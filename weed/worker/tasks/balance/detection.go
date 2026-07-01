@@ -10,18 +10,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/topology/balancer"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/util"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
-
-// maxDiskUsagePercent skips a balance destination whose physical disk used% is
-// at or above this. It mirrors the shell volume.balance -maxDiskUsagePercent
-// default and is the root-cause guard for an over-configured maxVolumeCount
-// making a physically full server look under-utilized by slot count. Servers
-// that do not report disk bytes are not gated (slot-only fallback).
-const maxDiskUsagePercent = 90
 
 // Detection implements the detection logic for balance tasks.
 // maxResults limits how many balance operations are returned per invocation.
@@ -211,12 +205,7 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 	// Judged per server against its own disk; servers not reporting disk bytes are
 	// never gated (slot-only fallback).
 	destinationDiskTooFull := func(server string) bool {
-		total := serverDiskTotalBytes[server]
-		if total == 0 {
-			return false
-		}
-		used := total - serverDiskFreeBytes[server]
-		return float64(used)*100 >= float64(total)*float64(maxDiskUsagePercent)
+		return balancer.DiskTooFullAfter(serverDiskTotalBytes[server], serverDiskFreeBytes[server], 0, balancer.DefaultMaxDiskUsagePercent)
 	}
 
 	for len(results) < maxResults {
@@ -267,7 +256,7 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 		if minServer == "" {
 			// Every candidate destination is at/above the physical disk high-water
 			// mark, so no move can safely improve balance.
-			glog.V(1).Infof("BALANCE [%s]: No eligible destination - all candidates at/above %d%% disk usage after %d task(s)", diskType, maxDiskUsagePercent, len(results))
+			glog.V(1).Infof("BALANCE [%s]: No eligible destination - all candidates at/above %d%% disk usage after %d task(s)", diskType, balancer.DefaultMaxDiskUsagePercent, len(results))
 			break
 		}
 

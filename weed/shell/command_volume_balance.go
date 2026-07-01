@@ -17,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/topology/balancer"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -132,7 +133,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	applyBalancingAlias := balanceCommand.Bool("force", false, "apply the balancing plan (alias for -apply)")
 	volumesPerExec := balanceCommand.Int("volumesPerExec", 0, "how many volumes to move in one run (default is 0 for unlimited)")
 	byDiskUsage := balanceCommand.Bool("byDiskUsage", false, "rank servers by actual data held (sum of volume sizes) instead of slot density; use when maxVolumeCount is set too high for the disk. Assumes comparable disk sizes per disk type.")
-	maxDiskUsagePercent := balanceCommand.Int("maxDiskUsagePercent", 90, "skip a move target whose physical disk used%% is at/above this; judged per server against its own disk, so heterogeneous disk sizes are fine. 0 or >=100 disables. Auto-skipped for servers that do not report disk bytes.")
+	maxDiskUsagePercent := balanceCommand.Int("maxDiskUsagePercent", balancer.DefaultMaxDiskUsagePercent, "skip a move target whose physical disk used%% is at/above this; judged per server against its own disk, so heterogeneous disk sizes are fine. 0 or >=100 disables. Auto-skipped for servers that do not report disk bytes.")
 
 	balanceCommand.Func("volumeBy", "only apply the balancing for ALL volumes and ACTIVE or FULL", func(flagValue string) error {
 		if flagValue == "" {
@@ -445,15 +446,11 @@ func (n *Node) diskBytes(diskType types.DiskType) (total, free uint64, ok bool) 
 // excluded. Returns false (no opinion) when the gate is disabled or the server
 // does not report disk bytes.
 func (c *commandVolumeBalance) targetDiskTooFull(node *Node, diskType types.DiskType, volumeSizeLimitMb uint64) bool {
-	if c.diskUsageHighWaterPercent <= 0 || c.diskUsageHighWaterPercent >= 100 {
-		return false
-	}
 	total, free, ok := node.diskBytes(diskType)
 	if !ok {
 		return false
 	}
-	usedAfter := float64(total-free) + float64(volumeSizeLimitMb*util.MiByte)
-	return usedAfter*100 > float64(total)*float64(c.diskUsageHighWaterPercent)
+	return balancer.DiskTooFullAfter(total, free, volumeSizeLimitMb*util.MiByte, c.diskUsageHighWaterPercent)
 }
 
 func (n *Node) isOneVolumeOnly() bool {
