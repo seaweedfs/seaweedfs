@@ -107,6 +107,9 @@ func (c *commandEcVolumeScrub) Do(args []string, commandEnv *CommandEnv, writer 
 	fmt.Fprintf(writer, "using %s mode\n", c.mode.String())
 	c.env = commandEnv
 	c.forceDeletedNeedlesCheck = *forceDeletedNeedlesCheck
+	if c.forceDeletedNeedlesCheck && c.mode != volume_server_pb.VolumeScrubMode_FULL {
+		return fmt.Errorf("deleted needle checks are only supported for FULL scrubs")
+	}
 
 	return c.scrubEcVolumes(writer, *maxParallelization, *showDetails)
 }
