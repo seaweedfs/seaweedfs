@@ -37,6 +37,7 @@ fn scrub_mode_label(mode: i32) -> &'static str {
         1 => "INDEX",
         2 => "FULL",
         3 => "LOCAL",
+        4 => "CHECKSUM",
         _ => "UNKNOWN",
     }
 }
@@ -2765,6 +2766,58 @@ impl VolumeServer for VolumeGrpcService {
             }
         }
 
+        // Copy the generation-0 bitrot checksum sidecar (.ecsum) when requested, so
+        // protection travels with the shards. Tolerant of a missing source (no-op):
+        // this non-2PC path has no Prepare backstop, and an unprotected source
+        // simply leaves the copy unprotected.
+        if req.copy_ecsum_file {
+            let copy_req = volume_server_pb::CopyFileRequest {
+                volume_id: req.volume_id,
+                collection: req.collection.clone(),
+                is_ec_volume: true,
+                ext: ".ecsum".to_string(),
+                compaction_revision: u32::MAX,
+                stop_offset: i64::MAX as u64,
+                ignore_source_file_not_found: true,
+                ..Default::default()
+            };
+            let mut stream = client
+                .copy_file(copy_req)
+                .await
+                .map_err(|e| {
+                    Status::internal(format!(
+                        "VolumeEcShardsCopy volume {} copy .ecsum: {}",
+                        vid, e
+                    ))
+                })?
+                .into_inner();
+
+            let file_path = {
+                let base =
+                    crate::storage::volume::volume_file_name(&dest_dir, &req.collection, vid);
+                format!("{}.ecsum", base)
+            };
+            let mut file = std::fs::File::create(&file_path)
+                .map_err(|e| Status::internal(format!("create {}: {}", file_path, e)))?;
+            let mut written: u64 = 0;
+            while let Some(chunk) = stream
+                .message()
+                .await
+                .map_err(|e| Status::internal(format!("recv .ecsum: {}", e)))?
+            {
+                use std::io::Write;
+                file.write_all(&chunk.file_content)
+                    .map_err(|e| Status::internal(format!("write {}: {}", file_path, e)))?;
+                written += chunk.file_content.len() as u64;
+            }
+            // A missing source yields an empty stream; drop the 0-byte file so mount
+            // sees no sidecar (protection Off) rather than a truncated/invalid one.
+            if written == 0 {
+                drop(file);
+                let _ = std::fs::remove_file(&file_path);
+            }
+        }
+
         Ok(Response::new(
             volume_server_pb::VolumeEcShardsCopyResponse {},
         ))
@@ -3911,7 +3964,7 @@ impl VolumeServer for VolumeGrpcService {
         // Validate mode
         let mode = req.mode;
         match mode {
-            1 | 2 | 3 => {} // INDEX=1, FULL=2, LOCAL=3
+            1 | 2 | 3 | 4 => {} // INDEX=1, FULL=2, LOCAL=3, CHECKSUM=4
             _ => {
                 return Err(Status::invalid_argument(format!(
                     "unsupported EC volume scrub mode {}",
@@ -4053,6 +4106,36 @@ impl VolumeServer for VolumeGrpcService {
                     if !errs.is_empty() || !shard_infos.is_empty() {
                         broken_volume_ids.push(vid.0);
                         broken_shard_infos.extend(shard_infos);
+                        for msg in errs {
+                            details.push(format!("ecvol {}: {}", vid.0, msg));
+                        }
+                    }
+                }
+                4 => {
+                    // CHECKSUM: verify each local shard's raw bytes against the
+                    // bitrot checksum sidecar, exercising cold parity shards.
+                    // Read-only. Mirrors Go's v.ChecksumScrub().
+                    let (blocks_scanned, broken, errs, collection) = {
+                        let store = self.state.store.read().unwrap();
+                        let ecv = store.find_ec_volume(vid).ok_or_else(|| {
+                            Status::not_found(format!("EC volume id {} not found", vid.0))
+                        })?;
+                        let collection = ecv.collection.clone();
+                        let (blocks, broken, errs) = ecv.checksum_scrub();
+                        (blocks, broken, errs, collection)
+                    };
+                    total_volumes += 1;
+                    total_files += blocks_scanned;
+                    if !errs.is_empty() || !broken.is_empty() {
+                        broken_volume_ids.push(vid.0);
+                        for b in broken {
+                            broken_shard_infos.push(volume_server_pb::EcShardInfo {
+                                volume_id: vid.0,
+                                collection: collection.clone(),
+                                shard_id: b,
+                                ..Default::default()
+                            });
+                        }
                         for msg in errs {
                             details.push(format!("ecvol {}: {}", vid.0, msg));
                         }
