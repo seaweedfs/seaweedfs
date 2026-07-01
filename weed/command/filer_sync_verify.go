@@ -58,6 +58,12 @@ var cmdFilerSyncVerify = &Command{
 	-modifiedTimeAgo to skip recently-modified files (sync-lag tolerance) and
 	-isActivePassive for unidirectional comparison.
 
+	A chunk-derived ETag (no stored attr.Md5) can differ between clusters only
+	because the chunk slice was assembled in a different order, since ETagChunks
+	does not sort by offset. Such files are byte-identical and reported as
+	CHUNK_REORDER: not counted as errors, always counted in the summary, listed
+	only at -v=1.
+
 	Exits with code 0 on agreement, 2 on differences or operational errors.
 
 `,
@@ -123,6 +129,7 @@ type VerifyResult struct {
 	missingCount  atomic.Int64
 	sizeMismatch  atomic.Int64
 	etagMismatch  atomic.Int64
+	chunkReorder  atomic.Int64 // content-equal; chunks differ only in slice order
 	onlyInB       atomic.Int64
 	skippedRecent atomic.Int64
 
@@ -139,6 +146,7 @@ const (
 	diffOnlyInB                            // in B but not in A
 	diffSizeMismatch                       // size differs
 	diffETagMismatch                       // etag differs
+	diffChunkReorder                       // etag differs but content is equal (chunk slice order only)
 )
 
 // diffRecord is the JSON Lines schema for a single diff entry.
@@ -167,6 +175,7 @@ type summaryRecord struct {
 	Missing       int64  `json:"missing"`
 	SizeMismatch  int64  `json:"sizeMismatch"`
 	ETagMismatch  int64  `json:"etagMismatch"`
+	ChunkReorder  int64  `json:"chunkReorder"`
 	OnlyInB       int64  `json:"onlyInB"`
 	TotalErrors   int64  `json:"totalErrors"`
 }
@@ -236,6 +245,7 @@ func runVerifySync(filerA, filerB pb.ServerAddress, aPath, bPath string,
 			Missing:       result.missingCount.Load(),
 			SizeMismatch:  result.sizeMismatch.Load(),
 			ETagMismatch:  result.etagMismatch.Load(),
+			ChunkReorder:  result.chunkReorder.Load(),
 			OnlyInB:       result.onlyInB.Load(),
 			TotalErrors:   totalErrors,
 		}
@@ -250,6 +260,9 @@ func runVerifySync(filerA, filerB pb.ServerAddress, aPath, bPath string,
 		fmt.Fprintf(os.Stdout, "  Missing in B:         %d\n", result.missingCount.Load())
 		fmt.Fprintf(os.Stdout, "  Size mismatch:        %d\n", result.sizeMismatch.Load())
 		fmt.Fprintf(os.Stdout, "  ETag mismatch:        %d\n", result.etagMismatch.Load())
+		if n := result.chunkReorder.Load(); n > 0 {
+			fmt.Fprintf(os.Stdout, "  Chunk reorder (equal): %d  (content-equal, not an error; use -v=1 to list)\n", n)
+		}
 		if !isActivePassive {
 			fmt.Fprintf(os.Stdout, "  Only in B:            %d\n", result.onlyInB.Load())
 		}
@@ -496,9 +509,79 @@ func compareEntries(dir string, entryA, entryB *filer_pb.Entry, result *VerifyRe
 	etagA := filer.ETag(entryA)
 	etagB := filer.ETag(entryB)
 	if etagA != etagB {
-		reportDiff(diffETagMismatch, dir, entryA, entryB, result)
+		if isChunkReorder(entryA, entryB) {
+			// Same bytes, just a different chunk slice order — not a real diff.
+			reportDiff(diffChunkReorder, dir, entryA, entryB, result)
+		} else {
+			reportDiff(diffETagMismatch, dir, entryA, entryB, result)
+		}
 		return
 	}
+}
+
+// isChunkReorder reports whether two entries with differing file ETags are
+// byte-identical, differing only in chunk slice order. filer.ETagChunks hashes
+// per-chunk MD5s in stored order without sorting by offset, so the same bytes
+// written by different paths (S3 multipart vs filer.backup) can hash
+// differently. If both chunk lists sorted by offset match element-wise on
+// (offset, size, ETag), the files cover the same bytes with the same content
+// and only the slice order differed.
+//
+// Applies only when both ETags come from chunks (a stored attr.Md5 is
+// order-independent, so a mismatch there is a real content difference) and the
+// chunks form a manifest-free, non-overlapping set whose bytes are fully
+// determined by the list — overlaps would need timestamp-based visible-interval
+// resolution, so those stay ETAG_MISMATCH.
+func isChunkReorder(entryA, entryB *filer_pb.Entry) bool {
+	if !usesChunkETag(entryA) || !usesChunkETag(entryB) {
+		return false
+	}
+	a := sortedSimpleChunks(entryA.GetChunks())
+	b := sortedSimpleChunks(entryB.GetChunks())
+	// nil means overlapping or manifest chunks we do not fast-path; a single
+	// chunk hashes directly and a differing count is a real divergence.
+	if a == nil || b == nil || len(a) != len(b) || len(a) < 2 {
+		return false
+	}
+	for i := range a {
+		if a[i].Offset != b[i].Offset || a[i].Size != b[i].Size || a[i].ETag != b[i].ETag {
+			return false
+		}
+	}
+	return true
+}
+
+// usesChunkETag reports whether filer.ETag falls back to ETagChunks for entry,
+// i.e. no stored attr.Md5 whole-content hash is available. Mirrors filer.ETag's
+// own condition so it agrees with how the compared ETag was computed.
+func usesChunkETag(entry *filer_pb.Entry) bool {
+	return entry.Attributes == nil || entry.Attributes.Md5 == nil
+}
+
+// sortedSimpleChunks returns chunks sorted by (offset, ETag) if they are a
+// manifest-free, non-overlapping set whose visible bytes are fully determined
+// by the list; otherwise nil. Overlapping ranges would require resolving the
+// visible interval by chunk timestamp, which this fast path does not attempt.
+func sortedSimpleChunks(chunks []*filer_pb.FileChunk) []*filer_pb.FileChunk {
+	sorted := make([]*filer_pb.FileChunk, len(chunks))
+	copy(sorted, chunks)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Offset != sorted[j].Offset {
+			return sorted[i].Offset < sorted[j].Offset
+		}
+		return sorted[i].ETag < sorted[j].ETag
+	})
+	prevEnd := int64(0)
+	for i, c := range sorted {
+		if c.IsChunkManifest {
+			return nil
+		}
+		if i > 0 && c.Offset < prevEnd {
+			return nil
+		}
+		prevEnd = c.Offset + int64(c.Size)
+	}
+	return sorted
 }
 
 // mtimeRelation classifies B.mtime vs A.mtime. Both entries must be non-nil.
@@ -557,6 +640,13 @@ func reportDiff(diffType verifyDiffType, dir string, entryA, entryB *filer_pb.En
 		result.sizeMismatch.Add(1)
 	case diffETagMismatch:
 		result.etagMismatch.Add(1)
+	case diffChunkReorder:
+		result.chunkReorder.Add(1)
+		// Content-equal (same chunks, different slice order): not an error, so
+		// keep it out of the default report; list only at -v=1.
+		if !glog.V(1) {
+			return
+		}
 	}
 
 	if result.jsonOutput {
@@ -590,6 +680,9 @@ func writeTextDiff(result *VerifyResult, diffType verifyDiffType, dir string, en
 		ann := annotation(entryA, entryB)
 		fmt.Fprintf(os.Stdout, "[ETAG_MISMATCH] %s (a=%s, b=%s%s)\n",
 			entryPath, filer.ETag(entryA), filer.ETag(entryB), ann)
+	case diffChunkReorder:
+		fmt.Fprintf(os.Stdout, "[CHUNK_REORDER] %s (a=%s, b=%s, content-equal: chunks differ only in slice order)\n",
+			entryPath, filer.ETag(entryA), filer.ETag(entryB))
 	}
 }
 
@@ -640,6 +733,14 @@ func writeJSONDiff(result *VerifyResult, diffType verifyDiffType, dir string, en
 		rec.MtimeRelation = relation
 		rec.MtimeDelta = delta
 		rec.Hint = hintFor(relation)
+	case diffChunkReorder:
+		rec.Type = "CHUNK_REORDER"
+		rec.A = toEntryRecord(entryA)
+		rec.B = toEntryRecord(entryB)
+		relation, delta, _ := mtimeRelation(entryA, entryB)
+		rec.MtimeRelation = relation
+		rec.MtimeDelta = delta
+		// no hint: content-equal, no action needed
 	}
 
 	writeJSONLine(result, rec)

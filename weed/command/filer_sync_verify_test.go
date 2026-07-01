@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
@@ -99,6 +100,34 @@ func verifyFileEntry(name string, size uint64) *filer_pb.Entry {
 
 func verifyDirEntry(name string) *filer_pb.Entry {
 	return &filer_pb.Entry{Name: name, IsDirectory: true}
+}
+
+// verifyChunk builds a FileChunk whose ETag is the base64 MD5 of seed, so
+// filer.ETagChunks (which base64-decodes each chunk ETag) can hash it. Distinct
+// seeds yield distinct per-chunk MD5s.
+func verifyChunk(offset int64, size uint64, seed string) *filer_pb.FileChunk {
+	return &filer_pb.FileChunk{
+		Offset: offset,
+		Size:   size,
+		ETag:   util.Base64Encode(util.Md5([]byte(seed))),
+	}
+}
+
+// verifyChunkedEntry builds a chunk-backed entry with no stored attr.Md5, so
+// its file ETag is derived from ETagChunks (the order-sensitive path). FileSize
+// is the max chunk end, matching filer.FileSize, so size comparison passes.
+func verifyChunkedEntry(name string, chunks []*filer_pb.FileChunk) *filer_pb.Entry {
+	var total uint64
+	for _, c := range chunks {
+		if end := uint64(c.Offset) + c.Size; end > total {
+			total = end
+		}
+	}
+	return &filer_pb.Entry{
+		Name:       name,
+		Attributes: &filer_pb.FuseAttributes{FileSize: total}, // Md5 nil → ETagChunks path
+		Chunks:     chunks,
+	}
 }
 
 // --- tests ---
@@ -277,6 +306,192 @@ func TestVerifySyncETagMismatch(t *testing.T) {
 	}
 	if got := result.sizeMismatch.Load(); got != 0 {
 		t.Errorf("sizeMismatch = %d, want 0 (same size should not trigger size mismatch)", got)
+	}
+}
+
+// TestVerifySyncChunkReorder confirms that two entries holding the SAME
+// chunks (same offsets, same per-chunk MD5s) in a DIFFERENT slice order are
+// classified as CHUNK_REORDER (content-equal), not ETAG_MISMATCH, and are
+// therefore not counted as errors. This is the S3-multipart vs filer.backup
+// reordering false positive.
+func TestVerifySyncChunkReorder(t *testing.T) {
+	c0 := verifyChunk(0, 100, "chunk-0")
+	c1 := verifyChunk(100, 100, "chunk-1")
+	c2 := verifyChunk(200, 100, "chunk-2")
+
+	// A stores [c0,c1,c2]; B stores a permutation [c2,c0,c1] of the same chunks.
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("model.bin", []*filer_pb.FileChunk{c0, c1, c2})},
+		},
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("model.bin", []*filer_pb.FileChunk{c2, c0, c1})},
+		},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := result.chunkReorder.Load(); got != 1 {
+		t.Errorf("chunkReorder = %d, want 1", got)
+	}
+	if got := result.etagMismatch.Load(); got != 0 {
+		t.Errorf("etagMismatch = %d, want 0 (reordered chunks are content-equal)", got)
+	}
+	if got := result.sizeMismatch.Load(); got != 0 {
+		t.Errorf("sizeMismatch = %d, want 0", got)
+	}
+}
+
+// TestVerifySyncGenuineChunkDivergence confirms that when one chunk's content
+// actually differs (same offsets and count, different per-chunk MD5), the file
+// stays classified as ETAG_MISMATCH and is NOT downgraded to CHUNK_REORDER.
+func TestVerifySyncGenuineChunkDivergence(t *testing.T) {
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("model.bin", []*filer_pb.FileChunk{
+				verifyChunk(0, 100, "chunk-0"),
+				verifyChunk(100, 100, "chunk-1"),
+				verifyChunk(200, 100, "chunk-2"),
+			})},
+		},
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("model.bin", []*filer_pb.FileChunk{
+				verifyChunk(0, 100, "chunk-0"),
+				verifyChunk(100, 100, "chunk-1"),
+				verifyChunk(200, 100, "chunk-2-DIFFERENT"), // real content divergence
+			})},
+		},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := result.etagMismatch.Load(); got != 1 {
+		t.Errorf("etagMismatch = %d, want 1 (genuine chunk content divergence)", got)
+	}
+	if got := result.chunkReorder.Load(); got != 0 {
+		t.Errorf("chunkReorder = %d, want 0 (content actually differs)", got)
+	}
+}
+
+// TestVerifySyncChunkCountDiffStaysEtagMismatch confirms that a differing chunk
+// count with an equal file size (e.g. differently split content) is NOT treated
+// as a reordering — it stays ETAG_MISMATCH.
+func TestVerifySyncChunkCountDiffStaysEtagMismatch(t *testing.T) {
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("data.bin", []*filer_pb.FileChunk{
+				verifyChunk(0, 100, "a"),
+				verifyChunk(100, 100, "b"),
+				verifyChunk(200, 100, "c"),
+			})},
+		},
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("data.bin", []*filer_pb.FileChunk{
+				verifyChunk(0, 150, "x"),
+				verifyChunk(150, 150, "y"),
+			})},
+		},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := result.sizeMismatch.Load(); got != 0 {
+		t.Errorf("sizeMismatch = %d, want 0 (both total 300 bytes)", got)
+	}
+	if got := result.etagMismatch.Load(); got != 1 {
+		t.Errorf("etagMismatch = %d, want 1", got)
+	}
+	if got := result.chunkReorder.Load(); got != 0 {
+		t.Errorf("chunkReorder = %d, want 0", got)
+	}
+}
+
+// TestVerifySyncDuplicateOffsetStaysEtagMismatch confirms that overlapping
+// chunks at the same offset — where the visible bytes are resolved by chunk
+// timestamp, not by the raw chunk list — are NOT fast-pathed to CHUNK_REORDER.
+// Both sides hold the same two ETags at offset 0 in a different order, so the
+// file ETags differ; the visible content is ambiguous from the list alone, so
+// this must stay ETAG_MISMATCH.
+func TestVerifySyncDuplicateOffsetStaysEtagMismatch(t *testing.T) {
+	c1 := verifyChunk(0, 100, "v1")
+	c2 := verifyChunk(0, 100, "v2") // same offset → overlap
+
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("data.bin", []*filer_pb.FileChunk{c1, c2})},
+		},
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("data.bin", []*filer_pb.FileChunk{c2, c1})},
+		},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := result.etagMismatch.Load(); got != 1 {
+		t.Errorf("etagMismatch = %d, want 1 (overlapping offsets are not a safe reorder)", got)
+	}
+	if got := result.chunkReorder.Load(); got != 0 {
+		t.Errorf("chunkReorder = %d, want 0", got)
+	}
+}
+
+// TestVerifySyncManifestChunkStaysEtagMismatch confirms that entries containing
+// a manifest chunk are not fast-pathed to CHUNK_REORDER: manifest chunks
+// represent compacted, possibly overlapping history that this check does not
+// resolve.
+func TestVerifySyncManifestChunkStaysEtagMismatch(t *testing.T) {
+	manifest := func(offset int64, size uint64, seed string) *filer_pb.FileChunk {
+		c := verifyChunk(offset, size, seed)
+		c.IsChunkManifest = true
+		return c
+	}
+	a0, a1 := manifest(0, 100, "m0"), verifyChunk(100, 100, "m1")
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("data.bin", []*filer_pb.FileChunk{a0, a1})},
+		},
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("data.bin", []*filer_pb.FileChunk{a1, a0})},
+		},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := result.etagMismatch.Load(); got != 1 {
+		t.Errorf("etagMismatch = %d, want 1 (manifest chunks are not fast-pathed)", got)
+	}
+	if got := result.chunkReorder.Load(); got != 0 {
+		t.Errorf("chunkReorder = %d, want 0", got)
 	}
 }
 
