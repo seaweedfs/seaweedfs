@@ -322,6 +322,9 @@ message DiskInfo {
   repeated VolumeInformationMessage volume_infos = 6;
   repeated VolumeEcShardInformationMessage ec_shard_infos = 7;
   int64 remote_volume_count = 8;
+  // On a per-physical-disk DiskInfo (from SplitByPhysicalDisk) this is the disk's
+  // identity; on the type-keyed aggregate it is only a representative fallback
+  // (the first volume's disk id).
   uint32 disk_id = 9;
   repeated string tags = 10;
   // Max volume count for every physical disk of this type, keyed by disk id,

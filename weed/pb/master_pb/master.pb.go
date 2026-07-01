@@ -2138,8 +2138,11 @@ type DiskInfo struct {
 	VolumeInfos       []*VolumeInformationMessage        `protobuf:"bytes,6,rep,name=volume_infos,json=volumeInfos,proto3" json:"volume_infos,omitempty"`
 	EcShardInfos      []*VolumeEcShardInformationMessage `protobuf:"bytes,7,rep,name=ec_shard_infos,json=ecShardInfos,proto3" json:"ec_shard_infos,omitempty"`
 	RemoteVolumeCount int64                              `protobuf:"varint,8,opt,name=remote_volume_count,json=remoteVolumeCount,proto3" json:"remote_volume_count,omitempty"`
-	DiskId            uint32                             `protobuf:"varint,9,opt,name=disk_id,json=diskId,proto3" json:"disk_id,omitempty"`
-	Tags              []string                           `protobuf:"bytes,10,rep,name=tags,proto3" json:"tags,omitempty"`
+	// On a per-physical-disk DiskInfo (from SplitByPhysicalDisk) this is the disk's
+	// identity; on the type-keyed aggregate it is only a representative fallback
+	// (the first volume's disk id).
+	DiskId uint32   `protobuf:"varint,9,opt,name=disk_id,json=diskId,proto3" json:"disk_id,omitempty"`
+	Tags   []string `protobuf:"bytes,10,rep,name=tags,proto3" json:"tags,omitempty"`
 	// Max volume count for every physical disk of this type, keyed by disk id,
 	// including disks with no volumes or EC shards; recovers empty disks that
 	// carry no per-volume/per-shard records.
