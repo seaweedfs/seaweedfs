@@ -6,19 +6,12 @@ func (v *VolumeLocation) IsEmptyUrl() bool {
 	return v.Url == "" || v.Url == ":0"
 }
 
-// SplitByPhysicalDisk returns one DiskInfo per physical disk_id observed in
-// VolumeInfos / EcShardInfos. The wire format keys DataNodeInfo.DiskInfos by
-// disk type, so multiple same-type physical disks on one DataNode collapse
-// into a single DiskInfo entry. Per-volume and per-shard records carry the
-// real physical DiskId; this helper rebuilds a per-physical-disk view from
-// those records so consumers (topology indexes, shell output) can target
-// individual disks instead of treating each node as one big disk.
-//
-// ActiveVolumeCount and RemoteVolumeCount are computed exactly from each
-// disk's VolumeInfos (read-only and remote-backed are known per-volume).
-// MaxVolumeCount and FreeVolumeCount are not derivable from per-volume
-// records, so they are split across reconstructed disks with the remainder
-// distributed to the lowest disk ids — the sums are preserved exactly.
+// SplitByPhysicalDisk returns one DiskInfo per physical disk. The wire format
+// keys DataNodeInfo.DiskInfos by disk type, collapsing same-type disks into one
+// entry, so this rebuilds the per-disk view. MaxVolumeCountByDisk, when present,
+// is the authoritative set (empty disks included) and gives each disk its exact
+// max; otherwise the set is the DiskIds seen on records with aggregate Max/Free
+// split evenly.
 func (d *DiskInfo) SplitByPhysicalDisk() []*DiskInfo {
 	if d == nil {
 		return nil
@@ -53,25 +46,6 @@ func (d *DiskInfo) SplitByPhysicalDisk() []*DiskInfo {
 		return id
 	}
 
-	diskIDs := make(map[uint32]struct{})
-	for _, vi := range d.VolumeInfos {
-		diskIDs[normalize(vi.DiskId)] = struct{}{}
-	}
-	for _, eci := range d.EcShardInfos {
-		diskIDs[normalize(eci.DiskId)] = struct{}{}
-	}
-	if len(diskIDs) == 0 {
-		diskIDs[d.DiskId] = struct{}{}
-	}
-
-	if len(diskIDs) == 1 {
-		for diskID := range diskIDs {
-			if diskID == d.DiskId {
-				return []*DiskInfo{d}
-			}
-		}
-	}
-
 	perDiskVolumes := make(map[uint32][]*VolumeInformationMessage)
 	for _, vi := range d.VolumeInfos {
 		id := normalize(vi.DiskId)
@@ -81,6 +55,35 @@ func (d *DiskInfo) SplitByPhysicalDisk() []*DiskInfo {
 	for _, eci := range d.EcShardInfos {
 		id := normalize(eci.DiskId)
 		perDiskShards[id] = append(perDiskShards[id], eci)
+	}
+
+	diskIDs := make(map[uint32]struct{})
+	for id := range perDiskVolumes {
+		diskIDs[id] = struct{}{}
+	}
+	for id := range perDiskShards {
+		diskIDs[id] = struct{}{}
+	}
+
+	// MaxVolumeCountByDisk (when present) is the authoritative set with each
+	// disk's exact max.
+	exactMax := len(d.MaxVolumeCountByDisk) > 0
+	for diskID := range d.MaxVolumeCountByDisk {
+		diskIDs[diskID] = struct{}{}
+	}
+
+	if len(diskIDs) == 0 {
+		diskIDs[d.DiskId] = struct{}{}
+	}
+
+	// A lone disk equal to the aggregate needs no reconstruction; exactMax disks
+	// always reconstruct so they report their own max.
+	if !exactMax && len(diskIDs) == 1 {
+		for diskID := range diskIDs {
+			if diskID == d.DiskId {
+				return []*DiskInfo{d}
+			}
+		}
 	}
 
 	// Sort disk IDs so the remainder distribution is deterministic and the
@@ -116,11 +119,24 @@ func (d *DiskInfo) SplitByPhysicalDisk() []*DiskInfo {
 				remoteCount++
 			}
 		}
+		volumeCount := int64(len(perDiskVolumes[diskID]))
+		maxVolumeCount := share(d.MaxVolumeCount, i)
+		freeVolumeCount := share(d.FreeVolumeCount, i)
+		if exactMax {
+			maxVolumeCount = d.MaxVolumeCountByDisk[diskID]
+			// EC slots aren't subtracted (needs the configurable ratio, outside
+			// this package); planners subtract them from EcShardInfos. Clamp so an
+			// over-allocated disk can't report negative free.
+			freeVolumeCount = maxVolumeCount - (volumeCount - remoteCount)
+			if freeVolumeCount < 0 {
+				freeVolumeCount = 0
+			}
+		}
 		result = append(result, &DiskInfo{
 			Type:              d.Type,
-			MaxVolumeCount:    share(d.MaxVolumeCount, i),
-			VolumeCount:       int64(len(perDiskVolumes[diskID])),
-			FreeVolumeCount:   share(d.FreeVolumeCount, i),
+			MaxVolumeCount:    maxVolumeCount,
+			VolumeCount:       volumeCount,
+			FreeVolumeCount:   freeVolumeCount,
 			ActiveVolumeCount: activeCount,
 			RemoteVolumeCount: remoteCount,
 			VolumeInfos:       perDiskVolumes[diskID],

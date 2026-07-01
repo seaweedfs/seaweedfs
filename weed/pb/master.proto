@@ -64,6 +64,9 @@ service Seaweed {
 message DiskTag {
   uint32 disk_id = 1;
   repeated string tags = 2;
+  // Physical disk descriptor, reported for every location including empty ones.
+  string type = 3;
+  int64 max_volume_count = 4;
 }
 
 message Heartbeat {
@@ -319,8 +322,15 @@ message DiskInfo {
   repeated VolumeInformationMessage volume_infos = 6;
   repeated VolumeEcShardInformationMessage ec_shard_infos = 7;
   int64 remote_volume_count = 8;
+  // On a per-physical-disk DiskInfo (from SplitByPhysicalDisk) this is the disk's
+  // identity; on the type-keyed aggregate it is only a representative fallback
+  // (the first volume's disk id).
   uint32 disk_id = 9;
   repeated string tags = 10;
+  // Max volume count for every physical disk of this type, keyed by disk id,
+  // including disks with no volumes or EC shards; recovers empty disks that
+  // carry no per-volume/per-shard records.
+  map<uint32, int64> max_volume_count_by_disk = 11;
 }
 message DataNodeInfo {
   string id = 1;
