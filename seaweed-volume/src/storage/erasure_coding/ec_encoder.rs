@@ -10,7 +10,9 @@ use std::io::{Read, Seek, SeekFrom};
 
 use reed_solomon_erasure::galois_8::ReedSolomon;
 
-use crate::pb::volume_server_pb::{ChecksumAlgorithm, EcBitrotProtection, EcShardChecksums};
+use crate::pb::volume_server_pb::{
+    ChecksumAlgorithm, EcBitrotProtection, EcShardChecksums,
+};
 use crate::storage::erasure_coding::ec_bitrot::{
     self, ShardChecksumBuilder, DEFAULT_BITROT_BLOCK_SIZE,
 };
@@ -82,9 +84,7 @@ pub fn write_ec_files(
 
     // Write the generation-0 bitrot sidecar (`<base>.ecsum`). Finalizing each
     // builder yields covered_size (== total bytes written to that shard) and
-    // the packed little-endian CRC32C array. Best-effort: a failed sidecar must
-    // not fail the encode — the shards are already written and valid; the volume
-    // simply runs with bitrot protection off for this generation.
+    // the packed little-endian CRC32C array.
     let mut shard_checksums: Vec<EcShardChecksums> = Vec::with_capacity(total_shards);
     for (i, builder) in builders.into_iter().enumerate() {
         let (covered_size, packed) = builder.finalize();
@@ -107,6 +107,9 @@ pub fn write_ec_files(
     };
     let sidecar_path = ec_bitrot::bitrot_sidecar_path(&base, 0);
     if let Err(e) = ec_bitrot::save_bitrot_sidecar(&sidecar_path, &prot) {
+        // A failed sidecar must not fail the encode — the shards are already
+        // written and valid. The volume simply runs with bitrot protection
+        // off for this generation until the sidecar is regenerated.
         tracing::warn!(
             volume_id = volume_id.0,
             path = %sidecar_path,
@@ -695,8 +698,8 @@ fn encode_one_batch(
         )
     })?;
 
-    // Write all shard buffers to files, feeding each shard's bytes into its
-    // bitrot checksum builder so covered_size == the on-disk shard length.
+    // Write all shard buffers to files and feed the same bytes to each
+    // shard's bitrot checksum builder, keeping covered_size == on-disk length.
     for (i, buf) in buffers.iter().enumerate() {
         shards[i].write_all(buf)?;
         builders[i].write(buf);
@@ -767,10 +770,7 @@ mod tests {
         assert!(std::path::Path::new(&ecx_path).exists());
     }
 
-    /// Encode-time capture writes a valid generation-0 `.ecsum` sidecar whose
-    /// recorded checksums match the actual on-disk shards.
-    #[test]
-    fn test_encode_writes_valid_bitrot_sidecar() {
+    fn make_volume_with_needles(n: u64) -> TempDir {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
         let mut v = Volume::new(
@@ -785,20 +785,32 @@ mod tests {
             Version::current(),
         )
         .unwrap();
-        for i in 1..=5 {
-            let data = format!("test data for needle {}", i);
-            let mut n = Needle {
+        for i in 1..=n {
+            // Larger payloads so encoded shards span multiple bitrot blocks
+            // would require huge data; small payloads are fine for correctness.
+            let data = format!("test data for needle {} {}", i, "x".repeat(64));
+            let mut needle = Needle {
                 id: NeedleId(i),
                 cookie: Cookie(i as u32),
                 data: data.as_bytes().to_vec(),
                 data_size: data.len() as u32,
                 ..Needle::default()
             };
-            v.write_needle(&mut n, true).unwrap();
+            v.write_needle(&mut needle, true).unwrap();
         }
         v.sync_to_disk().unwrap();
         v.close();
+        tmp
+    }
 
+    /// Encode-time capture writes a valid generation-0 `.ecsum` sidecar whose
+    /// recorded checksums match the actual on-disk shards.
+    #[test]
+    fn test_encode_writes_valid_bitrot_sidecar() {
+        use crate::storage::erasure_coding::ec_bitrot;
+
+        let tmp = make_volume_with_needles(5);
+        let dir = tmp.path().to_str().unwrap();
         write_ec_files(dir, dir, "", VolumeId(1), 10, 4).unwrap();
 
         let base = format!("{}/1", dir);

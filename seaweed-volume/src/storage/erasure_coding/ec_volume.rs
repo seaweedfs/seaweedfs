@@ -305,23 +305,40 @@ impl EcVolume {
         (self.bitrot.clone(), self.bitrot_status)
     }
 
-    /// Verify every locally-held EC shard's raw bytes against the active-generation
-    /// bitrot checksum sidecar. Read-only and purely diagnostic: it detects and
-    /// reports corruption but never mutates or quarantines anything. It is the only
-    /// path that exercises cold parity shards, never read during normal serving.
+    /// Read-only EC bitrot checksum scrub of the LOCAL shards of this volume's
+    /// active generation.
     ///
-    /// Returns (blocks scanned, mismatched shard ids, errors). An absent/
-    /// generation-mismatched sidecar is `Off` — a clean, empty no-op — so
-    /// unprotected volumes are never reported broken. If more shards mismatch
-    /// wholesale than parity can mask, the sidecar itself is the likely culprit
-    /// (stale/wrong): the shard-corruption verdict is suppressed and an
-    /// integrity note is added instead. Mirrors Go's `ChecksumScrub`.
+    /// Loads the active-generation `.ecsum` sidecar and, for each locally-held
+    /// shard, reads the on-disk shard file in `block_size` chunks and compares
+    /// each block's CRC32C against the sidecar. Returns
+    /// `(blocks_scanned, mismatched_shards, errors)`.
+    ///
+    /// If more than `parity_shards` shards mismatch wholesale (i.e. every block
+    /// of those shards is wrong — the signature of a stale/wrong sidecar rather
+    /// than localized disk rot), the result is classified as a suspect sidecar:
+    /// `mismatched_shards` is cleared and an integrity note is added to `errors`
+    /// instead. A genuine multi-shard disk failure of that magnitude is
+    /// already unrecoverable, so treating it as a sidecar-integrity issue avoids
+    /// raising false shard-corruption alarms.
+    ///
+    /// This method NEVER deletes or mutates anything — it is purely diagnostic.
     pub fn checksum_scrub(&self) -> (u64, Vec<u32>, Vec<String>) {
         use crate::storage::erasure_coding::ec_bitrot;
         use crate::storage::erasure_coding::ec_bitrot::BitrotStatus;
 
         let mut errors: Vec<String> = Vec::new();
 
+        // Resolve the active-generation protection AND its status, mirroring
+        // Go's `ChecksumScrub` (`prot, status := ecv.BitrotProtection()`):
+        //   - BitrotOff   => sidecars are OPTIONAL; an absent (or generation/
+        //     config-mismatched) sidecar simply means protection is not enabled
+        //     for this generation. Return a CLEAN, EMPTY result — NOT an error —
+        //     so legacy/intentionally-unprotected volumes are never reported
+        //     broken. (Go: `case BitrotOff: return 0, nil, nil`.)
+        //   - BitrotInvalid => the sidecar is PRESENT but malformed/unverifiable
+        //     (self-integrity or manifest failure). That is the only status that
+        //     yields an integrity error here.
+        //   - BitrotOn    => scan local shards against it.
         let prot = match self.bitrot_protection() {
             (_, BitrotStatus::Off) => {
                 // Unprotected generation: nothing to verify. Not an error.
@@ -339,7 +356,8 @@ impl EcVolume {
             }
             (Some(p), BitrotStatus::On) => p,
             (None, BitrotStatus::On) => {
-                // Unreachable: BitrotOn always carries a loaded sidecar.
+                // Unreachable: BitrotOn always carries a loaded sidecar. Treat a
+                // missing payload defensively as protection off (clean no-op).
                 return (0, Vec::new(), Vec::new());
             }
         };
@@ -350,6 +368,8 @@ impl EcVolume {
 
         let mut blocks_scanned: u64 = 0;
         let mut mismatched_shards: Vec<u32> = Vec::new();
+        // Track shards whose blocks ALL mismatch (wholesale) to detect a
+        // stale/wrong sidecar.
         let mut wholesale_mismatch = 0usize;
 
         for (i, slot) in self.shards.iter().enumerate() {
@@ -365,6 +385,8 @@ impl EcVolume {
                 continue;
             };
 
+            // Resolve the on-disk shard file path for the active generation,
+            // mirroring EcVolumeShard::reopen_against_generation's convention.
             let path = if generation == 0 {
                 format!("{}.ec{:02}", base, shard_id)
             } else {
@@ -391,9 +413,10 @@ impl EcVolume {
             }
         }
 
-        // More wholesale mismatches than parity can mask => the sidecar itself is
-        // suspect (stale generation / wrong volume): suppress the shard-corruption
-        // verdict and flag a sidecar-integrity issue instead.
+        // If more shards mismatch wholesale than parity can mask, the sidecar
+        // itself is the likely culprit (stale generation / wrong volume), so
+        // suppress the shard-corruption verdict and flag a sidecar-integrity
+        // issue instead.
         if wholesale_mismatch > self.parity_shards as usize {
             errors.push(format!(
                 "EC volume {}: {} shards mismatch wholesale (> {} parity); suspect stale/wrong sidecar, not shard corruption",
