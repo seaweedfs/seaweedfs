@@ -834,3 +834,103 @@ async fn replicate_write_does_not_re_replicate() {
         "plain write to a multi-copy volume must attempt replication"
     );
 }
+
+// ============================================================================
+// Chunk-manifest expansion resolves chunks on EC volumes
+//
+// A chunked object whose data chunks live on an EC-encoded volume must expand
+// by reconstruct-on-read from the shards, not by a local regular-volume lookup
+// (which finds nothing once the volume is EC-encoded). Mirrors Go's
+// ChunkedFileReader, which resolves every chunk through the master.
+// ============================================================================
+
+#[tokio::test]
+async fn chunk_manifest_expands_chunk_stored_on_ec_volume() {
+    use seaweed_volume::storage::erasure_coding::ec_encoder::write_ec_files;
+    use seaweed_volume::storage::needle::needle::{FileId, Needle};
+    use seaweed_volume::storage::types::{Cookie, NeedleId};
+    use seaweed_volume::storage::volume::Volume;
+
+    let (state, tmp) = test_state();
+    let dir = tmp.path().to_str().unwrap();
+
+    // A chunk large enough to be worth EC-encoding; its bytes are the payload we
+    // expect the manifest GET to return.
+    let chunk_data: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+    let chunk_nid = NeedleId(0x2a);
+    let chunk_cookie = Cookie(0x1234abcd);
+
+    // Build regular volume 2 holding the chunk, then EC-encode it and mount all
+    // 14 shards locally so reconstruct-on-read is a pure local read.
+    {
+        let mut v = Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(2),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        let mut n = Needle {
+            id: chunk_nid,
+            cookie: chunk_cookie,
+            data: chunk_data.clone(),
+            data_size: chunk_data.len() as u32,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true).unwrap();
+        v.sync_to_disk().unwrap();
+        v.close();
+    }
+    write_ec_files(dir, dir, "", VolumeId(2), 10, 4).unwrap();
+    // Volume 2 was built standalone (never registered in the store), so it only
+    // exists as EC shards — the chunk resolves through the EC path, as it would
+    // after ec.encode retired the regular volume.
+    {
+        let mut store = state.store.write().unwrap();
+        let shard_ids: Vec<u32> = (0..14).collect();
+        store.mount_ec_shards(VolumeId(2), "", &shard_ids).unwrap();
+    }
+
+    // Write the chunk-manifest needle to regular volume 1.
+    let chunk_fid = FileId::new(VolumeId(2), chunk_nid, chunk_cookie).to_string();
+    let manifest = format!(
+        r#"{{"name":"big.bin","mime":"application/octet-stream","size":{},"chunks":[{{"fid":"{}","offset":0,"size":{}}}]}}"#,
+        chunk_data.len(),
+        chunk_fid,
+        chunk_data.len()
+    );
+    let manifest_nid = NeedleId(0x7);
+    let manifest_cookie = Cookie(0x55667788);
+    {
+        let mut store = state.store.write().unwrap();
+        let mut n = Needle {
+            id: manifest_nid,
+            cookie: manifest_cookie,
+            data: manifest.into_bytes(),
+            ..Needle::default()
+        };
+        n.data_size = n.data.len() as u32;
+        n.set_is_chunk_manifest();
+        store.write_volume_needle(VolumeId(1), &mut n).unwrap();
+    }
+
+    // GET the manifest object; expect the reconstructed chunk bytes.
+    let manifest_fid = FileId::new(VolumeId(1), manifest_nid, manifest_cookie).to_string();
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/{}", manifest_fid))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_bytes(response).await, chunk_data);
+}
