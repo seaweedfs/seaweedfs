@@ -659,43 +659,29 @@ func moveVolume(commandEnv *CommandEnv, v *master_pb.VolumeInformationMessage, f
 	return nil
 }
 
+// toBalancerLocation converts a shell replica location to the shared placement
+// abstraction, resolving the physical host for machine anti-affinity.
+func toBalancerLocation(loc *location) balancer.Location {
+	return balancer.Location{
+		DataCenter: loc.dc,
+		Rack:       loc.rack,
+		NodeID:     loc.dataNode.Id,
+		Host:       pb.NewServerAddressFromDataNode(loc.dataNode).ToHost(),
+	}
+}
+
 func isGoodMove(placement *super_block.ReplicaPlacement, existingReplicas []*VolumeReplica, sourceNode, targetNode *Node) bool {
-	for _, replica := range existingReplicas {
-		if replica.location.dataNode.Id == targetNode.info.Id &&
-			replica.location.rack == targetNode.rack &&
-			replica.location.dc == targetNode.dc {
-			// never move to existing nodes
-			return false
-		}
+	locs := make([]balancer.Location, len(existingReplicas))
+	for i, replica := range existingReplicas {
+		locs[i] = toBalancerLocation(replica.location)
 	}
-
-	// existing replicas except the one on sourceNode
-	existingReplicasExceptSourceNode := make([]*VolumeReplica, 0)
-	for _, replica := range existingReplicas {
-		if replica.location.dataNode.Id != sourceNode.info.Id {
-			existingReplicasExceptSourceNode = append(existingReplicasExceptSourceNode, replica)
-		}
+	target := balancer.Location{
+		DataCenter: targetNode.dc,
+		Rack:       targetNode.rack,
+		NodeID:     targetNode.info.Id,
+		Host:       pb.NewServerAddressFromDataNode(targetNode.info).ToHost(),
 	}
-
-	// Don't move a replica onto a machine (host) that already holds one of this
-	// volume's replicas: servers sharing a host are one fault domain, so both would
-	// die together. Best-effort -- skip and let balancing try the next target.
-	targetHost := pb.NewServerAddressFromDataNode(targetNode.info).ToHost()
-	for _, replica := range existingReplicasExceptSourceNode {
-		if pb.NewServerAddressFromDataNode(replica.location.dataNode).ToHost() == targetHost {
-			return false
-		}
-	}
-
-	// target location
-	targetLocation := location{
-		dc:       targetNode.dc,
-		rack:     targetNode.rack,
-		dataNode: targetNode.info,
-	}
-
-	// check if this satisfies replication requirements
-	return satisfyReplicaPlacement(placement, existingReplicasExceptSourceNode, targetLocation)
+	return balancer.IsGoodMove(placement, locs, sourceNode.info.Id, target)
 }
 
 // addDiskFreeBytes adjusts a disk's reported free bytes by delta (negative when a
