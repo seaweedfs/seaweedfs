@@ -25,12 +25,13 @@ type DataNode struct {
 	IsTerminating bool
 
 	MaintenanceMode bool
-	diskTags        map[uint32][]string
-	// diskBackends holds each physical disk's type and capacity, including empty ones.
-	diskBackends map[uint32]diskBackend
+	// diskMetas holds each physical disk's tags, type, and capacity from the
+	// heartbeat DiskTags, including disks with no volumes or EC shards.
+	diskMetas map[uint32]diskMeta
 }
 
-type diskBackend struct {
+type diskMeta struct {
+	tags           []string
 	diskType       types.DiskType
 	maxVolumeCount int64
 }
@@ -301,21 +302,17 @@ func (dn *DataNode) ToDataNodeInfo() *master_pb.DataNodeInfo {
 	}
 
 	dn.RLock()
-	diskTags := make(map[uint32][]string, len(dn.diskTags))
-	for diskID, tags := range dn.diskTags {
-		diskTags[diskID] = append([]string(nil), tags...)
-	}
-	backends := make(map[uint32]diskBackend, len(dn.diskBackends))
-	for diskID, b := range dn.diskBackends {
-		backends[diskID] = b
+	metas := make(map[uint32]diskMeta, len(dn.diskMetas))
+	for diskID, meta := range dn.diskMetas {
+		metas[diskID] = meta
 	}
 	dn.RUnlock()
 	for _, diskInfo := range m.DiskInfos {
 		if diskInfo == nil {
 			continue
 		}
-		if tags, found := diskTags[diskInfo.DiskId]; found {
-			diskInfo.Tags = append([]string(nil), tags...)
+		if meta, found := metas[diskInfo.DiskId]; found {
+			diskInfo.Tags = append([]string(nil), meta.tags...)
 		}
 		// List every physical disk of this type, empty and unavailable (max 0)
 		// ones included. Emit only when some disk reports capacity, so an older
@@ -323,16 +320,16 @@ func (dn *DataNode) ToDataNodeInfo() *master_pb.DataNodeInfo {
 		diskType := types.ToDiskType(diskInfo.Type)
 		var physical []*master_pb.PhysicalDiskInfo
 		anyCapacity := false
-		for diskID, b := range backends {
-			if b.diskType != diskType {
+		for diskID, meta := range metas {
+			if meta.diskType != diskType {
 				continue
 			}
-			if b.maxVolumeCount > 0 {
+			if meta.maxVolumeCount > 0 {
 				anyCapacity = true
 			}
 			physical = append(physical, &master_pb.PhysicalDiskInfo{
 				DiskId:         diskID,
-				MaxVolumeCount: b.maxVolumeCount,
+				MaxVolumeCount: meta.maxVolumeCount,
 			})
 		}
 		if anyCapacity {
@@ -351,21 +348,19 @@ func (dn *DataNode) UpdateDiskTags(tags []*master_pb.DiskTag) {
 	}
 	// DiskTags is the full list on each full heartbeat; rebuild fresh to drop
 	// removed disks.
-	diskTags := make(map[uint32][]string, len(tags))
-	backends := make(map[uint32]diskBackend, len(tags))
+	metas := make(map[uint32]diskMeta, len(tags))
 	for _, tagInfo := range tags {
 		if tagInfo == nil {
 			continue
 		}
-		diskTags[tagInfo.DiskId] = append([]string(nil), tagInfo.Tags...)
-		backends[tagInfo.DiskId] = diskBackend{
+		metas[tagInfo.DiskId] = diskMeta{
+			tags:           append([]string(nil), tagInfo.Tags...),
 			diskType:       types.ToDiskType(tagInfo.Type),
 			maxVolumeCount: tagInfo.MaxVolumeCount,
 		}
 	}
 	dn.Lock()
-	dn.diskTags = diskTags
-	dn.diskBackends = backends
+	dn.diskMetas = metas
 	dn.Unlock()
 }
 
