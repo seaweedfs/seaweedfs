@@ -361,30 +361,21 @@ func (fs *FilerServer) ObjectTransactionBatch(ctx context.Context, req *filer_pb
 	return resp, nil
 }
 
-func (fs *FilerServer) applyStorageDefaultsToEntry(ctx context.Context, entry *filer.Entry) error {
-	if entry.IsDirectory() {
-		entry.Attr.TtlSec = 0
-		return nil
-	}
-
-	if entry.IsInRemoteOnly() {
-		entry.Attr.TtlSec = 0
-		return nil
-	}
-
-	if entry.TtlSec != 0 {
-		return nil
-	}
-	so, err := fs.detectStorageOption(ctx, string(entry.FullPath), "", "", entry.TtlSec, "", "", "", "")
+// applyStorageDefaultsToEntry enforces the path's storage rule (read-only
+// prefixes reject the write) and fills in the rule TTL when the entry carries
+// none. Remote entries never expire locally; the remote storage owns their
+// lifecycle.
+func (fs *FilerServer) applyStorageDefaultsToEntry(ctx context.Context, entry *filer.Entry) (*operation.StorageOption, error) {
+	so, err := fs.detectStorageOption(ctx, string(entry.FullPath), "", "", 0, "", "", "", "")
 	if err != nil {
-		glog.WarningfCtx(ctx, "detectStorageOption: %v", err)
-		return err
+		return nil, err
 	}
-	if so == nil {
-		return nil
+	if entry.Remote != nil {
+		entry.TtlSec = 0
+	} else if entry.TtlSec == 0 {
+		entry.TtlSec = so.TtlSeconds
 	}
-	entry.TtlSec = so.TtlSeconds
-	return nil
+	return so, nil
 }
 
 // applyObjectMutation applies a single mutation while the transaction's path
@@ -399,7 +390,7 @@ func (fs *FilerServer) applyObjectMutation(ctx context.Context, m *filer_pb.Obje
 			return fmt.Errorf("PUT requires an entry")
 		}
 		newEntry := filer.FromPbEntry(m.Directory, m.Entry)
-		if err := fs.applyStorageDefaultsToEntry(ctx, newEntry); err != nil {
+		if _, err := fs.applyStorageDefaultsToEntry(ctx, newEntry); err != nil {
 			return err
 		}
 		return fs.filer.CreateEntry(ctx, newEntry, nil, false, fromOtherCluster, signatures, false, fs.filer.MaxFilenameLength)

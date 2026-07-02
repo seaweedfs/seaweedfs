@@ -163,41 +163,45 @@ func TestObjectTransactionPutClearsTTLForRemoteEntry(t *testing.T) {
 }
 
 func TestObjectTransactionPutFailsOnReadOnlyStorageConfig(t *testing.T) {
-	fs, store := newTxnTestServer(nil)
+	// An explicit TTL must not bypass the read-only rule.
+	for _, ttlSec := range []int32{0, 7200} {
+		fs, store := newTxnTestServer(nil)
 
-	mustSetObjectTxnStorageConf(t, fs, &filer_pb.FilerConf_PathConf{
-		LocationPrefix: "/buckets/video/",
-		ReadOnly:       true,
-	})
+		mustSetObjectTxnStorageConf(t, fs, &filer_pb.FilerConf_PathConf{
+			LocationPrefix: "/buckets/video/",
+			ReadOnly:       true,
+		})
 
-	now := time.Unix(1700000000, 0)
+		now := time.Unix(1700000000, 0)
 
-	resp, err := fs.ObjectTransaction(context.Background(), &filer_pb.ObjectTransactionRequest{
-		LockKey: "/buckets/video/readonly.mp4",
-		Mutations: []*filer_pb.ObjectMutation{
-			{
-				Type:      filer_pb.ObjectMutation_PUT,
-				Directory: "/buckets/video",
-				Entry: &filer_pb.Entry{
-					Name: "readonly.mp4",
-					Attributes: &filer_pb.FuseAttributes{
-						Crtime:   now.Unix(),
-						Mtime:    now.Unix(),
-						FileMode: 0644,
-						FileSize: 123,
+		resp, err := fs.ObjectTransaction(context.Background(), &filer_pb.ObjectTransactionRequest{
+			LockKey: "/buckets/video/readonly.mp4",
+			Mutations: []*filer_pb.ObjectMutation{
+				{
+					Type:      filer_pb.ObjectMutation_PUT,
+					Directory: "/buckets/video",
+					Entry: &filer_pb.Entry{
+						Name: "readonly.mp4",
+						Attributes: &filer_pb.FuseAttributes{
+							Crtime:   now.Unix(),
+							Mtime:    now.Unix(),
+							FileMode: 0644,
+							FileSize: 123,
+							TtlSec:   ttlSec,
+						},
 					},
 				},
 			},
-		},
-	})
-	if err != nil {
-		t.Fatalf("ObjectTransaction transport error: %v", err)
-	}
-	if resp.Error == "" {
-		t.Fatalf("ObjectTransaction should report read-only storage config error")
-	}
+		})
+		if err != nil {
+			t.Fatalf("TtlSec=%d: ObjectTransaction transport error: %v", ttlSec, err)
+		}
+		if resp.Error == "" {
+			t.Fatalf("TtlSec=%d: ObjectTransaction should report read-only storage config error", ttlSec)
+		}
 
-	if _, ok := store.entries["/buckets/video/readonly.mp4"]; ok {
-		t.Fatalf("read-only storage config must not create the entry")
+		if _, ok := store.entries["/buckets/video/readonly.mp4"]; ok {
+			t.Fatalf("TtlSec=%d: read-only storage config must not create the entry", ttlSec)
+		}
 	}
 }
