@@ -886,7 +886,7 @@ fn build_heartbeat_with_ec_status(
                     replica_placement: vol.super_block.replica_placement.to_byte() as u32,
                     version: vol.super_block.version.0 as u32,
                     ttl: vol.super_block.ttl.to_u32(),
-                    compact_revision: vol.last_compact_revision() as u32,
+                    compact_revision: vol.super_block.compaction_revision as u32,
                     modified_at_second: vol.last_modified_ts() as i64,
                     disk_type: loc.disk_type.to_string(),
                     disk_id: disk_id as u32,
