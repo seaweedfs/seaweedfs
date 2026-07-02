@@ -857,7 +857,14 @@ filer:
       path: "/sw-filer/?(.*)"
       pathType: ImplementationSpecific
       annotations:
+        # Ingress terminates TLS and re-originates gRPC (HTTP/2) to the filer.
         nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
+        # For end-to-end mTLS (the filer's own TLS reaches the client, not
+        # terminated at the edge), drop backend-protocol above and use TLS
+        # passthrough instead:
+        #   nginx.ingress.kubernetes.io/ssl-passthrough: "true"
+        # Passthrough routes by SNI (set `host` above), ignores `path`, and
+        # requires ingress-nginx to run with --enable-ssl-passthrough.
       tls: []
 
   # extraEnvVars is a list of extra environment variables to set with the stateful set.
