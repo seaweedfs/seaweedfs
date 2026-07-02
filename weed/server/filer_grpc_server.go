@@ -361,7 +361,7 @@ func (fs *FilerServer) ObjectTransactionBatch(ctx context.Context, req *filer_pb
 	return resp, nil
 }
 
-func (fs *FilerServer) applyStorageDefaultsToEntry(entry *filer.Entry) {
+func (fs *FilerServer) applyStorageDefaultsToEntry(ctx context.Context, entry *filer.Entry) {
 	if entry.IsDirectory() {
 		return
 	}
@@ -373,10 +373,10 @@ func (fs *FilerServer) applyStorageDefaultsToEntry(entry *filer.Entry) {
 	if entry.TtlSec != 0 {
 		return
 	}
-	ctx := context.Background()
 	so, err := fs.detectStorageOption(ctx, string(entry.FullPath), "", "", entry.TtlSec, "", "", "", "")
 	if err != nil {
 		glog.WarningfCtx(ctx, "detectStorageOption: %v", err)
+		return
 	}
 	entry.TtlSec = so.TtlSeconds
 }
