@@ -11,17 +11,21 @@ import (
 // GrpcPortOffset is the offset weed mini uses to derive gRPC ports from HTTP ports.
 const GrpcPortOffset = 10000
 
-// miniPortMin/miniPortMax bound the random HTTP port range for weed mini.
-// The cap keeps both the HTTP port and its +GrpcPortOffset gRPC counterpart
-// below 32768, the Linux default ephemeral floor (ip_local_port_range). Ports
-// inside the ephemeral range can be claimed as the source port of a transient
+// linuxEphemeralPortFloor is the Linux default ip_local_port_range lower bound.
+// Ports at or above it can be claimed as the source port of a transient
 // outbound connection during mini's own startup (e.g. volume dialing master
 // gRPC) in the window between allocation and the listener bind, surfacing as
-// "bind: address already in use". Keeping maxPort+GrpcPortOffset under 32768
-// removes that steal.
+// "bind: address already in use".
+const linuxEphemeralPortFloor = 32768
+
+// miniPortMin/miniPortMax bound the random HTTP port range for weed mini.
+// The cap keeps both the HTTP port and its +GrpcPortOffset gRPC counterpart
+// below linuxEphemeralPortFloor, out of the range the kernel draws ephemeral
+// source ports from, so the steal above cannot happen. Deriving the cap from
+// GrpcPortOffset keeps the two in lockstep if the offset ever changes.
 const (
 	miniPortMin = 10000
-	miniPortMax = 22768
+	miniPortMax = linuxEphemeralPortFloor - GrpcPortOffset
 )
 
 // miniDefaultPorts are the weed mini flag defaults (see weed/command/mini.go).

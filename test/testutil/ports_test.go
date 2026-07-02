@@ -31,7 +31,7 @@ func TestAllocateMiniPortsAvoidsMiniDefaults(t *testing.T) {
 // outbound connection that had grabbed 44204 as an ephemeral source port
 // during mini startup ("bind: address already in use").
 func TestAllocateMiniPortsBelowEphemeralFloor(t *testing.T) {
-	const ephemeralFloor = 32768
+	const ephemeralFloor = linuxEphemeralPortFloor
 	for iter := 0; iter < 200; iter++ {
 		ports, err := AllocateMiniPorts(4)
 		if err != nil {
