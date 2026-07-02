@@ -854,8 +854,10 @@ filer:
       enabled: false
       className: ""
       host: "seaweedfs.cluster.local"
-      path: "/sw-filer/?(.*)"
-      pathType: ImplementationSpecific
+      # gRPC methods are called at /<package>.<Service>/<Method>, so route the
+      # whole host, not the HTTP UI's regex path.
+      path: "/"
+      pathType: Prefix
       annotations:
         # Ingress terminates TLS and re-originates gRPC (HTTP/2) to the filer.
         nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
