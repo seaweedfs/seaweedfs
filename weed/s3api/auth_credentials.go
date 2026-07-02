@@ -2413,6 +2413,62 @@ func (iam *IdentityAccessManagement) VerifyActionPermission(r *http.Request, ide
 	return s3err.ErrAccessDenied
 }
 
+// canListBucketsFromOwnerIndex reports whether ListBuckets for this identity
+// can be served from the bucket owner index instead of scanning /buckets, and
+// if so which bucket names its legacy actions may grant beyond ownership.
+//
+// Admins and identities whose legacy actions can match arbitrary buckets (a
+// bare "List" grant, or any wildcard pattern) need the full scan. Identities
+// authorized through IAM policies get their owned buckets only, matching the
+// AWS behavior of ListBuckets returning the account's buckets.
+func (iam *IdentityAccessManagement) canListBucketsFromOwnerIndex(r *http.Request, identity *Identity) (ok bool, granted []string) {
+	if identity.isAdmin() {
+		return false, nil
+	}
+
+	// Mirror the routing in VerifyActionPermission: these identities are
+	// authorized per bucket by IAM policies, which cannot be enumerated.
+	hasSessionToken := r.Header.Get(s3_constants.SeaweedFSSessionTokenHeader) != "" ||
+		r.Header.Get("X-Amz-Security-Token") != "" ||
+		r.URL.Query().Get("X-Amz-Security-Token") != ""
+	iam.m.RLock()
+	groupsHavePolicies := false
+	for _, gn := range iam.userGroups[identity.Name] {
+		if g, found := iam.groups[gn]; found && !g.Disabled && len(g.PolicyNames) > 0 {
+			groupsHavePolicies = true
+			break
+		}
+	}
+	iam.m.RUnlock()
+	hasAttachedPolicies := len(identity.PolicyNames) > 0 || groupsHavePolicies
+	if (len(identity.Actions) == 0 || hasSessionToken || hasAttachedPolicies) && iam.iamIntegration != nil {
+		return true, nil
+	}
+	if hasAttachedPolicies || len(identity.Actions) == 0 {
+		return true, nil
+	}
+
+	for _, a := range identity.Actions {
+		act := string(a)
+		if act == string(s3_constants.ACTION_LIST) {
+			return false, nil
+		}
+		if strings.ContainsAny(act, "*?") {
+			return false, nil
+		}
+		if colon := strings.Index(act, ":"); colon >= 0 {
+			bucket := act[colon+1:]
+			if slash := strings.Index(bucket, "/"); slash >= 0 {
+				bucket = bucket[:slash]
+			}
+			if bucket != "" {
+				granted = append(granted, bucket)
+			}
+		}
+	}
+	return true, granted
+}
+
 // AuthorizeCopySource verifies the caller is allowed to read the CopyObject /
 // UploadPartCopy source. The Auth middleware only checks the destination
 // (s3:PutObject) because routing keys on the request URL; without this call,

@@ -75,7 +75,11 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 	// Unauthenticated users should not see any buckets
 	if identity != nil {
 		var err error
-		buckets, nextToken, err = s3a.scanVisibleBuckets(r, identity, prefix, startAfter, maxBuckets)
+		if fromIndex, granted := s3a.iam.canListBucketsFromOwnerIndex(r, identity); fromIndex && s3a.bucketOwnerIndexReady() {
+			buckets, nextToken, err = s3a.listBucketsFromOwnerIndex(r, identity, granted, prefix, startAfter, maxBuckets)
+		} else {
+			buckets, nextToken, err = s3a.scanVisibleBuckets(r, identity, prefix, startAfter, maxBuckets)
+		}
 		if err != nil {
 			glog.Errorf("ListBucketsHandler: %v", err)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)

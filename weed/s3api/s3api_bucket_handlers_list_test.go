@@ -1,7 +1,9 @@
 package s3api
 
 import (
+	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -52,6 +54,50 @@ func TestGetListBucketsArgs(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCanListBucketsFromOwnerIndex(t *testing.T) {
+	iam := &IdentityAccessManagement{}
+	r := func() *http.Request {
+		req, _ := http.NewRequest(http.MethodGet, "/", nil)
+		return req
+	}
+
+	tests := []struct {
+		name        string
+		identity    *Identity
+		wantOk      bool
+		wantGranted []string
+	}{
+		{name: "admin scans", identity: &Identity{Name: "root", Actions: []Action{"Admin"}}, wantOk: false},
+		{name: "bare List scans", identity: &Identity{Name: "u", Actions: []Action{"List"}}, wantOk: false},
+		{name: "wildcard scans", identity: &Identity{Name: "u", Actions: []Action{"List:team-*"}}, wantOk: false},
+		{name: "no actions is owned-only", identity: &Identity{Name: "u"}, wantOk: true},
+		{name: "attached policies is owned-only", identity: &Identity{Name: "u", Actions: []Action{"List:b1"}, PolicyNames: []string{"p"}}, wantOk: true},
+		{name: "named grants enumerate", identity: &Identity{Name: "u", Actions: []Action{"Read:b1", "List:b2", "Admin:b3/prefix", "Write"}},
+			wantOk: true, wantGranted: []string{"b1", "b2", "b3"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ok, granted := iam.canListBucketsFromOwnerIndex(r(), tt.identity)
+			if ok != tt.wantOk {
+				t.Fatalf("ok = %v, want %v", ok, tt.wantOk)
+			}
+			if strings.Join(granted, ",") != strings.Join(tt.wantGranted, ",") {
+				t.Errorf("granted = %v, want %v", granted, tt.wantGranted)
+			}
+		})
+	}
+
+	t.Run("session token routes to policies when integrated", func(t *testing.T) {
+		integrated := &IdentityAccessManagement{iamIntegration: &S3IAMIntegration{}}
+		req := r()
+		req.Header.Set("X-Amz-Security-Token", "tok")
+		ok, granted := integrated.canListBucketsFromOwnerIndex(req, &Identity{Name: "u", Actions: []Action{"List:b1"}})
+		if !ok || granted != nil {
+			t.Errorf("ok = %v granted = %v, want owned-only", ok, granted)
+		}
+	})
 }
 
 func TestContinuationTokenRoundTrip(t *testing.T) {
