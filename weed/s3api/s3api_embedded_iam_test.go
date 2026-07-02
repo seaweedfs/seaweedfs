@@ -2095,6 +2095,43 @@ func TestEmbeddedIamGetActionsFromPolicy(t *testing.T) {
 	assert.Contains(t, actions, "Write:mybucket")
 }
 
+// TestEmbeddedIamGetActionsPrefixScopedResource verifies that a prefix-scoped
+// resource keeps its trailing wildcard so CanDo authorizes objects under the
+// prefix. Stripping the wildcard produced a non-wildcard action that only
+// matched at bucket level, denying every PutObject under the prefix.
+func TestEmbeddedIamGetActionsPrefixScopedResource(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+
+	policyDoc := `{
+		"Version": "2012-10-17",
+		"Statement": [{
+			"Effect": "Allow",
+			"Action": ["s3:Get*", "s3:Put*", "s3:DeleteObject"],
+			"Resource": ["arn:aws:s3:::mcp-upload/mcp/TMS/api_keys/example/*"]
+		}]
+	}`
+
+	policy, err := api.GetPolicyDocument(&policyDoc)
+	require.NoError(t, err)
+
+	actions, err := api.getActions(&policy)
+	require.NoError(t, err)
+	assert.Contains(t, actions, "Read:mcp-upload/mcp/TMS/api_keys/example/*")
+	assert.Contains(t, actions, "Write:mcp-upload/mcp/TMS/api_keys/example/*")
+
+	identity := &Identity{Name: "prefix-user"}
+	for _, a := range actions {
+		identity.Actions = append(identity.Actions, Action(a))
+	}
+
+	assert.True(t, identity.CanDo(ACTION_WRITE, "mcp-upload", "mcp/TMS/api_keys/example/logo.png"),
+		"PutObject under the allowed prefix should be authorized")
+	assert.True(t, identity.CanDo(ACTION_READ, "mcp-upload", "mcp/TMS/api_keys/example/logo.png"),
+		"GetObject under the allowed prefix should be authorized")
+	assert.False(t, identity.CanDo(ACTION_WRITE, "mcp-upload", "other/logo.png"),
+		"PutObject outside the allowed prefix should be denied")
+}
+
 // TestEmbeddedIamPutUserPolicyAllResourceWildcard reproduces issue #9209:
 // an AWS-style policy using "Action":"s3:*" with a bare "Resource":"*" is
 // valid AWS IAM syntax (meaning "any resource") but was rejected with

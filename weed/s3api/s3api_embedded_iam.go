@@ -989,15 +989,11 @@ func (e *EmbeddedIamApi) getActions(policy *policy_engine.PolicyDocument) ([]str
 					// Bucket-level or bucket/* - use just bucket name
 					actions = append(actions, fmt.Sprintf("%s:%s", statementAction, bucket))
 				} else {
-					// Path-specific: bucket/path/* -> Action:bucket/path
-					// Remove trailing /* if present for cleaner action format
-					objectPath = strings.TrimSuffix(objectPath, "/*")
-					objectPath = strings.TrimSuffix(objectPath, "*")
-					if objectPath == "" {
-						actions = append(actions, fmt.Sprintf("%s:%s", statementAction, bucket))
-					} else {
-						actions = append(actions, fmt.Sprintf("%s:%s/%s", statementAction, bucket, objectPath))
-					}
+					// Path-specific: preserve the object path, including any
+					// trailing wildcard, so CanDo can match objects under the
+					// prefix. Stripping the wildcard yielded a non-wildcard
+					// action that only matched at bucket level.
+					actions = append(actions, fmt.Sprintf("%s:%s/%s", statementAction, bucket, objectPath))
 				}
 			}
 		}
