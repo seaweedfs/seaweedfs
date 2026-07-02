@@ -2,6 +2,7 @@ package util
 
 import (
 	"net"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -32,19 +33,61 @@ func (l *Listener) Accept() (net.Conn, error) {
 // Conn wraps a net.Conn and implements a "no activity timeout".
 // Any activity (read or write) resets the deadline, so the connection
 // only times out when there's no activity in either direction.
+//
+// Callers may also set deadlines directly — net/http's server does this
+// to interrupt a blocked read (abortPendingRead sets a deadline in the
+// past) and to enforce its own Read/Write timeouts. The activity
+// extension must never overwrite such an externally-set deadline, or the
+// interrupt is lost and the read stays blocked until the activity
+// timeout fires (wedging connection drain on shutdown for up to the full
+// idle timeout). mu serializes deadline updates, and while an external
+// deadline is in force the activity extension is suspended; it resumes
+// once the caller clears the deadline (sets the zero time).
 type Conn struct {
 	net.Conn
 	Timeout  time.Duration
 	isClosed bool
+
+	mu                    sync.Mutex
+	externalReadDeadline  bool
+	externalWriteDeadline bool
+}
+
+func (c *Conn) SetDeadline(t time.Time) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.externalReadDeadline = !t.IsZero()
+	c.externalWriteDeadline = !t.IsZero()
+	return c.Conn.SetDeadline(t)
+}
+
+func (c *Conn) SetReadDeadline(t time.Time) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.externalReadDeadline = !t.IsZero()
+	return c.Conn.SetReadDeadline(t)
+}
+
+func (c *Conn) SetWriteDeadline(t time.Time) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.externalWriteDeadline = !t.IsZero()
+	return c.Conn.SetWriteDeadline(t)
 }
 
 // extendDeadline extends the connection deadline from now.
-// This implements "no activity timeout" - any activity keeps the connection alive.
+// This implements "no activity timeout" - any activity keeps the
+// connection alive in both directions (a long write-only response must
+// keep the read deadline alive too, or net/http's background read would
+// time out and cancel the in-flight request). Suspended while an
+// externally-set deadline is in force.
 func (c *Conn) extendDeadline() error {
-	if c.Timeout > 0 {
-		return c.Conn.SetDeadline(time.Now().Add(c.Timeout))
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.Timeout <= 0 || c.externalReadDeadline || c.externalWriteDeadline {
+		return nil
 	}
-	return nil
+	return c.Conn.SetDeadline(time.Now().Add(c.Timeout))
 }
 
 func (c *Conn) Read(b []byte) (count int, e error) {
