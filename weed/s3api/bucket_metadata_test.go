@@ -79,7 +79,8 @@ var (
 	}
 
 	//load filer is
-	loadFilerBucket = make(map[string]int, 1)
+	loadFilerBucket     = make(map[string]int, 1)
+	loadFilerBucketLock sync.Mutex
 	//override `loadBucketMetadataFromFiler` to avoid really load from filer
 )
 
@@ -177,7 +178,9 @@ func TestBuildBucketMetadata(t *testing.T) {
 func TestGetBucketMetadata(t *testing.T) {
 	loadBucketMetadataFromFiler = func(r *BucketRegistry, bucketName string) (*BucketMetaData, error) {
 		time.Sleep(time.Second)
+		loadFilerBucketLock.Lock()
 		loadFilerBucket[bucketName] = loadFilerBucket[bucketName] + 1
+		loadFilerBucketLock.Unlock()
 		return &BucketMetaData{
 			Name: bucketName,
 		}, nil
