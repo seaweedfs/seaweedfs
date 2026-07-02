@@ -171,7 +171,13 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	srcVersioningState, err := s3a.getVersioningState(srcBucket)
 	if err != nil {
 		glog.Errorf("Error checking versioning state for source bucket %s: %v", srcBucket, err)
-		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
+		// Only a missing bucket is the client's fault; a store error must stay
+		// retryable, matching the destination-bucket lookup.
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
+			return
+		}
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
 
@@ -860,7 +866,13 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	srcVersioningState, err := s3a.getVersioningState(srcBucket)
 	if err != nil {
 		glog.Errorf("Error checking versioning state for source bucket %s: %v", srcBucket, err)
-		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
+		// Only a missing bucket is the client's fault; a store error must stay
+		// retryable, matching the destination-bucket lookup.
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
+			return
+		}
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
 
