@@ -368,7 +368,11 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		// return the appropriate already-exists error instead of InternalError.
 		if exist, checkErr := s3a.exists(s3a.option.BucketsPath, bucket, true); checkErr == nil && exist {
 			glog.V(3).Infof("PutBucketHandler: bucket %s was created concurrently", bucket)
-			s3err.WriteErrorResponse(w, r, s3a.existingBucketError(r, bucket, currentIdentityId, requestHasACL))
+			errCode := s3a.existingBucketError(r, bucket, currentIdentityId, requestHasACL)
+			if errCode == s3err.ErrBucketAlreadyOwnedByYou {
+				s3a.healBucketOwnerIndex(bucket, currentIdentityId)
+			}
+			s3err.WriteErrorResponse(w, r, errCode)
 			return
 		}
 		glog.Errorf("PutBucketHandler mkdir: %v", err)
