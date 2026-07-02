@@ -930,8 +930,9 @@ func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput
 
 	entries, _, err := s3a.list(s3a.genUploadsFolder(*input.Bucket), "", *input.UploadIdMarker, false, math.MaxInt32)
 	if err != nil {
-		// A bucket with no in-progress uploads has no .uploads folder: empty list, not an error.
-		if errors.Is(err, filer_pb.ErrNotFound) {
+		// A missing .uploads folder normally lists as empty with no error; a
+		// store that reports it as not-found still means an empty list.
+		if isFilerListNotFound(err) {
 			return output, s3err.ErrNone
 		}
 		// surface a real store error; a masked empty 200 makes a resuming client treat the upload as gone
@@ -996,8 +997,9 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 
 	entries, isLast, err := s3a.list(s3a.genUploadsFolder(*input.Bucket)+"/"+*input.UploadId, "", fmt.Sprintf("%04d%s", *input.PartNumberMarker, multipartExt), false, uint32(*input.MaxParts))
 	if err != nil {
-		// The upload may have completed or been aborted since checkUploadId: that's NoSuchUpload, not a store error.
-		if errors.Is(err, filer_pb.ErrNotFound) {
+		// A store that reports the missing upload directory as not-found means
+		// the upload is gone (completed or aborted), not a store error.
+		if isFilerListNotFound(err) {
 			return nil, s3err.ErrNoSuchUpload
 		}
 		glog.Errorf("listObjectParts %s %s error: %v", *input.Bucket, *input.UploadId, err)
