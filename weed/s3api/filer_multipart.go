@@ -361,8 +361,12 @@ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *
 	entries, _, err := s3a.list(uploadDirectory, "", "", false, s3_constants.MaxS3MultipartParts+1)
 	if err != nil {
 		glog.Errorf("completeMultipartUpload %s %s error: %v", *input.Bucket, *input.UploadId, err)
-		stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedNoSuchUpload).Inc()
-		return nil, nil, s3err.ErrNoSuchUpload
+		if isFilerListNotFound(err) {
+			stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedNoSuchUpload).Inc()
+			return nil, nil, s3err.ErrNoSuchUpload
+		}
+		// a store error must not read as "upload gone": the client would drop a fully-uploaded object
+		return nil, nil, s3err.ErrInternalError
 	}
 	if len(entries) == 0 {
 		stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedNoSuchUpload).Inc()
@@ -372,8 +376,11 @@ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *
 	pentry, err := s3a.getEntry(s3a.genUploadsFolder(*input.Bucket), *input.UploadId)
 	if err != nil {
 		glog.Errorf("completeMultipartUpload %s %s error: %v", *input.Bucket, *input.UploadId, err)
-		stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedNoSuchUpload).Inc()
-		return nil, nil, s3err.ErrNoSuchUpload
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedNoSuchUpload).Inc()
+			return nil, nil, s3err.ErrNoSuchUpload
+		}
+		return nil, nil, s3err.ErrInternalError
 	}
 
 	deleteEntries := make([]*filer_pb.Entry, 0)
@@ -882,8 +889,10 @@ func (s3a *S3ApiServer) abortMultipartUpload(input *s3.AbortMultipartUploadInput
 
 	exists, err := s3a.exists(s3a.genUploadsFolder(*input.Bucket), *input.UploadId, true)
 	if err != nil {
-		glog.V(1).Infof("bucket %s abort upload %s: %v", *input.Bucket, *input.UploadId, err)
-		return nil, s3err.ErrNoSuchUpload
+		// filer_pb.Exists reports not-found as (false, nil), so an error here is
+		// always a store failure; answering NoSuchUpload would leak the parts.
+		glog.Errorf("bucket %s abort upload %s: %v", *input.Bucket, *input.UploadId, err)
+		return nil, s3err.ErrInternalError
 	}
 	if exists {
 		err = s3a.rm(s3a.genUploadsFolder(*input.Bucket), *input.UploadId, true, true)
