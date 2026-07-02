@@ -24,6 +24,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -82,9 +84,12 @@ func classifyCopySourceError(entry *filer_pb.Entry, err error) s3err.ErrorCode {
 		}
 		return s3err.ErrNone
 	}
-	if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, errInvalidVersionID) ||
-		errors.Is(err, ErrDeleteMarker) || strings.Contains(err.Error(), filer_pb.ErrNotFound.Error()) {
+	if errors.Is(err, filer_pb.ErrNotFound) || status.Code(err) == codes.NotFound ||
+		errors.Is(err, errInvalidVersionID) || errors.Is(err, ErrDeleteMarker) {
 		return s3err.ErrInvalidCopySource
+	}
+	if isTransientFilerError(err) {
+		return s3err.ErrServiceUnavailable
 	}
 	return s3err.ErrInternalError
 }
