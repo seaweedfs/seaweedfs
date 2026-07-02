@@ -202,7 +202,11 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 					return
 				}
 			}
-			time.Sleep(200 * time.Millisecond)
+			select {
+			case <-r.Context().Done():
+				return // client gone
+			case <-time.After(200 * time.Millisecond):
+			}
 			continue
 		} else {
 			ms.maybeAddJwtAuthorization(w, fid, true)

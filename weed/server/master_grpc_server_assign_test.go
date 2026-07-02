@@ -150,6 +150,28 @@ func TestAssignInitiatorShedsWhenGrowthConcludesUnfulfilled(t *testing.T) {
 	assert.Len(t, ms.volumeGrowthRequestChan, 0)
 }
 
+// A cancelled request stops waiting instead of sleeping out the 10s budget.
+func TestAssignAbortsOnCancel(t *testing.T) {
+	ms := newLeaderMaster()
+	ms.Topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+		GetOrCreateDataNode("127.0.0.1", 8080, 18080, "127.0.0.1", "dn1", map[string]uint32{"": 100})
+
+	// Initiator with its growth never concluding: nobody drains the chan.
+	req := &master_pb.AssignRequest{Count: 1, Replication: "000"}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	_, err := ms.Assign(ctx, req)
+	elapsed := time.Since(start)
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Less(t, elapsed, 2*time.Second)
+}
+
 // Out of space, Assign fails fast with the real error rather than masking it as
 // a retryable "growth in progress".
 func TestAssignFailsFastWhenOutOfSpace(t *testing.T) {

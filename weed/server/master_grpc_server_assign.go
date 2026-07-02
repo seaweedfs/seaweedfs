@@ -28,7 +28,7 @@ func (ms *MasterServer) StreamAssign(server master_pb.Seaweed_StreamAssignServer
 			glog.Errorf("StreamAssign failed to receive: %v", err)
 			return err
 		}
-		resp, err := ms.Assign(context.Background(), req)
+		resp, err := ms.Assign(server.Context(), req)
 		if err != nil {
 			// Return transient errors (warmup, growth-in-progress shed) as in-band
 			// error responses instead of killing the stream, so pooled connections
@@ -148,7 +148,11 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 					return nil, status.Errorf(codes.ResourceExhausted, "no writable volumes for %s, volume growth in progress", option.String())
 				}
 			}
-			time.Sleep(200 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(200 * time.Millisecond):
+			}
 			continue
 		}
 		dn := dnList.Head()
