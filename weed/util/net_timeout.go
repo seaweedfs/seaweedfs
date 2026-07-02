@@ -41,8 +41,9 @@ func (l *Listener) Accept() (net.Conn, error) {
 // interrupt is lost and the read stays blocked until the activity
 // timeout fires (wedging connection drain on shutdown for up to the full
 // idle timeout). mu serializes deadline updates, and while an external
-// deadline is in force the activity extension is suspended; it resumes
-// once the caller clears the deadline (sets the zero time).
+// deadline is in force on a direction the activity extension for that
+// direction is suspended; it resumes once the caller clears the deadline
+// (sets the zero time).
 type Conn struct {
 	net.Conn
 	Timeout  time.Duration
@@ -79,15 +80,29 @@ func (c *Conn) SetWriteDeadline(t time.Time) error {
 // This implements "no activity timeout" - any activity keeps the
 // connection alive in both directions (a long write-only response must
 // keep the read deadline alive too, or net/http's background read would
-// time out and cancel the in-flight request). Suspended while an
-// externally-set deadline is in force.
+// time out and cancel the in-flight request). Each direction is extended
+// independently: an externally-managed deadline on one side (e.g. a
+// server WriteTimeout) must not leave the other side's deadline stale.
 func (c *Conn) extendDeadline() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.Timeout <= 0 || c.externalReadDeadline || c.externalWriteDeadline {
+	if c.Timeout <= 0 {
 		return nil
 	}
-	return c.Conn.SetDeadline(time.Now().Add(c.Timeout))
+	if !c.externalReadDeadline && !c.externalWriteDeadline {
+		return c.Conn.SetDeadline(time.Now().Add(c.Timeout))
+	}
+	if !c.externalReadDeadline {
+		if err := c.Conn.SetReadDeadline(time.Now().Add(c.Timeout)); err != nil {
+			return err
+		}
+	}
+	if !c.externalWriteDeadline {
+		if err := c.Conn.SetWriteDeadline(time.Now().Add(c.Timeout)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (c *Conn) Read(b []byte) (count int, e error) {
