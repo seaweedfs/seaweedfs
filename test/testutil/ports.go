@@ -11,6 +11,19 @@ import (
 // GrpcPortOffset is the offset weed mini uses to derive gRPC ports from HTTP ports.
 const GrpcPortOffset = 10000
 
+// miniPortMin/miniPortMax bound the random HTTP port range for weed mini.
+// The cap keeps both the HTTP port and its +GrpcPortOffset gRPC counterpart
+// below 32768, the Linux default ephemeral floor (ip_local_port_range). Ports
+// inside the ephemeral range can be claimed as the source port of a transient
+// outbound connection during mini's own startup (e.g. volume dialing master
+// gRPC) in the window between allocation and the listener bind, surfacing as
+// "bind: address already in use". Keeping maxPort+GrpcPortOffset under 32768
+// removes that steal.
+const (
+	miniPortMin = 10000
+	miniPortMax = 22768
+)
+
 // miniDefaultPorts are the weed mini flag defaults (see weed/command/mini.go).
 // A test only overrides services it uses; unspecified services still bind
 // these defaults, so allocation must avoid handing them out (or any value
@@ -83,8 +96,8 @@ func MustAllocatePorts(t *testing.T, count int) []int {
 // wrong port and hang.
 func AllocateMiniPorts(count int) ([]int, error) {
 	const (
-		minPort = 10000
-		maxPort = 55000
+		minPort = miniPortMin
+		maxPort = miniPortMax
 	)
 	reserved := reservedMiniPorts()
 	ports := make([]int, 0, count)
@@ -155,8 +168,8 @@ func MustFreeMiniPort(t *testing.T, name string) int {
 // allocated, so a mini gRPC port cannot be recycled as a regular port mid-batch.
 func AllocatePortSet(miniCount, regularCount int) (mini []int, regular []int, err error) {
 	const (
-		minPort = 10000
-		maxPort = 55000
+		minPort = miniPortMin
+		maxPort = miniPortMax
 	)
 	reserved := reservedMiniPorts()
 	mini = make([]int, 0, miniCount)
