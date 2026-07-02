@@ -75,6 +75,11 @@ func classifyCopySourceError(entry *filer_pb.Entry, err error) s3err.ErrorCode {
 		if entry == nil || entry.IsDirectory {
 			return s3err.ErrInvalidCopySource
 		}
+		// The latest-version pointer tracks delete markers too; copying one
+		// must be NoSuchKey like every other handler, not a copy of the stub.
+		if deleteMarker, ok := entry.Extended[s3_constants.ExtDeleteMarkerKey]; ok && string(deleteMarker) == "true" {
+			return s3err.ErrNoSuchKey
+		}
 		return s3err.ErrNone
 	}
 	if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, errInvalidVersionID) ||
