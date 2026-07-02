@@ -333,11 +333,19 @@ func (f *FuseTestFramework) waitForService(addr string, timeout time.Duration) e
 	return fmt.Errorf("service at %s not ready within timeout", addr)
 }
 
-// waitForMount waits for the FUSE mount to be ready
+// waitForMount waits for the FUSE mount to be ready. A stat/ReadDir probe
+// alone is not enough: the bare mount point directory passes both before the
+// mount process finishes starting, letting tests race ahead and write to the
+// local disk underneath the mount. The mount point's device ID differing from
+// its parent's confirms a filesystem is actually mounted there.
 func (f *FuseTestFramework) waitForMount(timeout time.Duration) error {
+	parentDev, err := deviceID(filepath.Dir(f.mountPoint))
+	if err != nil {
+		return fmt.Errorf("stat mount point parent: %v", err)
+	}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if _, err := os.Stat(f.mountPoint); err == nil {
+		if dev, err := deviceID(f.mountPoint); err == nil && dev != parentDev {
 			if _, err := os.ReadDir(f.mountPoint); err == nil {
 				return nil
 			}
@@ -345,6 +353,15 @@ func (f *FuseTestFramework) waitForMount(timeout time.Duration) error {
 		time.Sleep(100 * time.Millisecond)
 	}
 	return fmt.Errorf("mount point not ready within timeout")
+}
+
+// deviceID returns the device ID of the filesystem containing path.
+func deviceID(path string) (uint64, error) {
+	var st syscall.Stat_t
+	if err := syscall.Stat(path, &st); err != nil {
+		return 0, err
+	}
+	return uint64(st.Dev), nil
 }
 
 // findWeedBinary locates the weed binary.
