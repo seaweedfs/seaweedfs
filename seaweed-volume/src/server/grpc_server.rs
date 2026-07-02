@@ -1525,7 +1525,7 @@ impl VolumeServer for VolumeGrpcService {
             // must not be used here, or this check spuriously fails on every volume
             // that has ever been compacted even once.
             if req.compaction_revision != u32::MAX
-                && v.super_block.compaction_revision != req.compaction_revision as u16
+                && u32::from(v.super_block.compaction_revision) != req.compaction_revision
             {
                 return Err(Status::failed_precondition(format!(
                     "volume {} is compacted",
@@ -5737,6 +5737,27 @@ mod tests {
             .await;
         let err = match stale_response {
             Ok(_) => panic!("a genuinely stale revision must be rejected"),
+            Err(e) => e,
+        };
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+        assert!(err.message().contains("is compacted"));
+
+        // A request revision that only collides after truncating to u16 must be
+        // rejected: 65537 as u16 == 1 == the live revision, but as u32 they differ.
+        // Compare in u32 space (matching Go) so this cannot spuriously pass.
+        let truncating_response = service
+            .copy_file(Request::new(volume_server_pb::CopyFileRequest {
+                volume_id: 1,
+                ext: ".dat".to_string(),
+                compaction_revision: u32::from(revision_after) + (1 << 16),
+                stop_offset: u64::MAX,
+                collection: String::new(),
+                is_ec_volume: false,
+                ignore_source_file_not_found: false,
+            }))
+            .await;
+        let err = match truncating_response {
+            Ok(_) => panic!("a revision that only matches after u16 truncation must be rejected"),
             Err(e) => e,
         };
         assert_eq!(err.code(), tonic::Code::FailedPrecondition);
