@@ -67,6 +67,23 @@ func hasPrefixFold(s, prefix string) bool {
 	return len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix)
 }
 
+// classifyCopySourceError maps a copy-source lookup to an S3 error: a missing,
+// invalid, or directory source stays a client error, but a transient store
+// error becomes a retryable 5xx so a resumable copy/commit survives a blip.
+func classifyCopySourceError(entry *filer_pb.Entry, err error) s3err.ErrorCode {
+	if err == nil {
+		if entry == nil || entry.IsDirectory {
+			return s3err.ErrInvalidCopySource
+		}
+		return s3err.ErrNone
+	}
+	if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, errInvalidVersionID) ||
+		errors.Is(err, ErrDeleteMarker) || strings.Contains(err.Error(), filer_pb.ErrNotFound.Error()) {
+		return s3err.ErrInvalidCopySource
+	}
+	return s3err.ErrInternalError
+}
+
 func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request) {
 	t := time.Now().UTC().Truncate(time.Millisecond)
 
@@ -149,8 +166,8 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	entry, err := s3a.resolveCopySourceEntry(srcBucket, srcObject, srcVersionId, srcVersioningState)
-	if err != nil || entry.IsDirectory {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
+	if errCode := classifyCopySourceError(entry, err); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 
@@ -216,8 +233,8 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		routeInPlace := owner != "" && dstVersioningState == "" && !mimeChanged
 		selfCopyBody := func() s3err.ErrorCode {
 			currentEntry, currentErr := s3a.resolveCopySourceEntry(srcBucket, srcObject, srcVersionId, srcVersioningState)
-			if currentErr != nil || currentEntry.IsDirectory {
-				return s3err.ErrInvalidCopySource
+			if errCode := classifyCopySourceError(currentEntry, currentErr); errCode != s3err.ErrNone {
+				return errCode
 			}
 			if errCode := s3a.validateConditionalCopyHeaders(r, currentEntry); errCode != s3err.ErrNone {
 				return errCode
@@ -856,8 +873,8 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		entry, err = s3a.getEntry(dir, name)
 	}
 
-	if err != nil || entry.IsDirectory {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
+	if errCode := classifyCopySourceError(entry, err); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 
