@@ -329,3 +329,76 @@ func TestReadLogFileRefsMultiFilerNotFoundSkips(t *testing.T) {
 		t.Fatalf("expected %d events after skipping one file, got %d", expected, count)
 	}
 }
+
+// TestReadLogFileRefsSingleFilerOrder covers the single-filer streaming path
+// (readFilerFilesWithPrefetch): every entry across all files, in order.
+func TestReadLogFileRefsSingleFilerOrder(t *testing.T) {
+	files := newTestLogFiles(1, 4, 50, 0)
+
+	var timestamps []int64
+	_, err := ReadLogFileRefs(files.refs, files.readerFn(), 0, 0,
+		PathFilter{PathPrefix: "/"},
+		func(resp *filer_pb.SubscribeMetadataResponse) error {
+			timestamps = append(timestamps, resp.TsNs)
+			return nil
+		})
+	if err != nil {
+		t.Fatalf("ReadLogFileRefs: %v", err)
+	}
+
+	if got, want := len(timestamps), files.totalEvents(); got != want {
+		t.Fatalf("expected %d events, got %d", want, got)
+	}
+	for i := 1; i < len(timestamps); i++ {
+		if timestamps[i] < timestamps[i-1] {
+			t.Fatalf("out of order at %d: %d < %d", i, timestamps[i], timestamps[i-1])
+		}
+	}
+}
+
+// TestReadLogFileRefsSingleFilerProcessErrorStops verifies that a processing
+// error aborts the single-filer stream promptly without leaking the producer
+// (it must be able to drain and exit even mid-file).
+func TestReadLogFileRefsSingleFilerProcessErrorStops(t *testing.T) {
+	files := newTestLogFiles(1, 3, 100, 0)
+
+	var count int64
+	wantErr := fmt.Errorf("boom")
+	_, err := ReadLogFileRefs(files.refs, files.readerFn(), 0, 0,
+		PathFilter{PathPrefix: "/"},
+		func(resp *filer_pb.SubscribeMetadataResponse) error {
+			if atomic.AddInt64(&count, 1) == 5 {
+				return wantErr
+			}
+			return nil
+		})
+	if err == nil {
+		t.Fatalf("expected processing error to propagate")
+	}
+	// Should stop near the failing event, not process the whole 300-event set.
+	if c := atomic.LoadInt64(&count); c > 20 {
+		t.Fatalf("expected prompt stop after error, processed %d events", c)
+	}
+}
+
+// TestReadLogFileRefsSingleFilerNotFoundSkips confirms a chunk-not-found on the
+// single-filer path skips just that file, not the whole replay.
+func TestReadLogFileRefsSingleFilerNotFoundSkips(t *testing.T) {
+	files := newTestLogFiles(1, 3, 10, 0)
+	skipKey := files.refs[1].Chunks[0].FileId // second file
+	readerFn := failingReaderFn(files.readerFn(), skipKey, fmt.Errorf("volume not found: %s", skipKey))
+
+	var count int64
+	_, err := ReadLogFileRefs(files.refs, readerFn, 0, 0,
+		PathFilter{PathPrefix: "/"},
+		func(resp *filer_pb.SubscribeMetadataResponse) error {
+			atomic.AddInt64(&count, 1)
+			return nil
+		})
+	if err != nil {
+		t.Fatalf("chunk-not-found should be skipped, got error: %v", err)
+	}
+	if got, want := count, int64(files.totalEvents()-10); got != want {
+		t.Fatalf("expected %d events after skipping one file, got %d", want, got)
+	}
+}

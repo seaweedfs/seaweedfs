@@ -2,6 +2,7 @@ package pb
 
 import (
 	"container/heap"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -16,6 +17,16 @@ import (
 
 // LogFileReaderFn creates an io.ReadCloser for a set of file chunks.
 type LogFileReaderFn func(chunks []*filer_pb.FileChunk) (io.ReadCloser, error)
+
+// logEntryChannelSize bounds how many decoded entries are held in flight per
+// filer stream. A whole log file is never buffered at once (see
+// streamLogFileEntries), so peak memory is ~this many entries plus the chunk
+// reader's buffer, not O(file size).
+const logEntryChannelSize = 512
+
+// errReaderStopped signals that the entry consumer asked to stop (the merge
+// loop aborted or the caller hit a processing error). It is not a read failure.
+var errReaderStopped = errors.New("log entry reader stopped")
 
 // PathFilter holds subscription path filtering parameters, matching the
 // server-side eachEventNotificationFn filtering logic.
@@ -70,8 +81,10 @@ func ReadLogFileRefs(
 	return readMultiFilersMerged(filerOrder, perFiler, newReader, startTsNs, stopTsNs, filter, processEventFn)
 }
 
-// readFilerFilesWithPrefetch reads files for a single filer, prefetching the
-// next file while processing entries from the current one.
+// readFilerFilesWithPrefetch reads files for a single filer, streaming entries
+// through a bounded channel. A producer goroutine reads files in order and
+// decodes one entry at a time (never a whole file), so the next file's network
+// read overlaps processing while memory stays bounded by logEntryChannelSize.
 func readFilerFilesWithPrefetch(
 	refs []*filer_pb.LogFileChunkRef,
 	newReader LogFileReaderFn,
@@ -80,47 +93,31 @@ func readFilerFilesWithPrefetch(
 	processEventFn ProcessMetadataFunc,
 ) (lastTsNs int64, err error) {
 
-	type prefetchResult struct {
-		entries []*filer_pb.LogEntry
-		err     error
-	}
+	ch := make(chan *filer_pb.LogEntry, logEntryChannelSize)
+	stop := make(chan struct{})
+	var stopOnce sync.Once
+	closeStop := func() { stopOnce.Do(func() { close(stop) }) }
+	defer closeStop()
 
-	startPrefetch := func(ref *filer_pb.LogFileChunkRef) chan prefetchResult {
-		ch := make(chan prefetchResult, 1)
-		go func() {
-			entries, readErr := readLogFileEntries(newReader, ref.Chunks, startTsNs, stopTsNs)
-			ch <- prefetchResult{entries, readErr}
-		}()
-		return ch
-	}
+	// readErr is written before the producer closes ch, so it is safe to read
+	// after the range loop observes the close (happens-before via channel close).
+	var readErr error
+	go func() {
+		defer close(ch)
+		readFilerFilesToChannel(refs, newReader, startTsNs, stopTsNs, ch, stop, func(e error) { readErr = e })
+	}()
 
-	var pendingCh chan prefetchResult
-	if len(refs) > 0 {
-		pendingCh = startPrefetch(refs[0])
-	}
-
-	for i, ref := range refs {
-		result := <-pendingCh
-
-		// Start prefetching next file while we process current
-		if i+1 < len(refs) {
-			pendingCh = startPrefetch(refs[i+1])
-		}
-
-		if result.err != nil {
-			if isChunkNotFound(result.err) {
-				glog.V(0).Infof("skip log file filer=%s ts=%d: %v", ref.FilerId, ref.FileTsNs, result.err)
-				continue
+	for entry := range ch {
+		lastTsNs, err = processOneLogEntry(entry, filter, processEventFn)
+		if err != nil {
+			closeStop()
+			for range ch { // unblock and drain the producer so it can exit
 			}
-			return lastTsNs, fmt.Errorf("read log file filer=%s ts=%d: %w", ref.FilerId, ref.FileTsNs, result.err)
+			return
 		}
-
-		for _, logEntry := range result.entries {
-			lastTsNs, err = processOneLogEntry(logEntry, filter, processEventFn)
-			if err != nil {
-				return
-			}
-		}
+	}
+	if readErr != nil {
+		return lastTsNs, readErr
 	}
 	return
 }
@@ -162,7 +159,7 @@ func readMultiFilersMerged(
 	}
 
 	for i, filerId := range filerOrder {
-		entryCh := make(chan *filer_pb.LogEntry, 512)
+		entryCh := make(chan *filer_pb.LogEntry, logEntryChannelSize)
 		streams[i] = filerStream{filerId: filerId, entryCh: entryCh}
 
 		wg.Add(1)
@@ -237,53 +234,28 @@ func readFilerFilesToChannel(
 	stop <-chan struct{},
 	setFatal func(error),
 ) {
-	type prefetchResult struct {
-		entries []*filer_pb.LogEntry
-		err     error
-	}
-
-	startPrefetch := func(ref *filer_pb.LogFileChunkRef) chan prefetchResult {
-		resultCh := make(chan prefetchResult, 1)
-		go func() {
-			entries, err := readLogFileEntries(newReader, ref.Chunks, startTsNs, stopTsNs)
-			resultCh <- prefetchResult{entries, err}
-		}()
-		return resultCh
-	}
-
-	var pendingCh chan prefetchResult
-	if len(refs) > 0 {
-		pendingCh = startPrefetch(refs[0])
-	}
-
-	for i, ref := range refs {
-		var result prefetchResult
+	sendEntry := func(entry *filer_pb.LogEntry) error {
 		select {
-		case result = <-pendingCh:
+		case ch <- entry:
+			return nil
 		case <-stop:
+			return errReaderStopped
+		}
+	}
+
+	for _, ref := range refs {
+		streamErr := streamLogFileEntries(newReader, ref.Chunks, startTsNs, stopTsNs, sendEntry)
+		if streamErr == errReaderStopped {
 			return
 		}
-
-		if i+1 < len(refs) {
-			pendingCh = startPrefetch(refs[i+1])
-		}
-
-		if result.err != nil {
-			if isChunkNotFound(result.err) {
-				glog.V(0).Infof("skip log file filer=%s ts=%d: %v", ref.FilerId, ref.FileTsNs, result.err)
+		if streamErr != nil {
+			if isChunkNotFound(streamErr) {
+				glog.V(0).Infof("skip log file filer=%s ts=%d: %v", ref.FilerId, ref.FileTsNs, streamErr)
 				continue
 			}
-			glog.Errorf("read log file filer=%s ts=%d: %v", ref.FilerId, ref.FileTsNs, result.err)
-			setFatal(fmt.Errorf("read log file filer=%s ts=%d: %w", ref.FilerId, ref.FileTsNs, result.err))
+			glog.Errorf("read log file filer=%s ts=%d: %v", ref.FilerId, ref.FileTsNs, streamErr)
+			setFatal(fmt.Errorf("read log file filer=%s ts=%d: %w", ref.FilerId, ref.FileTsNs, streamErr))
 			return
-		}
-
-		for _, entry := range result.entries {
-			select {
-			case ch <- entry:
-			case <-stop:
-				return
-			}
 		}
 	}
 }
@@ -352,45 +324,48 @@ func (h *logEntryHeap) Pop() any {
 
 // --- log file parsing (uses io.ReadFull for correct partial-read handling) ---
 
-func readLogFileEntries(newReader LogFileReaderFn, chunks []*filer_pb.FileChunk, startTsNs, stopTsNs int64) ([]*filer_pb.LogEntry, error) {
+// streamLogFileEntries reads a log file's chunks and invokes eachFn for every
+// entry as it is decoded, without buffering the whole file. A large (multi-GB)
+// log file therefore costs one entry plus the chunk reader's buffer at a time,
+// not O(file size). eachFn returns an error to stop early (e.g. the consumer
+// went away); that error is propagated to the caller.
+func streamLogFileEntries(newReader LogFileReaderFn, chunks []*filer_pb.FileChunk, startTsNs, stopTsNs int64, eachFn func(*filer_pb.LogEntry) error) error {
 	reader, err := newReader(chunks)
 	if err != nil {
-		return nil, fmt.Errorf("create reader: %w", err)
+		return fmt.Errorf("create reader: %w", err)
 	}
 	defer reader.Close()
 
 	sizeBuf := make([]byte, 4)
-	var entries []*filer_pb.LogEntry
 
 	for {
-		_, err := io.ReadFull(reader, sizeBuf)
-		if err != nil {
+		if _, err := io.ReadFull(reader, sizeBuf); err != nil {
 			if err == io.EOF || err == io.ErrUnexpectedEOF {
-				break
+				return nil
 			}
-			return entries, err
+			return err
 		}
 
 		size := util.BytesToUint32(sizeBuf)
 		entryData := make([]byte, size)
-		_, err = io.ReadFull(reader, entryData)
-		if err != nil {
-			return entries, err
+		if _, err := io.ReadFull(reader, entryData); err != nil {
+			return err
 		}
 
 		logEntry := &filer_pb.LogEntry{}
-		if err = proto.Unmarshal(entryData, logEntry); err != nil {
-			return entries, err
+		if err := proto.Unmarshal(entryData, logEntry); err != nil {
+			return err
 		}
 
 		if logEntry.TsNs <= startTsNs {
 			continue
 		}
 		if stopTsNs != 0 && logEntry.TsNs > stopTsNs {
-			break
+			return nil
 		}
 
-		entries = append(entries, logEntry)
+		if err := eachFn(logEntry); err != nil {
+			return err
+		}
 	}
-	return entries, nil
 }
