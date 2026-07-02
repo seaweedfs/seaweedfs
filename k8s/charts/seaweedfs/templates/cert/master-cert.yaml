@@ -30,7 +30,7 @@ spec:
     - '*.{{ .Release.Namespace }}.svc.cluster.local'
 {{- if .Values.certificates.dnsNames }}
 {{- range .Values.certificates.dnsNames }}
-    - {{ . }}
+    - {{ . | quote }}
 {{- end }}
 {{- end }}
     - '*.{{ include "seaweedfs.fullname" . }}-master'
