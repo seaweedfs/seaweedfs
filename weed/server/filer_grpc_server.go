@@ -393,7 +393,7 @@ func (fs *FilerServer) applyObjectMutation(ctx context.Context, m *filer_pb.Obje
 			return fmt.Errorf("PUT requires an entry")
 		}
 		newEntry := filer.FromPbEntry(m.Directory, m.Entry)
-		fs.applyStorageDefaultsToEntry(newEntry)
+		fs.applyStorageDefaultsToEntry(ctx, newEntry)
 		return fs.filer.CreateEntry(ctx, newEntry, nil, false, fromOtherCluster, signatures, false, fs.filer.MaxFilenameLength)
 
 	case filer_pb.ObjectMutation_DELETE:
