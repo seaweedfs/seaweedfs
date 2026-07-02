@@ -237,6 +237,7 @@ func listMergedBuckets(listOwned bucketPageLister, granted []ListAllMyBucketsEnt
 func (s3a *S3ApiServer) backfillBucketOwnerIndex() error {
 	startFrom := ""
 	for {
+		pageStart := startFrom
 		entries, isLast, err := s3a.list(s3a.option.BucketsPath, "", startFrom, false, bucketScanPageSize)
 		if err != nil {
 			return err
@@ -244,6 +245,7 @@ func (s3a *S3ApiServer) backfillBucketOwnerIndex() error {
 		if len(entries) == 0 {
 			break
 		}
+		var indexed []*filer_pb.Entry
 		for _, entry := range entries {
 			startFrom = entry.Name
 			if !entry.IsDirectory || strings.HasPrefix(entry.Name, ".") {
@@ -253,7 +255,15 @@ func (s3a *S3ApiServer) backfillBucketOwnerIndex() error {
 				if err := s3a.addBucketToOwnerIndex(owner, entry.Name, entry.Attributes.Crtime); err != nil {
 					return err
 				}
+				indexed = append(indexed, entry)
 			}
+		}
+		// A bucket deleted while this page was in flight would leave a permanent
+		// phantom record: the index write lands after the delete already tried to
+		// clean up. Re-list the page and drop records for buckets that vanished;
+		// a delete after this point sees the record and removes it itself.
+		if err := s3a.dropVanishedFromOwnerIndex(pageStart, indexed); err != nil {
+			return err
 		}
 		if isLast {
 			break
@@ -264,5 +274,43 @@ func (s3a *S3ApiServer) backfillBucketOwnerIndex() error {
 	}
 	s3a.ownerIndexReady.Store(true)
 	glog.V(0).Infof("bucket owner index ready")
+	return nil
+}
+
+func (s3a *S3ApiServer) dropVanishedFromOwnerIndex(startFrom string, indexed []*filer_pb.Entry) error {
+	if len(indexed) == 0 {
+		return nil
+	}
+	last := indexed[len(indexed)-1].Name
+	present := make(map[string]bool, len(indexed))
+	from := startFrom
+scan:
+	for {
+		entries, isLast, err := s3a.list(s3a.option.BucketsPath, "", from, false, bucketScanPageSize)
+		if err != nil {
+			return err
+		}
+		if len(entries) == 0 {
+			break
+		}
+		for _, entry := range entries {
+			if entry.Name > last {
+				break scan
+			}
+			from = entry.Name
+			present[entry.Name] = true
+		}
+		if isLast {
+			break
+		}
+	}
+	for _, entry := range indexed {
+		if present[entry.Name] {
+			continue
+		}
+		if err := s3a.removeBucketFromOwnerIndex(bucketEntryOwner(entry), entry.Name); err != nil {
+			return err
+		}
+	}
 	return nil
 }
