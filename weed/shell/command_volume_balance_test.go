@@ -356,6 +356,204 @@ func TestBalanceDoesNotDrainOntoOneNode(t *testing.T) {
 	}
 }
 
+// byteFullNode physically holds twice the data of mediumNode but its
+// MaxVolumeCount was configured too high for its disk, so the default slot-density
+// metric ranks it as the emptiest server and drains mediumNode onto it (verified
+// by the default-mode sub-assertion below). With -byDiskUsage the ranking is by
+// actual data held, so the fuller server becomes the move source and the two end
+// up evenly distributed by data.
+func TestBalanceByDiskUsage(t *testing.T) {
+	const mb = 1024 * 1024
+	volumeSizeLimitMb := uint64(100)
+
+	makeNode := func(id string, maxVolumeCount int64, volumes []*master_pb.VolumeInformationMessage) *Node {
+		return &Node{
+			info: &master_pb.DataNodeInfo{
+				Id: id,
+				DiskInfos: map[string]*master_pb.DiskInfo{
+					"": {
+						MaxVolumeCount: maxVolumeCount,
+						VolumeCount:    int64(len(volumes)),
+						VolumeInfos:    volumes,
+					},
+				},
+			},
+			dc:   "dc1",
+			rack: "rack1",
+		}
+	}
+
+	mkVolumes := func(start, n uint32) []*master_pb.VolumeInformationMessage {
+		var vs []*master_pb.VolumeInformationMessage
+		for id := start; id < start+n; id++ {
+			vs = append(vs, &master_pb.VolumeInformationMessage{Id: id, Size: 95 * mb})
+		}
+		return vs
+	}
+
+	dataBytes := func(n *Node) uint64 {
+		var sum uint64
+		for _, v := range n.info.DiskInfos[""].VolumeInfos {
+			sum += v.Size
+		}
+		return sum
+	}
+	volumeCount := func(n *Node) int { return len(n.info.DiskInfos[""].VolumeInfos) }
+
+	setup := func() (*Node, *Node, []*Node, map[uint32][]*VolumeReplica) {
+		byteFullNode := makeNode("byte-full", 1000, mkVolumes(1, 20))
+		mediumNode := makeNode("half-full", 30, mkVolumes(101, 10))
+		nodes := []*Node{byteFullNode, mediumNode}
+		volumeReplicas := map[uint32][]*VolumeReplica{}
+		for _, n := range nodes {
+			for _, v := range n.info.DiskInfos[""].VolumeInfos {
+				loc := newLocation("dc1", "rack1", n.info)
+				volumeReplicas[v.Id] = []*VolumeReplica{{location: &loc, info: v}}
+			}
+			n.selectVolumes(func(v *master_pb.VolumeInformationMessage) bool { return true })
+		}
+		return byteFullNode, mediumNode, nodes, volumeReplicas
+	}
+
+	// Default mode: the over-configured MaxVolumeCount makes the fuller server the
+	// target, so it gains even more data. This is the reported pathology.
+	byteFullNode, _, nodes, volumeReplicas := setup()
+	before := dataBytes(byteFullNode)
+	c := &commandVolumeBalance{volumeSizeLimitMb: volumeSizeLimitMb}
+	if err := c.balanceSelectedVolume(types.HardDriveType, volumeReplicas, nodes, sortWritableVolumes); err != nil {
+		t.Fatalf("default balanceSelectedVolume: %v", err)
+	}
+	if dataBytes(byteFullNode) <= before {
+		t.Fatalf("expected default mode to pile onto the fuller server (the bug), but it did not: %d MB -> %d MB", before/mb, dataBytes(byteFullNode)/mb)
+	}
+
+	// -byDiskUsage: the fuller server is recognized as full, so it sheds data and
+	// the two servers converge to an even data distribution.
+	byteFullNode, mediumNode, nodes, volumeReplicas := setup()
+	before = dataBytes(byteFullNode)
+	c = &commandVolumeBalance{volumeSizeLimitMb: volumeSizeLimitMb, byDiskUsage: true}
+	if err := c.balanceSelectedVolume(types.HardDriveType, volumeReplicas, nodes, sortWritableVolumes); err != nil {
+		t.Fatalf("byDiskUsage balanceSelectedVolume: %v", err)
+	}
+	if got := dataBytes(byteFullNode); got >= before {
+		t.Fatalf("-byDiskUsage should drain the fuller server, but it did not shrink: %d MB -> %d MB", before/mb, got/mb)
+	}
+	if diff := volumeCount(byteFullNode) - volumeCount(mediumNode); diff > 1 || diff < -1 {
+		t.Fatalf("-byDiskUsage should even out the data, got byte-full=%d half-full=%d volumes",
+			volumeCount(byteFullNode), volumeCount(mediumNode))
+	}
+}
+
+// makeByteNode builds a single-disk Node carrying physical disk bytes, for the
+// disk-fullness gate tests.
+func makeByteNode(id string, maxVolumeCount int64, totalBytes, freeBytes uint64, volumes []*master_pb.VolumeInformationMessage) *Node {
+	return &Node{
+		info: &master_pb.DataNodeInfo{
+			Id: id,
+			DiskInfos: map[string]*master_pb.DiskInfo{
+				"": {
+					MaxVolumeCount: maxVolumeCount,
+					VolumeCount:    int64(len(volumes)),
+					VolumeInfos:    volumes,
+					DiskTotalBytes: totalBytes,
+					DiskFreeBytes:  freeBytes,
+				},
+			},
+		},
+		dc:   "dc1",
+		rack: "rack1",
+	}
+}
+
+func mkByteVolumes(start, n uint32, sizeMb uint64) []*master_pb.VolumeInformationMessage {
+	const mb = 1024 * 1024
+	var vs []*master_pb.VolumeInformationMessage
+	for id := start; id < start+n; id++ {
+		vs = append(vs, &master_pb.VolumeInformationMessage{Id: id, Size: sizeMb * mb})
+	}
+	return vs
+}
+
+func runBalance(t *testing.T, c *commandVolumeBalance, nodes []*Node) {
+	t.Helper()
+	volumeReplicas := map[uint32][]*VolumeReplica{}
+	for _, n := range nodes {
+		for _, v := range n.info.DiskInfos[""].VolumeInfos {
+			loc := newLocation("dc1", "rack1", n.info)
+			volumeReplicas[v.Id] = []*VolumeReplica{{location: &loc, info: v}}
+		}
+		n.selectVolumes(func(v *master_pb.VolumeInformationMessage) bool { return true })
+	}
+	if err := c.balanceSelectedVolume(types.HardDriveType, volumeReplicas, nodes, sortWritableVolumes); err != nil {
+		t.Fatalf("balanceSelectedVolume: %v", err)
+	}
+}
+
+func volCount(n *Node) int { return len(n.info.DiskInfos[""].VolumeInfos) }
+
+// Issue #10160 root-cause guard: a server whose physical disk is near full must
+// not be chosen as a move target, even when an over-configured maxVolumeCount
+// makes the slot-density metric rank it as the emptiest node. The gate is on by
+// default, disables at 0, and falls back to slot-only behavior when the server
+// does not report disk bytes.
+func TestBalanceSkipsPhysicallyFullTarget(t *testing.T) {
+	const gb = 1024 * 1024 * 1024
+	volumeSizeLimitMb := uint64(1024) // 1 GiB volumes
+
+	// source: tight slot budget, so it ranks as the move source.
+	// fullDisk: huge maxVolumeCount (mis-set) but disk is physically 96% full.
+	build := func(fullDiskTotal, fullDiskFree uint64) (*Node, *Node) {
+		source := makeByteNode("source", 10, 1000*gb, 200*gb, mkByteVolumes(1, 8, 1000))
+		fullDisk := makeByteNode("disk-full", 1000, fullDiskTotal, fullDiskFree, mkByteVolumes(101, 1, 1000))
+		return source, fullDisk
+	}
+
+	// Gate on (default 90%): the 96%-full server is never a target -> no move.
+	source, fullDisk := build(1000*gb, 40*gb)
+	c := &commandVolumeBalance{volumeSizeLimitMb: volumeSizeLimitMb, diskUsageHighWaterPercent: 90}
+	runBalance(t, c, []*Node{source, fullDisk})
+	if got := volCount(fullDisk); got != 1 {
+		t.Fatalf("gate on: expected no move onto 96%%-full server, got %d volumes (was 1)", got)
+	}
+
+	// Gate off (0): the old behavior piles onto the byte-full server.
+	source, fullDisk = build(1000*gb, 40*gb)
+	c = &commandVolumeBalance{volumeSizeLimitMb: volumeSizeLimitMb, diskUsageHighWaterPercent: 0}
+	runBalance(t, c, []*Node{source, fullDisk})
+	if got := volCount(fullDisk); got <= 1 {
+		t.Fatalf("gate off: expected moves onto the byte-full server (the bug), got %d volumes", got)
+	}
+
+	// Fallback: server reports no disk bytes (DiskTotalBytes==0) -> not gated.
+	source, fullDisk = build(0, 0)
+	c = &commandVolumeBalance{volumeSizeLimitMb: volumeSizeLimitMb, diskUsageHighWaterPercent: 90}
+	runBalance(t, c, []*Node{source, fullDisk})
+	if got := volCount(fullDisk); got <= 1 {
+		t.Fatalf("fallback: expected slot-only behavior to move onto the server, got %d volumes", got)
+	}
+}
+
+// With the gate on, balancing steers moves to a physically empty disk and away
+// from a physically full one when both look equally empty by slot density.
+func TestBalanceGateSteersToEmptierDisk(t *testing.T) {
+	const gb = 1024 * 1024 * 1024
+	volumeSizeLimitMb := uint64(1024)
+
+	source := makeByteNode("source", 10, 1000*gb, 300*gb, mkByteVolumes(1, 8, 1000))
+	fullDisk := makeByteNode("disk-full", 1000, 1000*gb, 40*gb, mkByteVolumes(101, 1, 1000))    // 96% used -> gated
+	emptyDisk := makeByteNode("disk-empty", 1000, 1000*gb, 900*gb, mkByteVolumes(201, 1, 1000)) // 10% used -> ok
+
+	c := &commandVolumeBalance{volumeSizeLimitMb: volumeSizeLimitMb, diskUsageHighWaterPercent: 90}
+	runBalance(t, c, []*Node{source, fullDisk, emptyDisk})
+
+	if got := volCount(fullDisk); got != 1 {
+		t.Fatalf("expected no move onto the physically full disk, got %d volumes (was 1)", got)
+	}
+	if got := volCount(emptyDisk); got <= 1 {
+		t.Fatalf("expected moves onto the physically empty disk, got %d volumes", got)
+	}
+}
+
 // volumesPerExec caps the number of moves performed in a single execution.
 func TestBalanceVolumesPerExec(t *testing.T) {
 	const mb = 1024 * 1024

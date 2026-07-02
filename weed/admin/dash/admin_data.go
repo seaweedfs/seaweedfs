@@ -311,9 +311,7 @@ func (s *AdminServer) getFilerNodesStatus() []FilerNode {
 
 	// Get filer nodes from master using ListClusterNodes
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
-			ClientType: cluster.FilerType,
-		})
+		resp, err := client.ListClusterNodes(context.Background(), s.listClusterNodesRequest(cluster.FilerType))
 		if err != nil {
 			return err
 		}
@@ -352,9 +350,7 @@ func (s *AdminServer) getMessageBrokerNodesStatus() []MessageBrokerNode {
 
 	// Get message broker nodes from master using ListClusterNodes
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
-			ClientType: cluster.BrokerType,
-		})
+		resp, err := client.ListClusterNodes(context.Background(), s.listClusterNodesRequest(cluster.BrokerType))
 		if err != nil {
 			return err
 		}
@@ -393,9 +389,7 @@ func (s *AdminServer) getS3NodesStatus() []S3Node {
 
 	// Get S3 nodes from master using ListClusterNodes
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
-			ClientType: cluster.S3Type,
-		})
+		resp, err := client.ListClusterNodes(context.Background(), s.listClusterNodesRequest(cluster.S3Type))
 		if err != nil {
 			return err
 		}

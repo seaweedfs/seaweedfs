@@ -155,6 +155,9 @@ const (
 	ErrKeyTooLongError
 
 	ErrNoSuchConfiguration
+
+	// Truncated request body (fewer bytes than Content-Length)
+	ErrIncompleteBody
 )
 
 // Error message constants for checksum validation
@@ -296,6 +299,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Code:           "InternalError",
 		Description:    "We encountered an internal error, please try again.",
 		HTTPStatusCode: http.StatusInternalServerError,
+	},
+	ErrIncompleteBody: {
+		Code:           "IncompleteBody",
+		Description:    "You did not provide the number of bytes specified by the Content-Length HTTP header.",
+		HTTPStatusCode: http.StatusBadRequest,
 	},
 
 	ErrInvalidPart: {

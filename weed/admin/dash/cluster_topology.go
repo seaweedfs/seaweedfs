@@ -150,10 +150,19 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 						var totalMaxVolumes int64
 						var totalSize int64
 						var totalFiles int64
+						// Prefer the real physical disk capacity the volume server
+						// reports per disk; the slot-based estimate overstates capacity
+						// when maxVolumeCount is configured higher than the disk holds.
+						var diskCapacity int64
 
 						for _, diskInfo := range node.DiskInfos {
 							totalVolumes += diskInfo.VolumeCount
 							totalMaxVolumes += diskInfo.MaxVolumeCount
+							if diskInfo.DiskTotalBytes > 0 {
+								diskCapacity += int64(diskInfo.DiskTotalBytes)
+							} else {
+								diskCapacity += diskInfo.MaxVolumeCount * int64(resp.VolumeSizeLimitMb) * 1024 * 1024
+							}
 
 							// Sum up individual volume information
 							for _, volInfo := range diskInfo.VolumeInfos {
@@ -198,7 +207,7 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 							Volumes:       int(totalVolumes),
 							MaxVolumes:    int(totalMaxVolumes),
 							DiskUsage:     totalSize,
-							DiskCapacity:  totalMaxVolumes * int64(resp.VolumeSizeLimitMb) * 1024 * 1024,
+							DiskCapacity:  diskCapacity,
 							LastHeartbeat: time.Now(),
 						}
 

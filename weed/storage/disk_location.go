@@ -38,8 +38,12 @@ type DiskLocation struct {
 	OriginalMaxVolumeCount int32
 	MinFreeSpace           util.MinFreeSpace
 	AvailableSpace         atomic.Uint64
-	volumes                map[needle.VolumeId]*Volume
-	volumesLock            sync.RWMutex
+	// Physical filesystem capacity from the latest CheckDiskSpace probe, reported
+	// to the master so balancing can see real disk fullness, not just slot counts.
+	diskTotalBytes atomic.Uint64
+	diskFreeBytes  atomic.Uint64
+	volumes        map[needle.VolumeId]*Volume
+	volumesLock    sync.RWMutex
 
 	// erasure coding
 	ecVolumes     map[needle.VolumeId]*erasure_coding.EcVolume
@@ -680,6 +684,8 @@ func (l *DiskLocation) CheckDiskSpace(config stats.DiskIOProbeConfig) {
 		stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "free").Set(float64(s.Free))
 		stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "avail").Set(float64(available))
 		l.AvailableSpace.Store(available)
+		l.diskTotalBytes.Store(s.All)
+		l.diskFreeBytes.Store(s.Free)
 		isLow, desc := l.MinFreeSpace.IsLow(s.Free, s.PercentFree)
 		if isLow != l.isDiskSpaceLow.Load() {
 			l.isDiskSpaceLow.Store(isLow)

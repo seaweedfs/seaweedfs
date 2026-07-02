@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -39,6 +40,9 @@ func (c *commandRemoteMetaSync) Help() string {
 		remote.meta.sync -dir=/xxx
 		remote.meta.sync -dir=/xxx/some/subdir
 
+	Local metadata for files and directories removed from the remote is also
+	removed by default; pass -delete=false to keep it.
+
 	This is designed to run regularly. So you can add it to some cronjob.
 
 	If there are no other operations changing remote files, this operation is not needed.
@@ -55,6 +59,7 @@ func (c *commandRemoteMetaSync) Do(args []string, commandEnv *CommandEnv, writer
 	remoteMetaSyncCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 
 	dir := remoteMetaSyncCommand.String("dir", "", "a directory in filer")
+	deleteStale := remoteMetaSyncCommand.Bool("delete", true, "remove local metadata of files and directories deleted from remote")
 
 	if err = remoteMetaSyncCommand.Parse(args); err != nil {
 		return nil
@@ -67,7 +72,7 @@ func (c *commandRemoteMetaSync) Do(args []string, commandEnv *CommandEnv, writer
 	}
 
 	// pull metadata from remote
-	if err = pullMetadata(commandEnv, writer, util.FullPath(localMountedDir), remoteStorageMountedLocation, util.FullPath(*dir), remoteStorageConf); err != nil {
+	if err = pullMetadata(commandEnv, writer, util.FullPath(localMountedDir), remoteStorageMountedLocation, util.FullPath(*dir), remoteStorageConf, *deleteStale); err != nil {
 		return fmt.Errorf("cache meta data: %w", err)
 	}
 
@@ -136,9 +141,15 @@ func remoteEntryFileMode(isDirectory bool) uint32 {
 	return mode
 }
 
-func pullMetadata(commandEnv *CommandEnv, writer io.Writer, localMountedDir util.FullPath, remoteMountedLocation *remote_pb.RemoteStorageLocation, dirToCache util.FullPath, remoteConf *remote_pb.RemoteConf) error {
+// remoteChild is one entry of a single remote directory level: a file carries
+// its RemoteEntry, a directory carries none.
+type remoteChild struct {
+	isDirectory bool
+	remoteEntry *filer_pb.RemoteEntry
+}
 
-	// visit remote storage
+func pullMetadata(commandEnv *CommandEnv, writer io.Writer, localMountedDir util.FullPath, remoteMountedLocation *remote_pb.RemoteStorageLocation, dirToCache util.FullPath, remoteConf *remote_pb.RemoteConf, deleteStale bool) error {
+
 	remoteStorage, err := remote_storage.GetRemoteStorage(remoteConf)
 	if err != nil {
 		return err
@@ -146,63 +157,221 @@ func pullMetadata(commandEnv *CommandEnv, writer io.Writer, localMountedDir util
 
 	remote := filer.MapFullPathToRemoteStorageLocation(localMountedDir, remoteMountedLocation, dirToCache)
 
-	err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		ctx := context.Background()
-		err = remoteStorage.Traverse(remote, func(remoteDir, name string, isDirectory bool, remoteEntry *filer_pb.RemoteEntry) error {
-			localDir := filer.MapRemoteStorageLocationPathToFullPath(localMountedDir, remoteMountedLocation, remoteDir)
-			fmt.Fprint(writer, localDir.Child(name))
-
-			lookupResponse, lookupErr := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
-				Directory: string(localDir),
-				Name:      name,
-			})
-			var existingEntry *filer_pb.Entry
-			if lookupErr != nil {
-				if lookupErr != filer_pb.ErrNotFound {
-					return lookupErr
-				}
-			} else {
-				existingEntry = lookupResponse.Entry
-			}
-
-			if existingEntry == nil {
-				_, createErr := client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
-					Directory: string(localDir),
-					Entry: &filer_pb.Entry{
-						Name:        name,
-						IsDirectory: isDirectory,
-						Attributes: &filer_pb.FuseAttributes{
-							FileSize: uint64(remoteEntry.RemoteSize),
-							Mtime:    remoteEntry.RemoteMtime,
-							FileMode: remoteEntryFileMode(isDirectory),
-							TtlSec:   0, // Remote entries should not have TTL
-						},
-						RemoteEntry: remoteEntry,
-					},
-				})
-				fmt.Fprintln(writer, " (create)")
-				return createErr
-			} else {
-				if existingEntry.RemoteEntry == nil {
-					// this is a new local change and should not be overwritten
-					fmt.Fprintln(writer, " (skip)")
-					return nil
-				}
-				if existingEntry.RemoteEntry.RemoteETag != remoteEntry.RemoteETag || existingEntry.RemoteEntry.RemoteMtime < remoteEntry.RemoteMtime {
-					// the remote version is updated, need to pull meta
-					fmt.Fprintln(writer, " (update)")
-					return doSaveRemoteEntry(client, string(localDir), existingEntry, remoteEntry)
-				}
-			}
-			fmt.Fprintln(writer, " (skip)")
-			return nil
-		})
-		return err
+	return commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return pullMetadataDirectory(context.Background(), client, writer, remoteStorage, dirToCache, remote, deleteStale)
 	})
+}
 
+// pullMetadataDirectory reconciles one local directory with its remote
+// counterpart and recurses into every remote subdirectory. Listing with a
+// delimiter surfaces subdirectories, including empty ones, as their own
+// entries, so directories are materialized locally even when they hold no
+// files.
+func pullMetadataDirectory(ctx context.Context, client filer_pb.SeaweedFilerClient, writer io.Writer, remoteStorage remote_storage.RemoteStorageClient, localDir util.FullPath, remoteLoc *remote_pb.RemoteStorageLocation, deleteStale bool) error {
+
+	remoteChildren := make(map[string]*remoteChild)
+	if err := remoteStorage.ListDirectory(ctx, remoteLoc, func(dir, name string, isDirectory bool, remoteEntry *filer_pb.RemoteEntry) error {
+		remoteChildren[name] = &remoteChild{isDirectory: isDirectory, remoteEntry: remoteEntry}
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	localChildren, err := listLocalDirectory(ctx, client, localDir)
 	if err != nil {
 		return err
 	}
 
+	for name, child := range remoteChildren {
+		localPath := localDir.Child(name)
+		existingEntry := localChildren[name]
+
+		if existingEntry != nil && existingEntry.IsDirectory != child.isDirectory {
+			if existingEntry.RemoteEntry == nil {
+				// a local change conflicts with a changed remote type; keep local
+				fmt.Fprintf(writer, "%s (skip)\n", localPath)
+				continue
+			}
+			// the remote swapped file for directory (or vice versa); drop the
+			// stale entry so it is recreated with the right type, but keep any
+			// local-only descendants of a directory
+			if existingEntry.IsDirectory {
+				if err := deleteRemoteBackedEntry(ctx, client, writer, localDir, name, existingEntry); err != nil {
+					return err
+				}
+				refreshed, err := listLocalDirectory(ctx, client, localDir)
+				if err != nil {
+					return err
+				}
+				if refreshed[name] != nil {
+					// local-only entries remain, so the directory stays and the
+					// remote file cannot take its place
+					fmt.Fprintf(writer, "%s (skip)\n", localPath)
+					continue
+				}
+			} else {
+				fmt.Fprintf(writer, "%s (delete)\n", localPath)
+				if err := deleteLocalEntry(ctx, client, localDir, name); err != nil {
+					return err
+				}
+			}
+			existingEntry = nil
+		}
+
+		if existingEntry == nil {
+			if err := createRemoteEntry(ctx, client, writer, localDir, name, child, remoteLoc.Name); err != nil {
+				return err
+			}
+		} else if !child.isDirectory {
+			if existingEntry.RemoteEntry == nil {
+				// a local change that should not be overwritten
+				fmt.Fprintf(writer, "%s (skip)\n", localPath)
+			} else if existingEntry.RemoteEntry.RemoteETag != child.remoteEntry.RemoteETag ||
+				existingEntry.RemoteEntry.RemoteMtime != child.remoteEntry.RemoteMtime ||
+				existingEntry.RemoteEntry.RemoteSize != child.remoteEntry.RemoteSize {
+				fmt.Fprintf(writer, "%s (update)\n", localPath)
+				if err := doSaveRemoteEntry(client, string(localDir), existingEntry, child.remoteEntry); err != nil {
+					return err
+				}
+			} else {
+				fmt.Fprintf(writer, "%s (skip)\n", localPath)
+			}
+		}
+
+		if child.isDirectory {
+			if err := pullMetadataDirectory(ctx, client, writer, remoteStorage, localPath, childRemoteLocation(remoteLoc, name), deleteStale); err != nil {
+				return err
+			}
+		}
+	}
+
+	if deleteStale {
+		for name, existingEntry := range localChildren {
+			if _, ok := remoteChildren[name]; ok {
+				continue
+			}
+			if err := deleteRemoteBackedEntry(ctx, client, writer, localDir, name, existingEntry); err != nil {
+				return err
+			}
+		}
+	}
+
 	return nil
+}
+
+// deleteRemoteBackedEntry removes a local entry whose remote source is gone. A
+// file is deleted; a directory is descended into locally so its remote-backed
+// children are cleaned, and the directory itself is removed only when it was
+// remote-backed and holds no remaining local-only entries. Entries without a
+// RemoteEntry are local changes and are never touched.
+func deleteRemoteBackedEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, writer io.Writer, localDir util.FullPath, name string, existingEntry *filer_pb.Entry) error {
+	localPath := localDir.Child(name)
+
+	if !existingEntry.IsDirectory {
+		if existingEntry.RemoteEntry == nil {
+			return nil
+		}
+		fmt.Fprintf(writer, "%s (delete)\n", localPath)
+		return deleteLocalEntry(ctx, client, localDir, name)
+	}
+
+	children, err := listLocalDirectory(ctx, client, localPath)
+	if err != nil {
+		return err
+	}
+	for childName, childEntry := range children {
+		if err := deleteRemoteBackedEntry(ctx, client, writer, localPath, childName, childEntry); err != nil {
+			return err
+		}
+	}
+
+	if existingEntry.RemoteEntry == nil {
+		return nil
+	}
+	empty, err := isLocalDirectoryEmpty(ctx, client, localPath)
+	if err != nil {
+		return err
+	}
+	if empty {
+		fmt.Fprintf(writer, "%s (delete)\n", localPath)
+		return deleteLocalEntry(ctx, client, localDir, name)
+	}
+	return nil
+}
+
+func deleteLocalEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, localDir util.FullPath, name string) error {
+	_, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
+		Directory:    string(localDir),
+		Name:         name,
+		IsDeleteData: true,
+	})
+	return err
+}
+
+func isLocalDirectoryEmpty(ctx context.Context, client filer_pb.SeaweedFilerClient, dir util.FullPath) (bool, error) {
+	empty := true
+	err := filer_pb.SeaweedList(ctx, client, string(dir), "", func(entry *filer_pb.Entry, isLast bool) error {
+		empty = false
+		return nil
+	}, "", false, 1)
+	return empty, err
+}
+
+func createRemoteEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, writer io.Writer, localDir util.FullPath, name string, child *remoteChild, storageName string) error {
+	attributes := &filer_pb.FuseAttributes{
+		FileMode: remoteEntryFileMode(child.isDirectory),
+		TtlSec:   0, // Remote entries should not have TTL
+	}
+	remoteEntry := child.remoteEntry
+	if child.isDirectory {
+		// remote listings carry no directory timestamp; stamp with sync time
+		now := time.Now().Unix()
+		attributes.Crtime = now
+		attributes.Mtime = now
+		// mark the directory remote-backed so it can be reconciled and removed
+		// once it disappears from the remote
+		remoteEntry = &filer_pb.RemoteEntry{StorageName: storageName}
+	} else {
+		attributes.FileSize = uint64(child.remoteEntry.RemoteSize)
+		attributes.Mtime = child.remoteEntry.RemoteMtime
+	}
+	_, err := client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
+		Directory: string(localDir),
+		Entry: &filer_pb.Entry{
+			Name:        name,
+			IsDirectory: child.isDirectory,
+			Attributes:  attributes,
+			RemoteEntry: remoteEntry,
+		},
+	})
+	fmt.Fprintf(writer, "%s (create)\n", localDir.Child(name))
+	return err
+}
+
+func childRemoteLocation(remoteLoc *remote_pb.RemoteStorageLocation, name string) *remote_pb.RemoteStorageLocation {
+	return &remote_pb.RemoteStorageLocation{
+		Name:   remoteLoc.Name,
+		Bucket: remoteLoc.Bucket,
+		Path:   string(util.FullPath(remoteLoc.Path).Child(name)),
+	}
+}
+
+func listLocalDirectory(ctx context.Context, client filer_pb.SeaweedFilerClient, dir util.FullPath) (map[string]*filer_pb.Entry, error) {
+	const paginationLimit = 10000
+	entries := make(map[string]*filer_pb.Entry)
+	lastFileName := ""
+	for {
+		count := 0
+		if err := filer_pb.SeaweedList(ctx, client, string(dir), "", func(entry *filer_pb.Entry, isLast bool) error {
+			entries[entry.Name] = entry
+			lastFileName = entry.Name
+			count++
+			return nil
+		}, lastFileName, false, paginationLimit); err != nil {
+			return nil, err
+		}
+		if count < paginationLimit {
+			return entries, nil
+		}
+	}
 }

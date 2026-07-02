@@ -102,6 +102,54 @@ func TestFromActiveTopology(t *testing.T) {
 	}
 }
 
+// A physically near-full disk must contribute zero free EC slots to the snapshot,
+// even though its slot math (MaxVolumeCount - VolumeCount) says it has room, so
+// the planner never places shards onto it. Mirrors the volume-balance #10160 gate.
+func TestFromActiveTopologySkipsPhysicallyFullDisk(t *testing.T) {
+	const gb = uint64(1) << 30
+	at := topology.NewActiveTopology(10)
+
+	// Both disks look slot-empty; only their physical byte fullness differs.
+	full := &master_pb.DataNodeInfo{
+		Id: "10.0.0.1:8080",
+		DiskInfos: map[string]*master_pb.DiskInfo{
+			"hdd": {DiskId: 0, MaxVolumeCount: 100, VolumeCount: 0, DiskTotalBytes: 1000 * gb, DiskFreeBytes: 40 * gb}, // 96% used
+		},
+	}
+	empty := &master_pb.DataNodeInfo{
+		Id: "10.0.0.2:8080",
+		DiskInfos: map[string]*master_pb.DiskInfo{
+			"hdd": {DiskId: 0, MaxVolumeCount: 100, VolumeCount: 0, DiskTotalBytes: 1000 * gb, DiskFreeBytes: 900 * gb}, // 10% used
+		},
+	}
+	if err := at.UpdateTopology(&master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{{
+			Id:        "dc1",
+			RackInfos: []*master_pb.RackInfo{{Id: "rack1", DataNodeInfos: []*master_pb.DataNodeInfo{full, empty}}},
+		}},
+	}); err != nil {
+		t.Fatalf("UpdateTopology: %v", err)
+	}
+
+	topo := FromActiveTopology(at, 0)
+
+	fullNode := topo.nodes["10.0.0.1:8080"]
+	if fullNode == nil {
+		t.Fatal("full node missing")
+	}
+	if fullNode.freeSlots != 0 {
+		t.Errorf("physically full node freeSlots = %d, want 0", fullNode.freeSlots)
+	}
+	if d := fullNode.disks[0]; d == nil || d.freeSlots != 0 {
+		t.Errorf("physically full disk freeSlots = %v, want 0", d)
+	}
+
+	emptyNode := topo.nodes["10.0.0.2:8080"]
+	if emptyNode == nil || emptyNode.freeSlots <= 0 {
+		t.Errorf("physically empty node should keep free slots, got %v", emptyNode)
+	}
+}
+
 // TestFromActiveTopologyGroupsByAddressHost verifies the snapshot derives a node's
 // machine from its address, not its (possibly opaque) id: two volume servers with
 // distinct ids but the same host must land on one machine so EC placement spreads

@@ -67,6 +67,8 @@ func (d *DiskUsages) negative() *DiskUsages {
 		a.activeVolumeCount = -b.activeVolumeCount
 		a.ecShardCount = -b.ecShardCount
 		a.maxVolumeCount = -b.maxVolumeCount
+		a.diskTotalBytes = -b.diskTotalBytes
+		a.diskFreeBytes = -b.diskFreeBytes
 
 	}
 	return t
@@ -81,6 +83,8 @@ func (d *DiskUsages) ToDiskInfo() map[string]*master_pb.DiskInfo {
 			FreeVolumeCount:   diskUsageCounts.maxVolumeCount - (diskUsageCounts.volumeCount - diskUsageCounts.remoteVolumeCount) - ecShardSlots(diskUsageCounts.ecShardCount),
 			ActiveVolumeCount: diskUsageCounts.activeVolumeCount,
 			RemoteVolumeCount: diskUsageCounts.remoteVolumeCount,
+			DiskTotalBytes:    uint64(max(0, diskUsageCounts.diskTotalBytes)),
+			DiskFreeBytes:     uint64(max(0, diskUsageCounts.diskFreeBytes)),
 		}
 		ret[string(diskType)] = m
 	}
@@ -111,6 +115,10 @@ type DiskUsageCounts struct {
 	activeVolumeCount int64
 	ecShardCount      int64
 	maxVolumeCount    int64
+	// Physical filesystem capacity reported by the volume server, in bytes.
+	// 0 means the volume server did not report it (e.g. an older build).
+	diskTotalBytes int64
+	diskFreeBytes  int64
 }
 
 func (a *DiskUsageCounts) addDiskUsageCounts(b *DiskUsageCounts) {
@@ -119,6 +127,8 @@ func (a *DiskUsageCounts) addDiskUsageCounts(b *DiskUsageCounts) {
 	atomic.AddInt64(&a.activeVolumeCount, b.activeVolumeCount)
 	atomic.AddInt64(&a.ecShardCount, b.ecShardCount)
 	atomic.AddInt64(&a.maxVolumeCount, b.maxVolumeCount)
+	atomic.AddInt64(&a.diskTotalBytes, b.diskTotalBytes)
+	atomic.AddInt64(&a.diskFreeBytes, b.diskFreeBytes)
 }
 
 func (a *DiskUsageCounts) FreeSpace() int64 {
@@ -276,6 +286,8 @@ func (d *Disk) ToDiskInfo() *master_pb.DiskInfo {
 		ActiveVolumeCount: diskUsage.activeVolumeCount,
 		RemoteVolumeCount: diskUsage.remoteVolumeCount,
 		DiskId:            diskId,
+		DiskTotalBytes:    uint64(max(0, diskUsage.diskTotalBytes)),
+		DiskFreeBytes:     uint64(max(0, diskUsage.diskFreeBytes)),
 	}
 	for _, v := range volumes {
 		m.VolumeInfos = append(m.VolumeInfos, v.ToVolumeInformationMessage())

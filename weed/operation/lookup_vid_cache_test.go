@@ -25,6 +25,23 @@ func TestCaching(t *testing.T) {
 	}
 }
 
+// a stale under-replicated result must not linger for the full cache TTL
+func TestCachingDelete(t *testing.T) {
+	var vc VidCache
+	locations := []Location{{Url: "a.com:8080"}}
+	vc.Set("123", locations, time.Minute)
+	if ret, _ := vc.Get("123"); ret == nil {
+		t.Fatal("expected vid 123 to be cached")
+	}
+	vc.Delete("123")
+	if ret, _ := vc.Get("123"); ret != nil {
+		t.Fatal("expected vid 123 to be evicted after Delete")
+	}
+	// deleting a missing or out-of-range id must not panic
+	vc.Delete("123")
+	vc.Delete("4294967296")
+}
+
 // a single large volume id must not allocate an entry per id below it
 func TestCachingLargeVolumeId(t *testing.T) {
 	var vc VidCache
