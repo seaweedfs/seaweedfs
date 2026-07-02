@@ -3,14 +3,16 @@ package s3api
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
+	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -62,54 +64,127 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	var response ListAllMyBucketsResult
-
-	entries, _, err := s3a.list(s3a.option.BucketsPath, "", "", false, math.MaxInt32)
-
-	if err != nil {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+	maxBuckets, prefix, startAfter, errCode := getListBucketsArgs(r.URL.Query())
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 
-	var listBuckets ListAllMyBucketsList
-	for _, entry := range entries {
-		if entry.IsDirectory {
-			if strings.HasPrefix(entry.Name, ".") {
-				continue
-			}
-			// Unauthenticated users should not see any buckets
-			if identity == nil {
-				continue
-			}
-
-			// Check if bucket should be visible to this identity
-			// A bucket is visible if the user owns it OR has explicit permission to list it
-			isOwner := isBucketOwnedByIdentity(entry, identity)
-
-			// Skip permission check if user is already the owner (optimization)
-			if !isOwner {
-				if errCode := s3a.iam.VerifyActionPermission(r, identity, s3_constants.ACTION_LIST, entry.Name, ""); errCode != s3err.ErrNone {
-					continue
-				}
-			}
-
-			listBuckets.Bucket = append(listBuckets.Bucket, ListAllMyBucketsEntry{
-				Name:         entry.Name,
-				CreationDate: time.Unix(entry.Attributes.Crtime, 0).UTC(),
-			})
+	var buckets []ListAllMyBucketsEntry
+	var nextToken string
+	// Unauthenticated users should not see any buckets
+	if identity != nil {
+		var err error
+		buckets, nextToken, err = s3a.scanVisibleBuckets(r, identity, prefix, startAfter, maxBuckets)
+		if err != nil {
+			glog.Errorf("ListBucketsHandler: %v", err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
 		}
 	}
 
-	response = ListAllMyBucketsResult{
+	response := ListAllMyBucketsResult{
 		Owner: CanonicalUser{
 			ID:          identityId,
 			DisplayName: identityId,
 		},
-		Buckets: listBuckets,
+		Buckets:           ListAllMyBucketsList{Bucket: buckets},
+		ContinuationToken: nextToken,
+		Prefix:            prefix,
 	}
 
 	glog.V(3).Infof("ListBucketsHandler response: %+v", response)
 	writeSuccessResponseXML(w, r, response)
+}
+
+const (
+	// maxBucketsPerPage caps a single ListBuckets response, matching AWS.
+	maxBucketsPerPage = 10000
+	// bucketScanPageSize is the filer page size while scanning /buckets.
+	bucketScanPageSize = 1000
+)
+
+func getListBucketsArgs(values url.Values) (maxBuckets int, prefix string, startAfter string, errCode s3err.ErrorCode) {
+	maxBuckets = maxBucketsPerPage
+	if v := values.Get("max-buckets"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > maxBucketsPerPage {
+			return 0, "", "", s3err.ErrInvalidMaxBuckets
+		}
+		maxBuckets = n
+	}
+	prefix = values.Get("prefix")
+	if v := values.Get("continuation-token"); v != "" {
+		name, err := decodeContinuationToken(v)
+		if err != nil {
+			return 0, "", "", s3err.ErrInvalidContinuationToken
+		}
+		startAfter = name
+	}
+	return maxBuckets, prefix, startAfter, s3err.ErrNone
+}
+
+// The continuation token is the last returned bucket name, base64-encoded so
+// clients treat it as opaque per the S3 API contract.
+func encodeContinuationToken(bucket string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(bucket))
+}
+
+func decodeContinuationToken(token string) (string, error) {
+	name, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil || len(name) == 0 {
+		return "", fmt.Errorf("invalid continuation token %q", token)
+	}
+	return string(name), nil
+}
+
+// bucketVisibleToIdentity reports whether ListBuckets should include the bucket:
+// the identity owns it or has explicit permission to list it.
+func (s3a *S3ApiServer) bucketVisibleToIdentity(r *http.Request, entry *filer_pb.Entry, identity *Identity) bool {
+	if isBucketOwnedByIdentity(entry, identity) {
+		return true
+	}
+	return s3a.iam.VerifyActionPermission(r, identity, s3_constants.ACTION_LIST, entry.Name, "") == s3err.ErrNone
+}
+
+// scanVisibleBuckets pages through /buckets and collects up to maxBuckets
+// entries visible to the identity, returning a continuation token when more
+// remain. It never buffers the full bucket set.
+func (s3a *S3ApiServer) scanVisibleBuckets(r *http.Request, identity *Identity, prefix, startAfter string, maxBuckets int) (buckets []ListAllMyBucketsEntry, nextToken string, err error) {
+	startFrom := startAfter
+	for len(buckets) <= maxBuckets {
+		entries, isLast, listErr := s3a.list(s3a.option.BucketsPath, prefix, startFrom, false, bucketScanPageSize)
+		if listErr != nil {
+			return nil, "", listErr
+		}
+		if len(entries) == 0 {
+			break
+		}
+		for _, entry := range entries {
+			startFrom = entry.Name
+			if !entry.IsDirectory || strings.HasPrefix(entry.Name, ".") {
+				continue
+			}
+			if !s3a.bucketVisibleToIdentity(r, entry, identity) {
+				continue
+			}
+			buckets = append(buckets, ListAllMyBucketsEntry{
+				Name:         entry.Name,
+				CreationDate: time.Unix(entry.Attributes.Crtime, 0).UTC(),
+			})
+			if len(buckets) > maxBuckets {
+				break
+			}
+		}
+		if isLast || len(buckets) > maxBuckets {
+			break
+		}
+	}
+	if len(buckets) > maxBuckets {
+		buckets = buckets[:maxBuckets]
+		nextToken = encodeContinuationToken(buckets[maxBuckets-1].Name)
+	}
+	return buckets, nextToken, nil
 }
 
 // isBucketOwnedByIdentity checks if a bucket entry is owned by the given identity.
