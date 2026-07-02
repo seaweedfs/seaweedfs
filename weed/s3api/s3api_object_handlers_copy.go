@@ -861,6 +861,10 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPart)
 		return
 	}
+	if partID < 1 {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPart)
+		return
+	}
 
 	// Get detailed versioning state for source bucket
 	srcVersioningState, err := s3a.getVersioningState(srcBucket)
