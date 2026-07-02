@@ -2359,26 +2359,30 @@ func (iam *IdentityAccessManagement) isActionExplicitlyDeniedByIAM(r *http.Reque
 	return denied
 }
 
-// VerifyActionPermission checks if the identity is allowed to perform the action on the resource.
-// It handles both traditional identities (via Actions) and IAM/STS identities (via Policy).
-func (iam *IdentityAccessManagement) VerifyActionPermission(r *http.Request, identity *Identity, action Action, bucket, object string) s3err.ErrorCode {
-	// Fail closed if identity is nil
-	if identity == nil {
-		glog.V(3).Infof("VerifyActionPermission called with nil identity for action %s on %s/%s", action, bucket, object)
-		return s3err.ErrAccessDenied
-	}
+// authorizationRoute is the mechanism that decides a request/identity pair's
+// permissions: the IAM integration, locally attached IAM policies, the
+// identity's legacy Actions, or nothing at all.
+type authorizationRoute int
 
-	// Traditional identities (with Actions from -s3.config) use legacy auth,
-	// JWT/STS identities (no Actions or having a session token) use IAM authorization.
-	// IMPORTANT: We MUST prioritize IAM authorization for any request with a session token
-	// to ensure that session policies are correctly enforced.
+const (
+	authorizeViaIAMIntegration authorizationRoute = iota
+	authorizeViaAttachedPolicies
+	authorizeViaLegacyActions
+	authorizeDenied
+)
+
+// authorizationRoute picks the mechanism, so every caller routes identically.
+// Traditional identities (with Actions from -s3.config) use legacy auth,
+// JWT/STS identities (no Actions or having a session token) use IAM
+// authorization. A request with a session token must go through the IAM
+// integration so session policies are enforced.
+func (iam *IdentityAccessManagement) authorizationRoute(r *http.Request, identity *Identity) authorizationRoute {
 	hasSessionToken := r.Header.Get(s3_constants.SeaweedFSSessionTokenHeader) != "" ||
 		r.Header.Get("X-Amz-Security-Token") != "" ||
 		r.URL.Query().Get("X-Amz-Security-Token") != ""
 	iam.m.RLock()
-	userGroupNames := iam.userGroups[identity.Name]
 	groupsHavePolicies := false
-	for _, gn := range userGroupNames {
+	for _, gn := range iam.userGroups[identity.Name] {
 		if g, ok := iam.groups[gn]; ok && !g.Disabled && len(g.PolicyNames) > 0 {
 			groupsHavePolicies = true
 			break
@@ -2388,29 +2392,46 @@ func (iam *IdentityAccessManagement) VerifyActionPermission(r *http.Request, ide
 	hasAttachedPolicies := len(identity.PolicyNames) > 0 || groupsHavePolicies
 
 	if (len(identity.Actions) == 0 || hasSessionToken || hasAttachedPolicies) && iam.iamIntegration != nil {
-		return iam.authorizeWithIAM(r, identity, action, bucket, object)
+		return authorizeViaIAMIntegration
+	}
+	if hasAttachedPolicies {
+		return authorizeViaAttachedPolicies
+	}
+	if len(identity.Actions) > 0 {
+		return authorizeViaLegacyActions
+	}
+	return authorizeDenied
+}
+
+// VerifyActionPermission checks if the identity is allowed to perform the action on the resource.
+// It handles both traditional identities (via Actions) and IAM/STS identities (via Policy).
+func (iam *IdentityAccessManagement) VerifyActionPermission(r *http.Request, identity *Identity, action Action, bucket, object string) s3err.ErrorCode {
+	// Fail closed if identity is nil
+	if identity == nil {
+		glog.V(3).Infof("VerifyActionPermission called with nil identity for action %s on %s/%s", action, bucket, object)
+		return s3err.ErrAccessDenied
 	}
 
-	// Attached IAM policies are authoritative for IAM users. The legacy Actions
-	// field is a lossy projection that cannot represent deny statements,
-	// conditions, or fine-grained action differences such as PutObject vs
-	// DeleteObject.
-	if hasAttachedPolicies {
+	switch iam.authorizationRoute(r, identity) {
+	case authorizeViaIAMIntegration:
+		return iam.authorizeWithIAM(r, identity, action, bucket, object)
+	case authorizeViaAttachedPolicies:
+		// Attached IAM policies are authoritative for IAM users. The legacy Actions
+		// field is a lossy projection that cannot represent deny statements,
+		// conditions, or fine-grained action differences such as PutObject vs
+		// DeleteObject.
 		if iam.evaluateIAMPolicies(r, identity, action, bucket, object) {
 			return s3err.ErrNone
 		}
 		return s3err.ErrAccessDenied
-	}
-
-	// Traditional actions-based authorization from static S3 config.
-	if len(identity.Actions) > 0 {
+	case authorizeViaLegacyActions:
 		if !identity.CanDo(action, bucket, object) {
 			return s3err.ErrAccessDenied
 		}
 		return s3err.ErrNone
+	default:
+		return s3err.ErrAccessDenied
 	}
-
-	return s3err.ErrAccessDenied
 }
 
 // canListBucketsFromOwnerIndex reports whether ListBuckets for this identity
@@ -2428,25 +2449,9 @@ func (iam *IdentityAccessManagement) canListBucketsFromOwnerIndex(r *http.Reques
 		return false, nil
 	}
 
-	// Mirror the routing in VerifyActionPermission: these identities are
-	// authorized per bucket by IAM policies, which cannot be enumerated.
-	hasSessionToken := r.Header.Get(s3_constants.SeaweedFSSessionTokenHeader) != "" ||
-		r.Header.Get("X-Amz-Security-Token") != "" ||
-		r.URL.Query().Get("X-Amz-Security-Token") != ""
-	iam.m.RLock()
-	groupsHavePolicies := false
-	for _, gn := range iam.userGroups[identity.Name] {
-		if g, found := iam.groups[gn]; found && !g.Disabled && len(g.PolicyNames) > 0 {
-			groupsHavePolicies = true
-			break
-		}
-	}
-	iam.m.RUnlock()
-	hasAttachedPolicies := len(identity.PolicyNames) > 0 || groupsHavePolicies
-	if (len(identity.Actions) == 0 || hasSessionToken || hasAttachedPolicies) && iam.iamIntegration != nil {
-		return true, nil
-	}
-	if hasAttachedPolicies || len(identity.Actions) == 0 {
+	// Identities authorized by IAM policies (or by nothing) cannot have their
+	// visible set enumerated; they get their owned buckets only.
+	if iam.authorizationRoute(r, identity) != authorizeViaLegacyActions {
 		return true, nil
 	}
 
