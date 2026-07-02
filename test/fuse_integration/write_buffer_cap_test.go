@@ -88,13 +88,9 @@ func writeBufferCapConfig(debugPort int) *TestConfig {
 			"-writeBufferSizeMB=16",
 			"-debug=true",
 			fmt.Sprintf("-debug.port=%d", debugPort),
-			// Route glog to stderr so the framework's process log
-			// capture actually contains something — by default weed
-			// sends glog to /tmp/weed.* files which the CI artifact
-			// upload step never sees. Critical for diagnosing
-			// upload/saveToStorage errors on Linux runs.
-			"-logtostderr=true",
-			"-v=2",
+			// NOTE: glog flags (-logtostderr, -v) are globals parsed
+			// before the subcommand; passing them here makes weed
+			// mount exit with a usage error before ever mounting.
 		},
 		SkipCleanup: false,
 	}
