@@ -60,3 +60,13 @@ func (vc *VidCache) Set(vid string, locations []Location, duration time.Duration
 		NextRefreshTime: time.Now().Add(duration),
 	}
 }
+
+func (vc *VidCache) Delete(vid string) {
+	id, err := strconv.ParseUint(vid, 10, 32)
+	if err != nil || id == 0 {
+		return
+	}
+	vc.Lock()
+	defer vc.Unlock()
+	delete(vc.cache, uint32(id))
+}

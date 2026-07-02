@@ -37,6 +37,7 @@ fn scrub_mode_label(mode: i32) -> &'static str {
         1 => "INDEX",
         2 => "FULL",
         3 => "LOCAL",
+        4 => "CHECKSUM",
         _ => "UNKNOWN",
     }
 }
@@ -1515,9 +1516,16 @@ impl VolumeServer for VolumeGrpcService {
                 .find_volume(vid)
                 .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
 
-            // Check compaction revision
+            // Check compaction revision. Compare against the volume's live
+            // super_block.compaction_revision (matching Go's v.CompactionRevision,
+            // which is the embedded SuperBlock field). last_compact_revision() is
+            // a separate bookkeeping value recorded just before a compaction starts
+            // (for makeup-diff catch-up) and is intentionally left behind the live
+            // revision afterward — it is not interchangeable with the live value and
+            // must not be used here, or this check spuriously fails on every volume
+            // that has ever been compacted even once.
             if req.compaction_revision != u32::MAX
-                && v.last_compact_revision() != req.compaction_revision as u16
+                && u32::from(v.super_block.compaction_revision) != req.compaction_revision
             {
                 return Err(Status::failed_precondition(format!(
                     "volume {} is compacted",
@@ -2765,6 +2773,58 @@ impl VolumeServer for VolumeGrpcService {
             }
         }
 
+        // Copy the generation-0 bitrot checksum sidecar (.ecsum) when requested, so
+        // protection travels with the shards. Tolerant of a missing source (no-op):
+        // this non-2PC path has no Prepare backstop, and an unprotected source
+        // simply leaves the copy unprotected.
+        if req.copy_ecsum_file {
+            let copy_req = volume_server_pb::CopyFileRequest {
+                volume_id: req.volume_id,
+                collection: req.collection.clone(),
+                is_ec_volume: true,
+                ext: ".ecsum".to_string(),
+                compaction_revision: u32::MAX,
+                stop_offset: i64::MAX as u64,
+                ignore_source_file_not_found: true,
+                ..Default::default()
+            };
+            let mut stream = client
+                .copy_file(copy_req)
+                .await
+                .map_err(|e| {
+                    Status::internal(format!(
+                        "VolumeEcShardsCopy volume {} copy .ecsum: {}",
+                        vid, e
+                    ))
+                })?
+                .into_inner();
+
+            let file_path = {
+                let base =
+                    crate::storage::volume::volume_file_name(&dest_dir, &req.collection, vid);
+                format!("{}.ecsum", base)
+            };
+            let mut file = std::fs::File::create(&file_path)
+                .map_err(|e| Status::internal(format!("create {}: {}", file_path, e)))?;
+            let mut written: u64 = 0;
+            while let Some(chunk) = stream
+                .message()
+                .await
+                .map_err(|e| Status::internal(format!("recv .ecsum: {}", e)))?
+            {
+                use std::io::Write;
+                file.write_all(&chunk.file_content)
+                    .map_err(|e| Status::internal(format!("write {}: {}", file_path, e)))?;
+                written += chunk.file_content.len() as u64;
+            }
+            // A missing source yields an empty stream; drop the 0-byte file so mount
+            // sees no sidecar (protection Off) rather than a truncated/invalid one.
+            if written == 0 {
+                drop(file);
+                let _ = std::fs::remove_file(&file_path);
+            }
+        }
+
         Ok(Response::new(
             volume_server_pb::VolumeEcShardsCopyResponse {},
         ))
@@ -3911,7 +3971,7 @@ impl VolumeServer for VolumeGrpcService {
         // Validate mode
         let mode = req.mode;
         match mode {
-            1 | 2 | 3 => {} // INDEX=1, FULL=2, LOCAL=3
+            1 | 2 | 3 | 4 => {} // INDEX=1, FULL=2, LOCAL=3, CHECKSUM=4
             _ => {
                 return Err(Status::invalid_argument(format!(
                     "unsupported EC volume scrub mode {}",
@@ -4053,6 +4113,36 @@ impl VolumeServer for VolumeGrpcService {
                     if !errs.is_empty() || !shard_infos.is_empty() {
                         broken_volume_ids.push(vid.0);
                         broken_shard_infos.extend(shard_infos);
+                        for msg in errs {
+                            details.push(format!("ecvol {}: {}", vid.0, msg));
+                        }
+                    }
+                }
+                4 => {
+                    // CHECKSUM: verify each local shard's raw bytes against the
+                    // bitrot checksum sidecar, exercising cold parity shards.
+                    // Read-only. Mirrors Go's v.ChecksumScrub().
+                    let (blocks_scanned, broken, errs, collection) = {
+                        let store = self.state.store.read().unwrap();
+                        let ecv = store.find_ec_volume(vid).ok_or_else(|| {
+                            Status::not_found(format!("EC volume id {} not found", vid.0))
+                        })?;
+                        let collection = ecv.collection.clone();
+                        let (blocks, broken, errs) = ecv.checksum_scrub();
+                        (blocks, broken, errs, collection)
+                    };
+                    total_volumes += 1;
+                    total_files += blocks_scanned;
+                    if !errs.is_empty() || !broken.is_empty() {
+                        broken_volume_ids.push(vid.0);
+                        for b in broken {
+                            broken_shard_infos.push(volume_server_pb::EcShardInfo {
+                                volume_id: vid.0,
+                                collection: collection.clone(),
+                                shard_id: b,
+                                ..Default::default()
+                            });
+                        }
                         for msg in errs {
                             details.push(format!("ecvol {}: {}", vid.0, msg));
                         }
@@ -5573,6 +5663,105 @@ mod tests {
         if let Err(err) = result {
             assert_ne!(err.code(), tonic::Code::InvalidArgument, "got {err:?}");
         }
+    }
+
+    // Regression test for comparing the wrong compaction-revision field.
+    // last_compact_revision() is bookkeeping recorded just before a compaction
+    // starts (for makeup-diff catch-up) and is intentionally left behind
+    // super_block.compaction_revision once the compaction commits. copy_file's
+    // precondition check must compare against the live super_block value
+    // (matching Go's v.CompactionRevision), not the stale bookkeeping one, or
+    // it fails "volume N is compacted" on every volume that has ever been
+    // compacted even once.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_copy_file_accepts_live_revision_after_compaction() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+
+        // Drive a real compaction to completion so the two revision fields
+        // actually diverge the way they do in production, rather than poking
+        // the struct fields directly.
+        let (revision_before, revision_after, last_compact_revision_after) = {
+            let mut store = service.state.store.write().unwrap();
+            let (_, v) = store.find_volume_mut(VolumeId(1)).unwrap();
+            let before = v.super_block.compaction_revision;
+
+            v.compact_by_index(0, 0, |_| true).unwrap();
+            v.commit_compact().unwrap();
+
+            (before, v.super_block.compaction_revision, v.last_compact_revision())
+        };
+
+        assert_eq!(revision_before, 0, "fresh volume starts at revision 0");
+        assert_eq!(
+            revision_after, 1,
+            "live super_block.compaction_revision must advance after commit_compact"
+        );
+        assert_eq!(
+            last_compact_revision_after, 0,
+            "last_compact_revision() is recorded pre-compaction and must stay \
+             behind the live revision — this divergence is exactly what made \
+             the old check fail permanently"
+        );
+
+        // The live revision (1) must be accepted: this is what
+        // read_volume_file_status would report to a caller right now.
+        let response = service
+            .copy_file(Request::new(volume_server_pb::CopyFileRequest {
+                volume_id: 1,
+                ext: ".dat".to_string(),
+                compaction_revision: revision_after as u32,
+                stop_offset: u64::MAX,
+                collection: String::new(),
+                is_ec_volume: false,
+                ignore_source_file_not_found: false,
+            }))
+            .await;
+        assert!(
+            response.is_ok(),
+            "copy_file must accept the live compaction_revision, got: {:?}",
+            response.err()
+        );
+
+        // A genuinely stale/wrong revision must still be rejected — the fix
+        // corrects which field is compared, it does not disable the check.
+        let stale_response = service
+            .copy_file(Request::new(volume_server_pb::CopyFileRequest {
+                volume_id: 1,
+                ext: ".dat".to_string(),
+                compaction_revision: 99,
+                stop_offset: u64::MAX,
+                collection: String::new(),
+                is_ec_volume: false,
+                ignore_source_file_not_found: false,
+            }))
+            .await;
+        let err = match stale_response {
+            Ok(_) => panic!("a genuinely stale revision must be rejected"),
+            Err(e) => e,
+        };
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+        assert!(err.message().contains("is compacted"));
+
+        // A request revision that only collides after truncating to u16 must be
+        // rejected: 65537 as u16 == 1 == the live revision, but as u32 they differ.
+        // Compare in u32 space (matching Go) so this cannot spuriously pass.
+        let truncating_response = service
+            .copy_file(Request::new(volume_server_pb::CopyFileRequest {
+                volume_id: 1,
+                ext: ".dat".to_string(),
+                compaction_revision: u32::from(revision_after) + (1 << 16),
+                stop_offset: u64::MAX,
+                collection: String::new(),
+                is_ec_volume: false,
+                ignore_source_file_not_found: false,
+            }))
+            .await;
+        let err = match truncating_response {
+            Ok(_) => panic!("a revision that only matches after u16 truncation must be rejected"),
+            Err(e) => e,
+        };
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+        assert!(err.message().contains("is compacted"));
     }
 
     #[tokio::test]

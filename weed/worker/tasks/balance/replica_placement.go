@@ -1,167 +1,37 @@
 package balance
 
 import (
-	"slices"
-
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/topology/balancer"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
 // hostFromAddress returns the physical machine (host/IP) of a server address,
-// falling back to the node id (== ip:port in the common case) when no address is
-// known. Servers sharing a host are one fault domain.
+// falling back to the node id when no address is known.
 func hostFromAddress(address, nodeID string) string {
-	if address == "" {
-		address = nodeID
-	}
-	return pb.ServerAddress(address).ToHost()
+	return balancer.HostFromAddress(address, nodeID)
 }
 
-// rackKey uniquely identifies a rack within a data center.
-type rackKey struct {
-	DataCenter string
-	Rack       string
-}
-
-// nodeKey uniquely identifies a node within a rack.
-type nodeKey struct {
-	DataCenter string
-	Rack       string
-	NodeID     string
-}
-
-// IsGoodMove checks whether moving a volume from sourceNodeID to target
-// would satisfy the volume's replica placement policy, given the current
-// set of replica locations.
+// IsGoodMove checks whether moving a volume from sourceNodeID to target would
+// satisfy the volume's replica placement policy. It is a thin adapter over the
+// shared placement logic in weed/topology/balancer so the shell command and this
+// worker cannot drift.
 func IsGoodMove(rp *super_block.ReplicaPlacement, existingReplicas []types.ReplicaLocation, sourceNodeID string, target types.ReplicaLocation) bool {
-	if rp == nil || !rp.HasReplication() {
-		return true // no replication constraint
+	locs := make([]balancer.Location, len(existingReplicas))
+	for i, r := range existingReplicas {
+		locs[i] = toBalancerLocation(r)
 	}
-
-	// Build the replica set after the move: remove source, add target
-	afterMove := make([]types.ReplicaLocation, 0, len(existingReplicas))
-	sourceFound := false
-	for _, r := range existingReplicas {
-		if r.NodeID == sourceNodeID {
-			sourceFound = true
-		} else {
-			afterMove = append(afterMove, r)
-		}
-	}
-	if !sourceFound {
-		// Source not in replica list — cluster state may be inconsistent.
-		// Treat as unsafe to avoid incorrect placement decisions.
-		return false
-	}
-
-	// Best-effort machine anti-affinity: don't move a replica onto a host that
-	// already holds another replica of this volume, so a single machine failure
-	// can't take out two replicas.
-	if target.Host != "" {
-		for _, r := range afterMove {
-			if r.Host == target.Host {
-				return false
-			}
-		}
-	}
-
-	return satisfyReplicaPlacement(rp, afterMove, target)
+	return balancer.IsGoodMove(rp, locs, sourceNodeID, toBalancerLocation(target))
 }
 
-// satisfyReplicaPlacement checks whether placing a replica at target
-// is consistent with the replication policy, given the existing replicas.
-// Ported from weed/shell/command_volume_fix_replication.go
-func satisfyReplicaPlacement(rp *super_block.ReplicaPlacement, replicas []types.ReplicaLocation, target types.ReplicaLocation) bool {
-	existingDCs, _, existingNodes := countReplicas(replicas)
-
-	targetNK := nodeKey{DataCenter: target.DataCenter, Rack: target.Rack, NodeID: target.NodeID}
-	if _, found := existingNodes[targetNK]; found {
-		// avoid duplicated volume on the same data node
-		return false
+// toBalancerLocation copies a worker replica location to the shared placement
+// type field-by-field, so a future change to either struct is a compile error
+// here rather than a silent mismatch.
+func toBalancerLocation(r types.ReplicaLocation) balancer.Location {
+	return balancer.Location{
+		DataCenter: r.DataCenter,
+		Rack:       r.Rack,
+		NodeID:     r.NodeID,
+		Host:       r.Host,
 	}
-
-	primaryDCs, _ := findTopDCKeys(existingDCs)
-
-	// ensure data center count is within limit
-	if _, found := existingDCs[target.DataCenter]; !found {
-		// different from existing dcs
-		if len(existingDCs) < rp.DiffDataCenterCount+1 {
-			return true
-		}
-		return false
-	}
-	// now same as one of existing data centers
-	if !slices.Contains(primaryDCs, target.DataCenter) {
-		return false
-	}
-
-	// now on a primary dc - check racks within this DC
-	primaryDcRacks := make(map[rackKey]int)
-	for _, r := range replicas {
-		if r.DataCenter != target.DataCenter {
-			continue
-		}
-		primaryDcRacks[rackKey{DataCenter: r.DataCenter, Rack: r.Rack}]++
-	}
-
-	targetRK := rackKey{DataCenter: target.DataCenter, Rack: target.Rack}
-	primaryRacks, _ := findTopRackKeys(primaryDcRacks)
-	sameRackCount := primaryDcRacks[targetRK]
-
-	if _, found := primaryDcRacks[targetRK]; !found {
-		// different from existing racks
-		if len(primaryDcRacks) < rp.DiffRackCount+1 {
-			return true
-		}
-		return false
-	}
-	// same as one of existing racks
-	if !slices.Contains(primaryRacks, targetRK) {
-		return false
-	}
-
-	// on primary rack - check same-rack count
-	if sameRackCount < rp.SameRackCount+1 {
-		return true
-	}
-	return false
-}
-
-func countReplicas(replicas []types.ReplicaLocation) (dcCounts map[string]int, rackCounts map[rackKey]int, nodeCounts map[nodeKey]int) {
-	dcCounts = make(map[string]int)
-	rackCounts = make(map[rackKey]int)
-	nodeCounts = make(map[nodeKey]int)
-	for _, r := range replicas {
-		dcCounts[r.DataCenter]++
-		rackCounts[rackKey{DataCenter: r.DataCenter, Rack: r.Rack}]++
-		nodeCounts[nodeKey{DataCenter: r.DataCenter, Rack: r.Rack, NodeID: r.NodeID}]++
-	}
-	return
-}
-
-func findTopDCKeys(m map[string]int) (topKeys []string, max int) {
-	for k, c := range m {
-		if max < c {
-			topKeys = topKeys[:0]
-			topKeys = append(topKeys, k)
-			max = c
-		} else if max == c {
-			topKeys = append(topKeys, k)
-		}
-	}
-	return
-}
-
-func findTopRackKeys(m map[rackKey]int) (topKeys []rackKey, max int) {
-	for k, c := range m {
-		if max < c {
-			topKeys = topKeys[:0]
-			topKeys = append(topKeys, k)
-			max = c
-		} else if max == c {
-			topKeys = append(topKeys, k)
-		}
-	}
-	return
 }

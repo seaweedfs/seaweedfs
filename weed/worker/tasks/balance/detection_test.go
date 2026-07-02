@@ -13,12 +13,14 @@ import (
 
 // serverSpec describes a server for the topology builder.
 type serverSpec struct {
-	id         string // e.g. "node-1"
-	diskType   string // e.g. "ssd", "hdd"
-	diskID     uint32
-	dc         string
-	rack       string
-	maxVolumes int64
+	id             string // e.g. "node-1"
+	diskType       string // e.g. "ssd", "hdd"
+	diskID         uint32
+	dc             string
+	rack           string
+	maxVolumes     int64
+	diskTotalBytes uint64 // physical disk capacity (0 = not reported)
+	diskFreeBytes  uint64
 }
 
 // buildTopology constructs an ActiveTopology from server specs and volume metrics.
@@ -54,6 +56,8 @@ func buildTopology(servers []serverSpec, metrics []*types.VolumeHealthMetrics) *
 					VolumeInfos:    volumesByServer[s.id],
 					VolumeCount:    int64(len(volumesByServer[s.id])),
 					MaxVolumeCount: maxVol,
+					DiskTotalBytes: s.diskTotalBytes,
+					DiskFreeBytes:  s.diskFreeBytes,
 				},
 			},
 		}
@@ -398,6 +402,93 @@ func TestDetection_ImbalancedDiskType(t *testing.T) {
 		if task.TypedParams.Targets[0].Node != "ssd-server-2:8080" {
 			t.Errorf("Task %d: expected target ssd-server-2:8080, got %s", i, task.TypedParams.Targets[0].Node)
 		}
+	}
+}
+
+// Issue #10160 in the maintenance worker: an over-configured maxVolumeCount makes
+// a physically full server look under-utilized by slot count, so the greedy
+// least-utilized-destination pick would drain onto it. The physical-disk gate
+// must steer moves to a genuinely empty disk and never target the full one.
+func TestDetection_SkipsPhysicallyFullDestination(t *testing.T) {
+	const gb = uint64(1) << 30
+	servers := []serverSpec{
+		{id: "src", diskType: "hdd", dc: "dc1", rack: "rack1", maxVolumes: 10},
+		{id: "disk-full", diskType: "hdd", dc: "dc1", rack: "rack1", maxVolumes: 1000, diskTotalBytes: 1000 * gb, diskFreeBytes: 40 * gb},   // 96% used
+		{id: "disk-empty", diskType: "hdd", dc: "dc1", rack: "rack1", maxVolumes: 1000, diskTotalBytes: 1000 * gb, diskFreeBytes: 900 * gb}, // 10% used
+	}
+	metrics := makeVolumes("src", "hdd", "dc1", "rack1", "c1", 1, 8)
+
+	at := buildTopology(servers, metrics)
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+
+	tasks, _, err := Detection(metrics, clusterInfo, defaultConf(), 100)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+	if len(tasks) == 0 {
+		t.Fatal("expected balance tasks for the imbalanced cluster, got 0")
+	}
+	targetedEmpty := false
+	for i, task := range tasks {
+		tgt := task.TypedParams.Targets[0].Node
+		if tgt == "disk-full:8080" {
+			t.Errorf("task %d targeted the physically full server %s", i, tgt)
+		}
+		if tgt == "disk-empty:8080" {
+			targetedEmpty = true
+		}
+	}
+	if !targetedEmpty {
+		t.Error("expected at least one task to target the physically empty server")
+	}
+}
+
+// When every candidate destination is physically full, the worker must create no
+// tasks rather than pile onto a full disk.
+func TestDetection_NoDestinationWhenAllDisksFull(t *testing.T) {
+	const gb = uint64(1) << 30
+	servers := []serverSpec{
+		{id: "src", diskType: "hdd", dc: "dc1", rack: "rack1", maxVolumes: 10, diskTotalBytes: 1000 * gb, diskFreeBytes: 40 * gb},
+		{id: "disk-full", diskType: "hdd", dc: "dc1", rack: "rack1", maxVolumes: 1000, diskTotalBytes: 1000 * gb, diskFreeBytes: 40 * gb},
+	}
+	metrics := makeVolumes("src", "hdd", "dc1", "rack1", "c1", 1, 8)
+
+	at := buildTopology(servers, metrics)
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+
+	tasks, _, err := Detection(metrics, clusterInfo, defaultConf(), 100)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+	if len(tasks) != 0 {
+		t.Fatalf("expected no tasks when all destinations are physically full, got %d", len(tasks))
+	}
+}
+
+// near-full is at 85% (under the mark) but moving one 100-byte volume onto its
+// 1000-byte disk would reach 95%, so it must not be targeted.
+func TestDetection_ProjectsVolumeOntoNearFullDestination(t *testing.T) {
+	servers := []serverSpec{
+		{id: "src", diskType: "hdd", dc: "dc1", rack: "rack1", maxVolumes: 10},
+		{id: "near-full", diskType: "hdd", dc: "dc1", rack: "rack1", maxVolumes: 1000, diskTotalBytes: 1000, diskFreeBytes: 150},
+	}
+	metrics := make([]*types.VolumeHealthMetrics, 8)
+	for i := range metrics {
+		metrics[i] = &types.VolumeHealthMetrics{
+			VolumeID: uint32(i + 1), Server: "src", ServerAddress: "src:8080",
+			DiskType: "hdd", Collection: "c1", Size: 100, DataCenter: "dc1", Rack: "rack1",
+		}
+	}
+
+	at := buildTopology(servers, metrics)
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+
+	tasks, _, err := Detection(metrics, clusterInfo, defaultConf(), 100)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+	if len(tasks) != 0 {
+		t.Fatalf("expected no tasks: the projected move would cross 90%% disk usage, got %d", len(tasks))
 	}
 }
 

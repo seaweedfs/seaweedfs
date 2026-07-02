@@ -107,9 +107,7 @@ func TestUploadWithRetryDataReassignsOnVolumeSizeExceeded(t *testing.T) {
 			return "1,first", "volume-a", "", nil
 		}
 		return "2,second", "volume-b", "", nil
-	}, &UploadOption{Filename: "test.bin"}, func(host, fileId string) string {
-		return "http://" + host + "/" + fileId
-	}, []byte("abc"))
+	}, &UploadOption{Filename: "test.bin"}, []byte("abc"))
 
 	if err != nil {
 		t.Fatalf("expected success after reassignment, got %v", err)
@@ -210,7 +208,6 @@ func TestUploadWithRetryBoundsAssignVolume(t *testing.T) {
 		_, _, err, _ := uploader.UploadWithRetry(client,
 			&filer_pb.AssignVolumeRequest{Count: 1},
 			&UploadOption{Filename: "test.bin"},
-			func(host, fileId string) string { return "http://" + host + "/" + fileId },
 			bytes.NewReader([]byte("abc")),
 		)
 		done <- err

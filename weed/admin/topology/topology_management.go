@@ -216,27 +216,22 @@ func (at *ActiveTopology) rebuildIndexes() {
 	at.volumeIndex = make(map[uint32][]string)
 	at.ecShardIndex = make(map[uint32][]string)
 
-	// Index by the per-record DiskId (not the outer DiskInfo.DiskId) so the
-	// keys match the per-physical-disk activeDisk entries — see #9369.
+	// Derive index keys from the same SplitByPhysicalDisk reconstruction that
+	// builds at.disks, so every volume/EC lookup resolves to a real activeDisk
+	// entry. Re-deriving the per-record disk id here would diverge on physical
+	// disk 0, which the raw DiskId cannot tell apart from the "unset" default.
 	for _, dc := range at.topologyInfo.DataCenterInfos {
 		for _, rack := range dc.RackInfos {
 			for _, nodeInfo := range rack.DataNodeInfos {
 				for _, diskInfo := range nodeInfo.DiskInfos {
-					for _, volumeInfo := range diskInfo.VolumeInfos {
-						diskID := volumeInfo.DiskId
-						if diskID == 0 && diskInfo.DiskId != 0 {
-							diskID = diskInfo.DiskId
+					for _, perDisk := range diskInfo.SplitByPhysicalDisk() {
+						diskKey := fmt.Sprintf("%s:%d", nodeInfo.Id, perDisk.DiskId)
+						for _, volumeInfo := range perDisk.VolumeInfos {
+							at.volumeIndex[volumeInfo.Id] = append(at.volumeIndex[volumeInfo.Id], diskKey)
 						}
-						diskKey := fmt.Sprintf("%s:%d", nodeInfo.Id, diskID)
-						at.volumeIndex[volumeInfo.Id] = append(at.volumeIndex[volumeInfo.Id], diskKey)
-					}
-					for _, ecShardInfo := range diskInfo.EcShardInfos {
-						diskID := ecShardInfo.DiskId
-						if diskID == 0 && diskInfo.DiskId != 0 {
-							diskID = diskInfo.DiskId
+						for _, ecShardInfo := range perDisk.EcShardInfos {
+							at.ecShardIndex[ecShardInfo.Id] = append(at.ecShardIndex[ecShardInfo.Id], diskKey)
 						}
-						diskKey := fmt.Sprintf("%s:%d", nodeInfo.Id, diskID)
-						at.ecShardIndex[ecShardInfo.Id] = append(at.ecShardIndex[ecShardInfo.Id], diskKey)
 					}
 				}
 			}

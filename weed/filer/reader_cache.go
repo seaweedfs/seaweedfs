@@ -116,6 +116,10 @@ func (rc *ReaderCache) ReadChunkAt(ctx context.Context, buffer []byte, fileId st
 				rc.Lock()
 				continue
 			}
+			// Count this read on the cacher before releasing the map lock, so a
+			// concurrent destroy() (error eviction here, LRU, or UnCache) cannot
+			// start wg.Wait() on a zero counter while this read is about to register.
+			cacher.wg.Add(1)
 			rc.Unlock()
 			n, err := cacher.readChunkAt(ctx, buffer, offset)
 			if n > 0 || err != nil {
@@ -157,6 +161,7 @@ func (rc *ReaderCache) ReadChunkAt(ctx context.Context, buffer []byte, fileId st
 	go cacher.startCaching()
 	<-cacher.cacheStartedCh
 	rc.downloaders[fileId] = cacher
+	cacher.wg.Add(1)
 	rc.Unlock()
 
 	return cacher.readChunkAt(ctx, buffer, offset)
@@ -302,8 +307,8 @@ func (s *SingleChunkCacher) destroy() {
 // It waits for the download to complete if it's still in progress.
 // The ctx parameter allows the reader to cancel its wait (but the download continues
 // for other readers - see comment in startCaching about shared resource semantics).
+// The caller must s.wg.Add(1) under the ReaderCache lock before calling; this only releases it.
 func (s *SingleChunkCacher) readChunkAt(ctx context.Context, buf []byte, offset int64) (int, error) {
-	s.wg.Add(1)
 	defer s.wg.Done()
 
 	// Wait for download to complete, but allow reader cancellation.

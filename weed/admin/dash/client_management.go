@@ -76,9 +76,7 @@ func (s *AdminServer) getDiscoveredFilers() []string {
 	// Discover filers from masters
 	var filers []string
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
-			ClientType: cluster.FilerType,
-		})
+		resp, err := client.ListClusterNodes(context.Background(), s.listClusterNodesRequest(cluster.FilerType))
 		if err != nil {
 			return err
 		}

@@ -93,6 +93,13 @@ func (vs *VolumeServer) ScrubVolume(ctx context.Context, req *volume_server_pb.S
 }
 
 func (vs *VolumeServer) ScrubEcVolume(ctx context.Context, req *volume_server_pb.ScrubEcVolumeRequest) (*volume_server_pb.ScrubEcVolumeResponse, error) {
+	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
+		return nil, err
+	}
+	if req.GetForceDeletedNeedlesCheck() && req.GetMode() != volume_server_pb.VolumeScrubMode_FULL {
+		return nil, fmt.Errorf("deleted needle checks are only supported for FULL scrubs")
+	}
+
 	vids := []needle.VolumeId{}
 	if len(req.GetVolumeIds()) == 0 {
 		for _, l := range vs.store.Locations {
@@ -124,8 +131,7 @@ func (vs *VolumeServer) ScrubEcVolume(ctx context.Context, req *volume_server_pb
 		case volume_server_pb.VolumeScrubMode_LOCAL:
 			files, shardInfos, serrs = v.ScrubLocal()
 		case volume_server_pb.VolumeScrubMode_FULL:
-			// TODO: expose force_deleted_needles_check in the RPC and weed shell.
-			files, shardInfos, serrs = vs.store.ScrubEcVolume(v.VolumeId, false)
+			files, shardInfos, serrs = vs.store.ScrubEcVolume(v.VolumeId, req.GetForceDeletedNeedlesCheck())
 		case volume_server_pb.VolumeScrubMode_CHECKSUM:
 			// Verify each local shard's raw bytes against the bitrot sidecar,
 			// exercising cold parity shards. Read-only. ChecksumScrub's first

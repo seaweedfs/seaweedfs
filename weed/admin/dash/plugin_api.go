@@ -805,9 +805,7 @@ func (s *AdminServer) buildDefaultPluginClusterContext() *plugin_pb.ClusterConte
 
 	s3Seen := map[string]struct{}{}
 	if err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
-			ClientType: cluster.S3Type,
-		})
+		resp, err := client.ListClusterNodes(context.Background(), s.listClusterNodesRequest(cluster.S3Type))
 		if err != nil {
 			return err
 		}

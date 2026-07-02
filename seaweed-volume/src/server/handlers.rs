@@ -546,6 +546,23 @@ async fn do_replicated_request(
     .await
     .map_err(|e| format!("lookup volume failed: {}", e))?;
 
+    // Mirror Go's GetWritableRemoteReplications: reject when the master reports fewer replicas than
+    // the copy count. lookup_volume is uncached, so recovery is immediate once the replica re-registers.
+    let copy_count = {
+        let store = state.store.read().unwrap();
+        store.find_volume(VolumeId(vid)).map_or(1, |(_, v)| {
+            v.super_block.replica_placement.get_copy_count()
+        })
+    };
+    if locations.len() < copy_count as usize {
+        return Err(format!(
+            "replicating operations [{}] is less than volume {} replication copy count [{}]",
+            locations.len(),
+            vid,
+            copy_count
+        ));
+    }
+
     let self_http = to_http_address(&state.self_url);
     let remote_locations: Vec<_> = locations
         .into_iter()
@@ -1262,7 +1279,9 @@ async fn get_or_head_handler_inner(
             &query,
             &etag,
             &last_modified_str,
-        ) {
+        )
+        .await
+        {
             return resp;
         }
         // If manifest expansion fails (invalid JSON etc.), fall through to raw data
@@ -3179,12 +3198,11 @@ struct ChunkManifest {
 struct ChunkInfo {
     fid: String,
     offset: i64,
-    #[allow(dead_code)]
     size: i64,
 }
 
 /// Try to expand a chunk manifest needle. Returns None if manifest can't be parsed.
-fn try_expand_chunk_manifest(
+async fn try_expand_chunk_manifest(
     state: &Arc<VolumeServerState>,
     n: &Needle,
     _headers: &HeaderMap,
@@ -3224,29 +3242,26 @@ fn try_expand_chunk_manifest(
         return None;
     }
 
-    // Read and concatenate all chunks
+    // Read and concatenate all chunks. Each chunk is resolved to wherever it
+    // lives — a local regular volume, a local EC volume (reconstruct-on-read),
+    // or a peer via master lookup — mirroring Go's ChunkedFileReader, which
+    // never assumes chunks are local regular needles.
     let mut result = vec![0u8; manifest.size as usize];
-    let store = state.store.read().unwrap();
     for chunk in &manifest.chunks {
-        let (chunk_vid, chunk_nid, chunk_cookie) = match parse_url_path(&chunk.fid) {
-            Some(p) => p,
-            None => {
-                return Some(
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("invalid chunk fid: {}", chunk.fid),
-                    )
-                        .into_response(),
+        // Validate the attacker-controlled chunk offset before indexing: a
+        // negative value would wrap to a huge usize, and an out-of-range one has
+        // nowhere to land.
+        if chunk.offset < 0 || chunk.size < 0 {
+            return Some(
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("invalid negative chunk offset/size in {}", chunk.fid),
                 )
-            }
-        };
-        let mut chunk_needle = Needle {
-            id: chunk_nid,
-            cookie: chunk_cookie,
-            ..Needle::default()
-        };
-        match store.read_volume_needle(chunk_vid, &mut chunk_needle) {
-            Ok(_) => {}
+                    .into_response(),
+            );
+        }
+        let data = match read_chunk_needle(state, &chunk.fid).await {
+            Ok(d) => d,
             Err(e) => {
                 return Some(
                     (
@@ -3256,56 +3271,16 @@ fn try_expand_chunk_manifest(
                         .into_response(),
                 )
             }
-        }
-        // Validate the attacker-controlled chunk offset before indexing: a
-        // negative value would wrap to a huge usize, and an out-of-range one has
-        // nowhere to land.
-        if chunk.offset < 0 {
-            return Some(
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("invalid negative chunk offset in {}", chunk.fid),
-                )
-                    .into_response(),
-            );
-        }
+        };
         let offset = chunk.offset as usize;
         if offset >= result.len() {
             continue;
         }
-        // Write the chunk into its window in `result`. Compressed chunks inflate
-        // directly into the destination slice (bounded by the remaining window),
-        // so a chunk never allocates a second large buffer — peak memory stays at
-        // ~manifest.size instead of doubling. Bytes past the window are dropped,
-        // matching the prior truncation behavior.
-        if chunk_needle.is_compressed() {
-            use flate2::read::GzDecoder;
-            use std::io::Read as _;
-            let mut decoder = GzDecoder::new(&chunk_needle.data[..]);
-            let window = &mut result[offset..];
-            let mut written = 0usize;
-            let mut decode_failed = false;
-            while written < window.len() {
-                match decoder.read(&mut window[written..]) {
-                    Ok(0) => break,
-                    Ok(n) => written += n,
-                    Err(_) => {
-                        decode_failed = true;
-                        break;
-                    }
-                }
-            }
-            // On any decode failure, drop the partial output and fall back to the
-            // chunk's raw bytes (truncated to the window), preserving prior behavior.
-            if decode_failed {
-                window[..written].fill(0);
-                let copy_len = chunk_needle.data.len().min(window.len());
-                window[..copy_len].copy_from_slice(&chunk_needle.data[..copy_len]);
-            }
-        } else {
-            let copy_len = chunk_needle.data.len().min(result.len() - offset);
-            result[offset..offset + copy_len].copy_from_slice(&chunk_needle.data[..copy_len]);
-        }
+        // Clamp to the chunk's declared size so an over-long chunk can't bleed
+        // into the next chunk's window; also drop bytes past the buffer end.
+        let bound = (chunk.size as usize).min(result.len() - offset);
+        let copy_len = data.len().min(bound);
+        result[offset..offset + copy_len].copy_from_slice(&data[..copy_len]);
     }
 
     // Determine filename: URL path filename, then manifest name
@@ -3449,6 +3424,136 @@ fn try_expand_chunk_manifest(
     }
 
     Some((StatusCode::OK, response_headers, result).into_response())
+}
+
+/// Read one chunk-manifest chunk's final (decompressed) content bytes from
+/// wherever it lives: a local regular volume, a local EC volume
+/// (reconstruct-on-read from surviving shards), or a peer resolved via the
+/// master. Mirrors Go's ChunkedFileReader, which looks every chunk up through
+/// the master instead of assuming a local regular needle.
+async fn read_chunk_needle(
+    state: &Arc<VolumeServerState>,
+    fid: &str,
+) -> Result<Vec<u8>, String> {
+    let (vid, nid, cookie) =
+        parse_url_path(fid).ok_or_else(|| format!("invalid chunk fid: {}", fid))?;
+
+    // Decide where the chunk lives under one store read lock; drop it before any
+    // await (the EC and remote paths are async).
+    enum Placement {
+        Ec,
+        Remote,
+    }
+    let placement = {
+        let store = state.store.read().unwrap();
+        if store.find_volume(vid).is_some() {
+            let mut n = Needle {
+                id: nid,
+                cookie,
+                ..Needle::default()
+            };
+            return store
+                .read_volume_needle(vid, &mut n)
+                .map_err(|e| format!("{}", e))
+                .and_then(|_| cookie_checked_chunk(n, cookie));
+        } else if store.find_ec_volume(vid).is_some() {
+            Placement::Ec
+        } else {
+            Placement::Remote
+        }
+    };
+
+    match placement {
+        Placement::Ec => {
+            match crate::server::store_ec::read_ec_shard_needle_distributed(state, vid, nid).await {
+                Ok(Some(n)) => cookie_checked_chunk(n, cookie),
+                Ok(None) => Err("not found".to_string()),
+                Err(e) => Err(format!("{}", e)),
+            }
+        }
+        // The peer serves through its own GET handler, which validates the cookie.
+        Placement::Remote => read_remote_chunk_needle(state, vid, fid).await,
+    }
+}
+
+/// Validate a locally-read chunk's cookie against the one in its fid, then return
+/// its content bytes. The main GET paths check the cookie after a read; a chunk
+/// read must do the same so a stale/guessed id can't serve another needle's data.
+fn cookie_checked_chunk(n: Needle, cookie: Cookie) -> Result<Vec<u8>, String> {
+    if n.cookie != cookie {
+        return Err("not found".to_string());
+    }
+    decompress_chunk(n)
+}
+
+/// Return a needle's content bytes, decompressing gzip payloads the way the read
+/// handler does for a client that did not ask for gzip.
+fn decompress_chunk(n: Needle) -> Result<Vec<u8>, String> {
+    if n.is_compressed() {
+        match maybe_decompress_gzip(&n.data) {
+            Ok(d) => Ok(d),
+            Err(GunzipError::TooLarge) => {
+                Err("compressed chunk exceeds decompression limit".to_string())
+            }
+            // Not valid gzip; keep the raw bytes, matching the prior fallback.
+            Err(GunzipError::Decode) => Ok(n.data),
+        }
+    } else {
+        Ok(n.data)
+    }
+}
+
+/// Fetch a chunk that is not hosted locally from a peer volume server. The peer
+/// serves the final (decompressed) bytes whether the chunk is on a regular or EC
+/// volume, so a chunk whose EC shards live elsewhere is still reconstructed on
+/// the holder's side. Mirrors Go's ChunkedFileReader.readChunkNeedle.
+async fn read_remote_chunk_needle(
+    state: &Arc<VolumeServerState>,
+    vid: VolumeId,
+    fid: &str,
+) -> Result<Vec<u8>, String> {
+    let locations = lookup_volume(
+        &state.http_client,
+        &state.outgoing_http_scheme,
+        &state.master_url,
+        vid.0,
+    )
+    .await?;
+    if locations.is_empty() {
+        return Err("not found".to_string());
+    }
+
+    let mut last_err = String::new();
+    for loc in &locations {
+        // Skip self: the local paths already ruled this server out.
+        if loc.url.contains(&state.self_url) {
+            continue;
+        }
+        let target_http = to_http_address(&loc.url);
+        let url = match normalize_outgoing_http_url(
+            &state.outgoing_http_scheme,
+            &format!("{}/{}?proxied=true", target_http, fid),
+        ) {
+            Ok(u) => u,
+            Err(e) => {
+                last_err = e;
+                continue;
+            }
+        };
+        match state.http_client.get(&url).send().await {
+            Ok(resp) if resp.status().is_success() => match resp.bytes().await {
+                Ok(b) => return Ok(b.to_vec()),
+                Err(e) => last_err = format!("read body from {}: {}", url, e),
+            },
+            Ok(resp) => last_err = format!("{} returned {}", url, resp.status()),
+            Err(e) => last_err = format!("request to {} failed: {}", url, e),
+        }
+    }
+    Err(if last_err.is_empty() {
+        "not found".to_string()
+    } else {
+        last_err
+    })
 }
 
 // ============================================================================

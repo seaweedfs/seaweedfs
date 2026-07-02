@@ -25,7 +25,15 @@ type DataNode struct {
 	IsTerminating bool
 
 	MaintenanceMode bool
-	diskTags        map[uint32][]string
+	// diskMetas holds each physical disk's tags, type, and capacity from the
+	// heartbeat DiskTags, including disks with no volumes or EC shards.
+	diskMetas map[uint32]diskMeta
+}
+
+type diskMeta struct {
+	tags           []string
+	diskType       types.DiskType
+	maxVolumeCount int64
 }
 
 func NewDataNode(id string) *DataNode {
@@ -155,6 +163,33 @@ func (dn *DataNode) AdjustMaxVolumeCounts(maxVolumeCounts map[string]uint32) {
 		disk := dn.getOrCreateDisk(dt.String())
 		disk.UpAdjustDiskUsageDelta(dt, &DiskUsageCounts{
 			maxVolumeCount: int64(maxVolumeCount) - currentDiskUsageMaxVolumeCount,
+		})
+	}
+}
+
+// AdjustDiskUsageBytes records the physical filesystem capacity a volume server
+// reports per disk type, applied as a delta so it flows through the same
+// aggregation as the volume counts. Mirrors AdjustMaxVolumeCounts; entries with a
+// zero total are treated as "not reported" and skipped.
+func (dn *DataNode) AdjustDiskUsageBytes(diskTotalBytes, diskFreeBytes map[string]uint64) {
+	for diskType, totalBytes := range diskTotalBytes {
+		// Unlike maxVolumeCount, a 0 here is not "unset" but "not reported": let it
+		// flow through so a later heartbeat that drops physical-capacity reporting
+		// (e.g. statfs starts failing) clears the stale bytes and the gate falls
+		// back to slot-only instead of trusting outdated capacity.
+		dt := types.ToDiskType(diskType)
+		currentDiskUsage := dn.diskUsages.getOrCreateDisk(dt)
+		currentTotal := atomic.LoadInt64(&currentDiskUsage.diskTotalBytes)
+		currentFree := atomic.LoadInt64(&currentDiskUsage.diskFreeBytes)
+		newTotal := int64(totalBytes)
+		newFree := int64(diskFreeBytes[diskType])
+		if currentTotal == newTotal && currentFree == newFree {
+			continue
+		}
+		disk := dn.getOrCreateDisk(dt.String())
+		disk.UpAdjustDiskUsageDelta(dt, &DiskUsageCounts{
+			diskTotalBytes: newTotal - currentTotal,
+			diskFreeBytes:  newFree - currentFree,
 		})
 	}
 }
@@ -294,17 +329,35 @@ func (dn *DataNode) ToDataNodeInfo() *master_pb.DataNodeInfo {
 	}
 
 	dn.RLock()
-	diskTags := make(map[uint32][]string, len(dn.diskTags))
-	for diskID, tags := range dn.diskTags {
-		diskTags[diskID] = append([]string(nil), tags...)
+	metas := make(map[uint32]diskMeta, len(dn.diskMetas))
+	for diskID, meta := range dn.diskMetas {
+		metas[diskID] = meta
 	}
 	dn.RUnlock()
 	for _, diskInfo := range m.DiskInfos {
 		if diskInfo == nil {
 			continue
 		}
-		if tags, found := diskTags[diskInfo.DiskId]; found {
-			diskInfo.Tags = append([]string(nil), tags...)
+		if meta, found := metas[diskInfo.DiskId]; found {
+			diskInfo.Tags = append([]string(nil), meta.tags...)
+		}
+		// Max per physical disk of this type, empty and unavailable (max 0) ones
+		// included. Emit only when some disk reports capacity, so an older server
+		// sending all zeros leaves the map nil and falls back.
+		diskType := types.ToDiskType(diskInfo.Type)
+		maxByDisk := make(map[uint32]int64)
+		anyCapacity := false
+		for diskID, meta := range metas {
+			if meta.diskType != diskType {
+				continue
+			}
+			if meta.maxVolumeCount > 0 {
+				anyCapacity = true
+			}
+			maxByDisk[diskID] = meta.maxVolumeCount
+		}
+		if anyCapacity {
+			diskInfo.MaxVolumeCountByDisk = maxByDisk
 		}
 	}
 	return m
@@ -314,16 +367,21 @@ func (dn *DataNode) UpdateDiskTags(tags []*master_pb.DiskTag) {
 	if len(tags) == 0 {
 		return
 	}
-	dn.Lock()
-	if dn.diskTags == nil {
-		dn.diskTags = make(map[uint32][]string, len(tags))
-	}
+	// DiskTags is the full list on each full heartbeat; rebuild fresh to drop
+	// removed disks.
+	metas := make(map[uint32]diskMeta, len(tags))
 	for _, tagInfo := range tags {
 		if tagInfo == nil {
 			continue
 		}
-		dn.diskTags[tagInfo.DiskId] = append([]string(nil), tagInfo.Tags...)
+		metas[tagInfo.DiskId] = diskMeta{
+			tags:           append([]string(nil), tagInfo.Tags...),
+			diskType:       types.ToDiskType(tagInfo.Type),
+			maxVolumeCount: tagInfo.MaxVolumeCount,
+		}
 	}
+	dn.Lock()
+	dn.diskMetas = metas
 	dn.Unlock()
 }
 

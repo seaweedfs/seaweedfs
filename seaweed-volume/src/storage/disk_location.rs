@@ -38,6 +38,10 @@ pub struct DiskLocation {
     ec_volumes: HashMap<VolumeId, EcVolume>,
     pub is_disk_space_low: Arc<AtomicBool>,
     pub available_space: AtomicU64,
+    // Physical filesystem capacity from the latest check_disk_space probe, reported
+    // to the master so balancing can see real disk fullness, not just slot counts.
+    pub disk_total_bytes: AtomicU64,
+    pub disk_free_bytes: AtomicU64,
     pub min_free_space: MinFreeSpace,
 }
 
@@ -74,6 +78,8 @@ impl DiskLocation {
             ec_volumes: HashMap::new(),
             is_disk_space_low: Arc::new(AtomicBool::new(false)),
             available_space: AtomicU64::new(0),
+            disk_total_bytes: AtomicU64::new(0),
+            disk_free_bytes: AtomicU64::new(0),
             min_free_space,
         })
     }
@@ -395,6 +401,12 @@ impl DiskLocation {
         for i in 0..MAX_SHARD_COUNT {
             rm_if_present(format!("{}.ec{:02}", base, i))?;
         }
+
+        // Remove the bitrot checksum sidecars from both the data and idx dirs.
+        remove_bitrot_sidecars(&base)?;
+        if self.idx_directory != self.directory {
+            remove_bitrot_sidecars(&idx_base)?;
+        }
         Ok(())
     }
 
@@ -655,6 +667,8 @@ impl DiskLocation {
         };
         self.is_disk_space_low.store(is_low, Ordering::Relaxed);
         self.available_space.store(free, Ordering::Relaxed);
+        self.disk_total_bytes.store(total, Ordering::Relaxed);
+        self.disk_free_bytes.store(free, Ordering::Relaxed);
 
         // Update resource gauges
         crate::metrics::RESOURCE_GAUGE
@@ -1078,6 +1092,49 @@ fn rm_if_present(path: String) -> io::Result<()> {
     match fs::remove_file(&path) {
         Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
         _ => Ok(()),
+    }
+}
+
+/// Remove the bitrot checksum sidecars for a base file name: the legacy
+/// `<base>.ecsum` (generation 0) and any versioned `<base>.ecsum.v<N>`.
+/// Already-gone is success; returns the first real removal failure (and surfaces
+/// a directory-scan error) so a stale sidecar left behind is not reported as
+/// cleaned. Mirrors Go's removeBitrotSidecars.
+fn remove_bitrot_sidecars(base: &str) -> io::Result<()> {
+    use crate::storage::erasure_coding::ec_bitrot::BITROT_SIDECAR_EXT;
+    let rm = |path: std::path::PathBuf| -> io::Result<()> {
+        match fs::remove_file(&path) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        }
+    };
+    let mut first_err: Option<io::Error> = None;
+    let mut record = |res: io::Result<()>| {
+        if let Err(e) = res {
+            if first_err.is_none() {
+                first_err = Some(e);
+            }
+        }
+    };
+    record(rm(format!("{}{}", base, BITROT_SIDECAR_EXT).into()));
+    let path = std::path::Path::new(base);
+    if let (Some(parent), Some(fname)) = (path.parent(), path.file_name()) {
+        let prefix = format!("{}{}.v", fname.to_string_lossy(), BITROT_SIDECAR_EXT);
+        match fs::read_dir(parent) {
+            Ok(entries) => {
+                for entry in entries.flatten() {
+                    if entry.file_name().to_string_lossy().starts_with(&prefix) {
+                        record(rm(entry.path()));
+                    }
+                }
+            }
+            Err(e) if e.kind() != io::ErrorKind::NotFound => record(Err(e)),
+            Err(_) => {}
+        }
+    }
+    match first_err {
+        Some(e) => Err(e),
+        None => Ok(()),
     }
 }
 
