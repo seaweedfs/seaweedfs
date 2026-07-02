@@ -2,6 +2,7 @@ package pb
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"sync/atomic"
@@ -145,10 +146,10 @@ func (t *testLogFiles) totalEvents() int {
 	return total
 }
 
-// TestReadLogFileRefsMergeOrder verifies that entries from multiple filers are
-// delivered in correct timestamp order.
-func TestReadLogFileRefsMergeOrder(t *testing.T) {
-	files := newTestLogFiles(3, 2, 50, 0)
+// assertOrderedReplay reads all refs and checks every event arrives exactly
+// once, in timestamp order.
+func assertOrderedReplay(t *testing.T, files *testLogFiles) {
+	t.Helper()
 
 	var timestamps []int64
 	_, err := ReadLogFileRefs(files.refs, files.readerFn(), 0, 0,
@@ -161,20 +162,21 @@ func TestReadLogFileRefsMergeOrder(t *testing.T) {
 		t.Fatalf("ReadLogFileRefs: %v", err)
 	}
 
-	expected := files.totalEvents()
-	if len(timestamps) != expected {
-		t.Fatalf("expected %d events, got %d", expected, len(timestamps))
+	if got, want := len(timestamps), files.totalEvents(); got != want {
+		t.Fatalf("expected %d events, got %d", want, got)
 	}
-
 	for i := 1; i < len(timestamps); i++ {
 		if timestamps[i] < timestamps[i-1] {
-			t.Errorf("out of order at index %d: ts[%d]=%d > ts[%d]=%d",
+			t.Fatalf("out of order at index %d: ts[%d]=%d > ts[%d]=%d",
 				i, i-1, timestamps[i-1], i, timestamps[i])
-			break
 		}
 	}
+}
 
-	t.Logf("Verified %d events from 3 filers in correct timestamp order", len(timestamps))
+// TestReadLogFileRefsMergeOrder verifies that entries from multiple filers are
+// delivered in correct timestamp order.
+func TestReadLogFileRefsMergeOrder(t *testing.T) {
+	assertOrderedReplay(t, newTestLogFiles(3, 2, 50, 0))
 }
 
 // TestReadLogFileRefsPathFilter verifies path filtering including system log exclusion.
@@ -218,7 +220,7 @@ func TestReadLogFileRefsPathFilter(t *testing.T) {
 
 // TestDirectReadVsServerSideThroughput compares:
 //   - Server-side: sequential file read → gRPC send per event
-//   - Client direct-read: parallel filers + prefetching + no gRPC
+//   - Client direct-read: parallel filers + streaming + no gRPC
 func TestDirectReadVsServerSideThroughput(t *testing.T) {
 	const (
 		numFilers     = 3
@@ -255,7 +257,7 @@ func TestDirectReadVsServerSideThroughput(t *testing.T) {
 	})
 
 	var directRate float64
-	t.Run("client_direct_read_parallel_prefetch", func(t *testing.T) {
+	t.Run("client_direct_read_parallel_streaming", func(t *testing.T) {
 		var processed int64
 		start := time.Now()
 
@@ -270,12 +272,12 @@ func TestDirectReadVsServerSideThroughput(t *testing.T) {
 		}
 		elapsed := time.Since(start)
 		directRate = float64(processed) / elapsed.Seconds()
-		t.Logf("direct-read: %d events  %v  %6.0f events/sec  (%d filers parallel + prefetch, no gRPC)",
+		t.Logf("direct-read: %d events  %v  %6.0f events/sec  (%d filers parallel + streaming, no gRPC)",
 			processed, elapsed.Round(time.Millisecond), directRate, numFilers)
 	})
 
 	if serverRate > 0 {
-		t.Logf("Speedup: %.1fx (parallel + prefetch + no gRPC vs server-side sequential)", directRate/serverRate)
+		t.Logf("Speedup: %.1fx (parallel + streaming + no gRPC vs server-side sequential)", directRate/serverRate)
 	}
 }
 
@@ -330,54 +332,34 @@ func TestReadLogFileRefsMultiFilerNotFoundSkips(t *testing.T) {
 	}
 }
 
-// TestReadLogFileRefsSingleFilerOrder covers the single-filer streaming path
-// (readFilerFilesWithPrefetch): every entry across all files, in order.
+// TestReadLogFileRefsSingleFilerOrder covers the single-filer path: every
+// entry across all files, in order.
 func TestReadLogFileRefsSingleFilerOrder(t *testing.T) {
-	files := newTestLogFiles(1, 4, 50, 0)
-
-	var timestamps []int64
-	_, err := ReadLogFileRefs(files.refs, files.readerFn(), 0, 0,
-		PathFilter{PathPrefix: "/"},
-		func(resp *filer_pb.SubscribeMetadataResponse) error {
-			timestamps = append(timestamps, resp.TsNs)
-			return nil
-		})
-	if err != nil {
-		t.Fatalf("ReadLogFileRefs: %v", err)
-	}
-
-	if got, want := len(timestamps), files.totalEvents(); got != want {
-		t.Fatalf("expected %d events, got %d", want, got)
-	}
-	for i := 1; i < len(timestamps); i++ {
-		if timestamps[i] < timestamps[i-1] {
-			t.Fatalf("out of order at %d: %d < %d", i, timestamps[i], timestamps[i-1])
-		}
-	}
+	assertOrderedReplay(t, newTestLogFiles(1, 4, 50, 0))
 }
 
-// TestReadLogFileRefsSingleFilerProcessErrorStops verifies that a processing
-// error aborts the single-filer stream promptly without leaking the producer
-// (it must be able to drain and exit even mid-file).
+// TestReadLogFileRefsSingleFilerProcessErrorStops verifies that the callback's
+// own error propagates and aborts the stream promptly, mid-file.
 func TestReadLogFileRefsSingleFilerProcessErrorStops(t *testing.T) {
 	files := newTestLogFiles(1, 3, 100, 0)
 
-	var count int64
+	var count int
 	wantErr := fmt.Errorf("boom")
 	_, err := ReadLogFileRefs(files.refs, files.readerFn(), 0, 0,
 		PathFilter{PathPrefix: "/"},
 		func(resp *filer_pb.SubscribeMetadataResponse) error {
-			if atomic.AddInt64(&count, 1) == 5 {
+			count++
+			if count == 5 {
 				return wantErr
 			}
 			return nil
 		})
-	if err == nil {
-		t.Fatalf("expected processing error to propagate")
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected processing error to propagate, got: %v", err)
 	}
 	// Should stop near the failing event, not process the whole 300-event set.
-	if c := atomic.LoadInt64(&count); c > 20 {
-		t.Fatalf("expected prompt stop after error, processed %d events", c)
+	if count > 20 {
+		t.Fatalf("expected prompt stop after error, processed %d events", count)
 	}
 }
 
@@ -388,17 +370,17 @@ func TestReadLogFileRefsSingleFilerNotFoundSkips(t *testing.T) {
 	skipKey := files.refs[1].Chunks[0].FileId // second file
 	readerFn := failingReaderFn(files.readerFn(), skipKey, fmt.Errorf("volume not found: %s", skipKey))
 
-	var count int64
+	var count int
 	_, err := ReadLogFileRefs(files.refs, readerFn, 0, 0,
 		PathFilter{PathPrefix: "/"},
 		func(resp *filer_pb.SubscribeMetadataResponse) error {
-			atomic.AddInt64(&count, 1)
+			count++
 			return nil
 		})
 	if err != nil {
 		t.Fatalf("chunk-not-found should be skipped, got error: %v", err)
 	}
-	if got, want := count, int64(files.totalEvents()-10); got != want {
-		t.Fatalf("expected %d events after skipping one file, got %d", want, got)
+	if want := files.totalEvents() - 10; count != want {
+		t.Fatalf("expected %d events after skipping one file, got %d", want, count)
 	}
 }
