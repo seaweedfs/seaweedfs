@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -360,6 +361,26 @@ func TestReadLogFileRefsSingleFilerProcessErrorStops(t *testing.T) {
 	// Should stop near the failing event, not process the whole 300-event set.
 	if count > 20 {
 		t.Fatalf("expected prompt stop after error, processed %d events", count)
+	}
+}
+
+// A corrupt size prefix must fail the replay instead of allocating gigabytes.
+func TestReadLogFileRefsCorruptSizePrefix(t *testing.T) {
+	data := make([]byte, 4)
+	util.Uint32toBytes(data, 0xFFFFFFF0)
+	refs := []*filer_pb.LogFileChunkRef{{
+		Chunks:   []*filer_pb.FileChunk{{FileId: "corrupt"}},
+		FileTsNs: 1,
+		FilerId:  "filer00",
+	}}
+	readerFn := func(chunks []*filer_pb.FileChunk) (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(data)), nil
+	}
+
+	_, err := ReadLogFileRefs(refs, readerFn, 0, 0, PathFilter{PathPrefix: "/"},
+		func(*filer_pb.SubscribeMetadataResponse) error { return nil })
+	if err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("expected size-cap error, got: %v", err)
 	}
 }
 

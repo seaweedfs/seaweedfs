@@ -21,6 +21,10 @@ type LogFileReaderFn func(chunks []*filer_pb.FileChunk) (io.ReadCloser, error)
 // logEntryChannelSize bounds decoded entries in flight per filer stream.
 const logEntryChannelSize = 512
 
+// maxLogEntrySize guards the per-entry allocation against a corrupt size
+// prefix, mirroring the filer package's unexported constant.
+const maxLogEntrySize = 1 << 30
+
 // errReaderStopped signals that the entry consumer asked to stop (the merge
 // loop aborted or the caller hit a processing error). It is not a read failure.
 var errReaderStopped = errors.New("log entry reader stopped")
@@ -316,6 +320,9 @@ func streamLogFileEntries(newReader LogFileReaderFn, chunks []*filer_pb.FileChun
 		}
 
 		size := util.BytesToUint32(sizeBuf)
+		if size > maxLogEntrySize {
+			return fmt.Errorf("entry size %d exceeds %d", size, maxLogEntrySize)
+		}
 		entryData := make([]byte, size)
 		if _, err := io.ReadFull(reader, entryData); err != nil {
 			return err
