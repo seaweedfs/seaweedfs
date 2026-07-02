@@ -2422,7 +2422,9 @@ func (iam *IdentityAccessManagement) VerifyActionPermission(r *http.Request, ide
 // authorized through IAM policies get their owned buckets only, matching the
 // AWS behavior of ListBuckets returning the account's buckets.
 func (iam *IdentityAccessManagement) canListBucketsFromOwnerIndex(r *http.Request, identity *Identity) (ok bool, granted []string) {
-	if identity.isAdmin() {
+	// Fail closed on a nil identity: the scan path filters every bucket out
+	// without dereferencing it, while the index path would need its name.
+	if identity == nil || identity.isAdmin() {
 		return false, nil
 	}
 

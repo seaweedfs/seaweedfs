@@ -69,6 +69,7 @@ func TestCanListBucketsFromOwnerIndex(t *testing.T) {
 		wantOk      bool
 		wantGranted []string
 	}{
+		{name: "nil identity scans", identity: nil, wantOk: false},
 		{name: "admin scans", identity: &Identity{Name: "root", Actions: []Action{"Admin"}}, wantOk: false},
 		{name: "bare List scans", identity: &Identity{Name: "u", Actions: []Action{"List"}}, wantOk: false},
 		{name: "wildcard scans", identity: &Identity{Name: "u", Actions: []Action{"List:team-*"}}, wantOk: false},
@@ -76,6 +77,9 @@ func TestCanListBucketsFromOwnerIndex(t *testing.T) {
 		{name: "attached policies is owned-only", identity: &Identity{Name: "u", Actions: []Action{"List:b1"}, PolicyNames: []string{"p"}}, wantOk: true},
 		{name: "named grants enumerate", identity: &Identity{Name: "u", Actions: []Action{"Read:b1", "List:b2", "Admin:b3/prefix", "Write"}},
 			wantOk: true, wantGranted: []string{"b1", "b2", "b3"}},
+		// grants come back in action order; resolveGrantedBuckets sorts and dedups
+		{name: "unsorted grants keep action order", identity: &Identity{Name: "u", Actions: []Action{"List:c1", "List:a1", "List:b1"}},
+			wantOk: true, wantGranted: []string{"c1", "a1", "b1"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
