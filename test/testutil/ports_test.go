@@ -25,6 +25,27 @@ func TestAllocateMiniPortsAvoidsMiniDefaults(t *testing.T) {
 	}
 }
 
+// AllocateMiniPorts must keep every port it hands out, and that port's gRPC
+// counterpart, below 32768 - the Linux default ip_local_port_range floor.
+// A real failure: filer was allocated 44204, then lost the bind to a transient
+// outbound connection that had grabbed 44204 as an ephemeral source port
+// during mini startup ("bind: address already in use").
+func TestAllocateMiniPortsBelowEphemeralFloor(t *testing.T) {
+	const ephemeralFloor = linuxEphemeralPortFloor
+	for iter := 0; iter < 200; iter++ {
+		ports, err := AllocateMiniPorts(4)
+		if err != nil {
+			t.Fatalf("iter %d: AllocateMiniPorts: %v", iter, err)
+		}
+		for _, p := range ports {
+			if p+GrpcPortOffset >= ephemeralFloor {
+				t.Fatalf("iter %d: port %d (gRPC %d) reaches the ephemeral range floor %d",
+					iter, p, p+GrpcPortOffset, ephemeralFloor)
+			}
+		}
+	}
+}
+
 func TestAllocatePortSetNoGrpcCollision(t *testing.T) {
 	// Run a few iterations to catch the OS-recycles-just-closed-port race
 	// that previously hit regular ports when the mini gRPC offset was freed
