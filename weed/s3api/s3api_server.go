@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -110,6 +111,9 @@ type S3ApiServer struct {
 	// teardown waits on context.Background() fetches. The chunkCache field
 	// is nil in this commit; a follow-up wires in an in-memory chunk cache.
 	readerCache *filer.ReaderCache
+
+	// ownerIndexReady caches the presence of the owner index backfill marker.
+	ownerIndexReady atomic.Bool
 
 	versionsHealQueue      *versionsHealQueue
 	versionsReconcilerStop func()
@@ -451,6 +455,9 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 
 	// Start bucket size metrics collection in background
 	go s3ApiServer.startBucketSizeMetricsLoop(context.Background())
+
+	// Bring the bucket owner index up to date with pre-existing buckets
+	go s3ApiServer.startBucketOwnerIndexBackfill()
 
 	// Start the versioning reconciler that drains stranded .versions/
 	// pointer-to-missing-file states without waiting for a client GET.

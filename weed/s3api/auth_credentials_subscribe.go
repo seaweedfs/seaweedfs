@@ -184,6 +184,7 @@ func (s3a *S3ApiServer) onCircuitBreakerConfigChange(dir string, oldEntry *filer
 // reload bucket metadata
 func (s3a *S3ApiServer) onBucketMetadataChange(dir string, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) error {
 	if dir == s3a.option.BucketsPath {
+		s3a.maintainBucketOwnerIndex(oldEntry, newEntry)
 		if newEntry != nil {
 			// Update bucket registry (existing functionality)
 			s3a.bucketRegistry.LoadBucketMetadata(newEntry)
