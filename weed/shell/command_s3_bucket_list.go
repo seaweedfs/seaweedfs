@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -59,7 +60,7 @@ func (c *commandS3BucketList) Do(args []string, commandEnv *CommandEnv, writer i
 	}
 
 	err = filer_pb.List(context.Background(), commandEnv, filerBucketsPath, "", func(entry *filer_pb.Entry, isLast bool) error {
-		if !entry.IsDirectory {
+		if !entry.IsDirectory || strings.HasPrefix(entry.Name, ".") {
 			return nil
 		}
 		collection := getCollectionName(commandEnv, entry.Name)

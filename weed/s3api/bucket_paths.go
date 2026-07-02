@@ -95,5 +95,10 @@ func (s3a *S3ApiServer) bucketExists(bucket string) (bool, error) {
 }
 
 func (s3a *S3ApiServer) getBucketEntry(bucket string) (*filer_pb.Entry, error) {
+	// Dot-prefixed entries under /buckets are internal (.system) and can never
+	// be valid bucket names; don't let them resolve as buckets.
+	if strings.HasPrefix(bucket, ".") {
+		return nil, filer_pb.ErrNotFound
+	}
 	return s3a.getEntry(s3a.option.BucketsPath, bucket)
 }
