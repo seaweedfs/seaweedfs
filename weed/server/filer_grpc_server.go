@@ -361,6 +361,26 @@ func (fs *FilerServer) ObjectTransactionBatch(ctx context.Context, req *filer_pb
 	return resp, nil
 }
 
+func (fs *FilerServer) applyStorageDefaultsToEntry(entry *filer.Entry) {
+	if entry.IsDirectory() {
+		return
+	}
+
+	if entry.Remote != nil {
+		return
+	}
+
+	if entry.TtlSec != 0 {
+		return
+	}
+	ctx := context.Background()
+	so, err := fs.detectStorageOption(ctx, string(entry.FullPath), "", "", entry.TtlSec, "", "", "", "")
+	if err != nil {
+		glog.WarningfCtx(ctx, "detectStorageOption: %v", err)
+	}
+	entry.TtlSec = so.TtlSeconds
+}
+
 // applyObjectMutation applies a single mutation while the transaction's path
 // lock is held. PUT entries are expected to be fully prepared by the caller
 // (chunks resolved); mutations here are metadata-scoped. A DELETE of an absent
@@ -373,6 +393,7 @@ func (fs *FilerServer) applyObjectMutation(ctx context.Context, m *filer_pb.Obje
 			return fmt.Errorf("PUT requires an entry")
 		}
 		newEntry := filer.FromPbEntry(m.Directory, m.Entry)
+		fs.applyStorageDefaultsToEntry(newEntry)
 		return fs.filer.CreateEntry(ctx, newEntry, nil, false, fromOtherCluster, signatures, false, fs.filer.MaxFilenameLength)
 
 	case filer_pb.ObjectMutation_DELETE:
