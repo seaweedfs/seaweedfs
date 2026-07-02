@@ -930,8 +930,13 @@ func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput
 
 	entries, _, err := s3a.list(s3a.genUploadsFolder(*input.Bucket), "", *input.UploadIdMarker, false, math.MaxInt32)
 	if err != nil {
+		// A bucket with no in-progress uploads has no .uploads folder: empty list, not an error.
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return output, s3err.ErrNone
+		}
+		// surface a real store error; a masked empty 200 makes a resuming client treat the upload as gone
 		glog.Errorf("listMultipartUploads %s error: %v", *input.Bucket, err)
-		return
+		return output, s3err.ErrInternalError
 	}
 
 	uploadsCount := int64(0)
@@ -991,8 +996,12 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 
 	entries, isLast, err := s3a.list(s3a.genUploadsFolder(*input.Bucket)+"/"+*input.UploadId, "", fmt.Sprintf("%04d%s", *input.PartNumberMarker, multipartExt), false, uint32(*input.MaxParts))
 	if err != nil {
+		// The upload may have completed or been aborted since checkUploadId: that's NoSuchUpload, not a store error.
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return nil, s3err.ErrNoSuchUpload
+		}
 		glog.Errorf("listObjectParts %s %s error: %v", *input.Bucket, *input.UploadId, err)
-		return nil, s3err.ErrNoSuchUpload
+		return nil, s3err.ErrInternalError
 	}
 
 	// Note: The upload directory is sort of a marker of the existence of an multipart upload request.
