@@ -48,7 +48,7 @@ func markGrowthInFlight(t *testing.T, topo *topology.Topology, req *master_pb.As
 	require.NoError(t, err)
 	ttl, err := needle.ReadTTL(req.Ttl)
 	require.NoError(t, err)
-	topo.GetVolumeLayout(req.Collection, rp, ttl, types.ToDiskType(req.DiskType)).AddGrowRequest()
+	topo.GetVolumeLayout(req.Collection, rp, ttl, types.ToDiskType(req.DiskType)).AddGrowRequestIfAbsent()
 }
 
 // With free space but no writable volume and growth already in flight, Assign

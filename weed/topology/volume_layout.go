@@ -642,9 +642,6 @@ func (vl *VolumeLayout) remainingSize(vid needle.VolumeId) uint64 {
 func (vl *VolumeLayout) HasGrowRequest() bool {
 	return vl.growRequest.Load()
 }
-func (vl *VolumeLayout) AddGrowRequest() {
-	vl.growRequest.Store(true)
-}
 
 // AddGrowRequestIfAbsent atomically claims the pending-growth flag. It returns
 // true for the one caller that transitions it from unset to set (the growth
