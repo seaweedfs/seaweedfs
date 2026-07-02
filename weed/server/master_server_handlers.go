@@ -158,9 +158,10 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 	vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl, option.DiskType)
 
 	var (
-		lastErr    error
-		maxTimeout = time.Second * 10
-		startTime  = time.Now()
+		lastErr       error
+		maxTimeout    = time.Second * 10
+		startTime     = time.Now()
+		initiatedGrow bool
 	)
 
 	if !ms.Topo.DataCenterExists(option.DataCenter) {
@@ -172,12 +173,12 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 
 	for time.Since(startTime) < maxTimeout {
 		fid, count, dnList, shouldGrow, err := ms.Topo.PickForWrite(requestedCount, option, vl, expectedDataSize)
-		if shouldGrow && !vl.HasGrowRequest() && !ms.option.VolumeGrowthDisabled {
+		if shouldGrow && !initiatedGrow && !ms.option.VolumeGrowthDisabled && vl.AddGrowRequestIfAbsent() {
+			initiatedGrow = true
 			glog.V(0).Infof("dirAssign volume growth %v from %v", option.String(), r.RemoteAddr)
 			if err != nil && ms.Topo.AvailableSpaceFor(option) <= 0 {
 				err = fmt.Errorf("%s and no free volumes left for %s", err.Error(), option.String())
 			}
-			vl.AddGrowRequest()
 			ms.volumeGrowthRequestChan <- &topology.VolumeGrowRequest{
 				Option: option,
 				Count:  uint32(writableVolumeCount),
@@ -187,18 +188,25 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 		if err != nil {
 			stats.MasterPickForWriteErrorCounter.Inc()
 			lastErr = err
-			// See Assign: shed instead of spinning when growth is already in flight.
-			if shouldGrow && vl.HasGrowRequest() {
+			if shouldGrow {
 				if ms.Topo.AvailableSpaceFor(option) <= 0 {
 					break // out of space: surface the real error (406 below)
 				}
-				w.Header().Set("Retry-After", "1")
-				writeJsonQuiet(w, r, http.StatusServiceUnavailable, operation.AssignResult{
-					Error: fmt.Sprintf("no writable volumes for %s, volume growth in progress", option.String()),
-				})
-				return
+				// See Assign: only the initiator waits, and only while the
+				// growth it triggered is still pending.
+				if initiatedGrow != vl.HasGrowRequest() {
+					w.Header().Set("Retry-After", "1")
+					writeJsonQuiet(w, r, http.StatusServiceUnavailable, operation.AssignResult{
+						Error: fmt.Sprintf("no writable volumes for %s, volume growth in progress", option.String()),
+					})
+					return
+				}
 			}
-			time.Sleep(200 * time.Millisecond)
+			select {
+			case <-r.Context().Done():
+				return // client gone
+			case <-time.After(200 * time.Millisecond):
+			}
 			continue
 		} else {
 			ms.maybeAddJwtAuthorization(w, fid, true)
@@ -211,6 +219,14 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	// See Assign: initiator that timed out with growth still pending stays retryable.
+	if initiatedGrow && vl.HasGrowRequest() && ms.Topo.AvailableSpaceFor(option) > 0 {
+		w.Header().Set("Retry-After", "1")
+		writeJsonQuiet(w, r, http.StatusServiceUnavailable, operation.AssignResult{
+			Error: fmt.Sprintf("no writable volumes for %s, volume growth in progress", option.String()),
+		})
+		return
+	}
 	if lastErr != nil {
 		writeJsonQuiet(w, r, http.StatusNotAcceptable, operation.AssignResult{Error: lastErr.Error()})
 	} else {
