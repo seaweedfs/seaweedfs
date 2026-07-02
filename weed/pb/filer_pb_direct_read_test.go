@@ -2,8 +2,10 @@ package pb
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -145,10 +147,10 @@ func (t *testLogFiles) totalEvents() int {
 	return total
 }
 
-// TestReadLogFileRefsMergeOrder verifies that entries from multiple filers are
-// delivered in correct timestamp order.
-func TestReadLogFileRefsMergeOrder(t *testing.T) {
-	files := newTestLogFiles(3, 2, 50, 0)
+// assertOrderedReplay reads all refs and checks every event arrives exactly
+// once, in timestamp order.
+func assertOrderedReplay(t *testing.T, files *testLogFiles) {
+	t.Helper()
 
 	var timestamps []int64
 	_, err := ReadLogFileRefs(files.refs, files.readerFn(), 0, 0,
@@ -161,20 +163,21 @@ func TestReadLogFileRefsMergeOrder(t *testing.T) {
 		t.Fatalf("ReadLogFileRefs: %v", err)
 	}
 
-	expected := files.totalEvents()
-	if len(timestamps) != expected {
-		t.Fatalf("expected %d events, got %d", expected, len(timestamps))
+	if got, want := len(timestamps), files.totalEvents(); got != want {
+		t.Fatalf("expected %d events, got %d", want, got)
 	}
-
 	for i := 1; i < len(timestamps); i++ {
 		if timestamps[i] < timestamps[i-1] {
-			t.Errorf("out of order at index %d: ts[%d]=%d > ts[%d]=%d",
+			t.Fatalf("out of order at index %d: ts[%d]=%d > ts[%d]=%d",
 				i, i-1, timestamps[i-1], i, timestamps[i])
-			break
 		}
 	}
+}
 
-	t.Logf("Verified %d events from 3 filers in correct timestamp order", len(timestamps))
+// TestReadLogFileRefsMergeOrder verifies that entries from multiple filers are
+// delivered in correct timestamp order.
+func TestReadLogFileRefsMergeOrder(t *testing.T) {
+	assertOrderedReplay(t, newTestLogFiles(3, 2, 50, 0))
 }
 
 // TestReadLogFileRefsPathFilter verifies path filtering including system log exclusion.
@@ -218,7 +221,7 @@ func TestReadLogFileRefsPathFilter(t *testing.T) {
 
 // TestDirectReadVsServerSideThroughput compares:
 //   - Server-side: sequential file read → gRPC send per event
-//   - Client direct-read: parallel filers + prefetching + no gRPC
+//   - Client direct-read: parallel filers + streaming + no gRPC
 func TestDirectReadVsServerSideThroughput(t *testing.T) {
 	const (
 		numFilers     = 3
@@ -255,7 +258,7 @@ func TestDirectReadVsServerSideThroughput(t *testing.T) {
 	})
 
 	var directRate float64
-	t.Run("client_direct_read_parallel_prefetch", func(t *testing.T) {
+	t.Run("client_direct_read_parallel_streaming", func(t *testing.T) {
 		var processed int64
 		start := time.Now()
 
@@ -270,12 +273,12 @@ func TestDirectReadVsServerSideThroughput(t *testing.T) {
 		}
 		elapsed := time.Since(start)
 		directRate = float64(processed) / elapsed.Seconds()
-		t.Logf("direct-read: %d events  %v  %6.0f events/sec  (%d filers parallel + prefetch, no gRPC)",
+		t.Logf("direct-read: %d events  %v  %6.0f events/sec  (%d filers parallel + streaming, no gRPC)",
 			processed, elapsed.Round(time.Millisecond), directRate, numFilers)
 	})
 
 	if serverRate > 0 {
-		t.Logf("Speedup: %.1fx (parallel + prefetch + no gRPC vs server-side sequential)", directRate/serverRate)
+		t.Logf("Speedup: %.1fx (parallel + streaming + no gRPC vs server-side sequential)", directRate/serverRate)
 	}
 }
 
@@ -327,5 +330,122 @@ func TestReadLogFileRefsMultiFilerNotFoundSkips(t *testing.T) {
 	expected := int64(files.totalEvents() - 10) // one skipped file's events
 	if count != expected {
 		t.Fatalf("expected %d events after skipping one file, got %d", expected, count)
+	}
+}
+
+// TestReadLogFileRefsSingleFilerOrder covers the single-filer path: every
+// entry across all files, in order.
+func TestReadLogFileRefsSingleFilerOrder(t *testing.T) {
+	assertOrderedReplay(t, newTestLogFiles(1, 4, 50, 0))
+}
+
+// TestReadLogFileRefsSingleFilerProcessErrorStops verifies that the callback's
+// own error propagates and aborts the stream promptly, mid-file.
+func TestReadLogFileRefsSingleFilerProcessErrorStops(t *testing.T) {
+	files := newTestLogFiles(1, 3, 100, 0)
+
+	var count int
+	wantErr := fmt.Errorf("boom")
+	_, err := ReadLogFileRefs(files.refs, files.readerFn(), 0, 0,
+		PathFilter{PathPrefix: "/"},
+		func(resp *filer_pb.SubscribeMetadataResponse) error {
+			count++
+			if count == 5 {
+				return wantErr
+			}
+			return nil
+		})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected processing error to propagate, got: %v", err)
+	}
+	// Should stop near the failing event, not process the whole 300-event set.
+	if count > 20 {
+		t.Fatalf("expected prompt stop after error, processed %d events", count)
+	}
+}
+
+// A corrupt size prefix must fail the replay instead of allocating gigabytes.
+func TestReadLogFileRefsCorruptSizePrefix(t *testing.T) {
+	data := make([]byte, 4)
+	util.Uint32toBytes(data, 0xFFFFFFF0)
+	refs := []*filer_pb.LogFileChunkRef{{
+		Chunks:   []*filer_pb.FileChunk{{FileId: "corrupt"}},
+		FileTsNs: 1,
+		FilerId:  "filer00",
+	}}
+	readerFn := func(chunks []*filer_pb.FileChunk) (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(data)), nil
+	}
+
+	_, err := ReadLogFileRefs(refs, readerFn, 0, 0, PathFilter{PathPrefix: "/"},
+		func(*filer_pb.SubscribeMetadataResponse) error { return nil })
+	if err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("expected size-cap error, got: %v", err)
+	}
+}
+
+// blockingReader blocks in Read until released.
+type blockingReader struct{ release chan struct{} }
+
+func (r *blockingReader) Read(p []byte) (int, error) { <-r.release; return 0, io.EOF }
+func (r *blockingReader) Close() error               { return nil }
+
+// An abort (fatal error on one filer) must not wait for another filer's
+// in-flight chunk read: the replay returns promptly and the wedged producer
+// exits on its own once its read completes.
+func TestReadLogFileRefsAbortDoesNotJoinWedgedReader(t *testing.T) {
+	files := newTestLogFiles(2, 1, 10, 0)
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+
+	wedgedKey := files.refs[0].Chunks[0].FileId // filer00 wedges mid-read
+	failKey := files.refs[1].Chunks[0].FileId   // filer01 fails for real
+	base := files.readerFn()
+	readerFn := func(chunks []*filer_pb.FileChunk) (io.ReadCloser, error) {
+		switch chunks[0].FileId {
+		case wedgedKey:
+			return &blockingReader{release: release}, nil
+		case failKey:
+			return nil, fmt.Errorf("failed to locate %s", failKey)
+		}
+		return base(chunks)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := ReadLogFileRefs(files.refs, readerFn, 0, 0, PathFilter{PathPrefix: "/"},
+			func(*filer_pb.SubscribeMetadataResponse) error { return nil })
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatalf("expected the fatal read error to propagate")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("ReadLogFileRefs did not return while a peer reader was wedged")
+	}
+}
+
+// TestReadLogFileRefsSingleFilerNotFoundSkips confirms a chunk-not-found on the
+// single-filer path skips just that file, not the whole replay.
+func TestReadLogFileRefsSingleFilerNotFoundSkips(t *testing.T) {
+	files := newTestLogFiles(1, 3, 10, 0)
+	skipKey := files.refs[1].Chunks[0].FileId // second file
+	readerFn := failingReaderFn(files.readerFn(), skipKey, fmt.Errorf("volume not found: %s", skipKey))
+
+	var count int
+	_, err := ReadLogFileRefs(files.refs, readerFn, 0, 0,
+		PathFilter{PathPrefix: "/"},
+		func(resp *filer_pb.SubscribeMetadataResponse) error {
+			count++
+			return nil
+		})
+	if err != nil {
+		t.Fatalf("chunk-not-found should be skipped, got error: %v", err)
+	}
+	if want := files.totalEvents() - 10; count != want {
+		t.Fatalf("expected %d events after skipping one file, got %d", want, count)
 	}
 }
