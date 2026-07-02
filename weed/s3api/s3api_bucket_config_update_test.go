@@ -4,7 +4,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
@@ -22,17 +21,12 @@ func TestUpdateBucketConfigDoesNotMutateCacheOnPersistFailure(t *testing.T) {
 	s3a.bucketConfigCache.Set(bucket, &BucketConfig{
 		Name:       bucket,
 		Versioning: "",
-		Entry: &filer_pb.Entry{
-			Name:        bucket,
-			IsDirectory: true,
-			Extended:    map[string][]byte{},
-		},
 	})
 
 	// This test server only has in-memory IAM state and no filer connection, so
-	// updateBucketConfig is expected to fail during the persist step with an
-	// internal error. The assertion below verifies that the cached config stays
-	// unchanged when that write path fails.
+	// updateBucketConfig is expected to fail with an internal error when it
+	// reads the bucket entry. The assertion below verifies that the cached
+	// config stays unchanged when the write path fails.
 	errCode := s3a.updateBucketConfig(bucket, func(config *BucketConfig) error {
 		config.Versioning = s3_constants.VersioningEnabled
 		return nil
@@ -43,5 +37,4 @@ func TestUpdateBucketConfigDoesNotMutateCacheOnPersistFailure(t *testing.T) {
 	config, found := s3a.bucketConfigCache.Get(bucket)
 	require.True(t, found)
 	assert.Empty(t, config.Versioning)
-	assert.NotContains(t, config.Entry.Extended, s3_constants.ExtVersioningKey)
 }

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -23,13 +22,9 @@ func TestGetBucketLifecycleConfigurationHandlerUsesStoredLifecycleConfig(t *test
 	s3a.option = &S3ApiServerOption{BucketsPath: "/buckets"}
 	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
 	s3a.bucketConfigCache.Set(bucket, &BucketConfig{
-		Name: bucket,
-		Entry: &filer_pb.Entry{
-			Extended: map[string][]byte{
-				bucketLifecycleConfigurationXMLKey:            []byte(lifecycleXML),
-				bucketLifecycleTransitionMinimumObjectSizeKey: []byte("varies_by_storage_class"),
-			},
-		},
+		Name:                       bucket,
+		LifecycleXML:               []byte(lifecycleXML),
+		LifecycleTransitionMinSize: "varies_by_storage_class",
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/"+bucket+"?lifecycle", nil)
@@ -51,12 +46,8 @@ func TestGetBucketLifecycleConfigurationHandlerDefaultsTransitionMinimumObjectSi
 	s3a.option = &S3ApiServerOption{BucketsPath: "/buckets"}
 	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
 	s3a.bucketConfigCache.Set(bucket, &BucketConfig{
-		Name: bucket,
-		Entry: &filer_pb.Entry{
-			Extended: map[string][]byte{
-				bucketLifecycleConfigurationXMLKey: []byte(lifecycleXML),
-			},
-		},
+		Name:         bucket,
+		LifecycleXML: []byte(lifecycleXML),
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/"+bucket+"?lifecycle", nil)
@@ -76,10 +67,7 @@ func TestPutBucketLifecycleConfigurationHandlerRejectsOversizedBody(t *testing.T
 	s3a := newTestS3ApiServerWithMemoryIAM(t, nil)
 	s3a.option = &S3ApiServerOption{BucketsPath: "/buckets"}
 	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
-	s3a.bucketConfigCache.Set(bucket, &BucketConfig{
-		Name:  bucket,
-		Entry: &filer_pb.Entry{},
-	})
+	s3a.bucketConfigCache.Set(bucket, &BucketConfig{Name: bucket})
 
 	req := httptest.NewRequest(http.MethodPut, "/"+bucket+"?lifecycle", strings.NewReader(strings.Repeat("x", maxBucketLifecycleConfigurationSize+1)))
 	req = mux.SetURLVars(req, map[string]string{"bucket": bucket})
@@ -97,10 +85,7 @@ func TestPutBucketLifecycleConfigurationHandlerMapsReadErrorsToInvalidRequest(t 
 	s3a := newTestS3ApiServerWithMemoryIAM(t, nil)
 	s3a.option = &S3ApiServerOption{BucketsPath: "/buckets"}
 	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
-	s3a.bucketConfigCache.Set(bucket, &BucketConfig{
-		Name:  bucket,
-		Entry: &filer_pb.Entry{},
-	})
+	s3a.bucketConfigCache.Set(bucket, &BucketConfig{Name: bucket})
 
 	req := httptest.NewRequest(http.MethodPut, "/"+bucket+"?lifecycle", nil)
 	req = mux.SetURLVars(req, map[string]string{"bucket": bucket})
@@ -124,4 +109,3 @@ func (f failingReadCloser) Read(_ []byte) (int, error) {
 func (f failingReadCloser) Close() error {
 	return nil
 }
-

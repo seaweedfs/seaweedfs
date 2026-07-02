@@ -221,15 +221,10 @@ func (s3a *S3ApiServer) updateBucketConfigCacheFromEntry(entry *filer_pb.Entry) 
 		return
 	}
 
-	// Create new bucket config from the entry. populateBucketConfigDerivedFields
-	// is the single source of truth for mapping Entry.Extended → cached
-	// fields (incl. LifecycleTTL), so a meta-log Put/DeleteBucketLifecycle
-	// here can't leave a stale resolver in cache.
-	config := &BucketConfig{
-		Name:  bucket,
-		Entry: entry,
-	}
-	s3a.populateBucketConfigDerivedFields(config)
+	// newBucketConfigFromEntry is the single source of truth for mapping
+	// Entry.Extended → cached fields (incl. LifecycleTTL), so a meta-log
+	// Put/DeleteBucketLifecycle here can't leave a stale resolver in cache.
+	config := s3a.newBucketConfigFromEntry(bucket, entry)
 
 	glog.V(3).Infof("updateBucketConfigCacheFromEntry: refreshing cache for bucket %s, ObjectLockConfig=%+v", bucket, config.ObjectLockConfig)
 	s3a.bucketConfigCache.Set(bucket, config)

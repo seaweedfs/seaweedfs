@@ -474,7 +474,7 @@ func (s3a *S3ApiServer) checkBucket(r *http.Request, bucket string) s3err.ErrorC
 	if s3a.iam.isEnabled() {
 		return s3err.ErrNone
 	}
-	if !s3a.hasAccess(r, config.Entry) {
+	if !s3a.hasAccess(r, config.IdentityId) {
 		return s3err.ErrAccessDenied
 	}
 	return s3err.ErrNone
@@ -648,23 +648,23 @@ func (s3a *S3ApiServer) handleAutoCreateBucket(w http.ResponseWriter, r *http.Re
 	return true
 }
 
-func (s3a *S3ApiServer) hasAccess(r *http.Request, entry *filer_pb.Entry) bool {
+// hasAccess checks the caller against the identity recorded at bucket
+// creation; buckets with no recorded identity are open to any caller.
+func (s3a *S3ApiServer) hasAccess(r *http.Request, bucketIdentityId string) bool {
 	// Check if user is properly authenticated as admin through IAM system
 	if s3a.isUserAdmin(r) {
 		return true
 	}
 
-	if entry.Extended == nil {
+	if bucketIdentityId == "" {
 		return true
 	}
 
 	// Get authenticated identity from context (secure, cannot be spoofed)
 	identityId := s3_constants.GetIdentityNameFromContext(r)
-	if id, ok := entry.Extended[s3_constants.AmzIdentityId]; ok {
-		if identityId != string(id) {
-			glog.V(3).Infof("hasAccess: %s != %s (entry.Extended = %v)", identityId, id, entry.Extended)
-			return false
-		}
+	if identityId != bucketIdentityId {
+		glog.V(3).Infof("hasAccess: %s != %s", identityId, bucketIdentityId)
+		return false
 	}
 	return true
 }
@@ -803,8 +803,8 @@ func (s3a *S3ApiServer) GetBucketAclHandler(w http.ResponseWriter, r *http.Reque
 	// return any stored ACL, defaulting to the owner's full-control grant.
 	ownerId := r.Header.Get(s3_constants.AmzAccountId)
 	var storedGrants []*s3.Grant
-	if bucketConfig, errCode := s3a.getBucketConfig(bucket); errCode == s3err.ErrNone && bucketConfig.Entry != nil {
-		storedGrants = GetAcpGrants(bucketConfig.Entry.Extended)
+	if bucketConfig, errCode := s3a.getBucketConfig(bucket); errCode == s3err.ErrNone {
+		storedGrants = parseAclGrants(bucketConfig.ACL)
 		if bucketConfig.Owner != "" {
 			ownerId = bucketConfig.Owner
 		}
