@@ -55,8 +55,8 @@ global:
     replicationPlacement: "001"
     extraEnvironmentVars:
       WEED_CLUSTER_DEFAULT: "sw"
-      WEED_CLUSTER_SW_MASTER: "{{ include \"seaweedfs.cluster.masterAddress\" . }}"
-      WEED_CLUSTER_SW_FILER: "{{ include \"seaweedfs.cluster.filerAddress\" . }}"
+      WEED_CLUSTER_SW_MASTER: '{{ include "seaweedfs.cluster.masterAddress" . }}'
+      WEED_CLUSTER_SW_FILER: '{{ include "seaweedfs.cluster.filerAddress" . }}'
       # WEED_JWT_SIGNING_KEY:
       #   secretKeyRef:
       #     name: seaweedfs-signing-key
@@ -75,7 +75,7 @@ master:
   port: 9333
   grpcPort: 19333
   metricsPort: 9327
-  metricsIp: ""  # Metrics listen IP. If empty, defaults to ipBind
+  metricsIp: "" # Metrics listen IP. If empty, defaults to ipBind
   ipBind: "0.0.0.0"
   volumePreallocate: false
   volumeSizeLimitMB: 1000
@@ -320,7 +320,7 @@ volume:
   port: 8080
   grpcPort: 18080
   metricsPort: 9327
-  metricsIp: ""  # Metrics listen IP. If empty, defaults to ipBind
+  metricsIp: "" # Metrics listen IP. If empty, defaults to ipBind
   ipBind: "0.0.0.0"
   replicas: 1
   loggingOverrideLevel: null
@@ -629,8 +629,8 @@ filer:
   port: 8888
   grpcPort: 18888
   metricsPort: 9327
-  metricsIp: ""  # Metrics listen IP. If empty, defaults to ipBind
-  ipBind: "0.0.0.0"  # IP address to bind to. Set to 0.0.0.0 to allow external traffic
+  metricsIp: "" # Metrics listen IP. If empty, defaults to ipBind
+  ipBind: "0.0.0.0" # IP address to bind to. Set to 0.0.0.0 to allow external traffic
   loggingOverrideLevel: null
   filerGroup: ""
   # prefer to read and write to volumes in this data center (not set by default)
@@ -824,30 +824,70 @@ filer:
   #   allowPrivilegeEscalation: false
   containerSecurityContext: {}
 
-  ingress:
-    enabled: false
-    className: ""
-    # host: false for "*" hostname
-    host: "seaweedfs.cluster.local"
-    path: "/sw-filer/?(.*)"
-    pathType: ImplementationSpecific
-    annotations: {}
-      # nginx.ingress.kubernetes.io/backend-protocol: GRPC
-      # nginx.ingress.kubernetes.io/auth-type: "basic"
-      # nginx.ingress.kubernetes.io/auth-secret: "default/ingress-basic-auth-secret"
-      # nginx.ingress.kubernetes.io/auth-realm: 'Authentication Required - SW-Filer'
-      # nginx.ingress.kubernetes.io/service-upstream: "true"
-      # nginx.ingress.kubernetes.io/rewrite-target: /$1
-      # nginx.ingress.kubernetes.io/use-regex: "true"
-      # nginx.ingress.kubernetes.io/enable-rewrite-log: "true"
-      # nginx.ingress.kubernetes.io/ssl-redirect: "false"
-      # nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
-      # nginx.ingress.kubernetes.io/configuration-snippet: |
-      #   sub_filter '<head>' '<head> <base href="/sw-filer/">'; #add base url
-      #   sub_filter '="/' '="./';                               #make absolute paths to relative
-      #   sub_filter '=/' '=./';
-      #   sub_filter '/seaweedfsstatic' './seaweedfsstatic';
-      #   sub_filter_once off;
+  ingresses:
+    http:
+      enabled: false
+      className: ""
+      # host: false for "*" hostname
+      host: "seaweedfs.cluster.local"
+      path: "/sw-filer/?(.*)"
+      pathType: ImplementationSpecific
+      annotations: {}
+        # nginx.ingress.kubernetes.io/backend-protocol: GRPC
+        # nginx.ingress.kubernetes.io/auth-type: "basic"
+        # nginx.ingress.kubernetes.io/auth-secret: "default/ingress-basic-auth-secret"
+        # nginx.ingress.kubernetes.io/auth-realm: 'Authentication Required - SW-Filer'
+        # nginx.ingress.kubernetes.io/service-upstream: "true"
+        # nginx.ingress.kubernetes.io/rewrite-target: /$1
+        # nginx.ingress.kubernetes.io/use-regex: "true"
+        # nginx.ingress.kubernetes.io/enable-rewrite-log: "true"
+        # nginx.ingress.kubernetes.io/ssl-redirect: "false"
+        # nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+        # nginx.ingress.kubernetes.io/configuration-snippet: |
+        #   sub_filter '<head>' '<head> <base href="/sw-filer/">'; #add base url
+        #   sub_filter '="/' '="./';                               #make absolute paths to relative
+        #   sub_filter '=/' '=./';
+        #   sub_filter '/seaweedfsstatic' './seaweedfsstatic';
+        #   sub_filter_once off;
+      tls: []
+    grpc:
+      enabled: false
+      className: ""
+      host: "seaweedfs.cluster.local"
+      path: "/sw-filer/?(.*)"
+      pathType: ImplementationSpecific
+      annotations:
+        nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
+        # traefik.ingress.kubernetes.io/service.serverscheme: h2c
+      tls: []
+
+    # ── TCP passthrough (Traefik IngressRouteTCP) ──
+    # Use this when the filer has mTLS enabled and you need to expose gRPC
+    # via Traefik with TLS passthrough. The standard HTTP Ingress terminates
+    # TLS at the ingress, which conflicts with the filer's mTLS requirement.
+    #
+    # IngressRouteTCP is a Traefik CRD (traefik.io/v1alpha1) that forwards
+    # raw TCP traffic. With tls.passthrough: true, Traefik does not terminate
+    # TLS — the certificate negotiation happens directly between the client
+    # and the filer.
+    tcp:
+      enabled: false
+      # Traefik ingress class for the IngressRouteTCP resource.
+      className: "traefik"
+      # TCP entrypoints to route traffic through. Default "filer-grpc".
+      entryPoints: ["filer-grpc"]
+      # Service name to expose. Must be an existing Service in the release
+      # namespace. Common values: "filer", "all-in-one", or a custom service.
+      service: ""
+      # Hosts to expose. Empty list = wildcard (no host restriction).
+      # Example: ["filer.example.com"]
+      hosts: []
+      # Annotations on the IngressRouteTCP resource.
+      # The template automatically injects tls.passthrough: true.
+      # You can add Traefik TLS options, certResolver, etc. here:
+      #   traefik.ingressroute.traefik.io/tls.options: "default"
+      #   traefik.ingressroute.traefik.io/tls.certresolver: "letsencrypt"
+      annotations: {}
 
   # extraEnvVars is a list of extra environment variables to set with the stateful set.
   extraEnvironmentVars:
@@ -1138,22 +1178,22 @@ sftp:
   restartPolicy: null
   replicas: 1
   bindAddress: 0.0.0.0
-  port: 2022  # Default SFTP port
+  port: 2022 # Default SFTP port
   metricsPort: 9327
-  metricsIp: ""  # If empty, defaults to bindAddress
+  metricsIp: "" # If empty, defaults to bindAddress
   loggingOverrideLevel: null
 
   # SSH server configuration
-  sshPrivateKey: "/etc/sw/seaweedfs_sftp_ssh_private_key"  # Path to the SSH private key file for host authentication
-  hostKeysFolder: "/etc/sw/ssh"  # path to folder containing SSH private key files for host authentication
-  authMethods: "password,publickey"  # Comma-separated list of allowed auth methods: password, publickey, certificate
-  maxAuthTries: 6  # Maximum number of authentication attempts per connection
-  bannerMessage: "SeaweedFS SFTP Server"  # Message displayed before authentication
-  loginGraceTime: "2m"  # Timeout for authentication
-  clientAliveInterval: "5s"  # Interval for sending keep-alive messages
-  clientAliveCountMax: 3  # Maximum number of missed keep-alive messages before disconnecting
-  dataCenter: ""  # Prefer to read and write to volumes in this data center
-  localSocket: ""  # Default to /tmp/seaweedfs-sftp-<port>.sock
+  sshPrivateKey: "/etc/sw/seaweedfs_sftp_ssh_private_key" # Path to the SSH private key file for host authentication
+  hostKeysFolder: "/etc/sw/ssh" # path to folder containing SSH private key files for host authentication
+  authMethods: "password,publickey" # Comma-separated list of allowed auth methods: password, publickey, keyboard-interactive
+  maxAuthTries: 6 # Maximum number of authentication attempts per connection
+  bannerMessage: "SeaweedFS SFTP Server" # Message displayed before authentication
+  loginGraceTime: "2m" # Timeout for authentication
+  clientAliveInterval: "5s" # Interval for sending keep-alive messages
+  clientAliveCountMax: 3 # Maximum number of missed keep-alive messages before disconnecting
+  dataCenter: "" # Prefer to read and write to volumes in this data center
+  localSocket: "" # Default to /tmp/seaweedfs-sftp-<port>.sock
 
   # User authentication
   enableAuth: false
@@ -1225,8 +1265,8 @@ admin:
   imageOverride: null
   restartPolicy: null
   replicas: 1
-  port: 23646  # Default admin port
-  grpcPort: 33646  # Default gRPC port for worker connections
+  port: 23646 # Default admin port
+  grpcPort: 33646 # Default gRPC port for worker connections
   loggingOverrideLevel: null
 
   # Admin authentication
@@ -1238,10 +1278,10 @@ admin:
     # Key in the existing secret for the admin password. Required if existingSecret is set.
     pwKey: ""
     adminUser: "admin"
-    adminPassword: ""  # If empty, authentication is disabled.
+    adminPassword: "" # If empty, authentication is disabled.
 
   # Data directory for admin configuration and maintenance data
-  dataDir: ""  # If empty, configuration is kept in memory only
+  dataDir: "" # If empty, configuration is kept in memory only
 
   # Master servers to connect to
   # If empty, uses global.seaweedfs.masterServer or auto-discovers from master statefulset
@@ -1258,7 +1298,7 @@ admin:
 
   # Storage configuration
   data:
-    type: "emptyDir"  # Options: "hostPath", "persistentVolumeClaim", "emptyDir", "existingClaim"
+    type: "emptyDir" # Options: "hostPath", "persistentVolumeClaim", "emptyDir", "existingClaim"
     size: "10Gi"
     storageClass: ""
     hostPathPrefix: /storage
@@ -1266,7 +1306,7 @@ admin:
     annotations: {}
 
   logs:
-    type: "emptyDir"  # Options: "hostPath", "persistentVolumeClaim", "emptyDir", "existingClaim"
+    type: "emptyDir" # Options: "hostPath", "persistentVolumeClaim", "emptyDir", "existingClaim"
     size: "5Gi"
     storageClass: ""
     hostPathPrefix: /storage
@@ -1368,7 +1408,7 @@ worker:
   replicas: 1
   loggingOverrideLevel: null
   metricsPort: 9327
-  metricsIp: ""  # If empty, defaults to 0.0.0.0
+  metricsIp: "" # If empty, defaults to 0.0.0.0
 
   # Admin server to connect to
   adminServer: ""
@@ -1399,14 +1439,14 @@ worker:
   # Note: Workers use Deployment, so use "emptyDir", "hostPath", or "existingClaim"
   # Do NOT use "persistentVolumeClaim" - use "existingClaim" with pre-provisioned PVC instead
   data:
-    type: "emptyDir"  # Options: "hostPath", "emptyDir", "existingClaim"
+    type: "emptyDir" # Options: "hostPath", "emptyDir", "existingClaim"
     hostPathPrefix: /storage
-    claimName: ""  # For existingClaim type
+    claimName: "" # For existingClaim type
 
   logs:
-    type: "emptyDir"  # Options: "hostPath", "emptyDir", "existingClaim"
+    type: "emptyDir" # Options: "hostPath", "emptyDir", "existingClaim"
     hostPathPrefix: /storage
-    claimName: ""  # For existingClaim type
+    claimName: "" # For existingClaim type
 
   # Additional resources
   sidecars: []
@@ -1484,17 +1524,17 @@ allInOne:
   enabled: false
   imageOverride: null
   restartPolicy: Always
-  replicas: 1  # Number of replicas (note: multiple replicas may require shared storage)
+  replicas: 1 # Number of replicas (note: multiple replicas may require shared storage)
 
   # Core configuration
-  idleTimeout: 30  # Connection idle seconds
-  dataCenter: ""  # Current volume server's data center name
-  rack: ""  # Current volume server's rack name
-  whiteList: ""  # Comma separated IP addresses having write permission
-  disableHttp: false  # Disable HTTP requests, only gRPC operations are allowed
-  metricsPort: 9324  # Prometheus metrics listen port
-  metricsIp: ""  # Metrics listen IP. If empty, defaults to bindAddress
-  loggingOverrideLevel: null  # Override logging level
+  idleTimeout: 30 # Connection idle seconds
+  dataCenter: "" # Current volume server's data center name
+  rack: "" # Current volume server's rack name
+  whiteList: "" # Comma separated IP addresses having write permission
+  disableHttp: false # Disable HTTP requests, only gRPC operations are allowed
+  metricsPort: 9324 # Prometheus metrics listen port
+  metricsIp: "" # Metrics listen IP. If empty, defaults to bindAddress
+  loggingOverrideLevel: null # Override logging level
 
   # Custom command line arguments to add to the server command
   # Example to fix IPv6 metrics connectivity issues:
@@ -1516,11 +1556,11 @@ allInOne:
   # Note: Most parameters below default to null, which means they inherit from
   # the global s3.* settings. Set explicit values here to override for allInOne only.
   s3:
-    enabled: false  # Whether to enable S3 gateway
-    port: null  # S3 gateway port (null inherits from s3.port)
-    httpsPort: null  # S3 gateway HTTPS port (null inherits from s3.httpsPort)
-    domainName: null  # Suffix of the host name (null inherits from s3.domainName)
-    enableAuth: false  # Enable user & permission to S3
+    enabled: false # Whether to enable S3 gateway
+    port: null # S3 gateway port (null inherits from s3.port)
+    httpsPort: null # S3 gateway HTTPS port (null inherits from s3.httpsPort)
+    domainName: null # Suffix of the host name (null inherits from s3.domainName)
+    enableAuth: false # Enable user & permission to S3
     # Set to the name of an existing kubernetes Secret with the s3 json config file
     # should have a secret key called seaweedfs_s3_config with an inline json config
     existingConfigSecret: null
@@ -1528,8 +1568,8 @@ allInOne:
     # the top-level s3.credentials key (not allInOne.s3.credentials).
     # The s3-secret.yaml template only reads from .Values.s3.credentials.
     # See: s3.credentials.admin.accessKey, s3.credentials.read.accessKey
-    auditLogConfig: null  # S3 audit log configuration (null inherits from s3.auditLogConfig)
-    trafficDistribution: null  # Service traffic distribution (e.g., "PreferClose"); auto-converts to "PreferSameZone" on k8s >=1.35
+    auditLogConfig: null # S3 audit log configuration (null inherits from s3.auditLogConfig)
+    trafficDistribution: null # Service traffic distribution (e.g., "PreferClose"); auto-converts to "PreferSameZone" on k8s >=1.35
     # You may specify buckets to be created during the install process.
     # Buckets may be exposed publicly by setting `anonymousRead` to `true`
     # ttl format: [1-255][m|h|d|w|M|y] (e.g., 7d)
@@ -1550,17 +1590,17 @@ allInOne:
   # Note: Most parameters below default to null, which means they inherit from
   # the global sftp.* settings. Set explicit values here to override for allInOne only.
   sftp:
-    enabled: false  # Whether to enable SFTP server
-    port: null  # SFTP port (null inherits from sftp.port)
-    sshPrivateKey: null  # Path to SSH private key (null inherits from sftp.sshPrivateKey)
-    hostKeysFolder: null  # Path to SSH host keys folder (null inherits from sftp.hostKeysFolder)
-    authMethods: null  # Comma-separated auth methods (null inherits from sftp.authMethods)
-    maxAuthTries: null  # Maximum authentication attempts (null inherits from sftp.maxAuthTries)
-    bannerMessage: null  # Banner message (null inherits from sftp.bannerMessage)
-    loginGraceTime: null  # Login grace time (null inherits from sftp.loginGraceTime)
-    clientAliveInterval: null  # Client keep-alive interval (null inherits from sftp.clientAliveInterval)
-    clientAliveCountMax: null  # Maximum missed keep-alive messages (null inherits from sftp.clientAliveCountMax)
-    enableAuth: false  # Enable SFTP authentication
+    enabled: false # Whether to enable SFTP server
+    port: null # SFTP port (null inherits from sftp.port)
+    sshPrivateKey: null # Path to SSH private key (null inherits from sftp.sshPrivateKey)
+    hostKeysFolder: null # Path to SSH host keys folder (null inherits from sftp.hostKeysFolder)
+    authMethods: null # Comma-separated auth methods (null inherits from sftp.authMethods)
+    maxAuthTries: null # Maximum authentication attempts (null inherits from sftp.maxAuthTries)
+    bannerMessage: null # Banner message (null inherits from sftp.bannerMessage)
+    loginGraceTime: null # Login grace time (null inherits from sftp.loginGraceTime)
+    clientAliveInterval: null # Client keep-alive interval (null inherits from sftp.clientAliveInterval)
+    clientAliveCountMax: null # Maximum missed keep-alive messages (null inherits from sftp.clientAliveCountMax)
+    enableAuth: false # Enable SFTP authentication
     # Set to the name of an existing kubernetes Secret with the sftp json config file
     existingConfigSecret: null
     # Set to the name of an existing kubernetes Secret with the SSH keys
@@ -1572,9 +1612,9 @@ allInOne:
 
   # Service settings
   service:
-    annotations: {}  # Annotations for the service
-    type: ClusterIP  # Service type (ClusterIP, NodePort, LoadBalancer)
-    internalTrafficPolicy: Cluster  # Internal traffic policy
+    annotations: {} # Annotations for the service
+    type: ClusterIP # Service type (ClusterIP, NodePort, LoadBalancer)
+    internalTrafficPolicy: Cluster # Internal traffic policy
 
   # Note: For ingress in all-in-one mode, use the standard s3.ingress and
   # filer.ingress settings. The templates automatically detect all-in-one mode
@@ -1583,15 +1623,15 @@ allInOne:
 
   # Storage configuration
   data:
-    type: "emptyDir"  # Options: "hostPath", "persistentVolumeClaim", "emptyDir", "existingClaim"
-    hostPathPrefix: /mnt/data  # Path prefix for hostPath volumes
-    claimName: seaweedfs-data-pvc  # Name of the PVC to use (for existingClaim type)
-    size: null  # Size of the PVC (null defaults to 10Gi for persistentVolumeClaim type)
-    storageClass: null  # Storage class for the PVC (null uses cluster default)
+    type: "emptyDir" # Options: "hostPath", "persistentVolumeClaim", "emptyDir", "existingClaim"
+    hostPathPrefix: /mnt/data # Path prefix for hostPath volumes
+    claimName: seaweedfs-data-pvc # Name of the PVC to use (for existingClaim type)
+    size: null # Size of the PVC (null defaults to 10Gi for persistentVolumeClaim type)
+    storageClass: null # Storage class for the PVC (null uses cluster default)
     # accessModes for the PVC. Default is ["ReadWriteOnce"].
     # For multi-replica deployments, use ["ReadWriteMany"] with a compatible storage class.
     accessModes: []
-    annotations: {}  # Annotations for the PVC
+    annotations: {} # Annotations for the PVC
 
   # Health checks
   readinessProbe:
@@ -1619,7 +1659,7 @@ allInOne:
     timeoutSeconds: 5
 
   # Additional resources
-  extraEnvironmentVars: {}  # Additional environment variables
+  extraEnvironmentVars: {} # Additional environment variables
   # Secret environment variables (for database credentials, etc.)
   # Example:
   # secretExtraEnvironmentVars:
@@ -1632,13 +1672,13 @@ allInOne:
   #       name: postgres-credentials
   #       key: password
   secretExtraEnvironmentVars: {}
-  extraVolumeMounts: ""  # Additional volume mounts
-  extraVolumes: ""  # Additional volumes
-  initContainers: ""  # Init containers
-  sidecars: ""  # Sidecar containers
-  annotations: {}  # Annotations for the deployment
-  podAnnotations: {}  # Annotations for the pods
-  podLabels: {}  # Labels for the pods
+  extraVolumeMounts: "" # Additional volume mounts
+  extraVolumes: "" # Additional volumes
+  initContainers: "" # Init containers
+  sidecars: "" # Sidecar containers
+  annotations: {} # Annotations for the deployment
+  podAnnotations: {} # Annotations for the pods
+  podLabels: {} # Labels for the pods
 
   # Scheduling configuration
   # Affinity Settings
@@ -1745,14 +1785,15 @@ cosi:
 
 certificates:
   commonName: "SeaweedFS CA"
+  dnsNames: []
   ipAddresses: []
   keyAlgorithm: RSA
   keySize: 2048
-  duration: 2160h  # 90d
-  renewBefore: 360h  # 15d
+  duration: 2160h # 90d
+  renewBefore: 360h # 15d
   ca:
-    duration: 87600h  # 10 years
-    renewBefore: 720h  # 30d
+    duration: 87600h # 10 years
+    renewBefore: 720h # 30d
   externalCertificates:
     # This will avoid the need to use cert-manager and will rely on providing your own external certificates and CA
     # you will need to store your provided certificates in the secret read by the different services:

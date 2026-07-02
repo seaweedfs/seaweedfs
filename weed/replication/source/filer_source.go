@@ -19,14 +19,16 @@ import (
 )
 
 type FilerSource struct {
-	grpcAddress    string
-	grpcDialOption grpc.DialOption
-	Dir            string
-	address        string
-	proxyByFiler   bool
-	dataCenter     string
-	signature      int32
-	httpClient     *util_http_client.HTTPClient
+	grpcAddress       string
+	grpcDialOption    grpc.DialOption
+	Dir               string
+	address           string
+	proxyByFiler      bool
+	dataCenter        string
+	signature         int32
+	httpClient        *util_http_client.HTTPClient
+	signingKey        string
+	signingExpiresSec int
 }
 
 func (fs *FilerSource) Initialize(configuration util.Configuration, prefix string) error {
@@ -58,6 +60,20 @@ func (fs *FilerSource) SetGrpcDialOption(option grpc.DialOption) {
 
 func (fs *FilerSource) SetHttpClient(client *util_http_client.HTTPClient) {
 	fs.httpClient = client
+}
+
+// SetJwtSigningKeys configures the JWT signing key and token lifetime used
+// when reading chunk data through the filer proxy. It tries readKey first,
+// then falls back to fallbackKey if readKey is empty. This ensures compatibility
+// with deployments that only configure jwt.filer_signing.key (the generic key)
+// rather than the dedicated jwt.filer_signing.read.key.
+func (fs *FilerSource) SetJwtSigningKeys(readKey, fallbackKey string, expiresSec int) {
+	if readKey != "" {
+		fs.signingKey = readKey
+	} else if fallbackKey != "" {
+		fs.signingKey = fallbackKey
+	}
+	fs.signingExpiresSec = expiresSec
 }
 
 func (fs *FilerSource) LookupFileId(ctx context.Context, part string) (fileUrls []string, err error) {
@@ -118,7 +134,12 @@ func (fs *FilerSource) ReadPart(fileId string, offset int64) (filename string, h
 	}
 
 	if fs.proxyByFiler {
-		filename, header, resp, err = downloadFn("http://"+fs.address+"/?proxyChunkId="+fileId, "", offset)
+		var jwtToken string
+		if fs.signingKey != "" {
+			jwtToken = string(security.GenJwtForFilerServer(
+				security.SigningKey(fs.signingKey), fs.signingExpiresSec))
+		}
+		filename, header, resp, err = downloadFn("http://"+fs.address+"/?proxyChunkId="+fileId, jwtToken, offset)
 		if err != nil {
 			glog.V(0).Infof("read part %s via filer proxy %s offset %d: %v", fileId, fs.address, offset, err)
 		} else {

@@ -1,6 +1,8 @@
-{{- /* Filer ingress works for both normal mode (filer.enabled) and all-in-one mode (allInOne.enabled) */}}
+{{- /* Filer ingresses work for both normal mode (filer.enabled) and all-in-one mode (allInOne.enabled) */}}
 {{- $filerEnabled := or .Values.filer.enabled .Values.allInOne.enabled }}
-{{- if and $filerEnabled .Values.filer.ingress.enabled }}
+
+{{- /* HTTP Ingress */}}
+{{- if and $filerEnabled .Values.filer.ingresses.http.enabled }}
 {{- /* Determine service name based on deployment mode */}}
 {{- $serviceName := ternary (include "seaweedfs.componentName" (list . "all-in-one")) (include "seaweedfs.componentName" (list . "filer")) .Values.allInOne.enabled }}
 {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
@@ -12,9 +14,9 @@ apiVersion: extensions/v1beta1
 {{- end }}
 kind: Ingress
 metadata:
-  name: ingress-{{ include "seaweedfs.fullname" . }}-filer
+  name: ingress-{{ include "seaweedfs.fullname" . }}-filer-http
   namespace: {{ .Release.Namespace }}
-  {{- with .Values.filer.ingress.annotations }}
+  {{- with .Values.filer.ingresses.http.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
@@ -25,14 +27,14 @@ metadata:
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: filer
 spec:
-  ingressClassName: {{ .Values.filer.ingress.className | quote }}
+  ingressClassName: {{ .Values.filer.ingresses.http.className | quote }}
   tls:
-    {{ .Values.filer.ingress.tls | default list | toYaml | nindent 6}}
+    {{ .Values.filer.ingresses.http.tls | default list | toYaml | nindent 6}}
   rules:
   - http:
       paths:
-      - path: {{ .Values.filer.ingress.path | quote }}
-        pathType: {{ .Values.filer.ingress.pathType | quote }}
+      - path: {{ .Values.filer.ingresses.http.path | quote }}
+        pathType: {{ .Values.filer.ingresses.http.pathType | quote }}
         backend:
 {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
           service:
@@ -43,7 +45,58 @@ spec:
           serviceName: {{ $serviceName }}
           servicePort: {{ .Values.filer.port }}
 {{- end }}
-{{- if .Values.filer.ingress.host }}
-    host: {{ .Values.filer.ingress.host }}
+{{- if .Values.filer.ingresses.http.host }}
+    host: {{ .Values.filer.ingresses.http.host }}
+{{- end }}
+{{- end }}
+
+---
+
+{{- /* gRPC Ingress */}}
+{{- if and $filerEnabled .Values.filer.ingresses.grpc.enabled }}
+{{- /* Determine service name based on deployment mode */}}
+{{- $serviceName := ternary (include "seaweedfs.componentName" (list . "all-in-one")) (include "seaweedfs.componentName" (list . "filer")) .Values.allInOne.enabled }}
+{{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
+apiVersion: networking.k8s.io/v1
+{{- else if semverCompare ">=1.14-0" .Capabilities.KubeVersion.GitVersion }}
+apiVersion: networking.k8s.io/v1beta1
+{{- else }}
+apiVersion: extensions/v1beta1
+{{- end }}
+kind: Ingress
+metadata:
+  name: ingress-{{ include "seaweedfs.fullname" . }}-filer-grpc
+  namespace: {{ .Release.Namespace }}
+  {{- with .Values.filer.ingresses.grpc.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  labels:
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: filer
+spec:
+  ingressClassName: {{ .Values.filer.ingresses.grpc.className | quote }}
+  tls:
+    {{ .Values.filer.ingresses.grpc.tls | default list | toYaml | nindent 6}}
+  rules:
+  - http:
+      paths:
+      - path: {{ .Values.filer.ingresses.grpc.path | quote }}
+        pathType: {{ .Values.filer.ingresses.grpc.pathType | quote }}
+        backend:
+{{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
+          service:
+            name: {{ $serviceName }}
+            port:
+              number: {{ .Values.filer.grpcPort }}
+{{- else }}
+          serviceName: {{ $serviceName }}
+          servicePort: {{ .Values.filer.grpcPort }}
+{{- end }}
+{{- if .Values.filer.ingresses.grpc.host }}
+    host: {{ .Values.filer.ingresses.grpc.host }}
 {{- end }}
 {{- end }}
