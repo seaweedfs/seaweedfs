@@ -2059,18 +2059,21 @@ func (iam *IdentityAccessManagement) PruneBucketFromConfiguration(ctx context.Co
 }
 
 // actionScopedToBucket reports whether a configured action string like
-// "Read:bucket" or "Write:bucket/prefix" is scoped exclusively to the given
-// bucket. Wildcard resources are never considered scoped to a single bucket.
+// "Read:bucket", "Write:bucket/prefix" or "Write:bucket/prefix/*" is scoped
+// exclusively to the given bucket. A wildcard in the bucket segment (e.g. "*"
+// or "buck*/x") may cover other buckets and is never single-bucket scoped; a
+// wildcard confined to the object path stays scoped to this bucket.
 func actionScopedToBucket(action, bucket string) bool {
 	idx := strings.Index(action, ":")
 	if idx < 0 {
 		return false
 	}
 	resource := action[idx+1:]
-	if strings.ContainsAny(resource, "*?") {
+	bucketSeg, _, _ := strings.Cut(resource, "/")
+	if strings.ContainsAny(bucketSeg, "*?") {
 		return false
 	}
-	return resource == bucket || strings.HasPrefix(resource, bucket+"/")
+	return bucketSeg == bucket
 }
 
 // LoadS3ApiConfigurationFromCredentialManager loads configuration using the credential manager
