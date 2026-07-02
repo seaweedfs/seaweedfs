@@ -363,6 +363,50 @@ func TestReadLogFileRefsSingleFilerProcessErrorStops(t *testing.T) {
 	}
 }
 
+// blockingReader blocks in Read until released.
+type blockingReader struct{ release chan struct{} }
+
+func (r *blockingReader) Read(p []byte) (int, error) { <-r.release; return 0, io.EOF }
+func (r *blockingReader) Close() error               { return nil }
+
+// An abort (fatal error on one filer) must not wait for another filer's
+// in-flight chunk read: the replay returns promptly and the wedged producer
+// exits on its own once its read completes.
+func TestReadLogFileRefsAbortDoesNotJoinWedgedReader(t *testing.T) {
+	files := newTestLogFiles(2, 1, 10, 0)
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+
+	wedgedKey := files.refs[0].Chunks[0].FileId // filer00 wedges mid-read
+	failKey := files.refs[1].Chunks[0].FileId   // filer01 fails for real
+	base := files.readerFn()
+	readerFn := func(chunks []*filer_pb.FileChunk) (io.ReadCloser, error) {
+		switch chunks[0].FileId {
+		case wedgedKey:
+			return &blockingReader{release: release}, nil
+		case failKey:
+			return nil, fmt.Errorf("failed to locate %s", failKey)
+		}
+		return base(chunks)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := ReadLogFileRefs(files.refs, readerFn, 0, 0, PathFilter{PathPrefix: "/"},
+			func(*filer_pb.SubscribeMetadataResponse) error { return nil })
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatalf("expected the fatal read error to propagate")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("ReadLogFileRefs did not return while a peer reader was wedged")
+	}
+}
+
 // TestReadLogFileRefsSingleFilerNotFoundSkips confirms a chunk-not-found on the
 // single-filer path skips just that file, not the whole replay.
 func TestReadLogFileRefsSingleFilerNotFoundSkips(t *testing.T) {
