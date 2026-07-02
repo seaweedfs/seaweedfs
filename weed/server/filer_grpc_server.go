@@ -173,19 +173,11 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 		return &filer_pb.CreateEntryResponse{}, fmt.Errorf("CreateEntry cleanupChunks %s %s: %v", req.Directory, req.Entry.Name, err2)
 	}
 
-	so, err := fs.detectStorageOption(ctx, string(util.NewFullPath(req.Directory, req.Entry.Name)), "", "", 0, "", "", "", "")
-	if err != nil {
-		return nil, err
-	}
 	newEntry := filer.FromPbEntry(req.Directory, req.Entry)
 	newEntry.Chunks = chunks
-	// Don't apply TTL to remote entries - they're managed by remote storage
-	if newEntry.Remote == nil {
-		if newEntry.TtlSec == 0 {
-			newEntry.TtlSec = so.TtlSeconds
-		}
-	} else {
-		newEntry.TtlSec = 0
+	so, err := fs.applyStorageDefaultsToEntry(ctx, newEntry)
+	if err != nil {
+		return nil, err
 	}
 
 	// Serialize concurrent mutations to the same path on this filer so the
