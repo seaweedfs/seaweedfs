@@ -12,7 +12,9 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/sequence"
+	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -33,6 +35,7 @@ func newLeaderMaster() *MasterServer {
 	return &MasterServer{
 		Topo:                    topo,
 		option:                  &MasterOption{},
+		guard:                   security.NewGuard(nil, "", 0, "", 0),
 		volumeGrowthRequestChan: make(chan *topology.VolumeGrowRequest, 1<<6),
 	}
 }
@@ -73,6 +76,77 @@ func TestAssignShedsLoadWhenGrowthInFlight(t *testing.T) {
 	// Shed immediately rather than spinning out the 10s retry budget.
 	assert.Less(t, elapsed, 2*time.Second)
 	// Growth was already pending, so we must not enqueue another grow request.
+	assert.Len(t, ms.volumeGrowthRequestChan, 0)
+}
+
+// The assign that triggers growth must not shed itself: on a cold cluster there
+// is no other request to pick up the volume, so it waits for the growth it
+// started and returns the fresh volume once it lands.
+func TestAssignInitiatorWaitsForItsOwnGrowth(t *testing.T) {
+	ms := newLeaderMaster()
+	dn := ms.Topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+		GetOrCreateDataNode("127.0.0.1", 8080, 18080, "127.0.0.1", "dn1", map[string]uint32{"": 100})
+
+	req := &master_pb.AssignRequest{Count: 1, Replication: "000"}
+	rp, err := super_block.NewReplicaPlacementFromString(req.Replication)
+	require.NoError(t, err)
+
+	// Simulate growth landing shortly after it is requested by registering a
+	// writable volume, then draining the request the initiator enqueued.
+	go func() {
+		req := <-ms.volumeGrowthRequestChan
+		v := storage.VolumeInfo{
+			Id:               needle.VolumeId(1),
+			Version:          needle.GetCurrentVersion(),
+			ReplicaPlacement: rp,
+			Ttl:              needle.EMPTY_TTL,
+		}
+		dn.UpdateVolumes([]storage.VolumeInfo{v})
+		ms.Topo.RegisterVolumeLayout(v, dn)
+		ms.Topo.GetVolumeLayout(req.Option.Collection, rp, needle.EMPTY_TTL, types.ToDiskType("")).DoneGrowRequest()
+	}()
+
+	start := time.Now()
+	resp, err := ms.Assign(context.Background(), req)
+	elapsed := time.Since(start)
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.NotEmpty(t, resp.Fid)
+	// It waited for growth rather than shedding, but well inside the retry budget.
+	assert.Less(t, elapsed, 5*time.Second)
+}
+
+// An initiator whose growth concludes without yielding a writable volume
+// (failed or discarded growth) sheds retryably instead of re-triggering
+// growth for the rest of its budget.
+func TestAssignInitiatorShedsWhenGrowthConcludesUnfulfilled(t *testing.T) {
+	ms := newLeaderMaster()
+	ms.Topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+		GetOrCreateDataNode("127.0.0.1", 8080, 18080, "127.0.0.1", "dn1", map[string]uint32{"": 100})
+
+	req := &master_pb.AssignRequest{Count: 1, Replication: "000"}
+	rp, err := super_block.NewReplicaPlacementFromString(req.Replication)
+	require.NoError(t, err)
+	vl := ms.Topo.GetVolumeLayout("", rp, needle.EMPTY_TTL, types.ToDiskType(""))
+
+	// Growth consumer that fails: clears the flag without registering volumes.
+	go func() {
+		<-ms.volumeGrowthRequestChan
+		vl.DoneGrowRequest()
+	}()
+
+	start := time.Now()
+	resp, err := ms.Assign(context.Background(), req)
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	require.Nil(t, resp)
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.ResourceExhausted, st.Code())
+	assert.Less(t, elapsed, 2*time.Second)
+	// Growth was triggered exactly once, not re-enqueued after the failure.
 	assert.Len(t, ms.volumeGrowthRequestChan, 0)
 }
 

@@ -645,6 +645,13 @@ func (vl *VolumeLayout) HasGrowRequest() bool {
 func (vl *VolumeLayout) AddGrowRequest() {
 	vl.growRequest.Store(true)
 }
+
+// AddGrowRequestIfAbsent atomically claims the pending-growth flag. It returns
+// true for the one caller that transitions it from unset to set (the growth
+// initiator); concurrent callers get false and are followers of that growth.
+func (vl *VolumeLayout) AddGrowRequestIfAbsent() bool {
+	return vl.growRequest.CompareAndSwap(false, true)
+}
 func (vl *VolumeLayout) DoneGrowRequest() {
 	vl.growRequest.Store(false)
 }

@@ -106,18 +106,19 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 	vl.SetLastGrowCount(req.WritableVolumeCount)
 
 	var (
-		lastErr    error
-		maxTimeout = time.Second * 10
-		startTime  = time.Now()
+		lastErr       error
+		maxTimeout    = time.Second * 10
+		startTime     = time.Now()
+		initiatedGrow bool
 	)
 
 	for time.Now().Sub(startTime) < maxTimeout {
 		fid, count, dnList, shouldGrow, err := ms.Topo.PickForWrite(req.Count, option, vl, req.ExpectedDataSize)
-		if shouldGrow && !vl.HasGrowRequest() && !ms.option.VolumeGrowthDisabled {
+		if shouldGrow && !initiatedGrow && !ms.option.VolumeGrowthDisabled && vl.AddGrowRequestIfAbsent() {
+			initiatedGrow = true
 			if err != nil && ms.Topo.AvailableSpaceFor(option) <= 0 {
 				err = fmt.Errorf("%s and no free volumes left for %s", err.Error(), option.String())
 			}
-			vl.AddGrowRequest()
 			ms.volumeGrowthRequestChan <- &topology.VolumeGrowRequest{
 				Option: option,
 				Count:  req.WritableVolumeCount,
@@ -129,18 +130,23 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 			stats.MasterPickForWriteErrorCounter.Inc()
 			lastErr = err
 			if (req.DataCenter != "" || req.Rack != "") && strings.Contains(err.Error(), topology.NoWritableVolumes) {
-				break
+				glog.V(0).Infof("assign %v %v: %v", req, option.String(), err)
+				return nil, err
 			}
-			// Growth is the remedy and already in flight; don't pin a goroutine
-			// spinning out the timeout under an assign herd.
-			if shouldGrow && vl.HasGrowRequest() {
+			if shouldGrow {
 				if ms.Topo.AvailableSpaceFor(option) <= 0 {
 					break // out of space: surface the real error, not a retryable shed
 				}
-				// ResourceExhausted, not Unavailable: clients retry it (assign_file_id.go)
-				// but the gRPC layer doesn't treat it as a dead channel, so the shed
-				// doesn't tear down the shared master connection mid-herd.
-				return nil, status.Errorf(codes.ResourceExhausted, "no writable volumes for %s, volume growth in progress", option.String())
+				// Only the initiator waits, and only while the growth it triggered
+				// is still pending: followers shed fast so a herd doesn't pin a
+				// goroutine each, and an initiator whose growth concluded without
+				// yielding a writable volume sheds so client retries re-trigger
+				// growth instead of looping it here. ResourceExhausted, not
+				// Unavailable: clients retry it (assign_file_id.go) without
+				// invalidating the shared master connection.
+				if initiatedGrow != vl.HasGrowRequest() {
+					return nil, status.Errorf(codes.ResourceExhausted, "no writable volumes for %s, volume growth in progress", option.String())
+				}
 			}
 			time.Sleep(200 * time.Millisecond)
 			continue
@@ -170,6 +176,11 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 			Auth:     string(security.GenJwtForVolumeServer(ms.guard.SigningKey(), ms.guard.ExpiresAfterSec(), fid)),
 			Replicas: replicas,
 		}, nil
+	}
+	// The initiator timed out with its growth still pending: shed retryably
+	// rather than failing the write that growth is about to satisfy.
+	if initiatedGrow && vl.HasGrowRequest() && ms.Topo.AvailableSpaceFor(option) > 0 {
+		return nil, status.Errorf(codes.ResourceExhausted, "no writable volumes for %s, volume growth in progress", option.String())
 	}
 	if lastErr != nil {
 		glog.V(0).Infof("assign %v %v: %v", req, option.String(), lastErr)
