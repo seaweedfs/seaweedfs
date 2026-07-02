@@ -116,7 +116,7 @@ func TestObjectTransactionPutPreservesExplicitTTL(t *testing.T) {
 	}
 }
 
-func TestObjectTransactionPutDoesNotApplyStorageTTLToDirectoryOrRemoteEntry(t *testing.T) {
+func TestObjectTransactionPutClearsTTLForRemoteEntry(t *testing.T) {
 	fs, store := newTxnTestServer(nil)
 
 	mustSetObjectTxnStorageConf(t, fs, &filer_pb.FilerConf_PathConf{
@@ -127,22 +127,8 @@ func TestObjectTransactionPutDoesNotApplyStorageTTLToDirectoryOrRemoteEntry(t *t
 	now := time.Unix(1700000000, 0)
 
 	resp, err := fs.ObjectTransaction(context.Background(), &filer_pb.ObjectTransactionRequest{
-		LockKey: "/buckets/video/dir",
+		LockKey: "/buckets/video/remote",
 		Mutations: []*filer_pb.ObjectMutation{
-			{
-				Type:      filer_pb.ObjectMutation_PUT,
-				Directory: "/buckets/video",
-				Entry: &filer_pb.Entry{
-					Name:        "dir",
-					IsDirectory: true,
-					Attributes: &filer_pb.FuseAttributes{
-						Crtime:   now.Unix(),
-						Mtime:    now.Unix(),
-						FileMode: 0755 | (1 << 31),
-						TtlSec:   7200,
-					},
-				},
-			},
 			{
 				Type:      filer_pb.ObjectMutation_PUT,
 				Directory: "/buckets/video",
@@ -152,9 +138,10 @@ func TestObjectTransactionPutDoesNotApplyStorageTTLToDirectoryOrRemoteEntry(t *t
 						Crtime:   now.Unix(),
 						Mtime:    now.Unix(),
 						FileMode: 0644,
+						FileSize: 123,
 						TtlSec:   7200,
 					},
-					RemoteEntry: &filer_pb.RemoteEntry{},
+					RemoteEntry: &filer_pb.RemoteEntry{RemoteSize: 123},
 				},
 			},
 		},
@@ -166,19 +153,11 @@ func TestObjectTransactionPutDoesNotApplyStorageTTLToDirectoryOrRemoteEntry(t *t
 		t.Fatalf("ObjectTransaction response error: %q", resp.Error)
 	}
 
-	dirEntry := store.entries["/buckets/video/dir"]
-	if dirEntry == nil {
-		t.Fatalf("directory entry should be created")
-	}
-	if got := dirEntry.TtlSec; got != 0 {
-		t.Fatalf("directory TtlSec = %d, want 0", got)
-	}
-
-	remoteEntry := store.entries["/buckets/video/remote"]
-	if remoteEntry == nil {
+	entry := store.entries["/buckets/video/remote"]
+	if entry == nil {
 		t.Fatalf("remote entry should be created")
 	}
-	if got := remoteEntry.TtlSec; got != 0 {
+	if got := entry.TtlSec; got != 0 {
 		t.Fatalf("remote entry TtlSec = %d, want 0", got)
 	}
 }

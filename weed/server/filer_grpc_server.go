@@ -361,24 +361,30 @@ func (fs *FilerServer) ObjectTransactionBatch(ctx context.Context, req *filer_pb
 	return resp, nil
 }
 
-func (fs *FilerServer) applyStorageDefaultsToEntry(ctx context.Context, entry *filer.Entry) {
+func (fs *FilerServer) applyStorageDefaultsToEntry(ctx context.Context, entry *filer.Entry) error {
 	if entry.IsDirectory() {
-		return
+		entry.Attr.TtlSec = 0
+		return nil
 	}
 
-	if entry.Remote != nil {
-		return
+	if entry.IsInRemoteOnly() {
+		entry.Attr.TtlSec = 0
+		return nil
 	}
 
 	if entry.TtlSec != 0 {
-		return
+		return nil
 	}
 	so, err := fs.detectStorageOption(ctx, string(entry.FullPath), "", "", entry.TtlSec, "", "", "", "")
 	if err != nil {
 		glog.WarningfCtx(ctx, "detectStorageOption: %v", err)
-		return
+		return err
+	}
+	if so == nil {
+		return nil
 	}
 	entry.TtlSec = so.TtlSeconds
+	return nil
 }
 
 // applyObjectMutation applies a single mutation while the transaction's path
@@ -393,7 +399,9 @@ func (fs *FilerServer) applyObjectMutation(ctx context.Context, m *filer_pb.Obje
 			return fmt.Errorf("PUT requires an entry")
 		}
 		newEntry := filer.FromPbEntry(m.Directory, m.Entry)
-		fs.applyStorageDefaultsToEntry(ctx, newEntry)
+		if err := fs.applyStorageDefaultsToEntry(ctx, newEntry); err != nil {
+			return err
+		}
 		return fs.filer.CreateEntry(ctx, newEntry, nil, false, fromOtherCluster, signatures, false, fs.filer.MaxFilenameLength)
 
 	case filer_pb.ObjectMutation_DELETE:
