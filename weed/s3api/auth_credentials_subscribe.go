@@ -3,7 +3,6 @@ package s3api
 import (
 	"context"
 	"strings"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -211,8 +210,16 @@ func (s3a *S3ApiServer) updateBucketConfigCacheFromEntry(entry *filer_pb.Entry) 
 
 	bucket := entry.Name
 
-	glog.V(3).Infof("updateBucketConfigCacheFromEntry: called for bucket %s, ExtObjectLockEnabledKey=%s",
-		bucket, string(entry.Extended[s3_constants.ExtObjectLockEnabledKey]))
+	// Remove from negative cache since bucket now exists
+	// This is important for buckets created via weed shell or other external means
+	s3a.bucketConfigCache.RemoveNegativeCache(bucket)
+
+	// Only refresh buckets already resident in the cache; cold buckets
+	// lazy-load on first access so the cache holds this gateway's working
+	// set, not every bucket in the cluster.
+	if !s3a.bucketConfigCache.Contains(bucket) {
+		return
+	}
 
 	// Create new bucket config from the entry. populateBucketConfigDerivedFields
 	// is the single source of truth for mapping Entry.Extended → cached
@@ -224,15 +231,8 @@ func (s3a *S3ApiServer) updateBucketConfigCacheFromEntry(entry *filer_pb.Entry) 
 	}
 	s3a.populateBucketConfigDerivedFields(config)
 
-	// Update timestamp
-	config.LastModified = time.Now()
-
-	// Update cache
-	glog.V(3).Infof("updateBucketConfigCacheFromEntry: updating cache for bucket %s, ObjectLockConfig=%+v", bucket, config.ObjectLockConfig)
+	glog.V(3).Infof("updateBucketConfigCacheFromEntry: refreshing cache for bucket %s, ObjectLockConfig=%+v", bucket, config.ObjectLockConfig)
 	s3a.bucketConfigCache.Set(bucket, config)
-	// Remove from negative cache since bucket now exists
-	// This is important for buckets created via weed shell or other external means
-	s3a.bucketConfigCache.RemoveNegativeCache(bucket)
 }
 
 // invalidateBucketConfigCache removes a bucket from the configuration cache

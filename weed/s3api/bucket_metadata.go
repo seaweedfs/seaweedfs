@@ -1,10 +1,7 @@
 package s3api
 
 import (
-	"context"
 	"encoding/json"
-	"math"
-	"strings"
 	"sync"
 
 	"github.com/aws/aws-sdk-go/service/s3"
@@ -54,45 +51,25 @@ type BucketRegistry struct {
 	s3a          *S3ApiServer
 }
 
+// NewBucketRegistry creates a lazy registry: nothing is listed at startup,
+// buckets load from the filer on first access and stay fresh via the
+// metadata subscription.
 func NewBucketRegistry(s3a *S3ApiServer) *BucketRegistry {
-	br := &BucketRegistry{
+	return &BucketRegistry{
 		metadataCache: make(map[string]*BucketMetaData),
 		notFound:      make(map[string]struct{}),
 		s3a:           s3a,
 	}
-	err := br.init()
-	if err != nil {
-		glog.Fatal("init bucket registry failed", err)
-		return nil
-	}
-	return br
 }
 
-func (r *BucketRegistry) init() error {
-	var bucketCount int
-	err := filer_pb.List(context.Background(), r.s3a, r.s3a.option.BucketsPath, "", func(entry *filer_pb.Entry, isLast bool) error {
-		if entry != nil && strings.HasPrefix(entry.Name, ".") {
-			return nil
-		}
-		r.LoadBucketMetadata(entry)
-		// Also warm the bucket config cache with Object Lock and versioning settings
-		// This ensures cache consistency across multi-filer clusters after restart
-		r.s3a.updateBucketConfigCacheFromEntry(entry)
-		bucketCount++
-		return nil
-	}, "", false, math.MaxUint32)
-	if err != nil {
-		glog.Errorf("BucketRegistry.init: failed to list buckets: %v", err)
-		return err
-	}
-	glog.V(1).Infof("BucketRegistry.init: warmed config cache for %d buckets", bucketCount)
-	return nil
-}
-
+// LoadBucketMetadata refreshes a bucket already resident in the cache from a
+// subscription event. Cold buckets are left to lazy-load on first access so
+// the cache holds only this gateway's working set.
 func (r *BucketRegistry) LoadBucketMetadata(entry *filer_pb.Entry) {
-	bucketMetadata := buildBucketMetadata(r.s3a.iam, entry)
 	r.metadataCacheLock.Lock()
-	r.metadataCache[entry.Name] = bucketMetadata
+	if _, found := r.metadataCache[entry.Name]; found {
+		r.metadataCache[entry.Name] = buildBucketMetadata(r.s3a.iam, entry)
+	}
 	r.metadataCacheLock.Unlock()
 	// Remove from notFound cache since bucket now exists
 	r.unMarkNotFound(entry.Name)

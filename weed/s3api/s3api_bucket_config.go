@@ -282,6 +282,15 @@ func (bcc *BucketConfigCache) Set(bucket string, config *BucketConfig) {
 	bcc.cache[bucket] = config
 }
 
+// Contains reports whether the bucket is resident in the cache, regardless of TTL
+func (bcc *BucketConfigCache) Contains(bucket string) bool {
+	bcc.mutex.RLock()
+	defer bcc.mutex.RUnlock()
+
+	_, exists := bcc.cache[bucket]
+	return exists
+}
+
 // Remove removes bucket configuration from cache
 func (bcc *BucketConfigCache) Remove(bucket string) {
 	bcc.mutex.Lock()

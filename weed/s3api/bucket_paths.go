@@ -7,6 +7,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
@@ -17,21 +18,19 @@ func (s3a *S3ApiServer) isTableBucket(bucket string) bool {
 		return false
 	}
 
-	// Check cache first
 	if s3a.bucketRegistry != nil {
-		s3a.bucketRegistry.metadataCacheLock.RLock()
-		if metadata, ok := s3a.bucketRegistry.metadataCache[bucket]; ok {
-			s3a.bucketRegistry.metadataCacheLock.RUnlock()
-			return metadata.IsTableBucket
+		metadata, errCode := s3a.bucketRegistry.GetBucketMetadata(bucket)
+		if errCode != s3err.ErrNone {
+			if errCode != s3err.ErrNoSuchBucket {
+				glog.V(1).Infof("bucket lookup failed for %s: %v", bucket, errCode)
+			}
+			return false
 		}
-		s3a.bucketRegistry.metadataCacheLock.RUnlock()
+		return metadata.IsTableBucket
 	}
 
 	entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
 	if err == nil && entry != nil {
-		if s3a.bucketRegistry != nil {
-			s3a.bucketRegistry.LoadBucketMetadata(entry)
-		}
 		return s3tables.IsTableBucketEntry(entry)
 	}
 
