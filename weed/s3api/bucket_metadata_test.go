@@ -183,11 +183,7 @@ func TestGetBucketMetadata(t *testing.T) {
 		}, nil
 	}
 
-	br := &BucketRegistry{
-		metadataCache: make(map[string]*BucketMetaData),
-		notFound:      make(map[string]struct{}),
-		s3a:           nil,
-	}
+	br := NewBucketRegistry(nil)
 
 	//start 40 goroutine for
 	var wg sync.WaitGroup

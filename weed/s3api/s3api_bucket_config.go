@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/service/s3"
+	lru "github.com/hashicorp/golang-lru/v2"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -183,15 +184,21 @@ func (bkc *BucketKMSCache) Clear() {
 	bkc.cache = make(map[string]*BucketKMSCacheEntry)
 }
 
+// bucketCacheCapacity bounds the per-bucket caches (bucket config cache,
+// bucket registry, and their negative caches). Only the hot working set
+// stays resident; evicted buckets reload from the filer on next access.
+const bucketCacheCapacity = 65536
+
 // BucketConfigCache provides caching for bucket configurations
 // Cache entries are automatically updated/invalidated through metadata subscription events,
-// so TTL serves as a safety fallback rather than the primary consistency mechanism
+// so TTL serves as a safety fallback rather than the primary consistency mechanism.
+// Both caches are size-capped LRUs so a gateway serving millions of buckets
+// only keeps its hot working set resident.
 type BucketConfigCache struct {
-	cache         map[string]*BucketConfig
-	negativeCache map[string]time.Time // Cache for non-existent buckets
-	mutex         sync.RWMutex
-	ttl           time.Duration // Safety fallback TTL; real-time consistency maintained via events
-	negativeTTL   time.Duration // TTL for negative cache entries
+	cache         *lru.Cache[string, *BucketConfig]
+	negativeCache *lru.Cache[string, time.Time] // Cache for non-existent buckets
+	ttl           time.Duration                 // Safety fallback TTL; real-time consistency maintained via events
+	negativeTTL   time.Duration                 // TTL for negative cache entries
 }
 
 // BucketMetadata represents the complete metadata for a bucket
@@ -247,9 +254,11 @@ func NewBucketConfigCache(ttl time.Duration) *BucketConfigCache {
 		negativeTTL = 30 * time.Second // Minimum 30 seconds for negative cache
 	}
 
+	cache, _ := lru.New[string, *BucketConfig](bucketCacheCapacity)
+	negativeCache, _ := lru.New[string, time.Time](bucketCacheCapacity)
 	return &BucketConfigCache{
-		cache:         make(map[string]*BucketConfig),
-		negativeCache: make(map[string]time.Time),
+		cache:         cache,
+		negativeCache: negativeCache,
 		ttl:           ttl,
 		negativeTTL:   negativeTTL,
 	}
@@ -257,10 +266,7 @@ func NewBucketConfigCache(ttl time.Duration) *BucketConfigCache {
 
 // Get retrieves bucket configuration from cache
 func (bcc *BucketConfigCache) Get(bucket string) (*BucketConfig, bool) {
-	bcc.mutex.RLock()
-	defer bcc.mutex.RUnlock()
-
-	config, exists := bcc.cache[bucket]
+	config, exists := bcc.cache.Get(bucket)
 	if !exists {
 		return nil, false
 	}
@@ -275,69 +281,47 @@ func (bcc *BucketConfigCache) Get(bucket string) (*BucketConfig, bool) {
 
 // Set stores bucket configuration in cache
 func (bcc *BucketConfigCache) Set(bucket string, config *BucketConfig) {
-	bcc.mutex.Lock()
-	defer bcc.mutex.Unlock()
-
 	config.LastModified = time.Now()
-	bcc.cache[bucket] = config
+	bcc.cache.Add(bucket, config)
 }
 
 // Contains reports whether the bucket is resident in the cache, regardless of TTL
 func (bcc *BucketConfigCache) Contains(bucket string) bool {
-	bcc.mutex.RLock()
-	defer bcc.mutex.RUnlock()
-
-	_, exists := bcc.cache[bucket]
-	return exists
+	return bcc.cache.Contains(bucket)
 }
 
 // Remove removes bucket configuration from cache
 func (bcc *BucketConfigCache) Remove(bucket string) {
-	bcc.mutex.Lock()
-	defer bcc.mutex.Unlock()
-
-	delete(bcc.cache, bucket)
+	bcc.cache.Remove(bucket)
 }
 
 // Clear clears all cached configurations
 func (bcc *BucketConfigCache) Clear() {
-	bcc.mutex.Lock()
-	defer bcc.mutex.Unlock()
-
-	bcc.cache = make(map[string]*BucketConfig)
-	bcc.negativeCache = make(map[string]time.Time)
+	bcc.cache.Purge()
+	bcc.negativeCache.Purge()
 }
 
 // IsNegativelyCached checks if a bucket is in the negative cache (doesn't exist)
 func (bcc *BucketConfigCache) IsNegativelyCached(bucket string) bool {
-	bcc.mutex.Lock()
-	defer bcc.mutex.Unlock()
-
-	if cachedTime, exists := bcc.negativeCache[bucket]; exists {
+	if cachedTime, exists := bcc.negativeCache.Get(bucket); exists {
 		// Check if the negative cache entry is still valid
 		if time.Since(cachedTime) < bcc.negativeTTL {
 			return true
 		}
 		// Entry expired, remove it
-		delete(bcc.negativeCache, bucket)
+		bcc.negativeCache.Remove(bucket)
 	}
 	return false
 }
 
 // SetNegativeCache marks a bucket as non-existent in the negative cache
 func (bcc *BucketConfigCache) SetNegativeCache(bucket string) {
-	bcc.mutex.Lock()
-	defer bcc.mutex.Unlock()
-
-	bcc.negativeCache[bucket] = time.Now()
+	bcc.negativeCache.Add(bucket, time.Now())
 }
 
 // RemoveNegativeCache removes a bucket from the negative cache
 func (bcc *BucketConfigCache) RemoveNegativeCache(bucket string) {
-	bcc.mutex.Lock()
-	defer bcc.mutex.Unlock()
-
-	delete(bcc.negativeCache, bucket)
+	bcc.negativeCache.Remove(bucket)
 }
 
 // loadBucketPolicyFromExtended loads and parses bucket policy from entry extended attributes

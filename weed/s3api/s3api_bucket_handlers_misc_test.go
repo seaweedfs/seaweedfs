@@ -133,18 +133,14 @@ func TestPutBucketRequestPaymentRequesterRejected(t *testing.T) {
 func TestPutBucketOwnershipControlsRejectsRuleWithoutObjectOwnership(t *testing.T) {
 	ownerID := AccountAdmin.Id
 	s3a := &S3ApiServer{
-		bucketRegistry: &BucketRegistry{
-			metadataCache: map[string]*BucketMetaData{
-				"b": {
-					Name: "b",
-					Owner: &s3.Owner{
-						ID: &ownerID,
-					},
-				},
-			},
-			notFound: map[string]struct{}{},
-		},
+		bucketRegistry: NewBucketRegistry(nil),
 	}
+	s3a.bucketRegistry.setMetadataCache(&BucketMetaData{
+		Name: "b",
+		Owner: &s3.Owner{
+			ID: &ownerID,
+		},
+	})
 	body := `<OwnershipControls><Rule></Rule></OwnershipControls>`
 	req := newBucketRequest(http.MethodPut, "b", "ownershipControls=", body)
 	req.Header.Set(s3_constants.AmzAccountId, AccountAdmin.Id)
