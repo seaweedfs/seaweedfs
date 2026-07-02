@@ -1849,7 +1849,7 @@ func (s3a *S3ApiServer) recoverLatestVersionWithoutPointer(bucket, normalizedObj
 		return nil, healErr
 	}
 
-	return nil, fmt.Errorf("no version metadata in .versions directory and no regular object found for %s/%s", bucket, normalizedObject)
+	return nil, fmt.Errorf("no version metadata in .versions directory and no regular object found for %s/%s: %w", bucket, normalizedObject, filer_pb.ErrNotFound)
 }
 
 // versionIdFromEntry returns a .versions child entry's version id, preferring
