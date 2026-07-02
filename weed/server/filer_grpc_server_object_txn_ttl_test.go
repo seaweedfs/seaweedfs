@@ -162,6 +162,46 @@ func TestObjectTransactionPutClearsTTLForRemoteEntry(t *testing.T) {
 	}
 }
 
+func TestObjectTransactionPutHonorsMaxFileNameLengthRule(t *testing.T) {
+	fs, store := newTxnTestServer(nil)
+
+	mustSetObjectTxnStorageConf(t, fs, &filer_pb.FilerConf_PathConf{
+		LocationPrefix:    "/buckets/video/",
+		MaxFileNameLength: 8,
+	})
+
+	now := time.Unix(1700000000, 0)
+
+	resp, err := fs.ObjectTransaction(context.Background(), &filer_pb.ObjectTransactionRequest{
+		LockKey: "/buckets/video/toolong.mp4",
+		Mutations: []*filer_pb.ObjectMutation{
+			{
+				Type:      filer_pb.ObjectMutation_PUT,
+				Directory: "/buckets/video",
+				Entry: &filer_pb.Entry{
+					Name: "toolong.mp4",
+					Attributes: &filer_pb.FuseAttributes{
+						Crtime:   now.Unix(),
+						Mtime:    now.Unix(),
+						FileMode: 0644,
+						FileSize: 123,
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ObjectTransaction transport error: %v", err)
+	}
+	if resp.Error == "" {
+		t.Fatalf("ObjectTransaction should reject a name longer than the rule's max_file_name_length")
+	}
+
+	if _, ok := store.entries["/buckets/video/toolong.mp4"]; ok {
+		t.Fatalf("over-long name must not create the entry")
+	}
+}
+
 func TestObjectTransactionPutFailsOnReadOnlyStorageConfig(t *testing.T) {
 	// An explicit TTL must not bypass the read-only rule.
 	for _, ttlSec := range []int32{0, 7200} {

@@ -382,10 +382,11 @@ func (fs *FilerServer) applyObjectMutation(ctx context.Context, m *filer_pb.Obje
 			return fmt.Errorf("PUT requires an entry")
 		}
 		newEntry := filer.FromPbEntry(m.Directory, m.Entry)
-		if _, err := fs.applyStorageDefaultsToEntry(ctx, newEntry); err != nil {
+		so, err := fs.applyStorageDefaultsToEntry(ctx, newEntry)
+		if err != nil {
 			return err
 		}
-		return fs.filer.CreateEntry(ctx, newEntry, nil, false, fromOtherCluster, signatures, false, fs.filer.MaxFilenameLength)
+		return fs.filer.CreateEntry(ctx, newEntry, nil, false, fromOtherCluster, signatures, false, so.MaxFileNameLength)
 
 	case filer_pb.ObjectMutation_DELETE:
 		fullpath := util.NewFullPath(m.Directory, m.Name)
