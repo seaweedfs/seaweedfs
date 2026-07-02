@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
@@ -17,6 +18,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
+
+// ErrTruncatedBody tags a source read that ended before the expected bytes
+// arrived, so callers can tell a truncated input (client abort, reverse-proxy
+// timeout) apart from a volume-server upload fault.
+var ErrTruncatedBody = errors.New("truncated request body")
 
 // ChunkedUploadResult contains the result of a chunked upload
 type ChunkedUploadResult struct {
@@ -104,6 +110,9 @@ uploadLoop:
 			// before any data (offset=0,got=0) from mid-stream truncation.
 			// A bare io.ErrUnexpectedEOF is not actionable on its own (see #9149).
 			wrapped := fmt.Errorf("read chunk at offset %d (got %d bytes): %w", chunkOffset, dataSize, err)
+			if errors.Is(err, io.ErrUnexpectedEOF) {
+				wrapped = fmt.Errorf("%w: %w", ErrTruncatedBody, wrapped)
+			}
 			glog.V(2).Infof("UploadReaderInChunks: %v", wrapped)
 			chunkBufferPool.Put(bytesBuffer)
 			<-bytesBufferLimitChan
