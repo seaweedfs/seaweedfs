@@ -59,8 +59,8 @@ spec:
 
 ---
 
-{{- /* gRPC Ingress */}}
-{{- if and $filerEnabled .Values.filer.ingresses.grpc.enabled }}
+{{- /* gRPC Ingress (standard Kubernetes Ingress, NOT for Traefik) */}}
+{{- if and $filerEnabled .Values.filer.ingresses.grpc.enabled (not (hasPrefix "traefik" (default "" .Values.filer.ingresses.grpc.className))) }}
 {{- /* Determine service name based on deployment mode */}}
 {{- $serviceName := ternary (include "seaweedfs.componentName" (list . "all-in-one")) (include "seaweedfs.componentName" (list . "filer")) .Values.allInOne.enabled }}
 {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
