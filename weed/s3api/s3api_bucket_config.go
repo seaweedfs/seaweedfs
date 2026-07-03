@@ -38,6 +38,7 @@ type BucketConfig struct {
 	ACL              []byte
 	Owner            string
 	IdentityId       string // identity that created the bucket
+	Crtime           int64  // bucket creation time, unix seconds
 	IsPublicRead     bool   // Cached flag to avoid JSON parsing on every request
 	CORS             *cors.CORSConfiguration
 	ObjectLockConfig *ObjectLockConfiguration      // Cached parsed Object Lock configuration
@@ -402,6 +403,10 @@ func (s3a *S3ApiServer) newBucketConfigFromEntry(bucket string, entry *filer_pb.
 	}
 	if entry == nil {
 		return config
+	}
+
+	if entry.Attributes != nil {
+		config.Crtime = entry.Attributes.Crtime
 	}
 
 	if entry.Extended != nil {

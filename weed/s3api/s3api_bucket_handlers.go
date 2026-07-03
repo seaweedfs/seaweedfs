@@ -144,11 +144,11 @@ func decodeContinuationToken(token string) (string, error) {
 
 // bucketVisibleToIdentity reports whether ListBuckets should include the bucket:
 // the identity owns it or has explicit permission to list it.
-func (s3a *S3ApiServer) bucketVisibleToIdentity(r *http.Request, entry *filer_pb.Entry, identity *Identity) bool {
-	if isBucketOwnedByIdentity(entry, identity) {
+func (s3a *S3ApiServer) bucketVisibleToIdentity(r *http.Request, bucket, owner string, identity *Identity) bool {
+	if isBucketOwnedByIdentity(owner, identity) {
 		return true
 	}
-	return s3a.iam.VerifyActionPermission(r, identity, s3_constants.ACTION_LIST, entry.Name, "") == s3err.ErrNone
+	return s3a.iam.VerifyActionPermission(r, identity, s3_constants.ACTION_LIST, bucket, "") == s3err.ErrNone
 }
 
 // scanVisibleBuckets pages through /buckets and collects up to maxBuckets
@@ -169,7 +169,7 @@ func (s3a *S3ApiServer) scanVisibleBuckets(r *http.Request, identity *Identity, 
 			if !entry.IsDirectory || strings.HasPrefix(entry.Name, ".") {
 				continue
 			}
-			if !s3a.bucketVisibleToIdentity(r, entry, identity) {
+			if !s3a.bucketVisibleToIdentity(r, entry.Name, bucketEntryOwner(entry), identity) {
 				continue
 			}
 			buckets = append(buckets, ListAllMyBucketsEntry{
@@ -191,18 +191,14 @@ func (s3a *S3ApiServer) scanVisibleBuckets(r *http.Request, identity *Identity, 
 	return buckets, nextToken, nil
 }
 
-// isBucketOwnedByIdentity checks if a bucket entry is owned by the given identity.
-// Returns true if the identity owns the bucket, false otherwise.
+// isBucketOwnedByIdentity checks if a bucket with the given owner id (its
+// AmzIdentityId metadata) is owned by the given identity.
 //
 // Ownership rules:
 // - Admin users: considered owners of all buckets
-// - Non-admin users: own buckets where AmzIdentityId matches identity.Name
+// - Non-admin users: own buckets whose owner id matches identity.Name
 // - Buckets without owner metadata are not owned by anyone (except admins)
-func isBucketOwnedByIdentity(entry *filer_pb.Entry, identity *Identity) bool {
-	if !entry.IsDirectory {
-		return false
-	}
-
+func isBucketOwnedByIdentity(owner string, identity *Identity) bool {
 	if identity == nil {
 		return false
 	}
@@ -214,17 +210,7 @@ func isBucketOwnedByIdentity(entry *filer_pb.Entry, identity *Identity) bool {
 
 	// Non-admin users with no name cannot own buckets.
 	// This prevents misconfigured identities from matching buckets with empty owner IDs.
-	if identity.Name == "" {
-		return false
-	}
-
-	// Check ownership via AmzIdentityId metadata
-	id, ok := entry.Extended[s3_constants.AmzIdentityId]
-	if !ok || string(id) != identity.Name {
-		return false
-	}
-
-	return true
+	return identity.Name != "" && identity.Name == owner
 }
 
 func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request) {
@@ -416,10 +402,10 @@ func (s3a *S3ApiServer) healBucketOwnerIndex(bucket, identityId string) {
 		return
 	}
 	config, errCode := s3a.getBucketConfig(bucket)
-	if errCode != s3err.ErrNone || bucketEntryOwner(config.Entry) != identityId {
+	if errCode != s3err.ErrNone || config.IdentityId != identityId {
 		return
 	}
-	if err := s3a.addBucketToOwnerIndex(identityId, bucket, config.Entry.Attributes.Crtime); err != nil {
+	if err := s3a.addBucketToOwnerIndex(identityId, bucket, config.Crtime); err != nil {
 		glog.V(1).Infof("owner index heal %s/%s: %v", identityId, bucket, err)
 	}
 }
@@ -483,7 +469,7 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if owner := bucketEntryOwner(bucketConfig.Entry); owner != "" {
+	if owner := bucketConfig.IdentityId; owner != "" {
 		if err := s3a.removeBucketFromOwnerIndex(owner, bucket); err != nil {
 			glog.Warningf("DeleteBucketHandler: owner index remove %s/%s: %v", owner, bucket, err)
 		}

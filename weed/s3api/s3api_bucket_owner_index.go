@@ -166,12 +166,12 @@ func (s3a *S3ApiServer) resolveGrantedBuckets(r *http.Request, identity *Identit
 			}
 			continue
 		}
-		if !s3a.bucketVisibleToIdentity(r, config.Entry, identity) {
+		if !s3a.bucketVisibleToIdentity(r, name, config.IdentityId, identity) {
 			continue
 		}
 		granted = append(granted, ListAllMyBucketsEntry{
 			Name:         name,
-			CreationDate: time.Unix(config.Entry.Attributes.Crtime, 0).UTC(),
+			CreationDate: time.Unix(config.Crtime, 0).UTC(),
 		})
 	}
 	return granted
