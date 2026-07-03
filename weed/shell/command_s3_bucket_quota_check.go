@@ -74,7 +74,7 @@ func (c *commandS3BucketQuotaEnforce) Do(args []string, commandEnv *CommandEnv, 
 		collection := getCollectionName(commandEnv, entry.Name)
 		var collectionSize float64
 		if collectionInfo, found := collectionInfos[collection]; found {
-			collectionSize = collectionInfo.Size
+			collectionSize = collectionInfo.LogicalSize()
 		}
 		if c.processEachBucket(fc, filerBucketsPath, entry, writer, collectionSize) {
 			hasConfChanges = true

@@ -37,6 +37,16 @@ type CollectionInfo struct {
 	VolumeCount      int
 }
 
+// LogicalSize is the live data size: single-copy volume size minus the
+// un-vacuumed deleted/overwritten bytes. Quota enforcement uses this so
+// vacuum lag never counts against a bucket.
+func (c *CollectionInfo) LogicalSize() float64 {
+	if c.Size < c.DeletedByteCount {
+		return 0
+	}
+	return c.Size - c.DeletedByteCount
+}
+
 func (c *commandCollectionList) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	collections, err := ListCollectionNames(commandEnv, true, true)

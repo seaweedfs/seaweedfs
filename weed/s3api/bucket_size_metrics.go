@@ -30,9 +30,20 @@ type CollectionInfo struct {
 	FileCount        float64
 	DeleteCount      float64
 	DeletedByteCount float64
-	Size             float64 // Logical size (deduplicated by volume ID)
+	Size             float64 // Single-copy volume size (deduplicated by volume ID), still counting un-vacuumed garbage
 	PhysicalSize     float64 // Physical size (including all replicas)
 	VolumeCount      int     // Logical volume count (deduplicated by volume ID)
+}
+
+// LogicalSize is the live data size: single-copy volume size minus the
+// un-vacuumed deleted/overwritten bytes. Quota enforcement and the
+// bucket_size_bytes metric use this so vacuum lag never counts against a
+// bucket, matching the usage figure the Admin UI shows.
+func (c *CollectionInfo) LogicalSize() float64 {
+	if c.Size < c.DeletedByteCount {
+		return 0
+	}
+	return c.Size - c.DeletedByteCount
 }
 
 // volumeKey uniquely identifies a volume for deduplication
@@ -105,9 +116,9 @@ func (s3a *S3ApiServer) collectAndUpdateBucketSizeMetrics(ctx context.Context) {
 	for _, bucket := range buckets {
 		collection := s3a.getCollectionName(bucket.Name)
 		if info, found := collectionInfos[collection]; found {
-			stats.UpdateBucketSizeMetrics(bucket.Name, info.Size, info.PhysicalSize, info.FileCount)
+			stats.UpdateBucketSizeMetrics(bucket.Name, info.LogicalSize(), info.PhysicalSize, info.FileCount)
 			glog.V(3).Infof("Updated bucket size metrics: bucket=%s, logicalSize=%.0f, physicalSize=%.0f, objects=%.0f",
-				bucket.Name, info.Size, info.PhysicalSize, info.FileCount)
+				bucket.Name, info.LogicalSize(), info.PhysicalSize, info.FileCount)
 		} else {
 			// Bucket exists but no collection data (empty bucket)
 			stats.UpdateBucketSizeMetrics(bucket.Name, 0, 0, 0)
@@ -134,7 +145,7 @@ func (s3a *S3ApiServer) enforceBucketQuotas(ctx context.Context, buckets []*file
 	for _, bucket := range buckets {
 		var size float64
 		if info, found := collectionInfos[s3a.getCollectionName(bucket.Name)]; found {
-			size = info.Size
+			size = info.LogicalSize()
 		}
 		locPrefix := s3a.option.BucketsPath + "/" + bucket.Name + "/"
 		readOnly, flipped := fc.ApplyBucketQuotaReadOnly(locPrefix, size, float64(bucket.Quota))
