@@ -427,10 +427,17 @@ func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Set content type - use stored MIME type or default
+	// Set content type - use stored MIME type or default. A directory without a stored
+	// mime and without data of its own answers application/x-directory, the marker type
+	// Hadoop-style clients (e.g. flink-s3-fs-presto) require to classify the path as a
+	// directory; defaulting to octet-stream makes them treat it as a 0-byte file.
 	contentType := entry.Attributes.Mime
 	if contentType == "" {
-		contentType = "application/octet-stream"
+		if entry.IsDirectoryKeyObject() {
+			contentType = "application/octet-stream"
+		} else {
+			contentType = s3_constants.DirectoryMimeType
+		}
 	}
 	w.Header().Set("Content-Type", contentType)
 
