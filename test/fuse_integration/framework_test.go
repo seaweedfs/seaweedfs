@@ -34,14 +34,18 @@ type FuseTestFramework struct {
 
 // TestConfig holds configuration for FUSE tests
 type TestConfig struct {
-	Collection   string
-	Replication  string
-	ChunkSizeMB  int
-	CacheSizeMB  int
-	NumVolumes   int
-	EnableDebug  bool
-	MountOptions []string
-	SkipCleanup  bool // for debugging failed tests
+	Collection  string
+	Replication string
+	ChunkSizeMB int
+	CacheSizeMB int
+	NumVolumes  int
+	EnableDebug bool
+	// MountGlobalOptions are glog flags (-v, -logtostderr, ...) registered on
+	// weed's global flagset; they must precede the subcommand name or the
+	// mount process dies at flag parsing.
+	MountGlobalOptions []string
+	MountOptions       []string
+	SkipCleanup        bool // for debugging failed tests
 }
 
 // DefaultTestConfig returns a default configuration for FUSE tests
@@ -246,19 +250,20 @@ func (f *FuseTestFramework) copyLogsForCI() {
 
 // startMini starts "weed mini" which runs master+volume+filer in one process.
 func (f *FuseTestFramework) startMini(config *TestConfig) error {
-	args := []string{
-		"mini",
-		"-dir=" + f.dataDir,
-		"-ip=127.0.0.1",
-		"-ip.bind=127.0.0.1",
-		"-filer.port=" + strconv.Itoa(f.filerPort),
-		"-s3=false",
-		"-webdav=false",
-		"-admin.ui=false",
-	}
+	var args []string
 	if config.EnableDebug {
 		args = append(args, "-v=4")
 	}
+	args = append(args,
+		"mini",
+		"-dir="+f.dataDir,
+		"-ip=127.0.0.1",
+		"-ip.bind=127.0.0.1",
+		"-filer.port="+strconv.Itoa(f.filerPort),
+		"-s3=false",
+		"-webdav=false",
+		"-admin.ui=false",
+	)
 
 	proc, err := f.startProcess("mini", args)
 	if err != nil {
@@ -270,14 +275,18 @@ func (f *FuseTestFramework) startMini(config *TestConfig) error {
 
 // mountFuse mounts the SeaweedFS FUSE filesystem
 func (f *FuseTestFramework) mountFuse(config *TestConfig) error {
-	args := []string{
+	args := append([]string{}, config.MountGlobalOptions...)
+	if config.EnableDebug {
+		args = append(args, "-v=4")
+	}
+	args = append(args,
 		"mount",
-		"-filer=127.0.0.1:" + strconv.Itoa(f.filerPort),
-		"-dir=" + f.mountPoint,
+		"-filer=127.0.0.1:"+strconv.Itoa(f.filerPort),
+		"-dir="+f.mountPoint,
 		"-filer.path=/",
 		"-dirAutoCreate",
 		"-allowOthers=false",
-	}
+	)
 
 	if config.Collection != "" {
 		args = append(args, "-collection="+config.Collection)
@@ -290,9 +299,6 @@ func (f *FuseTestFramework) mountFuse(config *TestConfig) error {
 	}
 	if config.CacheSizeMB > 0 {
 		args = append(args, fmt.Sprintf("-cacheCapacityMB=%d", config.CacheSizeMB))
-	}
-	if config.EnableDebug {
-		args = append(args, "-v=4")
 	}
 
 	args = append(args, config.MountOptions...)
