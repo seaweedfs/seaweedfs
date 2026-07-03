@@ -429,6 +429,9 @@ type filerChunkReaderAt struct {
 }
 
 func (r *filerChunkReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	if off < 0 {
+		return 0, fmt.Errorf("negative offset: %d", off)
+	}
 	if off >= r.size {
 		return 0, io.EOF
 	}
@@ -440,13 +443,27 @@ func (r *filerChunkReaderAt) ReadAt(p []byte, off int64) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	buf := bytes.NewBuffer(p[:0])
-	if err := streamFn(buf); err != nil {
-		return buf.Len(), err
+	// Write straight into p; a bytes.Buffer wrapping p would silently
+	// allocate a fresh backing array if it ever grew, dropping bytes the
+	// caller expects in p.
+	w := &sliceWriter{dst: p}
+	if err := streamFn(w); err != nil {
+		return w.n, err
 	}
-	n := buf.Len()
-	if n < len(p) {
-		return n, io.EOF
+	if w.n < len(p) {
+		return w.n, io.EOF
 	}
-	return n, nil
+	return w.n, nil
+}
+
+// sliceWriter writes into a fixed destination slice, discarding any overflow.
+type sliceWriter struct {
+	dst []byte
+	n   int
+}
+
+func (w *sliceWriter) Write(p []byte) (int, error) {
+	c := copy(w.dst[w.n:], p)
+	w.n += c
+	return c, nil
 }
