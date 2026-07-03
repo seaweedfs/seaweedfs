@@ -24,6 +24,7 @@ const (
 
 type ecShard struct {
 	ShardID     uint32
+	Collection  string
 	NodeAddress string
 }
 
@@ -173,6 +174,7 @@ func (c *commandEcShardUnmount) liveShardsForVolume() []*ecShard {
 							for _, sid := range sinfo.Ids() {
 								shards = append(shards, &ecShard{
 									ShardID:     uint32(sid),
+									Collection:  eci.GetCollection(),
 									NodeAddress: nodeAddress,
 								})
 							}
@@ -264,8 +266,9 @@ func (c *commandEcShardUnmount) unmountShard(s *ecShard) error {
 		if c.delete {
 			c.write("Deleting shard %v for volume ID %d...\n", s, c.volumeID)
 			if _, err := vsc.VolumeEcShardsDelete(ctx, &volume_server_pb.VolumeEcShardsDeleteRequest{
-				VolumeId: c.volumeID,
-				ShardIds: []uint32{s.ShardID},
+				VolumeId:   c.volumeID,
+				Collection: s.Collection,
+				ShardIds:   []uint32{s.ShardID},
 			}); err != nil {
 				return err
 			}
