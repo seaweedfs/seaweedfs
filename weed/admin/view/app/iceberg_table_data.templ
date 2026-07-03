@@ -1,0 +1,250 @@
+package app
+
+import (
+	"fmt"
+	"net/url"
+	"path"
+
+	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
+)
+
+templ IcebergTableData(data dash.IcebergDataPreviewData) {
+	<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+		<h1 class="h2">
+			<nav aria-label="breadcrumb">
+				<ol class="breadcrumb mb-0">
+					<li class="breadcrumb-item">
+						<a href={ dash.PUrl(ctx, "/object-store/s3tables/buckets") }>
+							<i class="fas fa-table me-1"></i>Table Buckets
+						</a>
+					</li>
+					<li class="breadcrumb-item">
+						<a href={ dash.PUrl(ctx, fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces", url.PathEscape(data.CatalogName))) }>
+							{ data.CatalogName }
+						</a>
+					</li>
+					<li class="breadcrumb-item">
+						<a href={ dash.PUrl(ctx, fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces/%s/tables", url.PathEscape(data.CatalogName), url.PathEscape(data.NamespaceName))) }>
+							{ data.NamespaceName }
+						</a>
+					</li>
+					<li class="breadcrumb-item">
+						<a href={ dash.PUrl(ctx, fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces/%s/tables/%s", url.PathEscape(data.CatalogName), url.PathEscape(data.NamespaceName), url.PathEscape(data.TableName))) }>
+							{ data.TableName }
+						</a>
+					</li>
+					<li class="breadcrumb-item active">Data</li>
+				</ol>
+			</nav>
+		</h1>
+		<div class="btn-toolbar mb-2 mb-md-0">
+			<div class="btn-group me-2">
+				<a class="btn btn-sm btn-outline-secondary" href={ dash.PUrl(ctx, fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces/%s/tables/%s", url.PathEscape(data.CatalogName), url.PathEscape(data.NamespaceName), url.PathEscape(data.TableName))) }>
+					<i class="fas fa-info-circle me-1"></i>Table Details
+				</a>
+			</div>
+		</div>
+	</div>
+	if data.PreviewError != "" {
+		<div class="alert alert-warning">
+			<i class="fas fa-exclamation-triangle me-2"></i>{ data.PreviewError }
+		</div>
+	}
+	for _, note := range data.PreviewNotes {
+		<div class="alert alert-info py-2 mb-2">
+			<i class="fas fa-info-circle me-2"></i>{ note }
+		</div>
+	}
+	<div class="row mb-4">
+		<div class="col-xl-4 col-md-6 mb-4">
+			<div class="card border-left-primary shadow h-100 py-2">
+				<div class="card-body">
+					<div class="row no-gutters align-items-center">
+						<div class="col mr-2">
+							<div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+								Snapshot
+							</div>
+							<div class="h6 mb-0 font-weight-bold text-gray-800">
+								if data.SnapshotID != 0 {
+									{ fmt.Sprintf("%d", data.SnapshotID) }
+									if data.SnapshotID == data.CurrentSnapshotID {
+										<span class="badge bg-success ms-1">current</span>
+									}
+								} else {
+									-
+								}
+							</div>
+							if !data.SnapshotTime.IsZero() {
+								<div class="small text-muted">{ data.SnapshotTime.Format("2006-01-02 15:04:05") }</div>
+							}
+						</div>
+						<div class="col-auto">
+							if len(data.Snapshots) > 1 {
+								<div class="dropdown">
+									<button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+										Switch
+									</button>
+									<ul class="dropdown-menu dropdown-menu-end">
+										for i, snapshot := range data.Snapshots {
+											if i < 25 {
+												<li>
+													<a class="dropdown-item small" href={ dash.PUrl(ctx, icebergTableDataURL(data.CatalogName, data.NamespaceName, data.TableName, snapshot.SnapshotID, data.RowLimit, "")) }>
+														{ fmt.Sprintf("%d", snapshot.SnapshotID) }
+														if !snapshot.Timestamp.IsZero() {
+															<span class="text-muted ms-1">{ snapshot.Timestamp.Format("2006-01-02 15:04") }</span>
+														}
+													</a>
+												</li>
+											}
+										}
+									</ul>
+								</div>
+							} else {
+								<i class="fas fa-history fa-2x text-gray-300"></i>
+							}
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+		<div class="col-xl-4 col-md-6 mb-4">
+			<div class="card border-left-success shadow h-100 py-2">
+				<div class="card-body">
+					<div class="row no-gutters align-items-center">
+						<div class="col mr-2">
+							<div class="text-xs font-weight-bold text-success text-uppercase mb-1">
+								Data Files
+							</div>
+							<div class="h5 mb-0 font-weight-bold text-gray-800">
+								{ formatNumber(int64(data.TotalDataFiles)) }
+							</div>
+						</div>
+						<div class="col-auto">
+							<i class="fas fa-copy fa-2x text-gray-300"></i>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+		<div class="col-xl-4 col-md-6 mb-4">
+			<div class="card border-left-info shadow h-100 py-2">
+				<div class="card-body">
+					<div class="row no-gutters align-items-center">
+						<div class="col mr-2">
+							<div class="text-xs font-weight-bold text-info text-uppercase mb-1">
+								Total Records
+							</div>
+							<div class="h5 mb-0 font-weight-bold text-gray-800">
+								{ formatNumber(data.TotalRecords) }
+							</div>
+						</div>
+						<div class="col-auto">
+							<i class="fas fa-list-ol fa-2x text-gray-300"></i>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+	<div class="row">
+		<div class="col-12 mb-4">
+			<div class="card shadow">
+				<div class="card-header py-3 d-flex justify-content-between align-items-center">
+					<h6 class="m-0 font-weight-bold text-primary">
+						<i class="fas fa-table me-2"></i>Sample Rows
+						if data.SelectedFile != "" {
+							<span class="badge bg-secondary ms-2">{ path.Base(data.SelectedFile) }</span>
+							<a class="small ms-2" href={ dash.PUrl(ctx, icebergTableDataURL(data.CatalogName, data.NamespaceName, data.TableName, data.SnapshotID, data.RowLimit, "")) }>all files</a>
+						}
+					</h6>
+					<div class="btn-group btn-group-sm" role="group" aria-label="Row limit">
+						for _, limit := range []int{25, 50, 100, 200} {
+							if limit == data.RowLimit {
+								<a class="btn btn-primary" href={ dash.PUrl(ctx, icebergTableDataURL(data.CatalogName, data.NamespaceName, data.TableName, data.SnapshotID, limit, data.SelectedFile)) }>{ fmt.Sprintf("%d", limit) }</a>
+							} else {
+								<a class="btn btn-outline-primary" href={ dash.PUrl(ctx, icebergTableDataURL(data.CatalogName, data.NamespaceName, data.TableName, data.SnapshotID, limit, data.SelectedFile)) }>{ fmt.Sprintf("%d", limit) }</a>
+							}
+						}
+					</div>
+				</div>
+				<div class="card-body">
+					if len(data.Columns) > 0 {
+						<div class="table-responsive">
+							<table class="table table-sm table-hover table-striped">
+								<thead>
+									<tr>
+										<th class="text-muted">#</th>
+										for _, col := range data.Columns {
+											<th>{ col }</th>
+										}
+									</tr>
+								</thead>
+								<tbody>
+									for i, row := range data.Rows {
+										<tr>
+											<td class="text-muted">{ fmt.Sprintf("%d", i+1) }</td>
+											for _, cell := range row {
+												<td><span class="small">{ cell }</span></td>
+											}
+										</tr>
+									}
+								</tbody>
+							</table>
+						</div>
+						<div class="small text-muted">
+							{ fmt.Sprintf("Showing %d row(s) from %d data file(s).", len(data.Rows), data.ScannedFiles) }
+						</div>
+					} else {
+						<div class="text-center text-muted py-4">No rows to preview.</div>
+					}
+				</div>
+			</div>
+		</div>
+	</div>
+	<div class="row">
+		<div class="col-12 mb-4">
+			<div class="card shadow">
+				<div class="card-header py-3">
+					<h6 class="m-0 font-weight-bold text-primary">
+						<i class="fas fa-copy me-2"></i>Data Files
+					</h6>
+				</div>
+				<div class="card-body">
+					<div class="table-responsive">
+						<table class="table table-sm table-hover">
+							<thead>
+								<tr>
+									<th>Path</th>
+									<th>Format</th>
+									<th>Records</th>
+									<th>Size</th>
+									<th></th>
+								</tr>
+							</thead>
+							<tbody>
+								for _, file := range data.DataFiles {
+									<tr>
+										<td><code class="small">{ file.Path }</code></td>
+										<td><span class="badge bg-secondary">{ file.Format }</span></td>
+										<td>{ formatNumber(file.RecordCount) }</td>
+										<td>{ formatBytes(file.SizeBytes) }</td>
+										<td>
+											<a class="btn btn-sm btn-outline-primary" href={ dash.PUrl(ctx, icebergTableDataURL(data.CatalogName, data.NamespaceName, data.TableName, data.SnapshotID, data.RowLimit, file.Path)) }>
+												<i class="fas fa-eye me-1"></i>Preview
+											</a>
+										</td>
+									</tr>
+								}
+								if len(data.DataFiles) == 0 {
+									<tr>
+										<td colspan="5" class="text-center text-muted">No data files in this snapshot.</td>
+									</tr>
+								}
+							</tbody>
+						</table>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+}
