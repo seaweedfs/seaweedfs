@@ -124,6 +124,11 @@ func startCluster(testDir string) (*testCluster, error) {
 		adminEndpoint: fmt.Sprintf("http://127.0.0.1:%d", adminPort),
 	}
 
+	// Set on the package global before the goroutine starts so the mini
+	// command picks it up; cleared in stop(). The global is how the mini
+	// harness receives its cancellation context in tests.
+	command.MiniClusterCtx = ctx //nolint:fatcontext // test harness handoff, not a per-request context
+
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
@@ -158,9 +163,7 @@ func startCluster(testDir string) (*testCluster, error) {
 		for _, cmd := range command.Commands {
 			if cmd.Name() == "mini" && cmd.Run != nil {
 				cmd.Flag.Parse(os.Args[1:])
-				command.MiniClusterCtx = ctx
 				cmd.Run(cmd, cmd.Flag.Args())
-				command.MiniClusterCtx = nil
 				return
 			}
 		}
@@ -179,6 +182,7 @@ func startCluster(testDir string) (*testCluster, error) {
 }
 
 func (c *testCluster) stop() {
+	command.MiniClusterCtx = nil //nolint:fatcontext // clearing the test harness handoff
 	if c.cancel != nil {
 		c.cancel()
 	}
