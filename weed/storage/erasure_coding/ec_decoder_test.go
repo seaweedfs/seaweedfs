@@ -73,6 +73,22 @@ func TestHasLiveNeedles_EmptyFileIsFalse(t *testing.T) {
 	}
 }
 
+func TestHasLiveNeedles_TruncatedEcxErrors(t *testing.T) {
+	dir := t.TempDir()
+
+	base := filepath.Join(dir, "foo_1")
+
+	entry := makeNeedleMapEntry(types.NeedleId(1), types.Offset{}, types.TombstoneFileSize)
+	truncated := append(entry, entry[:types.NeedleIdSize]...)
+	if err := os.WriteFile(base+".ecx", truncated, 0644); err != nil {
+		t.Fatalf("write ecx: %v", err)
+	}
+
+	if _, err := erasure_coding.HasLiveNeedles(base); err == nil {
+		t.Fatalf("expected error for truncated ecx")
+	}
+}
+
 func makeNeedleMapEntry(key types.NeedleId, offset types.Offset, size types.Size) []byte {
 	b := make([]byte, types.NeedleIdSize+types.OffsetSize+types.SizeSize)
 	types.NeedleIdToBytes(b[0:types.NeedleIdSize], key)
