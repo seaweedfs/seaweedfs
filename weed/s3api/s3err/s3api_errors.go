@@ -64,6 +64,8 @@ const (
 	ErrInvalidDigest
 	ErrBadDigest
 	ErrInvalidMaxKeys
+	ErrInvalidMaxBuckets
+	ErrInvalidContinuationToken
 	ErrInvalidMaxUploads
 	ErrInvalidMaxParts
 	ErrInvalidMaxDeleteObjects
@@ -223,6 +225,16 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrInvalidMaxKeys: {
 		Code:           "InvalidArgument",
 		Description:    "Argument maxKeys must be an integer between 0 and 2147483647",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrInvalidMaxBuckets: {
+		Code:           "InvalidArgument",
+		Description:    "Argument max-buckets must be an integer between 1 and 10000",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrInvalidContinuationToken: {
+		Code:           "InvalidArgument",
+		Description:    "The continuation token provided is incorrect",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 	ErrInvalidMaxParts: {
