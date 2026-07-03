@@ -114,6 +114,7 @@ func (h *AdminHandlers) registerUIRoutes(r *mux.Router) {
 	r.HandleFunc("/object-store/s3tables/buckets/{bucket}/namespaces", h.ShowS3TablesNamespaces).Methods(http.MethodGet)
 	r.HandleFunc("/object-store/s3tables/buckets/{bucket}/namespaces/{namespace}/tables", h.ShowS3TablesTables).Methods(http.MethodGet)
 	r.HandleFunc("/object-store/s3tables/buckets/{bucket}/namespaces/{namespace}/tables/{table}", h.ShowS3TablesTableDetails).Methods(http.MethodGet)
+	r.HandleFunc("/object-store/s3tables/buckets/{bucket}/namespaces/{namespace}/tables/{table}/data", h.ShowS3TablesTableData).Methods(http.MethodGet)
 	r.HandleFunc("/object-store/iceberg", h.ShowIcebergCatalog).Methods(http.MethodGet)
 	r.HandleFunc("/object-store/iceberg/{catalog}/namespaces", h.ShowIcebergNamespaces).Methods(http.MethodGet)
 	r.HandleFunc("/object-store/iceberg/{catalog}/namespaces/{namespace}/tables", h.ShowIcebergTables).Methods(http.MethodGet)
@@ -435,6 +436,38 @@ func (h *AdminHandlers) ShowS3TablesTableDetails(w http.ResponseWriter, r *http.
 
 	w.Header().Set("Content-Type", "text/html")
 	component := app.IcebergTableDetails(data)
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
+	layoutComponent := layout.Layout(viewCtx, component)
+	if err := layoutComponent.Render(r.Context(), w); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
+	}
+}
+
+// ShowS3TablesTableData renders sample rows and the data-file list of an Iceberg table snapshot.
+func (h *AdminHandlers) ShowS3TablesTableData(w http.ResponseWriter, r *http.Request) {
+	bucketName := mux.Vars(r)["bucket"]
+	namespace := mux.Vars(r)["namespace"]
+	tableName := mux.Vars(r)["table"]
+	arn, err := buildS3TablesBucketArn(bucketName)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	query := r.URL.Query()
+	snapshotID, _ := strconv.ParseInt(query.Get("snapshot"), 10, 64)
+	limit, _ := strconv.Atoi(query.Get("limit"))
+
+	username := h.getUsername(r)
+	data, err := h.adminServer.GetIcebergTableDataPreview(r.Context(), bucketName, arn, namespace, tableName, snapshotID, query.Get("file"), limit)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to get table data: "+err.Error())
+		return
+	}
+	data.Username = username
+
+	w.Header().Set("Content-Type", "text/html")
+	component := app.IcebergTableData(data)
 	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
 	layoutComponent := layout.Layout(viewCtx, component)
 	if err := layoutComponent.Render(r.Context(), w); err != nil {
