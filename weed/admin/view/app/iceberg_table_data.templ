@@ -97,6 +97,14 @@ templ IcebergTableData(data dash.IcebergDataPreviewData) {
 												</li>
 											}
 										}
+										if len(data.Snapshots) > 25 {
+											<li><hr class="dropdown-divider"/></li>
+											<li>
+												<a class="dropdown-item small text-muted" href={ dash.PUrl(ctx, fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces/%s/tables/%s", url.PathEscape(data.CatalogName), url.PathEscape(data.NamespaceName), url.PathEscape(data.TableName))) }>
+													{ fmt.Sprintf("%d more in snapshot history…", len(data.Snapshots)-25) }
+												</a>
+											</li>
+										}
 									</ul>
 								</div>
 							} else {
