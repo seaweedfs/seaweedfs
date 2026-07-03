@@ -16,6 +16,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	clustermaintenance "github.com/seaweedfs/seaweedfs/weed/cluster/maintenance"
 	"github.com/seaweedfs/seaweedfs/weed/credential"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -71,6 +72,27 @@ func (s *AdminServer) getFilerConfig() (*FilerConfig, error) {
 	})
 
 	return config, err
+}
+
+// getFilerConf reads filer.conf so callers can inspect per-path rules such as
+// the read-only flag that quota enforcement toggles. A missing filer.conf
+// yields an empty (all-writable) config rather than an error.
+func (s *AdminServer) getFilerConf() (*filer.FilerConf, error) {
+	fc := filer.NewFilerConf()
+	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		content, err := filer.ReadInsideFiler(context.Background(), client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName)
+		if err != nil {
+			if errors.Is(err, filer_pb.ErrNotFound) {
+				return nil
+			}
+			return err
+		}
+		if len(content) > 0 {
+			return fc.LoadFromBytes(content)
+		}
+		return nil
+	})
+	return fc, err
 }
 
 // getCollectionName returns the collection name for a bucket, prefixed with filer group if configured
@@ -670,6 +692,12 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 		glog.Warningf("Failed to get filer configuration, using defaults: %v", err)
 	}
 
+	// Read filer.conf so we can surface the read-only flag quota enforcement sets
+	fc, err := s.getFilerConf()
+	if err != nil {
+		glog.Warningf("Failed to read filer.conf for bucket read-only state: %v", err)
+	}
+
 	// Now list buckets from the filer and match with collection data
 	err = s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		// Paginate through all buckets in the buckets directory
@@ -768,6 +796,7 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 					createdAt = time.Unix(resp.Entry.Attributes.Crtime, 0)
 					lastModified = time.Unix(resp.Entry.Attributes.Mtime, 0)
 				}
+				readOnly := fc.MatchStorageRule(filerConfig.BucketsPath + "/" + bucketName + "/").ReadOnly
 				bucket := S3Bucket{
 					Name:               bucketName,
 					CreatedAt:          createdAt,
@@ -776,6 +805,7 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 					LastModified:       lastModified,
 					Quota:              quota,
 					QuotaEnabled:       quotaEnabled,
+					ReadOnly:           readOnly,
 					VersioningStatus:   versioningStatus,
 					ObjectLockEnabled:  objectLockEnabled,
 					ObjectLockMode:     objectLockMode,
@@ -827,6 +857,13 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 	} else if data, ok := stats[collectionName]; ok {
 		details.Bucket.LogicalSize = data.LogicalSize
 		details.Bucket.PhysicalSize = data.PhysicalSize
+	}
+
+	// Surface the read-only flag quota enforcement sets in filer.conf
+	if fc, err := s.getFilerConf(); err != nil {
+		glog.Warningf("Failed to read filer.conf for bucket read-only state: %v", err)
+	} else {
+		details.Bucket.ReadOnly = fc.MatchStorageRule(filerConfig.BucketsPath + "/" + bucketName + "/").ReadOnly
 	}
 
 	err = s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {

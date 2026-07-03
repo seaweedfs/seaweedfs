@@ -162,6 +162,11 @@ templ S3Buckets(data dash.S3BucketsData) {
                                                     <i class="fas fa-cube me-2"></i>
                                                     {bucket.Name}
                                                 </a>
+                                                if bucket.ReadOnly {
+                                                    <span class="badge bg-danger ms-2" title="Bucket is read-only (quota enforcement or manual lock); writes are rejected">
+                                                        <i class="fas fa-lock me-1"></i>Read-only
+                                                    </span>
+                                                }
                                             </td>
                                             <td>
                                                 if bucket.Owner != "" {
@@ -1087,6 +1092,11 @@ function displayBucketDetails(data) {
         versioningHtml = '<span class="badge bg-warning"><i class="fas fa-pause me-1"></i>Suspended</span>';
     }
 
+    let statusHtml = '<span class="badge bg-success">Writable</span>';
+    if (bucket.read_only) {
+        statusHtml = '<span class="badge bg-danger"><i class="fas fa-lock me-1"></i>Read-only</span>';
+    }
+
     let objectLockHtml = '<span class="text-muted">Not configured</span>';
     if (bucket.object_lock_enabled) {
         let details = '';
@@ -1112,6 +1122,7 @@ function displayBucketDetails(data) {
         '<div class="col-md-6">',
         '<h6><i class="fas fa-cogs me-2"></i>Configuration</h6>',
         '<table class="table table-sm">',
+        '<tr><td><strong>Status:</strong></td><td>' + statusHtml + '<\/td><\/tr>',
         '<tr><td><strong>Quota:</strong></td><td>' + quotaHtml + '<\/td><\/tr>',
         '<tr><td><strong>Versioning:</strong></td><td>' + versioningHtml + '<\/td><\/tr>',
         '<tr><td><strong>Object Lock:</strong></td><td>' + objectLockHtml + '<\/td><\/tr>',
