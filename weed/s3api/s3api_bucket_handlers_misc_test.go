@@ -11,7 +11,6 @@ import (
 
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/gorilla/mux"
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
@@ -22,10 +21,7 @@ func newMiscTestServer(t *testing.T, bucket string) *S3ApiServer {
 		iam:               &IdentityAccessManagement{isAuthEnabled: true},
 		bucketConfigCache: NewBucketConfigCache(time.Minute),
 	}
-	s3a.bucketConfigCache.Set(bucket, &BucketConfig{
-		Name:  bucket,
-		Entry: &filer_pb.Entry{Name: bucket},
-	})
+	s3a.bucketConfigCache.Set(bucket, &BucketConfig{Name: bucket})
 	return s3a
 }
 
@@ -133,18 +129,14 @@ func TestPutBucketRequestPaymentRequesterRejected(t *testing.T) {
 func TestPutBucketOwnershipControlsRejectsRuleWithoutObjectOwnership(t *testing.T) {
 	ownerID := AccountAdmin.Id
 	s3a := &S3ApiServer{
-		bucketRegistry: &BucketRegistry{
-			metadataCache: map[string]*BucketMetaData{
-				"b": {
-					Name: "b",
-					Owner: &s3.Owner{
-						ID: &ownerID,
-					},
-				},
-			},
-			notFound: map[string]struct{}{},
-		},
+		bucketRegistry: NewBucketRegistry(nil),
 	}
+	s3a.bucketRegistry.setMetadataCache(&BucketMetaData{
+		Name: "b",
+		Owner: &s3.Owner{
+			ID: &ownerID,
+		},
+	})
 	body := `<OwnershipControls><Rule></Rule></OwnershipControls>`
 	req := newBucketRequest(http.MethodPut, "b", "ownershipControls=", body)
 	req.Header.Set(s3_constants.AmzAccountId, AccountAdmin.Id)

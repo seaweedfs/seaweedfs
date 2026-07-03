@@ -349,13 +349,16 @@ func buildAccessControlList(accountManager AccountManager, grants []*s3.Grant, o
 
 // GetAcpGrants return grants parsed from entry
 func GetAcpGrants(entryExtended map[string][]byte) []*s3.Grant {
-	acpBytes, ok := entryExtended[s3_constants.ExtAmzAclKey]
-	if ok && len(acpBytes) > 0 {
-		var grants []*s3.Grant
-		err := json.Unmarshal(acpBytes, &grants)
-		if err == nil {
-			return grants
-		}
+	return parseAclGrants(entryExtended[s3_constants.ExtAmzAclKey])
+}
+
+func parseAclGrants(acpBytes []byte) []*s3.Grant {
+	if len(acpBytes) == 0 {
+		return nil
+	}
+	var grants []*s3.Grant
+	if err := json.Unmarshal(acpBytes, &grants); err == nil {
+		return grants
 	}
 	return nil
 }

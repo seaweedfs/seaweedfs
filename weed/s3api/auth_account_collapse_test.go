@@ -54,13 +54,9 @@ func TestUnscopedIdentitiesGetDistinctAccounts(t *testing.T) {
 func TestCheckAccessByOwnershipDeniesNonOwner(t *testing.T) {
 	adminOwner := AccountAdmin.Id
 	s3a := &S3ApiServer{
-		bucketRegistry: &BucketRegistry{
-			metadataCache: map[string]*BucketMetaData{
-				"b": {Name: "b", Owner: &s3.Owner{ID: &adminOwner}},
-			},
-			notFound: map[string]struct{}{},
-		},
+		bucketRegistry: NewBucketRegistry(nil),
 	}
+	s3a.bucketRegistry.setMetadataCache(&BucketMetaData{Name: "b", Owner: &s3.Owner{ID: &adminOwner}})
 
 	nonOwner := httptest.NewRequest(http.MethodGet, "/b?ownershipControls=", nil)
 	nonOwner.Header.Set(s3_constants.AmzAccountId, "alice")

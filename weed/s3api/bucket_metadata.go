@@ -1,18 +1,16 @@
 package s3api
 
 import (
-	"context"
 	"encoding/json"
-	"math"
-	"strings"
-	"sync"
 
 	"github.com/aws/aws-sdk-go/service/s3"
+	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
+	"golang.org/x/sync/singleflight"
 )
 
 var loadBucketMetadataFromFiler = func(r *BucketRegistry, bucketName string) (*BucketMetaData, error) {
@@ -46,54 +44,35 @@ type BucketMetaData struct {
 }
 
 type BucketRegistry struct {
-	metadataCache     map[string]*BucketMetaData
-	metadataCacheLock sync.RWMutex
+	metadataCache *lru.Cache[string, *BucketMetaData]
 
-	notFound     map[string]struct{}
-	notFoundLock sync.RWMutex
-	s3a          *S3ApiServer
+	notFound *lru.Cache[string, struct{}]
+	// loadGroup deduplicates concurrent filer loads of the same bucket
+	// without serializing loads of different buckets
+	loadGroup singleflight.Group
+	s3a       *S3ApiServer
 }
 
+// NewBucketRegistry creates a lazy registry: nothing is listed at startup,
+// buckets load from the filer on first access and stay fresh via the
+// metadata subscription.
 func NewBucketRegistry(s3a *S3ApiServer) *BucketRegistry {
-	br := &BucketRegistry{
-		metadataCache: make(map[string]*BucketMetaData),
-		notFound:      make(map[string]struct{}),
+	metadataCache, _ := lru.New[string, *BucketMetaData](bucketCacheCapacity)
+	notFound, _ := lru.New[string, struct{}](bucketCacheCapacity)
+	return &BucketRegistry{
+		metadataCache: metadataCache,
+		notFound:      notFound,
 		s3a:           s3a,
 	}
-	err := br.init()
-	if err != nil {
-		glog.Fatal("init bucket registry failed", err)
-		return nil
-	}
-	return br
 }
 
-func (r *BucketRegistry) init() error {
-	var bucketCount int
-	err := filer_pb.List(context.Background(), r.s3a, r.s3a.option.BucketsPath, "", func(entry *filer_pb.Entry, isLast bool) error {
-		if entry != nil && strings.HasPrefix(entry.Name, ".") {
-			return nil
-		}
-		r.LoadBucketMetadata(entry)
-		// Also warm the bucket config cache with Object Lock and versioning settings
-		// This ensures cache consistency across multi-filer clusters after restart
-		r.s3a.updateBucketConfigCacheFromEntry(entry)
-		bucketCount++
-		return nil
-	}, "", false, math.MaxUint32)
-	if err != nil {
-		glog.Errorf("BucketRegistry.init: failed to list buckets: %v", err)
-		return err
-	}
-	glog.V(1).Infof("BucketRegistry.init: warmed config cache for %d buckets", bucketCount)
-	return nil
-}
-
+// LoadBucketMetadata refreshes a bucket already resident in the cache from a
+// subscription event. Cold buckets are left to lazy-load on first access so
+// the cache holds only this gateway's working set.
 func (r *BucketRegistry) LoadBucketMetadata(entry *filer_pb.Entry) {
-	bucketMetadata := buildBucketMetadata(r.s3a.iam, entry)
-	r.metadataCacheLock.Lock()
-	r.metadataCache[entry.Name] = bucketMetadata
-	r.metadataCacheLock.Unlock()
+	if r.metadataCache.Contains(entry.Name) {
+		r.metadataCache.Add(entry.Name, buildBucketMetadata(r.s3a.iam, entry))
+	}
 	// Remove from notFound cache since bucket now exists
 	r.unMarkNotFound(entry.Name)
 }
@@ -163,69 +142,58 @@ func (r *BucketRegistry) RemoveBucketMetadata(entry *filer_pb.Entry) {
 }
 
 func (r *BucketRegistry) GetBucketMetadata(bucketName string) (*BucketMetaData, s3err.ErrorCode) {
-	r.metadataCacheLock.RLock()
-	bucketMetadata, ok := r.metadataCache[bucketName]
-	r.metadataCacheLock.RUnlock()
+	bucketMetadata, ok := r.metadataCache.Get(bucketName)
 	if ok {
 		return bucketMetadata, s3err.ErrNone
 	}
 
-	r.notFoundLock.RLock()
-	_, ok = r.notFound[bucketName]
-	r.notFoundLock.RUnlock()
-	if ok {
+	if r.notFound.Contains(bucketName) {
 		return nil, s3err.ErrNoSuchBucket
 	}
 
-	bucketMetadata, errCode := r.LoadBucketMetadataFromFiler(bucketName)
-	if errCode != s3err.ErrNone {
-		return nil, errCode
-	}
-
-	r.setMetadataCache(bucketMetadata)
-	r.unMarkNotFound(bucketName)
-	return bucketMetadata, s3err.ErrNone
+	return r.LoadBucketMetadataFromFiler(bucketName)
 }
 
+// LoadBucketMetadataFromFiler loads the bucket from the filer; concurrent
+// calls for the same bucket share one load, and the cache is filled inside
+// the flight so a bucket is fetched only once.
 func (r *BucketRegistry) LoadBucketMetadataFromFiler(bucketName string) (*BucketMetaData, s3err.ErrorCode) {
-	r.notFoundLock.Lock()
-	defer r.notFoundLock.Unlock()
+	metadata, err, _ := r.loadGroup.Do(bucketName, func() (interface{}, error) {
+		//check if already exists
+		if bucketMetaData, ok := r.metadataCache.Get(bucketName); ok {
+			return bucketMetaData, nil
+		}
 
-	//check if already exists
-	r.metadataCacheLock.RLock()
-	bucketMetaData, ok := r.metadataCache[bucketName]
-	r.metadataCacheLock.RUnlock()
-	if ok {
-		return bucketMetaData, s3err.ErrNone
-	}
-
-	//if not exists, load from filer
-	bucketMetadata, err := loadBucketMetadataFromFiler(r, bucketName)
+		//if not exists, load from filer
+		bucketMetadata, err := loadBucketMetadataFromFiler(r, bucketName)
+		if err != nil {
+			if err == filer_pb.ErrNotFound {
+				// The bucket doesn't actually exist and should no longer loaded from the filer
+				r.notFound.Add(bucketName, struct{}{})
+			}
+			return nil, err
+		}
+		r.setMetadataCache(bucketMetadata)
+		r.unMarkNotFound(bucketName)
+		return bucketMetadata, nil
+	})
 	if err != nil {
 		if err == filer_pb.ErrNotFound {
-			// The bucket doesn't actually exist and should no longer loaded from the filer
-			r.notFound[bucketName] = struct{}{}
 			return nil, s3err.ErrNoSuchBucket
 		}
 		return nil, s3err.ErrInternalError
 	}
-	return bucketMetadata, s3err.ErrNone
+	return metadata.(*BucketMetaData), s3err.ErrNone
 }
 
 func (r *BucketRegistry) setMetadataCache(metadata *BucketMetaData) {
-	r.metadataCacheLock.Lock()
-	defer r.metadataCacheLock.Unlock()
-	r.metadataCache[metadata.Name] = metadata
+	r.metadataCache.Add(metadata.Name, metadata)
 }
 
 func (r *BucketRegistry) removeMetadataCache(bucket string) {
-	r.metadataCacheLock.Lock()
-	defer r.metadataCacheLock.Unlock()
-	delete(r.metadataCache, bucket)
+	r.metadataCache.Remove(bucket)
 }
 
 func (r *BucketRegistry) unMarkNotFound(bucket string) {
-	r.notFoundLock.Lock()
-	defer r.notFoundLock.Unlock()
-	delete(r.notFound, bucket)
+	r.notFound.Remove(bucket)
 }

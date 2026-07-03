@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
 func TestBucketConfigStubs(t *testing.T) {
@@ -17,10 +16,7 @@ func TestBucketConfigStubs(t *testing.T) {
 		iam:               &IdentityAccessManagement{isAuthEnabled: true},
 		bucketConfigCache: NewBucketConfigCache(time.Minute),
 	}
-	s3a.bucketConfigCache.Set(bucket, &BucketConfig{
-		Name:  bucket,
-		Entry: &filer_pb.Entry{Name: bucket},
-	})
+	s3a.bucketConfigCache.Set(bucket, &BucketConfig{Name: bucket})
 
 	listCases := []struct {
 		name        string
