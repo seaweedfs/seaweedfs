@@ -626,3 +626,54 @@ func TestSyncDataNodeRegistrationReRegistersMissingVolume(t *testing.T) {
 		t.Fatalf("after self-heal: lookup %d got %v, want 1 location", vid, got)
 	}
 }
+
+// TestSetVolumeAvailableRepairsMissingVolume covers the vacuum-commit variant of
+// the same divergence. A disconnect during a long vacuum can drop a
+// single-replica volume from the lookup index while it stays on the node; the
+// commit then calls SetVolumeAvailable on it. That used to dereference a nil
+// location and panic; it now re-creates the entry and repairs the split.
+func TestSetVolumeAvailableRepairsMissingVolume(t *testing.T) {
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+
+	dc := topo.GetOrCreateDataCenter("dc1")
+	rack := dc.GetOrCreateRack("rack1")
+	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", "", map[string]uint32{"": 25})
+
+	vid := needle.VolumeId(2640)
+	volumeMessage := &master_pb.VolumeInformationMessage{
+		Id:               uint32(vid),
+		Size:             100,
+		Collection:       "drr",
+		ReplicaPlacement: uint32(0),
+		Version:          uint32(needle.GetCurrentVersion()),
+		Ttl:              0,
+	}
+
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{volumeMessage}, dn)
+
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	vl := topo.GetVolumeLayout("drr", rp, needle.EMPTY_TTL, types.HardDriveType)
+
+	// Disconnect drops the volume from the index but leaves it on the node.
+	vl.SetVolumeUnavailable(dn, vid)
+	if got := topo.Lookup("", vid); got != nil {
+		t.Fatalf("after SetVolumeUnavailable: expected lookup miss, got %v", got)
+	}
+	if _, err := dn.GetVolumesById(vid); err != nil {
+		t.Fatalf("volume %d should still be in the data node disk map: %v", vid, err)
+	}
+
+	// The vacuum commit re-marks the volume available; it must re-register it.
+	vl.SetVolumeAvailable(dn, vid, false, false)
+	if got := topo.Lookup("", vid); len(got) != 1 {
+		t.Fatalf("after SetVolumeAvailable: lookup %d got %v, want 1 location", vid, got)
+	}
+	// Size tracking must be seeded too, or assigns go uncounted until the next
+	// heartbeat and the volume can overfill.
+	vl.accessLock.RLock()
+	_, tracked := vl.sizeTracking[vid]
+	vl.accessLock.RUnlock()
+	if !tracked {
+		t.Fatalf("after SetVolumeAvailable: size tracking for %d not seeded", vid)
+	}
+}

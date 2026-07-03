@@ -164,24 +164,37 @@ func (vl *VolumeLayout) String() string {
 	return fmt.Sprintf("rp:%v, ttl:%v, writables:%v, volumeSizeLimit:%v", vl.rp, vl.ttl, vl.writables, vl.volumeSizeLimit)
 }
 
+// getOrCreateLocationList returns the vid's location list, creating an empty one
+// if the index has none. Callers hold accessLock.
+func (vl *VolumeLayout) getOrCreateLocationList(vid needle.VolumeId) *VolumeLocationList {
+	location, ok := vl.vid2location[vid]
+	if !ok {
+		location = NewVolumeLocationList()
+		vl.vid2location[vid] = location
+	}
+	return location
+}
+
+// initSizeTracking seeds a vid's size tracking from a reported size if it has
+// none yet. Callers hold accessLock.
+func (vl *VolumeLayout) initSizeTracking(vid needle.VolumeId, size uint64, compactRevision uint32) {
+	if _, exists := vl.sizeTracking[vid]; !exists {
+		vl.sizeTracking[vid] = &volumeSizeTracking{
+			effectiveSize:   size,
+			reportedSize:    size,
+			compactRevision: compactRevision,
+		}
+	}
+}
+
 func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
 	defer vl.rememberOversizedVolume(v, dn)
 
-	if _, ok := vl.vid2location[v.Id]; !ok {
-		vl.vid2location[v.Id] = NewVolumeLocationList()
-	}
-	vl.vid2location[v.Id].Set(dn)
-	// For new volumes, initialize size tracking from reported size.
-	if _, exists := vl.sizeTracking[v.Id]; !exists {
-		vl.sizeTracking[v.Id] = &volumeSizeTracking{
-			effectiveSize:   v.Size,
-			reportedSize:    v.Size,
-			compactRevision: v.CompactRevision,
-		}
-	}
+	vl.getOrCreateLocationList(v.Id).Set(dn)
+	vl.initSizeTracking(v.Id, v.Size, v.CompactRevision)
 	// glog.V(4).Infof("volume %d added to %s len %d copy %d", v.Id, dn.Id(), vl.vid2location[v.Id].Length(), v.ReplicaPlacement.GetCopyCount())
 	for _, dn := range vl.vid2location[v.Id].list {
 		if vInfo, err := dn.GetVolumesById(v.Id); err == nil {
@@ -886,7 +899,11 @@ func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId, is
 		return false
 	}
 
-	vl.vid2location[vid].Set(dn)
+	// A disconnect during a long vacuum can drop the entry while the volume is
+	// still on the node; re-create it (and seed size tracking) instead of
+	// dereferencing a nil location, so the commit also repairs the split.
+	vl.getOrCreateLocationList(vid).Set(dn)
+	vl.initSizeTracking(vid, vInfo.Size, vInfo.CompactRevision)
 
 	if vInfo.ReadOnly || isReadOnly || isFullCapacity {
 		return false
