@@ -50,7 +50,7 @@ func (c *commandRemoteCopyLocal) Help() string {
 	1. Find local files that don't exist on remote storage
 	2. Copy these files to remote storage
 	3. Update local metadata with remote information
-	4. With -delete, remove remote files/directories that do not exist locally (similar to rsync --delete)
+	4. With -delete, remove remote files that do not exist locally (similar to rsync --delete)
 
 	This is useful when:
 	- You deleted filer logs and need to copy existing files
@@ -59,9 +59,9 @@ func (c *commandRemoteCopyLocal) Help() string {
 	- You want scheduled one-shot backups that also propagate local deletions (with -delete)
 
 	Notes on -delete:
+	- only remote files under -dir are considered; paths outside it are never deleted
 	- -include/-exclude patterns also limit which remote files are deleted
 	- size/age filters only apply to copying, not to deletion
-	- directories are only deleted when no -include/-exclude filter is set
 	- use -dryRun=true first to review what would be deleted
 
  `
@@ -140,12 +140,12 @@ func (c *commandRemoteCopyLocal) doLocalToRemoteCopy(commandEnv *CommandEnv, wri
 
 	fmt.Fprintf(writer, "Found %d files/directories in remote storage\n", len(remoteFiles))
 
-	// Step 3: Determine files to copy and files/directories to delete
-	plan := planLocalToRemoteSync(localFiles, remoteFiles, forceUpdate, deleteExtraneous, fileFilter)
+	// Step 3: Determine files to copy and files to delete
+	plan := planLocalToRemoteSync(localFiles, remoteFiles, dirToCopy, forceUpdate, deleteExtraneous, fileFilter)
 
 	fmt.Fprintf(writer, "Files to copy: %d\n", len(plan.filesToCopy))
 	if deleteExtraneous {
-		fmt.Fprintf(writer, "Files/directories to delete from remote: %d\n", len(plan.filesToDelete)+len(plan.dirsToDelete))
+		fmt.Fprintf(writer, "Files to delete from remote: %d\n", len(plan.filesToDelete))
 	}
 
 	if dryRun {
@@ -156,13 +156,10 @@ func (c *commandRemoteCopyLocal) doLocalToRemoteCopy(commandEnv *CommandEnv, wri
 		for _, path := range plan.filesToDelete {
 			fmt.Fprintf(writer, "DELETE: %s\n", path)
 		}
-		for _, path := range plan.dirsToDelete {
-			fmt.Fprintf(writer, "DELETE DIR: %s\n", path)
-		}
 		return nil
 	}
 
-	if len(plan.filesToCopy) == 0 && len(plan.filesToDelete) == 0 && len(plan.dirsToDelete) == 0 {
+	if len(plan.filesToCopy) == 0 && len(plan.filesToDelete) == 0 {
 		fmt.Fprintf(writer, "No files to copy\n")
 		return nil
 	}
@@ -225,8 +222,8 @@ func (c *commandRemoteCopyLocal) doLocalToRemoteCopy(commandEnv *CommandEnv, wri
 		fmt.Fprintf(writer, "Successfully copied %d files to remote storage\n", successCount.Load())
 	}
 
-	// Step 5: Delete extraneous files/directories from remote storage
-	if len(plan.filesToDelete) == 0 && len(plan.dirsToDelete) == 0 {
+	// Step 5: Delete extraneous files from remote storage
+	if len(plan.filesToDelete) == 0 {
 		return nil
 	}
 
@@ -235,9 +232,6 @@ func (c *commandRemoteCopyLocal) doLocalToRemoteCopy(commandEnv *CommandEnv, wri
 	var deletedCount atomic.Int64
 
 	for _, pathToDelete := range plan.filesToDelete {
-		if pathToDelete == string(dirToCopy) || pathToDelete == string(localMountedDir) {
-			continue
-		}
 		wg.Add(1)
 		localPath := pathToDelete // Capture for closure
 		limitedConcurrentExecutor.Execute(func() {
@@ -262,40 +256,20 @@ func (c *commandRemoteCopyLocal) doLocalToRemoteCopy(commandEnv *CommandEnv, wri
 	}
 	wg.Wait()
 
-	// remove directories only after their contents are gone, deepest first
-	if deleteErr == nil {
-		for _, dirPath := range plan.dirsToDelete {
-			if dirPath == string(dirToCopy) || dirPath == string(localMountedDir) {
-				continue
-			}
-			remoteLocation := filer.MapFullPathToRemoteStorageLocation(localMountedDir, remoteMountedLocation, util.FullPath(dirPath))
-			if err := remoteStorage.RemoveDirectory(remoteLocation); err != nil {
-				fmt.Fprintf(writer, "Deleting directory %s... failed: %v\n", dirPath, err)
-				deleteErrOnce.Do(func() {
-					deleteErr = err
-				})
-				continue
-			}
-			deletedCount.Add(1)
-			fmt.Fprintf(writer, "Deleting directory %s... done\n", dirPath)
-		}
-	}
-
 	if deleteErr != nil {
 		return deleteErr
 	}
 
-	fmt.Fprintf(writer, "Successfully deleted %d files/directories from remote storage\n", deletedCount.Load())
+	fmt.Fprintf(writer, "Successfully deleted %d files from remote storage\n", deletedCount.Load())
 	return nil
 }
 
 type localToRemoteSyncPlan struct {
 	filesToCopy   []string
 	filesToDelete []string
-	dirsToDelete  []string // deepest first, so children are removed before parents
 }
 
-func planLocalToRemoteSync(localFiles map[string]*filer_pb.Entry, remoteFiles map[string]bool, forceUpdate bool, deleteExtraneous bool, fileFilter *FileFilter) *localToRemoteSyncPlan {
+func planLocalToRemoteSync(localFiles map[string]*filer_pb.Entry, remoteFiles map[string]bool, dirToCopy util.FullPath, forceUpdate bool, deleteExtraneous bool, fileFilter *FileFilter) *localToRemoteSyncPlan {
 	plan := &localToRemoteSyncPlan{}
 
 	for localPath, localEntry := range localFiles {
@@ -320,17 +294,19 @@ func planLocalToRemoteSync(localFiles map[string]*filer_pb.Entry, remoteFiles ma
 		return plan
 	}
 
-	hasNameFilter := *fileFilter.include != "" || *fileFilter.exclude != ""
 	for remotePath, isDirectory := range remoteFiles {
+		// Traverse lists by key prefix (no delimiter), so it can return entries
+		// outside dirToCopy that merely share its name prefix (e.g. a sibling
+		// "foobar" when dirToCopy maps to prefix "foo"). Never delete anything
+		// outside the requested subtree.
+		if !util.FullPath(remotePath).IsUnder(dirToCopy) {
+			continue
+		}
 		if _, foundLocally := localFiles[remotePath]; foundLocally {
 			continue
 		}
+		// object stores expose no real directories; only files are deleted
 		if isDirectory {
-			// with name filters, some files under this directory may be intentionally
-			// kept, and removing the directory could remove them recursively
-			if !hasNameFilter {
-				plan.dirsToDelete = append(plan.dirsToDelete, remotePath)
-			}
 			continue
 		}
 		// name filters also protect remote files from deletion;
@@ -341,13 +317,6 @@ func planLocalToRemoteSync(localFiles map[string]*filer_pb.Entry, remoteFiles ma
 		plan.filesToDelete = append(plan.filesToDelete, remotePath)
 	}
 	sort.Strings(plan.filesToDelete)
-	sort.Slice(plan.dirsToDelete, func(i, j int) bool {
-		di, dj := strings.Count(plan.dirsToDelete[i], "/"), strings.Count(plan.dirsToDelete[j], "/")
-		if di != dj {
-			return di > dj
-		}
-		return plan.dirsToDelete[i] < plan.dirsToDelete[j]
-	})
 
 	return plan
 }
