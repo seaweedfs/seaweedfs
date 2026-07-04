@@ -241,14 +241,6 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
                                         title="View EC volume details">
                                     <i class="fas fa-info-circle"></i>
                                 </button>
-                                if !volume.IsComplete {
-                                    <button type="button" class="btn btn-sm btn-outline-warning" 
-                                            onclick="repairVolume(event)" 
-                                            data-volume-id={ fmt.Sprintf("%d", volume.VolumeID) }
-                                            title="Repair missing shards">
-                                        <i class="fas fa-wrench"></i>
-                                    </button>
-                                }
                             </div>
                         </td>
                     </tr>
@@ -376,34 +368,6 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
             window.location.href = (window.__BASE_PATH__ || '') + `/storage/ec-volumes/${volumeId}`;
         }
 
-        function repairVolume(event) {
-            const volumeId = event.target.closest('button').getAttribute('data-volume-id');
-            showConfirm(`Are you sure you want to repair missing shards for volume ${volumeId}?`, function() {
-                fetch((window.__BASE_PATH__ || '') + `/api/storage/ec-volumes/${volumeId}/repair`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    }
-                })
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                    }
-                    return response.json();
-                })
-                .then(data => {
-                    if (data && data.success) {
-                        showAlert('Repair initiated successfully', 'success');
-                        location.reload();
-                    } else {
-                        showAlert('Failed to initiate repair: ' + (data && data.error ? data.error : 'Unknown error'), 'error');
-                    }
-                })
-                .catch(error => {
-                    showAlert('Error: ' + error.message, 'error');
-                });
-            });
-        }
     </script>
 }
 

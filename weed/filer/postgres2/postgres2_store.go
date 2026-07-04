@@ -70,7 +70,7 @@ func (store *PostgresStore2) initialize(createTable, upsertQuery string, enableU
 	}
 	gen := &postgres.SqlGenPostgres{
 		CreateTableSqlTemplate: createTable,
-		DropTableSqlTemplate:   `drop table "%s"`,
+		DropTableSqlTemplate:   `drop table if exists "%s"`,
 		UpsertQueryTemplate:    upsertQuery,
 	}
 	store.SqlGenerator = gen

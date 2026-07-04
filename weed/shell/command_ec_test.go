@@ -9,6 +9,24 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
+// TestPickBestDiskOnNodeSelectsPhysicalDiskZero verifies physical disk 0 can be
+// chosen as the preferred shard target. Gating on bestDiskId != 0 discarded a
+// best-scoring disk 0 (0 is also the zero value) and returned the fallback.
+func TestPickBestDiskOnNodeSelectsPhysicalDiskZero(t *testing.T) {
+	ecNode := &EcNode{
+		disks: map[uint32]*EcDisk{
+			0: {diskId: 0, diskType: string(types.SsdType), freeEcSlots: 10, ecShards: map[needle.VolumeId]*erasure_coding.ShardsInfo{}},
+			5: {diskId: 5, diskType: string(types.HardDriveType), freeEcSlots: 10, ecShards: map[needle.VolumeId]*erasure_coding.ShardsInfo{}},
+		},
+	}
+
+	// Disk 0 matches the requested type; it must win over the non-matching
+	// fallback on disk 5 instead of being treated as "no match".
+	if got := pickBestDiskOnNode(ecNode, needle.VolumeId(42), types.SsdType, false, 0, 0); got != 0 {
+		t.Fatalf("want physical disk 0 (matching type), got %d", got)
+	}
+}
+
 func TestCommandEcBalanceSmall(t *testing.T) {
 	ecb := &ecBalancer{
 		ecNodes: []*EcNode{

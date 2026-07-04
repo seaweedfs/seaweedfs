@@ -10,6 +10,12 @@ use std::io::{Read, Seek, SeekFrom};
 
 use reed_solomon_erasure::galois_8::ReedSolomon;
 
+use crate::pb::volume_server_pb::{
+    ChecksumAlgorithm, EcBitrotProtection, EcShardChecksums,
+};
+use crate::storage::erasure_coding::ec_bitrot::{
+    self, ShardChecksumBuilder, DEFAULT_BITROT_BLOCK_SIZE,
+};
 use crate::storage::erasure_coding::ec_shard::*;
 use crate::storage::idx;
 use crate::storage::types::*;
@@ -52,12 +58,21 @@ pub fn write_ec_files(
         shard.create()?;
     }
 
+    // Per-shard bitrot checksum builders: accumulate a CRC32C for every
+    // DEFAULT_BITROT_BLOCK_SIZE block of each shard's byte stream as it is
+    // written, so the resulting `.ecsum` sidecar can later detect silent
+    // corruption in any shard (including cold parity).
+    let mut builders: Vec<ShardChecksumBuilder> = (0..total_shards)
+        .map(|_| ShardChecksumBuilder::new(DEFAULT_BITROT_BLOCK_SIZE as i64))
+        .collect();
+
     // Encode in large blocks, then small blocks
     encode_dat_file(
         &dat_file,
         dat_size,
         &rs,
         &mut shards,
+        &mut builders,
         data_shards,
         parity_shards,
     )?;
@@ -67,12 +82,52 @@ pub fn write_ec_files(
         shard.close();
     }
 
+    // Write the generation-0 bitrot sidecar (`<base>.ecsum`). Finalizing each
+    // builder yields covered_size (== total bytes written to that shard) and
+    // the packed little-endian CRC32C array.
+    let mut shard_checksums: Vec<EcShardChecksums> = Vec::with_capacity(total_shards);
+    for (i, builder) in builders.into_iter().enumerate() {
+        let (covered_size, packed) = builder.finalize();
+        shard_checksums.push(EcShardChecksums {
+            shard_id: i as u32,
+            covered_size,
+            block_crc32c: packed,
+        });
+    }
+    let prot = EcBitrotProtection {
+        algorithm: ChecksumAlgorithm::ChecksumCrc32c as i32,
+        block_size: DEFAULT_BITROT_BLOCK_SIZE as u32,
+        generation: 0,
+        ec_shard_config: Some(ec_bitrot::ec_shard_config(
+            data_shards as u32,
+            parity_shards as u32,
+        )),
+        shards: shard_checksums,
+        encode_uuid: ec_bitrot::new_encode_uuid(),
+    };
+    let sidecar_path = ec_bitrot::bitrot_sidecar_path(&base, 0);
+    if let Err(e) = ec_bitrot::save_bitrot_sidecar(&sidecar_path, &prot) {
+        // A failed sidecar must not fail the encode — the shards are already
+        // written and valid. The volume simply runs with bitrot protection
+        // off for this generation until the sidecar is regenerated.
+        tracing::warn!(
+            volume_id = volume_id.0,
+            path = %sidecar_path,
+            error = %e,
+            "ec encode: failed to write bitrot sidecar; protection off for this generation",
+        );
+    }
+
     Ok(())
 }
 
 /// Rebuild missing EC shard files from existing shards using Reed-Solomon reconstruct.
 ///
 /// This does not require the `.dat` file, only the existing `.ecXX` shard files.
+///
+/// `additional_dirs` lists sibling disk locations to search for existing shards when
+/// they are not found in `dir`. This is required on multi-disk volume servers where
+/// shards for the same volume may be spread across disks.
 pub fn rebuild_ec_files(
     dir: &str,
     collection: &str,
@@ -80,6 +135,7 @@ pub fn rebuild_ec_files(
     missing_shard_ids: &[u32],
     data_shards: usize,
     parity_shards: usize,
+    additional_dirs: &[&str],
 ) -> io::Result<()> {
     if missing_shard_ids.is_empty() {
         return Ok(());
@@ -93,7 +149,9 @@ pub fn rebuild_ec_files(
         .map(|i| EcVolumeShard::new(dir, collection, volume_id, i))
         .collect();
 
-    // Determine the exact shard size from the first available existing shard
+    // Determine the exact shard size from the first available existing shard.
+    // When a shard is not found in `dir`, search `additional_dirs` (sibling disks
+    // on the same volume server) before failing — mirrors Go's findShardFile logic.
     let mut shard_size = 0;
     for (i, shard) in shards.iter_mut().enumerate() {
         if !missing_shard_ids.contains(&(i as u32)) {
@@ -103,10 +161,26 @@ pub fn rebuild_ec_files(
                     shard_size = size;
                 }
             } else {
-                return Err(io::Error::new(
-                    io::ErrorKind::NotFound,
-                    format!("missing non-rebuild shard {}", i),
-                ));
+                // Try sibling disk locations before giving up.
+                let mut found = false;
+                for &other_dir in additional_dirs {
+                    let mut alt = EcVolumeShard::new(other_dir, collection, volume_id, i as u8);
+                    if let Ok(_) = alt.open() {
+                        let size = alt.file_size();
+                        if size > shard_size {
+                            shard_size = size;
+                        }
+                        *shard = alt;
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    return Err(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        format!("missing non-rebuild shard {}", i),
+                    ));
+                }
             }
         }
     }
@@ -184,7 +258,12 @@ pub fn rebuild_ec_files(
     Ok(())
 }
 
-/// Verify EC shards by computing parity against the existing data and identifying corrupted shards.
+/// Reed-Solomon parity check over the locally-held shards: recompute parity from
+/// the data shards and flag any shard whose bytes disagree. Wired into FULL
+/// (scrub mode 2) as a TEMPORARY local parity/cold-region check — the per-needle
+/// FULL walk only reads live data-shard intervals, so on its own it can't catch
+/// bitrot in a parity shard or an unwalked region. Move to mode 4 (CHECKSUM) and
+/// drop it from mode 2 once the `.ecsum` subsystem lands.
 pub fn verify_ec_shards(
     dir: &str,
     collection: &str,
@@ -331,11 +410,16 @@ fn write_sorted_ecx_from_idx(idx_path: &str, ecx_path: &str) -> io::Result<()> {
 /// content from the EC data shards, walks through needle headers to extract
 /// (needle_id, offset, size) entries, deduplicates them, and writes a sorted
 /// .ecx index file.
+///
+/// `additional_dirs` lists sibling disk locations to search for data shards when
+/// they are not found in `dir` — mirrors the same fallback used by rebuild_ec_files,
+/// required on multi-disk volume servers where shards may be spread across disks.
 pub fn rebuild_ecx_file(
     dir: &str,
     collection: &str,
     volume_id: VolumeId,
     data_shards: usize,
+    additional_dirs: &[&str],
 ) -> io::Result<()> {
     use crate::storage::needle::needle::get_actual_size;
     use crate::storage::super_block::SUPER_BLOCK_SIZE;
@@ -343,21 +427,34 @@ pub fn rebuild_ecx_file(
     let base = volume_file_name(dir, collection, volume_id);
     let ecx_path = format!("{}.ecx", base);
 
-    // Open data shards to read logical .dat content
+    // Open data shards to read logical .dat content. When a shard isn't found
+    // in `dir`, search `additional_dirs` (sibling disks on the same volume
+    // server) before giving up.
     let mut shards: Vec<EcVolumeShard> = (0..data_shards as u8)
         .map(|i| EcVolumeShard::new(dir, collection, volume_id, i))
         .collect();
 
-    for shard in &mut shards {
+    for (i, shard) in shards.iter_mut().enumerate() {
         if let Err(_) = shard.open() {
-            // If a data shard is missing, we can't rebuild ecx
-            for s in &mut shards {
-                s.close();
+            let mut found = false;
+            for &other_dir in additional_dirs {
+                let mut alt = EcVolumeShard::new(other_dir, collection, volume_id, i as u8);
+                if alt.open().is_ok() {
+                    *shard = alt;
+                    found = true;
+                    break;
+                }
             }
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("cannot open data shard for ecx rebuild"),
-            ));
+            if !found {
+                // If a data shard is missing, we can't rebuild ecx
+                for s in &mut shards {
+                    s.close();
+                }
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("cannot open data shard for ecx rebuild"),
+                ));
+            }
         }
     }
 
@@ -490,6 +587,7 @@ fn encode_dat_file(
     dat_size: i64,
     rs: &ReedSolomon,
     shards: &mut [EcVolumeShard],
+    builders: &mut [ShardChecksumBuilder],
     data_shards: usize,
     parity_shards: usize,
 ) -> io::Result<()> {
@@ -507,6 +605,7 @@ fn encode_dat_file(
             large_block_size,
             rs,
             shards,
+            builders,
             data_shards,
             parity_shards,
         )?;
@@ -526,6 +625,7 @@ fn encode_dat_file(
             small_block_size,
             rs,
             shards,
+            builders,
             data_shards,
             parity_shards,
         )?;
@@ -543,6 +643,7 @@ fn encode_one_batch(
     block_size: usize,
     rs: &ReedSolomon,
     shards: &mut [EcVolumeShard],
+    builders: &mut [ShardChecksumBuilder],
     data_shards: usize,
     parity_shards: usize,
 ) -> io::Result<()> {
@@ -596,9 +697,11 @@ fn encode_one_batch(
         )
     })?;
 
-    // Write all shard buffers to files
+    // Write all shard buffers to files and feed the same bytes to each
+    // shard's bitrot checksum builder, keeping covered_size == on-disk length.
     for (i, buf) in buffers.iter().enumerate() {
         shards[i].write_all(buf)?;
+        builders[i].write(buf);
     }
 
     Ok(())
@@ -666,6 +769,84 @@ mod tests {
         assert!(std::path::Path::new(&ecx_path).exists());
     }
 
+    fn make_volume_with_needles(n: u64) -> TempDir {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        for i in 1..=n {
+            // Larger payloads so encoded shards span multiple bitrot blocks
+            // would require huge data; small payloads are fine for correctness.
+            let data = format!("test data for needle {} {}", i, "x".repeat(64));
+            let mut needle = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                data: data.as_bytes().to_vec(),
+                data_size: data.len() as u32,
+                ..Needle::default()
+            };
+            v.write_needle(&mut needle, true).unwrap();
+        }
+        v.sync_to_disk().unwrap();
+        v.close();
+        tmp
+    }
+
+    /// Encode-time capture writes a valid generation-0 `.ecsum` sidecar whose
+    /// recorded checksums match the actual on-disk shards.
+    #[test]
+    fn test_encode_writes_valid_bitrot_sidecar() {
+        use crate::storage::erasure_coding::ec_bitrot;
+
+        let tmp = make_volume_with_needles(5);
+        let dir = tmp.path().to_str().unwrap();
+        write_ec_files(dir, dir, "", VolumeId(1), 10, 4).unwrap();
+
+        let base = format!("{}/1", dir);
+        let sidecar_path = ec_bitrot::bitrot_sidecar_path(&base, 0);
+        assert!(
+            std::path::Path::new(&sidecar_path).exists(),
+            "generation-0 .ecsum sidecar should exist after encode"
+        );
+
+        let prot = ec_bitrot::load_bitrot_sidecar(&sidecar_path).unwrap();
+        ec_bitrot::validate_manifest(&prot, 10, 4).unwrap();
+        assert_eq!(prot.generation, 0);
+        assert_eq!(prot.shards.len(), 14);
+        assert_eq!(prot.encode_uuid.len(), 16);
+        assert_eq!(prot.block_size, ec_bitrot::DEFAULT_BITROT_BLOCK_SIZE as u32);
+
+        // Every shard's recorded covered_size must equal its on-disk length and
+        // its block CRCs must verify clean.
+        let bs = prot.block_size as i64;
+        for entry in &prot.shards {
+            let path = format!("{}.ec{:02}", base, entry.shard_id);
+            let on_disk = std::fs::metadata(&path).unwrap().len() as i64;
+            assert_eq!(
+                entry.covered_size, on_disk,
+                "covered_size must equal on-disk length for shard {}",
+                entry.shard_id
+            );
+            let mm = ec_bitrot::verify_shard_file_blocks(&path, entry, bs).unwrap();
+            assert!(
+                mm.is_empty(),
+                "shard {} should verify clean, got mismatches {:?}",
+                entry.shard_id,
+                mm
+            );
+        }
+    }
+
     // encode_sample_volume writes a small volume and EC-encodes it, returning
     // the dir path so a test can drop/truncate shards and rebuild.
     fn encode_sample_volume(tmp: &TempDir) -> String {
@@ -717,7 +898,7 @@ mod tests {
 
         // Rebuild a different (genuinely missing) shard.
         std::fs::remove_file(format!("{}/1.ec07", dir)).unwrap();
-        let res = rebuild_ec_files(&dir, "", VolumeId(1), &[7], 10, 4);
+        let res = rebuild_ec_files(&dir, "", VolumeId(1), &[7], 10, 4, &[]);
         assert!(res.is_err(), "truncated input shard must abort the rebuild");
     }
 
@@ -730,7 +911,7 @@ mod tests {
 
         let dropped = format!("{}/1.ec07", dir);
         std::fs::remove_file(&dropped).unwrap();
-        rebuild_ec_files(&dir, "", VolumeId(1), &[7], 10, 4).unwrap();
+        rebuild_ec_files(&dir, "", VolumeId(1), &[7], 10, 4, &[]).unwrap();
         assert!(
             std::path::Path::new(&dropped).exists(),
             "rebuilt shard .ec07 should exist"
@@ -738,6 +919,124 @@ mod tests {
         assert!(
             std::fs::metadata(&dropped).unwrap().len() > 0,
             "rebuilt shard should be non-empty"
+        );
+    }
+
+    // Multi-disk rebuild: shards for the same volume are split across two
+    // directories (simulating a volume server with two disk locations). The
+    // shard to rebuild is in the primary dir; some of the input shards needed
+    // for RS reconstruction exist only in the secondary dir. Passing the
+    // secondary dir via `additional_dirs` must allow the rebuild to succeed
+    // where it would previously return "missing non-rebuild shard N".
+    #[test]
+    fn test_rebuild_ec_files_multi_disk() {
+        let tmp_primary = TempDir::new().unwrap();
+        let tmp_secondary = TempDir::new().unwrap();
+        let primary = tmp_primary.path().to_str().unwrap().to_string();
+        let secondary = tmp_secondary.path().to_str().unwrap().to_string();
+
+        // Encode into primary dir first (all 14 shards land there).
+        let dir = encode_sample_volume(&tmp_primary);
+        assert_eq!(dir, primary);
+
+        // Simulate a multi-disk layout: move shards 0, 4, 8 to the secondary
+        // dir, as if the master had placed them on a different disk.
+        let moved_shards: &[u8] = &[0, 4, 8];
+        for &shard_id in moved_shards {
+            let src = format!("{}/1.ec{:02}", primary, shard_id);
+            let dst = format!("{}/1.ec{:02}", secondary, shard_id);
+            std::fs::rename(&src, &dst).unwrap();
+        }
+
+        // Remove shard 7 from primary — this is the shard we want to rebuild.
+        let missing_path = format!("{}/1.ec07", primary);
+        std::fs::remove_file(&missing_path).unwrap();
+
+        // Without additional_dirs the rebuild must fail: shards 0, 4, 8 are
+        // not in primary and shard 7 cannot be reconstructed without them.
+        let res = rebuild_ec_files(&primary, "", VolumeId(1), &[7], 10, 4, &[]);
+        assert!(
+            res.is_err(),
+            "rebuild without additional_dirs must fail when input shards are on another disk"
+        );
+        assert!(
+            !std::path::Path::new(&missing_path).exists(),
+            "failed rebuild must not leave a partial shard file behind"
+        );
+
+        // With additional_dirs pointing at the secondary, the rebuild must succeed.
+        rebuild_ec_files(
+            &primary,
+            "",
+            VolumeId(1),
+            &[7],
+            10,
+            4,
+            &[secondary.as_str()],
+        )
+        .unwrap();
+
+        assert!(
+            std::path::Path::new(&missing_path).exists(),
+            "rebuilt shard .ec07 should exist in primary dir"
+        );
+        assert!(
+            std::fs::metadata(&missing_path).unwrap().len() > 0,
+            "rebuilt shard must be non-empty"
+        );
+    }
+
+    // Multi-disk .ecx rebuild: data shards (0-9) needed to reconstruct the
+    // logical .dat content are split across two directories, as on a
+    // multi-disk volume server. Passing the secondary dir via
+    // `additional_dirs` must allow rebuild_ecx_file to find them and
+    // succeed where it would previously fail with
+    // "cannot open data shard for ecx rebuild".
+    #[test]
+    fn test_rebuild_ecx_file_multi_disk() {
+        let tmp_primary = TempDir::new().unwrap();
+        let tmp_secondary = TempDir::new().unwrap();
+        let primary = tmp_primary.path().to_str().unwrap().to_string();
+        let secondary = tmp_secondary.path().to_str().unwrap().to_string();
+
+        let dir = encode_sample_volume(&tmp_primary);
+        assert_eq!(dir, primary);
+
+        // Move some data shards (0-9) to the secondary dir, simulating a
+        // multi-disk layout where not all data shards landed on the same disk.
+        let moved_shards: &[u8] = &[1, 3, 6];
+        for &shard_id in moved_shards {
+            let src = format!("{}/1.ec{:02}", primary, shard_id);
+            let dst = format!("{}/1.ec{:02}", secondary, shard_id);
+            std::fs::rename(&src, &dst).unwrap();
+        }
+
+        // Delete the existing .ecx to force a rebuild.
+        let ecx_path = format!("{}/1.ecx", primary);
+        std::fs::remove_file(&ecx_path).unwrap();
+
+        // Without additional_dirs, rebuild must fail: shards 1, 3, 6 are not
+        // in primary and the full logical .dat content can't be reconstructed.
+        let res = rebuild_ecx_file(&primary, "", VolumeId(1), 10, &[]);
+        assert!(
+            res.is_err(),
+            "ecx rebuild without additional_dirs must fail when data shards are on another disk"
+        );
+        assert!(
+            !std::path::Path::new(&ecx_path).exists(),
+            "failed ecx rebuild must not leave a partial .ecx file behind"
+        );
+
+        // With additional_dirs pointing at the secondary, the rebuild must succeed.
+        rebuild_ecx_file(&primary, "", VolumeId(1), 10, &[secondary.as_str()]).unwrap();
+
+        assert!(
+            std::path::Path::new(&ecx_path).exists(),
+            "rebuilt .ecx should exist in primary dir"
+        );
+        assert!(
+            std::fs::metadata(&ecx_path).unwrap().len() > 0,
+            "rebuilt .ecx must be non-empty"
         );
     }
 

@@ -471,7 +471,14 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 						// Process disk information
 						for _, diskInfo := range node.DiskInfos {
 							vs.MaxVolumes += int(diskInfo.MaxVolumeCount)
-							vs.DiskCapacity += int64(diskInfo.MaxVolumeCount) * int64(volumeSizeLimitMB) * 1024 * 1024 // Use actual volume size limit
+							// Prefer the real physical disk capacity the volume server
+							// reports; the slot-based estimate overstates capacity when
+							// maxVolumeCount is configured higher than the disk holds.
+							if diskInfo.DiskTotalBytes > 0 {
+								vs.DiskCapacity += int64(diskInfo.DiskTotalBytes)
+							} else {
+								vs.DiskCapacity += int64(diskInfo.MaxVolumeCount) * int64(volumeSizeLimitMB) * 1024 * 1024
+							}
 
 							// Count regular volumes and calculate disk usage
 							for _, volInfo := range diskInfo.VolumeInfos {

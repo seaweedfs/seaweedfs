@@ -37,6 +37,7 @@ fn scrub_mode_label(mode: i32) -> &'static str {
         1 => "INDEX",
         2 => "FULL",
         3 => "LOCAL",
+        4 => "CHECKSUM",
         _ => "UNKNOWN",
     }
 }
@@ -1515,9 +1516,16 @@ impl VolumeServer for VolumeGrpcService {
                 .find_volume(vid)
                 .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
 
-            // Check compaction revision
+            // Check compaction revision. Compare against the volume's live
+            // super_block.compaction_revision (matching Go's v.CompactionRevision,
+            // which is the embedded SuperBlock field). last_compact_revision() is
+            // a separate bookkeeping value recorded just before a compaction starts
+            // (for makeup-diff catch-up) and is intentionally left behind the live
+            // revision afterward — it is not interchangeable with the live value and
+            // must not be used here, or this check spuriously fails on every volume
+            // that has ever been compacted even once.
             if req.compaction_revision != u32::MAX
-                && v.last_compact_revision() != req.compaction_revision as u16
+                && u32::from(v.super_block.compaction_revision) != req.compaction_revision
             {
                 return Err(Status::failed_precondition(format!(
                     "volume {} is compacted",
@@ -2464,7 +2472,10 @@ impl VolumeServer for VolumeGrpcService {
             ));
         }
 
-        // Rebuild missing shards, searching all locations for input shards
+        // Rebuild missing shards, searching all locations for input shards.
+        // Pass other_dirs so shards on sibling disks are found even when the
+        // primary rebuild dir doesn't hold them.
+        let other_dir_refs: Vec<&str> = other_dirs.iter().map(|s| s.as_str()).collect();
         crate::storage::erasure_coding::ec_encoder::rebuild_ec_files(
             &rebuild_dir,
             collection,
@@ -2472,6 +2483,7 @@ impl VolumeServer for VolumeGrpcService {
             &missing,
             data_shards as usize,
             parity_shards as usize,
+            &other_dir_refs,
         )
         .map_err(|e| Status::internal(format!("RebuildEcFiles: {}", e)))?;
 
@@ -2485,11 +2497,23 @@ impl VolumeServer for VolumeGrpcService {
             rebuild_idx_dir
         };
 
+        // .ecx may live in a different directory than the data shards (split
+        // data/idx layout). Ensure rebuild_dir is searchable for data shards
+        // even when it isn't the chosen .ecx rebuild directory and isn't
+        // already covered by other_dir_refs.
+        let mut ecx_dir_refs: Vec<&str> =
+            Vec::with_capacity(other_dir_refs.len() + usize::from(ecx_rebuild_dir != rebuild_dir));
+        if ecx_rebuild_dir != rebuild_dir {
+            ecx_dir_refs.push(rebuild_dir.as_str());
+        }
+        ecx_dir_refs.extend(other_dir_refs.iter().copied());
+
         crate::storage::erasure_coding::ec_encoder::rebuild_ecx_file(
             &ecx_rebuild_dir,
             collection,
             vid,
             data_shards as usize,
+            &ecx_dir_refs,
         )
         .map_err(|e| Status::internal(format!("RebuildEcxFile: {}", e)))?;
 
@@ -2746,6 +2770,58 @@ impl VolumeServer for VolumeGrpcService {
                 use std::io::Write;
                 file.write_all(&chunk.file_content)
                     .map_err(|e| Status::internal(format!("write {}: {}", file_path, e)))?;
+            }
+        }
+
+        // Copy the generation-0 bitrot checksum sidecar (.ecsum) when requested, so
+        // protection travels with the shards. Tolerant of a missing source (no-op):
+        // this non-2PC path has no Prepare backstop, and an unprotected source
+        // simply leaves the copy unprotected.
+        if req.copy_ecsum_file {
+            let copy_req = volume_server_pb::CopyFileRequest {
+                volume_id: req.volume_id,
+                collection: req.collection.clone(),
+                is_ec_volume: true,
+                ext: ".ecsum".to_string(),
+                compaction_revision: u32::MAX,
+                stop_offset: i64::MAX as u64,
+                ignore_source_file_not_found: true,
+                ..Default::default()
+            };
+            let mut stream = client
+                .copy_file(copy_req)
+                .await
+                .map_err(|e| {
+                    Status::internal(format!(
+                        "VolumeEcShardsCopy volume {} copy .ecsum: {}",
+                        vid, e
+                    ))
+                })?
+                .into_inner();
+
+            let file_path = {
+                let base =
+                    crate::storage::volume::volume_file_name(&dest_dir, &req.collection, vid);
+                format!("{}.ecsum", base)
+            };
+            let mut file = std::fs::File::create(&file_path)
+                .map_err(|e| Status::internal(format!("create {}: {}", file_path, e)))?;
+            let mut written: u64 = 0;
+            while let Some(chunk) = stream
+                .message()
+                .await
+                .map_err(|e| Status::internal(format!("recv .ecsum: {}", e)))?
+            {
+                use std::io::Write;
+                file.write_all(&chunk.file_content)
+                    .map_err(|e| Status::internal(format!("write {}: {}", file_path, e)))?;
+                written += chunk.file_content.len() as u64;
+            }
+            // A missing source yields an empty stream; drop the 0-byte file so mount
+            // sees no sidecar (protection Off) rather than a truncated/invalid one.
+            if written == 0 {
+                drop(file);
+                let _ = std::fs::remove_file(&file_path);
             }
         }
 
@@ -3826,7 +3902,7 @@ impl VolumeServer for VolumeGrpcService {
                     .ok_or_else(|| Status::not_found(format!("volume id {} not found", vid.0)))?;
                 total_volumes += 1;
 
-                // INDEX mode (1) calls scrub_index; LOCAL (2) and FULL (3) call scrub
+                // INDEX mode (1) calls scrub_index; FULL (2) and LOCAL (3) call scrub
                 let scrub_result = if mode == 1 {
                     v.scrub_index()
                 } else {
@@ -3895,7 +3971,7 @@ impl VolumeServer for VolumeGrpcService {
         // Validate mode
         let mode = req.mode;
         match mode {
-            1 | 2 | 3 => {} // INDEX=1, FULL=2, LOCAL=3
+            1 | 2 | 3 | 4 => {} // INDEX=1, FULL=2, LOCAL=3, CHECKSUM=4
             _ => {
                 return Err(Status::invalid_argument(format!(
                     "unsupported EC volume scrub mode {}",
@@ -3904,15 +3980,19 @@ impl VolumeServer for VolumeGrpcService {
             }
         }
 
-        let store = self.state.store.read().unwrap();
-        let vids: Vec<VolumeId> = if req.volume_ids.is_empty() {
-            store
-                .locations
-                .iter()
-                .flat_map(|loc| loc.ec_volumes().map(|(vid, _)| *vid))
-                .collect()
-        } else {
-            req.volume_ids.iter().map(|&id| VolumeId(id)).collect()
+        // Collect the volume ids under a brief lock, then release it: FULL (mode 2)
+        // reads remote shards and must not hold the !Send store guard across .await.
+        let vids: Vec<VolumeId> = {
+            let store = self.state.store.read().unwrap();
+            if req.volume_ids.is_empty() {
+                store
+                    .locations
+                    .iter()
+                    .flat_map(|loc| loc.ec_volumes().map(|(vid, _)| *vid))
+                    .collect()
+            } else {
+                req.volume_ids.iter().map(|&id| VolumeId(id)).collect()
+            }
         };
 
         let mut total_volumes: u64 = 0;
@@ -3921,17 +4001,17 @@ impl VolumeServer for VolumeGrpcService {
         let mut broken_shard_infos: Vec<volume_server_pb::EcShardInfo> = Vec::new();
         let mut details: Vec<String> = Vec::new();
 
-        for vid in &vids {
-            let ecv = store
-                .find_ec_volume(*vid)
-                .ok_or_else(|| Status::not_found(format!("EC volume id {} not found", vid.0)))?;
-            let collection = ecv.collection.clone();
-
+        for vid in vids {
             match mode {
                 1 => {
-                    // INDEX mode: check ecx index integrity only, no shard verification
-                    // Matches Go's v.ScrubIndex() → idx.CheckIndexFile()
-                    let (count, errs) = ecv.scrub_index();
+                    // INDEX mode: check ecx index integrity only, no shard verification.
+                    let (count, errs) = {
+                        let store = self.state.store.read().unwrap();
+                        let ecv = store.find_ec_volume(vid).ok_or_else(|| {
+                            Status::not_found(format!("EC volume id {} not found", vid.0))
+                        })?;
+                        ecv.scrub_index()
+                    };
                     total_volumes += 1;
                     total_files += count;
                     if !errs.is_empty() {
@@ -3941,59 +4021,130 @@ impl VolumeServer for VolumeGrpcService {
                         }
                     }
                 }
-                2 | 3 => {
-                    // LOCAL (2) / FULL (3): verify EC shard data
-                    let files = ecv.walk_ecx_stats().map(|(f, _, _)| f).unwrap_or(0);
-
-                    // After cross-disk reconciliation, an EcVolume can
-                    // legitimately have ecv.dir != ecv.dir_idx (shards
-                    // on one disk, .ecx / .ecj / .vif on a sibling).
-                    // Use the EcVolume's own dirs rather than collapsing
-                    // both args to find_ec_dir's single answer, otherwise
-                    // read_ec_shard_config falls back to the wrong .vif
-                    // location for split-disk volumes (#9252).
-                    let dir = ecv.dir.clone();
-                    let idx_dir = ecv.dir_idx.clone();
-                    if dir.is_empty() {
-                        continue;
-                    }
-
+                2 => {
+                    // FULL: Go-parity per-needle local+remote walk, PLUS a TEMPORARY
+                    // local Reed-Solomon parity check. The needle walk only reads
+                    // DATA-shard intervals of LIVE needles, so on its own it can't
+                    // catch silent bitrot in a PARITY shard or an unwalked cold
+                    // region. Go closes that gap with a separate CHECKSUM mode over
+                    // .ecsum, which Rust does not have yet; running both here is a
+                    // deliberate divergence from Go FULL to preserve coverage. Drop
+                    // verify_ec_shards from this arm once mode 4 (CHECKSUM) lands.
+                    //
+                    // The RS recompute needs every shard co-located, so only run it
+                    // when this node holds all data+parity shards (single-node EC);
+                    // on a distributed layout it would report every non-local shard
+                    // as missing. Snapshot under a brief lock; release before await.
+                    let (dir, collection, data_shards, parity_shards, all_local) = {
+                        let store = self.state.store.read().unwrap();
+                        let ecv = store.find_ec_volume(vid).ok_or_else(|| {
+                            Status::not_found(format!("EC volume id {} not found", vid.0))
+                        })?;
+                        let total = (ecv.data_shards + ecv.parity_shards) as usize;
+                        let local = ecv.shards.iter().filter(|s| s.is_some()).count();
+                        (
+                            ecv.dir.clone(),
+                            ecv.collection.clone(),
+                            ecv.data_shards as usize,
+                            ecv.parity_shards as usize,
+                            local == total,
+                        )
+                    };
                     total_volumes += 1;
-                    total_files += files;
-                    let (data_shards, parity_shards) =
-                        crate::storage::erasure_coding::ec_volume::read_ec_shard_config(
-                            &dir,
-                            &idx_dir,
-                            &collection,
-                            *vid,
-                        );
 
-                    match crate::storage::erasure_coding::ec_encoder::verify_ec_shards(
-                        &dir,
-                        &collection,
-                        *vid,
-                        data_shards as usize,
-                        parity_shards as usize,
-                    ) {
-                        Ok((broken, msgs)) => {
-                            if !broken.is_empty() {
-                                broken_volume_ids.push(vid.0);
-                                for b in broken {
-                                    broken_shard_infos.push(volume_server_pb::EcShardInfo {
-                                        volume_id: vid.0,
-                                        collection: collection.clone(),
-                                        shard_id: b,
-                                        ..Default::default()
-                                    });
-                                }
-                            }
-                            for msg in msgs {
-                                details.push(format!("ecvol {}: {}", vid.0, msg));
+                    // (1) Per-needle local+remote walk (Go ScrubEcVolume parity).
+                    let (files, mut shard_infos, mut errs) =
+                        crate::server::store_ec::scrub_ec_volume_distributed(&self.state, vid, false)
+                            .await;
+                    total_files += files as u64; // count comes from the needle walk only
+
+                    // (2) Local parity check, gated on all-shards-local. Blocking RS
+                    // verify -> spawn_blocking; inputs are owned, no lock held.
+                    if all_local && !dir.is_empty() {
+                        let collection_pc = collection.clone();
+                        let (parity_broken, parity_details) = tokio::task::spawn_blocking(move || {
+                            crate::storage::erasure_coding::ec_encoder::verify_ec_shards(
+                                &dir,
+                                &collection_pc,
+                                vid,
+                                data_shards,
+                                parity_shards,
+                            )
+                        })
+                        .await
+                        .map_err(|e| Status::internal(format!("verify_ec_shards join: {}", e)))?
+                        .unwrap_or_else(|e| (Vec::new(), vec![format!("verify_ec_shards: {}", e)]));
+
+                        let mut seen: std::collections::HashSet<u32> =
+                            shard_infos.iter().map(|s| s.shard_id).collect();
+                        for sid in parity_broken {
+                            if seen.insert(sid) {
+                                shard_infos.push(volume_server_pb::EcShardInfo {
+                                    shard_id: sid,
+                                    collection: collection.clone(),
+                                    volume_id: vid.0,
+                                    ..Default::default()
+                                });
                             }
                         }
-                        Err(e) => {
-                            broken_volume_ids.push(vid.0);
-                            details.push(format!("ecvol {}: scrub error: {}", vid.0, e));
+                        shard_infos.sort_by_key(|s| s.shard_id);
+                        errs.extend(parity_details);
+                    }
+
+                    if !errs.is_empty() || !shard_infos.is_empty() {
+                        broken_volume_ids.push(vid.0);
+                        broken_shard_infos.extend(shard_infos);
+                        for msg in errs {
+                            details.push(format!("ecvol {}: {}", vid.0, msg));
+                        }
+                    }
+                }
+                3 => {
+                    // LOCAL: verify each needle against the locally-held shards.
+                    let (files, shard_infos, errs) = {
+                        let store = self.state.store.read().unwrap();
+                        let ecv = store.find_ec_volume(vid).ok_or_else(|| {
+                            Status::not_found(format!("EC volume id {} not found", vid.0))
+                        })?;
+                        ecv.scrub_local()
+                    };
+                    total_volumes += 1;
+                    total_files += files;
+                    if !errs.is_empty() || !shard_infos.is_empty() {
+                        broken_volume_ids.push(vid.0);
+                        broken_shard_infos.extend(shard_infos);
+                        for msg in errs {
+                            details.push(format!("ecvol {}: {}", vid.0, msg));
+                        }
+                    }
+                }
+                4 => {
+                    // CHECKSUM: verify each local shard's raw bytes against the
+                    // bitrot checksum sidecar, exercising cold parity shards.
+                    // Read-only. Mirrors Go's v.ChecksumScrub().
+                    let (blocks_scanned, broken, errs, collection) = {
+                        let store = self.state.store.read().unwrap();
+                        let ecv = store.find_ec_volume(vid).ok_or_else(|| {
+                            Status::not_found(format!("EC volume id {} not found", vid.0))
+                        })?;
+                        let collection = ecv.collection.clone();
+                        let (blocks, broken, errs) = ecv.checksum_scrub();
+                        (blocks, broken, errs, collection)
+                    };
+                    total_volumes += 1;
+                    total_files += blocks_scanned;
+                    if !errs.is_empty() || !broken.is_empty() {
+                        broken_volume_ids.push(vid.0);
+                        for b in broken {
+                            broken_shard_infos.push(volume_server_pb::EcShardInfo {
+                                volume_id: vid.0,
+                                collection: collection.clone(),
+                                shard_id: b,
+                                ..Default::default()
+                            });
+                        }
+                        for msg in errs {
+                            details.push(format!("ecvol {}: {}", vid.0, msg));
                         }
                     }
                 }
@@ -5512,6 +5663,105 @@ mod tests {
         if let Err(err) = result {
             assert_ne!(err.code(), tonic::Code::InvalidArgument, "got {err:?}");
         }
+    }
+
+    // Regression test for comparing the wrong compaction-revision field.
+    // last_compact_revision() is bookkeeping recorded just before a compaction
+    // starts (for makeup-diff catch-up) and is intentionally left behind
+    // super_block.compaction_revision once the compaction commits. copy_file's
+    // precondition check must compare against the live super_block value
+    // (matching Go's v.CompactionRevision), not the stale bookkeeping one, or
+    // it fails "volume N is compacted" on every volume that has ever been
+    // compacted even once.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_copy_file_accepts_live_revision_after_compaction() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+
+        // Drive a real compaction to completion so the two revision fields
+        // actually diverge the way they do in production, rather than poking
+        // the struct fields directly.
+        let (revision_before, revision_after, last_compact_revision_after) = {
+            let mut store = service.state.store.write().unwrap();
+            let (_, v) = store.find_volume_mut(VolumeId(1)).unwrap();
+            let before = v.super_block.compaction_revision;
+
+            v.compact_by_index(0, 0, |_| true).unwrap();
+            v.commit_compact().unwrap();
+
+            (before, v.super_block.compaction_revision, v.last_compact_revision())
+        };
+
+        assert_eq!(revision_before, 0, "fresh volume starts at revision 0");
+        assert_eq!(
+            revision_after, 1,
+            "live super_block.compaction_revision must advance after commit_compact"
+        );
+        assert_eq!(
+            last_compact_revision_after, 0,
+            "last_compact_revision() is recorded pre-compaction and must stay \
+             behind the live revision — this divergence is exactly what made \
+             the old check fail permanently"
+        );
+
+        // The live revision (1) must be accepted: this is what
+        // read_volume_file_status would report to a caller right now.
+        let response = service
+            .copy_file(Request::new(volume_server_pb::CopyFileRequest {
+                volume_id: 1,
+                ext: ".dat".to_string(),
+                compaction_revision: revision_after as u32,
+                stop_offset: u64::MAX,
+                collection: String::new(),
+                is_ec_volume: false,
+                ignore_source_file_not_found: false,
+            }))
+            .await;
+        assert!(
+            response.is_ok(),
+            "copy_file must accept the live compaction_revision, got: {:?}",
+            response.err()
+        );
+
+        // A genuinely stale/wrong revision must still be rejected — the fix
+        // corrects which field is compared, it does not disable the check.
+        let stale_response = service
+            .copy_file(Request::new(volume_server_pb::CopyFileRequest {
+                volume_id: 1,
+                ext: ".dat".to_string(),
+                compaction_revision: 99,
+                stop_offset: u64::MAX,
+                collection: String::new(),
+                is_ec_volume: false,
+                ignore_source_file_not_found: false,
+            }))
+            .await;
+        let err = match stale_response {
+            Ok(_) => panic!("a genuinely stale revision must be rejected"),
+            Err(e) => e,
+        };
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+        assert!(err.message().contains("is compacted"));
+
+        // A request revision that only collides after truncating to u16 must be
+        // rejected: 65537 as u16 == 1 == the live revision, but as u32 they differ.
+        // Compare in u32 space (matching Go) so this cannot spuriously pass.
+        let truncating_response = service
+            .copy_file(Request::new(volume_server_pb::CopyFileRequest {
+                volume_id: 1,
+                ext: ".dat".to_string(),
+                compaction_revision: u32::from(revision_after) + (1 << 16),
+                stop_offset: u64::MAX,
+                collection: String::new(),
+                is_ec_volume: false,
+                ignore_source_file_not_found: false,
+            }))
+            .await;
+        let err = match truncating_response {
+            Ok(_) => panic!("a revision that only matches after u16 truncation must be rejected"),
+            Err(e) => e,
+        };
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+        assert!(err.message().contains("is compacted"));
     }
 
     #[tokio::test]

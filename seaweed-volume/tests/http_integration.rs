@@ -39,8 +39,25 @@ fn test_state_with_guard(
     whitelist: Vec<String>,
     signing_key: Vec<u8>,
 ) -> (Arc<VolumeServerState>, TempDir) {
+    build_test_state(whitelist, signing_key, None, String::new())
+}
+
+/// Build a test state with volume 1 created using the given replica placement
+/// (e.g. "001" for a two-copy volume) and master URL. An empty master URL plus
+/// a None placement is the single-copy default used by most tests.
+fn build_test_state(
+    whitelist: Vec<String>,
+    signing_key: Vec<u8>,
+    replication: Option<&str>,
+    master_url: String,
+) -> (Arc<VolumeServerState>, TempDir) {
     let tmp = TempDir::new().expect("failed to create temp dir");
     let dir = tmp.path().to_str().unwrap();
+
+    let replica_placement = replication.map(|s| {
+        seaweed_volume::storage::super_block::ReplicaPlacement::from_string(s)
+            .expect("invalid replica placement")
+    });
 
     let mut store = Store::new(NeedleMapKind::InMemory);
     store
@@ -57,7 +74,7 @@ fn test_state_with_guard(
         .add_volume(
             VolumeId(1),
             "",
-            None,
+            replica_placement,
             None,
             0,
             DiskType::HardDrive,
@@ -100,7 +117,7 @@ fn test_state_with_guard(
         ),
         read_mode: seaweed_volume::config::ReadMode::Local,
         allow_untrusted_remote_endpoints: false,
-        master_url: String::new(),
+        master_url,
         master_urls: Vec::new(),
         seed_master_set: std::collections::HashSet::new(),
         current_master_url: tokio::sync::RwLock::new(String::new()),
@@ -677,4 +694,243 @@ async fn admin_router_serves_volume_ui_static_assets() {
     );
     let body = body_bytes(response).await;
     assert!(body.len() > 1000);
+}
+
+// ============================================================================
+// Replicated (fan-out) writes
+//
+// A chunked S3 upload has the gateway write every replica holder directly with
+// `type=replicate` instead of relaying through the primary volume. Each holder
+// must accept the copy and store it locally without re-replicating. These tests
+// pin that contract on the Rust volume server.
+// ============================================================================
+
+/// Raw-body `type=replicate` write is stored and reads back.
+#[tokio::test]
+async fn replicate_write_raw_body_is_stored() {
+    let (state, _tmp) = test_state();
+    let uri = "/1,01637037d6?type=replicate";
+    let payload = b"fan-out replica bytes";
+
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(uri)
+                .body(Body::from(payload.to_vec()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/1,01637037d6")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_bytes(response).await, payload);
+}
+
+/// Multipart `type=replicate` write (the shape the Go gateway uploader sends)
+/// is stored and reads back.
+#[tokio::test]
+async fn replicate_write_multipart_body_is_stored() {
+    let (state, _tmp) = test_state();
+    let boundary = "----replicateboundary";
+    let payload = b"fan-out replica bytes";
+    let mut body = Vec::new();
+    body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+    body.extend_from_slice(
+        b"Content-Disposition: form-data; name=\"file\"; filename=\"chunk\"\r\n",
+    );
+    body.extend_from_slice(b"Content-Type: application/octet-stream\r\n\r\n");
+    body.extend_from_slice(payload);
+    body.extend_from_slice(format!("\r\n--{}--\r\n", boundary).as_bytes());
+
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/1,01637037d6?type=replicate")
+                .header(
+                    "Content-Type",
+                    format!("multipart/form-data; boundary={}", boundary),
+                )
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/1,01637037d6")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_bytes(response).await, payload);
+}
+
+/// On a multi-copy volume, a `type=replicate` write must store locally without
+/// re-replicating: it must not contact the master, even an unreachable one.
+/// A plain write to the same volume does attempt replication and fails against
+/// the dead master, which proves the `type=replicate` flag is what suppresses
+/// the fan-out (not a disabled replication path).
+#[tokio::test]
+async fn replicate_write_does_not_re_replicate() {
+    // Port 0 is rejected by the socket layer immediately, so a stray lookup
+    // fails fast instead of hanging on a connect timeout in firewalled CI.
+    let dead_master = "127.0.0.1:0".to_string();
+    let (state, _tmp) = build_test_state(Vec::new(), Vec::new(), Some("001"), dead_master);
+
+    // type=replicate: stored locally, no master lookup -> 201.
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/1,01637037d6?type=replicate")
+                .body(Body::from(b"replicated copy".to_vec()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::CREATED,
+        "replicate write must not depend on the master"
+    );
+
+    // plain write: tries to fan out to the dead master and fails.
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/1,02637037d7")
+                .body(Body::from(b"primary copy".to_vec()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "plain write to a multi-copy volume must attempt replication"
+    );
+}
+
+// ============================================================================
+// Chunk-manifest expansion resolves chunks on EC volumes
+//
+// A chunked object whose data chunks live on an EC-encoded volume must expand
+// by reconstruct-on-read from the shards, not by a local regular-volume lookup
+// (which finds nothing once the volume is EC-encoded). Mirrors Go's
+// ChunkedFileReader, which resolves every chunk through the master.
+// ============================================================================
+
+#[tokio::test]
+async fn chunk_manifest_expands_chunk_stored_on_ec_volume() {
+    use seaweed_volume::storage::erasure_coding::ec_encoder::write_ec_files;
+    use seaweed_volume::storage::needle::needle::{FileId, Needle};
+    use seaweed_volume::storage::types::{Cookie, NeedleId};
+    use seaweed_volume::storage::volume::Volume;
+
+    let (state, tmp) = test_state();
+    let dir = tmp.path().to_str().unwrap();
+
+    // A chunk large enough to be worth EC-encoding; its bytes are the payload we
+    // expect the manifest GET to return.
+    let chunk_data: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+    let chunk_nid = NeedleId(0x2a);
+    let chunk_cookie = Cookie(0x1234abcd);
+
+    // Build regular volume 2 holding the chunk, then EC-encode it and mount all
+    // 14 shards locally so reconstruct-on-read is a pure local read.
+    {
+        let mut v = Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(2),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        let mut n = Needle {
+            id: chunk_nid,
+            cookie: chunk_cookie,
+            data: chunk_data.clone(),
+            data_size: chunk_data.len() as u32,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true).unwrap();
+        v.sync_to_disk().unwrap();
+        v.close();
+    }
+    write_ec_files(dir, dir, "", VolumeId(2), 10, 4).unwrap();
+    // Volume 2 was built standalone (never registered in the store), so it only
+    // exists as EC shards — the chunk resolves through the EC path, as it would
+    // after ec.encode retired the regular volume.
+    {
+        let mut store = state.store.write().unwrap();
+        let shard_ids: Vec<u32> = (0..14).collect();
+        store.mount_ec_shards(VolumeId(2), "", &shard_ids).unwrap();
+    }
+
+    // Write the chunk-manifest needle to regular volume 1.
+    let chunk_fid = FileId::new(VolumeId(2), chunk_nid, chunk_cookie).to_string();
+    let manifest = format!(
+        r#"{{"name":"big.bin","mime":"application/octet-stream","size":{},"chunks":[{{"fid":"{}","offset":0,"size":{}}}]}}"#,
+        chunk_data.len(),
+        chunk_fid,
+        chunk_data.len()
+    );
+    let manifest_nid = NeedleId(0x7);
+    let manifest_cookie = Cookie(0x55667788);
+    {
+        let mut store = state.store.write().unwrap();
+        let mut n = Needle {
+            id: manifest_nid,
+            cookie: manifest_cookie,
+            data: manifest.into_bytes(),
+            ..Needle::default()
+        };
+        n.data_size = n.data.len() as u32;
+        n.set_is_chunk_manifest();
+        store.write_volume_needle(VolumeId(1), &mut n).unwrap();
+    }
+
+    // GET the manifest object; expect the reconstructed chunk bytes.
+    let manifest_fid = FileId::new(VolumeId(1), manifest_nid, manifest_cookie).to_string();
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/{}", manifest_fid))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_bytes(response).await, chunk_data);
 }

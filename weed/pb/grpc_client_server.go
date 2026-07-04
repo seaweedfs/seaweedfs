@@ -391,6 +391,13 @@ func shouldInvalidateConnection(ctx context.Context, err error) bool {
 		switch code {
 		case codes.Unavailable, codes.Aborted, codes.Internal:
 			return true
+		case codes.ResourceExhausted:
+			// Server-side backpressure on a healthy channel (e.g. the master's
+			// assign shed while volume growth is in flight), not a dead connection.
+			// Invalidating would Close() the shared conn and cancel every other
+			// in-flight RPC with "the client connection is closing"; keep it and let
+			// the caller retry.
+			return false
 		case codes.Canceled, codes.DeadlineExceeded:
 			// Ambiguous: this fires both when a stale cached channel rejects
 			// RPCs (e.g. a peer restart behind a k8s Service VIP), where we must

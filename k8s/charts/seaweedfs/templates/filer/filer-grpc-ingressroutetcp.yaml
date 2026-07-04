@@ -1,0 +1,47 @@
+{{- /* Traefik IngressRouteTCP for the filer gRPC port. Rendered instead of the
+       standard Ingress when the gRPC ingress className starts with "traefik",
+       since a Kubernetes Ingress can't do raw TCP/gRPC passthrough.
+
+       global.seaweedfs.enableSecurity controls the mode:
+         false: plain TCP, Traefik forwards h2c to the pod. A non-TLS TCP
+                router can only match HostSNI(`*`) (SNI needs TLS).
+         true:  TLS passthrough, matched by SNI so it can route on the host. */}}
+
+{{- $filerEnabled := or .Values.filer.enabled .Values.allInOne.enabled }}
+{{- $isTraefik := hasPrefix "traefik" (default "" .Values.filer.ingresses.grpc.className) }}
+{{- $securityEnabled := .Values.global.seaweedfs.enableSecurity }}
+
+{{- if and $filerEnabled .Values.filer.ingresses.grpc.enabled $isTraefik }}
+{{- $serviceName := ternary (include "seaweedfs.componentName" (list . "all-in-one")) (include "seaweedfs.componentName" (list . "filer")) .Values.allInOne.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRouteTCP
+metadata:
+  name: {{ include "seaweedfs.fullname" . }}-filer-grpc
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: filer
+spec:
+  {{- if $securityEnabled }}
+  tls:
+    passthrough: true
+  {{- end }}
+  entryPoints:
+    {{- with .Values.filer.ingresses.grpc.entryPoint }}
+    - {{ . | quote }}
+    {{- else }}
+    - filer-grpc
+    {{- end }}
+  routes:
+    {{- if $securityEnabled }}
+    - match: HostSNI(`{{ .Values.filer.ingresses.grpc.host }}`)
+    {{- else }}
+    - match: HostSNI(`*`)
+    {{- end }}
+      services:
+        - name: {{ $serviceName }}
+          port: {{ .Values.filer.grpcPort }}
+{{- end }}

@@ -64,6 +64,8 @@ const (
 	ErrInvalidDigest
 	ErrBadDigest
 	ErrInvalidMaxKeys
+	ErrInvalidMaxBuckets
+	ErrInvalidContinuationToken
 	ErrInvalidMaxUploads
 	ErrInvalidMaxParts
 	ErrInvalidMaxDeleteObjects
@@ -155,6 +157,9 @@ const (
 	ErrKeyTooLongError
 
 	ErrNoSuchConfiguration
+
+	// Truncated request body (fewer bytes than Content-Length)
+	ErrIncompleteBody
 )
 
 // Error message constants for checksum validation
@@ -220,6 +225,16 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrInvalidMaxKeys: {
 		Code:           "InvalidArgument",
 		Description:    "Argument maxKeys must be an integer between 0 and 2147483647",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrInvalidMaxBuckets: {
+		Code:           "InvalidArgument",
+		Description:    "Argument max-buckets must be an integer between 1 and 10000",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrInvalidContinuationToken: {
+		Code:           "InvalidArgument",
+		Description:    "The continuation token provided is incorrect",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 	ErrInvalidMaxParts: {
@@ -296,6 +311,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Code:           "InternalError",
 		Description:    "We encountered an internal error, please try again.",
 		HTTPStatusCode: http.StatusInternalServerError,
+	},
+	ErrIncompleteBody: {
+		Code:           "IncompleteBody",
+		Description:    "You did not provide the number of bytes specified by the Content-Length HTTP header.",
+		HTTPStatusCode: http.StatusBadRequest,
 	},
 
 	ErrInvalidPart: {

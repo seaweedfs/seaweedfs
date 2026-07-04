@@ -74,7 +74,9 @@ func Assign(ctx context.Context, masterFn GetMasterFn, grpcDialOption grpc.DialO
 					return false
 				}
 				switch st.Code() {
-				case codes.Unavailable:
+				case codes.Unavailable, codes.ResourceExhausted:
+					// ResourceExhausted: the master is shedding because volume growth
+					// is in flight; retry so we pick up the new volume once it lands.
 					return true
 				case codes.Canceled, codes.DeadlineExceeded:
 					// A stale cached gRPC channel (e.g., master restart behind

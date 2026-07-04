@@ -459,6 +459,83 @@ func TestECPlannerSeesEachPhysicalDisk(t *testing.T) {
 	}
 }
 
+// TestVolumeIndexResolvesPhysicalDiskZero pins that a volume genuinely on
+// physical disk 0 resolves to its own disk via GetVolumeLocations even when the
+// aggregate DiskInfo.DiskId is seeded from a non-zero sibling (as ToDiskInfo
+// does from volumes[0]). Re-deriving the per-record disk id would fold disk 0
+// onto the sibling, then the lookup would find no matching volume and drop it.
+func TestVolumeIndexResolvesPhysicalDiskZero(t *testing.T) {
+	topology := NewActiveTopology(10)
+
+	require.NoError(t, topology.UpdateTopology(&master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{{
+			Id: "dc1",
+			RackInfos: []*master_pb.RackInfo{{
+				Id: "rack1",
+				DataNodeInfos: []*master_pb.DataNodeInfo{{
+					Id: "127.0.0.1:8080",
+					DiskInfos: map[string]*master_pb.DiskInfo{
+						"hdd": {
+							DiskId:         6, // seeded from volumes[0].DiskId
+							MaxVolumeCount: 200,
+							VolumeInfos: []*master_pb.VolumeInformationMessage{
+								{Id: 11, DiskId: 6, DiskType: "hdd"},
+								{Id: 10, DiskId: 0, DiskType: "hdd"},
+							},
+						},
+					},
+				}},
+			}},
+		}},
+	}))
+
+	loc10 := topology.GetVolumeLocations(10, "")
+	require.Len(t, loc10, 1, "volume on physical disk 0 must resolve to one disk")
+	assert.Equal(t, uint32(0), loc10[0].DiskID, "volume 10 lives on physical disk 0")
+
+	loc11 := topology.GetVolumeLocations(11, "")
+	require.Len(t, loc11, 1)
+	assert.Equal(t, uint32(6), loc11[0].DiskID, "volume 11 lives on physical disk 6")
+}
+
+// TestECShardIndexResolvesPhysicalDiskZero is the EC-shard twin of
+// TestVolumeIndexResolvesPhysicalDiskZero: rebuildIndexes builds ecShardIndex
+// the same way, so an EC shard on physical disk 0 must resolve via
+// GetECShardLocations rather than being folded onto a non-zero sibling.
+func TestECShardIndexResolvesPhysicalDiskZero(t *testing.T) {
+	topology := NewActiveTopology(10)
+
+	require.NoError(t, topology.UpdateTopology(&master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{{
+			Id: "dc1",
+			RackInfos: []*master_pb.RackInfo{{
+				Id: "rack1",
+				DataNodeInfos: []*master_pb.DataNodeInfo{{
+					Id: "127.0.0.1:8080",
+					DiskInfos: map[string]*master_pb.DiskInfo{
+						"hdd": {
+							DiskId:         6, // seeded from a non-zero sibling
+							MaxVolumeCount: 200,
+							EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{
+								{Id: 21, DiskId: 6, Collection: "c1", EcIndexBits: 0b1},
+								{Id: 20, DiskId: 0, Collection: "c1", EcIndexBits: 0b1},
+							},
+						},
+					},
+				}},
+			}},
+		}},
+	}))
+
+	loc20 := topology.GetECShardLocations(20, "c1")
+	require.Len(t, loc20, 1, "EC shard on physical disk 0 must resolve to one disk")
+	assert.Equal(t, uint32(0), loc20[0].DiskID, "shard 20 lives on physical disk 0")
+
+	loc21 := topology.GetECShardLocations(21, "c1")
+	require.Len(t, loc21, 1)
+	assert.Equal(t, uint32(6), loc21[0].DiskID, "shard 21 lives on physical disk 6")
+}
+
 // TestPublicInterfaces tests the public interface methods
 func TestPublicInterfaces(t *testing.T) {
 	topology := NewActiveTopology(10)

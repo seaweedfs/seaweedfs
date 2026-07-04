@@ -12,6 +12,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
 )
@@ -55,6 +57,20 @@ func (s *AdminServer) GetGrpcDialOption() grpc.DialOption {
 	return s.grpcDialOption
 }
 
+// VolumeServerReadJwt mints a per-fileId Bearer token for reads against a
+// volume server when jwt.signing.read.key is configured. The volume servers
+// are unaware of jwt.filer_signing.read.key — that one only gates the filer
+// HTTP surface, which this code path doesn't touch.
+func VolumeServerReadJwt(fileId string) string {
+	v := util.GetViper()
+	signingKey := security.SigningKey(v.GetString("jwt.signing.read.key"))
+	if len(signingKey) == 0 {
+		return ""
+	}
+	expiresAfterSec := v.GetInt("jwt.signing.read.expires_after_seconds")
+	return string(security.GenJwtForVolumeServer(signingKey, expiresAfterSec, fileId))
+}
+
 // GetFilerAddress returns a filer address, discovering from masters if needed
 func (s *AdminServer) GetFilerAddress() string {
 	// Discover filers from masters
@@ -76,9 +92,7 @@ func (s *AdminServer) getDiscoveredFilers() []string {
 	// Discover filers from masters
 	var filers []string
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
-			ClientType: cluster.FilerType,
-		})
+		resp, err := client.ListClusterNodes(context.Background(), s.listClusterNodesRequest(cluster.FilerType))
 		if err != nil {
 			return err
 		}

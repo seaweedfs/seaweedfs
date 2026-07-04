@@ -109,6 +109,17 @@ impl EcVolumeShard {
         self.ecd_file_size
     }
 
+    /// Protobuf descriptor for this shard. Mirrors Go's ToEcShardInfo.
+    pub fn to_ec_shard_info(&self) -> crate::pb::volume_server_pb::EcShardInfo {
+        crate::pb::volume_server_pb::EcShardInfo {
+            shard_id: self.shard_id as u32,
+            size: self.file_size(),
+            collection: self.collection.clone(),
+            volume_id: self.volume_id.0,
+            ..Default::default()
+        }
+    }
+
     /// Close the shard file.
     pub fn close(&mut self) {
         if let Some(ref file) = self.ecd_file {

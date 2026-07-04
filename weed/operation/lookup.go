@@ -61,6 +61,11 @@ func LookupVolumeId(masterFn GetMasterFn, grpcDialOption grpc.DialOption, vid st
 	return results[vid], err
 }
 
+// InvalidateVolumeIdLocationCache drops cached locations for vid so the next lookup re-queries the master.
+func InvalidateVolumeIdLocationCache(vid string) {
+	vc.Delete(vid)
+}
+
 // LookupVolumeIds find volume locations by cache and actual lookup
 func LookupVolumeIds(masterFn GetMasterFn, grpcDialOption grpc.DialOption, vids []string) (map[string]*LookupResult, error) {
 	ret := make(map[string]*LookupResult)

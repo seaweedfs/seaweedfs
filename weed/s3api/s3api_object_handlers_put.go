@@ -545,10 +545,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			s3a.deleteOrphanedChunks(chunkResult.FileChunks)
 		}
 
-		if strings.Contains(err.Error(), s3err.ErrMsgPayloadChecksumMismatch) {
-			return "", s3err.ErrInvalidDigest, SSEResponseMetadata{}
-		}
-		return "", s3err.ErrInternalError, SSEResponseMetadata{}
+		return "", mapChunkedUploadErrorToS3Error(err), SSEResponseMetadata{}
 	}
 
 	// Step 3: Calculate MD5 hash and add SSE metadata to chunks
@@ -1165,6 +1162,22 @@ func filerErrorToS3Error(err error) s3err.ErrorCode {
 		return s3err.ErrBadDigest
 	case strings.Contains(errString, "context canceled") || strings.Contains(errString, "code = Canceled"):
 		return s3err.ErrInvalidRequest
+	default:
+		return s3err.ErrInternalError
+	}
+}
+
+// mapChunkedUploadErrorToS3Error classifies a failed streaming upload. A truncated
+// request body (client abort or reverse-proxy timeout) is a request error, so report
+// IncompleteBody (400) rather than a 500 a reverse proxy would relay as a confusing
+// 502. Only the source read is tagged, so a volume-server upload fault still maps to
+// InternalError.
+func mapChunkedUploadErrorToS3Error(err error) s3err.ErrorCode {
+	switch {
+	case strings.Contains(err.Error(), s3err.ErrMsgPayloadChecksumMismatch):
+		return s3err.ErrInvalidDigest
+	case errors.Is(err, operation.ErrTruncatedBody):
+		return s3err.ErrIncompleteBody
 	default:
 		return s3err.ErrInternalError
 	}

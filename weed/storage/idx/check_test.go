@@ -1,13 +1,40 @@
 package idx
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"reflect"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
+
+func idxEntryBytes(id types.NeedleId, offset types.Offset, size types.Size) []byte {
+	b := make([]byte, types.NeedleIdSize+types.OffsetSize+types.SizeSize)
+	types.NeedleIdToBytes(b[0:types.NeedleIdSize], id)
+	types.OffsetToBytes(b[types.NeedleIdSize:types.NeedleIdSize+types.OffsetSize], offset)
+	types.SizeToBytes(b[types.NeedleIdSize+types.OffsetSize:], size)
+	return b
+}
+
+// An offset-0 logical tombstone (remote-tier delete) occupies no physical .dat
+// extent, so it must not be flagged as overlapping a real needle. The tombstone
+// row is still counted for the index-size check.
+func TestCheckIndexFile_IgnoresOffset0Tombstone(t *testing.T) {
+	var buf []byte
+	buf = append(buf, idxEntryBytes(types.NeedleId(1), types.ToOffset(8), types.Size(100))...)
+	buf = append(buf, idxEntryBytes(types.NeedleId(2), types.ToOffset(0), types.TombstoneFileSize)...)
+
+	count, errs := CheckIndexFile(bytes.NewReader(buf), int64(len(buf)), needle.Version3)
+	if count != 2 {
+		t.Errorf("tombstone row must still count: got %d", count)
+	}
+	if len(errs) != 0 {
+		t.Errorf("offset-0 tombstone must not overlap: %v", errs)
+	}
+}
 
 func TestCheckIndexFile(t *testing.T) {
 	testCases := []struct {

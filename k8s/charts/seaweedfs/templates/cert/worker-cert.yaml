@@ -29,6 +29,11 @@ spec:
     - '*.{{ include "seaweedfs.fullname" . }}-worker.{{ .Release.Namespace }}'
     - '*.{{ include "seaweedfs.fullname" . }}-worker.{{ .Release.Namespace }}.svc'
     - '*.{{ include "seaweedfs.fullname" . }}-worker.{{ .Release.Namespace }}.svc.cluster.local'
+{{- if .Values.certificates.dnsNames }}
+{{- range .Values.certificates.dnsNames }}
+    - {{ . | quote }}
+{{- end }}
+{{- end }}
 {{- if .Values.certificates.ipAddresses }}
   ipAddresses:
     {{- range .Values.certificates.ipAddresses }}

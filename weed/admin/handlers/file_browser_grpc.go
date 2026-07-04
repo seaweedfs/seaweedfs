@@ -18,7 +18,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // Admin upload chunk size, matching s3api so files split into the same fid-sized pieces.
@@ -256,7 +255,7 @@ func (h *FileBrowserHandlers) streamEntryContent(ctx context.Context, entry *fil
 	streamFn, err := filer.PrepareStreamContentWithThrottler(
 		ctx,
 		h.adminServer.GetMasterClient(),
-		volumeServerReadJwt,
+		dash.VolumeServerReadJwt,
 		entry.GetChunks(),
 		0,
 		size,
@@ -266,18 +265,4 @@ func (h *FileBrowserHandlers) streamEntryContent(ctx context.Context, entry *fil
 		return fmt.Errorf("prepare stream: %w", err)
 	}
 	return streamFn(w)
-}
-
-// volumeServerReadJwt mints a per-fileId Bearer token for reads against a
-// volume server when jwt.signing.read.key is configured. The volume servers
-// are unaware of jwt.filer_signing.read.key — that one only gates the filer
-// HTTP surface, which this code path doesn't touch.
-func volumeServerReadJwt(fileId string) string {
-	v := util.GetViper()
-	signingKey := security.SigningKey(v.GetString("jwt.signing.read.key"))
-	if len(signingKey) == 0 {
-		return ""
-	}
-	expiresAfterSec := v.GetInt("jwt.signing.read.expires_after_seconds")
-	return string(security.GenJwtForVolumeServer(signingKey, expiresAfterSec, fileId))
 }

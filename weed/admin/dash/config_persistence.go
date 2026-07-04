@@ -1088,6 +1088,10 @@ func (cp *ConfigPersistence) loadTaskStateLocked(taskID string) (*maintenance.Ma
 		return nil, fmt.Errorf("failed to unmarshal task state protobuf: %w", err)
 	}
 
+	if taskStateFile.Task == nil {
+		return nil, fmt.Errorf("task state file %s contains no task data", taskID)
+	}
+
 	// Convert protobuf to maintenance task
 	task := cp.protobufToMaintenanceTask(taskStateFile.Task)
 

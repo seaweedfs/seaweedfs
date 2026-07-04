@@ -1,0 +1,79 @@
+name: "Master Cold Start Tests"
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'weed/server/master_*.go'
+      - 'weed/topology/**'
+      - 'weed/operation/**'
+      - 'test/master_cold_start/**'
+      - 'test/testutil/**'
+      - '.github/workflows/master-cold-start-tests.yml'
+  pull_request:
+    branches: [ master ]
+    paths:
+      - 'weed/server/master_*.go'
+      - 'weed/topology/**'
+      - 'weed/operation/**'
+      - 'test/master_cold_start/**'
+      - 'test/testutil/**'
+      - '.github/workflows/master-cold-start-tests.yml'
+
+concurrency:
+  group: ${{ github.head_ref || github.ref }}/master-cold-start-tests
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  master-cold-start-tests:
+    name: Master Cold Start Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Build weed binary
+        run: |
+          cd weed && go install -buildvcs=false
+
+      - name: Run master cold start tests
+        # test/master_cold_start boots a fresh master plus empty volume
+        # servers and requires the very first assign (HTTP and gRPC, no
+        # client retries) to complete a write: the assign that triggers
+        # volume growth must wait for it instead of failing with
+        # "volume growth in progress".
+        run: |
+          export WEED_BINARY=$(go env GOPATH)/bin/weed
+          go test -v -timeout=8m ./test/master_cold_start/...
+
+      - name: Collect server logs on failure
+        if: failure()
+        run: |
+          # test/master_cold_start/cluster.go keeps failing-test dirs created
+          # via os.MkdirTemp("", "seaweedfs_master_cold_start_it_") with each
+          # process log under <baseDir>/logs/.
+          mkdir -p /tmp/master-cold-start-logs
+          find /tmp -maxdepth 1 -type d -name "seaweedfs_master_cold_start_it_*" 2>/dev/null | while read dir; do
+            echo "Found test directory: $dir"
+            cp -r "$dir" /tmp/master-cold-start-logs/ 2>/dev/null || true
+          done
+          find /tmp/master-cold-start-logs -type f -name "*.log" -print -exec tail -n 100 {} \; 2>/dev/null || echo "No logs found"
+
+      - name: Archive logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: master-cold-start-test-logs
+          path: /tmp/master-cold-start-logs/
+          retention-days: 7

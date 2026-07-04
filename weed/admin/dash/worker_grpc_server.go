@@ -154,11 +154,11 @@ func (s *WorkerGrpcServer) Stop() error {
 	s.running = false
 	close(s.stopChan)
 
-	// Close all worker connections
+	// Close all worker connections. Cancelling the context stops each
+	// handleOutgoingMessages goroutine; the outgoing channel is never closed.
 	s.connMutex.Lock()
 	for _, conn := range s.connections {
 		conn.cancel()
-		s.safeCloseOutgoingChannel(conn, "Stop")
 	}
 	s.connections = make(map[string]*WorkerConnection)
 	s.connMutex.Unlock()
@@ -227,10 +227,9 @@ func (s *WorkerGrpcServer) WorkerStream(stream worker_pb.WorkerService_WorkerStr
 	s.connMutex.Lock()
 	if oldConn, exists := s.connections[workerID]; exists {
 		glog.Infof("Worker %s reconnected, cleaning up old connection", workerID)
-		// Cancel old connection to stop its goroutines
+		// Cancel old connection to stop its goroutines. Its handleOutgoingMessages
+		// exits on the cancelled context; the outgoing channel is never closed.
 		oldConn.cancel()
-		// Don't close oldConn.outgoing here as it may cause panic in handleOutgoingMessages
-		// Let the goroutine exit naturally when it detects context cancellation
 	}
 	s.connections[workerID] = conn
 	s.connMutex.Unlock()
@@ -255,11 +254,8 @@ func (s *WorkerGrpcServer) WorkerStream(stream worker_pb.WorkerService_WorkerStr
 		},
 	}
 
-	select {
-	case conn.outgoing <- regResponse:
+	if s.sendToWorker(conn, regResponse, 5*time.Second, "registration response") {
 		glog.V(1).Infof("Registration response sent to worker %s", workerID)
-	case <-time.After(5 * time.Second):
-		glog.Errorf("Failed to send registration response to worker %s", workerID)
 	}
 
 	// Handle incoming messages
@@ -384,11 +380,7 @@ func (s *WorkerGrpcServer) handleHeartbeat(conn *WorkerConnection, heartbeat *wo
 		},
 	}
 
-	select {
-	case conn.outgoing <- response:
-	case <-time.After(time.Second):
-		glog.Warningf("Failed to send heartbeat response to worker %s", conn.workerID)
-	}
+	s.sendToWorker(conn, response, time.Second, "heartbeat response")
 }
 
 // handleTaskRequest processes task requests from workers
@@ -435,11 +427,7 @@ func (s *WorkerGrpcServer) handleTaskRequest(conn *WorkerConnection, request *wo
 			},
 		}
 
-		select {
-		case conn.outgoing <- assignment:
-		case <-time.After(time.Second):
-			glog.Warningf("Failed to send task assignment to worker %s", conn.workerID)
-		}
+		s.sendToWorker(conn, assignment, time.Second, "task assignment")
 	} else {
 		// Send explicit "No Task" response to prevent worker timeout
 		// Workers expect a TaskAssignment message but will sleep if TaskId is empty
@@ -452,11 +440,8 @@ func (s *WorkerGrpcServer) handleTaskRequest(conn *WorkerConnection, request *wo
 			},
 		}
 
-		select {
-		case conn.outgoing <- noTaskAssignment:
+		if s.sendToWorker(conn, noTaskAssignment, time.Second, "no-task response") {
 			glog.V(4).Infof("Sent 'No Task' response to worker %s", conn.workerID)
-		case <-time.After(time.Second):
-			// If we can't send, the worker will eventually time out and reconnect, which is fine
 		}
 	}
 }
@@ -596,14 +581,22 @@ func (s *WorkerGrpcServer) handleTaskLogResponse(conn *WorkerConnection, respons
 	s.logRequestsMutex.Unlock()
 }
 
-// safeCloseOutgoingChannel safely closes the outgoing channel for a worker connection.
-func (s *WorkerGrpcServer) safeCloseOutgoingChannel(conn *WorkerConnection, source string) {
-	defer func() {
-		if r := recover(); r != nil {
-			glog.V(1).Infof("%s: recovered from panic closing outgoing channel for worker %s: %v", source, conn.workerID, r)
-		}
-	}()
-	close(conn.outgoing)
+// sendToWorker queues a message on conn.outgoing, which is deliberately never
+// closed: it has multiple concurrent senders, so closing it could panic one of
+// them with "send on closed channel". Teardown is signaled via conn.ctx instead;
+// handleOutgoingMessages drains the channel until that context is cancelled.
+// Returns false if the connection closed or the send timed out.
+func (s *WorkerGrpcServer) sendToWorker(conn *WorkerConnection, msg *worker_pb.AdminMessage, timeout time.Duration, description string) bool {
+	select {
+	case conn.outgoing <- msg:
+		return true
+	case <-conn.ctx.Done():
+		glog.V(2).Infof("Dropped %s for worker %s: connection closed", description, conn.workerID)
+		return false
+	case <-time.After(timeout):
+		glog.Warningf("Failed to send %s to worker %s: timeout", description, conn.workerID)
+		return false
+	}
 }
 
 // unregisterWorker removes a worker connection
@@ -628,11 +621,10 @@ func (s *WorkerGrpcServer) unregisterWorker(conn *WorkerConnection, event string
 	s.connMutex.Unlock()
 	stats_collect.AdminWorkerEventsTotal.WithLabelValues(event).Inc()
 
-	// Cancel context to signal goroutines to stop
+	// Cancel context to signal goroutines to stop. The outgoing channel is
+	// never closed (it has multiple senders); handleOutgoingMessages exits on
+	// the cancelled context.
 	conn.cancel()
-
-	// Safely close the outgoing channel with recover to handle potential double-close
-	s.safeCloseOutgoingChannel(conn, "unregisterWorker")
 
 	glog.V(1).Infof("Unregistered worker %s", conn.workerID)
 }
@@ -732,6 +724,13 @@ func (s *WorkerGrpcServer) RequestTaskLogs(workerID, taskID string, maxEntries i
 	select {
 	case conn.outgoing <- logRequest:
 		glog.V(1).Infof("Log request sent to worker %s for task %s", workerID, taskID)
+	case <-conn.ctx.Done():
+		s.logRequestsMutex.Lock()
+		if s.pendingLogRequests[requestKey] == requestContext {
+			delete(s.pendingLogRequests, requestKey)
+		}
+		s.logRequestsMutex.Unlock()
+		return nil, fmt.Errorf("worker %s connection closed", workerID)
 	case <-time.After(logSendTimeout):
 		// Clean up pending request on timeout
 		s.logRequestsMutex.Lock()
@@ -750,6 +749,13 @@ func (s *WorkerGrpcServer) RequestTaskLogs(workerID, taskID string, maxEntries i
 		}
 		glog.V(1).Infof("Received %d log entries for task %s from worker %s", len(response.LogEntries), taskID, workerID)
 		return response.LogEntries, nil
+	case <-conn.ctx.Done():
+		s.logRequestsMutex.Lock()
+		if s.pendingLogRequests[requestKey] == requestContext {
+			delete(s.pendingLogRequests, requestKey)
+		}
+		s.logRequestsMutex.Unlock()
+		return nil, fmt.Errorf("worker %s connection closed", workerID)
 	case <-time.After(logResponseTimeout):
 		// Clean up pending request on timeout
 		s.logRequestsMutex.Lock()

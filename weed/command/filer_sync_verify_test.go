@@ -4,11 +4,14 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
@@ -18,10 +21,14 @@ import (
 type verifyTestStream struct {
 	entries []*filer_pb.Entry
 	idx     int
+	recvErr error // returned after all entries instead of io.EOF, if set
 }
 
 func (s *verifyTestStream) Recv() (*filer_pb.ListEntriesResponse, error) {
 	if s.idx >= len(s.entries) {
+		if s.recvErr != nil {
+			return nil, s.recvErr
+		}
 		return nil, io.EOF
 	}
 	resp := &filer_pb.ListEntriesResponse{Entry: s.entries[s.idx]}
@@ -39,11 +46,12 @@ func (s *verifyTestStream) RecvMsg(_ any) error          { return nil }
 // verifyTestInnerClient is the SeaweedFilerClient passed to fn inside WithFilerClient.
 type verifyTestInnerClient struct {
 	filer_pb.SeaweedFilerClient // embed for unimplemented RPCs
-	entriesByDir map[string][]*filer_pb.Entry
+	entriesByDir                map[string][]*filer_pb.Entry
+	recvErr                     error // injected listing error, if set
 }
 
 func (c *verifyTestInnerClient) ListEntries(_ context.Context, in *filer_pb.ListEntriesRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
-	return &verifyTestStream{entries: c.entriesByDir[in.Directory]}, nil
+	return &verifyTestStream{entries: c.entriesByDir[in.Directory], recvErr: c.recvErr}, nil
 }
 
 // verifyTestFilerClient implements filer_pb.FilerClient and tracks concurrent
@@ -57,6 +65,8 @@ type verifyTestFilerClient struct {
 	inFlight     atomic.Int64
 	peakFlight   atomic.Int64
 	delay        time.Duration
+	onList       func() // called at the start of each listing, if set
+	recvErr      error  // injected listing error, surfaced after entries
 }
 
 func (c *verifyTestFilerClient) WithFilerClient(_ bool, fn func(filer_pb.SeaweedFilerClient) error) error {
@@ -69,10 +79,13 @@ func (c *verifyTestFilerClient) WithFilerClient(_ bool, fn func(filer_pb.Seaweed
 			break
 		}
 	}
+	if c.onList != nil {
+		c.onList()
+	}
 	if c.delay > 0 {
 		time.Sleep(c.delay)
 	}
-	return fn(&verifyTestInnerClient{entriesByDir: c.entriesByDir})
+	return fn(&verifyTestInnerClient{entriesByDir: c.entriesByDir, recvErr: c.recvErr})
 }
 
 func (c *verifyTestFilerClient) AdjustedUrl(_ *filer_pb.Location) string { return "" }
@@ -89,6 +102,34 @@ func verifyFileEntry(name string, size uint64) *filer_pb.Entry {
 
 func verifyDirEntry(name string) *filer_pb.Entry {
 	return &filer_pb.Entry{Name: name, IsDirectory: true}
+}
+
+// verifyChunk builds a FileChunk whose ETag is the base64 MD5 of seed, so
+// filer.ETagChunks (which base64-decodes each chunk ETag) can hash it. Distinct
+// seeds yield distinct per-chunk MD5s.
+func verifyChunk(offset int64, size uint64, seed string) *filer_pb.FileChunk {
+	return &filer_pb.FileChunk{
+		Offset: offset,
+		Size:   size,
+		ETag:   util.Base64Encode(util.Md5([]byte(seed))),
+	}
+}
+
+// verifyChunkedEntry builds a chunk-backed entry with no stored attr.Md5, so
+// its file ETag is derived from ETagChunks (the order-sensitive path). FileSize
+// is the max chunk end, matching filer.FileSize, so size comparison passes.
+func verifyChunkedEntry(name string, chunks []*filer_pb.FileChunk) *filer_pb.Entry {
+	var total uint64
+	for _, c := range chunks {
+		if end := uint64(c.Offset) + c.Size; end > total {
+			total = end
+		}
+	}
+	return &filer_pb.Entry{
+		Name:       name,
+		Attributes: &filer_pb.FuseAttributes{FileSize: total}, // Md5 nil → ETagChunks path
+		Chunks:     chunks,
+	}
 }
 
 // --- tests ---
@@ -270,6 +311,271 @@ func TestVerifySyncETagMismatch(t *testing.T) {
 	}
 }
 
+// TestVerifySyncChunkReorder confirms that two entries holding the SAME
+// chunks (same offsets, same per-chunk MD5s) in a DIFFERENT slice order are
+// classified as CHUNK_REORDER (content-equal), not ETAG_MISMATCH, and are
+// therefore not counted as errors. This is the S3-multipart vs filer.backup
+// reordering false positive.
+func TestVerifySyncChunkReorder(t *testing.T) {
+	c0 := verifyChunk(0, 100, "chunk-0")
+	c1 := verifyChunk(100, 100, "chunk-1")
+	c2 := verifyChunk(200, 100, "chunk-2")
+
+	// A stores [c0,c1,c2]; B stores a permutation [c2,c0,c1] of the same chunks.
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("model.bin", []*filer_pb.FileChunk{c0, c1, c2})},
+		},
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("model.bin", []*filer_pb.FileChunk{c2, c0, c1})},
+		},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := result.chunkReorder.Load(); got != 1 {
+		t.Errorf("chunkReorder = %d, want 1", got)
+	}
+	if got := result.etagMismatch.Load(); got != 0 {
+		t.Errorf("etagMismatch = %d, want 0 (reordered chunks are content-equal)", got)
+	}
+	if got := result.sizeMismatch.Load(); got != 0 {
+		t.Errorf("sizeMismatch = %d, want 0", got)
+	}
+}
+
+// TestVerifySyncGenuineChunkDivergence confirms that when one chunk's content
+// actually differs (same offsets and count, different per-chunk MD5), the file
+// stays classified as ETAG_MISMATCH and is NOT downgraded to CHUNK_REORDER.
+func TestVerifySyncGenuineChunkDivergence(t *testing.T) {
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("model.bin", []*filer_pb.FileChunk{
+				verifyChunk(0, 100, "chunk-0"),
+				verifyChunk(100, 100, "chunk-1"),
+				verifyChunk(200, 100, "chunk-2"),
+			})},
+		},
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("model.bin", []*filer_pb.FileChunk{
+				verifyChunk(0, 100, "chunk-0"),
+				verifyChunk(100, 100, "chunk-1"),
+				verifyChunk(200, 100, "chunk-2-DIFFERENT"), // real content divergence
+			})},
+		},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := result.etagMismatch.Load(); got != 1 {
+		t.Errorf("etagMismatch = %d, want 1 (genuine chunk content divergence)", got)
+	}
+	if got := result.chunkReorder.Load(); got != 0 {
+		t.Errorf("chunkReorder = %d, want 0 (content actually differs)", got)
+	}
+}
+
+// TestVerifySyncChunkCountDiffStaysEtagMismatch confirms that a differing chunk
+// count with an equal file size (e.g. differently split content) is NOT treated
+// as a reordering — it stays ETAG_MISMATCH.
+func TestVerifySyncChunkCountDiffStaysEtagMismatch(t *testing.T) {
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("data.bin", []*filer_pb.FileChunk{
+				verifyChunk(0, 100, "a"),
+				verifyChunk(100, 100, "b"),
+				verifyChunk(200, 100, "c"),
+			})},
+		},
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("data.bin", []*filer_pb.FileChunk{
+				verifyChunk(0, 150, "x"),
+				verifyChunk(150, 150, "y"),
+			})},
+		},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := result.sizeMismatch.Load(); got != 0 {
+		t.Errorf("sizeMismatch = %d, want 0 (both total 300 bytes)", got)
+	}
+	if got := result.etagMismatch.Load(); got != 1 {
+		t.Errorf("etagMismatch = %d, want 1", got)
+	}
+	if got := result.chunkReorder.Load(); got != 0 {
+		t.Errorf("chunkReorder = %d, want 0", got)
+	}
+}
+
+// TestVerifySyncDuplicateOffsetStaysEtagMismatch confirms that overlapping
+// chunks at the same offset — where the visible bytes are resolved by chunk
+// timestamp, not by the raw chunk list — are NOT fast-pathed to CHUNK_REORDER.
+// Both sides hold the same two ETags at offset 0 in a different order, so the
+// file ETags differ; the visible content is ambiguous from the list alone, so
+// this must stay ETAG_MISMATCH.
+func TestVerifySyncDuplicateOffsetStaysEtagMismatch(t *testing.T) {
+	c1 := verifyChunk(0, 100, "v1")
+	c2 := verifyChunk(0, 100, "v2") // same offset → overlap
+
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("data.bin", []*filer_pb.FileChunk{c1, c2})},
+		},
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("data.bin", []*filer_pb.FileChunk{c2, c1})},
+		},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := result.etagMismatch.Load(); got != 1 {
+		t.Errorf("etagMismatch = %d, want 1 (overlapping offsets are not a safe reorder)", got)
+	}
+	if got := result.chunkReorder.Load(); got != 0 {
+		t.Errorf("chunkReorder = %d, want 0", got)
+	}
+}
+
+// TestVerifySyncManifestChunkStaysEtagMismatch confirms that entries containing
+// a manifest chunk are not fast-pathed to CHUNK_REORDER: manifest chunks
+// represent compacted, possibly overlapping history that this check does not
+// resolve.
+func TestVerifySyncManifestChunkStaysEtagMismatch(t *testing.T) {
+	manifest := func(offset int64, size uint64, seed string) *filer_pb.FileChunk {
+		c := verifyChunk(offset, size, seed)
+		c.IsChunkManifest = true
+		return c
+	}
+	a0, a1 := manifest(0, 100, "m0"), verifyChunk(100, 100, "m1")
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("data.bin", []*filer_pb.FileChunk{a0, a1})},
+		},
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("data.bin", []*filer_pb.FileChunk{a1, a0})},
+		},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := result.etagMismatch.Load(); got != 1 {
+		t.Errorf("etagMismatch = %d, want 1 (manifest chunks are not fast-pathed)", got)
+	}
+	if got := result.chunkReorder.Load(); got != 0 {
+		t.Errorf("chunkReorder = %d, want 0", got)
+	}
+}
+
+// TestVerifySyncEmptyChunkETagStaysEtagMismatch confirms that a chunk with an
+// empty per-chunk ETag is never fast-pathed to CHUNK_REORDER: an empty ETag is
+// not a content fingerprint, so (offset, size, ETag) equality cannot prove the
+// bytes match. The two sides reorder their non-empty chunks so the file ETags
+// differ and the reorder check is reached, but the empty-ETag chunk in the
+// middle must keep it ETAG_MISMATCH rather than assert a false content-equality.
+func TestVerifySyncEmptyChunkETagStaysEtagMismatch(t *testing.T) {
+	c0 := verifyChunk(0, 100, "e0")
+	empty := &filer_pb.FileChunk{Offset: 100, Size: 100} // no ETag → not a fingerprint
+	c2 := verifyChunk(200, 100, "e2")
+
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("data.bin", []*filer_pb.FileChunk{c0, empty, c2})},
+		},
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/root": {verifyChunkedEntry("data.bin", []*filer_pb.FileChunk{c2, c0, empty})},
+		},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := result.etagMismatch.Load(); got != 1 {
+		t.Errorf("etagMismatch = %d, want 1 (empty per-chunk ETag is not a content fingerprint)", got)
+	}
+	if got := result.chunkReorder.Load(); got != 0 {
+		t.Errorf("chunkReorder = %d, want 0", got)
+	}
+}
+
+// captureStdout runs fn with os.Stdout redirected to a pipe and returns what it
+// wrote. Tests that assert on emitted diff records use it.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = w
+	fn()
+	w.Close()
+	os.Stdout = orig
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read captured stdout: %v", err)
+	}
+	return string(data)
+}
+
+// TestVerifySyncChunkReorderJSONEmittedByDefault confirms that in JSON output
+// mode a CHUNK_REORDER record is emitted at default verbosity: the -v=1 gate
+// suppresses only the human text report, so the NDJSON per-record stream stays
+// consistent with the summary count a machine consumer reads.
+func TestVerifySyncChunkReorderJSONEmittedByDefault(t *testing.T) {
+	c0 := verifyChunk(0, 100, "chunk-0")
+	c1 := verifyChunk(100, 100, "chunk-1")
+	entryA := verifyChunkedEntry("model.bin", []*filer_pb.FileChunk{c0, c1})
+	entryB := verifyChunkedEntry("model.bin", []*filer_pb.FileChunk{c1, c0})
+
+	result := &VerifyResult{jsonOutput: true}
+	out := captureStdout(t, func() {
+		reportDiff(diffChunkReorder, "/root", entryA, entryB, result)
+	})
+
+	if got := result.chunkReorder.Load(); got != 1 {
+		t.Fatalf("chunkReorder = %d, want 1", got)
+	}
+	if !strings.Contains(out, `"type":"CHUNK_REORDER"`) {
+		t.Errorf("JSON output missing CHUNK_REORDER record at default verbosity; got %q", out)
+	}
+}
+
 // TestVerifySyncCutoffTime verifies that entries newer than cutoffTime are
 // skipped in both the A-only (MISSING) and B-only (ONLY_IN_B) branches.
 func TestVerifySyncCutoffTime(t *testing.T) {
@@ -422,8 +728,8 @@ func TestVerifySyncMissingDirRecursesEvenWithRecentMtime(t *testing.T) {
 
 	clientA := &verifyTestFilerClient{
 		entriesByDir: map[string][]*filer_pb.Entry{
-			"/":        {recentDir},
-			"/subdir":  {oldChild},
+			"/":       {recentDir},
+			"/subdir": {oldChild},
 		},
 	}
 	clientB := &verifyTestFilerClient{
@@ -454,14 +760,14 @@ func TestVerifySyncMissingDirRecursesEvenWithRecentMtime(t *testing.T) {
 func TestVerifySyncRootPath(t *testing.T) {
 	clientA := &verifyTestFilerClient{
 		entriesByDir: map[string][]*filer_pb.Entry{
-			"/":      {verifyDirEntry("data")},
-			"/data":  {verifyFileEntry("file.txt", 42)},
+			"/":     {verifyDirEntry("data")},
+			"/data": {verifyFileEntry("file.txt", 42)},
 		},
 	}
 	clientB := &verifyTestFilerClient{
 		entriesByDir: map[string][]*filer_pb.Entry{
-			"/":      {verifyDirEntry("data")},
-			"/data":  {verifyFileEntry("file.txt", 42)},
+			"/":     {verifyDirEntry("data")},
+			"/data": {verifyFileEntry("file.txt", 42)},
 		},
 	}
 
@@ -529,5 +835,135 @@ func TestVerifySyncNoDeadlockDeepTree(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("compareDirectory did not complete within 10s — possible deadlock")
+	}
+}
+
+// TestVerifySyncByteOrderSkew covers a collation skew between two filer
+// versions: both return the SAME name set in DIFFERENT order. Filer A (older,
+// pre-4.32) lists in locale collation (case-insensitive: lowercase mixes in
+// among uppercase); filer B (4.32+, with PR #9824) lists in byte order
+// (uppercase before lowercase). The mock returns each side's slice verbatim.
+//
+// Because compareDirectory sorts both sides client-side before merging, the two
+// orders converge and no spurious diffs are reported. Were the sort removed, the
+// streaming merge would desync and count 3 false MISSING + 3 false ONLY_IN_B.
+func TestVerifySyncByteOrderSkew(t *testing.T) {
+	// locale order (case-insensitive): lowercase mixes in among uppercase.
+	localeOrder := []*filer_pb.Entry{
+		verifyFileEntry("sk-4", 10),
+		verifyFileEntry("sk-8", 10),
+		verifyFileEntry("sk-mmsJ", 10),
+		verifyFileEntry("sk-nFGE", 10),
+		verifyFileEntry("sk-RH0Z", 10),
+		verifyFileEntry("sk-Xp", 10),
+		verifyFileEntry("sk-Z06", 10),
+	}
+	// byte order: uppercase (R,X,Z) sort before lowercase (m,n).
+	byteOrder := []*filer_pb.Entry{
+		verifyFileEntry("sk-4", 10),
+		verifyFileEntry("sk-8", 10),
+		verifyFileEntry("sk-RH0Z", 10),
+		verifyFileEntry("sk-Xp", 10),
+		verifyFileEntry("sk-Z06", 10),
+		verifyFileEntry("sk-mmsJ", 10),
+		verifyFileEntry("sk-nFGE", 10),
+	}
+
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{"/root": localeOrder},
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{"/root": byteOrder},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := result.missingCount.Load(); got != 0 {
+		t.Errorf("missingCount = %d, want 0", got)
+	}
+	if got := result.onlyInB.Load(); got != 0 {
+		t.Errorf("onlyInB = %d, want 0", got)
+	}
+}
+
+// TestVerifySyncSourcesListConcurrently guards against re-serializing the two
+// directory listings: both sides buffer + sort, and their loads must run
+// concurrently — not A fully then B. A shared gate releases only once both
+// listings are in-flight at the same time; if they were sequential the first
+// would block on the gate and time out.
+func TestVerifySyncSourcesListConcurrently(t *testing.T) {
+	var started atomic.Int32
+	var timedOut atomic.Bool
+	release := make(chan struct{})
+	gate := func() {
+		if started.Add(1) == 2 {
+			close(release) // both listings reached the gate → proceed
+		}
+		select {
+		case <-release:
+		case <-time.After(3 * time.Second):
+			timedOut.Store(true) // only one listing ever in-flight → serialized
+		}
+	}
+
+	entries := []*filer_pb.Entry{verifyFileEntry("a", 1), verifyFileEntry("b", 1)}
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{"/root": entries},
+		onList:       gate,
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{"/root": entries},
+		onList:       gate,
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	if err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, sem, result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if timedOut.Load() {
+		t.Fatal("sources listed sequentially: both listings were not in-flight at once")
+	}
+}
+
+// TestVerifySyncListErrorNoBogusDiffs verifies that a listing failure aborts
+// with the error and reports no differences. A side whose listing errors keeps
+// only a partial, unsorted buffer; the error must be surfaced before the merge
+// so those partial entries never produce spurious MISSING / ONLY_IN_B.
+func TestVerifySyncListErrorNoBogusDiffs(t *testing.T) {
+	entries := []*filer_pb.Entry{
+		verifyFileEntry("a", 1),
+		verifyFileEntry("b", 1),
+		verifyFileEntry("c", 1),
+	}
+	// A errors mid-listing (partial buffer); B lists cleanly.
+	clientA := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{"/root": entries},
+		recvErr:      fmt.Errorf("injected list failure"),
+	}
+	clientB := &verifyTestFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{"/root": entries},
+	}
+
+	result := &VerifyResult{}
+	sem := make(chan struct{}, verifySyncConcurrency)
+	err := compareDirectory(context.Background(), clientA, clientB,
+		"/root", "/root", false, time.Time{}, sem, result)
+	if err == nil {
+		t.Fatal("expected a listing error, got nil")
+	}
+	if got := result.missingCount.Load(); got != 0 {
+		t.Errorf("missingCount = %d, want 0 (no bogus diffs on list error)", got)
+	}
+	if got := result.onlyInB.Load(); got != 0 {
+		t.Errorf("onlyInB = %d, want 0 (no bogus diffs on list error)", got)
+	}
+	if got := result.fileCount.Load(); got != 0 {
+		t.Errorf("fileCount = %d, want 0 (merge must not run on failed listing)", got)
 	}
 }

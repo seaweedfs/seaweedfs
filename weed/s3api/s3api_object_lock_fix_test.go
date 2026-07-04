@@ -18,18 +18,15 @@ func TestVeeamObjectLockBugFix(t *testing.T) {
 		// The old code would immediately return NoSuchObjectLockConfiguration
 		// The new code correctly checks if Object Lock is enabled before returning an error
 
-		bucketConfig := &BucketConfig{
-			Name: "test-bucket",
-			Entry: &filer_pb.Entry{
-				Name:     "test-bucket",
-				Extended: nil, // This is the key - no extended attributes
-			},
+		entry := &filer_pb.Entry{
+			Name:     "test-bucket",
+			Extended: nil, // This is the key - no extended attributes
 		}
 
 		// Simulate the isObjectLockEnabledForBucket logic
 		enabled := false
-		if bucketConfig.Entry.Extended != nil {
-			if enabledBytes, exists := bucketConfig.Entry.Extended[s3_constants.ExtObjectLockEnabledKey]; exists {
+		if entry.Extended != nil {
+			if enabledBytes, exists := entry.Extended[s3_constants.ExtObjectLockEnabledKey]; exists {
 				enabled = string(enabledBytes) == s3_constants.ObjectLockEnabled || string(enabledBytes) == "true"
 			}
 		}
@@ -41,20 +38,17 @@ func TestVeeamObjectLockBugFix(t *testing.T) {
 	t.Run("Fix verification: bucket with Object Lock enabled via boolean flag", func(t *testing.T) {
 		// This verifies the fix works when Object Lock is enabled via boolean flag
 
-		bucketConfig := &BucketConfig{
+		entry := &filer_pb.Entry{
 			Name: "test-bucket",
-			Entry: &filer_pb.Entry{
-				Name: "test-bucket",
-				Extended: map[string][]byte{
-					s3_constants.ExtObjectLockEnabledKey: []byte("true"),
-				},
+			Extended: map[string][]byte{
+				s3_constants.ExtObjectLockEnabledKey: []byte("true"),
 			},
 		}
 
 		// Simulate the isObjectLockEnabledForBucket logic
 		enabled := false
-		if bucketConfig.Entry.Extended != nil {
-			if enabledBytes, exists := bucketConfig.Entry.Extended[s3_constants.ExtObjectLockEnabledKey]; exists {
+		if entry.Extended != nil {
+			if enabledBytes, exists := entry.Extended[s3_constants.ExtObjectLockEnabledKey]; exists {
 				enabled = string(enabledBytes) == s3_constants.ObjectLockEnabled || string(enabledBytes) == "true"
 			}
 		}
@@ -66,20 +60,17 @@ func TestVeeamObjectLockBugFix(t *testing.T) {
 	t.Run("Fix verification: bucket with Object Lock enabled via Enabled constant", func(t *testing.T) {
 		// Test using the s3_constants.ObjectLockEnabled constant
 
-		bucketConfig := &BucketConfig{
+		entry := &filer_pb.Entry{
 			Name: "test-bucket",
-			Entry: &filer_pb.Entry{
-				Name: "test-bucket",
-				Extended: map[string][]byte{
-					s3_constants.ExtObjectLockEnabledKey: []byte(s3_constants.ObjectLockEnabled),
-				},
+			Extended: map[string][]byte{
+				s3_constants.ExtObjectLockEnabledKey: []byte(s3_constants.ObjectLockEnabled),
 			},
 		}
 
 		// Simulate the isObjectLockEnabledForBucket logic
 		enabled := false
-		if bucketConfig.Entry.Extended != nil {
-			if enabledBytes, exists := bucketConfig.Entry.Extended[s3_constants.ExtObjectLockEnabledKey]; exists {
+		if entry.Extended != nil {
+			if enabledBytes, exists := entry.Extended[s3_constants.ExtObjectLockEnabledKey]; exists {
 				enabled = string(enabledBytes) == s3_constants.ObjectLockEnabled || string(enabledBytes) == "true"
 			}
 		}

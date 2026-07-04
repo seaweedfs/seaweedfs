@@ -1077,6 +1077,10 @@ type ListAllMyBucketsResult struct {
 	XMLName xml.Name             `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListAllMyBucketsResult"`
 	Owner   CanonicalUser        `xml:"Owner"`
 	Buckets ListAllMyBucketsList `xml:"Buckets"`
+	// ContinuationToken is set when the listing is truncated; passing it back
+	// via ?continuation-token= resumes the listing after the last bucket returned.
+	ContinuationToken string `xml:"ContinuationToken,omitempty"`
+	Prefix            string `xml:"Prefix,omitempty"`
 }
 
 type ListBucket struct {

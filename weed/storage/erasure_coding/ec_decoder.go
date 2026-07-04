@@ -150,12 +150,13 @@ func iterateEcxFile(baseFileName string, processNeedleFn func(key types.NeedleId
 
 	buf := make([]byte, types.NeedleMapEntrySize)
 	for {
-		n, err := ecxFile.Read(buf)
-		if n != types.NeedleMapEntrySize {
-			if err == io.EOF {
-				return nil
-			}
-			return err
+		// .ecx is a sealed index: a partial trailing record means corruption, not a torn append.
+		_, err := io.ReadFull(ecxFile, buf)
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("read ecx %s.ecx: %w", baseFileName, err)
 		}
 		key, offset, size := idx.IdxFileEntry(buf)
 		if processNeedleFn != nil {

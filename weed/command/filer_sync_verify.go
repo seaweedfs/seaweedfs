@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -56,6 +57,12 @@ var cmdFilerSyncVerify = &Command{
 	in active-passive mode), SIZE_MISMATCH, and ETAG_MISMATCH. Honors
 	-modifiedTimeAgo to skip recently-modified files (sync-lag tolerance) and
 	-isActivePassive for unidirectional comparison.
+
+	A chunk-derived ETag (no stored attr.Md5) can differ between clusters only
+	because the chunk slice was assembled in a different order, since ETagChunks
+	does not sort by offset. Such files are byte-identical and reported as
+	CHUNK_REORDER: not counted as errors, always counted in the summary, listed
+	only at -v=1.
 
 	Exits with code 0 on agreement, 2 on differences or operational errors.
 
@@ -122,6 +129,7 @@ type VerifyResult struct {
 	missingCount  atomic.Int64
 	sizeMismatch  atomic.Int64
 	etagMismatch  atomic.Int64
+	chunkReorder  atomic.Int64 // content-equal; chunks differ only in slice order
 	onlyInB       atomic.Int64
 	skippedRecent atomic.Int64
 
@@ -138,6 +146,7 @@ const (
 	diffOnlyInB                            // in B but not in A
 	diffSizeMismatch                       // size differs
 	diffETagMismatch                       // etag differs
+	diffChunkReorder                       // etag differs but content is equal (chunk slice order only)
 )
 
 // diffRecord is the JSON Lines schema for a single diff entry.
@@ -166,6 +175,7 @@ type summaryRecord struct {
 	Missing       int64  `json:"missing"`
 	SizeMismatch  int64  `json:"sizeMismatch"`
 	ETagMismatch  int64  `json:"etagMismatch"`
+	ChunkReorder  int64  `json:"chunkReorder"`
 	OnlyInB       int64  `json:"onlyInB"`
 	TotalErrors   int64  `json:"totalErrors"`
 }
@@ -235,6 +245,7 @@ func runVerifySync(filerA, filerB pb.ServerAddress, aPath, bPath string,
 			Missing:       result.missingCount.Load(),
 			SizeMismatch:  result.sizeMismatch.Load(),
 			ETagMismatch:  result.etagMismatch.Load(),
+			ChunkReorder:  result.chunkReorder.Load(),
 			OnlyInB:       result.onlyInB.Load(),
 			TotalErrors:   totalErrors,
 		}
@@ -249,6 +260,9 @@ func runVerifySync(filerA, filerB pb.ServerAddress, aPath, bPath string,
 		fmt.Fprintf(os.Stdout, "  Missing in B:         %d\n", result.missingCount.Load())
 		fmt.Fprintf(os.Stdout, "  Size mismatch:        %d\n", result.sizeMismatch.Load())
 		fmt.Fprintf(os.Stdout, "  ETag mismatch:        %d\n", result.etagMismatch.Load())
+		if n := result.chunkReorder.Load(); n > 0 {
+			fmt.Fprintf(os.Stdout, "  Chunk reorder (equal): %d  (content-equal, not an error; use -v=1 to list)\n", n)
+		}
 		if !isActivePassive {
 			fmt.Fprintf(os.Stdout, "  Only in B:            %d\n", result.onlyInB.Load())
 		}
@@ -261,59 +275,73 @@ func runVerifySync(filerA, filerB pb.ServerAddress, aPath, bPath string,
 	return nil
 }
 
-// entryStream is a sorted, streaming view of a single directory's entries.
-// A background goroutine pages through the directory via ReadDirAllEntries
-// and forwards each entry to a buffered channel; the caller consumes entries
-// one at a time through peek/advance. Memory usage is O(channel buffer) —
-// independent of directory size — rather than O(total entries).
-type entryStream struct {
-	ch   <-chan *filer_pb.Entry
-	head *filer_pb.Entry
-	done bool
-	err  error // written before ch is closed; safe to read once done==true
+// dirEntries holds one directory's entries buffered and sorted in Go byte
+// order, which the merge in compareDirectory requires (it pairs equal names and
+// uses eA.Name < eB.Name as the tie-break). The filer's own list order is not
+// trusted: since PR #9824 (4.32) a filer forces byte-lexicographic listing
+// regardless of SQL collation, while an older filer whose name column uses a
+// locale collation lists case-insensitively. Comparing two such clusters yields
+// the same name set in a different order, desyncing the merge into spurious
+// MISSING / ONLY_IN_B. Sorting both sides client-side makes the order identical
+// regardless of filer version or store backend.
+//
+// The load runs in a background goroutine so both sides of a compareDirectory
+// list concurrently; peek/advance block on `ready` until it completes. Memory
+// is O(directory size) per side — acceptable for a one-shot verify CLI.
+type dirEntries struct {
+	ready   chan struct{} // closed once entries and err are set
+	entries []*filer_pb.Entry
+	idx     int
+	err     error
 }
 
-// newEntryStream starts the background goroutine. It exits when listing
-// completes, an error occurs, or ctx is cancelled; the channel is always
-// closed before exit so consumers do not block indefinitely.
-func newEntryStream(ctx context.Context, client filer_pb.FilerClient, dir string) *entryStream {
-	ch := make(chan *filer_pb.Entry, 64)
-	s := &entryStream{ch: ch}
+// newDirEntries starts loading the whole directory and sorting it by Name, then
+// returns immediately. The goroutine exits when listing completes, errors, or
+// ctx is cancelled; it always closes `ready` so consumers never block forever.
+func newDirEntries(ctx context.Context, client filer_pb.FilerClient, dir string) *dirEntries {
+	s := &dirEntries{ready: make(chan struct{})}
 	go func() {
-		defer close(ch)
+		defer close(s.ready)
 		s.err = filer_pb.ReadDirAllEntries(ctx, client, util.FullPath(dir), "",
 			func(entry *filer_pb.Entry, isLast bool) error {
 				select {
-				case ch <- entry:
-					return nil
 				case <-ctx.Done():
 					return ctx.Err()
+				default:
 				}
+				s.entries = append(s.entries, entry)
+				return nil
 			})
+		if s.err == nil {
+			sort.Slice(s.entries, func(i, j int) bool {
+				return s.entries[i].Name < s.entries[j].Name
+			})
+		}
 	}()
 	return s
 }
 
+// wait blocks until the directory has finished loading and sorting. Its close
+// of `ready` happens-before the return, so entries and err are then safe to read
+// without additional synchronisation.
+func (s *dirEntries) wait() { <-s.ready }
+
 // peek returns the next entry without consuming it, or nil at end-of-stream.
-func (s *entryStream) peek() *filer_pb.Entry {
-	if s.done {
+// It blocks until the directory has finished loading and sorting.
+func (s *dirEntries) peek() *filer_pb.Entry {
+	s.wait()
+	if s.idx >= len(s.entries) {
 		return nil
 	}
-	if s.head == nil {
-		e, ok := <-s.ch
-		if !ok {
-			s.done = true
-			return nil
-		}
-		s.head = e
-	}
-	return s.head
+	return s.entries[s.idx]
 }
 
 // advance consumes and returns the next entry.
-func (s *entryStream) advance() *filer_pb.Entry {
+func (s *dirEntries) advance() *filer_pb.Entry {
 	e := s.peek()
-	s.head = nil
+	if e != nil {
+		s.idx++
+	}
 	return e
 }
 
@@ -340,26 +368,38 @@ func compareDirectory(ctx context.Context,
 
 	result.dirCount.Add(1)
 
-	// A child context ensures that stream goroutines are cancelled and their
-	// channels are closed if compareDirectory returns early (e.g. on error).
+	// A child context cancels the load goroutines (and their listing RPCs) if
+	// compareDirectory returns early, e.g. on error. Both sides load concurrently.
 	mergeCtx, cancelMerge := context.WithCancel(ctx)
 	defer cancelMerge()
 
-	streamA := newEntryStream(mergeCtx, clientA, dirA)
-	streamB := newEntryStream(mergeCtx, clientB, dirB)
+	entriesA := newDirEntries(mergeCtx, clientA, dirA)
+	entriesB := newDirEntries(mergeCtx, clientB, dirB)
+
+	// Both sides are fully buffered before merging; surface any listing error
+	// here so a failed or cancelled listing can't emit bogus diffs from partial
+	// data. wait() makes entries/err visible without extra synchronisation.
+	entriesA.wait()
+	entriesB.wait()
+	if err := entriesA.err; err != nil && err != context.Canceled {
+		return fmt.Errorf("list %s on filer A: %v", dirA, err)
+	}
+	if err := entriesB.err; err != nil && err != context.Canceled {
+		return fmt.Errorf("list %s on filer B: %v", dirB, err)
+	}
 
 	// collect subdirectories for recursive comparison
 	type dirPair struct{ a, b string }
 	var subDirs []dirPair
 
-	for streamA.peek() != nil || streamB.peek() != nil {
-		eA := streamA.peek()
-		eB := streamB.peek()
+	for entriesA.peek() != nil || entriesB.peek() != nil {
+		eA := entriesA.peek()
+		eB := entriesB.peek()
 
 		switch {
 		case eA != nil && (eB == nil || eA.Name < eB.Name):
 			// entry only in A
-			entryA := streamA.advance()
+			entryA := entriesA.advance()
 			if entryA.IsDirectory {
 				// Always recurse for missing-in-B directories: a recent
 				// child write can bump the parent's mtime even though
@@ -375,7 +415,7 @@ func compareDirectory(ctx context.Context,
 
 		case eB != nil && (eA == nil || eB.Name < eA.Name):
 			// entry only in B
-			entryB := streamB.advance()
+			entryB := entriesB.advance()
 			if !isActivePassive {
 				if isTooRecent(entryB, cutoffTime) {
 					result.skippedRecent.Add(1)
@@ -386,8 +426,8 @@ func compareDirectory(ctx context.Context,
 
 		default:
 			// same name in both
-			entryA := streamA.advance()
-			entryB := streamB.advance()
+			entryA := entriesA.advance()
+			entryB := entriesB.advance()
 
 			if entryA.IsDirectory && entryB.IsDirectory {
 				subDirs = append(subDirs, dirPair{
@@ -409,15 +449,6 @@ func compareDirectory(ctx context.Context,
 				}
 			}
 		}
-	}
-
-	// Both channels are closed: close happens-before the receive of the zero
-	// value, so stream.err is visible here without additional synchronisation.
-	if err := streamA.err; err != nil && err != context.Canceled {
-		return fmt.Errorf("list %s on filer A: %v", dirA, err)
-	}
-	if err := streamB.err; err != nil && err != context.Canceled {
-		return fmt.Errorf("list %s on filer B: %v", dirB, err)
 	}
 
 	// Release our slot before recursing so children can acquire it. Holding
@@ -465,7 +496,6 @@ func compareDirectory(ctx context.Context,
 	return nil
 }
 
-
 func compareEntries(dir string, entryA, entryB *filer_pb.Entry, result *VerifyResult) {
 	result.fileCount.Add(1)
 
@@ -479,9 +509,86 @@ func compareEntries(dir string, entryA, entryB *filer_pb.Entry, result *VerifyRe
 	etagA := filer.ETag(entryA)
 	etagB := filer.ETag(entryB)
 	if etagA != etagB {
-		reportDiff(diffETagMismatch, dir, entryA, entryB, result)
+		if isChunkReorder(entryA, entryB) {
+			// Same bytes, just a different chunk slice order — not a real diff.
+			reportDiff(diffChunkReorder, dir, entryA, entryB, result)
+		} else {
+			reportDiff(diffETagMismatch, dir, entryA, entryB, result)
+		}
 		return
 	}
+}
+
+// isChunkReorder reports whether two entries with differing file ETags are
+// byte-identical, differing only in chunk slice order. filer.ETagChunks hashes
+// per-chunk MD5s in stored order without sorting by offset, so the same bytes
+// written by different paths (S3 multipart vs filer.backup) can hash
+// differently. If both chunk lists sorted by offset match element-wise on
+// (offset, size, ETag), the files cover the same bytes with the same content
+// and only the slice order differed.
+//
+// Applies only when both ETags come from chunks (a stored attr.Md5 is
+// order-independent, so a mismatch there is a real content difference) and the
+// chunks form a manifest-free, non-overlapping set whose bytes are fully
+// determined by the list — overlaps would need timestamp-based visible-interval
+// resolution, so those stay ETAG_MISMATCH.
+func isChunkReorder(entryA, entryB *filer_pb.Entry) bool {
+	if !usesChunkETag(entryA) || !usesChunkETag(entryB) {
+		return false
+	}
+	a := sortedSimpleChunks(entryA.GetChunks())
+	b := sortedSimpleChunks(entryB.GetChunks())
+	// nil means overlapping or manifest chunks we do not fast-path; a single
+	// chunk hashes directly and a differing count is a real divergence.
+	if a == nil || b == nil || len(a) != len(b) || len(a) < 2 {
+		return false
+	}
+	for i := range a {
+		if a[i].Offset != b[i].Offset || a[i].Size != b[i].Size || a[i].ETag != b[i].ETag {
+			return false
+		}
+	}
+	return true
+}
+
+// usesChunkETag reports whether filer.ETag falls back to ETagChunks for entry,
+// i.e. no stored attr.Md5 whole-content hash is available. Mirrors filer.ETag's
+// own condition so it agrees with how the compared ETag was computed.
+func usesChunkETag(entry *filer_pb.Entry) bool {
+	return entry.Attributes == nil || entry.Attributes.Md5 == nil
+}
+
+// sortedSimpleChunks returns chunks sorted by (offset, ETag) if they are a
+// manifest-free, non-overlapping set whose visible bytes are fully determined
+// by the list and every chunk carries a usable per-chunk ETag; otherwise nil.
+// Overlapping ranges would require resolving the visible interval by chunk
+// timestamp, which this fast path does not attempt.
+func sortedSimpleChunks(chunks []*filer_pb.FileChunk) []*filer_pb.FileChunk {
+	sorted := make([]*filer_pb.FileChunk, len(chunks))
+	copy(sorted, chunks)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Offset != sorted[j].Offset {
+			return sorted[i].Offset < sorted[j].Offset
+		}
+		return sorted[i].ETag < sorted[j].ETag
+	})
+	prevEnd := int64(0)
+	for i, c := range sorted {
+		if c.IsChunkManifest {
+			return nil
+		}
+		// An empty or undecodable ETag is not a content fingerprint, so
+		// element-wise (offset, size, ETag) equality cannot prove the bytes
+		// match — decline rather than assert a false content-equality.
+		if len(util.Base64Md5ToBytes(c.ETag)) == 0 {
+			return nil
+		}
+		if i > 0 && c.Offset < prevEnd {
+			return nil
+		}
+		prevEnd = c.Offset + int64(c.Size)
+	}
+	return sorted
 }
 
 // mtimeRelation classifies B.mtime vs A.mtime. Both entries must be non-nil.
@@ -540,11 +647,19 @@ func reportDiff(diffType verifyDiffType, dir string, entryA, entryB *filer_pb.En
 		result.sizeMismatch.Add(1)
 	case diffETagMismatch:
 		result.etagMismatch.Add(1)
+	case diffChunkReorder:
+		result.chunkReorder.Add(1)
 	}
 
 	if result.jsonOutput {
 		writeJSONDiff(result, diffType, dir, entryA, entryB)
 	} else {
+		// A chunk reorder is content-equal, not a real diff: keep it out of the
+		// default text report and list it only at -v=1. JSON always emits it so
+		// the per-record stream matches the summary count.
+		if diffType == diffChunkReorder && !glog.V(1) {
+			return
+		}
 		writeTextDiff(result, diffType, dir, entryA, entryB)
 	}
 }
@@ -573,6 +688,9 @@ func writeTextDiff(result *VerifyResult, diffType verifyDiffType, dir string, en
 		ann := annotation(entryA, entryB)
 		fmt.Fprintf(os.Stdout, "[ETAG_MISMATCH] %s (a=%s, b=%s%s)\n",
 			entryPath, filer.ETag(entryA), filer.ETag(entryB), ann)
+	case diffChunkReorder:
+		fmt.Fprintf(os.Stdout, "[CHUNK_REORDER] %s (a=%s, b=%s, content-equal: chunks differ only in slice order)\n",
+			entryPath, filer.ETag(entryA), filer.ETag(entryB))
 	}
 }
 
@@ -623,6 +741,14 @@ func writeJSONDiff(result *VerifyResult, diffType verifyDiffType, dir string, en
 		rec.MtimeRelation = relation
 		rec.MtimeDelta = delta
 		rec.Hint = hintFor(relation)
+	case diffChunkReorder:
+		rec.Type = "CHUNK_REORDER"
+		rec.A = toEntryRecord(entryA)
+		rec.B = toEntryRecord(entryB)
+		relation, delta, _ := mtimeRelation(entryA, entryB)
+		rec.MtimeRelation = relation
+		rec.MtimeDelta = delta
+		// no hint: content-equal, no action needed
 	}
 
 	writeJSONLine(result, rec)

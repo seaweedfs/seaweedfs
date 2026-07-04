@@ -1,6 +1,8 @@
-{{- /* Filer ingress works for both normal mode (filer.enabled) and all-in-one mode (allInOne.enabled) */}}
+{{- /* Filer ingresses work for both normal mode (filer.enabled) and all-in-one mode (allInOne.enabled) */}}
 {{- $filerEnabled := or .Values.filer.enabled .Values.allInOne.enabled }}
-{{- if and $filerEnabled .Values.filer.ingress.enabled }}
+
+{{- /* HTTP Ingress */}}
+{{- if and $filerEnabled .Values.filer.ingresses.http.enabled }}
 {{- /* Determine service name based on deployment mode */}}
 {{- $serviceName := ternary (include "seaweedfs.componentName" (list . "all-in-one")) (include "seaweedfs.componentName" (list . "filer")) .Values.allInOne.enabled }}
 {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
@@ -12,10 +14,13 @@ apiVersion: extensions/v1beta1
 {{- end }}
 kind: Ingress
 metadata:
-  name: ingress-{{ include "seaweedfs.fullname" . }}-filer
+  name: ingress-{{ include "seaweedfs.fullname" . }}-filer-http
   namespace: {{ .Release.Namespace }}
-  {{- with .Values.filer.ingress.annotations }}
   annotations:
+  {{- if and (not (semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion)) .Values.filer.ingresses.http.className }}
+    kubernetes.io/ingress.class: {{ .Values.filer.ingresses.http.className }}
+  {{- end }}
+  {{- with .Values.filer.ingresses.http.annotations }}
     {{- toYaml . | nindent 4 }}
   {{- end }}
   labels:
@@ -25,14 +30,21 @@ metadata:
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: filer
 spec:
-  ingressClassName: {{ .Values.filer.ingress.className | quote }}
+  {{- if and (semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion) .Values.filer.ingresses.http.className }}
+  ingressClassName: {{ .Values.filer.ingresses.http.className | quote }}
+  {{- end }}
   tls:
-    {{ .Values.filer.ingress.tls | default list | toYaml | nindent 6}}
+    {{ .Values.filer.ingresses.http.tls | default list | toYaml | nindent 6}}
   rules:
-  - http:
+  - {{- if .Values.filer.ingresses.http.host }}
+    host: {{ .Values.filer.ingresses.http.host | quote }}
+    {{- end }}
+    http:
       paths:
-      - path: {{ .Values.filer.ingress.path | quote }}
-        pathType: {{ .Values.filer.ingress.pathType | quote }}
+      - path: {{ .Values.filer.ingresses.http.path | quote }}
+        {{- if semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion }}
+        pathType: {{ .Values.filer.ingresses.http.pathType | quote }}
+        {{- end }}
         backend:
 {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
           service:
@@ -43,7 +55,62 @@ spec:
           serviceName: {{ $serviceName }}
           servicePort: {{ .Values.filer.port }}
 {{- end }}
-{{- if .Values.filer.ingress.host }}
-    host: {{ .Values.filer.ingress.host }}
+{{- end }}
+
+---
+
+{{- /* gRPC Ingress (standard Kubernetes Ingress, NOT for Traefik) */}}
+{{- if and $filerEnabled .Values.filer.ingresses.grpc.enabled (not (hasPrefix "traefik" (default "" .Values.filer.ingresses.grpc.className))) }}
+{{- /* Determine service name based on deployment mode */}}
+{{- $serviceName := ternary (include "seaweedfs.componentName" (list . "all-in-one")) (include "seaweedfs.componentName" (list . "filer")) .Values.allInOne.enabled }}
+{{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
+apiVersion: networking.k8s.io/v1
+{{- else if semverCompare ">=1.14-0" .Capabilities.KubeVersion.GitVersion }}
+apiVersion: networking.k8s.io/v1beta1
+{{- else }}
+apiVersion: extensions/v1beta1
+{{- end }}
+kind: Ingress
+metadata:
+  name: ingress-{{ include "seaweedfs.fullname" . }}-filer-grpc
+  namespace: {{ .Release.Namespace }}
+  annotations:
+  {{- if and (not (semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion)) .Values.filer.ingresses.grpc.className }}
+    kubernetes.io/ingress.class: {{ .Values.filer.ingresses.grpc.className }}
+  {{- end }}
+  {{- with .Values.filer.ingresses.grpc.annotations }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  labels:
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: filer
+spec:
+  {{- if and (semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion) .Values.filer.ingresses.grpc.className }}
+  ingressClassName: {{ .Values.filer.ingresses.grpc.className | quote }}
+  {{- end }}
+  tls:
+    {{ .Values.filer.ingresses.grpc.tls | default list | toYaml | nindent 6}}
+  rules:
+  - {{- if .Values.filer.ingresses.grpc.host }}
+    host: {{ .Values.filer.ingresses.grpc.host | quote }}
+    {{- end }}
+    http:
+      paths:
+      - path: {{ .Values.filer.ingresses.grpc.path | quote }}
+        {{- if semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion }}
+        pathType: {{ .Values.filer.ingresses.grpc.pathType | quote }}
+        {{- end }}
+        backend:
+{{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
+          service:
+            name: {{ $serviceName }}
+            port:
+              number: {{ .Values.filer.grpcPort }}
+{{- else }}
+          serviceName: {{ $serviceName }}
+          servicePort: {{ .Values.filer.grpcPort }}
 {{- end }}
 {{- end }}

@@ -66,6 +66,22 @@ func TestShouldInvalidateConnection_StaleChannelStillInvalidates(t *testing.T) {
 	}
 }
 
+// TestShouldInvalidateConnection_ResourceExhaustedIsPerRequest ensures the
+// master's growth-in-progress assign shed (codes.ResourceExhausted) does NOT
+// tear down the shared cached ClientConn. The shed fires per-request across a
+// herd of concurrent assigns; invalidating on it would cancel every other
+// in-flight assign with "the client connection is closing" — the cascade in
+// seaweedfs#10118. It is retried by the caller without touching the channel.
+func TestShouldInvalidateConnection_ResourceExhaustedIsPerRequest(t *testing.T) {
+	shed := status.Error(codes.ResourceExhausted, "no writable volumes for x, volume growth in progress")
+	if shouldInvalidateConnection(context.Background(), shed) {
+		t.Fatalf("ResourceExhausted shed must not invalidate the shared connection")
+	}
+	if shouldInvalidateConnection(nil, shed) {
+		t.Fatalf("ResourceExhausted shed must not invalidate the shared connection (nil ctx)")
+	}
+}
+
 // TestShouldInvalidateConnection_GenuineInternalStillInvalidates ensures the
 // marshal-error carve-out does not swallow real server-side Internal errors,
 // which previously caused — and should continue to cause — connection

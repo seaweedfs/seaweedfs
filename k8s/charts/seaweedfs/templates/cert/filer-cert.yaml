@@ -28,6 +28,11 @@ spec:
     - '*.{{ .Release.Namespace }}'
     - '*.{{ .Release.Namespace }}.svc'
     - '*.{{ .Release.Namespace }}.svc.cluster.local'
+{{- if .Values.certificates.dnsNames }}
+{{- range .Values.certificates.dnsNames }}
+    - {{ . | quote }}
+{{- end }}
+{{- end }}
     - '*.{{ include "seaweedfs.fullname" . }}-master'
     - '*.{{ include "seaweedfs.fullname" . }}-master.{{ .Release.Namespace }}'
     - '*.{{ include "seaweedfs.fullname" . }}-master.{{ .Release.Namespace }}.svc'

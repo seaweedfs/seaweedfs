@@ -79,6 +79,11 @@ func (v *Volume) scrubVolumeData(idxFile *os.File, idxFileSize int64) (int64, []
 	version := v.Version()
 	err := idx.WalkIndexFile(idxFile, 0, func(id types.NeedleId, offset types.Offset, size types.Size) error {
 		count++
+		// A remote-tier delete records an offset-0 tombstone with no physical .dat
+		// bytes, so it must not contribute to totalRead.
+		if offset.IsZero() && size.IsDeleted() {
+			return nil
+		}
 		// compute the actual size of the needle in disk, including needle header, body and alignment padding.
 		actualSize := int64(needle.GetActualSize(size, version))
 

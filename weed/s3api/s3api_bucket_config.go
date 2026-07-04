@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/service/s3"
+	lru "github.com/hashicorp/golang-lru/v2"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -26,14 +27,19 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
-// BucketConfig represents cached bucket configuration
+// BucketConfig represents cached bucket configuration. Only fields parsed
+// from the bucket's filer entry are retained — not the entry itself — so a
+// cached config stays small; the write path (updateBucketConfig) re-reads
+// the entry from the filer.
 type BucketConfig struct {
 	Name             string
 	Versioning       string // "Enabled", "Suspended", or ""
 	Ownership        string
 	ACL              []byte
 	Owner            string
-	IsPublicRead     bool // Cached flag to avoid JSON parsing on every request
+	IdentityId       string // identity that created the bucket
+	Crtime           int64  // bucket creation time, unix seconds
+	IsPublicRead     bool   // Cached flag to avoid JSON parsing on every request
 	CORS             *cors.CORSConfiguration
 	ObjectLockConfig *ObjectLockConfiguration      // Cached parsed Object Lock configuration
 	BucketPolicy     *policy_engine.PolicyDocument // Cached bucket policy for performance
@@ -45,9 +51,14 @@ type BucketConfig struct {
 	// lifecycle worker reads bucket entries directly off the meta-log
 	// rather than this cache.
 	LifecycleTTL *LifecycleTTLResolver
-	KMSKeyCache  *BucketKMSCache // Per-bucket KMS key cache for SSE-KMS operations
-	LastModified time.Time
-	Entry        *filer_pb.Entry
+	// LifecycleXML is the stored lifecycle configuration as served by
+	// GetBucketLifecycle, with its companion transition minimum object size.
+	LifecycleXML               []byte
+	LifecycleTransitionMinSize string
+	Tags                       map[string]string              // parsed from entry content
+	Encryption                 *s3_pb.EncryptionConfiguration // parsed from entry content
+	KMSKeyCache                *BucketKMSCache                // Per-bucket KMS key cache for SSE-KMS operations
+	LastModified               time.Time
 }
 
 // BucketKMSCache represents per-bucket KMS key caching for SSE-KMS operations
@@ -183,15 +194,21 @@ func (bkc *BucketKMSCache) Clear() {
 	bkc.cache = make(map[string]*BucketKMSCacheEntry)
 }
 
+// bucketCacheCapacity bounds the per-bucket caches (bucket config cache,
+// bucket registry, and their negative caches). Only the hot working set
+// stays resident; evicted buckets reload from the filer on next access.
+const bucketCacheCapacity = 65536
+
 // BucketConfigCache provides caching for bucket configurations
 // Cache entries are automatically updated/invalidated through metadata subscription events,
-// so TTL serves as a safety fallback rather than the primary consistency mechanism
+// so TTL serves as a safety fallback rather than the primary consistency mechanism.
+// Both caches are size-capped LRUs so a gateway serving millions of buckets
+// only keeps its hot working set resident.
 type BucketConfigCache struct {
-	cache         map[string]*BucketConfig
-	negativeCache map[string]time.Time // Cache for non-existent buckets
-	mutex         sync.RWMutex
-	ttl           time.Duration // Safety fallback TTL; real-time consistency maintained via events
-	negativeTTL   time.Duration // TTL for negative cache entries
+	cache         *lru.Cache[string, *BucketConfig]
+	negativeCache *lru.Cache[string, time.Time] // Cache for non-existent buckets
+	ttl           time.Duration                 // Safety fallback TTL; real-time consistency maintained via events
+	negativeTTL   time.Duration                 // TTL for negative cache entries
 }
 
 // BucketMetadata represents the complete metadata for a bucket
@@ -247,9 +264,11 @@ func NewBucketConfigCache(ttl time.Duration) *BucketConfigCache {
 		negativeTTL = 30 * time.Second // Minimum 30 seconds for negative cache
 	}
 
+	cache, _ := lru.New[string, *BucketConfig](bucketCacheCapacity)
+	negativeCache, _ := lru.New[string, time.Time](bucketCacheCapacity)
 	return &BucketConfigCache{
-		cache:         make(map[string]*BucketConfig),
-		negativeCache: make(map[string]time.Time),
+		cache:         cache,
+		negativeCache: negativeCache,
 		ttl:           ttl,
 		negativeTTL:   negativeTTL,
 	}
@@ -257,10 +276,7 @@ func NewBucketConfigCache(ttl time.Duration) *BucketConfigCache {
 
 // Get retrieves bucket configuration from cache
 func (bcc *BucketConfigCache) Get(bucket string) (*BucketConfig, bool) {
-	bcc.mutex.RLock()
-	defer bcc.mutex.RUnlock()
-
-	config, exists := bcc.cache[bucket]
+	config, exists := bcc.cache.Get(bucket)
 	if !exists {
 		return nil, false
 	}
@@ -275,60 +291,47 @@ func (bcc *BucketConfigCache) Get(bucket string) (*BucketConfig, bool) {
 
 // Set stores bucket configuration in cache
 func (bcc *BucketConfigCache) Set(bucket string, config *BucketConfig) {
-	bcc.mutex.Lock()
-	defer bcc.mutex.Unlock()
-
 	config.LastModified = time.Now()
-	bcc.cache[bucket] = config
+	bcc.cache.Add(bucket, config)
+}
+
+// Contains reports whether the bucket is resident in the cache, regardless of TTL
+func (bcc *BucketConfigCache) Contains(bucket string) bool {
+	return bcc.cache.Contains(bucket)
 }
 
 // Remove removes bucket configuration from cache
 func (bcc *BucketConfigCache) Remove(bucket string) {
-	bcc.mutex.Lock()
-	defer bcc.mutex.Unlock()
-
-	delete(bcc.cache, bucket)
+	bcc.cache.Remove(bucket)
 }
 
 // Clear clears all cached configurations
 func (bcc *BucketConfigCache) Clear() {
-	bcc.mutex.Lock()
-	defer bcc.mutex.Unlock()
-
-	bcc.cache = make(map[string]*BucketConfig)
-	bcc.negativeCache = make(map[string]time.Time)
+	bcc.cache.Purge()
+	bcc.negativeCache.Purge()
 }
 
 // IsNegativelyCached checks if a bucket is in the negative cache (doesn't exist)
 func (bcc *BucketConfigCache) IsNegativelyCached(bucket string) bool {
-	bcc.mutex.Lock()
-	defer bcc.mutex.Unlock()
-
-	if cachedTime, exists := bcc.negativeCache[bucket]; exists {
+	if cachedTime, exists := bcc.negativeCache.Get(bucket); exists {
 		// Check if the negative cache entry is still valid
 		if time.Since(cachedTime) < bcc.negativeTTL {
 			return true
 		}
 		// Entry expired, remove it
-		delete(bcc.negativeCache, bucket)
+		bcc.negativeCache.Remove(bucket)
 	}
 	return false
 }
 
 // SetNegativeCache marks a bucket as non-existent in the negative cache
 func (bcc *BucketConfigCache) SetNegativeCache(bucket string) {
-	bcc.mutex.Lock()
-	defer bcc.mutex.Unlock()
-
-	bcc.negativeCache[bucket] = time.Now()
+	bcc.negativeCache.Add(bucket, time.Now())
 }
 
 // RemoveNegativeCache removes a bucket from the negative cache
 func (bcc *BucketConfigCache) RemoveNegativeCache(bucket string) {
-	bcc.mutex.Lock()
-	defer bcc.mutex.Unlock()
-
-	delete(bcc.negativeCache, bucket)
+	bcc.negativeCache.Remove(bucket)
 }
 
 // loadBucketPolicyFromExtended loads and parses bucket policy from entry extended attributes
@@ -377,12 +380,7 @@ func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.Err
 		return nil, s3err.ErrInternalError
 	}
 
-	config := &BucketConfig{
-		Name:         bucket,
-		Entry:        entry,
-		IsPublicRead: false, // Explicitly default to false for private buckets
-	}
-	s3a.populateBucketConfigDerivedFields(config)
+	config := s3a.newBucketConfigFromEntry(bucket, entry)
 
 	// Cache the result
 	s3a.bucketConfigCache.Set(bucket, config)
@@ -390,33 +388,26 @@ func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.Err
 	return config, s3err.ErrNone
 }
 
-// populateBucketConfigDerivedFields fills every field on BucketConfig that is
-// derived from Entry.Extended / Entry.Content (versioning flag, ACL, owner,
-// object lock, bucket policy, CORS, lifecycle TTL resolver). It is the
-// single source of truth for that mapping; callers that take a fresh
-// BucketConfig (getBucketConfig, updateBucketConfig after the user's update
-// fn runs, the meta-log subscription cache refresher) all funnel through
-// here so a missed field can't silently keep stale data — e.g. a stale
-// LifecycleTTL after a Put/DeleteBucketLifecycle would keep stamping the
-// old policy's irreversible volume TTL onto new writes.
-func (s3a *S3ApiServer) populateBucketConfigDerivedFields(config *BucketConfig) {
-	// Reset every derived field so stale values from a previous Entry
-	// don't survive a clear (e.g. DELETE policy → BucketPolicy=nil).
-	config.Versioning = ""
-	config.Ownership = ""
-	config.ACL = nil
-	config.Owner = ""
-	config.IsPublicRead = false
-	config.ObjectLockConfig = nil
-	config.BucketPolicy = nil
-	config.LifecycleTTL = nil
-	config.CORS = nil
-
-	entry := config.Entry
-	if entry == nil {
-		return
+// newBucketConfigFromEntry builds a BucketConfig from the bucket's filer
+// entry, parsing Entry.Extended / Entry.Content into the cached fields
+// (versioning flag, ACL, owner, object lock, bucket policy, CORS, tags,
+// encryption, lifecycle TTL resolver). It is the single source of truth for
+// that mapping; the read path (getBucketConfig), the write path
+// (updateBucketConfig), and the meta-log subscription cache refresher all
+// funnel through here so a missed field can't silently keep stale data —
+// e.g. a stale LifecycleTTL after a Put/DeleteBucketLifecycle would keep
+// stamping the old policy's irreversible volume TTL onto new writes.
+func (s3a *S3ApiServer) newBucketConfigFromEntry(bucket string, entry *filer_pb.Entry) *BucketConfig {
+	config := &BucketConfig{
+		Name: bucket,
 	}
-	bucket := config.Name
+	if entry == nil {
+		return config
+	}
+
+	if entry.Attributes != nil {
+		config.Crtime = entry.Attributes.Crtime
+	}
 
 	if entry.Extended != nil {
 		if versioning, exists := entry.Extended[s3_constants.ExtVersioningKey]; exists {
@@ -433,10 +424,18 @@ func (s3a *S3ApiServer) populateBucketConfigDerivedFields(config *BucketConfig) 
 		if owner, exists := entry.Extended[s3_constants.ExtAmzOwnerKey]; exists {
 			config.Owner = string(owner)
 		}
+		if identityId, exists := entry.Extended[s3_constants.AmzIdentityId]; exists {
+			config.IdentityId = string(identityId)
+		}
 		if objectLockConfig, found := LoadObjectLockConfigurationFromExtended(entry); found {
 			config.ObjectLockConfig = objectLockConfig
 		}
 		config.BucketPolicy = loadBucketPolicyFromExtended(entry, bucket)
+
+		if lifecycleXML, exists := entry.Extended[bucketLifecycleConfigurationXMLKey]; exists && len(lifecycleXML) > 0 {
+			config.LifecycleXML = lifecycleXML
+			config.LifecycleTransitionMinSize = string(entry.Extended[bucketLifecycleTransitionMinimumObjectSizeKey])
+		}
 
 		// The lifecycle TTL fast path is opt-in per bucket: a volume TTL
 		// stamped at write time can't honor a later policy change (rule
@@ -444,20 +443,18 @@ func (s3a *S3ApiServer) populateBucketConfigDerivedFields(config *BucketConfig) 
 		// so it stays off unless explicitly enabled. Skip the XML parse
 		// entirely when off. nil on parse error so the PUT path falls
 		// through to "no TTL" rather than rejecting writes.
-		if bytes.Equal(entry.Extended[s3_constants.ExtLifecycleTtlFastPathKey], []byte("true")) {
-			if xmlBytes, ok := entry.Extended[bucketLifecycleConfigurationXMLKey]; ok && len(xmlBytes) > 0 {
-				if rules, err := lifecycle_xml.ParseCanonical(xmlBytes); err == nil {
-					// Object Lock requires versioning, so an ObjectLockConfig
-					// implies the bucket is versioned even when the explicit
-					// Versioning header was never written. BucketIsVersioned
-					// in this file uses the same OR — keep them aligned.
-					versioned := config.Versioning == s3_constants.VersioningEnabled ||
-						config.Versioning == s3_constants.VersioningSuspended ||
-						config.ObjectLockConfig != nil
-					config.LifecycleTTL = NewLifecycleTTLResolver(rules, versioned)
-				} else {
-					glog.V(1).Infof("populateBucketConfigDerivedFields: bucket %s lifecycle xml parse: %v", bucket, err)
-				}
+		if bytes.Equal(entry.Extended[s3_constants.ExtLifecycleTtlFastPathKey], []byte("true")) && len(config.LifecycleXML) > 0 {
+			if rules, err := lifecycle_xml.ParseCanonical(config.LifecycleXML); err == nil {
+				// Object Lock requires versioning, so an ObjectLockConfig
+				// implies the bucket is versioned even when the explicit
+				// Versioning header was never written. BucketIsVersioned
+				// in this file uses the same OR — keep them aligned.
+				versioned := config.Versioning == s3_constants.VersioningEnabled ||
+					config.Versioning == s3_constants.VersioningSuspended ||
+					config.ObjectLockConfig != nil
+				config.LifecycleTTL = NewLifecycleTTLResolver(rules, versioned)
+			} else {
+				glog.V(1).Infof("newBucketConfigFromEntry: bucket %s lifecycle xml parse: %v", bucket, err)
 			}
 		}
 	}
@@ -465,75 +462,57 @@ func (s3a *S3ApiServer) populateBucketConfigDerivedFields(config *BucketConfig) 
 	// Sync bucket policy to the policy engine for evaluation.
 	s3a.syncBucketPolicyToEngine(bucket, config.BucketPolicy)
 
-	// Parse CORS configuration directly from the entry's Content field.
-	// This avoids a redundant RPC call since we already have the entry.
-	config.CORS = parseCORSFromEntryContent(entry.Content)
-}
-
-// updateBucketConfig updates bucket configuration and invalidates cache
-func (s3a *S3ApiServer) updateBucketConfig(bucket string, updateFn func(*BucketConfig) error) s3err.ErrorCode {
-	config, errCode := s3a.getBucketConfig(bucket)
-	if errCode != s3err.ErrNone {
-		return errCode
+	// Parse tags, CORS, and encryption from the entry's Content field.
+	if len(entry.Content) > 0 {
+		var protoMetadata s3_pb.BucketMetadata
+		if err := proto.Unmarshal(entry.Content, &protoMetadata); err != nil {
+			glog.Errorf("newBucketConfigFromEntry: failed to unmarshal metadata for bucket %s: %v", bucket, err)
+		} else {
+			config.Tags = protoMetadata.Tags
+			config.CORS = corsConfigFromProto(protoMetadata.Cors)
+			config.Encryption = protoMetadata.Encryption
+		}
 	}
 
-	nextConfig := cloneBucketConfig(config)
-	if nextConfig == nil {
-		glog.Errorf("updateBucketConfig: failed to clone config for bucket %s", bucket)
+	return config
+}
+
+// updateBucketConfig updates bucket configuration and invalidates cache.
+// It reads the bucket entry fresh from the filer so the patch diff is
+// computed against current state rather than a possibly stale cached copy.
+func (s3a *S3ApiServer) updateBucketConfig(bucket string, updateFn func(*BucketConfig) error) s3err.ErrorCode {
+	entry, err := s3a.getBucketEntry(bucket)
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			if s3a.bucketConfigCache != nil {
+				s3a.bucketConfigCache.SetNegativeCache(bucket)
+			}
+			return s3err.ErrNoSuchBucket
+		}
+		glog.Errorf("updateBucketConfig: failed to get bucket entry for %s: %v", bucket, err)
 		return s3err.ErrInternalError
 	}
 
+	config := s3a.newBucketConfigFromEntry(bucket, entry)
+
 	// Apply update function
-	if err := updateFn(nextConfig); err != nil {
+	if err := updateFn(config); err != nil {
 		glog.Errorf("updateBucketConfig: update function failed for bucket %s: %v", bucket, err)
 		return s3err.ErrInternalError
 	}
 
-	// Prepare extended attributes
-	if nextConfig.Entry == nil {
-		glog.Errorf("updateBucketConfig: missing bucket entry for %s", bucket)
+	oldExt := entry.GetExtended()
+	newExt := make(map[string][]byte, len(oldExt))
+	for k, v := range oldExt {
+		newExt[k] = v
+	}
+	if err := applyBucketConfigToExtended(config, newExt); err != nil {
+		glog.Errorf("updateBucketConfig: failed to serialize config for bucket %s: %v", bucket, err)
 		return s3err.ErrInternalError
-	}
-	if nextConfig.Entry.Extended == nil {
-		nextConfig.Entry.Extended = make(map[string][]byte)
-	}
-
-	// Update extended attributes
-	if nextConfig.Versioning != "" {
-		nextConfig.Entry.Extended[s3_constants.ExtVersioningKey] = []byte(nextConfig.Versioning)
-	} else {
-		delete(nextConfig.Entry.Extended, s3_constants.ExtVersioningKey)
-	}
-	if nextConfig.Ownership != "" {
-		nextConfig.Entry.Extended[s3_constants.ExtOwnershipKey] = []byte(nextConfig.Ownership)
-	} else {
-		delete(nextConfig.Entry.Extended, s3_constants.ExtOwnershipKey)
-	}
-	if nextConfig.ACL != nil {
-		nextConfig.Entry.Extended[s3_constants.ExtAmzAclKey] = nextConfig.ACL
-	} else {
-		delete(nextConfig.Entry.Extended, s3_constants.ExtAmzAclKey)
-	}
-	if nextConfig.Owner != "" {
-		nextConfig.Entry.Extended[s3_constants.ExtAmzOwnerKey] = []byte(nextConfig.Owner)
-	} else {
-		delete(nextConfig.Entry.Extended, s3_constants.ExtAmzOwnerKey)
-	}
-	// Update Object Lock configuration
-	if nextConfig.ObjectLockConfig != nil {
-		glog.V(3).Infof("updateBucketConfig: storing Object Lock config for bucket %s: %+v", bucket, nextConfig.ObjectLockConfig)
-		if err := StoreObjectLockConfigurationInExtended(nextConfig.Entry, nextConfig.ObjectLockConfig); err != nil {
-			glog.Errorf("updateBucketConfig: failed to store Object Lock configuration for bucket %s: %v", bucket, err)
-			return s3err.ErrInternalError
-		}
-		glog.V(3).Infof("updateBucketConfig: stored Object Lock config in extended attributes for bucket %s, key=%s, value=%s",
-			bucket, s3_constants.ExtObjectLockEnabledKey, string(nextConfig.Entry.Extended[s3_constants.ExtObjectLockEnabledKey]))
 	}
 
 	// Patch only the changed/removed extended keys, leaving Entry.content
 	// untouched so a concurrent content write (e.g. encryption) is preserved.
-	oldExt := config.Entry.GetExtended()
-	newExt := nextConfig.Entry.Extended
 	set := make(map[string][]byte)
 	for k, v := range newExt {
 		if ov, ok := oldExt[k]; !ok || !bytes.Equal(ov, v) {
@@ -552,14 +531,42 @@ func (s3a *S3ApiServer) updateBucketConfig(bucket string, updateFn func(*BucketC
 		return s3err.ErrInternalError
 	}
 
-	// Invalidate rather than cache nextConfig: its content may be stale relative
-	// to a concurrent content write. The next read re-fetches the merged entry.
+	// Invalidate rather than cache the updated config: it may be stale relative
+	// to a concurrent write. The next read re-fetches the merged entry.
 	if s3a.bucketConfigCache != nil {
 		s3a.bucketConfigCache.Remove(bucket)
 		s3a.bucketConfigCache.RemoveNegativeCache(bucket)
 	}
 
 	return s3err.ErrNone
+}
+
+// applyBucketConfigToExtended maps the persisted BucketConfig fields onto an
+// extended-attribute map; keys not derived from BucketConfig are left alone.
+func applyBucketConfigToExtended(config *BucketConfig, ext map[string][]byte) error {
+	setOrDelete := func(key string, value []byte) {
+		if len(value) > 0 {
+			ext[key] = value
+		} else {
+			delete(ext, key)
+		}
+	}
+	setOrDelete(s3_constants.ExtVersioningKey, []byte(config.Versioning))
+	setOrDelete(s3_constants.ExtOwnershipKey, []byte(config.Ownership))
+	setOrDelete(s3_constants.ExtAmzAclKey, config.ACL)
+	setOrDelete(s3_constants.ExtAmzOwnerKey, []byte(config.Owner))
+	setOrDelete(bucketLifecycleConfigurationXMLKey, config.LifecycleXML)
+	if len(config.LifecycleXML) > 0 && config.LifecycleTransitionMinSize != "" {
+		ext[bucketLifecycleTransitionMinimumObjectSizeKey] = []byte(config.LifecycleTransitionMinSize)
+	} else {
+		delete(ext, bucketLifecycleTransitionMinimumObjectSizeKey)
+	}
+	// Object Lock, once enabled, is never deleted; a nil config leaves any
+	// existing keys untouched.
+	if config.ObjectLockConfig != nil {
+		return StoreObjectLockConfigurationInExtended(&filer_pb.Entry{Extended: ext}, config.ObjectLockConfig)
+	}
+	return nil
 }
 
 // patchBucketEntry applies a field-level PATCH_EXTENDED mutation to the bucket's
@@ -596,135 +603,6 @@ func (s3a *S3ApiServer) patchBucketEntry(bucket string, m *filer_pb.ObjectMutati
 		}
 	}
 	return s3a.WithFilerClient(false, txn)
-}
-
-func cloneBucketConfig(config *BucketConfig) *BucketConfig {
-	if config == nil {
-		return nil
-	}
-
-	cloned := *config
-	if config.ACL != nil {
-		cloned.ACL = append([]byte(nil), config.ACL...)
-	}
-	if config.Entry != nil {
-		cloned.Entry = proto.Clone(config.Entry).(*filer_pb.Entry)
-	}
-	if config.CORS != nil {
-		cloned.CORS = cloneCORSConfiguration(config.CORS)
-	}
-	if config.ObjectLockConfig != nil {
-		cloned.ObjectLockConfig = cloneObjectLockConfiguration(config.ObjectLockConfig)
-	}
-	if config.BucketPolicy != nil {
-		cloned.BucketPolicy = cloneBucketPolicy(config.BucketPolicy)
-	}
-
-	return &cloned
-}
-
-func cloneCORSConfiguration(config *cors.CORSConfiguration) *cors.CORSConfiguration {
-	if config == nil {
-		return nil
-	}
-
-	cloned := &cors.CORSConfiguration{
-		CORSRules: make([]cors.CORSRule, len(config.CORSRules)),
-	}
-	for i, rule := range config.CORSRules {
-		cloned.CORSRules[i] = cors.CORSRule{
-			AllowedHeaders: append([]string(nil), rule.AllowedHeaders...),
-			AllowedMethods: append([]string(nil), rule.AllowedMethods...),
-			AllowedOrigins: append([]string(nil), rule.AllowedOrigins...),
-			ExposeHeaders:  append([]string(nil), rule.ExposeHeaders...),
-			ID:             rule.ID,
-		}
-		if rule.MaxAgeSeconds != nil {
-			maxAge := *rule.MaxAgeSeconds
-			cloned.CORSRules[i].MaxAgeSeconds = &maxAge
-		}
-	}
-
-	return cloned
-}
-
-func cloneObjectLockConfiguration(config *ObjectLockConfiguration) *ObjectLockConfiguration {
-	if config == nil {
-		return nil
-	}
-
-	cloned := &ObjectLockConfiguration{
-		XMLNS:             config.XMLNS,
-		XMLName:           config.XMLName,
-		ObjectLockEnabled: config.ObjectLockEnabled,
-	}
-	if config.Rule != nil {
-		cloned.Rule = &ObjectLockRule{
-			XMLName: config.Rule.XMLName,
-		}
-		if config.Rule.DefaultRetention != nil {
-			cloned.Rule.DefaultRetention = &DefaultRetention{
-				XMLName:  config.Rule.DefaultRetention.XMLName,
-				Mode:     config.Rule.DefaultRetention.Mode,
-				Days:     config.Rule.DefaultRetention.Days,
-				Years:    config.Rule.DefaultRetention.Years,
-				DaysSet:  config.Rule.DefaultRetention.DaysSet,
-				YearsSet: config.Rule.DefaultRetention.YearsSet,
-			}
-		}
-	}
-
-	return cloned
-}
-
-func cloneBucketPolicy(policyDoc *policy_engine.PolicyDocument) *policy_engine.PolicyDocument {
-	if policyDoc == nil {
-		return nil
-	}
-
-	cloned := &policy_engine.PolicyDocument{
-		Version:   policyDoc.Version,
-		Statement: make([]policy_engine.PolicyStatement, len(policyDoc.Statement)),
-	}
-	for i, statement := range policyDoc.Statement {
-		cloned.Statement[i] = clonePolicyStatement(statement)
-	}
-
-	return cloned
-}
-
-func clonePolicyStatement(statement policy_engine.PolicyStatement) policy_engine.PolicyStatement {
-	cloned := policy_engine.PolicyStatement{
-		Sid:         statement.Sid,
-		Effect:      statement.Effect,
-		Action:      cloneStringOrStringSlice(statement.Action),
-		NotResource: cloneStringOrStringSlicePtr(statement.NotResource),
-		Principal:   cloneStringOrStringSlicePtr(statement.Principal),
-		Resource:    cloneStringOrStringSlicePtr(statement.Resource),
-	}
-	if statement.Condition != nil {
-		cloned.Condition = make(policy_engine.PolicyConditions, len(statement.Condition))
-		for operator, operands := range statement.Condition {
-			copiedOperands := make(map[string]policy_engine.StringOrStringSlice, len(operands))
-			for key, value := range operands {
-				copiedOperands[key] = cloneStringOrStringSlice(value)
-			}
-			cloned.Condition[operator] = copiedOperands
-		}
-	}
-	return cloned
-}
-
-func cloneStringOrStringSlice(value policy_engine.StringOrStringSlice) policy_engine.StringOrStringSlice {
-	return policy_engine.CloneStringOrStringSlice(value)
-}
-
-func cloneStringOrStringSlicePtr(value *policy_engine.StringOrStringSlice) *policy_engine.StringOrStringSlice {
-	if value == nil {
-		return nil
-	}
-	cloned := policy_engine.CloneStringOrStringSlice(*value)
-	return &cloned
 }
 
 // isVersioningEnabled checks if versioning is enabled for a bucket (with caching)
@@ -829,21 +707,6 @@ func (s3a *S3ApiServer) setBucketOwnership(bucket, ownership string) s3err.Error
 		config.Ownership = ownership
 		return nil
 	})
-}
-
-// parseCORSFromEntryContent parses CORS configuration directly from an entry's Content field.
-// This avoids a separate RPC call when the entry is already available (e.g., from a
-// subscription event or a prior getBucketEntry call).
-func parseCORSFromEntryContent(content []byte) *cors.CORSConfiguration {
-	if len(content) == 0 {
-		return nil
-	}
-	var protoMetadata s3_pb.BucketMetadata
-	if err := proto.Unmarshal(content, &protoMetadata); err != nil {
-		glog.Errorf("parseCORSFromEntryContent: failed to unmarshal protobuf metadata: %v", err)
-		return nil
-	}
-	return corsConfigFromProto(protoMetadata.Cors)
 }
 
 // getCORSConfiguration retrieves CORS configuration with caching
@@ -988,49 +851,21 @@ func (s3a *S3ApiServer) getBucketMetadata(bucket string) (*BucketMetadata, error
 			return nil, fmt.Errorf("bucket directory not found %s", bucket)
 		}
 
-		// Try to get from positive cache
+		// Build from the cached parsed config; copy the tags so callers
+		// can't mutate the cached map.
 		if config, found := s3a.bucketConfigCache.Get(bucket); found {
-			// Extract metadata from cached config
-			if metadata, err := s3a.extractMetadataFromConfig(config); err == nil {
-				return metadata, nil
+			metadata := NewBucketMetadata()
+			for k, v := range config.Tags {
+				metadata.Tags[k] = v
 			}
-			// If extraction fails, fall through to direct load
+			metadata.CORS = config.CORS
+			metadata.Encryption = config.Encryption
+			return metadata, nil
 		}
 	}
 
 	// Load directly from filer
 	return s3a.loadBucketMetadataFromFiler(bucket)
-}
-
-// extractMetadataFromConfig extracts BucketMetadata from cached BucketConfig
-func (s3a *S3ApiServer) extractMetadataFromConfig(config *BucketConfig) (*BucketMetadata, error) {
-	if config == nil || config.Entry == nil {
-		return NewBucketMetadata(), nil
-	}
-
-	// Parse metadata from entry content if available
-	if len(config.Entry.Content) > 0 {
-		var protoMetadata s3_pb.BucketMetadata
-		if err := proto.Unmarshal(config.Entry.Content, &protoMetadata); err != nil {
-			glog.Errorf("extractMetadataFromConfig: failed to unmarshal protobuf metadata for bucket %s: %v", config.Name, err)
-			return nil, err
-		}
-		// Convert protobuf to structured metadata
-		metadata := &BucketMetadata{
-			Tags:       protoMetadata.Tags,
-			CORS:       corsConfigFromProto(protoMetadata.Cors),
-			Encryption: protoMetadata.Encryption,
-		}
-		return metadata, nil
-	}
-
-	// Fallback: create metadata from cached CORS config
-	metadata := NewBucketMetadata()
-	if config.CORS != nil {
-		metadata.CORS = config.CORS
-	}
-
-	return metadata, nil
 }
 
 // loadBucketMetadataFromFiler loads bucket metadata directly from the filer

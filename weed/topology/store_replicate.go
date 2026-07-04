@@ -292,6 +292,8 @@ func GetWritableRemoteReplications(s *storage.Store, grpcDialOption grpc.DialOpt
 		// has one local and has remote replications
 		copyCount := v.ReplicaPlacement.GetCopyCount()
 		if len(lookupResult.Locations) < copyCount {
+			// drop the stale cache so the next write re-queries the master once it re-registers the missing replica
+			operation.InvalidateVolumeIdLocationCache(volumeId.String())
 			err = fmt.Errorf("replicating operations [%d] is less than volume %d replication copy count [%d]",
 				len(lookupResult.Locations), volumeId, copyCount)
 		}

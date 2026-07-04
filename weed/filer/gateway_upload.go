@@ -17,7 +17,6 @@ type GatewayChunkUploader interface {
 		filerClient filer_pb.FilerClient,
 		assignRequest *filer_pb.AssignVolumeRequest,
 		uploadOption *operation.UploadOption,
-		genFileUrlFn func(host, fileId string) string,
 		reader io.Reader,
 	) (fileId string, uploadResult *operation.UploadResult, err error, data []byte)
 }
@@ -120,11 +119,8 @@ func SaveGatewayDataAsChunk(req GatewayChunkUploadRequest) (*filer_pb.FileChunk,
 		PairMap:           req.PairMap,
 	}
 
-	genFileUrlFn := func(host, fileId string) string {
-		if req.VolumeServerAccess == "filerProxy" && req.FilerHTTPAddress != "" {
-			return fmt.Sprintf("http://%s/?proxyChunkId=%s", req.FilerHTTPAddress, fileId)
-		}
-		return fmt.Sprintf("http://%s/%s", host, fileId)
+	if req.VolumeServerAccess == "filerProxy" && req.FilerHTTPAddress != "" {
+		uploadOption.GenUploadUrl = operation.GenUploadUrlProxy(req.FilerHTTPAddress)
 	}
 
 	assignRequest := &filer_pb.AssignVolumeRequest{
@@ -141,7 +137,6 @@ func SaveGatewayDataAsChunk(req GatewayChunkUploadRequest) (*filer_pb.FileChunk,
 		req.FilerClient,
 		assignRequest,
 		uploadOption,
-		genFileUrlFn,
 		req.Reader,
 	)
 	if uploadErr != nil {

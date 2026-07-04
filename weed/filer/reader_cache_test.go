@@ -16,6 +16,25 @@ type mockChunkCacheForReaderCache struct {
 	mu       sync.Mutex
 }
 
+type mockCacheInvalidatorForReaderCache struct {
+	calls  int32
+	mu     sync.Mutex
+	fileId string
+}
+
+func (m *mockCacheInvalidatorForReaderCache) InvalidateCache(fileId string) {
+	atomic.AddInt32(&m.calls, 1)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.fileId = fileId
+}
+
+func (m *mockCacheInvalidatorForReaderCache) lastFileId() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.fileId
+}
+
 func newMockChunkCacheForReaderCache() *mockChunkCacheForReaderCache {
 	return &mockChunkCacheForReaderCache{
 		data: make(map[string][]byte),
@@ -60,6 +79,113 @@ func (m *mockChunkCacheForReaderCache) IsInCache(fileId string, lockNeeded bool)
 	return ok
 }
 
+func TestReaderCacheRetryAfterCacheInvalidation(t *testing.T) {
+	cache := newMockChunkCacheForReaderCache()
+	invalidator := &mockCacheInvalidatorForReaderCache{}
+	fileId := "425141,ef8914e9bdbbe8cb6838191f"
+	staleUrl := "http://fast-volume-1/" + fileId
+	freshUrl := "http://fast-volume-9/" + fileId
+	testData := []byte("fresh chunk data after cache invalidation")
+
+	var lookupCount int32
+	lookupFn := func(ctx context.Context, requestedFileId string) ([]string, error) {
+		if requestedFileId != fileId {
+			return nil, fmt.Errorf("unexpected lookup file id %s", requestedFileId)
+		}
+		atomic.AddInt32(&lookupCount, 1)
+		if atomic.LoadInt32(&invalidator.calls) == 0 {
+			return []string{staleUrl}, nil
+		}
+		return []string{freshUrl}, nil
+	}
+
+	var fetchCount int32
+	fetchFn := func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, requestedFileId string) (int, error) {
+		if requestedFileId != fileId {
+			return 0, fmt.Errorf("unexpected fetch file id %s", requestedFileId)
+		}
+		switch atomic.AddInt32(&fetchCount, 1) {
+		case 1:
+			if len(urlStrings) != 1 || urlStrings[0] != staleUrl {
+				return 0, fmt.Errorf("first fetch should use stale url %v", urlStrings)
+			}
+			return 0, fmt.Errorf("404 Not Found: not found")
+		case 2:
+			if len(urlStrings) != 1 || urlStrings[0] != freshUrl {
+				return 0, fmt.Errorf("retry fetch should use fresh url %v", urlStrings)
+			}
+			return copy(buffer, testData), nil
+		default:
+			return 0, fmt.Errorf("unexpected extra fetch with urls %v", urlStrings)
+		}
+	}
+
+	rc := NewReaderCache(10, cache, lookupFn, invalidator)
+	rc.fetchChunkDataFn = fetchFn
+	defer rc.destroy()
+
+	buffer := make([]byte, len(testData))
+	n, err := rc.ReadChunkAt(context.Background(), buffer, fileId, nil, false, 0, len(testData), true)
+	if err != nil {
+		t.Fatalf("expected successful retry, got %v", err)
+	}
+	if got := string(buffer[:n]); got != string(testData) {
+		t.Fatalf("expected %q, got %q", testData, got)
+	}
+	if got := atomic.LoadInt32(&invalidator.calls); got != 1 {
+		t.Fatalf("expected one cache invalidation, got %d", got)
+	}
+	if got := invalidator.lastFileId(); got != fileId {
+		t.Fatalf("expected invalidated file id %s, got %s", fileId, got)
+	}
+	if got := atomic.LoadInt32(&lookupCount); got != 2 {
+		t.Fatalf("expected lookup before fetch and after invalidation, got %d", got)
+	}
+	if got := atomic.LoadInt32(&fetchCount); got != 2 {
+		t.Fatalf("expected stale fetch and retry fetch, got %d", got)
+	}
+}
+
+func TestReaderCacheRemovesFailedDownloader(t *testing.T) {
+	cache := newMockChunkCacheForReaderCache()
+	fileId := "425141,failed"
+	url := "http://fast-volume-1/" + fileId
+
+	var lookupCount int32
+	lookupFn := func(ctx context.Context, requestedFileId string) ([]string, error) {
+		if requestedFileId != fileId {
+			return nil, fmt.Errorf("unexpected lookup file id %s", requestedFileId)
+		}
+		atomic.AddInt32(&lookupCount, 1)
+		return []string{url}, nil
+	}
+
+	var fetchCount int32
+	fetchFn := func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, requestedFileId string) (int, error) {
+		atomic.AddInt32(&fetchCount, 1)
+		return 0, fmt.Errorf("fetch failed")
+	}
+
+	rc := NewReaderCache(10, cache, lookupFn, nil)
+	rc.fetchChunkDataFn = fetchFn
+	defer rc.destroy()
+
+	for i := 0; i < 2; i++ {
+		buffer := make([]byte, 8)
+		_, err := rc.ReadChunkAt(context.Background(), buffer, fileId, nil, false, 0, len(buffer), true)
+		if err == nil {
+			t.Fatalf("read %d should fail", i+1)
+		}
+	}
+
+	if got := atomic.LoadInt32(&lookupCount); got != 2 {
+		t.Fatalf("failed downloader should be removed so the second read re-lookups, got %d lookups", got)
+	}
+	if got := atomic.LoadInt32(&fetchCount); got != 2 {
+		t.Fatalf("failed downloader should be removed so the second read refetches, got %d fetches", got)
+	}
+}
+
 // TestReaderCacheContextCancellation tests that a reader can cancel its wait
 // while the download continues for other readers
 func TestReaderCacheContextCancellation(t *testing.T) {
@@ -67,7 +193,7 @@ func TestReaderCacheContextCancellation(t *testing.T) {
 
 	// Create a ReaderCache - we can't easily test the full flow without mocking HTTP,
 	// but we can test the context cancellation in readChunkAt
-	rc := NewReaderCache(10, cache, nil)
+	rc := NewReaderCache(10, cache, nil, nil)
 	defer rc.destroy()
 
 	// Pre-populate cache to avoid HTTP calls
@@ -106,7 +232,7 @@ func TestReaderCacheFallbackToChunkCache(t *testing.T) {
 	testData := []byte("fallback test data that should be found in chunk cache")
 	cache.SetChunk("fallback-file", testData)
 
-	rc := NewReaderCache(10, cache, nil)
+	rc := NewReaderCache(10, cache, nil, nil)
 	defer rc.destroy()
 
 	// Read should hit the chunk cache
@@ -138,7 +264,7 @@ func TestReaderCacheMultipleReadersWaitForSameChunk(t *testing.T) {
 	}
 	cache.SetChunk("shared-chunk", testData)
 
-	rc := NewReaderCache(10, cache, nil)
+	rc := NewReaderCache(10, cache, nil, nil)
 	defer rc.destroy()
 
 	// Launch multiple concurrent readers for the same chunk
@@ -184,7 +310,7 @@ func TestReaderCachePartialRead(t *testing.T) {
 	testData := []byte("0123456789ABCDEFGHIJ")
 	cache.SetChunk("partial-read-file", testData)
 
-	rc := NewReaderCache(10, cache, nil)
+	rc := NewReaderCache(10, cache, nil, nil)
 	defer rc.destroy()
 
 	tests := []struct {
@@ -222,7 +348,7 @@ func TestReaderCacheCleanup(t *testing.T) {
 	cache := newMockChunkCacheForReaderCache()
 
 	// Create cache with limit of 3
-	rc := NewReaderCache(3, cache, nil)
+	rc := NewReaderCache(3, cache, nil, nil)
 	defer rc.destroy()
 
 	// Add data for multiple files
@@ -259,7 +385,7 @@ func TestReaderCacheCleanup(t *testing.T) {
 // TestSingleChunkCacherDoneSignal tests that done channel is always closed
 func TestSingleChunkCacherDoneSignal(t *testing.T) {
 	cache := newMockChunkCacheForReaderCache()
-	rc := NewReaderCache(10, cache, nil)
+	rc := NewReaderCache(10, cache, nil, nil)
 	defer rc.destroy()
 
 	// Test that we can read even when data is in cache (done channel should work)
@@ -317,7 +443,7 @@ func TestSingleChunkCacherLookupError(t *testing.T) {
 		return nil, fmt.Errorf("lookup failed for %s", fileId)
 	}
 
-	rc := NewReaderCache(10, cache, lookupFn)
+	rc := NewReaderCache(10, cache, lookupFn, nil)
 	defer rc.destroy()
 
 	buffer := make([]byte, 100)
@@ -343,7 +469,7 @@ func TestSingleChunkCacherContextCancellationDuringLookup(t *testing.T) {
 		return nil, fmt.Errorf("lookup completed but reader should have cancelled")
 	}
 
-	rc := NewReaderCache(10, cache, lookupFn)
+	rc := NewReaderCache(10, cache, lookupFn, nil)
 	defer rc.destroy()
 	defer close(lookupCanFinish) // Ensure cleanup
 
@@ -391,7 +517,7 @@ func TestSingleChunkCacherMultipleReadersWaitForDownload(t *testing.T) {
 		return nil, fmt.Errorf("simulated lookup error")
 	}
 
-	rc := NewReaderCache(10, cache, lookupFn)
+	rc := NewReaderCache(10, cache, lookupFn, nil)
 	defer rc.destroy()
 
 	numReaders := 5
@@ -438,17 +564,25 @@ func TestSingleChunkCacherMultipleReadersWaitForDownload(t *testing.T) {
 // the downloaders map deduplicates in-flight downloads.
 func TestReaderCacheDownloaderDedup(t *testing.T) {
 	cache := newMockChunkCacheForReaderCache()
+
 	var lookupCount int32
-	lookupGate := make(chan struct{})
+	var fetchCount int32
+	fetchGate := make(chan struct{})
+	testData := []byte("deduplicated data")
 
 	lookupFn := func(ctx context.Context, fileId string) ([]string, error) {
 		atomic.AddInt32(&lookupCount, 1)
-		<-lookupGate
-		// Return an error so we don't need to mock the HTTP fetch.
-		return nil, fmt.Errorf("simulated lookup for %s", fileId)
+		return []string{"http://volume/" + fileId}, nil
 	}
 
-	rc := NewReaderCache(10, cache, lookupFn)
+	fetchFn := func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, fileId string) (int, error) {
+		atomic.AddInt32(&fetchCount, 1)
+		<-fetchGate
+		return copy(buffer, testData), nil
+	}
+
+	rc := NewReaderCache(10, cache, lookupFn, nil)
+	rc.fetchChunkDataFn = fetchFn
 	defer rc.destroy()
 
 	const numReaders = 10
@@ -464,12 +598,14 @@ func TestReaderCacheDownloaderDedup(t *testing.T) {
 	}
 
 	// Allow downloads to proceed.
-	close(lookupGate)
+	close(fetchGate)
 	wg.Wait()
 
-	count := atomic.LoadInt32(&lookupCount)
-	if count != 1 {
+	if count := atomic.LoadInt32(&lookupCount); count != 1 {
 		t.Errorf("expected exactly 1 lookup call, got %d", count)
+	}
+	if count := atomic.LoadInt32(&fetchCount); count != 1 {
+		t.Errorf("expected exactly 1 fetch call, got %d", count)
 	}
 }
 
@@ -487,7 +623,7 @@ func TestSingleChunkCacherOneReaderCancelsOthersContinue(t *testing.T) {
 		return nil, fmt.Errorf("simulated error after delay")
 	}
 
-	rc := NewReaderCache(10, cache, lookupFn)
+	rc := NewReaderCache(10, cache, lookupFn, nil)
 	defer rc.destroy()
 
 	cancelledReaderDone := make(chan error, 1)

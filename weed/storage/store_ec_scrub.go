@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 
@@ -12,7 +13,7 @@ import (
 
 // ScrubEcVolume checks the full integrity of a EC volume, across both local and remote shards.
 // Returns a count of processed file entries, slice of found broken shards, and slice of found errors.
-func (s *Store) ScrubEcVolume(vid needle.VolumeId) (int64, []*volume_server_pb.EcShardInfo, []error) {
+func (s *Store) ScrubEcVolume(vid needle.VolumeId, forceDeletedNeedlesCheck bool) (int64, []*volume_server_pb.EcShardInfo, []error) {
 	ecv, found := s.FindEcVolume(vid)
 	if !found {
 		return 0, nil, []error{fmt.Errorf("EC volume id %d not found", vid)}
@@ -78,7 +79,12 @@ func (s *Store) ScrubEcVolume(vid needle.VolumeId) (int64, []*volume_server_pb.E
 
 		n := needle.Needle{}
 		if err := n.ReadBytes(data, 0, size, ecv.Version); err != nil {
-			errs = append(errs, fmt.Errorf("needle %d on EC volume %d: %v", id, ecv.VolumeId, err))
+			// needles flagged as deleted in the index but not in the volume (or vice-versa) cannot
+			// be properly hydrated, as the header read by needle.ReadBytes() will mismatch.
+			deleteSizeMismatch := size.IsDeleted() != (n.Size == 0)
+			if !errors.Is(err, needle.ErrorSizeMismatch) || !deleteSizeMismatch || forceDeletedNeedlesCheck {
+				errs = append(errs, fmt.Errorf("needle %d on EC volume %d: %v", id, ecv.VolumeId, err))
+			}
 		}
 
 		return nil

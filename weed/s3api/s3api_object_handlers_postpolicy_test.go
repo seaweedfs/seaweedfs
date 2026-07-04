@@ -614,13 +614,8 @@ func TestPostPolicyBucketHandler_PolicyViolationReturns403(t *testing.T) {
 	}
 	// Pre-populate the bucket registry so validateTableBucketObjectPath sees
 	// a non-table bucket without needing a live filer connection.
-	s3a.bucketRegistry = &BucketRegistry{
-		metadataCache: map[string]*BucketMetaData{
-			testBucket: {Name: testBucket, IsTableBucket: false},
-		},
-		notFound: make(map[string]struct{}),
-		s3a:      s3a,
-	}
+	s3a.bucketRegistry = NewBucketRegistry(s3a)
+	s3a.bucketRegistry.setMetadataCache(&BucketMetaData{Name: testBucket, IsTableBucket: false})
 
 	now := time.Now().UTC()
 	amzDate := now.Format(iso8601Format)

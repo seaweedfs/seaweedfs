@@ -337,24 +337,16 @@ func (s3a *S3ApiServer) CleanupBucketKMSCache(bucketName string) int {
 func (s3a *S3ApiServer) CleanupAllBucketKMSCaches() int {
 	totalCleaned := 0
 
-	// Access the bucket config cache safely
 	if s3a.bucketConfigCache != nil {
-		s3a.bucketConfigCache.mutex.RLock()
-		bucketNames := make([]string, 0, len(s3a.bucketConfigCache.cache))
-		for bucketName := range s3a.bucketConfigCache.cache {
-			bucketNames = append(bucketNames, bucketName)
-		}
-		s3a.bucketConfigCache.mutex.RUnlock()
-
-		// Clean up each bucket's KMS cache
-		for _, bucketName := range bucketNames {
+		// Clean up each cached bucket's KMS cache
+		for _, bucketName := range s3a.bucketConfigCache.cache.Keys() {
 			cleaned := s3a.CleanupBucketKMSCache(bucketName)
 			totalCleaned += cleaned
 		}
 	}
 
 	if totalCleaned > 0 {
-		glog.V(2).Infof("Cleaned up %d expired KMS keys across %d bucket caches", totalCleaned, len(s3a.bucketConfigCache.cache))
+		glog.V(2).Infof("Cleaned up %d expired KMS keys across %d bucket caches", totalCleaned, s3a.bucketConfigCache.cache.Len())
 	}
 	return totalCleaned
 }
