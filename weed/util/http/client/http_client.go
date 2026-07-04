@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"google.golang.org/grpc/credentials/tls/certprovider"
 
@@ -20,6 +21,17 @@ import (
 
 var (
 	loadSecurityConfigOnce sync.Once
+)
+
+// Intra-cluster peers (volume/filer/master) answer headers within milliseconds.
+// A peer that is TCP-reachable but not answering -- a volume server still loading
+// after a restart, or a stale keep-alive to a container that returned on a new IP
+// -- otherwise blocks a chunk read or a replicated write forever. The response
+// timeout bounds that wait so the read fails over to another replica and the
+// write fails fast to retry; the idle timeout evicts sockets to a departed server.
+const (
+	responseHeaderTimeout = 30 * time.Second
+	idleConnTimeout       = 90 * time.Second
 )
 
 type HTTPClient struct {
@@ -166,7 +178,9 @@ func NewHttpClient(clientName ClientName, opts ...HttpClientOpt) (*HTTPClient, e
 		MaxIdleConnsPerHost: 1024,
 		TLSClientConfig:     tlsConfig,
 		// Bind outbound HTTP to the -ip.bind source address.
-		DialContext: util.OutboundDialContext,
+		DialContext:           util.OutboundDialContext,
+		ResponseHeaderTimeout: responseHeaderTimeout,
+		IdleConnTimeout:       idleConnTimeout,
 	}
 	httpClient.Client = &http.Client{
 		Transport: httpClient.Transport,
@@ -282,7 +296,9 @@ func NewHttpClientWithTLS(certFile, keyFile, caFile string, insecureSkipVerify b
 		MaxIdleConnsPerHost: 1024,
 		TLSClientConfig:     tlsConfig,
 		// Bind outbound HTTP to the -ip.bind source address.
-		DialContext: util.OutboundDialContext,
+		DialContext:           util.OutboundDialContext,
+		ResponseHeaderTimeout: responseHeaderTimeout,
+		IdleConnTimeout:       idleConnTimeout,
 	}
 	httpClient.Client = &http.Client{
 		Transport: httpClient.Transport,
