@@ -152,19 +152,28 @@ func newFileFilter(remoteMountCommand *flag.FlagSet) (ff *FileFilter) {
 	return
 }
 
-func (ff *FileFilter) matches(entry *filer_pb.Entry) bool {
-	if entry.Attributes == nil {
-		return false
-	}
+// matchesName applies only the name-based include/exclude patterns,
+// usable for remote entries where local attributes are not available.
+func (ff *FileFilter) matchesName(name string) bool {
 	if *ff.include != "" {
-		if ok, _ := filepath.Match(*ff.include, entry.Name); !ok {
+		if ok, _ := filepath.Match(*ff.include, name); !ok {
 			return false
 		}
 	}
 	if *ff.exclude != "" {
-		if ok, _ := filepath.Match(*ff.exclude, entry.Name); ok {
+		if ok, _ := filepath.Match(*ff.exclude, name); ok {
 			return false
 		}
+	}
+	return true
+}
+
+func (ff *FileFilter) matches(entry *filer_pb.Entry) bool {
+	if entry.Attributes == nil {
+		return false
+	}
+	if !ff.matchesName(entry.Name) {
+		return false
 	}
 	if *ff.minSize != -1 {
 		if int64(entry.Attributes.FileSize) < *ff.minSize {
