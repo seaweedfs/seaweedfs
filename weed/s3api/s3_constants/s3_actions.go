@@ -21,4 +21,5 @@ const (
 	MultipartUploadsFolder          = ".uploads"
 	VersionsFolder                  = ".versions"
 	FolderMimeType                  = "httpd/unix-directory"
+	DirectoryMimeType               = "application/x-directory"
 )
