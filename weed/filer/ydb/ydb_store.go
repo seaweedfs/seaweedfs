@@ -33,6 +33,7 @@ const (
 	defaultMinPartitionsCount     = 5
 	defaultMaxPartitionsCount     = 1000
 	defaultMaxListChunk           = 2000
+	defaultTablePathPrefix        = "seaweedfs"
 )
 
 var (
@@ -64,6 +65,7 @@ func (store *YdbStore) GetName() string {
 }
 
 func (store *YdbStore) Initialize(configuration util.Configuration, prefix string) (err error) {
+	configuration.SetDefault(prefix+"prefix", defaultTablePathPrefix)
 	configuration.SetDefault(prefix+"partitionBySizeEnabled", defaultPartitionBySizeEnabled)
 	configuration.SetDefault(prefix+"partitionSizeMb", defaultPartitionSizeMb)
 	configuration.SetDefault(prefix+"partitionByLoadEnabled", defaultPartitionByLoadEnabled)
