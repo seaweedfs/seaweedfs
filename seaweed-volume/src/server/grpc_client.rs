@@ -164,6 +164,21 @@ mod tests {
     use crate::config::{NeedleMapKind, ReadMode, VolumeServerConfig};
     use crate::security::tls::TlsPolicy;
 
+    const TEST_CERT_PEM: &str = "-----BEGIN CERTIFICATE-----\nMIIBPDCB76ADAgECAhRuRPQgeAu43BT/M7EfAWSdapVdYDAFBgMrZXAwFDESMBAG\nA1UEAwwJbG9jYWxob3N0MB4XDTI2MDcwNTE2MTUyOVoXDTM2MDcwMjE2MTUyOVow\nFDESMBAGA1UEAwwJbG9jYWxob3N0MCowBQYDK2VwAyEAr/3bNIFI+8V32oCiY6y+\nXRFmZpdNQ2g//VtRkT+nQg+jUzBRMB0GA1UdDgQWBBTsy9tLf1zPiXCQfgci6zNi\ndEzRSjAfBgNVHSMEGDAWgBTsy9tLf1zPiXCQfgci6zNidEzRSjAPBgNVHRMBAf8E\nBTADAQH/MAUGAytlcANBAIvsdw0IbvOBBkb9cd7BfMJfIP9pQQrAL03pCRWJFnFh\nSysaLVgFXI4T078IiaM874oO+iB+5vNbWEpc7CkGow4=\n-----END CERTIFICATE-----\n";
+    const TEST_KEY_PEM: &str = "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIHbyn71Kk+Y7KT3sBctit7uZpErpoH6qDbFj6P8qGaZH\n-----END PRIVATE KEY-----\n";
+
+    #[test]
+    fn test_build_grpc_endpoint_with_tls_resolves_crypto_provider() {
+        crate::security::tls::install_default_crypto_provider();
+        let tls = super::OutgoingGrpcTlsConfig {
+            cert_pem: TEST_CERT_PEM.to_string(),
+            key_pem: TEST_KEY_PEM.to_string(),
+            ca_pem: TEST_CERT_PEM.to_string(),
+        };
+        let endpoint = build_grpc_endpoint("127.0.0.1:19333", Some(&tls)).unwrap();
+        assert_eq!(endpoint.uri().scheme_str(), Some("https"));
+    }
+
     fn sample_config() -> VolumeServerConfig {
         VolumeServerConfig {
             port: 8080,

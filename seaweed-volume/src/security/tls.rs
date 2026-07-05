@@ -118,6 +118,13 @@ impl ClientCertVerifier for CommonNameVerifier {
     }
 }
 
+// aws-lc-rs and ring both get linked transitively, so rustls can't auto-select
+// a provider and tonic's client TLS panics on first use. Pin the default to
+// aws-lc-rs, matching the server config. Idempotent.
+pub fn install_default_crypto_provider() {
+    let _ = aws_lc_rs::default_provider().install_default();
+}
+
 pub fn build_rustls_server_config(
     cert_path: &str,
     key_path: &str,
