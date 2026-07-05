@@ -86,6 +86,13 @@ const (
 	AmzChecksumSHA256       = "X-Amz-Checksum-Sha256"
 	AmzTrailer              = "X-Amz-Trailer"
 	AmzSdkChecksumAlgorithm = "X-Amz-Sdk-Checksum-Algorithm"
+	AmzChecksumType         = "X-Amz-Checksum-Type"
+
+	// S3 checksum type values (x-amz-checksum-type). A COMPOSITE checksum is a
+	// checksum-of-per-part-checksums ("base64-N"); a FULL_OBJECT checksum is the
+	// checksum of the whole object as if uploaded in a single request ("base64").
+	ChecksumTypeComposite  = "COMPOSITE"
+	ChecksumTypeFullObject = "FULL_OBJECT"
 
 	// S3 conditional headers
 	IfMatch           = "If-Match"

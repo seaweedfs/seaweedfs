@@ -2091,6 +2091,9 @@ func (s3a *S3ApiServer) setResponseHeaders(w http.ResponseWriter, r *http.Reques
 			if algoName, ok := entry.Extended[s3_constants.ExtChecksumAlgorithm]; ok {
 				if checksumVal, ok := entry.Extended[s3_constants.ExtChecksumValue]; ok {
 					w.Header().Set(string(algoName), string(checksumVal))
+					if checksumType, ok := entry.Extended[s3_constants.ExtChecksumType]; ok && len(checksumType) > 0 {
+						w.Header().Set(s3_constants.AmzChecksumType, string(checksumType))
+					}
 				}
 			}
 		}

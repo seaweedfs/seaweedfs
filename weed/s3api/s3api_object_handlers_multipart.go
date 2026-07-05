@@ -180,9 +180,12 @@ func (s3a *S3ApiServer) CompleteMultipartUploadHandler(w http.ResponseWriter, r 
 		w.Header().Set("x-amz-version-id", *response.VersionId)
 	}
 
-	// Set composite checksum header if present
+	// Set checksum header if present
 	if response.ChecksumHeaderName != "" && response.ChecksumValue != "" {
 		w.Header().Set(response.ChecksumHeaderName, response.ChecksumValue)
+		if response.ChecksumType != "" {
+			w.Header().Set(s3_constants.AmzChecksumType, response.ChecksumType)
+		}
 	}
 
 	stats_collect.RecordBucketActiveTime(bucket)
