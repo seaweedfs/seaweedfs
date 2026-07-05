@@ -22,6 +22,10 @@ type SqlGenMysql struct {
 // is left for users to opt into via an explicit upsertQuery.
 const DefaultUpsertQuery = "INSERT INTO `%s` (`dirhash`,`name`,`directory`,`meta`) VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE `meta` = VALUES(`meta`)"
 
+// DefaultCreateTableQuery is used when createTable is left unset; an empty
+// template would otherwise render as %!(EXTRA ...) garbage SQL.
+const DefaultCreateTableQuery = "CREATE TABLE IF NOT EXISTS `%s` (`dirhash` BIGINT NOT NULL, `name` VARCHAR(766) NOT NULL, `directory` TEXT NOT NULL, `meta` LONGBLOB, PRIMARY KEY (`dirhash`, `name`)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+
 var (
 	_ = abstract_sql.SqlGenerator(&SqlGenMysql{})
 )

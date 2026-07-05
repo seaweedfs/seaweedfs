@@ -16,6 +16,17 @@ func TestDefaultUpsertQueryIsConflictSafe(t *testing.T) {
 	}
 }
 
+func TestDefaultCreateTableQueryRendersValidSql(t *testing.T) {
+	gen := &SqlGenPostgres{CreateTableSqlTemplate: DefaultCreateTableQuery}
+	got := gen.GetSqlCreateTable("filemeta")
+	if strings.Contains(got, "%!") {
+		t.Fatalf("template rendered to malformed SQL, got: %s", got)
+	}
+	if !strings.Contains(got, `"filemeta"`) {
+		t.Fatalf("expected quoted table name, got: %s", got)
+	}
+}
+
 func TestEmptyUpsertTemplateFallsBackToPlainInsert(t *testing.T) {
 	gen := &SqlGenPostgres{}
 	got := gen.GetSqlInsert("filemeta")

@@ -20,6 +20,10 @@ type SqlGenPostgres struct {
 // user enables upsert but does not provide their own template.
 const DefaultUpsertQuery = `INSERT INTO "%s" (dirhash,name,directory,meta) VALUES($1,$2,$3,$4) ON CONFLICT (dirhash, name) DO UPDATE SET directory=EXCLUDED.directory, meta=EXCLUDED.meta`
 
+// DefaultCreateTableQuery is used when createTable is left unset; an empty
+// template would otherwise render as %!(EXTRA ...) garbage SQL.
+const DefaultCreateTableQuery = `CREATE TABLE IF NOT EXISTS "%s" (dirhash BIGINT, name VARCHAR(65535), directory VARCHAR(65535), meta bytea, PRIMARY KEY (dirhash, name))`
+
 var (
 	_ = abstract_sql.SqlGenerator(&SqlGenPostgres{})
 )
