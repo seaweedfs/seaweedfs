@@ -7,7 +7,7 @@ use seaweed_volume::metrics;
 use seaweed_volume::pb::volume_server_pb::volume_server_server::VolumeServerServer;
 use seaweed_volume::security::tls::{
     build_rustls_server_config, build_rustls_server_config_with_grpc_client_auth,
-    GrpcClientAuthPolicy, TlsPolicy,
+    install_default_crypto_provider, GrpcClientAuthPolicy, TlsPolicy,
 };
 use seaweed_volume::security::{Guard, SigningKey};
 #[cfg(unix)]
@@ -39,6 +39,8 @@ const GRPC_MAX_HEADER_LIST_SIZE: u32 = 8 * 1024 * 1024;
 const GRPC_MAX_CONCURRENT_STREAMS: u32 = 1000;
 
 fn main() {
+    install_default_crypto_provider();
+
     // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(
