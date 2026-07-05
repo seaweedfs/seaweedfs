@@ -58,6 +58,9 @@ func (store *MysqlStore2) initialize(createTable, upsertQuery string, enableUpse
 	maxLifetimeSeconds int, interpolateParams bool) (err error) {
 
 	store.SupportBucketTable = true
+	if createTable == "" {
+		createTable = mysql.DefaultCreateTableQuery
+	}
 	if !enableUpsert {
 		upsertQuery = ""
 	} else if upsertQuery == "" {
