@@ -2635,17 +2635,10 @@ impl VolumeServer for VolumeGrpcService {
                     crate::storage::volume::volume_file_name(&dest_dir, &req.collection, vid);
                 format!("{}{}", base, ext)
             };
-            let mut file = std::fs::File::create(&file_path)
-                .map_err(|e| Status::internal(format!("create {}: {}", file_path, e)))?;
-            while let Some(chunk) = stream
-                .message()
+            let file = tokio::fs::File::create(&file_path)
                 .await
-                .map_err(|e| Status::internal(format!("recv {}: {}", ext, e)))?
-            {
-                use std::io::Write;
-                file.write_all(&chunk.file_content)
-                    .map_err(|e| Status::internal(format!("write {}: {}", file_path, e)))?;
-            }
+                .map_err(|e| Status::internal(format!("create {}: {}", file_path, e)))?;
+            drain_copy_stream_to_file(&mut stream, file, &file_path, &ext).await?;
         }
 
         // Copy .ecx file if requested
@@ -2675,17 +2668,10 @@ impl VolumeServer for VolumeGrpcService {
                     crate::storage::volume::volume_file_name(&dest_idx_dir, &req.collection, vid);
                 format!("{}.ecx", base)
             };
-            let mut file = std::fs::File::create(&file_path)
-                .map_err(|e| Status::internal(format!("create {}: {}", file_path, e)))?;
-            while let Some(chunk) = stream
-                .message()
+            let file = tokio::fs::File::create(&file_path)
                 .await
-                .map_err(|e| Status::internal(format!("recv .ecx: {}", e)))?
-            {
-                use std::io::Write;
-                file.write_all(&chunk.file_content)
-                    .map_err(|e| Status::internal(format!("write {}: {}", file_path, e)))?;
-            }
+                .map_err(|e| Status::internal(format!("create {}: {}", file_path, e)))?;
+            drain_copy_stream_to_file(&mut stream, file, &file_path, ".ecx").await?;
         }
 
         // Copy .ecj file if requested
@@ -2716,20 +2702,13 @@ impl VolumeServer for VolumeGrpcService {
                     crate::storage::volume::volume_file_name(&dest_idx_dir, &req.collection, vid);
                 format!("{}.ecj", base)
             };
-            let mut file = std::fs::OpenOptions::new()
+            let file = tokio::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(&file_path)
-                .map_err(|e| Status::internal(format!("create {}: {}", file_path, e)))?;
-            while let Some(chunk) = stream
-                .message()
                 .await
-                .map_err(|e| Status::internal(format!("recv .ecj: {}", e)))?
-            {
-                use std::io::Write;
-                file.write_all(&chunk.file_content)
-                    .map_err(|e| Status::internal(format!("write {}: {}", file_path, e)))?;
-            }
+                .map_err(|e| Status::internal(format!("create {}: {}", file_path, e)))?;
+            drain_copy_stream_to_file(&mut stream, file, &file_path, ".ecj").await?;
         }
 
         // Copy .vif file if requested
@@ -2760,17 +2739,10 @@ impl VolumeServer for VolumeGrpcService {
                     crate::storage::volume::volume_file_name(&dest_dir, &req.collection, vid);
                 format!("{}.vif", base)
             };
-            let mut file = std::fs::File::create(&file_path)
-                .map_err(|e| Status::internal(format!("create {}: {}", file_path, e)))?;
-            while let Some(chunk) = stream
-                .message()
+            let file = tokio::fs::File::create(&file_path)
                 .await
-                .map_err(|e| Status::internal(format!("recv .vif: {}", e)))?
-            {
-                use std::io::Write;
-                file.write_all(&chunk.file_content)
-                    .map_err(|e| Status::internal(format!("write {}: {}", file_path, e)))?;
-            }
+                .map_err(|e| Status::internal(format!("create {}: {}", file_path, e)))?;
+            drain_copy_stream_to_file(&mut stream, file, &file_path, ".vif").await?;
         }
 
         // Copy the generation-0 bitrot checksum sidecar (.ecsum) when requested, so
@@ -2804,24 +2776,16 @@ impl VolumeServer for VolumeGrpcService {
                     crate::storage::volume::volume_file_name(&dest_dir, &req.collection, vid);
                 format!("{}.ecsum", base)
             };
-            let mut file = std::fs::File::create(&file_path)
-                .map_err(|e| Status::internal(format!("create {}: {}", file_path, e)))?;
-            let mut written: u64 = 0;
-            while let Some(chunk) = stream
-                .message()
+            let file = tokio::fs::File::create(&file_path)
                 .await
-                .map_err(|e| Status::internal(format!("recv .ecsum: {}", e)))?
-            {
-                use std::io::Write;
-                file.write_all(&chunk.file_content)
-                    .map_err(|e| Status::internal(format!("write {}: {}", file_path, e)))?;
-                written += chunk.file_content.len() as u64;
-            }
+                .map_err(|e| Status::internal(format!("create {}: {}", file_path, e)))?;
+            let written =
+                drain_copy_stream_to_file(&mut stream, file, &file_path, ".ecsum").await?;
             // A missing source yields an empty stream; drop the 0-byte file so mount
             // sees no sidecar (protection Off) rather than a truncated/invalid one.
+            // (drain_copy_stream_to_file has already closed the file on return.)
             if written == 0 {
-                drop(file);
-                let _ = std::fs::remove_file(&file_path);
+                let _ = tokio::fs::remove_file(&file_path).await;
             }
         }
 
@@ -4572,6 +4536,39 @@ fn set_file_mtime(path: &str, modified_ts_ns: i64) -> std::io::Result<()> {
     let file = std::fs::File::open(path)?;
     let ft = std::fs::FileTimes::new().set_accessed(ts).set_modified(ts);
     file.set_times(ft)
+}
+
+/// Drain a CopyFile stream into `file`, returning the number of bytes written.
+///
+/// Uses async, buffered I/O (`tokio::fs` + `BufWriter`) so the receive-and-write
+/// loop never blocks a Tokio worker thread on disk I/O — a synchronous
+/// `std::fs::File::write_all` per chunk would stall the runtime for the duration
+/// of each write (noticeable for a large `.ecx`/`.dat` on a slow or busy disk).
+async fn drain_copy_stream_to_file(
+    stream: &mut tonic::Streaming<volume_server_pb::CopyFileResponse>,
+    file: tokio::fs::File,
+    file_path: &str,
+    what: &str,
+) -> Result<u64, Status> {
+    use tokio::io::AsyncWriteExt;
+    let mut writer = tokio::io::BufWriter::new(file);
+    let mut written: u64 = 0;
+    while let Some(chunk) = stream
+        .message()
+        .await
+        .map_err(|e| Status::internal(format!("recv {}: {}", what, e)))?
+    {
+        writer
+            .write_all(&chunk.file_content)
+            .await
+            .map_err(|e| Status::internal(format!("write {}: {}", file_path, e)))?;
+        written += chunk.file_content.len() as u64;
+    }
+    writer
+        .flush()
+        .await
+        .map_err(|e| Status::internal(format!("flush {}: {}", file_path, e)))?;
+    Ok(written)
 }
 
 /// Copy a file from a remote volume server via CopyFile streaming RPC.
