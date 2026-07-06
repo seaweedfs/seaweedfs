@@ -91,11 +91,37 @@ func (fs *FilerServer) checkTusJwtAuthorization(r *http.Request) bool {
 	isWrite := r.Method != http.MethodHead
 	var scopedPaths []string
 	if r.Method == http.MethodPost {
-		if target := strings.TrimPrefix(r.URL.Path, fs.option.TusBasePath); target != "" && target != "/" {
+		if target := fs.tusTargetPath(r); target != "" && target != "/" {
 			scopedPaths = append(scopedPaths, target)
 		}
 	}
 	return fs.checkJwtAuthorization(r, isWrite, scopedPaths)
+}
+
+// tusTargetPath resolves the filer path a TUS create request targets from the
+// request URL. It guarantees a leading slash so the result matches stored
+// absolute paths and JWT AllowedPrefixes even if TusBasePath were misconfigured
+// with a trailing slash.
+func (fs *FilerServer) tusTargetPath(r *http.Request) string {
+	target := strings.TrimPrefix(r.URL.Path, fs.option.TusBasePath)
+	if target != "" && !strings.HasPrefix(target, "/") {
+		target = "/" + target
+	}
+	return target
+}
+
+// writeTusCompleteError maps a completeTusUpload failure to the same HTTP status
+// the normal write path uses: a read-only prefix returns 507 and a WORM-protected
+// target returns 403, rather than a generic 500.
+func writeTusCompleteError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, ErrReadOnly):
+		http.Error(w, err.Error(), http.StatusInsufficientStorage)
+	case errors.Is(err, ErrWormEnforced):
+		http.Error(w, err.Error(), http.StatusForbidden)
+	default:
+		http.Error(w, "Failed to complete upload", http.StatusInternalServerError)
+	}
 }
 
 // tusOptionsHandler handles OPTIONS requests for capability discovery
@@ -135,10 +161,17 @@ func (fs *FilerServer) tusCreateHandler(w http.ResponseWriter, r *http.Request) 
 	// TusBasePath is pre-normalized in filer_server.go (leading slash, no trailing slash)
 	tusPrefix := fs.option.TusBasePath
 
-	// Determine target path from request URL
-	targetPath := strings.TrimPrefix(r.URL.Path, tusPrefix)
+	// Determine target path from request URL (leading slash guaranteed)
+	targetPath := fs.tusTargetPath(r)
 	if targetPath == "" || targetPath == "/" {
 		http.Error(w, "Target path required", http.StatusBadRequest)
+		return
+	}
+
+	// Reject writes to a read-only prefix up front, before creating a session or
+	// uploading any chunks, matching the normal write path.
+	if fs.filer.FilerConf.MatchStorageRule(targetPath).ReadOnly {
+		http.Error(w, ErrReadOnly.Error(), http.StatusInsufficientStorage)
 		return
 	}
 
@@ -196,7 +229,7 @@ func (fs *FilerServer) tusCreateHandler(w http.ResponseWriter, r *http.Request) 
 				}
 				if err := fs.completeTusUpload(ctx, session); err != nil {
 					glog.Errorf("Failed to complete TUS upload: %v", err)
-					http.Error(w, "Failed to complete upload", http.StatusInternalServerError)
+					writeTusCompleteError(w, err)
 					return
 				}
 			}
@@ -296,7 +329,7 @@ func (fs *FilerServer) tusPatchHandler(w http.ResponseWriter, r *http.Request, u
 
 		if err := fs.completeTusUpload(ctx, session); err != nil {
 			glog.Errorf("Failed to complete TUS upload: %v", err)
-			http.Error(w, "Failed to complete upload", http.StatusInternalServerError)
+			writeTusCompleteError(w, err)
 			return
 		}
 	}

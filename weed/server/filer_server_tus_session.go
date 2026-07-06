@@ -28,6 +28,11 @@ const (
 	TusExtensions    = "creation,creation-with-upload,termination"
 )
 
+// ErrWormEnforced marks a TUS completion rejected because the target entry is
+// WORM-protected. It shares the message the normal write path uses so it maps to
+// the same client-facing status.
+var ErrWormEnforced = errors.New(constants.ErrMsgOperationNotPermitted)
+
 // TusSession represents an in-progress TUS upload session
 type TusSession struct {
 	ID         string            `json:"id"`
@@ -368,7 +373,7 @@ func (fs *FilerServer) completeTusUpload(ctx context.Context, session *TusSessio
 	if wormEnforced, err := fs.wormEnforcedForEntry(ctx, string(targetPath)); err != nil {
 		return fmt.Errorf("check worm: %w", err)
 	} else if wormEnforced {
-		return errors.New(constants.ErrMsgOperationNotPermitted)
+		return ErrWormEnforced
 	}
 
 	entry := &filer.Entry{
