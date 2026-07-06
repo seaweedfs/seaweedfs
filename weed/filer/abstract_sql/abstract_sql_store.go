@@ -129,6 +129,14 @@ func (store *AbstractSqlStore) getTxOrDB(ctx context.Context, fullpath util.Full
 		shortPath = util.FullPath(bucketAndObjectKey[t:])
 	}
 
+	// Dot-prefixed entries directly under /buckets (e.g. .system) are internal
+	// folders, not S3 buckets; keep them in the default table by full path.
+	if strings.HasPrefix(bucket, ".") {
+		bucket = DEFAULT_TABLE
+		shortPath = fullpath
+		return
+	}
+
 	if isValidBucket(bucket) {
 		store.dbsLock.Lock()
 		defer store.dbsLock.Unlock()
