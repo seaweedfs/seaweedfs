@@ -26,11 +26,21 @@ func (fs *FilerServer) tusHandler(w http.ResponseWriter, r *http.Request) {
 	// Set common TUS response headers
 	w.Header().Set("Tus-Resumable", TusVersion)
 
-	// Check Tus-Resumable header for non-OPTIONS requests
+	// OPTIONS is capability discovery only and carries no data, so it is left
+	// unauthenticated like the main filer OPTIONS handler. Every other TUS method
+	// mutates or reads the filer namespace and must pass the same JWT check the
+	// rest of the filer API enforces: the TUS routes are otherwise only wrapped by
+	// filerGuard.WhiteList, which is a no-op for the filer, so without this they
+	// bypass jwt.filer_signing entirely.
 	if r.Method != http.MethodOptions {
 		tusVersion := r.Header.Get("Tus-Resumable")
 		if tusVersion != TusVersion {
 			http.Error(w, "Unsupported TUS version", http.StatusPreconditionFailed)
+			return
+		}
+
+		if !fs.checkTusJwtAuthorization(r) {
+			writeJsonError(w, r, http.StatusUnauthorized, errors.New("wrong jwt"))
 			return
 		}
 	}
@@ -68,6 +78,24 @@ func (fs *FilerServer) tusHandler(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+// checkTusJwtAuthorization enforces filer JWT authorization for a TUS request.
+// HEAD reads the current offset (read access); POST/PATCH/DELETE mutate the
+// namespace (write access). Only creation (POST) names a new target path, taken
+// from the request URL, so prefix-restricted tokens are scoped against that
+// resolved filer path rather than the /.tus route. HEAD/PATCH/DELETE act on an
+// existing session addressed by an unguessable id, whose target was already
+// scope-checked at creation, so no further path scoping is applied to them.
+func (fs *FilerServer) checkTusJwtAuthorization(r *http.Request) bool {
+	isWrite := r.Method != http.MethodHead
+	var scopedPaths []string
+	if r.Method == http.MethodPost {
+		if target := strings.TrimPrefix(r.URL.Path, fs.option.TusBasePath); target != "" && target != "/" {
+			scopedPaths = append(scopedPaths, target)
+		}
+	}
+	return fs.checkJwtAuthorization(r, isWrite, scopedPaths)
 }
 
 // tusOptionsHandler handles OPTIONS requests for capability discovery
