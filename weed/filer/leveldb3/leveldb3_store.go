@@ -118,6 +118,13 @@ func (store *LevelDB3Store) findDB(fullpath weed_util.FullPath, isForChildren bo
 		shortPath = weed_util.FullPath(bucketAndObjectKey[t:])
 	}
 
+	// Dot-prefixed entries directly under /buckets (e.g. .system) are internal
+	// folders, not S3 buckets; keep them in the default DB by full path.
+	if strings.HasPrefix(bucket, ".") {
+		store.dbsLock.RUnlock()
+		return defaultDB, DEFAULT, fullpath, nil
+	}
+
 	if db, found := store.dbs[bucket]; found {
 		store.dbsLock.RUnlock()
 		return db, bucket, shortPath, nil

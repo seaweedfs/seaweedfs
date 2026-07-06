@@ -468,6 +468,12 @@ func (store *YdbStore) getPrefix(ctx context.Context, dir *string) (tablePathPre
 			return
 		}
 
+		// Dot-prefixed entries directly under /buckets (e.g. .system) are internal
+		// folders, not S3 buckets; keep them under the default prefix.
+		if strings.HasPrefix(bucket, ".") {
+			return
+		}
+
 		store.dbsLock.Lock()
 		defer store.dbsLock.Unlock()
 
