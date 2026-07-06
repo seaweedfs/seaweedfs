@@ -63,6 +63,10 @@ func TestFilerServer_checkTusJwtAuthorization(t *testing.T) {
 		// (URL minus the /.tus prefix), not the /.tus route.
 		{"create within allowed prefix", http.MethodPost, "/.tus/buckets/allowed/ok.txt", signFilerToken(t, writeKey, []string{"/buckets/allowed"}, nil), true},
 		{"create outside allowed prefix denied", http.MethodPost, "/.tus/buckets/secret/owned.txt", signFilerToken(t, writeKey, []string{"/buckets/allowed"}, nil), false},
+
+		// Method-restricted tokens are checked against the actual HTTP method.
+		{"patch with matching method allowed", http.MethodPatch, "/.tus/.uploads/abc", signFilerToken(t, writeKey, nil, []string{"POST", "PATCH", "DELETE"}), true},
+		{"patch outside allowed methods denied", http.MethodPatch, "/.tus/.uploads/abc", signFilerToken(t, writeKey, nil, []string{"POST"}), false},
 	}
 
 	for _, tt := range tests {
