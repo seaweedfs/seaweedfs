@@ -58,6 +58,31 @@ func MultiRetry(name string, errList []string, job func() error) (err error) {
 	return err
 }
 
+// RetryOnError retries job with the same bounded backoff as MultiRetry, but
+// decides retriability with a predicate instead of an error-substring list.
+func RetryOnError(name string, shouldRetry func(error) bool, job func() error) (err error) {
+	waitTime := time.Second
+	hasErr := false
+	for waitTime < RetryWaitTime {
+		err = job()
+		if err == nil {
+			if hasErr {
+				glog.V(0).Infof("retry %s successfully", name)
+			}
+			break
+		}
+		if shouldRetry(err) {
+			hasErr = true
+			glog.V(0).Infof("retry %s: err: %v", name, err)
+		} else {
+			break
+		}
+		time.Sleep(waitTime)
+		waitTime += waitTime / 2
+	}
+	return err
+}
+
 // RetryUntil retries until the job returns no error or onErrFn returns false
 func RetryUntil(name string, job func() error, onErrFn func(err error) (shouldContinue bool)) error {
 	waitTime := time.Second
