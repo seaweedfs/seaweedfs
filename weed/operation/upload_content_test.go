@@ -30,18 +30,6 @@ type scriptedHTTPClient struct {
 	calls     []string
 }
 
-func testIsUploadRetryableAssignError(err error) bool {
-	if err == nil {
-		return false
-	}
-	for _, retryable := range uploadRetryableAssignErrList {
-		if strings.Contains(err.Error(), retryable) {
-			return true
-		}
-	}
-	return false
-}
-
 func (c *scriptedHTTPClient) Do(req *http.Request) (*http.Response, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -63,23 +51,26 @@ func (c *scriptedHTTPClient) Do(req *http.Request) (*http.Response, error) {
 	}, nil
 }
 
-func TestIsUploadRetryableAssignError(t *testing.T) {
+func TestShouldReassignUpload(t *testing.T) {
 	testCases := []struct {
 		name string
 		err  error
 		want bool
 	}{
 		{name: "nil", err: nil, want: false},
-		{name: "transport", err: fmt.Errorf("transport is closing"), want: true},
-		{name: "read only", err: fmt.Errorf("volume 1 is read only"), want: true},
-		{name: "volume full", err: fmt.Errorf("failed to write to local disk: append to volume 1 size 0 actualSize 0: Volume Size 33555976 Exceeded 33554432"), want: true},
+		{name: "no response (transport)", err: &uploadStatusError{StatusCode: 0, err: fmt.Errorf("dial tcp: no such host")}, want: true},
+		{name: "500 replica write failed", err: &uploadStatusError{StatusCode: 500, err: fmt.Errorf("failed to write to replicas")}, want: true},
+		{name: "503 service unavailable", err: &uploadStatusError{StatusCode: 503, err: fmt.Errorf("busy")}, want: true},
+		{name: "400 bad request", err: &uploadStatusError{StatusCode: 400, err: fmt.Errorf("bad needle")}, want: false},
+		{name: "401 unauthorized", err: &uploadStatusError{StatusCode: 401, err: fmt.Errorf("wrong jwt")}, want: false},
+		{name: "assign rpc transport", err: fmt.Errorf("assign volume: transport is closing"), want: true},
 		{name: "other permanent", err: fmt.Errorf("mismatching cookie"), want: false},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := testIsUploadRetryableAssignError(tc.err); got != tc.want {
-				t.Fatalf("testIsUploadRetryableAssignError(%v) = %v, want %v", tc.err, got, tc.want)
+			if got := shouldReassignUpload(tc.err); got != tc.want {
+				t.Fatalf("shouldReassignUpload(%v) = %v, want %v", tc.err, got, tc.want)
 			}
 		})
 	}
@@ -126,6 +117,48 @@ func TestUploadWithRetryDataReassignsOnVolumeSizeExceeded(t *testing.T) {
 	}
 	if httpClient.calls[0] != "http://volume-a/1,first" || httpClient.calls[3] != "http://volume-b/2,second" {
 		t.Fatalf("unexpected upload call sequence: %#v", httpClient.calls)
+	}
+}
+
+// A volume whose replica peer is down reports "failed to write to replicas":
+// the primary write lands but replication fails. The client must re-assign to a
+// volume on live nodes and retry rather than losing the write.
+func TestUploadWithRetryDataReassignsOnReplicaWriteFailure(t *testing.T) {
+	replicaErr := `{"error":"failed to write to replicas for volume 1: [volume-down:8080]: dial tcp: lookup volume-down: no such host"}`
+	httpClient := &scriptedHTTPClient{
+		responses: map[string][]scriptedHTTPResponse{
+			"http://volume-a/1,first": {
+				{status: http.StatusInternalServerError, body: replicaErr},
+				{status: http.StatusInternalServerError, body: replicaErr},
+				{status: http.StatusInternalServerError, body: replicaErr},
+			},
+			"http://volume-b/2,second": {
+				{status: http.StatusCreated, body: `{"name":"test.bin","size":3}`},
+			},
+		},
+	}
+	uploader := newUploader(httpClient)
+
+	assignCalls := 0
+	fileID, uploadResult, err := uploader.uploadWithRetryData(func() (string, string, security.EncodedJwt, error) {
+		assignCalls++
+		if assignCalls == 1 {
+			return "1,first", "volume-a", "", nil
+		}
+		return "2,second", "volume-b", "", nil
+	}, &UploadOption{Filename: "test.bin"}, []byte("abc"))
+
+	if err != nil {
+		t.Fatalf("expected success after reassignment, got %v", err)
+	}
+	if fileID != "2,second" {
+		t.Fatalf("expected reassigned file id, got %s", fileID)
+	}
+	if assignCalls != 2 {
+		t.Fatalf("expected 2 assign attempts, got %d", assignCalls)
+	}
+	if uploadResult == nil || uploadResult.Name != "test.bin" {
+		t.Fatalf("expected successful upload result, got %#v", uploadResult)
 	}
 }
 

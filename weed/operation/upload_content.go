@@ -6,6 +6,7 @@ import (
 	"crypto/md5"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -118,11 +119,35 @@ var (
 	once        sync.Once
 )
 
-var uploadRetryableAssignErrList = []string{
-	"transport",
-	"is read only",
-	"failed to write to local disk",
-	"Volume Size ",
+// uploadStatusError carries the volume-server HTTP status of a failed upload so
+// the retry gate can decide on the status code instead of the message text.
+// StatusCode 0 means the request never got a response — a transport failure.
+type uploadStatusError struct {
+	StatusCode int
+	err        error
+}
+
+func (e *uploadStatusError) Error() string { return e.err.Error() }
+func (e *uploadStatusError) Unwrap() error { return e.err }
+
+// shouldReassignUpload reports whether an upload error means the client should
+// ask for a fresh volume assignment and retry on another volume.
+//
+// On the write path a volume server only 5xxs on a ReplicatedWrite failure
+// (local disk, replica peer down, or under-replication) — all of which a
+// different volume dodges — so any 5xx is reassignable. A status of 0 means the
+// assigned target never answered (down/unreachable), also reassignable. A 4xx
+// is a genuine client error and is surfaced. Errors without a status come from
+// the AssignVolume RPC or request setup; retry only transient transport ones.
+func shouldReassignUpload(err error) bool {
+	if err == nil {
+		return false
+	}
+	var se *uploadStatusError
+	if errors.As(err, &se) {
+		return se.StatusCode == 0 || se.StatusCode >= 500
+	}
+	return strings.Contains(err.Error(), "transport")
 }
 
 // assignVolumeTimeout bounds a single AssignVolume RPC so an overwhelmed filer
@@ -195,7 +220,7 @@ func (uploader *Uploader) uploadWithRetryData(assignFn func() (fileId string, ho
 			return true
 		})
 	} else {
-		err = util.MultiRetry("uploadWithRetry", uploadRetryableAssignErrList, doUploadFunc)
+		err = util.RetryOnError("uploadWithRetry", shouldReassignUpload, doUploadFunc)
 	}
 
 	return
@@ -515,7 +540,7 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 	}
 	if post_err != nil {
 		stats.UploadErrorCounter.WithLabelValues("0").Inc()
-		return nil, fmt.Errorf("upload %s %d bytes to %v: %v", option.Filename, originalDataSize, option.UploadUrl, post_err)
+		return nil, &uploadStatusError{StatusCode: 0, err: fmt.Errorf("upload %s %d bytes to %v: %v", option.Filename, originalDataSize, option.UploadUrl, post_err)}
 	}
 	// print("-")
 
@@ -530,18 +555,18 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 	resp_body, ra_err := io.ReadAll(resp.Body)
 	if ra_err != nil {
 		stats.UploadErrorCounter.WithLabelValues(strconv.Itoa(resp.StatusCode)).Inc()
-		return nil, fmt.Errorf("read response body %v: %w", option.UploadUrl, ra_err)
+		return nil, &uploadStatusError{StatusCode: resp.StatusCode, err: fmt.Errorf("read response body %v: %w", option.UploadUrl, ra_err)}
 	}
 
 	unmarshal_err := json.Unmarshal(resp_body, &ret)
 	if unmarshal_err != nil {
 		stats.UploadErrorCounter.WithLabelValues(strconv.Itoa(resp.StatusCode)).Inc()
 		glog.ErrorfCtx(ctx, "unmarshal %s: %v", option.UploadUrl, string(resp_body))
-		return nil, fmt.Errorf("unmarshal %v: %w", option.UploadUrl, unmarshal_err)
+		return nil, &uploadStatusError{StatusCode: resp.StatusCode, err: fmt.Errorf("unmarshal %v: %w", option.UploadUrl, unmarshal_err)}
 	}
 	if ret.Error != "" {
 		stats.UploadErrorCounter.WithLabelValues(strconv.Itoa(resp.StatusCode)).Inc()
-		return nil, fmt.Errorf("unmarshalled error %v: %v", option.UploadUrl, ret.Error)
+		return nil, &uploadStatusError{StatusCode: resp.StatusCode, err: fmt.Errorf("unmarshalled error %v: %v", option.UploadUrl, ret.Error)}
 	}
 	ret.ETag = etag
 	ret.ContentMd5 = resp.Header.Get("Content-MD5")
