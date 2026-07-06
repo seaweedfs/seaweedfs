@@ -77,6 +77,11 @@ func extractBucket(fullpath util.FullPath) (string, string) {
 		bucket = bucketAndObjectKey[:t]
 		shortPath = string(util.FullPath(bucketAndObjectKey[t:]))
 	}
+	// Dot-prefixed entries directly under /buckets (e.g. .system) are internal
+	// folders, not S3 buckets; keep them in the default collection.
+	if strings.HasPrefix(bucket, ".") {
+		return "", string(fullpath)
+	}
 	return bucket, shortPath
 }
 
