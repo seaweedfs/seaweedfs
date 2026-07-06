@@ -154,7 +154,7 @@ require (
 	github.com/testcontainers/testcontainers-go v0.43.0
 	github.com/tikv/client-go/v2 v2.0.7
 	github.com/xeipuuv/gojsonschema v1.2.0
-	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.5.1
+	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.5.2
 	github.com/ydb-platform/ydb-go-sdk/v3 v3.141.0
 	go.etcd.io/etcd/client/pkg/v3 v3.6.12
 	go.uber.org/atomic v1.11.0
