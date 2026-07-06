@@ -4544,6 +4544,10 @@ fn set_file_mtime(path: &str, modified_ts_ns: i64) -> std::io::Result<()> {
 /// loop never blocks a Tokio worker thread on disk I/O — a synchronous
 /// `std::fs::File::write_all` per chunk would stall the runtime for the duration
 /// of each write (noticeable for a large `.ecx`/`.dat` on a slow or busy disk).
+///
+/// On any recv/write/flush error the partially written destination is removed
+/// (matching `receive_file` and the Go volume server), so a failed copy never
+/// leaves a truncated shard or checksum file behind for a later reader to trip on.
 async fn drain_copy_stream_to_file(
     stream: &mut tonic::Streaming<volume_server_pb::CopyFileResponse>,
     file: tokio::fs::File,
@@ -4552,23 +4556,35 @@ async fn drain_copy_stream_to_file(
 ) -> Result<u64, Status> {
     use tokio::io::AsyncWriteExt;
     let mut writer = tokio::io::BufWriter::new(file);
-    let mut written: u64 = 0;
-    while let Some(chunk) = stream
-        .message()
-        .await
-        .map_err(|e| Status::internal(format!("recv {}: {}", what, e)))?
-    {
-        writer
-            .write_all(&chunk.file_content)
+    let write_all = async {
+        let mut written: u64 = 0;
+        while let Some(chunk) = stream
+            .message()
             .await
-            .map_err(|e| Status::internal(format!("write {}: {}", file_path, e)))?;
-        written += chunk.file_content.len() as u64;
+            .map_err(|e| Status::internal(format!("recv {}: {}", what, e)))?
+        {
+            writer
+                .write_all(&chunk.file_content)
+                .await
+                .map_err(|e| Status::internal(format!("write {}: {}", file_path, e)))?;
+            written += chunk.file_content.len() as u64;
+        }
+        writer
+            .flush()
+            .await
+            .map_err(|e| Status::internal(format!("flush {}: {}", file_path, e)))?;
+        Ok::<u64, Status>(written)
+    };
+    match write_all.await {
+        Ok(written) => Ok(written),
+        Err(e) => {
+            // Close the handle, then drop the truncated file so it isn't mistaken
+            // for a complete shard/sidecar. Best-effort: the original error wins.
+            drop(writer);
+            let _ = tokio::fs::remove_file(file_path).await;
+            Err(e)
+        }
     }
-    writer
-        .flush()
-        .await
-        .map_err(|e| Status::internal(format!("flush {}: {}", file_path, e)))?;
-    Ok(written)
 }
 
 /// Copy a file from a remote volume server via CopyFile streaming RPC.
