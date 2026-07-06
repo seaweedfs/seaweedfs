@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -15,6 +16,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/constants"
 )
 
 const (
@@ -357,6 +359,18 @@ func (fs *FilerServer) completeTusUpload(ctx context.Context, session *TusSessio
 
 	// Create the final file entry
 	targetPath := util.FullPath(session.TargetPath)
+
+	// Apply the same read-only / WORM protections the normal write path enforces
+	// before landing the entry at the client-chosen target path.
+	if fs.filer.FilerConf.MatchStorageRule(string(targetPath)).ReadOnly {
+		return fmt.Errorf("%w: %s", ErrReadOnly, targetPath)
+	}
+	if wormEnforced, err := fs.wormEnforcedForEntry(ctx, string(targetPath)); err != nil {
+		return fmt.Errorf("check worm: %w", err)
+	} else if wormEnforced {
+		return errors.New(constants.ErrMsgOperationNotPermitted)
+	}
+
 	entry := &filer.Entry{
 		FullPath: targetPath,
 		Attr: filer.Attr{
