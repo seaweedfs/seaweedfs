@@ -1,13 +1,21 @@
 package s3api
 
 import (
+	"context"
+	"fmt"
+	"net"
 	"net/http"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 func reqWith(headers map[string]string) *http.Request {
@@ -239,6 +247,87 @@ func TestSingleStrongETag(t *testing.T) {
 		if single != c.single || (single && got != c.want) {
 			t.Errorf("singleStrongETag(%q) = (%q, %v), want (%q, %v)", c.in, got, single, c.want, c.single)
 		}
+	}
+}
+
+// fakeTxnFiler is a minimal SeaweedFiler gRPC server that records ObjectTransaction
+// calls, standing in for a live filer that a routed write fails over to.
+type fakeTxnFiler struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+	calls int32
+}
+
+func (f *fakeTxnFiler) ObjectTransaction(ctx context.Context, req *filer_pb.ObjectTransactionRequest) (*filer_pb.ObjectTransactionResponse, error) {
+	atomic.AddInt32(&f.calls, 1)
+	return &filer_pb.ObjectTransactionResponse{}, nil
+}
+
+// startFakeTxnFiler serves impl on a random localhost port and returns the S3-style
+// filer address whose ToGrpcAddress resolves back to that port.
+func startFakeTxnFiler(t *testing.T, impl *fakeTxnFiler) pb.ServerAddress {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(srv, impl)
+	go srv.Serve(lis)
+	t.Cleanup(srv.Stop)
+	port := lis.Addr().(*net.TCPAddr).Port
+	return pb.ServerAddress(fmt.Sprintf("127.0.0.1:1.%d", port))
+}
+
+// closedFilerAddress returns an address whose gRPC port has nothing listening,
+// modeling a filer whose ring address is stale after a pod restart.
+func closedFilerAddress(t *testing.T) pb.ServerAddress {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := lis.Addr().(*net.TCPAddr).Port
+	lis.Close()
+	return pb.ServerAddress(fmt.Sprintf("127.0.0.1:1.%d", port))
+}
+
+// A routed write whose owner address is dead fails over to a live filer (which
+// forwards to the real owner by route_key) instead of hanging on the dead owner,
+// so an object write survives a filer pod IP change without an S3 gateway restart.
+func TestObjectTxnFailsOverStaleOwner(t *testing.T) {
+	live := &fakeTxnFiler{}
+	liveAddr := startFakeTxnFiler(t, live)
+	deadOwner := closedFilerAddress(t)
+
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	s3a := &S3ApiServer{
+		option:      &S3ApiServerOption{GrpcDialOption: dialOption},
+		filerClient: wdclient.NewFilerClient([]pb.ServerAddress{liveAddr}, dialOption, ""),
+	}
+	req := &filer_pb.ObjectTransactionRequest{LockKey: "/buckets/b/o", RouteKey: "s3.object.write:/buckets/b/o"}
+
+	// Owner not yet flagged: the first attempt dials it, fails fast, then fails
+	// over to the live filer and flags the owner unreachable.
+	resp, err := s3a.objectTxnOnFiler(deadOwner, req)
+	if err != nil {
+		t.Fatalf("expected failover success, got %v", err)
+	}
+	if resp == nil || resp.Error != "" {
+		t.Fatalf("unexpected response %+v", resp)
+	}
+	if got := atomic.LoadInt32(&live.calls); got != 1 {
+		t.Fatalf("live filer calls = %d, want 1", got)
+	}
+	if !s3a.ownerRecentlyUnreachable(deadOwner) {
+		t.Fatal("dead owner should be flagged unreachable after the failed dial")
+	}
+
+	// Once flagged, the owner is skipped entirely and the write still lands.
+	if _, err := s3a.objectTxnOnFiler(deadOwner, req); err != nil {
+		t.Fatalf("expected success while owner flagged, got %v", err)
+	}
+	if got := atomic.LoadInt32(&live.calls); got != 2 {
+		t.Fatalf("live filer calls = %d, want 2", got)
 	}
 }
 
