@@ -148,13 +148,29 @@ func singleStrongETag(v string) (string, bool) {
 	return strings.Trim(v, `"`), true
 }
 
+// objectTxnOnFiler applies a routed transaction, preferring the object's owner
+// filer but failing over to a live filer when the owner is unreachable, so a
+// restarted filer's stale ring address (e.g. a rolled K8s pod's old IP) can't hang
+// the write. The reached filer forwards to the real owner by route_key, keeping its
+// per-path lock authoritative. Mirrors getObjectEntryRoutedByKey on the read path.
 func (s3a *S3ApiServer) objectTxnOnFiler(owner pb.ServerAddress, req *filer_pb.ObjectTransactionRequest) (*filer_pb.ObjectTransactionResponse, error) {
 	var resp *filer_pb.ObjectTransactionResponse
-	err := pb.WithFilerClient(false, 0, owner, s3a.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	txn := func(client filer_pb.SeaweedFilerClient) error {
 		var e error
 		resp, e = client.ObjectTransaction(context.Background(), req)
 		return e
-	})
+	}
+	if s3a.filerClient == nil {
+		err := pb.WithFilerClient(false, 0, owner, s3a.option.GrpcDialOption, txn)
+		return resp, err
+	}
+	// Skip an owner whose recent write hit a transport error so a dead/stale
+	// address isn't re-dialed every request.
+	preferred := owner
+	if s3a.ownerRecentlyUnreachable(owner) {
+		preferred = ""
+	}
+	err := s3a.withFilerClientFailover(preferred, false, txn)
 	return resp, err
 }
 
