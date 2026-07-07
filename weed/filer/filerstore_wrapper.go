@@ -151,7 +151,11 @@ func (fsw *FilerStoreWrapper) InsertEntry(ctx context.Context, entry *Entry) err
 		return err
 	}
 
-	return actualStore.InsertEntry(ctx, entry)
+	if err := actualStore.InsertEntry(ctx, entry); err != nil {
+		return err
+	}
+	fsw.recordInodeIndexWrite(ctx, "InsertEntry", entry.FullPath, entry.Attr.Inode)
+	return nil
 }
 
 // InsertEntryKnownAbsent skips the pre-insert FindEntry path when the caller has
@@ -179,7 +183,11 @@ func (fsw *FilerStoreWrapper) InsertEntryKnownAbsent(ctx context.Context, entry 
 		}
 	}
 
-	return actualStore.InsertEntry(ctx, entry)
+	if err := actualStore.InsertEntry(ctx, entry); err != nil {
+		return err
+	}
+	fsw.recordInodeIndexWrite(ctx, "InsertEntryKnownAbsent", entry.FullPath, entry.Attr.Inode)
+	return nil
 }
 
 func (fsw *FilerStoreWrapper) UpdateEntry(ctx context.Context, entry *Entry) error {
@@ -206,7 +214,11 @@ func (fsw *FilerStoreWrapper) UpdateEntry(ctx context.Context, entry *Entry) err
 		return err
 	}
 
-	return actualStore.UpdateEntry(ctx, entry)
+	if err := actualStore.UpdateEntry(ctx, entry); err != nil {
+		return err
+	}
+	fsw.recordInodeIndexWrite(ctx, "UpdateEntry", entry.FullPath, entry.Attr.Inode)
+	return nil
 }
 
 func normalizeEntryMimeForStore(entry *Entry) {
@@ -258,6 +270,8 @@ func (fsw *FilerStoreWrapper) DeleteEntry(ctx context.Context, fp util.FullPath)
 	if findErr == filer_pb.ErrNotFound || existingEntry == nil {
 		return nil
 	}
+	inode := existingEntry.Attr.Inode
+	fullPath := existingEntry.FullPath
 	if len(existingEntry.HardLinkId) != 0 {
 		// remove hard link
 		op := ctx.Value("OP")
@@ -272,7 +286,11 @@ func (fsw *FilerStoreWrapper) DeleteEntry(ctx context.Context, fp util.FullPath)
 		}
 	}
 
-	return actualStore.DeleteEntry(ctx, fp)
+	if err := actualStore.DeleteEntry(ctx, fp); err != nil {
+		return err
+	}
+	fsw.recordInodeIndexRemoval(ctx, "DeleteEntry", fullPath, inode)
+	return nil
 }
 
 func (fsw *FilerStoreWrapper) DeleteOneEntry(ctx context.Context, existingEntry *Entry) (err error) {
@@ -280,6 +298,8 @@ func (fsw *FilerStoreWrapper) DeleteOneEntry(ctx context.Context, existingEntry 
 		return err
 	}
 	ctx = context.WithoutCancel(ctx)
+	fullPath := existingEntry.FullPath
+	inode := existingEntry.Attr.Inode
 	actualStore := fsw.getActualStore(existingEntry.FullPath)
 	stats.FilerStoreCounter.WithLabelValues(actualStore.GetName(), "delete").Inc()
 	start := time.Now()
@@ -302,7 +322,11 @@ func (fsw *FilerStoreWrapper) DeleteOneEntry(ctx context.Context, existingEntry 
 		}
 	}
 
-	return actualStore.DeleteEntry(ctx, existingEntry.FullPath)
+	if err := actualStore.DeleteEntry(ctx, existingEntry.FullPath); err != nil {
+		return err
+	}
+	fsw.recordInodeIndexRemoval(ctx, "DeleteOneEntry", fullPath, inode)
+	return nil
 }
 
 func (fsw *FilerStoreWrapper) DeleteFolderChildren(ctx context.Context, fp util.FullPath) (err error) {
@@ -317,7 +341,20 @@ func (fsw *FilerStoreWrapper) DeleteFolderChildren(ctx context.Context, fp util.
 		stats.FilerStoreHistogram.WithLabelValues(actualStore.GetName(), "deleteFolderChildren").Observe(time.Since(start).Seconds())
 	}()
 
-	return actualStore.DeleteFolderChildren(ctx, fp)
+	collected, collectErr := fsw.collectInodeIndexEntries(ctx, fp)
+	if collectErr != nil {
+		// Index collection is best-effort: a failure here only prevents inode
+		// index housekeeping, not the directory removal itself.
+		glog.WarningfCtx(ctx, "collectInodeIndexEntries %s: %v; deleting folder children without index cleanup", fp, collectErr)
+		collected = nil
+	}
+	if err := actualStore.DeleteFolderChildren(ctx, fp); err != nil {
+		return err
+	}
+	for _, entry := range collected {
+		fsw.recordInodeIndexRemoval(ctx, "DeleteFolderChildren", entry.path, entry.inode)
+	}
+	return nil
 }
 
 func (fsw *FilerStoreWrapper) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc ListEachEntryFunc) (string, error) {
