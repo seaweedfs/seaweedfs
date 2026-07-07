@@ -17,7 +17,6 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/kms"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/cors"
@@ -587,8 +586,7 @@ func (s3a *S3ApiServer) patchBucketEntry(bucket string, m *filer_pb.ObjectMutati
 		RouteKey:  objectWriteRouteKeyPrefix + bucketPath,
 		Mutations: []*filer_pb.ObjectMutation{m},
 	}
-	txn := func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.ObjectTransaction(context.Background(), req)
+	respErr := func(resp *filer_pb.ObjectTransactionResponse, err error) error {
 		if err != nil {
 			return err
 		}
@@ -598,11 +596,13 @@ func (s3a *S3ApiServer) patchBucketEntry(bucket string, m *filer_pb.ObjectMutati
 		return nil
 	}
 	if s3a.objectWriteLockClient != nil {
-		if owner := s3a.objectWriteLockClient.PrimaryForKey(objectWriteRouteKeyPrefix + bucketPath); owner != "" {
-			return pb.WithFilerClient(false, 0, owner, s3a.option.GrpcDialOption, txn)
+		if owner := s3a.objectWriteLockClient.PrimaryForKey(req.RouteKey); owner != "" {
+			return respErr(s3a.objectTxnOnFiler(owner, req))
 		}
 	}
-	return s3a.WithFilerClient(false, txn)
+	return s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return respErr(client.ObjectTransaction(context.Background(), req))
+	})
 }
 
 // isVersioningEnabled checks if versioning is enabled for a bucket (with caching)
