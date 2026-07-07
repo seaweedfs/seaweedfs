@@ -1076,6 +1076,19 @@ func getSignedHeaders(signedHeaders http.Header) string {
 // if object matches reserved string, no need to encode them
 var reservedObjectNames = regexp.MustCompile("^[a-zA-Z0-9-_.~/]+$")
 
+// pathHexTable is used for manual percent-encoding in encodePath to avoid
+// the allocations of hex.EncodeToString + strings.ToUpper.
+const pathHexTable = "0123456789ABCDEF"
+
+// isPathUnreservedChar reports whether s is an RFC 3986 §2.3 unreserved
+// character (or '/') that does not need percent-encoding in an object path.
+func isPathUnreservedChar(s rune) bool {
+	return 'A' <= s && s <= 'Z' ||
+		'a' <= s && s <= 'z' ||
+		'0' <= s && s <= '9' ||
+		s == '-' || s == '_' || s == '.' || s == '~' || s == '/'
+}
+
 // encodePath encodes the strings from UTF-8 byte representations to HTML hex escape sequences
 //
 // This is necessary since regular url.Parse() and url.Encode() functions do not support UTF-8
@@ -1087,29 +1100,41 @@ func encodePath(pathName string) string {
 	if reservedObjectNames.MatchString(pathName) {
 		return pathName
 	}
-	var encodedPathname string
+
+	// Fast path: if nothing needs encoding, return the input unchanged
+	// (zero allocation). This is the common case for ASCII object keys.
+	needEncode := false
 	for _, s := range pathName {
-		if 'A' <= s && s <= 'Z' || 'a' <= s && s <= 'z' || '0' <= s && s <= '9' { // §2.3 Unreserved characters (mark)
-			encodedPathname = encodedPathname + string(s)
+		if !isPathUnreservedChar(s) {
+			needEncode = true
+			break
+		}
+	}
+	if !needEncode {
+		return pathName
+	}
+
+	// Slow path: preallocated Builder + manual hex encoding.
+	var buf strings.Builder
+	buf.Grow(len(pathName) * 3) // encoded form is at most 3x the byte length
+	for _, s := range pathName {
+		if isPathUnreservedChar(s) { // §2.3 Unreserved characters (mark)
+			buf.WriteRune(s)
 		} else {
-			switch s {
-			case '-', '_', '.', '~', '/': // §2.3 Unreserved characters (mark)
-				encodedPathname = encodedPathname + string(s)
-			default:
-				runeLen := utf8.RuneLen(s)
-				if runeLen < 0 {
-					return pathName
-				}
-				u := make([]byte, runeLen)
-				utf8.EncodeRune(u, s)
-				for _, r := range u {
-					hex := hex.EncodeToString([]byte{r})
-					encodedPathname = encodedPathname + "%" + strings.ToUpper(hex)
-				}
+			runeLen := utf8.RuneLen(s)
+			if runeLen < 0 {
+				return pathName
+			}
+			u := make([]byte, runeLen)
+			utf8.EncodeRune(u, s)
+			for _, r := range u {
+				buf.WriteByte('%')
+				buf.WriteByte(pathHexTable[r>>4])
+				buf.WriteByte(pathHexTable[r&0x0f])
 			}
 		}
 	}
-	return encodedPathname
+	return buf.String()
 }
 
 // getSignature final signature in hexadecimal form.
