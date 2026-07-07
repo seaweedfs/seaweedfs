@@ -1097,12 +1097,10 @@ func isPathUnreservedChar(s rune) bool {
 // This function on the other hand is a direct replacement for url.Encode() technique to support
 // pretty much every UTF-8 character.
 func encodePath(pathName string) string {
-	if reservedObjectNames.MatchString(pathName) {
-		return pathName
-	}
-
-	// Fast path: if nothing needs encoding, return the input unchanged
-	// (zero allocation). This is the common case for ASCII object keys.
+	// Fast path: if every character is unreserved, the encoded form equals the
+	// input, so return it unchanged with zero allocation. This is the common
+	// case for ASCII object keys and avoids the regexp engine on the SigV4 hot
+	// path, where encodePath runs on every authenticated request.
 	needEncode := false
 	for _, s := range pathName {
 		if !isPathUnreservedChar(s) {
