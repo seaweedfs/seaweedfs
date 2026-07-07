@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -15,6 +16,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/constants"
 )
 
 const (
@@ -25,6 +27,11 @@ const (
 	TusChunkExt      = ".chunk"
 	TusExtensions    = "creation,creation-with-upload,termination"
 )
+
+// ErrWormEnforced marks a TUS completion rejected because the target entry is
+// WORM-protected. It shares the message the normal write path uses so it maps to
+// the same client-facing status.
+var ErrWormEnforced = errors.New(constants.ErrMsgOperationNotPermitted)
 
 // TusSession represents an in-progress TUS upload session
 type TusSession struct {
@@ -357,6 +364,18 @@ func (fs *FilerServer) completeTusUpload(ctx context.Context, session *TusSessio
 
 	// Create the final file entry
 	targetPath := util.FullPath(session.TargetPath)
+
+	// Apply the same read-only / WORM protections the normal write path enforces
+	// before landing the entry at the client-chosen target path.
+	if fs.filer.FilerConf.MatchStorageRule(string(targetPath)).ReadOnly {
+		return fmt.Errorf("%w: %s", ErrReadOnly, targetPath)
+	}
+	if wormEnforced, err := fs.wormEnforcedForEntry(ctx, string(targetPath)); err != nil {
+		return fmt.Errorf("check worm: %w", err)
+	} else if wormEnforced {
+		return ErrWormEnforced
+	}
+
 	entry := &filer.Entry{
 		FullPath: targetPath,
 		Attr: filer.Attr{
