@@ -1047,16 +1047,23 @@ func (fs *seaweedFileSystem) lookupGeneration(ctx context.Context, inode uint64)
 		return kvErr
 	})
 	if err != nil {
-		return 0, err
+		// Index store unreachable: fall back to the initial generation so that mount
+		// and basic operations still work without the opt-in inode index. Handles
+		// will not survive a filer/generation change, but the gateway remains
+		// functional — consistent with filehandle.go's FromHandle fallback.
+		return filer.InodeIndexInitialGeneration, nil
 	}
 	if resp == nil {
-		return 0, ErrStaleHandle
+		return filer.InodeIndexInitialGeneration, nil
 	}
 	if resp.GetError() != "" {
-		return 0, errors.New(resp.GetError())
+		// KV store present but key absent: index not written for this entry
+		// (e.g. -nfs.inodeIndexPrefixes not configured, or entry created before
+		// the flag was enabled). Gracefully degrade instead of ESTALE.
+		return filer.InodeIndexInitialGeneration, nil
 	}
 	if len(resp.GetValue()) == 0 {
-		return 0, ErrStaleHandle
+		return filer.InodeIndexInitialGeneration, nil
 	}
 
 	record, err := filer.DecodeInodeIndexRecord(resp.GetValue())

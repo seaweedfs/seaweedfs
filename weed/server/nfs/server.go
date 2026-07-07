@@ -152,7 +152,7 @@ func (s *Server) logMountHint() {
 		glog.V(0).Infof("(MOUNT v3 is served over both TCP and UDP, so no mountproto override is needed.)")
 		return
 	}
-	glog.V(0).Infof("mount example (bypasses portmap): mount -t nfs -o nfsvers=3,nolock,noacl,port=%d,mountport=%d,proto=tcp,mountproto=tcp <host>:%s <mountpoint>",
+	glog.V(0).Infof("mount example (bypasses portmap): mount -t nfs -o nfsvers=3,nolock,noacl,port=%d,mountport=%d,proto=tcp,mountproto=udp <host>:%s <mountpoint>",
 		s.option.Port, s.option.Port, exportPath)
 	glog.V(0).Infof("tip: pass -portmap.bind to enable the built-in portmap responder on port 111 so plain `mount -t nfs host:%s /mnt` works.", exportPath)
 }
