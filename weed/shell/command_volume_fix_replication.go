@@ -6,6 +6,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"slices"
@@ -49,8 +50,10 @@ func (c *commandVolumeFixReplication) Help() string {
 	Note:
 		* each time this will only add back one replica for each volume id that is under replicated.
 		  If there are multiple replicas are missing, e.g. replica count is > 2, you may need to run this multiple times.
-		* do not run this too quickly within seconds, since the new volume replica may take a few seconds 
+		* do not run this too quickly within seconds, since the new volume replica may take a few seconds
 		  to register itself to the master.
+		* under-replicated volumes are copied up to -maxParallelization at a time, with at most
+		  -maxParallelizationPerServer concurrent copies onto any single destination server.
 
 `
 }
@@ -70,6 +73,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 	doDelete := volFixReplicationCommand.Bool("doDelete", true, "Also delete over-replicated volumes besides fixing under-replication")
 	doCheck := volFixReplicationCommand.Bool("doCheck", true, "Also check synchronization before deleting")
 	maxParallelization := volFixReplicationCommand.Int("maxParallelization", DefaultMaxParallelization, "run up to X tasks in parallel, whenever possible")
+	maxParallelizationPerServer := volFixReplicationCommand.Int("maxParallelizationPerServer", 1, "run up to X volume copies onto the same destination server in parallel")
 	retryCount := volFixReplicationCommand.Int("retry", 5, "how many times to retry")
 	volumesPerStep := volFixReplicationCommand.Int("volumesPerStep", 0, "how many volumes to fix in one cycle")
 
@@ -154,7 +158,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 		ewg.Reset()
 		ewg.Add(func() error {
 			// find the most underpopulated data nodes
-			fixedVolumeReplicas, err = c.fixUnderReplicatedVolumes(commandEnv, writer, *applyChanges, underReplicatedVolumeIds, volumeReplicas, allLocations, *retryCount, *volumesPerStep)
+			fixedVolumeReplicas, err = c.fixUnderReplicatedVolumes(commandEnv, writer, *applyChanges, underReplicatedVolumeIds, volumeReplicas, allLocations, *retryCount, *volumesPerStep, *maxParallelization, *maxParallelizationPerServer)
 			return err
 		})
 		if *doDelete {
@@ -336,7 +340,7 @@ func (c *commandVolumeFixReplication) deleteOneVolume(commandEnv *CommandEnv, wr
 	return nil
 }
 
-func (c *commandVolumeFixReplication) fixUnderReplicatedVolumes(commandEnv *CommandEnv, writer io.Writer, applyChanges bool, volumeIds []uint32, volumeReplicas map[uint32][]*VolumeReplica, allLocations []location, retryCount int, volumesPerStep int) (fixedVolumes map[string]int, err error) {
+func (c *commandVolumeFixReplication) fixUnderReplicatedVolumes(commandEnv *CommandEnv, writer io.Writer, applyChanges bool, volumeIds []uint32, volumeReplicas map[uint32][]*VolumeReplica, allLocations []location, retryCount int, volumesPerStep int, maxParallelization int, maxParallelizationPerServer int) (fixedVolumes map[string]int, err error) {
 	fixedVolumes = map[string]int{}
 
 	if len(volumeIds) == 0 {
@@ -346,61 +350,132 @@ func (c *commandVolumeFixReplication) fixUnderReplicatedVolumes(commandEnv *Comm
 	if len(volumeIds) > volumesPerStep && volumesPerStep > 0 {
 		volumeIds = volumeIds[0:volumesPerStep]
 	}
+
+	scheduler := newVolumeCopyScheduler(maxParallelizationPerServer)
+	var fixedVolumesMu sync.Mutex
+	ewg := NewErrorWaitGroup(maxParallelization)
 	for _, vid := range volumeIds {
-		for i := 0; i < retryCount+1; i++ {
-			var copied bool
-			if copied, err = c.fixOneUnderReplicatedVolume(commandEnv, writer, applyChanges, volumeReplicas, vid, allLocations); err == nil {
-				if applyChanges && copied {
-					fixedVolumes[strconv.FormatUint(uint64(vid), 10)] = len(volumeReplicas[vid])
+		ewg.Add(func() error {
+			for i := 0; i < retryCount+1; i++ {
+				if copied, err := c.fixOneUnderReplicatedVolume(commandEnv, writer, applyChanges, volumeReplicas, vid, allLocations, scheduler); err == nil {
+					if applyChanges && copied {
+						fixedVolumesMu.Lock()
+						fixedVolumes[strconv.FormatUint(uint64(vid), 10)] = len(volumeReplicas[vid])
+						fixedVolumesMu.Unlock()
+					}
+					break
+				} else {
+					fmt.Fprintf(writer, "fixing under replicated volume %d: %v\n", vid, err)
 				}
-				break
-			} else {
-				fmt.Fprintf(writer, "fixing under replicated volume %d: %v\n", vid, err)
 			}
-		}
+			return nil
+		})
 	}
-	return fixedVolumes, nil
+	return fixedVolumes, ewg.Wait()
 }
 
-func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *CommandEnv, writer io.Writer, applyChanges bool, volumeReplicas map[uint32][]*VolumeReplica, vid uint32, allLocations []location) (bool, error) {
+// volumeCopyScheduler serializes destination selection for concurrent volume
+// copies: selection and free-slot accounting are atomic so parallel fixes see
+// each other's reservations, and the per-server cap keeps many simultaneous
+// copies from swamping one destination's disks.
+type volumeCopyScheduler struct {
+	mu           sync.Mutex
+	cond         *sync.Cond
+	inflight     map[string]int // destination dataNode.Id -> copies in flight
+	maxPerServer int
+}
+
+func newVolumeCopyScheduler(maxPerServer int) *volumeCopyScheduler {
+	if maxPerServer <= 0 {
+		maxPerServer = 1
+	}
+	s := &volumeCopyScheduler{
+		inflight:     make(map[string]int),
+		maxPerServer: maxPerServer,
+	}
+	s.cond = sync.NewCond(&s.mu)
+	return s
+}
+
+// reserveTarget picks the emptiest data node satisfying the replica placement
+// and reserves a volume slot on it. When every eligible destination is at the
+// per-server copy cap it waits for a copy to finish instead of failing.
+// Returns nil only when no data node can accept the replica at all. With
+// countInflight=false (simulation) the slot is reserved but no copy is
+// counted in flight.
+func (s *volumeCopyScheduler) reserveTarget(replicaPlacement *super_block.ReplicaPlacement, replicas []*VolumeReplica, allLocations []location, diskType string, countInflight bool) *location {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	fn := capacityByFreeVolumeCount(types.ToDiskType(diskType))
+	for {
+		keepDataNodesSorted(allLocations, types.ToDiskType(diskType))
+		eligibleButBusy := false
+		for _, dst := range allLocations {
+			// check whether data nodes satisfy the constraints
+			if fn(dst.dataNode) <= 0 || !satisfyReplicaPlacement(replicaPlacement, replicas, dst) {
+				continue
+			}
+			if countInflight && s.inflight[dst.dataNode.Id] >= s.maxPerServer {
+				eligibleButBusy = true
+				continue
+			}
+			addVolumeCount(dst.dataNode.DiskInfos[diskType], 1)
+			if countInflight {
+				s.inflight[dst.dataNode.Id]++
+			}
+			return &dst
+		}
+		if !eligibleButBusy {
+			return nil
+		}
+		s.cond.Wait()
+	}
+}
+
+// releaseTarget ends a copy counted by reserveTarget. A failed copy also
+// returns the reserved volume slot, so retries do not drain the topology's
+// free-slot accounting.
+func (s *volumeCopyScheduler) releaseTarget(dst *location, diskType string, copied bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.inflight[dst.dataNode.Id]--
+	if s.inflight[dst.dataNode.Id] <= 0 {
+		delete(s.inflight, dst.dataNode.Id)
+	}
+	if !copied {
+		addVolumeCount(dst.dataNode.DiskInfos[diskType], -1)
+	}
+	s.cond.Broadcast()
+}
+
+func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *CommandEnv, writer io.Writer, applyChanges bool, volumeReplicas map[uint32][]*VolumeReplica, vid uint32, allLocations []location, scheduler *volumeCopyScheduler) (bool, error) {
 	replicas := volumeReplicas[vid]
 	replica := pickOneReplicaToCopyFrom(replicas)
 	replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(replica.info.ReplicaPlacement))
-	foundNewLocation := false
-	keepDataNodesSorted(allLocations, types.ToDiskType(replica.info.DiskType))
-	fn := capacityByFreeVolumeCount(types.ToDiskType(replica.info.DiskType))
-	for _, dst := range allLocations {
-		// check whether data nodes satisfy the constraints
-		if fn(dst.dataNode) > 0 && satisfyReplicaPlacement(replicaPlacement, replicas, dst) {
-			// ask the volume server to replicate the volume
-			foundNewLocation = true
-			fmt.Fprintf(writer, "replicating volume %d %s from %s to dataNode %s ...\n", replica.info.Id, replicaPlacement, replica.location.dataNode.Id, dst.dataNode.Id)
 
-			if !applyChanges {
-				// adjust volume count
-				addVolumeCount(dst.dataNode.DiskInfos[replica.info.DiskType], 1)
-				return true, nil
-			}
-
-			err := replicateVolumeToServer(commandEnv.option.GrpcDialOption, writer, needle.VolumeId(replica.info.Id),
-				pb.NewServerAddressFromDataNode(replica.location.dataNode),
-				pb.NewServerAddressFromDataNode(dst.dataNode),
-				replica.info.DiskType)
-
-			if err != nil {
-				return false, err
-			}
-
-			// adjust volume count
-			addVolumeCount(dst.dataNode.DiskInfos[replica.info.DiskType], 1)
-			return true, nil
-		}
-	}
-
-	if !foundNewLocation {
+	dst := scheduler.reserveTarget(replicaPlacement, replicas, allLocations, replica.info.DiskType, applyChanges)
+	if dst == nil {
 		fmt.Fprintf(writer, "failed to place volume %d replica as %s, existing:%+v\n", replica.info.Id, replicaPlacement, len(replicas))
+		return false, nil
 	}
-	return false, nil
+
+	// ask the volume server to replicate the volume
+	fmt.Fprintf(writer, "replicating volume %d %s from %s to dataNode %s ...\n", replica.info.Id, replicaPlacement, replica.location.dataNode.Id, dst.dataNode.Id)
+
+	if !applyChanges {
+		return true, nil
+	}
+
+	err := replicateVolumeToServer(commandEnv.option.GrpcDialOption, writer, needle.VolumeId(replica.info.Id),
+		pb.NewServerAddressFromDataNode(replica.location.dataNode),
+		pb.NewServerAddressFromDataNode(dst.dataNode),
+		replica.info.DiskType)
+	scheduler.releaseTarget(dst, replica.info.DiskType, err == nil)
+	if err != nil {
+		return false, err
+	}
+
+	return true, nil
 }
 
 func addVolumeCount(info *master_pb.DiskInfo, count int) {
