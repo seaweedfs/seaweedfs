@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class FilerGrpcClient {
@@ -36,6 +37,8 @@ public class FilerGrpcClient {
     public final int VOLUME_SERVER_ACCESS_FILER_PROXY = 2;
     public final Map<String, FilerProto.Locations> vidLocations = new HashMap<>();
     protected int randomClientId;
+
+    private static final AtomicBoolean plaintextBasicAuthWarned = new AtomicBoolean(false);
 
     // Connection pool to handle concurrent requests
     private static final int CHANNEL_POOL_SIZE = 4;
@@ -98,6 +101,14 @@ public class FilerGrpcClient {
             if (!cn.isEmpty()) {
                 builder.overrideAuthority(cn);
             }
+        }
+
+        String basicAuthHeader = FilerSecurityContext.getBasicAuthHeaderValue();
+        if (basicAuthHeader != null) {
+            if (sslContext == null && plaintextBasicAuthWarned.compareAndSet(false, true)) {
+                logger.warn("Basic Auth is enabled on a plaintext gRPC channel; credentials are sent in cleartext. Use TLS to the proxy.");
+            }
+            builder.intercept(new BasicAuthInterceptor(basicAuthHeader));
         }
         return builder;
     }

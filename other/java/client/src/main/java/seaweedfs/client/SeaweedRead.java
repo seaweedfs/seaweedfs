@@ -161,6 +161,11 @@ public class SeaweedRead {
 
         request.setHeader(HttpHeaders.ACCEPT_ENCODING, "gzip");
 
+        String basicAuthHeader = FilerSecurityContext.getBasicAuthHeaderValue();
+        if (basicAuthHeader != null) {
+            request.setHeader(HttpHeaders.AUTHORIZATION, basicAuthHeader);
+        }
+
         byte[] data = null;
 
         CloseableHttpResponse response = SeaweedUtil.getClosableHttpClient().execute(request);

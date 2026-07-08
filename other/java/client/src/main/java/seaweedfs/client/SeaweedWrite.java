@@ -179,7 +179,14 @@ public class SeaweedWrite {
 
         HttpPost post = new HttpPost(targetUrl);
         if (auth != null && auth.length() != 0) {
+            // Volume JWT and Basic Auth both use the Authorization header; the JWT wins
+            // when present. Front the volume with a JWT-free path to use Basic Auth here.
             post.addHeader("Authorization", "BEARER " + auth);
+        } else {
+            String basicAuthHeader = FilerSecurityContext.getBasicAuthHeaderValue();
+            if (basicAuthHeader != null) {
+                post.addHeader("Authorization", basicAuthHeader);
+            }
         }
         post.addHeader("Content-MD5", Base64.getEncoder().encodeToString(md.digest()));
 
