@@ -94,6 +94,12 @@ type LogBuffer struct {
 	hasOffsets bool
 	// Disk chunk cache for historical data reads
 	diskChunkCache *DiskChunkCache
+	// curSnap is a GC-owned copy of the current window's append-only prefix
+	// buf[:len(curSnap)], shared by all readers so each byte is copied once per
+	// window instead of once per reader. Extended lazily under curSnapMu; reset
+	// at seal. Existing holders keep their prefix slices, which never mutate.
+	curSnapMu sync.Mutex
+	curSnap   []byte
 	sync.RWMutex
 }
 
@@ -607,6 +613,13 @@ func (logBuffer *LogBuffer) copyToFlushInternal(withCallback bool) *dataToFlush 
 		// CRITICAL: logBuffer.offset is the "next offset to assign", so last offset in buffer is offset-1
 		lastOffsetInBuffer := logBuffer.offset - 1
 		logBuffer.buf = logBuffer.prevBuffers.SealBuffer(logBuffer.startTime, logBuffer.stopTime, logBuffer.buf, logBuffer.pos, logBuffer.bufferStartOffset, lastOffsetInBuffer)
+		// Hand a fully extended prefix snapshot to the sealed slot so sealed
+		// readers reuse it instead of re-copying the window; reset for the next
+		// window either way (holders keep their immutable prefix slices).
+		if len(logBuffer.curSnap) == logBuffer.pos {
+			logBuffer.prevBuffers.buffers[len(logBuffer.prevBuffers.buffers)-1].snapshot = logBuffer.curSnap[:logBuffer.pos:logBuffer.pos]
+		}
+		logBuffer.curSnap = nil
 		// Use zero time (time.Time{}) not epoch time (time.Unix(0,0))
 		// Epoch time (1970) breaks time-based reads after flush
 		logBuffer.startTime = time.Time{}
@@ -702,7 +715,11 @@ func (d *dataToFlush) releaseMemory() {
 	bufferPool.Put(d.data)
 }
 
-func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bufferCopy *bytes.Buffer, batchIndex int64, err error) {
+// ReadFromBuffer returns the in-memory log data at lastReadPosition. isPooled
+// reports whether the returned buffer is a private pooled copy the caller must
+// return via ReleaseMemory; when false the buffer wraps a snapshot shared with
+// other readers and must not be released (or written to).
+func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bufferCopy *bytes.Buffer, batchIndex int64, isPooled bool, err error) {
 	logBuffer.RLock()
 	defer logBuffer.RUnlock()
 
@@ -729,19 +746,19 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 				// Case 3: try disk read (historical data might exist)
 				if requestedOffset < logBuffer.offset {
 					// Data was in the buffer range but buffer is now empty = flushed to disk
-					return nil, -2, ResumeFromDiskError
+					return nil, -2, false, ResumeFromDiskError
 				}
 				// requestedOffset == logBuffer.offset: Current position
 				// CRITICAL: For subscribers starting from offset 0, try disk read first
 				// (historical data might exist from previous runs)
 				if requestedOffset == 0 && logBuffer.bufferStartOffset == 0 && logBuffer.offset == 0 {
 					// Initial state: try disk read before waiting for new data
-					return nil, -2, ResumeFromDiskError
+					return nil, -2, false, ResumeFromDiskError
 				}
 				// Otherwise, wait for new data to arrive
-				return nil, logBuffer.offset, nil
+				return nil, logBuffer.offset, false, nil
 			}
-			return copiedBytes(logBuffer.buf[:logBuffer.pos]), logBuffer.offset, nil
+			return logBuffer.currentSnapshotView(0, logBuffer.pos), logBuffer.offset, false, nil
 		}
 
 		// Check previous buffers for the requested offset
@@ -751,9 +768,9 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 				// (prevBuffers are created when buffer is flushed)
 				if buf.size == 0 {
 					// Empty prevBuffer covering this offset means data was flushed
-					return nil, -2, ResumeFromDiskError
+					return nil, -2, false, ResumeFromDiskError
 				}
-				return copiedBytes(buf.buf[:buf.size]), buf.offset, nil
+				return sharedBufferView(buf, 0), buf.offset, false, nil
 			}
 		}
 
@@ -761,16 +778,16 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 		if requestedOffset < logBuffer.bufferStartOffset {
 			// Data not in current buffers - must be on disk (flushed or never existed)
 			// Return ResumeFromDiskError to trigger disk read
-			return nil, -2, ResumeFromDiskError
+			return nil, -2, false, ResumeFromDiskError
 		}
 
 		if requestedOffset > logBuffer.offset {
 			// Future data, not available yet
-			return nil, logBuffer.offset, nil
+			return nil, logBuffer.offset, false, nil
 		}
 
 		// Offset not found - return nil
-		return nil, logBuffer.offset, nil
+		return nil, logBuffer.offset, false, nil
 	}
 
 	// TIMESTAMP-BASED READ (original logic)
@@ -799,7 +816,7 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 		// Buffer is empty - return ResumeFromDiskError so caller can read from disk
 		// This fixes issue #4977 where SubscribeMetadata stalls because
 		// MetaAggregator.MetaLogBuffer is empty in single-filer setups
-		return nil, -2, ResumeFromDiskError
+		return nil, -2, false, ResumeFromDiskError
 	} else if lastReadPosition.Time.Before(tsMemory) { // case 2.3
 		// For time-based reads, only check timestamp for disk reads
 		// Don't use offset comparisons as they're not meaningful for time-based subscriptions
@@ -813,7 +830,7 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 			// Treat first read with sentinel/zero offset as inclusive of earliest in-memory data
 		} else {
 			// Data not in memory buffers - read from disk
-			return nil, -2, ResumeFromDiskError
+			return nil, -2, false, ResumeFromDiskError
 		}
 	}
 
@@ -822,17 +839,17 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 	if lastReadPosition.Time.Equal(logBuffer.stopTime) && !logBuffer.stopTime.IsZero() {
 		// For first-read sentinel/zero offset, allow inclusive read at the boundary
 		if lastReadPosition.Offset > 0 {
-			return nil, logBuffer.offset, nil
+			return nil, logBuffer.offset, false, nil
 		}
 	}
 	if lastReadPosition.Time.After(logBuffer.stopTime) && !logBuffer.stopTime.IsZero() {
-		return nil, logBuffer.offset, nil
+		return nil, logBuffer.offset, false, nil
 	}
 	// Also check prevBuffers when current buffer is empty (startTime is zero)
 	if lastReadPosition.Time.Before(logBuffer.startTime) || logBuffer.startTime.IsZero() {
 		for _, buf := range logBuffer.prevBuffers.buffers {
 			if buf.startTime.After(lastReadPosition.Time) {
-				return copiedBytes(buf.buf[:buf.size]), buf.offset, nil
+				return sharedBufferView(buf, 0), buf.offset, false, nil
 			}
 			if !buf.startTime.After(lastReadPosition.Time) && buf.stopTime.After(lastReadPosition.Time) {
 				searchTime := lastReadPosition.Time
@@ -843,19 +860,19 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 				if err != nil {
 					// Buffer corruption detected - return error wrapped with ErrBufferCorrupted
 					glog.Errorf("ReadFromBuffer: buffer corruption in prevBuffer: %v", err)
-					return nil, -1, fmt.Errorf("%w: %v", ErrBufferCorrupted, err)
+					return nil, -1, false, fmt.Errorf("%w: %v", ErrBufferCorrupted, err)
 				}
 				if pos < buf.size {
-					return copiedBytes(buf.buf[pos:buf.size]), buf.offset, nil
+					return sharedBufferView(buf, pos), buf.offset, false, nil
 				}
 			}
 		}
 		// If current buffer is not empty, return it
 		if logBuffer.pos > 0 {
-			return copiedBytes(logBuffer.buf[:logBuffer.pos]), logBuffer.offset, nil
+			return logBuffer.currentSnapshotView(0, logBuffer.pos), logBuffer.offset, false, nil
 		}
 		// Buffer is empty and no data in prevBuffers - wait for new data
-		return nil, logBuffer.offset, nil
+		return nil, logBuffer.offset, false, nil
 	}
 
 	lastTs := lastReadPosition.Time.UnixNano()
@@ -887,7 +904,7 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 		if err != nil {
 			// Buffer corruption detected in binary search
 			glog.Errorf("ReadFromBuffer: buffer corruption at idx[%d] pos %d: %v", mid, pos, err)
-			return nil, -1, fmt.Errorf("%w: %v", ErrBufferCorrupted, err)
+			return nil, -1, false, fmt.Errorf("%w: %v", ErrBufferCorrupted, err)
 		}
 		if t <= searchTs {
 			l = mid + 1
@@ -898,11 +915,11 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 				if err != nil {
 					// Buffer corruption detected in binary search (previous entry)
 					glog.Errorf("ReadFromBuffer: buffer corruption at idx[%d] pos %d: %v", mid-1, logBuffer.idx[mid-1], err)
-					return nil, -1, fmt.Errorf("%w: %v", ErrBufferCorrupted, err)
+					return nil, -1, false, fmt.Errorf("%w: %v", ErrBufferCorrupted, err)
 				}
 			}
 			if prevT <= searchTs {
-				return copiedBytes(logBuffer.buf[pos:logBuffer.pos]), logBuffer.offset, nil
+				return logBuffer.currentSnapshotView(pos, logBuffer.pos), logBuffer.offset, false, nil
 			}
 			h = mid
 		}
@@ -910,9 +927,13 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 
 	// Binary search didn't find the timestamp - data may have been flushed to disk already
 	// Returning -2 signals to caller that data is not available in memory
-	return nil, -2, nil
+	return nil, -2, false, nil
 
 }
+
+// ReleaseMemory returns a pooled buffer for reuse. Only call it for buffers
+// ReadFromBuffer reported as pooled: recycling a shared sealed-window view
+// would let the next copiedBytes overwrite bytes other readers still hold.
 func (logBuffer *LogBuffer) ReleaseMemory(b *bytes.Buffer) {
 	bufferPool.Put(b)
 }
@@ -942,6 +963,37 @@ func copiedBytes(buf []byte) (copied *bytes.Buffer) {
 	copied.Reset()
 	copied.Write(buf)
 	return
+}
+
+// sharedBufferView wraps the sealed window's shared snapshot from pos onward.
+// The returned buffer aliases memory shared with other readers: it must be
+// treated as read-only and never passed to ReleaseMemory (the full-slice cap
+// makes an accidental append reallocate instead of scribbling on the snapshot).
+func sharedBufferView(mb *MemBuffer, pos int) *bytes.Buffer {
+	snap := mb.sharedSnapshot()
+	return bytes.NewBuffer(snap[pos:len(snap):len(snap)])
+}
+
+// currentSnapshotView returns buf[from:to] of the current window as a view of
+// the shared prefix snapshot, extending the snapshot to cover [0:to) first.
+// buf[:pos] is append-only until the window seals, so extension only ever
+// appends stable bytes; earlier holders' slices are unaffected. Callers must
+// hold the read lock (keeps buf and pos stable during extension).
+func (logBuffer *LogBuffer) currentSnapshotView(from, to int) *bytes.Buffer {
+	logBuffer.curSnapMu.Lock()
+	if cap(logBuffer.curSnap) < to {
+		// First use in this window (or the rare window whose array outgrew the
+		// previous one): size to the window array so extensions never reallocate.
+		grown := make([]byte, len(logBuffer.curSnap), len(logBuffer.buf))
+		copy(grown, logBuffer.curSnap)
+		logBuffer.curSnap = grown
+	}
+	if len(logBuffer.curSnap) < to {
+		logBuffer.curSnap = append(logBuffer.curSnap, logBuffer.buf[len(logBuffer.curSnap):to]...)
+	}
+	snap := logBuffer.curSnap[:to]
+	logBuffer.curSnapMu.Unlock()
+	return bytes.NewBuffer(snap[from:to:to])
 }
 
 func readTs(buf []byte, pos int) (size int, ts int64, err error) {

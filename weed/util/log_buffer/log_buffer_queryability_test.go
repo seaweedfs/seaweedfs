@@ -50,7 +50,7 @@ func TestBufferQueryability(t *testing.T) {
 
 	// Test immediate queryability - read from buffer starting from beginning
 	startPosition := NewMessagePosition(0, 0) // Start from beginning
-	bufferCopy, batchIndex, err := logBuffer.ReadFromBuffer(startPosition)
+	bufferCopy, batchIndex, _, err := logBuffer.ReadFromBuffer(startPosition)
 
 	if err != nil {
 		t.Fatalf("ReadFromBuffer failed: %v", err)
@@ -131,7 +131,7 @@ func TestMultipleEntriesQueryability(t *testing.T) {
 
 	// Read all entries
 	startPosition := NewMessagePosition(0, 0)
-	bufferCopy, batchIndex, err := logBuffer.ReadFromBuffer(startPosition)
+	bufferCopy, batchIndex, _, err := logBuffer.ReadFromBuffer(startPosition)
 
 	if err != nil {
 		t.Fatalf("ReadFromBuffer failed: %v", err)
@@ -207,7 +207,7 @@ func TestSchemaRegistryScenario(t *testing.T) {
 
 	// Simulate the SQL query scenario - read from offset 0
 	startPosition := NewMessagePosition(0, 0)
-	bufferCopy, _, err := logBuffer.ReadFromBuffer(startPosition)
+	bufferCopy, _, _, err := logBuffer.ReadFromBuffer(startPosition)
 
 	if err != nil {
 		t.Fatalf("Schema registry scenario failed: %v", err)
@@ -268,7 +268,7 @@ func TestTimeBasedFirstReadBeforeEarliest(t *testing.T) {
 
 	// Start read 1ns before earliest memory, with offset sentinel (-2)
 	startPos := NewMessagePosition(baseTs.Add(-time.Nanosecond).UnixNano(), -2)
-	buf, _, err := logBuffer.ReadFromBuffer(startPos)
+	buf, _, _, err := logBuffer.ReadFromBuffer(startPos)
 	if err != nil {
 		t.Fatalf("ReadFromBuffer returned err: %v", err)
 	}
@@ -293,7 +293,7 @@ func TestEarliestTimeExactRead(t *testing.T) {
 	}
 
 	startPos := NewMessagePosition(ts.UnixNano(), -2)
-	buf, _, err := logBuffer.ReadFromBuffer(startPos)
+	buf, _, _, err := logBuffer.ReadFromBuffer(startPos)
 	if err != nil {
 		t.Fatalf("ReadFromBuffer err: %v", err)
 	}

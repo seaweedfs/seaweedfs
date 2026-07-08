@@ -2,6 +2,7 @@ package log_buffer
 
 import (
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -12,6 +13,25 @@ type MemBuffer struct {
 	stopTime    time.Time
 	startOffset int64 // First offset in this buffer
 	offset      int64 // Last offset in this buffer (endOffset)
+
+	// snapshot is a GC-owned copy of buf[:size] shared by all readers of this
+	// sealed window, so N subscribers reading the same window cost one copy
+	// instead of N pooled copies. Created lazily by the first reader; travels
+	// with the window when SealBuffer shifts slots. Immutable once created.
+	snapMu   sync.Mutex
+	snapshot []byte
+}
+
+// sharedSnapshot returns the shared read-only copy of this sealed window,
+// creating it on first use. Callers must hold the LogBuffer read lock, which
+// keeps buf stable (SealBuffer mutates slots only under the write lock).
+func (mb *MemBuffer) sharedSnapshot() []byte {
+	mb.snapMu.Lock()
+	defer mb.snapMu.Unlock()
+	if mb.snapshot == nil {
+		mb.snapshot = append([]byte(nil), mb.buf[:mb.size]...)
+	}
+	return mb.snapshot
 }
 
 type SealedBuffers struct {
@@ -41,6 +61,7 @@ func (sbs *SealedBuffers) SealBuffer(startTime, stopTime time.Time, buf []byte, 
 		sbs.buffers[i].stopTime = sbs.buffers[i+1].stopTime
 		sbs.buffers[i].startOffset = sbs.buffers[i+1].startOffset
 		sbs.buffers[i].offset = sbs.buffers[i+1].offset
+		sbs.buffers[i].snapshot = sbs.buffers[i+1].snapshot // snapshot follows its window
 	}
 	sbs.buffers[size-1].buf = buf
 	sbs.buffers[size-1].size = pos
@@ -48,6 +69,7 @@ func (sbs *SealedBuffers) SealBuffer(startTime, stopTime time.Time, buf []byte, 
 	sbs.buffers[size-1].stopTime = stopTime
 	sbs.buffers[size-1].startOffset = startOffset
 	sbs.buffers[size-1].offset = endOffset
+	sbs.buffers[size-1].snapshot = nil
 	return oldBuf
 }
 
