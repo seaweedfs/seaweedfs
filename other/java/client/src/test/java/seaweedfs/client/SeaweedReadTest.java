@@ -4,11 +4,36 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
 public class SeaweedReadTest {
+
+    // A chunk fetch that briefly returns an empty body (observed right after an
+    // append) must not overrun the buffer with an opaque IndexOutOfBoundsException.
+    @Test
+    public void testReadChunkShorterThanViewFailsCleanly() throws IOException {
+        String fileId = "7,readchunkshort01";
+        SeaweedRead.volumeIdCache.setLocations("7",
+                FilerProto.Locations.newBuilder()
+                        .addLocations(FilerProto.Location.newBuilder().setUrl("localhost:0").build())
+                        .build());
+        // seed the chunk cache with an empty body so the fetch is skipped
+        SeaweedRead.chunkCache.setChunk(fileId, new byte[0]);
+
+        List<SeaweedRead.VisibleInterval> visibles = new ArrayList<>();
+        visibles.add(new SeaweedRead.VisibleInterval(0, 175, fileId, 1L, 0, true, null, false));
+
+        ByteBuffer buf = ByteBuffer.allocate(175);
+        try {
+            SeaweedRead.read(null, visibles, 0, buf, 175);
+            Assert.fail("expected IOException for a chunk shorter than its view");
+        } catch (IOException e) {
+            Assert.assertTrue(e.getMessage(), e.getMessage().contains(fileId));
+        }
+    }
 
     @Test
     public void testNonOverlappingVisibleIntervals() throws IOException {

@@ -111,10 +111,18 @@ public class SeaweedRead {
         }
 
         int len = (int) chunkView.size - (int) (startOffset - chunkView.logicOffset);
+        int srcOffset = (int) (startOffset - chunkView.logicOffset + chunkView.offset);
         LOG.debug("readChunkView fid:{} chunkData.length:{} chunkView.offset:{} chunkView[{};{}) startOffset:{}",
                 chunkView.fileId, chunkData.length, chunkView.offset, chunkView.logicOffset,
                 chunkView.logicOffset + chunkView.size, startOffset);
-        buf.put(chunkData, (int) (startOffset - chunkView.logicOffset + chunkView.offset), len);
+        // The fetched chunk can be shorter than the view claims when a read briefly
+        // returns an empty body (seen right after an append). Fail clearly instead of
+        // letting ByteBuffer.put throw an opaque IndexOutOfBoundsException.
+        if (srcOffset < 0 || len < 0 || srcOffset + len > chunkData.length) {
+            throw new IOException("chunk " + chunkView.fileId + " returned " + chunkData.length
+                    + " bytes, need [" + srcOffset + "," + (srcOffset + len) + ")");
+        }
+        buf.put(chunkData, srcOffset, len);
 
         return len;
     }
@@ -128,7 +136,15 @@ public class SeaweedRead {
             for (FilerProto.Location location : locations.getLocationsList()) {
                 String url = filerClient.getChunkUrl(chunkView.fileId, location.getUrl(), location.getPublicUrl());
                 try {
-                    data = doFetchOneFullChunkData(chunkView, url);
+                    byte[] fetched = doFetchOneFullChunkData(chunkView, url);
+                    // An empty body for a chunk we are reading from is never valid;
+                    // treat it as a transient failure so the retry loop tries another
+                    // location and backs off, rather than caching an empty chunk.
+                    if (fetched.length == 0) {
+                        lastException = new IOException("empty response for chunk " + chunkView.fileId + " from " + url);
+                        continue;
+                    }
+                    data = fetched;
                     lastException = null;
                     break;
                 } catch (IOException ioe) {
