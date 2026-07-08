@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
@@ -230,7 +231,26 @@ func ClonePathConf(src *filer_pb.FilerConf_PathConf) *filer_pb.FilerConf_PathCon
 		Worm:                     src.Worm,
 		WormGracePeriodSeconds:   src.WormGracePeriodSeconds,
 		WormRetentionTimeSeconds: src.WormRetentionTimeSeconds,
+		InodeIndex:               src.InodeIndex,
 	}
+}
+
+// InodeIndexActiveUnder reports whether entries inside dirPath may carry inode
+// index rows: either dirPath itself is covered by an inode_index rule, or such
+// a rule applies to a subtree inside dirPath.
+func (fc *FilerConf) InodeIndexActiveUnder(dirPath string) bool {
+	if fc.MatchStorageRule(dirPath).InodeIndex {
+		return true
+	}
+	active := false
+	fc.rules.Walk(func(key []byte, value *filer_pb.FilerConf_PathConf) bool {
+		if value.InodeIndex && strings.HasPrefix(string(key), dirPath) {
+			active = true
+			return false
+		}
+		return true
+	})
+	return active
 }
 
 // ApplyBucketQuotaReadOnly sets read-only when usedSize exceeds quota and clears it
@@ -292,6 +312,7 @@ func mergePathConf(a, b *filer_pb.FilerConf_PathConf) {
 	a.DataNode = util.Nvl(b.DataNode, a.DataNode)
 	a.DisableChunkDeletion = b.DisableChunkDeletion || a.DisableChunkDeletion
 	a.Worm = b.Worm || a.Worm
+	a.InodeIndex = b.InodeIndex || a.InodeIndex
 	if b.WormRetentionTimeSeconds > 0 {
 		a.WormRetentionTimeSeconds = b.WormRetentionTimeSeconds
 	}

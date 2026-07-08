@@ -165,7 +165,10 @@ func (f *Filer) ListExistingPeerUpdates(ctx context.Context) (existingNodes []*m
 }
 
 func (f *Filer) SetStore(store FilerStore) (isFresh bool) {
-	f.Store = NewFilerStoreWrapper(store)
+	fsw := NewFilerStoreWrapper(store)
+	// f.FilerConf is swapped on filer.conf reloads, so resolve it per call.
+	fsw.filerConfFn = func() *FilerConf { return f.FilerConf }
+	f.Store = fsw
 
 	return f.setOrLoadFilerStoreSignature(store)
 }
