@@ -99,6 +99,11 @@ public class FilerGrpcClient {
                 builder.overrideAuthority(cn);
             }
         }
+
+        String basicAuthHeader = FilerSecurityContext.getBasicAuthHeaderValue();
+        if (basicAuthHeader != null) {
+            builder.intercept(new BasicAuthInterceptor(basicAuthHeader));
+        }
         return builder;
     }
 
