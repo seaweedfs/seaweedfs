@@ -294,6 +294,40 @@ func TestRemoteTier_LiveTierUpload_StillReportsToMaster(t *testing.T) {
 	require.NotEmpty(t, msg.RemoteStorageName, "reported volume must carry its remote backend name")
 }
 
+// TestRemoteTier_ReloadUnderDataLock_NoDeadlock guards the reload-under-lock
+// path: CommitCompact holds dataFileAccessLock and calls v.load(), which for a
+// remote-tiered volume swaps the data backend. That swap must go through the
+// lock-free loadRemoteFileLocked; if load() instead used the public
+// LoadRemoteFile (which takes dataFileAccessLock), it would re-enter the held
+// lock and deadlock.
+func TestRemoteTier_ReloadUnderDataLock_NoDeadlock(t *testing.T) {
+	b := newLocalDirBackend(t)
+	registerTestBackend(t, b)
+
+	dir := t.TempDir()
+	const vid = needle.VolumeId(68)
+	v, _ := tierUpVolumeLive(t, dir, vid, b)
+	v.location = &DiskLocation{Directory: dir, DiskType: types.HddType}
+	require.True(t, v.HasRemoteFile())
+
+	done := make(chan error, 1)
+	go func() {
+		// Mirror CommitCompact: hold the data lock across the reload.
+		v.dataFileAccessLock.Lock()
+		defer v.dataFileAccessLock.Unlock()
+		done <- v.load(true, false, v.needleMapKind, 0, v.Version())
+	}()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+		require.True(t, v.HasRemoteFile(), "volume must stay remote-tiered after reload")
+		v.Close()
+	case <-time.After(10 * time.Second):
+		t.Fatal("reload under dataFileAccessLock deadlocked: load() re-entered the held lock via LoadRemoteFile")
+	}
+}
+
 // TestRemoteTier_Move_KeepsRemoteObject simulates the move-on-source-after-copy
 // step of a balance: Destroy(onlyEmpty=false, keepRemoteData=true). The remote
 // object must survive — the destination's freshly-copied .vif points at it.

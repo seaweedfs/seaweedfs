@@ -161,7 +161,10 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		v.noWriteCanDelete = true
 		v.noWriteOrDelete = false
 		glog.V(0).Infof("loading volume %d from remote %v", v.Id, v.volumeInfo)
-		if err := v.LoadRemoteFile(); err != nil {
+		// loadRemoteFileLocked, not LoadRemoteFile: load() is reached from
+		// CommitCompact with dataFileAccessLock already held, and the locking
+		// variant would deadlock re-entering it.
+		if err := v.loadRemoteFileLocked(); err != nil {
 			return fmt.Errorf("load remote file %v: %w", v.volumeInfo, err)
 		}
 		// Set lastModifiedTsSeconds from remote file to prevent premature expiry on startup

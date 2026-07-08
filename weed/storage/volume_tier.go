@@ -60,20 +60,34 @@ func (v *Volume) HasRemoteFile() bool {
 	return v.hasRemoteFile.Load()
 }
 
+// LoadRemoteFile swaps the data backend to the remote tier object under
+// dataFileAccessLock. Call this from a context that does NOT already hold the
+// lock — the live tier-upload handler, where the heartbeat may be reading the
+// backend concurrently. load() must instead use loadRemoteFileLocked, since it
+// can be reached with the lock already held (CommitCompact).
 func (v *Volume) LoadRemoteFile() error {
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
+	return v.loadRemoteFileLocked()
+}
+
+// loadRemoteFileLocked swaps the data backend to the remote tier object. The
+// caller must hold dataFileAccessLock or be single-threaded (load() during
+// construction or a compaction-commit reload). It marks the volume tiered in the
+// same locked step so a later heartbeat does not treat a removed local .dat as a
+// phantom volume and stop reporting it to the master.
+func (v *Volume) loadRemoteFileLocked() error {
+	// Callers only reach here for a tiered volume (HasRemoteFile / a just-appended
+	// remote file), but guard the index so a stray call is a clean error, not a panic.
+	if len(v.volumeInfo.GetFiles()) == 0 {
+		return fmt.Errorf("volume %d has no remote file to load", v.Id)
+	}
 	tierFile := v.volumeInfo.GetFiles()[0]
 	backendStorage, found := backend.BackendStorages[tierFile.BackendName()]
 	if !found {
 		return fmt.Errorf("backend storage %s not found", tierFile.BackendName())
 	}
-
-	// Swap under dataFileAccessLock (via SwapDataBackend) so the heartbeat's
-	// concurrent DataBackend read never races this reassignment, and mark the
-	// volume tiered in the same locked step so a later heartbeat does not treat
-	// the just-removed local .dat as a phantom volume and stop reporting it to
-	// the master. On disk-scan load this is already true; here it flips a volume
-	// that was tier-uploaded in-process without a reload.
-	v.SwapDataBackend(backendStorage.NewStorageFile(tierFile.Key, v.volumeInfo), true)
+	v.swapDataBackendLocked(backendStorage.NewStorageFile(tierFile.Key, v.volumeInfo), true)
 	return nil
 }
 

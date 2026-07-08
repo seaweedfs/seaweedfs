@@ -323,6 +323,14 @@ func (v *Volume) Close() {
 func (v *Volume) SwapDataBackend(newBackend backend.BackendStorageFile, hasRemoteFile bool) {
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
+	v.swapDataBackendLocked(newBackend, hasRemoteFile)
+}
+
+// swapDataBackendLocked is the body of SwapDataBackend for callers that already
+// hold dataFileAccessLock (e.g. load() reached while CommitCompact holds the
+// lock). Reusing it from those under-lock paths avoids re-entering the
+// non-reentrant lock, which would deadlock.
+func (v *Volume) swapDataBackendLocked(newBackend backend.BackendStorageFile, hasRemoteFile bool) {
 	if v.DataBackend != nil {
 		v.DataBackend.Close()
 	}
