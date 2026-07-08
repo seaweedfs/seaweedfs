@@ -640,6 +640,26 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 	// Add sub as well since it's commonly used
 	requestContext["sub"] = externalIdentity.UserID
 
+	// Surface federated group memberships so resource (permission) policies can do
+	// group-based ABAC - not just role trust policies. Stored as a []string; the
+	// string-condition evaluator already handles multi-valued context keys, and the
+	// S3 middleware additionally exposes it as jwt:groups. Without this, "groups"
+	// was excluded from the OIDC attributes (see oidc_provider processedClaims) and
+	// so only usable at assume-time (trust policy), never at request-time - meaning
+	// a single role's permission policy could not scope access by the caller's
+	// groups (aggregate/ABAC).
+	if len(externalIdentity.Groups) > 0 {
+		requestContext["groups"] = externalIdentity.Groups
+	}
+
+	// Same for the caller's roles (the `roles` claim). Surfaced as a []string so a
+	// resource policy can gate on jwt:roles - the S3 middleware exposes it that way.
+	// Without this, "roles" was excluded from the OIDC attributes (processedClaims)
+	// and so unusable in a request-time permission policy.
+	if len(externalIdentity.Roles) > 0 {
+		requestContext["roles"] = externalIdentity.Roles
+	}
+
 	// Compute a stable parent-user hash from (sub, iss). Only this tuple is
 	// guaranteed stable across token refresh per OIDC Core 1.0, so this is the
 	// right key for any per-identity state (audit trail, future quotas).

@@ -43,6 +43,13 @@ type ExternalIdentity struct {
 	// Groups are the groups the user belongs to
 	Groups []string `json:"groups,omitempty"`
 
+	// Roles are the roles the user holds (from the token's `roles` claim).
+	// Surfaced into the STS request context so resource policies can gate on
+	// jwt:roles - same rationale as Groups (the claim is otherwise excluded from
+	// attributes by the provider's processedClaims set, so it never reached the
+	// request context and was usable only via provider-configured role mapping).
+	Roles []string `json:"roles,omitempty"`
+
 	// Attributes are additional user attributes
 	Attributes map[string]string `json:"attributes,omitempty"`
 
