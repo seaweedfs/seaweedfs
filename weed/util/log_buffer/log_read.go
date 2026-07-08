@@ -101,6 +101,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 
 	// loop through all messages
 	var bytesBuf *bytes.Buffer
+	var bytesBufPooled bool
 	var batchIndex int64
 	lastReadPosition = startPosition
 	var entryCounter int64
@@ -113,7 +114,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 	// responsive 250ms cadence resumes for active readers.
 	caughtUpToDiskHead := false
 	defer func() {
-		if bytesBuf != nil {
+		if bytesBuf != nil && bytesBufPooled {
 			logBuffer.ReleaseMemory(bytesBuf)
 		}
 		// println("LoopProcessLogData", readerName, "sent messages total", entryCounter)
@@ -121,10 +122,11 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 
 	for {
 
-		if bytesBuf != nil {
+		if bytesBuf != nil && bytesBufPooled {
 			logBuffer.ReleaseMemory(bytesBuf)
+			bytesBuf = nil // keep the deferred release from double-freeing if ReadFromBuffer panics
 		}
-		bytesBuf, batchIndex, err = logBuffer.ReadFromBuffer(lastReadPosition)
+		bytesBuf, batchIndex, bytesBufPooled, err = logBuffer.ReadFromBuffer(lastReadPosition)
 		if err == ResumeFromDiskError {
 			// Try to read from disk if readFromDiskFn is available
 			if logBuffer.ReadFromDiskFn != nil {
@@ -148,11 +150,11 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 				// HasData() and ReadFromBuffer lock separately, so a racing write can make
 				// HasData() see data the empty-buffer read missed. Re-read; only bail if the
 				// position is genuinely behind the in-memory window (flushed to disk).
-				reBuf, _, reErr := logBuffer.ReadFromBuffer(lastReadPosition)
+				reBuf, _, rePooled, reErr := logBuffer.ReadFromBuffer(lastReadPosition)
 				if reErr == ResumeFromDiskError {
 					return lastReadPosition, isDone, ResumeFromDiskError
 				}
-				if reBuf != nil {
+				if reBuf != nil && rePooled {
 					logBuffer.ReleaseMemory(reBuf)
 				}
 				continue
@@ -315,13 +317,14 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 
 	// loop through all messages
 	var bytesBuf *bytes.Buffer
+	var bytesBufPooled bool
 	var offset int64
 	lastReadPosition = startPosition
 	var entryCounter int64
 	// See LoopProcessLogData for the caughtUpToDiskHead invariant.
 	caughtUpToDiskHead := false
 	defer func() {
-		if bytesBuf != nil {
+		if bytesBuf != nil && bytesBufPooled {
 			logBuffer.ReleaseMemory(bytesBuf)
 		}
 		// println("LoopProcessLogDataWithOffset", readerName, "sent messages total", entryCounter)
@@ -335,10 +338,11 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 			return
 		}
 
-		if bytesBuf != nil {
+		if bytesBuf != nil && bytesBufPooled {
 			logBuffer.ReleaseMemory(bytesBuf)
+			bytesBuf = nil // keep the deferred release from double-freeing if ReadFromBuffer panics
 		}
-		bytesBuf, offset, err = logBuffer.ReadFromBuffer(lastReadPosition)
+		bytesBuf, offset, bytesBufPooled, err = logBuffer.ReadFromBuffer(lastReadPosition)
 		glog.V(4).Infof("ReadFromBuffer for %s returned bytesBuf=%v, offset=%d, err=%v", readerName, bytesBuf != nil, offset, err)
 
 		// Check for buffer corruption error before other error handling
@@ -374,11 +378,11 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 				// HasData() and ReadFromBuffer lock separately, so a racing write can make
 				// HasData() see data the empty-buffer read missed. Re-read; only bail if the
 				// position is genuinely behind the in-memory window (flushed to disk).
-				reBuf, _, reErr := logBuffer.ReadFromBuffer(lastReadPosition)
+				reBuf, _, rePooled, reErr := logBuffer.ReadFromBuffer(lastReadPosition)
 				if reErr == ResumeFromDiskError {
 					return lastReadPosition, isDone, ResumeFromDiskError
 				}
-				if reBuf != nil {
+				if reBuf != nil && rePooled {
 					logBuffer.ReleaseMemory(reBuf)
 				}
 				continue

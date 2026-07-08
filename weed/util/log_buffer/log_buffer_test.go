@@ -101,7 +101,7 @@ func TestReadFromBufferTimestampBased_AfterFlushReturnsNewerData(t *testing.T) {
 		}
 	}
 
-	buf, _, err := lb.ReadFromBuffer(NewMessagePosition(sealed.stopTime.UnixNano(), sealed.offset))
+	buf, _, _, err := lb.ReadFromBuffer(NewMessagePosition(sealed.stopTime.UnixNano(), sealed.offset))
 	if err != nil {
 		t.Fatalf("ReadFromBuffer returned error: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestReadFromBuffer_OldOffsetReturnsResumeFromDiskError(t *testing.T) {
 			requestPosition := NewMessagePositionFromOffset(tt.requestedOffset)
 
 			// Try to read from the buffer
-			buf, batchIdx, err := lb.ReadFromBuffer(requestPosition)
+			buf, batchIdx, _, err := lb.ReadFromBuffer(requestPosition)
 
 			// Verify the error matches expectations
 			if tt.expectError != nil {
@@ -257,7 +257,7 @@ func TestReadFromBuffer_OldOffsetWithNoPrevBuffers(t *testing.T) {
 
 	// Before the fix, this would return (nil, offset, nil) causing an infinite wait
 	// After the fix, this should return ResumeFromDiskError
-	buf, batchIdx, err := lb.ReadFromBuffer(requestPosition)
+	buf, batchIdx, _, err := lb.ReadFromBuffer(requestPosition)
 
 	t.Logf("DEBUG: ReadFromBuffer returned: buf=%v, batchIdx=%d, err=%v", buf != nil, batchIdx, err)
 	t.Logf("DEBUG: Buffer state: bufferStartOffset=%d, offset=%d, pos=%d",
@@ -295,7 +295,7 @@ func TestReadFromBuffer_EmptyBufferAtCurrentOffset(t *testing.T) {
 
 	// BUG: Without fix, this returns empty buffer instead of checking disk
 	// FIX: Should return ResumeFromDiskError because buffer is empty (pos=0) despite valid range
-	buf, batchIdx, err := lb.ReadFromBuffer(requestPosition)
+	buf, batchIdx, _, err := lb.ReadFromBuffer(requestPosition)
 
 	t.Logf("DEBUG: ReadFromBuffer returned: buf=%v, batchIdx=%d, err=%v", buf != nil, batchIdx, err)
 	t.Logf("DEBUG: Buffer state: bufferStartOffset=%d, offset=%d, pos=%d",
@@ -362,7 +362,7 @@ func TestReadFromBuffer_OffsetRanges(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			requestPosition := NewMessagePositionFromOffset(tc.requestedOffset)
-			_, _, err := lb.ReadFromBuffer(requestPosition)
+			_, _, _, err := lb.ReadFromBuffer(requestPosition)
 
 			if tc.expectedError != nil {
 				if err != tc.expectedError {
@@ -424,7 +424,7 @@ func TestReadFromBuffer_InitializedFromDisk(t *testing.T) {
 	// Schema Registry tries to read offset 0 (should be on disk)
 	requestPosition := NewMessagePositionFromOffset(0)
 
-	buf, batchIdx, err := lb.ReadFromBuffer(requestPosition)
+	buf, batchIdx, _, err := lb.ReadFromBuffer(requestPosition)
 
 	t.Logf("After writing new message:")
 	t.Logf("  bufferStartOffset=%d, offset=%d, pos=%d", lb.bufferStartOffset, lb.offset, lb.pos)
