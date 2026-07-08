@@ -32,7 +32,7 @@ type Volume struct {
 	noWriteOrDelete    bool // if readonly, either noWriteOrDelete or noWriteCanDelete
 	noWriteCanDelete   bool // if readonly, either noWriteOrDelete or noWriteCanDelete
 	noWriteLock        sync.RWMutex
-	hasRemoteFile      bool // if the volume has a remote file
+	hasRemoteFile      atomic.Bool // if the volume is tiered: data lives in a remote backend
 	MemoryMapMaxSizeMb uint32
 
 	super_block.SuperBlock

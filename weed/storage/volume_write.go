@@ -274,7 +274,7 @@ func (v *Volume) doDeleteRequest(n *needle.Needle) (Size, error) {
 		var offset uint64
 		var err error
 		size := nv.Size
-		if !v.hasRemoteFile {
+		if !v.HasRemoteFile() {
 			n.Data = nil
 			n.UpdateAppendAtNs(v.lastAppendAtNs)
 			offset, _, _, err = n.Append(v.DataBackend, v.Version())

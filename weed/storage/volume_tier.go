@@ -19,13 +19,15 @@ func (v *Volume) GetVolumeInfo() *volume_server_pb.VolumeInfo {
 func (v *Volume) maybeLoadVolumeInfo() (found bool) {
 
 	var err error
-	v.volumeInfo, v.hasRemoteFile, found, err = volume_info.MaybeLoadVolumeInfo(v.FileName(".vif"))
+	var hasRemoteFile bool
+	v.volumeInfo, hasRemoteFile, found, err = volume_info.MaybeLoadVolumeInfo(v.FileName(".vif"))
+	v.hasRemoteFile.Store(hasRemoteFile)
 
 	if v.volumeInfo.Version == 0 {
 		v.volumeInfo.Version = uint32(needle.GetCurrentVersion())
 	}
 
-	if v.hasRemoteFile {
+	if hasRemoteFile {
 		glog.V(0).Infof("volume %d is tiered to %s as %s and read only", v.Id,
 			v.volumeInfo.Files[0].BackendName(), v.volumeInfo.Files[0].Key)
 	} else {
@@ -55,7 +57,7 @@ func (v *Volume) maybeLoadVolumeInfo() (found bool) {
 }
 
 func (v *Volume) HasRemoteFile() bool {
-	return v.hasRemoteFile
+	return v.hasRemoteFile.Load()
 }
 
 func (v *Volume) LoadRemoteFile() error {
@@ -65,11 +67,14 @@ func (v *Volume) LoadRemoteFile() error {
 		return fmt.Errorf("backend storage %s not found", tierFile.BackendName())
 	}
 
-	if v.DataBackend != nil {
-		v.DataBackend.Close()
-	}
-
-	v.DataBackend = backendStorage.NewStorageFile(tierFile.Key, v.volumeInfo)
+	// Swap under dataFileAccessLock (via SwapDataBackend) so the heartbeat's
+	// concurrent DataBackend read never races this reassignment. Then mark the
+	// volume tiered so a later heartbeat does not treat the just-removed local
+	// .dat as a phantom volume and stop reporting it to the master. On disk-scan
+	// load this is already true; here it flips a volume that was tier-uploaded
+	// in-process without a reload.
+	v.SwapDataBackend(backendStorage.NewStorageFile(tierFile.Key, v.volumeInfo))
+	v.hasRemoteFile.Store(true)
 	return nil
 }
 

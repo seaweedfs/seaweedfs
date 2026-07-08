@@ -102,7 +102,7 @@ func TestLocalVolumesLen(t *testing.T) {
 
 				// Mark some as remote
 				if i < tc.remoteVolumes {
-					vol.hasRemoteFile = true
+					vol.hasRemoteFile.Store(true)
 					vol.volumeInfo.Files = []*volume_server_pb.RemoteFile{
 						{BackendType: "s3", BackendId: "test", Key: "test-key"},
 					}
@@ -250,7 +250,7 @@ func createTestVolume(vid needle.VolumeId, isRemote bool) *Volume {
 	}
 
 	if isRemote {
-		vol.hasRemoteFile = true
+		vol.hasRemoteFile.Store(true)
 		vol.volumeInfo.Files = []*volume_server_pb.RemoteFile{
 			{BackendType: "s3", BackendId: "test", Key: "remote-key-" + strconv.Itoa(int(vid))},
 		}
