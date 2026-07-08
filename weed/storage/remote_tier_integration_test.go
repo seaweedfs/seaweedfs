@@ -147,9 +147,9 @@ func (f *localDirBackendFile) Truncate(off int64) error {
 	return os.Truncate(filepath.Join(f.backend.root, f.key), off)
 }
 
-func (f *localDirBackendFile) Close() error                                 { return nil }
-func (f *localDirBackendFile) Name() string                                 { return f.key }
-func (f *localDirBackendFile) Sync() error                                  { return nil }
+func (f *localDirBackendFile) Close() error { return nil }
+func (f *localDirBackendFile) Name() string { return f.key }
+func (f *localDirBackendFile) Sync() error  { return nil }
 func (f *localDirBackendFile) GetStat() (int64, time.Time, error) {
 	files := f.tierInfo.GetFiles()
 	if len(files) == 0 {
@@ -174,11 +174,13 @@ func registerTestBackend(t *testing.T, b *localDirBackend) {
 	})
 }
 
-// tierUpVolume creates a real on-disk volume, writes a few needles, then
-// uploads the .dat to the fake backend and rewrites the volume in remote
-// mode (mirrors the production flow in volume_grpc_tier_upload.go but
-// in-process).
-func tierUpVolume(t *testing.T, dir string, vid needle.VolumeId, b *localDirBackend) (collection string, key string) {
+// tierUpVolumeLive creates a real on-disk volume, writes a few needles, then
+// uploads the .dat to the fake backend and rewrites the volume in remote mode
+// (mirrors the production flow in volume_grpc_tier_upload.go but in-process).
+// It returns the still-open volume, exactly as a volume server holds it after a
+// live `volume.tier.upload` — no reload. Callers that want the on-disk state a
+// server sees after restart use tierUpVolume, which closes it.
+func tierUpVolumeLive(t *testing.T, dir string, vid needle.VolumeId, b *localDirBackend) (v *Volume, key string) {
 	t.Helper()
 	v, err := NewVolume(dir, dir, "", vid, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
 	require.NoError(t, err)
@@ -208,10 +210,16 @@ func tierUpVolume(t *testing.T, dir string, vid needle.VolumeId, b *localDirBack
 	require.NoError(t, v.LoadRemoteFile())
 	require.NoError(t, os.Remove(v.FileName(".dat")))
 
-	// Close the volume cleanly. Tests below reload it from disk to mirror
-	// what a volume server does on restart with a tiered volume.
-	v.Close()
+	return v, uploadKey
+}
 
+// tierUpVolume runs tierUpVolumeLive then closes the volume. Tests using it
+// reload from disk to mirror what a volume server does on restart with a
+// tiered volume.
+func tierUpVolume(t *testing.T, dir string, vid needle.VolumeId, b *localDirBackend) (collection string, key string) {
+	t.Helper()
+	v, uploadKey := tierUpVolumeLive(t, dir, vid, b)
+	v.Close()
 	return v.Collection, uploadKey
 }
 
@@ -257,6 +265,33 @@ func TestRemoteTier_DiskScanLoadsRemoteOnlyVolume(t *testing.T) {
 	require.True(t, ok, "remote-only volume must be loaded by the disk scan, not skipped by the phantom-.dat guard")
 	require.True(t, v.HasRemoteFile(), "loaded volume should be in remote mode")
 	v.Close()
+}
+
+// TestRemoteTier_LiveTierUpload_StillReportsToMaster covers a live
+// `volume.tier.upload`: the .dat is removed and the volume serves from remote,
+// but the same in-memory Volume keeps heartbeating with no reload. The
+// phantom-.dat guard must not suppress it just because .dat is gone —
+// LoadRemoteFile has flipped it into remote mode, so ToVolumeInformationMessage
+// must still report it to the master. If HasRemoteFile stayed false the volume
+// would vanish from the topology ("volume not found").
+func TestRemoteTier_LiveTierUpload_StillReportsToMaster(t *testing.T) {
+	b := newLocalDirBackend(t)
+	registerTestBackend(t, b)
+
+	dir := t.TempDir()
+	const vid = needle.VolumeId(67)
+	v, _ := tierUpVolumeLive(t, dir, vid, b)
+	defer v.Close()
+	// A store-owned volume always carries its DiskLocation; NewVolume leaves it
+	// nil, so give it one for the IsReadOnly disk-space check inside the heartbeat.
+	v.location = &DiskLocation{Directory: dir, DiskType: types.HddType}
+
+	require.True(t, v.HasRemoteFile(), "a tier-uploaded volume is in remote mode even before any reload")
+	require.False(t, util.FileExists(v.FileName(".dat")), "tier-up should have removed the local .dat")
+
+	_, msg := v.ToVolumeInformationMessage()
+	require.NotNil(t, msg, "tier-uploaded volume must still report to master")
+	require.NotEmpty(t, msg.RemoteStorageName, "reported volume must carry its remote backend name")
 }
 
 // TestRemoteTier_Move_KeepsRemoteObject simulates the move-on-source-after-copy
