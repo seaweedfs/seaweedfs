@@ -1017,3 +1017,71 @@ func readTsNs(entryData []byte) (tsNs int64, err error) {
 	}
 	return 0, nil
 }
+
+// unmarshalLogEntryAliased decodes a marshaled LogEntry into out, pointing the
+// data and key fields at sub-slices of entryData instead of copying them. A full
+// proto.Unmarshal allocates fresh slices for those byte fields on every entry
+// (protobuf consumeBytesNoZero), which dominated allocation churn when many
+// metadata subscribers each re-read the in-memory log window.
+//
+// The aliased data/key are only valid while entryData is, i.e. for the duration
+// of the eachLogEntryFn callback. Callers must copy anything they retain past the
+// callback; all current subscribers do (they re-decode data into their own event
+// or hand it to a synchronous grpc Send).
+func unmarshalLogEntryAliased(entryData []byte, out *filer_pb.LogEntry) error {
+	out.TsNs = 0
+	out.PartitionKeyHash = 0
+	out.Data = nil
+	out.Key = nil
+	out.Offset = 0
+	for i := 0; i < len(entryData); {
+		tag, n := binary.Uvarint(entryData[i:])
+		if n <= 0 {
+			return fmt.Errorf("bad field tag at %d", i)
+		}
+		i += n
+		fieldNum := tag >> 3
+		switch tag & 0x7 { // wire type
+		case 0: // varint: ts_ns / partition_key_hash / offset
+			v, m := binary.Uvarint(entryData[i:])
+			if m <= 0 {
+				return fmt.Errorf("bad varint for field %d", fieldNum)
+			}
+			i += m
+			switch fieldNum {
+			case 1:
+				out.TsNs = int64(v)
+			case 2:
+				out.PartitionKeyHash = int32(v)
+			case 5:
+				out.Offset = int64(v)
+			}
+		case 2: // length-delimited: data / key, aliased not copied
+			l, m := binary.Uvarint(entryData[i:])
+			if m <= 0 {
+				return fmt.Errorf("bad length for field %d", fieldNum)
+			}
+			i += m
+			if l > uint64(len(entryData)-i) {
+				return fmt.Errorf("field %d length %d overruns buffer", fieldNum, l)
+			}
+			switch fieldNum {
+			case 3:
+				out.Data = entryData[i : i+int(l)]
+			case 4:
+				out.Key = entryData[i : i+int(l)]
+			}
+			i += int(l)
+		case 1: // 64-bit
+			i += 8
+		case 5: // 32-bit
+			i += 4
+		default:
+			return fmt.Errorf("unknown wire type for field %d", fieldNum)
+		}
+		if i > len(entryData) {
+			return fmt.Errorf("field %d overruns buffer", fieldNum)
+		}
+	}
+	return nil
+}
