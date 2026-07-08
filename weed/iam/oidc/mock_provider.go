@@ -59,12 +59,14 @@ func (m *MockOIDCProvider) Authenticate(ctx context.Context, token string) (*pro
 	email, _ := claims.GetClaimString("email")
 	displayName, _ := claims.GetClaimString("name")
 	groups, _ := claims.GetClaimStringSlice("groups")
+	rawRoles, _ := claims.GetClaimStringSlice("roles")
 
 	return &providers.ExternalIdentity{
 		UserID:      claims.Subject,
 		Email:       email,
 		DisplayName: displayName,
 		Groups:      groups,
+		Roles:       rawRoles,
 		Provider:    m.name,
 	}, nil
 }
@@ -107,16 +109,26 @@ func (m *MockOIDCProvider) ValidateToken(ctx context.Context, token string) (*pr
 						issuedAt = time.Unix(int64(iat), 0)
 					}
 
+					// Carry the token's claims through like the real provider, keeping
+					// the synthesized defaults for tests that rely on them
+					claimsMap := make(map[string]interface{}, len(jwtClaims)+2)
+					for k, v := range jwtClaims {
+						claimsMap[k] = v
+					}
+					if _, ok := claimsMap["email"]; !ok {
+						claimsMap["email"] = subject + "@test-domain.com"
+					}
+					if _, ok := claimsMap["name"]; !ok {
+						claimsMap["name"] = "Test User " + subject
+					}
+
 					return &providers.TokenClaims{
 						Subject:   subject,
 						Issuer:    issuer,
 						Audience:  audience,
 						ExpiresAt: expiresAt,
 						IssuedAt:  issuedAt,
-						Claims: map[string]interface{}{
-							"email": subject + "@test-domain.com",
-							"name":  "Test User " + subject,
-						},
+						Claims:    claimsMap,
 					}, nil
 				}
 			}
