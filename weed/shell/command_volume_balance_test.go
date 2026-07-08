@@ -444,6 +444,68 @@ func TestBalanceByDiskUsage(t *testing.T) {
 	}
 }
 
+// When volume servers report physical disk bytes, -byDiskUsage should use the
+// filesystem fullness as the source ranking. This covers the production-shaped
+// case where a 99%-used disk does not have the largest sum of regular
+// VolumeInfos, so ranking by volume bytes alone drains the wrong server.
+func TestBalanceByDiskUsageUsesPhysicalDiskUsageWhenReported(t *testing.T) {
+	const gb = 1024 * 1024 * 1024
+	volumeSizeLimitMb := uint64(1024)
+
+	physicalFull := makeByteNode("physical-full", 2000, 1000*gb, 10*gb, mkByteVolumes(1, 5, 1000)) // 99% used
+	dataHeavy := makeByteNode("data-heavy", 2000, 1000*gb, 530*gb, mkByteVolumes(101, 20, 1000))   // 47% used, more volume bytes
+	target := makeByteNode("target", 2000, 1000*gb, 900*gb, mkByteVolumes(201, 1, 1000))           // 10% used
+	beforePhysicalFull := volCount(physicalFull)
+	beforeDataHeavy := volCount(dataHeavy)
+	beforeTarget := volCount(target)
+
+	c := &commandVolumeBalance{
+		volumeSizeLimitMb:         volumeSizeLimitMb,
+		byDiskUsage:               true,
+		diskUsageHighWaterPercent: 90,
+	}
+	runBalance(t, c, []*Node{physicalFull, dataHeavy, target})
+
+	if got := volCount(physicalFull); got >= beforePhysicalFull {
+		t.Fatalf("-byDiskUsage should drain the physically fullest server, got %d volumes (was %d)", got, beforePhysicalFull)
+	}
+	if got := volCount(dataHeavy); got != beforeDataHeavy {
+		t.Fatalf("-byDiskUsage should not drain the lower physical-usage data-heavy server first, got %d volumes (was %d)", got, beforeDataHeavy)
+	}
+	if got := volCount(target); got <= beforeTarget {
+		t.Fatalf("expected the low-usage target to receive volumes, got %d volumes (was %d)", got, beforeTarget)
+	}
+}
+
+// A fleet where only some servers report physical disk bytes must not mix the
+// percent scale with the volume-bytes scale: a non-reporting server's ratio is
+// whole volume-equivalents while reporting servers stay below 1.0, so the
+// balancer would drain a nearly empty old-build server onto physically fuller
+// ones. With mixed reporting, ranking falls back to data size for everyone.
+func TestBalanceByDiskUsageMixedReportingFallsBackToDataSize(t *testing.T) {
+	const gb = 1024 * 1024 * 1024
+
+	oldEmpty := makeByteNode("old-empty", 2000, 0, 0, mkByteVolumes(1, 2, 1000)) // no disk bytes reported
+	newFull := makeByteNode("new-full", 2000, 1000*gb, 500*gb, mkByteVolumes(101, 20, 1000))
+	newTarget := makeByteNode("new-target", 2000, 1000*gb, 990*gb, mkByteVolumes(201, 1, 1000))
+	beforeOldEmpty := volCount(oldEmpty)
+	beforeNewFull := volCount(newFull)
+
+	c := &commandVolumeBalance{
+		volumeSizeLimitMb:         1024,
+		byDiskUsage:               true,
+		diskUsageHighWaterPercent: 90,
+	}
+	runBalance(t, c, []*Node{oldEmpty, newFull, newTarget})
+
+	if got := volCount(oldEmpty); got < beforeOldEmpty {
+		t.Fatalf("the nearly empty non-reporting server should not be drained, got %d volumes (was %d)", got, beforeOldEmpty)
+	}
+	if got := volCount(newFull); got >= beforeNewFull {
+		t.Fatalf("the data-heavy server should drain under the fallback ranking, got %d volumes (was %d)", got, beforeNewFull)
+	}
+}
+
 // makeByteNode builds a single-disk Node carrying physical disk bytes, for the
 // disk-fullness gate tests.
 func makeByteNode(id string, maxVolumeCount int64, totalBytes, freeBytes uint64, volumes []*master_pb.VolumeInformationMessage) *Node {
