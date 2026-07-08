@@ -149,3 +149,35 @@ jobs:
           set -euo pipefail
           [ "$DRY_RUN" = "true" ] && GOAL="clean install" || GOAL="clean deploy"
           mvn -B -ntp $GOAL -DskipTests
+
+      # Bump every version the wiki quotes for the Java clients. Runs only after
+      # a successful real publish. Uses GITHUB_TOKEN; set a WIKI_TOKEN secret if
+      # the token can't push to the wiki.
+      - name: Update wiki client versions
+        if: ${{ !inputs.dry_run }}
+        env:
+          VERSION: ${{ steps.resolve.outputs.version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WIKI_TOKEN: ${{ secrets.WIKI_TOKEN }}
+        run: |
+          set -euo pipefail
+          TOKEN="${WIKI_TOKEN:-$GH_TOKEN}"
+          git clone -q "https://x-access-token:${TOKEN}@github.com/${{ github.repository }}.wiki.git" wiki
+          cd wiki
+          for f in $(grep -rlE "seaweedfs-(client|hadoop3-client)" --include="*.md" .); do
+            NEWV="$VERSION" perl -0777 -i -pe '
+              my $v = $ENV{NEWV};
+              s{(<artifactId>seaweedfs-(?:client|hadoop3-client)</artifactId>\s*<version>)[0-9]+\.[0-9]+(</version>)}{$1$v$2}g;
+              s{(seaweedfs-(?:client|hadoop3-client):)[0-9]+\.[0-9]+}{$1$v}g;
+              s{(seaweedfs-(?:client|hadoop3-client)-)[0-9]+\.[0-9]+(\.jar)}{$1$v$2}g;
+              s{(seaweedfs-(?:client|hadoop3-client)/)[0-9]+\.[0-9]+(/)}{$1$v$2}g;
+            ' "$f"
+          done
+          if git diff --quiet; then
+            echo "Wiki already references ${VERSION}."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "java clients ${VERSION}"
+          git push
