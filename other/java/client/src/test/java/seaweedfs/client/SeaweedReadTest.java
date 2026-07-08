@@ -32,6 +32,7 @@ public class SeaweedReadTest {
             Assert.fail("expected IOException for a chunk shorter than its view");
         } catch (IOException e) {
             Assert.assertTrue(e.getMessage(), e.getMessage().contains(fileId));
+            Assert.assertTrue(e.getMessage(), e.getMessage().contains("[0,175)"));
         }
     }
 

@@ -118,9 +118,9 @@ public class SeaweedRead {
         // The fetched chunk can be shorter than the view claims when a read briefly
         // returns an empty body (seen right after an append). Fail clearly instead of
         // letting ByteBuffer.put throw an opaque IndexOutOfBoundsException.
-        if (srcOffset < 0 || len < 0 || srcOffset + len > chunkData.length) {
+        if (srcOffset < 0 || len < 0 || srcOffset > chunkData.length - len) {
             throw new IOException("chunk " + chunkView.fileId + " returned " + chunkData.length
-                    + " bytes, need [" + srcOffset + "," + (srcOffset + len) + ")");
+                    + " bytes, need [" + srcOffset + "," + ((long) srcOffset + len) + ")");
         }
         buf.put(chunkData, srcOffset, len);
 
@@ -137,11 +137,11 @@ public class SeaweedRead {
                 String url = filerClient.getChunkUrl(chunkView.fileId, location.getUrl(), location.getPublicUrl());
                 try {
                     byte[] fetched = doFetchOneFullChunkData(chunkView, url);
-                    // An empty body for a chunk we are reading from is never valid;
-                    // treat it as a transient failure so the retry loop tries another
-                    // location and backs off, rather than caching an empty chunk.
-                    if (fetched.length == 0) {
-                        lastException = new IOException("empty response for chunk " + chunkView.fileId + " from " + url);
+                    // An empty (or null) body for a chunk we are reading from is never
+                    // valid; treat it as a transient failure so the retry loop tries
+                    // another location and backs off, rather than caching an empty chunk.
+                    if (fetched == null || fetched.length == 0) {
+                        lastException = new IOException("empty or null response for chunk " + chunkView.fileId + " from " + url);
                         continue;
                     }
                     data = fetched;
