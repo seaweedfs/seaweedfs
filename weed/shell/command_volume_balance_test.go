@@ -444,6 +444,39 @@ func TestBalanceByDiskUsage(t *testing.T) {
 	}
 }
 
+// When volume servers report physical disk bytes, -byDiskUsage should use the
+// filesystem fullness as the source ranking. This covers the production-shaped
+// case where a 99%-used disk does not have the largest sum of regular
+// VolumeInfos, so ranking by volume bytes alone drains the wrong server.
+func TestBalanceByDiskUsageUsesPhysicalDiskUsageWhenReported(t *testing.T) {
+	const gb = 1024 * 1024 * 1024
+	volumeSizeLimitMb := uint64(1024)
+
+	physicalFull := makeByteNode("physical-full", 2000, 1000*gb, 10*gb, mkByteVolumes(1, 5, 1000)) // 99% used
+	dataHeavy := makeByteNode("data-heavy", 2000, 1000*gb, 530*gb, mkByteVolumes(101, 20, 1000))   // 47% used, more volume bytes
+	target := makeByteNode("target", 2000, 1000*gb, 900*gb, mkByteVolumes(201, 1, 1000))           // 10% used
+	beforePhysicalFull := volCount(physicalFull)
+	beforeDataHeavy := volCount(dataHeavy)
+	beforeTarget := volCount(target)
+
+	c := &commandVolumeBalance{
+		volumeSizeLimitMb:         volumeSizeLimitMb,
+		byDiskUsage:               true,
+		diskUsageHighWaterPercent: 90,
+	}
+	runBalance(t, c, []*Node{physicalFull, dataHeavy, target})
+
+	if got := volCount(physicalFull); got >= beforePhysicalFull {
+		t.Fatalf("-byDiskUsage should drain the physically fullest server, got %d volumes (was %d)", got, beforePhysicalFull)
+	}
+	if got := volCount(dataHeavy); got != beforeDataHeavy {
+		t.Fatalf("-byDiskUsage should not drain the lower physical-usage data-heavy server first, got %d volumes (was %d)", got, beforeDataHeavy)
+	}
+	if got := volCount(target); got <= beforeTarget {
+		t.Fatalf("expected the low-usage target to receive volumes, got %d volumes (was %d)", got, beforeTarget)
+	}
+}
+
 // makeByteNode builds a single-disk Node carrying physical disk bytes, for the
 // disk-fullness gate tests.
 func makeByteNode(id string, maxVolumeCount int64, totalBytes, freeBytes uint64, volumes []*master_pb.VolumeInformationMessage) *Node {
