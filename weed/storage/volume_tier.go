@@ -68,13 +68,12 @@ func (v *Volume) LoadRemoteFile() error {
 	}
 
 	// Swap under dataFileAccessLock (via SwapDataBackend) so the heartbeat's
-	// concurrent DataBackend read never races this reassignment. Then mark the
-	// volume tiered so a later heartbeat does not treat the just-removed local
-	// .dat as a phantom volume and stop reporting it to the master. On disk-scan
-	// load this is already true; here it flips a volume that was tier-uploaded
-	// in-process without a reload.
-	v.SwapDataBackend(backendStorage.NewStorageFile(tierFile.Key, v.volumeInfo))
-	v.hasRemoteFile.Store(true)
+	// concurrent DataBackend read never races this reassignment, and mark the
+	// volume tiered in the same locked step so a later heartbeat does not treat
+	// the just-removed local .dat as a phantom volume and stop reporting it to
+	// the master. On disk-scan load this is already true; here it flips a volume
+	// that was tier-uploaded in-process without a reload.
+	v.SwapDataBackend(backendStorage.NewStorageFile(tierFile.Key, v.volumeInfo), true)
 	return nil
 }
 

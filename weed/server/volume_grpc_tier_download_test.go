@@ -121,8 +121,8 @@ func (f *tierTestBackendFile) ReadAt(p []byte, off int64) (int, error) {
 func (f *tierTestBackendFile) WriteAt(p []byte, off int64) (int, error) { panic("not implemented") }
 func (f *tierTestBackendFile) Truncate(off int64) error                 { panic("not implemented") }
 func (f *tierTestBackendFile) Close() error                             { return nil }
-func (f *tierTestBackendFile) Name() string                            { return f.key }
-func (f *tierTestBackendFile) Sync() error                             { return nil }
+func (f *tierTestBackendFile) Name() string                             { return f.key }
+func (f *tierTestBackendFile) Sync() error                              { return nil }
 func (f *tierTestBackendFile) GetStat() (int64, time.Time, error) {
 	files := f.tierInfo.GetFiles()
 	if len(files) == 0 {
@@ -136,7 +136,9 @@ type fakeTierStream struct {
 	grpc.ServerStream
 }
 
-func (s *fakeTierStream) Send(*volume_server_pb.VolumeTierMoveDatFromRemoteResponse) error { return nil }
+func (s *fakeTierStream) Send(*volume_server_pb.VolumeTierMoveDatFromRemoteResponse) error {
+	return nil
+}
 
 func newTierTestStore(t *testing.T, dir string) *storage.Store {
 	t.Helper()
@@ -275,6 +277,12 @@ func TestTierMoveDatFromRemote_KeepRemote_LeavesReplicaLocal(t *testing.T) {
 	// remote backend — this is the assertion that fails on the pre-fix code.
 	if _, ok := v.DataBackend.(*backend.DiskFile); !ok {
 		t.Fatalf("after keep-remote download the data backend must be local DiskFile, got %T", v.DataBackend)
+	}
+	// The live volume must also report non-remote immediately, without waiting for
+	// a remount: a delete arriving before the remount would otherwise skip the .dat
+	// tombstone, and the phantom-.dat guard would stay disabled.
+	if v.HasRemoteFile() {
+		t.Fatal("after download the live volume must no longer be remote-backed")
 	}
 
 	// Remount and confirm the volume is no longer remote-backed and reads come
