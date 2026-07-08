@@ -46,6 +46,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Full history so the version-bump commit can rebase onto a moved master.
+          fetch-depth: 0
 
       # An explicit input wins; otherwise fall back to the current SeaweedFS
       # version (MAJOR.MINOR) from constants.go, matching its %d.%02d formatting.
@@ -102,13 +105,22 @@ jobs:
           set -euo pipefail
           if git diff --quiet; then
             echo "Poms already at ${VERSION}; nothing to commit."
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add other/java/client/pom.xml other/java/hdfs3/pom.xml
-            git commit -m "java ${VERSION}"
-            git push
+            exit 0
           fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add other/java/client/pom.xml other/java/hdfs3/pom.xml
+          git commit -m "java ${VERSION}"
+          # Rebase and retry so a concurrent push to master doesn't lose the bump.
+          for attempt in 1 2 3 4 5; do
+            if git push origin HEAD:master; then
+              exit 0
+            fi
+            echo "push rejected (attempt ${attempt}); rebasing onto latest master"
+            git pull --rebase origin master
+          done
+          echo "::error::could not push version bump after retries"
+          exit 1
 
       # Tests are skipped here: the integration tests need a live filer, and the
       # offline unit tests already run on every push in java_unit_tests.yml.
