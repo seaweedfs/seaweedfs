@@ -29,6 +29,10 @@ public class BasicAuthTest {
         FilerSecurityContext.setBasicAuth(null, null);
         assertNull(FilerSecurityContext.getBasicAuthHeaderValue());
         assertFalse(FilerSecurityContext.isBasicAuthEnabled());
+
+        FilerSecurityContext.setBasicAuth("", "ignored");
+        assertNull(FilerSecurityContext.getBasicAuthHeaderValue());
+        assertFalse(FilerSecurityContext.isBasicAuthEnabled());
     }
 
     @Test
