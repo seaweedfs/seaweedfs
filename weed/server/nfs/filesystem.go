@@ -635,9 +635,21 @@ func (fs *seaweedFileSystem) createEntry(ctx context.Context, actualPath util.Fu
 		return nil, err
 	}
 	if createdEntry != nil {
+		// Self-manage the inode->path index so FromHandle can resolve the
+		// handle we hand back to the client even when the filer was started
+		// without -nfs.inodeIndexPrefixes (the default). Best-effort: a
+		// failure is logged inside ensureInodeIndexForEntry and never blocks
+		// an otherwise-successful create.
+		fs.ensureEntryIndex(ctx, actualPath, createdEntry)
 		return createdEntry, nil
 	}
-	return fs.lookupEntry(ctx, actualPath)
+	// Filer did not echo the new entry; look it up and index that.
+	lookedUp, lookupErr := fs.lookupEntry(ctx, actualPath)
+	if lookupErr != nil {
+		return nil, lookupErr
+	}
+	fs.ensureEntryIndex(ctx, actualPath, lookedUp)
+	return lookedUp, nil
 }
 
 func (fs *seaweedFileSystem) createEntryFromProto(ctx context.Context, actualPath util.FullPath, entry *filer_pb.Entry) (*filer_pb.Entry, error) {
@@ -684,9 +696,15 @@ func (fs *seaweedFileSystem) createEntryFromProto(ctx context.Context, actualPat
 		return nil, err
 	}
 	if createdEntry != nil {
+		fs.ensureEntryIndex(ctx, actualPath, createdEntry)
 		return createdEntry, nil
 	}
-	return fs.lookupEntry(ctx, actualPath)
+	lookedUp, lookupErr := fs.lookupEntry(ctx, actualPath)
+	if lookupErr != nil {
+		return nil, lookupErr
+	}
+	fs.ensureEntryIndex(ctx, actualPath, lookedUp)
+	return lookedUp, nil
 }
 
 func (fs *seaweedFileSystem) mutateEntry(ctx context.Context, actualPath util.FullPath, mutate func(*filer_pb.Entry)) (*filer_pb.Entry, error) {
@@ -1009,6 +1027,17 @@ func (fs *seaweedFileSystem) ensureIndexedEntry(ctx context.Context, actualPath 
 	return entry, generation, nil
 }
 
+// ensureEntryIndex writes the inode->path index row for the entry via the
+// filer's KV gRPC interface, so that filehandles nfs returns stay resolvable
+// regardless of whether the filer was started with -nfs.inodeIndexPrefixes.
+// Best-effort: errors are logged and swallowed (see ensureInodeIndex).
+func (fs *seaweedFileSystem) ensureEntryIndex(ctx context.Context, actualPath util.FullPath, entry *filer_pb.Entry) {
+	_ = fs.server.withInternalClient(false, func(client nfsFilerClient) error {
+		ensureInodeIndexForEntry(ctx, client, actualPath, entry)
+		return nil
+	})
+}
+
 func (fs *seaweedFileSystem) backfillLegacyInode(ctx context.Context, actualPath util.FullPath, entry *filer_pb.Entry) (*filer_pb.Entry, error) {
 	dir, _ := actualPath.DirAndName()
 	clonedEntry, ok := proto.Clone(entry).(*filer_pb.Entry)
@@ -1034,9 +1063,20 @@ func (fs *seaweedFileSystem) backfillLegacyInode(ctx context.Context, actualPath
 		return nil, err
 	}
 	if updatedEntry != nil {
+		// The backfill just assigned (and persisted) a fresh inode to a
+		// legacy entry. Without an index row FromHandle cannot reverse that
+		// inode to actualPath, so every subsequent handle for this entry
+		// would ESTALE. Index it now — this is the path that fixes default-
+		// config access to entries nfs did not create itself.
+		fs.ensureEntryIndex(ctx, actualPath, updatedEntry)
 		return updatedEntry, nil
 	}
-	return fs.lookupEntry(ctx, actualPath)
+	lookedUp, lookupErr := fs.lookupEntry(ctx, actualPath)
+	if lookupErr != nil {
+		return nil, lookupErr
+	}
+	fs.ensureEntryIndex(ctx, actualPath, lookedUp)
+	return lookedUp, nil
 }
 
 func (fs *seaweedFileSystem) lookupGeneration(ctx context.Context, inode uint64) (uint64, error) {

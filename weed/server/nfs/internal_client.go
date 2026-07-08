@@ -21,6 +21,7 @@ type nfsSubscribeMetadataClient interface {
 
 type nfsFilerClient interface {
 	KvGet(ctx context.Context, in *filer_pb.KvGetRequest, opts ...grpc.CallOption) (*filer_pb.KvGetResponse, error)
+	KvPut(ctx context.Context, in *filer_pb.KvPutRequest, opts ...grpc.CallOption) (*filer_pb.KvPutResponse, error)
 	LookupDirectoryEntry(ctx context.Context, in *filer_pb.LookupDirectoryEntryRequest, opts ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error)
 	ListEntries(ctx context.Context, in *filer_pb.ListEntriesRequest, opts ...grpc.CallOption) (nfsListEntriesClient, error)
 	SubscribeMetadata(ctx context.Context, in *filer_pb.SubscribeMetadataRequest, opts ...grpc.CallOption) (nfsSubscribeMetadataClient, error)
@@ -37,6 +38,10 @@ type grpcNFSFilerClient struct {
 
 func (c grpcNFSFilerClient) KvGet(ctx context.Context, in *filer_pb.KvGetRequest, opts ...grpc.CallOption) (*filer_pb.KvGetResponse, error) {
 	return c.client.KvGet(ctx, in, opts...)
+}
+
+func (c grpcNFSFilerClient) KvPut(ctx context.Context, in *filer_pb.KvPutRequest, opts ...grpc.CallOption) (*filer_pb.KvPutResponse, error) {
+	return c.client.KvPut(ctx, in, opts...)
 }
 
 func (c grpcNFSFilerClient) LookupDirectoryEntry(ctx context.Context, in *filer_pb.LookupDirectoryEntryRequest, opts ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {

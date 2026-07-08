@@ -118,6 +118,21 @@ func (f *fakeNFSFilerClient) KvGet(_ context.Context, in *filer_pb.KvGetRequest,
 	return &filer_pb.KvGetResponse{}, nil
 }
 
+// KvPut mirrors the real FilerServer.KvPut semantics: an empty value deletes
+// the key (so the index-sync path's best-effort cleanup path stays consistent
+// with the production server), any other value is stored verbatim.
+func (f *fakeNFSFilerClient) KvPut(_ context.Context, in *filer_pb.KvPutRequest, _ ...grpc.CallOption) (*filer_pb.KvPutResponse, error) {
+	if f.kv == nil {
+		f.kv = make(map[string][]byte)
+	}
+	if len(in.Value) == 0 {
+		delete(f.kv, string(in.Key))
+		return &filer_pb.KvPutResponse{}, nil
+	}
+	f.kv[string(in.Key)] = in.Value
+	return &filer_pb.KvPutResponse{}, nil
+}
+
 func (f *fakeNFSFilerClient) LookupDirectoryEntry(_ context.Context, in *filer_pb.LookupDirectoryEntryRequest, _ ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
 	fullPath := util.NewFullPath(in.Directory, in.Name)
 	if entry := f.materializeEntry(fullPath); entry != nil {

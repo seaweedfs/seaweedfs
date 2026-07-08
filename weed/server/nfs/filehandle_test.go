@@ -180,3 +180,91 @@ func TestNewServerNormalizesExportRootAndExportID(t *testing.T) {
 	assert.Equal(t, util.FullPath("/export/path"), server.exportRoot)
 	assert.Equal(t, exportIDForRoot("/export/path"), server.exportID)
 }
+
+// TestEnsureInodeIndexProducesResolverDecodableRow is the contract test for the
+// default-config fix: the row that weed nfs writes via ensureInodeIndex (the
+// self-managed index path) MUST be byte-for-byte decodable by the real
+// Resolver/FromHandle path, otherwise a filer started without
+// -nfs.inodeIndexPrefixes still yields ESTALE on read. It uses the real
+// fakeNFSFilerClient (which implements both the nfsFilerClient writer and the
+// filerResolverClient reader) so the write side and the read side share one KV
+// store, exactly as in production where both go through the filer gRPC KV.
+func TestEnsureInodeIndexProducesResolverDecodableRow(t *testing.T) {
+	client := &fakeNFSFilerClient{
+		kv:      make(map[string][]byte),
+		entries: make(map[util.FullPath]*filer_pb.Entry),
+	}
+
+	const inode uint64 = 7777
+	const path util.FullPath = "/exports/docs/readme.md"
+	// Seed the entry the resolver will look up; its inode must match.
+	client.entries[path] = &filer_pb.Entry{
+		Name: "readme.md",
+		Attributes: &filer_pb.FuseAttributes{
+			Inode: inode,
+		},
+	}
+
+	// nfs-side write — this is what createEntry/backfillLegacyInode call.
+	ensureInodeIndex(context.Background(), client, path, inode)
+
+	// Read side: a handle encoded with generation == InodeIndexInitialGeneration
+	// (the value lookupGeneration returns under default config) must resolve.
+	resolver := NewResolver("/exports", client)
+	handle := NewFileHandle(resolver.ExportID(), FileHandleKindFile, inode, filer.InodeIndexInitialGeneration)
+	resolved, err := resolver.ResolveHandle(context.Background(), handle.Encode())
+	require.NoError(t, err)
+	require.NotNil(t, resolved)
+	assert.Equal(t, path, resolved.Path)
+	require.NotNil(t, resolved.Entry)
+	assert.Equal(t, inode, resolved.Entry.Attributes.Inode)
+}
+
+// TestEnsureInodeIndexMergesPathsForHardLinks confirms the nfs-side writer
+// preserves existing paths on the inode row (read-modify-write), matching
+// FilerStoreWrapper.storeInodeIndex, so a hard-link's second path does not
+// clobber the first.
+func TestEnsureInodeIndexMergesPathsForHardLinks(t *testing.T) {
+	client := &fakeNFSFilerClient{
+		kv:      make(map[string][]byte),
+		entries: make(map[util.FullPath]*filer_pb.Entry),
+	}
+
+	const inode uint64 = 8888
+	// Pre-existing row with one path (as if the filer or a prior create wrote it).
+	existing := &filer.InodeIndexRecord{
+		Generation: filer.InodeIndexInitialGeneration,
+		Paths:      []string{"/exports/a/orig.txt"},
+	}
+	value, err := existing.Encode()
+	require.NoError(t, err)
+	client.kv[string(filer.InodeIndexKey(inode))] = value
+
+	// Both hard-linked names must exist in the filer for the resolver to land on.
+	client.entries["/exports/a/orig.txt"] = &filer_pb.Entry{
+		Name:       "orig.txt",
+		Attributes: &filer_pb.FuseAttributes{Inode: inode},
+	}
+	client.entries["/exports/b/link.txt"] = &filer_pb.Entry{
+		Name:       "link.txt",
+		Attributes: &filer_pb.FuseAttributes{Inode: inode},
+	}
+
+	// nfs writes a second path for the same inode (hard link).
+	ensureInodeIndex(context.Background(), client, "/exports/b/link.txt", inode)
+
+	// Both paths must be present on the merged row; the resolver picks the
+	// first that has a live entry lookup, so confirm both are decodable by
+	// checking the raw record carries two paths.
+	stored := client.kv[string(filer.InodeIndexKey(inode))]
+	require.NotEmpty(t, stored)
+	record, decErr := filer.DecodeInodeIndexRecord(stored)
+	require.NoError(t, decErr)
+	assert.ElementsMatch(t, []string{"/exports/a/orig.txt", "/exports/b/link.txt"}, record.Paths)
+
+	resolver := NewResolver("/exports", client)
+	handle := NewFileHandle(resolver.ExportID(), FileHandleKindFile, inode, filer.InodeIndexInitialGeneration)
+	resolved, err := resolver.ResolveHandle(context.Background(), handle.Encode())
+	require.NoError(t, err)
+	assert.Equal(t, util.FullPath("/exports/a/orig.txt"), resolved.Path)
+}
