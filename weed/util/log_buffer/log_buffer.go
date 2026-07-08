@@ -2,6 +2,7 @@ package log_buffer
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"math"
 	"sync"
@@ -936,18 +937,6 @@ var bufferPool = sync.Pool{
 	},
 }
 
-// logEntryPool reduces allocations in readTs which is called frequently during binary search
-var logEntryPool = sync.Pool{
-	New: func() interface{} {
-		return &filer_pb.LogEntry{}
-	},
-}
-
-// resetLogEntry clears a LogEntry for pool reuse
-func resetLogEntry(e *filer_pb.LogEntry) {
-	proto.Reset(e)
-}
-
 func copiedBytes(buf []byte) (copied *bytes.Buffer) {
 	copied = bufferPool.Get().(*bytes.Buffer)
 	copied.Reset()
@@ -970,19 +959,61 @@ func readTs(buf []byte, pos int) (size int, ts int64, err error) {
 
 	entryData := buf[pos+4 : pos+4+size]
 
-	// Use pooled LogEntry to avoid allocation on every call
-	logEntry := logEntryPool.Get().(*filer_pb.LogEntry)
-	defer func() {
-		resetLogEntry(logEntry)
-		logEntryPool.Put(logEntry)
-	}()
-
-	err = proto.Unmarshal(entryData, logEntry)
+	// Read only LogEntry.ts_ns rather than unmarshaling the whole entry. This
+	// runs on every binary-search probe in ReadFromBuffer; a full proto.Unmarshal
+	// there allocates fresh slices for the data/key byte fields on each call, which
+	// dominated allocation churn under metadata-subscription fan-out.
+	ts, err = readTsNs(entryData)
 	if err != nil {
-		// Return error instead of failing fast
-		// This allows caller to handle corruption gracefully
-		return 0, 0, fmt.Errorf("corrupted log buffer: failed to unmarshal LogEntry at pos %d, size %d: %w", pos, size, err)
+		return 0, 0, fmt.Errorf("corrupted log buffer at pos %d, size %d: %w", pos, size, err)
 	}
 
-	return size, logEntry.TsNs, nil
+	return size, ts, nil
+}
+
+// readTsNs scans a marshaled LogEntry and returns its ts_ns (field 1, varint)
+// without decoding the data/key byte fields. Fields serialize in number order,
+// so ts_ns is normally the first tag and this returns after one varint; the full
+// scan keeps it correct for any field order. A missing field 1 means the proto3
+// default, ts_ns == 0.
+func readTsNs(entryData []byte) (tsNs int64, err error) {
+	for i := 0; i < len(entryData); {
+		tag, n := binary.Uvarint(entryData[i:])
+		if n <= 0 {
+			return 0, fmt.Errorf("bad field tag at %d", i)
+		}
+		i += n
+		fieldNum := tag >> 3
+		switch tag & 0x7 { // wire type
+		case 0: // varint
+			v, m := binary.Uvarint(entryData[i:])
+			if m <= 0 {
+				return 0, fmt.Errorf("bad varint for field %d", fieldNum)
+			}
+			i += m
+			if fieldNum == 1 { // ts_ns
+				return int64(v), nil
+			}
+		case 1: // 64-bit
+			i += 8
+		case 2: // length-delimited: read length, skip payload without copying
+			l, m := binary.Uvarint(entryData[i:])
+			if m <= 0 {
+				return 0, fmt.Errorf("bad length for field %d", fieldNum)
+			}
+			i += m
+			if l > uint64(len(entryData)-i) {
+				return 0, fmt.Errorf("field %d length %d overruns buffer", fieldNum, l)
+			}
+			i += int(l)
+		case 5: // 32-bit
+			i += 4
+		default:
+			return 0, fmt.Errorf("unknown wire type for field %d", fieldNum)
+		}
+		if i > len(entryData) {
+			return 0, fmt.Errorf("field %d overruns buffer", fieldNum)
+		}
+	}
+	return 0, nil
 }
