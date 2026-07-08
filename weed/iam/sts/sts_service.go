@@ -652,6 +652,14 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 		requestContext["groups"] = externalIdentity.Groups
 	}
 
+	// Same for the caller's roles (the `roles` claim). Surfaced as a []string so a
+	// resource policy can gate on jwt:roles - the S3 middleware exposes it that way.
+	// Without this, "roles" was excluded from the OIDC attributes (processedClaims)
+	// and so unusable in a request-time permission policy.
+	if len(externalIdentity.Roles) > 0 {
+		requestContext["roles"] = externalIdentity.Roles
+	}
+
 	// Compute a stable parent-user hash from (sub, iss). Only this tuple is
 	// guaranteed stable across token refresh per OIDC Core 1.0, so this is the
 	// right key for any per-identity state (audit trail, future quotas).

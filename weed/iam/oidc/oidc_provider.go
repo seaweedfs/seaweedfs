@@ -481,6 +481,10 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, token string) (*provide
 	email, _ := claims.GetClaimString("email")
 	displayName, _ := claims.GetClaimString("name")
 	groups, _ := claims.GetClaimStringSlice("groups")
+	// The raw `roles` claim (e.g. from a Keycloak realm-role mapper). Surfaced into
+	// the STS request context below (see ExternalIdentity.Roles) so resource policies
+	// can gate on jwt:roles. Distinct from the provider-configured role mapping below.
+	rawRoles, _ := claims.GetClaimStringSlice("roles")
 
 	// Debug: Log available claims
 	glog.V(3).Infof("Available claims: %+v", claims.Claims)
@@ -535,6 +539,7 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, token string) (*provide
 		Email:         email,
 		DisplayName:   displayName,
 		Groups:        groups,
+		Roles:         rawRoles,
 		Attributes:    attributes,
 		Provider:      p.name,
 		Issuer:        claims.Issuer,
