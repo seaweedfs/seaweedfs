@@ -446,7 +446,8 @@ func isMultipartUploadsPath(bucketPath, directory string) bool {
 	if !ok {
 		return false
 	}
-	first, _, _ := strings.Cut(strings.TrimPrefix(directory, dir+"/"), "/")
+	// requireChild guarantees directory starts with dir + "/", so slice past it.
+	first, _, _ := strings.Cut(directory[len(dir)+1:], "/")
 	return first == s3_constants.MultipartUploadsFolder
 }
 
