@@ -124,6 +124,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 
 		if bytesBuf != nil && bytesBufPooled {
 			logBuffer.ReleaseMemory(bytesBuf)
+			bytesBuf = nil // keep the deferred release from double-freeing if ReadFromBuffer panics
 		}
 		bytesBuf, batchIndex, bytesBufPooled, err = logBuffer.ReadFromBuffer(lastReadPosition)
 		if err == ResumeFromDiskError {
@@ -339,6 +340,7 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 
 		if bytesBuf != nil && bytesBufPooled {
 			logBuffer.ReleaseMemory(bytesBuf)
+			bytesBuf = nil // keep the deferred release from double-freeing if ReadFromBuffer panics
 		}
 		bytesBuf, offset, bytesBufPooled, err = logBuffer.ReadFromBuffer(lastReadPosition)
 		glog.V(4).Infof("ReadFromBuffer for %s returned bytesBuf=%v, offset=%d, err=%v", readerName, bytesBuf != nil, offset, err)
