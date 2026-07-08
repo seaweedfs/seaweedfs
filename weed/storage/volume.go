@@ -32,7 +32,7 @@ type Volume struct {
 	noWriteOrDelete    bool // if readonly, either noWriteOrDelete or noWriteCanDelete
 	noWriteCanDelete   bool // if readonly, either noWriteOrDelete or noWriteCanDelete
 	noWriteLock        sync.RWMutex
-	hasRemoteFile      bool // if the volume has a remote file
+	hasRemoteFile      atomic.Bool // if the volume is tiered: data lives in a remote backend
 	MemoryMapMaxSizeMb uint32
 
 	super_block.SuperBlock
@@ -312,17 +312,22 @@ func (v *Volume) Close() {
 	v.doClose()
 }
 
-// SwapDataBackend atomically replaces the data backend (e.g. swapping a
-// remote-tier backend for a freshly downloaded local .dat), closing the old
-// one. Held under dataFileAccessLock so a concurrent read/write never observes
-// a half-swapped or closed backend.
-func (v *Volume) SwapDataBackend(newBackend backend.BackendStorageFile) {
+// SwapDataBackend atomically replaces the data backend and updates the
+// remote-tier flag under dataFileAccessLock, closing the old backend. Both tier
+// directions go through here so hasRemoteFile always matches the live backend:
+// tier-down passes hasRemoteFile=false (now serving a local .dat), tier-up
+// passes true. Keeping the swap and the flag under one lock means the heartbeat
+// never observes a half-swapped backend or a flag that disagrees with it — a
+// stale-false flag would make doDeleteRequest skip the new .dat's tombstones and
+// disable the phantom-.dat guard.
+func (v *Volume) SwapDataBackend(newBackend backend.BackendStorageFile, hasRemoteFile bool) {
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 	if v.DataBackend != nil {
 		v.DataBackend.Close()
 	}
 	v.DataBackend = newBackend
+	v.hasRemoteFile.Store(hasRemoteFile)
 }
 
 func (v *Volume) doClose() {

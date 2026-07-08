@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"google.golang.org/protobuf/proto"
-
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -261,7 +259,8 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 			entryData := buf[pos+4 : pos+4+int(size)]
 
 			logEntry := &filer_pb.LogEntry{}
-			if err = proto.Unmarshal(entryData, logEntry); err != nil {
+			// data/key alias entryData; valid only within eachLogDataFn below.
+			if err = unmarshalLogEntryAliased(entryData, logEntry); err != nil {
 				glog.Errorf("unexpected unmarshal mq_pb.Message: %v", err)
 				pos += 4 + int(size)
 				continue
@@ -523,7 +522,8 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 			entryData := buf[pos+4 : pos+4+int(size)]
 
 			logEntry := &filer_pb.LogEntry{}
-			if err = proto.Unmarshal(entryData, logEntry); err != nil {
+			// data/key alias entryData; valid only within eachLogDataFn below.
+			if err = unmarshalLogEntryAliased(entryData, logEntry); err != nil {
 				glog.Errorf("unexpected unmarshal mq_pb.Message: %v", err)
 				pos += 4 + int(size)
 				continue

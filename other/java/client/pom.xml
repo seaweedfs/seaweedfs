@@ -5,7 +5,7 @@
 
     <groupId>com.seaweedfs</groupId>
     <artifactId>seaweedfs-client</artifactId>
-    <version>4.00</version>
+    <version>4.38</version>
 
     <name>SeaweedFS Java Client</name>
     <description>A java client for SeaweedFS.</description>
@@ -133,7 +133,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-gpg-plugin</artifactId>
-                <version>1.5</version>
+                <version>3.2.4</version>
                 <executions>
                     <execution>
                         <id>sign-artifacts</id>
