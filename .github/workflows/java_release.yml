@@ -10,8 +10,8 @@ name: "release: java clients"
 #                             gpg --homedir <keyring> --armor --export-secret-keys <KEYID> > key.asc
 #   MAVEN_GPG_PASSPHRASE    - passphrase for that key
 #
-# Run with dry_run on first (default) to exercise secrets, GPG signing, and the
-# build without publishing. Uncheck dry_run for the real release to Central.
+# A plain run publishes to Central. Check dry_run to exercise secrets, GPG
+# signing, and the build without committing or publishing.
 
 on:
   workflow_dispatch:
@@ -23,7 +23,7 @@ on:
       dry_run:
         description: "Build and GPG-sign only; skip the version commit and the Central upload"
         type: boolean
-        default: true
+        default: false
 
 permissions:
   contents: write
