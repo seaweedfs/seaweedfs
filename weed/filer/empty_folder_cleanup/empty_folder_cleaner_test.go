@@ -104,6 +104,102 @@ func Test_isUnderBucketPath(t *testing.T) {
 	}
 }
 
+func Test_isMultipartUploadsPath(t *testing.T) {
+	uploads := s3_constants.MultipartUploadsFolder
+	tests := []struct {
+		name       string
+		directory  string
+		bucketPath string
+		expected   bool
+	}{
+		{"staging root", "/buckets/mybucket/" + uploads, "/buckets", true},
+		{"upload marker dir", "/buckets/mybucket/" + uploads + "/abc123", "/buckets", true},
+		{"nested under staging", "/buckets/mybucket/" + uploads + "/abc123/hashstates", "/buckets", true},
+		{"normal folder", "/buckets/mybucket/folder", "/buckets", false},
+		{"registry own uploads dir", "/buckets/mybucket/docker/registry/v2/_uploads/x", "/buckets", false},
+		{"bucket itself", "/buckets/mybucket", "/buckets", false},
+		{"outside buckets", "/other/" + uploads, "/buckets", false},
+		{"empty bucket path", "/buckets/mybucket/" + uploads, "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isMultipartUploadsPath(tt.bucketPath, tt.directory); got != tt.expected {
+				t.Errorf("isMultipartUploadsPath(%q, %q) = %v, want %v", tt.bucketPath, tt.directory, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestEmptyFolderCleaner_OnDeleteEvent_skipsMultipartUploads(t *testing.T) {
+	lockRing := lock_manager.NewLockRing(5 * time.Second)
+	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"}, 0)
+
+	cleaner := &EmptyFolderCleaner{
+		lockRing:     lockRing,
+		host:         "filer1:8888",
+		bucketPath:   "/buckets",
+		enabled:      true,
+		folderCounts: make(map[string]*folderState),
+		cleanupQueue: NewCleanupQueue(1000, 10*time.Minute),
+		stopCh:       make(chan struct{}),
+	}
+
+	now := time.Now()
+	uploads := "/buckets/mybucket/" + s3_constants.MultipartUploadsFolder
+	cleaner.OnDeleteEvent(uploads, "abc123", true, now)
+	cleaner.OnDeleteEvent(uploads+"/abc123", "0001.part", false, now)
+	if cleaner.GetPendingCleanupCount() != 0 {
+		t.Fatalf("multipart staging paths must not be queued, got %d pending", cleaner.GetPendingCleanupCount())
+	}
+
+	// A normal folder is still queued, proving the guard is scoped to .uploads.
+	cleaner.OnDeleteEvent("/buckets/mybucket/folder", "file.txt", false, now)
+	if cleaner.GetPendingCleanupCount() != 1 {
+		t.Fatalf("normal folder should be queued, got %d pending", cleaner.GetPendingCleanupCount())
+	}
+
+	cleaner.Stop()
+}
+
+func TestEmptyFolderCleaner_executeCleanup_skipsMultipartUploads(t *testing.T) {
+	lockRing := lock_manager.NewLockRing(5 * time.Second)
+	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"}, 0)
+
+	var deleted []string
+	mock := &mockFilerOps{
+		countFn:  func(util.FullPath) (int, error) { return 0, nil },
+		deleteFn: func(p util.FullPath) error { deleted = append(deleted, string(p)); return nil },
+	}
+
+	cleaner := &EmptyFolderCleaner{
+		filer:                 mock,
+		lockRing:              lockRing,
+		host:                  "filer1:8888",
+		bucketPath:            "/buckets",
+		enabled:               true,
+		maxCountCheck:         DefaultMaxCountCheck,
+		cacheExpiry:           DefaultCacheExpiry,
+		folderCounts:          make(map[string]*folderState),
+		bucketCleanupPolicies: make(map[string]*bucketCleanupPolicyState),
+		cleanupQueue:          NewCleanupQueue(1000, 10*time.Minute),
+		stopCh:                make(chan struct{}),
+	}
+
+	uploads := "/buckets/mybucket/" + s3_constants.MultipartUploadsFolder
+	cleaner.executeCleanup(uploads, "abc123")
+	cleaner.executeCleanup(uploads+"/abc123", "0001.part")
+	if len(deleted) != 0 {
+		t.Fatalf("multipart staging paths must not be deleted, got %v", deleted)
+	}
+
+	// An empty normal folder is deleted, proving the guard did not disable cleanup.
+	cleaner.executeCleanup("/buckets/mybucket/folder", "file.txt")
+	if len(deleted) != 1 || deleted[0] != "/buckets/mybucket/folder" {
+		t.Fatalf("normal empty folder should be deleted, got %v", deleted)
+	}
+}
+
 func Test_autoRemoveEmptyFoldersEnabled(t *testing.T) {
 	tests := []struct {
 		name      string

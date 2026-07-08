@@ -128,6 +128,11 @@ func (efc *EmptyFolderCleaner) OnDeleteEvent(directory string, entryName string,
 		return
 	}
 
+	// Never queue the S3 multipart staging area; the upload lifecycle owns it.
+	if isMultipartUploadsPath(efc.bucketPath, directory) {
+		return
+	}
+
 	// Check if we own this folder
 	if !efc.ownsFolder(directory) {
 		glog.V(4).Infof("EmptyFolderCleaner: not owner of %s, skipping", directory)
@@ -239,6 +244,15 @@ func (efc *EmptyFolderCleaner) processCleanupQueue() {
 
 // executeCleanup performs the actual cleanup of an empty folder
 func (efc *EmptyFolderCleaner) executeCleanup(folder string, triggeredBy string) {
+	// The bucket-shared .uploads staging tree holds in-progress multipart uploads.
+	// Deleting <bucket>/.uploads (reached here directly or via the parent cascade
+	// below) races a concurrent CreateMultipartUpload: the new upload's marker row
+	// is inserted between the emptiness check and the folder delete, then wiped,
+	// so the upload silently vanishes. Leave this tree to the upload lifecycle.
+	if isMultipartUploadsPath(efc.bucketPath, folder) {
+		return
+	}
+
 	efc.mu.Lock()
 
 	// Quick check: if we have cached count and it's > 0, skip
@@ -420,6 +434,21 @@ func isUnderPath(child, parent string) bool {
 		return true
 	}
 	return child[len(parent)] == '/'
+}
+
+// isMultipartUploadsPath reports whether directory is the S3 multipart staging
+// root <bucket>/.uploads or anything beneath it.
+func isMultipartUploadsPath(bucketPath, directory string) bool {
+	if bucketPath == "" {
+		return false
+	}
+	dir, ok := util.ExtractBucketPath(bucketPath, directory, true)
+	if !ok {
+		return false
+	}
+	// requireChild guarantees directory starts with dir + "/", so slice past it.
+	first, _, _ := strings.Cut(directory[len(dir)+1:], "/")
+	return first == s3_constants.MultipartUploadsFolder
 }
 
 // isUnderBucketPath checks if directory is inside a bucket (under /buckets/<bucket>/...)
