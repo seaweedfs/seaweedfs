@@ -85,10 +85,10 @@ func (vs *VolumeServer) VolumeTierMoveDatFromRemote(req *volume_server_pb.Volume
 	}
 
 	// Trim the remote file reference and persist the .vif (util.WriteFile fsyncs it)
-	// BEFORE deleting the remote object. After this point hasRemoteFile is false, so a
-	// crash before DeleteFile merely leaks the remote object while the volume reloads
-	// its local .dat. The volume must NEVER be left with a .vif referencing the remote
-	// object while that object is deleted.
+	// BEFORE deleting the remote object. After this the .vif no longer references the
+	// remote object, so a crash before DeleteFile merely leaks the remote object while
+	// the volume reloads its local .dat as non-remote. The volume must NEVER be left
+	// with a .vif referencing the remote object while that object is deleted.
 	v.GetVolumeInfo().Files = v.GetVolumeInfo().Files[1:]
 	if err := v.SaveVolumeInfo(); err != nil {
 		return fmt.Errorf("volume %d failed to save remote file info: %v", v.Id, err)
@@ -127,8 +127,9 @@ func swapToLocalDatBackend(v *storage.Volume, datFileName string) error {
 		return err
 	}
 	// Swap under the volume's data lock so concurrent reads never see a closed
-	// or half-swapped backend.
-	v.SwapDataBackend(backend.NewDiskFile(dataFile))
+	// or half-swapped backend, clearing hasRemoteFile in the same step since the
+	// volume now serves from the local .dat.
+	v.SwapDataBackend(backend.NewDiskFile(dataFile), false)
 	return nil
 }
 
