@@ -1,0 +1,139 @@
+name: "release: java clients"
+
+# Publishes the SeaweedFS Java clients (seaweedfs-client and
+# seaweedfs-hadoop3-client) to Maven Central via the Sonatype Central Portal.
+#
+# Required repository secrets:
+#   MAVEN_CENTRAL_USERNAME  - Central Portal user token username (central.sonatype.com -> Account -> Generate User Token)
+#   MAVEN_CENTRAL_PASSWORD  - Central Portal user token password
+#   MAVEN_GPG_PRIVATE_KEY   - ASCII-armored signing key:
+#                             gpg --homedir <keyring> --armor --export-secret-keys <KEYID> > key.asc
+#   MAVEN_GPG_PASSPHRASE    - passphrase for that key
+#
+# Run with dry_run on first (default) to exercise secrets, GPG signing, and the
+# build without publishing. Uncheck dry_run for the real release to Central.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish, e.g. 4.39. Leave blank to use the current SeaweedFS version."
+        type: string
+        required: false
+      dry_run:
+        description: "Build and GPG-sign only; skip the version commit and the Central upload"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: java-release
+  cancel-in-progress: false
+
+env:
+  # Java 17 needs these opens for the Maven publishing plugins' reflective access.
+  MAVEN_OPTS: >-
+    --add-opens=java.base/java.util=ALL-UNNAMED
+    --add-opens=java.base/java.lang.reflect=ALL-UNNAMED
+    --add-opens=java.base/java.text=ALL-UNNAMED
+    --add-opens=java.desktop/java.awt.font=ALL-UNNAMED
+
+jobs:
+  publish:
+    name: Publish to Maven Central
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # An explicit input wins; otherwise fall back to the current SeaweedFS
+      # version (MAJOR.MINOR) from constants.go, matching its %d.%02d formatting.
+      - name: Resolve version
+        id: resolve
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          VERSION="$INPUT_VERSION"
+          if [ -z "$VERSION" ]; then
+            CONST=weed/util/version/constants.go
+            MAJOR=$(grep -oP 'MAJOR_VERSION\s*=\s*int32\(\K[0-9]+' "$CONST")
+            MINOR=$(grep -oP 'MINOR_VERSION\s*=\s*int32\(\K[0-9]+' "$CONST")
+            VERSION=$(printf '%d.%02d' "$MAJOR" "$MINOR")
+            echo "No version given; using current SeaweedFS version ${VERSION}."
+          fi
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version must be MAJOR.MINOR, e.g. 4.39 (got '$VERSION')"
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'maven'
+          server-id: central
+          server-username: MAVEN_CENTRAL_USERNAME
+          server-password: MAVEN_CENTRAL_PASSWORD
+          gpg-private-key: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
+          gpg-passphrase: MAVEN_GPG_PASSPHRASE
+
+      # client carries the version literally; hdfs3 derives its own version and
+      # its seaweedfs-client dependency from the seaweedfs.client.version property.
+      - name: Set versions in poms
+        env:
+          VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          V=org.codehaus.mojo:versions-maven-plugin:2.16.2
+          mvn -B -ntp -f other/java/client/pom.xml "${V}:set" \
+            -DnewVersion="$VERSION" -DgenerateBackupPoms=false
+          mvn -B -ntp -f other/java/hdfs3/pom.xml "${V}:set-property" \
+            -Dproperty=seaweedfs.client.version -DnewVersion="$VERSION" -DgenerateBackupPoms=false
+
+      - name: Commit version bump
+        if: ${{ !inputs.dry_run }}
+        env:
+          VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "Poms already at ${VERSION}; nothing to commit."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add other/java/client/pom.xml other/java/hdfs3/pom.xml
+            git commit -m "java ${VERSION}"
+            git push
+          fi
+
+      # Tests are skipped here: the integration tests need a live filer, and the
+      # offline unit tests already run on every push in java_unit_tests.yml.
+      # dry_run stops at `install` (build + GPG sign, no upload). A real run deploys.
+      # client goes first either way so its install populates the local repo for hdfs3.
+      - name: Publish seaweedfs-client
+        working-directory: other/java/client
+        env:
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          [ "$DRY_RUN" = "true" ] && GOAL="clean install" || GOAL="clean deploy"
+          mvn -B -ntp $GOAL -DskipTests
+
+      - name: Publish seaweedfs-hadoop3-client
+        working-directory: other/java/hdfs3
+        env:
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          [ "$DRY_RUN" = "true" ] && GOAL="clean install" || GOAL="clean deploy"
+          mvn -B -ntp $GOAL -DskipTests
