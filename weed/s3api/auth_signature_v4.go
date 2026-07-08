@@ -1123,9 +1123,9 @@ func encodePath(pathName string) string {
 			if runeLen < 0 {
 				return pathName
 			}
-			u := make([]byte, runeLen)
-			utf8.EncodeRune(u, s)
-			for _, r := range u {
+			var u [utf8.UTFMax]byte
+			utf8.EncodeRune(u[:], s)
+			for _, r := range u[:runeLen] {
 				buf.WriteByte('%')
 				buf.WriteByte(pathHexTable[r>>4])
 				buf.WriteByte(pathHexTable[r&0x0f])
