@@ -732,6 +732,7 @@ message FilerConf {
         bool worm = 14;
         uint64 worm_grace_period_seconds = 15;
         uint64 worm_retention_time_seconds = 16;
+        bool inode_index = 17;
     }
     repeated PathConf locations = 2;
 }
