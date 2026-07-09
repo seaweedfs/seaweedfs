@@ -743,19 +743,14 @@ pub fn parse_needle_id_cookie(s: &str) -> Result<(NeedleId, Cookie), String> {
     let needle_id_hex = &hex_part[..split];
     let cookie_hex = &hex_part[split..];
 
-    let needle_id_bytes = hex::decode(needle_id_hex).map_err(|e| format!("Parse needleId error: {}", e))?;
-    let cookie_bytes = hex::decode(cookie_hex).map_err(|e| format!("Parse cookie error: {}", e))?;
-
-    // Pad needle id to 8 bytes
-    let mut nid_buf = [0u8; 8];
-    if needle_id_bytes.len() > 8 {
-        return Err(format!("KeyHash is too long."));
-    }
-    let start = 8 - needle_id_bytes.len();
-    nid_buf[start..].copy_from_slice(&needle_id_bytes);
-
-    let mut key = NeedleId::from_bytes(&nid_buf[0..8]);
-    let cookie = Cookie::from_bytes(&cookie_bytes[0..4]);
+    // Go parses both with strconv.ParseUint, which accepts odd-length hex
+    let mut key = NeedleId(
+        u64::from_str_radix(needle_id_hex, 16)
+            .map_err(|e| format!("Parse needleId error: {}", e))?,
+    );
+    let cookie = Cookie(
+        u32::from_str_radix(cookie_hex, 16).map_err(|e| format!("Parse cookie error: {}", e))?,
+    );
 
     // Apply delta if present (Go: n.Id += Uint64ToNeedleId(d))
     if let Some(d) = delta {
@@ -940,5 +935,19 @@ mod tests {
         let (key, cookie) = parse_needle_id_cookie(&s).unwrap();
         assert_eq!(key, NeedleId(1));
         assert_eq!(cookie, Cookie(0x12345678));
+    }
+
+    #[test]
+    fn test_parse_odd_length_needle_id() {
+        // Go's shell formats purge fids with strconv.FormatUint, which does not
+        // pad the needle id hex to an even length.
+        let (key, cookie) = parse_needle_id_cookie("100000000").unwrap();
+        assert_eq!(key, NeedleId(1));
+        assert_eq!(cookie, Cookie(0));
+
+        let fid = FileId::parse("3,12300000000").unwrap();
+        assert_eq!(fid.volume_id, VolumeId(3));
+        assert_eq!(fid.key, NeedleId(0x123));
+        assert_eq!(fid.cookie, Cookie(0));
     }
 }
