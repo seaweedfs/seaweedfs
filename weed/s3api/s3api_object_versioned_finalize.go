@@ -111,6 +111,9 @@ func wormDeleteCondition(worm, bypass bool) *filer_pb.WriteCondition {
 // rather than a dangling pointer) and deletes the version file. lock_key is the
 // object (serializing the pointer recompute); for object-lock buckets the
 // condition gates the delete on the version's WORM guards evaluated on the owner.
+// Deleting the last version also removes the emptied .versions/ directory —
+// leaving it behind would keep re-triggering the read path's self-heal rescans
+// on every GET of the key (Veeam probes its deleted lock objects forever).
 func (s3a *S3ApiServer) routedDeleteSpecificVersion(owner pb.ServerAddress, bucket, object, versionId string, worm, bypass bool) s3err.ErrorCode {
 	if !isValidVersionID(versionId) {
 		return s3err.ErrInvalidRequest
@@ -125,7 +128,7 @@ func (s3a *S3ApiServer) routedDeleteSpecificVersion(owner pb.ServerAddress, buck
 		Condition:    cond,
 		Mutations: []*filer_pb.ObjectMutation{
 			s3a.latestPointerRecompute(bucket, object, isNewFormatVersionId(versionId), versionFileName, false),
-			{Type: filer_pb.ObjectMutation_DELETE, Directory: versionsPath, Name: versionFileName, IsDeleteData: true},
+			{Type: filer_pb.ObjectMutation_DELETE, Directory: versionsPath, Name: versionFileName, IsDeleteData: true, RemoveEmptyParent: true},
 		},
 	}
 	resp, err := s3a.objectTxnOnFiler(owner, req)

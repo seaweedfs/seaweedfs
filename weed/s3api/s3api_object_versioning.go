@@ -1957,13 +1957,22 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 	}
 
 	if latestEntry == nil {
-		// Best-effort clear the stale latest-version pointer so subsequent
-		// reads short-circuit to ErrNotFound directly instead of replaying
-		// getLatestObjectVersion's read-retry loop and re-entering self-heal
-		// on every request. Orphan entries (files in .versions/ that lack
-		// the version-id extended attribute) remain in place; from the S3
-		// API perspective the object is correctly absent.
-		s3a.clearStaleLatestVersionPointer(bucket, normalizedObject, bucketDir, versionsObjectPath, versionsEntry, "healStaleLatestVersionPointer")
+		// No version remains: remove the residue directory outright so future
+		// reads take the clean ErrNotFound path instead of re-entering this
+		// self-heal (and its rescan + surfaced warning) on every request. The
+		// non-recursive rm makes this safe against a concurrent PUT — a new
+		// child fails the rm, and a directory removed just before that PUT's
+		// version file lands is recreated by the create's parent handling.
+		if rmErr := s3a.rm(bucketDir, versionsObjectPath, true, false); rmErr == nil {
+			versioningHealInfof("healed", "bucket=%s key=%s mode=empty_dir_removed", bucket, normalizedObject)
+		} else {
+			// Orphan entries (files in .versions/ that lack the version-id
+			// extended attribute) block the teardown and remain in place for an
+			// operator; fall back to clearing the stale pointer so reads at
+			// least short-circuit. From the S3 API perspective the object is
+			// correctly absent either way.
+			s3a.clearStaleLatestVersionPointer(bucket, normalizedObject, bucketDir, versionsObjectPath, versionsEntry, "healStaleLatestVersionPointer")
+		}
 		// Wrap filer_pb.ErrNotFound so callers can distinguish genuine
 		// object-absence (nothing left to promote) from scan failures
 		// (I/O errors during list) via errors.Is.

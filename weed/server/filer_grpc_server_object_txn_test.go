@@ -619,6 +619,86 @@ func TestObjectTransactionVersionDeleteWithWorm(t *testing.T) {
 	}
 }
 
+// Deleting the LAST version tears down the emptied .versions/ directory in the
+// same transaction (remove_empty_parent on the DELETE), so a fully-drained key
+// leaves no residue to re-trigger the read path's self-heal on every GET. A
+// remaining child keeps the directory; a replay after the child is already
+// gone still tidies it.
+func TestObjectTransactionDeleteRemovesEmptyParent(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	seed := func(withSibling bool) map[string]*filer.Entry {
+		entries := map[string]*filer.Entry{
+			"/buckets/b/obj/.versions": {
+				Attr:     filer.Attr{Inode: 2, Mtime: now, Crtime: now, Mode: 0755 | (1 << 31)},
+				Extended: map[string][]byte{"latestName": []byte("v_a"), "latestVid": []byte("v1")},
+			},
+			"/buckets/b/obj/.versions/v_a": {
+				Attr:     filer.Attr{Inode: 10, Mtime: now, Crtime: now, Mode: 0644},
+				Extended: map[string][]byte{"vid": []byte("v1")},
+			},
+		}
+		if withSibling {
+			entries["/buckets/b/obj/.versions/orphan"] = &filer.Entry{
+				Attr: filer.Attr{Inode: 11, Mtime: now, Crtime: now, Mode: 0644},
+			}
+		}
+		return entries
+	}
+	// Mirrors routedDeleteSpecificVersion: repoint excluding the dying version,
+	// then delete it and tidy the parent.
+	mkReq := func() *filer_pb.ObjectTransactionRequest {
+		return &filer_pb.ObjectTransactionRequest{
+			LockKey: "/buckets/b/obj",
+			Mutations: []*filer_pb.ObjectMutation{
+				{Type: filer_pb.ObjectMutation_RECOMPUTE_LATEST, Directory: "/buckets/b/obj", Name: ".versions",
+					Recompute: &filer_pb.Recompute{ScanDir: "/buckets/b/obj/.versions", Descending: true, ExcludeName: "v_a",
+						NameToKey: "latestName", CopyExtended: map[string]string{"latestVid": "vid"}}},
+				{Type: filer_pb.ObjectMutation_DELETE, Directory: "/buckets/b/obj/.versions", Name: "v_a", RemoveEmptyParent: true},
+			},
+		}
+	}
+
+	// Last version: the emptied directory goes with it.
+	fs, store := newTxnTestServer(seed(false))
+	resp, err := fs.ObjectTransaction(context.Background(), mkReq())
+	if err != nil || resp.Error != "" {
+		t.Fatalf("txn failed: err=%v resp=%q", err, resp.Error)
+	}
+	if _, ok := store.entries["/buckets/b/obj/.versions/v_a"]; ok {
+		t.Errorf("version should be deleted")
+	}
+	if _, ok := store.entries["/buckets/b/obj/.versions"]; ok {
+		t.Errorf(".versions directory emptied by the delete should be removed")
+	}
+
+	// A remaining child keeps the directory (non-recursive teardown declines).
+	fs, store = newTxnTestServer(seed(true))
+	resp, err = fs.ObjectTransaction(context.Background(), mkReq())
+	if err != nil || resp.Error != "" {
+		t.Fatalf("txn failed: err=%v resp=%q", err, resp.Error)
+	}
+	if _, ok := store.entries["/buckets/b/obj/.versions/orphan"]; !ok {
+		t.Errorf("sibling must survive the teardown attempt")
+	}
+	if _, ok := store.entries["/buckets/b/obj/.versions"]; !ok {
+		t.Errorf(".versions directory with a remaining child must not be removed")
+	}
+
+	// Replay: the child is already gone, the empty parent is still tidied.
+	fs, store = newTxnTestServer(map[string]*filer.Entry{
+		"/buckets/b/obj/.versions": {
+			Attr: filer.Attr{Inode: 2, Mtime: now, Crtime: now, Mode: 0755 | (1 << 31)},
+		},
+	})
+	resp, err = fs.ObjectTransaction(context.Background(), mkReq())
+	if err != nil || resp.Error != "" {
+		t.Fatalf("replay txn failed: err=%v resp=%q", err, resp.Error)
+	}
+	if _, ok := store.entries["/buckets/b/obj/.versions"]; ok {
+		t.Errorf("replayed delete should still remove the empty directory")
+	}
+}
+
 // PATCH_EXTENDED with touch_mtime bumps the entry's Mtime (a metadata-replace
 // copy) while merging Extended.
 func TestObjectTransactionPatchTouchMtime(t *testing.T) {
