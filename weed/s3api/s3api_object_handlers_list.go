@@ -298,7 +298,7 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, bucket string, ori
 		for {
 			empty := true
 
-			nextMarker, doErr = s3a.doListFilerEntries(ctx, client, reqDir, prefix, cursor, marker, delimiter, false, bucket, func(dir string, entry *filer_pb.Entry) {
+			nextMarker, doErr = s3a.doListFilerEntries(ctx, client, listDirectoryRequest{dir: reqDir, prefix: prefix, marker: marker, delimiter: delimiter, bucket: bucket}, cursor, func(dir string, entry *filer_pb.Entry) {
 				empty = false
 				dirName, entryName, _ := entryUrlEncode(dir, entry.Name, encodingTypeUrl)
 				if entry.IsDirectory {
@@ -557,7 +557,18 @@ func buildTruncatedNextMarker(requestDir, prefix, nextMarker string, lastEntryWa
 	return nextMarker
 }
 
-func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.SeaweedFilerClient, dir, prefix string, cursor *ListingCursor, marker, delimiter string, inclusiveStartFrom bool, bucket string, eachEntryFn func(dir string, entry *filer_pb.Entry)) (nextMarker string, err error) {
+type listDirectoryRequest struct {
+	dir                string
+	prefix             string
+	marker             string
+	delimiter          string
+	bucket             string
+	inclusiveStartFrom bool
+}
+
+func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.SeaweedFilerClient, req listDirectoryRequest, cursor *ListingCursor, eachEntryFn func(dir string, entry *filer_pb.Entry)) (nextMarker string, err error) {
+	dir, prefix, bucket := req.dir, req.prefix, req.bucket
+	marker, delimiter, inclusiveStartFrom := req.marker, req.delimiter, req.inclusiveStartFrom
 	// invariants
 	//   prefix and marker should be under dir, marker may contain "/"
 	//   maxKeys should be updated for each recursion
@@ -571,7 +582,7 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 	if strings.Contains(marker, "/") {
 		subDir, subMarker := toParentAndDescendants(marker)
 		// println("doListFilerEntries dir", dir+"/"+subDir, "subMarker", subMarker)
-		subNextMarker, subErr := s3a.doListFilerEntries(ctx, client, dir+"/"+subDir, "", cursor, subMarker, delimiter, false, bucket, eachEntryFn)
+		subNextMarker, subErr := s3a.doListFilerEntries(ctx, client, listDirectoryRequest{dir: dir + "/" + subDir, marker: subMarker, delimiter: delimiter, bucket: bucket}, cursor, eachEntryFn)
 		if subErr != nil {
 			err = subErr
 			return
@@ -703,7 +714,7 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 					// Recurse into subdirectory to list any children, noting whether the
 					// subtree produced any entries.
 					childEmitted := false
-					subNextMarker, subErr := s3a.doListFilerEntries(ctx, client, dir+"/"+entry.Name, "", cursor, "", delimiter, false, bucket, func(d string, e *filer_pb.Entry) {
+					subNextMarker, subErr := s3a.doListFilerEntries(ctx, client, listDirectoryRequest{dir: dir + "/" + entry.Name, delimiter: delimiter, bucket: bucket}, cursor, func(d string, e *filer_pb.Entry) {
 						childEmitted = true
 						eachEntryFn(d, e)
 					})
