@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"slices"
 	"testing"
 	"time"
 
@@ -516,6 +517,111 @@ func TestExtractHostHeader(t *testing.T) {
 			result := extractHostHeader(req, tt.externalHost)
 			if result != tt.expected {
 				t.Errorf("extractHostHeader() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestExtractHostHeaderCandidates tests the alternate host values tried during verification
+// when the true client-facing host is ambiguous behind a reverse proxy.
+func TestExtractHostHeaderCandidates(t *testing.T) {
+	tests := []struct {
+		name           string
+		hostHeader     string
+		forwardedHost  string
+		forwardedPort  string
+		forwardedProto string
+		externalHost   string
+		expected       []string
+	}{
+		{
+			name:         "externalHost is the only candidate",
+			hostHeader:   "backend:8333",
+			externalHost: "api.example.com:9000",
+			expected:     []string{"api.example.com:9000"},
+		},
+		{
+			name:          "X-Forwarded-Host with port is trusted as-is",
+			hostHeader:    "backend:8333",
+			forwardedHost: "example.com:9000",
+			forwardedPort: "443",
+			expected:      []string{"example.com:9000"},
+		},
+		{
+			name:       "plain Host with port is the only candidate",
+			hostHeader: "example.com:8080",
+			expected:   []string{"example.com:8080"},
+		},
+		{
+			name:           "portless X-Forwarded-Host, hostnames match: r.Host port first, then X-Forwarded-Port, then bare",
+			hostHeader:     "example.com:8333",
+			forwardedHost:  "example.com",
+			forwardedPort:  "9000",
+			forwardedProto: "http",
+			expected:       []string{"example.com:8333", "example.com:9000", "example.com"},
+		},
+		{
+			name:          "portless X-Forwarded-Host, hostnames match, no X-Forwarded-Port: bare host as fallback",
+			hostHeader:    "example.com:8333",
+			forwardedHost: "example.com",
+			expected:      []string{"example.com:8333", "example.com"},
+		},
+		{
+			name:          "portless X-Forwarded-Host, hostnames differ: X-Forwarded-Port, then bare",
+			hostHeader:    "backend:8333",
+			forwardedHost: "example.com",
+			forwardedPort: "9000",
+			expected:      []string{"example.com:9000", "example.com"},
+		},
+		{
+			name:           "default X-Forwarded-Port collapses into the bare candidate",
+			hostHeader:     "example.com:8333",
+			forwardedHost:  "example.com",
+			forwardedPort:  "443",
+			forwardedProto: "https",
+			expected:       []string{"example.com:8333", "example.com"},
+		},
+		{
+			name:          "portless Host with X-Forwarded-Port: forwarded port, then bare",
+			hostHeader:    "example.com",
+			forwardedPort: "9000",
+			expected:      []string{"example.com:9000", "example.com"},
+		},
+		{
+			name:          "bracketed portless IPv6 X-Forwarded-Host matches the request host",
+			hostHeader:    "[::1]:8333",
+			forwardedHost: "[::1]",
+			expected:      []string{"[::1]:8333", "::1"},
+		},
+		{
+			name:          "unbracketed portless IPv6 X-Forwarded-Host with X-Forwarded-Port",
+			hostHeader:    "backend:8333",
+			forwardedHost: "::1",
+			forwardedPort: "8080",
+			expected:      []string{"[::1]:8080", "::1"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := http.NewRequest("GET", "http://"+tt.hostHeader+"/bucket/object", nil)
+			if err != nil {
+				t.Fatalf("Failed to create request: %v", err)
+			}
+			req.Host = tt.hostHeader
+			if tt.forwardedHost != "" {
+				req.Header.Set("X-Forwarded-Host", tt.forwardedHost)
+			}
+			if tt.forwardedPort != "" {
+				req.Header.Set("X-Forwarded-Port", tt.forwardedPort)
+			}
+			if tt.forwardedProto != "" {
+				req.Header.Set("X-Forwarded-Proto", tt.forwardedProto)
+			}
+
+			result := extractHostHeaderCandidates(req, tt.externalHost)
+			if !slices.Equal(result, tt.expected) {
+				t.Errorf("extractHostHeaderCandidates() = %v, want %v", result, tt.expected)
 			}
 		})
 	}
