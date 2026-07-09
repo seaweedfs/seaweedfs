@@ -1459,8 +1459,8 @@ func (s *AdminServer) RunPluginDetectionWithReport(
 
 // DispatchPluginProposals dispatches a batch of proposals using the same
 // capacity-aware dispatch logic as the scheduler loop (executor reservation with
-// backoff, per-job retry on transient errors). The plugin lock must already be
-// held by the caller.
+// backoff, per-job retry on transient errors). The dispatch takes the cluster
+// admin lock around each job itself; callers must not hold it.
 func (s *AdminServer) DispatchPluginProposals(
 	ctx context.Context,
 	jobType string,

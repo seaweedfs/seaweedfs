@@ -98,9 +98,11 @@ func (r *Plugin) laneSchedulerLoop(ls *schedulerLaneState) {
 // runLaneSchedulerIteration runs one scheduling pass for a single lane,
 // processing only the job types assigned to that lane.
 //
-// For lanes that require a lock (e.g. LaneDefault), all job types are
-// processed sequentially under one admin lock because their volume
-// management operations share global state.
+// For lanes that require a lock (e.g. LaneDefault), job types are processed
+// sequentially because their volume management operations share global
+// state, and the cluster admin lock is taken around each detection and each
+// dispatched job rather than the whole pass, so manual shell operations
+// sharing the same lock can interleave between jobs.
 //
 // For lanes that do not require a lock (e.g. LaneIceberg, LaneLifecycle),
 // each job type runs independently in its own goroutine so they do not
@@ -122,7 +124,7 @@ func (r *Plugin) runLaneSchedulerIteration(ls *schedulerLaneState) bool {
 	}
 
 	if LaneRequiresLock(ls.lane) {
-		return r.runLaneSchedulerIterationLocked(ls, jobTypes)
+		return r.runLaneSchedulerIterationSequential(ls, jobTypes)
 	}
 	return r.runLaneSchedulerIterationConcurrent(ls, jobTypes)
 }
@@ -162,21 +164,13 @@ func (r *Plugin) collectDueJobTypes(ls *schedulerLaneState, jobTypes []string) (
 	return active, due
 }
 
-// runLaneSchedulerIterationLocked processes job types sequentially under a
-// single admin lock. Used by the default lane where volume management
-// operations must be serialised.
-func (r *Plugin) runLaneSchedulerIterationLocked(ls *schedulerLaneState, jobTypes []string) bool {
-	r.setLaneLoopState(ls, "", "waiting_for_lock")
-	lockName := fmt.Sprintf("plugin scheduler:%s", ls.lane)
-	releaseLock, err := r.acquireAdminLock(lockName)
-	if err != nil {
-		glog.Warningf("Plugin scheduler [%s] failed to acquire lock: %v", ls.lane, err)
-		r.setLaneLoopState(ls, "", "idle")
-		return false
-	}
-	if releaseLock != nil {
-		defer releaseLock()
-	}
+// runLaneSchedulerIterationSequential processes job types one at a time.
+// Used by the default lane where volume management operations must be
+// serialised. The cluster admin lock is not held across the pass;
+// runJobTypeIteration and dispatchScheduledProposals take it around each
+// detection and each job.
+func (r *Plugin) runLaneSchedulerIterationSequential(ls *schedulerLaneState, jobTypes []string) bool {
+	r.setLaneLoopState(ls, "", "busy")
 
 	active, due := r.collectDueJobTypes(ls, jobTypes)
 	hadJobs := false
@@ -288,6 +282,30 @@ func (r *Plugin) runJobTypeIteration(jobType string, policy schedulerPolicy) boo
 		return false
 	}
 
+	// Detection plans against the live topology, so it runs under the shared
+	// cluster admin lock; the lock is released as soon as detection returns.
+	releaseDetectionLock := func() {}
+	if LaneRequiresLock(JobTypeLane(jobType)) {
+		r.setSchedulerLoopStateForJobType(jobType, "waiting_for_lock")
+		release, lockErr := r.acquireAdminLock(fmt.Sprintf("plugin scheduler %s detection", jobType))
+		if lockErr != nil {
+			r.recordSchedulerDetectionError(jobType, lockErr)
+			r.appendActivity(JobActivity{
+				JobType:    jobType,
+				Source:     "admin_scheduler",
+				Message:    fmt.Sprintf("scheduled detection aborted: %v", lockErr),
+				Stage:      "failed",
+				OccurredAt: timeToPtr(time.Now().UTC()),
+			})
+			r.recordSchedulerRunComplete(jobType, "error")
+			return false
+		}
+		var releaseOnce sync.Once
+		releaseDetectionLock = func() { releaseOnce.Do(release) }
+		r.setSchedulerLoopStateForJobType(jobType, "detecting")
+	}
+	defer releaseDetectionLock()
+
 	detectionTimeout := policy.DetectionTimeout
 	remaining := time.Until(start.Add(maxRuntime))
 	if remaining <= 0 {
@@ -311,6 +329,7 @@ func (r *Plugin) runJobTypeIteration(jobType string, policy schedulerPolicy) boo
 	detectCtx, cancelDetect := context.WithTimeout(jobCtx, detectionTimeout)
 	proposals, err := r.RunDetection(detectCtx, jobType, clusterContext, policy.MaxResults)
 	cancelDetect()
+	releaseDetectionLock()
 	if err != nil {
 		r.recordSchedulerDetectionError(jobType, err)
 		stage := "failed"
@@ -818,6 +837,11 @@ func (r *Plugin) dispatchScheduledProposals(
 		ctx = context.Background()
 	}
 
+	// Volume management jobs mutate volume placement, so each one runs under
+	// the shared cluster admin lock. Taking it per job instead of around the
+	// whole dispatch lets manual shell operations interleave between jobs.
+	jobsRequireLock := LaneRequiresLock(JobTypeLane(jobType))
+
 	jobQueue := make(chan *plugin_pb.JobSpec, len(proposals))
 	for index, proposal := range proposals {
 		job := buildScheduledJobSpec(jobType, proposal, index)
@@ -900,7 +924,42 @@ func (r *Plugin) dispatchScheduledProposals(
 						break
 					}
 
+					var releaseJobLock func()
+					if jobsRequireLock {
+						var lockErr error
+						releaseJobLock, lockErr = r.acquireAdminLock(fmt.Sprintf("plugin scheduler %s job %s", jobType, job.JobId))
+						if lockErr != nil {
+							release()
+							statsMu.Lock()
+							errorCount++
+							statsMu.Unlock()
+							r.appendActivity(JobActivity{
+								JobID:      job.JobId,
+								JobType:    job.JobType,
+								Source:     "admin_scheduler",
+								Message:    fmt.Sprintf("scheduled execution lock failed: %v", lockErr),
+								Stage:      "failed",
+								OccurredAt: timeToPtr(time.Now().UTC()),
+							})
+							break
+						}
+						// The lock may have been held by an operator for a
+						// while; re-check the execution window.
+						if ctx.Err() != nil {
+							releaseJobLock()
+							release()
+							r.cancelQueuedJob(job, ctx.Err())
+							statsMu.Lock()
+							canceledCount++
+							statsMu.Unlock()
+							continue jobLoop
+						}
+					}
+
 					err := r.executeScheduledJobWithExecutor(ctx, executor, job, clusterContext, policy)
+					if releaseJobLock != nil {
+						releaseJobLock()
+					}
 					release()
 					if errors.Is(err, errExecutorAtCapacity) {
 						r.trackExecutionQueued(job)
