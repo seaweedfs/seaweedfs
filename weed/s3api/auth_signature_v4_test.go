@@ -587,6 +587,12 @@ func TestExtractHostHeaderCandidates(t *testing.T) {
 			forwardedPort: "9000",
 			expected:      []string{"example.com:9000", "example.com"},
 		},
+		{
+			name:          "bracketed portless IPv6 X-Forwarded-Host matches the request host",
+			hostHeader:    "[::1]:8333",
+			forwardedHost: "[::1]",
+			expected:      []string{"[::1]:8333", "::1"},
+		},
 	}
 
 	for _, tt := range tests {

@@ -940,7 +940,8 @@ func extractHostHeaderCandidates(r *http.Request, externalHost string) []string 
 			host = h
 			ports = []string{p}
 		} else {
-			if rh, rp, err := net.SplitHostPort(r.Host); err == nil && rh == host {
+			// SplitHostPort unbrackets IPv6 hosts, so unbracket the forwarded host to match
+			if rh, rp, err := net.SplitHostPort(r.Host); err == nil && rh == strings.Trim(host, "[]") {
 				ports = append(ports, rp)
 			}
 			if forwardedPort != "" {
