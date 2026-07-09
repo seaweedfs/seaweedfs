@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -391,10 +392,21 @@ func (fs *FilerServer) applyObjectMutation(ctx context.Context, m *filer_pb.Obje
 	case filer_pb.ObjectMutation_DELETE:
 		fullpath := util.NewFullPath(m.Directory, m.Name)
 		err := fs.filer.DeleteEntryMetaAndData(ctx, fullpath, m.IsRecursive, false, m.IsDeleteData, fromOtherCluster, signatures, 0)
-		if err == filer_pb.ErrNotFound {
-			return nil
+		if err != nil && err != filer_pb.ErrNotFound {
+			return err
 		}
-		return err
+		if m.RemoveEmptyParent {
+			// A parent that exists only to hold this child (e.g. a .versions/
+			// directory losing its last version) is torn down in the same locked
+			// transaction. Best-effort: a non-empty or already-removed parent is
+			// the expected no-op, and a failed teardown must not fail the
+			// already-applied delete.
+			parentErr := fs.filer.DeleteEntryMetaAndData(ctx, util.FullPath(m.Directory), false, false, false, fromOtherCluster, signatures, 0)
+			if parentErr != nil && parentErr != filer_pb.ErrNotFound && !strings.Contains(parentErr.Error(), filer.MsgFailDelNonEmptyFolder) {
+				glog.V(1).InfofCtx(ctx, "remove empty parent %s: %v", m.Directory, parentErr)
+			}
+		}
+		return nil
 
 	case filer_pb.ObjectMutation_PATCH_EXTENDED:
 		fullpath := util.NewFullPath(m.Directory, m.Name)
