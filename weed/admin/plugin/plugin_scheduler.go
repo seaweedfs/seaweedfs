@@ -394,26 +394,6 @@ func (r *Plugin) runJobTypeIteration(jobType string, policy schedulerPolicy) boo
 
 	r.setSchedulerLoopStateForJobType(jobType, "executing")
 
-	// Scan proposals for the maximum estimated_runtime_seconds so the
-	// execution phase gets enough time for large jobs (e.g. vacuum on
-	// big volumes). If any proposal needs more time than the remaining
-	// JobTypeMaxRuntime, extend the execution context accordingly.
-	var maxEstimatedRuntime time.Duration
-	for _, p := range filtered {
-		if p.Parameters != nil {
-			if est, ok := p.Parameters["estimated_runtime_seconds"]; ok {
-				if v := est.GetInt64Value(); v > 0 {
-					if d := time.Duration(v) * time.Second; d > maxEstimatedRuntime {
-						maxEstimatedRuntime = d
-					}
-				}
-			}
-		}
-	}
-	if maxEstimatedRuntime > maxEstimatedRuntimeCap {
-		maxEstimatedRuntime = maxEstimatedRuntimeCap
-	}
-
 	remaining = time.Until(start.Add(maxRuntime))
 	if remaining <= 0 {
 		r.appendActivity(JobActivity{
@@ -427,17 +407,6 @@ func (r *Plugin) runJobTypeIteration(jobType string, policy schedulerPolicy) boo
 		return detected
 	}
 
-	// If the longest estimated job exceeds the remaining JobTypeMaxRuntime,
-	// create a new execution context with enough headroom instead of using
-	// jobCtx which would cancel too early.
-	execCtx := jobCtx
-	execCancel := context.CancelFunc(func() {})
-	if maxEstimatedRuntime > 0 && maxEstimatedRuntime > remaining {
-		execCtx, execCancel = context.WithTimeout(context.Background(), maxEstimatedRuntime)
-		remaining = maxEstimatedRuntime
-	}
-	defer execCancel()
-
 	execPolicy := policy
 	if execPolicy.ExecutionTimeout <= 0 {
 		execPolicy.ExecutionTimeout = defaultScheduledExecutionTimeout
@@ -446,10 +415,15 @@ func (r *Plugin) runJobTypeIteration(jobType string, policy schedulerPolicy) boo
 		execPolicy.ExecutionTimeout = remaining
 	}
 
-	successCount, errorCount, canceledCount := r.dispatchScheduledProposals(execCtx, jobType, filtered, clusterContext, execPolicy)
+	// jobCtx bounds how long this run keeps STARTING jobs; a started job
+	// runs on its own estimated-runtime deadline (see
+	// executeScheduledJobWithExecutor). Jobs still queued when the window
+	// closes are canceled and re-proposed by a later detection, so one large
+	// backlog cannot monopolise the lane for hours.
+	successCount, errorCount, canceledCount := r.dispatchScheduledProposals(jobCtx, jobType, filtered, clusterContext, execPolicy)
 
 	status := "success"
-	if execCtx.Err() != nil {
+	if jobCtx.Err() != nil {
 		status = "timeout"
 	} else if errorCount > 0 || canceledCount > 0 {
 		status = "error"
@@ -1223,10 +1197,6 @@ func (r *Plugin) executeScheduledJobWithExecutor(
 			return ctx.Err()
 		}
 
-		parent := ctx
-		if parent == nil {
-			parent = context.Background()
-		}
 		// Use the job's estimated runtime if provided and larger than the
 		// default execution timeout. This lets handlers like vacuum scale
 		// the timeout based on volume size so large volumes are not killed.
@@ -1244,7 +1214,11 @@ func (r *Plugin) executeScheduledJobWithExecutor(
 				}
 			}
 		}
-		execCtx, cancel := context.WithTimeout(parent, timeout)
+		// The attempt runs against its own deadline, detached from the
+		// dispatch window (ctx): a job started near the end of the window
+		// may run to completion; the window only stops further jobs from
+		// starting.
+		execCtx, cancel := context.WithTimeout(context.Background(), timeout)
 		_, err := r.executeJobWithExecutor(execCtx, executor, job, clusterContext, int32(attempt))
 		cancel()
 		if err == nil {
