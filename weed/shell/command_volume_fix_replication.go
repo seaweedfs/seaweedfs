@@ -351,6 +351,11 @@ func (c *commandVolumeFixReplication) fixUnderReplicatedVolumes(commandEnv *Comm
 		volumeIds = volumeIds[0:volumesPerStep]
 	}
 
+	// own a private copy of the locations list: the scheduler re-sorts it on
+	// every reservation, and the caller's slice is shared with the concurrent
+	// delete phases
+	allLocations = slices.Clone(allLocations)
+
 	scheduler := newVolumeCopyScheduler(maxParallelizationPerServer)
 	var fixedVolumesMu sync.Mutex
 	ewg := NewErrorWaitGroup(maxParallelization)

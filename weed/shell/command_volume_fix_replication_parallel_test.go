@@ -34,6 +34,7 @@ func TestReserveTargetSpreadsAcrossServers(t *testing.T) {
 	// per-node copies; the shared dataNode pointers carry the accounting
 	byId := make(map[string]*location)
 	for _, loc := range allLocations {
+		loc := loc
 		byId[loc.dataNode.Id] = &loc
 	}
 	replicas := []*VolumeReplica{
