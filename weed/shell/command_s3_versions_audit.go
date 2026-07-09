@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -38,6 +39,8 @@ func (c *commandS3VersionsAudit) Help() string {
 	    Veeam/etc. as "Storage not found" on the next GET
 	  - orphan (directory has files lacking the version-id extended attr,
 	    which the post-delete cleanup path will refuse to rm)
+	  - empty (no pointer and no children — residue of a fully-drained key;
+	    every GET of the key replays the read-side self-heal rescan)
 
 	Example:
 		# Audit a whole bucket
@@ -52,9 +55,10 @@ func (c *commandS3VersionsAudit) Help() string {
 		s3.versions.audit -prefix /buckets/mybucket -heal
 
 	This command is read-only by default. With -heal, it clears the stale
-	latest-version pointer on stranded directories; the blob is already
-	gone, so reads then return NoSuchKey via the clean-miss path instead
-	of replaying the 10-retry self-heal loop on every request.
+	latest-version pointer on stranded directories and removes empty ones;
+	the blob is already gone, so reads then return NoSuchKey via the
+	clean-miss path instead of replaying the 10-retry self-heal loop on
+	every request.
 `
 }
 
@@ -81,6 +85,7 @@ func (c *commandS3VersionsAudit) Do(args []string, commandEnv *CommandEnv, write
 		clean        uint64
 		stranded     uint64
 		orphanOnly   uint64
+		empty        uint64
 		healed       uint64
 		healFailed   uint64
 	)
@@ -117,6 +122,7 @@ func (c *commandS3VersionsAudit) Do(args []string, commandEnv *CommandEnv, write
 			versionsPath := string(parentPath) + "/" + entry.Name
 			pointerSeen := false
 			hasOrphan := false
+			hasChild := false
 			const auditPageSize = 1024
 			var startName string
 			for {
@@ -128,6 +134,7 @@ func (c *commandS3VersionsAudit) Do(args []string, commandEnv *CommandEnv, write
 					}
 					pageEntries++
 					lastEntryName = child.Name
+					hasChild = true
 					hasVersionId := false
 					if child.Extended != nil {
 						if _, ok := child.Extended[s3_constants.ExtVersionIdKey]; ok {
@@ -154,12 +161,26 @@ func (c *commandS3VersionsAudit) Do(args []string, commandEnv *CommandEnv, write
 
 			switch {
 			case pointerFile == "":
-				// No pointer set. Orphan-only and clean are now mutually
+				// No pointer set. Empty, orphan-only and clean are mutually
 				// exclusive so the final report's category counts sum to
 				// versionsDirs.
-				if hasOrphan {
+				switch {
+				case !hasChild:
+					atomic.AddUint64(&empty, 1)
+					if *verbose {
+						fmt.Fprintf(writer, "empty: %s\n", versionsPath)
+					}
+					if *doHeal {
+						if err := removeEmptyVersionsDir(ctx, client, parentPath, entry); err != nil {
+							atomic.AddUint64(&healFailed, 1)
+							fmt.Fprintf(writer, "heal failed: %s: %v\n", versionsPath, err)
+						} else {
+							atomic.AddUint64(&healed, 1)
+						}
+					}
+				case hasOrphan:
 					atomic.AddUint64(&orphanOnly, 1)
-				} else {
+				default:
 					atomic.AddUint64(&clean, 1)
 				}
 			case pointerSeen:
@@ -190,6 +211,7 @@ func (c *commandS3VersionsAudit) Do(args []string, commandEnv *CommandEnv, write
 	fmt.Fprintf(writer, "  clean                 : %d\n", clean)
 	fmt.Fprintf(writer, "  stranded              : %d\n", stranded)
 	fmt.Fprintf(writer, "  orphan-only           : %d\n", orphanOnly)
+	fmt.Fprintf(writer, "  empty                 : %d\n", empty)
 	if *doHeal {
 		fmt.Fprintf(writer, "  healed                : %d\n", healed)
 		fmt.Fprintf(writer, "  heal failed           : %d\n", healFailed)
@@ -220,6 +242,25 @@ func healStrandedPointer(ctx context.Context, client filer_pb.SeaweedFilerClient
 		Entry:     entry,
 	})
 	return err
+}
+
+// removeEmptyVersionsDir deletes a .versions/ directory that holds no
+// children: residue of a fully-drained key. Non-recursive on purpose so a
+// concurrent write landing a new version fails the delete instead of being
+// lost with it.
+func removeEmptyVersionsDir(ctx context.Context, client filer_pb.SeaweedFilerClient, parentPath util.FullPath, entry *filer_pb.Entry) error {
+	resp, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
+		Directory:    string(parentPath),
+		Name:         entry.Name,
+		IsDeleteData: true,
+	})
+	if err != nil {
+		return err
+	}
+	if resp.Error != "" {
+		return errors.New(resp.Error)
+	}
+	return nil
 }
 
 // filerClientWrapper adapts a raw SeaweedFilerClient to the
