@@ -109,7 +109,15 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 	// Adjust marker if it ends with delimiter to skip all entries with that prefix
 	marker = adjustMarkerForDelimiter(marker, delimiter)
 
-	response, err := s3a.listFilerEntries(r.Context(), bucket, originalPrefix, maxKeys, marker, delimiter, encodingTypeUrl, fetchOwner)
+	response, err := s3a.listFilerEntries(r.Context(), listObjectsRequest{
+		bucket:          bucket,
+		prefix:          originalPrefix,
+		marker:          marker,
+		delimiter:       delimiter,
+		maxKeys:         maxKeys,
+		encodingTypeUrl: encodingTypeUrl,
+		fetchOwner:      fetchOwner,
+	})
 
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -173,7 +181,15 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	// Adjust marker if it ends with delimiter to skip all entries with that prefix
 	marker = adjustMarkerForDelimiter(marker, delimiter)
 
-	response, err := s3a.listFilerEntries(r.Context(), bucket, originalPrefix, uint16(maxKeys), marker, delimiter, encodingTypeUrl, true)
+	response, err := s3a.listFilerEntries(r.Context(), listObjectsRequest{
+		bucket:          bucket,
+		prefix:          originalPrefix,
+		marker:          marker,
+		delimiter:       delimiter,
+		maxKeys:         uint16(maxKeys),
+		encodingTypeUrl: encodingTypeUrl,
+		fetchOwner:      true,
+	})
 
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -232,7 +248,20 @@ func sanitizeV1MarkerEcho(response *ListBucketResult, marker string, encodingTyp
 	}
 }
 
-func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, bucket string, originalPrefix string, maxKeys uint16, originalMarker string, delimiter string, encodingTypeUrl bool, fetchOwner bool) (response ListBucketResult, err error) {
+type listObjectsRequest struct {
+	bucket          string
+	prefix          string
+	marker          string
+	delimiter       string
+	maxKeys         uint16
+	encodingTypeUrl bool
+	fetchOwner      bool
+}
+
+func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsRequest) (response ListBucketResult, err error) {
+	bucket, originalPrefix, originalMarker := req.bucket, req.prefix, req.marker
+	maxKeys, delimiter := req.maxKeys, req.delimiter
+	encodingTypeUrl, fetchOwner := req.encodingTypeUrl, req.fetchOwner
 	// convert full path prefix into directory name and prefix for entry name
 	requestDir, prefix, marker := normalizePrefixMarker(originalPrefix, originalMarker)
 	bucketPrefix := s3a.bucketPrefix(bucket)
