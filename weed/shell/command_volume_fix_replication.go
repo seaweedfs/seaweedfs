@@ -499,24 +499,11 @@ func keepDataNodesSorted(dataNodes []location, diskType types.DiskType) {
 }
 
 func satisfyReplicaCurrentLocation(replicaPlacement *super_block.ReplicaPlacement, replicas []*VolumeReplica) bool {
-	existingDataCenters, existingRacks, _ := countReplicas(replicas)
-
-	if replicaPlacement.DiffDataCenterCount+1 > len(existingDataCenters) {
-		return false
+	locs := make([]balancer.Location, len(replicas))
+	for i, r := range replicas {
+		locs[i] = toBalancerLocation(r.location)
 	}
-	if replicaPlacement.DiffRackCount+1 > len(existingRacks) {
-		return false
-	}
-	if replicaPlacement.SameRackCount > 0 {
-		foundSatisfyRack := false
-		for _, rackCount := range existingRacks {
-			if rackCount >= replicaPlacement.SameRackCount+1 {
-				foundSatisfyRack = true
-			}
-		}
-		return foundSatisfyRack
-	}
-	return true
+	return balancer.SatisfyReplicaCurrentLocation(replicaPlacement, locs)
 }
 
 /*
@@ -598,129 +585,50 @@ func (l location) DataCenter() string {
 	return l.dc
 }
 
-func pickOneReplicaToCopyFrom(replicas []*VolumeReplica) *VolumeReplica {
-	mostRecent := replicas[0]
-	for _, replica := range replicas {
-		if replica.info.ModifiedAtSecond > mostRecent.info.ModifiedAtSecond {
-			mostRecent = replica
-		}
-	}
-	return mostRecent
-}
-
-func countReplicas(replicas []*VolumeReplica) (diffDc, diffRack, diffNode map[string]int) {
-	diffDc = make(map[string]int)
-	diffRack = make(map[string]int)
-	diffNode = make(map[string]int)
-	for _, replica := range replicas {
-		diffDc[replica.location.DataCenter()] += 1
-		diffRack[replica.location.Rack()] += 1
-		diffNode[replica.location.String()] += 1
-	}
-	return
-}
-
-// pickOneReplicaToDelete selects the replica to trim when over-replicated.
-// It only ever removes the smallest of multiple healthy writable replicas: a
-// ReadOnly/integrity-flagged replica is never chosen for deletion, and the
-// trim is refused (returns nil) when removing a writable replica would leave
-// only ReadOnly survivors. VolumeStatus file_count>0 alone cannot prove the
-// survivors' .dat is readable, so we do not over-claim survivor health.
-// pickSmallestReplica returns the smallest replica (ties broken by oldest then
-// lowest compact revision), or nil for an empty set.
-func pickSmallestReplica(replicas []*VolumeReplica) *VolumeReplica {
-	if len(replicas) == 0 {
-		return nil
-	}
-	sorted := slices.Clone(replicas)
-	slices.SortFunc(sorted, func(a, b *VolumeReplica) int {
-		if a.info.Size != b.info.Size {
-			return int(a.info.Size - b.info.Size)
-		}
-		if a.info.ModifiedAtSecond != b.info.ModifiedAtSecond {
-			return int(a.info.ModifiedAtSecond - b.info.ModifiedAtSecond)
-		}
-		if a.info.CompactRevision != b.info.CompactRevision {
-			return int(a.info.CompactRevision - b.info.CompactRevision)
-		}
-		return 0
-	})
-	return sorted[0]
-}
-
-func pickOneReplicaToDelete(replicas []*VolumeReplica, replicaPlacement *super_block.ReplicaPlacement) *VolumeReplica {
-	// Over-replication trim: only ever remove a writable replica, and only
-	// when another writable one survives, so a healthy copy is never deleted
-	// down to a read-only (e.g. full or integrity-flagged) survivor.
-	var writable []*VolumeReplica
-	for _, r := range replicas {
-		if !r.info.ReadOnly {
-			writable = append(writable, r)
-		}
-	}
-	if len(writable) < 2 {
-		return nil
-	}
-	// Prefer a writable replica whose removal still satisfies placement, so the
-	// trim does not strip the only replica in a required failure domain. Fall
-	// back to the smallest writable if none keeps placement (a later misplaced
-	// cycle then re-balances).
-	var placementSafe []*VolumeReplica
+// toBalancerReplicas adapts shell replicas to the shared selection shape in
+// weed/topology/balancer; selection results come back as indices into the
+// same slice.
+func toBalancerReplicas(replicas []*VolumeReplica) []balancer.Replica {
+	out := make([]balancer.Replica, len(replicas))
 	for i, r := range replicas {
-		if r.info.ReadOnly {
-			continue
-		}
-		if !isMisplaced(otherThan(replicas, i), replicaPlacement) {
-			placementSafe = append(placementSafe, r)
+		out[i] = balancer.Replica{Location: toBalancerLocation(r.location)}
+		if r.info != nil {
+			out[i].Size = r.info.Size
+			out[i].ModifiedAtSecond = r.info.ModifiedAtSecond
+			out[i].CompactRevision = r.info.CompactRevision
+			out[i].ReadOnly = r.info.ReadOnly
 		}
 	}
-	if len(placementSafe) > 0 {
-		return pickSmallestReplica(placementSafe)
+	return out
+}
+
+func pickOneReplicaToCopyFrom(replicas []*VolumeReplica) *VolumeReplica {
+	if i := balancer.PickOneReplicaToCopyFrom(toBalancerReplicas(replicas)); i >= 0 {
+		return replicas[i]
 	}
-	return pickSmallestReplica(writable)
+	return nil
+}
+
+// pickOneReplicaToDelete selects the replica to trim when over-replicated;
+// see balancer.PickOneReplicaToDelete for the survivor-safety rules.
+// VolumeStatus file_count>0 alone cannot prove the survivors' .dat is
+// readable, so we do not over-claim survivor health.
+func pickOneReplicaToDelete(replicas []*VolumeReplica, replicaPlacement *super_block.ReplicaPlacement) *VolumeReplica {
+	if i := balancer.PickOneReplicaToDelete(toBalancerReplicas(replicas), replicaPlacement); i >= 0 {
+		return replicas[i]
+	}
+	return nil
 }
 
 // check and fix misplaced volumes
 
 func isMisplaced(replicas []*VolumeReplica, replicaPlacement *super_block.ReplicaPlacement) bool {
-
-	for i := 0; i < len(replicas); i++ {
-		others := otherThan(replicas, i)
-		if !satisfyReplicaPlacement(replicaPlacement, others, *replicas[i].location) {
-			return true
-		}
-	}
-
-	return false
-
+	return balancer.IsMisplaced(toBalancerReplicas(replicas), replicaPlacement)
 }
 
-func otherThan(replicas []*VolumeReplica, index int) (others []*VolumeReplica) {
-	for i := 0; i < len(replicas); i++ {
-		if index != i {
-			others = append(others, replicas[i])
-		}
+func pickOneMisplacedVolume(replicas []*VolumeReplica, replicaPlacement *super_block.ReplicaPlacement) *VolumeReplica {
+	if i := balancer.PickOneMisplacedVolume(toBalancerReplicas(replicas), replicaPlacement); i >= 0 {
+		return replicas[i]
 	}
-	return
-}
-
-func pickOneMisplacedVolume(replicas []*VolumeReplica, replicaPlacement *super_block.ReplicaPlacement) (toDelete *VolumeReplica) {
-
-	// Relocation, not over-replication: pick the smallest replica to delete
-	// and recreate at a correct placement. Unlike the trim this must still act
-	// on read-only replicas (e.g. a full but misplaced volume), so it does not
-	// use pickOneReplicaToDelete's writable-survivor guard.
-	var deletionCandidates []*VolumeReplica
-	for i := 0; i < len(replicas); i++ {
-		others := otherThan(replicas, i)
-		if !isMisplaced(others, replicaPlacement) {
-			deletionCandidates = append(deletionCandidates, replicas[i])
-		}
-	}
-	if toDelete = pickSmallestReplica(deletionCandidates); toDelete != nil {
-		return toDelete
-	}
-
-	return pickSmallestReplica(replicas)
-
+	return nil
 }
