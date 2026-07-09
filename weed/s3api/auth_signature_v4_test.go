@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
-	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -593,6 +593,13 @@ func TestExtractHostHeaderCandidates(t *testing.T) {
 			forwardedHost: "[::1]",
 			expected:      []string{"[::1]:8333", "::1"},
 		},
+		{
+			name:          "unbracketed portless IPv6 X-Forwarded-Host with X-Forwarded-Port",
+			hostHeader:    "backend:8333",
+			forwardedHost: "::1",
+			forwardedPort: "8080",
+			expected:      []string{"[::1]:8080", "::1"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -613,7 +620,7 @@ func TestExtractHostHeaderCandidates(t *testing.T) {
 			}
 
 			result := extractHostHeaderCandidates(req, tt.externalHost)
-			if !reflect.DeepEqual(result, tt.expected) {
+			if !slices.Equal(result, tt.expected) {
 				t.Errorf("extractHostHeaderCandidates() = %v, want %v", result, tt.expected)
 			}
 		})
