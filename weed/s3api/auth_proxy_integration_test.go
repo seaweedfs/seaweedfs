@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -46,12 +47,13 @@ func TestReverseProxySignatureVerification(t *testing.T) {
 }`
 
 	tests := []struct {
-		name              string
-		externalUrl       string // s3.externalUrl config for the backend
-		clientScheme      string // scheme the client uses for signing
-		clientHost        string // host the client signs against
-		proxyForwardsHost bool   // whether proxy sets X-Forwarded-Host
-		expectSuccess     bool
+		name                  string
+		externalUrl           string // s3.externalUrl config for the backend
+		clientScheme          string // scheme the client uses for signing
+		clientHost            string // host the client signs against
+		proxyForwardsHost     bool   // whether proxy sets X-Forwarded-Host
+		portlessForwardedHost bool   // nginx-style $host / $server_port: hostname in X-Forwarded-Host, port in X-Forwarded-Port
+		expectSuccess         bool
 	}{
 		{
 			name:              "non-standard port, externalUrl matches proxy address",
@@ -102,6 +104,26 @@ func TestReverseProxySignatureVerification(t *testing.T) {
 			expectSuccess:     false,
 		},
 		{
+			// The backend Host (127.0.0.1:ephemeral) shares the forwarded hostname, so the
+			// backend port must not shadow X-Forwarded-Port.
+			name:                  "nginx $host/$server_port forwarding, backend on same hostname",
+			externalUrl:           "",
+			clientScheme:          "http",
+			clientHost:            "127.0.0.1:9000",
+			proxyForwardsHost:     true,
+			portlessForwardedHost: true,
+			expectSuccess:         true,
+		},
+		{
+			name:                  "portless X-Forwarded-Host on default port, backend on same hostname",
+			externalUrl:           "",
+			clientScheme:          "http",
+			clientHost:            "127.0.0.1",
+			proxyForwardsHost:     true,
+			portlessForwardedHost: true,
+			expectSuccess:         true,
+		},
+		{
 			name:              "proxy without X-Forwarded-Host, externalUrl saves the day",
 			externalUrl:       "http://api.example.com:9000",
 			clientScheme:      "http",
@@ -136,6 +158,7 @@ func TestReverseProxySignatureVerification(t *testing.T) {
 			proxy := httputil.NewSingleHostReverseProxy(backendURL)
 
 			forwardsHost := tt.proxyForwardsHost
+			portlessForwardedHost := tt.portlessForwardedHost
 			originalDirector := proxy.Director
 			proxy.Director = func(req *http.Request) {
 				originalHost := req.Host
@@ -148,7 +171,14 @@ func TestReverseProxySignatureVerification(t *testing.T) {
 				// (nginx proxy_pass and Kong both do this by default)
 				req.Host = backendURL.Host
 				if forwardsHost {
-					req.Header.Set("X-Forwarded-Host", originalHost)
+					forwardedHost := originalHost
+					if portlessForwardedHost {
+						if h, p, splitErr := net.SplitHostPort(originalHost); splitErr == nil {
+							forwardedHost = h
+							req.Header.Set("X-Forwarded-Port", p)
+						}
+					}
+					req.Header.Set("X-Forwarded-Host", forwardedHost)
 					req.Header.Set("X-Forwarded-Proto", originalScheme)
 				}
 			}
