@@ -44,8 +44,7 @@ type testFilerClient struct {
 
 func (c *testFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEntriesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
 	entries := c.entriesByDir[in.Directory]
-	// Simplified mock: implements basic prefix filtering but ignores Limit, StartFromFileName, and InclusiveStartFrom
-	// to keep test logic focused. Prefix "/" is treated as no filter for bucket root compatibility.
+	// Simplified mock: prefix "/" is treated as no filter for bucket root compatibility.
 	if in.Prefix != "" && in.Prefix != "/" {
 		filtered := make([]*filer_pb.Entry, 0)
 		for _, e := range entries {
@@ -56,7 +55,16 @@ func (c *testFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEntr
 		entries = filtered
 	}
 
-	// Respect Limit
+	if in.StartFromFileName != "" {
+		filtered := make([]*filer_pb.Entry, 0)
+		for _, e := range entries {
+			if e.Name > in.StartFromFileName || (in.InclusiveStartFrom && e.Name == in.StartFromFileName) {
+				filtered = append(filtered, e)
+			}
+		}
+		entries = filtered
+	}
+
 	if in.Limit > 0 && int(in.Limit) < len(entries) {
 		entries = entries[:in.Limit]
 	}
@@ -353,6 +361,116 @@ func TestDoListFilerEntries_ExclusiveStartSkipsMarkerEchoWithSubsequentEntries(t
 	assert.NoError(t, err)
 	assert.Equal(t, []string{"zebra.txt"}, seen, "marker should be skipped while subsequent entries are returned")
 	assert.Equal(t, "zebra.txt", nextMarker)
+}
+
+func TestDoListFilerEntries_EmptyDirectoriesDoNotHideLaterEntries(t *testing.T) {
+	// With maxKeys=1 the listing window is 3 entries. The first window holds only
+	// empty directories, so the real object further down must still be found.
+	s3a := &S3ApiServer{}
+	client := &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/test-bucket": {
+				{Name: "00-empty-1", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+				{Name: "00-empty-2", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+				{Name: "00-empty-3", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+				{Name: "00-empty-4", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+				{Name: "00-empty-5", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+				{Name: "zz-real", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+			},
+			"/buckets/test-bucket/zz-real": {
+				{Name: "file.log", Attributes: &filer_pb.FuseAttributes{}},
+			},
+		},
+	}
+
+	cursor := &ListingCursor{maxKeys: 1}
+	var seen []string
+	_, err := s3a.doListFilerEntries(client, "/buckets/test-bucket", "", cursor, "", "", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
+		seen = append(seen, dir+"/"+entry.Name)
+		cursor.maxKeys--
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"/buckets/test-bucket/zz-real/file.log"}, seen)
+	assert.False(t, cursor.isTruncated)
+}
+
+func TestDoListFilerEntries_EmptyDirectoriesInSubdirectoryDoNotHideSiblings(t *testing.T) {
+	// The recursion into "logs" gets its own listing window; empty subdirectories
+	// filling that window must not skip the object behind them.
+	s3a := &S3ApiServer{}
+	client := &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/test-bucket": {
+				{Name: "logs", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+			},
+			"/buckets/test-bucket/logs": {
+				{Name: "00-empty-1", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+				{Name: "00-empty-2", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+				{Name: "00-empty-3", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+				{Name: "00-empty-4", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+				{Name: "00-empty-5", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+				{Name: "zz.log", Attributes: &filer_pb.FuseAttributes{}},
+			},
+		},
+	}
+
+	cursor := &ListingCursor{maxKeys: 1}
+	var seen []string
+	_, err := s3a.doListFilerEntries(client, "/buckets/test-bucket", "", cursor, "", "", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
+		seen = append(seen, dir+"/"+entry.Name)
+		cursor.maxKeys--
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"/buckets/test-bucket/logs/zz.log"}, seen)
+	assert.False(t, cursor.isTruncated)
+}
+
+func TestDoListFilerEntries_TruncationAcrossEmptyDirectories(t *testing.T) {
+	// Two real objects separated by empty directories: the first fills the quota
+	// and the listing must report truncation with a resumable marker.
+	s3a := &S3ApiServer{}
+	client := &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/test-bucket": {
+				{Name: "00-empty-1", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+				{Name: "00-empty-2", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+				{Name: "00-empty-3", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+				{Name: "mm-real", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+				{Name: "pp-empty", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+				{Name: "zz-real", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+			},
+			"/buckets/test-bucket/mm-real": {
+				{Name: "file.log", Attributes: &filer_pb.FuseAttributes{}},
+			},
+			"/buckets/test-bucket/zz-real": {
+				{Name: "file.log", Attributes: &filer_pb.FuseAttributes{}},
+			},
+		},
+	}
+
+	cursor := &ListingCursor{maxKeys: 1}
+	var seen []string
+	nextMarker, err := s3a.doListFilerEntries(client, "/buckets/test-bucket", "", cursor, "", "", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
+		seen = append(seen, dir+"/"+entry.Name)
+		cursor.maxKeys--
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"/buckets/test-bucket/mm-real/file.log"}, seen)
+	assert.True(t, cursor.isTruncated)
+
+	cursor = &ListingCursor{maxKeys: 1}
+	seen = nil
+	_, err = s3a.doListFilerEntries(client, "/buckets/test-bucket", "", cursor, nextMarker, "", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
+		seen = append(seen, dir+"/"+entry.Name)
+		cursor.maxKeys--
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"/buckets/test-bucket/zz-real/file.log"}, seen)
+	assert.False(t, cursor.isTruncated)
 }
 
 func TestAllowUnorderedWithDelimiterValidation(t *testing.T) {
