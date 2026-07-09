@@ -2,6 +2,7 @@ package log_buffer
 
 import (
 	"fmt"
+	"runtime/debug"
 	"sync"
 	"testing"
 	"time"
@@ -85,6 +86,12 @@ func TestSharedSnapshotSurvivesRecycle(t *testing.T) {
 // and recycling windows. Every delivered entry must unmarshal cleanly with the
 // expected payload — corruption here means a reader saw recycled bytes.
 func TestSharedSnapshotConcurrentIntegrity(t *testing.T) {
+	// The writer below is deliberately unthrottled, so transient marshal garbage
+	// scales with host speed; on linux/386 a fast runner can hit the 4GB
+	// address-space ceiling. Cap the heap so the GC paces the writer instead.
+	prevLimit := debug.SetMemoryLimit(1 << 30)
+	defer debug.SetMemoryLimit(prevLimit)
+
 	lb := NewLogBuffer("test", time.Hour, func(*LogBuffer, time.Time, time.Time, []byte, int64, int64) {}, nil, nil)
 	defer lb.ShutdownLogBuffer()
 
