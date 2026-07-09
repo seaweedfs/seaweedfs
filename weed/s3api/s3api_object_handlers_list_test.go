@@ -308,7 +308,7 @@ func TestDoListFilerEntries_BucketRootPrefixSlashDelimiterSlash_ListsDirectories
 
 	cursor := &ListingCursor{maxKeys: 1000}
 	seen := make([]string, 0)
-	_, err := s3a.doListFilerEntries(client, "/buckets/test-bucket", "/", cursor, "", "/", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
+	_, err := s3a.doListFilerEntries(context.Background(), client, "/buckets/test-bucket", "/", cursor, "", "/", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
 		if entry.IsDirectory {
 			seen = append(seen, entry.Name)
 		}
@@ -330,7 +330,7 @@ func TestDoListFilerEntries_ExclusiveStartSkipsMarkerEcho(t *testing.T) {
 
 	cursor := &ListingCursor{maxKeys: 1000}
 	var seen []string
-	nextMarker, err := s3a.doListFilerEntries(client, "/buckets/test-bucket", "", cursor, "test.txt", "", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
+	nextMarker, err := s3a.doListFilerEntries(context.Background(), client, "/buckets/test-bucket", "", cursor, "test.txt", "", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
 		seen = append(seen, entry.Name)
 	})
 
@@ -354,7 +354,7 @@ func TestDoListFilerEntries_ExclusiveStartSkipsMarkerEchoWithSubsequentEntries(t
 
 	cursor := &ListingCursor{maxKeys: 1000}
 	var seen []string
-	nextMarker, err := s3a.doListFilerEntries(client, "/buckets/test-bucket", "", cursor, "test.txt", "", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
+	nextMarker, err := s3a.doListFilerEntries(context.Background(), client, "/buckets/test-bucket", "", cursor, "test.txt", "", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
 		seen = append(seen, entry.Name)
 	})
 
@@ -385,7 +385,7 @@ func TestDoListFilerEntries_EmptyDirectoriesDoNotHideLaterEntries(t *testing.T) 
 
 	cursor := &ListingCursor{maxKeys: 1}
 	var seen []string
-	_, err := s3a.doListFilerEntries(client, "/buckets/test-bucket", "", cursor, "", "", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
+	_, err := s3a.doListFilerEntries(context.Background(), client, "/buckets/test-bucket", "", cursor, "", "", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
 		seen = append(seen, dir+"/"+entry.Name)
 		cursor.maxKeys--
 	})
@@ -417,7 +417,7 @@ func TestDoListFilerEntries_EmptyDirectoriesInSubdirectoryDoNotHideSiblings(t *t
 
 	cursor := &ListingCursor{maxKeys: 1}
 	var seen []string
-	_, err := s3a.doListFilerEntries(client, "/buckets/test-bucket", "", cursor, "", "", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
+	_, err := s3a.doListFilerEntries(context.Background(), client, "/buckets/test-bucket", "", cursor, "", "", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
 		seen = append(seen, dir+"/"+entry.Name)
 		cursor.maxKeys--
 	})
@@ -452,7 +452,7 @@ func TestDoListFilerEntries_TruncationAcrossEmptyDirectories(t *testing.T) {
 
 	cursor := &ListingCursor{maxKeys: 1}
 	var seen []string
-	nextMarker, err := s3a.doListFilerEntries(client, "/buckets/test-bucket", "", cursor, "", "", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
+	nextMarker, err := s3a.doListFilerEntries(context.Background(), client, "/buckets/test-bucket", "", cursor, "", "", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
 		seen = append(seen, dir+"/"+entry.Name)
 		cursor.maxKeys--
 	})
@@ -463,7 +463,7 @@ func TestDoListFilerEntries_TruncationAcrossEmptyDirectories(t *testing.T) {
 
 	cursor = &ListingCursor{maxKeys: 1}
 	seen = nil
-	_, err = s3a.doListFilerEntries(client, "/buckets/test-bucket", "", cursor, nextMarker, "", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
+	_, err = s3a.doListFilerEntries(context.Background(), client, "/buckets/test-bucket", "", cursor, nextMarker, "", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
 		seen = append(seen, dir+"/"+entry.Name)
 		cursor.maxKeys--
 	})
@@ -883,7 +883,7 @@ func TestListObjectsV2_Regression(t *testing.T) {
 	// Call doListFilerEntries directly to unit test listing logic in isolation,
 	// simulating parameters passed from listFilerEntries for prefix "reports/".
 
-	_, err := s3a.doListFilerEntries(client, "/buckets/reports", "reports", cursor, "", "", false, "reports", func(dir string, entry *filer_pb.Entry) {
+	_, err := s3a.doListFilerEntries(context.Background(), client, "/buckets/reports", "reports", cursor, "", "", false, "reports", func(dir string, entry *filer_pb.Entry) {
 		if !entry.IsDirectory {
 			results = append(results, entry.Name)
 		}
@@ -921,7 +921,7 @@ func TestListObjectsV2_Regression_Sorting(t *testing.T) {
 	// Without the fix, Limit=1 would cause the lister to stop after "reports-archive",
 	// missing the intended "reports" directory.
 
-	_, err := s3a.doListFilerEntries(client, "/buckets/reports", "reports", cursor, "", "", false, "reports", func(dir string, entry *filer_pb.Entry) {
+	_, err := s3a.doListFilerEntries(context.Background(), client, "/buckets/reports", "reports", cursor, "", "", false, "reports", func(dir string, entry *filer_pb.Entry) {
 		if !entry.IsDirectory {
 			results = append(results, entry.Name)
 		}
@@ -964,7 +964,7 @@ func TestListObjectsV2_PrefixEndingWithSlash_DoesNotMatchSiblings(t *testing.T) 
 	cursor := &ListingCursor{maxKeys: 1000, prefixEndsOnDelimiter: true}
 	var results []string
 
-	_, err := s3a.doListFilerEntries(client, "/buckets/bucket/path/to/list", "1", cursor, "", "", false, "bucket", func(dir string, entry *filer_pb.Entry) {
+	_, err := s3a.doListFilerEntries(context.Background(), client, "/buckets/bucket/path/to/list", "1", cursor, "", "", false, "bucket", func(dir string, entry *filer_pb.Entry) {
 		if !entry.IsDirectory {
 			results = append(results, entry.Name)
 		}
@@ -996,7 +996,7 @@ func TestListObjectsV2_PrefixEndingWithSlash_WithDelimiter(t *testing.T) {
 	cursor := &ListingCursor{maxKeys: 1000, prefixEndsOnDelimiter: true}
 	var results []string
 
-	_, err := s3a.doListFilerEntries(client, "/buckets/bucket/path/to/list", "1", cursor, "", "/", false, "bucket", func(dir string, entry *filer_pb.Entry) {
+	_, err := s3a.doListFilerEntries(context.Background(), client, "/buckets/bucket/path/to/list", "1", cursor, "", "/", false, "bucket", func(dir string, entry *filer_pb.Entry) {
 		results = append(results, entry.Name)
 	})
 
