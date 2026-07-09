@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"context"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -38,14 +39,14 @@ func TestDirectoryListedAsCommonPrefix(t *testing.T) {
 	var seenFiles []string
 
 	_, err := s3a.doListFilerEntries(
+		context.Background(),
 		client,
-		"/buckets/xoa-bucket/xo-vm-backups/data",
-		"", // prefix
+		listDirectoryRequest{
+			dir:       "/buckets/xoa-bucket/xo-vm-backups/data",
+			delimiter: "/", // should yield directory for CommonPrefix processing
+			bucket:    "xoa-bucket",
+		},
 		cursor,
-		"",  // marker
-		"/", // delimiter="/" - should yield directory for CommonPrefix processing
-		false,
-		"xoa-bucket",
 		func(dir string, entry *filer_pb.Entry) {
 			if entry.IsDirectory {
 				seenDirs = append(seenDirs, entry.Name)
@@ -88,7 +89,7 @@ func TestEmptyDirectorySurfacedAsMarker(t *testing.T) {
 	// Mirrors the getFileStatus probe: prefix "logs/" with delimiter "/".
 	cursor := &ListingCursor{maxKeys: 1000, prefixEndsOnDelimiter: true}
 	var seen []*filer_pb.Entry
-	_, err := s3a.doListFilerEntries(client, "/buckets/test", "logs", cursor, "", "/", false, "test",
+	_, err := s3a.doListFilerEntries(context.Background(), client, listDirectoryRequest{dir: "/buckets/test", prefix: "logs", delimiter: "/", bucket: "test"}, cursor,
 		func(dir string, entry *filer_pb.Entry) {
 			seen = append(seen, entry)
 		})
@@ -129,7 +130,7 @@ func TestNonEmptyDirectoryGetsNoPhantomMarker(t *testing.T) {
 	// Recursive listing under the "data/" prefix.
 	cursor := &ListingCursor{maxKeys: 1000, prefixEndsOnDelimiter: true}
 	var seen []string
-	_, err := s3a.doListFilerEntries(client, "/buckets/test", "data", cursor, "", "", false, "test",
+	_, err := s3a.doListFilerEntries(context.Background(), client, listDirectoryRequest{dir: "/buckets/test", prefix: "data", bucket: "test"}, cursor,
 		func(dir string, entry *filer_pb.Entry) {
 			seen = append(seen, entry.Name)
 		})
@@ -173,7 +174,7 @@ func TestEmptyDirectoryHiddenInFlatListing(t *testing.T) {
 	// Plain flat listing: no prefix, no delimiter.
 	cursor := &ListingCursor{maxKeys: 1000}
 	var seen []string
-	_, err := s3a.doListFilerEntries(client, "/buckets/test", "", cursor, "", "", false, "test",
+	_, err := s3a.doListFilerEntries(context.Background(), client, listDirectoryRequest{dir: "/buckets/test", bucket: "test"}, cursor,
 		func(dir string, entry *filer_pb.Entry) {
 			seen = append(seen, entry.Name)
 		})

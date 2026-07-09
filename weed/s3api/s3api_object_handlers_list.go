@@ -109,7 +109,15 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 	// Adjust marker if it ends with delimiter to skip all entries with that prefix
 	marker = adjustMarkerForDelimiter(marker, delimiter)
 
-	response, err := s3a.listFilerEntries(r.Context(), bucket, originalPrefix, maxKeys, marker, delimiter, encodingTypeUrl, fetchOwner)
+	response, err := s3a.listFilerEntries(r.Context(), listObjectsRequest{
+		bucket:          bucket,
+		prefix:          originalPrefix,
+		marker:          marker,
+		delimiter:       delimiter,
+		maxKeys:         maxKeys,
+		encodingTypeUrl: encodingTypeUrl,
+		fetchOwner:      fetchOwner,
+	})
 
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -173,7 +181,15 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	// Adjust marker if it ends with delimiter to skip all entries with that prefix
 	marker = adjustMarkerForDelimiter(marker, delimiter)
 
-	response, err := s3a.listFilerEntries(r.Context(), bucket, originalPrefix, uint16(maxKeys), marker, delimiter, encodingTypeUrl, true)
+	response, err := s3a.listFilerEntries(r.Context(), listObjectsRequest{
+		bucket:          bucket,
+		prefix:          originalPrefix,
+		marker:          marker,
+		delimiter:       delimiter,
+		maxKeys:         uint16(maxKeys),
+		encodingTypeUrl: encodingTypeUrl,
+		fetchOwner:      true,
+	})
 
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -232,7 +248,20 @@ func sanitizeV1MarkerEcho(response *ListBucketResult, marker string, encodingTyp
 	}
 }
 
-func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, bucket string, originalPrefix string, maxKeys uint16, originalMarker string, delimiter string, encodingTypeUrl bool, fetchOwner bool) (response ListBucketResult, err error) {
+type listObjectsRequest struct {
+	bucket          string
+	prefix          string
+	marker          string
+	delimiter       string
+	maxKeys         uint16
+	encodingTypeUrl bool
+	fetchOwner      bool
+}
+
+func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsRequest) (response ListBucketResult, err error) {
+	bucket, originalPrefix, originalMarker := req.bucket, req.prefix, req.marker
+	maxKeys, delimiter := req.maxKeys, req.delimiter
+	encodingTypeUrl, fetchOwner := req.encodingTypeUrl, req.fetchOwner
 	// convert full path prefix into directory name and prefix for entry name
 	requestDir, prefix, marker := normalizePrefixMarker(originalPrefix, originalMarker)
 	bucketPrefix := s3a.bucketPrefix(bucket)
@@ -298,7 +327,7 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, bucket string, ori
 		for {
 			empty := true
 
-			nextMarker, doErr = s3a.doListFilerEntries(client, reqDir, prefix, cursor, marker, delimiter, false, bucket, func(dir string, entry *filer_pb.Entry) {
+			nextMarker, doErr = s3a.doListFilerEntries(ctx, client, listDirectoryRequest{dir: reqDir, prefix: prefix, marker: marker, delimiter: delimiter, bucket: bucket}, cursor, func(dir string, entry *filer_pb.Entry) {
 				empty = false
 				dirName, entryName, _ := entryUrlEncode(dir, entry.Name, encodingTypeUrl)
 				if entry.IsDirectory {
@@ -557,7 +586,18 @@ func buildTruncatedNextMarker(requestDir, prefix, nextMarker string, lastEntryWa
 	return nextMarker
 }
 
-func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, dir, prefix string, cursor *ListingCursor, marker, delimiter string, inclusiveStartFrom bool, bucket string, eachEntryFn func(dir string, entry *filer_pb.Entry)) (nextMarker string, err error) {
+type listDirectoryRequest struct {
+	dir                string
+	prefix             string
+	marker             string
+	delimiter          string
+	bucket             string
+	inclusiveStartFrom bool
+}
+
+func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.SeaweedFilerClient, req listDirectoryRequest, cursor *ListingCursor, eachEntryFn func(dir string, entry *filer_pb.Entry)) (nextMarker string, err error) {
+	dir, prefix, bucket := req.dir, req.prefix, req.bucket
+	marker, delimiter, inclusiveStartFrom := req.marker, req.delimiter, req.inclusiveStartFrom
 	// invariants
 	//   prefix and marker should be under dir, marker may contain "/"
 	//   maxKeys should be updated for each recursion
@@ -571,7 +611,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 	if strings.Contains(marker, "/") {
 		subDir, subMarker := toParentAndDescendants(marker)
 		// println("doListFilerEntries dir", dir+"/"+subDir, "subMarker", subMarker)
-		subNextMarker, subErr := s3a.doListFilerEntries(client, dir+"/"+subDir, "", cursor, subMarker, delimiter, false, bucket, eachEntryFn)
+		subNextMarker, subErr := s3a.doListFilerEntries(ctx, client, listDirectoryRequest{dir: dir + "/" + subDir, marker: subMarker, delimiter: delimiter, bucket: bucket}, cursor, eachEntryFn)
 		if subErr != nil {
 			err = subErr
 			return
@@ -585,156 +625,170 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 	}
 
 	// now marker is also a direct child of dir
-	request := &filer_pb.ListEntriesRequest{
-		Directory:          dir,
-		Prefix:             prefix,
-		Limit:              uint32(cursor.maxKeys) + 2, // bucket root directory needs to skip additional s3_constants.MultipartUploadsFolder folder
-		StartFromFileName:  marker,
-		InclusiveStartFrom: inclusiveStartFrom,
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	stream, listErr := client.ListEntries(ctx, request)
-	if listErr != nil {
-		if errors.Is(listErr, filer_pb.ErrNotFound) {
-			return
-		}
-		err = fmt.Errorf("list entries %+v: %w", request, listErr)
-		return
-	}
 
+	// Entries that emit nothing (empty directories, the .uploads folder, the marker
+	// echo) consume the request window without consuming maxKeys, so one window may
+	// end before maxKeys is satisfied. Keep requesting from the last received entry
+	// until the quota is filled or a short window shows the directory is exhausted.
 	for {
-		resp, recvErr := stream.Recv()
-		if recvErr != nil {
-			if recvErr == io.EOF {
-				break
-			} else {
-				err = fmt.Errorf("iterating entries %+v: %v", request, recvErr)
+		request := &filer_pb.ListEntriesRequest{
+			Directory:          dir,
+			Prefix:             prefix,
+			Limit:              uint32(cursor.maxKeys) + 2, // bucket root directory needs to skip additional s3_constants.MultipartUploadsFolder folder
+			StartFromFileName:  marker,
+			InclusiveStartFrom: inclusiveStartFrom,
+		}
+
+		stream, listErr := client.ListEntries(ctx, request)
+		if listErr != nil {
+			if errors.Is(listErr, filer_pb.ErrNotFound) {
 				return
 			}
-		}
-		entry := resp.Entry
-		if entry == nil {
-			continue
-		}
-		// listFilerEntries always calls doListFilerEntries with inclusiveStartFrom=false
-		// (S3 marker semantics are exclusive), but keep the guard explicit to preserve
-		// behavior if inclusive callers are introduced in the future.
-		if !inclusiveStartFrom && marker != "" && entry.Name == marker {
-			continue
+			err = fmt.Errorf("list entries %+v: %w", request, listErr)
+			return
 		}
 
-		if cursor.maxKeys <= 0 {
-			cursor.isTruncated = true
-			break
-		}
-
-		// Set nextMarker only when we have quota to process this entry
-		nextMarker = entry.Name
-		// Track whether this entry is the exact directory targeted by a trailing-slash prefix
-		// (e.g., prefix "foo" from original prefix "foo/"). After recursing into this directory,
-		// we must stop processing siblings to avoid matching unrelated entries like "foo1000".
-		matchedPrefixDir := cursor.prefixEndsOnDelimiter && entry.Name == prefix && entry.IsDirectory
-		if cursor.prefixEndsOnDelimiter {
-			if entry.Name == prefix && entry.IsDirectory {
-				if delimiter != "/" {
-					cursor.prefixEndsOnDelimiter = false
-				}
-			} else {
-				continue
-			}
-		}
-		if entry.IsDirectory {
-			// glog.V(4).Infof("List Dir Entries %s, file: %s, maxKeys %d", dir, entry.Name, cursor.maxKeys)
-			if entry.Name == s3_constants.MultipartUploadsFolder { // FIXME no need to apply to all directories. this extra also affects maxKeys
-				continue
-			}
-
-			// Process .versions directories immediately to create logical versioned object entries
-			// These directories are never traversed (we continue here), so each is only encountered once
-			if strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
-				// Extract object name from .versions directory name
-				baseObjectName := strings.TrimSuffix(entry.Name, s3_constants.VersionsFolder)
-				// Construct full object path relative to bucket
-				bucketFullPath := s3a.bucketDir(bucket)
-				bucketRelativePath := strings.TrimPrefix(dir, bucketFullPath)
-				bucketRelativePath = strings.TrimPrefix(bucketRelativePath, "/")
-				var fullObjectPath string
-				if bucketRelativePath == "" {
-					fullObjectPath = baseObjectName
+		var entriesReceived uint32
+		var lastEntryName string
+		for {
+			resp, recvErr := stream.Recv()
+			if recvErr != nil {
+				if recvErr == io.EOF {
+					break
 				} else {
-					fullObjectPath = bucketRelativePath + "/" + baseObjectName
+					err = fmt.Errorf("iterating entries %+v: %v", request, recvErr)
+					return
 				}
-				// Use metadata from the already-fetched .versions directory entry
-				if latestVersionEntry, err := s3a.getLatestVersionEntryFromDirectoryEntry(bucket, fullObjectPath, entry); err == nil {
-					eachEntryFn(dir, latestVersionEntry)
-				} else if !errors.Is(err, ErrDeleteMarker) {
-					// Log unexpected errors (delete markers are expected)
-					glog.V(2).Infof("Skipping versioned object %s due to error: %v", fullObjectPath, err)
-				}
+			}
+			entry := resp.Entry
+			if entry == nil {
+				continue
+			}
+			entriesReceived++
+			lastEntryName = entry.Name
+			// listFilerEntries always calls doListFilerEntries with inclusiveStartFrom=false
+			// (S3 marker semantics are exclusive), but keep the guard explicit to preserve
+			// behavior if inclusive callers are introduced in the future.
+			if !inclusiveStartFrom && marker != "" && entry.Name == marker {
 				continue
 			}
 
-			if delimiter != "/" || cursor.prefixEndsOnDelimiter {
-				// A trailing-slash prefix (e.g. "logs/") names one directory and asks
-				// whether it exists, so a real but empty directory must be reported for
-				// that probe.
-				explicitDirProbe := cursor.prefixEndsOnDelimiter
-				if cursor.prefixEndsOnDelimiter {
-					cursor.prefixEndsOnDelimiter = false
+			if cursor.maxKeys <= 0 {
+				cursor.isTruncated = true
+				break
+			}
+
+			// Set nextMarker only when we have quota to process this entry
+			nextMarker = entry.Name
+			// Track whether this entry is the exact directory targeted by a trailing-slash prefix
+			// (e.g., prefix "foo" from original prefix "foo/"). After recursing into this directory,
+			// we must stop processing siblings to avoid matching unrelated entries like "foo1000".
+			matchedPrefixDir := cursor.prefixEndsOnDelimiter && entry.Name == prefix && entry.IsDirectory
+			if cursor.prefixEndsOnDelimiter {
+				if entry.Name == prefix && entry.IsDirectory {
+					if delimiter != "/" {
+						cursor.prefixEndsOnDelimiter = false
+					}
+				} else {
+					continue
 				}
-				isKeyObject := entry.IsDirectoryKeyObject()
-				if isKeyObject {
-					// Directory key objects (created via PutObject with trailing "/")
-					// must appear as regular keys in recursive listing mode.
+			}
+			if entry.IsDirectory {
+				// glog.V(4).Infof("List Dir Entries %s, file: %s, maxKeys %d", dir, entry.Name, cursor.maxKeys)
+				if entry.Name == s3_constants.MultipartUploadsFolder { // FIXME no need to apply to all directories. this extra also affects maxKeys
+					continue
+				}
+
+				// Process .versions directories immediately to create logical versioned object entries
+				// These directories are never traversed (we continue here), so each is only encountered once
+				if strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
+					// Extract object name from .versions directory name
+					baseObjectName := strings.TrimSuffix(entry.Name, s3_constants.VersionsFolder)
+					// Construct full object path relative to bucket
+					bucketFullPath := s3a.bucketDir(bucket)
+					bucketRelativePath := strings.TrimPrefix(dir, bucketFullPath)
+					bucketRelativePath = strings.TrimPrefix(bucketRelativePath, "/")
+					var fullObjectPath string
+					if bucketRelativePath == "" {
+						fullObjectPath = baseObjectName
+					} else {
+						fullObjectPath = bucketRelativePath + "/" + baseObjectName
+					}
+					// Use metadata from the already-fetched .versions directory entry
+					if latestVersionEntry, err := s3a.getLatestVersionEntryFromDirectoryEntry(bucket, fullObjectPath, entry); err == nil {
+						eachEntryFn(dir, latestVersionEntry)
+					} else if !errors.Is(err, ErrDeleteMarker) {
+						// Log unexpected errors (delete markers are expected)
+						glog.V(2).Infof("Skipping versioned object %s due to error: %v", fullObjectPath, err)
+					}
+					continue
+				}
+
+				if delimiter != "/" || cursor.prefixEndsOnDelimiter {
+					// A trailing-slash prefix (e.g. "logs/") names one directory and asks
+					// whether it exists, so a real but empty directory must be reported for
+					// that probe.
+					explicitDirProbe := cursor.prefixEndsOnDelimiter
+					if cursor.prefixEndsOnDelimiter {
+						cursor.prefixEndsOnDelimiter = false
+					}
+					isKeyObject := entry.IsDirectoryKeyObject()
+					if isKeyObject {
+						// Directory key objects (created via PutObject with trailing "/")
+						// must appear as regular keys in recursive listing mode.
+						eachEntryFn(dir, entry)
+					}
+					// Recurse into subdirectory to list any children, noting whether the
+					// subtree produced any entries.
+					childEmitted := false
+					subNextMarker, subErr := s3a.doListFilerEntries(ctx, client, listDirectoryRequest{dir: dir + "/" + entry.Name, delimiter: delimiter, bucket: bucket}, cursor, func(d string, e *filer_pb.Entry) {
+						childEmitted = true
+						eachEntryFn(d, e)
+					})
+					if subErr != nil {
+						err = fmt.Errorf("doListFilerEntries2: %w", subErr)
+						return
+					}
+					// A real but empty directory (created out of band via mount, mkdir or
+					// the filer API, so it carries no MIME) is otherwise invisible to S3
+					// clients that detect directories by listing it under its own "<dir>/"
+					// prefix. Surface it as a directory marker for that explicit probe,
+					// identical to a directory created via PutObject with a trailing "/", so
+					// tools like hadoop-aws can find it. Plain listings are left untouched, so
+					// empty directories left behind by deleted objects are not shown as keys.
+					if explicitDirProbe && !isKeyObject && !childEmitted && !cursor.isTruncated && entry.Attributes != nil {
+						entry.Attributes.Mime = s3_constants.FolderMimeType
+						eachEntryFn(dir, entry)
+					}
+					// println("doListFilerEntries2 dir", dir+"/"+entry.Name, "subNextMarker", subNextMarker)
+					nextMarker = entry.Name + "/" + subNextMarker
+					if cursor.isTruncated {
+						return
+					}
+					if matchedPrefixDir {
+						return
+					}
+					// println("doListFilerEntries2 nextMarker", nextMarker)
+				} else {
 					eachEntryFn(dir, entry)
 				}
-				// Recurse into subdirectory to list any children, noting whether the
-				// subtree produced any entries.
-				childEmitted := false
-				subNextMarker, subErr := s3a.doListFilerEntries(client, dir+"/"+entry.Name, "", cursor, "", delimiter, false, bucket, func(d string, e *filer_pb.Entry) {
-					childEmitted = true
-					eachEntryFn(d, e)
-				})
-				if subErr != nil {
-					err = fmt.Errorf("doListFilerEntries2: %w", subErr)
-					return
-				}
-				// A real but empty directory (created out of band via mount, mkdir or
-				// the filer API, so it carries no MIME) is otherwise invisible to S3
-				// clients that detect directories by listing it under its own "<dir>/"
-				// prefix. Surface it as a directory marker for that explicit probe,
-				// identical to a directory created via PutObject with a trailing "/", so
-				// tools like hadoop-aws can find it. Plain listings are left untouched, so
-				// empty directories left behind by deleted objects are not shown as keys.
-				if explicitDirProbe && !isKeyObject && !childEmitted && !cursor.isTruncated && entry.Attributes != nil {
-					entry.Attributes.Mime = s3_constants.FolderMimeType
-					eachEntryFn(dir, entry)
-				}
-				// println("doListFilerEntries2 dir", dir+"/"+entry.Name, "subNextMarker", subNextMarker)
-				nextMarker = entry.Name + "/" + subNextMarker
-				if cursor.isTruncated {
-					return
-				}
-				if matchedPrefixDir {
-					return
-				}
-				// println("doListFilerEntries2 nextMarker", nextMarker)
 			} else {
 				eachEntryFn(dir, entry)
+				// glog.V(4).Infof("List File Entries %s, file: %s, maxKeys %d", dir, entry.Name, cursor.maxKeys)
 			}
-		} else {
-			eachEntryFn(dir, entry)
-			// glog.V(4).Infof("List File Entries %s, file: %s, maxKeys %d", dir, entry.Name, cursor.maxKeys)
+			if cursor.prefixEndsOnDelimiter {
+				cursor.prefixEndsOnDelimiter = false
+			}
 		}
-		if cursor.prefixEndsOnDelimiter {
-			cursor.prefixEndsOnDelimiter = false
-		}
-	}
 
-	// Versioned directories are processed above (lines 524-546)
-	return
+		if cursor.isTruncated || entriesReceived < request.Limit {
+			return
+		}
+		marker = lastEntryName
+		inclusiveStartFrom = false
+	}
 }
 
 func getListObjectsV2Args(values url.Values) (prefix, startAfter, delimiter string, token OptionalString, encodingTypeUrl bool, fetchOwner bool, maxkeys uint16, allowUnordered bool, errCode s3err.ErrorCode) {

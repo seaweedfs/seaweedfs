@@ -136,7 +136,7 @@ func TestListObjectsWithVersionedObjects(t *testing.T) {
 			commonPrefixes := []PrefixEntry{}
 			bucketPrefix := fmt.Sprintf("%s/%s/", s3a.option.BucketsPath, tt.bucket)
 
-			_, err := s3a.doListFilerEntries(filerClient, bucketPrefix[:len(bucketPrefix)-1], tt.prefix, cursor, "", tt.delimiter, false, tt.bucket, func(dir string, entry *filer_pb.Entry) {
+			_, err := s3a.doListFilerEntries(context.Background(), filerClient, listDirectoryRequest{dir: bucketPrefix[:len(bucketPrefix)-1], prefix: tt.prefix, delimiter: tt.delimiter, bucket: tt.bucket}, cursor, func(dir string, entry *filer_pb.Entry) {
 				if cursor.maxKeys <= 0 {
 					return
 				}
@@ -237,7 +237,7 @@ func TestVersionedObjectsNoDuplication(t *testing.T) {
 
 	cursor := &ListingCursor{maxKeys: uint16(1000)}
 	contents := []ListEntry{}
-	_, err := s3a.doListFilerEntries(filerClient, "/buckets/test-bucket", "", cursor, "", "", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
+	_, err := s3a.doListFilerEntries(context.Background(), filerClient, listDirectoryRequest{dir: "/buckets/test-bucket", bucket: "test-bucket"}, cursor, func(dir string, entry *filer_pb.Entry) {
 		if cursor.maxKeys <= 0 {
 			return
 		}
@@ -295,7 +295,7 @@ func TestVersionedObjectsWithDeleteMarker(t *testing.T) {
 
 	cursor := &ListingCursor{maxKeys: uint16(1000)}
 	contents := []ListEntry{}
-	_, err := s3a.doListFilerEntries(filerClient, "/buckets/test-bucket", "", cursor, "", "", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
+	_, err := s3a.doListFilerEntries(context.Background(), filerClient, listDirectoryRequest{dir: "/buckets/test-bucket", bucket: "test-bucket"}, cursor, func(dir string, entry *filer_pb.Entry) {
 		if cursor.maxKeys <= 0 {
 			return
 		}
@@ -344,7 +344,7 @@ func TestVersionedObjectsMaxKeys(t *testing.T) {
 
 	cursor := &ListingCursor{maxKeys: uint16(3)}
 	contents := []ListEntry{}
-	_, err := s3a.doListFilerEntries(filerClient, "/buckets/test-bucket", "", cursor, "", "", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
+	_, err := s3a.doListFilerEntries(context.Background(), filerClient, listDirectoryRequest{dir: "/buckets/test-bucket", bucket: "test-bucket"}, cursor, func(dir string, entry *filer_pb.Entry) {
 		if cursor.maxKeys <= 0 {
 			return
 		}
@@ -406,7 +406,7 @@ func TestVersionsDirectoryNotTraversed(t *testing.T) {
 
 	cursor := &ListingCursor{maxKeys: uint16(1000)}
 	contents := []ListEntry{}
-	_, err := s3a.doListFilerEntries(customClient, "/buckets/test-bucket", "", cursor, "", "", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
+	_, err := s3a.doListFilerEntries(context.Background(), customClient, listDirectoryRequest{dir: "/buckets/test-bucket", bucket: "test-bucket"}, cursor, func(dir string, entry *filer_pb.Entry) {
 		if cursor.maxKeys <= 0 {
 			return
 		}
