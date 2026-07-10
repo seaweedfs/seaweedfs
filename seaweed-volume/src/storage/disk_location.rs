@@ -1095,47 +1095,10 @@ fn rm_if_present(path: String) -> io::Result<()> {
     }
 }
 
-/// Remove the bitrot checksum sidecars for a base file name: the legacy
-/// `<base>.ecsum` (generation 0) and any versioned `<base>.ecsum.v<N>`.
-/// Already-gone is success; returns the first real removal failure (and surfaces
-/// a directory-scan error) so a stale sidecar left behind is not reported as
-/// cleaned. Mirrors Go's removeBitrotSidecars.
+/// Thin wrapper so disk-location cleanup shares the canonical helper with
+/// `EcVolume::destroy` / `Store::delete_ec_shards` (Go parity).
 fn remove_bitrot_sidecars(base: &str) -> io::Result<()> {
-    use crate::storage::erasure_coding::ec_bitrot::BITROT_SIDECAR_EXT;
-    let rm = |path: std::path::PathBuf| -> io::Result<()> {
-        match fs::remove_file(&path) {
-            Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
-            _ => Ok(()),
-        }
-    };
-    let mut first_err: Option<io::Error> = None;
-    let mut record = |res: io::Result<()>| {
-        if let Err(e) = res {
-            if first_err.is_none() {
-                first_err = Some(e);
-            }
-        }
-    };
-    record(rm(format!("{}{}", base, BITROT_SIDECAR_EXT).into()));
-    let path = std::path::Path::new(base);
-    if let (Some(parent), Some(fname)) = (path.parent(), path.file_name()) {
-        let prefix = format!("{}{}.v", fname.to_string_lossy(), BITROT_SIDECAR_EXT);
-        match fs::read_dir(parent) {
-            Ok(entries) => {
-                for entry in entries.flatten() {
-                    if entry.file_name().to_string_lossy().starts_with(&prefix) {
-                        record(rm(entry.path()));
-                    }
-                }
-            }
-            Err(e) if e.kind() != io::ErrorKind::NotFound => record(Err(e)),
-            Err(_) => {}
-        }
-    }
-    match first_err {
-        Some(e) => Err(e),
-        None => Ok(()),
-    }
+    crate::storage::erasure_coding::ec_bitrot::remove_bitrot_sidecars(base)
 }
 
 fn ec_data_shards_from_vif(directory: &str, idx_directory: &str, collection: &str, vid: VolumeId) -> usize {

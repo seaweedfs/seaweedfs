@@ -946,6 +946,23 @@ impl Store {
         // Also unmount if mounted
         self.unmount_ec_shards(vid, shard_ids);
 
+        // Per-disk: when this location holds no remaining shards for the volume,
+        // the local bitrot sidecar is orphaned — remove it (Go
+        // deleteEcShardIdsForEachLocation when existingShardCount == 0).
+        for loc in &self.locations {
+            if self.location_has_ec_shards(loc, collection, vid) {
+                continue;
+            }
+            let data_base =
+                crate::storage::volume::volume_file_name(&loc.directory, collection, vid);
+            let _ = crate::storage::erasure_coding::ec_bitrot::remove_bitrot_sidecars(&data_base);
+            if loc.idx_directory != loc.directory {
+                let idx_base =
+                    crate::storage::volume::volume_file_name(&loc.idx_directory, collection, vid);
+                let _ = crate::storage::erasure_coding::ec_bitrot::remove_bitrot_sidecars(&idx_base);
+            }
+        }
+
         // If all shards are gone, remove .ecx and .ecj files from both idx and data dirs
         let all_gone = self.check_all_ec_shards_deleted(vid, collection);
         if all_gone {
@@ -963,6 +980,17 @@ impl Store {
                 }
             }
         }
+    }
+
+    /// True if `loc` still has any on-disk EC shard for this volume.
+    fn location_has_ec_shards(&self, loc: &DiskLocation, collection: &str, vid: VolumeId) -> bool {
+        for shard_id in 0..MAX_SHARD_COUNT as u8 {
+            let shard = EcVolumeShard::new(&loc.directory, collection, vid, shard_id);
+            if std::path::Path::new(&shard.file_name()).exists() {
+                return true;
+            }
+        }
+        false
     }
 
     /// Check if all EC shard files have been deleted for a volume.

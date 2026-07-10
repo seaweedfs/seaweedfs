@@ -1453,6 +1453,32 @@ impl EcVolume {
             let _ = fs::remove_file(format!("{}.ecj", data_base));
             let _ = fs::remove_file(format!("{}.vif", data_base));
         }
+        // Go's Destroy() also removes bitrot checksum sidecars so a later
+        // volume-id reuse cannot load stale protection, and so
+        // collection.delete does not leave orphaned <base>.ecsum files.
+        // Sweep every base dir the index/data files may live under.
+        let mut bases = vec![crate::storage::volume::volume_file_name(
+            &self.dir,
+            &self.collection,
+            self.volume_id,
+        )];
+        if self.dir_idx != self.dir {
+            bases.push(crate::storage::volume::volume_file_name(
+                &self.dir_idx,
+                &self.collection,
+                self.volume_id,
+            ));
+        }
+        if self.ecx_actual_dir != self.dir && self.ecx_actual_dir != self.dir_idx {
+            bases.push(crate::storage::volume::volume_file_name(
+                &self.ecx_actual_dir,
+                &self.collection,
+                self.volume_id,
+            ));
+        }
+        for base in bases {
+            let _ = crate::storage::erasure_coding::ec_bitrot::remove_bitrot_sidecars(&base);
+        }
         self.ecx_file = None;
         self.ecj_file = None;
     }
@@ -1462,6 +1488,82 @@ impl EcVolume {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    /// `destroy()` must remove co-located `.ecsum` sidecars (Go Destroy parity).
+    /// Without this, `collection.delete` leaves orphaned bitrot files that
+    /// inflate EC-health scanners after the shards are gone.
+    #[test]
+    fn test_destroy_removes_bitrot_sidecar() {
+        use crate::storage::needle_map::NeedleMapKind;
+        use crate::storage::volume::Volume;
+
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = Volume::new(
+            dir,
+            dir,
+            "ec1c",
+            VolumeId(2074),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        for i in 1..=3 {
+            let data = format!("needle {}", i);
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                data: data.as_bytes().to_vec(),
+                data_size: data.len() as u32,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true).unwrap();
+        }
+        v.sync_to_disk().unwrap();
+        v.close();
+        crate::storage::erasure_coding::ec_encoder::write_ec_files(
+            dir,
+            dir,
+            "ec1c",
+            VolumeId(2074),
+            10,
+            4,
+        )
+        .unwrap();
+
+        let base = crate::storage::volume::volume_file_name(dir, "ec1c", VolumeId(2074));
+        let ecsum = format!("{}.ecsum", base);
+        assert!(
+            std::path::Path::new(&ecsum).exists(),
+            "precondition: encode must write generation-0 .ecsum"
+        );
+        assert!(
+            std::path::Path::new(&format!("{}.ec00", base)).exists(),
+            "precondition: encode must write shards"
+        );
+
+        let mut vol = EcVolume::new(dir, dir, "ec1c", VolumeId(2074)).unwrap();
+        // Mount at least one local shard so destroy's shard loop has work.
+        vol.add_shard(EcVolumeShard::new(dir, "ec1c", VolumeId(2074), 0))
+            .unwrap();
+        vol.destroy();
+
+        assert!(
+            !std::path::Path::new(&format!("{}.ec00", base)).exists(),
+            "destroy should remove shards"
+        );
+        assert!(
+            !std::path::Path::new(&ecsum).exists(),
+            "destroy should remove co-located .ecsum (Go Destroy parity)"
+        );
+        assert!(
+            !std::path::Path::new(&format!("{}.ecx", base)).exists(),
+            "destroy should remove .ecx"
+        );
+    }
 
     /// Mounting an EC volume loads and validates its generation-0 `.ecsum`
     /// sidecar, so `bitrot_protection()` reports `On` with the parsed manifest.

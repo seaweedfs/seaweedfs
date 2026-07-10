@@ -146,6 +146,52 @@ pub fn bitrot_sidecar_path(base: &str, generation: u32) -> String {
     }
 }
 
+/// Remove the bitrot checksum sidecars for a base file name: the legacy
+/// `<base>.ecsum` (generation 0) and any versioned `<base>.ecsum.v<N>`.
+///
+/// Already-gone is success; returns the first real removal failure (and surfaces
+/// a directory-scan error) so a stale sidecar left behind is not reported as
+/// cleaned. Mirrors Go's `RemoveBitrotSidecars` / `removeBitrotSidecars`.
+pub fn remove_bitrot_sidecars(base: &str) -> io::Result<()> {
+    use std::fs;
+    use std::path::Path;
+
+    let rm = |path: std::path::PathBuf| -> io::Result<()> {
+        match fs::remove_file(&path) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        }
+    };
+    let mut first_err: Option<io::Error> = None;
+    let mut record = |res: io::Result<()>| {
+        if let Err(e) = res {
+            if first_err.is_none() {
+                first_err = Some(e);
+            }
+        }
+    };
+    record(rm(format!("{}{}", base, BITROT_SIDECAR_EXT).into()));
+    let path = Path::new(base);
+    if let (Some(parent), Some(fname)) = (path.parent(), path.file_name()) {
+        let prefix = format!("{}{}.v", fname.to_string_lossy(), BITROT_SIDECAR_EXT);
+        match fs::read_dir(parent) {
+            Ok(entries) => {
+                for entry in entries.flatten() {
+                    if entry.file_name().to_string_lossy().starts_with(&prefix) {
+                        record(rm(entry.path()));
+                    }
+                }
+            }
+            Err(e) if e.kind() != io::ErrorKind::NotFound => record(Err(e)),
+            Err(_) => {}
+        }
+    }
+    match first_err {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
+}
+
 /// Returns a fresh random per-encode identity used to detect a stale sidecar
 /// left behind by an in-place re-encode.
 pub fn new_encode_uuid() -> Vec<u8> {
