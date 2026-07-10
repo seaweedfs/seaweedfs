@@ -5,8 +5,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -269,4 +272,164 @@ func TestChunkEcEncodeVolumeIds(t *testing.T) {
 	}, chunkEcEncodeVolumeIds(vids, 2))
 
 	assert.Equal(t, [][]needle.VolumeId{vids}, chunkEcEncodeVolumeIds(vids, 0))
+}
+
+func ecShardVisibilityTestTopology(nodes ...*master_pb.DataNodeInfo) *master_pb.TopologyInfo {
+	return &master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{{
+			Id: "dc1",
+			RackInfos: []*master_pb.RackInfo{{
+				Id:            "rack1",
+				DataNodeInfos: nodes,
+			}},
+		}},
+	}
+}
+
+func TestCollectEcShardBitsByNode(t *testing.T) {
+	allBits := uint32(1)<<erasure_coding.TotalShardsCount - 1
+
+	// One node reports the volume's shards split across two disk types; the
+	// other node reports nothing for it.
+	node1 := &master_pb.DataNodeInfo{
+		Id: "node1:8080",
+		DiskInfos: map[string]*master_pb.DiskInfo{
+			"": {
+				MaxVolumeCount: 10,
+				EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{
+					{Id: 1, EcIndexBits: allBits & 0x00ff, DiskId: 0},
+				},
+			},
+			"ssd": {
+				Type:           "ssd",
+				MaxVolumeCount: 10,
+				EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{
+					{Id: 1, EcIndexBits: allBits &^ 0x00ff, DiskId: 1},
+					{Id: 2, EcIndexBits: allBits, DiskId: 1},
+				},
+			},
+		},
+	}
+	node2 := &master_pb.DataNodeInfo{
+		Id:        "node2:8080",
+		DiskInfos: map[string]*master_pb.DiskInfo{"": {MaxVolumeCount: 10}},
+	}
+	topo := ecShardVisibilityTestTopology(node1, node2)
+
+	byNode := collectEcShardBitsByNode(topo, needle.VolumeId(1))
+	assert.Len(t, byNode, 1)
+	assert.Equal(t, erasure_coding.ShardBits(allBits), byNode[pb.NewServerAddressFromDataNode(node1)])
+
+	assert.Empty(t, collectEcShardBitsByNode(topo, needle.VolumeId(3)))
+}
+
+func TestCollectEcShardBitsByNode_MixedGenerations(t *testing.T) {
+	allBits := uint32(1)<<erasure_coding.TotalShardsCount - 1
+
+	nodeWithGeneration := func(id string, ts int64) *master_pb.DataNodeInfo {
+		return &master_pb.DataNodeInfo{
+			Id: id,
+			DiskInfos: map[string]*master_pb.DiskInfo{
+				"": {
+					MaxVolumeCount: 10,
+					EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{
+						{Id: 1, EcIndexBits: allBits, DiskId: 0, EncodeTsNs: ts},
+					},
+				},
+			},
+		}
+	}
+
+	// A full orphaned older generation on node2 must not count: neither toward
+	// the registration union nor as a second holder.
+	fresh := nodeWithGeneration("node1:8080", 200)
+	orphan := nodeWithGeneration("node2:8080", 100)
+	byNode := collectEcShardBitsByNode(ecShardVisibilityTestTopology(fresh, orphan), needle.VolumeId(1))
+	assert.Len(t, byNode, 1)
+	assert.Equal(t, erasure_coding.ShardBits(allBits), byNode[pb.NewServerAddressFromDataNode(fresh)])
+
+	// Un-stamped entries are the legacy generation zero: dropped when a stamped
+	// generation exists, all counted when nothing is stamped.
+	legacy := nodeWithGeneration("node2:8080", 0)
+	byNode = collectEcShardBitsByNode(ecShardVisibilityTestTopology(fresh, legacy), needle.VolumeId(1))
+	assert.Len(t, byNode, 1)
+	assert.Equal(t, erasure_coding.ShardBits(allBits), byNode[pb.NewServerAddressFromDataNode(fresh)])
+
+	byNode = collectEcShardBitsByNode(
+		ecShardVisibilityTestTopology(nodeWithGeneration("node1:8080", 0), nodeWithGeneration("node2:8080", 0)),
+		needle.VolumeId(1))
+	assert.Len(t, byNode, 2)
+}
+
+func TestEcShardsClumpedOnOneNode(t *testing.T) {
+	allBits := uint32(1)<<erasure_coding.TotalShardsCount - 1
+
+	holderNode := func() *master_pb.DataNodeInfo {
+		return &master_pb.DataNodeInfo{
+			Id: "node1:8080",
+			DiskInfos: map[string]*master_pb.DiskInfo{
+				"": {
+					MaxVolumeCount: 10,
+					EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{
+						{Id: 1, EcIndexBits: allBits, DiskId: 0},
+					},
+				},
+			},
+		}
+	}
+	emptyNode := func(id string, maxVolumeCount, volumeCount int64) *master_pb.DataNodeInfo {
+		return &master_pb.DataNodeInfo{
+			Id: id,
+			DiskInfos: map[string]*master_pb.DiskInfo{
+				"": {MaxVolumeCount: maxVolumeCount, VolumeCount: volumeCount},
+			},
+		}
+	}
+
+	// All shards on one node while another node has free slots: clumped.
+	node1 := holderNode()
+	topo := ecShardVisibilityTestTopology(node1, emptyNode("node2:8080", 10, 0))
+	holder, clumped := ecShardsClumpedOnOneNode(topo, needle.VolumeId(1), types.HardDriveType)
+	assert.True(t, clumped)
+	assert.Equal(t, pb.NewServerAddressFromDataNode(node1), holder)
+
+	// The only other node has no free slots: the balance could not have spread
+	// the shards, so deletion may proceed.
+	topo = ecShardVisibilityTestTopology(holderNode(), emptyNode("node2:8080", 1, 1))
+	_, clumped = ecShardsClumpedOnOneNode(topo, needle.VolumeId(1), types.HardDriveType)
+	assert.False(t, clumped)
+
+	// Single-node cluster: not a clump.
+	topo = ecShardVisibilityTestTopology(holderNode())
+	_, clumped = ecShardsClumpedOnOneNode(topo, needle.VolumeId(1), types.HardDriveType)
+	assert.False(t, clumped)
+
+	// Shards spread across two nodes: not a clump.
+	spread1 := holderNode()
+	spread1.DiskInfos[""].EcShardInfos[0].EcIndexBits = allBits & 0x007f
+	spread2 := emptyNode("node2:8080", 10, 0)
+	spread2.DiskInfos[""].EcShardInfos = []*master_pb.VolumeEcShardInformationMessage{
+		{Id: 1, EcIndexBits: allBits &^ 0x007f, DiskId: 0},
+	}
+	topo = ecShardVisibilityTestTopology(spread1, spread2)
+	_, clumped = ecShardsClumpedOnOneNode(topo, needle.VolumeId(1), types.HardDriveType)
+	assert.False(t, clumped)
+
+	// No shards visible at all: the recoverability check owns that case.
+	topo = ecShardVisibilityTestTopology(emptyNode("node1:8080", 10, 0), emptyNode("node2:8080", 10, 0))
+	_, clumped = ecShardsClumpedOnOneNode(topo, needle.VolumeId(1), types.HardDriveType)
+	assert.False(t, clumped)
+
+	// A full orphaned older generation on another node must not pose as a
+	// second holder and defeat the clump detection.
+	fresh := holderNode()
+	fresh.DiskInfos[""].EcShardInfos[0].EncodeTsNs = 200
+	orphan := emptyNode("node2:8080", 10, 0)
+	orphan.DiskInfos[""].EcShardInfos = []*master_pb.VolumeEcShardInformationMessage{
+		{Id: 1, EcIndexBits: allBits, DiskId: 0, EncodeTsNs: 100},
+	}
+	topo = ecShardVisibilityTestTopology(fresh, orphan, emptyNode("node3:8080", 10, 0))
+	holder, clumped = ecShardsClumpedOnOneNode(topo, needle.VolumeId(1), types.HardDriveType)
+	assert.True(t, clumped)
+	assert.Equal(t, pb.NewServerAddressFromDataNode(fresh), holder)
 }

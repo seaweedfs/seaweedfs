@@ -275,6 +275,13 @@ func processEcEncodeBatch(commandEnv *CommandEnv, writer io.Writer, volumeIds []
 	if err != nil {
 		return fmt.Errorf("ec encode for volumes %v: %w", volumeIds, err)
 	}
+	// Mounting the new shards notifies the master asynchronously, and EcBalance
+	// plans from a fresh topology snapshot: one taken before the mounts land
+	// shows no shards for these volumes, so the balance plans no moves and
+	// silently leaves every shard on the generation host.
+	if err := waitForEcShardsToRegister(commandEnv, volumeIds); err != nil {
+		return fmt.Errorf("wait for ec shards to register with the master: %w", err)
+	}
 	// EcBalance works at collection scope. In batch mode this intentionally
 	// rebalances each collection after every batch so source volumes can be
 	// safely verified and deleted without waiting for all batches to finish.
@@ -283,7 +290,7 @@ func processEcEncodeBatch(commandEnv *CommandEnv, writer io.Writer, volumeIds []
 	if err := EcBalance(commandEnv, balanceCollections, "", rp, diskType, maxParallelization, applyBalancing, skippedNodes); err != nil {
 		return fmt.Errorf("re-balance ec shards for collection(s) %v: %w", balanceCollections, err)
 	}
-	if err := verifyEcShardsBeforeDelete(commandEnv, volumeIds, diskType); err != nil {
+	if err := verifyEcShardsBeforeDelete(commandEnv, volumeIds, diskType, applyBalancing); err != nil {
 		return fmt.Errorf("verify EC shards before deleting originals: %w", err)
 	}
 	fmt.Printf("Deleting original volumes after EC encoding...\n")
@@ -691,7 +698,110 @@ func classifyNodeLiveness(pingErr error) nodeLiveness {
 	return nodeLivenessUnknown
 }
 
-func verifyEcShardsBeforeDelete(commandEnv *CommandEnv, volumeIds []needle.VolumeId, diskType types.DiskType) error {
+// collectEcShardBitsByNode returns, for one volume, the EC shard bits each node
+// reports, unioned across all its disk types. Freshly generated shards sit on
+// the disk that held the source .dat, which may differ from the balance target
+// disk type, so visibility questions ("has the master heard about these shards
+// at all?") must not filter by disk type. Only the newest encode generation
+// (largest EncodeTsNs) counts: an orphaned older generation — a failed earlier
+// encode on a node the pre-encode sweep could not reach but the master still
+// hears from — must neither satisfy the registration wait nor pose as a second
+// holder in the clump check. Entries without a timestamp form the legacy
+// generation zero, so they only count when no stamped generation exists;
+// dropping them otherwise errs toward keeping the source volume.
+func collectEcShardBitsByNode(topoInfo *master_pb.TopologyInfo, vid needle.VolumeId) map[pb.ServerAddress]erasure_coding.ShardBits {
+	type shardEntry struct {
+		addr pb.ServerAddress
+		ts   int64
+		bits erasure_coding.ShardBits
+	}
+	var entries []shardEntry
+	var newestTs int64
+	eachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
+		for _, diskInfo := range dn.DiskInfos {
+			for _, ecInfo := range diskInfo.EcShardInfos {
+				if ecInfo.Id != uint32(vid) {
+					continue
+				}
+				entries = append(entries, shardEntry{pb.NewServerAddressFromDataNode(dn), ecInfo.EncodeTsNs, erasure_coding.ShardBits(ecInfo.EcIndexBits)})
+				if ecInfo.EncodeTsNs > newestTs {
+					newestTs = ecInfo.EncodeTsNs
+				}
+			}
+		}
+	})
+	res := make(map[pb.ServerAddress]erasure_coding.ShardBits)
+	for _, e := range entries {
+		if e.ts == newestTs {
+			res[e.addr] |= e.bits
+		}
+	}
+	return res
+}
+
+// waitForEcShardsToRegister polls the master topology until every given volume
+// reports a full EC shard set. Mounting shards notifies the master
+// asynchronously (mount -> NewEcShardsChan -> delta heartbeat), so a topology
+// snapshot taken right after doEcEncode can predate the mounts. Failing after
+// the retries keeps the source volumes, and a re-run of ec.encode starts clean.
+func waitForEcShardsToRegister(commandEnv *CommandEnv, volumeIds []needle.VolumeId) error {
+	const maxAttempts = 10
+	const retryInterval = 2 * time.Second
+
+	var lastMissing []string
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if attempt > 0 {
+			time.Sleep(retryInterval)
+		}
+		topoInfo, _, err := collectTopologyInfo(commandEnv, 0)
+		if err != nil {
+			return fmt.Errorf("fetch topology while waiting for ec shards to register: %w", err)
+		}
+		lastMissing = lastMissing[:0]
+		for _, vid := range volumeIds {
+			var union erasure_coding.ShardBits
+			for _, bits := range collectEcShardBitsByNode(topoInfo, vid) {
+				union |= bits
+			}
+			if union.Count() < erasure_coding.TotalShardsCount {
+				lastMissing = append(lastMissing, fmt.Sprintf("volume %d: %d/%d shards", vid, union.Count(), erasure_coding.TotalShardsCount))
+			}
+		}
+		if len(lastMissing) == 0 {
+			return nil
+		}
+		glog.V(0).Infof("waiting for newly generated ec shards to register with the master (attempt %d/%d): %v",
+			attempt+1, maxAttempts, lastMissing)
+	}
+	return fmt.Errorf("newly generated ec shards did not register with the master after %d attempts: %v", maxAttempts, lastMissing)
+}
+
+// ecShardsClumpedOnOneNode reports whether every EC shard the master sees for
+// vid sits on a single node while at least one other node has free EC shard
+// slots on the target disk type — i.e. the preceding rebalance could have
+// spread the shards but did not. Zero visible shards is not a clump; the
+// recoverability check owns that case.
+func ecShardsClumpedOnOneNode(topoInfo *master_pb.TopologyInfo, vid needle.VolumeId, diskType types.DiskType) (holder pb.ServerAddress, clumped bool) {
+	byNode := collectEcShardBitsByNode(topoInfo, vid)
+	if len(byNode) != 1 {
+		return "", false
+	}
+	for addr := range byNode {
+		holder = addr
+	}
+	ecNodes, _ := collectEcVolumeServersByDc(topoInfo, "", diskType)
+	for _, en := range ecNodes {
+		if pb.NewServerAddressFromDataNode(en.info) == holder {
+			continue
+		}
+		if en.freeEcSlot > 0 {
+			return holder, true
+		}
+	}
+	return "", false
+}
+
+func verifyEcShardsBeforeDelete(commandEnv *CommandEnv, volumeIds []needle.VolumeId, diskType types.DiskType, expectSpread bool) error {
 	// Shard relocations from the preceding EC balance reach the master via
 	// volume-server heartbeats, so freshly distributed shards may not all be
 	// visible in the master topology immediately. Poll a few times before
@@ -700,12 +810,16 @@ func verifyEcShardsBeforeDelete(commandEnv *CommandEnv, volumeIds []needle.Volum
 	// recoverable threshold (dataShards) aborts the deletion; a recoverable
 	// but degraded set proceeds with a warning, since the missing shards can
 	// be rebuilt from the survivors while keeping the source next to live
-	// shards is the more dangerous mixed state.
+	// shards is the more dangerous mixed state. When expectSpread is set (the
+	// rebalance ran in apply mode), a volume whose shards all still sit on one
+	// node while another node has free slots also aborts the deletion: losing
+	// that node would lose the volume, so the original is the safer copy.
 	const maxAttempts = 10
 	const retryInterval = 2 * time.Second
 
 	var lastErr error
 	var lastDegraded []string
+	var lastClumped []string
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		topoInfo, _, err := collectTopologyInfo(commandEnv, 0)
 		if err != nil {
@@ -714,6 +828,7 @@ func verifyEcShardsBeforeDelete(commandEnv *CommandEnv, volumeIds []needle.Volum
 
 		lastErr = nil
 		lastDegraded = lastDegraded[:0]
+		lastClumped = lastClumped[:0]
 		for _, vid := range volumeIds {
 			nodeShards, _ := collectEcNodeShardsInfo(topoInfo, vid, diskType)
 
@@ -733,6 +848,12 @@ func verifyEcShardsBeforeDelete(commandEnv *CommandEnv, volumeIds []needle.Volum
 				lastErr = fmt.Errorf("volume %d: %w (observed: %v)", vid, err, summary)
 				break
 			}
+			if expectSpread {
+				if holder, clumped := ecShardsClumpedOnOneNode(topoInfo, vid, diskType); clumped {
+					lastClumped = append(lastClumped, fmt.Sprintf("volume %d: all shards on %s", vid, holder))
+					continue
+				}
+			}
 			if degraded {
 				lastDegraded = append(lastDegraded, fmt.Sprintf("volume %d: %d/%d shards", vid, union.Count(), totalShards))
 				continue
@@ -742,12 +863,12 @@ func verifyEcShardsBeforeDelete(commandEnv *CommandEnv, volumeIds []needle.Volum
 				vid, diskType.ReadableString(), union.Count(), totalShards, len(nodeShards))
 		}
 
-		if lastErr == nil && len(lastDegraded) == 0 {
+		if lastErr == nil && len(lastDegraded) == 0 && len(lastClumped) == 0 {
 			return nil
 		}
 		if attempt < maxAttempts-1 {
-			glog.V(0).Infof("EC shard verification incomplete (attempt %d/%d), waiting for shard locations to propagate: %v %v",
-				attempt+1, maxAttempts, lastErr, lastDegraded)
+			glog.V(0).Infof("EC shard verification incomplete (attempt %d/%d), waiting for shard locations to propagate: %v %v %v",
+				attempt+1, maxAttempts, lastErr, lastDegraded, lastClumped)
 			time.Sleep(retryInterval)
 		}
 	}
@@ -755,6 +876,9 @@ func verifyEcShardsBeforeDelete(commandEnv *CommandEnv, volumeIds []needle.Volum
 	if lastErr != nil {
 		glog.Errorf("EC shard verification failed after %d attempts: %v", maxAttempts, lastErr)
 		return lastErr
+	}
+	if len(lastClumped) > 0 {
+		return fmt.Errorf("EC shards still sit on a single node after rebalance even though other nodes have free slots (%v); keeping the original volumes. Run ec.balance -apply, verify the spread, then delete the originals or re-run ec.encode", lastClumped)
 	}
 	glog.Warningf("EC shard set incomplete but recoverable after %d attempts, proceeding with source deletion (rebuild missing shards with ec.rebuild): %v",
 		maxAttempts, lastDegraded)
