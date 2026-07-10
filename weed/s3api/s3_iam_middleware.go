@@ -143,6 +143,13 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 			return nil, s3err.ErrAccessDenied
 		}
 
+		// Same trust-policy gate as AssumeRoleWithWebIdentity: the role mapping
+		// alone must not grant a role that STS would refuse for this token.
+		if err := s3iam.iamManager.ValidateTrustPolicyForWebIdentity(ctx, identity.RoleArn, sessionToken, nil); err != nil {
+			glog.V(3).Infof("OIDC bearer token rejected by trust policy of role %s: %v", identity.RoleArn, err)
+			return nil, s3err.ErrAccessDenied
+		}
+
 		// Create claims map and populate with standard claims and attributes
 		claims := make(map[string]interface{}, len(identity.Attributes)+5)
 
