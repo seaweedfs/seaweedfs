@@ -14,15 +14,15 @@ const (
 	adminLockClientName = "admin-plugin"
 )
 
-var (
+const (
 	// A competing shell client polls the master once a second, while a local
 	// re-acquire would win immediately. Leave the lock free for slightly more
 	// than one poll interval so a waiting operator gets it first.
-	adminLockYieldWindow = 2 * time.Second
+	defaultAdminLockYieldWindow = 2 * time.Second
 	// After the lock has been held continuously for this long (overlapping
 	// reference-counted holds can keep it held indefinitely), new Acquire
 	// calls wait for a full release so shell clients are not starved.
-	adminLockFairnessWindow = time.Minute
+	defaultAdminLockFairnessWindow = time.Minute
 )
 
 // adminLocker is the subset of exclusive_locks.ExclusiveLocker the manager uses.
@@ -35,12 +35,15 @@ type adminLocker interface {
 // AdminLockManager coordinates exclusive admin locks with reference counting.
 // It is safe for concurrent use.
 type AdminLockManager struct {
-	locker     adminLocker
-	clientName string
+	locker         adminLocker
+	clientName     string
+	yieldWindow    time.Duration
+	fairnessWindow time.Duration
 
 	mu        sync.Mutex
 	cond      *sync.Cond
 	acquiring bool
+	releasing bool
 	holdCount int
 	heldSince time.Time
 
@@ -59,8 +62,10 @@ func NewAdminLockManager(masterClient *wdclient.MasterClient, clientName string)
 		clientName = adminLockClientName
 	}
 	manager := &AdminLockManager{
-		locker:     exclusive_locks.NewExclusiveLocker(masterClient, adminLockName),
-		clientName: clientName,
+		locker:         exclusive_locks.NewExclusiveLocker(masterClient, adminLockName),
+		clientName:     clientName,
+		yieldWindow:    defaultAdminLockYieldWindow,
+		fairnessWindow: defaultAdminLockFairnessWindow,
 	}
 	manager.cond = sync.NewCond(&manager.mu)
 	return manager
@@ -80,7 +85,7 @@ func (m *AdminLockManager) Acquire(reason string) (func(), error) {
 		m.locker.SetMessage(reason)
 		m.currentReason = reason
 	}
-	for m.acquiring || (m.holdCount > 0 && time.Since(m.heldSince) > adminLockFairnessWindow) {
+	for m.acquiring || m.releasing || (m.holdCount > 0 && time.Since(m.heldSince) > m.fairnessWindow) {
 		m.cond.Wait()
 	}
 	if m.holdCount == 0 {
@@ -89,8 +94,8 @@ func (m *AdminLockManager) Acquire(reason string) (func(), error) {
 		m.waitingReason = reason
 		yield := time.Duration(0)
 		if !m.lastReleasedAt.IsZero() {
-			if since := time.Since(m.lastReleasedAt); since < adminLockYieldWindow {
-				yield = adminLockYieldWindow - since
+			if since := time.Since(m.lastReleasedAt); since < m.yieldWindow {
+				yield = m.yieldWindow - since
 			}
 		}
 		m.mu.Unlock()
@@ -129,11 +134,18 @@ func (m *AdminLockManager) Release() {
 	}
 	m.holdCount--
 	shouldRelease := m.holdCount == 0
+	if shouldRelease {
+		// Block new acquires until ReleaseLock completes: a RequestLock
+		// issued while the locker still considers itself locked would no-op
+		// and leave a hold with no live lease.
+		m.releasing = true
+	}
 	m.mu.Unlock()
 
 	if shouldRelease {
 		m.locker.ReleaseLock()
 		m.mu.Lock()
+		m.releasing = false
 		m.lastReleasedAt = time.Now().UTC()
 		m.currentReason = ""
 		m.cond.Broadcast()

@@ -7,9 +7,11 @@ import (
 )
 
 type fakeAdminLocker struct {
+	releaseDelay time.Duration
+
 	mu       sync.Mutex
 	requests []time.Time
-	releases []time.Time
+	releases []time.Time // recorded when ReleaseLock returns
 }
 
 func (f *fakeAdminLocker) RequestLock(clientName string) {
@@ -19,6 +21,9 @@ func (f *fakeAdminLocker) RequestLock(clientName string) {
 }
 
 func (f *fakeAdminLocker) ReleaseLock() {
+	if f.releaseDelay > 0 {
+		time.Sleep(f.releaseDelay)
+	}
 	f.mu.Lock()
 	f.releases = append(f.releases, time.Now())
 	f.mu.Unlock()
@@ -32,15 +37,22 @@ func (f *fakeAdminLocker) counts() (int, int) {
 	return len(f.requests), len(f.releases)
 }
 
-func newTestLockManager(locker adminLocker) *AdminLockManager {
-	m := &AdminLockManager{locker: locker, clientName: "test"}
+func newTestLockManager(locker adminLocker, yieldWindow, fairnessWindow time.Duration) *AdminLockManager {
+	m := &AdminLockManager{
+		locker:         locker,
+		clientName:     "test",
+		yieldWindow:    yieldWindow,
+		fairnessWindow: fairnessWindow,
+	}
 	m.cond = sync.NewCond(&m.mu)
 	return m
 }
 
 func TestAdminLockManagerRefCountsOverlappingHolds(t *testing.T) {
+	t.Parallel()
+
 	locker := &fakeAdminLocker{}
-	m := newTestLockManager(locker)
+	m := newTestLockManager(locker, defaultAdminLockYieldWindow, defaultAdminLockFairnessWindow)
 
 	release1, _ := m.Acquire("a")
 	release2, _ := m.Acquire("b")
@@ -60,12 +72,10 @@ func TestAdminLockManagerRefCountsOverlappingHolds(t *testing.T) {
 }
 
 func TestAdminLockManagerYieldsBeforeReacquire(t *testing.T) {
-	savedYield := adminLockYieldWindow
-	adminLockYieldWindow = 100 * time.Millisecond
-	defer func() { adminLockYieldWindow = savedYield }()
+	t.Parallel()
 
 	locker := &fakeAdminLocker{}
-	m := newTestLockManager(locker)
+	m := newTestLockManager(locker, 100*time.Millisecond, defaultAdminLockFairnessWindow)
 
 	release, _ := m.Acquire("first")
 	release()
@@ -81,17 +91,10 @@ func TestAdminLockManagerYieldsBeforeReacquire(t *testing.T) {
 }
 
 func TestAdminLockManagerFairnessWindowForcesFullRelease(t *testing.T) {
-	savedFairness := adminLockFairnessWindow
-	savedYield := adminLockYieldWindow
-	adminLockFairnessWindow = 50 * time.Millisecond
-	adminLockYieldWindow = 20 * time.Millisecond
-	defer func() {
-		adminLockFairnessWindow = savedFairness
-		adminLockYieldWindow = savedYield
-	}()
+	t.Parallel()
 
 	locker := &fakeAdminLocker{}
-	m := newTestLockManager(locker)
+	m := newTestLockManager(locker, 20*time.Millisecond, 50*time.Millisecond)
 
 	release1, _ := m.Acquire("long-hold")
 	m.mu.Lock()
@@ -121,5 +124,33 @@ func TestAdminLockManagerFairnessWindowForcesFullRelease(t *testing.T) {
 
 	if requests, releases := locker.counts(); requests != 2 || releases != 2 {
 		t.Fatalf("expected a full release/re-acquire cycle, got requests=%d releases=%d", requests, releases)
+	}
+}
+
+func TestAdminLockManagerAcquireWaitsForReleaseInFlight(t *testing.T) {
+	t.Parallel()
+
+	locker := &fakeAdminLocker{releaseDelay: 50 * time.Millisecond}
+	m := newTestLockManager(locker, time.Millisecond, defaultAdminLockFairnessWindow)
+
+	release1, _ := m.Acquire("first")
+	releaseDone := make(chan struct{})
+	go func() {
+		release1()
+		close(releaseDone)
+	}()
+	// Let the release enter the slow ReleaseLock before re-acquiring.
+	time.Sleep(10 * time.Millisecond)
+	release2, _ := m.Acquire("second")
+	<-releaseDone
+	release2()
+
+	locker.mu.Lock()
+	defer locker.mu.Unlock()
+	if len(locker.requests) != 2 || len(locker.releases) != 2 {
+		t.Fatalf("unexpected lease traffic: requests=%d releases=%d", len(locker.requests), len(locker.releases))
+	}
+	if locker.requests[1].Before(locker.releases[0]) {
+		t.Fatalf("RequestLock ran while ReleaseLock was still in flight")
 	}
 }
