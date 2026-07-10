@@ -131,6 +131,55 @@ func TestIsSourceLookupError_NonLookupErrors(t *testing.T) {
 	}
 }
 
+// Legacy events carry an empty NewParentPath; the probe must fall back to
+// resp.Directory instead of building "/<name>", which would read as "gone"
+// and skip a live file.
+func TestEventSupersessionProbe_PathDerivation(t *testing.T) {
+	entry := &filer_pb.Entry{
+		Name:       "f",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 123},
+	}
+	cases := []struct {
+		name string
+		resp *filer_pb.SubscribeMetadataResponse
+		want string
+	}{
+		{
+			"legacy event without NewParentPath",
+			&filer_pb.SubscribeMetadataResponse{
+				Directory:         "/buckets/x",
+				EventNotification: &filer_pb.EventNotification{NewEntry: entry},
+			},
+			"/buckets/x/f",
+		},
+		{
+			"rename event with NewParentPath",
+			&filer_pb.SubscribeMetadataResponse{
+				Directory: "/buckets/x",
+				EventNotification: &filer_pb.EventNotification{
+					NewParentPath: "/buckets/y",
+					NewEntry:      entry,
+				},
+			},
+			"/buckets/y/f",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path, mtimeNs, ok := eventSupersessionProbe(tc.resp)
+			if !ok {
+				t.Fatal("probe must succeed when NewEntry is present")
+			}
+			if string(path) != tc.want {
+				t.Errorf("path = %q, want %q", path, tc.want)
+			}
+			if mtimeNs != 123*int64(1e9) {
+				t.Errorf("mtimeNs = %d, want %d", mtimeNs, 123*int64(1e9))
+			}
+		})
+	}
+}
+
 // When supersession cannot be proven, never skip — that would drop a live file.
 func TestEventSourceSuperseded_Guards(t *testing.T) {
 	if eventSourceSuperseded(nil, nil) {

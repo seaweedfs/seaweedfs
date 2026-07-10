@@ -302,12 +302,23 @@ func isSourceLookupError(err error) bool {
 // version carried by this event (entry gone or strictly newer), making a skip
 // lossless. Without a NewEntry it reports false so the error propagates.
 func eventSourceSuperseded(filerSource *source.FilerSource, resp *filer_pb.SubscribeMetadataResponse) bool {
-	if resp == nil || resp.EventNotification == nil || resp.EventNotification.NewEntry == nil {
+	sourcePath, mtimeNs, ok := eventSupersessionProbe(resp)
+	if !ok {
 		return false
 	}
-	message := resp.EventNotification
-	sourcePath := util.FullPath(message.NewParentPath).Child(message.NewEntry.Name)
-	return filersink.SourceSupersedes(context.Background(), filerSource, sourcePath, filersink.EntryMtimeNs(message.NewEntry))
+	return filersink.SourceSupersedes(context.Background(), filerSource, sourcePath, mtimeNs)
+}
+
+// eventSupersessionProbe derives the source path and replayed mtime of the
+// event's landing entry. Legacy events can carry an empty NewParentPath, so the
+// path comes from MetadataEventTargetFullPath (falls back to resp.Directory) —
+// a wrong path here would read as "gone" and skip a live file.
+func eventSupersessionProbe(resp *filer_pb.SubscribeMetadataResponse) (util.FullPath, int64, bool) {
+	if resp == nil || resp.EventNotification == nil || resp.EventNotification.NewEntry == nil {
+		return "", 0, false
+	}
+	return util.FullPath(filer_pb.MetadataEventTargetFullPath(resp)),
+		filersink.EntryMtimeNs(resp.EventNotification.NewEntry), true
 }
 
 // persistSnapshotOffset writes the snapshot high-water mark to the source
