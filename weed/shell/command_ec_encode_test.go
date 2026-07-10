@@ -262,16 +262,16 @@ func TestParseEcEncodeVolumeIds(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestChunkEcEncodeVolumeIds(t *testing.T) {
+func TestChunkVolumeIds(t *testing.T) {
 	vids := []needle.VolumeId{101, 102, 103, 104, 105}
 
 	assert.Equal(t, [][]needle.VolumeId{
 		{101, 102},
 		{103, 104},
 		{105},
-	}, chunkEcEncodeVolumeIds(vids, 2))
+	}, chunkVolumeIds(vids, 2))
 
-	assert.Equal(t, [][]needle.VolumeId{vids}, chunkEcEncodeVolumeIds(vids, 0))
+	assert.Equal(t, [][]needle.VolumeId{vids}, chunkVolumeIds(vids, 0))
 }
 
 func ecShardVisibilityTestTopology(nodes ...*master_pb.DataNodeInfo) *master_pb.TopologyInfo {
