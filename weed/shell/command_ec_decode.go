@@ -36,7 +36,7 @@ func (c *commandEcDecode) Name() string {
 func (c *commandEcDecode) Help() string {
 	return `decode a erasure coded volume into a normal volume
 
-	ec.decode [-collection=""] [-volumeId=<volume_id>] [-diskType=<disk_type>] [-checkMinFreeSpace]
+	ec.decode [-collection=""] [-volumeId=<volume_id>] [-batchSize=10] [-diskType=<disk_type>] [-checkMinFreeSpace]
 
 	The -collection parameter supports regular expressions for pattern matching:
 	  - Use exact match: ec.decode -collection="^mybucket$"
@@ -46,6 +46,7 @@ func (c *commandEcDecode) Help() string {
 	Options:
 	  -diskType: source disk type where EC shards are stored (hdd, ssd, or empty for default hdd)
 	  -checkMinFreeSpace: check min free space when selecting the decode target (default true)
+	  -batchSize: decode this many volumes per topology refresh (default 10; 0 = one snapshot for all volumes)
 
 	Examples:
 	  # Decode EC shards from HDD (default)
@@ -67,8 +68,12 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	collection := decodeCommand.String("collection", "", "the collection name")
 	diskTypeStr := decodeCommand.String("diskType", "", "source disk type where EC shards are stored (hdd, ssd, or empty for default hdd)")
 	checkMinFreeSpace := decodeCommand.Bool("checkMinFreeSpace", true, "check min free space when selecting the decode target")
+	batchSize := decodeCommand.Int("batchSize", DefaultEcBatchSize, "decode up to this many volumes per topology refresh (0 = one snapshot for all volumes)")
 	if err = decodeCommand.Parse(args); err != nil {
 		return nil
+	}
+	if *batchSize < 0 {
+		return fmt.Errorf("-batchSize must be >= 0")
 	}
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {
@@ -99,9 +104,26 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 		return err
 	}
 	fmt.Printf("ec decode volumes: %v\n", volumeIds)
-	for _, vid := range volumeIds {
-		if err = doEcDecode(commandEnv, topologyInfo, *collection, vid, diskType, *checkMinFreeSpace, diskUsageState); err != nil {
-			return err
+	batches := chunkVolumeIds(volumeIds, *batchSize)
+	for i, batch := range batches {
+		if i > 0 {
+			// earlier batches moved shards and created volumes; re-snapshot so
+			// shard locations and free-space accounting stay accurate
+			topologyInfo, _, err = collectTopologyInfo(commandEnv, 0)
+			if err != nil {
+				return err
+			}
+			if *checkMinFreeSpace {
+				diskUsageState = newDecodeDiskUsageState(topologyInfo, diskType)
+			}
+		}
+		if len(batches) > 1 {
+			fmt.Printf("ec decode batch %d/%d: %v\n", i+1, len(batches), batch)
+		}
+		for _, vid := range batch {
+			if err = doEcDecode(commandEnv, topologyInfo, *collection, vid, diskType, *checkMinFreeSpace, diskUsageState); err != nil {
+				return err
+			}
 		}
 	}
 
