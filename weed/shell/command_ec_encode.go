@@ -702,19 +702,40 @@ func classifyNodeLiveness(pingErr error) nodeLiveness {
 // reports, unioned across all its disk types. Freshly generated shards sit on
 // the disk that held the source .dat, which may differ from the balance target
 // disk type, so visibility questions ("has the master heard about these shards
-// at all?") must not filter by disk type.
+// at all?") must not filter by disk type. Only the newest encode generation
+// (largest EncodeTsNs) counts: an orphaned older generation — a failed earlier
+// encode on a node the pre-encode sweep could not reach but the master still
+// hears from — must neither satisfy the registration wait nor pose as a second
+// holder in the clump check. Entries without a timestamp form the legacy
+// generation zero, so they only count when no stamped generation exists;
+// dropping them otherwise errs toward keeping the source volume.
 func collectEcShardBitsByNode(topoInfo *master_pb.TopologyInfo, vid needle.VolumeId) map[pb.ServerAddress]erasure_coding.ShardBits {
-	res := make(map[pb.ServerAddress]erasure_coding.ShardBits)
+	type shardEntry struct {
+		addr pb.ServerAddress
+		ts   int64
+		bits erasure_coding.ShardBits
+	}
+	var entries []shardEntry
+	var newestTs int64
 	eachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
 		for _, diskInfo := range dn.DiskInfos {
 			for _, ecInfo := range diskInfo.EcShardInfos {
-				if ecInfo.Id == uint32(vid) {
-					addr := pb.NewServerAddressFromDataNode(dn)
-					res[addr] |= erasure_coding.ShardBits(ecInfo.EcIndexBits)
+				if ecInfo.Id != uint32(vid) {
+					continue
+				}
+				entries = append(entries, shardEntry{pb.NewServerAddressFromDataNode(dn), ecInfo.EncodeTsNs, erasure_coding.ShardBits(ecInfo.EcIndexBits)})
+				if ecInfo.EncodeTsNs > newestTs {
+					newestTs = ecInfo.EncodeTsNs
 				}
 			}
 		}
 	})
+	res := make(map[pb.ServerAddress]erasure_coding.ShardBits)
+	for _, e := range entries {
+		if e.ts == newestTs {
+			res[e.addr] |= e.bits
+		}
+	}
 	return res
 }
 

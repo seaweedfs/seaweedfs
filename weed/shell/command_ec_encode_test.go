@@ -323,6 +323,44 @@ func TestCollectEcShardBitsByNode(t *testing.T) {
 	assert.Empty(t, collectEcShardBitsByNode(topo, needle.VolumeId(3)))
 }
 
+func TestCollectEcShardBitsByNode_MixedGenerations(t *testing.T) {
+	allBits := uint32(1)<<erasure_coding.TotalShardsCount - 1
+
+	nodeWithGeneration := func(id string, ts int64) *master_pb.DataNodeInfo {
+		return &master_pb.DataNodeInfo{
+			Id: id,
+			DiskInfos: map[string]*master_pb.DiskInfo{
+				"": {
+					MaxVolumeCount: 10,
+					EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{
+						{Id: 1, EcIndexBits: allBits, DiskId: 0, EncodeTsNs: ts},
+					},
+				},
+			},
+		}
+	}
+
+	// A full orphaned older generation on node2 must not count: neither toward
+	// the registration union nor as a second holder.
+	fresh := nodeWithGeneration("node1:8080", 200)
+	orphan := nodeWithGeneration("node2:8080", 100)
+	byNode := collectEcShardBitsByNode(ecShardVisibilityTestTopology(fresh, orphan), needle.VolumeId(1))
+	assert.Len(t, byNode, 1)
+	assert.Equal(t, erasure_coding.ShardBits(allBits), byNode[pb.NewServerAddressFromDataNode(fresh)])
+
+	// Un-stamped entries are the legacy generation zero: dropped when a stamped
+	// generation exists, all counted when nothing is stamped.
+	legacy := nodeWithGeneration("node2:8080", 0)
+	byNode = collectEcShardBitsByNode(ecShardVisibilityTestTopology(fresh, legacy), needle.VolumeId(1))
+	assert.Len(t, byNode, 1)
+	assert.Equal(t, erasure_coding.ShardBits(allBits), byNode[pb.NewServerAddressFromDataNode(fresh)])
+
+	byNode = collectEcShardBitsByNode(
+		ecShardVisibilityTestTopology(nodeWithGeneration("node1:8080", 0), nodeWithGeneration("node2:8080", 0)),
+		needle.VolumeId(1))
+	assert.Len(t, byNode, 2)
+}
+
 func TestEcShardsClumpedOnOneNode(t *testing.T) {
 	allBits := uint32(1)<<erasure_coding.TotalShardsCount - 1
 
@@ -381,4 +419,17 @@ func TestEcShardsClumpedOnOneNode(t *testing.T) {
 	topo = ecShardVisibilityTestTopology(emptyNode("node1:8080", 10, 0), emptyNode("node2:8080", 10, 0))
 	_, clumped = ecShardsClumpedOnOneNode(topo, needle.VolumeId(1), types.HardDriveType)
 	assert.False(t, clumped)
+
+	// A full orphaned older generation on another node must not pose as a
+	// second holder and defeat the clump detection.
+	fresh := holderNode()
+	fresh.DiskInfos[""].EcShardInfos[0].EncodeTsNs = 200
+	orphan := emptyNode("node2:8080", 10, 0)
+	orphan.DiskInfos[""].EcShardInfos = []*master_pb.VolumeEcShardInformationMessage{
+		{Id: 1, EcIndexBits: allBits, DiskId: 0, EncodeTsNs: 100},
+	}
+	topo = ecShardVisibilityTestTopology(fresh, orphan, emptyNode("node3:8080", 10, 0))
+	holder, clumped = ecShardsClumpedOnOneNode(topo, needle.VolumeId(1), types.HardDriveType)
+	assert.True(t, clumped)
+	assert.Equal(t, pb.NewServerAddressFromDataNode(fresh), holder)
 }
