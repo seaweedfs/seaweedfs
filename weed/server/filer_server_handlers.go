@@ -225,6 +225,15 @@ func (fs *FilerServer) maybeCheckJwtAuthorization(r *http.Request, isWrite bool)
 // target is not r.URL.Path — the TUS handler, whose URL points at the /.tus
 // route — pass the resolved filer path(s) here instead.
 func (fs *FilerServer) checkJwtAuthorization(r *http.Request, isWrite bool, scopedPaths []string) bool {
+	return fs.checkJwtAuthorizationScoped(r, isWrite, func() []string { return scopedPaths })
+}
+
+// checkJwtAuthorizationScoped is checkJwtAuthorization with the scoped paths
+// resolved lazily. resolveScopedPaths is only invoked for a prefix-restricted
+// token, so callers that must read extra state to name their target — the TUS
+// handler reads the session's stored path from the filer — pay for it only when
+// the prefix check will actually consult it.
+func (fs *FilerServer) checkJwtAuthorizationScoped(r *http.Request, isWrite bool, resolveScopedPaths func() []string) bool {
 
 	var signingKey security.SigningKey
 
@@ -266,7 +275,7 @@ func (fs *FilerServer) checkJwtAuthorization(r *http.Request, isWrite bool, scop
 		// Copy and move name their source via a query parameter, not r.URL.Path.
 		// Scope every path the request reads or relocates, or a prefix-restricted
 		// token could reach data outside its allowed subtree.
-		for _, p := range scopedPaths {
+		for _, p := range resolveScopedPaths() {
 			if !anyComponentPrefixMatches(claims.AllowedPrefixes, p) {
 				glog.V(1).Infof("jwt path not allowed from %s: %v", r.RemoteAddr, p)
 				return false
