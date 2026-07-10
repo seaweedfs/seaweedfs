@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 // A presigned URL that signs content-type carries
@@ -33,7 +34,7 @@ func TestPresignedPutSignedContentTypeWithRawSemicolon(t *testing.T) {
 	}
 
 	errCode := s3err.ErrInternalError
-	handler := escapeSemicolonsInQuery(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := util_http.EscapeSemicolonsInQuery(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, errCode = iam.reqSignatureV4Verify(r)
 	}))
 	handler.ServeHTTP(httptest.NewRecorder(), req)

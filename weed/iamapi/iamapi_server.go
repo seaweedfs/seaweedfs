@@ -22,6 +22,7 @@ import (
 	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
@@ -117,6 +118,9 @@ func NewIamApiServerWithStore(router *mux.Router, option *IamServerOption, expli
 }
 
 func (iama *IamApiServer) registerRouter(router *mux.Router) {
+	// SigV4 recomputes the canonical query from the parsed query, so raw ';'
+	// pairs that Go would drop must be recovered before verification.
+	router.Use(util_http.EscapeSemicolonsInQuery)
 	// API Router
 	apiRouter := router.PathPrefix("/").Subrouter()
 	apiRouter.Use(request_id.Middleware)
