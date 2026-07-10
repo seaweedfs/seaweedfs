@@ -46,8 +46,8 @@ func (c *commandEcEncode) Name() string {
 func (c *commandEcEncode) Help() string {
 	return `apply erasure coding to a volume
 
-	ec.encode [-collection=""] [-fullPercent=95 -quietFor=1h] [-batchSize=0] [-verbose] [-sourceDiskType=<disk_type>] [-diskType=<disk_type>]
-	ec.encode [-volumeId=<volume_id>|-volumeIds=<volume_id>,...] [-batchSize=0] [-verbose] [-diskType=<disk_type>]
+	ec.encode [-collection=""] [-fullPercent=95 -quietFor=1h] [-batchSize=10] [-verbose] [-sourceDiskType=<disk_type>] [-diskType=<disk_type>]
+	ec.encode [-volumeId=<volume_id>|-volumeIds=<volume_id>,...] [-batchSize=10] [-verbose] [-diskType=<disk_type>]
 
 	This command will:
 	1. freeze one volume
@@ -72,11 +72,11 @@ func (c *commandEcEncode) Help() string {
 	  -verbose: show detailed reasons why volumes are not selected for encoding
 	  -sourceDiskType: filter source volumes by disk type (hdd, ssd, or empty for all)
 	  -diskType: target disk type for EC shards (hdd, ssd, or empty for default hdd)
-	  -batchSize: if > 0, encode/rebalance/verify/delete this many volumes at a time
+	  -batchSize: encode/rebalance/verify/delete this many volumes at a time (default 10; 0 = all in one batch)
 	  -volumeIds: comma-separated volume IDs to encode
 
-	When -batchSize is set, each batch is committed independently. If a later batch fails,
-	earlier batches may already be encoded and their original volumes deleted.
+	Each batch is committed independently. If a later batch fails, earlier batches
+	are already encoded and their original volumes deleted.
 
 	Examples:
 	  # Encode SSD volumes to SSD EC shards (same tier)
@@ -108,7 +108,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	fullPercentage := encodeCommand.Float64("fullPercent", 95, "the volume reaches the percentage of max volume size")
 	quietPeriod := encodeCommand.Duration("quietFor", time.Hour, "select volumes without no writes for this period")
 	maxParallelization := encodeCommand.Int("maxParallelization", DefaultMaxParallelization, "run up to X tasks in parallel, whenever possible")
-	batchSize := encodeCommand.Int("batchSize", 0, "if > 0, encode/re-balance/verify/delete up to this many volumes at a time")
+	batchSize := encodeCommand.Int("batchSize", DefaultEcBatchSize, "encode/re-balance/verify/delete up to this many volumes at a time (0 = all in one batch)")
 	forceChanges := encodeCommand.Bool("force", false, "force the encoding even if the cluster has less than recommended 4 nodes")
 	shardReplicaPlacement := encodeCommand.String("shardReplicaPlacement", "", "replica placement for EC shards, or master default if empty")
 	sourceDiskTypeStr := encodeCommand.String("sourceDiskType", "", "filter source volumes by disk type (hdd, ssd, or empty for all)")
@@ -182,19 +182,19 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 		return fmt.Errorf("-batchSize must be >= 0")
 	}
 
-	batches := chunkEcEncodeVolumeIds(volumeIds, *batchSize)
-	if *batchSize > 0 {
+	batches := chunkVolumeIds(volumeIds, *batchSize)
+	if len(batches) > 1 {
 		fmt.Printf("Processing %d volumes in %d batch(es), batchSize=%d\n", len(volumeIds), len(batches), *batchSize)
 	}
 	for i, batchVolumeIds := range batches {
-		if *batchSize > 0 {
+		if len(batches) > 1 {
 			fmt.Printf("Starting EC encoding batch %d/%d with %d volumes: %v\n", i+1, len(batches), len(batchVolumeIds), batchVolumeIds)
 		}
 		if err := processEcEncodeBatch(commandEnv, writer, batchVolumeIds, rp, diskType, *maxParallelization, *applyBalancing, *collection); err != nil {
 			return fmt.Errorf("ec encode batch %d/%d for volumes %v: %w", i+1, len(batches), batchVolumeIds, err)
 		}
 	}
-	if *batchSize > 0 {
+	if len(batches) > 1 {
 		fmt.Printf("Successfully completed EC encoding for %d volumes in %d batch(es)\n", len(volumeIds), len(batches))
 	}
 
@@ -228,7 +228,7 @@ func parseEcEncodeVolumeIds(volumeIdsStr string) ([]needle.VolumeId, error) {
 	return volumeIds, nil
 }
 
-func chunkEcEncodeVolumeIds(volumeIds []needle.VolumeId, batchSize int) [][]needle.VolumeId {
+func chunkVolumeIds(volumeIds []needle.VolumeId, batchSize int) [][]needle.VolumeId {
 	if batchSize <= 0 || len(volumeIds) == 0 {
 		return [][]needle.VolumeId{volumeIds}
 	}
