@@ -384,3 +384,44 @@ func TestSourceSupersedesEpochMtime(t *testing.T) {
 		t.Fatal("epoch-mtime live source must not be reported superseded")
 	}
 }
+
+// An incremental sink's dated target keys cannot be mapped back to a source
+// path, so supersession is unverifiable: the gate must stop after the bounded
+// attempts and propagate instead of spinning forever.
+func TestManifestResolveRetryGateUnverifiableSupersessionBounded(t *testing.T) {
+	fs := &FilerSink{isIncremental: true, dir: "/backup"}
+	gate := fs.manifestResolveRetryGate("/backup/2026-07-10/buckets/x/f.pt", 123, "3,01abc")
+	resolveErr := errors.New("LookupFileId volume id 3: not found")
+	for i := 1; i < maxUnverifiableResolveAttempts; i++ {
+		if !gate(resolveErr) {
+			t.Fatalf("attempt %d: gate must keep retrying before the bound", i)
+		}
+	}
+	if gate(resolveErr) {
+		t.Error("gate must propagate once the bound is reached with supersession unverifiable")
+	}
+}
+
+// Non-transient resolve errors (corrupt manifest data, bad file ids) must
+// propagate immediately — before any attempt counting or supersession
+// mapping — so the configured metadata error policy applies, instead of
+// retrying until the source is superseded.
+func TestManifestResolveRetryGateNonTransientPropagates(t *testing.T) {
+	fs := &FilerSink{dir: "/backup"}
+	gate := fs.manifestResolveRetryGate("/backup/buckets/x/f.pt", 123, "3,01abc")
+	permanentErrs := []error{
+		errors.New("fail to unmarshal manifest 3,01abc: proto: cannot parse invalid wire-format data"),
+		errors.New("invalid fileId abc"),
+	}
+	for _, err := range permanentErrs {
+		if gate(err) {
+			t.Errorf("non-transient error must propagate immediately: %v", err)
+		}
+	}
+	if !gate(errors.New("LookupFileId volume id 3: not found")) {
+		t.Error("transient lookup race must keep retrying on the first attempt")
+	}
+	if isTransientResolveError(nil) {
+		t.Error("isTransientResolveError(nil) must be false")
+	}
+}

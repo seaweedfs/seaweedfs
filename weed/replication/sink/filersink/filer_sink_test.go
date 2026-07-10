@@ -109,6 +109,28 @@ func TestOnCorruptChunkRefusesWhenSupersessionUnconfirmed(t *testing.T) {
 	}
 }
 
+// onReplicateChunkError must NOT swallow a transient/partial replicate failure
+// (a volume-id lookup race or unretried manifest-chunk resolve during a write
+// burst) when it cannot confirm the source has moved on. Here filerSource is
+// nil, so hasSourceNewerVersion is always false — the "supersession unconfirmed"
+// case. Returning nil would let the metadata subscription advance its offset
+// past an event whose file was never written, silently dropping it (the
+// filer.backup partial-landing bug). It must propagate so the offset stays put
+// and the event is reprocessed. Genuine source-404 (gone/superseded) skipping is
+// covered by TestSourceSupersedes, which gates the return-nil branch.
+func TestOnReplicateChunkErrorPropagatesWhenSupersessionUnconfirmed(t *testing.T) {
+	fs := &FilerSink{} // filerSource nil => hasSourceNewerVersion always false
+	sentinel := errors.New("replicate manifest data chunks 7,02def: volume id 7 not found")
+
+	got := fs.onReplicateChunkError("/buckets/x/model.pt",
+		&filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{Mtime: 5, MtimeNs: 200}},
+		sentinel)
+
+	if !errors.Is(got, sentinel) {
+		t.Fatalf("expected the transient replicate error to be propagated (not swallowed), got %v", got)
+	}
+}
+
 // chooseUpdateAction decides skip vs repair vs normal. A destination left
 // truncated by an earlier failed replication can carry a newer mtime (the
 // source preserved an old mtime while the partial copy was written recently),

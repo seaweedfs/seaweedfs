@@ -26,6 +26,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
@@ -139,7 +140,19 @@ func (fs *FilerSink) replicateOneChunk(sourceChunk *filer_pb.FileChunk, path str
 }
 
 func (fs *FilerSink) replicateOneManifestChunk(ctx context.Context, sourceChunk *filer_pb.FileChunk, path string, sourceMtimeNs int64) (*filer_pb.FileChunk, error) {
-	resolvedChunks, err := filer.ResolveOneChunkManifest(ctx, fs.filerSource.LookupFileId, sourceChunk)
+	// LookupFileId can transiently fail during a write burst (volume not yet
+	// registered). Retry like the data-chunk path does; the gate stops on
+	// supersession or, when that cannot be checked, after a few attempts.
+	var resolvedChunks []*filer_pb.FileChunk
+	resolveName := fmt.Sprintf("resolve manifest %s", sourceChunk.GetFileIdString())
+	err := util.RetryUntil(resolveName, func() error {
+		rc, e := filer.ResolveOneChunkManifest(ctx, fs.filerSource.LookupFileId, sourceChunk)
+		if e != nil {
+			return e
+		}
+		resolvedChunks = rc
+		return nil
+	}, fs.manifestResolveRetryGate(path, sourceMtimeNs, sourceChunk.GetFileIdString()))
 	if err != nil {
 		return nil, fmt.Errorf("resolve manifest %s: %w", sourceChunk.GetFileIdString(), err)
 	}
@@ -176,6 +189,56 @@ func (fs *FilerSink) replicateOneManifestChunk(ctx context.Context, sourceChunk 
 		SourceFileId:    sourceChunk.GetFileIdString(),
 		IsChunkManifest: true,
 	}, nil
+}
+
+// maxUnverifiableResolveAttempts bounds manifest-resolve retries when
+// supersession cannot be checked for the target path.
+const maxUnverifiableResolveAttempts = 3
+
+// manifestResolveRetryGate decides whether a failing manifest resolve keeps
+// retrying: stop when the source superseded the replayed version (the caller
+// skips it as lossless), stop immediately on non-transient errors (e.g. corrupt
+// manifest data) so the configured metadata error policy applies, and stop
+// after a few attempts when supersession cannot be checked at all (incremental
+// dated target keys don't map back to a source path) — propagating lets
+// filer.backup decide with the event's real source key instead of spinning
+// here forever.
+func (fs *FilerSink) manifestResolveRetryGate(path string, sourceMtimeNs int64, chunkName string) func(error) bool {
+	_, canCheckSupersession := fs.targetPathToSourcePath(path)
+	attempts := 0
+	return func(resolveErr error) (shouldContinue bool) {
+		if fs.hasSourceNewerVersion(path, sourceMtimeNs) {
+			glog.V(1).Infof("skip retrying stale source manifest %s for %s: %v", chunkName, path, resolveErr)
+			return false
+		}
+		if !isTransientResolveError(resolveErr) {
+			glog.V(0).Infof("resolve manifest %s for %s: non-transient error, propagating: %v", chunkName, path, resolveErr)
+			return false
+		}
+		attempts++
+		if !canCheckSupersession && attempts >= maxUnverifiableResolveAttempts {
+			glog.V(0).Infof("resolve manifest %s for %s: supersession unverifiable, propagating after %d attempts: %v", chunkName, path, attempts, resolveErr)
+			return false
+		}
+		glog.V(0).Infof("resolve manifest %s for %s: %v", chunkName, path, resolveErr)
+		return true
+	}
+}
+
+// isTransientResolveError reports whether a manifest resolve failure belongs to
+// the classes that clear on their own during a write burst — volume-lookup
+// races and network interruptions. Anything else (corrupt manifest data, bad
+// file ids) is permanent and must propagate rather than retry forever.
+func isTransientResolveError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if isRetryableNetworkError(err) {
+		return true
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "LookupFileId") ||
+		(strings.Contains(errStr, "volume id") && strings.Contains(errStr, "not found"))
 }
 
 func (fs *FilerSink) uploadManifestChunk(path string, sourceMtimeNs int64, sourceFileId string, manifestData []byte) (fileId string, err error) {
@@ -440,17 +503,22 @@ func validateReplicatedReadSize(sourceChunk *filer_pb.FileChunk, readSize int) e
 // version being replayed is stale. The lookup runs regardless of sourceMtimeNs so
 // a deleted source is detected even when the replayed mtime is epoch/unset.
 func (fs *FilerSink) hasSourceNewerVersion(targetPath string, sourceMtimeNs int64) bool {
-	if fs.filerSource == nil {
-		return false
-	}
-
 	sourcePath, ok := fs.targetPathToSourcePath(targetPath)
 	if !ok {
 		return false
 	}
+	return SourceSupersedes(context.Background(), fs.filerSource, sourcePath, sourceMtimeNs)
+}
 
-	sourceEntry, err := filer_pb.GetEntry(context.Background(), fs.filerSource, sourcePath)
-	return sourceSupersedes(sourcePath, sourceEntry, err, sourceMtimeNs)
+// SourceSupersedes reports whether the live source's entry at sourcePath has
+// moved past the replayed version (mtimeNs) — deleted or strictly newer — so
+// skipping it is lossless. Exported for filer.backup's non-filer-sink decision.
+func SourceSupersedes(ctx context.Context, filerSource *source.FilerSource, sourcePath util.FullPath, mtimeNs int64) bool {
+	if filerSource == nil {
+		return false
+	}
+	sourceEntry, err := filer_pb.GetEntry(ctx, filerSource, sourcePath)
+	return sourceSupersedes(sourcePath, sourceEntry, err, mtimeNs)
 }
 
 // sourceSupersedes reports whether the replayed version (sourceMtimeNs) is stale:

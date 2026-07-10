@@ -77,6 +77,141 @@ func TestIsIgnorable404_NonIgnorableError(t *testing.T) {
 	}
 }
 
+// Regression for the partial-landing swallow: transient volume-lookup races
+// ("LookupFileId ... failed", "volume id N not found") raised while replicating
+// a checkpoint write burst must NOT be classified as a genuine source 404.
+// They previously matched isIgnorable404 by substring, so the event was treated
+// as a deletion — the subscription offset advanced and the file (typically a
+// large manifest-backed .pt) was never replicated, with no error logged. They
+// are now propagated so the offset stays put and the event is reprocessed; only
+// a genuinely-gone source (verified live by the filer sink) is ever skipped.
+func TestIsIgnorable404_TransientLookupNotSwallowed(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{
+			"lookup file id race",
+			fmt.Errorf("create entry1 : %w",
+				fmt.Errorf("replicate manifest data chunks 3,01abc: LookupFileId 3,01abc failed, err: context deadline exceeded")),
+		},
+		{
+			"volume id not found race",
+			fmt.Errorf("create entry1 : %w",
+				fmt.Errorf("replicate entry chunks /buckets/x/model.pt: copy 7,02def: read part 7,02def: volume id 7 not found")),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if isIgnorable404(tc.err) {
+				t.Errorf("transient lookup race must not be ignorable (would swallow a live file): %v", tc.err)
+			}
+			if !isSourceLookupError(tc.err) {
+				t.Errorf("lookup race must classify as a source lookup error (resolved via the live source): %v", tc.err)
+			}
+		})
+	}
+}
+
+func TestErrorClassifiersNilSafe(t *testing.T) {
+	if isIgnorable404(nil) {
+		t.Error("isIgnorable404(nil) must be false")
+	}
+	if isSourceLookupError(nil) {
+		t.Error("isSourceLookupError(nil) must be false")
+	}
+}
+
+func TestIsSourceLookupError_NonLookupErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{"genuine S3 404", fmt.Errorf("upload part: 404 Not Found: not found")},
+		{"network error", fmt.Errorf("dial tcp 10.0.0.1:8080: connection refused")},
+		{"plain not found without volume id", fmt.Errorf("entry not found")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if isSourceLookupError(tc.err) {
+				t.Errorf("must not classify as a source lookup error: %v", tc.err)
+			}
+		})
+	}
+}
+
+// Legacy events carry an empty NewParentPath; the probe must fall back to
+// resp.Directory instead of building "/<name>", which would read as "gone"
+// and skip a live file.
+func TestEventSupersessionProbe_PathDerivation(t *testing.T) {
+	entry := &filer_pb.Entry{
+		Name:       "f",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 123},
+	}
+	cases := []struct {
+		name string
+		resp *filer_pb.SubscribeMetadataResponse
+		want string
+	}{
+		{
+			"legacy event without NewParentPath",
+			&filer_pb.SubscribeMetadataResponse{
+				Directory:         "/buckets/x",
+				EventNotification: &filer_pb.EventNotification{NewEntry: entry},
+			},
+			"/buckets/x/f",
+		},
+		{
+			"rename event with NewParentPath",
+			&filer_pb.SubscribeMetadataResponse{
+				Directory: "/buckets/x",
+				EventNotification: &filer_pb.EventNotification{
+					NewParentPath: "/buckets/y",
+					NewEntry:      entry,
+				},
+			},
+			"/buckets/y/f",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path, mtimeNs, ok := eventSupersessionProbe(tc.resp)
+			if !ok {
+				t.Fatal("probe must succeed when NewEntry is present")
+			}
+			if string(path) != tc.want {
+				t.Errorf("path = %q, want %q", path, tc.want)
+			}
+			if mtimeNs != 123*int64(1e9) {
+				t.Errorf("mtimeNs = %d, want %d", mtimeNs, 123*int64(1e9))
+			}
+		})
+	}
+}
+
+// When supersession cannot be proven, never skip — that would drop a live file.
+func TestEventSourceSuperseded_Guards(t *testing.T) {
+	if eventSourceSuperseded(nil, nil) {
+		t.Error("nil response must not be skippable")
+	}
+	if eventSourceSuperseded(nil, &filer_pb.SubscribeMetadataResponse{
+		EventNotification: &filer_pb.EventNotification{},
+	}) {
+		t.Error("event without NewEntry must not be skippable")
+	}
+	if eventSourceSuperseded(nil, &filer_pb.SubscribeMetadataResponse{
+		EventNotification: &filer_pb.EventNotification{
+			NewParentPath: "/buckets/x",
+			NewEntry: &filer_pb.Entry{
+				Name:       "model.pt",
+				Attributes: &filer_pb.FuseAttributes{Mtime: 1234567890},
+			},
+		},
+	}) {
+		t.Error("nil filerSource must not be skippable")
+	}
+}
+
 // stubSink is a minimal ReplicationSink used to exercise initialSnapshotTargetKey
 // without standing up a real sink. Only the two methods read by the key builder
 // (GetName, IsIncremental) need meaningful behavior; the rest satisfy the interface.

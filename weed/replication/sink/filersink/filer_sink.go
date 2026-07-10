@@ -260,8 +260,7 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 			if errors.Is(err, errChunkSizeMismatch) {
 				return fs.onCorruptChunk(key, entry, err)
 			}
-			glog.Warningf("replicate entry chunks %s: %v", key, err)
-			return nil
+			return fs.onReplicateChunkError(key, entry, err)
 		}
 
 		// glog.V(4).Infof("replicated %s %+v ===> %+v", key, entry.GetChunks(), replicatedChunks)
@@ -339,8 +338,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 			if errors.Is(err, errChunkSizeMismatch) {
 				return true, fs.onCorruptChunk(targetKey, newEntry, err)
 			}
-			glog.Warningf("replicate entry chunks %s: %v", key, err)
-			return true, nil
+			return true, fs.onReplicateChunkError(targetKey, newEntry, err)
 		}
 		existingEntry.Chunks = replicatedChunks
 		existingEntry.Attributes = newEntry.Attributes
@@ -368,8 +366,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 			if errors.Is(err, errChunkSizeMismatch) {
 				return true, fs.onCorruptChunk(targetKey, newEntry, err)
 			}
-			glog.Warningf("replicate entry chunks %s: %v", key, err)
-			return true, nil
+			return true, fs.onReplicateChunkError(targetKey, newEntry, err)
 		}
 		existingEntry.Chunks = append(existingEntry.GetChunks(), replicatedChunks...)
 		existingEntry.Attributes = newEntry.Attributes
@@ -426,6 +423,11 @@ func getEntryMtimeNs(entry *filer_pb.Entry) int64 {
 	return entry.Attributes.Mtime*int64(1e9) + int64(entry.Attributes.MtimeNs)
 }
 
+// EntryMtimeNs exposes getEntryMtimeNs for filer.backup's supersession check.
+func EntryMtimeNs(entry *filer_pb.Entry) int64 {
+	return getEntryMtimeNs(entry)
+}
+
 // onCorruptChunk handles a permanent chunk size-mismatch (fetched source bytes
 // disagree with source metadata). If the source already holds a newer version the
 // event is a stale replay whose chunk was overwritten and GC'd — skip it (lossless:
@@ -438,6 +440,19 @@ func (fs *FilerSink) onCorruptChunk(key string, entry *filer_pb.Entry, err error
 	}
 	glog.Errorf("refuse to replicate entry with corrupt chunk %s: %v", key, err)
 	return err
+}
+
+// onReplicateChunkError handles a non-size-mismatch replicateChunks failure.
+// Skip (return nil) only when the live source has moved past this version —
+// deleted or strictly-newer mtime — so a later event carries the current
+// content and the skip is lossless. Otherwise propagate so the offset stays
+// put and the event is retried; returning nil would silently drop the file.
+func (fs *FilerSink) onReplicateChunkError(key string, entry *filer_pb.Entry, err error) error {
+	if fs.hasSourceNewerVersion(key, getEntryMtimeNs(entry)) {
+		glog.Warningf("skip stale entry %s, source superseded during replicate: %v", key, err)
+		return nil
+	}
+	return fmt.Errorf("replicate entry chunks %s: %w", key, err)
 }
 
 // updateAction decides how UpdateEntry reconciles an incoming source version with
