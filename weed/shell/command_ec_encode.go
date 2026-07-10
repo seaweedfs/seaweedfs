@@ -276,17 +276,17 @@ func processEcEncodeBatch(commandEnv *CommandEnv, writer io.Writer, volumeIds []
 		return fmt.Errorf("ec encode for volumes %v: %w", volumeIds, err)
 	}
 
-	// EcBalance plans from the master's VolumeList. Mount reports new EC shards
-	// to the master asynchronously (volume server NewEcShardsChan → delta
-	// heartbeat → IncrementalSyncDataNodeEcShards). Without waiting, Plan often
-	// sees ZERO shards for the just-mounted volume, returns an empty move list,
-	// and succeeds silently — then verifyEcShardsBeforeDelete waits for the same
-	// heartbeats, passes, and the original .dat is deleted with all 14 shards
-	// still on the generation host (zero disk-loss protection). Observed live
-	// on 4.39 (storage-trd). Reuse the verify poll before rebalance so the plan
-	// sees the clumped shards.
+	// EcBalance plans from the master's VolumeList, but mount reports new EC
+	// shards to the master asynchronously (volume server NewEcShardsChan →
+	// delta heartbeat → IncrementalSyncDataNodeEcShards). Without waiting, the
+	// plan often sees zero shards for the just-mounted volume and succeeds with
+	// an empty move list — then the pre-delete verification waits for the same
+	// heartbeats, passes, and the original .dat is deleted with all shards
+	// still on the generation host. All shards were just generated, so demand
+	// full visibility here: a partial view would make the plan skip the
+	// invisible shards.
 	if applyBalancing {
-		if err := verifyEcShardsBeforeDelete(commandEnv, volumeIds, diskType); err != nil {
+		if err := verifyEcShardsBeforeDelete(commandEnv, volumeIds, diskType, true); err != nil {
 			return fmt.Errorf("EC shards not visible in topology before rebalance: %w", err)
 		}
 	}
@@ -299,7 +299,7 @@ func processEcEncodeBatch(commandEnv *CommandEnv, writer io.Writer, volumeIds []
 	if err := EcBalance(commandEnv, balanceCollections, "", rp, diskType, maxParallelization, applyBalancing, skippedNodes); err != nil {
 		return fmt.Errorf("re-balance ec shards for collection(s) %v: %w", balanceCollections, err)
 	}
-	if err := verifyEcShardsBeforeDelete(commandEnv, volumeIds, diskType); err != nil {
+	if err := verifyEcShardsBeforeDelete(commandEnv, volumeIds, diskType, false); err != nil {
 		return fmt.Errorf("verify EC shards before deleting originals: %w", err)
 	}
 	// Defense in depth: even after a successful (or empty) plan, refuse to
@@ -781,7 +781,15 @@ func assertEcShardsNotSingleNode(topo *master_pb.TopologyInfo, volumeIds []needl
 	return nil
 }
 
-func verifyEcShardsBeforeDelete(commandEnv *CommandEnv, volumeIds []needle.VolumeId, diskType types.DiskType) error {
+// EC shard placements reach the master via volume-server delta heartbeats, so
+// topology reads right after generate/mount/move can be stale. Polls of the
+// master topology retry on this schedule before concluding anything.
+const (
+	ecTopologyPollAttempts = 10
+	ecTopologyPollInterval = 2 * time.Second
+)
+
+func verifyEcShardsBeforeDelete(commandEnv *CommandEnv, volumeIds []needle.VolumeId, diskType types.DiskType, requireFull bool) error {
 	// Shard relocations from the preceding EC balance reach the master via
 	// volume-server heartbeats, so freshly distributed shards may not all be
 	// visible in the master topology immediately. Poll a few times before
@@ -790,9 +798,12 @@ func verifyEcShardsBeforeDelete(commandEnv *CommandEnv, volumeIds []needle.Volum
 	// recoverable threshold (dataShards) aborts the deletion; a recoverable
 	// but degraded set proceeds with a warning, since the missing shards can
 	// be rebuilt from the survivors while keeping the source next to live
-	// shards is the more dangerous mixed state.
-	const maxAttempts = 10
-	const retryInterval = 2 * time.Second
+	// shards is the more dangerous mixed state. With requireFull the degraded
+	// acceptance is off and every shard must be visible — the bar before
+	// rebalance planning, where all shards were just generated and an
+	// incomplete view would make the plan skip the invisible ones.
+	const maxAttempts = ecTopologyPollAttempts
+	const retryInterval = ecTopologyPollInterval
 
 	var lastErr error
 	var lastDegraded []string
@@ -845,6 +856,9 @@ func verifyEcShardsBeforeDelete(commandEnv *CommandEnv, volumeIds []needle.Volum
 	if lastErr != nil {
 		glog.Errorf("EC shard verification failed after %d attempts: %v", maxAttempts, lastErr)
 		return lastErr
+	}
+	if requireFull {
+		return fmt.Errorf("EC shards still missing from master topology after %d attempts: %v", maxAttempts, lastDegraded)
 	}
 	glog.Warningf("EC shard set incomplete but recoverable after %d attempts, proceeding with source deletion (rebuild missing shards with ec.rebuild): %v",
 		maxAttempts, lastDegraded)
