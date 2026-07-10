@@ -29,6 +29,7 @@ import (
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 )
 
@@ -524,6 +525,9 @@ func (s3opt *S3Options) startS3Server() bool {
 // startIcebergServer starts the Iceberg REST Catalog server on a separate port.
 func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer) {
 	icebergRouter := mux.NewRouter().SkipClean(true)
+	// warehouse/parent query values may legally contain ';', which Go's
+	// url.ParseQuery would otherwise drop
+	icebergRouter.Use(util_http.EscapeSemicolonsInQuery)
 
 	// Create Iceberg server using the S3ApiServer as filer client
 	icebergServer := iceberg.NewServer(s3ApiServer, s3ApiServer)
