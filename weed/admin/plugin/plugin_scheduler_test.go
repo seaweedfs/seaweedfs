@@ -664,11 +664,72 @@ func TestRunLaneSchedulerIterationLockBehavior(t *testing.T) {
 				t.Fatalf("SaveJobTypeConfig: %v", err)
 			}
 
+			// Make the job type due immediately so the iteration reaches
+			// detection; the lock is only taken around due work now.
+			pluginSvc.schedulerMu.Lock()
+			pluginSvc.nextDetectionAt[tt.jobType] = time.Now().UTC().Add(-time.Second)
+			pluginSvc.schedulerMu.Unlock()
+
 			ls := pluginSvc.lanes[tt.lane]
 			pluginSvc.runLaneSchedulerIteration(ls)
 
 			if got := lm.count(); (got > 0) != tt.wantLock {
 				t.Errorf("lock acquired %d times, wantLock=%v", got, tt.wantLock)
+			}
+		})
+	}
+}
+
+func TestDispatchScheduledProposalsLocksPerJob(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		jobType   string
+		wantLocks int
+	}{
+		{"DefaultLaneLocksEachJob", "volume_balance", 3},
+		{"LifecycleLaneNeedsNoLock", "s3_lifecycle", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			lm := &trackingLockManager{}
+			pluginSvc, err := New(Options{LockManager: lm})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			defer pluginSvc.Shutdown()
+
+			// The worker has capabilities but no connected session, so each
+			// job reserves capacity, fails to send, and moves on.
+			pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+				WorkerId: "worker-a",
+				Capabilities: []*plugin_pb.JobTypeCapability{
+					{JobType: tt.jobType, CanExecute: true, MaxExecutionConcurrency: 4},
+				},
+			})
+
+			policy := schedulerPolicy{
+				ExecutionConcurrency:   1,
+				PerWorkerConcurrency:   1,
+				ExecutionTimeout:       time.Second,
+				ExecutorReserveBackoff: time.Millisecond,
+			}
+			proposals := []*plugin_pb.JobProposal{
+				{ProposalId: "p1", JobType: tt.jobType, DedupeKey: "k1"},
+				{ProposalId: "p2", JobType: tt.jobType, DedupeKey: "k2"},
+				{ProposalId: "p3", JobType: tt.jobType, DedupeKey: "k3"},
+			}
+
+			success, errors, canceled := pluginSvc.dispatchScheduledProposals(
+				context.Background(), tt.jobType, proposals, &plugin_pb.ClusterContext{}, policy)
+			if success != 0 || canceled != 0 || errors != 3 {
+				t.Fatalf("unexpected dispatch counts: success=%d errors=%d canceled=%d", success, errors, canceled)
+			}
+			if got := lm.count(); got != tt.wantLocks {
+				t.Fatalf("lock acquired %d times, want %d", got, tt.wantLocks)
 			}
 		})
 	}

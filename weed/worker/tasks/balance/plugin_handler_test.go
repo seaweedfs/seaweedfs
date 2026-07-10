@@ -795,3 +795,30 @@ func (r *recordingDetectionSender) SendActivity(event *plugin_pb.ActivityEvent) 
 	}
 	return nil
 }
+
+func TestCheckMovePreconditions(t *testing.T) {
+	tests := []struct {
+		name      string
+		locations []string
+		wantErr   string
+	}{
+		{"valid move", []string{"10.0.0.1:8080", "10.0.0.3:8080"}, ""},
+		{"volume left the source", []string{"10.0.0.3:8080"}, "no longer on source"},
+		{"volume gone entirely", nil, "no longer on source"},
+		{"target already has a replica", []string{"10.0.0.1:8080", "10.0.0.2:8080"}, "already has a replica on target"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := checkMovePreconditions(tt.locations, 5, "10.0.0.1:8080", "10.0.0.2:8080")
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
+			}
+		})
+	}
+}

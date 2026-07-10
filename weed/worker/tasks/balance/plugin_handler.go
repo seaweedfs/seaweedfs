@@ -723,19 +723,23 @@ func (h *VolumeBalanceHandler) executeSingleMove(
 		return err
 	}
 
-	if err := task.Execute(execCtx, params); err != nil {
+	execErr := h.checkMoveStillValid(execCtx, request.GetClusterContext().GetMasterGrpcAddresses(), params.VolumeId, params.Sources[0].Node, params.Targets[0].Node)
+	if execErr == nil {
+		execErr = task.Execute(execCtx, params)
+	}
+	if execErr != nil {
 		_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
 			JobId:           request.Job.JobId,
 			JobType:         request.Job.JobType,
 			State:           plugin_pb.JobState_JOB_STATE_FAILED,
 			ProgressPercent: 100,
 			Stage:           "failed",
-			Message:         err.Error(),
+			Message:         execErr.Error(),
 			Activities: []*plugin_pb.ActivityEvent{
-				pluginworker.BuildExecutorActivity("failed", err.Error()),
+				pluginworker.BuildExecutorActivity("failed", execErr.Error()),
 			},
 		})
-		return err
+		return execErr
 	}
 
 	sourceNode := params.Sources[0].Node
@@ -764,6 +768,41 @@ func (h *VolumeBalanceHandler) executeSingleMove(
 			pluginworker.BuildExecutorActivity("completed", resultSummary),
 		},
 	})
+}
+
+// checkMoveStillValid re-checks a planned move against the master's live
+// view right before executing it. The admin lock is released between
+// detection and execution, so the plan can go stale: the volume may have
+// left the source, or the target may have gained a replica that the copy
+// would overwrite and the source delete would then reduce to a single copy.
+// Without master addresses (older admin) the check is skipped and the move
+// relies on the task's own execution-time guards.
+func (h *VolumeBalanceHandler) checkMoveStillValid(ctx context.Context, masterAddresses []string, volumeID uint32, sourceNode, targetNode string) error {
+	if len(masterAddresses) == 0 {
+		glog.Warningf("volume balance: no master addresses in cluster context, skipping pre-move check for volume %d", volumeID)
+		return nil
+	}
+	locations, err := pluginworker.LookupVolumeLocations(ctx, masterAddresses, h.grpcDialOption, volumeID)
+	if err != nil {
+		return fmt.Errorf("pre-move check for volume %d: %w", volumeID, err)
+	}
+	return checkMovePreconditions(locations, volumeID, sourceNode, targetNode)
+}
+
+func checkMovePreconditions(locations []string, volumeID uint32, sourceNode, targetNode string) error {
+	sourceFound := false
+	for _, location := range locations {
+		switch strings.TrimSpace(location) {
+		case targetNode:
+			return fmt.Errorf("stale move: volume %d already has a replica on target %s", volumeID, targetNode)
+		case sourceNode:
+			sourceFound = true
+		}
+	}
+	if !sourceFound {
+		return fmt.Errorf("stale move: volume %d is no longer on source %s", volumeID, sourceNode)
+	}
+	return nil
 }
 
 // executeBatchMoves runs multiple volume moves concurrently within a single job.
@@ -881,6 +920,7 @@ func (h *VolumeBalanceHandler) executeBatchMoves(
 
 	sem := make(chan struct{}, maxConcurrent)
 	results := make(chan moveResult, totalMoves)
+	masterAddresses := request.GetClusterContext().GetMasterGrpcAddresses()
 
 	for i, move := range moves {
 		sem <- struct{}{} // acquire slot
@@ -899,7 +939,10 @@ func (h *VolumeBalanceHandler) executeBatchMoves(
 			})
 
 			moveParams := buildMoveTaskParams(m, bp)
-			err := task.Execute(batchCtx, moveParams)
+			err := h.checkMoveStillValid(batchCtx, masterAddresses, m.VolumeId, m.SourceNode, m.TargetNode)
+			if err == nil {
+				err = task.Execute(batchCtx, moveParams)
+			}
 			results <- moveResult{
 				index:    idx,
 				volumeID: m.VolumeId,

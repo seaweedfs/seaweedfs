@@ -6,8 +6,8 @@ import (
 )
 
 // SchedulerLane identifies an independent scheduling track. Each lane runs
-// its own goroutine, maintains its own detection timing, and acquires its
-// own admin lock so that workloads in different lanes never block each other.
+// its own goroutine and maintains its own detection timing so that
+// workloads in different lanes never block each other.
 type SchedulerLane string
 
 const (
@@ -39,17 +39,19 @@ var laneIdleSleep = map[SchedulerLane]time.Duration{
 }
 
 // laneRequiresLock maps each lane to whether its job types must be
-// serialised under a single admin lock. The default lane needs this
-// because volume-management operations share global state. Other
-// lanes run each job type independently.
+// serialised and run under the shared cluster admin lock. The default
+// lane needs this because volume-management operations share global
+// state; the lock is taken around each detection and each job so manual
+// shell operations can interleave. Other lanes run each job type
+// independently without the lock.
 var laneRequiresLock = map[SchedulerLane]bool{
 	LaneDefault:   true,
 	LaneIceberg:   false,
 	LaneLifecycle: false,
 }
 
-// LaneRequiresLock returns true if the given lane needs a single admin
-// lock to serialise its job types. Unknown lanes default to true.
+// LaneRequiresLock returns true if the given lane serialises its job types
+// and runs them under the cluster admin lock. Unknown lanes default to true.
 func LaneRequiresLock(lane SchedulerLane) bool {
 	if v, ok := laneRequiresLock[lane]; ok {
 		return v

@@ -424,7 +424,13 @@ func (r *Plugin) acquireAdminLock(reason string) (func(), error) {
 	if r == nil || r.lockManager == nil {
 		return func() {}, nil
 	}
-	return r.lockManager.Acquire(reason)
+	release, err := r.lockManager.Acquire(reason)
+	if release == nil {
+		// Lock manager implementations may return a nil release when
+		// disabled; callers always invoke the release function.
+		release = func() {}
+	}
+	return release, err
 }
 
 // RunDetectionWithReport requests one detector worker and returns proposals with request metadata.
