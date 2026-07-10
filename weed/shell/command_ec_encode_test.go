@@ -275,12 +275,12 @@ func TestChunkEcEncodeVolumeIds(t *testing.T) {
 // allFourteenBits is EcIndexBits for shards 0..13 (standard 10+4).
 const allFourteenBits = uint32((1 << 14) - 1)
 
-// hddKey is the DiskInfos map key for the default HDD disk type. SeaweedFS
-// normalizes both "" and "hdd" to types.HardDriveType (empty string).
+// hddKey is the DiskInfos map key for the default HDD disk type: the master
+// normalizes disk type strings, so HDD is keyed by the empty string.
 const hddKey = ""
 
-// topoWithClumpedEcVolume models the storage-trd failure mode: all 14 shards of
-// vid on nodeA, with a second empty node that could have received them.
+// topoWithClumpedEcVolume models the failure mode: all 14 shards of vid on
+// nodeA, with a second empty node that could have received them.
 func topoWithClumpedEcVolume(vid uint32, collection string) *master_pb.TopologyInfo {
 	return &master_pb.TopologyInfo{
 		DataCenterInfos: []*master_pb.DataCenterInfo{{
@@ -319,15 +319,44 @@ func topoWithClumpedEcVolume(vid uint32, collection string) *master_pb.TopologyI
 	}
 }
 
-func TestMaxEcShardsPerNode_Clumped(t *testing.T) {
+func TestEcShardSpread_Clumped(t *testing.T) {
 	topo := topoWithClumpedEcVolume(2059, "ec1c")
-	assert.Equal(t, 14, maxEcShardsPerNode(topo, needle.VolumeId(2059), types.HardDriveType))
-	assert.Equal(t, 0, maxEcShardsPerNode(topo, needle.VolumeId(9999), types.HardDriveType))
+	visible, maxOnOneNode := ecShardSpread(topo, needle.VolumeId(2059), types.HardDriveType)
+	assert.Equal(t, 14, visible)
+	assert.Equal(t, 14, maxOnOneNode)
+	visible, maxOnOneNode = ecShardSpread(topo, needle.VolumeId(9999), types.HardDriveType)
+	assert.Equal(t, 0, visible)
+	assert.Equal(t, 0, maxOnOneNode)
 }
 
-func TestMaxEcShardsPerNode_Spread(t *testing.T) {
+func TestEcShardSpread_MultiDiskNodeUnionsBits(t *testing.T) {
+	// One node, two physical disks, with shard 0 reported by both entries
+	// mid-move: bits must union, not sum.
+	topo := &master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{{
+			Id: "dc1",
+			RackInfos: []*master_pb.RackInfo{{
+				Id: "rack1",
+				DataNodeInfos: []*master_pb.DataNodeInfo{{
+					Id: "nodeA:8080",
+					DiskInfos: map[string]*master_pb.DiskInfo{
+						hddKey: {Type: hddKey, EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{
+							{Id: 1, Collection: "c", EcIndexBits: uint32(0b0011)}, // shards 0,1
+							{Id: 1, Collection: "c", EcIndexBits: uint32(0b0101)}, // shards 0,2
+						}},
+					},
+				}},
+			}},
+		}},
+	}
+	visible, maxOnOneNode := ecShardSpread(topo, needle.VolumeId(1), types.HardDriveType)
+	assert.Equal(t, 3, visible)
+	assert.Equal(t, 3, maxOnOneNode)
+}
+
+func TestEcShardSpread_Spread(t *testing.T) {
 	// 7 shards on A, 7 on B — not a single-node clump.
-	halfA := uint32((1 << 7) - 1)           // shards 0..6
+	halfA := uint32((1 << 7) - 1)            // shards 0..6
 	halfB := uint32(((1 << 14) - 1) ^ halfA) // shards 7..13
 	topo := &master_pb.TopologyInfo{
 		DataCenterInfos: []*master_pb.DataCenterInfo{{
@@ -349,15 +378,27 @@ func TestMaxEcShardsPerNode_Spread(t *testing.T) {
 			}},
 		}},
 	}
-	assert.Equal(t, 7, maxEcShardsPerNode(topo, needle.VolumeId(1), types.HardDriveType))
+	visible, maxOnOneNode := ecShardSpread(topo, needle.VolumeId(1), types.HardDriveType)
+	assert.Equal(t, 14, visible)
+	assert.Equal(t, 7, maxOnOneNode)
 }
 
 func TestAssertEcShardsNotSingleNode_RefusesClump(t *testing.T) {
 	topo := topoWithClumpedEcVolume(2059, "ec1c")
 	err := assertEcShardsNotSingleNode(topo, []needle.VolumeId{2059}, types.HardDriveType)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "all 14 EC shards still sit on one node")
+	assert.Contains(t, err.Error(), "all 14 visible EC shards still sit on one node")
 	assert.Contains(t, err.Error(), "refusing to delete")
+}
+
+func TestAssertEcShardsNotSingleNode_RefusesDegradedClump(t *testing.T) {
+	// Only 12 of 14 shards visible (heartbeat lag), all on nodeA: still a
+	// clump. The gate must judge against the visible set, not TotalShardsCount.
+	topo := topoWithClumpedEcVolume(2059, "ec1c")
+	topo.DataCenterInfos[0].RackInfos[0].DataNodeInfos[0].DiskInfos[hddKey].EcShardInfos[0].EcIndexBits = uint32((1 << 12) - 1)
+	err := assertEcShardsNotSingleNode(topo, []needle.VolumeId{2059}, types.HardDriveType)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "all 12 visible EC shards still sit on one node")
 }
 
 func TestAssertEcShardsNotSingleNode_AllowsSpread(t *testing.T) {

@@ -307,11 +307,7 @@ func processEcEncodeBatch(commandEnv *CommandEnv, writer io.Writer, volumeIds []
 	// while other nodes of this disk type exist. Keeps the .dat so the operator
 	// can recover; without this gate a silent no-op rebalance is catastrophic.
 	if applyBalancing {
-		postTopo, _, err := collectTopologyInfo(commandEnv, 0)
-		if err != nil {
-			return fmt.Errorf("fetch topology after rebalance: %w", err)
-		}
-		if err := assertEcShardsNotSingleNode(postTopo, volumeIds, diskType); err != nil {
+		if err := waitEcShardsNotSingleNode(commandEnv, volumeIds, diskType); err != nil {
 			return err
 		}
 	}
@@ -720,30 +716,30 @@ func classifyNodeLiveness(pingErr error) nodeLiveness {
 	return nodeLivenessUnknown
 }
 
-// maxEcShardsPerNode returns the highest number of EC shards of vid observed on
-// any single data node for diskType. Used to detect a fully clumped placement
-// (all TotalShardsCount on one node) after encode rebalance.
-func maxEcShardsPerNode(topo *master_pb.TopologyInfo, vid needle.VolumeId, diskType types.DiskType) int {
-	max := 0
+// ecShardSpread returns, for vid on diskType, how many distinct shards are
+// visible anywhere in topo and the largest distinct-shard count on any single
+// data node. Bits are unioned per node: a multi-disk node reports one
+// EcShardInfos entry per physical disk, and a shard moving between its disks
+// may momentarily appear in two entries.
+func ecShardSpread(topo *master_pb.TopologyInfo, vid needle.VolumeId, diskType types.DiskType) (visibleShards, maxShardsOnOneNode int) {
+	var union erasure_coding.ShardBits
 	eachDataNode(topo, func(_ DataCenterId, _ RackId, dn *master_pb.DataNodeInfo) {
-		if dn.DiskInfos == nil {
-			return
-		}
 		diskInfo := dn.DiskInfos[string(diskType)]
 		if diskInfo == nil {
 			return
 		}
-		n := 0
+		var nodeBits erasure_coding.ShardBits
 		for _, eci := range diskInfo.EcShardInfos {
 			if needle.VolumeId(eci.Id) == vid {
-				n += erasure_coding.GetShardCount(eci)
+				nodeBits = erasure_coding.ShardBits(uint32(nodeBits) | eci.EcIndexBits)
 			}
 		}
-		if n > max {
-			max = n
+		union = erasure_coding.ShardBits(uint32(union) | uint32(nodeBits))
+		if n := nodeBits.Count(); n > maxShardsOnOneNode {
+			maxShardsOnOneNode = n
 		}
 	})
-	return max
+	return union.Count(), maxShardsOnOneNode
 }
 
 // countNodesWithDiskType counts data nodes that advertise diskType. Used to
@@ -752,9 +748,6 @@ func maxEcShardsPerNode(topo *master_pb.TopologyInfo, vid needle.VolumeId, diskT
 func countNodesWithDiskType(topo *master_pb.TopologyInfo, diskType types.DiskType) int {
 	n := 0
 	eachDataNode(topo, func(_ DataCenterId, _ RackId, dn *master_pb.DataNodeInfo) {
-		if dn.DiskInfos == nil {
-			return
-		}
 		if dn.DiskInfos[string(diskType)] != nil {
 			n++
 		}
@@ -762,23 +755,48 @@ func countNodesWithDiskType(topo *master_pb.TopologyInfo, diskType types.DiskTyp
 	return n
 }
 
-// assertEcShardsNotSingleNode fails if any volume still has all EC shards on
-// one node while multiple nodes of diskType exist. That placement is EC with
-// zero node-loss protection; refusing to delete the source .dat is the only
-// safe response. Single-node clusters are skipped (nothing to spread to).
+// assertEcShardsNotSingleNode fails if, for any volume, every shard visible in
+// topo sits on one data node while multiple nodes of diskType exist. That
+// placement is EC with zero node-loss protection; refusing to delete the
+// source .dat is the only safe response. Judged against the visible shard set
+// rather than TotalShardsCount so a degraded-but-recoverable view (10-13
+// shards, all on the generation host) cannot slip past the gate. Single-node
+// clusters are skipped (nothing to spread to).
 func assertEcShardsNotSingleNode(topo *master_pb.TopologyInfo, volumeIds []needle.VolumeId, diskType types.DiskType) error {
 	if countNodesWithDiskType(topo, diskType) < 2 {
 		return nil
 	}
-	total := erasure_coding.TotalShardsCount
 	for _, vid := range volumeIds {
-		max := maxEcShardsPerNode(topo, vid, diskType)
-		if max >= total {
-			return fmt.Errorf("volume %d: after rebalance all %d EC shards still sit on one node; refusing to delete the source .dat (zero node-loss protection). Re-run with an explicit 'ec.balance -collection <c> -diskType %s -apply' once topology is settled, or investigate why internal EcBalance produced no moves",
-				vid, total, diskType.ReadableString())
+		visible, maxOnOneNode := ecShardSpread(topo, vid, diskType)
+		if visible > 0 && maxOnOneNode >= visible {
+			return fmt.Errorf("volume %d: after rebalance all %d visible EC shards still sit on one node; refusing to delete the source .dat (zero node-loss protection). Re-run with an explicit 'ec.balance -collection <c> -diskType %s -apply' once topology is settled, or investigate why internal EcBalance produced no moves",
+				vid, visible, diskType.ReadableString())
 		}
 	}
 	return nil
+}
+
+// waitEcShardsNotSingleNode polls assertEcShardsNotSingleNode. Right after a
+// real rebalance the master can still hold the source node's stale entry (its
+// unmount delta heartbeat has not landed), which looks exactly like a clump;
+// only a placement that stays clumped across the retries is refused.
+func waitEcShardsNotSingleNode(commandEnv *CommandEnv, volumeIds []needle.VolumeId, diskType types.DiskType) error {
+	var lastErr error
+	for attempt := 0; attempt < ecTopologyPollAttempts; attempt++ {
+		topo, _, err := collectTopologyInfo(commandEnv, 0)
+		if err != nil {
+			return fmt.Errorf("fetch topology after rebalance: %w", err)
+		}
+		if lastErr = assertEcShardsNotSingleNode(topo, volumeIds, diskType); lastErr == nil {
+			return nil
+		}
+		if attempt < ecTopologyPollAttempts-1 {
+			glog.V(0).Infof("EC shard spread check failed (attempt %d/%d), waiting for shard moves to reach the master: %v",
+				attempt+1, ecTopologyPollAttempts, lastErr)
+			time.Sleep(ecTopologyPollInterval)
+		}
+	}
+	return lastErr
 }
 
 // EC shard placements reach the master via volume-server delta heartbeats, so
