@@ -503,6 +503,9 @@ func TestExecuteDispatchesBatchPath(t *testing.T) {
 	err = handler.Execute(context.Background(), &plugin_pb.ExecuteJobRequest{
 		Job: job,
 	}, sender)
+	if err != nil {
+		t.Fatalf("handler.Execute: %v", err)
+	}
 
 	// Expect an error since no real volume servers exist
 	// But verify the batch path was taken by checking the assigned message
