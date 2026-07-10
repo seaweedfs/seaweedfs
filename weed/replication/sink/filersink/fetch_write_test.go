@@ -421,4 +421,7 @@ func TestManifestResolveRetryGateNonTransientPropagates(t *testing.T) {
 	if !gate(errors.New("LookupFileId volume id 3: not found")) {
 		t.Error("transient lookup race must keep retrying on the first attempt")
 	}
+	if isTransientResolveError(nil) {
+		t.Error("isTransientResolveError(nil) must be false")
+	}
 }

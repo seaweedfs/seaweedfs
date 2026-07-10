@@ -230,6 +230,9 @@ func (fs *FilerSink) manifestResolveRetryGate(path string, sourceMtimeNs int64, 
 // races and network interruptions. Anything else (corrupt manifest data, bad
 // file ids) is permanent and must propagate rather than retry forever.
 func isTransientResolveError(err error) bool {
+	if err == nil {
+		return false
+	}
 	if isRetryableNetworkError(err) {
 		return true
 	}

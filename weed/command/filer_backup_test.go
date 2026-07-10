@@ -113,6 +113,15 @@ func TestIsIgnorable404_TransientLookupNotSwallowed(t *testing.T) {
 	}
 }
 
+func TestErrorClassifiersNilSafe(t *testing.T) {
+	if isIgnorable404(nil) {
+		t.Error("isIgnorable404(nil) must be false")
+	}
+	if isSourceLookupError(nil) {
+		t.Error("isSourceLookupError(nil) must be false")
+	}
+}
+
 func TestIsSourceLookupError_NonLookupErrors(t *testing.T) {
 	cases := []struct {
 		name string

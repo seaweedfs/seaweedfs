@@ -283,6 +283,9 @@ func getSourceKey(resp *filer_pb.SubscribeMetadataResponse) string {
 // usually transient lookup races whose skip drops live files; those are resolved
 // against the live source instead (isSourceLookupError + eventSourceSuperseded).
 func isIgnorable404(err error) bool {
+	if err == nil {
+		return false
+	}
 	if errors.Is(err, http.ErrNotFound) {
 		return true
 	}
@@ -293,6 +296,9 @@ func isIgnorable404(err error) bool {
 // The same strings cover a transient race and a permanently gone volume, so
 // the caller must consult the live source to pick skip or retry.
 func isSourceLookupError(err error) bool {
+	if err == nil {
+		return false
+	}
 	errStr := err.Error()
 	return strings.Contains(errStr, "LookupFileId") ||
 		(strings.Contains(errStr, "volume id") && strings.Contains(errStr, "not found"))
