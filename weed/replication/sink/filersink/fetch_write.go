@@ -141,8 +141,8 @@ func (fs *FilerSink) replicateOneChunk(sourceChunk *filer_pb.FileChunk, path str
 
 func (fs *FilerSink) replicateOneManifestChunk(ctx context.Context, sourceChunk *filer_pb.FileChunk, path string, sourceMtimeNs int64) (*filer_pb.FileChunk, error) {
 	// LookupFileId can transiently fail during a write burst (volume not yet
-	// registered). Retry like the data-chunk path does; stop once the source
-	// has moved past this version, in which case the caller skips it as lossless.
+	// registered). Retry like the data-chunk path does; the gate stops on
+	// supersession or, when that cannot be checked, after a few attempts.
 	var resolvedChunks []*filer_pb.FileChunk
 	resolveName := fmt.Sprintf("resolve manifest %s", sourceChunk.GetFileIdString())
 	err := util.RetryUntil(resolveName, func() error {
@@ -152,14 +152,7 @@ func (fs *FilerSink) replicateOneManifestChunk(ctx context.Context, sourceChunk 
 		}
 		resolvedChunks = rc
 		return nil
-	}, func(resolveErr error) (shouldContinue bool) {
-		if fs.hasSourceNewerVersion(path, sourceMtimeNs) {
-			glog.V(1).Infof("skip retrying stale source manifest %s for %s: %v", sourceChunk.GetFileIdString(), path, resolveErr)
-			return false
-		}
-		glog.V(0).Infof("resolve manifest %s for %s: %v", sourceChunk.GetFileIdString(), path, resolveErr)
-		return true
-	})
+	}, fs.manifestResolveRetryGate(path, sourceMtimeNs, sourceChunk.GetFileIdString()))
 	if err != nil {
 		return nil, fmt.Errorf("resolve manifest %s: %w", sourceChunk.GetFileIdString(), err)
 	}
@@ -196,6 +189,53 @@ func (fs *FilerSink) replicateOneManifestChunk(ctx context.Context, sourceChunk 
 		SourceFileId:    sourceChunk.GetFileIdString(),
 		IsChunkManifest: true,
 	}, nil
+}
+
+// maxUnverifiableResolveAttempts bounds manifest-resolve retries when
+// supersession cannot be checked for the target path.
+const maxUnverifiableResolveAttempts = 3
+
+// manifestResolveRetryGate decides whether a failing manifest resolve keeps
+// retrying: stop when the source superseded the replayed version (the caller
+// skips it as lossless), stop immediately on non-transient errors (e.g. corrupt
+// manifest data) so the configured metadata error policy applies, and stop
+// after a few attempts when supersession cannot be checked at all (incremental
+// dated target keys don't map back to a source path) — propagating lets
+// filer.backup decide with the event's real source key instead of spinning
+// here forever.
+func (fs *FilerSink) manifestResolveRetryGate(path string, sourceMtimeNs int64, chunkName string) func(error) bool {
+	_, canCheckSupersession := fs.targetPathToSourcePath(path)
+	attempts := 0
+	return func(resolveErr error) (shouldContinue bool) {
+		if fs.hasSourceNewerVersion(path, sourceMtimeNs) {
+			glog.V(1).Infof("skip retrying stale source manifest %s for %s: %v", chunkName, path, resolveErr)
+			return false
+		}
+		if !isTransientResolveError(resolveErr) {
+			glog.V(0).Infof("resolve manifest %s for %s: non-transient error, propagating: %v", chunkName, path, resolveErr)
+			return false
+		}
+		attempts++
+		if !canCheckSupersession && attempts >= maxUnverifiableResolveAttempts {
+			glog.V(0).Infof("resolve manifest %s for %s: supersession unverifiable, propagating after %d attempts: %v", chunkName, path, attempts, resolveErr)
+			return false
+		}
+		glog.V(0).Infof("resolve manifest %s for %s: %v", chunkName, path, resolveErr)
+		return true
+	}
+}
+
+// isTransientResolveError reports whether a manifest resolve failure belongs to
+// the classes that clear on their own during a write burst — volume-lookup
+// races and network interruptions. Anything else (corrupt manifest data, bad
+// file ids) is permanent and must propagate rather than retry forever.
+func isTransientResolveError(err error) bool {
+	if isRetryableNetworkError(err) {
+		return true
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "LookupFileId") ||
+		(strings.Contains(errStr, "volume id") && strings.Contains(errStr, "not found"))
 }
 
 func (fs *FilerSink) uploadManifestChunk(path string, sourceMtimeNs int64, sourceFileId string, manifestData []byte) (fileId string, err error) {
