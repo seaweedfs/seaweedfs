@@ -7,6 +7,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -269,4 +270,142 @@ func TestChunkEcEncodeVolumeIds(t *testing.T) {
 	}, chunkEcEncodeVolumeIds(vids, 2))
 
 	assert.Equal(t, [][]needle.VolumeId{vids}, chunkEcEncodeVolumeIds(vids, 0))
+}
+
+// allFourteenBits is EcIndexBits for shards 0..13 (standard 10+4).
+const allFourteenBits = uint32((1 << 14) - 1)
+
+// hddKey is the DiskInfos map key for the default HDD disk type. SeaweedFS
+// normalizes both "" and "hdd" to types.HardDriveType (empty string).
+const hddKey = ""
+
+// topoWithClumpedEcVolume models the storage-trd failure mode: all 14 shards of
+// vid on nodeA, with a second empty node that could have received them.
+func topoWithClumpedEcVolume(vid uint32, collection string) *master_pb.TopologyInfo {
+	return &master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{{
+			Id: "dc1",
+			RackInfos: []*master_pb.RackInfo{{
+				Id: "rack1",
+				DataNodeInfos: []*master_pb.DataNodeInfo{
+					{
+						Id: "nodeA:8080",
+						DiskInfos: map[string]*master_pb.DiskInfo{
+							hddKey: {
+								Type:            hddKey,
+								MaxVolumeCount:  100,
+								FreeVolumeCount: 50,
+								EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{{
+									Id:          vid,
+									Collection:  collection,
+									EcIndexBits: allFourteenBits,
+								}},
+							},
+						},
+					},
+					{
+						Id: "nodeB:8080",
+						DiskInfos: map[string]*master_pb.DiskInfo{
+							hddKey: {
+								Type:            hddKey,
+								MaxVolumeCount:  100,
+								FreeVolumeCount: 50,
+							},
+						},
+					},
+				},
+			}},
+		}},
+	}
+}
+
+func TestMaxEcShardsPerNode_Clumped(t *testing.T) {
+	topo := topoWithClumpedEcVolume(2059, "ec1c")
+	assert.Equal(t, 14, maxEcShardsPerNode(topo, needle.VolumeId(2059), types.HardDriveType))
+	assert.Equal(t, 0, maxEcShardsPerNode(topo, needle.VolumeId(9999), types.HardDriveType))
+}
+
+func TestMaxEcShardsPerNode_Spread(t *testing.T) {
+	// 7 shards on A, 7 on B — not a single-node clump.
+	halfA := uint32((1 << 7) - 1)           // shards 0..6
+	halfB := uint32(((1 << 14) - 1) ^ halfA) // shards 7..13
+	topo := &master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{{
+			Id: "dc1",
+			RackInfos: []*master_pb.RackInfo{{
+				Id: "rack1",
+				DataNodeInfos: []*master_pb.DataNodeInfo{
+					{Id: "nodeA:8080", DiskInfos: map[string]*master_pb.DiskInfo{
+						hddKey: {Type: hddKey, EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{
+							{Id: 1, Collection: "c", EcIndexBits: halfA},
+						}},
+					}},
+					{Id: "nodeB:8080", DiskInfos: map[string]*master_pb.DiskInfo{
+						hddKey: {Type: hddKey, EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{
+							{Id: 1, Collection: "c", EcIndexBits: halfB},
+						}},
+					}},
+				},
+			}},
+		}},
+	}
+	assert.Equal(t, 7, maxEcShardsPerNode(topo, needle.VolumeId(1), types.HardDriveType))
+}
+
+func TestAssertEcShardsNotSingleNode_RefusesClump(t *testing.T) {
+	topo := topoWithClumpedEcVolume(2059, "ec1c")
+	err := assertEcShardsNotSingleNode(topo, []needle.VolumeId{2059}, types.HardDriveType)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "all 14 EC shards still sit on one node")
+	assert.Contains(t, err.Error(), "refusing to delete")
+}
+
+func TestAssertEcShardsNotSingleNode_AllowsSpread(t *testing.T) {
+	halfA := uint32((1 << 7) - 1)
+	halfB := uint32(((1 << 14) - 1) ^ halfA)
+	topo := &master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{{
+			Id: "dc1",
+			RackInfos: []*master_pb.RackInfo{{
+				Id: "rack1",
+				DataNodeInfos: []*master_pb.DataNodeInfo{
+					{Id: "nodeA:8080", DiskInfos: map[string]*master_pb.DiskInfo{
+						hddKey: {Type: hddKey, EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{
+							{Id: 1, Collection: "c", EcIndexBits: halfA},
+						}},
+					}},
+					{Id: "nodeB:8080", DiskInfos: map[string]*master_pb.DiskInfo{
+						hddKey: {Type: hddKey, EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{
+							{Id: 1, Collection: "c", EcIndexBits: halfB},
+						}},
+					}},
+				},
+			}},
+		}},
+	}
+	assert.NoError(t, assertEcShardsNotSingleNode(topo, []needle.VolumeId{1}, types.HardDriveType))
+}
+
+func TestAssertEcShardsNotSingleNode_SkipsSingleNodeCluster(t *testing.T) {
+	// True single-node install: rebalance cannot spread; do not refuse delete.
+	topo := &master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{{
+			Id: "dc1",
+			RackInfos: []*master_pb.RackInfo{{
+				Id: "rack1",
+				DataNodeInfos: []*master_pb.DataNodeInfo{{
+					Id: "only:8080",
+					DiskInfos: map[string]*master_pb.DiskInfo{
+						hddKey: {
+							Type: hddKey,
+							EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{{
+								Id: 1, Collection: "c", EcIndexBits: allFourteenBits,
+							}},
+						},
+					},
+				}},
+			}},
+		}},
+	}
+	assert.NoError(t, assertEcShardsNotSingleNode(topo, []needle.VolumeId{1}, types.HardDriveType))
 }

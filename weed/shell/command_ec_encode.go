@@ -275,6 +275,22 @@ func processEcEncodeBatch(commandEnv *CommandEnv, writer io.Writer, volumeIds []
 	if err != nil {
 		return fmt.Errorf("ec encode for volumes %v: %w", volumeIds, err)
 	}
+
+	// EcBalance plans from the master's VolumeList. Mount reports new EC shards
+	// to the master asynchronously (volume server NewEcShardsChan → delta
+	// heartbeat → IncrementalSyncDataNodeEcShards). Without waiting, Plan often
+	// sees ZERO shards for the just-mounted volume, returns an empty move list,
+	// and succeeds silently — then verifyEcShardsBeforeDelete waits for the same
+	// heartbeats, passes, and the original .dat is deleted with all 14 shards
+	// still on the generation host (zero disk-loss protection). Observed live
+	// on 4.39 (storage-trd). Reuse the verify poll before rebalance so the plan
+	// sees the clumped shards.
+	if applyBalancing {
+		if err := verifyEcShardsBeforeDelete(commandEnv, volumeIds, diskType); err != nil {
+			return fmt.Errorf("EC shards not visible in topology before rebalance: %w", err)
+		}
+	}
+
 	// EcBalance works at collection scope. In batch mode this intentionally
 	// rebalances each collection after every batch so source volumes can be
 	// safely verified and deleted without waiting for all batches to finish.
@@ -285,6 +301,19 @@ func processEcEncodeBatch(commandEnv *CommandEnv, writer io.Writer, volumeIds []
 	}
 	if err := verifyEcShardsBeforeDelete(commandEnv, volumeIds, diskType); err != nil {
 		return fmt.Errorf("verify EC shards before deleting originals: %w", err)
+	}
+	// Defense in depth: even after a successful (or empty) plan, refuse to
+	// delete the source if rebalance left every shard of a volume on one node
+	// while other nodes of this disk type exist. Keeps the .dat so the operator
+	// can recover; without this gate a silent no-op rebalance is catastrophic.
+	if applyBalancing {
+		postTopo, _, err := collectTopologyInfo(commandEnv, 0)
+		if err != nil {
+			return fmt.Errorf("fetch topology after rebalance: %w", err)
+		}
+		if err := assertEcShardsNotSingleNode(postTopo, volumeIds, diskType); err != nil {
+			return err
+		}
 	}
 	fmt.Printf("Deleting original volumes after EC encoding...\n")
 	if err := doDeleteVolumesWithLocations(commandEnv, volumeIds, volumeLocationsMap, maxParallelization); err != nil {
@@ -689,6 +718,67 @@ func classifyNodeLiveness(pingErr error) nodeLiveness {
 		return nodeDown
 	}
 	return nodeLivenessUnknown
+}
+
+// maxEcShardsPerNode returns the highest number of EC shards of vid observed on
+// any single data node for diskType. Used to detect a fully clumped placement
+// (all TotalShardsCount on one node) after encode rebalance.
+func maxEcShardsPerNode(topo *master_pb.TopologyInfo, vid needle.VolumeId, diskType types.DiskType) int {
+	max := 0
+	eachDataNode(topo, func(_ DataCenterId, _ RackId, dn *master_pb.DataNodeInfo) {
+		if dn.DiskInfos == nil {
+			return
+		}
+		diskInfo := dn.DiskInfos[string(diskType)]
+		if diskInfo == nil {
+			return
+		}
+		n := 0
+		for _, eci := range diskInfo.EcShardInfos {
+			if needle.VolumeId(eci.Id) == vid {
+				n += erasure_coding.GetShardCount(eci)
+			}
+		}
+		if n > max {
+			max = n
+		}
+	})
+	return max
+}
+
+// countNodesWithDiskType counts data nodes that advertise diskType. Used to
+// skip the single-node clump gate on true single-node clusters where rebalance
+// cannot spread shards.
+func countNodesWithDiskType(topo *master_pb.TopologyInfo, diskType types.DiskType) int {
+	n := 0
+	eachDataNode(topo, func(_ DataCenterId, _ RackId, dn *master_pb.DataNodeInfo) {
+		if dn.DiskInfos == nil {
+			return
+		}
+		if dn.DiskInfos[string(diskType)] != nil {
+			n++
+		}
+	})
+	return n
+}
+
+// assertEcShardsNotSingleNode fails if any volume still has all EC shards on
+// one node while multiple nodes of diskType exist. That placement is EC with
+// zero node-loss protection; refusing to delete the source .dat is the only
+// safe response. Single-node clusters are skipped (nothing to spread to).
+func assertEcShardsNotSingleNode(topo *master_pb.TopologyInfo, volumeIds []needle.VolumeId, diskType types.DiskType) error {
+	if countNodesWithDiskType(topo, diskType) < 2 {
+		return nil
+	}
+	total := erasure_coding.TotalShardsCount
+	for _, vid := range volumeIds {
+		max := maxEcShardsPerNode(topo, vid, diskType)
+		if max >= total {
+			return fmt.Errorf("volume %d: after rebalance all %d EC shards still sit on one node; refusing to delete the source .dat (zero node-loss protection). Re-run with an explicit 'ec.balance -collection <c> -diskType %s -apply' once topology is settled, or investigate why internal EcBalance produced no moves",
+				vid, total, diskType.ReadableString())
+		}
+	}
+	return nil
 }
 
 func verifyEcShardsBeforeDelete(commandEnv *CommandEnv, volumeIds []needle.VolumeId, diskType types.DiskType) error {
