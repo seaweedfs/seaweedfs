@@ -143,7 +143,7 @@ func TestDeleteEcShardsWithoutLocalEcx(t *testing.T) {
 	}
 
 	location := &storage.DiskLocation{Directory: dataDir, IdxDirectory: idxDir}
-	if err := deleteEcShardIdsForEachLocation(baseName, location, []uint32{3, 11}); err != nil {
+	if err := deleteEcShardIdsForEachLocation(baseName, location, []*storage.DiskLocation{location}, []uint32{3, 11}); err != nil {
 		t.Fatalf("deleteEcShardIdsForEachLocation: %v", err)
 	}
 	for _, f := range orphans {

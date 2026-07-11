@@ -85,3 +85,67 @@ func TestEcShardDeleteKeepsSharedIndexWhileSiblingHasShards(t *testing.T) {
 	del(7, 12)
 	require.False(t, util.FileExists(base0+".ecx"), "shared .ecx must be removed once no shard remains node-wide")
 }
+
+// Same protection for the idx-base bitrot sidecar: with one -dir.idx shared by
+// every disk, emptying one disk must not sweep <idx>/<volume>.ecsum while a
+// sibling disk still holds shards; it goes when the last sibling is emptied.
+func TestEcShardDeleteKeepsSharedIdxSidecarWhileSiblingHasShards(t *testing.T) {
+	tempDir := t.TempDir()
+	dir0 := filepath.Join(tempDir, "disk0")
+	dir1 := filepath.Join(tempDir, "disk1")
+	idxDir := filepath.Join(tempDir, "idx")
+	for _, d := range []string{dir0, dir1, idxDir} {
+		require.NoError(t, os.MkdirAll(d, 0o755))
+	}
+	const collection = "ec-shared-idx-sidecar"
+	vid := needle.VolumeId(78)
+
+	store := storage.NewStore(nil, "localhost", 8080, 18080, "http://localhost:8080", "store-id",
+		[]string{dir0, dir1}, []int32{100, 100}, []util.MinFreeSpace{{}, {}}, idxDir,
+		storage.NeedleMapInMemory, []types.DiskType{types.HardDriveType, types.HardDriveType}, nil, 3, stats.DefaultDiskIOProbeConfig())
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-store.NewEcShardsChan:
+			case <-store.NewVolumesChan:
+			case <-store.DeletedVolumesChan:
+			case <-store.DeletedEcShardsChan:
+			case <-store.StateUpdateChan:
+			case <-done:
+				return
+			}
+		}
+	}()
+	t.Cleanup(func() {
+		store.Close()
+		close(done)
+	})
+
+	plant := func(dir string, ids ...int) {
+		base := erasure_coding.EcShardFileName(collection, dir, int(vid))
+		for _, id := range ids {
+			require.NoError(t, os.WriteFile(base+erasure_coding.ToExt(id), []byte("s"), 0o644))
+		}
+	}
+	plant(dir0, 0)
+	plant(dir1, 7)
+	idxSidecar := erasure_coding.EcShardFileName(collection, idxDir, int(vid)) + erasure_coding.BitrotSidecarExt
+	require.NoError(t, os.WriteFile(idxSidecar, []byte("x"), 0o644))
+
+	vs := &VolumeServer{store: store}
+	del := func(ids ...uint32) {
+		_, err := vs.VolumeEcShardsDelete(context.Background(), &volume_server_pb.VolumeEcShardsDeleteRequest{
+			VolumeId:   uint32(vid),
+			Collection: collection,
+			ShardIds:   ids,
+		})
+		require.NoError(t, err)
+	}
+
+	del(0)
+	require.True(t, util.FileExists(idxSidecar), "shared idx sidecar must survive while a sibling disk holds shards")
+
+	del(7)
+	require.False(t, util.FileExists(idxSidecar), "shared idx sidecar must be removed once no shard remains node-wide")
+}
