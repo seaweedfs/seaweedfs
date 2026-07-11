@@ -33,7 +33,10 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/lifecycle_xml"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/scheduler"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 
@@ -797,20 +800,23 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 					lastModified = time.Unix(resp.Entry.Attributes.Mtime, 0)
 				}
 				readOnly := fc.MatchStorageRule(filerConfig.BucketsPath + "/" + bucketName + "/").ReadOnly
+				lifecycleRuleCount, lifecycleEnabledCount := extractLifecycleCountsFromEntry(resp.Entry)
 				bucket := S3Bucket{
-					Name:               bucketName,
-					CreatedAt:          createdAt,
-					LogicalSize:        logicalSize,
-					PhysicalSize:       physicalSize,
-					LastModified:       lastModified,
-					Quota:              quota,
-					QuotaEnabled:       quotaEnabled,
-					ReadOnly:           readOnly,
-					VersioningStatus:   versioningStatus,
-					ObjectLockEnabled:  objectLockEnabled,
-					ObjectLockMode:     objectLockMode,
-					ObjectLockDuration: objectLockDuration,
-					Owner:              owner,
+					Name:                  bucketName,
+					CreatedAt:             createdAt,
+					LogicalSize:           logicalSize,
+					PhysicalSize:          physicalSize,
+					LastModified:          lastModified,
+					Quota:                 quota,
+					QuotaEnabled:          quotaEnabled,
+					ReadOnly:              readOnly,
+					VersioningStatus:      versioningStatus,
+					ObjectLockEnabled:     objectLockEnabled,
+					ObjectLockMode:        objectLockMode,
+					ObjectLockDuration:    objectLockDuration,
+					Owner:                 owner,
+					LifecycleRuleCount:    lifecycleRuleCount,
+					LifecycleEnabledCount: lifecycleEnabledCount,
 				}
 				buckets = append(buckets, bucket)
 			}
@@ -915,6 +921,7 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 		details.Bucket.ObjectLockMode = objectLockMode
 		details.Bucket.ObjectLockDuration = objectLockDuration
 		details.Bucket.Owner = owner
+		details.Bucket.LifecycleRuleCount, details.Bucket.LifecycleEnabledCount = extractLifecycleCountsFromEntry(bucketResp.Entry)
 
 		return nil
 	})
@@ -1810,6 +1817,24 @@ func extractObjectLockInfoFromEntry(entry *filer_pb.Entry) (bool, string, int32)
 // Function to extract versioning information from bucket entry using shared utilities
 func extractVersioningFromEntry(entry *filer_pb.Entry) string {
 	return s3api.GetVersioningStatus(entry)
+}
+
+func extractLifecycleCountsFromEntry(entry *filer_pb.Entry) (ruleCount, enabledCount int) {
+	xmlBytes := entry.Extended[scheduler.BucketLifecycleConfigurationXMLKey]
+	if len(xmlBytes) == 0 {
+		return
+	}
+	rules, err := lifecycle_xml.ParseCanonical(xmlBytes)
+	if err != nil {
+		return
+	}
+	for _, rule := range rules {
+		ruleCount++
+		if rule.Status == s3lifecycle.StatusEnabled {
+			enabledCount++
+		}
+	}
+	return
 }
 
 // GetConfigPersistence returns the config persistence manager
