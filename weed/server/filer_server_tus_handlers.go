@@ -80,29 +80,20 @@ func (fs *FilerServer) tusHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // checkTusJwtAuthorization enforces filer JWT authorization for a TUS request.
-// HEAD reads the current offset (read access); POST/PATCH/DELETE mutate the
-// namespace (write access). The prefix check for a prefix-restricted token is
-// scoped against the resolved filer target, not the /.tus route, so the caller's
-// AllowedPrefixes is enforced on every verb.
+// HEAD is a read; POST/PATCH/DELETE are writes.
 func (fs *FilerServer) checkTusJwtAuthorization(r *http.Request) bool {
 	isWrite := r.Method != http.MethodHead
-	return fs.checkJwtAuthorizationScoped(r, isWrite, func() ([]string, error) {
+	return fs.checkJwtAuthorization(r, isWrite, func() ([]string, error) {
 		return fs.tusScopedPaths(r)
 	})
 }
 
-// tusScopedPaths resolves the filer path(s) a TUS request must fall within for a
-// prefix-restricted token. Creation (POST) names a new target in the request URL.
-// HEAD/PATCH/DELETE act on an existing session addressed by an id in the URL;
-// their effective target is the session's stored TargetPath, which must be
-// re-checked here. The session id is not an authorization boundary against a
-// legitimate low-privilege tenant who holds a valid token and learns another
-// upload's id, so without this scoping such a tenant could read, overwrite, or
-// cancel a session whose target lies outside its own AllowedPrefixes.
-//
-// A missing session leaves the request unscoped so the handler can answer 404,
-// but any other lookup failure (filer error, corrupt session) is returned so the
-// caller fails closed rather than authorizing against a target it could not read.
+// tusScopedPaths returns the filer path(s) a prefix-restricted token must be
+// allowed to reach. POST names its target in the URL; HEAD/PATCH/DELETE act on an
+// existing session whose stored TargetPath must be re-checked, since the session
+// id is not an authorization boundary against a tenant who already holds a token.
+// A missing session stays unscoped (handler answers 404); any other lookup error
+// is returned so the caller fails closed.
 func (fs *FilerServer) tusScopedPaths(r *http.Request) ([]string, error) {
 	switch r.Method {
 	case http.MethodPost:
@@ -128,9 +119,8 @@ func (fs *FilerServer) tusScopedPaths(r *http.Request) ([]string, error) {
 	return nil, nil
 }
 
-// tusUploadID extracts the session id from a {TusBasePath}/.uploads/{id} request
-// path, returning "" when the path is not an uploads route. Shared by the request
-// router and the JWT scoping so both address the same session.
+// tusUploadID extracts the session id from a {TusBasePath}/.uploads/{id} path, or
+// "" when the path is not an uploads route.
 func (fs *FilerServer) tusUploadID(reqPath string) string {
 	uploadsPrefix := fs.option.TusBasePath + "/.uploads/"
 	if !strings.HasPrefix(reqPath, uploadsPrefix) {

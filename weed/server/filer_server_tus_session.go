@@ -182,8 +182,7 @@ func (fs *FilerServer) saveTusSession(ctx context.Context, session *TusSession) 
 }
 
 // readTusSessionInfo reads and decodes a session's .info file without listing its
-// chunks. It is the cheap lookup the authorization check uses, which only needs
-// the stored TargetPath to scope a prefix-restricted token.
+// chunks, the cheap lookup the authorization check needs for the stored TargetPath.
 func (fs *FilerServer) readTusSessionInfo(ctx context.Context, uploadID string) (*TusSession, error) {
 	infoPath := util.FullPath(fs.tusSessionInfoPath(uploadID))
 	entry, err := fs.filer.FindEntry(ctx, infoPath)
