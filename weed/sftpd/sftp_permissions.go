@@ -197,8 +197,9 @@ func HasExplicitPermission(user *user.User, filepath, requiredPerm string, isDir
 
 	for p, userPerms := range user.Permissions {
 		// The path must be the permission path exactly or under that path
-		if p = stdpath.Clean(p); pathWithin(p, filepath) && len(p) > len(bestMatch) {
-			bestMatch = p
+		cleaned := stdpath.Clean(p)
+		if pathWithin(cleaned, filepath) && len(cleaned) > len(bestMatch) {
+			bestMatch = cleaned
 			perms = userPerms
 		}
 	}
