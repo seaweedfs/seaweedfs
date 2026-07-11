@@ -1234,12 +1234,24 @@ impl VolumeServer for VolumeGrpcService {
             DiskType::from_string(&vol_info.disk_type)
         };
 
+        let has_remote_dat = vol_info
+            .volume_info
+            .as_ref()
+            .map(|vi| !vi.files.is_empty())
+            .unwrap_or(false);
+        // a remote-backed volume only lands its .idx/.vif locally; the .dat stays in the tier
+        let needed_space = if has_remote_dat {
+            vol_info.idx_file_size
+        } else {
+            vol_info.dat_file_size
+        };
+
         // Find a free disk location using Go's Store.FindFreeLocation semantics.
         let (data_base, idx_base, selected_disk_type) = {
             let store = self.state.store.read().unwrap();
             let Some(loc_idx) = store.find_free_location_predicate(|loc| {
                 loc.disk_type == requested_disk_type
-                    && loc.available_space.load(Ordering::Relaxed) > vol_info.dat_file_size
+                    && loc.available_space.load(Ordering::Relaxed) > needed_space
             }) else {
                 return Err(Status::internal(format!(
                     "no space left {}",
@@ -1265,12 +1277,6 @@ impl VolumeServer for VolumeGrpcService {
         std::fs::write(&note_path, format!("copying from {}", source)).map_err(|e| {
             Status::internal(format!("write .note for volume {}: {}", vid, e))
         })?;
-
-        let has_remote_dat = vol_info
-            .volume_info
-            .as_ref()
-            .map(|vi| !vi.files.is_empty())
-            .unwrap_or(false);
 
         let (tx, rx) =
             tokio::sync::mpsc::channel::<Result<volume_server_pb::VolumeCopyResponse, Status>>(16);
