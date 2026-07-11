@@ -165,7 +165,8 @@ func doVolumeTierUpload(commandEnv *CommandEnv, writer io.Writer, collection str
 // collectVolumeTierUploadLocations lists the replica locations of a volume,
 // putting an already-tiered replica first so a rerun after a partial failure
 // reuses its remote object instead of uploading a second copy.
-func collectVolumeTierUploadLocations(topoInfo *master_pb.TopologyInfo, vid needle.VolumeId, collection string, writer io.Writer) (existingLocations []wdclient.Location) {
+func collectVolumeTierUploadLocations(topoInfo *master_pb.TopologyInfo, vid needle.VolumeId, collection string, writer io.Writer) []wdclient.Location {
+	var tiered, local []wdclient.Location
 	eachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
 		for _, disk := range dn.DiskInfos {
 			for _, vi := range disk.VolumeInfos {
@@ -178,15 +179,15 @@ func collectVolumeTierUploadLocations(topoInfo *master_pb.TopologyInfo, vid need
 						DataCenter: string(dc),
 					}
 					if vi.RemoteStorageKey != "" {
-						existingLocations = append([]wdclient.Location{loc}, existingLocations...)
+						tiered = append(tiered, loc)
 					} else {
-						existingLocations = append(existingLocations, loc)
+						local = append(local, loc)
 					}
 				}
 			}
 		}
 	})
-	return
+	return append(tiered, local...)
 }
 
 func uploadDatToRemoteTier(grpcDialOption grpc.DialOption, writer io.Writer, volumeId needle.VolumeId, collection string, sourceVolumeServer pb.ServerAddress, dest string, keepLocalDatFile bool) error {
