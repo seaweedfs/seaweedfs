@@ -15,8 +15,9 @@ import (
 
 // newTusIDORTestServer builds a FilerServer backed by an in-memory store seeded
 // with TUS sessions (uploadID -> stored TargetPath), so the JWT check can resolve
-// a session's target the way the real handler does.
-func newTusIDORTestServer(t *testing.T, writeKey, readKey string, sessions map[string]string) *FilerServer {
+// a session's target the way the real handler does. The store is returned so a
+// test can seed additional (e.g. corrupt) session entries.
+func newTusIDORTestServer(t *testing.T, writeKey, readKey string, sessions map[string]string) (*FilerServer, *renameTestStore) {
 	t.Helper()
 	store := newRenameTestStore()
 	fs := &FilerServer{
@@ -29,12 +30,11 @@ func newTusIDORTestServer(t *testing.T, writeKey, readKey string, sessions map[s
 		if err != nil {
 			t.Fatalf("marshal session %s: %v", uploadID, err)
 		}
-		infoPath := util.FullPath(fs.tusSessionInfoPath(uploadID))
-		if err := store.InsertEntry(context.Background(), &filer.Entry{FullPath: infoPath, Content: data}); err != nil {
+		if err := store.InsertEntry(context.Background(), &filer.Entry{FullPath: util.FullPath(fs.tusSessionInfoPath(uploadID)), Content: data}); err != nil {
 			t.Fatalf("seed session %s: %v", uploadID, err)
 		}
 	}
-	return fs
+	return fs, store
 }
 
 // TestFilerServer_checkTusJwtAuthorization_CrossPrefixSessionHijack reproduces
@@ -45,10 +45,19 @@ func TestFilerServer_checkTusJwtAuthorization_CrossPrefixSessionHijack(t *testin
 	const writeKey = "write-secret"
 	const readKey = "read-secret"
 
-	fs := newTusIDORTestServer(t, writeKey, readKey, map[string]string{
+	fs, store := newTusIDORTestServer(t, writeKey, readKey, map[string]string{
 		"victim-session": "/buckets/secret/victim.bin",
 		"own-session":    "/buckets/allowed/own.bin",
 	})
+
+	// A session whose .info is unreadable (corrupt JSON) must fail closed rather
+	// than authorize a prefix-restricted token against a target we cannot resolve.
+	if err := store.InsertEntry(context.Background(), &filer.Entry{
+		FullPath: util.FullPath(fs.tusSessionInfoPath("corrupt-session")),
+		Content:  []byte("{not valid json"),
+	}); err != nil {
+		t.Fatalf("seed corrupt session: %v", err)
+	}
 
 	attackerWrite := signFilerToken(t, writeKey, []string{"/buckets/allowed"}, nil)
 	attackerRead := signFilerToken(t, readKey, []string{"/buckets/allowed"}, nil)
@@ -78,6 +87,11 @@ func TestFilerServer_checkTusJwtAuthorization_CrossPrefixSessionHijack(t *testin
 		// An unknown session leaves the request unscoped so the handler can answer
 		// 404, rather than being denied on a path that cannot be resolved.
 		{"patch unknown session allowed", http.MethodPatch, "/.tus/.uploads/does-not-exist", attackerWrite, true},
+
+		// A corrupt/unreadable session fails closed: the target cannot be resolved
+		// so a prefix-restricted token must be denied, not authorized.
+		{"patch corrupt session denied", http.MethodPatch, "/.tus/.uploads/corrupt-session", attackerWrite, false},
+		{"head corrupt session denied", http.MethodHead, "/.tus/.uploads/corrupt-session", attackerRead, false},
 	}
 
 	for _, tt := range tests {
@@ -98,7 +112,7 @@ func TestFilerServer_tusHandler_CrossPrefixPatchRejected(t *testing.T) {
 	const writeKey = "write-secret"
 	const readKey = "read-secret"
 
-	fs := newTusIDORTestServer(t, writeKey, readKey, map[string]string{
+	fs, _ := newTusIDORTestServer(t, writeKey, readKey, map[string]string{
 		"victim-session": "/buckets/secret/victim.bin",
 	})
 	attacker := signFilerToken(t, writeKey, []string{"/buckets/allowed"}, nil)

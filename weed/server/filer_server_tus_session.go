@@ -189,7 +189,7 @@ func (fs *FilerServer) readTusSessionInfo(ctx context.Context, uploadID string) 
 	entry, err := fs.filer.FindEntry(ctx, infoPath)
 	if err != nil {
 		if err == filer_pb.ErrNotFound {
-			return nil, fmt.Errorf("TUS upload session not found: %s", uploadID)
+			return nil, fmt.Errorf("TUS upload session not found: %s: %w", uploadID, filer_pb.ErrNotFound)
 		}
 		return nil, fmt.Errorf("find session: %w", err)
 	}

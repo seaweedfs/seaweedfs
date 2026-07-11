@@ -86,7 +86,7 @@ func (fs *FilerServer) tusHandler(w http.ResponseWriter, r *http.Request) {
 // AllowedPrefixes is enforced on every verb.
 func (fs *FilerServer) checkTusJwtAuthorization(r *http.Request) bool {
 	isWrite := r.Method != http.MethodHead
-	return fs.checkJwtAuthorizationScoped(r, isWrite, func() []string {
+	return fs.checkJwtAuthorizationScoped(r, isWrite, func() ([]string, error) {
 		return fs.tusScopedPaths(r)
 	})
 }
@@ -99,29 +99,33 @@ func (fs *FilerServer) checkTusJwtAuthorization(r *http.Request) bool {
 // legitimate low-privilege tenant who holds a valid token and learns another
 // upload's id, so without this scoping such a tenant could read, overwrite, or
 // cancel a session whose target lies outside its own AllowedPrefixes.
-func (fs *FilerServer) tusScopedPaths(r *http.Request) []string {
+//
+// A missing session leaves the request unscoped so the handler can answer 404,
+// but any other lookup failure (filer error, corrupt session) is returned so the
+// caller fails closed rather than authorizing against a target it could not read.
+func (fs *FilerServer) tusScopedPaths(r *http.Request) ([]string, error) {
 	switch r.Method {
 	case http.MethodPost:
 		if target := fs.tusTargetPath(r); target != "" && target != "/" {
-			return []string{target}
+			return []string{target}, nil
 		}
 	case http.MethodHead, http.MethodPatch, http.MethodDelete:
 		uploadID := fs.tusUploadID(r.URL.Path)
 		if uploadID == "" {
-			return nil
+			return nil, nil
 		}
 		session, err := fs.readTusSessionInfo(r.Context(), uploadID)
 		if err != nil {
-			// Unknown or unreadable session: leave the request unscoped so the
-			// handler resolves it to 404, rather than denying on a path we cannot
-			// determine.
-			return nil
+			if errors.Is(err, filer_pb.ErrNotFound) {
+				return nil, nil
+			}
+			return nil, err
 		}
 		if target := session.TargetPath; target != "" && target != "/" {
-			return []string{target}
+			return []string{target}, nil
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 // tusUploadID extracts the session id from a {TusBasePath}/.uploads/{id} request
