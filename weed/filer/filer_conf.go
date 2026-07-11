@@ -290,6 +290,8 @@ func ClearBucketReadOnly(ctx context.Context, client filer_pb.SeaweedFilerClient
 	if err = fc.LoadFromBytes(data); err != nil {
 		return false, fmt.Errorf("parse %s/%s: %v", DirectoryEtcSeaweedFS, FilerConfName, err)
 	}
+	// join the rule key exactly as s3.bucket.quota.enforce writes it, so the
+	// exact-match lookup finds the rule even for a non-canonical bucketsPath
 	if !fc.ClearReadOnly(bucketsPath + "/" + bucketName + "/") {
 		return false, nil
 	}
@@ -297,7 +299,10 @@ func ClearBucketReadOnly(ctx context.Context, client filer_pb.SeaweedFilerClient
 	if err = fc.ToText(&buf); err != nil {
 		return false, err
 	}
-	return true, SaveInsideFiler(ctx, client, DirectoryEtcSeaweedFS, FilerConfName, buf.Bytes())
+	if err = SaveInsideFiler(ctx, client, DirectoryEtcSeaweedFS, FilerConfName, buf.Bytes()); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (fc *FilerConf) GetCollectionTtls(collection string) (ttls map[string]string) {
