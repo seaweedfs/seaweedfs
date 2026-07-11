@@ -709,6 +709,7 @@ templ S3Buckets(data dash.S3BucketsData) {
     let ownerModalInstance = null;
     let detailsModalInstance = null;
     let lifecycleModalInstance = null;
+    let lifecycleRequestSeq = 0;
     let cachedUsers = null;
 
     document.addEventListener('DOMContentLoaded', function() {
@@ -1086,9 +1087,12 @@ templ S3Buckets(data dash.S3BucketsData) {
 
                 lifecycleModalInstance.show();
 
+                // Drop responses that arrive after another bucket was opened
+                const requestSeq = ++lifecycleRequestSeq;
                 fetch(basePath('/api/s3/buckets/' + bucketName + '/lifecycle'))
                     .then(response => response.json())
                     .then(data => {
+                        if (requestSeq !== lifecycleRequestSeq) return;
                         if (data.error) {
                             document.getElementById('bucketLifecycleContent').innerHTML =
                                 '<div class="alert alert-danger">' +
@@ -1100,6 +1104,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                         }
                     })
                     .catch(error => {
+                        if (requestSeq !== lifecycleRequestSeq) return;
                         console.error('Error fetching bucket lifecycle:', error);
                         document.getElementById('bucketLifecycleContent').innerHTML =
                             '<div class="alert alert-danger">' +
