@@ -114,9 +114,23 @@ func (fs *SftpServer) CheckFilePermission(path string, perm string) error {
 	return os.ErrPermission
 }
 
+// pathWithin reports whether candidate is base itself or a descendant of base,
+// on path-component boundaries so /a does not match /a-sibling.
+func pathWithin(base, candidate string) bool {
+	base = stdpath.Clean(base)
+	candidate = stdpath.Clean(candidate)
+	if base == "/" {
+		return strings.HasPrefix(candidate, "/")
+	}
+	return candidate == base || strings.HasPrefix(candidate, base+"/")
+}
+
 // isPathInHomeDirectory checks if a path is in the user's home directory
 func isPathInHomeDirectory(user *user.User, path string) bool {
-	return strings.HasPrefix(path, user.HomeDir)
+	if user.HomeDir == "" {
+		return true
+	}
+	return pathWithin(user.HomeDir, path)
 }
 
 // HasUnixPermission checks if the user has the required Unix permission
@@ -182,9 +196,10 @@ func HasExplicitPermission(user *user.User, filepath, requiredPerm string, isDir
 	var perms []string
 
 	for p, userPerms := range user.Permissions {
-		// Check if the path is either the permission path exactly or is under that path
-		if strings.HasPrefix(filepath, p) && len(p) > len(bestMatch) {
-			bestMatch = p
+		// The path must be the permission path exactly or under that path
+		cleaned := stdpath.Clean(p)
+		if pathWithin(cleaned, filepath) && len(cleaned) > len(bestMatch) {
+			bestMatch = cleaned
 			perms = userPerms
 		}
 	}

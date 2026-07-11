@@ -31,6 +31,17 @@
     },
     "Uid": 1002,
     "Gid": 1002
+  },
+  {
+    "Username": "scoped",
+    "Password": "scopedpassword",
+    "PublicKeys": [],
+    "HomeDir": "/",
+    "Permissions": {
+      "/tenants/alice": ["read", "write", "list"]
+    },
+    "Uid": 1003,
+    "Gid": 1003
   }
 ]
 
