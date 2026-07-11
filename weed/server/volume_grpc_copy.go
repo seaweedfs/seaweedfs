@@ -74,9 +74,15 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 		if req.DiskType != "" {
 			diskType = req.DiskType
 		}
+		hasRemoteDatFile = volFileInfoResp.VolumeInfo != nil && len(volFileInfoResp.VolumeInfo.Files) > 0
+		// a remote-backed volume only lands its .idx/.vif locally; the .dat stays in the tier
+		neededSpace := volFileInfoResp.DatFileSize
+		if hasRemoteDatFile {
+			neededSpace = volFileInfoResp.IdxFileSize
+		}
 		location := vs.store.FindFreeLocation(func(location *storage.DiskLocation) bool {
 			return location.DiskType == types.ToDiskType(diskType) &&
-				location.AvailableSpace.Load() > volFileInfoResp.DatFileSize
+				location.AvailableSpace.Load() > neededSpace
 		})
 		if location == nil {
 			return fmt.Errorf("%s %s", util.ErrVolumeNoSpaceLeft, types.ToDiskType(diskType).ReadableString())
@@ -84,7 +90,6 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 
 		dataBaseFileName = storage.VolumeFileName(location.Directory, volFileInfoResp.Collection, int(req.VolumeId))
 		indexBaseFileName = storage.VolumeFileName(location.IdxDirectory, volFileInfoResp.Collection, int(req.VolumeId))
-		hasRemoteDatFile = volFileInfoResp.VolumeInfo != nil && len(volFileInfoResp.VolumeInfo.Files) > 0
 
 		// The .note marks the copy as in-progress; a leftover note fails the
 		// volume load on restart, so a write failure must abort the copy.
