@@ -287,6 +287,21 @@ func (fs *FilerServer) loadTusSessionChunks(ctx context.Context, session *TusSes
 	return nil
 }
 
+// refreshTusSessionChunks verifies the pinned session still exists and still
+// identifies the same upload before refreshing its chunk state, so a PATCH
+// cannot complete after a concurrent DELETE or metadata replacement and land at
+// a TargetPath other than the one that was authorized.
+func (fs *FilerServer) refreshTusSessionChunks(ctx context.Context, session *TusSession) error {
+	stored, err := fs.readTusSessionInfo(ctx, session.ID)
+	if err != nil {
+		return err
+	}
+	if stored.TargetPath != session.TargetPath || stored.Size != session.Size || !stored.CreatedAt.Equal(session.CreatedAt) {
+		return fmt.Errorf("TUS session identity changed: %s", session.ID)
+	}
+	return fs.loadTusSessionChunks(ctx, session)
+}
+
 // saveTusChunk stores the chunk info as a separate file entry
 // This avoids read-modify-write race conditions across multiple filer instances
 // The chunk metadata is encoded in the filename; the entry's Crtime preserves upload time

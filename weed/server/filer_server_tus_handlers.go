@@ -263,8 +263,8 @@ func (fs *FilerServer) tusCreateHandler(w http.ResponseWriter, r *http.Request) 
 
 			// Check if upload is complete
 			if bytesWritten == session.Size {
-				// Refresh the pinned session's chunks before completing.
-				if err = fs.loadTusSessionChunks(ctx, session); err != nil {
+				// Ensure the pinned session still exists, then refresh its chunks.
+				if err = fs.refreshTusSessionChunks(ctx, session); err != nil {
 					glog.Errorf("Failed to get updated TUS session: %v", err)
 					http.Error(w, "Failed to complete upload", http.StatusInternalServerError)
 					return
@@ -346,8 +346,8 @@ func (fs *FilerServer) tusPatchHandler(w http.ResponseWriter, r *http.Request, s
 
 	// Check if upload is complete
 	if newOffset == session.Size {
-		// Refresh the pinned session's chunks before completing.
-		if err = fs.loadTusSessionChunks(ctx, session); err != nil {
+		// Ensure the authorized session still exists, then refresh its chunks.
+		if err = fs.refreshTusSessionChunks(ctx, session); err != nil {
 			glog.Errorf("Failed to get updated TUS session: %v", err)
 			http.Error(w, "Failed to complete upload", http.StatusInternalServerError)
 			return

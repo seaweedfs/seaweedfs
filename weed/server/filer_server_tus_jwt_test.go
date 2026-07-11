@@ -160,3 +160,53 @@ func TestFilerServer_tusHandler_UnauthenticatedRejected(t *testing.T) {
 		t.Errorf("unauthenticated HEAD = %d, want %d", headRec.Code, http.StatusUnauthorized)
 	}
 }
+
+// TestFilerServer_refreshTusSessionChunks_RevalidatesPinnedSession verifies a
+// pinned session cannot complete after it is deleted or its target is replaced
+// between authorization and completion.
+func TestFilerServer_refreshTusSessionChunks_RevalidatesPinnedSession(t *testing.T) {
+	pin := func(t *testing.T) (*FilerServer, *renameTestStore, *TusSession) {
+		t.Helper()
+		fs, store := newTusTestServer(t, nil)
+		seedTusSession(t, fs, store, TusSession{
+			ID:         tusTestUploadID,
+			TargetPath: "/buckets/secret/victim.bin",
+			Size:       1,
+			CreatedAt:  time.Unix(1700000000, 123),
+		})
+		session, err := fs.readTusSessionInfo(context.Background(), tusTestUploadID)
+		if err != nil {
+			t.Fatalf("pin session: %v", err)
+		}
+		return fs, store, session
+	}
+
+	t.Run("deleted before completion", func(t *testing.T) {
+		fs, store, session := pin(t)
+		if err := store.DeleteEntry(context.Background(), util.FullPath(fs.tusSessionInfoPath(tusTestUploadID))); err != nil {
+			t.Fatalf("delete session info: %v", err)
+		}
+		if err := fs.refreshTusSessionChunks(context.Background(), session); err == nil {
+			t.Fatal("refresh succeeded after the session was deleted")
+		}
+	})
+
+	t.Run("replaced before completion", func(t *testing.T) {
+		fs, store, session := pin(t)
+		replaced := *session
+		replaced.TargetPath = "/buckets/other/replacement.bin"
+		data, err := json.Marshal(&replaced)
+		if err != nil {
+			t.Fatalf("marshal replacement: %v", err)
+		}
+		if err := store.InsertEntry(context.Background(), &filer.Entry{
+			FullPath: util.FullPath(fs.tusSessionInfoPath(tusTestUploadID)),
+			Content:  data,
+		}); err != nil {
+			t.Fatalf("replace session info: %v", err)
+		}
+		if err := fs.refreshTusSessionChunks(context.Background(), session); err == nil {
+			t.Fatal("refresh succeeded after the session target was replaced")
+		}
+	})
+}
