@@ -53,8 +53,7 @@ func (fs *FilerServer) tusHandler(w http.ResponseWriter, r *http.Request) {
 	// Check if this is an upload location (contains upload ID after {tusPrefix}/.uploads/)
 	uploadsPrefix := tusPrefix + "/.uploads/"
 	if strings.HasPrefix(reqPath, uploadsPrefix) {
-		uploadID := strings.TrimPrefix(reqPath, uploadsPrefix)
-		uploadID = strings.Split(uploadID, "/")[0] // Get just the ID, not any trailing path
+		uploadID := fs.tusUploadID(reqPath)
 
 		switch r.Method {
 		case http.MethodHead:
@@ -81,21 +80,53 @@ func (fs *FilerServer) tusHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // checkTusJwtAuthorization enforces filer JWT authorization for a TUS request.
-// HEAD reads the current offset (read access); POST/PATCH/DELETE mutate the
-// namespace (write access). Only creation (POST) names a new target path, taken
-// from the request URL, so prefix-restricted tokens are scoped against that
-// resolved filer path rather than the /.tus route. HEAD/PATCH/DELETE act on an
-// existing session addressed by an unguessable id, whose target was already
-// scope-checked at creation, so no further path scoping is applied to them.
+// HEAD is a read; POST/PATCH/DELETE are writes.
 func (fs *FilerServer) checkTusJwtAuthorization(r *http.Request) bool {
 	isWrite := r.Method != http.MethodHead
-	var scopedPaths []string
-	if r.Method == http.MethodPost {
+	return fs.checkJwtAuthorization(r, isWrite, func() ([]string, error) {
+		return fs.tusScopedPaths(r)
+	})
+}
+
+// tusScopedPaths returns the filer path(s) a prefix-restricted token must be
+// allowed to reach. POST names its target in the URL; HEAD/PATCH/DELETE act on an
+// existing session whose stored TargetPath must be re-checked, since the session
+// id is not an authorization boundary against a tenant who already holds a token.
+// A missing session stays unscoped (handler answers 404); any other lookup error
+// is returned so the caller fails closed.
+func (fs *FilerServer) tusScopedPaths(r *http.Request) ([]string, error) {
+	switch r.Method {
+	case http.MethodPost:
 		if target := fs.tusTargetPath(r); target != "" && target != "/" {
-			scopedPaths = append(scopedPaths, target)
+			return []string{target}, nil
+		}
+	case http.MethodHead, http.MethodPatch, http.MethodDelete:
+		uploadID := fs.tusUploadID(r.URL.Path)
+		if uploadID == "" {
+			return nil, nil
+		}
+		session, err := fs.readTusSessionInfo(r.Context(), uploadID)
+		if err != nil {
+			if errors.Is(err, filer_pb.ErrNotFound) {
+				return nil, nil
+			}
+			return nil, err
+		}
+		if target := session.TargetPath; target != "" && target != "/" {
+			return []string{target}, nil
 		}
 	}
-	return fs.checkJwtAuthorization(r, isWrite, scopedPaths)
+	return nil, nil
+}
+
+// tusUploadID extracts the session id from a {TusBasePath}/.uploads/{id} path, or
+// "" when the path is not an uploads route.
+func (fs *FilerServer) tusUploadID(reqPath string) string {
+	uploadsPrefix := fs.option.TusBasePath + "/.uploads/"
+	if !strings.HasPrefix(reqPath, uploadsPrefix) {
+		return ""
+	}
+	return strings.Split(strings.TrimPrefix(reqPath, uploadsPrefix), "/")[0]
 }
 
 // tusTargetPath resolves the filer path a TUS create request targets from the

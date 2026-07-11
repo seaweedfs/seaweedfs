@@ -181,13 +181,14 @@ func (fs *FilerServer) saveTusSession(ctx context.Context, session *TusSession) 
 	return nil
 }
 
-// getTusSession retrieves a TUS session by upload ID, including chunks from directory listing
-func (fs *FilerServer) getTusSession(ctx context.Context, uploadID string) (*TusSession, error) {
+// readTusSessionInfo reads and decodes a session's .info file without listing its
+// chunks, the cheap lookup the authorization check needs for the stored TargetPath.
+func (fs *FilerServer) readTusSessionInfo(ctx context.Context, uploadID string) (*TusSession, error) {
 	infoPath := util.FullPath(fs.tusSessionInfoPath(uploadID))
 	entry, err := fs.filer.FindEntry(ctx, infoPath)
 	if err != nil {
 		if err == filer_pb.ErrNotFound {
-			return nil, fmt.Errorf("TUS upload session not found: %s", uploadID)
+			return nil, fmt.Errorf("TUS upload session not found: %s: %w", uploadID, filer_pb.ErrNotFound)
 		}
 		return nil, fmt.Errorf("find session: %w", err)
 	}
@@ -195,6 +196,15 @@ func (fs *FilerServer) getTusSession(ctx context.Context, uploadID string) (*Tus
 	var session TusSession
 	if err := json.Unmarshal(entry.Content, &session); err != nil {
 		return nil, fmt.Errorf("unmarshal session: %w", err)
+	}
+	return &session, nil
+}
+
+// getTusSession retrieves a TUS session by upload ID, including chunks from directory listing
+func (fs *FilerServer) getTusSession(ctx context.Context, uploadID string) (*TusSession, error) {
+	session, err := fs.readTusSessionInfo(ctx, uploadID)
+	if err != nil {
+		return nil, err
 	}
 
 	// Load chunks from directory listing with pagination (atomic read, no race condition)
@@ -248,7 +258,7 @@ func (fs *FilerServer) getTusSession(ctx context.Context, uploadID string) (*Tus
 		session.Offset = contiguousEnd
 	}
 
-	return &session, nil
+	return session, nil
 }
 
 // saveTusChunk stores the chunk info as a separate file entry
