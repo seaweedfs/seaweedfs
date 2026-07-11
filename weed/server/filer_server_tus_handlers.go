@@ -54,7 +54,14 @@ func (fs *FilerServer) tusHandler(w http.ResponseWriter, r *http.Request) {
 	// Check if this is an upload location (contains upload ID after {tusPrefix}/.uploads/)
 	uploadsPrefix := tusPrefix + "/.uploads/"
 	if strings.HasPrefix(reqPath, uploadsPrefix) {
-		uploadID := fs.tusUploadID(reqPath)
+		// Session ids this server mints are canonical UUIDs. Rejecting aliases
+		// (a trailing path or any non-canonical spelling) keeps one URL bound to
+		// one stored authorization resource.
+		uploadID := strings.TrimPrefix(reqPath, uploadsPrefix)
+		if !isCanonicalTusUploadID(uploadID) {
+			writeTusSessionNotFound(w, r.Method)
+			return
+		}
 
 		switch r.Method {
 		case http.MethodHead, http.MethodPatch, http.MethodDelete:
@@ -117,14 +124,11 @@ func writeTusSessionNotFound(w http.ResponseWriter, method string) {
 	http.Error(w, "Upload not found", http.StatusNotFound)
 }
 
-// tusUploadID extracts the session id from a {TusBasePath}/.uploads/{id} path, or
-// "" when the path is not an uploads route.
-func (fs *FilerServer) tusUploadID(reqPath string) string {
-	uploadsPrefix := fs.option.TusBasePath + "/.uploads/"
-	if !strings.HasPrefix(reqPath, uploadsPrefix) {
-		return ""
-	}
-	return strings.Split(strings.TrimPrefix(reqPath, uploadsPrefix), "/")[0]
+// isCanonicalTusUploadID reports whether uploadID is a canonical UUID, the only
+// form this server mints, so an aliased or crafted id cannot address a session.
+func isCanonicalTusUploadID(uploadID string) bool {
+	id, err := uuid.Parse(uploadID)
+	return err == nil && id.String() == uploadID
 }
 
 // tusTargetPath resolves the filer path a TUS create request targets from the

@@ -2,10 +2,12 @@ package weed_server
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -59,6 +61,53 @@ func TestFilerServer_tusHandler_CrossPrefixSessionHijack(t *testing.T) {
 			}
 			if !tt.expectExists && err == nil {
 				t.Fatalf("session still present after authorized %s", tt.method)
+			}
+		})
+	}
+}
+
+// TestFilerServer_tusHandler_RejectsAliasesAndInvalidMetadata covers the routing
+// and metadata guards: a non-canonical or aliased upload id is rejected before
+// any lookup, and a session whose stored id, target or size is unusable resolves
+// to "not found" rather than being authorized or acted upon.
+func TestFilerServer_tusHandler_RejectsAliasesAndInvalidMetadata(t *testing.T) {
+	tests := []struct {
+		name    string
+		routeID string
+		stored  TusSession
+	}{
+		{"trailing path alias", tusTestUploadID + "/extra", TusSession{ID: tusTestUploadID, TargetPath: "/buckets/secret/victim.bin", Size: 1}},
+		{"non-canonical route id", "not-a-uuid", TusSession{ID: tusTestUploadID, TargetPath: "/buckets/secret/victim.bin", Size: 1}},
+		{"stored id mismatch", tusTestUploadID, TusSession{ID: "00000000-0000-0000-0000-000000000000", TargetPath: "/buckets/secret/victim.bin", Size: 1}},
+		{"empty stored target", tusTestUploadID, TusSession{ID: tusTestUploadID, TargetPath: "", Size: 1}},
+		{"root stored target", tusTestUploadID, TusSession{ID: tusTestUploadID, TargetPath: "/", Size: 1}},
+		{"relative stored target", tusTestUploadID, TusSession{ID: tusTestUploadID, TargetPath: "buckets/secret/x.bin", Size: 1}},
+		{"oversize stored size", tusTestUploadID, TusSession{ID: tusTestUploadID, TargetPath: "/buckets/secret/victim.bin", Size: TusMaxSize + 1}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs, store := newTusTestServer(t, nil)
+			data, err := json.Marshal(&tt.stored)
+			if err != nil {
+				t.Fatalf("marshal session: %v", err)
+			}
+			if err := store.InsertEntry(context.Background(), &filer.Entry{
+				FullPath: util.FullPath(fs.tusSessionInfoPath(tusTestUploadID)),
+				Content:  data,
+			}); err != nil {
+				t.Fatalf("seed session: %v", err)
+			}
+
+			req := httptest.NewRequest(http.MethodHead, "/.tus/.uploads/"+tt.routeID, nil)
+			req.Header.Set("Authorization", "Bearer "+signFilerToken(t, tusTestReadKey, nil, nil))
+			req.Header.Set("Tus-Resumable", TusVersion)
+			rec := httptest.NewRecorder()
+
+			fs.tusHandler(rec, req)
+
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("HEAD %s = %d, want %d; body=%q", tt.routeID, rec.Code, http.StatusNotFound, rec.Body.String())
 			}
 		})
 	}

@@ -186,6 +186,9 @@ func (fs *FilerServer) saveTusSession(ctx context.Context, session *TusSession) 
 // the stored TargetPath. It rejects a metadata file whose id, target or size is
 // unusable so a corrupt or replaced session cannot be authorized or completed.
 func (fs *FilerServer) readTusSessionInfo(ctx context.Context, uploadID string) (*TusSession, error) {
+	if !isCanonicalTusUploadID(uploadID) {
+		return nil, fmt.Errorf("invalid TUS upload id: %q", uploadID)
+	}
 	infoPath := util.FullPath(fs.tusSessionInfoPath(uploadID))
 	entry, err := fs.filer.FindEntry(ctx, infoPath)
 	if err != nil {
