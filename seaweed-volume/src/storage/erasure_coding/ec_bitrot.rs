@@ -599,6 +599,40 @@ mod tests {
         assert_eq!(bitrot_sidecar_path("/d/1", 3), "/d/1.ecsum.v3");
     }
 
+    /// Mirrors Go's TestRemoveBitrotSidecars: legacy + versioned sidecars go,
+    /// unrelated files (a shard, a longer-vid sidecar) survive, absent is success.
+    #[test]
+    fn test_remove_bitrot_sidecars() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let base = tmp.path().join("5").to_str().unwrap().to_string();
+        for p in [
+            format!("{}.ecsum", base),
+            format!("{}.ecsum.v1", base),
+            format!("{}.ecsum.v7", base),
+        ] {
+            std::fs::write(&p, b"x").unwrap();
+        }
+        let keep_shard = format!("{}.ec00", base);
+        let keep_other_vid = format!("{}0.ecsum", base);
+        std::fs::write(&keep_shard, b"x").unwrap();
+        std::fs::write(&keep_other_vid, b"x").unwrap();
+
+        remove_bitrot_sidecars(&base).unwrap();
+
+        for p in [
+            format!("{}.ecsum", base),
+            format!("{}.ecsum.v1", base),
+            format!("{}.ecsum.v7", base),
+        ] {
+            assert!(!std::path::Path::new(&p).exists(), "{} should be removed", p);
+        }
+        assert!(std::path::Path::new(&keep_shard).exists());
+        assert!(std::path::Path::new(&keep_other_vid).exists());
+
+        // Already-gone is success.
+        remove_bitrot_sidecars(&base).unwrap();
+    }
+
     #[test]
     fn test_is_pow2_multiple_of_1mib() {
         assert!(is_pow2_multiple_of_1mib(1 << 20)); // 1 MiB
