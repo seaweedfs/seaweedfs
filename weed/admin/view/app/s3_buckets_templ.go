@@ -617,7 +617,7 @@ func S3Buckets(data dash.S3BucketsData) templ.Component {
 			}
 		}
 		if len(data.Buckets) == 0 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 70, "<tr><td colspan=\"11\" class=\"text-center text-muted py-4\"><i class=\"fas fa-cube fa-3x mb-3 text-muted\"></i><div><h5>No Object Store buckets found</h5><p>Create your first bucket to get started with S3 storage.</p><button type=\"button\" class=\"btn btn-primary\" data-bs-toggle=\"modal\" data-bs-target=\"#createBucketModal\"><i class=\"fas fa-plus me-1\"></i>Create Bucket</button></div></td></tr>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 70, "<tr><td colspan=\"10\" class=\"text-center text-muted py-4\"><i class=\"fas fa-cube fa-3x mb-3 text-muted\"></i><div><h5>No Object Store buckets found</h5><p>Create your first bucket to get started with S3 storage.</p><button type=\"button\" class=\"btn btn-primary\" data-bs-toggle=\"modal\" data-bs-target=\"#createBucketModal\"><i class=\"fas fa-plus me-1\"></i>Create Bucket</button></div></td></tr>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
