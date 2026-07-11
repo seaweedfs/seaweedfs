@@ -150,6 +150,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                         <th>Quota</th>
                                         <th>Versioning</th>
                                         <th>Object Lock</th>
+                                        <th>Lifecycle</th>
                                         <th>Actions</th>
                                     </tr>
                                 </thead>
@@ -233,17 +234,45 @@ templ S3Buckets(data dash.S3BucketsData) {
                                                 }
                                             </td>
                                             <td>
+                                                if bucket.LifecycleRuleCount > 0 {
+                                                    <div>
+                                                        <span class="badge bg-primary lifecycle-btn" role="button"
+                                                              data-bucket-name={bucket.Name}
+                                                              title="View Lifecycle Rules">
+                                                            if bucket.LifecycleRuleCount == 1 {
+                                                                1 rule
+                                                            } else {
+                                                                {fmt.Sprintf("%d rules", bucket.LifecycleRuleCount)}
+                                                            }
+                                                        </span>
+                                                        if bucket.LifecycleEnabledCount < bucket.LifecycleRuleCount {
+                                                            <div class="small text-muted">
+                                                                {fmt.Sprintf("%d enabled", bucket.LifecycleEnabledCount)}
+                                                            </div>
+                                                        }
+                                                    </div>
+                                                } else {
+                                                    <span class="text-muted">Not configured</span>
+                                                }
+                                            </td>
+                                            <td>
                                                 <div class="btn-group btn-group-sm" role="group">
                                                     <a href={dash.PUrl(ctx, fmt.Sprintf("/files?path=/buckets/%s", bucket.Name))}
                                                        class="btn btn-outline-success btn-sm"
                                                        title="Browse Files">
                                                         <i class="fas fa-folder-open"></i>
                                                     </a>
-                                                    <button type="button" 
+                                                    <button type="button"
                                                             class="btn btn-outline-primary btn-sm view-details-btn"
                                                             data-bucket-name={bucket.Name}
                                                             title="View Details">
                                                         <i class="fas fa-eye"></i>
+                                                    </button>
+                                                    <button type="button"
+                                                            class="btn btn-outline-secondary btn-sm lifecycle-btn"
+                                                            data-bucket-name={bucket.Name}
+                                                            title="Lifecycle Rules">
+                                                        <i class="fas fa-recycle"></i>
                                                     </button>
                                                     <button type="button" 
                                                             class="btn btn-outline-info btn-sm owner-btn"
@@ -272,7 +301,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                     }
                                     if len(data.Buckets) == 0 {
                                         <tr>
-                                            <td colspan="10" class="text-center text-muted py-4">
+                                            <td colspan="11" class="text-center text-muted py-4">
                                                 <i class="fas fa-cube fa-3x mb-3 text-muted"></i>
                                                 <div>
                                                     					<h5>No Object Store buckets found</h5>
@@ -606,6 +635,26 @@ templ S3Buckets(data dash.S3BucketsData) {
         </div>
     </div>
 
+    <!-- Bucket Lifecycle Modal -->
+    <div class="modal fade" id="bucketLifecycleModal" tabindex="-1" aria-labelledby="bucketLifecycleModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="bucketLifecycleModalLabel">
+                        <i class="fas fa-recycle me-2"></i>Lifecycle
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="bucketLifecycleContent"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Manage Owner Modal -->
     <div class="modal fade" id="manageOwnerModal" tabindex="-1" aria-labelledby="manageOwnerModalLabel" aria-hidden="true">
         <div class="modal-dialog">
@@ -659,6 +708,7 @@ templ S3Buckets(data dash.S3BucketsData) {
     let quotaModalInstance = null;
     let ownerModalInstance = null;
     let detailsModalInstance = null;
+    let lifecycleModalInstance = null;
     let cachedUsers = null;
 
     document.addEventListener('DOMContentLoaded', function() {
@@ -676,6 +726,7 @@ templ S3Buckets(data dash.S3BucketsData) {
         quotaModalInstance = new bootstrap.Modal(document.getElementById('manageQuotaModal'));
         ownerModalInstance = new bootstrap.Modal(document.getElementById('manageOwnerModal'));
         detailsModalInstance = new bootstrap.Modal(document.getElementById('bucketDetailsModal'));
+        lifecycleModalInstance = new bootstrap.Modal(document.getElementById('bucketLifecycleModal'));
 
         const quotaCheckbox = document.getElementById('enableQuota');
         const quotaSettings = document.getElementById('quotaSettings');
@@ -1016,6 +1067,48 @@ templ S3Buckets(data dash.S3BucketsData) {
                     });
             });
         });
+
+        // Lifecycle buttons: column badge and action button
+        document.querySelectorAll('.lifecycle-btn').forEach(button => {
+            button.addEventListener('click', function() {
+                const bucketName = this.dataset.bucketName;
+
+                document.getElementById('bucketLifecycleModalLabel').innerHTML =
+                    '<i class="fas fa-recycle me-2"></i>Lifecycle - ' + bucketName;
+
+                document.getElementById('bucketLifecycleContent').innerHTML =
+                    '<div class="text-center py-4">' +
+                    '<div class="spinner-border text-primary" role="status">' +
+                    '<span class="visually-hidden">Loading...</span>' +
+                    '<\/div>' +
+                    '<div class="mt-2">Loading lifecycle rules...</div>' +
+                    '<\/div>';
+
+                lifecycleModalInstance.show();
+
+                fetch(basePath('/api/s3/buckets/' + bucketName + '/lifecycle'))
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.error) {
+                            document.getElementById('bucketLifecycleContent').innerHTML =
+                                '<div class="alert alert-danger">' +
+                                '<i class="fas fa-exclamation-triangle me-2"></i>' +
+                                'Error loading lifecycle rules: ' + data.error +
+                                '<\/div>';
+                        } else {
+                            displayBucketLifecycle(data);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error fetching bucket lifecycle:', error);
+                        document.getElementById('bucketLifecycleContent').innerHTML =
+                            '<div class="alert alert-danger">' +
+                            '<i class="fas fa-exclamation-triangle me-2"></i>' +
+                            'Error loading lifecycle rules: ' + error.message +
+                            '<\/div>';
+                    });
+            });
+        });
     });
 
     function deleteBucket() {
@@ -1132,6 +1225,114 @@ function displayBucketDetails(data) {
     ];
 
     document.getElementById('bucketDetailsContent').innerHTML = rows.join('');
+}
+
+function displayBucketLifecycle(data) {
+    function escapeHtml(v) {
+        return String(v ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function formatBytes(bytes) {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
+    function days(n) {
+        return n + (n === 1 ? ' day' : ' days');
+    }
+
+    const rules = data.rules || [];
+    if (rules.length === 0) {
+        document.getElementById('bucketLifecycleContent').innerHTML =
+            '<div class="text-center text-muted py-4">No lifecycle configuration<\/div>';
+        return;
+    }
+
+    function describeScope(rule) {
+        const parts = [];
+        if (rule.prefix) {
+            parts.push('<code>' + escapeHtml(rule.prefix) + '<\/code>');
+        }
+        Object.entries(rule.tags || {}).forEach(([k, v]) => {
+            parts.push('<span class="badge bg-light text-dark border">' + escapeHtml(k) + '=' + escapeHtml(v) + '<\/span>');
+        });
+        if (rule.size_greater_than) {
+            parts.push('size &gt; ' + formatBytes(rule.size_greater_than));
+        }
+        if (rule.size_less_than) {
+            parts.push('size &lt; ' + formatBytes(rule.size_less_than));
+        }
+        return parts.length ? parts.join(' ') : '<span class="text-muted">Whole bucket<\/span>';
+    }
+
+    function describeActions(rule) {
+        const actions = [];
+        if (rule.expiration_days) {
+            actions.push('Expire after ' + days(rule.expiration_days));
+        }
+        if (rule.expiration_date) {
+            actions.push('Expire on ' + escapeHtml(rule.expiration_date));
+        }
+        if (rule.expired_object_delete_marker) {
+            actions.push('Remove expired object delete markers');
+        }
+        if (rule.noncurrent_version_expiration_days) {
+            let action = 'Expire noncurrent versions after ' + days(rule.noncurrent_version_expiration_days);
+            if (rule.newer_noncurrent_versions) {
+                action += ', keep ' + rule.newer_noncurrent_versions + ' newest';
+            }
+            actions.push(action);
+        }
+        if (rule.abort_multipart_days) {
+            actions.push('Abort incomplete multipart uploads after ' + days(rule.abort_multipart_days));
+        }
+        if (actions.length === 0) {
+            return '<span class="text-muted">None<\/span>';
+        }
+        return actions.join('<br>');
+    }
+
+    const rows = [
+        '<div class="table-responsive">',
+        '<table class="table table-sm">',
+        '<thead><tr><th>Rule<\/th><th>Status<\/th><th>Scope<\/th><th>Actions<\/th><\/tr><\/thead>',
+        '<tbody>'
+    ];
+
+    rules.forEach(rule => {
+        const statusHtml = rule.status === 'Enabled'
+            ? '<span class="badge bg-success">Enabled<\/span>'
+            : '<span class="badge bg-secondary">' + escapeHtml(rule.status) + '<\/span>';
+        rows.push(
+            '<tr>' +
+            '<td>' + (rule.id ? escapeHtml(rule.id) : '<span class="text-muted">unnamed<\/span>') + '<\/td>' +
+            '<td>' + statusHtml + '<\/td>' +
+            '<td>' + describeScope(rule) + '<\/td>' +
+            '<td>' + describeActions(rule) + '<\/td>' +
+            '<\/tr>'
+        );
+    });
+
+    rows.push('<\/tbody>', '<\/table>', '<\/div>');
+
+    if (data.xml) {
+        rows.push(
+            '<details class="mt-2">',
+            '<summary class="text-muted small">Raw XML<\/summary>',
+            '<pre class="bg-light border rounded p-2 mt-2 small mb-0">' + escapeHtml(data.xml) + '<\/pre>',
+            '<\/details>'
+        );
+    }
+
+    document.getElementById('bucketLifecycleContent').innerHTML = rows.join('');
 }
 
     function goToPage(page) {
