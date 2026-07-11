@@ -13,6 +13,7 @@ use std::sync::Arc;
 use tracing::warn;
 
 use crate::config::MinFreeSpace;
+use crate::storage::erasure_coding::ec_bitrot::remove_bitrot_sidecars;
 use crate::storage::erasure_coding::ec_shard::{
     EcVolumeShard, DATA_SHARDS_COUNT, ERASURE_CODING_LARGE_BLOCK_SIZE,
     ERASURE_CODING_SMALL_BLOCK_SIZE,
@@ -1093,12 +1094,6 @@ fn rm_if_present(path: String) -> io::Result<()> {
         Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
         _ => Ok(()),
     }
-}
-
-/// Thin wrapper so disk-location cleanup shares the canonical helper with
-/// `EcVolume::destroy` / `Store::delete_ec_shards` (Go parity).
-fn remove_bitrot_sidecars(base: &str) -> io::Result<()> {
-    crate::storage::erasure_coding::ec_bitrot::remove_bitrot_sidecars(base)
 }
 
 fn ec_data_shards_from_vif(directory: &str, idx_directory: &str, collection: &str, vid: VolumeId) -> usize {
