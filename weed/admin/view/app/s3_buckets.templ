@@ -236,15 +236,15 @@ templ S3Buckets(data dash.S3BucketsData) {
                                             <td>
                                                 if bucket.LifecycleRuleCount > 0 {
                                                     <div>
-                                                        <span class="badge bg-primary lifecycle-btn" role="button"
-                                                              data-bucket-name={bucket.Name}
-                                                              title="View Lifecycle Rules">
+                                                        <button type="button" class="badge bg-primary border-0 lifecycle-btn"
+                                                                data-bucket-name={bucket.Name}
+                                                                title="View Lifecycle Rules">
                                                             if bucket.LifecycleRuleCount == 1 {
                                                                 1 rule
                                                             } else {
                                                                 {fmt.Sprintf("%d rules", bucket.LifecycleRuleCount)}
                                                             }
-                                                        </span>
+                                                        </button>
                                                         if bucket.LifecycleEnabledCount < bucket.LifecycleRuleCount {
                                                             <div class="small text-muted">
                                                                 {fmt.Sprintf("%d enabled", bucket.LifecycleEnabledCount)}

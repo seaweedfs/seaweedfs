@@ -428,14 +428,14 @@ func S3Buckets(data dash.S3BucketsData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			if bucket.LifecycleRuleCount > 0 {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 52, "<div><span class=\"badge bg-primary lifecycle-btn\" role=\"button\" data-bucket-name=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 52, "<div><button type=\"button\" class=\"badge bg-primary border-0 lifecycle-btn\" data-bucket-name=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var18 string
 				templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(bucket.Name)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/s3_buckets.templ`, Line: 240, Col: 91}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/s3_buckets.templ`, Line: 240, Col: 93}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
 				if templ_7745c5c3_Err != nil {
@@ -461,7 +461,7 @@ func S3Buckets(data dash.S3BucketsData) templ.Component {
 						return templ_7745c5c3_Err
 					}
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 55, "</span> ")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 55, "</button> ")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
