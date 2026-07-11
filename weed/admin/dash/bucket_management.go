@@ -85,6 +85,23 @@ func (s *AdminServer) ShowBucketDetails(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, details)
 }
 
+// ShowBucketLifecycle returns the lifecycle configuration for a specific bucket
+func (s *AdminServer) ShowBucketLifecycle(w http.ResponseWriter, r *http.Request) {
+	bucketName := mux.Vars(r)["bucket"]
+	if bucketName == "" {
+		writeJSONError(w, http.StatusBadRequest, "Bucket name is required")
+		return
+	}
+
+	lifecycle, err := s.GetBucketLifecycle(bucketName)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to get bucket lifecycle: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, lifecycle)
+}
+
 // CreateBucket creates a new S3 bucket
 func (s *AdminServer) CreateBucket(w http.ResponseWriter, r *http.Request) {
 	var req CreateBucketRequest
