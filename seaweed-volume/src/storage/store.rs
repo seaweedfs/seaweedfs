@@ -962,9 +962,21 @@ impl Store {
                 crate::storage::volume::volume_file_name(&loc.directory, collection, vid);
             let _ = crate::storage::erasure_coding::ec_bitrot::remove_bitrot_sidecars(&data_base);
             if loc.idx_directory != loc.directory {
-                let idx_base =
-                    crate::storage::volume::volume_file_name(&loc.idx_directory, collection, vid);
-                let _ = crate::storage::erasure_coding::ec_bitrot::remove_bitrot_sidecars(&idx_base);
+                // A single -dir.idx is shared by every location: leave the idx-base
+                // sidecar alone while any sibling still holds shards of this volume.
+                let idx_in_use = self.locations.iter().any(|other| {
+                    other.idx_directory == loc.idx_directory
+                        && Self::location_has_ec_shards(other, collection, vid)
+                });
+                if !idx_in_use {
+                    let idx_base = crate::storage::volume::volume_file_name(
+                        &loc.idx_directory,
+                        collection,
+                        vid,
+                    );
+                    let _ =
+                        crate::storage::erasure_coding::ec_bitrot::remove_bitrot_sidecars(&idx_base);
+                }
             }
         }
 
@@ -1750,6 +1762,52 @@ mod tests {
         assert!(
             std::path::Path::new(&format!("{}.ecsum", base0)).exists(),
             "a delete that removed nothing on this disk must not strip its sidecar"
+        );
+    }
+
+    /// With one -dir.idx shared by every location, emptying disk 0 must not
+    /// remove the idx-base sidecar while disk 1 still holds shards; it goes
+    /// only when the last location sharing the idx dir is emptied too.
+    #[test]
+    fn test_delete_ec_shards_preserves_shared_idx_sidecar() {
+        let tmp = TempDir::new().unwrap();
+        let idx = tmp.path().join("idx");
+        std::fs::create_dir_all(&idx).unwrap();
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        for i in 0..2 {
+            let path = tmp.path().join(format!("data{}", i));
+            std::fs::create_dir_all(&path).unwrap();
+            store
+                .add_location(
+                    path.to_str().unwrap(),
+                    idx.to_str().unwrap(),
+                    100,
+                    DiskType::HardDrive,
+                    MinFreeSpace::Percent(0.0),
+                    Vec::new(),
+                )
+                .unwrap();
+        }
+        let collection = "c";
+        let vid = VolumeId(7);
+
+        let base0 = volume_file_name(&store.locations[0].directory, collection, vid);
+        let base1 = volume_file_name(&store.locations[1].directory, collection, vid);
+        let idx_base = volume_file_name(&store.locations[0].idx_directory, collection, vid);
+        std::fs::write(format!("{}.ec00", base0), b"x").unwrap();
+        std::fs::write(format!("{}.ec01", base1), b"x").unwrap();
+        std::fs::write(format!("{}.ecsum", idx_base), b"x").unwrap();
+
+        store.delete_ec_shards(vid, collection, &[0]);
+        assert!(
+            std::path::Path::new(&format!("{}.ecsum", idx_base)).exists(),
+            "shared idx sidecar must survive while a sibling disk still has shards"
+        );
+
+        store.delete_ec_shards(vid, collection, &[1]);
+        assert!(
+            !std::path::Path::new(&format!("{}.ecsum", idx_base)).exists(),
+            "shared idx sidecar should go with the last location's last shard"
         );
     }
 
