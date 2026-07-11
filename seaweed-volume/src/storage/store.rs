@@ -986,14 +986,29 @@ impl Store {
             for loc in &self.locations {
                 let idx_base =
                     crate::storage::volume::volume_file_name(&loc.idx_directory, collection, vid);
+                let data_base =
+                    crate::storage::volume::volume_file_name(&loc.directory, collection, vid);
                 let _ = std::fs::remove_file(format!("{}.ecx", idx_base));
                 let _ = std::fs::remove_file(format!("{}.ecj", idx_base));
                 // Also try data directory in case .ecx/.ecj were created before -dir.idx
                 if loc.idx_directory != loc.directory {
-                    let data_base =
-                        crate::storage::volume::volume_file_name(&loc.directory, collection, vid);
                     let _ = std::fs::remove_file(format!("{}.ecx", data_base));
                     let _ = std::fs::remove_file(format!("{}.ecj", data_base));
+                }
+                // A shard-only disk also drops its stale .vif (Go
+                // removeEcSharedIndexFiles): a live .idx means this disk still
+                // hosts the source volume and the .vif belongs to it. Unexpected
+                // stat errors count as present so a transient failure never
+                // strips a live volume's .vif.
+                let has_idx = [&idx_base, &data_base].iter().any(|base| {
+                    match std::fs::metadata(format!("{}.idx", base)) {
+                        Ok(_) => true,
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+                        Err(_) => true,
+                    }
+                });
+                if !has_idx {
+                    let _ = std::fs::remove_file(format!("{}.vif", data_base));
                 }
             }
         }
@@ -1808,6 +1823,34 @@ mod tests {
         assert!(
             !std::path::Path::new(&format!("{}.ecsum", idx_base)).exists(),
             "shared idx sidecar should go with the last location's last shard"
+        );
+    }
+
+    /// When the node's last shard goes, a shard-only disk also drops its stale
+    /// .vif (Go removeEcSharedIndexFiles); a disk with a live .idx still hosts
+    /// the source volume and keeps its .vif.
+    #[test]
+    fn test_delete_ec_shards_vif_removal_gated_on_idx() {
+        let (mut store, _tmp) = make_ec_target_test_store(2);
+        let collection = "c";
+        let vid = VolumeId(7);
+        let base0 = volume_file_name(&store.locations[0].directory, collection, vid);
+        let base1 = volume_file_name(&store.locations[1].directory, collection, vid);
+        std::fs::write(format!("{}.ec00", base0), b"x").unwrap();
+        std::fs::write(format!("{}.vif", base0), b"x").unwrap();
+        std::fs::write(format!("{}.ec01", base1), b"x").unwrap();
+        std::fs::write(format!("{}.vif", base1), b"x").unwrap();
+        std::fs::write(format!("{}.idx", base1), b"x").unwrap();
+
+        store.delete_ec_shards(vid, collection, &[0, 1]);
+
+        assert!(
+            !std::path::Path::new(&format!("{}.vif", base0)).exists(),
+            "shard-only disk should drop its stale .vif with the node's last shard"
+        );
+        assert!(
+            std::path::Path::new(&format!("{}.vif", base1)).exists(),
+            "a disk with a live .idx keeps its .vif"
         );
     }
 
