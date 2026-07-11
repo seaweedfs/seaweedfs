@@ -1456,28 +1456,17 @@ impl EcVolume {
         // Go's Destroy() also removes bitrot checksum sidecars so a later
         // volume-id reuse cannot load stale protection, and so
         // collection.delete does not leave orphaned <base>.ecsum files.
-        // Sweep every base dir the index/data files may live under.
-        let mut bases = vec![crate::storage::volume::volume_file_name(
-            &self.dir,
-            &self.collection,
-            self.volume_id,
-        )];
+        // ecx_actual_dir is always one of these two dirs.
+        let _ = crate::storage::erasure_coding::ec_bitrot::remove_bitrot_sidecars(
+            &self.base_name(),
+        );
         if self.dir_idx != self.dir {
-            bases.push(crate::storage::volume::volume_file_name(
+            let idx_base = crate::storage::volume::volume_file_name(
                 &self.dir_idx,
                 &self.collection,
                 self.volume_id,
-            ));
-        }
-        if self.ecx_actual_dir != self.dir && self.ecx_actual_dir != self.dir_idx {
-            bases.push(crate::storage::volume::volume_file_name(
-                &self.ecx_actual_dir,
-                &self.collection,
-                self.volume_id,
-            ));
-        }
-        for base in bases {
-            let _ = crate::storage::erasure_coding::ec_bitrot::remove_bitrot_sidecars(&base);
+            );
+            let _ = crate::storage::erasure_coding::ec_bitrot::remove_bitrot_sidecars(&idx_base);
         }
         self.ecx_file = None;
         self.ecj_file = None;
