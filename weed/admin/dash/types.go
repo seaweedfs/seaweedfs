@@ -103,6 +103,27 @@ type BucketDetails struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+type BucketLifecycleRule struct {
+	ID                              string            `json:"id,omitempty"`
+	Status                          string            `json:"status"`
+	Prefix                          string            `json:"prefix,omitempty"`
+	Tags                            map[string]string `json:"tags,omitempty"`
+	SizeGreaterThan                 int64             `json:"size_greater_than,omitempty"`
+	SizeLessThan                    int64             `json:"size_less_than,omitempty"`
+	ExpirationDays                  int               `json:"expiration_days,omitempty"`
+	ExpirationDate                  string            `json:"expiration_date,omitempty"`
+	ExpiredObjectDeleteMarker       bool              `json:"expired_object_delete_marker,omitempty"`
+	NoncurrentVersionExpirationDays int               `json:"noncurrent_version_expiration_days,omitempty"`
+	NewerNoncurrentVersions         int               `json:"newer_noncurrent_versions,omitempty"`
+	AbortMultipartDays              int               `json:"abort_multipart_days,omitempty"`
+}
+
+type BucketLifecycle struct {
+	Bucket string                `json:"bucket"`
+	Rules  []BucketLifecycleRule `json:"rules"`
+	XML    string                `json:"xml,omitempty"`
+}
+
 // ObjectStoreUser is defined in admin_data.go
 
 // Volume management structures

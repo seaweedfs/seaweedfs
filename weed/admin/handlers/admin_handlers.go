@@ -178,6 +178,7 @@ func (h *AdminHandlers) registerAPIRoutes(api *mux.Router, enforceWrite bool) {
 	s3Api.Handle("/buckets", wrapWrite(h.adminServer.CreateBucket)).Methods(http.MethodPost)
 	s3Api.Handle("/buckets/{bucket}", wrapWrite(h.adminServer.DeleteBucket)).Methods(http.MethodDelete)
 	s3Api.HandleFunc("/buckets/{bucket}", h.adminServer.ShowBucketDetails).Methods(http.MethodGet)
+	s3Api.HandleFunc("/buckets/{bucket}/lifecycle", h.adminServer.ShowBucketLifecycle).Methods(http.MethodGet)
 	s3Api.Handle("/buckets/{bucket}/quota", wrapWrite(h.adminServer.UpdateBucketQuota)).Methods(http.MethodPut)
 	s3Api.Handle("/buckets/{bucket}/owner", wrapWrite(h.adminServer.UpdateBucketOwner)).Methods(http.MethodPut)
 

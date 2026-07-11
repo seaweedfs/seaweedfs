@@ -933,6 +933,68 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 	return details, nil
 }
 
+// GetBucketLifecycle returns the lifecycle configuration stored on a bucket's filer entry
+func (s *AdminServer) GetBucketLifecycle(bucketName string) (*BucketLifecycle, error) {
+	filerConfig, err := s.getFilerConfig()
+	if err != nil {
+		glog.Warningf("Failed to get filer configuration, using defaults: %v", err)
+	}
+
+	lifecycle := &BucketLifecycle{
+		Bucket: bucketName,
+		Rules:  []BucketLifecycleRule{},
+	}
+
+	err = s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+			Directory: filerConfig.BucketsPath,
+			Name:      bucketName,
+		})
+		if err != nil {
+			return fmt.Errorf("bucket not found: %w", err)
+		}
+
+		xmlBytes := resp.Entry.Extended[scheduler.BucketLifecycleConfigurationXMLKey]
+		if len(xmlBytes) == 0 {
+			return nil
+		}
+		rules, err := lifecycle_xml.ParseCanonical(xmlBytes)
+		if err != nil {
+			return fmt.Errorf("parse lifecycle configuration: %w", err)
+		}
+		lifecycle.XML = string(xmlBytes)
+		for _, rule := range rules {
+			lifecycle.Rules = append(lifecycle.Rules, toBucketLifecycleRule(rule))
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return lifecycle, nil
+}
+
+func toBucketLifecycleRule(rule *s3lifecycle.Rule) BucketLifecycleRule {
+	out := BucketLifecycleRule{
+		ID:                              rule.ID,
+		Status:                          rule.Status,
+		Prefix:                          rule.Prefix,
+		Tags:                            rule.FilterTags,
+		SizeGreaterThan:                 rule.FilterSizeGreaterThan,
+		SizeLessThan:                    rule.FilterSizeLessThan,
+		ExpirationDays:                  rule.ExpirationDays,
+		ExpiredObjectDeleteMarker:       rule.ExpiredObjectDeleteMarker,
+		NoncurrentVersionExpirationDays: rule.NoncurrentVersionExpirationDays,
+		NewerNoncurrentVersions:         rule.NewerNoncurrentVersions,
+		AbortMultipartDays:              rule.AbortMPUDaysAfterInitiation,
+	}
+	if !rule.ExpirationDate.IsZero() {
+		out.ExpirationDate = rule.ExpirationDate.Format(time.DateOnly)
+	}
+	return out
+}
+
 // CreateS3Bucket creates a new S3 bucket
 func (s *AdminServer) CreateS3Bucket(bucketName string) error {
 	return s.CreateS3BucketWithQuota(bucketName, 0, false)
