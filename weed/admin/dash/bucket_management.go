@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -395,6 +396,14 @@ func (s *AdminServer) SetBucketQuota(bucketName string, quotaBytes int64, quotaE
 		})
 		if err != nil {
 			return fmt.Errorf("failed to update bucket quota: %w", err)
+		}
+
+		if quota <= 0 {
+			// with no active quota, quota enforcement can no longer clear a
+			// read-only flag it turned on, so lift it here
+			if _, err := filer.ClearBucketReadOnly(context.Background(), client, "/buckets", bucketName); err != nil {
+				return fmt.Errorf("failed to clear bucket read-only flag: %w", err)
+			}
 		}
 
 		return nil

@@ -161,3 +161,24 @@ func TestApplyBucketQuotaReadOnly(t *testing.T) {
 	_, changed = fc.ApplyBucketQuotaReadOnly(prefix, 50, 100)
 	assert.False(t, changed)
 }
+
+func TestClearReadOnly(t *testing.T) {
+	const prefix = "/buckets/b/"
+
+	fc := NewFilerConf()
+	assert.False(t, fc.ClearReadOnly(prefix), "no rule to clear")
+
+	// locked by quota enforcement, then quota removed: still clearable
+	fc.ApplyBucketQuotaReadOnly(prefix, 150, 100)
+	assert.True(t, fc.ClearReadOnly(prefix))
+	assert.False(t, fc.MatchStorageRule(prefix).ReadOnly)
+	assert.False(t, fc.ClearReadOnly(prefix), "already writable")
+
+	// clearing the flag keeps the rule's other settings
+	fc = NewFilerConf()
+	fc.SetLocationConf(&filer_pb.FilerConf_PathConf{LocationPrefix: prefix, Ttl: "7d", ReadOnly: true})
+	assert.True(t, fc.ClearReadOnly(prefix))
+	rule := fc.MatchStorageRule(prefix)
+	assert.False(t, rule.ReadOnly)
+	assert.Equal(t, "7d", rule.Ttl)
+}

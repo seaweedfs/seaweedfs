@@ -41,6 +41,9 @@ func (c *commandFsConfigure) Help() string {
 	# apply the changes
 	fs.configure -locationPrefix=/my/folder -collection=abc -apply
 
+	# example: unlock a bucket that quota enforcement made read-only
+	fs.configure -locationPrefix=/buckets/my_bucket/ -readOnly=false -apply
+
 	# delete the changes
 	fs.configure -locationPrefix=/my/folder -delete -apply
 
@@ -131,6 +134,21 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 			fc.DeleteLocationConf(*locationPrefix)
 		} else {
 			fc.AddLocationConf(locConf)
+			// AddLocationConf merges boolean fields with OR, which can never turn
+			// a flag off; let an explicitly passed false win, e.g. -readOnly=false
+			// to reopen a bucket that quota enforcement locked
+			if mergedConf, found := fc.GetLocationConf(*locationPrefix); found {
+				fsConfigureCommand.Visit(func(f *flag.Flag) {
+					switch f.Name {
+					case "readOnly":
+						mergedConf.ReadOnly = *isReadOnly
+					case "fsync":
+						mergedConf.Fsync = *fsync
+					case "worm":
+						mergedConf.Worm = *worm
+					}
+				})
+			}
 		}
 	}
 

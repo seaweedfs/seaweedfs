@@ -262,6 +262,44 @@ func (fc *FilerConf) ApplyBucketQuotaReadOnly(locationPrefix string, usedSize, q
 	return locConf.ReadOnly, true
 }
 
+// ClearReadOnly clears the read-only flag on the rule at exactly locationPrefix,
+// reporting whether the flag was set. This is the explicit unlock for a flag that
+// ApplyBucketQuotaReadOnly can no longer clear once the quota is gone.
+func (fc *FilerConf) ClearReadOnly(locationPrefix string) (changed bool) {
+	locConf, found := fc.GetLocationConf(locationPrefix)
+	if !found || !locConf.ReadOnly {
+		return false
+	}
+	locConf.ReadOnly = false
+	fc.SetLocationConf(locConf)
+	return true
+}
+
+// ClearBucketReadOnly lifts the read-only flag that quota enforcement may have
+// left on the bucket's path rule, saving the updated configuration back to the
+// filer. It reports whether anything was cleared.
+func ClearBucketReadOnly(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketsPath, bucketName string) (changed bool, err error) {
+	data, err := ReadInsideFiler(ctx, client, DirectoryEtcSeaweedFS, FilerConfName)
+	if err == filer_pb.ErrNotFound || (err == nil && len(data) == 0) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read %s/%s: %v", DirectoryEtcSeaweedFS, FilerConfName, err)
+	}
+	fc := NewFilerConf()
+	if err = fc.LoadFromBytes(data); err != nil {
+		return false, fmt.Errorf("parse %s/%s: %v", DirectoryEtcSeaweedFS, FilerConfName, err)
+	}
+	if !fc.ClearReadOnly(bucketsPath + "/" + bucketName + "/") {
+		return false, nil
+	}
+	var buf bytes.Buffer
+	if err = fc.ToText(&buf); err != nil {
+		return false, err
+	}
+	return true, SaveInsideFiler(ctx, client, DirectoryEtcSeaweedFS, FilerConfName, buf.Bytes())
+}
+
 func (fc *FilerConf) GetCollectionTtls(collection string) (ttls map[string]string) {
 	ttls = make(map[string]string)
 	fc.rules.Walk(func(key []byte, value *filer_pb.FilerConf_PathConf) bool {
