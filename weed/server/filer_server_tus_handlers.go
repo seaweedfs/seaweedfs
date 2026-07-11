@@ -76,6 +76,9 @@ func (fs *FilerServer) tusHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		session, err := fs.readTusSessionInfo(ctx, uploadID)
 		if err != nil {
+			// A transient filer error resolves to "not found"; log it so it is
+			// distinguishable from a genuinely missing session.
+			glog.V(1).Infof("TUS session %s not resolved: %v", uploadID, err)
 			writeTusSessionNotFound(w, r.Method)
 			return
 		}
@@ -84,6 +87,7 @@ func (fs *FilerServer) tusHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := fs.loadTusSessionChunks(ctx, session); err != nil {
+			glog.Errorf("Failed to load TUS session %s chunks: %v", uploadID, err)
 			writeTusSessionNotFound(w, r.Method)
 			return
 		}
