@@ -934,17 +934,51 @@ impl Store {
 
     /// Delete EC shard files from disk.
     pub fn delete_ec_shards(&mut self, vid: VolumeId, collection: &str, shard_ids: &[u32]) {
-        // Delete shard files from disk
-        for loc in &self.locations {
+        // Delete shard files from disk, tracking which locations actually held one.
+        let mut deleted_at = vec![false; self.locations.len()];
+        for (i, loc) in self.locations.iter().enumerate() {
             for &shard_id in shard_ids {
                 let shard = EcVolumeShard::new(&loc.directory, collection, vid, shard_id as u8);
-                let path = shard.file_name();
-                let _ = std::fs::remove_file(&path);
+                if std::fs::remove_file(shard.file_name()).is_ok() {
+                    deleted_at[i] = true;
+                }
             }
         }
 
         // Also unmount if mounted
         self.unmount_ec_shards(vid, shard_ids);
+
+        // Per-disk: when this delete removed the location's last shards, the local
+        // bitrot sidecar is orphaned — remove it (Go deleteEcShardIdsForEachLocation
+        // when found && existingShardCount == 0). The `deleted_at` gate keeps a
+        // delete that never touched a disk from stripping a sidecar it does not
+        // own: a shared -dir.idx sibling with surviving shards, or an ec.rebuild
+        // index-prep copy that lands .ecx/.ecsum before any shard.
+        for (i, loc) in self.locations.iter().enumerate() {
+            if !deleted_at[i] || Self::location_has_ec_shards(loc, collection, vid) {
+                continue;
+            }
+            let data_base =
+                crate::storage::volume::volume_file_name(&loc.directory, collection, vid);
+            let _ = crate::storage::erasure_coding::ec_bitrot::remove_bitrot_sidecars(&data_base);
+            if loc.idx_directory != loc.directory {
+                // A single -dir.idx is shared by every location: leave the idx-base
+                // sidecar alone while any sibling still holds shards of this volume.
+                let idx_in_use = self.locations.iter().any(|other| {
+                    other.idx_directory == loc.idx_directory
+                        && Self::location_has_ec_shards(other, collection, vid)
+                });
+                if !idx_in_use {
+                    let idx_base = crate::storage::volume::volume_file_name(
+                        &loc.idx_directory,
+                        collection,
+                        vid,
+                    );
+                    let _ =
+                        crate::storage::erasure_coding::ec_bitrot::remove_bitrot_sidecars(&idx_base);
+                }
+            }
+        }
 
         // If all shards are gone, remove .ecx and .ecj files from both idx and data dirs
         let all_gone = self.check_all_ec_shards_deleted(vid, collection);
@@ -952,28 +986,56 @@ impl Store {
             for loc in &self.locations {
                 let idx_base =
                     crate::storage::volume::volume_file_name(&loc.idx_directory, collection, vid);
+                let data_base =
+                    crate::storage::volume::volume_file_name(&loc.directory, collection, vid);
                 let _ = std::fs::remove_file(format!("{}.ecx", idx_base));
                 let _ = std::fs::remove_file(format!("{}.ecj", idx_base));
                 // Also try data directory in case .ecx/.ecj were created before -dir.idx
                 if loc.idx_directory != loc.directory {
-                    let data_base =
-                        crate::storage::volume::volume_file_name(&loc.directory, collection, vid);
                     let _ = std::fs::remove_file(format!("{}.ecx", data_base));
                     let _ = std::fs::remove_file(format!("{}.ecj", data_base));
                 }
+                // A shard-only disk also drops its stale .vif (Go
+                // removeEcSharedIndexFiles): a live .idx means this disk still
+                // hosts the source volume and the .vif belongs to it. Unexpected
+                // stat errors count as present so a transient failure never
+                // strips a live volume's .vif.
+                let has_idx = [&idx_base, &data_base].iter().any(|base| {
+                    match std::fs::metadata(format!("{}.idx", base)) {
+                        Ok(_) => true,
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+                        Err(_) => true,
+                    }
+                });
+                if !has_idx {
+                    let _ = std::fs::remove_file(format!("{}.vif", data_base));
+                }
             }
         }
+    }
+
+    /// True if `loc` still has any on-disk EC shard for this volume. An
+    /// unexpected stat error (permission, I/O) counts as "exists" so a
+    /// transient failure never classifies live shards as gone and deletes
+    /// their sidecar or shared index.
+    fn location_has_ec_shards(loc: &DiskLocation, collection: &str, vid: VolumeId) -> bool {
+        for shard_id in 0..MAX_SHARD_COUNT as u8 {
+            let shard = EcVolumeShard::new(&loc.directory, collection, vid, shard_id);
+            match std::fs::metadata(shard.file_name()) {
+                Ok(_) => return true,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => return true,
+            }
+        }
+        false
     }
 
     /// Check if all EC shard files have been deleted for a volume.
     /// Uses MAX_SHARD_COUNT to support non-standard EC configurations.
     fn check_all_ec_shards_deleted(&self, vid: VolumeId, collection: &str) -> bool {
         for loc in &self.locations {
-            for shard_id in 0..MAX_SHARD_COUNT as u8 {
-                let shard = EcVolumeShard::new(&loc.directory, collection, vid, shard_id);
-                if std::path::Path::new(&shard.file_name()).exists() {
-                    return false;
-                }
+            if Self::location_has_ec_shards(loc, collection, vid) {
+                return false;
             }
         }
         true
@@ -1679,6 +1741,116 @@ mod tests {
             Some(2),
             "placement leaked off the .ecx-owning disk; got {:?}",
             got,
+        );
+    }
+
+    /// Deleting a disk's last shard removes that disk's now-orphaned `.ecsum`;
+    /// a disk this delete never changed keeps its sidecar. Disk 0 models
+    /// ec.rebuild's index-prep state (`.ecsum` landed, no shards yet) — an
+    /// unrelated shard delete must not strip its just-copied protection.
+    #[test]
+    fn test_delete_ec_shards_sidecar_gated_on_local_delete() {
+        let (mut store, _tmp) = make_ec_target_test_store(2);
+        let collection = "c";
+        let vid = VolumeId(7);
+
+        let base0 = volume_file_name(&store.locations[0].directory, collection, vid);
+        let base1 = volume_file_name(&store.locations[1].directory, collection, vid);
+        std::fs::write(format!("{}.ecsum", base0), b"x").unwrap();
+        std::fs::write(format!("{}.ec00", base1), b"x").unwrap();
+        std::fs::write(format!("{}.ec01", base1), b"x").unwrap();
+        std::fs::write(format!("{}.ecsum", base1), b"x").unwrap();
+
+        // Disk 1 still has .ec01 afterwards: both sidecars survive.
+        store.delete_ec_shards(vid, collection, &[0]);
+        assert!(std::path::Path::new(&format!("{}.ecsum", base0)).exists());
+        assert!(std::path::Path::new(&format!("{}.ecsum", base1)).exists());
+
+        // Disk 1's last shard goes: its sidecar is orphaned and removed, but
+        // disk 0 was never touched by either delete and keeps its sidecar.
+        store.delete_ec_shards(vid, collection, &[1]);
+        assert!(!std::path::Path::new(&format!("{}.ec01", base1)).exists());
+        assert!(
+            !std::path::Path::new(&format!("{}.ecsum", base1)).exists(),
+            "orphaned sidecar should be removed with the disk's last shard"
+        );
+        assert!(
+            std::path::Path::new(&format!("{}.ecsum", base0)).exists(),
+            "a delete that removed nothing on this disk must not strip its sidecar"
+        );
+    }
+
+    /// With one -dir.idx shared by every location, emptying disk 0 must not
+    /// remove the idx-base sidecar while disk 1 still holds shards; it goes
+    /// only when the last location sharing the idx dir is emptied too.
+    #[test]
+    fn test_delete_ec_shards_preserves_shared_idx_sidecar() {
+        let tmp = TempDir::new().unwrap();
+        let idx = tmp.path().join("idx");
+        std::fs::create_dir_all(&idx).unwrap();
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        for i in 0..2 {
+            let path = tmp.path().join(format!("data{}", i));
+            std::fs::create_dir_all(&path).unwrap();
+            store
+                .add_location(
+                    path.to_str().unwrap(),
+                    idx.to_str().unwrap(),
+                    100,
+                    DiskType::HardDrive,
+                    MinFreeSpace::Percent(0.0),
+                    Vec::new(),
+                )
+                .unwrap();
+        }
+        let collection = "c";
+        let vid = VolumeId(7);
+
+        let base0 = volume_file_name(&store.locations[0].directory, collection, vid);
+        let base1 = volume_file_name(&store.locations[1].directory, collection, vid);
+        let idx_base = volume_file_name(&store.locations[0].idx_directory, collection, vid);
+        std::fs::write(format!("{}.ec00", base0), b"x").unwrap();
+        std::fs::write(format!("{}.ec01", base1), b"x").unwrap();
+        std::fs::write(format!("{}.ecsum", idx_base), b"x").unwrap();
+
+        store.delete_ec_shards(vid, collection, &[0]);
+        assert!(
+            std::path::Path::new(&format!("{}.ecsum", idx_base)).exists(),
+            "shared idx sidecar must survive while a sibling disk still has shards"
+        );
+
+        store.delete_ec_shards(vid, collection, &[1]);
+        assert!(
+            !std::path::Path::new(&format!("{}.ecsum", idx_base)).exists(),
+            "shared idx sidecar should go with the last location's last shard"
+        );
+    }
+
+    /// When the node's last shard goes, a shard-only disk also drops its stale
+    /// .vif (Go removeEcSharedIndexFiles); a disk with a live .idx still hosts
+    /// the source volume and keeps its .vif.
+    #[test]
+    fn test_delete_ec_shards_vif_removal_gated_on_idx() {
+        let (mut store, _tmp) = make_ec_target_test_store(2);
+        let collection = "c";
+        let vid = VolumeId(7);
+        let base0 = volume_file_name(&store.locations[0].directory, collection, vid);
+        let base1 = volume_file_name(&store.locations[1].directory, collection, vid);
+        std::fs::write(format!("{}.ec00", base0), b"x").unwrap();
+        std::fs::write(format!("{}.vif", base0), b"x").unwrap();
+        std::fs::write(format!("{}.ec01", base1), b"x").unwrap();
+        std::fs::write(format!("{}.vif", base1), b"x").unwrap();
+        std::fs::write(format!("{}.idx", base1), b"x").unwrap();
+
+        store.delete_ec_shards(vid, collection, &[0, 1]);
+
+        assert!(
+            !std::path::Path::new(&format!("{}.vif", base0)).exists(),
+            "shard-only disk should drop its stale .vif with the node's last shard"
+        );
+        assert!(
+            std::path::Path::new(&format!("{}.vif", base1)).exists(),
+            "a disk with a live .idx keeps its .vif"
         );
     }
 

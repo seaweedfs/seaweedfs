@@ -471,7 +471,7 @@ func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_se
 	// Pass 1: delete the requested shard files (and any now-orphaned per-disk bitrot
 	// sidecars) on every disk.
 	for diskId, location := range vs.store.Locations {
-		if err := deleteEcShardIdsForEachLocation(bName, location, req.ShardIds); err != nil {
+		if err := deleteEcShardIdsForEachLocation(bName, location, vs.store.Locations, req.ShardIds); err != nil {
 			glog.Errorf("deleteEcShards from disk_id:%d %s %s.%v: %v", diskId, location.Directory, bName, req.ShardIds, err)
 			return nil, err
 		}
@@ -508,7 +508,7 @@ func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_se
 	return &volume_server_pb.VolumeEcShardsDeleteResponse{}, nil
 }
 
-func deleteEcShardIdsForEachLocation(bName string, location *storage.DiskLocation, shardIds []uint32) error {
+func deleteEcShardIdsForEachLocation(bName string, location *storage.DiskLocation, locations []*storage.DiskLocation, shardIds []uint32) error {
 
 	found := false
 
@@ -546,7 +546,7 @@ func deleteEcShardIdsForEachLocation(bName string, location *storage.DiskLocatio
 		if err := removeBitrotSidecars(dataBaseFilename); err != nil {
 			return err
 		}
-		if location.IdxDirectory != location.Directory {
+		if location.IdxDirectory != location.Directory && !idxSidecarInUse(bName, location.IdxDirectory, locations) {
 			if err := removeBitrotSidecars(indexBaseFilename); err != nil {
 				return err
 			}
@@ -554,6 +554,21 @@ func deleteEcShardIdsForEachLocation(bName string, location *storage.DiskLocatio
 	}
 
 	return nil
+}
+
+// One -dir.idx serves every disk, so the idx-base sidecar is shared: it stays
+// while any disk using that idx directory still holds shards of this volume.
+// A status error counts as in-use so a transient failure never strips it early.
+func idxSidecarInUse(bName string, idxDirectory string, locations []*storage.DiskLocation) bool {
+	for _, other := range locations {
+		if other.IdxDirectory != idxDirectory {
+			continue
+		}
+		if _, _, count, err := checkEcVolumeStatus(bName, other); err != nil || count > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // removeEcSharedIndexFiles removes the shared .ecx/.ecj index (and the .vif when no
