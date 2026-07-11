@@ -58,6 +58,9 @@ func (c *commandVolumeTierUpload) Help() string {
 
 	The index file is still local, and the same O(1) disk read is applied to the remote file.
 
+	Each replica keeps its own local index pointing at the same remote object,
+	so the volume keeps its replica count for reads after tiering.
+
 `
 }
 
@@ -119,22 +122,7 @@ func doVolumeTierUpload(commandEnv *CommandEnv, writer io.Writer, collection str
 		return fmt.Errorf("collect topology info: %v", err)
 	}
 
-	var existingLocations []wdclient.Location
-	eachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
-		for _, disk := range dn.DiskInfos {
-			for _, vi := range disk.VolumeInfos {
-				if needle.VolumeId(vi.Id) == vid && (collection == "" || vi.Collection == collection) {
-					fmt.Printf("find volume %d from Url:%s, GrpcPort:%d, DC:%s\n", vid, dn.Id, dn.GrpcPort, string(dc))
-					existingLocations = append(existingLocations, wdclient.Location{
-						Url:        dn.Id,
-						PublicUrl:  dn.Id,
-						GrpcPort:   int(dn.GrpcPort),
-						DataCenter: string(dc),
-					})
-				}
-			}
-		}
-	})
+	existingLocations := collectVolumeTierUploadLocations(topoInfo, vid, collection, writer)
 
 	if len(existingLocations) == 0 {
 		if collection == "" {
@@ -157,23 +145,48 @@ func doVolumeTierUpload(commandEnv *CommandEnv, writer io.Writer, collection str
 	if keepLocalDatFile {
 		return nil
 	}
-	// now the first replica has the .idx and .vif files.
-	// ask replicas on other volume server to delete its own local copy
+	// Re-copy the uploaded replica's .idx/.vif onto the other replicas instead
+	// of deleting them: the remote object key lives only in the .vif, so losing
+	// the single server holding it would orphan the volume.
 	for i, location := range existingLocations {
 		if i == 0 {
 			continue
 		}
-		fmt.Printf("delete volume %d from Url:%s\n", vid, location.Url)
-		// Other replicas were never tier-uploaded; their .vif (if any) points
-		// to the same cloud key just written for this volume. Keep the remote
-		// object so the tier-uploaded replica still references valid data.
-		err = deleteVolume(commandEnv.option.GrpcDialOption, vid, location.ServerAddress(), false, true)
+		fmt.Fprintf(writer, "replicate remote volume %d metadata from %s to %s\n", vid, existingLocations[0].Url, location.Url)
+		err = replicateVolumeToServer(commandEnv.option.GrpcDialOption, writer, vid, existingLocations[0].ServerAddress(), location.ServerAddress(), "")
 		if err != nil {
-			return fmt.Errorf("deleteVolume %s volume %d: %v", location.Url, vid, err)
+			return fmt.Errorf("replicate volume %d from %s to %s: %v", vid, existingLocations[0].Url, location.Url, err)
 		}
 	}
 
 	return nil
+}
+
+// collectVolumeTierUploadLocations lists the replica locations of a volume,
+// putting an already-tiered replica first so a rerun after a partial failure
+// reuses its remote object instead of uploading a second copy.
+func collectVolumeTierUploadLocations(topoInfo *master_pb.TopologyInfo, vid needle.VolumeId, collection string, writer io.Writer) (existingLocations []wdclient.Location) {
+	eachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
+		for _, disk := range dn.DiskInfos {
+			for _, vi := range disk.VolumeInfos {
+				if needle.VolumeId(vi.Id) == vid && (collection == "" || vi.Collection == collection) {
+					fmt.Fprintf(writer, "find volume %d from Url:%s, GrpcPort:%d, DC:%s\n", vid, dn.Id, dn.GrpcPort, string(dc))
+					loc := wdclient.Location{
+						Url:        dn.Id,
+						PublicUrl:  dn.Id,
+						GrpcPort:   int(dn.GrpcPort),
+						DataCenter: string(dc),
+					}
+					if vi.RemoteStorageKey != "" {
+						existingLocations = append([]wdclient.Location{loc}, existingLocations...)
+					} else {
+						existingLocations = append(existingLocations, loc)
+					}
+				}
+			}
+		}
+	})
+	return
 }
 
 func uploadDatToRemoteTier(grpcDialOption grpc.DialOption, writer io.Writer, volumeId needle.VolumeId, collection string, sourceVolumeServer pb.ServerAddress, dest string, keepLocalDatFile bool) error {
