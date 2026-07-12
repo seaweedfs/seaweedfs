@@ -181,9 +181,14 @@ func (fs *FilerServer) saveTusSession(ctx context.Context, session *TusSession) 
 	return nil
 }
 
-// readTusSessionInfo reads and decodes a session's .info file without listing its
-// chunks, the cheap lookup the authorization check needs for the stored TargetPath.
+// readTusSessionInfo reads and validates a session's immutable .info metadata
+// without listing its chunks, the cheap lookup the authorization check needs for
+// the stored TargetPath. It rejects a metadata file whose id, target or size is
+// unusable so a corrupt or replaced session cannot be authorized or completed.
 func (fs *FilerServer) readTusSessionInfo(ctx context.Context, uploadID string) (*TusSession, error) {
+	if !isCanonicalTusUploadID(uploadID) {
+		return nil, fmt.Errorf("invalid TUS upload id: %q", uploadID)
+	}
 	infoPath := util.FullPath(fs.tusSessionInfoPath(uploadID))
 	entry, err := fs.filer.FindEntry(ctx, infoPath)
 	if err != nil {
@@ -197,18 +202,39 @@ func (fs *FilerServer) readTusSessionInfo(ctx context.Context, uploadID string) 
 	if err := json.Unmarshal(entry.Content, &session); err != nil {
 		return nil, fmt.Errorf("unmarshal session: %w", err)
 	}
+	if session.ID != uploadID {
+		return nil, fmt.Errorf("TUS session id mismatch: got %q, want %q", session.ID, uploadID)
+	}
+	target := canonicalTusTargetPath(session.TargetPath)
+	if target == "" || target == "/" {
+		return nil, fmt.Errorf("invalid TUS target path: %q", session.TargetPath)
+	}
+	if session.Size < 0 || session.Size > TusMaxSize {
+		return nil, fmt.Errorf("invalid TUS upload size: %d", session.Size)
+	}
+	// Pin authorization and every later operation to the same canonical path.
+	session.TargetPath = target
 	return &session, nil
 }
 
-// getTusSession retrieves a TUS session by upload ID, including chunks from directory listing
+// getTusSession retrieves a validated TUS session by upload ID, including its
+// chunks and current offset.
 func (fs *FilerServer) getTusSession(ctx context.Context, uploadID string) (*TusSession, error) {
 	session, err := fs.readTusSessionInfo(ctx, uploadID)
 	if err != nil {
 		return nil, err
 	}
+	if err := fs.loadTusSessionChunks(ctx, session); err != nil {
+		return nil, err
+	}
+	return session, nil
+}
 
+// loadTusSessionChunks refreshes a session's chunks and offset from its session
+// directory, leaving the immutable .info metadata untouched.
+func (fs *FilerServer) loadTusSessionChunks(ctx context.Context, session *TusSession) error {
 	// Load chunks from directory listing with pagination (atomic read, no race condition)
-	sessionDirPath := util.FullPath(fs.tusSessionPath(uploadID))
+	sessionDirPath := util.FullPath(fs.tusSessionPath(session.ID))
 	session.Chunks = nil
 	session.Offset = 0
 
@@ -217,7 +243,7 @@ func (fs *FilerServer) getTusSession(ctx context.Context, uploadID string) (*Tus
 	for {
 		entries, hasMore, err := fs.filer.ListDirectoryEntries(ctx, sessionDirPath, lastFileName, false, int64(pageSize), "", "", "")
 		if err != nil {
-			return nil, fmt.Errorf("list session directory: %w", err)
+			return fmt.Errorf("list session directory: %w", err)
 		}
 
 		for _, e := range entries {
@@ -258,7 +284,22 @@ func (fs *FilerServer) getTusSession(ctx context.Context, uploadID string) (*Tus
 		session.Offset = contiguousEnd
 	}
 
-	return session, nil
+	return nil
+}
+
+// refreshTusSessionChunks verifies the pinned session still exists and still
+// identifies the same upload before refreshing its chunk state, so a PATCH
+// cannot complete after a concurrent DELETE or metadata replacement and land at
+// a TargetPath other than the one that was authorized.
+func (fs *FilerServer) refreshTusSessionChunks(ctx context.Context, session *TusSession) error {
+	stored, err := fs.readTusSessionInfo(ctx, session.ID)
+	if err != nil {
+		return err
+	}
+	if stored.TargetPath != session.TargetPath || stored.Size != session.Size || !stored.CreatedAt.Equal(session.CreatedAt) {
+		return fmt.Errorf("TUS session identity changed: %s", session.ID)
+	}
+	return fs.loadTusSessionChunks(ctx, session)
 }
 
 // saveTusChunk stores the chunk info as a separate file entry

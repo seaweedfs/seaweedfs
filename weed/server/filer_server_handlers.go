@@ -216,66 +216,58 @@ func (fs *FilerServer) maybeCheckJwtAuthorization(r *http.Request, isWrite bool)
 		return true
 	}
 
-	return fs.checkJwtAuthorization(r, isWrite, func() ([]string, error) { return jwtScopedRequestPaths(r), nil })
+	return fs.checkJwtAuthorization(r, isWrite, jwtScopedRequestPaths(r))
 }
 
 // checkJwtAuthorization verifies the request carries a valid filer JWT for the
-// requested access level and, for prefix-restricted tokens, that every resolved
-// path falls within AllowedPrefixes. resolveScopedPaths is invoked only for a
-// prefix-restricted token, so callers that read extra state to name their target
-// (the TUS handler reads the session's stored path) pay for it only when it is
-// consulted; a resolution error denies the request.
-func (fs *FilerServer) checkJwtAuthorization(r *http.Request, isWrite bool, resolveScopedPaths func() ([]string, error)) bool {
+// requested access level and, for prefix-restricted tokens, that every path in
+// scopedPaths falls within AllowedPrefixes.
+func (fs *FilerServer) checkJwtAuthorization(r *http.Request, isWrite bool, scopedPaths []string) bool {
+	claims, ok := fs.authenticateFilerJwt(r, isWrite)
+	if !ok {
+		return false
+	}
+	return authorizeFilerJwtPaths(r, claims, scopedPaths)
+}
+
+// authenticateFilerJwt verifies the JWT signature and method claims. A nil claims
+// with ok true means authentication is disabled for this access level. Splitting
+// authentication from path authorization lets a handler load an indirect resource
+// (the TUS session target) only after the caller's credential is verified.
+func (fs *FilerServer) authenticateFilerJwt(r *http.Request, isWrite bool) (*security.SeaweedFilerClaims, bool) {
 
 	var signingKey security.SigningKey
-
 	if isWrite {
 		signingKey = fs.filerGuard.SigningKey()
-		if len(signingKey) == 0 {
-			return true
-		}
 	} else {
 		signingKey = fs.filerGuard.ReadSigningKey()
-		if len(signingKey) == 0 {
-			return true
-		}
+	}
+	if len(signingKey) == 0 {
+		return nil, true
 	}
 
 	tokenStr := security.GetJwt(r)
 	if tokenStr == "" {
 		glog.V(1).Infof("missing jwt from %s", r.RemoteAddr)
-		return false
+		return nil, false
 	}
 
 	token, err := security.DecodeJwt(signingKey, tokenStr, &security.SeaweedFilerClaims{})
 	if err != nil {
 		glog.V(1).Infof("jwt verification error from %s: %v", r.RemoteAddr, err)
-		return false
+		return nil, false
 	}
 	if !token.Valid {
 		glog.V(1).Infof("jwt invalid from %s: %v", r.RemoteAddr, tokenStr)
-		return false
+		return nil, false
 	}
 
 	claims, ok := token.Claims.(*security.SeaweedFilerClaims)
 	if !ok {
 		glog.V(1).Infof("jwt claims not of type *SeaweedFilerClaims from %s", r.RemoteAddr)
-		return false
+		return nil, false
 	}
 
-	if len(claims.AllowedPrefixes) > 0 {
-		scopedPaths, err := resolveScopedPaths()
-		if err != nil {
-			glog.V(1).Infof("jwt scope resolution failed from %s: %v", r.RemoteAddr, err)
-			return false
-		}
-		for _, p := range scopedPaths {
-			if !anyComponentPrefixMatches(claims.AllowedPrefixes, p) {
-				glog.V(1).Infof("jwt path not allowed from %s: %v", r.RemoteAddr, p)
-				return false
-			}
-		}
-	}
 	if len(claims.AllowedMethods) > 0 {
 		hasMethod := false
 		for _, method := range claims.AllowedMethods {
@@ -286,10 +278,30 @@ func (fs *FilerServer) checkJwtAuthorization(r *http.Request, isWrite bool, reso
 		}
 		if !hasMethod {
 			glog.V(1).Infof("jwt method not allowed from %s: %v", r.RemoteAddr, r.Method)
-			return false
+			return nil, false
 		}
 	}
 
+	return claims, true
+}
+
+// authorizeFilerJwtPaths checks the resource scope after authentication. A
+// prefix-restricted token must name at least one resource path; an empty list
+// fails closed, so a caller that cannot resolve its target never falls open.
+func authorizeFilerJwtPaths(r *http.Request, claims *security.SeaweedFilerClaims, scopedPaths []string) bool {
+	if claims == nil || len(claims.AllowedPrefixes) == 0 {
+		return true
+	}
+	if len(scopedPaths) == 0 {
+		glog.V(1).Infof("jwt resource path missing from %s", r.RemoteAddr)
+		return false
+	}
+	for _, p := range scopedPaths {
+		if !anyComponentPrefixMatches(claims.AllowedPrefixes, p) {
+			glog.V(1).Infof("jwt path not allowed from %s: %v", r.RemoteAddr, p)
+			return false
+		}
+	}
 	return true
 }
 
