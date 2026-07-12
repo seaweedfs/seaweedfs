@@ -57,12 +57,107 @@ func TestDoVolumeCheckDiskDoesNotResurrectAbsentNeedle(t *testing.T) {
 	// read, so this returns cleanly with no changes. On the pre-fix code the
 	// needle is queued and a source blob read is attempted, which has no server
 	// to reach and surfaces as an error (or a resurrection) instead.
-	hasChanges, err := vcd.doVolumeCheckDisk(sourceDB, targetDB, source, target)
+	hasChanges, err := vcd.doVolumeCheckDisk(sourceDB, targetDB, source, target, false, 0)
 	if err != nil {
 		t.Fatalf("doVolumeCheckDisk returned error: %v", err)
 	}
 	if hasChanges {
 		t.Fatalf("absent-on-target needle was resurrected; expected no changes")
+	}
+}
+
+// TestDoVolumeCheckDiskResurrectSkipsVacuumedTarget verifies that even with
+// -resurrectMissingNeedles, an absent needle is not pushed into a replica that
+// has been vacuumed (compaction revision > 0): the vacuum may have erased the
+// tombstone of a legitimate delete, so the absence proves nothing.
+func TestDoVolumeCheckDiskResurrectSkipsVacuumedTarget(t *testing.T) {
+	sourceDB, targetDB := needle_map.NewMemDb(), needle_map.NewMemDb()
+	defer sourceDB.Close()
+	defer targetDB.Close()
+
+	if err := sourceDB.Set(types.NeedleId(1001), types.ToOffset(8), types.Size(123)); err != nil {
+		t.Fatalf("seed source: %v", err)
+	}
+
+	var buf bytes.Buffer
+	vcd := &volumeCheckDisk{
+		commandEnv: &CommandEnv{
+			option: &ShellOptions{
+				GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+			},
+		},
+		writer:                  &buf,
+		now:                     time.Now(),
+		applyChanges:            false,
+		nonRepairThreshold:      1,
+		resurrectMissingNeedles: true,
+	}
+
+	source := &VolumeReplica{
+		location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "127.0.0.1:1"}},
+		info:     &master_pb.VolumeInformationMessage{Id: 7},
+	}
+	target := &VolumeReplica{
+		location: &location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "127.0.0.1:2"}},
+		info:     &master_pb.VolumeInformationMessage{Id: 7},
+	}
+
+	// resurrectAbsent=false with revision 2: the caller found the target vacuumed.
+	hasChanges, err := vcd.doVolumeCheckDisk(sourceDB, targetDB, source, target, false, 2)
+	if err != nil {
+		t.Fatalf("doVolumeCheckDisk returned error: %v", err)
+	}
+	if hasChanges {
+		t.Fatalf("absent needle was resurrected into a vacuumed replica; expected no changes")
+	}
+	if !bytes.Contains(buf.Bytes(), []byte("compaction revision 2")) {
+		t.Fatalf("expected skip message to mention the compaction revision, got: %s", buf.String())
+	}
+}
+
+// TestDoVolumeCheckDiskResurrectQueuesProvenMissingWrite verifies that with
+// -resurrectMissingNeedles and a never-vacuumed target, the absent needle is
+// treated as a missing write and queued for repair: the blob read against the
+// unreachable source server is attempted, which is only possible if the needle
+// passed the resurrection guard.
+func TestDoVolumeCheckDiskResurrectQueuesProvenMissingWrite(t *testing.T) {
+	sourceDB, targetDB := needle_map.NewMemDb(), needle_map.NewMemDb()
+	defer sourceDB.Close()
+	defer targetDB.Close()
+
+	if err := sourceDB.Set(types.NeedleId(1001), types.ToOffset(8), types.Size(123)); err != nil {
+		t.Fatalf("seed source: %v", err)
+	}
+
+	var buf bytes.Buffer
+	vcd := &volumeCheckDisk{
+		commandEnv: &CommandEnv{
+			option: &ShellOptions{
+				GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+			},
+		},
+		writer:                  &buf,
+		now:                     time.Now(),
+		applyChanges:            false,
+		nonRepairThreshold:      1,
+		resurrectMissingNeedles: true,
+	}
+
+	source := &VolumeReplica{
+		location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "127.0.0.1:1"}},
+		info:     &master_pb.VolumeInformationMessage{Id: 7},
+	}
+	target := &VolumeReplica{
+		location: &location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "127.0.0.1:2"}},
+		info:     &master_pb.VolumeInformationMessage{Id: 7},
+	}
+
+	_, err := vcd.doVolumeCheckDisk(sourceDB, targetDB, source, target, true, 0)
+	if err == nil {
+		t.Fatalf("expected blob read against unreachable source, got nil error (needle did not pass the guard?)")
+	}
+	if !bytes.Contains(buf.Bytes(), []byte("missed 1")) {
+		t.Fatalf("expected the absent needle to be counted as missed, got: %s", buf.String())
 	}
 }
 

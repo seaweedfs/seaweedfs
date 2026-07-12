@@ -46,8 +46,10 @@ type volumeCheckDisk struct {
 	// resurrectMissingNeedles controls whether a needle present on the source
 	// but entirely absent on the target is pushed back. Default false: an
 	// absent needle is indistinguishable from a vacuumed delete, so the safe
-	// default never raises deleted data. No caller sets this true today; it is
-	// the seam for a future tombstone-aware repair path.
+	// default never raises deleted data. Even when enabled, resurrection only
+	// happens into a replica whose compaction revision is 0: a never-vacuumed
+	// index still holds a tombstone for every delete it processed, so a needle
+	// absent there is provably a missing write.
 	resurrectMissingNeedles bool
 
 	ewg *ErrorWaitGroup
@@ -84,6 +86,9 @@ func (c *commandVolumeCheckDisk) Help() string {
 	  -fixReadOnly: also check and repair read-only volumes using uni-directional sync
 	  -syncDeleted: sync deletion records during repair
 	  -nonRepairThreshold: maximum fraction of missing keys allowed for repair (default 0.3)
+	  -resurrectMissingNeedles: copy needles absent on one replica back from the other, e.g. after replication failures.
+	    Only repairs replicas that were never vacuumed (compaction revision 0), where an absent needle is provably
+	    a missing write and not a vacuumed delete. Counts toward -nonRepairThreshold.
 
 `
 }
@@ -105,6 +110,7 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 	syncDeletions := fsckCommand.Bool("syncDeleted", false, "sync of deletions the fix")
 	maxParallelization := fsckCommand.Int("maxParallelization", DefaultMaxParallelization, "run up to X tasks in parallel, whenever possible")
 	nonRepairThreshold := fsckCommand.Float64("nonRepairThreshold", 0.3, "repair when missing keys is not more than this limit")
+	resurrectMissingNeedles := fsckCommand.Bool("resurrectMissingNeedles", false, "copy needles absent on one replica back from the other, only into never-vacuumed replicas (compaction revision 0)")
 	if err = fsckCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -127,6 +133,8 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 		syncDeletions:      *syncDeletions,
 		fixReadOnly:        *fixReadOnly,
 		nonRepairThreshold: *nonRepairThreshold,
+
+		resurrectMissingNeedles: *resurrectMissingNeedles,
 
 		ewg: NewErrorWaitGroup(*maxParallelization),
 	}
@@ -337,6 +345,21 @@ func (vcd *volumeCheckDisk) writeVerbose(format string, a ...any) {
 	}
 }
 
+// compactionRevision reads the live compaction revision of a volume replica.
+// Zero means the volume has never been vacuumed.
+func (vcd *volumeCheckDisk) compactionRevision(replica *VolumeReplica) (revision uint32, err error) {
+	err = operation.WithVolumeServerClient(false, pb.NewServerAddressFromDataNode(replica.location.dataNode), vcd.grpcDialOption(), func(client volume_server_pb.VolumeServerClient) error {
+		resp, reqErr := client.ReadVolumeFileStatus(context.Background(), &volume_server_pb.ReadVolumeFileStatusRequest{
+			VolumeId: replica.info.Id,
+		})
+		if resp != nil {
+			revision = resp.CompactionRevision
+		}
+		return reqErr
+	})
+	return
+}
+
 // getVolumeStatusFileCount retrieves the current file count and deleted file count
 // from a volume server via gRPC.
 func (vcd *volumeCheckDisk) getVolumeStatusFileCount(vid uint32, dn *master_pb.DataNodeInfo) (totalFileCount, deletedFileCount uint64, err error) {
@@ -485,9 +508,28 @@ func (vcd *volumeCheckDisk) checkBoth(source, target *VolumeReplica, bidi bool) 
 		return true, true, fmt.Errorf("readIndexDatabase %s volume %d: %w", target.location.dataNode.Id, target.info.Id, err)
 	}
 
+	// Resurrection is gated per direction on the receiving replica's compaction
+	// revision: only a never-vacuumed index (revision 0) proves an absent needle
+	// is a missing write rather than a vacuumed delete. The revision is read
+	// after the index snapshot above, so the proof covers the snapshot.
+	resurrectIntoTarget, resurrectIntoSource := false, false
+	var targetRevision, sourceRevision uint32
+	if vcd.resurrectMissingNeedles {
+		if targetRevision, err = vcd.compactionRevision(target); err != nil {
+			return true, true, fmt.Errorf("compactionRevision %s volume %d: %w", target.location.dataNode.Id, target.info.Id, err)
+		}
+		resurrectIntoTarget = targetRevision == 0
+		if bidi {
+			if sourceRevision, err = vcd.compactionRevision(source); err != nil {
+				return true, true, fmt.Errorf("compactionRevision %s volume %d: %w", source.location.dataNode.Id, source.info.Id, err)
+			}
+			resurrectIntoSource = sourceRevision == 0
+		}
+	}
+
 	// find and make up the differences
 	var errs []error
-	targetHasChanges, errTarget := vcd.doVolumeCheckDisk(sourceDB, targetDB, source, target)
+	targetHasChanges, errTarget := vcd.doVolumeCheckDisk(sourceDB, targetDB, source, target, resurrectIntoTarget, targetRevision)
 	if errTarget != nil {
 		errs = append(errs,
 			fmt.Errorf("doVolumeCheckDisk source:%s target:%s volume %d: %w",
@@ -496,7 +538,7 @@ func (vcd *volumeCheckDisk) checkBoth(source, target *VolumeReplica, bidi bool) 
 	sourceHasChanges = false
 	if bidi {
 		var errSource error
-		sourceHasChanges, errSource = vcd.doVolumeCheckDisk(targetDB, sourceDB, target, source)
+		sourceHasChanges, errSource = vcd.doVolumeCheckDisk(targetDB, sourceDB, target, source, resurrectIntoSource, sourceRevision)
 		if errSource != nil {
 			errs = append(errs,
 				fmt.Errorf("doVolumeCheckDisk source:%s target:%s volume %d: %w",
@@ -510,7 +552,7 @@ func (vcd *volumeCheckDisk) checkBoth(source, target *VolumeReplica, bidi bool) 
 	return sourceHasChanges, targetHasChanges, nil
 }
 
-func (vcd *volumeCheckDisk) doVolumeCheckDisk(minuend, subtrahend *needle_map.MemDb, source, target *VolumeReplica) (hasChanges bool, err error) {
+func (vcd *volumeCheckDisk) doVolumeCheckDisk(minuend, subtrahend *needle_map.MemDb, source, target *VolumeReplica, resurrectAbsent bool, targetRevision uint32) (hasChanges bool, err error) {
 
 	// find missing keys
 	// hash join, can be more efficient
@@ -533,9 +575,10 @@ func (vcd *volumeCheckDisk) doVolumeCheckDisk(minuend, subtrahend *needle_map.Me
 			// vacuum watermark, so it cannot distinguish the two. Without
 			// positive proof the absence is a missing write (rather than a
 			// vacuumed delete), the safe default is to NOT resurrect: a real
-			// missing write may go unrepaired until a tombstone-aware path
-			// exists, but we never raise back data the operator deleted.
-			if !vcd.resurrectMissingNeedles {
+			// missing write may go unrepaired, but we never raise back data
+			// the operator deleted. resurrectAbsent carries that proof: the
+			// caller sets it only when the target was never vacuumed.
+			if !resurrectAbsent {
 				skippedAbsentNeedles++
 				return nil
 			}
@@ -549,8 +592,13 @@ func (vcd *volumeCheckDisk) doVolumeCheckDisk(minuend, subtrahend *needle_map.Me
 	})
 
 	if skippedAbsentNeedles > 0 {
-		vcd.write("volume %d %s: not resurrecting %d needle(s) absent on %s (cannot prove they are missing writes vs vacuumed deletes)",
-			source.info.Id, source.location.dataNode.Id, skippedAbsentNeedles, target.location.dataNode.Id)
+		if vcd.resurrectMissingNeedles {
+			vcd.write("volume %d %s: not resurrecting %d needle(s) absent on %s (compaction revision %d: a vacuum may have erased deleted needles there)",
+				source.info.Id, source.location.dataNode.Id, skippedAbsentNeedles, target.location.dataNode.Id, targetRevision)
+		} else {
+			vcd.write("volume %d %s: not resurrecting %d needle(s) absent on %s (cannot prove they are missing writes vs vacuumed deletes)",
+				source.info.Id, source.location.dataNode.Id, skippedAbsentNeedles, target.location.dataNode.Id)
+		}
 	}
 
 	vcd.write("volume %d %s has %d entries, %s missed %d and partially deleted %d entries",
