@@ -1925,13 +1925,16 @@ impl Volume {
         }
 
         // Slow path: scan the whole .idx for the entry at the maximum offset.
+        // Tombstone entries are not skipped: a trailing deletion is a real
+        // on-disk record and can be the needle physically last in the .dat.
         let mut max_entry_pos: i64 = -1;
         let mut max_actual_offset: i64 = -1;
         let mut entry_pos: i64 = 0;
         let mut buf = [0u8; NEEDLE_MAP_ENTRY_SIZE];
         idx_file.seek(SeekFrom::Start(0))?;
+        let mut reader = io::BufReader::new(idx_file);
         while entry_pos < idx_size {
-            idx_file.read_exact(&mut buf)?;
+            reader.read_exact(&mut buf)?;
             let (_, offset, _) = idx_entry_from_bytes(&buf);
             if !offset.is_zero() {
                 let ao = offset.to_actual_offset();
