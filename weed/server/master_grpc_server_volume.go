@@ -204,20 +204,9 @@ func (ms *MasterServer) Statistics(ctx context.Context, req *master_pb.Statistic
 		return nil, raft.NotLeaderError
 	}
 
-	if req.Replication == "" {
-		req.Replication = ms.option.DefaultReplicaPlacement
-	}
-	replicaPlacement, err := super_block.NewReplicaPlacementFromString(req.Replication)
-	if err != nil {
-		return nil, err
-	}
-	ttl, err := needle.ReadTTL(req.Ttl)
-	if err != nil {
-		return nil, err
-	}
-
-	volumeLayout := ms.Topo.GetVolumeLayout(req.Collection, replicaPlacement, ttl, types.ToDiskType(req.DiskType))
-	stats := volumeLayout.Stats()
+	// an empty collection means all collections, and a named collection covers
+	// all its layouts, so used size matches the topology-wide total size below
+	stats := ms.Topo.CollectionVolumeStats(req.Collection)
 	totalSize := ms.Topo.GetDiskUsages().GetMaxVolumeCount() * int64(ms.option.VolumeSizeLimitMB) * 1024 * 1024
 	resp := &master_pb.StatisticsResponse{
 		TotalSize: uint64(totalSize),

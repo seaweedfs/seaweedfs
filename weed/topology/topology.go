@@ -431,6 +431,29 @@ func (t *Topology) GetVolumeLayout(collectionName string, rp *super_block.Replic
 	}).(*Collection).GetOrCreateVolumeLayout(rp, ttl, diskType)
 }
 
+// CollectionVolumeStats aggregates stats across all volume layouts of one
+// collection, or across every collection when collectionName is empty.
+func (t *Topology) CollectionVolumeStats(collectionName string) *VolumeLayoutStats {
+	ret := &VolumeLayoutStats{}
+	var collections []*Collection
+	if collectionName == "" {
+		for _, c := range t.collectionMap.Items() {
+			collections = append(collections, c.(*Collection))
+		}
+	} else if c, found := t.FindCollection(collectionName); found {
+		collections = append(collections, c)
+	}
+	for _, c := range collections {
+		for _, vl := range c.GetAllVolumeLayouts() {
+			stats := vl.Stats()
+			ret.TotalSize += stats.TotalSize
+			ret.UsedSize += stats.UsedSize
+			ret.FileCount += stats.FileCount
+		}
+	}
+	return ret
+}
+
 func (t *Topology) ListCollections(includeNormalVolumes, includeEcVolumes bool) (ret []string) {
 	found := make(map[string]bool)
 
