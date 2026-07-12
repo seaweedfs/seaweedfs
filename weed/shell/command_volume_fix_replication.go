@@ -260,7 +260,7 @@ func checkOneVolume(a *VolumeReplica, b *VolumeReplica, writer io.Writer, comman
 	if err := vcd.readIndexDatabase(bDB, b.info.Collection, b.info.Id, pb.NewServerAddressFromDataNode(b.location.dataNode)); err != nil {
 		return fmt.Errorf("readIndexDatabase %s volume %d: %v", b.location.dataNode, b.info.Id, err)
 	}
-	if _, err = vcd.doVolumeCheckDisk(aDB, bDB, a, b); err != nil {
+	if _, err = vcd.doVolumeCheckDisk(aDB, bDB, a, b, false, 0); err != nil {
 		return fmt.Errorf("doVolumeCheckDisk source:%s target:%s volume %d: %v", a.location.dataNode.Id, b.location.dataNode.Id, a.info.Id, err)
 	}
 	return
