@@ -50,7 +50,7 @@ require (
 	github.com/kurin/blazer v0.5.3
 	github.com/linxGnu/grocksdb v1.10.8
 	github.com/mailru/easyjson v0.9.1 // indirect
-	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/olivere/elastic/v7 v7.0.32
@@ -147,7 +147,7 @@ require (
 	github.com/rclone/rclone v1.74.3
 	github.com/rdleal/intervalst v1.5.0
 	github.com/redis/go-redis/v9 v9.21.0
-	github.com/schollz/progressbar/v3 v3.19.0
+	github.com/schollz/progressbar/v3 v3.19.1
 	github.com/seaweedfs/go-fuse/v2 v2.9.3
 	github.com/shirou/gopsutil/v4 v4.26.5
 	github.com/tarantool/go-tarantool/v2 v2.4.2
