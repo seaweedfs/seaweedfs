@@ -119,6 +119,23 @@ func EcShardsTotalSize(vi *master_pb.VolumeEcShardInformationMessage) int64 {
 	return total
 }
 
+// EcShardsVolumeDataShards returns the number of data shards for the EC volume
+// described by vi. Open-source SeaweedFS always uses the fixed 10+4 layout, so
+// this returns DataShardsCount. It is defined as a per-volume accessor (rather
+// than referencing DataShardsCount directly at every call site) so callers such
+// as ec.check.replication stay correct when a build derives the ratio per volume instead
+// of from the global constant.
+func EcShardsVolumeDataShards(vi *master_pb.VolumeEcShardInformationMessage) int {
+	return DataShardsCount
+}
+
+// EcShardsVolumeParityShards returns the number of parity shards for the EC
+// volume described by vi. As with EcShardsVolumeDataShards, open-source
+// SeaweedFS uses the fixed 10+4 layout, so this returns ParityShardsCount.
+func EcShardsVolumeParityShards(vi *master_pb.VolumeEcShardInformationMessage) int {
+	return ParityShardsCount
+}
+
 // EcShardsDataSize returns the sum of sizes for data shards only (parity
 // shards excluded). Data shards are those with id < dataShards; all higher
 // shard ids are treated as parity. Passing dataShards <= 0 falls back to
