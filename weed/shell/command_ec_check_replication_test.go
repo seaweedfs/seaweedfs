@@ -246,3 +246,44 @@ Shards map for over-replicated EC volume 20 (15/14 shards):
 		t.Errorf("unexpected shard:\n got: %q\nwant: %q", got, want)
 	}
 }
+
+// TestEcCheckReplicationMixedAnomalies verifies that a volume with both a missing
+// shard and a duplicated shard is reported in both lists. Volume 30 has shard 5
+// missing everywhere (under-replicated) and shard 0 on two nodes (over-replicated).
+func TestEcCheckReplicationMixedAnomalies(t *testing.T) {
+	nodes := []*master_pb.DataNodeInfo{
+		{
+			Address: "nodeA",
+			DiskInfos: map[string]*master_pb.DiskInfo{
+				"d1": {
+					EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{
+						{Id: 30, EcIndexBits: 0b11111111011111}, // shards 0..13 except 5
+					},
+				},
+			},
+		},
+		{
+			Address: "nodeB",
+			DiskInfos: map[string]*master_pb.DiskInfo{
+				"d2": {
+					EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{
+						{Id: 30, EcIndexBits: 0b00000000000001}, // duplicate of shard 0
+					},
+				},
+			},
+		},
+	}
+
+	want := `Found 1/1 under-replicated EC volumes: [30]
+Found 1/1 over-replicated EC volumes: [30]
+`
+
+	var buf bytes.Buffer
+	runner := &ecCheckReplicationRunner{writer: &buf, dataNodes: nodes}
+	if err := runner.checkEcVolumes(false); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := buf.String(); got != want {
+		t.Errorf("mixed anomalies:\n got: %q\nwant: %q", got, want)
+	}
+}

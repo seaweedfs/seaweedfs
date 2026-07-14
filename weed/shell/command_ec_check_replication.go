@@ -221,11 +221,13 @@ func (r *ecCheckReplicationRunner) checkEcVolumes(showDetails bool) error {
 			over = true
 		}
 
+		// under- and over-replication are independent problems (missing shards risk
+		// data loss, redundant shards waste space), so a volume exhibiting both is
+		// reported in both lists.
 		if under {
 			underreplicatedVolumeIDs = append(underreplicatedVolumeIDs, vid)
-		} else if over {
-			// don't flag EC volumes as over-replicated if some shards are missing,
-			// regardless of others being repeated.
+		}
+		if over {
 			overreplicatedVolumeIDs = append(overreplicatedVolumeIDs, vid)
 		}
 	}
