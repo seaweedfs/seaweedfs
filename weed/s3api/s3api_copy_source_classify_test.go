@@ -24,14 +24,14 @@ func TestClassifyCopySourceError(t *testing.T) {
 		want  s3err.ErrorCode
 	}{
 		{"regular entry", &filer_pb.Entry{Name: "o"}, nil, s3err.ErrNone},
-		{"nil entry", nil, nil, s3err.ErrInvalidCopySource},
-		{"directory entry", &filer_pb.Entry{IsDirectory: true}, nil, s3err.ErrInvalidCopySource},
+		{"nil entry", nil, nil, s3err.ErrNoSuchKey},
+		{"directory entry", &filer_pb.Entry{IsDirectory: true}, nil, s3err.ErrNoSuchKey},
 		{"delete marker entry", deleteMarker, nil, s3err.ErrNoSuchKey},
-		{"not found sentinel", nil, filer_pb.ErrNotFound, s3err.ErrInvalidCopySource},
-		{"wrapped not found", nil, fmt.Errorf("read %s: %w", "o", filer_pb.ErrNotFound), s3err.ErrInvalidCopySource},
-		{"grpc not found", nil, status.Error(codes.NotFound, "no entry"), s3err.ErrInvalidCopySource},
-		{"invalid version id", nil, errInvalidVersionID, s3err.ErrInvalidCopySource},
-		{"delete marker error", nil, ErrDeleteMarker, s3err.ErrInvalidCopySource},
+		{"not found sentinel", nil, filer_pb.ErrNotFound, s3err.ErrNoSuchKey},
+		{"wrapped not found", nil, fmt.Errorf("read %s: %w", "o", filer_pb.ErrNotFound), s3err.ErrNoSuchKey},
+		{"grpc not found", nil, status.Error(codes.NotFound, "no entry"), s3err.ErrNoSuchKey},
+		{"invalid version id", nil, errInvalidVersionID, s3err.ErrNoSuchKey},
+		{"delete marker error", nil, ErrDeleteMarker, s3err.ErrNoSuchKey},
 		{"transient unavailable", nil, status.Error(codes.Unavailable, "filer down"), s3err.ErrServiceUnavailable},
 		{"store error", nil, errors.New("connection reset"), s3err.ErrInternalError},
 		// A message merely mentioning the sentinel text must not downgrade a store error.

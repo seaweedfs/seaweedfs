@@ -69,16 +69,14 @@ func hasPrefixFold(s, prefix string) bool {
 	return len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix)
 }
 
-// classifyCopySourceError maps a copy-source lookup to an S3 error: a missing,
-// invalid, or directory source stays a client error, but a transient store
-// error becomes a retryable 5xx so a resumable copy/commit survives a blip.
+// classifyCopySourceError maps a copy-source lookup to an S3 error: a missing
+// or directory source is NoSuchKey like AWS, but a transient store error
+// becomes a retryable 5xx so a resumable copy/commit survives a blip.
 func classifyCopySourceError(entry *filer_pb.Entry, err error) s3err.ErrorCode {
 	if err == nil {
 		if entry == nil || entry.IsDirectory {
-			return s3err.ErrInvalidCopySource
+			return s3err.ErrNoSuchKey
 		}
-		// The latest-version pointer tracks delete markers too; copying one
-		// must be NoSuchKey like every other handler, not a copy of the stub.
 		if deleteMarker, ok := entry.Extended[s3_constants.ExtDeleteMarkerKey]; ok && string(deleteMarker) == "true" {
 			return s3err.ErrNoSuchKey
 		}
@@ -86,7 +84,7 @@ func classifyCopySourceError(entry *filer_pb.Entry, err error) s3err.ErrorCode {
 	}
 	if errors.Is(err, filer_pb.ErrNotFound) || status.Code(err) == codes.NotFound ||
 		errors.Is(err, errInvalidVersionID) || errors.Is(err, ErrDeleteMarker) {
-		return s3err.ErrInvalidCopySource
+		return s3err.ErrNoSuchKey
 	}
 	if isTransientFilerError(err) {
 		return s3err.ErrServiceUnavailable
