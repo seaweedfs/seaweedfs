@@ -10,6 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // GetObjectAclHandler Get object ACL
@@ -268,35 +269,7 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Calculate the correct directory for ACL update
-	var updateDirectory string
-
-	if versioningConfigured {
-		if versionId != "" && versionId != "null" {
-			// Versioned object - update the specific version file in .versions directory
-			updateDirectory = s3a.bucketDir(bucket) + "/" + object + s3_constants.VersionsFolder
-		} else {
-			// Latest version in versioned bucket - could be null version or versioned object
-			// Extract version ID from the entry to determine where it's stored
-			var actualVersionId string
-			if entry.Extended != nil {
-				if versionIdBytes, exists := entry.Extended[s3_constants.ExtVersionIdKey]; exists {
-					actualVersionId = string(versionIdBytes)
-				}
-			}
-
-			if actualVersionId == "null" || actualVersionId == "" {
-				// Null version (pre-versioning object) - stored as regular file
-				updateDirectory = s3a.bucketDir(bucket)
-			} else {
-				// Versioned object - stored in .versions directory
-				updateDirectory = s3a.bucketDir(bucket) + "/" + object + s3_constants.VersionsFolder
-			}
-		}
-	} else {
-		// Non-versioned object - stored as regular file
-		updateDirectory = s3a.bucketDir(bucket)
-	}
+	updateDirectory := s3a.objectAclUpdateDirectory(bucket, object, versioningConfigured, versionId, entry)
 
 	// Update the object with new ACL metadata
 	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
@@ -319,4 +292,27 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 
 	glog.V(3).Infof("PutObjectAclHandler: Successfully updated ACL for %s/%s by user %s", bucket, object, amzAccountId)
 	writeSuccessResponseEmpty(w, r)
+}
+
+// objectAclUpdateDirectory returns the filer directory holding the entry a PutObjectAcl
+// update must target. A regular object lives under its full key's parent directory, so a
+// nested key must not fall back to the bucket root, which would rewrite a different object
+// sharing the same basename.
+func (s3a *S3ApiServer) objectAclUpdateDirectory(bucket, object string, versioningConfigured bool, versionId string, entry *filer_pb.Entry) string {
+	if versioningConfigured {
+		if versionId != "" && versionId != "null" {
+			return s3a.bucketDir(bucket) + "/" + object + s3_constants.VersionsFolder
+		}
+		var actualVersionId string
+		if entry.Extended != nil {
+			if versionIdBytes, exists := entry.Extended[s3_constants.ExtVersionIdKey]; exists {
+				actualVersionId = string(versionIdBytes)
+			}
+		}
+		if actualVersionId != "null" && actualVersionId != "" {
+			return s3a.bucketDir(bucket) + "/" + object + s3_constants.VersionsFolder
+		}
+	}
+	dir, _ := util.NewFullPath(s3a.bucketDir(bucket), object).DirAndName()
+	return dir
 }
