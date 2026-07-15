@@ -449,3 +449,29 @@ func TestReadLogFileRefsSingleFilerNotFoundSkips(t *testing.T) {
 		t.Fatalf("expected %d events after skipping one file, got %d", want, count)
 	}
 }
+
+// TestProcessOneLogEntrySkipsInvalidUTF8 guards that an event whose string field
+// is not valid UTF-8 is rejected by proto.Unmarshal and never reaches path
+// filtering or the consumer. UnmarshalVT would accept it, so the decode here
+// must stay on proto.Unmarshal.
+func TestProcessOneLogEntrySkipsInvalidUTF8(t *testing.T) {
+	// SubscribeMetadataResponse{Directory: "\xff"}: field 1 (string), wire type 2,
+	// length 1, byte 0xff — a syntactically valid message with an invalid-UTF-8
+	// string, which proto3 forbids.
+	logEntry := &filer_pb.LogEntry{Data: []byte{0x0a, 0x01, 0xff}}
+
+	called := false
+	tsNs, err := processOneLogEntry(logEntry, PathFilter{PathPrefix: "/"}, func(resp *filer_pb.SubscribeMetadataResponse) error {
+		called = true
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("processOneLogEntry err = %v, want nil (corrupt entries are skipped)", err)
+	}
+	if called {
+		t.Fatal("consumer was invoked for a malformed (invalid UTF-8) event; validation was bypassed")
+	}
+	if tsNs != 0 {
+		t.Fatalf("tsNs = %d, want 0 for a skipped entry", tsNs)
+	}
+}

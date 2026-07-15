@@ -142,6 +142,45 @@ func TestVTWireCompatibility(t *testing.T) {
 	}
 }
 
+// TestUTF8Validation documents the deliberate UTF-8 difference between the two
+// decoders. UnmarshalVT skips proto3's UTF-8 validation for string fields, so
+// the metadata delivery paths keep decoding SubscribeMetadataResponse with
+// proto.Unmarshal; only LogEntry (bytes-only) decodes use UnmarshalVT.
+func TestUTF8Validation(t *testing.T) {
+	// SubscribeMetadataResponse{Directory: "\xff"}: field 1 (string), wire type 2,
+	// length 1, byte 0xff.
+	malformed := []byte{0x0a, 0x01, 0xff}
+
+	var viaProto SubscribeMetadataResponse
+	if err := proto.Unmarshal(malformed, &viaProto); err == nil {
+		t.Fatal("proto.Unmarshal accepted invalid UTF-8 in a string field; expected rejection")
+	}
+
+	var viaVT SubscribeMetadataResponse
+	if err := viaVT.UnmarshalVT(malformed); err != nil {
+		t.Fatalf("UnmarshalVT rejected invalid UTF-8: %v", err)
+	}
+	if viaVT.Directory != "\xff" {
+		t.Fatalf("UnmarshalVT Directory = %q, want \\xff", viaVT.Directory)
+	}
+
+	// LogEntry carries only bytes fields, so the decoders agree on arbitrary bytes;
+	// that is why the log entry decode paths can use UnmarshalVT.
+	// LogEntry{Data: "\xff"}: field 3 (bytes), wire type 2, length 1, byte 0xff.
+	leBytes := []byte{0x1a, 0x01, 0xff}
+	var leProto LogEntry
+	if err := proto.Unmarshal(leBytes, &leProto); err != nil {
+		t.Fatalf("proto.Unmarshal LogEntry: %v", err)
+	}
+	var leVT LogEntry
+	if err := leVT.UnmarshalVT(leBytes); err != nil {
+		t.Fatalf("UnmarshalVT LogEntry: %v", err)
+	}
+	if !proto.Equal(&leProto, &leVT) {
+		t.Fatal("LogEntry proto/VT decode of a bytes field diverged")
+	}
+}
+
 var chunkCounts = []int{1, 8, 32, 128}
 
 // BenchmarkUnmarshal is the decode hot path: each subscriber decodes every

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 
+	"google.golang.org/protobuf/proto"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -234,7 +236,9 @@ func readFilerFilesToChannel(
 
 func processOneLogEntry(logEntry *filer_pb.LogEntry, filter PathFilter, processEventFn ProcessMetadataFunc) (int64, error) {
 	event := &filer_pb.SubscribeMetadataResponse{}
-	if err := event.UnmarshalVT(logEntry.Data); err != nil {
+	// proto.Unmarshal (not UnmarshalVT) validates UTF-8 in string fields, so
+	// malformed metadata is skipped here instead of reaching path filtering.
+	if err := proto.Unmarshal(logEntry.Data, event); err != nil {
 		glog.Errorf("unmarshal log entry: %v", err)
 		return 0, nil // skip corrupt entries
 	}
