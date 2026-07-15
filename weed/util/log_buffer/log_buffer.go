@@ -15,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 )
 
 const BufferSize = 8 * 1024 * 1024
@@ -34,7 +35,7 @@ var (
 type dataToFlush struct {
 	startTime time.Time
 	stopTime  time.Time
-	data      *bytes.Buffer
+	data      []byte // slab from mem.Allocate; returned via mem.Free after flush
 	minOffset int64
 	maxOffset int64
 	done      chan struct{} // Signal when flush completes
@@ -541,7 +542,7 @@ func (logBuffer *LogBuffer) loopFlush() {
 		if d == nil {
 			break // shutdown sentinel
 		}
-		logBuffer.flushFn(logBuffer, d.startTime, d.stopTime, d.data.Bytes(), d.minOffset, d.maxOffset)
+		logBuffer.flushFn(logBuffer, d.startTime, d.stopTime, d.data, d.minOffset, d.maxOffset)
 		d.releaseMemory()
 		// local logbuffer is different from aggregate logbuffer here
 		if d.maxOffset >= 0 {
@@ -711,8 +712,8 @@ func (logBuffer *LogBuffer) SetLastFlushTsNs(ts int64) {
 }
 
 func (d *dataToFlush) releaseMemory() {
-	d.data.Reset()
-	bufferPool.Put(d.data)
+	mem.Free(d.data)
+	d.data = nil
 }
 
 // ReadFromBuffer returns the in-memory log data at lastReadPosition. isPooled
@@ -958,11 +959,14 @@ var bufferPool = sync.Pool{
 	},
 }
 
-func copiedBytes(buf []byte) (copied *bytes.Buffer) {
-	copied = bufferPool.Get().(*bytes.Buffer)
-	copied.Reset()
-	copied.Write(buf)
-	return
+// copiedBytes returns a private copy of buf backed by the shared, size-classed
+// slab pool. The caller owns it until mem.Free (see dataToFlush.releaseMemory),
+// so the live buffer never outlives the flush. Routing through mem reuses slabs
+// across the process instead of reallocating a window-sized array per flush.
+func copiedBytes(buf []byte) []byte {
+	copied := mem.Allocate(len(buf))
+	copy(copied, buf)
+	return copied
 }
 
 // sharedBufferView wraps the sealed window's shared snapshot from pos onward.
