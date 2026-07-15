@@ -269,7 +269,7 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	updateDirectory := s3a.objectAclUpdateDirectory(bucket, object, versioningConfigured, versionId, entry)
+	updateDirectory := s3a.objectMetadataUpdateDirectory(bucket, object, versioningConfigured, versionId, entry)
 
 	// Update the object with new ACL metadata
 	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
@@ -294,11 +294,11 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 	writeSuccessResponseEmpty(w, r)
 }
 
-// objectAclUpdateDirectory returns the filer directory holding the entry a PutObjectAcl
-// update must target. A regular object lives under its full key's parent directory, so a
-// nested key must not fall back to the bucket root, which would rewrite a different object
-// sharing the same basename.
-func (s3a *S3ApiServer) objectAclUpdateDirectory(bucket, object string, versioningConfigured bool, versionId string, entry *filer_pb.Entry) string {
+// objectMetadataUpdateDirectory returns the filer directory holding the entry an in-place
+// metadata update (ACL or tags) must target. A regular object lives under its full key's
+// parent directory, so a nested key must not fall back to the bucket root, which would
+// rewrite a different object sharing the same basename.
+func (s3a *S3ApiServer) objectMetadataUpdateDirectory(bucket, object string, versioningConfigured bool, versionId string, entry *filer_pb.Entry) string {
 	if versioningConfigured {
 		if versionId != "" && versionId != "null" {
 			return s3a.bucketDir(bucket) + "/" + object + s3_constants.VersionsFolder
