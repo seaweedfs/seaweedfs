@@ -712,8 +712,13 @@ func (logBuffer *LogBuffer) SetLastFlushTsNs(ts int64) {
 }
 
 func (d *dataToFlush) releaseMemory() {
-	mem.Free(d.data)
-	d.data = nil
+	// Guard nil: mem.Free(nil) would put a zero-cap slice into the smallest slot
+	// pool, so a later Allocate could hand back nil and panic. Also makes a double
+	// release harmless.
+	if d.data != nil {
+		mem.Free(d.data)
+		d.data = nil
+	}
 }
 
 // ReadFromBuffer returns the in-memory log data at lastReadPosition. isPooled
