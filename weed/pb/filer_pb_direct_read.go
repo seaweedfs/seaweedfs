@@ -8,8 +8,6 @@ import (
 	"strings"
 	"sync"
 
-	"google.golang.org/protobuf/proto"
-
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -236,7 +234,7 @@ func readFilerFilesToChannel(
 
 func processOneLogEntry(logEntry *filer_pb.LogEntry, filter PathFilter, processEventFn ProcessMetadataFunc) (int64, error) {
 	event := &filer_pb.SubscribeMetadataResponse{}
-	if err := proto.Unmarshal(logEntry.Data, event); err != nil {
+	if err := event.UnmarshalVT(logEntry.Data); err != nil {
 		glog.Errorf("unmarshal log entry: %v", err)
 		return 0, nil // skip corrupt entries
 	}
@@ -329,7 +327,7 @@ func streamLogFileEntries(newReader LogFileReaderFn, chunks []*filer_pb.FileChun
 		}
 
 		logEntry := &filer_pb.LogEntry{}
-		if err := proto.Unmarshal(entryData, logEntry); err != nil {
+		if err := logEntry.UnmarshalVT(entryData); err != nil {
 			return err
 		}
 

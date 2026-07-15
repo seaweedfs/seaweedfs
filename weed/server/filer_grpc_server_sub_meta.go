@@ -10,8 +10,6 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 
-	"google.golang.org/protobuf/proto"
-
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -515,7 +513,7 @@ func eachLogEntryFn(req *filer_pb.SubscribeMetadataRequest, sender metadataStrea
 			}
 		}
 		event := &filer_pb.SubscribeMetadataResponse{}
-		if err := proto.Unmarshal(logEntry.Data, event); err != nil {
+		if err := event.UnmarshalVT(logEntry.Data); err != nil {
 			glog.Errorf("unexpected unmarshal filer_pb.SubscribeMetadataResponse: %v", err)
 			return false, fmt.Errorf("unexpected unmarshal filer_pb.SubscribeMetadataResponse: %w", err)
 		}

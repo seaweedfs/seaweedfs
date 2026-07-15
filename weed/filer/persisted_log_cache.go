@@ -8,13 +8,11 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/sync/semaphore"
-	"golang.org/x/sync/singleflight"
-	"google.golang.org/protobuf/proto"
-
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
+	"golang.org/x/sync/semaphore"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -201,10 +199,10 @@ func loadLogFileEntries(masterClient *wdclient.MasterClient, chunk *filer_pb.Fil
 // decodeLogRecords parses size-prefixed LogEntry records. A buffer that stops
 // mid-record, or whose size prefix is garbage (also the symptom of starting
 // mid-record), reports errLogChunkIncomplete with the cleanly decoded prefix.
-// Since proto.Unmarshal is permissive enough to accept misaligned bytes,
+// Since UnmarshalVT is permissive enough to accept misaligned bytes,
 // records must also satisfy the writer's invariants: never empty, a positive
 // timestamp, and strictly increasing within one flushed buffer.
-// proto.Unmarshal copies all bytes, so the entries do not alias data.
+// UnmarshalVT copies all bytes, so the entries do not alias data.
 func decodeLogRecords(data []byte) (entries []*filer_pb.LogEntry, cacheable bool, err error) {
 	var lastTsNs int64
 	for pos := 0; pos < len(data); {
@@ -220,7 +218,7 @@ func decodeLogRecords(data []byte) (entries []*filer_pb.LogEntry, cacheable bool
 			return entries, false, errLogChunkIncomplete
 		}
 		logEntry := &filer_pb.LogEntry{}
-		if unmarshalErr := proto.Unmarshal(data[pos+4:pos+4+size], logEntry); unmarshalErr != nil {
+		if unmarshalErr := logEntry.UnmarshalVT(data[pos+4 : pos+4+size]); unmarshalErr != nil {
 			return entries, false, errLogChunkIncomplete
 		}
 		if logEntry.TsNs <= lastTsNs {

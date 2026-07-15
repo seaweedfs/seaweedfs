@@ -9,8 +9,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"google.golang.org/protobuf/proto"
-
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
@@ -301,7 +299,7 @@ func (logBuffer *LogBuffer) AddLogEntryToBuffer(logEntry *filer_pb.LogEntry) err
 		logBuffer.LastTsNs.Store(processingTsNs)
 	}
 
-	logEntryData, err := proto.Marshal(logEntry)
+	logEntryData, err := logEntry.MarshalVT()
 	if err != nil {
 		marshalErr = fmt.Errorf("failed to marshal LogEntry: %w", err)
 		glog.Errorf("%v", marshalErr)
@@ -416,7 +414,7 @@ func (logBuffer *LogBuffer) AddDataToBuffer(partitionKey, data []byte, processin
 	logEntry.Offset = logBuffer.offset
 
 	// Marshal with correct timestamp and offset
-	logEntryData, err := proto.Marshal(logEntry)
+	logEntryData, err := logEntry.MarshalVT()
 	if err != nil {
 		marshalErr = fmt.Errorf("failed to marshal LogEntry: %w", err)
 		glog.Errorf("%v", marshalErr)
