@@ -130,6 +130,7 @@ type S3BackendStorageFile struct {
 
 func (s3backendStorageFile S3BackendStorageFile) ReadAt(p []byte, off int64) (n int, err error) {
 	datSize, _, _ := s3backendStorageFile.GetStat()
+	requested := len(p)
 
 	if datSize > 0 && off >= datSize {
 		return 0, io.EOF
@@ -162,7 +163,7 @@ func (s3backendStorageFile S3BackendStorageFile) ReadAt(p []byte, off int64) (n 
 		}
 	}
 
-	if err == io.EOF {
+	if err == io.EOF && n == requested {
 		err = nil
 	}
 
