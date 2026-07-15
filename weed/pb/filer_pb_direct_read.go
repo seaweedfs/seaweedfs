@@ -236,6 +236,8 @@ func readFilerFilesToChannel(
 
 func processOneLogEntry(logEntry *filer_pb.LogEntry, filter PathFilter, processEventFn ProcessMetadataFunc) (int64, error) {
 	event := &filer_pb.SubscribeMetadataResponse{}
+	// proto.Unmarshal (not UnmarshalVT) validates UTF-8 in string fields, so
+	// malformed metadata is skipped here instead of reaching path filtering.
 	if err := proto.Unmarshal(logEntry.Data, event); err != nil {
 		glog.Errorf("unmarshal log entry: %v", err)
 		return 0, nil // skip corrupt entries
@@ -329,7 +331,7 @@ func streamLogFileEntries(newReader LogFileReaderFn, chunks []*filer_pb.FileChun
 		}
 
 		logEntry := &filer_pb.LogEntry{}
-		if err := proto.Unmarshal(entryData, logEntry); err != nil {
+		if err := logEntry.UnmarshalVT(entryData); err != nil {
 			return err
 		}
 

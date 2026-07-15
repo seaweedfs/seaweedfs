@@ -11,13 +11,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
-	"google.golang.org/protobuf/proto"
-
-	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 type LogFileEntry struct {
@@ -518,7 +516,7 @@ func (iter *LogFileIterator) getNext() (logEntry *filer_pb.LogEntry, err error) 
 			return nil, fmt.Errorf("entry data %d bytes, expected %d bytes", n, size)
 		}
 		logEntry = &filer_pb.LogEntry{}
-		if err = proto.Unmarshal(entryData, logEntry); err != nil {
+		if err = logEntry.UnmarshalVT(entryData); err != nil {
 			return
 		}
 		if logEntry.TsNs <= iter.startTsNs {

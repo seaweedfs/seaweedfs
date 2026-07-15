@@ -9,8 +9,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"google.golang.org/protobuf/proto"
-
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
@@ -302,13 +300,9 @@ func (logBuffer *LogBuffer) AddLogEntryToBuffer(logEntry *filer_pb.LogEntry) err
 		logBuffer.LastTsNs.Store(processingTsNs)
 	}
 
-	logEntryData, err := proto.Marshal(logEntry)
-	if err != nil {
-		marshalErr = fmt.Errorf("failed to marshal LogEntry: %w", err)
-		glog.Errorf("%v", marshalErr)
-		return marshalErr
-	}
-	size := len(logEntryData)
+	// Size is computed without allocating; the entry is marshaled straight into
+	// the buffer below via MarshalToSizedBufferVT.
+	size := logEntry.SizeVT()
 
 	if logBuffer.pos == 0 {
 		logBuffer.startTime = ts
@@ -352,10 +346,17 @@ func (logBuffer *LogBuffer) AddLogEntryToBuffer(logEntry *filer_pb.LogEntry) err
 	}
 	logBuffer.stopTime = ts
 
+	// Marshal directly into the buffer, avoiding an intermediate slice and copy.
+	// On the (practically impossible) error the entry is dropped before idx/pos
+	// are advanced, leaving the buffer consistent.
+	if _, err := logEntry.MarshalToSizedBufferVT(logBuffer.buf[logBuffer.pos+4 : logBuffer.pos+4+size]); err != nil {
+		marshalErr = fmt.Errorf("failed to marshal LogEntry: %w", err)
+		glog.Errorf("%v", marshalErr)
+		return marshalErr
+	}
 	logBuffer.idx = append(logBuffer.idx, logBuffer.pos)
 	util.Uint32toBytes(logBuffer.sizeBuf, uint32(size))
 	copy(logBuffer.buf[logBuffer.pos:logBuffer.pos+4], logBuffer.sizeBuf)
-	copy(logBuffer.buf[logBuffer.pos+4:logBuffer.pos+4+size], logEntryData)
 	logBuffer.pos += size + 4
 
 	logBuffer.offset++
@@ -416,15 +417,9 @@ func (logBuffer *LogBuffer) AddDataToBuffer(partitionKey, data []byte, processin
 	// Note: This also enables AddToBuffer to work correctly with Kafka-style offset-based reads
 	logEntry.Offset = logBuffer.offset
 
-	// Marshal with correct timestamp and offset
-	logEntryData, err := proto.Marshal(logEntry)
-	if err != nil {
-		marshalErr = fmt.Errorf("failed to marshal LogEntry: %w", err)
-		glog.Errorf("%v", marshalErr)
-		return marshalErr
-	}
-
-	size := len(logEntryData)
+	// Size is computed without allocating; the entry is marshaled straight into
+	// the buffer below via MarshalToSizedBufferVT.
+	size := logEntry.SizeVT()
 
 	if logBuffer.pos == 0 {
 		logBuffer.startTime = ts
@@ -466,10 +461,17 @@ func (logBuffer *LogBuffer) AddDataToBuffer(partitionKey, data []byte, processin
 	}
 	logBuffer.stopTime = ts
 
+	// Marshal directly into the buffer, avoiding an intermediate slice and copy.
+	// On the (practically impossible) error the entry is dropped before idx/pos
+	// are advanced, leaving the buffer consistent.
+	if _, err := logEntry.MarshalToSizedBufferVT(logBuffer.buf[logBuffer.pos+4 : logBuffer.pos+4+size]); err != nil {
+		marshalErr = fmt.Errorf("failed to marshal LogEntry: %w", err)
+		glog.Errorf("%v", marshalErr)
+		return marshalErr
+	}
 	logBuffer.idx = append(logBuffer.idx, logBuffer.pos)
 	util.Uint32toBytes(logBuffer.sizeBuf, uint32(size))
 	copy(logBuffer.buf[logBuffer.pos:logBuffer.pos+4], logBuffer.sizeBuf)
-	copy(logBuffer.buf[logBuffer.pos+4:logBuffer.pos+4+size], logEntryData)
 	logBuffer.pos += size + 4
 
 	logBuffer.offset++

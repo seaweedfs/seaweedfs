@@ -422,7 +422,7 @@ func parseMessagesFromBuffer(buf []byte, startOffset int64, maxMessages int, max
 		// Parse message
 		entryData := buf[pos+4 : pos+4+int(size)]
 		logEntry := &filer_pb.LogEntry{}
-		if err = proto.Unmarshal(entryData, logEntry); err != nil {
+		if err = logEntry.UnmarshalVT(entryData); err != nil {
 			glog.Warningf("[parseMessages] Failed to unmarshal message: %v", err)
 			pos += 4 + int(size)
 			continue
