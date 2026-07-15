@@ -199,35 +199,10 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// For versioned objects, determine the correct directory based on the version
-	var updateDirectory string
-	if versionId != "" {
-		// Specific version requested
-		if versionId == "null" {
-			// Null version (pre-versioning object) - stored as regular file
-			updateDirectory = s3a.bucketDir(bucket)
-		} else {
-			// Versioned object - stored in .versions directory
-			updateDirectory = s3a.bucketDir(bucket) + "/" + object + s3_constants.VersionsFolder
-		}
-	} else {
-		// Latest version in versioned bucket - could be null version or versioned object
-		// Extract version ID from the entry to determine where it's stored
-		var actualVersionId string
-		if entry.Extended != nil {
-			if versionIdBytes, exists := entry.Extended[s3_constants.ExtVersionIdKey]; exists {
-				actualVersionId = string(versionIdBytes)
-			}
-		}
-
-		if actualVersionId == "null" || actualVersionId == "" {
-			// Null version (pre-versioning object) - stored as regular file
-			updateDirectory = s3a.bucketDir(bucket)
-		} else {
-			// Versioned object - stored in .versions directory
-			updateDirectory = s3a.bucketDir(bucket) + "/" + object + s3_constants.VersionsFolder
-		}
-	}
+	// For versioned objects, resolve the directory holding the entry to update. A null
+	// version lives under its full key's parent directory, so a nested key must not fall
+	// back to the bucket root and rewrite a different object sharing the same basename.
+	updateDirectory := s3a.objectMetadataUpdateDirectory(bucket, object, versioningConfigured, versionId, entry)
 
 	// Remove old tags and add new ones
 	for k := range entry.Extended {
@@ -343,35 +318,10 @@ func (s3a *S3ApiServer) DeleteObjectTaggingHandler(w http.ResponseWriter, r *htt
 		return
 	}
 
-	// For versioned objects, determine the correct directory based on the version
-	var updateDirectory string
-	if versionId != "" {
-		// Specific version requested
-		if versionId == "null" {
-			// Null version (pre-versioning object) - stored as regular file
-			updateDirectory = s3a.bucketDir(bucket)
-		} else {
-			// Versioned object - stored in .versions directory
-			updateDirectory = s3a.bucketDir(bucket) + "/" + object + s3_constants.VersionsFolder
-		}
-	} else {
-		// Latest version in versioned bucket - could be null version or versioned object
-		// Extract version ID from the entry to determine where it's stored
-		var actualVersionId string
-		if entry.Extended != nil {
-			if versionIdBytes, exists := entry.Extended[s3_constants.ExtVersionIdKey]; exists {
-				actualVersionId = string(versionIdBytes)
-			}
-		}
-
-		if actualVersionId == "null" || actualVersionId == "" {
-			// Null version (pre-versioning object) - stored as regular file
-			updateDirectory = s3a.bucketDir(bucket)
-		} else {
-			// Versioned object - stored in .versions directory
-			updateDirectory = s3a.bucketDir(bucket) + "/" + object + s3_constants.VersionsFolder
-		}
-	}
+	// For versioned objects, resolve the directory holding the entry to update. A null
+	// version lives under its full key's parent directory, so a nested key must not fall
+	// back to the bucket root and rewrite a different object sharing the same basename.
+	updateDirectory := s3a.objectMetadataUpdateDirectory(bucket, object, versioningConfigured, versionId, entry)
 
 	// Remove all tags
 	hasDeletion := false
