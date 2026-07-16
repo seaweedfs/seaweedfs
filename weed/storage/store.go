@@ -389,6 +389,11 @@ func collectStatForOneVolume(vid needle.VolumeId, v *Volume) (s *VolumeInfo) {
 	s.DeleteCount = v.nm.DeletedCount()
 	s.DeletedByteCount = v.nm.DeletedSize()
 	s.Size = v.nm.ContentSize()
+	if v.DataBackend != nil {
+		if _, modTime, e := v.DataBackend.GetStat(); e == nil {
+			s.ModifiedAtSecond = modTime.Unix()
+		}
+	}
 	return
 }
 
