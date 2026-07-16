@@ -137,7 +137,7 @@ func (n *Needle) ParsePath(fid string) (err error) {
 	if delta != "" {
 		if d, e := strconv.ParseUint(delta, 10, 64); e == nil {
 			if d > math.MaxUint64-uint64(n.Id) {
-				return fmt.Errorf("delta %d overflows needle id %d", d, n.Id)
+				return fmt.Errorf("delta %d overflows needle id %x", d, n.Id)
 			}
 			n.Id += Uint64ToNeedleId(d)
 		} else {
