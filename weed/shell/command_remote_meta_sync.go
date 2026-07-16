@@ -43,6 +43,9 @@ func (c *commandRemoteMetaSync) Help() string {
 	Local metadata for files and directories removed from the remote is also
 	removed by default; pass -delete=false to keep it.
 
+	S3 listings do not report Content-Encoding; pass -statFiles to stat each
+	new or changed file so that metadata is synchronized too.
+
 	This is designed to run regularly. So you can add it to some cronjob.
 
 	If there are no other operations changing remote files, this operation is not needed.
@@ -60,6 +63,7 @@ func (c *commandRemoteMetaSync) Do(args []string, commandEnv *CommandEnv, writer
 
 	dir := remoteMetaSyncCommand.String("dir", "", "a directory in filer")
 	deleteStale := remoteMetaSyncCommand.Bool("delete", true, "remove local metadata of files and directories deleted from remote")
+	statFiles := remoteMetaSyncCommand.Bool("statFiles", false, "stat each new or changed file when the listing does not report all metadata (S3 listings lack Content-Encoding); costs one extra remote request per file")
 
 	if err = remoteMetaSyncCommand.Parse(args); err != nil {
 		return nil
@@ -72,7 +76,7 @@ func (c *commandRemoteMetaSync) Do(args []string, commandEnv *CommandEnv, writer
 	}
 
 	// pull metadata from remote
-	if err = pullMetadata(commandEnv, writer, util.FullPath(localMountedDir), remoteStorageMountedLocation, util.FullPath(*dir), remoteStorageConf, *deleteStale); err != nil {
+	if err = pullMetadata(commandEnv, writer, util.FullPath(localMountedDir), remoteStorageMountedLocation, util.FullPath(*dir), remoteStorageConf, *deleteStale, *statFiles); err != nil {
 		return fmt.Errorf("cache meta data: %w", err)
 	}
 
@@ -148,7 +152,7 @@ type remoteChild struct {
 	remoteEntry *filer_pb.RemoteEntry
 }
 
-func pullMetadata(commandEnv *CommandEnv, writer io.Writer, localMountedDir util.FullPath, remoteMountedLocation *remote_pb.RemoteStorageLocation, dirToCache util.FullPath, remoteConf *remote_pb.RemoteConf, deleteStale bool) error {
+func pullMetadata(commandEnv *CommandEnv, writer io.Writer, localMountedDir util.FullPath, remoteMountedLocation *remote_pb.RemoteStorageLocation, dirToCache util.FullPath, remoteConf *remote_pb.RemoteConf, deleteStale bool, statFiles bool) error {
 
 	remoteStorage, err := remote_storage.GetRemoteStorage(remoteConf)
 	if err != nil {
@@ -158,7 +162,7 @@ func pullMetadata(commandEnv *CommandEnv, writer io.Writer, localMountedDir util
 	remote := filer.MapFullPathToRemoteStorageLocation(localMountedDir, remoteMountedLocation, dirToCache)
 
 	return commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return pullMetadataDirectory(context.Background(), client, writer, remoteStorage, dirToCache, remote, deleteStale)
+		return pullMetadataDirectory(context.Background(), client, writer, remoteStorage, dirToCache, remote, deleteStale, statFiles)
 	})
 }
 
@@ -167,7 +171,7 @@ func pullMetadata(commandEnv *CommandEnv, writer io.Writer, localMountedDir util
 // delimiter surfaces subdirectories, including empty ones, as their own
 // entries, so directories are materialized locally even when they hold no
 // files.
-func pullMetadataDirectory(ctx context.Context, client filer_pb.SeaweedFilerClient, writer io.Writer, remoteStorage remote_storage.RemoteStorageClient, localDir util.FullPath, remoteLoc *remote_pb.RemoteStorageLocation, deleteStale bool) error {
+func pullMetadataDirectory(ctx context.Context, client filer_pb.SeaweedFilerClient, writer io.Writer, remoteStorage remote_storage.RemoteStorageClient, localDir util.FullPath, remoteLoc *remote_pb.RemoteStorageLocation, deleteStale bool, statFiles bool) error {
 
 	remoteChildren := make(map[string]*remoteChild)
 	if err := remoteStorage.ListDirectory(ctx, remoteLoc, func(dir, name string, isDirectory bool, remoteEntry *filer_pb.RemoteEntry) error {
@@ -218,6 +222,23 @@ func pullMetadataDirectory(ctx context.Context, client filer_pb.SeaweedFilerClie
 			existingEntry = nil
 		}
 
+		// enrich a listing that does not report encodings with a per-file stat,
+		// skipping files whose stored metadata is already present and unchanged
+		if statFiles && !child.isDirectory && child.remoteEntry.RemoteContentEncoding == nil {
+			needsStat := existingEntry == nil
+			if existingEntry != nil && existingEntry.RemoteEntry != nil {
+				needsStat = existingEntry.RemoteEntry.RemoteContentEncoding == nil ||
+					existingEntry.RemoteEntry.RemoteETag != child.remoteEntry.RemoteETag ||
+					existingEntry.RemoteEntry.RemoteMtime != child.remoteEntry.RemoteMtime ||
+					existingEntry.RemoteEntry.RemoteSize != child.remoteEntry.RemoteSize
+			}
+			if needsStat {
+				if statEntry, statErr := remoteStorage.StatFile(childRemoteLocation(remoteLoc, name)); statErr == nil && statEntry != nil {
+					child.remoteEntry = statEntry
+				}
+			}
+		}
+
 		if existingEntry == nil {
 			if err := createRemoteEntry(ctx, client, writer, localDir, name, child, remoteLoc.Name); err != nil {
 				return err
@@ -230,7 +251,10 @@ func pullMetadataDirectory(ctx context.Context, client filer_pb.SeaweedFilerClie
 				existingEntry.RemoteEntry.RemoteMtime != child.remoteEntry.RemoteMtime ||
 				existingEntry.RemoteEntry.RemoteSize != child.remoteEntry.RemoteSize ||
 				(child.remoteEntry.RemoteContentEncoding != nil &&
-					existingEntry.RemoteEntry.GetRemoteContentEncoding() != child.remoteEntry.GetRemoteContentEncoding()) {
+					existingEntry.RemoteEntry.GetRemoteContentEncoding() != child.remoteEntry.GetRemoteContentEncoding()) ||
+				// persist the stat-derived encoding so the next run skips the stat
+				(statFiles && existingEntry.RemoteEntry.RemoteContentEncoding == nil &&
+					child.remoteEntry.RemoteContentEncoding != nil) {
 				fmt.Fprintf(writer, "%s (update)\n", localPath)
 				if err := doSaveRemoteEntry(client, string(localDir), existingEntry, child.remoteEntry); err != nil {
 					return err
@@ -241,7 +265,7 @@ func pullMetadataDirectory(ctx context.Context, client filer_pb.SeaweedFilerClie
 		}
 
 		if child.isDirectory {
-			if err := pullMetadataDirectory(ctx, client, writer, remoteStorage, localPath, childRemoteLocation(remoteLoc, name), deleteStale); err != nil {
+			if err := pullMetadataDirectory(ctx, client, writer, remoteStorage, localPath, childRemoteLocation(remoteLoc, name), deleteStale, statFiles); err != nil {
 				return err
 			}
 		}

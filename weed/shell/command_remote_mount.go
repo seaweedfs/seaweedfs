@@ -102,7 +102,7 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 	}
 
 	if strategy == MetadataCacheEager {
-		if err = pullMetadata(commandEnv, writer, util.FullPath(*dir), remoteStorageLocation, util.FullPath(*dir), remoteConf, false); err != nil {
+		if err = pullMetadata(commandEnv, writer, util.FullPath(*dir), remoteStorageLocation, util.FullPath(*dir), remoteConf, false, false); err != nil {
 			return fmt.Errorf("cache metadata: %w", err)
 		}
 	}
