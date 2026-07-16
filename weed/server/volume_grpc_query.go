@@ -21,7 +21,10 @@ func (vs *VolumeServer) Query(req *volume_server_pb.QueryRequest, stream volume_
 
 		n := new(needle.Needle)
 		volumeId, _ := needle.NewVolumeId(vid)
-		n.ParsePath(id_cookie)
+		if err := n.ParsePath(id_cookie); err != nil {
+			glog.V(0).Infof("volume query failed to parse fid %s: %v", fid, err)
+			return err
+		}
 
 		cookie := n.Cookie
 		if _, err := vs.store.ReadVolumeNeedle(volumeId, n, nil, nil); err != nil {

@@ -35,7 +35,6 @@ func (vs *VolumeServer) BatchDelete(ctx context.Context, req *volume_server_pb.B
 
 		n := new(needle.Needle)
 		volumeId, _ := needle.NewVolumeId(vid)
-		ecVolume, isEcVolume := vs.store.FindEcVolume(volumeId)
 		if req.SkipCookieCheck {
 			n.Id, _, err = needle.ParseNeedleIdCookie(id_cookie)
 			if err != nil {
@@ -46,7 +45,17 @@ func (vs *VolumeServer) BatchDelete(ctx context.Context, req *volume_server_pb.B
 				continue
 			}
 		} else {
-			n.ParsePath(id_cookie)
+			if err := n.ParsePath(id_cookie); err != nil {
+				resp.Results = append(resp.Results, &volume_server_pb.DeleteResult{
+					FileId: fid,
+					Status: http.StatusBadRequest,
+					Error:  err.Error()})
+				continue
+			}
+		}
+
+		ecVolume, isEcVolume := vs.store.FindEcVolume(volumeId)
+		if !req.SkipCookieCheck {
 			cookie := n.Cookie
 			if !isEcVolume {
 				if _, err := vs.store.ReadVolumeNeedle(volumeId, n, nil, nil); err != nil {
