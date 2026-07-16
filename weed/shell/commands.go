@@ -6,7 +6,9 @@ import (
 	"io"
 	"strings"
 
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 
@@ -48,7 +50,7 @@ func NewCommandEnv(options *ShellOptions) *CommandEnv {
 		option:       options,
 		noLock:       false,
 	}
-	ce.locker = exclusive_locks.NewExclusiveLocker(ce.MasterClient, "shell")
+	ce.locker = exclusive_locks.NewExclusiveLocker(ce.MasterClient, cluster.AdminShellLockName)
 	return ce
 }
 
@@ -105,6 +107,21 @@ func (ce *CommandEnv) isLocked() bool {
 		return true
 	}
 	return ce.locker.IsLocked()
+}
+
+// shellLockHolder asks the master who currently holds the cluster-wide shell
+// lock. Best effort: masters without GetAdminLockStatus report no holder.
+func (ce *CommandEnv) shellLockHolder() (clientName string, message string, held bool) {
+	ce.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+		resp, err := client.GetAdminLockStatus(context.Background(), &master_pb.GetAdminLockStatusRequest{
+			LockName: cluster.AdminShellLockName,
+		})
+		if err == nil && resp.IsLocked {
+			clientName, message, held = resp.ClientName, resp.Message, true
+		}
+		return nil
+	})
+	return
 }
 
 func (ce *CommandEnv) checkDirectory(path string) error {

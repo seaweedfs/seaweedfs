@@ -160,6 +160,20 @@ func (ms *MasterServer) ReleaseAdminToken(ctx context.Context, req *master_pb.Re
 	return resp, nil
 }
 
+func (ms *MasterServer) GetAdminLockStatus(ctx context.Context, req *master_pb.GetAdminLockStatusRequest) (*master_pb.GetAdminLockStatusResponse, error) {
+	resp := &master_pb.GetAdminLockStatusResponse{}
+	if !ms.Topo.IsLeader() {
+		return resp, raft.NotLeaderError
+	}
+	// isLocked reports the last holder even after the lease expired
+	if clientName, message, isLocked := ms.adminLocks.isLocked(req.LockName); isLocked {
+		resp.IsLocked = true
+		resp.ClientName = clientName
+		resp.Message = message
+	}
+	return resp, nil
+}
+
 // isKnownPingTarget reports whether target is a peer that the master has
 // learned about as part of cluster membership. Restricting Ping to known
 // peers avoids turning the RPC into a generic outbound dialer. The lookups

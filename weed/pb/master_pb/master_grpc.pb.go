@@ -37,6 +37,7 @@ const (
 	Seaweed_ListClusterNodes_FullMethodName       = "/master_pb.Seaweed/ListClusterNodes"
 	Seaweed_LeaseAdminToken_FullMethodName        = "/master_pb.Seaweed/LeaseAdminToken"
 	Seaweed_ReleaseAdminToken_FullMethodName      = "/master_pb.Seaweed/ReleaseAdminToken"
+	Seaweed_GetAdminLockStatus_FullMethodName     = "/master_pb.Seaweed/GetAdminLockStatus"
 	Seaweed_Ping_FullMethodName                   = "/master_pb.Seaweed/Ping"
 	Seaweed_RaftListClusterServers_FullMethodName = "/master_pb.Seaweed/RaftListClusterServers"
 	Seaweed_RaftAddServer_FullMethodName          = "/master_pb.Seaweed/RaftAddServer"
@@ -67,6 +68,7 @@ type SeaweedClient interface {
 	ListClusterNodes(ctx context.Context, in *ListClusterNodesRequest, opts ...grpc.CallOption) (*ListClusterNodesResponse, error)
 	LeaseAdminToken(ctx context.Context, in *LeaseAdminTokenRequest, opts ...grpc.CallOption) (*LeaseAdminTokenResponse, error)
 	ReleaseAdminToken(ctx context.Context, in *ReleaseAdminTokenRequest, opts ...grpc.CallOption) (*ReleaseAdminTokenResponse, error)
+	GetAdminLockStatus(ctx context.Context, in *GetAdminLockStatusRequest, opts ...grpc.CallOption) (*GetAdminLockStatusResponse, error)
 	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
 	RaftListClusterServers(ctx context.Context, in *RaftListClusterServersRequest, opts ...grpc.CallOption) (*RaftListClusterServersResponse, error)
 	RaftAddServer(ctx context.Context, in *RaftAddServerRequest, opts ...grpc.CallOption) (*RaftAddServerResponse, error)
@@ -272,6 +274,16 @@ func (c *seaweedClient) ReleaseAdminToken(ctx context.Context, in *ReleaseAdminT
 	return out, nil
 }
 
+func (c *seaweedClient) GetAdminLockStatus(ctx context.Context, in *GetAdminLockStatusRequest, opts ...grpc.CallOption) (*GetAdminLockStatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetAdminLockStatusResponse)
+	err := c.cc.Invoke(ctx, Seaweed_GetAdminLockStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *seaweedClient) Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PingResponse)
@@ -354,6 +366,7 @@ type SeaweedServer interface {
 	ListClusterNodes(context.Context, *ListClusterNodesRequest) (*ListClusterNodesResponse, error)
 	LeaseAdminToken(context.Context, *LeaseAdminTokenRequest) (*LeaseAdminTokenResponse, error)
 	ReleaseAdminToken(context.Context, *ReleaseAdminTokenRequest) (*ReleaseAdminTokenResponse, error)
+	GetAdminLockStatus(context.Context, *GetAdminLockStatusRequest) (*GetAdminLockStatusResponse, error)
 	Ping(context.Context, *PingRequest) (*PingResponse, error)
 	RaftListClusterServers(context.Context, *RaftListClusterServersRequest) (*RaftListClusterServersResponse, error)
 	RaftAddServer(context.Context, *RaftAddServerRequest) (*RaftAddServerResponse, error)
@@ -423,6 +436,9 @@ func (UnimplementedSeaweedServer) LeaseAdminToken(context.Context, *LeaseAdminTo
 }
 func (UnimplementedSeaweedServer) ReleaseAdminToken(context.Context, *ReleaseAdminTokenRequest) (*ReleaseAdminTokenResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReleaseAdminToken not implemented")
+}
+func (UnimplementedSeaweedServer) GetAdminLockStatus(context.Context, *GetAdminLockStatusRequest) (*GetAdminLockStatusResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetAdminLockStatus not implemented")
 }
 func (UnimplementedSeaweedServer) Ping(context.Context, *PingRequest) (*PingResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Ping not implemented")
@@ -754,6 +770,24 @@ func _Seaweed_ReleaseAdminToken_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Seaweed_GetAdminLockStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetAdminLockStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedServer).GetAdminLockStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Seaweed_GetAdminLockStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedServer).GetAdminLockStatus(ctx, req.(*GetAdminLockStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Seaweed_Ping_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(PingRequest)
 	if err := dec(in); err != nil {
@@ -928,6 +962,10 @@ var Seaweed_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReleaseAdminToken",
 			Handler:    _Seaweed_ReleaseAdminToken_Handler,
+		},
+		{
+			MethodName: "GetAdminLockStatus",
+			Handler:    _Seaweed_GetAdminLockStatus_Handler,
 		},
 		{
 			MethodName: "Ping",
