@@ -163,6 +163,9 @@ func (s3backendStorageFile S3BackendStorageFile) ReadAt(p []byte, off int64) (n 
 	var readCount int
 	for {
 		p = p[readCount:]
+		if len(p) == 0 {
+			break
+		}
 		readCount, err = getObjectOutput.Body.Read(p)
 		n += readCount
 
