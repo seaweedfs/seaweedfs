@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"reflect"
 	"strings"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
@@ -358,10 +360,42 @@ func (s *s3RemoteStorageClient) readFileRemoteEntry(loc *remote_pb.RemoteStorage
 	return s.StatFile(loc)
 }
 
+// the largest object a single CopyObject call accepts
+const s3CopyObjectSizeLimit = 5 * 1024 * 1024 * 1024
+
 func (s *s3RemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStorageLocation, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) (err error) {
 	if reflect.DeepEqual(oldEntry.Extended, newEntry.Extended) {
 		return nil
 	}
+
+	// Content-Encoding is S3 system metadata, changeable without a content
+	// rewrite only through an in-place copy
+	if encoding := remote_storage.EntryContentEncoding(newEntry); encoding != remote_storage.EntryContentEncoding(oldEntry) {
+		key := loc.Path[1:]
+		if fileSize := int64(filer.FileSize(newEntry)); fileSize > s3CopyObjectSizeLimit {
+			glog.Warningf("s3 %s/%s: applying the Content-Encoding change needs an object copy, but %d bytes exceeds the copy limit; it will apply on the next content write", loc.Bucket, key, fileSize)
+		} else {
+			copyInput := &s3.CopyObjectInput{
+				Bucket:            aws.String(loc.Bucket),
+				Key:               aws.String(key),
+				CopySource:        aws.String(url.PathEscape(loc.Bucket + "/" + key)),
+				MetadataDirective: aws.String(s3.MetadataDirectiveReplace),
+			}
+			if encoding != "" {
+				copyInput.ContentEncoding = aws.String(encoding)
+			}
+			if newEntry.Attributes != nil && newEntry.Attributes.Mime != "" {
+				copyInput.ContentType = aws.String(newEntry.Attributes.Mime)
+			}
+			if s.conf.S3StorageClass != "" {
+				copyInput.StorageClass = aws.String(s.conf.S3StorageClass)
+			}
+			if _, err = s.conn.CopyObject(copyInput); err != nil {
+				return fmt.Errorf("update content encoding of %s/%s: %w", loc.Bucket, key, err)
+			}
+		}
+	}
+
 	tagging := toTagging(newEntry.Extended)
 	if len(tagging.TagSet) > 0 {
 		_, err = s.conn.PutObjectTagging(&s3.PutObjectTaggingInput{
