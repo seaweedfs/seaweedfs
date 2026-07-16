@@ -41,3 +41,40 @@ func TestReadAtReturnsEOFForShortRead(t *testing.T) {
 		t.Fatalf("ReadAt() error = %v, want io.EOF", err)
 	}
 }
+
+func TestReadAtRejectsInvalidRequestsLocally(t *testing.T) {
+	tests := []struct {
+		name    string
+		buffer  []byte
+		offset  int64
+		wantErr bool
+	}{
+		{name: "empty buffer", buffer: nil},
+		{name: "negative offset", buffer: make([]byte, 1), offset: -1, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			called := false
+			client := &stubS3Client{getObject: func(*s3.GetObjectInput) (*s3.GetObjectOutput, error) {
+				called = true
+				return nil, errors.New("unexpected GetObject")
+			}}
+			file := S3BackendStorageFile{
+				backendStorage: &S3BackendStorage{conn: client, bucket: "bucket"},
+				key:            "key",
+				tierInfo: &volume_server_pb.VolumeInfo{Files: []*volume_server_pb.RemoteFile{
+					{FileSize: 10},
+				}},
+			}
+
+			n, err := file.ReadAt(tt.buffer, tt.offset)
+			if n != 0 || (err != nil) != tt.wantErr {
+				t.Fatalf("ReadAt() = (%d, %v), want error %t", n, err, tt.wantErr)
+			}
+			if called {
+				t.Fatal("ReadAt() called S3 for an invalid request")
+			}
+		})
+	}
+}
