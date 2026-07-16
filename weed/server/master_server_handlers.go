@@ -158,10 +158,11 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 	vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl, option.DiskType)
 
 	var (
-		lastErr       error
-		maxTimeout    = time.Second * 10
-		startTime     = time.Now()
-		initiatedGrow bool
+		lastErr           error
+		maxTimeout        = time.Second * 10
+		startTime         = time.Now()
+		initiatedGrow     bool
+		repickedAfterGrow bool
 	)
 
 	if !ms.Topo.DataCenterExists(option.DataCenter) {
@@ -195,6 +196,12 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 				// See Assign: only the initiator waits, and only while the
 				// growth it triggered is still pending.
 				if initiatedGrow != vl.HasGrowRequest() {
+					// See Assign: re-pick once after the growth concludes before
+					// shedding — the failed pick may predate the conclusion.
+					if initiatedGrow && !repickedAfterGrow {
+						repickedAfterGrow = true
+						continue
+					}
 					w.Header().Set("Retry-After", "1")
 					writeJsonQuiet(w, r, http.StatusServiceUnavailable, operation.AssignResult{
 						Error: fmt.Sprintf("no writable volumes for %s, volume growth in progress", option.String()),

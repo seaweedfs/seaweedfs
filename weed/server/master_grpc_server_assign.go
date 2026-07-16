@@ -106,10 +106,11 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 	vl.SetLastGrowCount(req.WritableVolumeCount)
 
 	var (
-		lastErr       error
-		maxTimeout    = time.Second * 10
-		startTime     = time.Now()
-		initiatedGrow bool
+		lastErr           error
+		maxTimeout        = time.Second * 10
+		startTime         = time.Now()
+		initiatedGrow     bool
+		repickedAfterGrow bool
 	)
 
 	for time.Now().Sub(startTime) < maxTimeout {
@@ -145,6 +146,14 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 				// Unavailable: clients retry it (assign_file_id.go) without
 				// invalidating the shared master connection.
 				if initiatedGrow != vl.HasGrowRequest() {
+					// The failed pick above may predate the growth concluding, so
+					// re-pick once before shedding: growth registers its volumes
+					// before clearing the flag, and shedding here would bounce the
+					// client off a volume that just landed.
+					if initiatedGrow && !repickedAfterGrow {
+						repickedAfterGrow = true
+						continue
+					}
 					return nil, status.Errorf(codes.ResourceExhausted, "no writable volumes for %s, volume growth in progress", option.String())
 				}
 			}
