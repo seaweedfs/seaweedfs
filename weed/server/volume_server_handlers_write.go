@@ -83,7 +83,10 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	n := new(needle.Needle)
 	vid, fid, _, _, _ := parseURLPath(r.URL.Path)
 	volumeId, _ := needle.NewVolumeId(vid)
-	n.ParsePath(fid)
+	if err := n.ParsePath(fid); err != nil {
+		writeJsonError(w, r, http.StatusBadRequest, err)
+		return
+	}
 
 	if !vs.maybeCheckJwtAuthorization(r, vid, fid, true) {
 		writeJsonError(w, r, http.StatusUnauthorized, errors.New("wrong jwt"))

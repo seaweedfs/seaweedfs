@@ -40,6 +40,14 @@ func TestParseKeyHash(t *testing.T) {
 	}
 }
 
+func TestNeedleParsePathRejectsDeltaOverflow(t *testing.T) {
+	var n Needle
+	err := n.ParsePath("ffffffffffffffff00000000_1")
+	if err == nil {
+		t.Fatalf("ParsePath accepted overflowing delta with needle id %d", n.Id)
+	}
+}
+
 func BenchmarkParseKeyHash(b *testing.B) {
 	b.ReportAllocs()
 

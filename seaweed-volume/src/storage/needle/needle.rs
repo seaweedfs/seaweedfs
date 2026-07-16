@@ -712,7 +712,7 @@ fn format_needle_id_cookie(key: NeedleId, cookie: Cookie) -> String {
 /// Parse "needle_id_cookie_hex" or "needle_id_cookie_hex_delta" into (NeedleId, Cookie).
 /// Matches Go's ParsePath + ParseNeedleIdCookie: supports an optional `_delta` suffix
 /// where delta is a decimal number added to the NeedleId (used for sub-file addressing).
-/// Rejects strings that are too short or too long.
+/// Rejects strings that are too short or too long, and deltas that overflow the needle id.
 pub fn parse_needle_id_cookie(s: &str) -> Result<(NeedleId, Cookie), String> {
     // Go ParsePath: check for "_" suffix containing a decimal delta
     let (hex_part, delta) = if let Some(underscore_pos) = s.rfind('_') {
@@ -754,7 +754,11 @@ pub fn parse_needle_id_cookie(s: &str) -> Result<(NeedleId, Cookie), String> {
 
     // Apply delta if present (Go: n.Id += Uint64ToNeedleId(d))
     if let Some(d) = delta {
-        key = NeedleId(key.0.wrapping_add(d));
+        key = NeedleId(
+            key.0
+                .checked_add(d)
+                .ok_or_else(|| format!("delta {} overflows needle id {:x}", d, key.0))?,
+        );
     }
 
     Ok((key, cookie))
@@ -935,6 +939,13 @@ mod tests {
         let (key, cookie) = parse_needle_id_cookie(&s).unwrap();
         assert_eq!(key, NeedleId(1));
         assert_eq!(cookie, Cookie(0x12345678));
+    }
+
+    #[test]
+    fn test_parse_rejects_delta_overflow() {
+        assert!(parse_needle_id_cookie("ffffffffffffffff00000000_1").is_err());
+        let (key, _) = parse_needle_id_cookie("fffffffffffffffe00000000_1").unwrap();
+        assert_eq!(key, NeedleId(u64::MAX));
     }
 
     #[test]
