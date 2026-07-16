@@ -119,7 +119,7 @@ func TestBatchDeleteCookieMismatchAndSkipCheck(t *testing.T) {
 	}
 }
 
-func TestBatchDeleteMixedStatusesAndMismatchStopsProcessing(t *testing.T) {
+func TestBatchDeleteMixedStatusesAndMismatchContinuesProcessing(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
@@ -188,29 +188,32 @@ func TestBatchDeleteMixedStatusesAndMismatchStopsProcessing(t *testing.T) {
 	}
 
 	wrongCookieB := framework.NewFileID(volumeID, needleB, cookieB+1)
-	stopResp, err := client.BatchDelete(ctx, &volume_server_pb.BatchDeleteRequest{
+	mismatchContinueResp, err := client.BatchDelete(ctx, &volume_server_pb.BatchDeleteRequest{
 		FileIds: []string{wrongCookieB, fidC},
 	})
 	if err != nil {
-		t.Fatalf("BatchDelete mismatch-stop request failed: %v", err)
+		t.Fatalf("BatchDelete mismatch-continue request failed: %v", err)
 	}
-	if len(stopResp.GetResults()) != 1 {
-		t.Fatalf("BatchDelete mismatch-stop expected 1 result due early break, got %d", len(stopResp.GetResults()))
+	if len(mismatchContinueResp.GetResults()) != 2 {
+		t.Fatalf("BatchDelete mismatch-continue expected 2 results, got %d", len(mismatchContinueResp.GetResults()))
 	}
-	if stopResp.GetResults()[0].GetStatus() != http.StatusBadRequest {
-		t.Fatalf("BatchDelete mismatch-stop expected 400, got %d", stopResp.GetResults()[0].GetStatus())
+	if mismatchContinueResp.GetResults()[0].GetStatus() != http.StatusBadRequest {
+		t.Fatalf("BatchDelete mismatch-continue result[0] expected 400, got %d", mismatchContinueResp.GetResults()[0].GetStatus())
+	}
+	if mismatchContinueResp.GetResults()[1].GetStatus() != http.StatusAccepted {
+		t.Fatalf("BatchDelete mismatch-continue result[1] expected 202, got %d", mismatchContinueResp.GetResults()[1].GetStatus())
 	}
 
 	readB := framework.ReadBytes(t, httpClient, cluster.VolumeAdminURL(), fidB)
 	_ = framework.ReadAllAndClose(t, readB)
 	if readB.StatusCode != http.StatusOK {
-		t.Fatalf("fidB should remain after cookie mismatch path, got %d", readB.StatusCode)
+		t.Fatalf("fidB should remain after cookie mismatch, got %d", readB.StatusCode)
 	}
 
 	readC := framework.ReadBytes(t, httpClient, cluster.VolumeAdminURL(), fidC)
 	_ = framework.ReadAllAndClose(t, readC)
-	if readC.StatusCode != http.StatusOK {
-		t.Fatalf("fidC should remain when batch processing stops on mismatch, got %d", readC.StatusCode)
+	if readC.StatusCode != http.StatusNotFound {
+		t.Fatalf("fidC should be deleted when processing continues past a mismatch, got %d", readC.StatusCode)
 	}
 }
 

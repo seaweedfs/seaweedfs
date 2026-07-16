@@ -380,7 +380,7 @@ impl VolumeServer for VolumeGrpcService {
                         size: 0,
                         version: 0,
                     });
-                    break;
+                    continue;
                 }
             }
 
