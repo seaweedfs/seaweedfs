@@ -25,6 +25,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -1189,6 +1190,10 @@ func (s3a *S3ApiServer) createLookupFileIdFunction() func(context.Context, strin
 
 // streamFromVolumeServersWithSSE handles streaming with inline SSE decryption
 func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r *http.Request, entry *filer_pb.Entry, sseType string, bucket, object, versionId string) error {
+	if entry != nil && entry.RemoteEntry != nil && entry.RemoteEntry.RemoteSize > 0 {
+		stats.RecordRemoteCacheRead(stats.RemoteCacheSourceS3, bucket, len(entry.GetChunks()) > 0)
+	}
+
 	// If not encrypted, use fast path without decryption
 	if sseType == "" || sseType == "None" {
 		return s3a.streamFromVolumeServers(w, r, entry, sseType, bucket, object, versionId)

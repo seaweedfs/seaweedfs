@@ -193,6 +193,11 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if entry.Remote != nil && entry.Remote.RemoteSize > 0 {
+		bucket := bucketUnderBucketsPath(string(entry.FullPath), fs.filer.DirBucketsPath)
+		stats.RecordRemoteCacheRead(stats.RemoteCacheSourceFiler, bucket, len(entry.GetChunks()) > 0)
+	}
+
 	ProcessRangeRequest(r, w, totalSize, mimeType, func(offset int64, size int64) (filer.DoStreamContent, error) {
 		if offset+size <= int64(len(entry.Content)) {
 			return func(writer io.Writer) error {
@@ -266,4 +271,18 @@ func (fs *FilerServer) maybeGetVolumeReadJwtAuthorizationToken(fileId string) st
 		return ""
 	}
 	return string(security.GenJwtForVolumeServer(key, fs.volumeGuard.ReadExpiresAfterSec(), fileId))
+}
+
+// bucketUnderBucketsPath returns the top-level bucket name for a path under the
+// filer buckets root, or "" if the path is not under that root.
+func bucketUnderBucketsPath(fullPath, bucketsPath string) string {
+	prefix := bucketsPath + "/"
+	if !strings.HasPrefix(fullPath, prefix) {
+		return ""
+	}
+	rest := fullPath[len(prefix):]
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		return rest[:i]
+	}
+	return rest
 }

@@ -52,6 +52,7 @@ const (
 	subsystemS3           = "s3"
 	subsystemS3Lifecycle  = "s3_lifecycle"
 	subsystemAdmin        = "admin"
+	subsystemRemote       = "remote"
 )
 
 var bucketLastActiveTsNs map[string]int64 = map[string]int64{}
@@ -612,6 +613,14 @@ var (
 			Help:      "Number of objects deleted in each bucket.",
 		}, []string{"bucket"})
 
+	RemoteCacheReadCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemRemote,
+			Name:      "cache_read_total",
+			Help:      "Remote-mount object reads by source, bucket and cache result.",
+		}, []string{"source", "bucket", "result"})
+
 	S3UploadedObjectsCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -920,6 +929,7 @@ func init() {
 	Gather.MustRegister(S3BucketTrafficReceivedBytesCounter)
 	Gather.MustRegister(S3BucketTrafficSentBytesCounter)
 	Gather.MustRegister(S3DeletedObjectsCounter)
+	Gather.MustRegister(RemoteCacheReadCounter)
 	Gather.MustRegister(S3UploadedObjectsCounter)
 	Gather.MustRegister(S3BucketSizeBytesGauge)
 	Gather.MustRegister(S3BucketPhysicalSizeBytesGauge)
@@ -1004,6 +1014,17 @@ func RecordBucketActiveTime(bucket string) {
 	bucketLastActiveLock.Unlock()
 }
 
+func RecordRemoteCacheRead(source, bucket string, hit bool) {
+	if bucket == "" {
+		bucket = "_other"
+	}
+	result := RemoteCacheResultMiss
+	if hit {
+		result = RemoteCacheResultHit
+	}
+	RemoteCacheReadCounter.WithLabelValues(source, bucket, result).Inc()
+}
+
 func DeleteBucketMetrics(bucket string) {
 	bucketLastActiveLock.Lock()
 	delete(bucketLastActiveTsNs, bucket)
@@ -1016,6 +1037,7 @@ func DeleteBucketMetrics(bucket string) {
 	c += S3BucketTrafficReceivedBytesCounter.DeletePartialMatch(labels)
 	c += S3BucketTrafficSentBytesCounter.DeletePartialMatch(labels)
 	c += S3DeletedObjectsCounter.DeletePartialMatch(labels)
+	c += RemoteCacheReadCounter.DeletePartialMatch(labels)
 	c += S3UploadedObjectsCounter.DeletePartialMatch(labels)
 	c += S3BucketSizeBytesGauge.DeletePartialMatch(labels)
 	c += S3BucketPhysicalSizeBytesGauge.DeletePartialMatch(labels)
