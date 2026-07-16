@@ -96,6 +96,16 @@ type gcsRemoteStorageClient struct {
 
 var _ = remote_storage.RemoteStorageClient(&gcsRemoteStorageClient{})
 
+func (gcs *gcsRemoteStorageClient) toRemoteEntry(attr *storage.ObjectAttrs) *filer_pb.RemoteEntry {
+	return &filer_pb.RemoteEntry{
+		StorageName:           gcs.conf.Name,
+		RemoteMtime:           attr.Updated.Unix(),
+		RemoteSize:            attr.Size,
+		RemoteETag:            attr.Etag,
+		RemoteContentEncoding: attr.ContentEncoding,
+	}
+}
+
 func (gcs *gcsRemoteStorageClient) Traverse(loc *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
 
 	pathKey := loc.Path[1:]
@@ -119,12 +129,7 @@ func (gcs *gcsRemoteStorageClient) Traverse(loc *remote_pb.RemoteStorageLocation
 		key := objectAttr.Name
 		key = "/" + key
 		dir, name := util.FullPath(key).DirAndName()
-		err = visitFn(dir, name, false, &filer_pb.RemoteEntry{
-			RemoteMtime: objectAttr.Updated.Unix(),
-			RemoteSize:  objectAttr.Size,
-			RemoteETag:  objectAttr.Etag,
-			StorageName: gcs.conf.Name,
-		})
+		err = visitFn(dir, name, false, gcs.toRemoteEntry(objectAttr))
 	}
 	return
 }
@@ -165,12 +170,7 @@ func (gcs *gcsRemoteStorageClient) ListDirectory(ctx context.Context, loc *remot
 				continue // skip directory markers
 			}
 			dir, name := util.FullPath(key).DirAndName()
-			if err = visitFn(dir, name, false, &filer_pb.RemoteEntry{
-				RemoteMtime: objectAttr.Updated.Unix(),
-				RemoteSize:  objectAttr.Size,
-				RemoteETag:  objectAttr.Etag,
-				StorageName: gcs.conf.Name,
-			}); err != nil {
+			if err = visitFn(dir, name, false, gcs.toRemoteEntry(objectAttr)); err != nil {
 				return err
 			}
 		}
@@ -188,12 +188,7 @@ func (gcs *gcsRemoteStorageClient) StatFile(loc *remote_pb.RemoteStorageLocation
 		}
 		return nil, fmt.Errorf("stat gcs %s%s: %w", loc.Bucket, loc.Path, err)
 	}
-	return &filer_pb.RemoteEntry{
-		StorageName: gcs.conf.Name,
-		RemoteMtime: attr.Updated.Unix(),
-		RemoteSize:  attr.Size,
-		RemoteETag:  attr.Etag,
-	}, nil
+	return gcs.toRemoteEntry(attr), nil
 }
 
 func (gcs *gcsRemoteStorageClient) ReadFile(loc *remote_pb.RemoteStorageLocation, offset int64, size int64) (data []byte, err error) {

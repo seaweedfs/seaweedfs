@@ -143,6 +143,7 @@ message RemoteEntry {
     string remote_e_tag = 3;
     int64 remote_mtime = 4;
     int64 remote_size = 5;
+    string remote_content_encoding = 6;
 }
 message Entry {
     string name = 1;

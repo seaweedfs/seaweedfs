@@ -275,6 +275,7 @@ func (c *commandRemoteCache) doComprehensiveSync(commandEnv *CommandEnv, writer 
 							Mtime:    remoteEntry.RemoteMtime,
 							FileMode: remoteEntryFileMode(isDirectory),
 						},
+						Extended:    filer.MergeRemoteContentEncoding(remoteEntry, nil),
 						RemoteEntry: remoteEntry,
 					},
 				})
@@ -295,6 +296,7 @@ func (c *commandRemoteCache) doComprehensiveSync(commandEnv *CommandEnv, writer 
 				existingEntry.Attributes.FileSize = uint64(remoteEntry.RemoteSize)
 				existingEntry.Attributes.Mtime = remoteEntry.RemoteMtime
 				existingEntry.Attributes.Md5 = nil
+				existingEntry.Extended = filer.MergeRemoteContentEncoding(remoteEntry, existingEntry.Extended)
 				existingEntry.Chunks = nil
 				existingEntry.Content = nil
 

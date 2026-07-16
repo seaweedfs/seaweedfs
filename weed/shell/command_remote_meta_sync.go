@@ -228,7 +228,10 @@ func pullMetadataDirectory(ctx context.Context, client filer_pb.SeaweedFilerClie
 				fmt.Fprintf(writer, "%s (skip)\n", localPath)
 			} else if existingEntry.RemoteEntry.RemoteETag != child.remoteEntry.RemoteETag ||
 				existingEntry.RemoteEntry.RemoteMtime != child.remoteEntry.RemoteMtime ||
-				existingEntry.RemoteEntry.RemoteSize != child.remoteEntry.RemoteSize {
+				existingEntry.RemoteEntry.RemoteSize != child.remoteEntry.RemoteSize ||
+				// S3 listings report no encoding, so only a reported one can differ
+				(child.remoteEntry.RemoteContentEncoding != "" &&
+					existingEntry.RemoteEntry.RemoteContentEncoding != child.remoteEntry.RemoteContentEncoding) {
 				fmt.Fprintf(writer, "%s (update)\n", localPath)
 				if err := doSaveRemoteEntry(client, string(localDir), existingEntry, child.remoteEntry); err != nil {
 					return err
@@ -341,6 +344,7 @@ func createRemoteEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, 
 			Name:        name,
 			IsDirectory: child.isDirectory,
 			Attributes:  attributes,
+			Extended:    filer.MergeRemoteContentEncoding(remoteEntry, nil),
 			RemoteEntry: remoteEntry,
 		},
 	})

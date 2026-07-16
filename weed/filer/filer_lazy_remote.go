@@ -90,7 +90,8 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 				Mode:     0644,
 				FileSize: uint64(remoteEntry.RemoteSize),
 			},
-			Remote: remoteEntry,
+			Extended: MergeRemoteContentEncoding(remoteEntry, nil),
+			Remote:   remoteEntry,
 		}
 
 		persistBaseCtx, cancelPersist := context.WithTimeout(context.Background(), 30*time.Second)

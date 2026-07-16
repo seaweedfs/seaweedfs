@@ -304,7 +304,7 @@ func registerStubMaker(t *testing.T, storageType string, client remote_storage.R
 func TestMaybeLazyFetchFromRemote_HitsRemoteAndPersists(t *testing.T) {
 	const storageType = "stub_lazy_hit"
 	stub := &stubRemoteClient{
-		statResult: &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 1234},
+		statResult: &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 1234, RemoteContentEncoding: "zstd"},
 	}
 	defer registerStubMaker(t, storageType, stub)()
 
@@ -331,6 +331,7 @@ func TestMaybeLazyFetchFromRemote_HitsRemoteAndPersists(t *testing.T) {
 	stored, sErr := store.FindEntry(context.Background(), "/buckets/mybucket/file.txt")
 	require.NoError(t, sErr)
 	assert.Equal(t, int64(1234), stored.Remote.RemoteSize)
+	assert.Equal(t, []byte("zstd"), stored.Extended["Content-Encoding"])
 }
 
 func TestMaybeLazyFetchFromRemote_NotUnderMount(t *testing.T) {
@@ -849,10 +850,11 @@ func TestMaybeLazyListFromRemote_PopulatesStoreFromRemote(t *testing.T) {
 				return err
 			}
 			if err := visitFn("/", "file.txt", false, &filer_pb.RemoteEntry{
-				RemoteMtime: 1700000000,
-				RemoteSize:  42,
-				RemoteETag:  "abc",
-				StorageName: "myliststore",
+				RemoteMtime:           1700000000,
+				RemoteSize:            42,
+				RemoteETag:            "abc",
+				StorageName:           "myliststore",
+				RemoteContentEncoding: "gzip",
 			}); err != nil {
 				return err
 			}
@@ -882,6 +884,7 @@ func TestMaybeLazyListFromRemote_PopulatesStoreFromRemote(t *testing.T) {
 	require.NotNil(t, fileEntry, "file.txt should be persisted")
 	assert.Equal(t, uint64(42), fileEntry.FileSize)
 	assert.NotNil(t, fileEntry.Remote)
+	assert.Equal(t, []byte("gzip"), fileEntry.Extended["Content-Encoding"])
 
 	// Check that the subdirectory was persisted
 	dirEntry := store.getEntry("/buckets/mybucket/subdir")

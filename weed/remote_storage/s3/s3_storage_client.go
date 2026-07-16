@@ -224,6 +224,9 @@ func (s *s3RemoteStorageClient) StatFile(loc *remote_pb.RemoteStorageLocation) (
 	if resp.ETag != nil {
 		remoteEntry.RemoteETag = *resp.ETag
 	}
+	if resp.ContentEncoding != nil {
+		remoteEntry.RemoteContentEncoding = *resp.ContentEncoding
+	}
 	return remoteEntry, nil
 }
 
