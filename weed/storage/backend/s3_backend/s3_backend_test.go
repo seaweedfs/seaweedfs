@@ -5,6 +5,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
@@ -39,6 +40,28 @@ func TestReadAtReturnsEOFForShortRead(t *testing.T) {
 	}
 	if !errors.Is(err, io.EOF) {
 		t.Fatalf("ReadAt() error = %v, want io.EOF", err)
+	}
+}
+
+func TestReadAtClearsEOFOnFullRead(t *testing.T) {
+	client := &stubS3Client{getObject: func(*s3.GetObjectInput) (*s3.GetObjectOutput, error) {
+		return &s3.GetObjectOutput{Body: io.NopCloser(iotest.DataErrReader(strings.NewReader("abcde")))}, nil
+	}}
+	file := S3BackendStorageFile{
+		backendStorage: &S3BackendStorage{conn: client, bucket: "bucket"},
+		key:            "key",
+		tierInfo: &volume_server_pb.VolumeInfo{Files: []*volume_server_pb.RemoteFile{
+			{FileSize: 10},
+		}},
+	}
+
+	buffer := make([]byte, 5)
+	n, err := file.ReadAt(buffer, 0)
+	if n != 5 || err != nil {
+		t.Fatalf("ReadAt() = (%d, %v), want (5, nil)", n, err)
+	}
+	if string(buffer) != "abcde" {
+		t.Fatalf("ReadAt() buffer = %q, want %q", buffer, "abcde")
 	}
 }
 
