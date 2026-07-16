@@ -375,11 +375,34 @@ func (s *s3RemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStorageL
 		if fileSize := int64(filer.FileSize(newEntry)); fileSize > s3CopyObjectSizeLimit {
 			glog.Warningf("s3 %s/%s: applying the Content-Encoding change needs an object copy, but %d bytes exceeds the copy limit; it will apply on the next content write", loc.Bucket, key, fileSize)
 		} else {
+			// the replace directive drops everything not resent, so read the
+			// object's current metadata and carry it over
+			headOut, headErr := s.conn.HeadObject(&s3.HeadObjectInput{
+				Bucket: aws.String(loc.Bucket),
+				Key:    aws.String(key),
+			})
+			if headErr != nil {
+				return fmt.Errorf("stat %s/%s before metadata copy: %w", loc.Bucket, key, headErr)
+			}
 			copyInput := &s3.CopyObjectInput{
-				Bucket:            aws.String(loc.Bucket),
-				Key:               aws.String(key),
-				CopySource:        aws.String(url.PathEscape(loc.Bucket + "/" + key)),
-				MetadataDirective: aws.String(s3.MetadataDirectiveReplace),
+				Bucket:                  aws.String(loc.Bucket),
+				Key:                     aws.String(key),
+				CopySource:              aws.String(url.PathEscape(loc.Bucket + "/" + key)),
+				MetadataDirective:       aws.String(s3.MetadataDirectiveReplace),
+				Metadata:                headOut.Metadata,
+				ContentType:             headOut.ContentType,
+				CacheControl:            headOut.CacheControl,
+				ContentDisposition:      headOut.ContentDisposition,
+				ContentLanguage:         headOut.ContentLanguage,
+				WebsiteRedirectLocation: headOut.WebsiteRedirectLocation,
+				ServerSideEncryption:    headOut.ServerSideEncryption,
+				SSEKMSKeyId:             headOut.SSEKMSKeyId,
+				StorageClass:            headOut.StorageClass,
+			}
+			if headOut.Expires != nil {
+				if expires, parseErr := http.ParseTime(*headOut.Expires); parseErr == nil {
+					copyInput.Expires = aws.Time(expires)
+				}
 			}
 			if encoding != "" {
 				copyInput.ContentEncoding = aws.String(encoding)
