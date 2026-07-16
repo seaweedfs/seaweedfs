@@ -48,6 +48,28 @@ func grpcErrorToFuseStatus(err error) fuse.Status {
 	return fuse.EIO
 }
 
+// isStorageFullError reports whether a chunk upload failed because the cluster
+// has no writable volume left (disks full and volume growth failed). The
+// master's message reaches the mount as plain text inside
+// AssignVolumeResponse.Error, so match on text rather than a status code.
+func isStorageFullError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "no writable volumes") ||
+		strings.Contains(errStr, "no free volumes")
+}
+
+// writeErrorToFuseStatus maps a dirty-page write/flush failure to the status
+// returned to the kernel: ENOSPC when the cluster is out of space, EIO otherwise.
+func writeErrorToFuseStatus(err error) fuse.Status {
+	if isStorageFullError(err) {
+		return fuse.Status(syscall.ENOSPC)
+	}
+	return fuse.EIO
+}
+
 // isRetryableFilerError reports whether a filer RPC error looks transient
 // enough to retry. It takes a conservative whitelist approach: only errors
 // that clearly describe a permanent application-level failure
