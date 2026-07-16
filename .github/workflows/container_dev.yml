@@ -5,6 +5,7 @@ on:
     branches: [ master ]
     paths:
       - 'weed/**'
+      - 'seaweed-volume/**'
       - 'docker/**'
       - 'go.mod'
       - 'go.sum'
