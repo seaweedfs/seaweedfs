@@ -440,8 +440,10 @@ func (az *azureRemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStor
 	key := loc.Path[1:]
 	blobClient := az.client.ServiceClient().NewContainerClient(loc.Bucket).NewBlobClient(key)
 
-	if _, err = blobClient.SetMetadata(context.Background(), metadata, nil); err != nil {
-		return err
+	if !reflect.DeepEqual(toMetadata(oldEntry.Extended), metadata) {
+		if _, err = blobClient.SetMetadata(context.Background(), metadata, nil); err != nil {
+			return err
+		}
 	}
 
 	if encoding := remote_storage.EntryContentEncoding(newEntry); encoding != remote_storage.EntryContentEncoding(oldEntry) {
