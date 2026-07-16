@@ -82,7 +82,7 @@ func (vs *VolumeServer) BatchDelete(ctx context.Context, req *volume_server_pb.B
 					Status: http.StatusBadRequest,
 					Error:  "File Random Cookie does not match.",
 				})
-				break
+				continue
 			}
 		}
 
