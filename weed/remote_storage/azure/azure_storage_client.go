@@ -440,7 +440,25 @@ func (az *azureRemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStor
 	key := loc.Path[1:]
 	blobClient := az.client.ServiceClient().NewContainerClient(loc.Bucket).NewBlobClient(key)
 
-	_, err = blobClient.SetMetadata(context.Background(), metadata, nil)
+	if _, err = blobClient.SetMetadata(context.Background(), metadata, nil); err != nil {
+		return err
+	}
+
+	if encoding := remote_storage.EntryContentEncoding(newEntry); encoding != remote_storage.EntryContentEncoding(oldEntry) {
+		// SetHTTPHeaders replaces the whole header set, so carry the rest over
+		props, getErr := blobClient.GetProperties(context.Background(), nil)
+		if getErr != nil {
+			return fmt.Errorf("azure get properties %s%s: %w", loc.Bucket, loc.Path, getErr)
+		}
+		httpHeaders := blob.ParseHTTPHeaders(props)
+		httpHeaders.BlobContentEncoding = nil
+		if encoding != "" {
+			httpHeaders.BlobContentEncoding = &encoding
+		}
+		if _, err = blobClient.SetHTTPHeaders(context.Background(), httpHeaders, nil); err != nil {
+			return fmt.Errorf("azure set http headers %s%s: %w", loc.Bucket, loc.Path, err)
+		}
+	}
 
 	return
 }

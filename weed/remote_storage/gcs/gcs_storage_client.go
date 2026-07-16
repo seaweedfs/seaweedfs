@@ -265,18 +265,21 @@ func (gcs *gcsRemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStora
 	if reflect.DeepEqual(oldEntry.Extended, newEntry.Extended) {
 		return nil
 	}
-	metadata := toMetadata(newEntry.Extended)
-
-	key := loc.Path[1:]
-
-	if len(metadata) > 0 {
-		_, err = gcs.client.Bucket(loc.Bucket).Object(key).Update(context.Background(), storage.ObjectAttrsToUpdate{
-			Metadata: metadata,
-		})
+	attrsToUpdate := storage.ObjectAttrsToUpdate{}
+	if metadata := toMetadata(newEntry.Extended); len(metadata) > 0 {
+		attrsToUpdate.Metadata = metadata
 	} else {
 		// no way to delete the metadata yet
 	}
+	if encoding := remote_storage.EntryContentEncoding(newEntry); encoding != remote_storage.EntryContentEncoding(oldEntry) {
+		attrsToUpdate.ContentEncoding = encoding // empty clears the header
+	}
 
+	if attrsToUpdate.Metadata == nil && attrsToUpdate.ContentEncoding == nil {
+		return nil
+	}
+	key := loc.Path[1:]
+	_, err = gcs.client.Bucket(loc.Bucket).Object(key).Update(context.Background(), attrsToUpdate)
 	return
 }
 func (gcs *gcsRemoteStorageClient) DeleteFile(loc *remote_pb.RemoteStorageLocation) (err error) {
