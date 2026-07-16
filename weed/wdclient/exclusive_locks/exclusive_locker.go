@@ -91,6 +91,7 @@ func (l *ExclusiveLocker) RequestLock(clientName string) {
 	if l.renewGoroutineRunning.CompareAndSwap(false, true) {
 		// start a goroutine to renew the lease
 		go func() {
+			defer l.renewGoroutineRunning.Store(false)
 			ctx2, cancel2 := context.WithCancel(context.Background())
 			defer cancel2()
 
