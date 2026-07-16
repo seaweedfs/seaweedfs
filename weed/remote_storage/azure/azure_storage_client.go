@@ -388,6 +388,9 @@ func (az *azureRemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocati
 	if entry.Attributes != nil && entry.Attributes.Mime != "" {
 		httpHeaders.BlobContentType = &entry.Attributes.Mime
 	}
+	if contentEncoding := remote_storage.EntryContentEncoding(entry); contentEncoding != "" {
+		httpHeaders.BlobContentEncoding = &contentEncoding
+	}
 
 	_, err = blobClient.UploadStream(context.Background(), reader, &blockblob.UploadStreamOptions{
 		BlockSize:   defaultBlockSize,

@@ -230,6 +230,7 @@ func (gcs *gcsRemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocatio
 	if entry.Attributes != nil && entry.Attributes.Mime != "" {
 		wc.ContentType = entry.Attributes.Mime
 	}
+	wc.ContentEncoding = remote_storage.EntryContentEncoding(entry)
 	if _, err = io.Copy(wc, reader); err != nil {
 		return nil, fmt.Errorf("upload to gcs %s/%s%s: %v", loc.Name, loc.Bucket, loc.Path, err)
 	}
