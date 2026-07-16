@@ -81,4 +81,10 @@ const (
 	FailureContextCancelled = "context_cancelled"
 	// FailureServerError is the failure reason label for generic server-side errors.
 	FailureServerError = "server_error"
+
+	// remote-mount cache read labels
+	RemoteCacheSourceFiler = "filer"
+	RemoteCacheSourceS3    = "s3"
+	RemoteCacheResultHit   = "hit"
+	RemoteCacheResultMiss  = "miss"
 )

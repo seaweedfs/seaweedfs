@@ -7,6 +7,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -63,6 +64,9 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	if isDeleteCollection {
 		collectionName := entry.Name()
 		f.DoDeleteCollection(collectionName)
+		// drop bucket-labeled series held by this process; the S3 gateway
+		// only cleans its own registry
+		stats.DeleteBucketMetrics(collectionName)
 	}
 
 	return nil

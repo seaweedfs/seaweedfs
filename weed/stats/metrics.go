@@ -52,6 +52,7 @@ const (
 	subsystemS3           = "s3"
 	subsystemS3Lifecycle  = "s3_lifecycle"
 	subsystemAdmin        = "admin"
+	subsystemRemote       = "remote"
 )
 
 var bucketLastActiveTsNs map[string]int64 = map[string]int64{}
@@ -660,6 +661,14 @@ var (
 			Help:      "Whether each S3 bucket is read-only (1) or writable (0), e.g. after exceeding its quota.",
 		}, []string{"bucket"})
 
+	RemoteCacheReadCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemRemote,
+			Name:      "cache_read_total",
+			Help:      "Remote-mount object read attempts by source, bucket and cache result. A cold object retried before caching completes records a miss per attempt; paths outside the buckets folder use bucket \"_other\".",
+		}, []string{"source", "bucket", "result"})
+
 	UploadErrorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -927,6 +936,8 @@ func init() {
 	Gather.MustRegister(S3BucketQuotaBytesGauge)
 	Gather.MustRegister(S3BucketReadOnlyGauge)
 
+	Gather.MustRegister(RemoteCacheReadCounter)
+
 	Gather.MustRegister(S3LifecycleDispatchCounter)
 	Gather.MustRegister(S3LifecycleScheduleDepthGauge)
 	Gather.MustRegister(S3LifecycleCursorMinTsNs)
@@ -1004,6 +1015,17 @@ func RecordBucketActiveTime(bucket string) {
 	bucketLastActiveLock.Unlock()
 }
 
+func RecordRemoteCacheRead(source, bucket string, hit bool) {
+	if bucket == "" {
+		bucket = "_other"
+	}
+	result := RemoteCacheResultMiss
+	if hit {
+		result = RemoteCacheResultHit
+	}
+	RemoteCacheReadCounter.WithLabelValues(source, bucket, result).Inc()
+}
+
 func DeleteBucketMetrics(bucket string) {
 	bucketLastActiveLock.Lock()
 	delete(bucketLastActiveTsNs, bucket)
@@ -1025,6 +1047,7 @@ func DeleteBucketMetrics(bucket string) {
 	c += S3LifecycleDispatchCounter.DeletePartialMatch(labels)
 	c += S3LifecycleBootstrapDispatchCounter.DeletePartialMatch(labels)
 	c += S3LifecycleMetadataOnlyCounter.DeletePartialMatch(labels)
+	c += RemoteCacheReadCounter.DeletePartialMatch(labels)
 
 	glog.V(0).Infof("delete bucket metrics, %s: %d", bucket, c)
 }
