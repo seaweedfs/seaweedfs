@@ -13,6 +13,7 @@ import (
 type ChunkedDirtyPages struct {
 	fh             *FileHandle
 	writeWaitGroup sync.WaitGroup
+	lastErrLock    sync.Mutex
 	lastErr        error
 	collection     string
 	replication    string
@@ -40,6 +41,12 @@ func newMemoryChunkPages(fh *FileHandle, chunkSize int64) *ChunkedDirtyPages {
 }
 
 func (pages *ChunkedDirtyPages) AddPage(offset int64, data []byte, isSequential bool, tsNs int64) error {
+	// A failed chunk upload already dropped its data, so this handle can never
+	// flush cleanly. Reject further writes so the writer fails fast instead of
+	// pushing the rest of the file through a pipeline that cannot persist it.
+	if err := pages.LastError(); err != nil {
+		return err
+	}
 	pages.hasWrites = true
 
 	glog.V(4).Infof("%v memory AddPage [%d, %d)", pages.fh.fh, offset, offset+int64(len(data)))
@@ -53,10 +60,26 @@ func (pages *ChunkedDirtyPages) FlushData() error {
 		return nil
 	}
 	pages.uploadPipeline.FlushAll()
-	if pages.lastErr != nil {
-		return fmt.Errorf("flush data: %v", pages.lastErr)
+	if err := pages.LastError(); err != nil {
+		return fmt.Errorf("flush data: %w", err)
 	}
 	return nil
+}
+
+// LastError returns the first chunk upload failure on this handle. It is
+// sticky: the failed chunk's data is gone, so the handle stays poisoned.
+func (pages *ChunkedDirtyPages) LastError() error {
+	pages.lastErrLock.Lock()
+	defer pages.lastErrLock.Unlock()
+	return pages.lastErr
+}
+
+func (pages *ChunkedDirtyPages) setLastError(err error) {
+	pages.lastErrLock.Lock()
+	defer pages.lastErrLock.Unlock()
+	if pages.lastErr == nil {
+		pages.lastErr = err
+	}
 }
 
 func (pages *ChunkedDirtyPages) ReadDirtyDataAt(data []byte, startOffset int64, tsNs int64) (maxStop int64) {
@@ -75,7 +98,7 @@ func (pages *ChunkedDirtyPages) saveChunkedFileIntervalToStorage(reader io.Reade
 	chunk, err := pages.fh.wfs.saveDataAsChunk(fileFullPath)(reader, fileName, offset, modifiedTsNs, uint64(size))
 	if err != nil {
 		glog.V(0).Infof("%v saveToStorage [%d,%d): %v", fileFullPath, offset, offset+size, err)
-		pages.lastErr = err
+		pages.setLastError(err)
 		return
 	}
 	pages.fh.AddChunks([]*filer_pb.FileChunk{chunk})

@@ -186,7 +186,7 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 			fhOut.dirtyPages.writerPattern.IsSequentialMode(),
 			nowUnixNano); err != nil {
 			glog.Errorf("AddPage error: %v", err)
-			return 0, fuse.EIO
+			return 0, writeErrorToFuseStatus(err)
 		}
 
 		// Accumulate for the next loop iteration

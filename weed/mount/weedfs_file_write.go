@@ -85,7 +85,7 @@ func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (wr
 
 	if err := fh.dirtyPages.AddPage(offset, data, fh.dirtyPages.writerPattern.IsSequentialMode(), tsNs); err != nil {
 		glog.Errorf("AddPage error: %v", err)
-		return 0, fuse.EIO
+		return 0, writeErrorToFuseStatus(err)
 	}
 
 	written = uint32(len(data))
