@@ -276,11 +276,10 @@ func (fs *FilerServer) maybeGetVolumeReadJwtAuthorizationToken(fileId string) st
 // bucketUnderBucketsPath returns the top-level bucket name for a path under the
 // filer buckets root, or "" if the path is not under that root.
 func bucketUnderBucketsPath(fullPath, bucketsPath string) string {
-	prefix := bucketsPath + "/"
-	if !strings.HasPrefix(fullPath, prefix) {
+	if len(fullPath) <= len(bucketsPath) || !strings.HasPrefix(fullPath, bucketsPath) || fullPath[len(bucketsPath)] != '/' {
 		return ""
 	}
-	rest := fullPath[len(prefix):]
+	rest := fullPath[len(bucketsPath)+1:]
 	if i := strings.IndexByte(rest, '/'); i >= 0 {
 		return rest[:i]
 	}
