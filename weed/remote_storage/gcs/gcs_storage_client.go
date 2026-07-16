@@ -194,7 +194,9 @@ func (gcs *gcsRemoteStorageClient) StatFile(loc *remote_pb.RemoteStorageLocation
 func (gcs *gcsRemoteStorageClient) ReadFile(loc *remote_pb.RemoteStorageLocation, offset int64, size int64) (data []byte, err error) {
 
 	key := loc.Path[1:]
-	rangeReader, readErr := gcs.client.Bucket(loc.Bucket).Object(key).NewRangeReader(context.Background(), offset, size)
+	// read the stored bytes: decompressive transcoding of gzip-encoded objects
+	// breaks range reads and returns sizes that disagree with RemoteSize
+	rangeReader, readErr := gcs.client.Bucket(loc.Bucket).Object(key).ReadCompressed(true).NewRangeReader(context.Background(), offset, size)
 	if readErr != nil {
 		return nil, readErr
 	}
@@ -209,7 +211,7 @@ func (gcs *gcsRemoteStorageClient) ReadFile(loc *remote_pb.RemoteStorageLocation
 
 func (gcs *gcsRemoteStorageClient) ReadFileAsStream(ctx context.Context, loc *remote_pb.RemoteStorageLocation, offset int64, size int64) (reader io.ReadCloser, err error) {
 	key := loc.Path[1:]
-	return gcs.client.Bucket(loc.Bucket).Object(key).NewRangeReader(ctx, offset, size)
+	return gcs.client.Bucket(loc.Bucket).Object(key).ReadCompressed(true).NewRangeReader(ctx, offset, size)
 }
 
 func (gcs *gcsRemoteStorageClient) WriteDirectory(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry) (err error) {
