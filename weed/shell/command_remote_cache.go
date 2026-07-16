@@ -160,7 +160,9 @@ func (c *commandRemoteCache) doComprehensiveSync(commandEnv *CommandEnv, writer 
 				// File exists locally, check if it needs updating
 				if localEntry.RemoteEntry == nil ||
 					localEntry.RemoteEntry.RemoteETag != remoteEntry.RemoteETag ||
-					localEntry.RemoteEntry.RemoteMtime < remoteEntry.RemoteMtime {
+					localEntry.RemoteEntry.RemoteMtime < remoteEntry.RemoteMtime ||
+					(remoteEntry.RemoteContentEncoding != nil &&
+						localEntry.RemoteEntry.GetRemoteContentEncoding() != remoteEntry.GetRemoteContentEncoding()) {
 					filesToUpdate = append(filesToUpdate, remotePath)
 				}
 				// Check if it needs caching

@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/proto"
 )
 
 // --- minimal FilerStore stub ---
@@ -304,7 +305,7 @@ func registerStubMaker(t *testing.T, storageType string, client remote_storage.R
 func TestMaybeLazyFetchFromRemote_HitsRemoteAndPersists(t *testing.T) {
 	const storageType = "stub_lazy_hit"
 	stub := &stubRemoteClient{
-		statResult: &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 1234, RemoteContentEncoding: "zstd"},
+		statResult: &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 1234, RemoteContentEncoding: proto.String("zstd")},
 	}
 	defer registerStubMaker(t, storageType, stub)()
 
@@ -854,7 +855,7 @@ func TestMaybeLazyListFromRemote_PopulatesStoreFromRemote(t *testing.T) {
 				RemoteSize:            42,
 				RemoteETag:            "abc",
 				StorageName:           "myliststore",
-				RemoteContentEncoding: "gzip",
+				RemoteContentEncoding: proto.String("gzip"),
 			}); err != nil {
 				return err
 			}

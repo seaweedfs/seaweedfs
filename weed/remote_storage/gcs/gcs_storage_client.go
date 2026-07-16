@@ -20,6 +20,7 @@ import (
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
+	"google.golang.org/protobuf/proto"
 )
 
 func init() {
@@ -102,7 +103,7 @@ func (gcs *gcsRemoteStorageClient) toRemoteEntry(attr *storage.ObjectAttrs) *fil
 		RemoteMtime:           attr.Updated.Unix(),
 		RemoteSize:            attr.Size,
 		RemoteETag:            attr.Etag,
-		RemoteContentEncoding: attr.ContentEncoding,
+		RemoteContentEncoding: proto.String(attr.ContentEncoding),
 	}
 }
 

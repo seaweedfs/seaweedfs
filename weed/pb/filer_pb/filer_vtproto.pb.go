@@ -261,10 +261,10 @@ func (m *RemoteEntry) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
-	if len(m.RemoteContentEncoding) > 0 {
-		i -= len(m.RemoteContentEncoding)
-		copy(dAtA[i:], m.RemoteContentEncoding)
-		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.RemoteContentEncoding)))
+	if m.RemoteContentEncoding != nil {
+		i -= len(*m.RemoteContentEncoding)
+		copy(dAtA[i:], *m.RemoteContentEncoding)
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(*m.RemoteContentEncoding)))
 		i--
 		dAtA[i] = 0x32
 	}
@@ -6254,8 +6254,8 @@ func (m *RemoteEntry) SizeVT() (n int) {
 	if m.RemoteSize != 0 {
 		n += 1 + protohelpers.SizeOfVarint(uint64(m.RemoteSize))
 	}
-	l = len(m.RemoteContentEncoding)
-	if l > 0 {
+	if m.RemoteContentEncoding != nil {
+		l = len(*m.RemoteContentEncoding)
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
 	n += len(m.unknownFields)
@@ -9301,7 +9301,8 @@ func (m *RemoteEntry) UnmarshalVT(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.RemoteContentEncoding = string(dAtA[iNdEx:postIndex])
+			s := string(dAtA[iNdEx:postIndex])
+			m.RemoteContentEncoding = &s
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex

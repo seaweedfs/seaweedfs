@@ -190,9 +190,7 @@ func (az *azureRemoteStorageClient) ListDirectory(ctx context.Context, loc *remo
 				if blobItem.Properties.ETag != nil {
 					remoteEntry.RemoteETag = string(*blobItem.Properties.ETag)
 				}
-				if blobItem.Properties.ContentEncoding != nil {
-					remoteEntry.RemoteContentEncoding = *blobItem.Properties.ContentEncoding
-				}
+				remoteEntry.RemoteContentEncoding = remoteContentEncoding(blobItem.Properties.ContentEncoding)
 			}
 
 			if err = visitFn(dir, name, false, remoteEntry); err != nil {
@@ -227,10 +225,18 @@ func (az *azureRemoteStorageClient) StatFile(loc *remote_pb.RemoteStorageLocatio
 	if resp.ETag != nil {
 		remoteEntry.RemoteETag = string(*resp.ETag)
 	}
-	if resp.ContentEncoding != nil {
-		remoteEntry.RemoteContentEncoding = *resp.ContentEncoding
-	}
+	remoteEntry.RemoteContentEncoding = remoteContentEncoding(resp.ContentEncoding)
 	return remoteEntry, nil
+}
+
+// blob properties report no Content-Encoding as nil; the remote entry records
+// that authoritatively as empty
+func remoteContentEncoding(encoding *string) *string {
+	if encoding == nil {
+		empty := ""
+		return &empty
+	}
+	return encoding
 }
 
 func (az *azureRemoteStorageClient) Traverse(loc *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
@@ -269,9 +275,7 @@ func (az *azureRemoteStorageClient) Traverse(loc *remote_pb.RemoteStorageLocatio
 				if blobItem.Properties.ETag != nil {
 					remoteEntry.RemoteETag = string(*blobItem.Properties.ETag)
 				}
-				if blobItem.Properties.ContentEncoding != nil {
-					remoteEntry.RemoteContentEncoding = *blobItem.Properties.ContentEncoding
-				}
+				remoteEntry.RemoteContentEncoding = remoteContentEncoding(blobItem.Properties.ContentEncoding)
 			}
 
 			err = visitFn(dir, name, false, remoteEntry)
