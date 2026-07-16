@@ -552,8 +552,11 @@ type RemoteEntry struct {
 	RemoteETag        string                 `protobuf:"bytes,3,opt,name=remote_e_tag,json=remoteETag,proto3" json:"remote_e_tag,omitempty"`
 	RemoteMtime       int64                  `protobuf:"varint,4,opt,name=remote_mtime,json=remoteMtime,proto3" json:"remote_mtime,omitempty"`
 	RemoteSize        int64                  `protobuf:"varint,5,opt,name=remote_size,json=remoteSize,proto3" json:"remote_size,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// unset when the remote listing does not report encodings (S3);
+	// empty when the remote object authoritatively has none
+	RemoteContentEncoding *string `protobuf:"bytes,6,opt,name=remote_content_encoding,json=remoteContentEncoding,proto3,oneof" json:"remote_content_encoding,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *RemoteEntry) Reset() {
@@ -619,6 +622,13 @@ func (x *RemoteEntry) GetRemoteSize() int64 {
 		return x.RemoteSize
 	}
 	return 0
+}
+
+func (x *RemoteEntry) GetRemoteContentEncoding() string {
+	if x != nil && x.RemoteContentEncoding != nil {
+		return *x.RemoteContentEncoding
+	}
+	return ""
 }
 
 type Entry struct {
@@ -6818,7 +6828,7 @@ const file_filer_proto_rawDesc = "" +
 	"\x0esnapshot_ts_ns\x18\x06 \x01(\x03R\fsnapshotTsNs\"b\n" +
 	"\x13ListEntriesResponse\x12%\n" +
 	"\x05entry\x18\x01 \x01(\v2\x0f.filer_pb.EntryR\x05entry\x12$\n" +
-	"\x0esnapshot_ts_ns\x18\x02 \x01(\x03R\fsnapshotTsNs\"\xc8\x01\n" +
+	"\x0esnapshot_ts_ns\x18\x02 \x01(\x03R\fsnapshotTsNs\"\xa1\x02\n" +
 	"\vRemoteEntry\x12!\n" +
 	"\fstorage_name\x18\x01 \x01(\tR\vstorageName\x120\n" +
 	"\x15last_local_sync_ts_ns\x18\x02 \x01(\x03R\x11lastLocalSyncTsNs\x12 \n" +
@@ -6826,7 +6836,9 @@ const file_filer_proto_rawDesc = "" +
 	"remoteETag\x12!\n" +
 	"\fremote_mtime\x18\x04 \x01(\x03R\vremoteMtime\x12\x1f\n" +
 	"\vremote_size\x18\x05 \x01(\x03R\n" +
-	"remoteSize\"\x89\x04\n" +
+	"remoteSize\x12;\n" +
+	"\x17remote_content_encoding\x18\x06 \x01(\tH\x00R\x15remoteContentEncoding\x88\x01\x01B\x1a\n" +
+	"\x18_remote_content_encoding\"\x89\x04\n" +
 	"\x05Entry\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12!\n" +
 	"\fis_directory\x18\x02 \x01(\bR\visDirectory\x12+\n" +
@@ -7719,6 +7731,7 @@ func file_filer_proto_init() {
 	if File_filer_proto != nil {
 		return
 	}
+	file_filer_proto_msgTypes[4].OneofWrappers = []any{}
 	file_filer_proto_msgTypes[84].OneofWrappers = []any{
 		(*StreamMutateEntryRequest_CreateRequest)(nil),
 		(*StreamMutateEntryRequest_UpdateRequest)(nil),

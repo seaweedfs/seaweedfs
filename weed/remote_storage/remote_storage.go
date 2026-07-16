@@ -66,6 +66,15 @@ func FormatLocation(loc *remote_pb.RemoteStorageLocation) string {
 
 type VisitFunc func(dir string, name string, isDirectory bool, remoteEntry *filer_pb.RemoteEntry) error
 
+// EntryContentEncoding returns the Content-Encoding stored in the entry
+// extended attributes, for clients to set on uploaded remote objects.
+func EntryContentEncoding(entry *filer_pb.Entry) string {
+	if entry == nil {
+		return ""
+	}
+	return string(entry.Extended["Content-Encoding"])
+}
+
 type Bucket struct {
 	Name      string
 	CreatedAt time.Time

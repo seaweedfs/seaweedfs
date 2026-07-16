@@ -20,6 +20,7 @@ import (
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
+	"google.golang.org/protobuf/proto"
 )
 
 func init() {
@@ -96,6 +97,16 @@ type gcsRemoteStorageClient struct {
 
 var _ = remote_storage.RemoteStorageClient(&gcsRemoteStorageClient{})
 
+func (gcs *gcsRemoteStorageClient) toRemoteEntry(attr *storage.ObjectAttrs) *filer_pb.RemoteEntry {
+	return &filer_pb.RemoteEntry{
+		StorageName:           gcs.conf.Name,
+		RemoteMtime:           attr.Updated.Unix(),
+		RemoteSize:            attr.Size,
+		RemoteETag:            attr.Etag,
+		RemoteContentEncoding: proto.String(attr.ContentEncoding),
+	}
+}
+
 func (gcs *gcsRemoteStorageClient) Traverse(loc *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
 
 	pathKey := loc.Path[1:]
@@ -119,12 +130,7 @@ func (gcs *gcsRemoteStorageClient) Traverse(loc *remote_pb.RemoteStorageLocation
 		key := objectAttr.Name
 		key = "/" + key
 		dir, name := util.FullPath(key).DirAndName()
-		err = visitFn(dir, name, false, &filer_pb.RemoteEntry{
-			RemoteMtime: objectAttr.Updated.Unix(),
-			RemoteSize:  objectAttr.Size,
-			RemoteETag:  objectAttr.Etag,
-			StorageName: gcs.conf.Name,
-		})
+		err = visitFn(dir, name, false, gcs.toRemoteEntry(objectAttr))
 	}
 	return
 }
@@ -165,12 +171,7 @@ func (gcs *gcsRemoteStorageClient) ListDirectory(ctx context.Context, loc *remot
 				continue // skip directory markers
 			}
 			dir, name := util.FullPath(key).DirAndName()
-			if err = visitFn(dir, name, false, &filer_pb.RemoteEntry{
-				RemoteMtime: objectAttr.Updated.Unix(),
-				RemoteSize:  objectAttr.Size,
-				RemoteETag:  objectAttr.Etag,
-				StorageName: gcs.conf.Name,
-			}); err != nil {
+			if err = visitFn(dir, name, false, gcs.toRemoteEntry(objectAttr)); err != nil {
 				return err
 			}
 		}
@@ -188,18 +189,15 @@ func (gcs *gcsRemoteStorageClient) StatFile(loc *remote_pb.RemoteStorageLocation
 		}
 		return nil, fmt.Errorf("stat gcs %s%s: %w", loc.Bucket, loc.Path, err)
 	}
-	return &filer_pb.RemoteEntry{
-		StorageName: gcs.conf.Name,
-		RemoteMtime: attr.Updated.Unix(),
-		RemoteSize:  attr.Size,
-		RemoteETag:  attr.Etag,
-	}, nil
+	return gcs.toRemoteEntry(attr), nil
 }
 
 func (gcs *gcsRemoteStorageClient) ReadFile(loc *remote_pb.RemoteStorageLocation, offset int64, size int64) (data []byte, err error) {
 
 	key := loc.Path[1:]
-	rangeReader, readErr := gcs.client.Bucket(loc.Bucket).Object(key).NewRangeReader(context.Background(), offset, size)
+	// read the stored bytes: decompressive transcoding of gzip-encoded objects
+	// breaks range reads and returns sizes that disagree with RemoteSize
+	rangeReader, readErr := gcs.client.Bucket(loc.Bucket).Object(key).ReadCompressed(true).NewRangeReader(context.Background(), offset, size)
 	if readErr != nil {
 		return nil, readErr
 	}
@@ -214,7 +212,7 @@ func (gcs *gcsRemoteStorageClient) ReadFile(loc *remote_pb.RemoteStorageLocation
 
 func (gcs *gcsRemoteStorageClient) ReadFileAsStream(ctx context.Context, loc *remote_pb.RemoteStorageLocation, offset int64, size int64) (reader io.ReadCloser, err error) {
 	key := loc.Path[1:]
-	return gcs.client.Bucket(loc.Bucket).Object(key).NewRangeReader(ctx, offset, size)
+	return gcs.client.Bucket(loc.Bucket).Object(key).ReadCompressed(true).NewRangeReader(ctx, offset, size)
 }
 
 func (gcs *gcsRemoteStorageClient) WriteDirectory(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry) (err error) {
@@ -235,6 +233,7 @@ func (gcs *gcsRemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocatio
 	if entry.Attributes != nil && entry.Attributes.Mime != "" {
 		wc.ContentType = entry.Attributes.Mime
 	}
+	wc.ContentEncoding = remote_storage.EntryContentEncoding(entry)
 	if _, err = io.Copy(wc, reader); err != nil {
 		return nil, fmt.Errorf("upload to gcs %s/%s%s: %v", loc.Name, loc.Bucket, loc.Path, err)
 	}
@@ -266,18 +265,21 @@ func (gcs *gcsRemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStora
 	if reflect.DeepEqual(oldEntry.Extended, newEntry.Extended) {
 		return nil
 	}
-	metadata := toMetadata(newEntry.Extended)
-
-	key := loc.Path[1:]
-
-	if len(metadata) > 0 {
-		_, err = gcs.client.Bucket(loc.Bucket).Object(key).Update(context.Background(), storage.ObjectAttrsToUpdate{
-			Metadata: metadata,
-		})
+	attrsToUpdate := storage.ObjectAttrsToUpdate{}
+	if metadata := toMetadata(newEntry.Extended); len(metadata) > 0 {
+		attrsToUpdate.Metadata = metadata
 	} else {
 		// no way to delete the metadata yet
 	}
+	if encoding := remote_storage.EntryContentEncoding(newEntry); encoding != remote_storage.EntryContentEncoding(oldEntry) {
+		attrsToUpdate.ContentEncoding = encoding // empty clears the header
+	}
 
+	if attrsToUpdate.Metadata == nil && attrsToUpdate.ContentEncoding == nil {
+		return nil
+	}
+	key := loc.Path[1:]
+	_, err = gcs.client.Bucket(loc.Bucket).Object(key).Update(context.Background(), attrsToUpdate)
 	return
 }
 func (gcs *gcsRemoteStorageClient) DeleteFile(loc *remote_pb.RemoteStorageLocation) (err error) {

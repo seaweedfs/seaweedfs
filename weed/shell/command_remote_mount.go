@@ -102,7 +102,7 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 	}
 
 	if strategy == MetadataCacheEager {
-		if err = pullMetadata(commandEnv, writer, util.FullPath(*dir), remoteStorageLocation, util.FullPath(*dir), remoteConf, false); err != nil {
+		if err = pullMetadata(commandEnv, writer, util.FullPath(*dir), remoteStorageLocation, util.FullPath(*dir), remoteConf, false, false); err != nil {
 			return fmt.Errorf("cache metadata: %w", err)
 		}
 	}
@@ -203,6 +203,7 @@ func doSaveRemoteEntry(client filer_pb.SeaweedFilerClient, localDir string, exis
 	existingEntry.Attributes.Mtime = remoteEntry.RemoteMtime
 	existingEntry.Attributes.Md5 = nil
 	existingEntry.Attributes.TtlSec = 0 // Remote entries should not have TTL
+	existingEntry.Extended = filer.MergeRemoteContentEncoding(remoteEntry, existingEntry.Extended)
 	existingEntry.Chunks = nil
 	existingEntry.Content = nil
 	_, updateErr := client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{

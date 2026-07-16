@@ -143,6 +143,9 @@ message RemoteEntry {
     string remote_e_tag = 3;
     int64 remote_mtime = 4;
     int64 remote_size = 5;
+    // unset when the remote listing does not report encodings (S3);
+    // empty when the remote object authoritatively has none
+    optional string remote_content_encoding = 6;
 }
 message Entry {
     string name = 1;
@@ -528,6 +531,7 @@ message AssignVolumeResponse {
     string replication = 7;
     string error = 8;
     Location location = 9;
+    repeated Location replicas = 10;
 }
 
 message LookupVolumeRequest {

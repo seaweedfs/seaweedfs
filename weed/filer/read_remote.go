@@ -12,6 +12,26 @@ func (entry *Entry) IsInRemoteOnly() bool {
 	return len(entry.GetChunks()) == 0 && entry.Remote != nil && entry.Remote.RemoteSize > 0
 }
 
+// MergeRemoteContentEncoding stamps the remote object's Content-Encoding into the
+// entry extended attributes so HTTP and S3 reads return the header. An unset
+// remote value (a listing that does not report encodings) leaves the attribute
+// alone; an authoritatively empty one removes it.
+func MergeRemoteContentEncoding(remoteEntry *filer_pb.RemoteEntry, extended map[string][]byte) map[string][]byte {
+	if remoteEntry == nil || remoteEntry.RemoteContentEncoding == nil {
+		return extended
+	}
+	encoding := *remoteEntry.RemoteContentEncoding
+	if encoding == "" {
+		delete(extended, "Content-Encoding")
+		return extended
+	}
+	if extended == nil {
+		extended = make(map[string][]byte)
+	}
+	extended["Content-Encoding"] = []byte(encoding)
+	return extended
+}
+
 func MapFullPathToRemoteStorageLocation(localMountedDir util.FullPath, remoteMountedLocation *remote_pb.RemoteStorageLocation, fp util.FullPath) *remote_pb.RemoteStorageLocation {
 	remoteLocation := &remote_pb.RemoteStorageLocation{
 		Name:   remoteMountedLocation.Name,

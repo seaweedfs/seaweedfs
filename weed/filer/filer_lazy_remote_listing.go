@@ -113,6 +113,7 @@ func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) {
 						existingEntry.Attr.Mtime = time.Unix(remoteEntry.RemoteMtime, 0)
 					}
 					existingEntry.Attr.FileSize = uint64(remoteEntry.RemoteSize)
+					existingEntry.Extended = MergeRemoteContentEncoding(remoteEntry, existingEntry.Extended)
 				}
 				if saveErr := f.Store.UpdateEntry(persistCtx, existingEntry); saveErr != nil {
 					glog.Warningf("maybeLazyListFromRemote: update %s: %v", childPath, saveErr)
@@ -146,7 +147,8 @@ func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) {
 							Uid:    OS_UID,
 							Gid:    OS_GID,
 						},
-						Remote: remoteEntry,
+						Extended: MergeRemoteContentEncoding(remoteEntry, nil),
+						Remote:   remoteEntry,
 					}
 					if remoteEntry != nil {
 						entry.Attr.FileSize = uint64(remoteEntry.RemoteSize)

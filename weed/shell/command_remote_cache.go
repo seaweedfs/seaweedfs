@@ -160,7 +160,9 @@ func (c *commandRemoteCache) doComprehensiveSync(commandEnv *CommandEnv, writer 
 				// File exists locally, check if it needs updating
 				if localEntry.RemoteEntry == nil ||
 					localEntry.RemoteEntry.RemoteETag != remoteEntry.RemoteETag ||
-					localEntry.RemoteEntry.RemoteMtime < remoteEntry.RemoteMtime {
+					localEntry.RemoteEntry.RemoteMtime < remoteEntry.RemoteMtime ||
+					(remoteEntry.RemoteContentEncoding != nil &&
+						localEntry.RemoteEntry.GetRemoteContentEncoding() != remoteEntry.GetRemoteContentEncoding()) {
 					filesToUpdate = append(filesToUpdate, remotePath)
 				}
 				// Check if it needs caching
@@ -275,6 +277,7 @@ func (c *commandRemoteCache) doComprehensiveSync(commandEnv *CommandEnv, writer 
 							Mtime:    remoteEntry.RemoteMtime,
 							FileMode: remoteEntryFileMode(isDirectory),
 						},
+						Extended:    filer.MergeRemoteContentEncoding(remoteEntry, nil),
 						RemoteEntry: remoteEntry,
 					},
 				})
@@ -295,6 +298,7 @@ func (c *commandRemoteCache) doComprehensiveSync(commandEnv *CommandEnv, writer 
 				existingEntry.Attributes.FileSize = uint64(remoteEntry.RemoteSize)
 				existingEntry.Attributes.Mtime = remoteEntry.RemoteMtime
 				existingEntry.Attributes.Md5 = nil
+				existingEntry.Extended = filer.MergeRemoteContentEncoding(remoteEntry, existingEntry.Extended)
 				existingEntry.Chunks = nil
 				existingEntry.Content = nil
 
