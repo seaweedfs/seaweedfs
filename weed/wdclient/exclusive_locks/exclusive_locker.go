@@ -15,6 +15,9 @@ const (
 	RenewInterval     = 4 * time.Second
 	SafeRenewInterval = 3 * time.Second
 	InitLockInterval  = 1 * time.Second
+	// bounds each renew/release RPC attempt so an unresponsive master cannot
+	// hold l.mu (and block ReleaseLock) indefinitely
+	rpcTimeout = 3 * time.Second
 )
 
 type ExclusiveLocker struct {
@@ -56,13 +59,12 @@ func (l *ExclusiveLocker) RequestLock(clientName string) {
 		return
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	// retry to get the lease
 	for {
 		if err := l.masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
-			resp, err := client.LeaseAdminToken(ctx, &master_pb.LeaseAdminTokenRequest{
+			attemptCtx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
+			defer cancel()
+			resp, err := client.LeaseAdminToken(attemptCtx, &master_pb.LeaseAdminTokenRequest{
 				PreviousToken:    atomic.LoadInt64(&l.token),
 				PreviousLockTime: atomic.LoadInt64(&l.lockTsNs),
 				LockName:         l.lockName,
@@ -115,7 +117,9 @@ func (l *ExclusiveLocker) renewLease(ctx context.Context) error {
 		return nil
 	}
 	return l.masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
-		resp, err := client.LeaseAdminToken(ctx, &master_pb.LeaseAdminTokenRequest{
+		attemptCtx, cancel := context.WithTimeout(ctx, rpcTimeout)
+		defer cancel()
+		resp, err := client.LeaseAdminToken(attemptCtx, &master_pb.LeaseAdminTokenRequest{
 			PreviousToken:    atomic.LoadInt64(&l.token),
 			PreviousLockTime: atomic.LoadInt64(&l.lockTsNs),
 			LockName:         l.lockName,
@@ -138,16 +142,15 @@ func (l *ExclusiveLocker) ReleaseLock() {
 	l.isLocked.Store(false)
 	l.clientName = ""
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	l.masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
-		client.ReleaseAdminToken(ctx, &master_pb.ReleaseAdminTokenRequest{
+		attemptCtx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
+		defer cancel()
+		_, err := client.ReleaseAdminToken(attemptCtx, &master_pb.ReleaseAdminTokenRequest{
 			PreviousToken:    atomic.LoadInt64(&l.token),
 			PreviousLockTime: atomic.LoadInt64(&l.lockTsNs),
 			LockName:         l.lockName,
 		})
-		return nil
+		return err
 	})
 	atomic.StoreInt64(&l.token, 0)
 	atomic.StoreInt64(&l.lockTsNs, 0)

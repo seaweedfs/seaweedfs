@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -110,16 +111,19 @@ func (ce *CommandEnv) isLocked() bool {
 }
 
 // shellLockHolder asks the master who currently holds the cluster-wide shell
-// lock. Best effort: masters without GetAdminLockStatus report no holder.
+// lock. Best effort: masters without GetAdminLockStatus report no holder, and
+// each attempt is bounded so an unresponsive master cannot hang the shell.
 func (ce *CommandEnv) shellLockHolder() (clientName string, message string, held bool) {
 	ce.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
-		resp, err := client.GetAdminLockStatus(context.Background(), &master_pb.GetAdminLockStatusRequest{
+		attemptCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		resp, err := client.GetAdminLockStatus(attemptCtx, &master_pb.GetAdminLockStatusRequest{
 			LockName: cluster.AdminShellLockName,
 		})
 		if err == nil && resp.IsLocked {
 			clientName, message, held = resp.ClientName, resp.Message, true
 		}
-		return nil
+		return err
 	})
 	return
 }
