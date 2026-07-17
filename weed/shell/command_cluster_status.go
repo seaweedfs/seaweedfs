@@ -53,6 +53,9 @@ type ClusterStatusPrinter struct {
 	maxParallelization int
 
 	locked              bool
+	lockHeld            bool
+	lockHolder          string
+	lockMessage         string
 	collections         []string
 	topology            *master_pb.TopologyInfo
 	volumeSizeLimitMb   uint64
@@ -91,12 +94,17 @@ func (c *commandClusterStatus) Do(args []string, commandEnv *CommandEnv, writer 
 		return err
 	}
 
+	lockHolder, lockMessage, lockHeld := commandEnv.shellLockHolder()
+
 	sp := &ClusterStatusPrinter{
 		writer:             writer,
 		humanize:           *humanize,
 		maxParallelization: *maxParallelization,
 
 		locked:            commandEnv.isLocked(),
+		lockHeld:          lockHeld,
+		lockHolder:        lockHolder,
+		lockMessage:       lockMessage,
 		collections:       collections,
 		topology:          topology,
 		volumeSizeLimitMb: volumeSizeLimitMb,
@@ -339,8 +347,14 @@ func (sp *ClusterStatusPrinter) printClusterInfo() {
 	}
 
 	status := "unlocked"
-	if sp.locked {
+	if sp.lockHeld || sp.locked {
 		status = "LOCKED"
+		if sp.lockHolder != "" {
+			status += " by " + sp.lockHolder
+		}
+		if sp.lockMessage != "" {
+			status += " (" + sp.lockMessage + ")"
+		}
 	}
 
 	sp.write("cluster:")

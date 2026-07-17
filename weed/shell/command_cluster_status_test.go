@@ -9,12 +9,15 @@ import (
 
 func TestPrintClusterInfo(t *testing.T) {
 	testCases := []struct {
-		topology *master_pb.TopologyInfo
-		humanize bool
-		want     string
+		topology    *master_pb.TopologyInfo
+		humanize    bool
+		lockHeld    bool
+		lockHolder  string
+		lockMessage string
+		want        string
 	}{
 		{
-			testTopology1, true,
+			testTopology1, true, false, "", "",
 			`cluster:
 	id:       test_topo_1
 	status:   unlocked
@@ -24,7 +27,7 @@ func TestPrintClusterInfo(t *testing.T) {
 `,
 		},
 		{
-			testTopology1, false,
+			testTopology1, false, false, "", "",
 			`cluster:
 	id:       test_topo_1
 	status:   unlocked
@@ -33,14 +36,37 @@ func TestPrintClusterInfo(t *testing.T) {
 
 `,
 		},
+		{
+			testTopology1, true, true, "192.168.1.5", "",
+			`cluster:
+	id:       test_topo_1
+	status:   LOCKED by 192.168.1.5
+	nodes:    5
+	topology: 5 DCs, 5 disks on 6 racks
+
+`,
+		},
+		{
+			testTopology1, true, true, "192.168.1.5", "ec.encode",
+			`cluster:
+	id:       test_topo_1
+	status:   LOCKED by 192.168.1.5 (ec.encode)
+	nodes:    5
+	topology: 5 DCs, 5 disks on 6 racks
+
+`,
+		},
 	}
 
 	for _, tc := range testCases {
 		var buf bytes.Buffer
 		sp := &ClusterStatusPrinter{
-			writer:   &buf,
-			humanize: tc.humanize,
-			topology: tc.topology,
+			writer:      &buf,
+			humanize:    tc.humanize,
+			topology:    tc.topology,
+			lockHeld:    tc.lockHeld,
+			lockHolder:  tc.lockHolder,
+			lockMessage: tc.lockMessage,
 		}
 		sp.printClusterInfo()
 		got := buf.String()
