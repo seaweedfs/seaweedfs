@@ -142,6 +142,9 @@ func (l *ExclusiveLocker) ReleaseLock() {
 	l.isLocked.Store(false)
 	l.clientName = ""
 
+	prevToken := atomic.LoadInt64(&l.token)
+	prevLockTsNs := atomic.LoadInt64(&l.lockTsNs)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -149,14 +152,16 @@ func (l *ExclusiveLocker) ReleaseLock() {
 	// lock held until it expires, turning a slow unlock into a ghost lock
 	l.masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 		client.ReleaseAdminToken(ctx, &master_pb.ReleaseAdminTokenRequest{
-			PreviousToken:    atomic.LoadInt64(&l.token),
-			PreviousLockTime: atomic.LoadInt64(&l.lockTsNs),
+			PreviousToken:    prevToken,
+			PreviousLockTime: prevLockTsNs,
 			LockName:         l.lockName,
 		})
 		return nil
 	})
-	atomic.StoreInt64(&l.token, 0)
-	atomic.StoreInt64(&l.lockTsNs, 0)
+	// compare on clear: a RequestLock racing a slow release must not have its
+	// fresh token zeroed
+	atomic.CompareAndSwapInt64(&l.token, prevToken, 0)
+	atomic.CompareAndSwapInt64(&l.lockTsNs, prevLockTsNs, 0)
 }
 
 func (l *ExclusiveLocker) SetMessage(message string) {
