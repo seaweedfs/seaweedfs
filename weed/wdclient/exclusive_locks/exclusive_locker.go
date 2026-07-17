@@ -15,8 +15,8 @@ const (
 	RenewInterval     = 4 * time.Second
 	SafeRenewInterval = 3 * time.Second
 	InitLockInterval  = 1 * time.Second
-	// bounds each renew/release RPC attempt so an unresponsive master cannot
-	// hold l.mu (and block ReleaseLock) indefinitely
+	// bounds each lease and renew RPC attempt so an unresponsive master
+	// cannot hold l.mu (and block ReleaseLock) indefinitely
 	rpcTimeout = 3 * time.Second
 )
 
@@ -142,15 +142,18 @@ func (l *ExclusiveLocker) ReleaseLock() {
 	l.isLocked.Store(false)
 	l.clientName = ""
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// single unbounded attempt: a release cut short by a deadline leaves the
+	// lock held until it expires, turning a slow unlock into a ghost lock
 	l.masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
-		attemptCtx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
-		defer cancel()
-		_, err := client.ReleaseAdminToken(attemptCtx, &master_pb.ReleaseAdminTokenRequest{
+		client.ReleaseAdminToken(ctx, &master_pb.ReleaseAdminTokenRequest{
 			PreviousToken:    atomic.LoadInt64(&l.token),
 			PreviousLockTime: atomic.LoadInt64(&l.lockTsNs),
 			LockName:         l.lockName,
 		})
-		return err
+		return nil
 	})
 	atomic.StoreInt64(&l.token, 0)
 	atomic.StoreInt64(&l.lockTsNs, 0)
