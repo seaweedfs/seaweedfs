@@ -3,6 +3,7 @@ package cassandra2
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 
 	gocql "github.com/apache/cassandra-gocql-driver/v2"
@@ -28,7 +29,7 @@ func (store *Cassandra2Store) KvGet(ctx context.Context, key []byte) (data []byt
 	if err := store.session.Query(
 		"SELECT meta FROM filemeta WHERE dirhash=? AND directory=? AND name=?",
 		util.HashStringToLong(dir), dir, name).Scan(&data); err != nil {
-		if err == gocql.ErrNotFound {
+		if errors.Is(err, gocql.ErrNotFound) {
 			return nil, filer.ErrKvNotFound
 		}
 		return nil, fmt.Errorf("kv get: %w", err)
