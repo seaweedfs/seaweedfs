@@ -12,6 +12,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
@@ -790,12 +791,17 @@ func (h *VolumeBalanceHandler) checkMoveStillValid(ctx context.Context, masterAd
 }
 
 func checkMovePreconditions(locations []string, volumeID uint32, sourceNode, targetNode string) error {
+	// Proposal nodes carry the grpc suffix (host:port.grpcPort) while the
+	// master reports plain host:port urls, so compare in http form.
+	sourceAddress := pb.ServerAddress(strings.TrimSpace(sourceNode))
+	targetAddress := pb.ServerAddress(strings.TrimSpace(targetNode))
 	sourceFound := false
 	for _, location := range locations {
-		switch strings.TrimSpace(location) {
-		case targetNode:
+		locationAddress := pb.ServerAddress(strings.TrimSpace(location))
+		switch {
+		case locationAddress.Equals(targetAddress):
 			return fmt.Errorf("stale move: volume %d already has a replica on target %s", volumeID, targetNode)
-		case sourceNode:
+		case locationAddress.Equals(sourceAddress):
 			sourceFound = true
 		}
 	}

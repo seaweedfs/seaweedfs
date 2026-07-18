@@ -798,18 +798,22 @@ func (r *recordingDetectionSender) SendActivity(event *plugin_pb.ActivityEvent) 
 
 func TestCheckMovePreconditions(t *testing.T) {
 	tests := []struct {
-		name      string
-		locations []string
-		wantErr   string
+		name       string
+		locations  []string
+		sourceNode string
+		targetNode string
+		wantErr    string
 	}{
-		{"valid move", []string{"10.0.0.1:8080", "10.0.0.3:8080"}, ""},
-		{"volume left the source", []string{"10.0.0.3:8080"}, "no longer on source"},
-		{"volume gone entirely", nil, "no longer on source"},
-		{"target already has a replica", []string{"10.0.0.1:8080", "10.0.0.2:8080"}, "already has a replica on target"},
+		{"valid move", []string{"10.0.0.1:8080", "10.0.0.3:8080"}, "10.0.0.1:8080", "10.0.0.2:8080", ""},
+		{"volume left the source", []string{"10.0.0.3:8080"}, "10.0.0.1:8080", "10.0.0.2:8080", "no longer on source"},
+		{"volume gone entirely", nil, "10.0.0.1:8080", "10.0.0.2:8080", "no longer on source"},
+		{"target already has a replica", []string{"10.0.0.1:8080", "10.0.0.2:8080"}, "10.0.0.1:8080", "10.0.0.2:8080", "already has a replica on target"},
+		{"proposal nodes carry grpc suffix", []string{"10.0.0.1:8080", "10.0.0.3:8080"}, "10.0.0.1:8080.18080", "10.0.0.2:8080.18080", ""},
+		{"grpc-suffixed target already has a replica", []string{"10.0.0.1:8080", "10.0.0.2:8080"}, "10.0.0.1:8080.18080", "10.0.0.2:8080.18080", "already has a replica on target"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := checkMovePreconditions(tt.locations, 5, "10.0.0.1:8080", "10.0.0.2:8080")
+			err := checkMovePreconditions(tt.locations, 5, tt.sourceNode, tt.targetNode)
 			if tt.wantErr == "" {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
