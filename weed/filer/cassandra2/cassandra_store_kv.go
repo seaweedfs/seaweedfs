@@ -28,9 +28,10 @@ func (store *Cassandra2Store) KvGet(ctx context.Context, key []byte) (data []byt
 	if err := store.session.Query(
 		"SELECT meta FROM filemeta WHERE dirhash=? AND directory=? AND name=?",
 		util.HashStringToLong(dir), dir, name).Scan(&data); err != nil {
-		if err != gocql.ErrNotFound {
+		if err == gocql.ErrNotFound {
 			return nil, filer.ErrKvNotFound
 		}
+		return nil, fmt.Errorf("kv get: %w", err)
 	}
 
 	if len(data) == 0 {
