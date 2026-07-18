@@ -47,39 +47,30 @@ func (c *commandClusterPs) Do(args []string, commandEnv *CommandEnv, writer io.W
 		return nil
 	}
 
-	var filerNodes []*master_pb.ListClusterNodesResponse_ClusterNode
-	var mqBrokerNodes []*master_pb.ListClusterNodesResponse_ClusterNode
-
-	// get the list of filers
-	err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
-		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
-			ClientType: cluster.FilerType,
-			FilerGroup: *commandEnv.option.FilerGroup,
+	listClusterNodes := func(clientType string) (nodes []*master_pb.ListClusterNodesResponse_ClusterNode, err error) {
+		err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+			resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
+				ClientType: clientType,
+				FilerGroup: *commandEnv.option.FilerGroup,
+			})
+			if err != nil {
+				return err
+			}
+			nodes = resp.ClusterNodes
+			return nil
 		})
-		if err != nil {
-			return err
-		}
-
-		filerNodes = resp.ClusterNodes
-		return err
-	})
-	if err != nil {
 		return
 	}
 
-	// get the list of message queue brokers
-	err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
-		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
-			ClientType: cluster.BrokerType,
-			FilerGroup: *commandEnv.option.FilerGroup,
-		})
-		if err != nil {
-			return err
-		}
-
-		mqBrokerNodes = resp.ClusterNodes
-		return err
-	})
+	filerNodes, err := listClusterNodes(cluster.FilerType)
+	if err != nil {
+		return
+	}
+	mqBrokerNodes, err := listClusterNodes(cluster.BrokerType)
+	if err != nil {
+		return
+	}
+	s3Nodes, err := listClusterNodes(cluster.S3Type)
 	if err != nil {
 		return
 	}
@@ -87,6 +78,19 @@ func (c *commandClusterPs) Do(args []string, commandEnv *CommandEnv, writer io.W
 	if len(mqBrokerNodes) > 0 {
 		fmt.Fprintf(writer, "* message queue brokers %d\n", len(mqBrokerNodes))
 		for _, node := range mqBrokerNodes {
+			fmt.Fprintf(writer, "  * %s (%v)\n", node.Address, node.Version)
+			if node.DataCenter != "" {
+				fmt.Fprintf(writer, "    DataCenter: %v\n", node.DataCenter)
+			}
+			if node.Rack != "" {
+				fmt.Fprintf(writer, "    Rack: %v\n", node.Rack)
+			}
+		}
+	}
+
+	if len(s3Nodes) > 0 {
+		fmt.Fprintf(writer, "* s3 servers %d\n", len(s3Nodes))
+		for _, node := range s3Nodes {
 			fmt.Fprintf(writer, "  * %s (%v)\n", node.Address, node.Version)
 			if node.DataCenter != "" {
 				fmt.Fprintf(writer, "    DataCenter: %v\n", node.DataCenter)
