@@ -47,8 +47,9 @@ func (c *commandClusterPs) Do(args []string, commandEnv *CommandEnv, writer io.W
 		return nil
 	}
 
-	listClusterNodes := func(clientType string) (nodes []*master_pb.ListClusterNodesResponse_ClusterNode, err error) {
-		err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+	listClusterNodes := func(clientType string) ([]*master_pb.ListClusterNodesResponse_ClusterNode, error) {
+		var nodes []*master_pb.ListClusterNodesResponse_ClusterNode
+		err := commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 			resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
 				ClientType: clientType,
 				FilerGroup: *commandEnv.option.FilerGroup,
@@ -59,7 +60,7 @@ func (c *commandClusterPs) Do(args []string, commandEnv *CommandEnv, writer io.W
 			nodes = resp.ClusterNodes
 			return nil
 		})
-		return
+		return nodes, err
 	}
 
 	filerNodes, err := listClusterNodes(cluster.FilerType)
