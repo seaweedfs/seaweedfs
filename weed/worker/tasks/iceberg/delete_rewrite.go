@@ -440,7 +440,7 @@ func (h *Handler) rewritePositionDeleteFiles(
 			dfBuilder, err := iceberg.NewDataFileBuilder(
 				spec,
 				iceberg.EntryContentPosDeletes,
-				path.Join("data", fileName),
+				absoluteIcebergPath(bucketName, tablePath, "data", fileName),
 				iceberg.ParquetFile,
 				group.Partition,
 				nil, nil,
@@ -512,7 +512,7 @@ func (h *Handler) rewritePositionDeleteFiles(
 			return "", nil, fmt.Errorf("partition spec %d not found", specID)
 		}
 		manifestName := fmt.Sprintf("rewrite-delete-%d-%s-spec%d.avro", newSnapID, artifactSuffix, specID)
-		manifestPath := path.Join("metadata", manifestName)
+		manifestPath := absoluteIcebergPath(bucketName, tablePath, "metadata", manifestName)
 		mf, manifestBytes, err := writeManifestWithContent(
 			manifestPath,
 			version,
@@ -542,7 +542,7 @@ func (h *Handler) rewritePositionDeleteFiles(
 	}
 	writtenArtifacts = append(writtenArtifacts, artifact{dir: metaDir, fileName: manifestListName})
 
-	manifestListLocation := path.Join("metadata", manifestListName)
+	manifestListLocation := absoluteIcebergPath(bucketName, tablePath, "metadata", manifestListName)
 	err = h.commitWithRetry(ctx, filerClient, bucketName, tablePath, metadataFileName, config, func(currentMeta table.Metadata, builder *table.MetadataBuilder) error {
 		cs := currentMeta.CurrentSnapshot()
 		if cs == nil || cs.SnapshotID != snapshotID {

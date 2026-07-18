@@ -274,7 +274,7 @@ func TestCompactDataFilesWhereFilter(t *testing.T) {
 	var compactedCount int
 	for _, p := range liveDataPaths {
 		switch {
-		case strings.HasPrefix(p, "data/compact-"):
+		case strings.HasPrefix(p, "s3://tb/ns/tbl/data/compact-"):
 			compactedCount++
 		case p == "data/eu-1.parquet", p == "data/eu-2.parquet":
 		default:

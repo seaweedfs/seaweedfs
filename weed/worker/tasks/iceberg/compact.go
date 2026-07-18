@@ -262,7 +262,7 @@ func (h *Handler) compactDataFiles(
 		}
 
 		mergedFileName := fmt.Sprintf("compact-%d-%d-%s-%d.parquet", snapshotID, newSnapID, artifactSuffix, binIdx)
-		mergedFilePath := path.Join("data", mergedFileName)
+		mergedFilePath := absoluteIcebergPath(bucketName, tablePath, "data", mergedFileName)
 
 		var mergedData []byte
 		var recordCount int64
@@ -408,7 +408,7 @@ func (h *Handler) compactDataFiles(
 		var manifestBuf bytes.Buffer
 		manifestFileName := fmt.Sprintf("compact-%d-%s-spec%d.avro", newSnapID, artifactSuffix, se.specID)
 		newManifest, err := iceberg.WriteManifest(
-			path.Join("metadata", manifestFileName),
+			absoluteIcebergPath(bucketName, tablePath, "metadata", manifestFileName),
 			&manifestBuf,
 			version,
 			ps,
@@ -470,7 +470,7 @@ func (h *Handler) compactDataFiles(
 	writtenArtifacts = append(writtenArtifacts, artifact{dir: metaDir, fileName: manifestListFileName})
 
 	// Commit: add new snapshot and update main branch ref
-	manifestListLocation := path.Join("metadata", manifestListFileName)
+	manifestListLocation := absoluteIcebergPath(bucketName, tablePath, "metadata", manifestListFileName)
 	err = h.commitWithRetry(ctx, filerClient, bucketName, tablePath, metadataFileName, config, func(currentMeta table.Metadata, builder *table.MetadataBuilder) error {
 		// Guard: verify table head hasn't advanced since we planned.
 		cs := currentMeta.CurrentSnapshot()
