@@ -646,3 +646,88 @@ func TestSatisfyReplicaCurrentLocation(t *testing.T) {
 		})
 	}
 }
+
+func TestClassifyReplicaSet(t *testing.T) {
+
+	var tests = []struct {
+		name        string
+		replication string
+		replicas    []*VolumeReplica
+		expected    replicaFix
+	}{
+		{
+			// The full replica count is present but two copies crowd one rack.
+			// Deleting a misplaced replica first would drop the volume below its
+			// intended durability, so add a well-placed replica first.
+			name:        "110 misplaced without surplus adds before trimming",
+			replication: "110",
+			replicas: []*VolumeReplica{
+				{location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn1"}}},
+				{location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn2"}}},
+				{location: &location{"dc2", "r2", &master_pb.DataNodeInfo{Id: "dn3"}}},
+			},
+			expected: replicaFixAddOneBeforeTrim,
+		},
+		{
+			// Same misplaced set once the well-placed replica registered: now
+			// there is a surplus, and the misplaced replica can be trimmed.
+			name:        "110 misplaced with surplus trims",
+			replication: "110",
+			replicas: []*VolumeReplica{
+				{location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn1"}}},
+				{location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn2"}}},
+				{location: &location{"dc1", "r3", &master_pb.DataNodeInfo{Id: "dn4"}}},
+				{location: &location{"dc2", "r2", &master_pb.DataNodeInfo{Id: "dn3"}}},
+			},
+			expected: replicaFixTrimMisplaced,
+		},
+		{
+			name:        "010 missing a replica adds",
+			replication: "010",
+			replicas: []*VolumeReplica{
+				{location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn1"}}},
+			},
+			expected: replicaFixAddOne,
+		},
+		{
+			// Simultaneously over-provisioned in count and lacking rack spread:
+			// the missing failure domain is filled first, trims come later.
+			name:        "010 surplus count but missing rack spread adds",
+			replication: "010",
+			replicas: []*VolumeReplica{
+				{location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn1"}}},
+				{location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn2"}}},
+				{location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn3"}}},
+			},
+			expected: replicaFixAddOne,
+		},
+		{
+			name:        "010 well placed needs nothing",
+			replication: "010",
+			replicas: []*VolumeReplica{
+				{location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn1"}}},
+				{location: &location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "dn2"}}},
+			},
+			expected: replicaFixNothing,
+		},
+		{
+			name:        "000 duplicate copy trims",
+			replication: "000",
+			replicas: []*VolumeReplica{
+				{location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn1"}}},
+				{location: &location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "dn2"}}},
+			},
+			expected: replicaFixTrimMisplaced,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			replicaPlacement, _ := super_block.NewReplicaPlacementFromString(tt.replication)
+			if got := classifyReplicaSet(replicaPlacement, tt.replicas); got != tt.expected {
+				t.Errorf("%s: expect %v got %v for %v %+v",
+					tt.name, tt.expected, got, tt.replication, tt.replicas)
+			}
+		})
+	}
+}
