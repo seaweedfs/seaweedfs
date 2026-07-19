@@ -251,6 +251,16 @@ func normalizeIcebergPath(icebergPath, bucketName, tablePath string) string {
 	return p
 }
 
+// absoluteIcebergPath is the inverse of normalizeIcebergPath: it builds the
+// absolute s3:// URI for a file under the table root. The Iceberg spec
+// requires absolute locations in metadata — strict readers (Spark/Trino via
+// S3FileIO) reject paths with no scheme. The base is derived from
+// bucketName/tablePath because that is where this package physically writes
+// every file, regardless of the location recorded in the table metadata.
+func absoluteIcebergPath(bucketName, tablePath string, elem ...string) string {
+	return "s3://" + path.Join(append([]string{bucketName, tablePath}, elem...)...)
+}
+
 // saveFilerFile saves a file to the filer.
 func saveFilerFile(ctx context.Context, client filer_pb.SeaweedFilerClient, dir, fileName string, content []byte) error {
 	resp, err := client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
@@ -285,8 +295,9 @@ func deleteFilerFile(ctx context.Context, client filer_pb.SeaweedFilerClient, di
 // writing and passes the previous metadata xattr back to the filer as a
 // server-side precondition so concurrent writers fail with a retryable
 // metadata version conflict.
-// newMetadataLocation is the table-relative path to the new metadata file
-// (e.g. "metadata/v3.metadata.json").
+// newMetadataLocation is the absolute location of the new metadata file
+// (e.g. "s3://bucket/ns/table/metadata/v3.metadata.json"), matching the form
+// the S3 Tables catalog stores.
 func updateTableMetadataXattr(ctx context.Context, client filer_pb.SeaweedFilerClient, tableDir string, expectedVersion int, newFullMetadata []byte, newMetadataLocation string) error {
 	tableName := path.Base(tableDir)
 	parentDir := path.Dir(tableDir)

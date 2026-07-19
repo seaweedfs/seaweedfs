@@ -766,6 +766,53 @@ func TestRewriteManifestsExecution(t *testing.T) {
 	if updates == 0 {
 		t.Error("expected at least one UpdateEntry call for xattr update")
 	}
+
+	// The spec requires absolute locations — strict readers (Spark/Trino via
+	// S3FileIO) reject scheme-less paths, so verify every written location.
+	wantPrefix := "s3://test-bucket/analytics/events/metadata/"
+	newMeta, _, err := loadCurrentMetadata(context.Background(), client, setup.BucketName, setup.tablePath())
+	if err != nil {
+		t.Fatalf("reload metadata: %v", err)
+	}
+	newSnap := newMeta.CurrentSnapshot()
+	if newSnap == nil || !strings.HasPrefix(newSnap.ManifestList, wantPrefix+"snap-") {
+		t.Fatalf("new snapshot manifest list should be absolute, got %+v", newSnap)
+	}
+	foundPreviousEntry := false
+	for mle := range newMeta.PreviousFiles() {
+		if mle.MetadataFile == wantPrefix+"v1.metadata.json" {
+			foundPreviousEntry = true
+		}
+	}
+	if !foundPreviousEntry {
+		t.Error("metadata-log should record the previous metadata file at its absolute location")
+	}
+	mlData, err := loadFileByIcebergPath(context.Background(), client, setup.BucketName, setup.tablePath(), newSnap.ManifestList)
+	if err != nil {
+		t.Fatalf("load new manifest list: %v", err)
+	}
+	newManifests, err := iceberg.ReadManifestList(bytes.NewReader(mlData))
+	if err != nil {
+		t.Fatalf("parse new manifest list: %v", err)
+	}
+	for _, mf := range newManifests {
+		if !strings.HasPrefix(mf.FilePath(), wantPrefix+"merged-") {
+			t.Errorf("merged manifest path should be absolute, got %q", mf.FilePath())
+		}
+	}
+	tableEntry := fs.getEntry(path.Join(s3tables.TablesPath, setup.BucketName, setup.Namespace), setup.TableName)
+	if tableEntry == nil {
+		t.Fatal("table entry missing")
+	}
+	var xattrMeta struct {
+		MetadataLocation string `json:"metadataLocation"`
+	}
+	if err := json.Unmarshal(tableEntry.Extended[s3tables.ExtendedKeyMetadata], &xattrMeta); err != nil {
+		t.Fatalf("unmarshal table xattr: %v", err)
+	}
+	if !strings.HasPrefix(xattrMeta.MetadataLocation, wantPrefix+"v2-") {
+		t.Errorf("xattr metadataLocation should be absolute, got %q", xattrMeta.MetadataLocation)
+	}
 }
 
 func TestRewriteManifestsBelowThreshold(t *testing.T) {
@@ -3318,7 +3365,7 @@ func TestRewritePositionDeleteFilesExecution(t *testing.T) {
 	if len(liveDeletePaths) != 1 {
 		t.Fatalf("expected 1 live rewritten delete file, got %v", liveDeletePaths)
 	}
-	if !strings.HasPrefix(liveDeletePaths[0], "data/rewrite-delete-") {
+	if !strings.HasPrefix(liveDeletePaths[0], "s3://tb/ns/tbl/data/rewrite-delete-") {
 		t.Fatalf("expected rewritten delete file path, got %q", liveDeletePaths[0])
 	}
 }
@@ -3545,7 +3592,7 @@ func TestRewritePositionDeleteFilesPreservesUnsupportedMultiTargetDeletes(t *tes
 	if posPaths[0] != "data/pd3.parquet" && posPaths[1] != "data/pd3.parquet" {
 		t.Fatalf("expected multi-target delete file to be preserved, got %v", posPaths)
 	}
-	if !strings.HasPrefix(posPaths[0], "data/rewrite-delete-") && !strings.HasPrefix(posPaths[1], "data/rewrite-delete-") {
+	if !strings.HasPrefix(posPaths[0], "s3://tb/ns/tbl/data/rewrite-delete-") && !strings.HasPrefix(posPaths[1], "s3://tb/ns/tbl/data/rewrite-delete-") {
 		t.Fatalf("expected rewritten delete file to remain live, got %v", posPaths)
 	}
 }
@@ -3614,7 +3661,7 @@ func TestRewritePositionDeleteFilesRebuildsMixedDeleteManifests(t *testing.T) {
 	}
 
 	posPaths, eqPaths := loadLiveDeleteFilePaths(t, client, setup.BucketName, setup.tablePath())
-	if len(posPaths) != 1 || !strings.HasPrefix(posPaths[0], "data/rewrite-delete-") {
+	if len(posPaths) != 1 || !strings.HasPrefix(posPaths[0], "s3://tb/ns/tbl/data/rewrite-delete-") {
 		t.Fatalf("expected only the rewritten position delete file to remain live, got %v", posPaths)
 	}
 	if len(eqPaths) != 1 || eqPaths[0] != "data/eq1.parquet" {

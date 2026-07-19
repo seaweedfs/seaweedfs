@@ -456,7 +456,7 @@ func (h *Handler) rewriteManifests(
 	for _, se := range specMap {
 		totalEntries += len(se.entries)
 		manifestFileName := fmt.Sprintf("merged-%d-%s-spec%d.avro", newSnapshotID, artifactSuffix, se.specID)
-		manifestPath := path.Join("metadata", manifestFileName)
+		manifestPath := absoluteIcebergPath(bucketName, tablePath, "metadata", manifestFileName)
 
 		var manifestBuf bytes.Buffer
 		mergedManifest, err := iceberg.WriteManifest(
@@ -500,7 +500,7 @@ func (h *Handler) rewriteManifests(
 	writtenArtifacts = append(writtenArtifacts, artifact{dir: metaDir, fileName: manifestListFileName})
 
 	// Create new snapshot with the rewritten manifest list
-	manifestListLocation := path.Join("metadata", manifestListFileName)
+	manifestListLocation := absoluteIcebergPath(bucketName, tablePath, "metadata", manifestListFileName)
 
 	err = h.commitWithRetry(ctx, filerClient, bucketName, tablePath, metadataFileName, config, func(currentMeta table.Metadata, builder *table.MetadataBuilder) error {
 		// Guard: verify table head hasn't advanced since we planned.
@@ -590,9 +590,9 @@ func (h *Handler) commitWithRetry(
 			return fmt.Errorf("load metadata (attempt %d): %w", attempt, err)
 		}
 
-		// Build new metadata — pass the current metadata file path so the
+		// Build new metadata — pass the current metadata file location so the
 		// metadata log correctly records where the previous version lives.
-		currentMetaFilePath := path.Join("metadata", metaFileName)
+		currentMetaFilePath := absoluteIcebergPath(bucketName, tablePath, "metadata", metaFileName)
 		builder, err := table.MetadataBuilderFromBase(meta, currentMetaFilePath)
 		if err != nil {
 			return fmt.Errorf("create metadata builder (attempt %d): %w", attempt, err)
@@ -632,7 +632,7 @@ func (h *Handler) commitWithRetry(
 
 		// Update the table entry's xattr with new metadata (CAS on version)
 		tableDir := path.Join(s3tables.TablesPath, bucketName, tablePath)
-		newMetadataLocation := path.Join("metadata", newMetadataFileName)
+		newMetadataLocation := absoluteIcebergPath(bucketName, tablePath, "metadata", newMetadataFileName)
 		err = updateTableMetadataXattr(ctx, filerClient, tableDir, currentVersion, metadataBytes, newMetadataLocation)
 		if err != nil {
 			// Use a detached context for cleanup so staged files are removed
