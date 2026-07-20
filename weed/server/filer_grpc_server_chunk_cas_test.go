@@ -33,8 +33,12 @@ func TestValidateExpectedChunks(t *testing.T) {
 	}{
 		{"nil-disables", withChunks("3,01"), nil, false},
 		{"empty-disables", withChunks("3,01"), []string{}, false},
+		{"nil-entry-disables", nil, nil, false},
+		{"nil-entry-with-expected", nil, []string{"3,01"}, true},
 		{"exact-match", withChunks("3,01", "3,02"), []string{"3,01", "3,02"}, false},
 		{"order-independent", withChunks("3,01", "3,02"), []string{"3,02", "3,01"}, false},
+		{"matching-duplicates", withChunks("3,01", "3,01", "3,02"), []string{"3,01", "3,01", "3,02"}, false},
+		{"matching-duplicates-reordered", withChunks("3,02", "3,01", "3,01"), []string{"3,01", "3,02", "3,01"}, false},
 		// The strand: stored was diffed down to empty by a concurrent update,
 		// but the stale writer still expects the old chunk present -> reject.
 		{"stored-emptied", withChunks(), []string{"3,01"}, true},

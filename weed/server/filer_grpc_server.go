@@ -668,23 +668,37 @@ func validateExpectedChunks(entry *filer.Entry, expectedChunks []string) error {
 		return nil
 	}
 
-	actual := make(map[string]int)
+	var actual []*filer_pb.FileChunk
 	if entry != nil {
-		for _, chunk := range entry.GetChunks() {
-			actual[chunk.GetFileIdString()]++
+		actual = entry.GetChunks()
+	}
+
+	// Fast path: the common successful-OCC case is an identical, in-order list,
+	// which we can confirm without allocating comparison maps.
+	if len(actual) == len(expectedChunks) {
+		ordered := true
+		for i, chunk := range actual {
+			if chunk.GetFileIdString() != expectedChunks[i] {
+				ordered = false
+				break
+			}
+		}
+		if ordered {
+			return nil
 		}
 	}
 
-	expected := make(map[string]int, len(expectedChunks))
+	// Fall back to an order-independent multiset compare: expected fids increment
+	// and stored fids decrement a single counter map; equal multisets net to zero.
+	counts := make(map[string]int, len(expectedChunks))
 	for _, fid := range expectedChunks {
-		expected[fid]++
+		counts[fid]++
 	}
-
-	if len(actual) != len(expected) {
-		return status.Errorf(codes.FailedPrecondition, "chunk set changed")
+	for _, chunk := range actual {
+		counts[chunk.GetFileIdString()]--
 	}
-	for fid, count := range expected {
-		if actual[fid] != count {
+	for _, c := range counts {
+		if c != 0 {
 			return status.Errorf(codes.FailedPrecondition, "chunk set changed")
 		}
 	}
