@@ -585,3 +585,42 @@ func TestCacheRemoteObjectForStreamingCached(t *testing.T) {
 	require.NotNil(t, got)
 	assert.Len(t, got.GetChunks(), 1)
 }
+
+// TestRecoverFromStaleRemoteChunksGuards pins the guards that keep the
+// stale-chunk recovery from touching the filer for cases it must not act on:
+// entries with no remote backing (i.e. normal, non-remote buckets) and requests
+// whose client already disconnected. In both cases it must return false without
+// dialing the filer, so behavior for non-remote buckets is unchanged.
+func TestRecoverFromStaleRemoteChunksGuards(t *testing.T) {
+	// A filer that fails the test if any recovery step ever dials it.
+	filerAddr := startFakeCacheFiler(t, &fakeCacheFiler{
+		cache: func(ctx context.Context, req *filer_pb.CacheRemoteObjectToLocalClusterRequest) (*filer_pb.CacheRemoteObjectToLocalClusterResponse, error) {
+			t.Fatalf("recovery must not reach the filer for guarded cases")
+			return nil, nil
+		},
+	})
+	s3a := newRemoteCacheTestServer(filerAddr)
+
+	t.Run("non-remote entry", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/mybucket/obj.bin", nil)
+		localEntry := &filer_pb.Entry{
+			Name:   "obj.bin",
+			Chunks: []*filer_pb.FileChunk{{FileId: "1,dead", Size: 100}},
+		}
+		assert.False(t, s3a.recoverFromStaleRemoteChunks(w, r, localEntry, "mybucket", "obj.bin", "", 0, 100, 100))
+	})
+
+	t.Run("canceled request", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		r := httptest.NewRequest(http.MethodGet, "/mybucket/obj.bin", nil).WithContext(ctx)
+		remoteEntry := &filer_pb.Entry{
+			Name:        "obj.bin",
+			RemoteEntry: &filer_pb.RemoteEntry{RemoteSize: 100},
+			Chunks:      []*filer_pb.FileChunk{{FileId: "1,dead", Size: 100}},
+		}
+		assert.False(t, s3a.recoverFromStaleRemoteChunks(w, r, remoteEntry, "mybucket", "obj.bin", "", 0, 100, 100))
+	})
+}

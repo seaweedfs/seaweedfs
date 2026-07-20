@@ -1154,6 +1154,18 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 		BucketTrafficSent(cw.written, r)
 	}
 	if err != nil {
+		// A remote-mounted entry can still reference local chunks whose backing
+		// needle has been reclaimed (vacuum-compaction / deletion), so the
+		// volume-server read returns 404 even though the object is intact in the
+		// remote store. Because the entry still has chunks, IsInRemoteOnly() is
+		// false and the normal remote re-pull above never runs. When nothing has
+		// been written yet, drop the dead chunks and re-pull from the remote
+		// rather than failing the GET.
+		if cw.written == 0 && errors.Is(err, util_http.ErrNotFound) &&
+			s3a.recoverFromStaleRemoteChunks(w, r, entry, bucket, object, versionId, offset, size, totalSize) {
+			glog.V(1).Infof("streamFromVolumeServers: recovered %s/%s from remote after stale-chunk 404", bucket, object)
+			return nil
+		}
 		switch {
 		case isCanceledStreamingError(err):
 			// Client disconnected mid-stream (e.g. Nginx upstream timeout, browser cancel) - expected
@@ -3211,6 +3223,105 @@ func (s3a *S3ApiServer) cacheRemoteObjectForStreamingWithShortTimeout(r *http.Re
 	}
 
 	return nil, nil
+}
+
+// recoverFromStaleRemoteChunks self-heals a remote-mounted entry whose local
+// chunks point at a reclaimed needle (vacuum-compaction / deletion), which makes
+// the volume-server read return 404 even though the object is intact in the
+// remote store. Because the entry still has chunks, IsInRemoteOnly() is false
+// and the normal remote re-pull path never runs.
+//
+// It drops the dead chunks — turning the entry back into a remote-only entry so
+// future reads self-heal via the existing remote-only path — re-pulls the object
+// from the remote store, and streams the requested range from the fresh chunks
+// to satisfy the current request.
+//
+// It only acts on entries with a remote backing, so non-remote buckets are
+// unaffected. Returns true only when it fully served the response body, so the
+// caller (which must not have written any bytes yet) can return success.
+func (s3a *S3ApiServer) recoverFromStaleRemoteChunks(w http.ResponseWriter, r *http.Request, entry *filer_pb.Entry, bucket, object, versionId string, offset, size, totalSize int64) bool {
+	if entry == nil || entry.RemoteEntry == nil || entry.RemoteEntry.RemoteSize == 0 {
+		return false
+	}
+	if r.Context().Err() != nil {
+		return false
+	}
+
+	cacheVersionId := resolvedSourceVersionId(versionId, entry)
+	dir, name := s3a.buildVersionedRemoteObjectPath(bucket, object, cacheVersionId)
+	glog.Warningf("recoverFromStaleRemoteChunks: %s/%s references a reclaimed needle; dropping stale chunks and re-pulling from remote", dir, name)
+
+	if err := s3a.dropLocalChunks(dir, name); err != nil {
+		glog.Errorf("recoverFromStaleRemoteChunks: failed to drop stale chunks for %s/%s: %v", dir, name, err)
+		return false
+	}
+
+	cachedEntry, err := s3a.cacheRemoteObjectForStreamingWithShortTimeout(r, entry, bucket, object, cacheVersionId)
+	if err != nil || cachedEntry == nil || len(cachedEntry.GetChunks()) == 0 {
+		// The entry is now remote-only, so a client retry self-heals via the
+		// existing remote-only path even if this in-line re-pull did not finish.
+		glog.Errorf("recoverFromStaleRemoteChunks: re-pull from remote did not produce chunks for %s/%s: %v", dir, name, err)
+		return false
+	}
+
+	if streamErr := s3a.streamEntryRangeToResponse(r, w, cachedEntry, offset, size, totalSize); streamErr != nil {
+		glog.Errorf("recoverFromStaleRemoteChunks: streaming re-pulled chunks failed for %s/%s: %v", dir, name, streamErr)
+		return false
+	}
+
+	glog.V(1).Infof("recoverFromStaleRemoteChunks: served %s/%s from re-pulled remote chunks (%d chunks)", dir, name, len(cachedEntry.GetChunks()))
+	return true
+}
+
+// dropLocalChunks clears a remote-backed entry's local chunk references so a
+// subsequent CacheRemoteObjectToLocalCluster re-downloads from the remote
+// instead of short-circuiting as "already cached". A no-op when the entry has no
+// chunks; errors when the entry is not remote-backed.
+func (s3a *S3ApiServer) dropLocalChunks(dir, name string) error {
+	entry, err := s3a.getEntry(dir, name)
+	if err != nil {
+		return err
+	}
+	if entry.RemoteEntry == nil || entry.RemoteEntry.RemoteSize == 0 {
+		return fmt.Errorf("%s/%s is not remote-backed", dir, name)
+	}
+	if len(entry.GetChunks()) == 0 {
+		return nil
+	}
+	entry.Chunks = nil
+	return s3a.updateEntry(dir, entry)
+}
+
+// streamEntryRangeToResponse streams the [offset, offset+size) range of entry's
+// chunks to w, mirroring the reader setup used by streamFromVolumeServers.
+func (s3a *S3ApiServer) streamEntryRangeToResponse(r *http.Request, w io.Writer, entry *filer_pb.Entry, offset, size, totalSize int64) error {
+	chunks := entry.GetChunks()
+	if len(chunks) == 0 {
+		return fmt.Errorf("entry has no chunks to stream")
+	}
+
+	ctx := r.Context()
+	lookupFileIdFn := s3a.createLookupFileIdFunction()
+	visibleIntervals, err := filer.NonOverlappingVisibleIntervals(ctx, lookupFileIdFn, chunks, offset, offset+size)
+	if err != nil {
+		return fmt.Errorf("resolve chunks: %w", err)
+	}
+
+	chunkViews := filer.ViewFromVisibleIntervals(visibleIntervals, offset, size)
+	reader := filer.NewChunkReaderAtFromClient(ctx, s3a.readerCache, chunkViews, totalSize, filer.DefaultPrefetchCount)
+
+	cw := &countingWriter{w: w}
+	const maxCopyBuf = 256 * 1024
+	copyBufSize := int64(maxCopyBuf)
+	if size > 0 && size < copyBufSize {
+		copyBufSize = size
+	}
+	copyBuf := make([]byte, copyBufSize)
+	_, err = io.CopyBuffer(cw, io.NewSectionReader(reader, offset, size), copyBuf)
+	if cw.written > 0 {
+		BucketTrafficSent(cw.written, r)
+	}
+	return err
 }
 
 // cacheRemoteObjectForStreaming caches a remote-only object to the local cluster for streaming.
