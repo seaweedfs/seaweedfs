@@ -2038,6 +2038,15 @@ func (m *UpdateEntryRequest) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if len(m.ExpectedChunks) > 0 {
+		for iNdEx := len(m.ExpectedChunks) - 1; iNdEx >= 0; iNdEx-- {
+			i -= len(m.ExpectedChunks[iNdEx])
+			copy(dAtA[i:], m.ExpectedChunks[iNdEx])
+			i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.ExpectedChunks[iNdEx])))
+			i--
+			dAtA[i] = 0x32
+		}
+	}
 	if len(m.ExpectedExtended) > 0 {
 		for k := range m.ExpectedExtended {
 			v := m.ExpectedExtended[k]
@@ -6977,6 +6986,12 @@ func (m *UpdateEntryRequest) SizeVT() (n int) {
 			l = 1 + len(v) + protohelpers.SizeOfVarint(uint64(len(v)))
 			mapEntrySize := 1 + len(k) + protohelpers.SizeOfVarint(uint64(len(k))) + l
 			n += mapEntrySize + 1 + protohelpers.SizeOfVarint(uint64(mapEntrySize))
+		}
+	}
+	if len(m.ExpectedChunks) > 0 {
+		for _, s := range m.ExpectedChunks {
+			l = len(s)
+			n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 		}
 	}
 	n += len(m.unknownFields)
@@ -14419,6 +14434,38 @@ func (m *UpdateEntryRequest) UnmarshalVT(dAtA []byte) error {
 				}
 			}
 			m.ExpectedExtended[mapkey] = mapvalue
+			iNdEx = postIndex
+		case 6:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ExpectedChunks", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.ExpectedChunks = append(m.ExpectedChunks, string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex

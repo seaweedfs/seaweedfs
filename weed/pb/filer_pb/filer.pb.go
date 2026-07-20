@@ -2310,8 +2310,15 @@ type UpdateEntryRequest struct {
 	IsFromOtherCluster bool                   `protobuf:"varint,3,opt,name=is_from_other_cluster,json=isFromOtherCluster,proto3" json:"is_from_other_cluster,omitempty"`
 	Signatures         []int32                `protobuf:"varint,4,rep,packed,name=signatures,proto3" json:"signatures,omitempty"`
 	ExpectedExtended   map[string][]byte      `protobuf:"bytes,5,rep,name=expected_extended,json=expectedExtended,proto3" json:"expected_extended,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Optimistic concurrency on the chunk list. When non-empty, the filer
+	// rejects the update with FAILED_PRECONDITION unless the stored entry's
+	// current chunk set (by fid string) exactly matches this set. Empty/nil
+	// disables the check (backward compatible). Prevents a stale
+	// chunk-preserving read-modify-write from resurrecting a needle that a
+	// concurrent update already queued for deletion.
+	ExpectedChunks []string `protobuf:"bytes,6,rep,name=expected_chunks,json=expectedChunks,proto3" json:"expected_chunks,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *UpdateEntryRequest) Reset() {
@@ -2375,6 +2382,13 @@ func (x *UpdateEntryRequest) GetSignatures() []int32 {
 func (x *UpdateEntryRequest) GetExpectedExtended() map[string][]byte {
 	if x != nil {
 		return x.ExpectedExtended
+	}
+	return nil
+}
+
+func (x *UpdateEntryRequest) GetExpectedChunks() []string {
+	if x != nil {
+		return x.ExpectedChunks
 	}
 	return nil
 }
@@ -7034,7 +7048,7 @@ const file_filer_proto_rawDesc = "" +
 	"\x05error\x18\x01 \x01(\tR\x05error\x12J\n" +
 	"\x0emetadata_event\x18\x02 \x01(\v2#.filer_pb.SubscribeMetadataResponseR\rmetadataEvent\x123\n" +
 	"\n" +
-	"error_code\x18\x03 \x01(\x0e2\x14.filer_pb.FilerErrorR\terrorCode\"\xd2\x02\n" +
+	"error_code\x18\x03 \x01(\x0e2\x14.filer_pb.FilerErrorR\terrorCode\"\xfb\x02\n" +
 	"\x12UpdateEntryRequest\x12\x1c\n" +
 	"\tdirectory\x18\x01 \x01(\tR\tdirectory\x12%\n" +
 	"\x05entry\x18\x02 \x01(\v2\x0f.filer_pb.EntryR\x05entry\x121\n" +
@@ -7042,7 +7056,8 @@ const file_filer_proto_rawDesc = "" +
 	"\n" +
 	"signatures\x18\x04 \x03(\x05R\n" +
 	"signatures\x12_\n" +
-	"\x11expected_extended\x18\x05 \x03(\v22.filer_pb.UpdateEntryRequest.ExpectedExtendedEntryR\x10expectedExtended\x1aC\n" +
+	"\x11expected_extended\x18\x05 \x03(\v22.filer_pb.UpdateEntryRequest.ExpectedExtendedEntryR\x10expectedExtended\x12'\n" +
+	"\x0fexpected_chunks\x18\x06 \x03(\tR\x0eexpectedChunks\x1aC\n" +
 	"\x15ExpectedExtendedEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01\"a\n" +

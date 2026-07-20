@@ -447,6 +447,13 @@ message UpdateEntryRequest {
     bool is_from_other_cluster = 3;
     repeated int32 signatures = 4;
     map<string, bytes> expected_extended = 5;
+    // Optimistic concurrency on the chunk list. When non-empty, the filer
+    // rejects the update with FAILED_PRECONDITION unless the stored entry's
+    // current chunk set (by fid string) exactly matches this set. Empty/nil
+    // disables the check (backward compatible). Prevents a stale
+    // chunk-preserving read-modify-write from resurrecting a needle that a
+    // concurrent update already queued for deletion.
+    repeated string expected_chunks = 6;
 }
 message UpdateEntryResponse {
     SubscribeMetadataResponse metadata_event = 1;
