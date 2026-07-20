@@ -3247,6 +3247,10 @@ func (s3a *S3ApiServer) recoverFromStaleRemoteChunks(w http.ResponseWriter, r *h
 		return false
 	}
 
+	// Count only real recovery attempts (past the not-applicable guards above).
+	recovered := false
+	defer func() { stats.RecordRemoteStaleChunkRecovery(stats.RemoteCacheSourceS3, bucket, recovered) }()
+
 	cacheVersionId := resolvedSourceVersionId(versionId, entry)
 	dir, name := s3a.buildVersionedRemoteObjectPath(bucket, object, cacheVersionId)
 	glog.Warningf("recoverFromStaleRemoteChunks: %s/%s references a reclaimed needle; dropping stale chunks and re-pulling from remote", dir, name)
@@ -3270,6 +3274,7 @@ func (s3a *S3ApiServer) recoverFromStaleRemoteChunks(w http.ResponseWriter, r *h
 	}
 
 	glog.V(1).Infof("recoverFromStaleRemoteChunks: served %s/%s from re-pulled remote chunks (%d chunks)", dir, name, len(cachedEntry.GetChunks()))
+	recovered = true
 	return true
 }
 
