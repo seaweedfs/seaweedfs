@@ -598,7 +598,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	if err != nil {
 		return &filer_pb.UpdateEntryResponse{}, fmt.Errorf("not found %s: %v", fullpath, err)
 	}
-	if err := validateUpdateEntryPreconditions(entry, req.ExpectedExtended); err != nil {
+	if err := validateUpdateEntryPreconditions(entry, req.ExpectedExtended, req.ExpectedChunks); err != nil {
 		return &filer_pb.UpdateEntryResponse{}, err
 	}
 
@@ -634,10 +634,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	return resp, err
 }
 
-func validateUpdateEntryPreconditions(entry *filer.Entry, expectedExtended map[string][]byte) error {
-	if len(expectedExtended) == 0 {
-		return nil
-	}
+func validateUpdateEntryPreconditions(entry *filer.Entry, expectedExtended map[string][]byte, expectedChunks []string) error {
 
 	for key, expectedValue := range expectedExtended {
 		var actualValue []byte
@@ -653,6 +650,42 @@ func validateUpdateEntryPreconditions(entry *filer.Entry, expectedExtended map[s
 		}
 		if len(expectedValue) > 0 {
 			return status.Errorf(codes.FailedPrecondition, "extended attribute %q changed", key)
+		}
+	}
+
+	return validateExpectedChunks(entry, expectedChunks)
+}
+
+// validateExpectedChunks enforces optimistic concurrency on the chunk list.
+// When expectedChunks is non-empty, the stored entry's current set of chunk
+// fids must match it exactly; otherwise the update is rejected as retryable so
+// a stale chunk-preserving read-modify-write cannot resurrect a needle that a
+// concurrent update already diffed away and queued for deletion. The comparison
+// is order-independent because chunk ordering is not semantically meaningful for
+// needle liveness. Empty/nil disables the check (backward compatible).
+func validateExpectedChunks(entry *filer.Entry, expectedChunks []string) error {
+	if len(expectedChunks) == 0 {
+		return nil
+	}
+
+	actual := make(map[string]int)
+	if entry != nil {
+		for _, chunk := range entry.GetChunks() {
+			actual[chunk.GetFileIdString()]++
+		}
+	}
+
+	expected := make(map[string]int, len(expectedChunks))
+	for _, fid := range expectedChunks {
+		expected[fid]++
+	}
+
+	if len(actual) != len(expected) {
+		return status.Errorf(codes.FailedPrecondition, "chunk set changed")
+	}
+	for fid, count := range expected {
+		if actual[fid] != count {
+			return status.Errorf(codes.FailedPrecondition, "chunk set changed")
 		}
 	}
 
