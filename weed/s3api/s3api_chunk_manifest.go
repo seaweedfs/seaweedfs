@@ -35,7 +35,10 @@ func (s3a *S3ApiServer) saveManifestChunk(filePath string, bucket string, ttlSec
 // manifestizeChunks folds a large flat chunk list into manifest chunks. A
 // failed fold falls back to the flat list, deleting any blobs it saved.
 func (s3a *S3ApiServer) manifestizeChunks(filePath string, bucket string, ttlSec int32, chunks []*filer_pb.FileChunk) []*filer_pb.FileChunk {
-	save := s3a.saveManifestChunk(filePath, bucket, ttlSec)
+	return manifestizeOrKeepFlat(s3a.saveManifestChunk(filePath, bucket, ttlSec), s3a.deleteOrphanedChunks, filePath, chunks)
+}
+
+func manifestizeOrKeepFlat(save filer.SaveDataAsChunkFunctionType, deleteChunks func([]*filer_pb.FileChunk), filePath string, chunks []*filer_pb.FileChunk) []*filer_pb.FileChunk {
 	var saved []*filer_pb.FileChunk
 	record := func(reader io.Reader, name string, offset int64, tsNs int64, expectedDataSize uint64) (*filer_pb.FileChunk, error) {
 		chunk, err := save(reader, name, offset, tsNs, expectedDataSize)
@@ -48,7 +51,7 @@ func (s3a *S3ApiServer) manifestizeChunks(filePath string, bucket string, ttlSec
 	if err != nil {
 		glog.V(0).Infof("MaybeManifestize %s: %v", filePath, err)
 		if len(saved) > 0 {
-			s3a.deleteOrphanedChunks(saved)
+			deleteChunks(saved)
 		}
 		return chunks
 	}
