@@ -209,16 +209,14 @@ func iterateEcjFile(baseFileName string, processNeedleFn func(key types.NeedleId
 // FindDatFileSize. encodedDatFileSize is the .dat size at encode time, which
 // fixed the shard block layout: deletions can move the live extent below the
 // large-block row boundary, and deriving the layout from the shrunk extent
-// would read the shards in the wrong block order.
+// would read the shards in the wrong block order. Pass zero when the .vif does
+// not record the encode-time size to infer the layout from the shard size.
 func WriteDatFile(baseFileName string, datFileSize int64, encodedDatFileSize int64, shardFileNames []string) error {
 	return writeDatFile(baseFileName, datFileSize, encodedDatFileSize, shardFileNames, ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize)
 }
 
 func writeDatFile(baseFileName string, datFileSize int64, encodedDatFileSize int64, shardFileNames []string, largeBlockSize int64, smallBlockSize int64) error {
 
-	if datFileSize > encodedDatFileSize {
-		return fmt.Errorf("dat file size %d exceeds encoded dat file size %d", datFileSize, encodedDatFileSize)
-	}
 	if len(shardFileNames) == 0 {
 		return fmt.Errorf("no data shard files")
 	}
@@ -255,6 +253,19 @@ func writeDatFile(baseFileName string, datFileSize int64, encodedDatFileSize int
 		if openErr != nil {
 			return openErr
 		}
+	}
+
+	if encodedDatFileSize <= 0 {
+		// .vif without the encode-time size: infer the padded layout from the
+		// physical shard size, which reads the shards in the same block order.
+		shardFileInfo, statErr := inputFiles[0].Stat()
+		if statErr != nil {
+			return fmt.Errorf("stat %s: %v", shardFileNames[0], statErr)
+		}
+		encodedDatFileSize = int64(dataShards) * shardFileInfo.Size()
+	}
+	if datFileSize > encodedDatFileSize {
+		return fmt.Errorf("dat file size %d exceeds encoded dat file size %d", datFileSize, encodedDatFileSize)
 	}
 
 	for encodedDatFileSize >= int64(dataShards)*largeBlockSize && datFileSize > 0 {
