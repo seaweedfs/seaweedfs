@@ -183,15 +183,6 @@ var cmdAdmin = &Command{
       variables, e.g. WEED_MAINTENANCE_VACUUM_GARBAGE_THRESHOLD=0.3
     - Settings are applied to both the legacy task policy and the plugin
       config store, so they take effect for the admin UI and plugin workers
-    - Common runtime fields available for all sections:
-        enabled                 (bool)
-        retry_limit             (int)
-        retry_backoff_seconds   (int)
-    - Section-specific fields (via WEED_MAINTENANCE_{SECTION}_{FIELD}):
-        vacuum:  GARBAGE_THRESHOLD, MIN_VOLUME_AGE_SECONDS
-        balance: IMBALANCE_THRESHOLD, MIN_SERVER_COUNT
-        erasure_coding: FULLNESS_RATIO, QUIET_FOR_SECONDS, MIN_SIZE_MB,
-                        COLLECTION_FILTER, REPLICA_PLACEMENT
     - Generate example admin.toml: weed scaffold -config=admin
 
   Configuration File:
@@ -399,9 +390,6 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 	// Create admin server (plugin is always enabled)
 	adminServer := dash.NewAdminServer(*options.master, *options.filerGroup, nil, dataDir, icebergPort)
 
-	// Apply [maintenance.vacuum] settings from admin.toml to the plugin
-	// config store so the values are picked up by the admin UI and plugin
-	// workers, not just the legacy maintenance task config.
 	if err := adminServer.ApplyPluginConfigFromToml(util.GetViper()); err != nil {
 		glog.Warningf("Failed to apply admin.toml to plugin config: %v", err)
 	}
