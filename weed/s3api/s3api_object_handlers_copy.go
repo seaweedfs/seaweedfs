@@ -919,9 +919,8 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		entry = cachedEntry
 	}
 
-	// The part-copy paths below iterate entry.GetChunks() per chunk, so a
-	// manifested source must be resolved into its data chunks first.
-	if err := s3a.flattenManifestChunks(r.Context(), entry); err != nil {
+	// per-chunk part-copy needs a flat source; resolved manifests stay with the source
+	if _, err := s3a.flattenManifestChunks(r.Context(), entry); err != nil {
 		glog.Errorf("CopyObjectPartHandler: resolve source manifest chunks %s/%s: %v", srcBucket, srcObject, err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return

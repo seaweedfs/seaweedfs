@@ -232,6 +232,11 @@ type multipartCompletionState struct {
 	checksumHeaderName string // e.g. "X-Amz-Checksum-Crc32", empty if no checksum
 	checksumValue      string // multipart checksum: "base64-N" (COMPOSITE) or "base64" (FULL_OBJECT)
 	checksumType       string // s3_constants.ChecksumType* (COMPOSITE or FULL_OBJECT)
+
+	newManifestChunks       []*filer_pb.FileChunk // blobs folded for finalParts; orphans until the entry commits
+	manifestsReferenced     bool                  // failed rollback left an entry holding newManifestChunks
+	supersededPartManifests []*filer_pb.FileChunk // part-entry blobs replaced by flattening; deleted after commit
+	metadataOnlyCleanup     bool                  // deleteEntries share chunks with the live object; keep their data
 }
 
 func completeMultipartResult(r *http.Request, input *s3.CompleteMultipartUploadInput, etag string, entry *filer_pb.Entry) *CompleteMultipartUploadResult {
@@ -378,7 +383,7 @@ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *
 			if cleanupErr != nil && !errors.Is(cleanupErr, filer_pb.ErrNotFound) {
 				glog.Warningf("completeMultipartUpload: failed to list stale upload directory %s for cleanup: %v", uploadDirectory, cleanupErr)
 			}
-			return &multipartCompletionState{deleteEntries: cleanupEntries}, completeMultipartResult(r, input, getEtagFromEntry(entry), entry), s3err.ErrNone
+			return &multipartCompletionState{deleteEntries: cleanupEntries, metadataOnlyCleanup: true}, completeMultipartResult(r, input, getEtagFromEntry(entry), entry), s3err.ErrNone
 		}
 	}
 
@@ -476,6 +481,7 @@ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *
 	}
 	finalParts := make([]*filer_pb.FileChunk, 0)
 	partBoundaries := make([]multipartPartBoundary, 0, len(completedPartNumbers))
+	var supersededPartManifests []*filer_pb.FileChunk
 	var offset int64
 
 	for _, partNumber := range completedPartNumbers {
@@ -501,10 +507,12 @@ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *
 			// oversized part, e.g. a large UploadPartCopy range). Resolve them
 			// first: the rebase below shifts chunk offsets, which a manifest
 			// chunk cannot express.
-			if flattenErr := s3a.flattenManifestChunks(r.Context(), entry); flattenErr != nil {
+			removedManifests, flattenErr := s3a.flattenManifestChunks(r.Context(), entry)
+			if flattenErr != nil {
 				glog.Errorf("completeMultipartUpload %s %s part %d resolve manifest chunks: %v", *input.Bucket, *input.UploadId, partNumber, flattenErr)
 				return nil, nil, s3err.ErrInternalError
 			}
+			supersededPartManifests = append(supersededPartManifests, removedManifests...)
 
 			partStartChunk := len(finalParts)
 			partStartOffset := offset
@@ -573,23 +581,27 @@ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *
 
 	// Fold huge completions (>filer.ManifestBatch chunks) into manifest chunks
 	// so the object entry stays small. Runs after the part boundaries above
-	// captured their byte offsets against the flat list.
+	// captured their byte offsets against the flat list. finalParts holds no
+	// manifest chunks at this point, so anything folded out is newly created.
 	finalParts = s3a.manifestizeChunks(dirName+"/"+entryName, *input.Bucket, 0, finalParts)
+	newManifestChunks, _ := filer.SeparateManifestChunks(finalParts)
 
 	return &multipartCompletionState{
-		deleteEntries:      deleteEntries,
-		partEntries:        partEntries,
-		pentry:             pentry,
-		sses3Info:          sses3Info,
-		mime:               mime,
-		finalParts:         finalParts,
-		offset:             offset,
-		partBoundaries:     partBoundaries,
-		multipartETag:      calculateMultipartETag(partEntries, completedPartNumbers),
-		entityWithTtl:      entityWithTtl,
-		checksumHeaderName: checksumHeaderName,
-		checksumValue:      checksumValue,
-		checksumType:       checksumType,
+		deleteEntries:           deleteEntries,
+		partEntries:             partEntries,
+		pentry:                  pentry,
+		sses3Info:               sses3Info,
+		mime:                    mime,
+		finalParts:              finalParts,
+		offset:                  offset,
+		partBoundaries:          partBoundaries,
+		multipartETag:           calculateMultipartETag(partEntries, completedPartNumbers),
+		entityWithTtl:           entityWithTtl,
+		checksumHeaderName:      checksumHeaderName,
+		checksumValue:           checksumValue,
+		checksumType:            checksumType,
+		newManifestChunks:       newManifestChunks,
+		supersededPartManifests: supersededPartManifests,
 	}, nil, s3err.ErrNone
 }
 
@@ -733,12 +745,14 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				if code := s3a.routedVersionedFinalize(owner, *input.Bucket, *input.Key, useInvertedFormat); code != s3err.ErrNone {
 					if rollbackErr := s3a.rollbackMultipartVersion(versionDir, versionFileName); rollbackErr != nil {
 						glog.Errorf("completeMultipartUpload: failed to rollback version %s for %s/%s after routed finalize error: %v", versionId, *input.Bucket, *input.Key, rollbackErr)
+						completionState.manifestsReferenced = true
 					}
 					return code
 				}
 			} else if err := s3a.updateLatestVersionInDirectory(*input.Bucket, *input.Key, versionId, versionFileName, versionEntryForCache); err != nil {
 				if rollbackErr := s3a.rollbackMultipartVersion(versionDir, versionFileName); rollbackErr != nil {
 					glog.Errorf("completeMultipartUpload: failed to rollback version %s for %s/%s after latest pointer update error: %v", versionId, *input.Bucket, *input.Key, rollbackErr)
+					completionState.manifestsReferenced = true
 				}
 				glog.Errorf("completeMultipartUpload: failed to update latest version in directory: %v", err)
 				return s3err.ErrInternalError
@@ -910,25 +924,34 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		}, completionBody)
 	}
 	if finalizeCode != s3err.ErrNone {
+		// this attempt's manifests are orphans unless a failed rollback left an entry holding them
+		if completionState != nil && !completionState.manifestsReferenced && len(completionState.newManifestChunks) > 0 {
+			s3a.deleteOrphanedChunks(completionState.newManifestChunks)
+		}
 		return nil, finalizeCode
 	}
 
 	if completionState != nil {
 		for _, deleteEntry := range completionState.deleteEntries {
-			if err := s3a.rm(uploadDirectory, deleteEntry.Name, true, true); err != nil {
+			if err := s3a.rm(uploadDirectory, deleteEntry.Name, !completionState.metadataOnlyCleanup, true); err != nil {
 				glog.Warningf("completeMultipartUpload cleanup %s upload %s unused %s : %v", *input.Bucket, *input.UploadId, deleteEntry.Name, err)
 			}
 		}
 		if err := s3a.rm(s3a.genUploadsFolder(*input.Bucket), *input.UploadId, false, true); err != nil {
 			glog.V(1).Infof("completeMultipartUpload cleanup %s upload %s: %v", *input.Bucket, *input.UploadId, err)
 		}
+		if len(completionState.supersededPartManifests) > 0 {
+			s3a.deleteOrphanedChunks(completionState.supersededPartManifests)
+		}
 	}
 
 	return
 }
 
+// Metadata-only: the version file's chunks are the still-registered parts'
+// chunks, which a retried completion needs.
 func (s3a *S3ApiServer) rollbackMultipartVersion(versionDir, versionFileName string) error {
-	return s3a.rmObject(versionDir, versionFileName, true, false)
+	return s3a.rmObject(versionDir, versionFileName, false, false)
 }
 
 func (s3a *S3ApiServer) getEntryNameAndDir(input *s3.CompleteMultipartUploadInput) (string, string) {
