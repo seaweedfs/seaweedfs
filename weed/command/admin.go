@@ -391,7 +391,7 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 	adminServer := dash.NewAdminServer(*options.master, *options.filerGroup, nil, dataDir, icebergPort)
 
 	if err := adminServer.ApplyPluginConfigFromToml(util.GetViper()); err != nil {
-		glog.Warningf("Failed to apply admin.toml to plugin config: %v", err)
+		return fmt.Errorf("apply admin.toml to plugin config: %w", err)
 	}
 
 	// Show discovered filers
