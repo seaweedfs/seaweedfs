@@ -309,7 +309,9 @@ func (s3a *S3ApiServer) buildObjectAttributesParts(entry *filer_pb.Entry, maxPar
 		}
 
 		var partSize int64
-		if b.StartChunk >= 0 && b.EndChunk >= 0 && b.StartChunk < len(chunks) && b.EndChunk <= len(chunks) && b.StartChunk < b.EndChunk {
+		if b.EndOffset > b.StartOffset {
+			partSize = b.EndOffset - b.StartOffset
+		} else if b.StartChunk >= 0 && b.EndChunk >= 0 && b.StartChunk < len(chunks) && b.EndChunk <= len(chunks) && b.StartChunk < b.EndChunk {
 			for ci := b.StartChunk; ci < b.EndChunk; ci++ {
 				partSize += int64(chunks[ci].Size)
 			}

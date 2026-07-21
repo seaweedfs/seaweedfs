@@ -205,6 +205,11 @@ type multipartPartBoundary struct {
 	StartChunk int    `json:"start"`
 	EndChunk   int    `json:"end"`
 	ETag       string `json:"etag"`
+	// Byte offsets of the part within the object. Readers prefer these over
+	// the chunk indexes above, which stop matching the entry's chunk list
+	// once large completions fold it into manifest chunks.
+	StartOffset int64 `json:"startOffset,omitempty"`
+	EndOffset   int64 `json:"endOffset,omitempty"` // exclusive
 }
 
 type multipartSSES3Info struct {
@@ -492,7 +497,17 @@ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *
 				continue
 			}
 
+			// A part entry can itself carry manifest chunks (the filer folds an
+			// oversized part, e.g. a large UploadPartCopy range). Resolve them
+			// first: the rebase below shifts chunk offsets, which a manifest
+			// chunk cannot express.
+			if flattenErr := s3a.flattenManifestChunks(r.Context(), entry); flattenErr != nil {
+				glog.Errorf("completeMultipartUpload %s %s part %d resolve manifest chunks: %v", *input.Bucket, *input.UploadId, partNumber, flattenErr)
+				return nil, nil, s3err.ErrInternalError
+			}
+
 			partStartChunk := len(finalParts)
+			partStartOffset := offset
 			partETag := getEtagFromEntry(entry)
 
 			for _, chunk := range entry.GetChunks() {
@@ -507,10 +522,12 @@ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *
 
 			partEndChunk := len(finalParts)
 			partBoundaries = append(partBoundaries, multipartPartBoundary{
-				PartNumber: partNumber,
-				StartChunk: partStartChunk,
-				EndChunk:   partEndChunk,
-				ETag:       partETag,
+				PartNumber:  partNumber,
+				StartChunk:  partStartChunk,
+				EndChunk:    partEndChunk,
+				ETag:        partETag,
+				StartOffset: partStartOffset,
+				EndOffset:   offset,
 			})
 
 			found = true
@@ -553,6 +570,11 @@ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *
 			return nil, nil, s3err.ErrInvalidPart
 		}
 	}
+
+	// Fold huge completions (>filer.ManifestBatch chunks) into manifest chunks
+	// so the object entry stays small. Runs after the part boundaries above
+	// captured their byte offsets against the flat list.
+	finalParts = s3a.manifestizeChunks(dirName+"/"+entryName, *input.Bucket, 0, finalParts)
 
 	return &multipartCompletionState{
 		deleteEntries:      deleteEntries,

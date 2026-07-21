@@ -807,6 +807,13 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		glog.V(3).Infof("putToFiler: storing SSE-S3 metadata - keyID=%s, raw len=%d", sseS3Key.KeyID, len(sseS3Metadata))
 	}
 
+	// Fold large flat chunk lists into manifest chunks before creating the
+	// entry. Part uploads (object == "") stay flat: completion rebases their
+	// offsets into the final object, which manifest chunks cannot express.
+	if object != "" {
+		entry.Chunks = s3a.manifestizeChunks(filePath, bucket, lifecycleTTLSec, entry.GetChunks())
+	}
+
 	// Step 4: Save metadata to filer via gRPC
 	// Use context.Background() to ensure metadata save completes even if HTTP request is cancelled
 	// This matches the chunk upload behavior and prevents orphaned chunks
@@ -892,9 +899,15 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		}
 
 		// If the entry was never created, the uploaded chunks are orphaned and must be deleted.
-		if !entryCreated && len(chunkResult.FileChunks) > 0 {
-			glog.Warningf("putToFiler: finalization failed, attempting to cleanup %d orphaned chunks", len(chunkResult.FileChunks))
-			s3a.deleteOrphanedChunks(chunkResult.FileChunks)
+		if !entryCreated {
+			orphaned := chunkResult.FileChunks
+			if manifestChunks, _ := filer.SeparateManifestChunks(entry.GetChunks()); len(manifestChunks) > 0 {
+				orphaned = append(manifestChunks, orphaned...)
+			}
+			if len(orphaned) > 0 {
+				glog.Warningf("putToFiler: finalization failed, attempting to cleanup %d orphaned chunks", len(orphaned))
+				s3a.deleteOrphanedChunks(orphaned)
+			}
 		}
 
 		return "", createCode, SSEResponseMetadata{}
