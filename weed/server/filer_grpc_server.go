@@ -719,6 +719,12 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 	lock := lockClient.NewShortLivedLock(string(fullpath), string(fs.option.Host))
 	defer lock.StopShortLivedLock()
 
+	// The cluster lock serializes appenders across filers; the path lock makes
+	// this read-modify-write atomic against conditional updates and deletes on
+	// the owner filer.
+	pathLock := fs.entryLockTable.AcquireLock("AppendToEntry", fullpath, util.ExclusiveLock)
+	defer fs.entryLockTable.ReleaseLock(fullpath, pathLock)
+
 	var offset int64 = 0
 	entry, err := fs.filer.FindEntry(ctx, fullpath)
 	if err == filer_pb.ErrNotFound {
@@ -762,8 +768,16 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 
 	glog.V(4).InfofCtx(ctx, "DeleteEntry %v", req)
 
+	// A delete queues the entry's chunks for deletion, so it must not
+	// interleave with a conditional update's check-then-write on the same
+	// path: the update would pass its precondition and then resurrect fids
+	// that are already on the deletion queue.
+	fullpath := util.JoinPath(req.Directory, req.Name)
+	pathLock := fs.entryLockTable.AcquireLock("DeleteEntry", fullpath, util.ExclusiveLock)
+	defer fs.entryLockTable.ReleaseLock(fullpath, pathLock)
+
 	ctx, eventSink := filer.WithMetadataEventSink(ctx)
-	err = fs.filer.DeleteEntryMetaAndData(ctx, util.JoinPath(req.Directory, req.Name), req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData, req.IsFromOtherCluster, req.Signatures, req.IfNotModifiedAfter)
+	err = fs.filer.DeleteEntryMetaAndData(ctx, fullpath, req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData, req.IsFromOtherCluster, req.Signatures, req.IfNotModifiedAfter)
 	resp = &filer_pb.DeleteEntryResponse{}
 	if err != nil && err != filer_pb.ErrNotFound {
 		resp.Error = err.Error()

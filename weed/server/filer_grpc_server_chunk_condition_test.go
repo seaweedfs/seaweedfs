@@ -151,3 +151,37 @@ func TestUpdateEntryChunkConditionPreventsStrand(t *testing.T) {
 		}
 	})
 }
+
+// DeleteEntry queues chunk deletions, so it must serialize on the same path
+// lock the conditional writers hold; otherwise it can interleave with a
+// passed precondition and the stale write resurrects the queued fids.
+func TestDeleteEntryWaitsForPathLock(t *testing.T) {
+	store := newRenameTestStore()
+	store.entries["/test/obj"] = &filer.Entry{
+		FullPath: "/test/obj",
+		Attr:     filer.Attr{Inode: 1, Mtime: time.Unix(1700000000, 0), Mode: 0644},
+	}
+	f := newRenameTestFiler(store)
+	fs := &FilerServer{filer: f, option: &FilerOption{}, entryLockTable: util.NewLockTable[util.FullPath]()}
+
+	lockPath := util.FullPath("/test/obj")
+	hold := fs.entryLockTable.AcquireLock("test", lockPath, util.ExclusiveLock)
+
+	done := make(chan struct{})
+	go func() {
+		fs.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{Directory: "/test", Name: "obj"})
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		t.Fatal("DeleteEntry completed while the path lock was held")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	fs.entryLockTable.ReleaseLock(lockPath, hold)
+	<-done
+	if _, ok := store.entries["/test/obj"]; ok {
+		t.Fatal("entry not deleted after the lock was released")
+	}
+}
