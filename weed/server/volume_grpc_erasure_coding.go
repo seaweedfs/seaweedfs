@@ -965,8 +965,22 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 		return nil, fmt.Errorf("FindDatFileSize %s: %v", dataBaseFileName, err)
 	}
 
+	// The shard block layout was fixed by the .dat size at encode time (recorded
+	// in .vif); deletions can shrink the live extent below a large-block row
+	// boundary, so the layout must not be derived from datFileSize.
+	encodedDatFileSize := v.DatFileSize()
+	if encodedDatFileSize < datFileSize {
+		// old .vif without dat_file_size: the padded layout implied by the
+		// physical shard size reads the shards in the same block order
+		shardFileInfo, statErr := os.Stat(shardFileNames[0])
+		if statErr != nil {
+			return nil, fmt.Errorf("stat %s: %v", shardFileNames[0], statErr)
+		}
+		encodedDatFileSize = int64(dataShards) * shardFileInfo.Size()
+	}
+
 	// write .dat file from .ec00 ~ .ec09 files
-	if err := erasure_coding.WriteDatFile(dataBaseFileName, datFileSize, shardFileNames); err != nil {
+	if err := erasure_coding.WriteDatFile(dataBaseFileName, datFileSize, encodedDatFileSize, shardFileNames); err != nil {
 		return nil, fmt.Errorf("WriteDatFile %s: %v", dataBaseFileName, err)
 	}
 
