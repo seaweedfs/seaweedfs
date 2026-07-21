@@ -1,6 +1,7 @@
 package dash
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -160,6 +161,37 @@ retry_limit = 5
 	}
 	if cfg.UpdatedBy != "admin.toml" {
 		t.Errorf("updated_by = %q, want admin.toml", cfg.UpdatedBy)
+	}
+}
+
+func TestApplyPluginConfigFromTomlClampsRetryValues(t *testing.T) {
+	s := newPluginServer(t)
+	seed := &plugin_pb.PersistedJobTypeConfig{
+		JobType:      "vacuum",
+		AdminRuntime: &plugin_pb.AdminRuntimeConfig{Enabled: true},
+	}
+	if err := s.GetPlugin().SaveJobTypeConfig(seed); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	v := tomlConfig(t, `
+[maintenance.vacuum]
+retry_limit = 68719476736
+retry_backoff_seconds = -5
+`)
+	if err := s.ApplyPluginConfigFromToml(v); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	cfg, err := s.GetPlugin().LoadJobTypeConfig("vacuum")
+	if err != nil || cfg == nil {
+		t.Fatalf("load: %v %v", cfg, err)
+	}
+	if cfg.AdminRuntime.RetryLimit != math.MaxInt32 {
+		t.Errorf("retry_limit = %d, want clamped to MaxInt32", cfg.AdminRuntime.RetryLimit)
+	}
+	if cfg.AdminRuntime.RetryBackoffSeconds != 0 {
+		t.Errorf("retry_backoff_seconds = %d, want clamped to 0", cfg.AdminRuntime.RetryBackoffSeconds)
 	}
 }
 

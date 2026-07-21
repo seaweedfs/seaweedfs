@@ -2,6 +2,7 @@ package dash
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -238,11 +239,11 @@ func (section pluginConfigSection) applyToml(v TomlConfig, cfg *plugin_pb.Persis
 		changed = true
 	}
 	if k := section.prefix + ".retry_limit"; v.IsSet(k) {
-		ensureAdminRuntime(cfg).RetryLimit = int32(v.GetInt(k))
+		ensureAdminRuntime(cfg).RetryLimit = int32Setting(v, k)
 		changed = true
 	}
 	if k := section.prefix + ".retry_backoff_seconds"; v.IsSet(k) {
-		ensureAdminRuntime(cfg).RetryBackoffSeconds = int32(v.GetInt(k))
+		ensureAdminRuntime(cfg).RetryBackoffSeconds = int32Setting(v, k)
 		changed = true
 	}
 	for tomlKey, mapper := range section.workerKeys {
@@ -268,6 +269,18 @@ func (section pluginConfigSection) applyToml(v TomlConfig, cfg *plugin_pb.Persis
 		cfg.UpdatedBy = "admin.toml"
 	}
 	return changed
+}
+
+// int32Setting clamps to [0, MaxInt32] so oversized toml values cannot wrap negative
+func int32Setting(v TomlConfig, key string) int32 {
+	n := v.GetInt(key)
+	if n < 0 {
+		return 0
+	}
+	if n > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	return int32(n)
 }
 
 func ensureAdminRuntime(cfg *plugin_pb.PersistedJobTypeConfig) *plugin_pb.AdminRuntimeConfig {
