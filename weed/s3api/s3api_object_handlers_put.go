@@ -807,9 +807,8 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		glog.V(3).Infof("putToFiler: storing SSE-S3 metadata - keyID=%s, raw len=%d", sseS3Key.KeyID, len(sseS3Metadata))
 	}
 
-	// Fold large flat chunk lists into manifest chunks before creating the
-	// entry. Part uploads (object == "") stay flat: completion rebases their
-	// offsets into the final object, which manifest chunks cannot express.
+	// Parts (object == "") stay flat: completion rebases chunk offsets, which
+	// manifest chunks cannot express.
 	if object != "" {
 		entry.Chunks = s3a.manifestizeChunks(filePath, bucket, lifecycleTTLSec, entry.GetChunks())
 	}

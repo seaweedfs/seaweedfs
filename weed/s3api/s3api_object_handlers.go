@@ -853,21 +853,14 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			// Note: ETag is NOT overridden - AWS S3 returns the complete object's ETag
 			// even when requesting a specific part via PartNumber
 			var startOffset, endOffset int64
-			if partInfo != nil && partInfo.EndOffset > partInfo.StartOffset {
-				// Byte-offset boundaries: valid regardless of how the entry's
-				// chunk list is laid out (flat or manifest chunks)
-				startOffset = partInfo.StartOffset
-				endOffset = partInfo.EndOffset - 1
-			} else if partInfo != nil {
-				// Legacy boundaries carry chunk indexes into the flat chunk list
-				if partInfo.StartChunk < 0 || partInfo.EndChunk <= partInfo.StartChunk || partInfo.EndChunk > len(objectEntryForSSE.Chunks) {
+			if partInfo != nil {
+				var ok bool
+				startOffset, endOffset, ok = partRange(partInfo, objectEntryForSSE.Chunks)
+				if !ok {
 					glog.Errorf("GetObject: part %d boundary chunks [%d,%d) out of range (chunks: %d)", partNumber, partInfo.StartChunk, partInfo.EndChunk, len(objectEntryForSSE.Chunks))
 					s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 					return
 				}
-				startOffset = objectEntryForSSE.Chunks[partInfo.StartChunk].Offset
-				lastChunk := objectEntryForSSE.Chunks[partInfo.EndChunk-1]
-				endOffset = lastChunk.Offset + int64(lastChunk.Size) - 1
 			} else {
 				// Fallback: assume 1:1 part-to-chunk mapping (backward compatibility)
 				chunkIndex := partNumber - 1
@@ -3047,11 +3040,24 @@ type PartBoundaryInfo struct {
 	StartChunk int    `json:"start"`
 	EndChunk   int    `json:"end"` // exclusive
 	ETag       string `json:"etag"`
-	// Byte offsets of the part within the object; preferred over the chunk
-	// indexes, which stop matching once the entry's chunk list is folded
-	// into manifest chunks. Zero EndOffset means a legacy boundary record.
+	// Byte offsets of the part; zero EndOffset means a legacy record carrying
+	// chunk indexes only.
 	StartOffset int64 `json:"startOffset,omitempty"`
 	EndOffset   int64 `json:"endOffset,omitempty"` // exclusive
+}
+
+// partRange returns the inclusive byte range of a part, preferring byte
+// offsets; ok is false when a legacy record's chunk indexes do not address
+// the entry's chunk list.
+func partRange(partInfo *PartBoundaryInfo, chunks []*filer_pb.FileChunk) (startOffset, endOffset int64, ok bool) {
+	if partInfo.EndOffset > partInfo.StartOffset {
+		return partInfo.StartOffset, partInfo.EndOffset - 1, true
+	}
+	if partInfo.StartChunk < 0 || partInfo.EndChunk <= partInfo.StartChunk || partInfo.EndChunk > len(chunks) {
+		return 0, 0, false
+	}
+	lastChunk := chunks[partInfo.EndChunk-1]
+	return chunks[partInfo.StartChunk].Offset, lastChunk.Offset + int64(lastChunk.Size) - 1, true
 }
 
 // rc is a helper type that wraps a Reader and Closer for proper resource cleanup
