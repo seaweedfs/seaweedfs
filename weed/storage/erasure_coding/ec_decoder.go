@@ -262,7 +262,14 @@ func writeDatFile(baseFileName string, datFileSize int64, encodedDatFileSize int
 		if statErr != nil {
 			return fmt.Errorf("stat %s: %v", shardFileNames[0], statErr)
 		}
-		encodedDatFileSize = int64(dataShards) * shardFileInfo.Size()
+		shardSize := shardFileInfo.Size()
+		// A shard size that is an exact multiple of the large block size is
+		// ambiguous: N large rows, or N-1 large rows plus a full small-block
+		// region. The two layouts only agree below the last large row.
+		if shardSize%largeBlockSize == 0 && datFileSize > (shardSize/largeBlockSize-1)*largeBlockSize*int64(dataShards) {
+			return fmt.Errorf("shard size %d of %s does not identify the block layout; re-encode to record the dat size in .vif", shardSize, baseFileName)
+		}
+		encodedDatFileSize = int64(dataShards) * shardSize
 	}
 	if datFileSize > encodedDatFileSize {
 		return fmt.Errorf("dat file size %d exceeds encoded dat file size %d", datFileSize, encodedDatFileSize)

@@ -454,3 +454,56 @@ func TestWriteDatFileAfterTailDeletion(t *testing.T) {
 	// the live extent can never exceed the encode-time size
 	require.Error(t, writeDatFile(decodedBase, datSize+1, datSize, shardFileNames, large, small))
 }
+
+// TestWriteDatFileFallbackLayout covers decoding when .vif does not record the
+// encode-time size: the layout is inferred from the shard size, except when
+// that is an exact large-block multiple and the live extent reaches the
+// ambiguous region.
+func TestWriteDatFileFallbackLayout(t *testing.T) {
+	const (
+		large = int64(largeBlockSize) // 10000
+		small = int64(smallBlockSize) // 100
+	)
+	largeRowSize := large * DataShardsCount
+
+	dir := t.TempDir()
+
+	encode := func(name string, datSize int64) (string, []string, []byte) {
+		baseFileName := fmt.Sprintf("%s/%s", dir, name)
+		originalData := make([]byte, datSize)
+		_, err := rand.Read(originalData)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(baseFileName+".dat", originalData, 0644))
+		ctx := NewDefaultECContext("", 0)
+		_, err = generateEcFiles(baseFileName, 50, large, small, ctx)
+		require.NoError(t, err, "EC encoding")
+		shardFileNames := make([]string, DataShardsCount)
+		for i := 0; i < DataShardsCount; i++ {
+			shardFileNames[i] = baseFileName + ctx.ToExt(i)
+		}
+		return baseFileName, shardFileNames, originalData
+	}
+
+	// a small-block tail that is not a large-block multiple is unambiguous
+	base, shards, original := encode("plain", largeRowSize+2530)
+	liveSize := largeRowSize / 2
+	require.NoError(t, writeDatFile(base+"_d", liveSize, 0, shards, large, small))
+	decoded, err := os.ReadFile(base + "_d.dat")
+	require.NoError(t, err)
+	assert.Equal(t, original[:liveSize], decoded)
+
+	// datSize just under one large row: the full small-block region makes each
+	// shard exactly largeBlockSize, indistinguishable from one large row
+	base, shards, _ = encode("ambiguous1", largeRowSize-1)
+	err = writeDatFile(base+"_d", largeRowSize/2, 0, shards, large, small)
+	require.ErrorContains(t, err, "does not identify the block layout")
+
+	// two-row equivalent: decoding within the agreed prefix still works
+	base, shards, original = encode("ambiguous2", 2*largeRowSize-1)
+	require.NoError(t, writeDatFile(base+"_d", largeRowSize, 0, shards, large, small))
+	decoded, err = os.ReadFile(base + "_d.dat")
+	require.NoError(t, err)
+	assert.Equal(t, original[:largeRowSize], decoded)
+	err = writeDatFile(base+"_d2", largeRowSize+1, 0, shards, large, small)
+	require.ErrorContains(t, err, "does not identify the block layout")
+}
