@@ -15,3 +15,9 @@ COPY tarantool /opt/tarantool/app
 # build app
 RUN tt build app
 
+# the base image's default healthcheck assumes a single-instance layout and
+# checks a control socket path that doesn't exist for this multi-instance
+# app, so it never reports healthy; check instance status instead.
+HEALTHCHECK --interval=5s --timeout=3s --start-period=15s --retries=6 \
+  CMD tt status app | awk 'NR>2{if ($2!="RUNNING") exit 1} END{if (NR<=2) exit 1}'
+
