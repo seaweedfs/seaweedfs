@@ -172,12 +172,12 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 		})
 		if *doDelete {
 			ewg.Add(func() error {
-				deleted, err := c.deleteOneVolume(commandEnv, writer, *applyChanges, *doCheck, overReplicatedVolumeIds, volumeReplicas, allLocations, pickOneReplicaToDelete)
+				deleted, err := c.deleteOneVolume(commandEnv, writer, *applyChanges, *doCheck, overReplicatedVolumeIds, volumeReplicas, pickOneReplicaToDelete)
 				deletedVolumeReplicas.Add(int64(deleted))
 				return err
 			})
 			ewg.Add(func() error {
-				deleted, err := c.deleteOneVolume(commandEnv, writer, *applyChanges, *doCheck, misplacedVolumeIds, volumeReplicas, allLocations, pickOneMisplacedVolume)
+				deleted, err := c.deleteOneVolume(commandEnv, writer, *applyChanges, *doCheck, misplacedVolumeIds, volumeReplicas, pickOneMisplacedVolume)
 				deletedVolumeReplicas.Add(int64(deleted))
 				return err
 			})
@@ -343,7 +343,7 @@ func (c *commandVolumeFixReplication) matchCollectionPattern(collection string) 
 
 // deleteOneVolume trims one replica from each of the given volumes, and
 // reports how many replicas it actually deleted.
-func (c *commandVolumeFixReplication) deleteOneVolume(commandEnv *CommandEnv, writer io.Writer, applyChanges bool, doCheck bool, volumeIds []uint32, volumeReplicas map[uint32][]*VolumeReplica, allLocations []location, selectOneVolumeFn SelectOneVolumeFunc) (deleted int, err error) {
+func (c *commandVolumeFixReplication) deleteOneVolume(commandEnv *CommandEnv, writer io.Writer, applyChanges bool, doCheck bool, volumeIds []uint32, volumeReplicas map[uint32][]*VolumeReplica, selectOneVolumeFn SelectOneVolumeFunc) (deleted int, err error) {
 	if len(volumeIds) == 0 {
 		// nothing to do
 		return 0, nil
