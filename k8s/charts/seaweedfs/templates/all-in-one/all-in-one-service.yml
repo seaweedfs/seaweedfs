@@ -15,7 +15,12 @@ metadata:
     {{- toYaml .Values.allInOne.service.annotations | nindent 4 }}
   {{- end }}
 spec:
-  type: {{ .Values.allInOne.service.type | default "ClusterIP" }}
+  {{- $serviceType := .Values.allInOne.service.type | default "ClusterIP" }}
+  {{- $nodePorts := dict }}
+  {{- if or (eq $serviceType "NodePort") (eq $serviceType "LoadBalancer") }}
+  {{- $nodePorts = .Values.allInOne.service.nodePorts | default dict }}
+  {{- end }}
+  type: {{ $serviceType }}
   internalTrafficPolicy: {{ .Values.allInOne.service.internalTrafficPolicy | default "Cluster" }}
   {{- if and (semverCompare ">=1.31-0" .Capabilities.KubeVersion.GitVersion) .Values.allInOne.s3.trafficDistribution }}
   trafficDistribution: {{ include "seaweedfs.trafficDistribution" (dict "value" .Values.allInOne.s3.trafficDistribution "Capabilities" .Capabilities) }}
@@ -25,30 +30,48 @@ spec:
   - name: "swfs-master"
     port: {{ .Values.master.port }}
     targetPort: {{ .Values.master.port }}
+    {{- if $nodePorts.master }}
+    nodePort: {{ $nodePorts.master }}
+    {{- end }}
     protocol: TCP
   - name: "swfs-master-grpc"
     port: {{ .Values.master.grpcPort }}
     targetPort: {{ .Values.master.grpcPort }}
+    {{- if $nodePorts.masterGrpc }}
+    nodePort: {{ $nodePorts.masterGrpc }}
+    {{- end }}
     protocol: TCP
-  
+
   # Volume ports
   - name: "swfs-volume"
     port: {{ .Values.volume.port }}
     targetPort: {{ .Values.volume.port }}
+    {{- if $nodePorts.volume }}
+    nodePort: {{ $nodePorts.volume }}
+    {{- end }}
     protocol: TCP
   - name: "swfs-volume-grpc"
     port: {{ .Values.volume.grpcPort }}
     targetPort: {{ .Values.volume.grpcPort }}
+    {{- if $nodePorts.volumeGrpc }}
+    nodePort: {{ $nodePorts.volumeGrpc }}
+    {{- end }}
     protocol: TCP
-  
+
   # Filer ports
   - name: "swfs-filer"
     port: {{ .Values.filer.port }}
     targetPort: {{ .Values.filer.port }}
+    {{- if $nodePorts.filer }}
+    nodePort: {{ $nodePorts.filer }}
+    {{- end }}
     protocol: TCP
   - name: "swfs-filer-grpc"
     port: {{ .Values.filer.grpcPort }}
     targetPort: {{ .Values.filer.grpcPort }}
+    {{- if $nodePorts.filerGrpc }}
+    nodePort: {{ $nodePorts.filerGrpc }}
+    {{- end }}
     protocol: TCP
   
   # S3 ports (if enabled)
@@ -56,21 +79,30 @@ spec:
   - name: "swfs-s3"
     port: {{ .Values.allInOne.s3.port | default .Values.s3.port }}
     targetPort: {{ .Values.allInOne.s3.port | default .Values.s3.port }}
+    {{- if $nodePorts.s3 }}
+    nodePort: {{ $nodePorts.s3 }}
+    {{- end }}
     protocol: TCP
   {{- $httpsPort := .Values.allInOne.s3.httpsPort | default .Values.s3.httpsPort }}
   {{- if $httpsPort }}
   - name: "swfs-s3-tls"
     port: {{ $httpsPort }}
     targetPort: {{ $httpsPort }}
+    {{- if $nodePorts.s3Https }}
+    nodePort: {{ $nodePorts.s3Https }}
+    {{- end }}
     protocol: TCP
   {{- end }}
   {{- end }}
-  
+
   # SFTP ports (if enabled)
   {{- if .Values.allInOne.sftp.enabled }}
   - name: "swfs-sftp"
     port: {{ .Values.allInOne.sftp.port | default .Values.sftp.port }}
     targetPort: {{ .Values.allInOne.sftp.port | default .Values.sftp.port }}
+    {{- if $nodePorts.sftp }}
+    nodePort: {{ $nodePorts.sftp }}
+    {{- end }}
     protocol: TCP
   {{- end }}
 
@@ -79,6 +111,9 @@ spec:
   - name: "server-metrics"
     port: {{ .Values.allInOne.metricsPort }}
     targetPort: {{ .Values.allInOne.metricsPort }}
+    {{- if $nodePorts.metrics }}
+    nodePort: {{ $nodePorts.metrics }}
+    {{- end }}
     protocol: TCP
   {{- end }}
   

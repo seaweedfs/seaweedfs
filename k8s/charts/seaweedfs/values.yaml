@@ -1142,6 +1142,13 @@ s3:
   # Service settings
   service:
     type: ClusterIP
+    # Fixed nodePort numbers, applied only when type is NodePort or LoadBalancer.
+    # Leave null to let Kubernetes allocate them.
+    nodePorts:
+      http: null
+      https: null
+      iceberg: null
+      metrics: null
 
   icebergIngress:
     enabled: false
@@ -1239,6 +1246,10 @@ sftp:
   # Service settings
   service:
     type: ClusterIP
+    # Fixed nodePort numbers, applied only when type is NodePort or LoadBalancer.
+    nodePorts:
+      sftp: null
+      metrics: null
 
 admin:
   enabled: false
@@ -1376,6 +1387,10 @@ admin:
   service:
     type: ClusterIP
     annotations: {}
+    # Fixed nodePort numbers, applied only when type is NodePort or LoadBalancer.
+    nodePorts:
+      http: null
+      grpc: null
 
   # ServiceMonitor annotations (separate from pod/deployment annotations)
   serviceMonitor:
@@ -1595,6 +1610,19 @@ allInOne:
     annotations: {}  # Annotations for the service
     type: ClusterIP  # Service type (ClusterIP, NodePort, LoadBalancer)
     internalTrafficPolicy: Cluster  # Internal traffic policy
+    # Fixed nodePort numbers, applied only when type is NodePort or LoadBalancer.
+    # Leave null to let Kubernetes allocate them.
+    nodePorts:
+      master: null
+      masterGrpc: null
+      volume: null
+      volumeGrpc: null
+      filer: null
+      filerGrpc: null
+      s3: null
+      s3Https: null
+      sftp: null
+      metrics: null
 
   # Note: For ingress in all-in-one mode, use the standard s3.ingress and
   # filer.ingress settings. The templates automatically detect all-in-one mode
