@@ -594,12 +594,25 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	}
 
 	fullpath := util.Join(req.Directory, req.Entry.Name)
+
+	// Serialize concurrent mutations to the same path on this filer so the
+	// read (preconditions, garbage diff) and the write are atomic. Callers
+	// route a key's writes to this owner filer, making this local lock
+	// sufficient.
+	lockPath := util.FullPath(fullpath)
+	pathLock := fs.entryLockTable.AcquireLock("UpdateEntry", lockPath, util.ExclusiveLock)
+	defer fs.entryLockTable.ReleaseLock(lockPath, pathLock)
+
 	entry, err := fs.filer.FindEntry(ctx, util.FullPath(fullpath))
 	if err != nil {
 		return &filer_pb.UpdateEntryResponse{}, fmt.Errorf("not found %s: %v", fullpath, err)
 	}
 	if err := validateUpdateEntryPreconditions(entry, req.ExpectedExtended); err != nil {
 		return &filer_pb.UpdateEntryResponse{}, err
+	}
+	if conditionIsSet(req.Condition) && !writeConditionSatisfied(req.Condition, entry) {
+		glog.V(3).InfofCtx(ctx, "UpdateEntry %s: precondition failed: %v", fullpath, req.Condition)
+		return &filer_pb.UpdateEntryResponse{}, status.Errorf(codes.FailedPrecondition, "precondition failed: %s", fullpath)
 	}
 
 	chunks, garbage, err2 := fs.cleanupChunks(ctx, fullpath, entry, req.Entry)

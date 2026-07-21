@@ -447,6 +447,10 @@ message UpdateEntryRequest {
     bool is_from_other_cluster = 3;
     repeated int32 signatures = 4;
     map<string, bytes> expected_extended = 5;
+    // Optional precondition evaluated against the current entry atomically with
+    // the write, under the filer's per-path lock. The caller must route the
+    // key's writes to this entry's owner filer for the check to be authoritative.
+    WriteCondition condition = 6;
 }
 message UpdateEntryResponse {
     SubscribeMetadataResponse metadata_event = 1;
