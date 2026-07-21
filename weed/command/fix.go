@@ -410,7 +410,7 @@ func doFixEcxFromShards(basePath, baseFileName, collection string, volumeId int6
 	// De-stripe the data shards into a temporary .dat next to the shards.
 	tmpBase := base + ".ecxrecover"
 	tmpDat := tmpBase + ".dat"
-	if err := erasure_coding.WriteDatFile(tmpBase, reconstructSize, shardFileNames); err != nil {
+	if err := erasure_coding.WriteDatFile(tmpBase, reconstructSize, reconstructSize, shardFileNames); err != nil {
 		os.Remove(tmpDat)
 		fail(fmt.Errorf("volume %d: reconstruct .dat from data shards: %w", volumeId, err))
 		return
