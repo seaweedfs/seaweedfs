@@ -1,12 +1,16 @@
 package dash
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
+	adminplugin "github.com/seaweedfs/seaweedfs/weed/admin/plugin"
+	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
@@ -105,5 +109,171 @@ garbage_threshold = 0.03
 `)
 	if err := cp.ApplyMaintenanceConfigFromToml(v); err == nil {
 		t.Errorf("expected error when maintenance keys are set without a data dir")
+	}
+}
+
+func newPluginServer(t *testing.T) *AdminServer {
+	t.Helper()
+	p, err := adminplugin.New(adminplugin.Options{})
+	if err != nil {
+		t.Fatalf("new plugin: %v", err)
+	}
+	t.Cleanup(p.Shutdown)
+	return &AdminServer{plugin: p}
+}
+
+func TestApplyPluginConfigFromTomlUpdatesExistingConfig(t *testing.T) {
+	s := newPluginServer(t)
+	seed := &plugin_pb.PersistedJobTypeConfig{
+		JobType:      "vacuum",
+		AdminRuntime: &plugin_pb.AdminRuntimeConfig{Enabled: true, RetryLimit: 1, RetryBackoffSeconds: 10},
+		WorkerConfigValues: map[string]*plugin_pb.ConfigValue{
+			"garbage_threshold": {Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.3}},
+		},
+	}
+	if err := s.GetPlugin().SaveJobTypeConfig(seed); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	v := tomlConfig(t, `
+[maintenance.vacuum]
+garbage_threshold = 0.1
+retry_limit = 5
+`)
+	if err := s.ApplyPluginConfigFromToml(v); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	cfg, err := s.GetPlugin().LoadJobTypeConfig("vacuum")
+	if err != nil || cfg == nil {
+		t.Fatalf("load: %v %v", cfg, err)
+	}
+	if got := cfg.WorkerConfigValues["garbage_threshold"].GetDoubleValue(); got != 0.1 {
+		t.Errorf("garbage_threshold = %v, want 0.1", got)
+	}
+	if cfg.AdminRuntime.RetryLimit != 5 {
+		t.Errorf("retry_limit = %d, want 5", cfg.AdminRuntime.RetryLimit)
+	}
+	if !cfg.AdminRuntime.Enabled {
+		t.Errorf("enabled flipped off by unrelated toml keys")
+	}
+	if cfg.AdminRuntime.RetryBackoffSeconds != 10 {
+		t.Errorf("retry_backoff_seconds = %d, want 10 kept", cfg.AdminRuntime.RetryBackoffSeconds)
+	}
+	if cfg.UpdatedBy != "admin.toml" {
+		t.Errorf("updated_by = %q, want admin.toml", cfg.UpdatedBy)
+	}
+}
+
+func TestApplyPluginConfigFromTomlClampsRetryValues(t *testing.T) {
+	s := newPluginServer(t)
+	seed := &plugin_pb.PersistedJobTypeConfig{
+		JobType:      "vacuum",
+		AdminRuntime: &plugin_pb.AdminRuntimeConfig{Enabled: true},
+	}
+	if err := s.GetPlugin().SaveJobTypeConfig(seed); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	v := tomlConfig(t, `
+[maintenance.vacuum]
+retry_limit = 68719476736
+retry_backoff_seconds = -5
+`)
+	if err := s.ApplyPluginConfigFromToml(v); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	cfg, err := s.GetPlugin().LoadJobTypeConfig("vacuum")
+	if err != nil || cfg == nil {
+		t.Fatalf("load: %v %v", cfg, err)
+	}
+	wantLimit := int32(math.MaxInt32)
+	if strconv.IntSize == 32 {
+		wantLimit = 0 // viper zeroes values that overflow int before the clamp sees them
+	}
+	if cfg.AdminRuntime.RetryLimit != wantLimit {
+		t.Errorf("retry_limit = %d, want clamped to %d", cfg.AdminRuntime.RetryLimit, wantLimit)
+	}
+	if cfg.AdminRuntime.RetryBackoffSeconds != 0 {
+		t.Errorf("retry_backoff_seconds = %d, want clamped to 0", cfg.AdminRuntime.RetryBackoffSeconds)
+	}
+}
+
+func TestApplyPluginConfigFromTomlLeavesMissingConfigToBootstrap(t *testing.T) {
+	s := newPluginServer(t)
+	v := tomlConfig(t, `
+[maintenance.vacuum]
+garbage_threshold = 0.1
+`)
+	if err := s.ApplyPluginConfigFromToml(v); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if cfg, _ := s.GetPlugin().LoadJobTypeConfig("vacuum"); cfg != nil {
+		t.Errorf("bare config created; descriptor bootstrap would be skipped and disable the job type")
+	}
+}
+
+func TestApplyPluginTomlDefaultsOverlaysBootstrapConfig(t *testing.T) {
+	cfg := &plugin_pb.PersistedJobTypeConfig{
+		JobType:      "vacuum",
+		AdminRuntime: &plugin_pb.AdminRuntimeConfig{Enabled: true, RetryLimit: 1},
+		WorkerConfigValues: map[string]*plugin_pb.ConfigValue{
+			"garbage_threshold": {Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.3}},
+		},
+		UpdatedBy: "plugin",
+	}
+	v := tomlConfig(t, `
+[maintenance.vacuum]
+garbage_threshold = 0.1
+`)
+	applyPluginTomlDefaults(v, cfg)
+	if got := cfg.WorkerConfigValues["garbage_threshold"].GetDoubleValue(); got != 0.1 {
+		t.Errorf("garbage_threshold = %v, want 0.1", got)
+	}
+	if !cfg.AdminRuntime.Enabled || cfg.AdminRuntime.RetryLimit != 1 {
+		t.Errorf("descriptor defaults lost: %v", cfg.AdminRuntime)
+	}
+	if cfg.UpdatedBy != "admin.toml" {
+		t.Errorf("updated_by = %q, want admin.toml", cfg.UpdatedBy)
+	}
+}
+
+func TestApplyPluginConfigFromTomlErasureCodingKeyPlacement(t *testing.T) {
+	s := newPluginServer(t)
+	seed := &plugin_pb.PersistedJobTypeConfig{
+		JobType:      "erasure_coding",
+		AdminRuntime: &plugin_pb.AdminRuntimeConfig{Enabled: true},
+	}
+	if err := s.GetPlugin().SaveJobTypeConfig(seed); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	v := tomlConfig(t, `
+[maintenance.erasure_coding]
+collection_filter = "important"
+replica_placement = "020"
+preferred_tags = ["fast,SSD"]
+`)
+	if err := s.ApplyPluginConfigFromToml(v); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	cfg, err := s.GetPlugin().LoadJobTypeConfig("erasure_coding")
+	if err != nil || cfg == nil {
+		t.Fatalf("load: %v %v", cfg, err)
+	}
+	// collection_filter is read from the admin values by all workers
+	if got := cfg.AdminConfigValues["collection_filter"].GetStringValue(); got != "important" {
+		t.Errorf("admin collection_filter = %q, want important", got)
+	}
+	if _, ok := cfg.WorkerConfigValues["collection_filter"]; ok {
+		t.Errorf("collection_filter must not land in worker values")
+	}
+	if got := cfg.WorkerConfigValues["replica_placement"].GetStringValue(); got != "020" {
+		t.Errorf("replica_placement = %q, want 020", got)
+	}
+	if got := cfg.WorkerConfigValues["preferred_tags"].GetStringList().GetValues(); !reflect.DeepEqual(got, []string{"fast", "ssd"}) {
+		t.Errorf("preferred_tags = %v, want [fast ssd]", got)
 	}
 }

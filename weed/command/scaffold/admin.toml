@@ -20,6 +20,10 @@
 # max_concurrent = 2
 # only vacuum volumes older than this (rounded up to whole hours)
 # min_volume_age_seconds = 86400
+# max retry attempts for a failed vacuum job (admin runtime default)
+# retry_limit = 1
+# seconds to wait between retry attempts
+# retry_backoff_seconds = 10
 
 [maintenance.balance]
 # enabled = true
@@ -29,6 +33,10 @@
 # max_concurrent = 1
 # minimum number of volume servers before balancing
 # min_server_count = 2
+# max retry attempts for a failed balance job
+# retry_limit = 1
+# seconds to wait between retry attempts
+# retry_backoff_seconds = 15
 
 [maintenance.erasure_coding]
 # enabled = true
@@ -45,3 +53,7 @@
 # preferred_tags = ["fast", "ssd"]
 # EC shard placement constraint, e.g. "020"; empty uses the master default replication
 # replica_placement = ""
+# max retry attempts for a failed erasure coding job
+# retry_limit = 1
+# seconds to wait between retry attempts
+# retry_backoff_seconds = 30

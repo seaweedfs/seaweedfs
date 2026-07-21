@@ -474,12 +474,16 @@ func (s *AdminServer) loadTaskConfigurationsFromPersistence() {
 }
 
 // enrichConfigDefaults is called by the plugin when bootstrapping a job type's
-// default config from its descriptor. For admin_script, it fetches maintenance
-// scripts from the master and uses them as the script default.
+// default config from its descriptor. It overlays admin.toml maintenance
+// settings, and for admin_script fetches maintenance scripts from the master
+// to use as the script default.
 //
-// MIGRATION: This exists to help users migrate from master.toml [master.maintenance]
-// to the admin script plugin worker. Remove after March 2027.
+// MIGRATION: the admin_script part exists to help users migrate from
+// master.toml [master.maintenance] to the admin script plugin worker.
+// Remove after March 2027.
 func (s *AdminServer) enrichConfigDefaults(cfg *plugin_pb.PersistedJobTypeConfig) *plugin_pb.PersistedJobTypeConfig {
+	applyPluginTomlDefaults(util.GetViper(), cfg)
+
 	if cfg.JobType != "admin_script" {
 		return cfg
 	}

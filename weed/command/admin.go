@@ -181,6 +181,8 @@ var cmdAdmin = &Command{
       saved from the admin UI, so they can be managed declaratively
     - Requires -dataDir; values can also be set via WEED_* environment
       variables, e.g. WEED_MAINTENANCE_VACUUM_GARBAGE_THRESHOLD=0.3
+    - Settings are applied to both the legacy task policy and the plugin
+      config store, so they take effect for the admin UI and plugin workers
     - Generate example admin.toml: weed scaffold -config=admin
 
   Configuration File:
@@ -387,6 +389,10 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 
 	// Create admin server (plugin is always enabled)
 	adminServer := dash.NewAdminServer(*options.master, *options.filerGroup, nil, dataDir, icebergPort)
+
+	if err := adminServer.ApplyPluginConfigFromToml(util.GetViper()); err != nil {
+		return fmt.Errorf("apply admin.toml to plugin config: %w", err)
+	}
 
 	// Show discovered filers
 	filers := adminServer.GetAllFilers()
