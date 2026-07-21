@@ -78,6 +78,7 @@ pub fn write_dat_file_from_shards(
     collection: &str,
     volume_id: VolumeId,
     dat_file_size: i64,
+    encoded_dat_file_size: i64,
     data_shards: usize,
 ) -> io::Result<()> {
     let dirs: Vec<String> = (0..data_shards).map(|_| dir.to_string()).collect();
@@ -86,6 +87,7 @@ pub fn write_dat_file_from_shards(
         collection,
         volume_id,
         dat_file_size,
+        encoded_dat_file_size,
         data_shards,
         &dirs,
     )
@@ -99,18 +101,60 @@ pub fn write_dat_file_from_shards(
 /// one dir" case both can be the same value.
 ///
 /// Mirrors Go's `WriteDatFile(baseFileName, datFileSize,
-/// shardFileNames)` shape — Go passes per-shard paths so a
-/// reconciled volume with shards split across disks of the same
-/// volume server can still be decoded back to a regular .dat
+/// encodedDatFileSize, shardFileNames)` shape — Go passes per-shard
+/// paths so a reconciled volume with shards split across disks of the
+/// same volume server can still be decoded back to a regular .dat
 /// (seaweedfs/seaweedfs#9252).
+///
+/// `dat_file_size` is the number of bytes to write, i.e. the live data
+/// extent from [`find_dat_file_size`]. `encoded_dat_file_size` is the
+/// .dat size at encode time, which fixed the shard block layout:
+/// deletions can move the live extent below the large-block row
+/// boundary, and deriving the layout from the shrunk extent would read
+/// the shards in the wrong block order.
 pub fn write_dat_file_from_shards_with_dirs(
     dat_dir: &str,
     collection: &str,
     volume_id: VolumeId,
     dat_file_size: i64,
+    encoded_dat_file_size: i64,
     data_shards: usize,
     shard_dirs: &[String],
 ) -> io::Result<()> {
+    write_dat_file(
+        dat_dir,
+        collection,
+        volume_id,
+        dat_file_size,
+        encoded_dat_file_size,
+        data_shards,
+        shard_dirs,
+        ERASURE_CODING_LARGE_BLOCK_SIZE,
+        ERASURE_CODING_SMALL_BLOCK_SIZE,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_dat_file(
+    dat_dir: &str,
+    collection: &str,
+    volume_id: VolumeId,
+    dat_file_size: i64,
+    encoded_dat_file_size: i64,
+    data_shards: usize,
+    shard_dirs: &[String],
+    large_block_size: usize,
+    small_block_size: usize,
+) -> io::Result<()> {
+    if dat_file_size > encoded_dat_file_size {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "dat file size {} exceeds encoded dat file size {}",
+                dat_file_size, encoded_dat_file_size
+            ),
+        ));
+    }
     if shard_dirs.len() < data_shards {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -140,34 +184,46 @@ pub fn write_dat_file_from_shards_with_dirs(
 
         let mut dat_file = File::create(&tmp_path)?;
         let mut remaining = dat_file_size;
-        let large_block_size = ERASURE_CODING_LARGE_BLOCK_SIZE;
-        let small_block_size = ERASURE_CODING_SMALL_BLOCK_SIZE;
+        let mut encoded_remaining = encoded_dat_file_size;
         let large_row_size = (large_block_size * data_shards) as i64;
 
         let mut shard_offset: u64 = 0;
 
         // Read large blocks
-        while remaining >= large_row_size {
+        while encoded_remaining >= large_row_size && remaining > 0 {
             for i in 0..data_shards {
-                let mut buf = vec![0u8; large_block_size];
-                shards[i].read_at(&mut buf, shard_offset)?;
                 let to_write = large_block_size.min(remaining as usize);
-                dat_file.write_all(&buf[..to_write])?;
+                let mut buf = vec![0u8; to_write];
+                let n = shards[i].read_at(&mut buf, shard_offset)?;
+                if n != to_write {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        format!("short read of large block on shard {}", i),
+                    ));
+                }
+                dat_file.write_all(&buf)?;
                 remaining -= to_write as i64;
                 if remaining <= 0 {
                     break;
                 }
             }
+            encoded_remaining -= large_row_size;
             shard_offset += large_block_size as u64;
         }
 
         // Read small blocks
         while remaining > 0 {
             for i in 0..data_shards {
-                let mut buf = vec![0u8; small_block_size];
-                shards[i].read_at(&mut buf, shard_offset)?;
                 let to_write = small_block_size.min(remaining as usize);
-                dat_file.write_all(&buf[..to_write])?;
+                let mut buf = vec![0u8; to_write];
+                let n = shards[i].read_at(&mut buf, shard_offset)?;
+                if n != to_write {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        format!("short read of small block on shard {}", i),
+                    ));
+                }
+                dat_file.write_all(&buf)?;
                 remaining -= to_write as i64;
                 if remaining <= 0 {
                     break;
@@ -330,8 +386,15 @@ mod tests {
         std::fs::remove_file(format!("{}/1.idx", dir)).unwrap();
 
         // Reconstruct from EC shards
-        write_dat_file_from_shards(dir, "", VolumeId(1), original_dat_size as i64, data_shards)
-            .unwrap();
+        write_dat_file_from_shards(
+            dir,
+            "",
+            VolumeId(1),
+            original_dat_size as i64,
+            original_dat_size as i64,
+            data_shards,
+        )
+        .unwrap();
         write_idx_file_from_ec_index(dir, "", VolumeId(1)).unwrap();
 
         // Atomic publish must rename the temp files away, never leaving them behind.
@@ -376,7 +439,7 @@ mod tests {
         let dir = tmp.path().to_str().unwrap();
         // No shard files exist, so de-striping must fail and publish nothing:
         // neither the final .dat nor a partial .dat.tmp may remain.
-        let res = write_dat_file_from_shards(dir, "", VolumeId(7), 100, 10);
+        let res = write_dat_file_from_shards(dir, "", VolumeId(7), 100, 100, 10);
         assert!(res.is_err());
         assert!(!std::path::Path::new(&format!("{}/7.dat", dir)).exists());
         assert!(!std::path::Path::new(&format!("{}/7.dat.tmp", dir)).exists());
