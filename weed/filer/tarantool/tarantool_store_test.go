@@ -18,6 +18,6 @@ func TestStore(t *testing.T) {
 	}
 	store := &TarantoolStore{}
 	addresses := []string{"127.0.1:3303"}
-	store.initialize(addresses, "client", "client", 5*time.Second, 1000)
+	store.initialize(addresses, "client", "client", 5*time.Second)
 	store_test.TestFilerStore(t, store)
 }
