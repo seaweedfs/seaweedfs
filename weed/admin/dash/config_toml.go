@@ -168,7 +168,7 @@ var pluginConfigSections = []pluginConfigSection{
 		},
 	},
 	{
-		jobType: "balance",
+		jobType: "volume_balance",
 		prefix:  "maintenance.balance",
 		workerValueMappings: map[string]func(v TomlConfig, key string) *plugin_pb.ConfigValue{
 			"imbalance_threshold": doubleValue,
