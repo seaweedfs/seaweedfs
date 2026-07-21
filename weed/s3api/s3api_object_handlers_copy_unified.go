@@ -14,6 +14,13 @@ import (
 // executeUnifiedCopyStrategy executes the appropriate copy strategy based on encryption state
 // Returns chunks and destination metadata that should be applied to the destination entry
 func (s3a *S3ApiServer) executeUnifiedCopyStrategy(entry *filer_pb.Entry, r *http.Request, srcBucket, dstBucket, srcObject, dstObject string) ([]*filer_pb.FileChunk, map[string][]byte, error) {
+	// The per-chunk copy paths below must see real data chunks; copying a
+	// manifest chunk raw would store its blob as object data pointing at the
+	// source's chunks.
+	if err := s3a.flattenManifestChunks(r.Context(), entry); err != nil {
+		return nil, nil, fmt.Errorf("resolve source manifest chunks: %w", err)
+	}
+
 	// Detect encryption state (using entry-aware detection for multipart objects)
 	srcPath := fmt.Sprintf("%s/%s", s3a.bucketDir(srcBucket), srcObject)
 	dstPath := fmt.Sprintf("%s/%s", s3a.bucketDir(dstBucket), dstObject)

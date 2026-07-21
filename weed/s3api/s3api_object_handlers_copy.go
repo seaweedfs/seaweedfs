@@ -423,7 +423,9 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			return
 		}
 
-		dstEntry.Chunks = dstChunks
+		// Re-fold a large copied chunk list into manifest chunks, mirroring the
+		// PutObject path (no-op below filer.ManifestBatch or for SSE chunks).
+		dstEntry.Chunks = s3a.manifestizeChunks(fmt.Sprintf("%s/%s", s3a.bucketDir(dstBucket), dstObject), dstBucket, 0, dstChunks)
 
 		// Apply destination-specific metadata (e.g., SSE-C IV and headers)
 		if dstMetadata != nil {
@@ -915,6 +917,14 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 			return
 		}
 		entry = cachedEntry
+	}
+
+	// The part-copy paths below iterate entry.GetChunks() per chunk, so a
+	// manifested source must be resolved into its data chunks first.
+	if err := s3a.flattenManifestChunks(r.Context(), entry); err != nil {
+		glog.Errorf("CopyObjectPartHandler: resolve source manifest chunks %s/%s: %v", srcBucket, srcObject, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
 	}
 
 	// Validate conditional copy headers
