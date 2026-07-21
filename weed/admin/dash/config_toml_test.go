@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	adminplugin "github.com/seaweedfs/seaweedfs/weed/admin/plugin"
+	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
@@ -108,52 +110,133 @@ garbage_threshold = 0.03
 	}
 }
 
-// TestApplyMaintenanceConfigFromTomlOnlyUpdatesLegacyStore demonstrates the
-// bug: ApplyMaintenanceConfigFromToml writes the admin.toml values to the
-// legacy task-policy store (<dataDir>/conf/task_vacuum.json) but does NOT
-// propagate them to the plugin config store
-// (<dataDir>/plugin/job_types/vacuum/config.json) that the admin UI and plugin
-// workers actually read. This is the gap that ApplyPluginConfigFromToml fills.
-func TestApplyMaintenanceConfigFromTomlOnlyUpdatesLegacyStore(t *testing.T) {
-	dir := t.TempDir()
-	cp := NewConfigPersistence(dir)
+func newPluginServer(t *testing.T) *AdminServer {
+	t.Helper()
+	p, err := adminplugin.New(adminplugin.Options{})
+	if err != nil {
+		t.Fatalf("new plugin: %v", err)
+	}
+	t.Cleanup(p.Shutdown)
+	return &AdminServer{plugin: p}
+}
+
+func TestApplyPluginConfigFromTomlUpdatesExistingConfig(t *testing.T) {
+	s := newPluginServer(t)
+	seed := &plugin_pb.PersistedJobTypeConfig{
+		JobType:      "vacuum",
+		AdminRuntime: &plugin_pb.AdminRuntimeConfig{Enabled: true, RetryLimit: 1, RetryBackoffSeconds: 10},
+		WorkerConfigValues: map[string]*plugin_pb.ConfigValue{
+			"garbage_threshold": {Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.3}},
+		},
+	}
+	if err := s.GetPlugin().SaveJobTypeConfig(seed); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
 
 	v := tomlConfig(t, `
 [maintenance.vacuum]
 garbage_threshold = 0.1
-retry_limit = 10
-retry_backoff_seconds = 30
+retry_limit = 5
 `)
-	if err := cp.ApplyMaintenanceConfigFromToml(v); err != nil {
+	if err := s.ApplyPluginConfigFromToml(v); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
-	// Legacy store IS updated (this works correctly)
-	legacyFile := filepath.Join(dir, ConfigSubdir, VacuumTaskConfigJSONFile)
-	if _, err := os.Stat(legacyFile); os.IsNotExist(err) {
-		t.Errorf("legacy vacuum config file missing — admin.toml values should be here")
+	cfg, err := s.GetPlugin().LoadJobTypeConfig("vacuum")
+	if err != nil || cfg == nil {
+		t.Fatalf("load: %v %v", cfg, err)
 	}
-	vacuumConf := vacuum.LoadConfigFromPersistence(cp)
-	if vacuumConf.GarbageThreshold != 0.1 {
-		t.Errorf("legacy garbage_threshold = %v, want 0.1 (admin.toml applied to legacy store)", vacuumConf.GarbageThreshold)
+	if got := cfg.WorkerConfigValues["garbage_threshold"].GetDoubleValue(); got != 0.1 {
+		t.Errorf("garbage_threshold = %v, want 0.1", got)
+	}
+	if cfg.AdminRuntime.RetryLimit != 5 {
+		t.Errorf("retry_limit = %d, want 5", cfg.AdminRuntime.RetryLimit)
+	}
+	if !cfg.AdminRuntime.Enabled {
+		t.Errorf("enabled flipped off by unrelated toml keys")
+	}
+	if cfg.AdminRuntime.RetryBackoffSeconds != 10 {
+		t.Errorf("retry_backoff_seconds = %d, want 10 kept", cfg.AdminRuntime.RetryBackoffSeconds)
+	}
+	if cfg.UpdatedBy != "admin.toml" {
+		t.Errorf("updated_by = %q, want admin.toml", cfg.UpdatedBy)
+	}
+}
+
+func TestApplyPluginConfigFromTomlLeavesMissingConfigToBootstrap(t *testing.T) {
+	s := newPluginServer(t)
+	v := tomlConfig(t, `
+[maintenance.vacuum]
+garbage_threshold = 0.1
+`)
+	if err := s.ApplyPluginConfigFromToml(v); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if cfg, _ := s.GetPlugin().LoadJobTypeConfig("vacuum"); cfg != nil {
+		t.Errorf("bare config created; descriptor bootstrap would be skipped and disable the job type")
+	}
+}
+
+func TestApplyPluginTomlDefaultsOverlaysBootstrapConfig(t *testing.T) {
+	cfg := &plugin_pb.PersistedJobTypeConfig{
+		JobType:      "vacuum",
+		AdminRuntime: &plugin_pb.AdminRuntimeConfig{Enabled: true, RetryLimit: 1},
+		WorkerConfigValues: map[string]*plugin_pb.ConfigValue{
+			"garbage_threshold": {Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.3}},
+		},
+		UpdatedBy: "plugin",
+	}
+	v := tomlConfig(t, `
+[maintenance.vacuum]
+garbage_threshold = 0.1
+`)
+	applyPluginTomlDefaults(v, cfg)
+	if got := cfg.WorkerConfigValues["garbage_threshold"].GetDoubleValue(); got != 0.1 {
+		t.Errorf("garbage_threshold = %v, want 0.1", got)
+	}
+	if !cfg.AdminRuntime.Enabled || cfg.AdminRuntime.RetryLimit != 1 {
+		t.Errorf("descriptor defaults lost: %v", cfg.AdminRuntime)
+	}
+	if cfg.UpdatedBy != "admin.toml" {
+		t.Errorf("updated_by = %q, want admin.toml", cfg.UpdatedBy)
+	}
+}
+
+func TestApplyPluginConfigFromTomlErasureCodingKeyPlacement(t *testing.T) {
+	s := newPluginServer(t)
+	seed := &plugin_pb.PersistedJobTypeConfig{
+		JobType:      "erasure_coding",
+		AdminRuntime: &plugin_pb.AdminRuntimeConfig{Enabled: true},
+	}
+	if err := s.GetPlugin().SaveJobTypeConfig(seed); err != nil {
+		t.Fatalf("seed: %v", err)
 	}
 
-	// Plugin config store has the DEFAULT (0.3), not the admin.toml value (0.1).
-	// The file exists because the plugin bootstrap creates it with descriptor
-	// defaults, but ApplyMaintenanceConfigFromToml never touches it.
-	pluginConfigFile := filepath.Join(dir, "plugin", "job_types", "vacuum", "config.json")
-	if data, err := os.ReadFile(pluginConfigFile); err == nil {
-		if strings.Contains(string(data), `"doubleValue": 0.3`) {
-			t.Logf("BUG CONFIRMED: plugin config at %s has garbage_threshold=0.3 (default), not 0.1 from admin.toml",
-				pluginConfigFile)
-			t.Logf("Legacy store has garbage_threshold=%.1f, but the admin UI and plugin workers read the plugin store and see 0.3",
-				vacuumConf.GarbageThreshold)
-		} else {
-			t.Logf("Plugin config file contents:\n%s", string(data))
-		}
-	} else {
-		// File doesn't exist yet — but in production the plugin bootstrap
-		// creates it with defaults when the admin server starts.
-		t.Logf("Plugin config file not found at %s (will be created by plugin bootstrap with defaults)", pluginConfigFile)
+	v := tomlConfig(t, `
+[maintenance.erasure_coding]
+collection_filter = "important"
+replica_placement = "020"
+preferred_tags = ["fast,SSD"]
+`)
+	if err := s.ApplyPluginConfigFromToml(v); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	cfg, err := s.GetPlugin().LoadJobTypeConfig("erasure_coding")
+	if err != nil || cfg == nil {
+		t.Fatalf("load: %v %v", cfg, err)
+	}
+	// collection_filter is read from the admin values by all workers
+	if got := cfg.AdminConfigValues["collection_filter"].GetStringValue(); got != "important" {
+		t.Errorf("admin collection_filter = %q, want important", got)
+	}
+	if _, ok := cfg.WorkerConfigValues["collection_filter"]; ok {
+		t.Errorf("collection_filter must not land in worker values")
+	}
+	if got := cfg.WorkerConfigValues["replica_placement"].GetStringValue(); got != "020" {
+		t.Errorf("replica_placement = %q, want 020", got)
+	}
+	if got := cfg.WorkerConfigValues["preferred_tags"].GetStringList().GetValues(); !reflect.DeepEqual(got, []string{"fast", "ssd"}) {
+		t.Errorf("preferred_tags = %v, want [fast ssd]", got)
 	}
 }

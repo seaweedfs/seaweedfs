@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // TomlConfig is the subset of viper used to read admin.toml values.
@@ -127,42 +128,59 @@ func applyBaseConfigFromToml(v TomlConfig, prefix string, c *base.BaseConfig) bo
 	return changed
 }
 
-// ApplyPluginConfigFromToml applies admin.toml [maintenance.*] settings to the
-// plugin job type config store so they are picked up by the admin UI and plugin
-// workers. Unlike ApplyMaintenanceConfigFromToml (which writes to the legacy
-// task-policy store that the plugin system does not read), this method updates
-// the plugin's PersistedJobTypeConfig (WorkerConfigValues and AdminRuntime).
-//
-// Requires the plugin to already be initialized.
+// ApplyPluginConfigFromToml overlays admin.toml [maintenance.*] settings onto
+// existing plugin job type configs. Configs that do not exist yet get the
+// overlay in applyPluginTomlDefaults when the plugin bootstraps them from a
+// worker descriptor, so descriptor defaults are never lost.
 func (s *AdminServer) ApplyPluginConfigFromToml(v TomlConfig) error {
-	if s.GetPlugin() == nil {
+	plugin := s.GetPlugin()
+	if plugin == nil {
 		return nil
 	}
-
-	applied := false
 	for _, section := range pluginConfigSections {
-		if s.applyPluginConfigSection(v, section) {
-			applied = true
+		cfg, err := plugin.LoadJobTypeConfig(section.jobType)
+		if err != nil {
+			return fmt.Errorf("load %s plugin config: %w", section.jobType, err)
 		}
-	}
-	if applied {
-		glog.V(0).Infof("Applied maintenance plugin settings from admin.toml")
+		if cfg == nil {
+			continue
+		}
+		if !section.applyToml(v, cfg) {
+			continue
+		}
+		if err := plugin.SaveJobTypeConfig(cfg); err != nil {
+			return fmt.Errorf("save %s plugin config: %w", section.jobType, err)
+		}
+		glog.V(0).Infof("Applied [%s] settings from admin.toml to plugin config", section.prefix)
 	}
 	return nil
 }
 
+// applyPluginTomlDefaults overlays admin.toml onto a job type config the
+// plugin is bootstrapping from descriptor defaults.
+func applyPluginTomlDefaults(v TomlConfig, cfg *plugin_pb.PersistedJobTypeConfig) {
+	for _, section := range pluginConfigSections {
+		if section.jobType == cfg.JobType {
+			if section.applyToml(v, cfg) {
+				glog.V(0).Infof("Applied [%s] settings from admin.toml to plugin defaults", section.prefix)
+			}
+			return
+		}
+	}
+}
+
 type pluginConfigSection struct {
-	jobType string
-	prefix  string
-	// toml key → function to build the ConfigValue for WorkerConfigValues
-	workerValueMappings map[string]func(v TomlConfig, key string) *plugin_pb.ConfigValue
+	jobType    string
+	prefix     string
+	workerKeys map[string]func(v TomlConfig, key string) *plugin_pb.ConfigValue
+	adminKeys  map[string]func(v TomlConfig, key string) *plugin_pb.ConfigValue
 }
 
 var pluginConfigSections = []pluginConfigSection{
 	{
 		jobType: "vacuum",
 		prefix:  "maintenance.vacuum",
-		workerValueMappings: map[string]func(v TomlConfig, key string) *plugin_pb.ConfigValue{
+		workerKeys: map[string]func(v TomlConfig, key string) *plugin_pb.ConfigValue{
 			"garbage_threshold":      doubleValue,
 			"min_volume_age_seconds": int64Value,
 		},
@@ -170,7 +188,7 @@ var pluginConfigSections = []pluginConfigSection{
 	{
 		jobType: "volume_balance",
 		prefix:  "maintenance.balance",
-		workerValueMappings: map[string]func(v TomlConfig, key string) *plugin_pb.ConfigValue{
+		workerKeys: map[string]func(v TomlConfig, key string) *plugin_pb.ConfigValue{
 			"imbalance_threshold": doubleValue,
 			"min_server_count":    int64Value,
 		},
@@ -178,12 +196,16 @@ var pluginConfigSections = []pluginConfigSection{
 	{
 		jobType: "erasure_coding",
 		prefix:  "maintenance.erasure_coding",
-		workerValueMappings: map[string]func(v TomlConfig, key string) *plugin_pb.ConfigValue{
+		workerKeys: map[string]func(v TomlConfig, key string) *plugin_pb.ConfigValue{
 			"fullness_ratio":    doubleValue,
 			"quiet_for_seconds": int64Value,
 			"min_size_mb":       int64Value,
-			"collection_filter": stringValue,
+			"preferred_tags":    stringListValue,
 			"replica_placement": stringValue,
+		},
+		// workers read collection_filter from the admin values, not the worker values
+		adminKeys: map[string]func(v TomlConfig, key string) *plugin_pb.ConfigValue{
+			"collection_filter": stringValue,
 		},
 	},
 }
@@ -200,66 +222,58 @@ func stringValue(v TomlConfig, key string) *plugin_pb.ConfigValue {
 	return &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_StringValue{StringValue: v.GetString(key)}}
 }
 
-func (s *AdminServer) applyPluginConfigSection(v TomlConfig, section pluginConfigSection) bool {
-	allKeys := []string{"enabled", "retry_limit", "retry_backoff_seconds"}
-	for k := range section.workerValueMappings {
-		allKeys = append(allKeys, k)
+func stringListValue(v TomlConfig, key string) *plugin_pb.ConfigValue {
+	// viper does not split comma-separated values from env vars
+	var items []string
+	for _, item := range v.GetStringSlice(key) {
+		items = append(items, strings.Split(item, ",")...)
 	}
+	return &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_StringList{StringList: &plugin_pb.StringList{Values: util.NormalizeTagList(items)}}}
+}
 
-	hasAny := false
-	for _, k := range allKeys {
-		if v.IsSet(section.prefix + "." + k) {
-			hasAny = true
-			break
-		}
-	}
-	if !hasAny {
-		return false
-	}
-
-	cfg, err := s.GetPlugin().LoadJobTypeConfig(section.jobType)
-	if err != nil {
-		glog.Warningf("load %s plugin config: %v", section.jobType, err)
-		return false
-	}
-	if cfg == nil {
-		cfg = &plugin_pb.PersistedJobTypeConfig{
-			JobType: section.jobType,
-		}
-	}
-	if cfg.WorkerConfigValues == nil {
-		cfg.WorkerConfigValues = make(map[string]*plugin_pb.ConfigValue)
-	}
-	if cfg.AdminRuntime == nil {
-		cfg.AdminRuntime = &plugin_pb.AdminRuntimeConfig{}
-	}
-
-	// Common runtime fields shared by all maintenance sections
+func (section pluginConfigSection) applyToml(v TomlConfig, cfg *plugin_pb.PersistedJobTypeConfig) bool {
+	changed := false
 	if k := section.prefix + ".enabled"; v.IsSet(k) {
-		cfg.AdminRuntime.Enabled = v.GetBool(k)
+		ensureAdminRuntime(cfg).Enabled = v.GetBool(k)
+		changed = true
 	}
 	if k := section.prefix + ".retry_limit"; v.IsSet(k) {
-		cfg.AdminRuntime.RetryLimit = int32(v.GetInt(k))
+		ensureAdminRuntime(cfg).RetryLimit = int32(v.GetInt(k))
+		changed = true
 	}
 	if k := section.prefix + ".retry_backoff_seconds"; v.IsSet(k) {
-		cfg.AdminRuntime.RetryBackoffSeconds = int32(v.GetInt(k))
+		ensureAdminRuntime(cfg).RetryBackoffSeconds = int32(v.GetInt(k))
+		changed = true
 	}
-
-	// Section-specific worker config values
-	for tomlKey, mapper := range section.workerValueMappings {
-		k := section.prefix + "." + tomlKey
-		if v.IsSet(k) {
+	for tomlKey, mapper := range section.workerKeys {
+		if k := section.prefix + "." + tomlKey; v.IsSet(k) {
+			if cfg.WorkerConfigValues == nil {
+				cfg.WorkerConfigValues = make(map[string]*plugin_pb.ConfigValue)
+			}
 			cfg.WorkerConfigValues[tomlKey] = mapper(v, k)
+			changed = true
 		}
 	}
-
-	cfg.UpdatedBy = "admin.toml"
-
-	if err := s.GetPlugin().SaveJobTypeConfig(cfg); err != nil {
-		glog.Warningf("save %s plugin config: %v", section.jobType, err)
-		return false
+	for tomlKey, mapper := range section.adminKeys {
+		if k := section.prefix + "." + tomlKey; v.IsSet(k) {
+			if cfg.AdminConfigValues == nil {
+				cfg.AdminConfigValues = make(map[string]*plugin_pb.ConfigValue)
+			}
+			cfg.AdminConfigValues[tomlKey] = mapper(v, k)
+			changed = true
+		}
 	}
+	if changed {
+		cfg.UpdatedAt = timestamppb.Now()
+		cfg.UpdatedBy = "admin.toml"
+	}
+	return changed
+}
 
-	glog.V(0).Infof("Applied [%s] plugin settings from admin.toml", section.prefix)
-	return true
+func ensureAdminRuntime(cfg *plugin_pb.PersistedJobTypeConfig) *plugin_pb.AdminRuntimeConfig {
+	if cfg.AdminRuntime == nil {
+		// maintenance job types are enabled by default; a bare runtime must not disable them
+		cfg.AdminRuntime = &plugin_pb.AdminRuntimeConfig{Enabled: true}
+	}
+	return cfg.AdminRuntime
 }
