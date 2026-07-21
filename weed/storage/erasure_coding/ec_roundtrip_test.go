@@ -326,7 +326,7 @@ func testDecodeDat(t *testing.T, datSize int64) {
 		shardFileNames[i] = fmt.Sprintf("%s%s", baseFileName, ctx.ToExt(i))
 	}
 
-	err = WriteDatFile(decodedBase, datSize, shardFileNames)
+	err = WriteDatFile(decodedBase, datSize, datSize, shardFileNames)
 	require.NoError(t, err, "WriteDatFile")
 
 	// The atomic publish must rename the temp file away, never leaving it behind.
@@ -389,4 +389,121 @@ func assembleFromIntervals(ecFiles []*os.File, intervals []Interval, large, smal
 		data = append(data, chunk...)
 	}
 	return data, nil
+}
+
+// TestWriteDatFileAfterTailDeletion decodes after deletions moved the live
+// extent below the large-block row boundary. The shard block layout is fixed
+// by the encode-time .dat size, so de-striping must not derive it from the
+// shrunk live extent.
+func TestWriteDatFileAfterTailDeletion(t *testing.T) {
+	const (
+		large = int64(largeBlockSize) // 10000
+		small = int64(smallBlockSize) // 100
+	)
+	largeRowSize := large * DataShardsCount
+	smallRowSize := small * DataShardsCount
+
+	// one full large-block row plus a small-block tail
+	datSize := largeRowSize + 2*smallRowSize + 530
+
+	dir := t.TempDir()
+	baseFileName := fmt.Sprintf("%s/tail_del", dir)
+
+	originalData := make([]byte, datSize)
+	_, err := rand.Read(originalData)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(baseFileName+".dat", originalData, 0644))
+
+	ctx := NewDefaultECContext("", 0)
+	_, err = generateEcFiles(baseFileName, 50, large, small, ctx)
+	require.NoError(t, err, "EC encoding")
+
+	shardFileNames := make([]string, DataShardsCount)
+	for i := 0; i < DataShardsCount; i++ {
+		shardFileNames[i] = baseFileName + ctx.ToExt(i)
+	}
+	shardFileInfo, err := os.Stat(shardFileNames[0])
+	require.NoError(t, err)
+	paddedSize := int64(DataShardsCount) * shardFileInfo.Size()
+
+	decodedBase := baseFileName + "_decoded"
+	decode := func(liveSize, encodedSize int64) []byte {
+		require.NoError(t, writeDatFile(decodedBase, liveSize, encodedSize, shardFileNames, large, small))
+		decoded, readErr := os.ReadFile(decodedBase + ".dat")
+		require.NoError(t, readErr)
+		require.NoError(t, os.Remove(decodedBase+".dat"))
+		return decoded
+	}
+
+	liveSizes := []int64{
+		large - 1,              // within the first large block
+		large + 42,             // partial second large block
+		largeRowSize / 2,       // mid large row
+		largeRowSize,           // exactly the large row
+		largeRowSize + 5*small, // into the small-block tail
+		datSize,                // nothing deleted
+	}
+	for _, liveSize := range liveSizes {
+		assert.Equal(t, originalData[:liveSize], decode(liveSize, datSize), "live size %d, encode-time layout", liveSize)
+		assert.Equal(t, originalData[:liveSize], decode(liveSize, paddedSize), "live size %d, padded layout", liveSize)
+	}
+
+	// deriving the layout from the shrunk live extent reorders the data
+	assert.NotEqual(t, originalData[:largeRowSize/2], decode(largeRowSize/2, largeRowSize/2))
+
+	// the live extent can never exceed the encode-time size
+	require.Error(t, writeDatFile(decodedBase, datSize+1, datSize, shardFileNames, large, small))
+}
+
+// TestWriteDatFileFallbackLayout covers decoding when .vif does not record the
+// encode-time size: the layout is inferred from the shard size, except when
+// that is an exact large-block multiple and the live extent reaches the
+// ambiguous region.
+func TestWriteDatFileFallbackLayout(t *testing.T) {
+	const (
+		large = int64(largeBlockSize) // 10000
+		small = int64(smallBlockSize) // 100
+	)
+	largeRowSize := large * DataShardsCount
+
+	dir := t.TempDir()
+
+	encode := func(name string, datSize int64) (string, []string, []byte) {
+		baseFileName := fmt.Sprintf("%s/%s", dir, name)
+		originalData := make([]byte, datSize)
+		_, err := rand.Read(originalData)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(baseFileName+".dat", originalData, 0644))
+		ctx := NewDefaultECContext("", 0)
+		_, err = generateEcFiles(baseFileName, 50, large, small, ctx)
+		require.NoError(t, err, "EC encoding")
+		shardFileNames := make([]string, DataShardsCount)
+		for i := 0; i < DataShardsCount; i++ {
+			shardFileNames[i] = baseFileName + ctx.ToExt(i)
+		}
+		return baseFileName, shardFileNames, originalData
+	}
+
+	// a small-block tail that is not a large-block multiple is unambiguous
+	base, shards, original := encode("plain", largeRowSize+2530)
+	liveSize := largeRowSize / 2
+	require.NoError(t, writeDatFile(base+"_d", liveSize, 0, shards, large, small))
+	decoded, err := os.ReadFile(base + "_d.dat")
+	require.NoError(t, err)
+	assert.Equal(t, original[:liveSize], decoded)
+
+	// datSize just under one large row: the full small-block region makes each
+	// shard exactly largeBlockSize, indistinguishable from one large row
+	base, shards, _ = encode("ambiguous1", largeRowSize-1)
+	err = writeDatFile(base+"_d", largeRowSize/2, 0, shards, large, small)
+	require.ErrorContains(t, err, "does not identify the block layout")
+
+	// two-row equivalent: decoding within the agreed prefix still works
+	base, shards, original = encode("ambiguous2", 2*largeRowSize-1)
+	require.NoError(t, writeDatFile(base+"_d", largeRowSize, 0, shards, large, small))
+	decoded, err = os.ReadFile(base + "_d.dat")
+	require.NoError(t, err)
+	assert.Equal(t, original[:largeRowSize], decoded)
+	err = writeDatFile(base+"_d2", largeRowSize+1, 0, shards, large, small)
+	require.ErrorContains(t, err, "does not identify the block layout")
 }

@@ -78,6 +78,7 @@ pub fn write_dat_file_from_shards(
     collection: &str,
     volume_id: VolumeId,
     dat_file_size: i64,
+    encoded_dat_file_size: i64,
     data_shards: usize,
 ) -> io::Result<()> {
     let dirs: Vec<String> = (0..data_shards).map(|_| dir.to_string()).collect();
@@ -86,6 +87,7 @@ pub fn write_dat_file_from_shards(
         collection,
         volume_id,
         dat_file_size,
+        encoded_dat_file_size,
         data_shards,
         &dirs,
     )
@@ -99,18 +101,59 @@ pub fn write_dat_file_from_shards(
 /// one dir" case both can be the same value.
 ///
 /// Mirrors Go's `WriteDatFile(baseFileName, datFileSize,
-/// shardFileNames)` shape — Go passes per-shard paths so a
-/// reconciled volume with shards split across disks of the same
-/// volume server can still be decoded back to a regular .dat
+/// encodedDatFileSize, shardFileNames)` shape — Go passes per-shard
+/// paths so a reconciled volume with shards split across disks of the
+/// same volume server can still be decoded back to a regular .dat
 /// (seaweedfs/seaweedfs#9252).
+///
+/// `dat_file_size` is the number of bytes to write, i.e. the live data
+/// extent from [`find_dat_file_size`]. `encoded_dat_file_size` is the
+/// .dat size at encode time, which fixed the shard block layout:
+/// deletions can move the live extent below the large-block row
+/// boundary, and deriving the layout from the shrunk extent would read
+/// the shards in the wrong block order. Pass zero when the .vif does
+/// not record the encode-time size to infer the layout from the shard
+/// size.
 pub fn write_dat_file_from_shards_with_dirs(
     dat_dir: &str,
     collection: &str,
     volume_id: VolumeId,
     dat_file_size: i64,
+    encoded_dat_file_size: i64,
     data_shards: usize,
     shard_dirs: &[String],
 ) -> io::Result<()> {
+    write_dat_file(
+        dat_dir,
+        collection,
+        volume_id,
+        dat_file_size,
+        encoded_dat_file_size,
+        data_shards,
+        shard_dirs,
+        ERASURE_CODING_LARGE_BLOCK_SIZE,
+        ERASURE_CODING_SMALL_BLOCK_SIZE,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_dat_file(
+    dat_dir: &str,
+    collection: &str,
+    volume_id: VolumeId,
+    dat_file_size: i64,
+    encoded_dat_file_size: i64,
+    data_shards: usize,
+    shard_dirs: &[String],
+    large_block_size: usize,
+    small_block_size: usize,
+) -> io::Result<()> {
+    if data_shards == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "no data shards",
+        ));
+    }
     if shard_dirs.len() < data_shards {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -138,36 +181,82 @@ pub fn write_dat_file_from_shards_with_dirs(
             shard.open()?;
         }
 
+        let mut encoded_dat_file_size = encoded_dat_file_size;
+        if encoded_dat_file_size <= 0 {
+            // .vif without the encode-time size: infer the padded layout from
+            // the physical shard size, which reads the shards in the same
+            // block order.
+            let shard_size = std::fs::metadata(shards[0].file_name())?.len() as i64;
+            // A shard size that is an exact multiple of the large block size
+            // is ambiguous: N large rows, or N-1 large rows plus a full
+            // small-block region. The two layouts only agree below the last
+            // large row.
+            let large = large_block_size as i64;
+            if shard_size % large == 0
+                && dat_file_size > (shard_size / large - 1) * large * data_shards as i64
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "shard size {} does not identify the block layout; re-encode to record the dat size in .vif",
+                        shard_size
+                    ),
+                ));
+            }
+            encoded_dat_file_size = data_shards as i64 * shard_size;
+        }
+        if dat_file_size > encoded_dat_file_size {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "dat file size {} exceeds encoded dat file size {}",
+                    dat_file_size, encoded_dat_file_size
+                ),
+            ));
+        }
+
         let mut dat_file = File::create(&tmp_path)?;
         let mut remaining = dat_file_size;
-        let large_block_size = ERASURE_CODING_LARGE_BLOCK_SIZE;
-        let small_block_size = ERASURE_CODING_SMALL_BLOCK_SIZE;
+        let mut encoded_remaining = encoded_dat_file_size;
         let large_row_size = (large_block_size * data_shards) as i64;
 
         let mut shard_offset: u64 = 0;
 
         // Read large blocks
-        while remaining >= large_row_size {
+        while encoded_remaining >= large_row_size && remaining > 0 {
             for i in 0..data_shards {
-                let mut buf = vec![0u8; large_block_size];
-                shards[i].read_at(&mut buf, shard_offset)?;
                 let to_write = large_block_size.min(remaining as usize);
-                dat_file.write_all(&buf[..to_write])?;
+                let mut buf = vec![0u8; to_write];
+                let n = shards[i].read_at(&mut buf, shard_offset)?;
+                if n != to_write {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        format!("short read of large block on shard {}", i),
+                    ));
+                }
+                dat_file.write_all(&buf)?;
                 remaining -= to_write as i64;
                 if remaining <= 0 {
                     break;
                 }
             }
+            encoded_remaining -= large_row_size;
             shard_offset += large_block_size as u64;
         }
 
         // Read small blocks
         while remaining > 0 {
             for i in 0..data_shards {
-                let mut buf = vec![0u8; small_block_size];
-                shards[i].read_at(&mut buf, shard_offset)?;
                 let to_write = small_block_size.min(remaining as usize);
-                dat_file.write_all(&buf[..to_write])?;
+                let mut buf = vec![0u8; to_write];
+                let n = shards[i].read_at(&mut buf, shard_offset)?;
+                if n != to_write {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        format!("short read of small block on shard {}", i),
+                    ));
+                }
+                dat_file.write_all(&buf)?;
                 remaining -= to_write as i64;
                 if remaining <= 0 {
                     break;
@@ -330,8 +419,15 @@ mod tests {
         std::fs::remove_file(format!("{}/1.idx", dir)).unwrap();
 
         // Reconstruct from EC shards
-        write_dat_file_from_shards(dir, "", VolumeId(1), original_dat_size as i64, data_shards)
-            .unwrap();
+        write_dat_file_from_shards(
+            dir,
+            "",
+            VolumeId(1),
+            original_dat_size as i64,
+            original_dat_size as i64,
+            data_shards,
+        )
+        .unwrap();
         write_idx_file_from_ec_index(dir, "", VolumeId(1)).unwrap();
 
         // Atomic publish must rename the temp files away, never leaving them behind.
@@ -376,9 +472,223 @@ mod tests {
         let dir = tmp.path().to_str().unwrap();
         // No shard files exist, so de-striping must fail and publish nothing:
         // neither the final .dat nor a partial .dat.tmp may remain.
-        let res = write_dat_file_from_shards(dir, "", VolumeId(7), 100, 10);
+        let res = write_dat_file_from_shards(dir, "", VolumeId(7), 100, 100, 10);
         assert!(res.is_err());
         assert!(!std::path::Path::new(&format!("{}/7.dat", dir)).exists());
         assert!(!std::path::Path::new(&format!("{}/7.dat.tmp", dir)).exists());
+    }
+
+
+    // Decoding when .vif does not record the encode-time size: the layout is
+    // inferred from the shard size, except when that is an exact large-block
+    // multiple and the live extent reaches the ambiguous region.
+    #[test]
+    fn test_write_dat_file_fallback_layout() {
+        use crate::storage::erasure_coding::ec_bitrot::{
+            ShardChecksumBuilder, DEFAULT_BITROT_BLOCK_SIZE,
+        };
+        use reed_solomon_erasure::galois_8::ReedSolomon;
+
+        const LARGE: usize = 10000;
+        const SMALL: usize = 100;
+        let data_shards = 10usize;
+        let parity_shards = 4usize;
+        let large_row_size = (LARGE * data_shards) as i64;
+
+        let tmp = TempDir::new().unwrap();
+
+        let encode = |name: &str, dat_size: i64| -> (String, Vec<String>, Vec<u8>) {
+            let dir = tmp.path().join(name);
+            std::fs::create_dir(&dir).unwrap();
+            let dir = dir.to_str().unwrap().to_string();
+            let original: Vec<u8> = (0..dat_size as usize)
+                .map(|i| ((i as u64).wrapping_mul(2654435761) >> 8) as u8)
+                .collect();
+            std::fs::write(format!("{}/1.dat", dir), &original).unwrap();
+            let dat_file = File::open(format!("{}/1.dat", dir)).unwrap();
+            let rs = ReedSolomon::new(data_shards, parity_shards).unwrap();
+            let total = data_shards + parity_shards;
+            let mut shards: Vec<EcVolumeShard> = (0..total as u8)
+                .map(|i| EcVolumeShard::new(&dir, "", VolumeId(1), i))
+                .collect();
+            for shard in &mut shards {
+                shard.create().unwrap();
+            }
+            let mut builders: Vec<ShardChecksumBuilder> = (0..total)
+                .map(|_| ShardChecksumBuilder::new(DEFAULT_BITROT_BLOCK_SIZE as i64))
+                .collect();
+            ec_encoder::encode_dat_file(
+                &dat_file,
+                dat_size,
+                &rs,
+                &mut shards,
+                &mut builders,
+                data_shards,
+                parity_shards,
+                LARGE,
+                SMALL,
+            )
+            .unwrap();
+            for shard in &mut shards {
+                shard.close();
+            }
+            let shard_dirs: Vec<String> = (0..data_shards).map(|_| dir.clone()).collect();
+            (dir, shard_dirs, original)
+        };
+
+        let decode_to = |dir: &str,
+                         sub: &str,
+                         live: i64,
+                         encoded: i64,
+                         shard_dirs: &[String]|
+         -> io::Result<Vec<u8>> {
+            let out = format!("{}/{}", dir, sub);
+            std::fs::create_dir_all(&out).unwrap();
+            write_dat_file(&out, "", VolumeId(1), live, encoded, 10, shard_dirs, LARGE, SMALL)?;
+            Ok(std::fs::read(format!("{}/1.dat", out)).unwrap())
+        };
+
+        // a small-block tail that is not a large-block multiple is unambiguous
+        let (dir, shard_dirs, original) = encode("plain", large_row_size + 2530);
+        let live = large_row_size / 2;
+        let decoded = decode_to(&dir, "out", live, 0, &shard_dirs).unwrap();
+        assert_eq!(&original[..live as usize], &decoded[..]);
+
+        // datSize just under one large row: the full small-block region makes
+        // each shard exactly one large block, indistinguishable from one large row
+        let (dir, shard_dirs, _) = encode("ambig1", large_row_size - 1);
+        let err = decode_to(&dir, "out", large_row_size / 2, 0, &shard_dirs).unwrap_err();
+        assert!(err.to_string().contains("does not identify the block layout"));
+
+        // two-row equivalent: decoding within the agreed prefix still works
+        let (dir, shard_dirs, original) = encode("ambig2", 2 * large_row_size - 1);
+        let decoded = decode_to(&dir, "outa", large_row_size, 0, &shard_dirs).unwrap();
+        assert_eq!(&original[..large_row_size as usize], &decoded[..]);
+        let err = decode_to(&dir, "outb", large_row_size + 1, 0, &shard_dirs).unwrap_err();
+        assert!(err.to_string().contains("does not identify the block layout"));
+    }
+
+    // Decoding after deletions moved the live extent below the large-block row
+    // boundary: the shard block layout is fixed by the encode-time .dat size,
+    // so de-striping must not derive it from the shrunk live extent.
+    #[test]
+    fn test_write_dat_file_after_tail_deletion() {
+        use crate::storage::erasure_coding::ec_bitrot::{
+            ShardChecksumBuilder, DEFAULT_BITROT_BLOCK_SIZE,
+        };
+        use reed_solomon_erasure::galois_8::ReedSolomon;
+
+        const LARGE: usize = 10000;
+        const SMALL: usize = 100;
+        let data_shards = 10usize;
+        let parity_shards = 4usize;
+        let large_row_size = (LARGE * data_shards) as i64;
+        let small_row_size = (SMALL * data_shards) as i64;
+
+        // one full large-block row plus a small-block tail
+        let dat_size = large_row_size + 2 * small_row_size + 530;
+
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        let original: Vec<u8> = (0..dat_size as usize)
+            .map(|i| ((i as u64).wrapping_mul(2654435761) >> 8) as u8)
+            .collect();
+        std::fs::write(format!("{}/1.dat", dir), &original).unwrap();
+
+        let dat_file = File::open(format!("{}/1.dat", dir)).unwrap();
+        let rs = ReedSolomon::new(data_shards, parity_shards).unwrap();
+        let total = data_shards + parity_shards;
+        let mut shards: Vec<EcVolumeShard> = (0..total as u8)
+            .map(|i| EcVolumeShard::new(dir, "", VolumeId(1), i))
+            .collect();
+        for shard in &mut shards {
+            shard.create().unwrap();
+        }
+        let mut builders: Vec<ShardChecksumBuilder> = (0..total)
+            .map(|_| ShardChecksumBuilder::new(DEFAULT_BITROT_BLOCK_SIZE as i64))
+            .collect();
+        ec_encoder::encode_dat_file(
+            &dat_file,
+            dat_size,
+            &rs,
+            &mut shards,
+            &mut builders,
+            data_shards,
+            parity_shards,
+            LARGE,
+            SMALL,
+        )
+        .unwrap();
+        for shard in &mut shards {
+            shard.close();
+        }
+
+        let shard_size = std::fs::metadata(format!("{}/1.ec00", dir)).unwrap().len() as i64;
+        let padded_size = data_shards as i64 * shard_size;
+        let shard_dirs: Vec<String> = (0..data_shards).map(|_| dir.to_string()).collect();
+
+        // decode into a separate dir so the output does not collide with the source .dat
+        let out_dir = tmp.path().join("out");
+        std::fs::create_dir(&out_dir).unwrap();
+        let out = out_dir.to_str().unwrap();
+        let decode = |live_size: i64, encoded_size: i64| -> Vec<u8> {
+            write_dat_file(
+                out,
+                "",
+                VolumeId(1),
+                live_size,
+                encoded_size,
+                data_shards,
+                &shard_dirs,
+                LARGE,
+                SMALL,
+            )
+            .unwrap();
+            let path = format!("{}/1.dat", out);
+            let decoded = std::fs::read(&path).unwrap();
+            std::fs::remove_file(&path).unwrap();
+            decoded
+        };
+
+        for live_size in [
+            LARGE as i64 - 1,                  // within the first large block
+            LARGE as i64 + 42,                 // partial second large block
+            large_row_size / 2,                // mid large row
+            large_row_size,                    // exactly the large row
+            large_row_size + 5 * SMALL as i64, // into the small-block tail
+            dat_size,                          // nothing deleted
+        ] {
+            assert_eq!(
+                &original[..live_size as usize],
+                &decode(live_size, dat_size)[..],
+                "live size {} with encode-time layout",
+                live_size
+            );
+            assert_eq!(
+                &original[..live_size as usize],
+                &decode(live_size, padded_size)[..],
+                "live size {} with padded layout",
+                live_size
+            );
+        }
+
+        // deriving the layout from the shrunk live extent reorders the data
+        let control = decode(large_row_size / 2, large_row_size / 2);
+        assert_ne!(&original[..(large_row_size / 2) as usize], &control[..]);
+
+        // the live extent can never exceed the encode-time size
+        assert!(write_dat_file(
+            out,
+            "",
+            VolumeId(1),
+            dat_size + 1,
+            dat_size,
+            data_shards,
+            &shard_dirs,
+            LARGE,
+            SMALL,
+        )
+        .is_err());
     }
 }

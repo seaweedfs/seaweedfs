@@ -204,8 +204,22 @@ func iterateEcjFile(baseFileName string, processNeedleFn func(key types.NeedleId
 
 }
 
-// WriteDatFile generates .dat from EC shard files (e.g., .ec00 ~ .ec09 for 10+4)
-func WriteDatFile(baseFileName string, datFileSize int64, shardFileNames []string) error {
+// WriteDatFile generates .dat from EC shard files (e.g., .ec00 ~ .ec09 for 10+4).
+// datFileSize is the number of bytes to write, i.e. the live data extent from
+// FindDatFileSize. encodedDatFileSize is the .dat size at encode time, which
+// fixed the shard block layout: deletions can move the live extent below the
+// large-block row boundary, and deriving the layout from the shrunk extent
+// would read the shards in the wrong block order. Pass zero when the .vif does
+// not record the encode-time size to infer the layout from the shard size.
+func WriteDatFile(baseFileName string, datFileSize int64, encodedDatFileSize int64, shardFileNames []string) error {
+	return writeDatFile(baseFileName, datFileSize, encodedDatFileSize, shardFileNames, ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize)
+}
+
+func writeDatFile(baseFileName string, datFileSize int64, encodedDatFileSize int64, shardFileNames []string, largeBlockSize int64, smallBlockSize int64) error {
+
+	if len(shardFileNames) == 0 {
+		return fmt.Errorf("no data shard files")
+	}
 
 	// Write to a temp file and atomically rename into place, so a crash mid-write
 	// never leaves a partial .dat at the final name beside the source shards.
@@ -241,19 +255,41 @@ func WriteDatFile(baseFileName string, datFileSize int64, shardFileNames []strin
 		}
 	}
 
-	for datFileSize >= int64(dataShards)*ErasureCodingLargeBlockSize {
-		for shardId := 0; shardId < dataShards; shardId++ {
-			w, err := io.CopyN(datFile, inputFiles[shardId], ErasureCodingLargeBlockSize)
-			if w != ErasureCodingLargeBlockSize {
+	if encodedDatFileSize <= 0 {
+		// .vif without the encode-time size: infer the padded layout from the
+		// physical shard size, which reads the shards in the same block order.
+		shardFileInfo, statErr := inputFiles[0].Stat()
+		if statErr != nil {
+			return fmt.Errorf("stat %s: %v", shardFileNames[0], statErr)
+		}
+		shardSize := shardFileInfo.Size()
+		// A shard size that is an exact multiple of the large block size is
+		// ambiguous: N large rows, or N-1 large rows plus a full small-block
+		// region. The two layouts only agree below the last large row.
+		if shardSize%largeBlockSize == 0 && datFileSize > (shardSize/largeBlockSize-1)*largeBlockSize*int64(dataShards) {
+			return fmt.Errorf("shard size %d of %s does not identify the block layout; re-encode to record the dat size in .vif", shardSize, baseFileName)
+		}
+		encodedDatFileSize = int64(dataShards) * shardSize
+	}
+	if datFileSize > encodedDatFileSize {
+		return fmt.Errorf("dat file size %d exceeds encoded dat file size %d", datFileSize, encodedDatFileSize)
+	}
+
+	for encodedDatFileSize >= int64(dataShards)*largeBlockSize && datFileSize > 0 {
+		for shardId := 0; shardId < dataShards && datFileSize > 0; shardId++ {
+			toRead := min(datFileSize, largeBlockSize)
+			w, err := io.CopyN(datFile, inputFiles[shardId], toRead)
+			if w != toRead {
 				return fmt.Errorf("copy %s large block on shardId %d: %v", baseFileName, shardId, err)
 			}
-			datFileSize -= ErasureCodingLargeBlockSize
+			datFileSize -= toRead
 		}
+		encodedDatFileSize -= int64(dataShards) * largeBlockSize
 	}
 
 	for datFileSize > 0 {
-		for shardId := 0; shardId < dataShards; shardId++ {
-			toRead := min(datFileSize, ErasureCodingSmallBlockSize)
+		for shardId := 0; shardId < dataShards && datFileSize > 0; shardId++ {
+			toRead := min(datFileSize, smallBlockSize)
 			w, err := io.CopyN(datFile, inputFiles[shardId], toRead)
 			if w != toRead {
 				return fmt.Errorf("copy %s small block %d: %v", baseFileName, shardId, err)
