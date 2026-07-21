@@ -265,6 +265,7 @@ message WriteCondition {
         IF_MODIFIED_SINCE     = 6; // fail if present and mtime <= unix_time
         IF_EXTENDED_NOT_EQUAL = 7; // fail if present and extended[ext_key] == ext_value
         IF_EXTENDED_TIME_ELAPSED = 8; // fail if present and extended[ext_key] (unix seconds) is in the future
+        IF_CHUNKS_EQUAL       = 9; // fail unless the stored chunk fid multiset equals fids (absent entry = no chunks)
     }
     // Clause is one primitive comparison. IF_ETAG_MATCH holds when the current
     // entry's ETag equals any value in etags; IF_ETAG_NOT_MATCH holds when it
@@ -278,6 +279,11 @@ message WriteCondition {
     // clock). The caller composes these and, for governance-bypass, simply omits
     // the retention clause when the bypass is authorized — the filer makes no
     // authorization decision.
+    //
+    // IF_CHUNKS_EQUAL guards a chunk-preserving read-modify-write: the stored
+    // chunk fid set must still equal what the caller read, so a stale write
+    // cannot resurrect needles that a concurrent update already diffed away
+    // and queued for deletion. An empty fids list expects no chunks.
     message Clause {
         Kind kind = 1;
         repeated string etags = 2; // ETag set for IF_ETAG_* kinds
@@ -287,6 +293,7 @@ message WriteCondition {
         string ext_value = 6;      // blocking value for IF_EXTENDED_NOT_EQUAL
         string gate_key = 7;       // IF_EXTENDED_TIME_ELAPSED: only enforce when extended[gate_key] == gate_value
         string gate_value = 8;     // gate value (e.g. retention mode COMPLIANCE for governance bypass)
+        repeated string fids = 9;  // chunk fid strings for IF_CHUNKS_EQUAL
     }
     repeated Clause clauses = 1;   // all must hold (logical AND)
 }

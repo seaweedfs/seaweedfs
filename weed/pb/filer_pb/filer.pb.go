@@ -206,6 +206,7 @@ const (
 	WriteCondition_IF_MODIFIED_SINCE        WriteCondition_Kind = 6 // fail if present and mtime <= unix_time
 	WriteCondition_IF_EXTENDED_NOT_EQUAL    WriteCondition_Kind = 7 // fail if present and extended[ext_key] == ext_value
 	WriteCondition_IF_EXTENDED_TIME_ELAPSED WriteCondition_Kind = 8 // fail if present and extended[ext_key] (unix seconds) is in the future
+	WriteCondition_IF_CHUNKS_EQUAL          WriteCondition_Kind = 9 // fail unless the stored chunk fid multiset equals fids (absent entry = no chunks)
 )
 
 // Enum value maps for WriteCondition_Kind.
@@ -220,6 +221,7 @@ var (
 		6: "IF_MODIFIED_SINCE",
 		7: "IF_EXTENDED_NOT_EQUAL",
 		8: "IF_EXTENDED_TIME_ELAPSED",
+		9: "IF_CHUNKS_EQUAL",
 	}
 	WriteCondition_Kind_value = map[string]int32{
 		"NONE":                     0,
@@ -231,6 +233,7 @@ var (
 		"IF_MODIFIED_SINCE":        6,
 		"IF_EXTENDED_NOT_EQUAL":    7,
 		"IF_EXTENDED_TIME_ELAPSED": 8,
+		"IF_CHUNKS_EQUAL":          9,
 	}
 )
 
@@ -6502,6 +6505,11 @@ func (x *MountInfo) GetDataCenter() string {
 // clock). The caller composes these and, for governance-bypass, simply omits
 // the retention clause when the bypass is authorized — the filer makes no
 // authorization decision.
+//
+// IF_CHUNKS_EQUAL guards a chunk-preserving read-modify-write: the stored
+// chunk fid set must still equal what the caller read, so a stale write
+// cannot resurrect needles that a concurrent update already diffed away
+// and queued for deletion. An empty fids list expects no chunks.
 type WriteCondition_Clause struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Kind          WriteCondition_Kind    `protobuf:"varint,1,opt,name=kind,proto3,enum=filer_pb.WriteCondition_Kind" json:"kind,omitempty"`
@@ -6512,6 +6520,7 @@ type WriteCondition_Clause struct {
 	ExtValue      string                 `protobuf:"bytes,6,opt,name=ext_value,json=extValue,proto3" json:"ext_value,omitempty"`     // blocking value for IF_EXTENDED_NOT_EQUAL
 	GateKey       string                 `protobuf:"bytes,7,opt,name=gate_key,json=gateKey,proto3" json:"gate_key,omitempty"`        // IF_EXTENDED_TIME_ELAPSED: only enforce when extended[gate_key] == gate_value
 	GateValue     string                 `protobuf:"bytes,8,opt,name=gate_value,json=gateValue,proto3" json:"gate_value,omitempty"`  // gate value (e.g. retention mode COMPLIANCE for governance bypass)
+	Fids          []string               `protobuf:"bytes,9,rep,name=fids,proto3" json:"fids,omitempty"`                             // chunk fid strings for IF_CHUNKS_EQUAL
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -6600,6 +6609,13 @@ func (x *WriteCondition_Clause) GetGateValue() string {
 		return x.GateValue
 	}
 	return ""
+}
+
+func (x *WriteCondition_Clause) GetFids() []string {
+	if x != nil {
+		return x.Fids
+	}
+	return nil
 }
 
 // if found, send the exact address
@@ -6936,9 +6952,9 @@ const file_filer_proto_rawDesc = "" +
 	"signatures\x18\x05 \x03(\x05R\n" +
 	"signatures\x12=\n" +
 	"\x1bskip_check_parent_directory\x18\x06 \x01(\bR\x18skipCheckParentDirectory\x126\n" +
-	"\tcondition\x18\a \x01(\v2\x18.filer_pb.WriteConditionR\tcondition\"\x93\x04\n" +
+	"\tcondition\x18\a \x01(\v2\x18.filer_pb.WriteConditionR\tcondition\"\xbc\x04\n" +
 	"\x0eWriteCondition\x129\n" +
-	"\aclauses\x18\x01 \x03(\v2\x1f.filer_pb.WriteCondition.ClauseR\aclauses\x1a\xfd\x01\n" +
+	"\aclauses\x18\x01 \x03(\v2\x1f.filer_pb.WriteCondition.ClauseR\aclauses\x1a\x91\x02\n" +
 	"\x06Clause\x121\n" +
 	"\x04kind\x18\x01 \x01(\x0e2\x1d.filer_pb.WriteCondition.KindR\x04kind\x12\x14\n" +
 	"\x05etags\x18\x02 \x03(\tR\x05etags\x12\x1b\n" +
@@ -6949,7 +6965,8 @@ const file_filer_proto_rawDesc = "" +
 	"\text_value\x18\x06 \x01(\tR\bextValue\x12\x19\n" +
 	"\bgate_key\x18\a \x01(\tR\agateKey\x12\x1d\n" +
 	"\n" +
-	"gate_value\x18\b \x01(\tR\tgateValue\"\xc5\x01\n" +
+	"gate_value\x18\b \x01(\tR\tgateValue\x12\x12\n" +
+	"\x04fids\x18\t \x03(\tR\x04fids\"\xda\x01\n" +
 	"\x04Kind\x12\b\n" +
 	"\x04NONE\x10\x00\x12\x11\n" +
 	"\rIF_NOT_EXISTS\x10\x01\x12\r\n" +
@@ -6959,7 +6976,8 @@ const file_filer_proto_rawDesc = "" +
 	"\x13IF_UNMODIFIED_SINCE\x10\x05\x12\x15\n" +
 	"\x11IF_MODIFIED_SINCE\x10\x06\x12\x19\n" +
 	"\x15IF_EXTENDED_NOT_EQUAL\x10\a\x12\x1c\n" +
-	"\x18IF_EXTENDED_TIME_ELAPSED\x10\b\"\xa2\x05\n" +
+	"\x18IF_EXTENDED_TIME_ELAPSED\x10\b\x12\x13\n" +
+	"\x0fIF_CHUNKS_EQUAL\x10\t\"\xa2\x05\n" +
 	"\x0eObjectMutation\x121\n" +
 	"\x04type\x18\x01 \x01(\x0e2\x1d.filer_pb.ObjectMutation.TypeR\x04type\x12\x1c\n" +
 	"\tdirectory\x18\x02 \x01(\tR\tdirectory\x12\x12\n" +
