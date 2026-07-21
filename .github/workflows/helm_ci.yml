@@ -278,6 +278,144 @@ jobs:
           helm template test $CHART_DIR --set sftp.enabled=true > /tmp/sftp.yaml
           grep -q "seaweedfs-sftp" /tmp/sftp.yaml
           echo "SFTP deployment renders correctly"
+
+          echo ""
+          echo "=== Testing SFTP host key generation ==="
+          # The chart must not ship host key material: keys are generated
+          # per install, land in the secret the deployments mount at
+          # sftp.hostKeysFolder, and must be PKCS#8 ed25519 private keys,
+          # the shape the server's host key loader parses; it fails to
+          # start otherwise.
+          pip install pyyaml -q
+          python3 - "$CHART_DIR" <<'PYEOF'
+          import base64, re, subprocess, sys, yaml
+
+          chart = sys.argv[1]
+
+          def render(values):
+              args = ["helm", "template", "test", chart]
+              for k, v in values.items():
+                  args += ["--set", f"{k}={v}"]
+              return subprocess.check_output(args, text=True)
+
+          def docs(manifest):
+              return [d for d in yaml.safe_load_all(manifest) if d]
+
+          def secret(manifest, name):
+              for d in docs(manifest):
+                  if d.get("kind") == "Secret" and d["metadata"]["name"] == name:
+                      return d
+              return None
+
+          def pod_spec(manifest, name):
+              for d in docs(manifest):
+                  if d.get("kind") in ("Deployment", "StatefulSet") and d["metadata"]["name"] == name:
+                      return d["spec"]["template"]["spec"]
+              return None
+
+          def script_of(spec):
+              for c in spec["containers"]:
+                  cmd = c.get("command", [])
+                  if len(cmd) >= 3 and cmd[0] == "/bin/sh":
+                      return cmd[2]
+              raise AssertionError("no shell command block found")
+
+          def volume_secret(spec, volname):
+              for v in spec.get("volumes", []):
+                  if v["name"] == volname:
+                      return v["secret"]["secretName"]
+              return None
+
+          def parse_ed25519(pem):
+              m = re.match(r"-----BEGIN PRIVATE KEY-----\n(.+?)-----END PRIVATE KEY-----", pem.strip(), re.S)
+              if not m:
+                  raise AssertionError("not a PKCS#8 PEM private key")
+              der = base64.b64decode(m.group(1))
+              # RFC 8410: fixed PKCS#8 prefix, then the 32-byte seed
+              prefix = bytes.fromhex("302e020100300506032b657004220420")
+              if len(der) != 48 or not der.startswith(prefix):
+                  raise AssertionError("not an ed25519 PKCS#8 key")
+
+          failed = []
+          # public-key material of the key the chart used to bundle
+          BUNDLED = "H4McwcDphteXVullu6q7ephEN1N60z"
+
+          out1 = render({"sftp.enabled": "true"})
+          out2 = render({"sftp.enabled": "true"})
+
+          for label, out in (("first", out1), ("second", out2)):
+              if BUNDLED in out:
+                  failed.append(f"{label} render still contains the formerly bundled host key")
+
+          def folder_key(out):
+              s = secret(out, "test-seaweedfs-sftp-ssh-secret")
+              if s is None:
+                  return None
+              return base64.b64decode(s["data"]["ssh_host_ed25519_key"]).decode()
+
+          k1, k2 = folder_key(out1), folder_key(out2)
+          if k1 is None or k2 is None:
+              failed.append("sftp-ssh-secret not rendered with sftp.enabled=true")
+          else:
+              try:
+                  parse_ed25519(k1)
+                  print("generated host key parses as ed25519")
+              except Exception as e:
+                  failed.append(f"generated host key does not parse: {e}")
+              if k1 == k2:
+                  failed.append("two renders produced the same host key (key is not generated per install)")
+              else:
+                  print("host key differs between installs")
+
+          legacy1 = secret(out1, "test-seaweedfs-sftp-secret")["stringData"]["seaweedfs_sftp_ssh_private_key"]
+          legacy2 = secret(out2, "test-seaweedfs-sftp-secret")["stringData"]["seaweedfs_sftp_ssh_private_key"]
+          try:
+              parse_ed25519(legacy1)
+          except Exception as e:
+              failed.append(f"sftp-secret ssh key does not parse: {e}")
+          if legacy1 == legacy2:
+              failed.append("sftp-secret ssh key identical across renders")
+          else:
+              print("sftp-secret ssh key is generated per install")
+
+          spec = pod_spec(out1, "test-seaweedfs-sftp")
+          script = script_of(spec)
+          if "-sshPrivateKey" in script:
+              failed.append("sftp deployment passes -sshPrivateKey by default; the file only exists "
+                            "when enableAuth mounts /etc/sw and a missing key file is fatal")
+          if "-hostKeysFolder=/etc/sw/ssh" not in script:
+              failed.append("sftp deployment missing -hostKeysFolder=/etc/sw/ssh")
+          if volume_secret(spec, "config-ssh") != "test-seaweedfs-sftp-ssh-secret":
+              failed.append("sftp config-ssh volume does not reference the generated secret")
+          else:
+              print("sftp deployment mounts the generated secret at the host keys folder")
+
+          out = render({"sftp.enabled": "true", "sftp.existingSshConfigSecret": "my-keys"})
+          if secret(out, "test-seaweedfs-sftp-ssh-secret") is not None:
+              failed.append("existingSshConfigSecret set but the default ssh secret still renders")
+          if volume_secret(pod_spec(out, "test-seaweedfs-sftp"), "config-ssh") != "my-keys":
+              failed.append("existingSshConfigSecret is not the config-ssh volume source")
+          else:
+              print("existingSshConfigSecret replaces the generated secret")
+
+          out = render({"allInOne.enabled": "true", "allInOne.sftp.enabled": "true"})
+          spec = pod_spec(out, "test-seaweedfs-all-in-one")
+          if secret(out, "test-seaweedfs-sftp-ssh-secret") is None:
+              failed.append("all-in-one: ssh secret not rendered")
+          if "-sftp.hostKeysFolder=/etc/sw/ssh" not in script_of(spec):
+              failed.append("all-in-one: missing -sftp.hostKeysFolder=/etc/sw/ssh")
+          if volume_secret(spec, "config-ssh") != "test-seaweedfs-sftp-ssh-secret":
+              failed.append("all-in-one: config-ssh volume does not reference the generated secret")
+          else:
+              print("all-in-one mounts the generated secret")
+
+          if failed:
+              print("\nFAIL:", file=sys.stderr)
+              for f in failed:
+                  print(f"  - {f}", file=sys.stderr)
+              sys.exit(1)
+          PYEOF
+          echo "SFTP host key generation tests passed"
           
           echo "=== Testing ingress configurations ==="
           helm template test $CHART_DIR \
@@ -544,3 +682,48 @@ jobs:
 
       - name: Run chart-testing (install)
         run: ct install --target-branch ${{ github.event.repository.default_branch }} --all --chart-dirs k8s/charts
+
+      - name: Verify SFTP host key secret lifecycle
+        run: |
+          set -e
+          CHART_DIR="k8s/charts/seaweedfs"
+          NS="sftp-hostkey"
+          SECRET="hk-seaweedfs-sftp-ssh-secret"
+          SFTP_ARGS="--set sftp.enabled=true --set master.enabled=false --set volume.enabled=false --set filer.enabled=false"
+          kubectl create namespace "$NS"
+
+          echo "=== install generates a host key, upgrade keeps it ==="
+          helm install hk $CHART_DIR -n "$NS" $SFTP_ARGS
+          KEY1=$(kubectl get secret "$SECRET" -n "$NS" -o jsonpath='{.data.ssh_host_ed25519_key}')
+          [ -n "$KEY1" ] || { echo "FAIL: install did not create a host key"; exit 1; }
+          echo "$KEY1" | base64 -d | grep -q "BEGIN PRIVATE KEY" || { echo "FAIL: host key is not a PEM private key"; exit 1; }
+          helm upgrade hk $CHART_DIR -n "$NS" $SFTP_ARGS
+          KEY2=$(kubectl get secret "$SECRET" -n "$NS" -o jsonpath='{.data.ssh_host_ed25519_key}')
+          [ "$KEY1" = "$KEY2" ] || { echo "FAIL: host key changed across upgrade"; exit 1; }
+          echo "host key survives upgrade"
+
+          echo "=== the key the chart used to bundle is replaced ==="
+          kubectl delete secret "$SECRET" -n "$NS"
+          kubectl create secret generic "$SECRET" -n "$NS" \
+            --from-literal=ssh_host_ed25519_key="stand-in H4McwcDphteXVullu6q7ephEN1N60z stand-in"
+          helm upgrade hk $CHART_DIR -n "$NS" $SFTP_ARGS
+          ROTATED=$(kubectl get secret "$SECRET" -n "$NS" -o jsonpath='{.data.ssh_host_ed25519_key}' | base64 -d)
+          case "$ROTATED" in
+            *H4McwcDphteXVullu6q7ephEN1N60z*) echo "FAIL: bundled key survived the upgrade"; exit 1;;
+          esac
+          echo "$ROTATED" | grep -q "BEGIN PRIVATE KEY" || { echo "FAIL: replacement is not a generated key"; exit 1; }
+          echo "bundled key rotated to a generated one"
+
+          echo "=== operator-managed keys are kept as-is ==="
+          kubectl delete secret "$SECRET" -n "$NS"
+          ssh-keygen -q -t ed25519 -N "" -C "" -f /tmp/operator_key
+          kubectl create secret generic "$SECRET" -n "$NS" --from-file=my_key=/tmp/operator_key
+          helm upgrade hk $CHART_DIR -n "$NS" $SFTP_ARGS
+          kubectl get secret "$SECRET" -n "$NS" -o jsonpath='{.data.my_key}' | base64 -d | cmp -s - /tmp/operator_key \
+            || { echo "FAIL: operator key was modified"; exit 1; }
+          NKEYS=$(kubectl get secret "$SECRET" -n "$NS" -o json | jq '.data | length')
+          [ "$NKEYS" = "1" ] || { echo "FAIL: expected only the operator key, found $NKEYS entries"; exit 1; }
+          echo "operator key kept, no extra key generated"
+
+          kubectl delete namespace "$NS"
+          echo "SFTP host key lifecycle tests passed"
