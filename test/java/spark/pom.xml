@@ -21,7 +21,7 @@
         <scala.binary.version>2.12</scala.binary.version>
         <junit.version>4.13.2</junit.version>
         <seaweedfs.hadoop3.client.version>4.00</seaweedfs.hadoop3.client.version>
-        <jackson.version>2.22.0</jackson.version> <!-- Upgraded from 2.15.3 -->
+        <jackson.version>2.22.1</jackson.version> <!-- Upgraded from 2.15.3 -->
         <!-- jackson-annotations dropped the patch digit in 2.20; matches jackson.version's major.minor -->
         <jackson.annotations.version>2.22</jackson.annotations.version>
         <netty.version>4.2.15.Final</netty.version> <!-- Upgraded to 4.1.125.Final for security fixes (CVE in netty-codec < 4.1.125.Final, netty-codec-http2 <= 4.1.123.Final) -->
