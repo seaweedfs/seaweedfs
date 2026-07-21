@@ -155,6 +155,12 @@ fn write_dat_file(
             ),
         ));
     }
+    if data_shards == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "no data shards",
+        ));
+    }
     if shard_dirs.len() < data_shards {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,

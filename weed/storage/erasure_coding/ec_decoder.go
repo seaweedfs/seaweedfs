@@ -219,6 +219,9 @@ func writeDatFile(baseFileName string, datFileSize int64, encodedDatFileSize int
 	if datFileSize > encodedDatFileSize {
 		return fmt.Errorf("dat file size %d exceeds encoded dat file size %d", datFileSize, encodedDatFileSize)
 	}
+	if len(shardFileNames) == 0 {
+		return fmt.Errorf("no data shard files")
+	}
 
 	// Write to a temp file and atomically rename into place, so a crash mid-write
 	// never leaves a partial .dat at the final name beside the source shards.
