@@ -854,12 +854,10 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			// even when requesting a specific part via PartNumber
 			var startOffset, endOffset int64
 			if partInfo != nil && partInfo.EndOffset > partInfo.StartOffset {
-				// Byte-offset boundaries: valid regardless of how the entry's
-				// chunk list is laid out (flat or manifest chunks)
 				startOffset = partInfo.StartOffset
 				endOffset = partInfo.EndOffset - 1
 			} else if partInfo != nil {
-				// Legacy boundaries carry chunk indexes into the flat chunk list
+				// legacy chunk-index boundaries
 				if partInfo.StartChunk < 0 || partInfo.EndChunk <= partInfo.StartChunk || partInfo.EndChunk > len(objectEntryForSSE.Chunks) {
 					glog.Errorf("GetObject: part %d boundary chunks [%d,%d) out of range (chunks: %d)", partNumber, partInfo.StartChunk, partInfo.EndChunk, len(objectEntryForSSE.Chunks))
 					s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -3047,9 +3045,8 @@ type PartBoundaryInfo struct {
 	StartChunk int    `json:"start"`
 	EndChunk   int    `json:"end"` // exclusive
 	ETag       string `json:"etag"`
-	// Byte offsets of the part within the object; preferred over the chunk
-	// indexes, which stop matching once the entry's chunk list is folded
-	// into manifest chunks. Zero EndOffset means a legacy boundary record.
+	// Byte offsets of the part; zero EndOffset means a legacy record carrying
+	// chunk indexes only.
 	StartOffset int64 `json:"startOffset,omitempty"`
 	EndOffset   int64 `json:"endOffset,omitempty"` // exclusive
 }

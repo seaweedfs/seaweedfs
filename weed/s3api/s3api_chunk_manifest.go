@@ -10,9 +10,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
-// saveManifestChunk returns the save function MaybeManifestize uses to store
-// manifest blobs, assigning volumes against the object's real filer path so
-// placement follows the bucket's storage rules.
+// saveManifestChunk stores manifest blobs, assigning volumes against the
+// object's filer path so bucket placement rules apply.
 func (s3a *S3ApiServer) saveManifestChunk(filePath string, bucket string, ttlSec int32) filer.SaveDataAsChunkFunctionType {
 	collection := ""
 	if s3a.option.FilerGroup != "" {

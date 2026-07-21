@@ -423,8 +423,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			return
 		}
 
-		// Re-fold a large copied chunk list into manifest chunks, mirroring the
-		// PutObject path (no-op below filer.ManifestBatch or for SSE chunks).
+		// re-fold a large copied chunk list, mirroring the PutObject path
 		dstEntry.Chunks = s3a.manifestizeChunks(fmt.Sprintf("%s/%s", s3a.bucketDir(dstBucket), dstObject), dstBucket, 0, dstChunks)
 
 		// Apply destination-specific metadata (e.g., SSE-C IV and headers)
