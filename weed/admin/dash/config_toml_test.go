@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -187,8 +188,12 @@ retry_backoff_seconds = -5
 	if err != nil || cfg == nil {
 		t.Fatalf("load: %v %v", cfg, err)
 	}
-	if cfg.AdminRuntime.RetryLimit != math.MaxInt32 {
-		t.Errorf("retry_limit = %d, want clamped to MaxInt32", cfg.AdminRuntime.RetryLimit)
+	wantLimit := int32(math.MaxInt32)
+	if strconv.IntSize == 32 {
+		wantLimit = 0 // viper zeroes values that overflow int before the clamp sees them
+	}
+	if cfg.AdminRuntime.RetryLimit != wantLimit {
+		t.Errorf("retry_limit = %d, want clamped to %d", cfg.AdminRuntime.RetryLimit, wantLimit)
 	}
 	if cfg.AdminRuntime.RetryBackoffSeconds != 0 {
 		t.Errorf("retry_backoff_seconds = %d, want clamped to 0", cfg.AdminRuntime.RetryBackoffSeconds)
