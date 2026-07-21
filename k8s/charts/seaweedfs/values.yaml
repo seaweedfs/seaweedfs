@@ -1142,8 +1142,7 @@ s3:
   # Service settings
   service:
     type: ClusterIP
-    # Fixed nodePort numbers, applied only when type is NodePort or LoadBalancer.
-    # Leave null to let Kubernetes allocate them.
+    # fixed nodePorts, used only when type is NodePort or LoadBalancer
     nodePorts:
       http: null
       https: null
@@ -1246,7 +1245,7 @@ sftp:
   # Service settings
   service:
     type: ClusterIP
-    # Fixed nodePort numbers, applied only when type is NodePort or LoadBalancer.
+    # fixed nodePorts, used only when type is NodePort or LoadBalancer
     nodePorts:
       sftp: null
       metrics: null
@@ -1387,7 +1386,7 @@ admin:
   service:
     type: ClusterIP
     annotations: {}
-    # Fixed nodePort numbers, applied only when type is NodePort or LoadBalancer.
+    # fixed nodePorts, used only when type is NodePort or LoadBalancer
     nodePorts:
       http: null
       grpc: null
@@ -1610,8 +1609,7 @@ allInOne:
     annotations: {}  # Annotations for the service
     type: ClusterIP  # Service type (ClusterIP, NodePort, LoadBalancer)
     internalTrafficPolicy: Cluster  # Internal traffic policy
-    # Fixed nodePort numbers, applied only when type is NodePort or LoadBalancer.
-    # Leave null to let Kubernetes allocate them.
+    # fixed nodePorts, used only when type is NodePort or LoadBalancer
     nodePorts:
       master: null
       masterGrpc: null
