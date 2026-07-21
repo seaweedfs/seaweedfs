@@ -15,17 +15,28 @@ metadata:
     {{- toYaml .Values.sftp.annotations | nindent 4 }}
 {{- end }}
 spec:
-  type: {{ .Values.sftp.service.type }}
+  {{- $serviceType := .Values.sftp.service.type }}
+  {{- $nodePorts := dict }}
+  {{- if or (eq $serviceType "NodePort") (eq $serviceType "LoadBalancer") }}
+  {{- $nodePorts = .Values.sftp.service.nodePorts | default dict }}
+  {{- end }}
+  type: {{ $serviceType }}
   internalTrafficPolicy: {{ .Values.sftp.internalTrafficPolicy | default "Cluster" }}
   ports:
   - name: "swfs-sftp"
     port: {{ .Values.sftp.port }}
     targetPort: {{ .Values.sftp.port }}
+{{- if $nodePorts.sftp }}
+    nodePort: {{ $nodePorts.sftp }}
+{{- end }}
     protocol: TCP
 {{- if .Values.sftp.metricsPort }}
   - name: "metrics"
     port: {{ .Values.sftp.metricsPort }}
     targetPort: {{ .Values.sftp.metricsPort }}
+{{- if $nodePorts.metrics }}
+    nodePort: {{ $nodePorts.metrics }}
+{{- end }}
     protocol: TCP
 {{- end }}
   selector:

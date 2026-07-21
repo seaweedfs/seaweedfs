@@ -15,15 +15,26 @@ metadata:
     {{- toYaml .Values.admin.service.annotations | nindent 4 }}
 {{- end }}
 spec:
-  type: {{ .Values.admin.service.type }}
+  {{- $serviceType := .Values.admin.service.type }}
+  {{- $nodePorts := dict }}
+  {{- if or (eq $serviceType "NodePort") (eq $serviceType "LoadBalancer") }}
+  {{- $nodePorts = .Values.admin.service.nodePorts | default dict }}
+  {{- end }}
+  type: {{ $serviceType }}
   ports:
   - name: "http"
     port: {{ .Values.admin.port }}
     targetPort: {{ .Values.admin.port }}
+    {{- if $nodePorts.http }}
+    nodePort: {{ $nodePorts.http }}
+    {{- end }}
     protocol: TCP
   - name: "grpc"
     port: {{ .Values.admin.grpcPort }}
     targetPort: {{ .Values.admin.grpcPort }}
+    {{- if $nodePorts.grpc }}
+    nodePort: {{ $nodePorts.grpc }}
+    {{- end }}
     protocol: TCP
   selector:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
