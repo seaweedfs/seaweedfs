@@ -111,7 +111,9 @@ pub fn write_dat_file_from_shards(
 /// .dat size at encode time, which fixed the shard block layout:
 /// deletions can move the live extent below the large-block row
 /// boundary, and deriving the layout from the shrunk extent would read
-/// the shards in the wrong block order.
+/// the shards in the wrong block order. Pass zero when the .vif does
+/// not record the encode-time size to infer the layout from the shard
+/// size.
 pub fn write_dat_file_from_shards_with_dirs(
     dat_dir: &str,
     collection: &str,
@@ -146,15 +148,6 @@ fn write_dat_file(
     large_block_size: usize,
     small_block_size: usize,
 ) -> io::Result<()> {
-    if dat_file_size > encoded_dat_file_size {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!(
-                "dat file size {} exceeds encoded dat file size {}",
-                dat_file_size, encoded_dat_file_size
-            ),
-        ));
-    }
     if data_shards == 0 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -186,6 +179,24 @@ fn write_dat_file(
 
         for shard in &mut shards {
             shard.open()?;
+        }
+
+        let mut encoded_dat_file_size = encoded_dat_file_size;
+        if encoded_dat_file_size <= 0 {
+            // .vif without the encode-time size: infer the padded layout from
+            // the physical shard size, which reads the shards in the same
+            // block order.
+            let shard_size = std::fs::metadata(shards[0].file_name())?.len() as i64;
+            encoded_dat_file_size = data_shards as i64 * shard_size;
+        }
+        if dat_file_size > encoded_dat_file_size {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "dat file size {} exceeds encoded dat file size {}",
+                    dat_file_size, encoded_dat_file_size
+                ),
+            ));
         }
 
         let mut dat_file = File::create(&tmp_path)?;
