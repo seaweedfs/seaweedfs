@@ -76,12 +76,10 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, lastTsNs int64, p
 	})
 }
 
-// onIamConfigChange handles IAM config file changes (create, update, delete)
+// onIamConfigChange handles IAM config file changes (create, update, delete).
+// It reloads even with a static -config file: the merge protects the file's
+// identities, and the filer->s3 push alone is best-effort.
 func (s3a *S3ApiServer) onIamConfigChange(dir string, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) error {
-	if s3a.iam != nil && s3a.iam.IsStaticConfig() {
-		glog.V(1).Infof("Skipping IAM config update for static configuration")
-		return nil
-	}
 	if s3a.iam == nil {
 		return nil
 	}

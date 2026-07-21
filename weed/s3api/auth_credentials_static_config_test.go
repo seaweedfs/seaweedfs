@@ -40,9 +40,9 @@ func TestIamConfigWithoutIdentitiesIsNotStatic(t *testing.T) {
 	}
 }
 
-// A -config identity file marks its identities static, protecting them and keeping the
-// established behavior of not live-reloading those from the filer.
-func TestConfigWithIdentitiesIsStatic(t *testing.T) {
+// A -config identity file protects its identities but must not block live
+// delivery of filer-managed identities to a running gateway.
+func TestConfigWithIdentitiesStillLiveReloadsDynamic(t *testing.T) {
 	s3a := newTestS3ApiServerWithMemoryIAM(t, []*iam_pb.Identity{})
 
 	path := writeTempIamConfig(t, `{"identities":[{"name":"static-admin","credentials":[{"accessKey":"AKIAITEST","secretKey":"c2VjcmV0"}],"actions":["Admin"]}]}`)
@@ -61,15 +61,60 @@ func TestConfigWithIdentitiesIsStatic(t *testing.T) {
 		t.Fatalf("expected static-admin to be marked static")
 	}
 
-	// A static identity file does not live-reload dynamic identities from the filer.
 	if err := s3a.iam.credentialManager.CreateUser(context.Background(), &iam_pb.Identity{Name: "alice"}); err != nil {
 		t.Fatalf("failed to create alice: %v", err)
 	}
 	if err := s3a.onIamConfigChange(filer.IamConfigDirectory+"/identities", nil, &filer_pb.Entry{Name: "alice.json"}); err != nil {
 		t.Fatalf("onIamConfigChange returned error: %v", err)
 	}
+	if !hasIdentity(s3a.iam, "alice") {
+		t.Fatalf("expected alice to live-reload despite the static identity file")
+	}
+	if !hasIdentity(s3a.iam, "static-admin") {
+		t.Fatalf("static-admin must survive the dynamic reload")
+	}
+
+	// deletion on the filer must revoke on the running gateway too
+	if err := s3a.iam.credentialManager.DeleteUser(context.Background(), "alice"); err != nil {
+		t.Fatalf("failed to delete alice: %v", err)
+	}
+	if err := s3a.onIamConfigChange(filer.IamConfigDirectory+"/identities", &filer_pb.Entry{Name: "alice.json"}, nil); err != nil {
+		t.Fatalf("onIamConfigChange returned error: %v", err)
+	}
 	if hasIdentity(s3a.iam, "alice") {
-		t.Fatalf("did not expect alice to load while running off a static identity file")
+		t.Fatalf("expected alice to be removed after deletion on the filer")
+	}
+	if !hasIdentity(s3a.iam, "static-admin") {
+		t.Fatalf("static-admin must survive the deletion reload")
+	}
+}
+
+// A single pushed identity (PutIdentity) is a partial merge and must not wipe
+// other dynamic identities or a dynamic anonymous identity.
+func TestUpsertIdentityKeepsOtherDynamicIdentities(t *testing.T) {
+	s3a := newTestS3ApiServerWithMemoryIAM(t, []*iam_pb.Identity{})
+
+	path := writeTempIamConfig(t, `{"identities":[{"name":"static-admin","credentials":[{"accessKey":"AKIAITEST","secretKey":"c2VjcmV0"}],"actions":["Admin"]}]}`)
+	if err := s3a.iam.loadS3ApiConfigurationFromFile(path); err != nil {
+		t.Fatalf("failed to load identity config: %v", err)
+	}
+
+	for _, name := range []string{"alice", "anonymous"} {
+		if err := s3a.iam.credentialManager.CreateUser(context.Background(), &iam_pb.Identity{Name: name}); err != nil {
+			t.Fatalf("failed to create %s: %v", name, err)
+		}
+	}
+	if err := s3a.iam.LoadS3ApiConfigurationFromCredentialManager(); err != nil {
+		t.Fatalf("failed to load from credential manager: %v", err)
+	}
+
+	if err := s3a.iam.UpsertIdentity(&iam_pb.Identity{Name: "bob", Actions: []string{"Read"}}); err != nil {
+		t.Fatalf("failed to upsert bob: %v", err)
+	}
+	for _, name := range []string{"static-admin", "alice", "anonymous", "bob"} {
+		if !hasIdentity(s3a.iam, name) {
+			t.Fatalf("expected %s to survive a partial upsert", name)
+		}
 	}
 }
 

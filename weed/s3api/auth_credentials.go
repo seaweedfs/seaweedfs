@@ -554,8 +554,8 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationWithSource(config *ia
 	iam.m.RUnlock()
 
 	if hasStaticConfig {
-		// Merge mode: preserve static identities, add/update dynamic ones
-		return iam.MergeS3ApiConfiguration(config, fromStaticFile)
+		// Merge mode: a dynamic load is the full store state, so it also reconciles deletions
+		return iam.MergeS3ApiConfiguration(config, fromStaticFile, !fromStaticFile)
 	}
 
 	// Normal mode: completely replace configuration
@@ -776,7 +776,9 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 
 // MergeS3ApiConfiguration adds/updates dynamic identities while preserving static
 // ones. A config-file reload (fromStaticFile) may also overwrite its static identities.
-func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3ApiConfiguration, fromStaticFile bool) error {
+// isFullState marks config as the complete store snapshot, so dynamic identities
+// absent from it are removed; partial merges (a single pushed identity) pass false.
+func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3ApiConfiguration, fromStaticFile bool, isFullState bool) error {
 	// Start with current configuration (which includes static identities)
 	iam.m.RLock()
 	identities := make([]*Identity, len(iam.identities))
@@ -926,6 +928,31 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 		nameToIdentity[t.Name] = t
 	}
 
+	// full snapshot: drop dynamic identities the store no longer has
+	if isFullState {
+		present := make(map[string]bool, len(config.Identities))
+		for _, ident := range config.Identities {
+			present[ident.Name] = true
+		}
+		kept := identities[:0]
+		for _, existing := range identities {
+			if staticNames[existing.Name] || present[existing.Name] {
+				kept = append(kept, existing)
+				continue
+			}
+			delete(nameToIdentity, existing.Name)
+			for _, cred := range existing.Credentials {
+				if accessKeyIdent[cred.AccessKey] == existing {
+					delete(accessKeyIdent, cred.AccessKey)
+				}
+			}
+			if identityAnonymous == existing {
+				identityAnonymous = nil
+			}
+		}
+		identities = kept
+	}
+
 	// Process service accounts from dynamic config
 	for _, sa := range config.ServiceAccounts {
 		if sa.Credential == nil {
@@ -977,35 +1004,6 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 		parentIdent.Credentials = append(parentIdent.Credentials, cred)
 		accessKeyIdent[sa.Credential.AccessKey] = parentIdent
 		glog.V(3).Infof("Loaded service account %s for dynamic parent %s (expiration: %d)", sa.Id, sa.ParentUser, sa.Expiration)
-	}
-
-	// If the anonymous identity was carried over from the previous state but is
-	// no longer present in the credential-manager snapshot, clear it so that
-	// deleted anonymous users do not persist across merges.
-	if identityAnonymous != nil && !identityAnonymous.IsStatic {
-		stillPresent := false
-		for _, ident := range config.Identities {
-			if ident.Name == s3_constants.AccountAnonymousId {
-				stillPresent = true
-				break
-			}
-		}
-		if !stillPresent {
-			// Remove from identities slice and maps
-			for i, ident := range identities {
-				if ident == identityAnonymous {
-					identities = append(identities[:i], identities[i+1:]...)
-					break
-				}
-			}
-			delete(nameToIdentity, identityAnonymous.Name)
-			for _, cred := range identityAnonymous.Credentials {
-				if accessKeyIdent[cred.AccessKey] == identityAnonymous {
-					delete(accessKeyIdent, cred.AccessKey)
-				}
-			}
-			identityAnonymous = nil
-		}
 	}
 
 	for _, policy := range config.Policies {
@@ -1115,7 +1113,7 @@ func (iam *IdentityAccessManagement) UpsertIdentity(ident *iam_pb.Identity) erro
 	glog.V(1).Infof("IAM: upsert identity %s", ident.Name)
 	return iam.MergeS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{ident},
-	}, false)
+	}, false, false)
 }
 
 // isEnabled reports whether S3 auth should be enforced for this server.
