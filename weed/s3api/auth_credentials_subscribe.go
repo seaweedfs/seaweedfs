@@ -87,7 +87,9 @@ func (s3a *S3ApiServer) onIamConfigChange(dir string, oldEntry *filer_pb.Entry, 
 	reloadIamConfig := func(reason string) error {
 		glog.V(1).Infof("IAM change detected in %s, reloading configuration", reason)
 		if err := s3a.iam.LoadS3ApiConfigurationFromCredentialManager(); err != nil {
+			// the event stream moves on; retry state-based until a reload succeeds
 			glog.Errorf("failed to reload IAM configuration after change in %s: %v", reason, err)
+			s3a.iam.scheduleReload()
 			return err
 		}
 		return nil
