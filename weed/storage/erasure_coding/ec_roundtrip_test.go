@@ -390,3 +390,67 @@ func assembleFromIntervals(ecFiles []*os.File, intervals []Interval, large, smal
 	}
 	return data, nil
 }
+
+// TestWriteDatFileAfterTailDeletion decodes after deletions moved the live
+// extent below the large-block row boundary. The shard block layout is fixed
+// by the encode-time .dat size, so de-striping must not derive it from the
+// shrunk live extent.
+func TestWriteDatFileAfterTailDeletion(t *testing.T) {
+	const (
+		large = int64(largeBlockSize) // 10000
+		small = int64(smallBlockSize) // 100
+	)
+	largeRowSize := large * DataShardsCount
+	smallRowSize := small * DataShardsCount
+
+	// one full large-block row plus a small-block tail
+	datSize := largeRowSize + 2*smallRowSize + 530
+
+	dir := t.TempDir()
+	baseFileName := fmt.Sprintf("%s/tail_del", dir)
+
+	originalData := make([]byte, datSize)
+	_, err := rand.Read(originalData)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(baseFileName+".dat", originalData, 0644))
+
+	ctx := NewDefaultECContext("", 0)
+	_, err = generateEcFiles(baseFileName, 50, large, small, ctx)
+	require.NoError(t, err, "EC encoding")
+
+	shardFileNames := make([]string, DataShardsCount)
+	for i := 0; i < DataShardsCount; i++ {
+		shardFileNames[i] = baseFileName + ctx.ToExt(i)
+	}
+	shardFileInfo, err := os.Stat(shardFileNames[0])
+	require.NoError(t, err)
+	paddedSize := int64(DataShardsCount) * shardFileInfo.Size()
+
+	decodedBase := baseFileName + "_decoded"
+	decode := func(liveSize, encodedSize int64) []byte {
+		require.NoError(t, writeDatFile(decodedBase, liveSize, encodedSize, shardFileNames, large, small))
+		decoded, readErr := os.ReadFile(decodedBase + ".dat")
+		require.NoError(t, readErr)
+		require.NoError(t, os.Remove(decodedBase+".dat"))
+		return decoded
+	}
+
+	liveSizes := []int64{
+		large - 1,              // within the first large block
+		large + 42,             // partial second large block
+		largeRowSize / 2,       // mid large row
+		largeRowSize,           // exactly the large row
+		largeRowSize + 5*small, // into the small-block tail
+		datSize,                // nothing deleted
+	}
+	for _, liveSize := range liveSizes {
+		assert.Equal(t, originalData[:liveSize], decode(liveSize, datSize), "live size %d, encode-time layout", liveSize)
+		assert.Equal(t, originalData[:liveSize], decode(liveSize, paddedSize), "live size %d, padded layout", liveSize)
+	}
+
+	// deriving the layout from the shrunk live extent reorders the data
+	assert.NotEqual(t, originalData[:largeRowSize/2], decode(largeRowSize/2, largeRowSize/2))
+
+	// the live extent can never exceed the encode-time size
+	require.Error(t, writeDatFile(decodedBase, datSize+1, datSize, shardFileNames, large, small))
+}
