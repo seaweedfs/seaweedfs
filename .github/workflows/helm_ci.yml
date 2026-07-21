@@ -326,6 +326,13 @@ jobs:
                       return v["secret"]["secretName"]
               return None
 
+          def mount_path(spec, volname):
+              for c in spec["containers"]:
+                  for vm in c.get("volumeMounts", []):
+                      if vm["name"] == volname:
+                          return vm["mountPath"]
+              return None
+
           def parse_ed25519(pem):
               m = re.match(r"-----BEGIN PRIVATE KEY-----\n(.+?)-----END PRIVATE KEY-----", pem.strip(), re.S)
               if not m:
@@ -408,6 +415,21 @@ jobs:
               failed.append("all-in-one: config-ssh volume does not reference the generated secret")
           else:
               print("all-in-one mounts the generated secret")
+
+          out = render({"sftp.enabled": "true", "sftp.hostKeysFolder": "/keys"})
+          spec = pod_spec(out, "test-seaweedfs-sftp")
+          if "-hostKeysFolder=/keys" not in script_of(spec) or mount_path(spec, "config-ssh") != "/keys":
+              failed.append("custom hostKeysFolder: flag and secret mount do not agree")
+          else:
+              print("custom hostKeysFolder keeps flag and mount aligned")
+
+          out = render({"allInOne.enabled": "true", "allInOne.sftp.enabled": "true",
+                        "allInOne.sftp.hostKeysFolder": "/keys"})
+          spec = pod_spec(out, "test-seaweedfs-all-in-one")
+          if "-sftp.hostKeysFolder=/keys" not in script_of(spec) or mount_path(spec, "config-ssh") != "/keys":
+              failed.append("all-in-one custom hostKeysFolder: flag and secret mount do not agree")
+          else:
+              print("all-in-one custom hostKeysFolder keeps flag and mount aligned")
 
           if failed:
               print("\nFAIL:", file=sys.stderr)

@@ -176,7 +176,7 @@ spec:
               name: config-users
               readOnly: true
             {{- end }}
-            - mountPath: /etc/sw/ssh
+            - mountPath: {{ .Values.sftp.hostKeysFolder | default "/etc/sw/ssh" }}
               name: config-ssh
               readOnly: true
             {{- if and .Values.sftp.authMethods (contains "certificate" .Values.sftp.authMethods) }}

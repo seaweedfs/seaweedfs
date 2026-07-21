@@ -302,7 +302,7 @@ spec:
             {{- end }}
             {{- if .Values.allInOne.sftp.enabled }}
             - name: config-ssh
-              mountPath: /etc/sw/ssh
+              mountPath: {{ .Values.allInOne.sftp.hostKeysFolder | default .Values.sftp.hostKeysFolder | default "/etc/sw/ssh" }}
               readOnly: true
             {{- if or .Values.allInOne.sftp.enableAuth .Values.sftp.enableAuth }}
             - mountPath: /etc/sw/sftp
