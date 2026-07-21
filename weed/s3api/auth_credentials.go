@@ -97,6 +97,10 @@ type IdentityAccessManagement struct {
 
 	// reloadCh coalesces failed-reload retries handled by reloadRetryLoop
 	reloadCh chan struct{}
+
+	// reloadMu serializes configuration loads end-to-end (store snapshot
+	// through commit) so an older snapshot cannot overwrite a newer one
+	reloadMu sync.Mutex
 }
 
 type Identity struct {
@@ -541,6 +545,8 @@ func (iam *IdentityAccessManagement) doLoadS3ApiConfigurationFromFiler(option *S
 }
 
 func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFile(fileName string) error {
+	iam.reloadMu.Lock()
+	defer iam.reloadMu.Unlock()
 	content, readErr := os.ReadFile(fileName)
 	if readErr != nil {
 		glog.Warningf("fail to read %s : %v", fileName, readErr)
@@ -2141,6 +2147,8 @@ func actionScopedToBucket(action, bucket string) bool {
 
 // LoadS3ApiConfigurationFromCredentialManager loads configuration using the credential manager
 func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromCredentialManager() error {
+	iam.reloadMu.Lock()
+	defer iam.reloadMu.Unlock()
 	glog.V(1).Infof("Loading S3 API configuration from credential manager")
 
 	s3ApiConfiguration, err := iam.credentialManager.LoadConfiguration(context.Background())
