@@ -107,3 +107,53 @@ garbage_threshold = 0.03
 		t.Errorf("expected error when maintenance keys are set without a data dir")
 	}
 }
+
+// TestApplyMaintenanceConfigFromTomlOnlyUpdatesLegacyStore demonstrates the
+// bug: ApplyMaintenanceConfigFromToml writes the admin.toml values to the
+// legacy task-policy store (<dataDir>/conf/task_vacuum.json) but does NOT
+// propagate them to the plugin config store
+// (<dataDir>/plugin/job_types/vacuum/config.json) that the admin UI and plugin
+// workers actually read. This is the gap that ApplyPluginConfigFromToml fills.
+func TestApplyMaintenanceConfigFromTomlOnlyUpdatesLegacyStore(t *testing.T) {
+	dir := t.TempDir()
+	cp := NewConfigPersistence(dir)
+
+	v := tomlConfig(t, `
+[maintenance.vacuum]
+garbage_threshold = 0.1
+retry_limit = 10
+retry_backoff_seconds = 30
+`)
+	if err := cp.ApplyMaintenanceConfigFromToml(v); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	// Legacy store IS updated (this works correctly)
+	legacyFile := filepath.Join(dir, ConfigSubdir, VacuumTaskConfigJSONFile)
+	if _, err := os.Stat(legacyFile); os.IsNotExist(err) {
+		t.Errorf("legacy vacuum config file missing — admin.toml values should be here")
+	}
+	vacuumConf := vacuum.LoadConfigFromPersistence(cp)
+	if vacuumConf.GarbageThreshold != 0.1 {
+		t.Errorf("legacy garbage_threshold = %v, want 0.1 (admin.toml applied to legacy store)", vacuumConf.GarbageThreshold)
+	}
+
+	// Plugin config store has the DEFAULT (0.3), not the admin.toml value (0.1).
+	// The file exists because the plugin bootstrap creates it with descriptor
+	// defaults, but ApplyMaintenanceConfigFromToml never touches it.
+	pluginConfigFile := filepath.Join(dir, "plugin", "job_types", "vacuum", "config.json")
+	if data, err := os.ReadFile(pluginConfigFile); err == nil {
+		if strings.Contains(string(data), `"doubleValue": 0.3`) {
+			t.Logf("BUG CONFIRMED: plugin config at %s has garbage_threshold=0.3 (default), not 0.1 from admin.toml",
+				pluginConfigFile)
+			t.Logf("Legacy store has garbage_threshold=%.1f, but the admin UI and plugin workers read the plugin store and see 0.3",
+				vacuumConf.GarbageThreshold)
+		} else {
+			t.Logf("Plugin config file contents:\n%s", string(data))
+		}
+	} else {
+		// File doesn't exist yet — but in production the plugin bootstrap
+		// creates it with defaults when the admin server starts.
+		t.Logf("Plugin config file not found at %s (will be created by plugin bootstrap with defaults)", pluginConfigFile)
+	}
+}
