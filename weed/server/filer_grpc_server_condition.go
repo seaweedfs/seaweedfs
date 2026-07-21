@@ -80,12 +80,38 @@ func clauseSatisfied(c *filer_pb.WriteCondition_Clause, current *filer.Entry) bo
 			return false
 		}
 		return deadline <= time.Now().Unix()
+	case filer_pb.WriteCondition_IF_CHUNKS_EQUAL:
+		return chunkFidsEqual(current, c.Fids)
 	default:
 		// An unrecognized clause kind (e.g. from a newer client) must not be
 		// treated as satisfied, which would silently bypass the guard. Fail
 		// closed so the write is blocked rather than slipping through.
 		return false
 	}
+}
+
+// chunkFidsEqual compares the stored chunk fids (absent entry = none) against
+// expected as multisets; chunk order carries no meaning for needle liveness.
+func chunkFidsEqual(current *filer.Entry, expected []string) bool {
+	var chunks []*filer_pb.FileChunk
+	if current != nil {
+		chunks = current.GetChunks()
+	}
+	if len(chunks) != len(expected) {
+		return false
+	}
+	counts := make(map[string]int, len(expected))
+	for _, fid := range expected {
+		counts[fid]++
+	}
+	for _, chunk := range chunks {
+		fid := chunk.GetFileIdString()
+		if counts[fid] == 0 {
+			return false
+		}
+		counts[fid]--
+	}
+	return true
 }
 
 // etagInSet reports whether stored matches any candidate. A strong comparison

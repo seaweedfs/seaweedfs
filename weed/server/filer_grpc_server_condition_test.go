@@ -10,6 +10,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func entryWithETag(etag string, mtime time.Time) *filer.Entry {
@@ -282,5 +284,48 @@ func TestCreateEntryReusesProvidedExisting(t *testing.T) {
 
 	if withNil != withExisting+1 {
 		t.Fatalf("providing existing should save one path lookup: existing=%d nil=%d", withExisting, withNil)
+	}
+}
+
+// The UpdateEntry handler enforces the precondition under the per-path lock: a
+// matching If-Match applies the update, a non-matching one fails with
+// FailedPrecondition and leaves the stored entry untouched.
+func TestUpdateEntryConditionEnforced(t *testing.T) {
+	newServer := func() (*FilerServer, *renameTestStore) {
+		store := newRenameTestStore()
+		store.entries["/test/obj"] = &filer.Entry{
+			FullPath: "/test/obj",
+			Attr:     filer.Attr{Inode: 1, Mtime: time.Unix(1700000000, 0), Mode: 0644},
+			Extended: map[string][]byte{s3_constants.ExtETagKey: []byte("abc")},
+		}
+		f := newRenameTestFiler(store)
+		return &FilerServer{filer: f, option: &FilerOption{}, entryLockTable: util.NewLockTable[util.FullPath]()}, store
+	}
+
+	req := func(etag string) *filer_pb.UpdateEntryRequest {
+		return &filer_pb.UpdateEntryRequest{
+			Directory: "/test",
+			Entry: &filer_pb.Entry{
+				Name:       "obj",
+				Attributes: &filer_pb.FuseAttributes{Mtime: 1700000005, FileMode: 0644, Inode: 1},
+			},
+			Condition: one(&filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_ETAG_MATCH, Etags: []string{etag}}),
+		}
+	}
+
+	fs, store := newServer()
+	if _, err := fs.UpdateEntry(context.Background(), req(`"zzz"`)); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("mismatched etag: want FailedPrecondition, got %v", err)
+	}
+	if got := store.entries["/test/obj"].Attr.Mtime.Unix(); got != 1700000000 {
+		t.Fatalf("rejected update must not be applied, mtime %d", got)
+	}
+
+	fs, store = newServer()
+	if _, err := fs.UpdateEntry(context.Background(), req(`"abc"`)); err != nil {
+		t.Fatalf("matching etag should update: %v", err)
+	}
+	if got := store.entries["/test/obj"].Attr.Mtime.Unix(); got != 1700000005 {
+		t.Fatalf("update not applied, mtime %d", got)
 	}
 }
