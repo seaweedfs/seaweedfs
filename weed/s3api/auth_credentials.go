@@ -91,10 +91,9 @@ type IdentityAccessManagement struct {
 	// These identities are immutable and cannot be updated by dynamic configuration
 	staticIdentityNames map[string]bool
 
-	// staticPolicyNames and staticGroupNames track policy/group names loaded
-	// from the static config file so full-state reconciliation does not drop them
+	// staticPolicyNames tracks policy names loaded from the static config file
+	// so full-state reconciliation does not drop them
 	staticPolicyNames map[string]bool
-	staticGroupNames  map[string]bool
 
 	// reloadCh coalesces failed-reload retries handled by reloadRetryLoop
 	reloadCh chan struct{}
@@ -370,13 +369,6 @@ func (iam *IdentityAccessManagement) markStaticIdentities(config *iam_pb.S3ApiCo
 	for _, policy := range config.Policies {
 		iam.staticPolicyNames[policy.Name] = true
 	}
-	// unlike identities and policies, the file is authoritative for its group
-	// set: removing a group from the file revokes it on reload
-	staticGroups := make(map[string]bool, len(config.Groups))
-	for _, group := range config.Groups {
-		staticGroups[group.Name] = true
-	}
-	iam.staticGroupNames = staticGroups
 	for _, identity := range iam.identities {
 		if iam.staticIdentityNames[identity.Name] {
 			identity.IsStatic = true
@@ -592,6 +584,11 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromBytes(content []b
 	if err := filer.ParseS3ConfigurationFromBytes(content, s3ApiConfiguration); err != nil {
 		glog.Warningf("unmarshal error: %v", err)
 		return nil, fmt.Errorf("unmarshal error: %w", err)
+	}
+
+	if fromStaticFile && len(s3ApiConfiguration.Groups) > 0 {
+		glog.Warningf("ignoring %d groups in static config file: groups are managed via the IAM API", len(s3ApiConfiguration.Groups))
+		s3ApiConfiguration.Groups = nil
 	}
 
 	if err := filer.CheckDuplicateAccessKey(s3ApiConfiguration); err != nil {
@@ -1101,42 +1098,17 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 
 	// Groups: a full snapshot is authoritative even when empty (last group
 	// deleted); partial updates pass nil Groups and preserve existing state.
-	// Groups: a full snapshot is authoritative for dynamic groups, a
-	// static-file reload for the file's; each preserves the other's entries.
-	// Partial updates pass nil Groups and preserve existing state.
-	if isFullState || fromStaticFile || config.Groups != nil {
+	// Groups: a full snapshot is authoritative, even when empty (last group
+	// deleted). Partial updates pass nil Groups and preserve existing state;
+	// static config files never carry groups (stripped at load).
+	if isFullState || config.Groups != nil {
 		mergedGroups := make(map[string]*iam_pb.Group)
 		mergedUserGroups := make(map[string][]string)
-		addGroup := func(g *iam_pb.Group) {
+		for _, g := range config.Groups {
 			mergedGroups[g.Name] = g
 			if !g.Disabled {
 				for _, member := range g.Members {
 					mergedUserGroups[member] = append(mergedUserGroups[member], g.Name)
-				}
-			}
-		}
-		for _, g := range config.Groups {
-			addGroup(g)
-		}
-		if isFullState {
-			// static-file groups survive snapshots that do not carry them
-			for name := range iam.staticGroupNames {
-				if _, ok := mergedGroups[name]; !ok {
-					if g, ok := iam.groups[name]; ok {
-						addGroup(g)
-					}
-				}
-			}
-		}
-		if fromStaticFile {
-			// dynamic groups survive a file reload; groups dropped from the
-			// file do not (markStaticIdentities re-records the file's set next)
-			for name, g := range iam.groups {
-				if iam.staticGroupNames[name] {
-					continue
-				}
-				if _, ok := mergedGroups[name]; !ok {
-					addGroup(g)
 				}
 			}
 		}

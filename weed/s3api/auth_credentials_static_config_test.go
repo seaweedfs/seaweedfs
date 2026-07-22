@@ -215,14 +215,18 @@ func TestReloadStaticConfigUpdatesServiceAccountSecret(t *testing.T) {
 	}
 }
 
-// A full snapshot must also reconcile policy and group deletions, without
-// touching policies from the static config file or groups on partial merges.
+// A full snapshot reconciles policy and group deletions, static-file policies
+// survive, and groups in a static config file are ignored: the dynamic store
+// is the only source of groups.
 func TestFullStateMergeReconcilesPoliciesAndGroups(t *testing.T) {
 	s3a := newTestS3ApiServerWithMemoryIAM(t, []*iam_pb.Identity{})
 
 	path := writeTempIamConfig(t, `{"identities":[{"name":"static-admin","credentials":[{"accessKey":"AKIAITEST","secretKey":"c2VjcmV0"}],"actions":["Admin"]}],"policies":[{"name":"file-policy","content":"{}"}],"groups":[{"name":"file-group","members":["static-admin"]}]}`)
 	if err := s3a.iam.loadS3ApiConfigurationFromFile(path); err != nil {
 		t.Fatalf("failed to load identity config: %v", err)
+	}
+	if hasGroup(s3a.iam, "file-group") {
+		t.Fatalf("groups in a static config file must be ignored")
 	}
 
 	full := &iam_pb.S3ApiConfiguration{
@@ -235,9 +239,6 @@ func TestFullStateMergeReconcilesPoliciesAndGroups(t *testing.T) {
 	if !hasPolicy(s3a.iam, "file-policy") || !hasPolicy(s3a.iam, "dynamic-policy") || !hasGroup(s3a.iam, "g1") {
 		t.Fatalf("expected file-policy, dynamic-policy and g1 after full merge")
 	}
-	if !hasGroup(s3a.iam, "file-group") {
-		t.Fatalf("file-group must survive a full snapshot that does not carry it")
-	}
 
 	// partial merge preserves groups and policies
 	if err := s3a.iam.UpsertIdentity(&iam_pb.Identity{Name: "bob"}); err != nil {
@@ -245,6 +246,14 @@ func TestFullStateMergeReconcilesPoliciesAndGroups(t *testing.T) {
 	}
 	if !hasPolicy(s3a.iam, "dynamic-policy") || !hasGroup(s3a.iam, "g1") {
 		t.Fatalf("partial merge must not drop dynamic-policy or g1")
+	}
+
+	// a static-file reload leaves dynamic groups alone
+	if err := s3a.iam.loadS3ApiConfigurationFromFile(path); err != nil {
+		t.Fatalf("failed to reload config: %v", err)
+	}
+	if !hasGroup(s3a.iam, "g1") {
+		t.Fatalf("dynamic g1 must survive a static-file reload")
 	}
 
 	// empty full snapshot: dynamic policy and last group deleted, file policy stays
@@ -257,36 +266,8 @@ func TestFullStateMergeReconcilesPoliciesAndGroups(t *testing.T) {
 	if hasGroup(s3a.iam, "g1") {
 		t.Fatalf("expected g1 to be removed by empty full snapshot")
 	}
-	if !hasPolicy(s3a.iam, "file-policy") || !hasGroup(s3a.iam, "file-group") {
-		t.Fatalf("file-policy and file-group must survive full-state reconciliation")
-	}
-	s3a.iam.m.RLock()
-	memberGroups := s3a.iam.userGroups["static-admin"]
-	s3a.iam.m.RUnlock()
-	if len(memberGroups) != 1 || memberGroups[0] != "file-group" {
-		t.Fatalf("expected static-admin membership in file-group to survive, got %v", memberGroups)
-	}
-
-	// a file reload without the group revokes it, but keeps dynamic groups
-	if err := s3a.iam.MergeS3ApiConfiguration(&iam_pb.S3ApiConfiguration{Groups: []*iam_pb.Group{{Name: "g2"}}}, false, true); err != nil {
-		t.Fatalf("full merge failed: %v", err)
-	}
-	p2 := writeTempIamConfig(t, `{"identities":[{"name":"static-admin","credentials":[{"accessKey":"AKIAITEST","secretKey":"c2VjcmV0"}],"actions":["Admin"]}]}`)
-	if err := s3a.iam.loadS3ApiConfigurationFromFile(p2); err != nil {
-		t.Fatalf("failed to reload config: %v", err)
-	}
-	if hasGroup(s3a.iam, "file-group") {
-		t.Fatalf("expected file-group revoked after removal from the config file")
-	}
-	if !hasGroup(s3a.iam, "g2") {
-		t.Fatalf("dynamic g2 must survive a static-file reload")
-	}
-	// and a later full snapshot without g2 still removes it
-	if err := s3a.iam.MergeS3ApiConfiguration(&iam_pb.S3ApiConfiguration{}, false, true); err != nil {
-		t.Fatalf("empty full merge failed: %v", err)
-	}
-	if hasGroup(s3a.iam, "g2") || hasGroup(s3a.iam, "file-group") {
-		t.Fatalf("expected no groups after final empty snapshot")
+	if !hasPolicy(s3a.iam, "file-policy") {
+		t.Fatalf("file-policy must survive full-state reconciliation")
 	}
 }
 
