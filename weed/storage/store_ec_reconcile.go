@@ -23,7 +23,7 @@ type datOwnerInfo struct {
 }
 
 // ecKeyForReconcile keys orphan-shard reconciliation by collection + volume
-// id. Per-collection grouping matters because two collections can re-use the
+// id. Per-collection grouping matters because two collections can reuse the
 // same volume id, and we must only pair shards with their own .ecx file.
 type ecKeyForReconcile struct {
 	collection string

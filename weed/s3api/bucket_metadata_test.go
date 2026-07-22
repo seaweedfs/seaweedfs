@@ -170,7 +170,7 @@ func TestBuildBucketMetadata(t *testing.T) {
 	for _, tc := range tcs {
 		resultBucketMetadata := buildBucketMetadata(iam, tc.filerEntry)
 		if !reflect.DeepEqual(resultBucketMetadata, tc.expectBucketMetadata) {
-			t.Fatalf("result is unexpect: \nresult: %v, \nexpect: %v", resultBucketMetadata, tc.expectBucketMetadata)
+			t.Fatalf("result is unexpected: \nresult: %v, \nexpect: %v", resultBucketMetadata, tc.expectBucketMetadata)
 		}
 	}
 }

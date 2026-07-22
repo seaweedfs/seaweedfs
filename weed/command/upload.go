@@ -38,7 +38,7 @@ func init() {
 	cmdUpload.IsDebug = cmdUpload.Flag.Bool("debug", false, "verbose debug information")
 	upload.master = cmdUpload.Flag.String("master", "localhost:9333", "SeaweedFS master location")
 	upload.dir = cmdUpload.Flag.String("dir", "", "Upload the whole folder recursively if specified.")
-	upload.include = cmdUpload.Flag.String("include", "", "pattens of files to upload, e.g., *.pdf, *.html, ab?d.txt, works together with -dir")
+	upload.include = cmdUpload.Flag.String("include", "", "patterns of files to upload, e.g., *.pdf, *.html, ab?d.txt, works together with -dir")
 	upload.replication = cmdUpload.Flag.String("replication", "", "replication type")
 	upload.collection = cmdUpload.Flag.String("collection", "", "optional collection name")
 	upload.dataCenter = cmdUpload.Flag.String("dataCenter", "", "optional data center name")

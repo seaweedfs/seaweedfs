@@ -57,7 +57,7 @@ struct DatOwnerInfo {
 }
 
 /// Key for orphan-shard reconciliation: collection + volume id. Two
-/// collections can re-use the same volume id, and we must only pair
+/// collections can reuse the same volume id, and we must only pair
 /// shards with their own `.ecx`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct EcKey {
