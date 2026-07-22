@@ -266,6 +266,28 @@ func TestFullStateMergeReconcilesPoliciesAndGroups(t *testing.T) {
 	if len(memberGroups) != 1 || memberGroups[0] != "file-group" {
 		t.Fatalf("expected static-admin membership in file-group to survive, got %v", memberGroups)
 	}
+
+	// a file reload without the group revokes it, but keeps dynamic groups
+	if err := s3a.iam.MergeS3ApiConfiguration(&iam_pb.S3ApiConfiguration{Groups: []*iam_pb.Group{{Name: "g2"}}}, false, true); err != nil {
+		t.Fatalf("full merge failed: %v", err)
+	}
+	p2 := writeTempIamConfig(t, `{"identities":[{"name":"static-admin","credentials":[{"accessKey":"AKIAITEST","secretKey":"c2VjcmV0"}],"actions":["Admin"]}]}`)
+	if err := s3a.iam.loadS3ApiConfigurationFromFile(p2); err != nil {
+		t.Fatalf("failed to reload config: %v", err)
+	}
+	if hasGroup(s3a.iam, "file-group") {
+		t.Fatalf("expected file-group revoked after removal from the config file")
+	}
+	if !hasGroup(s3a.iam, "g2") {
+		t.Fatalf("dynamic g2 must survive a static-file reload")
+	}
+	// and a later full snapshot without g2 still removes it
+	if err := s3a.iam.MergeS3ApiConfiguration(&iam_pb.S3ApiConfiguration{}, false, true); err != nil {
+		t.Fatalf("empty full merge failed: %v", err)
+	}
+	if hasGroup(s3a.iam, "g2") || hasGroup(s3a.iam, "file-group") {
+		t.Fatalf("expected no groups after final empty snapshot")
+	}
 }
 
 // flakyStore fails LoadConfiguration a fixed number of times.

@@ -370,12 +370,13 @@ func (iam *IdentityAccessManagement) markStaticIdentities(config *iam_pb.S3ApiCo
 	for _, policy := range config.Policies {
 		iam.staticPolicyNames[policy.Name] = true
 	}
-	if iam.staticGroupNames == nil {
-		iam.staticGroupNames = make(map[string]bool)
-	}
+	// unlike identities and policies, the file is authoritative for its group
+	// set: removing a group from the file revokes it on reload
+	staticGroups := make(map[string]bool, len(config.Groups))
 	for _, group := range config.Groups {
-		iam.staticGroupNames[group.Name] = true
+		staticGroups[group.Name] = true
 	}
+	iam.staticGroupNames = staticGroups
 	for _, identity := range iam.identities {
 		if iam.staticIdentityNames[identity.Name] {
 			identity.IsStatic = true
@@ -1100,7 +1101,10 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 
 	// Groups: a full snapshot is authoritative even when empty (last group
 	// deleted); partial updates pass nil Groups and preserve existing state.
-	if isFullState || config.Groups != nil {
+	// Groups: a full snapshot is authoritative for dynamic groups, a
+	// static-file reload for the file's; each preserves the other's entries.
+	// Partial updates pass nil Groups and preserve existing state.
+	if isFullState || fromStaticFile || config.Groups != nil {
 		mergedGroups := make(map[string]*iam_pb.Group)
 		mergedUserGroups := make(map[string][]string)
 		addGroup := func(g *iam_pb.Group) {
@@ -1114,10 +1118,24 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 		for _, g := range config.Groups {
 			addGroup(g)
 		}
-		// static-file groups survive snapshots that do not carry them
-		for name := range iam.staticGroupNames {
-			if _, ok := mergedGroups[name]; !ok {
-				if g, ok := iam.groups[name]; ok {
+		if isFullState {
+			// static-file groups survive snapshots that do not carry them
+			for name := range iam.staticGroupNames {
+				if _, ok := mergedGroups[name]; !ok {
+					if g, ok := iam.groups[name]; ok {
+						addGroup(g)
+					}
+				}
+			}
+		}
+		if fromStaticFile {
+			// dynamic groups survive a file reload; groups dropped from the
+			// file do not (markStaticIdentities re-records the file's set next)
+			for name, g := range iam.groups {
+				if iam.staticGroupNames[name] {
+					continue
+				}
+				if _, ok := mergedGroups[name]; !ok {
 					addGroup(g)
 				}
 			}
