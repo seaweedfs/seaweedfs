@@ -188,7 +188,7 @@ func (fh *FileHandle) downloadRemoteEntry(entry *LockedEntry) error {
 		}
 
 		glog.V(4).Infof("download entry: %v", request)
-		baselineTsNs := fh.wfs.latestKnownFilerTsNs()
+		baselineTsNs := fh.wfs.filerBarrierTsNs()
 		resp, err := client.CacheRemoteObjectToLocalCluster(context.Background(), request)
 		if err != nil {
 			return fmt.Errorf("CacheRemoteObjectToLocalCluster file %s: %v", fileFullPath, err)

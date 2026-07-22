@@ -216,7 +216,7 @@ func (wfs *WFS) tryServerSideWholeFileCopy(cancel <-chan struct{}, in *fuse.Copy
 
 	glog.V(1).Infof("CopyFileRange server-side copy %s => %s (%d bytes)", copyRequest.srcPath, copyRequest.dstPath, copyRequest.sourceSize)
 
-	baselineTsNs := wfs.latestKnownFilerTsNs()
+	baselineTsNs := wfs.filerBarrierTsNs()
 	entry, outcome, err := performServerSideWholeFileCopy(cancel, wfs, copyRequest)
 	switch outcome {
 	case serverSideWholeFileCopyCommitted:

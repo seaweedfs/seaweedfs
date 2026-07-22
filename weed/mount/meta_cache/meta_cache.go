@@ -576,7 +576,6 @@ type metadataResponseSideEffects struct {
 }
 
 func (mc *MetaCache) applyMetadataResponseNow(ctx context.Context, resp *filer_pb.SubscribeMetadataResponse, options MetadataResponseApplyOptions) error {
-	mc.advanceLatestEventTs(resp.TsNs)
 	if mc.shouldSkipDuplicateEvent(resp) {
 		return nil
 	}
@@ -610,6 +609,10 @@ func (mc *MetaCache) applyMetadataResponseDirect(ctx context.Context, resp *file
 	if _, err := mc.applyMetadataResponseLocked(ctx, resp, options, allowUncachedInsert); err != nil {
 		return err
 	}
+	// Advance only after the store write: readers pairing a cursor capture
+	// with a store read (the open-time handle fence) rely on the cursor never
+	// leading the store.
+	mc.advanceLatestEventTs(resp.TsNs)
 	mc.applyMetadataSideEffects(resp, options)
 	return nil
 }

@@ -686,6 +686,27 @@ func (wfs *WFS) latestKnownFilerTsNs() int64 {
 	return wfs.metaCache.LatestEventTsNs()
 }
 
+// filerBarrierTsNs returns a timestamp at or below the filer's current log
+// position. Metadata events are stamped with the filer clock, and a self-ping
+// reads that same clock, so unlike latestKnownFilerTsNs this also covers
+// events already committed but not yet delivered to the subscription. Call
+// before the RPC whose result the barrier fences. Best-effort: one bounded
+// attempt, falling back to the newest delivered event — no WithFilerClient
+// retry waves for an optimization.
+func (wfs *WFS) filerBarrierTsNs() int64 {
+	baseline := wfs.latestKnownFilerTsNs()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_ = pb.WithGrpcClient(ctx, false, wfs.signature, func(conn *grpc.ClientConn) error {
+		resp, err := filer_pb.NewSeaweedFilerClient(conn).Ping(ctx, &filer_pb.PingRequest{})
+		if err == nil && resp.StartTimeNs > baseline {
+			baseline = resp.StartTimeNs
+		}
+		return err
+	}, wfs.getCurrentFiler().ToGrpcAddress(), false, wfs.option.GrpcDialOption)
+	return baseline
+}
+
 // invalidateOpenFileHandle refreshes an open file handle from a metadata
 // subscription event. No filer lookup happens here: it can fail transiently,
 // and since the subscription cursor has already advanced past the event, the

@@ -343,11 +343,26 @@ func TestQueuedEventOlderThanFlushedStateIsIgnored(t *testing.T) {
 	}
 }
 
-type saveEntryTestServer struct {
+type fakeFilerServer struct {
 	filer_pb.UnimplementedSeaweedFilerServer
+	lookupSize uint64
+	pingTsNs   int64
 }
 
-func (s *saveEntryTestServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
+func (s *fakeFilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	return &filer_pb.LookupDirectoryEntryResponse{
+		Entry: &filer_pb.Entry{
+			Name:       req.Name,
+			Attributes: &filer_pb.FuseAttributes{FileSize: s.lookupSize, FileMode: 0100644},
+		},
+	}, nil
+}
+
+func (s *fakeFilerServer) Ping(ctx context.Context, req *filer_pb.PingRequest) (*filer_pb.PingResponse, error) {
+	return &filer_pb.PingResponse{StartTimeNs: s.pingTsNs}, nil
+}
+
+func (s *fakeFilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
 	return &filer_pb.UpdateEntryResponse{
 		MetadataEvent: &filer_pb.SubscribeMetadataResponse{
 			Directory: req.Directory,
@@ -371,7 +386,7 @@ func TestSaveEntryKeepsOpenHandleAheadOfOlderEvents(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = listener.Close() })
 	server := pb.NewGrpcServer()
-	filer_pb.RegisterSeaweedFilerServer(server, &saveEntryTestServer{})
+	filer_pb.RegisterSeaweedFilerServer(server, &fakeFilerServer{})
 	go server.Serve(listener)
 	t.Cleanup(server.Stop)
 
@@ -488,5 +503,142 @@ func TestNilAckEventFallsBackToLatestSeenTs(t *testing.T) {
 
 	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
 		t.Fatalf("open handle file size = %d, want 200 (queued event at TsNs 1000 predates the known log position 1500)", size)
+	}
+}
+
+// startFakeFiler serves fake on a local port and points wfs at it.
+func startFakeFiler(t *testing.T, wfs *WFS, fake *fakeFilerServer) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	server := pb.NewGrpcServer()
+	filer_pb.RegisterSeaweedFilerServer(server, fake)
+	go server.Serve(listener)
+	t.Cleanup(server.Stop)
+	wfs.option.FilerAddresses = []pb.ServerAddress{
+		pb.NewServerAddressWithGrpcPort("127.0.0.1:1", listener.Addr().(*net.TCPAddr).Port),
+	}
+}
+
+// A handle opened while an older event sits in the invalidation queue is
+// fenced at open time: its entry came from a lookup that reflects every
+// event applied so far, so the queued event must not replace it.
+func TestQueuedEventDoesNotRollBackHandleOpenedAfterEnqueue(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+	startFakeFiler(t, wfs, &fakeFilerServer{lookupSize: 200})
+
+	// Stall the single invalidation worker on an unrelated handle's lock so
+	// queued events outlive the open below.
+	blockerInode := wfs.inodeToPath.Lookup(util.FullPath("/dir/blocker"), time.Now().Unix(), false, false, 0, false)
+	blockerFh := wfs.fhMap.AcquireFileHandle(wfs, blockerInode, &filer_pb.Entry{
+		Name:       "blocker",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 1},
+	})
+	blockerLock := wfs.fhLockTable.AcquireLock("test", blockerFh.fh, util.ExclusiveLock)
+	blockerEvent := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		TsNs:      500,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: "blocker"},
+			NewEntry: &filer_pb.Entry{
+				Name:       "blocker",
+				Attributes: &filer_pb.FuseAttributes{FileSize: 2},
+			},
+			NewParentPath: "/dir",
+		},
+	}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), blockerEvent, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		wfs.fhLockTable.ReleaseLock(blockerFh.fh, blockerLock)
+		t.Fatalf("apply blocker event: %v", err)
+	}
+
+	// The event for the file predates the open below.
+	older := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		TsNs:      1000,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: "file"},
+			NewEntry: &filer_pb.Entry{
+				Name:       "file",
+				Attributes: &filer_pb.FuseAttributes{FileSize: 100},
+			},
+			NewParentPath: "/dir",
+		},
+	}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), older, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		wfs.fhLockTable.ReleaseLock(blockerFh.fh, blockerLock)
+		t.Fatalf("apply subscriber event: %v", err)
+	}
+
+	// Open the file now: the lookup reaches the filer, which already serves
+	// the newer size-200 state.
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh, status := wfs.AcquireHandle(inode, 0, 0, 0)
+	if status != fuse.OK {
+		wfs.fhLockTable.ReleaseLock(blockerFh.fh, blockerLock)
+		t.Fatalf("AcquireHandle status = %v, want OK", status)
+	}
+	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
+		wfs.fhLockTable.ReleaseLock(blockerFh.fh, blockerLock)
+		t.Fatalf("opened handle file size = %d, want 200", size)
+	}
+
+	wfs.fhLockTable.ReleaseLock(blockerFh.fh, blockerLock)
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
+		t.Fatalf("open handle file size = %d, want 200 (event queued before the open must not roll it back)", size)
+	}
+}
+
+// The delivered-event cursor misses events already committed on the filer but
+// not yet delivered to the subscription. A pre-RPC filer self-ping reads the
+// clock those events are stamped with, so state fetched after the ping fences
+// them out.
+func TestFilerBarrierCoversUndeliveredEvents(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+	startFakeFiler(t, wfs, &fakeFilerServer{pingTsNs: 2000})
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 88},
+	})
+
+	// The copy/remote-cache pattern: barrier, then the operation's result.
+	// The event at TsNs 1500 is committed but not yet delivered, so only the
+	// filer clock (2000) can cover it.
+	baselineTsNs := wfs.filerBarrierTsNs()
+	if baselineTsNs != 2000 {
+		t.Fatalf("filerBarrierTsNs = %d, want 2000 from the filer ping", baselineTsNs)
+	}
+	fh.SetEntry(&filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 200},
+	})
+	fh.advanceLocalEntryTs(baselineTsNs)
+
+	late := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		TsNs:      1500,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: "file"},
+			NewEntry: &filer_pb.Entry{
+				Name:       "file",
+				Attributes: &filer_pb.FuseAttributes{FileSize: 100},
+			},
+			NewParentPath: "/dir",
+		},
+	}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), late, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply late event: %v", err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
+		t.Fatalf("open handle file size = %d, want 200 (undelivered-at-barrier event must not roll back)", size)
 	}
 }

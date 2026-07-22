@@ -17,9 +17,18 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 	// data that was just written asynchronously.
 	wfs.waitForPendingAsyncFlush(inode)
 
+	// Fence baseline for a freshly looked-up entry: the lookup below reads
+	// the local store or the filer, both of which reflect every event applied
+	// so far, so invalidations already queued at or before this cursor are
+	// old news for the new handle. Captured before the lookup — never after —
+	// so an event arriving mid-open cannot inflate the fence past the state
+	// the lookup actually returned.
+	baselineTsNs := wfs.latestKnownFilerTsNs()
+
 	var entry *filer_pb.Entry
 	var path util.FullPath
-	path, _, entry, status = wfs.maybeReadEntry(inode)
+	var existingFh *FileHandle
+	path, existingFh, entry, status = wfs.maybeReadEntry(inode)
 	if status == fuse.OK {
 		if wormEnforced, _ := wfs.wormEnforcedForEntry(path, entry); wormEnforced && flags&fuse.O_ANYWRITE != 0 {
 			return nil, fuse.EPERM
@@ -39,6 +48,11 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 		// need to AcquireFileHandle again to ensure correct handle counter
 		fileHandle = wfs.fhMap.AcquireFileHandle(wfs, inode, entry)
 		fileHandle.RememberPath(path)
+		// An existing handle's entry did not come from the lookup above, so
+		// the fence would overstate what it reflects.
+		if existingFh == nil {
+			fileHandle.advanceLocalEntryTs(baselineTsNs)
+		}
 
 		// Acquire distributed lock for write opens. The lock is held with
 		// auto-renewal until the file handle is released (close).
