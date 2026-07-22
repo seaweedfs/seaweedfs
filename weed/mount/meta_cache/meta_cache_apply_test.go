@@ -420,6 +420,7 @@ func TestCollectEntryInvalidationsCarryAuthoritativeEntries(t *testing.T) {
 
 	update := &filer_pb.SubscribeMetadataResponse{
 		Directory: "/dir",
+		TsNs:      77,
 		EventNotification: &filer_pb.EventNotification{
 			OldEntry:      &filer_pb.Entry{Name: "file.txt"},
 			NewEntry:      newEntry,
@@ -427,8 +428,8 @@ func TestCollectEntryInvalidationsCarryAuthoritativeEntries(t *testing.T) {
 		},
 	}
 	got := collectEntryInvalidations(update)
-	if len(got) != 1 || got[0].path != "/dir/file.txt" || got[0].entry != newEntry {
-		t.Fatalf("in-place update invalidations = %+v, want [{/dir/file.txt NewEntry}]", got)
+	if len(got) != 1 || got[0].path != "/dir/file.txt" || got[0].entry != newEntry || got[0].tsNs != 77 {
+		t.Fatalf("in-place update invalidations = %+v, want [{/dir/file.txt NewEntry ts 77}]", got)
 	}
 
 	rename := &filer_pb.SubscribeMetadataResponse{
@@ -495,7 +496,7 @@ func newTestMetaCache(t *testing.T, cached map[util.FullPath]bool) (*MetaCache, 
 			defer cachedMu.Unlock()
 			return cached[path]
 		},
-		func(path util.FullPath, entry *filer_pb.Entry) {
+		func(path util.FullPath, entry *filer_pb.Entry, eventTsNs int64) {
 			invalidations.record(path)
 		},
 		func(dir util.FullPath) {

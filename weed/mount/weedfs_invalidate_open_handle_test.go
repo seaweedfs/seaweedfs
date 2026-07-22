@@ -180,9 +180,10 @@ func TestQueuedEventDoesNotRollBackNewerLocalState(t *testing.T) {
 
 // During a directory build, an event touching the building directory is
 // buffered: its store write is deferred to build completion while its
-// invalidation runs immediately, so that refresh can resolve to the older
-// listing snapshot. The completion replay must re-invalidate so the handle
-// lands on the event's state.
+// invalidation runs immediately, against a store that may not reflect the
+// listing yet. Build completion must re-invalidate every buffered event —
+// including snapshot-covered ones — so the handle lands on the completed
+// directory's state.
 func TestBufferedBuildEventReinvalidatesOnCompletion(t *testing.T) {
 	wfs := newInvalidateTestWFS(t)
 
@@ -198,29 +199,18 @@ func TestBufferedBuildEventReinvalidatesOnCompletion(t *testing.T) {
 	if err := wfs.metaCache.BeginDirectoryBuild(context.Background(), util.FullPath("/dir")); err != nil {
 		t.Fatalf("begin build: %v", err)
 	}
-	// The in-progress listing inserts the pre-event snapshot.
-	if err := wfs.metaCache.InsertEntry(context.Background(), &filer.Entry{
-		FullPath: "/dir/file",
-		Attr: filer.Attr{
-			Crtime:   time.Unix(1, 0),
-			Mtime:    time.Unix(1, 0),
-			Mode:     0100644,
-			FileSize: 100,
-		},
-	}); err != nil {
-		t.Fatalf("insert listing entry: %v", err)
-	}
 
-	// Postdates the listing snapshot, so it is buffered; its immediate
-	// invalidation resolves to the older listing entry.
+	// Covered by the upcoming listing snapshot (TsNs 900 <= snapshot 1000);
+	// its immediate invalidation runs before the listing inserts the newer
+	// entry, so the handle picks up the event's state.
 	event := &filer_pb.SubscribeMetadataResponse{
 		Directory: "/dir",
-		TsNs:      2000,
+		TsNs:      900,
 		EventNotification: &filer_pb.EventNotification{
 			OldEntry: &filer_pb.Entry{Name: "file"},
 			NewEntry: &filer_pb.Entry{
 				Name:       "file",
-				Attributes: &filer_pb.FuseAttributes{FileSize: 300},
+				Attributes: &filer_pb.FuseAttributes{FileSize: 100},
 			},
 			NewParentPath: "/dir",
 		},
@@ -230,7 +220,20 @@ func TestBufferedBuildEventReinvalidatesOnCompletion(t *testing.T) {
 	}
 	wfs.metaCache.WaitForEntryInvalidations()
 	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 100 {
-		t.Fatalf("open handle file size mid-build = %d, want 100 (listing snapshot)", size)
+		t.Fatalf("open handle file size mid-build = %d, want 100 (event state)", size)
+	}
+
+	// The listing then inserts the newer entry the snapshot already covers.
+	if err := wfs.metaCache.InsertEntry(context.Background(), &filer.Entry{
+		FullPath: "/dir/file",
+		Attr: filer.Attr{
+			Crtime:   time.Unix(1, 0),
+			Mtime:    time.Unix(1, 0),
+			Mode:     0100644,
+			FileSize: 300,
+		},
+	}); err != nil {
+		t.Fatalf("insert listing entry: %v", err)
 	}
 
 	if err := wfs.metaCache.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 1000); err != nil {
@@ -238,6 +241,101 @@ func TestBufferedBuildEventReinvalidatesOnCompletion(t *testing.T) {
 	}
 	wfs.metaCache.WaitForEntryInvalidations()
 	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 300 {
-		t.Fatalf("open handle file size after build completion = %d, want 300 (buffered event must re-invalidate)", size)
+		t.Fatalf("open handle file size after build completion = %d, want 300 (snapshot-covered event must re-invalidate)", size)
+	}
+}
+
+// A hit in the local store only resolves an invalidation when the parent
+// directory is cached. An uncached parent receives no store writes, so a
+// leftover entry there is stale and must not mask the event.
+func TestUncachedDirStaleStoreEntryDoesNotMaskEvent(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 88},
+	})
+
+	// Leftover store entry under a parent that is not children-cached.
+	if err := wfs.metaCache.InsertEntry(context.Background(), &filer.Entry{
+		FullPath: "/dir/file",
+		Attr: filer.Attr{
+			Crtime:   time.Unix(1, 0),
+			Mtime:    time.Unix(1, 0),
+			Mode:     0100644,
+			FileSize: 88,
+		},
+	}); err != nil {
+		t.Fatalf("insert stale entry: %v", err)
+	}
+
+	updateResp := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		TsNs:      1000,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: "file"},
+			NewEntry: &filer_pb.Entry{
+				Name:       "file",
+				Attributes: &filer_pb.FuseAttributes{FileSize: 180020},
+			},
+			NewParentPath: "/dir",
+		},
+	}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateResp, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply update event: %v", err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 180020 {
+		t.Fatalf("open handle file size = %d, want 180020 (stale store entry must not mask the event)", size)
+	}
+}
+
+// In a read-through directory neither a local flush nor the event reaches the
+// local store, so ordering falls to the filer log timestamps: an event at or
+// before the handle's last filer-acknowledged local mutation is old news and
+// must not roll the handle back.
+func TestQueuedEventOlderThanFlushedStateIsIgnored(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 88},
+	})
+
+	// Hold the handle lock so the queued invalidation cannot apply yet.
+	testLock := wfs.fhLockTable.AcquireLock("test", fh.fh, util.ExclusiveLock)
+	older := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		TsNs:      1000,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: "file"},
+			NewEntry: &filer_pb.Entry{
+				Name:       "file",
+				Attributes: &filer_pb.FuseAttributes{FileSize: 100},
+			},
+			NewParentPath: "/dir",
+		},
+	}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), older, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		wfs.fhLockTable.ReleaseLock(fh.fh, testLock)
+		t.Fatalf("apply subscriber event: %v", err)
+	}
+
+	// A local flush lands: the filer acknowledged it with a later log
+	// timestamp than the queued event.
+	fh.SetEntry(&filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 200},
+	})
+	fh.advanceLocalEntryTs(2000)
+	wfs.fhLockTable.ReleaseLock(fh.fh, testLock)
+
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
+		t.Fatalf("open handle file size = %d, want 200 (event at TsNs 1000 predates the flush at 2000)", size)
 	}
 }

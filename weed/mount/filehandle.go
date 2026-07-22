@@ -3,6 +3,7 @@ package mount
 import (
 	"os"
 	"sync"
+	"sync/atomic"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -38,6 +39,13 @@ type FileHandle struct {
 
 	isDeleted bool
 	isRenamed bool // set by Rename before waiting for async flush; skips old-path metadata flush
+
+	// lastLocalEntryTsNs is the filer log timestamp of the newest filer-
+	// acknowledged local mutation reflected in this handle's entry (from the
+	// metadata event a CreateEntry/CacheRemoteObject response carries).
+	// Subscription events at or before this timestamp are old news for the
+	// handle and must not roll it back.
+	lastLocalEntryTsNs atomic.Int64
 
 	// dlmLock holds the distributed lock for cross-mount write coordination.
 	// Non-nil only when -dlm is enabled and the file was opened for writing.
@@ -117,6 +125,21 @@ func (fh *FileHandle) SetEntry(entry *filer_pb.Entry) {
 
 	// Invalidate chunk offset cache since chunks may have changed
 	fh.invalidateChunkCache()
+}
+
+// advanceLocalEntryTs records the filer log timestamp of a filer-acknowledged
+// local mutation now reflected in the handle's entry. Monotonic: an older
+// timestamp never regresses the watermark.
+func (fh *FileHandle) advanceLocalEntryTs(tsNs int64) {
+	if tsNs == 0 {
+		return
+	}
+	for {
+		current := fh.lastLocalEntryTsNs.Load()
+		if tsNs <= current || fh.lastLocalEntryTsNs.CompareAndSwap(current, tsNs) {
+			return
+		}
+	}
 }
 
 func (fh *FileHandle) ResetDirtyPages() {

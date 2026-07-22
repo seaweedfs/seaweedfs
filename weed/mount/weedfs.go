@@ -302,8 +302,8 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 			wfs.inodeToPath.MarkChildrenCached(path)
 		}, func(path util.FullPath) bool {
 			return wfs.inodeToPath.IsChildrenCached(path)
-		}, func(filePath util.FullPath, entry *filer_pb.Entry) {
-			wfs.invalidateOpenFileHandle(filePath, entry)
+		}, func(filePath util.FullPath, entry *filer_pb.Entry, eventTsNs int64) {
+			wfs.invalidateOpenFileHandle(filePath, entry, eventTsNs)
 		}, func(dirPath util.FullPath) {
 			if wfs.inodeToPath.RecordDirectoryUpdate(dirPath, time.Now(), wfs.dirHotWindow, wfs.dirHotThreshold) {
 				wfs.markDirectoryReadThrough(dirPath)
@@ -682,7 +682,7 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, fuse.Status) 
 // handle would stay pinned to its old entry until an unrelated event arrives.
 // A nil entry means the path no longer holds one (delete, rename away); the
 // handle keeps its last entry so unlinked-but-open reads still work.
-func (wfs *WFS) invalidateOpenFileHandle(filePath util.FullPath, entry *filer_pb.Entry) {
+func (wfs *WFS) invalidateOpenFileHandle(filePath util.FullPath, entry *filer_pb.Entry, eventTsNs int64) {
 	inode, inodeFound := wfs.inodeToPath.GetInode(filePath)
 	if !inodeFound {
 		return
@@ -694,22 +694,28 @@ func (wfs *WFS) invalidateOpenFileHandle(filePath util.FullPath, entry *filer_pb
 	fhActiveLock := wfs.fhLockTable.AcquireLock("invalidateFunc", fh.fh, util.ExclusiveLock)
 	defer wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 
+	// Invalidations apply asynchronously, so this event may be old news by
+	// now: a local flush can land while the event sits in the queue, and the
+	// flush's own event is dedup-suppressed, so a rollback would never heal.
+	// Both timestamps come from the filer log, so this orders exactly.
+	if eventTsNs != 0 && eventTsNs <= fh.lastLocalEntryTsNs.Load() {
+		return
+	}
+
 	fh.dirtyPages.Destroy()
 	fh.dirtyPages = newPageWriter(fh, wfs.option.ChunkSizeLimit)
 
-	// Invalidations apply asynchronously, so the event entry may be a stale
-	// snapshot by now: a local flush can install newer state while the event
-	// sits in the queue, and the flush's own event is dedup-suppressed, so a
-	// rollback would never heal. The apply loop has already ordered this event
-	// and any later state into the local store, so prefer the store's entry.
-	// The store misses for read-through directories and TTL-expired entries;
-	// falling back to the event entry there can still roll back a racing
-	// local flush (neither write reaches the store in a read-through
-	// directory), but it is the best ordered information available without a
-	// filer round-trip.
-	if localEntry, findErr := wfs.metaCache.FindEntry(context.Background(), filePath); findErr == nil && localEntry != nil {
-		fh.SetEntry(localEntry.ToProtoEntry())
-		return
+	// Prefer the local store's entry when the parent directory is cached: the
+	// apply loop has already ordered this event and anything newer (e.g. a
+	// local flush) into it. An uncached parent receives no store writes, so a
+	// hit there could be a stale leftover masking this event — fall through
+	// to the event entry instead, the freshest information for that case.
+	dir, _ := filePath.DirAndName()
+	if wfs.metaCache.IsDirectoryCached(util.FullPath(dir)) {
+		if localEntry, findErr := wfs.metaCache.FindEntry(context.Background(), filePath); findErr == nil && localEntry != nil {
+			fh.SetEntry(localEntry.ToProtoEntry())
+			return
+		}
 	}
 	if entry == nil {
 		return

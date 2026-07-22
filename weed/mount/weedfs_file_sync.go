@@ -270,6 +270,7 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	if event == nil {
 		event = metadataUpdateEvent(string(dir), request.Entry)
 	}
+	fh.advanceLocalEntryTs(event.GetTsNs())
 	if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
 		glog.Warningf("flush %s: best-effort metadata apply failed: %v", fileFullPath, applyErr)
 		wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(dir))

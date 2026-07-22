@@ -200,6 +200,7 @@ func (fh *FileHandle) downloadRemoteEntry(entry *LockedEntry) error {
 		if event == nil {
 			event = metadataUpdateEvent(request.Directory, resp.Entry)
 		}
+		fh.advanceLocalEntryTs(event.GetTsNs())
 		fh.wfs.applyLocalMetadataEventAsync(event)
 
 		return nil
