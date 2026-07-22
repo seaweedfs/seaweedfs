@@ -18,6 +18,7 @@ func TestReadFromBufferEvictionGate(t *testing.T) {
 			return startPosition, false, nil
 		},
 		func() {})
+	defer lb.ShutdownLogBuffer()
 
 	base := time.Now().Add(-time.Second)
 	entry := &filer_pb.LogEntry{TsNs: base.UnixNano(), Data: []byte("x"), Key: []byte("k"), Offset: 0}
@@ -45,9 +46,20 @@ func TestReadFromBufferEvictionGate(t *testing.T) {
 		t.Fatalf("epoch start after eviction: want ResumeFromDiskError, got %v", err)
 	}
 
-	// At/after the watermark the retained history is complete → inclusive read,
-	// regardless of the cursor's batch offset (adjacent-cursor case).
+	// At the watermark with an exclusive cursor (positive batch offset) the
+	// retained history is complete → served from memory (adjacent-cursor case).
 	if buf, _, _, err := lb.ReadFromBuffer(NewMessagePosition(evictedTs.UnixNano(), 7)); err != nil || buf == nil {
 		t.Fatalf("within retained history: buf=%v err=%v", buf != nil, err)
+	}
+
+	// At the watermark with a sentinel cursor: sentinel reads include their own
+	// timestamp, and the evicted window may end exactly there → defer to disk.
+	if _, _, _, err := lb.ReadFromBuffer(NewMessagePosition(evictedTs.UnixNano(), -2)); err != ResumeFromDiskError {
+		t.Fatalf("sentinel at watermark: want ResumeFromDiskError, got %v", err)
+	}
+
+	// Strictly above the watermark a sentinel cursor is safe again.
+	if buf, _, _, err := lb.ReadFromBuffer(NewMessagePosition(evictedTs.Add(time.Nanosecond).UnixNano(), -2)); err != nil || buf == nil {
+		t.Fatalf("sentinel above watermark: buf=%v err=%v", buf != nil, err)
 	}
 }

@@ -844,12 +844,15 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 			// Start from the beginning of memory: nothing was ever evicted, so
 			// the retained buffers still hold the complete history.
 			// Fall through to case 2.1 to read from earliest buffer
-		} else if lastReadPosition.Time.UnixNano() >= logBuffer.lastEvictedTsNs.Load() {
-			// Position within the retained history: nothing at or after it was
-			// ever evicted from the ring, so memory is complete for this window
-			// and reading from the earliest in-memory entry skips nothing.
-			// (Batch offsets carry no meaning for time-based reads, so this
-			// applies to any offset.) Fall through to case 2.1.
+		} else if posTsNs, evictedTsNs := lastReadPosition.Time.UnixNano(), logBuffer.lastEvictedTsNs.Load(); posTsNs > evictedTsNs ||
+			(posTsNs == evictedTsNs && lastReadPosition.Offset > 0) {
+			// Position within the retained history: nothing after it was ever
+			// evicted from the ring, so memory is complete for this window and
+			// reading from the earliest in-memory entry skips nothing. Sentinel
+			// (Offset <= 0) cursors read inclusively of their own timestamp, so
+			// equality with the watermark is not safe for them — the evicted
+			// window may end exactly at that timestamp.
+			// Fall through to case 2.1.
 		} else {
 			// Data not in memory buffers - read from disk. Silently starting at
 			// the earliest in-memory entry here could skip evicted-but-not-yet-
