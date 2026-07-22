@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"sort"
 	"sync"
 	"time"
 
@@ -147,29 +148,39 @@ func (s *PrometheusStorage) GetMetrics(days int) (map[string]interface{}, error)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// Return current metrics from in-memory storage
-	// Historical data should be queried from Prometheus directly
+	// Return current metrics from in-memory storage, aggregated per day
+	// in the parallel-array shape the dashboard charts expect.
+	// Historical data should be queried from Prometheus directly.
 	cutoff := time.Now().AddDate(0, 0, -days)
 
-	var volumeServers []map[string]interface{}
-	var diskUsage []map[string]interface{}
+	serverCountByDate := make(map[string]int64)
+	diskUsageByDate := make(map[string]uint64)
 
 	for _, instance := range s.instances {
 		if instance.ReceivedAt.After(cutoff) {
-			volumeServers = append(volumeServers, map[string]interface{}{
-				"date":  instance.ReceivedAt.Format("2006-01-02"),
-				"value": instance.TelemetryData.VolumeServerCount,
-			})
-			diskUsage = append(diskUsage, map[string]interface{}{
-				"date":  instance.ReceivedAt.Format("2006-01-02"),
-				"value": instance.TelemetryData.TotalDiskBytes,
-			})
+			date := instance.ReceivedAt.Format("2006-01-02")
+			serverCountByDate[date] += int64(instance.TelemetryData.VolumeServerCount)
+			diskUsageByDate[date] += instance.TelemetryData.TotalDiskBytes
 		}
 	}
 
+	dates := make([]string, 0, len(serverCountByDate))
+	for date := range serverCountByDate {
+		dates = append(dates, date)
+	}
+	sort.Strings(dates)
+
+	serverCounts := make([]int64, 0, len(dates))
+	diskUsage := make([]uint64, 0, len(dates))
+	for _, date := range dates {
+		serverCounts = append(serverCounts, serverCountByDate[date])
+		diskUsage = append(diskUsage, diskUsageByDate[date])
+	}
+
 	return map[string]interface{}{
-		"volume_servers": volumeServers,
-		"disk_usage":     diskUsage,
+		"dates":         dates,
+		"server_counts": serverCounts,
+		"disk_usage":    diskUsage,
 	}, nil
 }
 
