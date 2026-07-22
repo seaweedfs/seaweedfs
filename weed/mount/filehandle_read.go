@@ -188,7 +188,10 @@ func (fh *FileHandle) downloadRemoteEntry(entry *LockedEntry) error {
 		}
 
 		glog.V(4).Infof("download entry: %v", request)
-		baselineTsNs := fh.wfs.filerBarrierTsNs()
+		// Barrier through this closure's client: on failover WithFilerClient
+		// retries against another filer while the current-filer index still
+		// points at the failed one.
+		baselineTsNs := fh.wfs.filerBarrierTsNsWith(client)
 		resp, err := client.CacheRemoteObjectToLocalCluster(context.Background(), request)
 		if err != nil {
 			return fmt.Errorf("CacheRemoteObjectToLocalCluster file %s: %v", fileFullPath, err)

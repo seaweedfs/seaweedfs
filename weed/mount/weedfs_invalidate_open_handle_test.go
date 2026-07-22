@@ -347,6 +347,17 @@ type fakeFilerServer struct {
 	filer_pb.UnimplementedSeaweedFilerServer
 	lookupSize uint64
 	pingTsNs   int64
+	cacheSize  uint64
+}
+
+func (s *fakeFilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req *filer_pb.CacheRemoteObjectToLocalClusterRequest) (*filer_pb.CacheRemoteObjectToLocalClusterResponse, error) {
+	// No MetadataEvent: the object was already cached by another client.
+	return &filer_pb.CacheRemoteObjectToLocalClusterResponse{
+		Entry: &filer_pb.Entry{
+			Name:       req.Name,
+			Attributes: &filer_pb.FuseAttributes{FileSize: s.cacheSize, FileMode: 0100644},
+		},
+	}, nil
 }
 
 func (s *fakeFilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
@@ -640,5 +651,135 @@ func TestFilerBarrierCoversUndeliveredEvents(t *testing.T) {
 
 	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
 		t.Fatalf("open handle file size = %d, want 200 (undelivered-at-barrier event must not roll back)", size)
+	}
+}
+
+// An event buffered for a building directory must be covered by the open-time
+// cursor even if it never reaches a store write: aborting the build drops the
+// buffered events while their invalidations stay queued, so an open fenced
+// below the event would be rolled back.
+func TestAbortedBuildEventStillCoveredByOpenFence(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+	startFakeFiler(t, wfs, &fakeFilerServer{lookupSize: 200})
+
+	// Stall the invalidation worker on an unrelated handle's lock.
+	blockerInode := wfs.inodeToPath.Lookup(util.FullPath("/other/blocker"), time.Now().Unix(), false, false, 0, false)
+	blockerFh := wfs.fhMap.AcquireFileHandle(wfs, blockerInode, &filer_pb.Entry{
+		Name:       "blocker",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 1},
+	})
+	blockerLock := wfs.fhLockTable.AcquireLock("test", blockerFh.fh, util.ExclusiveLock)
+	blockerEvent := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/other",
+		TsNs:      500,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: "blocker"},
+			NewEntry: &filer_pb.Entry{
+				Name:       "blocker",
+				Attributes: &filer_pb.FuseAttributes{FileSize: 2},
+			},
+			NewParentPath: "/other",
+		},
+	}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), blockerEvent, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		wfs.fhLockTable.ReleaseLock(blockerFh.fh, blockerLock)
+		t.Fatalf("apply blocker event: %v", err)
+	}
+
+	if err := wfs.metaCache.BeginDirectoryBuild(context.Background(), util.FullPath("/dir")); err != nil {
+		wfs.fhLockTable.ReleaseLock(blockerFh.fh, blockerLock)
+		t.Fatalf("begin build: %v", err)
+	}
+	buffered := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		TsNs:      1000,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: "file"},
+			NewEntry: &filer_pb.Entry{
+				Name:       "file",
+				Attributes: &filer_pb.FuseAttributes{FileSize: 100},
+			},
+			NewParentPath: "/dir",
+		},
+	}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), buffered, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		wfs.fhLockTable.ReleaseLock(blockerFh.fh, blockerLock)
+		t.Fatalf("apply buffered event: %v", err)
+	}
+	if got := wfs.metaCache.LatestEventTsNs(); got != 1000 {
+		wfs.fhLockTable.ReleaseLock(blockerFh.fh, blockerLock)
+		t.Fatalf("LatestEventTsNs = %d, want 1000 (buffered event must advance the cursor)", got)
+	}
+	if err := wfs.metaCache.AbortDirectoryBuild(context.Background(), util.FullPath("/dir")); err != nil {
+		wfs.fhLockTable.ReleaseLock(blockerFh.fh, blockerLock)
+		t.Fatalf("abort build: %v", err)
+	}
+
+	// Open after the abort: the lookup reaches the filer, which serves the
+	// newer size-200 state; the fence must cover the still-queued event.
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh, status := wfs.AcquireHandle(inode, 0, 0, 0)
+	if status != fuse.OK {
+		wfs.fhLockTable.ReleaseLock(blockerFh.fh, blockerLock)
+		t.Fatalf("AcquireHandle status = %v, want OK", status)
+	}
+
+	wfs.fhLockTable.ReleaseLock(blockerFh.fh, blockerLock)
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
+		t.Fatalf("open handle file size = %d, want 200 (aborted-build event must not roll back the open)", size)
+	}
+}
+
+// During filer failover, WithFilerClient retries the callback against another
+// filer while the current-filer index still points at the failed one. The
+// barrier must ping through the callback's client, or it silently degrades to
+// the delivered-event cursor and reopens the undelivered-event rollback.
+func TestRemoteCacheBarrierFollowsFailover(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+	fake := &fakeFilerServer{pingTsNs: 2000, cacheSize: 200}
+	startFakeFiler(t, wfs, fake)
+	// First filer is unreachable; WithFilerClient fails over to the fake.
+	live := wfs.option.FilerAddresses[0]
+	wfs.option.FilerAddresses = []pb.ServerAddress{
+		pb.NewServerAddressWithGrpcPort("127.0.0.1:1", 1),
+		live,
+	}
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 88},
+	})
+
+	if err := fh.downloadRemoteEntry(fh.GetEntry()); err != nil {
+		t.Fatalf("downloadRemoteEntry: %v", err)
+	}
+	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
+		t.Fatalf("downloaded file size = %d, want 200", size)
+	}
+
+	// An event committed before the download (TsNs 1500 < ping 2000) but
+	// delivered only now must not roll the handle back.
+	late := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		TsNs:      1500,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: "file"},
+			NewEntry: &filer_pb.Entry{
+				Name:       "file",
+				Attributes: &filer_pb.FuseAttributes{FileSize: 100},
+			},
+			NewParentPath: "/dir",
+		},
+	}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), late, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply late event: %v", err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
+		t.Fatalf("open handle file size = %d, want 200 (barrier must come from the failover filer)", size)
 	}
 }

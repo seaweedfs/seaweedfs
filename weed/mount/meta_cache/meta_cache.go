@@ -585,6 +585,20 @@ func (mc *MetaCache) applyMetadataResponseNow(ctx context.Context, resp *filer_p
 		return mc.applyMetadataResponseDirect(ctx, resp, options, false)
 	}
 
+	for _, immediateEvent := range immediateEvents {
+		if err := mc.applyMetadataResponseDirect(ctx, immediateEvent, MetadataResponseApplyOptions{}, false); err != nil {
+			return err
+		}
+	}
+	// The cursor must cover a buffered event before its invalidation is
+	// observable, or an open racing the queue fences too low and the event
+	// later replaces newer state — a buffered event may never reach
+	// applyMetadataResponseDirect (build abort, snapshot-covered on
+	// completion). Sound without the store write: the building directory is
+	// read-through, so opens there consult the filer, which is at least this
+	// new. Immediate fragments were applied above, so their store writes are
+	// not outrun either.
+	mc.advanceLatestEventTs(resp.TsNs)
 	// Apply side effects but skip directory notifications for dirs that are
 	// currently being built. Notifying a building dir can trigger
 	// markDirectoryReadThrough → DeleteFolderChildren, wiping entries that
@@ -596,11 +610,6 @@ func (mc *MetaCache) applyMetadataResponseNow(ctx context.Context, resp *filer_p
 			continue
 		}
 		state.bufferedEvents = append(state.bufferedEvents, events...)
-	}
-	for _, immediateEvent := range immediateEvents {
-		if err := mc.applyMetadataResponseDirect(ctx, immediateEvent, MetadataResponseApplyOptions{}, false); err != nil {
-			return err
-		}
 	}
 	return nil
 }
