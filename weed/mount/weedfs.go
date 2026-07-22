@@ -677,12 +677,11 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, fuse.Status) 
 }
 
 // invalidateOpenFileHandle refreshes an open file handle from a metadata
-// subscription event. The event entry is applied directly: a second lookup
-// here can fail transiently or serve stale cached metadata, and since the
-// subscription cursor has already advanced past the event, the handle would
-// stay pinned to its old entry until an unrelated event arrives. A nil entry
-// means the path no longer holds one (delete, rename away); the handle keeps
-// its last entry so unlinked-but-open reads still work.
+// subscription event. No filer lookup happens here: it can fail transiently,
+// and since the subscription cursor has already advanced past the event, the
+// handle would stay pinned to its old entry until an unrelated event arrives.
+// A nil entry means the path no longer holds one (delete, rename away); the
+// handle keeps its last entry so unlinked-but-open reads still work.
 func (wfs *WFS) invalidateOpenFileHandle(filePath util.FullPath, entry *filer_pb.Entry) {
 	inode, inodeFound := wfs.inodeToPath.GetInode(filePath)
 	if !inodeFound {
@@ -698,6 +697,17 @@ func (wfs *WFS) invalidateOpenFileHandle(filePath util.FullPath, entry *filer_pb
 	fh.dirtyPages.Destroy()
 	fh.dirtyPages = newPageWriter(fh, wfs.option.ChunkSizeLimit)
 
+	// Invalidations apply asynchronously, so the event entry may be a stale
+	// snapshot by now: a local flush can install newer state while the event
+	// sits in the queue, and the flush's own event is dedup-suppressed, so a
+	// rollback would never heal. The apply loop has already ordered this event
+	// and any later state into the local store, so prefer the store's entry;
+	// it misses only for read-through directories, where the event entry is
+	// the freshest ordered information available.
+	if localEntry, findErr := wfs.metaCache.FindEntry(context.Background(), filePath); findErr == nil && localEntry != nil {
+		fh.SetEntry(localEntry.ToProtoEntry())
+		return
+	}
 	if entry == nil {
 		return
 	}

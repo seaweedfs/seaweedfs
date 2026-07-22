@@ -119,3 +119,60 @@ func TestUpdateEventRefreshesOpenFileHandle(t *testing.T) {
 		t.Fatalf("open handle file size after delete = %d, want 180020", size)
 	}
 }
+
+// A queued invalidation must not roll the handle back over newer state a
+// local flush installed while the event sat in the queue. The local store is
+// ordered by the apply loop, so it resolves the refresh for cached
+// directories.
+func TestQueuedEventDoesNotRollBackNewerLocalState(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+
+	wfs.inodeToPath.MarkChildrenCached(util.FullPath("/"))
+	wfs.inodeToPath.Lookup(util.FullPath("/dir"), time.Now().Unix(), true, false, 0, false)
+	wfs.inodeToPath.MarkChildrenCached(util.FullPath("/dir"))
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 88},
+	})
+
+	updateEvent := func(size uint64) *filer_pb.SubscribeMetadataResponse {
+		return &filer_pb.SubscribeMetadataResponse{
+			Directory: "/dir",
+			EventNotification: &filer_pb.EventNotification{
+				OldEntry: &filer_pb.Entry{Name: "file"},
+				NewEntry: &filer_pb.Entry{
+					Name:       "file",
+					Attributes: &filer_pb.FuseAttributes{FileSize: size},
+				},
+				NewParentPath: "/dir",
+			},
+		}
+	}
+
+	// Hold the handle lock so the queued invalidation cannot apply yet.
+	testLock := wfs.fhLockTable.AcquireLock("test", fh.fh, util.ExclusiveLock)
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEvent(100), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		wfs.fhLockTable.ReleaseLock(fh.fh, testLock)
+		t.Fatalf("apply subscriber event: %v", err)
+	}
+
+	// A local flush lands after the event was queued: newer state goes into
+	// the handle and, via the local apply, into the local store.
+	fh.SetEntry(&filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 200},
+	})
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEvent(200), meta_cache.LocalMetadataResponseApplyOptions); err != nil {
+		wfs.fhLockTable.ReleaseLock(fh.fh, testLock)
+		t.Fatalf("apply local event: %v", err)
+	}
+	wfs.fhLockTable.ReleaseLock(fh.fh, testLock)
+
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
+		t.Fatalf("open handle file size = %d, want 200 (queued size-100 event must not roll back the newer local state)", size)
+	}
+}
