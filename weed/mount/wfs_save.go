@@ -27,6 +27,7 @@ func (wfs *WFS) saveEntry(path util.FullPath, entry *filer_pb.Entry) (code fuse.
 
 	glog.V(1).Infof("save entry: %v", request)
 
+	baselineTsNs := wfs.latestKnownFilerTsNs()
 	var resp *filer_pb.UpdateEntryResponse
 	err := retryMetadataFlushIf(context.Background(), func() error {
 		var callErr error
@@ -49,6 +50,14 @@ func (wfs *WFS) saveEntry(path util.FullPath, entry *filer_pb.Entry) (code fuse.
 			glog.V(1).Infof("saveEntry failed for %s: %v (returning %v)", path, err, fuseStatus)
 		}
 		return fuseStatus
+	}
+
+	// The mutation is acknowledged; keep any open handle for this path ahead
+	// of subscription events the filer logged before it.
+	if inode, found := wfs.inodeToPath.GetInode(path); found {
+		if fh, fhFound := wfs.fhMap.FindFileHandle(inode); fhFound {
+			fh.noteFilerAck(baselineTsNs, resp.GetMetadataEvent())
+		}
 	}
 
 	event := resp.GetMetadataEvent()

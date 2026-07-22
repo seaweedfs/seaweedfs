@@ -2,9 +2,12 @@ package mount
 
 import (
 	"context"
+	"net"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/seaweedfs/go-fuse/v2/fuse"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
@@ -337,5 +340,153 @@ func TestQueuedEventOlderThanFlushedStateIsIgnored(t *testing.T) {
 
 	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
 		t.Fatalf("open handle file size = %d, want 200 (event at TsNs 1000 predates the flush at 2000)", size)
+	}
+}
+
+type saveEntryTestServer struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+}
+
+func (s *saveEntryTestServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
+	return &filer_pb.UpdateEntryResponse{
+		MetadataEvent: &filer_pb.SubscribeMetadataResponse{
+			Directory: req.Directory,
+			TsNs:      2000,
+			EventNotification: &filer_pb.EventNotification{
+				OldEntry:      &filer_pb.Entry{Name: req.Entry.Name},
+				NewEntry:      req.Entry,
+				NewParentPath: req.Directory,
+			},
+		},
+	}, nil
+}
+
+// saveEntry (truncate, setattr) must advance the open handle's watermark from
+// the acknowledged mutation's log timestamp, or an older queued event rolls
+// the mutation back in a read-through directory.
+func TestSaveEntryKeepsOpenHandleAheadOfOlderEvents(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	server := pb.NewGrpcServer()
+	filer_pb.RegisterSeaweedFilerServer(server, &saveEntryTestServer{})
+	go server.Serve(listener)
+	t.Cleanup(server.Stop)
+
+	wfs := newInvalidateTestWFS(t)
+	wfs.option.FilerAddresses = []pb.ServerAddress{
+		pb.NewServerAddressWithGrpcPort("127.0.0.1:1", listener.Addr().(*net.TCPAddr).Port),
+	}
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 88},
+	})
+
+	testLock := wfs.fhLockTable.AcquireLock("test", fh.fh, util.ExclusiveLock)
+	older := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		TsNs:      1000,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: "file"},
+			NewEntry: &filer_pb.Entry{
+				Name:       "file",
+				Attributes: &filer_pb.FuseAttributes{FileSize: 100},
+			},
+			NewParentPath: "/dir",
+		},
+	}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), older, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		wfs.fhLockTable.ReleaseLock(fh.fh, testLock)
+		t.Fatalf("apply subscriber event: %v", err)
+	}
+
+	// A truncate-style mutation: the filer acknowledges it at TsNs 2000 and
+	// the handle takes the new entry.
+	saved := &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 200},
+	}
+	if code := wfs.saveEntry(util.FullPath("/dir/file"), saved); code != fuse.OK {
+		wfs.fhLockTable.ReleaseLock(fh.fh, testLock)
+		t.Fatalf("saveEntry status = %v, want OK", code)
+	}
+	fh.SetEntry(saved)
+	wfs.fhLockTable.ReleaseLock(fh.fh, testLock)
+
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
+		t.Fatalf("open handle file size = %d, want 200 (saveEntry at TsNs 2000 outranks the queued event at 1000)", size)
+	}
+}
+
+// When a filer response carries no metadata event, the watermark falls back
+// to the latest filer log timestamp already seen: the filer served state at
+// least that new, so queued events at or before it must not roll the fresh
+// handle state back.
+func TestNilAckEventFallsBackToLatestSeenTs(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 88},
+	})
+
+	// An unrelated event advances the mount's known filer log position.
+	unrelated := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		TsNs:      1500,
+		EventNotification: &filer_pb.EventNotification{
+			NewEntry: &filer_pb.Entry{
+				Name:       "other",
+				Attributes: &filer_pb.FuseAttributes{FileSize: 1},
+			},
+		},
+	}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), unrelated, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply unrelated event: %v", err)
+	}
+	if got := wfs.metaCache.LatestEventTsNs(); got != 1500 {
+		t.Fatalf("LatestEventTsNs = %d, want 1500", got)
+	}
+
+	testLock := wfs.fhLockTable.AcquireLock("test", fh.fh, util.ExclusiveLock)
+	older := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		TsNs:      1000,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: "file"},
+			NewEntry: &filer_pb.Entry{
+				Name:       "file",
+				Attributes: &filer_pb.FuseAttributes{FileSize: 100},
+			},
+			NewParentPath: "/dir",
+		},
+	}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), older, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		wfs.fhLockTable.ReleaseLock(fh.fh, testLock)
+		t.Fatalf("apply subscriber event: %v", err)
+	}
+
+	// A filer RPC that returned no event (remote cache already populated,
+	// server-side copy) installs fresh state; the baseline captured before
+	// the RPC stands in for the missing event timestamp.
+	baselineTsNs := wfs.metaCache.LatestEventTsNs()
+	fh.SetEntry(&filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 200},
+	})
+	fh.noteFilerAck(baselineTsNs, nil)
+	wfs.fhLockTable.ReleaseLock(fh.fh, testLock)
+
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
+		t.Fatalf("open handle file size = %d, want 200 (queued event at TsNs 1000 predates the known log position 1500)", size)
 	}
 }

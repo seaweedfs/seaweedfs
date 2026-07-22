@@ -127,6 +127,19 @@ func (fh *FileHandle) SetEntry(entry *filer_pb.Entry) {
 	fh.invalidateChunkCache()
 }
 
+// noteFilerAck advances the watermark after a filer RPC acknowledged state
+// now reflected in this handle: to the response event's log timestamp when
+// one was returned, otherwise to baselineTsNs — the latest filer log position
+// known before the RPC was issued, a safe lower bound for the state the
+// filer served.
+func (fh *FileHandle) noteFilerAck(baselineTsNs int64, event *filer_pb.SubscribeMetadataResponse) {
+	if tsNs := event.GetTsNs(); tsNs != 0 {
+		fh.advanceLocalEntryTs(tsNs)
+		return
+	}
+	fh.advanceLocalEntryTs(baselineTsNs)
+}
+
 // advanceLocalEntryTs records the filer log timestamp of a filer-acknowledged
 // local mutation now reflected in the handle's entry. Monotonic: an older
 // timestamp never regresses the watermark.

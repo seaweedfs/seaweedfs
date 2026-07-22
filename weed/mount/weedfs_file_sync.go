@@ -260,17 +260,18 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 
 	wfs.mapPbIdFromLocalToFiler(request.Entry)
 
+	baselineTsNs := wfs.latestKnownFilerTsNs()
 	resp, err := wfs.streamCreateEntry(ctx, request)
 	if err != nil {
 		glog.Errorf("fh flush create %s: %v", fileFullPath, err)
 		return fmt.Errorf("fh flush create %s: %v", fileFullPath, err)
 	}
+	fh.noteFilerAck(baselineTsNs, resp.GetMetadataEvent())
 
 	event := resp.GetMetadataEvent()
 	if event == nil {
 		event = metadataUpdateEvent(string(dir), request.Entry)
 	}
-	fh.advanceLocalEntryTs(event.GetTsNs())
 	if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
 		glog.Warningf("flush %s: best-effort metadata apply failed: %v", fileFullPath, applyErr)
 		wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(dir))

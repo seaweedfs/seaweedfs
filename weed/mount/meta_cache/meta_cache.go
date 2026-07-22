@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -42,6 +43,7 @@ type MetaCache struct {
 	buildingDirs         map[util.FullPath]*directoryBuildState
 	dedupRing            dedupRingBuffer
 	includeSystemEntries bool
+	latestEventTsNs      atomic.Int64 // newest filer log timestamp seen in any applied event
 
 	// Entry invalidations run on a worker, not inline on the apply loop:
 	// invalidateFunc takes the fh lock, which a flush can hold while waiting on
@@ -574,6 +576,7 @@ type metadataResponseSideEffects struct {
 }
 
 func (mc *MetaCache) applyMetadataResponseNow(ctx context.Context, resp *filer_pb.SubscribeMetadataResponse, options MetadataResponseApplyOptions) error {
+	mc.advanceLatestEventTs(resp.TsNs)
 	if mc.shouldSkipDuplicateEvent(resp) {
 		return nil
 	}
@@ -649,6 +652,26 @@ func (mc *MetaCache) applyMetadataSideEffectsSkippingBuildingDirs(resp *filer_pb
 // shutdown paths that need the previously-synchronous behavior.
 func (mc *MetaCache) WaitForEntryInvalidations() {
 	mc.invalidateWorker.Drain()
+}
+
+func (mc *MetaCache) advanceLatestEventTs(tsNs int64) {
+	if tsNs == 0 {
+		return
+	}
+	for {
+		current := mc.latestEventTsNs.Load()
+		if tsNs <= current || mc.latestEventTsNs.CompareAndSwap(current, tsNs) {
+			return
+		}
+	}
+}
+
+// LatestEventTsNs returns the newest filer log timestamp seen in any applied
+// event. A filer RPC issued after reading this serves state at least this
+// new, so it is a safe watermark baseline when the RPC response carries no
+// metadata event of its own.
+func (mc *MetaCache) LatestEventTsNs() int64 {
+	return mc.latestEventTsNs.Load()
 }
 
 func (mc *MetaCache) applyMetadataResponseLocked(ctx context.Context, resp *filer_pb.SubscribeMetadataResponse, _ MetadataResponseApplyOptions, allowUncachedInsert bool) (metadataResponseSideEffects, error) {

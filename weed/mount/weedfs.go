@@ -676,6 +676,16 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, fuse.Status) 
 	return filer.FromPbEntry(dir, entry), fuse.OK
 }
 
+// latestKnownFilerTsNs is the newest filer log timestamp seen in any applied
+// event — the watermark baseline for filer RPCs whose response carries no
+// metadata event. Nil-safe for partially constructed test instances.
+func (wfs *WFS) latestKnownFilerTsNs() int64 {
+	if wfs.metaCache == nil {
+		return 0
+	}
+	return wfs.metaCache.LatestEventTsNs()
+}
+
 // invalidateOpenFileHandle refreshes an open file handle from a metadata
 // subscription event. No filer lookup happens here: it can fail transiently,
 // and since the subscription cursor has already advanced past the event, the

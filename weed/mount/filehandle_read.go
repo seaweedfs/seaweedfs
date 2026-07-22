@@ -188,19 +188,20 @@ func (fh *FileHandle) downloadRemoteEntry(entry *LockedEntry) error {
 		}
 
 		glog.V(4).Infof("download entry: %v", request)
+		baselineTsNs := fh.wfs.latestKnownFilerTsNs()
 		resp, err := client.CacheRemoteObjectToLocalCluster(context.Background(), request)
 		if err != nil {
 			return fmt.Errorf("CacheRemoteObjectToLocalCluster file %s: %v", fileFullPath, err)
 		}
 
 		fh.SetEntry(resp.Entry)
+		fh.noteFilerAck(baselineTsNs, resp.GetMetadataEvent())
 
 		// Async: a sync apply deadlocks against the apply loop's invalidate, which needs this read's file-handle lock.
 		event := resp.GetMetadataEvent()
 		if event == nil {
 			event = metadataUpdateEvent(request.Directory, resp.Entry)
 		}
-		fh.advanceLocalEntryTs(event.GetTsNs())
 		fh.wfs.applyLocalMetadataEventAsync(event)
 
 		return nil
