@@ -17,4 +17,6 @@ ignore-regex = \b[a-z]+[A-Z]\w*\b|\b[A-Z][a-z]+[A-Z]\w*\b
 # ue: appears inside JSON test fixtures with embedded escaped quotes (Bl\"ue)
 # auther: local variable meaning "authenticator" (tls.go: `auther := Authenticator{}`)
 # thirdparty: literal Maven groupId `org.apache.hadoop.thirdparty` (external, cannot rename)
-ignore-words-list = visibles,fo,te,ser,bject,unparseable,keep-alives,tread,anc,ue,auther,thirdparty
+# unknwon: GitHub username / Go module path (`github.com/unknwon/goconfig`)
+# atleast: CLI mode literal string in test/benchmark/fuse_db/bin/sqlite_verify.py
+ignore-words-list = visibles,fo,te,ser,bject,unparseable,keep-alives,tread,anc,ue,auther,thirdparty,unknwon,atleast

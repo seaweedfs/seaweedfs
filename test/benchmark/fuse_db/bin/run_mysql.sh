@@ -40,7 +40,7 @@ mysql_load() {  # loads TOTAL rows in BATCH-sized committed inserts; progress ->
     mv -f "$PROG.tmp" "$PROG"
   done
 }
-mysql_verify() {  # $1=expected $2=mode(exact|at least) ; returns 0 on PASS
+mysql_verify() {  # $1=expected $2=mode(exact|atleast) ; returns 0 on PASS
   local exp=$1 mode=$2 cnt sumchk corrupt minid maxid checktbl ok=0
   read -r cnt sumchk corrupt minid maxid <<EOF
 $(mq -N -e "SELECT COUNT(*),COALESCE(SUM(chk),0),COALESCE(SUM(chk<>CRC32(payload)),0),COALESCE(MIN(id),-1),COALESCE(MAX(id),-1) FROM loadtest.t;")
@@ -113,7 +113,7 @@ sleep 1
 cluster_start || exit 1; mount_start || exit 1
 say "restarting mysqld -> InnoDB recovery; in-flight txn must roll back, committed must survive"
 mysql_start || { echo "recovery failed"; tail -30 "$LOGS/mysqld.log"; chk 1 "C/crash-during-write"; }
-if mq -e "SELECT 1" >/dev/null 2>&1; then mysql_verify "$LB" at least; chk $? "C/crash-during-write"; fi
+if mq -e "SELECT 1" >/dev/null 2>&1; then mysql_verify "$LB" atleast; chk $? "C/crash-during-write"; fi
 
 echo; echo "######## MySQL RESULT: PASS=$PASS FAIL=$FAIL ########"
 mysql_stop_graceful; mount_stop_graceful; cluster_stop_graceful
