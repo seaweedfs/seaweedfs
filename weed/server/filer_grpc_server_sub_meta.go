@@ -344,7 +344,9 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 
 		glog.V(4).Infof("read in memory %v aggregated subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
-		lastReadTime, isDone, readInMemoryLogErr = fs.filer.MetaAggregator.MetaLogBuffer.LoopProcessLogData("aggMeta:"+clientName, lastReadTime, req.UntilNs, func() bool {
+		// Reader name includes clientId/epoch for the same reason as aggNotifyName:
+		// LoopProcessLogData registers it as a subscriber key internally.
+		lastReadTime, isDone, readInMemoryLogErr = fs.filer.MetaAggregator.MetaLogBuffer.LoopProcessLogData(fmt.Sprintf("aggMeta:%s:%d:%d", clientName, req.ClientId, req.ClientEpoch), lastReadTime, req.UntilNs, func() bool {
 			select {
 			case <-ctx.Done():
 				return false
@@ -520,7 +522,9 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 
 		glog.V(3).Infof("read in memory %v local subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
-		lastReadTime, isDone, readInMemoryLogErr = fs.filer.LocalMetaLogBuffer.LoopProcessLogData("localMeta:"+clientName, lastReadTime, req.UntilNs, func() bool {
+		// Reader name includes clientId/epoch for the same reason as localNotifyName:
+		// LoopProcessLogData registers it as a subscriber key internally.
+		lastReadTime, isDone, readInMemoryLogErr = fs.filer.LocalMetaLogBuffer.LoopProcessLogData(fmt.Sprintf("localMeta:%s:%d:%d", clientName, req.ClientId, req.ClientEpoch), lastReadTime, req.UntilNs, func() bool {
 			select {
 			case <-ctx.Done():
 				return false

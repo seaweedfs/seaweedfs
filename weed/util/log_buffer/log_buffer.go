@@ -840,15 +840,16 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 
 		// Special case: If requested time is zero (Unix epoch), treat as "start from beginning"
 		// This handles queries that want to read all data without knowing the exact start time
-		if lastReadPosition.Time.IsZero() || lastReadPosition.Time.Unix() == 0 {
-			// Start from the beginning of memory
+		if (lastReadPosition.Time.IsZero() || lastReadPosition.Time.Unix() == 0) && logBuffer.lastEvictedTsNs.Load() == 0 {
+			// Start from the beginning of memory: nothing was ever evicted, so
+			// the retained buffers still hold the complete history.
 			// Fall through to case 2.1 to read from earliest buffer
-		} else if lastReadPosition.Offset <= 0 && lastReadPosition.Time.UnixNano() >= logBuffer.lastEvictedTsNs.Load() {
-			// Sentinel-offset (time-based) read within the retained history:
-			// nothing at or after this position was ever evicted from the ring,
-			// so memory is complete for this window and reading from the
-			// earliest in-memory entry skips nothing.
-			// Fall through to case 2.1.
+		} else if lastReadPosition.Time.UnixNano() >= logBuffer.lastEvictedTsNs.Load() {
+			// Position within the retained history: nothing at or after it was
+			// ever evicted from the ring, so memory is complete for this window
+			// and reading from the earliest in-memory entry skips nothing.
+			// (Batch offsets carry no meaning for time-based reads, so this
+			// applies to any offset.) Fall through to case 2.1.
 		} else {
 			// Data not in memory buffers - read from disk. Silently starting at
 			// the earliest in-memory entry here could skip evicted-but-not-yet-

@@ -503,24 +503,51 @@ func TestLoopProcessLogData_SlowConsumerFallsBehind(t *testing.T) {
 
 	oldPosition := NewMessagePosition(baseTime.Add(-10*time.Second).UnixNano(), 1)
 
+	// Phase 1: nothing was ever evicted from the ring, so memory still holds
+	// the complete history — the fallen-behind consumer is served inclusively
+	// from memory instead of detouring to disk.
+	received := 0
+	done := make(chan struct{})
+	var err error
+	go func() {
+		_, _, err = logBuffer.LoopProcessLogData("slow-consumer", oldPosition, 0,
+			func() bool { return false }, // stop once drained
+			func(logEntry *filer_pb.LogEntry) (bool, error) {
+				received++
+				return false, nil
+			})
+		close(done)
+	}()
+	select {
+	case <-done:
+		if err == ResumeFromDiskError {
+			t.Fatalf("complete in-memory history must be served from memory, got %v", err)
+		}
+		if received != 1000 {
+			t.Fatalf("expected 1000 entries from memory, got %d", received)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("LoopProcessLogData blocked instead of draining from memory")
+	}
+
+	// Phase 2: once a window at/after the position has been evicted, memory is
+	// incomplete for that window and the consumer must defer to disk.
+	logBuffer.lastEvictedTsNs.Store(baseTime.Add(-5 * time.Second).UnixNano())
+
 	waitForDataFn := func() bool {
 		t.Errorf("waitForDataFn should not be called for a slow consumer that has fallen behind")
 		return false
 	}
-
-	eachLogEntryFn := func(logEntry *filer_pb.LogEntry) (bool, error) {
-		return false, nil
-	}
-
-	done := make(chan struct{})
-	var err error
+	done2 := make(chan struct{})
 	go func() {
-		_, _, err = logBuffer.LoopProcessLogData("slow-consumer", oldPosition, 0, waitForDataFn, eachLogEntryFn)
-		close(done)
+		_, _, err = logBuffer.LoopProcessLogData("slow-consumer-evicted", oldPosition, 0, waitForDataFn,
+			func(logEntry *filer_pb.LogEntry) (bool, error) {
+				return false, nil
+			})
+		close(done2)
 	}()
-
 	select {
-	case <-done:
+	case <-done2:
 		if err != ResumeFromDiskError {
 			t.Fatalf("expected ResumeFromDiskError, got %v", err)
 		}
