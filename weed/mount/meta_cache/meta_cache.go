@@ -564,7 +564,7 @@ func (mc *MetaCache) handleApplyRequest(req metadataApplyRequest) error {
 
 type metadataInvalidation struct {
 	path  util.FullPath
-	entry *filer_pb.Entry
+	entry *filer_pb.Entry // entry now at path per the event; nil when the path was vacated (delete, rename away)
 }
 
 type metadataResponseSideEffects struct {
@@ -975,15 +975,17 @@ func collectEntryInvalidations(resp *filer_pb.SubscribeMetadataResponse) []metad
 	var invalidations []metadataInvalidation
 	if message.OldEntry != nil && message.NewEntry != nil {
 		oldKey := util.NewFullPath(resp.Directory, message.OldEntry.Name)
-		invalidations = append(invalidations, metadataInvalidation{path: oldKey, entry: message.OldEntry})
 		// Normalize NewParentPath: empty means same directory as resp.Directory
 		newDir := resp.Directory
 		if message.NewParentPath != "" {
 			newDir = message.NewParentPath
 		}
 		if message.OldEntry.Name != message.NewEntry.Name || resp.Directory != newDir {
+			invalidations = append(invalidations, metadataInvalidation{path: oldKey})
 			newKey := util.NewFullPath(newDir, message.NewEntry.Name)
 			invalidations = append(invalidations, metadataInvalidation{path: newKey, entry: message.NewEntry})
+		} else {
+			invalidations = append(invalidations, metadataInvalidation{path: oldKey, entry: message.NewEntry})
 		}
 		return invalidations
 	}
@@ -999,7 +1001,7 @@ func collectEntryInvalidations(resp *filer_pb.SubscribeMetadataResponse) []metad
 
 	if filer_pb.IsDelete(resp) && message.OldEntry != nil {
 		oldKey := util.NewFullPath(resp.Directory, message.OldEntry.Name)
-		invalidations = append(invalidations, metadataInvalidation{path: oldKey, entry: message.OldEntry})
+		invalidations = append(invalidations, metadataInvalidation{path: oldKey})
 	}
 
 	return invalidations

@@ -409,6 +409,65 @@ func TestApplyMetadataResponsePurgesHiddenDestinationPath(t *testing.T) {
 	}
 }
 
+// The entry attached to each invalidation is what an open file handle gets
+// refreshed with, so it must be the entry now at that path — or nil when the
+// path was vacated and the handle should keep its last entry.
+func TestCollectEntryInvalidationsCarryAuthoritativeEntries(t *testing.T) {
+	newEntry := &filer_pb.Entry{
+		Name:       "file.txt",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 42},
+	}
+
+	update := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      &filer_pb.Entry{Name: "file.txt"},
+			NewEntry:      newEntry,
+			NewParentPath: "/dir",
+		},
+	}
+	got := collectEntryInvalidations(update)
+	if len(got) != 1 || got[0].path != "/dir/file.txt" || got[0].entry != newEntry {
+		t.Fatalf("in-place update invalidations = %+v, want [{/dir/file.txt NewEntry}]", got)
+	}
+
+	rename := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/src",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      &filer_pb.Entry{Name: "file.tmp"},
+			NewEntry:      newEntry,
+			NewParentPath: "/dst",
+		},
+	}
+	got = collectEntryInvalidations(rename)
+	if len(got) != 2 || got[0].path != "/src/file.tmp" || got[0].entry != nil ||
+		got[1].path != "/dst/file.txt" || got[1].entry != newEntry {
+		t.Fatalf("rename invalidations = %+v, want [{/src/file.tmp nil} {/dst/file.txt NewEntry}]", got)
+	}
+
+	create := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		EventNotification: &filer_pb.EventNotification{
+			NewEntry: newEntry,
+		},
+	}
+	got = collectEntryInvalidations(create)
+	if len(got) != 1 || got[0].path != "/dir/file.txt" || got[0].entry != newEntry {
+		t.Fatalf("create invalidations = %+v, want [{/dir/file.txt NewEntry}]", got)
+	}
+
+	deleteResp := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: "file.txt"},
+		},
+	}
+	got = collectEntryInvalidations(deleteResp)
+	if len(got) != 1 || got[0].path != "/dir/file.txt" || got[0].entry != nil {
+		t.Fatalf("delete invalidations = %+v, want [{/dir/file.txt nil}]", got)
+	}
+}
+
 func newTestMetaCache(t *testing.T, cached map[util.FullPath]bool) (*MetaCache, map[util.FullPath]bool, *recordedPaths, *recordedPaths) {
 	t.Helper()
 

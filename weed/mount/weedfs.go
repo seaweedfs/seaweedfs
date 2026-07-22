@@ -12,6 +12,7 @@ import (
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -302,26 +303,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		}, func(path util.FullPath) bool {
 			return wfs.inodeToPath.IsChildrenCached(path)
 		}, func(filePath util.FullPath, entry *filer_pb.Entry) {
-			// Find inode if it is not a deleted path
-			if inode, inodeFound := wfs.inodeToPath.GetInode(filePath); inodeFound {
-				// Find open file handle
-				if fh, fhFound := wfs.fhMap.FindFileHandle(inode); fhFound {
-					fhActiveLock := fh.wfs.fhLockTable.AcquireLock("invalidateFunc", fh.fh, util.ExclusiveLock)
-					defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
-
-					// Recreate dirty pages
-					fh.dirtyPages.Destroy()
-					fh.dirtyPages = newPageWriter(fh, wfs.option.ChunkSizeLimit)
-
-					// Update handle entry
-					newEntry, status := wfs.maybeLoadEntry(filePath)
-					if status == fuse.OK {
-						if fh.GetEntry().GetEntry() != newEntry {
-							fh.SetEntry(newEntry)
-						}
-					}
-				}
-			}
+			wfs.invalidateOpenFileHandle(filePath, entry)
 		}, func(dirPath util.FullPath) {
 			if wfs.inodeToPath.RecordDirectoryUpdate(dirPath, time.Now(), wfs.dirHotWindow, wfs.dirHotThreshold) {
 				wfs.markDirectoryReadThrough(dirPath)
@@ -692,6 +674,41 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, fuse.Status) 
 		entry.Attributes.Uid, entry.Attributes.Gid = wfs.option.UidGidMapper.FilerToLocal(entry.Attributes.Uid, entry.Attributes.Gid)
 	}
 	return filer.FromPbEntry(dir, entry), fuse.OK
+}
+
+// invalidateOpenFileHandle refreshes an open file handle from a metadata
+// subscription event. The event entry is applied directly: a second lookup
+// here can fail transiently or serve stale cached metadata, and since the
+// subscription cursor has already advanced past the event, the handle would
+// stay pinned to its old entry until an unrelated event arrives. A nil entry
+// means the path no longer holds one (delete, rename away); the handle keeps
+// its last entry so unlinked-but-open reads still work.
+func (wfs *WFS) invalidateOpenFileHandle(filePath util.FullPath, entry *filer_pb.Entry) {
+	inode, inodeFound := wfs.inodeToPath.GetInode(filePath)
+	if !inodeFound {
+		return
+	}
+	fh, fhFound := wfs.fhMap.FindFileHandle(inode)
+	if !fhFound {
+		return
+	}
+	fhActiveLock := wfs.fhLockTable.AcquireLock("invalidateFunc", fh.fh, util.ExclusiveLock)
+	defer wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
+
+	fh.dirtyPages.Destroy()
+	fh.dirtyPages = newPageWriter(fh, wfs.option.ChunkSizeLimit)
+
+	if entry == nil {
+		return
+	}
+	newEntry := proto.Clone(entry).(*filer_pb.Entry)
+	if newEntry.Attributes == nil {
+		newEntry.Attributes = &filer_pb.FuseAttributes{}
+	}
+	if wfs.option.UidGidMapper != nil {
+		newEntry.Attributes.Uid, newEntry.Attributes.Gid = wfs.option.UidGidMapper.FilerToLocal(newEntry.Attributes.Uid, newEntry.Attributes.Gid)
+	}
+	fh.SetEntry(newEntry)
 }
 
 func (wfs *WFS) LookupFn() wdclient.LookupFileIdFunctionType {
