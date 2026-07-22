@@ -60,7 +60,7 @@ kill -9 $GENPID 2>/dev/null; wait $GENPID 2>/dev/null
 sleep 1
 cluster_start || exit 1; mount_start || exit 1
 say "verifying recovery (committed prefix must survive, integrity must hold)"
-python3 "$BIN/sqlite_verify.py" "$DB" "$LB" atleast; chk $? "C/crash-during-write"
+python3 "$BIN/sqlite_verify.py" "$DB" "$LB" at least; chk $? "C/crash-during-write"
 
 echo; echo "######## SQLite RESULT: PASS=$PASS FAIL=$FAIL ########"
 mount_stop_graceful; cluster_stop_graceful

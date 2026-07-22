@@ -22,7 +22,7 @@ func TestJsonpMarshalUnmarshal(t *testing.T) {
 	}
 
 	if text, err := m.Marshal(tv); err != nil {
-		fmt.Printf("marshal eror: %v\n", err)
+		fmt.Printf("marshal error: %v\n", err)
 	} else {
 		fmt.Printf("marshalled: %s\n", string(text))
 	}

@@ -82,7 +82,7 @@ public class SeaweedHadoopInputStream extends FSInputStream {
      * length returned is the length
      * as of the time the Stream was opened. Specifically, if there have been
      * subsequent appends to the file,
-     * they wont be reflected in the returned length.
+     * they won't be reflected in the returned length.
      *
      * @return length of the file.
      * @throws IOException if the stream is closed

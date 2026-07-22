@@ -121,7 +121,7 @@ func (p *TopicPublisher) onEachAssignments(generation int, assignments []*mq_pb.
 		}(job)
 		jobs = append(jobs, job)
 		// TODO assuming this is not re-configured so the partitions are fixed.
-		// better just re-use the existing job
+		// better just reuse the existing job
 		p.partition2Buffer.Insert(assignment.Partition.RangeStart, assignment.Partition.RangeStop, job.inputQueue)
 	}
 	p.jobs = jobs

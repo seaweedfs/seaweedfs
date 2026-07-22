@@ -1,8 +1,8 @@
 package needle_map
 
-/* CompactMap is an in-memory map of needle indeces, optimized for memory usage.
+/* CompactMap is an in-memory map of needle indices, optimized for memory usage.
  *
- * It's implemented as a map of sorted indeces segments, which are in turn accessed through binary
+ * It's implemented as a map of sorted indices segments, which are in turn accessed through binary
  * search. This guarantees a best-case scenario (ordered inserts/updates) of O(1) and a worst case
  * scenario of O(log n) runtime, with memory usage unaffected by insert ordering.
  *
@@ -163,7 +163,7 @@ func (cs *CompactMapSegment) set(key types.NeedleId, offset types.Offset, size t
 	return
 }
 
-// get seeks a map entry by key. Returns an entry pointer, with a boolean specifiying if the entry was found.
+// get seeks a map entry by key. Returns an entry pointer, with a boolean specifying if the entry was found.
 func (cs *CompactMapSegment) get(key types.NeedleId) (*CompactNeedleValue, bool) {
 	if i, found := cs.bsearchKey(key); found {
 		return &cs.list[i], true
@@ -243,7 +243,7 @@ func (cm *CompactMap) Set(key types.NeedleId, offset types.Offset, size types.Si
 	return cs.set(key, offset, size)
 }
 
-// Get seeks a map entry by key. Returns an entry pointer, with a boolean specifiying if the entry was found.
+// Get seeks a map entry by key. Returns an entry pointer, with a boolean specifying if the entry was found.
 func (cm *CompactMap) Get(key types.NeedleId) (*NeedleValue, bool) {
 	cm.RLock()
 	defer cm.RUnlock()

@@ -61,7 +61,7 @@ func TestS3TablesIntegration(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	// Re-use the shared cluster started by TestMain.
+	// Reuse the shared cluster started by TestMain.
 	client := NewS3TablesClient(sharedCluster.s3Endpoint, testRegion, testAccessKey, testSecretKey)
 
 	// Run test suite

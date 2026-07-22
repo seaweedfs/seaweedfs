@@ -7,7 +7,7 @@
 # usage: sqlite_verify.py <db> <expected_rows> [mode]
 #   mode=exact  (default): count must == expected_rows (normal/unexpected shutdown
 #               of a fully-loaded DB -- nothing may be lost or extra).
-#   mode=atleast: expected_rows is a LOWER BOUND (durable committed progress at
+#   mode=at least: expected_rows is a LOWER BOUND (durable committed progress at
 #               crash time). count must be >= expected_rows and form a contiguous
 #               prefix 0..count-1 (the in-flight txn may or may not have committed,
 #               but no committed row may be lost and recovery must be consistent).
@@ -16,8 +16,8 @@ import sys, sqlite3, zlib, random
 db_path = sys.argv[1]
 expected_rows = int(sys.argv[2])
 mode = sys.argv[3] if len(sys.argv) > 3 else "exact"
-if mode not in ("exact", "atleast"):   # a typo must not silently relax checks
-    raise SystemExit(f"invalid mode: {mode!r} (want exact|atleast)")
+if mode not in ("exact", "at least"):   # a typo must not silently relax checks
+    raise SystemExit(f"invalid mode: {mode!r} (want exact|at least)")
 
 def payload(i: int) -> bytes:
     return random.Random(i).randbytes(4096)
@@ -41,7 +41,7 @@ if mode == "exact":
         print(f"rows: got={cnt} expected={expected_rows}  MISMATCH"); ok = False
     else:
         print(f"rows: got={cnt} expected={expected_rows}  OK")
-else:  # atleast
+else:  # at least
     print(f"rows: got={cnt} committed-lower-bound={expected_rows}  "
           f"{'OK' if cnt >= expected_rows else 'LOST COMMITTED DATA'}")
     if cnt < expected_rows: ok = False

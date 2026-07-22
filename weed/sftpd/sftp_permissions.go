@@ -40,7 +40,7 @@ type EntryAttributes struct {
 	SymlinkTarget string
 }
 
-// PermissionError represents a permission-related erro
+// PermissionError represents a permission-related error
 
 // CheckFilePermission verifies if a user has the required permission on a path
 // It first checks if the path is in the user's home directory with explicit permissions.
