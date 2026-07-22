@@ -308,8 +308,9 @@ func TestFilerEtcStoreLoadManagedPoliciesRespectsReadContext(t *testing.T) {
 	}
 	server.mu.Unlock()
 
+	// the canceled read must fail the snapshot, not silently omit the policy
 	managedPolicies, err := store.LoadManagedPolicies(ctx)
-	require.NoError(t, err)
+	require.ErrorContains(t, err, "cancel-me.json")
 	assert.Empty(t, managedPolicies)
 }
 

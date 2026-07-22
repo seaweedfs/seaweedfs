@@ -3,6 +3,7 @@ package filer_etc
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
@@ -187,8 +188,8 @@ func (store *FilerEtcStore) loadPoliciesFromMultiFile(ctx context.Context, polic
 			} else {
 				c, err := filer.ReadInsideFiler(ctx, client, dir, entry.Name)
 				if err != nil {
-					glog.Warningf("Failed to read policy file %s: %v", entry.Name, err)
-					continue
+					// fail the snapshot: a skipped policy would read as deleted
+					return fmt.Errorf("failed to read policy file %s: %w", entry.Name, err)
 				}
 				content = c
 			}

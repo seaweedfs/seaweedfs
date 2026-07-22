@@ -100,8 +100,8 @@ func (store *FilerEtcStore) loadFromMultiFile(ctx context.Context, s3cfg *iam_pb
 			} else {
 				c, err := filer.ReadInsideFiler(ctx, client, dir, entry.Name)
 				if err != nil {
-					glog.Warningf("Failed to read identity file %s: %v", entry.Name, err)
-					continue
+					// fail the snapshot: a skipped identity would read as deleted
+					return fmt.Errorf("failed to read identity file %s: %w", entry.Name, err)
 				}
 				content = c
 			}
