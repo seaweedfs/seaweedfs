@@ -91,9 +91,10 @@ type IdentityAccessManagement struct {
 	// These identities are immutable and cannot be updated by dynamic configuration
 	staticIdentityNames map[string]bool
 
-	// staticPolicyNames tracks policy names loaded from the static config file
-	// so full-state reconciliation does not drop them
+	// staticPolicyNames and staticGroupNames track policy/group names loaded
+	// from the static config file so full-state reconciliation does not drop them
 	staticPolicyNames map[string]bool
+	staticGroupNames  map[string]bool
 
 	// reloadCh coalesces failed-reload retries handled by reloadRetryLoop
 	reloadCh chan struct{}
@@ -368,6 +369,12 @@ func (iam *IdentityAccessManagement) markStaticIdentities(config *iam_pb.S3ApiCo
 	}
 	for _, policy := range config.Policies {
 		iam.staticPolicyNames[policy.Name] = true
+	}
+	if iam.staticGroupNames == nil {
+		iam.staticGroupNames = make(map[string]bool)
+	}
+	for _, group := range config.Groups {
+		iam.staticGroupNames[group.Name] = true
 	}
 	for _, identity := range iam.identities {
 		if iam.staticIdentityNames[identity.Name] {
@@ -1096,11 +1103,22 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 	if isFullState || config.Groups != nil {
 		mergedGroups := make(map[string]*iam_pb.Group)
 		mergedUserGroups := make(map[string][]string)
-		for _, g := range config.Groups {
+		addGroup := func(g *iam_pb.Group) {
 			mergedGroups[g.Name] = g
 			if !g.Disabled {
 				for _, member := range g.Members {
 					mergedUserGroups[member] = append(mergedUserGroups[member], g.Name)
+				}
+			}
+		}
+		for _, g := range config.Groups {
+			addGroup(g)
+		}
+		// static-file groups survive snapshots that do not carry them
+		for name := range iam.staticGroupNames {
+			if _, ok := mergedGroups[name]; !ok {
+				if g, ok := iam.groups[name]; ok {
+					addGroup(g)
 				}
 			}
 		}
