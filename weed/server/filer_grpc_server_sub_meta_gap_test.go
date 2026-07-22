@@ -32,11 +32,11 @@ func TestResolveDiskGapResume(t *testing.T) {
 		},
 		{
 			// Ancient start: skip to avoid an infinite loop, but never past the horizon.
-			name:            "ancient empty gap skips, capped at settled horizon",
+			name:            "ancient empty gap skips, capped below settled horizon",
 			currentTsNs:     time.Unix(0, 0).UnixNano(),
 			earliestMemTsNs: ago(30 * time.Second),
 			wantAdvance:     true,
-			wantAdvanceToNs: ago(horizon),
+			wantAdvanceToNs: ago(horizon) - 1,
 		},
 		{
 			// Advance only to the settled horizon, not to earliest.
@@ -44,7 +44,16 @@ func TestResolveDiskGapResume(t *testing.T) {
 			currentTsNs:     ago(10 * time.Minute),
 			earliestMemTsNs: ago(30 * time.Second),
 			wantAdvance:     true,
-			wantAdvanceToNs: ago(horizon),
+			wantAdvanceToNs: ago(horizon) - 1,
+		},
+		{
+			// Persisted reads exclude ts <= cursor, so an event exactly on the
+			// boundary must stay ahead of the cursor.
+			name:            "earliest exactly at horizon boundary is capped below it",
+			currentTsNs:     ago(10 * time.Minute),
+			earliestMemTsNs: ago(horizon),
+			wantAdvance:     true,
+			wantAdvanceToNs: ago(horizon) - 1,
 		},
 		{
 			// The whole gap is older than the horizon → safe to reach earliest.
@@ -83,10 +92,84 @@ func TestResolveDiskGapResume(t *testing.T) {
 				if gotTo <= tc.currentTsNs {
 					t.Fatalf("advanceTo %v must be strictly after current %v", time.Unix(0, gotTo), time.Unix(0, tc.currentTsNs))
 				}
-				// Never advance into the unsettled (recent) window.
-				if gotTo > now-int64(horizon) {
-					t.Fatalf("advanceTo %v must not exceed settled horizon %v", time.Unix(0, gotTo), time.Unix(0, now-int64(horizon)))
+				// Never advance to or past the unsettled boundary (persisted
+				// reads exclude ts <= cursor).
+				if gotTo >= now-int64(horizon) {
+					t.Fatalf("advanceTo %v must stay strictly below settled horizon %v", time.Unix(0, gotTo), time.Unix(0, now-int64(horizon)))
 				}
+			}
+		})
+	}
+}
+
+// TestResolveLocalGapResume pins the watermark gate used by local subscriptions:
+// a disk miss proves a gap empty only if the flush watermark observed before the
+// read had already passed the earliest in-memory time.
+func TestResolveLocalGapResume(t *testing.T) {
+	now := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC).UnixNano()
+	ago := func(d time.Duration) int64 { return now - int64(d) }
+
+	cases := []struct {
+		name            string
+		currentTsNs     int64
+		earliestMemTsNs int64
+		flushedTsNs     int64
+		wantAdvance     bool
+	}{
+		{
+			name:            "watermark behind earliest must NOT skip (may be unflushed)",
+			currentTsNs:     ago(40 * time.Second),
+			earliestMemTsNs: ago(30 * time.Second),
+			flushedTsNs:     ago(35 * time.Second),
+			wantAdvance:     false,
+		},
+		{
+			name:            "no flush ever (watermark 0) must NOT skip",
+			currentTsNs:     ago(40 * time.Second),
+			earliestMemTsNs: ago(30 * time.Second),
+			flushedTsNs:     0,
+			wantAdvance:     false,
+		},
+		{
+			// Everything up to earliest was flushed before the read: the miss is
+			// authoritative, jump to earliest (the reader includes it from memory).
+			name:            "watermark at earliest skips to earliest",
+			currentTsNs:     ago(40 * time.Second),
+			earliestMemTsNs: ago(30 * time.Second),
+			flushedTsNs:     ago(30 * time.Second),
+			wantAdvance:     true,
+		},
+		{
+			name:            "watermark past earliest skips to earliest",
+			currentTsNs:     ago(10 * time.Minute),
+			earliestMemTsNs: ago(30 * time.Second),
+			flushedTsNs:     ago(10 * time.Second),
+			wantAdvance:     true,
+		},
+		{
+			name:            "memory not ahead of current must NOT skip",
+			currentTsNs:     ago(20 * time.Second),
+			earliestMemTsNs: ago(40 * time.Second),
+			flushedTsNs:     ago(10 * time.Second),
+			wantAdvance:     false,
+		},
+		{
+			name:            "no in-memory data must NOT skip",
+			currentTsNs:     ago(30 * time.Second),
+			earliestMemTsNs: time.Time{}.UnixNano(),
+			flushedTsNs:     ago(10 * time.Second),
+			wantAdvance:     false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotTo, gotAdvance := resolveLocalGapResume(tc.currentTsNs, tc.earliestMemTsNs, tc.flushedTsNs)
+			if gotAdvance != tc.wantAdvance {
+				t.Fatalf("advance = %v, want %v", gotAdvance, tc.wantAdvance)
+			}
+			if gotAdvance && gotTo != tc.earliestMemTsNs {
+				t.Fatalf("advanceTo = %v, want earliest %v", time.Unix(0, gotTo), time.Unix(0, tc.earliestMemTsNs))
 			}
 		})
 	}

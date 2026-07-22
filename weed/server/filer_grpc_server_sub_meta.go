@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/stats"
@@ -20,11 +19,14 @@ import (
 )
 
 const (
-	// metadataGapSettledHorizon bounds how recent a gap may be before a
-	// subscriber may skip past it. A disk miss proves a window empty only once
-	// the window is older than the longest possible flush lag (LogFlushInterval
-	// plus inter-filer clock-skew margin); skipping a younger gap could drop
-	// evicted-but-not-yet-flushed events.
+	// metadataGapSettledHorizon bounds how recent a gap may be before an
+	// aggregated-stream subscriber may skip past it. The aggregated ring has no
+	// flush watermark of its own (persistence happens on each source filer), so
+	// wall-clock age is the only local proxy: a window younger than a flush
+	// interval plus clock-skew margin may still be unflushed. A flush stalled
+	// beyond the horizon can still lose the skipped window — but the previous
+	// unconditional skip lost it in every case. Local subscriptions gate on the
+	// real flush watermark instead (resolveLocalGapResume).
 	metadataGapSettledHorizon = 2 * filer.LogFlushInterval
 
 	// unflushedGapRetryInterval caps the wait of a subscriber parked on a recent
@@ -168,23 +170,42 @@ func (s *pipelinedSender) Close() error {
 	}
 }
 
-// resolveDiskGapResume decides whether a subscriber whose in-memory read returned
-// ResumeFromDiskError and whose disk read found nothing may skip forward. The
-// target is the earliest in-memory timestamp capped at nowTsNs-settledHorizon:
-// only a window older than the horizon is provably empty. For a recent gap the
-// cap lands at/before the current position and it returns false — the caller must
-// wait for the flush and re-read disk instead of skipping unflushed events.
+// resolveDiskGapResume decides whether an aggregated-stream subscriber whose
+// in-memory read returned ResumeFromDiskError and whose disk read found nothing
+// may skip forward. The target is the earliest in-memory timestamp, capped
+// strictly below nowTsNs-settledHorizon (persisted reads exclude ts <= cursor,
+// so the boundary itself stays protected). For a recent gap the cap lands
+// at/before the current position and it returns false — the caller must wait
+// for the flush and re-read disk. Callers should pace capped advances: the
+// horizon slides with the wall clock, so immediate re-probing would spin.
 func resolveDiskGapResume(currentTsNs, earliestMemTsNs, nowTsNs int64, settledHorizon time.Duration) (advanceToTsNs int64, advance bool) {
 	// No in-memory data (zero time → negative UnixNano), or memory not ahead of us.
 	if earliestMemTsNs <= 0 || earliestMemTsNs <= currentTsNs {
 		return 0, false
 	}
-	target := min(earliestMemTsNs, nowTsNs-int64(settledHorizon))
+	target := min(earliestMemTsNs, nowTsNs-int64(settledHorizon)-1)
 	// A recent gap collapses to target <= currentTsNs → do not advance.
 	if target <= currentTsNs {
 		return 0, false
 	}
 	return target, true
+}
+
+// resolveLocalGapResume decides whether a local subscriber may skip a gap its
+// disk read found empty. flushedTsNs is the buffer's flush watermark observed
+// before that read: once it has passed the earliest in-memory timestamp, every
+// event in the gap would have been on disk when the read ran, so the miss
+// proves the gap empty — no wall-clock assumptions needed.
+func resolveLocalGapResume(currentTsNs, earliestMemTsNs, flushedTsNs int64) (advanceToTsNs int64, advance bool) {
+	// No in-memory data (zero time → negative UnixNano), or memory not ahead of us.
+	if earliestMemTsNs <= 0 || earliestMemTsNs <= currentTsNs {
+		return 0, false
+	}
+	// The gap may still hold unflushed events.
+	if flushedTsNs < earliestMemTsNs {
+		return 0, false
+	}
+	return earliestMemTsNs, true
 }
 
 func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeMetadataServer) error {
@@ -270,6 +291,16 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 						lastReadTime.Time, time.Unix(0, advanceToTsNs), earliestTime, clientName)
 					lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, -2)
 					readInMemoryLogErr = nil // Clear the error since we're skipping forward
+					if advanceToTsNs < earliestTime.UnixNano() {
+						// Capped by the sliding horizon: pace the next probe
+						// instead of spinning as the horizon advances.
+						select {
+						case <-aggNotifyChan:
+						case <-ctx.Done():
+							return nil
+						case <-time.After(unflushedGapRetryInterval):
+						}
+					}
 				} else if !earliestTime.IsZero() {
 					// Recent (possibly-unflushed) gap: wait for flush/new data,
 					// then re-read disk.
@@ -373,6 +404,13 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	sender := newPipelinedSender(stream, 1024, req.ClientSupportsBatching)
 	defer sender.Close()
 
+	// Bounded gap waits use the buffer's subscriber notification plus a retry
+	// timer, so a flush landing between the disk read and the wait cannot
+	// strand the subscriber (no lost-wakeup window).
+	localNotifyName := "localGap:" + clientName
+	localNotifyChan := fs.filer.LocalMetaLogBuffer.RegisterSubscriber(localNotifyName)
+	defer fs.filer.LocalMetaLogBuffer.UnregisterSubscriber(localNotifyName)
+
 	var unsyncedEvents int64
 	eachEventNotificationFn := fs.eachEventNotificationFn(req, sender, clientName, &unsyncedEvents)
 
@@ -429,22 +467,24 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 				// No data found on disk
 				// Check if we previously got ResumeFromDiskError from memory, meaning we're in a gap
 				if readInMemoryLogErr == log_buffer.ResumeFromDiskError {
-					// Disk found nothing for the gap. Only skip past a window proven
-					// settled; a recent gap may hold unflushed events. See resolveDiskGapResume.
+					// The read above ran after observing the currentFlushTsNs
+					// watermark and found nothing: once that watermark has passed
+					// the earliest in-memory time, the gap is provably empty.
 					earliestTime := fs.filer.LocalMetaLogBuffer.GetEarliestTime()
-					if advanceToTsNs, advance := resolveDiskGapResume(lastReadTime.Time.UnixNano(), earliestTime.UnixNano(), time.Now().UnixNano(), metadataGapSettledHorizon); advance {
-						glog.V(3).Infof("gap detected: skipping from %v to settled position %v (earliest memory %v) for %v",
-							lastReadTime.Time, time.Unix(0, advanceToTsNs), earliestTime, clientName)
+					if advanceToTsNs, advance := resolveLocalGapResume(lastReadTime.Time.UnixNano(), earliestTime.UnixNano(), currentFlushTsNs); advance {
+						glog.V(3).Infof("gap detected: skipping from %v to flushed earliest memory time %v for %v",
+							lastReadTime.Time, earliestTime, clientName)
 						lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, -2)
 						readInMemoryLogErr = nil // Clear the error since we're skipping forward
 					} else {
-						// Recent (possibly-unflushed) gap or no memory data yet:
-						// wait for flush/new data, then re-read disk.
-						fs.listenersLock.Lock()
-						atomic.AddInt64(&fs.listenersWaits, 1)
-						fs.listenersCond.Wait()
-						atomic.AddInt64(&fs.listenersWaits, -1)
-						fs.listenersLock.Unlock()
+						// The gap may hold unflushed events: wait (bounded) for
+						// flush/new data, then re-read disk.
+						select {
+						case <-localNotifyChan:
+						case <-ctx.Done():
+							return nil
+						case <-time.After(unflushedGapRetryInterval):
+						}
 						continue
 					}
 				} else {
@@ -490,25 +530,26 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 						time.Unix(0, lastDiskReadTsNs), time.Unix(0, currentReadTsNs))
 					continue
 				}
-				// No flush or read-position progress. Only skip past a gap proven
-				// settled; a recent gap may hold unflushed events. See resolveDiskGapResume.
+				// No flush or read-position progress since the last disk read: that
+				// read already proved everything up to the lastCheckedFlushTsNs
+				// watermark, so skip only if it covers the earliest in-memory time.
 				earliestTime := fs.filer.LocalMetaLogBuffer.GetEarliestTime()
-				if advanceToTsNs, advance := resolveDiskGapResume(lastReadTime.Time.UnixNano(), earliestTime.UnixNano(), time.Now().UnixNano(), metadataGapSettledHorizon); advance {
-					glog.V(3).Infof("gap detected: skipping from %v to settled position %v (earliest memory %v) for %v",
-						lastReadTime.Time, time.Unix(0, advanceToTsNs), earliestTime, clientName)
+				if advanceToTsNs, advance := resolveLocalGapResume(currentReadTsNs, earliestTime.UnixNano(), lastCheckedFlushTsNs); advance {
+					glog.V(3).Infof("gap detected: skipping from %v to flushed earliest memory time %v for %v",
+						lastReadTime.Time, earliestTime, clientName)
 					lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, -2)
-					// Clear the error so the next iteration re-reads disk
-					// instead of stalling on listenersCond.Wait().
+					// Clear the error so the next iteration re-reads disk.
 					readInMemoryLogErr = nil
 					continue
 				}
-				// Recent (possibly-unflushed) gap: wait for flush/new data,
-				// then re-evaluate.
-				fs.listenersLock.Lock()
-				atomic.AddInt64(&fs.listenersWaits, 1)
-				fs.listenersCond.Wait()
-				atomic.AddInt64(&fs.listenersWaits, -1)
-				fs.listenersLock.Unlock()
+				// The gap may hold unflushed events: wait (bounded) for
+				// flush/new data, then re-evaluate.
+				select {
+				case <-localNotifyChan:
+				case <-ctx.Done():
+					return nil
+				case <-time.After(unflushedGapRetryInterval):
+				}
 				continue
 			}
 			glog.Errorf("processed to %v: %v", lastReadTime, readInMemoryLogErr)
