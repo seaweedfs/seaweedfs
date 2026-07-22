@@ -1,6 +1,6 @@
 [codespell]
 # Ref: https://github.com/codespell-project/codespell#using-a-config-file
-skip = .git,.gitignore,.gitattributes,*.svg,go.sum,vendor,*.lock,*.css,*.min.*,.codespellrc,*_templ.go
+skip = .git,.git-meta,.gitignore,.gitattributes,*.svg,go.sum,vendor,*.lock,*.css,*.min.*,.codespellrc,*_templ.go
 check-hidden = true
 # Ignore camelCase and PascalCase identifiers (very common in Go/Rust/JS
 # source, e.g. allLocations, publishErr, ReadInside, FlushInterval).
@@ -16,4 +16,5 @@ ignore-regex = \b[a-z]+[A-Z]\w*\b|\b[A-Z][a-z]+[A-Z]\w*\b
 # anc: variable abbreviation for "ancestor" in tree/path tests
 # ue: appears inside JSON test fixtures with embedded escaped quotes (Bl\"ue)
 # auther: local variable meaning "authenticator" (tls.go: `auther := Authenticator{}`)
-ignore-words-list = visibles,fo,te,ser,bject,unparseable,keep-alives,tread,anc,ue,auther
+# thirdparty: literal Maven groupId `org.apache.hadoop.thirdparty` (external, cannot rename)
+ignore-words-list = visibles,fo,te,ser,bject,unparseable,keep-alives,tread,anc,ue,auther,thirdparty
