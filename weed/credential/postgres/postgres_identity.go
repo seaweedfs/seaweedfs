@@ -84,7 +84,34 @@ func (store *PostgresStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3Ap
 		return nil, fmt.Errorf("failed iterating user rows: %w", err)
 	}
 
-	glog.V(0).Infof("credential postgres: LoadConfiguration loaded %d identities", len(config.Identities))
+	// groups are part of the snapshot: full-state reconciliation treats their
+	// absence as deletion
+	groupRows, err := store.db.QueryContext(ctx, "SELECT name, members, policy_names, disabled FROM groups")
+	if err != nil {
+		return nil, fmt.Errorf("failed to query groups: %w", err)
+	}
+	defer groupRows.Close()
+	for groupRows.Next() {
+		var name string
+		var membersJSON, policyNamesJSON []byte
+		var disabled bool
+		if err := groupRows.Scan(&name, &membersJSON, &policyNamesJSON, &disabled); err != nil {
+			return nil, fmt.Errorf("failed to scan group row: %w", err)
+		}
+		group := &iam_pb.Group{Name: name, Disabled: disabled}
+		if err := json.Unmarshal(membersJSON, &group.Members); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal members for group %s: %w", name, err)
+		}
+		if err := json.Unmarshal(policyNamesJSON, &group.PolicyNames); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal policy_names for group %s: %w", name, err)
+		}
+		config.Groups = append(config.Groups, group)
+	}
+	if err := groupRows.Err(); err != nil {
+		return nil, fmt.Errorf("failed iterating group rows: %w", err)
+	}
+
+	glog.V(0).Infof("credential postgres: LoadConfiguration loaded %d identities, %d groups", len(config.Identities), len(config.Groups))
 	return config, nil
 }
 
