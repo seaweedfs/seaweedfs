@@ -499,7 +499,7 @@ func (t *SkipList) Prev(e *SkipListElement) (*SkipListElement, error) {
 // ChangeValue can be used to change the actual value of a node in the skiplist
 // without the need of Deleting and reinserting the node again.
 // Be advised, that ChangeValue only works, if the actual key from ExtractKey() will stay the same!
-// ok is an indicator, wether the value is actually changed.
+// ok is an indicator, whether the value is actually changed.
 func (t *SkipList) ChangeValue(e *SkipListElement, newValue []byte) (err error) {
 	// The key needs to stay correct, so this is very important!
 	e.Value = newValue

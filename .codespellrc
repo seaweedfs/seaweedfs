@@ -15,4 +15,5 @@ ignore-regex = \b[a-z]+[A-Z]\w*\b|\b[A-Z][a-z]+[A-Z]\w*\b
 # tread: valid English word in the idiom "tread carefully" (help text)
 # anc: variable abbreviation for "ancestor" in tree/path tests
 # ue: appears inside JSON test fixtures with embedded escaped quotes (Bl\"ue)
-ignore-words-list = visibles,fo,te,ser,bject,unparseable,keep-alives,tread,anc,ue
+# auther: local variable meaning "authenticator" (tls.go: `auther := Authenticator{}`)
+ignore-words-list = visibles,fo,te,ser,bject,unparseable,keep-alives,tread,anc,ue,auther

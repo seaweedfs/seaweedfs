@@ -61,7 +61,7 @@ func TestStructToSchema(t *testing.T) {
 				RecordTypeEnd(),
 		},
 		{
-			name: "nested simpe structs",
+			name: "nested simple structs",
 			args: args{
 				instance: struct {
 					Field1 int
