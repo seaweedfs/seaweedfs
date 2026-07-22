@@ -46,23 +46,23 @@ func NewPrometheusStorage() *PrometheusStorage {
 		volumeServerCount: promauto.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "seaweedfs_telemetry_volume_servers",
 			Help: "Number of volume servers per cluster",
-		}, []string{"cluster_id", "version", "os"}),
+		}, []string{"cluster_id"}),
 		totalDiskBytes: promauto.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "seaweedfs_telemetry_disk_bytes",
 			Help: "Total disk usage in bytes per cluster",
-		}, []string{"cluster_id", "version", "os"}),
+		}, []string{"cluster_id"}),
 		totalVolumeCount: promauto.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "seaweedfs_telemetry_volume_count",
 			Help: "Total number of volumes per cluster",
-		}, []string{"cluster_id", "version", "os"}),
+		}, []string{"cluster_id"}),
 		filerCount: promauto.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "seaweedfs_telemetry_filer_count",
 			Help: "Number of filer servers per cluster",
-		}, []string{"cluster_id", "version", "os"}),
+		}, []string{"cluster_id"}),
 		brokerCount: promauto.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "seaweedfs_telemetry_broker_count",
 			Help: "Number of broker servers per cluster",
-		}, []string{"cluster_id", "version", "os"}),
+		}, []string{"cluster_id"}),
 		clusterInfo: promauto.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "seaweedfs_telemetry_cluster_info",
 			Help: "Cluster information (always 1, labels contain metadata)",
@@ -80,11 +80,11 @@ func (s *PrometheusStorage) StoreTelemetry(data *proto.TelemetryData) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Update Prometheus metrics
+	// Update Prometheus metrics. Value gauges are keyed by cluster_id only so
+	// a cluster's series continues across upgrades; version/os metadata lives
+	// on cluster_info (join with `* on(cluster_id) group_left(version, os)`).
 	labels := prometheus.Labels{
 		"cluster_id": data.TopologyId,
-		"version":    data.Version,
-		"os":         data.Os,
 	}
 
 	s.volumeServerCount.With(labels).Set(float64(data.VolumeServerCount))
@@ -93,12 +93,14 @@ func (s *PrometheusStorage) StoreTelemetry(data *proto.TelemetryData) error {
 	s.filerCount.With(labels).Set(float64(data.FilerCount))
 	s.brokerCount.With(labels).Set(float64(data.BrokerCount))
 
-	infoLabels := prometheus.Labels{
-		"cluster_id": data.TopologyId,
-		"version":    data.Version,
-		"os":         data.Os,
+	// Drop the cluster_info series recorded under the previous label set when
+	// a cluster reports back with a different version or OS, so it is not
+	// counted under two versions at once.
+	if prev, ok := s.instances[data.TopologyId]; ok &&
+		(prev.TelemetryData.Version != data.Version || prev.TelemetryData.Os != data.Os) {
+		s.clusterInfo.Delete(infoLabels(prev.TelemetryData))
 	}
-	s.clusterInfo.With(infoLabels).Set(1)
+	s.clusterInfo.With(infoLabels(data)).Set(1)
 
 	s.telemetryReceived.Inc()
 
@@ -216,21 +218,32 @@ func (s *PrometheusStorage) CleanupOldInstances(maxAge time.Duration) {
 	for instanceID, instance := range s.instances {
 		if instance.ReceivedAt.Before(cutoff) {
 			delete(s.instances, instanceID)
-
-			// Remove from Prometheus metrics
-			labels := prometheus.Labels{
-				"cluster_id": instance.TelemetryData.TopologyId,
-				"version":    instance.TelemetryData.Version,
-				"os":         instance.TelemetryData.Os,
-			}
-			s.volumeServerCount.Delete(labels)
-			s.totalDiskBytes.Delete(labels)
-			s.totalVolumeCount.Delete(labels)
-			s.filerCount.Delete(labels)
-			s.brokerCount.Delete(labels)
-			s.clusterInfo.Delete(labels)
+			s.deleteClusterMetrics(instance.TelemetryData)
 		}
 	}
 
 	s.updateStats()
+}
+
+// deleteClusterMetrics removes all gauges stored for the given report's
+// cluster. Callers must hold s.mu.
+func (s *PrometheusStorage) deleteClusterMetrics(data *proto.TelemetryData) {
+	labels := prometheus.Labels{
+		"cluster_id": data.TopologyId,
+	}
+	s.volumeServerCount.Delete(labels)
+	s.totalDiskBytes.Delete(labels)
+	s.totalVolumeCount.Delete(labels)
+	s.filerCount.Delete(labels)
+	s.brokerCount.Delete(labels)
+	s.clusterInfo.Delete(infoLabels(data))
+}
+
+// infoLabels is the full label set used by the cluster_info metric.
+func infoLabels(data *proto.TelemetryData) prometheus.Labels {
+	return prometheus.Labels{
+		"cluster_id": data.TopologyId,
+		"version":    data.Version,
+		"os":         data.Os,
+	}
 }
