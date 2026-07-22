@@ -749,7 +749,12 @@ func (mc *MetaCache) completeDirectoryBuildNow(ctx context.Context, dirPath util
 		if snapshotTsNs != 0 && event.TsNs != 0 && event.TsNs <= snapshotTsNs {
 			continue
 		}
-		if err := mc.applyMetadataResponseDirect(ctx, event, MetadataResponseApplyOptions{}, true); err != nil {
+		// Re-invalidate on replay: the invalidation enqueued when this event
+		// arrived resolved against the store mid-build, when the store could
+		// still hold the older listing snapshot (the event's own store write
+		// was deferred to this replay). Skipped events need no re-invalidation
+		// since the listing state is at least as new.
+		if err := mc.applyMetadataResponseDirect(ctx, event, MetadataResponseApplyOptions{InvalidateEntries: true}, true); err != nil {
 			return err
 		}
 	}

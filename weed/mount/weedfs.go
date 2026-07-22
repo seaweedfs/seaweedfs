@@ -701,9 +701,12 @@ func (wfs *WFS) invalidateOpenFileHandle(filePath util.FullPath, entry *filer_pb
 	// snapshot by now: a local flush can install newer state while the event
 	// sits in the queue, and the flush's own event is dedup-suppressed, so a
 	// rollback would never heal. The apply loop has already ordered this event
-	// and any later state into the local store, so prefer the store's entry;
-	// it misses only for read-through directories, where the event entry is
-	// the freshest ordered information available.
+	// and any later state into the local store, so prefer the store's entry.
+	// The store misses for read-through directories and TTL-expired entries;
+	// falling back to the event entry there can still roll back a racing
+	// local flush (neither write reaches the store in a read-through
+	// directory), but it is the best ordered information available without a
+	// filer round-trip.
 	if localEntry, findErr := wfs.metaCache.FindEntry(context.Background(), filePath); findErr == nil && localEntry != nil {
 		fh.SetEntry(localEntry.ToProtoEntry())
 		return

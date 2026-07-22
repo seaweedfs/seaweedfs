@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -174,5 +175,69 @@ func TestQueuedEventDoesNotRollBackNewerLocalState(t *testing.T) {
 
 	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
 		t.Fatalf("open handle file size = %d, want 200 (queued size-100 event must not roll back the newer local state)", size)
+	}
+}
+
+// During a directory build, an event touching the building directory is
+// buffered: its store write is deferred to build completion while its
+// invalidation runs immediately, so that refresh can resolve to the older
+// listing snapshot. The completion replay must re-invalidate so the handle
+// lands on the event's state.
+func TestBufferedBuildEventReinvalidatesOnCompletion(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+
+	wfs.inodeToPath.MarkChildrenCached(util.FullPath("/"))
+	wfs.inodeToPath.Lookup(util.FullPath("/dir"), time.Now().Unix(), true, false, 0, false)
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 88},
+	})
+
+	if err := wfs.metaCache.BeginDirectoryBuild(context.Background(), util.FullPath("/dir")); err != nil {
+		t.Fatalf("begin build: %v", err)
+	}
+	// The in-progress listing inserts the pre-event snapshot.
+	if err := wfs.metaCache.InsertEntry(context.Background(), &filer.Entry{
+		FullPath: "/dir/file",
+		Attr: filer.Attr{
+			Crtime:   time.Unix(1, 0),
+			Mtime:    time.Unix(1, 0),
+			Mode:     0100644,
+			FileSize: 100,
+		},
+	}); err != nil {
+		t.Fatalf("insert listing entry: %v", err)
+	}
+
+	// Postdates the listing snapshot, so it is buffered; its immediate
+	// invalidation resolves to the older listing entry.
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		TsNs:      2000,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: "file"},
+			NewEntry: &filer_pb.Entry{
+				Name:       "file",
+				Attributes: &filer_pb.FuseAttributes{FileSize: 300},
+			},
+			NewParentPath: "/dir",
+		},
+	}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), event, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply buffered event: %v", err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 100 {
+		t.Fatalf("open handle file size mid-build = %d, want 100 (listing snapshot)", size)
+	}
+
+	if err := wfs.metaCache.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 1000); err != nil {
+		t.Fatalf("complete build: %v", err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 300 {
+		t.Fatalf("open handle file size after build completion = %d, want 300 (buffered event must re-invalidate)", size)
 	}
 }
