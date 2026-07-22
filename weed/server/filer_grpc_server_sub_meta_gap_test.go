@@ -56,12 +56,13 @@ func TestResolveDiskGapResume(t *testing.T) {
 			wantAdvanceToNs: ago(horizon) - 1,
 		},
 		{
-			// The whole gap is older than the horizon → safe to reach earliest.
-			name:            "earliest older than horizon skips to earliest",
+			// The whole gap is older than the horizon → safe to reach earliest
+			// (just below it: positions are exclusive).
+			name:            "earliest older than horizon skips to just below earliest",
 			currentTsNs:     ago(10 * time.Minute),
 			earliestMemTsNs: ago(5 * time.Minute),
 			wantAdvance:     true,
-			wantAdvanceToNs: ago(5 * time.Minute),
+			wantAdvanceToNs: ago(5*time.Minute) - 1,
 		},
 		{
 			name:            "memory not ahead of current must NOT skip",
@@ -168,8 +169,10 @@ func TestResolveLocalGapResume(t *testing.T) {
 			if gotAdvance != tc.wantAdvance {
 				t.Fatalf("advance = %v, want %v", gotAdvance, tc.wantAdvance)
 			}
-			if gotAdvance && gotTo != tc.earliestMemTsNs {
-				t.Fatalf("advanceTo = %v, want earliest %v", time.Unix(0, gotTo), time.Unix(0, tc.earliestMemTsNs))
+			// Positions are exclusive: the jump lands just below earliest so the
+			// earliest entry itself is still delivered.
+			if gotAdvance && gotTo != tc.earliestMemTsNs-1 {
+				t.Fatalf("advanceTo = %v, want just below earliest %v", time.Unix(0, gotTo), time.Unix(0, tc.earliestMemTsNs))
 			}
 		})
 	}

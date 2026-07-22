@@ -183,7 +183,9 @@ func resolveDiskGapResume(currentTsNs, earliestMemTsNs, nowTsNs int64, settledHo
 	if earliestMemTsNs <= 0 || earliestMemTsNs <= currentTsNs {
 		return 0, false
 	}
-	target := min(earliestMemTsNs, nowTsNs-int64(settledHorizon)-1)
+	// Positions are exclusive (readers deliver ts > position): resume just below
+	// earliest so the earliest in-memory entry itself is still delivered.
+	target := min(earliestMemTsNs-1, nowTsNs-int64(settledHorizon)-1)
 	// A recent gap collapses to target <= currentTsNs → do not advance.
 	if target <= currentTsNs {
 		return 0, false
@@ -205,7 +207,13 @@ func resolveLocalGapResume(currentTsNs, earliestMemTsNs, flushedTsNs int64) (adv
 	if flushedTsNs < earliestMemTsNs {
 		return 0, false
 	}
-	return earliestMemTsNs, true
+	// Positions are exclusive (readers deliver ts > position): resume just below
+	// earliest so the earliest in-memory entry itself is still delivered.
+	target := earliestMemTsNs - 1
+	if target <= currentTsNs {
+		return 0, false
+	}
+	return target, true
 }
 
 func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeMetadataServer) error {
@@ -237,7 +245,10 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 
 	// Register for instant notification when new data arrives in the aggregated log buffer.
 	// Used to replace the 1127ms sleep with event-driven wake-up.
-	aggNotifyName := "aggSubscribe:" + clientName
+	// Key includes clientId/epoch: a replacement stream may reuse the same
+	// clientName (same gRPC conn), and sharing the channel would let the old
+	// stream's deferred unregister close it under the new stream.
+	aggNotifyName := fmt.Sprintf("aggSubscribe:%s:%d:%d", clientName, req.ClientId, req.ClientEpoch)
 	aggNotifyChan := fs.filer.MetaAggregator.MetaLogBuffer.RegisterSubscriber(aggNotifyName)
 	defer fs.filer.MetaAggregator.MetaLogBuffer.UnregisterSubscriber(aggNotifyName)
 
@@ -290,17 +301,20 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 					glog.V(3).Infof("gap detected: skipping from %v to settled position %v (earliest memory %v) for %v",
 						lastReadTime.Time, time.Unix(0, advanceToTsNs), earliestTime, clientName)
 					lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, -2)
-					readInMemoryLogErr = nil // Clear the error since we're skipping forward
-					if advanceToTsNs < earliestTime.UnixNano() {
-						// Capped by the sliding horizon: pace the next probe
-						// instead of spinning as the horizon advances.
+					if advanceToTsNs < earliestTime.UnixNano()-1 {
+						// Capped mid-gap: stay on the disk-probe path (the rest of
+						// the window may still be unflushed) and pace the next
+						// probe — the horizon slides with the wall clock, so
+						// immediate re-probing would spin.
 						select {
 						case <-aggNotifyChan:
 						case <-ctx.Done():
 							return nil
 						case <-time.After(unflushedGapRetryInterval):
 						}
+						continue
 					}
+					readInMemoryLogErr = nil // Reached the in-memory window: resume from memory
 				} else if !earliestTime.IsZero() {
 					// Recent (possibly-unflushed) gap: wait for flush/new data,
 					// then re-read disk.
@@ -406,8 +420,9 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 
 	// Bounded gap waits use the buffer's subscriber notification plus a retry
 	// timer, so a flush landing between the disk read and the wait cannot
-	// strand the subscriber (no lost-wakeup window).
-	localNotifyName := "localGap:" + clientName
+	// strand the subscriber (no lost-wakeup window). Key includes clientId/
+	// epoch so a replacement stream never shares (and loses) the channel.
+	localNotifyName := fmt.Sprintf("localGap:%s:%d:%d", clientName, req.ClientId, req.ClientEpoch)
 	localNotifyChan := fs.filer.LocalMetaLogBuffer.RegisterSubscriber(localNotifyName)
 	defer fs.filer.LocalMetaLogBuffer.UnregisterSubscriber(localNotifyName)
 

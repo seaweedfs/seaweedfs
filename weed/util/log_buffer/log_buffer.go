@@ -64,6 +64,7 @@ type LogBuffer struct {
 	LastTsNs          atomic.Int64
 	lastFlushTsNs     atomic.Int64
 	lastFlushedOffset atomic.Int64 // Highest offset that has been flushed to disk (-1 = nothing flushed yet)
+	lastEvictedTsNs   atomic.Int64 // Latest stopTime evicted from the sealed ring (0 = nothing evicted yet)
 	offset            int64
 	bufferStartOffset int64
 	minOffset         int64
@@ -615,6 +616,14 @@ func (logBuffer *LogBuffer) copyToFlushInternal(withCallback bool) *dataToFlush 
 		}
 		// CRITICAL: logBuffer.offset is the "next offset to assign", so last offset in buffer is offset-1
 		lastOffsetInBuffer := logBuffer.offset - 1
+		// The oldest sealed window falls out of the ring here: remember how far
+		// eviction has reached so readers can tell whether the retained
+		// in-memory history is complete for a given position.
+		if evicted := logBuffer.prevBuffers.buffers[0]; evicted.size > 0 && !evicted.stopTime.IsZero() {
+			if ts := evicted.stopTime.UnixNano(); ts > logBuffer.lastEvictedTsNs.Load() {
+				logBuffer.lastEvictedTsNs.Store(ts)
+			}
+		}
 		logBuffer.buf = logBuffer.prevBuffers.SealBuffer(logBuffer.startTime, logBuffer.stopTime, logBuffer.buf, logBuffer.pos, logBuffer.bufferStartOffset, lastOffsetInBuffer)
 		// Hand a fully extended prefix snapshot to the sealed slot so sealed
 		// readers reuse it instead of re-copying the window; reset for the next
@@ -834,10 +843,17 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 		if lastReadPosition.Time.IsZero() || lastReadPosition.Time.Unix() == 0 {
 			// Start from the beginning of memory
 			// Fall through to case 2.1 to read from earliest buffer
-		} else if lastReadPosition.Offset <= 0 && lastReadPosition.Time.Before(tsMemory) {
-			// Treat first read with sentinel/zero offset as inclusive of earliest in-memory data
+		} else if lastReadPosition.Offset <= 0 && lastReadPosition.Time.UnixNano() >= logBuffer.lastEvictedTsNs.Load() {
+			// Sentinel-offset (time-based) read within the retained history:
+			// nothing at or after this position was ever evicted from the ring,
+			// so memory is complete for this window and reading from the
+			// earliest in-memory entry skips nothing.
+			// Fall through to case 2.1.
 		} else {
-			// Data not in memory buffers - read from disk
+			// Data not in memory buffers - read from disk. Silently starting at
+			// the earliest in-memory entry here could skip evicted-but-not-yet-
+			// flushed events; the caller's gap handling decides when skipping
+			// forward is provably safe.
 			return nil, -2, false, ResumeFromDiskError
 		}
 	}
