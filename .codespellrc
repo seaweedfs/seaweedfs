@@ -1,6 +1,18 @@
 [codespell]
 # Ref: https://github.com/codespell-project/codespell#using-a-config-file
-skip = .git,.gitignore,.gitattributes,*.svg,go.sum,vendor,*.lock,*.css,*.min.*,.codespellrc
+skip = .git,.gitignore,.gitattributes,*.svg,go.sum,vendor,*.lock,*.css,*.min.*,.codespellrc,*_templ.go
 check-hidden = true
-# ignore-regex = 
-# ignore-words-list =
+# Ignore camelCase and PascalCase identifiers (very common in Go/Rust/JS
+# source, e.g. allLocations, publishErr, ReadInside, FlushInterval).
+ignore-regex = \b[a-z]+[A-Z]\w*\b|\b[A-Z][a-z]+[A-Z]\w*\b
+# visibles: variable name for VisibleInterval collections in filer/mount code
+# fo: `*FilerOptions` receiver name (e.g. `func (fo *FilerOptions) ...`)
+# te: "truncate error" local variable (e.g. `if te := w.Truncate(end); te != nil`)
+# ser: Rust serde serializer variable (`serde_json::ser`, `let mut ser = ...`)
+# bject: intentional wildcard test data (e.g. `s3:Get?bject` matching `s3:GetObject`)
+# unparseable: accepted alternate spelling used throughout the codebase
+# keep-alives: correct plural of the technical term (SSH/HTTP keep-alive)
+# tread: valid English word in the idiom "tread carefully" (help text)
+# anc: variable abbreviation for "ancestor" in tree/path tests
+# ue: appears inside JSON test fixtures with embedded escaped quotes (Bl\"ue)
+ignore-words-list = visibles,fo,te,ser,bject,unparseable,keep-alives,tread,anc,ue
