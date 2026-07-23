@@ -24,7 +24,7 @@ var (
 	logRequests     = flag.Bool("log", true, "Log incoming requests")
 	enableDashboard = flag.Bool("dashboard", true, "Enable built-in dashboard (optional when using Grafana)")
 	cleanupInterval = flag.Duration("cleanup", 24*time.Hour, "Cleanup interval for old instances")
-	maxInstanceAge  = flag.Duration("max-age", 30*24*time.Hour, "Maximum age for instances before cleanup")
+	maxInstanceAge  = flag.Duration("max-age", 90*24*time.Hour, "Maximum age for instances before cleanup")
 	stateFile       = flag.String("state-file", "data/telemetry-state.json", "File for persisting in-memory state across restarts (empty to disable)")
 	saveInterval    = flag.Duration("state-save", time.Hour, "How often to save changed state to -state-file")
 )
