@@ -13,6 +13,9 @@ ACCESS_KEY ?= some_access_key1
 SECRET_KEY ?= some_secret_key1
 VOLUME_MAX_SIZE_MB ?= 50
 
+# Let the tests force-drop collections at the master they actually run against
+export MASTER_ENDPOINT ?= http://127.0.0.1:$(MASTER_PORT)
+
 # Test directory
 TEST_DIR := $(shell pwd)
 SEAWEEDFS_ROOT := $(shell cd ../../../ && pwd)
