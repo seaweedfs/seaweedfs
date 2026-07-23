@@ -64,14 +64,8 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 // doCacheRemoteObjectToLocalCluster performs the actual caching operation.
 // This is called from singleflight, so only one instance runs per object.
 func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, req *filer_pb.CacheRemoteObjectToLocalClusterRequest) (*filer_pb.CacheRemoteObjectToLocalClusterResponse, error) {
-	// Log position fence for the returned entry, serialized with the
-	// mutation handlers' exclusive path lock so a write+notify cannot
-	// interleave the stamp and the read.
 	lockPath := util.JoinPath(req.Directory, req.Name)
-	pathLock := fs.entryLockTable.AcquireLock("CacheRemoteObjectToLocalCluster", lockPath, util.SharedLock)
-	logTsNs := time.Now().UnixNano()
-	entry, err := fs.filer.FindEntry(ctx, lockPath)
-	fs.entryLockTable.ReleaseLock(lockPath, pathLock)
+	entry, logTsNs, err := fs.fencedFindEntry(ctx, lockPath)
 
 	if err == filer_pb.ErrNotFound {
 		return nil, err

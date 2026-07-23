@@ -6,7 +6,6 @@ import (
 	"math"
 	"os"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -43,23 +42,6 @@ type MetaCache struct {
 	buildingDirs         map[util.FullPath]*directoryBuildState
 	dedupRing            dedupRingBuffer
 	includeSystemEntries bool
-
-	// latestEventTsNs is the subscription's progress: the newest subscriber
-	// event timestamp reflected in the local store, advanced under the write
-	// lock together with the store mutation so a read under the same lock
-	// pairs an entry with a version. Only subscriber events advance it —
-	// events are delivered in log order, so every event at or below it has
-	// been seen for EVERY path. Local mutation acks must not advance it:
-	// an ack for one path says nothing about undelivered events for others,
-	// and an inflated cursor would fence those events out permanently.
-	latestEventTsNs atomic.Int64
-
-	// dirVersionFloors records, per children-cached directory, the listing
-	// snapshot its build completed at: the store's content for that
-	// directory reflects every event at or below the floor even when the
-	// subscription still lags the snapshot. Written under the write lock,
-	// read under the read lock, cleared when the directory is purged.
-	dirVersionFloors map[util.FullPath]int64
 
 	// Entry invalidations run on a worker, not inline on the apply loop:
 	// invalidateFunc takes the fh lock, which a flush can hold while waiting on
@@ -128,11 +110,10 @@ func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPat
 		invalidateFunc: func(fullpath util.FullPath, entry *filer_pb.Entry, eventTsNs int64) {
 			invalidateFunc(fullpath, entry, eventTsNs)
 		},
-		applyCh:          make(chan metadataApplyRequest, 128),
-		applyDone:        make(chan struct{}),
-		buildingDirs:     make(map[util.FullPath]*directoryBuildState),
-		dedupRing:        newDedupRingBuffer(),
-		dirVersionFloors: make(map[util.FullPath]int64),
+		applyCh:      make(chan metadataApplyRequest, 128),
+		applyDone:    make(chan struct{}),
+		buildingDirs: make(map[util.FullPath]*directoryBuildState),
+		dedupRing:    newDedupRingBuffer(),
 	}
 	mc.invalidateWorker = util.NewAsyncBatchWorker(func(batch []metadataInvalidation) {
 		for _, invalidation := range batch {
@@ -168,7 +149,11 @@ func (mc *MetaCache) InsertEntry(ctx context.Context, entry *filer.Entry) error 
 }
 
 func (mc *MetaCache) doInsertEntry(ctx context.Context, entry *filer.Entry) error {
-	return mc.localStore.InsertEntry(ctx, entry)
+	if err := mc.localStore.InsertEntry(ctx, entry); err != nil {
+		return err
+	}
+	mc.clearEntryVersionLocked(ctx, entry.FullPath)
+	return nil
 }
 
 // doBatchInsertEntries inserts multiple entries using LevelDB's batch write.
@@ -180,10 +165,10 @@ func (mc *MetaCache) doBatchInsertEntries(ctx context.Context, entries []*filer.
 func (mc *MetaCache) AtomicUpdateEntryFromFiler(ctx context.Context, oldPath util.FullPath, newEntry *filer.Entry) error {
 	mc.Lock()
 	defer mc.Unlock()
-	return mc.atomicUpdateEntryFromFilerLocked(ctx, oldPath, newEntry, false)
+	return mc.atomicUpdateEntryFromFilerLocked(ctx, oldPath, newEntry, false, 0)
 }
 
-func (mc *MetaCache) atomicUpdateEntryFromFilerLocked(ctx context.Context, oldPath util.FullPath, newEntry *filer.Entry, allowUncachedInsert bool) error {
+func (mc *MetaCache) atomicUpdateEntryFromFilerLocked(ctx context.Context, oldPath util.FullPath, newEntry *filer.Entry, allowUncachedInsert bool, versionTsNs int64) error {
 	entry, err := mc.localStore.FindEntry(ctx, oldPath)
 	if err != nil && err != filer_pb.ErrNotFound {
 		glog.Errorf("Metacache: find entry error: %v", err)
@@ -200,6 +185,7 @@ func (mc *MetaCache) atomicUpdateEntryFromFilerLocked(ctx context.Context, oldPa
 				if err := mc.localStore.DeleteEntry(ctx, oldPath); err != nil {
 					return err
 				}
+				mc.clearEntryVersionLocked(ctx, oldPath)
 			}
 		}
 	} else {
@@ -213,6 +199,7 @@ func (mc *MetaCache) atomicUpdateEntryFromFilerLocked(ctx context.Context, oldPa
 			if err := mc.localStore.InsertEntry(ctx, newEntry); err != nil {
 				return err
 			}
+			mc.setEntryVersionLocked(ctx, newEntry.FullPath, versionTsNs)
 		}
 	}
 	return nil
@@ -342,7 +329,11 @@ func (mc *MetaCache) PurgeDirectoryChildren(dirPath util.FullPath, resetFn func(
 func (mc *MetaCache) UpdateEntry(ctx context.Context, entry *filer.Entry) error {
 	mc.Lock()
 	defer mc.Unlock()
-	return mc.localStore.UpdateEntry(ctx, entry)
+	if err := mc.localStore.UpdateEntry(ctx, entry); err != nil {
+		return err
+	}
+	mc.clearEntryVersionLocked(ctx, entry.FullPath)
+	return nil
 }
 
 // TouchDirMtimeCtime updates the mtime and ctime of a directory entry
@@ -361,7 +352,11 @@ func (mc *MetaCache) TouchDirMtimeCtime(ctx context.Context, dirPath util.FullPa
 	}
 	entry.Attr.Mtime = now
 	entry.Attr.Ctime = now
-	return mc.localStore.UpdateEntry(ctx, entry)
+	if err := mc.localStore.UpdateEntry(ctx, entry); err != nil {
+		return err
+	}
+	mc.clearEntryVersionLocked(ctx, dirPath)
+	return nil
 }
 
 func (mc *MetaCache) FindEntry(ctx context.Context, fp util.FullPath) (entry *filer.Entry, err error) {
@@ -369,51 +364,97 @@ func (mc *MetaCache) FindEntry(ctx context.Context, fp util.FullPath) (entry *fi
 	return
 }
 
-// FindEntryWithVersion returns the entry paired with the store's version
-// cursor, read under the same lock the apply path advances it under: every
-// event at or below the returned timestamp is reflected in the entry, for
-// paths whose parent directory the store maintains.
+// FindEntryWithVersion returns the entry paired with its own version: the
+// filer log position of the write that produced it — the event that applied
+// it, or the listing snapshot that inserted it. Zero when the entry came
+// from an unversioned local write. Read under the same lock the apply path
+// writes both under, so the pair is consistent.
 func (mc *MetaCache) FindEntryWithVersion(ctx context.Context, fp util.FullPath) (entry *filer.Entry, versionTsNs int64, err error) {
 	mc.RLock()
 	defer mc.RUnlock()
-	versionTsNs = mc.latestEventTsNs.Load()
-	dir, _ := fp.DirAndName()
-	if floor := mc.dirVersionFloors[util.FullPath(dir)]; floor > versionTsNs {
-		versionTsNs = floor
-	}
 	entry, err = mc.localStore.FindEntry(ctx, fp)
 	if err != nil {
-		return nil, versionTsNs, err
+		return nil, 0, err
 	}
 	if entry.TtlSec > 0 && entry.Crtime.Add(time.Duration(entry.TtlSec)*time.Second).Before(time.Now()) {
-		return nil, versionTsNs, filer_pb.ErrNotFound
+		return nil, 0, filer_pb.ErrNotFound
 	}
 	mc.mapIdFromFilerToLocal(entry)
+	versionTsNs = mc.getEntryVersionLocked(ctx, fp)
 	return
 }
 
-func (mc *MetaCache) advanceLatestEventTs(tsNs int64) {
+// entryVersionKeyPrefix namespaces the per-entry version records in the
+// store's key-value space, apart from entry keys.
+const entryVersionKeyPrefix = "\x00mount.entry.ver\x00"
+
+func entryVersionKey(fp util.FullPath) []byte {
+	return []byte(entryVersionKeyPrefix + string(fp))
+}
+
+// setEntryVersionLocked records the filer log position an entry write
+// reflects; zero (an unversioned local write) clears any previous claim —
+// the new content is not proven at the old position.
+func (mc *MetaCache) setEntryVersionLocked(ctx context.Context, fp util.FullPath, tsNs int64) {
 	if tsNs == 0 {
+		mc.clearEntryVersionLocked(ctx, fp)
 		return
 	}
-	for {
-		current := mc.latestEventTsNs.Load()
-		if tsNs <= current || mc.latestEventTsNs.CompareAndSwap(current, tsNs) {
-			return
-		}
+	value := make([]byte, 8)
+	util.Uint64toBytes(value, uint64(tsNs))
+	if err := mc.localStore.KvPut(ctx, entryVersionKey(fp), value); err != nil {
+		glog.V(1).Infof("set entry version %s: %v", fp, err)
 	}
 }
 
-// LatestEventTsNs returns the newest filer log timestamp reflected in the
-// local store.
-func (mc *MetaCache) LatestEventTsNs() int64 {
-	return mc.latestEventTsNs.Load()
+func (mc *MetaCache) clearEntryVersionLocked(ctx context.Context, fp util.FullPath) {
+	if err := mc.localStore.KvDelete(ctx, entryVersionKey(fp)); err != nil {
+		glog.V(4).Infof("clear entry version %s: %v", fp, err)
+	}
+}
+
+func (mc *MetaCache) getEntryVersionLocked(ctx context.Context, fp util.FullPath) int64 {
+	value, err := mc.localStore.KvGet(ctx, entryVersionKey(fp))
+	if err != nil || len(value) != 8 {
+		return 0
+	}
+	return int64(util.BytesToUint64(value))
+}
+
+// entryVersionBlocksLocked reports whether an incoming write at tsNs is
+// already reflected at fp. Version records can linger after a bulk folder
+// wipe (DeleteFolderChildren cannot enumerate them), so a claim only blocks
+// while its entry actually exists — a recreate is never fenced out.
+func (mc *MetaCache) entryVersionBlocksLocked(ctx context.Context, fp util.FullPath, tsNs int64) bool {
+	if mc.getEntryVersionLocked(ctx, fp) < tsNs {
+		return false
+	}
+	if _, err := mc.localStore.FindEntry(ctx, fp); err != nil {
+		return false
+	}
+	return true
+}
+
+// stampChildrenVersionLocked records the listing snapshot as every child's
+// version: the listing read the filer at the snapshot, proving each listed
+// entry individually at that position.
+func (mc *MetaCache) stampChildrenVersionLocked(ctx context.Context, dirPath util.FullPath, snapshotTsNs int64) {
+	if _, err := mc.localStore.ListDirectoryEntries(ctx, dirPath, "", true, math.MaxInt64, func(entry *filer.Entry) (bool, error) {
+		mc.setEntryVersionLocked(ctx, entry.FullPath, snapshotTsNs)
+		return true, nil
+	}); err != nil {
+		glog.V(1).Infof("stamp children versions %s: %v", dirPath, err)
+	}
 }
 
 func (mc *MetaCache) DeleteEntry(ctx context.Context, fp util.FullPath) (err error) {
 	mc.Lock()
 	defer mc.Unlock()
-	return mc.localStore.DeleteEntry(ctx, fp)
+	if err = mc.localStore.DeleteEntry(ctx, fp); err != nil {
+		return err
+	}
+	mc.clearEntryVersionLocked(ctx, fp)
+	return nil
 }
 func (mc *MetaCache) DeleteFolderChildren(ctx context.Context, fp util.FullPath) (err error) {
 	mc.Lock()
@@ -639,15 +680,6 @@ func (mc *MetaCache) applyMetadataResponseNow(ctx context.Context, resp *filer_p
 			return err
 		}
 	}
-	// A buffered event is delivered subscription progress even though its
-	// store write waits for the build: its directory is read-through, so no
-	// store read pairs with it, and the cursor must cover it before its
-	// invalidation is observable (the build may abort and never apply it).
-	// Immediate rename fragments were applied above so their store writes
-	// are not outrun.
-	if options.InvalidateEntries {
-		mc.advanceLatestEventTs(resp.TsNs)
-	}
 	// Apply side effects but skip directory notifications for dirs that are
 	// currently being built. Notifying a building dir can trigger
 	// markDirectoryReadThrough → DeleteFolderChildren, wiping entries that
@@ -738,27 +770,20 @@ func (mc *MetaCache) applyMetadataResponseLocked(ctx context.Context, resp *file
 	}
 
 	mc.Lock()
-	// A directory floor certifies the listing state as of the snapshot; an
-	// event at or below the floor is already reflected there, and applying
-	// it would roll the store back while the floor keeps claiming the
-	// snapshot version — fencing the correcting events out. Skip each half
-	// of the mutation independently against its directory's floor.
+	// Last-writer-wins per entry: an event at or below the version an entry
+	// already carries is already reflected in it (a listing snapshot or a
+	// newer event wrote it), and applying it would roll that entry back
+	// while its version keeps the newer claim — fencing the correcting
+	// events out. Each half of the mutation is gated independently.
 	if resp.TsNs != 0 {
-		if oldPath != "" {
-			if dir, _ := oldPath.DirAndName(); resp.TsNs <= mc.dirVersionFloors[util.FullPath(dir)] {
-				oldPath = ""
-			}
+		if oldPath != "" && mc.entryVersionBlocksLocked(ctx, oldPath, resp.TsNs) {
+			oldPath = ""
 		}
-		if newEntry != nil {
-			if dir, _ := newEntry.DirAndName(); resp.TsNs <= mc.dirVersionFloors[util.FullPath(dir)] {
-				newEntry = nil
-			}
+		if newEntry != nil && mc.entryVersionBlocksLocked(ctx, newEntry.FullPath, resp.TsNs) {
+			newEntry = nil
 		}
 	}
-	err := mc.atomicUpdateEntryFromFilerLocked(ctx, oldPath, newEntry, allowUncachedInsert)
-	if err == nil && options.InvalidateEntries {
-		mc.advanceLatestEventTs(resp.TsNs)
-	}
+	err := mc.atomicUpdateEntryFromFilerLocked(ctx, oldPath, newEntry, allowUncachedInsert, resp.TsNs)
 	if err == nil && hideNewPath {
 		if purgeErr := mc.purgeEntryLocked(ctx, newPath, message.NewEntry.IsDirectory); purgeErr != nil {
 			err = purgeErr
@@ -810,7 +835,8 @@ func (mc *MetaCache) purgeDirectoryChildrenNow(ctx context.Context, dirPath util
 	}
 	mc.Lock()
 	defer mc.Unlock()
-	delete(mc.dirVersionFloors, dirPath)
+	// Version records for the wiped children linger; entryVersionBlocksLocked
+	// disregards a claim whose entry is gone, so they cannot fence recreates.
 	return mc.localStore.DeleteFolderChildren(ctx, dirPath)
 }
 
@@ -820,6 +846,15 @@ func (mc *MetaCache) completeDirectoryBuildNow(ctx context.Context, dirPath util
 
 	if state == nil {
 		return nil
+	}
+
+	// The listing read the filer at the snapshot, proving each listed entry
+	// at that position; stamp before replaying so replayed (newer) events
+	// override the stamp, not the other way around.
+	if snapshotTsNs != 0 {
+		mc.Lock()
+		mc.stampChildrenVersionLocked(ctx, dirPath, snapshotTsNs)
+		mc.Unlock()
 	}
 
 	for _, event := range state.bufferedEvents {
@@ -836,15 +871,6 @@ func (mc *MetaCache) completeDirectoryBuildNow(ctx context.Context, dirPath util
 		}
 	}
 
-	// The listing that built this directory reflects the filer log up to
-	// snapshotTsNs for this directory only — record it as the directory's
-	// version floor rather than advancing the global cursor, which would
-	// falsely vouch for undelivered events of unrelated paths.
-	if snapshotTsNs != 0 {
-		mc.Lock()
-		mc.dirVersionFloors[dirPath] = snapshotTsNs
-		mc.Unlock()
-	}
 	mc.markCachedFn(dirPath)
 
 	// Re-invalidate every buffered event, replayed or snapshot-covered: the

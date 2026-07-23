@@ -729,11 +729,8 @@ func TestLocalAckDoesNotFenceUnrelatedDelayedEvents(t *testing.T) {
 	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("other", 10, 2000), meta_cache.LocalMetadataResponseApplyOptions); err != nil {
 		t.Fatalf("apply local event: %v", err)
 	}
-	if got := wfs.metaCache.LatestEventTsNs(); got != 0 {
-		t.Fatalf("LatestEventTsNs = %d, want 0 (local acks must not advance the subscription cursor)", got)
-	}
-
-	// Open the file: the cached-store read must not claim position 2000.
+	// Open the file: the cached-store read must not claim position 2000 —
+	// the local ack versioned only its own path.
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
 	fh, status := wfs.AcquireHandle(inode, 0, 0, 0)
 	if status != fuse.OK {

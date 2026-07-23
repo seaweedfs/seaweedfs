@@ -26,21 +26,26 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// fencedFindEntry reads an entry together with a log-position fence for it.
+// The fence is exact: the stamp and the read share the path lock the
+// mutation handlers hold exclusively across write and notify, so a mutation
+// completing before the lock has its event timestamp below the fence, and
+// one starting after it is not in the read — every event at or below the
+// fence is reflected in the returned entry, and none above it are. Any
+// read whose result a client versions must go through here.
+func (fs *FilerServer) fencedFindEntry(ctx context.Context, path util.FullPath) (entry *filer.Entry, logTsNs int64, err error) {
+	pathLock := fs.entryLockTable.AcquireLock("fencedFindEntry", path, util.SharedLock)
+	logTsNs = time.Now().UnixNano()
+	entry, err = fs.filer.FindEntry(ctx, path)
+	fs.entryLockTable.ReleaseLock(path, pathLock)
+	return
+}
+
 func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
 
 	glog.V(4).InfofCtx(ctx, "LookupDirectoryEntry %s", filepath.Join(req.Directory, req.Name))
 
-	// Log position fence for the returned entry. Shared with the mutation
-	// handlers' exclusive path lock so the fence and the read are serialized
-	// against write+notify: a mutation completing before the lock has its
-	// event timestamp below the fence, one starting after it is not in the
-	// read — every event at or below the fence is reflected in the entry,
-	// and none above it are.
-	lockPath := util.JoinPath(req.Directory, req.Name)
-	pathLock := fs.entryLockTable.AcquireLock("LookupDirectoryEntry", lockPath, util.SharedLock)
-	logTsNs := time.Now().UnixNano()
-	entry, err := fs.filer.FindEntry(ctx, lockPath)
-	fs.entryLockTable.ReleaseLock(lockPath, pathLock)
+	entry, logTsNs, err := fs.fencedFindEntry(ctx, util.JoinPath(req.Directory, req.Name))
 
 	if err == filer_pb.ErrNotFound {
 		return &filer_pb.LookupDirectoryEntryResponse{LogTsNs: logTsNs}, err

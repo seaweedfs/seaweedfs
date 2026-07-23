@@ -537,3 +537,47 @@ func countPath(paths []util.FullPath, target util.FullPath) int {
 	}
 	return count
 }
+
+// An unversioned local write replaces the content, so the previous version
+// claim no longer describes it and must be cleared — keeping it would fence
+// out events correcting the unversioned state.
+func TestUnversionedWriteClearsEntryVersion(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+		"/":    true,
+		"/dir": true,
+	})
+	defer mc.Shutdown()
+
+	versioned := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		TsNs:      1000,
+		EventNotification: &filer_pb.EventNotification{
+			NewEntry: &filer_pb.Entry{
+				Name:       "file.txt",
+				Attributes: &filer_pb.FuseAttributes{FileSize: 11, FileMode: 0100644},
+			},
+		},
+	}
+	if err := mc.ApplyMetadataResponse(context.Background(), versioned, SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply versioned event: %v", err)
+	}
+	if _, versionTsNs, err := mc.FindEntryWithVersion(context.Background(), util.FullPath("/dir/file.txt")); err != nil || versionTsNs != 1000 {
+		t.Fatalf("versioned entry = ts %d, %v; want 1000", versionTsNs, err)
+	}
+
+	if err := mc.UpdateEntry(context.Background(), &filer.Entry{
+		FullPath: "/dir/file.txt",
+		Attr: filer.Attr{
+			Crtime:   time.Unix(1, 0),
+			Mtime:    time.Unix(2, 0),
+			Mode:     0100644,
+			FileSize: 22,
+		},
+	}); err != nil {
+		t.Fatalf("local update: %v", err)
+	}
+	if _, versionTsNs, err := mc.FindEntryWithVersion(context.Background(), util.FullPath("/dir/file.txt")); err != nil || versionTsNs != 0 {
+		t.Fatalf("after unversioned write = ts %d, %v; want 0", versionTsNs, err)
+	}
+	mc.WaitForEntryInvalidations()
+}
