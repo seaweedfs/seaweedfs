@@ -26,14 +26,17 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version-file: 'go.mod'
+          go-version-file: 'telemetry/server/go.mod'
 
       - name: Build Telemetry Server
         if: github.event_name == 'workflow_dispatch' && inputs.deploy
         run: |
+          # telemetry/server is its own Go module; build from within it
+          cd telemetry/server
           go mod tidy
           echo "Building telemetry server..."
-          GOOS=linux GOARCH=amd64 go build -o telemetry-server ./telemetry/server/main.go
+          GOOS=linux GOARCH=amd64 go build -o ../../telemetry-server .
+          cd ../..
           ls -la telemetry-server
           echo "Build completed successfully"
 
