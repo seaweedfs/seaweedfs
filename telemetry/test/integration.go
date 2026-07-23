@@ -157,8 +157,8 @@ func waitForServer(url string, timeout time.Duration) bool {
 func testProtobufMarshaling() error {
 	// Test protobuf marshaling/unmarshaling
 	testData := &proto.TelemetryData{
-		TopologyId:        "test-cluster-12345",
-		Version:           "test-3.45",
+		TopologyId:        "00000000-0000-4000-8000-000000012345",
+		Version:           "3.45",
 		Os:                "linux/amd64",
 		VolumeServerCount: 2,
 		TotalDiskBytes:    1000000,
@@ -199,11 +199,11 @@ func testProtobufMarshaling() error {
 func testTelemetryClient() error {
 	// Create telemetry client
 	client := telemetry.NewClient(serverURL+"/api/collect", true)
-	client.SetTopologyId("test-topology-12345")
+	client.SetTopologyId("00000000-0000-4000-8000-000000054321")
 
 	// Create test data using protobuf format
 	testData := &proto.TelemetryData{
-		Version:           "test-3.45",
+		Version:           "3.45",
 		Os:                "linux/amd64",
 		VolumeServerCount: 3,
 		TotalDiskBytes:    1073741824, // 1GB
