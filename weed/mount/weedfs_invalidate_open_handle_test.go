@@ -77,7 +77,8 @@ type fakeFilerServer struct {
 	lookupLogTsNs2          int64
 	cacheSize               uint64
 	cacheLogTsNs            int64
-	updateEventless         bool // UpdateEntry acks like a no-change update: no event, log position only
+	cacheUid                uint32 // filer-side uid the cache response carries
+	updateEventless         bool   // UpdateEntry acks like a no-change update: no event, log position only
 	updateLogTsNs           int64
 	lookupCalls             atomic.Int32
 	lookupStarted           chan struct{} // closed when the first lookup arrives
@@ -108,7 +109,7 @@ func (s *fakeFilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, r
 	return &filer_pb.CacheRemoteObjectToLocalClusterResponse{
 		Entry: &filer_pb.Entry{
 			Name:       req.Name,
-			Attributes: &filer_pb.FuseAttributes{FileSize: s.cacheSize, FileMode: 0100644},
+			Attributes: &filer_pb.FuseAttributes{FileSize: s.cacheSize, FileMode: 0100644, Uid: s.cacheUid},
 		},
 		LogTsNs: s.cacheLogTsNs,
 	}, nil
@@ -1421,4 +1422,116 @@ func TestEmptyListingTrailerSnapshotSetsAbsenceFloor(t *testing.T) {
 		t.Fatalf("entry after newer create = %+v, %v; want size 450", entry, err)
 	}
 	wfs.metaCache.WaitForEntryInvalidations()
+}
+
+// A foreign delete of a file with unflushed local writes must not destroy the
+// dirty pages: POSIX lets a process keep writing to an unlinked-but-open file,
+// and the writes were already acknowledged.
+func TestVacateEventPreservesDirtyPages(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 200},
+	})
+	fh.dirtyMetadata = true
+	pagesBefore := fh.dirtyPages
+
+	deleteResp := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		TsNs:      1500,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: "file"},
+		},
+	}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), deleteResp, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply delete event: %v", err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if fh.dirtyPages != pagesBefore {
+		t.Fatal("dirty pages destroyed by a foreign delete of an open file with unflushed writes")
+	}
+	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
+		t.Fatalf("open handle file size after delete = %d, want 200", size)
+	}
+}
+
+// A committed copy whose readback failed adopts only the copy's own event
+// (same content). A foreign write to the destination that arrives first has
+// different content and must install normally, not be swallowed by the
+// pending adoption.
+func TestCopyAdoptRejectsForeignEvent(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 100},
+	})
+
+	// Readback failed: synthesized base at size 200, adoption pending.
+	wfs.applyServerSideWholeFileCopyResult(fh, fh, util.FullPath("/dir/file"), nil, 0, 200)
+
+	// A foreign write to the destination arrives before the copy's own event:
+	// different content (size 500), so it must install and not be adopted.
+	foreign := updateEventFor("file", 500, 1500)
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), foreign, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply foreign event: %v", err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 500 {
+		t.Fatalf("live entry file size = %d, want 500 (foreign write must install, not be swallowed by the copy adoption)", size)
+	}
+}
+
+// downloadRemoteEntry stores the handle's base in local uid/gid form, so a
+// later re-delivery of unchanged content compares equal and does not
+// force-destroy dirty pages under a non-identity UidGidMapper.
+func TestRemoteDownloadBaseMappedToLocal(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+	// The test mapper maps filer uid 2000 -> local 1000; the cache response
+	// carries filer uid 2000.
+	startFakeFiler(t, wfs, &fakeFilerServer{cacheSize: 200, cacheUid: 2000, cacheLogTsNs: 1000})
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+		Name:        "file",
+		Attributes:  &filer_pb.FuseAttributes{FileSize: 200},
+		RemoteEntry: &filer_pb.RemoteEntry{RemoteSize: 200},
+	})
+
+	if err := fh.downloadRemoteEntry(fh.GetEntry()); err != nil {
+		t.Fatalf("downloadRemoteEntry: %v", err)
+	}
+	// The base — and the live entry — must be in local uid form.
+	if uid := fh.GetEntry().GetEntry().Attributes.Uid; uid != 1000 {
+		t.Fatalf("live entry uid = %d, want filer 2000 mapped to local 1000", uid)
+	}
+
+	// The user writes to the handle (dirty pages, not flushed).
+	fh.dirtyMetadata = true
+	pagesBefore := fh.dirtyPages
+
+	// A re-delivery of the same content (local-form candidate, uid 2000 in the
+	// event mapped to local 1000) must read as a no-op and preserve the writes.
+	reDeliver := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		TsNs:      1500,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      &filer_pb.Entry{Name: "file"},
+			NewEntry:      &filer_pb.Entry{Name: "file", Attributes: &filer_pb.FuseAttributes{FileSize: 200, FileMode: 0100644, Uid: 2000}},
+			NewParentPath: "/dir",
+		},
+	}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), reDeliver, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply re-delivery: %v", err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if fh.dirtyPages != pagesBefore {
+		t.Fatal("dirty pages destroyed by an unchanged re-delivery (base was not mapped to local form)")
+	}
 }

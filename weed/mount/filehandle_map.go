@@ -50,7 +50,15 @@ func (i *FileHandleToInode) MarkInodeRenamed(inode uint64) {
 }
 
 func (i *FileHandleToInode) AcquireFileHandle(wfs *WFS, inode uint64, entry *filer_pb.Entry) *FileHandle {
-	fh, _ := i.AcquireFileHandleWithVersion(wfs, inode, entry, 0)
+	fh, existed := i.AcquireFileHandleWithVersion(wfs, inode, entry, 0)
+	// Preserve the pre-versioning contract for callers that pass an
+	// authoritative entry rather than a fresh lookup — the deferred-create
+	// path and tests: the entry must take effect even on a pre-existing
+	// handle. The versioned open path uses AcquireFileHandleWithVersion
+	// followed by installAckedEntry, which gates on version instead.
+	if existed && entry != nil && fh.GetEntry().GetEntry() != entry {
+		fh.SetEntry(entry)
+	}
 	return fh
 }
 

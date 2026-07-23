@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"bytes"
 	"context"
 	"math/rand/v2"
 	"os"
@@ -601,6 +602,16 @@ func (wfs *WFS) maybeLoadEntryWithVersion(fullpath util.FullPath) (*filer_pb.Ent
 // For uncached/read-through directories, always consult the filer directly so stale
 // local entries do not leak back into lookup results.
 func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, fuse.Status) {
+	// Hot path: a cache hit returns the entry without the extra version read
+	// FindEntryWithVersion performs. Every other case (cache miss, error,
+	// uncached parent) falls through to the version-aware lookup, whose extra
+	// read is dwarfed by the filer RPC it does anyway.
+	dir, _ := fullpath.DirAndName()
+	if wfs.metaCache.IsDirectoryCached(util.FullPath(dir)) {
+		if cachedEntry, err := wfs.metaCache.FindEntry(context.Background(), fullpath); err == nil && cachedEntry != nil {
+			return cachedEntry, fuse.OK
+		}
+	}
 	entry, _, status := wfs.lookupEntryWithVersion(fullpath)
 	return entry, status
 }
@@ -730,6 +741,29 @@ func (wfs *WFS) getPbEntryWithVersion(ctx context.Context, fullpath util.FullPat
 	return entry, logTsNs, nil
 }
 
+// sameEntryContent reports whether two entries carry the same file content —
+// size, inline bytes, and chunk list — ignoring server-assigned timestamps.
+// Used to tell a self-initiated mutation's own event (same content, fresh
+// timestamps) from a foreign write (changed content).
+func sameEntryContent(a, b *filer_pb.Entry) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if filer.FileSize(a) != filer.FileSize(b) || !bytes.Equal(a.Content, b.Content) {
+		return false
+	}
+	if len(a.Chunks) != len(b.Chunks) {
+		return false
+	}
+	for i := range a.Chunks {
+		if a.Chunks[i].GetFileIdString() != b.Chunks[i].GetFileIdString() ||
+			a.Chunks[i].Offset != b.Chunks[i].Offset || a.Chunks[i].Size != b.Chunks[i].Size {
+			return false
+		}
+	}
+	return true
+}
+
 // invalidateOpenFileHandle refreshes an open file handle from a metadata
 // subscription event. No filer lookup happens here: it can fail transiently,
 // and since the subscription cursor has already advanced past the event, the
@@ -779,10 +813,15 @@ func (wfs *WFS) invalidateOpenFileHandle(filePath util.FullPath, eventEntry *fil
 		}
 	}
 	if candidate == nil {
-		// Path vacated (delete, rename away): drop local dirty state, keep
-		// the last entry so unlinked-but-open reads still work.
-		fh.dirtyPages.Destroy()
-		fh.dirtyPages = newPageWriter(fh, wfs.option.ChunkSizeLimit)
+		// Path vacated (delete, rename away): keep the last entry so
+		// unlinked-but-open reads still work. Preserve local dirty state —
+		// a process may keep writing to an unlinked-but-open file (POSIX),
+		// and those writes have already been acknowledged; destroying them
+		// on a foreign delete loses acknowledged data.
+		if !fh.dirtyMetadata {
+			fh.dirtyPages.Destroy()
+			fh.dirtyPages = newPageWriter(fh, wfs.option.ChunkSizeLimit)
+		}
 		fh.advanceEntryVersionTsNs(eventTsNs)
 		return
 	}
@@ -790,12 +829,20 @@ func (wfs *WFS) invalidateOpenFileHandle(filePath util.FullPath, eventEntry *fil
 		candidate.Attributes.FileSize = filer.FileSize(candidate)
 	}
 	// A committed self-initiated mutation with a failed readback left the
-	// base approximate; its own event is en route. Adopt this state as the
-	// base without invalidating local writes made since.
-	if fh.adoptNextEventBase.CompareAndSwap(true, false) {
-		fh.baseEntry.Store(candidate)
-		fh.advanceEntryVersionTsNs(candidateTsNs)
-		return
+	// base approximate; its own event is en route. Adopt that event's state
+	// as the base without invalidating local writes made since — but only
+	// when it is the copy's own event: the synthesized base matches the copy
+	// on content and differs only in server-assigned timestamps. An event
+	// that changes content is a foreign write that arrived first; clear the
+	// pending adoption and install it normally.
+	if fh.adoptNextEventBase.Load() {
+		if base := fh.baseEntry.Load(); base != nil && sameEntryContent(candidate, base) {
+			fh.adoptNextEventBase.Store(false)
+			fh.baseEntry.Store(candidate)
+			fh.advanceEntryVersionTsNs(candidateTsNs)
+			return
+		}
+		fh.adoptNextEventBase.Store(false)
 	}
 	// State the handle already reflects — an under-fenced re-delivery (a
 	// fence is a lower bound; a listing or lookup can include a mutation

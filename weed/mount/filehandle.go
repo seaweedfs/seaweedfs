@@ -68,6 +68,11 @@ type FileHandle struct {
 	// Acquired in AcquireHandle, released in ReleaseHandle.
 	dlmLock *cluster.LiveLock
 
+	// remoteInstallMu serializes downloadRemoteEntry's entry/base/version
+	// install, which runs under only the handle's shared lock and so can race
+	// a second concurrent read of the same remote-only file.
+	remoteInstallMu sync.Mutex
+
 	// RDMA chunk offset cache for performance optimization
 	chunkOffsetCache []int64
 	chunkCacheValid  bool

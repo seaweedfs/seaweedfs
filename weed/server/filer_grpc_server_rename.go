@@ -12,6 +12,28 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+// acquireRenamePathLocks holds the source and destination path locks across a
+// rename's commit and notification so a shared-locked lookup cannot read
+// renamed state under a fence preceding its events. Locks are taken in path
+// order to avoid deadlock with a concurrent reverse rename; descendant paths
+// of a renamed directory are not individually locked. The returned func
+// releases both.
+func (fs *FilerServer) acquireRenamePathLocks(intention string, oldPath, newPath util.FullPath) func() {
+	firstPath, secondPath := oldPath, newPath
+	if secondPath < firstPath {
+		firstPath, secondPath = secondPath, firstPath
+	}
+	firstLock := fs.entryLockTable.AcquireLock(intention, firstPath, util.ExclusiveLock)
+	if secondPath == firstPath {
+		return func() { fs.entryLockTable.ReleaseLock(firstPath, firstLock) }
+	}
+	secondLock := fs.entryLockTable.AcquireLock(intention, secondPath, util.ExclusiveLock)
+	return func() {
+		fs.entryLockTable.ReleaseLock(secondPath, secondLock)
+		fs.entryLockTable.ReleaseLock(firstPath, firstLock)
+	}
+}
+
 func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.AtomicRenameEntryRequest) (*filer_pb.AtomicRenameEntryResponse, error) {
 
 	glog.V(1).Infof("AtomicRenameEntry %v", req)
@@ -23,21 +45,7 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 		return nil, err
 	}
 
-	// Participate in the lookup fence: hold the source and destination path
-	// locks across commit and notification so a shared-locked lookup cannot
-	// read renamed state under a fence preceding its events. Ordered by path
-	// to avoid deadlock with a concurrent reverse rename; descendant paths
-	// of a renamed directory are not individually locked.
-	firstPath, secondPath := oldParent.Child(req.OldName), newParent.Child(req.NewName)
-	if secondPath < firstPath {
-		firstPath, secondPath = secondPath, firstPath
-	}
-	firstLock := fs.entryLockTable.AcquireLock("AtomicRenameEntry", firstPath, util.ExclusiveLock)
-	defer fs.entryLockTable.ReleaseLock(firstPath, firstLock)
-	if secondPath != firstPath {
-		secondLock := fs.entryLockTable.AcquireLock("AtomicRenameEntry", secondPath, util.ExclusiveLock)
-		defer fs.entryLockTable.ReleaseLock(secondPath, secondLock)
-	}
+	defer fs.acquireRenamePathLocks("AtomicRenameEntry", oldParent.Child(req.OldName), newParent.Child(req.NewName))()
 
 	ctx, err := fs.filer.BeginTransaction(ctx)
 	if err != nil {
@@ -87,17 +95,7 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 		return err
 	}
 
-	// Same fence participation as AtomicRenameEntry.
-	firstPath, secondPath := oldParent.Child(req.OldName), newParent.Child(req.NewName)
-	if secondPath < firstPath {
-		firstPath, secondPath = secondPath, firstPath
-	}
-	firstLock := fs.entryLockTable.AcquireLock("StreamRenameEntry", firstPath, util.ExclusiveLock)
-	defer fs.entryLockTable.ReleaseLock(firstPath, firstLock)
-	if secondPath != firstPath {
-		secondLock := fs.entryLockTable.AcquireLock("StreamRenameEntry", secondPath, util.ExclusiveLock)
-		defer fs.entryLockTable.ReleaseLock(secondPath, secondLock)
-	}
+	defer fs.acquireRenamePathLocks("StreamRenameEntry", oldParent.Child(req.OldName), newParent.Child(req.NewName))()
 
 	ctx := context.Background()
 

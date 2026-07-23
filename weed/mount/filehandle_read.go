@@ -195,16 +195,30 @@ func (fh *FileHandle) downloadRemoteEntry(entry *LockedEntry) error {
 			return fmt.Errorf("CacheRemoteObjectToLocalCluster file %s: %v", fileFullPath, err)
 		}
 
-		fh.SetEntry(resp.Entry)
-		fh.setAuthoritativeBase(proto.Clone(resp.Entry).(*filer_pb.Entry))
+		// The handle's live entry and base are kept in local uid/gid form, like
+		// every other install path; the caching response carries filer-side
+		// ids. Mapping the base too keeps proto.Equal(candidate, base) meaningful
+		// under a non-identity UidGidMapper — otherwise an unchanged re-delivery
+		// would look foreign and force-destroy dirty pages.
+		localEntry := proto.Clone(resp.Entry).(*filer_pb.Entry)
+		if localEntry.Attributes != nil && fh.wfs.option.UidGidMapper != nil {
+			localEntry.Attributes.Uid, localEntry.Attributes.Gid = fh.wfs.option.UidGidMapper.FilerToLocal(localEntry.Attributes.Uid, localEntry.Attributes.Gid)
+		}
+
 		// The response state is versioned by the caching event when the filer
 		// performed the download, or by the response's log position when the
 		// object was already cached.
-		versionTsNs := resp.GetMetadataEvent().GetTsNs()
-		if versionTsNs == 0 {
-			versionTsNs = resp.GetLogTsNs()
-		}
+		versionTsNs := ackVersionTsNs(resp)
+
+		// Serialize the entry/base/version install: this runs under the file
+		// handle's shared lock, so a second concurrent read can be here too;
+		// invalidateOpenFileHandle is excluded by the exclusive lock, but two
+		// downloads are not excluded from each other.
+		fh.remoteInstallMu.Lock()
+		fh.SetEntry(localEntry)
+		fh.setAuthoritativeBase(proto.Clone(localEntry).(*filer_pb.Entry))
 		fh.advanceEntryVersionTsNs(versionTsNs)
+		fh.remoteInstallMu.Unlock()
 
 		// Async: a sync apply deadlocks against the apply loop's invalidate, which needs this read's file-handle lock.
 		event := resp.GetMetadataEvent()

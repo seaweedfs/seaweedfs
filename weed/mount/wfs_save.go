@@ -58,15 +58,12 @@ func (wfs *WFS) saveEntry(path util.FullPath, entry *filer_pb.Entry) (code fuse.
 	// flight holds an older entry, and advancing its version alone would
 	// fence out the events carrying what it lacks. A no-change update
 	// returns no event but still carries the log position it confirmed.
-	ackVersionTsNs := resp.GetMetadataEvent().GetTsNs()
-	if ackVersionTsNs == 0 {
-		ackVersionTsNs = resp.GetLogTsNs()
-	}
+	ackVersion := ackVersionTsNs(resp)
 	if inode, found := wfs.inodeToPath.GetInode(path); found {
 		if fh, fhFound := wfs.fhMap.FindFileHandle(inode); fhFound {
 			ackedEntry := proto.Clone(entry).(*filer_pb.Entry)
 			wfs.mapPbIdFromFilerToLocal(ackedEntry)
-			fh.installAckedEntry(ackedEntry, ackVersionTsNs)
+			fh.installAckedEntry(ackedEntry, ackVersion)
 		}
 	}
 

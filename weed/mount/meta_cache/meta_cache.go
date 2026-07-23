@@ -376,8 +376,21 @@ func (mc *MetaCache) TouchDirMtimeCtime(ctx context.Context, dirPath util.FullPa
 	return nil
 }
 
+// FindEntry is the hot lookup/getattr path: it returns only the entry and
+// deliberately does NOT read the version record, sparing every cache hit the
+// second store read. Callers that need the version — the invalidation gate —
+// use FindEntryWithVersion.
 func (mc *MetaCache) FindEntry(ctx context.Context, fp util.FullPath) (entry *filer.Entry, err error) {
-	entry, _, err = mc.FindEntryWithVersion(ctx, fp)
+	mc.RLock()
+	defer mc.RUnlock()
+	entry, err = mc.localStore.FindEntry(ctx, fp)
+	if err != nil {
+		return nil, err
+	}
+	if entry.TtlSec > 0 && entry.Crtime.Add(time.Duration(entry.TtlSec)*time.Second).Before(time.Now()) {
+		return nil, filer_pb.ErrNotFound
+	}
+	mc.mapIdFromFilerToLocal(entry)
 	return
 }
 
@@ -510,6 +523,29 @@ func (mc *MetaCache) pruneSupersededTombstonesLocked(ctx context.Context, dirPat
 	}
 }
 
+// deleteChildVersionRecordsLocked removes every direct-child version record
+// (plain and tombstone) of a directory being evicted or read-through. An
+// uncached directory serves lookups from the filer and gates inserts on
+// isCachedFn, so neither its plain records nor its tombstones affect its
+// behavior — leaving them behind only grows the store for names in
+// directories that are wiped and never rebuilt. A later rebuild re-derives a
+// fresh absence floor and fresh tombstones from replayed events.
+func (mc *MetaCache) deleteChildVersionRecordsLocked(ctx context.Context, dirPath util.FullPath) {
+	var keys [][]byte
+	if err := mc.leveldbStore.VisitKvPrefix(ctx, entryVersionChildPrefix(dirPath), func(key, value []byte) error {
+		keys = append(keys, key)
+		return nil
+	}); err != nil {
+		glog.V(1).Infof("collect version records %s: %v", dirPath, err)
+		return
+	}
+	for _, key := range keys {
+		if err := mc.localStore.KvDelete(ctx, key); err != nil {
+			glog.V(1).Infof("delete version record %s: %v", string(key), err)
+		}
+	}
+}
+
 // stampChildrenVersionLocked records the listing snapshot as every child's
 // version: the listing read the filer at the snapshot, proving each listed
 // entry individually at that position. A zero snapshot (pre-upgrade filer)
@@ -536,6 +572,8 @@ func (mc *MetaCache) DeleteEntry(ctx context.Context, fp util.FullPath) (err err
 func (mc *MetaCache) DeleteFolderChildren(ctx context.Context, fp util.FullPath) (err error) {
 	mc.Lock()
 	defer mc.Unlock()
+	delete(mc.dirAbsenceFloors, fp)
+	mc.deleteChildVersionRecordsLocked(ctx, fp)
 	return mc.localStore.DeleteFolderChildren(ctx, fp)
 }
 
@@ -913,9 +951,7 @@ func (mc *MetaCache) purgeDirectoryChildrenNow(ctx context.Context, dirPath util
 	mc.Lock()
 	defer mc.Unlock()
 	delete(mc.dirAbsenceFloors, dirPath)
-	// Plain version records for the wiped children linger;
-	// entryVersionBlocksLocked disregards a claim whose entry is gone, so
-	// they cannot fence recreates. Tombstones survive by design.
+	mc.deleteChildVersionRecordsLocked(ctx, dirPath)
 	return mc.localStore.DeleteFolderChildren(ctx, dirPath)
 }
 

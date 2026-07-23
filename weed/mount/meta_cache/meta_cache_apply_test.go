@@ -732,3 +732,52 @@ func TestBuildCompletionPrunesSupersededTombstones(t *testing.T) {
 	}
 	mc.WaitForEntryInvalidations()
 }
+
+// Evicting a directory clears its children's version records (plain and
+// tombstone) so they cannot accumulate for the lifetime of a long-running
+// mount.
+func TestDirectoryEvictionClearsVersionRecords(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+		"/":    true,
+		"/dir": true,
+	})
+	defer mc.Shutdown()
+
+	create := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		TsNs:      1000,
+		EventNotification: &filer_pb.EventNotification{
+			NewEntry: &filer_pb.Entry{Name: "keep", Attributes: &filer_pb.FuseAttributes{FileSize: 1, FileMode: 0100644}},
+		},
+	}
+	if err := mc.ApplyMetadataResponse(context.Background(), create, SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply create: %v", err)
+	}
+	del := &filer_pb.SubscribeMetadataResponse{
+		Directory:         "/dir",
+		TsNs:              1100,
+		EventNotification: &filer_pb.EventNotification{OldEntry: &filer_pb.Entry{Name: "gone"}},
+	}
+	if err := mc.ApplyMetadataResponse(context.Background(), del, SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply delete: %v", err)
+	}
+
+	if tsNs, _ := mc.getEntryVersionRecordLocked(context.Background(), util.FullPath("/dir/keep")); tsNs != 1000 {
+		t.Fatalf("version record for /dir/keep = %d, want 1000 before eviction", tsNs)
+	}
+	if tsNs, tombstone := mc.getEntryVersionRecordLocked(context.Background(), util.FullPath("/dir/gone")); tsNs != 1100 || !tombstone {
+		t.Fatalf("tombstone for /dir/gone = (%d,%v), want (1100,true) before eviction", tsNs, tombstone)
+	}
+
+	if err := mc.DeleteFolderChildren(context.Background(), util.FullPath("/dir")); err != nil {
+		t.Fatalf("evict directory: %v", err)
+	}
+
+	if tsNs, _ := mc.getEntryVersionRecordLocked(context.Background(), util.FullPath("/dir/keep")); tsNs != 0 {
+		t.Fatalf("version record for /dir/keep survived eviction: %d", tsNs)
+	}
+	if tsNs, _ := mc.getEntryVersionRecordLocked(context.Background(), util.FullPath("/dir/gone")); tsNs != 0 {
+		t.Fatalf("tombstone for /dir/gone survived eviction: %d", tsNs)
+	}
+	mc.WaitForEntryInvalidations()
+}
