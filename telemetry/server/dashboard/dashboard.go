@@ -74,6 +74,26 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
             padding: 40px;
             color: #666;
         }
+        .cluster-lookup {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        .cluster-lookup input {
+            flex: 1;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+        .cluster-lookup button {
+            padding: 8px 20px;
+            border: none;
+            border-radius: 4px;
+            background: #2196F3;
+            color: white;
+            cursor: pointer;
+        }
         .error {
             background: #ffebee;
             color: #c62828;
@@ -133,6 +153,20 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
             <div class="chart-container">
                 <div class="chart-title">Total Disk Usage Over Time</div>
                 <canvas id="diskChart" width="400" height="200"></canvas>
+            </div>
+
+            <div class="chart-container">
+                <div class="chart-title">Per-Cluster History</div>
+                <div class="cluster-lookup">
+                    <input type="text" id="clusterIdInput" placeholder="cluster UUID"
+                           onkeydown="if (event.key === 'Enter') loadClusterHistory()">
+                    <button onclick="loadClusterHistory()">Load</button>
+                </div>
+                <div id="clusterHistoryError" class="error" style="display: none;"></div>
+                <div id="clusterHistoryCharts" style="display: none;">
+                    <canvas id="clusterDiskChart" width="400" height="150"></canvas>
+                    <canvas id="clusterVolumeChart" width="400" height="150"></canvas>
+                </div>
             </div>
         </div>
     </div>
@@ -251,6 +285,35 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
                     }
                 }
             });
+        }
+
+        async function loadClusterHistory() {
+            const id = document.getElementById('clusterIdInput').value.trim();
+            const errorDiv = document.getElementById('clusterHistoryError');
+            const chartsDiv = document.getElementById('clusterHistoryCharts');
+            if (!id) return;
+            errorDiv.style.display = 'none';
+            try {
+                const resp = await fetch('/api/history?cluster_id=' + encodeURIComponent(id) + '&days=90');
+                if (!resp.ok) {
+                    throw new Error(resp.status === 404 ? 'Unknown cluster UUID' : 'Request failed: ' + resp.status);
+                }
+                const history = await resp.json();
+                const samples = history.samples || [];
+                if (samples.length === 0) {
+                    throw new Error('No samples recorded for this cluster yet');
+                }
+                const dates = samples.map(s => new Date(s.ts * 1000).toISOString().slice(0, 10));
+                chartsDiv.style.display = 'block';
+                createLineChart('clusterDiskChart', 'Disk Usage (GB)', dates,
+                    samples.map(s => Math.round(s.disk / (1024 * 1024 * 1024) * 100) / 100), '#FF9800');
+                createLineChart('clusterVolumeChart', 'Volumes', dates,
+                    samples.map(s => s.volumes), '#9C27B0');
+            } catch (error) {
+                chartsDiv.style.display = 'none';
+                errorDiv.style.display = 'block';
+                errorDiv.textContent = error.message;
+            }
         }
 
         function showError(message) {

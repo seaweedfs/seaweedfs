@@ -5,15 +5,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/seaweedfs/seaweedfs/telemetry/proto"
 )
 
 func TestStateRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "data", "telemetry-state.json")
 
-	// promauto registers on the global registry, so the whole test uses a
-	// single storage instance.
-	s := NewPrometheusStorage()
+	s := newPrometheusStorage(prometheus.NewRegistry())
 
 	if err := s.SaveStateIfDirty(path); err != nil {
 		t.Fatalf("clean save: %v", err)

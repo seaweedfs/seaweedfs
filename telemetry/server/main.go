@@ -75,6 +75,7 @@ func main() {
 	mux.HandleFunc("/api/stats", corsMiddleware(logMiddleware(apiHandler.GetStats)))
 	mux.HandleFunc("/api/instances", corsMiddleware(logMiddleware(apiHandler.GetInstances)))
 	mux.HandleFunc("/api/metrics", corsMiddleware(logMiddleware(apiHandler.GetMetrics)))
+	mux.HandleFunc("/api/history", corsMiddleware(logMiddleware(apiHandler.GetHistory)))
 
 	// Dashboard (optional)
 	if *enableDashboard {

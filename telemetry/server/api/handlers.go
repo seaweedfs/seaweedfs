@@ -150,3 +150,35 @@ func (h *Handler) GetMetrics(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(metrics)
 }
+
+func (h *Handler) GetHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	clusterId := r.URL.Query().Get("cluster_id")
+	if clusterId == "" {
+		http.Error(w, "cluster_id is required", http.StatusBadRequest)
+		return
+	}
+
+	days := 90 // default
+	if daysStr := r.URL.Query().Get("days"); daysStr != "" {
+		if d, err := strconv.Atoi(daysStr); err == nil && d > 0 && d <= 365 {
+			days = d
+		}
+	}
+
+	samples, ok := h.storage.GetHistory(clusterId, days)
+	if !ok {
+		http.Error(w, "Unknown cluster_id", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"cluster_id": clusterId,
+		"samples":    samples,
+	})
+}

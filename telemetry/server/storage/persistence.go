@@ -9,7 +9,8 @@ import (
 
 // persistedState is the on-disk snapshot of the in-memory instance map.
 type persistedState struct {
-	Instances map[string]*telemetryData `json:"instances"`
+	Instances map[string]*telemetryData  `json:"instances"`
+	Histories map[string][]HistorySample `json:"histories,omitempty"`
 }
 
 // LoadState restores the instance map and Prometheus gauges from a state file
@@ -42,6 +43,11 @@ func (s *PrometheusStorage) LoadState(path string) (int, error) {
 		s.setClusterMetrics(instance.TelemetryData)
 		loaded++
 	}
+	for id, h := range state.Histories {
+		if _, ok := s.instances[id]; ok && len(h) > 0 {
+			s.histories[id] = h
+		}
+	}
 	s.updateStats()
 	return loaded, nil
 }
@@ -54,7 +60,7 @@ func (s *PrometheusStorage) SaveStateIfDirty(path string) error {
 		s.mu.Unlock()
 		return nil
 	}
-	b, err := json.Marshal(&persistedState{Instances: s.instances})
+	b, err := json.Marshal(&persistedState{Instances: s.instances, Histories: s.histories})
 	if err != nil {
 		s.mu.Unlock()
 		return err
