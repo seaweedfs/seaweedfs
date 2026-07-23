@@ -67,13 +67,15 @@ func newInvalidateTestWFS(t *testing.T) *WFS {
 
 type fakeFilerServer struct {
 	filer_pb.UnimplementedSeaweedFilerServer
-	lookupSize    uint64
-	lookupLogTsNs int64
-	cacheSize     uint64
-	cacheLogTsNs  int64
-	lookupCalls   atomic.Int32
-	lookupStarted chan struct{} // closed when the first lookup arrives
-	lookupGate    chan struct{} // first lookup waits here when non-nil
+	lookupSize      uint64
+	lookupLogTsNs   int64
+	cacheSize       uint64
+	cacheLogTsNs    int64
+	updateEventless bool // UpdateEntry acks like a no-change update: no event, log position only
+	updateLogTsNs   int64
+	lookupCalls     atomic.Int32
+	lookupStarted   chan struct{} // closed when the first lookup arrives
+	lookupGate      chan struct{} // first lookup waits here when non-nil
 }
 
 func (s *fakeFilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
@@ -102,6 +104,9 @@ func (s *fakeFilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, r
 }
 
 func (s *fakeFilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
+	if s.updateEventless {
+		return &filer_pb.UpdateEntryResponse{LogTsNs: s.updateLogTsNs}, nil
+	}
 	return &filer_pb.UpdateEntryResponse{
 		MetadataEvent: &filer_pb.SubscribeMetadataResponse{
 			Directory: req.Directory,
@@ -650,5 +655,43 @@ func TestRemoteCacheResponseVersionFencesUndeliveredEvents(t *testing.T) {
 
 	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
 		t.Fatalf("open handle file size = %d, want 200 (response-versioned state must fence the undelivered event)", size)
+	}
+}
+
+// A no-change update returns success without an event; the response's log
+// position must still fence the handle, or a delayed event already reflected
+// by the confirmed state rolls it back.
+func TestEventlessSaveAckStillFencesOlderEvents(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+	startFakeFiler(t, wfs, &fakeFilerServer{updateEventless: true, updateLogTsNs: 2000})
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 200},
+	})
+
+	testLock := wfs.fhLockTable.AcquireLock("test", fh.fh, util.ExclusiveLock)
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("file", 100, 1000), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		wfs.fhLockTable.ReleaseLock(fh.fh, testLock)
+		t.Fatalf("apply subscriber event: %v", err)
+	}
+
+	// The save confirms the handle's state without changing it: no event,
+	// only the acknowledged log position.
+	saved := &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 200},
+	}
+	if code := wfs.saveEntry(util.FullPath("/dir/file"), saved); code != fuse.OK {
+		wfs.fhLockTable.ReleaseLock(fh.fh, testLock)
+		t.Fatalf("saveEntry status = %v, want OK", code)
+	}
+	wfs.fhLockTable.ReleaseLock(fh.fh, testLock)
+
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
+		t.Fatalf("open handle file size = %d, want 200 (no-op ack at log position 2000 outranks the queued event at 1000)", size)
 	}
 }

@@ -52,10 +52,16 @@ func (wfs *WFS) saveEntry(path util.FullPath, entry *filer_pb.Entry) (code fuse.
 	}
 
 	// The mutation is acknowledged; keep any open handle for this path ahead
-	// of subscription events the filer logged before it.
+	// of subscription events the filer logged before it. A no-change update
+	// returns no event but still carries the log position of the state it
+	// confirmed.
+	ackVersionTsNs := resp.GetMetadataEvent().GetTsNs()
+	if ackVersionTsNs == 0 {
+		ackVersionTsNs = resp.GetLogTsNs()
+	}
 	if inode, found := wfs.inodeToPath.GetInode(path); found {
 		if fh, fhFound := wfs.fhMap.FindFileHandle(inode); fhFound {
-			fh.advanceEntryVersionTsNs(resp.GetMetadataEvent().GetTsNs())
+			fh.advanceEntryVersionTsNs(ackVersionTsNs)
 		}
 	}
 

@@ -270,9 +270,14 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	if event == nil {
 		event = metadataUpdateEvent(string(dir), request.Entry)
 	}
-	// The filer acknowledged this state at the event's log position; older
-	// queued subscription events must not roll the handle back.
-	fh.advanceEntryVersionTsNs(event.GetTsNs())
+	// The filer acknowledged this state at the event's log position (or, for
+	// a no-op create, at the response's log position); older queued
+	// subscription events must not roll the handle back.
+	ackVersionTsNs := resp.GetMetadataEvent().GetTsNs()
+	if ackVersionTsNs == 0 {
+		ackVersionTsNs = resp.GetLogTsNs()
+	}
+	fh.advanceEntryVersionTsNs(ackVersionTsNs)
 	if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
 		glog.Warningf("flush %s: best-effort metadata apply failed: %v", fileFullPath, applyErr)
 		wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(dir))

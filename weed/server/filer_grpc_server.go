@@ -30,12 +30,18 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 
 	glog.V(4).InfofCtx(ctx, "LookupDirectoryEntry %s", filepath.Join(req.Directory, req.Name))
 
-	// Log position fence, stamped before the entry read: metadata events are
-	// logged after their store write on this clock, so every event at or
-	// below this timestamp is reflected in the returned entry.
+	// Log position fence for the returned entry. Shared with the mutation
+	// handlers' exclusive path lock so the fence and the read are serialized
+	// against write+notify: a mutation completing before the lock has its
+	// event timestamp below the fence, one starting after it is not in the
+	// read — every event at or below the fence is reflected in the entry,
+	// and none above it are.
+	lockPath := util.JoinPath(req.Directory, req.Name)
+	pathLock := fs.entryLockTable.AcquireLock("LookupDirectoryEntry", lockPath, util.SharedLock)
 	logTsNs := time.Now().UnixNano()
+	entry, err := fs.filer.FindEntry(ctx, lockPath)
+	fs.entryLockTable.ReleaseLock(lockPath, pathLock)
 
-	entry, err := fs.filer.FindEntry(ctx, util.JoinPath(req.Directory, req.Name))
 	if err == filer_pb.ErrNotFound {
 		return &filer_pb.LookupDirectoryEntryResponse{LogTsNs: logTsNs}, err
 	}
@@ -193,6 +199,11 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	fullpath := newEntry.FullPath
 	pathLock := fs.entryLockTable.AcquireLock("CreateEntry", fullpath, util.ExclusiveLock)
 	defer fs.entryLockTable.ReleaseLock(fullpath, pathLock)
+
+	// Log position fence, stamped under the lock: when the create is a
+	// no-op (identical entry) the response carries no event, yet the
+	// acknowledged state reflects every event at or below this timestamp.
+	resp.LogTsNs = time.Now().UnixNano()
 
 	// Evaluate the optional precondition against the current entry while the
 	// path lock is held, so the check and the write are atomic on this filer.
@@ -609,6 +620,11 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	pathLock := fs.entryLockTable.AcquireLock("UpdateEntry", lockPath, util.ExclusiveLock)
 	defer fs.entryLockTable.ReleaseLock(lockPath, pathLock)
 
+	// Log position fence, stamped under the lock: on the no-change path below
+	// the response carries no event, yet the acknowledged state reflects
+	// every event at or below this timestamp.
+	logTsNs := time.Now().UnixNano()
+
 	entry, err := fs.filer.FindEntry(ctx, lockPath)
 	if err != nil {
 		return &filer_pb.UpdateEntryResponse{}, fmt.Errorf("not found %s: %v", fullpath, err)
@@ -635,11 +651,11 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	}
 
 	if filer.EqualEntry(entry, newEntry) {
-		return &filer_pb.UpdateEntryResponse{}, err
+		return &filer_pb.UpdateEntryResponse{LogTsNs: logTsNs}, err
 	}
 
 	ctx, eventSink := filer.WithMetadataEventSink(ctx)
-	resp := &filer_pb.UpdateEntryResponse{}
+	resp := &filer_pb.UpdateEntryResponse{LogTsNs: logTsNs}
 	if err = fs.filer.UpdateEntry(ctx, entry, newEntry); err == nil {
 		fs.filer.DeleteChunksNotRecursive(garbage)
 

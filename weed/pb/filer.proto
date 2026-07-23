@@ -449,6 +449,9 @@ message CreateEntryResponse {
     string error = 1;                          // kept for human readability + backward compat
     SubscribeMetadataResponse metadata_event = 2;
     FilerError error_code = 3;                 // machine-readable error code
+    // filer log position stamped under the path lock before the write:
+    // every event at or below it is reflected in the acknowledged state
+    int64 log_ts_ns = 4;
 }
 
 message UpdateEntryRequest {
@@ -464,6 +467,9 @@ message UpdateEntryRequest {
 }
 message UpdateEntryResponse {
     SubscribeMetadataResponse metadata_event = 1;
+    // filer log position stamped under the path lock before the write:
+    // every event at or below it is reflected in the acknowledged state
+    int64 log_ts_ns = 2;
 }
 
 message TouchAccessTimeRequest {

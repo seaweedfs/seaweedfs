@@ -2261,6 +2261,9 @@ type CreateEntryResponse struct {
 	Error         string                     `protobuf:"bytes,1,opt,name=error,proto3" json:"error,omitempty"` // kept for human readability + backward compat
 	MetadataEvent *SubscribeMetadataResponse `protobuf:"bytes,2,opt,name=metadata_event,json=metadataEvent,proto3" json:"metadata_event,omitempty"`
 	ErrorCode     FilerError                 `protobuf:"varint,3,opt,name=error_code,json=errorCode,proto3,enum=filer_pb.FilerError" json:"error_code,omitempty"` // machine-readable error code
+	// filer log position stamped under the path lock before the write:
+	// every event at or below it is reflected in the acknowledged state
+	LogTsNs       int64 `protobuf:"varint,4,opt,name=log_ts_ns,json=logTsNs,proto3" json:"log_ts_ns,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2314,6 +2317,13 @@ func (x *CreateEntryResponse) GetErrorCode() FilerError {
 		return x.ErrorCode
 	}
 	return FilerError_OK
+}
+
+func (x *CreateEntryResponse) GetLogTsNs() int64 {
+	if x != nil {
+		return x.LogTsNs
+	}
+	return 0
 }
 
 type UpdateEntryRequest struct {
@@ -2406,6 +2416,9 @@ func (x *UpdateEntryRequest) GetCondition() *WriteCondition {
 type UpdateEntryResponse struct {
 	state         protoimpl.MessageState     `protogen:"open.v1"`
 	MetadataEvent *SubscribeMetadataResponse `protobuf:"bytes,1,opt,name=metadata_event,json=metadataEvent,proto3" json:"metadata_event,omitempty"`
+	// filer log position stamped under the path lock before the write:
+	// every event at or below it is reflected in the acknowledged state
+	LogTsNs       int64 `protobuf:"varint,2,opt,name=log_ts_ns,json=logTsNs,proto3" json:"log_ts_ns,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2445,6 +2458,13 @@ func (x *UpdateEntryResponse) GetMetadataEvent() *SubscribeMetadataResponse {
 		return x.MetadataEvent
 	}
 	return nil
+}
+
+func (x *UpdateEntryResponse) GetLogTsNs() int64 {
+	if x != nil {
+		return x.LogTsNs
+	}
+	return 0
 }
 
 type TouchAccessTimeRequest struct {
@@ -7079,12 +7099,13 @@ const file_filer_proto_rawDesc = "" +
 	"\x1dObjectTransactionBatchRequest\x12F\n" +
 	"\ftransactions\x18\x01 \x03(\v2\".filer_pb.ObjectTransactionRequestR\ftransactions\"c\n" +
 	"\x1eObjectTransactionBatchResponse\x12A\n" +
-	"\tresponses\x18\x01 \x03(\v2#.filer_pb.ObjectTransactionResponseR\tresponses\"\xac\x01\n" +
+	"\tresponses\x18\x01 \x03(\v2#.filer_pb.ObjectTransactionResponseR\tresponses\"\xc8\x01\n" +
 	"\x13CreateEntryResponse\x12\x14\n" +
 	"\x05error\x18\x01 \x01(\tR\x05error\x12J\n" +
 	"\x0emetadata_event\x18\x02 \x01(\v2#.filer_pb.SubscribeMetadataResponseR\rmetadataEvent\x123\n" +
 	"\n" +
-	"error_code\x18\x03 \x01(\x0e2\x14.filer_pb.FilerErrorR\terrorCode\"\x8a\x03\n" +
+	"error_code\x18\x03 \x01(\x0e2\x14.filer_pb.FilerErrorR\terrorCode\x12\x1a\n" +
+	"\tlog_ts_ns\x18\x04 \x01(\x03R\alogTsNs\"\x8a\x03\n" +
 	"\x12UpdateEntryRequest\x12\x1c\n" +
 	"\tdirectory\x18\x01 \x01(\tR\tdirectory\x12%\n" +
 	"\x05entry\x18\x02 \x01(\v2\x0f.filer_pb.EntryR\x05entry\x121\n" +
@@ -7096,9 +7117,10 @@ const file_filer_proto_rawDesc = "" +
 	"\tcondition\x18\x06 \x01(\v2\x18.filer_pb.WriteConditionR\tcondition\x1aC\n" +
 	"\x15ExpectedExtendedEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01\"a\n" +
+	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01\"}\n" +
 	"\x13UpdateEntryResponse\x12J\n" +
-	"\x0emetadata_event\x18\x01 \x01(\v2#.filer_pb.SubscribeMetadataResponseR\rmetadataEvent\"r\n" +
+	"\x0emetadata_event\x18\x01 \x01(\v2#.filer_pb.SubscribeMetadataResponseR\rmetadataEvent\x12\x1a\n" +
+	"\tlog_ts_ns\x18\x02 \x01(\x03R\alogTsNs\"r\n" +
 	"\x16TouchAccessTimeRequest\x12\x1c\n" +
 	"\tdirectory\x18\x01 \x01(\tR\tdirectory\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12&\n" +
