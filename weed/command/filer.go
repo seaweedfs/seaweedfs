@@ -81,6 +81,9 @@ type FilerOptions struct {
 	exposeDirectoryData       *bool
 	tusBasePath               *string
 	s3ConfigFile              *string // optional path to static S3 identity config
+	atimeMode                 *string
+	atimeRelatimeThreshold    *time.Duration
+	atimePaths                *string
 	// shutdownCtx, when non-nil, tells startFiler to gracefully shut down its
 	// HTTP/gRPC servers once the ctx is cancelled. Used by integration tests
 	// and by weed mini; nil for standalone weed filer.
@@ -88,6 +91,25 @@ type FilerOptions struct {
 	// gracefulStopTimeout caps how long startFiler waits for gRPC graceful
 	// stop before forcing the server to stop. Zero means the default of 10s.
 	gracefulStopTimeout time.Duration
+}
+
+// buildAtimePolicy resolves the configured atime policy with safe defaults
+// when the embedding command (e.g. weed mini, integration tests) has not
+// registered the optional atime flags.
+func (fo *FilerOptions) buildAtimePolicy() (*filer.AtimePolicy, error) {
+	mode := string(filer.AtimeModeOff)
+	if fo.atimeMode != nil {
+		mode = *fo.atimeMode
+	}
+	threshold := filer.DefaultRelatimeThreshold
+	if fo.atimeRelatimeThreshold != nil {
+		threshold = *fo.atimeRelatimeThreshold
+	}
+	var paths string
+	if fo.atimePaths != nil {
+		paths = *fo.atimePaths
+	}
+	return filer.NewAtimePolicy(mode, threshold, filer.ParsePathPrefixes(paths))
 }
 
 func init() {
@@ -123,6 +145,9 @@ func init() {
 	f.allowedOrigins = cmdFiler.Flag.String("allowedOrigins", "*", "comma separated list of allowed origins")
 	f.exposeDirectoryData = cmdFiler.Flag.Bool("exposeDirectoryData", true, "whether to return directory metadata and content in Filer UI")
 	f.tusBasePath = cmdFiler.Flag.String("tusBasePath", "/.tus", "TUS resumable upload endpoint base path (e.g., /.tus)")
+	f.atimeMode = cmdFiler.Flag.String("atime", string(filer.AtimeModeOff), "filer access-time policy: off | relatime | strict (default off; opt in per deployment)")
+	f.atimeRelatimeThreshold = cmdFiler.Flag.Duration("atime.relatime_threshold", filer.DefaultRelatimeThreshold, "minimum age before relatime persists an atime update")
+	f.atimePaths = cmdFiler.Flag.String("atime.paths", "", "comma-separated path prefixes that atime tracking applies to; empty = every path when atime mode is on")
 
 	// start s3 on filer
 	filerStartS3 = cmdFiler.Flag.Bool("s3", false, "whether to start S3 gateway")
@@ -363,6 +388,11 @@ func (fo *FilerOptions) startFiler() {
 		}
 	}
 
+	atimePolicy, atimeErr := fo.buildAtimePolicy()
+	if atimeErr != nil {
+		glog.Fatalf("Filer atime configuration error: %v", atimeErr)
+	}
+
 	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux, &weed_server.FilerOption{
 		Masters:                   fo.masters,
 		FilerGroup:                *fo.filerGroup,
@@ -386,6 +416,7 @@ func (fo *FilerOptions) startFiler() {
 		AllowedOrigins:            strings.Split(*fo.allowedOrigins, ","),
 		TusBasePath:               *fo.tusBasePath,
 		CredentialManager:         credentialManager,
+		AtimePolicy:               atimePolicy,
 	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)

@@ -86,6 +86,7 @@ type FilerOption struct {
 	TusBasePath               string
 	S3ConfigFile              string // optional path to static S3 identity config file
 	CredentialManager         *credential.CredentialManager
+	AtimePolicy               *filer.AtimePolicy
 }
 
 type FilerServer struct {
