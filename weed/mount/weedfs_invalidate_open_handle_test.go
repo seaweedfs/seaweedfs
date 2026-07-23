@@ -966,3 +966,40 @@ func TestUnversionedSlowerOpenDoesNotOverwrite(t *testing.T) {
 		t.Fatalf("open handle file size = %d, want 200 (an unversioned response cannot outrank the installed entry)", size)
 	}
 }
+
+// The no-op judgment must use the immutable base snapshot, not the live
+// entry: local writes diverge the live entry from the base, and an event
+// re-delivering the base would otherwise look like a foreign change —
+// destroying the dirty pages and rolling the entry back over nothing.
+func TestAlreadyReflectedEventPreservesDirtyWrites(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 200},
+	})
+
+	// A local write grows the live entry past the base.
+	fh.UpdateEntry(func(entry *filer_pb.Entry) {
+		entry.Attributes.FileSize = 205
+	})
+	fh.dirtyMetadata = true
+	pagesBefore := fh.dirtyPages
+
+	// The delayed event re-delivers the base the handle was opened with.
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("file", 200, 1500), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply event: %v", err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if fh.dirtyPages != pagesBefore {
+		t.Fatal("dirty pages were destroyed by an event re-delivering the handle's base state")
+	}
+	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 205 {
+		t.Fatalf("live entry file size = %d, want 205 (local write must survive the base re-delivery)", size)
+	}
+	if got := fh.entryVersionTsNs.Load(); got != 1500 {
+		t.Fatalf("handle version = %d, want 1500", got)
+	}
+}

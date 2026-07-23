@@ -505,6 +505,7 @@ func (wfs *WFS) truncateEntry(entryFullPath util.FullPath, entry *filer_pb.Entry
 			fhActiveLock := fh.wfs.fhLockTable.AcquireLock("truncateEntry", fh.fh, util.ExclusiveLock)
 			fh.ResetDirtyPages()
 			fh.SetEntry(entry)
+			fh.baseEntry.Store(proto.Clone(entry).(*filer_pb.Entry))
 			fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 		}
 	}

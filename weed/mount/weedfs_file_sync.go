@@ -258,6 +258,9 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 		SkipCheckParentDirectory: true,
 	}
 
+	// Snapshot with local ids before the request mapping mutates the clone:
+	// on ack this becomes the handle's base, judged against future events.
+	baseSnapshot := proto.Clone(requestEntry).(*filer_pb.Entry)
 	wfs.mapPbIdFromLocalToFiler(request.Entry)
 
 	resp, err := wfs.streamCreateEntry(ctx, request)
@@ -277,6 +280,7 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	if ackVersionTsNs == 0 {
 		ackVersionTsNs = resp.GetLogTsNs()
 	}
+	fh.baseEntry.Store(baseSnapshot)
 	fh.advanceEntryVersionTsNs(ackVersionTsNs)
 	if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
 		glog.Warningf("flush %s: best-effort metadata apply failed: %v", fileFullPath, applyErr)

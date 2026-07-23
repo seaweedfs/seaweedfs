@@ -5,6 +5,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"google.golang.org/protobuf/proto"
+
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -46,6 +48,14 @@ type FileHandle struct {
 	// the entry — it would roll the handle back.
 	entryVersionTsNs atomic.Int64
 
+	// baseEntry is an immutable snapshot of the filer state the handle last
+	// installed or acknowledged. The live entry diverges from it as local
+	// writes mutate size, timestamps, and chunks, so "does this event bring
+	// anything new" must be judged against the base, never the live entry —
+	// or a re-delivered base would look like a change and discard the local
+	// writes. Stored values are never mutated; always store a fresh clone.
+	baseEntry atomic.Pointer[filer_pb.Entry]
+
 	// dlmLock holds the distributed lock for cross-mount write coordination.
 	// Non-nil only when -dlm is enabled and the file was opened for writing.
 	// Acquired in AcquireHandle, released in ReleaseHandle.
@@ -74,6 +84,7 @@ func newFileHandle(wfs *WFS, handleId FileHandleId, inode uint64, entry *filer_p
 	}
 	if entry != nil {
 		fh.SetEntry(entry)
+		fh.baseEntry.Store(proto.Clone(entry).(*filer_pb.Entry))
 	}
 
 	if IsDebugFileReadWrite {

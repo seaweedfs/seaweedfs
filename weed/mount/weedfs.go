@@ -765,17 +765,20 @@ func (wfs *WFS) invalidateOpenFileHandle(filePath util.FullPath, eventEntry *fil
 	if candidate.Attributes != nil {
 		candidate.Attributes.FileSize = filer.FileSize(candidate)
 	}
-	// State the handle already holds — an under-fenced re-delivery (a fence
-	// is a lower bound; a listing or lookup can include a mutation whose
-	// event follows). Nothing changed for this handle: advancing the version
-	// suffices, and destroying dirty pages for it would lose local writes.
-	if proto.Equal(candidate, fh.GetEntry().GetEntry()) {
+	// State the handle already reflects — an under-fenced re-delivery (a
+	// fence is a lower bound; a listing or lookup can include a mutation
+	// whose event follows). Judged against the immutable base snapshot, not
+	// the live entry: local writes mutate the live entry, and a re-delivered
+	// base must not look like a foreign change and discard them. Nothing
+	// changed for this handle: advancing the version suffices.
+	if base := fh.baseEntry.Load(); base != nil && proto.Equal(candidate, base) {
 		fh.advanceEntryVersionTsNs(candidateTsNs)
 		return
 	}
 	fh.dirtyPages.Destroy()
 	fh.dirtyPages = newPageWriter(fh, wfs.option.ChunkSizeLimit)
 	fh.SetEntry(candidate)
+	fh.baseEntry.Store(proto.Clone(candidate).(*filer_pb.Entry))
 	fh.advanceEntryVersionTsNs(candidateTsNs)
 }
 

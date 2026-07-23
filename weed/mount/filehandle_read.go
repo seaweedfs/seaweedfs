@@ -6,6 +6,8 @@ import (
 	"io"
 	"sort"
 
+	"google.golang.org/protobuf/proto"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -194,6 +196,7 @@ func (fh *FileHandle) downloadRemoteEntry(entry *LockedEntry) error {
 		}
 
 		fh.SetEntry(resp.Entry)
+		fh.baseEntry.Store(proto.Clone(resp.Entry).(*filer_pb.Entry))
 		// The response state is versioned by the caching event when the filer
 		// performed the download, or by the response's log position when the
 		// object was already cached.

@@ -8,6 +8,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/protobuf/proto"
 )
 
 func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle *FileHandle, status fuse.Status) {
@@ -74,6 +75,7 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 		if entryVersionTsNs != 0 && entryVersionTsNs > fileHandle.entryVersionTsNs.Load() &&
 			!fileHandle.dirtyMetadata && entry != fileHandle.GetEntry().GetEntry() {
 			fileHandle.SetEntry(entry)
+			fileHandle.baseEntry.Store(proto.Clone(entry).(*filer_pb.Entry))
 			fileHandle.advanceEntryVersionTsNs(entryVersionTsNs)
 		}
 		wfs.fhLockTable.ReleaseLock(fileHandle.fh, fhActiveLock)
