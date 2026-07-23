@@ -14,6 +14,7 @@ type PrometheusStorage struct {
 	// Prometheus metrics
 	totalClusters     prometheus.Gauge
 	activeClusters    prometheus.Gauge
+	confirmedClusters prometheus.Gauge
 	volumeServerCount *prometheus.GaugeVec
 	totalDiskBytes    *prometheus.GaugeVec
 	totalVolumeCount  *prometheus.GaugeVec
@@ -50,6 +51,10 @@ func newPrometheusStorage(reg prometheus.Registerer) *PrometheusStorage {
 		activeClusters: promauto.NewGauge(prometheus.GaugeOpts{
 			Name: "seaweedfs_telemetry_active_clusters",
 			Help: "Number of active SeaweedFS clusters (last 7 days)",
+		}),
+		confirmedClusters: promauto.NewGauge(prometheus.GaugeOpts{
+			Name: "seaweedfs_telemetry_confirmed_clusters",
+			Help: "Active clusters seen on at least 2 distinct days (last 7 days)",
 		}),
 		volumeServerCount: promauto.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "seaweedfs_telemetry_volume_servers",
@@ -207,8 +212,11 @@ func (s *PrometheusStorage) updateStats() {
 
 	totalInstances := 0
 	activeInstances := 0
-	versions := make(map[string]int)
-	osDistribution := make(map[string]int)
+	confirmedInstances := 0
+	versionsAll := make(map[string]int)
+	osAll := make(map[string]int)
+	versionsConfirmed := make(map[string]int)
+	osConfirmed := make(map[string]int)
 
 	for _, instance := range s.instances {
 		if instance.ReceivedAt.After(last30Days) {
@@ -216,21 +224,39 @@ func (s *PrometheusStorage) updateStats() {
 		}
 		if instance.ReceivedAt.After(last7Days) {
 			activeInstances++
-			versions[instance.TelemetryData.Version]++
-			osDistribution[instance.TelemetryData.Os]++
+			versionsAll[instance.TelemetryData.Version]++
+			osAll[instance.TelemetryData.Os]++
+			// A cluster is confirmed once seen on >=2 distinct UTC days
+			// (histories hold one sample per day), so one-shot reports
+			// can't skew the distributions below.
+			if len(s.histories[instance.TelemetryData.TopologyId]) >= confirmDays {
+				confirmedInstances++
+				versionsConfirmed[instance.TelemetryData.Version]++
+				osConfirmed[instance.TelemetryData.Os]++
+			}
 		}
+	}
+
+	// Before any cluster has two days of history (fresh server with no
+	// prior state), fall back to all active clusters so the dashboard
+	// distributions aren't empty.
+	versions, osDistribution := versionsConfirmed, osConfirmed
+	if confirmedInstances == 0 {
+		versions, osDistribution = versionsAll, osAll
 	}
 
 	// Update Prometheus gauges
 	s.totalClusters.Set(float64(totalInstances))
 	s.activeClusters.Set(float64(activeInstances))
+	s.confirmedClusters.Set(float64(confirmedInstances))
 
 	// Update cached stats for API
 	s.stats = map[string]interface{}{
-		"total_instances":  totalInstances,
-		"active_instances": activeInstances,
-		"versions":         versions,
-		"os_distribution":  osDistribution,
+		"total_instances":     totalInstances,
+		"active_instances":    activeInstances,
+		"confirmed_instances": confirmedInstances,
+		"versions":            versions,
+		"os_distribution":     osDistribution,
 	}
 }
 

@@ -124,6 +124,10 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
                     <div class="stat-label">Active Instances (7 days)</div>
                 </div>
                 <div class="stat-card">
+                    <div class="stat-value" id="confirmedInstances">-</div>
+                    <div class="stat-label">Confirmed Clusters (2+ days)</div>
+                </div>
+                <div class="stat-card">
                     <div class="stat-value" id="totalVersions">-</div>
                     <div class="stat-label">Different Versions</div>
                 </div>
@@ -198,6 +202,7 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
         function updateStats(stats) {
             document.getElementById('totalInstances').textContent = stats.total_instances || 0;
             document.getElementById('activeInstances').textContent = stats.active_instances || 0;
+            document.getElementById('confirmedInstances').textContent = stats.confirmed_instances || 0;
             document.getElementById('totalVersions').textContent = Object.keys(stats.versions || {}).length;
             document.getElementById('totalOS').textContent = Object.keys(stats.os_distribution || {}).length;
         }
