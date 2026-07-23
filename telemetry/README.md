@@ -136,12 +136,17 @@ The telemetry server exposes these Prometheus metrics:
 - `seaweedfs_telemetry_active_clusters`: Active clusters (7 days)
 
 ### Per-Cluster Metrics
-- `seaweedfs_telemetry_volume_servers{cluster_id, version, os}`: Volume servers per cluster
-- `seaweedfs_telemetry_disk_bytes{cluster_id, version, os}`: Disk usage per cluster  
-- `seaweedfs_telemetry_volume_count{cluster_id, version, os}`: Volume count per cluster
-- `seaweedfs_telemetry_filer_count{cluster_id, version, os}`: Filer servers per cluster
-- `seaweedfs_telemetry_broker_count{cluster_id, version, os}`: Broker servers per cluster
+- `seaweedfs_telemetry_volume_servers{cluster_id}`: Volume servers per cluster
+- `seaweedfs_telemetry_disk_bytes{cluster_id}`: Disk usage per cluster
+- `seaweedfs_telemetry_volume_count{cluster_id}`: Volume count per cluster
+- `seaweedfs_telemetry_filer_count{cluster_id}`: Filer servers per cluster
+- `seaweedfs_telemetry_broker_count{cluster_id}`: Broker servers per cluster
 - `seaweedfs_telemetry_cluster_info{cluster_id, version, os}`: Cluster metadata
+
+Value gauges are keyed by `cluster_id` only, so a cluster keeps one continuous
+series across upgrades. To slice values by version or OS, join with
+`cluster_info`, e.g.
+`seaweedfs_telemetry_disk_bytes * on(cluster_id) group_left(version, os) seaweedfs_telemetry_cluster_info`.
 
 ### Server Metrics
 - `seaweedfs_telemetry_reports_received_total`: Total telemetry reports received
@@ -274,14 +279,14 @@ The included Grafana dashboard provides:
 # Total active clusters
 seaweedfs_telemetry_active_clusters
 
-# Disk usage by version
-sum by (version) (seaweedfs_telemetry_disk_bytes)
+# Disk usage per cluster
+seaweedfs_telemetry_disk_bytes{cluster_id="<uuid>"}
+
+# Disk usage by version (join with cluster_info for version/os)
+sum by (version) (seaweedfs_telemetry_disk_bytes * on(cluster_id) group_left(version) seaweedfs_telemetry_cluster_info)
 
 # Volume servers by operating system
-sum by (os) (seaweedfs_telemetry_volume_servers)
-
-# Filer servers by version
-sum by (version) (seaweedfs_telemetry_filer_count)
+sum by (os) (seaweedfs_telemetry_volume_servers * on(cluster_id) group_left(os) seaweedfs_telemetry_cluster_info)
 
 # Broker servers across all clusters
 sum(seaweedfs_telemetry_broker_count)
