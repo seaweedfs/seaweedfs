@@ -34,8 +34,8 @@ func (h *Handler) CollectTelemetry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read protobuf request
-	body, err := io.ReadAll(r.Body)
+	// Read protobuf request; real reports are well under 1 KB
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestBytes))
 	if err != nil {
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
 		return
@@ -53,9 +53,8 @@ func (h *Handler) CollectTelemetry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate required fields
-	if data.TopologyId == "" || data.Version == "" || data.Os == "" {
-		http.Error(w, "Missing required fields", http.StatusBadRequest)
+	if err := validateTelemetryData(data); err != nil {
+		http.Error(w, "Invalid telemetry data: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
