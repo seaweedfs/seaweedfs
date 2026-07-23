@@ -42,25 +42,17 @@ type FileHandle struct {
 	isDeleted bool
 	isRenamed bool // set by Rename before waiting for async flush; skips old-path metadata flush
 
-	// entryVersionTsNs is the filer log position the handle's entry reflects:
-	// the log timestamp carried by the event, lookup response, or mutation
-	// ack that produced it. State at or below this version must not replace
-	// the entry — it would roll the handle back.
+	// entryVersionTsNs is the filer log position the handle's entry reflects.
+	// State at or below it must not replace the entry — that rolls it back.
 	entryVersionTsNs atomic.Int64
 
-	// adoptNextEventBase marks a committed self-initiated mutation whose
-	// readback failed: the base below is approximate, and the mutation's own
-	// event is en route. The next invalidation adopts its state as the base
-	// without invalidating local writes made since — the event is ours, not
-	// a foreign change.
+	// adoptNextEventBase marks a committed mutation whose readback failed:
+	// baseEntry is approximate and the mutation's own event is en route.
 	adoptNextEventBase atomic.Bool
 
-	// baseEntry is an immutable snapshot of the filer state the handle last
-	// installed or acknowledged. The live entry diverges from it as local
-	// writes mutate size, timestamps, and chunks, so "does this event bring
-	// anything new" must be judged against the base, never the live entry —
-	// or a re-delivered base would look like a change and discard the local
-	// writes. Stored values are never mutated; always store a fresh clone.
+	// baseEntry snapshots the filer state last installed or acknowledged.
+	// Local writes move the live entry away from it, so "is this event new"
+	// must be judged here, not against the live entry. Always store a clone.
 	baseEntry atomic.Pointer[filer_pb.Entry]
 
 	// dlmLock holds the distributed lock for cross-mount write coordination.
@@ -68,9 +60,8 @@ type FileHandle struct {
 	// Acquired in AcquireHandle, released in ReleaseHandle.
 	dlmLock *cluster.LiveLock
 
-	// remoteInstallMu serializes downloadRemoteEntry's entry/base/version
-	// install, which runs under only the handle's shared lock and so can race
-	// a second concurrent read of the same remote-only file.
+	// remoteInstallMu serializes downloadRemoteEntry's install, which holds
+	// only the handle's shared lock and so races a second concurrent read.
 	remoteInstallMu sync.Mutex
 
 	// RDMA chunk offset cache for performance optimization
@@ -150,10 +141,9 @@ func (fh *FileHandle) SetEntry(entry *filer_pb.Entry) {
 }
 
 // installAckedEntry installs filer-acknowledged state under the handle lock
-// when it outranks what the handle holds. A version must never advance
-// without its value: stamping a handle whose entry did not come from this
-// acknowledgment would fence out the events carrying the state it lacks.
-// Dirty handles are left alone — their local writes supersede the ack.
+// when it outranks the handle. A version never advances without its value:
+// stamping alone would fence out the events carrying what the handle lacks.
+// Dirty handles are skipped — local writes supersede the ack.
 func (fh *FileHandle) installAckedEntry(entry *filer_pb.Entry, versionTsNs int64) {
 	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("installAckedEntry", fh.fh, util.ExclusiveLock)
 	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
@@ -166,19 +156,16 @@ func (fh *FileHandle) installAckedEntry(entry *filer_pb.Entry, versionTsNs int64
 	fh.advanceEntryVersionTsNs(versionTsNs)
 }
 
-// setAuthoritativeBase installs a fresh base snapshot from a local
-// acknowledgment and cancels any pending event adoption: the ack supersedes
-// the mutation the adoption was waiting for, whose event will now be version
-// gated — a surviving flag would misfire on a later foreign event, silently
-// adopting it without installing or invalidating.
+// setAuthoritativeBase installs a base from a local ack and cancels any
+// pending adoption: the ack supersedes the mutation it was waiting for, and a
+// surviving flag would misfire on a later foreign event.
 func (fh *FileHandle) setAuthoritativeBase(base *filer_pb.Entry) {
 	fh.baseEntry.Store(base)
 	fh.adoptNextEventBase.Store(false)
 }
 
-// advanceEntryVersionTsNs raises the entry version; an older timestamp never
-// regresses it. A zero timestamp (state without a version, e.g. from an old
-// filer) is a no-op, leaving the handle open to refreshes.
+// advanceEntryVersionTsNs raises the entry version, never regresses it. Zero
+// (an unversioned old filer) is a no-op, leaving the handle open to refreshes.
 func (fh *FileHandle) advanceEntryVersionTsNs(tsNs int64) {
 	if tsNs == 0 {
 		return

@@ -567,9 +567,8 @@ func (wfs *WFS) maybeLoadEntry(fullpath util.FullPath) (*filer_pb.Entry, fuse.St
 	return entry, status
 }
 
-// maybeLoadEntryWithVersion also returns the filer log position the entry
-// reflects — the version carried by the store read or the lookup response —
-// or zero when no version is known.
+// maybeLoadEntryWithVersion also returns the log position the entry reflects,
+// or zero when unknown.
 func (wfs *WFS) maybeLoadEntryWithVersion(fullpath util.FullPath) (*filer_pb.Entry, int64, fuse.Status) {
 	// glog.V(3).Infof("read entry cache miss %s", fullpath)
 	_, name := fullpath.DirAndName()
@@ -601,10 +600,8 @@ func (wfs *WFS) maybeLoadEntryWithVersion(fullpath util.FullPath) (*filer_pb.Ent
 // For uncached/read-through directories, always consult the filer directly so stale
 // local entries do not leak back into lookup results.
 func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, fuse.Status) {
-	// Hot path: a cache hit returns the entry without the extra version read
-	// FindEntryWithVersion performs. Every other case (cache miss, error,
-	// uncached parent) falls through to the version-aware lookup, whose extra
-	// read is dwarfed by the filer RPC it does anyway.
+	// Hot path: a cache hit skips the version read FindEntryWithVersion adds.
+	// Everything else falls through, where a filer RPC dwarfs it anyway.
 	dir, _ := fullpath.DirAndName()
 	if wfs.metaCache.IsDirectoryCached(util.FullPath(dir)) {
 		if cachedEntry, err := wfs.metaCache.FindEntry(context.Background(), fullpath); err == nil && cachedEntry != nil {
@@ -615,9 +612,8 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, fuse.Status) 
 	return entry, status
 }
 
-// lookupEntryWithVersion also returns the filer log position the entry
-// reflects: the store's version cursor for cache hits, the lookup response's
-// log timestamp for filer fetches, zero when neither is known.
+// lookupEntryWithVersion also returns the log position the entry reflects:
+// the entry's stored version, the lookup response's, or zero if unknown.
 func (wfs *WFS) lookupEntryWithVersion(fullpath util.FullPath) (*filer.Entry, int64, fuse.Status) {
 	dir, _ := fullpath.DirAndName()
 	dirPath := util.FullPath(dir)
@@ -716,8 +712,7 @@ func (wfs *WFS) lookupEntryWithVersion(fullpath util.FullPath) (*filer.Entry, in
 	return filer.FromPbEntry(dir, entry), lookupLogTsNs, fuse.OK
 }
 
-// getPbEntryWithVersion fetches an entry from the filer together with the
-// log position its state reflects, from the fenced lookup response.
+// getPbEntryWithVersion fetches an entry with the log position it reflects.
 func (wfs *WFS) getPbEntryWithVersion(ctx context.Context, fullpath util.FullPath) (*filer_pb.Entry, int64, error) {
 	dir, name := fullpath.DirAndName()
 	var entry *filer_pb.Entry
@@ -740,13 +735,9 @@ func (wfs *WFS) getPbEntryWithVersion(ctx context.Context, fullpath util.FullPat
 	return entry, logTsNs, nil
 }
 
-// sameEntryContent reports whether two entries are equal ignoring only the
-// server-assigned timestamps (mtime/ctime/crtime/atime and the per-chunk
-// modified time), which a self-initiated mutation's own event legitimately
-// refreshes. Everything else — size, chunks, mode, ownership, extended
-// attributes — must match, so a foreign metadata-only change (chmod, chown,
-// setxattr) with unchanged content is NOT mistaken for the copy's own event.
-// Erring strict is safe: a rejected match installs normally.
+// sameEntryContent reports entry equality ignoring only server-assigned
+// timestamps, which a copy's own event refreshes. A foreign metadata-only
+// change (chmod/chown/setxattr) then differs and is not adopted as the copy.
 func sameEntryContent(a, b *filer_pb.Entry) bool {
 	if a == nil || b == nil {
 		return a == b
@@ -770,9 +761,8 @@ func entryWithoutVolatileTimes(e *filer_pb.Entry) *filer_pb.Entry {
 }
 
 // invalidateOpenFileHandle refreshes an open file handle from a metadata
-// subscription event. No filer lookup happens here: it can fail transiently,
-// and since the subscription cursor has already advanced past the event, the
-// handle would stay pinned to its old entry until an unrelated event arrives.
+// subscription event. No filer lookup here: it can fail transiently, and with
+// the subscription cursor already past the event, nothing would retry.
 func (wfs *WFS) invalidateOpenFileHandle(filePath util.FullPath, eventEntry *filer_pb.Entry, eventTsNs int64) {
 	inode, inodeFound := wfs.inodeToPath.GetInode(filePath)
 	if !inodeFound {
@@ -785,20 +775,15 @@ func (wfs *WFS) invalidateOpenFileHandle(filePath util.FullPath, eventEntry *fil
 	fhActiveLock := wfs.fhLockTable.AcquireLock("invalidateFunc", fh.fh, util.ExclusiveLock)
 	defer wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 
-	// Version gate: invalidations apply asynchronously, so by now the handle
-	// may already reflect this event or something newer — from a local
-	// mutation ack, an open-time lookup, or a store-resolved refresh.
-	// Installing older state would roll the handle back, and with the
-	// subscription cursor advanced, nothing would correct it.
+	// Invalidations apply asynchronously: the handle may already reflect this
+	// event or newer state, and rolling it back would never be corrected.
 	if eventTsNs != 0 && eventTsNs <= fh.entryVersionTsNs.Load() {
 		return
 	}
 
 	// A cached parent's store entry is the ordered merge of this event and
-	// anything applied since (e.g. a local flush that landed while the event
-	// sat in the queue), and carries a version at least the event's. An
-	// uncached parent receives no store writes, so a hit there would be a
-	// stale leftover masking the event — use the event entry instead.
+	// anything applied since. An uncached parent takes no store writes, so a
+	// hit there is a stale leftover — use the event entry instead.
 	var candidate *filer_pb.Entry
 	candidateTsNs := eventTsNs
 	dir, _ := filePath.DirAndName()
@@ -818,12 +803,9 @@ func (wfs *WFS) invalidateOpenFileHandle(filePath util.FullPath, eventEntry *fil
 		}
 	}
 	if candidate == nil {
-		// Path vacated by a foreign delete or rename-away. Mark the handle
-		// deleted so a later flush does not recreate the remotely-unlinked
-		// name (doFlush skips metadata flush when isDeleted). Keep the last
-		// entry and any dirty pages so the open fd can still read its own
-		// buffered writes (POSIX unlinked-but-open), but those writes are not
-		// persisted — the name is gone.
+		// Foreign delete/rename-away: mark deleted so a flush cannot recreate
+		// the unlinked name. Keep the entry and dirty pages so the open fd
+		// still reads its buffered writes (POSIX unlinked-but-open), unpersisted.
 		fh.isDeleted = true
 		if !fh.dirtyMetadata {
 			fh.dirtyPages.Destroy()
@@ -835,13 +817,9 @@ func (wfs *WFS) invalidateOpenFileHandle(filePath util.FullPath, eventEntry *fil
 	if candidate.Attributes != nil {
 		candidate.Attributes.FileSize = filer.FileSize(candidate)
 	}
-	// A committed self-initiated mutation with a failed readback left the
-	// base approximate; its own event is en route. Adopt that event's state
-	// as the base without invalidating local writes made since — but only
-	// when it is the copy's own event: the synthesized base matches the copy
-	// on content and differs only in server-assigned timestamps. An event
-	// that changes content is a foreign write that arrived first; clear the
-	// pending adoption and install it normally.
+	// A committed copy whose readback failed left the base approximate; adopt
+	// its own event (content-equal, fresher timestamps) without invalidating
+	// writes made since. Anything else is a foreign write — install it.
 	if fh.adoptNextEventBase.Load() {
 		if base := fh.baseEntry.Load(); base != nil && sameEntryContent(candidate, base) {
 			fh.adoptNextEventBase.Store(false)
@@ -851,12 +829,9 @@ func (wfs *WFS) invalidateOpenFileHandle(filePath util.FullPath, eventEntry *fil
 		}
 		fh.adoptNextEventBase.Store(false)
 	}
-	// State the handle already reflects — an under-fenced re-delivery (a
-	// fence is a lower bound; a listing or lookup can include a mutation
-	// whose event follows). Judged against the immutable base snapshot, not
-	// the live entry: local writes mutate the live entry, and a re-delivered
-	// base must not look like a foreign change and discard them. Nothing
-	// changed for this handle: advancing the version suffices.
+	// Already reflected — an under-fenced re-delivery (a fence is a lower
+	// bound). Judged against the base, not the live entry: local writes move
+	// the live entry, and a re-delivered base must not discard them.
 	if base := fh.baseEntry.Load(); base != nil && proto.Equal(candidate, base) {
 		fh.advanceEntryVersionTsNs(candidateTsNs)
 		return

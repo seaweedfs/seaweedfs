@@ -298,12 +298,10 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 		return nil, err
 	}
 
-	// Commit under the exclusive path lock the mutation handlers use, so a
-	// concurrent lookup's shared-locked fence+read cannot land between the
-	// store update and its event notification — that window would hand out
-	// the cached state under-versioned. Re-read under the lock: the entry
-	// may have changed since the unlocked download began, and clobbering it
-	// with a clone of the stale base would lose that write.
+	// Commit under the mutation path lock so a fenced lookup cannot land
+	// between the store update and its notification, handing out
+	// under-versioned state. Re-read under it: the entry may have changed
+	// during the unlocked download, and the stale base would clobber it.
 	commitLock := fs.entryLockTable.AcquireLock("CacheRemoteObjectToLocalCluster", lockPath, util.ExclusiveLock)
 	defer fs.entryLockTable.ReleaseLock(lockPath, commitLock)
 
@@ -314,8 +312,8 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 		return nil, fmt.Errorf("find entry %s before commit: %v", lockPath, err)
 	}
 	if !filer.EqualEntry(current, entry) {
-		// The entry changed during the download; its writer supersedes the
-		// cached content. Return the current state, fenced at this read.
+		// Changed during the download: that writer supersedes the cached
+		// content. Return the current state, fenced at this read.
 		fs.filer.DeleteUncommittedChunks(ctx, chunks)
 		resp.Entry = current.ToProtoEntry()
 		resp.LogTsNs = commitLogTsNs

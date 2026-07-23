@@ -8,17 +8,15 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// filerAckResponse is any mutation response that carries the log position of
-// the state it acknowledged: the metadata event's timestamp when one was
-// emitted, else the log-position fence stamped for a no-op ack.
+// filerAckResponse is any mutation response carrying the log position of the
+// state it acknowledged.
 type filerAckResponse interface {
 	GetMetadataEvent() *filer_pb.SubscribeMetadataResponse
 	GetLogTsNs() int64
 }
 
-// ackVersionTsNs is the filer log position a mutation ack confirmed: the
-// event's timestamp, or the response's log-position fence when the ack
-// carried no event (a no-op that only confirmed the current state).
+// ackVersionTsNs is the log position an ack confirmed: its event's timestamp,
+// or the response's fence when the ack carried no event.
 func ackVersionTsNs(resp filerAckResponse) int64 {
 	if ts := resp.GetMetadataEvent().GetTsNs(); ts != 0 {
 		return ts

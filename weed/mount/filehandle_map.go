@@ -51,22 +51,19 @@ func (i *FileHandleToInode) MarkInodeRenamed(inode uint64) {
 
 func (i *FileHandleToInode) AcquireFileHandle(wfs *WFS, inode uint64, entry *filer_pb.Entry) *FileHandle {
 	fh, existed := i.AcquireFileHandleWithVersion(wfs, inode, entry, 0)
-	// Preserve the pre-versioning contract for callers that pass an
-	// authoritative entry rather than a fresh lookup — the deferred-create
-	// path and tests: the entry must take effect even on a pre-existing
-	// handle. The versioned open path uses AcquireFileHandleWithVersion
-	// followed by installAckedEntry, which gates on version instead.
+	// Callers passing an authoritative entry (deferred create, tests) need it
+	// to take effect even on a pre-existing handle. The versioned open path
+	// gates on version via installAckedEntry instead.
 	if existed && entry != nil && fh.GetEntry().GetEntry() != entry {
 		fh.SetEntry(entry)
 	}
 	return fh
 }
 
-// AcquireFileHandleWithVersion creates a handle fully initialized — entry and
-// the filer log position it reflects — before exposing it in the map. For an
-// existing handle it only bumps the counter: its entry belongs to whoever
-// holds the handle lock, so any install from a fresh lookup must happen there
-// (see AcquireHandle), not under the map lock.
+// AcquireFileHandleWithVersion fully initializes a handle — entry and the log
+// position it reflects — before exposing it in the map. An existing handle
+// only gets its counter bumped: its entry belongs to whoever holds the handle
+// lock, so a fresh lookup installs there (AcquireHandle), not under this one.
 func (i *FileHandleToInode) AcquireFileHandleWithVersion(wfs *WFS, inode uint64, entry *filer_pb.Entry, versionTsNs int64) (*FileHandle, bool) {
 	i.Lock()
 	defer i.Unlock()

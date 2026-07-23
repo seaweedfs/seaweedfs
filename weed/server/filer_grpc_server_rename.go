@@ -12,12 +12,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-// acquireRenamePathLocks holds the source and destination path locks across a
-// rename's commit and notification so a shared-locked lookup cannot read
-// renamed state under a fence preceding its events. Locks are taken in path
-// order to avoid deadlock with a concurrent reverse rename; descendant paths
-// of a renamed directory are not individually locked. The returned func
-// releases both.
+// acquireRenamePathLocks holds both paths across commit and notification so a
+// fenced lookup cannot read renamed state under a fence preceding its events.
+// Path order avoids deadlock with a reverse rename; descendants are not
+// locked. The returned func releases both.
 func (fs *FilerServer) acquireRenamePathLocks(intention string, oldPath, newPath util.FullPath) func() {
 	firstPath, secondPath := oldPath, newPath
 	if secondPath < firstPath {

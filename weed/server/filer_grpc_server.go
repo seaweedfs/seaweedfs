@@ -27,13 +27,10 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// fencedFindEntry reads an entry together with a log-position fence for it.
-// The fence is exact: the stamp and the read share the path lock the
-// mutation handlers hold exclusively across write and notify, so a mutation
-// completing before the lock has its event timestamp below the fence, and
-// one starting after it is not in the read — every event at or below the
-// fence is reflected in the returned entry, and none above it are. Any
-// read whose result a client versions must go through here.
+// fencedFindEntry reads an entry with an exact log-position fence: the stamp
+// and the read share the path lock mutations hold across write and notify, so
+// every event at or below the fence is in the entry and none above it are.
+// Any read whose result a client versions must go through here.
 func (fs *FilerServer) fencedFindEntry(ctx context.Context, path util.FullPath) (entry *filer.Entry, logTsNs int64, err error) {
 	pathLock := fs.entryLockTable.AcquireLock("fencedFindEntry", path, util.SharedLock)
 	logTsNs = time.Now().UnixNano()
@@ -120,11 +117,9 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 
 	}
 
-	// For empty directories we intentionally do NOT send a snapshot-only
-	// response (Entry == nil). Many consumers (Java FilerClient, S3 listing,
-	// etc.) treat any received response as an entry. The trailer carries the
-	// snapshot instead, so clients that understand it get one even from an
-	// empty listing; older clients ignore trailers.
+	// No snapshot-only response for empty directories: many consumers (Java
+	// FilerClient, S3 listing) treat any response as an entry. The trailer
+	// carries it instead; older clients ignore trailers.
 	stream.SetTrailer(metadata.Pairs(filer_pb.ListSnapshotTsNsTrailerKey, strconv.FormatInt(snapshotTsNs, 10)))
 
 	return nil
@@ -206,9 +201,8 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	pathLock := fs.entryLockTable.AcquireLock("CreateEntry", fullpath, util.ExclusiveLock)
 	defer fs.entryLockTable.ReleaseLock(fullpath, pathLock)
 
-	// Log position fence, stamped under the lock: when the create is a
-	// no-op (identical entry) the response carries no event, yet the
-	// acknowledged state reflects every event at or below this timestamp.
+	// Fence stamped under the lock: a no-op create returns no event, but the
+	// acknowledged state still reflects everything at or below this.
 	resp.LogTsNs = time.Now().UnixNano()
 
 	// Evaluate the optional precondition against the current entry while the
@@ -626,9 +620,8 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	pathLock := fs.entryLockTable.AcquireLock("UpdateEntry", lockPath, util.ExclusiveLock)
 	defer fs.entryLockTable.ReleaseLock(lockPath, pathLock)
 
-	// Log position fence, stamped under the lock: on the no-change path below
-	// the response carries no event, yet the acknowledged state reflects
-	// every event at or below this timestamp.
+	// Fence stamped under the lock: the no-change path below returns no event,
+	// but the acknowledged state still reflects everything at or below this.
 	logTsNs := time.Now().UnixNano()
 
 	entry, err := fs.filer.FindEntry(ctx, lockPath)

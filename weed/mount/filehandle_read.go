@@ -195,29 +195,20 @@ func (fh *FileHandle) downloadRemoteEntry(entry *LockedEntry) error {
 			return fmt.Errorf("CacheRemoteObjectToLocalCluster file %s: %v", fileFullPath, err)
 		}
 
-		// The handle's live entry and base are kept in local uid/gid form, like
-		// every other install path; the caching response carries filer-side
-		// ids. Mapping the base too keeps proto.Equal(candidate, base) meaningful
-		// under a non-identity UidGidMapper — otherwise an unchanged re-delivery
-		// would look foreign and force-destroy dirty pages.
+		// Entry and base are kept in local uid/gid form like every other
+		// install path; the response carries filer ids. Without mapping, an
+		// unchanged re-delivery compares unequal and destroys dirty pages.
 		localEntry := proto.Clone(resp.Entry).(*filer_pb.Entry)
 		if localEntry.Attributes != nil && fh.wfs.option.UidGidMapper != nil {
 			localEntry.Attributes.Uid, localEntry.Attributes.Gid = fh.wfs.option.UidGidMapper.FilerToLocal(localEntry.Attributes.Uid, localEntry.Attributes.Gid)
 		}
 
-		// The response state is versioned by the caching event when the filer
-		// performed the download, or by the response's log position when the
-		// object was already cached.
 		versionTsNs := ackVersionTsNs(resp)
 
-		// Serialize the entry/base/version install: this runs under the file
-		// handle's shared lock, so a second concurrent read can be here too;
-		// invalidateOpenFileHandle is excluded by the exclusive lock, but two
-		// downloads are not excluded from each other. Install as one unit and
-		// only when this response is at least as new as what the handle holds
-		// — an older response arriving last must not overwrite the entry/base
-		// while the monotonic version keeps the newer value, which would fence
-		// out corrections permanently.
+		// Two concurrent reads can both be here (the handle lock is shared;
+		// invalidation is excluded by the exclusive one). Install as one unit,
+		// and only if at least as new — an older response landing last would
+		// keep the newer version over an older entry, fencing out corrections.
 		fh.remoteInstallMu.Lock()
 		if versionTsNs == 0 || versionTsNs >= fh.entryVersionTsNs.Load() {
 			fh.SetEntry(localEntry)
@@ -227,9 +218,8 @@ func (fh *FileHandle) downloadRemoteEntry(entry *LockedEntry) error {
 		fh.remoteInstallMu.Unlock()
 
 		// Async: a sync apply deadlocks against the apply loop's invalidate, which needs this read's file-handle lock.
-		// Stamp the synthesized fallback event with the ack's log fence so the
-		// cache versions the entry — a zero TsNs would leave it unversioned
-		// and open to rollback by an older subscriber event.
+		// Stamp the synthesized event so the cache versions the entry; a zero
+		// TsNs would leave it open to rollback by an older subscriber event.
 		event := resp.GetMetadataEvent()
 		if event == nil {
 			event = metadataUpdateEvent(request.Directory, resp.Entry)
