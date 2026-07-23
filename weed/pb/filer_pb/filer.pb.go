@@ -6690,6 +6690,7 @@ type FilerConf_PathConf struct {
 	Worm                     bool                   `protobuf:"varint,14,opt,name=worm,proto3" json:"worm,omitempty"`
 	WormGracePeriodSeconds   uint64                 `protobuf:"varint,15,opt,name=worm_grace_period_seconds,json=wormGracePeriodSeconds,proto3" json:"worm_grace_period_seconds,omitempty"`
 	WormRetentionTimeSeconds uint64                 `protobuf:"varint,16,opt,name=worm_retention_time_seconds,json=wormRetentionTimeSeconds,proto3" json:"worm_retention_time_seconds,omitempty"`
+	InodeIndex               bool                   `protobuf:"varint,17,opt,name=inode_index,json=inodeIndex,proto3" json:"inode_index,omitempty"`
 	unknownFields            protoimpl.UnknownFields
 	sizeCache                protoimpl.SizeCache
 }
@@ -6834,6 +6835,13 @@ func (x *FilerConf_PathConf) GetWormRetentionTimeSeconds() uint64 {
 		return x.WormRetentionTimeSeconds
 	}
 	return 0
+}
+
+func (x *FilerConf_PathConf) GetInodeIndex() bool {
+	if x != nil {
+		return x.InodeIndex
+	}
+	return false
 }
 
 var File_filer_proto protoreflect.FileDescriptor
@@ -7304,10 +7312,10 @@ const file_filer_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\fR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\fR\x05value\"%\n" +
 	"\rKvPutResponse\x12\x14\n" +
-	"\x05error\x18\x01 \x01(\tR\x05error\"\xb2\x05\n" +
+	"\x05error\x18\x01 \x01(\tR\x05error\"\xd3\x05\n" +
 	"\tFilerConf\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x05R\aversion\x12:\n" +
-	"\tlocations\x18\x02 \x03(\v2\x1c.filer_pb.FilerConf.PathConfR\tlocations\x1a\xce\x04\n" +
+	"\tlocations\x18\x02 \x03(\v2\x1c.filer_pb.FilerConf.PathConfR\tlocations\x1a\xef\x04\n" +
 	"\bPathConf\x12'\n" +
 	"\x0flocation_prefix\x18\x01 \x01(\tR\x0elocationPrefix\x12\x1e\n" +
 	"\n" +
@@ -7328,7 +7336,9 @@ const file_filer_proto_rawDesc = "" +
 	"\x16disable_chunk_deletion\x18\r \x01(\bR\x14disableChunkDeletion\x12\x12\n" +
 	"\x04worm\x18\x0e \x01(\bR\x04worm\x129\n" +
 	"\x19worm_grace_period_seconds\x18\x0f \x01(\x04R\x16wormGracePeriodSeconds\x12=\n" +
-	"\x1bworm_retention_time_seconds\x18\x10 \x01(\x04R\x18wormRetentionTimeSeconds\"\xba\x01\n" +
+	"\x1bworm_retention_time_seconds\x18\x10 \x01(\x04R\x18wormRetentionTimeSeconds\x12\x1f\n" +
+	"\vinode_index\x18\x11 \x01(\bR\n" +
+	"inodeIndex\"\xba\x01\n" +
 	"&CacheRemoteObjectToLocalClusterRequest\x12\x1c\n" +
 	"\tdirectory\x18\x01 \x01(\tR\tdirectory\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12+\n" +
