@@ -802,3 +802,170 @@ func TestSlowerConcurrentOpenDoesNotOverwriteNewerHandle(t *testing.T) {
 		t.Fatalf("open handle version = %d, want 2000", got)
 	}
 }
+
+// An event at or below a directory's listing floor is already reflected in
+// the snapshot state; applying it would roll the store back while the floor
+// keeps claiming the snapshot version, fencing out the correcting events.
+func TestFloorProtectsSnapshotStateFromDelayedEvents(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+
+	wfs.inodeToPath.MarkChildrenCached(util.FullPath("/"))
+	wfs.inodeToPath.Lookup(util.FullPath("/dir"), time.Now().Unix(), true, false, 0, false)
+
+	if err := wfs.metaCache.BeginDirectoryBuild(context.Background(), util.FullPath("/dir")); err != nil {
+		t.Fatalf("begin build: %v", err)
+	}
+	if err := wfs.metaCache.InsertEntry(context.Background(), &filer.Entry{
+		FullPath: "/dir/file",
+		Attr: filer.Attr{
+			Crtime:   time.Unix(1, 0),
+			Mtime:    time.Unix(1, 0),
+			Mode:     0100644,
+			FileSize: 300,
+		},
+	}); err != nil {
+		t.Fatalf("insert listing entry: %v", err)
+	}
+	if err := wfs.metaCache.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 2000); err != nil {
+		t.Fatalf("complete build: %v", err)
+	}
+
+	// Delayed event the snapshot already covers: must not touch the store.
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("file", 100, 1500), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply covered event: %v", err)
+	}
+	entry, err := wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/file"))
+	if err != nil {
+		t.Fatalf("find entry: %v", err)
+	}
+	if entry.FileSize != 300 {
+		t.Fatalf("store file size = %d, want 300 (event at 1500 is covered by the floor at 2000)", entry.FileSize)
+	}
+
+	// A genuinely new event still applies.
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("file", 400, 2500), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply new event: %v", err)
+	}
+	entry, err = wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/file"))
+	if err != nil {
+		t.Fatalf("find entry: %v", err)
+	}
+	if entry.FileSize != 400 {
+		t.Fatalf("store file size = %d, want 400 (event above the floor must apply)", entry.FileSize)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+}
+
+// A fence is a lower bound: a listing or lookup can include a mutation whose
+// event is delivered afterwards. Such an event carries state the handle
+// already holds — it must advance the version without destroying dirty
+// pages, or local writes are lost for a no-op.
+func TestAlreadyReflectedEventDoesNotDestroyDirtyPages(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 200},
+	})
+	pagesBefore := fh.dirtyPages
+
+	// The event re-delivers exactly the state the handle already reflects.
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("file", 200, 1500), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply event: %v", err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if fh.dirtyPages != pagesBefore {
+		t.Fatal("dirty pages were destroyed for an already-reflected event")
+	}
+	if got := fh.entryVersionTsNs.Load(); got != 1500 {
+		t.Fatalf("handle version = %d, want 1500 (the no-op event still advances the version)", got)
+	}
+}
+
+// A slower opener's install must not land on a dirty handle (local writes
+// would be lost) and unversioned lookup results cannot outrank anything.
+func TestSlowerOpenRejectedWhenHandleDirtyOrLookupUnversioned(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+	fake := &fakeFilerServer{
+		lookupSize:     100,
+		lookupLogTsNs:  3000, // newer than the fast open, but the handle is dirty
+		lookupSize2:    200,
+		lookupLogTsNs2: 2000,
+		lookupStarted:  make(chan struct{}),
+		lookupGate:     make(chan struct{}),
+	}
+	startFakeFiler(t, wfs, fake)
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	type openResult struct {
+		fh     *FileHandle
+		status fuse.Status
+	}
+	slow := make(chan openResult, 1)
+	go func() {
+		fh, status := wfs.AcquireHandle(inode, 0, 0, 0)
+		slow <- openResult{fh, status}
+	}()
+	<-fake.lookupStarted
+
+	fastFh, status := wfs.AcquireHandle(inode, 0, 0, 0)
+	if status != fuse.OK {
+		t.Fatalf("fast AcquireHandle status = %v, want OK", status)
+	}
+	fastFh.dirtyMetadata = true
+
+	close(fake.lookupGate)
+	result := <-slow
+	if result.status != fuse.OK {
+		t.Fatalf("slow AcquireHandle status = %v, want OK", result.status)
+	}
+
+	if size := fastFh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
+		t.Fatalf("open handle file size = %d, want 200 (install on a dirty handle must be rejected)", size)
+	}
+	if !fastFh.dirtyMetadata {
+		t.Fatal("dirtyMetadata was cleared by the rejected install")
+	}
+}
+
+// Legacy filers return no version; two racing opens both at version zero must
+// not overwrite each other — the first install stands.
+func TestUnversionedSlowerOpenDoesNotOverwrite(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+	fake := &fakeFilerServer{
+		lookupSize:    100, // slower, unversioned
+		lookupSize2:   200, // faster, unversioned
+		lookupStarted: make(chan struct{}),
+		lookupGate:    make(chan struct{}),
+	}
+	startFakeFiler(t, wfs, fake)
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	type openResult struct {
+		fh     *FileHandle
+		status fuse.Status
+	}
+	slow := make(chan openResult, 1)
+	go func() {
+		fh, status := wfs.AcquireHandle(inode, 0, 0, 0)
+		slow <- openResult{fh, status}
+	}()
+	<-fake.lookupStarted
+
+	fastFh, status := wfs.AcquireHandle(inode, 0, 0, 0)
+	if status != fuse.OK {
+		t.Fatalf("fast AcquireHandle status = %v, want OK", status)
+	}
+
+	close(fake.lookupGate)
+	result := <-slow
+	if result.status != fuse.OK {
+		t.Fatalf("slow AcquireHandle status = %v, want OK", result.status)
+	}
+
+	if size := fastFh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
+		t.Fatalf("open handle file size = %d, want 200 (an unversioned response cannot outrank the installed entry)", size)
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle *FileHandle, status fuse.Status) {
@@ -28,6 +29,7 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 	// version — they did not come from this lookup.
 	var entry *filer_pb.Entry
 	var entryVersionTsNs int64
+	freshLookup := false
 	if existingFh, found := wfs.fhMap.FindFileHandle(inode); found {
 		entry = existingFh.UpdateEntry(func(entry *filer_pb.Entry) {
 			if entry != nil && existingFh.entry.Attributes == nil {
@@ -40,6 +42,7 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 		if status != fuse.OK {
 			return nil, status
 		}
+		freshLookup = true
 	}
 	if wormEnforced, _ := wfs.wormEnforcedForEntry(path, entry); wormEnforced && flags&fuse.O_ANYWRITE != 0 {
 		return nil, fuse.EPERM
@@ -57,8 +60,24 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 		}
 	}
 	// need to AcquireFileHandle again to ensure correct handle counter
-	fileHandle, _ = wfs.fhMap.AcquireFileHandleWithVersion(wfs, inode, entry, entryVersionTsNs)
+	var existed bool
+	fileHandle, existed = wfs.fhMap.AcquireFileHandleWithVersion(wfs, inode, entry, entryVersionTsNs)
 	fileHandle.RememberPath(path)
+	if existed && freshLookup {
+		// Another opener created the handle while our lookup was in flight.
+		// Install under the handle lock every user synchronizes on, and only
+		// state that provably improves on what the handle holds: reject
+		// dirty handles (local writes would be lost), unknown versions (an
+		// unversioned response cannot outrank anything), and anything not
+		// strictly newer.
+		fhActiveLock := wfs.fhLockTable.AcquireLock("AcquireHandle", fileHandle.fh, util.ExclusiveLock)
+		if entryVersionTsNs != 0 && entryVersionTsNs > fileHandle.entryVersionTsNs.Load() &&
+			!fileHandle.dirtyMetadata && entry != fileHandle.GetEntry().GetEntry() {
+			fileHandle.SetEntry(entry)
+			fileHandle.advanceEntryVersionTsNs(entryVersionTsNs)
+		}
+		wfs.fhLockTable.ReleaseLock(fileHandle.fh, fhActiveLock)
+	}
 
 	// Acquire distributed lock for write opens. The lock is held with
 	// auto-renewal until the file handle is released (close).

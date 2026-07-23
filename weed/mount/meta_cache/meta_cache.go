@@ -738,6 +738,23 @@ func (mc *MetaCache) applyMetadataResponseLocked(ctx context.Context, resp *file
 	}
 
 	mc.Lock()
+	// A directory floor certifies the listing state as of the snapshot; an
+	// event at or below the floor is already reflected there, and applying
+	// it would roll the store back while the floor keeps claiming the
+	// snapshot version — fencing the correcting events out. Skip each half
+	// of the mutation independently against its directory's floor.
+	if resp.TsNs != 0 {
+		if oldPath != "" {
+			if dir, _ := oldPath.DirAndName(); resp.TsNs <= mc.dirVersionFloors[util.FullPath(dir)] {
+				oldPath = ""
+			}
+		}
+		if newEntry != nil {
+			if dir, _ := newEntry.DirAndName(); resp.TsNs <= mc.dirVersionFloors[util.FullPath(dir)] {
+				newEntry = nil
+			}
+		}
+	}
 	err := mc.atomicUpdateEntryFromFilerLocked(ctx, oldPath, newEntry, allowUncachedInsert)
 	if err == nil && options.InvalidateEntries {
 		mc.advanceLatestEventTs(resp.TsNs)

@@ -284,7 +284,7 @@ func TestAtomicRenameEntryEmitsLogicalRenameEvent(t *testing.T) {
 	queue := &captureQueue{}
 	swapNotificationQueue(t, queue)
 
-	server := &FilerServer{filer: newRenameTestFiler(store)}
+	server := &FilerServer{filer: newRenameTestFiler(store), entryLockTable: util.NewLockTable[util.FullPath]()}
 	_, err := server.AtomicRenameEntry(context.Background(), &filer_pb.AtomicRenameEntryRequest{
 		OldDirectory: "/",
 		OldName:      "src.txt",
@@ -334,7 +334,7 @@ func TestAtomicRenameEntryOverwriteEmitsDeleteThenRename(t *testing.T) {
 	queue := &captureQueue{}
 	swapNotificationQueue(t, queue)
 
-	server := &FilerServer{filer: newRenameTestFiler(store)}
+	server := &FilerServer{filer: newRenameTestFiler(store), entryLockTable: util.NewLockTable[util.FullPath]()}
 	_, err := server.AtomicRenameEntry(context.Background(), &filer_pb.AtomicRenameEntryRequest{
 		OldDirectory: "/",
 		OldName:      "src.txt",
@@ -398,7 +398,7 @@ func TestAtomicRenameEntryDoesNotEmitEventOnDeleteFailure(t *testing.T) {
 	queue := &captureQueue{}
 	swapNotificationQueue(t, queue)
 
-	server := &FilerServer{filer: newRenameTestFiler(store)}
+	server := &FilerServer{filer: newRenameTestFiler(store), entryLockTable: util.NewLockTable[util.FullPath]()}
 	_, err := server.AtomicRenameEntry(context.Background(), &filer_pb.AtomicRenameEntryRequest{
 		OldDirectory: "/",
 		OldName:      "src.txt",
@@ -422,7 +422,7 @@ func TestAtomicRenameEntryDoesNotEmitEventOnCommitFailure(t *testing.T) {
 	queue := &captureQueue{}
 	swapNotificationQueue(t, queue)
 
-	server := &FilerServer{filer: newRenameTestFiler(store)}
+	server := &FilerServer{filer: newRenameTestFiler(store), entryLockTable: util.NewLockTable[util.FullPath]()}
 	_, err := server.AtomicRenameEntry(context.Background(), &filer_pb.AtomicRenameEntryRequest{
 		OldDirectory: "/",
 		OldName:      "src.txt",
@@ -447,7 +447,7 @@ func TestAtomicRenameEntrySkipsDescendantTargetLookups(t *testing.T) {
 	queue := &captureQueue{}
 	swapNotificationQueue(t, queue)
 
-	server := &FilerServer{filer: newRenameTestFiler(store)}
+	server := &FilerServer{filer: newRenameTestFiler(store), entryLockTable: util.NewLockTable[util.FullPath]()}
 	_, err := server.AtomicRenameEntry(context.Background(), &filer_pb.AtomicRenameEntryRequest{
 		OldDirectory: "/",
 		OldName:      "srcdir",

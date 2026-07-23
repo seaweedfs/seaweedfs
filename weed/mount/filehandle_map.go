@@ -54,11 +54,11 @@ func (i *FileHandleToInode) AcquireFileHandle(wfs *WFS, inode uint64, entry *fil
 	return fh
 }
 
-// AcquireFileHandleWithVersion installs the entry and the filer log position
-// it reflects as one decision under the map lock: a slower concurrent opener
-// must not overwrite a newer entry another opener already installed while the
-// monotonic version keeps the newer timestamp — that combination would fence
-// out every correcting event.
+// AcquireFileHandleWithVersion creates a handle fully initialized — entry and
+// the filer log position it reflects — before exposing it in the map. For an
+// existing handle it only bumps the counter: its entry belongs to whoever
+// holds the handle lock, so any install from a fresh lookup must happen there
+// (see AcquireHandle), not under the map lock.
 func (i *FileHandleToInode) AcquireFileHandleWithVersion(wfs *WFS, inode uint64, entry *filer_pb.Entry, versionTsNs int64) (*FileHandle, bool) {
 	i.Lock()
 	defer i.Unlock()
@@ -71,10 +71,6 @@ func (i *FileHandleToInode) AcquireFileHandleWithVersion(wfs *WFS, inode uint64,
 		return fh, false
 	}
 	fh.counter++
-	if fh.GetEntry().GetEntry() != entry && versionTsNs >= fh.entryVersionTsNs.Load() {
-		fh.SetEntry(entry)
-		fh.advanceEntryVersionTsNs(versionTsNs)
-	}
 	return fh, true
 }
 

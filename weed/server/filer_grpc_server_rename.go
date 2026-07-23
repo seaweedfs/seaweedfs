@@ -23,6 +23,22 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 		return nil, err
 	}
 
+	// Participate in the lookup fence: hold the source and destination path
+	// locks across commit and notification so a shared-locked lookup cannot
+	// read renamed state under a fence preceding its events. Ordered by path
+	// to avoid deadlock with a concurrent reverse rename; descendant paths
+	// of a renamed directory are not individually locked.
+	firstPath, secondPath := oldParent.Child(req.OldName), newParent.Child(req.NewName)
+	if secondPath < firstPath {
+		firstPath, secondPath = secondPath, firstPath
+	}
+	firstLock := fs.entryLockTable.AcquireLock("AtomicRenameEntry", firstPath, util.ExclusiveLock)
+	defer fs.entryLockTable.ReleaseLock(firstPath, firstLock)
+	if secondPath != firstPath {
+		secondLock := fs.entryLockTable.AcquireLock("AtomicRenameEntry", secondPath, util.ExclusiveLock)
+		defer fs.entryLockTable.ReleaseLock(secondPath, secondLock)
+	}
+
 	ctx, err := fs.filer.BeginTransaction(ctx)
 	if err != nil {
 		return nil, err
@@ -69,6 +85,18 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 
 	if err := fs.filer.CanRename(stream.Context(), oldParent, newParent, req.OldName); err != nil {
 		return err
+	}
+
+	// Same fence participation as AtomicRenameEntry.
+	firstPath, secondPath := oldParent.Child(req.OldName), newParent.Child(req.NewName)
+	if secondPath < firstPath {
+		firstPath, secondPath = secondPath, firstPath
+	}
+	firstLock := fs.entryLockTable.AcquireLock("StreamRenameEntry", firstPath, util.ExclusiveLock)
+	defer fs.entryLockTable.ReleaseLock(firstPath, firstLock)
+	if secondPath != firstPath {
+		secondLock := fs.entryLockTable.AcquireLock("StreamRenameEntry", secondPath, util.ExclusiveLock)
+		defer fs.entryLockTable.ReleaseLock(secondPath, secondLock)
 	}
 
 	ctx := context.Background()

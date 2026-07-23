@@ -731,37 +731,52 @@ func (wfs *WFS) invalidateOpenFileHandle(filePath util.FullPath, eventEntry *fil
 		return
 	}
 
-	fh.dirtyPages.Destroy()
-	fh.dirtyPages = newPageWriter(fh, wfs.option.ChunkSizeLimit)
-
 	// A cached parent's store entry is the ordered merge of this event and
 	// anything applied since (e.g. a local flush that landed while the event
 	// sat in the queue), and carries a version at least the event's. An
 	// uncached parent receives no store writes, so a hit there would be a
 	// stale leftover masking the event — use the event entry instead.
+	var candidate *filer_pb.Entry
+	candidateTsNs := eventTsNs
 	dir, _ := filePath.DirAndName()
 	if wfs.metaCache.IsDirectoryCached(util.FullPath(dir)) {
 		if storeEntry, storeVersionTsNs, findErr := wfs.metaCache.FindEntryWithVersion(context.Background(), filePath); findErr == nil && storeEntry != nil && storeVersionTsNs >= eventTsNs {
-			fh.SetEntry(storeEntry.ToProtoEntry())
-			fh.advanceEntryVersionTsNs(storeVersionTsNs)
-			return
+			candidate = storeEntry.ToProtoEntry()
+			candidateTsNs = storeVersionTsNs
 		}
 	}
-	if eventEntry == nil {
-		// Path vacated (delete, rename away): keep the last entry so
-		// unlinked-but-open reads still work.
+	if candidate == nil && eventEntry != nil {
+		candidate = proto.Clone(eventEntry).(*filer_pb.Entry)
+		if candidate.Attributes == nil {
+			candidate.Attributes = &filer_pb.FuseAttributes{}
+		}
+		if wfs.option.UidGidMapper != nil {
+			candidate.Attributes.Uid, candidate.Attributes.Gid = wfs.option.UidGidMapper.FilerToLocal(candidate.Attributes.Uid, candidate.Attributes.Gid)
+		}
+	}
+	if candidate == nil {
+		// Path vacated (delete, rename away): drop local dirty state, keep
+		// the last entry so unlinked-but-open reads still work.
+		fh.dirtyPages.Destroy()
+		fh.dirtyPages = newPageWriter(fh, wfs.option.ChunkSizeLimit)
 		fh.advanceEntryVersionTsNs(eventTsNs)
 		return
 	}
-	newEntry := proto.Clone(eventEntry).(*filer_pb.Entry)
-	if newEntry.Attributes == nil {
-		newEntry.Attributes = &filer_pb.FuseAttributes{}
+	if candidate.Attributes != nil {
+		candidate.Attributes.FileSize = filer.FileSize(candidate)
 	}
-	if wfs.option.UidGidMapper != nil {
-		newEntry.Attributes.Uid, newEntry.Attributes.Gid = wfs.option.UidGidMapper.FilerToLocal(newEntry.Attributes.Uid, newEntry.Attributes.Gid)
+	// State the handle already holds — an under-fenced re-delivery (a fence
+	// is a lower bound; a listing or lookup can include a mutation whose
+	// event follows). Nothing changed for this handle: advancing the version
+	// suffices, and destroying dirty pages for it would lose local writes.
+	if proto.Equal(candidate, fh.GetEntry().GetEntry()) {
+		fh.advanceEntryVersionTsNs(candidateTsNs)
+		return
 	}
-	fh.SetEntry(newEntry)
-	fh.advanceEntryVersionTsNs(eventTsNs)
+	fh.dirtyPages.Destroy()
+	fh.dirtyPages = newPageWriter(fh, wfs.option.ChunkSizeLimit)
+	fh.SetEntry(candidate)
+	fh.advanceEntryVersionTsNs(candidateTsNs)
 }
 
 func (wfs *WFS) LookupFn() wdclient.LookupFileIdFunctionType {
