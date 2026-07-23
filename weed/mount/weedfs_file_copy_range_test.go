@@ -346,7 +346,7 @@ func newCopyRangeTestWFSWithMetaCache(t *testing.T) *WFS {
 		func(path util.FullPath) bool {
 			return wfs.inodeToPath.IsChildrenCached(path)
 		},
-		func(util.FullPath, *filer_pb.Entry) {},
+		func(util.FullPath, *filer_pb.Entry, int64) {},
 		nil,
 	)
 	t.Cleanup(func() {

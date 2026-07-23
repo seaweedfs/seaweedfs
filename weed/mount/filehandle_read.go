@@ -194,6 +194,14 @@ func (fh *FileHandle) downloadRemoteEntry(entry *LockedEntry) error {
 		}
 
 		fh.SetEntry(resp.Entry)
+		// The response state is versioned by the caching event when the filer
+		// performed the download, or by the response's log position when the
+		// object was already cached.
+		versionTsNs := resp.GetMetadataEvent().GetTsNs()
+		if versionTsNs == 0 {
+			versionTsNs = resp.GetLogTsNs()
+		}
+		fh.advanceEntryVersionTsNs(versionTsNs)
 
 		// Async: a sync apply deadlocks against the apply loop's invalidate, which needs this read's file-handle lock.
 		event := resp.GetMetadataEvent()

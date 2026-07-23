@@ -3,6 +3,7 @@ package mount
 import (
 	"os"
 	"sync"
+	"sync/atomic"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -38,6 +39,12 @@ type FileHandle struct {
 
 	isDeleted bool
 	isRenamed bool // set by Rename before waiting for async flush; skips old-path metadata flush
+
+	// entryVersionTsNs is the filer log position the handle's entry reflects:
+	// the log timestamp carried by the event, lookup response, or mutation
+	// ack that produced it. State at or below this version must not replace
+	// the entry — it would roll the handle back.
+	entryVersionTsNs atomic.Int64
 
 	// dlmLock holds the distributed lock for cross-mount write coordination.
 	// Non-nil only when -dlm is enabled and the file was opened for writing.
@@ -117,6 +124,21 @@ func (fh *FileHandle) SetEntry(entry *filer_pb.Entry) {
 
 	// Invalidate chunk offset cache since chunks may have changed
 	fh.invalidateChunkCache()
+}
+
+// advanceEntryVersionTsNs raises the entry version; an older timestamp never
+// regresses it. A zero timestamp (state without a version, e.g. from an old
+// filer) is a no-op, leaving the handle open to refreshes.
+func (fh *FileHandle) advanceEntryVersionTsNs(tsNs int64) {
+	if tsNs == 0 {
+		return
+	}
+	for {
+		current := fh.entryVersionTsNs.Load()
+		if tsNs <= current || fh.entryVersionTsNs.CompareAndSwap(current, tsNs) {
+			return
+		}
+	}
 }
 
 func (fh *FileHandle) ResetDirtyPages() {

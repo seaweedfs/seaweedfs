@@ -7,7 +7,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle *FileHandle, status fuse.Status) {
@@ -17,42 +16,65 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 	// data that was just written asynchronously.
 	wfs.waitForPendingAsyncFlush(inode)
 
-	var entry *filer_pb.Entry
-	var path util.FullPath
-	path, _, entry, status = wfs.maybeReadEntry(inode)
-	if status == fuse.OK {
-		if wormEnforced, _ := wfs.wormEnforcedForEntry(path, entry); wormEnforced && flags&fuse.O_ANYWRITE != 0 {
-			return nil, fuse.EPERM
-		}
-		// Check unix permission bits for the requested access mode. With
-		// default_permissions the kernel already enforced them before this
-		// open, so the check (and its supplementary-group lookup) is redundant.
-		if !wfs.option.DefaultPermissions && entry != nil && entry.Attributes != nil {
-			fileUid, fileGid := entry.Attributes.Uid, entry.Attributes.Gid
-			if wfs.option.UidGidMapper != nil {
-				fileUid, fileGid = wfs.option.UidGidMapper.FilerToLocal(fileUid, fileGid)
-			}
-			if mask := openFlagsToAccessMask(flags); mask != 0 && !hasAccess(uid, gid, fileUid, fileGid, entry.Attributes.FileMode, mask) {
-				return nil, fuse.EACCES
-			}
-		}
-		// need to AcquireFileHandle again to ensure correct handle counter
-		fileHandle = wfs.fhMap.AcquireFileHandle(wfs, inode, entry)
-		fileHandle.RememberPath(path)
+	path, pathStatus := wfs.inodeToPath.GetPath(inode)
+	if pathStatus != fuse.OK {
+		return nil, pathStatus
+	}
 
-		// Acquire distributed lock for write opens. The lock is held with
-		// auto-renewal until the file handle is released (close).
-		// Use the filer path as the lock key since inode numbers are
-		// assigned per-mount and differ across mount instances.
-		if wfs.lockClient != nil && flags&fuse.O_ANYWRITE != 0 && fileHandle.dlmLock == nil {
-			owner := fmt.Sprintf("mount-%d", wfs.signature)
-			fileHandle.dlmLock = wfs.lockClient.NewBlockingLongLivedLock(
-				string(path), owner, lock_manager.LiveLockTTL,
-			)
-			glog.V(1).Infof("DLM lock acquired for %s", path)
+	// A fresh lookup returns the entry with the filer log position it
+	// reflects; the new handle starts at that version so invalidations for
+	// older, already-queued events cannot replace it. An existing handle
+	// keeps its own version — its entry did not come from this lookup.
+	var entry *filer_pb.Entry
+	var entryVersionTsNs int64
+	freshLookup := false
+	if existingFh, found := wfs.fhMap.FindFileHandle(inode); found {
+		entry = existingFh.UpdateEntry(func(entry *filer_pb.Entry) {
+			if entry != nil && existingFh.entry.Attributes == nil {
+				entry.Attributes = &filer_pb.FuseAttributes{}
+			}
+		})
+	} else {
+		entry, entryVersionTsNs, status = wfs.maybeLoadEntryWithVersion(path)
+		if status != fuse.OK {
+			return nil, status
+		}
+		freshLookup = true
+	}
+	if wormEnforced, _ := wfs.wormEnforcedForEntry(path, entry); wormEnforced && flags&fuse.O_ANYWRITE != 0 {
+		return nil, fuse.EPERM
+	}
+	// Check unix permission bits for the requested access mode. With
+	// default_permissions the kernel already enforced them before this
+	// open, so the check (and its supplementary-group lookup) is redundant.
+	if !wfs.option.DefaultPermissions && entry != nil && entry.Attributes != nil {
+		fileUid, fileGid := entry.Attributes.Uid, entry.Attributes.Gid
+		if wfs.option.UidGidMapper != nil {
+			fileUid, fileGid = wfs.option.UidGidMapper.FilerToLocal(fileUid, fileGid)
+		}
+		if mask := openFlagsToAccessMask(flags); mask != 0 && !hasAccess(uid, gid, fileUid, fileGid, entry.Attributes.FileMode, mask) {
+			return nil, fuse.EACCES
 		}
 	}
-	return
+	// need to AcquireFileHandle again to ensure correct handle counter
+	fileHandle = wfs.fhMap.AcquireFileHandle(wfs, inode, entry)
+	fileHandle.RememberPath(path)
+	if freshLookup {
+		fileHandle.advanceEntryVersionTsNs(entryVersionTsNs)
+	}
+
+	// Acquire distributed lock for write opens. The lock is held with
+	// auto-renewal until the file handle is released (close).
+	// Use the filer path as the lock key since inode numbers are
+	// assigned per-mount and differ across mount instances.
+	if wfs.lockClient != nil && flags&fuse.O_ANYWRITE != 0 && fileHandle.dlmLock == nil {
+		owner := fmt.Sprintf("mount-%d", wfs.signature)
+		fileHandle.dlmLock = wfs.lockClient.NewBlockingLongLivedLock(
+			string(path), owner, lock_manager.LiveLockTTL,
+		)
+		glog.V(1).Infof("DLM lock acquired for %s", path)
+	}
+	return fileHandle, fuse.OK
 }
 
 // ReleaseHandle is called from FUSE Release.  For handles with a pending

@@ -128,7 +128,7 @@ func newCreateTestWFS(t *testing.T) (*WFS, *createEntryTestServer) {
 		func(path util.FullPath) bool {
 			return wfs.inodeToPath.IsChildrenCached(path)
 		},
-		func(util.FullPath, *filer_pb.Entry) {},
+		func(util.FullPath, *filer_pb.Entry, int64) {},
 		nil,
 	)
 	wfs.inodeToPath.MarkChildrenCached(root)

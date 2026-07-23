@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -31,7 +32,7 @@ type MetaCache struct {
 	uidGidMapper         *UidGidMapper
 	markCachedFn         func(fullpath util.FullPath)
 	isCachedFn           func(fullpath util.FullPath) bool
-	invalidateFunc       func(fullpath util.FullPath, entry *filer_pb.Entry)
+	invalidateFunc       func(fullpath util.FullPath, entry *filer_pb.Entry, eventTsNs int64)
 	onDirectoryUpdate    func(dir util.FullPath)
 	pinnedChildFn        func(*filer.Entry) bool // a child a rebuild must not drop (local-only, not yet on the filer); nil disables
 	visitGroup           singleflight.Group      // deduplicates concurrent EnsureVisited calls for the same path
@@ -42,6 +43,12 @@ type MetaCache struct {
 	buildingDirs         map[util.FullPath]*directoryBuildState
 	dedupRing            dedupRingBuffer
 	includeSystemEntries bool
+
+	// latestEventTsNs is the newest filer log timestamp reflected in the
+	// local store, advanced under the write lock together with the store
+	// mutation so a read under the same lock pairs an entry with a version:
+	// every event at or below it is reflected in what the store holds.
+	latestEventTsNs atomic.Int64
 
 	// Entry invalidations run on a worker, not inline on the apply loop:
 	// invalidateFunc takes the fh lock, which a flush can hold while waiting on
@@ -96,7 +103,7 @@ type metadataApplyRequest struct {
 }
 
 func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPath, includeSystemEntries bool,
-	markCachedFn func(path util.FullPath), isCachedFn func(path util.FullPath) bool, invalidateFunc func(util.FullPath, *filer_pb.Entry), onDirectoryUpdate func(dir util.FullPath)) *MetaCache {
+	markCachedFn func(path util.FullPath), isCachedFn func(path util.FullPath) bool, invalidateFunc func(util.FullPath, *filer_pb.Entry, int64), onDirectoryUpdate func(dir util.FullPath)) *MetaCache {
 	leveldbStore, virtualStore := openMetaStore(dbFolder)
 	mc := &MetaCache{
 		root:                 root,
@@ -107,8 +114,8 @@ func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPat
 		uidGidMapper:         uidGidMapper,
 		onDirectoryUpdate:    onDirectoryUpdate,
 		includeSystemEntries: includeSystemEntries,
-		invalidateFunc: func(fullpath util.FullPath, entry *filer_pb.Entry) {
-			invalidateFunc(fullpath, entry)
+		invalidateFunc: func(fullpath util.FullPath, entry *filer_pb.Entry, eventTsNs int64) {
+			invalidateFunc(fullpath, entry, eventTsNs)
 		},
 		applyCh:      make(chan metadataApplyRequest, 128),
 		applyDone:    make(chan struct{}),
@@ -117,7 +124,7 @@ func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPat
 	}
 	mc.invalidateWorker = util.NewAsyncBatchWorker(func(batch []metadataInvalidation) {
 		for _, invalidation := range batch {
-			mc.invalidateFunc(invalidation.path, invalidation.entry)
+			mc.invalidateFunc(invalidation.path, invalidation.entry, invalidation.tsNs)
 		}
 	})
 	go mc.runApplyLoop()
@@ -346,17 +353,45 @@ func (mc *MetaCache) TouchDirMtimeCtime(ctx context.Context, dirPath util.FullPa
 }
 
 func (mc *MetaCache) FindEntry(ctx context.Context, fp util.FullPath) (entry *filer.Entry, err error) {
+	entry, _, err = mc.FindEntryWithVersion(ctx, fp)
+	return
+}
+
+// FindEntryWithVersion returns the entry paired with the store's version
+// cursor, read under the same lock the apply path advances it under: every
+// event at or below the returned timestamp is reflected in the entry, for
+// paths whose parent directory the store maintains.
+func (mc *MetaCache) FindEntryWithVersion(ctx context.Context, fp util.FullPath) (entry *filer.Entry, versionTsNs int64, err error) {
 	mc.RLock()
 	defer mc.RUnlock()
+	versionTsNs = mc.latestEventTsNs.Load()
 	entry, err = mc.localStore.FindEntry(ctx, fp)
 	if err != nil {
-		return nil, err
+		return nil, versionTsNs, err
 	}
 	if entry.TtlSec > 0 && entry.Crtime.Add(time.Duration(entry.TtlSec)*time.Second).Before(time.Now()) {
-		return nil, filer_pb.ErrNotFound
+		return nil, versionTsNs, filer_pb.ErrNotFound
 	}
 	mc.mapIdFromFilerToLocal(entry)
 	return
+}
+
+func (mc *MetaCache) advanceLatestEventTs(tsNs int64) {
+	if tsNs == 0 {
+		return
+	}
+	for {
+		current := mc.latestEventTsNs.Load()
+		if tsNs <= current || mc.latestEventTsNs.CompareAndSwap(current, tsNs) {
+			return
+		}
+	}
+}
+
+// LatestEventTsNs returns the newest filer log timestamp reflected in the
+// local store.
+func (mc *MetaCache) LatestEventTsNs() int64 {
+	return mc.latestEventTsNs.Load()
 }
 
 func (mc *MetaCache) DeleteEntry(ctx context.Context, fp util.FullPath) (err error) {
@@ -564,7 +599,8 @@ func (mc *MetaCache) handleApplyRequest(req metadataApplyRequest) error {
 
 type metadataInvalidation struct {
 	path  util.FullPath
-	entry *filer_pb.Entry
+	entry *filer_pb.Entry // entry now at path per the event; nil when the path was vacated (delete, rename away)
+	tsNs  int64           // the event's filer log timestamp; 0 for locally built events
 }
 
 type metadataResponseSideEffects struct {
@@ -678,6 +714,9 @@ func (mc *MetaCache) applyMetadataResponseLocked(ctx context.Context, resp *file
 
 	mc.Lock()
 	err := mc.atomicUpdateEntryFromFilerLocked(ctx, oldPath, newEntry, allowUncachedInsert)
+	if err == nil {
+		mc.advanceLatestEventTs(resp.TsNs)
+	}
 	if err == nil && hideNewPath {
 		if purgeErr := mc.purgeEntryLocked(ctx, newPath, message.NewEntry.IsDirectory); purgeErr != nil {
 			err = purgeErr
@@ -754,7 +793,25 @@ func (mc *MetaCache) completeDirectoryBuildNow(ctx context.Context, dirPath util
 		}
 	}
 
+	// The listing that built this directory reflects the filer log up to
+	// snapshotTsNs; the version cursor must cover it before the directory is
+	// published so store reads pair correctly.
+	mc.advanceLatestEventTs(snapshotTsNs)
 	mc.markCachedFn(dirPath)
+
+	// Re-invalidate every buffered event, replayed or snapshot-covered: the
+	// invalidation issued when an event arrived ran against a mid-build
+	// store, so an open handle can hold older state than the completed
+	// directory. Enqueued after markCachedFn so the refresh resolves against
+	// the published store. Versioned at the snapshot so it outranks what a
+	// handle picked up from the same event mid-build; the buffered clones
+	// are owned and discarded here.
+	for _, event := range state.bufferedEvents {
+		if event.TsNs < snapshotTsNs {
+			event.TsNs = snapshotTsNs
+		}
+		mc.applyMetadataSideEffects(event, MetadataResponseApplyOptions{InvalidateEntries: true})
+	}
 	return nil
 }
 
@@ -975,15 +1032,17 @@ func collectEntryInvalidations(resp *filer_pb.SubscribeMetadataResponse) []metad
 	var invalidations []metadataInvalidation
 	if message.OldEntry != nil && message.NewEntry != nil {
 		oldKey := util.NewFullPath(resp.Directory, message.OldEntry.Name)
-		invalidations = append(invalidations, metadataInvalidation{path: oldKey, entry: message.OldEntry})
 		// Normalize NewParentPath: empty means same directory as resp.Directory
 		newDir := resp.Directory
 		if message.NewParentPath != "" {
 			newDir = message.NewParentPath
 		}
 		if message.OldEntry.Name != message.NewEntry.Name || resp.Directory != newDir {
+			invalidations = append(invalidations, metadataInvalidation{path: oldKey, tsNs: resp.TsNs})
 			newKey := util.NewFullPath(newDir, message.NewEntry.Name)
-			invalidations = append(invalidations, metadataInvalidation{path: newKey, entry: message.NewEntry})
+			invalidations = append(invalidations, metadataInvalidation{path: newKey, entry: message.NewEntry, tsNs: resp.TsNs})
+		} else {
+			invalidations = append(invalidations, metadataInvalidation{path: oldKey, entry: message.NewEntry, tsNs: resp.TsNs})
 		}
 		return invalidations
 	}
@@ -994,12 +1053,12 @@ func collectEntryInvalidations(resp *filer_pb.SubscribeMetadataResponse) []metad
 			newDir = message.NewParentPath
 		}
 		newKey := util.NewFullPath(newDir, message.NewEntry.Name)
-		invalidations = append(invalidations, metadataInvalidation{path: newKey, entry: message.NewEntry})
+		invalidations = append(invalidations, metadataInvalidation{path: newKey, entry: message.NewEntry, tsNs: resp.TsNs})
 	}
 
 	if filer_pb.IsDelete(resp) && message.OldEntry != nil {
 		oldKey := util.NewFullPath(resp.Directory, message.OldEntry.Name)
-		invalidations = append(invalidations, metadataInvalidation{path: oldKey, entry: message.OldEntry})
+		invalidations = append(invalidations, metadataInvalidation{path: oldKey, tsNs: resp.TsNs})
 	}
 
 	return invalidations

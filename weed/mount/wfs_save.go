@@ -51,6 +51,14 @@ func (wfs *WFS) saveEntry(path util.FullPath, entry *filer_pb.Entry) (code fuse.
 		return fuseStatus
 	}
 
+	// The mutation is acknowledged; keep any open handle for this path ahead
+	// of subscription events the filer logged before it.
+	if inode, found := wfs.inodeToPath.GetInode(path); found {
+		if fh, fhFound := wfs.fhMap.FindFileHandle(inode); fhFound {
+			fh.advanceEntryVersionTsNs(resp.GetMetadataEvent().GetTsNs())
+		}
+	}
+
 	event := resp.GetMetadataEvent()
 	if event == nil {
 		event = metadataUpdateEvent(parentDir, entry)
