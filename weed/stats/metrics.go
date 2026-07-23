@@ -669,6 +669,14 @@ var (
 			Help:      "Remote-mount object read attempts by source, bucket and cache result. A cold object retried before caching completes records a miss per attempt; paths outside the buckets folder use bucket \"_other\".",
 		}, []string{"source", "bucket", "result"})
 
+	RemoteStaleChunkRecoveryCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemRemote,
+			Name:      "stale_chunk_recovery_total",
+			Help:      "Remote-mount reads that found a local chunk pointing at a reclaimed needle and fell back to re-pulling from the remote, by source, bucket and result (recovered, failed). A nonzero rate means local cache/volume state is diverging from the remote and is worth alerting on.",
+		}, []string{"source", "bucket", "result"})
+
 	UploadErrorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -937,6 +945,7 @@ func init() {
 	Gather.MustRegister(S3BucketReadOnlyGauge)
 
 	Gather.MustRegister(RemoteCacheReadCounter)
+	Gather.MustRegister(RemoteStaleChunkRecoveryCounter)
 
 	Gather.MustRegister(S3LifecycleDispatchCounter)
 	Gather.MustRegister(S3LifecycleScheduleDepthGauge)
@@ -1026,6 +1035,17 @@ func RecordRemoteCacheRead(source, bucket string, hit bool) {
 	RemoteCacheReadCounter.WithLabelValues(source, bucket, result).Inc()
 }
 
+func RecordRemoteStaleChunkRecovery(source, bucket string, recovered bool) {
+	if bucket == "" {
+		bucket = "_other"
+	}
+	result := "failed"
+	if recovered {
+		result = "recovered"
+	}
+	RemoteStaleChunkRecoveryCounter.WithLabelValues(source, bucket, result).Inc()
+}
+
 func DeleteBucketMetrics(bucket string) {
 	bucketLastActiveLock.Lock()
 	delete(bucketLastActiveTsNs, bucket)
@@ -1048,6 +1068,7 @@ func DeleteBucketMetrics(bucket string) {
 	c += S3LifecycleBootstrapDispatchCounter.DeletePartialMatch(labels)
 	c += S3LifecycleMetadataOnlyCounter.DeletePartialMatch(labels)
 	c += RemoteCacheReadCounter.DeletePartialMatch(labels)
+	c += RemoteStaleChunkRecoveryCounter.DeletePartialMatch(labels)
 
 	glog.V(0).Infof("delete bucket metrics, %s: %d", bucket, c)
 }

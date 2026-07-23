@@ -944,13 +944,12 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 		rangeParseTime   time.Duration
 		headerSetTime    time.Duration
 		chunkResolveTime time.Duration
-		streamPrepTime   time.Duration
 		streamExecTime   time.Duration
 	)
 	defer func() {
 		totalTime := time.Since(t0)
-		glog.V(2).Infof("  └─ streamFromVolumeServers: total=%v, rangeParse=%v, headerSet=%v, chunkResolve=%v, streamPrep=%v, streamExec=%v",
-			totalTime, rangeParseTime, headerSetTime, chunkResolveTime, streamPrepTime, streamExecTime)
+		glog.V(2).Infof("  └─ streamFromVolumeServers: total=%v, rangeParse=%v, headerSet=%v, chunkResolve=%v, streamExec=%v",
+			totalTime, rangeParseTime, headerSetTime, chunkResolveTime, streamExecTime)
 	}()
 
 	if entry == nil {
@@ -1094,24 +1093,6 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 		return newStreamErrorWithResponse(fmt.Errorf("failed to resolve chunks: %v", err))
 	}
 
-	// Build a ChunkReadAt backed by the server-wide ReaderCache. This mirrors
-	// the WebDAV read path (server/webdav_server.go) and outperforms the
-	// io.Pipe-based streamChunksPrefetched path: ReaderCache prefetches whole
-	// chunks into memory buffers that the consumer can memcpy out of, so
-	// prefetchCount translates into actual in-flight bytes rather than just
-	// parallel TCP handshakes.
-	//
-	// We do NOT call reader.Close() here — ChunkReadAt.Close() would destroy
-	// the ReaderCache's downloaders map, which is shared across concurrent
-	// requests. Eviction is handled by the ReaderCache's own downloader
-	// limit. JWT for volume-server requests is generated internally by
-	// util_http.RetriedFetchChunkData from jwtSigningReadKey, matching the
-	// WebDAV and mount read paths.
-	tStreamPrep := time.Now()
-	chunkViews := filer.ViewFromVisibleIntervals(visibleIntervals, offset, size)
-	reader := filer.NewChunkReaderAtFromClient(ctx, s3a.readerCache, chunkViews, totalSize, filer.DefaultPrefetchCount)
-	streamPrepTime = time.Since(tStreamPrep)
-
 	// All validation and preparation successful - NOW set headers and write status
 	tHeaderSet := time.Now()
 	s3a.setResponseHeaders(w, r, entry, totalSize)
@@ -1135,42 +1116,37 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	// Track time to first byte metric
 	TimeToFirstByte(r.Method, t0, r)
 
-	// Stream directly to response with counting wrapper.
-	// ChunkReadAt's ReadAt is backed by in-memory prefetched chunk buffers, so
-	// io.CopyBuffer drains them as fast memcpys.
 	tStreamExec := time.Now()
 	glog.V(4).Infof("streamFromVolumeServers: starting chunk reader, offset=%d, size=%d", offset, size)
-	cw := &countingWriter{w: w}
-	// Cap the copy buffer to the response size so small-object GETs (common
-	// for thumbnails, config files, etc.) don't allocate a 256 KiB scratch
-	// buffer per request.
-	const maxCopyBuf = 256 * 1024
-	copyBufSize := int64(maxCopyBuf)
-	if size > 0 && size < copyBufSize {
-		copyBufSize = size
-	}
-	copyBuf := make([]byte, copyBufSize)
-	_, err = io.CopyBuffer(cw, io.NewSectionReader(reader, offset, size), copyBuf)
+	written, err := s3a.streamResolvedRangeToResponse(ctx, r, w, visibleIntervals, offset, size, totalSize)
 	streamExecTime = time.Since(tStreamExec)
-	// Track traffic even on partial writes for accurate egress accounting
-	if cw.written > 0 {
-		BucketTrafficSent(cw.written, r)
-	}
 	if err != nil {
+		// A remote-mounted entry can still reference local chunks whose backing
+		// needle has been reclaimed (vacuum-compaction / deletion), so the
+		// volume-server read returns 404 even though the object is intact in the
+		// remote store. Because the entry still has chunks, IsInRemoteOnly() is
+		// false and the normal remote re-pull above never runs. When nothing has
+		// been written yet, drop the dead chunks and re-pull from the remote
+		// rather than failing the GET.
+		if written == 0 && errors.Is(err, util_http.ErrNotFound) &&
+			s3a.recoverFromStaleRemoteChunks(w, r, entry, bucket, object, versionId, offset, size, totalSize) {
+			glog.V(1).Infof("streamFromVolumeServers: recovered %s/%s from remote after stale-chunk 404", bucket, object)
+			return nil
+		}
 		switch {
 		case isCanceledStreamingError(err):
 			// Client disconnected mid-stream (e.g. Nginx upstream timeout, browser cancel) - expected
-			glog.V(3).Infof("streamFromVolumeServers: client disconnected after writing %d bytes: %v", cw.written, err)
+			glog.V(3).Infof("streamFromVolumeServers: client disconnected after writing %d bytes: %v", written, err)
 		case errors.Is(err, context.DeadlineExceeded):
 			// Server-side deadline exceeded - unexpected, warrants operator attention
-			glog.Warningf("streamFromVolumeServers: server-side deadline exceeded after writing %d bytes: %v", cw.written, err)
+			glog.Warningf("streamFromVolumeServers: server-side deadline exceeded after writing %d bytes: %v", written, err)
 		default:
-			glog.Errorf("streamFromVolumeServers: streamFn failed after writing %d bytes: %v", cw.written, err)
+			glog.Errorf("streamFromVolumeServers: streamFn failed after writing %d bytes: %v", written, err)
 		}
 		// Streaming error after WriteHeader was called - response already partially written
 		return newStreamErrorWithResponse(err)
 	}
-	glog.V(4).Infof("streamFromVolumeServers: streamFn completed successfully, wrote %d bytes", cw.written)
+	glog.V(4).Infof("streamFromVolumeServers: streamFn completed successfully, wrote %d bytes", written)
 	return nil
 }
 
@@ -3232,6 +3208,126 @@ func (s3a *S3ApiServer) cacheRemoteObjectForStreamingWithShortTimeout(r *http.Re
 	}
 
 	return nil, nil
+}
+
+// recoverFromStaleRemoteChunks self-heals a remote-mounted entry whose local
+// chunks point at a reclaimed needle (vacuum-compaction / deletion), which makes
+// the volume-server read return 404 even though the object is intact in the
+// remote store. Because the entry still has chunks, IsInRemoteOnly() is false
+// and the normal remote re-pull path never runs.
+//
+// It drops the dead chunks — turning the entry back into a remote-only entry so
+// future reads self-heal via the existing remote-only path — re-pulls the object
+// from the remote store, and streams the requested range from the fresh chunks
+// to satisfy the current request.
+//
+// It only acts on entries with a remote backing, so non-remote buckets are
+// unaffected. Returns true only when it fully served the response body, so the
+// caller (which must not have written any bytes yet) can return success.
+func (s3a *S3ApiServer) recoverFromStaleRemoteChunks(w http.ResponseWriter, r *http.Request, entry *filer_pb.Entry, bucket, object, versionId string, offset, size, totalSize int64) bool {
+	if entry == nil || entry.RemoteEntry == nil || entry.RemoteEntry.RemoteSize == 0 {
+		return false
+	}
+	if r.Context().Err() != nil {
+		return false
+	}
+
+	// Count only real recovery attempts (past the not-applicable guards above).
+	recovered := false
+	defer func() { stats.RecordRemoteStaleChunkRecovery(stats.RemoteCacheSourceS3, bucket, recovered) }()
+
+	cacheVersionId := resolvedSourceVersionId(versionId, entry)
+	dir, name := s3a.buildVersionedRemoteObjectPath(bucket, object, cacheVersionId)
+	glog.Warningf("recoverFromStaleRemoteChunks: %s/%s references a reclaimed needle; dropping stale chunks and re-pulling from remote", dir, name)
+
+	if err := s3a.dropLocalChunks(dir, name); err != nil {
+		glog.Errorf("recoverFromStaleRemoteChunks: failed to drop stale chunks for %s/%s: %v", dir, name, err)
+		return false
+	}
+
+	cachedEntry, err := s3a.cacheRemoteObjectForStreamingWithShortTimeout(r, entry, bucket, object, cacheVersionId)
+	if err != nil || cachedEntry == nil || len(cachedEntry.GetChunks()) == 0 {
+		// The entry is now remote-only, so a client retry self-heals via the
+		// existing remote-only path even if this in-line re-pull did not finish.
+		glog.Errorf("recoverFromStaleRemoteChunks: re-pull from remote did not produce chunks for %s/%s: %v", dir, name, err)
+		return false
+	}
+
+	if streamErr := s3a.streamEntryRangeToResponse(r, w, cachedEntry, offset, size, totalSize); streamErr != nil {
+		glog.Errorf("recoverFromStaleRemoteChunks: streaming re-pulled chunks failed for %s/%s: %v", dir, name, streamErr)
+		return false
+	}
+
+	glog.V(1).Infof("recoverFromStaleRemoteChunks: served %s/%s from re-pulled remote chunks (%d chunks)", dir, name, len(cachedEntry.GetChunks()))
+	recovered = true
+	return true
+}
+
+// dropLocalChunks clears a remote-backed entry's local chunk references so a
+// subsequent CacheRemoteObjectToLocalCluster re-downloads from the remote
+// instead of short-circuiting as "already cached". A no-op when the entry has no
+// chunks; errors when the entry is not remote-backed.
+func (s3a *S3ApiServer) dropLocalChunks(dir, name string) error {
+	entry, err := s3a.getEntry(dir, name)
+	if err != nil {
+		return err
+	}
+	if entry.RemoteEntry == nil || entry.RemoteEntry.RemoteSize == 0 {
+		return fmt.Errorf("%s/%s is not remote-backed", dir, name)
+	}
+	if len(entry.GetChunks()) == 0 {
+		return nil
+	}
+	entry.Chunks = nil
+	return s3a.updateEntry(dir, entry)
+}
+
+// streamEntryRangeToResponse resolves entry's chunks and streams the
+// [offset, offset+size) range to w.
+func (s3a *S3ApiServer) streamEntryRangeToResponse(r *http.Request, w io.Writer, entry *filer_pb.Entry, offset, size, totalSize int64) error {
+	chunks := entry.GetChunks()
+	if len(chunks) == 0 {
+		return fmt.Errorf("entry has no chunks to stream")
+	}
+
+	ctx := r.Context()
+	lookupFileIdFn := s3a.createLookupFileIdFunction()
+	visibleIntervals, err := filer.NonOverlappingVisibleIntervals(ctx, lookupFileIdFn, chunks, offset, offset+size)
+	if err != nil {
+		return fmt.Errorf("resolve chunks: %w", err)
+	}
+
+	_, err = s3a.streamResolvedRangeToResponse(ctx, r, w, visibleIntervals, offset, size, totalSize)
+	return err
+}
+
+// streamResolvedRangeToResponse builds a ReaderCache-backed reader over the
+// resolved [offset, offset+size) intervals and copies it to w, returning the
+// number of bytes written (also accounted as bucket egress). Shared by the
+// primary GET path and the stale-remote-chunk recovery path.
+//
+// We do NOT call reader.Close() here — ChunkReadAt.Close() would destroy the
+// ReaderCache's downloaders map, which is shared across concurrent requests;
+// eviction is handled by the ReaderCache's own downloader limit. JWT for
+// volume-server requests is generated internally by util_http.RetriedFetchChunkData.
+func (s3a *S3ApiServer) streamResolvedRangeToResponse(ctx context.Context, r *http.Request, w io.Writer, visibleIntervals *filer.IntervalList[*filer.VisibleInterval], offset, size, totalSize int64) (int64, error) {
+	chunkViews := filer.ViewFromVisibleIntervals(visibleIntervals, offset, size)
+	reader := filer.NewChunkReaderAtFromClient(ctx, s3a.readerCache, chunkViews, totalSize, filer.DefaultPrefetchCount)
+
+	cw := &countingWriter{w: w}
+	// Cap the copy buffer to the response size so small-object GETs don't
+	// allocate a 256 KiB scratch buffer per request.
+	const maxCopyBuf = 256 * 1024
+	copyBufSize := int64(maxCopyBuf)
+	if size > 0 && size < copyBufSize {
+		copyBufSize = size
+	}
+	copyBuf := make([]byte, copyBufSize)
+	_, err := io.CopyBuffer(cw, io.NewSectionReader(reader, offset, size), copyBuf)
+	if cw.written > 0 {
+		BucketTrafficSent(cw.written, r)
+	}
+	return cw.written, err
 }
 
 // cacheRemoteObjectForStreaming caches a remote-only object to the local cluster for streaming.
