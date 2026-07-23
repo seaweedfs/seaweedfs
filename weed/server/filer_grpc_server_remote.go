@@ -74,7 +74,7 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 		return nil, fmt.Errorf("find entry %s/%s: %v", req.Directory, req.Name, err)
 	}
 
-	resp := &filer_pb.CacheRemoteObjectToLocalClusterResponse{LogTsNs: logTsNs}
+	resp := &filer_pb.CacheRemoteObjectToLocalClusterResponse{LogTsNs: logTsNs, LogSignature: fs.filer.Signature}
 
 	// Early return if not a remote-only object or already cached
 	if entry.Remote == nil || entry.Remote.RemoteSize == 0 {
@@ -322,6 +322,7 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 		fs.filer.DeleteUncommittedChunks(ctx, chunks)
 		resp.Entry = current.ToProtoEntry()
 		resp.LogTsNs = commitLogTsNs
+		resp.LogSignature = fs.filer.Signature
 		return resp, nil
 	}
 
@@ -346,6 +347,7 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 	resp.Entry = newEntry.ToProtoEntry()
 	resp.MetadataEvent = eventSink.Last()
 	resp.LogTsNs = commitLogTsNs
+	resp.LogSignature = fs.filer.Signature
 
 	return resp, nil
 

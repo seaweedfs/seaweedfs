@@ -112,7 +112,7 @@ func TestCopyFileRangeUsesServerSideWholeFileCopy(t *testing.T) {
 	}()
 
 	var called bool
-	performServerSideWholeFileCopy = func(cancel <-chan struct{}, gotWFS *WFS, copyRequest wholeFileServerCopyRequest) (*filer_pb.Entry, int64, serverSideWholeFileCopyOutcome, error) {
+	performServerSideWholeFileCopy = func(cancel <-chan struct{}, gotWFS *WFS, copyRequest wholeFileServerCopyRequest) (*filer_pb.Entry, entryVersion, serverSideWholeFileCopyOutcome, error) {
 		called = true
 		if gotWFS != wfs {
 			t.Fatalf("wfs = %p, want %p", gotWFS, wfs)
@@ -131,7 +131,7 @@ func TestCopyFileRangeUsesServerSideWholeFileCopy(t *testing.T) {
 				Mime:     "text/plain; charset=utf-8",
 			},
 			Content: []byte("hello"),
-		}, 2000, serverSideWholeFileCopyCommitted, nil
+		}, entryVersion{tsNs: 2000}, serverSideWholeFileCopyCommitted, nil
 	}
 
 	written, status := wfs.CopyFileRange(make(chan struct{}), &fuse.CopyFileRangeIn{
@@ -198,11 +198,11 @@ func TestCopyFileRangeDoesNotFallbackAfterCommittedServerCopyRefreshFailure(t *t
 		performServerSideWholeFileCopy = originalCopy
 	}()
 
-	performServerSideWholeFileCopy = func(cancel <-chan struct{}, gotWFS *WFS, copyRequest wholeFileServerCopyRequest) (*filer_pb.Entry, int64, serverSideWholeFileCopyOutcome, error) {
+	performServerSideWholeFileCopy = func(cancel <-chan struct{}, gotWFS *WFS, copyRequest wholeFileServerCopyRequest) (*filer_pb.Entry, entryVersion, serverSideWholeFileCopyOutcome, error) {
 		if gotWFS != wfs || copyRequest.srcPath != srcPath || copyRequest.dstPath != dstPath {
 			t.Fatalf("unexpected server-side copy call: wfs=%p src=%q dst=%q", gotWFS, copyRequest.srcPath, copyRequest.dstPath)
 		}
-		return nil, 0, serverSideWholeFileCopyCommitted, errors.New("reload copied entry: transient filer read failure")
+		return nil, entryVersion{}, serverSideWholeFileCopyCommitted, errors.New("reload copied entry: transient filer read failure")
 	}
 
 	written, status := wfs.CopyFileRange(make(chan struct{}), &fuse.CopyFileRangeIn{
@@ -278,11 +278,11 @@ func TestCopyFileRangeReturnsEIOForAmbiguousServerSideCopy(t *testing.T) {
 		performServerSideWholeFileCopy = originalCopy
 	}()
 
-	performServerSideWholeFileCopy = func(cancel <-chan struct{}, gotWFS *WFS, copyRequest wholeFileServerCopyRequest) (*filer_pb.Entry, int64, serverSideWholeFileCopyOutcome, error) {
+	performServerSideWholeFileCopy = func(cancel <-chan struct{}, gotWFS *WFS, copyRequest wholeFileServerCopyRequest) (*filer_pb.Entry, entryVersion, serverSideWholeFileCopyOutcome, error) {
 		if gotWFS != wfs || copyRequest.srcPath != srcPath || copyRequest.dstPath != dstPath {
 			t.Fatalf("unexpected server-side copy call: wfs=%p src=%q dst=%q", gotWFS, copyRequest.srcPath, copyRequest.dstPath)
 		}
-		return nil, 0, serverSideWholeFileCopyAmbiguous, errors.New("transport timeout after request dispatch")
+		return nil, entryVersion{}, serverSideWholeFileCopyAmbiguous, errors.New("transport timeout after request dispatch")
 	}
 
 	written, status := wfs.CopyFileRange(make(chan struct{}), &fuse.CopyFileRangeIn{
@@ -346,7 +346,7 @@ func newCopyRangeTestWFSWithMetaCache(t *testing.T) *WFS {
 		func(path util.FullPath) bool {
 			return wfs.inodeToPath.IsChildrenCached(path)
 		},
-		func(util.FullPath, *filer_pb.Entry, int64, bool) {},
+		func(meta_cache.EntryInvalidation) {},
 		nil,
 	)
 	t.Cleanup(func() {

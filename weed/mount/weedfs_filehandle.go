@@ -27,7 +27,7 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 	// overwrite a newer install. An existing handle keeps its own entry and
 	// version — they did not come from this lookup.
 	var entry *filer_pb.Entry
-	var entryVersionTsNs int64
+	var entryVersionTsNs entryVersion
 	freshLookup := false
 	if existingFh, found := wfs.fhMap.FindFileHandle(inode); found {
 		entry = existingFh.UpdateEntry(func(entry *filer_pb.Entry) {
@@ -35,7 +35,7 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 				entry.Attributes = &filer_pb.FuseAttributes{}
 			}
 		})
-		entryVersionTsNs = existingFh.entryVersionTsNs.Load()
+		entryVersionTsNs = entryVersion{tsNs: existingFh.entryVersionTsNs.Load(), signature: existingFh.entryVersionSignature.Load()}
 	} else {
 		entry, entryVersionTsNs, status = wfs.maybeLoadEntryWithVersion(path)
 		if status != fuse.OK {
@@ -60,12 +60,12 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 	}
 	// need to AcquireFileHandle again to ensure correct handle counter
 	var existed bool
-	fileHandle, existed = wfs.fhMap.AcquireFileHandleWithVersion(wfs, inode, entry, entryVersionTsNs)
+	fileHandle, existed = wfs.fhMap.AcquireFileHandleWithVersion(wfs, inode, entry, entryVersionTsNs.tsNs, entryVersionTsNs.signature)
 	fileHandle.RememberPath(path)
 	if existed && freshLookup {
 		// Another opener created the handle while our lookup was in flight;
 		// install only state that provably improves on what it holds.
-		fileHandle.installAckedEntry(entry, entryVersionTsNs)
+		fileHandle.installAckedEntry(entry, entryVersionTsNs.tsNs, entryVersionTsNs.signature)
 	}
 
 	// Acquire distributed lock for write opens. The lock is held with

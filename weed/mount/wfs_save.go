@@ -63,7 +63,7 @@ func (wfs *WFS) saveEntry(path util.FullPath, entry *filer_pb.Entry) (code fuse.
 		if fh, fhFound := wfs.fhMap.FindFileHandle(inode); fhFound {
 			ackedEntry := proto.Clone(entry).(*filer_pb.Entry)
 			wfs.mapPbIdFromFilerToLocal(ackedEntry)
-			fh.installAckedEntry(ackedEntry, ackVersion)
+			fh.installAckedEntry(ackedEntry, ackVersion, resp.GetLogSignature())
 		}
 	}
 

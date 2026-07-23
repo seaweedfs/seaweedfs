@@ -124,6 +124,9 @@ message LookupDirectoryEntryResponse {
     // filer log position stamped before the entry read: every event at or
     // below it is reflected in the returned entry
     int64 log_ts_ns = 2;
+    // signature of the filer whose clock stamped log_ts_ns; positions are
+    // only comparable with events that filer logged
+    int32 log_signature = 3;
 }
 
 message ListEntriesRequest {
@@ -452,6 +455,7 @@ message CreateEntryResponse {
     // filer log position stamped under the path lock before the write:
     // every event at or below it is reflected in the acknowledged state
     int64 log_ts_ns = 4;
+    int32 log_signature = 5; // filer whose clock stamped log_ts_ns
 }
 
 message UpdateEntryRequest {
@@ -470,6 +474,7 @@ message UpdateEntryResponse {
     // filer log position stamped under the path lock before the write:
     // every event at or below it is reflected in the acknowledged state
     int64 log_ts_ns = 2;
+    int32 log_signature = 3; // filer whose clock stamped log_ts_ns
 }
 
 message TouchAccessTimeRequest {
@@ -775,6 +780,7 @@ message CacheRemoteObjectToLocalClusterResponse {
     // filer log position stamped before the entry read: every event at or
     // below it is reflected in the returned entry
     int64 log_ts_ns = 3;
+    int32 log_signature = 4; // filer whose clock stamped log_ts_ns
 }
 
 /////////////////////////

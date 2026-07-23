@@ -31,7 +31,7 @@ type MetaCache struct {
 	uidGidMapper         *UidGidMapper
 	markCachedFn         func(fullpath util.FullPath)
 	isCachedFn           func(fullpath util.FullPath) bool
-	invalidateFunc       func(fullpath util.FullPath, entry *filer_pb.Entry, eventTsNs int64, deleted bool)
+	invalidateFunc       func(EntryInvalidation)
 	onDirectoryUpdate    func(dir util.FullPath)
 	pinnedChildFn        func(*filer.Entry) bool // a child a rebuild must not drop (local-only, not yet on the filer); nil disables
 	visitGroup           singleflight.Group      // deduplicates concurrent EnsureVisited calls for the same path
@@ -53,7 +53,7 @@ type MetaCache struct {
 	// invalidateFunc takes the fh lock, which a flush can hold while waiting on
 	// the apply loop (flushMetadataToFiler -> applyLocalMetadataEvent), so inline
 	// invalidation deadlocks the mount.
-	invalidateWorker *util.AsyncBatchWorker[metadataInvalidation]
+	invalidateWorker *util.AsyncBatchWorker[EntryInvalidation]
 }
 
 var errMetaCacheClosed = errors.New("metadata cache is shut down")
@@ -102,7 +102,7 @@ type metadataApplyRequest struct {
 }
 
 func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPath, includeSystemEntries bool,
-	markCachedFn func(path util.FullPath), isCachedFn func(path util.FullPath) bool, invalidateFunc func(util.FullPath, *filer_pb.Entry, int64, bool), onDirectoryUpdate func(dir util.FullPath)) *MetaCache {
+	markCachedFn func(path util.FullPath), isCachedFn func(path util.FullPath) bool, invalidateFunc func(EntryInvalidation), onDirectoryUpdate func(dir util.FullPath)) *MetaCache {
 	leveldbStore, virtualStore := openMetaStore(dbFolder)
 	mc := &MetaCache{
 		root:                 root,
@@ -113,18 +113,16 @@ func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPat
 		uidGidMapper:         uidGidMapper,
 		onDirectoryUpdate:    onDirectoryUpdate,
 		includeSystemEntries: includeSystemEntries,
-		invalidateFunc: func(fullpath util.FullPath, entry *filer_pb.Entry, eventTsNs int64, deleted bool) {
-			invalidateFunc(fullpath, entry, eventTsNs, deleted)
-		},
-		applyCh:          make(chan metadataApplyRequest, 128),
-		applyDone:        make(chan struct{}),
-		buildingDirs:     make(map[util.FullPath]*directoryBuildState),
-		dedupRing:        newDedupRingBuffer(),
-		dirVersionFloors: make(map[util.FullPath]int64),
+		invalidateFunc:       invalidateFunc,
+		applyCh:              make(chan metadataApplyRequest, 128),
+		applyDone:            make(chan struct{}),
+		buildingDirs:         make(map[util.FullPath]*directoryBuildState),
+		dedupRing:            newDedupRingBuffer(),
+		dirVersionFloors:     make(map[util.FullPath]int64),
 	}
-	mc.invalidateWorker = util.NewAsyncBatchWorker(func(batch []metadataInvalidation) {
+	mc.invalidateWorker = util.NewAsyncBatchWorker(func(batch []EntryInvalidation) {
 		for _, invalidation := range batch {
-			mc.invalidateFunc(invalidation.path, invalidation.entry, invalidation.tsNs, invalidation.deleted)
+			mc.invalidateFunc(invalidation)
 		}
 	})
 	go mc.runApplyLoop()
@@ -766,16 +764,21 @@ func (mc *MetaCache) handleApplyRequest(req metadataApplyRequest) error {
 	}
 }
 
-type metadataInvalidation struct {
-	path    util.FullPath
-	entry   *filer_pb.Entry // entry now at path per the event; nil when the path was vacated
-	tsNs    int64           // the event's filer log timestamp; 0 for locally built events
-	deleted bool            // path vacated by a delete, not a rename away — the file still exists elsewhere
+// EntryInvalidation describes one path's metadata change for an open-handle
+// refresh.
+type EntryInvalidation struct {
+	Path    util.FullPath
+	Entry   *filer_pb.Entry // entry now at path per the event; nil when the path was vacated
+	TsNs    int64           // the event's filer log position; 0 for locally built events
+	Deleted bool            // vacated by a delete, not a rename away — the file lives on elsewhere
+	// Signatures from the event. The filer that logged it appends its own, so
+	// this identifies the clock domain TsNs belongs to.
+	Signatures []int32
 }
 
 type metadataResponseSideEffects struct {
 	dirsToNotify  []util.FullPath
-	invalidations []metadataInvalidation
+	invalidations []EntryInvalidation
 }
 
 func (mc *MetaCache) applyMetadataResponseNow(ctx context.Context, resp *filer_pb.SubscribeMetadataResponse, options MetadataResponseApplyOptions) error {
@@ -1209,13 +1212,14 @@ func collectDirectoryNotifications(resp *filer_pb.SubscribeMetadataResponse) []u
 	return dirs[:n]
 }
 
-func collectEntryInvalidations(resp *filer_pb.SubscribeMetadataResponse) []metadataInvalidation {
+func collectEntryInvalidations(resp *filer_pb.SubscribeMetadataResponse) []EntryInvalidation {
 	message := resp.GetEventNotification()
 	if message == nil {
 		return nil
 	}
 
-	var invalidations []metadataInvalidation
+	var invalidations []EntryInvalidation
+	signatures := message.Signatures
 	if message.OldEntry != nil && message.NewEntry != nil {
 		oldKey := util.NewFullPath(resp.Directory, message.OldEntry.Name)
 		// Normalize NewParentPath: empty means same directory as resp.Directory
@@ -1224,11 +1228,11 @@ func collectEntryInvalidations(resp *filer_pb.SubscribeMetadataResponse) []metad
 			newDir = message.NewParentPath
 		}
 		if message.OldEntry.Name != message.NewEntry.Name || resp.Directory != newDir {
-			invalidations = append(invalidations, metadataInvalidation{path: oldKey, tsNs: resp.TsNs})
+			invalidations = append(invalidations, EntryInvalidation{Path: oldKey, TsNs: resp.TsNs, Signatures: signatures})
 			newKey := util.NewFullPath(newDir, message.NewEntry.Name)
-			invalidations = append(invalidations, metadataInvalidation{path: newKey, entry: message.NewEntry, tsNs: resp.TsNs})
+			invalidations = append(invalidations, EntryInvalidation{Path: newKey, Entry: message.NewEntry, TsNs: resp.TsNs, Signatures: signatures})
 		} else {
-			invalidations = append(invalidations, metadataInvalidation{path: oldKey, entry: message.NewEntry, tsNs: resp.TsNs})
+			invalidations = append(invalidations, EntryInvalidation{Path: oldKey, Entry: message.NewEntry, TsNs: resp.TsNs, Signatures: signatures})
 		}
 		return invalidations
 	}
@@ -1239,12 +1243,12 @@ func collectEntryInvalidations(resp *filer_pb.SubscribeMetadataResponse) []metad
 			newDir = message.NewParentPath
 		}
 		newKey := util.NewFullPath(newDir, message.NewEntry.Name)
-		invalidations = append(invalidations, metadataInvalidation{path: newKey, entry: message.NewEntry, tsNs: resp.TsNs})
+		invalidations = append(invalidations, EntryInvalidation{Path: newKey, Entry: message.NewEntry, TsNs: resp.TsNs, Signatures: signatures})
 	}
 
 	if filer_pb.IsDelete(resp) && message.OldEntry != nil {
 		oldKey := util.NewFullPath(resp.Directory, message.OldEntry.Name)
-		invalidations = append(invalidations, metadataInvalidation{path: oldKey, tsNs: resp.TsNs, deleted: true})
+		invalidations = append(invalidations, EntryInvalidation{Path: oldKey, TsNs: resp.TsNs, Deleted: true, Signatures: signatures})
 	}
 
 	return invalidations

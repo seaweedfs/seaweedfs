@@ -280,7 +280,7 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	// a no-op create, at the response's log position); older queued
 	// subscription events must not roll the handle back.
 	fh.setAuthoritativeBase(baseSnapshot)
-	fh.advanceEntryVersionTsNs(ackVersionTsNs(resp))
+	fh.advanceEntryVersion(ackVersionTsNs(resp), resp.GetLogSignature())
 	if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
 		glog.Warningf("flush %s: best-effort metadata apply failed: %v", fileFullPath, applyErr)
 		wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(dir))

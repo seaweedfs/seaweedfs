@@ -46,7 +46,7 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 	entry, logTsNs, err := fs.fencedFindEntry(ctx, util.JoinPath(req.Directory, req.Name))
 
 	if err == filer_pb.ErrNotFound {
-		return &filer_pb.LookupDirectoryEntryResponse{LogTsNs: logTsNs}, err
+		return &filer_pb.LookupDirectoryEntryResponse{LogTsNs: logTsNs, LogSignature: fs.filer.Signature}, err
 	}
 	if err != nil {
 		glog.V(3).InfofCtx(ctx, "LookupDirectoryEntry %s: %+v, ", filepath.Join(req.Directory, req.Name), err)
@@ -54,8 +54,9 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 	}
 
 	return &filer_pb.LookupDirectoryEntryResponse{
-		Entry:   entry.ToProtoEntry(),
-		LogTsNs: logTsNs,
+		Entry:        entry.ToProtoEntry(),
+		LogTsNs:      logTsNs,
+		LogSignature: fs.filer.Signature,
 	}, nil
 }
 
@@ -204,6 +205,7 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	// Fence stamped under the lock: a no-op create returns no event, but the
 	// acknowledged state still reflects everything at or below this.
 	resp.LogTsNs = time.Now().UnixNano()
+	resp.LogSignature = fs.filer.Signature
 
 	// Evaluate the optional precondition against the current entry while the
 	// path lock is held, so the check and the write are atomic on this filer.
@@ -650,11 +652,11 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	}
 
 	if filer.EqualEntry(entry, newEntry) {
-		return &filer_pb.UpdateEntryResponse{LogTsNs: logTsNs}, err
+		return &filer_pb.UpdateEntryResponse{LogTsNs: logTsNs, LogSignature: fs.filer.Signature}, err
 	}
 
 	ctx, eventSink := filer.WithMetadataEventSink(ctx)
-	resp := &filer_pb.UpdateEntryResponse{LogTsNs: logTsNs}
+	resp := &filer_pb.UpdateEntryResponse{LogTsNs: logTsNs, LogSignature: fs.filer.Signature}
 	if err = fs.filer.UpdateEntry(ctx, entry, newEntry); err == nil {
 		fs.filer.DeleteChunksNotRecursive(garbage)
 

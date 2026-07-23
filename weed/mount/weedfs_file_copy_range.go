@@ -46,7 +46,7 @@ type wholeFileServerCopyRequest struct {
 
 // performServerSideWholeFileCopy is a package-level seam so tests can override
 // the filer call without standing up an HTTP endpoint.
-var performServerSideWholeFileCopy = func(cancel <-chan struct{}, wfs *WFS, copyRequest wholeFileServerCopyRequest) (*filer_pb.Entry, int64, serverSideWholeFileCopyOutcome, error) {
+var performServerSideWholeFileCopy = func(cancel <-chan struct{}, wfs *WFS, copyRequest wholeFileServerCopyRequest) (*filer_pb.Entry, entryVersion, serverSideWholeFileCopyOutcome, error) {
 	return wfs.copyEntryViaFiler(cancel, copyRequest)
 }
 
@@ -235,11 +235,11 @@ func (wfs *WFS) tryServerSideWholeFileCopy(cancel <-chan struct{}, in *fuse.Copy
 	}
 }
 
-func (wfs *WFS) applyServerSideWholeFileCopyResult(fhIn, fhOut *FileHandle, dstPath util.FullPath, entry *filer_pb.Entry, entryVersionTsNs int64, sourceSize int64) {
+func (wfs *WFS) applyServerSideWholeFileCopyResult(fhIn, fhOut *FileHandle, dstPath util.FullPath, entry *filer_pb.Entry, entryVersionTsNs entryVersion, sourceSize int64) {
 	synthesized := false
 	if entry == nil {
 		entry = synthesizeLocalEntryForServerSideWholeFileCopy(fhIn, fhOut, sourceSize)
-		entryVersionTsNs = 0
+		entryVersionTsNs = entryVersion{}
 		synthesized = true
 	}
 	if entry == nil {
@@ -252,7 +252,7 @@ func (wfs *WFS) applyServerSideWholeFileCopyResult(fhIn, fhOut *FileHandle, dstP
 	// event must read as a no-op against this base, not as a foreign change
 	// that destroys writes made to the destination after the copy.
 	fhOut.baseEntry.Store(proto.Clone(entry).(*filer_pb.Entry))
-	fhOut.advanceEntryVersionTsNs(entryVersionTsNs)
+	fhOut.advanceEntryVersion(entryVersionTsNs.tsNs, entryVersionTsNs.signature)
 	// A synthesized base approximates the committed copy (its timestamps are
 	// local), so the copy's own event would read as foreign: mark it for
 	// adoption. A real readback — or any later authoritative base — clears
@@ -391,7 +391,7 @@ func wholeFileServerCopyCandidate(fhIn, fhOut *FileHandle, in *fuse.CopyFileRang
 	}, true
 }
 
-func (wfs *WFS) copyEntryViaFiler(cancel <-chan struct{}, copyRequest wholeFileServerCopyRequest) (*filer_pb.Entry, int64, serverSideWholeFileCopyOutcome, error) {
+func (wfs *WFS) copyEntryViaFiler(cancel <-chan struct{}, copyRequest wholeFileServerCopyRequest) (*filer_pb.Entry, entryVersion, serverSideWholeFileCopyOutcome, error) {
 	baseCtx, baseCancel := context.WithCancel(context.Background())
 	defer baseCancel()
 
@@ -413,7 +413,7 @@ func (wfs *WFS) copyEntryViaFiler(cancel <-chan struct{}, copyRequest wholeFileS
 		var err error
 		httpClient, err = util_http.NewGlobalHttpClient()
 		if err != nil {
-			return nil, 0, serverSideWholeFileCopyNotCommitted, fmt.Errorf("create filer copy http client: %w", err)
+			return nil, entryVersion{}, serverSideWholeFileCopyNotCommitted, fmt.Errorf("create filer copy http client: %w", err)
 		}
 	}
 
@@ -437,7 +437,7 @@ func (wfs *WFS) copyEntryViaFiler(cancel <-chan struct{}, copyRequest wholeFileS
 
 	req, err := http.NewRequestWithContext(postCtx, http.MethodPost, copyURL.String(), nil)
 	if err != nil {
-		return nil, 0, serverSideWholeFileCopyNotCommitted, fmt.Errorf("create filer copy request: %w", err)
+		return nil, entryVersion{}, serverSideWholeFileCopyNotCommitted, fmt.Errorf("create filer copy request: %w", err)
 	}
 	if jwt := wfs.filerCopyJWT(); jwt != "" {
 		req.Header.Set("Authorization", security.BearerPrefix+string(jwt))
@@ -451,7 +451,7 @@ func (wfs *WFS) copyEntryViaFiler(cancel <-chan struct{}, copyRequest wholeFileS
 
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, 0, serverSideWholeFileCopyNotCommitted, fmt.Errorf("filer copy %s => %s failed: status %d: %s", copyRequest.srcPath, copyRequest.dstPath, resp.StatusCode, string(body))
+		return nil, entryVersion{}, serverSideWholeFileCopyNotCommitted, fmt.Errorf("filer copy %s => %s failed: status %d: %s", copyRequest.srcPath, copyRequest.dstPath, resp.StatusCode, string(body))
 	}
 
 	readbackCtx, readbackCancel := context.WithTimeout(baseCtx, filerCopyReadbackTimeout)
@@ -459,10 +459,10 @@ func (wfs *WFS) copyEntryViaFiler(cancel <-chan struct{}, copyRequest wholeFileS
 
 	entry, entryVersionTsNs, err := wfs.getPbEntryWithVersion(readbackCtx, copyRequest.dstPath)
 	if err != nil {
-		return nil, 0, serverSideWholeFileCopyCommitted, fmt.Errorf("reload copied entry %s: %w", copyRequest.dstPath, err)
+		return nil, entryVersion{}, serverSideWholeFileCopyCommitted, fmt.Errorf("reload copied entry %s: %w", copyRequest.dstPath, err)
 	}
 	if entry == nil {
-		return nil, 0, serverSideWholeFileCopyCommitted, fmt.Errorf("reload copied entry %s: not found", copyRequest.dstPath)
+		return nil, entryVersion{}, serverSideWholeFileCopyCommitted, fmt.Errorf("reload copied entry %s: not found", copyRequest.dstPath)
 	}
 	if entry.Attributes != nil && wfs.option != nil && wfs.option.UidGidMapper != nil {
 		entry.Attributes.Uid, entry.Attributes.Gid = wfs.option.UidGidMapper.FilerToLocal(entry.Attributes.Uid, entry.Attributes.Gid)
@@ -471,7 +471,7 @@ func (wfs *WFS) copyEntryViaFiler(cancel <-chan struct{}, copyRequest wholeFileS
 	return entry, entryVersionTsNs, serverSideWholeFileCopyCommitted, nil
 }
 
-func (wfs *WFS) confirmServerSideWholeFileCopyAfterAmbiguousRequest(baseCtx context.Context, copyRequest wholeFileServerCopyRequest, requestErr error) (*filer_pb.Entry, int64, serverSideWholeFileCopyOutcome, error) {
+func (wfs *WFS) confirmServerSideWholeFileCopyAfterAmbiguousRequest(baseCtx context.Context, copyRequest wholeFileServerCopyRequest, requestErr error) (*filer_pb.Entry, entryVersion, serverSideWholeFileCopyOutcome, error) {
 	readbackCtx, readbackCancel := context.WithTimeout(baseCtx, filerCopyReadbackTimeout)
 	defer readbackCancel()
 
@@ -484,12 +484,12 @@ func (wfs *WFS) confirmServerSideWholeFileCopyAfterAmbiguousRequest(baseCtx cont
 	}
 
 	if err != nil {
-		return nil, 0, serverSideWholeFileCopyAmbiguous, fmt.Errorf("%w; post-copy readback failed: %v", requestErr, err)
+		return nil, entryVersion{}, serverSideWholeFileCopyAmbiguous, fmt.Errorf("%w; post-copy readback failed: %v", requestErr, err)
 	}
 	if entry == nil {
-		return nil, 0, serverSideWholeFileCopyAmbiguous, fmt.Errorf("%w; destination %s was not readable after the ambiguous request", requestErr, copyRequest.dstPath)
+		return nil, entryVersion{}, serverSideWholeFileCopyAmbiguous, fmt.Errorf("%w; destination %s was not readable after the ambiguous request", requestErr, copyRequest.dstPath)
 	}
-	return nil, 0, serverSideWholeFileCopyAmbiguous, fmt.Errorf("%w; destination %s did not match the requested copy after the ambiguous request", requestErr, copyRequest.dstPath)
+	return nil, entryVersion{}, serverSideWholeFileCopyAmbiguous, fmt.Errorf("%w; destination %s did not match the requested copy after the ambiguous request", requestErr, copyRequest.dstPath)
 }
 
 func entryMatchesServerSideWholeFileCopy(copyRequest wholeFileServerCopyRequest, entry *filer_pb.Entry) bool {

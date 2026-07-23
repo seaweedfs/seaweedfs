@@ -46,6 +46,13 @@ type FileHandle struct {
 	// State at or below it must not replace the entry — that rolls it back.
 	entryVersionTsNs atomic.Int64
 
+	// entryVersionSignature identifies the filer whose clock stamped
+	// entryVersionTsNs, when it came from an RPC fence. Positions from a
+	// different filer are not comparable, so an event that filer did not log
+	// is applied rather than fenced out. Zero when the version came from an
+	// event, whose ordering the subscription already provides.
+	entryVersionSignature atomic.Int32
+
 	// adoptNextEventBase marks a committed mutation whose readback failed:
 	// baseEntry is approximate and the mutation's own event is en route.
 	adoptNextEventBase atomic.Bool
@@ -144,7 +151,7 @@ func (fh *FileHandle) SetEntry(entry *filer_pb.Entry) {
 // when it outranks the handle. A version never advances without its value:
 // stamping alone would fence out the events carrying what the handle lacks.
 // Dirty handles are skipped — local writes supersede the ack.
-func (fh *FileHandle) installAckedEntry(entry *filer_pb.Entry, versionTsNs int64) {
+func (fh *FileHandle) installAckedEntry(entry *filer_pb.Entry, versionTsNs int64, signature int32) {
 	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("installAckedEntry", fh.fh, util.ExclusiveLock)
 	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 	if versionTsNs == 0 || versionTsNs <= fh.entryVersionTsNs.Load() ||
@@ -153,7 +160,7 @@ func (fh *FileHandle) installAckedEntry(entry *filer_pb.Entry, versionTsNs int64
 	}
 	fh.SetEntry(entry)
 	fh.setAuthoritativeBase(proto.Clone(entry).(*filer_pb.Entry))
-	fh.advanceEntryVersionTsNs(versionTsNs)
+	fh.advanceEntryVersion(versionTsNs, signature)
 }
 
 // setAuthoritativeBase installs a base from a local ack and cancels any
@@ -167,12 +174,23 @@ func (fh *FileHandle) setAuthoritativeBase(base *filer_pb.Entry) {
 // advanceEntryVersionTsNs raises the entry version, never regresses it. Zero
 // (an unversioned old filer) is a no-op, leaving the handle open to refreshes.
 func (fh *FileHandle) advanceEntryVersionTsNs(tsNs int64) {
+	fh.advanceEntryVersion(tsNs, 0)
+}
+
+// advanceEntryVersion raises the entry version and records the clock domain
+// the new position belongs to: a filer signature for an RPC fence, zero for an
+// event. The signature travels with the timestamp so the two never disagree.
+func (fh *FileHandle) advanceEntryVersion(tsNs int64, signature int32) {
 	if tsNs == 0 {
 		return
 	}
 	for {
 		current := fh.entryVersionTsNs.Load()
-		if tsNs <= current || fh.entryVersionTsNs.CompareAndSwap(current, tsNs) {
+		if tsNs <= current {
+			return
+		}
+		if fh.entryVersionTsNs.CompareAndSwap(current, tsNs) {
+			fh.entryVersionSignature.Store(signature)
 			return
 		}
 	}

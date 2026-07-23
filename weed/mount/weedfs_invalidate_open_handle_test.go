@@ -73,6 +73,7 @@ type fakeFilerServer struct {
 	listSnapshotTrailerTsNs int64 // when set, ListEntries returns empty with this trailer snapshot
 	lookupSize              uint64
 	lookupLogTsNs           int64
+	lookupSignature         int32  // filer signature the lookup fence carries
 	lookupSize2             uint64 // when set, served to the second and later lookups
 	lookupLogTsNs2          int64
 	cacheSize               uint64
@@ -100,7 +101,8 @@ func (s *fakeFilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_p
 			Name:       req.Name,
 			Attributes: &filer_pb.FuseAttributes{FileSize: size, FileMode: 0100644},
 		},
-		LogTsNs: logTsNs,
+		LogTsNs:      logTsNs,
+		LogSignature: s.lookupSignature,
 	}, nil
 }
 
@@ -1083,7 +1085,7 @@ func TestServerSideCopyInstallEnrollsInBase(t *testing.T) {
 		Name:       "file",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 200},
 	}
-	wfs.applyServerSideWholeFileCopyResult(fh, fh, util.FullPath("/dir/file"), copied, 0, 200)
+	wfs.applyServerSideWholeFileCopyResult(fh, fh, util.FullPath("/dir/file"), copied, entryVersion{}, 200)
 
 	// Writes land on the destination before the copy's event arrives.
 	fh.UpdateEntry(func(entry *filer_pb.Entry) {
@@ -1201,7 +1203,7 @@ func TestCommittedCopyWithFailedReadbackAdoptsItsEvent(t *testing.T) {
 	})
 
 	// Readback failed: nil entry forces the synthesized fallback.
-	wfs.applyServerSideWholeFileCopyResult(fh, fh, util.FullPath("/dir/file"), nil, 0, 200)
+	wfs.applyServerSideWholeFileCopyResult(fh, fh, util.FullPath("/dir/file"), nil, entryVersion{}, 200)
 
 	// Writes land on the destination before the copy's event arrives.
 	fh.UpdateEntry(func(entry *filer_pb.Entry) {
@@ -1314,7 +1316,7 @@ func TestFlushAckCancelsPendingCopyEventAdoption(t *testing.T) {
 	})
 
 	// Committed copy, failed readback: adoption pending on a synthesized base.
-	wfs.applyServerSideWholeFileCopyResult(fh, fh, util.FullPath("/dir/file"), nil, 0, 200)
+	wfs.applyServerSideWholeFileCopyResult(fh, fh, util.FullPath("/dir/file"), nil, entryVersion{}, 200)
 
 	// A local flush lands: the ack at 3000 becomes the authoritative base.
 	fh.dirtyMetadata = true
@@ -1472,7 +1474,7 @@ func TestCopyAdoptRejectsForeignEvent(t *testing.T) {
 	})
 
 	// Readback failed: synthesized base at size 200, adoption pending.
-	wfs.applyServerSideWholeFileCopyResult(fh, fh, util.FullPath("/dir/file"), nil, 0, 200)
+	wfs.applyServerSideWholeFileCopyResult(fh, fh, util.FullPath("/dir/file"), nil, entryVersion{}, 200)
 
 	// A foreign write to the destination arrives before the copy's own event:
 	// different content (size 500), so it must install and not be adopted.
@@ -1665,7 +1667,7 @@ func TestCopyAdoptRejectsForeignMetadataChange(t *testing.T) {
 	})
 
 	// Readback failed: synthesized base at size 200, mode 0644; adoption pending.
-	wfs.applyServerSideWholeFileCopyResult(fh, fh, util.FullPath("/dir/file"), nil, 0, 200)
+	wfs.applyServerSideWholeFileCopyResult(fh, fh, util.FullPath("/dir/file"), nil, entryVersion{}, 200)
 
 	// A foreign chmod: same content (size 200) but mode 0600.
 	chmod := &filer_pb.SubscribeMetadataResponse{
@@ -1745,7 +1747,7 @@ func TestCopyAdoptAppliesForeignTouchToCleanHandle(t *testing.T) {
 	})
 
 	// Readback failed: synthesized base, adoption pending.
-	wfs.applyServerSideWholeFileCopyResult(fh, fh, util.FullPath("/dir/file"), nil, 0, 200)
+	wfs.applyServerSideWholeFileCopyResult(fh, fh, util.FullPath("/dir/file"), nil, entryVersion{}, 200)
 
 	// A foreign touch: identical content, new mtime.
 	touch := &filer_pb.SubscribeMetadataResponse{
@@ -1794,5 +1796,49 @@ func TestUnversionedRemoteDownloadDoesNotOverwriteVersioned(t *testing.T) {
 
 	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
 		t.Fatalf("handle file size = %d, want 200 (an unversioned response must not overwrite version-3000 state)", size)
+	}
+}
+
+// A fence stamped by one filer says nothing about an event another filer
+// logged: their clocks are independent. Skipping across that boundary would
+// leave the handle stale for good, so the event is applied instead — a
+// re-apply the base check absorbs when it turns out to be redundant.
+func TestEventFromAnotherFilerIsNotFencedByForeignClock(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+	// Filer A answers the open-time lookup and stamps its fence at 5000.
+	startFakeFiler(t, wfs, &fakeFilerServer{lookupSize: 200, lookupLogTsNs: 5000, lookupSignature: 11})
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh, status := wfs.AcquireHandle(inode, 0, 0, 0)
+	if status != fuse.OK {
+		t.Fatalf("AcquireHandle status = %v, want OK", status)
+	}
+	if got := fh.entryVersionSignature.Load(); got != 11 {
+		t.Fatalf("handle fence signature = %d, want 11 from the lookup", got)
+	}
+
+	// Filer B logged this event at 3000 on its own clock — below A's fence,
+	// but the two positions are not comparable.
+	fromOtherFiler := updateEventFor("file", 900, 3000)
+	fromOtherFiler.EventNotification.Signatures = []int32{22}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), fromOtherFiler, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply cross-filer event: %v", err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 900 {
+		t.Fatalf("handle file size = %d, want 900 (an event from another filer must not be fenced by this filer's clock)", size)
+	}
+
+	// The same filer's own older event is still fenced: one clock, real order.
+	sameFiler := updateEventFor("file", 700, 4000)
+	sameFiler.EventNotification.Signatures = []int32{11}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), sameFiler, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply same-filer event: %v", err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size == 700 {
+		t.Fatal("an older event from the fencing filer was applied; within one clock domain it must be fenced")
 	}
 }

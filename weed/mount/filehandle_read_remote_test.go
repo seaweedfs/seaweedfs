@@ -93,7 +93,8 @@ func TestReadUncachedRemoteEntryDoesNotDeadlock(t *testing.T) {
 		func(path util.FullPath) { wfs.inodeToPath.MarkChildrenCached(path) },
 		func(path util.FullPath) bool { return wfs.inodeToPath.IsChildrenCached(path) },
 		// Mirror weedfs.go's invalidateFunc: take the file handle exclusive lock.
-		func(path util.FullPath, _ *filer_pb.Entry, _ int64, _ bool) {
+		func(inv meta_cache.EntryInvalidation) {
+			path := inv.Path
 			inode, ok := wfs.inodeToPath.GetInode(path)
 			if !ok {
 				return

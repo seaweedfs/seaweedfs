@@ -50,7 +50,7 @@ func (i *FileHandleToInode) MarkInodeRenamed(inode uint64) {
 }
 
 func (i *FileHandleToInode) AcquireFileHandle(wfs *WFS, inode uint64, entry *filer_pb.Entry) *FileHandle {
-	fh, existed := i.AcquireFileHandleWithVersion(wfs, inode, entry, 0)
+	fh, existed := i.AcquireFileHandleWithVersion(wfs, inode, entry, 0, 0)
 	// Callers passing an authoritative entry (deferred create, tests) need it
 	// to take effect even on a pre-existing handle. The versioned open path
 	// gates on version via installAckedEntry instead.
@@ -64,13 +64,14 @@ func (i *FileHandleToInode) AcquireFileHandle(wfs *WFS, inode uint64, entry *fil
 // position it reflects — before exposing it in the map. An existing handle
 // only gets its counter bumped: its entry belongs to whoever holds the handle
 // lock, so a fresh lookup installs there (AcquireHandle), not under this one.
-func (i *FileHandleToInode) AcquireFileHandleWithVersion(wfs *WFS, inode uint64, entry *filer_pb.Entry, versionTsNs int64) (*FileHandle, bool) {
+func (i *FileHandleToInode) AcquireFileHandleWithVersion(wfs *WFS, inode uint64, entry *filer_pb.Entry, versionTsNs int64, signature int32) (*FileHandle, bool) {
 	i.Lock()
 	defer i.Unlock()
 	fh, found := i.inode2fh[inode]
 	if !found {
 		fh = newFileHandle(wfs, FileHandleId(util.RandomUint64()), inode, entry)
 		fh.entryVersionTsNs.Store(versionTsNs)
+		fh.entryVersionSignature.Store(signature)
 		i.inode2fh[inode] = fh
 		i.fh2inode[fh.fh] = inode
 		return fh, false

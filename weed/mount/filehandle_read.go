@@ -213,7 +213,7 @@ func (fh *FileHandle) downloadRemoteEntry(entry *LockedEntry) error {
 		if versionTsNs >= fh.entryVersionTsNs.Load() {
 			fh.SetEntry(localEntry)
 			fh.setAuthoritativeBase(proto.Clone(localEntry).(*filer_pb.Entry))
-			fh.advanceEntryVersionTsNs(versionTsNs)
+			fh.advanceEntryVersion(versionTsNs, resp.GetLogSignature())
 		} else if fh.GetEntry().GetEntry().IsInRemoteOnly() {
 			// Older or unversioned response (pre-upgrade filer), but the handle
 			// still has no local chunks and cannot read without them: take the

@@ -429,7 +429,7 @@ func TestCollectEntryInvalidationsCarryAuthoritativeEntries(t *testing.T) {
 		},
 	}
 	got := collectEntryInvalidations(update)
-	if len(got) != 1 || got[0].path != "/dir/file.txt" || got[0].entry != newEntry || got[0].tsNs != 77 {
+	if len(got) != 1 || got[0].Path != "/dir/file.txt" || got[0].Entry != newEntry || got[0].TsNs != 77 {
 		t.Fatalf("in-place update invalidations = %+v, want [{/dir/file.txt NewEntry ts 77}]", got)
 	}
 
@@ -443,8 +443,8 @@ func TestCollectEntryInvalidationsCarryAuthoritativeEntries(t *testing.T) {
 		},
 	}
 	got = collectEntryInvalidations(rename)
-	if len(got) != 2 || got[0].path != "/src/file.tmp" || got[0].entry != nil || got[0].tsNs != 78 ||
-		got[1].path != "/dst/file.txt" || got[1].entry != newEntry || got[1].tsNs != 78 {
+	if len(got) != 2 || got[0].Path != "/src/file.tmp" || got[0].Entry != nil || got[0].TsNs != 78 ||
+		got[1].Path != "/dst/file.txt" || got[1].Entry != newEntry || got[1].TsNs != 78 {
 		t.Fatalf("rename invalidations = %+v, want [{/src/file.tmp nil} {/dst/file.txt NewEntry}]", got)
 	}
 
@@ -456,7 +456,7 @@ func TestCollectEntryInvalidationsCarryAuthoritativeEntries(t *testing.T) {
 		},
 	}
 	got = collectEntryInvalidations(create)
-	if len(got) != 1 || got[0].path != "/dir/file.txt" || got[0].entry != newEntry || got[0].tsNs != 79 {
+	if len(got) != 1 || got[0].Path != "/dir/file.txt" || got[0].Entry != newEntry || got[0].TsNs != 79 {
 		t.Fatalf("create invalidations = %+v, want [{/dir/file.txt NewEntry ts 79}]", got)
 	}
 
@@ -468,7 +468,7 @@ func TestCollectEntryInvalidationsCarryAuthoritativeEntries(t *testing.T) {
 		},
 	}
 	got = collectEntryInvalidations(deleteResp)
-	if len(got) != 1 || got[0].path != "/dir/file.txt" || got[0].entry != nil || got[0].tsNs != 80 {
+	if len(got) != 1 || got[0].Path != "/dir/file.txt" || got[0].Entry != nil || got[0].TsNs != 80 {
 		t.Fatalf("delete invalidations = %+v, want [{/dir/file.txt nil ts 80}]", got)
 	}
 }
@@ -500,8 +500,8 @@ func newTestMetaCache(t *testing.T, cached map[util.FullPath]bool) (*MetaCache, 
 			defer cachedMu.Unlock()
 			return cached[path]
 		},
-		func(path util.FullPath, entry *filer_pb.Entry, eventTsNs int64, deleted bool) {
-			invalidations.record(path)
+		func(inv EntryInvalidation) {
+			invalidations.record(inv.Path)
 		},
 		func(dir util.FullPath) {
 			notifications.record(dir)

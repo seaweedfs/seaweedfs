@@ -373,7 +373,10 @@ type LookupDirectoryEntryResponse struct {
 	Entry *Entry                 `protobuf:"bytes,1,opt,name=entry,proto3" json:"entry,omitempty"`
 	// filer log position stamped before the entry read: every event at or
 	// below it is reflected in the returned entry
-	LogTsNs       int64 `protobuf:"varint,2,opt,name=log_ts_ns,json=logTsNs,proto3" json:"log_ts_ns,omitempty"`
+	LogTsNs int64 `protobuf:"varint,2,opt,name=log_ts_ns,json=logTsNs,proto3" json:"log_ts_ns,omitempty"`
+	// signature of the filer whose clock stamped log_ts_ns; positions are
+	// only comparable with events that filer logged
+	LogSignature  int32 `protobuf:"varint,3,opt,name=log_signature,json=logSignature,proto3" json:"log_signature,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -418,6 +421,13 @@ func (x *LookupDirectoryEntryResponse) GetEntry() *Entry {
 func (x *LookupDirectoryEntryResponse) GetLogTsNs() int64 {
 	if x != nil {
 		return x.LogTsNs
+	}
+	return 0
+}
+
+func (x *LookupDirectoryEntryResponse) GetLogSignature() int32 {
+	if x != nil {
+		return x.LogSignature
 	}
 	return 0
 }
@@ -2264,6 +2274,7 @@ type CreateEntryResponse struct {
 	// filer log position stamped under the path lock before the write:
 	// every event at or below it is reflected in the acknowledged state
 	LogTsNs       int64 `protobuf:"varint,4,opt,name=log_ts_ns,json=logTsNs,proto3" json:"log_ts_ns,omitempty"`
+	LogSignature  int32 `protobuf:"varint,5,opt,name=log_signature,json=logSignature,proto3" json:"log_signature,omitempty"` // filer whose clock stamped log_ts_ns
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2322,6 +2333,13 @@ func (x *CreateEntryResponse) GetErrorCode() FilerError {
 func (x *CreateEntryResponse) GetLogTsNs() int64 {
 	if x != nil {
 		return x.LogTsNs
+	}
+	return 0
+}
+
+func (x *CreateEntryResponse) GetLogSignature() int32 {
+	if x != nil {
+		return x.LogSignature
 	}
 	return 0
 }
@@ -2419,6 +2437,7 @@ type UpdateEntryResponse struct {
 	// filer log position stamped under the path lock before the write:
 	// every event at or below it is reflected in the acknowledged state
 	LogTsNs       int64 `protobuf:"varint,2,opt,name=log_ts_ns,json=logTsNs,proto3" json:"log_ts_ns,omitempty"`
+	LogSignature  int32 `protobuf:"varint,3,opt,name=log_signature,json=logSignature,proto3" json:"log_signature,omitempty"` // filer whose clock stamped log_ts_ns
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2463,6 +2482,13 @@ func (x *UpdateEntryResponse) GetMetadataEvent() *SubscribeMetadataResponse {
 func (x *UpdateEntryResponse) GetLogTsNs() int64 {
 	if x != nil {
 		return x.LogTsNs
+	}
+	return 0
+}
+
+func (x *UpdateEntryResponse) GetLogSignature() int32 {
+	if x != nil {
+		return x.LogSignature
 	}
 	return 0
 }
@@ -5295,6 +5321,7 @@ type CacheRemoteObjectToLocalClusterResponse struct {
 	// filer log position stamped before the entry read: every event at or
 	// below it is reflected in the returned entry
 	LogTsNs       int64 `protobuf:"varint,3,opt,name=log_ts_ns,json=logTsNs,proto3" json:"log_ts_ns,omitempty"`
+	LogSignature  int32 `protobuf:"varint,4,opt,name=log_signature,json=logSignature,proto3" json:"log_signature,omitempty"` // filer whose clock stamped log_ts_ns
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5346,6 +5373,13 @@ func (x *CacheRemoteObjectToLocalClusterResponse) GetMetadataEvent() *SubscribeM
 func (x *CacheRemoteObjectToLocalClusterResponse) GetLogTsNs() int64 {
 	if x != nil {
 		return x.LogTsNs
+	}
+	return 0
+}
+
+func (x *CacheRemoteObjectToLocalClusterResponse) GetLogSignature() int32 {
+	if x != nil {
+		return x.LogSignature
 	}
 	return 0
 }
@@ -6883,10 +6917,11 @@ const file_filer_proto_rawDesc = "" +
 	"\vfiler.proto\x12\bfiler_pb\"O\n" +
 	"\x1bLookupDirectoryEntryRequest\x12\x1c\n" +
 	"\tdirectory\x18\x01 \x01(\tR\tdirectory\x12\x12\n" +
-	"\x04name\x18\x02 \x01(\tR\x04name\"a\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\"\x86\x01\n" +
 	"\x1cLookupDirectoryEntryResponse\x12%\n" +
 	"\x05entry\x18\x01 \x01(\v2\x0f.filer_pb.EntryR\x05entry\x12\x1a\n" +
-	"\tlog_ts_ns\x18\x02 \x01(\x03R\alogTsNs\"\xe4\x01\n" +
+	"\tlog_ts_ns\x18\x02 \x01(\x03R\alogTsNs\x12#\n" +
+	"\rlog_signature\x18\x03 \x01(\x05R\flogSignature\"\xe4\x01\n" +
 	"\x12ListEntriesRequest\x12\x1c\n" +
 	"\tdirectory\x18\x01 \x01(\tR\tdirectory\x12\x16\n" +
 	"\x06prefix\x18\x02 \x01(\tR\x06prefix\x12,\n" +
@@ -7099,13 +7134,14 @@ const file_filer_proto_rawDesc = "" +
 	"\x1dObjectTransactionBatchRequest\x12F\n" +
 	"\ftransactions\x18\x01 \x03(\v2\".filer_pb.ObjectTransactionRequestR\ftransactions\"c\n" +
 	"\x1eObjectTransactionBatchResponse\x12A\n" +
-	"\tresponses\x18\x01 \x03(\v2#.filer_pb.ObjectTransactionResponseR\tresponses\"\xc8\x01\n" +
+	"\tresponses\x18\x01 \x03(\v2#.filer_pb.ObjectTransactionResponseR\tresponses\"\xed\x01\n" +
 	"\x13CreateEntryResponse\x12\x14\n" +
 	"\x05error\x18\x01 \x01(\tR\x05error\x12J\n" +
 	"\x0emetadata_event\x18\x02 \x01(\v2#.filer_pb.SubscribeMetadataResponseR\rmetadataEvent\x123\n" +
 	"\n" +
 	"error_code\x18\x03 \x01(\x0e2\x14.filer_pb.FilerErrorR\terrorCode\x12\x1a\n" +
-	"\tlog_ts_ns\x18\x04 \x01(\x03R\alogTsNs\"\x8a\x03\n" +
+	"\tlog_ts_ns\x18\x04 \x01(\x03R\alogTsNs\x12#\n" +
+	"\rlog_signature\x18\x05 \x01(\x05R\flogSignature\"\x8a\x03\n" +
 	"\x12UpdateEntryRequest\x12\x1c\n" +
 	"\tdirectory\x18\x01 \x01(\tR\tdirectory\x12%\n" +
 	"\x05entry\x18\x02 \x01(\v2\x0f.filer_pb.EntryR\x05entry\x121\n" +
@@ -7117,10 +7153,11 @@ const file_filer_proto_rawDesc = "" +
 	"\tcondition\x18\x06 \x01(\v2\x18.filer_pb.WriteConditionR\tcondition\x1aC\n" +
 	"\x15ExpectedExtendedEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01\"}\n" +
+	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01\"\xa2\x01\n" +
 	"\x13UpdateEntryResponse\x12J\n" +
 	"\x0emetadata_event\x18\x01 \x01(\v2#.filer_pb.SubscribeMetadataResponseR\rmetadataEvent\x12\x1a\n" +
-	"\tlog_ts_ns\x18\x02 \x01(\x03R\alogTsNs\"r\n" +
+	"\tlog_ts_ns\x18\x02 \x01(\x03R\alogTsNs\x12#\n" +
+	"\rlog_signature\x18\x03 \x01(\x05R\flogSignature\"r\n" +
 	"\x16TouchAccessTimeRequest\x12\x1c\n" +
 	"\tdirectory\x18\x01 \x01(\tR\tdirectory\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12&\n" +
@@ -7376,11 +7413,12 @@ const file_filer_proto_rawDesc = "" +
 	"\tdirectory\x18\x01 \x01(\tR\tdirectory\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12+\n" +
 	"\x11chunk_concurrency\x18\x03 \x01(\x05R\x10chunkConcurrency\x121\n" +
-	"\x14download_concurrency\x18\x04 \x01(\x05R\x13downloadConcurrency\"\xb8\x01\n" +
+	"\x14download_concurrency\x18\x04 \x01(\x05R\x13downloadConcurrency\"\xdd\x01\n" +
 	"'CacheRemoteObjectToLocalClusterResponse\x12%\n" +
 	"\x05entry\x18\x01 \x01(\v2\x0f.filer_pb.EntryR\x05entry\x12J\n" +
 	"\x0emetadata_event\x18\x02 \x01(\v2#.filer_pb.SubscribeMetadataResponseR\rmetadataEvent\x12\x1a\n" +
-	"\tlog_ts_ns\x18\x03 \x01(\x03R\alogTsNs\"\x9b\x01\n" +
+	"\tlog_ts_ns\x18\x03 \x01(\x03R\alogTsNs\x12#\n" +
+	"\rlog_signature\x18\x04 \x01(\x05R\flogSignature\"\x9b\x01\n" +
 	"\vLockRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12&\n" +
 	"\x0fseconds_to_lock\x18\x02 \x01(\x03R\rsecondsToLock\x12\x1f\n" +

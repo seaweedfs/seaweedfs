@@ -187,7 +187,7 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 		}
 	}
 	fh.setAuthoritativeBase(baseSnapshot)
-	fh.advanceEntryVersionTsNs(ackVersionTsNs(resp))
+	fh.advanceEntryVersion(ackVersionTsNs(resp), resp.GetLogSignature())
 	if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
 		glog.Warningf("flushFileMetadata %s: best-effort metadata apply failed: %v", fileFullPath, applyErr)
 		wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(dir))
