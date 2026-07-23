@@ -302,8 +302,8 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 			wfs.inodeToPath.MarkChildrenCached(path)
 		}, func(path util.FullPath) bool {
 			return wfs.inodeToPath.IsChildrenCached(path)
-		}, func(filePath util.FullPath, entry *filer_pb.Entry, eventTsNs int64) {
-			wfs.invalidateOpenFileHandle(filePath, entry, eventTsNs)
+		}, func(filePath util.FullPath, entry *filer_pb.Entry, eventTsNs int64, deleted bool) {
+			wfs.invalidateOpenFileHandle(filePath, entry, eventTsNs, deleted)
 		}, func(dirPath util.FullPath) {
 			if wfs.inodeToPath.RecordDirectoryUpdate(dirPath, time.Now(), wfs.dirHotWindow, wfs.dirHotThreshold) {
 				wfs.markDirectoryReadThrough(dirPath)
@@ -763,7 +763,7 @@ func entryWithoutVolatileTimes(e *filer_pb.Entry) *filer_pb.Entry {
 // invalidateOpenFileHandle refreshes an open file handle from a metadata
 // subscription event. No filer lookup here: it can fail transiently, and with
 // the subscription cursor already past the event, nothing would retry.
-func (wfs *WFS) invalidateOpenFileHandle(filePath util.FullPath, eventEntry *filer_pb.Entry, eventTsNs int64) {
+func (wfs *WFS) invalidateOpenFileHandle(filePath util.FullPath, eventEntry *filer_pb.Entry, eventTsNs int64, deleted bool) {
 	inode, inodeFound := wfs.inodeToPath.GetInode(filePath)
 	if !inodeFound {
 		return
@@ -803,10 +803,14 @@ func (wfs *WFS) invalidateOpenFileHandle(filePath util.FullPath, eventEntry *fil
 		}
 	}
 	if candidate == nil {
-		// Foreign delete/rename-away: mark deleted so a flush cannot recreate
-		// the unlinked name. Keep the entry and dirty pages so the open fd
-		// still reads its buffered writes (POSIX unlinked-but-open), unpersisted.
-		fh.isDeleted = true
+		// Path vacated. Only an actual delete marks the handle: a flush must
+		// not recreate an unlinked name, but a rename-away left the file alive
+		// at its new path, and marking it would silently drop later writes.
+		// Either way keep the entry and dirty pages so the open fd still reads
+		// its buffered writes (POSIX unlinked-but-open).
+		if deleted {
+			fh.isDeleted = true
+		}
 		if !fh.dirtyMetadata {
 			fh.dirtyPages.Destroy()
 			fh.dirtyPages = newPageWriter(fh, wfs.option.ChunkSizeLimit)
@@ -823,6 +827,13 @@ func (wfs *WFS) invalidateOpenFileHandle(filePath util.FullPath, eventEntry *fil
 	if fh.adoptNextEventBase.Load() {
 		if base := fh.baseEntry.Load(); base != nil && sameEntryContent(candidate, base) {
 			fh.adoptNextEventBase.Store(false)
+			// Content is unchanged, so the dirty pages stay valid either way.
+			// A clean handle still takes the entry: the event may be a foreign
+			// touch/chmod rather than the copy's own, and its attributes would
+			// otherwise be lost. A dirty handle keeps its diverged entry.
+			if !fh.dirtyMetadata {
+				fh.SetEntry(candidate)
+			}
 			fh.baseEntry.Store(candidate)
 			fh.advanceEntryVersionTsNs(candidateTsNs)
 			return

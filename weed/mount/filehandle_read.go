@@ -210,10 +210,16 @@ func (fh *FileHandle) downloadRemoteEntry(entry *LockedEntry) error {
 		// and only if at least as new — an older response landing last would
 		// keep the newer version over an older entry, fencing out corrections.
 		fh.remoteInstallMu.Lock()
-		if versionTsNs == 0 || versionTsNs >= fh.entryVersionTsNs.Load() {
+		if versionTsNs >= fh.entryVersionTsNs.Load() {
 			fh.SetEntry(localEntry)
 			fh.setAuthoritativeBase(proto.Clone(localEntry).(*filer_pb.Entry))
 			fh.advanceEntryVersionTsNs(versionTsNs)
+		} else if fh.GetEntry().GetEntry().IsInRemoteOnly() {
+			// Older or unversioned response (pre-upgrade filer), but the handle
+			// still has no local chunks and cannot read without them: take the
+			// content without claiming the response's log position.
+			fh.SetEntry(localEntry)
+			fh.setAuthoritativeBase(proto.Clone(localEntry).(*filer_pb.Entry))
 		}
 		fh.remoteInstallMu.Unlock()
 

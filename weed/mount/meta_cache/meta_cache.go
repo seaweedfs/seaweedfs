@@ -31,7 +31,7 @@ type MetaCache struct {
 	uidGidMapper         *UidGidMapper
 	markCachedFn         func(fullpath util.FullPath)
 	isCachedFn           func(fullpath util.FullPath) bool
-	invalidateFunc       func(fullpath util.FullPath, entry *filer_pb.Entry, eventTsNs int64)
+	invalidateFunc       func(fullpath util.FullPath, entry *filer_pb.Entry, eventTsNs int64, deleted bool)
 	onDirectoryUpdate    func(dir util.FullPath)
 	pinnedChildFn        func(*filer.Entry) bool // a child a rebuild must not drop (local-only, not yet on the filer); nil disables
 	visitGroup           singleflight.Group      // deduplicates concurrent EnsureVisited calls for the same path
@@ -101,7 +101,7 @@ type metadataApplyRequest struct {
 }
 
 func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPath, includeSystemEntries bool,
-	markCachedFn func(path util.FullPath), isCachedFn func(path util.FullPath) bool, invalidateFunc func(util.FullPath, *filer_pb.Entry, int64), onDirectoryUpdate func(dir util.FullPath)) *MetaCache {
+	markCachedFn func(path util.FullPath), isCachedFn func(path util.FullPath) bool, invalidateFunc func(util.FullPath, *filer_pb.Entry, int64, bool), onDirectoryUpdate func(dir util.FullPath)) *MetaCache {
 	leveldbStore, virtualStore := openMetaStore(dbFolder)
 	mc := &MetaCache{
 		root:                 root,
@@ -112,8 +112,8 @@ func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPat
 		uidGidMapper:         uidGidMapper,
 		onDirectoryUpdate:    onDirectoryUpdate,
 		includeSystemEntries: includeSystemEntries,
-		invalidateFunc: func(fullpath util.FullPath, entry *filer_pb.Entry, eventTsNs int64) {
-			invalidateFunc(fullpath, entry, eventTsNs)
+		invalidateFunc: func(fullpath util.FullPath, entry *filer_pb.Entry, eventTsNs int64, deleted bool) {
+			invalidateFunc(fullpath, entry, eventTsNs, deleted)
 		},
 		applyCh:          make(chan metadataApplyRequest, 128),
 		applyDone:        make(chan struct{}),
@@ -123,7 +123,7 @@ func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPat
 	}
 	mc.invalidateWorker = util.NewAsyncBatchWorker(func(batch []metadataInvalidation) {
 		for _, invalidation := range batch {
-			mc.invalidateFunc(invalidation.path, invalidation.entry, invalidation.tsNs)
+			mc.invalidateFunc(invalidation.path, invalidation.entry, invalidation.tsNs, invalidation.deleted)
 		}
 	})
 	go mc.runApplyLoop()
@@ -747,9 +747,10 @@ func (mc *MetaCache) handleApplyRequest(req metadataApplyRequest) error {
 }
 
 type metadataInvalidation struct {
-	path  util.FullPath
-	entry *filer_pb.Entry // entry now at path per the event; nil when the path was vacated (delete, rename away)
-	tsNs  int64           // the event's filer log timestamp; 0 for locally built events
+	path    util.FullPath
+	entry   *filer_pb.Entry // entry now at path per the event; nil when the path was vacated
+	tsNs    int64           // the event's filer log timestamp; 0 for locally built events
+	deleted bool            // path vacated by a delete, not a rename away — the file still exists elsewhere
 }
 
 type metadataResponseSideEffects struct {
@@ -1221,7 +1222,7 @@ func collectEntryInvalidations(resp *filer_pb.SubscribeMetadataResponse) []metad
 
 	if filer_pb.IsDelete(resp) && message.OldEntry != nil {
 		oldKey := util.NewFullPath(resp.Directory, message.OldEntry.Name)
-		invalidations = append(invalidations, metadataInvalidation{path: oldKey, tsNs: resp.TsNs})
+		invalidations = append(invalidations, metadataInvalidation{path: oldKey, tsNs: resp.TsNs, deleted: true})
 	}
 
 	return invalidations

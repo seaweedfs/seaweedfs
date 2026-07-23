@@ -30,7 +30,7 @@ func TestHandleRenameResponseLeavesUncachedTargetOutOfCache(t *testing.T) {
 		func(path util.FullPath) bool {
 			return inodeToPath.IsChildrenCached(path)
 		},
-		func(util.FullPath, *filer_pb.Entry, int64) {},
+		func(util.FullPath, *filer_pb.Entry, int64, bool) {},
 		nil,
 	)
 	defer mc.Shutdown()

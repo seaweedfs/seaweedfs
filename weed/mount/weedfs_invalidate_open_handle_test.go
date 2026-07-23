@@ -1592,8 +1592,9 @@ func TestEventlessSaveVersionsCacheEntry(t *testing.T) {
 	}
 }
 
-// A remote download response older than the handle's current version must not
-// overwrite the entry/base while the monotonic version keeps the newer value.
+// A remote download response that lands after the handle was already
+// populated must not roll the entry back: it is older than what the handle
+// holds, and the monotonic version would keep the newer value.
 func TestStaleRemoteDownloadDoesNotRollBack(t *testing.T) {
 	wfs := newInvalidateTestWFS(t)
 	startFakeFiler(t, wfs, &fakeFilerServer{cacheSize: 100, cacheLogTsNs: 1000})
@@ -1602,9 +1603,15 @@ func TestStaleRemoteDownloadDoesNotRollBack(t *testing.T) {
 	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:        "file",
 		Attributes:  &filer_pb.FuseAttributes{FileSize: 200},
-		RemoteEntry: &filer_pb.RemoteEntry{RemoteSize: 100},
+		RemoteEntry: &filer_pb.RemoteEntry{RemoteSize: 200},
 	})
-	// The handle already reflects a newer version than the download will carry.
+	// While the download was in flight the handle was populated at a newer
+	// version — it now has local chunks and no longer needs the response.
+	fh.SetEntry(&filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 200},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "1,ab1", Size: 200}},
+	})
 	fh.advanceEntryVersionTsNs(3000)
 
 	if err := fh.downloadRemoteEntry(fh.GetEntry()); err != nil {
@@ -1613,6 +1620,36 @@ func TestStaleRemoteDownloadDoesNotRollBack(t *testing.T) {
 
 	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
 		t.Fatalf("handle file size = %d, want 200 (a download at version 1000 must not overwrite the version-3000 handle)", size)
+	}
+	if got := fh.entryVersionTsNs.Load(); got != 3000 {
+		t.Fatalf("handle version = %d, want 3000", got)
+	}
+}
+
+// A still-remote-only handle must take an older or unversioned response
+// anyway — without it there are no local chunks to read — but must not claim
+// the response's log position.
+func TestRemoteOnlyHandleTakesUnversionedDownload(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+	startFakeFiler(t, wfs, &fakeFilerServer{cacheSize: 100})
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+		Name:        "file",
+		Attributes:  &filer_pb.FuseAttributes{FileSize: 100},
+		RemoteEntry: &filer_pb.RemoteEntry{RemoteSize: 100},
+	})
+	fh.advanceEntryVersionTsNs(3000)
+
+	if err := fh.downloadRemoteEntry(fh.GetEntry()); err != nil {
+		t.Fatalf("downloadRemoteEntry: %v", err)
+	}
+
+	if fh.GetEntry().GetEntry().IsInRemoteOnly() {
+		t.Fatal("remote-only handle did not take the download; reads would have no chunks")
+	}
+	if got := fh.entryVersionTsNs.Load(); got != 3000 {
+		t.Fatalf("handle version = %d, want 3000 (an unversioned response must not claim a position)", got)
 	}
 }
 
@@ -1647,5 +1684,115 @@ func TestCopyAdoptRejectsForeignMetadataChange(t *testing.T) {
 
 	if mode := fh.GetEntry().GetEntry().Attributes.FileMode; mode != 0100600 {
 		t.Fatalf("live entry mode = %o, want 0100600 (foreign chmod must install, not be swallowed by copy adoption)", mode)
+	}
+}
+
+// A foreign rename must not mark an open handle deleted: the file still
+// exists at its new path, and marking it silently drops later writes through
+// the already-open descriptor.
+func TestForeignRenameDoesNotMarkHandleDeleted(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 200},
+	})
+	fh.dirtyMetadata = true
+
+	rename := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		TsNs:      1500,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      &filer_pb.Entry{Name: "file"},
+			NewEntry:      &filer_pb.Entry{Name: "renamed", Attributes: &filer_pb.FuseAttributes{FileSize: 200}},
+			NewParentPath: "/dir",
+		},
+	}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), rename, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply rename: %v", err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if fh.isDeleted {
+		t.Fatal("handle marked deleted by a foreign rename; later writes would be silently dropped")
+	}
+
+	// A real delete still marks it.
+	del := &filer_pb.SubscribeMetadataResponse{
+		Directory:         "/dir",
+		TsNs:              2500,
+		EventNotification: &filer_pb.EventNotification{OldEntry: &filer_pb.Entry{Name: "file"}},
+	}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), del, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply delete: %v", err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+	if !fh.isDeleted {
+		t.Fatal("handle not marked deleted by a real foreign delete")
+	}
+}
+
+// A foreign touch arriving before a committed copy's own event must apply its
+// timestamps to a clean handle rather than being swallowed by the adoption.
+func TestCopyAdoptAppliesForeignTouchToCleanHandle(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 200, Mtime: 100},
+	})
+
+	// Readback failed: synthesized base, adoption pending.
+	wfs.applyServerSideWholeFileCopyResult(fh, fh, util.FullPath("/dir/file"), nil, 0, 200)
+
+	// A foreign touch: identical content, new mtime.
+	touch := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		TsNs:      1500,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      &filer_pb.Entry{Name: "file"},
+			NewEntry:      &filer_pb.Entry{Name: "file", Attributes: &filer_pb.FuseAttributes{FileSize: 200, Mtime: 999}},
+			NewParentPath: "/dir",
+		},
+	}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), touch, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply touch: %v", err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if mtime := fh.GetEntry().GetEntry().Attributes.Mtime; mtime != 999 {
+		t.Fatalf("live entry mtime = %d, want 999 (foreign touch must apply to a clean handle, not be swallowed)", mtime)
+	}
+}
+
+// An unversioned response (pre-upgrade filer) must not overwrite versioned
+// state on a handle that already has local content.
+func TestUnversionedRemoteDownloadDoesNotOverwriteVersioned(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+	// No cacheLogTsNs and no metadata event: the response carries no version.
+	startFakeFiler(t, wfs, &fakeFilerServer{cacheSize: 100})
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+		Name:        "file",
+		Attributes:  &filer_pb.FuseAttributes{FileSize: 200},
+		RemoteEntry: &filer_pb.RemoteEntry{RemoteSize: 200},
+	})
+	// Populated at version 3000 while the download was in flight.
+	fh.SetEntry(&filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 200},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "1,ab1", Size: 200}},
+	})
+	fh.advanceEntryVersionTsNs(3000)
+
+	if err := fh.downloadRemoteEntry(fh.GetEntry()); err != nil {
+		t.Fatalf("downloadRemoteEntry: %v", err)
+	}
+
+	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
+		t.Fatalf("handle file size = %d, want 200 (an unversioned response must not overwrite version-3000 state)", size)
 	}
 }

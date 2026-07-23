@@ -500,7 +500,7 @@ func newTestMetaCache(t *testing.T, cached map[util.FullPath]bool) (*MetaCache, 
 			defer cachedMu.Unlock()
 			return cached[path]
 		},
-		func(path util.FullPath, entry *filer_pb.Entry, eventTsNs int64) {
+		func(path util.FullPath, entry *filer_pb.Entry, eventTsNs int64, deleted bool) {
 			invalidations.record(path)
 		},
 		func(dir util.FullPath) {
