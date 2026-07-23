@@ -64,6 +64,11 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 // doCacheRemoteObjectToLocalCluster performs the actual caching operation.
 // This is called from singleflight, so only one instance runs per object.
 func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, req *filer_pb.CacheRemoteObjectToLocalClusterRequest) (*filer_pb.CacheRemoteObjectToLocalClusterResponse, error) {
+	// Log position fence, stamped before the entry read: metadata events are
+	// logged after their store write and carry this clock, so every event at
+	// or below this timestamp is reflected in the entry returned below.
+	logTsNs := time.Now().UnixNano()
+
 	// find the entry first to check if already cached
 	entry, err := fs.filer.FindEntry(ctx, util.JoinPath(req.Directory, req.Name))
 	if err == filer_pb.ErrNotFound {
@@ -73,7 +78,7 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 		return nil, fmt.Errorf("find entry %s/%s: %v", req.Directory, req.Name, err)
 	}
 
-	resp := &filer_pb.CacheRemoteObjectToLocalClusterResponse{}
+	resp := &filer_pb.CacheRemoteObjectToLocalClusterResponse{LogTsNs: logTsNs}
 
 	// Early return if not a remote-only object or already cached
 	if entry.Remote == nil || entry.Remote.RemoteSize == 0 {

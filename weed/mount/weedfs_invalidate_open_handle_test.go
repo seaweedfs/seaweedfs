@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -345,9 +346,13 @@ func TestQueuedEventOlderThanFlushedStateIsIgnored(t *testing.T) {
 
 type fakeFilerServer struct {
 	filer_pb.UnimplementedSeaweedFilerServer
-	lookupSize uint64
-	pingTsNs   int64
-	cacheSize  uint64
+	lookupSize    uint64
+	pingTsNs      int64
+	cacheSize     uint64
+	cacheLogTsNs  int64
+	lookupCalls   atomic.Int32
+	lookupStarted chan struct{} // closed when the first lookup arrives
+	lookupGate    chan struct{} // first lookup waits here when non-nil
 }
 
 func (s *fakeFilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req *filer_pb.CacheRemoteObjectToLocalClusterRequest) (*filer_pb.CacheRemoteObjectToLocalClusterResponse, error) {
@@ -357,10 +362,15 @@ func (s *fakeFilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, r
 			Name:       req.Name,
 			Attributes: &filer_pb.FuseAttributes{FileSize: s.cacheSize, FileMode: 0100644},
 		},
+		LogTsNs: s.cacheLogTsNs,
 	}, nil
 }
 
 func (s *fakeFilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	if s.lookupGate != nil && s.lookupCalls.Add(1) == 1 {
+		close(s.lookupStarted)
+		<-s.lookupGate
+	}
 	return &filer_pb.LookupDirectoryEntryResponse{
 		Entry: &filer_pb.Entry{
 			Name:       req.Name,
@@ -781,5 +791,134 @@ func TestRemoteCacheBarrierFollowsFailover(t *testing.T) {
 
 	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
 		t.Fatalf("open handle file size = %d, want 200 (barrier must come from the failover filer)", size)
+	}
+}
+
+// An event applied while the open's lookup is in flight can already be
+// reflected in the returned entry while sitting above the pre-lookup cursor.
+// The open re-reads until the cursor is stable across the lookup so the fence
+// covers such events.
+func TestEventDuringOpenLookupIsFenced(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+	fake := &fakeFilerServer{
+		lookupSize:    200,
+		lookupStarted: make(chan struct{}),
+		lookupGate:    make(chan struct{}),
+	}
+	startFakeFiler(t, wfs, fake)
+
+	// Stall the invalidation worker on an unrelated handle's lock.
+	blockerInode := wfs.inodeToPath.Lookup(util.FullPath("/other/blocker"), time.Now().Unix(), false, false, 0, false)
+	blockerFh := wfs.fhMap.AcquireFileHandle(wfs, blockerInode, &filer_pb.Entry{
+		Name:       "blocker",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 1},
+	})
+	blockerLock := wfs.fhLockTable.AcquireLock("test", blockerFh.fh, util.ExclusiveLock)
+	blockerReleased := false
+	releaseBlocker := func() {
+		if !blockerReleased {
+			blockerReleased = true
+			wfs.fhLockTable.ReleaseLock(blockerFh.fh, blockerLock)
+		}
+	}
+	defer releaseBlocker()
+	blockerEvent := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/other",
+		TsNs:      500,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: "blocker"},
+			NewEntry: &filer_pb.Entry{
+				Name:       "blocker",
+				Attributes: &filer_pb.FuseAttributes{FileSize: 2},
+			},
+			NewParentPath: "/other",
+		},
+	}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), blockerEvent, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply blocker event: %v", err)
+	}
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	type openResult struct {
+		fh     *FileHandle
+		status fuse.Status
+	}
+	opened := make(chan openResult, 1)
+	go func() {
+		fh, status := wfs.AcquireHandle(inode, 0, 0, 0)
+		opened <- openResult{fh, status}
+	}()
+
+	// While the open's lookup is blocked in the filer, an event lands and its
+	// invalidation is queued behind the blocker.
+	<-fake.lookupStarted
+	during := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		TsNs:      1500,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: "file"},
+			NewEntry: &filer_pb.Entry{
+				Name:       "file",
+				Attributes: &filer_pb.FuseAttributes{FileSize: 100},
+			},
+			NewParentPath: "/dir",
+		},
+	}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), during, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply mid-lookup event: %v", err)
+	}
+	close(fake.lookupGate)
+
+	result := <-opened
+	if result.status != fuse.OK {
+		t.Fatalf("AcquireHandle status = %v, want OK", result.status)
+	}
+
+	releaseBlocker()
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if size := result.fh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
+		t.Fatalf("open handle file size = %d, want 200 (mid-lookup event must be fenced)", size)
+	}
+}
+
+// A pre-RPC ping cannot cover an event committed during the RPC itself. The
+// cache response carries a log timestamp stamped before the filer read the
+// entry, causally fencing everything the returned entry reflects.
+func TestCacheResponseLogTsFencesEventsCommittedDuringRPC(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+	// The ping (100) predates the event (1500); only the response's log
+	// timestamp (2000) can cover it.
+	startFakeFiler(t, wfs, &fakeFilerServer{pingTsNs: 100, cacheSize: 200, cacheLogTsNs: 2000})
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 88},
+	})
+
+	if err := fh.downloadRemoteEntry(fh.GetEntry()); err != nil {
+		t.Fatalf("downloadRemoteEntry: %v", err)
+	}
+
+	late := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		TsNs:      1500,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: "file"},
+			NewEntry: &filer_pb.Entry{
+				Name:       "file",
+				Attributes: &filer_pb.FuseAttributes{FileSize: 100},
+			},
+			NewParentPath: "/dir",
+		},
+	}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), late, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply late event: %v", err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
+		t.Fatalf("open handle file size = %d, want 200 (response log ts must fence the mid-RPC event)", size)
 	}
 }

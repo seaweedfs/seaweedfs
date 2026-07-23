@@ -29,6 +29,21 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 	var path util.FullPath
 	var existingFh *FileHandle
 	path, existingFh, entry, status = wfs.maybeReadEntry(inode)
+	// Stable-read: an event applied while the lookup was in flight may
+	// already be reflected in the returned entry yet sit above the
+	// pre-lookup cursor, so its queued invalidation would replace fresher
+	// state. Re-read until the cursor is stable across the lookup. Bounded:
+	// on sustained churn the last pre-lookup value stands, which can only
+	// under-fence — a too-low fence lets an event re-apply, never blocks a
+	// newer one.
+	for attempt := 0; attempt < 3 && existingFh == nil && status == fuse.OK; attempt++ {
+		currentTsNs := wfs.latestKnownFilerTsNs()
+		if currentTsNs == baselineTsNs {
+			break
+		}
+		baselineTsNs = currentTsNs
+		path, existingFh, entry, status = wfs.maybeReadEntry(inode)
+	}
 	if status == fuse.OK {
 		if wormEnforced, _ := wfs.wormEnforcedForEntry(path, entry); wormEnforced && flags&fuse.O_ANYWRITE != 0 {
 			return nil, fuse.EPERM

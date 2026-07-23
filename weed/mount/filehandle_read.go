@@ -190,7 +190,9 @@ func (fh *FileHandle) downloadRemoteEntry(entry *LockedEntry) error {
 		glog.V(4).Infof("download entry: %v", request)
 		// Barrier through this closure's client: on failover WithFilerClient
 		// retries against another filer while the current-filer index still
-		// points at the failed one.
+		// points at the failed one. Only a fallback for old filers — the
+		// response's own log timestamp is causal with the returned entry,
+		// while a pre-RPC ping cannot cover events committed during the RPC.
 		baselineTsNs := fh.wfs.filerBarrierTsNsWith(client)
 		resp, err := client.CacheRemoteObjectToLocalCluster(context.Background(), request)
 		if err != nil {
@@ -198,6 +200,9 @@ func (fh *FileHandle) downloadRemoteEntry(entry *LockedEntry) error {
 		}
 
 		fh.SetEntry(resp.Entry)
+		if resp.GetLogTsNs() > baselineTsNs {
+			baselineTsNs = resp.GetLogTsNs()
+		}
 		fh.noteFilerAck(baselineTsNs, resp.GetMetadataEvent())
 
 		// Async: a sync apply deadlocks against the apply loop's invalidate, which needs this read's file-handle lock.
