@@ -26,6 +26,7 @@ type PrometheusStorage struct {
 	mu        sync.RWMutex
 	instances map[string]*telemetryData
 	stats     map[string]interface{}
+	dirty     bool // instances changed since the last successful state save
 }
 
 // telemetryData is an internal struct that includes the received timestamp
@@ -81,19 +82,6 @@ func (s *PrometheusStorage) StoreTelemetry(data *proto.TelemetryData) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Update Prometheus metrics. Value gauges are keyed by cluster_id only so
-	// a cluster's series continues across upgrades; version/os metadata lives
-	// on cluster_info (join with `* on(cluster_id) group_left(version, os)`).
-	labels := prometheus.Labels{
-		"cluster_id": data.TopologyId,
-	}
-
-	s.volumeServerCount.With(labels).Set(float64(data.VolumeServerCount))
-	s.totalDiskBytes.With(labels).Set(float64(data.TotalDiskBytes))
-	s.totalVolumeCount.With(labels).Set(float64(data.TotalVolumeCount))
-	s.filerCount.With(labels).Set(float64(data.FilerCount))
-	s.brokerCount.With(labels).Set(float64(data.BrokerCount))
-
 	// Drop the cluster_info series recorded under the previous label set when
 	// a cluster reports back with a different version or OS, so it is not
 	// counted under two versions at once.
@@ -101,7 +89,7 @@ func (s *PrometheusStorage) StoreTelemetry(data *proto.TelemetryData) error {
 		(prev.TelemetryData.Version != data.Version || prev.TelemetryData.Os != data.Os) {
 		s.clusterInfo.Delete(infoLabels(prev.TelemetryData))
 	}
-	s.clusterInfo.With(infoLabels(data)).Set(1)
+	s.setClusterMetrics(data)
 
 	s.telemetryReceived.Inc()
 
@@ -110,11 +98,28 @@ func (s *PrometheusStorage) StoreTelemetry(data *proto.TelemetryData) error {
 		TelemetryData: data,
 		ReceivedAt:    time.Now().UTC(),
 	}
+	s.dirty = true
 
 	// Update aggregated stats
 	s.updateStats()
 
 	return nil
+}
+
+// setClusterMetrics records a report's values on the Prometheus gauges.
+// Value gauges are keyed by cluster_id only so a cluster's series continues
+// across upgrades; version/os metadata lives on cluster_info (join with
+// `* on(cluster_id) group_left(version, os)`). Callers must hold s.mu.
+func (s *PrometheusStorage) setClusterMetrics(data *proto.TelemetryData) {
+	labels := prometheus.Labels{
+		"cluster_id": data.TopologyId,
+	}
+	s.volumeServerCount.With(labels).Set(float64(data.VolumeServerCount))
+	s.totalDiskBytes.With(labels).Set(float64(data.TotalDiskBytes))
+	s.totalVolumeCount.With(labels).Set(float64(data.TotalVolumeCount))
+	s.filerCount.With(labels).Set(float64(data.FilerCount))
+	s.brokerCount.With(labels).Set(float64(data.BrokerCount))
+	s.clusterInfo.With(infoLabels(data)).Set(1)
 }
 
 func (s *PrometheusStorage) GetStats() (map[string]interface{}, error) {
@@ -230,6 +235,7 @@ func (s *PrometheusStorage) CleanupOldInstances(maxAge time.Duration) {
 		if instance.ReceivedAt.Before(cutoff) {
 			delete(s.instances, instanceID)
 			s.deleteClusterMetrics(instance.TelemetryData)
+			s.dirty = true
 		}
 	}
 

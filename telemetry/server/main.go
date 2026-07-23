@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -20,7 +24,9 @@ var (
 	logRequests     = flag.Bool("log", true, "Log incoming requests")
 	enableDashboard = flag.Bool("dashboard", true, "Enable built-in dashboard (optional when using Grafana)")
 	cleanupInterval = flag.Duration("cleanup", 24*time.Hour, "Cleanup interval for old instances")
-	maxInstanceAge  = flag.Duration("max-age", 30*24*time.Hour, "Maximum age for instances before cleanup")
+	maxInstanceAge  = flag.Duration("max-age", 90*24*time.Hour, "Maximum age for instances before cleanup")
+	stateFile       = flag.String("state-file", "data/telemetry-state.json", "File for persisting in-memory state across restarts (empty to disable)")
+	saveInterval    = flag.Duration("state-save", time.Hour, "How often to save changed state to -state-file")
 )
 
 func main() {
@@ -28,6 +34,25 @@ func main() {
 
 	// Create Prometheus storage instance
 	store := storage.NewPrometheusStorage()
+
+	// Restore state from the previous run and keep saving it periodically,
+	// so deploys and restarts don't reset the collected metrics
+	if *stateFile != "" {
+		if n, err := store.LoadState(*stateFile); err != nil {
+			log.Printf("Failed to load state from %s: %v", *stateFile, err)
+		} else if n > 0 {
+			log.Printf("Restored %d instances from %s", n, *stateFile)
+		}
+		go func() {
+			ticker := time.NewTicker(*saveInterval)
+			defer ticker.Stop()
+			for range ticker.C {
+				if err := store.SaveStateIfDirty(*stateFile); err != nil {
+					log.Printf("Failed to save state to %s: %v", *stateFile, err)
+				}
+			}
+		}()
+	}
 
 	// Start cleanup routine
 	go func() {
@@ -76,8 +101,25 @@ func main() {
 	}
 	log.Printf("Cleanup interval: %v, Max instance age: %v", *cleanupInterval, *maxInstanceAge)
 
-	if err := http.ListenAndServe(addr, mux); err != nil {
-		log.Fatalf("Server failed: %v", err)
+	server := &http.Server{Addr: addr, Handler: mux}
+	go func() {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Server failed: %v", err)
+		}
+	}()
+
+	// On SIGTERM/SIGINT, stop serving and save state before exiting
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	<-sig
+	log.Printf("Shutting down...")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	server.Shutdown(ctx)
+	if *stateFile != "" {
+		if err := store.SaveStateIfDirty(*stateFile); err != nil {
+			log.Printf("Failed to save state to %s: %v", *stateFile, err)
+		}
 	}
 }
 
