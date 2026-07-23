@@ -833,11 +833,23 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 		}
 	}
 	if candidate == nil {
-		// Path vacated. Only an actual delete marks the handle: a flush must
-		// not recreate an unlinked name, but a rename-away left the file alive
-		// at its new path, and marking it would silently drop later writes.
-		// Either way keep the entry and dirty pages so the open fd still reads
-		// its buffered writes (POSIX unlinked-but-open).
+		// Path vacated. A rename left the file alive at its new name, so the
+		// handle follows it — an open fd tracks the inode, and leaving it on
+		// the old path would make its next flush recreate that name instead of
+		// updating the renamed file. An actual delete instead marks the handle
+		// so no flush recreates the unlinked name. Either way the entry and
+		// dirty pages stay, so the open fd still reads its buffered writes.
+		if invalidation.RenamedTo != "" {
+			wfs.inodeToPath.MovePath(filePath, invalidation.RenamedTo)
+			fh.RememberPath(invalidation.RenamedTo)
+			if _, newName := invalidation.RenamedTo.DirAndName(); newName != "" {
+				fh.UpdateEntry(func(entry *filer_pb.Entry) {
+					if entry != nil {
+						entry.Name = newName
+					}
+				})
+			}
+		}
 		if invalidation.Deleted {
 			fh.isDeleted = true
 		}
@@ -851,35 +863,26 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 	if candidate.Attributes != nil {
 		candidate.Attributes.FileSize = filer.FileSize(candidate)
 	}
-	// A committed copy whose readback failed left the base approximate; adopt
-	// its own event (content-equal, fresher timestamps) without invalidating
-	// writes made since. Anything else is a foreign write — install it.
-	if fh.adoptNextEventBase.Load() {
-		if base := fh.baseEntry.Load(); base != nil && sameEntryContent(candidate, base) {
-			fh.adoptNextEventBase.Store(false)
-			// Content is unchanged, so the dirty pages stay valid either way.
-			// A clean handle still takes the entry: the event may be a foreign
-			// touch/chmod rather than the copy's own, and its attributes would
-			// otherwise be lost. A dirty handle keeps its diverged entry.
-			if !fh.dirtyMetadata {
-				fh.SetEntry(candidate)
-			}
-			fh.baseEntry.Store(candidate)
-			fh.advanceEntryVersionTsNs(candidateTsNs)
-			return
-		}
-		fh.adoptNextEventBase.Store(false)
-	}
 	// Already reflected — an under-fenced re-delivery (a fence is a lower
 	// bound). Judged against the base, not the live entry: local writes move
 	// the live entry, and a re-delivered base must not discard them.
-	if base := fh.baseEntry.Load(); base != nil && proto.Equal(candidate, base) {
+	base := fh.baseEntry.Load()
+	if base != nil && proto.Equal(candidate, base) {
 		fh.advanceEntryVersionTsNs(candidateTsNs)
 		return
 	}
-	fh.dirtyPages.Destroy()
-	fh.dirtyPages = newPageWriter(fh, wfs.option.ChunkSizeLimit)
-	fh.SetEntry(candidate)
+	// Dirty pages overlay content, so only a content change invalidates them:
+	// a metadata-only event (chmod, touch, or a committed copy's own event
+	// against an approximate base) leaves them valid. A dirty handle likewise
+	// keeps its diverged entry unless foreign content supersedes it.
+	contentChanged := base == nil || !sameEntryContent(candidate, base)
+	if contentChanged {
+		fh.dirtyPages.Destroy()
+		fh.dirtyPages = newPageWriter(fh, wfs.option.ChunkSizeLimit)
+	}
+	if contentChanged || !fh.dirtyMetadata {
+		fh.SetEntry(candidate)
+	}
 	fh.baseEntry.Store(proto.Clone(candidate).(*filer_pb.Entry))
 	fh.advanceEntryVersionTsNs(candidateTsNs)
 }

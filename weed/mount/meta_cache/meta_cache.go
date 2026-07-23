@@ -771,6 +771,9 @@ type EntryInvalidation struct {
 	Entry   *filer_pb.Entry // entry now at path per the event; nil when the path was vacated
 	TsNs    int64           // the event's filer log position; 0 for locally built events
 	Deleted bool            // vacated by a delete, not a rename away — the file lives on elsewhere
+	// RenamedTo is the destination when a rename vacated this path: the file
+	// lives on there, so an open handle follows it rather than being orphaned.
+	RenamedTo util.FullPath
 	// Signatures from the event. The filer that logged it appends its own, so
 	// this identifies the clock domain TsNs belongs to.
 	Signatures []int32
@@ -1228,8 +1231,8 @@ func collectEntryInvalidations(resp *filer_pb.SubscribeMetadataResponse) []Entry
 			newDir = message.NewParentPath
 		}
 		if message.OldEntry.Name != message.NewEntry.Name || resp.Directory != newDir {
-			invalidations = append(invalidations, EntryInvalidation{Path: oldKey, TsNs: resp.TsNs, Signatures: signatures})
 			newKey := util.NewFullPath(newDir, message.NewEntry.Name)
+			invalidations = append(invalidations, EntryInvalidation{Path: oldKey, TsNs: resp.TsNs, Signatures: signatures, RenamedTo: newKey})
 			invalidations = append(invalidations, EntryInvalidation{Path: newKey, Entry: message.NewEntry, TsNs: resp.TsNs, Signatures: signatures})
 		} else {
 			invalidations = append(invalidations, EntryInvalidation{Path: oldKey, Entry: message.NewEntry, TsNs: resp.TsNs, Signatures: signatures})

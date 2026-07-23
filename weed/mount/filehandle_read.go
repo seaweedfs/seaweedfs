@@ -209,31 +209,38 @@ func (fh *FileHandle) downloadRemoteEntry(entry *LockedEntry) error {
 		// invalidation is excluded by the exclusive one). Install as one unit,
 		// and only if at least as new — an older response landing last would
 		// keep the newer version over an older entry, fencing out corrections.
+		installed := false
 		fh.remoteInstallMu.Lock()
-		if versionTsNs >= fh.entryVersionTsNs.Load() {
+		switch {
+		case versionTsNs >= fh.entryVersionTsNs.Load():
 			fh.SetEntry(localEntry)
 			fh.setAuthoritativeBase(proto.Clone(localEntry).(*filer_pb.Entry))
 			fh.advanceEntryVersion(versionTsNs, resp.GetLogSignature())
-		} else if fh.GetEntry().GetEntry().IsInRemoteOnly() {
-			// Older or unversioned response (pre-upgrade filer), but the handle
-			// still has no local chunks and cannot read without them: take the
-			// content without claiming the response's log position.
+			installed = true
+		case versionTsNs == 0 && fh.GetEntry().GetEntry().IsInRemoteOnly():
+			// Unversioned response (pre-upgrade filer) and the handle still has
+			// no local chunks to read: take the content, but claim no position.
+			// A response that is merely *older* is refused instead — its content
+			// predates what the handle already reflects.
 			fh.SetEntry(localEntry)
 			fh.setAuthoritativeBase(proto.Clone(localEntry).(*filer_pb.Entry))
 		}
 		fh.remoteInstallMu.Unlock()
 
+		// Only publish state we accepted, and only when it carries a position
+		// to order it by: an unversioned event would clear the cache entry's
+		// version and let an older subscriber event roll the cache back.
 		// Async: a sync apply deadlocks against the apply loop's invalidate, which needs this read's file-handle lock.
-		// Stamp the synthesized event so the cache versions the entry; a zero
-		// TsNs would leave it open to rollback by an older subscriber event.
-		event := resp.GetMetadataEvent()
-		if event == nil {
-			event = metadataUpdateEvent(request.Directory, resp.Entry)
-			if event != nil {
-				event.TsNs = versionTsNs
+		if installed && versionTsNs != 0 {
+			event := resp.GetMetadataEvent()
+			if event == nil {
+				event = metadataUpdateEvent(request.Directory, resp.Entry)
+				if event != nil {
+					event.TsNs = versionTsNs
+				}
 			}
+			fh.wfs.applyLocalMetadataEventAsync(event)
 		}
-		fh.wfs.applyLocalMetadataEventAsync(event)
 
 		return nil
 	})

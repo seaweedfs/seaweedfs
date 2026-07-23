@@ -53,10 +53,6 @@ type FileHandle struct {
 	// event, whose ordering the subscription already provides.
 	entryVersionSignature atomic.Int32
 
-	// adoptNextEventBase marks a committed mutation whose readback failed:
-	// baseEntry is approximate and the mutation's own event is en route.
-	adoptNextEventBase atomic.Bool
-
 	// baseEntry snapshots the filer state last installed or acknowledged.
 	// Local writes move the live entry away from it, so "is this event new"
 	// must be judged here, not against the live entry. Always store a clone.
@@ -163,12 +159,9 @@ func (fh *FileHandle) installAckedEntry(entry *filer_pb.Entry, versionTsNs int64
 	fh.advanceEntryVersion(versionTsNs, signature)
 }
 
-// setAuthoritativeBase installs a base from a local ack and cancels any
-// pending adoption: the ack supersedes the mutation it was waiting for, and a
-// surviving flag would misfire on a later foreign event.
+// setAuthoritativeBase installs the base snapshot a local ack acknowledged.
 func (fh *FileHandle) setAuthoritativeBase(base *filer_pb.Entry) {
 	fh.baseEntry.Store(base)
-	fh.adoptNextEventBase.Store(false)
 }
 
 // advanceEntryVersionTsNs raises the entry version, never regresses it. Zero
