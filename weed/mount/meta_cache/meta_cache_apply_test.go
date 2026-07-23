@@ -581,3 +581,52 @@ func TestUnversionedWriteClearsEntryVersion(t *testing.T) {
 	}
 	mc.WaitForEntryInvalidations()
 }
+
+// A rebuild against a pre-upgrade filer returns no snapshot; the reinserted
+// entries must not inherit the version records their pre-rebuild
+// incarnations left behind, or valid events below the stale claim are
+// rejected.
+func TestUnversionedRebuildClearsStaleVersions(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+		"/":    true,
+		"/dir": true,
+	})
+	defer mc.Shutdown()
+
+	versioned := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		TsNs:      3000,
+		EventNotification: &filer_pb.EventNotification{
+			NewEntry: &filer_pb.Entry{
+				Name:       "file.txt",
+				Attributes: &filer_pb.FuseAttributes{FileSize: 11, FileMode: 0100644},
+			},
+		},
+	}
+	if err := mc.ApplyMetadataResponse(context.Background(), versioned, SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply versioned event: %v", err)
+	}
+
+	if err := mc.BeginDirectoryBuild(context.Background(), util.FullPath("/dir")); err != nil {
+		t.Fatalf("begin build: %v", err)
+	}
+	if err := mc.doBatchInsertEntries(context.Background(), []*filer.Entry{{
+		FullPath: "/dir/file.txt",
+		Attr: filer.Attr{
+			Crtime:   time.Unix(1, 0),
+			Mtime:    time.Unix(1, 0),
+			Mode:     0100644,
+			FileSize: 22,
+		},
+	}}); err != nil {
+		t.Fatalf("batch insert: %v", err)
+	}
+	if err := mc.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 0); err != nil {
+		t.Fatalf("complete unversioned build: %v", err)
+	}
+
+	if _, versionTsNs, err := mc.FindEntryWithVersion(context.Background(), util.FullPath("/dir/file.txt")); err != nil || versionTsNs != 0 {
+		t.Fatalf("rebuilt entry version = %d, %v; want 0 (stale claim must not survive an unversioned rebuild)", versionTsNs, err)
+	}
+	mc.WaitForEntryInvalidations()
+}

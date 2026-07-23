@@ -1003,3 +1003,128 @@ func TestAlreadyReflectedEventPreservesDirtyWrites(t *testing.T) {
 		t.Fatalf("handle version = %d, want 1500", got)
 	}
 }
+
+// A versioned deletion is a fact about the path with no entry left to carry
+// it. Without a tombstone, a delayed older event resurrects the deleted path
+// permanently — the deletion's own redelivery is dedup-suppressed.
+func TestDeleteTombstoneBlocksResurrection(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+	wfs.inodeToPath.MarkChildrenCached(util.FullPath("/"))
+	wfs.inodeToPath.Lookup(util.FullPath("/dir"), time.Now().Unix(), true, false, 0, false)
+	wfs.inodeToPath.MarkChildrenCached(util.FullPath("/dir"))
+
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("file", 100, 1000), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply create: %v", err)
+	}
+	deleteResp := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		TsNs:      2000,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: "file"},
+		},
+	}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), deleteResp, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply delete: %v", err)
+	}
+
+	// Delayed update the deletion supersedes: must not resurrect the path.
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("file", 150, 1500), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply delayed update: %v", err)
+	}
+	if entry, err := wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/file")); err == nil {
+		t.Fatalf("deleted path resurrected by a delayed event: %+v", entry)
+	}
+
+	// A genuinely newer create still applies over the tombstone.
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("file", 250, 2500), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply newer create: %v", err)
+	}
+	entry, err := wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/file"))
+	if err != nil || entry.FileSize != 250 {
+		t.Fatalf("entry after newer create = %+v, %v; want size 250", entry, err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+}
+
+// A server-side copy installs the copied entry into the destination handle;
+// it must enroll in the versioned-base protocol, or the copy's own event
+// differs from the stale pre-copy base and destroys writes made to the
+// destination after the copy.
+func TestServerSideCopyInstallEnrollsInBase(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 100},
+	})
+
+	copied := &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 200},
+	}
+	wfs.applyServerSideWholeFileCopyResult(fh, fh, util.FullPath("/dir/file"), copied, 0, 200)
+
+	// Writes land on the destination before the copy's event arrives.
+	fh.UpdateEntry(func(entry *filer_pb.Entry) {
+		entry.Attributes.FileSize = 205
+	})
+	fh.dirtyMetadata = true
+	pagesBefore := fh.dirtyPages
+
+	// The copy's own event carries the copied state — a no-op for this base.
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("file", 200, 1500), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply copy event: %v", err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if fh.dirtyPages != pagesBefore {
+		t.Fatal("dirty pages destroyed by the copy's own event")
+	}
+	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 205 {
+		t.Fatalf("live entry file size = %d, want 205 (post-copy write must survive)", size)
+	}
+}
+
+// A completed listing proves absences as well as presences: a delayed
+// create for a name the snapshot omitted re-creates something the listing
+// already saw deleted.
+func TestAbsenceFloorBlocksGhostCreate(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+	wfs.inodeToPath.MarkChildrenCached(util.FullPath("/"))
+	wfs.inodeToPath.Lookup(util.FullPath("/dir"), time.Now().Unix(), true, false, 0, false)
+
+	if err := wfs.metaCache.BeginDirectoryBuild(context.Background(), util.FullPath("/dir")); err != nil {
+		t.Fatalf("begin build: %v", err)
+	}
+	if err := wfs.metaCache.InsertEntry(context.Background(), &filer.Entry{
+		FullPath: "/dir/other",
+		Attr: filer.Attr{
+			Crtime:   time.Unix(1, 0),
+			Mtime:    time.Unix(1, 0),
+			Mode:     0100644,
+			FileSize: 1,
+		},
+	}); err != nil {
+		t.Fatalf("insert listing entry: %v", err)
+	}
+	if err := wfs.metaCache.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 2000); err != nil {
+		t.Fatalf("complete build: %v", err)
+	}
+
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("ghost", 100, 1500), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply ghost create: %v", err)
+	}
+	if entry, err := wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/ghost")); err == nil {
+		t.Fatalf("name absent at snapshot 2000 resurrected by event at 1500: %+v", entry)
+	}
+
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("ghost", 250, 2500), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply newer ghost create: %v", err)
+	}
+	entry, err := wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/ghost"))
+	if err != nil || entry.FileSize != 250 {
+		t.Fatalf("ghost after newer create = %+v, %v; want size 250", entry, err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+}

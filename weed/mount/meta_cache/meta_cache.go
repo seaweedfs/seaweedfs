@@ -43,6 +43,14 @@ type MetaCache struct {
 	dedupRing            dedupRingBuffer
 	includeSystemEntries bool
 
+	// dirAbsenceFloors records, per children-cached directory, the listing
+	// snapshot its build completed at, used ONLY to fence writes for names
+	// the listing proved absent: an event at or below the floor for a path
+	// with no entry and no version record re-creates something the snapshot
+	// already saw deleted. Present entries carry their own versions and
+	// never consult it. Written under the write lock, cleared on purge.
+	dirAbsenceFloors map[util.FullPath]int64
+
 	// Entry invalidations run on a worker, not inline on the apply loop:
 	// invalidateFunc takes the fh lock, which a flush can hold while waiting on
 	// the apply loop (flushMetadataToFiler -> applyLocalMetadataEvent), so inline
@@ -110,10 +118,11 @@ func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPat
 		invalidateFunc: func(fullpath util.FullPath, entry *filer_pb.Entry, eventTsNs int64) {
 			invalidateFunc(fullpath, entry, eventTsNs)
 		},
-		applyCh:      make(chan metadataApplyRequest, 128),
-		applyDone:    make(chan struct{}),
-		buildingDirs: make(map[util.FullPath]*directoryBuildState),
-		dedupRing:    newDedupRingBuffer(),
+		applyCh:          make(chan metadataApplyRequest, 128),
+		applyDone:        make(chan struct{}),
+		buildingDirs:     make(map[util.FullPath]*directoryBuildState),
+		dedupRing:        newDedupRingBuffer(),
+		dirAbsenceFloors: make(map[util.FullPath]int64),
 	}
 	mc.invalidateWorker = util.NewAsyncBatchWorker(func(batch []metadataInvalidation) {
 		for _, invalidation := range batch {
@@ -185,7 +194,15 @@ func (mc *MetaCache) atomicUpdateEntryFromFilerLocked(ctx context.Context, oldPa
 				if err := mc.localStore.DeleteEntry(ctx, oldPath); err != nil {
 					return err
 				}
-				mc.clearEntryVersionLocked(ctx, oldPath)
+				// A versioned deletion is a fact about the path with no entry
+				// left to carry it: keep it as a tombstone, or a delayed
+				// older event resurrects the deleted path (the deletion's own
+				// redelivery is dedup-suppressed and never corrects it).
+				if versionTsNs != 0 {
+					mc.setEntryTombstoneLocked(ctx, oldPath, versionTsNs)
+				} else {
+					mc.clearEntryVersionLocked(ctx, oldPath)
+				}
 			}
 		}
 	} else {
@@ -407,6 +424,18 @@ func (mc *MetaCache) setEntryVersionLocked(ctx context.Context, fp util.FullPath
 	}
 }
 
+// setEntryTombstoneLocked records a versioned deletion. The ninth byte marks
+// the record as a tombstone: unlike a plain record, it fences even though no
+// entry exists.
+func (mc *MetaCache) setEntryTombstoneLocked(ctx context.Context, fp util.FullPath, tsNs int64) {
+	value := make([]byte, 9)
+	util.Uint64toBytes(value, uint64(tsNs))
+	value[8] = 1
+	if err := mc.localStore.KvPut(ctx, entryVersionKey(fp), value); err != nil {
+		glog.V(1).Infof("set entry tombstone %s: %v", fp, err)
+	}
+}
+
 func (mc *MetaCache) clearEntryVersionLocked(ctx context.Context, fp util.FullPath) {
 	if err := mc.localStore.KvDelete(ctx, entryVersionKey(fp)); err != nil {
 		glog.V(4).Infof("clear entry version %s: %v", fp, err)
@@ -414,30 +443,52 @@ func (mc *MetaCache) clearEntryVersionLocked(ctx context.Context, fp util.FullPa
 }
 
 func (mc *MetaCache) getEntryVersionLocked(ctx context.Context, fp util.FullPath) int64 {
+	tsNs, _ := mc.getEntryVersionRecordLocked(ctx, fp)
+	return tsNs
+}
+
+func (mc *MetaCache) getEntryVersionRecordLocked(ctx context.Context, fp util.FullPath) (tsNs int64, tombstone bool) {
 	value, err := mc.localStore.KvGet(ctx, entryVersionKey(fp))
-	if err != nil || len(value) != 8 {
-		return 0
+	if err != nil || len(value) < 8 {
+		return 0, false
 	}
-	return int64(util.BytesToUint64(value))
+	return int64(util.BytesToUint64(value[:8])), len(value) == 9 && value[8] == 1
 }
 
 // entryVersionBlocksLocked reports whether an incoming write at tsNs is
-// already reflected at fp. Version records can linger after a bulk folder
-// wipe (DeleteFolderChildren cannot enumerate them), so a claim only blocks
-// while its entry actually exists — a recreate is never fenced out.
+// already reflected at fp. A tombstone fences with no entry present — the
+// deletion is the reflected fact. A plain record can linger after a bulk
+// folder wipe (DeleteFolderChildren cannot enumerate them), so it only
+// blocks while its entry actually exists — a recreate is never fenced out.
+// With neither knowledge, a completed listing's snapshot fences names it
+// proved absent.
 func (mc *MetaCache) entryVersionBlocksLocked(ctx context.Context, fp util.FullPath, tsNs int64) bool {
-	if mc.getEntryVersionLocked(ctx, fp) < tsNs {
+	recordTsNs, tombstone := mc.getEntryVersionRecordLocked(ctx, fp)
+	if recordTsNs >= tsNs && recordTsNs != 0 {
+		if tombstone {
+			return true
+		}
+		if _, err := mc.localStore.FindEntry(ctx, fp); err == nil {
+			return true
+		}
 		return false
 	}
-	if _, err := mc.localStore.FindEntry(ctx, fp); err != nil {
-		return false
+	if recordTsNs == 0 {
+		if _, err := mc.localStore.FindEntry(ctx, fp); err != nil {
+			dir, _ := fp.DirAndName()
+			if mc.dirAbsenceFloors[util.FullPath(dir)] >= tsNs {
+				return true
+			}
+		}
 	}
-	return true
+	return false
 }
 
 // stampChildrenVersionLocked records the listing snapshot as every child's
 // version: the listing read the filer at the snapshot, proving each listed
-// entry individually at that position.
+// entry individually at that position. A zero snapshot (pre-upgrade filer)
+// clears instead — otherwise a rebuilt entry would reactivate the stale
+// record its pre-rebuild incarnation left behind, rejecting valid events.
 func (mc *MetaCache) stampChildrenVersionLocked(ctx context.Context, dirPath util.FullPath, snapshotTsNs int64) {
 	if _, err := mc.localStore.ListDirectoryEntries(ctx, dirPath, "", true, math.MaxInt64, func(entry *filer.Entry) (bool, error) {
 		mc.setEntryVersionLocked(ctx, entry.FullPath, snapshotTsNs)
@@ -835,8 +886,10 @@ func (mc *MetaCache) purgeDirectoryChildrenNow(ctx context.Context, dirPath util
 	}
 	mc.Lock()
 	defer mc.Unlock()
-	// Version records for the wiped children linger; entryVersionBlocksLocked
-	// disregards a claim whose entry is gone, so they cannot fence recreates.
+	delete(mc.dirAbsenceFloors, dirPath)
+	// Plain version records for the wiped children linger;
+	// entryVersionBlocksLocked disregards a claim whose entry is gone, so
+	// they cannot fence recreates. Tombstones survive by design.
 	return mc.localStore.DeleteFolderChildren(ctx, dirPath)
 }
 
@@ -850,12 +903,17 @@ func (mc *MetaCache) completeDirectoryBuildNow(ctx context.Context, dirPath util
 
 	// The listing read the filer at the snapshot, proving each listed entry
 	// at that position; stamp before replaying so replayed (newer) events
-	// override the stamp, not the other way around.
+	// override the stamp, not the other way around. An unversioned listing
+	// clears the children's records, and the snapshot also becomes the
+	// directory's absence floor for the names it proved deleted.
+	mc.Lock()
+	mc.stampChildrenVersionLocked(ctx, dirPath, snapshotTsNs)
 	if snapshotTsNs != 0 {
-		mc.Lock()
-		mc.stampChildrenVersionLocked(ctx, dirPath, snapshotTsNs)
-		mc.Unlock()
+		mc.dirAbsenceFloors[dirPath] = snapshotTsNs
+	} else {
+		delete(mc.dirAbsenceFloors, dirPath)
 	}
+	mc.Unlock()
 
 	for _, event := range state.bufferedEvents {
 		// When the server provided a snapshot timestamp, skip events that

@@ -706,6 +706,30 @@ func (wfs *WFS) lookupEntryWithVersion(fullpath util.FullPath) (*filer.Entry, in
 	return filer.FromPbEntry(dir, entry), lookupLogTsNs, fuse.OK
 }
 
+// getPbEntryWithVersion fetches an entry from the filer together with the
+// log position its state reflects, from the fenced lookup response.
+func (wfs *WFS) getPbEntryWithVersion(ctx context.Context, fullpath util.FullPath) (*filer_pb.Entry, int64, error) {
+	dir, name := fullpath.DirAndName()
+	var entry *filer_pb.Entry
+	var logTsNs int64
+	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		resp, lookupErr := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
+			Directory: dir,
+			Name:      name,
+		})
+		if lookupErr != nil {
+			return lookupErr
+		}
+		entry = resp.Entry
+		logTsNs = resp.LogTsNs
+		return nil
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	return entry, logTsNs, nil
+}
+
 // invalidateOpenFileHandle refreshes an open file handle from a metadata
 // subscription event. No filer lookup happens here: it can fail transiently,
 // and since the subscription cursor has already advanced past the event, the
