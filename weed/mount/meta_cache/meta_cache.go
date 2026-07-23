@@ -183,30 +183,26 @@ func (mc *MetaCache) atomicUpdateEntryFromFilerLocked(ctx context.Context, oldPa
 		glog.Errorf("Metacache: find entry error: %v", err)
 		return err
 	}
-	if entry != nil {
-		if oldPath != "" {
-			if newEntry != nil && oldPath == newEntry.FullPath {
-				// skip the unnecessary deletion
-				// leave the update to the following InsertEntry operation
-			} else {
-				ctx = context.WithValue(ctx, "OP", "MV")
-				glog.V(3).Infof("DeleteEntry %s", oldPath)
-				if err := mc.localStore.DeleteEntry(ctx, oldPath); err != nil {
-					return err
-				}
-				// A versioned deletion is a fact about the path with no entry
-				// left to carry it: keep it as a tombstone, or a delayed
-				// older event resurrects the deleted path (the deletion's own
-				// redelivery is dedup-suppressed and never corrects it).
-				if versionTsNs != 0 {
-					mc.setEntryTombstoneLocked(ctx, oldPath, versionTsNs)
-				} else {
-					mc.clearEntryVersionLocked(ctx, oldPath)
-				}
-			}
+	vacatingOldPath := oldPath != "" && !(newEntry != nil && oldPath == newEntry.FullPath)
+	if entry != nil && vacatingOldPath {
+		ctx = context.WithValue(ctx, "OP", "MV")
+		glog.V(3).Infof("DeleteEntry %s", oldPath)
+		if err := mc.localStore.DeleteEntry(ctx, oldPath); err != nil {
+			return err
 		}
-	} else {
-		// println("unknown old directory:", oldDir)
+	}
+	if vacatingOldPath {
+		// A versioned deletion is a fact about the path with no entry left
+		// to carry it: keep it as a tombstone, or a delayed older event
+		// resurrects the deleted path (the deletion's own redelivery is
+		// dedup-suppressed and never corrects it). Written even when the
+		// store held no entry — the deletion is a fact about the path, not
+		// about what this cache happened to hold.
+		if versionTsNs != 0 {
+			mc.setEntryTombstoneLocked(ctx, oldPath, versionTsNs)
+		} else {
+			mc.clearEntryVersionLocked(ctx, oldPath)
+		}
 	}
 
 	if newEntry != nil {
@@ -457,31 +453,22 @@ func (mc *MetaCache) getEntryVersionRecordLocked(ctx context.Context, fp util.Fu
 
 // entryVersionBlocksLocked reports whether an incoming write at tsNs is
 // already reflected at fp. A tombstone fences with no entry present — the
-// deletion is the reflected fact. A plain record can linger after a bulk
-// folder wipe (DeleteFolderChildren cannot enumerate them), so it only
-// blocks while its entry actually exists — a recreate is never fenced out.
-// With neither knowledge, a completed listing's snapshot fences names it
-// proved absent.
+// deletion is the reflected fact. A plain record only blocks while its entry
+// actually exists, since records can linger after a bulk folder wipe
+// (DeleteFolderChildren cannot enumerate them) and must not fence a
+// recreate. For an absent entry, the listing's absence floor always speaks,
+// whatever older record remains: a snapshot newer than a tombstone confirms
+// the name is still absent at the newer position.
 func (mc *MetaCache) entryVersionBlocksLocked(ctx context.Context, fp util.FullPath, tsNs int64) bool {
 	recordTsNs, tombstone := mc.getEntryVersionRecordLocked(ctx, fp)
-	if recordTsNs >= tsNs && recordTsNs != 0 {
-		if tombstone {
-			return true
-		}
-		if _, err := mc.localStore.FindEntry(ctx, fp); err == nil {
-			return true
-		}
-		return false
+	if tombstone && recordTsNs >= tsNs {
+		return true
 	}
-	if recordTsNs == 0 {
-		if _, err := mc.localStore.FindEntry(ctx, fp); err != nil {
-			dir, _ := fp.DirAndName()
-			if mc.dirAbsenceFloors[util.FullPath(dir)] >= tsNs {
-				return true
-			}
-		}
+	if _, err := mc.localStore.FindEntry(ctx, fp); err == nil {
+		return recordTsNs != 0 && recordTsNs >= tsNs && !tombstone
 	}
-	return false
+	dir, _ := fp.DirAndName()
+	return mc.dirAbsenceFloors[util.FullPath(dir)] >= tsNs
 }
 
 // stampChildrenVersionLocked records the listing snapshot as every child's

@@ -789,6 +789,14 @@ func (wfs *WFS) invalidateOpenFileHandle(filePath util.FullPath, eventEntry *fil
 	if candidate.Attributes != nil {
 		candidate.Attributes.FileSize = filer.FileSize(candidate)
 	}
+	// A committed self-initiated mutation with a failed readback left the
+	// base approximate; its own event is en route. Adopt this state as the
+	// base without invalidating local writes made since.
+	if fh.adoptNextEventBase.CompareAndSwap(true, false) {
+		fh.baseEntry.Store(candidate)
+		fh.advanceEntryVersionTsNs(candidateTsNs)
+		return
+	}
 	// State the handle already reflects — an under-fenced re-delivery (a
 	// fence is a lower bound; a listing or lookup can include a mutation
 	// whose event follows). Judged against the immutable base snapshot, not

@@ -48,6 +48,13 @@ type FileHandle struct {
 	// the entry — it would roll the handle back.
 	entryVersionTsNs atomic.Int64
 
+	// adoptNextEventBase marks a committed self-initiated mutation whose
+	// readback failed: the base below is approximate, and the mutation's own
+	// event is en route. The next invalidation adopts its state as the base
+	// without invalidating local writes made since — the event is ours, not
+	// a foreign change.
+	adoptNextEventBase atomic.Bool
+
 	// baseEntry is an immutable snapshot of the filer state the handle last
 	// installed or acknowledged. The live entry diverges from it as local
 	// writes mutate size, timestamps, and chunks, so "does this event bring

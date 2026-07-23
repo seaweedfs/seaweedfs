@@ -239,6 +239,10 @@ func (wfs *WFS) applyServerSideWholeFileCopyResult(fhIn, fhOut *FileHandle, dstP
 	if entry == nil {
 		entry = synthesizeLocalEntryForServerSideWholeFileCopy(fhIn, fhOut, sourceSize)
 		entryVersionTsNs = 0
+		// The copy committed but its readback failed: the synthesized entry
+		// approximates the real state (its timestamps are local), so the
+		// copy's own event would differ from this base and read as foreign.
+		fhOut.adoptNextEventBase.Store(true)
 	}
 	if entry == nil {
 		glog.Warningf("CopyFileRange server-side copy %s left no local entry to apply", dstPath)
