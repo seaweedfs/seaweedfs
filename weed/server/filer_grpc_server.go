@@ -30,9 +30,14 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 
 	glog.V(4).InfofCtx(ctx, "LookupDirectoryEntry %s", filepath.Join(req.Directory, req.Name))
 
+	// Log position fence, stamped before the entry read: metadata events are
+	// logged after their store write on this clock, so every event at or
+	// below this timestamp is reflected in the returned entry.
+	logTsNs := time.Now().UnixNano()
+
 	entry, err := fs.filer.FindEntry(ctx, util.JoinPath(req.Directory, req.Name))
 	if err == filer_pb.ErrNotFound {
-		return &filer_pb.LookupDirectoryEntryResponse{}, err
+		return &filer_pb.LookupDirectoryEntryResponse{LogTsNs: logTsNs}, err
 	}
 	if err != nil {
 		glog.V(3).InfofCtx(ctx, "LookupDirectoryEntry %s: %+v, ", filepath.Join(req.Directory, req.Name), err)
@@ -40,7 +45,8 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 	}
 
 	return &filer_pb.LookupDirectoryEntryResponse{
-		Entry: entry.ToProtoEntry(),
+		Entry:   entry.ToProtoEntry(),
+		LogTsNs: logTsNs,
 	}, nil
 }
 

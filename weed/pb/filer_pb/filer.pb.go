@@ -369,8 +369,11 @@ func (x *LookupDirectoryEntryRequest) GetName() string {
 }
 
 type LookupDirectoryEntryResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Entry         *Entry                 `protobuf:"bytes,1,opt,name=entry,proto3" json:"entry,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Entry *Entry                 `protobuf:"bytes,1,opt,name=entry,proto3" json:"entry,omitempty"`
+	// filer log position stamped before the entry read: every event at or
+	// below it is reflected in the returned entry
+	LogTsNs       int64 `protobuf:"varint,2,opt,name=log_ts_ns,json=logTsNs,proto3" json:"log_ts_ns,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -410,6 +413,13 @@ func (x *LookupDirectoryEntryResponse) GetEntry() *Entry {
 		return x.Entry
 	}
 	return nil
+}
+
+func (x *LookupDirectoryEntryResponse) GetLogTsNs() int64 {
+	if x != nil {
+		return x.LogTsNs
+	}
+	return 0
 }
 
 type ListEntriesRequest struct {
@@ -5262,6 +5272,9 @@ type CacheRemoteObjectToLocalClusterResponse struct {
 	state         protoimpl.MessageState     `protogen:"open.v1"`
 	Entry         *Entry                     `protobuf:"bytes,1,opt,name=entry,proto3" json:"entry,omitempty"`
 	MetadataEvent *SubscribeMetadataResponse `protobuf:"bytes,2,opt,name=metadata_event,json=metadataEvent,proto3" json:"metadata_event,omitempty"`
+	// filer log position stamped before the entry read: every event at or
+	// below it is reflected in the returned entry
+	LogTsNs       int64 `protobuf:"varint,3,opt,name=log_ts_ns,json=logTsNs,proto3" json:"log_ts_ns,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5308,6 +5321,13 @@ func (x *CacheRemoteObjectToLocalClusterResponse) GetMetadataEvent() *SubscribeM
 		return x.MetadataEvent
 	}
 	return nil
+}
+
+func (x *CacheRemoteObjectToLocalClusterResponse) GetLogTsNs() int64 {
+	if x != nil {
+		return x.LogTsNs
+	}
+	return 0
 }
 
 // ///////////////////////
@@ -6843,9 +6863,10 @@ const file_filer_proto_rawDesc = "" +
 	"\vfiler.proto\x12\bfiler_pb\"O\n" +
 	"\x1bLookupDirectoryEntryRequest\x12\x1c\n" +
 	"\tdirectory\x18\x01 \x01(\tR\tdirectory\x12\x12\n" +
-	"\x04name\x18\x02 \x01(\tR\x04name\"E\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\"a\n" +
 	"\x1cLookupDirectoryEntryResponse\x12%\n" +
-	"\x05entry\x18\x01 \x01(\v2\x0f.filer_pb.EntryR\x05entry\"\xe4\x01\n" +
+	"\x05entry\x18\x01 \x01(\v2\x0f.filer_pb.EntryR\x05entry\x12\x1a\n" +
+	"\tlog_ts_ns\x18\x02 \x01(\x03R\alogTsNs\"\xe4\x01\n" +
 	"\x12ListEntriesRequest\x12\x1c\n" +
 	"\tdirectory\x18\x01 \x01(\tR\tdirectory\x12\x16\n" +
 	"\x06prefix\x18\x02 \x01(\tR\x06prefix\x12,\n" +
@@ -7333,10 +7354,11 @@ const file_filer_proto_rawDesc = "" +
 	"\tdirectory\x18\x01 \x01(\tR\tdirectory\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12+\n" +
 	"\x11chunk_concurrency\x18\x03 \x01(\x05R\x10chunkConcurrency\x121\n" +
-	"\x14download_concurrency\x18\x04 \x01(\x05R\x13downloadConcurrency\"\x9c\x01\n" +
+	"\x14download_concurrency\x18\x04 \x01(\x05R\x13downloadConcurrency\"\xb8\x01\n" +
 	"'CacheRemoteObjectToLocalClusterResponse\x12%\n" +
 	"\x05entry\x18\x01 \x01(\v2\x0f.filer_pb.EntryR\x05entry\x12J\n" +
-	"\x0emetadata_event\x18\x02 \x01(\v2#.filer_pb.SubscribeMetadataResponseR\rmetadataEvent\"\x9b\x01\n" +
+	"\x0emetadata_event\x18\x02 \x01(\v2#.filer_pb.SubscribeMetadataResponseR\rmetadataEvent\x12\x1a\n" +
+	"\tlog_ts_ns\x18\x03 \x01(\x03R\alogTsNs\"\x9b\x01\n" +
 	"\vLockRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12&\n" +
 	"\x0fseconds_to_lock\x18\x02 \x01(\x03R\rsecondsToLock\x12\x1f\n" +
