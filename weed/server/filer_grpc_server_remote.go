@@ -309,6 +309,11 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 	current, err := fs.filer.FindEntry(ctx, lockPath)
 	if err != nil {
 		fs.filer.DeleteUncommittedChunks(ctx, chunks)
+		if err == filer_pb.ErrNotFound {
+			// Deleted while the download ran; keep the sentinel so callers
+			// still surface a 404 rather than a generic failure.
+			return nil, err
+		}
 		return nil, fmt.Errorf("find entry %s before commit: %v", lockPath, err)
 	}
 	if !filer.EqualEntry(current, entry) {

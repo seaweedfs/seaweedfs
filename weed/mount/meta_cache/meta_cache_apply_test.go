@@ -443,7 +443,7 @@ func TestCollectEntryInvalidationsCarryAuthoritativeEntries(t *testing.T) {
 		},
 	}
 	got = collectEntryInvalidations(rename)
-	if len(got) != 2 || got[0].path != "/src/file.tmp" || got[0].entry != nil ||
+	if len(got) != 2 || got[0].path != "/src/file.tmp" || got[0].entry != nil || got[0].tsNs != 78 ||
 		got[1].path != "/dst/file.txt" || got[1].entry != newEntry || got[1].tsNs != 78 {
 		t.Fatalf("rename invalidations = %+v, want [{/src/file.tmp nil} {/dst/file.txt NewEntry}]", got)
 	}
@@ -780,4 +780,98 @@ func TestDirectoryEvictionClearsVersionRecords(t *testing.T) {
 		t.Fatalf("tombstone for /dir/gone survived eviction: %d", tsNs)
 	}
 	mc.WaitForEntryInvalidations()
+}
+
+// A completed build versions its children through one directory floor rather
+// than a version record per child, and the floor fences exactly as per-child
+// records did.
+func TestBuildFloorVersionsChildrenWithoutPerChildRecords(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+		"/":    true,
+		"/dir": true,
+	})
+	defer mc.Shutdown()
+
+	if err := mc.BeginDirectoryBuild(context.Background(), util.FullPath("/dir")); err != nil {
+		t.Fatalf("begin build: %v", err)
+	}
+	if err := mc.doBatchInsertEntries(context.Background(), []*filer.Entry{{
+		FullPath: "/dir/file",
+		Attr: filer.Attr{
+			Crtime:   time.Unix(1, 0),
+			Mtime:    time.Unix(1, 0),
+			Mode:     0100644,
+			FileSize: 300,
+		},
+	}}); err != nil {
+		t.Fatalf("batch insert: %v", err)
+	}
+	if err := mc.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 2000); err != nil {
+		t.Fatalf("complete build: %v", err)
+	}
+
+	// No per-child record was written...
+	if tsNs, _ := mc.getEntryVersionRecordLocked(context.Background(), util.FullPath("/dir/file")); tsNs != 0 {
+		t.Fatalf("per-child version record = %d, want none (the floor versions the child)", tsNs)
+	}
+	// ...yet the child reads back at the listing snapshot.
+	if _, versionTsNs, err := mc.FindEntryWithVersion(context.Background(), util.FullPath("/dir/file")); err != nil || versionTsNs != 2000 {
+		t.Fatalf("child version = %d, %v; want 2000 from the directory floor", versionTsNs, err)
+	}
+
+	// And an event the snapshot already covered is still fenced out.
+	covered := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		TsNs:      1500,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      &filer_pb.Entry{Name: "file"},
+			NewEntry:      &filer_pb.Entry{Name: "file", Attributes: &filer_pb.FuseAttributes{FileSize: 100, FileMode: 0100644}},
+			NewParentPath: "/dir",
+		},
+	}
+	if err := mc.ApplyMetadataResponse(context.Background(), covered, SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply covered event: %v", err)
+	}
+	entry, err := mc.FindEntry(context.Background(), util.FullPath("/dir/file"))
+	if err != nil || entry.FileSize != 300 {
+		t.Fatalf("entry = %+v, %v; want size 300 (floor must fence the covered event)", entry, err)
+	}
+	mc.WaitForEntryInvalidations()
+}
+
+// The presence probe applies the same TTL expiry the read path does, so a
+// logically-expired entry is judged by its directory's floor rather than by
+// the stale version record it still carries.
+func TestExpiredEntryIsJudgedByDirectoryFloor(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+		"/":    true,
+		"/dir": true,
+	})
+	defer mc.Shutdown()
+
+	if err := mc.InsertEntry(context.Background(), &filer.Entry{
+		FullPath: "/dir/file",
+		Attr: filer.Attr{
+			Crtime:   time.Now().Add(-2 * time.Hour),
+			Mtime:    time.Now().Add(-2 * time.Hour),
+			Mode:     0100644,
+			FileSize: 7,
+			TtlSec:   1,
+		},
+	}); err != nil {
+		t.Fatalf("insert expiring entry: %v", err)
+	}
+
+	mc.Lock()
+	// A record newer than the directory floor: it only governs while the entry
+	// it describes still exists. Once the entry has logically expired the floor
+	// is the accurate answer, and an event above the floor must apply.
+	mc.setEntryVersionLocked(context.Background(), util.FullPath("/dir/file"), 5000)
+	mc.dirVersionFloors[util.FullPath("/dir")] = 3000
+	blocks := mc.entryVersionBlocksLocked(context.Background(), util.FullPath("/dir/file"), 4000)
+	mc.Unlock()
+
+	if blocks {
+		t.Fatal("event at 4000 fenced by an expired entry's stale record at 5000; the floor at 3000 should govern")
+	}
 }
