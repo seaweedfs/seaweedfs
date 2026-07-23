@@ -50,20 +50,32 @@ func (i *FileHandleToInode) MarkInodeRenamed(inode uint64) {
 }
 
 func (i *FileHandleToInode) AcquireFileHandle(wfs *WFS, inode uint64, entry *filer_pb.Entry) *FileHandle {
+	fh, _ := i.AcquireFileHandleWithVersion(wfs, inode, entry, 0)
+	return fh
+}
+
+// AcquireFileHandleWithVersion installs the entry and the filer log position
+// it reflects as one decision under the map lock: a slower concurrent opener
+// must not overwrite a newer entry another opener already installed while the
+// monotonic version keeps the newer timestamp — that combination would fence
+// out every correcting event.
+func (i *FileHandleToInode) AcquireFileHandleWithVersion(wfs *WFS, inode uint64, entry *filer_pb.Entry, versionTsNs int64) (*FileHandle, bool) {
 	i.Lock()
 	defer i.Unlock()
 	fh, found := i.inode2fh[inode]
 	if !found {
 		fh = newFileHandle(wfs, FileHandleId(util.RandomUint64()), inode, entry)
+		fh.entryVersionTsNs.Store(versionTsNs)
 		i.inode2fh[inode] = fh
 		i.fh2inode[fh.fh] = inode
-	} else {
-		fh.counter++
+		return fh, false
 	}
-	if fh.GetEntry().GetEntry() != entry {
+	fh.counter++
+	if fh.GetEntry().GetEntry() != entry && versionTsNs >= fh.entryVersionTsNs.Load() {
 		fh.SetEntry(entry)
+		fh.advanceEntryVersionTsNs(versionTsNs)
 	}
-	return fh
+	return fh, true
 }
 
 func (i *FileHandleToInode) ReleaseByHandle(fh FileHandleId) *FileHandle {

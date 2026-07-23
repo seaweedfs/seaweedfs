@@ -69,6 +69,8 @@ type fakeFilerServer struct {
 	filer_pb.UnimplementedSeaweedFilerServer
 	lookupSize      uint64
 	lookupLogTsNs   int64
+	lookupSize2     uint64 // when set, served to the second and later lookups
+	lookupLogTsNs2  int64
 	cacheSize       uint64
 	cacheLogTsNs    int64
 	updateEventless bool // UpdateEntry acks like a no-change update: no event, log position only
@@ -79,16 +81,21 @@ type fakeFilerServer struct {
 }
 
 func (s *fakeFilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
-	if s.lookupGate != nil && s.lookupCalls.Add(1) == 1 {
+	call := s.lookupCalls.Add(1)
+	if s.lookupGate != nil && call == 1 {
 		close(s.lookupStarted)
 		<-s.lookupGate
+	}
+	size, logTsNs := s.lookupSize, s.lookupLogTsNs
+	if call > 1 && s.lookupSize2 != 0 {
+		size, logTsNs = s.lookupSize2, s.lookupLogTsNs2
 	}
 	return &filer_pb.LookupDirectoryEntryResponse{
 		Entry: &filer_pb.Entry{
 			Name:       req.Name,
-			Attributes: &filer_pb.FuseAttributes{FileSize: s.lookupSize, FileMode: 0100644},
+			Attributes: &filer_pb.FuseAttributes{FileSize: size, FileMode: 0100644},
 		},
-		LogTsNs: s.lookupLogTsNs,
+		LogTsNs: logTsNs,
 	}, nil
 }
 
@@ -693,5 +700,105 @@ func TestEventlessSaveAckStillFencesOlderEvents(t *testing.T) {
 
 	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
 		t.Fatalf("open handle file size = %d, want 200 (no-op ack at log position 2000 outranks the queued event at 1000)", size)
+	}
+}
+
+// A local mutation ack for one path must not inflate the version of store
+// reads for other paths: the subscription may still owe those paths older
+// events, and an inflated fence would discard them permanently.
+func TestLocalAckDoesNotFenceUnrelatedDelayedEvents(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+
+	wfs.inodeToPath.MarkChildrenCached(util.FullPath("/"))
+	wfs.inodeToPath.Lookup(util.FullPath("/dir"), time.Now().Unix(), true, false, 0, false)
+	wfs.inodeToPath.MarkChildrenCached(util.FullPath("/dir"))
+
+	if err := wfs.metaCache.InsertEntry(context.Background(), &filer.Entry{
+		FullPath: "/dir/file",
+		Attr: filer.Attr{
+			Crtime:   time.Unix(1, 0),
+			Mtime:    time.Unix(1, 0),
+			Mode:     0100644,
+			FileSize: 88,
+		},
+	}); err != nil {
+		t.Fatalf("insert cached entry: %v", err)
+	}
+
+	// A local flush of an unrelated file acknowledges filer position 2000.
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("other", 10, 2000), meta_cache.LocalMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply local event: %v", err)
+	}
+	if got := wfs.metaCache.LatestEventTsNs(); got != 0 {
+		t.Fatalf("LatestEventTsNs = %d, want 0 (local acks must not advance the subscription cursor)", got)
+	}
+
+	// Open the file: the cached-store read must not claim position 2000.
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh, status := wfs.AcquireHandle(inode, 0, 0, 0)
+	if status != fuse.OK {
+		t.Fatalf("AcquireHandle status = %v, want OK", status)
+	}
+
+	// The delayed subscription event for this file must still land.
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("file", 150, 1500), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply delayed event: %v", err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 150 {
+		t.Fatalf("open handle file size = %d, want 150 (unrelated local ack must not fence this file's event)", size)
+	}
+}
+
+// Two concurrent first opens race: the slower opener's older lookup result
+// must not overwrite the newer entry the faster opener installed, while the
+// monotonic version keeps the newer timestamp — entry and version are one
+// decision under the handle map lock.
+func TestSlowerConcurrentOpenDoesNotOverwriteNewerHandle(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+	fake := &fakeFilerServer{
+		lookupSize:     100,
+		lookupLogTsNs:  1000,
+		lookupSize2:    200,
+		lookupLogTsNs2: 2000,
+		lookupStarted:  make(chan struct{}),
+		lookupGate:     make(chan struct{}),
+	}
+	startFakeFiler(t, wfs, fake)
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	type openResult struct {
+		fh     *FileHandle
+		status fuse.Status
+	}
+	slow := make(chan openResult, 1)
+	go func() {
+		fh, status := wfs.AcquireHandle(inode, 0, 0, 0)
+		slow <- openResult{fh, status}
+	}()
+	<-fake.lookupStarted
+
+	// The faster opener completes with newer state while the slow lookup is
+	// still in flight.
+	fastFh, status := wfs.AcquireHandle(inode, 0, 0, 0)
+	if status != fuse.OK {
+		t.Fatalf("fast AcquireHandle status = %v, want OK", status)
+	}
+	if size := fastFh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
+		t.Fatalf("fast open file size = %d, want 200", size)
+	}
+
+	close(fake.lookupGate)
+	result := <-slow
+	if result.status != fuse.OK {
+		t.Fatalf("slow AcquireHandle status = %v, want OK", result.status)
+	}
+
+	if size := fastFh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
+		t.Fatalf("open handle file size = %d, want 200 (slower opener's older lookup must not overwrite)", size)
+	}
+	if got := fastFh.entryVersionTsNs.Load(); got != 2000 {
+		t.Fatalf("open handle version = %d, want 2000", got)
 	}
 }

@@ -304,6 +304,30 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 		return nil, err
 	}
 
+	// Commit under the exclusive path lock the mutation handlers use, so a
+	// concurrent lookup's shared-locked fence+read cannot land between the
+	// store update and its event notification — that window would hand out
+	// the cached state under-versioned. Re-read under the lock: the entry
+	// may have changed since the unlocked download began, and clobbering it
+	// with a clone of the stale base would lose that write.
+	commitLock := fs.entryLockTable.AcquireLock("CacheRemoteObjectToLocalCluster", lockPath, util.ExclusiveLock)
+	defer fs.entryLockTable.ReleaseLock(lockPath, commitLock)
+
+	commitLogTsNs := time.Now().UnixNano()
+	current, err := fs.filer.FindEntry(ctx, lockPath)
+	if err != nil {
+		fs.filer.DeleteUncommittedChunks(ctx, chunks)
+		return nil, fmt.Errorf("find entry %s before commit: %v", lockPath, err)
+	}
+	if !filer.EqualEntry(current, entry) {
+		// The entry changed during the download; its writer supersedes the
+		// cached content. Return the current state, fenced at this read.
+		fs.filer.DeleteUncommittedChunks(ctx, chunks)
+		resp.Entry = current.ToProtoEntry()
+		resp.LogTsNs = commitLogTsNs
+		return resp, nil
+	}
+
 	garbage := entry.GetChunks()
 
 	newEntry := entry.ShallowClone()
@@ -324,6 +348,7 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 
 	resp.Entry = newEntry.ToProtoEntry()
 	resp.MetadataEvent = eventSink.Last()
+	resp.LogTsNs = commitLogTsNs
 
 	return resp, nil
 

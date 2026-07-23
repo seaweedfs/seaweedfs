@@ -22,24 +22,24 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 	}
 
 	// A fresh lookup returns the entry with the filer log position it
-	// reflects; the new handle starts at that version so invalidations for
-	// older, already-queued events cannot replace it. An existing handle
-	// keeps its own version — its entry did not come from this lookup.
+	// reflects; the handle takes that entry and version as one decision in
+	// AcquireFileHandleWithVersion, so a slower concurrent opener cannot
+	// overwrite a newer install. An existing handle keeps its own entry and
+	// version — they did not come from this lookup.
 	var entry *filer_pb.Entry
 	var entryVersionTsNs int64
-	freshLookup := false
 	if existingFh, found := wfs.fhMap.FindFileHandle(inode); found {
 		entry = existingFh.UpdateEntry(func(entry *filer_pb.Entry) {
 			if entry != nil && existingFh.entry.Attributes == nil {
 				entry.Attributes = &filer_pb.FuseAttributes{}
 			}
 		})
+		entryVersionTsNs = existingFh.entryVersionTsNs.Load()
 	} else {
 		entry, entryVersionTsNs, status = wfs.maybeLoadEntryWithVersion(path)
 		if status != fuse.OK {
 			return nil, status
 		}
-		freshLookup = true
 	}
 	if wormEnforced, _ := wfs.wormEnforcedForEntry(path, entry); wormEnforced && flags&fuse.O_ANYWRITE != 0 {
 		return nil, fuse.EPERM
@@ -57,11 +57,8 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 		}
 	}
 	// need to AcquireFileHandle again to ensure correct handle counter
-	fileHandle = wfs.fhMap.AcquireFileHandle(wfs, inode, entry)
+	fileHandle, _ = wfs.fhMap.AcquireFileHandleWithVersion(wfs, inode, entry, entryVersionTsNs)
 	fileHandle.RememberPath(path)
-	if freshLookup {
-		fileHandle.advanceEntryVersionTsNs(entryVersionTsNs)
-	}
 
 	// Acquire distributed lock for write opens. The lock is held with
 	// auto-renewal until the file handle is released (close).

@@ -44,11 +44,22 @@ type MetaCache struct {
 	dedupRing            dedupRingBuffer
 	includeSystemEntries bool
 
-	// latestEventTsNs is the newest filer log timestamp reflected in the
-	// local store, advanced under the write lock together with the store
-	// mutation so a read under the same lock pairs an entry with a version:
-	// every event at or below it is reflected in what the store holds.
+	// latestEventTsNs is the subscription's progress: the newest subscriber
+	// event timestamp reflected in the local store, advanced under the write
+	// lock together with the store mutation so a read under the same lock
+	// pairs an entry with a version. Only subscriber events advance it —
+	// events are delivered in log order, so every event at or below it has
+	// been seen for EVERY path. Local mutation acks must not advance it:
+	// an ack for one path says nothing about undelivered events for others,
+	// and an inflated cursor would fence those events out permanently.
 	latestEventTsNs atomic.Int64
+
+	// dirVersionFloors records, per children-cached directory, the listing
+	// snapshot its build completed at: the store's content for that
+	// directory reflects every event at or below the floor even when the
+	// subscription still lags the snapshot. Written under the write lock,
+	// read under the read lock, cleared when the directory is purged.
+	dirVersionFloors map[util.FullPath]int64
 
 	// Entry invalidations run on a worker, not inline on the apply loop:
 	// invalidateFunc takes the fh lock, which a flush can hold while waiting on
@@ -117,10 +128,11 @@ func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPat
 		invalidateFunc: func(fullpath util.FullPath, entry *filer_pb.Entry, eventTsNs int64) {
 			invalidateFunc(fullpath, entry, eventTsNs)
 		},
-		applyCh:      make(chan metadataApplyRequest, 128),
-		applyDone:    make(chan struct{}),
-		buildingDirs: make(map[util.FullPath]*directoryBuildState),
-		dedupRing:    newDedupRingBuffer(),
+		applyCh:          make(chan metadataApplyRequest, 128),
+		applyDone:        make(chan struct{}),
+		buildingDirs:     make(map[util.FullPath]*directoryBuildState),
+		dedupRing:        newDedupRingBuffer(),
+		dirVersionFloors: make(map[util.FullPath]int64),
 	}
 	mc.invalidateWorker = util.NewAsyncBatchWorker(func(batch []metadataInvalidation) {
 		for _, invalidation := range batch {
@@ -365,6 +377,10 @@ func (mc *MetaCache) FindEntryWithVersion(ctx context.Context, fp util.FullPath)
 	mc.RLock()
 	defer mc.RUnlock()
 	versionTsNs = mc.latestEventTsNs.Load()
+	dir, _ := fp.DirAndName()
+	if floor := mc.dirVersionFloors[util.FullPath(dir)]; floor > versionTsNs {
+		versionTsNs = floor
+	}
 	entry, err = mc.localStore.FindEntry(ctx, fp)
 	if err != nil {
 		return nil, versionTsNs, err
@@ -618,6 +634,20 @@ func (mc *MetaCache) applyMetadataResponseNow(ctx context.Context, resp *filer_p
 		return mc.applyMetadataResponseDirect(ctx, resp, options, false)
 	}
 
+	for _, immediateEvent := range immediateEvents {
+		if err := mc.applyMetadataResponseDirect(ctx, immediateEvent, MetadataResponseApplyOptions{}, false); err != nil {
+			return err
+		}
+	}
+	// A buffered event is delivered subscription progress even though its
+	// store write waits for the build: its directory is read-through, so no
+	// store read pairs with it, and the cursor must cover it before its
+	// invalidation is observable (the build may abort and never apply it).
+	// Immediate rename fragments were applied above so their store writes
+	// are not outrun.
+	if options.InvalidateEntries {
+		mc.advanceLatestEventTs(resp.TsNs)
+	}
 	// Apply side effects but skip directory notifications for dirs that are
 	// currently being built. Notifying a building dir can trigger
 	// markDirectoryReadThrough → DeleteFolderChildren, wiping entries that
@@ -629,11 +659,6 @@ func (mc *MetaCache) applyMetadataResponseNow(ctx context.Context, resp *filer_p
 			continue
 		}
 		state.bufferedEvents = append(state.bufferedEvents, events...)
-	}
-	for _, immediateEvent := range immediateEvents {
-		if err := mc.applyMetadataResponseDirect(ctx, immediateEvent, MetadataResponseApplyOptions{}, false); err != nil {
-			return err
-		}
 	}
 	return nil
 }
@@ -686,7 +711,7 @@ func (mc *MetaCache) WaitForEntryInvalidations() {
 	mc.invalidateWorker.Drain()
 }
 
-func (mc *MetaCache) applyMetadataResponseLocked(ctx context.Context, resp *filer_pb.SubscribeMetadataResponse, _ MetadataResponseApplyOptions, allowUncachedInsert bool) (metadataResponseSideEffects, error) {
+func (mc *MetaCache) applyMetadataResponseLocked(ctx context.Context, resp *filer_pb.SubscribeMetadataResponse, options MetadataResponseApplyOptions, allowUncachedInsert bool) (metadataResponseSideEffects, error) {
 	message := resp.GetEventNotification()
 	if message == nil {
 		return metadataResponseSideEffects{}, nil
@@ -714,7 +739,7 @@ func (mc *MetaCache) applyMetadataResponseLocked(ctx context.Context, resp *file
 
 	mc.Lock()
 	err := mc.atomicUpdateEntryFromFilerLocked(ctx, oldPath, newEntry, allowUncachedInsert)
-	if err == nil {
+	if err == nil && options.InvalidateEntries {
 		mc.advanceLatestEventTs(resp.TsNs)
 	}
 	if err == nil && hideNewPath {
@@ -768,6 +793,7 @@ func (mc *MetaCache) purgeDirectoryChildrenNow(ctx context.Context, dirPath util
 	}
 	mc.Lock()
 	defer mc.Unlock()
+	delete(mc.dirVersionFloors, dirPath)
 	return mc.localStore.DeleteFolderChildren(ctx, dirPath)
 }
 
@@ -794,9 +820,14 @@ func (mc *MetaCache) completeDirectoryBuildNow(ctx context.Context, dirPath util
 	}
 
 	// The listing that built this directory reflects the filer log up to
-	// snapshotTsNs; the version cursor must cover it before the directory is
-	// published so store reads pair correctly.
-	mc.advanceLatestEventTs(snapshotTsNs)
+	// snapshotTsNs for this directory only — record it as the directory's
+	// version floor rather than advancing the global cursor, which would
+	// falsely vouch for undelivered events of unrelated paths.
+	if snapshotTsNs != 0 {
+		mc.Lock()
+		mc.dirVersionFloors[dirPath] = snapshotTsNs
+		mc.Unlock()
+	}
 	mc.markCachedFn(dirPath)
 
 	// Re-invalidate every buffered event, replayed or snapshot-covered: the
