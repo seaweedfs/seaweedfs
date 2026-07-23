@@ -1,7 +1,6 @@
 package mount
 
 import (
-	"bytes"
 	"context"
 	"math/rand/v2"
 	"os"
@@ -741,27 +740,33 @@ func (wfs *WFS) getPbEntryWithVersion(ctx context.Context, fullpath util.FullPat
 	return entry, logTsNs, nil
 }
 
-// sameEntryContent reports whether two entries carry the same file content —
-// size, inline bytes, and chunk list — ignoring server-assigned timestamps.
-// Used to tell a self-initiated mutation's own event (same content, fresh
-// timestamps) from a foreign write (changed content).
+// sameEntryContent reports whether two entries are equal ignoring only the
+// server-assigned timestamps (mtime/ctime/crtime/atime and the per-chunk
+// modified time), which a self-initiated mutation's own event legitimately
+// refreshes. Everything else — size, chunks, mode, ownership, extended
+// attributes — must match, so a foreign metadata-only change (chmod, chown,
+// setxattr) with unchanged content is NOT mistaken for the copy's own event.
+// Erring strict is safe: a rejected match installs normally.
 func sameEntryContent(a, b *filer_pb.Entry) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	if filer.FileSize(a) != filer.FileSize(b) || !bytes.Equal(a.Content, b.Content) {
-		return false
+	return proto.Equal(entryWithoutVolatileTimes(a), entryWithoutVolatileTimes(b))
+}
+
+func entryWithoutVolatileTimes(e *filer_pb.Entry) *filer_pb.Entry {
+	c := proto.Clone(e).(*filer_pb.Entry)
+	if c.Attributes != nil {
+		c.Attributes.FileSize = filer.FileSize(e)
+		c.Attributes.Mtime, c.Attributes.MtimeNs = 0, 0
+		c.Attributes.Ctime, c.Attributes.CtimeNs = 0, 0
+		c.Attributes.Crtime, c.Attributes.CrtimeNs = 0, 0
+		c.Attributes.Atime, c.Attributes.AtimeNs = 0, 0
 	}
-	if len(a.Chunks) != len(b.Chunks) {
-		return false
+	for _, ch := range c.Chunks {
+		ch.ModifiedTsNs = 0
 	}
-	for i := range a.Chunks {
-		if a.Chunks[i].GetFileIdString() != b.Chunks[i].GetFileIdString() ||
-			a.Chunks[i].Offset != b.Chunks[i].Offset || a.Chunks[i].Size != b.Chunks[i].Size {
-			return false
-		}
-	}
-	return true
+	return c
 }
 
 // invalidateOpenFileHandle refreshes an open file handle from a metadata
@@ -813,11 +818,13 @@ func (wfs *WFS) invalidateOpenFileHandle(filePath util.FullPath, eventEntry *fil
 		}
 	}
 	if candidate == nil {
-		// Path vacated (delete, rename away): keep the last entry so
-		// unlinked-but-open reads still work. Preserve local dirty state —
-		// a process may keep writing to an unlinked-but-open file (POSIX),
-		// and those writes have already been acknowledged; destroying them
-		// on a foreign delete loses acknowledged data.
+		// Path vacated by a foreign delete or rename-away. Mark the handle
+		// deleted so a later flush does not recreate the remotely-unlinked
+		// name (doFlush skips metadata flush when isDeleted). Keep the last
+		// entry and any dirty pages so the open fd can still read its own
+		// buffered writes (POSIX unlinked-but-open), but those writes are not
+		// persisted — the name is gone.
+		fh.isDeleted = true
 		if !fh.dirtyMetadata {
 			fh.dirtyPages.Destroy()
 			fh.dirtyPages = newPageWriter(fh, wfs.option.ChunkSizeLimit)

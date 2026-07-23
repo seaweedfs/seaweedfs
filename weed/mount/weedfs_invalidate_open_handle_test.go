@@ -1535,3 +1535,117 @@ func TestRemoteDownloadBaseMappedToLocal(t *testing.T) {
 		t.Fatal("dirty pages destroyed by an unchanged re-delivery (base was not mapped to local form)")
 	}
 }
+
+// A foreign delete of a dirty open file must mark the handle deleted, so a
+// later flush does not recreate the remotely-unlinked name.
+func TestForeignDeleteMarksHandleDeleted(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 200},
+	})
+	fh.dirtyMetadata = true
+
+	del := &filer_pb.SubscribeMetadataResponse{
+		Directory:         "/dir",
+		TsNs:              1500,
+		EventNotification: &filer_pb.EventNotification{OldEntry: &filer_pb.Entry{Name: "file"}},
+	}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), del, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply delete: %v", err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if !fh.isDeleted {
+		t.Fatal("handle not marked deleted after a foreign delete; a flush would recreate the unlinked name")
+	}
+}
+
+// A no-event acknowledgment (log fence only) must version the cache entry, so
+// an older subscriber event cannot roll it back.
+func TestEventlessSaveVersionsCacheEntry(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+	startFakeFiler(t, wfs, &fakeFilerServer{updateEventless: true, updateLogTsNs: 2000})
+
+	wfs.inodeToPath.MarkChildrenCached(util.FullPath("/"))
+	wfs.inodeToPath.Lookup(util.FullPath("/dir"), time.Now().Unix(), true, false, 0, false)
+	wfs.inodeToPath.MarkChildrenCached(util.FullPath("/dir"))
+
+	if code := wfs.saveEntry(util.FullPath("/dir/file"), &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 200, FileMode: 0100644},
+	}); code != fuse.OK {
+		t.Fatalf("saveEntry status = %v, want OK", code)
+	}
+
+	// An older subscriber event must be fenced out by the ack's log position.
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("file", 100, 1500), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply older event: %v", err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	entry, err := wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/file"))
+	if err != nil || entry.FileSize != 200 {
+		t.Fatalf("cache entry = %+v, %v; want size 200 (older event must not roll back the no-event ack)", entry, err)
+	}
+}
+
+// A remote download response older than the handle's current version must not
+// overwrite the entry/base while the monotonic version keeps the newer value.
+func TestStaleRemoteDownloadDoesNotRollBack(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+	startFakeFiler(t, wfs, &fakeFilerServer{cacheSize: 100, cacheLogTsNs: 1000})
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+		Name:        "file",
+		Attributes:  &filer_pb.FuseAttributes{FileSize: 200},
+		RemoteEntry: &filer_pb.RemoteEntry{RemoteSize: 100},
+	})
+	// The handle already reflects a newer version than the download will carry.
+	fh.advanceEntryVersionTsNs(3000)
+
+	if err := fh.downloadRemoteEntry(fh.GetEntry()); err != nil {
+		t.Fatalf("downloadRemoteEntry: %v", err)
+	}
+
+	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
+		t.Fatalf("handle file size = %d, want 200 (a download at version 1000 must not overwrite the version-3000 handle)", size)
+	}
+}
+
+// A foreign metadata-only change (chmod) with unchanged content must not be
+// mistaken for a committed copy's own event and adopted; it must install.
+func TestCopyAdoptRejectsForeignMetadataChange(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 200, FileMode: 0100644},
+	})
+
+	// Readback failed: synthesized base at size 200, mode 0644; adoption pending.
+	wfs.applyServerSideWholeFileCopyResult(fh, fh, util.FullPath("/dir/file"), nil, 0, 200)
+
+	// A foreign chmod: same content (size 200) but mode 0600.
+	chmod := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		TsNs:      1500,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      &filer_pb.Entry{Name: "file"},
+			NewEntry:      &filer_pb.Entry{Name: "file", Attributes: &filer_pb.FuseAttributes{FileSize: 200, FileMode: 0100600}},
+			NewParentPath: "/dir",
+		},
+	}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), chmod, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply chmod: %v", err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if mode := fh.GetEntry().GetEntry().Attributes.FileMode; mode != 0100600 {
+		t.Fatalf("live entry mode = %o, want 0100600 (foreign chmod must install, not be swallowed by copy adoption)", mode)
+	}
+}

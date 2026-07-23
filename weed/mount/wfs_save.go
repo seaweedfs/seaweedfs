@@ -70,6 +70,9 @@ func (wfs *WFS) saveEntry(path util.FullPath, entry *filer_pb.Entry) (code fuse.
 	event := resp.GetMetadataEvent()
 	if event == nil {
 		event = metadataUpdateEvent(parentDir, entry)
+		if event != nil {
+			event.TsNs = ackVersion
+		}
 	}
 	if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
 		glog.Warningf("saveEntry %s: best-effort metadata apply failed: %v", path, applyErr)

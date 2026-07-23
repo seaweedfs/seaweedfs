@@ -213,17 +213,29 @@ func (fh *FileHandle) downloadRemoteEntry(entry *LockedEntry) error {
 		// Serialize the entry/base/version install: this runs under the file
 		// handle's shared lock, so a second concurrent read can be here too;
 		// invalidateOpenFileHandle is excluded by the exclusive lock, but two
-		// downloads are not excluded from each other.
+		// downloads are not excluded from each other. Install as one unit and
+		// only when this response is at least as new as what the handle holds
+		// — an older response arriving last must not overwrite the entry/base
+		// while the monotonic version keeps the newer value, which would fence
+		// out corrections permanently.
 		fh.remoteInstallMu.Lock()
-		fh.SetEntry(localEntry)
-		fh.setAuthoritativeBase(proto.Clone(localEntry).(*filer_pb.Entry))
-		fh.advanceEntryVersionTsNs(versionTsNs)
+		if versionTsNs == 0 || versionTsNs >= fh.entryVersionTsNs.Load() {
+			fh.SetEntry(localEntry)
+			fh.setAuthoritativeBase(proto.Clone(localEntry).(*filer_pb.Entry))
+			fh.advanceEntryVersionTsNs(versionTsNs)
+		}
 		fh.remoteInstallMu.Unlock()
 
 		// Async: a sync apply deadlocks against the apply loop's invalidate, which needs this read's file-handle lock.
+		// Stamp the synthesized fallback event with the ack's log fence so the
+		// cache versions the entry — a zero TsNs would leave it unversioned
+		// and open to rollback by an older subscriber event.
 		event := resp.GetMetadataEvent()
 		if event == nil {
 			event = metadataUpdateEvent(request.Directory, resp.Entry)
+			if event != nil {
+				event.TsNs = versionTsNs
+			}
 		}
 		fh.wfs.applyLocalMetadataEventAsync(event)
 

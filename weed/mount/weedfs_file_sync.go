@@ -272,6 +272,9 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	event := resp.GetMetadataEvent()
 	if event == nil {
 		event = metadataUpdateEvent(string(dir), request.Entry)
+		if event != nil {
+			event.TsNs = ackVersionTsNs(resp)
+		}
 	}
 	// The filer acknowledged this state at the event's log position (or, for
 	// a no-op create, at the response's log position); older queued

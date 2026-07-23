@@ -182,6 +182,9 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 	event := resp.GetMetadataEvent()
 	if event == nil {
 		event = metadataUpdateEvent(string(dir), request.Entry)
+		if event != nil {
+			event.TsNs = ackVersionTsNs(resp)
+		}
 	}
 	fh.setAuthoritativeBase(baseSnapshot)
 	fh.advanceEntryVersionTsNs(ackVersionTsNs(resp))
