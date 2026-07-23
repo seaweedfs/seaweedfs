@@ -21,7 +21,7 @@ func TestWholeFileServerCopyCandidate(t *testing.T) {
 	srcInode := wfs.inodeToPath.Lookup(srcPath, 1, false, false, 0, true)
 	dstInode := wfs.inodeToPath.Lookup(dstPath, 1, false, false, 0, true)
 
-	srcHandle := wfs.fhMap.AcquireFileHandle(wfs, srcInode, &filer_pb.Entry{
+	srcHandle, _ := wfs.fhMap.AcquireFileHandle(wfs, srcInode, &filer_pb.Entry{
 		Name: "src.txt",
 		Attributes: &filer_pb.FuseAttributes{
 			FileMode: 0100644,
@@ -29,14 +29,14 @@ func TestWholeFileServerCopyCandidate(t *testing.T) {
 			Inode:    srcInode,
 		},
 		Content: []byte("hello"),
-	})
-	dstHandle := wfs.fhMap.AcquireFileHandle(wfs, dstInode, &filer_pb.Entry{
+	}, 0, 0)
+	dstHandle, _ := wfs.fhMap.AcquireFileHandle(wfs, dstInode, &filer_pb.Entry{
 		Name: "dst.txt",
 		Attributes: &filer_pb.FuseAttributes{
 			FileMode: 0100644,
 			Inode:    dstInode,
 		},
-	})
+	}, 0, 0)
 
 	srcHandle.RememberPath(srcPath)
 	dstHandle.RememberPath(dstPath)
@@ -86,7 +86,7 @@ func TestCopyFileRangeUsesServerSideWholeFileCopy(t *testing.T) {
 	srcInode := wfs.inodeToPath.Lookup(srcPath, 1, false, false, 0, true)
 	dstInode := wfs.inodeToPath.Lookup(dstPath, 1, false, false, 0, true)
 
-	srcHandle := wfs.fhMap.AcquireFileHandle(wfs, srcInode, &filer_pb.Entry{
+	srcHandle, _ := wfs.fhMap.AcquireFileHandle(wfs, srcInode, &filer_pb.Entry{
 		Name: "src.txt",
 		Attributes: &filer_pb.FuseAttributes{
 			FileMode: 0100644,
@@ -94,14 +94,14 @@ func TestCopyFileRangeUsesServerSideWholeFileCopy(t *testing.T) {
 			Inode:    srcInode,
 		},
 		Content: []byte("hello"),
-	})
-	dstHandle := wfs.fhMap.AcquireFileHandle(wfs, dstInode, &filer_pb.Entry{
+	}, 0, 0)
+	dstHandle, _ := wfs.fhMap.AcquireFileHandle(wfs, dstInode, &filer_pb.Entry{
 		Name: "dst.txt",
 		Attributes: &filer_pb.FuseAttributes{
 			FileMode: 0100644,
 			Inode:    dstInode,
 		},
-	})
+	}, 0, 0)
 
 	srcHandle.RememberPath(srcPath)
 	dstHandle.RememberPath(dstPath)
@@ -171,7 +171,7 @@ func TestCopyFileRangeDoesNotFallbackAfterCommittedServerCopyRefreshFailure(t *t
 	srcInode := wfs.inodeToPath.Lookup(srcPath, 1, false, false, 0, true)
 	dstInode := wfs.inodeToPath.Lookup(dstPath, 1, false, false, 0, true)
 
-	srcHandle := wfs.fhMap.AcquireFileHandle(wfs, srcInode, &filer_pb.Entry{
+	srcHandle, _ := wfs.fhMap.AcquireFileHandle(wfs, srcInode, &filer_pb.Entry{
 		Name: "src.txt",
 		Attributes: &filer_pb.FuseAttributes{
 			FileMode: 0100644,
@@ -181,14 +181,14 @@ func TestCopyFileRangeDoesNotFallbackAfterCommittedServerCopyRefreshFailure(t *t
 			Inode:    srcInode,
 		},
 		Content: []byte("hello"),
-	})
-	dstHandle := wfs.fhMap.AcquireFileHandle(wfs, dstInode, &filer_pb.Entry{
+	}, 0, 0)
+	dstHandle, _ := wfs.fhMap.AcquireFileHandle(wfs, dstInode, &filer_pb.Entry{
 		Name: "dst.txt",
 		Attributes: &filer_pb.FuseAttributes{
 			FileMode: 0100600,
 			Inode:    dstInode,
 		},
-	})
+	}, 0, 0)
 
 	srcHandle.RememberPath(srcPath)
 	dstHandle.RememberPath(dstPath)
@@ -233,7 +233,7 @@ func TestCopyFileRangeDoesNotFallbackAfterCommittedServerCopyRefreshFailure(t *t
 		t.Fatalf("destination content = %q, want %q", string(gotEntry.GetContent()), "hello")
 	}
 
-	cachedEntry, err := wfs.metaCache.FindEntry(context.Background(), dstPath)
+	cachedEntry, _, err := wfs.metaCache.FindEntry(context.Background(), dstPath)
 	if err != nil {
 		t.Fatalf("metaCache find entry: %v", err)
 	}
@@ -253,7 +253,7 @@ func TestCopyFileRangeReturnsEIOForAmbiguousServerSideCopy(t *testing.T) {
 	srcInode := wfs.inodeToPath.Lookup(srcPath, 1, false, false, 0, true)
 	dstInode := wfs.inodeToPath.Lookup(dstPath, 1, false, false, 0, true)
 
-	srcHandle := wfs.fhMap.AcquireFileHandle(wfs, srcInode, &filer_pb.Entry{
+	srcHandle, _ := wfs.fhMap.AcquireFileHandle(wfs, srcInode, &filer_pb.Entry{
 		Name: "src.txt",
 		Attributes: &filer_pb.FuseAttributes{
 			FileMode: 0100644,
@@ -261,14 +261,14 @@ func TestCopyFileRangeReturnsEIOForAmbiguousServerSideCopy(t *testing.T) {
 			Inode:    srcInode,
 		},
 		Content: []byte("hello"),
-	})
-	dstHandle := wfs.fhMap.AcquireFileHandle(wfs, dstInode, &filer_pb.Entry{
+	}, 0, 0)
+	dstHandle, _ := wfs.fhMap.AcquireFileHandle(wfs, dstInode, &filer_pb.Entry{
 		Name: "dst.txt",
 		Attributes: &filer_pb.FuseAttributes{
 			FileMode: 0100600,
 			Inode:    dstInode,
 		},
-	})
+	}, 0, 0)
 
 	srcHandle.RememberPath(srcPath)
 	dstHandle.RememberPath(dstPath)

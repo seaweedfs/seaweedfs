@@ -73,7 +73,7 @@ func TestHandleRenameResponseLeavesUncachedTargetOutOfCache(t *testing.T) {
 		t.Fatalf("handle rename response: %v", err)
 	}
 
-	entry, findErr := mc.FindEntry(context.Background(), targetPath)
+	entry, _, findErr := mc.FindEntry(context.Background(), targetPath)
 	if findErr != filer_pb.ErrNotFound {
 		t.Fatalf("find target entry error = %v, want %v", findErr, filer_pb.ErrNotFound)
 	}

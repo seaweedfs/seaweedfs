@@ -23,7 +23,7 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 
 	// A fresh lookup returns the entry with the filer log position it
 	// reflects; the handle takes that entry and version as one decision in
-	// AcquireFileHandleWithVersion, so a slower concurrent opener cannot
+	// AcquireFileHandle, so a slower concurrent opener cannot
 	// overwrite a newer install. An existing handle keeps its own entry and
 	// version — they did not come from this lookup.
 	var entry *filer_pb.Entry
@@ -37,7 +37,7 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 		})
 		entryVersionTsNs = entryVersion{tsNs: existingFh.entryVersionTsNs.Load(), signature: existingFh.entryVersionSignature.Load()}
 	} else {
-		entry, entryVersionTsNs, status = wfs.maybeLoadEntryWithVersion(path)
+		entry, entryVersionTsNs, status = wfs.maybeLoadEntry(path)
 		if status != fuse.OK {
 			return nil, status
 		}
@@ -60,7 +60,7 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 	}
 	// need to AcquireFileHandle again to ensure correct handle counter
 	var existed bool
-	fileHandle, existed = wfs.fhMap.AcquireFileHandleWithVersion(wfs, inode, entry, entryVersionTsNs.tsNs, entryVersionTsNs.signature)
+	fileHandle, existed = wfs.fhMap.AcquireFileHandle(wfs, inode, entry, entryVersionTsNs.tsNs, entryVersionTsNs.signature)
 	fileHandle.RememberPath(path)
 	if existed && freshLookup {
 		// Another opener created the handle while our lookup was in flight;

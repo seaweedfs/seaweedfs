@@ -46,7 +46,7 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	}
 	oldParentPath, _ := oldEntryPath.DirAndName()
 
-	oldEntry, status := wfs.maybeLoadEntry(oldEntryPath)
+	oldEntry, _, status := wfs.maybeLoadEntry(oldEntryPath)
 	if status != fuse.OK {
 		return status
 	}
@@ -78,7 +78,7 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 		// Do not fall back to the pre-lock snapshot: if every alias
 		// was deleted while we waited, abort instead of deriving the
 		// next counter from a stale entry.
-		fresh, freshStatus := wfs.maybeLoadEntry(oldEntryPath)
+		fresh, _, freshStatus := wfs.maybeLoadEntry(oldEntryPath)
 		if freshStatus != fuse.OK {
 			return freshStatus
 		}
@@ -212,7 +212,7 @@ func (wfs *WFS) syncHardLinkSiblings(inode uint64, authoritativeEntry *filer_pb.
 		if _, skipped := skip[p]; skipped {
 			continue
 		}
-		sibling, err := wfs.metaCache.FindEntry(ctx, p)
+		sibling, _, err := wfs.metaCache.FindEntry(ctx, p)
 		if err != nil || sibling == nil {
 			continue
 		}

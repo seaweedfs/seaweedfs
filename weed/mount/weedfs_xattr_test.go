@@ -26,13 +26,13 @@ func TestSetXAttrCopiesValueBuffer(t *testing.T) {
 
 	path := util.FullPath("/aaa.txt")
 	inode := wfs.inodeToPath.Lookup(path, 1, false, false, 0, true)
-	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name: "aaa.txt",
 		Attributes: &filer_pb.FuseAttributes{
 			FileMode: 0100644,
 			Inode:    inode,
 		},
-	})
+	}, 0, 0)
 	fh.RememberPath(path)
 
 	// Caller buffer aliases a pool that the kernel will overwrite on

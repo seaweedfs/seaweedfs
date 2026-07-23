@@ -195,10 +195,10 @@ func TestUpdateEventRefreshesOpenFileHandle(t *testing.T) {
 	wfs := newInvalidateTestWFS(t)
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:       "file",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 88},
-	})
+	}, 0, 0)
 
 	updateResp := &filer_pb.SubscribeMetadataResponse{
 		Directory: "/dir",
@@ -260,10 +260,10 @@ func TestQueuedEventDoesNotRollBackNewerLocalState(t *testing.T) {
 	wfs.inodeToPath.MarkChildrenCached(util.FullPath("/dir"))
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:       "file",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 88},
-	})
+	}, 0, 0)
 
 	// Hold the handle lock so the queued invalidation cannot apply yet.
 	testLock := wfs.fhLockTable.AcquireLock("test", fh.fh, util.ExclusiveLock)
@@ -302,10 +302,10 @@ func TestBufferedBuildEventReinvalidatesOnCompletion(t *testing.T) {
 	wfs.inodeToPath.Lookup(util.FullPath("/dir"), time.Now().Unix(), true, false, 0, false)
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:       "file",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 88},
-	})
+	}, 0, 0)
 
 	if err := wfs.metaCache.BeginDirectoryBuild(context.Background(), util.FullPath("/dir")); err != nil {
 		t.Fatalf("begin build: %v", err)
@@ -324,7 +324,7 @@ func TestBufferedBuildEventReinvalidatesOnCompletion(t *testing.T) {
 
 	// The listing then inserts the newer entry the snapshot already covers,
 	// through the same batch path a real build uses.
-	if err := wfs.metaCache.InsertListedEntriesForTest(context.Background(), []*filer.Entry{{
+	if err := wfs.metaCache.InsertEntry(context.Background(), &filer.Entry{
 		FullPath: "/dir/file",
 		Attr: filer.Attr{
 			Crtime:   time.Unix(1, 0),
@@ -332,7 +332,7 @@ func TestBufferedBuildEventReinvalidatesOnCompletion(t *testing.T) {
 			Mode:     0100644,
 			FileSize: 300,
 		},
-	}}); err != nil {
+	}, 2000); err != nil {
 		t.Fatalf("insert listing entry: %v", err)
 	}
 
@@ -352,10 +352,10 @@ func TestUncachedDirStaleStoreEntryDoesNotMaskEvent(t *testing.T) {
 	wfs := newInvalidateTestWFS(t)
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:       "file",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 88},
-	})
+	}, 0, 0)
 
 	// Leftover store entry under a parent that is not children-cached.
 	if err := wfs.metaCache.InsertEntry(context.Background(), &filer.Entry{
@@ -366,7 +366,7 @@ func TestUncachedDirStaleStoreEntryDoesNotMaskEvent(t *testing.T) {
 			Mode:     0100644,
 			FileSize: 88,
 		},
-	}); err != nil {
+	}, 0); err != nil {
 		t.Fatalf("insert stale entry: %v", err)
 	}
 
@@ -388,10 +388,10 @@ func TestQueuedEventOlderThanFlushedStateIsIgnored(t *testing.T) {
 	wfs := newInvalidateTestWFS(t)
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:       "file",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 88},
-	})
+	}, 0, 0)
 
 	// Hold the handle lock so the queued invalidation cannot apply yet.
 	testLock := wfs.fhLockTable.AcquireLock("test", fh.fh, util.ExclusiveLock)
@@ -406,7 +406,7 @@ func TestQueuedEventOlderThanFlushedStateIsIgnored(t *testing.T) {
 		Name:       "file",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 200},
 	})
-	fh.advanceEntryVersionTsNs(2000)
+	fh.advanceEntryVersion(2000, 0)
 	wfs.fhLockTable.ReleaseLock(fh.fh, testLock)
 
 	wfs.metaCache.WaitForEntryInvalidations()
@@ -424,10 +424,10 @@ func TestSaveEntryKeepsOpenHandleAheadOfOlderEvents(t *testing.T) {
 	startFakeFiler(t, wfs, &fakeFilerServer{})
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:       "file",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 88},
-	})
+	}, 0, 0)
 
 	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("file", 100, 1000), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
 		t.Fatalf("apply subscriber event: %v", err)
@@ -462,10 +462,10 @@ func TestQueuedEventDoesNotRollBackHandleOpenedAfterEnqueue(t *testing.T) {
 	// Stall the single invalidation worker on an unrelated handle's lock so
 	// queued events outlive the open below.
 	blockerInode := wfs.inodeToPath.Lookup(util.FullPath("/other/blocker"), time.Now().Unix(), false, false, 0, false)
-	blockerFh := wfs.fhMap.AcquireFileHandle(wfs, blockerInode, &filer_pb.Entry{
+	blockerFh, _ := wfs.fhMap.AcquireFileHandle(wfs, blockerInode, &filer_pb.Entry{
 		Name:       "blocker",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 1},
-	})
+	}, 0, 0)
 	blockerLock := wfs.fhLockTable.AcquireLock("test", blockerFh.fh, util.ExclusiveLock)
 	blockerReleased := false
 	releaseBlocker := func() {
@@ -523,10 +523,10 @@ func TestAbortedBuildEventDoesNotRollBackLaterOpen(t *testing.T) {
 	startFakeFiler(t, wfs, &fakeFilerServer{lookupSize: 200, lookupLogTsNs: 2000})
 
 	blockerInode := wfs.inodeToPath.Lookup(util.FullPath("/other/blocker"), time.Now().Unix(), false, false, 0, false)
-	blockerFh := wfs.fhMap.AcquireFileHandle(wfs, blockerInode, &filer_pb.Entry{
+	blockerFh, _ := wfs.fhMap.AcquireFileHandle(wfs, blockerInode, &filer_pb.Entry{
 		Name:       "blocker",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 1},
-	})
+	}, 0, 0)
 	blockerLock := wfs.fhLockTable.AcquireLock("test", blockerFh.fh, util.ExclusiveLock)
 	blockerReleased := false
 	releaseBlocker := func() {
@@ -590,10 +590,10 @@ func TestEventDuringOpenLookupIsFenced(t *testing.T) {
 	startFakeFiler(t, wfs, fake)
 
 	blockerInode := wfs.inodeToPath.Lookup(util.FullPath("/other/blocker"), time.Now().Unix(), false, false, 0, false)
-	blockerFh := wfs.fhMap.AcquireFileHandle(wfs, blockerInode, &filer_pb.Entry{
+	blockerFh, _ := wfs.fhMap.AcquireFileHandle(wfs, blockerInode, &filer_pb.Entry{
 		Name:       "blocker",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 1},
-	})
+	}, 0, 0)
 	blockerLock := wfs.fhLockTable.AcquireLock("test", blockerFh.fh, util.ExclusiveLock)
 	blockerReleased := false
 	releaseBlocker := func() {
@@ -667,10 +667,10 @@ func TestRemoteCacheResponseVersionFencesUndeliveredEvents(t *testing.T) {
 	}
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:       "file",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 88},
-	})
+	}, 0, 0)
 
 	if err := fh.downloadRemoteEntry(fh.GetEntry()); err != nil {
 		t.Fatalf("downloadRemoteEntry: %v", err)
@@ -699,10 +699,10 @@ func TestEventlessSaveAckStillFencesOlderEvents(t *testing.T) {
 	startFakeFiler(t, wfs, &fakeFilerServer{updateEventless: true, updateLogTsNs: 2000})
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:       "file",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 200},
-	})
+	}, 0, 0)
 
 	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("file", 100, 1000), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
 		t.Fatalf("apply subscriber event: %v", err)
@@ -744,7 +744,7 @@ func TestLocalAckDoesNotFenceUnrelatedDelayedEvents(t *testing.T) {
 			Mode:     0100644,
 			FileSize: 88,
 		},
-	}); err != nil {
+	}, 0); err != nil {
 		t.Fatalf("insert cached entry: %v", err)
 	}
 
@@ -835,7 +835,7 @@ func TestFloorProtectsSnapshotStateFromDelayedEvents(t *testing.T) {
 	if err := wfs.metaCache.BeginDirectoryBuild(context.Background(), util.FullPath("/dir")); err != nil {
 		t.Fatalf("begin build: %v", err)
 	}
-	if err := wfs.metaCache.InsertListedEntriesForTest(context.Background(), []*filer.Entry{{
+	if err := wfs.metaCache.InsertEntry(context.Background(), &filer.Entry{
 		FullPath: "/dir/file",
 		Attr: filer.Attr{
 			Crtime:   time.Unix(1, 0),
@@ -843,7 +843,7 @@ func TestFloorProtectsSnapshotStateFromDelayedEvents(t *testing.T) {
 			Mode:     0100644,
 			FileSize: 300,
 		},
-	}}); err != nil {
+	}, 2000); err != nil {
 		t.Fatalf("insert listing entry: %v", err)
 	}
 	if err := wfs.metaCache.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 2000); err != nil {
@@ -854,7 +854,7 @@ func TestFloorProtectsSnapshotStateFromDelayedEvents(t *testing.T) {
 	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("file", 100, 1500), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
 		t.Fatalf("apply covered event: %v", err)
 	}
-	entry, err := wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/file"))
+	entry, _, err := wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/file"))
 	if err != nil {
 		t.Fatalf("find entry: %v", err)
 	}
@@ -866,7 +866,7 @@ func TestFloorProtectsSnapshotStateFromDelayedEvents(t *testing.T) {
 	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("file", 400, 2500), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
 		t.Fatalf("apply new event: %v", err)
 	}
-	entry, err = wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/file"))
+	entry, _, err = wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/file"))
 	if err != nil {
 		t.Fatalf("find entry: %v", err)
 	}
@@ -884,10 +884,10 @@ func TestAlreadyReflectedEventDoesNotDestroyDirtyPages(t *testing.T) {
 	wfs := newInvalidateTestWFS(t)
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:       "file",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 200},
-	})
+	}, 0, 0)
 	pagesBefore := fh.dirtyPages
 
 	// The event re-delivers exactly the state the handle already reflects.
@@ -998,10 +998,10 @@ func TestAlreadyReflectedEventPreservesDirtyWrites(t *testing.T) {
 	wfs := newInvalidateTestWFS(t)
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:       "file",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 200},
-	})
+	}, 0, 0)
 
 	// A local write grows the live entry past the base.
 	fh.UpdateEntry(func(entry *filer_pb.Entry) {
@@ -1054,7 +1054,7 @@ func TestDeleteTombstoneBlocksResurrection(t *testing.T) {
 	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("file", 150, 1500), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
 		t.Fatalf("apply delayed update: %v", err)
 	}
-	if entry, err := wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/file")); err == nil {
+	if entry, _, err := wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/file")); err == nil {
 		t.Fatalf("deleted path resurrected by a delayed event: %+v", entry)
 	}
 
@@ -1062,7 +1062,7 @@ func TestDeleteTombstoneBlocksResurrection(t *testing.T) {
 	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("file", 250, 2500), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
 		t.Fatalf("apply newer create: %v", err)
 	}
-	entry, err := wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/file"))
+	entry, _, err := wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/file"))
 	if err != nil || entry.FileSize != 250 {
 		t.Fatalf("entry after newer create = %+v, %v; want size 250", entry, err)
 	}
@@ -1077,10 +1077,10 @@ func TestServerSideCopyInstallEnrollsInBase(t *testing.T) {
 	wfs := newInvalidateTestWFS(t)
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:       "file",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 100},
-	})
+	}, 0, 0)
 
 	copied := &filer_pb.Entry{
 		Name:       "file",
@@ -1128,7 +1128,7 @@ func TestAbsenceFloorBlocksGhostCreate(t *testing.T) {
 			Mode:     0100644,
 			FileSize: 1,
 		},
-	}); err != nil {
+	}, 0); err != nil {
 		t.Fatalf("insert listing entry: %v", err)
 	}
 	if err := wfs.metaCache.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 2000); err != nil {
@@ -1138,14 +1138,14 @@ func TestAbsenceFloorBlocksGhostCreate(t *testing.T) {
 	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("ghost", 100, 1500), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
 		t.Fatalf("apply ghost create: %v", err)
 	}
-	if entry, err := wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/ghost")); err == nil {
+	if entry, _, err := wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/ghost")); err == nil {
 		t.Fatalf("name absent at snapshot 2000 resurrected by event at 1500: %+v", entry)
 	}
 
 	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("ghost", 250, 2500), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
 		t.Fatalf("apply newer ghost create: %v", err)
 	}
-	entry, err := wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/ghost"))
+	entry, _, err := wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/ghost"))
 	if err != nil || entry.FileSize != 250 {
 		t.Fatalf("ghost after newer create = %+v, %v; want size 250", entry, err)
 	}
@@ -1176,14 +1176,14 @@ func TestVersionedDeleteOfMissingEntryLeavesTombstone(t *testing.T) {
 	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("file", 150, 1500), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
 		t.Fatalf("apply delayed update: %v", err)
 	}
-	if entry, err := wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/file")); err == nil {
+	if entry, _, err := wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/file")); err == nil {
 		t.Fatalf("path deleted at 2000 recreated by an event at 1500: %+v", entry)
 	}
 
 	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("file", 250, 2500), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
 		t.Fatalf("apply newer create: %v", err)
 	}
-	entry, err := wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/file"))
+	entry, _, err := wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/file"))
 	if err != nil || entry.FileSize != 250 {
 		t.Fatalf("entry after newer create = %+v, %v; want size 250", entry, err)
 	}
@@ -1198,10 +1198,10 @@ func TestCommittedCopyWithFailedReadbackAdoptsItsEvent(t *testing.T) {
 	wfs := newInvalidateTestWFS(t)
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:       "file",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 100},
-	})
+	}, 0, 0)
 
 	// Readback failed: nil entry forces the synthesized fallback.
 	wfs.applyServerSideWholeFileCopyResult(fh, fh, util.FullPath("/dir/file"), nil, entryVersion{}, 200)
@@ -1289,14 +1289,14 @@ func TestNewerAbsenceFloorOverridesOlderTombstone(t *testing.T) {
 	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("file", 150, 2000), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
 		t.Fatalf("apply mid event: %v", err)
 	}
-	if entry, err := wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/file")); err == nil {
+	if entry, _, err := wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/file")); err == nil {
 		t.Fatalf("name absent at snapshot 3000 recreated by an event at 2000: %+v", entry)
 	}
 
 	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("file", 350, 3500), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
 		t.Fatalf("apply newer create: %v", err)
 	}
-	entry, err := wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/file"))
+	entry, _, err := wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/file"))
 	if err != nil || entry.FileSize != 350 {
 		t.Fatalf("entry after newer create = %+v, %v; want size 350", entry, err)
 	}
@@ -1311,10 +1311,10 @@ func TestFlushAckCancelsPendingCopyEventAdoption(t *testing.T) {
 	startFakeFiler(t, wfs, &fakeFilerServer{})
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:       "file",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 100},
-	})
+	}, 0, 0)
 
 	// Committed copy, failed readback: adoption pending on a synthesized base.
 	wfs.applyServerSideWholeFileCopyResult(fh, fh, util.FullPath("/dir/file"), nil, entryVersion{}, 200)
@@ -1356,10 +1356,10 @@ func TestAckedSaveInstallsIntoRacingOpenHandle(t *testing.T) {
 
 	// The handle opened after the setattr path found none, before the ack.
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:       "file",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 88},
-	})
+	}, 0, 0)
 
 	saved := &filer_pb.Entry{
 		Name:       "file",
@@ -1378,10 +1378,10 @@ func TestAckedSaveInstallsIntoRacingOpenHandle(t *testing.T) {
 
 	// A dirty handle is left alone entirely: neither entry nor version.
 	dirtyInode := wfs.inodeToPath.Lookup(util.FullPath("/dir/dirty"), time.Now().Unix(), false, false, 0, false)
-	dirtyFh := wfs.fhMap.AcquireFileHandle(wfs, dirtyInode, &filer_pb.Entry{
+	dirtyFh, _ := wfs.fhMap.AcquireFileHandle(wfs, dirtyInode, &filer_pb.Entry{
 		Name:       "dirty",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 88},
-	})
+	}, 0, 0)
 	dirtyFh.dirtyMetadata = true
 	if code := wfs.saveEntry(util.FullPath("/dir/dirty"), &filer_pb.Entry{
 		Name:       "dirty",
@@ -1413,14 +1413,14 @@ func TestEmptyListingTrailerSnapshotSetsAbsenceFloor(t *testing.T) {
 	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("ghost", 100, 3000), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
 		t.Fatalf("apply covered create: %v", err)
 	}
-	if entry, err := wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/ghost")); err == nil {
+	if entry, _, err := wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/ghost")); err == nil {
 		t.Fatalf("name absent at trailer snapshot 4000 created by event at 3000: %+v", entry)
 	}
 
 	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("ghost", 450, 4500), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
 		t.Fatalf("apply newer create: %v", err)
 	}
-	entry, err := wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/ghost"))
+	entry, _, err := wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/ghost"))
 	if err != nil || entry.FileSize != 450 {
 		t.Fatalf("entry after newer create = %+v, %v; want size 450", entry, err)
 	}
@@ -1434,10 +1434,10 @@ func TestVacateEventPreservesDirtyPages(t *testing.T) {
 	wfs := newInvalidateTestWFS(t)
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:       "file",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 200},
-	})
+	}, 0, 0)
 	fh.dirtyMetadata = true
 	pagesBefore := fh.dirtyPages
 
@@ -1469,10 +1469,10 @@ func TestCopyAdoptRejectsForeignEvent(t *testing.T) {
 	wfs := newInvalidateTestWFS(t)
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:       "file",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 100},
-	})
+	}, 0, 0)
 
 	// Readback failed: synthesized base at size 200, adoption pending.
 	wfs.applyServerSideWholeFileCopyResult(fh, fh, util.FullPath("/dir/file"), nil, entryVersion{}, 200)
@@ -1500,11 +1500,11 @@ func TestRemoteDownloadBaseMappedToLocal(t *testing.T) {
 	startFakeFiler(t, wfs, &fakeFilerServer{cacheSize: 200, cacheUid: 2000, cacheLogTsNs: 1000})
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:        "file",
 		Attributes:  &filer_pb.FuseAttributes{FileSize: 200},
 		RemoteEntry: &filer_pb.RemoteEntry{RemoteSize: 200},
-	})
+	}, 0, 0)
 
 	if err := fh.downloadRemoteEntry(fh.GetEntry()); err != nil {
 		t.Fatalf("downloadRemoteEntry: %v", err)
@@ -1545,10 +1545,10 @@ func TestForeignDeleteMarksHandleDeleted(t *testing.T) {
 	wfs := newInvalidateTestWFS(t)
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:       "file",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 200},
-	})
+	}, 0, 0)
 	fh.dirtyMetadata = true
 
 	del := &filer_pb.SubscribeMetadataResponse{
@@ -1589,7 +1589,7 @@ func TestEventlessSaveVersionsCacheEntry(t *testing.T) {
 	}
 	wfs.metaCache.WaitForEntryInvalidations()
 
-	entry, err := wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/file"))
+	entry, _, err := wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/file"))
 	if err != nil || entry.FileSize != 200 {
 		t.Fatalf("cache entry = %+v, %v; want size 200 (older event must not roll back the no-event ack)", entry, err)
 	}
@@ -1603,11 +1603,11 @@ func TestStaleRemoteDownloadDoesNotRollBack(t *testing.T) {
 	startFakeFiler(t, wfs, &fakeFilerServer{cacheSize: 100, cacheLogTsNs: 1000})
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:        "file",
 		Attributes:  &filer_pb.FuseAttributes{FileSize: 200},
 		RemoteEntry: &filer_pb.RemoteEntry{RemoteSize: 200},
-	})
+	}, 0, 0)
 	// While the download was in flight the handle was populated at a newer
 	// version — it now has local chunks and no longer needs the response.
 	fh.SetEntry(&filer_pb.Entry{
@@ -1615,7 +1615,7 @@ func TestStaleRemoteDownloadDoesNotRollBack(t *testing.T) {
 		Attributes: &filer_pb.FuseAttributes{FileSize: 200},
 		Chunks:     []*filer_pb.FileChunk{{FileId: "1,ab1", Size: 200}},
 	})
-	fh.advanceEntryVersionTsNs(3000)
+	fh.advanceEntryVersion(3000, 0)
 
 	if err := fh.downloadRemoteEntry(fh.GetEntry()); err != nil {
 		t.Fatalf("downloadRemoteEntry: %v", err)
@@ -1637,12 +1637,12 @@ func TestRemoteOnlyHandleTakesUnversionedDownload(t *testing.T) {
 	startFakeFiler(t, wfs, &fakeFilerServer{cacheSize: 100})
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:        "file",
 		Attributes:  &filer_pb.FuseAttributes{FileSize: 100},
 		RemoteEntry: &filer_pb.RemoteEntry{RemoteSize: 100},
-	})
-	fh.advanceEntryVersionTsNs(3000)
+	}, 0, 0)
+	fh.advanceEntryVersion(3000, 0)
 
 	if err := fh.downloadRemoteEntry(fh.GetEntry()); err != nil {
 		t.Fatalf("downloadRemoteEntry: %v", err)
@@ -1662,10 +1662,10 @@ func TestCopyAdoptRejectsForeignMetadataChange(t *testing.T) {
 	wfs := newInvalidateTestWFS(t)
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:       "file",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 200, FileMode: 0100644},
-	})
+	}, 0, 0)
 
 	// Readback failed: synthesized base at size 200, mode 0644; adoption pending.
 	wfs.applyServerSideWholeFileCopyResult(fh, fh, util.FullPath("/dir/file"), nil, entryVersion{}, 200)
@@ -1697,10 +1697,10 @@ func TestForeignRenameDoesNotMarkHandleDeleted(t *testing.T) {
 	wfs := newInvalidateTestWFS(t)
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:       "file",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 200},
-	})
+	}, 0, 0)
 	fh.dirtyMetadata = true
 
 	rename := &filer_pb.SubscribeMetadataResponse{
@@ -1752,10 +1752,10 @@ func TestCopyAdoptAppliesForeignTouchToCleanHandle(t *testing.T) {
 	wfs := newInvalidateTestWFS(t)
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:       "file",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 200, Mtime: 100},
-	})
+	}, 0, 0)
 
 	// Readback failed: synthesized base, adoption pending.
 	wfs.applyServerSideWholeFileCopyResult(fh, fh, util.FullPath("/dir/file"), nil, entryVersion{}, 200)
@@ -1788,18 +1788,18 @@ func TestUnversionedRemoteDownloadDoesNotOverwriteVersioned(t *testing.T) {
 	startFakeFiler(t, wfs, &fakeFilerServer{cacheSize: 100})
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:        "file",
 		Attributes:  &filer_pb.FuseAttributes{FileSize: 200},
 		RemoteEntry: &filer_pb.RemoteEntry{RemoteSize: 200},
-	})
+	}, 0, 0)
 	// Populated at version 3000 while the download was in flight.
 	fh.SetEntry(&filer_pb.Entry{
 		Name:       "file",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 200},
 		Chunks:     []*filer_pb.FileChunk{{FileId: "1,ab1", Size: 200}},
 	})
-	fh.advanceEntryVersionTsNs(3000)
+	fh.advanceEntryVersion(3000, 0)
 
 	if err := fh.downloadRemoteEntry(fh.GetEntry()); err != nil {
 		t.Fatalf("downloadRemoteEntry: %v", err)
@@ -1860,10 +1860,10 @@ func TestTouchBeforeCopyEventKeepsPostCopyWrites(t *testing.T) {
 	wfs := newInvalidateTestWFS(t)
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:       "file",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 100, Mtime: 100},
-	})
+	}, 0, 0)
 
 	// Committed copy whose readback failed: the base is synthesized.
 	wfs.applyServerSideWholeFileCopyResult(fh, fh, util.FullPath("/dir/file"), nil, entryVersion{}, 200)
@@ -1924,12 +1924,12 @@ func TestRejectedDownloadDoesNotRollBackCache(t *testing.T) {
 	wfs.metaCache.WaitForEntryInvalidations()
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:       "file",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 200},
 		Chunks:     []*filer_pb.FileChunk{{FileId: "1,ab1", Size: 200}},
-	})
-	fh.advanceEntryVersionTsNs(3000)
+	}, 0, 0)
+	fh.advanceEntryVersion(3000, 0)
 
 	if err := fh.downloadRemoteEntry(fh.GetEntry()); err != nil {
 		t.Fatalf("downloadRemoteEntry: %v", err)
@@ -1941,7 +1941,7 @@ func TestRejectedDownloadDoesNotRollBackCache(t *testing.T) {
 	}
 	wfs.metaCache.WaitForEntryInvalidations()
 
-	entry, versionTsNs, err := wfs.metaCache.FindEntryWithVersion(context.Background(), util.FullPath("/dir/file"))
+	entry, versionTsNs, err := wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/file"))
 	if err != nil {
 		t.Fatalf("find cache entry: %v", err)
 	}
@@ -1959,12 +1959,12 @@ func TestRemoteOnlyHandleRefusesKnownOlderDownload(t *testing.T) {
 	startFakeFiler(t, wfs, &fakeFilerServer{cacheSize: 100, cacheLogTsNs: 1000})
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:        "file",
 		Attributes:  &filer_pb.FuseAttributes{FileSize: 200},
 		RemoteEntry: &filer_pb.RemoteEntry{RemoteSize: 200},
-	})
-	fh.advanceEntryVersionTsNs(3000)
+	}, 0, 0)
+	fh.advanceEntryVersion(3000, 0)
 
 	if err := fh.downloadRemoteEntry(fh.GetEntry()); err != nil {
 		t.Fatalf("downloadRemoteEntry: %v", err)
@@ -1981,10 +1981,10 @@ func TestForeignChmodPreservesDirtyPages(t *testing.T) {
 	wfs := newInvalidateTestWFS(t)
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:       "file",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 200, FileMode: 0100644},
-	})
+	}, 0, 0)
 	fh.dirtyMetadata = true
 	pagesBefore := fh.dirtyPages
 
@@ -2013,15 +2013,15 @@ func TestRenameOverExistingMarksReplacedHandleDeleted(t *testing.T) {
 	wfs := newInvalidateTestWFS(t)
 
 	srcInode := wfs.inodeToPath.Lookup(util.FullPath("/dir/src"), time.Now().Unix(), false, false, 0, false)
-	srcFh := wfs.fhMap.AcquireFileHandle(wfs, srcInode, &filer_pb.Entry{
+	srcFh, _ := wfs.fhMap.AcquireFileHandle(wfs, srcInode, &filer_pb.Entry{
 		Name:       "src",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 100},
-	})
+	}, 0, 0)
 	dstInode := wfs.inodeToPath.Lookup(util.FullPath("/dir/dst"), time.Now().Unix(), false, false, 0, false)
-	dstFh := wfs.fhMap.AcquireFileHandle(wfs, dstInode, &filer_pb.Entry{
+	dstFh, _ := wfs.fhMap.AcquireFileHandle(wfs, dstInode, &filer_pb.Entry{
 		Name:       "dst",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 900},
-	})
+	}, 0, 0)
 	dstFh.dirtyMetadata = true
 
 	rename := &filer_pb.SubscribeMetadataResponse{
@@ -2053,10 +2053,10 @@ func TestAckFromAnotherFilerIsNotDroppedBehindForeignFence(t *testing.T) {
 	wfs := newInvalidateTestWFS(t)
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:       "file",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 88},
-	})
+	}, 0, 0)
 	// Filer A's fence at 5000.
 	fh.advanceEntryVersion(5000, 11)
 

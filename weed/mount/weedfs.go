@@ -533,7 +533,7 @@ func (wfs *WFS) maybeReadEntry(inode uint64) (path util.FullPath, fh *FileHandle
 			}
 		})
 	} else {
-		entry, status = wfs.maybeLoadEntry(path)
+		entry, _, status = wfs.maybeLoadEntry(path)
 	}
 	return
 }
@@ -561,14 +561,9 @@ func (wfs *WFS) isLocalOnlyEntry(entry *filer.Entry) bool {
 	return pending
 }
 
-func (wfs *WFS) maybeLoadEntry(fullpath util.FullPath) (*filer_pb.Entry, fuse.Status) {
-	entry, _, status := wfs.maybeLoadEntryWithVersion(fullpath)
-	return entry, status
-}
-
-// maybeLoadEntryWithVersion also returns the log position the entry reflects,
-// or zero when unknown.
-func (wfs *WFS) maybeLoadEntryWithVersion(fullpath util.FullPath) (*filer_pb.Entry, entryVersion, fuse.Status) {
+// maybeLoadEntry returns the entry and the log position it reflects, or a zero
+// position when unknown.
+func (wfs *WFS) maybeLoadEntry(fullpath util.FullPath) (*filer_pb.Entry, entryVersion, fuse.Status) {
 	// glog.V(3).Infof("read entry cache miss %s", fullpath)
 	_, name := fullpath.DirAndName()
 
@@ -587,7 +582,7 @@ func (wfs *WFS) maybeLoadEntryWithVersion(fullpath util.FullPath) (*filer_pb.Ent
 		}, entryVersion{}, fuse.OK
 	}
 
-	entry, version, status := wfs.lookupEntryWithVersion(fullpath)
+	entry, version, status := wfs.lookupEntry(fullpath)
 	if status != fuse.OK {
 		return nil, entryVersion{}, status
 	}
@@ -598,27 +593,14 @@ func (wfs *WFS) maybeLoadEntryWithVersion(fullpath util.FullPath) (*filer_pb.Ent
 // Cached metadata is only authoritative when the parent directory itself is cached.
 // For uncached/read-through directories, always consult the filer directly so stale
 // local entries do not leak back into lookup results.
-func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, fuse.Status) {
-	// Hot path: a cache hit skips the version read FindEntryWithVersion adds.
-	// Everything else falls through, where a filer RPC dwarfs it anyway.
-	dir, _ := fullpath.DirAndName()
-	if wfs.metaCache.IsDirectoryCached(util.FullPath(dir)) {
-		if cachedEntry, err := wfs.metaCache.FindEntry(context.Background(), fullpath); err == nil && cachedEntry != nil {
-			return cachedEntry, fuse.OK
-		}
-	}
-	entry, _, status := wfs.lookupEntryWithVersion(fullpath)
-	return entry, status
-}
-
-// lookupEntryWithVersion also returns the log position the entry reflects:
-// the entry's stored version, the lookup response's, or zero if unknown.
-func (wfs *WFS) lookupEntryWithVersion(fullpath util.FullPath) (*filer.Entry, entryVersion, fuse.Status) {
+// It also returns the log position the entry reflects: the entry's stored
+// version, the lookup response's, or zero if unknown.
+func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, entryVersion, fuse.Status) {
 	dir, _ := fullpath.DirAndName()
 	dirPath := util.FullPath(dir)
 
 	if wfs.metaCache.IsDirectoryCached(dirPath) {
-		cachedEntry, cachedVersionTsNs, cacheErr := wfs.metaCache.FindEntryWithVersion(context.Background(), fullpath)
+		cachedEntry, cachedVersionTsNs, cacheErr := wfs.metaCache.FindEntry(context.Background(), fullpath)
 		if cacheErr != nil && cacheErr != filer_pb.ErrNotFound {
 			glog.Errorf("lookupEntry: cache lookup for %s failed: %v", fullpath, cacheErr)
 			return nil, entryVersion{}, fuse.EIO
@@ -680,7 +662,7 @@ func (wfs *WFS) lookupEntryWithVersion(fullpath util.FullPath) (*filer.Entry, en
 				wfs.pendingAsyncFlushMu.Unlock()
 
 				if hasDirtyHandle || hasPendingFlush {
-					if localEntry, localVersionTsNs, localErr := wfs.metaCache.FindEntryWithVersion(context.Background(), fullpath); localErr == nil && localEntry != nil {
+					if localEntry, localVersionTsNs, localErr := wfs.metaCache.FindEntry(context.Background(), fullpath); localErr == nil && localEntry != nil {
 						glog.V(4).Infof("lookupEntry found deferred entry in local cache %s", fullpath)
 						return localEntry, entryVersion{tsNs: localVersionTsNs}, fuse.OK
 					}
@@ -693,7 +675,7 @@ func (wfs *WFS) lookupEntryWithVersion(fullpath util.FullPath) (*filer.Entry, en
 				// up without -v=4 — and include layer-by-layer state so the
 				// next failed run pinpoints which layer dropped the entry.
 				localPresent := false
-				if localEntry, localErr := wfs.metaCache.FindEntry(context.Background(), fullpath); localErr == nil && localEntry != nil {
+				if localEntry, _, localErr := wfs.metaCache.FindEntry(context.Background(), fullpath); localErr == nil && localEntry != nil {
 					localPresent = true
 				}
 				glog.Warningf("lookupEntry: filer ErrNotFound for tracked path %s (inode=%d dirtyHandle=%v pendingFlush=%v localCache=%v dirCached=%v) — possible coherence bug",
@@ -710,29 +692,6 @@ func (wfs *WFS) lookupEntryWithVersion(fullpath util.FullPath) (*filer.Entry, en
 		entry.Attributes.Uid, entry.Attributes.Gid = wfs.option.UidGidMapper.FilerToLocal(entry.Attributes.Uid, entry.Attributes.Gid)
 	}
 	return filer.FromPbEntry(dir, entry), lookupVersion, fuse.OK
-}
-
-// getPbEntryWithVersion fetches an entry with the log position it reflects.
-func (wfs *WFS) getPbEntryWithVersion(ctx context.Context, fullpath util.FullPath) (*filer_pb.Entry, entryVersion, error) {
-	dir, name := fullpath.DirAndName()
-	var entry *filer_pb.Entry
-	var version entryVersion
-	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		resp, lookupErr := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
-			Directory: dir,
-			Name:      name,
-		})
-		if lookupErr != nil {
-			return lookupErr
-		}
-		entry = resp.Entry
-		version = entryVersion{tsNs: resp.LogTsNs, signature: resp.LogSignature}
-		return nil
-	})
-	if err != nil {
-		return nil, entryVersion{}, err
-	}
-	return entry, version, nil
 }
 
 // entryVersion is a filer log position together with the clock domain it
@@ -817,7 +776,7 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 	candidateTsNs := eventTsNs
 	dir, _ := filePath.DirAndName()
 	if wfs.metaCache.IsDirectoryCached(util.FullPath(dir)) {
-		if storeEntry, storeVersionTsNs, findErr := wfs.metaCache.FindEntryWithVersion(context.Background(), filePath); findErr == nil && storeEntry != nil && storeVersionTsNs >= eventTsNs {
+		if storeEntry, storeVersionTsNs, findErr := wfs.metaCache.FindEntry(context.Background(), filePath); findErr == nil && storeEntry != nil && storeVersionTsNs >= eventTsNs {
 			candidate = storeEntry.ToProtoEntry()
 			candidateTsNs = storeVersionTsNs
 		}
@@ -864,7 +823,7 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 			fh.dirtyPages.Destroy()
 			fh.dirtyPages = newPageWriter(fh, wfs.option.ChunkSizeLimit)
 		}
-		fh.advanceEntryVersionTsNs(eventTsNs)
+		fh.advanceEntryVersion(eventTsNs, 0)
 		return
 	}
 	if candidate.Attributes != nil {
@@ -875,7 +834,7 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 	// the live entry, and a re-delivered base must not discard them.
 	base := fh.baseEntry.Load()
 	if base != nil && proto.Equal(candidate, base) {
-		fh.advanceEntryVersionTsNs(candidateTsNs)
+		fh.advanceEntryVersion(candidateTsNs, 0)
 		return
 	}
 	// Dirty pages overlay content, so only a content change invalidates them:
@@ -891,7 +850,7 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 		fh.SetEntry(candidate)
 	}
 	fh.baseEntry.Store(proto.Clone(candidate).(*filer_pb.Entry))
-	fh.advanceEntryVersionTsNs(candidateTsNs)
+	fh.advanceEntryVersion(candidateTsNs, 0)
 }
 
 func (wfs *WFS) LookupFn() wdclient.LookupFileIdFunctionType {

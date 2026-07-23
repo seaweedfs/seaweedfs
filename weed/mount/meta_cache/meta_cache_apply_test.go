@@ -65,7 +65,7 @@ func TestApplyMetadataResponseAppliesEventsInOrder(t *testing.T) {
 		t.Fatalf("apply create: %v", err)
 	}
 
-	entry, err := mc.FindEntry(context.Background(), util.FullPath("/dir/file.txt"))
+	entry, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/file.txt"))
 	if err != nil {
 		t.Fatalf("find created entry: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestApplyMetadataResponseAppliesEventsInOrder(t *testing.T) {
 		t.Fatalf("apply update: %v", err)
 	}
 
-	entry, err = mc.FindEntry(context.Background(), util.FullPath("/dir/file.txt"))
+	entry, _, err = mc.FindEntry(context.Background(), util.FullPath("/dir/file.txt"))
 	if err != nil {
 		t.Fatalf("find updated entry: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestApplyMetadataResponseAppliesEventsInOrder(t *testing.T) {
 		t.Fatalf("apply delete: %v", err)
 	}
 
-	entry, err = mc.FindEntry(context.Background(), util.FullPath("/dir/file.txt"))
+	entry, _, err = mc.FindEntry(context.Background(), util.FullPath("/dir/file.txt"))
 	if err != filer_pb.ErrNotFound {
 		t.Fatalf("find deleted entry error = %v, want %v", err, filer_pb.ErrNotFound)
 	}
@@ -122,7 +122,7 @@ func TestApplyMetadataResponseRenamesAcrossCachedDirectories(t *testing.T) {
 			Mode:     0100644,
 			FileSize: 7,
 		},
-	}); err != nil {
+	}, 0); err != nil {
 		t.Fatalf("insert source entry: %v", err)
 	}
 
@@ -149,7 +149,7 @@ func TestApplyMetadataResponseRenamesAcrossCachedDirectories(t *testing.T) {
 		t.Fatalf("apply rename: %v", err)
 	}
 
-	oldEntry, err := mc.FindEntry(context.Background(), util.FullPath("/src/file.tmp"))
+	oldEntry, _, err := mc.FindEntry(context.Background(), util.FullPath("/src/file.tmp"))
 	if err != filer_pb.ErrNotFound {
 		t.Fatalf("find old path error = %v, want %v", err, filer_pb.ErrNotFound)
 	}
@@ -157,7 +157,7 @@ func TestApplyMetadataResponseRenamesAcrossCachedDirectories(t *testing.T) {
 		t.Fatalf("old path still cached: %+v", oldEntry)
 	}
 
-	newEntry, err := mc.FindEntry(context.Background(), util.FullPath("/dst/file.txt"))
+	newEntry, _, err := mc.FindEntry(context.Background(), util.FullPath("/dst/file.txt"))
 	if err != nil {
 		t.Fatalf("find new path: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestApplyMetadataResponseLocalOptionsSkipInvalidations(t *testing.T) {
 			Mode:     0100644,
 			FileSize: 7,
 		},
-	}); err != nil {
+	}, 0); err != nil {
 		t.Fatalf("insert source entry: %v", err)
 	}
 
@@ -222,7 +222,7 @@ func TestApplyMetadataResponseLocalOptionsSkipInvalidations(t *testing.T) {
 		t.Fatalf("apply local update: %v", err)
 	}
 
-	entry, err := mc.FindEntry(context.Background(), util.FullPath("/dir/file.txt"))
+	entry, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/file.txt"))
 	if err != nil {
 		t.Fatalf("find updated entry: %v", err)
 	}
@@ -253,7 +253,7 @@ func TestApplyMetadataResponseDeduplicatesRepeatedFilerEvent(t *testing.T) {
 			Mode:     0100644,
 			FileSize: 5,
 		},
-	}); err != nil {
+	}, 0); err != nil {
 		t.Fatalf("insert source entry: %v", err)
 	}
 
@@ -285,7 +285,7 @@ func TestApplyMetadataResponseDeduplicatesRepeatedFilerEvent(t *testing.T) {
 		t.Fatalf("second apply: %v", err)
 	}
 
-	entry, err := mc.FindEntry(context.Background(), util.FullPath("/dir/file.txt"))
+	entry, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/file.txt"))
 	if err != nil {
 		t.Fatalf("find updated entry: %v", err)
 	}
@@ -326,7 +326,7 @@ func TestApplyMetadataResponseSkipsHiddenSystemEntryWhenDisabled(t *testing.T) {
 		t.Fatalf("apply create: %v", err)
 	}
 
-	entry, err := mc.FindEntry(context.Background(), util.FullPath("/topics"))
+	entry, _, err := mc.FindEntry(context.Background(), util.FullPath("/topics"))
 	if err != filer_pb.ErrNotFound {
 		t.Fatalf("find hidden entry error = %v, want %v", err, filer_pb.ErrNotFound)
 	}
@@ -349,7 +349,7 @@ func TestApplyMetadataResponsePurgesHiddenDestinationPath(t *testing.T) {
 			Mtime:  time.Unix(1, 0),
 			Mode:   os.ModeDir | 0o755,
 		},
-	}); err != nil {
+	}, 0); err != nil {
 		t.Fatalf("insert stale hidden dir: %v", err)
 	}
 	if err := mc.InsertEntry(context.Background(), &filer.Entry{
@@ -360,7 +360,7 @@ func TestApplyMetadataResponsePurgesHiddenDestinationPath(t *testing.T) {
 			Mode:     0o644,
 			FileSize: 7,
 		},
-	}); err != nil {
+	}, 0); err != nil {
 		t.Fatalf("insert leaked hidden child: %v", err)
 	}
 	if err := mc.InsertEntry(context.Background(), &filer.Entry{
@@ -370,7 +370,7 @@ func TestApplyMetadataResponsePurgesHiddenDestinationPath(t *testing.T) {
 			Mtime:  time.Unix(1, 0),
 			Mode:   os.ModeDir | 0o755,
 		},
-	}); err != nil {
+	}, 0); err != nil {
 		t.Fatalf("insert source dir: %v", err)
 	}
 
@@ -398,13 +398,13 @@ func TestApplyMetadataResponsePurgesHiddenDestinationPath(t *testing.T) {
 		t.Fatalf("apply rename: %v", err)
 	}
 
-	if entry, err := mc.FindEntry(context.Background(), util.FullPath("/src/visible")); err != filer_pb.ErrNotFound || entry != nil {
+	if entry, _, err := mc.FindEntry(context.Background(), util.FullPath("/src/visible")); err != filer_pb.ErrNotFound || entry != nil {
 		t.Fatalf("source dir after rename = %+v, %v; want nil, %v", entry, err, filer_pb.ErrNotFound)
 	}
-	if entry, err := mc.FindEntry(context.Background(), util.FullPath("/topics")); err != filer_pb.ErrNotFound || entry != nil {
+	if entry, _, err := mc.FindEntry(context.Background(), util.FullPath("/topics")); err != filer_pb.ErrNotFound || entry != nil {
 		t.Fatalf("hidden destination after rename = %+v, %v; want nil, %v", entry, err, filer_pb.ErrNotFound)
 	}
-	if entry, err := mc.FindEntry(context.Background(), util.FullPath("/topics/leaked.txt")); err != filer_pb.ErrNotFound || entry != nil {
+	if entry, _, err := mc.FindEntry(context.Background(), util.FullPath("/topics/leaked.txt")); err != filer_pb.ErrNotFound || entry != nil {
 		t.Fatalf("hidden child after rename = %+v, %v; want nil, %v", entry, err, filer_pb.ErrNotFound)
 	}
 }
@@ -561,7 +561,7 @@ func TestUnversionedWriteClearsEntryVersion(t *testing.T) {
 	if err := mc.ApplyMetadataResponse(context.Background(), versioned, SubscriberMetadataResponseApplyOptions); err != nil {
 		t.Fatalf("apply versioned event: %v", err)
 	}
-	if _, versionTsNs, err := mc.FindEntryWithVersion(context.Background(), util.FullPath("/dir/file.txt")); err != nil || versionTsNs != 1000 {
+	if _, versionTsNs, err := mc.FindEntry(context.Background(), util.FullPath("/dir/file.txt")); err != nil || versionTsNs != 1000 {
 		t.Fatalf("versioned entry = ts %d, %v; want 1000", versionTsNs, err)
 	}
 
@@ -576,7 +576,7 @@ func TestUnversionedWriteClearsEntryVersion(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("local update: %v", err)
 	}
-	if _, versionTsNs, err := mc.FindEntryWithVersion(context.Background(), util.FullPath("/dir/file.txt")); err != nil || versionTsNs != 0 {
+	if _, versionTsNs, err := mc.FindEntry(context.Background(), util.FullPath("/dir/file.txt")); err != nil || versionTsNs != 0 {
 		t.Fatalf("after unversioned write = ts %d, %v; want 0", versionTsNs, err)
 	}
 	mc.WaitForEntryInvalidations()
@@ -625,7 +625,7 @@ func TestUnversionedRebuildClearsStaleVersions(t *testing.T) {
 		t.Fatalf("complete unversioned build: %v", err)
 	}
 
-	if _, versionTsNs, err := mc.FindEntryWithVersion(context.Background(), util.FullPath("/dir/file.txt")); err != nil || versionTsNs != 0 {
+	if _, versionTsNs, err := mc.FindEntry(context.Background(), util.FullPath("/dir/file.txt")); err != nil || versionTsNs != 0 {
 		t.Fatalf("rebuilt entry version = %d, %v; want 0 (stale claim must not survive an unversioned rebuild)", versionTsNs, err)
 	}
 	mc.WaitForEntryInvalidations()
@@ -815,7 +815,7 @@ func TestBuildFloorVersionsChildrenWithoutPerChildRecords(t *testing.T) {
 		t.Fatalf("per-child version record = %d, want none (the floor versions the child)", tsNs)
 	}
 	// ...yet the child reads back at the listing snapshot.
-	if _, versionTsNs, err := mc.FindEntryWithVersion(context.Background(), util.FullPath("/dir/file")); err != nil || versionTsNs != 2000 {
+	if _, versionTsNs, err := mc.FindEntry(context.Background(), util.FullPath("/dir/file")); err != nil || versionTsNs != 2000 {
 		t.Fatalf("child version = %d, %v; want 2000 from the directory floor", versionTsNs, err)
 	}
 
@@ -832,7 +832,7 @@ func TestBuildFloorVersionsChildrenWithoutPerChildRecords(t *testing.T) {
 	if err := mc.ApplyMetadataResponse(context.Background(), covered, SubscriberMetadataResponseApplyOptions); err != nil {
 		t.Fatalf("apply covered event: %v", err)
 	}
-	entry, err := mc.FindEntry(context.Background(), util.FullPath("/dir/file"))
+	entry, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/file"))
 	if err != nil || entry.FileSize != 300 {
 		t.Fatalf("entry = %+v, %v; want size 300 (floor must fence the covered event)", entry, err)
 	}
@@ -858,7 +858,7 @@ func TestExpiredEntryIsJudgedByDirectoryFloor(t *testing.T) {
 			FileSize: 7,
 			TtlSec:   1,
 		},
-	}); err != nil {
+	}, 0); err != nil {
 		t.Fatalf("insert expiring entry: %v", err)
 	}
 
@@ -902,11 +902,11 @@ func TestUnversionedWriteDoesNotInheritDirectoryFloor(t *testing.T) {
 			Mode:     0100644,
 			FileSize: 7,
 		},
-	}); err != nil {
+	}, 0); err != nil {
 		t.Fatalf("local insert: %v", err)
 	}
 
-	if _, versionTsNs, err := mc.FindEntryWithVersion(context.Background(), util.FullPath("/dir/file")); err != nil || versionTsNs != 0 {
+	if _, versionTsNs, err := mc.FindEntry(context.Background(), util.FullPath("/dir/file")); err != nil || versionTsNs != 0 {
 		t.Fatalf("version = %d, %v; want 0 (unversioned content must not inherit the floor at 2000)", versionTsNs, err)
 	}
 
@@ -923,7 +923,7 @@ func TestUnversionedWriteDoesNotInheritDirectoryFloor(t *testing.T) {
 	if err := mc.ApplyMetadataResponse(context.Background(), correcting, SubscriberMetadataResponseApplyOptions); err != nil {
 		t.Fatalf("apply correcting event: %v", err)
 	}
-	entry, err := mc.FindEntry(context.Background(), util.FullPath("/dir/file"))
+	entry, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/file"))
 	if err != nil || entry.FileSize != 42 {
 		t.Fatalf("entry = %+v, %v; want size 42 (the floor must not fence a correction of unversioned content)", entry, err)
 	}

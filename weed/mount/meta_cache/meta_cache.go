@@ -147,30 +147,25 @@ func openMetaStore(dbFolder string) (*leveldb.LevelDBStore, filer.VirtualFilerSt
 
 }
 
-func (mc *MetaCache) InsertEntry(ctx context.Context, entry *filer.Entry) error {
+// InsertEntry stores an entry at the filer log position it reflects. Zero means
+// local content no log position describes, which records that explicitly so the
+// entry does not inherit its directory's listing floor.
+func (mc *MetaCache) InsertEntry(ctx context.Context, entry *filer.Entry, versionTsNs int64) error {
 	mc.Lock()
 	defer mc.Unlock()
-	return mc.doInsertEntry(ctx, entry)
+	return mc.doInsertEntry(ctx, entry, versionTsNs)
 }
 
-func (mc *MetaCache) doInsertEntry(ctx context.Context, entry *filer.Entry) error {
+func (mc *MetaCache) doInsertEntry(ctx context.Context, entry *filer.Entry, versionTsNs int64) error {
 	if err := mc.localStore.InsertEntry(ctx, entry); err != nil {
 		return err
 	}
-	mc.markEntryUnversionedLocked(ctx, entry.FullPath)
+	mc.setEntryVersionLocked(ctx, entry.FullPath, versionTsNs)
 	return nil
 }
 
 // doBatchInsertEntries inserts multiple entries using LevelDB's batch write.
 // This is more efficient than inserting entries one by one.
-// InsertListedEntriesForTest inserts entries the way a directory build does —
-// without marking them unversioned, since a listing covers them at its
-// snapshot. Tests use it to model a build; production goes through the build.
-func (mc *MetaCache) InsertListedEntriesForTest(ctx context.Context, entries []*filer.Entry) error {
-	mc.Lock()
-	defer mc.Unlock()
-	return mc.doBatchInsertEntries(ctx, entries)
-}
 
 func (mc *MetaCache) doBatchInsertEntries(ctx context.Context, entries []*filer.Entry) error {
 	return mc.leveldbStore.BatchInsertEntries(ctx, entries)
@@ -377,27 +372,11 @@ func (mc *MetaCache) TouchDirMtimeCtime(ctx context.Context, dirPath util.FullPa
 	return nil
 }
 
-// FindEntry is the hot lookup/getattr path and deliberately skips the version
-// record, sparing every cache hit a second store read. Callers needing the
-// version use FindEntryWithVersion.
-func (mc *MetaCache) FindEntry(ctx context.Context, fp util.FullPath) (entry *filer.Entry, err error) {
-	mc.RLock()
-	defer mc.RUnlock()
-	entry, err = mc.localStore.FindEntry(ctx, fp)
-	if err != nil {
-		return nil, err
-	}
-	if isTtlExpired(entry) {
-		return nil, filer_pb.ErrNotFound
-	}
-	mc.mapIdFromFilerToLocal(entry)
-	return
-}
-
-// FindEntryWithVersion pairs the entry with the log position of the write
-// that produced it, zero for an unversioned local write. Read under the lock
-// the apply path writes both under, so the pair is consistent.
-func (mc *MetaCache) FindEntryWithVersion(ctx context.Context, fp util.FullPath) (entry *filer.Entry, versionTsNs int64, err error) {
+// FindEntry returns the entry together with the filer log position it
+// reflects: the position of the write that produced it, its directory's
+// listing snapshot when the listing covered it, or zero for local content no
+// log position describes.
+func (mc *MetaCache) FindEntry(ctx context.Context, fp util.FullPath) (entry *filer.Entry, versionTsNs int64, err error) {
 	mc.RLock()
 	defer mc.RUnlock()
 	entry, err = mc.localStore.FindEntry(ctx, fp)
@@ -412,8 +391,7 @@ func (mc *MetaCache) FindEntryWithVersion(ctx context.Context, fp util.FullPath)
 	if unversioned {
 		return entry, 0, nil
 	}
-	versionTsNs = mc.entryVersionFloorLocked(fp, recordTsNs)
-	return
+	return entry, mc.entryVersionFloorLocked(fp, recordTsNs), nil
 }
 
 // entryVersionKeyPrefix namespaces per-entry version records apart from entry
@@ -484,11 +462,6 @@ func (mc *MetaCache) clearEntryVersionLocked(ctx context.Context, fp util.FullPa
 	if err := mc.localStore.KvDelete(ctx, entryVersionKey(fp)); err != nil {
 		glog.V(4).Infof("clear entry version %s: %v", fp, err)
 	}
-}
-
-func (mc *MetaCache) getEntryVersionLocked(ctx context.Context, fp util.FullPath) int64 {
-	tsNs, _ := mc.getEntryVersionRecordLocked(ctx, fp)
-	return tsNs
 }
 
 func (mc *MetaCache) getEntryVersionRecordLocked(ctx context.Context, fp util.FullPath) (tsNs int64, tombstone bool) {

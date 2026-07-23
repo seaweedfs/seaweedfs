@@ -40,7 +40,7 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 	entryFullPath := dirFullPath.Child(name)
 	var inode uint64
 
-	newEntry, code := wfs.maybeLoadEntry(entryFullPath)
+	newEntry, _, code := wfs.maybeLoadEntry(entryFullPath)
 	if code == fuse.OK {
 		if newEntry == nil || newEntry.Attributes == nil {
 			return fuse.EIO
@@ -76,7 +76,7 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 	if code == fuse.Status(syscall.EEXIST) && in.Flags&syscall.O_EXCL == 0 {
 		// Race: another process created the file between our check and create.
 		// Reopen the winner's entry.
-		newEntry, code = wfs.maybeLoadEntry(entryFullPath)
+		newEntry, _, code = wfs.maybeLoadEntry(entryFullPath)
 		if code != fuse.OK {
 			return code
 		}
@@ -110,7 +110,12 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 	// For deferred creates, bypass AcquireHandle (which calls maybeReadEntry
 	// and would fail since the entry is not yet on the filer or in the meta cache).
 	// We already have the entry from createRegularFile, so create the handle directly.
-	fileHandle := wfs.fhMap.AcquireFileHandle(wfs, inode, newEntry)
+	fileHandle, existed := wfs.fhMap.AcquireFileHandle(wfs, inode, newEntry, 0, 0)
+	if existed {
+		// A create is authoritative for the entry it just made, so it takes
+		// effect even on a handle that outlived a previous incarnation.
+		fileHandle.SetEntry(newEntry)
+	}
 	fileHandle.RememberPath(entryFullPath)
 	// Mark dirty so the deferred filer create happens on Flush,
 	// even if the file is closed without any writes.
@@ -181,7 +186,7 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	}
 	entryFullPath := dirFullPath.Child(name)
 
-	entry, code := wfs.maybeLoadEntry(entryFullPath)
+	entry, _, code := wfs.maybeLoadEntry(entryFullPath)
 	if code != fuse.OK {
 		if code == fuse.ENOENT {
 			return fuse.OK
@@ -210,7 +215,7 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 		// maybeLoadEntry path above. Do not fall back to the stale
 		// pre-lock snapshot: proceeding with its HardLinkCounter would
 		// reintroduce the stale-base update the lock is meant to prevent.
-		fresh, freshCode := wfs.maybeLoadEntry(entryFullPath)
+		fresh, _, freshCode := wfs.maybeLoadEntry(entryFullPath)
 		if freshCode == fuse.ENOENT {
 			return fuse.OK
 		}
@@ -221,7 +226,7 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	}
 
 	// POSIX: enforce sticky bit on the parent directory.
-	if dirEntry, dirCode := wfs.maybeLoadEntry(dirFullPath); dirCode == fuse.OK && dirEntry != nil && dirEntry.Attributes != nil {
+	if dirEntry, _, dirCode := wfs.maybeLoadEntry(dirFullPath); dirCode == fuse.OK && dirEntry != nil && dirEntry.Attributes != nil {
 		targetUid := uint32(0)
 		if entry != nil && entry.Attributes != nil {
 			targetUid = entry.Attributes.Uid
@@ -324,7 +329,7 @@ func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode u
 	// SkipCheckParentDirectory, so this is the only parent check). With
 	// default_permissions the kernel already verified write+search on it before
 	// Create/Mknod, so skip only the mode-bit check and its group lookup.
-	parentEntry, parentStatus := wfs.maybeLoadEntry(dirFullPath)
+	parentEntry, _, parentStatus := wfs.maybeLoadEntry(dirFullPath)
 	if parentStatus != fuse.OK {
 		return 0, nil, parentStatus
 	}
@@ -345,7 +350,7 @@ func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode u
 
 	entryFullPath := dirFullPath.Child(name)
 	if !skipExistenceCheck {
-		if _, status := wfs.maybeLoadEntry(entryFullPath); status == fuse.OK {
+		if _, _, status := wfs.maybeLoadEntry(entryFullPath); status == fuse.OK {
 			return 0, nil, fuse.Status(syscall.EEXIST)
 		} else if status != fuse.ENOENT {
 			return 0, nil, status
@@ -377,7 +382,7 @@ func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode u
 		// create checks, stat, readdir).
 		// We use InsertEntry directly instead of applyLocalMetadataEvent to avoid
 		// triggering directory hot-threshold eviction that would wipe the entry.
-		if insertErr := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(string(dirFullPath), newEntry)); insertErr != nil {
+		if insertErr := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(string(dirFullPath), newEntry), 0); insertErr != nil {
 			glog.Warningf("createFile %s: insert local entry: %v", entryFullPath, insertErr)
 		}
 		wfs.inodeToPath.TouchDirectory(dirFullPath)

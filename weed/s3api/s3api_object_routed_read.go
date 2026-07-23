@@ -25,7 +25,8 @@ func (s3a *S3ApiServer) getObjectEntryRoutedByKey(bucket, object string) (*filer
 
 	owner := s3a.routableWriteOwner(bucket, object)
 	if owner == "" || s3a.filerClient == nil {
-		return filer_pb.GetEntry(context.Background(), s3a, fullPath)
+		entry, _, _, err := filer_pb.GetEntry(context.Background(), s3a, fullPath)
+		return entry, err
 	}
 
 	// Skip an owner whose recent read hit a transport error; read local-first until

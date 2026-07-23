@@ -176,7 +176,7 @@ func doTraverseBfsAndSaving(filerClient filer_pb.FilerClient, writer io.Writer, 
 	var hasErr atomic.Bool
 
 	// also save the directory itself (path) if it exists in the filer
-	if e, getErr := filer_pb.GetEntry(ctx, filerClient, util.FullPath(path)); getErr != nil {
+	if e, _, _, getErr := filer_pb.GetEntry(ctx, filerClient, util.FullPath(path)); getErr != nil {
 		// Entry not found is expected and can be ignored; log other errors.
 		if !errors.Is(getErr, filer_pb.ErrNotFound) {
 			fmt.Fprintf(writer, "failed to get entry %s: %v\n", path, getErr)

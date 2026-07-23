@@ -207,10 +207,10 @@ func Run(ctx context.Context, cfg Config) error {
 // the state.
 func summarizeShardCursorLag(ctx context.Context, cfg Config, runNow time.Time) string {
 	var (
-		maxLag     time.Duration
-		maxAge     time.Duration
-		anyCursor  bool
-		anyWalked  bool
+		maxLag    time.Duration
+		maxAge    time.Duration
+		anyCursor bool
+		anyWalked bool
 	)
 	for _, sh := range cfg.Shards {
 		c, found, err := cfg.Persister.Load(ctx, sh)

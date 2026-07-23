@@ -26,7 +26,11 @@ type FilerClient interface {
 	GetDataCenter() string
 }
 
-func GetEntry(ctx context.Context, filerClient FilerClient, fullFilePath util.FullPath) (entry *Entry, err error) {
+// GetEntry returns the entry together with the log position the filer stamped
+// for it and the signature of the filer that stamped it — positions are only
+// comparable within one filer's clock. Both are zero against a filer that does
+// not stamp them.
+func GetEntry(ctx context.Context, filerClient FilerClient, fullFilePath util.FullPath) (entry *Entry, logTsNs int64, logSignature int32, err error) {
 
 	dir, name := fullFilePath.DirAndName()
 
@@ -50,6 +54,8 @@ func GetEntry(ctx context.Context, filerClient FilerClient, fullFilePath util.Fu
 		}
 
 		entry = resp.Entry
+		logTsNs = resp.LogTsNs
+		logSignature = resp.LogSignature
 		return nil
 	})
 

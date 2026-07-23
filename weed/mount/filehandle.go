@@ -173,15 +173,11 @@ func (fh *FileHandle) setAuthoritativeBase(base *filer_pb.Entry) {
 	fh.baseEntry.Store(base)
 }
 
-// advanceEntryVersionTsNs raises the entry version, never regresses it. Zero
-// (an unversioned old filer) is a no-op, leaving the handle open to refreshes.
-func (fh *FileHandle) advanceEntryVersionTsNs(tsNs int64) {
-	fh.advanceEntryVersion(tsNs, 0)
-}
-
-// advanceEntryVersion raises the entry version and records the clock domain
-// the new position belongs to: a filer signature for an RPC fence, zero for an
-// event. The signature travels with the timestamp so the two never disagree.
+// advanceEntryVersion raises the entry version, never regresses it, and
+// records the clock domain the new position belongs to: a filer signature for
+// an RPC fence, zero for an event. The signature travels with the timestamp so
+// the two never disagree. A zero position (an unversioned old filer) is a
+// no-op, leaving the handle open to refreshes.
 func (fh *FileHandle) advanceEntryVersion(tsNs int64, signature int32) {
 	if tsNs == 0 {
 		return

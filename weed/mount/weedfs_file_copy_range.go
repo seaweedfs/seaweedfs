@@ -450,7 +450,8 @@ func (wfs *WFS) copyEntryViaFiler(cancel <-chan struct{}, copyRequest wholeFileS
 	readbackCtx, readbackCancel := context.WithTimeout(baseCtx, filerCopyReadbackTimeout)
 	defer readbackCancel()
 
-	entry, entryVersionTsNs, err := wfs.getPbEntryWithVersion(readbackCtx, copyRequest.dstPath)
+	entry, logTsNs, logSignature, err := filer_pb.GetEntry(readbackCtx, wfs, copyRequest.dstPath)
+	entryVersionTsNs := entryVersion{tsNs: logTsNs, signature: logSignature}
 	if err != nil {
 		return nil, entryVersion{}, serverSideWholeFileCopyCommitted, fmt.Errorf("reload copied entry %s: %w", copyRequest.dstPath, err)
 	}
@@ -468,7 +469,8 @@ func (wfs *WFS) confirmServerSideWholeFileCopyAfterAmbiguousRequest(baseCtx cont
 	readbackCtx, readbackCancel := context.WithTimeout(baseCtx, filerCopyReadbackTimeout)
 	defer readbackCancel()
 
-	entry, entryVersionTsNs, err := wfs.getPbEntryWithVersion(readbackCtx, copyRequest.dstPath)
+	entry, logTsNs, logSignature, err := filer_pb.GetEntry(readbackCtx, wfs, copyRequest.dstPath)
+	entryVersionTsNs := entryVersion{tsNs: logTsNs, signature: logSignature}
 	if err == nil && entry != nil && entryMatchesServerSideWholeFileCopy(copyRequest, entry) {
 		if entry.Attributes != nil && wfs.option != nil && wfs.option.UidGidMapper != nil {
 			entry.Attributes.Uid, entry.Attributes.Gid = wfs.option.UidGidMapper.FilerToLocal(entry.Attributes.Uid, entry.Attributes.Gid)
