@@ -25,6 +25,7 @@ type PrometheusStorage struct {
 	// In-memory storage for API endpoints (if needed)
 	mu        sync.RWMutex
 	instances map[string]*telemetryData
+	histories map[string][]HistorySample
 	stats     map[string]interface{}
 	dirty     bool // instances changed since the last successful state save
 }
@@ -36,6 +37,11 @@ type telemetryData struct {
 }
 
 func NewPrometheusStorage() *PrometheusStorage {
+	return newPrometheusStorage(prometheus.DefaultRegisterer)
+}
+
+func newPrometheusStorage(reg prometheus.Registerer) *PrometheusStorage {
+	promauto := promauto.With(reg)
 	return &PrometheusStorage{
 		totalClusters: promauto.NewGauge(prometheus.GaugeOpts{
 			Name: "seaweedfs_telemetry_total_clusters",
@@ -74,6 +80,7 @@ func NewPrometheusStorage() *PrometheusStorage {
 			Help: "Total number of telemetry reports received",
 		}),
 		instances: make(map[string]*telemetryData),
+		histories: make(map[string][]HistorySample),
 		stats:     make(map[string]interface{}),
 	}
 }
@@ -94,10 +101,12 @@ func (s *PrometheusStorage) StoreTelemetry(data *proto.TelemetryData) error {
 	s.telemetryReceived.Inc()
 
 	// Store in memory for API endpoints
+	receivedAt := time.Now().UTC()
 	s.instances[data.TopologyId] = &telemetryData{
 		TelemetryData: data,
-		ReceivedAt:    time.Now().UTC(),
+		ReceivedAt:    receivedAt,
 	}
+	s.appendHistory(data, receivedAt)
 	s.dirty = true
 
 	// Update aggregated stats
@@ -235,6 +244,22 @@ func (s *PrometheusStorage) CleanupOldInstances(maxAge time.Duration) {
 		if instance.ReceivedAt.Before(cutoff) {
 			delete(s.instances, instanceID)
 			s.deleteClusterMetrics(instance.TelemetryData)
+			s.dirty = true
+		}
+	}
+
+	for id, h := range s.histories {
+		if _, ok := s.instances[id]; !ok {
+			delete(s.histories, id)
+			s.dirty = true
+			continue
+		}
+		i := 0
+		for i < len(h) && time.Unix(h[i].Ts, 0).Before(cutoff) {
+			i++
+		}
+		if i > 0 {
+			s.histories[id] = append([]HistorySample(nil), h[i:]...)
 			s.dirty = true
 		}
 	}

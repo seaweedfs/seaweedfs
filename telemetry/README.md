@@ -173,6 +173,9 @@ GET /api/instances?limit=100
 
 # Get metrics over time
 GET /api/metrics?days=30
+
+# Get one cluster's daily usage history (disk bytes, volumes, volume servers)
+GET /api/history?cluster_id=<uuid>&days=90
 ```
 
 ### Monitoring
