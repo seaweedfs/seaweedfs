@@ -144,6 +144,23 @@ func (fh *FileHandle) SetEntry(entry *filer_pb.Entry) {
 	fh.invalidateChunkCache()
 }
 
+// installAckedEntry installs filer-acknowledged state under the handle lock
+// when it outranks what the handle holds. A version must never advance
+// without its value: stamping a handle whose entry did not come from this
+// acknowledgment would fence out the events carrying the state it lacks.
+// Dirty handles are left alone — their local writes supersede the ack.
+func (fh *FileHandle) installAckedEntry(entry *filer_pb.Entry, versionTsNs int64) {
+	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("installAckedEntry", fh.fh, util.ExclusiveLock)
+	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
+	if versionTsNs == 0 || versionTsNs <= fh.entryVersionTsNs.Load() ||
+		fh.dirtyMetadata || entry == fh.GetEntry().GetEntry() {
+		return
+	}
+	fh.SetEntry(entry)
+	fh.setAuthoritativeBase(proto.Clone(entry).(*filer_pb.Entry))
+	fh.advanceEntryVersionTsNs(versionTsNs)
+}
+
 // setAuthoritativeBase installs a fresh base snapshot from a local
 // acknowledgment and cancels any pending event adoption: the ack supersedes
 // the mutation the adoption was waiting for, whose event will now be version

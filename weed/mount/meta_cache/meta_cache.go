@@ -5,7 +5,6 @@ import (
 	"errors"
 	"math"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -403,11 +402,19 @@ func (mc *MetaCache) FindEntryWithVersion(ctx context.Context, fp util.FullPath)
 }
 
 // entryVersionKeyPrefix namespaces the per-entry version records in the
-// store's key-value space, apart from entry keys.
+// store's key-value space, apart from entry keys. Keys encode the parent
+// directory and the name separated by a NUL, so a directory's direct
+// children form one contiguous key range: pruning scans exactly them, never
+// a subtree.
 const entryVersionKeyPrefix = "\x00mount.entry.ver\x00"
 
 func entryVersionKey(fp util.FullPath) []byte {
-	return []byte(entryVersionKeyPrefix + string(fp))
+	dir, name := fp.DirAndName()
+	return []byte(entryVersionKeyPrefix + dir + "\x00" + name)
+}
+
+func entryVersionChildPrefix(dirPath util.FullPath) []byte {
+	return []byte(entryVersionKeyPrefix + string(dirPath) + "\x00")
 }
 
 // setEntryVersionLocked records the filer log position an entry write
@@ -478,21 +485,14 @@ func (mc *MetaCache) entryVersionBlocksLocked(ctx context.Context, fp util.FullP
 
 // pruneSupersededTombstonesLocked deletes the directory's direct-child
 // tombstones at or below the listing snapshot: the absence floor now fences
-// what they fenced, so they are pure growth. Deeper descendants are governed
-// by their own directory's floor and are left alone; tombstones above the
-// snapshot (deletions the listing has not seen) survive.
+// what they fenced, so they are pure growth. The key encoding makes the
+// direct children one contiguous range, so the scan touches nothing else;
+// deeper descendants are governed by their own directory's floor. Tombstones
+// above the snapshot (deletions the listing has not seen) survive.
 func (mc *MetaCache) pruneSupersededTombstonesLocked(ctx context.Context, dirPath util.FullPath, snapshotTsNs int64) {
-	childPrefix := string(dirPath)
-	if !strings.HasSuffix(childPrefix, "/") {
-		childPrefix += "/"
-	}
 	var superseded [][]byte
-	if err := mc.leveldbStore.VisitKvPrefix(ctx, []byte(entryVersionKeyPrefix+childPrefix), func(key, value []byte) error {
+	if err := mc.leveldbStore.VisitKvPrefix(ctx, entryVersionChildPrefix(dirPath), func(key, value []byte) error {
 		if len(value) != 9 || value[8] != 1 {
-			return nil
-		}
-		path := util.FullPath(string(key[len(entryVersionKeyPrefix):]))
-		if dir, _ := path.DirAndName(); util.FullPath(dir) != dirPath {
 			return nil
 		}
 		if int64(util.BytesToUint64(value[:8])) <= snapshotTsNs {

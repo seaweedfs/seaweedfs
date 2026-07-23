@@ -4,9 +4,12 @@ import (
 	"context"
 	"net"
 	"path/filepath"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"google.golang.org/grpc/metadata"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 
@@ -67,17 +70,18 @@ func newInvalidateTestWFS(t *testing.T) *WFS {
 
 type fakeFilerServer struct {
 	filer_pb.UnimplementedSeaweedFilerServer
-	lookupSize      uint64
-	lookupLogTsNs   int64
-	lookupSize2     uint64 // when set, served to the second and later lookups
-	lookupLogTsNs2  int64
-	cacheSize       uint64
-	cacheLogTsNs    int64
-	updateEventless bool // UpdateEntry acks like a no-change update: no event, log position only
-	updateLogTsNs   int64
-	lookupCalls     atomic.Int32
-	lookupStarted   chan struct{} // closed when the first lookup arrives
-	lookupGate      chan struct{} // first lookup waits here when non-nil
+	listSnapshotTrailerTsNs int64 // when set, ListEntries returns empty with this trailer snapshot
+	lookupSize              uint64
+	lookupLogTsNs           int64
+	lookupSize2             uint64 // when set, served to the second and later lookups
+	lookupLogTsNs2          int64
+	cacheSize               uint64
+	cacheLogTsNs            int64
+	updateEventless         bool // UpdateEntry acks like a no-change update: no event, log position only
+	updateLogTsNs           int64
+	lookupCalls             atomic.Int32
+	lookupStarted           chan struct{} // closed when the first lookup arrives
+	lookupGate              chan struct{} // first lookup waits here when non-nil
 }
 
 func (s *fakeFilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
@@ -108,6 +112,13 @@ func (s *fakeFilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, r
 		},
 		LogTsNs: s.cacheLogTsNs,
 	}, nil
+}
+
+func (s *fakeFilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream filer_pb.SeaweedFiler_ListEntriesServer) error {
+	if s.listSnapshotTrailerTsNs != 0 {
+		stream.SetTrailer(metadata.Pairs(filer_pb.ListSnapshotTsNsTrailerKey, strconv.FormatInt(s.listSnapshotTrailerTsNs, 10)))
+	}
+	return nil
 }
 
 func (s *fakeFilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
@@ -414,24 +425,21 @@ func TestSaveEntryKeepsOpenHandleAheadOfOlderEvents(t *testing.T) {
 		Attributes: &filer_pb.FuseAttributes{FileSize: 88},
 	})
 
-	testLock := wfs.fhLockTable.AcquireLock("test", fh.fh, util.ExclusiveLock)
 	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("file", 100, 1000), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
-		wfs.fhLockTable.ReleaseLock(fh.fh, testLock)
 		t.Fatalf("apply subscriber event: %v", err)
 	}
 
 	// A truncate-style mutation: the filer acknowledges it at TsNs 2000 and
-	// the handle takes the new entry.
+	// installs the acknowledged state into the handle. Whichever order the
+	// queued event and the acknowledgment reach the handle, the newer
+	// acknowledged state wins.
 	saved := &filer_pb.Entry{
 		Name:       "file",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 200},
 	}
 	if code := wfs.saveEntry(util.FullPath("/dir/file"), saved); code != fuse.OK {
-		wfs.fhLockTable.ReleaseLock(fh.fh, testLock)
 		t.Fatalf("saveEntry status = %v, want OK", code)
 	}
-	fh.SetEntry(saved)
-	wfs.fhLockTable.ReleaseLock(fh.fh, testLock)
 
 	wfs.metaCache.WaitForEntryInvalidations()
 
@@ -692,23 +700,20 @@ func TestEventlessSaveAckStillFencesOlderEvents(t *testing.T) {
 		Attributes: &filer_pb.FuseAttributes{FileSize: 200},
 	})
 
-	testLock := wfs.fhLockTable.AcquireLock("test", fh.fh, util.ExclusiveLock)
 	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("file", 100, 1000), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
-		wfs.fhLockTable.ReleaseLock(fh.fh, testLock)
 		t.Fatalf("apply subscriber event: %v", err)
 	}
 
 	// The save confirms the handle's state without changing it: no event,
-	// only the acknowledged log position.
+	// only the acknowledged log position, which installs the confirmed
+	// state over whatever the queued event may have applied first.
 	saved := &filer_pb.Entry{
 		Name:       "file",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 200},
 	}
 	if code := wfs.saveEntry(util.FullPath("/dir/file"), saved); code != fuse.OK {
-		wfs.fhLockTable.ReleaseLock(fh.fh, testLock)
 		t.Fatalf("saveEntry status = %v, want OK", code)
 	}
-	wfs.fhLockTable.ReleaseLock(fh.fh, testLock)
 
 	wfs.metaCache.WaitForEntryInvalidations()
 
@@ -1335,4 +1340,85 @@ func TestFlushAckCancelsPendingCopyEventAdoption(t *testing.T) {
 	if fh.dirtyPages == pagesBefore {
 		t.Fatal("foreign event must invalidate dirty pages, not be silently adopted")
 	}
+}
+
+// A version must never advance without its value: a handle opened while a
+// setattr was in flight holds the pre-mutation entry, and stamping it with
+// the acknowledgment's version would fence out the events carrying the state
+// it lacks. The acknowledged entry is installed with the version instead.
+func TestAckedSaveInstallsIntoRacingOpenHandle(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+	startFakeFiler(t, wfs, &fakeFilerServer{})
+
+	// The handle opened after the setattr path found none, before the ack.
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 88},
+	})
+
+	saved := &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 200},
+	}
+	if code := wfs.saveEntry(util.FullPath("/dir/file"), saved); code != fuse.OK {
+		t.Fatalf("saveEntry status = %v, want OK", code)
+	}
+
+	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
+		t.Fatalf("open handle file size = %d, want 200 (the acknowledged state must be installed with its version)", size)
+	}
+	if got := fh.entryVersionTsNs.Load(); got != 2000 {
+		t.Fatalf("handle version = %d, want 2000", got)
+	}
+
+	// A dirty handle is left alone entirely: neither entry nor version.
+	dirtyInode := wfs.inodeToPath.Lookup(util.FullPath("/dir/dirty"), time.Now().Unix(), false, false, 0, false)
+	dirtyFh := wfs.fhMap.AcquireFileHandle(wfs, dirtyInode, &filer_pb.Entry{
+		Name:       "dirty",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 88},
+	})
+	dirtyFh.dirtyMetadata = true
+	if code := wfs.saveEntry(util.FullPath("/dir/dirty"), &filer_pb.Entry{
+		Name:       "dirty",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 200},
+	}); code != fuse.OK {
+		t.Fatalf("saveEntry status = %v, want OK", code)
+	}
+	if size := dirtyFh.GetEntry().GetEntry().Attributes.FileSize; size != 88 {
+		t.Fatalf("dirty handle file size = %d, want 88 (local writes supersede the ack)", size)
+	}
+	if got := dirtyFh.entryVersionTsNs.Load(); got != 0 {
+		t.Fatalf("dirty handle version = %d, want 0 (no version without its value)", got)
+	}
+}
+
+// An empty listing carries its snapshot in the stream trailer, so empty
+// directories still gain an absence floor — and their stale tombstones
+// still get pruned — instead of accumulating forever.
+func TestEmptyListingTrailerSnapshotSetsAbsenceFloor(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+	startFakeFiler(t, wfs, &fakeFilerServer{listSnapshotTrailerTsNs: 4000})
+
+	wfs.inodeToPath.Lookup(util.FullPath("/dir"), time.Now().Unix(), true, false, 0, false)
+	if err := meta_cache.EnsureVisited(wfs.metaCache, wfs, util.FullPath("/dir")); err != nil {
+		t.Fatalf("EnsureVisited: %v", err)
+	}
+
+	// Absent at the trailer snapshot: an older create must be fenced.
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("ghost", 100, 3000), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply covered create: %v", err)
+	}
+	if entry, err := wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/ghost")); err == nil {
+		t.Fatalf("name absent at trailer snapshot 4000 created by event at 3000: %+v", entry)
+	}
+
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("ghost", 450, 4500), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply newer create: %v", err)
+	}
+	entry, err := wfs.metaCache.FindEntry(context.Background(), util.FullPath("/dir/ghost"))
+	if err != nil || entry.FileSize != 450 {
+		t.Fatalf("entry after newer create = %+v, %v; want size 450", entry, err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
 }

@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"google.golang.org/protobuf/proto"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -51,17 +53,20 @@ func (wfs *WFS) saveEntry(path util.FullPath, entry *filer_pb.Entry) (code fuse.
 		return fuseStatus
 	}
 
-	// The mutation is acknowledged; keep any open handle for this path ahead
-	// of subscription events the filer logged before it. A no-change update
-	// returns no event but still carries the log position of the state it
-	// confirmed.
+	// The mutation is acknowledged; bring any open handle for this path up
+	// to the acknowledged state — a handle opened while this save was in
+	// flight holds an older entry, and advancing its version alone would
+	// fence out the events carrying what it lacks. A no-change update
+	// returns no event but still carries the log position it confirmed.
 	ackVersionTsNs := resp.GetMetadataEvent().GetTsNs()
 	if ackVersionTsNs == 0 {
 		ackVersionTsNs = resp.GetLogTsNs()
 	}
 	if inode, found := wfs.inodeToPath.GetInode(path); found {
 		if fh, fhFound := wfs.fhMap.FindFileHandle(inode); fhFound {
-			fh.advanceEntryVersionTsNs(ackVersionTsNs)
+			ackedEntry := proto.Clone(entry).(*filer_pb.Entry)
+			wfs.mapPbIdFromFilerToLocal(ackedEntry)
+			fh.installAckedEntry(ackedEntry, ackVersionTsNs)
 		}
 	}
 

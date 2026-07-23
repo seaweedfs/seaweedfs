@@ -7,8 +7,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/util"
-	"google.golang.org/protobuf/proto"
 )
 
 func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle *FileHandle, status fuse.Status) {
@@ -65,20 +63,9 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 	fileHandle, existed = wfs.fhMap.AcquireFileHandleWithVersion(wfs, inode, entry, entryVersionTsNs)
 	fileHandle.RememberPath(path)
 	if existed && freshLookup {
-		// Another opener created the handle while our lookup was in flight.
-		// Install under the handle lock every user synchronizes on, and only
-		// state that provably improves on what the handle holds: reject
-		// dirty handles (local writes would be lost), unknown versions (an
-		// unversioned response cannot outrank anything), and anything not
-		// strictly newer.
-		fhActiveLock := wfs.fhLockTable.AcquireLock("AcquireHandle", fileHandle.fh, util.ExclusiveLock)
-		if entryVersionTsNs != 0 && entryVersionTsNs > fileHandle.entryVersionTsNs.Load() &&
-			!fileHandle.dirtyMetadata && entry != fileHandle.GetEntry().GetEntry() {
-			fileHandle.SetEntry(entry)
-			fileHandle.setAuthoritativeBase(proto.Clone(entry).(*filer_pb.Entry))
-			fileHandle.advanceEntryVersionTsNs(entryVersionTsNs)
-		}
-		wfs.fhLockTable.ReleaseLock(fileHandle.fh, fhActiveLock)
+		// Another opener created the handle while our lookup was in flight;
+		// install only state that provably improves on what it holds.
+		fileHandle.installAckedEntry(entry, entryVersionTsNs)
 	}
 
 	// Acquire distributed lock for write opens. The lock is held with

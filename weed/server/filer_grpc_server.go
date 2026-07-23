@@ -23,6 +23,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -121,10 +122,10 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 
 	// For empty directories we intentionally do NOT send a snapshot-only
 	// response (Entry == nil). Many consumers (Java FilerClient, S3 listing,
-	// etc.) treat any received response as an entry. The Go client-side
-	// DoSeaweedListWithSnapshot generates a client-side cutoff when the
-	// server sends no snapshot, so snapshot consistency is preserved
-	// without a server-side send.
+	// etc.) treat any received response as an entry. The trailer carries the
+	// snapshot instead, so clients that understand it get one even from an
+	// empty listing; older clients ignore trailers.
+	stream.SetTrailer(metadata.Pairs(filer_pb.ListSnapshotTsNsTrailerKey, strconv.FormatInt(snapshotTsNs, 10)))
 
 	return nil
 }

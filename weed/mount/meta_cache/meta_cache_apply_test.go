@@ -709,6 +709,11 @@ func TestBuildCompletionPrunesSupersededTombstones(t *testing.T) {
 	apply(createEvent("b", 3900))
 	apply(deleteEvent("b", 4000))
 
+	// A deeper descendant's tombstone belongs to its own directory's floor.
+	mc.Lock()
+	mc.setEntryTombstoneLocked(context.Background(), util.FullPath("/dir/sub/x"), 1000)
+	mc.Unlock()
+
 	if err := mc.BeginDirectoryBuild(context.Background(), util.FullPath("/dir")); err != nil {
 		t.Fatalf("begin build: %v", err)
 	}
@@ -721,6 +726,9 @@ func TestBuildCompletionPrunesSupersededTombstones(t *testing.T) {
 	}
 	if tsNs, tombstone := mc.getEntryVersionRecordLocked(context.Background(), util.FullPath("/dir/b")); tsNs != 4000 || !tombstone {
 		t.Fatalf("tombstone at 4000 must survive the floor at 3000, got (%d, %v)", tsNs, tombstone)
+	}
+	if tsNs, tombstone := mc.getEntryVersionRecordLocked(context.Background(), util.FullPath("/dir/sub/x")); tsNs != 1000 || !tombstone {
+		t.Fatalf("descendant tombstone must survive the parent's prune, got (%d, %v)", tsNs, tombstone)
 	}
 	mc.WaitForEntryInvalidations()
 }
