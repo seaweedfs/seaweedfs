@@ -215,7 +215,7 @@ After setup, the remote server will have:
 ├── logs/
 │   ├── telemetry.log            # Application logs
 │   └── telemetry.error.log      # Error logs
-├── data/                        # Data directory (if needed)
+├── data/                        # State snapshots (telemetry-state.json), restored on restart
 ├── grafana-dashboard.json       # Grafana dashboard configuration
 └── prometheus.yml               # Prometheus configuration
 ```

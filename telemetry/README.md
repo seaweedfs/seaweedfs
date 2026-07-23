@@ -122,6 +122,8 @@ weed master -telemetry=true -telemetry.url=http://localhost:8080/api/collect
 -dashboard=true               # Enable built-in dashboard
 -cleanup=24h                  # Cleanup interval
 -max-age=720h                 # Maximum data retention (30 days)
+-state-file=data/telemetry-state.json  # Persist state across restarts (empty to disable)
+-state-save=1h                # How often to save changed state
 
 # Example
 ./telemetry-server -port=8080 -dashboard=true -cleanup=24h -max-age=720h
