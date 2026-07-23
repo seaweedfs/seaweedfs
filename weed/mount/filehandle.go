@@ -144,6 +144,16 @@ func (fh *FileHandle) SetEntry(entry *filer_pb.Entry) {
 	fh.invalidateChunkCache()
 }
 
+// setAuthoritativeBase installs a fresh base snapshot from a local
+// acknowledgment and cancels any pending event adoption: the ack supersedes
+// the mutation the adoption was waiting for, whose event will now be version
+// gated — a surviving flag would misfire on a later foreign event, silently
+// adopting it without installing or invalidating.
+func (fh *FileHandle) setAuthoritativeBase(base *filer_pb.Entry) {
+	fh.baseEntry.Store(base)
+	fh.adoptNextEventBase.Store(false)
+}
+
 // advanceEntryVersionTsNs raises the entry version; an older timestamp never
 // regresses it. A zero timestamp (state without a version, e.g. from an old
 // filer) is a no-op, leaving the handle open to refreshes.

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -197,8 +198,12 @@ func (mc *MetaCache) atomicUpdateEntryFromFilerLocked(ctx context.Context, oldPa
 		// resurrects the deleted path (the deletion's own redelivery is
 		// dedup-suppressed and never corrects it). Written even when the
 		// store held no entry — the deletion is a fact about the path, not
-		// about what this cache happened to hold.
-		if versionTsNs != 0 {
+		// about what this cache happened to hold. Scoped to directories
+		// whose cached state the fence protects: an uncached parent never
+		// serves from the store and never applies the resurrecting insert,
+		// so a tombstone there would only accumulate.
+		oldDir, _ := oldPath.DirAndName()
+		if versionTsNs != 0 && (allowUncachedInsert || mc.isCachedFn(util.FullPath(oldDir))) {
 			mc.setEntryTombstoneLocked(ctx, oldPath, versionTsNs)
 		} else {
 			mc.clearEntryVersionLocked(ctx, oldPath)
@@ -469,6 +474,40 @@ func (mc *MetaCache) entryVersionBlocksLocked(ctx context.Context, fp util.FullP
 	}
 	dir, _ := fp.DirAndName()
 	return mc.dirAbsenceFloors[util.FullPath(dir)] >= tsNs
+}
+
+// pruneSupersededTombstonesLocked deletes the directory's direct-child
+// tombstones at or below the listing snapshot: the absence floor now fences
+// what they fenced, so they are pure growth. Deeper descendants are governed
+// by their own directory's floor and are left alone; tombstones above the
+// snapshot (deletions the listing has not seen) survive.
+func (mc *MetaCache) pruneSupersededTombstonesLocked(ctx context.Context, dirPath util.FullPath, snapshotTsNs int64) {
+	childPrefix := string(dirPath)
+	if !strings.HasSuffix(childPrefix, "/") {
+		childPrefix += "/"
+	}
+	var superseded [][]byte
+	if err := mc.leveldbStore.VisitKvPrefix(ctx, []byte(entryVersionKeyPrefix+childPrefix), func(key, value []byte) error {
+		if len(value) != 9 || value[8] != 1 {
+			return nil
+		}
+		path := util.FullPath(string(key[len(entryVersionKeyPrefix):]))
+		if dir, _ := path.DirAndName(); util.FullPath(dir) != dirPath {
+			return nil
+		}
+		if int64(util.BytesToUint64(value[:8])) <= snapshotTsNs {
+			superseded = append(superseded, key)
+		}
+		return nil
+	}); err != nil {
+		glog.V(1).Infof("prune tombstones %s: %v", dirPath, err)
+		return
+	}
+	for _, key := range superseded {
+		if err := mc.localStore.KvDelete(ctx, key); err != nil {
+			glog.V(1).Infof("prune tombstone %s: %v", string(key), err)
+		}
+	}
 }
 
 // stampChildrenVersionLocked records the listing snapshot as every child's
@@ -897,6 +936,7 @@ func (mc *MetaCache) completeDirectoryBuildNow(ctx context.Context, dirPath util
 	mc.stampChildrenVersionLocked(ctx, dirPath, snapshotTsNs)
 	if snapshotTsNs != 0 {
 		mc.dirAbsenceFloors[dirPath] = snapshotTsNs
+		mc.pruneSupersededTombstonesLocked(ctx, dirPath, snapshotTsNs)
 	} else {
 		delete(mc.dirAbsenceFloors, dirPath)
 	}

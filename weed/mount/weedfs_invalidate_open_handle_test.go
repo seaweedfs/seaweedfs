@@ -110,6 +110,20 @@ func (s *fakeFilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, r
 	}, nil
 }
 
+func (s *fakeFilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
+	return &filer_pb.CreateEntryResponse{
+		MetadataEvent: &filer_pb.SubscribeMetadataResponse{
+			Directory: req.Directory,
+			TsNs:      3000,
+			EventNotification: &filer_pb.EventNotification{
+				OldEntry:      &filer_pb.Entry{Name: req.Entry.Name},
+				NewEntry:      req.Entry,
+				NewParentPath: req.Directory,
+			},
+		},
+	}, nil
+}
+
 func (s *fakeFilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
 	if s.updateEventless {
 		return &filer_pb.UpdateEntryResponse{LogTsNs: s.updateLogTsNs}, nil
@@ -1278,4 +1292,47 @@ func TestNewerAbsenceFloorOverridesOlderTombstone(t *testing.T) {
 		t.Fatalf("entry after newer create = %+v, %v; want size 350", entry, err)
 	}
 	wfs.metaCache.WaitForEntryInvalidations()
+}
+
+// A flush acknowledgment supersedes a pending copy-event adoption: the copy's
+// event is version gated after the ack, so a surviving adoption flag would
+// misfire on the next genuinely foreign event, silently swallowing it.
+func TestFlushAckCancelsPendingCopyEventAdoption(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+	startFakeFiler(t, wfs, &fakeFilerServer{})
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 100},
+	})
+
+	// Committed copy, failed readback: adoption pending on a synthesized base.
+	wfs.applyServerSideWholeFileCopyResult(fh, fh, util.FullPath("/dir/file"), nil, 0, 200)
+
+	// A local flush lands: the ack at 3000 becomes the authoritative base.
+	fh.dirtyMetadata = true
+	if status := wfs.doFlush(context.Background(), fh, 0, 0, false); status != fuse.OK {
+		t.Fatalf("doFlush status = %v, want OK", status)
+	}
+
+	// The copy's own delayed event is version gated by the ack.
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("file", 200, 1500), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply copy event: %v", err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	// A genuinely foreign event must install normally, not be adopted.
+	pagesBefore := fh.dirtyPages
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("file", 300, 3500), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply foreign event: %v", err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 300 {
+		t.Fatalf("live entry file size = %d, want 300 (foreign event must install, not be silently adopted)", size)
+	}
+	if fh.dirtyPages == pagesBefore {
+		t.Fatal("foreign event must invalidate dirty pages, not be silently adopted")
+	}
 }

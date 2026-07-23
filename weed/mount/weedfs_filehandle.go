@@ -75,7 +75,7 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 		if entryVersionTsNs != 0 && entryVersionTsNs > fileHandle.entryVersionTsNs.Load() &&
 			!fileHandle.dirtyMetadata && entry != fileHandle.GetEntry().GetEntry() {
 			fileHandle.SetEntry(entry)
-			fileHandle.baseEntry.Store(proto.Clone(entry).(*filer_pb.Entry))
+			fileHandle.setAuthoritativeBase(proto.Clone(entry).(*filer_pb.Entry))
 			fileHandle.advanceEntryVersionTsNs(entryVersionTsNs)
 		}
 		wfs.fhLockTable.ReleaseLock(fileHandle.fh, fhActiveLock)

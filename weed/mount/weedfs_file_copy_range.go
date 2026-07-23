@@ -236,13 +236,11 @@ func (wfs *WFS) tryServerSideWholeFileCopy(cancel <-chan struct{}, in *fuse.Copy
 }
 
 func (wfs *WFS) applyServerSideWholeFileCopyResult(fhIn, fhOut *FileHandle, dstPath util.FullPath, entry *filer_pb.Entry, entryVersionTsNs int64, sourceSize int64) {
+	synthesized := false
 	if entry == nil {
 		entry = synthesizeLocalEntryForServerSideWholeFileCopy(fhIn, fhOut, sourceSize)
 		entryVersionTsNs = 0
-		// The copy committed but its readback failed: the synthesized entry
-		// approximates the real state (its timestamps are local), so the
-		// copy's own event would differ from this base and read as foreign.
-		fhOut.adoptNextEventBase.Store(true)
+		synthesized = true
 	}
 	if entry == nil {
 		glog.Warningf("CopyFileRange server-side copy %s left no local entry to apply", dstPath)
@@ -255,6 +253,11 @@ func (wfs *WFS) applyServerSideWholeFileCopyResult(fhIn, fhOut *FileHandle, dstP
 	// that destroys writes made to the destination after the copy.
 	fhOut.baseEntry.Store(proto.Clone(entry).(*filer_pb.Entry))
 	fhOut.advanceEntryVersionTsNs(entryVersionTsNs)
+	// A synthesized base approximates the committed copy (its timestamps are
+	// local), so the copy's own event would read as foreign: mark it for
+	// adoption. A real readback — or any later authoritative base — clears
+	// the mark.
+	fhOut.adoptNextEventBase.Store(synthesized)
 	fhOut.RememberPath(dstPath)
 	if entry.Attributes != nil {
 		fhOut.contentType = entry.Attributes.Mime

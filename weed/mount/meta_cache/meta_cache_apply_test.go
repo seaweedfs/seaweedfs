@@ -630,3 +630,97 @@ func TestUnversionedRebuildClearsStaleVersions(t *testing.T) {
 	}
 	mc.WaitForEntryInvalidations()
 }
+
+// Tombstones are scoped to directories whose cached state the fence
+// protects; an uncached parent never serves from the store nor applies the
+// resurrecting insert, so a tombstone there would only accumulate.
+func TestTombstonesScopedToCachedDirectories(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+		"/":       true,
+		"/cached": true,
+	})
+	defer mc.Shutdown()
+
+	deleteEventFor := func(dir, name string, tsNs int64) *filer_pb.SubscribeMetadataResponse {
+		return &filer_pb.SubscribeMetadataResponse{
+			Directory: dir,
+			TsNs:      tsNs,
+			EventNotification: &filer_pb.EventNotification{
+				OldEntry: &filer_pb.Entry{Name: name},
+			},
+		}
+	}
+
+	if err := mc.ApplyMetadataResponse(context.Background(), deleteEventFor("/cached", "file", 2000), SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply cached delete: %v", err)
+	}
+	if tsNs, tombstone := mc.getEntryVersionRecordLocked(context.Background(), util.FullPath("/cached/file")); tsNs != 2000 || !tombstone {
+		t.Fatalf("cached-dir delete record = (%d, %v), want tombstone at 2000", tsNs, tombstone)
+	}
+
+	if err := mc.ApplyMetadataResponse(context.Background(), deleteEventFor("/uncached", "file", 2000), SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply uncached delete: %v", err)
+	}
+	if tsNs, _ := mc.getEntryVersionRecordLocked(context.Background(), util.FullPath("/uncached/file")); tsNs != 0 {
+		t.Fatalf("uncached-dir delete record = %d, want none", tsNs)
+	}
+	mc.WaitForEntryInvalidations()
+}
+
+// A completed listing's absence floor supersedes the direct-child tombstones
+// at or below its snapshot; newer tombstones survive.
+func TestBuildCompletionPrunesSupersededTombstones(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+		"/":    true,
+		"/dir": true,
+	})
+	defer mc.Shutdown()
+
+	apply := func(resp *filer_pb.SubscribeMetadataResponse) {
+		t.Helper()
+		if err := mc.ApplyMetadataResponse(context.Background(), resp, SubscriberMetadataResponseApplyOptions); err != nil {
+			t.Fatalf("apply: %v", err)
+		}
+	}
+	createEvent := func(name string, tsNs int64) *filer_pb.SubscribeMetadataResponse {
+		return &filer_pb.SubscribeMetadataResponse{
+			Directory: "/dir",
+			TsNs:      tsNs,
+			EventNotification: &filer_pb.EventNotification{
+				NewEntry: &filer_pb.Entry{
+					Name:       name,
+					Attributes: &filer_pb.FuseAttributes{FileSize: 1, FileMode: 0100644},
+				},
+			},
+		}
+	}
+	deleteEvent := func(name string, tsNs int64) *filer_pb.SubscribeMetadataResponse {
+		return &filer_pb.SubscribeMetadataResponse{
+			Directory: "/dir",
+			TsNs:      tsNs,
+			EventNotification: &filer_pb.EventNotification{
+				OldEntry: &filer_pb.Entry{Name: name},
+			},
+		}
+	}
+
+	apply(createEvent("a", 900))
+	apply(deleteEvent("a", 1000))
+	apply(createEvent("b", 3900))
+	apply(deleteEvent("b", 4000))
+
+	if err := mc.BeginDirectoryBuild(context.Background(), util.FullPath("/dir")); err != nil {
+		t.Fatalf("begin build: %v", err)
+	}
+	if err := mc.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 3000); err != nil {
+		t.Fatalf("complete build: %v", err)
+	}
+
+	if tsNs, _ := mc.getEntryVersionRecordLocked(context.Background(), util.FullPath("/dir/a")); tsNs != 0 {
+		t.Fatalf("tombstone at 1000 should be pruned by the floor at 3000, got %d", tsNs)
+	}
+	if tsNs, tombstone := mc.getEntryVersionRecordLocked(context.Background(), util.FullPath("/dir/b")); tsNs != 4000 || !tombstone {
+		t.Fatalf("tombstone at 4000 must survive the floor at 3000, got (%d, %v)", tsNs, tombstone)
+	}
+	mc.WaitForEntryInvalidations()
+}
