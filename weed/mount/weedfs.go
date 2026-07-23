@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"bytes"
 	"context"
 	"math/rand/v2"
 	"os"
@@ -759,29 +760,27 @@ func sameClockDomain(fenceSignature int32, eventSignatures []int32) bool {
 	return false
 }
 
-// sameEntryContent reports entry equality ignoring only server-assigned
-// timestamps, which a copy's own event refreshes. A foreign metadata-only
-// change (chmod/chown/setxattr) then differs and is not adopted as the copy.
+// sameEntryContent reports whether two entries carry the same file content:
+// size, inline bytes, and chunk list. Attributes are deliberately excluded —
+// its caller decides whether the dirty-page overlay is still valid, and a
+// metadata change (chmod, chown, touch, xattr) does not invalidate it.
 func sameEntryContent(a, b *filer_pb.Entry) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	return proto.Equal(entryWithoutVolatileTimes(a), entryWithoutVolatileTimes(b))
-}
-
-func entryWithoutVolatileTimes(e *filer_pb.Entry) *filer_pb.Entry {
-	c := proto.Clone(e).(*filer_pb.Entry)
-	if c.Attributes != nil {
-		c.Attributes.FileSize = filer.FileSize(e)
-		c.Attributes.Mtime, c.Attributes.MtimeNs = 0, 0
-		c.Attributes.Ctime, c.Attributes.CtimeNs = 0, 0
-		c.Attributes.Crtime, c.Attributes.CrtimeNs = 0, 0
-		c.Attributes.Atime, c.Attributes.AtimeNs = 0, 0
+	if filer.FileSize(a) != filer.FileSize(b) || !bytes.Equal(a.Content, b.Content) {
+		return false
 	}
-	for _, ch := range c.Chunks {
-		ch.ModifiedTsNs = 0
+	if len(a.Chunks) != len(b.Chunks) {
+		return false
 	}
-	return c
+	for i := range a.Chunks {
+		if a.Chunks[i].GetFileIdString() != b.Chunks[i].GetFileIdString() ||
+			a.Chunks[i].Offset != b.Chunks[i].Offset || a.Chunks[i].Size != b.Chunks[i].Size {
+			return false
+		}
+	}
+	return true
 }
 
 // invalidateOpenFileHandle refreshes an open file handle from a metadata
@@ -840,7 +839,15 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 		// so no flush recreates the unlinked name. Either way the entry and
 		// dirty pages stay, so the open fd still reads its buffered writes.
 		if invalidation.RenamedTo != "" {
-			wfs.inodeToPath.MovePath(filePath, invalidation.RenamedTo)
+			_, replacedInode := wfs.inodeToPath.MovePath(filePath, invalidation.RenamedTo)
+			// A rename over an existing file destroys that file. Mark its
+			// handle deleted so its flush cannot resurrect it on top of the
+			// renamed source now occupying the name.
+			if replacedInode != 0 && replacedInode != inode {
+				if replacedFh, found := wfs.fhMap.FindFileHandle(replacedInode); found {
+					replacedFh.isDeleted = true
+				}
+			}
 			fh.RememberPath(invalidation.RenamedTo)
 			if _, newName := invalidation.RenamedTo.DirAndName(); newName != "" {
 				fh.UpdateEntry(func(entry *filer_pb.Entry) {

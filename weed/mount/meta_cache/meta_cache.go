@@ -157,12 +157,21 @@ func (mc *MetaCache) doInsertEntry(ctx context.Context, entry *filer.Entry) erro
 	if err := mc.localStore.InsertEntry(ctx, entry); err != nil {
 		return err
 	}
-	mc.clearEntryVersionLocked(ctx, entry.FullPath)
+	mc.markEntryUnversionedLocked(ctx, entry.FullPath)
 	return nil
 }
 
 // doBatchInsertEntries inserts multiple entries using LevelDB's batch write.
 // This is more efficient than inserting entries one by one.
+// InsertListedEntriesForTest inserts entries the way a directory build does —
+// without marking them unversioned, since a listing covers them at its
+// snapshot. Tests use it to model a build; production goes through the build.
+func (mc *MetaCache) InsertListedEntriesForTest(ctx context.Context, entries []*filer.Entry) error {
+	mc.Lock()
+	defer mc.Unlock()
+	return mc.doBatchInsertEntries(ctx, entries)
+}
+
 func (mc *MetaCache) doBatchInsertEntries(ctx context.Context, entries []*filer.Entry) error {
 	return mc.leveldbStore.BatchInsertEntries(ctx, entries)
 }
@@ -341,7 +350,7 @@ func (mc *MetaCache) UpdateEntry(ctx context.Context, entry *filer.Entry) error 
 	if err := mc.localStore.UpdateEntry(ctx, entry); err != nil {
 		return err
 	}
-	mc.clearEntryVersionLocked(ctx, entry.FullPath)
+	mc.markEntryUnversionedLocked(ctx, entry.FullPath)
 	return nil
 }
 
@@ -364,7 +373,7 @@ func (mc *MetaCache) TouchDirMtimeCtime(ctx context.Context, dirPath util.FullPa
 	if err := mc.localStore.UpdateEntry(ctx, entry); err != nil {
 		return err
 	}
-	mc.clearEntryVersionLocked(ctx, dirPath)
+	mc.markEntryUnversionedLocked(ctx, dirPath)
 	return nil
 }
 
@@ -399,13 +408,22 @@ func (mc *MetaCache) FindEntryWithVersion(ctx context.Context, fp util.FullPath)
 		return nil, 0, filer_pb.ErrNotFound
 	}
 	mc.mapIdFromFilerToLocal(entry)
-	versionTsNs = mc.entryVersionFloorLocked(fp, mc.getEntryVersionLocked(ctx, fp))
+	recordTsNs, _, unversioned := mc.entryVersionRecordLocked(ctx, fp)
+	if unversioned {
+		return entry, 0, nil
+	}
+	versionTsNs = mc.entryVersionFloorLocked(fp, recordTsNs)
 	return
 }
 
 // entryVersionKeyPrefix namespaces per-entry version records apart from entry
 // keys. Keys encode parent-NUL-name, so a directory's direct children form one
 // contiguous range: pruning scans exactly them, never a subtree.
+const (
+	entryVersionTombstone   = 1 // the path was deleted at the recorded position
+	entryVersionUnversioned = 2 // local content no log position describes
+)
+
 const entryVersionKeyPrefix = "\x00mount.entry.ver\x00"
 
 func entryVersionKey(fp util.FullPath) []byte {
@@ -422,13 +440,26 @@ func entryVersionChildPrefix(dirPath util.FullPath) []byte {
 // proven at the old position.
 func (mc *MetaCache) setEntryVersionLocked(ctx context.Context, fp util.FullPath, tsNs int64) {
 	if tsNs == 0 {
-		mc.clearEntryVersionLocked(ctx, fp)
+		mc.markEntryUnversionedLocked(ctx, fp)
 		return
 	}
 	value := make([]byte, 8)
 	util.Uint64toBytes(value, uint64(tsNs))
 	if err := mc.localStore.KvPut(ctx, entryVersionKey(fp), value); err != nil {
 		glog.V(1).Infof("set entry version %s: %v", fp, err)
+	}
+}
+
+// markEntryUnversionedLocked records that a local write replaced an entry's
+// content with state no log position describes. Distinct from having no
+// record at all: a path with no record is one the directory listing covered,
+// so the listing snapshot is its version, while this content is not covered
+// by anything and must not inherit that floor.
+func (mc *MetaCache) markEntryUnversionedLocked(ctx context.Context, fp util.FullPath) {
+	value := make([]byte, 9)
+	value[8] = entryVersionUnversioned
+	if err := mc.localStore.KvPut(ctx, entryVersionKey(fp), value); err != nil {
+		glog.V(1).Infof("mark entry unversioned %s: %v", fp, err)
 	}
 }
 
@@ -443,7 +474,7 @@ func (mc *MetaCache) setEntryVersionLocked(ctx context.Context, fp util.FullPath
 func (mc *MetaCache) setEntryTombstoneLocked(ctx context.Context, fp util.FullPath, tsNs int64) {
 	value := make([]byte, 9)
 	util.Uint64toBytes(value, uint64(tsNs))
-	value[8] = 1
+	value[8] = entryVersionTombstone
 	if err := mc.localStore.KvPut(ctx, entryVersionKey(fp), value); err != nil {
 		glog.V(1).Infof("set entry tombstone %s: %v", fp, err)
 	}
@@ -461,11 +492,20 @@ func (mc *MetaCache) getEntryVersionLocked(ctx context.Context, fp util.FullPath
 }
 
 func (mc *MetaCache) getEntryVersionRecordLocked(ctx context.Context, fp util.FullPath) (tsNs int64, tombstone bool) {
+	tsNs, tombstone, _ = mc.entryVersionRecordLocked(ctx, fp)
+	return
+}
+
+func (mc *MetaCache) entryVersionRecordLocked(ctx context.Context, fp util.FullPath) (tsNs int64, tombstone, unversioned bool) {
 	value, err := mc.localStore.KvGet(ctx, entryVersionKey(fp))
 	if err != nil || len(value) < 8 {
-		return 0, false
+		return 0, false, false
 	}
-	return int64(util.BytesToUint64(value[:8])), len(value) == 9 && value[8] == 1
+	if len(value) == 9 {
+		tombstone = value[8] == entryVersionTombstone
+		unversioned = value[8] == entryVersionUnversioned
+	}
+	return int64(util.BytesToUint64(value[:8])), tombstone, unversioned
 }
 
 // entryVersionBlocksLocked reports whether a write at tsNs is already
@@ -475,9 +515,14 @@ func (mc *MetaCache) getEntryVersionRecordLocked(ctx context.Context, fp util.Fu
 // A plain record only counts while its entry exists: records linger after a
 // bulk folder wipe and must not fence a recreate.
 func (mc *MetaCache) entryVersionBlocksLocked(ctx context.Context, fp util.FullPath, tsNs int64) bool {
-	recordTsNs, tombstone := mc.getEntryVersionRecordLocked(ctx, fp)
+	recordTsNs, tombstone, unversioned := mc.entryVersionRecordLocked(ctx, fp)
 	if tombstone {
 		return recordTsNs >= tsNs
+	}
+	if unversioned {
+		// Local content no log position describes: fence nothing, so any
+		// event can correct it.
+		return false
 	}
 	if !mc.entryExistsLocked(ctx, fp) {
 		recordTsNs = 0
@@ -517,7 +562,7 @@ func isTtlExpired(entry *filer.Entry) bool {
 func (mc *MetaCache) pruneSupersededTombstonesLocked(ctx context.Context, dirPath util.FullPath, snapshotTsNs int64) {
 	var superseded [][]byte
 	if err := mc.leveldbStore.VisitKvPrefix(ctx, entryVersionChildPrefix(dirPath), func(key, value []byte) error {
-		if len(value) != 9 || value[8] != 1 {
+		if len(value) != 9 || value[8] != entryVersionTombstone {
 			return nil
 		}
 		if int64(util.BytesToUint64(value[:8])) <= snapshotTsNs {

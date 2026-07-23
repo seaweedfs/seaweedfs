@@ -322,8 +322,9 @@ func TestBufferedBuildEventReinvalidatesOnCompletion(t *testing.T) {
 		t.Fatalf("open handle file size mid-build = %d, want 100 (event state)", size)
 	}
 
-	// The listing then inserts the newer entry the snapshot already covers.
-	if err := wfs.metaCache.InsertEntry(context.Background(), &filer.Entry{
+	// The listing then inserts the newer entry the snapshot already covers,
+	// through the same batch path a real build uses.
+	if err := wfs.metaCache.InsertListedEntriesForTest(context.Background(), []*filer.Entry{{
 		FullPath: "/dir/file",
 		Attr: filer.Attr{
 			Crtime:   time.Unix(1, 0),
@@ -331,7 +332,7 @@ func TestBufferedBuildEventReinvalidatesOnCompletion(t *testing.T) {
 			Mode:     0100644,
 			FileSize: 300,
 		},
-	}); err != nil {
+	}}); err != nil {
 		t.Fatalf("insert listing entry: %v", err)
 	}
 
@@ -834,7 +835,7 @@ func TestFloorProtectsSnapshotStateFromDelayedEvents(t *testing.T) {
 	if err := wfs.metaCache.BeginDirectoryBuild(context.Background(), util.FullPath("/dir")); err != nil {
 		t.Fatalf("begin build: %v", err)
 	}
-	if err := wfs.metaCache.InsertEntry(context.Background(), &filer.Entry{
+	if err := wfs.metaCache.InsertListedEntriesForTest(context.Background(), []*filer.Entry{{
 		FullPath: "/dir/file",
 		Attr: filer.Attr{
 			Crtime:   time.Unix(1, 0),
@@ -842,7 +843,7 @@ func TestFloorProtectsSnapshotStateFromDelayedEvents(t *testing.T) {
 			Mode:     0100644,
 			FileSize: 300,
 		},
-	}); err != nil {
+	}}); err != nil {
 		t.Fatalf("insert listing entry: %v", err)
 	}
 	if err := wfs.metaCache.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 2000); err != nil {
@@ -1971,5 +1972,106 @@ func TestRemoteOnlyHandleRefusesKnownOlderDownload(t *testing.T) {
 
 	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
 		t.Fatalf("handle file size = %d, want 200 (a known-older response must be refused even when remote-only)", size)
+	}
+}
+
+// A metadata-only foreign change (chmod) must not invalidate the dirty-page
+// overlay: pages overlay content, and the content did not change.
+func TestForeignChmodPreservesDirtyPages(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 200, FileMode: 0100644},
+	})
+	fh.dirtyMetadata = true
+	pagesBefore := fh.dirtyPages
+
+	chmod := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		TsNs:      1500,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      &filer_pb.Entry{Name: "file"},
+			NewEntry:      &filer_pb.Entry{Name: "file", Attributes: &filer_pb.FuseAttributes{FileSize: 200, FileMode: 0100600}},
+			NewParentPath: "/dir",
+		},
+	}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), chmod, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply chmod: %v", err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if fh.dirtyPages != pagesBefore {
+		t.Fatal("dirty pages destroyed by a metadata-only change")
+	}
+}
+
+// A rename over an existing file destroys that file; its open handle must be
+// marked deleted so a later flush cannot resurrect it over the renamed source.
+func TestRenameOverExistingMarksReplacedHandleDeleted(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+
+	srcInode := wfs.inodeToPath.Lookup(util.FullPath("/dir/src"), time.Now().Unix(), false, false, 0, false)
+	srcFh := wfs.fhMap.AcquireFileHandle(wfs, srcInode, &filer_pb.Entry{
+		Name:       "src",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 100},
+	})
+	dstInode := wfs.inodeToPath.Lookup(util.FullPath("/dir/dst"), time.Now().Unix(), false, false, 0, false)
+	dstFh := wfs.fhMap.AcquireFileHandle(wfs, dstInode, &filer_pb.Entry{
+		Name:       "dst",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 900},
+	})
+	dstFh.dirtyMetadata = true
+
+	rename := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		TsNs:      1500,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      &filer_pb.Entry{Name: "src"},
+			NewEntry:      &filer_pb.Entry{Name: "dst", Attributes: &filer_pb.FuseAttributes{FileSize: 100}},
+			NewParentPath: "/dir",
+		},
+	}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), rename, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply rename: %v", err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if !dstFh.isDeleted {
+		t.Fatal("replaced destination handle not marked deleted; its flush could resurrect it over the renamed source")
+	}
+	if srcFh.isDeleted {
+		t.Fatal("renamed source handle must stay live")
+	}
+}
+
+// An acknowledgment from one filer must not be dropped behind a fence another
+// filer stamped: their positions are not comparable, and dropping it leaves
+// the handle holding exactly the state the mutation replaced.
+func TestAckFromAnotherFilerIsNotDroppedBehindForeignFence(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 88},
+	})
+	// Filer A's fence at 5000.
+	fh.advanceEntryVersion(5000, 11)
+
+	// Filer B acknowledges our mutation at 1000 on its own clock.
+	acked := &filer_pb.Entry{Name: "file", Attributes: &filer_pb.FuseAttributes{FileSize: 200}}
+	fh.installAckedEntry(acked, 1000, 22)
+
+	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
+		t.Fatalf("handle file size = %d, want 200 (a cross-filer ack must not be dropped behind a foreign fence)", size)
+	}
+
+	// The same filer's own older ack is still refused.
+	older := &filer_pb.Entry{Name: "file", Attributes: &filer_pb.FuseAttributes{FileSize: 300}}
+	fh.installAckedEntry(older, 500, fh.entryVersionSignature.Load())
+	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size == 300 {
+		t.Fatal("an older ack from the fencing filer was installed; within one clock domain it must be refused")
 	}
 }

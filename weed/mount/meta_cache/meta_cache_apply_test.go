@@ -875,3 +875,57 @@ func TestExpiredEntryIsJudgedByDirectoryFloor(t *testing.T) {
 		t.Fatal("event at 4000 fenced by an expired entry's stale record at 5000; the floor at 3000 should govern")
 	}
 }
+
+// An unversioned local write leaves content no log position describes, so it
+// must not inherit the directory's listing floor — that would fence the very
+// events needed to correct it.
+func TestUnversionedWriteDoesNotInheritDirectoryFloor(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+		"/":    true,
+		"/dir": true,
+	})
+	defer mc.Shutdown()
+
+	if err := mc.BeginDirectoryBuild(context.Background(), util.FullPath("/dir")); err != nil {
+		t.Fatalf("begin build: %v", err)
+	}
+	if err := mc.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 2000); err != nil {
+		t.Fatalf("complete build: %v", err)
+	}
+
+	// A local write with no log position behind it.
+	if err := mc.InsertEntry(context.Background(), &filer.Entry{
+		FullPath: "/dir/file",
+		Attr: filer.Attr{
+			Crtime:   time.Unix(1, 0),
+			Mtime:    time.Unix(1, 0),
+			Mode:     0100644,
+			FileSize: 7,
+		},
+	}); err != nil {
+		t.Fatalf("local insert: %v", err)
+	}
+
+	if _, versionTsNs, err := mc.FindEntryWithVersion(context.Background(), util.FullPath("/dir/file")); err != nil || versionTsNs != 0 {
+		t.Fatalf("version = %d, %v; want 0 (unversioned content must not inherit the floor at 2000)", versionTsNs, err)
+	}
+
+	// And an event below the floor can still correct it.
+	correcting := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		TsNs:      1500,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      &filer_pb.Entry{Name: "file"},
+			NewEntry:      &filer_pb.Entry{Name: "file", Attributes: &filer_pb.FuseAttributes{FileSize: 42, FileMode: 0100644}},
+			NewParentPath: "/dir",
+		},
+	}
+	if err := mc.ApplyMetadataResponse(context.Background(), correcting, SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply correcting event: %v", err)
+	}
+	entry, err := mc.FindEntry(context.Background(), util.FullPath("/dir/file"))
+	if err != nil || entry.FileSize != 42 {
+		t.Fatalf("entry = %+v, %v; want size 42 (the floor must not fence a correction of unversioned content)", entry, err)
+	}
+	mc.WaitForEntryInvalidations()
+}

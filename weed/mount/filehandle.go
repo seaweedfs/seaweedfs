@@ -150,8 +150,17 @@ func (fh *FileHandle) SetEntry(entry *filer_pb.Entry) {
 func (fh *FileHandle) installAckedEntry(entry *filer_pb.Entry, versionTsNs int64, signature int32) {
 	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("installAckedEntry", fh.fh, util.ExclusiveLock)
 	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
-	if versionTsNs == 0 || versionTsNs <= fh.entryVersionTsNs.Load() ||
-		fh.dirtyMetadata || entry == fh.GetEntry().GetEntry() {
+	if versionTsNs == 0 || fh.dirtyMetadata || entry == fh.GetEntry().GetEntry() {
+		return
+	}
+	// Refuse only what is provably older. Two known, differing filer
+	// signatures mean the positions come from unrelated clocks and say
+	// nothing about each other; dropping the acknowledgment there would leave
+	// the handle holding the very state this mutation replaced. Unknown
+	// signatures still compare, as they did before.
+	handleSignature := fh.entryVersionSignature.Load()
+	provablyOtherClock := signature != 0 && handleSignature != 0 && signature != handleSignature
+	if !provablyOtherClock && versionTsNs <= fh.entryVersionTsNs.Load() {
 		return
 	}
 	fh.SetEntry(entry)
