@@ -136,6 +136,7 @@ The telemetry server exposes these Prometheus metrics:
 ### Cluster Metrics
 - `seaweedfs_telemetry_total_clusters`: Total unique clusters (30 days)
 - `seaweedfs_telemetry_active_clusters`: Active clusters (7 days)
+- `seaweedfs_telemetry_confirmed_clusters`: Active clusters seen on 2+ distinct days — one-shot reports don't count, and the version/OS distributions in `/api/stats` are computed over these
 
 ### Per-Cluster Metrics
 - `seaweedfs_telemetry_volume_servers{cluster_id}`: Volume servers per cluster

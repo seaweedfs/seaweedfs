@@ -6,6 +6,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/telemetry/proto"
 )
 
+// confirmDays is how many distinct UTC days a cluster must have reported
+// on before it counts as confirmed in the aggregated stats.
+const confirmDays = 2
+
 // HistorySample is one retained data point of a cluster's daily reports.
 // Tags are kept short because thousands of samples end up in the state file.
 type HistorySample struct {
