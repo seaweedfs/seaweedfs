@@ -517,7 +517,7 @@ func SourceSupersedes(ctx context.Context, filerSource *source.FilerSource, sour
 	if filerSource == nil {
 		return false
 	}
-	sourceEntry, err := filer_pb.GetEntry(ctx, filerSource, sourcePath)
+	sourceEntry, _, _, err := filer_pb.GetEntry(ctx, filerSource, sourcePath)
 	return sourceSupersedes(sourcePath, sourceEntry, err, mtimeNs)
 }
 

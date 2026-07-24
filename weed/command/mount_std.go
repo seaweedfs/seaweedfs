@@ -68,7 +68,7 @@ func ensureBucketAllowEmptyFolders(ctx context.Context, filerClient filer_pb.Fil
 		return nil
 	}
 
-	entry, err := filer_pb.GetEntry(ctx, filerClient, util.FullPath(bucketPath))
+	entry, _, _, err := filer_pb.GetEntry(ctx, filerClient, util.FullPath(bucketPath))
 	if err != nil {
 		return err
 	}

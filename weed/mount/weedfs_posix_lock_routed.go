@@ -95,7 +95,7 @@ func (wfs *WFS) posixLockKeyForInode(inode uint64) (string, bool) {
 	if status != fuse.OK {
 		return "", false
 	}
-	if entry, st := wfs.maybeLoadEntry(path); st == fuse.OK && entry != nil && len(entry.HardLinkId) > 0 {
+	if entry, _, st := wfs.maybeLoadEntry(path); st == fuse.OK && entry != nil && len(entry.HardLinkId) > 0 {
 		return posixLockKeyPrefix + "hl:" + hex.EncodeToString(entry.HardLinkId), true
 	}
 	return posixLockKeyPrefix + string(path), true

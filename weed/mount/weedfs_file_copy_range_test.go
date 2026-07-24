@@ -21,7 +21,7 @@ func TestWholeFileServerCopyCandidate(t *testing.T) {
 	srcInode := wfs.inodeToPath.Lookup(srcPath, 1, false, false, 0, true)
 	dstInode := wfs.inodeToPath.Lookup(dstPath, 1, false, false, 0, true)
 
-	srcHandle := wfs.fhMap.AcquireFileHandle(wfs, srcInode, &filer_pb.Entry{
+	srcHandle, _ := wfs.fhMap.AcquireFileHandle(wfs, srcInode, &filer_pb.Entry{
 		Name: "src.txt",
 		Attributes: &filer_pb.FuseAttributes{
 			FileMode: 0100644,
@@ -29,14 +29,14 @@ func TestWholeFileServerCopyCandidate(t *testing.T) {
 			Inode:    srcInode,
 		},
 		Content: []byte("hello"),
-	})
-	dstHandle := wfs.fhMap.AcquireFileHandle(wfs, dstInode, &filer_pb.Entry{
+	}, 0, 0)
+	dstHandle, _ := wfs.fhMap.AcquireFileHandle(wfs, dstInode, &filer_pb.Entry{
 		Name: "dst.txt",
 		Attributes: &filer_pb.FuseAttributes{
 			FileMode: 0100644,
 			Inode:    dstInode,
 		},
-	})
+	}, 0, 0)
 
 	srcHandle.RememberPath(srcPath)
 	dstHandle.RememberPath(dstPath)
@@ -86,7 +86,7 @@ func TestCopyFileRangeUsesServerSideWholeFileCopy(t *testing.T) {
 	srcInode := wfs.inodeToPath.Lookup(srcPath, 1, false, false, 0, true)
 	dstInode := wfs.inodeToPath.Lookup(dstPath, 1, false, false, 0, true)
 
-	srcHandle := wfs.fhMap.AcquireFileHandle(wfs, srcInode, &filer_pb.Entry{
+	srcHandle, _ := wfs.fhMap.AcquireFileHandle(wfs, srcInode, &filer_pb.Entry{
 		Name: "src.txt",
 		Attributes: &filer_pb.FuseAttributes{
 			FileMode: 0100644,
@@ -94,14 +94,14 @@ func TestCopyFileRangeUsesServerSideWholeFileCopy(t *testing.T) {
 			Inode:    srcInode,
 		},
 		Content: []byte("hello"),
-	})
-	dstHandle := wfs.fhMap.AcquireFileHandle(wfs, dstInode, &filer_pb.Entry{
+	}, 0, 0)
+	dstHandle, _ := wfs.fhMap.AcquireFileHandle(wfs, dstInode, &filer_pb.Entry{
 		Name: "dst.txt",
 		Attributes: &filer_pb.FuseAttributes{
 			FileMode: 0100644,
 			Inode:    dstInode,
 		},
-	})
+	}, 0, 0)
 
 	srcHandle.RememberPath(srcPath)
 	dstHandle.RememberPath(dstPath)
@@ -112,7 +112,7 @@ func TestCopyFileRangeUsesServerSideWholeFileCopy(t *testing.T) {
 	}()
 
 	var called bool
-	performServerSideWholeFileCopy = func(cancel <-chan struct{}, gotWFS *WFS, copyRequest wholeFileServerCopyRequest) (*filer_pb.Entry, serverSideWholeFileCopyOutcome, error) {
+	performServerSideWholeFileCopy = func(cancel <-chan struct{}, gotWFS *WFS, copyRequest wholeFileServerCopyRequest) (*filer_pb.Entry, entryVersion, serverSideWholeFileCopyOutcome, error) {
 		called = true
 		if gotWFS != wfs {
 			t.Fatalf("wfs = %p, want %p", gotWFS, wfs)
@@ -131,7 +131,7 @@ func TestCopyFileRangeUsesServerSideWholeFileCopy(t *testing.T) {
 				Mime:     "text/plain; charset=utf-8",
 			},
 			Content: []byte("hello"),
-		}, serverSideWholeFileCopyCommitted, nil
+		}, entryVersion{tsNs: 2000}, serverSideWholeFileCopyCommitted, nil
 	}
 
 	written, status := wfs.CopyFileRange(make(chan struct{}), &fuse.CopyFileRangeIn{
@@ -171,7 +171,7 @@ func TestCopyFileRangeDoesNotFallbackAfterCommittedServerCopyRefreshFailure(t *t
 	srcInode := wfs.inodeToPath.Lookup(srcPath, 1, false, false, 0, true)
 	dstInode := wfs.inodeToPath.Lookup(dstPath, 1, false, false, 0, true)
 
-	srcHandle := wfs.fhMap.AcquireFileHandle(wfs, srcInode, &filer_pb.Entry{
+	srcHandle, _ := wfs.fhMap.AcquireFileHandle(wfs, srcInode, &filer_pb.Entry{
 		Name: "src.txt",
 		Attributes: &filer_pb.FuseAttributes{
 			FileMode: 0100644,
@@ -181,14 +181,14 @@ func TestCopyFileRangeDoesNotFallbackAfterCommittedServerCopyRefreshFailure(t *t
 			Inode:    srcInode,
 		},
 		Content: []byte("hello"),
-	})
-	dstHandle := wfs.fhMap.AcquireFileHandle(wfs, dstInode, &filer_pb.Entry{
+	}, 0, 0)
+	dstHandle, _ := wfs.fhMap.AcquireFileHandle(wfs, dstInode, &filer_pb.Entry{
 		Name: "dst.txt",
 		Attributes: &filer_pb.FuseAttributes{
 			FileMode: 0100600,
 			Inode:    dstInode,
 		},
-	})
+	}, 0, 0)
 
 	srcHandle.RememberPath(srcPath)
 	dstHandle.RememberPath(dstPath)
@@ -198,11 +198,11 @@ func TestCopyFileRangeDoesNotFallbackAfterCommittedServerCopyRefreshFailure(t *t
 		performServerSideWholeFileCopy = originalCopy
 	}()
 
-	performServerSideWholeFileCopy = func(cancel <-chan struct{}, gotWFS *WFS, copyRequest wholeFileServerCopyRequest) (*filer_pb.Entry, serverSideWholeFileCopyOutcome, error) {
+	performServerSideWholeFileCopy = func(cancel <-chan struct{}, gotWFS *WFS, copyRequest wholeFileServerCopyRequest) (*filer_pb.Entry, entryVersion, serverSideWholeFileCopyOutcome, error) {
 		if gotWFS != wfs || copyRequest.srcPath != srcPath || copyRequest.dstPath != dstPath {
 			t.Fatalf("unexpected server-side copy call: wfs=%p src=%q dst=%q", gotWFS, copyRequest.srcPath, copyRequest.dstPath)
 		}
-		return nil, serverSideWholeFileCopyCommitted, errors.New("reload copied entry: transient filer read failure")
+		return nil, entryVersion{}, serverSideWholeFileCopyCommitted, errors.New("reload copied entry: transient filer read failure")
 	}
 
 	written, status := wfs.CopyFileRange(make(chan struct{}), &fuse.CopyFileRangeIn{
@@ -233,7 +233,7 @@ func TestCopyFileRangeDoesNotFallbackAfterCommittedServerCopyRefreshFailure(t *t
 		t.Fatalf("destination content = %q, want %q", string(gotEntry.GetContent()), "hello")
 	}
 
-	cachedEntry, err := wfs.metaCache.FindEntry(context.Background(), dstPath)
+	cachedEntry, _, err := wfs.metaCache.FindEntry(context.Background(), dstPath)
 	if err != nil {
 		t.Fatalf("metaCache find entry: %v", err)
 	}
@@ -253,7 +253,7 @@ func TestCopyFileRangeReturnsEIOForAmbiguousServerSideCopy(t *testing.T) {
 	srcInode := wfs.inodeToPath.Lookup(srcPath, 1, false, false, 0, true)
 	dstInode := wfs.inodeToPath.Lookup(dstPath, 1, false, false, 0, true)
 
-	srcHandle := wfs.fhMap.AcquireFileHandle(wfs, srcInode, &filer_pb.Entry{
+	srcHandle, _ := wfs.fhMap.AcquireFileHandle(wfs, srcInode, &filer_pb.Entry{
 		Name: "src.txt",
 		Attributes: &filer_pb.FuseAttributes{
 			FileMode: 0100644,
@@ -261,14 +261,14 @@ func TestCopyFileRangeReturnsEIOForAmbiguousServerSideCopy(t *testing.T) {
 			Inode:    srcInode,
 		},
 		Content: []byte("hello"),
-	})
-	dstHandle := wfs.fhMap.AcquireFileHandle(wfs, dstInode, &filer_pb.Entry{
+	}, 0, 0)
+	dstHandle, _ := wfs.fhMap.AcquireFileHandle(wfs, dstInode, &filer_pb.Entry{
 		Name: "dst.txt",
 		Attributes: &filer_pb.FuseAttributes{
 			FileMode: 0100600,
 			Inode:    dstInode,
 		},
-	})
+	}, 0, 0)
 
 	srcHandle.RememberPath(srcPath)
 	dstHandle.RememberPath(dstPath)
@@ -278,11 +278,11 @@ func TestCopyFileRangeReturnsEIOForAmbiguousServerSideCopy(t *testing.T) {
 		performServerSideWholeFileCopy = originalCopy
 	}()
 
-	performServerSideWholeFileCopy = func(cancel <-chan struct{}, gotWFS *WFS, copyRequest wholeFileServerCopyRequest) (*filer_pb.Entry, serverSideWholeFileCopyOutcome, error) {
+	performServerSideWholeFileCopy = func(cancel <-chan struct{}, gotWFS *WFS, copyRequest wholeFileServerCopyRequest) (*filer_pb.Entry, entryVersion, serverSideWholeFileCopyOutcome, error) {
 		if gotWFS != wfs || copyRequest.srcPath != srcPath || copyRequest.dstPath != dstPath {
 			t.Fatalf("unexpected server-side copy call: wfs=%p src=%q dst=%q", gotWFS, copyRequest.srcPath, copyRequest.dstPath)
 		}
-		return nil, serverSideWholeFileCopyAmbiguous, errors.New("transport timeout after request dispatch")
+		return nil, entryVersion{}, serverSideWholeFileCopyAmbiguous, errors.New("transport timeout after request dispatch")
 	}
 
 	written, status := wfs.CopyFileRange(make(chan struct{}), &fuse.CopyFileRangeIn{
@@ -346,7 +346,7 @@ func newCopyRangeTestWFSWithMetaCache(t *testing.T) *WFS {
 		func(path util.FullPath) bool {
 			return wfs.inodeToPath.IsChildrenCached(path)
 		},
-		func(util.FullPath, *filer_pb.Entry) {},
+		func(meta_cache.EntryInvalidation) {},
 		nil,
 	)
 	t.Cleanup(func() {

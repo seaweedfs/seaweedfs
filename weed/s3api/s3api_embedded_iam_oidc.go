@@ -14,15 +14,15 @@ import (
 
 // OIDC provider IAM actions handled by this file.
 const (
-	actionGetOpenIDConnectProvider                  = "GetOpenIDConnectProvider"
-	actionListOpenIDConnectProviders                = "ListOpenIDConnectProviders"
-	actionCreateOpenIDConnectProvider               = "CreateOpenIDConnectProvider"
-	actionDeleteOpenIDConnectProvider               = "DeleteOpenIDConnectProvider"
-	actionAddClientIDToOpenIDConnectProvider        = "AddClientIDToOpenIDConnectProvider"
-	actionRemoveClientIDFromOpenIDConnectProvider   = "RemoveClientIDFromOpenIDConnectProvider"
-	actionUpdateOpenIDConnectProviderThumbprint     = "UpdateOpenIDConnectProviderThumbprint"
-	actionTagOpenIDConnectProvider                  = "TagOpenIDConnectProvider"
-	actionUntagOpenIDConnectProvider                = "UntagOpenIDConnectProvider"
+	actionGetOpenIDConnectProvider                = "GetOpenIDConnectProvider"
+	actionListOpenIDConnectProviders              = "ListOpenIDConnectProviders"
+	actionCreateOpenIDConnectProvider             = "CreateOpenIDConnectProvider"
+	actionDeleteOpenIDConnectProvider             = "DeleteOpenIDConnectProvider"
+	actionAddClientIDToOpenIDConnectProvider      = "AddClientIDToOpenIDConnectProvider"
+	actionRemoveClientIDFromOpenIDConnectProvider = "RemoveClientIDFromOpenIDConnectProvider"
+	actionUpdateOpenIDConnectProviderThumbprint   = "UpdateOpenIDConnectProviderThumbprint"
+	actionTagOpenIDConnectProvider                = "TagOpenIDConnectProvider"
+	actionUntagOpenIDConnectProvider              = "UntagOpenIDConnectProvider"
 )
 
 // isOIDCProviderAction reports whether an action belongs to the OIDC provider

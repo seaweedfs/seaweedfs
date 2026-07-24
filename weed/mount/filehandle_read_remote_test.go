@@ -93,7 +93,8 @@ func TestReadUncachedRemoteEntryDoesNotDeadlock(t *testing.T) {
 		func(path util.FullPath) { wfs.inodeToPath.MarkChildrenCached(path) },
 		func(path util.FullPath) bool { return wfs.inodeToPath.IsChildrenCached(path) },
 		// Mirror weedfs.go's invalidateFunc: take the file handle exclusive lock.
-		func(path util.FullPath, _ *filer_pb.Entry) {
+		func(inv meta_cache.EntryInvalidation) {
+			path := inv.Path
 			inode, ok := wfs.inodeToPath.GetInode(path)
 			if !ok {
 				return
@@ -117,11 +118,11 @@ func TestReadUncachedRemoteEntryDoesNotDeadlock(t *testing.T) {
 	t.Cleanup(func() { wfs.metaCache.Shutdown() })
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:        "file",
 		Attributes:  &filer_pb.FuseAttributes{FileSize: uint64(len(testServer.content))},
 		RemoteEntry: &filer_pb.RemoteEntry{RemoteSize: int64(len(testServer.content))},
-	})
+	}, 0, 0)
 
 	buff := make([]byte, len(testServer.content))
 	done := make(chan fuse.Status, 1)

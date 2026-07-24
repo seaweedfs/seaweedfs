@@ -14,11 +14,11 @@ import (
 // HRW-assigned owner mounts for each cached fid this mount holds.
 //
 // Shape:
-//   * EnqueueAnnounce(fid) is a non-blocking push into an in-memory set.
-//   * A background ticker flushes every announceInterval. Each flush
+//   - EnqueueAnnounce(fid) is a non-blocking push into an in-memory set.
+//   - A background ticker flushes every announceInterval. Each flush
 //     drains the set, adds fids due for TTL renewal, groups by owner
 //     mount via HRW, and sends one ChunkAnnounce RPC per distinct owner.
-//   * A successful send records announced_at[fid]. A rejected (not-owner)
+//   - A successful send records announced_at[fid]. A rejected (not-owner)
 //     fid is requeued so it will be retried after the seed view refreshes.
 //
 // See design-weed-mount-peer-chunk-sharing.md §4.4.
@@ -28,7 +28,7 @@ type PeerAnnouncer struct {
 	selfRack         string
 	ownerFor         func(fid string) string
 	dialPeer         MountPeerDialer
-	localDir         *PeerDirectory       // populated directly for fids whose HRW owner == self
+	localDir         *PeerDirectory        // populated directly for fids whose HRW owner == self
 	isCached         func(fid string) bool // residency check; set nil to disable
 	announceInterval time.Duration
 	announceTTL      time.Duration

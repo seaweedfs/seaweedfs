@@ -27,7 +27,7 @@ func (wfs *WFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	fullFilePath := dirPath.Child(name)
 
 	// Use shared lookup logic that checks cache first, then filer if needed
-	localEntry, status := wfs.lookupEntry(fullFilePath)
+	localEntry, _, status := wfs.lookupEntry(fullFilePath)
 	if status != fuse.OK {
 		return status
 	}

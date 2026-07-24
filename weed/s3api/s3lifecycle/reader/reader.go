@@ -64,8 +64,8 @@ func (e *Event) IsCreate() bool {
 type Reader struct {
 	// ShardID and ShardPredicate are alternatives — set at most one.
 	// ShardPredicate wins if both are populated.
-	ShardID        int             // [0, s3lifecycle.ShardCount); used when ShardPredicate is nil
-	ShardPredicate func(int) bool  // accepts an event when true; nil falls back to ShardID equality
+	ShardID        int            // [0, s3lifecycle.ShardCount); used when ShardPredicate is nil
+	ShardPredicate func(int) bool // accepts an event when true; nil falls back to ShardID equality
 
 	BucketsPath string // e.g. "/buckets"
 	// Cursor is the single-shard cursor used for SinceNs when StartTsNs is 0.

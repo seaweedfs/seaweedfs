@@ -271,11 +271,11 @@ func DeserializeSSES3Metadata(data []byte, keyManager *SSES3KeyManager) (*SSES3K
 // SSES3KeyManager manages SSE-S3 encryption keys using envelope encryption
 // Instead of storing keys in memory, it uses a super key (KEK) to encrypt/decrypt DEKs
 type SSES3KeyManager struct {
-	mu             sync.RWMutex
-	superKey       []byte               // 256-bit master key (KEK - Key Encryption Key)
-	filerClient    filer_pb.FilerClient // Filer client for KEK persistence
-	kekPath        string               // Path in filer where KEK is stored (e.g., /etc/s3/sse_kek)
-	kekPassphrase  string               // If set, KEK is encrypted at rest using a key derived from this passphrase
+	mu            sync.RWMutex
+	superKey      []byte               // 256-bit master key (KEK - Key Encryption Key)
+	filerClient   filer_pb.FilerClient // Filer client for KEK persistence
+	kekPath       string               // Path in filer where KEK is stored (e.g., /etc/s3/sse_kek)
+	kekPassphrase string               // If set, KEK is encrypted at rest using a key derived from this passphrase
 }
 
 const (
@@ -320,7 +320,6 @@ var kekWrappedV2Magic = []byte{0x53, 0x57, 0x76, 0x32} // "SWv2"
 // kekRandomSaltSize is the per-installation salt length in bytes for HKDF.
 // 32 bytes matches the SHA-256 output and is the standard recommendation.
 const kekRandomSaltSize = 32
-
 
 // NewSSES3KeyManager creates a new SSE-S3 key manager with envelope encryption.
 // If kekPassphrase is non-empty, the KEK is encrypted at rest using a key derived from it.
@@ -583,7 +582,7 @@ func (km *SSES3KeyManager) loadSuperKeyFromFiler() error {
 	}
 
 	// Get the entry from filer
-	entry, err := filer_pb.GetEntry(context.Background(), km.filerClient, util.FullPath(km.kekPath))
+	entry, _, _, err := filer_pb.GetEntry(context.Background(), km.filerClient, util.FullPath(km.kekPath))
 	if err != nil {
 		return fmt.Errorf("failed to get KEK entry from filer: %w", err)
 	}

@@ -371,7 +371,7 @@ func (fs *WebDavFileSystem) stat(ctx context.Context, fullFilePath string) (os.F
 	fullpath := util.FullPath(fullFilePath)
 
 	var fi FileInfo
-	entry, err := filer_pb.GetEntry(context.Background(), fs, fullpath)
+	entry, _, _, err := filer_pb.GetEntry(context.Background(), fs, fullpath)
 	if err != nil {
 		if err == filer_pb.ErrNotFound {
 			return nil, os.ErrNotExist
@@ -435,7 +435,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 	var getErr error
 	ctx := context.Background()
 	if f.entry == nil {
-		f.entry, getErr = filer_pb.GetEntry(context.Background(), f.fs, fullPath)
+		f.entry, _, _, getErr = filer_pb.GetEntry(context.Background(), f.fs, fullPath)
 	}
 
 	if f.entry == nil {
@@ -526,7 +526,7 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 	glog.V(2).Infof("WebDavFileSystem.Read %v", f.name)
 
 	if f.entry == nil {
-		f.entry, err = filer_pb.GetEntry(context.Background(), f.fs, util.FullPath(f.name))
+		f.entry, _, _, err = filer_pb.GetEntry(context.Background(), f.fs, util.FullPath(f.name))
 	}
 	if f.entry == nil {
 		return 0, err

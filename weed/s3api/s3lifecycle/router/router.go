@@ -52,15 +52,15 @@ type Survivors struct {
 // so the dispatcher can locate the specific version, and VersionID
 // carries the AWS-visible version ID separately.
 type Match struct {
-	Key      s3lifecycle.ActionKey
-	Action   *engine.CompiledAction
-	Result   s3lifecycle.EvalResult
-	EventTs  time.Time
-	DueTime  time.Time
-	Bucket   string
+	Key       s3lifecycle.ActionKey
+	Action    *engine.CompiledAction
+	Result    s3lifecycle.EvalResult
+	EventTs   time.Time
+	DueTime   time.Time
+	Bucket    string
 	ObjectKey string
 	VersionID string
-	Identity *EntryIdentity
+	Identity  *EntryIdentity
 }
 
 // EntryIdentity is the schedule-time CAS witness; the dispatcher serializes

@@ -8,6 +8,22 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// filerAckResponse is any mutation response carrying the log position of the
+// state it acknowledged.
+type filerAckResponse interface {
+	GetMetadataEvent() *filer_pb.SubscribeMetadataResponse
+	GetLogTsNs() int64
+}
+
+// ackVersionTsNs is the log position an ack confirmed: its event's timestamp,
+// or the response's fence when the ack carried no event.
+func ackVersionTsNs(resp filerAckResponse) int64 {
+	if ts := resp.GetMetadataEvent().GetTsNs(); ts != 0 {
+		return ts
+	}
+	return resp.GetLogTsNs()
+}
+
 func (wfs *WFS) applyLocalMetadataEvent(ctx context.Context, event *filer_pb.SubscribeMetadataResponse) error {
 	if ctx == nil {
 		ctx = context.Background()
