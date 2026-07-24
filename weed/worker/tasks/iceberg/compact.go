@@ -110,8 +110,8 @@ func (h *Handler) compactDataFiles(
 	// Collect delete entries if we need to apply deletes
 	var positionDeletes map[string][]int64
 	var eqDeleteGroups []equalityDeleteGroup
+	var allDeleteEntries []iceberg.ManifestEntry
 	if config.ApplyDeletes && len(deleteManifests) > 0 {
-		var allDeleteEntries []iceberg.ManifestEntry
 		for _, mf := range deleteManifests {
 			manifestData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, dataPath, mf.FilePath())
 			if err != nil {
@@ -213,6 +213,7 @@ func (h *Handler) compactDataFiles(
 	// Process each bin: read source Parquet files, merge, write output
 	var newManifestEntries []iceberg.ManifestEntry
 	var deletedManifestEntries []iceberg.ManifestEntry
+	var summary snapshotSummary
 	totalMerged := 0
 
 	entrySeqNum := func(entry iceberg.ManifestEntry) *int64 {
@@ -312,16 +313,19 @@ func (h *Handler) compactDataFiles(
 			}
 			writtenArtifacts = append(writtenArtifacts, artifact{dir: dataDir, fileName: mergedFileName})
 
+			mergedDataFile := dfBuilder.Build()
+			summary.addFile(mergedDataFile)
 			newEntry := iceberg.NewManifestEntry(
 				iceberg.EntryStatusADDED,
 				&newSnapID,
 				nil, nil,
-				dfBuilder.Build(),
+				mergedDataFile,
 			)
 			newManifestEntries = append(newManifestEntries, newEntry)
 
 			// Mark original entries as deleted
 			for _, entry := range bin.Entries {
+				summary.removeFile(entry.DataFile())
 				delEntry := iceberg.NewManifestEntry(
 					iceberg.EntryStatusDELETED,
 					&newSnapID,
@@ -433,27 +437,23 @@ func (h *Handler) compactDataFiles(
 	// Position deletes reference specific data files — if all those files
 	// were compacted, the deletes are fully consumed. Equality deletes
 	// apply broadly, so they're only consumed if all data files were compacted.
-	if !config.ApplyDeletes || (len(positionDeletes) == 0 && len(eqDeleteGroups) == 0) {
-		for _, mf := range deleteManifests {
-			allManifests = append(allManifests, mf)
-		}
-	} else {
-		// Check if any non-compacted data files remain
-		hasUncompactedFiles := false
+	carryDeletes := !config.ApplyDeletes || (len(positionDeletes) == 0 && len(eqDeleteGroups) == 0)
+	if !carryDeletes {
+		// Deletes still apply to any file that wasn't compacted.
 		for _, entry := range allEntries {
 			if _, compacted := compactedPaths[entry.DataFile().FilePath()]; !compacted {
-				hasUncompactedFiles = true
+				carryDeletes = true
 				break
 			}
 		}
-		if hasUncompactedFiles {
-			// Some files weren't compacted — carry forward delete manifests
-			// since deletes may still apply to those files.
-			for _, mf := range deleteManifests {
-				allManifests = append(allManifests, mf)
-			}
+	}
+	if carryDeletes {
+		allManifests = append(allManifests, deleteManifests...)
+	} else {
+		// All files were compacted, so the deletes leave the table with them.
+		for _, entry := range allDeleteEntries {
+			summary.removeFile(entry.DataFile())
 		}
-		// If all files were compacted, deletes are fully consumed — don't carry forward.
 	}
 
 	// Write new manifest list
@@ -485,16 +485,13 @@ func (h *Handler) compactDataFiles(
 			SequenceNumber:   seqNum,
 			TimestampMs:      newSnapID,
 			ManifestList:     manifestListLocation,
-			Summary: &table.Summary{
-				Operation: table.OpReplace,
-				Properties: map[string]string{
-					"maintenance":      "compact_data_files",
-					"merged-files":     fmt.Sprintf("%d", totalMerged),
-					"new-files":        fmt.Sprintf("%d", len(newManifestEntries)),
-					"compaction-bins":  fmt.Sprintf("%d", len(bins)),
-					"rewrite-strategy": rewritePlan.strategy,
-				},
-			},
+			Summary: summary.build(table.OpReplace, cs, map[string]string{
+				"maintenance":      "compact_data_files",
+				"merged-files":     fmt.Sprintf("%d", totalMerged),
+				"new-files":        fmt.Sprintf("%d", len(newManifestEntries)),
+				"compaction-bins":  fmt.Sprintf("%d", len(bins)),
+				"rewrite-strategy": rewritePlan.strategy,
+			}),
 			SchemaID: func() *int {
 				id := schema.ID
 				return &id
