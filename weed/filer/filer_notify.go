@@ -7,6 +7,7 @@ import (
 	"io"
 	nethttp "net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -155,13 +156,31 @@ func (f *Filer) triggerLocalEmptyFolderCleanup(oldEntry, newEntry *Entry) {
 	}
 }
 
-// metadataLogUploadLimit bounds one metadata log upload. A volume server
-// refuses anything over its -fileSizeLimitMB (256 MB by default), and a single
-// oversized event — a CreateEntry carrying a large inline Content, say — grows
-// the log buffer well past that, leaving a blob that can never be written and
-// blocks every later flush behind it. BufferSize is what an ordinary flush
-// already produces, so it is the size the volume server is known to accept.
+// metadataLogUploadLimit is the piece size a metadata log flush starts with. A
+// volume server refuses anything over its -fileSizeLimitMB (256 MB by default),
+// and a single oversized event — a CreateEntry carrying a large inline Content,
+// say — grows the log buffer well past that, leaving a blob that can never be
+// written and blocks every later flush behind it. BufferSize is what an
+// ordinary flush already produces, so it is a size the volume server accepts
+// under any configuration that works at all; a cluster running below it says so
+// in the rejection and volumeFileSizeLimit picks the real limit up from there.
 const metadataLogUploadLimit = log_buffer.BufferSize
+
+var fileSizeLimitPattern = regexp.MustCompile(`file over the limited (\d+) bytes`)
+
+// volumeFileSizeLimit reads the byte limit back out of a volume server's size
+// rejection, and returns 0 for any other error.
+func volumeFileSizeLimit(err error) int {
+	match := fileSizeLimitPattern.FindStringSubmatch(err.Error())
+	if match == nil {
+		return 0
+	}
+	limit, convErr := strconv.Atoi(match[1])
+	if convErr != nil {
+		return 0
+	}
+	return limit
+}
 
 func (f *Filer) logFlushFunc(logBuffer *log_buffer.LogBuffer, startTime, stopTime time.Time, buf []byte, minOffset, maxOffset int64) {
 
@@ -176,58 +195,50 @@ func (f *Filer) logFlushFunc(logBuffer *log_buffer.LogBuffer, startTime, stopTim
 		// startTime.Second(), startTime.Nanosecond(),
 	)
 
-	// Each piece is retried on its own so a partial success is not replayed.
-	for _, piece := range splitLogBuffer(buf, metadataLogUploadLimit) {
-		for {
-			if err := f.appendToFile(targetFile, piece); err != nil {
-				glog.V(0).Infof("metadata log write failed %s: %v", targetFile, err)
-				time.Sleep(737 * time.Millisecond)
-			} else {
-				break
+	// One piece at a time, each retried on its own so a partial success is not
+	// replayed, and the piece size follows the limit the volume servers report.
+	limit := metadataLogUploadLimit
+	for len(buf) > 0 {
+		piece := nextLogPiece(buf, limit)
+		if err := f.appendToFile(targetFile, piece); err != nil {
+			glog.V(0).Infof("metadata log write failed %s: %v", targetFile, err)
+			if reported := volumeFileSizeLimit(err); reported > 0 && reported < limit {
+				glog.V(0).Infof("metadata log upload limit lowered to %d bytes", reported)
+				limit = reported
+				continue
 			}
+			time.Sleep(737 * time.Millisecond)
+			continue
 		}
+		buf = buf[len(piece):]
 	}
 }
 
-// splitLogBuffer cuts a flushed log buffer into pieces of at most maxSize
-// bytes, breaking on record boundaries where it can so each piece still decodes
-// on its own. A record longer than maxSize is spread over several pieces; the
+// nextLogPiece returns the leading piece of a flushed log buffer, at most
+// maxSize bytes and ending on a record boundary where it can so the piece still
+// decodes on its own. A record longer than maxSize is cut by size instead; the
 // readers fall back to streaming the whole file when a chunk does not decode
 // standalone, so a record may cross a chunk boundary.
-func splitLogBuffer(buf []byte, maxSize int) [][]byte {
+func nextLogPiece(buf []byte, maxSize int) []byte {
 	if len(buf) <= maxSize {
-		return [][]byte{buf}
+		return buf
 	}
 
-	var pieces [][]byte
-	start, pos := 0, 0
-	// Invariant at the top of each round: pos-start <= maxSize.
+	pos := 0
 	for pos+4 <= len(buf) {
 		size := int(util.BytesToUint32(buf[pos : pos+4]))
 		end := pos + 4 + size
-		if size <= 0 || end > len(buf) {
-			break // not a record boundary after all; cut the rest by size
-		}
-		if end-start > maxSize {
-			if pos > start {
-				pieces = append(pieces, buf[start:pos])
-				start = pos
-			}
-			for end-start > maxSize {
-				pieces = append(pieces, buf[start:start+maxSize])
-				start += maxSize
-			}
+		if size <= 0 || end > len(buf) || end > maxSize {
+			break
 		}
 		pos = end
 	}
-	for len(buf)-start > maxSize {
-		pieces = append(pieces, buf[start:start+maxSize])
-		start += maxSize
+	if pos == 0 {
+		// Either the leading record alone is over the limit, or buf starts
+		// mid-record because the piece before it was cut by size.
+		return buf[:maxSize]
 	}
-	if start < len(buf) {
-		pieces = append(pieces, buf[start:])
-	}
-	return pieces
+	return buf[:pos]
 }
 
 var (

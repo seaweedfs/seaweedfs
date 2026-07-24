@@ -2,6 +2,8 @@ package filer
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -73,7 +75,19 @@ func buildLogBuffer(t *testing.T, payloadSizes []int) (buf []byte, count int) {
 	return buf, len(payloadSizes)
 }
 
-func TestSplitLogBuffer(t *testing.T) {
+// splitLogBuffer drains a buffer the way logFlushFunc does, one piece at a
+// time, so the tests exercise the same walk.
+func splitLogBuffer(buf []byte, maxSize int) [][]byte {
+	var pieces [][]byte
+	for len(buf) > 0 {
+		piece := nextLogPiece(buf, maxSize)
+		pieces = append(pieces, piece)
+		buf = buf[len(piece):]
+	}
+	return pieces
+}
+
+func TestNextLogPiece(t *testing.T) {
 	const maxSize = 1024
 
 	testCases := []struct {
@@ -119,7 +133,7 @@ func TestSplitLogBuffer(t *testing.T) {
 
 // A buffer of ordinary records splits on record boundaries, so every piece
 // decodes on its own and the readers keep the per-chunk cache path.
-func TestSplitLogBufferKeepsRecordBoundaries(t *testing.T) {
+func TestNextLogPieceKeepsRecordBoundaries(t *testing.T) {
 	buf, count := buildLogBuffer(t, []int{300, 300, 300, 300, 300, 300, 300})
 
 	var decodedCount int
@@ -139,7 +153,7 @@ func TestSplitLogBufferKeepsRecordBoundaries(t *testing.T) {
 }
 
 // A truncated tail must not be dropped or duplicated, only cut by size.
-func TestSplitLogBufferTruncatedTail(t *testing.T) {
+func TestNextLogPieceTruncatedTail(t *testing.T) {
 	buf, _ := buildLogBuffer(t, []int{300, 300})
 	buf = append(buf, 0xff, 0xff, 0xff)
 
@@ -147,6 +161,51 @@ func TestSplitLogBufferTruncatedTail(t *testing.T) {
 	for i, piece := range splitLogBuffer(buf, 320) {
 		if len(piece) > 320 {
 			t.Errorf("piece %d is %d bytes, over the 320 limit", i, len(piece))
+		}
+		rejoined = append(rejoined, piece...)
+	}
+	if !bytes.Equal(rejoined, buf) {
+		t.Errorf("rejoined pieces differ from the original buffer")
+	}
+}
+
+// A cluster whose fileSizeLimitMB is under metadataLogUploadLimit says so in
+// the rejection, and the flush has to take that limit up rather than retry an
+// unwritable piece forever.
+func TestVolumeFileSizeLimit(t *testing.T) {
+	testCases := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{
+			"volume server size rejection",
+			fmt.Errorf("upload data http://127.0.0.1:8180/1,16ef8dca8a: unmarshalled error http://127.0.0.1:8180/1,16ef8dca8a: file over the limited 16777216 bytes"),
+			16777216,
+		},
+		{"default limit", errors.New("file over the limited 268435456 bytes"), 268435456},
+		{"unrelated failure", errors.New("connection refused"), 0},
+		{"no byte count", errors.New("file over the limited bytes"), 0},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := volumeFileSizeLimit(tc.err); got != tc.want {
+				t.Errorf("volumeFileSizeLimit = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// Once the reported limit is adopted, every piece fits it.
+func TestNextLogPieceHonorsLoweredLimit(t *testing.T) {
+	buf, _ := buildLogBuffer(t, []int{20 << 20})
+
+	const lowered = 1 << 20
+	var rejoined []byte
+	for i, piece := range splitLogBuffer(buf, lowered) {
+		if len(piece) > lowered {
+			t.Errorf("piece %d is %d bytes, over the lowered %d limit", i, len(piece), lowered)
 		}
 		rejoined = append(rejoined, piece...)
 	}
