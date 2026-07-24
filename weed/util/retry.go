@@ -18,25 +18,42 @@ var RetryWaitTime = 6 * time.Second
 // likely to get past: connection resets, timeouts, and the throttling or
 // overload replies S3 and gRPC hand back. Cloud SDKs bury the underlying net
 // error in an opaque wrapper with no Unwrap, so the message is often all
-// that is left to match on.
+// that is left to match on. Compared case-insensitively, so entries are lower
+// case: the same condition reaches different layers capitalized differently
+// (a volume server relays its idle timeout as "I/O timeout" inside JSON).
 var transientErrorMessages = []string{
 	"transport",
 	"connection reset",
 	"connection refused",
 	"broken pipe",
-	"unexpected EOF",
+	"unexpected eof",
 	"i/o timeout",
-	"TLS handshake timeout",
+	"tls handshake timeout",
 	"no such host",
-	"Client.Timeout",
-	"RequestError",
-	"RequestTimeout",
-	"SlowDown",
-	"Throttling",
-	"InternalError",
-	"ServiceUnavailable",
-	"ResourceExhausted",
-	"Unavailable",
+	"no route to host",
+	"network is unreachable",
+	"client.timeout",
+	"requesterror",
+	"requesttimeout",
+	"slowdown",
+	"throttling",
+	"internalerror",
+	"resourceexhausted",
+	"unavailable",
+}
+
+// IsTransientErrorMessage reports whether an error message describes a network
+// or service condition worth retrying. Callers holding an error should use
+// IsTransientError; this is for paths that only carry the text, such as the
+// per-file status strings in a batch delete response.
+func IsTransientErrorMessage(msg string) bool {
+	lower := strings.ToLower(msg)
+	for _, transient := range transientErrorMessages {
+		if strings.Contains(lower, transient) {
+			return true
+		}
+	}
+	return false
 }
 
 // IsTransientError reports whether err is a network or service condition worth
@@ -58,7 +75,7 @@ func IsTransientError(err error) bool {
 	if errors.As(err, &netErr) && netErr.Timeout() {
 		return true
 	}
-	return containErr(err.Error(), transientErrorMessages)
+	return IsTransientErrorMessage(err.Error())
 }
 
 func Retry(name string, job func() error) (err error) {

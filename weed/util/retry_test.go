@@ -43,6 +43,34 @@ func TestIsTransientError(t *testing.T) {
 	}
 }
 
+func TestIsTransientErrorMessage(t *testing.T) {
+	transient := []string{
+		"read tcp 10.0.0.1:8082->10.0.0.1:54848: i/o timeout",
+		// the same condition relayed by a volume server inside a JSON string
+		"Upload result: read tcp 10.0.0.1:8082->10.0.0.1:54848: I/O timeout",
+		"Connection reset by peer",
+		"dial tcp 10.0.0.1:8888: connect: no route to host",
+		"rpc error: code = Unavailable desc = the connection is unavailable",
+	}
+	for _, msg := range transient {
+		if !IsTransientErrorMessage(msg) {
+			t.Errorf("expected transient: %q", msg)
+		}
+	}
+
+	permanent := []string{
+		"",
+		"not found",
+		"invalid file id",
+		"chunk size mismatch",
+	}
+	for _, msg := range permanent {
+		if IsTransientErrorMessage(msg) {
+			t.Errorf("expected permanent: %q", msg)
+		}
+	}
+}
+
 func TestRetryTransientError(t *testing.T) {
 	callCount := 0
 	err := Retry("test", func() error {

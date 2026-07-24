@@ -17,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // UrlPreference controls which URL to use for volume access
@@ -519,12 +520,13 @@ func isRetryableGrpcError(err error) bool {
 		}
 	}
 
-	// Fallback to string matching for non-gRPC errors (e.g., network errors)
-	errStr := err.Error()
-	return strings.Contains(errStr, "transport") ||
+	// Fallback for non-gRPC errors (e.g. network errors). "connection" and
+	// "timeout" are deliberately broader than the shared classifier: a volume
+	// lookup is a cheap read-only call, so leaning towards a retry is fine.
+	errStr := strings.ToLower(err.Error())
+	return util.IsTransientError(err) ||
 		strings.Contains(errStr, "connection") ||
-		strings.Contains(errStr, "timeout") ||
-		strings.Contains(errStr, "unavailable")
+		strings.Contains(errStr, "timeout")
 }
 
 // jitter returns a duration in the range [d/2, d) using equal jitter.
