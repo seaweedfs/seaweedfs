@@ -616,6 +616,14 @@ func (logBuffer *LogBuffer) copyToFlushInternal(withCallback bool) *dataToFlush 
 		// CRITICAL: logBuffer.offset is the "next offset to assign", so last offset in buffer is offset-1
 		lastOffsetInBuffer := logBuffer.offset - 1
 		logBuffer.buf = logBuffer.prevBuffers.SealBuffer(logBuffer.startTime, logBuffer.stopTime, logBuffer.buf, logBuffer.pos, logBuffer.bufferStartOffset, lastOffsetInBuffer)
+		// SealBuffer hands back the oldest window array to reuse. An entry larger
+		// than BufferSize grew one of these arrays to fit it, and buffers cycle
+		// forever, so without this a single oversized entry leaves every later
+		// window carrying — and snapshotting — its size. Growth is on demand, so
+		// the next oversized entry just reallocates.
+		if len(logBuffer.buf) > BufferSize {
+			logBuffer.buf = make([]byte, BufferSize)
+		}
 		// Hand a fully extended prefix snapshot to the sealed slot so sealed
 		// readers reuse it instead of re-copying the window; reset for the next
 		// window either way (holders keep their immutable prefix slices).
