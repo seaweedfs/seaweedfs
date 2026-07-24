@@ -1,10 +1,12 @@
 package redis2
 
 import (
+	"crypto/tls"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/filer/redis_tls"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -21,6 +23,10 @@ func (store *Redis2SentinelStore) GetName() string {
 }
 
 func (store *Redis2SentinelStore) Initialize(configuration util.Configuration, prefix string) (err error) {
+	tlsConfig, err := redis_tls.Config(configuration, prefix)
+	if err != nil {
+		return err
+	}
 	return store.initialize(
 		configuration.GetStringSlice(prefix+"addresses"),
 		configuration.GetString(prefix+"masterName"),
@@ -30,10 +36,11 @@ func (store *Redis2SentinelStore) Initialize(configuration util.Configuration, p
 		configuration.GetString(prefix+"sentinel_password"),
 		configuration.GetInt(prefix+"database"),
 		configuration.GetString(prefix+"keyPrefix"),
+		tlsConfig,
 	)
 }
 
-func (store *Redis2SentinelStore) initialize(addresses []string, masterName string, username string, password string, sentinelUsername string, sentinelPassword string, database int, keyPrefix string) (err error) {
+func (store *Redis2SentinelStore) initialize(addresses []string, masterName string, username string, password string, sentinelUsername string, sentinelPassword string, database int, keyPrefix string, tlsConfig *tls.Config) (err error) {
 	store.Client = redis.NewFailoverClient(&redis.FailoverOptions{
 		MasterName:       masterName,
 		SentinelAddrs:    addresses,
@@ -42,6 +49,7 @@ func (store *Redis2SentinelStore) initialize(addresses []string, masterName stri
 		SentinelUsername: sentinelUsername,
 		SentinelPassword: sentinelPassword,
 		DB:               database,
+		TLSConfig:        tlsConfig,
 		MinRetryBackoff:  time.Millisecond * 100,
 		MaxRetryBackoff:  time.Minute * 1,
 		ReadTimeout:      time.Second * 30,

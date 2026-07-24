@@ -1,8 +1,11 @@
 package redis2
 
 import (
+	"crypto/tls"
+
 	"github.com/redis/go-redis/v9"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/filer/redis_tls"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -23,6 +26,11 @@ func (store *RedisCluster2Store) Initialize(configuration util.Configuration, pr
 	configuration.SetDefault(prefix+"useReadOnly", false)
 	configuration.SetDefault(prefix+"routeByLatency", false)
 
+	tlsConfig, err := redis_tls.Config(configuration, prefix)
+	if err != nil {
+		return err
+	}
+
 	return store.initialize(
 		configuration.GetStringSlice(prefix+"addresses"),
 		configuration.GetString(prefix+"username"),
@@ -31,16 +39,18 @@ func (store *RedisCluster2Store) Initialize(configuration util.Configuration, pr
 		configuration.GetBool(prefix+"useReadOnly"),
 		configuration.GetBool(prefix+"routeByLatency"),
 		configuration.GetStringSlice(prefix+"superLargeDirectories"),
+		tlsConfig,
 	)
 }
 
-func (store *RedisCluster2Store) initialize(addresses []string, username string, password string, keyPrefix string, readOnly, routeByLatency bool, superLargeDirectories []string) (err error) {
+func (store *RedisCluster2Store) initialize(addresses []string, username string, password string, keyPrefix string, readOnly, routeByLatency bool, superLargeDirectories []string, tlsConfig *tls.Config) (err error) {
 	store.Client = redis.NewClusterClient(&redis.ClusterOptions{
 		Addrs:          addresses,
 		Username:       username,
 		Password:       password,
 		ReadOnly:       readOnly,
 		RouteByLatency: routeByLatency,
+		TLSConfig:      tlsConfig,
 	})
 	store.keyPrefix = keyPrefix
 	store.loadSuperLargeDirectories(superLargeDirectories)
