@@ -403,7 +403,7 @@ func doEcEncode(commandEnv *CommandEnv, writer io.Writer, volumeIdToCollection m
 	for _, vid := range volumeIds {
 		for _, l := range locations[vid] {
 			ewg.Add(func() error {
-				if err := markVolumeReplicaWritable(commandEnv.option.GrpcDialOption, vid, l, false, false); err != nil {
+				if err := markVolumeReplicaWritable(context.Background(), commandEnv.option.GrpcDialOption, vid, l, false, false); err != nil {
 					return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, l.Url, err)
 				}
 				return nil
@@ -902,7 +902,7 @@ func doDeleteVolumesWithLocations(commandEnv *CommandEnv, volumeIds []needle.Vol
 
 		for _, l := range locations {
 			ewg.Add(func() error {
-				if err := deleteVolume(commandEnv.option.GrpcDialOption, vid, l.ServerAddress(), false, false); err != nil {
+				if err := deleteVolume(context.Background(), commandEnv.option.GrpcDialOption, vid, l.ServerAddress(), false, false); err != nil {
 					return fmt.Errorf("deleteVolume %s volume %d: %v", l.Url, vid, err)
 				}
 				fmt.Printf("deleted volume %d from %s\n", vid, l.Url)

@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"context"
 	"flag"
 	"io"
 
@@ -50,6 +51,6 @@ func (c *commandVolumeDelete) Do(args []string, commandEnv *CommandEnv, writer i
 
 	volumeId := needle.VolumeId(*volumeIdInt)
 
-	return deleteVolume(commandEnv.option.GrpcDialOption, volumeId, sourceVolumeServer, false, false)
+	return deleteVolume(context.Background(), commandEnv.option.GrpcDialOption, volumeId, sourceVolumeServer, false, false)
 
 }
