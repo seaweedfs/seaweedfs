@@ -10,6 +10,9 @@ import (
 // on before it counts as confirmed in the aggregated stats.
 const confirmDays = 2
 
+// activeDays is how recently a cluster must have reported to count as active.
+const activeDays = 7
+
 // HistorySample is one retained data point of a cluster's daily reports.
 // Tags are kept short because thousands of samples end up in the state file.
 type HistorySample struct {
