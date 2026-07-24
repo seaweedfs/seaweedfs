@@ -2,13 +2,10 @@ package redis2
 
 import (
 	"crypto/tls"
-	"crypto/x509"
-	"net"
-	"os"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/filer/redis_tls"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -25,6 +22,10 @@ func (store *Redis2Store) GetName() string {
 }
 
 func (store *Redis2Store) Initialize(configuration util.Configuration, prefix string) (err error) {
+	tlsConfig, err := redis_tls.Config(configuration, prefix)
+	if err != nil {
+		return err
+	}
 	return store.initialize(
 		configuration.GetString(prefix+"address"),
 		configuration.GetString(prefix+"username"),
@@ -32,49 +33,18 @@ func (store *Redis2Store) Initialize(configuration util.Configuration, prefix st
 		configuration.GetInt(prefix+"database"),
 		configuration.GetString(prefix+"keyPrefix"),
 		configuration.GetStringSlice(prefix+"superLargeDirectories"),
-		configuration.GetBool(prefix+"enable_mtls"),
-		configuration.GetString(prefix+"ca_cert_path"),
-		configuration.GetString(prefix+"client_cert_path"),
-		configuration.GetString(prefix+"client_key_path"),
+		tlsConfig,
 	)
 }
 
-func (store *Redis2Store) initialize(hostPort string, username string, password string, database int, keyPrefix string, superLargeDirectories []string, enableMtls bool, caCertPath string, clientCertPath string, clientKeyPath string) (err error) {
-	opt := &redis.Options{
-		Addr:     hostPort,
-		Username: username,
-		Password: password,
-		DB:       database,
-	}
-	if enableMtls {
-		clientCert, err := tls.LoadX509KeyPair(clientCertPath, clientKeyPath)
-		if err != nil {
-			glog.Fatalf("Error loading client certificate and key pair: %v", err)
-		}
-
-		caCertBytes, err := os.ReadFile(caCertPath)
-		if err != nil {
-			glog.Fatalf("Error reading CA certificate file: %v", err)
-		}
-
-		caCertPool := x509.NewCertPool()
-		if ok := caCertPool.AppendCertsFromPEM(caCertBytes); !ok {
-			glog.Fatalf("Error appending CA certificate to pool")
-		}
-
-		redisHost, _, err := net.SplitHostPort(hostPort)
-		if err != nil {
-			glog.Fatalf("Error parsing redis host and port from %s: %v", hostPort, err)
-		}
-
-		opt.TLSConfig = &tls.Config{
-			Certificates: []tls.Certificate{clientCert},
-			RootCAs:      caCertPool,
-			ServerName:   redisHost,
-			MinVersion:   tls.VersionTLS12,
-		}
-	}
-	store.Client = redis.NewClient(opt)
+func (store *Redis2Store) initialize(hostPort string, username string, password string, database int, keyPrefix string, superLargeDirectories []string, tlsConfig *tls.Config) (err error) {
+	store.Client = redis.NewClient(&redis.Options{
+		Addr:      hostPort,
+		Username:  username,
+		Password:  password,
+		DB:        database,
+		TLSConfig: tlsConfig,
+	})
 	store.keyPrefix = keyPrefix
 	store.loadSuperLargeDirectories(superLargeDirectories)
 	return
