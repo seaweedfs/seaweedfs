@@ -155,6 +155,14 @@ func (f *Filer) triggerLocalEmptyFolderCleanup(oldEntry, newEntry *Entry) {
 	}
 }
 
+// metadataLogUploadLimit bounds one metadata log upload. A volume server
+// refuses anything over its -fileSizeLimitMB (256 MB by default), and a single
+// oversized event — a CreateEntry carrying a large inline Content, say — grows
+// the log buffer well past that, leaving a blob that can never be written and
+// blocks every later flush behind it. BufferSize is what an ordinary flush
+// already produces, so it is the size the volume server is known to accept.
+const metadataLogUploadLimit = log_buffer.BufferSize
+
 func (f *Filer) logFlushFunc(logBuffer *log_buffer.LogBuffer, startTime, stopTime time.Time, buf []byte, minOffset, maxOffset int64) {
 
 	if len(buf) == 0 {
@@ -168,14 +176,58 @@ func (f *Filer) logFlushFunc(logBuffer *log_buffer.LogBuffer, startTime, stopTim
 		// startTime.Second(), startTime.Nanosecond(),
 	)
 
-	for {
-		if err := f.appendToFile(targetFile, buf); err != nil {
-			glog.V(0).Infof("metadata log write failed %s: %v", targetFile, err)
-			time.Sleep(737 * time.Millisecond)
-		} else {
-			break
+	// Each piece is retried on its own so a partial success is not replayed.
+	for _, piece := range splitLogBuffer(buf, metadataLogUploadLimit) {
+		for {
+			if err := f.appendToFile(targetFile, piece); err != nil {
+				glog.V(0).Infof("metadata log write failed %s: %v", targetFile, err)
+				time.Sleep(737 * time.Millisecond)
+			} else {
+				break
+			}
 		}
 	}
+}
+
+// splitLogBuffer cuts a flushed log buffer into pieces of at most maxSize
+// bytes, breaking on record boundaries where it can so each piece still decodes
+// on its own. A record longer than maxSize is spread over several pieces; the
+// readers fall back to streaming the whole file when a chunk does not decode
+// standalone, so a record may cross a chunk boundary.
+func splitLogBuffer(buf []byte, maxSize int) [][]byte {
+	if len(buf) <= maxSize {
+		return [][]byte{buf}
+	}
+
+	var pieces [][]byte
+	start, pos := 0, 0
+	// Invariant at the top of each round: pos-start <= maxSize.
+	for pos+4 <= len(buf) {
+		size := int(util.BytesToUint32(buf[pos : pos+4]))
+		end := pos + 4 + size
+		if size <= 0 || end > len(buf) {
+			break // not a record boundary after all; cut the rest by size
+		}
+		if end-start > maxSize {
+			if pos > start {
+				pieces = append(pieces, buf[start:pos])
+				start = pos
+			}
+			for end-start > maxSize {
+				pieces = append(pieces, buf[start:start+maxSize])
+				start += maxSize
+			}
+		}
+		pos = end
+	}
+	for len(buf)-start > maxSize {
+		pieces = append(pieces, buf[start:start+maxSize])
+		start += maxSize
+	}
+	if start < len(buf) {
+		pieces = append(pieces, buf[start:])
+	}
+	return pieces
 }
 
 var (
