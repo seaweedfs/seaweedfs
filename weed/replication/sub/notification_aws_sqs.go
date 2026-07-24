@@ -103,14 +103,21 @@ func (k *AwsSqsInput) ReceiveMessage() (key string, message *filer_pb.EventNotif
 		err = fmt.Errorf("unmarshal message from sqs %s: %w", k.queueUrl, err)
 		return
 	}
-	// delete the message
-	_, err = k.svc.DeleteMessage(&sqs.DeleteMessageInput{
-		QueueUrl:      &k.queueUrl,
-		ReceiptHandle: result.Messages[0].ReceiptHandle,
-	})
 
-	if err != nil {
-		glog.V(1).Infof("delete message from sqs %s: %v", k.queueUrl, err)
+	// Delete only once the message has been replicated. Deleting on receipt
+	// drops the message for good when the sink write fails; leaving it in the
+	// queue lets the visibility timeout redeliver it.
+	receiptHandle := result.Messages[0].ReceiptHandle
+	onSuccessFn = func() {
+		if _, deleteErr := k.svc.DeleteMessage(&sqs.DeleteMessageInput{
+			QueueUrl:      &k.queueUrl,
+			ReceiptHandle: receiptHandle,
+		}); deleteErr != nil {
+			glog.V(1).Infof("delete message from sqs %s: %v", k.queueUrl, deleteErr)
+		}
+	}
+	onFailureFn = func() {
+		glog.V(1).Infof("keeping message %s in sqs %s for redelivery", key, k.queueUrl)
 	}
 
 	return
