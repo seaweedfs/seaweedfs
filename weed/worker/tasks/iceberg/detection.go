@@ -120,14 +120,14 @@ func (h *Handler) scanTablesForMaintenance(
 					continue
 				}
 
-				icebergMeta, metadataFileName, planningIndex, err := parseTableMetadataEnvelope(metadataBytes)
+				tablePath := path.Join(nsName, tblName)
+				state, err := parseTableMetadataEnvelope(metadataBytes, bucketName, tablePath)
 				if err != nil {
 					glog.V(2).Infof("iceberg maintenance: skipping %s/%s/%s: cannot parse iceberg metadata: %v", bucketName, nsName, tblName, err)
 					continue
 				}
 
-				tablePath := path.Join(nsName, tblName)
-				needsWork, err := h.tableNeedsMaintenance(ctx, filerClient, bucketName, tablePath, icebergMeta, metadataFileName, planningIndex, config, ops)
+				needsWork, err := h.tableNeedsMaintenance(ctx, filerClient, bucketName, tablePath, state, config, ops)
 				if err != nil {
 					glog.V(2).Infof("iceberg maintenance: skipping %s/%s/%s: cannot evaluate maintenance need: %v", bucketName, nsName, tblName, err)
 					continue
@@ -138,8 +138,8 @@ func (h *Handler) scanTablesForMaintenance(
 						Namespace:        nsName,
 						TableName:        tblName,
 						TablePath:        tablePath,
-						MetadataFileName: metadataFileName,
-						Metadata:         icebergMeta,
+						MetadataFileName: state.MetadataFileName,
+						Metadata:         state.Metadata,
 					})
 					if limit > 0 && len(tables) > limit {
 						return tables, nil
@@ -167,13 +167,15 @@ func (h *Handler) tableNeedsMaintenance(
 	ctx context.Context,
 	filerClient filer_pb.SeaweedFilerClient,
 	bucketName, tablePath string,
-	meta table.Metadata,
-	metadataFileName string,
-	cachedPlanningIndex *planningIndex,
+	state *tableState,
 	config Config,
 	ops []string,
 ) (bool, error) {
 	config = normalizeDetectionConfig(config)
+	meta := state.Metadata
+	dataPath := state.DataPath
+	metadataFileName := state.MetadataFileName
+	cachedPlanningIndex := state.PlanningIndex
 
 	var predicate *partitionPredicate
 	if strings.TrimSpace(config.Where) != "" {
@@ -209,7 +211,7 @@ func (h *Handler) tableNeedsMaintenance(
 		if manifestsLoaded {
 			return currentManifests, manifestsErr
 		}
-		currentManifests, manifestsErr = loadCurrentManifests(ctx, filerClient, bucketName, tablePath, meta)
+		currentManifests, manifestsErr = loadCurrentManifests(ctx, filerClient, bucketName, dataPath, meta)
 		manifestsLoaded = true
 		return currentManifests, manifestsErr
 	}
@@ -228,7 +230,7 @@ func (h *Handler) tableNeedsMaintenance(
 			planningIndexErrs[op] = err
 			return nil, err
 		}
-		index, err := buildPlanningIndexFromManifests(ctx, filerClient, bucketName, tablePath, meta, config, []string{op}, manifests)
+		index, err := buildPlanningIndexFromManifests(ctx, filerClient, bucketName, dataPath, meta, config, []string{op}, manifests)
 		if err != nil {
 			planningIndexErrs[op] = err
 			return nil, err
@@ -286,7 +288,7 @@ func (h *Handler) tableNeedsMaintenance(
 				opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
 				continue
 			}
-			eligible, err := hasEligibleDeleteRewrite(ctx, filerClient, bucketName, tablePath, manifests, config, meta, predicate)
+			eligible, err := hasEligibleDeleteRewrite(ctx, filerClient, bucketName, dataPath, manifests, config, meta, predicate)
 			if err != nil {
 				opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
 				continue
@@ -308,14 +310,14 @@ func (h *Handler) tableNeedsMaintenance(
 			}
 		case "remove_orphans":
 			if metadataFileName == "" {
-				_, currentMetadataFileName, err := loadCurrentMetadata(ctx, filerClient, bucketName, tablePath)
+				currentState, err := loadCurrentMetadata(ctx, filerClient, bucketName, tablePath)
 				if err != nil {
 					opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
 					continue
 				}
-				metadataFileName = currentMetadataFileName
+				metadataFileName = currentState.MetadataFileName
 			}
-			orphanCandidates, err := collectOrphanCandidates(ctx, filerClient, bucketName, tablePath, meta, metadataFileName, config.OrphanOlderThanHours)
+			orphanCandidates, err := collectOrphanCandidates(ctx, filerClient, bucketName, dataPath, meta, metadataFileName, config.OrphanOlderThanHours)
 			if err != nil {
 				opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
 				continue
@@ -333,11 +335,15 @@ func (h *Handler) tableNeedsMaintenance(
 	return false, nil
 }
 
-func metadataFileNameFromLocation(location, bucketName, tablePath string) string {
+func metadataFileNameFromLocation(location string) string {
 	if location == "" {
 		return ""
 	}
-	return path.Base(normalizeIcebergPath(location, bucketName, tablePath))
+	name := path.Base(location)
+	if name == "." || name == "/" {
+		return ""
+	}
+	return name
 }
 
 func countDataManifests(manifests []iceberg.ManifestFile) int64 {
@@ -353,7 +359,7 @@ func countDataManifests(manifests []iceberg.ManifestFile) int64 {
 func loadCurrentManifests(
 	ctx context.Context,
 	filerClient filer_pb.SeaweedFilerClient,
-	bucketName, tablePath string,
+	bucketName, dataPath string,
 	meta table.Metadata,
 ) ([]iceberg.ManifestFile, error) {
 	currentSnap := meta.CurrentSnapshot()
@@ -361,7 +367,7 @@ func loadCurrentManifests(
 		return nil, nil
 	}
 
-	manifestListData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, currentSnap.ManifestList)
+	manifestListData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, dataPath, currentSnap.ManifestList)
 	if err != nil {
 		return nil, fmt.Errorf("read manifest list: %w", err)
 	}
@@ -375,7 +381,7 @@ func loadCurrentManifests(
 func hasEligibleCompaction(
 	ctx context.Context,
 	filerClient filer_pb.SeaweedFilerClient,
-	bucketName, tablePath string,
+	bucketName, dataPath string,
 	manifests []iceberg.ManifestFile,
 	config Config,
 	meta table.Metadata,
@@ -408,7 +414,7 @@ func hasEligibleCompaction(
 
 	var allEntries []iceberg.ManifestEntry
 	for _, mf := range dataManifests {
-		manifestData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, mf.FilePath())
+		manifestData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, dataPath, mf.FilePath())
 		if err != nil {
 			return false, fmt.Errorf("read manifest %s: %w", mf.FilePath(), err)
 		}

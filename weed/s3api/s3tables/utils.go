@@ -97,11 +97,11 @@ func GetTablePath(bucketName, namespace, tableName string) string {
 	return path.Join(TablesPath, bucketName, namespace, tableName)
 }
 
-// tableDataDirFromMetadataLocation maps a table's s3:// metadata location to the
+// TableDataDirFromMetadataLocation maps a table's s3:// metadata location to the
 // filer directory holding its data. A renamed table is catalog-only, so its data
 // stays at the original location while its catalog entry moves; this lets a drop
 // purge the real data instead of the now-empty catalog path.
-func tableDataDirFromMetadataLocation(metadataLocation string) string {
+func TableDataDirFromMetadataLocation(metadataLocation string) string {
 	loc := strings.TrimSuffix(metadataLocation, "/")
 	if idx := strings.LastIndex(loc, "/metadata/"); idx != -1 {
 		loc = loc[:idx]

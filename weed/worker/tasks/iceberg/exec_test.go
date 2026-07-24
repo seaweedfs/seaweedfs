@@ -259,11 +259,31 @@ type tableSetup struct {
 	BucketName string
 	Namespace  string
 	TableName  string
-	Snapshots  []table.Snapshot
+	// DataPath is the bucket-relative directory holding the table's files when
+	// it differs from the catalog path, as it does for tables an external REST
+	// client created at their own location (e.g. "ns/table-<uuid>"). Such a
+	// table records absolute s3:// URIs for every file it references.
+	DataPath  string
+	Snapshots []table.Snapshot
 }
 
 func (ts tableSetup) tablePath() string {
 	return path.Join(ts.Namespace, ts.TableName)
+}
+
+func (ts tableSetup) dataPath() string {
+	if ts.DataPath != "" {
+		return ts.DataPath
+	}
+	return ts.tablePath()
+}
+
+// fileRef builds the reference a table records for one of its files.
+func (ts tableSetup) fileRef(elem ...string) string {
+	if ts.DataPath == "" {
+		return path.Join(elem...)
+	}
+	return absoluteIcebergPath(ts.BucketName, append([]string{ts.DataPath}, elem...)...)
 }
 
 // populateTable creates the directory hierarchy and metadata entries in the
@@ -282,7 +302,7 @@ func populateTable(t *testing.T, fs *fakeFilerServer, setup tableSetup) table.Me
 	const metadataVersion = 1
 	internalMeta := map[string]interface{}{
 		"metadataVersion":  metadataVersion,
-		"metadataLocation": path.Join("metadata", fmt.Sprintf("v%d.metadata.json", metadataVersion)),
+		"metadataLocation": setup.fileRef("metadata", fmt.Sprintf("v%d.metadata.json", metadataVersion)),
 		"metadata": map[string]interface{}{
 			"fullMetadata": json.RawMessage(fullMetadataJSON),
 		},
@@ -295,7 +315,7 @@ func populateTable(t *testing.T, fs *fakeFilerServer, setup tableSetup) table.Me
 	bucketsPath := s3tables.TablesPath // "/buckets"
 	bucketPath := path.Join(bucketsPath, setup.BucketName)
 	nsPath := path.Join(bucketPath, setup.Namespace)
-	tableFilerPath := path.Join(nsPath, setup.TableName)
+	tableFilerPath := path.Join(bucketPath, setup.dataPath())
 
 	// Register bucket entry (marked as table bucket)
 	fs.putEntry(bucketsPath, setup.BucketName, &filer_pb.Entry{
@@ -340,7 +360,7 @@ func populateTable(t *testing.T, fs *fakeFilerServer, setup tableSetup) table.Me
 		dfBuilder, err := iceberg.NewDataFileBuilder(
 			spec,
 			iceberg.EntryContentData,
-			fmt.Sprintf("data/snap-%d-data.parquet", snap.SnapshotID),
+			setup.fileRef("data", fmt.Sprintf("snap-%d-data.parquet", snap.SnapshotID)),
 			iceberg.ParquetFile,
 			map[int]any{},
 			nil, nil,
@@ -360,7 +380,7 @@ func populateTable(t *testing.T, fs *fakeFilerServer, setup tableSetup) table.Me
 
 		// Write manifest
 		manifestFileName := fmt.Sprintf("manifest-%d.avro", snap.SnapshotID)
-		manifestPath := path.Join("metadata", manifestFileName)
+		manifestPath := setup.fileRef("metadata", manifestFileName)
 		var manifestBuf bytes.Buffer
 		mf, err := iceberg.WriteManifest(manifestPath, &manifestBuf, version, spec, schema, snap.SnapshotID, []iceberg.ManifestEntry{entry})
 		if err != nil {
@@ -570,6 +590,165 @@ func TestExpireSnapshotsNothingToExpire(t *testing.T) {
 	}
 }
 
+// A table created through the Iceberg REST catalog can live outside its
+// catalog path, and every location it records is then an absolute s3:// URI
+// under that other directory. Maintenance must follow the recorded location
+// instead of joining the URI onto the catalog path.
+func TestMaintenanceOnExternalTableLocation(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	const dataPath = "source/events-0cd81bca-b389-4dda-8dae-3502ce680501"
+	snapAt := func(id int64) string {
+		return fmt.Sprintf("s3://lake/%s/metadata/snap-%d.avro", dataPath, id)
+	}
+	now := time.Now().Add(-10 * time.Second).UnixMilli()
+	setup := tableSetup{
+		BucketName: "lake",
+		Namespace:  "source",
+		TableName:  "events",
+		DataPath:   dataPath,
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now, ManifestList: snapAt(1)},
+			{SnapshotID: 2, TimestampMs: now + 1, ManifestList: snapAt(2)},
+			{SnapshotID: 3, TimestampMs: now + 2, ManifestList: snapAt(3)},
+		},
+	}
+	populateTable(t, fs, setup)
+
+	handler := NewHandler(nil)
+	config := Config{
+		SnapshotRetentionHours: 0,
+		MaxSnapshotsToKeep:     1,
+		MaxCommitRetries:       3,
+		Operations:             "expire_snapshots",
+	}
+
+	result, _, err := handler.expireSnapshots(context.Background(), client, setup.BucketName, setup.tablePath(), config)
+	if err != nil {
+		t.Fatalf("expireSnapshots: %v", err)
+	}
+	if !strings.Contains(result, "expired 2 snapshot(s)") {
+		t.Errorf("expected two snapshots expired, got %q", result)
+	}
+
+	// The expired snapshots' files are gone from the table's own directory.
+	metaDir := path.Join(s3tables.TablesPath, setup.BucketName, dataPath, "metadata")
+	for _, name := range []string{"snap-1.avro", "snap-2.avro"} {
+		if fs.getEntry(metaDir, name) != nil {
+			t.Errorf("expected %s/%s to be deleted", metaDir, name)
+		}
+	}
+	if fs.getEntry(metaDir, "snap-3.avro") == nil {
+		t.Errorf("expected %s/snap-3.avro to be kept", metaDir)
+	}
+
+	// The new metadata file is written next to the table's files, and the
+	// catalog now points at it there.
+	state, err := loadCurrentMetadata(context.Background(), client, setup.BucketName, setup.tablePath())
+	if err != nil {
+		t.Fatalf("loadCurrentMetadata: %v", err)
+	}
+	if fs.getEntry(metaDir, state.MetadataFileName) == nil {
+		t.Errorf("expected new metadata file %s in %s", state.MetadataFileName, metaDir)
+	}
+	if got := len(state.Metadata.Snapshots()); got != 1 {
+		t.Errorf("expected 1 snapshot left, got %d", got)
+	}
+}
+
+// Compaction of such a table must keep its output with the rest of the table
+// instead of splitting it across the catalog path and the table's location.
+func TestCompactDataFilesOnExternalTableLocation(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	setup := tableSetup{
+		BucketName: "lake",
+		Namespace:  "source",
+		TableName:  "events",
+		DataPath:   "source/events-0cd81bca-b389-4dda-8dae-3502ce680501",
+	}
+	populateTableWithDeleteFiles(t, fs, setup,
+		[]struct {
+			Name string
+			Rows []struct {
+				ID   int64
+				Name string
+			}
+		}{
+			{"d1.parquet", []struct {
+				ID   int64
+				Name string
+			}{{1, "a"}, {2, "b"}}},
+			{"d2.parquet", []struct {
+				ID   int64
+				Name string
+			}{{3, "c"}}},
+		},
+		nil, nil,
+	)
+
+	handler := NewHandler(nil)
+	config := Config{
+		TargetFileSizeBytes: 256 * 1024 * 1024,
+		MinInputFiles:       2,
+		MaxCommitRetries:    3,
+		ApplyDeletes:        true,
+	}
+
+	result, _, err := handler.compactDataFiles(context.Background(), client, setup.BucketName, setup.tablePath(), config, nil)
+	if err != nil {
+		t.Fatalf("compactDataFiles: %v", err)
+	}
+	if !strings.Contains(result, "compacted 2 files into 1") {
+		t.Fatalf("unexpected result: %q", result)
+	}
+
+	state, err := loadCurrentMetadata(context.Background(), client, setup.BucketName, setup.tablePath())
+	if err != nil {
+		t.Fatalf("loadCurrentMetadata: %v", err)
+	}
+	if state.DataPath != setup.DataPath {
+		t.Fatalf("data path = %q, want %q", state.DataPath, setup.DataPath)
+	}
+
+	// Everything the new snapshot names lives under the table's own location.
+	wantPrefix := "s3://" + setup.BucketName + "/" + setup.DataPath + "/"
+	newSnap := state.Metadata.CurrentSnapshot()
+	if newSnap == nil || !strings.HasPrefix(newSnap.ManifestList, wantPrefix+"metadata/snap-") {
+		t.Fatalf("manifest list %q should be under %q", newSnap.ManifestList, wantPrefix)
+	}
+	manifests, err := loadCurrentManifests(context.Background(), client, setup.BucketName, state.DataPath, state.Metadata)
+	if err != nil {
+		t.Fatalf("loadCurrentManifests: %v", err)
+	}
+	for _, mf := range manifests {
+		if !strings.HasPrefix(mf.FilePath(), wantPrefix+"metadata/") {
+			t.Errorf("manifest %q should be under %q", mf.FilePath(), wantPrefix)
+		}
+		manifestData, err := loadFileByIcebergPath(context.Background(), client, setup.BucketName, state.DataPath, mf.FilePath())
+		if err != nil {
+			t.Fatalf("load manifest: %v", err)
+		}
+		entries, err := iceberg.ReadManifest(mf, bytes.NewReader(manifestData), true)
+		if err != nil {
+			t.Fatalf("read manifest: %v", err)
+		}
+		for _, entry := range entries {
+			if !strings.HasPrefix(entry.DataFile().FilePath(), wantPrefix+"data/") {
+				t.Errorf("data file %q should be under %q", entry.DataFile().FilePath(), wantPrefix)
+			}
+		}
+	}
+
+	// Nothing was written to the catalog path.
+	catalogDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath())
+	for _, subdir := range []string{"metadata", "data"} {
+		if entries := fs.listDir(path.Join(catalogDir, subdir)); len(entries) > 0 {
+			t.Errorf("expected no files under %s/%s, got %d", catalogDir, subdir, len(entries))
+		}
+	}
+}
+
 func TestRemoveOrphansExecution(t *testing.T) {
 	fs, client := startFakeFiler(t)
 
@@ -770,16 +949,16 @@ func TestRewriteManifestsExecution(t *testing.T) {
 	// The spec requires absolute locations — strict readers (Spark/Trino via
 	// S3FileIO) reject scheme-less paths, so verify every written location.
 	wantPrefix := "s3://test-bucket/analytics/events/metadata/"
-	newMeta, _, err := loadCurrentMetadata(context.Background(), client, setup.BucketName, setup.tablePath())
+	state, err := loadCurrentMetadata(context.Background(), client, setup.BucketName, setup.tablePath())
 	if err != nil {
 		t.Fatalf("reload metadata: %v", err)
 	}
-	newSnap := newMeta.CurrentSnapshot()
+	newSnap := state.Metadata.CurrentSnapshot()
 	if newSnap == nil || !strings.HasPrefix(newSnap.ManifestList, wantPrefix+"snap-") {
 		t.Fatalf("new snapshot manifest list should be absolute, got %+v", newSnap)
 	}
 	foundPreviousEntry := false
-	for mle := range newMeta.PreviousFiles() {
+	for mle := range state.Metadata.PreviousFiles() {
 		if mle.MetadataFile == wantPrefix+"v1.metadata.json" {
 			foundPreviousEntry = true
 		}
@@ -1532,7 +1711,7 @@ func TestTableNeedsMaintenanceCachesPlanningIndexBuildError(t *testing.T) {
 		t.Fatalf("parseOperations: %v", err)
 	}
 
-	needsWork, err := handler.tableNeedsMaintenance(context.Background(), client, setup.BucketName, setup.tablePath(), meta, "v1.metadata.json", nil, config, ops)
+	needsWork, err := handler.tableNeedsMaintenance(context.Background(), client, setup.BucketName, setup.tablePath(), &tableState{Metadata: meta, MetadataFileName: "v1.metadata.json", DataPath: setup.dataPath()}, config, ops)
 	if err == nil {
 		t.Fatal("expected planning-index build error")
 	}
@@ -1588,7 +1767,7 @@ func TestTableNeedsMaintenanceScopesPlanningIndexBuildErrorsPerOperation(t *test
 		t.Fatalf("parseOperations: %v", err)
 	}
 
-	needsWork, err := handler.tableNeedsMaintenance(context.Background(), client, setup.BucketName, setup.tablePath(), meta, "v1.metadata.json", nil, config, ops)
+	needsWork, err := handler.tableNeedsMaintenance(context.Background(), client, setup.BucketName, setup.tablePath(), &tableState{Metadata: meta, MetadataFileName: "v1.metadata.json", DataPath: setup.dataPath()}, config, ops)
 	if err != nil {
 		t.Fatalf("expected rewrite_manifests planning to survive compaction planning error, got %v", err)
 	}
@@ -2111,7 +2290,7 @@ func populateTableWithDeleteFilesAndSortOrder(
 	schema := newTestSchema()
 	spec := *iceberg.UnpartitionedSpec
 
-	meta, err := table.NewMetadata(schema, &spec, sortOrder, "s3://"+setup.BucketName+"/"+setup.tablePath(), nil)
+	meta, err := table.NewMetadata(schema, &spec, sortOrder, "s3://"+setup.BucketName+"/"+setup.dataPath(), nil)
 	if err != nil {
 		t.Fatalf("create metadata: %v", err)
 	}
@@ -2119,7 +2298,7 @@ func populateTableWithDeleteFilesAndSortOrder(
 	bucketsPath := s3tables.TablesPath
 	bucketPath := path.Join(bucketsPath, setup.BucketName)
 	nsPath := path.Join(bucketPath, setup.Namespace)
-	tableFilerPath := path.Join(nsPath, setup.TableName)
+	tableFilerPath := path.Join(bucketPath, setup.dataPath())
 	metaDir := path.Join(tableFilerPath, "metadata")
 	dataDir := path.Join(tableFilerPath, "data")
 
@@ -2129,7 +2308,7 @@ func populateTableWithDeleteFilesAndSortOrder(
 	var dataManifestEntries []iceberg.ManifestEntry
 	for _, df := range dataFiles {
 		data := writeTestParquetFile(t, fs, dataDir, df.Name, df.Rows)
-		dfb, err := iceberg.NewDataFileBuilder(spec, iceberg.EntryContentData, "data/"+df.Name, iceberg.ParquetFile, map[int]any{}, nil, nil, int64(len(df.Rows)), int64(len(data)))
+		dfb, err := iceberg.NewDataFileBuilder(spec, iceberg.EntryContentData, setup.fileRef("data", df.Name), iceberg.ParquetFile, map[int]any{}, nil, nil, int64(len(df.Rows)), int64(len(data)))
 		if err != nil {
 			t.Fatalf("build data file %s: %v", df.Name, err)
 		}
@@ -2140,7 +2319,7 @@ func populateTableWithDeleteFilesAndSortOrder(
 	// Write data manifest
 	var dataManifestBuf bytes.Buffer
 	dataManifestName := "data-manifest-1.avro"
-	dataMf, err := iceberg.WriteManifest(path.Join("metadata", dataManifestName), &dataManifestBuf, version, spec, schema, 1, dataManifestEntries)
+	dataMf, err := iceberg.WriteManifest(setup.fileRef("metadata", dataManifestName), &dataManifestBuf, version, spec, schema, 1, dataManifestEntries)
 	if err != nil {
 		t.Fatalf("write data manifest: %v", err)
 	}
@@ -2173,7 +2352,7 @@ func populateTableWithDeleteFilesAndSortOrder(
 				Name: pdf.Name, Content: buf.Bytes(),
 				Attributes: &filer_pb.FuseAttributes{Mtime: time.Now().Unix(), FileSize: uint64(buf.Len())},
 			})
-			dfb, err := iceberg.NewDataFileBuilder(spec, iceberg.EntryContentPosDeletes, "data/"+pdf.Name, iceberg.ParquetFile, map[int]any{}, nil, nil, int64(len(pdf.Rows)), int64(buf.Len()))
+			dfb, err := iceberg.NewDataFileBuilder(spec, iceberg.EntryContentPosDeletes, setup.fileRef("data", pdf.Name), iceberg.ParquetFile, map[int]any{}, nil, nil, int64(len(pdf.Rows)), int64(buf.Len()))
 			if err != nil {
 				t.Fatalf("build pos delete file: %v", err)
 			}
@@ -2185,7 +2364,7 @@ func populateTableWithDeleteFilesAndSortOrder(
 		// metadata to "deletes" and build a ManifestFile with the right content type.
 		var posManifestBuf bytes.Buffer
 		posManifestName := "pos-delete-manifest-1.avro"
-		posManifestPath := path.Join("metadata", posManifestName)
+		posManifestPath := setup.fileRef("metadata", posManifestName)
 		_, err := iceberg.WriteManifest(posManifestPath, &posManifestBuf, version, spec, schema, 1, posDeleteEntries)
 		if err != nil {
 			t.Fatalf("write pos delete manifest: %v", err)
@@ -2225,7 +2404,7 @@ func populateTableWithDeleteFilesAndSortOrder(
 				Name: edf.Name, Content: buf.Bytes(),
 				Attributes: &filer_pb.FuseAttributes{Mtime: time.Now().Unix(), FileSize: uint64(buf.Len())},
 			})
-			dfb, err := iceberg.NewDataFileBuilder(spec, iceberg.EntryContentEqDeletes, "data/"+edf.Name, iceberg.ParquetFile, map[int]any{}, nil, nil, int64(len(edf.Rows)), int64(buf.Len()))
+			dfb, err := iceberg.NewDataFileBuilder(spec, iceberg.EntryContentEqDeletes, setup.fileRef("data", edf.Name), iceberg.ParquetFile, map[int]any{}, nil, nil, int64(len(edf.Rows)), int64(buf.Len()))
 			if err != nil {
 				t.Fatalf("build eq delete file: %v", err)
 			}
@@ -2236,7 +2415,7 @@ func populateTableWithDeleteFilesAndSortOrder(
 
 		var eqManifestBuf bytes.Buffer
 		eqManifestName := "eq-delete-manifest-1.avro"
-		eqManifestPath := path.Join("metadata", eqManifestName)
+		eqManifestPath := setup.fileRef("metadata", eqManifestName)
 		_, err := iceberg.WriteManifest(eqManifestPath, &eqManifestBuf, version, spec, schema, 1, eqDeleteEntries)
 		if err != nil {
 			t.Fatalf("write eq delete manifest: %v", err)
@@ -2267,8 +2446,8 @@ func populateTableWithDeleteFilesAndSortOrder(
 
 	// Build final metadata with snapshot
 	now := time.Now().UnixMilli()
-	snap := table.Snapshot{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro"}
-	builder, err := table.MetadataBuilderFromBase(meta, "s3://"+setup.BucketName+"/"+setup.tablePath())
+	snap := table.Snapshot{SnapshotID: 1, TimestampMs: now, ManifestList: setup.fileRef("metadata", "snap-1.avro")}
+	builder, err := table.MetadataBuilderFromBase(meta, "s3://"+setup.BucketName+"/"+setup.dataPath())
 	if err != nil {
 		t.Fatalf("create metadata builder: %v", err)
 	}
@@ -2286,8 +2465,9 @@ func populateTableWithDeleteFilesAndSortOrder(
 	// Register table structure
 	fullMetadataJSON, _ := json.Marshal(meta)
 	internalMeta := map[string]interface{}{
-		"metadataVersion": 1,
-		"metadata":        map[string]interface{}{"fullMetadata": json.RawMessage(fullMetadataJSON)},
+		"metadataVersion":  1,
+		"metadataLocation": setup.fileRef("metadata", "v1.metadata.json"),
+		"metadata":         map[string]interface{}{"fullMetadata": json.RawMessage(fullMetadataJSON)},
 	}
 	xattr, _ := json.Marshal(internalMeta)
 
@@ -2311,11 +2491,11 @@ func loadLiveDeleteFilePaths(
 ) (posPaths, eqPaths []string) {
 	t.Helper()
 
-	meta, _, err := loadCurrentMetadata(context.Background(), client, bucketName, tablePath)
+	state, err := loadCurrentMetadata(context.Background(), client, bucketName, tablePath)
 	if err != nil {
 		t.Fatalf("loadCurrentMetadata: %v", err)
 	}
-	manifests, err := loadCurrentManifests(context.Background(), client, bucketName, tablePath, meta)
+	manifests, err := loadCurrentManifests(context.Background(), client, bucketName, state.DataPath, state.Metadata)
 	if err != nil {
 		t.Fatalf("loadCurrentManifests: %v", err)
 	}
@@ -2355,11 +2535,11 @@ func rewriteDeleteManifestsAsMixed(
 ) {
 	t.Helper()
 
-	meta, _, err := loadCurrentMetadata(context.Background(), client, setup.BucketName, setup.tablePath())
+	state, err := loadCurrentMetadata(context.Background(), client, setup.BucketName, setup.tablePath())
 	if err != nil {
 		t.Fatalf("loadCurrentMetadata: %v", err)
 	}
-	manifests, err := loadCurrentManifests(context.Background(), client, setup.BucketName, setup.tablePath(), meta)
+	manifests, err := loadCurrentManifests(context.Background(), client, setup.BucketName, state.DataPath, state.Metadata)
 	if err != nil {
 		t.Fatalf("loadCurrentManifests: %v", err)
 	}
@@ -2385,13 +2565,13 @@ func rewriteDeleteManifestsAsMixed(
 	}
 
 	spec := *iceberg.UnpartitionedSpec
-	version := meta.Version()
+	version := state.Metadata.Version()
 	metaDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "metadata")
 	manifestName := "mixed-delete-manifest-1.avro"
 	manifestPath := path.Join("metadata", manifestName)
 
 	var manifestBuf bytes.Buffer
-	_, err = iceberg.WriteManifest(manifestPath, &manifestBuf, version, spec, meta.CurrentSchema(), 1, deleteEntries)
+	_, err = iceberg.WriteManifest(manifestPath, &manifestBuf, version, spec, state.Metadata.CurrentSchema(), 1, deleteEntries)
 	if err != nil {
 		t.Fatalf("write mixed delete manifest: %v", err)
 	}
@@ -3204,11 +3384,11 @@ func TestDetectSplitsSortCompactionBinsByCap(t *testing.T) {
 		sortOrder,
 	)
 
-	meta, _, err := loadCurrentMetadata(context.Background(), client, setup.BucketName, setup.tablePath())
+	state, err := loadCurrentMetadata(context.Background(), client, setup.BucketName, setup.tablePath())
 	if err != nil {
 		t.Fatalf("loadCurrentMetadata: %v", err)
 	}
-	manifests, err := loadCurrentManifests(context.Background(), client, setup.BucketName, setup.tablePath(), meta)
+	manifests, err := loadCurrentManifests(context.Background(), client, setup.BucketName, state.DataPath, state.Metadata)
 	if err != nil {
 		t.Fatalf("loadCurrentManifests: %v", err)
 	}

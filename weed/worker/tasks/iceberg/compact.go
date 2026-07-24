@@ -44,10 +44,11 @@ func (h *Handler) compactDataFiles(
 	onProgress func(binIdx, totalBins int),
 ) (string, map[string]int64, error) {
 	start := time.Now()
-	meta, metadataFileName, err := loadCurrentMetadata(ctx, filerClient, bucketName, tablePath)
+	state, err := loadCurrentMetadata(ctx, filerClient, bucketName, tablePath)
 	if err != nil {
 		return "", nil, fmt.Errorf("load metadata: %w", err)
 	}
+	meta, dataPath := state.Metadata, state.DataPath
 	predicate, err := parsePartitionPredicate(config.Where, meta)
 	if err != nil {
 		return "", nil, err
@@ -64,7 +65,7 @@ func (h *Handler) compactDataFiles(
 	}
 
 	// Read manifest list
-	manifestListData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, currentSnap.ManifestList)
+	manifestListData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, dataPath, currentSnap.ManifestList)
 	if err != nil {
 		return "", nil, fmt.Errorf("read manifest list: %w", err)
 	}
@@ -93,7 +94,7 @@ func (h *Handler) compactDataFiles(
 	// Collect data file entries from data manifests
 	var allEntries []iceberg.ManifestEntry
 	for _, mf := range dataManifests {
-		manifestData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, mf.FilePath())
+		manifestData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, dataPath, mf.FilePath())
 		if err != nil {
 			return "", nil, fmt.Errorf("read manifest %s: %w", mf.FilePath(), err)
 		}
@@ -112,7 +113,7 @@ func (h *Handler) compactDataFiles(
 	if config.ApplyDeletes && len(deleteManifests) > 0 {
 		var allDeleteEntries []iceberg.ManifestEntry
 		for _, mf := range deleteManifests {
-			manifestData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, mf.FilePath())
+			manifestData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, dataPath, mf.FilePath())
 			if err != nil {
 				return "", nil, fmt.Errorf("read delete manifest %s: %w", mf.FilePath(), err)
 			}
@@ -149,14 +150,14 @@ func (h *Handler) compactDataFiles(
 		}
 
 		if len(posDeleteEntries) > 0 {
-			positionDeletes, err = collectPositionDeletes(ctx, filerClient, bucketName, tablePath, posDeleteEntries)
+			positionDeletes, err = collectPositionDeletes(ctx, filerClient, bucketName, dataPath, posDeleteEntries)
 			if err != nil {
 				return "", nil, fmt.Errorf("collect position deletes: %w", err)
 			}
 		}
 
 		if len(eqDeleteEntries) > 0 {
-			eqDeleteGroups, err = collectEqualityDeletes(ctx, filerClient, bucketName, tablePath, eqDeleteEntries, meta.CurrentSchema())
+			eqDeleteGroups, err = collectEqualityDeletes(ctx, filerClient, bucketName, dataPath, eqDeleteEntries, meta.CurrentSchema())
 			if err != nil {
 				return "", nil, fmt.Errorf("collect equality deletes: %w", err)
 			}
@@ -230,8 +231,8 @@ func (h *Handler) compactDataFiles(
 		return entrySeqNum(entry)
 	}
 
-	metaDir := path.Join(s3tables.TablesPath, bucketName, tablePath, "metadata")
-	dataDir := path.Join(s3tables.TablesPath, bucketName, tablePath, "data")
+	metaDir := path.Join(s3tables.TablesPath, bucketName, dataPath, "metadata")
+	dataDir := path.Join(s3tables.TablesPath, bucketName, dataPath, "data")
 
 	// Track written artifacts so we can clean them up if the commit fails.
 	type artifact struct {
@@ -262,14 +263,14 @@ func (h *Handler) compactDataFiles(
 		}
 
 		mergedFileName := fmt.Sprintf("compact-%d-%d-%s-%d.parquet", snapshotID, newSnapID, artifactSuffix, binIdx)
-		mergedFilePath := absoluteIcebergPath(bucketName, tablePath, "data", mergedFileName)
+		mergedFilePath := absoluteIcebergPath(bucketName, dataPath, "data", mergedFileName)
 
 		var mergedData []byte
 		var recordCount int64
 		if rewritePlan != nil && rewritePlan.strategy == "sort" {
-			mergedData, recordCount, err = mergeParquetFilesSorted(ctx, filerClient, bucketName, tablePath, bin.Entries, positionDeletes, eqDeleteGroups, schema, rewritePlan)
+			mergedData, recordCount, err = mergeParquetFilesSorted(ctx, filerClient, bucketName, dataPath, bin.Entries, positionDeletes, eqDeleteGroups, schema, rewritePlan)
 		} else {
-			mergedData, recordCount, err = mergeParquetFiles(ctx, filerClient, bucketName, tablePath, bin.Entries, positionDeletes, eqDeleteGroups, schema)
+			mergedData, recordCount, err = mergeParquetFiles(ctx, filerClient, bucketName, dataPath, bin.Entries, positionDeletes, eqDeleteGroups, schema)
 		}
 		if err != nil {
 			glog.Warningf("iceberg compact: failed to merge bin %d (%d files): %v", binIdx, len(bin.Entries), err)
@@ -408,7 +409,7 @@ func (h *Handler) compactDataFiles(
 		var manifestBuf bytes.Buffer
 		manifestFileName := fmt.Sprintf("compact-%d-%s-spec%d.avro", newSnapID, artifactSuffix, se.specID)
 		newManifest, err := iceberg.WriteManifest(
-			absoluteIcebergPath(bucketName, tablePath, "metadata", manifestFileName),
+			absoluteIcebergPath(bucketName, dataPath, "metadata", manifestFileName),
 			&manifestBuf,
 			version,
 			ps,
@@ -470,8 +471,8 @@ func (h *Handler) compactDataFiles(
 	writtenArtifacts = append(writtenArtifacts, artifact{dir: metaDir, fileName: manifestListFileName})
 
 	// Commit: add new snapshot and update main branch ref
-	manifestListLocation := absoluteIcebergPath(bucketName, tablePath, "metadata", manifestListFileName)
-	err = h.commitWithRetry(ctx, filerClient, bucketName, tablePath, metadataFileName, config, func(currentMeta table.Metadata, builder *table.MetadataBuilder) error {
+	manifestListLocation := absoluteIcebergPath(bucketName, dataPath, "metadata", manifestListFileName)
+	err = h.commitWithRetry(ctx, filerClient, bucketName, tablePath, state.MetadataFileName, config, func(currentMeta table.Metadata, builder *table.MetadataBuilder) error {
 		// Guard: verify table head hasn't advanced since we planned.
 		cs := currentMeta.CurrentSnapshot()
 		if cs == nil || cs.SnapshotID != snapshotID {
@@ -688,7 +689,7 @@ func partitionKey(partition map[int]any) string {
 func collectPositionDeletes(
 	ctx context.Context,
 	filerClient filer_pb.SeaweedFilerClient,
-	bucketName, tablePath string,
+	bucketName, dataPath string,
 	deleteEntries []iceberg.ManifestEntry,
 ) (map[string][]int64, error) {
 	result := make(map[string][]int64)
@@ -696,12 +697,15 @@ func collectPositionDeletes(
 		if entry.DataFile().ContentType() != iceberg.EntryContentPosDeletes {
 			continue
 		}
-		fileDeletes, err := readPositionDeleteFile(ctx, filerClient, bucketName, tablePath, entry.DataFile().FilePath())
+		fileDeletes, err := readPositionDeleteFile(ctx, filerClient, bucketName, dataPath, entry.DataFile().FilePath())
 		if err != nil {
 			return nil, fmt.Errorf("read position delete file %s: %w", entry.DataFile().FilePath(), err)
 		}
 		for filePath, positions := range fileDeletes {
-			normalized := normalizeIcebergPath(filePath, bucketName, tablePath)
+			normalized, err := normalizeIcebergPath(filePath, bucketName, dataPath)
+			if err != nil {
+				return nil, fmt.Errorf("resolve deleted file %s: %w", filePath, err)
+			}
 			result[normalized] = append(result[normalized], positions...)
 		}
 	}
@@ -720,9 +724,9 @@ func collectPositionDeletes(
 func readPositionDeleteFile(
 	ctx context.Context,
 	filerClient filer_pb.SeaweedFilerClient,
-	bucketName, tablePath, filePath string,
+	bucketName, dataPath, filePath string,
 ) (map[string][]int64, error) {
-	data, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, filePath)
+	data, err := loadFileByIcebergPath(ctx, filerClient, bucketName, dataPath, filePath)
 	if err != nil {
 		return nil, err
 	}
@@ -783,7 +787,7 @@ type equalityDeleteGroup struct {
 func collectEqualityDeletes(
 	ctx context.Context,
 	filerClient filer_pb.SeaweedFilerClient,
-	bucketName, tablePath string,
+	bucketName, dataPath string,
 	deleteEntries []iceberg.ManifestEntry,
 	schema *iceberg.Schema,
 ) ([]equalityDeleteGroup, error) {
@@ -809,7 +813,7 @@ func collectEqualityDeletes(
 			groups[groupKey] = gs
 		}
 
-		keys, err := readEqualityDeleteFile(ctx, filerClient, bucketName, tablePath, entry.DataFile().FilePath(), eqFieldIDs, schema)
+		keys, err := readEqualityDeleteFile(ctx, filerClient, bucketName, dataPath, entry.DataFile().FilePath(), eqFieldIDs, schema)
 		if err != nil {
 			return nil, fmt.Errorf("read equality delete file %s: %w", entry.DataFile().FilePath(), err)
 		}
@@ -831,11 +835,11 @@ func collectEqualityDeletes(
 func readEqualityDeleteFile(
 	ctx context.Context,
 	filerClient filer_pb.SeaweedFilerClient,
-	bucketName, tablePath, filePath string,
+	bucketName, dataPath, filePath string,
 	fieldIDs []int,
 	icebergSchema *iceberg.Schema,
 ) (map[string]struct{}, error) {
-	data, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, filePath)
+	data, err := loadFileByIcebergPath(ctx, filerClient, bucketName, dataPath, filePath)
 	if err != nil {
 		return nil, err
 	}
@@ -922,7 +926,7 @@ func resolveEqualityColIndices(pqSchema *parquet.Schema, fieldIDs []int, iceberg
 func mergeParquetFiles(
 	ctx context.Context,
 	filerClient filer_pb.SeaweedFilerClient,
-	bucketName, tablePath string,
+	bucketName, dataPath string,
 	entries []iceberg.ManifestEntry,
 	positionDeletes map[string][]int64,
 	eqDeleteGroups []equalityDeleteGroup,
@@ -933,7 +937,7 @@ func mergeParquetFiles(
 	}
 
 	// Load the first file to obtain the schema for the writer.
-	firstData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, entries[0].DataFile().FilePath())
+	firstData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, dataPath, entries[0].DataFile().FilePath())
 	if err != nil {
 		return nil, 0, fmt.Errorf("read parquet file %s: %w", entries[0].DataFile().FilePath(), err)
 	}
@@ -954,7 +958,7 @@ func mergeParquetFiles(
 	writer := parquet.NewWriter(&outputBuf, parquetSchema)
 
 	drainReader := func(reader *parquet.Reader, source string) (int64, error) {
-		return visitFilteredParquetRows(ctx, reader, source, bucketName, tablePath, positionDeletes, resolvedEqGroups, func(filtered []parquet.Row) error {
+		return visitFilteredParquetRows(ctx, reader, source, bucketName, dataPath, positionDeletes, resolvedEqGroups, func(filtered []parquet.Row) error {
 			if _, err := writer.WriteRows(filtered); err != nil {
 				return fmt.Errorf("write rows from %s: %w", source, err)
 			}
@@ -980,7 +984,7 @@ func mergeParquetFiles(
 		default:
 		}
 
-		data, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, entry.DataFile().FilePath())
+		data, err := loadFileByIcebergPath(ctx, filerClient, bucketName, dataPath, entry.DataFile().FilePath())
 		if err != nil {
 			writer.Close()
 			return nil, 0, fmt.Errorf("read parquet file %s: %w", entry.DataFile().FilePath(), err)
@@ -1037,7 +1041,7 @@ func resolveEqualityDeleteGroupsForSchema(
 func visitFilteredParquetRows(
 	ctx context.Context,
 	reader *parquet.Reader,
-	source, bucketName, tablePath string,
+	source, bucketName, dataPath string,
 	positionDeletes map[string][]int64,
 	resolvedEqGroups []resolvedEqDeleteGroup,
 	onRows func([]parquet.Row) error,
@@ -1046,7 +1050,10 @@ func visitFilteredParquetRows(
 
 	rows := make([]parquet.Row, 256)
 	filteredRows := make([]parquet.Row, 0, len(rows))
-	normalizedSource := normalizeIcebergPath(source, bucketName, tablePath)
+	normalizedSource, err := normalizeIcebergPath(source, bucketName, dataPath)
+	if err != nil {
+		return 0, err
+	}
 	posDeletes := positionDeletes[normalizedSource]
 	posDeleteIdx := 0
 	var absolutePos int64
@@ -1107,7 +1114,7 @@ func visitFilteredParquetRows(
 func mergeParquetFilesSorted(
 	ctx context.Context,
 	filerClient filer_pb.SeaweedFilerClient,
-	bucketName, tablePath string,
+	bucketName, dataPath string,
 	entries []iceberg.ManifestEntry,
 	positionDeletes map[string][]int64,
 	eqDeleteGroups []equalityDeleteGroup,
@@ -1121,7 +1128,7 @@ func mergeParquetFilesSorted(
 		return nil, 0, fmt.Errorf("sorted merge requires sort rewrite plan")
 	}
 
-	firstData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, entries[0].DataFile().FilePath())
+	firstData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, dataPath, entries[0].DataFile().FilePath())
 	if err != nil {
 		return nil, 0, fmt.Errorf("read parquet file %s: %w", entries[0].DataFile().FilePath(), err)
 	}
@@ -1148,7 +1155,7 @@ func mergeParquetFilesSorted(
 	var allRows []parquet.Row
 
 	collectRows := func(reader *parquet.Reader, source string) (int64, error) {
-		return visitFilteredParquetRows(ctx, reader, source, bucketName, tablePath, positionDeletes, resolvedEqGroups, func(filtered []parquet.Row) error {
+		return visitFilteredParquetRows(ctx, reader, source, bucketName, dataPath, positionDeletes, resolvedEqGroups, func(filtered []parquet.Row) error {
 			for _, row := range filtered {
 				allRows = append(allRows, row.Clone())
 			}
@@ -1168,7 +1175,7 @@ func mergeParquetFilesSorted(
 		default:
 		}
 
-		data, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, entry.DataFile().FilePath())
+		data, err := loadFileByIcebergPath(ctx, filerClient, bucketName, dataPath, entry.DataFile().FilePath())
 		if err != nil {
 			return nil, 0, fmt.Errorf("read parquet file %s: %w", entry.DataFile().FilePath(), err)
 		}

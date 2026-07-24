@@ -13,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/apache/iceberg-go/table"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -124,7 +123,7 @@ func walkFilerEntries(ctx context.Context, client filer_pb.SeaweedFilerClient, d
 }
 
 // loadCurrentMetadata loads and parses the current Iceberg metadata from the table entry's xattr.
-func loadCurrentMetadata(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, tablePath string) (table.Metadata, string, error) {
+func loadCurrentMetadata(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, tablePath string) (*tableState, error) {
 	dir := path.Join(s3tables.TablesPath, bucketName, path.Dir(tablePath))
 	name := path.Base(tablePath)
 
@@ -133,63 +132,28 @@ func loadCurrentMetadata(ctx context.Context, client filer_pb.SeaweedFilerClient
 		Name:      name,
 	})
 	if err != nil {
-		return nil, "", fmt.Errorf("lookup table entry %s/%s: %w", dir, name, err)
+		return nil, fmt.Errorf("lookup table entry %s/%s: %w", dir, name, err)
 	}
 	if resp == nil || resp.Entry == nil {
-		return nil, "", fmt.Errorf("table entry not found: %s/%s", dir, name)
+		return nil, fmt.Errorf("table entry not found: %s/%s", dir, name)
 	}
 
 	metadataBytes, ok := resp.Entry.Extended[s3tables.ExtendedKeyMetadata]
 	if !ok || len(metadataBytes) == 0 {
-		return nil, "", fmt.Errorf("no metadata xattr on table entry %s/%s", dir, name)
+		return nil, fmt.Errorf("no metadata xattr on table entry %s/%s", dir, name)
 	}
 
-	// Parse internal metadata to extract FullMetadata
-	var internalMeta struct {
-		MetadataVersion  int    `json:"metadataVersion"`
-		MetadataLocation string `json:"metadataLocation,omitempty"`
-		Metadata         *struct {
-			FullMetadata json.RawMessage `json:"fullMetadata,omitempty"`
-		} `json:"metadata,omitempty"`
-	}
-	if err := json.Unmarshal(metadataBytes, &internalMeta); err != nil {
-		return nil, "", fmt.Errorf("unmarshal internal metadata: %w", err)
-	}
-	if internalMeta.Metadata == nil || len(internalMeta.Metadata.FullMetadata) == 0 {
-		return nil, "", fmt.Errorf("no fullMetadata in table xattr")
-	}
-
-	meta, err := table.ParseMetadataBytes(internalMeta.Metadata.FullMetadata)
-	if err != nil {
-		return nil, "", fmt.Errorf("parse iceberg metadata: %w", err)
-	}
-
-	// Use metadataLocation from xattr if available (includes nonce suffix),
-	// otherwise fall back to the canonical name derived from metadataVersion.
-	metadataFileName := path.Base(internalMeta.MetadataLocation)
-	if metadataFileName == "" || metadataFileName == "." {
-		metadataFileName = fmt.Sprintf("v%d.metadata.json", internalMeta.MetadataVersion)
-	}
-	return meta, metadataFileName, nil
+	return parseTableMetadataEnvelope(metadataBytes, bucketName, tablePath)
 }
 
 // loadFileByIcebergPath loads a file from the filer given an Iceberg-style path.
-// Paths may be absolute filer paths, relative (metadata/..., data/...), or
-// location-based (s3://bucket/ns/table/metadata/...).
-//
-// The function normalises the path to a relative form under the table root
-// (e.g. "metadata/snap-1.avro" or "data/region=us/file.parquet") and splits
-// it into the correct filer directory + entry name, so nested sub-directories
-// are resolved properly.
-func loadFileByIcebergPath(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, tablePath, icebergPath string) ([]byte, error) {
-	relPath := path.Clean(normalizeIcebergPath(icebergPath, bucketName, tablePath))
-	relPath = strings.TrimPrefix(relPath, "/")
-	if relPath == "." || relPath == "" || strings.HasPrefix(relPath, "../") {
-		return nil, fmt.Errorf("invalid iceberg path %q", icebergPath)
+// dataPath is the bucket-relative directory the table's files live in.
+func loadFileByIcebergPath(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, dataPath, icebergPath string) ([]byte, error) {
+	fullPath, err := icebergFilerPath(bucketName, dataPath, icebergPath)
+	if err != nil {
+		return nil, err
 	}
-
-	dir := path.Join(s3tables.TablesPath, bucketName, tablePath, path.Dir(relPath))
-	fileName := path.Base(relPath)
+	dir, fileName := path.Dir(fullPath), path.Base(fullPath)
 
 	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
 		Directory: dir,
@@ -218,47 +182,74 @@ func loadFileByIcebergPath(ctx context.Context, client filer_pb.SeaweedFilerClie
 	return data, nil
 }
 
-// normalizeIcebergPath converts an Iceberg path (which may be an S3 URL, an
-// absolute filer path, or a plain relative path) into a relative path under the
-// table root, e.g. "metadata/snap-1.avro" or "data/region=us/file.parquet".
-func normalizeIcebergPath(icebergPath, bucketName, tablePath string) string {
+// normalizeIcebergPath converts an Iceberg path (an S3 URL, an absolute filer
+// path, or a path relative to the table root) into a path relative to the
+// bucket root, e.g. "ns/table/metadata/snap-1.avro". Absolute references are
+// resolved from the bucket root rather than from dataPath: an Iceberg table
+// records where its files actually are, and a client writing through the REST
+// catalog may place them outside the catalog path. The bucket-relative form is
+// the canonical key for comparing references that mix both spellings.
+func normalizeIcebergPath(icebergPath, bucketName, dataPath string) (string, error) {
 	p := icebergPath
-
-	// Strip scheme (e.g. "s3://bucket/ns/table/metadata/file" → "bucket/ns/table/metadata/file")
+	absolute := false
 	if idx := strings.Index(p, "://"); idx >= 0 {
 		p = p[idx+3:]
+		absolute = true
+	} else if strings.HasPrefix(p, "/") {
+		absolute = true
 	}
-
-	// Strip any leading slash
 	p = strings.TrimPrefix(p, "/")
 
-	// Strip bucket+tablePath prefix if present
-	// e.g. "mybucket/ns/table/metadata/file" → "metadata/file"
-	tablePrefix := path.Join(bucketName, tablePath) + "/"
-	if strings.HasPrefix(p, tablePrefix) {
-		return p[len(tablePrefix):]
+	if absolute {
+		rest, ok := cutPathPrefix(p, bucketName)
+		if !ok {
+			// Filer-style references carry the /buckets prefix ahead of the bucket.
+			if withoutTablesPath, hasTablesPath := cutPathPrefix(p, strings.TrimPrefix(s3tables.TablesPath, "/")); hasTablesPath {
+				rest, ok = cutPathPrefix(withoutTablesPath, bucketName)
+			}
+		}
+		if !ok {
+			return "", fmt.Errorf("iceberg path %q is outside bucket %q", icebergPath, bucketName)
+		}
+		p = rest
+	} else {
+		if clean := path.Clean(p); clean == ".." || strings.HasPrefix(clean, "../") {
+			return "", fmt.Errorf("invalid iceberg path %q", icebergPath)
+		}
+		p = path.Join(dataPath, p)
 	}
 
-	// Strip filer TablesPath prefix if present
-	// e.g. "buckets/mybucket/ns/table/metadata/file" → "metadata/file"
-	filerPrefix := strings.TrimPrefix(s3tables.TablesPath, "/")
-	fullPrefix := path.Join(filerPrefix, bucketName, tablePath) + "/"
-	if strings.HasPrefix(p, fullPrefix) {
-		return p[len(fullPrefix):]
+	p = path.Clean(p)
+	if p == "." || p == ".." || strings.HasPrefix(p, "../") {
+		return "", fmt.Errorf("invalid iceberg path %q", icebergPath)
 	}
+	return p, nil
+}
 
-	// Already relative (e.g. "metadata/snap-1.avro")
-	return p
+// cutPathPrefix removes a leading path prefix at a path boundary.
+func cutPathPrefix(p, segment string) (string, bool) {
+	if segment == "" {
+		return p, false
+	}
+	rest, ok := strings.CutPrefix(p, segment+"/")
+	return rest, ok
+}
+
+// icebergFilerPath resolves an Iceberg path to the filer path holding the file.
+func icebergFilerPath(bucketName, dataPath, icebergPath string) (string, error) {
+	relPath, err := normalizeIcebergPath(icebergPath, bucketName, dataPath)
+	if err != nil {
+		return "", err
+	}
+	return path.Join(s3tables.TablesPath, bucketName, relPath), nil
 }
 
 // absoluteIcebergPath is the inverse of normalizeIcebergPath: it builds the
-// absolute s3:// URI for a file under the table root. The Iceberg spec
-// requires absolute locations in metadata — strict readers (Spark/Trino via
-// S3FileIO) reject paths with no scheme. The base is derived from
-// bucketName/tablePath because that is where this package physically writes
-// every file, regardless of the location recorded in the table metadata.
-func absoluteIcebergPath(bucketName, tablePath string, elem ...string) string {
-	return "s3://" + path.Join(append([]string{bucketName, tablePath}, elem...)...)
+// absolute s3:// URI for a bucket-relative path. The Iceberg spec requires
+// absolute locations in metadata — strict readers (Spark/Trino via S3FileIO)
+// reject paths with no scheme.
+func absoluteIcebergPath(bucketName string, elem ...string) string {
+	return "s3://" + path.Join(append([]string{bucketName}, elem...)...)
 }
 
 // saveFilerFile saves a file to the filer.
