@@ -5,6 +5,7 @@ import (
 	"path"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -86,6 +87,12 @@ type MetadataProcessor struct {
 	// tsHeap is a min-heap of active job timestamps with lazy deletion,
 	// used for O(log n) amortized watermark tracking.
 	tsHeap tsMinHeap
+
+	// oldestFailedTsNs is the timestamp of the oldest event whose job returned
+	// an error, or 0 when none has. The watermark is never advanced to it or
+	// past it, so the persisted sync offset stays behind the failure and a
+	// restart replays the event instead of skipping it forever.
+	oldestFailedTsNs int64
 }
 
 func NewMetadataProcessor(fn pb.ProcessMetadataFunc, concurrency int, offsetTsNs int64) *MetadataProcessor {
@@ -254,14 +261,21 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 
 	go func() {
 
-		if err := util.Retry("metadata processor", func() error {
+		jobErr := util.Retry("metadata processor", func() error {
 			return t.fn(resp)
-		}); err != nil {
-			glog.Errorf("process %v: %v", resp, err)
-		}
+		})
 
 		t.activeJobsLock.Lock()
 		defer t.activeJobsLock.Unlock()
+
+		if jobErr != nil {
+			if t.oldestFailedTsNs == 0 || resp.TsNs < t.oldestFailedTsNs {
+				t.oldestFailedTsNs = resp.TsNs
+				glog.Errorf("process %v: %v; holding sync offset at %v so this event is replayed on restart", resp, jobErr, time.Unix(0, resp.TsNs))
+			} else {
+				glog.Errorf("process %v: %v", resp, jobErr)
+			}
+		}
 
 		delete(t.activeJobs, resp.TsNs)
 		t.removePathFromIndex(jobPaths.path, jobPaths.kind)
@@ -277,9 +291,13 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 			}
 			heap.Pop(&t.tsHeap)
 		}
-		// If this was the oldest job, advance the watermark.
+		// If this was the oldest job, advance the watermark, but never to or
+		// past an event that failed: the offset is the durable resume point,
+		// and moving it over a failure drops that event for good.
 		if t.tsHeap.Len() == 0 || resp.TsNs < t.tsHeap[0] {
-			t.processedTsWatermark.Store(resp.TsNs)
+			if t.oldestFailedTsNs == 0 || resp.TsNs < t.oldestFailedTsNs {
+				t.processedTsWatermark.Store(resp.TsNs)
+			}
 		}
 		t.activeJobsCond.Signal()
 	}()
