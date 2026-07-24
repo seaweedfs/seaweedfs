@@ -26,22 +26,26 @@ func (store *Redis2SentinelStore) Initialize(configuration util.Configuration, p
 		configuration.GetString(prefix+"masterName"),
 		configuration.GetString(prefix+"username"),
 		configuration.GetString(prefix+"password"),
+		configuration.GetString(prefix+"sentinel_username"),
+		configuration.GetString(prefix+"sentinel_password"),
 		configuration.GetInt(prefix+"database"),
 		configuration.GetString(prefix+"keyPrefix"),
 	)
 }
 
-func (store *Redis2SentinelStore) initialize(addresses []string, masterName string, username string, password string, database int, keyPrefix string) (err error) {
+func (store *Redis2SentinelStore) initialize(addresses []string, masterName string, username string, password string, sentinelUsername string, sentinelPassword string, database int, keyPrefix string) (err error) {
 	store.Client = redis.NewFailoverClient(&redis.FailoverOptions{
-		MasterName:      masterName,
-		SentinelAddrs:   addresses,
-		Username:        username,
-		Password:        password,
-		DB:              database,
-		MinRetryBackoff: time.Millisecond * 100,
-		MaxRetryBackoff: time.Minute * 1,
-		ReadTimeout:     time.Second * 30,
-		WriteTimeout:    time.Second * 5,
+		MasterName:       masterName,
+		SentinelAddrs:    addresses,
+		Username:         username,
+		Password:         password,
+		SentinelUsername: sentinelUsername,
+		SentinelPassword: sentinelPassword,
+		DB:               database,
+		MinRetryBackoff:  time.Millisecond * 100,
+		MaxRetryBackoff:  time.Minute * 1,
+		ReadTimeout:      time.Second * 30,
+		WriteTimeout:     time.Second * 5,
 	})
 	store.keyPrefix = keyPrefix
 	return

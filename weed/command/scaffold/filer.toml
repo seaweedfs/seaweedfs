@@ -237,6 +237,9 @@ addresses = ["172.22.12.7:26379","172.22.12.8:26379","172.22.12.9:26379"]
 masterName = "master"
 username = ""
 password = ""
+# credentials used to authenticate against the sentinel nodes themselves (if they require auth)
+sentinel_username = ""
+sentinel_password = ""
 database = 0
 # prefix for filer redis keys
 keyPrefix = ""
