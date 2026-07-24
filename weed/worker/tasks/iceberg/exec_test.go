@@ -41,6 +41,10 @@ type fakeFilerServer struct {
 	entries      map[string]map[string]*filer_pb.Entry // dir → name → entry
 	beforeUpdate func(*fakeFilerServer, *filer_pb.UpdateEntryRequest) error
 
+	// Set by enableAssign to serve AssignVolume against a fake volume server.
+	assignVolumeServer string
+	assignCount        int
+
 	// Counters for assertions
 	createCalls int
 	updateCalls int
@@ -188,6 +192,20 @@ func (f *fakeFilerServer) DeleteEntry(_ context.Context, req *filer_pb.DeleteEnt
 	}
 	f.mu.Unlock()
 	return &filer_pb.DeleteEntryResponse{}, nil
+}
+
+func (f *fakeFilerServer) AssignVolume(_ context.Context, _ *filer_pb.AssignVolumeRequest) (*filer_pb.AssignVolumeResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.assignVolumeServer == "" {
+		return nil, status.Error(codes.Unavailable, "no volume server")
+	}
+	f.assignCount++
+	return &filer_pb.AssignVolumeResponse{
+		FileId:   fmt.Sprintf("1,%08x", f.assignCount),
+		Location: &filer_pb.Location{Url: f.assignVolumeServer, PublicUrl: f.assignVolumeServer},
+		Count:    1,
+	}, nil
 }
 
 func (f *fakeFilerServer) Ping(_ context.Context, _ *filer_pb.PingRequest) (*filer_pb.PingResponse, error) {
