@@ -9,7 +9,6 @@ import (
 	"math/rand/v2"
 	"path"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/apache/iceberg-go"
@@ -41,10 +40,11 @@ func (h *Handler) expireSnapshots(
 ) (string, map[string]int64, error) {
 	start := time.Now()
 	// Load current metadata
-	meta, metadataFileName, err := loadCurrentMetadata(ctx, filerClient, bucketName, tablePath)
+	state, err := loadCurrentMetadata(ctx, filerClient, bucketName, tablePath)
 	if err != nil {
 		return "", nil, fmt.Errorf("load metadata: %w", err)
 	}
+	meta, dataPath := state.Metadata, state.DataPath
 
 	snapshots := meta.Snapshots()
 	if len(snapshots) == 0 {
@@ -112,23 +112,25 @@ func (h *Handler) expireSnapshots(
 
 	// Collect all files referenced by each set before modifying metadata.
 	// This lets us determine which files become unreferenced.
-	expiredFiles, err := collectSnapshotFiles(ctx, filerClient, bucketName, tablePath, expiredSnaps)
+	expiredFiles, err := collectSnapshotFiles(ctx, filerClient, bucketName, dataPath, expiredSnaps)
 	if err != nil {
 		return "", nil, fmt.Errorf("collect expired snapshot files: %w", err)
 	}
-	keptFiles, err := collectSnapshotFiles(ctx, filerClient, bucketName, tablePath, keptSnaps)
+	keptFiles, err := collectSnapshotFiles(ctx, filerClient, bucketName, dataPath, keptSnaps)
 	if err != nil {
 		return "", nil, fmt.Errorf("collect kept snapshot files: %w", err)
 	}
 
-	// Normalize kept file paths for consistent comparison
-	normalizedKept := make(map[string]struct{}, len(keptFiles))
+	// Resolve kept file paths for consistent comparison
+	keptFilerPaths := make(map[string]struct{}, len(keptFiles))
 	for f := range keptFiles {
-		normalizedKept[normalizeIcebergPath(f, bucketName, tablePath)] = struct{}{}
+		if filerPath, err := icebergFilerPath(bucketName, dataPath, f); err == nil {
+			keptFilerPaths[filerPath] = struct{}{}
+		}
 	}
 
 	// Use MetadataBuilder to remove snapshots and create new metadata
-	err = h.commitWithRetry(ctx, filerClient, bucketName, tablePath, metadataFileName, config, func(currentMeta table.Metadata, builder *table.MetadataBuilder) error {
+	err = h.commitWithRetry(ctx, filerClient, bucketName, tablePath, state.MetadataFileName, config, func(currentMeta table.Metadata, builder *table.MetadataBuilder) error {
 		// Guard: verify table head hasn't changed since we planned
 		cs := currentMeta.CurrentSnapshot()
 		if (cs == nil) != (currentSnapID == 0) || (cs != nil && cs.SnapshotID != currentSnapID) {
@@ -141,16 +143,17 @@ func (h *Handler) expireSnapshots(
 	}
 
 	// Delete files exclusively referenced by expired snapshots (best-effort)
-	tableBasePath := path.Join(s3tables.TablesPath, bucketName, tablePath)
 	deletedCount := 0
 	for filePath := range expiredFiles {
-		normalized := normalizeIcebergPath(filePath, bucketName, tablePath)
-		if _, stillReferenced := normalizedKept[normalized]; stillReferenced {
+		resolved, err := icebergFilerPath(bucketName, dataPath, filePath)
+		if err != nil {
+			glog.Warningf("iceberg maintenance: cannot resolve expired file %s: %v", filePath, err)
 			continue
 		}
-		dir := path.Join(tableBasePath, path.Dir(normalized))
-		fileName := path.Base(normalized)
-		if delErr := deleteFilerFile(ctx, filerClient, dir, fileName); delErr != nil {
+		if _, stillReferenced := keptFilerPaths[resolved]; stillReferenced {
+			continue
+		}
+		if delErr := deleteFilerFile(ctx, filerClient, path.Dir(resolved), path.Base(resolved)); delErr != nil {
 			glog.Warningf("iceberg maintenance: failed to delete unreferenced file %s: %v", filePath, delErr)
 		} else {
 			deletedCount++
@@ -172,7 +175,7 @@ func (h *Handler) expireSnapshots(
 func collectSnapshotFiles(
 	ctx context.Context,
 	filerClient filer_pb.SeaweedFilerClient,
-	bucketName, tablePath string,
+	bucketName, dataPath string,
 	snapshots []table.Snapshot,
 ) (map[string]struct{}, error) {
 	files := make(map[string]struct{})
@@ -182,7 +185,7 @@ func collectSnapshotFiles(
 		}
 		files[snap.ManifestList] = struct{}{}
 
-		manifestListData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, snap.ManifestList)
+		manifestListData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, dataPath, snap.ManifestList)
 		if err != nil {
 			return nil, fmt.Errorf("read manifest list %s: %w", snap.ManifestList, err)
 		}
@@ -194,7 +197,7 @@ func collectSnapshotFiles(
 		for _, mf := range manifests {
 			files[mf.FilePath()] = struct{}{}
 
-			manifestData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, mf.FilePath())
+			manifestData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, dataPath, mf.FilePath())
 			if err != nil {
 				return nil, fmt.Errorf("read manifest %s: %w", mf.FilePath(), err)
 			}
@@ -224,12 +227,12 @@ func (h *Handler) removeOrphans(
 ) (string, map[string]int64, error) {
 	start := time.Now()
 	// Load current metadata
-	meta, metadataFileName, err := loadCurrentMetadata(ctx, filerClient, bucketName, tablePath)
+	state, err := loadCurrentMetadata(ctx, filerClient, bucketName, tablePath)
 	if err != nil {
 		return "", nil, fmt.Errorf("load metadata: %w", err)
 	}
 
-	orphanCandidates, err := collectOrphanCandidates(ctx, filerClient, bucketName, tablePath, meta, metadataFileName, config.OrphanOlderThanHours)
+	orphanCandidates, err := collectOrphanCandidates(ctx, filerClient, bucketName, state.DataPath, state.Metadata, state.MetadataFileName, config.OrphanOlderThanHours)
 	if err != nil {
 		return "", nil, fmt.Errorf("collect orphan candidates: %w", err)
 	}
@@ -253,12 +256,12 @@ func (h *Handler) removeOrphans(
 func collectOrphanCandidates(
 	ctx context.Context,
 	filerClient filer_pb.SeaweedFilerClient,
-	bucketName, tablePath string,
+	bucketName, dataPath string,
 	meta table.Metadata,
 	metadataFileName string,
 	orphanOlderThanHours int64,
 ) ([]filerFileEntry, error) {
-	referencedFiles, err := collectSnapshotFiles(ctx, filerClient, bucketName, tablePath, meta.Snapshots())
+	referencedFiles, err := collectSnapshotFiles(ctx, filerClient, bucketName, dataPath, meta.Snapshots())
 	if err != nil {
 		return nil, fmt.Errorf("collect referenced files: %w", err)
 	}
@@ -268,13 +271,14 @@ func collectOrphanCandidates(
 		referencedFiles[mle.MetadataFile] = struct{}{}
 	}
 
-	normalizedRefs := make(map[string]struct{}, len(referencedFiles))
+	referencedFilerPaths := make(map[string]struct{}, len(referencedFiles))
 	for ref := range referencedFiles {
-		normalizedRefs[ref] = struct{}{}
-		normalizedRefs[normalizeIcebergPath(ref, bucketName, tablePath)] = struct{}{}
+		if filerPath, err := icebergFilerPath(bucketName, dataPath, ref); err == nil {
+			referencedFilerPaths[filerPath] = struct{}{}
+		}
 	}
 
-	tableBasePath := path.Join(s3tables.TablesPath, bucketName, tablePath)
+	tableBasePath := path.Join(s3tables.TablesPath, bucketName, dataPath)
 	safetyThreshold := time.Now().Add(-time.Duration(orphanOlderThanHours) * time.Hour)
 	var candidates []filerFileEntry
 
@@ -288,9 +292,7 @@ func collectOrphanCandidates(
 
 		for _, fe := range fileEntries {
 			entry := fe.Entry
-			fullPath := path.Join(fe.Dir, entry.Name)
-			relPath := strings.TrimPrefix(fullPath, tableBasePath+"/")
-			if _, isReferenced := normalizedRefs[relPath]; isReferenced {
+			if _, isReferenced := referencedFilerPaths[path.Join(fe.Dir, entry.Name)]; isReferenced {
 				continue
 			}
 			if entry.Attributes == nil {
@@ -319,10 +321,11 @@ func (h *Handler) rewriteManifests(
 ) (string, map[string]int64, error) {
 	start := time.Now()
 	// Load current metadata
-	meta, metadataFileName, err := loadCurrentMetadata(ctx, filerClient, bucketName, tablePath)
+	state, err := loadCurrentMetadata(ctx, filerClient, bucketName, tablePath)
 	if err != nil {
 		return "", nil, fmt.Errorf("load metadata: %w", err)
 	}
+	meta, dataPath := state.Metadata, state.DataPath
 	predicate, err := parsePartitionPredicate(config.Where, meta)
 	if err != nil {
 		return "", nil, err
@@ -334,7 +337,7 @@ func (h *Handler) rewriteManifests(
 	}
 
 	// Read manifest list
-	manifestListData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, currentSnap.ManifestList)
+	manifestListData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, dataPath, currentSnap.ManifestList)
 	if err != nil {
 		return "", nil, fmt.Errorf("read manifest list: %w", err)
 	}
@@ -368,7 +371,7 @@ func (h *Handler) rewriteManifests(
 	var manifestsRewritten int64
 
 	for _, mf := range dataManifests {
-		manifestData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, mf.FilePath())
+		manifestData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, dataPath, mf.FilePath())
 		if err != nil {
 			return "", nil, fmt.Errorf("read manifest %s: %w", mf.FilePath(), err)
 		}
@@ -427,7 +430,7 @@ func (h *Handler) rewriteManifests(
 	newSnapshotID := time.Now().UnixMilli()
 	newSeqNum := currentSnap.SequenceNumber + 1
 	artifactSuffix := compactRandomSuffix()
-	metaDir := path.Join(s3tables.TablesPath, bucketName, tablePath, "metadata")
+	metaDir := path.Join(s3tables.TablesPath, bucketName, dataPath, "metadata")
 
 	// Track written artifacts so we can clean them up if the commit fails.
 	type artifact struct {
@@ -456,7 +459,7 @@ func (h *Handler) rewriteManifests(
 	for _, se := range specMap {
 		totalEntries += len(se.entries)
 		manifestFileName := fmt.Sprintf("merged-%d-%s-spec%d.avro", newSnapshotID, artifactSuffix, se.specID)
-		manifestPath := absoluteIcebergPath(bucketName, tablePath, "metadata", manifestFileName)
+		manifestPath := absoluteIcebergPath(bucketName, dataPath, "metadata", manifestFileName)
 
 		var manifestBuf bytes.Buffer
 		mergedManifest, err := iceberg.WriteManifest(
@@ -500,9 +503,9 @@ func (h *Handler) rewriteManifests(
 	writtenArtifacts = append(writtenArtifacts, artifact{dir: metaDir, fileName: manifestListFileName})
 
 	// Create new snapshot with the rewritten manifest list
-	manifestListLocation := absoluteIcebergPath(bucketName, tablePath, "metadata", manifestListFileName)
+	manifestListLocation := absoluteIcebergPath(bucketName, dataPath, "metadata", manifestListFileName)
 
-	err = h.commitWithRetry(ctx, filerClient, bucketName, tablePath, metadataFileName, config, func(currentMeta table.Metadata, builder *table.MetadataBuilder) error {
+	err = h.commitWithRetry(ctx, filerClient, bucketName, tablePath, state.MetadataFileName, config, func(currentMeta table.Metadata, builder *table.MetadataBuilder) error {
 		// Guard: verify table head hasn't advanced since we planned.
 		// The merged manifest and manifest list were built against snapshotID;
 		// if the head moved, they reference stale state.
@@ -585,14 +588,15 @@ func (h *Handler) commitWithRetry(
 		}
 
 		// Load current metadata
-		meta, metaFileName, err := loadCurrentMetadata(ctx, filerClient, bucketName, tablePath)
+		state, err := loadCurrentMetadata(ctx, filerClient, bucketName, tablePath)
 		if err != nil {
 			return fmt.Errorf("load metadata (attempt %d): %w", attempt, err)
 		}
+		meta, metaFileName, dataPath := state.Metadata, state.MetadataFileName, state.DataPath
 
 		// Build new metadata — pass the current metadata file location so the
 		// metadata log correctly records where the previous version lives.
-		currentMetaFilePath := absoluteIcebergPath(bucketName, tablePath, "metadata", metaFileName)
+		currentMetaFilePath := absoluteIcebergPath(bucketName, dataPath, "metadata", metaFileName)
 		builder, err := table.MetadataBuilderFromBase(meta, currentMetaFilePath)
 		if err != nil {
 			return fmt.Errorf("create metadata builder (attempt %d): %w", attempt, err)
@@ -625,14 +629,14 @@ func (h *Handler) commitWithRetry(
 		newMetadataFileName := fmt.Sprintf("v%d-%d.metadata.json", newVersion, time.Now().UnixNano())
 
 		// Save new metadata file
-		metaDir := path.Join(s3tables.TablesPath, bucketName, tablePath, "metadata")
+		metaDir := path.Join(s3tables.TablesPath, bucketName, dataPath, "metadata")
 		if err := saveFilerFile(ctx, filerClient, metaDir, newMetadataFileName, metadataBytes); err != nil {
 			return fmt.Errorf("save metadata file (attempt %d): %w", attempt, err)
 		}
 
 		// Update the table entry's xattr with new metadata (CAS on version)
 		tableDir := path.Join(s3tables.TablesPath, bucketName, tablePath)
-		newMetadataLocation := absoluteIcebergPath(bucketName, tablePath, "metadata", newMetadataFileName)
+		newMetadataLocation := absoluteIcebergPath(bucketName, dataPath, "metadata", newMetadataFileName)
 		err = updateTableMetadataXattr(ctx, filerClient, tableDir, currentVersion, metadataBytes, newMetadataLocation)
 		if err != nil {
 			// Use a detached context for cleanup so staged files are removed
