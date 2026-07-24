@@ -306,6 +306,9 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 		// Hoist versioning check out of per-entry callback
 		versioningState, _ := s3a.getVersioningState(bucket)
 		versioningEnabled := versioningState == "Enabled"
+		// Suspending versioning keeps the delete markers already written, so both states
+		// can hold a directory whose objects are all gone from the current-version view.
+		cursor.hideDeletedPrefixes = versioningState != ""
 
 		// Helper function to handle dedup/append logic
 		appendOrDedup := func(newEntry ListEntry) {
@@ -504,6 +507,10 @@ type ListingCursor struct {
 	maxKeys               uint16
 	isTruncated           bool
 	prefixEndsOnDelimiter bool
+	// hideDeletedPrefixes turns on the dirHoldsOnlyHiddenEntries probe, which only has
+	// something to find once a bucket has version history to leave behind.
+	hideDeletedPrefixes bool
+	probedEntries       int
 }
 
 // the prefix and marker may be in different directories
@@ -758,7 +765,10 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 					// identical to a directory created via PutObject with a trailing "/", so
 					// tools like hadoop-aws can find it. Plain listings are left untouched, so
 					// empty directories left behind by deleted objects are not shown as keys.
-					if explicitDirProbe && !isKeyObject && !childEmitted && !cursor.isTruncated && entry.Attributes != nil {
+					// A directory that still holds version history no longer names anything,
+					// so it gets no marker either.
+					if explicitDirProbe && !isKeyObject && !childEmitted && !cursor.isTruncated && entry.Attributes != nil &&
+						!s3a.dirHoldsOnlyHiddenEntries(ctx, client, bucket, dir+"/"+entry.Name, cursor) {
 						entry.Attributes.Mime = s3_constants.FolderMimeType
 						eachEntryFn(dir, entry)
 					}
@@ -771,7 +781,7 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 						return
 					}
 					// println("doListFilerEntries2 nextMarker", nextMarker)
-				} else {
+				} else if entry.IsDirectoryKeyObject() || !s3a.dirHoldsOnlyHiddenEntries(ctx, client, bucket, dir+"/"+entry.Name, cursor) {
 					eachEntryFn(dir, entry)
 				}
 			} else {
@@ -788,6 +798,106 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 		}
 		marker = lastEntryName
 		inclusiveStartFrom = false
+	}
+}
+
+// hiddenProbePageSize is the window one probe request asks the filer for, and
+// hiddenProbeBudget caps how many entries a single list request may look at while
+// deciding which directories still stand for a prefix.
+const (
+	hiddenProbePageSize = 64
+	hiddenProbeBudget   = 10000
+)
+
+// dirHoldsOnlyHiddenEntries reports whether dir holds entries but none that a
+// current-version listing returns. Deleting the last object under a prefix in a
+// versioned bucket leaves the version history and a delete marker behind, so the filer
+// directory survives with nothing listable in it. AWS derives CommonPrefixes from the
+// keys a listing returns, so that path is no longer a prefix and no longer a directory
+// to answer a probe for. An empty directory is left alone: mount and mkdir create them
+// and empty-folder cleanup owns their lifetime.
+//
+// The scan stops at the first key it finds, so a populated prefix costs one ListEntries
+// answered by its first entry. A subtree that is entirely delete-marked costs a walk of
+// that subtree, bounded by the request's probe budget; once the budget is spent the
+// prefix is reported, as it was before this check existed.
+func (s3a *S3ApiServer) dirHoldsOnlyHiddenEntries(ctx context.Context, client filer_pb.SeaweedFilerClient, bucket, dir string, cursor *ListingCursor) bool {
+	if !cursor.hideDeletedPrefixes {
+		return false
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	sawEntry := false
+	startFrom := ""
+	for {
+		request := &filer_pb.ListEntriesRequest{
+			Directory:         dir,
+			StartFromFileName: startFrom,
+			Limit:             hiddenProbePageSize,
+		}
+		stream, listErr := client.ListEntries(ctx, request)
+		if listErr != nil {
+			if !errors.Is(listErr, filer_pb.ErrNotFound) {
+				glog.V(1).Infof("dirHoldsOnlyHiddenEntries %s: %v", dir, listErr)
+			}
+			return false
+		}
+
+		var entriesReceived uint32
+		for {
+			resp, recvErr := stream.Recv()
+			if recvErr != nil {
+				if recvErr != io.EOF {
+					glog.V(1).Infof("dirHoldsOnlyHiddenEntries %s: %v", dir, recvErr)
+					return false
+				}
+				break
+			}
+			entry := resp.Entry
+			if entry == nil {
+				continue
+			}
+			entriesReceived++
+			startFrom = entry.Name
+			sawEntry = true
+
+			cursor.probedEntries++
+			if cursor.probedEntries > hiddenProbeBudget {
+				return false
+			}
+
+			if !entry.IsDirectory {
+				return false
+			}
+			if entry.Name == s3_constants.MultipartUploadsFolder {
+				continue
+			}
+			if strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
+				// Each write that changes an object's current version stamps the answer
+				// onto its .versions directory entry, which the listing above already
+				// carries, so a delete-marked object costs nothing to recognize. A
+				// missing stamp leaves the current version unknown - the pointer is
+				// written on the key's owner filer and may not have reached the filer
+				// serving this list - and an unknown object keeps its prefix rather than
+				// turning one listing into a version rescan per object.
+				if isDeleteMarker, stamped := entry.Extended[s3_constants.ExtLatestVersionIsDeleteMarker]; stamped && string(isDeleteMarker) == "true" {
+					continue
+				}
+				return false
+			}
+			if entry.IsDirectoryKeyObject() {
+				return false
+			}
+			if !s3a.dirHoldsOnlyHiddenEntries(ctx, client, bucket, dir+"/"+entry.Name, cursor) {
+				return false
+			}
+		}
+
+		if entriesReceived < request.Limit {
+			return sawEntry
+		}
 	}
 }
 
