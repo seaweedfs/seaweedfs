@@ -2146,7 +2146,7 @@ dependencies = [
  "p256 0.13.2",
  "p384",
  "pem",
- "rand 0.8.5",
+ "rand 0.8.7",
  "rsa",
  "serde",
  "serde_json",
@@ -2421,7 +2421,7 @@ dependencies = [
  "num-integer",
  "num-iter",
  "num-traits",
- "rand 0.8.5",
+ "rand 0.8.7",
  "smallvec",
  "zeroize",
 ]
@@ -3020,9 +3020,9 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "rand"
-version = "0.8.5"
+version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34af8d1a0e25924bc5b7c43c079c942339d8f0a8b57c39049bef581b46327404"
+checksum = "22f6172bdec972074665ed81ed53b71da00bfc44b65a753cfde883ec4c702a1a"
 dependencies = [
  "libc",
  "rand_chacha",
@@ -3395,7 +3395,7 @@ dependencies = [
  "errno 0.2.8",
  "fs2",
  "integer-encoding",
- "rand 0.8.5",
+ "rand 0.8.7",
  "snap",
 ]
 
@@ -4097,7 +4097,7 @@ dependencies = [
  "indexmap 1.9.3",
  "pin-project",
  "pin-project-lite",
- "rand 0.8.5",
+ "rand 0.8.7",
  "slab",
  "tokio",
  "tokio-util",
@@ -4529,7 +4529,7 @@ dependencies = [
  "prometheus",
  "prost 0.13.5",
  "prost-types 0.13.5",
- "rand 0.8.5",
+ "rand 0.10.2",
  "redb",
  "reed-solomon-erasure",
  "reqwest",
