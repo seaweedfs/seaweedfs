@@ -69,6 +69,10 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
             font-weight: bold;
             margin-bottom: 15px;
         }
+        .chart-subtitle {
+            color: #666;
+            margin: -10px 0 15px;
+        }
         .loading {
             text-align: center;
             padding: 40px;
@@ -160,6 +164,14 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
             </div>
 
             <div class="chart-container">
+                <div class="chart-title">Cluster Sizes Over Time</div>
+                <div class="chart-subtitle" id="clusterSizesTotal"></div>
+                <div style="position: relative; height: 420px;">
+                    <canvas id="clusterSizeChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-container">
                 <div class="chart-title">Per-Cluster History</div>
                 <div class="cluster-lookup">
                     <input type="text" id="clusterIdInput" placeholder="cluster UUID"
@@ -177,6 +189,7 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
 
     <script>
         let charts = {};
+        let clusterSizeIds = [];
 
         async function loadDashboard() {
             try {
@@ -188,8 +201,13 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
                 const metricsResponse = await fetch('/api/metrics?days=30');
                 const metrics = await metricsResponse.json();
 
+                // Load per-cluster sizes over time
+                const sizesResponse = await fetch('/api/cluster-sizes?days=30&limit=20');
+                const sizes = await sizesResponse.json();
+
                 updateStats(stats);
                 updateCharts(stats, metrics);
+                updateClusterSizes(sizes);
                 
                 document.getElementById('loading').style.display = 'none';
                 document.getElementById('dashboard').style.display = 'block';
@@ -290,6 +308,117 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
                     }
                 }
             });
+        }
+
+        // Decimal units, so the round numbers the chart picks for its ticks
+        // come out as round labels.
+        function formatBytes(bytes) {
+            const units = ['B', 'kB', 'MB', 'GB', 'TB', 'PB'];
+            let value = bytes || 0, unit = 0;
+            while (value >= 1000 && unit < units.length - 1) {
+                value /= 1000;
+                unit++;
+            }
+            return (unit === 0 ? value : value.toFixed(value >= 100 ? 0 : 1)) + ' ' + units[unit];
+        }
+
+        // One stacked band per cluster over time: the band is that cluster's
+        // size, the top of the stack is the fleet total. Clusters beyond the
+        // requested limit are summed into a trailing "other" band so the stack
+        // still adds up.
+        function updateClusterSizes(series) {
+            const clusters = series.clusters || [];
+            const dates = series.dates || [];
+            const count = series.cluster_count || 0;
+
+            document.getElementById('clusterSizesTotal').textContent =
+                formatBytes(series.total_disk) + ' across ' + count + ' cluster' + (count === 1 ? '' : 's') +
+                ' on ' + (dates[dates.length - 1] || 'no data');
+
+            clusterSizeIds = clusters.map(c => c.cluster_id);
+            const datasets = clusters.map((c, i) => {
+                // Evenly spaced hues keep neighbouring bands distinguishable.
+                const hue = Math.round(i * 360 / clusters.length);
+                return band(c.cluster_id.slice(0, 8), c.disk,
+                    'hsl(' + hue + ', 65%, 45%)', 'hsla(' + hue + ', 65%, 55%, 0.75)');
+            });
+            if (series.other) {
+                clusterSizeIds.push(null);
+                datasets.push(band('other (' + series.other.count + ')', series.other.disk,
+                    '#9E9E9E', 'rgba(158, 158, 158, 0.6)'));
+            }
+
+            const ctx = document.getElementById('clusterSizeChart').getContext('2d');
+            if (charts.clusterSizeChart) {
+                charts.clusterSizeChart.destroy();
+            }
+            charts.clusterSizeChart = new Chart(ctx, {
+                type: 'line',
+                data: { labels: dates, datasets: datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'band', intersect: false },
+                    onClick: (event, elements) => {
+                        const id = elements.length && clusterSizeIds[elements[0].datasetIndex];
+                        if (id) {
+                            document.getElementById('clusterIdInput').value = id;
+                            loadClusterHistory();
+                        }
+                    },
+                    plugins: {
+                        legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
+                        tooltip: {
+                            callbacks: {
+                                label: item => {
+                                    const id = clusterSizeIds[item.datasetIndex];
+                                    return (id || item.dataset.label) + ': ' + formatBytes(item.raw);
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: { ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 12 } },
+                        y: {
+                            stacked: true,
+                            beginAtZero: true,
+                            ticks: { callback: value => formatBytes(value) }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Hover and click resolve to the band the pointer is inside. Chart.js's
+        // built-in modes match the nearest line, which on a stack of thin bands
+        // is rarely the one under the pointer.
+        Chart.Interaction.modes.band = function(chart, event) {
+            const last = chart.data.labels.length - 1;
+            if (last < 0) return [];
+            const index = Math.min(Math.max(Math.round(chart.scales.x.getValueForPixel(event.x)), 0), last);
+            const value = chart.scales.y.getValueForPixel(event.y);
+            let stacked = 0;
+            for (let d = 0; d < chart.data.datasets.length; d++) {
+                stacked += chart.data.datasets[d].data[index] || 0;
+                if (value <= stacked) {
+                    return [{ element: chart.getDatasetMeta(d).data[index], datasetIndex: d, index: index }];
+                }
+            }
+            return [];
+        };
+
+        function band(label, data, borderColor, backgroundColor) {
+            return {
+                label: label,
+                data: data,
+                borderColor: borderColor,
+                backgroundColor: backgroundColor,
+                borderWidth: 1,
+                pointRadius: 0,
+                pointHitRadius: 8,
+                fill: true,
+                tension: 0.1
+            };
         }
 
         async function loadClusterHistory() {

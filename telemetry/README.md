@@ -177,6 +177,9 @@ GET /api/metrics?days=30
 
 # Get one cluster's daily usage history (disk bytes, volumes, volume servers)
 GET /api/history?cluster_id=<uuid>&days=90
+
+# Get per-cluster disk usage over time, largest first, the rest summed as "other"
+GET /api/cluster-sizes?days=30&limit=20
 ```
 
 ### Monitoring

@@ -76,6 +76,7 @@ func main() {
 	mux.HandleFunc("/api/instances", corsMiddleware(logMiddleware(apiHandler.GetInstances)))
 	mux.HandleFunc("/api/metrics", corsMiddleware(logMiddleware(apiHandler.GetMetrics)))
 	mux.HandleFunc("/api/history", corsMiddleware(logMiddleware(apiHandler.GetHistory)))
+	mux.HandleFunc("/api/cluster-sizes", corsMiddleware(logMiddleware(apiHandler.GetClusterSizes)))
 
 	// Dashboard (optional)
 	if *enableDashboard {
