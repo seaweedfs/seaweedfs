@@ -207,7 +207,7 @@ func (s *PrometheusStorage) GetMetrics(days int) (map[string]interface{}, error)
 
 func (s *PrometheusStorage) updateStats() {
 	now := time.Now()
-	last7Days := now.AddDate(0, 0, -7)
+	last7Days := now.AddDate(0, 0, -activeDays)
 	last30Days := now.AddDate(0, 0, -30)
 
 	totalInstances := 0
