@@ -367,6 +367,7 @@ func (h *Handler) rewritePositionDeleteFiles(
 	artifactSuffix := compactRandomSuffix()
 
 	replacedPaths := make(map[string]struct{})
+	var summary snapshotSummary
 	var rewrittenGroups int64
 	var skippedGroups int64
 	var deleteFilesRewritten int64
@@ -457,12 +458,14 @@ func (h *Handler) rewritePositionDeleteFiles(
 			if err != nil {
 				return "", nil, fmt.Errorf("build rewritten delete file: %w", err)
 			}
-			entry := iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &newSnapID, nil, nil, dfBuilder.Build())
-			addToSpec(group.SpecID, entry)
+			rewrittenDeleteFile := dfBuilder.Build()
+			summary.addFile(rewrittenDeleteFile)
+			addToSpec(group.SpecID, iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &newSnapID, nil, nil, rewrittenDeleteFile))
 			deleteFilesWritten++
 		}
 
 		for _, input := range group.Inputs {
+			summary.removeFile(input.Entry.DataFile())
 			delEntry := iceberg.NewManifestEntry(
 				iceberg.EntryStatusDELETED,
 				&newSnapID,
@@ -561,15 +564,12 @@ func (h *Handler) rewritePositionDeleteFiles(
 			SequenceNumber:   seqNum,
 			TimestampMs:      newSnapID,
 			ManifestList:     manifestListLocation,
-			Summary: &table.Summary{
-				Operation: table.OpReplace,
-				Properties: map[string]string{
-					"maintenance":            "rewrite_position_delete_files",
-					"delete-files-rewritten": fmt.Sprintf("%d", deleteFilesRewritten),
-					"delete-files-written":   fmt.Sprintf("%d", deleteFilesWritten),
-					"delete-groups":          fmt.Sprintf("%d", rewrittenGroups),
-				},
-			},
+			Summary: summary.build(table.OpReplace, cs, map[string]string{
+				"maintenance":            "rewrite_position_delete_files",
+				"delete-files-rewritten": fmt.Sprintf("%d", deleteFilesRewritten),
+				"delete-files-written":   fmt.Sprintf("%d", deleteFilesWritten),
+				"delete-groups":          fmt.Sprintf("%d", rewrittenGroups),
+			}),
 			SchemaID: func() *int {
 				id := meta.CurrentSchema().ID
 				return &id

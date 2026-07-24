@@ -520,10 +520,8 @@ func (h *Handler) rewriteManifests(
 			SequenceNumber:   cs.SequenceNumber + 1,
 			TimestampMs:      time.Now().UnixMilli(),
 			ManifestList:     manifestListLocation,
-			Summary: &table.Summary{
-				Operation:  table.OpReplace,
-				Properties: map[string]string{"maintenance": "rewrite_manifests"},
-			},
+			// Merging manifests changes no file, so the totals carry over.
+			Summary: snapshotSummary{}.build(table.OpReplace, cs, map[string]string{"maintenance": "rewrite_manifests"}),
 			SchemaID: func() *int {
 				id := schema.ID
 				return &id

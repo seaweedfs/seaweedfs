@@ -9,6 +9,7 @@ import (
 	"net"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -263,8 +264,11 @@ type tableSetup struct {
 	// it differs from the catalog path, as it does for tables an external REST
 	// client created at their own location (e.g. "ns/table-<uuid>"). Such a
 	// table records absolute s3:// URIs for every file it references.
-	DataPath  string
-	Snapshots []table.Snapshot
+	DataPath string
+	// SnapshotSummary is recorded on the table's snapshot, the way the writer
+	// that created it would record the table's running totals.
+	SnapshotSummary map[string]string
+	Snapshots       []table.Snapshot
 }
 
 func (ts tableSetup) tablePath() string {
@@ -861,7 +865,14 @@ func TestRewriteManifestsExecution(t *testing.T) {
 		Namespace:  "analytics",
 		TableName:  "events",
 		Snapshots: []table.Snapshot{
-			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro"},
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro", Summary: &table.Summary{
+				Operation: table.OpAppend,
+				Properties: map[string]string{
+					"total-data-files": "5",
+					"total-records":    "5",
+					"total-files-size": "5120",
+				},
+			}},
 		},
 	}
 	meta := populateTable(t, fs, setup)
@@ -991,6 +1002,16 @@ func TestRewriteManifestsExecution(t *testing.T) {
 	}
 	if !strings.HasPrefix(xattrMeta.MetadataLocation, wantPrefix+"v2-") {
 		t.Errorf("xattr metadataLocation should be absolute, got %q", xattrMeta.MetadataLocation)
+	}
+
+	// Merging manifests moves no data, so the table's totals are unchanged.
+	if newSnap.Summary == nil {
+		t.Fatal("new snapshot has no summary")
+	}
+	for key, want := range map[string]string{"total-data-files": "5", "total-records": "5", "total-files-size": "5120"} {
+		if got := newSnap.Summary.Properties[key]; got != want {
+			t.Errorf("%s = %q, want %q", key, got, want)
+		}
 	}
 }
 
@@ -2447,6 +2468,9 @@ func populateTableWithDeleteFilesAndSortOrder(
 	// Build final metadata with snapshot
 	now := time.Now().UnixMilli()
 	snap := table.Snapshot{SnapshotID: 1, TimestampMs: now, ManifestList: setup.fileRef("metadata", "snap-1.avro")}
+	if setup.SnapshotSummary != nil {
+		snap.Summary = &table.Summary{Operation: table.OpAppend, Properties: setup.SnapshotSummary}
+	}
 	builder, err := table.MetadataBuilderFromBase(meta, "s3://"+setup.BucketName+"/"+setup.dataPath())
 	if err != nil {
 		t.Fatalf("create metadata builder: %v", err)
@@ -2710,6 +2734,208 @@ func TestCompactDataFilesMetrics(t *testing.T) {
 	if len(progressCalls) != 1 {
 		t.Errorf("expected 1 progress call, got %d", len(progressCalls))
 	}
+}
+
+// summaryDataFiles is the two-file input every snapshot-summary test compacts.
+func summaryDataFiles() []struct {
+	Name string
+	Rows []struct {
+		ID   int64
+		Name string
+	}
+} {
+	return []struct {
+		Name string
+		Rows []struct {
+			ID   int64
+			Name string
+		}
+	}{
+		{"d1.parquet", []struct {
+			ID   int64
+			Name string
+		}{{1, "a"}, {2, "b"}}},
+		{"d2.parquet", []struct {
+			ID   int64
+			Name string
+		}{{3, "c"}}},
+	}
+}
+
+func snapshotSummaryProps(t *testing.T, client filer_pb.SeaweedFilerClient, setup tableSetup) map[string]string {
+	t.Helper()
+	state, err := loadCurrentMetadata(context.Background(), client, setup.BucketName, setup.tablePath())
+	if err != nil {
+		t.Fatalf("loadCurrentMetadata: %v", err)
+	}
+	snap := state.Metadata.CurrentSnapshot()
+	if snap == nil || snap.Summary == nil {
+		t.Fatalf("new snapshot has no summary: %+v", snap)
+	}
+	return snap.Summary.Properties
+}
+
+func requireSummaryValue(t *testing.T, props map[string]string, key, want string) {
+	t.Helper()
+	if got := props[key]; got != want {
+		t.Errorf("%s = %q, want %q", key, got, want)
+	}
+}
+
+func summaryInt(t *testing.T, props map[string]string, key string) int64 {
+	t.Helper()
+	raw, ok := props[key]
+	if !ok {
+		t.Fatalf("summary is missing %s: %v", key, props)
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		t.Fatalf("summary %s = %q: %v", key, raw, err)
+	}
+	return value
+}
+
+// Engines report a table's size from the current snapshot summary, so a
+// compaction has to carry the running totals forward the way the writer that
+// created the table did.
+func TestCompactDataFilesRecordsSnapshotTotals(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	const parentFilesSize = 4096
+	setup := tableSetup{
+		BucketName: "tb", Namespace: "ns", TableName: "tbl",
+		SnapshotSummary: map[string]string{
+			"total-data-files": "2",
+			"total-records":    "3",
+			"total-files-size": strconv.Itoa(parentFilesSize),
+		},
+	}
+	populateTableWithDeleteFiles(t, fs, setup, summaryDataFiles(), nil, nil)
+
+	handler := NewHandler(nil)
+	config := Config{
+		TargetFileSizeBytes: 256 * 1024 * 1024,
+		MinInputFiles:       2,
+		MaxCommitRetries:    3,
+		ApplyDeletes:        true,
+	}
+	if _, _, err := handler.compactDataFiles(context.Background(), client, setup.BucketName, setup.tablePath(), config, nil); err != nil {
+		t.Fatalf("compactDataFiles: %v", err)
+	}
+
+	props := snapshotSummaryProps(t, client, setup)
+	requireSummaryValue(t, props, "added-data-files", "1")
+	requireSummaryValue(t, props, "deleted-data-files", "2")
+	requireSummaryValue(t, props, "added-records", "3")
+	requireSummaryValue(t, props, "deleted-records", "3")
+
+	// Two files became one, holding the same rows.
+	requireSummaryValue(t, props, "total-data-files", "1")
+	requireSummaryValue(t, props, "total-records", "3")
+	wantSize := parentFilesSize + summaryInt(t, props, "added-files-size") - summaryInt(t, props, "removed-files-size")
+	requireSummaryValue(t, props, "total-files-size", strconv.FormatInt(wantSize, 10))
+
+	// The operation's own labels survive alongside the counters.
+	requireSummaryValue(t, props, "maintenance", "compact_data_files")
+}
+
+// A table whose parent snapshot never recorded totals gets none invented for
+// it: "total-records: 0" on a table with rows is worse than no answer.
+func TestCompactDataFilesLeavesOutTotalsParentNeverRecorded(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	setup := tableSetup{BucketName: "tb", Namespace: "ns", TableName: "tbl"}
+	populateTableWithDeleteFiles(t, fs, setup, summaryDataFiles(), nil, nil)
+
+	handler := NewHandler(nil)
+	config := Config{
+		TargetFileSizeBytes: 256 * 1024 * 1024,
+		MinInputFiles:       2,
+		MaxCommitRetries:    3,
+		ApplyDeletes:        true,
+	}
+	if _, _, err := handler.compactDataFiles(context.Background(), client, setup.BucketName, setup.tablePath(), config, nil); err != nil {
+		t.Fatalf("compactDataFiles: %v", err)
+	}
+
+	props := snapshotSummaryProps(t, client, setup)
+	requireSummaryValue(t, props, "added-data-files", "1")
+	requireSummaryValue(t, props, "deleted-data-files", "2")
+	for _, key := range []string{"total-data-files", "total-records", "total-files-size"} {
+		if got, ok := props[key]; ok {
+			t.Errorf("%s = %q, want it left out", key, got)
+		}
+	}
+}
+
+func TestRewritePositionDeleteFilesRecordsSnapshotTotals(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	setup := tableSetup{
+		BucketName: "tb", Namespace: "ns", TableName: "tbl",
+		SnapshotSummary: map[string]string{
+			"total-data-files":       "1",
+			"total-records":          "3",
+			"total-delete-files":     "2",
+			"total-position-deletes": "3",
+		},
+	}
+	populateTableWithDeleteFiles(t, fs, setup,
+		[]struct {
+			Name string
+			Rows []struct {
+				ID   int64
+				Name string
+			}
+		}{
+			{"d1.parquet", []struct {
+				ID   int64
+				Name string
+			}{{1, "alice"}, {2, "bob"}, {3, "charlie"}}},
+		},
+		[]struct {
+			Name string
+			Rows []struct {
+				FilePath string
+				Pos      int64
+			}
+		}{
+			{"pd1.parquet", []struct {
+				FilePath string
+				Pos      int64
+			}{{"data/d1.parquet", 0}, {"data/d1.parquet", 2}}},
+			{"pd2.parquet", []struct {
+				FilePath string
+				Pos      int64
+			}{{"data/d1.parquet", 1}}},
+		},
+		nil,
+	)
+
+	handler := NewHandler(nil)
+	config := Config{
+		DeleteTargetFileSizeBytes:   64 * 1024 * 1024,
+		DeleteMinInputFiles:         2,
+		DeleteMaxFileGroupSizeBytes: 128 * 1024 * 1024,
+		DeleteMaxOutputFiles:        4,
+		MaxCommitRetries:            3,
+	}
+	if _, _, err := handler.rewritePositionDeleteFiles(context.Background(), client, setup.BucketName, setup.tablePath(), config); err != nil {
+		t.Fatalf("rewritePositionDeleteFiles: %v", err)
+	}
+
+	props := snapshotSummaryProps(t, client, setup)
+	requireSummaryValue(t, props, "added-delete-files", "1")
+	requireSummaryValue(t, props, "removed-delete-files", "2")
+	requireSummaryValue(t, props, "added-position-delete-files", "1")
+	requireSummaryValue(t, props, "added-position-deletes", "3")
+	requireSummaryValue(t, props, "removed-position-deletes", "3")
+
+	// Two delete files became one; the deleted rows and the data are untouched.
+	requireSummaryValue(t, props, "total-delete-files", "1")
+	requireSummaryValue(t, props, "total-position-deletes", "3")
+	requireSummaryValue(t, props, "total-data-files", "1")
+	requireSummaryValue(t, props, "total-records", "3")
 }
 
 func TestExpireSnapshotsMetrics(t *testing.T) {
