@@ -195,9 +195,9 @@ pub fn remove_bitrot_sidecars(base: &str) -> io::Result<()> {
 /// Returns a fresh random per-encode identity used to detect a stale sidecar
 /// left behind by an in-place re-encode.
 pub fn new_encode_uuid() -> Vec<u8> {
-    use rand::RngCore;
+    use rand::Rng;
     let mut b = vec![0u8; 16];
-    rand::thread_rng().fill_bytes(&mut b);
+    rand::rng().fill_bytes(&mut b);
     b
 }
 
