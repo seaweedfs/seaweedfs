@@ -8,7 +8,36 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/security"
 )
+
+const (
+	proxyTestWriteKey = "cluster-write-key"
+	proxyTestReadKey  = "cluster-read-key"
+	proxyTestVid      = "3"
+	proxyTestFid      = "01637037d6"
+	proxyTestFileId   = proxyTestVid + "," + proxyTestFid
+)
+
+// The volume server strips a _N delta suffix before comparing the fid claim, so
+// a token minted for the suffixed form would never validate.
+func TestProxyReadTokenMatchesDeltaFid(t *testing.T) {
+	const deltaFileId = proxyTestFileId + "_1"
+
+	fs := &FilerServer{volumeGuard: security.NewGuard([]string{}, proxyTestWriteKey, 10, proxyTestReadKey, 10)}
+	jwt := fs.maybeGetVolumeReadJwtAuthorizationToken(deltaFileId)
+	if jwt == "" {
+		t.Fatal("no read token minted for a delta fid")
+	}
+
+	vs := &VolumeServer{guard: security.NewGuard([]string{}, proxyTestWriteKey, 10, proxyTestReadKey, 10)}
+	r := httptest.NewRequest(http.MethodGet, "http://volume:8080/"+deltaFileId, nil)
+	r.Header.Set("Authorization", security.BearerPrefix+jwt)
+	if !vs.maybeCheckJwtAuthorization(r, proxyTestVid, proxyTestFid+"_1", false) {
+		t.Fatal("token minted for a delta fid did not authorize the read")
+	}
+}
 
 func TestValidateProxyChunkId(t *testing.T) {
 	for _, tc := range []struct {

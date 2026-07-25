@@ -52,9 +52,12 @@ func releaseProxySemaphore(host string) {
 
 // baseFileId strips the trailing _N delta suffix that batch assigns append to a
 // fid, and only that: the suffix must be a non-empty run of digits, otherwise
-// the fid is returned whole for the caller to reject.
+// the fid is returned whole for the caller to reject. The volume server compares
+// a JWT's fid claim against the stripped form (see
+// VolumeServer.maybeCheckJwtAuthorization), so anything minting or parsing a fid
+// on this side has to agree with it.
 //
-// The volume server strips at the last "_" unconditionally, which is safe there
+// That server strips at the last "_" unconditionally, which is safe there
 // because its fid already came out of a path the mux parsed and so cannot hold
 // a "/". Here the value is raw query input, and an unguarded strip would reduce
 // "3,01637037d6_1/../../status" to a valid fid and wave the traversal through.

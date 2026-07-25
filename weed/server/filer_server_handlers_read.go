@@ -271,5 +271,7 @@ func (fs *FilerServer) maybeGetVolumeReadJwtAuthorizationToken(fileId string) st
 	if len(key) == 0 {
 		return ""
 	}
-	return string(security.GenJwtForVolumeServer(key, fs.volumeGuard.ReadExpiresAfterSec(), fileId))
+	// Claim the base fid: the volume server strips a _N delta suffix before
+	// comparing, so a token claiming the suffixed form never matches.
+	return string(security.GenJwtForVolumeServer(key, fs.volumeGuard.ReadExpiresAfterSec(), baseFileId(fileId)))
 }
