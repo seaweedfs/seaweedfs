@@ -51,7 +51,7 @@ func releaseProxySemaphore(host string) {
 }
 
 // isProxyReadMethod reports whether a proxied request only reads. Everything
-// else is treated as a write for credential purposes.
+// else is treated as a write for both credential and concurrency purposes.
 func isProxyReadMethod(method string) bool {
 	return method == http.MethodGet || method == http.MethodHead
 }
@@ -139,14 +139,20 @@ func (fs *FilerServer) proxyToVolumeServerURL(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Limit concurrent requests per volume server to prevent overload
-	volumeHost := proxyReq.URL.Host
-	if err := acquireProxySemaphore(ctx, volumeHost); err != nil {
-		glog.V(0).InfofCtx(ctx, "proxy to %s cancelled while waiting: %v", volumeHost, err)
-		w.WriteHeader(http.StatusServiceUnavailable)
-		return
+	// Limit concurrent reads per volume server to prevent overload. Writes are
+	// deliberately exempt: a proxied write carries the caller's AssignVolume
+	// token, which expires 10s after the assign by default, so queueing one here
+	// can push it past expiry and turn it into a 401 the uploader does not
+	// re-assign on.
+	if isProxyReadMethod(r.Method) {
+		volumeHost := proxyReq.URL.Host
+		if err := acquireProxySemaphore(ctx, volumeHost); err != nil {
+			glog.V(0).InfofCtx(ctx, "proxy to %s cancelled while waiting: %v", volumeHost, err)
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		defer releaseProxySemaphore(volumeHost)
 	}
-	defer releaseProxySemaphore(volumeHost)
 
 	proxyReq.Header.Set("Host", r.Host)
 	proxyReq.Header.Set("X-Forwarded-For", r.RemoteAddr)

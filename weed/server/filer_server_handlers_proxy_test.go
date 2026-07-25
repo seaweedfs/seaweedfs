@@ -180,6 +180,45 @@ func TestProxyReadDropsCallerCredentialWhenNothingMinted(t *testing.T) {
 	}
 }
 
+// Writes must not queue behind the read semaphore: a proxied write carries an
+// AssignVolume token that expires 10s after the assign by default, and waiting
+// for a read slot can push it past expiry.
+func TestProxyWriteBypassesReadSemaphore(t *testing.T) {
+	volume := newProxyTestVolume(t)
+	host := volume.Listener.Addr().String()
+
+	// Fill every read slot for this host and never release them.
+	for i := 0; i < proxyReadConcurrencyPerVolumeServer; i++ {
+		if err := acquireProxySemaphore(context.Background(), host); err != nil {
+			t.Fatalf("fill slot %d: %v", i, err)
+		}
+	}
+	defer func() {
+		for i := 0; i < proxyReadConcurrencyPerVolumeServer; i++ {
+			releaseProxySemaphore(host)
+		}
+	}()
+
+	fs := &FilerServer{volumeGuard: security.NewGuard([]string{}, proxyTestWriteKey, 10, "", 10)}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	r := httptest.NewRequest(http.MethodPost, "http://filer:8888/?proxyChunkId="+proxyTestFileId, nil).WithContext(ctx)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		fs.proxyToVolumeServerURL(httptest.NewRecorder(), r, proxyTestFileId, volume.URL+"/"+proxyTestFileId)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("proxied write blocked on the read semaphore")
+	}
+	volume.requireReached(t)
+}
+
 // The volume server strips a _N delta suffix before comparing the fid claim, so
 // a token minted for the suffixed form would never validate.
 func TestProxyReadTokenMatchesDeltaFid(t *testing.T) {
