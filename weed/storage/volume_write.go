@@ -372,6 +372,11 @@ func (v *Volume) WriteNeedleBlob(needleId NeedleId, needleBlob []byte, size Size
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 
+	// nm.Put on a read-only volume fails only after the blob is appended to .dat.
+	if v.IsReadOnly() {
+		return fmt.Errorf("volume %d is read only", v.Id)
+	}
+
 	if MaxPossibleVolumeSize < v.nm.ContentSize()+uint64(len(needleBlob)) {
 		return fmt.Errorf("volume size limit %d exceeded! current size is %d", MaxPossibleVolumeSize, v.nm.ContentSize())
 	}
