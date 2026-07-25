@@ -78,7 +78,7 @@ func (m *SortedFileNeedleMap) Get(key NeedleId) (element *needle_map.NeedleValue
 }
 
 func (m *SortedFileNeedleMap) Put(key NeedleId, offset Offset, size Size) error {
-	return os.ErrInvalid
+	return fmt.Errorf("needle map %s.sdx is read only: %w", m.baseFileName, os.ErrInvalid)
 }
 
 func (m *SortedFileNeedleMap) Delete(key NeedleId, offset Offset) error {
