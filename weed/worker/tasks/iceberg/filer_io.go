@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"path"
@@ -15,8 +16,11 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -252,20 +256,42 @@ func absoluteIcebergPath(bucketName string, elem ...string) string {
 	return "s3://" + path.Join(append([]string{bucketName}, elem...)...)
 }
 
-// saveFilerFile saves a file to the filer.
+const (
+	// inlineContentLimit is the most saveFilerFile keeps in Entry.Content.
+	// Manifests and metadata JSON are small and stay inline; a compacted data
+	// file runs to hundreds of MB, and inlining that stores the parquet bytes
+	// verbatim in the filer store and ships them again through the metadata
+	// change log as one oversized event.
+	inlineContentLimit = 256 * 1024
+	// filerFileChunkSize is the upload chunk size for anything over the limit.
+	filerFileChunkSize = 8 * 1024 * 1024
+)
+
+// saveFilerFile saves a file to the filer, inline when it is small and as
+// volume chunks when it is not.
 func saveFilerFile(ctx context.Context, client filer_pb.SeaweedFilerClient, dir, fileName string, content []byte) error {
+	entry := &filer_pb.Entry{
+		Name: fileName,
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime:    time.Now().Unix(),
+			Crtime:   time.Now().Unix(),
+			FileMode: uint32(0644),
+			FileSize: uint64(len(content)),
+		},
+	}
+	if len(content) <= inlineContentLimit {
+		entry.Content = content
+	} else {
+		chunks, err := uploadFilerChunks(ctx, client, path.Join(dir, fileName), content)
+		if err != nil {
+			return fmt.Errorf("upload %s/%s: %w", dir, fileName, err)
+		}
+		entry.Chunks = chunks
+	}
+
 	resp, err := client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
 		Directory: dir,
-		Entry: &filer_pb.Entry{
-			Name: fileName,
-			Attributes: &filer_pb.FuseAttributes{
-				Mtime:    time.Now().Unix(),
-				Crtime:   time.Now().Unix(),
-				FileMode: uint32(0644),
-				FileSize: uint64(len(content)),
-			},
-			Content: content,
-		},
+		Entry:     entry,
 	})
 	if err != nil {
 		return fmt.Errorf("create entry %s/%s: %w", dir, fileName, err)
@@ -274,6 +300,51 @@ func saveFilerFile(ctx context.Context, client filer_pb.SeaweedFilerClient, dir,
 		return fmt.Errorf("create entry %s/%s: %s", dir, fileName, resp.Error)
 	}
 	return nil
+}
+
+// uploadFilerChunks writes content to volume servers, assigning through the
+// filer so the entry's storage rules apply.
+func uploadFilerChunks(ctx context.Context, client filer_pb.SeaweedFilerClient, fullPath string, content []byte) ([]*filer_pb.FileChunk, error) {
+	assignFn := func(ctx context.Context, count int, expectedDataSize uint64) (*operation.VolumeAssignRequest, *operation.AssignResult, error) {
+		resp, err := client.AssignVolume(ctx, &filer_pb.AssignVolumeRequest{
+			Count:            int32(count),
+			Path:             fullPath,
+			ExpectedDataSize: expectedDataSize,
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		if resp.Error != "" {
+			return nil, nil, errors.New(resp.Error)
+		}
+		if resp.Location == nil || resp.FileId == "" {
+			return nil, nil, fmt.Errorf("assign volume returned no location")
+		}
+		return nil, &operation.AssignResult{
+			Fid:       resp.FileId,
+			Url:       resp.Location.Url,
+			PublicUrl: resp.Location.PublicUrl,
+			Count:     uint64(count),
+			Auth:      security.EncodedJwt(resp.Auth),
+		}, nil
+	}
+
+	initGlobalHTTPClientOnce.Do(util_http.InitGlobalHttpClient)
+	result, err := operation.UploadReaderInChunks(ctx, util.NewBytesReader(content), &operation.ChunkedUploadOption{
+		ChunkSize:  filerFileChunkSize,
+		AssignFunc: assignFn,
+	})
+	if err != nil {
+		// Chunks uploaded before the failure are orphaned: nothing references
+		// them, so name them for fsck rather than losing them silently.
+		if result != nil {
+			for _, chunk := range result.FileChunks {
+				glog.Warningf("iceberg: orphan chunk %s from failed upload of %s", chunk.GetFileIdString(), fullPath)
+			}
+		}
+		return nil, err
+	}
+	return result.FileChunks, nil
 }
 
 // deleteFilerFile deletes a file from the filer.
