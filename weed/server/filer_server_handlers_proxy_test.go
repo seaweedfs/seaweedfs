@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -27,17 +28,25 @@ const (
 // left the filer are otherwise indistinguishable.
 type proxyTestVolume struct {
 	*httptest.Server
-	hits atomic.Int32
-	auth atomic.Value // string
+	hits         atomic.Int32
+	auth         atomic.Value // string
+	effectiveJwt atomic.Value // string
+	rawQuery     atomic.Value // string
 }
 
 func newProxyTestVolume(t *testing.T) *proxyTestVolume {
 	t.Helper()
 	v := &proxyTestVolume{}
 	v.auth.Store("")
+	v.effectiveJwt.Store("")
+	v.rawQuery.Store("")
 	v.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		v.hits.Add(1)
 		v.auth.Store(r.Header.Get("Authorization"))
+		v.rawQuery.Store(r.URL.RawQuery)
+		// The credential the volume server would actually evaluate, which is not
+		// necessarily the Authorization header.
+		v.effectiveJwt.Store(string(security.GetJwt(r)))
 	}))
 	t.Cleanup(func() {
 		v.Close()
@@ -53,10 +62,70 @@ func newProxyTestVolume(t *testing.T) *proxyTestVolume {
 
 func (v *proxyTestVolume) seenAuth() string { return v.auth.Load().(string) }
 
+// seenEffectiveJwt is the token the volume server would validate, resolved the
+// same way VolumeServer.maybeCheckJwtAuthorization resolves it.
+func (v *proxyTestVolume) seenEffectiveJwt() string { return v.effectiveJwt.Load().(string) }
+
+func (v *proxyTestVolume) seenRawQuery() string { return v.rawQuery.Load().(string) }
+
 func (v *proxyTestVolume) requireReached(t *testing.T) {
 	t.Helper()
 	if v.hits.Load() == 0 {
 		t.Fatal("request never reached the volume server, so the assertion below proves nothing")
+	}
+}
+
+// security.GetJwt reads the "jwt" query parameter before the Authorization
+// header, so a caller-supplied one would outrank the token the filer attaches
+// on a read -- the credential the volume server evaluates has to be the filer's.
+func TestProxyReadDropsCallerJwtQueryParam(t *testing.T) {
+	minted := &FilerServer{volumeGuard: security.NewGuard([]string{}, proxyTestWriteKey, 10, proxyTestReadKey, 10)}
+	want := minted.maybeGetVolumeReadJwtAuthorizationToken(proxyTestFileId)
+	if want == "" {
+		t.Fatal("no read token minted despite a configured read key")
+	}
+
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		t.Run(method, func(t *testing.T) {
+			volume := newProxyTestVolume(t)
+			fs := &FilerServer{volumeGuard: security.NewGuard([]string{}, proxyTestWriteKey, 10, proxyTestReadKey, 10)}
+
+			r := httptest.NewRequest(method,
+				"http://filer:8888/?proxyChunkId="+proxyTestFileId+"&jwt=caller-supplied&readDeleted=true", nil)
+			fs.proxyToVolumeServerURL(httptest.NewRecorder(), r, proxyTestFileId, volume.URL+"/"+proxyTestFileId)
+
+			volume.requireReached(t)
+			if got := volume.seenEffectiveJwt(); got == "caller-supplied" {
+				t.Fatal("caller's jwt query param outranked the filer-minted token")
+			}
+			if got := volume.seenEffectiveJwt(); got != want {
+				t.Fatalf("volume server would evaluate %q, want the minted token %q", got, want)
+			}
+			if q := volume.seenRawQuery(); strings.Contains(q, "jwt=") {
+				t.Fatalf("jwt survived in the forwarded query: %q", q)
+			}
+			// Unrelated params must still be forwarded.
+			if q := volume.seenRawQuery(); !strings.Contains(q, "readDeleted=true") {
+				t.Fatalf("readDeleted was dropped from the forwarded query: %q", q)
+			}
+		})
+	}
+}
+
+// A writer's credential is its own either way, so the query parameter is left
+// alone on writes -- stripping it would break a caller that presents its volume
+// JWT that way.
+func TestProxyWriteKeepsCallerJwtQueryParam(t *testing.T) {
+	volume := newProxyTestVolume(t)
+	fs := &FilerServer{volumeGuard: security.NewGuard([]string{}, proxyTestWriteKey, 10, proxyTestReadKey, 10)}
+
+	r := httptest.NewRequest(http.MethodPost,
+		"http://filer:8888/?proxyChunkId="+proxyTestFileId+"&jwt=caller-supplied", nil)
+	fs.proxyToVolumeServerURL(httptest.NewRecorder(), r, proxyTestFileId, volume.URL+"/"+proxyTestFileId)
+
+	volume.requireReached(t)
+	if got := volume.seenEffectiveJwt(); got != "caller-supplied" {
+		t.Fatalf("writer's own jwt query param was altered: got %q", got)
 	}
 }
 
