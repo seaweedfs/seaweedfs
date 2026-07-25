@@ -230,6 +230,23 @@ client_cert_path = ""
 client_key_path = ""
 # This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
 superLargeDirectories = []
+# Connection tuning, accepted by every redis filer store section. Each key keeps the go-redis
+# default when left at 0, and a timeout cannot be turned off - a filer that never times out a read
+# is what stalls a failover. Shorter read timeouts make the filer notice a dead redis sooner, which
+# matters most for the sentinel store: every pooled connection to the old master has to time out
+# before a failover is absorbed.
+# max_retries = 0                        # 0 is three retries, -1 disables retrying
+# min_retry_backoff_millisecond = 0      # default 8
+# max_retry_backoff_millisecond = 0      # default 512
+# dial_timeout_millisecond = 0           # default 5000
+# read_timeout_millisecond = 0           # default 3000
+# write_timeout_millisecond = 0          # default 3000, follows read_timeout_millisecond
+# pool_size = 0                          # default 10 per CPU
+# pool_timeout_millisecond = 0           # default read_timeout_millisecond + 1000
+# min_idle_conns = 0
+# max_idle_conns = 0
+# conn_max_idle_time_seconds = 0         # default 1800
+# conn_max_lifetime_seconds = 0          # default unlimited
 
 [redis2_sentinel]
 enabled = false
@@ -247,6 +264,7 @@ enable_tls = false
 ca_cert_path = ""
 client_cert_path = ""
 client_key_path = ""
+# see [redis2] for the connection tuning keys
 
 [redis_cluster2]
 enabled = false

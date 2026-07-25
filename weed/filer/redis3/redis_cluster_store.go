@@ -7,6 +7,7 @@ import (
 	"github.com/go-redsync/redsync/v4/redis/goredis/v9"
 	"github.com/redis/go-redis/v9"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/filer/redis_conf"
 	"github.com/seaweedfs/seaweedfs/weed/filer/redis_tls"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -39,17 +40,20 @@ func (store *RedisCluster3Store) Initialize(configuration util.Configuration, pr
 		configuration.GetBool(prefix+"useReadOnly"),
 		configuration.GetBool(prefix+"routeByLatency"),
 		tlsConfig,
+		redis_conf.Read(configuration, prefix),
 	)
 }
 
-func (store *RedisCluster3Store) initialize(addresses []string, password string, readOnly, routeByLatency bool, tlsConfig *tls.Config) (err error) {
-	store.Client = redis.NewClusterClient(&redis.ClusterOptions{
+func (store *RedisCluster3Store) initialize(addresses []string, password string, readOnly, routeByLatency bool, tlsConfig *tls.Config, settings redis_conf.Settings) (err error) {
+	options := &redis.ClusterOptions{
 		Addrs:          addresses,
 		Password:       password,
 		ReadOnly:       readOnly,
 		RouteByLatency: routeByLatency,
 		TLSConfig:      tlsConfig,
-	})
+	}
+	settings.ApplyToCluster(options)
+	store.Client = redis.NewClusterClient(options)
 	store.redsync = redsync.New(goredis.NewPool(store.Client))
 	return
 }

@@ -2,10 +2,10 @@ package redis2
 
 import (
 	"crypto/tls"
-	"time"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/filer/redis_conf"
 	"github.com/seaweedfs/seaweedfs/weed/filer/redis_tls"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -37,11 +37,12 @@ func (store *Redis2SentinelStore) Initialize(configuration util.Configuration, p
 		configuration.GetInt(prefix+"database"),
 		configuration.GetString(prefix+"keyPrefix"),
 		tlsConfig,
+		redis_conf.Read(configuration, prefix),
 	)
 }
 
-func (store *Redis2SentinelStore) initialize(addresses []string, masterName string, username string, password string, sentinelUsername string, sentinelPassword string, database int, keyPrefix string, tlsConfig *tls.Config) (err error) {
-	store.Client = redis.NewFailoverClient(&redis.FailoverOptions{
+func (store *Redis2SentinelStore) initialize(addresses []string, masterName string, username string, password string, sentinelUsername string, sentinelPassword string, database int, keyPrefix string, tlsConfig *tls.Config, settings redis_conf.Settings) (err error) {
+	options := &redis.FailoverOptions{
 		MasterName:       masterName,
 		SentinelAddrs:    addresses,
 		Username:         username,
@@ -50,11 +51,9 @@ func (store *Redis2SentinelStore) initialize(addresses []string, masterName stri
 		SentinelPassword: sentinelPassword,
 		DB:               database,
 		TLSConfig:        tlsConfig,
-		MinRetryBackoff:  time.Millisecond * 100,
-		MaxRetryBackoff:  time.Minute * 1,
-		ReadTimeout:      time.Second * 30,
-		WriteTimeout:     time.Second * 5,
-	})
+	}
+	settings.ApplyToFailover(options)
+	store.Client = redis.NewFailoverClient(options)
 	store.keyPrefix = keyPrefix
 	return
 }

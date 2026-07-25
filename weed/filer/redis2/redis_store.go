@@ -5,6 +5,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/filer/redis_conf"
 	"github.com/seaweedfs/seaweedfs/weed/filer/redis_tls"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -34,17 +35,20 @@ func (store *Redis2Store) Initialize(configuration util.Configuration, prefix st
 		configuration.GetString(prefix+"keyPrefix"),
 		configuration.GetStringSlice(prefix+"superLargeDirectories"),
 		tlsConfig,
+		redis_conf.Read(configuration, prefix),
 	)
 }
 
-func (store *Redis2Store) initialize(hostPort string, username string, password string, database int, keyPrefix string, superLargeDirectories []string, tlsConfig *tls.Config) (err error) {
-	store.Client = redis.NewClient(&redis.Options{
+func (store *Redis2Store) initialize(hostPort string, username string, password string, database int, keyPrefix string, superLargeDirectories []string, tlsConfig *tls.Config, settings redis_conf.Settings) (err error) {
+	options := &redis.Options{
 		Addr:      hostPort,
 		Username:  username,
 		Password:  password,
 		DB:        database,
 		TLSConfig: tlsConfig,
-	})
+	}
+	settings.ApplyTo(options)
+	store.Client = redis.NewClient(options)
 	store.keyPrefix = keyPrefix
 	store.loadSuperLargeDirectories(superLargeDirectories)
 	return

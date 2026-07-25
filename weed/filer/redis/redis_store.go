@@ -3,6 +3,7 @@ package redis
 import (
 	"github.com/redis/go-redis/v9"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/filer/redis_conf"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -23,14 +24,17 @@ func (store *RedisStore) Initialize(configuration util.Configuration, prefix str
 		configuration.GetString(prefix+"address"),
 		configuration.GetString(prefix+"password"),
 		configuration.GetInt(prefix+"database"),
+		redis_conf.Read(configuration, prefix),
 	)
 }
 
-func (store *RedisStore) initialize(hostPort string, password string, database int) (err error) {
-	store.Client = redis.NewClient(&redis.Options{
+func (store *RedisStore) initialize(hostPort string, password string, database int, settings redis_conf.Settings) (err error) {
+	options := &redis.Options{
 		Addr:     hostPort,
 		Password: password,
 		DB:       database,
-	})
+	}
+	settings.ApplyTo(options)
+	store.Client = redis.NewClient(options)
 	return
 }
