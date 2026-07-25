@@ -66,6 +66,7 @@ type S3ApiServerOption struct {
 	ExternalUrl               string // external URL clients use, for signature verification behind a reverse proxy
 	DefaultFileMode           uint32 // default file permission mode for S3 uploads (e.g. 0660, 0644)
 	CacheSizeMB               int64  // in-memory chunk cache capacity in MB for the shared ReaderCache; 0 disables
+	MaxMB                     int32  // filer's -maxMB, read from the filer configuration at startup
 }
 
 // s3ChunkCacheChunkSizeMB is the assumed chunk size (in MiB) used to convert
