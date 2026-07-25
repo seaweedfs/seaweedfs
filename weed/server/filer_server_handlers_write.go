@@ -297,10 +297,18 @@ func (fs *FilerServer) detectStorageOption(ctx context.Context, requestURI, qCol
 
 	collection := util.Nvl(qCollection, rule.Collection, bucketDefaultCollection, fs.option.Collection)
 
-	// A placement overlay steers a collection's new volumes onto a chosen
-	// medium. It sits between the explicit request and the filer.conf rule: it
-	// overrides the rule but yields to a value the caller asked for outright.
-	overlayDisk, overlayReplication, overlayDataCenter, _ := fs.filer.ResolvePlacement(collection)
+	// A placement overlay steers a bound collection's new volumes onto a tier.
+	// It sits between the explicit request and the filer.conf rule: it overrides
+	// the rule but yields to a value the caller asked for outright. Only a
+	// steered collection contributes values; an unsteered one clears them so it
+	// falls straight through to the rule.
+	overlayDisk, overlayReplication, overlayDataCenter, overlaySteered := fs.filer.ResolvePlacement(collection)
+	if !overlaySteered {
+		overlayDisk, overlayReplication, overlayDataCenter = "", "", ""
+	} else {
+		glog.V(4).InfofCtx(ctx, "placement overlay steers collection %s: disk=%q replication=%q dataCenter=%q",
+			collection, overlayDisk, overlayReplication, overlayDataCenter)
+	}
 
 	return &operation.StorageOption{
 		Replication:       util.Nvl(qReplication, overlayReplication, rule.Replication, fs.option.DefaultReplication),

@@ -4,11 +4,10 @@ package filer
 // the disk type, replication, and data center new volumes of that collection
 // should land on — or ok=false when the collection has none.
 //
-// It exists so an enterprise feature can steer where a bound collection's data
-// lands without every operator setting an fs.configure rule by hand. The type
-// is deliberately generic: it names no storage-class concepts, so this
-// OSS-origin seam carries no enterprise types and survives the sync unchanged.
-// The enterprise tiering overlay registers a factory that reads tiering.conf.
+// It exists so a feature can steer where a bound collection's data lands without
+// every operator setting an fs.configure rule by hand. The type is deliberately
+// generic: it names no placement-policy concepts, so a downstream build
+// registers whatever overlay it wants without coupling this seam to it.
 type PlacementOverlay func(collection string) (diskType, replication, dataCenter string, ok bool)
 
 // newPlacementOverlay builds the overlay for a filer. Enterprise sets it in an
@@ -17,8 +16,10 @@ type PlacementOverlay func(collection string) (diskType, replication, dataCenter
 // the sync.
 var newPlacementOverlay func(*Filer) PlacementOverlay
 
-// RegisterPlacementOverlay installs the factory. The last registration wins;
-// there is only ever one overlay.
+// RegisterPlacementOverlay installs the factory. It is meant to be called from a
+// package init() — before any Filer is constructed and before serving starts —
+// so the unsynchronized read in NewFiler never races the write. The last
+// registration wins; there is only ever one overlay.
 func RegisterPlacementOverlay(factory func(*Filer) PlacementOverlay) {
 	newPlacementOverlay = factory
 }
