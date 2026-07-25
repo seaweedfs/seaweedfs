@@ -2,11 +2,79 @@ package weed_server
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestValidateProxyChunkId(t *testing.T) {
+	for _, tc := range []struct {
+		fileId string
+		ok     bool
+	}{
+		{"3,01637037d6", true},
+		{"1,0c2b3f2f0f", true},
+		{"12,04f0e6ba1d", true},
+		{"3,01637037d6_1", true},  // batch-assign delta form
+		{"3,01637037d6_12", true}, // multi-digit delta
+		{"3,x/../../status", false},
+		{"3,01637037d6/../../status", false},
+		{"3,01637037d6/../../stats/counter", false},
+		{"3,../../status", false},
+		{"3,01637037d6/../../status_1", false}, // traversal wearing a delta suffix
+		// The suffix must be digits only, or stripping it would reduce a
+		// traversal payload to a valid fid and let it through.
+		{"3,01637037d6_1/../../status", false},
+		{"3,01637037d6_../../status", false},
+		{"3,01637037d6_1/../../stats/counter", false},
+		{"3,01637037d6_", false},
+		{"3,01637037d6_abc", false},
+		{"3,01637037d6_1a", false},
+		{"3,01637037d6?readDeleted=true", false},
+		{"3,01637037d6#frag", false},
+		{"3,", false},
+		{"3,abc", false},
+		{"3", false},
+		{"", false},
+	} {
+		err := validateProxyChunkId(tc.fileId)
+		if tc.ok && err != nil {
+			t.Errorf("validateProxyChunkId(%q) rejected a valid fid: %v", tc.fileId, err)
+		}
+		if !tc.ok && err == nil {
+			t.Errorf("validateProxyChunkId(%q) accepted a malformed fid", tc.fileId)
+		}
+	}
+}
+
+// A fid carrying dot segments must be rejected before the lookup, so it can
+// never be pasted into a volume server URL. Asserting on 400 (not merely "no
+// traversal") also proves the request never left the filer.
+func TestProxyRejectsTraversalBeforeLookup(t *testing.T) {
+	fs := &FilerServer{}
+
+	for _, fileId := range []string{
+		"3,x/../../status",
+		"3,01637037d6/../../status",
+		"3,01637037d6/../../stats/counter",
+		"3,01637037d6_1/../../status",
+		"3,01637037d6_../../status",
+	} {
+		r := httptest.NewRequest(http.MethodGet, "http://filer:8888/?proxyChunkId="+fileId, nil)
+		w := httptest.NewRecorder()
+
+		// fs.filer is nil: reaching the lookup would panic, so surviving this
+		// call is itself proof the fid was rejected first.
+		fs.proxyToVolumeServer(w, r, fileId)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("proxyChunkId=%q returned %d, want 400", fileId, w.Code)
+		}
+	}
+}
 
 func TestProxySemaphore_LimitsConcurrency(t *testing.T) {
 	host := "test-volume:8080"
