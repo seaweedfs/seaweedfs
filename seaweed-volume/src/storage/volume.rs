@@ -2713,6 +2713,11 @@ impl Volume {
         needle_blob: &[u8],
         size: Size,
     ) -> Result<(), VolumeError> {
+        // nm.put on a read-only volume fails only after the blob is appended to .dat.
+        if self.is_read_only() {
+            return Err(VolumeError::ReadOnly);
+        }
+
         // Dedup check: if the same needle already exists with matching content, skip the write.
         // Matches Go's WriteNeedleBlob which reads existing needle and compares cookie+checksum+data.
         if let Some(nm) = &self.nm {

@@ -167,3 +167,47 @@ func TestDestroyNonemptyVolumeWithoutOnlyEmpty(t *testing.T) {
 	}
 	assertFileExist(t, false, path)
 }
+
+// Pre-fix: the blob was appended to .dat, then rejected by SortedFileNeedleMap.Put.
+func TestWriteNeedleBlobRejectedOnReadOnlyVolume(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 7, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	offset, size, _, err := v.writeNeedle2(newRandomNeedle(1), true, false)
+	if err != nil {
+		t.Fatalf("write needle: %v", err)
+	}
+	blob, err := v.ReadNeedleBlob(int64(offset), size)
+	if err != nil {
+		t.Fatalf("read needle blob: %v", err)
+	}
+	v.PersistReadOnly(true)
+	v.Close()
+
+	v, err = NewVolume(dir, dir, "", 7, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume reload: %v", err)
+	}
+	defer v.Close()
+	if _, ok := v.nm.(*SortedFileNeedleMap); !ok {
+		t.Fatalf("reloaded read-only volume should use SortedFileNeedleMap, got %T", v.nm)
+	}
+
+	datSizeBefore, _, _ := v.DataBackend.GetStat()
+
+	err = v.WriteNeedleBlob(types.Uint64ToNeedleId(2), blob, size)
+	if err == nil {
+		t.Fatalf("expected WriteNeedleBlob to be rejected on a read-only volume")
+	}
+	if errors.Is(err, os.ErrInvalid) {
+		t.Errorf("WriteNeedleBlob should fail with a read-only error, not the needle map's os.ErrInvalid: %v", err)
+	}
+
+	datSizeAfter, _, _ := v.DataBackend.GetStat()
+	if datSizeAfter != datSizeBefore {
+		t.Errorf("read-only volume .dat grew from %d to %d, leaving an unindexed needle", datSizeBefore, datSizeAfter)
+	}
+}
