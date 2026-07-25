@@ -277,6 +277,9 @@ func (s3opt *S3Options) startS3Server() bool {
 	var metricsAddress string
 	var metricsIntervalSec int
 
+	// chunk size for S3 uploads, read from the filer's -maxMB
+	var filerMaxMB int32
+
 	for {
 		err := pb.WithOneOfGrpcFilerClients(false, filerAddresses, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
@@ -288,7 +291,9 @@ func (s3opt *S3Options) startS3Server() bool {
 			// Get master addresses for filer discovery
 			masterAddresses = pb.ServerAddresses(strings.Join(resp.Masters, ",")).ToAddresses()
 			metricsAddress, metricsIntervalSec = resp.MetricsAddress, int(resp.MetricsIntervalSec)
+			filerMaxMB = int32(resp.MaxMb)
 			glog.V(0).Infof("S3 read filer buckets dir: %s", filerBucketsPath)
+			glog.V(0).Infof("S3 read filer maxMB: %d", filerMaxMB)
 			if len(masterAddresses) > 0 {
 				glog.V(0).Infof("S3 read master addresses for discovery: %v", masterAddresses)
 			}
@@ -358,6 +363,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		ExternalUrl:               s3opt.resolveExternalUrl(),
 		DefaultFileMode:           defaultFileMode,
 		CacheSizeMB:               *s3opt.cacheSizeMB,
+		MaxMB:                     filerMaxMB,
 	})
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)

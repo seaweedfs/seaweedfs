@@ -363,6 +363,27 @@ type putFinalize struct {
 	afterCreate func(entry *filer_pb.Entry) s3err.ErrorCode
 }
 
+const (
+	// defaultUploadChunkSizeMB applies when the filer reports no -maxMB.
+	defaultUploadChunkSizeMB = 8
+	// maxUploadChunkSizeMB keeps the byte count inside int32.
+	maxUploadChunkSizeMB = 2047
+)
+
+// uploadChunkSize is how large a chunk the S3 write path cuts. It follows the
+// filer's -maxMB so an object written through S3 chunks the same way the same
+// bytes written through the filer, WebDAV or a mount would.
+func (s3a *S3ApiServer) uploadChunkSize() int32 {
+	sizeMB := s3a.option.MaxMB
+	if sizeMB <= 0 {
+		sizeMB = defaultUploadChunkSizeMB
+	}
+	if sizeMB > maxUploadChunkSizeMB {
+		sizeMB = maxUploadChunkSizeMB
+	}
+	return sizeMB * 1024 * 1024
+}
+
 // putToFiler writes one chunk of object bytes (a full PutObject body, a
 // single MPU part, a copy-part destination). lifecycleTTLSec is non-zero
 // only for top-level PutObject paths where the lifecycle XML's
@@ -466,8 +487,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 
 	// filePath is already provided directly - no URL parsing needed
 	// Step 1 & 2: Use auto-chunking to handle large files without OOM
-	// This splits large uploads into 8MB chunks, preventing memory issues on both S3 API and volume servers
-	const chunkSize = 8 * 1024 * 1024 // 8MB chunks (S3 standard)
+	chunkSize := s3a.uploadChunkSize()
 	const smallFileLimit = 256 * 1024 // 256KB - store inline in filer
 
 	collection := ""
