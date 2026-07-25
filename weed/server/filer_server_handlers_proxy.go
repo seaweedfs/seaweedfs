@@ -6,6 +6,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
@@ -13,6 +14,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"net/http"
+	"strings"
 )
 
 // proxyReadConcurrencyPerVolumeServer limits how many concurrent proxy read
@@ -48,8 +50,50 @@ func releaseProxySemaphore(host string) {
 	}
 }
 
+// baseFileId strips the trailing _N delta suffix that batch assigns append to a
+// fid, and only that: the suffix must be a non-empty run of digits, otherwise
+// the fid is returned whole for the caller to reject.
+//
+// The volume server strips at the last "_" unconditionally, which is safe there
+// because its fid already came out of a path the mux parsed and so cannot hold
+// a "/". Here the value is raw query input, and an unguarded strip would reduce
+// "3,01637037d6_1/../../status" to a valid fid and wave the traversal through.
+func baseFileId(fileId string) string {
+	sepIndex := strings.LastIndex(fileId, "_")
+	if sepIndex <= 0 {
+		return fileId
+	}
+	delta := fileId[sepIndex+1:]
+	if delta == "" {
+		return fileId
+	}
+	for _, c := range delta {
+		if c < '0' || c > '9' {
+			return fileId
+		}
+	}
+	return fileId[:sepIndex]
+}
+
+// validateProxyChunkId rejects a proxyChunkId that is not a well-formed fid.
+// LookupFileId only requires a single comma, and the value is pasted into the
+// volume server URL path, so "3,x/../../status" resolves to a volume the caller
+// never named -- the volume server's mux cleans the dot segments and redirects
+// to /status, which the filer follows and relays.
+func validateProxyChunkId(fileId string) error {
+	_, err := needle.ParseFileIdFromString(baseFileId(fileId))
+	return err
+}
+
 func (fs *FilerServer) proxyToVolumeServer(w http.ResponseWriter, r *http.Request, fileId string) {
 	ctx := r.Context()
+
+	if err := validateProxyChunkId(fileId); err != nil {
+		glog.V(1).InfofCtx(ctx, "reject proxyChunkId %q: %v", fileId, err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
 	urlStrings, err := fs.filer.MasterClient.GetLookupFileIdFunction()(ctx, fileId)
 	if err != nil {
 		glog.ErrorfCtx(ctx, "locate %s: %v", fileId, err)
