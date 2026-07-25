@@ -295,14 +295,21 @@ func (fs *FilerServer) detectStorageOption(ctx context.Context, requestURI, qCol
 		ttlSeconds = int32(ttl.Minutes()) * 60
 	}
 
+	collection := util.Nvl(qCollection, rule.Collection, bucketDefaultCollection, fs.option.Collection)
+
+	// A placement overlay steers a collection's new volumes onto a chosen
+	// medium. It sits between the explicit request and the filer.conf rule: it
+	// overrides the rule but yields to a value the caller asked for outright.
+	overlayDisk, overlayReplication, overlayDataCenter, _ := fs.filer.ResolvePlacement(collection)
+
 	return &operation.StorageOption{
-		Replication:       util.Nvl(qReplication, rule.Replication, fs.option.DefaultReplication),
-		Collection:        util.Nvl(qCollection, rule.Collection, bucketDefaultCollection, fs.option.Collection),
-		DataCenter:        util.Nvl(dataCenter, rule.DataCenter, fs.option.DataCenter),
+		Replication:       util.Nvl(qReplication, overlayReplication, rule.Replication, fs.option.DefaultReplication),
+		Collection:        collection,
+		DataCenter:        util.Nvl(dataCenter, overlayDataCenter, rule.DataCenter, fs.option.DataCenter),
 		Rack:              util.Nvl(rack, rule.Rack, fs.option.Rack),
 		DataNode:          util.Nvl(dataNode, rule.DataNode, fs.option.DataNode),
 		TtlSeconds:        ttlSeconds,
-		DiskType:          util.Nvl(diskType, rule.DiskType),
+		DiskType:          util.Nvl(diskType, overlayDisk, rule.DiskType),
 		Fsync:             rule.Fsync,
 		VolumeGrowthCount: rule.VolumeGrowthCount,
 		MaxFileNameLength: maxFileNameLength,
