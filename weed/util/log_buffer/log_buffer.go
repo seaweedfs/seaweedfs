@@ -24,6 +24,18 @@ const PreviousBufferCount = 4
 // pinning hundreds of buffer copies.
 const flushQueueDepth = 16
 
+// flushQueueBudget bounds the same queue in bytes. Counting copies only holds
+// if every copy is a window's worth: an entry larger than BufferSize grows its
+// window to fit, and a queue of those multiplies straight through — sixteen
+// 100 MB windows is 1.6 GB of flush copies alone. The ceiling is the one the
+// depth was chosen for, so ordinary windows still queue sixteen deep.
+//
+// This covers the flush queue only. A sealed window stays reachable through
+// prevBuffers for PreviousBufferCount more seals, and readers may take a
+// snapshot of it, so an oversized entry still costs several times its size
+// before it falls out of the ring.
+const flushQueueBudget = flushQueueDepth * BufferSize
+
 // Errors that can be returned by log buffer operations
 var (
 	// ErrBufferCorrupted indicates the log buffer contains corrupted data
@@ -36,7 +48,87 @@ type dataToFlush struct {
 	data      []byte // slab from mem.Allocate; returned via mem.Free after flush
 	minOffset int64
 	maxOffset int64
+	seq       uint64        // seal order, so the budget admits windows in order
+	budget    int           // bytes reserved from flushBudget, released after the flush
 	done      chan struct{} // Signal when flush completes
+}
+
+// flushBudget accounts the bytes of sealed windows waiting to be written, so a
+// producer waits for the queue to drain instead of adding another copy to it.
+// Windows are admitted strictly in seal order: a producer parked here can wait
+// seconds, and letting a later window overtake an earlier one would hand
+// loopFlush the windows out of order.
+type flushBudget struct {
+	mu      sync.Mutex
+	cond    *sync.Cond
+	limit   int
+	queued  int
+	nextSeq uint64
+	closed  bool
+}
+
+func newFlushBudget(limit int) *flushBudget {
+	b := &flushBudget{limit: limit}
+	b.cond = sync.NewCond(&b.mu)
+	return b
+}
+
+// reserve blocks until it is this window's turn and its bytes fit under the
+// limit, then returns the amount to hand back to release. A window larger than
+// the whole budget is admitted on its own once the queue empties, so an
+// oversized entry still gets through.
+func (b *flushBudget) reserve(seq uint64, n int) int {
+	if n > b.limit {
+		n = b.limit
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for !b.closed && (seq != b.nextSeq || (b.queued > 0 && b.queued+n > b.limit)) {
+		b.cond.Wait()
+	}
+	if seq == b.nextSeq {
+		b.nextSeq++
+	}
+	b.queued += n
+	b.cond.Broadcast() // wake whoever is next in line
+	return n
+}
+
+// waitForRoom parks until the queue has headroom for a window of n bytes,
+// without charging anything. A window is copied into its slab while the write
+// lock is held, before queueFlush gets to reserve, so a burst of concurrent
+// oversized writers would each be holding a full copy in hand by the time they
+// queue up -- memory the budget never sees. Large writers wait here first so
+// they arrive at the seal a few at a time. This throttles the burst rather than
+// bounding it: a writer that passes the check still seals unconditionally.
+func (b *flushBudget) waitForRoom(n int) {
+	if n > b.limit {
+		n = b.limit
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for !b.closed && b.queued > 0 && b.queued+n > b.limit {
+		b.cond.Wait()
+	}
+}
+
+func (b *flushBudget) release(n int) {
+	if n == 0 {
+		return
+	}
+	b.mu.Lock()
+	b.queued -= n
+	b.mu.Unlock()
+	b.cond.Broadcast()
+}
+
+// close stops the budget from parking anyone, so shutdown is never held up by
+// a producer waiting on a flush that will not run.
+func (b *flushBudget) close() {
+	b.mu.Lock()
+	b.closed = true
+	b.mu.Unlock()
+	b.cond.Broadcast()
 }
 
 type EachLogEntryFuncType func(logEntry *filer_pb.LogEntry) (isDone bool, err error)
@@ -89,6 +181,8 @@ type LogBuffer struct {
 	shutdownCh    chan struct{} // closed by ShutdownLogBuffer to wake blocked subscribers
 	isAllFlushed  bool
 	flushChan     chan *dataToFlush
+	flushBudget   *flushBudget
+	flushSeq      uint64 // seal counter, assigned under the write lock
 	// Offset range tracking for Kafka integration
 	hasOffsets bool
 	// Disk chunk cache for historical data reads
@@ -115,6 +209,7 @@ func NewLogBuffer(name string, flushInterval time.Duration, flushFn LogFlushFunc
 		notifyFn:       notifyFn,
 		subscribers:    make(map[string]chan struct{}),
 		flushChan:      make(chan *dataToFlush, flushQueueDepth),
+		flushBudget:    newFlushBudget(flushQueueBudget),
 		isStopping:     new(atomic.Bool),
 		shutdownCh:     make(chan struct{}),
 		offset:         0, // Will be initialized from existing data if available
@@ -265,17 +360,17 @@ func (logBuffer *LogBuffer) AddToBuffer(message *mq_pb.DataMessage) error {
 
 // AddLogEntryToBuffer directly adds a LogEntry to the buffer, preserving offset information
 func (logBuffer *LogBuffer) AddLogEntryToBuffer(logEntry *filer_pb.LogEntry) error {
+	if len(logEntry.Data) > BufferSize {
+		logBuffer.flushBudget.waitForRoom(len(logEntry.Data))
+	}
+
 	var toFlush *dataToFlush
 	var marshalErr error
 	logBuffer.Lock()
 	defer func() {
 		logBuffer.Unlock()
 		if toFlush != nil {
-			select {
-			case logBuffer.flushChan <- toFlush:
-			case <-logBuffer.shutdownCh:
-				// shutting down; loopFlush may be gone, do not park forever
-			}
+			logBuffer.queueFlush(toFlush)
 		}
 		// Only notify if there was no error
 		if marshalErr == nil {
@@ -333,15 +428,16 @@ func (logBuffer *LogBuffer) AddLogEntryToBuffer(logEntry *filer_pb.LogEntry) err
 		if len(logBuffer.buf) < size+4 {
 			// Validate size to prevent integer overflow in computation BEFORE allocation
 			const maxBufferSize = 1 << 30 // 1 GiB practical limit
-			// Ensure 2*size + 4 won't overflow int and stays within practical bounds
-			if size < 0 || size > (math.MaxInt-4)/2 || size > (maxBufferSize-4)/2 {
+			// The window is sized size+4, so that is what has to stay in bounds
+			if size < 0 || size > math.MaxInt-4 || size > maxBufferSize-4 {
 				marshalErr = fmt.Errorf("message size %d exceeds maximum allowed size", size)
 				glog.Errorf("%v", marshalErr)
 				return marshalErr
 			}
-			// Safe to compute now that we've validated size is in valid range
-			newSize := 2*size + 4
-			logBuffer.buf = make([]byte, newSize)
+			// Fit the entry exactly. Doubling left room for a second oversized
+			// record in the same window, which only doubles the flush copy and
+			// the snapshot taken of it.
+			logBuffer.buf = make([]byte, size+4)
 		}
 	}
 	logBuffer.stopTime = ts
@@ -365,6 +461,12 @@ func (logBuffer *LogBuffer) AddLogEntryToBuffer(logEntry *filer_pb.LogEntry) err
 
 func (logBuffer *LogBuffer) AddDataToBuffer(partitionKey, data []byte, processingTsNs int64) error {
 
+	// An entry this large gets a window to itself, so it will seal and copy one;
+	// wait for the queue to have room before joining the queue for the lock.
+	if len(data) > BufferSize {
+		logBuffer.flushBudget.waitForRoom(len(data))
+	}
+
 	// PERFORMANCE OPTIMIZATION: Pre-process expensive operations OUTSIDE the lock
 	var ts time.Time
 	if processingTsNs == 0 {
@@ -387,11 +489,7 @@ func (logBuffer *LogBuffer) AddDataToBuffer(partitionKey, data []byte, processin
 	defer func() {
 		logBuffer.Unlock()
 		if toFlush != nil {
-			select {
-			case logBuffer.flushChan <- toFlush:
-			case <-logBuffer.shutdownCh:
-				// shutting down; loopFlush may be gone, do not park forever
-			}
+			logBuffer.queueFlush(toFlush)
 		}
 		// Only notify if there was no error
 		if marshalErr == nil {
@@ -448,15 +546,16 @@ func (logBuffer *LogBuffer) AddDataToBuffer(partitionKey, data []byte, processin
 		if len(logBuffer.buf) < size+4 {
 			// Validate size to prevent integer overflow in computation BEFORE allocation
 			const maxBufferSize = 1 << 30 // 1 GiB practical limit
-			// Ensure 2*size + 4 won't overflow int and stays within practical bounds
-			if size < 0 || size > (math.MaxInt-4)/2 || size > (maxBufferSize-4)/2 {
+			// The window is sized size+4, so that is what has to stay in bounds
+			if size < 0 || size > math.MaxInt-4 || size > maxBufferSize-4 {
 				marshalErr = fmt.Errorf("message size %d exceeds maximum allowed size", size)
 				glog.Errorf("%v", marshalErr)
 				return marshalErr
 			}
-			// Safe to compute now that we've validated size is in valid range
-			newSize := 2*size + 4
-			logBuffer.buf = make([]byte, newSize)
+			// Fit the entry exactly. Doubling left room for a second oversized
+			// record in the same window, which only doubles the flush copy and
+			// the snapshot taken of it.
+			logBuffer.buf = make([]byte, size+4)
 		}
 	}
 	logBuffer.stopTime = ts
@@ -498,9 +597,7 @@ func (logBuffer *LogBuffer) ForceFlush() {
 		// The live buffer was already sealed and reset by copyToFlushWithCallback,
 		// so dropping toFlush on a timeout would lose it. Block until queued,
 		// bailing out only on shutdown.
-		select {
-		case logBuffer.flushChan <- toFlush:
-		case <-logBuffer.shutdownCh:
+		if !logBuffer.queueFlush(toFlush) {
 			return
 		}
 		select {
@@ -522,10 +619,14 @@ func (logBuffer *LogBuffer) ShutdownLogBuffer() {
 	// notice IsStopping() and exit promptly, even on an idle buffer where no
 	// flush notification would otherwise fire.
 	close(logBuffer.shutdownCh)
+	// Let go of the flush budget before sealing the last window, so a producer
+	// parked on it wakes up and the hand-off below cannot wait on a reservation.
+	logBuffer.flushBudget.close()
 	logBuffer.Lock()
 	toFlush := logBuffer.copyToFlush()
 	logBuffer.Unlock()
 	if toFlush != nil {
+		toFlush.budget = logBuffer.flushBudget.reserve(toFlush.seq, cap(toFlush.data))
 		logBuffer.flushChan <- toFlush
 	}
 	// nil is the shutdown sentinel: loopFlush drains everything queued before
@@ -539,6 +640,32 @@ func (logBuffer *LogBuffer) IsAllFlushed() bool {
 	return logBuffer.isAllFlushed
 }
 
+// queueFlush hands a sealed window to loopFlush, reserving its bytes first so
+// a producer waits for the queue to drain rather than adding another copy to
+// it. Reports false when the buffer shut down before the hand-off.
+func (logBuffer *LogBuffer) queueFlush(d *dataToFlush) bool {
+	// Charge the slab, not the window: mem.Allocate rounds up to a size class,
+	// so the bytes actually held are cap(data), and charging len would let the
+	// queue hold up to twice the ceiling.
+	d.budget = logBuffer.flushBudget.reserve(d.seq, cap(d.data))
+	// The window is already sealed, so dropping it here loses records the
+	// caller was told were accepted. Take any room in the queue first, and only
+	// fall back to the shutdown escape when there is none.
+	select {
+	case logBuffer.flushChan <- d:
+		return true
+	default:
+	}
+	select {
+	case logBuffer.flushChan <- d:
+		return true
+	case <-logBuffer.shutdownCh:
+		// shutting down; loopFlush may be gone, do not park forever
+		logBuffer.flushBudget.release(d.budget)
+		return false
+	}
+}
+
 func (logBuffer *LogBuffer) loopFlush() {
 	for d := range logBuffer.flushChan {
 		if d == nil {
@@ -546,6 +673,7 @@ func (logBuffer *LogBuffer) loopFlush() {
 		}
 		logBuffer.flushFn(logBuffer, d.startTime, d.stopTime, d.data, d.minOffset, d.maxOffset)
 		d.releaseMemory()
+		logBuffer.flushBudget.release(d.budget)
 		// local logbuffer is different from aggregate logbuffer here
 		if d.maxOffset >= 0 {
 			logBuffer.lastFlushedOffset.Store(d.maxOffset)
@@ -579,11 +707,7 @@ func (logBuffer *LogBuffer) loopInterval() {
 		toFlush := logBuffer.copyToFlush()
 		logBuffer.Unlock()
 		if toFlush != nil {
-			select {
-			case logBuffer.flushChan <- toFlush:
-			case <-logBuffer.shutdownCh:
-				// shutting down; loopFlush may be gone, do not park forever
-			}
+			logBuffer.queueFlush(toFlush)
 		}
 	}
 }
@@ -612,6 +736,11 @@ func (logBuffer *LogBuffer) copyToFlushInternal(withCallback bool) *dataToFlush 
 			if withCallback {
 				d.done = make(chan struct{})
 			}
+			// Stamped under the lock so the budget can admit windows in the
+			// order they were sealed. Every stamped window must reach reserve
+			// exactly once or the queue stalls behind the missing turn.
+			d.seq = logBuffer.flushSeq
+			logBuffer.flushSeq++
 		}
 		// CRITICAL: logBuffer.offset is the "next offset to assign", so last offset in buffer is offset-1
 		lastOffsetInBuffer := logBuffer.offset - 1
