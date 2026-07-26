@@ -169,6 +169,10 @@ func (vs *VolumeServer) VolumeConsolidateIndex(ctx context.Context, req *volume_
 		return resp, err
 	}
 
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return resp, err
+	}
+
 	err := vs.store.ConsolidateVolumeIndex(needle.VolumeId(req.VolumeId))
 
 	if err != nil {

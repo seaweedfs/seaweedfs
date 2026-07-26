@@ -207,7 +207,11 @@ func (v *Volume) RelocateIndexTo(newIdxDir string) error {
 	}
 
 	if err := RenameOrCopyFile(oldBase+".idx", newBase+".idx"); err != nil {
-		_ = v.load(true, false, v.needleMapKind, 0, v.Version()) // reopen against the old dir
+		// Reopen against the old dir so the volume is not left down; surface a
+		// failed reopen since it leaves the volume unusable until the next load.
+		if reopenErr := v.load(true, false, v.needleMapKind, 0, v.Version()); reopenErr != nil {
+			glog.Errorf("relocate volume %d: reopen after failed .idx move: %v", v.Id, reopenErr)
+		}
 		return fmt.Errorf("relocate index for volume %d: move .idx: %w", v.Id, err)
 	}
 	// The .sdx is a derived sorted index; move it when present, but a failure is

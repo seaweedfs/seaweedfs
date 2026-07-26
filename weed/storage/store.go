@@ -866,7 +866,14 @@ func RenameOrCopyFile(src, dst string) error {
 		os.Remove(dst)
 		return err
 	}
-	return os.Remove(src)
+	// Roll the copy back if the source cannot be removed, so a failure never
+	// leaves two divergent copies (the loader would keep using the data-dir one
+	// while the idx-dir orphan goes stale).
+	if err := os.Remove(src); err != nil {
+		os.Remove(dst)
+		return err
+	}
+	return nil
 }
 
 func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool, keepRemoteData bool) error {
