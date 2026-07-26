@@ -4,10 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
@@ -808,6 +810,90 @@ func (s *Store) UnmountVolume(i needle.VolumeId) error {
 		s.DeletedVolumesChan <- &message
 	}
 	return errors.Join(errs...)
+}
+
+// ConsolidateVolumeIndex returns a volume's index to the configured -dir.idx
+// directory when it is currently co-located with the data. A decode/reconstruct
+// leaves the rebuilt .idx next to the .dat so the on-demand mount can find the
+// volume while the old EC .ecx still coexists in the index directory; once the
+// shards are gone this puts the index back on its own tier. It is a no-op when
+// no separate index directory is configured or the index is already there.
+//
+// The volume is unmounted around the move so no write races the relocation, then
+// remounted from the index directory. A derived .ldb (leveldb map) is not moved:
+// it rebuilds from the .idx on remount, and the stale copy left in the data
+// directory is ignored by the loader, which keys on .idx/.vif.
+func (s *Store) ConsolidateVolumeIndex(i needle.VolumeId) error {
+	var loc *DiskLocation
+	var collection string
+	for _, location := range s.Locations {
+		if v, found := location.FindVolume(i); found {
+			loc, collection = location, v.Collection
+			break
+		}
+	}
+	if loc == nil {
+		return fmt.Errorf("volume %d not found on disk", i)
+	}
+	if loc.IdxDirectory == loc.Directory {
+		return nil
+	}
+	srcBase := VolumeFileName(loc.Directory, collection, int(i))
+	var exts []string
+	for _, ext := range []string{".idx", ".sdx"} {
+		if util.FileExists(srcBase + ext) {
+			exts = append(exts, ext)
+		}
+	}
+	if len(exts) == 0 {
+		return nil // index already lives in the idx directory
+	}
+	if err := s.UnmountVolume(i); err != nil {
+		return fmt.Errorf("consolidate index for volume %d: unmount: %w", i, err)
+	}
+	dstBase := VolumeFileName(loc.IdxDirectory, collection, int(i))
+	for _, ext := range exts {
+		if err := RenameOrCopyFile(srcBase+ext, dstBase+ext); err != nil {
+			_ = s.MountVolume(i) // do not leave the volume unmounted
+			return fmt.Errorf("consolidate index for volume %d: move %s: %w", i, ext, err)
+		}
+	}
+	return s.MountVolume(i)
+}
+
+// RenameOrCopyFile moves src to dst, falling back to a copy when the two sit on
+// different filesystems (os.Rename returns EXDEV across the data and -dir.idx
+// disks, the separate media the flag exists to use).
+func RenameOrCopyFile(src, dst string) error {
+	if err := os.Rename(src, dst); err == nil {
+		return nil
+	} else if !errors.Is(err, syscall.EXDEV) {
+		return err
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		os.Remove(dst)
+		return err
+	}
+	if err := out.Sync(); err != nil {
+		out.Close()
+		os.Remove(dst)
+		return err
+	}
+	if err := out.Close(); err != nil {
+		os.Remove(dst)
+		return err
+	}
+	return os.Remove(src)
 }
 
 func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool, keepRemoteData bool) error {

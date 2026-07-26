@@ -1009,6 +1009,23 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 		glog.Errorf("CompactVolumeFiles %s: %v", dataBaseFileName, err)
 	}
 
+	// Co-locate the rebuilt index with the data. The rebuild wrote the .idx to
+	// the shared -dir.idx directory, but the on-demand VolumeMount scans only
+	// the data directory and matches on .idx/.vif: with the index off in the
+	// index directory it would find the volume's leftover EC .vif instead and
+	// skip it as EC metadata. Moving the .idx next to the .dat lets the mount
+	// find the volume; VolumeConsolidateIndex returns it to the index directory
+	// once the EC shards are deleted.
+	if volumeLocation.IdxDirectory != volumeLocation.Directory {
+		idxSrc := storage.VolumeFileName(volumeLocation.IdxDirectory, v.Collection, int(req.VolumeId)) + ".idx"
+		idxDst := storage.VolumeFileName(volumeLocation.Directory, v.Collection, int(req.VolumeId)) + ".idx"
+		if util.FileExists(idxSrc) {
+			if moveErr := storage.RenameOrCopyFile(idxSrc, idxDst); moveErr != nil {
+				glog.Warningf("co-locate rebuilt index %s -> %s: %v", idxSrc, idxDst, moveErr)
+			}
+		}
+	}
+
 	return &volume_server_pb.VolumeEcShardsToVolumeResponse{}, nil
 }
 
