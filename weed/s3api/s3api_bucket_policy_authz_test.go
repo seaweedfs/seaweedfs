@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	iamlib "github.com/seaweedfs/seaweedfs/weed/iam"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
@@ -126,6 +127,43 @@ func TestBucketPolicyWriteAllowedForAdmin(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The new actions are only reachable if an operator can actually grant them.
+// An IAM policy naming s3:PutBucketPolicy is rejected outright when the action
+// has no mapping ("not a valid action"), so the grant this change requires has
+// to round-trip through the IAM helpers.
+func TestBucketPolicyActionsAreGrantableViaIamPolicy(t *testing.T) {
+	for _, tc := range []struct{ policyAction, wantIdentityAction string }{
+		{"s3:PutBucketPolicy", s3_constants.ACTION_PUT_BUCKET_POLICY},
+		{"PutBucketPolicy", s3_constants.ACTION_PUT_BUCKET_POLICY},
+		{"s3:DeleteBucketPolicy", s3_constants.ACTION_DELETE_BUCKET_POLICY},
+		{"DeleteBucketPolicy", s3_constants.ACTION_DELETE_BUCKET_POLICY},
+		{"s3:GetBucketPolicy", s3_constants.ACTION_READ},
+	} {
+		if got := iamlib.MapToStatementAction(tc.policyAction); got != tc.wantIdentityAction {
+			t.Errorf("MapToStatementAction(%q) = %q, want %q -- an unmapped action is rejected as invalid, so the permission cannot be granted",
+				tc.policyAction, got, tc.wantIdentityAction)
+		}
+	}
+
+	// Granting delete-policy must not hand back blanket admin, which is what
+	// the previous mapping did.
+	if got := iamlib.MapToStatementAction("s3:DeleteBucketPolicy"); got == s3_constants.ACTION_ADMIN {
+		t.Error("s3:DeleteBucketPolicy still maps to Admin, so granting it grants everything")
+	}
+
+	// And the reverse direction, used to render an identity's actions back as
+	// policy statements.
+	for _, tc := range []struct{ identityAction, wantPolicyAction string }{
+		{s3_constants.ACTION_PUT_BUCKET_POLICY, "PutBucketPolicy"},
+		{s3_constants.ACTION_DELETE_BUCKET_POLICY, "DeleteBucketPolicy"},
+	} {
+		if got := iamlib.MapToIdentitiesAction(tc.identityAction); got != tc.wantPolicyAction {
+			t.Errorf("MapToIdentitiesAction(%q) = %q, want %q -- an empty result renders as a bare \"s3:\"",
+				tc.identityAction, got, tc.wantPolicyAction)
+		}
 	}
 }
 
