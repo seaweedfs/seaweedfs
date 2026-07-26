@@ -7,6 +7,7 @@ import (
 	"github.com/go-redsync/redsync/v4/redis/goredis/v9"
 	"github.com/redis/go-redis/v9"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/filer/redis_conf"
 	"github.com/seaweedfs/seaweedfs/weed/filer/redis_tls"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -33,16 +34,19 @@ func (store *Redis3Store) Initialize(configuration util.Configuration, prefix st
 		configuration.GetString(prefix+"password"),
 		configuration.GetInt(prefix+"database"),
 		tlsConfig,
+		redis_conf.Read(configuration, prefix),
 	)
 }
 
-func (store *Redis3Store) initialize(hostPort string, password string, database int, tlsConfig *tls.Config) (err error) {
-	store.Client = redis.NewClient(&redis.Options{
+func (store *Redis3Store) initialize(hostPort string, password string, database int, tlsConfig *tls.Config, settings redis_conf.Settings) (err error) {
+	options := &redis.Options{
 		Addr:      hostPort,
 		Password:  password,
 		DB:        database,
 		TLSConfig: tlsConfig,
-	})
+	}
+	settings.ApplyTo(options)
+	store.Client = redis.NewClient(options)
 	store.redsync = redsync.New(goredis.NewPool(store.Client))
 	return
 }
