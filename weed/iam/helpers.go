@@ -118,8 +118,13 @@ var baseS3ActionMap = map[string]string{
 	"PutBucketAcl":        s3_constants.ACTION_WRITE_ACP,
 	"GetBucketAcl":        s3_constants.ACTION_READ_ACP,
 	// Bucket operations
-	"DeleteBucket":                     s3_constants.ACTION_DELETE_BUCKET,
-	"DeleteBucketPolicy":               s3_constants.ACTION_ADMIN,
+	"DeleteBucket": s3_constants.ACTION_DELETE_BUCKET,
+	// Bucket policy is permissions management: an explicit Allow in one skips
+	// the IAM check, so it gets its own actions rather than folding into Write
+	// (which any object writer holds) or Admin (which grants everything).
+	"GetBucketPolicy":                  s3_constants.ACTION_READ,
+	"PutBucketPolicy":                  s3_constants.ACTION_PUT_BUCKET_POLICY,
+	"DeleteBucketPolicy":               s3_constants.ACTION_DELETE_BUCKET_POLICY,
 	"ListBucket":                       s3_constants.ACTION_LIST,
 	"ListBucketVersions":               s3_constants.ACTION_LIST,
 	"ListAllMyBuckets":                 s3_constants.ACTION_LIST,
@@ -186,6 +191,10 @@ func MapToIdentitiesAction(action string) string {
 		return StatementActionTagging
 	case s3_constants.ACTION_DELETE_BUCKET:
 		return StatementActionDelete
+	case s3_constants.ACTION_PUT_BUCKET_POLICY:
+		return "PutBucketPolicy"
+	case s3_constants.ACTION_DELETE_BUCKET_POLICY:
+		return "DeleteBucketPolicy"
 	default:
 		return ""
 	}
