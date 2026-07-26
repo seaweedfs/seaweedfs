@@ -33,7 +33,15 @@ func TestBucketPolicyRoutesUseTheirOwnActions(t *testing.T) {
 }
 
 // handlerActionBindings maps each handler name to the action constant its route
-// is gated on, read out of the router source.
+// authorizes on, read out of the router source.
+//
+// Routes read `iam.Auth(cb.Limit(handler, ACTION))`, which is a multi-value
+// pass-through: Limit returns (http.HandlerFunc, Action) and those become Auth's
+// two parameters, so the action Auth authorizes on is Limit's second argument
+// and the two cannot disagree -- `Auth(Limit(h, X), Y)` does not compile. Auth
+// called directly with its own action is still recognised, so a route that
+// bypasses Limit is reported against the action it really uses rather than as a
+// missing route.
 func handlerActionBindings(t *testing.T) map[string]string {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -49,7 +57,7 @@ func handlerActionBindings(t *testing.T) map[string]string {
 			return true
 		}
 		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok || sel.Sel.Name != "Limit" {
+		if !ok || (sel.Sel.Name != "Limit" && sel.Sel.Name != "Auth") {
 			return true
 		}
 		handler, ok := call.Args[0].(*ast.SelectorExpr)
