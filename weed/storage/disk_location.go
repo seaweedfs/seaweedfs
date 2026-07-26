@@ -160,14 +160,14 @@ func getValidVolumeName(basename string) string {
 }
 
 // hasEcxFile reports whether an .ecx for volumeName exists on this disk.
-// Checks IdxDirectory first, then falls back to Directory (the .ecx may
-// have been created before -dir.idx was configured).
+// Checks the local Directory first (where the index sits co-located with the
+// shards during a move or reconstruct), then the shared IdxDirectory.
 func (l *DiskLocation) hasEcxFile(volumeName string) bool {
-	if util.FileExists(filepath.Join(l.IdxDirectory, volumeName+".ecx")) {
+	if util.FileExists(filepath.Join(l.Directory, volumeName+".ecx")) {
 		return true
 	}
 	if l.IdxDirectory != l.Directory {
-		return util.FileExists(filepath.Join(l.Directory, volumeName+".ecx"))
+		return util.FileExists(filepath.Join(l.IdxDirectory, volumeName+".ecx"))
 	}
 	return false
 }
