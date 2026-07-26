@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -131,13 +132,19 @@ func (f *tierTestBackendFile) GetStat() (int64, time.Time, error) {
 	return int64(files[0].FileSize), time.Unix(int64(files[0].ModifiedTime), 0), nil
 }
 
-// fakeTierStream is a no-op server stream for the tier-download RPC.
+// fakeTierStream is a no-op server stream for the tier-download RPC. The
+// embedded grpc.ServerStream is nil, so Context is implemented here rather than
+// promoted -- the RPC reads it to authorize the caller.
 type fakeTierStream struct {
 	grpc.ServerStream
 }
 
 func (s *fakeTierStream) Send(*volume_server_pb.VolumeTierMoveDatFromRemoteResponse) error {
 	return nil
+}
+
+func (s *fakeTierStream) Context() context.Context {
+	return context.Background()
 }
 
 func newTierTestStore(t *testing.T, dir string) *storage.Store {

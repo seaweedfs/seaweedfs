@@ -16,6 +16,9 @@ import (
 
 // VolumeTierMoveDatFromRemote copy dat file from a remote tier to local volume server
 func (vs *VolumeServer) VolumeTierMoveDatFromRemote(req *volume_server_pb.VolumeTierMoveDatFromRemoteRequest, stream volume_server_pb.VolumeServer_VolumeTierMoveDatFromRemoteServer) error {
+	if err := vs.checkGrpcAdminAuth(stream.Context()); err != nil {
+		return err
+	}
 
 	// find existing volume
 	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
