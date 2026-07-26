@@ -819,46 +819,19 @@ func (s *Store) UnmountVolume(i needle.VolumeId) error {
 // shards are gone this puts the index back on its own tier. It is a no-op when
 // no separate index directory is configured or the index is already there.
 //
-// The volume is unmounted around the move so no write races the relocation, then
-// remounted from the index directory. A derived .ldb (leveldb map) is not moved:
-// it rebuilds from the .idx on remount, and the stale copy left in the data
-// directory is ignored by the loader, which keys on .idx/.vif.
+// The relocation happens in place under the volume lock (see RelocateIndexTo),
+// so the volume never leaves the mounted set and a concurrent read blocks
+// briefly rather than failing.
 func (s *Store) ConsolidateVolumeIndex(i needle.VolumeId) error {
-	var loc *DiskLocation
-	var collection string
 	for _, location := range s.Locations {
 		if v, found := location.FindVolume(i); found {
-			loc, collection = location, v.Collection
-			break
+			if location.IdxDirectory == location.Directory {
+				return nil
+			}
+			return v.RelocateIndexTo(location.IdxDirectory)
 		}
 	}
-	if loc == nil {
-		return fmt.Errorf("volume %d not found on disk", i)
-	}
-	if loc.IdxDirectory == loc.Directory {
-		return nil
-	}
-	srcBase := VolumeFileName(loc.Directory, collection, int(i))
-	var exts []string
-	for _, ext := range []string{".idx", ".sdx"} {
-		if util.FileExists(srcBase + ext) {
-			exts = append(exts, ext)
-		}
-	}
-	if len(exts) == 0 {
-		return nil // index already lives in the idx directory
-	}
-	if err := s.UnmountVolume(i); err != nil {
-		return fmt.Errorf("consolidate index for volume %d: unmount: %w", i, err)
-	}
-	dstBase := VolumeFileName(loc.IdxDirectory, collection, int(i))
-	for _, ext := range exts {
-		if err := RenameOrCopyFile(srcBase+ext, dstBase+ext); err != nil {
-			_ = s.MountVolume(i) // do not leave the volume unmounted
-			return fmt.Errorf("consolidate index for volume %d: move %s: %w", i, ext, err)
-		}
-	}
-	return s.MountVolume(i)
+	return fmt.Errorf("volume %d not found on disk", i)
 }
 
 // RenameOrCopyFile moves src to dst, falling back to a copy when the two sit on

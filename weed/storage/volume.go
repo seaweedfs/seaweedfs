@@ -173,6 +173,55 @@ func (v *Volume) FileName(ext string) (fileName string) {
 	return VolumeFileName(v.dir, v.Collection, int(v.Id)) + ext
 }
 
+// RelocateIndexTo moves the volume's index to newIdxDir and reopens the volume
+// against it in place, without unmounting. It takes the data-file write lock —
+// so a concurrent read blocks briefly instead of failing — closes the needle
+// map and data backend, moves the .idx (and the derived .sdx best-effort), then
+// retargets dirIdx and reloads, mirroring CommitCompact's close-swap-load. A
+// decode co-locates the rebuilt index with the data so the on-demand mount can
+// find the volume; this returns it to the -dir.idx tier once the EC shards are
+// gone. A no-op when the index already lives in newIdxDir. A derived .ldb is
+// not moved: the reload rebuilds it in newIdxDir from the .idx.
+func (v *Volume) RelocateIndexTo(newIdxDir string) error {
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
+
+	if v.dirIdx == newIdxDir {
+		return nil
+	}
+	oldBase := VolumeFileName(v.dirIdx, v.Collection, int(v.Id))
+	if _, err := os.Stat(oldBase + ".idx"); err != nil {
+		return nil // nothing co-located to move
+	}
+	newBase := VolumeFileName(newIdxDir, v.Collection, int(v.Id))
+
+	if v.nm != nil {
+		_ = v.nm.Sync()
+		v.nm.Close()
+		v.nm = nil
+	}
+	if v.DataBackend != nil {
+		_ = v.DataBackend.Sync()
+		_ = v.DataBackend.Close()
+		v.DataBackend = nil
+	}
+
+	if err := RenameOrCopyFile(oldBase+".idx", newBase+".idx"); err != nil {
+		_ = v.load(true, false, v.needleMapKind, 0, v.Version()) // reopen against the old dir
+		return fmt.Errorf("relocate index for volume %d: move .idx: %w", v.Id, err)
+	}
+	// The .sdx is a derived sorted index; move it when present, but a failure is
+	// not fatal — drop the stale copy so the reload rebuilds it in the new dir.
+	if _, err := os.Stat(oldBase + ".sdx"); err == nil {
+		if err := RenameOrCopyFile(oldBase+".sdx", newBase+".sdx"); err != nil {
+			glog.Warningf("relocate volume %d: move .sdx: %v (will rebuild)", v.Id, err)
+			_ = os.Remove(oldBase + ".sdx")
+		}
+	}
+	v.dirIdx = newIdxDir
+	return v.load(true, false, v.needleMapKind, 0, v.Version())
+}
+
 func (v *Volume) Version() needle.Version {
 	v.superBlockAccessLock.Lock()
 	defer v.superBlockAccessLock.Unlock()

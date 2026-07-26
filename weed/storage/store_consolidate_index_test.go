@@ -88,12 +88,27 @@ func TestConsolidateVolumeIndexMovesIdxToIdxDir(t *testing.T) {
 	store := newIdxSplitStore(t, dataDir, idxDir)
 	require.NoError(t, store.MountVolume(vid))
 
+	// Write a needle so the relocate has real index state to preserve.
+	mounted := store.findVolume(vid)
+	require.NotNil(t, mounted)
+	n := &needle.Needle{Id: types.Uint64ToNeedleId(42), Data: []byte("payload-across-relocate")}
+	n.Checksum = needle.NewCRC(n.Data)
+	_, _, _, err = mounted.writeNeedle2(n, true, false)
+	require.NoError(t, err)
+
 	require.NoError(t, store.ConsolidateVolumeIndex(vid))
 
 	require.FileExists(t, idxDirIdx, "index should have moved to the idx dir")
 	_, err = os.Stat(dataIdx)
 	require.True(t, os.IsNotExist(err), "index should be gone from the data dir")
 	require.NotNil(t, store.findVolume(vid), "volume should stay mounted after consolidation")
+
+	// The volume stayed mounted and reloaded in place, so the needle still reads
+	// back — a concurrent read would have blocked on the lock, never failed.
+	got := &needle.Needle{Id: n.Id}
+	_, err = store.ReadVolumeNeedle(vid, got, &ReadOption{}, func(types.Size) {})
+	require.NoError(t, err, "volume must serve reads after consolidation")
+	require.Equal(t, n.Data, got.Data, "needle content survives the relocate")
 }
 
 // TestConsolidateVolumeIndexNoopWithoutIdxDir pins that the relocate is a no-op
