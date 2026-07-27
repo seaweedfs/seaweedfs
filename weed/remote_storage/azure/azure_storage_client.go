@@ -94,6 +94,20 @@ func init() {
 	remote_storage.RemoteStorageClientMakers["azure"] = new(azureRemoteStorageMaker)
 }
 
+// resolveAzureAccount completes the configured account from the environment. A
+// configured client id asks for Entra ID, so a key left over in the environment
+// must not quietly take the request back to shared key auth.
+func resolveAzureAccount(conf *remote_pb.RemoteConf) (accountName, accountKey string) {
+	accountName, accountKey = conf.AzureAccountName, conf.AzureAccountKey
+	if len(accountName) == 0 {
+		accountName = os.Getenv("AZURE_STORAGE_ACCOUNT")
+	}
+	if len(accountKey) == 0 && len(conf.AzureClientId) == 0 {
+		accountKey = os.Getenv("AZURE_STORAGE_ACCESS_KEY")
+	}
+	return
+}
+
 type azureRemoteStorageMaker struct{}
 
 func (s azureRemoteStorageMaker) HasBucket() bool {
@@ -106,13 +120,7 @@ func (s azureRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storag
 		conf: conf,
 	}
 
-	accountName, accountKey := conf.AzureAccountName, conf.AzureAccountKey
-	if len(accountName) == 0 {
-		accountName = os.Getenv("AZURE_STORAGE_ACCOUNT")
-	}
-	if len(accountKey) == 0 {
-		accountKey = os.Getenv("AZURE_STORAGE_ACCESS_KEY")
-	}
+	accountName, accountKey := resolveAzureAccount(conf)
 	if len(accountName) == 0 {
 		return nil, fmt.Errorf("neither azure_account_name nor the AZURE_STORAGE_ACCOUNT environment variable is set")
 	}
