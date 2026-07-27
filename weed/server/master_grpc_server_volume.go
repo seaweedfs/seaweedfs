@@ -205,7 +205,8 @@ func (ms *MasterServer) Statistics(ctx context.Context, req *master_pb.Statistic
 	}
 
 	// an empty collection means all collections, and a named collection covers
-	// all its layouts, so used size matches the topology-wide total size below
+	// all its layouts and EC volumes, so used size matches the topology-wide
+	// total size below
 	stats := ms.Topo.CollectionVolumeStats(req.Collection)
 	totalSize := ms.Topo.GetDiskUsages().GetMaxVolumeCount() * int64(ms.option.VolumeSizeLimitMB) * 1024 * 1024
 	resp := &master_pb.StatisticsResponse{
