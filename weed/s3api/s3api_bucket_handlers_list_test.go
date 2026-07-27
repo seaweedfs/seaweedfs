@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
@@ -74,7 +76,7 @@ func TestCanListBucketsFromOwnerIndex(t *testing.T) {
 		{name: "bare List scans", identity: &Identity{Name: "u", Actions: []Action{"List"}}, wantOk: false},
 		{name: "wildcard scans", identity: &Identity{Name: "u", Actions: []Action{"List:team-*"}}, wantOk: false},
 		{name: "no actions is owned-only", identity: &Identity{Name: "u"}, wantOk: true},
-		{name: "attached policies is owned-only", identity: &Identity{Name: "u", Actions: []Action{"List:b1"}, PolicyNames: []string{"p"}}, wantOk: true},
+		{name: "attached policy with no loaded document scans", identity: &Identity{Name: "u", Actions: []Action{"List:b1"}, PolicyNames: []string{"p"}}, wantOk: false},
 		{name: "named grants enumerate", identity: &Identity{Name: "u", Actions: []Action{"Read:b1", "List:b2", "Admin:b3/prefix", "Write"}},
 			wantOk: true, wantGranted: []string{"b1", "b2", "b3"}},
 		// grants come back in action order; resolveGrantedBuckets sorts and dedups
@@ -93,15 +95,112 @@ func TestCanListBucketsFromOwnerIndex(t *testing.T) {
 		})
 	}
 
-	t.Run("session token routes to policies when integrated", func(t *testing.T) {
+	// A session token carries policies only the IAM integration can see.
+	t.Run("session token scans", func(t *testing.T) {
 		integrated := &IdentityAccessManagement{iamIntegration: &S3IAMIntegration{}}
 		req := r()
 		req.Header.Set("X-Amz-Security-Token", "tok")
 		ok, granted := integrated.canListBucketsFromOwnerIndex(req, &Identity{Name: "u", Actions: []Action{"List:b1"}})
-		if !ok || granted != nil {
-			t.Errorf("ok = %v granted = %v, want owned-only", ok, granted)
+		if ok || granted != nil {
+			t.Errorf("ok = %v granted = %v, want scan", ok, granted)
 		}
 	})
+}
+
+// An identity authorized by an attached IAM policy is listed from the buckets
+// its policy names, and scanned for whenever the policy can reach a bucket it
+// does not name.
+func TestCanListBucketsFromOwnerIndexAttachedPolicy(t *testing.T) {
+	// The policy from the issue report: List on one named bucket, plus the
+	// account-wide ListAllMyBuckets that names no bucket at all.
+	const namedBucket = `{"Version":"2012-10-17","Statement":[
+		{"Effect":"Allow","Action":["s3:GetBucketLocation","s3:ListBucket"],"Resource":["arn:aws:s3:::example-bucket"]},
+		{"Effect":"Allow","Action":["s3:GetObject"],"Resource":["arn:aws:s3:::example-bucket/*"]},
+		{"Effect":"Allow","Action":["s3:ListAllMyBuckets"],"Resource":"*"}]}`
+	const wildcardResource = `{"Version":"2012-10-17","Statement":[
+		{"Effect":"Allow","Action":["s3:ListBucket"],"Resource":["arn:aws:s3:::team-*"]}]}`
+	const notResource = `{"Version":"2012-10-17","Statement":[
+		{"Effect":"Allow","Action":["s3:ListBucket"],"NotResource":["arn:aws:s3:::secret"]}]}`
+	const allActionsOneBucket = `{"Version":"2012-10-17","Statement":[
+		{"Effect":"Allow","Action":["s3:*"],"Resource":["arn:aws:s3:::b1","arn:aws:s3:::b1/*"]}]}`
+	const denyOne = `{"Version":"2012-10-17","Statement":[
+		{"Effect":"Allow","Action":["s3:ListBucket"],"Resource":["arn:aws:s3:::b1","arn:aws:s3:::b2"]},
+		{"Effect":"Deny","Action":["s3:ListBucket"],"Resource":["arn:aws:s3:::b2"]}]}`
+	const groupPolicy = `{"Version":"2012-10-17","Statement":[
+		{"Effect":"Allow","Action":["s3:ListBucket"],"Resource":["arn:aws:s3:::shared"]}]}`
+	// A variable resolves per request, naming a bucket this cannot predict.
+	const resourceVariable = `{"Version":"2012-10-17","Statement":[
+		{"Effect":"Allow","Action":["s3:ListBucket"],"Resource":["arn:aws:s3:::home-${aws:username}"]}]}`
+	// A variable action may resolve to ListBucket, so the bucket it names counts.
+	const actionVariable = `{"Version":"2012-10-17","Statement":[
+		{"Effect":"Allow","Action":["s3:${aws:username}"],"Resource":["arn:aws:s3:::b9"]}]}`
+	// The IAM authorizer matches action names case-insensitively, so these
+	// grant List and their buckets have to be listed.
+	const mixedCaseAction = `{"Version":"2012-10-17","Statement":[
+		{"Effect":"Allow","Action":["S3:LISTBUCKET"],"Resource":["arn:aws:s3:::b7"]}]}`
+	const mixedCaseWildcardAction = `{"Version":"2012-10-17","Statement":[
+		{"Effect":"Allow","Action":["S3:*"],"Resource":["arn:aws:s3:::b8"]}]}`
+
+	engine := policy_engine.NewPolicyEngine()
+	for name, document := range map[string]string{
+		"named": namedBucket, "wildcard": wildcardResource, "not-resource": notResource,
+		"all-actions": allActionsOneBucket, "deny-one": denyOne, "group": groupPolicy,
+		"resource-variable": resourceVariable, "action-variable": actionVariable,
+		"mixed-case": mixedCaseAction, "mixed-case-wildcard": mixedCaseWildcardAction,
+	} {
+		if err := engine.SetBucketPolicy(name, document); err != nil {
+			t.Fatalf("load policy %s: %v", name, err)
+		}
+	}
+	iam := &IdentityAccessManagement{
+		iamPolicyEngine: engine,
+		groups: map[string]*iam_pb.Group{
+			"team":     {Name: "team", PolicyNames: []string{"group"}},
+			"disabled": {Name: "disabled", PolicyNames: []string{"wildcard"}, Disabled: true},
+		},
+		userGroups: map[string][]string{"grouped": {"team"}, "in-disabled-group": {"disabled"}},
+	}
+
+	tests := []struct {
+		name        string
+		identity    *Identity
+		wantOk      bool
+		wantGranted []string
+	}{
+		{name: "named bucket enumerates", identity: &Identity{Name: "u", PolicyNames: []string{"named"}},
+			wantOk: true, wantGranted: []string{"example-bucket"}},
+		{name: "wildcard resource scans", identity: &Identity{Name: "u", PolicyNames: []string{"wildcard"}}},
+		{name: "not-resource scans", identity: &Identity{Name: "u", PolicyNames: []string{"not-resource"}}},
+		{name: "unknown policy scans", identity: &Identity{Name: "u", PolicyNames: []string{"missing"}}},
+		{name: "one wildcard policy scans", identity: &Identity{Name: "u", PolicyNames: []string{"named", "wildcard"}}},
+		{name: "action wildcard on a named bucket enumerates", identity: &Identity{Name: "u", PolicyNames: []string{"all-actions"}},
+			wantOk: true, wantGranted: []string{"b1", "b1"}},
+		// Deny narrows nothing here; resolveGrantedBuckets re-checks each name.
+		{name: "denied bucket stays a candidate", identity: &Identity{Name: "u", PolicyNames: []string{"deny-one"}},
+			wantOk: true, wantGranted: []string{"b1", "b2"}},
+		{name: "group policy contributes", identity: &Identity{Name: "grouped", PolicyNames: []string{"named"}},
+			wantOk: true, wantGranted: []string{"example-bucket", "shared"}},
+		{name: "disabled group is ignored", identity: &Identity{Name: "in-disabled-group"}, wantOk: true},
+		{name: "resource variable scans", identity: &Identity{Name: "u", PolicyNames: []string{"resource-variable"}}},
+		{name: "action variable keeps its bucket", identity: &Identity{Name: "u", PolicyNames: []string{"action-variable"}},
+			wantOk: true, wantGranted: []string{"b9"}},
+		{name: "mixed case action enumerates", identity: &Identity{Name: "u", PolicyNames: []string{"mixed-case"}},
+			wantOk: true, wantGranted: []string{"b7"}},
+		{name: "mixed case wildcard action enumerates", identity: &Identity{Name: "u", PolicyNames: []string{"mixed-case-wildcard"}},
+			wantOk: true, wantGranted: []string{"b8"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, _ := http.NewRequest(http.MethodGet, "/", nil)
+			ok, granted := iam.canListBucketsFromOwnerIndex(req, tt.identity)
+			if ok != tt.wantOk {
+				t.Fatalf("ok = %v, want %v", ok, tt.wantOk)
+			}
+			if strings.Join(granted, ",") != strings.Join(tt.wantGranted, ",") {
+				t.Errorf("granted = %v, want %v", granted, tt.wantGranted)
+			}
+		})
+	}
 }
 
 func TestContinuationTokenRoundTrip(t *testing.T) {

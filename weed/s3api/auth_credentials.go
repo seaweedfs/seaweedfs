@@ -2450,15 +2450,37 @@ const (
 	authorizeDenied
 )
 
+// attachedPolicyNames returns the identity's own policy names plus the ones it
+// inherits from its enabled groups. The copy keeps callers from mutating the
+// shared identity.
+func (iam *IdentityAccessManagement) attachedPolicyNames(identity *Identity) []string {
+	iam.m.RLock()
+	defer iam.m.RUnlock()
+
+	names := slices.Clone(identity.PolicyNames)
+	for _, groupName := range iam.userGroups[identity.Name] {
+		if g, exists := iam.groups[groupName]; exists && !g.Disabled {
+			names = append(names, g.PolicyNames...)
+		}
+	}
+	return names
+}
+
+// hasSessionToken reports whether the request carries an STS session token,
+// whose session policies are known only to the IAM integration.
+func hasSessionToken(r *http.Request) bool {
+	return r.Header.Get(s3_constants.SeaweedFSSessionTokenHeader) != "" ||
+		r.Header.Get("X-Amz-Security-Token") != "" ||
+		r.URL.Query().Get("X-Amz-Security-Token") != ""
+}
+
 // authorizationRoute picks the mechanism, so every caller routes identically.
 // Traditional identities (with Actions from -s3.config) use legacy auth,
 // JWT/STS identities (no Actions or having a session token) use IAM
 // authorization. A request with a session token must go through the IAM
 // integration so session policies are enforced.
 func (iam *IdentityAccessManagement) authorizationRoute(r *http.Request, identity *Identity) authorizationRoute {
-	hasSessionToken := r.Header.Get(s3_constants.SeaweedFSSessionTokenHeader) != "" ||
-		r.Header.Get("X-Amz-Security-Token") != "" ||
-		r.URL.Query().Get("X-Amz-Security-Token") != ""
+	sessionToken := hasSessionToken(r)
 	iam.m.RLock()
 	groupsHavePolicies := false
 	for _, gn := range iam.userGroups[identity.Name] {
@@ -2470,7 +2492,7 @@ func (iam *IdentityAccessManagement) authorizationRoute(r *http.Request, identit
 	iam.m.RUnlock()
 	hasAttachedPolicies := len(identity.PolicyNames) > 0 || groupsHavePolicies
 
-	if (len(identity.Actions) == 0 || hasSessionToken || hasAttachedPolicies) && iam.iamIntegration != nil {
+	if (len(identity.Actions) == 0 || sessionToken || hasAttachedPolicies) && iam.iamIntegration != nil {
 		return authorizeViaIAMIntegration
 	}
 	if hasAttachedPolicies {
@@ -2515,12 +2537,12 @@ func (iam *IdentityAccessManagement) VerifyActionPermission(r *http.Request, ide
 
 // canListBucketsFromOwnerIndex reports whether ListBuckets for this identity
 // can be served from the bucket owner index instead of scanning /buckets, and
-// if so which bucket names its legacy actions may grant beyond ownership.
+// if so which bucket names its permissions may grant beyond ownership.
 //
-// Admins and identities whose legacy actions can match arbitrary buckets (a
-// bare "List" grant, or any wildcard pattern) need the full scan. Identities
-// authorized through IAM policies get their owned buckets only, matching the
-// AWS behavior of ListBuckets returning the account's buckets.
+// Only an identity whose grants name every bucket they can reach can be served
+// from the index. Admins, a bare "List" grant, a wildcard action pattern and a
+// wildcard policy resource all match buckets the identity does not name, so
+// their visible set only comes out of the full scan.
 func (iam *IdentityAccessManagement) canListBucketsFromOwnerIndex(r *http.Request, identity *Identity) (ok bool, granted []string) {
 	// Fail closed on a nil identity: the scan path filters every bucket out
 	// without dereferencing it, while the index path would need its name.
@@ -2528,10 +2550,8 @@ func (iam *IdentityAccessManagement) canListBucketsFromOwnerIndex(r *http.Reques
 		return false, nil
 	}
 
-	// Identities authorized by IAM policies (or by nothing) cannot have their
-	// visible set enumerated; they get their owned buckets only.
 	if iam.authorizationRoute(r, identity) != authorizeViaLegacyActions {
-		return true, nil
+		return iam.bucketsNamedByAttachedPolicies(r, identity)
 	}
 
 	for _, a := range identity.Actions {
@@ -2551,6 +2571,39 @@ func (iam *IdentityAccessManagement) canListBucketsFromOwnerIndex(r *http.Reques
 				granted = append(granted, bucket)
 			}
 		}
+	}
+	return true, granted
+}
+
+// bucketsNamedByAttachedPolicies collects the buckets the identity's own and
+// group policies name in a statement allowing s3:ListBucket, the permission
+// bucketVisibleToIdentity checks. The names are candidates that the caller
+// re-checks against the full policy evaluation. Enumeration fails on a policy
+// this gateway does not hold, such as an STS session policy.
+func (iam *IdentityAccessManagement) bucketsNamedByAttachedPolicies(r *http.Request, identity *Identity) (ok bool, granted []string) {
+	if hasSessionToken(r) {
+		return false, nil
+	}
+
+	policyNames := iam.attachedPolicyNames(identity)
+	// Nothing attached: the identity reaches only what it owns.
+	if len(policyNames) == 0 {
+		return true, nil
+	}
+
+	iam.m.RLock()
+	engine := iam.iamPolicyEngine
+	iam.m.RUnlock()
+	if engine == nil {
+		return false, nil
+	}
+
+	for _, policyName := range policyNames {
+		names, complete := engine.BucketsAllowedForAction(policyName, s3_constants.S3_ACTION_LIST_BUCKET)
+		if !complete {
+			return false, nil
+		}
+		granted = append(granted, names...)
 	}
 	return true, granted
 }
@@ -2713,20 +2766,7 @@ func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity 
 		}
 	}
 
-	// Create IAMIdentity for authorization — copy PolicyNames to avoid mutating shared identity
-	policyNames := make([]string, len(identity.PolicyNames))
-	copy(policyNames, identity.PolicyNames)
-
-	// Include policies inherited from user's groups
-	iam.m.RLock()
-	if groupNames, ok := iam.userGroups[identity.Name]; ok {
-		for _, gn := range groupNames {
-			if g, exists := iam.groups[gn]; exists && !g.Disabled {
-				policyNames = append(policyNames, g.PolicyNames...)
-			}
-		}
-	}
-	iam.m.RUnlock()
+	policyNames := iam.attachedPolicyNames(identity)
 
 	iamIdentity := &IAMIdentity{
 		Name:        identity.Name,
