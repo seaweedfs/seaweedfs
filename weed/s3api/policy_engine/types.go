@@ -50,6 +50,15 @@ var (
 		s3const.S3_ACTION_LIST_PARTS:             true,
 		s3const.S3_ACTION_LIST_MULTIPART_UPLOADS: true,
 	}
+
+	// lowerMultipartActionSet keys the same actions for case-insensitive lookup.
+	lowerMultipartActionSet = func() map[string]bool {
+		lowered := make(map[string]bool, len(multipartActionSet))
+		for action := range multipartActionSet {
+			lowered[strings.ToLower(action)] = true
+		}
+		return lowered
+	}()
 )
 
 // StringOrStringSlice represents a value that can be either a string or []string
@@ -694,7 +703,7 @@ func statementMayAllowAction(actions []string, action string) bool {
 			return true
 		}
 	}
-	if !multipartActionSet[action] {
+	if !lowerMultipartActionSet[strings.ToLower(action)] {
 		return false
 	}
 	for _, pattern := range actions {
