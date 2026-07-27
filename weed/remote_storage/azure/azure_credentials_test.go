@@ -11,6 +11,14 @@ func TestNewAzBlobClientRequiresAccountName(t *testing.T) {
 	}
 }
 
+func TestNewAzBlobClientRejectsMalformedAccountName(t *testing.T) {
+	for _, accountName := range []string{"ab", "TestAccount", "test-account", "evil.com/x", "evil@host.com", "account?x=1"} {
+		if _, err := NewAzBlobClient(accountName, "", ""); err == nil {
+			t.Errorf("expected an error for account name %q", accountName)
+		}
+	}
+}
+
 func TestNewAzBlobClientSharedKey(t *testing.T) {
 	client, err := NewAzBlobClient("testaccount", "aW52YWxpZGtleQ==", "")
 	if err != nil {

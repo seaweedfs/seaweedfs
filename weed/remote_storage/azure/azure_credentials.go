@@ -3,12 +3,18 @@ package azure
 import (
 	"fmt"
 	"os"
+	"regexp"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
+
+// Azure storage account names are 3 to 24 lowercase letters and digits. The
+// name lands in the service URL, where a stray "/", "?" or "@" would move the
+// authority somewhere else and send an authenticated request to that host.
+var validAzureAccountName = regexp.MustCompile(`^[a-z0-9]{3,24}$`)
 
 // NewAzBlobClient builds a blob service client for accountName.
 //
@@ -21,6 +27,9 @@ func NewAzBlobClient(accountName, accountKey, clientID string) (*azblob.Client, 
 
 	if accountName == "" {
 		return nil, fmt.Errorf("azure account name is required")
+	}
+	if !validAzureAccountName.MatchString(accountName) {
+		return nil, fmt.Errorf("invalid azure account name %q: expecting 3 to 24 lowercase letters and digits", accountName)
 	}
 
 	serviceURL := fmt.Sprintf("https://%s.blob.core.windows.net/", accountName)
