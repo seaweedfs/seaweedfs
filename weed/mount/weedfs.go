@@ -61,6 +61,10 @@ type Option struct {
 	DisableXAttr                bool
 	IsMacOs                     bool
 
+	// LogicalDiskUsage reports data sizes rather than the space they occupy,
+	// for both df and the quota. See WFS.diskSizes.
+	LogicalDiskUsage bool
+
 	MountUid         uint32
 	MountGid         uint32
 	MountMode        os.FileMode

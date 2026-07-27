@@ -172,18 +172,21 @@ func (t *Topology) LookupEcShards(vid needle.VolumeId) (locations *EcShardLocati
 	return
 }
 
-// ecVolumeCounts accumulates one EC volume's needle counts while they are
-// collected from every node reporting its shards.
+// ecVolumeCounts accumulates one EC volume's data size and needle counts while
+// they are collected from every node reporting its shards.
 type ecVolumeCounts struct {
-	fileCount   uint64
-	deleteCount uint64
+	countedShards erasure_coding.ShardBits
+	dataSize      uint64
+	fileCount     uint64
+	deleteCount   uint64
 }
 
 // CollectionEcVolumeStats sums the disk footprint and live needle count of the
 // EC volumes in one collection, or in every collection when collectionName is
 // empty. Every shard copy counts, parity included, the way a regular volume's
 // used size counts every replica; needle counts are per volume, again as a
-// regular volume reports them.
+// regular volume reports them. The logical size instead counts each volume's
+// data shards once, leaving out parity and over-replicated copies.
 func (t *Topology) CollectionEcVolumeStats(collectionName string) *VolumeLayoutStats {
 	ret := &VolumeLayoutStats{}
 	perVolume := make(map[needle.VolumeId]*ecVolumeCounts)
@@ -200,6 +203,14 @@ func (t *Topology) CollectionEcVolumeStats(collectionName string) *VolumeLayoutS
 					if !found {
 						counts = &ecVolumeCounts{}
 						perVolume[ecInfo.VolumeId] = counts
+					}
+					dataShards := ecInfo.DataShardsOrDefault()
+					for id := range erasure_coding.ShardBits(ecInfo.ShardsInfo.Bitmap()).All() {
+						if int(id) >= dataShards || counts.countedShards.Has(id) {
+							continue
+						}
+						counts.countedShards = counts.countedShards.Set(id)
+						counts.dataSize += uint64(ecInfo.ShardsInfo.Size(id))
 					}
 					// .ecx and .ecj are both volume-wide files that travel with
 					// the shards, so take the largest count any holder reports
@@ -223,6 +234,7 @@ func (t *Topology) CollectionEcVolumeStats(collectionName string) *VolumeLayoutS
 	// an EC volume is sealed, so it offers no room beyond what it holds
 	ret.TotalSize = ret.UsedSize
 	for _, counts := range perVolume {
+		ret.LogicalUsedSize += counts.dataSize
 		if counts.fileCount > counts.deleteCount {
 			ret.FileCount += counts.fileCount - counts.deleteCount
 		}

@@ -140,7 +140,10 @@ type VolumeLayout struct {
 type VolumeLayoutStats struct {
 	TotalSize uint64
 	UsedSize  uint64
-	FileCount uint64
+	// LogicalUsedSize counts one copy of the data: a single replica of a
+	// regular volume, the data shards of an EC volume.
+	LogicalUsedSize uint64
+	FileCount       uint64
 }
 
 func NewVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType types.DiskType, volumeSizeLimit uint64, replicationAsMin bool) *VolumeLayout {
@@ -1009,6 +1012,7 @@ func (vl *VolumeLayout) Stats() *VolumeLayoutStats {
 		size, fileCount := vll.Stats(vid, freshThreshold)
 		ret.FileCount += uint64(fileCount)
 		ret.UsedSize += size * uint64(vll.Length())
+		ret.LogicalUsedSize += size
 		if vl.readonlyVolumes.IsTrue(vid) {
 			ret.TotalSize += size * uint64(vll.Length())
 		} else {

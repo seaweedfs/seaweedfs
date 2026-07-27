@@ -604,6 +604,9 @@ message StatisticsResponse {
     uint64 total_size = 4;
     uint64 used_size = 5;
     uint64 file_count = 6;
+    // sizes counting one copy of the data, as reported by the master
+    uint64 logical_total_size = 7;
+    uint64 logical_used_size = 8;
 }
 
 message PingRequest {
