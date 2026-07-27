@@ -90,6 +90,17 @@ type IdentityAccessManagement struct {
 	// staticIdentityNames tracks identity names loaded from the static config file
 	// These identities are immutable and cannot be updated by dynamic configuration
 	staticIdentityNames map[string]bool
+
+	// staticPolicyNames tracks policy names loaded from the static config file
+	// so full-state reconciliation does not drop them
+	staticPolicyNames map[string]bool
+
+	// reloadCh coalesces failed-reload retries handled by reloadRetryLoop
+	reloadCh chan struct{}
+
+	// reloadMu serializes configuration loads end-to-end (store snapshot
+	// through commit) so an older snapshot cannot overwrite a newer one
+	reloadMu sync.Mutex
 }
 
 type Identity struct {
@@ -267,6 +278,8 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, filerClient
 
 	iam.credentialManager = credentialManager
 	iam.stopChan = make(chan struct{})
+	iam.reloadCh = make(chan struct{}, 1)
+	go iam.reloadRetryLoop()
 	iam.grpcDialOption = option.GrpcDialOption
 
 	// First, try to load configurations from file or filer
@@ -350,12 +363,52 @@ func (iam *IdentityAccessManagement) markStaticIdentities(config *iam_pb.S3ApiCo
 	for _, ident := range config.Identities {
 		iam.staticIdentityNames[ident.Name] = true
 	}
+	if iam.staticPolicyNames == nil {
+		iam.staticPolicyNames = make(map[string]bool)
+	}
+	for _, policy := range config.Policies {
+		iam.staticPolicyNames[policy.Name] = true
+	}
 	for _, identity := range iam.identities {
 		if iam.staticIdentityNames[identity.Name] {
 			identity.IsStatic = true
 		}
 	}
 	iam.useStaticConfig = len(iam.staticIdentityNames) > 0
+}
+
+var iamReloadRetryInterval = 5 * time.Second
+
+// scheduleReload queues a full configuration reload that retries until it
+// succeeds. Signals coalesce, and the reload is state-based, so it is safe to
+// call for every failed event.
+func (iam *IdentityAccessManagement) scheduleReload() {
+	select {
+	case iam.reloadCh <- struct{}{}:
+	default:
+	}
+}
+
+func (iam *IdentityAccessManagement) reloadRetryLoop() {
+	for {
+		select {
+		case <-iam.stopChan:
+			return
+		case <-iam.reloadCh:
+		}
+		for {
+			err := iam.LoadS3ApiConfigurationFromCredentialManager()
+			if err == nil || errors.Is(err, filer_pb.ErrNotFound) {
+				break
+			}
+			glog.Warningf("retrying IAM reload: %v", err)
+			select {
+			case <-iam.stopChan:
+				return
+			case <-time.After(iamReloadRetryInterval):
+			}
+		}
+	}
 }
 
 func (iam *IdentityAccessManagement) pollIamConfigChanges(interval time.Duration) {
@@ -492,6 +545,8 @@ func (iam *IdentityAccessManagement) doLoadS3ApiConfigurationFromFiler(option *S
 }
 
 func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFile(fileName string) error {
+	iam.reloadMu.Lock()
+	defer iam.reloadMu.Unlock()
 	content, readErr := os.ReadFile(fileName)
 	if readErr != nil {
 		glog.Warningf("fail to read %s : %v", fileName, readErr)
@@ -531,6 +586,11 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromBytes(content []b
 		return nil, fmt.Errorf("unmarshal error: %w", err)
 	}
 
+	if fromStaticFile && len(s3ApiConfiguration.Groups) > 0 {
+		glog.Warningf("ignoring %d groups in static config file: groups are managed via the IAM API", len(s3ApiConfiguration.Groups))
+		s3ApiConfiguration.Groups = nil
+	}
+
 	if err := filer.CheckDuplicateAccessKey(s3ApiConfiguration); err != nil {
 		return nil, err
 	}
@@ -554,8 +614,8 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationWithSource(config *ia
 	iam.m.RUnlock()
 
 	if hasStaticConfig {
-		// Merge mode: preserve static identities, add/update dynamic ones
-		return iam.MergeS3ApiConfiguration(config, fromStaticFile)
+		// Merge mode: a dynamic load is the full store state, so it also reconciles deletions
+		return iam.MergeS3ApiConfiguration(config, fromStaticFile, !fromStaticFile)
 	}
 
 	// Normal mode: completely replace configuration
@@ -776,7 +836,9 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 
 // MergeS3ApiConfiguration adds/updates dynamic identities while preserving static
 // ones. A config-file reload (fromStaticFile) may also overwrite its static identities.
-func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3ApiConfiguration, fromStaticFile bool) error {
+// isFullState marks config as the complete store snapshot, so dynamic identities
+// absent from it are removed; partial merges (a single pushed identity) pass false.
+func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3ApiConfiguration, fromStaticFile bool, isFullState bool) error {
 	// Start with current configuration (which includes static identities)
 	iam.m.RLock()
 	identities := make([]*Identity, len(iam.identities))
@@ -805,6 +867,10 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 	staticNames := make(map[string]bool)
 	for k, v := range iam.staticIdentityNames {
 		staticNames[k] = v
+	}
+	staticPolicies := make(map[string]bool)
+	for k, v := range iam.staticPolicyNames {
+		staticPolicies[k] = v
 	}
 	iam.m.RUnlock()
 
@@ -926,6 +992,31 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 		nameToIdentity[t.Name] = t
 	}
 
+	// full snapshot: drop dynamic identities the store no longer has
+	if isFullState {
+		present := make(map[string]bool, len(config.Identities))
+		for _, ident := range config.Identities {
+			present[ident.Name] = true
+		}
+		kept := identities[:0]
+		for _, existing := range identities {
+			if staticNames[existing.Name] || present[existing.Name] {
+				kept = append(kept, existing)
+				continue
+			}
+			delete(nameToIdentity, existing.Name)
+			for _, cred := range existing.Credentials {
+				if accessKeyIdent[cred.AccessKey] == existing {
+					delete(accessKeyIdent, cred.AccessKey)
+				}
+			}
+			if identityAnonymous == existing {
+				identityAnonymous = nil
+			}
+		}
+		identities = kept
+	}
+
 	// Process service accounts from dynamic config
 	for _, sa := range config.ServiceAccounts {
 		if sa.Credential == nil {
@@ -979,37 +1070,20 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 		glog.V(3).Infof("Loaded service account %s for dynamic parent %s (expiration: %d)", sa.Id, sa.ParentUser, sa.Expiration)
 	}
 
-	// If the anonymous identity was carried over from the previous state but is
-	// no longer present in the credential-manager snapshot, clear it so that
-	// deleted anonymous users do not persist across merges.
-	if identityAnonymous != nil && !identityAnonymous.IsStatic {
-		stillPresent := false
-		for _, ident := range config.Identities {
-			if ident.Name == s3_constants.AccountAnonymousId {
-				stillPresent = true
-				break
-			}
-		}
-		if !stillPresent {
-			// Remove from identities slice and maps
-			for i, ident := range identities {
-				if ident == identityAnonymous {
-					identities = append(identities[:i], identities[i+1:]...)
-					break
-				}
-			}
-			delete(nameToIdentity, identityAnonymous.Name)
-			for _, cred := range identityAnonymous.Credentials {
-				if accessKeyIdent[cred.AccessKey] == identityAnonymous {
-					delete(accessKeyIdent, cred.AccessKey)
-				}
-			}
-			identityAnonymous = nil
-		}
-	}
-
 	for _, policy := range config.Policies {
 		policies[policy.Name] = policy
+	}
+	// full snapshot: drop dynamic policies the store no longer has
+	if isFullState {
+		presentPolicies := make(map[string]bool, len(config.Policies))
+		for _, policy := range config.Policies {
+			presentPolicies[policy.Name] = true
+		}
+		for name := range policies {
+			if !staticPolicies[name] && !presentPolicies[name] {
+				delete(policies, name)
+			}
+		}
 	}
 
 	iam.m.Lock()
@@ -1022,9 +1096,12 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 	iam.accessKeyIdent = accessKeyIdent
 	iam.policies = policies
 
-	// Process groups: only replace if config.Groups is non-nil (full config reload).
-	// Partial updates (e.g., UpsertIdentity) pass nil Groups and should preserve existing state.
-	if config.Groups != nil {
+	// Groups: a full snapshot is authoritative even when empty (last group
+	// deleted); partial updates pass nil Groups and preserve existing state.
+	// Groups: a full snapshot is authoritative, even when empty (last group
+	// deleted). Partial updates pass nil Groups and preserve existing state;
+	// static config files never carry groups (stripped at load).
+	if isFullState || config.Groups != nil {
 		mergedGroups := make(map[string]*iam_pb.Group)
 		mergedUserGroups := make(map[string][]string)
 		for _, g := range config.Groups {
@@ -1115,7 +1192,7 @@ func (iam *IdentityAccessManagement) UpsertIdentity(ident *iam_pb.Identity) erro
 	glog.V(1).Infof("IAM: upsert identity %s", ident.Name)
 	return iam.MergeS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{ident},
-	}, false)
+	}, false, false)
 }
 
 // isEnabled reports whether S3 auth should be enforced for this server.
@@ -2078,6 +2155,8 @@ func actionScopedToBucket(action, bucket string) bool {
 
 // LoadS3ApiConfigurationFromCredentialManager loads configuration using the credential manager
 func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromCredentialManager() error {
+	iam.reloadMu.Lock()
+	defer iam.reloadMu.Unlock()
 	glog.V(1).Infof("Loading S3 API configuration from credential manager")
 
 	s3ApiConfiguration, err := iam.credentialManager.LoadConfiguration(context.Background())

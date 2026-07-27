@@ -62,7 +62,7 @@ func (s *PropagatingCredentialStore) propagateChange(ctx context.Context, fn fun
 			FilerGroup: s.masterClient.FilerGroup,
 		})
 		if err != nil {
-			glog.V(1).Infof("failed to list S3 servers: %v", err)
+			glog.Warningf("failed to list S3 servers: %v", err)
 			return err
 		}
 		for _, node := range resp.ClusterNodes {
@@ -72,7 +72,7 @@ func (s *PropagatingCredentialStore) propagateChange(ctx context.Context, fn fun
 		return nil
 	})
 	if err != nil {
-		glog.V(1).Infof("failed to list s3 servers via master client: %v", err)
+		glog.Warningf("failed to list s3 servers via master client: %v", err)
 		return
 	}
 	glog.V(1).Infof("IAM: propagating change to %d S3 servers: %v", len(s3Servers), s3Servers)
@@ -92,7 +92,7 @@ func (s *PropagatingCredentialStore) propagateChange(ctx context.Context, fn fun
 				return fn(propagateCtx, client)
 			}, server, false, s.grpcDialOption)
 			if err != nil {
-				glog.V(1).Infof("failed to propagate change to s3 server %s: %v", server, err)
+				glog.Warningf("failed to propagate change to s3 server %s: %v", server, err)
 			}
 		}(server)
 	}
