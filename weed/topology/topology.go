@@ -449,6 +449,7 @@ func (t *Topology) CollectionVolumeStats(collectionName string) *VolumeLayoutSta
 			stats := vl.Stats()
 			ret.TotalSize += stats.TotalSize
 			ret.UsedSize += stats.UsedSize
+			ret.LogicalUsedSize += stats.LogicalUsedSize
 			ret.FileCount += stats.FileCount
 		}
 	}
@@ -457,6 +458,7 @@ func (t *Topology) CollectionVolumeStats(collectionName string) *VolumeLayoutSta
 	ecStats := t.CollectionEcVolumeStats(collectionName)
 	ret.TotalSize += ecStats.TotalSize
 	ret.UsedSize += ecStats.UsedSize
+	ret.LogicalUsedSize += ecStats.LogicalUsedSize
 	ret.FileCount += ecStats.FileCount
 	return ret
 }

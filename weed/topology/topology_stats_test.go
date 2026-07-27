@@ -26,11 +26,17 @@ func TestCollectionVolumeStats(t *testing.T) {
 	}
 	topo.SyncDataNodeRegistration(volumeMessages, dn)
 
+	// volume 4 is replicated, so a second node holds a copy of it
+	replicaDn := rack.GetOrCreateDataNode("127.0.0.2", 34534, 0, "127.0.0.2", "", maxVolumeCounts)
+	topo.SyncDataNodeRegistration(volumeMessages[3:], replicaDn)
+
 	// VolumeLocationList.Stats only counts nodes connected for over a minute
 	dn.LastSeen = time.Now().Unix() - 61
+	replicaDn.LastSeen = dn.LastSeen
 
 	allStats := topo.CollectionVolumeStats("")
-	assert(t, "all collections used size", int(allStats.UsedSize), 10000)
+	assert(t, "all collections used size", int(allStats.UsedSize), 14000)
+	assert(t, "all collections logical used size", int(allStats.LogicalUsedSize), 10000)
 	assert(t, "all collections file count", int(allStats.FileCount), 100)
 
 	c1Stats := topo.CollectionVolumeStats("c1")
@@ -38,7 +44,9 @@ func TestCollectionVolumeStats(t *testing.T) {
 	assert(t, "c1 file count", int(c1Stats.FileCount), 50)
 
 	c2Stats := topo.CollectionVolumeStats("c2")
-	assert(t, "c2 used size", int(c2Stats.UsedSize), 4000)
+	// both copies of volume 4 count against the space, only one against the data
+	assert(t, "c2 used size", int(c2Stats.UsedSize), 8000)
+	assert(t, "c2 logical used size", int(c2Stats.LogicalUsedSize), 4000)
 
 	missingStats := topo.CollectionVolumeStats("no-such-collection")
 	assert(t, "missing collection used size", int(missingStats.UsedSize), 0)
@@ -87,12 +95,16 @@ func TestCollectionVolumeStatsWithEcVolumes(t *testing.T) {
 	// 100..700 on dn1, plus a second copy of shard 0 and 800..1400 on dn2
 	c1Stats := topo.CollectionVolumeStats("c1")
 	assert(t, "c1 ec used size", int(c1Stats.UsedSize), 2800+7800)
+	// data shards 0..9 once each, so the second copy of shard 0 and the
+	// parity shards 10..13 are left out
+	assert(t, "c1 ec logical used size", int(c1Stats.LogicalUsedSize), 5500)
 	// the shared journal counts once, not once per holder: 50 - 5
 	assert(t, "c1 ec file count", int(c1Stats.FileCount), 45)
 
 	// volume 20 adds all 14 shards, each sized (id+1)*10
 	allStats := topo.CollectionVolumeStats("")
 	assert(t, "all collections ec used size", int(allStats.UsedSize), 10600+1050)
+	assert(t, "all collections ec logical used size", int(allStats.LogicalUsedSize), 5500+550)
 	assert(t, "all collections ec file count", int(allStats.FileCount), 45+7)
 
 	if _, found := topo.FindCollection("c1"); found {
