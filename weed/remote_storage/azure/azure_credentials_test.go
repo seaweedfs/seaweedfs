@@ -53,7 +53,7 @@ func TestAzureServiceURL(t *testing.T) {
 		t.Errorf("expected %q, got %q", government, serviceURL)
 	}
 
-	for _, endpoint := range []string{"core.usgovcloudapi.net", "http://testaccount.blob.core.windows.net/", "https://", "://x"} {
+	for _, endpoint := range []string{"core.usgovcloudapi.net", "http://testaccount.blob.core.windows.net/", "https://", "https://:443/", "://x"} {
 		if _, err := azureServiceURL("testaccount", endpoint); err == nil {
 			t.Errorf("expected an error for endpoint %q", endpoint)
 		}

@@ -77,7 +77,7 @@ func azureServiceURL(accountName, endpoint string) (string, error) {
 		return "", fmt.Errorf("invalid azure endpoint %q: %w", endpoint, err)
 	}
 	// plain http would carry the account key or the bearer token in the clear
-	if parsed.Scheme != "https" || parsed.Host == "" {
+	if parsed.Scheme != "https" || parsed.Hostname() == "" {
 		return "", fmt.Errorf("invalid azure endpoint %q: expecting an https service url, such as https://%s.blob.core.usgovcloudapi.net/", endpoint, accountName)
 	}
 	return endpoint, nil
