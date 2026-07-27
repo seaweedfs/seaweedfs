@@ -2371,6 +2371,22 @@ const (
 	authorizeDenied
 )
 
+// attachedPolicyNames returns the identity's own policy names plus the ones it
+// inherits from its enabled groups. The copy keeps callers from mutating the
+// shared identity.
+func (iam *IdentityAccessManagement) attachedPolicyNames(identity *Identity) []string {
+	iam.m.RLock()
+	defer iam.m.RUnlock()
+
+	names := slices.Clone(identity.PolicyNames)
+	for _, groupName := range iam.userGroups[identity.Name] {
+		if g, exists := iam.groups[groupName]; exists && !g.Disabled {
+			names = append(names, g.PolicyNames...)
+		}
+	}
+	return names
+}
+
 // hasSessionToken reports whether the request carries an STS session token,
 // whose session policies are known only to the IAM integration.
 func hasSessionToken(r *http.Request) bool {
@@ -2490,20 +2506,15 @@ func (iam *IdentityAccessManagement) bucketsNamedByAttachedPolicies(r *http.Requ
 		return false, nil
 	}
 
-	iam.m.RLock()
-	engine := iam.iamPolicyEngine
-	policyNames := slices.Clone(identity.PolicyNames)
-	for _, groupName := range iam.userGroups[identity.Name] {
-		if g, exists := iam.groups[groupName]; exists && !g.Disabled {
-			policyNames = append(policyNames, g.PolicyNames...)
-		}
-	}
-	iam.m.RUnlock()
-
+	policyNames := iam.attachedPolicyNames(identity)
 	// Nothing attached: the identity reaches only what it owns.
 	if len(policyNames) == 0 {
 		return true, nil
 	}
+
+	iam.m.RLock()
+	engine := iam.iamPolicyEngine
+	iam.m.RUnlock()
 	if engine == nil {
 		return false, nil
 	}
@@ -2676,20 +2687,7 @@ func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity 
 		}
 	}
 
-	// Create IAMIdentity for authorization — copy PolicyNames to avoid mutating shared identity
-	policyNames := make([]string, len(identity.PolicyNames))
-	copy(policyNames, identity.PolicyNames)
-
-	// Include policies inherited from user's groups
-	iam.m.RLock()
-	if groupNames, ok := iam.userGroups[identity.Name]; ok {
-		for _, gn := range groupNames {
-			if g, exists := iam.groups[gn]; exists && !g.Disabled {
-				policyNames = append(policyNames, g.PolicyNames...)
-			}
-		}
-	}
-	iam.m.RUnlock()
+	policyNames := iam.attachedPolicyNames(identity)
 
 	iamIdentity := &IAMIdentity{
 		Name:        identity.Name,
