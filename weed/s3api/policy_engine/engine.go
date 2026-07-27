@@ -658,15 +658,9 @@ func (engine *PolicyEngine) BucketsAllowedForAction(policyName string, action st
 		return nil, false
 	}
 
-	for _, compiled := range context.policy.Statements {
-		statement := compiled.Statement
+	for _, statement := range context.policy.Document.Statement {
 		// A Deny only narrows what an Allow named.
-		if statement.Effect != PolicyEffectAllow {
-			continue
-		}
-		// An action that is itself a policy variable resolves per request, so
-		// the statement has to be read as if it matched.
-		if len(compiled.DynamicActionPatterns) == 0 && !compiled.MatchesAction(action) {
+		if statement.Effect != PolicyEffectAllow || !statementMayAllowAction(statement.Action.Strings(), action) {
 			continue
 		}
 		if statement.Resource == nil || statement.NotResource != nil {

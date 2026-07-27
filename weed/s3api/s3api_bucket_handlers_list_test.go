@@ -134,12 +134,19 @@ func TestCanListBucketsFromOwnerIndexAttachedPolicy(t *testing.T) {
 	// A variable action may resolve to ListBucket, so the bucket it names counts.
 	const actionVariable = `{"Version":"2012-10-17","Statement":[
 		{"Effect":"Allow","Action":["s3:${aws:username}"],"Resource":["arn:aws:s3:::b9"]}]}`
+	// The IAM authorizer matches action names case-insensitively, so these
+	// grant List and their buckets have to be listed.
+	const mixedCaseAction = `{"Version":"2012-10-17","Statement":[
+		{"Effect":"Allow","Action":["S3:LISTBUCKET"],"Resource":["arn:aws:s3:::b7"]}]}`
+	const mixedCaseWildcardAction = `{"Version":"2012-10-17","Statement":[
+		{"Effect":"Allow","Action":["S3:*"],"Resource":["arn:aws:s3:::b8"]}]}`
 
 	engine := policy_engine.NewPolicyEngine()
 	for name, document := range map[string]string{
 		"named": namedBucket, "wildcard": wildcardResource, "not-resource": notResource,
 		"all-actions": allActionsOneBucket, "deny-one": denyOne, "group": groupPolicy,
 		"resource-variable": resourceVariable, "action-variable": actionVariable,
+		"mixed-case": mixedCaseAction, "mixed-case-wildcard": mixedCaseWildcardAction,
 	} {
 		if err := engine.SetBucketPolicy(name, document); err != nil {
 			t.Fatalf("load policy %s: %v", name, err)
@@ -177,6 +184,10 @@ func TestCanListBucketsFromOwnerIndexAttachedPolicy(t *testing.T) {
 		{name: "resource variable scans", identity: &Identity{Name: "u", PolicyNames: []string{"resource-variable"}}},
 		{name: "action variable keeps its bucket", identity: &Identity{Name: "u", PolicyNames: []string{"action-variable"}},
 			wantOk: true, wantGranted: []string{"b9"}},
+		{name: "mixed case action enumerates", identity: &Identity{Name: "u", PolicyNames: []string{"mixed-case"}},
+			wantOk: true, wantGranted: []string{"b7"}},
+		{name: "mixed case wildcard action enumerates", identity: &Identity{Name: "u", PolicyNames: []string{"mixed-case-wildcard"}},
+			wantOk: true, wantGranted: []string{"b8"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
