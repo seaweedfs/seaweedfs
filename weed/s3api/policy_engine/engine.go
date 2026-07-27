@@ -644,6 +644,52 @@ func (engine *PolicyEngine) GetPolicyStatements(bucketName string) []PolicyState
 	return context.policy.Document.Statement
 }
 
+// BucketsAllowedForAction returns the buckets a policy names in the Allow
+// statements that can match the action, and whether those names cover every
+// bucket the policy can allow it on. A statement reaching buckets it does not
+// name -- a wildcard resource, a policy variable, a NotResource -- leaves the
+// set incomplete, as does an unknown policy name.
+func (engine *PolicyEngine) BucketsAllowedForAction(policyName string, action string) (buckets []string, complete bool) {
+	engine.mutex.RLock()
+	context, exists := engine.contexts[policyName]
+	engine.mutex.RUnlock()
+
+	if !exists {
+		return nil, false
+	}
+
+	for _, compiled := range context.policy.Statements {
+		statement := compiled.Statement
+		// A Deny only narrows what an Allow named.
+		if statement.Effect != PolicyEffectAllow {
+			continue
+		}
+		// An action that is itself a policy variable resolves per request, so
+		// the statement has to be read as if it matched.
+		if len(compiled.DynamicActionPatterns) == 0 && !compiled.MatchesAction(action) {
+			continue
+		}
+		if statement.Resource == nil || statement.NotResource != nil {
+			return nil, false
+		}
+		resources := statement.Resource.Strings()
+		if len(resources) == 0 {
+			return nil, false
+		}
+		for _, resource := range resources {
+			if PolicyVariableRegex.MatchString(resource) {
+				return nil, false
+			}
+			bucket := GetBucketFromResource(resource)
+			if bucket == "" || strings.ContainsAny(bucket, "*?") {
+				return nil, false
+			}
+			buckets = append(buckets, bucket)
+		}
+	}
+	return buckets, true
+}
+
 // ValidatePolicyForBucket validates if a policy is valid for a bucket
 func (engine *PolicyEngine) ValidatePolicyForBucket(bucketName string, policyJSON string) error {
 	policy, err := ParsePolicy(policyJSON)
