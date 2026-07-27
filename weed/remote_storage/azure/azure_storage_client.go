@@ -125,7 +125,7 @@ func (s azureRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storag
 		return nil, fmt.Errorf("neither azure_account_name nor the AZURE_STORAGE_ACCOUNT environment variable is set")
 	}
 
-	azClient, err := NewAzBlobClient(accountName, accountKey, conf.AzureClientId)
+	azClient, err := NewAzBlobClient(accountName, accountKey, conf.AzureClientId, conf.AzureEndpoint)
 	if err != nil {
 		return nil, err
 	}

@@ -104,7 +104,7 @@ func TestAzureSinkInitialization(t *testing.T) {
 
 	sink := &AzureSink{}
 
-	err := sink.initialize(accountName, accountKey, "", testContainer, "/test")
+	err := sink.initialize(accountName, accountKey, "", "", testContainer, "/test")
 	if err != nil {
 		t.Fatalf("Failed to initialize Azure sink: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestAzureSinkEntryOperations(t *testing.T) {
 	}
 
 	sink := &AzureSink{}
-	err := sink.initialize(accountName, accountKey, "", testContainer, "/test")
+	err := sink.initialize(accountName, accountKey, "", "", testContainer, "/test")
 	if err != nil {
 		t.Fatalf("Failed to initialize: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestAzureSinkPrecondition(t *testing.T) {
 	}
 
 	sink := &AzureSink{}
-	err := sink.initialize(accountName, accountKey, "", testContainer, "/test")
+	err := sink.initialize(accountName, accountKey, "", "", testContainer, "/test")
 	if err != nil {
 		t.Fatalf("Failed to initialize: %v", err)
 	}
@@ -354,7 +354,7 @@ func TestAzureSinkIdempotentCreate(t *testing.T) {
 	}
 
 	sink := &AzureSink{}
-	err := sink.initialize(accountName, accountKey, "", testContainer, "/test")
+	err := sink.initialize(accountName, accountKey, "", "", testContainer, "/test")
 	if err != nil {
 		t.Fatalf("Failed to initialize: %v", err)
 	}
@@ -460,7 +460,7 @@ func BenchmarkCleanKey(b *testing.B) {
 func TestAzureSinkInvalidCredentials(t *testing.T) {
 	sink := &AzureSink{}
 
-	err := sink.initialize("invalid-account", "aW52YWxpZGtleQ==", "", "test-container", "/test")
+	err := sink.initialize("invalid-account", "aW52YWxpZGtleQ==", "", "", "test-container", "/test")
 	if err != nil {
 		t.Skip("Invalid credentials correctly rejected at initialization")
 	}

@@ -52,6 +52,7 @@ func (g *AzureSink) Initialize(configuration util.Configuration, prefix string) 
 		configuration.GetString(prefix+"account_name"),
 		configuration.GetString(prefix+"account_key"),
 		configuration.GetString(prefix+"client_id"),
+		configuration.GetString(prefix+"endpoint"),
 		configuration.GetString(prefix+"container"),
 		configuration.GetString(prefix+"directory"),
 	)
@@ -61,11 +62,11 @@ func (g *AzureSink) SetSourceFiler(s *source.FilerSource) {
 	g.filerSource = s
 }
 
-func (g *AzureSink) initialize(accountName, accountKey, clientID, container, dir string) error {
+func (g *AzureSink) initialize(accountName, accountKey, clientID, endpoint, container, dir string) error {
 	g.container = container
 	g.dir = dir
 
-	client, err := azure.NewAzBlobClient(accountName, accountKey, clientID)
+	client, err := azure.NewAzBlobClient(accountName, accountKey, clientID, endpoint)
 	if err != nil {
 		return err
 	}
