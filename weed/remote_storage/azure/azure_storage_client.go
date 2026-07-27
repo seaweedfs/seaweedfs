@@ -94,6 +94,20 @@ func init() {
 	remote_storage.RemoteStorageClientMakers["azure"] = new(azureRemoteStorageMaker)
 }
 
+// resolveAzureAccount completes the configured account from the environment. A
+// configured client id asks for Entra ID, so a key left over in the environment
+// must not quietly take the request back to shared key auth.
+func resolveAzureAccount(conf *remote_pb.RemoteConf) (accountName, accountKey string) {
+	accountName, accountKey = conf.AzureAccountName, conf.AzureAccountKey
+	if len(accountName) == 0 {
+		accountName = os.Getenv("AZURE_STORAGE_ACCOUNT")
+	}
+	if len(accountKey) == 0 && len(conf.AzureClientId) == 0 {
+		accountKey = os.Getenv("AZURE_STORAGE_ACCESS_KEY")
+	}
+	return
+}
+
 type azureRemoteStorageMaker struct{}
 
 func (s azureRemoteStorageMaker) HasBucket() bool {
@@ -106,24 +120,14 @@ func (s azureRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storag
 		conf: conf,
 	}
 
-	accountName, accountKey := conf.AzureAccountName, conf.AzureAccountKey
-	if len(accountName) == 0 || len(accountKey) == 0 {
-		accountName, accountKey = os.Getenv("AZURE_STORAGE_ACCOUNT"), os.Getenv("AZURE_STORAGE_ACCESS_KEY")
-		if len(accountName) == 0 || len(accountKey) == 0 {
-			return nil, fmt.Errorf("either AZURE_STORAGE_ACCOUNT or AZURE_STORAGE_ACCESS_KEY environment variable is not set")
-		}
+	accountName, accountKey := resolveAzureAccount(conf)
+	if len(accountName) == 0 {
+		return nil, fmt.Errorf("neither azure_account_name nor the AZURE_STORAGE_ACCOUNT environment variable is set")
 	}
 
-	// Create credential and client
-	credential, err := azblob.NewSharedKeyCredential(accountName, accountKey)
+	azClient, err := NewAzBlobClient(accountName, accountKey, conf.AzureClientId)
 	if err != nil {
-		return nil, fmt.Errorf("invalid Azure credential with account name:%s: %w", accountName, err)
-	}
-
-	serviceURL := fmt.Sprintf("https://%s.blob.core.windows.net/", accountName)
-	azClient, err := azblob.NewClientWithSharedKeyCredential(serviceURL, credential, DefaultAzBlobClientOptions())
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Azure client: %w", err)
+		return nil, err
 	}
 
 	client.client = azClient

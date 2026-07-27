@@ -40,6 +40,7 @@ type RemoteConf struct {
 	GcsProjectId                    string                 `protobuf:"bytes,12,opt,name=gcs_project_id,json=gcsProjectId,proto3" json:"gcs_project_id,omitempty"`
 	AzureAccountName                string                 `protobuf:"bytes,15,opt,name=azure_account_name,json=azureAccountName,proto3" json:"azure_account_name,omitempty"`
 	AzureAccountKey                 string                 `protobuf:"bytes,16,opt,name=azure_account_key,json=azureAccountKey,proto3" json:"azure_account_key,omitempty"`
+	AzureClientId                   string                 `protobuf:"bytes,17,opt,name=azure_client_id,json=azureClientId,proto3" json:"azure_client_id,omitempty"`
 	BackblazeKeyId                  string                 `protobuf:"bytes,20,opt,name=backblaze_key_id,json=backblazeKeyId,proto3" json:"backblaze_key_id,omitempty"`
 	BackblazeApplicationKey         string                 `protobuf:"bytes,21,opt,name=backblaze_application_key,json=backblazeApplicationKey,proto3" json:"backblaze_application_key,omitempty"`
 	BackblazeEndpoint               string                 `protobuf:"bytes,22,opt,name=backblaze_endpoint,json=backblazeEndpoint,proto3" json:"backblaze_endpoint,omitempty"`
@@ -197,6 +198,13 @@ func (x *RemoteConf) GetAzureAccountName() string {
 func (x *RemoteConf) GetAzureAccountKey() string {
 	if x != nil {
 		return x.AzureAccountKey
+	}
+	return ""
+}
+
+func (x *RemoteConf) GetAzureClientId() string {
+	if x != nil {
+		return x.AzureClientId
 	}
 	return ""
 }
@@ -528,7 +536,7 @@ var File_remote_proto protoreflect.FileDescriptor
 
 const file_remote_proto_rawDesc = "" +
 	"\n" +
-	"\fremote.proto\x12\tremote_pb\"\x9b\x0e\n" +
+	"\fremote.proto\x12\tremote_pb\"\xc3\x0e\n" +
 	"\n" +
 	"RemoteConf\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12\x12\n" +
@@ -546,7 +554,8 @@ const file_remote_proto_rawDesc = "" +
 	" \x01(\tR\x1fgcsGoogleApplicationCredentials\x12$\n" +
 	"\x0egcs_project_id\x18\f \x01(\tR\fgcsProjectId\x12,\n" +
 	"\x12azure_account_name\x18\x0f \x01(\tR\x10azureAccountName\x12*\n" +
-	"\x11azure_account_key\x18\x10 \x01(\tR\x0fazureAccountKey\x12(\n" +
+	"\x11azure_account_key\x18\x10 \x01(\tR\x0fazureAccountKey\x12&\n" +
+	"\x0fazure_client_id\x18\x11 \x01(\tR\razureClientId\x12(\n" +
 	"\x10backblaze_key_id\x18\x14 \x01(\tR\x0ebackblazeKeyId\x12:\n" +
 	"\x19backblaze_application_key\x18\x15 \x01(\tR\x17backblazeApplicationKey\x12-\n" +
 	"\x12backblaze_endpoint\x18\x16 \x01(\tR\x11backblazeEndpoint\x12)\n" +
