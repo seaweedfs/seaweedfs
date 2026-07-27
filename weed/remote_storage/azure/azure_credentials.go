@@ -2,6 +2,7 @@ package azure
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"regexp"
 
@@ -23,7 +24,10 @@ var validAzureAccountName = regexp.MustCompile(`^[a-z0-9]{3,24}$`)
 // the environment, and access is granted through RBAC. Fleets that cannot
 // distribute and rotate storage account keys authenticate that way. clientID
 // pins a user-assigned identity when the environment offers more than one.
-func NewAzBlobClient(accountName, accountKey, clientID string) (*azblob.Client, error) {
+//
+// endpoint is the blob service URL, for accounts outside the public cloud. An
+// empty endpoint derives the public one from accountName.
+func NewAzBlobClient(accountName, accountKey, clientID, endpoint string) (*azblob.Client, error) {
 
 	if accountName == "" {
 		return nil, fmt.Errorf("azure account name is required")
@@ -32,7 +36,10 @@ func NewAzBlobClient(accountName, accountKey, clientID string) (*azblob.Client, 
 		return nil, fmt.Errorf("invalid azure account name %q: expecting 3 to 24 lowercase letters and digits", accountName)
 	}
 
-	serviceURL := fmt.Sprintf("https://%s.blob.core.windows.net/", accountName)
+	serviceURL, err := azureServiceURL(accountName, endpoint)
+	if err != nil {
+		return nil, err
+	}
 
 	if accountKey == "" {
 		credential, err := newAzureTokenCredential(clientID)
@@ -56,6 +63,24 @@ func NewAzBlobClient(accountName, accountKey, clientID string) (*azblob.Client, 
 		return nil, fmt.Errorf("failed to create Azure client: %w", err)
 	}
 	return client, nil
+}
+
+// azureServiceURL locates the blob service. Sovereign clouds and private
+// endpoints do not live under blob.core.windows.net, so they name the service
+// URL outright rather than having it derived from the account.
+func azureServiceURL(accountName, endpoint string) (string, error) {
+	if endpoint == "" {
+		return fmt.Sprintf("https://%s.blob.core.windows.net/", accountName), nil
+	}
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return "", fmt.Errorf("invalid azure endpoint %q: %w", endpoint, err)
+	}
+	// plain http would carry the account key or the bearer token in the clear
+	if parsed.Scheme != "https" || parsed.Host == "" {
+		return "", fmt.Errorf("invalid azure endpoint %q: expecting an https service url, such as https://%s.blob.core.usgovcloudapi.net/", endpoint, accountName)
+	}
+	return endpoint, nil
 }
 
 // newAzureTokenCredential resolves an Entra ID credential. Without a pinned

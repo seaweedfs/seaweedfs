@@ -27,6 +27,7 @@ message RemoteConf {
   string azure_account_name = 15;
   string azure_account_key = 16;
   string azure_client_id = 17;
+  string azure_endpoint = 18;
 
   string backblaze_key_id = 20;
   string backblaze_application_key = 21;

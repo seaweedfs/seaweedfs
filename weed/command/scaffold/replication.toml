@@ -67,6 +67,9 @@ account_key = ""
 # takes its tenant and token from AZURE_TENANT_ID and AZURE_FEDERATED_TOKEN_FILE,
 # which the Azure workload identity webhook projects into the pod.
 client_id = ""
+# blob service url, for accounts outside the public cloud. Empty resolves to
+# https://<account_name>.blob.core.windows.net/
+endpoint = ""
 container = "mycontainer"      # an existing container
 directory = "/"                # destination directory
 is_incremental = false

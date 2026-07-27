@@ -84,6 +84,7 @@ func (c *commandRemoteConfigure) Do(args []string, commandEnv *CommandEnv, write
 	remoteConfigureCommand.StringVar(&conf.AzureAccountName, "azure.account_name", "", "azure account name, default to use env AZURE_STORAGE_ACCOUNT")
 	remoteConfigureCommand.StringVar(&conf.AzureAccountKey, "azure.account_key", "", "azure account key, default to use env AZURE_STORAGE_ACCESS_KEY. Leave empty to authenticate with Entra ID")
 	remoteConfigureCommand.StringVar(&conf.AzureClientId, "azure.client_id", "", "azure user-assigned identity to authenticate, when no account key is given. Workload identity also reads env AZURE_TENANT_ID and AZURE_FEDERATED_TOKEN_FILE")
+	remoteConfigureCommand.StringVar(&conf.AzureEndpoint, "azure.endpoint", "", "azure blob service url, for accounts outside the public cloud, e.g. https://xxx.blob.core.usgovcloudapi.net/")
 
 	remoteConfigureCommand.StringVar(&conf.BackblazeKeyId, "b2.key_id", "", "backblaze keyID")
 	remoteConfigureCommand.StringVar(&conf.BackblazeApplicationKey, "b2.application_key", "", "backblaze applicationKey. Note that your Master Application Key will not work with the S3 Compatible API. You must create a new key that is eligible for use. For more information: https://help.backblaze.com/hc/en-us/articles/360047425453")
