@@ -351,6 +351,25 @@ func TestAzureRemoteStorageMaker(t *testing.T) {
 	}
 }
 
+// An account name without a key authenticates with Entra ID
+func TestAzureRemoteStorageMakerWithoutAccountKey(t *testing.T) {
+	t.Setenv("AZURE_STORAGE_ACCOUNT", "")
+	t.Setenv("AZURE_STORAGE_ACCESS_KEY", "")
+
+	maker := azureRemoteStorageMaker{}
+	conf := &remote_pb.RemoteConf{
+		Name:             "test",
+		AzureAccountName: "testaccount",
+	}
+	client, err := maker.Make(conf)
+	if err != nil {
+		t.Fatalf("Failed to create client without an account key: %v", err)
+	}
+	if client.(*azureRemoteStorageClient).client == nil {
+		t.Error("Expected a blob client")
+	}
+}
+
 // Test error cases
 func TestAzureStorageClientErrors(t *testing.T) {
 	// Test with invalid credentials
