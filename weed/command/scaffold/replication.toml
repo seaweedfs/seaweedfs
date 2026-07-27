@@ -59,7 +59,11 @@ is_incremental = false
 # experimental, let me know if it works
 enabled = false
 account_name = ""
+# leave account_key empty to authenticate with Entra ID instead of a shared key,
+# picking up a workload identity or managed identity from the environment. The
+# identity needs a data-plane role such as Storage Blob Data Contributor.
 account_key = ""
+client_id = ""                 # optional user-assigned identity, when account_key is empty
 container = "mycontainer"      # an existing container
 directory = "/"                # destination directory
 is_incremental = false
