@@ -114,6 +114,9 @@ func TestObjectTransactionPutPreservesExplicitTTL(t *testing.T) {
 	if got := entry.TtlSec; got != 7200 {
 		t.Fatalf("TtlSec = %d, want explicit TTL 7200 to win over fs.configure", got)
 	}
+	if _, found := entry.Extended["X-Seaweedfs-Expires-S3"]; !found {
+		t.Fatalf("Header X-Seaweedfs-Expires-S3")
+	}
 }
 
 func TestObjectTransactionPutClearsTTLForRemoteEntry(t *testing.T) {
