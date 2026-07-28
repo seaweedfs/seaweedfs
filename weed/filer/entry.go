@@ -186,6 +186,10 @@ func (entry *Entry) ApplyS3ExpiryMetadata() {
 		return
 	}
 
+	if _, found := entry.Extended[s3_constants.SeaweedFSExpiresS3]; found {
+		return
+	}
+
 	if !entry.isS3Entry() {
 		return
 	}

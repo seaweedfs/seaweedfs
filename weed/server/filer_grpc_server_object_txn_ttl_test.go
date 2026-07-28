@@ -42,6 +42,10 @@ func TestObjectTransactionPutAppliesConfiguredTTLAndExpires(t *testing.T) {
 						FileSize: 123,
 						TtlSec:   0,
 					},
+					Extended: map[string][]byte{
+						"Seaweed-X-Amz-Owner": []byte("admin"),
+						"Seaweed-X-Amz-ETag":  []byte("abc123"),
+					},
 				},
 			},
 		},

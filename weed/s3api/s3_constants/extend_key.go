@@ -1,7 +1,7 @@
 package s3_constants
 
 const (
-	ExtAmzPrefix                = "Seaweed-X-Amz"
+	ExtAmzPrefix                = "Seaweed-X-Amz-"
 	ExtAmzOwnerKey              = "Seaweed-X-Amz-Owner"
 	ExtAmzAclKey                = "Seaweed-X-Amz-Acl"
 	ExtOwnershipKey             = "Seaweed-X-Amz-Ownership"
