@@ -36,9 +36,6 @@ const (
 	// sosAPICapacityXML is the path to the capacity information XML file.
 	sosAPICapacityXML = sosAPISystemFolder + "/capacity.xml"
 
-	// sosAPIClientUserAgent is a substring to detect SOSAPI-compatible backup clients.
-	sosAPIClientUserAgent = "APN/1.0 Veeam/1.0"
-
 	// sosAPIProtocolVersion is the SOSAPI protocol version supported.
 	sosAPIProtocolVersion = `"1.0"`
 

@@ -33,17 +33,6 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// corsHeaders defines the CORS headers that need to be preserved
-// Package-level constant to avoid repeated allocations
-var corsHeaders = []string{
-	"Access-Control-Allow-Origin",
-	"Access-Control-Allow-Methods",
-	"Access-Control-Allow-Headers",
-	"Access-Control-Expose-Headers",
-	"Access-Control-Max-Age",
-	"Access-Control-Allow-Credentials",
-}
-
 // zeroBuf is a reusable buffer of zero bytes for padding operations
 // Package-level to avoid per-call allocations in writeZeroBytes
 var zeroBuf = make([]byte, 32*1024)
@@ -2998,15 +2987,6 @@ type MultipartSSEReader struct {
 	readers     []io.Reader
 }
 
-// SSERangeReader applies range logic to an underlying reader
-type SSERangeReader struct {
-	reader    io.Reader
-	offset    int64  // bytes to skip from the beginning
-	remaining int64  // bytes remaining to read (-1 for unlimited)
-	skipped   int64  // bytes already skipped
-	skipBuf   []byte // reusable buffer for skipping bytes (avoids per-call allocation)
-}
-
 // NewMultipartSSEReader creates a new multipart reader that can properly close all underlying readers
 func NewMultipartSSEReader(readers []io.Reader) *MultipartSSEReader {
 	return &MultipartSSEReader{
@@ -3117,7 +3097,7 @@ func (s3a *S3ApiServer) buildRemoteObjectPath(bucket, object string) (dir, name 
 }
 
 // doCacheRemoteObject calls the filer's CacheRemoteObjectToLocalCluster gRPC endpoint.
-// This is the core caching function used by both cacheRemoteObjectWithDedup and cacheRemoteObjectForStreaming.
+// This is the core caching function used by cacheRemoteObjectForStreaming.
 func (s3a *S3ApiServer) doCacheRemoteObject(ctx context.Context, dir, name string) (*filer_pb.Entry, error) {
 	var cachedEntry *filer_pb.Entry
 	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
@@ -3134,36 +3114,6 @@ func (s3a *S3ApiServer) doCacheRemoteObject(ctx context.Context, dir, name strin
 		return nil
 	})
 	return cachedEntry, err
-}
-
-// cacheRemoteObjectWithDedup caches a remote-only object to the local cluster.
-// The filer server handles singleflight deduplication, so all clients (S3, HTTP, Hadoop) benefit.
-// On cache error, returns the original entry (will retry in streamFromVolumeServers).
-// Uses a bounded timeout to avoid blocking requests indefinitely.
-func (s3a *S3ApiServer) cacheRemoteObjectWithDedup(ctx context.Context, bucket, object string, entry *filer_pb.Entry) *filer_pb.Entry {
-	const cacheTimeout = 30 * time.Second
-	cacheCtx, cancel := context.WithTimeout(ctx, cacheTimeout)
-	defer cancel()
-
-	dir, name := s3a.buildRemoteObjectPath(bucket, object)
-	glog.V(2).Infof("cacheRemoteObjectWithDedup: caching %s/%s (remote size: %d)", bucket, object, entry.RemoteEntry.RemoteSize)
-
-	cachedEntry, err := s3a.doCacheRemoteObject(cacheCtx, dir, name)
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			glog.V(1).Infof("cacheRemoteObjectWithDedup: timeout caching %s/%s after %v (will retry in streaming)", bucket, object, cacheTimeout)
-		} else {
-			glog.Warningf("cacheRemoteObjectWithDedup: failed to cache %s/%s: %v (will retry in streaming)", bucket, object, err)
-		}
-		return entry
-	}
-
-	if cachedEntry != nil && len(cachedEntry.GetChunks()) > 0 {
-		glog.V(1).Infof("cacheRemoteObjectWithDedup: successfully cached %s/%s (%d chunks)", bucket, object, len(cachedEntry.GetChunks()))
-		entry.Chunks = cachedEntry.Chunks
-	}
-
-	return entry
 }
 
 func (s3a *S3ApiServer) buildVersionedRemoteObjectPath(bucket, object, versionId string) (dir, name string) {

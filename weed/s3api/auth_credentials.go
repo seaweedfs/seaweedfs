@@ -57,7 +57,6 @@ type IdentityAccessManagement struct {
 	hashes            map[string]*sync.Pool
 	hashCounters      map[string]*int32
 	identityAnonymous *Identity
-	hashMu            sync.RWMutex
 	domain            string
 	externalHost      string // pre-computed host for S3 signature verification (from ExternalUrl)
 	isAuthEnabled     bool
