@@ -155,7 +155,7 @@ func (s *Server) prepareTableCommit(ctx context.Context, bucketName, bucketARN, 
 			return nil, &icebergRequestError{http.StatusInternalServerError, "InternalServerError", "Failed to parse current metadata"}
 		}
 	} else {
-		currentMetadata = newTableMetadata(tableUUID, location, nil, nil, nil, nil)
+		currentMetadata = newEmptyTableMetadata(tableUUID, location, tableName)
 	}
 	if currentMetadata == nil {
 		return nil, &icebergRequestError{http.StatusInternalServerError, "InternalServerError", "Failed to build current metadata"}

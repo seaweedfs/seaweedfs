@@ -188,9 +188,11 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build proper Iceberg table metadata using iceberg-go types
-	metadata := newTableMetadata(tableUUID, location, req.Schema, req.PartitionSpec, req.WriteOrder, req.Properties)
-	if metadata == nil {
-		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build table metadata")
+	metadata, err := newTableMetadata(tableUUID, location, req.Schema, req.PartitionSpec, req.WriteOrder, req.Properties)
+	if err != nil {
+		glog.V(1).Infof("Iceberg: CreateTable %s metadata error: %v", req.Name, err)
+		status, errType, message := metadataBuildError(err)
+		writeError(w, status, errType, message)
 		return
 	}
 
@@ -520,12 +522,12 @@ func (s *Server) buildLoadTableResult(getResp s3tables.GetTableResponse, bucketN
 			// Attempt to reconstruct from IcebergMetadata if available, otherwise synthetic
 			// TODO: Extract schema/spec from getResp.Metadata.Iceberg if FullMetadata fails but partial info exists?
 			// For now, fallback to empty metadata
-			metadata = newTableMetadata(tableUUID, location, nil, nil, nil, nil)
+			metadata = newEmptyTableMetadata(tableUUID, location, tableName)
 		}
 	} else {
 		// No full metadata, create synthetic
 		// TODO: If we had stored schema in IcebergMetadata, we would pass it here
-		metadata = newTableMetadata(tableUUID, location, nil, nil, nil, nil)
+		metadata = newEmptyTableMetadata(tableUUID, location, tableName)
 	}
 
 	return LoadTableResult{
@@ -780,7 +782,7 @@ func newTableMetadata(
 	partitionSpec *iceberg.PartitionSpec,
 	sortOrder *table.SortOrder,
 	props iceberg.Properties,
-) table.Metadata {
+) (table.Metadata, error) {
 	// Add schema - use provided or create empty schema
 	var s *iceberg.Schema
 	if schema != nil {
@@ -812,11 +814,34 @@ func newTableMetadata(
 	}
 
 	// Create metadata directly using the constructor which ensures spec compliance for V2
-	metadata, err := table.NewMetadataWithUUID(s, pSpec, so, location, props, tableUUID)
+	return table.NewMetadataWithUUID(s, pSpec, so, location, props, tableUUID)
+}
+
+// newEmptyTableMetadata builds the schema-less placeholder used when a table's
+// persisted metadata is missing or unparseable. Nothing here is client-supplied,
+// so a failure is ours: log it and let the caller report a 500.
+func newEmptyTableMetadata(tableUUID uuid.UUID, location, tableName string) table.Metadata {
+	metadata, err := newTableMetadata(tableUUID, location, nil, nil, nil, nil)
 	if err != nil {
-		glog.Errorf("Failed to create metadata: %v", err)
+		glog.Errorf("Iceberg: failed to build placeholder metadata for %s: %v", tableName, err)
 		return nil
 	}
-
 	return metadata
+}
+
+// metadataBuildError maps a newTableMetadata failure to a REST response. Schema
+// and spec errors come from the request body, so they are the caller's mistake
+// and must carry the reason: a variant field without format-version 3 otherwise
+// reads as a bare 500 with "variant is not supported until v3" only in the log.
+func metadataBuildError(err error) (int, string, string) {
+	switch {
+	case errors.Is(err, iceberg.ErrInvalidSchema),
+		errors.Is(err, iceberg.ErrInvalidPartitionSpec),
+		errors.Is(err, iceberg.ErrInvalidTypeString),
+		errors.Is(err, iceberg.ErrInvalidTransform),
+		errors.Is(err, iceberg.ErrInvalidArgument):
+		return http.StatusBadRequest, "BadRequestException", err.Error()
+	default:
+		return http.StatusInternalServerError, "InternalServerError", "Failed to build table metadata: " + err.Error()
+	}
 }

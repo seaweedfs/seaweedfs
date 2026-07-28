@@ -160,7 +160,7 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 				}
 
 				if baseMetadata == nil {
-					baseMetadata = newTableMetadata(tableUUID, location, nil, nil, nil, nil)
+					baseMetadata = newEmptyTableMetadata(tableUUID, location, tableName)
 					if baseMetadata == nil {
 						writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build current metadata")
 						return
@@ -216,7 +216,7 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		} else {
-			currentMetadata = newTableMetadata(tableUUID, location, nil, nil, nil, nil)
+			currentMetadata = newEmptyTableMetadata(tableUUID, location, tableName)
 		}
 		if currentMetadata == nil {
 			writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build current metadata")
