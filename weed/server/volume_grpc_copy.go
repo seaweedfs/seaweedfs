@@ -700,7 +700,14 @@ func (vs *VolumeServer) ReceiveFile(stream volume_server_pb.VolumeServer_Receive
 					// VolumeEcShardsToVolume(from_staged). .idx.copying/.vif.copying
 					// are not valid volume names, so the scanner never half-loads.
 					want := types.ToDiskType(fileInfo.DiskType)
+					stagedVid := needle.VolumeId(fileInfo.VolumeId)
 					loc := vs.store.FindFreeLocation(func(l *storage.DiskLocation) bool {
+						// Skip a disk that already holds this vid's EC shards, so the
+						// decoded .dat never lands in the same directory as a shard —
+						// lets the caller target a shard host that has a spare disk.
+						if _, holds := l.FindEcVolume(stagedVid); holds {
+							return false
+						}
 						return l.DiskType == want
 					})
 					if loc == nil {
