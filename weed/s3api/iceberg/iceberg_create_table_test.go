@@ -3,7 +3,6 @@ package iceberg
 import (
 	"encoding/json"
 	"errors"
-	"net/http"
 	"strings"
 	"testing"
 
@@ -67,15 +66,9 @@ func TestNewTableMetadataRejectsV3TypeBelowV3(t *testing.T) {
 		t.Fatalf("newTableMetadata() error = %v, want ErrInvalidSchema", err)
 	}
 
-	status, errType, message := metadataBuildError(err)
-	if status != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", status, http.StatusBadRequest)
-	}
-	if errType != "BadRequestException" {
-		t.Errorf("errType = %q, want BadRequestException", errType)
-	}
-	if !strings.Contains(message, "variant is not supported until v3") {
-		t.Errorf("message = %q, want the underlying reason", message)
+	// writeManagerError turns this into a 400; see TestWriteManagerError.
+	if !strings.Contains(err.Error(), "variant is not supported until v3") {
+		t.Errorf("error = %q, want the underlying reason", err.Error())
 	}
 }
 
@@ -111,19 +104,5 @@ func TestBuildLoadTableResultNeverReturnsNilMetadata(t *testing.T) {
 				t.Fatal("buildLoadTableResult() returned nil metadata with no error")
 			}
 		})
-	}
-}
-
-// Failures with no client input to blame stay 500 and keep their detail.
-func TestMetadataBuildErrorDefaultsToServerError(t *testing.T) {
-	status, errType, message := metadataBuildError(errors.New("filer unreachable"))
-	if status != http.StatusInternalServerError {
-		t.Errorf("status = %d, want %d", status, http.StatusInternalServerError)
-	}
-	if errType != "InternalServerError" {
-		t.Errorf("errType = %q, want InternalServerError", errType)
-	}
-	if !strings.Contains(message, "filer unreachable") {
-		t.Errorf("message = %q, want the underlying reason", message)
 	}
 }

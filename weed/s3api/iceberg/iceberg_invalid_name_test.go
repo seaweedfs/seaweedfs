@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/apache/iceberg-go"
 )
 
 func TestNameValidationError(t *testing.T) {
@@ -41,6 +43,8 @@ func TestWriteManagerError(t *testing.T) {
 		wantType string
 	}{
 		{"invalid name is a client error", fmt.Errorf("invalid namespace name: only 'a-z', '0-9', and '_' are allowed"), http.StatusBadRequest, "BadRequestException"},
+		{"rejected schema is a client error", fmt.Errorf("%w: for v2: variant is not supported until v3", iceberg.ErrInvalidSchema), http.StatusBadRequest, "BadRequestException"},
+		{"bad format version is a client error", fmt.Errorf("%w: 4", iceberg.ErrInvalidFormatVersion), http.StatusBadRequest, "BadRequestException"},
 		{"everything else is a server fault", fmt.Errorf("all filers failed, last error: connection refused"), http.StatusInternalServerError, "InternalServerError"},
 	}
 	for _, c := range cases {
