@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"sort"
 	"sync"
 	"time"
 
@@ -165,41 +164,35 @@ func (s *PrometheusStorage) GetInstances(limit int) ([]*telemetryData, error) {
 	return instances, nil
 }
 
+// GetMetrics returns fleet-wide daily totals for the last `days` days, in the
+// parallel-array shape the dashboard charts expect. Totals come from the daily
+// histories rather than from s.instances, which holds only each cluster's most
+// recent report and so would credit every cluster to the single day it last
+// reported on.
 func (s *PrometheusStorage) GetMetrics(days int) (map[string]interface{}, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// Return current metrics from in-memory storage, aggregated per day
-	// in the parallel-array shape the dashboard charts expect.
-	// Historical data should be queried from Prometheus directly.
-	cutoff := time.Now().AddDate(0, 0, -days)
+	axis := newDailySeries(days, s.histories)
+	activeSince := time.Now().UTC().AddDate(0, 0, -activeDays).Unix()
 
-	serverCountByDate := make(map[string]int64)
-	diskUsageByDate := make(map[string]uint64)
-
-	for _, instance := range s.instances {
-		if instance.ReceivedAt.After(cutoff) {
-			date := instance.ReceivedAt.Format("2006-01-02")
-			serverCountByDate[date] += int64(instance.TelemetryData.VolumeServerCount)
-			diskUsageByDate[date] += instance.TelemetryData.TotalDiskBytes
+	diskUsage := make([]uint64, len(axis.dates))
+	serverCounts := make([]int64, len(axis.dates))
+	for _, history := range s.histories {
+		if disk, ok := axis.align(history, activeSince, diskBytes); ok {
+			for i, v := range disk {
+				diskUsage[i] += v
+			}
+		}
+		if servers, ok := axis.align(history, activeSince, serverCount); ok {
+			for i, v := range servers {
+				serverCounts[i] += int64(v)
+			}
 		}
 	}
 
-	dates := make([]string, 0, len(serverCountByDate))
-	for date := range serverCountByDate {
-		dates = append(dates, date)
-	}
-	sort.Strings(dates)
-
-	serverCounts := make([]int64, 0, len(dates))
-	diskUsage := make([]uint64, 0, len(dates))
-	for _, date := range dates {
-		serverCounts = append(serverCounts, serverCountByDate[date])
-		diskUsage = append(diskUsage, diskUsageByDate[date])
-	}
-
 	return map[string]interface{}{
-		"dates":         dates,
+		"dates":         axis.dates,
 		"server_counts": serverCounts,
 		"disk_usage":    diskUsage,
 	}, nil
