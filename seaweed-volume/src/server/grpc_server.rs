@@ -1769,12 +1769,28 @@ impl VolumeServer for VolumeGrpcService {
                                 // so the scanner never half-loads a partial push.
                                 let want = DiskType::from_string(&info.disk_type);
                                 let staged_vid = VolumeId(info.volume_id);
-                                // Skip a disk already holding this vid's EC shards, so the
-                                // decoded .dat never lands in the same directory as a shard —
-                                // lets the caller target a shard host that has a spare disk.
+                                // Don't stage the decoded .dat onto a disk that holds a
+                                // shard of this vid. Check the mounted map and the on-disk
+                                // files, so an unmounted or orphan shard (on disk, absent
+                                // from the map) is caught too.
                                 match store.find_free_location_predicate(|l| {
-                                    l.disk_type == want
-                                        && !l.ec_volumes().any(|(v, _)| *v == staged_vid)
+                                    if l.disk_type != want {
+                                        return false;
+                                    }
+                                    if l.ec_volumes().any(|(v, _)| *v == staged_vid) {
+                                        return false;
+                                    }
+                                    let base = crate::storage::volume::volume_file_name(
+                                        &l.directory,
+                                        &info.collection,
+                                        staged_vid,
+                                    );
+                                    !(0..crate::storage::erasure_coding::ec_shard::MAX_SHARD_COUNT)
+                                        .any(|i| {
+                                            std::fs::metadata(format!("{}.ec{:02}", base, i))
+                                                .map(|m| m.len() > 0)
+                                                .unwrap_or(false)
+                                        })
                                 }) {
                                     Some(i) => {
                                         let dir = store.locations[i].directory.clone();
