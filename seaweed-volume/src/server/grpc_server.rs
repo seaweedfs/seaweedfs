@@ -1753,16 +1753,47 @@ impl VolumeServer for VolumeGrpcService {
                             format!("{}/{}{}", dir, ec_base, info.ext)
                         } else {
                             let store = self.state.store.read().unwrap();
-                            let (_, v) =
-                                store.find_volume(VolumeId(info.volume_id)).ok_or_else(|| {
-                                    Status::not_found(format!(
-                                        "volume {} not found",
-                                        info.volume_id
-                                    ))
-                                })?;
-                            let p = v.file_name(&info.ext);
-                            drop(store);
-                            p
+                            let existing = store
+                                .find_volume(VolumeId(info.volume_id))
+                                .map(|(_, v)| v.file_name(&info.ext));
+                            if let Some(p) = existing {
+                                drop(store);
+                                p
+                            } else if !info.disk_type.is_empty() {
+                                // Staged-new-volume mode (EC decode onto a clean peer):
+                                // the volume does not exist here yet. Pick a free-slot
+                                // disk location of the requested medium and stage the
+                                // file as <base><ext>.copying, to be renamed into place
+                                // and mounted by VolumeEcShardsToVolume(from_staged).
+                                // .idx.copying/.vif.copying are not valid volume names,
+                                // so the scanner never half-loads a partial push.
+                                let want = DiskType::from_string(&info.disk_type);
+                                match store.find_free_location_predicate(|l| l.disk_type == want) {
+                                    Some(i) => {
+                                        let dir = store.locations[i].directory.clone();
+                                        drop(store);
+                                        let vfile = if info.collection.is_empty() {
+                                            format!("{}/{}", dir, info.volume_id)
+                                        } else {
+                                            format!("{}/{}_{}", dir, info.collection, info.volume_id)
+                                        };
+                                        format!("{}{}.copying", vfile, info.ext)
+                                    }
+                                    None => {
+                                        drop(store);
+                                        return Err(Status::internal(format!(
+                                            "no {} disk location with a free slot for volume {}",
+                                            info.disk_type, info.volume_id
+                                        )));
+                                    }
+                                }
+                            } else {
+                                drop(store);
+                                return Err(Status::not_found(format!(
+                                    "volume {} not found",
+                                    info.volume_id
+                                )));
+                            }
                         };
 
                         target_file = Some(std::fs::File::create(&path).map_err(|e| {
@@ -3094,6 +3125,89 @@ impl VolumeServer for VolumeGrpcService {
         self.state.check_maintenance()?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
+
+        // Staged mode: the caller decoded off-box and streamed the normal volume
+        // here as <base><ext>.copying (ReceiveFile staged-new-volume mode). Adopt
+        // those files as a normal volume — rename .copying into place under a .note
+        // marker, then mount. This server holds no EC shards for the vid, so there
+        // is no in-place decode to run.
+        if req.from_staged {
+            let want = DiskType::from_string(&req.disk_type);
+            let base = {
+                let store = self.state.store.read().unwrap();
+                if store.has_volume(vid) {
+                    return Err(Status::internal(format!(
+                        "staged volume {} already exists on this server",
+                        req.volume_id
+                    )));
+                }
+                let mut base: Option<String> = None;
+                for loc in store.locations.iter() {
+                    if loc.disk_type != want {
+                        continue;
+                    }
+                    let candidate = if req.collection.is_empty() {
+                        format!("{}/{}", loc.directory, req.volume_id)
+                    } else {
+                        format!("{}/{}_{}", loc.directory, req.collection, req.volume_id)
+                    };
+                    if std::path::Path::new(&format!("{}.dat.copying", candidate)).exists() {
+                        base = Some(candidate);
+                        break;
+                    }
+                }
+                base
+            }
+            .ok_or_else(|| {
+                Status::not_found(format!(
+                    "staged volume {}: no .dat.copying found on a {} disk",
+                    req.volume_id, req.disk_type
+                ))
+            })?;
+
+            for ext in [".dat", ".idx", ".vif"] {
+                if !std::path::Path::new(&format!("{}{}.copying", base, ext)).exists() {
+                    return Err(Status::not_found(format!(
+                        "staged volume {} missing {}.copying",
+                        req.volume_id, ext
+                    )));
+                }
+            }
+
+            // .note in-progress marker (VolumeCopy discipline): a crash mid-rename
+            // leaves a .note that fails the load and sweeps the partial volume.
+            let note = format!("{}.note", base);
+            std::fs::write(&note, format!("adopting decoded volume {}", req.volume_id))
+                .map_err(|e| Status::internal(format!("write .note: {}", e)))?;
+
+            // Rename staged files into place, then drop the .note before mounting —
+            // a volume that still carries a .note is swept by the load scan.
+            for ext in [".vif", ".dat", ".idx"] {
+                let src = format!("{}{}.copying", base, ext);
+                let dst = format!("{}{}", base, ext);
+                if let Err(e) = std::fs::rename(&src, &dst) {
+                    let _ = std::fs::remove_file(&note);
+                    return Err(Status::internal(format!("rename staged {}: {}", ext, e)));
+                }
+            }
+            let _ = std::fs::remove_file(&note);
+
+            {
+                let mut store = self.state.store.write().unwrap();
+                store.mount_volume_by_id(vid).map_err(|e| {
+                    Status::internal(format!("mount staged volume {}: {}", req.volume_id, e))
+                })?;
+            }
+            self.state.volume_state_notify.notify_one();
+            tracing::info!(
+                "volume_ec_shards_to_volume: adopted decoded volume {} from staging ({})",
+                req.volume_id,
+                base
+            );
+            return Ok(Response::new(
+                volume_server_pb::VolumeEcShardsToVolumeResponse {},
+            ));
+        }
 
         let store = self.state.store.read().unwrap();
         // Aggregate per-shard data dirs across all locations so the

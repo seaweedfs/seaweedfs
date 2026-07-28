@@ -2465,14 +2465,20 @@ func (*ReceiveFileRequest_Info) isReceiveFileRequest_Data() {}
 func (*ReceiveFileRequest_FileContent) isReceiveFileRequest_Data() {}
 
 type ReceiveFileInfo struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	VolumeId      uint32                 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
-	Ext           string                 `protobuf:"bytes,2,opt,name=ext,proto3" json:"ext,omitempty"`
-	Collection    string                 `protobuf:"bytes,3,opt,name=collection,proto3" json:"collection,omitempty"`
-	IsEcVolume    bool                   `protobuf:"varint,4,opt,name=is_ec_volume,json=isEcVolume,proto3" json:"is_ec_volume,omitempty"`
-	ShardId       uint32                 `protobuf:"varint,5,opt,name=shard_id,json=shardId,proto3" json:"shard_id,omitempty"`
-	FileSize      uint64                 `protobuf:"varint,6,opt,name=file_size,json=fileSize,proto3" json:"file_size,omitempty"`
-	DiskId        uint32                 `protobuf:"varint,7,opt,name=disk_id,json=diskId,proto3" json:"disk_id,omitempty"` // EC shard disk; 0 = auto-select (see VolumeEcShardsCopyRequest.disk_id)
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	VolumeId   uint32                 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	Ext        string                 `protobuf:"bytes,2,opt,name=ext,proto3" json:"ext,omitempty"`
+	Collection string                 `protobuf:"bytes,3,opt,name=collection,proto3" json:"collection,omitempty"`
+	IsEcVolume bool                   `protobuf:"varint,4,opt,name=is_ec_volume,json=isEcVolume,proto3" json:"is_ec_volume,omitempty"`
+	ShardId    uint32                 `protobuf:"varint,5,opt,name=shard_id,json=shardId,proto3" json:"shard_id,omitempty"`
+	FileSize   uint64                 `protobuf:"varint,6,opt,name=file_size,json=fileSize,proto3" json:"file_size,omitempty"`
+	DiskId     uint32                 `protobuf:"varint,7,opt,name=disk_id,json=diskId,proto3" json:"disk_id,omitempty"` // EC shard disk; 0 = auto-select (see VolumeEcShardsCopyRequest.disk_id)
+	// Field numbers 8-11 are reserved for versioned-EC; disk_type stays at 12.
+	// Staged-new-volume mode (EC decode onto a clean peer): set on a non-EC push
+	// whose volume does not yet exist on this server. The server picks a disk
+	// location of this medium with a free slot and writes <base><ext>.copying,
+	// finalized by VolumeEcShardsToVolume(from_staged).
+	DiskType      string `protobuf:"bytes,12,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2554,6 +2560,13 @@ func (x *ReceiveFileInfo) GetDiskId() uint32 {
 		return x.DiskId
 	}
 	return 0
+}
+
+func (x *ReceiveFileInfo) GetDiskType() string {
+	if x != nil {
+		return x.DiskType
+	}
+	return ""
 }
 
 type ReceiveFileResponse struct {
@@ -4257,9 +4270,16 @@ func (*VolumeEcBlobDeleteResponse) Descriptor() ([]byte, []int) {
 }
 
 type VolumeEcShardsToVolumeRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	VolumeId      uint32                 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
-	Collection    string                 `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	VolumeId   uint32                 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	Collection string                 `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
+	// Staged mode: the caller already decoded the EC shards off-box and pushed
+	// .dat/.idx/.vif as <base><ext>.copying to this server (ReceiveFile
+	// staged-new-volume mode). Adopt them as a normal volume instead of decoding
+	// local EC shards in place, so <vid> is never registered as both EC and
+	// normal on one disk.
+	FromStaged    bool   `protobuf:"varint,3,opt,name=from_staged,json=fromStaged,proto3" json:"from_staged,omitempty"`
+	DiskType      string `protobuf:"bytes,4,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"` // target medium's disk location for the normal volume (staged mode)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4304,6 +4324,20 @@ func (x *VolumeEcShardsToVolumeRequest) GetVolumeId() uint32 {
 func (x *VolumeEcShardsToVolumeRequest) GetCollection() string {
 	if x != nil {
 		return x.Collection
+	}
+	return ""
+}
+
+func (x *VolumeEcShardsToVolumeRequest) GetFromStaged() bool {
+	if x != nil {
+		return x.FromStaged
+	}
+	return false
+}
+
+func (x *VolumeEcShardsToVolumeRequest) GetDiskType() string {
+	if x != nil {
+		return x.DiskType
 	}
 	return ""
 }
@@ -7285,7 +7319,7 @@ const file_volume_server_proto_rawDesc = "" +
 	"\x12ReceiveFileRequest\x127\n" +
 	"\x04info\x18\x01 \x01(\v2!.volume_server_pb.ReceiveFileInfoH\x00R\x04info\x12#\n" +
 	"\ffile_content\x18\x02 \x01(\fH\x00R\vfileContentB\x06\n" +
-	"\x04data\"\xd3\x01\n" +
+	"\x04data\"\xf0\x01\n" +
 	"\x0fReceiveFileInfo\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x10\n" +
 	"\x03ext\x18\x02 \x01(\tR\x03ext\x12\x1e\n" +
@@ -7296,7 +7330,8 @@ const file_volume_server_proto_rawDesc = "" +
 	"isEcVolume\x12\x19\n" +
 	"\bshard_id\x18\x05 \x01(\rR\ashardId\x12\x1b\n" +
 	"\tfile_size\x18\x06 \x01(\x04R\bfileSize\x12\x17\n" +
-	"\adisk_id\x18\a \x01(\rR\x06diskId\"P\n" +
+	"\adisk_id\x18\a \x01(\rR\x06diskId\x12\x1b\n" +
+	"\tdisk_type\x18\f \x01(\tR\bdiskType\"P\n" +
 	"\x13ReceiveFileResponse\x12#\n" +
 	"\rbytes_written\x18\x01 \x01(\x04R\fbytesWritten\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\"`\n" +
@@ -7431,12 +7466,15 @@ const file_volume_server_proto_rawDesc = "" +
 	"collection\x12\x19\n" +
 	"\bfile_key\x18\x03 \x01(\x04R\afileKey\x12\x18\n" +
 	"\aversion\x18\x04 \x01(\rR\aversion\"\x1c\n" +
-	"\x1aVolumeEcBlobDeleteResponse\"\\\n" +
+	"\x1aVolumeEcBlobDeleteResponse\"\x9a\x01\n" +
 	"\x1dVolumeEcShardsToVolumeRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x1e\n" +
 	"\n" +
 	"collection\x18\x02 \x01(\tR\n" +
-	"collection\" \n" +
+	"collection\x12\x1f\n" +
+	"\vfrom_staged\x18\x03 \x01(\bR\n" +
+	"fromStaged\x12\x1b\n" +
+	"\tdisk_type\x18\x04 \x01(\tR\bdiskType\" \n" +
 	"\x1eVolumeEcShardsToVolumeResponse\"8\n" +
 	"\x19VolumeEcShardsInfoRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\"\xcf\x01\n" +

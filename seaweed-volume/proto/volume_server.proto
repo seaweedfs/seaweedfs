@@ -343,6 +343,13 @@ message ReceiveFileInfo {
     uint32 shard_id = 5;
     uint64 file_size = 6;
     uint32 disk_id = 7;  // EC shard disk; 0 = auto-select (see VolumeEcShardsCopyRequest.disk_id)
+
+    // Field numbers 8-11 are reserved for versioned-EC; disk_type stays at 12.
+    // Staged-new-volume mode (EC decode onto a clean peer): set on a non-EC push
+    // whose volume does not yet exist on this server. The server picks a disk
+    // location of this medium with a free slot and writes <base><ext>.copying,
+    // finalized by VolumeEcShardsToVolume(from_staged).
+    string disk_type = 12;
 }
 
 message ReceiveFileResponse {
@@ -503,6 +510,13 @@ message VolumeEcBlobDeleteResponse {
 message VolumeEcShardsToVolumeRequest {
     uint32 volume_id = 1;
     string collection = 2;
+    // Staged mode: the caller already decoded the EC shards off-box and pushed
+    // .dat/.idx/.vif as <base><ext>.copying to this server (ReceiveFile
+    // staged-new-volume mode). Adopt them as a normal volume instead of decoding
+    // local EC shards in place, so <vid> is never registered as both EC and
+    // normal on one disk.
+    bool from_staged = 3;
+    string disk_type = 4; // target medium's disk location for the normal volume (staged mode)
 }
 message VolumeEcShardsToVolumeResponse {
 }
