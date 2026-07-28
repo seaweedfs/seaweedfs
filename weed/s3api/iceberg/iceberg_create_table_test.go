@@ -9,6 +9,7 @@ import (
 
 	"github.com/apache/iceberg-go"
 	"github.com/google/uuid"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
 func TestValidateCreateTableRequestRequiresName(t *testing.T) {
@@ -89,6 +90,27 @@ func TestNewTableMetadataAcceptsV3TypeAtV3(t *testing.T) {
 	}
 	if _, found := metadata.CurrentSchema().FindFieldByName("payload"); !found {
 		t.Error("variant field missing from stored schema")
+	}
+}
+
+// A LoadTable response must never carry nil metadata: it serializes as
+// "metadata":null under HTTP 200, which no Iceberg client can parse.
+func TestBuildLoadTableResultNeverReturnsNilMetadata(t *testing.T) {
+	cases := map[string]s3tables.GetTableResponse{
+		"no stored metadata":   {MetadataLocation: "s3://bkt/ns/t/metadata/v1.metadata.json"},
+		"empty full metadata":  {Metadata: &s3tables.TableMetadata{}},
+		"unparseable metadata": {Metadata: &s3tables.TableMetadata{FullMetadata: json.RawMessage(`{"nope":`)}},
+	}
+	for name, getResp := range cases {
+		t.Run(name, func(t *testing.T) {
+			result, err := (&Server{}).buildLoadTableResult(getResp, "bkt", []string{"ns"}, "t")
+			if err != nil {
+				t.Fatalf("buildLoadTableResult() error = %v, want nil", err)
+			}
+			if result.Metadata == nil {
+				t.Fatal("buildLoadTableResult() returned nil metadata with no error")
+			}
+		})
 	}
 }
 

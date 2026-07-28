@@ -160,8 +160,9 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 				}
 
 				if baseMetadata == nil {
-					baseMetadata = newEmptyTableMetadata(tableUUID, location, tableName)
-					if baseMetadata == nil {
+					var buildErr error
+					if baseMetadata, buildErr = newEmptyTableMetadata(tableUUID, location); buildErr != nil {
+						glog.Errorf("Iceberg: CommitTable placeholder metadata for %s: %v", tableName, buildErr)
 						writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build current metadata")
 						return
 					}
@@ -216,11 +217,12 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		} else {
-			currentMetadata = newEmptyTableMetadata(tableUUID, location, tableName)
-		}
-		if currentMetadata == nil {
-			writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build current metadata")
-			return
+			currentMetadata, err = newEmptyTableMetadata(tableUUID, location)
+			if err != nil {
+				glog.Errorf("Iceberg: CommitTable placeholder metadata for %s: %v", tableName, err)
+				writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build current metadata")
+				return
+			}
 		}
 
 		for _, requirement := range req.Requirements {

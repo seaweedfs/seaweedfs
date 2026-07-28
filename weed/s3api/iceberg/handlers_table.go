@@ -247,7 +247,12 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	if existsErr == nil {
 		// Table already registered. Return the existing definition so CTAS/IF NOT
 		// EXISTS flows see a stable response instead of a 409.
-		result := s.buildLoadTableResult(existsResp, bucketName, namespace, tableName)
+		result, buildErr := s.buildLoadTableResult(existsResp, bucketName, namespace, tableName)
+		if buildErr != nil {
+			glog.Errorf("Iceberg: CreateTable load existing %s: %v", tableName, buildErr)
+			writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build table metadata")
+			return
+		}
 		writeJSON(w, http.StatusOK, result)
 		return
 	}
@@ -320,7 +325,12 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusConflict, "AlreadyExistsException", err.Error())
 				return
 			}
-			result := s.buildLoadTableResult(getResp, bucketName, namespace, tableName)
+			result, buildErr := s.buildLoadTableResult(getResp, bucketName, namespace, tableName)
+			if buildErr != nil {
+				glog.Errorf("Iceberg: CreateTable load existing %s: %v", tableName, buildErr)
+				writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build table metadata")
+				return
+			}
 			writeJSON(w, http.StatusOK, result)
 			return
 		}
@@ -339,7 +349,12 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusConflict, "AlreadyExistsException", err.Error())
 				return
 			}
-			result := s.buildLoadTableResult(getResp, bucketName, namespace, tableName)
+			result, buildErr := s.buildLoadTableResult(getResp, bucketName, namespace, tableName)
+			if buildErr != nil {
+				glog.Errorf("Iceberg: CreateTable load existing %s: %v", tableName, buildErr)
+				writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build table metadata")
+				return
+			}
 			writeJSON(w, http.StatusOK, result)
 			return
 		}
@@ -451,7 +466,12 @@ func (s *Server) handleRegisterTable(w http.ResponseWriter, r *http.Request) {
 		MetadataLocation: req.MetadataLocation,
 		Metadata:         &s3tables.TableMetadata{FullMetadata: json.RawMessage(metadataBytes)},
 	}
-	result := s.buildLoadTableResult(getResp, bucketName, namespace, req.Name)
+	result, buildErr := s.buildLoadTableResult(getResp, bucketName, namespace, req.Name)
+	if buildErr != nil {
+		glog.Errorf("Iceberg: RegisterTable %s: %v", req.Name, buildErr)
+		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build table metadata")
+		return
+	}
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -495,11 +515,16 @@ func (s *Server) handleLoadTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result := s.buildLoadTableResult(getResp, bucketName, namespace, tableName)
+	result, buildErr := s.buildLoadTableResult(getResp, bucketName, namespace, tableName)
+	if buildErr != nil {
+		glog.Errorf("Iceberg: LoadTable %s: %v", tableName, buildErr)
+		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build table metadata")
+		return
+	}
 	writeJSON(w, http.StatusOK, result)
 }
 
-func (s *Server) buildLoadTableResult(getResp s3tables.GetTableResponse, bucketName string, namespace []string, tableName string) LoadTableResult {
+func (s *Server) buildLoadTableResult(getResp s3tables.GetTableResponse, bucketName string, namespace []string, tableName string) (LoadTableResult, error) {
 	location := tableLocationFromMetadataLocation(getResp.MetadataLocation)
 	if location == "" {
 		location = fmt.Sprintf("s3://%s/%s", bucketName, path.Join(flattenNamespacePath(namespace), tableName))
@@ -514,27 +539,32 @@ func (s *Server) buildLoadTableResult(getResp s3tables.GetTableResponse, bucketN
 	// Stability is guaranteed by not generating random UUIDs on read
 
 	var metadata table.Metadata
+	var err error
 	if getResp.Metadata != nil && len(getResp.Metadata.FullMetadata) > 0 {
-		var err error
 		metadata, err = table.ParseMetadataBytes(getResp.Metadata.FullMetadata)
 		if err != nil {
 			glog.Warningf("Iceberg: Failed to parse persisted metadata for %s: %v", tableName, err)
 			// Attempt to reconstruct from IcebergMetadata if available, otherwise synthetic
 			// TODO: Extract schema/spec from getResp.Metadata.Iceberg if FullMetadata fails but partial info exists?
 			// For now, fallback to empty metadata
-			metadata = newEmptyTableMetadata(tableUUID, location, tableName)
+			metadata, err = newEmptyTableMetadata(tableUUID, location)
 		}
 	} else {
 		// No full metadata, create synthetic
 		// TODO: If we had stored schema in IcebergMetadata, we would pass it here
-		metadata = newEmptyTableMetadata(tableUUID, location, tableName)
+		metadata, err = newEmptyTableMetadata(tableUUID, location)
+	}
+	// A nil metadata would serialize as "metadata":null under HTTP 200, which no
+	// Iceberg client can parse. Fail the request instead.
+	if err != nil {
+		return LoadTableResult{}, fmt.Errorf("build metadata for %s: %w", tableName, err)
 	}
 
 	return LoadTableResult{
 		MetadataLocation: getResp.MetadataLocation,
 		Metadata:         metadata,
 		Config:           s.buildFileIOConfig(),
-	}
+	}, nil
 }
 
 // buildFileIOConfig returns the FileIO properties to advertise to catalog
@@ -818,15 +848,9 @@ func newTableMetadata(
 }
 
 // newEmptyTableMetadata builds the schema-less placeholder used when a table's
-// persisted metadata is missing or unparseable. Nothing here is client-supplied,
-// so a failure is ours: log it and let the caller report a 500.
-func newEmptyTableMetadata(tableUUID uuid.UUID, location, tableName string) table.Metadata {
-	metadata, err := newTableMetadata(tableUUID, location, nil, nil, nil, nil)
-	if err != nil {
-		glog.Errorf("Iceberg: failed to build placeholder metadata for %s: %v", tableName, err)
-		return nil
-	}
-	return metadata
+// persisted metadata is missing or unparseable.
+func newEmptyTableMetadata(tableUUID uuid.UUID, location string) (table.Metadata, error) {
+	return newTableMetadata(tableUUID, location, nil, nil, nil, nil)
 }
 
 // metadataBuildError maps a newTableMetadata failure to a REST response. Schema
