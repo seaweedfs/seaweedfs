@@ -1768,7 +1768,14 @@ impl VolumeServer for VolumeGrpcService {
                                 // .idx.copying/.vif.copying are not valid volume names,
                                 // so the scanner never half-loads a partial push.
                                 let want = DiskType::from_string(&info.disk_type);
-                                match store.find_free_location_predicate(|l| l.disk_type == want) {
+                                let staged_vid = VolumeId(info.volume_id);
+                                // Skip a disk already holding this vid's EC shards, so the
+                                // decoded .dat never lands in the same directory as a shard —
+                                // lets the caller target a shard host that has a spare disk.
+                                match store.find_free_location_predicate(|l| {
+                                    l.disk_type == want
+                                        && !l.ec_volumes().any(|(v, _)| *v == staged_vid)
+                                }) {
                                     Some(i) => {
                                         let dir = store.locations[i].directory.clone();
                                         drop(store);
