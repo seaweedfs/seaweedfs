@@ -2,12 +2,14 @@ package iceberg
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 
+	"github.com/apache/iceberg-go"
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -123,11 +125,19 @@ func nameValidationError(err error) bool {
 	return false
 }
 
-// writeManagerError maps a residual s3tables manager error to a response:
-// name validation failures are client errors (400); anything else is a server
-// fault (500).
+// writeManagerError maps a residual error to a response: name validation
+// failures and rejected schemas come from the request body, so they are client
+// errors (400) and must carry the reason -- a variant field without
+// format-version 3 otherwise reads as a bare 500 with "variant is not supported
+// until v3" only in the log. Anything else is a server fault (500).
 func writeManagerError(w http.ResponseWriter, err error) {
-	if nameValidationError(err) {
+	switch {
+	case nameValidationError(err),
+		errors.Is(err, iceberg.ErrInvalidSchema),
+		errors.Is(err, iceberg.ErrInvalidPartitionSpec),
+		errors.Is(err, iceberg.ErrInvalidTypeString),
+		errors.Is(err, iceberg.ErrInvalidTransform),
+		errors.Is(err, iceberg.ErrInvalidArgument):
 		writeError(w, http.StatusBadRequest, "BadRequestException", err.Error())
 		return
 	}

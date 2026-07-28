@@ -1,8 +1,14 @@
 package iceberg
 
 import (
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
+
+	"github.com/apache/iceberg-go"
+	"github.com/google/uuid"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
 func TestValidateCreateTableRequestRequiresName(t *testing.T) {
@@ -33,5 +39,70 @@ func TestIsStageCreateEnabledFalseValues(t *testing.T) {
 		if isStageCreateEnabled() {
 			t.Fatalf("isStageCreateEnabled() = true for value %q, want false", value)
 		}
+	}
+}
+
+func mustParseSchema(t *testing.T, raw string) *iceberg.Schema {
+	t.Helper()
+	var schema iceberg.Schema
+	if err := json.Unmarshal([]byte(raw), &schema); err != nil {
+		t.Fatalf("parse schema: %v", err)
+	}
+	return &schema
+}
+
+const variantSchema = `{"type":"struct","schema-id":0,"fields":[
+	{"id":1,"name":"id","required":true,"type":"long"},
+	{"id":2,"name":"payload","required":false,"type":"variant"}]}`
+
+// A v3-only column type without format-version 3 is the client's mistake, and
+// the reason has to travel back to them rather than only into the server log.
+func TestNewTableMetadataRejectsV3TypeBelowV3(t *testing.T) {
+	_, err := newTableMetadata(uuid.New(), "s3://bkt/ns/t", mustParseSchema(t, variantSchema), nil, nil, nil)
+	if err == nil {
+		t.Fatal("newTableMetadata() error = nil, want invalid schema")
+	}
+	if !errors.Is(err, iceberg.ErrInvalidSchema) {
+		t.Fatalf("newTableMetadata() error = %v, want ErrInvalidSchema", err)
+	}
+
+	// writeManagerError turns this into a 400; see TestWriteManagerError.
+	if !strings.Contains(err.Error(), "variant is not supported until v3") {
+		t.Errorf("error = %q, want the underlying reason", err.Error())
+	}
+}
+
+func TestNewTableMetadataAcceptsV3TypeAtV3(t *testing.T) {
+	metadata, err := newTableMetadata(uuid.New(), "s3://bkt/ns/t", mustParseSchema(t, variantSchema), nil, nil,
+		iceberg.Properties{"format-version": "3"})
+	if err != nil {
+		t.Fatalf("newTableMetadata() error = %v, want nil", err)
+	}
+	if got := metadata.Version(); got != 3 {
+		t.Fatalf("metadata.Version() = %d, want 3", got)
+	}
+	if _, found := metadata.CurrentSchema().FindFieldByName("payload"); !found {
+		t.Error("variant field missing from stored schema")
+	}
+}
+
+// A LoadTable response must never carry nil metadata: it serializes as
+// "metadata":null under HTTP 200, which no Iceberg client can parse.
+func TestBuildLoadTableResultNeverReturnsNilMetadata(t *testing.T) {
+	cases := map[string]s3tables.GetTableResponse{
+		"no stored metadata":   {MetadataLocation: "s3://bkt/ns/t/metadata/v1.metadata.json"},
+		"empty full metadata":  {Metadata: &s3tables.TableMetadata{}},
+		"unparseable metadata": {Metadata: &s3tables.TableMetadata{FullMetadata: json.RawMessage(`{"nope":`)}},
+	}
+	for name, getResp := range cases {
+		t.Run(name, func(t *testing.T) {
+			result, err := (&Server{}).buildLoadTableResult(getResp, "bkt", []string{"ns"}, "t")
+			if err != nil {
+				t.Fatalf("buildLoadTableResult() error = %v, want nil", err)
+			}
+			if result.Metadata == nil {
+				t.Fatal("buildLoadTableResult() returned nil metadata with no error")
+			}
+		})
 	}
 }
