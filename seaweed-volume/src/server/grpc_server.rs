@@ -182,7 +182,19 @@ impl VolumeGrpcService {
         info: &MasterVolumeInfo,
         is_readonly: bool,
     ) -> Result<(), Status> {
-        let master_url = self.state.master_url.clone();
+        // VolumeMarkReadonly mutates raft-replicated master topology, so it must
+        // reach the leader. Prefer the live leader the heartbeat is talking to
+        // (current_master_url), falling back to the static seed before the first
+        // heartbeat — mirrors store_ec.rs and Go's vs.GetMaster(). Sending it to
+        // the static seed fails "not current leader" after any master failover.
+        let master_url = {
+            let live = self.state.current_master_url.read().await.clone();
+            if !live.is_empty() {
+                live
+            } else {
+                self.state.master_url.clone()
+            }
+        };
         if master_url.is_empty() {
             return Ok(());
         }
