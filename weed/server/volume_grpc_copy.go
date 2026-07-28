@@ -687,12 +687,31 @@ func (vs *VolumeServer) ReceiveFile(stream volume_server_pb.VolumeServer_Receive
 				// Regular volume file
 				v := vs.store.GetVolume(needle.VolumeId(fileInfo.VolumeId))
 				if v == nil {
-					glog.Errorf("ReceiveFile: volume %d not found", fileInfo.VolumeId)
-					return stream.SendAndClose(&volume_server_pb.ReceiveFileResponse{
-						Error: fmt.Sprintf("volume %d not found", fileInfo.VolumeId),
+					if fileInfo.DiskType == "" {
+						glog.Errorf("ReceiveFile: volume %d not found", fileInfo.VolumeId)
+						return stream.SendAndClose(&volume_server_pb.ReceiveFileResponse{
+							Error: fmt.Sprintf("volume %d not found", fileInfo.VolumeId),
+						})
+					}
+					// Staged-new-volume mode (EC decode onto a clean peer): the
+					// volume does not exist here yet. Pick a free-slot disk location
+					// of the requested medium and stage the file as
+					// <base><ext>.copying, to be renamed into place and mounted by
+					// VolumeEcShardsToVolume(from_staged). .idx.copying/.vif.copying
+					// are not valid volume names, so the scanner never half-loads.
+					want := types.ToDiskType(fileInfo.DiskType)
+					loc := vs.store.FindFreeLocation(func(l *storage.DiskLocation) bool {
+						return l.DiskType == want
 					})
+					if loc == nil {
+						return stream.SendAndClose(&volume_server_pb.ReceiveFileResponse{
+							Error: fmt.Sprintf("no %s disk location with a free slot for volume %d", fileInfo.DiskType, fileInfo.VolumeId),
+						})
+					}
+					filePath = storage.VolumeFileName(loc.Directory, fileInfo.Collection, int(fileInfo.VolumeId)) + fileInfo.Ext + ".copying"
+				} else {
+					filePath = v.FileName(fileInfo.Ext)
 				}
-				filePath = v.FileName(fileInfo.Ext)
 			}
 
 			// Create target file
