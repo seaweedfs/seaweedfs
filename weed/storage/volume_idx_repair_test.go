@@ -80,6 +80,11 @@ func TestRepairIdxHeadTombstones_RestoresClobberedRows(t *testing.T) {
 	idxPath := filepath.Join(dir, "1.idx")
 	sizeBefore := fileSize(t, idxPath)
 
+	// The rewrite replaces .idx wholesale, so it must not widen the mode.
+	if err := os.Chmod(idxPath, 0600); err != nil {
+		t.Fatalf("chmod idx: %v", err)
+	}
+
 	// Deletes against needles 9..12 land on the front of .idx and take the
 	// rows indexing needles 1..4 with them.
 	clobberIdxHead(t, idxPath, []uint64{9, 10, 11, 12})
@@ -99,6 +104,12 @@ func TestRepairIdxHeadTombstones_RestoresClobberedRows(t *testing.T) {
 
 	if got, want := fileSize(t, idxPath), sizeBefore+int64(clobbered*types.NeedleMapEntrySize); got != want {
 		t.Fatalf("idx size after recovery: got %d, want %d", got, want)
+	}
+
+	if st, err := os.Stat(idxPath); err != nil {
+		t.Fatalf("stat idx: %v", err)
+	} else if got := st.Mode().Perm(); got != 0600 {
+		t.Fatalf("idx mode after recovery: got %o, want 600", got)
 	}
 
 	// The recovered rows go back in front, so .idx is in .dat append order

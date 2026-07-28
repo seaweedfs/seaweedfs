@@ -190,8 +190,13 @@ func prependIdxRows(idxFileName string, rows []byte) error {
 	}
 	defer src.Close()
 
+	srcStat, err := src.Stat()
+	if err != nil {
+		return err
+	}
+
 	tmpFileName := idxFileName + ".tmp"
-	dst, err := os.OpenFile(tmpFileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	dst, err := os.OpenFile(tmpFileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, srcStat.Mode().Perm())
 	if err != nil {
 		return err
 	}
@@ -203,6 +208,11 @@ func prependIdxRows(idxFileName string, rows []byte) error {
 		}
 	}()
 
+	// The rename replaces .idx with this file, so it has to carry the mode the
+	// index already had -- O_CREATE alone leaves it at the umask's mercy.
+	if err = dst.Chmod(srcStat.Mode().Perm()); err != nil {
+		return err
+	}
 	if _, err = dst.Write(rows); err != nil {
 		return err
 	}

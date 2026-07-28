@@ -176,11 +176,15 @@ fn prepend_idx_rows(idx_path: &str, rows: &[u8]) -> Result<(), VolumeError> {
     let tmp_path = format!("{}.tmp", idx_path);
     let mut src = File::open(idx_path)?;
     let commit = (|| -> io::Result<()> {
+        let src_perm = src.metadata()?.permissions();
         let mut dst = OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
             .open(&tmp_path)?;
+        // The rename replaces .idx with this file, so it has to carry the mode
+        // the index already had rather than whatever the umask allows.
+        dst.set_permissions(src_perm)?;
         dst.write_all(rows)?;
         io::copy(&mut src, &mut dst)?;
         dst.sync_all()?;
@@ -211,7 +215,7 @@ mod tests {
     use super::*;
     use crate::storage::needle::crc::CRC;
     use crate::storage::needle_map::NeedleMapKind;
-    use std::os::unix::fs::FileExt;
+    use std::os::unix::fs::{FileExt, PermissionsExt};
     use tempfile::TempDir;
 
     fn open_volume(dir: &str) -> Volume {
@@ -300,6 +304,9 @@ mod tests {
         let written = write_test_volume(dir, 12);
         let size_before = idx_size(&idx_path);
 
+        // The rewrite replaces .idx wholesale, so it must not widen the mode.
+        fs::set_permissions(&idx_path, fs::Permissions::from_mode(0o600)).unwrap();
+
         // Deletes against needles 9..12 land on the front of .idx and take the
         // rows indexing needles 1..4 with them.
         clobber_idx_head(&idx_path, &[9, 10, 11, 12]);
@@ -316,6 +323,12 @@ mod tests {
 
         let want = size_before + 4 * NEEDLE_MAP_ENTRY_SIZE as u64;
         assert_eq!(idx_size(&idx_path), want, "idx size after recovery");
+
+        assert_eq!(
+            fs::metadata(&idx_path).unwrap().permissions().mode() & 0o777,
+            0o600,
+            "idx mode after recovery"
+        );
 
         // The recovered rows go back in front, so .idx is in .dat append order
         // again: the fingerprint is gone and the last row is still the .dat tail.
