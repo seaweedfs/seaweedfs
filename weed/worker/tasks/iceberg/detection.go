@@ -371,7 +371,7 @@ func loadCurrentManifests(
 	if err != nil {
 		return nil, fmt.Errorf("read manifest list: %w", err)
 	}
-	manifests, err := iceberg.ReadManifestList(bytes.NewReader(manifestListData))
+	manifests, err := s3tables.ReadManifestList(manifestListData)
 	if err != nil {
 		return nil, fmt.Errorf("parse manifest list: %w", err)
 	}

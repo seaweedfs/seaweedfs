@@ -871,6 +871,75 @@ func TestRemoveOrphansPreservesReferencedFiles(t *testing.T) {
 	}
 }
 
+// DuckDB writes manifest lists carrying no Iceberg header metadata, which
+// iceberg-go reads as v1 and then rejects every v2 manifest listed in them,
+// failing all three maintenance operations before they touch anything.
+func TestMaintenanceOnManifestListWithoutFormatVersion(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "test",
+		TableName:  "foo",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: time.Now().UnixMilli(), ManifestList: "metadata/snap-1.avro"},
+		},
+	}
+	populateTable(t, fs, setup)
+
+	metaDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "metadata")
+	dropManifestListFormatVersion(t, fs, metaDir, "snap-1.avro")
+
+	handler := NewHandler(nil)
+	config := Config{
+		OrphanOlderThanHours: 0, // no safety window — every unreferenced file is an orphan
+		MaxCommitRetries:     3,
+	}
+
+	result, _, err := handler.removeOrphans(context.Background(), client, setup.BucketName, setup.tablePath(), config)
+	if err != nil {
+		t.Fatalf("removeOrphans failed: %v", err)
+	}
+	if !strings.Contains(result, "removed 0 orphan") {
+		t.Errorf("expected every file to still be referenced, got %q", result)
+	}
+	if fs.getEntry(metaDir, "manifest-1.avro") == nil {
+		t.Error("manifest-1.avro (referenced manifest) should not have been deleted")
+	}
+}
+
+// dropManifestListFormatVersion rewrites a manifest list's Avro header the way
+// DuckDB writes it, without a "format-version" entry. The key is renamed rather
+// than removed so every Avro length prefix stays valid — iceberg-go ignores
+// header entries it does not recognise.
+func dropManifestListFormatVersion(t *testing.T, fs *fakeFilerServer, dir, name string) {
+	t.Helper()
+
+	entry := fs.getEntry(dir, name)
+	if entry == nil {
+		t.Fatalf("manifest list %s/%s not found", dir, name)
+	}
+	patched := bytes.Replace(entry.Content, []byte("format-version"), []byte("ignored-header"), 1)
+	if bytes.Equal(patched, entry.Content) {
+		t.Fatalf("manifest list %s carries no format-version to drop", name)
+	}
+	fs.putEntry(dir, name, &filer_pb.Entry{
+		Name:       entry.Name,
+		Attributes: entry.Attributes,
+		Content:    patched,
+	})
+
+	// Confirm the fixture reproduces the report: with the entry gone,
+	// iceberg-go alone falls back to v1 and mislabels the v2 manifests.
+	manifests, err := iceberg.ReadManifestList(bytes.NewReader(patched))
+	if err != nil {
+		t.Fatalf("read patched manifest list: %v", err)
+	}
+	if got := manifests[0].Version(); got != 1 {
+		t.Fatalf("patched manifest list still reports v%d", got)
+	}
+}
+
 func TestRewriteManifestsExecution(t *testing.T) {
 	fs, client := startFakeFiler(t)
 
