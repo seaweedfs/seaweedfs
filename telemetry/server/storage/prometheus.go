@@ -173,7 +173,7 @@ func (s *PrometheusStorage) GetMetrics(days int) (map[string]interface{}, error)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	axis := newDailySeries(days)
+	axis := newDailySeries(days, s.histories)
 	activeSince := time.Now().UTC().AddDate(0, 0, -activeDays).Unix()
 
 	diskUsage := make([]uint64, len(axis.dates))

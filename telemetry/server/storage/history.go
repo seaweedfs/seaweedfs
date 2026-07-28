@@ -52,18 +52,43 @@ type dailySeries struct {
 	dayOf map[string]int
 }
 
-func newDailySeries(days int) dailySeries {
-	now := time.Now().UTC()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+// newDailySeries builds the axis of UTC days ending today, spanning `days` days
+// but starting no earlier than the first day any cluster reported on: a fresh
+// server is asked for more days than it has history for, and padding those days
+// with zeros draws a climb out of nothing that never happened.
+func newDailySeries(days int, histories map[string][]HistorySample) dailySeries {
+	today := utcDay(time.Now().Unix())
+	requested := today.AddDate(0, 0, 1-days)
+
+	// Samples are appended in receive order, so [0] is a cluster's oldest.
+	var start time.Time
+	for _, history := range histories {
+		if len(history) == 0 {
+			continue
+		}
+		if first := utcDay(history[0].Ts); start.IsZero() || first.Before(start) {
+			start = first
+		}
+	}
+	if start.IsZero() || start.Before(requested) {
+		start = requested
+	}
+
+	n := int(today.Sub(start)/(24*time.Hour)) + 1
 	d := dailySeries{
-		dates: make([]string, days),
-		dayOf: make(map[string]int, days),
+		dates: make([]string, n),
+		dayOf: make(map[string]int, n),
 	}
 	for i := range d.dates {
-		d.dates[i] = today.AddDate(0, 0, i-days+1).Format("2006-01-02")
+		d.dates[i] = start.AddDate(0, 0, i).Format("2006-01-02")
 		d.dayOf[d.dates[i]] = i
 	}
 	return d
+}
+
+func utcDay(ts int64) time.Time {
+	t := time.Unix(ts, 0).UTC()
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
 }
 
 func diskBytes(s HistorySample) uint64   { return s.TotalDiskBytes }

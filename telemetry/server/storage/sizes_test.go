@@ -101,11 +101,16 @@ func TestClusterSizeSeriesUsesLatestDailySample(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Nothing was reported before today, so the axis is today alone rather
+	// than the full 3 days padded out with zeros.
 	series := s.GetClusterSizeSeries(3, 0)
 	if len(series.Clusters) != 1 {
 		t.Fatalf("clusters = %+v, want 1", series.Clusters)
 	}
-	if got := series.Clusters[0].Disk; !equal(got, []uint64{0, 0, 700}) {
+	if today := time.Now().UTC().Format("2006-01-02"); len(series.Dates) != 1 || series.Dates[0] != today {
+		t.Errorf("dates = %v, want %s only", series.Dates, today)
+	}
+	if got := series.Clusters[0].Disk; !equal(got, []uint64{700}) {
 		t.Errorf("disk = %v, want today's latest sample only", got)
 	}
 	if series.TotalDisk != 700 {

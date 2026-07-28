@@ -51,6 +51,59 @@ func TestGetMetricsCarriesSkippedDaysForward(t *testing.T) {
 	}
 }
 
+// The window starts at the oldest sample the server actually has, so a server
+// with less history than the caller asked for does not report a fleet that grew
+// out of nothing on its first day of data.
+func TestGetMetricsWindowStartsAtOldestSample(t *testing.T) {
+	s := newPrometheusStorage(prometheus.NewRegistry())
+	seedSamples(s, "recent", HistorySample{TotalDiskBytes: 100, VolumeServerCount: 1}, -2, -1, 0)
+
+	metrics, err := s.GetMetrics(30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := metrics["dates"].([]string); len(got) != 3 {
+		t.Errorf("dates = %v, want the 3 days with history, not 30", got)
+	}
+	if got := metrics["disk_usage"].([]uint64); !equal(got, []uint64{100, 100, 100}) {
+		t.Errorf("disk_usage = %v, want no leading zero days", got)
+	}
+
+	// History reaching past the requested window still clips to the window.
+	seedSamples(s, "old", HistorySample{TotalDiskBytes: 50, VolumeServerCount: 1}, -40)
+	metrics, err = s.GetMetrics(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := metrics["dates"].([]string); len(got) != 10 {
+		t.Errorf("dates = %v, want 10 days", got)
+	}
+}
+
+// "Total Disk Usage Over Time" and the stacked "Cluster Sizes Over Time" sit on
+// the same dashboard, so their last day has to add up to the same number.
+func TestGetMetricsAgreesWithClusterSizes(t *testing.T) {
+	s := newPrometheusStorage(prometheus.NewRegistry())
+	seedSamples(s, "daily", HistorySample{TotalDiskBytes: 300, VolumeServerCount: 3},
+		-9, -8, -7, -6, -5, -4, -3, -2, -1, 0)
+	seedSamples(s, "lagging", HistorySample{TotalDiskBytes: 200, VolumeServerCount: 2}, -2)
+	seedSamples(s, "gone", HistorySample{TotalDiskBytes: 900, VolumeServerCount: 9}, -9, -8)
+
+	metrics, err := s.GetMetrics(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	disk := metrics["disk_usage"].([]uint64)
+	sizes := s.GetClusterSizeSeries(10, 1) // limit forces the Other fold-in too
+
+	if got, want := disk[len(disk)-1], sizes.TotalDisk; got != want {
+		t.Errorf("metrics last day = %d, cluster sizes total = %d", got, want)
+	}
+	if len(disk) != len(sizes.Dates) {
+		t.Errorf("metrics has %d days, cluster sizes has %d", len(disk), len(sizes.Dates))
+	}
+}
+
 func equalInt64(a, b []int64) bool {
 	if len(a) != len(b) {
 		return false

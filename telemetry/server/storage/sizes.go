@@ -35,7 +35,7 @@ func (s *PrometheusStorage) GetClusterSizeSeries(days, limit int) ClusterSizeSer
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	axis := newDailySeries(days)
+	axis := newDailySeries(days, s.histories)
 	activeSince := time.Now().UTC().AddDate(0, 0, -activeDays).Unix()
 	last := len(axis.dates) - 1
 	series := ClusterSizeSeries{Dates: axis.dates}
