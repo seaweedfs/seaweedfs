@@ -10,13 +10,17 @@ import (
 
 // seedHistory gives a cluster one sample per listed day offset (0 is today).
 func seedHistory(s *PrometheusStorage, id string, disk uint64, dayOffsets ...int) {
+	seedSamples(s, id, HistorySample{TotalDiskBytes: disk}, dayOffsets...)
+}
+
+// seedSamples is seedHistory for tests that care about more than disk usage.
+// The sample's Ts is filled in per day offset.
+func seedSamples(s *PrometheusStorage, id string, sample HistorySample, dayOffsets ...int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, offset := range dayOffsets {
-		s.histories[id] = append(s.histories[id], HistorySample{
-			Ts:             time.Now().AddDate(0, 0, offset).Unix(),
-			TotalDiskBytes: disk,
-		})
+		sample.Ts = time.Now().AddDate(0, 0, offset).Unix()
+		s.histories[id] = append(s.histories[id], sample)
 	}
 }
 

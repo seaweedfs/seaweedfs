@@ -45,6 +45,64 @@ func sameUTCDay(a, b int64) bool {
 	return ta.Year() == tb.Year() && ta.YearDay() == tb.YearDay()
 }
 
+// dailySeries is the shared date axis of the fleet-wide time series: one slot
+// per UTC day, ending today.
+type dailySeries struct {
+	dates []string
+	dayOf map[string]int
+}
+
+func newDailySeries(days int) dailySeries {
+	now := time.Now().UTC()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	d := dailySeries{
+		dates: make([]string, days),
+		dayOf: make(map[string]int, days),
+	}
+	for i := range d.dates {
+		d.dates[i] = today.AddDate(0, 0, i-days+1).Format("2006-01-02")
+		d.dayOf[d.dates[i]] = i
+	}
+	return d
+}
+
+func diskBytes(s HistorySample) uint64   { return s.TotalDiskBytes }
+func serverCount(s HistorySample) uint64 { return uint64(s.VolumeServerCount) }
+
+// align lays one cluster's history onto the axis, picking `value` out of each
+// sample. Clusters report roughly once a day at no fixed hour, so a day without
+// a report carries the previous value forward rather than dropping to zero; a
+// cluster that stopped reporting altogether ends at its last sample instead of
+// holding capacity forever. Reports false when the cluster has nothing in range.
+func (d dailySeries) align(history []HistorySample, activeSince int64, value func(HistorySample) uint64) ([]uint64, bool) {
+	out := make([]uint64, len(d.dates))
+	reported := make([]bool, len(d.dates))
+	first, last := -1, -1
+	for _, sample := range history {
+		i, ok := d.dayOf[time.Unix(sample.Ts, 0).UTC().Format("2006-01-02")]
+		if !ok {
+			continue
+		}
+		out[i], reported[i] = value(sample), true
+		if first < 0 {
+			first = i
+		}
+		last = i
+		if sample.Ts >= activeSince {
+			last = len(d.dates) - 1 // still reporting, so hold to the right edge
+		}
+	}
+	if first < 0 {
+		return nil, false
+	}
+	for i := first + 1; i <= last; i++ {
+		if !reported[i] {
+			out[i] = out[i-1]
+		}
+	}
+	return out, true
+}
+
 // GetHistory returns the cluster's samples from the last `days` days.
 // The second return value reports whether the cluster is known at all.
 func (s *PrometheusStorage) GetHistory(clusterId string, days int) ([]HistorySample, bool) {
