@@ -140,13 +140,17 @@ jobs:
 
       - name: Determine branch to build
         id: branch
+        env:
+          INPUT_REF: ${{ inputs.seaweedfs_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          if [ -n "${{ inputs.seaweedfs_ref }}" ]; then
-            echo "branch=${{ inputs.seaweedfs_ref }}" >> "$GITHUB_OUTPUT"
+          if [ -n "$INPUT_REF" ]; then
+            echo "branch=$INPUT_REF" >> "$GITHUB_OUTPUT"
           elif [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "branch=${{ github.head_ref }}" >> "$GITHUB_OUTPUT"
+            echo "branch=$HEAD_REF" >> "$GITHUB_OUTPUT"
           else
-            echo "branch=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "branch=$REF_NAME" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build and push image
