@@ -2,7 +2,7 @@
 //! overwrote. Mirrors `weed/storage/volume_idx_repair.go`.
 
 use std::collections::HashMap;
-use std::fs::{File, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufReader, Write};
 use std::path::Path;
 
@@ -12,7 +12,7 @@ use crate::storage::idx;
 use crate::storage::needle::needle::needle_body_length;
 use crate::storage::needle::Needle;
 use crate::storage::types::*;
-use crate::storage::volume::{Volume, VolumeError};
+use crate::storage::volume::{fsync_dir, Volume, VolumeError};
 
 /// Needles found in the head of .dat, keyed by id, plus the ids in .dat order.
 type DatHeadNeedles = (HashMap<NeedleId, (Offset, Size)>, Vec<NeedleId>);
@@ -38,8 +38,13 @@ impl Volume {
     /// .idx and .dat grow in lockstep, so the clobbered rows indexed exactly the
     /// first N records of .dat. Re-deriving them is a header-only walk over the
     /// head of .dat, which stays cheap even when .dat is served from a remote
-    /// tier. The recovered rows are appended, so the surviving tail and the
-    /// tombstones themselves are left alone.
+    /// tier.
+    ///
+    /// The recovered rows go back in front, where the rows they replace used to
+    /// sit, and every existing row keeps its relative order behind them. That
+    /// restores .idx to .dat append order, which several readers lean on: the
+    /// fingerprint is gone so a later load stops after one row, and the last row
+    /// is the .dat-tail needle again.
     pub(crate) fn repair_idx_head_tombstones(&self) -> Result<usize, VolumeError> {
         if !self.has_data_backend() {
             return Ok(0);
@@ -51,8 +56,8 @@ impl Volume {
         let first_needle_offset = self.super_block.block_size() as i64;
         let idx_path = self.file_name(".idx");
 
-        let (clobbered, head_indexed) = scan_idx_head_tombstones(&idx_path, first_needle_offset)?;
-        if clobbered == 0 || head_indexed {
+        let clobbered = idx_head_tombstone_count(&idx_path)?;
+        if clobbered == 0 {
             return Ok(0);
         }
 
@@ -78,7 +83,7 @@ impl Volume {
             idx::write_index_entry(&mut rows, key, offset, size)?;
             restored += 1;
         }
-        append_idx_rows(&idx_path, &rows)?;
+        prepend_idx_rows(&idx_path, &rows)?;
         Ok(restored)
     }
 
@@ -124,45 +129,24 @@ impl Volume {
     }
 }
 
-/// Report how many rows at the front of .idx are offset-0 tombstones, and
-/// whether any row still indexes the first needle in .dat.
-///
-/// `head_indexed` is the cheap "already recovered" signal: once the row for the
-/// first .dat record is back, later loads skip the .dat walk. It stays false in
-/// the corner case where that record's key was overwritten later in the volume's
-/// life -- the key is then indexed by the newer row, nothing needs restoring,
-/// and the only cost is repeating the (bounded) .dat head walk on each load.
-fn scan_idx_head_tombstones(
-    idx_path: &str,
-    first_needle_offset: i64,
-) -> Result<(usize, bool), VolumeError> {
+/// Report how many rows at the front of .idx are offset-0 tombstones. A healthy
+/// .idx answers 0 on its first row.
+fn idx_head_tombstone_count(idx_path: &str) -> Result<usize, VolumeError> {
     if !Path::new(idx_path).exists() {
-        return Ok((0, false));
+        return Ok(0);
     }
     let mut reader = BufReader::new(File::open(idx_path)?);
 
     let mut clobbered = 0usize;
-    let mut head_indexed = false;
-    let mut in_head = true;
     let walk = idx::walk_index_file(&mut reader, 0, |_key, offset, size| {
-        if in_head {
-            if offset.is_zero() && size.is_tombstone() {
-                clobbered += 1;
-                return Ok(());
-            }
-            in_head = false;
-            if clobbered == 0 {
-                return Err(stop_walk());
-            }
-        }
-        if offset.to_actual_offset() == first_needle_offset {
-            head_indexed = true;
+        if !offset.is_zero() || !size.is_tombstone() {
             return Err(stop_walk());
         }
+        clobbered += 1;
         Ok(())
     });
     finish_walk(walk)?;
-    Ok((clobbered, head_indexed))
+    Ok(clobbered)
 }
 
 /// Remove every candidate the .idx already names, whether by a Put row or a
@@ -185,11 +169,29 @@ fn drop_indexed_keys(
     finish_walk(walk)
 }
 
-fn append_idx_rows(idx_path: &str, rows: &[u8]) -> Result<(), VolumeError> {
-    let mut file = OpenOptions::new().append(true).open(idx_path)?;
-    file.write_all(rows)?;
-    file.sync_all()?;
-    Ok(())
+/// Rewrite .idx as `rows` followed by its current contents, through a temp file
+/// and a rename so a crash mid-write never leaves a partial index at the live
+/// name.
+fn prepend_idx_rows(idx_path: &str, rows: &[u8]) -> Result<(), VolumeError> {
+    let tmp_path = format!("{}.tmp", idx_path);
+    let mut src = File::open(idx_path)?;
+    let commit = (|| -> io::Result<()> {
+        let mut dst = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&tmp_path)?;
+        dst.write_all(rows)?;
+        io::copy(&mut src, &mut dst)?;
+        dst.sync_all()?;
+        drop(dst);
+        fs::rename(&tmp_path, idx_path)?;
+        fsync_dir(idx_path)
+    })();
+    if commit.is_err() {
+        let _ = fs::remove_file(&tmp_path);
+    }
+    Ok(commit?)
 }
 
 /// Sentinel that ends an `idx::walk_index_file` early once the answer is known.
@@ -269,6 +271,17 @@ mod tests {
         std::fs::metadata(idx_path).unwrap().len()
     }
 
+    fn idx_rows(idx_path: &str) -> Vec<(NeedleId, i64, Size)> {
+        let mut reader = BufReader::new(File::open(idx_path).unwrap());
+        let mut rows = Vec::new();
+        idx::walk_index_file(&mut reader, 0, |key, offset, size| {
+            rows.push((key, offset.to_actual_offset(), size));
+            Ok(())
+        })
+        .unwrap();
+        rows
+    }
+
     fn read_needle_data(v: &Volume, id: u64) -> Result<Vec<u8>, VolumeError> {
         let mut n = Needle {
             id: NeedleId(id),
@@ -303,6 +316,23 @@ mod tests {
 
         let want = size_before + 4 * NEEDLE_MAP_ENTRY_SIZE as u64;
         assert_eq!(idx_size(&idx_path), want, "idx size after recovery");
+
+        // The recovered rows go back in front, so .idx is in .dat append order
+        // again: the fingerprint is gone and the last row is still the .dat tail.
+        let rows = idx_rows(&idx_path);
+        assert_eq!(
+            rows[0].1,
+            v.super_block.block_size() as i64,
+            "first row does not index the first needle in .dat"
+        );
+        for i in 1..4 {
+            assert!(
+                rows[i - 1].1 < rows[i].1,
+                "recovered rows are not in .dat order: {:?} then {:?}",
+                rows[i - 1],
+                rows[i]
+            );
+        }
 
         // The recovery is idempotent: a second load finds nothing left to restore.
         drop(v);

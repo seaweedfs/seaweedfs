@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
@@ -13,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // errStopIdxWalk ends an idx.WalkIndexFile early once the answer is known.
@@ -36,9 +38,14 @@ var errStopIdxWalk = errors.New("stop idx walk")
 //
 // .idx and .dat grow in lockstep, so the clobbered rows indexed exactly the
 // first N records of .dat. Re-deriving them is a header-only walk over the head
-// of .dat, which stays cheap even when .dat is served from a remote tier. The
-// recovered rows are appended, so the surviving tail and the tombstones
-// themselves are left alone.
+// of .dat, which stays cheap even when .dat is served from a remote tier.
+//
+// The recovered rows go back in front, where the rows they replace used to sit,
+// and every existing row keeps its relative order behind them. That restores
+// .idx to .dat append order, which several readers lean on: the fingerprint is
+// gone so a later load stops after one row, the last row is the .dat-tail needle
+// again so CheckVolumeDataIntegrity keeps its O(1) path, and
+// BinarySearchByAppendAtNs sees ascending append timestamps.
 func (v *Volume) repairIdxHeadTombstones() (restored int, err error) {
 	if v.DataBackend == nil {
 		return 0, nil
@@ -50,8 +57,8 @@ func (v *Volume) repairIdxHeadTombstones() (restored int, err error) {
 	firstNeedleOffset := int64(v.SuperBlock.BlockSize())
 	idxFileName := v.FileName(".idx")
 
-	clobbered, headIndexed, err := scanIdxHeadTombstones(idxFileName, firstNeedleOffset)
-	if err != nil || clobbered == 0 || headIndexed {
+	clobbered, err := idxHeadTombstoneCount(idxFileName)
+	if err != nil || clobbered == 0 {
 		return 0, err
 	}
 
@@ -78,49 +85,32 @@ func (v *Volume) repairIdxHeadTombstones() (restored int, err error) {
 		rows = append(rows, nv.ToBytes()...)
 		restored++
 	}
-	return restored, appendIdxRows(idxFileName, rows)
+	return restored, prependIdxRows(idxFileName, rows)
 }
 
-// scanIdxHeadTombstones reports how many rows at the front of .idx are offset-0
-// tombstones, and whether any row still indexes the first needle in .dat.
-//
-// headIndexed is the cheap "already recovered" signal: once the row for the
-// first .dat record is back, later loads skip the .dat walk. It stays false in
-// the corner case where that record's key was overwritten later in the volume's
-// life -- the key is then indexed by the newer row, nothing needs restoring, and
-// the only cost is repeating the (bounded) .dat head walk on each load.
-func scanIdxHeadTombstones(idxFileName string, firstNeedleOffset int64) (clobbered int, headIndexed bool, err error) {
+// idxHeadTombstoneCount reports how many rows at the front of .idx are offset-0
+// tombstones. A healthy .idx answers 0 on its first row.
+func idxHeadTombstoneCount(idxFileName string) (clobbered int, err error) {
 	idxFile, err := os.Open(idxFileName)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return 0, false, nil
+			return 0, nil
 		}
-		return 0, false, err
+		return 0, err
 	}
 	defer idxFile.Close()
 
-	inHead := true
 	err = idx.WalkIndexFile(idxFile, 0, func(_ types.NeedleId, offset types.Offset, size types.Size) error {
-		if inHead {
-			if offset.IsZero() && size.IsTombstone() {
-				clobbered++
-				return nil
-			}
-			inHead = false
-			if clobbered == 0 {
-				return errStopIdxWalk
-			}
-		}
-		if offset.ToActualOffset() == firstNeedleOffset {
-			headIndexed = true
+		if !offset.IsZero() || !size.IsTombstone() {
 			return errStopIdxWalk
 		}
+		clobbered++
 		return nil
 	})
 	if errors.Is(err, errStopIdxWalk) {
 		err = nil
 	}
-	return clobbered, headIndexed, err
+	return clobbered, err
 }
 
 // scanDatHead reads the headers of the first limit records of .dat and returns
@@ -190,14 +180,47 @@ func dropIndexedKeys(idxFileName string, candidates map[types.NeedleId]needle_ma
 	return err
 }
 
-func appendIdxRows(idxFileName string, rows []byte) error {
-	idxFile, err := os.OpenFile(idxFileName, os.O_WRONLY|os.O_APPEND, 0644)
+// prependIdxRows rewrites .idx as rows followed by its current contents,
+// through a temp file and a rename so a crash mid-write never leaves a partial
+// index at the live name.
+func prependIdxRows(idxFileName string, rows []byte) error {
+	src, err := os.Open(idxFileName)
 	if err != nil {
 		return err
 	}
-	defer idxFile.Close()
-	if _, err = idxFile.Write(rows); err != nil {
+	defer src.Close()
+
+	tmpFileName := idxFileName + ".tmp"
+	dst, err := os.OpenFile(tmpFileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
 		return err
 	}
-	return idxFile.Sync()
+	committed := false
+	defer func() {
+		dst.Close()
+		if !committed {
+			os.Remove(tmpFileName)
+		}
+	}()
+
+	if _, err = dst.Write(rows); err != nil {
+		return err
+	}
+	if _, err = io.Copy(dst, src); err != nil {
+		return err
+	}
+	if err = dst.Sync(); err != nil {
+		return err
+	}
+	if err = dst.Close(); err != nil {
+		return err
+	}
+	if err = os.Rename(tmpFileName, idxFileName); err != nil {
+		return err
+	}
+	if err = util.FsyncDir(filepath.Dir(idxFileName)); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }

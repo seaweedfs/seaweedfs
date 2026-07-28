@@ -101,6 +101,18 @@ func TestRepairIdxHeadTombstones_RestoresClobberedRows(t *testing.T) {
 		t.Fatalf("idx size after recovery: got %d, want %d", got, want)
 	}
 
+	// The recovered rows go back in front, so .idx is in .dat append order
+	// again: the fingerprint is gone and the last row is still the .dat tail.
+	entries := readAllIdxEntries(t, idxPath)
+	if entries[0].offset.ToActualOffset() != int64(v.SuperBlock.BlockSize()) {
+		t.Fatalf("first row does not index the first needle in .dat: %+v", entries[0])
+	}
+	for i := 1; i < clobbered; i++ {
+		if entries[i-1].offset.ToActualOffset() >= entries[i].offset.ToActualOffset() {
+			t.Fatalf("recovered rows are not in .dat order: %+v then %+v", entries[i-1], entries[i])
+		}
+	}
+
 	// The recovery is idempotent: a second load finds nothing left to restore.
 	v.Close()
 	v = mustReload(t, dir)
