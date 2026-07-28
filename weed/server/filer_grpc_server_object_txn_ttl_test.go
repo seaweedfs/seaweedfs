@@ -36,7 +36,7 @@ func TestObjectTransactionPutAppliesConfiguredTTLAndExpires(t *testing.T) {
 				Entry: &filer_pb.Entry{
 					Name: "expired.mp4",
 					Attributes: &filer_pb.FuseAttributes{
-						Crtime:   old.Unix(),
+						Crtime:   time.Now().Unix(),
 						Mtime:    old.Unix(),
 						FileMode: 0644,
 						FileSize: 123,
@@ -63,6 +63,9 @@ func TestObjectTransactionPutAppliesConfiguredTTLAndExpires(t *testing.T) {
 	}
 	if got := entry.TtlSec; got != 3600 {
 		t.Fatalf("TtlSec = %d, want 3600 from fs.configure storage rule", got)
+	}
+	if _, found := entry.Extended["X-Seaweedfs-Expires-S3"]; !found {
+		t.Fatalf("Header X-Seaweedfs-Expires-S3 not found")
 	}
 
 	_, err = fs.filer.FindEntry(context.Background(), util.FullPath("/buckets/video/expired.mp4"))
@@ -94,11 +97,15 @@ func TestObjectTransactionPutPreservesExplicitTTL(t *testing.T) {
 				Entry: &filer_pb.Entry{
 					Name: "lifecycle.mp4",
 					Attributes: &filer_pb.FuseAttributes{
-						Crtime:   now.Unix(),
+						Crtime:   time.Now().Add(-2 * time.Hour).Unix(),
 						Mtime:    now.Unix(),
 						FileMode: 0644,
 						FileSize: 123,
 						TtlSec:   7200,
+					},
+					Extended: map[string][]byte{
+						"Seaweed-X-Amz-Owner": []byte("admin"),
+						"Seaweed-X-Amz-ETag":  []byte("abc123"),
 					},
 				},
 			},
@@ -119,7 +126,7 @@ func TestObjectTransactionPutPreservesExplicitTTL(t *testing.T) {
 		t.Fatalf("TtlSec = %d, want explicit TTL 7200 to win over fs.configure", got)
 	}
 	if _, found := entry.Extended["X-Seaweedfs-Expires-S3"]; !found {
-		t.Fatalf("Header X-Seaweedfs-Expires-S3")
+		t.Fatalf("Header X-Seaweedfs-Expires-S3 not found")
 	}
 }
 
