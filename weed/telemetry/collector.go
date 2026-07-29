@@ -79,7 +79,7 @@ func (c *Collector) StartPeriodicCollection(interval time.Duration) {
 		return
 	}
 
-	glog.V(0).Infof("Starting telemetry collection every %v", interval)
+	glog.V(0).Infof("Reporting anonymous cluster statistics to %s every %v, use -telemetry=false to opt out", c.client.url, interval)
 
 	// Send initial telemetry after a short delay
 	go func() {
