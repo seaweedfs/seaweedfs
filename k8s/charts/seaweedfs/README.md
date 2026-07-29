@@ -373,7 +373,9 @@ In a namespace with a default-deny policy the install hangs: the components cann
 helm install seaweedfs seaweedfs/seaweedfs --set networkPolicy.enabled=true
 ```
 
-That alone leaves outbound traffic untouched. Restricting egress is a second opt-in, because the chart knows where its own components live but not where your filer store, notification sink or remote tier does:
+That alone leaves outbound traffic untouched, which is enough when the namespace's default-deny only restricts ingress. If it lists `Egress` in its `policyTypes` too - the usual baseline - the components still cannot resolve DNS, and you need the second opt-in below as well.
+
+Egress is separate because the chart knows where its own components live but not where your filer store, notification sink or remote tier does, and because in a namespace with no default-deny at all, adding egress rules would narrow the components from "may reach anything" to "may reach these peers":
 
 ```yaml
 networkPolicy:
