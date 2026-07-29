@@ -322,13 +322,16 @@ jobs:
               "global.seaweedfs.extraEnvironmentVars.WEED_JWT_FILER_SIGNING_KEY.secretKeyRef.key": "filerWrite",
           }))
           pod = hook_pod(out)
-          entry = next((e for e in pod["containers"][0]["env"] if e["name"] == "WEED_JWT_FILER_SIGNING_KEY"), None)
-          if entry is None:
-              failed.append("secretKeyRef: hook env WEED_JWT_FILER_SIGNING_KEY missing")
-          elif entry.get("valueFrom", {}).get("secretKeyRef") != {"name": "signing-keys", "key": "filerWrite"}:
-              failed.append(f"secretKeyRef: hook env rendered as {entry}")
+          if pod is None:
+              failed.append("secretKeyRef: bucket hook Job missing")
           else:
-              print("secretKeyRef: hook env keeps the secret reference")
+              entry = next((e for e in pod["containers"][0]["env"] if e["name"] == "WEED_JWT_FILER_SIGNING_KEY"), None)
+              if entry is None:
+                  failed.append("secretKeyRef: hook env WEED_JWT_FILER_SIGNING_KEY missing")
+              elif entry.get("valueFrom", {}).get("secretKeyRef") != {"name": "signing-keys", "key": "filerWrite"}:
+                  failed.append(f"secretKeyRef: hook env rendered as {entry}")
+              else:
+                  print("secretKeyRef: hook env keeps the secret reference")
 
           if failed:
               print("\nFAIL:", file=sys.stderr)
