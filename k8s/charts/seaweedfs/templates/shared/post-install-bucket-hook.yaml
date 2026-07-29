@@ -47,8 +47,11 @@ kind: Job
 metadata:
   name: "{{ $.Release.Name }}-bucket-hook"
   labels:
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
     app.kubernetes.io/managed-by: {{ .Release.Service | quote }}
     app.kubernetes.io/instance: {{ .Release.Name | quote }}
+    app.kubernetes.io/component: bucket-hook
   annotations:
     "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-weight": "-5"
@@ -58,8 +61,11 @@ spec:
     metadata:
       name: "{{ .Release.Name }}"
       labels:
+        app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+        helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
         app.kubernetes.io/managed-by: {{ .Release.Service | quote }}
         app.kubernetes.io/instance: {{ .Release.Name | quote }}
+        app.kubernetes.io/component: bucket-hook
     spec:
       restartPolicy: Never
       {{- if .Values.filer.podSecurityContext.enabled }}
