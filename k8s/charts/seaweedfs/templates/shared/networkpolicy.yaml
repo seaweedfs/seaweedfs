@@ -112,17 +112,7 @@
        then. The resize hook is pre-install weight 0, which runs before the
        manifest is applied at all, so its policy has to be a pre-install hook
        itself, at a weight below the Job's. */}}
-{{- /* Same condition as the Job in post-install-bucket-hook.yaml: an S3
-       endpoint plus buckets to create. Keep the two in step. */}}
-{{- $bucketHook := false }}
-{{- if .Values.allInOne.enabled }}
-{{-   $bucketHook = and .Values.allInOne.s3.enabled .Values.allInOne.s3.createBuckets }}
-{{- else if .Values.master.enabled }}
-{{-   if or .Values.filer.s3.enabled .Values.s3.enabled }}
-{{-     $bucketHook = or .Values.s3.createBuckets .Values.filer.s3.createBuckets }}
-{{-   end }}
-{{- end }}
-{{- if $bucketHook }}
+{{- if include "seaweedfs.bucketHookEnabled" . }}
 {{-   $targets = append $targets (dict "component" "bucket-hook" "ports" (list)) }}
 {{- end }}
 {{- /* Whether the resize hook Job materialises depends on a cluster lookup, so

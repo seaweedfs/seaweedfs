@@ -344,6 +344,22 @@ true
 {{- end -}}
 {{- end -}}
 
+{{/* True when the post-install bucket hook Job renders: an S3 endpoint, plus
+     buckets to create on it. Read by the Job itself and by its NetworkPolicy,
+     which has to appear exactly when the Job does - a Job without its policy
+     hangs in a default-deny namespace. */}}
+{{- define "seaweedfs.bucketHookEnabled" -}}
+{{- if .Values.allInOne.enabled -}}
+{{-   if and .Values.allInOne.s3.enabled .Values.allInOne.s3.createBuckets -}}
+true
+{{-   end -}}
+{{- else if .Values.master.enabled -}}
+{{-   if and (or .Values.filer.s3.enabled .Values.s3.enabled) (or .Values.s3.createBuckets .Values.filer.s3.createBuckets) -}}
+true
+{{-   end -}}
+{{- end -}}
+{{- end -}}
+
 {{/* S3 TLS cert/key arguments, using custom secret if s3.tlsSecret is set */}}
 {{- define "seaweedfs.s3.tlsArgs" -}}
 {{- $prefix := .prefix -}}
