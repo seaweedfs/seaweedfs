@@ -822,6 +822,184 @@ jobs:
           PYEOF
           echo "Hook Job label tests passed"
 
+          echo ""
+          echo "=== Testing NetworkPolicy rendering ==="
+          # The policies are only exercised for real by the networkpolicy-install
+          # job below. These assertions cover what template rendering can see:
+          # that the flag stays off by default, that every deployed component has
+          # exactly one policy, that each policy allows every port its workload
+          # declares, and that egress stays a separate opt-in.
+          python3 - "$CHART_DIR" <<'PYEOF'
+          import subprocess, sys, yaml
+
+          chart = sys.argv[1]
+
+          def render(values):
+              args = ["helm", "template", "test", chart]
+              for k, v in values.items():
+                  args += ["--set", f"{k}={v}"]
+              return subprocess.check_output(args, text=True, stderr=subprocess.STDOUT)
+
+          def docs(manifest):
+              return [d for d in yaml.safe_load_all(manifest) if d]
+
+          def component(labels):
+              return labels.get("app.kubernetes.io/component")
+
+          def policies(manifest):
+              out = {}
+              for d in docs(manifest):
+                  if d.get("kind") != "NetworkPolicy":
+                      continue
+                  out[component(d["spec"]["podSelector"]["matchLabels"])] = d
+              return out
+
+          def workloads(manifest, kinds=("Deployment", "StatefulSet")):
+              out = {}
+              for d in docs(manifest):
+                  if d.get("kind") in kinds:
+                      out[component(d["spec"]["template"]["metadata"]["labels"])] = d
+              return out
+
+          def allowed_ports(policy):
+              ports = set()
+              for rule in policy["spec"].get("ingress") or []:
+                  for p in rule.get("ports") or []:
+                      ports.add(p["port"])
+              return ports
+
+          def container_ports(workload):
+              ports = set()
+              for c in workload["spec"]["template"]["spec"].get("containers", []):
+                  for p in c.get("ports") or []:
+                      ports.add(p["containerPort"])
+              return ports
+
+          EVERYTHING = {
+              "s3.enabled": "true",
+              "sftp.enabled": "true",
+              "admin.enabled": "true",
+              "worker.enabled": "true",
+              "cosi.enabled": "true",
+              "s3.createBuckets[0].name": "b",
+              "volumes.ssd.port": "8081",
+              "global.seaweedfs.monitoring.enabled": "true",
+          }
+
+          failed = []
+
+          # Off by default: the chart has never shipped a NetworkPolicy and must not
+          # start now, or every existing release in a default-deny namespace changes
+          # behaviour on the next upgrade.
+          if policies(render(EVERYTHING)):
+              failed.append("networkPolicy.enabled unset: policies rendered anyway")
+          else:
+              print("networkPolicy off by default: no policies rendered")
+
+          on = dict(EVERYTHING, **{"networkPolicy.enabled": "true"})
+          out = render(on)
+          pols = policies(out)
+          wls = workloads(out)
+
+          # Every workload gets exactly one policy, and every policy has a workload.
+          # A component with no policy is wide open under default-deny; a policy with
+          # no component is dead weight that hides a renamed label.
+          for comp in wls:
+              if comp not in pols:
+                  failed.append(f"{comp}: workload has no NetworkPolicy")
+          for comp in pols:
+              # The hook Jobs are covered too, and the resize hook Job only renders
+              # when a cluster lookup says a PVC needs growing, so it is never in the
+              # rendered set here.
+              if comp not in wls and comp not in ("bucket-hook", "volume-resize-hook"):
+                  failed.append(f"{comp}: NetworkPolicy selects a component that is not deployed")
+
+          # The ports a component listens on come from the same values as its
+          # containerPorts, so the two must agree. This is what catches a port added to
+          # a workload and forgotten in the policy - the failure mode that only shows up
+          # once someone turns the flag on.
+          for comp, wl in wls.items():
+              if comp not in pols:
+                  continue
+              declared = container_ports(wl)
+              allowed = allowed_ports(pols[comp])
+              missing = sorted(declared - allowed)
+              if missing:
+                  failed.append(f"{comp}: listens on {missing} but its policy does not allow it")
+          if not failed:
+              print("every workload has a policy covering all of its containerPorts")
+
+          # Egress is its own opt-in: with it off the policies must not constrain
+          # outbound traffic at all, or enabling networkPolicy alone would cut the filer
+          # off from its store.
+          for comp, p in pols.items():
+              if "Egress" in p["spec"]["policyTypes"]:
+                  failed.append(f"{comp}: Egress in policyTypes while networkPolicy.egress.enabled is false")
+          if not any("Egress" in p["spec"]["policyTypes"] for p in pols.values()):
+              print("egress off by default: policies are ingress-only")
+
+          # Components that need the API server must not silently lose it: rendering
+          # fails with a pointer to the value instead.
+          try:
+              render(dict(on, **{"networkPolicy.egress.enabled": "true"}))
+              failed.append("egress on with empty kubeApiServer.cidrs: render should have failed")
+          except subprocess.CalledProcessError as e:
+              if "kubeApiServer.cidrs is empty" not in (e.output or ""):
+                  failed.append(f"egress on with empty cidrs: unexpected error: {(e.output or '')[:200]}")
+              else:
+                  print("empty kubeApiServer.cidrs fails the render with a pointer to the value")
+
+          egress_on = dict(on, **{
+              "networkPolicy.egress.enabled": "true",
+              "networkPolicy.egress.kubeApiServer.cidrs[0]": "10.96.0.1/32",
+          })
+          out = render(egress_on)
+          pols = policies(out)
+
+          # DNS for everyone: every component addresses its peers by service name.
+          for comp, p in pols.items():
+              dns = [r for r in p["spec"]["egress"]
+                     if {x["port"] for x in r.get("ports") or []} == {53}]
+              if not dns:
+                  failed.append(f"{comp}: egress on but no DNS rule")
+          if not failed:
+              print("every policy allows DNS when egress is on")
+
+          # The API server rule goes only to the components that talk to it.
+          apiserver = {c for c, p in pols.items()
+                       if any("ipBlock" in t for r in p["spec"]["egress"] for t in r.get("to") or [])}
+          expected = {"admin", "objectstorage-provisioner", "volume-resize-hook"}
+          if apiserver != expected:
+              failed.append(f"API server egress granted to {sorted(apiserver)}, expected {sorted(expected)}")
+          else:
+              print(f"API server egress limited to {sorted(expected)}")
+
+          # The resize hook runs as a pre-install hook at weight 0, before the release
+          # manifest is applied, so its policy has to be a hook itself and has to sort
+          # ahead of the Job.
+          rh = pols["volume-resize-hook"]["metadata"].get("annotations", {})
+          if rh.get("helm.sh/hook") != "pre-install,pre-upgrade":
+              failed.append(f"volume-resize-hook policy is not a pre-install hook: {rh}")
+          elif int(rh.get("helm.sh/hook-weight", 0)) >= 0:
+              failed.append(f"volume-resize-hook policy weight {rh.get('helm.sh/hook-weight')} does not sort before the Job at 0")
+          else:
+              print("volume-resize-hook policy is a pre-install hook ahead of the Job")
+
+          # The bucket hook is post-install, so the release manifest is already applied;
+          # its policy must be a plain resource that uninstall cleans up.
+          if "helm.sh/hook" in (pols["bucket-hook"]["metadata"].get("annotations") or {}):
+              failed.append("bucket-hook policy is a hook resource; post-install runs after the manifest is applied")
+          else:
+              print("bucket-hook policy is a plain release resource")
+
+          if failed:
+              print("\nFAIL:", file=sys.stderr)
+              for f in failed:
+                  print(f"  - {f}", file=sys.stderr)
+              sys.exit(1)
+          PYEOF
+          echo "NetworkPolicy rendering tests passed"
+
           echo "All template rendering tests passed!"
 
       - name: Create kind cluster
@@ -874,3 +1052,104 @@ jobs:
 
           kubectl delete namespace "$NS"
           echo "SFTP host key lifecycle tests passed"
+
+      - name: Verify install into a default-deny namespace
+        run: |
+          set -e
+          CHART_DIR="k8s/charts/seaweedfs"
+          NS="netpol"
+
+          # kind enforces NetworkPolicy out of the box since v0.24 (kindnetd
+          # runs sigs.k8s.io/kube-network-policies), so the cluster created for
+          # chart-testing above is enough and no extra CNI is needed. The two
+          # probes at the end fail loudly if that ever stops being true, rather
+          # than letting this pass vacuously.
+          kubectl create namespace "$NS"
+          kubectl apply -n "$NS" -f - <<'EOF'
+          apiVersion: networking.k8s.io/v1
+          kind: NetworkPolicy
+          metadata:
+            name: default-deny
+          spec:
+            podSelector: {}
+            policyTypes: [Ingress, Egress]
+          EOF
+
+          # The backend address, not the kubernetes service ClusterIP: kube-proxy
+          # rewrites the destination, so an ipBlock has to name the real endpoint.
+          APISERVER=$(kubectl get endpointslice kubernetes \
+            -o jsonpath='{.endpoints[0].addresses[0]}' 2>/dev/null || true)
+          if [ -z "$APISERVER" ]; then
+            APISERVER=$(kubectl get endpoints kubernetes -o jsonpath='{.subsets[0].addresses[0].ip}')
+          fi
+          echo "kube-apiserver at $APISERVER"
+
+          echo "=== install with the policies on ==="
+          # Without them this hangs: the components cannot resolve or reach each
+          # other, and the post-install bucket hook waits on master and filer
+          # until it gives up. --wait covers the components, and helm fails the
+          # release if the hook Job does not finish, so a clean install is the
+          # assertion.
+          helm install np $CHART_DIR -n "$NS" --wait --timeout 8m \
+            --set s3.enabled=true \
+            --set s3.createBuckets[0].name=testbucket \
+            --set networkPolicy.enabled=true \
+            --set networkPolicy.egress.enabled=true \
+            --set networkPolicy.egress.kubeApiServer.cidrs[0]="$APISERVER/32"
+          echo "release came up and the bucket hook finished under default-deny"
+
+          FILER_IP=$(kubectl get pod -n "$NS" -l app.kubernetes.io/component=filer \
+            -o jsonpath='{.items[0].status.podIP}')
+          echo "filer pod at $FILER_IP"
+
+          # Both probes get their own all-egress policy, so the namespace-wide
+          # default-deny is not what decides the outcome: the only thing left in
+          # the way is the filer's own policy, which admits release pods only.
+          # Probing the pod IP keeps DNS out of it.
+          kubectl apply -n "$NS" -f - <<'EOF'
+          apiVersion: networking.k8s.io/v1
+          kind: NetworkPolicy
+          metadata:
+            name: probe-egress
+          spec:
+            podSelector:
+              matchExpressions:
+                - key: probe
+                  operator: Exists
+            policyTypes: [Egress]
+            egress:
+              - {}
+          EOF
+
+          probe() {
+            local name=$1
+            local labels=$2
+            kubectl run "$name" -n "$NS" --image=busybox:1.36 --restart=Never \
+              --labels="probe=$name,$labels" --command -- \
+              sh -c "wget -T 5 -q -O /dev/null http://$FILER_IP:8888/; echo exit=\$?"
+            kubectl wait -n "$NS" --for=jsonpath='{.status.phase}'=Succeeded \
+              "pod/$name" --timeout=120s >/dev/null
+            kubectl logs -n "$NS" "$name"
+          }
+
+          # A pod carrying the release labels is what the filer's policy allows.
+          # This has to succeed, otherwise the policies are blocking traffic they
+          # are supposed to permit - or nothing is enforced and the next probe
+          # would be meaningless.
+          ALLOWED=$(probe probe-allowed "app.kubernetes.io/name=seaweedfs,app.kubernetes.io/instance=np")
+          echo "labelled probe: $ALLOWED"
+          case "$ALLOWED" in
+            *exit=0*) echo "a pod with the release labels reaches the filer";;
+            *) echo "FAIL: the filer policy rejects a pod carrying the release labels"; exit 1;;
+          esac
+
+          # The same probe without those labels must not get through.
+          DENIED=$(probe probe-denied "role=outsider")
+          echo "unlabelled probe: $DENIED"
+          case "$DENIED" in
+            *exit=0*) echo "FAIL: a pod outside the release reached the filer; the policy over-allows"; exit 1;;
+            *) echo "the filer policy refuses a pod outside the release";;
+          esac
+
+          kubectl delete namespace "$NS" --wait=false
+          echo "default-deny namespace tests passed"

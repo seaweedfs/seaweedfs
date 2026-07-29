@@ -40,6 +40,8 @@
   {{- end }}
 {{- end }}
 
+{{- /* networkpolicy.yaml decides whether to render this Job's policy off the
+       same condition. Keep the two in step. */}}
 {{- if and $s3Enabled $createBuckets }}
 ---
 apiVersion: batch/v1

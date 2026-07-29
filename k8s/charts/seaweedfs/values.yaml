@@ -1810,3 +1810,111 @@ certificates:
 podLabels: {}
 # Annotations to be added to all the created pods
 podAnnotations: {}
+
+networkPolicy:
+  # Opt-in. While false the chart renders no NetworkPolicy objects at all and
+  # the cluster default (usually allow-all) applies. Turn this on for a
+  # namespace with a default-deny policy, where the components otherwise
+  # cannot reach each other and the install hangs.
+  enabled: false
+
+  # One policy is rendered per component, selecting its pods by the standard
+  # app.kubernetes.io/{name,instance,component} labels. Each policy admits
+  # traffic from any pod of this release, on the ports that component listens
+  # on - the same values the containerPorts are taken from, so retuning a port
+  # does not leave the policy behind. Everything else is denied.
+  #
+  # Traffic from outside the release has to be added here. Rules are plain
+  # NetworkPolicyIngressRule entries, appended to every component's policy:
+  #
+  #   extraIngress:
+  #     # an ingress controller reaching filer/s3/admin
+  #     - from:
+  #         - namespaceSelector:
+  #             matchLabels:
+  #               kubernetes.io/metadata.name: ingress-nginx
+  #       ports:
+  #         - protocol: TCP
+  #           port: 8888
+  #         - protocol: TCP
+  #           port: 8333
+  #     # Prometheus scraping the metrics ports
+  #     - from:
+  #         - namespaceSelector:
+  #             matchLabels:
+  #               kubernetes.io/metadata.name: monitoring
+  #       ports:
+  #         - protocol: TCP
+  #           port: 9327
+  #
+  # An ingress controller running on the host network is not a pod as far as
+  # the policy is concerned; select it with an ipBlock of the node addresses
+  # instead of a namespaceSelector.
+  #
+  # Kubelet probes are not covered by these rules. Node-to-pod traffic is
+  # outside NetworkPolicy in the CNIs that come up without host endpoints
+  # (Calico, Cilium); if yours polices it, allow the node addresses here.
+  extraIngress: []
+
+  egress:
+    # Egress is a separate opt-in: the chart knows the addresses of its own
+    # components, but not where your filer store (MySQL, Postgres, Redis,
+    # ...), notification sink or remote tier lives. Enabling this without
+    # listing those under extraEgress will cut the filer off from its store.
+    enabled: false
+
+    # Every component resolves its peers by DNS name, so this is required
+    # for the release to function at all.
+    allowDNS: true
+    dnsNamespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: kube-system
+    dnsPodSelector:
+      matchLabels:
+        k8s-app: kube-dns
+
+    # The admin component manages pods through the Kubernetes API, the COSI
+    # driver watches the COSI custom resources, and the volume resize hook
+    # shells out to kubectl. Only those three get this rule.
+    kubeApiServer:
+      enabled: true
+      # The API server cannot be selected by label, so its address has to be
+      # given here - there is no sane default, and 0.0.0.0/0 would defeat the
+      # point. Rendering fails with a pointer to this value if a component
+      # needs the API server and this is empty.
+      #
+      # Use the endpoint behind the kubernetes service, not its ClusterIP:
+      # kube-proxy rewrites the destination before the packet is matched.
+      #   kubectl get endpointslice kubernetes -o jsonpath='{.endpoints[*].addresses[*]}'
+      cidrs: []
+      ports: [443, 6443]
+
+    # Plain NetworkPolicyEgressRule entries, appended to every component's
+    # policy. This is where the filer store and the notification sinks go:
+    #
+    #   extraEgress:
+    #     - to:
+    #         - podSelector:
+    #             matchLabels:
+    #               app.kubernetes.io/name: mysql
+    #       ports:
+    #         - protocol: TCP
+    #           port: 3306
+    extraEgress: []
+
+  # Per-component additions, keyed by the component's app.kubernetes.io/component
+  # label value, for rules that should not apply to the whole release. The keys
+  # are master, filer, s3, sftp, admin, worker, bucket-hook,
+  # volume-resize-hook, objectstorage-provisioner, seaweedfs-all-in-one, and
+  # volume (plus volume-<name> for every entry under `volumes`):
+  #
+  #   components:
+  #     filer:
+  #       extraEgress:
+  #         - to:
+  #             - ipBlock:
+  #                 cidr: 10.0.0.5/32
+  #           ports:
+  #             - protocol: TCP
+  #               port: 5432
+  components: {}
