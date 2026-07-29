@@ -140,13 +140,21 @@ func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer 
 // back here at all (a VPN address, a container-internal IP), and the push then
 // fails silently after a 10s deadline.
 func (option *S3ApiServerOption) advertisedHost() string {
-	if option.Ip != "" {
+	if option.Ip != "" && !isWildcardHost(option.Ip) {
 		return option.Ip
 	}
-	if option.BindIp != "" && option.BindIp != "0.0.0.0" {
+	if option.BindIp != "" && !isWildcardHost(option.BindIp) {
 		return option.BindIp
 	}
 	return util.DetectedHostAddress()
+}
+
+// isWildcardHost reports whether host is an unspecified address (0.0.0.0, ::,
+// [::]) — one that accepts connections but tells a peer nothing about where to
+// reach us. Host names parse as nil and are addresses in their own right.
+func isWildcardHost(host string) bool {
+	ip := net.ParseIP(strings.TrimSuffix(strings.TrimPrefix(host, "["), "]"))
+	return ip != nil && ip.IsUnspecified()
 }
 
 func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, explicitStore string) (s3ApiServer *S3ApiServer, err error) {

@@ -18,7 +18,13 @@ func TestAdvertisedHost(t *testing.T) {
 		{"advertised ip wins over wildcard bind", "localhost", "0.0.0.0", "localhost"},
 		{"advertised ip wins over specific bind", "s3.example.com", "10.0.0.5", "s3.example.com"},
 		{"bind ip used when no advertised ip", "", "10.0.0.5", "10.0.0.5"},
+		{"ipv6 bind ip used when no advertised ip", "", "2001:db8::1", "2001:db8::1"},
 		{"wildcard bind falls back to detected", "", "0.0.0.0", detected},
+		{"ipv6 wildcard bind falls back to detected", "", "::", detected},
+		{"bracketed ipv6 wildcard bind falls back to detected", "", "[::]", detected},
+		{"expanded ipv6 wildcard bind falls back to detected", "", "0:0:0:0:0:0:0:0", detected},
+		{"wildcard advertised ip falls back to bind ip", "0.0.0.0", "10.0.0.5", "10.0.0.5"},
+		{"wildcard advertised ip and bind fall back to detected", "::", "0.0.0.0", detected},
 		{"empty falls back to detected", "", "", detected},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
