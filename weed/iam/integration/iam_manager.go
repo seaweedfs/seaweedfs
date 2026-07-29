@@ -467,7 +467,10 @@ func (m *IAMManager) SyncRuntimePolicies(ctx context.Context, policies []*iam_pb
 		var document policy.PolicyDocument
 		if err := json.Unmarshal([]byte(runtimePolicy.Content), &document); err != nil {
 			// Drop just this one: aborting here would leave every other policy
-			// unsynced, and the engine keeps serving whatever it last held.
+			// unsynced. Leaving it out of desiredPolicies also deletes it from
+			// the engine below, which is the point — a policy whose stored
+			// definition no longer parses must stop granting access rather than
+			// keep enforcing a document the operator can no longer see.
 			glog.Warningf("skipping unparsable runtime policy %q: %v", runtimePolicy.Name, err)
 			continue
 		}

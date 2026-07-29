@@ -186,3 +186,38 @@ func TestResync_SkipsUnparsablePolicy(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, allowed, "an unparsable policy must not block the rest of the sync")
 }
+
+// A policy whose stored definition stops parsing must stop granting access:
+// enforcing a document the operator can no longer see is worse than denying.
+func TestResync_UnparsablePolicyStopsGranting(t *testing.T) {
+	mgr := newTestIAMManager(t)
+	iam := &IdentityAccessManagement{}
+	iam.SetIAMIntegration(NewS3IAMIntegration(mgr, ""))
+
+	doc, _ := json.Marshal(map[string]interface{}{
+		"Version": "2012-10-17",
+		"Statement": []map[string]interface{}{
+			{"Effect": "Allow", "Action": "s3:*", "Resource": "arn:aws:s3:::good/*"},
+		},
+	})
+	allows := func() bool {
+		allowed, err := mgr.IsActionAllowed(context.Background(), &integration.ActionRequest{
+			Principal:   "arn:aws:iam::111122223333:user/test",
+			Action:      "s3:PutObject",
+			Resource:    "arn:aws:s3:::good/file.txt",
+			PolicyNames: []string{"good"},
+		})
+		require.NoError(t, err)
+		return allowed
+	}
+
+	require.NoError(t, iam.PutPolicy("good", string(doc)))
+	require.True(t, allows())
+
+	iam.m.Lock()
+	iam.policies["good"] = &iam_pb.Policy{Name: "good", Content: "{not json"}
+	iam.m.Unlock()
+	iam.resyncIAMManagerPolicies()
+
+	require.False(t, allows(), "an unparsable policy must not keep granting its old permissions")
+}
