@@ -397,7 +397,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 
 	server, err := fuse.NewServer(seaweedFileSystem, dir, fuseMountOptions)
 	if err != nil {
-		glog.Fatalf("Mount fail: %v", err)
+		// A failed mount is an environment problem (no /dev/fuse, fusermount not
+		// setuid, stale mount point); the goroutine dump Fatalf adds buries it.
+		glog.Exitf("Mount fail: %v", err)
 	}
 	grace.OnInterrupt(func() {
 		if err := unmount.Unmount(dir); err != nil {
