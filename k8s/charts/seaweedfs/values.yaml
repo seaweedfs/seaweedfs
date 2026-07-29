@@ -1816,6 +1816,11 @@ networkPolicy:
   # the cluster default (usually allow-all) applies. Turn this on for a
   # namespace with a default-deny policy, where the components otherwise
   # cannot reach each other and the install hangs.
+  #
+  # This alone covers a default-deny that only restricts ingress. If yours has
+  # Egress in its policyTypes as well - the usual baseline - the components
+  # still cannot resolve DNS or reach each other, and you need egress.enabled
+  # below too, together with an extraEgress entry for the filer store.
   enabled: false
 
   # One policy is rendered per component, selecting its pods by the standard
@@ -1861,6 +1866,11 @@ networkPolicy:
     # components, but not where your filer store (MySQL, Postgres, Redis,
     # ...), notification sink or remote tier lives. Enabling this without
     # listing those under extraEgress will cut the filer off from its store.
+    #
+    # It cannot be on by default either. In a namespace with no default-deny,
+    # egress rules would take the components from "may reach anything" down to
+    # "may reach the peers listed here", which is the same breakage from the
+    # other direction. Required if your default-deny covers egress.
     enabled: false
 
     # Every component resolves its peers by DNS name, so this is required
