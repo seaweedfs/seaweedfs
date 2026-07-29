@@ -580,7 +580,7 @@ func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromBytes(content []b
 
 func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromBytes(content []byte, fromStaticFile bool) (*iam_pb.S3ApiConfiguration, error) {
 	s3ApiConfiguration := &iam_pb.S3ApiConfiguration{}
-	if err := filer.ParseS3ConfigurationFromBytes(content, s3ApiConfiguration); err != nil {
+	if err := filer.ParseS3ConfigurationFromBytes(normalizeAdvancedIAMPolicies(content), s3ApiConfiguration); err != nil {
 		glog.Warningf("unmarshal error: %v", err)
 		return nil, fmt.Errorf("unmarshal error: %w", err)
 	}

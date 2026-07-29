@@ -393,6 +393,14 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 	// is required. An explicit identity-side deny still wins (deny-always-wins).
 	// Without a RoleArn the caller assumes a session for itself.
 	if roleArn != "" {
+		// An ARN that names something other than a role can never resolve to one,
+		// and reporting that as "not authorized" sends the caller looking for a
+		// permission problem they do not have.
+		if utils.ExtractRoleNameFromArn(roleArn) == "" {
+			h.writeSTSErrorResponse(w, r, STSErrInvalidParameterValue,
+				fmt.Errorf("RoleArn %q is not an IAM role ARN, expected arn:aws:iam::<account>:role/<name>", roleArn))
+			return
+		}
 		callerArn := h.callerPrincipalArn(identity)
 		if err := h.iam.ValidateTrustPolicyForPrincipal(r.Context(), roleArn, callerArn); err != nil {
 			glog.V(2).Infof("AssumeRole: %s not authorized to assume %s: %v", identity.Name, roleArn, err)
