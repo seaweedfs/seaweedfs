@@ -834,11 +834,24 @@ jobs:
 
           chart = sys.argv[1]
 
-          def render(values):
+          def render(values, json_values=None):
               args = ["helm", "template", "test", chart]
               for k, v in values.items():
                   args += ["--set", f"{k}={v}"]
+              for k, v in (json_values or {}).items():
+                  args += ["--set-json", f"{k}={v}"]
               return subprocess.check_output(args, text=True, stderr=subprocess.STDOUT)
+
+          def expect_failure(values, needle, label, json_values=None):
+              try:
+                  render(values, json_values)
+              except subprocess.CalledProcessError as e:
+                  if needle not in (e.output or ""):
+                      failed.append(f"{label}: unexpected error: {(e.output or '')[:200]}")
+                  else:
+                      print(label)
+                  return
+              failed.append(f"{label}: render should have failed")
 
           def docs(manifest):
               return [d for d in yaml.safe_load_all(manifest) if d]
@@ -940,19 +953,42 @@ jobs:
 
           # Components that need the API server must not silently lose it: rendering
           # fails with a pointer to the value instead.
-          try:
-              render(dict(on, **{"networkPolicy.egress.enabled": "true"}))
-              failed.append("egress on with empty kubeApiServer.cidrs: render should have failed")
-          except subprocess.CalledProcessError as e:
-              if "kubeApiServer.cidrs is empty" not in (e.output or ""):
-                  failed.append(f"egress on with empty cidrs: unexpected error: {(e.output or '')[:200]}")
-              else:
-                  print("empty kubeApiServer.cidrs fails the render with a pointer to the value")
+          expect_failure(dict(on, **{"networkPolicy.egress.enabled": "true"}),
+                         "kubeApiServer.cidrs is empty",
+                         "empty kubeApiServer.cidrs fails the render with a pointer to the value")
 
           egress_on = dict(on, **{
               "networkPolicy.egress.enabled": "true",
               "networkPolicy.egress.kubeApiServer.cidrs[0]": "10.96.0.1/32",
           })
+
+          # An empty port or peer list is "everything" in a NetworkPolicy, not
+          # "nothing", so the two places that could be emptied have to be refused
+          # rather than quietly widened.
+          expect_failure(egress_on, "kubeApiServer.ports is empty",
+                         "empty kubeApiServer.ports is refused instead of allowing every port",
+                         json_values={"networkPolicy.egress.kubeApiServer.ports": "[]"})
+          expect_failure(egress_on, "allowDNS is on but both",
+                         "DNS with no selector is refused instead of allowing every pod",
+                         json_values={"networkPolicy.egress.dnsNamespaceSelector": "null",
+                                      "networkPolicy.egress.dnsPodSelector": "null"})
+
+          # Dropping one of the two DNS selectors must leave the key out, not
+          # render it as null - null namespaceSelector means this namespace and
+          # null podSelector means every pod in the peer namespace.
+          for dropped in ("dnsNamespaceSelector", "dnsPodSelector"):
+              out = render(egress_on, {f"networkPolicy.egress.{dropped}": "null"})
+              nulls = [(c, k) for c, p in policies(out).items()
+                       for r in p["spec"]["egress"]
+                       for t in r.get("to") or []
+                       for k, v in t.items() if v is None]
+              nulls += [(c, "ports") for c, p in policies(out).items()
+                        for r in p["spec"]["egress"] if "ports" in r and r["ports"] is None]
+              if nulls:
+                  failed.append(f"{dropped}=null: rendered null keys {sorted(set(nulls))}")
+              else:
+                  print(f"{dropped}=null: the key is left out rather than rendered as null")
+
           out = render(egress_on)
           pols = policies(out)
 
