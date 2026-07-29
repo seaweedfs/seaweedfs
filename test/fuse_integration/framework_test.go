@@ -219,7 +219,7 @@ func (p *managedProcess) exited() error {
 		if p.err != nil {
 			return p.err
 		}
-		return fmt.Errorf("exited with status 0")
+		return fmt.Errorf("exit status 0")
 	default:
 		return nil
 	}
@@ -227,7 +227,9 @@ func (p *managedProcess) exited() error {
 
 // stop asks the process to terminate and waits for it to go away.
 func (p *managedProcess) stop() {
-	p.cmd.Process.Signal(syscall.SIGTERM)
+	// Signal fails with os.ErrProcessDone when the child is already gone, which
+	// is exactly the case the select below handles.
+	_ = p.cmd.Process.Signal(syscall.SIGTERM)
 	select {
 	case <-p.done:
 	case <-time.After(10 * time.Second):
@@ -379,7 +381,7 @@ func (f *FuseTestFramework) waitForService(proc *managedProcess, addr string, ti
 			return nil
 		}
 		if exitErr := proc.exited(); exitErr != nil {
-			return fmt.Errorf("process %v before %s accepted connections", exitErr, addr)
+			return fmt.Errorf("process exited (%v) before %s accepted connections", exitErr, addr)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -406,7 +408,7 @@ func (f *FuseTestFramework) waitForMount(timeout time.Duration) error {
 		// A mount that cannot mount at all (no /dev/fuse, fusermount not setuid)
 		// dies within a second; reporting that beats waiting out the timeout.
 		if exitErr := f.mountProcess.exited(); exitErr != nil {
-			return fmt.Errorf("mount process %v", exitErr)
+			return fmt.Errorf("mount process exited (%v)", exitErr)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}

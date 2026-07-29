@@ -11,6 +11,7 @@ on:
       - 'weed/pb/filer.proto'
       - 'test/fuse_p2p/**'
       - '.github/workflows/fuse-p2p-integration.yml'
+      - '.github/actions/fix-fusermount-setuid/**'
   push:
     branches: [master]
     paths:
@@ -21,6 +22,7 @@ on:
       - 'weed/pb/mount_peer.proto'
       - 'weed/pb/filer.proto'
       - 'test/fuse_p2p/**'
+      - '.github/actions/fix-fusermount-setuid/**'
 
 concurrency:
   group: ${{ github.head_ref || github.ref }}/fuse-p2p-integration
@@ -50,18 +52,9 @@ jobs:
           sudo apt-get install -y libfuse3-dev
           echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
           sudo chmod 644 /etc/fuse.conf
-          # Some runner images carry a second, source-built fusermount3 in
-          # /usr/local/bin that shadows the distro one in PATH without its setuid
-          # bit, and every unprivileged mount then fails with EPERM. go-fuse takes
-          # the first fusermount3 in PATH, so repair that one.
-          fusermount_bin=$(command -v fusermount3 || true)
-          if [ -n "$fusermount_bin" ]; then
-            if [ ! -u "$fusermount_bin" ]; then
-              sudo chown root:root "$fusermount_bin"
-              sudo chmod u+s "$fusermount_bin"
-            fi
-            ls -l "$fusermount_bin"
-          fi
+
+      - name: Repair the fusermount3 setuid bit
+        uses: ./.github/actions/fix-fusermount-setuid
 
       - name: Build SeaweedFS
         run: go build -o weed/weed -buildvcs=false ./weed
