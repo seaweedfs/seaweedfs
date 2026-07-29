@@ -6,7 +6,7 @@
 
 {{- /* One entry per rendered workload, keyed by its app.kubernetes.io/component
        label. "ports" is everything the workload listens on, taken from the same
-       values the containerPorts are taken from, so a retuned port cannot drift
+       values the containerPorts are taken from, so a changed port cannot drift
        out of the policy. "apiserver" marks the workloads that talk to the
        Kubernetes API. */}}
 {{- $targets := list }}
