@@ -7,12 +7,14 @@ on:
       - 'weed/**'
       - 'test/fuse_integration/**'
       - '.github/workflows/fuse-integration.yml'
+      - '.github/actions/fix-fusermount-setuid/**'
   pull_request:
     branches: [ master, main ]
     paths:
       - 'weed/**'
       - 'test/fuse_integration/**'
       - '.github/workflows/fuse-integration.yml'
+      - '.github/actions/fix-fusermount-setuid/**'
 
 concurrency:
   group: ${{ github.head_ref }}/fuse-integration

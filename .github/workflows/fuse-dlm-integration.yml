@@ -8,6 +8,7 @@ on:
       - 'weed/cluster/**'
       - 'test/fuse_dlm/**'
       - '.github/workflows/fuse-dlm-integration.yml'
+      - '.github/actions/fix-fusermount-setuid/**'
   push:
     branches: [master]
     paths:
@@ -15,6 +16,7 @@ on:
       - 'weed/mount/**'
       - 'weed/cluster/**'
       - 'test/fuse_dlm/**'
+      - '.github/actions/fix-fusermount-setuid/**'
 
 concurrency:
   group: ${{ github.head_ref || github.ref }}/fuse-dlm-integration
