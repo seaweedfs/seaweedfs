@@ -466,7 +466,10 @@ func (m *IAMManager) SyncRuntimePolicies(ctx context.Context, policies []*iam_pb
 
 		var document policy.PolicyDocument
 		if err := json.Unmarshal([]byte(runtimePolicy.Content), &document); err != nil {
-			return fmt.Errorf("failed to parse runtime policy %q: %w", runtimePolicy.Name, err)
+			// Drop just this one: aborting here would leave every other policy
+			// unsynced, and the engine keeps serving whatever it last held.
+			glog.Warningf("skipping unparsable runtime policy %q: %v", runtimePolicy.Name, err)
+			continue
 		}
 
 		desiredPolicies[runtimePolicy.Name] = &document

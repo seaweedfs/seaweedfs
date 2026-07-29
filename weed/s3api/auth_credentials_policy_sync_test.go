@@ -156,3 +156,33 @@ func TestResyncIAMManager_ReflectsCurrentPolicies(t *testing.T) {
 	require.False(t, allows("alpha"), "resync should drop a policy no longer in the map")
 	require.True(t, allows("beta"), "resync should add a policy newly in the map")
 }
+
+func TestResync_SkipsUnparsablePolicy(t *testing.T) {
+	mgr := newTestIAMManager(t)
+	iam := &IdentityAccessManagement{}
+	iam.SetIAMIntegration(NewS3IAMIntegration(mgr, ""))
+
+	doc, _ := json.Marshal(map[string]interface{}{
+		"Version": "2012-10-17",
+		"Statement": []map[string]interface{}{
+			{"Effect": "Allow", "Action": "s3:*", "Resource": "arn:aws:s3:::good/*"},
+		},
+	})
+
+	iam.m.Lock()
+	iam.policies = map[string]*iam_pb.Policy{
+		"broken": {Name: "broken"},
+		"good":   {Name: "good", Content: string(doc)},
+	}
+	iam.m.Unlock()
+	iam.resyncIAMManagerPolicies()
+
+	allowed, err := mgr.IsActionAllowed(context.Background(), &integration.ActionRequest{
+		Principal:   "arn:aws:iam::111122223333:user/test",
+		Action:      "s3:PutObject",
+		Resource:    "arn:aws:s3:::good/file.txt",
+		PolicyNames: []string{"good"},
+	})
+	require.NoError(t, err)
+	require.True(t, allowed, "an unparsable policy must not block the rest of the sync")
+}
