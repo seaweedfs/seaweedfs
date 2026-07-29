@@ -1821,7 +1821,7 @@ networkPolicy:
   # One policy is rendered per component, selecting its pods by the standard
   # app.kubernetes.io/{name,instance,component} labels. Each policy admits
   # traffic from any pod of this release, on the ports that component listens
-  # on - the same values the containerPorts are taken from, so retuning a port
+  # on - the same values the containerPorts are taken from, so changing a port
   # does not leave the policy behind. Everything else is denied.
   #
   # Traffic from outside the release has to be added here. Rules are plain
