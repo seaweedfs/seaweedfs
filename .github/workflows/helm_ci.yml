@@ -309,11 +309,16 @@ jobs:
               failed.append("filerWrite=true: bucket hook Job missing")
           else:
               vols = {v["name"] for v in pod.get("volumes", [])}
-              mounts = {m["name"] for m in pod["containers"][0].get("volumeMounts", [])}
-              if "security-config" not in vols or "security-config" not in mounts:
+              mount = next((m for m in pod["containers"][0].get("volumeMounts", []) if m["name"] == "security-config"), None)
+              # The file has to land on one of weed's config search paths,
+              # so the target matters as much as the volume itself.
+              target = ("/etc/seaweedfs/security.toml", "security.toml")
+              if "security-config" not in vols or mount is None:
                   failed.append("filerWrite=true: bucket hook does not mount security-config (s3.configure would fail)")
+              elif (mount.get("mountPath"), mount.get("subPath")) != target:
+                  failed.append(f"filerWrite=true: bucket hook mounts security-config as {mount}")
               else:
-                  print("filerWrite=true: bucket hook mounts security-config")
+                  print("filerWrite=true: bucket hook mounts security-config at /etc/seaweedfs/security.toml")
 
           # Keys kept in a Secret are referenced, not inlined, so the hook
           # must render valueFrom for non-string extraEnvironmentVars.
