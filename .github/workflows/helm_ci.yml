@@ -713,8 +713,13 @@ jobs:
           import subprocess, sys, yaml
 
           chart = sys.argv[1]
+          # The three a selector keys on, and the full set the other workloads
+          # carry - a missing chart or managed-by label is not a selector
+          # problem, but it does leave the hook Jobs looking unlike everything
+          # else the release owns.
           TRIPLE = ("app.kubernetes.io/name", "app.kubernetes.io/instance",
                     "app.kubernetes.io/component")
+          STANDARD = TRIPLE + ("helm.sh/chart", "app.kubernetes.io/managed-by")
 
           def render(values):
               args = ["helm", "template", "test", chart]
@@ -752,17 +757,21 @@ jobs:
               if job is None:
                   failed.append(f"{mode}: bucket hook Job not rendered")
                   continue
+              job_labels = job["metadata"].get("labels", {})
               pod_labels = job["spec"]["template"]["metadata"].get("labels", {})
-              for where, labels in (("Job", job["metadata"].get("labels", {})),
-                                    ("pod", pod_labels)):
-                  missing = [k for k in TRIPLE if not labels.get(k)]
+              for where, labels in (("Job", job_labels), ("pod", pod_labels)):
+                  missing = [k for k in STANDARD if not labels.get(k)]
                   if missing:
                       failed.append(f"{mode}: bucket hook {where} has no {missing}, "
                                     "nothing can select it")
-              component = pod_labels.get("app.kubernetes.io/component")
-              if component != "bucket-hook":
-                  failed.append(f"{mode}: bucket hook pod component is {component!r}, "
-                                "expected 'bucket-hook'")
+                  component = labels.get("app.kubernetes.io/component")
+                  if component != "bucket-hook":
+                      failed.append(f"{mode}: bucket hook {where} component is "
+                                    f"{component!r}, expected 'bucket-hook'")
+              # A selector written against the Job has to find its pods.
+              if triple(job_labels) != triple(pod_labels):
+                  failed.append(f"{mode}: bucket hook Job and pod disagree: "
+                                f"{triple(job_labels)} vs {triple(pod_labels)}")
               # The triple must not also match another component's pods, or a
               # selector meant for that component would pull the hook pod in.
               for d in docs(out):
