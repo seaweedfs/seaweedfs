@@ -365,6 +365,36 @@ helm install seaweedfs-worker-vacuum seaweedfs/seaweedfs -f values-worker-vacuum
 helm install seaweedfs-worker-balance seaweedfs/seaweedfs -f values-worker-balance.yaml
 ```
 
+## Network Policies
+
+In a namespace with a default-deny policy the install hangs: the components cannot resolve each other, and the post-install bucket hook waits on the master and filer until it gives up. `networkPolicy.enabled` renders one `NetworkPolicy` per component, selecting its pods by the standard `app.kubernetes.io/{name,instance,component}` labels and admitting traffic from the other pods of the release on the ports that component listens on.
+
+```bash
+helm install seaweedfs seaweedfs/seaweedfs --set networkPolicy.enabled=true
+```
+
+That alone leaves outbound traffic untouched. Restricting egress is a second opt-in, because the chart knows where its own components live but not where your filer store, notification sink or remote tier does:
+
+```yaml
+networkPolicy:
+  enabled: true
+  egress:
+    enabled: true
+    kubeApiServer:
+      # the endpoint behind the kubernetes service, not its ClusterIP
+      cidrs: ["172.18.0.2/32"]
+    extraEgress:
+      - to:
+          - podSelector:
+              matchLabels:
+                app.kubernetes.io/name: postgresql
+        ports:
+          - protocol: TCP
+            port: 5432
+```
+
+Anything reaching the release from outside - an ingress controller, a Prometheus in another namespace - goes into `networkPolicy.extraIngress`, or into `networkPolicy.components.<component>.extraIngress` for a single component. See the `networkPolicy` block in `values.yaml` for the full set.
+
 ## OpenShift Support
 
 SeaweedFS can be deployed on OpenShift or any cluster enforcing the Kubernetes "restricted" Pod Security Standard. By default, OpenShift blocks containers that run as root or use `hostPath` volumes.
