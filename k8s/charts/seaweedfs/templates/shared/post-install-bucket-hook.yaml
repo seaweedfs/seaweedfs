@@ -71,12 +71,6 @@ spec:
         image: {{ template "seaweedfs.master.image" . }}
         imagePullPolicy: {{ $.Values.global.seaweedfs.imagePullPolicy | default "IfNotPresent" }}
         env:
-          - name: WEED_CLUSTER_DEFAULT
-            value: "sw"
-          - name: WEED_CLUSTER_SW_MASTER
-            value: {{ include "seaweedfs.cluster.masterAddress" . | quote }}
-          - name: WEED_CLUSTER_SW_FILER
-            value: {{ include "seaweedfs.cluster.filerAddress" . | quote }}
           - name: POD_IP
             valueFrom:
               fieldRef:
@@ -91,6 +85,19 @@ spec:
                 fieldPath: metadata.namespace
           - name: SEAWEEDFS_FULLNAME
             value: "{{ include "seaweedfs.fullname" . }}"
+          {{- /* Carries the WEED_CLUSTER_* defaults the script below uses, and the
+                 JWT signing keys when they are set as environment overrides
+                 rather than in security.toml. */}}
+          {{- range $key := keys $bucketEnvVars | sortAlpha }}
+          {{- $value := index $bucketEnvVars $key }}
+          - name: {{ $key }}
+          {{- if kindIs "string" $value }}
+            value: {{ tpl $value $ | quote }}
+          {{- else }}
+            valueFrom:
+              {{ toYaml $value | nindent 14 | trim }}
+          {{- end -}}
+          {{- end }}
         command:
           - "/bin/sh"
           - "-ec"
@@ -177,11 +184,19 @@ spec:
                 /usr/bin/weed shell
           {{- end }}  
           {{- end }}
-        {{- if $enableAuth }}
+        {{- if or $enableAuth (include "seaweedfs.securityConfigEnabled" .) }}
         volumeMounts:
+          {{- if $enableAuth }}
           - name: config-users
             mountPath: /etc/sw
             readOnly: true
+          {{- end }}
+          {{- if include "seaweedfs.securityConfigEnabled" . }}
+          - name: security-config
+            readOnly: true
+            mountPath: /etc/seaweedfs/security.toml
+            subPath: security.toml
+          {{- end }}
         {{- end }}
         ports:
           - containerPort: {{ .Values.master.port }}
@@ -199,8 +214,9 @@ spec:
         {{- if .Values.filer.containerSecurityContext.enabled }}
         securityContext: {{- omit .Values.filer.containerSecurityContext "enabled" | toYaml | nindent 12 }}
         {{- end }}
-    {{- if $enableAuth }}
+    {{- if or $enableAuth (include "seaweedfs.securityConfigEnabled" .) }}
       volumes:
+        {{- if $enableAuth }}
         - name: config-users
           secret:
             defaultMode: 420
@@ -209,5 +225,11 @@ spec:
             {{- else }}
             secretName: {{ include "seaweedfs.fullname" . }}-s3-secret
             {{- end }}
+        {{- end }}
+        {{- if include "seaweedfs.securityConfigEnabled" . }}
+        - name: security-config
+          configMap:
+            name: {{ include "seaweedfs.fullname" . }}-security-config
+        {{- end }}
     {{- end }}
 {{- end }}

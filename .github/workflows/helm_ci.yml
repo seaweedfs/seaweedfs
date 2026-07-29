@@ -246,6 +246,98 @@ jobs:
           PYEOF
           echo "IAM gRPC decoupling tests passed"
 
+          echo ""
+          echo "=== Testing bucket hook credentials ==="
+          # The bucket hook pipes s3.configure into `weed shell`, which needs
+          # the filer JWT signing key once jwtSigning.filerWrite is on: the
+          # filer rejects unsigned IAM gRPC calls, and `weed shell` still
+          # exits 0, so the Job goes green while anonymousRead is dropped.
+          # The key reaches the hook either through security.toml or through
+          # an environment override in extraEnvironmentVars.
+          python3 - "$CHART_DIR" <<'PYEOF'
+          import subprocess, sys, yaml
+
+          chart = sys.argv[1]
+
+          def render(values):
+              args = ["helm", "template", "test", chart]
+              for k, v in values.items():
+                  args += ["--set", f"{k}={v}"]
+              return subprocess.check_output(args, text=True)
+
+          def hook_pod(manifest):
+              for d in yaml.safe_load_all(manifest):
+                  if d and d.get("kind") == "Job" and d["metadata"]["name"].endswith("-bucket-hook"):
+                      return d["spec"]["template"]["spec"]
+              return None
+
+          buckets = {
+              "s3.enabled": "true",
+              "s3.createBuckets[0].name": "data",
+              "s3.createBuckets[0].anonymousRead": "true",
+          }
+          jwt = dict(buckets, **{"global.seaweedfs.securityConfig.jwtSigning.filerWrite": "true"})
+
+          failed = []
+
+          # The script in the hook addresses master and filer through
+          # WEED_CLUSTER_*, which now comes from extraEnvironmentVars instead
+          # of being hardcoded. Duplicate names would be a rendering bug.
+          pod = hook_pod(render(buckets))
+          if pod is None:
+              failed.append("createBuckets: bucket hook Job missing")
+          else:
+              env = pod["containers"][0]["env"]
+              names = [e["name"] for e in env]
+              dupes = sorted({n for n in names if names.count(n) > 1})
+              if dupes:
+                  failed.append(f"createBuckets: duplicate env entries {dupes}")
+              values = {e["name"]: e.get("value") for e in env}
+              for name in ("WEED_CLUSTER_DEFAULT", "WEED_CLUSTER_SW_MASTER", "WEED_CLUSTER_SW_FILER"):
+                  if not values.get(name):
+                      failed.append(f"createBuckets: hook env {name} is empty")
+              if not dupes and all(values.get(n) for n in ("WEED_CLUSTER_SW_MASTER", "WEED_CLUSTER_SW_FILER")):
+                  print("createBuckets: hook env resolves the cluster addresses once")
+              if any(v["name"] == "security-config" for v in pod.get("volumes", [])):
+                  failed.append("createBuckets: hook mounts security-config without JWT signing")
+
+          # filerWrite=true: the hook needs the same security.toml the filer
+          # gets, otherwise s3.configure fails with "missing authorization
+          # metadata".
+          pod = hook_pod(render(jwt))
+          if pod is None:
+              failed.append("filerWrite=true: bucket hook Job missing")
+          else:
+              vols = {v["name"] for v in pod.get("volumes", [])}
+              mounts = {m["name"] for m in pod["containers"][0].get("volumeMounts", [])}
+              if "security-config" not in vols or "security-config" not in mounts:
+                  failed.append("filerWrite=true: bucket hook does not mount security-config (s3.configure would fail)")
+              else:
+                  print("filerWrite=true: bucket hook mounts security-config")
+
+          # Keys kept in a Secret are referenced, not inlined, so the hook
+          # must render valueFrom for non-string extraEnvironmentVars.
+          out = render(dict(jwt, **{
+              "global.seaweedfs.extraEnvironmentVars.WEED_JWT_FILER_SIGNING_KEY.secretKeyRef.name": "signing-keys",
+              "global.seaweedfs.extraEnvironmentVars.WEED_JWT_FILER_SIGNING_KEY.secretKeyRef.key": "filerWrite",
+          }))
+          pod = hook_pod(out)
+          entry = next((e for e in pod["containers"][0]["env"] if e["name"] == "WEED_JWT_FILER_SIGNING_KEY"), None)
+          if entry is None:
+              failed.append("secretKeyRef: hook env WEED_JWT_FILER_SIGNING_KEY missing")
+          elif entry.get("valueFrom", {}).get("secretKeyRef") != {"name": "signing-keys", "key": "filerWrite"}:
+              failed.append(f"secretKeyRef: hook env rendered as {entry}")
+          else:
+              print("secretKeyRef: hook env keeps the secret reference")
+
+          if failed:
+              print("\nFAIL:", file=sys.stderr)
+              for f in failed:
+                  print(f"  - {f}", file=sys.stderr)
+              sys.exit(1)
+          PYEOF
+          echo "Bucket hook credential tests passed"
+
           echo "=== Testing with monitoring enabled ==="
           helm template test $CHART_DIR \
             --set global.seaweedfs.monitoring.enabled=true \
