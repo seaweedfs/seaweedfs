@@ -33,17 +33,20 @@ func normalizeAdvancedIAMPolicies(configContent []byte) []byte {
 		if !hasDocument || hasPolicyContent(policy) {
 			continue
 		}
-		delete(policy, "document")
-		if isJSONString(document) {
-			// Already a JSON-encoded string, so it is the content verbatim.
-			policy["content"] = document
-		} else {
+		// A document already written as a JSON string is the content verbatim;
+		// an inline object becomes the JSON encoding of its own bytes. Nothing
+		// is mutated until the content is in hand, so a failure leaves the
+		// policy as it was rather than stripping its only definition.
+		content := document
+		if !isJSONString(document) {
 			encoded, err := json.Marshal(string(document))
 			if err != nil {
 				continue
 			}
-			policy["content"] = encoded
+			content = encoded
 		}
+		delete(policy, "document")
+		policy["content"] = content
 		rewritten = true
 	}
 	if !rewritten {
