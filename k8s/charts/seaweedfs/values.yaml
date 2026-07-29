@@ -958,6 +958,10 @@ filer:
     #     anonymousRead: false
     createBucketsHook:
       resources: {}
+      # Toleration settings for the bucket creation Job.
+      tolerations: ""
+      # Node selector labels for the bucket creation Job.
+      nodeSelector: ""
 
 s3:
   enabled: false
@@ -1127,6 +1131,10 @@ s3:
 
   createBucketsHook:
     resources: {}
+    # Toleration settings for the bucket creation Job.
+    tolerations: ""
+    # Node selector labels for the bucket creation Job.
+    nodeSelector: ""
 
   ingress:
     enabled: false
@@ -1579,6 +1587,10 @@ allInOne:
     #     anonymousRead: false
     createBucketsHook:
       resources: {}
+      # Toleration settings for the bucket creation Job.
+      tolerations: ""
+      # Node selector labels for the bucket creation Job.
+      nodeSelector: ""
 
   # SFTP server configuration
   # Note: Most parameters below default to null, which means they inherit from

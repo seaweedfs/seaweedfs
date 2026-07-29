@@ -66,6 +66,10 @@ spec:
       securityContext: {{- omit .Values.filer.podSecurityContext "enabled" | toYaml | nindent 8 }}
       {{- end }}
       {{- include "seaweedfs.imagePullSecrets" $ | nindent 6 }}
+      {{- with coalesce .Values.allInOne.s3.createBucketsHook.tolerations .Values.s3.createBucketsHook.tolerations .Values.filer.s3.createBucketsHook.tolerations }}
+      tolerations:
+        {{ tpl . $ | nindent 8 }}
+      {{- end }}
       containers:
       - name: post-install-job
         image: {{ template "seaweedfs.master.image" . }}
@@ -209,5 +213,9 @@ spec:
             {{- else }}
             secretName: {{ include "seaweedfs.fullname" . }}-s3-secret
             {{- end }}
+    {{- end }}
+    {{- with coalesce .Values.allInOne.s3.createBucketsHook.nodeSelector .Values.s3.createBucketsHook.nodeSelector .Values.filer.s3.createBucketsHook.nodeSelector }}
+      nodeSelector:
+        {{ tpl . $ | nindent 8 }}
     {{- end }}
 {{- end }}
