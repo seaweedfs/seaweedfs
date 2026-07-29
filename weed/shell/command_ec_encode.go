@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -801,6 +802,19 @@ func ecShardsClumpedOnOneNode(topoInfo *master_pb.TopologyInfo, vid needle.Volum
 	return "", false
 }
 
+// ecShardSummaryByNode says where a volume's shards are, one entry per node,
+// sorted so the message is stable. It names the ids and not just the count: a
+// set holding shards 0-9 and one holding 4-13 are both "10 shards", and which
+// ones survived is what says whether the set is recoverable and from where.
+func ecShardSummaryByNode(byNode map[pb.ServerAddress]erasure_coding.ShardBits) []string {
+	summary := make([]string, 0, len(byNode))
+	for node, bits := range byNode {
+		summary = append(summary, fmt.Sprintf("%s=%d shards %v", node, bits.Count(), slices.Collect(bits.All())))
+	}
+	sort.Strings(summary)
+	return summary
+}
+
 func verifyEcShardsBeforeDelete(commandEnv *CommandEnv, volumeIds []needle.VolumeId, diskType types.DiskType, expectSpread bool) error {
 	// Shard relocations from the preceding EC balance reach the master via
 	// volume-server heartbeats, so freshly distributed shards may not all be
@@ -847,12 +861,7 @@ func verifyEcShardsBeforeDelete(commandEnv *CommandEnv, volumeIds []needle.Volum
 			totalShards := erasure_coding.TotalShardsCount
 			degraded, err := erasure_coding.RequireRecoverableShardSet(uint32(vid), union, erasure_coding.DataShardsCount, totalShards)
 			if err != nil {
-				summary := make([]string, 0, len(byNode))
-				for node, bits := range byNode {
-					summary = append(summary, fmt.Sprintf("%s=%d shards", node, bits.Count()))
-				}
-				sort.Strings(summary)
-				lastErr = fmt.Errorf("volume %d: %w (observed: %v)", vid, err, summary)
+				lastErr = fmt.Errorf("volume %d: %w (observed: %v)", vid, err, ecShardSummaryByNode(byNode))
 				break
 			}
 			if expectSpread {

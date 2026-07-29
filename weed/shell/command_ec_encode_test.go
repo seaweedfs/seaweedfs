@@ -466,3 +466,19 @@ func TestEcShardCountIgnoresDiskTypeOfTheShards(t *testing.T) {
 	scoped, _ := collectEcNodeShardsInfo(topo, needle.VolumeId(1), types.ToDiskType(""))
 	assert.Empty(t, scoped, "the hdd-scoped view cannot see ssd shards")
 }
+
+// The message an aborted deletion leaves behind is all the operator has to go
+// on, so it has to name which shards were found and not only how many: a set
+// holding 0-9 and one holding 4-13 are both "10 shards", and only the ids say
+// whether what survived can rebuild the volume.
+func TestEcShardSummaryNamesTheShardIds(t *testing.T) {
+	byNode := map[pb.ServerAddress]erasure_coding.ShardBits{
+		"node2:8080": erasure_coding.ShardBits(0).Set(1).Set(2),
+		"node1:8080": erasure_coding.ShardBits(0).Set(0).Set(12),
+	}
+
+	assert.Equal(t, []string{
+		"node1:8080=2 shards [0 12]",
+		"node2:8080=2 shards [1 2]",
+	}, ecShardSummaryByNode(byNode))
+}
