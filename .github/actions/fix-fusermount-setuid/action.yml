@@ -1,0 +1,42 @@
+name: Fix fusermount3 setuid
+description: >
+  Restore the setuid bit on the fusermount3 an unprivileged mount will use.
+  Some runner images carry a second, source-built fusermount3 in /usr/local/bin
+  that shadows the distro one in PATH without its setuid bit, and every mount
+  then fails with "mount failed: Operation not permitted". Both the Go mount
+  and sw-fuse resolve the helper through PATH, so repair the first one.
+  Run it after the step that apt-installs fuse3.
+
+runs:
+  using: composite
+  steps:
+    - name: Repair the fusermount3 in PATH
+      shell: bash
+      run: |
+        set -euo pipefail
+        bin=$(command -v fusermount3 || true)
+        if [ -z "$bin" ]; then
+          echo "no fusermount3 in PATH"
+          exit 0
+        fi
+        if [ -u "$bin" ]; then
+          ls -l "$bin"
+          exit 0
+        fi
+        # Reaching here means unprivileged mounts cannot work as-is, but the
+        # target comes from PATH: grant setuid root only to a root-owned system
+        # binary, and say why rather than escalating anything else.
+        case "$bin" in
+          /bin/*|/sbin/*|/usr/bin/*|/usr/sbin/*|/usr/local/bin/*|/usr/local/sbin/*) ;;
+          *) echo "refusing to setuid $bin: outside the system bin paths" >&2; exit 1 ;;
+        esac
+        if [ -L "$bin" ] || [ ! -f "$bin" ] || [ ! -x "$bin" ]; then
+          echo "refusing to setuid $bin: not a regular executable file" >&2
+          exit 1
+        fi
+        if [ "$(stat -c %u "$bin")" != 0 ] || [ "$(stat -c %g "$bin")" != 0 ]; then
+          echo "refusing to setuid $bin: not owned by root:root" >&2
+          exit 1
+        fi
+        sudo chmod u+s "$bin"
+        ls -l "$bin"
