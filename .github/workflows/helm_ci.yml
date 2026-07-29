@@ -942,6 +942,46 @@ jobs:
           if not failed:
               print("every workload has a policy covering all of its containerPorts")
 
+          # The bucket hook Job and its policy are gated on one shared helper, and
+          # this pins that down: a Job without its policy hangs under default-deny,
+          # a policy without its Job is noise. The combinations cover the modes that
+          # decide it, including the ones where a bucket list is ignored.
+          hook_cases = {
+              "nothing": {},
+              "s3 without buckets": {"s3.enabled": "true"},
+              "s3 with buckets": {"s3.enabled": "true", "s3.createBuckets[0].name": "b"},
+              "filer.s3 without buckets": {"filer.s3.enabled": "true"},
+              "filer.s3 with buckets": {"filer.s3.enabled": "true",
+                                        "filer.s3.createBuckets[0].name": "b"},
+              "s3 gateway, buckets on filer.s3": {"s3.enabled": "true",
+                                                  "filer.s3.createBuckets[0].name": "b"},
+              "allInOne without buckets": {"allInOne.enabled": "true",
+                                           "allInOne.s3.enabled": "true"},
+              "allInOne with buckets": {"allInOne.enabled": "true",
+                                        "allInOne.s3.enabled": "true",
+                                        "allInOne.s3.createBuckets[0].name": "b"},
+              # allInOne reads only its own bucket list, so s3.createBuckets is
+              # not enough to produce the Job.
+              "allInOne, buckets on s3": {"allInOne.enabled": "true",
+                                          "allInOne.s3.enabled": "true",
+                                          "s3.createBuckets[0].name": "b"},
+              "master off": {"master.enabled": "false", "s3.enabled": "true",
+                             "s3.createBuckets[0].name": "b"},
+              "buckets but no S3 endpoint": {"s3.createBuckets[0].name": "b"},
+          }
+          for label, values in hook_cases.items():
+              out = render(dict(values, **{"networkPolicy.enabled": "true"}))
+              job = any(d.get("kind") == "Job"
+                        and d["metadata"]["name"].endswith("-bucket-hook")
+                        for d in docs(out))
+              policy = "bucket-hook" in policies(out)
+              if job != policy:
+                  failed.append(f"{label}: bucket hook Job={job} but its policy={policy}; "
+                                "the two are gated on seaweedfs.bucketHookEnabled and "
+                                "have to appear together")
+          if not failed:
+              print(f"bucket hook Job and policy agree across {len(hook_cases)} modes")
+
           # Egress is its own opt-in: with it off the policies must not constrain
           # outbound traffic at all, or enabling networkPolicy alone would cut the filer
           # off from its store.
