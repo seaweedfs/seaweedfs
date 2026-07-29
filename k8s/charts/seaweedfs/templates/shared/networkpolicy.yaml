@@ -197,11 +197,26 @@ spec:
               app.kubernetes.io/name: {{ template "seaweedfs.name" $ }}
               app.kubernetes.io/instance: {{ $.Release.Name }}
 {{- if $egressCfg.allowDNS }}
+{{- /* Emit only the selectors that are set. An empty one has to be left out
+       rather than rendered as null: a missing podSelector means every pod in
+       the namespace, and a missing namespaceSelector means this namespace
+       instead of the one DNS runs in. */}}
+{{- if not (or $egressCfg.dnsNamespaceSelector $egressCfg.dnsPodSelector) }}
+{{- fail "networkPolicy: egress.allowDNS is on but both egress.dnsNamespaceSelector and egress.dnsPodSelector are empty, which would open port 53 to every pod in the release namespace. Set at least one of them, or turn allowDNS off and name the resolver in egress.extraEgress." }}
+{{- end }}
     - to:
+{{- if and $egressCfg.dnsNamespaceSelector $egressCfg.dnsPodSelector }}
         - namespaceSelector:
             {{- toYaml $egressCfg.dnsNamespaceSelector | nindent 12 }}
           podSelector:
             {{- toYaml $egressCfg.dnsPodSelector | nindent 12 }}
+{{- else if $egressCfg.dnsNamespaceSelector }}
+        - namespaceSelector:
+            {{- toYaml $egressCfg.dnsNamespaceSelector | nindent 12 }}
+{{- else }}
+        - podSelector:
+            {{- toYaml $egressCfg.dnsPodSelector | nindent 12 }}
+{{- end }}
       ports:
         - protocol: UDP
           port: 53
@@ -211,6 +226,11 @@ spec:
 {{- if and $target.apiserver ($egressCfg.kubeApiServer).enabled }}
 {{- if not $egressCfg.kubeApiServer.cidrs }}
 {{- fail (printf "networkPolicy: %s needs the Kubernetes API server, but networkPolicy.egress.kubeApiServer.cidrs is empty. Set it to your API server address(es), or disable networkPolicy.egress.kubeApiServer and allow it through networkPolicy.egress.extraEgress." $component) }}
+{{- end }}
+{{- /* An empty port list is not "no ports" in a NetworkPolicy, it is every
+       port, so refuse it rather than quietly opening the CIDR up. */}}
+{{- if not $egressCfg.kubeApiServer.ports }}
+{{- fail "networkPolicy: egress.kubeApiServer.ports is empty, which allows every port on the API server CIDR(s) rather than none. Set it (the default is [443, 6443]), or turn egress.kubeApiServer off and describe the access in egress.extraEgress." }}
 {{- end }}
 {{- range $cidr := $egressCfg.kubeApiServer.cidrs }}
     - to:
