@@ -56,8 +56,8 @@ metadata:
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
     helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
-    app.kubernetes.io/managed-by: {{ .Release.Service }}
-    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service | quote }}
+    app.kubernetes.io/instance: {{ .Release.Name | quote }}
     app.kubernetes.io/component: volume-resize-hook
   annotations:
     helm.sh/hook: pre-install,pre-upgrade
@@ -70,8 +70,8 @@ spec:
       labels:
         app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
         helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
-        app.kubernetes.io/managed-by: {{ .Release.Service }}
-        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/managed-by: {{ .Release.Service | quote }}
+        app.kubernetes.io/instance: {{ .Release.Name | quote }}
         app.kubernetes.io/component: volume-resize-hook
     spec:
       serviceAccountName: {{ $seaweedfsName }}-volume-resize-hook
