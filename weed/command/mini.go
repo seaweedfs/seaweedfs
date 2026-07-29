@@ -1223,6 +1223,7 @@ func runMini(cmd *Command, args []string) bool {
 	miniFilerOptions.masters = pb.ServerAddresses(actualPeersForComponents).ToServiceDiscovery()
 	miniFilerOptions.ip = miniIp
 	miniFilerOptions.bindIp = miniBindIp
+	miniS3Options.ip = miniIp
 	miniS3Options.bindIp = miniBindIp
 	miniWebDavOptions.ipBind = miniBindIp
 	miniOptions.v.ip = miniIp

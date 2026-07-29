@@ -58,9 +58,10 @@ type S3ApiServerOption struct {
 	IamConfig                 string // Advanced IAM configuration file path
 	ConcurrentUploadLimit     int64
 	ConcurrentFileUploadLimit int64
-	EnableIam                 bool // Enable embedded IAM API on the same port
-	IamReadOnly               bool // Disable IAM write operations on this server
-	Cipher                    bool // encrypt data on volume servers
+	EnableIam                 bool   // Enable embedded IAM API on the same port
+	IamReadOnly               bool   // Disable IAM write operations on this server
+	Cipher                    bool   // encrypt data on volume servers
+	Ip                        string // address advertised to the cluster; empty falls back to BindIp
 	BindIp                    string
 	GrpcPort                  int
 	ExternalUrl               string // external URL clients use, for signature verification behind a reverse proxy
@@ -132,6 +133,30 @@ func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer 
 	return NewS3ApiServerWithStore(router, option, "")
 }
 
+// advertisedHost is the address this server registers with the master, which is
+// how peers reach it — IAM changes are pushed to it over gRPC. It must be the
+// advertised -ip, not the bind address: binding 0.0.0.0 and registering the
+// auto-detected interface makes those pushes dial a host that may not route
+// back here at all (a VPN address, a container-internal IP), and the push then
+// fails silently after a 10s deadline.
+func (option *S3ApiServerOption) advertisedHost() string {
+	if option.Ip != "" && !isWildcardHost(option.Ip) {
+		return option.Ip
+	}
+	if option.BindIp != "" && !isWildcardHost(option.BindIp) {
+		return option.BindIp
+	}
+	return util.DetectedHostAddress()
+}
+
+// isWildcardHost reports whether host is an unspecified address (0.0.0.0, ::,
+// [::]) — one that accepts connections but tells a peer nothing about where to
+// reach us. Host names parse as nil and are addresses in their own right.
+func isWildcardHost(host string) bool {
+	ip := net.ParseIP(strings.TrimSuffix(strings.TrimPrefix(host, "["), "]"))
+	return ip != nil && ip.IsUnspecified()
+}
+
 func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, explicitStore string) (s3ApiServer *S3ApiServer, err error) {
 	if len(option.Filers) == 0 {
 		return nil, fmt.Errorf("at least one filer address is required")
@@ -174,10 +199,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		for i, addr := range option.Masters {
 			masterMap[fmt.Sprintf("master%d", i)] = addr
 		}
-		clientHost := option.BindIp
-		if clientHost == "0.0.0.0" || clientHost == "" {
-			clientHost = util.DetectedHostAddress()
-		}
+		clientHost := option.advertisedHost()
 		masterClient = wdclient.NewMasterClient(option.GrpcDialOption, option.FilerGroup, cluster.S3Type, pb.ServerAddress(util.JoinHostPort(clientHost, option.GrpcPort)), option.DataCenter, "", *pb.NewServiceDiscoveryFromMap(masterMap))
 		// Build the object-write lock client and subscribe to the master's
 		// lock-ring updates BEFORE starting the master loop, so the initial
