@@ -719,6 +719,15 @@ jobs:
           # else the release owns.
           TRIPLE = ("app.kubernetes.io/name", "app.kubernetes.io/instance",
                     "app.kubernetes.io/component")
+          # The labels that identify the release rather than the workload, and
+          # so have to hold the same values everywhere. They are compared
+          # against a workload that already renders them instead of being
+          # spelled out here, which keeps the chart version out of the test.
+          # managed-by is not among them on purpose: the chart puts it on
+          # workload metadata but not on pod templates, so it cannot be part of
+          # a cross-workload comparison. Its presence is still checked below.
+          RELEASE = ("app.kubernetes.io/name", "app.kubernetes.io/instance",
+                     "helm.sh/chart")
           STANDARD = TRIPLE + ("helm.sh/chart", "app.kubernetes.io/managed-by")
 
           def render(values):
@@ -738,6 +747,16 @@ jobs:
 
           def triple(labels):
               return {k: labels.get(k) for k in TRIPLE}
+
+          def release(labels):
+              return {k: labels.get(k) for k in RELEASE}
+
+          def reference(manifest):
+              """Any long-running workload; they all carry the release labels."""
+              for d in docs(manifest):
+                  if d.get("kind") in ("Deployment", "StatefulSet"):
+                      return d
+              return None
 
           modes = {
               "s3": {"s3.enabled": "true",
@@ -759,6 +778,11 @@ jobs:
                   continue
               job_labels = job["metadata"].get("labels", {})
               pod_labels = job["spec"]["template"]["metadata"].get("labels", {})
+              ref = reference(out)
+              if ref is None:
+                  failed.append(f"{mode}: no workload to compare the release labels against")
+                  continue
+              ref_labels = release(ref["spec"]["template"]["metadata"].get("labels", {}))
               for where, labels in (("Job", job_labels), ("pod", pod_labels)):
                   missing = [k for k in STANDARD if not labels.get(k)]
                   if missing:
@@ -768,6 +792,12 @@ jobs:
                   if component != "bucket-hook":
                       failed.append(f"{mode}: bucket hook {where} component is "
                                     f"{component!r}, expected 'bucket-hook'")
+                  # Present is not enough: the values have to be the release's
+                  # own, or a selector written for this release misses the hook.
+                  if release(labels) != ref_labels:
+                      failed.append(f"{mode}: bucket hook {where} release labels "
+                                    f"{release(labels)} differ from "
+                                    f"{ref['metadata']['name']}'s {ref_labels}")
               # A selector written against the Job has to find its pods.
               if triple(job_labels) != triple(pod_labels):
                   failed.append(f"{mode}: bucket hook Job and pod disagree: "
