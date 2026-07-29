@@ -830,19 +830,26 @@ func verifyEcShardsBeforeDelete(commandEnv *CommandEnv, volumeIds []needle.Volum
 		lastDegraded = lastDegraded[:0]
 		lastClumped = lastClumped[:0]
 		for _, vid := range volumeIds {
-			nodeShards, _ := collectEcNodeShardsInfo(topoInfo, vid, diskType)
+			// Count the shards wherever they landed, as waitForEcShardsToRegister
+			// above already does. generateEcShards writes them beside the source
+			// volume, so encoding a volume that lives on a non-default medium
+			// puts them on that medium while -diskType still says hdd. Counting
+			// only the -diskType bucket then reports a complete set as entirely
+			// missing and aborts an encode that in fact succeeded, leaving the
+			// volume as both a .dat and a full set of shards.
+			byNode := collectEcShardBitsByNode(topoInfo, vid)
 
 			var union erasure_coding.ShardBits
-			for _, info := range nodeShards {
-				union = erasure_coding.ShardBits(uint32(union) | info.Bitmap())
+			for _, bits := range byNode {
+				union |= bits
 			}
 
 			totalShards := erasure_coding.TotalShardsCount
 			degraded, err := erasure_coding.RequireRecoverableShardSet(uint32(vid), union, erasure_coding.DataShardsCount, totalShards)
 			if err != nil {
-				summary := make([]string, 0, len(nodeShards))
-				for node, info := range nodeShards {
-					summary = append(summary, fmt.Sprintf("%s=%s", node, info.String()))
+				summary := make([]string, 0, len(byNode))
+				for node, bits := range byNode {
+					summary = append(summary, fmt.Sprintf("%s=%d shards", node, bits.Count()))
 				}
 				sort.Strings(summary)
 				lastErr = fmt.Errorf("volume %d: %w (observed: %v)", vid, err, summary)
@@ -859,8 +866,8 @@ func verifyEcShardsBeforeDelete(commandEnv *CommandEnv, volumeIds []needle.Volum
 				continue
 			}
 
-			glog.V(0).Infof("EC shard verification ok for volume %d on diskType %q: %d/%d shards present across %d nodes",
-				vid, diskType.ReadableString(), union.Count(), totalShards, len(nodeShards))
+			glog.V(0).Infof("EC shard verification ok for volume %d: %d/%d shards present across %d nodes",
+				vid, union.Count(), totalShards, len(byNode))
 		}
 
 		if lastErr == nil && len(lastDegraded) == 0 && len(lastClumped) == 0 {

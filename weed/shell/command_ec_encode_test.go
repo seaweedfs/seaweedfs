@@ -433,3 +433,36 @@ func TestEcShardsClumpedOnOneNode(t *testing.T) {
 	assert.True(t, clumped)
 	assert.Equal(t, pb.NewServerAddressFromDataNode(fresh), holder)
 }
+
+// A volume that lived on ssd gets its shards written beside it, on ssd, while
+// -diskType still defaults to hdd. The pre-delete check must count them anyway:
+// scoping the count to the hdd bucket saw a complete set as zero shards and
+// aborted the encode, leaving the volume as both a .dat and a full shard set.
+func TestEcShardCountIgnoresDiskTypeOfTheShards(t *testing.T) {
+	allBits := uint32(1)<<erasure_coding.TotalShardsCount - 1
+	node := &master_pb.DataNodeInfo{
+		Id: "node1:8080",
+		DiskInfos: map[string]*master_pb.DiskInfo{
+			"":    {MaxVolumeCount: 10},
+			"ssd": {Type: "ssd", MaxVolumeCount: 10, EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{{Id: 1, EcIndexBits: allBits, DiskId: 1}}},
+		},
+	}
+	topo := ecShardVisibilityTestTopology(node)
+
+	var union erasure_coding.ShardBits
+	for _, bits := range collectEcShardBitsByNode(topo, needle.VolumeId(1)) {
+		union |= bits
+	}
+	assert.Equal(t, erasure_coding.TotalShardsCount, union.Count(),
+		"shards on a non-default medium must still be counted")
+
+	degraded, err := erasure_coding.RequireRecoverableShardSet(
+		1, union, erasure_coding.DataShardsCount, erasure_coding.TotalShardsCount)
+	assert.NoError(t, err, "a complete shard set must not read as unrecoverable")
+	assert.False(t, degraded)
+
+	// The disk-scoped view is what the check used to consult, and it is blind
+	// to this volume entirely.
+	scoped, _ := collectEcNodeShardsInfo(topo, needle.VolumeId(1), types.ToDiskType(""))
+	assert.Empty(t, scoped, "the hdd-scoped view cannot see ssd shards")
+}
