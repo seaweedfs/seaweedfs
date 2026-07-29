@@ -1029,6 +1029,39 @@ jobs:
               else:
                   print(f"{dropped}=null: the key is left out rather than rendered as null")
 
+          # Helm allows a release named "123", and an unquoted label value then
+          # renders as a YAML integer. Label values are strings in the API, so the
+          # whole object gets rejected - a policy that never applies, silently.
+          # Every label the policies emit, in metadata and in every selector, has
+          # to survive that release name as a string.
+          numeric = subprocess.check_output(
+              ["helm", "template", "123", chart,
+               "--set", "networkPolicy.enabled=true",
+               "--set", "networkPolicy.egress.enabled=true",
+               "--set", "networkPolicy.egress.kubeApiServer.cidrs[0]=10.96.0.1/32",
+               "--set", "s3.enabled=true", "--set", "s3.createBuckets[0].name=b"],
+              text=True, stderr=subprocess.STDOUT)
+
+          def label_maps(policy):
+              yield "metadata", policy["metadata"].get("labels", {})
+              yield "podSelector", policy["spec"]["podSelector"]["matchLabels"]
+              for direction in ("ingress", "egress"):
+                  for i, rule in enumerate(policy["spec"].get(direction) or []):
+                      for peer in rule.get("to") or rule.get("from") or []:
+                          for key in ("podSelector", "namespaceSelector"):
+                              sel = peer.get(key) or {}
+                              yield f"{direction}[{i}].{key}", sel.get("matchLabels", {})
+
+          coerced = [(comp, where, k, v)
+                     for comp, p in policies(numeric).items()
+                     for where, labels in label_maps(p)
+                     for k, v in labels.items() if not isinstance(v, str)]
+          if coerced:
+              failed.append(f"release name 123: label values are not strings, so the API "
+                            f"server rejects the policy: {coerced}")
+          else:
+              print("a numeric release name keeps every policy label a string")
+
           out = render(egress_on)
           pols = policies(out)
 

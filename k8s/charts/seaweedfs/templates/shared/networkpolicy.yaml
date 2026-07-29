@@ -133,11 +133,11 @@ metadata:
   name: {{ include "seaweedfs.componentName" (list $ $component) }}
   namespace: {{ $.Release.Namespace }}
   labels:
-    app.kubernetes.io/name: {{ template "seaweedfs.name" $ }}
+    app.kubernetes.io/name: {{ include "seaweedfs.name" $ | quote }}
     helm.sh/chart: {{ $.Chart.Name }}-{{ $.Chart.Version | replace "+" "_" }}
-    app.kubernetes.io/managed-by: {{ $.Release.Service }}
-    app.kubernetes.io/instance: {{ $.Release.Name }}
-    app.kubernetes.io/component: {{ $component }}
+    app.kubernetes.io/managed-by: {{ $.Release.Service | quote }}
+    app.kubernetes.io/instance: {{ $.Release.Name | quote }}
+    app.kubernetes.io/component: {{ $component | quote }}
 {{- if $target.hook }}
   annotations:
     {{- /* Only before-hook-creation: the policy has to outlive the Job it
@@ -151,9 +151,9 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/name: {{ template "seaweedfs.name" $ }}
-      app.kubernetes.io/instance: {{ $.Release.Name }}
-      app.kubernetes.io/component: {{ $component }}
+      app.kubernetes.io/name: {{ include "seaweedfs.name" $ | quote }}
+      app.kubernetes.io/instance: {{ $.Release.Name | quote }}
+      app.kubernetes.io/component: {{ $component | quote }}
   policyTypes:
     - Ingress
 {{- if $egressCfg.enabled }}
@@ -168,8 +168,8 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/name: {{ template "seaweedfs.name" $ }}
-              app.kubernetes.io/instance: {{ $.Release.Name }}
+              app.kubernetes.io/name: {{ include "seaweedfs.name" $ | quote }}
+              app.kubernetes.io/instance: {{ $.Release.Name | quote }}
       ports:
 {{- range $port := $target.ports }}
         - protocol: TCP
@@ -184,8 +184,8 @@ spec:
     - to:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/name: {{ template "seaweedfs.name" $ }}
-              app.kubernetes.io/instance: {{ $.Release.Name }}
+              app.kubernetes.io/name: {{ include "seaweedfs.name" $ | quote }}
+              app.kubernetes.io/instance: {{ $.Release.Name | quote }}
 {{- if $egressCfg.allowDNS }}
 {{- /* Emit only the selectors that are set. An empty one has to be left out
        rather than rendered as null: a missing podSelector means every pod in
