@@ -289,6 +289,7 @@ func runServer(cmd *Command, args []string) bool {
 	filerOptions.masters = pb.ServerAddresses(actualPeersForComponents).ToServiceDiscovery()
 	filerOptions.ip = serverIp
 	filerOptions.bindIp = serverBindIp
+	s3Options.ip = serverIp
 	if *s3Options.bindIp == "" {
 		s3Options.bindIp = serverBindIp
 	}
