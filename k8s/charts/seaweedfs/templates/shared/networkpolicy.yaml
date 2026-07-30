@@ -39,7 +39,6 @@
 {{-   $targets = append $targets (dict "component" "master" "ports" $ports) }}
 {{- end }}
 {{- /* Every volume group carries its own component label and its own ports. */}}
-{{- $anyVolume := false }}
 {{- $volumes := deepCopy .Values.volumes | mergeOverwrite (dict "" .Values.volume) }}
 {{- range $vname, $volume := $volumes }}
 {{-   $volumeName := trimSuffix "-" (printf "volume-%s" $vname) }}
@@ -50,7 +49,6 @@
 {{-       $ports = append $ports $volume.metricsPort }}
 {{-     end }}
 {{-     $targets = append $targets (dict "component" $volumeName "ports" $ports) }}
-{{-     $anyVolume = true }}
 {{-   end }}
 {{- end }}
 {{- if .Values.filer.enabled }}
@@ -115,11 +113,13 @@
 {{- if include "seaweedfs.bucketHookEnabled" . }}
 {{-   $targets = append $targets (dict "component" "bucket-hook" "ports" (list)) }}
 {{- end }}
-{{- /* Whether the resize hook Job materialises depends on a cluster lookup, so
-       there is nothing to key on at render time. Its policy is created whenever
-       the hook is enabled and selects no pods on the upgrades that need no
-       resize. */}}
-{{- if and .Values.volume.resizeHook.enabled $anyVolume }}
+{{- /* Same cluster lookup the Job is gated on, so the policy appears on exactly
+       the upgrades that grow a PVC and never on the ones that do not. Helm does
+       not garbage-collect hook resources, so a policy rendered unconditionally
+       would be left in the namespace by every install that uninstalls again -
+       and would make egress.kubeApiServer.cidrs mandatory for every release,
+       for a Job most of them never run. */}}
+{{- if include "seaweedfs.volumeResizeHookCommands" . | trim }}
 {{-   $targets = append $targets (dict "component" "volume-resize-hook" "ports" (list) "apiserver" true "hook" "pre-install,pre-upgrade" "hookWeight" "-10") }}
 {{- end }}
 
