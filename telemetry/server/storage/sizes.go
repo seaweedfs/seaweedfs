@@ -29,18 +29,19 @@ type ClusterSizeSeries struct {
 	TotalDisk    uint64          `json:"total_disk"` // across all clusters on the last day
 }
 
-// GetClusterSizeSeries returns the last `days` days of per-cluster disk usage.
-// Clusters beyond `limit` are folded into Other.
+// GetClusterSizeSeries returns the last `days` days of per-cluster disk usage
+// across confirmed clusters. Clusters beyond `limit` are folded into Other.
 func (s *PrometheusStorage) GetClusterSizeSeries(days, limit int) ClusterSizeSeries {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	axis := newDailySeries(days, s.histories)
+	histories := s.seriesHistories()
+	axis := newDailySeries(days, histories)
 	activeSince := time.Now().UTC().AddDate(0, 0, -activeDays).Unix()
 	last := len(axis.dates) - 1
 	series := ClusterSizeSeries{Dates: axis.dates}
 
-	for id, history := range s.histories {
+	for id, history := range histories {
 		disk, ok := axis.align(history, activeSince, diskBytes)
 		if !ok {
 			continue

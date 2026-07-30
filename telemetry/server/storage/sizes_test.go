@@ -31,9 +31,11 @@ func TestClusterSizeSeries(t *testing.T) {
 	seedHistory(s, "daily", 300, -9, -8, -7, -6, -5, -4, -3, -2, -1, 0)
 	// Reported two days ago and not since: still active, so its size is held
 	// to the right edge instead of dropping out of the stack.
-	seedHistory(s, "lagging", 200, -2)
+	seedHistory(s, "lagging", 200, -3, -2)
 	// Stopped reporting past the active window: its own days only.
 	seedHistory(s, "gone", 900, -9, -8)
+	// One day of history only: unconfirmed, so it stays out of the stack.
+	seedHistory(s, "oneshot", 400, -1)
 
 	series := s.GetClusterSizeSeries(10, 0)
 	if len(series.Dates) != 10 {
@@ -50,11 +52,14 @@ func TestClusterSizeSeries(t *testing.T) {
 	if got := byId["daily"]; !equal(got, []uint64{300, 300, 300, 300, 300, 300, 300, 300, 300, 300}) {
 		t.Errorf("daily = %v, want 300 every day", got)
 	}
-	if got := byId["lagging"]; !equal(got, []uint64{0, 0, 0, 0, 0, 0, 0, 200, 200, 200}) {
+	if got := byId["lagging"]; !equal(got, []uint64{0, 0, 0, 0, 0, 0, 200, 200, 200, 200}) {
 		t.Errorf("lagging = %v, want its size carried to the right edge", got)
 	}
 	if got := byId["gone"]; !equal(got, []uint64{900, 900, 0, 0, 0, 0, 0, 0, 0, 0}) {
 		t.Errorf("gone = %v, want no capacity after its last report", got)
+	}
+	if _, ok := byId["oneshot"]; ok {
+		t.Errorf("unconfirmed cluster in the stack: %v", byId["oneshot"])
 	}
 
 	// The total is the last day's stack height: daily + lagging, not gone.
@@ -74,7 +79,7 @@ func TestClusterSizeSeries(t *testing.T) {
 	if series.Other == nil || series.Other.Count != 2 {
 		t.Fatalf("other = %+v, want 2 clusters", series.Other)
 	}
-	if !equal(series.Other.Disk, []uint64{900, 900, 0, 0, 0, 0, 0, 200, 200, 200}) {
+	if !equal(series.Other.Disk, []uint64{900, 900, 0, 0, 0, 0, 200, 200, 200, 200}) {
 		t.Errorf("other = %v, want lagging+gone summed per day", series.Other.Disk)
 	}
 	if series.ClusterCount != 3 || series.TotalDisk != 500 {

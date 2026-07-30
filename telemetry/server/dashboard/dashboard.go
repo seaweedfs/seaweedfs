@@ -155,11 +155,13 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
 
             <div class="chart-container">
                 <div class="chart-title">Volume Servers Over Time</div>
+                <div class="chart-subtitle">Confirmed clusters only</div>
                 <canvas id="serverChart" width="400" height="200"></canvas>
             </div>
 
             <div class="chart-container">
                 <div class="chart-title">Total Disk Usage Over Time</div>
+                <div class="chart-subtitle">Confirmed clusters only</div>
                 <canvas id="diskChart" width="400" height="200"></canvas>
             </div>
 
