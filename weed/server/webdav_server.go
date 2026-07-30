@@ -381,7 +381,7 @@ func (fs *WebDavFileSystem) stat(ctx context.Context, fullFilePath string) (os.F
 		return &fi, nil
 	}
 
-	entry, _, _, err := filer_pb.GetEntry(context.Background(), fs, fullpath)
+	entry, _, _, err := filer_pb.GetEntry(ctx, fs, fullpath)
 	if err != nil {
 		if err == filer_pb.ErrNotFound {
 			return nil, os.ErrNotExist
@@ -582,9 +582,10 @@ func (f *WebDavFile) Readdir(count int) (ret []os.FileInfo, err error) {
 
 	dir, _ := util.FullPath(f.name).DirAndName()
 
-	listed := listedEntriesFrom(f.ctx)
+	ctx := f.requestContext()
+	listed := listedEntriesFrom(ctx)
 
-	err = filer_pb.ReadDirAllEntries(context.Background(), f.fs, util.FullPath(dir), "", func(entry *filer_pb.Entry, isLast bool) error {
+	err = filer_pb.ReadDirAllEntries(ctx, f.fs, util.FullPath(dir), "", func(entry *filer_pb.Entry, isLast bool) error {
 		fi := FileInfo{
 			size:         int64(filer.FileSize(entry)),
 			name:         entry.Name,
@@ -633,7 +634,7 @@ func (f *WebDavFile) Seek(offset int64, whence int) (int64, error) {
 
 	glog.V(2).Infof("WebDavFile.Seek %v %v %v", f.name, offset, whence)
 
-	ctx := context.Background()
+	ctx := f.requestContext()
 
 	var err error
 	switch whence {
@@ -654,10 +655,14 @@ func (f *WebDavFile) Stat() (os.FileInfo, error) {
 
 	glog.V(2).Infof("WebDavFile.Stat %v", f.name)
 
-	ctx := f.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	return f.fs.stat(f.requestContext(), f.name)
+}
 
-	return f.fs.stat(ctx, f.name)
+// the context of the request that opened the file, or a bare one for files
+// opened outside a request
+func (f *WebDavFile) requestContext() context.Context {
+	if f.ctx != nil {
+		return f.ctx
+	}
+	return context.Background()
 }
