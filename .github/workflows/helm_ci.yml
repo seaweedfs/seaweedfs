@@ -1072,14 +1072,30 @@ jobs:
           if not failed:
               print("every policy allows DNS when egress is on")
 
-          # The API server rule goes only to the components that talk to it.
+          # The API server rule goes only to what talks to it, which is the COSI
+          # sidecar and, on an upgrade that grows a PVC, the resize hook. No
+          # seaweedfs binary does - there is no client-go in go.mod - so admin
+          # must not be in here: it would force everyone running admin to name an
+          # API server address for a connection that is never made.
           apiserver = {c for c, p in pols.items()
                        if any("ipBlock" in t for r in p["spec"]["egress"] for t in r.get("to") or [])}
-          expected = {"admin", "objectstorage-provisioner"}
+          expected = {"objectstorage-provisioner"}
           if apiserver != expected:
               failed.append(f"API server egress granted to {sorted(apiserver)}, expected {sorted(expected)}")
           else:
               print(f"API server egress limited to {sorted(expected)}")
+
+          # Which means egress on its own must render for a release that runs
+          # neither COSI nor a resize: no component of it reaches the API server,
+          # so nothing may demand a CIDR for one.
+          for label, values in {"defaults": {}, "admin": {"admin.enabled": "true"}}.items():
+              try:
+                  render(dict(values, **{"networkPolicy.enabled": "true",
+                                         "networkPolicy.egress.enabled": "true"}))
+                  print(f"egress on {label} renders without kubeApiServer.cidrs")
+              except subprocess.CalledProcessError as e:
+                  failed.append(f"{label}: egress needs kubeApiServer.cidrs but nothing "
+                                f"in the release talks to the API server: {(e.output or '')[:200]}")
 
           # The resize hook's policy is gated on the same lookup as its Job, so
           # neither is ever in a rendered set - a policy on its own would be an
