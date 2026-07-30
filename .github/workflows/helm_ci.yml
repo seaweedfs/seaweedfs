@@ -697,6 +697,131 @@ jobs:
           echo "$BOOL_FALSE" | grep -q -- '-status Suspended' || { echo "FAIL: bool false versioning did not Suspend the bucket"; exit 1; }
           echo "Bucket versioning: YAML bool false suspends consistently with string \"false\""
 
+          echo ""
+          echo "=== Testing hook Job labels ==="
+          # The hook Jobs were the only pods in the chart without the standard
+          # app.kubernetes.io label set, so nothing label-based could target
+          # them - NetworkPolicy podSelectors, monitoring, kubectl -l. Assert
+          # both the Job and its pod template carry the same name/instance/
+          # component triple the other components use, and that the triple is
+          # the hook's own so a per-component selector cannot match it too.
+          #
+          # Only the bucket hook is covered: the volume resize hook is gated on
+          # lookup finding a StatefulSet with a smaller PVC than requested, and
+          # lookup returns nothing under helm template, so it never renders here.
+          python3 - "$CHART_DIR" <<'PYEOF'
+          import subprocess, sys, yaml
+
+          chart = sys.argv[1]
+          # The three a selector keys on, and the full set the other workloads
+          # carry - a missing chart or managed-by label is not a selector
+          # problem, but it does leave the hook Jobs looking unlike everything
+          # else the release owns.
+          TRIPLE = ("app.kubernetes.io/name", "app.kubernetes.io/instance",
+                    "app.kubernetes.io/component")
+          # The labels that identify the release rather than the workload, and
+          # so have to hold the same values everywhere. They are compared
+          # against a workload that already renders them instead of being
+          # spelled out here, which keeps the chart version out of the test.
+          # managed-by is not among them on purpose: the chart puts it on
+          # workload metadata but not on pod templates, so it cannot be part of
+          # a cross-workload comparison. Its presence is still checked below.
+          RELEASE = ("app.kubernetes.io/name", "app.kubernetes.io/instance",
+                     "helm.sh/chart")
+          STANDARD = TRIPLE + ("helm.sh/chart", "app.kubernetes.io/managed-by")
+
+          def render(values):
+              args = ["helm", "template", "test", chart]
+              for k, v in values.items():
+                  args += ["--set", f"{k}={v}"]
+              return subprocess.check_output(args, text=True)
+
+          def docs(manifest):
+              return [d for d in yaml.safe_load_all(manifest) if d]
+
+          def hook_job(manifest):
+              for d in docs(manifest):
+                  if d.get("kind") == "Job" and d["metadata"]["name"].endswith("-bucket-hook"):
+                      return d
+              return None
+
+          def triple(labels):
+              return {k: labels.get(k) for k in TRIPLE}
+
+          def release(labels):
+              return {k: labels.get(k) for k in RELEASE}
+
+          def reference(manifest):
+              """Any long-running workload; they all carry the release labels."""
+              for d in docs(manifest):
+                  if d.get("kind") in ("Deployment", "StatefulSet"):
+                      return d
+              return None
+
+          modes = {
+              "s3": {"s3.enabled": "true",
+                     "s3.createBuckets[0].name": "b"},
+              "filer.s3": {"filer.s3.enabled": "true",
+                           "filer.s3.createBuckets[0].name": "b"},
+              "allInOne": {"allInOne.enabled": "true",
+                           "allInOne.s3.enabled": "true",
+                           "allInOne.s3.createBuckets[0].name": "b"},
+          }
+
+          failed = []
+          for mode, values in modes.items():
+              before = len(failed)
+              out = render(values)
+              job = hook_job(out)
+              if job is None:
+                  failed.append(f"{mode}: bucket hook Job not rendered")
+                  continue
+              job_labels = job["metadata"].get("labels", {})
+              pod_labels = job["spec"]["template"]["metadata"].get("labels", {})
+              ref = reference(out)
+              if ref is None:
+                  failed.append(f"{mode}: no workload to compare the release labels against")
+                  continue
+              ref_labels = release(ref["spec"]["template"]["metadata"].get("labels", {}))
+              for where, labels in (("Job", job_labels), ("pod", pod_labels)):
+                  missing = [k for k in STANDARD if not labels.get(k)]
+                  if missing:
+                      failed.append(f"{mode}: bucket hook {where} has no {missing}, "
+                                    "nothing can select it")
+                  component = labels.get("app.kubernetes.io/component")
+                  if component != "bucket-hook":
+                      failed.append(f"{mode}: bucket hook {where} component is "
+                                    f"{component!r}, expected 'bucket-hook'")
+                  # Present is not enough: the values have to be the release's
+                  # own, or a selector written for this release misses the hook.
+                  if release(labels) != ref_labels:
+                      failed.append(f"{mode}: bucket hook {where} release labels "
+                                    f"{release(labels)} differ from "
+                                    f"{ref['metadata']['name']}'s {ref_labels}")
+              # A selector written against the Job has to find its pods.
+              if triple(job_labels) != triple(pod_labels):
+                  failed.append(f"{mode}: bucket hook Job and pod disagree: "
+                                f"{triple(job_labels)} vs {triple(pod_labels)}")
+              # The triple must not also match another component's pods, or a
+              # selector meant for that component would pull the hook pod in.
+              for d in docs(out):
+                  if d.get("kind") not in ("Deployment", "StatefulSet"):
+                      continue
+                  other = d["spec"]["template"]["metadata"].get("labels", {})
+                  if triple(other) == triple(pod_labels):
+                      failed.append(f"{mode}: bucket hook pod shares its label triple "
+                                    f"with {d['metadata']['name']}")
+              if len(failed) == before:
+                  print(f"{mode}: bucket hook Job and pod carry a distinct label triple")
+
+          if failed:
+              print("\nFAIL:", file=sys.stderr)
+              for f in failed:
+                  print(f"  - {f}", file=sys.stderr)
+              sys.exit(1)
+          PYEOF
+          echo "Hook Job label tests passed"
+
           echo "All template rendering tests passed!"
 
       - name: Create kind cluster

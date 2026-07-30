@@ -53,6 +53,12 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: "{{ $seaweedfsName }}-volume-resize-hook"
+  labels:
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/managed-by: {{ .Release.Service | quote }}
+    app.kubernetes.io/instance: {{ .Release.Name | quote }}
+    app.kubernetes.io/component: volume-resize-hook
   annotations:
     helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "0"
@@ -60,6 +66,13 @@ metadata:
 spec:
   backoffLimit: 1
   template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+        helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+        app.kubernetes.io/managed-by: {{ .Release.Service | quote }}
+        app.kubernetes.io/instance: {{ .Release.Name | quote }}
+        app.kubernetes.io/component: volume-resize-hook
     spec:
       serviceAccountName: {{ $seaweedfsName }}-volume-resize-hook
       restartPolicy: Never
