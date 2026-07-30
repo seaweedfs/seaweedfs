@@ -1251,9 +1251,12 @@ jobs:
               - {}
           EOF
 
-          # Only the pod's own output, so a probe that never produced one cannot
-          # be mistaken for a verdict: "pod/x created" on stdout would read as
-          # "not exit=0", which is how the denied case passes.
+          # Only the marker line, so a probe that never produced one cannot be
+          # mistaken for a verdict: "pod/x created" on stdout would read as
+          # "not exit=0", which is how the denied case passes. busybox wget
+          # reports a timeout on stderr even under -q and kubectl logs returns
+          # both streams, so the marker has to be picked out rather than taken
+          # as the whole log. Empty output stays empty - the callers fail on it.
           probe() {
             local name=$1
             local labels=$2
@@ -1262,7 +1265,7 @@ jobs:
               sh -c "wget -T 5 -q -O /dev/null http://$FILER_IP:8888/; echo exit=\$?" >/dev/null
             kubectl wait -n "$NS" --for=jsonpath='{.status.phase}'=Succeeded \
               "pod/$name" --timeout=120s >/dev/null
-            kubectl logs -n "$NS" "$name"
+            kubectl logs -n "$NS" "$name" | grep '^exit=' || true
           }
 
           # A pod carrying the release labels is what the filer's policy allows.
