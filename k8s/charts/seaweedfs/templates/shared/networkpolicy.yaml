@@ -127,6 +127,21 @@
 {{-   $targets = append $targets (dict "component" "volume-resize-hook" "ports" (list) "apiserver" true "hook" "pre-install,pre-upgrade" "hookWeight" "-10") }}
 {{- end }}
 
+{{- /* A key under networkPolicy.components that names no component would be
+       read as "these rules are applied" and silently do nothing. Check against
+       every component the chart can produce rather than the ones enabled here,
+       so one values file can still carry overrides for a component this release
+       leaves off. */}}
+{{- $known := list "master" "filer" "s3" "sftp" "admin" "worker" "volume" "bucket-hook" "volume-resize-hook" "objectstorage-provisioner" "seaweedfs-all-in-one" }}
+{{- range $vname, $_ := (.Values.volumes | default dict) }}
+{{-   $known = append $known (trimSuffix "-" (printf "volume-%s" $vname)) }}
+{{- end }}
+{{- range $name, $_ := $overrides }}
+{{-   if not (has $name $known) }}
+{{-     fail (printf "networkPolicy.components: %q is not a component of this chart, so its rules would never be applied. Known components: %s." $name (join ", " (sortAlpha $known))) }}
+{{-   end }}
+{{- end }}
+
 {{- range $target := $targets }}
 {{- $component := $target.component }}
 {{- $override := get $overrides $component | default dict }}

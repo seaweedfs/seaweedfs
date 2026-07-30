@@ -1109,6 +1109,12 @@ jobs:
           else:
               print("volume-resize-hook policy tracks its Job rather than rendering always")
 
+          # A components key that names nothing reads as "these rules are applied"
+          # and silently does not apply them.
+          expect_failure(dict(on, **{"networkPolicy.components.filerr.extraIngress[0].ports[0].port": "1"}),
+                         '"filerr" is not a component of this chart',
+                         "a misspelled networkPolicy.components key fails the render")
+
           # The bucket hook is post-install, so the release manifest is already applied;
           # its policy must be a plain resource that uninstall cleans up.
           if "helm.sh/hook" in (pols["bucket-hook"]["metadata"].get("annotations") or {}):
