@@ -84,8 +84,12 @@
 {{-   end }}
 {{-   $targets = append $targets (dict "component" "sftp" "ports" $ports) }}
 {{- end }}
+{{- /* No seaweedfs binary speaks to the Kubernetes API - the repository has no
+       client-go dependency - so admin gets no apiserver rule. The pod-RW
+       ClusterRole under global.seaweedfs.createClusterRole is a leftover from a
+       migration and is not exercised by any component. */}}
 {{- if .Values.admin.enabled }}
-{{-   $targets = append $targets (dict "component" "admin" "ports" (list .Values.admin.port .Values.admin.grpcPort) "apiserver" true) }}
+{{-   $targets = append $targets (dict "component" "admin" "ports" (list .Values.admin.port .Values.admin.grpcPort)) }}
 {{- end }}
 {{- if .Values.worker.enabled }}
 {{-   $ports := list }}

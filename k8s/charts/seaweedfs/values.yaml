@@ -1883,9 +1883,11 @@ networkPolicy:
       matchLabels:
         k8s-app: kube-dns
 
-    # The admin component manages pods through the Kubernetes API, the COSI
-    # driver watches the COSI custom resources, and the volume resize hook
-    # shells out to kubectl. Only those three get this rule.
+    # The COSI sidecar watches the COSI custom resources and the volume resize
+    # hook shells out to kubectl. Only those two get this rule - no seaweedfs
+    # component itself speaks to the Kubernetes API. The resize hook's policy,
+    # and with it this requirement, only appears on an upgrade that actually
+    # grows a volume PVC.
     kubeApiServer:
       enabled: true
       # The API server cannot be selected by label, so its address has to be
