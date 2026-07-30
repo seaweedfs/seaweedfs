@@ -40,6 +40,25 @@ func (s *PrometheusStorage) appendHistory(data *proto.TelemetryData, receivedAt 
 	s.histories[data.TopologyId] = h
 }
 
+// seriesHistories picks the clusters the fleet-wide series are built from: the
+// confirmed ones. A cluster that only ever reported on one day is usually a CI
+// or test cluster that lived for a minute, and those arrive faster than they
+// age out, so counting them makes every fleet total climb forever. Falls back to
+// all clusters while none is confirmed yet, so a fresh server still draws its
+// charts. Callers must hold s.mu.
+func (s *PrometheusStorage) seriesHistories() map[string][]HistorySample {
+	confirmed := make(map[string][]HistorySample, len(s.histories))
+	for id, history := range s.histories {
+		if len(history) >= confirmDays {
+			confirmed[id] = history
+		}
+	}
+	if len(confirmed) == 0 {
+		return s.histories
+	}
+	return confirmed
+}
+
 func sameUTCDay(a, b int64) bool {
 	ta, tb := time.Unix(a, 0).UTC(), time.Unix(b, 0).UTC()
 	return ta.Year() == tb.Year() && ta.YearDay() == tb.YearDay()

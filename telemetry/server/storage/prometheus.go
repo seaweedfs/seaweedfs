@@ -164,21 +164,22 @@ func (s *PrometheusStorage) GetInstances(limit int) ([]*telemetryData, error) {
 	return instances, nil
 }
 
-// GetMetrics returns fleet-wide daily totals for the last `days` days, in the
-// parallel-array shape the dashboard charts expect. Totals come from the daily
-// histories rather than from s.instances, which holds only each cluster's most
-// recent report and so would credit every cluster to the single day it last
-// reported on.
+// GetMetrics returns fleet-wide daily totals across confirmed clusters for the
+// last `days` days, in the parallel-array shape the dashboard charts expect.
+// Totals come from the daily histories rather than from s.instances, which holds
+// only each cluster's most recent report and so would credit every cluster to
+// the single day it last reported on.
 func (s *PrometheusStorage) GetMetrics(days int) (map[string]interface{}, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	axis := newDailySeries(days, s.histories)
+	histories := s.seriesHistories()
+	axis := newDailySeries(days, histories)
 	activeSince := time.Now().UTC().AddDate(0, 0, -activeDays).Unix()
 
 	diskUsage := make([]uint64, len(axis.dates))
 	serverCounts := make([]int64, len(axis.dates))
-	for _, history := range s.histories {
+	for _, history := range histories {
 		if disk, ok := axis.align(history, activeSince, diskBytes); ok {
 			for i, v := range disk {
 				diskUsage[i] += v
