@@ -79,12 +79,6 @@ func (v *proxyTestVolume) requireReached(t *testing.T) {
 // header, so a caller-supplied one would outrank the token the filer attaches
 // on a read -- the credential the volume server evaluates has to be the filer's.
 func TestProxyReadDropsCallerJwtQueryParam(t *testing.T) {
-	minted := &FilerServer{volumeGuard: security.NewGuard([]string{}, proxyTestWriteKey, 10, proxyTestReadKey, 10)}
-	want := minted.maybeGetVolumeReadJwtAuthorizationToken(proxyTestFileId)
-	if want == "" {
-		t.Fatal("no read token minted despite a configured read key")
-	}
-
 	for _, method := range []string{http.MethodGet, http.MethodHead} {
 		t.Run(method, func(t *testing.T) {
 			volume := newProxyTestVolume(t)
@@ -98,8 +92,19 @@ func TestProxyReadDropsCallerJwtQueryParam(t *testing.T) {
 			if got := volume.seenEffectiveJwt(); got == "caller-supplied" {
 				t.Fatal("caller's jwt query param outranked the filer-minted token")
 			}
-			if got := volume.seenEffectiveJwt(); got != want {
-				t.Fatalf("volume server would evaluate %q, want the minted token %q", got, want)
+			// The credential has to be a filer-minted read token for THIS file.
+			// Comparing it against a separately minted token would also say that,
+			// but only within the second that minted both: the expiry claim has
+			// one-second resolution, so two mints either side of a tick differ in
+			// the encoded string while carrying the same authority and file id.
+			claims := &security.SeaweedFileIdClaims{}
+			if _, err := security.DecodeJwt(security.SigningKey(proxyTestReadKey),
+				security.EncodedJwt(volume.seenEffectiveJwt()), claims); err != nil {
+				t.Fatalf("volume server would evaluate %q, which does not validate against the read key: %v",
+					volume.seenEffectiveJwt(), err)
+			}
+			if claims.Fid != proxyTestFileId {
+				t.Fatalf("token authorizes file %q, want %q", claims.Fid, proxyTestFileId)
 			}
 			if q := volume.seenRawQuery(); strings.Contains(q, "jwt=") {
 				t.Fatalf("jwt survived in the forwarded query: %q", q)
