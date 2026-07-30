@@ -404,7 +404,7 @@ Two things worth knowing before you turn this on:
 - **Monitoring stops.** The metrics ports are admitted from release pods like every other port, so with `global.seaweedfs.monitoring.enabled` the ServiceMonitors keep scraping targets a Prometheus in another namespace can no longer reach. Nothing reports it; add the scraper's namespace to `extraIngress`.
 - **The resize hook's policy is a Helm hook.** Its Job runs before the release manifest is applied, so the policy has to be a `pre-install` hook too. Helm does not garbage-collect hook resources, so on an upgrade that grows a volume PVC the policy is created and then left behind on uninstall - delete `<release>-seaweedfs-volume-resize-hook` by hand if it bothers you.
 
-The DNS selectors default to CoreDNS as kubeadm, kind, EKS, GKE and AKS install it. On OpenShift, override `egress.dnsNamespaceSelector` and `egress.dnsPodSelector` to match `openshift-dns`; see the comment in `values.yaml`.
+The DNS selectors default to CoreDNS as kubeadm, kind and the managed offerings from AWS, Google and Azure install it. On OpenShift, override `egress.dnsNamespaceSelector` and `egress.dnsPodSelector` to match `openshift-dns`; see the comment in `values.yaml`.
 
 ## OpenShift Support
 

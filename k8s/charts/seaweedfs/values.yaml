@@ -1881,8 +1881,9 @@ networkPolicy:
     # Every component resolves its peers by DNS name, so this is required
     # for the release to function at all.
     #
-    # The defaults below are CoreDNS as kubeadm, kind, EKS, GKE and AKS install
-    # it. OpenShift runs its resolver elsewhere and needs both overridden:
+    # The defaults below are CoreDNS as kubeadm, kind and the managed offerings
+    # from AWS, Google and Azure install it. OpenShift runs its resolver
+    # elsewhere and needs both overridden:
     #   dnsNamespaceSelector:
     #     matchLabels:
     #       kubernetes.io/metadata.name: openshift-dns
