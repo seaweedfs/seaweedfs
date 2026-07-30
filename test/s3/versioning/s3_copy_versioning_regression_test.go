@@ -3,6 +3,7 @@ package s3api
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -11,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -144,4 +146,82 @@ func TestVersioningSelfCopyMetadataReplaceSuspendedKeepsNullVersion(t *testing.T
 	require.NotNil(t, versionsResp.Versions[0].VersionId)
 	assert.Equal(t, "null", *versionsResp.Versions[0].VersionId, "Suspended self-copy should preserve null-version semantics")
 	assert.True(t, *versionsResp.Versions[0].IsLatest, "Null version should remain latest")
+}
+
+func TestVersioningSelfCopyCreatesNewVersion(t *testing.T) {
+	client := getS3Client(t)
+	bucketName := getNewBucketName()
+
+	createBucket(t, client, bucketName)
+	defer deleteBucket(t, client, bucketName)
+
+	enableVersioning(t, client, bucketName)
+
+	objectKey := "self-copy-no-directive.txt"
+	firstContent := []byte("first")
+	secondContent := []byte("second")
+
+	firstPut, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+		Body:   bytes.NewReader(firstContent),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, firstPut.VersionId)
+
+	_, err = client.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+		Body:   bytes.NewReader(secondContent),
+	})
+	require.NoError(t, err)
+
+	// Copying an earlier version onto its own key is how AWS restores that version.
+	copyResp, err := client.CopyObject(context.TODO(), &s3.CopyObjectInput{
+		Bucket:     aws.String(bucketName),
+		Key:        aws.String(objectKey),
+		CopySource: aws.String(fmt.Sprintf("%s?versionId=%s", versioningCopySource(bucketName, objectKey), *firstPut.VersionId)),
+	})
+	require.NoError(t, err, "Self-copy of an earlier version should succeed on a versioned bucket")
+	require.NotNil(t, copyResp.VersionId)
+	assert.NotEqual(t, *firstPut.VersionId, *copyResp.VersionId, "Restore should write a new version")
+
+	getResp, err := client.GetObject(context.TODO(), &s3.GetObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err)
+	defer getResp.Body.Close()
+	body, err := io.ReadAll(getResp.Body)
+	require.NoError(t, err)
+	assert.Equal(t, firstContent, body, "Restored version should serve the earlier body")
+
+	versionsResp, err := client.ListObjectVersions(context.TODO(), &s3.ListObjectVersionsInput{
+		Bucket: aws.String(bucketName),
+		Prefix: aws.String(objectKey),
+	})
+	require.NoError(t, err)
+	assert.Len(t, versionsResp.Versions, 3, "Restore should append to the version history")
+}
+
+func TestSelfCopyWithoutVersioningIsRejected(t *testing.T) {
+	client := getS3Client(t)
+	bucketName := getNewBucketName()
+
+	createBucket(t, client, bucketName)
+	defer deleteBucket(t, client, bucketName)
+
+	objectKey := "self-copy-unversioned.txt"
+	putObject(t, client, bucketName, objectKey, "content")
+
+	_, err := client.CopyObject(context.TODO(), &s3.CopyObjectInput{
+		Bucket:     aws.String(bucketName),
+		Key:        aws.String(objectKey),
+		CopySource: aws.String(versioningCopySource(bucketName, objectKey)),
+	})
+	require.Error(t, err, "Self-copy without a metadata change is a no-op on an unversioned bucket")
+	var apiErr smithy.APIError
+	if assert.True(t, errors.As(err, &apiErr), "Expected a smithy.APIError, but got %T", err) {
+		assert.Equal(t, "InvalidRequest", apiErr.ErrorCode())
+	}
 }
