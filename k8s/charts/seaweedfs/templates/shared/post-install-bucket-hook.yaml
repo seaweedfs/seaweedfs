@@ -1,7 +1,6 @@
 {{- include "seaweedfs.compat" . -}}
 {{- /* Support bucket creation for both standalone filer.s3 and allInOne modes */}}
 {{- $createBuckets := list }}
-{{- $s3Enabled := false }}
 {{- $enableAuth := false }}
 {{- $existingConfigSecret := "" }}
 {{- $bucketsFolder := "/buckets" }}
@@ -17,7 +16,6 @@
 {{- /* Check allInOne mode first */}}
 {{- if .Values.allInOne.enabled }}
   {{- if .Values.allInOne.s3.enabled }}
-    {{- $s3Enabled = true }}
     {{- if .Values.allInOne.s3.createBuckets }}
       {{- $createBuckets = .Values.allInOne.s3.createBuckets }}
     {{- end }}
@@ -27,7 +25,6 @@
 {{- else if .Values.master.enabled }}
   {{- /* Check if embedded (in filer) or standalone S3 gateway is enabled */}}
   {{- if or .Values.filer.s3.enabled .Values.s3.enabled }}
-    {{- $s3Enabled = true }}
     {{- if .Values.s3.createBuckets }}
       {{- $createBuckets = .Values.s3.createBuckets }}
       {{- $enableAuth = .Values.s3.enableAuth }}
@@ -40,7 +37,9 @@
   {{- end }}
 {{- end }}
 
-{{- if and $s3Enabled $createBuckets }}
+{{- /* Shared with networkpolicy.yaml, which renders this Job's policy exactly
+       when the Job itself renders. */}}
+{{- if include "seaweedfs.bucketHookEnabled" . }}
 ---
 apiVersion: batch/v1
 kind: Job

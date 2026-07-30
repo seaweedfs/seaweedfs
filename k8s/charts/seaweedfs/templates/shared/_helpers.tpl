@@ -344,6 +344,81 @@ true
 {{- end -}}
 {{- end -}}
 
+{{/* True when the post-install bucket hook Job renders: an S3 endpoint, plus
+     buckets to create on it. Read by the Job itself and by its NetworkPolicy,
+     which has to appear exactly when the Job does - a Job without its policy
+     hangs in a default-deny namespace. */}}
+{{- define "seaweedfs.bucketHookEnabled" -}}
+{{- if .Values.allInOne.enabled -}}
+{{-   if and .Values.allInOne.s3.enabled .Values.allInOne.s3.createBuckets -}}
+true
+{{-   end -}}
+{{- else if .Values.master.enabled -}}
+{{-   if and (or .Values.filer.s3.enabled .Values.s3.enabled) (or .Values.s3.createBuckets .Values.filer.s3.createBuckets) -}}
+true
+{{-   end -}}
+{{- end -}}
+{{- end -}}
+
+{{/* The kubectl commands the volume resize hook has to run, one per line: a
+     cascade-orphan delete for every StatefulSet whose volumeClaimTemplates no
+     longer match the values, and a patch for every PVC the values grew.
+
+     Empty when there is nothing to resize, which is what gates the Job. Read by
+     its NetworkPolicy too, which has to appear exactly when the Job does - a Job
+     without its policy hangs in a default-deny namespace, and a policy without
+     its Job is an orphaned hook resource on every install.
+
+     Built on lookup, so it is always empty under helm template and on a fresh
+     install, where there is no StatefulSet to compare against yet. */}}
+{{- define "seaweedfs.volumeResizeHookCommands" -}}
+{{- $seaweedfsName := include "seaweedfs.fullname" $ }}
+{{- $volumes := deepCopy .Values.volumes | mergeOverwrite (dict "" .Values.volume) }}
+{{- $commands := list }}
+{{- if .Values.volume.resizeHook.enabled }}
+{{-   range $vname, $volume := $volumes }}
+{{-     $volumeName := trimSuffix "-" (printf "volume-%s" $vname) }}
+{{-     $volume := mergeOverwrite (deepCopy $.Values.volume) (dict "enabled" true) $volume }}
+{{-     if $volume.enabled }}
+{{-       $replicas := int $volume.replicas }}
+{{-       $statefulsetName := printf "%s-%s" $seaweedfsName $volumeName }}
+{{-       $statefulset := (lookup "apps/v1" "StatefulSet" $.Release.Namespace $statefulsetName) }}
+{{- /* Check for changes in volumeClaimTemplates */}}
+{{-       if $statefulset }}
+{{-         range $dir := $volume.dataDirs }}
+{{-           if eq .type "persistentVolumeClaim" }}
+{{-             $desiredSize := .size }}
+{{-             range $statefulset.spec.volumeClaimTemplates }}
+{{-               if and (eq .metadata.name $dir.name) (ne .spec.resources.requests.storage $desiredSize) }}
+{{-                 $commands = append $commands (printf "kubectl delete statefulset %s --cascade=orphan" $statefulsetName) }}
+{{-               end }}
+{{-             end }}
+{{-           end }}
+{{-         end }}
+{{-       end }}
+{{- /* Check for the need for patching existing PVCs */}}
+{{-       range $dir := $volume.dataDirs }}
+{{-         if eq .type "persistentVolumeClaim" }}
+{{-           $desiredSize := .size }}
+{{-           range $i, $e := until $replicas }}
+{{-             $pvcName := printf "%s-%s-%s-%d" $dir.name $seaweedfsName $volumeName $e }}
+{{-             $currentPVC := (lookup "v1" "PersistentVolumeClaim" $.Release.Namespace $pvcName) }}
+{{-             if $currentPVC }}
+{{-               $oldSize := include "seaweedfs.resource-quantity" $currentPVC.spec.resources.requests.storage }}
+{{-               $newSize := include "seaweedfs.resource-quantity" $desiredSize }}
+{{-               if gt $newSize $oldSize }}
+{{-                 $commands = append $commands (printf "kubectl patch pvc %s-%s-%s-%d -p '{\"spec\":{\"resources\":{\"requests\":{\"storage\":\"%s\"}}}}'" $dir.name $seaweedfsName $volumeName $e $desiredSize) }}
+{{-               end }}
+{{-             end }}
+{{-           end }}
+{{-         end }}
+{{-       end }}
+{{-     end }}
+{{-   end }}
+{{- end }}
+{{- join "\n" $commands }}
+{{- end -}}
+
 {{/* S3 TLS cert/key arguments, using custom secret if s3.tlsSecret is set */}}
 {{- define "seaweedfs.s3.tlsArgs" -}}
 {{- $prefix := .prefix -}}
