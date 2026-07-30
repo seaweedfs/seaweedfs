@@ -921,10 +921,8 @@ jobs:
               if comp not in pols:
                   failed.append(f"{comp}: workload has no NetworkPolicy")
           for comp in pols:
-              # The hook Jobs are covered too, and the resize hook Job only renders
-              # when a cluster lookup says a PVC needs growing, so it is never in the
-              # rendered set here.
-              if comp not in wls and comp not in ("bucket-hook", "volume-resize-hook"):
+              # The bucket hook Job is covered too, and a Job is not a workload here.
+              if comp not in wls and comp != "bucket-hook":
                   failed.append(f"{comp}: NetworkPolicy selects a component that is not deployed")
 
           # The ports a component listens on come from the same values as its
@@ -1077,22 +1075,23 @@ jobs:
           # The API server rule goes only to the components that talk to it.
           apiserver = {c for c, p in pols.items()
                        if any("ipBlock" in t for r in p["spec"]["egress"] for t in r.get("to") or [])}
-          expected = {"admin", "objectstorage-provisioner", "volume-resize-hook"}
+          expected = {"admin", "objectstorage-provisioner"}
           if apiserver != expected:
               failed.append(f"API server egress granted to {sorted(apiserver)}, expected {sorted(expected)}")
           else:
               print(f"API server egress limited to {sorted(expected)}")
 
-          # The resize hook runs as a pre-install hook at weight 0, before the release
-          # manifest is applied, so its policy has to be a hook itself and has to sort
-          # ahead of the Job.
-          rh = pols["volume-resize-hook"]["metadata"].get("annotations", {})
-          if rh.get("helm.sh/hook") != "pre-install,pre-upgrade":
-              failed.append(f"volume-resize-hook policy is not a pre-install hook: {rh}")
-          elif int(rh.get("helm.sh/hook-weight", 0)) >= 0:
-              failed.append(f"volume-resize-hook policy weight {rh.get('helm.sh/hook-weight')} does not sort before the Job at 0")
+          # The resize hook's policy is gated on the same lookup as its Job, so
+          # neither is ever in a rendered set - a policy on its own would be an
+          # orphaned hook resource on every install, since Helm does not collect
+          # those. The hook annotations it carries when the lookup does hit are
+          # only reachable against a live cluster.
+          if "volume-resize-hook" in pols:
+              failed.append("volume-resize-hook policy rendered without its Job; the two "
+                            "are gated on seaweedfs.volumeResizeHookCommands and have to "
+                            "appear together")
           else:
-              print("volume-resize-hook policy is a pre-install hook ahead of the Job")
+              print("volume-resize-hook policy tracks its Job rather than rendering always")
 
           # The bucket hook is post-install, so the release manifest is already applied;
           # its policy must be a plain resource that uninstall cleans up.
