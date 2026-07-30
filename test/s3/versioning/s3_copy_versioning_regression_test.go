@@ -225,3 +225,28 @@ func TestSelfCopyWithoutVersioningIsRejected(t *testing.T) {
 		assert.Equal(t, "InvalidRequest", apiErr.ErrorCode())
 	}
 }
+
+func TestSelfCopyWithSuspendedVersioningIsRejected(t *testing.T) {
+	client := getS3Client(t)
+	bucketName := getNewBucketName()
+
+	createBucket(t, client, bucketName)
+	defer deleteBucket(t, client, bucketName)
+
+	enableVersioning(t, client, bucketName)
+	suspendVersioning(t, client, bucketName)
+
+	objectKey := "self-copy-suspended-no-directive.txt"
+	putObject(t, client, bucketName, objectKey, "content")
+
+	_, err := client.CopyObject(context.TODO(), &s3.CopyObjectInput{
+		Bucket:     aws.String(bucketName),
+		Key:        aws.String(objectKey),
+		CopySource: aws.String(versioningCopySource(bucketName, objectKey)),
+	})
+	require.Error(t, err, "Suspended versioning overwrites the null version in place, so the copy changes nothing")
+	var apiErr smithy.APIError
+	if assert.True(t, errors.As(err, &apiErr), "Expected a smithy.APIError, but got %T", err) {
+		assert.Equal(t, "InvalidRequest", apiErr.ErrorCode())
+	}
+}
