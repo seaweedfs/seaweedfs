@@ -255,7 +255,7 @@ jobs:
           # The key reaches the hook either through security.toml or through
           # an environment override in extraEnvironmentVars.
           python3 - "$CHART_DIR" <<'PYEOF'
-          import subprocess, sys, yaml
+          import re, subprocess, sys, yaml
 
           chart = sys.argv[1]
 
@@ -281,8 +281,8 @@ jobs:
           failed = []
 
           # The script in the hook addresses master and filer through
-          # WEED_CLUSTER_*, which now comes from extraEnvironmentVars instead
-          # of being hardcoded. Duplicate names would be a rendering bug.
+          # WEED_CLUSTER_*, now rendered next to extraEnvironmentVars.
+          # Duplicate names would be a rendering bug.
           pod = hook_pod(render(buckets))
           if pod is None:
               failed.append("createBuckets: bucket hook Job missing")
@@ -319,6 +319,33 @@ jobs:
                   failed.append(f"filerWrite=true: bucket hook mounts security-config as {mount}")
               else:
                   print("filerWrite=true: bucket hook mounts security-config at /etc/seaweedfs/security.toml")
+
+          # The readiness waits dereference the cluster env names, so renaming
+          # the cluster alias has to rename them too: an undefined name leaves
+          # the hook polling "http://" for five minutes and then failing the
+          # release. The endpoints stay chart-computed, so an address kept in
+          # extraEnvironmentVars is replaced, not rendered twice.
+          pod = hook_pod(render(dict(buckets, **{
+              "global.seaweedfs.extraEnvironmentVars.WEED_CLUSTER_DEFAULT": "prod",
+              "global.seaweedfs.extraEnvironmentVars.WEED_CLUSTER_PROD_MASTER": "stale:9333",
+              "global.seaweedfs.extraEnvironmentVars.WEED_CLUSTER_SW_MASTER": "null",
+              "global.seaweedfs.extraEnvironmentVars.WEED_CLUSTER_SW_FILER": "null",
+          })))
+          if pod is None:
+              failed.append("cluster alias: bucket hook Job missing")
+          else:
+              container = pod["containers"][0]
+              env = {e["name"]: e.get("value") for e in container["env"]}
+              waited = re.findall(r'wait_for_service "http://\$(\w+)', container["command"][2])
+              undefined = sorted(n for n in set(waited) if not env.get(n))
+              if not waited:
+                  failed.append("cluster alias: hook script has no readiness waits")
+              elif undefined:
+                  failed.append(f"cluster alias: hook waits on undefined env {undefined}")
+              elif env.get("WEED_CLUSTER_PROD_MASTER") == "stale:9333":
+                  failed.append("cluster alias: hook kept the values address instead of the chart's")
+              else:
+                  print("cluster alias: hook waits on the renamed cluster env names")
 
           # Keys kept in a Secret are referenced, not inlined, so the hook
           # must render valueFrom for non-string extraEnvironmentVars.
