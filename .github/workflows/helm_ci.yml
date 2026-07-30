@@ -1251,12 +1251,15 @@ jobs:
               - {}
           EOF
 
+          # Only the pod's own output, so a probe that never produced one cannot
+          # be mistaken for a verdict: "pod/x created" on stdout would read as
+          # "not exit=0", which is how the denied case passes.
           probe() {
             local name=$1
             local labels=$2
             kubectl run "$name" -n "$NS" --image=busybox:1.36 --restart=Never \
               --labels="probe=$name,$labels" --command -- \
-              sh -c "wget -T 5 -q -O /dev/null http://$FILER_IP:8888/; echo exit=\$?"
+              sh -c "wget -T 5 -q -O /dev/null http://$FILER_IP:8888/; echo exit=\$?" >/dev/null
             kubectl wait -n "$NS" --for=jsonpath='{.status.phase}'=Succeeded \
               "pod/$name" --timeout=120s >/dev/null
             kubectl logs -n "$NS" "$name"
@@ -1269,16 +1272,19 @@ jobs:
           ALLOWED=$(probe probe-allowed "app.kubernetes.io/name=seaweedfs,app.kubernetes.io/instance=np")
           echo "labelled probe: $ALLOWED"
           case "$ALLOWED" in
-            *exit=0*) echo "a pod with the release labels reaches the filer";;
+            exit=0) echo "a pod with the release labels reaches the filer";;
             *) echo "FAIL: the filer policy rejects a pod carrying the release labels"; exit 1;;
           esac
 
-          # The same probe without those labels must not get through.
+          # The same probe without those labels must not get through. Assert the
+          # wget failure rather than the absence of a success, so an empty log
+          # fails the job instead of reading as a denial.
           DENIED=$(probe probe-denied "role=outsider")
           echo "unlabelled probe: $DENIED"
           case "$DENIED" in
-            *exit=0*) echo "FAIL: a pod outside the release reached the filer; the policy over-allows"; exit 1;;
-            *) echo "the filer policy refuses a pod outside the release";;
+            exit=0) echo "FAIL: a pod outside the release reached the filer; the policy over-allows"; exit 1;;
+            exit=*) echo "the filer policy refuses a pod outside the release";;
+            *) echo "FAIL: the probe produced no result, so nothing was tested: '$DENIED'"; exit 1;;
           esac
 
           kubectl delete namespace "$NS" --wait=false
