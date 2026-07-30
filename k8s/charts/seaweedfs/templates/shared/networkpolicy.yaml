@@ -8,7 +8,8 @@
        label. "ports" is everything the workload listens on, taken from the same
        values the containerPorts are taken from, so a changed port cannot drift
        out of the policy. "apiserver" marks the workloads that talk to the
-       Kubernetes API. */}}
+       Kubernetes API. "name" overrides the object name where the component
+       label already reads as a full name. */}}
 {{- $targets := list }}
 
 {{- /* allInOne.enabled does not turn the individual components off - their
@@ -29,7 +30,7 @@
 {{-   if .Values.allInOne.sftp.enabled }}
 {{-     $ports = append $ports (.Values.allInOne.sftp.port | default .Values.sftp.port) }}
 {{-   end }}
-{{-   $targets = append $targets (dict "component" "seaweedfs-all-in-one" "ports" $ports) }}
+{{-   $targets = append $targets (dict "component" "seaweedfs-all-in-one" "name" "all-in-one" "ports" $ports) }}
 {{- end }}
 {{- if .Values.master.enabled }}
 {{-   $ports := list .Values.master.port .Values.master.grpcPort }}
@@ -149,7 +150,7 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "seaweedfs.componentName" (list $ $component) }}
+  name: {{ include "seaweedfs.componentName" (list $ ($target.name | default $component)) }}
   namespace: {{ $.Release.Namespace }}
   labels:
     app.kubernetes.io/name: {{ include "seaweedfs.name" $ | quote }}
