@@ -47,9 +47,6 @@ func TestVifReplicationOutranksSuperBlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load vif: %v", err)
 	}
-	if info == nil {
-		info = &volume_server_pb.VolumeInfo{}
-	}
 	info.Replication = "010"
 	if err := volume_info.SaveVolumeInfo(vifFile, info); err != nil {
 		t.Fatalf("save vif: %v", err)
