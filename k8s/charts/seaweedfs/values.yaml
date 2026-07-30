@@ -1830,7 +1830,12 @@ networkPolicy:
   # does not leave the policy behind. Everything else is denied.
   #
   # Traffic from outside the release has to be added here. Rules are plain
-  # NetworkPolicyIngressRule entries, appended to every component's policy:
+  # NetworkPolicyIngressRule entries, appended to every component's policy.
+  #
+  # The metrics ports are covered by the same rule as everything else, so with
+  # global.seaweedfs.monitoring.enabled the ServiceMonitors keep pointing at
+  # ports a Prometheus outside the release can no longer reach. Nothing reports
+  # that - the targets just go down - so add the scraper here:
   #
   #   extraIngress:
   #     # an ingress controller reaching filer/s3/admin
@@ -1875,6 +1880,17 @@ networkPolicy:
 
     # Every component resolves its peers by DNS name, so this is required
     # for the release to function at all.
+    #
+    # The defaults below are CoreDNS as kubeadm, kind, EKS, GKE and AKS install
+    # it. OpenShift runs its resolver elsewhere and needs both overridden:
+    #   dnsNamespaceSelector:
+    #     matchLabels:
+    #       kubernetes.io/metadata.name: openshift-dns
+    #   dnsPodSelector:
+    #     matchLabels:
+    #       dns.operator.openshift.io/daemonset-dns: default
+    # A node-local DNS cache is not a pod peer at all - the resolver address is
+    # a link-local IP - so name it with an ipBlock in extraEgress instead.
     allowDNS: true
     dnsNamespaceSelector:
       matchLabels:
