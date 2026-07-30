@@ -678,13 +678,13 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 			// listFilerEntries always calls doListFilerEntries with inclusiveStartFrom=false
 			// (S3 marker semantics are exclusive), but keep the guard explicit to preserve
 			// behavior if inclusive callers are introduced in the future.
-			// A versioned object lives in a "<key>.versions" directory, so compare the
-			// object name the marker is expressed in.
+			// A versioned object lives in a "<key>.versions" directory, so the marker also
+			// has to be matched against the object name that directory stands for.
 			markerName := entry.Name
 			if entry.IsDirectory {
 				markerName = strings.TrimSuffix(markerName, s3_constants.VersionsFolder)
 			}
-			if !inclusiveStartFrom && marker != "" && markerName == marker {
+			if !inclusiveStartFrom && marker != "" && (entry.Name == marker || markerName == marker) {
 				continue
 			}
 
