@@ -395,7 +395,16 @@ networkPolicy:
             port: 5432
 ```
 
+`kubeApiServer.cidrs` is only demanded when something in the release actually needs the API server, which is the COSI sidecar and, on an upgrade that grows a volume PVC, the resize hook. No seaweedfs component itself speaks to it.
+
 Anything reaching the release from outside - an ingress controller, a Prometheus in another namespace - goes into `networkPolicy.extraIngress`, or into `networkPolicy.components.<component>.extraIngress` for a single component. See the `networkPolicy` block in `values.yaml` for the full set.
+
+Two things worth knowing before you turn this on:
+
+- **Monitoring stops.** The metrics ports are admitted from release pods like every other port, so with `global.seaweedfs.monitoring.enabled` the ServiceMonitors keep scraping targets a Prometheus in another namespace can no longer reach. Nothing reports it; add the scraper's namespace to `extraIngress`.
+- **The resize hook's policy is a Helm hook.** Its Job runs before the release manifest is applied, so the policy has to be a `pre-install` hook too. Helm does not garbage-collect hook resources, so on an upgrade that grows a volume PVC the policy is created and then left behind on uninstall - delete `<release>-seaweedfs-volume-resize-hook` by hand if it bothers you.
+
+The DNS selectors default to CoreDNS as kubeadm, kind, EKS, GKE and AKS install it. On OpenShift, override `egress.dnsNamespaceSelector` and `egress.dnsPodSelector` to match `openshift-dns`; see the comment in `values.yaml`.
 
 ## OpenShift Support
 
