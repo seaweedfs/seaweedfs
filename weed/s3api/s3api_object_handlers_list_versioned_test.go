@@ -684,3 +684,52 @@ func TestProcessDirectorySkipsBeforeMarker(t *testing.T) {
 		})
 	}
 }
+
+// TestVersionedListSkipsMarkerObject covers the exclusive marker on a versioned bucket,
+// where the marker names an object but the entry is its ".versions" directory.
+func TestVersionedListSkipsMarkerObject(t *testing.T) {
+	s3a := &S3ApiServer{option: &S3ApiServerOption{BucketsPath: "/buckets"}}
+	client := &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/test-bucket": {
+				liveVersionsDir("file-1"),
+				liveVersionsDir("file-2"),
+			},
+		},
+	}
+
+	cursor := &ListingCursor{maxKeys: 1000}
+	var seen []string
+	_, err := s3a.doListFilerEntries(context.Background(), client, listDirectoryRequest{dir: "/buckets/test-bucket", marker: "file-1", bucket: "test-bucket"}, cursor, func(dir string, entry *filer_pb.Entry) {
+		seen = append(seen, entry.Name)
+		cursor.maxKeys--
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"file-2"}, seen, "the marker object should not be returned")
+}
+
+// TestVersionedListSkipsEchoedVersionsMarker covers a backend that echoes the marker it
+// was given, when that marker is a ".versions" directory name.
+func TestVersionedListSkipsEchoedVersionsMarker(t *testing.T) {
+	s3a := &S3ApiServer{option: &S3ApiServerOption{BucketsPath: "/buckets"}}
+	client := &markerEchoFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/test-bucket": {
+				liveVersionsDir("file-1"),
+				liveVersionsDir("file-2"),
+			},
+		},
+		returnFollowing: true,
+	}
+
+	cursor := &ListingCursor{maxKeys: 1000}
+	var seen []string
+	_, err := s3a.doListFilerEntries(context.Background(), client, listDirectoryRequest{dir: "/buckets/test-bucket", marker: "file-1" + s3_constants.VersionsFolder, bucket: "test-bucket"}, cursor, func(dir string, entry *filer_pb.Entry) {
+		seen = append(seen, entry.Name)
+		cursor.maxKeys--
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"file-2"}, seen, "the echoed marker entry should not be returned")
+}
