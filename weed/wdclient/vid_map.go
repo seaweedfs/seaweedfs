@@ -149,16 +149,39 @@ func (vc *vidMap) GetLocations(vid uint32) (locations []Location, found bool) {
 	vc.RLock()
 	defer vc.RUnlock()
 
-	if entry, ok := vc.vid2Locations[vid]; ok && len(entry.locations) > 0 {
-		return entry.locations, true
+	regular, hasRegular := lookupEntry(vc.vid2Locations, vid)
+	ec, hasEc := lookupEntry(vc.ecVid2Locations, vid)
+
+	switch {
+	case hasRegular && hasEc:
+		// Whichever was learned last wins: once a volume is EC encoded, the
+		// regular copies a previous generation knew must stop answering for
+		// it, and a decoded volume must stop answering with its shards. A tie
+		// means one generation reported both, where the regular copies serve.
+		if ec.generation > regular.generation {
+			return ec.locations, true
+		}
+		return regular.locations, true
+	case hasRegular:
+		return regular.locations, true
+	case hasEc:
+		return ec.locations, true
 	}
-	if ecEntry, ok := vc.ecVid2Locations[vid]; ok && len(ecEntry.locations) > 0 {
-		return ecEntry.locations, true
-	}
+
 	// Nothing older to fall back to: a volume's history lives in its own entry,
 	// so a volume whose locations are all gone (a pod restarting, say) is a
 	// miss rather than a reason to serve what it used to have.
 	return nil, false
+}
+
+// lookupEntry returns vid's entry when it still holds locations. Callers must
+// hold the lock.
+func lookupEntry(vid2Locations map[uint32]*locationsEntry, vid uint32) (*locationsEntry, bool) {
+	entry, found := vid2Locations[vid]
+	if !found || len(entry.locations) == 0 {
+		return nil, false
+	}
+	return entry, true
 }
 
 func (vc *vidMap) GetLocationsClone(vid uint32) (locations []Location, found bool) {

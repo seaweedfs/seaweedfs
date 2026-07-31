@@ -137,6 +137,48 @@ func TestDeleteLocationDoesNotRefreshGeneration(t *testing.T) {
 	}
 }
 
+// Encoding a volume must stop the regular copies a previous generation knew
+// from answering for it, and decoding it must stop its shards from answering.
+func TestNewestGenerationWinsAcrossEcTransition(t *testing.T) {
+	regular := Location{Url: "10.0.0.1:8080"}
+	ecShard := Location{Url: "10.0.0.2:8080"}
+
+	t.Run("encoded", func(t *testing.T) {
+		vm := newVidMap("", DefaultVidMapCacheSize)
+		vm.addLocation(1, regular)
+		vm.reset()
+		vm.addEcLocation(1, ecShard)
+
+		locs, found := vm.GetLocations(1)
+		if !found || len(locs) != 1 || locs[0].Url != ecShard.Url {
+			t.Fatalf("expected the freshly learned EC shard, got found=%v %v", found, urlsOf(locs))
+		}
+	})
+
+	t.Run("decoded", func(t *testing.T) {
+		vm := newVidMap("", DefaultVidMapCacheSize)
+		vm.addEcLocation(1, ecShard)
+		vm.reset()
+		vm.addLocation(1, regular)
+
+		locs, found := vm.GetLocations(1)
+		if !found || len(locs) != 1 || locs[0].Url != regular.Url {
+			t.Fatalf("expected the freshly learned regular copy, got found=%v %v", found, urlsOf(locs))
+		}
+	})
+
+	t.Run("same generation prefers regular", func(t *testing.T) {
+		vm := newVidMap("", DefaultVidMapCacheSize)
+		vm.addEcLocation(1, ecShard)
+		vm.addLocation(1, regular)
+
+		locs, found := vm.GetLocations(1)
+		if !found || len(locs) != 1 || locs[0].Url != regular.Url {
+			t.Fatalf("expected the regular copy, got found=%v %v", found, urlsOf(locs))
+		}
+	})
+}
+
 // Losing the last location drops the entry: a client that never resets should
 // not accumulate one empty entry per volume it has ever seen deleted.
 func TestDeleteLastLocationDropsEntry(t *testing.T) {
