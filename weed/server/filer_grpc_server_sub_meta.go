@@ -163,11 +163,13 @@ func (s *pipelinedSender) Close() error {
 	}
 }
 
-// gapResumeOffset marks a gap-resume cursor as exclusive. A skip is only taken
-// once the gap is proven empty, so nothing remains at the resume timestamp. An
-// inclusive cursor would keep asking for its own timestamp, and when that is
-// also the eviction watermark the read gate answers ResumeFromDiskError forever.
-const gapResumeOffset = 1
+// deliveredCursorOffset marks a cursor exclusive: everything at its timestamp
+// has already been delivered. An inclusive cursor keeps asking for its own
+// timestamp, and once that timestamp is the eviction watermark the read gate
+// answers ResumeFromDiskError forever. Both cursors that carry this are proven:
+// a gap skip is only taken once the gap is empty, and a disk position names the
+// last entry the disk read handed to the subscriber.
+const deliveredCursorOffset = 1
 
 // gapResumeAdvances reports whether an exclusive cursor at targetTsNs makes
 // progress past the current cursor. Equal timestamps still advance an inclusive
@@ -372,7 +374,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		glog.V(4).Infof("processed to %v: %v", clientName, processedTsNs)
 		if processedTsNs != 0 {
 			gapStall.clear()
-			lastReadTime = log_buffer.NewMessagePosition(processedTsNs, -2)
+			lastReadTime = log_buffer.NewMessagePosition(processedTsNs, deliveredCursorOffset)
 		} else {
 			// No data found on disk
 			// Check if we previously got ResumeFromDiskError from memory, meaning we're in a gap
@@ -386,7 +388,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 					gapStall.clear()
 					glog.V(3).Infof("gap detected: skipping from %v to earliest memory time %v for %v",
 						lastReadTime.Time, earliestTime, clientName)
-					lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, gapResumeOffset)
+					lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, deliveredCursorOffset)
 					readInMemoryLogErr = nil // Reached the in-memory window: resume from memory
 				} else {
 					// The ring dropped the gap before a peer persisted it, or the
@@ -562,7 +564,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 
 			if processedTsNs != 0 {
 				gapStall.clear()
-				lastReadTime = log_buffer.NewMessagePosition(processedTsNs, -2)
+				lastReadTime = log_buffer.NewMessagePosition(processedTsNs, deliveredCursorOffset)
 			} else {
 				// No data found on disk
 				// Check if we previously got ResumeFromDiskError from memory, meaning we're in a gap
@@ -575,7 +577,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 						gapStall.clear()
 						glog.V(3).Infof("gap detected: skipping from %v to flushed earliest memory time %v for %v",
 							lastReadTime.Time, earliestTime, clientName)
-						lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, gapResumeOffset)
+						lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, deliveredCursorOffset)
 						readInMemoryLogErr = nil // Clear the error since we're skipping forward
 					} else {
 						// The gap may hold unflushed events: wait (bounded) for
@@ -638,7 +640,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 					gapStall.clear()
 					glog.V(3).Infof("gap detected: skipping from %v to flushed earliest memory time %v for %v",
 						lastReadTime.Time, earliestTime, clientName)
-					lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, gapResumeOffset)
+					lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, deliveredCursorOffset)
 					// Clear the error so the next iteration re-reads disk.
 					readInMemoryLogErr = nil
 					continue

@@ -62,7 +62,7 @@ func TestResolveAggregatedGapResume(t *testing.T) {
 			// Same timestamp, but the cursor already excludes it.
 			name:            "exclusive cursor on the watermark skips",
 			currentTsNs:     ago(30 * time.Second),
-			currentOffset:   gapResumeOffset,
+			currentOffset:   deliveredCursorOffset,
 			earliestMemTsNs: ago(25 * time.Second),
 			lastEvictedTsNs: ago(30 * time.Second),
 			wantAdvance:     true,
@@ -94,7 +94,7 @@ func TestResolveAggregatedGapResume(t *testing.T) {
 			// Already exclusive at that timestamp: re-arming it is not progress.
 			name:            "adjacent exclusive cursor must NOT skip",
 			currentTsNs:     ago(30*time.Second) - 1,
-			currentOffset:   gapResumeOffset,
+			currentOffset:   deliveredCursorOffset,
 			earliestMemTsNs: ago(30 * time.Second),
 			lastEvictedTsNs: ago(31 * time.Second),
 			wantAdvance:     false,
@@ -197,7 +197,7 @@ func TestResolveLocalGapResume(t *testing.T) {
 			// Already exclusive at that timestamp: re-arming it is not progress.
 			name:            "adjacent exclusive cursor must NOT skip",
 			currentTsNs:     ago(30*time.Second) - 1,
-			currentOffset:   gapResumeOffset,
+			currentOffset:   deliveredCursorOffset,
 			earliestMemTsNs: ago(30 * time.Second),
 			flushedTsNs:     ago(10 * time.Second),
 			wantAdvance:     false,
@@ -216,5 +216,35 @@ func TestResolveLocalGapResume(t *testing.T) {
 				t.Fatalf("advanceTo = %v, want just below earliest %v", time.Unix(0, gotTo), time.Unix(0, tc.earliestMemTsNs))
 			}
 		})
+	}
+}
+
+// TestDiskCursorAtEvictionWatermarkResumesFromMemory pins the disk-to-memory
+// handoff. A disk read that lands exactly on the eviction watermark has
+// delivered the entry at that timestamp, and the retained ring starts strictly
+// after it, so the whole gap is empty and everything later is in memory. An
+// inclusive cursor there was sent back to disk by the read gate, found nothing,
+// and then failed both emptiness proofs — parking the subscriber until some
+// later flush, or forever while one stayed stalled.
+func TestDiskCursorAtEvictionWatermarkResumesFromMemory(t *testing.T) {
+	now := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC).UnixNano()
+	watermark := now - int64(30*time.Second) // disk delivered exactly this far
+	earliest := watermark + 1                // retained ring starts right after
+
+	inclusive := int64(-2)
+	if _, advance := resolveAggregatedGapResume(watermark, inclusive, earliest, watermark); advance {
+		t.Fatal("precondition: an inclusive cursor on the watermark cannot prove the gap empty")
+	}
+	if _, advance := resolveLocalGapResume(watermark, inclusive, earliest, 0); advance {
+		t.Fatal("precondition: an inclusive cursor with no flush cannot prove the gap empty")
+	}
+
+	// Carrying the delivered-cursor offset, the read gate serves from memory and
+	// the gap resolver is never reached. Both agree it is safe either way.
+	if !memoryHoldsGap(watermark, deliveredCursorOffset, watermark) {
+		t.Fatal("a delivered cursor on the watermark must read from memory, not disk")
+	}
+	if _, advance := resolveAggregatedGapResume(watermark, deliveredCursorOffset, earliest, watermark); advance {
+		t.Fatal("nothing to advance to: memory already starts at the next nanosecond")
 	}
 }
