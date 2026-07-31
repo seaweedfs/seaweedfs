@@ -23,6 +23,9 @@ const (
 	// (possibly-unflushed) gap, in case the flush notification is missed.
 	unflushedGapRetryInterval = 2 * time.Second
 
+	// gapStallWarnInterval paces the warning for a subscriber that stays parked.
+	gapStallWarnInterval = time.Minute
+
 	// MaxUnsyncedEvents send empty notification with timestamp when certain amount of events have been filtered
 	MaxUnsyncedEvents = 1e3
 
@@ -217,6 +220,44 @@ func resolveAggregatedGapResume(currentTsNs, currentOffset, earliestMemTsNs, las
 	return target, true
 }
 
+// gapStallReporter makes a parked subscriber visible. Parking is the safe answer
+// to an unresolved gap — its events are gone from memory and not yet persisted,
+// so advancing would drop them — but a flush that never lands stalls the stream
+// for good, and a silent stall is as hard to diagnose as the silent loss it
+// replaced. Consumers such as filer.sync and mount followers simply stop
+// advancing, with no error on either side.
+type gapStallReporter struct {
+	scope      string
+	clientName string
+	pathPrefix string
+	since      time.Time
+	lastWarnAt time.Time
+}
+
+func (r *gapStallReporter) park(cursor time.Time, detail string) {
+	now := time.Now()
+	if r.since.IsZero() {
+		r.since = now
+		stats.FilerSubscribeGapStalledGauge.WithLabelValues(r.scope, r.clientName, r.pathPrefix).Set(1)
+	}
+	if !r.lastWarnAt.IsZero() && now.Sub(r.lastWarnAt) < gapStallWarnInterval {
+		return
+	}
+	r.lastWarnAt = now
+	glog.Warningf("%s subscriber %s %s parked %v at %v: %s", r.scope, r.clientName, r.pathPrefix,
+		now.Sub(r.since).Truncate(time.Second), cursor, detail)
+}
+
+func (r *gapStallReporter) clear() {
+	if r.since.IsZero() {
+		return
+	}
+	glog.Warningf("%s subscriber %s %s resumed after %v parked", r.scope, r.clientName, r.pathPrefix,
+		time.Since(r.since).Truncate(time.Second))
+	r.since, r.lastWarnAt = time.Time{}, time.Time{}
+	stats.FilerSubscribeGapStalledGauge.WithLabelValues(r.scope, r.clientName, r.pathPrefix).Set(0)
+}
+
 // waitForLocalFlush parks a local subscriber sitting on a possibly-unflushed
 // gap until the buffer flushes, the retry interval elapses, or the stream ends;
 // it reports false once the stream is gone. The notification channel also
@@ -296,6 +337,9 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	aggNotifyChan := fs.filer.MetaAggregator.MetaLogBuffer.RegisterSubscriber(aggNotifyName)
 	defer fs.filer.MetaAggregator.MetaLogBuffer.UnregisterSubscriber(aggNotifyName)
 
+	gapStall := &gapStallReporter{scope: "aggregated", clientName: clientName, pathPrefix: req.PathPrefix}
+	defer gapStall.clear()
+
 	var unsyncedEvents int64
 	eachEventNotificationFn := fs.eachEventNotificationFn(req, sender, clientName, &unsyncedEvents)
 
@@ -333,6 +377,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 
 		glog.V(4).Infof("processed to %v: %v", clientName, processedTsNs)
 		if processedTsNs != 0 {
+			gapStall.clear()
 			lastReadTime = log_buffer.NewMessagePosition(processedTsNs, -2)
 		} else {
 			// No data found on disk
@@ -344,6 +389,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 				earliestTime := fs.filer.MetaAggregator.MetaLogBuffer.GetEarliestTime()
 				lastEvictedTsNs := fs.filer.MetaAggregator.MetaLogBuffer.GetLastEvictedTsNs()
 				if advanceToTsNs, advance := resolveAggregatedGapResume(lastReadTime.Time.UnixNano(), lastReadTime.Offset, earliestTime.UnixNano(), lastEvictedTsNs); advance {
+					gapStall.clear()
 					glog.V(3).Infof("gap detected: skipping from %v to earliest memory time %v for %v",
 						lastReadTime.Time, earliestTime, clientName)
 					lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, gapResumeOffset)
@@ -361,8 +407,8 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 					// would re-run a full ReadPersistedLogBuffer per cluster-wide
 					// metadata event, while the flush this waits on is signalled
 					// by nothing local. Only the timer can make progress here.
-					glog.V(3).Infof("unflushed gap at %v (earliest memory %v, evicted through %v) for %v: waiting for a peer flush before advancing",
-						lastReadTime.Time, earliestTime, time.Unix(0, lastEvictedTsNs), clientName)
+					gapStall.park(lastReadTime.Time, fmt.Sprintf("gap evicted through %v is not on a peer's disk yet (earliest memory %v)",
+						time.Unix(0, lastEvictedTsNs), earliestTime))
 					select {
 					case <-ctx.Done():
 						return nil
@@ -470,6 +516,9 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	localNotifyChan := fs.filer.LocalMetaLogBuffer.RegisterSubscriber(localNotifyName)
 	defer fs.filer.LocalMetaLogBuffer.UnregisterSubscriber(localNotifyName)
 
+	gapStall := &gapStallReporter{scope: "local", clientName: clientName, pathPrefix: req.PathPrefix}
+	defer gapStall.clear()
+
 	var unsyncedEvents int64
 	eachEventNotificationFn := fs.eachEventNotificationFn(req, sender, clientName, &unsyncedEvents)
 
@@ -521,6 +570,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 			lastCheckedFlushTsNs = currentFlushTsNs
 
 			if processedTsNs != 0 {
+				gapStall.clear()
 				lastReadTime = log_buffer.NewMessagePosition(processedTsNs, -2)
 			} else {
 				// No data found on disk
@@ -531,6 +581,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 					// the earliest in-memory time, the gap is provably empty.
 					earliestTime := fs.filer.LocalMetaLogBuffer.GetEarliestTime()
 					if advanceToTsNs, advance := resolveLocalGapResume(lastReadTime.Time.UnixNano(), lastReadTime.Offset, earliestTime.UnixNano(), currentFlushTsNs); advance {
+						gapStall.clear()
 						glog.V(3).Infof("gap detected: skipping from %v to flushed earliest memory time %v for %v",
 							lastReadTime.Time, earliestTime, clientName)
 						lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, gapResumeOffset)
@@ -538,6 +589,8 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 					} else {
 						// The gap may hold unflushed events: wait (bounded) for
 						// the flush, then re-read disk.
+						gapStall.park(lastReadTime.Time, fmt.Sprintf("gap is not flushed yet (earliest memory %v, flushed through %v)",
+							earliestTime, time.Unix(0, currentFlushTsNs)))
 						if !waitForLocalFlush(ctx, localNotifyChan) {
 							return nil
 						}
@@ -593,6 +646,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 				// watermark, so skip only if it covers the earliest in-memory time.
 				earliestTime := fs.filer.LocalMetaLogBuffer.GetEarliestTime()
 				if advanceToTsNs, advance := resolveLocalGapResume(currentReadTsNs, lastReadTime.Offset, earliestTime.UnixNano(), lastCheckedFlushTsNs); advance {
+					gapStall.clear()
 					glog.V(3).Infof("gap detected: skipping from %v to flushed earliest memory time %v for %v",
 						lastReadTime.Time, earliestTime, clientName)
 					lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, gapResumeOffset)
@@ -602,6 +656,8 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 				}
 				// The gap may hold unflushed events: wait (bounded) for the
 				// flush, then re-evaluate.
+				gapStall.park(lastReadTime.Time, fmt.Sprintf("gap is not flushed yet (earliest memory %v, flushed through %v)",
+					earliestTime, time.Unix(0, lastCheckedFlushTsNs)))
 				if !waitForLocalFlush(ctx, localNotifyChan) {
 					return nil
 				}

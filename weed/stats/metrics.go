@@ -234,6 +234,14 @@ var (
 			Help:      "The last send timestamp of the filer subscription.",
 		}, []string{"sourceFiler", "clientName", "path"})
 
+	FilerSubscribeGapStalledGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemFiler,
+			Name:      "subscribe_gap_stalled",
+			Help:      "1 while a metadata subscriber is parked on a gap whose events are evicted from memory but not yet persisted.",
+		}, []string{"scope", "clientName", "path"})
+
 	// Sampled only on first creation, so counts track distinct objects.
 	FilerObjectSizeBytesHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
@@ -881,6 +889,7 @@ func init() {
 	Gather.MustRegister(FilerStoreHistogram)
 	Gather.MustRegister(FilerSyncOffsetGauge)
 	Gather.MustRegister(FilerServerLastSendTsOfSubscribeGauge)
+	Gather.MustRegister(FilerSubscribeGapStalledGauge)
 	Gather.MustRegister(FilerObjectSizeBytesHistogram)
 	Gather.MustRegister(collectors.NewGoCollector())
 	Gather.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
