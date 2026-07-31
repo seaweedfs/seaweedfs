@@ -95,8 +95,8 @@ func TestResolveAggregatedGapResume(t *testing.T) {
 			if !gotAdvance {
 				return
 			}
-			if gotTo != tc.earliestMemTsNs {
-				t.Fatalf("advanceTo = %v, want earliest %v", time.Unix(0, gotTo), time.Unix(0, tc.earliestMemTsNs))
+			if gotTo != tc.earliestMemTsNs-1 {
+				t.Fatalf("advanceTo = %v, want just below earliest %v", time.Unix(0, gotTo), time.Unix(0, tc.earliestMemTsNs))
 			}
 			if gotTo <= tc.currentTsNs {
 				t.Fatalf("advanceTo %v must be strictly ahead of current %v",
@@ -196,8 +196,8 @@ func TestResolveLocalGapResume(t *testing.T) {
 			}
 			// Positions are exclusive: the jump lands just below earliest so the
 			// earliest entry itself is still delivered.
-			if gotAdvance && gotTo != tc.earliestMemTsNs {
-				t.Fatalf("advanceTo = %v, want earliest %v", time.Unix(0, gotTo), time.Unix(0, tc.earliestMemTsNs))
+			if gotAdvance && gotTo != tc.earliestMemTsNs-1 {
+				t.Fatalf("advanceTo = %v, want just below earliest %v", time.Unix(0, gotTo), time.Unix(0, tc.earliestMemTsNs))
 			}
 		})
 	}
@@ -222,8 +222,8 @@ func TestInclusiveDiskCursorOnWatermarkStillAdvances(t *testing.T) {
 	if !advance {
 		t.Fatal("aggregated: an inclusive cursor on the watermark must still advance")
 	}
-	if to != earliest {
-		t.Fatalf("aggregated: advanceTo = %v, want earliest %v", time.Unix(0, to), time.Unix(0, earliest))
+	if to != earliest-1 {
+		t.Fatalf("aggregated: advanceTo = %v, want just below earliest %v", time.Unix(0, to), time.Unix(0, earliest))
 	}
 	// No flush has landed, so only the eviction proof can settle this one.
 	if _, advance := resolveLocalGapResume(watermark, earliest, 0, watermark); !advance {

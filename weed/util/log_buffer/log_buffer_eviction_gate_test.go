@@ -53,6 +53,64 @@ func TestEvictionWatermarkTracksSealedRing(t *testing.T) {
 	}
 }
 
+// TestGapResumeCursorReadsSingleEntrySealedWindow pins the resume cursor
+// against the shape that actually breaks: a sealed window holding one entry,
+// where startTime == stopTime. The sealed-buffer lookup only enters a window
+// whose stopTime is strictly after the cursor, so a cursor sitting exactly on
+// earliest walks straight past such a window and its sole event is never
+// delivered. Low-volume metadata windows are routinely one entry.
+func TestGapResumeCursorReadsSingleEntrySealedWindow(t *testing.T) {
+	lb := NewLogBuffer("gap-resume-sealed", time.Minute, nil, nil, nil)
+	defer lb.ShutdownLogBuffer()
+
+	// Timestamps far enough apart that every append seals the window before it,
+	// so each sealed window holds exactly one entry.
+	base := time.Now().Add(-time.Hour).Truncate(time.Second)
+	for i := 0; i < 3; i++ {
+		if err := lb.AddLogEntryToBuffer(&filer_pb.LogEntry{
+			TsNs: base.Add(time.Duration(i) * 2 * time.Minute).UnixNano(), Data: []byte("x"), Key: []byte("k"),
+		}); err != nil {
+			t.Fatalf("add %d: %v", i, err)
+		}
+	}
+	earliest := lb.GetEarliestTime()
+	if earliest.IsZero() {
+		t.Fatal("expected in-memory data")
+	}
+
+	// firstTsFrom reports the timestamp of the first entry a read hands back.
+	firstTsFrom := func(cursorTsNs int64) int64 {
+		buf, _, pooled, err := lb.ReadFromBuffer(NewMessagePosition(cursorTsNs, gapResumeTestOffset))
+		if err != nil {
+			t.Fatalf("read at %v: %v", time.Unix(0, cursorTsNs), err)
+		}
+		if buf == nil {
+			t.Fatalf("read at %v returned no data", time.Unix(0, cursorTsNs))
+		}
+		if pooled {
+			defer lb.ReleaseMemory(buf)
+		}
+		_, ts, readErr := readTs(buf.Bytes(), 0)
+		if readErr != nil {
+			t.Fatalf("decode first entry: %v", readErr)
+		}
+		return ts
+	}
+
+	// The resume the resolvers issue must deliver the earliest entry itself.
+	if got := firstTsFrom(earliest.UnixNano() - 1); got != earliest.UnixNano() {
+		t.Fatalf("resume just below earliest starts at %v, want the earliest entry %v",
+			time.Unix(0, got), earliest)
+	}
+	// Resuming exactly on earliest is the shape that loses it.
+	if got := firstTsFrom(earliest.UnixNano()); got == earliest.UnixNano() {
+		t.Fatal("expected a cursor exactly on earliest to skip the single-entry window (precondition)")
+	}
+}
+
+// gapResumeTestOffset mirrors the sentinel the filer's gap resume carries.
+const gapResumeTestOffset = -2
+
 // TestGapResumeCursorReadsFromMemory pins the contract the filer's gap resolver
 // depends on: the cursor it resumes with must be one this read actually serves.
 // ReadFromBuffer only falls through to memory for a cursor below the in-memory

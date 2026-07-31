@@ -211,9 +211,17 @@ func resolveAggregatedGapResume(currentTsNs, earliestMemTsNs, lastEvictedTsNs in
 	if !memoryHoldsGap(currentTsNs, lastEvictedTsNs) {
 		return 0, false
 	}
-	// Resume at earliest itself: the guard above proves it is ahead of the
-	// cursor, and an inclusive read there still delivers that entry.
-	return earliestMemTsNs, true
+	// Resume just below earliest, not at it. A sealed window holding a single
+	// entry has startTime == stopTime == earliest, and the sealed-buffer lookup
+	// only enters a window whose stopTime is strictly after the cursor, so a
+	// cursor sitting exactly on earliest skips that window entirely and loses
+	// its sole event. One nanosecond lower takes the startTime.After branch and
+	// returns the whole window.
+	target := earliestMemTsNs - 1
+	if target <= currentTsNs {
+		return 0, false
+	}
+	return target, true
 }
 
 // gapStallReporter makes a parked subscriber visible: a flush that never lands
@@ -355,9 +363,17 @@ func resolveLocalGapResume(currentTsNs, earliestMemTsNs, flushedTsNs, lastEvicte
 	if !memoryHoldsGap(currentTsNs, lastEvictedTsNs) && flushedTsNs < earliestMemTsNs {
 		return 0, false
 	}
-	// Resume at earliest itself: the guard above proves it is ahead of the
-	// cursor, and an inclusive read there still delivers that entry.
-	return earliestMemTsNs, true
+	// Resume just below earliest, not at it. A sealed window holding a single
+	// entry has startTime == stopTime == earliest, and the sealed-buffer lookup
+	// only enters a window whose stopTime is strictly after the cursor, so a
+	// cursor sitting exactly on earliest skips that window entirely and loses
+	// its sole event. One nanosecond lower takes the startTime.After branch and
+	// returns the whole window.
+	target := earliestMemTsNs - 1
+	if target <= currentTsNs {
+		return 0, false
+	}
+	return target, true
 }
 
 func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeMetadataServer) error {
