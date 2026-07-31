@@ -112,6 +112,22 @@ func TestGetAccessLogRequesterAnonymous(t *testing.T) {
 	log := GetAccessLog(req, http.StatusOK, ErrNone)
 
 	assert.Empty(t, log.Requester, "anonymous request must not report a requester")
+	assert.Empty(t, log.RequesterArn, "anonymous request must not report a principal ARN")
+}
+
+// An STS session's identity name is an opaque session subject, so the audit
+// entry must also carry the principal ARN — that is where the assumed role and
+// the role session name are recoverable from.
+func TestGetAccessLogRequesterArnForAssumedRole(t *testing.T) {
+	outer := s3_constants.EnsureIdentityHolder(httptest.NewRequest(http.MethodGet, "/bucket/object", nil))
+
+	ctx := s3_constants.SetIdentityNameInContext(outer.Context(), "47ad4828c45b3f337bc3146081ba8f0f")
+	_ = outer.WithContext(s3_constants.SetPrincipalArnInContext(ctx, "arn:aws:sts::000000000000:assumed-role/ClientRole/dev-session"))
+
+	log := GetAccessLog(outer, http.StatusOK, ErrNone)
+
+	assert.Equal(t, "47ad4828c45b3f337bc3146081ba8f0f", log.Requester)
+	assert.Equal(t, "arn:aws:sts::000000000000:assumed-role/ClientRole/dev-session", log.RequesterArn)
 }
 
 func TestAuditTrackingFlag(t *testing.T) {
