@@ -252,23 +252,27 @@ func (r *gapStallReporter) clear() {
 	stats.FilerSubscribeGapStalledGauge.WithLabelValues(r.scope, r.clientName, r.pathPrefix).Set(0)
 }
 
-// waitForLocalFlush parks until the buffer flushes, the retry interval elapses,
-// or the stream ends; it reports false once the stream is gone. The channel also
-// carries an append per metadata write, and an append cannot settle the gap, so
-// a stale token is dropped first or a busy filer would spin this at write rate.
-// The retry interval covers the notification the drain discards.
-func waitForLocalFlush(ctx context.Context, notifyChan <-chan struct{}) bool {
-	select {
-	case <-notifyChan:
-	default:
+// waitForLocalFlush parks until the buffer's flush watermark moves past
+// flushedTsNs, the retry interval elapses, or the stream ends; it reports false
+// once the stream is gone. The notification channel carries an append per
+// metadata write as well as the flush, and only the flush can settle a gap, so
+// an append wake-up re-parks instead of returning: under the write burst that
+// causes these stalls, returning on one would run the caller's recovery loop at
+// write rate rather than the retry cadence.
+func waitForLocalFlush(ctx context.Context, logBuffer *log_buffer.LogBuffer, notifyChan <-chan struct{}, flushedTsNs int64) bool {
+	retry := time.After(unflushedGapRetryInterval)
+	for {
+		select {
+		case <-notifyChan:
+			if logBuffer.GetLastFlushTsNs() != flushedTsNs {
+				return true
+			}
+		case <-ctx.Done():
+			return false
+		case <-retry:
+			return true
+		}
 	}
-	select {
-	case <-notifyChan:
-	case <-ctx.Done():
-		return false
-	case <-time.After(unflushedGapRetryInterval):
-	}
-	return true
 }
 
 // resolveLocalGapResume decides whether a local subscriber may skip a gap its
@@ -584,7 +588,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 						// the flush, then re-read disk.
 						gapStall.park(lastReadTime.Time, fmt.Sprintf("gap is not flushed yet (earliest memory %v, flushed through %v)",
 							earliestTime, time.Unix(0, currentFlushTsNs)))
-						if !waitForLocalFlush(ctx, localNotifyChan) {
+						if !waitForLocalFlush(ctx, fs.filer.LocalMetaLogBuffer, localNotifyChan, currentFlushTsNs) {
 							return nil
 						}
 						continue
@@ -649,7 +653,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 				// flush, then re-evaluate.
 				gapStall.park(lastReadTime.Time, fmt.Sprintf("gap is not flushed yet (earliest memory %v, flushed through %v)",
 					earliestTime, time.Unix(0, lastCheckedFlushTsNs)))
-				if !waitForLocalFlush(ctx, localNotifyChan) {
+				if !waitForLocalFlush(ctx, fs.filer.LocalMetaLogBuffer, localNotifyChan, lastCheckedFlushTsNs) {
 					return nil
 				}
 				continue

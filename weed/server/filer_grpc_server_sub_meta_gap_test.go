@@ -1,8 +1,11 @@
 package weed_server
 
 import (
+	"context"
 	"testing"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 )
 
 // TestResolveAggregatedGapResume pins the gap-skip fix on the aggregated
@@ -246,5 +249,71 @@ func TestDiskCursorAtEvictionWatermarkResumesFromMemory(t *testing.T) {
 	}
 	if _, advance := resolveAggregatedGapResume(watermark, deliveredCursorOffset, earliest, watermark); advance {
 		t.Fatal("nothing to advance to: memory already starts at the next nanosecond")
+	}
+}
+
+// TestWaitForLocalFlushIgnoresAppends pins the parked-subscriber cadence. The
+// subscriber channel carries an append per metadata write as well as the flush,
+// and only the flush can settle a gap, so appends must not release the wait:
+// during the write burst that causes these stalls they arrive continuously, and
+// returning on one runs the caller's recovery loop at write rate.
+func TestWaitForLocalFlushIgnoresAppends(t *testing.T) {
+	lb := log_buffer.NewLogBuffer("wait-for-flush", time.Minute, nil, nil, nil)
+	defer lb.ShutdownLogBuffer()
+	lb.SetLastFlushTsNs(100)
+
+	notify := make(chan struct{}, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// A steady stream of appends, none of which moves the flush watermark.
+	appendsDone := make(chan struct{})
+	stopAppends := make(chan struct{})
+	go func() {
+		defer close(appendsDone)
+		for {
+			select {
+			case <-stopAppends:
+				return
+			case notify <- struct{}{}:
+			}
+		}
+	}()
+
+	start := time.Now()
+	if !waitForLocalFlush(ctx, lb, notify, 100) {
+		t.Fatal("wait reported a closed stream")
+	}
+	elapsed := time.Since(start)
+	close(stopAppends)
+	<-appendsDone
+	if elapsed < unflushedGapRetryInterval {
+		t.Fatalf("appends released the wait after %v, want the full %v retry interval", elapsed, unflushedGapRetryInterval)
+	}
+
+	// A flush releases it immediately.
+	drain(notify)
+	lb.SetLastFlushTsNs(200)
+	notify <- struct{}{}
+	start = time.Now()
+	if !waitForLocalFlush(ctx, lb, notify, 100) {
+		t.Fatal("wait reported a closed stream")
+	}
+	if elapsed := time.Since(start); elapsed >= unflushedGapRetryInterval {
+		t.Fatalf("flush wake-up took %v, want well under the %v retry interval", elapsed, unflushedGapRetryInterval)
+	}
+
+	// A cancelled stream unblocks it and reports the stream is gone.
+	drain(notify)
+	cancel()
+	if waitForLocalFlush(ctx, lb, notify, 200) {
+		t.Fatal("wait must report false once the stream is gone")
+	}
+}
+
+func drain(ch chan struct{}) {
+	select {
+	case <-ch:
+	default:
 	}
 }
