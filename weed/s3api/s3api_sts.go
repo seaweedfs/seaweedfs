@@ -385,6 +385,10 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Record the caller so the audit entry for the AssumeRole call itself names
+	// who asked for the session, not just the session it minted.
+	r = r.WithContext(recordIdentityInContext(r.Context(), identity))
+
 	glog.V(2).Infof("AssumeRole: caller identity=%s, roleArn=%s, sessionName=%s",
 		identity.Name, roleArn, roleSessionName)
 
@@ -678,6 +682,8 @@ func (h *STSHandlers) handleGetFederationToken(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	r = r.WithContext(recordIdentityInContext(r.Context(), identity))
+
 	glog.V(2).Infof("GetFederationToken: caller identity=%s, name=%s", identity.Name, name)
 
 	// Check if the caller is authorized to call GetFederationToken
@@ -950,6 +956,8 @@ func (h *STSHandlers) handleGetCallerIdentity(w http.ResponseWriter, r *http.Req
 	accountID := h.getAccountID()
 	arn := h.callerPrincipalArn(identity)
 	userId := identity.Name
+
+	r = r.WithContext(recordIdentityInContext(r.Context(), identity))
 
 	glog.V(2).Infof("GetCallerIdentity: identity=%s, arn=%s, account=%s", identity.Name, arn, accountID)
 
