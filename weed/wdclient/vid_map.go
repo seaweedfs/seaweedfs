@@ -129,6 +129,11 @@ func (vc *vidMap) GetVidLocations(vid string) (locations []Location, err error) 
 
 func (vc *vidMap) GetLocations(vid uint32) (locations []Location, found bool) {
 	// glog.V(4).Infof("~ lookup volume id %d: %+v ec:%+v", vid, vc.vid2Locations, vc.ecVid2Locations)
+	// Read the cache link before the live map: resetVidMap trims the chain, so a
+	// link loaded after the local miss may already be severed, turning a lookup
+	// that could have been served by the cache into a spurious miss.
+	cachedMap := vc.cache.Load()
+
 	locations, found = vc.getLocations(vid)
 	if found {
 		// If volume is explicitly tracked (found=true), return its locations even if empty.
@@ -143,7 +148,7 @@ func (vc *vidMap) GetLocations(vid uint32) (locations []Location, found bool) {
 	}
 
 	// Volume not found in current map - check cache for unknown volumes
-	if cachedMap := vc.cache.Load(); cachedMap != nil {
+	if cachedMap != nil {
 		return cachedMap.GetLocations(vid)
 	}
 
@@ -185,13 +190,16 @@ func (vc *vidMap) hasVolumeServer(addr pb.ServerAddress) bool {
 	if key == "" {
 		return false
 	}
+	// Same ordering requirement as GetLocations: grab the cache link before the
+	// local lookup so a concurrent reset cannot sever it underneath us.
+	cachedMap := vc.cache.Load()
 	vc.RLock()
 	count := vc.serverRefCount[key]
 	vc.RUnlock()
 	if count > 0 {
 		return true
 	}
-	if cachedMap := vc.cache.Load(); cachedMap != nil {
+	if cachedMap != nil {
 		return cachedMap.hasVolumeServer(addr)
 	}
 	return false
