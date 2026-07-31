@@ -6764,23 +6764,24 @@ func (x *LocateBrokerResponse_Resource) GetResourceCount() int32 {
 }
 
 type FilerConf_PathConf struct {
-	state                    protoimpl.MessageState `protogen:"open.v1"`
-	LocationPrefix           string                 `protobuf:"bytes,1,opt,name=location_prefix,json=locationPrefix,proto3" json:"location_prefix,omitempty"`
-	Collection               string                 `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
-	Replication              string                 `protobuf:"bytes,3,opt,name=replication,proto3" json:"replication,omitempty"`
-	Ttl                      string                 `protobuf:"bytes,4,opt,name=ttl,proto3" json:"ttl,omitempty"`
-	DiskType                 string                 `protobuf:"bytes,5,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
-	Fsync                    bool                   `protobuf:"varint,6,opt,name=fsync,proto3" json:"fsync,omitempty"`
-	VolumeGrowthCount        uint32                 `protobuf:"varint,7,opt,name=volume_growth_count,json=volumeGrowthCount,proto3" json:"volume_growth_count,omitempty"`
-	ReadOnly                 bool                   `protobuf:"varint,8,opt,name=read_only,json=readOnly,proto3" json:"read_only,omitempty"`
-	DataCenter               string                 `protobuf:"bytes,9,opt,name=data_center,json=dataCenter,proto3" json:"data_center,omitempty"`
-	Rack                     string                 `protobuf:"bytes,10,opt,name=rack,proto3" json:"rack,omitempty"`
-	DataNode                 string                 `protobuf:"bytes,11,opt,name=data_node,json=dataNode,proto3" json:"data_node,omitempty"`
-	MaxFileNameLength        uint32                 `protobuf:"varint,12,opt,name=max_file_name_length,json=maxFileNameLength,proto3" json:"max_file_name_length,omitempty"`
-	DisableChunkDeletion     bool                   `protobuf:"varint,13,opt,name=disable_chunk_deletion,json=disableChunkDeletion,proto3" json:"disable_chunk_deletion,omitempty"`
-	Worm                     bool                   `protobuf:"varint,14,opt,name=worm,proto3" json:"worm,omitempty"`
-	WormGracePeriodSeconds   uint64                 `protobuf:"varint,15,opt,name=worm_grace_period_seconds,json=wormGracePeriodSeconds,proto3" json:"worm_grace_period_seconds,omitempty"`
-	WormRetentionTimeSeconds uint64                 `protobuf:"varint,16,opt,name=worm_retention_time_seconds,json=wormRetentionTimeSeconds,proto3" json:"worm_retention_time_seconds,omitempty"`
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	LocationPrefix       string                 `protobuf:"bytes,1,opt,name=location_prefix,json=locationPrefix,proto3" json:"location_prefix,omitempty"`
+	Collection           string                 `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
+	Replication          string                 `protobuf:"bytes,3,opt,name=replication,proto3" json:"replication,omitempty"`
+	Ttl                  string                 `protobuf:"bytes,4,opt,name=ttl,proto3" json:"ttl,omitempty"`
+	DiskType             string                 `protobuf:"bytes,5,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
+	Fsync                bool                   `protobuf:"varint,6,opt,name=fsync,proto3" json:"fsync,omitempty"`
+	VolumeGrowthCount    uint32                 `protobuf:"varint,7,opt,name=volume_growth_count,json=volumeGrowthCount,proto3" json:"volume_growth_count,omitempty"`
+	ReadOnly             bool                   `protobuf:"varint,8,opt,name=read_only,json=readOnly,proto3" json:"read_only,omitempty"`
+	DataCenter           string                 `protobuf:"bytes,9,opt,name=data_center,json=dataCenter,proto3" json:"data_center,omitempty"`
+	Rack                 string                 `protobuf:"bytes,10,opt,name=rack,proto3" json:"rack,omitempty"`
+	DataNode             string                 `protobuf:"bytes,11,opt,name=data_node,json=dataNode,proto3" json:"data_node,omitempty"`
+	MaxFileNameLength    uint32                 `protobuf:"varint,12,opt,name=max_file_name_length,json=maxFileNameLength,proto3" json:"max_file_name_length,omitempty"`
+	DisableChunkDeletion bool                   `protobuf:"varint,13,opt,name=disable_chunk_deletion,json=disableChunkDeletion,proto3" json:"disable_chunk_deletion,omitempty"`
+	// unset inherits from the enclosing path rule, set overrides it
+	Worm                     *bool  `protobuf:"varint,14,opt,name=worm,proto3,oneof" json:"worm,omitempty"`
+	WormGracePeriodSeconds   uint64 `protobuf:"varint,15,opt,name=worm_grace_period_seconds,json=wormGracePeriodSeconds,proto3" json:"worm_grace_period_seconds,omitempty"`
+	WormRetentionTimeSeconds uint64 `protobuf:"varint,16,opt,name=worm_retention_time_seconds,json=wormRetentionTimeSeconds,proto3" json:"worm_retention_time_seconds,omitempty"`
 	unknownFields            protoimpl.UnknownFields
 	sizeCache                protoimpl.SizeCache
 }
@@ -6907,8 +6908,8 @@ func (x *FilerConf_PathConf) GetDisableChunkDeletion() bool {
 }
 
 func (x *FilerConf_PathConf) GetWorm() bool {
-	if x != nil {
-		return x.Worm
+	if x != nil && x.Worm != nil {
+		return *x.Worm
 	}
 	return false
 }
@@ -7403,10 +7404,10 @@ const file_filer_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\fR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\fR\x05value\"%\n" +
 	"\rKvPutResponse\x12\x14\n" +
-	"\x05error\x18\x01 \x01(\tR\x05error\"\xb2\x05\n" +
+	"\x05error\x18\x01 \x01(\tR\x05error\"\xc0\x05\n" +
 	"\tFilerConf\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x05R\aversion\x12:\n" +
-	"\tlocations\x18\x02 \x03(\v2\x1c.filer_pb.FilerConf.PathConfR\tlocations\x1a\xce\x04\n" +
+	"\tlocations\x18\x02 \x03(\v2\x1c.filer_pb.FilerConf.PathConfR\tlocations\x1a\xdc\x04\n" +
 	"\bPathConf\x12'\n" +
 	"\x0flocation_prefix\x18\x01 \x01(\tR\x0elocationPrefix\x12\x1e\n" +
 	"\n" +
@@ -7424,10 +7425,11 @@ const file_filer_proto_rawDesc = "" +
 	" \x01(\tR\x04rack\x12\x1b\n" +
 	"\tdata_node\x18\v \x01(\tR\bdataNode\x12/\n" +
 	"\x14max_file_name_length\x18\f \x01(\rR\x11maxFileNameLength\x124\n" +
-	"\x16disable_chunk_deletion\x18\r \x01(\bR\x14disableChunkDeletion\x12\x12\n" +
-	"\x04worm\x18\x0e \x01(\bR\x04worm\x129\n" +
+	"\x16disable_chunk_deletion\x18\r \x01(\bR\x14disableChunkDeletion\x12\x17\n" +
+	"\x04worm\x18\x0e \x01(\bH\x00R\x04worm\x88\x01\x01\x129\n" +
 	"\x19worm_grace_period_seconds\x18\x0f \x01(\x04R\x16wormGracePeriodSeconds\x12=\n" +
-	"\x1bworm_retention_time_seconds\x18\x10 \x01(\x04R\x18wormRetentionTimeSeconds\"\xba\x01\n" +
+	"\x1bworm_retention_time_seconds\x18\x10 \x01(\x04R\x18wormRetentionTimeSecondsB\a\n" +
+	"\x05_worm\"\xba\x01\n" +
 	"&CacheRemoteObjectToLocalClusterRequest\x12\x1c\n" +
 	"\tdirectory\x18\x01 \x01(\tR\tdirectory\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12+\n" +
@@ -7876,6 +7878,7 @@ func file_filer_proto_init() {
 		(*StreamMutateEntryResponse_DeleteResponse)(nil),
 		(*StreamMutateEntryResponse_RenameResponse)(nil),
 	}
+	file_filer_proto_msgTypes[98].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

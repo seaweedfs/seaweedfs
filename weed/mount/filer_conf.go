@@ -82,7 +82,7 @@ func (wfs *WFS) wormEnforcedForEntry(path util.FullPath, entry *filer_pb.Entry) 
 	}
 
 	rule := wfs.FilerConf.MatchStorageRule(string(path))
-	if !rule.Worm {
+	if !rule.GetWorm() {
 		return false, false
 	}
 
