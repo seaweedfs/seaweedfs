@@ -52,3 +52,42 @@ func TestEvictionWatermarkTracksSealedRing(t *testing.T) {
 		t.Fatalf("evicted through %v, want %v", time.Unix(0, got), time.Unix(0, want))
 	}
 }
+
+// TestGapResumeCursorReadsFromMemory pins the contract the filer's gap resolver
+// depends on: the cursor it resumes with must be one this read actually serves.
+// ReadFromBuffer only falls through to memory for a cursor below the in-memory
+// window when the offset is a sentinel, and answers ResumeFromDiskError for
+// every positive one -- a resume carrying a positive offset would bounce
+// straight back to the resolver, which sees no progress and parks a subscriber
+// whose data is sitting in the ring.
+func TestGapResumeCursorReadsFromMemory(t *testing.T) {
+	lb := NewLogBuffer("gap-resume", time.Minute, nil, nil, nil)
+	defer lb.ShutdownLogBuffer()
+
+	base := time.Now().Add(-time.Hour).Truncate(time.Second)
+	for i := 0; i < 3; i++ {
+		if err := lb.AddLogEntryToBuffer(&filer_pb.LogEntry{
+			TsNs: base.Add(time.Duration(i) * time.Second).UnixNano(), Data: []byte("x"), Key: []byte("k"),
+		}); err != nil {
+			t.Fatalf("add %d: %v", i, err)
+		}
+	}
+	earliest := lb.GetEarliestTime()
+	if earliest.IsZero() {
+		t.Fatal("expected in-memory data")
+	}
+
+	// The resolver resumes at earliest itself, read inclusively.
+	if buf, _, _, err := lb.ReadFromBuffer(NewMessagePosition(earliest.UnixNano(), -2)); err != nil || buf == nil {
+		t.Fatalf("resume at earliest: buf=%v err=%v", buf != nil, err)
+	}
+	// A sentinel just below it is served too, so the exact boundary is not load-bearing.
+	if buf, _, _, err := lb.ReadFromBuffer(NewMessagePosition(earliest.UnixNano()-1, -2)); err != nil || buf == nil {
+		t.Fatalf("resume just below earliest: buf=%v err=%v", buf != nil, err)
+	}
+	// A positive offset below the window is refused: this is the shape a gap
+	// resume must never take.
+	if _, _, _, err := lb.ReadFromBuffer(NewMessagePosition(earliest.UnixNano()-1, 1)); err != ResumeFromDiskError {
+		t.Fatalf("positive-offset cursor below the window: want ResumeFromDiskError, got %v", err)
+	}
+}

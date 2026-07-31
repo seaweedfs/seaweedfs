@@ -20,7 +20,6 @@ func TestResolveAggregatedGapResume(t *testing.T) {
 	cases := []struct {
 		name            string
 		currentTsNs     int64
-		currentOffset   int64 // zero value is an inclusive (sentinel) cursor
 		earliestMemTsNs int64
 		lastEvictedTsNs int64
 		wantAdvance     bool
@@ -66,7 +65,6 @@ func TestResolveAggregatedGapResume(t *testing.T) {
 		{
 			name:            "exclusive cursor on the watermark skips",
 			currentTsNs:     ago(30 * time.Second),
-			currentOffset:   gapResumeOffset,
 			earliestMemTsNs: ago(25 * time.Second),
 			lastEvictedTsNs: ago(30 * time.Second),
 			wantAdvance:     true,
@@ -84,30 +82,11 @@ func TestResolveAggregatedGapResume(t *testing.T) {
 			earliestMemTsNs: time.Time{}.UnixNano(),
 			wantAdvance:     false,
 		},
-		{
-			// The resume target collapses onto the cursor. An inclusive cursor
-			// still advances, because the exclusive resume drops its own
-			// timestamp; parking here is what stranded the subscriber.
-			name:            "adjacent inclusive cursor advances to an exclusive one",
-			currentTsNs:     ago(30*time.Second) - 1,
-			earliestMemTsNs: ago(30 * time.Second),
-			lastEvictedTsNs: ago(31 * time.Second),
-			wantAdvance:     true,
-		},
-		{
-			// Already exclusive at that timestamp: re-arming it is not progress.
-			name:            "adjacent exclusive cursor must NOT skip",
-			currentTsNs:     ago(30*time.Second) - 1,
-			currentOffset:   gapResumeOffset,
-			earliestMemTsNs: ago(30 * time.Second),
-			lastEvictedTsNs: ago(31 * time.Second),
-			wantAdvance:     false,
-		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gotTo, gotAdvance := resolveAggregatedGapResume(tc.currentTsNs, tc.currentOffset, tc.earliestMemTsNs, tc.lastEvictedTsNs)
+			gotTo, gotAdvance := resolveAggregatedGapResume(tc.currentTsNs, tc.earliestMemTsNs, tc.lastEvictedTsNs)
 			if gotAdvance != tc.wantAdvance {
 				t.Fatalf("advance = %v, want %v (current=%v earliest=%v evicted=%v)",
 					gotAdvance, tc.wantAdvance, time.Unix(0, tc.currentTsNs),
@@ -116,12 +95,12 @@ func TestResolveAggregatedGapResume(t *testing.T) {
 			if !gotAdvance {
 				return
 			}
-			if gotTo != tc.earliestMemTsNs-1 {
-				t.Fatalf("advanceTo = %v, want just below earliest %v", time.Unix(0, gotTo), time.Unix(0, tc.earliestMemTsNs))
+			if gotTo != tc.earliestMemTsNs {
+				t.Fatalf("advanceTo = %v, want earliest %v", time.Unix(0, gotTo), time.Unix(0, tc.earliestMemTsNs))
 			}
-			if !gapResumeAdvances(gotTo, tc.currentTsNs, tc.currentOffset) {
-				t.Fatalf("advanceTo %v (exclusive) must be ahead of current %v offset %d",
-					time.Unix(0, gotTo), time.Unix(0, tc.currentTsNs), tc.currentOffset)
+			if gotTo <= tc.currentTsNs {
+				t.Fatalf("advanceTo %v must be strictly ahead of current %v",
+					time.Unix(0, gotTo), time.Unix(0, tc.currentTsNs))
 			}
 		})
 	}
@@ -137,7 +116,6 @@ func TestResolveLocalGapResume(t *testing.T) {
 	cases := []struct {
 		name            string
 		currentTsNs     int64
-		currentOffset   int64 // zero value is an inclusive (sentinel) cursor
 		earliestMemTsNs int64
 		flushedTsNs     int64
 		lastEvictedTsNs int64 // zero value is a ring that never evicted
@@ -190,26 +168,6 @@ func TestResolveLocalGapResume(t *testing.T) {
 			wantAdvance:     false,
 		},
 		{
-			// The cursor already sits just below earliest. Advancing it to an
-			// exclusive cursor at the same timestamp is the only way out: an
-			// inclusive one keeps asking for a timestamp the eviction gate
-			// answers from disk, and the disk has nothing.
-			name:            "adjacent inclusive cursor advances to an exclusive one",
-			currentTsNs:     ago(30*time.Second) - 1,
-			earliestMemTsNs: ago(30 * time.Second),
-			flushedTsNs:     ago(10 * time.Second),
-			wantAdvance:     true,
-		},
-		{
-			// Already exclusive at that timestamp: re-arming it is not progress.
-			name:            "adjacent exclusive cursor must NOT skip",
-			currentTsNs:     ago(30*time.Second) - 1,
-			currentOffset:   gapResumeOffset,
-			earliestMemTsNs: ago(30 * time.Second),
-			flushedTsNs:     ago(10 * time.Second),
-			wantAdvance:     false,
-		},
-		{
 			// Nothing was ever evicted, so memory still holds the gap and the
 			// flush watermark does not have to prove anything.
 			name:            "nothing evicted skips despite a stale flush watermark",
@@ -232,14 +190,14 @@ func TestResolveLocalGapResume(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gotTo, gotAdvance := resolveLocalGapResume(tc.currentTsNs, tc.currentOffset, tc.earliestMemTsNs, tc.flushedTsNs, tc.lastEvictedTsNs)
+			gotTo, gotAdvance := resolveLocalGapResume(tc.currentTsNs, tc.earliestMemTsNs, tc.flushedTsNs, tc.lastEvictedTsNs)
 			if gotAdvance != tc.wantAdvance {
 				t.Fatalf("advance = %v, want %v", gotAdvance, tc.wantAdvance)
 			}
 			// Positions are exclusive: the jump lands just below earliest so the
 			// earliest entry itself is still delivered.
-			if gotAdvance && gotTo != tc.earliestMemTsNs-1 {
-				t.Fatalf("advanceTo = %v, want just below earliest %v", time.Unix(0, gotTo), time.Unix(0, tc.earliestMemTsNs))
+			if gotAdvance && gotTo != tc.earliestMemTsNs {
+				t.Fatalf("advanceTo = %v, want earliest %v", time.Unix(0, gotTo), time.Unix(0, tc.earliestMemTsNs))
 			}
 		})
 	}
@@ -256,29 +214,28 @@ func TestInclusiveDiskCursorOnWatermarkStillAdvances(t *testing.T) {
 	now := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC).UnixNano()
 	watermark := now - int64(30*time.Second) // disk delivered exactly this far
 	earliest := watermark + int64(time.Second)
-	inclusive := int64(-2)
 
 	if !memoryHoldsGap(watermark, watermark) {
 		t.Fatal("memory holds everything after the watermark, whatever the cursor's inclusivity")
 	}
-	to, advance := resolveAggregatedGapResume(watermark, inclusive, earliest, watermark)
+	to, advance := resolveAggregatedGapResume(watermark, earliest, watermark)
 	if !advance {
 		t.Fatal("aggregated: an inclusive cursor on the watermark must still advance")
 	}
-	if to != earliest-1 {
-		t.Fatalf("aggregated: advanceTo = %v, want just below earliest %v", time.Unix(0, to), time.Unix(0, earliest))
+	if to != earliest {
+		t.Fatalf("aggregated: advanceTo = %v, want earliest %v", time.Unix(0, to), time.Unix(0, earliest))
 	}
 	// No flush has landed, so only the eviction proof can settle this one.
-	if _, advance := resolveLocalGapResume(watermark, inclusive, earliest, 0, watermark); !advance {
+	if _, advance := resolveLocalGapResume(watermark, earliest, 0, watermark); !advance {
 		t.Fatal("local: an inclusive cursor on the watermark must still advance")
 	}
 
 	// One nanosecond earlier the gap really was dropped unflushed: park.
 	dropped := watermark - 1
-	if _, advance := resolveAggregatedGapResume(dropped, inclusive, earliest, watermark); advance {
+	if _, advance := resolveAggregatedGapResume(dropped, earliest, watermark); advance {
 		t.Fatal("aggregated: a cursor below the watermark must wait, not skip")
 	}
-	if _, advance := resolveLocalGapResume(dropped, inclusive, earliest, 0, watermark); advance {
+	if _, advance := resolveLocalGapResume(dropped, earliest, 0, watermark); advance {
 		t.Fatal("local: a cursor below the watermark with no flush must wait, not skip")
 	}
 }
@@ -362,4 +319,16 @@ func TestWaitOnGapExits(t *testing.T) {
 			t.Fatalf("took %v, want well under the %v retry interval", elapsed, unflushedGapRetryInterval)
 		}
 	})
+}
+
+// TestGapResumeCursorOffsetIsSentinel ties the resolvers' resume cursor to what
+// ReadFromBuffer will serve. That read falls through to memory for a cursor
+// below the in-memory window only when the offset is a sentinel; a positive one
+// comes back as ResumeFromDiskError, so the resume would bounce to the resolver,
+// which sees no progress and parks a subscriber whose data is in the ring.
+func TestGapResumeCursorOffsetIsSentinel(t *testing.T) {
+	if gapResumeCursorOffset > 0 {
+		t.Fatalf("gapResumeCursorOffset = %d, want a sentinel (<= 0) or the memory read refuses every gap resume",
+			gapResumeCursorOffset)
+	}
 }
