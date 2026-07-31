@@ -3,17 +3,15 @@ package weed_server
 import (
 	"testing"
 	"time"
-
-	"github.com/seaweedfs/seaweedfs/weed/filer"
 )
 
-// TestResolveDiskGapResume pins the gap-skip fix: a subscriber that fell behind
-// the in-memory ring must not skip past a window that may still hold unflushed
-// events; only a window older than the settled horizon may be skipped.
-func TestResolveDiskGapResume(t *testing.T) {
+// TestResolveAggregatedGapResume pins the gap-skip fix on the aggregated
+// stream: that ring never flushes, so a disk miss proves nothing. Only the
+// eviction watermark can prove the gap empty — anything the ring dropped may
+// still be sitting unflushed on the peer that produced it.
+func TestResolveAggregatedGapResume(t *testing.T) {
 	// A fixed "now" so the cases are deterministic.
 	now := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC).UnixNano()
-	horizon := metadataGapSettledHorizon // 2 * LogFlushInterval
 	ago := func(d time.Duration) int64 { return now - int64(d) }
 
 	cases := []struct {
@@ -21,49 +19,53 @@ func TestResolveDiskGapResume(t *testing.T) {
 		currentTsNs     int64
 		currentOffset   int64 // zero value is an inclusive (sentinel) cursor
 		earliestMemTsNs int64
+		lastEvictedTsNs int64
 		wantAdvance     bool
-		wantAdvanceToNs int64 // only checked when wantAdvance
 	}{
 		{
-			// The bug: the 30s..25s window may hold unflushed events → must wait.
-			name:            "recent unflushed gap must NOT skip",
+			// The bug: the ring dropped the 30s..25s window before any peer
+			// flushed it, so skipping past it loses those events for good.
+			name:            "gap the ring dropped must NOT skip",
 			currentTsNs:     ago(30 * time.Second),
 			earliestMemTsNs: ago(25 * time.Second),
+			lastEvictedTsNs: ago(26 * time.Second),
 			wantAdvance:     false,
 		},
 		{
-			// Ancient start: skip to avoid an infinite loop, but never past the horizon.
-			name:            "ancient empty gap skips, capped below settled horizon",
+			// An ancient cursor is always below the watermark once anything has
+			// been evicted: wall-clock age is not a licence to skip.
+			name:            "ancient cursor below the watermark must NOT skip",
 			currentTsNs:     time.Unix(0, 0).UnixNano(),
 			earliestMemTsNs: ago(30 * time.Second),
-			wantAdvance:     true,
-			wantAdvanceToNs: ago(horizon) - 1,
+			lastEvictedTsNs: ago(10 * time.Minute),
+			wantAdvance:     false,
 		},
 		{
-			// Advance only to the settled horizon, not to earliest.
-			name:            "settled empty gap skips to horizon not earliest",
-			currentTsNs:     ago(10 * time.Minute),
+			// Nothing was ever evicted, so memory holds the whole history and
+			// the gap is provably empty however old the cursor is.
+			name:            "nothing evicted skips however old the cursor",
+			currentTsNs:     time.Unix(0, 0).UnixNano(),
 			earliestMemTsNs: ago(30 * time.Second),
+			lastEvictedTsNs: 0,
 			wantAdvance:     true,
-			wantAdvanceToNs: ago(horizon) - 1,
 		},
 		{
-			// Persisted reads exclude ts <= cursor, so an event exactly on the
-			// boundary must stay ahead of the cursor.
-			name:            "earliest exactly at horizon boundary is capped below it",
-			currentTsNs:     ago(10 * time.Minute),
-			earliestMemTsNs: ago(horizon),
-			wantAdvance:     true,
-			wantAdvanceToNs: ago(horizon) - 1,
+			// The evicted window ends exactly on the cursor, which still wants
+			// that entry: it is gone from memory and not proven to be on disk.
+			name:            "inclusive cursor on the watermark must NOT skip",
+			currentTsNs:     ago(30 * time.Second),
+			earliestMemTsNs: ago(25 * time.Second),
+			lastEvictedTsNs: ago(30 * time.Second),
+			wantAdvance:     false,
 		},
 		{
-			// The whole gap is older than the horizon → safe to reach earliest
-			// (just below it: positions are exclusive).
-			name:            "earliest older than horizon skips to just below earliest",
-			currentTsNs:     ago(10 * time.Minute),
-			earliestMemTsNs: ago(5 * time.Minute),
+			// Same timestamp, but the cursor already excludes it.
+			name:            "exclusive cursor on the watermark skips",
+			currentTsNs:     ago(30 * time.Second),
+			currentOffset:   gapResumeOffset,
+			earliestMemTsNs: ago(25 * time.Second),
+			lastEvictedTsNs: ago(30 * time.Second),
 			wantAdvance:     true,
-			wantAdvanceToNs: ago(5*time.Minute) - 1,
 		},
 		{
 			name:            "memory not ahead of current must NOT skip",
@@ -83,41 +85,39 @@ func TestResolveDiskGapResume(t *testing.T) {
 			// still advances, because the exclusive resume drops its own
 			// timestamp; parking here is what stranded the subscriber.
 			name:            "adjacent inclusive cursor advances to an exclusive one",
-			currentTsNs:     ago(5*time.Minute) - 1,
-			earliestMemTsNs: ago(5 * time.Minute),
+			currentTsNs:     ago(30*time.Second) - 1,
+			earliestMemTsNs: ago(30 * time.Second),
+			lastEvictedTsNs: ago(31 * time.Second),
 			wantAdvance:     true,
-			wantAdvanceToNs: ago(5*time.Minute) - 1,
 		},
 		{
 			// Already exclusive at that timestamp: re-arming it is not progress.
 			name:            "adjacent exclusive cursor must NOT skip",
-			currentTsNs:     ago(5*time.Minute) - 1,
+			currentTsNs:     ago(30*time.Second) - 1,
 			currentOffset:   gapResumeOffset,
-			earliestMemTsNs: ago(5 * time.Minute),
+			earliestMemTsNs: ago(30 * time.Second),
+			lastEvictedTsNs: ago(31 * time.Second),
 			wantAdvance:     false,
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gotTo, gotAdvance := resolveDiskGapResume(tc.currentTsNs, tc.currentOffset, tc.earliestMemTsNs, now, horizon)
+			gotTo, gotAdvance := resolveAggregatedGapResume(tc.currentTsNs, tc.currentOffset, tc.earliestMemTsNs, tc.lastEvictedTsNs)
 			if gotAdvance != tc.wantAdvance {
-				t.Fatalf("advance = %v, want %v (current=%v earliest=%v)",
-					gotAdvance, tc.wantAdvance, time.Unix(0, tc.currentTsNs), time.Unix(0, tc.earliestMemTsNs))
+				t.Fatalf("advance = %v, want %v (current=%v earliest=%v evicted=%v)",
+					gotAdvance, tc.wantAdvance, time.Unix(0, tc.currentTsNs),
+					time.Unix(0, tc.earliestMemTsNs), time.Unix(0, tc.lastEvictedTsNs))
 			}
-			if tc.wantAdvance {
-				if gotTo != tc.wantAdvanceToNs {
-					t.Fatalf("advanceTo = %v, want %v", time.Unix(0, gotTo), time.Unix(0, tc.wantAdvanceToNs))
-				}
-				if !gapResumeAdvances(gotTo, tc.currentTsNs, tc.currentOffset) {
-					t.Fatalf("advanceTo %v (exclusive) must be ahead of current %v offset %d",
-						time.Unix(0, gotTo), time.Unix(0, tc.currentTsNs), tc.currentOffset)
-				}
-				// Never advance to or past the unsettled boundary (persisted
-				// reads exclude ts <= cursor).
-				if gotTo >= now-int64(horizon) {
-					t.Fatalf("advanceTo %v must stay strictly below settled horizon %v", time.Unix(0, gotTo), time.Unix(0, now-int64(horizon)))
-				}
+			if !gotAdvance {
+				return
+			}
+			if gotTo != tc.earliestMemTsNs-1 {
+				t.Fatalf("advanceTo = %v, want just below earliest %v", time.Unix(0, gotTo), time.Unix(0, tc.earliestMemTsNs))
+			}
+			if !gapResumeAdvances(gotTo, tc.currentTsNs, tc.currentOffset) {
+				t.Fatalf("advanceTo %v (exclusive) must be ahead of current %v offset %d",
+					time.Unix(0, gotTo), time.Unix(0, tc.currentTsNs), tc.currentOffset)
 			}
 		})
 	}
@@ -216,73 +216,5 @@ func TestResolveLocalGapResume(t *testing.T) {
 				t.Fatalf("advanceTo = %v, want just below earliest %v", time.Unix(0, gotTo), time.Unix(0, tc.earliestMemTsNs))
 			}
 		})
-	}
-}
-
-// oldGapSkipWouldSkipPast models the pre-fix behaviour: always advance to the
-// earliest in-memory time; an event at eventTsNs behind the jump is dropped.
-func oldGapSkipWouldSkipPast(currentTsNs, earliestMemTsNs, eventTsNs int64) bool {
-	if earliestMemTsNs > 0 && earliestMemTsNs > currentTsNs {
-		newPos := earliestMemTsNs
-		return newPos > eventTsNs // event is now behind the read position → never read
-	}
-	return false
-}
-
-// newGapSkipWouldSkipPast models the post-fix behaviour via resolveDiskGapResume.
-func newGapSkipWouldSkipPast(currentTsNs, earliestMemTsNs, eventTsNs, nowTsNs int64, horizon time.Duration) bool {
-	advanceTo, advance := resolveDiskGapResume(currentTsNs, 0, earliestMemTsNs, nowTsNs, horizon)
-	if !advance {
-		return false // no skip → event preserved, re-read after flush
-	}
-	return advanceTo > eventTsNs
-}
-
-// TestGapSkipDropsUnflushedEvent is a deterministic loss proof: the pre-fix
-// gap-skip drops an evicted-but-unflushed event, the post-fix logic preserves it,
-// and a genuinely old settled gap is still skipped (no infinite-loop regression).
-// The loss is fully determined by this position-advance decision, so the repro is
-// expressed at the decision level.
-func TestGapSkipDropsUnflushedEvent(t *testing.T) {
-	now := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC).UnixNano()
-	horizon := metadataGapSettledHorizon
-	ago := func(d time.Duration) int64 { return now - int64(d) }
-
-	t.Run("unflushed event in a recent gap", func(t *testing.T) {
-		// Subscriber stalled at now-40s; an event at now-35s is not yet flushed;
-		// earliest in-memory has advanced to now-30s.
-		current := ago(40 * time.Second)
-		event := ago(35 * time.Second)
-		earliest := ago(30 * time.Second)
-
-		if !oldGapSkipWouldSkipPast(current, earliest, event) {
-			t.Fatal("expected the PRE-FIX gap-skip to drop the unflushed event (repro precondition)")
-		}
-		if newGapSkipWouldSkipPast(current, earliest, event, now, horizon) {
-			t.Fatal("POST-FIX must NOT drop an unflushed event in a recent gap")
-		}
-	})
-
-	t.Run("settled empty gap still skipped (no infinite-loop regression)", func(t *testing.T) {
-		// Ancient start, disk genuinely empty: both skip so the reader makes progress.
-		current := time.Unix(0, 0).UnixNano()
-		event := ago(10 * time.Minute) // already flushed long ago; disk authoritative
-		earliest := ago(20 * time.Second)
-
-		if !oldGapSkipWouldSkipPast(current, earliest, event) {
-			t.Fatal("sanity: pre-fix skips the ancient settled gap")
-		}
-		if !newGapSkipWouldSkipPast(current, earliest, event, now, horizon) {
-			t.Fatal("POST-FIX must still skip a genuinely-old settled gap (infinite-loop guard)")
-		}
-	})
-}
-
-// The horizon must exceed the flush interval, otherwise a window one flush cycle
-// old could be treated as settled while its events are still only in memory.
-func TestMetadataGapSettledHorizonExceedsFlushInterval(t *testing.T) {
-	if metadataGapSettledHorizon <= filer.LogFlushInterval {
-		t.Fatalf("metadataGapSettledHorizon (%v) must exceed LogFlushInterval (%v) so a disk miss is authoritative",
-			metadataGapSettledHorizon, filer.LogFlushInterval)
 	}
 }

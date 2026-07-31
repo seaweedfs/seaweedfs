@@ -19,16 +19,6 @@ import (
 )
 
 const (
-	// metadataGapSettledHorizon bounds how recent a gap may be before an
-	// aggregated-stream subscriber may skip past it. The aggregated ring has no
-	// flush watermark of its own (persistence happens on each source filer), so
-	// wall-clock age is the only local proxy: a window younger than a flush
-	// interval plus clock-skew margin may still be unflushed. A flush stalled
-	// beyond the horizon can still lose the skipped window — but the previous
-	// unconditional skip lost it in every case. Local subscriptions gate on the
-	// real flush watermark instead (resolveLocalGapResume).
-	metadataGapSettledHorizon = 2 * filer.LogFlushInterval
-
 	// unflushedGapRetryInterval caps the wait of a subscriber parked on a recent
 	// (possibly-unflushed) gap, in case the flush notification is missed.
 	unflushedGapRetryInterval = 2 * time.Second
@@ -187,22 +177,40 @@ func gapResumeAdvances(targetTsNs, currentTsNs, currentOffset int64) bool {
 	return targetTsNs == currentTsNs && currentOffset <= 0
 }
 
-// resolveDiskGapResume decides whether an aggregated-stream subscriber whose
-// in-memory read returned ResumeFromDiskError and whose disk read found nothing
-// may skip forward. The target is the earliest in-memory timestamp, capped
-// strictly below nowTsNs-settledHorizon (persisted reads exclude ts <= cursor,
-// so the boundary itself stays protected). For a recent gap the cap lands
-// at/before the current position and it returns false — the caller must wait
-// for the flush and re-read disk. Callers should pace capped advances: the
-// horizon slides with the wall clock, so immediate re-probing would spin.
-func resolveDiskGapResume(currentTsNs, currentOffset, earliestMemTsNs, nowTsNs int64, settledHorizon time.Duration) (advanceToTsNs int64, advance bool) {
+// memoryHoldsGap reports whether the retained ring still holds every entry after
+// the cursor, i.e. nothing at or after it was evicted. It mirrors the read gate
+// in ReadFromBuffer: an inclusive cursor also needs the entry at its own
+// timestamp, so equality with the watermark only clears an exclusive one.
+func memoryHoldsGap(currentTsNs, currentOffset, lastEvictedTsNs int64) bool {
+	if lastEvictedTsNs == 0 {
+		return true // nothing was ever dropped from the ring
+	}
+	if currentTsNs > lastEvictedTsNs {
+		return true
+	}
+	return currentTsNs == lastEvictedTsNs && currentOffset > 0
+}
+
+// resolveAggregatedGapResume decides whether an aggregated-stream subscriber
+// whose in-memory read returned ResumeFromDiskError, and whose disk read then
+// found nothing, may skip forward. The aggregated ring never flushes — peers
+// persist their own local logs — so it has no flush watermark to make that miss
+// authoritative, and wall-clock age proves nothing about persistence. What it
+// does have is the eviction watermark: if nothing at or after the cursor was
+// ever dropped from the ring, memory still holds every entry after the cursor
+// and the gap is provably empty. Below the watermark entries were dropped and
+// only a peer's flush can supply them, so the caller waits instead.
+func resolveAggregatedGapResume(currentTsNs, currentOffset, earliestMemTsNs, lastEvictedTsNs int64) (advanceToTsNs int64, advance bool) {
 	// No in-memory data (zero time → negative UnixNano), or memory not ahead of us.
 	if earliestMemTsNs <= 0 || earliestMemTsNs <= currentTsNs {
 		return 0, false
 	}
+	if !memoryHoldsGap(currentTsNs, currentOffset, lastEvictedTsNs) {
+		return 0, false
+	}
 	// Resume just below earliest so the earliest in-memory entry is still
 	// delivered by the exclusive cursor.
-	target := min(earliestMemTsNs-1, nowTsNs-int64(settledHorizon)-1)
+	target := earliestMemTsNs - 1
 	if !gapResumeAdvances(target, currentTsNs, currentOffset) {
 		return 0, false
 	}
@@ -310,44 +318,24 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 			// No data found on disk
 			// Check if we previously got ResumeFromDiskError from memory, meaning we're in a gap
 			if errors.Is(readInMemoryLogErr, log_buffer.ResumeFromDiskError) {
-				// Disk found nothing for the gap. Only skip past a window proven
-				// settled; a recent gap may hold unflushed events. See resolveDiskGapResume.
+				// Disk found nothing for the gap. Skip only what the ring proves
+				// empty; anything it dropped may still be unflushed on a peer.
+				// See resolveAggregatedGapResume.
 				earliestTime := fs.filer.MetaAggregator.MetaLogBuffer.GetEarliestTime()
-				if advanceToTsNs, advance := resolveDiskGapResume(lastReadTime.Time.UnixNano(), lastReadTime.Offset, earliestTime.UnixNano(), time.Now().UnixNano(), metadataGapSettledHorizon); advance {
-					if advanceToTsNs < earliestTime.UnixNano()-1 {
-						// Loud on purpose: the aggregated path has no flush
-						// watermark, so a skip capped by the wall-clock horizon
-						// may pass events a stalled flush lands later. Operators
-						// should see a flush stall outlasting the horizon.
-						glog.Warningf("metadata gap: flush older than %v stalled? skipping from %v toward %v (earliest memory %v) for %v",
-							metadataGapSettledHorizon, lastReadTime.Time, time.Unix(0, advanceToTsNs), earliestTime, clientName)
-					} else {
-						glog.V(3).Infof("gap detected: skipping from %v to settled position %v (earliest memory %v) for %v",
-							lastReadTime.Time, time.Unix(0, advanceToTsNs), earliestTime, clientName)
-					}
+				lastEvictedTsNs := fs.filer.MetaAggregator.MetaLogBuffer.GetLastEvictedTsNs()
+				if advanceToTsNs, advance := resolveAggregatedGapResume(lastReadTime.Time.UnixNano(), lastReadTime.Offset, earliestTime.UnixNano(), lastEvictedTsNs); advance {
+					glog.V(3).Infof("gap detected: skipping from %v to earliest memory time %v for %v",
+						lastReadTime.Time, earliestTime, clientName)
 					lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, gapResumeOffset)
-					if advanceToTsNs < earliestTime.UnixNano()-1 {
-						// Capped mid-gap: stay on the disk-probe path (the rest of
-						// the window may still be unflushed) and pace the next
-						// probe — the horizon slides with the wall clock, so
-						// immediate re-probing would spin.
-						select {
-						case <-aggNotifyChan:
-						case <-ctx.Done():
-							return nil
-						case <-time.After(unflushedGapRetryInterval):
-						}
-						continue
-					}
 					readInMemoryLogErr = nil // Reached the in-memory window: resume from memory
 				} else {
-					// Recent (possibly-unflushed) gap — or an aggregated buffer
-					// with no readable entries (zero earliestTime): wait for
-					// flush/new data, then re-read disk. Falling through to the
-					// in-memory read here would return ResumeFromDiskError
-					// again immediately and spin without waiting.
-					glog.V(3).Infof("unflushed gap at %v (earliest memory %v) for %v: waiting for flush before advancing",
-						lastReadTime.Time, earliestTime, clientName)
+					// The ring dropped the gap before a peer persisted it — or
+					// the aggregated buffer has no readable entries at all: wait
+					// for the peer's flush to land on disk, then re-read. Falling
+					// through to the in-memory read here would return
+					// ResumeFromDiskError again immediately and spin.
+					glog.V(3).Infof("unflushed gap at %v (earliest memory %v, evicted through %v) for %v: waiting for a peer flush before advancing",
+						lastReadTime.Time, earliestTime, time.Unix(0, lastEvictedTsNs), clientName)
 					select {
 					case <-aggNotifyChan:
 					case <-ctx.Done():

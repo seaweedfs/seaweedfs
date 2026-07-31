@@ -718,6 +718,14 @@ func (logBuffer *LogBuffer) GetLastFlushTsNs() int64 {
 	return logBuffer.lastFlushTsNs.Load()
 }
 
+// GetLastEvictedTsNs returns the stopTime of the newest window dropped from the
+// sealed ring, or 0 if nothing has been evicted. A reader positioned past it
+// knows the retained buffers still hold every entry after its position, which is
+// the only emptiness proof available to a buffer that never flushes.
+func (logBuffer *LogBuffer) GetLastEvictedTsNs() int64 {
+	return logBuffer.lastEvictedTsNs.Load()
+}
+
 func (logBuffer *LogBuffer) SetLastFlushTsNs(ts int64) {
 	logBuffer.lastFlushTsNs.Store(ts)
 }
