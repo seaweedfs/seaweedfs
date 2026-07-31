@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"google.golang.org/protobuf/proto"
 )
 
 func init() {
@@ -44,6 +45,10 @@ func (c *commandFsConfigure) Help() string {
 	# example: unlock a bucket that quota enforcement made read-only
 	fs.configure -locationPrefix=/buckets/my_bucket/ -readOnly=false -apply
 
+	# example: keep one directory writable under a worm-protected tree
+	fs.configure -locationPrefix=/buckets/my_bucket/ -worm -apply
+	fs.configure -locationPrefix=/buckets/my_bucket/scratch/ -worm=false -apply
+
 	# delete the changes
 	fs.configure -locationPrefix=/my/folder -delete -apply
 
@@ -64,7 +69,7 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 	diskType := fsConfigureCommand.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
 	fsync := fsConfigureCommand.Bool("fsync", false, "fsync for the writes")
 	isReadOnly := fsConfigureCommand.Bool("readOnly", false, "disable writes")
-	worm := fsConfigureCommand.Bool("worm", false, "write-once-read-many, written files are readonly")
+	worm := fsConfigureCommand.Bool("worm", false, "write-once-read-many, written files are readonly; unset inherits from the parent path")
 	wormGracePeriod := fsConfigureCommand.Uint64("wormGracePeriod", 0, "grace period before worm is enforced, in seconds")
 	wormRetentionTime := fsConfigureCommand.Uint64("wormRetentionTime", 0, "retention time for a worm enforced file, in seconds")
 	maxFileNameLength := fsConfigureCommand.Uint("maxFileNameLength", 0, "file name length limits in bytes for compatibility with Unix-based systems")
@@ -98,10 +103,17 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 			DataCenter:               *dataCenter,
 			Rack:                     *rack,
 			DataNode:                 *dataNode,
-			Worm:                     *worm,
 			WormGracePeriodSeconds:   *wormGracePeriod,
 			WormRetentionTimeSeconds: *wormRetentionTime,
 		}
+
+		// worm is only carried when the flag is passed, so a rule that says nothing
+		// about it keeps inheriting from the enclosing path
+		fsConfigureCommand.Visit(func(f *flag.Flag) {
+			if f.Name == "worm" {
+				locConf.Worm = proto.Bool(*worm)
+			}
+		})
 
 		// check collection
 		if *collection != "" && strings.HasPrefix(*locationPrefix, "/buckets/") {
@@ -134,8 +146,8 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 			fc.DeleteLocationConf(*locationPrefix)
 		} else {
 			fc.AddLocationConf(locConf)
-			// AddLocationConf merges boolean fields with OR, which can never turn
-			// a flag off; let an explicitly passed false win, e.g. -readOnly=false
+			// AddLocationConf merges these boolean fields with OR, which can never
+			// turn a flag off; let an explicitly passed false win, e.g. -readOnly=false
 			// to reopen a bucket that quota enforcement locked
 			if mergedConf, found := fc.GetLocationConf(*locationPrefix); found {
 				fsConfigureCommand.Visit(func(f *flag.Flag) {
@@ -144,8 +156,6 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 						mergedConf.ReadOnly = *isReadOnly
 					case "fsync":
 						mergedConf.Fsync = *fsync
-					case "worm":
-						mergedConf.Worm = *worm
 					}
 				})
 			}

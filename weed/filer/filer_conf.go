@@ -15,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/viant/ptrie"
 	jsonpb "google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -26,6 +27,12 @@ const (
 	IamIdentityFile       = "identity.json"
 	IamPoliciesFile       = "policies.json"
 )
+
+// FilerConfVersion is stamped into every configuration this build writes.
+// Version 0 predates worm presence: it was written with EmitUnpopulated, so every
+// rule carries an explicit "worm": false that meant nothing. Reading one back as an
+// override would silently lift worm off nested paths, so it is dropped to unset.
+const FilerConfVersion = 1
 
 type FilerConf struct {
 	rules ptrie.Trie[*filer_pb.FilerConf_PathConf]
@@ -115,6 +122,9 @@ func (fc *FilerConf) LoadFromBytes(data []byte) (err error) {
 
 func (fc *FilerConf) doLoadConf(conf *filer_pb.FilerConf) (err error) {
 	for _, location := range conf.Locations {
+		if conf.Version < FilerConfVersion && location.Worm != nil && !*location.Worm {
+			location.Worm = nil
+		}
 		err = fc.SetLocationConf(location)
 		if err != nil {
 			// this is not recoverable
@@ -213,6 +223,10 @@ func ClonePathConf(src *filer_pb.FilerConf_PathConf) *filer_pb.FilerConf_PathCon
 	if src == nil {
 		return &filer_pb.FilerConf_PathConf{}
 	}
+	var worm *bool
+	if src.Worm != nil {
+		worm = proto.Bool(*src.Worm)
+	}
 	return &filer_pb.FilerConf_PathConf{
 		LocationPrefix:           src.LocationPrefix,
 		Collection:               src.Collection,
@@ -227,7 +241,7 @@ func ClonePathConf(src *filer_pb.FilerConf_PathConf) *filer_pb.FilerConf_PathCon
 		Rack:                     src.Rack,
 		DataNode:                 src.DataNode,
 		DisableChunkDeletion:     src.DisableChunkDeletion,
-		Worm:                     src.Worm,
+		Worm:                     worm,
 		WormGracePeriodSeconds:   src.WormGracePeriodSeconds,
 		WormRetentionTimeSeconds: src.WormRetentionTimeSeconds,
 	}
@@ -334,7 +348,12 @@ func mergePathConf(a, b *filer_pb.FilerConf_PathConf) {
 	a.Rack = util.Nvl(b.Rack, a.Rack)
 	a.DataNode = util.Nvl(b.DataNode, a.DataNode)
 	a.DisableChunkDeletion = b.DisableChunkDeletion || a.DisableChunkDeletion
-	a.Worm = b.Worm || a.Worm
+	// worm merges on presence, so a nested rule can turn it off. readOnly, fsync and
+	// disableChunkDeletion stay OR'ed on purpose: a nested rule must not be able to
+	// lift a lock the bucket set.
+	if b.Worm != nil {
+		a.Worm = b.Worm
+	}
 	if b.WormRetentionTimeSeconds > 0 {
 		a.WormRetentionTimeSeconds = b.WormRetentionTimeSeconds
 	}
@@ -344,7 +363,7 @@ func mergePathConf(a, b *filer_pb.FilerConf_PathConf) {
 }
 
 func (fc *FilerConf) ToProto() *filer_pb.FilerConf {
-	m := &filer_pb.FilerConf{}
+	m := &filer_pb.FilerConf{Version: FilerConfVersion}
 	fc.rules.Walk(func(key []byte, value *filer_pb.FilerConf_PathConf) bool {
 		m.Locations = append(m.Locations, value)
 		return true
