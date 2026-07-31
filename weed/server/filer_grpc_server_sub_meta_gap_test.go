@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 )
 
 // TestResolveAggregatedGapResume pins the gap-skip fix on the aggregated
@@ -284,81 +283,83 @@ func TestInclusiveDiskCursorOnWatermarkStillAdvances(t *testing.T) {
 	}
 }
 
-// TestWaitForLocalFlushUsesFlushOnlyChannel pins the parked-subscriber cadence.
-// The general subscriber channel carries an append per metadata write, and a
-// parked subscriber can do nothing with an append, so it waits on the
-// flush-only channel instead: during the write burst these stalls come from,
-// consuming appends would wake it once per write and keep that channel drained,
-// turning every writer's dropped notification into a delivered one.
-func TestWaitForLocalFlushUsesFlushOnlyChannel(t *testing.T) {
-	lb := log_buffer.NewLogBuffer("wait-for-flush", time.Minute, nil, nil, nil)
-	defer lb.ShutdownLogBuffer()
-	lb.SetLastFlushTsNs(100)
+// TestWaitOnGapExits pins every way a park has to end. The park is where a
+// stalled subscriber spends all its time and it never re-enters the main loop,
+// so any exit the loop relies on has to be honored here as well.
+func TestWaitOnGapExits(t *testing.T) {
+	fs := &FilerServer{knownListeners: map[int32]int32{7: 3}}
+	req := &filer_pb.SubscribeMetadataRequest{ClientId: 7, ClientEpoch: 3}
+	cursor := time.Now().UnixNano()
 
-	appendChan := lb.RegisterSubscriber("appends")
-	defer lb.UnregisterSubscriber("appends")
-	flushChan := lb.RegisterFlushSubscriber("flushes")
-	defer lb.UnregisterFlushSubscriber("flushes")
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// A steady stream of appends, none of which moves the flush watermark.
-	appendsDone := make(chan struct{})
-	stopAppends := make(chan struct{})
-	go func() {
-		defer close(appendsDone)
-		for {
-			select {
-			case <-stopAppends:
-				return
-			default:
-				lb.AddLogEntryToBuffer(&filer_pb.LogEntry{TsNs: time.Now().UnixNano(), Data: []byte("x"), Key: []byte("k")})
-			}
+	t.Run("retries on the timer with no notification channel", func(t *testing.T) {
+		start := time.Now()
+		if got := fs.waitOnGap(context.Background(), req, cursor, nil, 0); got != gapWaitRetry {
+			t.Fatalf("outcome = %v, want retry", got)
 		}
-	}()
+		if elapsed := time.Since(start); elapsed < unflushedGapRetryInterval {
+			t.Fatalf("returned after %v, want the full %v retry interval", elapsed, unflushedGapRetryInterval)
+		}
+	})
 
-	start := time.Now()
-	if !waitForLocalFlush(ctx, lb, flushChan, 100) {
-		t.Fatal("wait reported a closed stream")
-	}
-	elapsed := time.Since(start)
-	close(stopAppends)
-	<-appendsDone
-	if elapsed < unflushedGapRetryInterval {
-		t.Fatalf("appends released the wait after %v, want the full %v retry interval", elapsed, unflushedGapRetryInterval)
-	}
-	// The appends went to the general channel, which nobody drained: it holds
-	// one token and every later writer dropped its notification.
-	if len(appendChan) != 1 {
-		t.Fatalf("append channel holds %d tokens, want the single undrained one", len(appendChan))
-	}
-	if len(flushChan) != 0 {
-		t.Fatalf("flush channel holds %d tokens, want none from appends alone", len(flushChan))
-	}
+	t.Run("a replaced client ends the stream", func(t *testing.T) {
+		// A reconnect at a higher epoch supersedes this stream; without this the
+		// old one keeps scanning the filer store until its TCP connection dies.
+		superseded := &filer_pb.SubscribeMetadataRequest{ClientId: 7, ClientEpoch: 2}
+		if got := fs.waitOnGap(context.Background(), superseded, cursor, nil, 0); got != gapWaitDone {
+			t.Fatalf("outcome = %v, want done", got)
+		}
+	})
 
-	// A flush releases it immediately.
-	lb.SetLastFlushTsNs(200)
-	flushChan <- struct{}{}
-	start = time.Now()
-	if !waitForLocalFlush(ctx, lb, flushChan, 100) {
-		t.Fatal("wait reported a closed stream")
-	}
-	if elapsed := time.Since(start); elapsed >= unflushedGapRetryInterval {
-		t.Fatalf("flush wake-up took %v, want well under the %v retry interval", elapsed, unflushedGapRetryInterval)
-	}
+	t.Run("a bounded subscription past its window ends the stream", func(t *testing.T) {
+		// LoopProcessLogData is the only place UntilNs ends a stream and it is
+		// unreachable from a park, so `weed shell fs.verify` would hang here.
+		bounded := &filer_pb.SubscribeMetadataRequest{ClientId: 7, ClientEpoch: 3, UntilNs: cursor - 1}
+		if got := fs.waitOnGap(context.Background(), bounded, cursor, nil, 0); got != gapWaitDone {
+			t.Fatalf("outcome = %v, want done", got)
+		}
+	})
 
-	// A cancelled stream unblocks it and reports the stream is gone.
-	drain(flushChan)
-	cancel()
-	if waitForLocalFlush(ctx, lb, flushChan, 200) {
-		t.Fatal("wait must report false once the stream is gone")
-	}
-}
+	t.Run("a stall past the bound fails the stream", func(t *testing.T) {
+		if got := fs.waitOnGap(context.Background(), req, cursor, nil, maxGapStall); got != gapWaitStalled {
+			t.Fatalf("outcome = %v, want stalled", got)
+		}
+	})
 
-func drain(ch chan struct{}) {
-	select {
-	case <-ch:
-	default:
-	}
+	t.Run("a cancelled stream ends promptly", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		start := time.Now()
+		if got := fs.waitOnGap(ctx, req, cursor, nil, 0); got != gapWaitDone {
+			t.Fatalf("outcome = %v, want done", got)
+		}
+		if elapsed := time.Since(start); elapsed >= unflushedGapRetryInterval {
+			t.Fatalf("took %v, want well under the %v retry interval", elapsed, unflushedGapRetryInterval)
+		}
+	})
+
+	t.Run("a closed notification channel does not spin", func(t *testing.T) {
+		// A receive on a closed channel returns instantly forever; selecting on
+		// it without checking would burn a core until the retry timer fires.
+		closed := make(chan struct{})
+		close(closed)
+		start := time.Now()
+		if got := fs.waitOnGap(context.Background(), req, cursor, closed, 0); got != gapWaitRetry {
+			t.Fatalf("outcome = %v, want retry", got)
+		}
+		if elapsed := time.Since(start); elapsed < unflushedGapRetryInterval {
+			t.Fatalf("returned after %v, want the timer to pace it to %v", elapsed, unflushedGapRetryInterval)
+		}
+	})
+
+	t.Run("a notification wakes it early", func(t *testing.T) {
+		notify := make(chan struct{}, 1)
+		notify <- struct{}{}
+		start := time.Now()
+		if got := fs.waitOnGap(context.Background(), req, cursor, notify, 0); got != gapWaitRetry {
+			t.Fatalf("outcome = %v, want retry", got)
+		}
+		if elapsed := time.Since(start); elapsed >= unflushedGapRetryInterval {
+			t.Fatalf("took %v, want well under the %v retry interval", elapsed, unflushedGapRetryInterval)
+		}
+	})
 }
