@@ -19,6 +19,7 @@ func TestResolveDiskGapResume(t *testing.T) {
 	cases := []struct {
 		name            string
 		currentTsNs     int64
+		currentOffset   int64 // zero value is an inclusive (sentinel) cursor
 		earliestMemTsNs int64
 		wantAdvance     bool
 		wantAdvanceToNs int64 // only checked when wantAdvance
@@ -77,11 +78,29 @@ func TestResolveDiskGapResume(t *testing.T) {
 			earliestMemTsNs: time.Time{}.UnixNano(),
 			wantAdvance:     false,
 		},
+		{
+			// The resume target collapses onto the cursor. An inclusive cursor
+			// still advances, because the exclusive resume drops its own
+			// timestamp; parking here is what stranded the subscriber.
+			name:            "adjacent inclusive cursor advances to an exclusive one",
+			currentTsNs:     ago(5*time.Minute) - 1,
+			earliestMemTsNs: ago(5 * time.Minute),
+			wantAdvance:     true,
+			wantAdvanceToNs: ago(5*time.Minute) - 1,
+		},
+		{
+			// Already exclusive at that timestamp: re-arming it is not progress.
+			name:            "adjacent exclusive cursor must NOT skip",
+			currentTsNs:     ago(5*time.Minute) - 1,
+			currentOffset:   gapResumeOffset,
+			earliestMemTsNs: ago(5 * time.Minute),
+			wantAdvance:     false,
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gotTo, gotAdvance := resolveDiskGapResume(tc.currentTsNs, tc.earliestMemTsNs, now, horizon)
+			gotTo, gotAdvance := resolveDiskGapResume(tc.currentTsNs, tc.currentOffset, tc.earliestMemTsNs, now, horizon)
 			if gotAdvance != tc.wantAdvance {
 				t.Fatalf("advance = %v, want %v (current=%v earliest=%v)",
 					gotAdvance, tc.wantAdvance, time.Unix(0, tc.currentTsNs), time.Unix(0, tc.earliestMemTsNs))
@@ -90,8 +109,9 @@ func TestResolveDiskGapResume(t *testing.T) {
 				if gotTo != tc.wantAdvanceToNs {
 					t.Fatalf("advanceTo = %v, want %v", time.Unix(0, gotTo), time.Unix(0, tc.wantAdvanceToNs))
 				}
-				if gotTo <= tc.currentTsNs {
-					t.Fatalf("advanceTo %v must be strictly after current %v", time.Unix(0, gotTo), time.Unix(0, tc.currentTsNs))
+				if !gapResumeAdvances(gotTo, tc.currentTsNs, tc.currentOffset) {
+					t.Fatalf("advanceTo %v (exclusive) must be ahead of current %v offset %d",
+						time.Unix(0, gotTo), time.Unix(0, tc.currentTsNs), tc.currentOffset)
 				}
 				// Never advance to or past the unsettled boundary (persisted
 				// reads exclude ts <= cursor).
@@ -113,6 +133,7 @@ func TestResolveLocalGapResume(t *testing.T) {
 	cases := []struct {
 		name            string
 		currentTsNs     int64
+		currentOffset   int64 // zero value is an inclusive (sentinel) cursor
 		earliestMemTsNs int64
 		flushedTsNs     int64
 		wantAdvance     bool
@@ -161,11 +182,31 @@ func TestResolveLocalGapResume(t *testing.T) {
 			flushedTsNs:     ago(10 * time.Second),
 			wantAdvance:     false,
 		},
+		{
+			// The cursor already sits just below earliest. Advancing it to an
+			// exclusive cursor at the same timestamp is the only way out: an
+			// inclusive one keeps asking for a timestamp the eviction gate
+			// answers from disk, and the disk has nothing.
+			name:            "adjacent inclusive cursor advances to an exclusive one",
+			currentTsNs:     ago(30*time.Second) - 1,
+			earliestMemTsNs: ago(30 * time.Second),
+			flushedTsNs:     ago(10 * time.Second),
+			wantAdvance:     true,
+		},
+		{
+			// Already exclusive at that timestamp: re-arming it is not progress.
+			name:            "adjacent exclusive cursor must NOT skip",
+			currentTsNs:     ago(30*time.Second) - 1,
+			currentOffset:   gapResumeOffset,
+			earliestMemTsNs: ago(30 * time.Second),
+			flushedTsNs:     ago(10 * time.Second),
+			wantAdvance:     false,
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gotTo, gotAdvance := resolveLocalGapResume(tc.currentTsNs, tc.earliestMemTsNs, tc.flushedTsNs)
+			gotTo, gotAdvance := resolveLocalGapResume(tc.currentTsNs, tc.currentOffset, tc.earliestMemTsNs, tc.flushedTsNs)
 			if gotAdvance != tc.wantAdvance {
 				t.Fatalf("advance = %v, want %v", gotAdvance, tc.wantAdvance)
 			}
@@ -190,7 +231,7 @@ func oldGapSkipWouldSkipPast(currentTsNs, earliestMemTsNs, eventTsNs int64) bool
 
 // newGapSkipWouldSkipPast models the post-fix behaviour via resolveDiskGapResume.
 func newGapSkipWouldSkipPast(currentTsNs, earliestMemTsNs, eventTsNs, nowTsNs int64, horizon time.Duration) bool {
-	advanceTo, advance := resolveDiskGapResume(currentTsNs, earliestMemTsNs, nowTsNs, horizon)
+	advanceTo, advance := resolveDiskGapResume(currentTsNs, 0, earliestMemTsNs, nowTsNs, horizon)
 	if !advance {
 		return false // no skip → event preserved, re-read after flush
 	}

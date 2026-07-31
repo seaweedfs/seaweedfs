@@ -170,6 +170,23 @@ func (s *pipelinedSender) Close() error {
 	}
 }
 
+// gapResumeOffset marks a gap-resume cursor as exclusive. A skip is only taken
+// once the gap is proven empty, so nothing remains to deliver at the resume
+// timestamp itself. An inclusive (sentinel) cursor there would keep asking for
+// its own timestamp, and when that timestamp is also the eviction watermark the
+// read gate answers ResumeFromDiskError forever — the subscriber parks for good.
+const gapResumeOffset = 1
+
+// gapResumeAdvances reports whether an exclusive cursor at targetTsNs makes
+// progress past the current cursor. Equal timestamps still advance an inclusive
+// cursor, which delivers its own timestamp where an exclusive one does not.
+func gapResumeAdvances(targetTsNs, currentTsNs, currentOffset int64) bool {
+	if targetTsNs > currentTsNs {
+		return true
+	}
+	return targetTsNs == currentTsNs && currentOffset <= 0
+}
+
 // resolveDiskGapResume decides whether an aggregated-stream subscriber whose
 // in-memory read returned ResumeFromDiskError and whose disk read found nothing
 // may skip forward. The target is the earliest in-memory timestamp, capped
@@ -178,16 +195,15 @@ func (s *pipelinedSender) Close() error {
 // at/before the current position and it returns false — the caller must wait
 // for the flush and re-read disk. Callers should pace capped advances: the
 // horizon slides with the wall clock, so immediate re-probing would spin.
-func resolveDiskGapResume(currentTsNs, earliestMemTsNs, nowTsNs int64, settledHorizon time.Duration) (advanceToTsNs int64, advance bool) {
+func resolveDiskGapResume(currentTsNs, currentOffset, earliestMemTsNs, nowTsNs int64, settledHorizon time.Duration) (advanceToTsNs int64, advance bool) {
 	// No in-memory data (zero time → negative UnixNano), or memory not ahead of us.
 	if earliestMemTsNs <= 0 || earliestMemTsNs <= currentTsNs {
 		return 0, false
 	}
-	// Positions are exclusive (readers deliver ts > position): resume just below
-	// earliest so the earliest in-memory entry itself is still delivered.
+	// Resume just below earliest so the earliest in-memory entry is still
+	// delivered by the exclusive cursor.
 	target := min(earliestMemTsNs-1, nowTsNs-int64(settledHorizon)-1)
-	// A recent gap collapses to target <= currentTsNs → do not advance.
-	if target <= currentTsNs {
+	if !gapResumeAdvances(target, currentTsNs, currentOffset) {
 		return 0, false
 	}
 	return target, true
@@ -198,7 +214,7 @@ func resolveDiskGapResume(currentTsNs, earliestMemTsNs, nowTsNs int64, settledHo
 // before that read: once it has passed the earliest in-memory timestamp, every
 // event in the gap would have been on disk when the read ran, so the miss
 // proves the gap empty — no wall-clock assumptions needed.
-func resolveLocalGapResume(currentTsNs, earliestMemTsNs, flushedTsNs int64) (advanceToTsNs int64, advance bool) {
+func resolveLocalGapResume(currentTsNs, currentOffset, earliestMemTsNs, flushedTsNs int64) (advanceToTsNs int64, advance bool) {
 	// No in-memory data (zero time → negative UnixNano), or memory not ahead of us.
 	if earliestMemTsNs <= 0 || earliestMemTsNs <= currentTsNs {
 		return 0, false
@@ -207,10 +223,10 @@ func resolveLocalGapResume(currentTsNs, earliestMemTsNs, flushedTsNs int64) (adv
 	if flushedTsNs < earliestMemTsNs {
 		return 0, false
 	}
-	// Positions are exclusive (readers deliver ts > position): resume just below
-	// earliest so the earliest in-memory entry itself is still delivered.
+	// Resume just below earliest so the earliest in-memory entry is still
+	// delivered by the exclusive cursor.
 	target := earliestMemTsNs - 1
-	if target <= currentTsNs {
+	if !gapResumeAdvances(target, currentTsNs, currentOffset) {
 		return 0, false
 	}
 	return target, true
@@ -297,7 +313,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 				// Disk found nothing for the gap. Only skip past a window proven
 				// settled; a recent gap may hold unflushed events. See resolveDiskGapResume.
 				earliestTime := fs.filer.MetaAggregator.MetaLogBuffer.GetEarliestTime()
-				if advanceToTsNs, advance := resolveDiskGapResume(lastReadTime.Time.UnixNano(), earliestTime.UnixNano(), time.Now().UnixNano(), metadataGapSettledHorizon); advance {
+				if advanceToTsNs, advance := resolveDiskGapResume(lastReadTime.Time.UnixNano(), lastReadTime.Offset, earliestTime.UnixNano(), time.Now().UnixNano(), metadataGapSettledHorizon); advance {
 					if advanceToTsNs < earliestTime.UnixNano()-1 {
 						// Loud on purpose: the aggregated path has no flush
 						// watermark, so a skip capped by the wall-clock horizon
@@ -309,7 +325,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 						glog.V(3).Infof("gap detected: skipping from %v to settled position %v (earliest memory %v) for %v",
 							lastReadTime.Time, time.Unix(0, advanceToTsNs), earliestTime, clientName)
 					}
-					lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, -2)
+					lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, gapResumeOffset)
 					if advanceToTsNs < earliestTime.UnixNano()-1 {
 						// Capped mid-gap: stay on the disk-probe path (the rest of
 						// the window may still be unflushed) and pace the next
@@ -500,23 +516,11 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 					// watermark and found nothing: once that watermark has passed
 					// the earliest in-memory time, the gap is provably empty.
 					earliestTime := fs.filer.LocalMetaLogBuffer.GetEarliestTime()
-					if advanceToTsNs, advance := resolveLocalGapResume(lastReadTime.Time.UnixNano(), earliestTime.UnixNano(), currentFlushTsNs); advance {
+					if advanceToTsNs, advance := resolveLocalGapResume(lastReadTime.Time.UnixNano(), lastReadTime.Offset, earliestTime.UnixNano(), currentFlushTsNs); advance {
 						glog.V(3).Infof("gap detected: skipping from %v to flushed earliest memory time %v for %v",
 							lastReadTime.Time, earliestTime, clientName)
-						lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, -2)
+						lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, gapResumeOffset)
 						readInMemoryLogErr = nil // Clear the error since we're skipping forward
-					} else if currentFlushTsNs >= earliestTime.UnixNano() && earliestTime.UnixNano()-1 == lastReadTime.Time.UnixNano() {
-						// Exact-boundary corner: the gap is provably empty (the
-						// flush watermark has passed the earliest in-memory
-						// entry) but the exclusive resume target collapses onto
-						// the current cursor, so resolveLocalGapResume cannot
-						// advance. Re-arm the cursor with a positive (exclusive)
-						// offset instead: ReadFromBuffer explicitly allows it at
-						// the eviction watermark, so the earliest in-memory
-						// entry is served from memory without waiting another
-						// flush cycle.
-						lastReadTime = log_buffer.NewMessagePosition(lastReadTime.Time.UnixNano(), 1)
-						readInMemoryLogErr = nil
 					} else {
 						// The gap may hold unflushed events: wait (bounded) for
 						// flush/new data, then re-read disk.
@@ -577,10 +581,10 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 				// read already proved everything up to the lastCheckedFlushTsNs
 				// watermark, so skip only if it covers the earliest in-memory time.
 				earliestTime := fs.filer.LocalMetaLogBuffer.GetEarliestTime()
-				if advanceToTsNs, advance := resolveLocalGapResume(currentReadTsNs, earliestTime.UnixNano(), lastCheckedFlushTsNs); advance {
+				if advanceToTsNs, advance := resolveLocalGapResume(currentReadTsNs, lastReadTime.Offset, earliestTime.UnixNano(), lastCheckedFlushTsNs); advance {
 					glog.V(3).Infof("gap detected: skipping from %v to flushed earliest memory time %v for %v",
 						lastReadTime.Time, earliestTime, clientName)
-					lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, -2)
+					lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, gapResumeOffset)
 					// Clear the error so the next iteration re-reads disk.
 					readInMemoryLogErr = nil
 					continue
