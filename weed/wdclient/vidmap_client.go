@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 
 	"golang.org/x/sync/singleflight"
 
@@ -27,28 +26,23 @@ type VolumeLocationProvider interface {
 // vidMapClient provides volume location caching with pluggable lookup
 // It wraps the battle-tested vidMap with customizable volume lookup strategies
 type vidMapClient struct {
-	vidMap          *vidMap
-	vidMapLock      sync.RWMutex
-	vidMapCacheSize int
-	provider        VolumeLocationProvider
-	vidLookupGroup  singleflight.Group
+	vidMap         *vidMap
+	provider       VolumeLocationProvider
+	vidLookupGroup singleflight.Group
 }
 
 const (
-	// DefaultVidMapCacheSize is the default number of historical vidMap snapshots to keep
-	// This provides cache history when volumes move between servers
+	// DefaultVidMapCacheSize is the default number of resets a volume location
+	// survives without being relearned. This provides cache history when
+	// volumes move between servers.
 	DefaultVidMapCacheSize = 5
 )
 
 // newVidMapClient creates a new client with the given provider and data center
 func newVidMapClient(provider VolumeLocationProvider, dataCenter string, cacheSize int) *vidMapClient {
-	if cacheSize <= 0 {
-		cacheSize = DefaultVidMapCacheSize
-	}
 	return &vidMapClient{
-		vidMap:          newVidMap(dataCenter),
-		vidMapCacheSize: cacheSize,
-		provider:        provider,
+		vidMap:   newVidMap(dataCenter, cacheSize),
+		provider: provider,
 	}
 }
 
@@ -59,12 +53,9 @@ func (vc *vidMapClient) GetLookupFileIdFunction() LookupFileIdFunctionType {
 
 // LookupFileIdWithFallback looks up a file ID, checking cache first, then using provider
 func (vc *vidMapClient) LookupFileIdWithFallback(ctx context.Context, fileId string) (fullUrls []string, err error) {
-	// Try cache first - hold read lock during entire vidMap access to prevent swap during operation
-	vc.vidMapLock.RLock()
-	vm := vc.vidMap
-	dataCenter := vm.DataCenter
-	fullUrls, err = vm.LookupFileId(ctx, fileId)
-	vc.vidMapLock.RUnlock()
+	// Try cache first
+	dataCenter := vc.vidMap.DataCenter
+	fullUrls, err = vc.vidMap.LookupFileId(ctx, fileId)
 
 	// Cache hit - return immediately
 	if err == nil && len(fullUrls) > 0 {
@@ -146,9 +137,6 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 	// Check cache first and parse volume IDs once
 	vidStringToUint := make(map[string]uint32, len(volumeIds))
 
-	// Get stable pointer to vidMap with minimal lock hold time
-	vm := vc.getStableVidMap()
-
 	for _, vidString := range volumeIds {
 		vid, err := strconv.ParseUint(vidString, 10, 32)
 		if err != nil {
@@ -156,7 +144,7 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 		}
 		vidStringToUint[vidString] = uint32(vid)
 
-		locations, found := vm.GetLocations(uint32(vid))
+		locations, found := vc.vidMap.GetLocations(uint32(vid))
 		if found && len(locations) > 0 {
 			result[vidString] = locations
 		} else {
@@ -178,12 +166,9 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 		stillNeedLookup := make([]string, 0, len(needsLookup))
 		batchResult := make(map[string][]Location)
 
-		// Get stable pointer with minimal lock hold time
-		vm := vc.getStableVidMap()
-
 		for _, vidString := range needsLookup {
 			vid := vidStringToUint[vidString] // Use pre-parsed value
-			if locations, found := vm.GetLocations(vid); found && len(locations) > 0 {
+			if locations, found := vc.vidMap.GetLocations(vid); found && len(locations) > 0 {
 				batchResult[vidString] = locations
 			} else {
 				stillNeedLookup = append(stillNeedLookup, vidString)
@@ -244,117 +229,74 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 	return result, errors.Join(lookupErrors...)
 }
 
-// getStableVidMap gets a stable pointer to the vidMap, releasing the lock immediately.
-// WARNING: Use with caution. The returned vidMap pointer is stable (won't be garbage collected
-// due to cache chain), but the vidMapClient.vidMap field may be swapped by resetVidMap().
-// For operations that must use the current vidMap atomically, use withCurrentVidMap() instead.
-func (vc *vidMapClient) getStableVidMap() *vidMap {
-	vc.vidMapLock.RLock()
-	vm := vc.vidMap
-	vc.vidMapLock.RUnlock()
-	return vm
-}
-
-// withCurrentVidMap executes a function with the current vidMap under a read lock.
-// This guarantees the vidMap instance cannot be swapped during the function execution.
-// Use this when you need atomic access to the current vidMap for multiple operations.
-func (vc *vidMapClient) withCurrentVidMap(f func(vm *vidMap)) {
-	vc.vidMapLock.RLock()
-	defer vc.vidMapLock.RUnlock()
-	f(vc.vidMap)
-}
-
 // Public methods for external access
+//
+// The vidMap itself is never replaced, so these all read the one map under its
+// own lock. Resets bump its generation instead of swapping in a fresh instance.
 
 // GetLocations safely retrieves volume locations
 func (vc *vidMapClient) GetLocations(vid uint32) (locations []Location, found bool) {
-	return vc.getStableVidMap().GetLocations(vid)
+	return vc.vidMap.GetLocations(vid)
 }
 
 // GetLocationsClone safely retrieves a clone of volume locations
 func (vc *vidMapClient) GetLocationsClone(vid uint32) (locations []Location, found bool) {
-	return vc.getStableVidMap().GetLocationsClone(vid)
+	return vc.vidMap.GetLocationsClone(vid)
 }
 
 // GetVidLocations safely retrieves volume locations by string ID
 func (vc *vidMapClient) GetVidLocations(vid string) (locations []Location, err error) {
-	return vc.getStableVidMap().GetVidLocations(vid)
+	return vc.vidMap.GetVidLocations(vid)
 }
 
 // LookupFileId safely looks up URLs for a file ID
 func (vc *vidMapClient) LookupFileId(ctx context.Context, fileId string) (fullUrls []string, err error) {
-	return vc.getStableVidMap().LookupFileId(ctx, fileId)
+	return vc.vidMap.LookupFileId(ctx, fileId)
 }
 
 // LookupVolumeServerUrl safely looks up volume server URLs
 func (vc *vidMapClient) LookupVolumeServerUrl(vid string) (serverUrls []string, err error) {
-	return vc.getStableVidMap().LookupVolumeServerUrl(vid)
+	return vc.vidMap.LookupVolumeServerUrl(vid)
 }
 
 // HasVolumeServer reports whether addr is currently a known volume server
 // (hosts at least one volume or EC shard) in the cached vid map. Used by
 // admission paths that must only contact peers learned from the master.
 func (vc *vidMapClient) HasVolumeServer(addr pb.ServerAddress) bool {
-	return vc.getStableVidMap().hasVolumeServer(addr)
+	return vc.vidMap.hasVolumeServer(addr)
 }
 
 // GetDataCenter safely retrieves the data center
 func (vc *vidMapClient) GetDataCenter() string {
-	return vc.getStableVidMap().DataCenter
+	return vc.vidMap.DataCenter
 }
 
 // Thread-safe helpers for vidMap operations
 
 // addLocation adds a volume location
 func (vc *vidMapClient) addLocation(vid uint32, location Location) {
-	vc.withCurrentVidMap(func(vm *vidMap) {
-		vm.addLocation(vid, location)
-	})
+	vc.vidMap.addLocation(vid, location)
 }
 
 // deleteLocation removes a volume location
 func (vc *vidMapClient) deleteLocation(vid uint32, location Location) {
-	vc.withCurrentVidMap(func(vm *vidMap) {
-		vm.deleteLocation(vid, location)
-	})
+	vc.vidMap.deleteLocation(vid, location)
 }
 
 // addEcLocation adds an EC volume location
 func (vc *vidMapClient) addEcLocation(vid uint32, location Location) {
-	vc.withCurrentVidMap(func(vm *vidMap) {
-		vm.addEcLocation(vid, location)
-	})
+	vc.vidMap.addEcLocation(vid, location)
 }
 
 // deleteEcLocation removes an EC volume location
 func (vc *vidMapClient) deleteEcLocation(vid uint32, location Location) {
-	vc.withCurrentVidMap(func(vm *vidMap) {
-		vm.deleteEcLocation(vid, location)
-	})
+	vc.vidMap.deleteEcLocation(vid, location)
 }
 
-// resetVidMap resets the volume ID map
+// resetVidMap starts a new generation, as when the master changes: what the
+// previous one told us stays readable until it is relearned or expires.
 func (vc *vidMapClient) resetVidMap() {
-	vc.vidMapLock.Lock()
-	defer vc.vidMapLock.Unlock()
-
-	// Preserve the existing vidMap in the cache chain
-	tail := vc.vidMap
-
-	nvm := newVidMap(tail.DataCenter)
-	nvm.cache.Store(tail)
-	vc.vidMap = nvm
-
-	// Trim cache chain to vidMapCacheSize
-	node := tail
-	for i := 0; i < vc.vidMapCacheSize-1; i++ {
-		if node.cache.Load() == nil {
-			return
-		}
-		node = node.cache.Load()
-	}
-	// node is guaranteed to be non-nil after the loop
-	node.cache.Store(nil)
+	vc.vidMap.reset()
 }
 
 // InvalidateCache removes all cached locations for a volume ID
@@ -365,7 +307,5 @@ func (vc *vidMapClient) InvalidateCache(fileId string) {
 	if err != nil {
 		return
 	}
-	vc.withCurrentVidMap(func(vm *vidMap) {
-		vm.deleteVid(uint32(vid))
-	})
+	vc.vidMap.deleteVid(uint32(vid))
 }
