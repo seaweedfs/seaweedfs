@@ -616,9 +616,8 @@ func (logBuffer *LogBuffer) copyToFlushInternal(withCallback bool) *dataToFlush 
 		}
 		// CRITICAL: logBuffer.offset is the "next offset to assign", so last offset in buffer is offset-1
 		lastOffsetInBuffer := logBuffer.offset - 1
-		// The oldest sealed window falls out of the ring here: remember how far
-		// eviction has reached so readers can tell whether the retained
-		// in-memory history is complete for a given position.
+		// Slot 0 falls out of the ring in SealBuffer below, so record how far
+		// eviction has reached before it goes.
 		if evicted := logBuffer.prevBuffers.buffers[0]; evicted.size > 0 && !evicted.stopTime.IsZero() {
 			if ts := evicted.stopTime.UnixNano(); ts > logBuffer.lastEvictedTsNs.Load() {
 				logBuffer.lastEvictedTsNs.Store(ts)
@@ -848,23 +847,17 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 		// Special case: If requested time is zero (Unix epoch), treat as "start from beginning"
 		// This handles queries that want to read all data without knowing the exact start time
 		if (lastReadPosition.Time.IsZero() || lastReadPosition.Time.Unix() == 0) && logBuffer.lastEvictedTsNs.Load() == 0 {
-			// Start from the beginning of memory: nothing was ever evicted, so
-			// the retained buffers still hold the complete history.
+			// Nothing was ever evicted, so memory still holds the whole history.
 			// Fall through to case 2.1 to read from earliest buffer
 		} else if posTsNs, evictedTsNs := lastReadPosition.Time.UnixNano(), logBuffer.lastEvictedTsNs.Load(); posTsNs > evictedTsNs ||
 			(posTsNs == evictedTsNs && lastReadPosition.Offset > 0) {
-			// Position within the retained history: nothing after it was ever
-			// evicted from the ring, so memory is complete for this window and
-			// reading from the earliest in-memory entry skips nothing. Sentinel
-			// (Offset <= 0) cursors read inclusively of their own timestamp, so
-			// equality with the watermark is not safe for them — the evicted
-			// window may end exactly at that timestamp.
-			// Fall through to case 2.1.
+			// Nothing after this position was evicted, so reading from the
+			// earliest in-memory entry skips nothing. Sentinel (Offset <= 0)
+			// cursors also want the entry at their own timestamp, which the
+			// evicted window may end on, so equality only clears an exclusive one.
 		} else {
-			// Data not in memory buffers - read from disk. Silently starting at
-			// the earliest in-memory entry here could skip evicted-but-not-yet-
-			// flushed events; the caller's gap handling decides when skipping
-			// forward is provably safe.
+			// Starting at the earliest in-memory entry here would skip
+			// evicted-but-unflushed events; let the caller's gap handling decide.
 			return nil, -2, false, ResumeFromDiskError
 		}
 	}

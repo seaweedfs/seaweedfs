@@ -164,10 +164,9 @@ func (s *pipelinedSender) Close() error {
 }
 
 // gapResumeOffset marks a gap-resume cursor as exclusive. A skip is only taken
-// once the gap is proven empty, so nothing remains to deliver at the resume
-// timestamp itself. An inclusive (sentinel) cursor there would keep asking for
-// its own timestamp, and when that timestamp is also the eviction watermark the
-// read gate answers ResumeFromDiskError forever — the subscriber parks for good.
+// once the gap is proven empty, so nothing remains at the resume timestamp. An
+// inclusive cursor would keep asking for its own timestamp, and when that is
+// also the eviction watermark the read gate answers ResumeFromDiskError forever.
 const gapResumeOffset = 1
 
 // gapResumeAdvances reports whether an exclusive cursor at targetTsNs makes
@@ -194,15 +193,11 @@ func memoryHoldsGap(currentTsNs, currentOffset, lastEvictedTsNs int64) bool {
 	return currentTsNs == lastEvictedTsNs && currentOffset > 0
 }
 
-// resolveAggregatedGapResume decides whether an aggregated-stream subscriber
-// whose in-memory read returned ResumeFromDiskError, and whose disk read then
-// found nothing, may skip forward. The aggregated ring never flushes — peers
-// persist their own local logs — so it has no flush watermark to make that miss
-// authoritative, and wall-clock age proves nothing about persistence. What it
-// does have is the eviction watermark: if nothing at or after the cursor was
-// ever dropped from the ring, memory still holds every entry after the cursor
-// and the gap is provably empty. Below the watermark entries were dropped and
-// only a peer's flush can supply them, so the caller waits instead.
+// resolveAggregatedGapResume decides whether an aggregated-stream subscriber may
+// skip a gap its disk read found empty. The aggregated ring never flushes (peers
+// persist their own local logs), so that miss proves nothing and the eviction
+// watermark is the only emptiness proof: below it entries were dropped and only
+// a peer's flush can supply them.
 func resolveAggregatedGapResume(currentTsNs, currentOffset, earliestMemTsNs, lastEvictedTsNs int64) (advanceToTsNs int64, advance bool) {
 	// No in-memory data (zero time → negative UnixNano), or memory not ahead of us.
 	if earliestMemTsNs <= 0 || earliestMemTsNs <= currentTsNs {
@@ -220,12 +215,9 @@ func resolveAggregatedGapResume(currentTsNs, currentOffset, earliestMemTsNs, las
 	return target, true
 }
 
-// gapStallReporter makes a parked subscriber visible. Parking is the safe answer
-// to an unresolved gap — its events are gone from memory and not yet persisted,
-// so advancing would drop them — but a flush that never lands stalls the stream
-// for good, and a silent stall is as hard to diagnose as the silent loss it
-// replaced. Consumers such as filer.sync and mount followers simply stop
-// advancing, with no error on either side.
+// gapStallReporter makes a parked subscriber visible: a flush that never lands
+// stalls the stream for good, and filer.sync and mount followers just stop
+// advancing with no error on either side.
 type gapStallReporter struct {
 	scope      string
 	clientName string
@@ -258,12 +250,11 @@ func (r *gapStallReporter) clear() {
 	stats.FilerSubscribeGapStalledGauge.WithLabelValues(r.scope, r.clientName, r.pathPrefix).Set(0)
 }
 
-// waitForLocalFlush parks a local subscriber sitting on a possibly-unflushed
-// gap until the buffer flushes, the retry interval elapses, or the stream ends;
-// it reports false once the stream is gone. The notification channel also
+// waitForLocalFlush parks until the buffer flushes, the retry interval elapses,
+// or the stream ends; it reports false once the stream is gone. The channel also
 // carries an append per metadata write, and an append cannot settle the gap, so
-// stale tokens are drained first — otherwise a busy filer would spin this loop
-// at write rate. The retry interval covers the notification the drain discards.
+// a stale token is dropped first or a busy filer would spin this at write rate.
+// The retry interval covers the notification the drain discards.
 func waitForLocalFlush(ctx context.Context, notifyChan <-chan struct{}) bool {
 	select {
 	case <-notifyChan:
@@ -398,18 +389,16 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 					lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, gapResumeOffset)
 					readInMemoryLogErr = nil // Reached the in-memory window: resume from memory
 				} else {
-					// The ring dropped the gap before a peer persisted it — or
-					// the aggregated buffer has no readable entries at all: wait
-					// for the peer's flush to land on disk, then re-read. Falling
-					// through to the in-memory read here would return
-					// ResumeFromDiskError again immediately and spin.
+					// The ring dropped the gap before a peer persisted it, or the
+					// buffer has no readable entries at all. Falling through to
+					// the in-memory read would return ResumeFromDiskError again
+					// and spin.
 					//
-					// Deliberately not woken by aggNotifyChan: that fires on
-					// every append to the aggregated ring, and an append says
-					// nothing about a peer having persisted the gap. Waking on it
-					// would re-run a full ReadPersistedLogBuffer per cluster-wide
-					// metadata event, while the flush this waits on is signalled
-					// by nothing local. Only the timer can make progress here.
+					// Deliberately not woken by aggNotifyChan: it fires on every
+					// append to the aggregated ring, which says nothing about a
+					// peer having persisted the gap, and each wake would re-run a
+					// full ReadPersistedLogBuffer. Nothing local signals the flush
+					// this waits on, so only the timer can make progress.
 					gapStall.park(lastReadTime.Time, fmt.Sprintf("gap evicted through %v is not on a peer's disk yet (earliest memory %v)",
 						time.Unix(0, lastEvictedTsNs), earliestTime))
 					select {
