@@ -424,15 +424,18 @@ func (iter *LogFileQueueIterator) getNext(v *OrderedLogVisitor) (logEntry *filer
 		if iter.stopTsNs != 0 && t.TsNs > iter.stopTsNs {
 			return nil, io.EOF
 		}
-		next := iter.q.Peek()
-		if next == nil {
+		if iter.q.Peek() == nil {
 			if collectErr := v.logFileEntryCollector.collectMore(v); collectErr != nil && collectErr != io.EOF {
 				return nil, collectErr
 			}
-			next = iter.q.Peek() // Re-peek after collectMore
 		}
-		// skip the file if the next entry is before the startTsNs
-		if next != nil && next.TsNs <= iter.startTsNs {
+		// Skip the file only when it cannot hold anything past startTsNs. The
+		// following file's name is not the bound: a file is named for the start
+		// of the window it holds, minute-truncated, and the window runs up to a
+		// flush interval longer, so "12-30" can hold 12:31:20 while "12-31"
+		// exists alongside it. Comparing against the next name dropped exactly
+		// the spanning file a mid-window cursor needs.
+		if t.TsNs+int64(time.Minute)+int64(LogFlushInterval) <= iter.startTsNs {
 			continue
 		}
 		iter.currentFileIterator = newLogFileIterator(iter.masterClient, iter.cache, t.FileEntry, iter.startTsNs, iter.stopTsNs)
