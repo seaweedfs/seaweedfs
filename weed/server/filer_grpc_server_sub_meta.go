@@ -334,6 +334,9 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	// clientName (same gRPC conn), and sharing the channel would let the old
 	// stream's deferred unregister close it under the new stream.
 	aggNotifyName := fmt.Sprintf("aggSubscribe:%s:%d:%d", clientName, req.ClientId, req.ClientEpoch)
+	// Same key shape for the reader: LoopProcessLogData registers it as a
+	// subscriber internally, once per loop iteration.
+	aggReaderName := fmt.Sprintf("aggMeta:%s:%d:%d", clientName, req.ClientId, req.ClientEpoch)
 	aggNotifyChan := fs.filer.MetaAggregator.MetaLogBuffer.RegisterSubscriber(aggNotifyName)
 	defer fs.filer.MetaAggregator.MetaLogBuffer.UnregisterSubscriber(aggNotifyName)
 
@@ -432,9 +435,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 
 		glog.V(4).Infof("read in memory %v aggregated subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
-		// Reader name includes clientId/epoch for the same reason as aggNotifyName:
-		// LoopProcessLogData registers it as a subscriber key internally.
-		lastReadTime, isDone, readInMemoryLogErr = fs.filer.MetaAggregator.MetaLogBuffer.LoopProcessLogData(fmt.Sprintf("aggMeta:%s:%d:%d", clientName, req.ClientId, req.ClientEpoch), lastReadTime, req.UntilNs, func() bool {
+		lastReadTime, isDone, readInMemoryLogErr = fs.filer.MetaAggregator.MetaLogBuffer.LoopProcessLogData(aggReaderName, lastReadTime, req.UntilNs, func() bool {
 			select {
 			case <-ctx.Done():
 				return false
@@ -511,6 +512,9 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	// strand the subscriber (no lost-wakeup window). Key includes clientId/
 	// epoch so a replacement stream never shares (and loses) the channel.
 	localNotifyName := fmt.Sprintf("localGap:%s:%d:%d", clientName, req.ClientId, req.ClientEpoch)
+	// Same key shape for the reader: LoopProcessLogData registers it as a
+	// subscriber internally, once per loop iteration.
+	localReaderName := fmt.Sprintf("localMeta:%s:%d:%d", clientName, req.ClientId, req.ClientEpoch)
 	localNotifyChan := fs.filer.LocalMetaLogBuffer.RegisterSubscriber(localNotifyName)
 	defer fs.filer.LocalMetaLogBuffer.UnregisterSubscriber(localNotifyName)
 
@@ -612,9 +616,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 
 		glog.V(3).Infof("read in memory %v local subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
-		// Reader name includes clientId/epoch for the same reason as localNotifyName:
-		// LoopProcessLogData registers it as a subscriber key internally.
-		lastReadTime, isDone, readInMemoryLogErr = fs.filer.LocalMetaLogBuffer.LoopProcessLogData(fmt.Sprintf("localMeta:%s:%d:%d", clientName, req.ClientId, req.ClientEpoch), lastReadTime, req.UntilNs, func() bool {
+		lastReadTime, isDone, readInMemoryLogErr = fs.filer.LocalMetaLogBuffer.LoopProcessLogData(localReaderName, lastReadTime, req.UntilNs, func() bool {
 			select {
 			case <-ctx.Done():
 				return false
