@@ -30,7 +30,7 @@ const (
 
 	// maxGapStall bounds how long a subscriber waits for a gap to become
 	// readable before the stream is failed. Waiting is productive while the
-	// window holding the gap is still queued for flush, but a peer that never
+	// window that holds the gap is still queued for flush, but a peer that never
 	// comes back - or a peer whose filer store this filer cannot read at all -
 	// makes it permanent, and a subscriber that silently stops delivering is as
 	// bad as one that silently skips. Fail loudly instead and let the client
@@ -318,11 +318,11 @@ const (
 // waitOnGap parks a subscriber that cannot read past a gap. notifyChan may be
 // nil, which parks on the retry timer alone - the right choice when no local
 // signal corresponds to the event being waited for. The park is where a stalled
-// subscriber spends all its time and it never re-enters the read loop, so every
-// exit that loop relies on has to be checked here too.
+// subscriber spends all its time, so every exit the main loop relies on has to
+// be checked here too: the loop below it is never reached while parked.
 func (fs *FilerServer) waitOnGap(ctx context.Context, req *filer_pb.SubscribeMetadataRequest, cursorTsNs int64, notifyChan <-chan struct{}, stalledFor time.Duration) gapWaitOutcome {
 	// A bounded subscription whose window is already behind the gap is finished:
-	// LoopProcessLogData, the only place UntilNs ends a stream, is unreachable
+	// LoopProcessLogData, the only place UntilNs ends a stream, is not reachable
 	// from here.
 	if req.UntilNs != 0 && cursorTsNs > req.UntilNs {
 		return gapWaitDone
@@ -459,54 +459,57 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		if processedTsNs != 0 {
 			gapStall.resumed()
 			lastReadTime = log_buffer.NewMessagePosition(processedTsNs, -2)
-		} else {
-			// No data found on disk
-			// Check if we previously got ResumeFromDiskError from memory, meaning we're in a gap
-			if errors.Is(readInMemoryLogErr, log_buffer.ResumeFromDiskError) {
-				// Disk found nothing for the gap. Skip only what the ring proves
-				// empty; anything it dropped may still be unflushed on a peer.
-				// See resolveAggregatedGapResume.
-				earliestTime := fs.filer.MetaAggregator.MetaLogBuffer.GetEarliestTime()
-				lastEvictedTsNs := fs.filer.MetaAggregator.MetaLogBuffer.GetLastEvictedTsNs()
-				if advanceToTsNs, advance := resolveAggregatedGapResume(lastReadTime.Time.UnixNano(), lastReadTime.Offset, earliestTime.UnixNano(), lastEvictedTsNs); advance {
-					gapStall.resumed()
-					glog.V(3).Infof("gap detected: skipping from %v to earliest memory time %v for %v",
-						lastReadTime.Time, earliestTime, clientName)
-					lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, gapResumeOffset)
-					readInMemoryLogErr = nil // Reached the in-memory window: resume from memory
-				} else {
-					// The ring dropped the gap before a peer persisted it, or the
-					// buffer has no readable entries at all. Falling through to
-					// the in-memory read would return ResumeFromDiskError again
-					// and spin.
-					//
-					// Deliberately not woken by aggNotifyChan: it fires on every
-					// append to the aggregated ring, which says nothing about a
-					// peer having persisted the gap, and each wake would re-run a
-					// full ReadPersistedLogBuffer. Nothing local signals the flush
-					// this waits on, so only the timer can make progress.
-					reason := fmt.Sprintf("gap evicted through %v is not on a peer's disk yet (earliest memory %v)",
-						time.Unix(0, lastEvictedTsNs), earliestTime)
-					gapStall.park(lastReadTime.Time, reason)
-					switch fs.waitOnGap(ctx, req, lastReadTime.Time.UnixNano(), nil, gapStall.stalledFor()) {
-					case gapWaitDone:
-						return nil
-					case gapWaitStalled:
-						return gapStall.stalledErr(lastReadTime.Time, reason)
-					}
-					continue
-				}
+		} else if !errors.Is(readInMemoryLogErr, log_buffer.ResumeFromDiskError) {
+			// First pass or no ResumeFromDiskError yet - check the next day for logs
+			nextDayTs := util.GetNextDayTsNano(lastReadTime.Time.UnixNano())
+			position := log_buffer.NewMessagePosition(nextDayTs, -2)
+			found, err := fs.filer.HasPersistedLogFiles(position)
+			if err != nil {
+				return fmt.Errorf("checking persisted log files: %w", err)
+			}
+			if found {
+				lastReadTime = position
+			}
+		}
+
+		// The ring drops sealed windows this buffer never persists (peers write
+		// their own logs), so reading memory at a cursor the ring has already
+		// passed would jump silently over whatever it dropped. Resolve that here
+		// rather than inside ReadFromBuffer, which is shared with the message
+		// queue and has no gap handling of its own. Skip only what the eviction
+		// watermark proves empty; otherwise wait for a peer's flush to put the
+		// window on disk.
+		earliestTime := fs.filer.MetaAggregator.MetaLogBuffer.GetEarliestTime()
+		lastEvictedTsNs := fs.filer.MetaAggregator.MetaLogBuffer.GetLastEvictedTsNs()
+		memoryIncomplete := !memoryHoldsGap(lastReadTime.Time.UnixNano(), lastEvictedTsNs)
+		diskExhausted := processedTsNs == 0 && errors.Is(readInMemoryLogErr, log_buffer.ResumeFromDiskError)
+		if memoryIncomplete || diskExhausted {
+			if advanceToTsNs, advance := resolveAggregatedGapResume(lastReadTime.Time.UnixNano(), lastReadTime.Offset, earliestTime.UnixNano(), lastEvictedTsNs); advance {
+				gapStall.resumed()
+				glog.V(3).Infof("gap detected: skipping from %v to earliest memory time %v for %v",
+					lastReadTime.Time, earliestTime, clientName)
+				lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, gapResumeOffset)
+				readInMemoryLogErr = nil // Reached the in-memory window: resume from memory
 			} else {
-				// First pass or no ResumeFromDiskError yet - check the next day for logs
-				nextDayTs := util.GetNextDayTsNano(lastReadTime.Time.UnixNano())
-				position := log_buffer.NewMessagePosition(nextDayTs, -2)
-				found, err := fs.filer.HasPersistedLogFiles(position)
-				if err != nil {
-					return fmt.Errorf("checking persisted log files: %w", err)
+				// An append tells a subscriber waiting on a peer's flush nothing,
+				// and each wake re-runs a full ReadPersistedLogBuffer, so that
+				// wait is paced by the timer alone. An empty ring is the one case
+				// where new data is exactly the signal, so it keeps the channel.
+				var notifyChan <-chan struct{}
+				reason := fmt.Sprintf("gap evicted through %v is not on a peer's disk yet (earliest memory %v)",
+					time.Unix(0, lastEvictedTsNs), earliestTime)
+				if !memoryIncomplete {
+					notifyChan = aggNotifyChan
+					reason = "aggregated buffer has no readable entries yet"
 				}
-				if found {
-					lastReadTime = position
+				gapStall.park(lastReadTime.Time, reason)
+				switch fs.waitOnGap(ctx, req, lastReadTime.Time.UnixNano(), notifyChan, gapStall.stalledFor()) {
+				case gapWaitDone:
+					return nil
+				case gapWaitStalled:
+					return gapStall.stalledErr(lastReadTime.Time, reason)
 				}
+				continue
 			}
 		}
 
@@ -693,6 +696,32 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 						lastReadTime = position
 					}
 				}
+			}
+		}
+
+		// Same reason as the aggregated path: a cursor the ring has already
+		// passed cannot be served from memory without skipping what it dropped,
+		// and ReadFromBuffer is shared with the message queue and has no gap
+		// handling of its own. The disk read above may also have left the cursor
+		// short of the watermark, so this is checked every pass, not only when
+		// the disk came up empty.
+		if lastEvictedTsNs := fs.filer.LocalMetaLogBuffer.GetLastEvictedTsNs(); !memoryHoldsGap(lastReadTime.Time.UnixNano(), lastEvictedTsNs) {
+			earliestTime := fs.filer.LocalMetaLogBuffer.GetEarliestTime()
+			if advanceToTsNs, advance := resolveLocalGapResume(lastReadTime.Time.UnixNano(), lastReadTime.Offset, earliestTime.UnixNano(), lastCheckedFlushTsNs, lastEvictedTsNs); advance {
+				gapStall.resumed()
+				lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, gapResumeOffset)
+				readInMemoryLogErr = nil
+			} else {
+				reason := fmt.Sprintf("gap evicted through %v is not flushed yet (earliest memory %v, flushed through %v)",
+					time.Unix(0, lastEvictedTsNs), earliestTime, time.Unix(0, lastCheckedFlushTsNs))
+				gapStall.park(lastReadTime.Time, reason)
+				switch fs.waitOnGap(ctx, req, lastReadTime.Time.UnixNano(), localFlushChan, gapStall.stalledFor()) {
+				case gapWaitDone:
+					return nil
+				case gapWaitStalled:
+					return gapStall.stalledErr(lastReadTime.Time, reason)
+				}
+				continue
 			}
 		}
 

@@ -891,18 +891,13 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 
 		// Special case: If requested time is zero (Unix epoch), treat as "start from beginning"
 		// This handles queries that want to read all data without knowing the exact start time
-		if (lastReadPosition.Time.IsZero() || lastReadPosition.Time.Unix() == 0) && logBuffer.lastEvictedTsNs.Load() == 0 {
-			// Nothing was ever evicted, so memory still holds the whole history.
+		if lastReadPosition.Time.IsZero() || lastReadPosition.Time.Unix() == 0 {
+			// Start from the beginning of memory
 			// Fall through to case 2.1 to read from earliest buffer
-		} else if posTsNs, evictedTsNs := lastReadPosition.Time.UnixNano(), logBuffer.lastEvictedTsNs.Load(); posTsNs > evictedTsNs ||
-			(posTsNs == evictedTsNs && lastReadPosition.Offset > 0) {
-			// Nothing after this position was evicted, so reading from the
-			// earliest in-memory entry skips nothing. Sentinel (Offset <= 0)
-			// cursors also want the entry at their own timestamp, which the
-			// evicted window may end on, so equality only clears an exclusive one.
+		} else if lastReadPosition.Offset <= 0 && lastReadPosition.Time.Before(tsMemory) {
+			// Treat first read with sentinel/zero offset as inclusive of earliest in-memory data
 		} else {
-			// Starting at the earliest in-memory entry here would skip
-			// evicted-but-unflushed events; let the caller's gap handling decide.
+			// Data not in memory buffers - read from disk
 			return nil, -2, false, ResumeFromDiskError
 		}
 	}
