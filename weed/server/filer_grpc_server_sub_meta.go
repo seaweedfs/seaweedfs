@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 
 	"google.golang.org/protobuf/proto"
@@ -222,19 +224,36 @@ func resolveAggregatedGapResume(currentTsNs, currentOffset, earliestMemTsNs, las
 // gapStallReporter makes a parked subscriber visible: a flush that never lands
 // stalls the stream for good, and filer.sync and mount followers just stop
 // advancing with no error on either side.
+//
+// clientName carries the client's ephemeral source port, so it is used for logs
+// only; the gauge is keyed on the stable client-supplied name and its series is
+// deleted on teardown, or every reconnect would leave one behind forever.
 type gapStallReporter struct {
 	scope      string
 	clientName string
+	label      string
 	pathPrefix string
 	since      time.Time
 	lastWarnAt time.Time
+}
+
+func (r *gapStallReporter) gauge() prometheus.Gauge {
+	return stats.FilerSubscribeGapStalledGauge.WithLabelValues(r.scope, r.label, r.pathPrefix)
+}
+
+// stalledFor reports how long this subscriber has been parked, zero if it is not.
+func (r *gapStallReporter) stalledFor() time.Duration {
+	if r.since.IsZero() {
+		return 0
+	}
+	return time.Since(r.since)
 }
 
 func (r *gapStallReporter) park(cursor time.Time, detail string) {
 	now := time.Now()
 	if r.since.IsZero() {
 		r.since = now
-		stats.FilerSubscribeGapStalledGauge.WithLabelValues(r.scope, r.clientName, r.pathPrefix).Set(1)
+		r.gauge().Set(1)
 	}
 	if !r.lastWarnAt.IsZero() && now.Sub(r.lastWarnAt) < gapStallWarnInterval {
 		return
@@ -244,14 +263,30 @@ func (r *gapStallReporter) park(cursor time.Time, detail string) {
 		now.Sub(r.since).Truncate(time.Second), cursor, detail)
 }
 
-func (r *gapStallReporter) clear() {
+// resumed marks the gap cleared. A park short enough that park() never warned
+// about it does not need announcing either: during a write burst a subscriber
+// parks and resumes every couple of seconds, and one warning per cycle would
+// bury the real errors the paced park warning exists to surface.
+func (r *gapStallReporter) resumed() {
 	if r.since.IsZero() {
 		return
 	}
-	glog.Warningf("%s subscriber %s %s resumed after %v parked", r.scope, r.clientName, r.pathPrefix,
-		time.Since(r.since).Truncate(time.Second))
+	if !r.lastWarnAt.IsZero() {
+		glog.Warningf("%s subscriber %s %s resumed after %v parked", r.scope, r.clientName, r.pathPrefix,
+			time.Since(r.since).Truncate(time.Second))
+	}
 	r.since, r.lastWarnAt = time.Time{}, time.Time{}
-	stats.FilerSubscribeGapStalledGauge.WithLabelValues(r.scope, r.clientName, r.pathPrefix).Set(0)
+	r.gauge().Set(0)
+}
+
+// close releases the gauge series. Unlike resumed() it does not claim recovery:
+// a subscriber that disconnects while parked never resumed.
+func (r *gapStallReporter) close() {
+	if !r.since.IsZero() {
+		glog.Warningf("%s subscriber %s %s disconnected after %v parked, still behind", r.scope, r.clientName,
+			r.pathPrefix, r.stalledFor().Truncate(time.Second))
+	}
+	stats.FilerSubscribeGapStalledGauge.DeleteLabelValues(r.scope, r.label, r.pathPrefix)
 }
 
 // waitForLocalFlush parks until the buffer's flush watermark moves past
@@ -342,8 +377,8 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	aggNotifyChan := fs.filer.MetaAggregator.MetaLogBuffer.RegisterSubscriber(aggNotifyName)
 	defer fs.filer.MetaAggregator.MetaLogBuffer.UnregisterSubscriber(aggNotifyName)
 
-	gapStall := &gapStallReporter{scope: "aggregated", clientName: clientName, pathPrefix: req.PathPrefix}
-	defer gapStall.clear()
+	gapStall := &gapStallReporter{scope: "aggregated", clientName: clientName, label: req.ClientName, pathPrefix: req.PathPrefix}
+	defer gapStall.close()
 
 	var unsyncedEvents int64
 	eachEventNotificationFn := fs.eachEventNotificationFn(req, sender, clientName, &unsyncedEvents)
@@ -382,7 +417,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 
 		glog.V(4).Infof("processed to %v: %v", clientName, processedTsNs)
 		if processedTsNs != 0 {
-			gapStall.clear()
+			gapStall.resumed()
 			lastReadTime = log_buffer.NewMessagePosition(processedTsNs, -2)
 		} else {
 			// No data found on disk
@@ -394,7 +429,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 				earliestTime := fs.filer.MetaAggregator.MetaLogBuffer.GetEarliestTime()
 				lastEvictedTsNs := fs.filer.MetaAggregator.MetaLogBuffer.GetLastEvictedTsNs()
 				if advanceToTsNs, advance := resolveAggregatedGapResume(lastReadTime.Time.UnixNano(), lastReadTime.Offset, earliestTime.UnixNano(), lastEvictedTsNs); advance {
-					gapStall.clear()
+					gapStall.resumed()
 					glog.V(3).Infof("gap detected: skipping from %v to earliest memory time %v for %v",
 						lastReadTime.Time, earliestTime, clientName)
 					lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, gapResumeOffset)
@@ -518,8 +553,8 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	localFlushChan := fs.filer.LocalMetaLogBuffer.RegisterFlushSubscriber(localNotifyName)
 	defer fs.filer.LocalMetaLogBuffer.UnregisterFlushSubscriber(localNotifyName)
 
-	gapStall := &gapStallReporter{scope: "local", clientName: clientName, pathPrefix: req.PathPrefix}
-	defer gapStall.clear()
+	gapStall := &gapStallReporter{scope: "local", clientName: clientName, label: req.ClientName, pathPrefix: req.PathPrefix}
+	defer gapStall.close()
 
 	var unsyncedEvents int64
 	eachEventNotificationFn := fs.eachEventNotificationFn(req, sender, clientName, &unsyncedEvents)
@@ -572,7 +607,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 			lastCheckedFlushTsNs = currentFlushTsNs
 
 			if processedTsNs != 0 {
-				gapStall.clear()
+				gapStall.resumed()
 				lastReadTime = log_buffer.NewMessagePosition(processedTsNs, -2)
 			} else {
 				// No data found on disk
@@ -584,7 +619,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 					earliestTime := fs.filer.LocalMetaLogBuffer.GetEarliestTime()
 					lastEvictedTsNs := fs.filer.LocalMetaLogBuffer.GetLastEvictedTsNs()
 					if advanceToTsNs, advance := resolveLocalGapResume(lastReadTime.Time.UnixNano(), lastReadTime.Offset, earliestTime.UnixNano(), currentFlushTsNs, lastEvictedTsNs); advance {
-						gapStall.clear()
+						gapStall.resumed()
 						glog.V(3).Infof("gap detected: skipping from %v to flushed earliest memory time %v for %v",
 							lastReadTime.Time, earliestTime, clientName)
 						lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, gapResumeOffset)
@@ -648,7 +683,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 				earliestTime := fs.filer.LocalMetaLogBuffer.GetEarliestTime()
 				lastEvictedTsNs := fs.filer.LocalMetaLogBuffer.GetLastEvictedTsNs()
 				if advanceToTsNs, advance := resolveLocalGapResume(currentReadTsNs, lastReadTime.Offset, earliestTime.UnixNano(), lastCheckedFlushTsNs, lastEvictedTsNs); advance {
-					gapStall.clear()
+					gapStall.resumed()
 					glog.V(3).Infof("gap detected: skipping from %v to flushed earliest memory time %v for %v",
 						lastReadTime.Time, earliestTime, clientName)
 					lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, gapResumeOffset)
