@@ -298,8 +298,17 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 				// settled; a recent gap may hold unflushed events. See resolveDiskGapResume.
 				earliestTime := fs.filer.MetaAggregator.MetaLogBuffer.GetEarliestTime()
 				if advanceToTsNs, advance := resolveDiskGapResume(lastReadTime.Time.UnixNano(), earliestTime.UnixNano(), time.Now().UnixNano(), metadataGapSettledHorizon); advance {
-					glog.V(3).Infof("gap detected: skipping from %v to settled position %v (earliest memory %v) for %v",
-						lastReadTime.Time, time.Unix(0, advanceToTsNs), earliestTime, clientName)
+					if advanceToTsNs < earliestTime.UnixNano()-1 {
+						// Loud on purpose: the aggregated path has no flush
+						// watermark, so a skip capped by the wall-clock horizon
+						// may pass events a stalled flush lands later. Operators
+						// should see a flush stall outlasting the horizon.
+						glog.Warningf("metadata gap: flush older than %v stalled? skipping from %v toward %v (earliest memory %v) for %v",
+							metadataGapSettledHorizon, lastReadTime.Time, time.Unix(0, advanceToTsNs), earliestTime, clientName)
+					} else {
+						glog.V(3).Infof("gap detected: skipping from %v to settled position %v (earliest memory %v) for %v",
+							lastReadTime.Time, time.Unix(0, advanceToTsNs), earliestTime, clientName)
+					}
 					lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, -2)
 					if advanceToTsNs < earliestTime.UnixNano()-1 {
 						// Capped mid-gap: stay on the disk-probe path (the rest of
@@ -496,6 +505,18 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 							lastReadTime.Time, earliestTime, clientName)
 						lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, -2)
 						readInMemoryLogErr = nil // Clear the error since we're skipping forward
+					} else if currentFlushTsNs >= earliestTime.UnixNano() && earliestTime.UnixNano()-1 == lastReadTime.Time.UnixNano() {
+						// Exact-boundary corner: the gap is provably empty (the
+						// flush watermark has passed the earliest in-memory
+						// entry) but the exclusive resume target collapses onto
+						// the current cursor, so resolveLocalGapResume cannot
+						// advance. Re-arm the cursor with a positive (exclusive)
+						// offset instead: ReadFromBuffer explicitly allows it at
+						// the eviction watermark, so the earliest in-memory
+						// entry is served from memory without waiting another
+						// flush cycle.
+						lastReadTime = log_buffer.NewMessagePosition(lastReadTime.Time.UnixNano(), 1)
+						readInMemoryLogErr = nil
 					} else {
 						// The gap may hold unflushed events: wait (bounded) for
 						// flush/new data, then re-read disk.
