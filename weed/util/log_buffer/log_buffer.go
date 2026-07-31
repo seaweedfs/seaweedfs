@@ -672,8 +672,7 @@ func (logBuffer *LogBuffer) invalidateAllDiskCacheChunks() {
 // because ReadFromBuffer's tsMemory (and therefore ResumeFromDiskError) is
 // computed from the min across both.  Returning only the active startTime
 // would cause gap-detection callers to skip past data still living in prev
-// buffers, and can also silently equal the consumer's lastReadTime and
-// stall on listenersCond.Wait().
+// buffers, and can also silently equal the consumer's lastReadTime.
 func (logBuffer *LogBuffer) GetEarliestTime() time.Time {
 	logBuffer.RLock()
 	defer logBuffer.RUnlock()
