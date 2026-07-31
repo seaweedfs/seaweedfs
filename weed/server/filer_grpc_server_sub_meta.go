@@ -315,9 +315,12 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 						continue
 					}
 					readInMemoryLogErr = nil // Reached the in-memory window: resume from memory
-				} else if !earliestTime.IsZero() {
-					// Recent (possibly-unflushed) gap: wait for flush/new data,
-					// then re-read disk.
+				} else {
+					// Recent (possibly-unflushed) gap — or an aggregated buffer
+					// with no readable entries (zero earliestTime): wait for
+					// flush/new data, then re-read disk. Falling through to the
+					// in-memory read here would return ResumeFromDiskError
+					// again immediately and spin without waiting.
 					glog.V(3).Infof("unflushed gap at %v (earliest memory %v) for %v: waiting for flush before advancing",
 						lastReadTime.Time, earliestTime, clientName)
 					select {
