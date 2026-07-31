@@ -174,6 +174,31 @@ func (s *pipelinedSender) Close() error {
 	}
 }
 
+// reportUnprovenAggregatedCrossing records the one gap the aggregated stream
+// cannot close by itself.
+//
+// The eviction watermark is a property of the merged ring, but the disk it is
+// checked against is the union of every peer's own log, and each peer flushes
+// on its own schedule. A read that advances the cursor from below the watermark
+// to above it may have done so entirely on a peer that is already ahead, while
+// a lagging peer still holds unflushed events inside the range just skipped;
+// once it flushes them they sit behind the cursor and are never delivered.
+//
+// Nothing available locally distinguishes that from the ordinary case where
+// every peer had in fact persisted the range -- the aggregator tracks peers by
+// address while log files carry a random per-filer id, so "has this peer
+// flushed through T" cannot be answered here. Deciding it needs the source
+// filer's own flush watermark carried on the subscribe stream. Until then the
+// crossing is counted and logged rather than passed over in silence.
+func reportUnprovenAggregatedCrossing(cursorBeforeTsNs, cursorAfterTsNs, evictedTsNs int64, clientName, pathPrefix string) {
+	if evictedTsNs == 0 || cursorBeforeTsNs >= evictedTsNs || cursorAfterTsNs < evictedTsNs {
+		return
+	}
+	stats.FilerSubscribeUnprovenGapCrossings.Inc()
+	glog.Warningf("aggregated subscriber %s %s crossed an evicted range (%v..%v] on peer disk reads; a peer that flushes into it later will not be re-read",
+		clientName, pathPrefix, time.Unix(0, cursorBeforeTsNs), time.Unix(0, evictedTsNs))
+}
+
 // diskReadAdvanced reports whether a persisted read moved the subscriber on.
 // A chunk-ref read reports the minute-level name of the last file it shipped,
 // clamped so it never rewinds, so it comes back non-zero even when it names the
@@ -451,6 +476,9 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 
 		glog.V(4).Infof("read on disk %v aggregated subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
+		cursorBeforeDiskTsNs := lastReadTime.Time.UnixNano()
+		evictedBeforeDiskTsNs := fs.filer.MetaAggregator.MetaLogBuffer.GetLastEvictedTsNs()
+
 		if req.ClientSupportsMetadataChunks {
 			processedTsNs, isDone, readPersistedLogErr = fs.sendLogFileRefs(ctx, stream, lastReadTime, req.UntilNs)
 		} else {
@@ -466,6 +494,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		glog.V(4).Infof("processed to %v: %v", clientName, processedTsNs)
 		if diskReadAdvanced(processedTsNs, lastReadTime) {
 			gapStall.resumed()
+			reportUnprovenAggregatedCrossing(cursorBeforeDiskTsNs, processedTsNs, evictedBeforeDiskTsNs, clientName, req.PathPrefix)
 			lastReadTime = log_buffer.NewMessagePosition(processedTsNs, -2)
 		} else if !errors.Is(readInMemoryLogErr, log_buffer.ResumeFromDiskError) {
 			// First pass or no ResumeFromDiskError yet - check the next day for logs

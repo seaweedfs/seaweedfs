@@ -234,6 +234,14 @@ var (
 			Help:      "The last send timestamp of the filer subscription.",
 		}, []string{"sourceFiler", "clientName", "path"})
 
+	FilerSubscribeUnprovenGapCrossings = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemFiler,
+			Name:      "subscribe_unproven_gap_crossings",
+			Help:      "Times an aggregated metadata subscriber advanced past an evicted range without proof that every peer had persisted it.",
+		})
+
 	FilerSubscribeGapStalledGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
@@ -890,6 +898,7 @@ func init() {
 	Gather.MustRegister(FilerSyncOffsetGauge)
 	Gather.MustRegister(FilerServerLastSendTsOfSubscribeGauge)
 	Gather.MustRegister(FilerSubscribeGapStalledGauge)
+	Gather.MustRegister(FilerSubscribeUnprovenGapCrossings)
 	Gather.MustRegister(FilerObjectSizeBytesHistogram)
 	Gather.MustRegister(collectors.NewGoCollector())
 	Gather.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))

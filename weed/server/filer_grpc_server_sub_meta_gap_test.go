@@ -5,7 +5,10 @@ import (
 	"testing"
 	"time"
 
+	dto "github.com/prometheus/client_model/go"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 )
 
@@ -356,5 +359,42 @@ func TestDiskReadAdvancedRequiresForwardProgress(t *testing.T) {
 	}
 	if !diskReadAdvanced(cursorTsNs+1, cursor) {
 		t.Fatal("a read that moves the cursor forward is progress")
+	}
+}
+
+// TestReportUnprovenAggregatedCrossing pins which advances are flagged. The
+// eviction watermark belongs to the merged ring while the disk behind it is the
+// union of each peer's own log, so a read that lifts the cursor from below the
+// watermark to above it may have done so entirely on a peer that is ahead --
+// leaving a lagging peer's unflushed events inside the range just crossed.
+func TestReportUnprovenAggregatedCrossing(t *testing.T) {
+	const (
+		before  = 10
+		evicted = 20
+		after   = 25
+	)
+	crossings := func() float64 {
+		var m dto.Metric
+		if err := stats.FilerSubscribeUnprovenGapCrossings.Write(&m); err != nil {
+			t.Fatalf("read counter: %v", err)
+		}
+		return m.GetCounter().GetValue()
+	}
+
+	start := crossings()
+	// Nothing evicted: no range to cross.
+	reportUnprovenAggregatedCrossing(before, after, 0, "c", "/")
+	// Cursor already past the watermark: the evicted range was behind it.
+	reportUnprovenAggregatedCrossing(evicted, after, evicted, "c", "/")
+	// Cursor still short of the watermark: the gap is open, not crossed.
+	reportUnprovenAggregatedCrossing(before, evicted-1, evicted, "c", "/")
+	if got := crossings(); got != start {
+		t.Fatalf("counter moved by %v on advances that cross nothing", got-start)
+	}
+
+	// From below the watermark to above it: unproven.
+	reportUnprovenAggregatedCrossing(before, after, evicted, "c", "/")
+	if got := crossings(); got != start+1 {
+		t.Fatalf("counter = %v, want %v after one unproven crossing", got, start+1)
 	}
 }
