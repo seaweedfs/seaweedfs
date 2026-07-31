@@ -271,6 +271,26 @@ jobs:
                       return d["spec"]["template"]["spec"]
               return None
 
+          def cluster_endpoints(manifest):
+              """Where the chart's own Services put master and filer.
+
+              The hook's WEED_CLUSTER_* values have to match these: a defined
+              name pointing anywhere else fails the readiness wait exactly as
+              an undefined one does.
+              """
+              wanted = {"-master": "swfs-master", "-filer-client": "swfs-filer"}
+              found = {}
+              for d in yaml.safe_load_all(manifest):
+                  if not d or d.get("kind") != "Service":
+                      continue
+                  for suffix, portName in wanted.items():
+                      if not d["metadata"]["name"].endswith(suffix):
+                          continue
+                      port = next((p["port"] for p in d["spec"]["ports"] if p.get("name") == portName), None)
+                      if port:
+                          found[suffix] = f"{d['metadata']['name']}.{d['metadata']['namespace']}:{port}"
+              return found.get("-master"), found.get("-filer-client")
+
           buckets = {
               "s3.enabled": "true",
               "s3.createBuckets[0].name": "data",
@@ -283,7 +303,8 @@ jobs:
           # The script in the hook addresses master and filer through
           # WEED_CLUSTER_*, now rendered next to extraEnvironmentVars.
           # Duplicate names would be a rendering bug.
-          pod = hook_pod(render(buckets))
+          out = render(buckets)
+          pod = hook_pod(out)
           if pod is None:
               failed.append("createBuckets: bucket hook Job missing")
           else:
@@ -293,10 +314,15 @@ jobs:
               if dupes:
                   failed.append(f"createBuckets: duplicate env entries {dupes}")
               values = {e["name"]: e.get("value") for e in env}
-              for name in ("WEED_CLUSTER_DEFAULT", "WEED_CLUSTER_SW_MASTER", "WEED_CLUSTER_SW_FILER"):
-                  if not values.get(name):
-                      failed.append(f"createBuckets: hook env {name} is empty")
-              if not dupes and all(values.get(n) for n in ("WEED_CLUSTER_SW_MASTER", "WEED_CLUSTER_SW_FILER")):
+              if not values.get("WEED_CLUSTER_DEFAULT"):
+                  failed.append("createBuckets: hook env WEED_CLUSTER_DEFAULT is empty")
+              rendered = (values.get("WEED_CLUSTER_SW_MASTER"), values.get("WEED_CLUSTER_SW_FILER"))
+              expected = cluster_endpoints(out)
+              if not all(expected):
+                  failed.append(f"createBuckets: no master/filer-client Service to compare against, found {expected}")
+              elif rendered != expected:
+                  failed.append(f"createBuckets: hook env holds {rendered}, the services are at {expected}")
+              elif not dupes:
                   print("createBuckets: hook env resolves the cluster addresses once")
               if any(v["name"] == "security-config" for v in pod.get("volumes", [])):
                   failed.append("createBuckets: hook mounts security-config without JWT signing")
@@ -308,15 +334,20 @@ jobs:
           if pod is None:
               failed.append("filerWrite=true: bucket hook Job missing")
           else:
-              vols = {v["name"] for v in pod.get("volumes", [])}
+              vol = next((v for v in pod.get("volumes", []) if v["name"] == "security-config"), None)
               mount = next((m for m in pod["containers"][0].get("volumeMounts", []) if m["name"] == "security-config"), None)
-              # The file has to land on one of weed's config search paths,
-              # so the target matters as much as the volume itself.
+              # The file has to land on one of weed's config search paths, so
+              # the target matters as much as the volume itself - and a volume
+              # of that name backed by anything but the chart's ConfigMap
+              # leaves `weed shell` without the signing key just the same.
               target = ("/etc/seaweedfs/security.toml", "security.toml")
-              if "security-config" not in vols or mount is None:
+              configmap = "test-seaweedfs-security-config"
+              if vol is None or mount is None:
                   failed.append("filerWrite=true: bucket hook does not mount security-config (s3.configure would fail)")
               elif (mount.get("mountPath"), mount.get("subPath")) != target:
                   failed.append(f"filerWrite=true: bucket hook mounts security-config as {mount}")
+              elif vol.get("configMap", {}).get("name") != configmap:
+                  failed.append(f"filerWrite=true: security-config is not backed by the {configmap} ConfigMap: {vol}")
               else:
                   print("filerWrite=true: bucket hook mounts security-config at /etc/seaweedfs/security.toml")
 
@@ -325,12 +356,13 @@ jobs:
           # the hook polling "http://" for five minutes and then failing the
           # release. The endpoints stay chart-computed, so an address kept in
           # extraEnvironmentVars is replaced, not rendered twice.
-          pod = hook_pod(render(dict(buckets, **{
+          out = render(dict(buckets, **{
               "global.seaweedfs.extraEnvironmentVars.WEED_CLUSTER_DEFAULT": "prod",
               "global.seaweedfs.extraEnvironmentVars.WEED_CLUSTER_PROD_MASTER": "stale:9333",
               "global.seaweedfs.extraEnvironmentVars.WEED_CLUSTER_SW_MASTER": "null",
               "global.seaweedfs.extraEnvironmentVars.WEED_CLUSTER_SW_FILER": "null",
-          })))
+          }))
+          pod = hook_pod(out)
           if pod is None:
               failed.append("cluster alias: bucket hook Job missing")
           else:
@@ -338,14 +370,21 @@ jobs:
               env = {e["name"]: e.get("value") for e in container["env"]}
               waited = re.findall(r'wait_for_service "http://\$(\w+)', container["command"][2])
               undefined = sorted(n for n in set(waited) if not env.get(n))
+              renamed = (env.get("WEED_CLUSTER_PROD_MASTER"), env.get("WEED_CLUSTER_PROD_FILER"))
+              expected = cluster_endpoints(out)
               if not waited:
                   failed.append("cluster alias: hook script has no readiness waits")
               elif undefined:
                   failed.append(f"cluster alias: hook waits on undefined env {undefined}")
-              elif env.get("WEED_CLUSTER_PROD_MASTER") == "stale:9333":
-                  failed.append("cluster alias: hook kept the values address instead of the chart's")
+              elif not all(expected):
+                  failed.append(f"cluster alias: no master/filer-client Service to compare against, found {expected}")
+              elif renamed != expected:
+                  # Both addresses under the renamed alias, not just the one
+                  # the values tried to keep: the stale one would fail the
+                  # release, and a missing filer address just as much.
+                  failed.append(f"cluster alias: hook waits on {renamed}, the services are at {expected}")
               else:
-                  print("cluster alias: hook waits on the renamed cluster env names")
+                  print("cluster alias: hook waits on the renamed names and the chart's addresses")
 
           # Keys kept in a Secret are referenced, not inlined, so the hook
           # must render valueFrom for non-string extraEnvironmentVars.
