@@ -86,10 +86,12 @@ type LogBuffer struct {
 	// Per-subscriber notification channels for instant wake-up
 	subscribersMu sync.RWMutex
 	subscribers   map[string]chan struct{} // subscriberID -> notification channel
-	isStopping    *atomic.Bool
-	shutdownCh    chan struct{} // closed by ShutdownLogBuffer to wake blocked subscribers
-	isAllFlushed  bool
-	flushChan     chan *dataToFlush
+	// Notified only when a flush lands, for readers that cannot act on an append
+	flushSubscribers map[string]chan struct{}
+	isStopping       *atomic.Bool
+	shutdownCh       chan struct{} // closed by ShutdownLogBuffer to wake blocked subscribers
+	isAllFlushed     bool
+	flushChan        chan *dataToFlush
 	// Offset range tracking for Kafka integration
 	hasOffsets bool
 	// Disk chunk cache for historical data reads
@@ -106,19 +108,20 @@ type LogBuffer struct {
 func NewLogBuffer(name string, flushInterval time.Duration, flushFn LogFlushFuncType,
 	readFromDiskFn LogReadFromDiskFuncType, notifyFn func()) *LogBuffer {
 	lb := &LogBuffer{
-		name:           name,
-		prevBuffers:    newSealedBuffers(PreviousBufferCount),
-		buf:            make([]byte, BufferSize),
-		sizeBuf:        make([]byte, 4),
-		flushInterval:  flushInterval,
-		flushFn:        flushFn,
-		ReadFromDiskFn: readFromDiskFn,
-		notifyFn:       notifyFn,
-		subscribers:    make(map[string]chan struct{}),
-		flushChan:      make(chan *dataToFlush, flushQueueDepth),
-		isStopping:     new(atomic.Bool),
-		shutdownCh:     make(chan struct{}),
-		offset:         0, // Will be initialized from existing data if available
+		name:             name,
+		prevBuffers:      newSealedBuffers(PreviousBufferCount),
+		buf:              make([]byte, BufferSize),
+		sizeBuf:          make([]byte, 4),
+		flushInterval:    flushInterval,
+		flushFn:          flushFn,
+		ReadFromDiskFn:   readFromDiskFn,
+		notifyFn:         notifyFn,
+		subscribers:      make(map[string]chan struct{}),
+		flushSubscribers: make(map[string]chan struct{}),
+		flushChan:        make(chan *dataToFlush, flushQueueDepth),
+		isStopping:       new(atomic.Bool),
+		shutdownCh:       make(chan struct{}),
+		offset:           0, // Will be initialized from existing data if available
 		diskChunkCache: &DiskChunkCache{
 			chunks:    make(map[int64]*CachedDiskChunk),
 			maxChunks: 16, // Cache up to 16 chunks (configurable)
@@ -155,6 +158,34 @@ func (logBuffer *LogBuffer) UnregisterSubscriber(subscriberID string) {
 	if ch, exists := logBuffer.subscribers[subscriberID]; exists {
 		close(ch)
 		delete(logBuffer.subscribers, subscriberID)
+	}
+}
+
+// RegisterFlushSubscriber registers a subscriber woken only when a flush lands.
+// A reader waiting for data it can only get from disk has nothing to do with an
+// append, and taking those wake-ups off the shared channel would cost it one
+// scheduling round-trip per write - and keep that channel drained, so every
+// writer's non-blocking send succeeds instead of falling through.
+func (logBuffer *LogBuffer) RegisterFlushSubscriber(subscriberID string) chan struct{} {
+	logBuffer.subscribersMu.Lock()
+	defer logBuffer.subscribersMu.Unlock()
+
+	if existingChan, exists := logBuffer.flushSubscribers[subscriberID]; exists {
+		return existingChan
+	}
+	notifyChan := make(chan struct{}, 1)
+	logBuffer.flushSubscribers[subscriberID] = notifyChan
+	return notifyChan
+}
+
+// UnregisterFlushSubscriber removes a flush subscriber and closes its channel
+func (logBuffer *LogBuffer) UnregisterFlushSubscriber(subscriberID string) {
+	logBuffer.subscribersMu.Lock()
+	defer logBuffer.subscribersMu.Unlock()
+
+	if ch, exists := logBuffer.flushSubscribers[subscriberID]; exists {
+		close(ch)
+		delete(logBuffer.flushSubscribers, subscriberID)
 	}
 }
 
@@ -224,6 +255,19 @@ func (logBuffer *LogBuffer) notifySubscribers() {
 		default:
 			// Channel full - subscriber hasn't consumed previous notification yet
 			// This is OK because one notification is sufficient to wake the subscriber
+		}
+	}
+}
+
+// notifyFlushSubscribers wakes the readers that only care about a flush landing
+func (logBuffer *LogBuffer) notifyFlushSubscribers() {
+	logBuffer.subscribersMu.RLock()
+	defer logBuffer.subscribersMu.RUnlock()
+
+	for _, notifyChan := range logBuffer.flushSubscribers {
+		select {
+		case notifyChan <- struct{}{}:
+		default:
 		}
 	}
 }
@@ -560,6 +604,7 @@ func (logBuffer *LogBuffer) loopFlush() {
 			logBuffer.notifyFn()
 		}
 		logBuffer.notifySubscribers()
+		logBuffer.notifyFlushSubscribers()
 
 		// Signal completion if there's a callback channel
 		if d.done != nil {

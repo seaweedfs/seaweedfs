@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 )
 
@@ -283,17 +284,22 @@ func TestInclusiveDiskCursorOnWatermarkStillAdvances(t *testing.T) {
 	}
 }
 
-// TestWaitForLocalFlushIgnoresAppends pins the parked-subscriber cadence. The
-// subscriber channel carries an append per metadata write as well as the flush,
-// and only the flush can settle a gap, so appends must not release the wait:
-// during the write burst that causes these stalls they arrive continuously, and
-// returning on one runs the caller's recovery loop at write rate.
-func TestWaitForLocalFlushIgnoresAppends(t *testing.T) {
+// TestWaitForLocalFlushUsesFlushOnlyChannel pins the parked-subscriber cadence.
+// The general subscriber channel carries an append per metadata write, and a
+// parked subscriber can do nothing with an append, so it waits on the
+// flush-only channel instead: during the write burst these stalls come from,
+// consuming appends would wake it once per write and keep that channel drained,
+// turning every writer's dropped notification into a delivered one.
+func TestWaitForLocalFlushUsesFlushOnlyChannel(t *testing.T) {
 	lb := log_buffer.NewLogBuffer("wait-for-flush", time.Minute, nil, nil, nil)
 	defer lb.ShutdownLogBuffer()
 	lb.SetLastFlushTsNs(100)
 
-	notify := make(chan struct{}, 1)
+	appendChan := lb.RegisterSubscriber("appends")
+	defer lb.UnregisterSubscriber("appends")
+	flushChan := lb.RegisterFlushSubscriber("flushes")
+	defer lb.UnregisterFlushSubscriber("flushes")
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -306,13 +312,14 @@ func TestWaitForLocalFlushIgnoresAppends(t *testing.T) {
 			select {
 			case <-stopAppends:
 				return
-			case notify <- struct{}{}:
+			default:
+				lb.AddLogEntryToBuffer(&filer_pb.LogEntry{TsNs: time.Now().UnixNano(), Data: []byte("x"), Key: []byte("k")})
 			}
 		}
 	}()
 
 	start := time.Now()
-	if !waitForLocalFlush(ctx, lb, notify, 100) {
+	if !waitForLocalFlush(ctx, lb, flushChan, 100) {
 		t.Fatal("wait reported a closed stream")
 	}
 	elapsed := time.Since(start)
@@ -321,13 +328,20 @@ func TestWaitForLocalFlushIgnoresAppends(t *testing.T) {
 	if elapsed < unflushedGapRetryInterval {
 		t.Fatalf("appends released the wait after %v, want the full %v retry interval", elapsed, unflushedGapRetryInterval)
 	}
+	// The appends went to the general channel, which nobody drained: it holds
+	// one token and every later writer dropped its notification.
+	if len(appendChan) != 1 {
+		t.Fatalf("append channel holds %d tokens, want the single undrained one", len(appendChan))
+	}
+	if len(flushChan) != 0 {
+		t.Fatalf("flush channel holds %d tokens, want none from appends alone", len(flushChan))
+	}
 
 	// A flush releases it immediately.
-	drain(notify)
 	lb.SetLastFlushTsNs(200)
-	notify <- struct{}{}
+	flushChan <- struct{}{}
 	start = time.Now()
-	if !waitForLocalFlush(ctx, lb, notify, 100) {
+	if !waitForLocalFlush(ctx, lb, flushChan, 100) {
 		t.Fatal("wait reported a closed stream")
 	}
 	if elapsed := time.Since(start); elapsed >= unflushedGapRetryInterval {
@@ -335,9 +349,9 @@ func TestWaitForLocalFlushIgnoresAppends(t *testing.T) {
 	}
 
 	// A cancelled stream unblocks it and reports the stream is gone.
-	drain(notify)
+	drain(flushChan)
 	cancel()
-	if waitForLocalFlush(ctx, lb, notify, 200) {
+	if waitForLocalFlush(ctx, lb, flushChan, 200) {
 		t.Fatal("wait must report false once the stream is gone")
 	}
 }

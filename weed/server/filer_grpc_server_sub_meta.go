@@ -256,16 +256,18 @@ func (r *gapStallReporter) clear() {
 
 // waitForLocalFlush parks until the buffer's flush watermark moves past
 // flushedTsNs, the retry interval elapses, or the stream ends; it reports false
-// once the stream is gone. The notification channel carries an append per
-// metadata write as well as the flush, and only the flush can settle a gap, so
-// an append wake-up re-parks instead of returning: under the write burst that
-// causes these stalls, returning on one would run the caller's recovery loop at
-// write rate rather than the retry cadence.
-func waitForLocalFlush(ctx context.Context, logBuffer *log_buffer.LogBuffer, notifyChan <-chan struct{}, flushedTsNs int64) bool {
+// once the stream is gone. flushChan is the flush-only notification: the
+// general subscriber channel also carries an append per metadata write, and
+// nothing a parked subscriber can do about an append, so under the write burst
+// these stalls come from it would wake once per write - and keep that channel
+// drained, turning every writer's dropped notification into a delivered one.
+func waitForLocalFlush(ctx context.Context, logBuffer *log_buffer.LogBuffer, flushChan <-chan struct{}, flushedTsNs int64) bool {
 	retry := time.After(unflushedGapRetryInterval)
 	for {
 		select {
-		case <-notifyChan:
+		case <-flushChan:
+			// A flush that landed before this call still counts: it is data the
+			// last disk read did not see.
 			if logBuffer.GetLastFlushTsNs() != flushedTsNs {
 				return true
 			}
@@ -513,8 +515,8 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	// Same key shape for the reader: LoopProcessLogData registers it as a
 	// subscriber internally, once per loop iteration.
 	localReaderName := fmt.Sprintf("localMeta:%s:%d:%d", clientName, req.ClientId, req.ClientEpoch)
-	localNotifyChan := fs.filer.LocalMetaLogBuffer.RegisterSubscriber(localNotifyName)
-	defer fs.filer.LocalMetaLogBuffer.UnregisterSubscriber(localNotifyName)
+	localFlushChan := fs.filer.LocalMetaLogBuffer.RegisterFlushSubscriber(localNotifyName)
+	defer fs.filer.LocalMetaLogBuffer.UnregisterFlushSubscriber(localNotifyName)
 
 	gapStall := &gapStallReporter{scope: "local", clientName: clientName, pathPrefix: req.PathPrefix}
 	defer gapStall.clear()
@@ -592,7 +594,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 						// the flush, then re-read disk.
 						gapStall.park(lastReadTime.Time, fmt.Sprintf("gap is not flushed yet (earliest memory %v, flushed through %v)",
 							earliestTime, time.Unix(0, currentFlushTsNs)))
-						if !waitForLocalFlush(ctx, fs.filer.LocalMetaLogBuffer, localNotifyChan, currentFlushTsNs) {
+						if !waitForLocalFlush(ctx, fs.filer.LocalMetaLogBuffer, localFlushChan, currentFlushTsNs) {
 							return nil
 						}
 						continue
@@ -658,7 +660,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 				// flush, then re-evaluate.
 				gapStall.park(lastReadTime.Time, fmt.Sprintf("gap is not flushed yet (earliest memory %v, flushed through %v)",
 					earliestTime, time.Unix(0, lastCheckedFlushTsNs)))
-				if !waitForLocalFlush(ctx, fs.filer.LocalMetaLogBuffer, localNotifyChan, lastCheckedFlushTsNs) {
+				if !waitForLocalFlush(ctx, fs.filer.LocalMetaLogBuffer, localFlushChan, lastCheckedFlushTsNs) {
 					return nil
 				}
 				continue
