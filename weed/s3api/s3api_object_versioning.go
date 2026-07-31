@@ -37,6 +37,7 @@ func clearCachedVersionMetadata(extended map[string][]byte) {
 	delete(extended, s3_constants.ExtLatestVersionETagKey)
 	delete(extended, s3_constants.ExtLatestVersionOwnerKey)
 	delete(extended, s3_constants.ExtLatestVersionIsDeleteMarker)
+	delete(extended, s3_constants.ExtLatestVersionStorageClassKey)
 }
 
 // markVersionNoncurrent stamps ExtNoncurrentSinceNsKey on the named entry
@@ -97,6 +98,9 @@ func setCachedListMetadata(versionsEntry, versionEntry *filer_pb.Entry) {
 		}
 		if owner, ok := versionEntry.Extended[s3_constants.ExtAmzOwnerKey]; ok {
 			versionsEntry.Extended[s3_constants.ExtLatestVersionOwnerKey] = owner
+		}
+		if storageClass, ok := versionEntry.Extended[s3_constants.AmzStorageClass]; ok {
+			versionsEntry.Extended[s3_constants.ExtLatestVersionStorageClassKey] = storageClass
 		}
 		if deleteMarker, ok := versionEntry.Extended[s3_constants.ExtDeleteMarkerKey]; ok {
 			versionsEntry.Extended[s3_constants.ExtLatestVersionIsDeleteMarker] = deleteMarker
@@ -2074,6 +2078,13 @@ func (s3a *S3ApiServer) getLatestVersionEntryFromDirectoryEntry(bucket, object s
 			// Add owner if cached
 			if ownerBytes, hasOwner := versionsDirEntry.Extended[s3_constants.ExtLatestVersionOwnerKey]; hasOwner {
 				logicalEntry.Extended[s3_constants.ExtAmzOwnerKey] = ownerBytes
+			}
+
+			// Add storage class if cached. Without it the listing falls back to
+			// the default and reports a different class than HEAD does for the
+			// same object.
+			if storageClassBytes, hasStorageClass := versionsDirEntry.Extended[s3_constants.ExtLatestVersionStorageClassKey]; hasStorageClass {
+				logicalEntry.Extended[s3_constants.AmzStorageClass] = storageClassBytes
 			}
 
 			return logicalEntry, nil
