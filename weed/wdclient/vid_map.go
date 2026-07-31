@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 
@@ -32,10 +31,18 @@ func (l Location) ServerAddress() pb.ServerAddress {
 	return pb.NewServerAddressWithGrpcPort(l.Url, l.GrpcPort)
 }
 
+// locationsEntry is what a volume id maps to: the locations themselves plus the
+// generation they were learned in. Entries are copy-on-write, so a slice handed
+// to a reader is never mutated afterwards.
+type locationsEntry struct {
+	locations  []Location
+	generation uint64
+}
+
 type vidMap struct {
 	sync.RWMutex
-	vid2Locations   map[uint32][]Location
-	ecVid2Locations map[uint32][]Location
+	vid2Locations   map[uint32]*locationsEntry
+	ecVid2Locations map[uint32]*locationsEntry
 	// serverRefCount tracks how many vid locations (regular + EC) currently
 	// reference each volume server address. Maintaining it incrementally lets
 	// hasVolumeServer answer in O(1) instead of walking every volume entry.
@@ -43,15 +50,25 @@ type vidMap struct {
 	// pass either "host:port" or "host:port.grpc" find the same entry.
 	serverRefCount map[string]int
 	DataCenter     string
-	cache          atomic.Pointer[vidMap]
+	// generation counts resets. Each entry remembers the generation it was
+	// learned in, so history expires per volume rather than by keeping
+	// snapshot copies of the whole map.
+	generation uint64
+	// retainGenerations is how many resets an entry survives without being
+	// refreshed before reset drops it.
+	retainGenerations uint64
 }
 
-func newVidMap(dataCenter string) *vidMap {
+func newVidMap(dataCenter string, retainGenerations int) *vidMap {
+	if retainGenerations <= 0 {
+		retainGenerations = DefaultVidMapCacheSize
+	}
 	return &vidMap{
-		vid2Locations:   make(map[uint32][]Location),
-		ecVid2Locations: make(map[uint32][]Location),
-		serverRefCount:  make(map[string]int),
-		DataCenter:      dataCenter,
+		vid2Locations:     make(map[uint32]*locationsEntry),
+		ecVid2Locations:   make(map[uint32]*locationsEntry),
+		serverRefCount:    make(map[string]int),
+		DataCenter:        dataCenter,
+		retainGenerations: uint64(retainGenerations),
 	}
 }
 
@@ -128,30 +145,19 @@ func (vc *vidMap) GetVidLocations(vid string) (locations []Location, err error) 
 }
 
 func (vc *vidMap) GetLocations(vid uint32) (locations []Location, found bool) {
-	// glog.V(4).Infof("~ lookup volume id %d: %+v ec:%+v", vid, vc.vid2Locations, vc.ecVid2Locations)
-	// Read the cache link before the live map: resetVidMap trims the chain, so a
-	// link loaded after the local miss may already be severed, turning a lookup
-	// that could have been served by the cache into a spurious miss.
-	cachedMap := vc.cache.Load()
+	vc.RLock()
+	defer vc.RUnlock()
 
-	locations, found = vc.getLocations(vid)
-	if found {
-		// If volume is explicitly tracked (found=true), return its locations even if empty.
-		// An empty array means "volume has no locations" (e.g., during pod restart),
-		// which is different from "volume never existed" (found=false).
-		// Don't fall back to stale cache for explicitly empty volumes.
-		if len(locations) > 0 {
-			return locations, found
-		}
-		// Volume exists but has no locations - return empty, don't check cache
-		return nil, false
+	if entry, ok := vc.vid2Locations[vid]; ok && len(entry.locations) > 0 {
+		return entry.locations, true
 	}
-
-	// Volume not found in current map - check cache for unknown volumes
-	if cachedMap != nil {
-		return cachedMap.GetLocations(vid)
+	if ecEntry, ok := vc.ecVid2Locations[vid]; ok && len(ecEntry.locations) > 0 {
+		return ecEntry.locations, true
 	}
-
+	// A tracked but empty entry means the volume is known to have no locations
+	// (e.g. during a pod restart), which is different from never having heard
+	// of it. Either way there is nothing older to fall back to: history lives
+	// in this same entry.
 	return nil, false
 }
 
@@ -168,41 +174,17 @@ func (vc *vidMap) GetLocationsClone(vid uint32) (locations []Location, found boo
 	return nil, false
 }
 
-func (vc *vidMap) getLocations(vid uint32) (locations []Location, found bool) {
-	vc.RLock()
-	defer vc.RUnlock()
-
-	locations, found = vc.vid2Locations[vid]
-	if found && len(locations) > 0 {
-		return
-	}
-	locations, found = vc.ecVid2Locations[vid]
-	return
-}
-
 // hasVolumeServer reports whether any tracked volume (regular or EC) is hosted
-// on addr. It walks the cache chain so recently expired maps are still
-// considered. Used to gate admission of operations targeting a volume server.
-// The lookup is O(1) thanks to serverRefCount; we still consult the cache
-// chain to keep covering volume servers that just rolled out of the live map.
+// on addr, including volumes still held from earlier generations. Used to gate
+// admission of operations targeting a volume server.
 func (vc *vidMap) hasVolumeServer(addr pb.ServerAddress) bool {
 	key := addr.ToHttpAddress()
 	if key == "" {
 		return false
 	}
-	// Same ordering requirement as GetLocations: grab the cache link before the
-	// local lookup so a concurrent reset cannot sever it underneath us.
-	cachedMap := vc.cache.Load()
 	vc.RLock()
-	count := vc.serverRefCount[key]
-	vc.RUnlock()
-	if count > 0 {
-		return true
-	}
-	if cachedMap != nil {
-		return cachedMap.hasVolumeServer(addr)
-	}
-	return false
+	defer vc.RUnlock()
+	return vc.serverRefCount[key] > 0
 }
 
 func (vc *vidMap) addLocation(vid uint32, location Location) {
@@ -211,22 +193,7 @@ func (vc *vidMap) addLocation(vid uint32, location Location) {
 
 	glog.V(4).Infof("+ volume id %d: %+v", vid, location)
 
-	locations, found := vc.vid2Locations[vid]
-	if !found {
-		vc.vid2Locations[vid] = []Location{location}
-		vc.incrementServerRef(locationServerKey(location))
-		return
-	}
-
-	for _, loc := range locations {
-		if loc.Url == location.Url {
-			return
-		}
-	}
-
-	vc.vid2Locations[vid] = append(locations, location)
-	vc.incrementServerRef(locationServerKey(location))
-
+	vc.addLocationToMap(vc.vid2Locations, vid, location)
 }
 
 func (vc *vidMap) addEcLocation(vid uint32, location Location) {
@@ -235,88 +202,126 @@ func (vc *vidMap) addEcLocation(vid uint32, location Location) {
 
 	glog.V(4).Infof("+ ec volume id %d: %+v", vid, location)
 
-	locations, found := vc.ecVid2Locations[vid]
-	if !found {
-		vc.ecVid2Locations[vid] = []Location{location}
+	vc.addLocationToMap(vc.ecVid2Locations, vid, location)
+}
+
+// addLocationToMap records location for vid. The first write of a generation
+// replaces what an earlier one held instead of merging with it: after a reset
+// the new master is the authority, so a volume that moved must not keep
+// answering with the server it moved off. Callers must hold the write lock.
+func (vc *vidMap) addLocationToMap(vid2Locations map[uint32]*locationsEntry, vid uint32, location Location) {
+	entry, found := vid2Locations[vid]
+	if !found || entry.generation != vc.generation {
+		if found {
+			vc.releaseEntry(entry)
+		}
+		vid2Locations[vid] = &locationsEntry{
+			locations:  []Location{location},
+			generation: vc.generation,
+		}
 		vc.incrementServerRef(locationServerKey(location))
 		return
 	}
 
-	for _, loc := range locations {
+	for _, loc := range entry.locations {
 		if loc.Url == location.Url {
 			return
 		}
 	}
 
-	vc.ecVid2Locations[vid] = append(locations, location)
+	entry.locations = append(append(make([]Location, 0, len(entry.locations)+1), entry.locations...), location)
 	vc.incrementServerRef(locationServerKey(location))
-
 }
 
 func (vc *vidMap) deleteLocation(vid uint32, location Location) {
-	if cachedMap := vc.cache.Load(); cachedMap != nil {
-		cachedMap.deleteLocation(vid, location)
-	}
-
 	vc.Lock()
 	defer vc.Unlock()
 
 	glog.V(4).Infof("- volume id %d: %+v", vid, location)
 
-	locations, found := vc.vid2Locations[vid]
-	if !found {
-		return
-	}
-
-	for i, loc := range locations {
-		if loc.Url == location.Url {
-			vc.vid2Locations[vid] = append(locations[0:i], locations[i+1:]...)
-			vc.decrementServerRef(locationServerKey(loc))
-			break
-		}
-	}
+	vc.deleteLocationFromMap(vc.vid2Locations, vid, location)
 }
 
 func (vc *vidMap) deleteEcLocation(vid uint32, location Location) {
-	if cachedMap := vc.cache.Load(); cachedMap != nil {
-		cachedMap.deleteEcLocation(vid, location)
-	}
-
 	vc.Lock()
 	defer vc.Unlock()
 
 	glog.V(4).Infof("- ec volume id %d: %+v", vid, location)
 
-	locations, found := vc.ecVid2Locations[vid]
+	vc.deleteLocationFromMap(vc.ecVid2Locations, vid, location)
+}
+
+// deleteLocationFromMap drops one location from vid's entry, leaving the entry
+// in place so the volume stays explicitly known to have none. The generation is
+// untouched: a delete only speaks about the location it names, it does not make
+// the rest of the entry any fresher. Callers must hold the write lock.
+func (vc *vidMap) deleteLocationFromMap(vid2Locations map[uint32]*locationsEntry, vid uint32, location Location) {
+	entry, found := vid2Locations[vid]
 	if !found {
 		return
 	}
 
-	for i, loc := range locations {
-		if loc.Url == location.Url {
-			vc.ecVid2Locations[vid] = append(locations[0:i], locations[i+1:]...)
-			vc.decrementServerRef(locationServerKey(loc))
-			break
+	for i, loc := range entry.locations {
+		if loc.Url != location.Url {
+			continue
 		}
+		remaining := make([]Location, 0, len(entry.locations)-1)
+		remaining = append(remaining, entry.locations[:i]...)
+		remaining = append(remaining, entry.locations[i+1:]...)
+		entry.locations = remaining
+		vc.decrementServerRef(locationServerKey(loc))
+		return
 	}
 }
 
 func (vc *vidMap) deleteVid(vid uint32) {
-	if cachedMap := vc.cache.Load(); cachedMap != nil {
-		cachedMap.deleteVid(vid)
-	}
-
 	vc.Lock()
 	defer vc.Unlock()
 
-	for _, loc := range vc.vid2Locations[vid] {
+	if entry, found := vc.vid2Locations[vid]; found {
+		vc.releaseEntry(entry)
+		delete(vc.vid2Locations, vid)
+	}
+	if entry, found := vc.ecVid2Locations[vid]; found {
+		vc.releaseEntry(entry)
+		delete(vc.ecVid2Locations, vid)
+	}
+}
+
+// reset starts a new generation, as when the master changes and everything it
+// told us has to be relearned. Entries stay readable while they are relearned
+// and are dropped once they fall out of the retained window.
+func (vc *vidMap) reset() {
+	vc.Lock()
+	defer vc.Unlock()
+
+	vc.generation++
+	if vc.generation <= vc.retainGenerations {
+		return
+	}
+	oldest := vc.generation - vc.retainGenerations
+	vc.expire(vc.vid2Locations, oldest)
+	vc.expire(vc.ecVid2Locations, oldest)
+}
+
+// expire drops entries last refreshed before oldest. Callers must hold the
+// write lock.
+func (vc *vidMap) expire(vid2Locations map[uint32]*locationsEntry, oldest uint64) {
+	for vid, entry := range vid2Locations {
+		if entry.generation >= oldest {
+			continue
+		}
+		vc.releaseEntry(entry)
+		delete(vid2Locations, vid)
+	}
+}
+
+// releaseEntry drops the server references an entry holds. Callers must hold
+// the write lock.
+func (vc *vidMap) releaseEntry(entry *locationsEntry) {
+	for _, loc := range entry.locations {
 		vc.decrementServerRef(locationServerKey(loc))
 	}
-	for _, loc := range vc.ecVid2Locations[vid] {
-		vc.decrementServerRef(locationServerKey(loc))
-	}
-	delete(vc.vid2Locations, vid)
-	delete(vc.ecVid2Locations, vid)
 }
 
 // incrementServerRef increases the refcount for key. Empty keys are skipped
