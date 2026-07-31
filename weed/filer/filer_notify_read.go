@@ -118,7 +118,22 @@ func (f *Filer) CollectLogFileRefs(ctx context.Context, startPosition log_buffer
 			lastTsNs = t.UnixNano()
 		}
 	}
+	lastTsNs = clampLogRefsCursor(lastTsNs, startPosition.Time.UnixNano())
 	return
+}
+
+// clampLogRefsCursor keeps a chunk-ref read from moving the subscriber's cursor
+// backwards. Refs are named for the minute their window starts in, so the last
+// one routinely sorts before the position that was asked for -- always, now
+// that the scan reaches back a flush interval to pick up a spanning file. The
+// caller makes this value the new read position, and rewinding it would replay
+// memory from before the client's own SinceNs and re-send what the chunk reader
+// has already been handed.
+func clampLogRefsCursor(lastTsNs, startTsNs int64) int64 {
+	if lastTsNs < startTsNs {
+		return startTsNs
+	}
+	return lastTsNs
 }
 
 func (f *Filer) HasPersistedLogFiles(startPosition log_buffer.MessagePosition) (bool, error) {

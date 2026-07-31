@@ -70,3 +70,21 @@ func TestSpanningLogFileIsNotSkipped(t *testing.T) {
 		t.Fatal("a file a full interval behind the cursor should still be skipped")
 	}
 }
+
+// TestClampLogRefsCursorNeverRewinds pins that a chunk-ref read cannot move the
+// subscriber backwards. The refs carry minute-level names, so the last one
+// normally sorts before the requested position, and the caller assigns that
+// value straight to the read cursor.
+func TestClampLogRefsCursorNeverRewinds(t *testing.T) {
+	cursor := time.Date(2026, 6, 29, 12, 31, 10, 0, time.UTC).UnixNano()
+	spanningFile := time.Date(2026, 6, 29, 12, 30, 0, 0, time.UTC).UnixNano()
+
+	if got := clampLogRefsCursor(spanningFile, cursor); got != cursor {
+		t.Fatalf("cursor moved to %v, want it held at %v", time.Unix(0, got), time.Unix(0, cursor))
+	}
+	// A ref genuinely ahead of the cursor still advances it.
+	ahead := time.Date(2026, 6, 29, 12, 32, 0, 0, time.UTC).UnixNano()
+	if got := clampLogRefsCursor(ahead, cursor); got != ahead {
+		t.Fatalf("cursor = %v, want it to advance to %v", time.Unix(0, got), time.Unix(0, ahead))
+	}
+}
