@@ -23,13 +23,25 @@ type LogFileEntry struct {
 	FileEntry *Entry
 }
 
+// persistedLogScanStart backs a read position off by one flush interval before
+// choosing which log files to open. A log file is named for the start of the
+// window it holds and a window spans up to flushInterval, so a file whose name
+// sorts before the cursor's own minute can still hold entries after it -- a
+// window sealed at 12:30:59 and ending 12:31:58 lives in "12-30". Entries are
+// filtered against the exact cursor afterwards, so widening the file scan only
+// costs a little extra reading and never re-delivers.
+func persistedLogScanStart(t time.Time) time.Time {
+	return t.Add(-LogFlushInterval)
+}
+
 func (f *Filer) collectPersistedLogBuffer(startPosition log_buffer.MessagePosition, stopTsNs int64) (v *OrderedLogVisitor, err error) {
 
 	if stopTsNs != 0 && startPosition.Time.UnixNano() > stopTsNs {
 		return nil, io.EOF
 	}
 
-	startDate := fmt.Sprintf("%04d-%02d-%02d", startPosition.Time.Year(), startPosition.Time.Month(), startPosition.Time.Day())
+	scanFrom := persistedLogScanStart(startPosition.Time)
+	startDate := fmt.Sprintf("%04d-%02d-%02d", scanFrom.Year(), scanFrom.Month(), scanFrom.Day())
 
 	dayEntries, _, listDayErr := f.ListDirectoryEntries(context.Background(), SystemLogDir, startDate, true, math.MaxInt32, "", "", "")
 	if listDayErr != nil {
@@ -48,8 +60,9 @@ func (f *Filer) CollectLogFileRefs(ctx context.Context, startPosition log_buffer
 		return nil, 0, nil
 	}
 
-	startDate := fmt.Sprintf("%04d-%02d-%02d", startPosition.Time.Year(), startPosition.Time.Month(), startPosition.Time.Day())
-	startHourMinute := fmt.Sprintf("%02d-%02d", startPosition.Time.Hour(), startPosition.Time.Minute())
+	scanFrom := persistedLogScanStart(startPosition.Time)
+	startDate := fmt.Sprintf("%04d-%02d-%02d", scanFrom.Year(), scanFrom.Month(), scanFrom.Day())
+	startHourMinute := fmt.Sprintf("%02d-%02d", scanFrom.Hour(), scanFrom.Minute())
 	var stopDate, stopHourMinute string
 	if stopTsNs != 0 {
 		stopTime := time.Unix(0, stopTsNs).UTC()
@@ -234,8 +247,9 @@ func NewLogFileEntryCollector(f *Filer, startPosition log_buffer.MessagePosition
 		// println("enqueue day entry", dayEntry.Name())
 	}
 
-	startDate := fmt.Sprintf("%04d-%02d-%02d", startPosition.Time.Year(), startPosition.Time.Month(), startPosition.Time.Day())
-	startHourMinute := fmt.Sprintf("%02d-%02d", startPosition.Time.Hour(), startPosition.Time.Minute())
+	scanFrom := persistedLogScanStart(startPosition.Time)
+	startDate := fmt.Sprintf("%04d-%02d-%02d", scanFrom.Year(), scanFrom.Month(), scanFrom.Day())
+	startHourMinute := fmt.Sprintf("%02d-%02d", scanFrom.Hour(), scanFrom.Minute())
 	var stopDate, stopHourMinute string
 	if stopTsNs != 0 {
 		stopTime := time.Unix(0, stopTsNs+24*60*60*int64(time.Second)).UTC()
