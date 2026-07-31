@@ -221,8 +221,11 @@ func (up *UploadPipeline) moveToSealed(memChunk PageChunk, logicChunkIndex Logic
 		oldMemChunk.FreeReference(fmt.Sprintf("%s replace chunk %d", up.filepath, logicChunkIndex))
 	}
 	sealedChunk := &SealedChunk{
-		chunk:            memChunk,
-		referenceCounter: 1, // default 1 is for uploading process
+		chunk: memChunk,
+		// One for the sealedChunks slot, one for the upload below, which
+		// drops its own. Execute() returns before SaveContent reads the
+		// chunk, so a later seal must not free the buffer under it.
+		referenceCounter: 2,
 		accountant:       up.accountant,
 		chunkSize:        up.ChunkSize,
 	}
@@ -252,8 +255,12 @@ func (up *UploadPipeline) moveToSealed(memChunk PageChunk, logicChunkIndex Logic
 			up.readerCountCond.Wait()
 		}
 
-		// then remove from sealed chunks
-		delete(up.sealedChunks, logicChunkIndex)
+		// then remove from sealed chunks, unless a later seal took over the
+		// index — deleting that one would hide its dirty pages from readers
+		if up.sealedChunks[logicChunkIndex] == sealedChunk {
+			delete(up.sealedChunks, logicChunkIndex)
+			sealedChunk.FreeReference(fmt.Sprintf("%s unindex chunk %d", up.filepath, logicChunkIndex))
+		}
 		sealedChunk.FreeReference(fmt.Sprintf("%s finished uploading chunk %d", up.filepath, logicChunkIndex))
 
 	})
@@ -388,9 +395,8 @@ func (up *UploadPipeline) Shutdown() {
 		delete(up.writableChunks, logicChunkIndex)
 	}
 	for logicChunkIndex, sealedChunk := range up.sealedChunks {
-		// FreeReference releases the accountant slot on the refcount-zero
-		// transition; a racing async uploader will call FreeReference again
-		// and be a no-op, so there is no double-release.
+		// only the slot reference; an in-flight upload frees the chunk itself
 		sealedChunk.FreeReference(fmt.Sprintf("%s uploadpipeline shutdown chunk %d", up.filepath, logicChunkIndex))
+		delete(up.sealedChunks, logicChunkIndex)
 	}
 }
