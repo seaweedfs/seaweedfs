@@ -1,6 +1,7 @@
 package wdclient
 
 import (
+	"runtime"
 	"sync"
 	"testing"
 
@@ -136,6 +137,27 @@ func TestDeleteLocationDoesNotRefreshGeneration(t *testing.T) {
 	}
 }
 
+// Losing the last location drops the entry: a client that never resets should
+// not accumulate one empty entry per volume it has ever seen deleted.
+func TestDeleteLastLocationDropsEntry(t *testing.T) {
+	vm := newVidMap("", DefaultVidMapCacheSize)
+	vid := uint32(12)
+	location := Location{Url: "10.0.0.1:8080"}
+
+	vm.addLocation(vid, location)
+	vm.deleteLocation(vid, location)
+
+	if _, found := vm.GetLocations(vid); found {
+		t.Error("a volume with no locations left must not resolve")
+	}
+	if len(vm.vid2Locations) != 0 {
+		t.Errorf("expected the emptied entry to be dropped, got %v", vm.vid2Locations)
+	}
+	if len(vm.serverRefCount) != 0 {
+		t.Errorf("server refcounts leaked: %v", vm.serverRefCount)
+	}
+}
+
 // EC locations follow the same rules as regular ones, and back a volume whose
 // regular locations are gone.
 func TestEcLocationsFollowGenerationRules(t *testing.T) {
@@ -231,6 +253,7 @@ func TestConcurrentResetAndUpdates(t *testing.T) {
 					}
 					vm.hasVolumeServer(pb.ServerAddress(live.Url))
 					vm.GetLocationsClone(churnVid)
+					runtime.Gosched()
 				}
 			}
 		}()

@@ -32,8 +32,9 @@ func (l Location) ServerAddress() pb.ServerAddress {
 }
 
 // locationsEntry is what a volume id maps to: the locations themselves plus the
-// generation they were learned in. Entries are copy-on-write, so a slice handed
-// to a reader is never mutated afterwards.
+// generation they were learned in. An entry is immutable once stored; every
+// update installs a new one, so locations handed to a reader are never
+// rewritten underneath it.
 type locationsEntry struct {
 	locations  []Location
 	generation uint64
@@ -154,10 +155,9 @@ func (vc *vidMap) GetLocations(vid uint32) (locations []Location, found bool) {
 	if ecEntry, ok := vc.ecVid2Locations[vid]; ok && len(ecEntry.locations) > 0 {
 		return ecEntry.locations, true
 	}
-	// A tracked but empty entry means the volume is known to have no locations
-	// (e.g. during a pod restart), which is different from never having heard
-	// of it. Either way there is nothing older to fall back to: history lives
-	// in this same entry.
+	// Nothing older to fall back to: a volume's history lives in its own entry,
+	// so a volume whose locations are all gone (a pod restarting, say) is a
+	// miss rather than a reason to serve what it used to have.
 	return nil, false
 }
 
@@ -229,7 +229,10 @@ func (vc *vidMap) addLocationToMap(vid2Locations map[uint32]*locationsEntry, vid
 		}
 	}
 
-	entry.locations = append(append(make([]Location, 0, len(entry.locations)+1), entry.locations...), location)
+	locations := make([]Location, 0, len(entry.locations)+1)
+	locations = append(locations, entry.locations...)
+	locations = append(locations, location)
+	vid2Locations[vid] = &locationsEntry{locations: locations, generation: entry.generation}
 	vc.incrementServerRef(locationServerKey(location))
 }
 
@@ -251,10 +254,10 @@ func (vc *vidMap) deleteEcLocation(vid uint32, location Location) {
 	vc.deleteLocationFromMap(vc.ecVid2Locations, vid, location)
 }
 
-// deleteLocationFromMap drops one location from vid's entry, leaving the entry
-// in place so the volume stays explicitly known to have none. The generation is
-// untouched: a delete only speaks about the location it names, it does not make
-// the rest of the entry any fresher. Callers must hold the write lock.
+// deleteLocationFromMap drops one location from vid's entry, and the entry
+// itself once its last location is gone. The generation is untouched: a delete
+// only speaks about the location it names, it does not make the rest of the
+// entry any fresher. Callers must hold the write lock.
 func (vc *vidMap) deleteLocationFromMap(vid2Locations map[uint32]*locationsEntry, vid uint32, location Location) {
 	entry, found := vid2Locations[vid]
 	if !found {
@@ -265,11 +268,15 @@ func (vc *vidMap) deleteLocationFromMap(vid2Locations map[uint32]*locationsEntry
 		if loc.Url != location.Url {
 			continue
 		}
+		vc.decrementServerRef(locationServerKey(loc))
+		if len(entry.locations) == 1 {
+			delete(vid2Locations, vid)
+			return
+		}
 		remaining := make([]Location, 0, len(entry.locations)-1)
 		remaining = append(remaining, entry.locations[:i]...)
 		remaining = append(remaining, entry.locations[i+1:]...)
-		entry.locations = remaining
-		vc.decrementServerRef(locationServerKey(loc))
+		vid2Locations[vid] = &locationsEntry{locations: remaining, generation: entry.generation}
 		return
 	}
 }
