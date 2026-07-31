@@ -352,7 +352,8 @@ func mergePathConf(a, b *filer_pb.FilerConf_PathConf) {
 	// disableChunkDeletion stay OR'ed on purpose: a nested rule must not be able to
 	// lift a lock the bucket set.
 	if b.Worm != nil {
-		a.Worm = b.Worm
+		// copy the value: a is often a scratch conf while b is a live trie entry
+		a.Worm = proto.Bool(*b.Worm)
 	}
 	if b.WormRetentionTimeSeconds > 0 {
 		a.WormRetentionTimeSeconds = b.WormRetentionTimeSeconds

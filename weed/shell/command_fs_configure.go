@@ -148,7 +148,8 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 			fc.AddLocationConf(locConf)
 			// AddLocationConf merges these boolean fields with OR, which can never
 			// turn a flag off; let an explicitly passed false win, e.g. -readOnly=false
-			// to reopen a bucket that quota enforcement locked
+			// to reopen a bucket that quota enforcement locked. worm does not belong
+			// here: it merges on presence, so the value set above already wins.
 			if mergedConf, found := fc.GetLocationConf(*locationPrefix); found {
 				fsConfigureCommand.Visit(func(f *flag.Flag) {
 					switch f.Name {
