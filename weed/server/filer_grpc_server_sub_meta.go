@@ -217,6 +217,26 @@ func resolveAggregatedGapResume(currentTsNs, currentOffset, earliestMemTsNs, las
 	return target, true
 }
 
+// waitForLocalFlush parks a local subscriber sitting on a possibly-unflushed
+// gap until the buffer flushes, the retry interval elapses, or the stream ends;
+// it reports false once the stream is gone. The notification channel also
+// carries an append per metadata write, and an append cannot settle the gap, so
+// stale tokens are drained first — otherwise a busy filer would spin this loop
+// at write rate. The retry interval covers the notification the drain discards.
+func waitForLocalFlush(ctx context.Context, notifyChan <-chan struct{}) bool {
+	select {
+	case <-notifyChan:
+	default:
+	}
+	select {
+	case <-notifyChan:
+	case <-ctx.Done():
+		return false
+	case <-time.After(unflushedGapRetryInterval):
+	}
+	return true
+}
+
 // resolveLocalGapResume decides whether a local subscriber may skip a gap its
 // disk read found empty. flushedTsNs is the buffer's flush watermark observed
 // before that read: once it has passed the earliest in-memory timestamp, every
@@ -334,10 +354,16 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 					// for the peer's flush to land on disk, then re-read. Falling
 					// through to the in-memory read here would return
 					// ResumeFromDiskError again immediately and spin.
+					//
+					// Deliberately not woken by aggNotifyChan: that fires on
+					// every append to the aggregated ring, and an append says
+					// nothing about a peer having persisted the gap. Waking on it
+					// would re-run a full ReadPersistedLogBuffer per cluster-wide
+					// metadata event, while the flush this waits on is signalled
+					// by nothing local. Only the timer can make progress here.
 					glog.V(3).Infof("unflushed gap at %v (earliest memory %v, evicted through %v) for %v: waiting for a peer flush before advancing",
 						lastReadTime.Time, earliestTime, time.Unix(0, lastEvictedTsNs), clientName)
 					select {
-					case <-aggNotifyChan:
 					case <-ctx.Done():
 						return nil
 					case <-time.After(unflushedGapRetryInterval):
@@ -511,12 +537,9 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 						readInMemoryLogErr = nil // Clear the error since we're skipping forward
 					} else {
 						// The gap may hold unflushed events: wait (bounded) for
-						// flush/new data, then re-read disk.
-						select {
-						case <-localNotifyChan:
-						case <-ctx.Done():
+						// the flush, then re-read disk.
+						if !waitForLocalFlush(ctx, localNotifyChan) {
 							return nil
-						case <-time.After(unflushedGapRetryInterval):
 						}
 						continue
 					}
@@ -577,13 +600,10 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 					readInMemoryLogErr = nil
 					continue
 				}
-				// The gap may hold unflushed events: wait (bounded) for
-				// flush/new data, then re-evaluate.
-				select {
-				case <-localNotifyChan:
-				case <-ctx.Done():
+				// The gap may hold unflushed events: wait (bounded) for the
+				// flush, then re-evaluate.
+				if !waitForLocalFlush(ctx, localNotifyChan) {
 					return nil
-				case <-time.After(unflushedGapRetryInterval):
 				}
 				continue
 			}
