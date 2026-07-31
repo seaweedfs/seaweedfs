@@ -174,6 +174,16 @@ func (s *pipelinedSender) Close() error {
 	}
 }
 
+// diskReadAdvanced reports whether a persisted read moved the subscriber on.
+// A chunk-ref read reports the minute-level name of the last file it shipped,
+// clamped so it never rewinds, so it comes back non-zero even when it names the
+// position that was already current. Treating that as progress clears the stall
+// timer, and a subscriber parked on a gap it re-ships the same refs for would
+// reset the timer every retry and never reach the stall bound.
+func diskReadAdvanced(processedTsNs int64, cursor log_buffer.MessagePosition) bool {
+	return processedTsNs != 0 && processedTsNs > cursor.Time.UnixNano()
+}
+
 // gapResumeCursorOffset is the sentinel offset a gap resume carries. It has to
 // be one ReadFromBuffer will serve: that read only falls through to memory for
 // a cursor below the in-memory window when the offset is a sentinel, and hands
@@ -454,7 +464,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		}
 
 		glog.V(4).Infof("processed to %v: %v", clientName, processedTsNs)
-		if processedTsNs != 0 {
+		if diskReadAdvanced(processedTsNs, lastReadTime) {
 			gapStall.resumed()
 			lastReadTime = log_buffer.NewMessagePosition(processedTsNs, -2)
 		} else if !errors.Is(readInMemoryLogErr, log_buffer.ResumeFromDiskError) {
@@ -480,7 +490,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		earliestTime := fs.filer.MetaAggregator.MetaLogBuffer.GetEarliestTime()
 		lastEvictedTsNs := fs.filer.MetaAggregator.MetaLogBuffer.GetLastEvictedTsNs()
 		memoryIncomplete := !memoryHoldsGap(lastReadTime.Time.UnixNano(), lastEvictedTsNs)
-		diskExhausted := processedTsNs == 0 && errors.Is(readInMemoryLogErr, log_buffer.ResumeFromDiskError)
+		diskExhausted := !diskReadAdvanced(processedTsNs, lastReadTime) && errors.Is(readInMemoryLogErr, log_buffer.ResumeFromDiskError)
 		if memoryIncomplete || diskExhausted {
 			if advanceToTsNs, advance := resolveAggregatedGapResume(lastReadTime.Time.UnixNano(), earliestTime.UnixNano(), lastEvictedTsNs); advance {
 				gapStall.resumed()
@@ -649,7 +659,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 			// Update the last checked flushed time
 			lastCheckedFlushTsNs = currentFlushTsNs
 
-			if processedTsNs != 0 {
+			if diskReadAdvanced(processedTsNs, lastReadTime) {
 				gapStall.resumed()
 				lastReadTime = log_buffer.NewMessagePosition(processedTsNs, -2)
 			} else {

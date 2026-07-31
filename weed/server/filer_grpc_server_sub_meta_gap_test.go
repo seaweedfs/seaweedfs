@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 )
 
 // TestResolveAggregatedGapResume pins the gap-skip fix on the aggregated
@@ -330,5 +331,30 @@ func TestGapResumeCursorOffsetIsSentinel(t *testing.T) {
 	if gapResumeCursorOffset > 0 {
 		t.Fatalf("gapResumeCursorOffset = %d, want a sentinel (<= 0) or the memory read refuses every gap resume",
 			gapResumeCursorOffset)
+	}
+}
+
+// TestDiskReadAdvancedRequiresForwardProgress pins that a persisted read only
+// counts as progress when it actually moves the cursor. A chunk-ref read
+// reports the minute-level name of the last file it shipped, clamped so it
+// never rewinds, so it comes back non-zero while naming the position that was
+// already current -- and a subscriber parked on a gap it keeps re-shipping the
+// same refs for would clear its stall timer on every retry and never reach the
+// bound that is supposed to end it.
+func TestDiskReadAdvancedRequiresForwardProgress(t *testing.T) {
+	cursorTsNs := time.Date(2026, 6, 29, 12, 31, 10, 0, time.UTC).UnixNano()
+	cursor := log_buffer.NewMessagePosition(cursorTsNs, gapResumeCursorOffset)
+
+	if diskReadAdvanced(0, cursor) {
+		t.Fatal("an empty disk read is not progress")
+	}
+	if diskReadAdvanced(cursorTsNs, cursor) {
+		t.Fatal("a read reporting the position already held is not progress")
+	}
+	if diskReadAdvanced(cursorTsNs-1, cursor) {
+		t.Fatal("a read reporting an earlier position is not progress")
+	}
+	if !diskReadAdvanced(cursorTsNs+1, cursor) {
+		t.Fatal("a read that moves the cursor forward is progress")
 	}
 }
