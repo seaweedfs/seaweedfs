@@ -190,65 +190,80 @@ func TestInclusiveDiskCursorOnWatermarkStillAdvances(t *testing.T) {
 	}
 }
 
-// TestWaitOnGapExits pins every way a park has to end. The park is where a
-// stalled subscriber spends all its time and it never re-enters the main loop,
-// so any exit the loop relies on has to be honored here as well.
-func TestWaitOnGapExits(t *testing.T) {
+// TestParkOnGapExits pins every way a park has to end. The park is where a
+// stalled subscriber spends all its time and it never re-enters the read loop,
+// so any exit the loop relies on has to be honored here as well - and the done
+// exits must run before the reporter marks the stream parked, or a healthy
+// completion leaves a phantom "still behind" trace.
+func TestParkOnGapExits(t *testing.T) {
 	fs := &FilerServer{knownListeners: map[int32]int32{7: 3}}
 	req := &filer_pb.SubscribeMetadataRequest{ClientId: 7, ClientEpoch: 3}
-	cursor := time.Now().UnixNano()
+	cursorTs := time.Now().UnixNano()
+	cursor := log_buffer.NewMessagePosition(cursorTs, -2)
+	noEviction := func() int64 { return 0 }
+	newStall := func() *gapStallReporter {
+		return &gapStallReporter{scope: "aggregated", clientName: "c", pathPrefix: "/"}
+	}
 
 	t.Run("retries on the timer with no notification channel", func(t *testing.T) {
+		gapStall := newStall()
+		defer gapStall.resumed()
 		start := time.Now()
-		if got := fs.waitOnGap(context.Background(), req, cursor, nil, 0); got != gapWaitRetry {
-			t.Fatalf("outcome = %v, want retry", got)
+		_, skip, done := fs.parkOnGap(context.Background(), req, gapStall, noEviction, cursor, nil, "test")
+		if skip || done {
+			t.Fatalf("skip=%v done=%v, want a plain retry", skip, done)
 		}
 		if elapsed := time.Since(start); elapsed < unflushedGapRetryInterval {
 			t.Fatalf("returned after %v, want the full %v retry interval", elapsed, unflushedGapRetryInterval)
 		}
 	})
 
-	t.Run("a replaced client ends the stream", func(t *testing.T) {
+	t.Run("a replaced client ends the stream without parking", func(t *testing.T) {
 		// A reconnect at a higher epoch supersedes this stream; without this the
 		// old one keeps scanning the filer store until its TCP connection dies.
+		gapStall := newStall()
 		superseded := &filer_pb.SubscribeMetadataRequest{ClientId: 7, ClientEpoch: 2}
-		if got := fs.waitOnGap(context.Background(), superseded, cursor, nil, 0); got != gapWaitDone {
-			t.Fatalf("outcome = %v, want done", got)
+		if _, _, done := fs.parkOnGap(context.Background(), superseded, gapStall, noEviction, cursor, nil, "test"); !done {
+			t.Fatal("want done")
+		}
+		if !gapStall.since.IsZero() {
+			t.Fatal("a finished stream must not be marked parked")
 		}
 	})
 
-	t.Run("a bounded subscription past its window ends the stream", func(t *testing.T) {
-		// LoopProcessLogData is the only place UntilNs ends a stream and it is
-		// unreachable from a park, so `weed shell fs.verify` would hang here.
-		bounded := &filer_pb.SubscribeMetadataRequest{ClientId: 7, ClientEpoch: 3, UntilNs: cursor - 1}
-		if got := fs.waitOnGap(context.Background(), bounded, cursor, nil, 0); got != gapWaitDone {
-			t.Fatalf("outcome = %v, want done", got)
+	t.Run("a bounded subscription past its window ends without parking", func(t *testing.T) {
+		gapStall := newStall()
+		bounded := &filer_pb.SubscribeMetadataRequest{ClientId: 7, ClientEpoch: 3, UntilNs: cursorTs - 1}
+		if _, _, done := fs.parkOnGap(context.Background(), bounded, gapStall, noEviction, cursor, nil, "test"); !done {
+			t.Fatal("want done")
+		}
+		if !gapStall.since.IsZero() {
+			t.Fatal("a finished stream must not be marked parked")
 		}
 	})
 
-	t.Run("a bounded subscription exactly at its window ends the stream", func(t *testing.T) {
+	t.Run("a bounded subscription exactly at its window ends without parking", func(t *testing.T) {
 		// The bound is inclusive and cursors are exclusive: a disk read whose
 		// last entry sits exactly on UntilNs leaves the cursor there with
-		// everything <= UntilNs delivered. Parking would make fs.verify hang
-		// and then fail on a healthy cluster.
-		bounded := &filer_pb.SubscribeMetadataRequest{ClientId: 7, ClientEpoch: 3, UntilNs: cursor}
-		if got := fs.waitOnGap(context.Background(), bounded, cursor, nil, 0); got != gapWaitDone {
-			t.Fatalf("outcome = %v, want done", got)
+		// everything <= UntilNs delivered. Parking would make fs.verify hang.
+		gapStall := newStall()
+		bounded := &filer_pb.SubscribeMetadataRequest{ClientId: 7, ClientEpoch: 3, UntilNs: cursorTs}
+		if _, _, done := fs.parkOnGap(context.Background(), bounded, gapStall, noEviction, cursor, nil, "test"); !done {
+			t.Fatal("want done")
 		}
-	})
-
-	t.Run("a stall past the bound fails the stream", func(t *testing.T) {
-		if got := fs.waitOnGap(context.Background(), req, cursor, nil, maxGapStall); got != gapWaitStalled {
-			t.Fatalf("outcome = %v, want stalled", got)
+		if !gapStall.since.IsZero() {
+			t.Fatal("a finished stream must not be marked parked")
 		}
 	})
 
 	t.Run("a cancelled stream ends promptly", func(t *testing.T) {
+		gapStall := newStall()
+		defer gapStall.resumed()
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		start := time.Now()
-		if got := fs.waitOnGap(ctx, req, cursor, nil, 0); got != gapWaitDone {
-			t.Fatalf("outcome = %v, want done", got)
+		if _, _, done := fs.parkOnGap(ctx, req, gapStall, noEviction, cursor, nil, "test"); !done {
+			t.Fatal("want done")
 		}
 		if elapsed := time.Since(start); elapsed >= unflushedGapRetryInterval {
 			t.Fatalf("took %v, want well under the %v retry interval", elapsed, unflushedGapRetryInterval)
@@ -258,11 +273,14 @@ func TestWaitOnGapExits(t *testing.T) {
 	t.Run("a closed notification channel does not spin", func(t *testing.T) {
 		// A receive on a closed channel returns instantly forever; selecting on
 		// it without checking would burn a core until the retry timer fires.
+		gapStall := newStall()
+		defer gapStall.resumed()
 		closed := make(chan struct{})
 		close(closed)
 		start := time.Now()
-		if got := fs.waitOnGap(context.Background(), req, cursor, closed, 0); got != gapWaitRetry {
-			t.Fatalf("outcome = %v, want retry", got)
+		_, skip, done := fs.parkOnGap(context.Background(), req, gapStall, noEviction, cursor, closed, "test")
+		if skip || done {
+			t.Fatalf("skip=%v done=%v, want a plain retry", skip, done)
 		}
 		if elapsed := time.Since(start); elapsed < unflushedGapRetryInterval {
 			t.Fatalf("returned after %v, want the timer to pace it to %v", elapsed, unflushedGapRetryInterval)
@@ -270,11 +288,14 @@ func TestWaitOnGapExits(t *testing.T) {
 	})
 
 	t.Run("a notification wakes it early", func(t *testing.T) {
+		gapStall := newStall()
+		defer gapStall.resumed()
 		notify := make(chan struct{}, 1)
 		notify <- struct{}{}
 		start := time.Now()
-		if got := fs.waitOnGap(context.Background(), req, cursor, notify, 0); got != gapWaitRetry {
-			t.Fatalf("outcome = %v, want retry", got)
+		_, skip, done := fs.parkOnGap(context.Background(), req, gapStall, noEviction, cursor, notify, "test")
+		if skip || done {
+			t.Fatalf("skip=%v done=%v, want a plain retry", skip, done)
 		}
 		if elapsed := time.Since(start); elapsed >= unflushedGapRetryInterval {
 			t.Fatalf("took %v, want well under the %v retry interval", elapsed, unflushedGapRetryInterval)
@@ -406,7 +427,7 @@ func TestParkOnGapStallOutcomes(t *testing.T) {
 		gapStall.since = time.Now().Add(-maxGapStall)
 
 		before := crossings()
-		skipTo, skip, done := fs.parkOnGap(context.Background(), req, gapStall, lb, cursor, nil, "test")
+		skipTo, skip, done := fs.parkOnGap(context.Background(), req, gapStall, lb.GetLastEvictedTsNs, cursor, nil, "test")
 		if done || !skip {
 			t.Fatalf("skip=%v done=%v, want a forced skip", skip, done)
 		}
@@ -429,7 +450,7 @@ func TestParkOnGapStallOutcomes(t *testing.T) {
 		defer gapStall.close() // release the gauge this test's park holds
 
 		before := crossings()
-		_, skip, done := fs.parkOnGap(context.Background(), req, gapStall, lb, cursor, nil, "test")
+		_, skip, done := fs.parkOnGap(context.Background(), req, gapStall, lb.GetLastEvictedTsNs, cursor, nil, "test")
 		if skip || done {
 			t.Fatalf("skip=%v done=%v, want neither: nothing is being lost", skip, done)
 		}

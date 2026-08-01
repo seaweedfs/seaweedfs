@@ -352,35 +352,49 @@ func (r *gapStallReporter) close() {
 	r.since = time.Time{}
 }
 
-// gapWaitOutcome says how a park ended.
-type gapWaitOutcome int
-
-const (
-	gapWaitRetry   gapWaitOutcome = iota // re-probe disk
-	gapWaitDone                          // the stream is finished; return nil
-	gapWaitStalled                       // stalled past maxGapStall; give up on the gap
-)
-
-// waitOnGap parks a subscriber that cannot read past a gap. notifyChan may be
-// nil, which parks on the retry timer alone - the right choice when no local
-// signal corresponds to the event being waited for. The park is where a stalled
-// subscriber spends all its time, so every exit the main loop relies on has to
-// be checked here too: the loop below it is never reached while parked.
-func (fs *FilerServer) waitOnGap(ctx context.Context, req *filer_pb.SubscribeMetadataRequest, cursorTsNs int64, notifyChan <-chan struct{}, stalledFor time.Duration) gapWaitOutcome {
-	// A bounded subscription whose window is already behind the gap is finished:
-	// LoopProcessLogData, the only place UntilNs ends a stream, is not reachable
-	// from here. The bound is inclusive and cursors are exclusive, so a cursor
-	// sitting exactly on UntilNs has already delivered everything <= it.
-	if req.UntilNs != 0 && cursorTsNs >= req.UntilNs {
-		return gapWaitDone
+// parkOnGap parks the subscriber on a gap it cannot read past and reports how
+// to go on. done: the stream is over - the client is gone, a bounded
+// subscription is complete, or the context ended. skip: the park outlived
+// maxGapStall and the caller must resume at skipToTsNs, abandoning the gap
+// (recorded via gaveUp). Otherwise the caller re-probes. notifyChan may be nil,
+// which parks on the retry timer alone - right when no local signal
+// corresponds to the event being waited for. The park is where a stalled
+// subscriber spends all its time, so every exit the read loop relies on has to
+// be checked here too.
+func (fs *FilerServer) parkOnGap(ctx context.Context, req *filer_pb.SubscribeMetadataRequest, gapStall *gapStallReporter, evictedTsNs func() int64, cursor log_buffer.MessagePosition, notifyChan <-chan struct{}, reason string) (skipToTsNs int64, skip bool, done bool) {
+	// The done exits run before park(): a stream that is already finished was
+	// never parked, and marking it so leaves a phantom gauge blip and a false
+	// "disconnected still behind" trace on a healthy completion.
+	//
+	// A bounded subscription whose cursor reached UntilNs is finished:
+	// LoopProcessLogData, the only place UntilNs ends a stream, is unreachable
+	// from here, and the bound is inclusive while cursors are exclusive.
+	if req.UntilNs != 0 && cursor.Time.UnixNano() >= req.UntilNs {
+		return 0, false, true
 	}
 	if !fs.hasClient(req.ClientId, req.ClientEpoch) {
-		return gapWaitDone
+		return 0, false, true
 	}
-	if stalledFor >= maxGapStall {
-		return gapWaitStalled
+	gapStall.park(cursor.Time, reason)
+	if gapStall.stalledFor() >= maxGapStall {
+		// Resume at the eviction watermark: everything retained starts
+		// strictly after it, so the recorded loss is exactly (cursor, skipTo].
+		if evicted := evictedTsNs(); evicted > cursor.Time.UnixNano() {
+			gapStall.gaveUp(cursor.Time, evicted, reason)
+			return evicted, true, false
+		}
+		// Nothing was withheld past the cursor - nothing to skip, nothing being
+		// lost; keep waiting on a fresh stall cycle.
+		gapStall.restartStall(cursor.Time, reason)
 	}
-	retry := time.After(unflushedGapRetryInterval)
+	// Re-probes back off as the stall ages: every retry re-reads the persisted
+	// log, and probing the store each 2s for 15 minutes - per parked subscriber,
+	// during the outage that parked them - makes the bad time worse.
+	waitFor := unflushedGapRetryInterval + gapStall.stalledFor()/8
+	if waitFor > gapStallWarnInterval {
+		waitFor = gapStallWarnInterval
+	}
+	retry := time.After(waitFor)
 	for {
 		select {
 		case _, ok := <-notifyChan:
@@ -391,38 +405,14 @@ func (fs *FilerServer) waitOnGap(ctx context.Context, req *filer_pb.SubscribeMet
 				continue
 			}
 		case <-ctx.Done():
-			return gapWaitDone
+			return 0, false, true
 		case <-retry:
 		}
 		if !fs.hasClient(req.ClientId, req.ClientEpoch) {
-			return gapWaitDone
+			return 0, false, true
 		}
-		return gapWaitRetry
+		return 0, false, false
 	}
-}
-
-// parkOnGap parks the subscriber on a gap it cannot read past and reports how
-// to go on. done means the stream is over: the client is gone, a bounded
-// subscription is complete, or the context ended. skip means the park outlived
-// maxGapStall and the caller must resume at skipToTsNs, abandoning the gap -
-// recorded via gaveUp. Otherwise the caller re-probes.
-func (fs *FilerServer) parkOnGap(ctx context.Context, req *filer_pb.SubscribeMetadataRequest, gapStall *gapStallReporter, lb *log_buffer.LogBuffer, cursor log_buffer.MessagePosition, notifyChan <-chan struct{}, reason string) (skipToTsNs int64, skip bool, done bool) {
-	gapStall.park(cursor.Time, reason)
-	switch fs.waitOnGap(ctx, req, cursor.Time.UnixNano(), notifyChan, gapStall.stalledFor()) {
-	case gapWaitDone:
-		return 0, false, true
-	case gapWaitStalled:
-		// Resume at the eviction watermark: everything retained starts
-		// strictly after it, so the recorded loss is exactly (cursor, skipTo].
-		if evictedTsNs := lb.GetLastEvictedTsNs(); evictedTsNs > cursor.Time.UnixNano() {
-			gapStall.gaveUp(cursor.Time, evictedTsNs, reason)
-			return evictedTsNs, true, false
-		}
-		// Nothing was withheld past the cursor - there is nothing to skip and
-		// nothing being lost; keep waiting on a fresh stall cycle.
-		gapStall.restartStall(cursor.Time, reason)
-	}
-	return 0, false, false
 }
 
 // resolveGapResume decides whether a subscriber may skip a gap its disk read
@@ -594,7 +584,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 				// so this wait is paced by the timer alone.
 				reason := fmt.Sprintf("gap evicted through %v is not on a peer's disk yet (earliest memory %v)",
 					time.Unix(0, lastEvictedTsNs), earliestTime)
-				if skipTo, skip, done := fs.parkOnGap(ctx, req, gapStall, fs.filer.MetaAggregator.MetaLogBuffer, lastReadTime, nil, reason); done {
+				if skipTo, skip, done := fs.parkOnGap(ctx, req, gapStall, fs.filer.MetaAggregator.MetaLogBuffer.GetLastEvictedTsNs, lastReadTime, nil, reason); done {
 					return nil
 				} else if skip {
 					lastReadTime = log_buffer.NewMessagePosition(skipTo, gapResumeCursorOffset)
@@ -612,7 +602,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 				lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, gapResumeCursorOffset)
 				readInMemoryLogErr = nil
 			} else {
-				if skipTo, skip, done := fs.parkOnGap(ctx, req, gapStall, fs.filer.MetaAggregator.MetaLogBuffer, lastReadTime, aggNotifyChan, "aggregated buffer has no readable entries yet"); done {
+				if skipTo, skip, done := fs.parkOnGap(ctx, req, gapStall, fs.filer.MetaAggregator.MetaLogBuffer.GetLastEvictedTsNs, lastReadTime, aggNotifyChan, "aggregated buffer has no readable entries yet"); done {
 					return nil
 				} else if skip {
 					lastReadTime = log_buffer.NewMessagePosition(skipTo, gapResumeCursorOffset)
@@ -811,7 +801,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 			} else {
 				reason := fmt.Sprintf("gap is not flushed yet (earliest memory %v, flushed through %v)",
 					earliestTime, time.Unix(0, lastCheckedFlushTsNs))
-				if skipTo, skip, done := fs.parkOnGap(ctx, req, gapStall, fs.filer.LocalMetaLogBuffer, lastReadTime, localFlushChan, reason); done {
+				if skipTo, skip, done := fs.parkOnGap(ctx, req, gapStall, fs.filer.LocalMetaLogBuffer.GetLastEvictedTsNs, lastReadTime, localFlushChan, reason); done {
 					return nil
 				} else if skip {
 					lastReadTime = log_buffer.NewMessagePosition(skipTo, gapResumeCursorOffset)
@@ -831,7 +821,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 			} else {
 				reason := fmt.Sprintf("memory refuses the cursor (earliest memory %v, flushed through %v)",
 					earliestTime, time.Unix(0, lastCheckedFlushTsNs))
-				if skipTo, skip, done := fs.parkOnGap(ctx, req, gapStall, fs.filer.LocalMetaLogBuffer, lastReadTime, localFlushChan, reason); done {
+				if skipTo, skip, done := fs.parkOnGap(ctx, req, gapStall, fs.filer.LocalMetaLogBuffer.GetLastEvictedTsNs, lastReadTime, localFlushChan, reason); done {
 					return nil
 				} else if skip {
 					lastReadTime = log_buffer.NewMessagePosition(skipTo, gapResumeCursorOffset)
