@@ -19,6 +19,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blockblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/container"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
@@ -382,6 +383,39 @@ func (az *azureRemoteStorageClient) WriteDirectory(loc *remote_pb.RemoteStorageL
 }
 
 func (az *azureRemoteStorageClient) RemoveDirectory(loc *remote_pb.RemoteStorageLocation) (err error) {
+	// the trailing slash keeps sibling prefixes that share the name intact
+	prefix := loc.Path[1:]
+	if prefix != "" && !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+	if prefix == "" {
+		// the mount root maps to the whole container; wiping every blob from a
+		// single namespace event is too destructive, so keep them
+		glog.Warningf("azure %s: skip removing directory mapped to the container root", loc.Bucket)
+		return nil
+	}
+
+	containerClient := az.client.ServiceClient().NewContainerClient(loc.Bucket)
+	pager := containerClient.NewListBlobsFlatPager(&container.ListBlobsFlatOptions{
+		Prefix: &prefix,
+	})
+	for pager.More() {
+		resp, pageErr := pager.NextPage(context.Background())
+		if pageErr != nil {
+			return fmt.Errorf("azure list %s/%s: %w", loc.Bucket, prefix, pageErr)
+		}
+		for _, blobItem := range resp.Segment.BlobItems {
+			if blobItem.Name == nil {
+				continue
+			}
+			_, delErr := containerClient.NewBlobClient(*blobItem.Name).Delete(context.Background(), &blob.DeleteOptions{
+				DeleteSnapshots: to.Ptr(blob.DeleteSnapshotsOptionTypeInclude),
+			})
+			if delErr != nil && !bloberror.HasCode(delErr, bloberror.BlobNotFound) {
+				return fmt.Errorf("azure delete %s/%s: %w", loc.Bucket, *blobItem.Name, delErr)
+			}
+		}
+	}
 	return nil
 }
 

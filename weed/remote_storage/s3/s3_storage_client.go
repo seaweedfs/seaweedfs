@@ -285,6 +285,55 @@ func (s *s3RemoteStorageClient) WriteDirectory(loc *remote_pb.RemoteStorageLocat
 }
 
 func (s *s3RemoteStorageClient) RemoveDirectory(loc *remote_pb.RemoteStorageLocation) (err error) {
+	// the trailing slash keeps sibling prefixes that share the name intact
+	prefix := loc.Path[1:]
+	if prefix != "" && !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+	if prefix == "" {
+		// the mount root maps to the whole bucket; wiping every object from a
+		// single namespace event is too destructive, so keep them
+		glog.Warningf("s3 %s: skip removing directory mapped to the bucket root", loc.Bucket)
+		return nil
+	}
+
+	listInput := &s3.ListObjectsV2Input{
+		Bucket: aws.String(loc.Bucket),
+		Prefix: aws.String(prefix),
+	}
+	var deleteErr error
+	listErr := s.conn.ListObjectsV2Pages(listInput, func(page *s3.ListObjectsV2Output, lastPage bool) bool {
+		var objects []*s3.ObjectIdentifier
+		for _, content := range page.Contents {
+			objects = append(objects, &s3.ObjectIdentifier{Key: content.Key})
+		}
+		if len(objects) == 0 {
+			return true
+		}
+		// a listing page holds at most 1000 keys, the DeleteObjects limit
+		resp, batchErr := s.conn.DeleteObjects(&s3.DeleteObjectsInput{
+			Bucket: aws.String(loc.Bucket),
+			Delete: &s3.Delete{
+				Objects: objects,
+				Quiet:   aws.Bool(true),
+			},
+		})
+		if batchErr != nil {
+			deleteErr = batchErr
+			return false
+		}
+		for _, failed := range resp.Errors {
+			deleteErr = fmt.Errorf("delete %s: %s %s", aws.StringValue(failed.Key), aws.StringValue(failed.Code), aws.StringValue(failed.Message))
+			return false
+		}
+		return true
+	})
+	if listErr != nil {
+		return fmt.Errorf("list %s/%s: %w", loc.Bucket, prefix, listErr)
+	}
+	if deleteErr != nil {
+		return fmt.Errorf("remove directory %s/%s: %w", loc.Bucket, prefix, deleteErr)
+	}
 	return nil
 }
 
