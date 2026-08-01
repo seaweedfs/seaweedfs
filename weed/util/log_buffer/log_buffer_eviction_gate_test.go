@@ -233,3 +233,42 @@ func TestFlushSubscriberContract(t *testing.T) {
 	lb.UnregisterFlushSubscriber("s")
 	lb.UnregisterFlushSubscriber("never-registered")
 }
+
+// TestEvictionGatedCursor pins the gated sentinel: below the eviction watermark
+// it is refused to disk under the read's own lock - the only place the check is
+// atomic with the serve decision - while the plain -2 sentinel keeps master's
+// serve-from-earliest behavior for the message queue's readers.
+func TestEvictionGatedCursor(t *testing.T) {
+	lb := NewLogBuffer("gated-cursor", time.Minute, nil, nil, nil)
+	defer lb.ShutdownLogBuffer()
+
+	// Entries far enough apart that every append seals the window before it;
+	// wrapping the ring moves the watermark for real.
+	base := time.Now().Add(-time.Hour).Truncate(time.Second)
+	for i := 0; i < PreviousBufferCount+2; i++ {
+		if err := lb.AddLogEntryToBuffer(&filer_pb.LogEntry{
+			TsNs: base.Add(time.Duration(i) * 2 * time.Minute).UnixNano(), Data: []byte("x"), Key: []byte("k"),
+		}); err != nil {
+			t.Fatalf("add %d: %v", i, err)
+		}
+	}
+	evicted := lb.GetLastEvictedTsNs()
+	if evicted == 0 {
+		t.Fatal("precondition: the ring evicted nothing")
+	}
+
+	// Below the watermark: gated goes to disk, -2 keeps serving (MQ contract).
+	if _, _, _, err := lb.ReadFromBuffer(NewMessagePosition(evicted-1, EvictionGatedOffset)); err != ResumeFromDiskError {
+		t.Fatalf("gated below watermark: want ResumeFromDiskError, got %v", err)
+	}
+	if buf, _, _, err := lb.ReadFromBuffer(NewMessagePosition(evicted-1, -2)); err != nil || buf == nil {
+		t.Fatalf("plain sentinel below watermark: buf=%v err=%v, master behavior must hold", buf != nil, err)
+	}
+	// At and above the watermark the gated cursor serves normally.
+	if buf, _, _, err := lb.ReadFromBuffer(NewMessagePosition(evicted, EvictionGatedOffset)); err != nil || buf == nil {
+		t.Fatalf("gated at watermark: buf=%v err=%v", buf != nil, err)
+	}
+	if buf, _, _, err := lb.ReadFromBuffer(NewMessagePosition(evicted+1, EvictionGatedOffset)); err != nil || buf == nil {
+		t.Fatalf("gated above watermark: buf=%v err=%v", buf != nil, err)
+	}
+}

@@ -19,6 +19,14 @@ import (
 const BufferSize = 8 * 1024 * 1024
 const PreviousBufferCount = 4
 
+// EvictionGatedOffset is a sentinel cursor offset (-2..-6 are taken by other
+// sentinels) that reads like the plain -2 sentinel except below the eviction
+// watermark: there ReadFromBuffer refuses with ResumeFromDiskError instead of
+// silently serving from the earliest retained window. The check runs under the
+// read lock, atomically with the serve decision, which callers cannot do from
+// outside - an eviction can land between any caller-side check and the read.
+const EvictionGatedOffset = -7
+
 // flushQueueDepth bounds queued flush copies (BufferSize each); a full queue
 // blocks producers, so a stalled flush backpressures writers instead of
 // pinning hundreds of buffer copies.
@@ -895,6 +903,11 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 		// For time-based reads, only check timestamp for disk reads
 		// Don't use offset comparisons as they're not meaningful for time-based subscriptions
 
+		// A gated cursor below the eviction watermark must go to disk: serving it
+		// from the earliest retained window would silently skip the evicted span.
+		if lastReadPosition.Offset == EvictionGatedOffset && lastReadPosition.Time.UnixNano() < logBuffer.lastEvictedTsNs.Load() {
+			return nil, -2, false, ResumeFromDiskError
+		}
 		// Special case: If requested time is zero (Unix epoch), treat as "start from beginning"
 		// This handles queries that want to read all data without knowing the exact start time
 		if lastReadPosition.Time.IsZero() || lastReadPosition.Time.Unix() == 0 {

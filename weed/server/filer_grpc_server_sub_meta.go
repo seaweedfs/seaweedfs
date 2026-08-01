@@ -231,13 +231,12 @@ func diskReadAdvanced(processedTsNs int64, cursor log_buffer.MessagePosition) bo
 	return processedTsNs != 0 && processedTsNs > cursor.Time.UnixNano()
 }
 
-// gapResumeCursorOffset is the sentinel offset a gap resume carries. It has to
-// be one ReadFromBuffer will serve: that read only falls through to memory for
-// a cursor below the in-memory window when the offset is a sentinel, and hands
-// back ResumeFromDiskError for every positive one. A resume the memory read
-// then refuses would bounce straight back to the gap resolver, which sees no
-// progress and parks a subscriber whose data is sitting in the ring.
-const gapResumeCursorOffset = -2
+// gapResumeCursorOffset marks every cursor these loops hand to the memory
+// read. The gated sentinel reads inclusively like -2, but below the eviction
+// watermark ReadFromBuffer refuses it under its own lock instead of silently
+// serving from the earliest retained window - closing the race where a seal
+// lands between this loop's watermark check and the read.
+const gapResumeCursorOffset = log_buffer.EvictionGatedOffset
 
 // memoryHoldsGap reports whether the retained ring still holds every entry after
 // the cursor, i.e. nothing after it was evicted.
@@ -470,7 +469,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		fs.deleteClient("", clientName, req.ClientId, req.ClientEpoch)
 	}()
 
-	lastReadTime := log_buffer.NewMessagePosition(req.SinceNs, -2)
+	lastReadTime := log_buffer.NewMessagePosition(req.SinceNs, gapResumeCursorOffset)
 	glog.V(0).Infof(" %v starts to subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
 	sender := newPipelinedSender(stream, 1024, req.ClientSupportsBatching)
@@ -545,12 +544,12 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		if diskAdvanced {
 			gapStall.resumed()
 			reportUnprovenAggregatedCrossing(cursorBeforeDiskTsNs, processedTsNs, lastEvictedTsNs, clientName, req.PathPrefix)
-			lastReadTime = log_buffer.NewMessagePosition(processedTsNs, -2)
+			lastReadTime = log_buffer.NewMessagePosition(processedTsNs, gapResumeCursorOffset)
 		} else if readInMemoryLogErr == nil {
 			// Nothing on disk and memory never spoke: scan forward for the next
 			// day that has logs.
 			nextDayTs := util.GetNextDayTsNano(lastReadTime.Time.UnixNano())
-			position := log_buffer.NewMessagePosition(nextDayTs, -2)
+			position := log_buffer.NewMessagePosition(nextDayTs, gapResumeCursorOffset)
 			found, err := fs.filer.HasPersistedLogFiles(position)
 			if err != nil {
 				return fmt.Errorf("checking persisted log files: %w", err)
@@ -680,7 +679,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 		fs.deleteClient("local", clientName, req.ClientId, req.ClientEpoch)
 	}()
 
-	lastReadTime := log_buffer.NewMessagePosition(req.SinceNs, -2)
+	lastReadTime := log_buffer.NewMessagePosition(req.SinceNs, gapResumeCursorOffset)
 	glog.V(0).Infof(" + %v local subscribe %s from %+v clientId:%d", clientName, req.PathPrefix, lastReadTime, req.ClientId)
 
 	sender := newPipelinedSender(stream, 1024, req.ClientSupportsBatching)
@@ -762,12 +761,12 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 			diskAdvanced = diskReadAdvanced(processedTsNs, lastReadTime)
 			if diskAdvanced {
 				gapStall.resumed()
-				lastReadTime = log_buffer.NewMessagePosition(processedTsNs, -2)
+				lastReadTime = log_buffer.NewMessagePosition(processedTsNs, gapResumeCursorOffset)
 			} else if readInMemoryLogErr == nil {
 				// Nothing on disk and memory never spoke: scan forward for the
 				// next day that has logs.
 				nextDayTs := util.GetNextDayTsNano(lastReadTime.Time.UnixNano())
-				position := log_buffer.NewMessagePosition(nextDayTs, -2)
+				position := log_buffer.NewMessagePosition(nextDayTs, gapResumeCursorOffset)
 				found, err := fs.filer.HasPersistedLogFiles(position)
 				if err != nil {
 					return fmt.Errorf("checking persisted log files: %w", err)
