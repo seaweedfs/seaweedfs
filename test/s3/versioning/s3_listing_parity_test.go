@@ -41,6 +41,9 @@ func currentKeysAndPrefixes(t *testing.T, client *s3.Client, bucket, prefix, del
 	}
 	resp, err := client.ListObjectsV2(context.TODO(), in)
 	require.NoError(t, err)
+	// One page only. A truncated response would silently compare partial results
+	// against partial results and report parity that was never checked.
+	require.False(t, aws.ToBool(resp.IsTruncated), "test data must fit one page")
 
 	var keys, prefixes []string
 	for _, o := range resp.Contents {
@@ -67,9 +70,16 @@ func currentKeysAndPrefixesFromVersions(t *testing.T, client *s3.Client, bucket,
 	}
 	resp, err := client.ListObjectVersions(context.TODO(), in)
 	require.NoError(t, err)
+	require.False(t, aws.ToBool(resp.IsTruncated), "test data must fit one page")
 
 	// Reduce the version view to the same thing ListObjects reports: keys whose
 	// current version is real content, not a delete marker.
+	//
+	// Delete markers are only visible here as individual entries. Under a
+	// delimiter, keys grouped into a common prefix do not appear individually, so
+	// this cannot tell that every key beneath a prefix is delete-marked — such a
+	// prefix stays in the returned list. Comparisons that need that case must
+	// query the prefix directly rather than relying on the grouped view.
 	deleted := make(map[string]bool)
 	for _, m := range resp.DeleteMarkers {
 		if m.Key != nil && m.IsLatest != nil && *m.IsLatest {
@@ -198,5 +208,63 @@ func TestListingParityAfterPrefixEmptied(t *testing.T) {
 	// listings agree about it, and only the latter is under test here.
 	assert.Equal(t, plainKeys, versionKeys, "listings disagree on remaining keys after the prefix was emptied")
 	assert.Equal(t, plainPrefixes, versionPrefixes, "listings disagree on remaining common prefixes after the prefix was emptied")
+	// Asserted on both sides rather than leaning on the equality above to catch a
+	// divergence in whichever direction it happens.
 	assert.Empty(t, plainKeys, "no current keys should remain once every version is gone")
+	assert.Empty(t, versionKeys, "no current keys should remain once every version is gone")
+}
+
+// The other way a key stops being current: a delete marker rather than removal of
+// the version. Both listings must drop the key while its history stays intact.
+func TestListingParityAfterDeleteMarker(t *testing.T) {
+	client := getS3Client(t)
+	bucketName := getNewBucketName()
+
+	createBucket(t, client, bucketName)
+	defer deleteBucket(t, client, bucketName)
+	enableVersioning(t, client, bucketName)
+
+	const marked = "backup/archive/001/data.blk"
+	const kept = "backup/archive/002/data.blk"
+	for _, key := range []string{marked, kept} {
+		_, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(key),
+			Body:   bytes.NewReader([]byte("x")),
+		})
+		require.NoError(t, err)
+	}
+
+	// No version id: this layers a delete marker instead of removing the version.
+	_, err := client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(marked),
+	})
+	require.NoError(t, err)
+
+	for _, tc := range []struct{ prefix, delimiter string }{
+		{"backup/archive/", ""},
+		{"backup/archive/001/", "/"},
+		{"backup/archive/001/", ""},
+	} {
+		t.Run(tc.prefix+"|"+tc.delimiter, func(t *testing.T) {
+			plainKeys, plainPrefixes := currentKeysAndPrefixes(t, client, bucketName, tc.prefix, tc.delimiter)
+			versionKeys, versionPrefixes := currentKeysAndPrefixesFromVersions(t, client, bucketName, tc.prefix, tc.delimiter)
+
+			assert.Equal(t, plainKeys, versionKeys,
+				"prefix=%q delimiter=%q: listings disagree on current keys after a delete marker", tc.prefix, tc.delimiter)
+			assert.Equal(t, plainPrefixes, versionPrefixes,
+				"prefix=%q delimiter=%q: listings disagree on common prefixes after a delete marker", tc.prefix, tc.delimiter)
+			assert.NotContains(t, plainKeys, marked, "a delete-marked key is not current")
+		})
+	}
+
+	// The history the marker hides must still be there.
+	versions, err := client.ListObjectVersions(context.TODO(), &s3.ListObjectVersionsInput{
+		Bucket: aws.String(bucketName),
+		Prefix: aws.String(marked),
+	})
+	require.NoError(t, err)
+	assert.Len(t, versions.Versions, 1, "the superseded version must survive its delete marker")
+	assert.Len(t, versions.DeleteMarkers, 1)
 }
