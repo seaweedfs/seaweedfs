@@ -111,16 +111,20 @@ func TestPersistedLogScanStartTsNsMinuteAligned(t *testing.T) {
 	}
 }
 
-// TestLastShippedLogEntryTsNs pins the chunk-mode cursor source: the answer
-// comes from the shipped chunks alone, permanently missing chunks are skipped
-// the way every replay path skips them - a dead volume must not wedge the
-// stream ahead of its transition marker - and a legacy chunk whose records
-// span boundaries falls back to streaming the shipped list itself.
+// TestLastShippedLogEntryTsNs pins the chunk-mode cursor source against the
+// client's reader, which it must mirror: per file the readable prefix - the
+// client stops at the first unreadable chunk and never resumes within the file
+// - and per filer the newest file with content, because the client keeps
+// reading later files after skipping a bad one. A marker past what the client
+// applies loses events; one short only re-ships.
 func TestLastShippedLogEntryTsNs(t *testing.T) {
 	f := &Filer{persistedLogCache: newPersistedLogCache(1 << 20)}
 
 	entry := func(ts int64) *filer_pb.LogEntry { return &filer_pb.LogEntry{TsNs: ts} }
 	chunk := func(id string) *filer_pb.FileChunk { return &filer_pb.FileChunk{FileId: id, Size: 10} }
+	ref := func(fileTsNs int64, chunks ...*filer_pb.FileChunk) *filer_pb.LogFileChunkRef {
+		return &filer_pb.LogFileChunkRef{FilerId: "a", FileTsNs: fileTsNs, Chunks: chunks}
+	}
 
 	byId := map[string]struct {
 		entries []*filer_pb.LogEntry
@@ -129,6 +133,7 @@ func TestLastShippedLogEntryTsNs(t *testing.T) {
 		"good-early": {entries: []*filer_pb.LogEntry{entry(100), entry(200)}},
 		"good-late":  {entries: []*filer_pb.LogEntry{entry(300), entry(400)}},
 		"missing":    {err: fmt.Errorf("volume 7 not found")},
+		"missing2":   {err: fmt.Errorf("volume 8 not found")},
 		"empty":      {},
 	}
 	origLoad := loadLogFileEntriesFn
@@ -138,31 +143,43 @@ func TestLastShippedLogEntryTsNs(t *testing.T) {
 	}
 	defer func() { loadLogFileEntriesFn = origLoad }()
 
-	t.Run("last readable chunk answers", func(t *testing.T) {
-		ts, ok, err := f.LastShippedLogEntryTsNs([]*filer_pb.FileChunk{chunk("good-early"), chunk("good-late")})
-		if err != nil || !ok || ts != 400 {
-			t.Fatalf("ts=%d ok=%v err=%v, want 400", ts, ok, err)
+	t.Run("a fully readable file answers with its tail", func(t *testing.T) {
+		ts, ok := f.lastShippedLogEntryTsNs([]*filer_pb.FileChunk{chunk("good-early"), chunk("good-late")})
+		if !ok || ts != 400 {
+			t.Fatalf("ts=%d ok=%v, want 400", ts, ok)
 		}
 	})
 
-	t.Run("a missing tail walks back instead of failing", func(t *testing.T) {
-		ts, ok, err := f.LastShippedLogEntryTsNs([]*filer_pb.FileChunk{chunk("good-early"), chunk("missing")})
-		if err != nil || !ok || ts != 200 {
-			t.Fatalf("ts=%d ok=%v err=%v, want the previous chunk's 200", ts, ok, err)
+	t.Run("the prefix ends at the first missing chunk", func(t *testing.T) {
+		// The client's reader stops there and never resumes within the file:
+		// answering from the readable suffix would put the marker past entries
+		// the client never applied, losing them permanently.
+		ts, ok := f.lastShippedLogEntryTsNs([]*filer_pb.FileChunk{chunk("good-early"), chunk("missing"), chunk("good-late")})
+		if !ok || ts != 200 {
+			t.Fatalf("ts=%d ok=%v, want the prefix end 200, never the suffix 400", ts, ok)
 		}
 	})
 
-	t.Run("nothing readable is a skip, not an error", func(t *testing.T) {
-		_, ok, err := f.LastShippedLogEntryTsNs([]*filer_pb.FileChunk{chunk("missing"), chunk("empty")})
-		if err != nil || ok {
-			t.Fatalf("ok=%v err=%v, want a clean no-answer", ok, err)
+	t.Run("nothing readable is a clean no-answer", func(t *testing.T) {
+		if _, ok := f.lastShippedLogEntryTsNs([]*filer_pb.FileChunk{chunk("missing"), chunk("empty")}); ok {
+			t.Fatal("want no answer")
+		}
+	})
+
+	t.Run("an entirely missing last file falls back to earlier files", func(t *testing.T) {
+		// The client skips the bad file but has applied the earlier ones;
+		// discarding their progress would rewind the marker to the start
+		// cursor and stall or replay.
+		ts, ok := f.LastShippedLogEntryTsNsForFiler([]*filer_pb.LogFileChunkRef{
+			ref(1000, chunk("good-late")),
+			ref(2000, chunk("missing"), chunk("missing2")),
+		})
+		if !ok || ts != 400 {
+			t.Fatalf("ts=%d ok=%v, want the previous file's 400", ts, ok)
 		}
 	})
 
 	t.Run("spanning records stream the shipped list", func(t *testing.T) {
-		// The chunk refuses standalone decode; the streamed bytes carry two
-		// length-prefixed entries and the fallback must return the last one.
-		byIdIncomplete := chunk("incomplete")
 		origLoad2 := loadLogFileEntriesFn
 		loadLogFileEntriesFn = func(masterClient *wdclient.MasterClient, c *filer_pb.FileChunk) ([]*filer_pb.LogEntry, bool, error) {
 			return nil, false, errLogChunkIncomplete
@@ -177,13 +194,17 @@ func TestLastShippedLogEntryTsNs(t *testing.T) {
 				buf.Write(sizeBuf[:])
 				buf.Write(data)
 			}
+			// A torn trailing size prefix, as a crashed writer leaves it: the
+			// client reads it as a clean end, so the probe must too - failing
+			// here would block the marker forever on data the client accepts.
+			buf.Write([]byte{0x01, 0x02})
 			return &buf
 		}
 		defer func() { loadLogFileEntriesFn = origLoad2; newLogFileStreamReader = origStream }()
 
-		ts, ok, err := f.LastShippedLogEntryTsNs([]*filer_pb.FileChunk{byIdIncomplete})
-		if err != nil || !ok || ts != 600 {
-			t.Fatalf("ts=%d ok=%v err=%v, want the streamed tail 600", ts, ok, err)
+		ts, ok := f.lastShippedLogEntryTsNs([]*filer_pb.FileChunk{chunk("incomplete")})
+		if !ok || ts != 600 {
+			t.Fatalf("ts=%d ok=%v, want the streamed tail 600 past the torn prefix", ts, ok)
 		}
 	})
 }

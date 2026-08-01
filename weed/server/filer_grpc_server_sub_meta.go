@@ -954,24 +954,19 @@ func (fs *FilerServer) chunkDiskPass(ctx context.Context, sender metadataStreamS
 		return 0, false, err
 	}
 
-	// Shipped content end: the max final-entry timestamp of each filer's last
-	// shipped sequence, read from the shipped chunks alone - a fresh listing
-	// here could see a concurrent append and move the cursor past unshipped
-	// content. Missing chunks are skipped (the client's reader skips them the
-	// same way), so a dead volume cannot wedge the stream ahead of the marker.
+	// Shipped content end, read from the shipped chunks alone - a fresh
+	// listing here could see a concurrent append and move the cursor past
+	// unshipped content. The probe mirrors the client's reader exactly (per
+	// file the readable prefix, per filer the newest file with content), so
+	// the marker never claims events the client will not apply, and it cannot
+	// fail: a dead volume must not block the transition the client waits on.
 	cursorTsNs := startPos.Time.UnixNano()
-	lastRefPerFiler := make(map[string]*filer_pb.LogFileChunkRef, 2)
+	refsPerFiler := make(map[string][]*filer_pb.LogFileChunkRef, 2)
 	for _, ref := range refs {
-		lastRefPerFiler[ref.FilerId] = ref
+		refsPerFiler[ref.FilerId] = append(refsPerFiler[ref.FilerId], ref)
 	}
-	for _, ref := range lastRefPerFiler {
-		tailTsNs, ok, tailErr := fs.filer.LastShippedLogEntryTsNs(ref.Chunks)
-		if tailErr != nil {
-			// Transient: fail the stream before the marker; the reconnect's
-			// fresh sent-state re-ships everything, so nothing is lost.
-			return 0, false, tailErr
-		}
-		if ok && tailTsNs > cursorTsNs {
+	for _, filerRefs := range refsPerFiler {
+		if tailTsNs, ok := fs.filer.LastShippedLogEntryTsNsForFiler(filerRefs); ok && tailTsNs > cursorTsNs {
 			cursorTsNs = tailTsNs
 		}
 	}
