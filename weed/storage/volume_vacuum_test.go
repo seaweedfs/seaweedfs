@@ -397,7 +397,8 @@ type needleInfo struct {
 
 func newRandomNeedle(id uint64) *needle.Needle {
 	n := new(needle.Needle)
-	n.Data = make([]byte, rand.Intn(1024))
+	// never zero bytes: an empty needle writes a size-0 .dat record, indistinguishable from a delete marker
+	n.Data = make([]byte, 1+rand.Intn(1023))
 	rand.Read(n.Data)
 
 	n.Checksum = needle.NewCRC(n.Data)
