@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -521,7 +522,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	var readPersistedLogErr error
 	var readInMemoryLogErr error
 	var isDone bool
-	refsSentAtTsNs := int64(-1) // position refs were last sent for; never re-sent at the same one
+	refsSentAtTsNs := int64(math.MinInt64) // position refs were last sent for; never re-sent at the same one
 
 	for {
 
@@ -730,9 +731,9 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	var readPersistedLogErr error
 	var readInMemoryLogErr error
 	var isDone bool
-	var lastCheckedFlushTsNs int64 = -1 // Track the last flushed time we checked
-	var lastDiskReadTsNs int64 = -1     // Track the last read position we used for disk read
-	refsSentAtTsNs := int64(-1)         // position refs were last sent for; never re-sent at the same one
+	var lastCheckedFlushTsNs int64 = -1    // Track the last flushed time we checked
+	var lastDiskReadTsNs int64 = -1        // Track the last read position we used for disk read
+	refsSentAtTsNs := int64(math.MinInt64) // position refs were last sent for; never re-sent at the same one
 
 	for {
 		// Check if new data has been flushed to disk since last check, or if read position advanced
