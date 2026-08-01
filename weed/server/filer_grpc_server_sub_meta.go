@@ -472,15 +472,12 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 
 	isReplacing, alreadyKnown, clientName := fs.addClient("", req.ClientName, peerAddress, req.PathPrefix, req.ClientId, req.ClientEpoch)
 	if isReplacing {
-		fs.filer.MetaAggregator.ListenersCond.Broadcast() // nudges the subscribers that are waiting
 	} else if alreadyKnown {
-		fs.filer.MetaAggregator.ListenersCond.Broadcast() // nudges the subscribers that are waiting
 		return fmt.Errorf("duplicated subscription detected for client %s id %d", clientName, req.ClientId)
 	}
 	defer func() {
 		glog.V(0).Infof("disconnect %v subscriber %s clientId:%d", clientName, req.PathPrefix, req.ClientId)
 		fs.deleteClient("", clientName, req.ClientId, req.ClientEpoch)
-		fs.filer.MetaAggregator.ListenersCond.Broadcast() // nudges the subscribers that are waiting
 	}()
 
 	lastReadTime := log_buffer.NewMessagePosition(req.SinceNs, -2)
