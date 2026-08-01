@@ -18,7 +18,7 @@ func TestEvictionWatermarkTracksSealedRing(t *testing.T) {
 
 	// Each timestamp is further past the previous window's start than the flush
 	// interval, so every append seals the window before it.
-	base := time.Now().Add(-time.Hour).Truncate(time.Second)
+	base := time.Now().Add(-30 * time.Minute).Truncate(time.Second)
 	step := 2 * time.Minute
 	at := func(i int) time.Time { return base.Add(time.Duration(i) * step) }
 
@@ -148,4 +148,77 @@ func TestGapResumeCursorReadsFromMemory(t *testing.T) {
 	if _, _, _, err := lb.ReadFromBuffer(NewMessagePosition(earliest.UnixNano()-1, 1)); err != ResumeFromDiskError {
 		t.Fatalf("positive-offset cursor below the window: want ResumeFromDiskError, got %v", err)
 	}
+}
+
+// TestFlushSubscriberContract pins what the filer's gap parks rest on: a flush
+// subscriber is woken when a flush lands and the flush watermark is already
+// visible at that moment - loopFlush stores lastFlushTsNs before notifying, so
+// a waiter that re-checks the watermark on wake-up cannot miss the flush that
+// woke it. Appends alone never signal this channel, and unregistering closes
+// it so an abandoned waiter is not stranded.
+func TestFlushSubscriberContract(t *testing.T) {
+	flushed := make(chan struct{}, 16)
+	// A flush interval far longer than the test, so appends never auto-seal a
+	// window and ForceFlush is the only source of flushes: each round then has
+	// exactly one flush, and the token received is known to belong to it.
+	lb := NewLogBuffer("flush-sub", time.Hour,
+		func(logBuffer *LogBuffer, startTime, stopTime time.Time, buf []byte, minOffset, maxOffset int64) {
+			flushed <- struct{}{}
+		}, nil, nil)
+	defer lb.ShutdownLogBuffer()
+
+	ch := lb.RegisterFlushSubscriber("s")
+
+	// An append is not a flush: nothing may arrive on the channel.
+	if err := lb.AddLogEntryToBuffer(&filer_pb.LogEntry{TsNs: time.Now().Add(-31 * time.Minute).UnixNano(), Data: []byte("x"), Key: []byte("k")}); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	select {
+	case <-ch:
+		t.Fatal("an append must not wake a flush subscriber")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	// A flush wakes it, and the watermark is already stored when the wake-up
+	// arrives - the contract the gap parks re-check on. A reordered loopFlush
+	// (notify before store) fails only in the window between the two, so this
+	// runs many tight round-trips: correct ordering passes every one
+	// deterministically, while a reorder gets caught with high probability.
+	base := time.Now().Add(-time.Hour)
+	for i := 0; i < 500; i++ {
+		ts := base.Add(time.Duration(i) * time.Millisecond).UnixNano()
+		if err := lb.AddLogEntryToBuffer(&filer_pb.LogEntry{TsNs: ts, Data: []byte("x"), Key: []byte("k")}); err != nil {
+			t.Fatalf("add round %d: %v", i, err)
+		}
+		go lb.ForceFlush()
+		select {
+		case <-ch:
+			if got := lb.GetLastFlushTsNs(); got < ts {
+				t.Fatalf("round %d: woken with watermark %v short of the flushed entry %v; a waiter re-checking it on wake-up misses the flush that woke it",
+					i, time.Unix(0, got), time.Unix(0, ts))
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("round %d: a flush must wake the flush subscriber", i)
+		}
+		select {
+		case <-flushed:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("round %d: flushFn did not run", i)
+		}
+	}
+
+	// Unregistering closes the channel so an abandoned waiter unblocks.
+	lb.UnregisterFlushSubscriber("s")
+	select {
+	case _, ok := <-ch:
+		if ok {
+			t.Fatal("unregister must close the channel, not send on it")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("unregister must close the channel")
+	}
+
+	// Unknown ids and double unregisters are harmless.
+	lb.UnregisterFlushSubscriber("s")
+	lb.UnregisterFlushSubscriber("never-registered")
 }

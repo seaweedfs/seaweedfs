@@ -600,6 +600,12 @@ func (logBuffer *LogBuffer) loopFlush() {
 		}
 
 		// Wake readers that may be waiting to retry disk reads after the flush lands.
+		// LOAD-BEARING ORDER: the watermark store above must precede these
+		// notifications. A parked filer subscriber re-checks GetLastFlushTsNs on
+		// wake-up and goes back to sleep if it has not moved; notifying first
+		// opens a window where the wake-up looks spurious and the flush that
+		// caused it is only picked up by the retry timer. Not testable from
+		// outside (the window is nanoseconds on this goroutine) - keep the order.
 		if logBuffer.notifyFn != nil {
 			logBuffer.notifyFn()
 		}
