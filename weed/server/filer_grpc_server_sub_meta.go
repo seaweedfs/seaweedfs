@@ -451,6 +451,79 @@ func resolveGapResume(currentTsNs, currentOffset, earliestMemTsNs, flushedTsNs, 
 	return target, true
 }
 
+// gapPass carries what the shared post-disk gap decisions differ by between
+// the two subscribe loops; everything else about them must stay identical, and
+// this PR's history shows they drift when edited separately.
+type gapPass struct {
+	fs        *FilerServer
+	req       *filer_pb.SubscribeMetadataRequest
+	gapStall  *gapStallReporter
+	earliest  func() time.Time
+	evicted   func() int64 // gap-proof watermark; aggregated uses the received-ts space
+	flushed   func() int64 // flush watermark the last disk read observed; aggregated: 0
+	gapChan   <-chan struct{}
+	dataChan  <-chan struct{}
+	gapReason func(earliest time.Time, evictedTsNs int64) string
+}
+
+type gapOutcome int
+
+const (
+	gapProceed  gapOutcome = iota // read memory
+	gapContinue                   // restart the pass
+	gapDone                       // the stream is over
+)
+
+// resolve is the gap decision both loops run between the disk pass and the
+// memory read. A cursor the ring evicted past cannot be served from memory
+// without skipping what was dropped: keep draining the disk if it just moved,
+// skip if a proof says the gap is empty, park otherwise. A cursor memory
+// refused with nothing evicted after it re-arms onto the retained window.
+func (p *gapPass) resolve(ctx context.Context, cursor *log_buffer.MessagePosition, latch *error, diskAdvanced bool) gapOutcome {
+	earliest := p.earliest()
+	evictedTsNs := p.evicted()
+	cursorTsNs := cursor.Time.UnixNano()
+	if !memoryHoldsGap(cursorTsNs, evictedTsNs) {
+		if diskAdvanced {
+			return gapContinue // the disk may hold more of the gap
+		}
+		if advanceToTsNs, advance := resolveGapResume(cursorTsNs, cursor.Offset, earliest.UnixNano(), p.flushed(), evictedTsNs); advance {
+			p.gapStall.resumed()
+			glog.V(3).Infof("%s subscriber %s: gap proven empty, skipping from %v to earliest memory %v",
+				p.gapStall.scope, p.gapStall.clientName, cursor.Time, earliest)
+			*cursor = log_buffer.NewMessagePosition(advanceToTsNs, gapResumeCursorOffset)
+			*latch = nil
+			return gapProceed
+		}
+		return p.park(ctx, cursor, latch, p.gapChan, p.gapReason(earliest, evictedTsNs))
+	}
+	if !diskAdvanced && errors.Is(*latch, log_buffer.ResumeFromDiskError) {
+		// Memory refused the cursor though nothing after it was evicted: its
+		// exclusive offset predates the retained window. Re-arm it onto the
+		// window; failing even that, wait for data.
+		if advanceToTsNs, advance := resolveGapResume(cursorTsNs, cursor.Offset, earliest.UnixNano(), p.flushed(), evictedTsNs); advance {
+			p.gapStall.resumed()
+			*cursor = log_buffer.NewMessagePosition(advanceToTsNs, gapResumeCursorOffset)
+			*latch = nil
+			return gapProceed
+		}
+		return p.park(ctx, cursor, latch, p.dataChan, "no readable in-memory entries yet")
+	}
+	return gapProceed
+}
+
+func (p *gapPass) park(ctx context.Context, cursor *log_buffer.MessagePosition, latch *error, notifyChan <-chan struct{}, reason string) gapOutcome {
+	skipTo, skip, done := p.fs.parkOnGap(ctx, p.req, p.gapStall, p.evicted, *cursor, notifyChan, reason)
+	if done {
+		return gapDone
+	}
+	if skip {
+		*cursor = log_buffer.NewMessagePosition(skipTo, gapResumeCursorOffset)
+		*latch = nil
+	}
+	return gapContinue
+}
+
 func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeMetadataServer) error {
 	if fs.filer.MetaAggregator == nil || !fs.filer.MetaAggregator.HasRemotePeers() {
 		return fs.SubscribeLocalMetadata(req, stream)
@@ -519,6 +592,22 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		diskEntryFn = func(logEntry *filer_pb.LogEntry) (bool, error) { return false, nil }
 	}
 
+	aggBuffer := fs.filer.MetaAggregator.MetaLogBuffer
+	gaps := &gapPass{
+		fs:       fs,
+		req:      req,
+		gapStall: gapStall,
+		earliest: aggBuffer.GetEarliestTime,
+		evicted:  aggBuffer.GetLastEvictedOriginalTsNs,
+		flushed:  func() int64 { return 0 }, // the aggregated ring never flushes
+		gapChan:  nil,                       // nothing local signals a peer's flush; the timer paces it
+		dataChan: aggNotifyChan,
+		gapReason: func(earliest time.Time, evictedTsNs int64) string {
+			return fmt.Sprintf("gap evicted through %v is not on a peer's disk yet (earliest memory %v)",
+				time.Unix(0, evictedTsNs), earliest)
+		},
+	}
+
 	for {
 
 		glog.V(4).Infof("read on disk %v aggregated subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
@@ -575,54 +664,11 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 			}
 		}
 
-		// Reading memory at a cursor the ring has evicted past would silently
-		// jump whatever the ring dropped, so it is resolved here on every pass
-		// - ReadFromBuffer is shared with the message queue and has no gap
-		// handling of its own.
-		earliestTime := fs.filer.MetaAggregator.MetaLogBuffer.GetEarliestTime()
-		if !memoryHoldsGap(lastReadTime.Time.UnixNano(), lastEvictedTsNs) {
-			if diskAdvanced {
-				// The disk may hold more of the gap: keep reading it.
-				continue
-			}
-			if advanceToTsNs, advance := resolveGapResume(lastReadTime.Time.UnixNano(), lastReadTime.Offset, earliestTime.UnixNano(), 0, lastEvictedTsNs); advance {
-				gapStall.resumed()
-				glog.V(3).Infof("gap detected: skipping from %v to earliest memory time %v for %v",
-					lastReadTime.Time, earliestTime, clientName)
-				lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, gapResumeCursorOffset)
-				readInMemoryLogErr = nil
-			} else {
-				// An append tells a subscriber waiting on a peer's flush
-				// nothing, and each retry re-reads the persisted logs anyway,
-				// so this wait is paced by the timer alone.
-				reason := fmt.Sprintf("gap evicted through %v is not on a peer's disk yet (earliest memory %v)",
-					time.Unix(0, lastEvictedTsNs), earliestTime)
-				if skipTo, skip, done := fs.parkOnGap(ctx, req, gapStall, fs.filer.MetaAggregator.MetaLogBuffer.GetLastEvictedOriginalTsNs, lastReadTime, nil, reason); done {
-					return nil
-				} else if skip {
-					lastReadTime = log_buffer.NewMessagePosition(skipTo, gapResumeCursorOffset)
-					readInMemoryLogErr = nil
-				}
-				continue
-			}
-		} else if !diskAdvanced && errors.Is(readInMemoryLogErr, log_buffer.ResumeFromDiskError) {
-			// The last memory read refused this cursor, the disk just proved it
-			// has nothing more, yet nothing after the cursor was evicted: the
-			// cursor's exclusive offset predates the retained window. Re-arm it
-			// onto the window; failing even that, wait for data to arrive.
-			if advanceToTsNs, advance := resolveGapResume(lastReadTime.Time.UnixNano(), lastReadTime.Offset, earliestTime.UnixNano(), 0, lastEvictedTsNs); advance {
-				gapStall.resumed()
-				lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, gapResumeCursorOffset)
-				readInMemoryLogErr = nil
-			} else {
-				if skipTo, skip, done := fs.parkOnGap(ctx, req, gapStall, fs.filer.MetaAggregator.MetaLogBuffer.GetLastEvictedOriginalTsNs, lastReadTime, aggNotifyChan, "aggregated buffer has no readable entries yet"); done {
-					return nil
-				} else if skip {
-					lastReadTime = log_buffer.NewMessagePosition(skipTo, gapResumeCursorOffset)
-					readInMemoryLogErr = nil
-				}
-				continue
-			}
+		switch gaps.resolve(ctx, &lastReadTime, &readInMemoryLogErr, diskAdvanced) {
+		case gapDone:
+			return nil
+		case gapContinue:
+			continue
 		}
 
 		glog.V(4).Infof("read in memory %v aggregated subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
@@ -744,6 +790,22 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 		diskEntryFn = func(logEntry *filer_pb.LogEntry) (bool, error) { return false, nil }
 	}
 
+	localBuffer := fs.filer.LocalMetaLogBuffer
+	gaps := &gapPass{
+		fs:       fs,
+		req:      req,
+		gapStall: gapStall,
+		earliest: localBuffer.GetEarliestTime,
+		evicted:  localBuffer.GetLastEvictedTsNs, // local disk carries the ring's own timestamps
+		flushed:  func() int64 { return lastCheckedFlushTsNs },
+		gapChan:  localFlushChan,
+		dataChan: localFlushChan,
+		gapReason: func(earliest time.Time, evictedTsNs int64) string {
+			return fmt.Sprintf("gap is not flushed yet (earliest memory %v, flushed through %v)",
+				earliest, time.Unix(0, lastCheckedFlushTsNs))
+		},
+	}
+
 	for {
 		// Check if new data has been flushed to disk since last check, or if read position advanced
 		currentFlushTsNs := fs.filer.LocalMetaLogBuffer.GetLastFlushTsNs()
@@ -801,56 +863,11 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 			}
 		}
 
-		// Reading memory at a cursor the ring has evicted past would silently
-		// jump whatever the ring dropped, so it is resolved here on every pass
-		// - ReadFromBuffer is shared with the message queue and has no gap
-		// handling of its own. Unlike the aggregated ring this buffer flushes,
-		// so a disk miss observed at a flush watermark past the earliest
-		// in-memory time is a second, independent proof the gap is empty.
-		earliestTime := fs.filer.LocalMetaLogBuffer.GetEarliestTime()
-		lastEvictedTsNs := fs.filer.LocalMetaLogBuffer.GetLastEvictedTsNs()
-		if !memoryHoldsGap(lastReadTime.Time.UnixNano(), lastEvictedTsNs) {
-			if diskAdvanced {
-				// The disk may hold more of the gap: keep reading it.
-				continue
-			}
-			if advanceToTsNs, advance := resolveGapResume(lastReadTime.Time.UnixNano(), lastReadTime.Offset, earliestTime.UnixNano(), lastCheckedFlushTsNs, lastEvictedTsNs); advance {
-				gapStall.resumed()
-				glog.V(3).Infof("gap detected: skipping from %v to flushed earliest memory time %v for %v",
-					lastReadTime.Time, earliestTime, clientName)
-				lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, gapResumeCursorOffset)
-				readInMemoryLogErr = nil
-			} else {
-				reason := fmt.Sprintf("gap is not flushed yet (earliest memory %v, flushed through %v)",
-					earliestTime, time.Unix(0, lastCheckedFlushTsNs))
-				if skipTo, skip, done := fs.parkOnGap(ctx, req, gapStall, fs.filer.LocalMetaLogBuffer.GetLastEvictedTsNs, lastReadTime, localFlushChan, reason); done {
-					return nil
-				} else if skip {
-					lastReadTime = log_buffer.NewMessagePosition(skipTo, gapResumeCursorOffset)
-					readInMemoryLogErr = nil
-				}
-				continue
-			}
-		} else if !diskAdvanced && errors.Is(readInMemoryLogErr, log_buffer.ResumeFromDiskError) {
-			// The last memory read refused this cursor, the disk has nothing
-			// more, yet nothing after the cursor was evicted: the cursor's
-			// exclusive offset predates the retained window. Re-arm it onto
-			// the window; failing even that, wait for the next flush.
-			if advanceToTsNs, advance := resolveGapResume(lastReadTime.Time.UnixNano(), lastReadTime.Offset, earliestTime.UnixNano(), lastCheckedFlushTsNs, lastEvictedTsNs); advance {
-				gapStall.resumed()
-				lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, gapResumeCursorOffset)
-				readInMemoryLogErr = nil
-			} else {
-				reason := fmt.Sprintf("memory refuses the cursor (earliest memory %v, flushed through %v)",
-					earliestTime, time.Unix(0, lastCheckedFlushTsNs))
-				if skipTo, skip, done := fs.parkOnGap(ctx, req, gapStall, fs.filer.LocalMetaLogBuffer.GetLastEvictedTsNs, lastReadTime, localFlushChan, reason); done {
-					return nil
-				} else if skip {
-					lastReadTime = log_buffer.NewMessagePosition(skipTo, gapResumeCursorOffset)
-					readInMemoryLogErr = nil
-				}
-				continue
-			}
+		switch gaps.resolve(ctx, &lastReadTime, &readInMemoryLogErr, diskAdvanced) {
+		case gapDone:
+			return nil
+		case gapContinue:
+			continue
 		}
 
 		glog.V(3).Infof("read in memory %v local subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
