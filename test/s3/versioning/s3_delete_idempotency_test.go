@@ -33,6 +33,22 @@ func TestDeleteMissingObjectSucceeds(t *testing.T) {
 	require.NoError(t, err, "deleting a key that never existed must succeed")
 	require.NotNil(t, resp.DeleteMarker, "a versioned bucket records the delete as a marker")
 	assert.True(t, *resp.DeleteMarker)
+	require.NotNil(t, resp.VersionId)
+
+	// The response can claim a marker the backend never stored, so confirm it is
+	// really in the version history under the id the response handed back.
+	versions, err := client.ListObjectVersions(context.TODO(), &s3.ListObjectVersionsInput{
+		Bucket: aws.String(bucketName),
+		Prefix: aws.String("never-written.lock"),
+	})
+	require.NoError(t, err)
+	found := false
+	for _, m := range versions.DeleteMarkers {
+		if m.Key != nil && *m.Key == "never-written.lock" && m.VersionId != nil && *m.VersionId == *resp.VersionId {
+			found = true
+		}
+	}
+	assert.True(t, found, "the delete marker reported by the response must be persisted")
 }
 
 func TestDeleteAbsentVersionSucceeds(t *testing.T) {
@@ -76,6 +92,17 @@ func TestDeleteAbsentVersionSucceeds(t *testing.T) {
 		VersionId: put.VersionId,
 	})
 	require.NoError(t, err)
+
+	// Confirm the first delete actually removed the version. Without this a
+	// backend that ignored every version-specific delete would satisfy both calls
+	// and the idempotency the test claims to cover would never be exercised.
+	_, err = client.HeadObject(context.TODO(), &s3.HeadObjectInput{
+		Bucket:    aws.String(bucketName),
+		Key:       aws.String(objectKey),
+		VersionId: put.VersionId,
+	})
+	require.Error(t, err, "the version must be gone after the first delete")
+
 	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
 		Bucket:    aws.String(bucketName),
 		Key:       aws.String(objectKey),
