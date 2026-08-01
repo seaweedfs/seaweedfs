@@ -39,16 +39,11 @@ func TestPersistedLogScanStartCrossesMidnight(t *testing.T) {
 	}
 }
 
-// logFileSkippable mirrors the file-advance decision in LogFileQueueIterator:
-// a file may only be skipped when it cannot hold anything past the cursor.
-func logFileSkippable(fileNameMinute, startTsNs int64) bool {
-	return fileNameMinute+int64(time.Minute)+int64(LogFlushInterval) <= startTsNs
-}
-
 // TestSpanningLogFileIsNotSkipped pins the other half of the minute-boundary
-// fix. Widening which files get listed is useless if the iterator then drops
-// the spanning file, which it did by treating the following file's name as an
-// upper bound on this file's contents -- it is not.
+// fix, against the predicate the iterator actually calls. Widening which files
+// get listed is useless if the iterator then drops the spanning file, which it
+// did by treating the following file's name as an upper bound on this file's
+// contents -- it is not.
 func TestSpanningLogFileIsNotSkipped(t *testing.T) {
 	// Window sealed at 12:30:59, ending 12:31:58, written to "12-30".
 	spanning := time.Date(2026, 6, 29, 12, 30, 0, 0, time.UTC).UnixNano()
@@ -59,14 +54,14 @@ func TestSpanningLogFileIsNotSkipped(t *testing.T) {
 	if following > cursor {
 		t.Fatal("precondition: the following file's name sorts at or before the cursor")
 	}
-	if logFileSkippable(spanning, cursor) {
+	if !logFileMayContainAfter(spanning, cursor) {
 		t.Fatal("the spanning file holds entries past the cursor and must be read")
 	}
 
 	// A file that genuinely cannot reach the cursor is still skipped, so the
 	// widening does not turn into reading the whole day.
 	old := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC).UnixNano()
-	if !logFileSkippable(old, cursor) {
+	if logFileMayContainAfter(old, cursor) {
 		t.Fatal("a file a full interval behind the cursor should still be skipped")
 	}
 }

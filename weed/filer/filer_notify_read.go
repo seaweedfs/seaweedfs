@@ -23,6 +23,16 @@ type LogFileEntry struct {
 	FileEntry *Entry
 }
 
+// logFileMayContainAfter reports whether the log file named for fileTsNs can
+// hold any entry past startTsNs. The following file's name is not the bound: a
+// file is named for the start of the window it holds, minute-truncated, and the
+// window runs up to a flush interval longer, so "12-30" can hold 12:31:20 while
+// "12-31" exists alongside it. Comparing against the next name dropped exactly
+// the spanning file a mid-window cursor needs.
+func logFileMayContainAfter(fileTsNs, startTsNs int64) bool {
+	return fileTsNs+int64(time.Minute)+int64(LogFlushInterval) > startTsNs
+}
+
 // persistedLogScanStart backs a read position off by one flush interval before
 // choosing which log files to open. A log file is named for the start of the
 // window it holds and a window spans up to flushInterval, so a file whose name
@@ -444,13 +454,7 @@ func (iter *LogFileQueueIterator) getNext(v *OrderedLogVisitor) (logEntry *filer
 				return nil, collectErr
 			}
 		}
-		// Skip the file only when it cannot hold anything past startTsNs. The
-		// following file's name is not the bound: a file is named for the start
-		// of the window it holds, minute-truncated, and the window runs up to a
-		// flush interval longer, so "12-30" can hold 12:31:20 while "12-31"
-		// exists alongside it. Comparing against the next name dropped exactly
-		// the spanning file a mid-window cursor needs.
-		if t.TsNs+int64(time.Minute)+int64(LogFlushInterval) <= iter.startTsNs {
+		if !logFileMayContainAfter(t.TsNs, iter.startTsNs) {
 			continue
 		}
 		iter.currentFileIterator = newLogFileIterator(iter.masterClient, iter.cache, t.FileEntry, iter.startTsNs, iter.stopTsNs)
