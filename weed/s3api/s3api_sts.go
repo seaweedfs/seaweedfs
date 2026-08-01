@@ -388,6 +388,8 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 	glog.V(2).Infof("AssumeRole: caller identity=%s, roleArn=%s, sessionName=%s",
 		identity.Name, roleArn, roleSessionName)
 
+	assumesSelf := roleArn == ""
+
 	// A named role is authorized by its trust policy, which declares which
 	// principals may assume it, so no separate identity-side sts:AssumeRole allow
 	// is required. An explicit identity-side deny still wins (deny-always-wins).
@@ -415,7 +417,9 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		roleArn = identity.PrincipalArn
+		// Synthesize the caller ARN when the identity carries none, else the
+		// session ends up with an empty role name in its assumed-role ARN.
+		roleArn = h.callerPrincipalArn(identity)
 		glog.V(2).Infof("AssumeRole: no RoleArn provided, defaulting to caller identity: %s", roleArn)
 		if authErr := h.iam.VerifyActionPermission(r, identity, Action(sts.ActionAssumeRole), "", ""); authErr != s3err.ErrNone {
 			glog.Warningf("AssumeRole: caller %s attempted to assume role without RoleArn and lacks global sts:AssumeRole permission", identity.Name)
@@ -431,9 +435,12 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Prepare custom claims for the session
+	// is_admin lets the session bypass base policy evaluation, so it may only
+	// travel into a session the caller assumed for itself — a legacy static admin
+	// carries no IAM policies for such a session to inherit. Assuming a named role
+	// scopes the session to that role's policies, admin caller or not.
 	var modifyClaims func(claims *sts.STSSessionClaims)
-	if identity.isAdmin() {
+	if assumesSelf && identity.isAdmin() {
 		modifyClaims = func(claims *sts.STSSessionClaims) {
 			if claims.RequestContext == nil {
 				claims.RequestContext = make(map[string]interface{})
