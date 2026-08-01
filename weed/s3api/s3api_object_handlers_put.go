@@ -565,7 +565,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			s3a.deleteOrphanedChunks(chunkResult.FileChunks)
 		}
 
-		return "", mapChunkedUploadErrorToS3Error(err), SSEResponseMetadata{}
+		return "", mapChunkedUploadErrorToS3Error(r.Context(), err), SSEResponseMetadata{}
 	}
 
 	// Step 3: Calculate MD5 hash and add SSE metadata to chunks
@@ -1204,11 +1204,27 @@ func filerErrorToS3Error(err error) s3err.ErrorCode {
 // IncompleteBody (400) rather than a 500 a reverse proxy would relay as a confusing
 // 502. Only the source read is tagged, so a volume-server upload fault still maps to
 // InternalError.
-func mapChunkedUploadErrorToS3Error(err error) s3err.ErrorCode {
+//
+// reqCtx is the request context, which separates the two ways a body ends early: a
+// peer that went away, and a body that arrived short while the peer was still there.
+// Both surface as the same read error, so without this they are indistinguishable in
+// logs even though they point at opposite causes — a network path versus a client.
+// The upload itself deliberately runs on a background context, so cancellation of
+// reqCtx races the read error; a missed signal degrades to IncompleteBody as before.
+//
+// This reads cancellation as "the peer is gone", which is what net/http means by it
+// today: nothing on the S3 request path cancels reqCtx for its own reasons. Anything
+// added later that does — a request budget, an auth deadline, shutdown draining —
+// would have to cancel with its own cause and be excluded here, otherwise a body
+// truncated at that instant gets attributed to the peer.
+func mapChunkedUploadErrorToS3Error(reqCtx context.Context, err error) s3err.ErrorCode {
 	switch {
 	case strings.Contains(err.Error(), s3err.ErrMsgPayloadChecksumMismatch):
 		return s3err.ErrInvalidDigest
 	case errors.Is(err, operation.ErrTruncatedBody):
+		if errors.Is(reqCtx.Err(), context.Canceled) {
+			return s3err.ErrClientDisconnected
+		}
 		return s3err.ErrIncompleteBody
 	default:
 		return s3err.ErrInternalError
