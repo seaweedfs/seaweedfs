@@ -216,7 +216,7 @@ func reportUnprovenAggregatedCrossing(cursorBeforeTsNs, cursorAfterTsNs, evicted
 	if evictedTsNs == 0 || cursorBeforeTsNs >= evictedTsNs || cursorAfterTsNs < evictedTsNs {
 		return
 	}
-	stats.FilerSubscribeUnprovenGapCrossings.Inc()
+	stats.FilerSubscribeUnprovenGapCrossings.WithLabelValues("aggregated").Inc()
 	glog.Warningf("aggregated subscriber %s %s crossed an evicted range (%v..%v] on peer disk reads; a peer that flushes into it later will not be re-read",
 		clientName, pathPrefix, time.Unix(0, cursorBeforeTsNs), time.Unix(0, evictedTsNs))
 }
@@ -324,7 +324,7 @@ func (r *gapStallReporter) resumed() {
 // skipped it. This is the loss the whole gap machinery exists to make loud: it
 // shares the unproven-crossing counter and logs at error level.
 func (r *gapStallReporter) gaveUp(cursor time.Time, skipToTsNs int64, detail string) {
-	stats.FilerSubscribeUnprovenGapCrossings.Inc()
+	stats.FilerSubscribeUnprovenGapCrossings.WithLabelValues(r.scope).Inc()
 	glog.Errorf("%s subscriber %s %s skipping the gap (%v..%v] after %v parked: %s; events a peer flushes into that range later will not be delivered",
 		r.scope, r.clientName, r.pathPrefix, cursor, time.Unix(0, skipToTsNs), r.stalledFor().Truncate(time.Second), detail)
 	r.since, r.lastWarnAt = time.Time{}, time.Time{}

@@ -234,20 +234,20 @@ var (
 			Help:      "The last send timestamp of the filer subscription.",
 		}, []string{"sourceFiler", "clientName", "path"})
 
-	FilerSubscribeUnprovenGapCrossings = prometheus.NewCounter(
+	FilerSubscribeUnprovenGapCrossings = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
 			Subsystem: subsystemFiler,
 			Name:      "subscribe_unproven_gap_crossings",
-			Help:      "Times an aggregated metadata subscriber advanced past an evicted range without proof that every peer had persisted it.",
-		})
+			Help:      "Times a metadata subscriber moved past a log range without proof it was persisted: scope=aggregated means a peer may not have flushed it, scope=local means this filer's own log flush was wedged past the give-up bound.",
+		}, []string{"scope"})
 
 	FilerSubscribeGapStalledGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
 			Subsystem: subsystemFiler,
 			Name:      "subscribe_gap_stalled",
-			Help:      "Number of metadata subscribers currently parked on a gap whose events are evicted from memory but not yet persisted.",
+			Help:      "Number of metadata subscribers currently parked waiting to read past a gap in the metadata log.",
 		}, []string{"scope"})
 
 	// Sampled only on first creation, so counts track distinct objects.

@@ -332,7 +332,7 @@ func TestReportUnprovenAggregatedCrossing(t *testing.T) {
 	)
 	crossings := func() float64 {
 		var m dto.Metric
-		if err := stats.FilerSubscribeUnprovenGapCrossings.Write(&m); err != nil {
+		if err := stats.FilerSubscribeUnprovenGapCrossings.WithLabelValues("aggregated").Write(&m); err != nil {
 			t.Fatalf("read counter: %v", err)
 		}
 		return m.GetCounter().GetValue()
@@ -386,7 +386,7 @@ func TestParkOnGapStallOutcomes(t *testing.T) {
 
 	crossings := func() float64 {
 		var m dto.Metric
-		if err := stats.FilerSubscribeUnprovenGapCrossings.Write(&m); err != nil {
+		if err := stats.FilerSubscribeUnprovenGapCrossings.WithLabelValues("aggregated").Write(&m); err != nil {
 			t.Fatalf("read counter: %v", err)
 		}
 		return m.GetCounter().GetValue()
