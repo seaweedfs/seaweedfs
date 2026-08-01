@@ -417,7 +417,9 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		roleArn = identity.PrincipalArn
+		// Synthesize the caller ARN when the identity carries none, else the
+		// session ends up with an empty role name in its assumed-role ARN.
+		roleArn = h.callerPrincipalArn(identity)
 		glog.V(2).Infof("AssumeRole: no RoleArn provided, defaulting to caller identity: %s", roleArn)
 		if authErr := h.iam.VerifyActionPermission(r, identity, Action(sts.ActionAssumeRole), "", ""); authErr != s3err.ErrNone {
 			glog.Warningf("AssumeRole: caller %s attempted to assume role without RoleArn and lacks global sts:AssumeRole permission", identity.Name)

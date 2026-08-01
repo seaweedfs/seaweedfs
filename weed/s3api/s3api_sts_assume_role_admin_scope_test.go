@@ -93,3 +93,46 @@ func TestAssumeRole_AdminCallerScopedToRolePolicies(t *testing.T) {
 	assert.True(t, allowed("s3:GetObject", "arn:aws:s3:::bucket/key"), "the role's own policy still applies")
 	assert.False(t, allowed("s3:DeleteBucket", "arn:aws:s3:::bucket"), "the role's policy bounds the session")
 }
+
+// Assuming a session for oneself is the one path that keeps the caller's admin
+// standing, and it has to name the caller even when the identity carries no
+// principal ARN of its own — otherwise the session ARN has an empty role name.
+func TestAssumeRole_SelfAssumptionWithoutPrincipalArn(t *testing.T) {
+	ctx := context.Background()
+	manager := newTestSTSIntegrationManager(t)
+
+	const accessKey, secretKey = "adminkey", "adminsecret"
+	iam := &IdentityAccessManagement{iamIntegration: NewS3IAMIntegration(manager, "")}
+	require.NoError(t, iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{
+			Name:        "admin",
+			Credentials: []*iam_pb.Credential{{AccessKey: accessKey, SecretKey: secretKey}},
+			Actions:     []string{"Admin"},
+		}},
+	}))
+	for _, ident := range iam.identities {
+		ident.PrincipalArn = ""
+	}
+
+	body := url.Values{
+		"Action":          {"AssumeRole"},
+		"Version":         {"2011-06-15"},
+		"RoleSessionName": {"self-session"},
+	}.Encode()
+	req, err := newTestRequest(http.MethodPost, "http://sts.seaweedfs.test/", int64(len(body)), strings.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	require.NoError(t, signRequestV4(req, accessKey, secretKey))
+
+	rec := httptest.NewRecorder()
+	NewSTSHandlers(manager.GetSTSService(), iam).handleAssumeRole(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var resp AssumeRoleResponse
+	require.NoError(t, xml.Unmarshal(rec.Body.Bytes(), &resp))
+	assert.Equal(t, "arn:aws:sts::"+defaultAccountID+":assumed-role/admin/self-session", resp.Result.AssumedRoleUser.Arn)
+
+	session, err := manager.GetSTSService().ValidateSessionToken(ctx, resp.Result.Credentials.SessionToken)
+	require.NoError(t, err)
+	assert.Equal(t, true, session.RequestContext["is_admin"], "a self-assumed session keeps the caller's admin standing")
+}
