@@ -355,3 +355,79 @@ func TestReportUnprovenAggregatedCrossing(t *testing.T) {
 		t.Fatalf("counter = %v, want %v after one unproven crossing", got, start+1)
 	}
 }
+
+// TestParkOnGapStallOutcomes pins what a park that outlived maxGapStall does.
+// Failing the stream would just move the loop into the client, which
+// reconnects at the same position and hits the same wall delivering nothing;
+// instead the subscriber abandons the gap, loudly: the skip lands exactly on
+// the eviction watermark (everything retained starts strictly after it) and
+// the unproven-crossing counter records the loss. A stall with nothing evicted
+// past the cursor has nothing to skip and keeps waiting on a fresh cycle.
+func TestParkOnGapStallOutcomes(t *testing.T) {
+	fs := &FilerServer{knownListeners: map[int32]int32{7: 3}}
+	req := &filer_pb.SubscribeMetadataRequest{ClientId: 7, ClientEpoch: 3}
+
+	lb := log_buffer.NewLogBuffer("park-stall", time.Minute, nil, nil, nil)
+	defer lb.ShutdownLogBuffer()
+	// Entries far enough apart that every append seals the window before it;
+	// the ring evicts once it wraps, moving the watermark for real.
+	base := time.Now().Add(-time.Hour).Truncate(time.Second)
+	for i := 0; i < log_buffer.PreviousBufferCount+2; i++ {
+		if err := lb.AddLogEntryToBuffer(&filer_pb.LogEntry{
+			TsNs: base.Add(time.Duration(i) * 2 * time.Minute).UnixNano(), Data: []byte("x"), Key: []byte("k"),
+		}); err != nil {
+			t.Fatalf("add %d: %v", i, err)
+		}
+	}
+	evicted := lb.GetLastEvictedTsNs()
+	if evicted == 0 {
+		t.Fatal("precondition: the ring evicted nothing")
+	}
+
+	crossings := func() float64 {
+		var m dto.Metric
+		if err := stats.FilerSubscribeUnprovenGapCrossings.Write(&m); err != nil {
+			t.Fatalf("read counter: %v", err)
+		}
+		return m.GetCounter().GetValue()
+	}
+
+	t.Run("a stalled park below the watermark skips to it", func(t *testing.T) {
+		gapStall := &gapStallReporter{scope: "aggregated", clientName: "c", pathPrefix: "/"}
+		gapStall.since = time.Now().Add(-maxGapStall) // parked a full bound ago
+		cursor := log_buffer.NewMessagePosition(evicted-int64(time.Minute), -2)
+
+		before := crossings()
+		skipTo, skip, done := fs.parkOnGap(context.Background(), req, gapStall, lb, cursor, nil, "test")
+		if done || !skip {
+			t.Fatalf("skip=%v done=%v, want a forced skip", skip, done)
+		}
+		if skipTo != evicted {
+			t.Fatalf("skipTo = %v, want the eviction watermark %v", time.Unix(0, skipTo), time.Unix(0, evicted))
+		}
+		if got := crossings(); got != before+1 {
+			t.Fatalf("crossing counter moved by %v, want 1: the loss must be recorded", got-before)
+		}
+		if !gapStall.since.IsZero() {
+			t.Fatal("the stall must be cleared after giving up")
+		}
+	})
+
+	t.Run("a stalled park with nothing to skip to keeps waiting", func(t *testing.T) {
+		gapStall := &gapStallReporter{scope: "aggregated", clientName: "c", pathPrefix: "/"}
+		gapStall.since = time.Now().Add(-maxGapStall)
+		cursor := log_buffer.NewMessagePosition(evicted, -2) // at the watermark: nothing withheld
+
+		before := crossings()
+		_, skip, done := fs.parkOnGap(context.Background(), req, gapStall, lb, cursor, nil, "test")
+		if skip || done {
+			t.Fatalf("skip=%v done=%v, want neither: nothing is being lost", skip, done)
+		}
+		if got := crossings(); got != before {
+			t.Fatal("no loss happened, the counter must not move")
+		}
+		if gapStall.stalledFor() >= maxGapStall {
+			t.Fatal("the stall clock must restart, or this branch retriggers every retry")
+		}
+	})
+}
