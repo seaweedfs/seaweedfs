@@ -88,7 +88,7 @@ func TestListingSurvivesRunOfHiddenVersions(t *testing.T) {
 
 	// Paginated with pages smaller than the retracted run, so at least one page
 	// is filled entirely from entries that get dropped.
-	for _, pageSize := range []int32{1, 2, 5, 10} {
+	for _, pageSize := range []int32{1, 2, 3, 5, 10} {
 		t.Run(fmt.Sprintf("maxKeys=%d", pageSize), func(t *testing.T) {
 			assert.Equal(t, live, listAllKeys(t, client, bucketName, pageSize),
 				"pagination across a retracted run must not lose the keys after it")
@@ -120,7 +120,7 @@ func TestListingSurvivesHiddenVersionsBetweenLiveKeys(t *testing.T) {
 	putObjectVersioned(t, client, bucketName, "z-last.blk")
 
 	want := []string{"a-first.blk", "z-last.blk"}
-	for _, pageSize := range []int32{0, 1, 3, 10} {
+	for _, pageSize := range []int32{0, 1, 2, 3, 5, 10} {
 		t.Run(fmt.Sprintf("maxKeys=%d", pageSize), func(t *testing.T) {
 			assert.Equal(t, want, listAllKeys(t, client, bucketName, pageSize),
 				"keys on both sides of a retracted run must both be listed")
@@ -148,13 +148,30 @@ func TestListObjectVersionsReportsRetractedKeys(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	resp, err := client.ListObjectVersions(context.TODO(), &s3.ListObjectVersionsInput{
-		Bucket: aws.String(bucketName),
-	})
-	require.NoError(t, err)
+	// Paginated with a page far smaller than the run, so the continuation markers
+	// have to carry the walk across it — the same path the plain listing exercises
+	// above, but on the version side.
+	var versions, markers int
+	var keyMarker, versionIDMarker *string
+	for {
+		resp, err := client.ListObjectVersions(context.TODO(), &s3.ListObjectVersionsInput{
+			Bucket:          aws.String(bucketName),
+			MaxKeys:         aws.Int32(3),
+			KeyMarker:       keyMarker,
+			VersionIdMarker: versionIDMarker,
+		})
+		require.NoError(t, err)
+		versions += len(resp.Versions)
+		markers += len(resp.DeleteMarkers)
+		if resp.IsTruncated == nil || !*resp.IsTruncated {
+			break
+		}
+		require.NotNil(t, resp.NextKeyMarker, "a truncated version listing must carry a key marker")
+		keyMarker, versionIDMarker = resp.NextKeyMarker, resp.NextVersionIdMarker
+	}
 
-	assert.Len(t, resp.Versions, retracted, "every written version must still be reported")
-	assert.Len(t, resp.DeleteMarkers, retracted, "every retraction must be reported as a delete marker")
+	assert.Equal(t, retracted, versions, "every written version must still be reported")
+	assert.Equal(t, retracted, markers, "every retraction must be reported as a delete marker")
 
 	// And the current-version view of the same namespace is empty.
 	assert.Empty(t, listAllKeys(t, client, bucketName, 0),
