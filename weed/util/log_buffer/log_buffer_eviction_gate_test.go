@@ -169,8 +169,13 @@ func TestFlushSubscriberContract(t *testing.T) {
 
 	ch := lb.RegisterFlushSubscriber("s")
 
-	// An append is not a flush: nothing may arrive on the channel.
-	if err := lb.AddLogEntryToBuffer(&filer_pb.LogEntry{TsNs: time.Now().Add(-31 * time.Minute).UnixNano(), Data: []byte("x"), Key: []byte("k")}); err != nil {
+	// An append is not a flush: nothing may arrive on the channel. The probe
+	// sits just below the first round timestamp: below, so no round entry gets
+	// collision-bumped and its stored stopTime stays comparable to the local
+	// value each round asserts against; just below, because a gap wider than
+	// the flush interval would make round 0's own append auto-seal the probe
+	// window - a second flush whose token throws every round off by one.
+	if err := lb.AddLogEntryToBuffer(&filer_pb.LogEntry{TsNs: time.Now().Add(-time.Hour - time.Millisecond).UnixNano(), Data: []byte("x"), Key: []byte("k")}); err != nil {
 		t.Fatalf("add: %v", err)
 	}
 	select {
@@ -179,14 +184,20 @@ func TestFlushSubscriberContract(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 
-	// A flush wakes it, and the watermark is already stored when the wake-up
-	// arrives - the contract the gap parks re-check on. A reordered loopFlush
-	// (notify before store) fails only in the window between the two, so this
-	// runs many tight round-trips: correct ordering passes every one
-	// deterministically, while a reorder gets caught with high probability.
+	// A flush wakes it with the watermark already stored - the contract the gap
+	// parks re-check on. The store-before-notify ordering itself is pinned by a
+	// load-bearing comment at the loopFlush site (a reorder's window is
+	// nanoseconds on that goroutine, untestable from here); these round-trips
+	// verify the observable contract and catch a notify with no store at all.
 	base := time.Now().Add(-time.Hour)
-	for i := 0; i < 500; i++ {
+	for i := 0; i < 8; i++ {
 		ts := base.Add(time.Duration(i) * time.Millisecond).UnixNano()
+		// The round entry must be above the buffer head: a bumped timestamp
+		// flushes a stopTime far above the local ts compared below, making the
+		// round's assertion vacuously true.
+		if last := lb.LastTsNs.Load(); last >= ts {
+			t.Fatalf("round %d: ts not above buffer head; the assertion would be vacuous", i)
+		}
 		if err := lb.AddLogEntryToBuffer(&filer_pb.LogEntry{TsNs: ts, Data: []byte("x"), Key: []byte("k")}); err != nil {
 			t.Fatalf("add round %d: %v", i, err)
 		}

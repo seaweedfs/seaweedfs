@@ -391,11 +391,19 @@ func TestParkOnGapStallOutcomes(t *testing.T) {
 		}
 		return m.GetCounter().GetValue()
 	}
+	var g0 dto.Metric
+	if err := stats.FilerSubscribeGapStalledGauge.WithLabelValues("aggregated").Write(&g0); err != nil {
+		t.Fatalf("read gauge: %v", err)
+	}
+	gaugeBefore := g0.GetGauge().GetValue()
 
 	t.Run("a stalled park below the watermark skips to it", func(t *testing.T) {
 		gapStall := &gapStallReporter{scope: "aggregated", clientName: "c", pathPrefix: "/"}
-		gapStall.since = time.Now().Add(-maxGapStall) // parked a full bound ago
 		cursor := log_buffer.NewMessagePosition(evicted-int64(time.Minute), -2)
+		// Park through the real path so the gauge Inc that gaveUp() will Dec
+		// exists, then age the park to the give-up bound.
+		gapStall.park(cursor.Time, "test")
+		gapStall.since = time.Now().Add(-maxGapStall)
 
 		before := crossings()
 		skipTo, skip, done := fs.parkOnGap(context.Background(), req, gapStall, lb, cursor, nil, "test")
@@ -415,8 +423,10 @@ func TestParkOnGapStallOutcomes(t *testing.T) {
 
 	t.Run("a stalled park with nothing to skip to keeps waiting", func(t *testing.T) {
 		gapStall := &gapStallReporter{scope: "aggregated", clientName: "c", pathPrefix: "/"}
-		gapStall.since = time.Now().Add(-maxGapStall)
 		cursor := log_buffer.NewMessagePosition(evicted, -2) // at the watermark: nothing withheld
+		gapStall.park(cursor.Time, "test")
+		gapStall.since = time.Now().Add(-maxGapStall)
+		defer gapStall.close() // release the gauge this test's park holds
 
 		before := crossings()
 		_, skip, done := fs.parkOnGap(context.Background(), req, gapStall, lb, cursor, nil, "test")
@@ -430,4 +440,14 @@ func TestParkOnGapStallOutcomes(t *testing.T) {
 			t.Fatal("the stall clock must restart, or this branch retriggers every retry")
 		}
 	})
+
+	// The shared gauge must come back to its starting value: a test leaving it
+	// skewed corrupts every later assertion on it in this package.
+	var g dto.Metric
+	if err := stats.FilerSubscribeGapStalledGauge.WithLabelValues("aggregated").Write(&g); err != nil {
+		t.Fatalf("read gauge: %v", err)
+	}
+	if got := g.GetGauge().GetValue(); got != gaugeBefore {
+		t.Fatalf("stalled gauge = %v, want %v: parks and releases must balance", got, gaugeBefore)
+	}
 }
