@@ -73,10 +73,8 @@ type LogBuffer struct {
 	lastFlushTsNs     atomic.Int64
 	lastFlushedOffset atomic.Int64 // Highest offset that has been flushed to disk (-1 = nothing flushed yet)
 	lastEvictedTsNs   atomic.Int64 // Latest stopTime evicted from the sealed ring (0 = nothing evicted yet)
-	// Like lastEvictedTsNs but in pre-bump timestamps: the aggregated ring
-	// rewrites out-of-order arrivals to LastTsNs+1, so its stopTimes live in a
-	// timestamp space nothing on any peer's disk shares. Gap proofs against
-	// disk cursors need the original space.
+	// lastEvictedTsNs in pre-bump timestamps: gap proofs compare disk cursors,
+	// which never see the bumped values out-of-order arrivals get.
 	lastEvictedOriginalTsNs  atomic.Int64
 	curWindowMaxOriginalTsNs int64 // max pre-bump ts in the open window, under the write lock
 	offset                   int64
@@ -792,10 +790,8 @@ func (logBuffer *LogBuffer) GetLastFlushTsNs() int64 {
 	return logBuffer.lastFlushTsNs.Load()
 }
 
-// GetLastEvictedOriginalTsNs is GetLastEvictedTsNs in pre-bump timestamps: the
-// highest as-received timestamp among evicted entries. The aggregated gap gate
-// compares disk cursors, which live in the peers' original timestamp space,
-// not the ring's bumped one.
+// GetLastEvictedOriginalTsNs is GetLastEvictedTsNs in pre-bump timestamps -
+// the space disk cursors live in.
 func (logBuffer *LogBuffer) GetLastEvictedOriginalTsNs() int64 {
 	return logBuffer.lastEvictedOriginalTsNs.Load()
 }

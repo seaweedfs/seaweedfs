@@ -29,16 +29,9 @@ const (
 	// gapStallWarnInterval paces the warning for a subscriber that stays parked.
 	gapStallWarnInterval = time.Minute
 
-	// maxGapStall bounds how long a subscriber waits for a gap to become
-	// readable before giving up and skipping it. Waiting is productive while
-	// the window holding the gap is still queued for a flush, but a peer that
-	// never comes back - or one whose filer store this filer cannot read at
-	// all - makes the wait permanent, and a subscriber that stops delivering
-	// for good is worse than one that records a bounded loss and moves on.
-	// Failing the stream instead just moves the loop into the client, which
-	// reconnects at the same position and hits the same wall. The skip is
-	// counted and logged at error level; master skipped the same ranges
-	// immediately and silently.
+	// maxGapStall bounds a gap wait before giving up and skipping it, counted
+	// and logged: a dead peer makes the wait permanent, and failing the stream
+	// only moves the loop into a client that reconnects to the same wall.
 	maxGapStall = 15 * time.Minute
 
 	// MaxUnsyncedEvents send empty notification with timestamp when certain amount of events have been filtered
@@ -196,22 +189,11 @@ func (s *pipelinedSender) Close() error {
 	}
 }
 
-// reportUnprovenAggregatedCrossing records the one gap the aggregated stream
-// cannot close by itself.
-//
-// The eviction watermark is a property of the merged ring, but the disk it is
-// checked against is the union of every peer's own log, and each peer flushes
-// on its own schedule. A read that advances the cursor from below the watermark
-// to above it may have done so entirely on a peer that is already ahead, while
-// a lagging peer still holds unflushed events inside the range just skipped;
-// once it flushes them they sit behind the cursor and are never delivered.
-//
-// Nothing available locally distinguishes that from the ordinary case where
-// every peer had in fact persisted the range -- the aggregator tracks peers by
-// address while log files carry a random per-filer id, so "has this peer
-// flushed through T" cannot be answered here. Deciding it needs the source
-// filer's own flush watermark carried on the subscribe stream. Until then the
-// crossing is counted and logged rather than passed over in silence.
+// reportUnprovenAggregatedCrossing records the residual hole: a disk read that
+// crosses the eviction watermark may have advanced on one peer's log while a
+// lagging peer still holds unflushed events in the crossed range. Locally
+// undecidable (log files carry random filer ids, peers are tracked by address);
+// closing it needs each peer's flush watermark on the subscribe stream.
 func reportUnprovenAggregatedCrossing(cursorBeforeTsNs, cursorAfterTsNs, evictedTsNs int64, clientName, pathPrefix string) {
 	if evictedTsNs == 0 || cursorBeforeTsNs >= evictedTsNs || cursorAfterTsNs < evictedTsNs {
 		return
@@ -231,22 +213,15 @@ func diskReadAdvanced(processedTsNs int64, cursor log_buffer.MessagePosition) bo
 	return processedTsNs != 0 && processedTsNs > cursor.Time.UnixNano()
 }
 
-// gapResumeCursorOffset marks every cursor these loops hand to the memory
-// read. The gated sentinel reads inclusively like -2, but below the eviction
-// watermark ReadFromBuffer refuses it under its own lock instead of silently
-// serving from the earliest retained window - closing the race where a seal
-// lands between this loop's watermark check and the read.
+// gapResumeCursorOffset marks every cursor these loops hand to the memory read:
+// gated, so a seal racing the loop's watermark check is refused under the
+// read's own lock instead of silently served from the earliest window.
 const gapResumeCursorOffset = log_buffer.EvictionGatedOffset
 
-// memoryHoldsGap reports whether the retained ring still holds every entry after
-// the cursor, i.e. nothing after it was evicted.
-//
-// Equality with the watermark counts, whatever the cursor's own inclusivity.
-// The evicted window ends on that timestamp and the retained windows start
-// strictly after it, so memory holds nothing there; and the persisted reader
-// skips ts <= its start position, so no disk read at this cursor can produce
-// that entry either, however long the subscriber waits for a flush. Refusing
-// the gap here buys nothing and never ends.
+// memoryHoldsGap reports whether nothing after the cursor was evicted. Equality
+// counts: the evicted window ends on the watermark, retained windows start
+// strictly after it, and the persisted reader skips ts <= cursor, so no wait
+// can ever produce the boundary entry - refusing there never ends.
 func memoryHoldsGap(currentTsNs, lastEvictedTsNs int64) bool {
 	if lastEvictedTsNs == 0 {
 		return true // nothing was ever dropped from the ring
@@ -361,13 +336,11 @@ func (r *gapStallReporter) close() {
 // subscriber spends all its time, so every exit the read loop relies on has to
 // be checked here too.
 func (fs *FilerServer) parkOnGap(ctx context.Context, req *filer_pb.SubscribeMetadataRequest, gapStall *gapStallReporter, evictedTsNs func() int64, cursor log_buffer.MessagePosition, notifyChan <-chan struct{}, reason string) (skipToTsNs int64, skip bool, done bool) {
-	// The done exits run before park(): a stream that is already finished was
-	// never parked, and marking it so leaves a phantom gauge blip and a false
-	// "disconnected still behind" trace on a healthy completion.
-	//
-	// A bounded subscription whose cursor reached UntilNs is finished:
-	// LoopProcessLogData, the only place UntilNs ends a stream, is unreachable
-	// from here, and the bound is inclusive while cursors are exclusive.
+	// Done exits run before park(): a finished stream was never parked, and
+	// marking it so leaves a false "still behind" trace. A cursor at UntilNs is
+	// finished - the bound is inclusive, cursors are exclusive, and
+	// LoopProcessLogData (the only place UntilNs ends a stream) is unreachable
+	// from a park.
 	if req.UntilNs != 0 && cursor.Time.UnixNano() >= req.UntilNs {
 		return 0, false, true
 	}
@@ -583,10 +556,9 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	var isDone bool
 	refsSentAtTsNs := int64(math.MinInt64) // position refs were last sent for; never re-sent at the same one
 	sentRefs := make(map[string]sentRefState)
-	// Entry passes for chunk clients advance the cursor without delivering:
-	// every entry they would send is (or will be) covered by refs, and the
-	// client applies inline events unfiltered, so delivering here applies the
-	// ref'd file's tail twice.
+	// Chunk clients' entry passes advance without delivering: refs already
+	// cover (or will cover) every entry, and the client applies inline events
+	// unfiltered - delivering here applies the ref'd tail twice.
 	diskEntryFn := eachLogEntryFn
 	if req.ClientSupportsMetadataChunks {
 		diskEntryFn = func(logEntry *filer_pb.LogEntry) (bool, error) { return false, nil }
@@ -614,13 +586,9 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 
 		cursorBeforeDiskTsNs := lastReadTime.Time.UnixNano()
 
-		// One disk pass. Chunk-capable clients get refs, but only once per
-		// position: gap retries run this loop every couple of seconds, and
-		// re-sending the same refs piles duplicates into the client's pending
-		// list, which it only drains when a non-ref message arrives. Refs also
-		// name files by their start minute, below the content the client was
-		// actually given, so when they cannot advance the cursor an entry pass
-		// moves it by real entry timestamps instead.
+		// Refs go once per position (retries would re-send them into a pending
+		// list the client only drains on a non-ref message); when their
+		// minute-named cursor cannot advance, an entry pass moves it instead.
 		if req.ClientSupportsMetadataChunks && cursorBeforeDiskTsNs != refsSentAtTsNs {
 			refsSentAtTsNs = cursorBeforeDiskTsNs
 			processedTsNs, isDone, readPersistedLogErr = fs.sendLogFileRefs(ctx, sender, lastReadTime, req.UntilNs, sentRefs)
@@ -636,13 +604,10 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 
 		glog.V(4).Infof("processed to %v: %v", clientName, processedTsNs)
 		diskAdvanced := diskReadAdvanced(processedTsNs, lastReadTime)
-		// The watermark is read after the disk read - an eviction landing while
-		// a long backlog read runs must count against the position it produced -
-		// and in ORIGINAL timestamps: the ring bumps out-of-order peer arrivals
-		// to its head, so its stopTimes exceed anything on any peer's disk, and
-		// gating a disk cursor on them would park a subscriber that has in fact
-		// drained every peer's log (15 minutes and a false loss alarm per
-		// bump-heavy interval, e.g. any peer-history replay after a restart).
+		// Read after the disk read (an eviction landing mid-read must count) and
+		// in received-ts space: the ring's bumped stopTimes exceed anything on
+		// any peer's disk, and gating disk cursors on them parks subscribers
+		// that drained every peer's log.
 		lastEvictedTsNs := fs.filer.MetaAggregator.MetaLogBuffer.GetLastEvictedOriginalTsNs()
 		if diskAdvanced {
 			gapStall.resumed()
@@ -781,10 +746,9 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	var lastDiskReadTsNs int64 = -1        // Track the last read position we used for disk read
 	refsSentAtTsNs := int64(math.MinInt64) // position refs were last sent for; never re-sent at the same one
 	sentRefs := make(map[string]sentRefState)
-	// Entry passes for chunk clients advance the cursor without delivering:
-	// every entry they would send is (or will be) covered by refs, and the
-	// client applies inline events unfiltered, so delivering here applies the
-	// ref'd file's tail twice.
+	// Chunk clients' entry passes advance without delivering: refs already
+	// cover (or will cover) every entry, and the client applies inline events
+	// unfiltered - delivering here applies the ref'd tail twice.
 	diskEntryFn := eachLogEntryFn
 	if req.ClientSupportsMetadataChunks {
 		diskEntryFn = func(logEntry *filer_pb.LogEntry) (bool, error) { return false, nil }
@@ -820,12 +784,9 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 			// Record the position we are about to read from
 			lastDiskReadTsNs = currentReadTsNs
 			glog.V(4).Infof("read on disk %v local subscribe %s from %+v (lastFlushed: %v)", clientName, req.PathPrefix, lastReadTime, time.Unix(0, currentFlushTsNs))
-			// Chunk-capable clients get refs, but only once per position: gap
-			// retries re-run this pass, and re-sent refs pile up in the
-			// client's pending list, which it only drains on a non-ref
-			// message. Refs also name files by their start minute, below the
-			// content the client was actually given, so when they cannot
-			// advance the cursor an entry pass moves it by real timestamps.
+			// Refs go once per position (retries would re-send them into a
+			// pending list the client only drains on a non-ref message); when
+			// their minute-named cursor cannot advance, an entry pass moves it.
 			if req.ClientSupportsMetadataChunks && currentReadTsNs != refsSentAtTsNs {
 				refsSentAtTsNs = currentReadTsNs
 				processedTsNs, isDone, readPersistedLogErr = fs.sendLogFileRefs(ctx, sender, lastReadTime, req.UntilNs, sentRefs)
