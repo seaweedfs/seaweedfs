@@ -140,7 +140,7 @@ func TestS3RemoveDirectoryDeletesEveryListedObject(t *testing.T) {
 	require.Equal(t, []string{"testdir/z.bin"}, deletedKeys(mock.deleteInputs[1]))
 }
 
-func TestS3RemoveDirectoryEmptyPrefixSendsNoDeletes(t *testing.T) {
+func TestS3RemoveDirectoryEmptyListingSendsNoDeletes(t *testing.T) {
 	mock := &removeDirectoryMock{pages: []*awss3.ListObjectsV2Output{listPage()}}
 	client := &s3RemoteStorageClient{conf: &remote_pb.RemoteConf{Name: "test"}, conn: mock}
 	loc := &remote_pb.RemoteStorageLocation{Name: "test", Bucket: "bucket", Path: "/testdir"}
