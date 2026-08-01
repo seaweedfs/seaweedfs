@@ -160,6 +160,12 @@ func TestWriteBufferCap_SharedAcrossPipelines(t *testing.T) {
 	if got := observedMax.Load(); got > capBytes {
 		t.Fatalf("observed Used()=%d exceeded cap=%d", got, capBytes)
 	}
+	// An uploader goroutine releases its budget slot only after reacquiring
+	// chunksLock post-Shutdown, so the last releases may land asynchronously.
+	drainDeadline := time.Now().Add(5 * time.Second)
+	for acc.Used() != 0 && time.Now().Before(drainDeadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
 	if got := acc.Used(); got != 0 {
 		t.Fatalf("expected 0 used after shutdown, got %d", got)
 	}
