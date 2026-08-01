@@ -226,6 +226,17 @@ func TestWaitOnGapExits(t *testing.T) {
 		}
 	})
 
+	t.Run("a bounded subscription exactly at its window ends the stream", func(t *testing.T) {
+		// The bound is inclusive and cursors are exclusive: a disk read whose
+		// last entry sits exactly on UntilNs leaves the cursor there with
+		// everything <= UntilNs delivered. Parking would make fs.verify hang
+		// and then fail on a healthy cluster.
+		bounded := &filer_pb.SubscribeMetadataRequest{ClientId: 7, ClientEpoch: 3, UntilNs: cursor}
+		if got := fs.waitOnGap(context.Background(), bounded, cursor, nil, 0); got != gapWaitDone {
+			t.Fatalf("outcome = %v, want done", got)
+		}
+	})
+
 	t.Run("a stall past the bound fails the stream", func(t *testing.T) {
 		if got := fs.waitOnGap(context.Background(), req, cursor, nil, maxGapStall); got != gapWaitStalled {
 			t.Fatalf("outcome = %v, want stalled", got)

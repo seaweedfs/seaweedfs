@@ -353,8 +353,9 @@ const (
 func (fs *FilerServer) waitOnGap(ctx context.Context, req *filer_pb.SubscribeMetadataRequest, cursorTsNs int64, notifyChan <-chan struct{}, stalledFor time.Duration) gapWaitOutcome {
 	// A bounded subscription whose window is already behind the gap is finished:
 	// LoopProcessLogData, the only place UntilNs ends a stream, is not reachable
-	// from here.
-	if req.UntilNs != 0 && cursorTsNs > req.UntilNs {
+	// from here. The bound is inclusive and cursors are exclusive, so a cursor
+	// sitting exactly on UntilNs has already delivered everything <= it.
+	if req.UntilNs != 0 && cursorTsNs >= req.UntilNs {
 		return gapWaitDone
 	}
 	if !fs.hasClient(req.ClientId, req.ClientEpoch) {
