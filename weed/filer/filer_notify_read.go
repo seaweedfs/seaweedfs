@@ -47,14 +47,24 @@ func persistedLogScanStart(t time.Time) time.Time {
 // LastShippedLogEntryTsNsForFiler mirrors the client's reader across one
 // filer's shipped files, in ship order: a file that fails mid-read still
 // delivers its readable prefix and later files still deliver after it, so the
-// newest file with readable content answers.
-func (f *Filer) LastShippedLogEntryTsNsForFiler(refs []*filer_pb.LogFileChunkRef) (tsNs int64, ok bool) {
+// newest file with readable content answers. answeredFileTsNs names that file
+// so the caller can roll back the sent state of everything newer - refs the
+// cursor did not reach must re-ship, or a transient probe failure leaves the
+// cursor behind them for the life of the connection.
+func (f *Filer) LastShippedLogEntryTsNsForFiler(refs []*filer_pb.LogFileChunkRef) (tsNs int64, answeredFileTsNs int64, ok bool) {
 	for i := len(refs) - 1; i >= 0; i-- {
 		if tsNs, ok = f.lastShippedLogEntryTsNs(refs[i].Chunks); ok {
-			return tsNs, ok
+			return tsNs, refs[i].FileTsNs, ok
 		}
 	}
-	return 0, false
+	return 0, 0, false
+}
+
+// lookupLogChunkFn reports whether a chunk still resolves to a live volume.
+// Swapped in tests.
+var lookupLogChunkFn = func(f *Filer, fileId string) error {
+	_, err := f.MasterClient.GetLookupFileIdFunction()(context.Background(), fileId)
+	return err
 }
 
 // lastShippedLogEntryTsNs mirrors the client's read of one shipped file: a
@@ -63,8 +73,16 @@ func (f *Filer) LastShippedLogEntryTsNsForFiler(refs []*filer_pb.LogFileChunkRef
 // apply. Unreadable includes transient failures - understating the marker
 // only re-ships, overstating loses events - and no error escapes: a probe
 // failure must never block the transition the client is waiting on.
+//
+// Readability is judged where the client reads - the volumes - not by the
+// decoded-chunk cache: a chunk this server decoded an hour ago may sit on a
+// volume that has since died, and the direct-reading client stops there no
+// matter how well the cache still remembers the bytes.
 func (f *Filer) lastShippedLogEntryTsNs(chunks []*filer_pb.FileChunk) (tsNs int64, ok bool) {
 	for _, chunk := range chunks {
+		if lookupErr := lookupLogChunkFn(f, chunk.GetFileIdString()); lookupErr != nil {
+			return tsNs, ok
+		}
 		entries, loadErr := f.persistedLogCache.getOrLoad(chunk.GetFileIdString(), int64(chunk.Size), func() ([]*filer_pb.LogEntry, bool, error) {
 			return loadLogFileEntriesFn(f.MasterClient, chunk)
 		})

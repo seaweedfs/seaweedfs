@@ -141,7 +141,15 @@ func TestLastShippedLogEntryTsNs(t *testing.T) {
 		r := byId[c.FileId]
 		return r.entries, true, r.err
 	}
-	defer func() { loadLogFileEntriesFn = origLoad }()
+	origLookup := lookupLogChunkFn
+	deadVolumes := map[string]bool{}
+	lookupLogChunkFn = func(f *Filer, fileId string) error {
+		if deadVolumes[fileId] {
+			return fmt.Errorf("volume 9 not found")
+		}
+		return nil
+	}
+	defer func() { loadLogFileEntriesFn = origLoad; lookupLogChunkFn = origLookup }()
 
 	t.Run("a fully readable file answers with its tail", func(t *testing.T) {
 		ts, ok := f.lastShippedLogEntryTsNs([]*filer_pb.FileChunk{chunk("good-early"), chunk("good-late")})
@@ -170,12 +178,30 @@ func TestLastShippedLogEntryTsNs(t *testing.T) {
 		// The client skips the bad file but has applied the earlier ones;
 		// discarding their progress would rewind the marker to the start
 		// cursor and stall or replay.
-		ts, ok := f.LastShippedLogEntryTsNsForFiler([]*filer_pb.LogFileChunkRef{
+		ts, answeredFileTsNs, ok := f.LastShippedLogEntryTsNsForFiler([]*filer_pb.LogFileChunkRef{
 			ref(1000, chunk("good-late")),
 			ref(2000, chunk("missing"), chunk("missing2")),
 		})
 		if !ok || ts != 400 {
 			t.Fatalf("ts=%d ok=%v, want the previous file's 400", ts, ok)
+		}
+		if answeredFileTsNs != 1000 {
+			t.Fatalf("answered file %d, want 1000: the caller rolls back sent state above it", answeredFileTsNs)
+		}
+	})
+
+	t.Run("a cached chunk on a dead volume ends the prefix", func(t *testing.T) {
+		// Warm the cache, then kill the middle chunk's volume. The client
+		// reads directly and stops there; a probe trusting its own decoded
+		// cache would sail past to the tail and put the marker beyond entries
+		// the client never applied.
+		if ts, ok := f.lastShippedLogEntryTsNs([]*filer_pb.FileChunk{chunk("good-early"), chunk("good-late")}); !ok || ts != 400 {
+			t.Fatalf("warmup: ts=%d ok=%v, want 400", ts, ok)
+		}
+		deadVolumes["good-early"] = true
+		defer delete(deadVolumes, "good-early")
+		if ts, ok := f.lastShippedLogEntryTsNs([]*filer_pb.FileChunk{chunk("good-early"), chunk("good-late")}); ok || ts != 0 {
+			t.Fatalf("ts=%d ok=%v, want no answer: the first chunk's volume is gone however warm the cache", ts, ok)
 		}
 	})
 

@@ -965,9 +965,22 @@ func (fs *FilerServer) chunkDiskPass(ctx context.Context, sender metadataStreamS
 	for _, ref := range refs {
 		refsPerFiler[ref.FilerId] = append(refsPerFiler[ref.FilerId], ref)
 	}
-	for _, filerRefs := range refsPerFiler {
-		if tailTsNs, ok := fs.filer.LastShippedLogEntryTsNsForFiler(filerRefs); ok && tailTsNs > cursorTsNs {
+	for filerId, filerRefs := range refsPerFiler {
+		tailTsNs, answeredFileTsNs, ok := fs.filer.LastShippedLogEntryTsNsForFiler(filerRefs)
+		if ok && tailTsNs > cursorTsNs {
 			cursorTsNs = tailTsNs
+		}
+		// Refs the cursor did not reach must re-ship on a later pass: their
+		// content sits above the marker, and sent-state that outlives a
+		// transient probe failure would strand the cursor behind them for the
+		// life of the connection - parking aggregated streams below the
+		// watermark. Re-shipped entries at or below the client's checkpoint
+		// are filtered client-side, and batches are marker-separated, so a
+		// re-shipped whole file cannot rewind a merge mid-batch.
+		for _, ref := range filerRefs {
+			if !ok || ref.FileTsNs > answeredFileTsNs {
+				delete(sent, sentRefKey(filerId, ref.FileTsNs))
+			}
 		}
 	}
 	// A file selected before the bound can hold entries past it. The client
@@ -1013,6 +1026,10 @@ type sentRefState struct {
 	fileTsNs int64
 }
 
+func sentRefKey(filerId string, fileTsNs int64) string {
+	return fmt.Sprintf("%s/%d", filerId, fileTsNs)
+}
+
 // deltaLogFileRefs reduces a collection to the chunks not yet shipped, updates
 // the sent state, and prunes files the scan window has moved past.
 //
@@ -1025,7 +1042,7 @@ type sentRefState struct {
 func deltaLogFileRefs(refs []*filer_pb.LogFileChunkRef, sent map[string]sentRefState, pruneBeforeTsNs int64) []*filer_pb.LogFileChunkRef {
 	out := make([]*filer_pb.LogFileChunkRef, 0, len(refs))
 	for _, ref := range refs {
-		key := fmt.Sprintf("%s/%d", ref.FilerId, ref.FileTsNs)
+		key := sentRefKey(ref.FilerId, ref.FileTsNs)
 		prior := sent[key].chunks
 		if len(ref.Chunks) <= prior {
 			continue
