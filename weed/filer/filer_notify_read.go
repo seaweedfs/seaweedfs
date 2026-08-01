@@ -44,10 +44,13 @@ func persistedLogScanStart(t time.Time) time.Time {
 	return t.Add(-LogFlushInterval)
 }
 
-// PersistedLogScanStartTsNs is the same bound for callers tracking which log
-// files a scan from t can still return.
+// PersistedLogScanStartTsNs is the oldest file-name timestamp a scan from t
+// can still list. File names are minute-truncated, and the collector compares
+// names at minute granularity, so the bound must truncate too: an exact-ns
+// bound sits inside the boundary file's minute and disowns a file the next
+// collection will still return.
 func PersistedLogScanStartTsNs(t time.Time) int64 {
-	return persistedLogScanStart(t).UnixNano()
+	return persistedLogScanStart(t).Truncate(time.Minute).UnixNano()
 }
 
 func (f *Filer) collectPersistedLogBuffer(startPosition log_buffer.MessagePosition, stopTsNs int64) (v *OrderedLogVisitor, err error) {

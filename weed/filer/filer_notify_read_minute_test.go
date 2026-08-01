@@ -83,3 +83,23 @@ func TestClampLogRefsCursorNeverRewinds(t *testing.T) {
 		t.Fatalf("cursor = %v, want it to advance to %v", time.Unix(0, got), time.Unix(0, ahead))
 	}
 }
+
+// TestPersistedLogScanStartTsNsMinuteAligned pins the prune bound against the
+// collector's minute-granular file comparison: a cursor at 12:31:20 still
+// collects the 12-30 file, so the bound must not sit past 12:30:00 - an
+// exact-ns bound disowns the file's sent state and the next pass reships it
+// whole, re-creating the duplicate-refs class the state exists to prevent.
+func TestPersistedLogScanStartTsNsMinuteAligned(t *testing.T) {
+	cursor := time.Date(2026, 6, 29, 12, 31, 20, 0, time.UTC)
+	fileTsNs := time.Date(2026, 6, 29, 12, 30, 0, 0, time.UTC).UnixNano()
+
+	bound := PersistedLogScanStartTsNs(cursor)
+	if fileTsNs < bound {
+		t.Fatalf("bound %v disowns the 12-30 file the collector still lists", time.Unix(0, bound).UTC())
+	}
+	// A file a full interval plus a minute behind is genuinely out of scan range.
+	old := time.Date(2026, 6, 29, 12, 28, 0, 0, time.UTC).UnixNano()
+	if old >= bound {
+		t.Fatalf("bound %v keeps state for files the scan can no longer list", time.Unix(0, bound).UTC())
+	}
+}
