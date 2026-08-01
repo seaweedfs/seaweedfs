@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -63,6 +64,9 @@ func probe(t *testing.T, client *s3.Client, bucket, key string) existence {
 		Bucket: aws.String(bucket), Key: aws.String(key),
 	})
 	if err == nil {
+		// Drain before closing so the connection goes back to the pool; these
+		// probes run in tight loops and a discarded body forces a new connection.
+		_, _ = io.Copy(io.Discard, getResp.Body)
 		getResp.Body.Close()
 		e.get = true
 	} else {
@@ -171,29 +175,32 @@ func TestLockKeyVerbParityAcrossReacquireCycles(t *testing.T) {
 	createBucketWithObjectLock(t, client, bucketName)
 	defer deleteBucket(t, client, bucketName)
 
-	key := lockArbitrationKeys[0]
-	for cycle := 0; cycle < 3; cycle++ {
-		put, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
-			Bucket: aws.String(bucketName),
-			Key:    aws.String(key),
-			Body:   bytes.NewReader([]byte("held")),
+	for _, key := range lockArbitrationKeys {
+		t.Run(strings.ReplaceAll(key, "/", "_"), func(t *testing.T) {
+			for cycle := 0; cycle < 3; cycle++ {
+				put, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
+					Bucket: aws.String(bucketName),
+					Key:    aws.String(key),
+					Body:   bytes.NewReader([]byte("held")),
+				})
+				require.NoError(t, err)
+				require.NotNil(t, put.VersionId)
+
+				held := probe(t, client, bucketName, key)
+				require.True(t, held.agree(), "cycle %d: verbs disagree while held: %+v", cycle, held)
+				require.True(t, held.get, "cycle %d: key should be present while held: %+v", cycle, held)
+
+				_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+					Bucket:    aws.String(bucketName),
+					Key:       aws.String(key),
+					VersionId: put.VersionId,
+				})
+				require.NoError(t, err)
+
+				released := probe(t, client, bucketName, key)
+				require.True(t, released.agree(), "cycle %d: verbs disagree after release: %+v", cycle, released)
+				require.False(t, released.get, "cycle %d: key should be absent after release: %+v", cycle, released)
+			}
 		})
-		require.NoError(t, err)
-		require.NotNil(t, put.VersionId)
-
-		held := probe(t, client, bucketName, key)
-		require.True(t, held.agree(), "cycle %d: verbs disagree while held: %+v", cycle, held)
-		require.True(t, held.get, "cycle %d: key should be present while held: %+v", cycle, held)
-
-		_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
-			Bucket:    aws.String(bucketName),
-			Key:       aws.String(key),
-			VersionId: put.VersionId,
-		})
-		require.NoError(t, err)
-
-		released := probe(t, client, bucketName, key)
-		require.True(t, released.agree(), "cycle %d: verbs disagree after release: %+v", cycle, released)
-		require.False(t, released.get, "cycle %d: key should be absent after release: %+v", cycle, released)
 	}
 }
