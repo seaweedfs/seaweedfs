@@ -49,9 +49,11 @@ func TestUnusableVersionIDIsRefusedNotResolved(t *testing.T) {
 				Key:       aws.String(objectKey),
 				VersionId: aws.String(versionID),
 			})
-			status := statusOf(t, err)
-			assert.Less(t, status, 500, "an unusable version id is a client error, not a server fault; a 5xx invites endless retries of a request that can never succeed")
-			assert.GreaterOrEqual(t, status, 400)
+			// 400, not merely "some 4xx": the id is malformed, which is a bad
+			// argument rather than a missing resource. A 5xx would be the real
+			// damage — it invites endless retries of a request that can never
+			// succeed — but pinning the exact code keeps the contract honest.
+			assert.Equal(t, 400, statusOf(t, err))
 		})
 	}
 
@@ -98,9 +100,7 @@ func TestUnusableVersionIDRefusedOnReadPaths(t *testing.T) {
 				Key:       aws.String(objectKey),
 				VersionId: aws.String(versionID),
 			})
-			status := statusOf(t, err)
-			assert.Less(t, status, 500)
-			assert.GreaterOrEqual(t, status, 400)
+			assert.Equal(t, 400, statusOf(t, err))
 		})
 		t.Run("head "+versionID, func(t *testing.T) {
 			_, err := client.HeadObject(context.TODO(), &s3.HeadObjectInput{
@@ -108,9 +108,7 @@ func TestUnusableVersionIDRefusedOnReadPaths(t *testing.T) {
 				Key:       aws.String(objectKey),
 				VersionId: aws.String(versionID),
 			})
-			status := statusOf(t, err)
-			assert.Less(t, status, 500)
-			assert.GreaterOrEqual(t, status, 400)
+			assert.Equal(t, 400, statusOf(t, err))
 		})
 	}
 }
