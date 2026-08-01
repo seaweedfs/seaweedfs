@@ -44,6 +44,12 @@ func persistedLogScanStart(t time.Time) time.Time {
 	return t.Add(-LogFlushInterval)
 }
 
+// PersistedLogScanStartTsNs is the same bound for callers tracking which log
+// files a scan from t can still return.
+func PersistedLogScanStartTsNs(t time.Time) int64 {
+	return persistedLogScanStart(t).UnixNano()
+}
+
 func (f *Filer) collectPersistedLogBuffer(startPosition log_buffer.MessagePosition, stopTsNs int64) (v *OrderedLogVisitor, err error) {
 
 	if stopTsNs != 0 && startPosition.Time.UnixNano() > stopTsNs {

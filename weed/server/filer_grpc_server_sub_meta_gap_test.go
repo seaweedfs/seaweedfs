@@ -472,3 +472,53 @@ func TestParkOnGapStallOutcomes(t *testing.T) {
 		t.Fatalf("stalled gauge = %v, want %v: parks and releases must balance", got, gaugeBefore)
 	}
 }
+
+// TestDeltaLogFileRefs pins the per-stream ref dedup. Collections overlap by
+// design - the scan backs off a flush interval to catch a spanning file, and a
+// filer appends chunks to its newest file - so without the delta a subscriber
+// receives the same file twice: re-downloaded chunks at best, and a mid-stream
+// timestamp rewind inside the client's sorted per-filer merge at worst.
+func TestDeltaLogFileRefs(t *testing.T) {
+	chunk := func(id string) *filer_pb.FileChunk { return &filer_pb.FileChunk{FileId: id} }
+	ref := func(filerId string, fileTsNs int64, chunks ...*filer_pb.FileChunk) *filer_pb.LogFileChunkRef {
+		return &filer_pb.LogFileChunkRef{FilerId: filerId, FileTsNs: fileTsNs, Chunks: chunks}
+	}
+	sent := make(map[string]sentRefState)
+
+	// First collection ships everything.
+	out := deltaLogFileRefs([]*filer_pb.LogFileChunkRef{ref("a", 100, chunk("c1"), chunk("c2"))}, sent, 0)
+	if len(out) != 1 || len(out[0].Chunks) != 2 {
+		t.Fatalf("first collection: got %d refs, want the whole file", len(out))
+	}
+
+	// Re-collection of the identical file ships nothing.
+	out = deltaLogFileRefs([]*filer_pb.LogFileChunkRef{ref("a", 100, chunk("c1"), chunk("c2"))}, sent, 0)
+	if len(out) != 0 {
+		t.Fatalf("unchanged re-collection: got %d refs, want none", len(out))
+	}
+
+	// A grown file ships only its new chunks; a new file ships whole.
+	out = deltaLogFileRefs([]*filer_pb.LogFileChunkRef{
+		ref("a", 100, chunk("c1"), chunk("c2"), chunk("c3")),
+		ref("a", 200, chunk("d1")),
+	}, sent, 0)
+	if len(out) != 2 {
+		t.Fatalf("growth pass: got %d refs, want 2", len(out))
+	}
+	if len(out[0].Chunks) != 1 || out[0].Chunks[0].FileId != "c3" {
+		t.Fatalf("grown file must ship only the appended suffix, got %+v", out[0].Chunks)
+	}
+	if len(out[1].Chunks) != 1 || out[1].Chunks[0].FileId != "d1" {
+		t.Fatalf("new file must ship whole, got %+v", out[1].Chunks)
+	}
+
+	// Files behind the scan window are pruned; one that somehow reappears ships
+	// again rather than leaking state forever.
+	deltaLogFileRefs(nil, sent, 150)
+	if _, kept := sent["a/100"]; kept {
+		t.Fatal("file behind the scan window must be pruned")
+	}
+	if _, kept := sent["a/200"]; !kept {
+		t.Fatal("file inside the scan window must be kept")
+	}
+}
