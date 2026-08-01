@@ -18,6 +18,7 @@ type Collector struct {
 	masterServer interface{} // Will be set to *weed_server.MasterServer to access client tracking
 	version      string
 	os           string
+	isEnterprise bool
 }
 
 // NewCollector creates a new telemetry collector
@@ -40,6 +41,11 @@ func (c *Collector) SetVersion(version string) {
 // SetOS sets the operating system information
 func (c *Collector) SetOS(os string) {
 	c.os = os
+}
+
+// SetIsEnterprise marks the reports as coming from an enterprise build
+func (c *Collector) SetIsEnterprise(isEnterprise bool) {
+	c.isEnterprise = isEnterprise
 }
 
 // SetMasterServer sets a reference to the master server for client tracking
@@ -109,9 +115,10 @@ func (c *Collector) StartPeriodicCollection(interval time.Duration) {
 // collectData gathers telemetry data from the topology
 func (c *Collector) collectData() *proto.TelemetryData {
 	data := &proto.TelemetryData{
-		Version:   c.version,
-		Os:        c.os,
-		Timestamp: time.Now().Unix(),
+		Version:      c.version,
+		Os:           c.os,
+		IsEnterprise: c.isEnterprise,
+		Timestamp:    time.Now().Unix(),
 	}
 
 	if c.topo != nil {

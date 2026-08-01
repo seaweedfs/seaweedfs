@@ -38,6 +38,10 @@ message TelemetryData {
   
   // Unix timestamp when the data was collected
   int64 timestamp = 11;
+
+  // Whether this cluster runs an enterprise build; carried separately from
+  // the version string so the public dashboard does not single them out
+  bool is_enterprise = 12;
 }
 
 // TelemetryRequest is sent from SeaweedFS clusters to the telemetry server
