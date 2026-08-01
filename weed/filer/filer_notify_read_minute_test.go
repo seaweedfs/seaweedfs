@@ -1,8 +1,15 @@
 package filer
 
 import (
+	"bytes"
+	"fmt"
+	"io"
 	"testing"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
 // TestPersistedLogScanStartCoversSpanningWindow pins the file-selection window.
@@ -102,4 +109,81 @@ func TestPersistedLogScanStartTsNsMinuteAligned(t *testing.T) {
 	if old >= bound {
 		t.Fatalf("bound %v keeps state for files the scan can no longer list", time.Unix(0, bound).UTC())
 	}
+}
+
+// TestLastShippedLogEntryTsNs pins the chunk-mode cursor source: the answer
+// comes from the shipped chunks alone, permanently missing chunks are skipped
+// the way every replay path skips them - a dead volume must not wedge the
+// stream ahead of its transition marker - and a legacy chunk whose records
+// span boundaries falls back to streaming the shipped list itself.
+func TestLastShippedLogEntryTsNs(t *testing.T) {
+	f := &Filer{persistedLogCache: newPersistedLogCache(1 << 20)}
+
+	entry := func(ts int64) *filer_pb.LogEntry { return &filer_pb.LogEntry{TsNs: ts} }
+	chunk := func(id string) *filer_pb.FileChunk { return &filer_pb.FileChunk{FileId: id, Size: 10} }
+
+	byId := map[string]struct {
+		entries []*filer_pb.LogEntry
+		err     error
+	}{
+		"good-early": {entries: []*filer_pb.LogEntry{entry(100), entry(200)}},
+		"good-late":  {entries: []*filer_pb.LogEntry{entry(300), entry(400)}},
+		"missing":    {err: fmt.Errorf("volume 7 not found")},
+		"empty":      {},
+	}
+	origLoad := loadLogFileEntriesFn
+	loadLogFileEntriesFn = func(masterClient *wdclient.MasterClient, c *filer_pb.FileChunk) ([]*filer_pb.LogEntry, bool, error) {
+		r := byId[c.FileId]
+		return r.entries, true, r.err
+	}
+	defer func() { loadLogFileEntriesFn = origLoad }()
+
+	t.Run("last readable chunk answers", func(t *testing.T) {
+		ts, ok, err := f.LastShippedLogEntryTsNs([]*filer_pb.FileChunk{chunk("good-early"), chunk("good-late")})
+		if err != nil || !ok || ts != 400 {
+			t.Fatalf("ts=%d ok=%v err=%v, want 400", ts, ok, err)
+		}
+	})
+
+	t.Run("a missing tail walks back instead of failing", func(t *testing.T) {
+		ts, ok, err := f.LastShippedLogEntryTsNs([]*filer_pb.FileChunk{chunk("good-early"), chunk("missing")})
+		if err != nil || !ok || ts != 200 {
+			t.Fatalf("ts=%d ok=%v err=%v, want the previous chunk's 200", ts, ok, err)
+		}
+	})
+
+	t.Run("nothing readable is a skip, not an error", func(t *testing.T) {
+		_, ok, err := f.LastShippedLogEntryTsNs([]*filer_pb.FileChunk{chunk("missing"), chunk("empty")})
+		if err != nil || ok {
+			t.Fatalf("ok=%v err=%v, want a clean no-answer", ok, err)
+		}
+	})
+
+	t.Run("spanning records stream the shipped list", func(t *testing.T) {
+		// The chunk refuses standalone decode; the streamed bytes carry two
+		// length-prefixed entries and the fallback must return the last one.
+		byIdIncomplete := chunk("incomplete")
+		origLoad2 := loadLogFileEntriesFn
+		loadLogFileEntriesFn = func(masterClient *wdclient.MasterClient, c *filer_pb.FileChunk) ([]*filer_pb.LogEntry, bool, error) {
+			return nil, false, errLogChunkIncomplete
+		}
+		origStream := newLogFileStreamReader
+		newLogFileStreamReader = func(masterClient *wdclient.MasterClient, chunks []*filer_pb.FileChunk) io.Reader {
+			var buf bytes.Buffer
+			for _, ts := range []int64{500, 600} {
+				data, _ := (&filer_pb.LogEntry{TsNs: ts}).MarshalVT()
+				var sizeBuf [4]byte
+				util.Uint32toBytes(sizeBuf[:], uint32(len(data)))
+				buf.Write(sizeBuf[:])
+				buf.Write(data)
+			}
+			return &buf
+		}
+		defer func() { loadLogFileEntriesFn = origLoad2; newLogFileStreamReader = origStream }()
+
+		ts, ok, err := f.LastShippedLogEntryTsNs([]*filer_pb.FileChunk{byIdIncomplete})
+		if err != nil || !ok || ts != 600 {
+			t.Fatalf("ts=%d ok=%v err=%v, want the streamed tail 600", ts, ok, err)
+		}
+	})
 }

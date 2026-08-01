@@ -44,24 +44,67 @@ func persistedLogScanStart(t time.Time) time.Time {
 	return t.Add(-LogFlushInterval)
 }
 
-// LastLogEntryTsNs decodes one log chunk through the shared persisted-log
-// cache and returns its final entry's timestamp. ok=false means the chunk does
-// not decode standalone (legacy spanning records) and the caller needs a range
-// read instead.
-func (f *Filer) LastLogEntryTsNs(chunk *filer_pb.FileChunk) (tsNs int64, ok bool, err error) {
-	entries, loadErr := f.persistedLogCache.getOrLoad(chunk.GetFileIdString(), int64(chunk.Size), func() ([]*filer_pb.LogEntry, bool, error) {
-		return loadLogFileEntriesFn(f.MasterClient, chunk)
-	})
-	if errors.Is(loadErr, errLogChunkIncomplete) {
-		return 0, false, nil
+// LastShippedLogEntryTsNs returns the final entry timestamp of a shipped chunk
+// sequence, reading only those chunks - never a fresh listing, so a concurrent
+// append cannot move the answer past what was shipped. A permanently missing
+// chunk is skipped, matching every other replay path (the client's reader
+// skips it the same way); a chunk whose records span boundaries falls back to
+// streaming the shipped list itself. ok=false when nothing readable remains.
+func (f *Filer) LastShippedLogEntryTsNs(chunks []*filer_pb.FileChunk) (tsNs int64, ok bool, err error) {
+	for i := len(chunks) - 1; i >= 0; i-- {
+		chunk := chunks[i]
+		entries, loadErr := f.persistedLogCache.getOrLoad(chunk.GetFileIdString(), int64(chunk.Size), func() ([]*filer_pb.LogEntry, bool, error) {
+			return loadLogFileEntriesFn(f.MasterClient, chunk)
+		})
+		if errors.Is(loadErr, errLogChunkIncomplete) {
+			return f.lastStreamedLogEntryTsNs(chunks[:i+1])
+		}
+		if isChunkNotFoundError(loadErr) {
+			continue
+		}
+		if loadErr != nil {
+			return 0, false, loadErr
+		}
+		if len(entries) == 0 {
+			continue
+		}
+		return entries[len(entries)-1].TsNs, true, nil
 	}
-	if loadErr != nil {
-		return 0, false, loadErr
+	return 0, false, nil
+}
+
+// lastStreamedLogEntryTsNs scans the chunk list as one byte stream for its
+// final entry timestamp. A missing chunk mid-stream yields what was read.
+func (f *Filer) lastStreamedLogEntryTsNs(chunks []*filer_pb.FileChunk) (tsNs int64, ok bool, err error) {
+	r := newLogFileStreamReader(f.MasterClient, chunks)
+	if closer, isCloser := r.(io.Closer); isCloser {
+		defer closer.Close()
 	}
-	if len(entries) == 0 {
-		return 0, true, nil
+	sizeBuf := make([]byte, 4)
+	for {
+		if _, readErr := io.ReadFull(r, sizeBuf); readErr != nil {
+			if readErr == io.EOF || isChunkNotFoundError(readErr) {
+				return tsNs, ok, nil
+			}
+			return tsNs, ok, readErr
+		}
+		size := util.BytesToUint32(sizeBuf)
+		if size > maxLogEntrySize {
+			return tsNs, ok, fmt.Errorf("streamed log entry size %d exceeds %d", size, maxLogEntrySize)
+		}
+		data := make([]byte, size)
+		if _, readErr := io.ReadFull(r, data); readErr != nil {
+			if isChunkNotFoundError(readErr) {
+				return tsNs, ok, nil
+			}
+			return tsNs, ok, readErr
+		}
+		logEntry := &filer_pb.LogEntry{}
+		if unmarshalErr := logEntry.UnmarshalVT(data); unmarshalErr != nil {
+			return tsNs, ok, unmarshalErr
+		}
+		tsNs, ok = logEntry.TsNs, true
 	}
-	return entries[len(entries)-1].TsNs, true, nil
 }
 
 // PersistedLogScanStartTsNs is the oldest file-name timestamp a scan from t

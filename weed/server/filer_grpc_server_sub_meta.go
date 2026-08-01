@@ -955,35 +955,31 @@ func (fs *FilerServer) chunkDiskPass(ctx context.Context, sender metadataStreamS
 	}
 
 	// Shipped content end: the max final-entry timestamp of each filer's last
-	// shipped chunk. Chunks are per-filer timestamp-ordered, so the last one
-	// bounds them all.
+	// shipped sequence, read from the shipped chunks alone - a fresh listing
+	// here could see a concurrent append and move the cursor past unshipped
+	// content. Missing chunks are skipped (the client's reader skips them the
+	// same way), so a dead volume cannot wedge the stream ahead of the marker.
 	cursorTsNs := startPos.Time.UnixNano()
-	lastPerFiler := make(map[string]*filer_pb.FileChunk, 2)
+	lastRefPerFiler := make(map[string]*filer_pb.LogFileChunkRef, 2)
 	for _, ref := range refs {
-		lastPerFiler[ref.FilerId] = ref.Chunks[len(ref.Chunks)-1]
+		lastRefPerFiler[ref.FilerId] = ref
 	}
-	for _, chunk := range lastPerFiler {
-		tailTsNs, ok, tailErr := fs.filer.LastLogEntryTsNs(chunk)
+	for _, ref := range lastRefPerFiler {
+		tailTsNs, ok, tailErr := fs.filer.LastShippedLogEntryTsNs(ref.Chunks)
 		if tailErr != nil {
+			// Transient: fail the stream before the marker; the reconnect's
+			// fresh sent-state re-ships everything, so nothing is lost.
 			return 0, false, tailErr
 		}
-		if !ok {
-			// Legacy chunk with spanning records: fall back to a range read
-			// from the pre-refs position to find the content end.
-			noop := func(*filer_pb.LogEntry) (bool, error) { return false, nil }
-			rangeEnd, done, rangeErr := fs.filer.ReadPersistedLogBuffer(ctx, startPos, untilNs, noop)
-			if rangeErr != nil {
-				return 0, false, rangeErr
-			}
-			if rangeEnd > cursorTsNs {
-				cursorTsNs = rangeEnd
-			}
-			isDone = done
-			break
-		}
-		if tailTsNs > cursorTsNs {
+		if ok && tailTsNs > cursorTsNs {
 			cursorTsNs = tailTsNs
 		}
+	}
+	// A file selected before the bound can hold entries past it. The client
+	// filters those but adopts the marker as its checkpoint, so an unclamped
+	// marker makes a later bounded request skip them.
+	if untilNs != 0 && cursorTsNs > untilNs {
+		cursorTsNs = untilNs
 	}
 	if err := sender.Send(&filer_pb.SubscribeMetadataResponse{
 		EventNotification: &filer_pb.EventNotification{},
@@ -991,7 +987,7 @@ func (fs *FilerServer) chunkDiskPass(ctx context.Context, sender metadataStreamS
 	}); err != nil {
 		return 0, false, err
 	}
-	return cursorTsNs, isDone, nil
+	return cursorTsNs, false, nil
 }
 
 // sendRefsBatched sends refs through the pipelined sender, which keeps them
