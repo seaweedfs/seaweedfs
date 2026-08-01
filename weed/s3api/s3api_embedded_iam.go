@@ -2515,7 +2515,7 @@ func (e *EmbeddedIamApi) AuthIam(f http.HandlerFunc, _ Action) http.HandlerFunc 
 
 		// Store identity in context
 		if identity != nil && identity.Name != "" {
-			r = r.WithContext(recordIdentityInContext(r.Context(), identity))
+			r = r.WithContext(recordIdentityInContext(r, identity))
 		}
 
 		// Check permissions based on action type

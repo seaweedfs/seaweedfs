@@ -57,6 +57,23 @@ func TestAuditRequesterArnForSTSSession(t *testing.T) {
 		"audit entry must name the assumed role and session")
 }
 
+// A JWT-authenticated identity carries no PrincipalArn of its own — the auth
+// layer hands the principal over in a request header — so the audit entry has to
+// resolve the ARN the same way policy evaluation does.
+func TestAuditRequesterArnForJWTIdentity(t *testing.T) {
+	iam := &IdentityAccessManagement{}
+
+	outer := s3_constants.EnsureIdentityHolder(httptest.NewRequest(http.MethodGet, "http://s3/test/", nil))
+	outer.Header.Set(s3_constants.SeaweedFSPrincipalHeader, "arn:aws:sts::000000000000:assumed-role/ClientRole/oidc-session")
+
+	identity := &Identity{Name: "alice", Account: &Account{Id: "alice"}}
+	iam.handleAuthResult(httptest.NewRecorder(), outer, identity, s3err.ErrNone, func(http.ResponseWriter, *http.Request) {})
+
+	log := s3err.GetAccessLog(outer, http.StatusOK, s3err.ErrNone)
+	assert.Equal(t, "alice", log.Requester)
+	assert.Equal(t, "arn:aws:sts::000000000000:assumed-role/ClientRole/oidc-session", log.RequesterArn)
+}
+
 // The AssumeRole call itself is authenticated inside the STS handler, which the
 // generic auth middleware never wraps; without recording the caller there the
 // audit entry for minting a session has no requester at all.

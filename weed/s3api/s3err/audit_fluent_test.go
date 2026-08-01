@@ -121,8 +121,9 @@ func TestGetAccessLogRequesterAnonymous(t *testing.T) {
 func TestGetAccessLogRequesterArnForAssumedRole(t *testing.T) {
 	outer := s3_constants.EnsureIdentityHolder(httptest.NewRequest(http.MethodGet, "/bucket/object", nil))
 
+	// Auth writes into the holder from a request copy the audit path never sees.
 	ctx := s3_constants.SetIdentityNameInContext(outer.Context(), "47ad4828c45b3f337bc3146081ba8f0f")
-	_ = outer.WithContext(s3_constants.SetPrincipalArnInContext(ctx, "arn:aws:sts::000000000000:assumed-role/ClientRole/dev-session"))
+	s3_constants.SetPrincipalArnInContext(ctx, "arn:aws:sts::000000000000:assumed-role/ClientRole/dev-session")
 
 	log := GetAccessLog(outer, http.StatusOK, ErrNone)
 

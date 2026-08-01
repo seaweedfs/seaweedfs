@@ -708,7 +708,7 @@ func (s3a *S3ApiServer) UnifiedPostHandler(w http.ResponseWriter, r *http.Reques
 		// AssumeRoleWithWebIdentity/WithLDAPIdentity carry no SigV4 caller, so
 		// identity may be nil here; the STS handlers record their own caller.
 		if identity != nil {
-			r = r.WithContext(recordIdentityInContext(r.Context(), identity))
+			r = r.WithContext(recordIdentityInContext(r, identity))
 		}
 		s3a.stsHandlers.HandleSTSRequest(w, r)
 	} else {
@@ -721,7 +721,7 @@ func (s3a *S3ApiServer) UnifiedPostHandler(w http.ResponseWriter, r *http.Reques
 
 		// Store identity in context
 		// Always set identity in context when non-nil to ensure downstream handlers have access
-		r = r.WithContext(recordIdentityInContext(r.Context(), identity))
+		r = r.WithContext(recordIdentityInContext(r, identity))
 
 		targetUserName := r.Form.Get("UserName")
 

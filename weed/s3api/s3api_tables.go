@@ -703,7 +703,7 @@ func (s3a *S3ApiServer) authenticateS3Tables(f http.HandlerFunc) http.HandlerFun
 		// Store the authenticated identity in request context
 		if identity != nil && identity.Name != "" {
 			glog.V(2).Infof("S3Tables: authenticated identity Name=%s Account.Id=%s", identity.Name, identity.Account.Id)
-			r = r.WithContext(recordIdentityInContext(r.Context(), identity))
+			r = r.WithContext(recordIdentityInContext(r, identity))
 		} else {
 			glog.V(2).Infof("S3Tables: authenticated identity is nil or empty name")
 		}

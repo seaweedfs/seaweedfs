@@ -1468,14 +1468,16 @@ func (iam *IdentityAccessManagement) AuthPostPolicy(f http.HandlerFunc, action A
 }
 
 // recordIdentityInContext stores the authenticated identity, its name and its
-// principal ARN in ctx. An STS session's name is only an opaque subject, so the
-// ARN is what carries the assumed role and session name to the audit log.
-func recordIdentityInContext(ctx context.Context, identity *Identity) context.Context {
+// principal ARN in the request context. An STS session's name is only an opaque
+// subject, so the ARN is what carries the assumed role and session name to the
+// audit log. A JWT-authenticated identity carries no PrincipalArn of its own,
+// hence the resolution through buildPrincipalARN.
+func recordIdentityInContext(r *http.Request, identity *Identity) context.Context {
 	if identity == nil {
-		return ctx
+		return r.Context()
 	}
-	ctx = s3_constants.SetIdentityNameInContext(ctx, identity.Name)
-	ctx = s3_constants.SetPrincipalArnInContext(ctx, identity.PrincipalArn)
+	ctx := s3_constants.SetIdentityNameInContext(r.Context(), identity.Name)
+	ctx = s3_constants.SetPrincipalArnInContext(ctx, buildPrincipalARN(identity, r))
 	// Also store the full identity object for handlers that need it (e.g., ListBuckets)
 	// This is especially important for JWT users whose identity is not in the identities list
 	return s3_constants.SetIdentityInContext(ctx, identity)
@@ -1485,7 +1487,7 @@ func (iam *IdentityAccessManagement) handleAuthResult(w http.ResponseWriter, r *
 	if errCode == s3err.ErrNone {
 		// Store the authenticated identity in request context (secure, cannot be spoofed)
 		if identity != nil && identity.Name != "" {
-			r = r.WithContext(recordIdentityInContext(r.Context(), identity))
+			r = r.WithContext(recordIdentityInContext(r, identity))
 		}
 		f(w, r)
 		return
