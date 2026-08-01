@@ -47,8 +47,7 @@ func (s s3RemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.R
 // a guarded DialContext.
 func MakeWithHTTPClient(conf *remote_pb.RemoteConf, httpClient *http.Client) (remote_storage.RemoteStorageClient, error) {
 	client := &s3RemoteStorageClient{
-		supportTagging: true,
-		conf:           conf,
+		conf: conf,
 	}
 	config := &aws.Config{
 		Region:                        aws.String(conf.S3Region),
@@ -82,12 +81,11 @@ func MakeWithHTTPClient(conf *remote_pb.RemoteConf, httpClient *http.Client) (re
 }
 
 type s3RemoteStorageClient struct {
-	conf           *remote_pb.RemoteConf
-	conn           s3iface.S3API
-	supportTagging bool
+	conf *remote_pb.RemoteConf
+	conn s3iface.S3API
 }
 
-var _ = remote_storage.RemoteStorageClient(&s3RemoteStorageClient{supportTagging: true})
+var _ = remote_storage.RemoteStorageClient(&s3RemoteStorageClient{})
 
 func (s *s3RemoteStorageClient) Traverse(remote *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
 
