@@ -419,12 +419,18 @@ func (s *s3RemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStorageL
 		}
 	}
 
+	// same as the write path: a remote without tagging support rejects both
+	// PutObjectTagging and DeleteObjectTagging
+	if !s.conf.S3SupportTagging {
+		return
+	}
+
 	tagging := toTagging(newEntry.Extended)
 	if len(tagging.TagSet) > 0 {
 		_, err = s.conn.PutObjectTagging(&s3.PutObjectTaggingInput{
 			Bucket:  aws.String(loc.Bucket),
 			Key:     aws.String(loc.Path[1:]),
-			Tagging: toTagging(newEntry.Extended),
+			Tagging: tagging,
 		})
 	} else {
 		_, err = s.conn.DeleteObjectTagging(&s3.DeleteObjectTaggingInput{

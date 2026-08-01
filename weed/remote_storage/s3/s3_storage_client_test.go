@@ -136,6 +136,73 @@ func TestS3WriteFilePassesMimeAsContentType(t *testing.T) {
 	require.Equal(t, "text/html", rt.uploadContentType(), "Content-Type should match entry.Attributes.Mime")
 }
 
+// recordingRoundTripper records every request and answers all of them with a 200.
+type recordingRoundTripper struct {
+	requests []*http.Request
+}
+
+func (c *recordingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	c.requests = append(c.requests, req.Clone(req.Context()))
+	if req.Body != nil {
+		_, _ = io.Copy(io.Discard, req.Body)
+		_ = req.Body.Close()
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader("")),
+		Header:     http.Header{},
+		Request:    req,
+	}, nil
+}
+
+func newRecordingS3Client(t *testing.T, supportTagging bool) (*s3RemoteStorageClient, *recordingRoundTripper) {
+	t.Helper()
+	rt := &recordingRoundTripper{}
+	conf := &remote_pb.RemoteConf{
+		Name:             "test",
+		S3Region:         "us-east-1",
+		S3Endpoint:       "https://example.invalid",
+		S3ForcePathStyle: true,
+		S3AccessKey:      "test-key",
+		S3SecretKey:      "test-secret",
+		S3SupportTagging: supportTagging,
+	}
+	rs, err := MakeWithHTTPClient(conf, &http.Client{Transport: rt})
+	require.NoError(t, err)
+	return rs.(*s3RemoteStorageClient), rt
+}
+
+func TestS3UpdateFileMetadataSkipsTaggingWhenUnsupported(t *testing.T) {
+	client, rt := newRecordingS3Client(t, false)
+	loc := &remote_pb.RemoteStorageLocation{Name: "test", Bucket: "bucket", Path: "/dir/file.bin"}
+	plain := &filer_pb.Entry{}
+	tagged := &filer_pb.Entry{Extended: map[string][]byte{"k1": []byte("v1")}}
+
+	require.NoError(t, client.UpdateFileMetadata(loc, plain, tagged))
+	require.Empty(t, rt.requests, "adding attributes must not send PutObjectTagging")
+
+	require.NoError(t, client.UpdateFileMetadata(loc, tagged, plain))
+	require.Empty(t, rt.requests, "removing attributes must not send DeleteObjectTagging")
+}
+
+func TestS3UpdateFileMetadataSendsTaggingWhenSupported(t *testing.T) {
+	client, rt := newRecordingS3Client(t, true)
+	loc := &remote_pb.RemoteStorageLocation{Name: "test", Bucket: "bucket", Path: "/dir/file.bin"}
+	plain := &filer_pb.Entry{}
+	tagged := &filer_pb.Entry{Extended: map[string][]byte{"k1": []byte("v1")}}
+
+	require.NoError(t, client.UpdateFileMetadata(loc, plain, tagged))
+	require.Len(t, rt.requests, 1)
+	require.Equal(t, http.MethodPut, rt.requests[0].Method)
+	require.Contains(t, rt.requests[0].URL.RawQuery, "tagging")
+
+	rt.requests = nil
+	require.NoError(t, client.UpdateFileMetadata(loc, tagged, plain))
+	require.Len(t, rt.requests, 1)
+	require.Equal(t, http.MethodDelete, rt.requests[0].Method)
+	require.Contains(t, rt.requests[0].URL.RawQuery, "tagging")
+}
+
 func TestS3WriteFileOmitsContentTypeWhenMimeMissing(t *testing.T) {
 	client, rt := newCapturingS3Client(t)
 	loc := &remote_pb.RemoteStorageLocation{
