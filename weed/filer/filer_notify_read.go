@@ -44,6 +44,26 @@ func persistedLogScanStart(t time.Time) time.Time {
 	return t.Add(-LogFlushInterval)
 }
 
+// LastLogEntryTsNs decodes one log chunk through the shared persisted-log
+// cache and returns its final entry's timestamp. ok=false means the chunk does
+// not decode standalone (legacy spanning records) and the caller needs a range
+// read instead.
+func (f *Filer) LastLogEntryTsNs(chunk *filer_pb.FileChunk) (tsNs int64, ok bool, err error) {
+	entries, loadErr := f.persistedLogCache.getOrLoad(chunk.GetFileIdString(), int64(chunk.Size), func() ([]*filer_pb.LogEntry, bool, error) {
+		return loadLogFileEntriesFn(f.MasterClient, chunk)
+	})
+	if errors.Is(loadErr, errLogChunkIncomplete) {
+		return 0, false, nil
+	}
+	if loadErr != nil {
+		return 0, false, loadErr
+	}
+	if len(entries) == 0 {
+		return 0, true, nil
+	}
+	return entries[len(entries)-1].TsNs, true, nil
+}
+
 // PersistedLogScanStartTsNs is the oldest file-name timestamp a scan from t
 // can still list. File names are minute-truncated, and the collector compares
 // names at minute granularity, so the bound must truncate too: an exact-ns
