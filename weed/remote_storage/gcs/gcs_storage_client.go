@@ -245,7 +245,7 @@ func (gcs *gcsRemoteStorageClient) RemoveDirectory(loc *remote_pb.RemoteStorageL
 			return fmt.Errorf("gcs list %s/%s: %w", loc.Bucket, prefix, iterErr)
 		}
 		if delErr := bucket.Object(objectAttr.Name).Delete(context.Background()); delErr != nil && !errors.Is(delErr, storage.ErrObjectNotExist) {
-			return fmt.Errorf("gcs delete %s/%s: %v", loc.Bucket, objectAttr.Name, delErr)
+			return fmt.Errorf("gcs delete %s/%s: %w", loc.Bucket, objectAttr.Name, delErr)
 		}
 	}
 }
