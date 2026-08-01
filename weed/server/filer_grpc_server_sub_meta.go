@@ -90,7 +90,13 @@ func newPipelinedSender(stream metadataStreamSender, bufSize int, clientSupports
 func (s *pipelinedSender) sendLoop(stream metadataStreamSender) {
 	defer close(s.done)
 	for msg := range s.sendCh {
-		shouldBatch := s.canBatch && time.Now().UnixNano()-msg.TsNs > int64(batchBehindThreshold)
+		// LogFileRefs messages are unbatchable: the client recognizes them by
+		// the top-level field and skips the rest of the response, so a refs
+		// envelope would drop its Events tail and refs inside Events would be
+		// applied as an (empty) event. Their TsNs is 0, which the batch
+		// heuristic would misread as far behind. Always send them solo.
+		shouldBatch := s.canBatch && len(msg.LogFileRefs) == 0 &&
+			time.Now().UnixNano()-msg.TsNs > int64(batchBehindThreshold)
 
 		if !shouldBatch {
 			// Real-time: send immediately for low latency
@@ -106,11 +112,17 @@ func (s *pipelinedSender) sendLoop(stream metadataStreamSender) {
 		// go in the Events slice. Old clients ignore the Events field.
 		batch := make([]*filer_pb.SubscribeMetadataResponse, 0, maxBatchSize)
 		batch = append(batch, msg)
+		var trailingRefs *filer_pb.SubscribeMetadataResponse
 	drain:
 		for len(batch) < maxBatchSize {
 			select {
 			case next, ok := <-s.sendCh:
 				if !ok {
+					break drain
+				}
+				if len(next.LogFileRefs) > 0 {
+					// already consumed; send it solo right after the batch
+					trailingRefs = next
 					break drain
 				}
 				batch = append(batch, next)
@@ -133,6 +145,12 @@ func (s *pipelinedSender) sendLoop(stream metadataStreamSender) {
 		}
 		if toSend.Events != nil {
 			toSend.Events = nil
+		}
+		if trailingRefs != nil {
+			if err := stream.Send(trailingRefs); err != nil {
+				s.reportErr(err)
+				return
+			}
 		}
 	}
 }
@@ -480,7 +498,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		evictedBeforeDiskTsNs := fs.filer.MetaAggregator.MetaLogBuffer.GetLastEvictedTsNs()
 
 		if req.ClientSupportsMetadataChunks {
-			processedTsNs, isDone, readPersistedLogErr = fs.sendLogFileRefs(ctx, stream, lastReadTime, req.UntilNs)
+			processedTsNs, isDone, readPersistedLogErr = fs.sendLogFileRefs(ctx, sender, lastReadTime, req.UntilNs)
 		} else {
 			processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(ctx, lastReadTime, req.UntilNs, eachLogEntryFn)
 		}
@@ -673,7 +691,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 			lastDiskReadTsNs = currentReadTsNs
 			glog.V(4).Infof("read on disk %v local subscribe %s from %+v (lastFlushed: %v)", clientName, req.PathPrefix, lastReadTime, time.Unix(0, currentFlushTsNs))
 			if req.ClientSupportsMetadataChunks {
-				processedTsNs, isDone, readPersistedLogErr = fs.sendLogFileRefs(ctx, stream, lastReadTime, req.UntilNs)
+				processedTsNs, isDone, readPersistedLogErr = fs.sendLogFileRefs(ctx, sender, lastReadTime, req.UntilNs)
 			} else {
 				processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(ctx, lastReadTime, req.UntilNs, eachLogEntryFn)
 			}
@@ -922,8 +940,9 @@ func (fs *FilerServer) maybeSendIdleHeartbeat(req *filer_pb.SubscribeMetadataReq
 // sendLogFileRefs collects persisted log file chunk references and sends them
 // to the client so it can read the data directly from volume servers.
 // This does zero volume server I/O — it only lists filer store directory entries.
-// Sends directly on the gRPC stream (bypasses pipelinedSender) because ref
-// messages have TsNs=0 and must not be batched into Events by the sender.
+// Refs go through the pipelinedSender like every other message: gRPC allows
+// only one goroutine to Send on a stream, and the sender's goroutine is it.
+// The sender keeps refs messages out of Events batches.
 func (fs *FilerServer) sendLogFileRefs(ctx context.Context, stream metadataStreamSender, startPosition log_buffer.MessagePosition, stopTsNs int64) (lastTsNs int64, isDone bool, err error) {
 	refs, lastTsNs, err := fs.filer.CollectLogFileRefs(ctx, startPosition, stopTsNs)
 	if err != nil {
