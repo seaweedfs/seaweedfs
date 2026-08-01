@@ -538,9 +538,14 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 
 		glog.V(4).Infof("processed to %v: %v", clientName, processedTsNs)
 		diskAdvanced := diskReadAdvanced(processedTsNs, lastReadTime)
-		// The watermark is read after the disk read: an eviction landing while
-		// a long backlog read runs must count against the position it produced.
-		lastEvictedTsNs := fs.filer.MetaAggregator.MetaLogBuffer.GetLastEvictedTsNs()
+		// The watermark is read after the disk read - an eviction landing while
+		// a long backlog read runs must count against the position it produced -
+		// and in ORIGINAL timestamps: the ring bumps out-of-order peer arrivals
+		// to its head, so its stopTimes exceed anything on any peer's disk, and
+		// gating a disk cursor on them would park a subscriber that has in fact
+		// drained every peer's log (15 minutes and a false loss alarm per
+		// bump-heavy interval, e.g. any peer-history replay after a restart).
+		lastEvictedTsNs := fs.filer.MetaAggregator.MetaLogBuffer.GetLastEvictedOriginalTsNs()
 		if diskAdvanced {
 			gapStall.resumed()
 			reportUnprovenAggregatedCrossing(cursorBeforeDiskTsNs, processedTsNs, lastEvictedTsNs, clientName, req.PathPrefix)
@@ -583,7 +588,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 				// so this wait is paced by the timer alone.
 				reason := fmt.Sprintf("gap evicted through %v is not on a peer's disk yet (earliest memory %v)",
 					time.Unix(0, lastEvictedTsNs), earliestTime)
-				if skipTo, skip, done := fs.parkOnGap(ctx, req, gapStall, fs.filer.MetaAggregator.MetaLogBuffer.GetLastEvictedTsNs, lastReadTime, nil, reason); done {
+				if skipTo, skip, done := fs.parkOnGap(ctx, req, gapStall, fs.filer.MetaAggregator.MetaLogBuffer.GetLastEvictedOriginalTsNs, lastReadTime, nil, reason); done {
 					return nil
 				} else if skip {
 					lastReadTime = log_buffer.NewMessagePosition(skipTo, gapResumeCursorOffset)
@@ -601,7 +606,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 				lastReadTime = log_buffer.NewMessagePosition(advanceToTsNs, gapResumeCursorOffset)
 				readInMemoryLogErr = nil
 			} else {
-				if skipTo, skip, done := fs.parkOnGap(ctx, req, gapStall, fs.filer.MetaAggregator.MetaLogBuffer.GetLastEvictedTsNs, lastReadTime, aggNotifyChan, "aggregated buffer has no readable entries yet"); done {
+				if skipTo, skip, done := fs.parkOnGap(ctx, req, gapStall, fs.filer.MetaAggregator.MetaLogBuffer.GetLastEvictedOriginalTsNs, lastReadTime, aggNotifyChan, "aggregated buffer has no readable entries yet"); done {
 					return nil
 				} else if skip {
 					lastReadTime = log_buffer.NewMessagePosition(skipTo, gapResumeCursorOffset)

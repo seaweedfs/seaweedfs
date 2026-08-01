@@ -73,13 +73,19 @@ type LogBuffer struct {
 	lastFlushTsNs     atomic.Int64
 	lastFlushedOffset atomic.Int64 // Highest offset that has been flushed to disk (-1 = nothing flushed yet)
 	lastEvictedTsNs   atomic.Int64 // Latest stopTime evicted from the sealed ring (0 = nothing evicted yet)
-	offset            int64
-	bufferStartOffset int64
-	minOffset         int64
-	maxOffset         int64
-	flushInterval     time.Duration
-	startTime         time.Time
-	stopTime          time.Time
+	// Like lastEvictedTsNs but in pre-bump timestamps: the aggregated ring
+	// rewrites out-of-order arrivals to LastTsNs+1, so its stopTimes live in a
+	// timestamp space nothing on any peer's disk shares. Gap proofs against
+	// disk cursors need the original space.
+	lastEvictedOriginalTsNs  atomic.Int64
+	curWindowMaxOriginalTsNs int64 // max pre-bump ts in the open window, under the write lock
+	offset                   int64
+	bufferStartOffset        int64
+	minOffset                int64
+	maxOffset                int64
+	flushInterval            time.Duration
+	startTime                time.Time
+	stopTime                 time.Time
 
 	// Other fields
 	name           string
@@ -342,6 +348,9 @@ func (logBuffer *LogBuffer) AddLogEntryToBuffer(logEntry *filer_pb.LogEntry) err
 
 	processingTsNs := logEntry.TsNs
 	ts := time.Unix(0, processingTsNs)
+	if processingTsNs > logBuffer.curWindowMaxOriginalTsNs {
+		logBuffer.curWindowMaxOriginalTsNs = processingTsNs
+	}
 
 	// Handle timestamp collision inside lock (rare case)
 	if logBuffer.LastTsNs.Load() >= processingTsNs {
@@ -456,6 +465,9 @@ func (logBuffer *LogBuffer) AddDataToBuffer(partitionKey, data []byte, processin
 		}
 	}()
 
+	if processingTsNs > logBuffer.curWindowMaxOriginalTsNs {
+		logBuffer.curWindowMaxOriginalTsNs = processingTsNs
+	}
 	// Handle timestamp collision inside lock (rare case)
 	if logBuffer.LastTsNs.Load() >= processingTsNs {
 		processingTsNs = logBuffer.LastTsNs.Add(1)
@@ -676,13 +688,18 @@ func (logBuffer *LogBuffer) copyToFlushInternal(withCallback bool) *dataToFlush 
 		// CRITICAL: logBuffer.offset is the "next offset to assign", so last offset in buffer is offset-1
 		lastOffsetInBuffer := logBuffer.offset - 1
 		// Slot 0 falls out of the ring in SealBuffer below, so record how far
-		// eviction has reached before it goes.
+		// eviction has reached before it goes - in both timestamp spaces.
 		if evicted := logBuffer.prevBuffers.buffers[0]; evicted.size > 0 && !evicted.stopTime.IsZero() {
 			if ts := evicted.stopTime.UnixNano(); ts > logBuffer.lastEvictedTsNs.Load() {
 				logBuffer.lastEvictedTsNs.Store(ts)
 			}
+			if ts := evicted.maxOriginalTsNs; ts > logBuffer.lastEvictedOriginalTsNs.Load() {
+				logBuffer.lastEvictedOriginalTsNs.Store(ts)
+			}
 		}
 		logBuffer.buf = logBuffer.prevBuffers.SealBuffer(logBuffer.startTime, logBuffer.stopTime, logBuffer.buf, logBuffer.pos, logBuffer.bufferStartOffset, lastOffsetInBuffer)
+		logBuffer.prevBuffers.buffers[len(logBuffer.prevBuffers.buffers)-1].maxOriginalTsNs = logBuffer.curWindowMaxOriginalTsNs
+		logBuffer.curWindowMaxOriginalTsNs = 0
 		// Hand a fully extended prefix snapshot to the sealed slot so sealed
 		// readers reuse it instead of re-copying the window; reset for the next
 		// window either way (holders keep their immutable prefix slices).
@@ -773,6 +790,14 @@ func (logBuffer *LogBuffer) GetEarliestPosition() MessagePosition {
 // Returns 0 if nothing has been flushed yet.
 func (logBuffer *LogBuffer) GetLastFlushTsNs() int64 {
 	return logBuffer.lastFlushTsNs.Load()
+}
+
+// GetLastEvictedOriginalTsNs is GetLastEvictedTsNs in pre-bump timestamps: the
+// highest as-received timestamp among evicted entries. The aggregated gap gate
+// compares disk cursors, which live in the peers' original timestamp space,
+// not the ring's bumped one.
+func (logBuffer *LogBuffer) GetLastEvictedOriginalTsNs() int64 {
+	return logBuffer.lastEvictedOriginalTsNs.Load()
 }
 
 // GetLastEvictedTsNs returns the stopTime of the newest window dropped from the

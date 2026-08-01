@@ -272,3 +272,47 @@ func TestEvictionGatedCursor(t *testing.T) {
 		t.Fatalf("gated above watermark: buf=%v err=%v", buf != nil, err)
 	}
 }
+
+// TestEvictionOriginalWatermark pins the second timestamp space. The ring bumps
+// an out-of-order arrival past its head, so a bump-heavy interval (peer history
+// replay) leaves stopTimes above anything on any peer's disk; a gap gate
+// comparing disk cursors against those would park a subscriber that drained
+// every peer's log. The original watermark tracks what was actually received.
+func TestEvictionOriginalWatermark(t *testing.T) {
+	lb := NewLogBuffer("orig-watermark", time.Minute, nil, nil, nil)
+	defer lb.ShutdownLogBuffer()
+
+	// Newest original first: it sets the ring head, so every later arrival is
+	// bumped. Seals go by bumped time, which advances by nanoseconds, so each
+	// window is sealed explicitly; wrapping the ring evicts.
+	newest := time.Now().Add(-time.Hour).Truncate(time.Second).UnixNano()
+	for i := 0; i < PreviousBufferCount+2; i++ {
+		orig := newest - int64(i)*int64(time.Minute)
+		if err := lb.AddLogEntryToBuffer(&filer_pb.LogEntry{TsNs: orig, Data: []byte("x"), Key: []byte("k")}); err != nil {
+			t.Fatalf("add %d: %v", i, err)
+		}
+		lb.ForceFlush()
+	}
+
+	bumped := lb.GetLastEvictedTsNs()
+	original := lb.GetLastEvictedOriginalTsNs()
+	if bumped == 0 || original == 0 {
+		t.Fatalf("precondition: nothing evicted (bumped=%d original=%d)", bumped, original)
+	}
+	if original > newest {
+		t.Fatalf("original watermark %v exceeds the highest received timestamp %v", time.Unix(0, original), time.Unix(0, newest))
+	}
+	if bumped <= newest {
+		t.Fatalf("bumped watermark %v not past the ring head %v: the spaces did not diverge", time.Unix(0, bumped), time.Unix(0, newest))
+	}
+	// The punchline: a disk cursor that drained every peer's log sits at the
+	// highest received timestamp - clearing the original watermark while still
+	// below the bumped one, which no disk timestamp can ever reach.
+	diskHead := newest
+	if diskHead < original {
+		t.Fatalf("disk head %v short of the original watermark %v", time.Unix(0, diskHead), time.Unix(0, original))
+	}
+	if diskHead >= bumped {
+		t.Fatal("disk head reached the bumped watermark; the gate would not have parked and this test proves nothing")
+	}
+}
