@@ -479,34 +479,42 @@ func TestParkOnGapStallOutcomes(t *testing.T) {
 // receives the same file twice: re-downloaded chunks at best, and a mid-stream
 // timestamp rewind inside the client's sorted per-filer merge at worst.
 func TestDeltaLogFileRefs(t *testing.T) {
-	chunk := func(id string) *filer_pb.FileChunk { return &filer_pb.FileChunk{FileId: id} }
+	chunk := func(id string, offset, size int64) *filer_pb.FileChunk {
+		return &filer_pb.FileChunk{FileId: id, Offset: offset, Size: uint64(size)}
+	}
 	ref := func(filerId string, fileTsNs int64, chunks ...*filer_pb.FileChunk) *filer_pb.LogFileChunkRef {
 		return &filer_pb.LogFileChunkRef{FilerId: filerId, FileTsNs: fileTsNs, Chunks: chunks}
 	}
 	sent := make(map[string]sentRefState)
 
 	// First collection ships everything.
-	out := deltaLogFileRefs([]*filer_pb.LogFileChunkRef{ref("a", 100, chunk("c1"), chunk("c2"))}, sent, 0)
+	out := deltaLogFileRefs([]*filer_pb.LogFileChunkRef{ref("a", 100, chunk("c1", 0, 10), chunk("c2", 10, 10))}, sent, 0)
 	if len(out) != 1 || len(out[0].Chunks) != 2 {
 		t.Fatalf("first collection: got %d refs, want the whole file", len(out))
 	}
 
 	// Re-collection of the identical file ships nothing.
-	out = deltaLogFileRefs([]*filer_pb.LogFileChunkRef{ref("a", 100, chunk("c1"), chunk("c2"))}, sent, 0)
+	out = deltaLogFileRefs([]*filer_pb.LogFileChunkRef{ref("a", 100, chunk("c1", 0, 10), chunk("c2", 10, 10))}, sent, 0)
 	if len(out) != 0 {
 		t.Fatalf("unchanged re-collection: got %d refs, want none", len(out))
 	}
 
 	// A grown file ships only its new chunks; a new file ships whole.
 	out = deltaLogFileRefs([]*filer_pb.LogFileChunkRef{
-		ref("a", 100, chunk("c1"), chunk("c2"), chunk("c3")),
-		ref("a", 200, chunk("d1")),
+		ref("a", 100, chunk("c1", 0, 10), chunk("c2", 10, 10), chunk("c3", 20, 10)),
+		ref("a", 200, chunk("d1", 0, 10)),
 	}, sent, 0)
 	if len(out) != 2 {
 		t.Fatalf("growth pass: got %d refs, want 2", len(out))
 	}
 	if len(out[0].Chunks) != 1 || out[0].Chunks[0].FileId != "c3" {
 		t.Fatalf("grown file must ship only the appended suffix, got %+v", out[0].Chunks)
+	}
+	// The suffix must read from logical zero: the client's chunk reader starts
+	// there, and a list opening at a higher offset is an instant EOF - a
+	// silently empty replay of the appended events.
+	if out[0].Chunks[0].Offset != 0 {
+		t.Fatalf("suffix chunk keeps file offset %d; it must be rebased to 0", out[0].Chunks[0].Offset)
 	}
 	if len(out[1].Chunks) != 1 || out[1].Chunks[0].FileId != "d1" {
 		t.Fatalf("new file must ship whole, got %+v", out[1].Chunks)

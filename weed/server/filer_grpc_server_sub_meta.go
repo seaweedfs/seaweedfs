@@ -968,6 +968,13 @@ type sentRefState struct {
 
 // deltaLogFileRefs reduces a collection to the chunks not yet shipped, updates
 // the sent state, and prunes files the scan window has moved past.
+//
+// A shipped suffix is rebased to logical offset zero: the client's chunk
+// reader starts at zero, and a chunk list opening at a higher offset reads as
+// instant EOF - an empty replay that would silently drop the appended events.
+// The cut is record-aligned because each append is one chunk of whole entries
+// (logFlushFunc appends one uploaded window per flush), so the rebased suffix
+// decodes as a file of its own.
 func deltaLogFileRefs(refs []*filer_pb.LogFileChunkRef, sent map[string]sentRefState, pruneBeforeTsNs int64) []*filer_pb.LogFileChunkRef {
 	out := make([]*filer_pb.LogFileChunkRef, 0, len(refs))
 	for _, ref := range refs {
@@ -976,8 +983,18 @@ func deltaLogFileRefs(refs []*filer_pb.LogFileChunkRef, sent map[string]sentRefS
 		if len(ref.Chunks) <= prior {
 			continue
 		}
+		chunks := ref.Chunks[prior:]
+		if base := chunks[0].Offset; base != 0 {
+			rebased := make([]*filer_pb.FileChunk, len(chunks))
+			for i, c := range chunks {
+				cc := proto.Clone(c).(*filer_pb.FileChunk)
+				cc.Offset -= base
+				rebased[i] = cc
+			}
+			chunks = rebased
+		}
 		out = append(out, &filer_pb.LogFileChunkRef{
-			Chunks:   ref.Chunks[prior:],
+			Chunks:   chunks,
 			FileTsNs: ref.FileTsNs,
 			FilerId:  ref.FilerId,
 		})
