@@ -12,6 +12,10 @@
 {{- end }}
 {{- $bucketsFolder = default $bucketsFolder (get $bucketEnvVars "WEED_FILER_BUCKETS_FOLDER") }}
 {{- $bucketsFolder = trimSuffix "/" $bucketsFolder }}
+{{- $clusterAlias := default "sw" (get $bucketEnvVars "WEED_CLUSTER_DEFAULT") }}
+{{- $clusterUpper := upper $clusterAlias }}
+{{- $clusterMasterKey := printf "WEED_CLUSTER_%s_MASTER" $clusterUpper }}
+{{- $clusterFilerKey := printf "WEED_CLUSTER_%s_FILER" $clusterUpper }}
 
 {{- /* Check allInOne mode first */}}
 {{- if .Values.allInOne.enabled }}
@@ -76,12 +80,6 @@ spec:
         image: {{ template "seaweedfs.master.image" . }}
         imagePullPolicy: {{ $.Values.global.seaweedfs.imagePullPolicy | default "IfNotPresent" }}
         env:
-          - name: WEED_CLUSTER_DEFAULT
-            value: "sw"
-          - name: WEED_CLUSTER_SW_MASTER
-            value: {{ include "seaweedfs.cluster.masterAddress" . | quote }}
-          - name: WEED_CLUSTER_SW_FILER
-            value: {{ include "seaweedfs.cluster.filerAddress" . | quote }}
           - name: POD_IP
             valueFrom:
               fieldRef:
@@ -96,6 +94,28 @@ spec:
                 fieldPath: metadata.namespace
           - name: SEAWEEDFS_FULLNAME
             value: "{{ include "seaweedfs.fullname" . }}"
+          {{- /* Carries the JWT signing keys when they are set as environment
+                 overrides rather than in security.toml. */}}
+          {{- range $key := keys $bucketEnvVars | sortAlpha }}
+          {{- $value := index $bucketEnvVars $key }}
+          {{- if not (has $key (list "WEED_CLUSTER_DEFAULT" $clusterMasterKey $clusterFilerKey)) }}
+          - name: {{ $key }}
+          {{- if kindIs "string" $value }}
+            value: {{ tpl $value $ | quote }}
+          {{- else }}
+            valueFrom:
+              {{ toYaml $value | nindent 14 | trim }}
+          {{- end }}
+          {{- end }}
+          {{- end }}
+          {{- /* Computed, as in all-in-one: the values pick the cluster alias,
+                 the chart still owns the endpoints the script waits on. */}}
+          - name: WEED_CLUSTER_DEFAULT
+            value: {{ $clusterAlias | quote }}
+          - name: {{ $clusterMasterKey }}
+            value: {{ include "seaweedfs.cluster.masterAddress" . | quote }}
+          - name: {{ $clusterFilerKey }}
+            value: {{ include "seaweedfs.cluster.filerAddress" . | quote }}
         command:
           - "/bin/sh"
           - "-ec"
@@ -120,11 +140,11 @@ spec:
               exit 1
             }
             {{- if .Values.allInOne.enabled }}
-            wait_for_service "http://$WEED_CLUSTER_SW_MASTER{{ .Values.allInOne.readinessProbe.httpGet.path }}"
-            wait_for_service "http://$WEED_CLUSTER_SW_FILER{{ .Values.filer.readinessProbe.httpGet.path }}"
+            wait_for_service "http://${{ $clusterMasterKey }}{{ .Values.allInOne.readinessProbe.httpGet.path }}"
+            wait_for_service "http://${{ $clusterFilerKey }}{{ .Values.filer.readinessProbe.httpGet.path }}"
             {{- else }}
-            wait_for_service "http://$WEED_CLUSTER_SW_MASTER{{ .Values.master.readinessProbe.httpGet.path }}"
-            wait_for_service "http://$WEED_CLUSTER_SW_FILER{{ .Values.filer.readinessProbe.httpGet.path }}"
+            wait_for_service "http://${{ $clusterMasterKey }}{{ .Values.master.readinessProbe.httpGet.path }}"
+            wait_for_service "http://${{ $clusterFilerKey }}{{ .Values.filer.readinessProbe.httpGet.path }}"
             {{- end }}
             {{- range $createBuckets }}
             {{- $bucketName := .name }}
@@ -182,11 +202,19 @@ spec:
                 /usr/bin/weed shell
           {{- end }}  
           {{- end }}
-        {{- if $enableAuth }}
+        {{- if or $enableAuth (include "seaweedfs.securityConfigEnabled" .) }}
         volumeMounts:
+          {{- if $enableAuth }}
           - name: config-users
             mountPath: /etc/sw
             readOnly: true
+          {{- end }}
+          {{- if include "seaweedfs.securityConfigEnabled" . }}
+          - name: security-config
+            readOnly: true
+            mountPath: /etc/seaweedfs/security.toml
+            subPath: security.toml
+          {{- end }}
         {{- end }}
         ports:
           - containerPort: {{ .Values.master.port }}
@@ -204,8 +232,9 @@ spec:
         {{- if .Values.filer.containerSecurityContext.enabled }}
         securityContext: {{- omit .Values.filer.containerSecurityContext "enabled" | toYaml | nindent 12 }}
         {{- end }}
-    {{- if $enableAuth }}
+    {{- if or $enableAuth (include "seaweedfs.securityConfigEnabled" .) }}
       volumes:
+        {{- if $enableAuth }}
         - name: config-users
           secret:
             defaultMode: 420
@@ -214,5 +243,11 @@ spec:
             {{- else }}
             secretName: {{ include "seaweedfs.fullname" . }}-s3-secret
             {{- end }}
+        {{- end }}
+        {{- if include "seaweedfs.securityConfigEnabled" . }}
+        - name: security-config
+          configMap:
+            name: {{ include "seaweedfs.fullname" . }}-security-config
+        {{- end }}
     {{- end }}
 {{- end }}

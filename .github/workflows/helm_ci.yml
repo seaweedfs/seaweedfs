@@ -246,6 +246,172 @@ jobs:
           PYEOF
           echo "IAM gRPC decoupling tests passed"
 
+          echo ""
+          echo "=== Testing bucket hook credentials ==="
+          # The bucket hook pipes s3.configure into `weed shell`, which needs
+          # the filer JWT signing key once jwtSigning.filerWrite is on: the
+          # filer rejects unsigned IAM gRPC calls, and `weed shell` still
+          # exits 0, so the Job goes green while anonymousRead is dropped.
+          # The key reaches the hook either through security.toml or through
+          # an environment override in extraEnvironmentVars.
+          python3 - "$CHART_DIR" <<'PYEOF'
+          import re, subprocess, sys, yaml
+
+          chart = sys.argv[1]
+
+          def render(values):
+              args = ["helm", "template", "test", chart]
+              for k, v in values.items():
+                  args += ["--set", f"{k}={v}"]
+              return subprocess.check_output(args, text=True)
+
+          def hook_pod(manifest):
+              for d in yaml.safe_load_all(manifest):
+                  if d and d.get("kind") == "Job" and d["metadata"]["name"].endswith("-bucket-hook"):
+                      return d["spec"]["template"]["spec"]
+              return None
+
+          def cluster_endpoints(manifest):
+              """Where the chart's own Services put master and filer.
+
+              The hook's WEED_CLUSTER_* values have to match these: a defined
+              name pointing anywhere else fails the readiness wait exactly as
+              an undefined one does.
+              """
+              wanted = {"-master": "swfs-master", "-filer-client": "swfs-filer"}
+              found = {}
+              for d in yaml.safe_load_all(manifest):
+                  if not d or d.get("kind") != "Service":
+                      continue
+                  for suffix, portName in wanted.items():
+                      if not d["metadata"]["name"].endswith(suffix):
+                          continue
+                      port = next((p["port"] for p in d["spec"]["ports"] if p.get("name") == portName), None)
+                      if port:
+                          found[suffix] = f"{d['metadata']['name']}.{d['metadata']['namespace']}:{port}"
+              return found.get("-master"), found.get("-filer-client")
+
+          buckets = {
+              "s3.enabled": "true",
+              "s3.createBuckets[0].name": "data",
+              "s3.createBuckets[0].anonymousRead": "true",
+          }
+          jwt = dict(buckets, **{"global.seaweedfs.securityConfig.jwtSigning.filerWrite": "true"})
+
+          failed = []
+
+          # The script in the hook addresses master and filer through
+          # WEED_CLUSTER_*, now rendered next to extraEnvironmentVars.
+          # Duplicate names would be a rendering bug.
+          out = render(buckets)
+          pod = hook_pod(out)
+          if pod is None:
+              failed.append("createBuckets: bucket hook Job missing")
+          else:
+              env = pod["containers"][0]["env"]
+              names = [e["name"] for e in env]
+              dupes = sorted({n for n in names if names.count(n) > 1})
+              if dupes:
+                  failed.append(f"createBuckets: duplicate env entries {dupes}")
+              values = {e["name"]: e.get("value") for e in env}
+              if not values.get("WEED_CLUSTER_DEFAULT"):
+                  failed.append("createBuckets: hook env WEED_CLUSTER_DEFAULT is empty")
+              rendered = (values.get("WEED_CLUSTER_SW_MASTER"), values.get("WEED_CLUSTER_SW_FILER"))
+              expected = cluster_endpoints(out)
+              if not all(expected):
+                  failed.append(f"createBuckets: no master/filer-client Service to compare against, found {expected}")
+              elif rendered != expected:
+                  failed.append(f"createBuckets: hook env holds {rendered}, the services are at {expected}")
+              elif not dupes:
+                  print("createBuckets: hook env resolves the cluster addresses once")
+              if any(v["name"] == "security-config" for v in pod.get("volumes", [])):
+                  failed.append("createBuckets: hook mounts security-config without JWT signing")
+
+          # filerWrite=true: the hook needs the same security.toml the filer
+          # gets, otherwise s3.configure fails with "missing authorization
+          # metadata".
+          pod = hook_pod(render(jwt))
+          if pod is None:
+              failed.append("filerWrite=true: bucket hook Job missing")
+          else:
+              vol = next((v for v in pod.get("volumes", []) if v["name"] == "security-config"), None)
+              mount = next((m for m in pod["containers"][0].get("volumeMounts", []) if m["name"] == "security-config"), None)
+              # The file has to land on one of weed's config search paths, so
+              # the target matters as much as the volume itself - and a volume
+              # of that name backed by anything but the chart's ConfigMap
+              # leaves `weed shell` without the signing key just the same.
+              target = ("/etc/seaweedfs/security.toml", "security.toml")
+              configmap = "test-seaweedfs-security-config"
+              if vol is None or mount is None:
+                  failed.append("filerWrite=true: bucket hook does not mount security-config (s3.configure would fail)")
+              elif (mount.get("mountPath"), mount.get("subPath")) != target:
+                  failed.append(f"filerWrite=true: bucket hook mounts security-config as {mount}")
+              elif vol.get("configMap", {}).get("name") != configmap:
+                  failed.append(f"filerWrite=true: security-config is not backed by the {configmap} ConfigMap: {vol}")
+              else:
+                  print("filerWrite=true: bucket hook mounts security-config at /etc/seaweedfs/security.toml")
+
+          # The readiness waits dereference the cluster env names, so renaming
+          # the cluster alias has to rename them too: an undefined name leaves
+          # the hook polling "http://" for five minutes and then failing the
+          # release. The endpoints stay chart-computed, so an address kept in
+          # extraEnvironmentVars is replaced, not rendered twice.
+          out = render(dict(buckets, **{
+              "global.seaweedfs.extraEnvironmentVars.WEED_CLUSTER_DEFAULT": "prod",
+              "global.seaweedfs.extraEnvironmentVars.WEED_CLUSTER_PROD_MASTER": "stale:9333",
+              "global.seaweedfs.extraEnvironmentVars.WEED_CLUSTER_SW_MASTER": "null",
+              "global.seaweedfs.extraEnvironmentVars.WEED_CLUSTER_SW_FILER": "null",
+          }))
+          pod = hook_pod(out)
+          if pod is None:
+              failed.append("cluster alias: bucket hook Job missing")
+          else:
+              container = pod["containers"][0]
+              env = {e["name"]: e.get("value") for e in container["env"]}
+              waited = re.findall(r'wait_for_service "http://\$(\w+)', container["command"][2])
+              undefined = sorted(n for n in set(waited) if not env.get(n))
+              renamed = (env.get("WEED_CLUSTER_PROD_MASTER"), env.get("WEED_CLUSTER_PROD_FILER"))
+              expected = cluster_endpoints(out)
+              if not waited:
+                  failed.append("cluster alias: hook script has no readiness waits")
+              elif undefined:
+                  failed.append(f"cluster alias: hook waits on undefined env {undefined}")
+              elif not all(expected):
+                  failed.append(f"cluster alias: no master/filer-client Service to compare against, found {expected}")
+              elif renamed != expected:
+                  # Both addresses under the renamed alias, not just the one
+                  # the values tried to keep: the stale one would fail the
+                  # release, and a missing filer address just as much.
+                  failed.append(f"cluster alias: hook waits on {renamed}, the services are at {expected}")
+              else:
+                  print("cluster alias: hook waits on the renamed names and the chart's addresses")
+
+          # Keys kept in a Secret are referenced, not inlined, so the hook
+          # must render valueFrom for non-string extraEnvironmentVars.
+          out = render(dict(jwt, **{
+              "global.seaweedfs.extraEnvironmentVars.WEED_JWT_FILER_SIGNING_KEY.secretKeyRef.name": "signing-keys",
+              "global.seaweedfs.extraEnvironmentVars.WEED_JWT_FILER_SIGNING_KEY.secretKeyRef.key": "filerWrite",
+          }))
+          pod = hook_pod(out)
+          if pod is None:
+              failed.append("secretKeyRef: bucket hook Job missing")
+          else:
+              entry = next((e for e in pod["containers"][0]["env"] if e["name"] == "WEED_JWT_FILER_SIGNING_KEY"), None)
+              if entry is None:
+                  failed.append("secretKeyRef: hook env WEED_JWT_FILER_SIGNING_KEY missing")
+              elif entry.get("valueFrom", {}).get("secretKeyRef") != {"name": "signing-keys", "key": "filerWrite"}:
+                  failed.append(f"secretKeyRef: hook env rendered as {entry}")
+              else:
+                  print("secretKeyRef: hook env keeps the secret reference")
+
+          if failed:
+              print("\nFAIL:", file=sys.stderr)
+              for f in failed:
+                  print(f"  - {f}", file=sys.stderr)
+              sys.exit(1)
+          PYEOF
+          echo "Bucket hook credential tests passed"
+
           echo "=== Testing with monitoring enabled ==="
           helm template test $CHART_DIR \
             --set global.seaweedfs.monitoring.enabled=true \
