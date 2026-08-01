@@ -247,8 +247,8 @@ var (
 			Namespace: Namespace,
 			Subsystem: subsystemFiler,
 			Name:      "subscribe_gap_stalled",
-			Help:      "1 while a metadata subscriber is parked on a gap whose events are evicted from memory but not yet persisted.",
-		}, []string{"scope", "clientName", "path"})
+			Help:      "Number of metadata subscribers currently parked on a gap whose events are evicted from memory but not yet persisted.",
+		}, []string{"scope"})
 
 	// Sampled only on first creation, so counts track distinct objects.
 	FilerObjectSizeBytesHistogram = prometheus.NewHistogram(

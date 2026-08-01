@@ -281,20 +281,22 @@ func resolveAggregatedGapResume(currentTsNs, earliestMemTsNs, lastEvictedTsNs in
 // stalls the stream for good, and filer.sync and mount followers just stop
 // advancing with no error on either side.
 //
-// clientName carries the client's ephemeral source port, so it is used for logs
-// only; the gauge is keyed on the stable client-supplied name and its series is
-// deleted on teardown, or every reconnect would leave one behind forever.
+// The gauge counts parked subscribers per scope. It deliberately carries no
+// per-client label: clientName embeds the ephemeral source port (a series per
+// reconnect), and the client-supplied name is not unique either - every mount
+// registers as "mount" - so same-named streams would clobber and delete each
+// other's series. A count needs no identity and no cleanup; the logs carry the
+// client details.
 type gapStallReporter struct {
 	scope      string
 	clientName string
-	label      string
 	pathPrefix string
 	since      time.Time
 	lastWarnAt time.Time
 }
 
 func (r *gapStallReporter) gauge() prometheus.Gauge {
-	return stats.FilerSubscribeGapStalledGauge.WithLabelValues(r.scope, r.label, r.pathPrefix)
+	return stats.FilerSubscribeGapStalledGauge.WithLabelValues(r.scope)
 }
 
 // stalledFor reports how long this subscriber has been parked, zero if it is not.
@@ -305,11 +307,18 @@ func (r *gapStallReporter) stalledFor() time.Duration {
 	return time.Since(r.since)
 }
 
+// park records that the subscriber is waiting on a gap. It stays quiet until
+// the stall has lasted gapStallWarnInterval: during a catch-up burst a
+// subscriber parks and resumes every couple of seconds, and a warning per
+// cycle would bury the long-stall warnings this reporter exists to surface.
 func (r *gapStallReporter) park(cursor time.Time, detail string) {
 	now := time.Now()
 	if r.since.IsZero() {
 		r.since = now
-		r.gauge().Set(1)
+		r.gauge().Inc()
+	}
+	if now.Sub(r.since) < gapStallWarnInterval {
+		return
 	}
 	if !r.lastWarnAt.IsZero() && now.Sub(r.lastWarnAt) < gapStallWarnInterval {
 		return
@@ -319,10 +328,8 @@ func (r *gapStallReporter) park(cursor time.Time, detail string) {
 		now.Sub(r.since).Truncate(time.Second), cursor, detail)
 }
 
-// resumed marks the gap cleared. A park short enough that park() never warned
-// about it does not need announcing either: during a write burst a subscriber
-// parks and resumes every couple of seconds, and one warning per cycle would
-// bury the real errors the paced park warning exists to surface.
+// resumed marks the gap cleared. Only a stall park() had already warned about
+// is worth announcing.
 func (r *gapStallReporter) resumed() {
 	if r.since.IsZero() {
 		return
@@ -332,7 +339,7 @@ func (r *gapStallReporter) resumed() {
 			time.Since(r.since).Truncate(time.Second))
 	}
 	r.since, r.lastWarnAt = time.Time{}, time.Time{}
-	r.gauge().Set(0)
+	r.gauge().Dec()
 }
 
 // stalledErr ends a stream that waited out maxGapStall, and doubles as the
@@ -343,14 +350,16 @@ func (r *gapStallReporter) stalledErr(cursor time.Time, detail string) error {
 	return fmt.Errorf("metadata gap at %v did not become readable within %v: %s", cursor, maxGapStall, detail)
 }
 
-// close releases the gauge series. Unlike resumed() it does not claim recovery:
-// a subscriber that disconnects while parked never resumed.
+// close releases the gauge on teardown. Unlike resumed() it does not claim
+// recovery: a subscriber that disconnects while parked never resumed.
 func (r *gapStallReporter) close() {
-	if !r.since.IsZero() {
-		glog.Warningf("%s subscriber %s %s disconnected after %v parked, still behind", r.scope, r.clientName,
-			r.pathPrefix, r.stalledFor().Truncate(time.Second))
+	if r.since.IsZero() {
+		return
 	}
-	stats.FilerSubscribeGapStalledGauge.DeleteLabelValues(r.scope, r.label, r.pathPrefix)
+	glog.Warningf("%s subscriber %s %s disconnected after %v parked, still behind", r.scope, r.clientName,
+		r.pathPrefix, r.stalledFor().Truncate(time.Second))
+	r.gauge().Dec()
+	r.since = time.Time{}
 }
 
 // gapWaitOutcome says how a park ended.
@@ -468,7 +477,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	aggNotifyChan := fs.filer.MetaAggregator.MetaLogBuffer.RegisterSubscriber(aggNotifyName)
 	defer fs.filer.MetaAggregator.MetaLogBuffer.UnregisterSubscriber(aggNotifyName)
 
-	gapStall := &gapStallReporter{scope: "aggregated", clientName: clientName, label: req.ClientName, pathPrefix: req.PathPrefix}
+	gapStall := &gapStallReporter{scope: "aggregated", clientName: clientName, pathPrefix: req.PathPrefix}
 	defer gapStall.close()
 
 	var unsyncedEvents int64
@@ -653,7 +662,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	localFlushChan := fs.filer.LocalMetaLogBuffer.RegisterFlushSubscriber(localNotifyName)
 	defer fs.filer.LocalMetaLogBuffer.UnregisterFlushSubscriber(localNotifyName)
 
-	gapStall := &gapStallReporter{scope: "local", clientName: clientName, label: req.ClientName, pathPrefix: req.PathPrefix}
+	gapStall := &gapStallReporter{scope: "local", clientName: clientName, pathPrefix: req.PathPrefix}
 	defer gapStall.close()
 
 	var unsyncedEvents int64
