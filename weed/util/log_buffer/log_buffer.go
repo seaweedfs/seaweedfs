@@ -346,9 +346,7 @@ func (logBuffer *LogBuffer) AddLogEntryToBuffer(logEntry *filer_pb.LogEntry) err
 
 	processingTsNs := logEntry.TsNs
 	ts := time.Unix(0, processingTsNs)
-	if processingTsNs > logBuffer.curWindowMaxOriginalTsNs {
-		logBuffer.curWindowMaxOriginalTsNs = processingTsNs
-	}
+	originalTsNs := processingTsNs
 
 	// Handle timestamp collision inside lock (rare case)
 	if logBuffer.LastTsNs.Load() >= processingTsNs {
@@ -418,6 +416,13 @@ func (logBuffer *LogBuffer) AddLogEntryToBuffer(logEntry *filer_pb.LogEntry) err
 	util.Uint32toBytes(logBuffer.sizeBuf, uint32(size))
 	copy(logBuffer.buf[logBuffer.pos:logBuffer.pos+4], logBuffer.sizeBuf)
 	logBuffer.pos += size + 4
+	// Only now is the entry's window known: a rollover above seals the previous
+	// window first, and crediting this timestamp before that hands it to the
+	// sealed window and loses it from the new one - corrupting the received-ts
+	// eviction watermark in both directions.
+	if originalTsNs > logBuffer.curWindowMaxOriginalTsNs {
+		logBuffer.curWindowMaxOriginalTsNs = originalTsNs
+	}
 
 	logBuffer.offset++
 	return nil
@@ -463,9 +468,7 @@ func (logBuffer *LogBuffer) AddDataToBuffer(partitionKey, data []byte, processin
 		}
 	}()
 
-	if processingTsNs > logBuffer.curWindowMaxOriginalTsNs {
-		logBuffer.curWindowMaxOriginalTsNs = processingTsNs
-	}
+	originalTsNs := processingTsNs
 	// Handle timestamp collision inside lock (rare case)
 	if logBuffer.LastTsNs.Load() >= processingTsNs {
 		processingTsNs = logBuffer.LastTsNs.Add(1)
@@ -536,6 +539,13 @@ func (logBuffer *LogBuffer) AddDataToBuffer(partitionKey, data []byte, processin
 	util.Uint32toBytes(logBuffer.sizeBuf, uint32(size))
 	copy(logBuffer.buf[logBuffer.pos:logBuffer.pos+4], logBuffer.sizeBuf)
 	logBuffer.pos += size + 4
+	// Only now is the entry's window known: a rollover above seals the previous
+	// window first, and crediting this timestamp before that hands it to the
+	// sealed window and loses it from the new one - corrupting the received-ts
+	// eviction watermark in both directions.
+	if originalTsNs > logBuffer.curWindowMaxOriginalTsNs {
+		logBuffer.curWindowMaxOriginalTsNs = originalTsNs
+	}
 
 	logBuffer.offset++
 	return nil

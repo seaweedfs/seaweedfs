@@ -316,3 +316,35 @@ func TestEvictionOriginalWatermark(t *testing.T) {
 		t.Fatal("disk head reached the bumped watermark; the gate would not have parked and this test proves nothing")
 	}
 }
+
+// TestOriginalWatermarkWindowAttribution pins which window an entry's received
+// timestamp is credited to. An append that rolls the window over seals the
+// previous one first; crediting the incoming timestamp before that hands it to
+// the sealed window (inflating its watermark: spurious parks) and loses it
+// from the new one (deflating: gaps proven empty that are not).
+func TestOriginalWatermarkWindowAttribution(t *testing.T) {
+	lb := NewLogBuffer("orig-attribution", time.Minute, nil, nil, nil)
+	defer lb.ShutdownLogBuffer()
+
+	base := time.Now().Add(-time.Hour).Truncate(time.Second)
+	t1 := base.UnixNano()
+	t2 := base.Add(2 * time.Minute).UnixNano() // past the flush interval: seals window A
+
+	if err := lb.AddLogEntryToBuffer(&filer_pb.LogEntry{TsNs: t1, Data: []byte("x"), Key: []byte("k")}); err != nil {
+		t.Fatalf("add t1: %v", err)
+	}
+	if err := lb.AddLogEntryToBuffer(&filer_pb.LogEntry{TsNs: t2, Data: []byte("x"), Key: []byte("k")}); err != nil {
+		t.Fatalf("add t2: %v", err)
+	}
+
+	sealed := lb.prevBuffers.buffers[len(lb.prevBuffers.buffers)-1]
+	if sealed.size == 0 {
+		t.Fatal("precondition: the second append did not seal the first window")
+	}
+	if got := sealed.maxOriginalTsNs; got != t1 {
+		t.Fatalf("sealed window credited with %v, want its own entry %v (t2 belongs to the open window)", time.Unix(0, got), time.Unix(0, t1))
+	}
+	if got := lb.curWindowMaxOriginalTsNs; got != t2 {
+		t.Fatalf("open window holds %v, want the entry that rolled it over %v", time.Unix(0, got), time.Unix(0, t2))
+	}
+}
