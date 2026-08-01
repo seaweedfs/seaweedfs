@@ -39,6 +39,13 @@ func (s *Store) ScrubEcVolume(vid needle.VolumeId, forceDeletedNeedlesCheck bool
 		data := make([]byte, 0, needle.GetActualSize(size, ecv.Version))
 		intervals := ecv.LocateEcShardNeedleInterval(ecv.Version, offset.ToActualOffset(), size)
 
+		shardIds := make([]erasure_coding.ShardId, len(intervals))
+		for i, iv := range intervals {
+			sid, _ := s.IntervalToShardIdAndOffset(iv)
+			shardIds[i] = sid
+		}
+		slices.Sort(shardIds)
+
 		for i, iv := range intervals {
 			chunk := make([]byte, iv.Size)
 			shardId, offset := s.IntervalToShardIdAndOffset(iv)
@@ -73,7 +80,7 @@ func (s *Store) ScrubEcVolume(vid needle.VolumeId, forceDeletedNeedlesCheck bool
 		}
 
 		if got, want := int64(len(data)), needle.GetActualSize(size, ecv.Version); got != want {
-			errs = append(errs, fmt.Errorf("expected %d bytes for needle %d, got %d", want, id, got))
+			errs = append(errs, fmt.Errorf("EC volume %d, needle %d on shards %v: expected %d bytes, got %d", ecv.VolumeId, id, shardIds, want, got))
 			return nil
 		}
 
@@ -83,7 +90,7 @@ func (s *Store) ScrubEcVolume(vid needle.VolumeId, forceDeletedNeedlesCheck bool
 			// be properly hydrated, as the header read by needle.ReadBytes() will mismatch.
 			deleteSizeMismatch := size.IsDeleted() != (n.Size == 0)
 			if !errors.Is(err, needle.ErrorSizeMismatch) || !deleteSizeMismatch || forceDeletedNeedlesCheck {
-				errs = append(errs, fmt.Errorf("needle %d on EC volume %d: %v", id, ecv.VolumeId, err))
+				errs = append(errs, fmt.Errorf("EC volume %d, needle %d on shards %v: %v", ecv.VolumeId, id, shardIds, err))
 			}
 		}
 
