@@ -172,10 +172,14 @@ func TestS3RemoveDirectoryReturnsBatchError(t *testing.T) {
 
 func TestS3RemoveDirectoryReturnsPerKeyError(t *testing.T) {
 	mock := &removeDirectoryMock{
-		pages: []*awss3.ListObjectsV2Output{listPage("testdir/a.bin")},
+		pages: []*awss3.ListObjectsV2Output{listPage("testdir/a.bin", "testdir/b.bin")},
 		deleteResp: &awss3.DeleteObjectsOutput{
 			Errors: []*awss3.Error{{
 				Key:     aws.String("testdir/a.bin"),
+				Code:    aws.String("InternalError"),
+				Message: aws.String("try again"),
+			}, {
+				Key:     aws.String("testdir/b.bin"),
 				Code:    aws.String("InternalError"),
 				Message: aws.String("try again"),
 			}},
@@ -184,7 +188,9 @@ func TestS3RemoveDirectoryReturnsPerKeyError(t *testing.T) {
 	client := &s3RemoteStorageClient{conf: &remote_pb.RemoteConf{Name: "test"}, conn: mock}
 	loc := &remote_pb.RemoteStorageLocation{Name: "test", Bucket: "bucket", Path: "/testdir"}
 
-	require.ErrorContains(t, client.RemoveDirectory(loc), "testdir/a.bin")
+	err := client.RemoveDirectory(loc)
+	require.ErrorContains(t, err, "2 keys failed")
+	require.ErrorContains(t, err, "testdir/a.bin")
 }
 
 // captureRoundTripper records the PUT request that the s3manager uploader

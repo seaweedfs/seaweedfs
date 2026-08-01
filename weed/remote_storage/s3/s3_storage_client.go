@@ -322,8 +322,10 @@ func (s *s3RemoteStorageClient) RemoveDirectory(loc *remote_pb.RemoteStorageLoca
 			deleteErr = batchErr
 			return false
 		}
-		for _, failed := range resp.Errors {
-			deleteErr = fmt.Errorf("delete %s: %s %s", aws.StringValue(failed.Key), aws.StringValue(failed.Code), aws.StringValue(failed.Message))
+		if len(resp.Errors) > 0 {
+			// a batch can fail 1000 keys; report the scope, not every key
+			failed := resp.Errors[0]
+			deleteErr = fmt.Errorf("%d keys failed, first is %s: %s %s", len(resp.Errors), aws.StringValue(failed.Key), aws.StringValue(failed.Code), aws.StringValue(failed.Message))
 			return false
 		}
 		return true
