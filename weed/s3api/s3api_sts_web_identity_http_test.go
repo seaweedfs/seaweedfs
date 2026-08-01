@@ -45,9 +45,12 @@ func TestAssumeRoleWithWebIdentityOverHTTP(t *testing.T) {
 		}},
 	}
 	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/jwks" {
-			json.NewEncoder(w).Encode(jwks)
+		if r.URL.Path != "/jwks" {
+			http.NotFound(w, r)
+			return
 		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(jwks)
 	}))
 	defer idp.Close()
 
@@ -195,7 +198,28 @@ func TestAssumeRoleWithWebIdentityOverHTTP(t *testing.T) {
 
 		info, err := manager.GetSTSService().ValidateSessionToken(ctx, resp.Result.Credentials.SessionToken)
 		require.NoError(t, err)
-		assert.NotEmpty(t, info.SessionPolicy, "the inline policy must travel in the session token")
+		require.NotEmpty(t, info.SessionPolicy, "the inline policy must travel in the session token")
+
+		// Carrying the policy is not the point - restricting the session is. The
+		// role allows s3:GetObject on any bucket; the session policy narrows that
+		// to one bucket, so the same action on another bucket must be refused.
+		allowed, err := manager.IsActionAllowed(ctx, &integration.ActionRequest{
+			Principal:    info.Principal,
+			Action:       "s3:GetObject",
+			Resource:     "arn:aws:s3:::bucket/key",
+			SessionToken: resp.Result.Credentials.SessionToken,
+		})
+		require.NoError(t, err)
+		assert.True(t, allowed, "the session policy allows this bucket")
+
+		denied, err := manager.IsActionAllowed(ctx, &integration.ActionRequest{
+			Principal:    info.Principal,
+			Action:       "s3:GetObject",
+			Resource:     "arn:aws:s3:::other-bucket/key",
+			SessionToken: resp.Result.Credentials.SessionToken,
+		})
+		require.NoError(t, err)
+		assert.False(t, denied, "the session policy must scope the session down to one bucket")
 	})
 
 	t.Run("role whose trust policy rejects the provider is denied", func(t *testing.T) {
@@ -214,31 +238,45 @@ func TestAssumeRoleWithWebIdentityOverHTTP(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 	})
 
-	t.Run("token signed by an unknown key is rejected", func(t *testing.T) {
-		otherKey, err := rsa.GenerateKey(rand.Reader, 2048)
-		require.NoError(t, err)
-		token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
-			"iss": idp.URL,
-			"sub": "forged-user",
-			"aud": "test-client",
-			"exp": time.Now().Add(time.Hour).Unix(),
+	// Both rejection paths matter and they are not the same code: one fails
+	// signature verification against a key we do publish, the other never finds
+	// a key to verify against. The claim set is otherwise identical to a token
+	// signOIDCToken would mint, so neither can pass or fail for want of a claim.
+	forgedTokenCases := []struct {
+		name string
+		kid  string
+	}{
+		{name: "token signed by a key we do not publish is rejected", kid: "web-identity-test-key"},
+		{name: "token naming an unknown key id is rejected", kid: "not-in-the-jwks"},
+	}
+	for _, tc := range forgedTokenCases {
+		t.Run(tc.name, func(t *testing.T) {
+			otherKey, err := rsa.GenerateKey(rand.Reader, 2048)
+			require.NoError(t, err)
+			token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+				"iss": idp.URL,
+				"sub": "forged-user",
+				"aud": "test-client",
+				"exp": time.Now().Add(time.Hour).Unix(),
+				"iat": time.Now().Unix(),
+			})
+			token.Header["kid"] = tc.kid
+			forged, err := token.SignedString(otherKey)
+			require.NoError(t, err)
+
+			form := url.Values{
+				"Action":           {"AssumeRoleWithWebIdentity"},
+				"Version":          {"2011-06-15"},
+				"RoleArn":          {trustedRoleArn},
+				"RoleSessionName":  {"web-session"},
+				"WebIdentityToken": {forged},
+			}
+			req := httptest.NewRequest(http.MethodPost, "http://sts.seaweedfs.test/", strings.NewReader(form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+			rec := httptest.NewRecorder()
+			handlers.HandleSTSRequest(rec, req)
+			assert.NotEqual(t, http.StatusOK, rec.Code, "a forged token must not mint a session")
 		})
-		token.Header["kid"] = "web-identity-test-key"
-		forged, err := token.SignedString(otherKey)
-		require.NoError(t, err)
-
-		form := url.Values{
-			"Action":           {"AssumeRoleWithWebIdentity"},
-			"Version":          {"2011-06-15"},
-			"RoleArn":          {trustedRoleArn},
-			"RoleSessionName":  {"web-session"},
-			"WebIdentityToken": {forged},
-		}
-		req := httptest.NewRequest(http.MethodPost, "http://sts.seaweedfs.test/", strings.NewReader(form.Encode()))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-		rec := httptest.NewRecorder()
-		handlers.HandleSTSRequest(rec, req)
-		assert.NotEqual(t, http.StatusOK, rec.Code, "a forged signature must not mint a session")
-	})
+	}
 }
