@@ -556,13 +556,6 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	var isDone bool
 	refsSentAtTsNs := int64(math.MinInt64) // position refs were last sent for; never re-sent at the same one
 	sentRefs := make(map[string]sentRefState)
-	// Chunk clients' entry passes advance without delivering: refs already
-	// cover (or will cover) every entry, and the client applies inline events
-	// unfiltered - delivering here applies the ref'd tail twice.
-	diskEntryFn := eachLogEntryFn
-	if req.ClientSupportsMetadataChunks {
-		diskEntryFn = func(logEntry *filer_pb.LogEntry) (bool, error) { return false, nil }
-	}
 
 	aggBuffer := fs.filer.MetaAggregator.MetaLogBuffer
 	gaps := &gapPass{
@@ -586,14 +579,10 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 
 		cursorBeforeDiskTsNs := lastReadTime.Time.UnixNano()
 
-		// Refs go once per position (retries would re-send them into a pending
-		// list the client only drains on a non-ref message); when their
-		// minute-named cursor cannot advance, an entry pass moves it instead.
-		if req.ClientSupportsMetadataChunks && cursorBeforeDiskTsNs != refsSentAtTsNs {
-			refsSentAtTsNs = cursorBeforeDiskTsNs
-			processedTsNs, isDone, readPersistedLogErr = fs.sendLogFileRefs(ctx, sender, lastReadTime, req.UntilNs, sentRefs)
+		if req.ClientSupportsMetadataChunks {
+			processedTsNs, isDone, readPersistedLogErr = fs.chunkDiskPass(ctx, sender, lastReadTime, req.UntilNs, &refsSentAtTsNs, sentRefs)
 		} else {
-			processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(ctx, lastReadTime, req.UntilNs, diskEntryFn)
+			processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(ctx, lastReadTime, req.UntilNs, eachLogEntryFn)
 		}
 		if readPersistedLogErr != nil {
 			return fmt.Errorf("reading from persisted logs: %w", readPersistedLogErr)
@@ -746,13 +735,6 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	var lastDiskReadTsNs int64 = -1        // Track the last read position we used for disk read
 	refsSentAtTsNs := int64(math.MinInt64) // position refs were last sent for; never re-sent at the same one
 	sentRefs := make(map[string]sentRefState)
-	// Chunk clients' entry passes advance without delivering: refs already
-	// cover (or will cover) every entry, and the client applies inline events
-	// unfiltered - delivering here applies the ref'd tail twice.
-	diskEntryFn := eachLogEntryFn
-	if req.ClientSupportsMetadataChunks {
-		diskEntryFn = func(logEntry *filer_pb.LogEntry) (bool, error) { return false, nil }
-	}
 
 	localBuffer := fs.filer.LocalMetaLogBuffer
 	gaps := &gapPass{
@@ -784,14 +766,10 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 			// Record the position we are about to read from
 			lastDiskReadTsNs = currentReadTsNs
 			glog.V(4).Infof("read on disk %v local subscribe %s from %+v (lastFlushed: %v)", clientName, req.PathPrefix, lastReadTime, time.Unix(0, currentFlushTsNs))
-			// Refs go once per position (retries would re-send them into a
-			// pending list the client only drains on a non-ref message); when
-			// their minute-named cursor cannot advance, an entry pass moves it.
-			if req.ClientSupportsMetadataChunks && currentReadTsNs != refsSentAtTsNs {
-				refsSentAtTsNs = currentReadTsNs
-				processedTsNs, isDone, readPersistedLogErr = fs.sendLogFileRefs(ctx, sender, lastReadTime, req.UntilNs, sentRefs)
+			if req.ClientSupportsMetadataChunks {
+				processedTsNs, isDone, readPersistedLogErr = fs.chunkDiskPass(ctx, sender, lastReadTime, req.UntilNs, &refsSentAtTsNs, sentRefs)
 			} else {
-				processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(ctx, lastReadTime, req.UntilNs, diskEntryFn)
+				processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(ctx, lastReadTime, req.UntilNs, eachLogEntryFn)
 			}
 			if readPersistedLogErr != nil {
 				glog.V(0).Infof("read on disk %v local subscribe %s from %+v: %v", clientName, req.PathPrefix, lastReadTime, readPersistedLogErr)
@@ -955,6 +933,62 @@ func (fs *FilerServer) maybeSendIdleHeartbeat(req *filer_pb.SubscribeMetadataReq
 	return now
 }
 
+// chunkDiskPass is the disk step for chunk-capable clients: ship the unsent
+// refs, advance the cursor by an entry read that delivers nothing (refs cover
+// the content), re-ship anything that entry read saw beyond the first delta,
+// then send a transition. The transition is an empty-notification marker: both
+// chunk consumers buffer refs until a non-ref message, so an idle source -
+// historical logs, empty ring - would otherwise strand the backlog in the
+// client's pending list until the next mutation. Its timestamp becomes the
+// client's resume filter, which is why the second delta must run first: the
+// entry read can outrun the first delta by a chunk appended in between, and a
+// filter past unshipped content silently drops it.
+func (fs *FilerServer) chunkDiskPass(ctx context.Context, sender metadataStreamSender, startPos log_buffer.MessagePosition, untilNs int64, refsSentAtTsNs *int64, sent map[string]sentRefState) (processedTsNs int64, isDone bool, err error) {
+	cursor := startPos
+	refsSent := false
+	finish := func(done bool) (int64, bool, error) {
+		if refsSent {
+			if sendErr := sender.Send(&filer_pb.SubscribeMetadataResponse{
+				EventNotification: &filer_pb.EventNotification{},
+				TsNs:              cursor.Time.UnixNano(),
+			}); sendErr != nil {
+				return 0, false, sendErr
+			}
+		}
+		return cursor.Time.UnixNano(), done, nil
+	}
+	if cursor.Time.UnixNano() != *refsSentAtTsNs {
+		*refsSentAtTsNs = cursor.Time.UnixNano()
+		refsTsNs, sentAny, done, refsErr := fs.sendLogFileRefs(ctx, sender, cursor, untilNs, sent)
+		if refsErr != nil {
+			return 0, false, refsErr
+		}
+		refsSent = sentAny
+		if diskReadAdvanced(refsTsNs, cursor) {
+			cursor = log_buffer.NewMessagePosition(refsTsNs, gapResumeCursorOffset)
+		}
+		if done {
+			return finish(true)
+		}
+	}
+	noop := func(*filer_pb.LogEntry) (bool, error) { return false, nil }
+	entryTsNs, done, entryErr := fs.filer.ReadPersistedLogBuffer(ctx, cursor, untilNs, noop)
+	if entryErr != nil {
+		return 0, false, entryErr
+	}
+	if diskReadAdvanced(entryTsNs, cursor) {
+		cursor = log_buffer.NewMessagePosition(entryTsNs, gapResumeCursorOffset)
+		*refsSentAtTsNs = entryTsNs
+		_, sentAny, done2, refsErr := fs.sendLogFileRefs(ctx, sender, cursor, untilNs, sent)
+		if refsErr != nil {
+			return 0, false, refsErr
+		}
+		refsSent = refsSent || sentAny
+		done = done || done2
+	}
+	return finish(done)
+}
+
 // sentRefState tracks, per subscription, how many chunks of each log file have
 // been shipped as refs. Collection re-lists files up to a flush interval behind
 // the cursor (the spanning-file back-off), and a filer appends further chunks
@@ -1014,14 +1048,14 @@ func deltaLogFileRefs(refs []*filer_pb.LogFileChunkRef, sent map[string]sentRefS
 // listings. Refs go through the pipelinedSender like every other message: gRPC
 // allows one sending goroutine per stream, and the sender's goroutine is it;
 // the sender keeps refs messages out of Events batches.
-func (fs *FilerServer) sendLogFileRefs(ctx context.Context, stream metadataStreamSender, startPosition log_buffer.MessagePosition, stopTsNs int64, sent map[string]sentRefState) (lastTsNs int64, isDone bool, err error) {
+func (fs *FilerServer) sendLogFileRefs(ctx context.Context, stream metadataStreamSender, startPosition log_buffer.MessagePosition, stopTsNs int64, sent map[string]sentRefState) (lastTsNs int64, sentAny bool, isDone bool, err error) {
 	collected, lastTsNs, err := fs.filer.CollectLogFileRefs(ctx, startPosition, stopTsNs)
 	if err != nil {
-		return 0, false, err
+		return 0, false, false, err
 	}
 	refs := deltaLogFileRefs(collected, sent, filer.PersistedLogScanStartTsNs(startPosition.Time))
 	if len(refs) == 0 {
-		return lastTsNs, false, nil
+		return lastTsNs, false, false, nil
 	}
 
 	const maxRefsPerMessage = 64
@@ -1033,10 +1067,10 @@ func (fs *FilerServer) sendLogFileRefs(ctx context.Context, stream metadataStrea
 		if err := stream.Send(&filer_pb.SubscribeMetadataResponse{
 			LogFileRefs: refs[i:end],
 		}); err != nil {
-			return lastTsNs, false, err
+			return lastTsNs, true, false, err
 		}
 	}
-	return lastTsNs, false, nil
+	return lastTsNs, true, false, nil
 }
 
 func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRequest, sender metadataStreamSender, clientName string, filtered *int64) func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
