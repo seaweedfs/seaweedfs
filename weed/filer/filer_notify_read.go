@@ -51,13 +51,16 @@ func persistedLogScanStart(t time.Time) time.Time {
 // so the caller can roll back the sent state of everything newer - refs the
 // cursor did not reach must re-ship, or a transient probe failure leaves the
 // cursor behind them for the life of the connection.
-func (f *Filer) LastShippedLogEntryTsNsForFiler(refs []*filer_pb.LogFileChunkRef) (tsNs int64, answeredFileTsNs int64, ok bool) {
+// complete reports whether the answering file was read through to its end: a
+// prefix-limited answer means the ref's unread suffix must re-ship too, or a
+// transient mid-file failure abandons it for the life of the connection.
+func (f *Filer) LastShippedLogEntryTsNsForFiler(refs []*filer_pb.LogFileChunkRef) (tsNs int64, answeredFileTsNs int64, ok bool, complete bool) {
 	for i := len(refs) - 1; i >= 0; i-- {
-		if tsNs, ok = f.lastShippedLogEntryTsNs(refs[i].Chunks); ok {
-			return tsNs, refs[i].FileTsNs, ok
+		if tsNs, ok, complete = f.lastShippedLogEntryTsNs(refs[i].Chunks); ok {
+			return tsNs, refs[i].FileTsNs, ok, complete
 		}
 	}
-	return 0, 0, false
+	return 0, 0, false, false
 }
 
 // lookupLogChunkFn reports whether a chunk still resolves to a live volume.
@@ -78,35 +81,35 @@ var lookupLogChunkFn = func(f *Filer, fileId string) error {
 // decoded-chunk cache: a chunk this server decoded an hour ago may sit on a
 // volume that has since died, and the direct-reading client stops there no
 // matter how well the cache still remembers the bytes.
-func (f *Filer) lastShippedLogEntryTsNs(chunks []*filer_pb.FileChunk) (tsNs int64, ok bool) {
+func (f *Filer) lastShippedLogEntryTsNs(chunks []*filer_pb.FileChunk) (tsNs int64, ok bool, complete bool) {
 	for _, chunk := range chunks {
 		if lookupErr := lookupLogChunkFn(f, chunk.GetFileIdString()); lookupErr != nil {
-			return tsNs, ok
+			return tsNs, ok, false
 		}
 		entries, loadErr := f.persistedLogCache.getOrLoad(chunk.GetFileIdString(), int64(chunk.Size), func() ([]*filer_pb.LogEntry, bool, error) {
 			return loadLogFileEntriesFn(f.MasterClient, chunk)
 		})
 		if errors.Is(loadErr, errLogChunkIncomplete) {
 			// Records span chunks; the client streams such a file whole.
-			if streamTsNs, streamOk := f.lastStreamedLogEntryTsNs(chunks); streamOk {
-				return streamTsNs, true
+			if streamTsNs, streamOk, streamComplete := f.lastStreamedLogEntryTsNs(chunks); streamOk {
+				return streamTsNs, true, streamComplete
 			}
-			return tsNs, ok
+			return tsNs, ok, false
 		}
 		if loadErr != nil {
-			return tsNs, ok // prefix ends here, like the client's reader
+			return tsNs, ok, false // prefix ends here, like the client's reader
 		}
 		if len(entries) > 0 {
 			tsNs, ok = entries[len(entries)-1].TsNs, true
 		}
 	}
-	return tsNs, ok
+	return tsNs, ok, true
 }
 
 // lastStreamedLogEntryTsNs scans the chunk list as one byte stream, ending
 // where the client's reader ends: a clean or torn tail, a missing chunk, or
 // undecodable bytes all terminate the scan with the progress made.
-func (f *Filer) lastStreamedLogEntryTsNs(chunks []*filer_pb.FileChunk) (tsNs int64, ok bool) {
+func (f *Filer) lastStreamedLogEntryTsNs(chunks []*filer_pb.FileChunk) (tsNs int64, ok bool, complete bool) {
 	r := newLogFileStreamReader(f.MasterClient, chunks)
 	if closer, isCloser := r.(io.Closer); isCloser {
 		defer closer.Close()
@@ -114,19 +117,22 @@ func (f *Filer) lastStreamedLogEntryTsNs(chunks []*filer_pb.FileChunk) (tsNs int
 	sizeBuf := make([]byte, 4)
 	for {
 		if _, readErr := io.ReadFull(r, sizeBuf); readErr != nil {
-			return tsNs, ok
+			// A clean or torn tail is where the client's read ends too; only a
+			// mid-stream failure leaves an unread remainder worth re-shipping.
+			ended := readErr == io.EOF || readErr == io.ErrUnexpectedEOF
+			return tsNs, ok, ended
 		}
 		size := util.BytesToUint32(sizeBuf)
 		if size > maxLogEntrySize {
-			return tsNs, ok
+			return tsNs, ok, false
 		}
 		data := make([]byte, size)
 		if _, readErr := io.ReadFull(r, data); readErr != nil {
-			return tsNs, ok
+			return tsNs, ok, false
 		}
 		logEntry := &filer_pb.LogEntry{}
 		if unmarshalErr := logEntry.UnmarshalVT(data); unmarshalErr != nil {
-			return tsNs, ok
+			return tsNs, ok, false
 		}
 		tsNs, ok = logEntry.TsNs, true
 	}

@@ -166,10 +166,11 @@ func (r *chunkStreamReader) Close() error { return nil }
 // ---- the harness ----
 
 type subscribeHarness struct {
-	t   *testing.T
-	f   *filer.Filer
-	fs  *FilerServer
-	vol *fakeLogVolumes
+	t    *testing.T
+	f    *filer.Filer
+	fs   *FilerServer
+	vol  *fakeLogVolumes
+	base int64 // fixed timestamp origin; a per-call time.Now() shifts across second boundaries mid-test
 
 	// flushGate, when non-nil, blocks the flush function - the "volume outage
 	// stalls the metadata log flush" state the whole PR exists to handle.
@@ -213,7 +214,8 @@ func newSubscribeHarness(t *testing.T) *subscribeHarness {
 	)
 	t.Cleanup(restore)
 
-	h := &subscribeHarness{t: t, f: f, vol: vol}
+	h := &subscribeHarness{t: t, f: f, vol: vol,
+		base: time.Now().Add(-time.Hour).Truncate(time.Second).UnixNano()}
 
 	// The real buffer, with the flush function writing through the fake volume
 	// layer the way logFlushFunc writes through real volumes.
@@ -381,11 +383,10 @@ func assertNoEventsFor(t *testing.T, r *runningSubscribe, d time.Duration) {
 	}
 }
 
-// tsAt returns test timestamps: base is old enough that windows seal on the
-// time jump between them, and each window's entries sit 1ms apart.
-func tsAt(window, i int) int64 {
-	base := time.Now().Add(-time.Hour).Truncate(time.Second)
-	return base.Add(time.Duration(window)*2*time.Minute + time.Duration(i)*time.Millisecond).UnixNano()
+// tsAt returns test timestamps from the harness's fixed base: old enough that
+// windows seal on the jump between them, entries 1ms apart within a window.
+func (h *subscribeHarness) tsAt(window, i int) int64 {
+	return h.base + int64(window)*int64(2*time.Minute) + int64(i)*int64(time.Millisecond)
 }
 
 // ---- scenarios ----
@@ -399,7 +400,7 @@ func TestSubscribeLoop_EvictedUnflushedGapWaitsThenDelivers(t *testing.T) {
 
 	var want []int64
 	for w := 0; w < log_buffer.PreviousBufferCount+3; w++ {
-		ts := tsAt(w, 0)
+		ts := h.tsAt(w, 0)
 		want = append(want, ts)
 		h.append(ts)
 	}
@@ -422,7 +423,7 @@ func TestSubscribeLoop_NothingEvictedServesFromMemory(t *testing.T) {
 	h := newSubscribeHarness(t)
 	h.blockFlushes() // no disk at all; memory alone must serve
 
-	want := []int64{tsAt(0, 0), tsAt(0, 1), tsAt(0, 2)}
+	want := []int64{h.tsAt(0, 0), h.tsAt(0, 1), h.tsAt(0, 2)}
 	for _, ts := range want {
 		h.append(ts)
 	}
@@ -439,8 +440,7 @@ func TestSubscribeLoop_NothingEvictedServesFromMemory(t *testing.T) {
 func TestSubscribeLoop_BacklogThenLiveExactlyOnce(t *testing.T) {
 	h := newSubscribeHarness(t)
 
-	base := time.Now().Add(-time.Hour).Truncate(time.Second).UnixNano()
-	ts := func(i int) int64 { return base + int64(i)*int64(time.Millisecond) }
+	ts := func(i int) int64 { return h.base + int64(i)*int64(time.Millisecond) }
 
 	var want []int64
 	n := 0
@@ -475,7 +475,7 @@ func TestSubscribeLoop_BacklogThenLiveExactlyOnce(t *testing.T) {
 func TestSubscribeLoop_BoundedSubscriptionTerminates(t *testing.T) {
 	h := newSubscribeHarness(t)
 
-	all := []int64{tsAt(0, 0), tsAt(0, 1), tsAt(1, 0), tsAt(1, 1)}
+	all := []int64{h.tsAt(0, 0), h.tsAt(0, 1), h.tsAt(1, 0), h.tsAt(1, 1)}
 	for _, ts := range all {
 		h.append(ts)
 	}
@@ -508,7 +508,7 @@ func TestSubscribeLoop_FlushProvenGapSkipsToRetained(t *testing.T) {
 	h := newSubscribeHarness(t)
 
 	for w := 0; w < log_buffer.PreviousBufferCount+2; w++ {
-		h.append(tsAt(w, 0))
+		h.append(h.tsAt(w, 0))
 	}
 	waitForFlushedFiles(t, h)
 	if h.f.LocalMetaLogBuffer.GetLastEvictedTsNs() == 0 {
@@ -519,7 +519,7 @@ func TestSubscribeLoop_FlushProvenGapSkipsToRetained(t *testing.T) {
 	earliest := h.f.LocalMetaLogBuffer.GetEarliestTime().UnixNano()
 	var retained []int64
 	for w := 0; w < log_buffer.PreviousBufferCount+2; w++ {
-		if ts := tsAt(w, 0); ts >= earliest {
+		if ts := h.tsAt(w, 0); ts >= earliest {
 			retained = append(retained, ts)
 		}
 	}
@@ -570,12 +570,12 @@ func TestSubscribeLoop_GiveUpSkipsAndKeepsStreaming(t *testing.T) {
 	h.blockFlushes()
 	var retained []int64
 	for w := 0; w < log_buffer.PreviousBufferCount+3; w++ {
-		h.append(tsAt(w, 0))
+		h.append(h.tsAt(w, 0))
 	}
 	// What the ring still holds after eviction is what must arrive post-skip.
 	earliest := h.f.LocalMetaLogBuffer.GetEarliestTime().UnixNano()
 	for w := 0; w < log_buffer.PreviousBufferCount+3; w++ {
-		if ts := tsAt(w, 0); ts >= earliest {
+		if ts := h.tsAt(w, 0); ts >= earliest {
 			retained = append(retained, ts)
 		}
 	}
@@ -599,7 +599,7 @@ func TestSubscribeLoop_ChunkModeMarkerMatchesClientReplay(t *testing.T) {
 	var want []int64
 	for w := 0; w < 3; w++ {
 		for i := 0; i < 3; i++ {
-			ts := tsAt(w, i)
+			ts := h.tsAt(w, i)
 			want = append(want, ts)
 			h.append(ts)
 		}
@@ -665,7 +665,7 @@ func TestSubscribeLoop_ChunkModeMarkerMatchesClientReplay(t *testing.T) {
 	}
 
 	// And a live tail still arrives inline, after the marker.
-	live := tsAt(4, 0)
+	live := h.tsAt(4, 0)
 	h.append(live)
 	waitForEvents(t, r, []int64{live}, 5*time.Second)
 }
@@ -679,7 +679,7 @@ func TestSubscribeLoop_ChunkModeDeadVolumeAgreesWithClient(t *testing.T) {
 	// Three flushed windows -> three files; kill the middle file's chunk.
 	var written []int64
 	for w := 0; w < 3; w++ {
-		ts := tsAt(w, 0)
+		ts := h.tsAt(w, 0)
 		written = append(written, ts)
 		h.append(ts)
 	}

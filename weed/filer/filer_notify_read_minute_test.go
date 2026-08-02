@@ -151,10 +151,10 @@ func TestLastShippedLogEntryTsNs(t *testing.T) {
 	}
 	defer func() { loadLogFileEntriesFn = origLoad; lookupLogChunkFn = origLookup }()
 
-	t.Run("a fully readable file answers with its tail", func(t *testing.T) {
-		ts, ok := f.lastShippedLogEntryTsNs([]*filer_pb.FileChunk{chunk("good-early"), chunk("good-late")})
-		if !ok || ts != 400 {
-			t.Fatalf("ts=%d ok=%v, want 400", ts, ok)
+	t.Run("a fully readable file answers with its tail, complete", func(t *testing.T) {
+		ts, ok, complete := f.lastShippedLogEntryTsNs([]*filer_pb.FileChunk{chunk("good-early"), chunk("good-late")})
+		if !ok || ts != 400 || !complete {
+			t.Fatalf("ts=%d ok=%v complete=%v, want 400 and complete", ts, ok, complete)
 		}
 	})
 
@@ -162,14 +162,17 @@ func TestLastShippedLogEntryTsNs(t *testing.T) {
 		// The client's reader stops there and never resumes within the file:
 		// answering from the readable suffix would put the marker past entries
 		// the client never applied, losing them permanently.
-		ts, ok := f.lastShippedLogEntryTsNs([]*filer_pb.FileChunk{chunk("good-early"), chunk("missing"), chunk("good-late")})
+		ts, ok, complete := f.lastShippedLogEntryTsNs([]*filer_pb.FileChunk{chunk("good-early"), chunk("missing"), chunk("good-late")})
 		if !ok || ts != 200 {
 			t.Fatalf("ts=%d ok=%v, want the prefix end 200, never the suffix 400", ts, ok)
+		}
+		if complete {
+			t.Fatal("a prefix-limited read must report incomplete, or the unread suffix is never re-shipped")
 		}
 	})
 
 	t.Run("nothing readable is a clean no-answer", func(t *testing.T) {
-		if _, ok := f.lastShippedLogEntryTsNs([]*filer_pb.FileChunk{chunk("missing"), chunk("empty")}); ok {
+		if _, ok, _ := f.lastShippedLogEntryTsNs([]*filer_pb.FileChunk{chunk("missing"), chunk("empty")}); ok {
 			t.Fatal("want no answer")
 		}
 	})
@@ -178,7 +181,7 @@ func TestLastShippedLogEntryTsNs(t *testing.T) {
 		// The client skips the bad file but has applied the earlier ones;
 		// discarding their progress would rewind the marker to the start
 		// cursor and stall or replay.
-		ts, answeredFileTsNs, ok := f.LastShippedLogEntryTsNsForFiler([]*filer_pb.LogFileChunkRef{
+		ts, answeredFileTsNs, ok, _ := f.LastShippedLogEntryTsNsForFiler([]*filer_pb.LogFileChunkRef{
 			ref(1000, chunk("good-late")),
 			ref(2000, chunk("missing"), chunk("missing2")),
 		})
@@ -195,13 +198,41 @@ func TestLastShippedLogEntryTsNs(t *testing.T) {
 		// reads directly and stops there; a probe trusting its own decoded
 		// cache would sail past to the tail and put the marker beyond entries
 		// the client never applied.
-		if ts, ok := f.lastShippedLogEntryTsNs([]*filer_pb.FileChunk{chunk("good-early"), chunk("good-late")}); !ok || ts != 400 {
+		if ts, ok, _ := f.lastShippedLogEntryTsNs([]*filer_pb.FileChunk{chunk("good-early"), chunk("good-late")}); !ok || ts != 400 {
 			t.Fatalf("warmup: ts=%d ok=%v, want 400", ts, ok)
 		}
 		deadVolumes["good-early"] = true
 		defer delete(deadVolumes, "good-early")
-		if ts, ok := f.lastShippedLogEntryTsNs([]*filer_pb.FileChunk{chunk("good-early"), chunk("good-late")}); ok || ts != 0 {
+		ts, ok, complete := f.lastShippedLogEntryTsNs([]*filer_pb.FileChunk{chunk("good-early"), chunk("good-late")})
+		if ok || ts != 0 {
 			t.Fatalf("ts=%d ok=%v, want no answer: the first chunk's volume is gone however warm the cache", ts, ok)
+		}
+		if complete {
+			t.Fatal("a lookup-limited read must report incomplete so the ref re-ships")
+		}
+	})
+
+	t.Run("a dead needle behind a warm cache is the accepted residual", func(t *testing.T) {
+		// Production liveness is a volume lookup: it cannot see a needle 404
+		// or a stale location inside a resolvable volume, so a warm cache can
+		// answer past a chunk the client fails to read. Accepted because
+		// metadata log chunks die volume-at-a-time (TTL'd log volumes) and the
+		// alternative is a real read per probe, which is what the probe exists
+		// to avoid; the client logs the skip at V(0). This test pins the
+		// boundary so a change to it is a decision, not an accident.
+		if ts, ok, _ := f.lastShippedLogEntryTsNs([]*filer_pb.FileChunk{chunk("good-early"), chunk("good-late")}); !ok || ts != 400 {
+			t.Fatalf("warmup: ts=%d ok=%v, want 400", ts, ok)
+		}
+		// The needle dies: loads fail, but the volume still resolves.
+		prev := byId["good-early"]
+		byId["good-early"] = struct {
+			entries []*filer_pb.LogEntry
+			err     error
+		}{err: fmt.Errorf("read: 404 Not Found: not found")}
+		defer func() { byId["good-early"] = prev }()
+		ts, ok, complete := f.lastShippedLogEntryTsNs([]*filer_pb.FileChunk{chunk("good-early"), chunk("good-late")})
+		if !ok || ts != 400 || !complete {
+			t.Fatalf("ts=%d ok=%v complete=%v: the warm cache masks a dead needle - if this now fails, the residual was closed and this test should assert the new behavior", ts, ok, complete)
 		}
 	})
 
@@ -228,9 +259,12 @@ func TestLastShippedLogEntryTsNs(t *testing.T) {
 		}
 		defer func() { loadLogFileEntriesFn = origLoad2; newLogFileStreamReader = origStream }()
 
-		ts, ok := f.lastShippedLogEntryTsNs([]*filer_pb.FileChunk{chunk("incomplete")})
+		ts, ok, complete := f.lastShippedLogEntryTsNs([]*filer_pb.FileChunk{chunk("incomplete")})
 		if !ok || ts != 600 {
 			t.Fatalf("ts=%d ok=%v, want the streamed tail 600 past the torn prefix", ts, ok)
+		}
+		if !complete {
+			t.Fatal("a torn tail is where the client's read ends too: complete, nothing to re-ship")
 		}
 	})
 }

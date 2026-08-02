@@ -530,3 +530,33 @@ func TestDeltaLogFileRefs(t *testing.T) {
 		t.Fatal("file inside the scan window must be kept")
 	}
 }
+
+// TestRefNeedsReship pins the sent-state rollback rules. Sent state that
+// outlives what the probe could not verify strands the cursor behind shipped
+// content for the life of the connection; sent state dropped for files the
+// client has moved past only re-ships noise it will filter.
+func TestRefNeedsReship(t *testing.T) {
+	const answered = 2000
+	cases := []struct {
+		name     string
+		fileTsNs int64
+		ok       bool
+		complete bool
+		want     bool
+	}{
+		{"file above the answer re-ships", 3000, true, true, true},
+		{"complete answering file stays sent", answered, true, true, false},
+		{"prefix-limited answering file re-ships its suffix", answered, true, false, true},
+		{"file below a complete answer stays sent", 1000, true, true, false},
+		{"file below an incomplete answer stays sent (client moved past)", 1000, true, false, false},
+		{"everything re-ships when nothing answered", 1000, false, false, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := refNeedsReship(tc.fileTsNs, tc.ok, answered, tc.complete); got != tc.want {
+				t.Fatalf("refNeedsReship(%d, %v, %d, %v) = %v, want %v",
+					tc.fileTsNs, tc.ok, answered, tc.complete, got, tc.want)
+			}
+		})
+	}
+}

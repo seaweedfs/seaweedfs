@@ -970,7 +970,7 @@ func (fs *FilerServer) chunkDiskPass(ctx context.Context, sender metadataStreamS
 		refsPerFiler[ref.FilerId] = append(refsPerFiler[ref.FilerId], ref)
 	}
 	for filerId, filerRefs := range refsPerFiler {
-		tailTsNs, answeredFileTsNs, ok := fs.filer.LastShippedLogEntryTsNsForFiler(filerRefs)
+		tailTsNs, answeredFileTsNs, ok, complete := fs.filer.LastShippedLogEntryTsNsForFiler(filerRefs)
 		if ok && tailTsNs > cursorTsNs {
 			cursorTsNs = tailTsNs
 		}
@@ -978,11 +978,13 @@ func (fs *FilerServer) chunkDiskPass(ctx context.Context, sender metadataStreamS
 		// content sits above the marker, and sent-state that outlives a
 		// transient probe failure would strand the cursor behind them for the
 		// life of the connection - parking aggregated streams below the
-		// watermark. Re-shipped entries at or below the client's checkpoint
-		// are filtered client-side, and batches are marker-separated, so a
+		// watermark. A prefix-limited answer re-ships the answering file too,
+		// or its unread suffix is abandoned the moment a later append advances
+		// past it. Re-shipped entries at or below the client's checkpoint are
+		// filtered client-side, and batches are marker-separated, so a
 		// re-shipped whole file cannot rewind a merge mid-batch.
 		for _, ref := range filerRefs {
-			if !ok || ref.FileTsNs > answeredFileTsNs {
+			if refNeedsReship(ref.FileTsNs, ok, answeredFileTsNs, complete) {
 				delete(sent, sentRefKey(filerId, ref.FileTsNs))
 			}
 		}
@@ -1028,6 +1030,23 @@ func (fs *FilerServer) sendRefsBatched(sender metadataStreamSender, refs []*file
 type sentRefState struct {
 	chunks   int
 	fileTsNs int64
+}
+
+// refNeedsReship says whether a shipped ref's sent state must be dropped so a
+// later pass re-ships it: everything above the file that answered the probe
+// (the cursor never reached it), the answering file itself when its read was
+// prefix-limited (its unread suffix would otherwise be abandoned the moment a
+// later append advances past it), and everything when nothing answered. Files
+// below a complete answer stay sent: the client has moved past them, and
+// re-shipping cannot rewind its filter.
+func refNeedsReship(fileTsNs int64, answered bool, answeredFileTsNs int64, complete bool) bool {
+	if !answered {
+		return true
+	}
+	if fileTsNs > answeredFileTsNs {
+		return true
+	}
+	return fileTsNs == answeredFileTsNs && !complete
 }
 
 func sentRefKey(filerId string, fileTsNs int64) string {
