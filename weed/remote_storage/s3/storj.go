@@ -25,8 +25,7 @@ func (s StorjRemoteStorageMaker) HasBucket() bool {
 
 func (s StorjRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
 	client := &s3RemoteStorageClient{
-		supportTagging: true,
-		conf:           conf,
+		conf: conf,
 	}
 	accessKey := util.Nvl(conf.StorjAccessKey, os.Getenv("AWS_ACCESS_KEY_ID"))
 	secretKey := util.Nvl(conf.StorjSecretKey, os.Getenv("AWS_SECRET_ACCESS_KEY"))
