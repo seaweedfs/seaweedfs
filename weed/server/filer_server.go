@@ -91,11 +91,6 @@ type FilerOption struct {
 type FilerServer struct {
 	inFlightDataSize int64
 	inFlightUploads  int64
-	listenersWaits   int64
-
-	// notifying clients
-	listenersLock sync.Mutex
-	listenersCond *sync.Cond
 
 	inFlightDataLimitCond *sync.Cond
 
@@ -196,7 +191,6 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs.startPosixLockSweeper()
 	fs.mountPeerRegistry = filer.NewMountPeerRegistry()
 	go fs.runMountPeerRegistrySweeper()
-	fs.listenersCond = sync.NewCond(&fs.listenersLock)
 
 	option.Masters.RefreshBySrvIfAvailable()
 	if len(option.Masters.GetInstances()) == 0 {
@@ -219,11 +213,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	v.SetDefault("filer.options.max_file_name_length", 255)
 	maxFilenameLength := v.GetUint32("filer.options.max_file_name_length")
 	glog.V(0).Infof("max_file_name_length %d", maxFilenameLength)
-	fs.filer = filer.NewFiler(*option.Masters, fs.grpcDialOption, option.Host, option.FilerGroup, option.Collection, option.DefaultReplication, option.DataCenter, maxFilenameLength, func() {
-		if atomic.LoadInt64(&fs.listenersWaits) > 0 {
-			fs.listenersCond.Broadcast()
-		}
-	})
+	fs.filer = filer.NewFiler(*option.Masters, fs.grpcDialOption, option.Host, option.FilerGroup, option.Collection, option.DefaultReplication, option.DataCenter, maxFilenameLength, nil)
 	fs.filer.Cipher = option.Cipher
 	fs.filer.DefaultDiskType = option.DiskType
 	// we do not support IP whitelist right now https://github.com/seaweedfs/seaweedfs/issues/7094

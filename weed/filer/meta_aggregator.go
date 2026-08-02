@@ -30,10 +30,6 @@ type MetaAggregator struct {
 	MetaLogBuffer  *log_buffer.LogBuffer
 	peerChans      map[pb.ServerAddress]chan struct{}
 	peerChansLock  sync.Mutex
-	// notifying clients
-	ListenersLock  sync.Mutex
-	ListenersWaits int64 // Atomic counter
-	ListenersCond  *sync.Cond
 }
 
 // MetaAggregator only aggregates data "on the fly". The logs are not re-persisted to disk.
@@ -45,12 +41,9 @@ func NewMetaAggregator(filer *Filer, self pb.ServerAddress, grpcDialOption grpc.
 		grpcDialOption: grpcDialOption,
 		peerChans:      make(map[pb.ServerAddress]chan struct{}),
 	}
-	t.ListenersCond = sync.NewCond(&t.ListenersLock)
-	t.MetaLogBuffer = log_buffer.NewLogBuffer("aggr", LogFlushInterval, nil, nil, func() {
-		if atomic.LoadInt64(&t.ListenersWaits) > 0 {
-			t.ListenersCond.Broadcast()
-		}
-	})
+	// nil notifyFn: aggregated subscribers wake through the buffer's
+	// subscriber channels, not a cond.
+	t.MetaLogBuffer = log_buffer.NewLogBuffer("aggr", LogFlushInterval, nil, nil, nil)
 	return t
 }
 
