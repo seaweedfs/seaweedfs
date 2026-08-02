@@ -20,7 +20,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 )
 
-const (
+// Vars, not consts: the loop tests shrink them to drive parks and give-ups in
+// test time.
+var (
 	// unflushedGapRetryInterval caps the wait of a subscriber parked on a recent
 	// (possibly-unflushed) gap, in case the flush notification is missed.
 	unflushedGapRetryInterval = 2 * time.Second
@@ -32,7 +34,9 @@ const (
 	// and logged: a dead peer makes the wait permanent, and failing the stream
 	// only moves the loop into a client that reconnects to the same wall.
 	maxGapStall = 15 * time.Minute
+)
 
+const (
 	// MaxUnsyncedEvents send empty notification with timestamp when certain amount of events have been filtered
 	MaxUnsyncedEvents = 1e3
 
