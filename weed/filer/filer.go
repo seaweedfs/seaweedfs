@@ -56,6 +56,7 @@ type Filer struct {
 	MetaAggregator          *MetaAggregator
 	Signature               int32
 	FilerConf               *FilerConf
+	placementOverlay        PlacementOverlay
 	RemoteStorage           *FilerRemoteStorage
 	lazyFetchGroup          singleflight.Group
 	lazyListGroup           singleflight.Group
@@ -95,6 +96,10 @@ func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerH
 	f.LocalMetaLogBuffer = log_buffer.NewLogBuffer("local", LogFlushInterval, f.logFlushFunc, nil, notifyFn)
 	f.metaLogCollection = collection
 	f.metaLogReplication = replication
+
+	if newPlacementOverlay != nil {
+		f.placementOverlay = newPlacementOverlay(f)
+	}
 
 	go f.loopProcessingDeletion()
 

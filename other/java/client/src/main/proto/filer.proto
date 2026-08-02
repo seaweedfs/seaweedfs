@@ -121,6 +121,12 @@ message LookupDirectoryEntryRequest {
 
 message LookupDirectoryEntryResponse {
     Entry entry = 1;
+    // filer log position stamped before the entry read: every event at or
+    // below it is reflected in the returned entry
+    int64 log_ts_ns = 2;
+    // signature of the filer whose clock stamped log_ts_ns; positions are
+    // only comparable with events that filer logged
+    int32 log_signature = 3;
 }
 
 message ListEntriesRequest {
@@ -446,6 +452,10 @@ message CreateEntryResponse {
     string error = 1;                          // kept for human readability + backward compat
     SubscribeMetadataResponse metadata_event = 2;
     FilerError error_code = 3;                 // machine-readable error code
+    // filer log position stamped under the path lock before the write:
+    // every event at or below it is reflected in the acknowledged state
+    int64 log_ts_ns = 4;
+    int32 log_signature = 5; // filer whose clock stamped log_ts_ns
 }
 
 message UpdateEntryRequest {
@@ -461,6 +471,10 @@ message UpdateEntryRequest {
 }
 message UpdateEntryResponse {
     SubscribeMetadataResponse metadata_event = 1;
+    // filer log position stamped under the path lock before the write:
+    // every event at or below it is reflected in the acknowledged state
+    int64 log_ts_ns = 2;
+    int32 log_signature = 3; // filer whose clock stamped log_ts_ns
 }
 
 message TouchAccessTimeRequest {
@@ -590,6 +604,9 @@ message StatisticsResponse {
     uint64 total_size = 4;
     uint64 used_size = 5;
     uint64 file_count = 6;
+    // sizes counting one copy of the data, as reported by the master
+    uint64 logical_total_size = 7;
+    uint64 logical_used_size = 8;
 }
 
 message PingRequest {
@@ -744,7 +761,8 @@ message FilerConf {
         string data_node = 11;
         uint32 max_file_name_length = 12;
         bool disable_chunk_deletion = 13;
-        bool worm = 14;
+        // unset inherits from the enclosing path rule, set overrides it
+        optional bool worm = 14;
         uint64 worm_grace_period_seconds = 15;
         uint64 worm_retention_time_seconds = 16;
     }
@@ -763,6 +781,10 @@ message CacheRemoteObjectToLocalClusterRequest {
 message CacheRemoteObjectToLocalClusterResponse {
     Entry entry = 1;
     SubscribeMetadataResponse metadata_event = 2;
+    // filer log position stamped before the entry read: every event at or
+    // below it is reflected in the returned entry
+    int64 log_ts_ns = 3;
+    int32 log_signature = 4; // filer whose clock stamped log_ts_ns
 }
 
 /////////////////////////

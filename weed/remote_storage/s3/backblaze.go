@@ -23,8 +23,7 @@ func (s BackBlazeRemoteStorageMaker) HasBucket() bool {
 
 func (s BackBlazeRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
 	client := &s3RemoteStorageClient{
-		supportTagging: false,
-		conf:           conf,
+		conf: conf,
 	}
 	config := &aws.Config{
 		Endpoint:                      aws.String(conf.BackblazeEndpoint),

@@ -42,6 +42,7 @@ var (
 // When adding a new field, update all four flag registration sites.
 type S3Options struct {
 	filer                     *string
+	ip                        *string
 	bindIp                    *string
 	port                      *int
 	portHttps                 *int
@@ -83,6 +84,7 @@ type S3Options struct {
 func init() {
 	cmdS3.Run = runS3 // break init cycle
 	s3StandaloneOptions.filer = cmdS3.Flag.String("filer", "localhost:8888", "comma-separated filer server addresses for high availability")
+	s3StandaloneOptions.ip = cmdS3.Flag.String("ip", "", "ip address advertised to the cluster. If empty, default to -ip.bind, or the auto-detected address.")
 	s3StandaloneOptions.bindIp = cmdS3.Flag.String("ip.bind", "", "ip address to bind to. If empty, default to 0.0.0.0.")
 	s3StandaloneOptions.port = cmdS3.Flag.Int("port", 8333, "s3 server http listen port")
 	s3StandaloneOptions.portHttps = cmdS3.Flag.Int("port.https", 0, "s3 server https listen port")
@@ -277,6 +279,9 @@ func (s3opt *S3Options) startS3Server() bool {
 	var metricsAddress string
 	var metricsIntervalSec int
 
+	// chunk size for S3 uploads, read from the filer's -maxMB
+	var filerMaxMB int32
+
 	for {
 		err := pb.WithOneOfGrpcFilerClients(false, filerAddresses, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
@@ -288,7 +293,9 @@ func (s3opt *S3Options) startS3Server() bool {
 			// Get master addresses for filer discovery
 			masterAddresses = pb.ServerAddresses(strings.Join(resp.Masters, ",")).ToAddresses()
 			metricsAddress, metricsIntervalSec = resp.MetricsAddress, int(resp.MetricsIntervalSec)
+			filerMaxMB = int32(resp.MaxMb)
 			glog.V(0).Infof("S3 read filer buckets dir: %s", filerBucketsPath)
+			glog.V(0).Infof("S3 read filer maxMB: %d", filerMaxMB)
 			if len(masterAddresses) > 0 {
 				glog.V(0).Infof("S3 read master addresses for discovery: %v", masterAddresses)
 			}
@@ -353,11 +360,13 @@ func (s3opt *S3Options) startS3Server() bool {
 		EnableIam:                 *s3opt.enableIam, // Embedded IAM API (enabled by default)
 		IamReadOnly:               *s3opt.iamReadOnly,
 		Cipher:                    *s3opt.cipher, // encrypt data on volume servers
+		Ip:                        *s3opt.ip,
 		BindIp:                    *s3opt.bindIp,
 		GrpcPort:                  *s3opt.portGrpc,
 		ExternalUrl:               s3opt.resolveExternalUrl(),
 		DefaultFileMode:           defaultFileMode,
 		CacheSizeMB:               *s3opt.cacheSizeMB,
+		MaxMB:                     filerMaxMB,
 	})
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)

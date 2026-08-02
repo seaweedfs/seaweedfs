@@ -51,6 +51,8 @@ func (g *AzureSink) Initialize(configuration util.Configuration, prefix string) 
 	return g.initialize(
 		configuration.GetString(prefix+"account_name"),
 		configuration.GetString(prefix+"account_key"),
+		configuration.GetString(prefix+"client_id"),
+		configuration.GetString(prefix+"endpoint"),
 		configuration.GetString(prefix+"container"),
 		configuration.GetString(prefix+"directory"),
 	)
@@ -60,20 +62,13 @@ func (g *AzureSink) SetSourceFiler(s *source.FilerSource) {
 	g.filerSource = s
 }
 
-func (g *AzureSink) initialize(accountName, accountKey, container, dir string) error {
+func (g *AzureSink) initialize(accountName, accountKey, clientID, endpoint, container, dir string) error {
 	g.container = container
 	g.dir = dir
 
-	// Create credential and client
-	credential, err := azblob.NewSharedKeyCredential(accountName, accountKey)
+	client, err := azure.NewAzBlobClient(accountName, accountKey, clientID, endpoint)
 	if err != nil {
-		return fmt.Errorf("failed to create Azure credential with account name:%s: %w", accountName, err)
-	}
-
-	serviceURL := fmt.Sprintf("https://%s.blob.core.windows.net/", accountName)
-	client, err := azblob.NewClientWithSharedKeyCredential(serviceURL, credential, azure.DefaultAzBlobClientOptions())
-	if err != nil {
-		return fmt.Errorf("failed to create Azure client: %w", err)
+		return err
 	}
 
 	g.client = client

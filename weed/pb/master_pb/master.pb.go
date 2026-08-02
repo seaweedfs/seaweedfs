@@ -1864,12 +1864,17 @@ func (x *StatisticsRequest) GetDiskType() string {
 }
 
 type StatisticsResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	TotalSize     uint64                 `protobuf:"varint,4,opt,name=total_size,json=totalSize,proto3" json:"total_size,omitempty"`
-	UsedSize      uint64                 `protobuf:"varint,5,opt,name=used_size,json=usedSize,proto3" json:"used_size,omitempty"`
-	FileCount     uint64                 `protobuf:"varint,6,opt,name=file_count,json=fileCount,proto3" json:"file_count,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	TotalSize uint64                 `protobuf:"varint,4,opt,name=total_size,json=totalSize,proto3" json:"total_size,omitempty"`
+	UsedSize  uint64                 `protobuf:"varint,5,opt,name=used_size,json=usedSize,proto3" json:"used_size,omitempty"`
+	FileCount uint64                 `protobuf:"varint,6,opt,name=file_count,json=fileCount,proto3" json:"file_count,omitempty"`
+	// sizes counting one copy of the data: a single replica of a regular volume,
+	// the data shards of an ec volume. logical_total_size scales the free space
+	// by the copies the requested replication makes.
+	LogicalTotalSize uint64 `protobuf:"varint,7,opt,name=logical_total_size,json=logicalTotalSize,proto3" json:"logical_total_size,omitempty"`
+	LogicalUsedSize  uint64 `protobuf:"varint,8,opt,name=logical_used_size,json=logicalUsedSize,proto3" json:"logical_used_size,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *StatisticsResponse) Reset() {
@@ -1919,6 +1924,20 @@ func (x *StatisticsResponse) GetUsedSize() uint64 {
 func (x *StatisticsResponse) GetFileCount() uint64 {
 	if x != nil {
 		return x.FileCount
+	}
+	return 0
+}
+
+func (x *StatisticsResponse) GetLogicalTotalSize() uint64 {
+	if x != nil {
+		return x.LogicalTotalSize
+	}
+	return 0
+}
+
+func (x *StatisticsResponse) GetLogicalUsedSize() uint64 {
+	if x != nil {
+		return x.LogicalUsedSize
 	}
 	return 0
 }
@@ -4763,13 +4782,15 @@ const file_master_proto_rawDesc = "" +
 	"collection\x18\x02 \x01(\tR\n" +
 	"collection\x12\x10\n" +
 	"\x03ttl\x18\x03 \x01(\tR\x03ttl\x12\x1b\n" +
-	"\tdisk_type\x18\x04 \x01(\tR\bdiskType\"o\n" +
+	"\tdisk_type\x18\x04 \x01(\tR\bdiskType\"\xc9\x01\n" +
 	"\x12StatisticsResponse\x12\x1d\n" +
 	"\n" +
 	"total_size\x18\x04 \x01(\x04R\ttotalSize\x12\x1b\n" +
 	"\tused_size\x18\x05 \x01(\x04R\busedSize\x12\x1d\n" +
 	"\n" +
-	"file_count\x18\x06 \x01(\x04R\tfileCount\" \n" +
+	"file_count\x18\x06 \x01(\x04R\tfileCount\x12,\n" +
+	"\x12logical_total_size\x18\a \x01(\x04R\x10logicalTotalSize\x12*\n" +
+	"\x11logical_used_size\x18\b \x01(\x04R\x0flogicalUsedSize\" \n" +
 	"\n" +
 	"Collection\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\"{\n" +

@@ -40,11 +40,11 @@ func TestMultipartSSES3RealisticEndToEnd(t *testing.T) {
 	// Realistic mix of part sizes: small (one chunk), exact 8MB, >8MB (two
 	// chunks), much larger (multiple chunks).
 	partSizes := []int{
-		5 * 1024 * 1024,         // 5MB (single chunk)
-		8 * 1024 * 1024,         // 8MB exactly (single chunk, full)
-		8*1024*1024 + 123,       // crosses chunk boundary (two chunks)
-		17 * 1024 * 1024,        // three chunks
-		1234,                    // tiny
+		5 * 1024 * 1024,   // 5MB (single chunk)
+		8 * 1024 * 1024,   // 8MB exactly (single chunk, full)
+		8*1024*1024 + 123, // crosses chunk boundary (two chunks)
+		17 * 1024 * 1024,  // three chunks
+		1234,              // tiny
 	}
 
 	parts := make([][]byte, len(partSizes))
@@ -57,7 +57,7 @@ func TestMultipartSSES3RealisticEndToEnd(t *testing.T) {
 	// store per-chunk metadata IV = calculateIVWithOffset(baseIV, partLocalOff),
 	// then assign GLOBAL offsets to the FileChunk.
 	type chunkBlob struct {
-		fid       string
+		fid        string
 		ciphertext []byte
 	}
 	var chunks []*filer_pb.FileChunk

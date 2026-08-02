@@ -49,21 +49,25 @@ func (i *FileHandleToInode) MarkInodeRenamed(inode uint64) {
 	}
 }
 
-func (i *FileHandleToInode) AcquireFileHandle(wfs *WFS, inode uint64, entry *filer_pb.Entry) *FileHandle {
+// AcquireFileHandle fully initializes a handle — entry and the log position it
+// reflects — before exposing it in the map, and reports whether one already
+// existed. An existing handle only gets its counter bumped: its entry belongs
+// to whoever holds the handle lock, so callers install there (AcquireHandle)
+// rather than under this one.
+func (i *FileHandleToInode) AcquireFileHandle(wfs *WFS, inode uint64, entry *filer_pb.Entry, versionTsNs int64, signature int32) (*FileHandle, bool) {
 	i.Lock()
 	defer i.Unlock()
 	fh, found := i.inode2fh[inode]
 	if !found {
 		fh = newFileHandle(wfs, FileHandleId(util.RandomUint64()), inode, entry)
+		fh.entryVersionTsNs.Store(versionTsNs)
+		fh.entryVersionSignature.Store(signature)
 		i.inode2fh[inode] = fh
 		i.fh2inode[fh.fh] = inode
-	} else {
-		fh.counter++
+		return fh, false
 	}
-	if fh.GetEntry().GetEntry() != entry {
-		fh.SetEntry(entry)
-	}
-	return fh
+	fh.counter++
+	return fh, true
 }
 
 func (i *FileHandleToInode) ReleaseByHandle(fh FileHandleId) *FileHandle {

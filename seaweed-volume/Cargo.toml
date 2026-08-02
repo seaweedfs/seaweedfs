@@ -103,7 +103,7 @@ mime_guess = "2"
 
 # Misc
 bytes = "1"
-rand = "0.8"
+rand = "0.10"
 chrono = "0.4"
 hex = "0.4"
 parking_lot = "0.12"

@@ -152,7 +152,7 @@ func TestRouteSkipsHardDelete(t *testing.T) {
 		Bucket: "bk",
 		Key:    "gone.txt",
 		OldEntry: &filer_pb.Entry{
-			Name: "gone.txt",
+			Name:       "gone.txt",
 			Attributes: &filer_pb.FuseAttributes{Mtime: old.Unix(), FileSize: 1},
 		},
 	}
@@ -500,19 +500,19 @@ func markerEvent(bucket, logicalKey, versionID string, mtimeUnix, mtimeNs int64)
 // state to return; calls list is appended on each invocation so tests
 // can assert whether the lister was consulted at all.
 type recordingLister struct {
-	calls           []string
-	survivors       Survivors
-	err             error
-	lookupCalls     []string
-	lookupEntry     *filer_pb.Entry
-	lookupErr       error
-	listCalls       []string
-	listVersions    []*filer_pb.Entry
-	listErr         error
-	nullCalls       []string
-	nullEntry       *filer_pb.Entry
-	nullExplicit    bool
-	nullErr         error
+	calls        []string
+	survivors    Survivors
+	err          error
+	lookupCalls  []string
+	lookupEntry  *filer_pb.Entry
+	lookupErr    error
+	listCalls    []string
+	listVersions []*filer_pb.Entry
+	listErr      error
+	nullCalls    []string
+	nullEntry    *filer_pb.Entry
+	nullExplicit bool
+	nullErr      error
 }
 
 func (r *recordingLister) ListVersions(_ context.Context, bucket, key string) ([]*filer_pb.Entry, error) {
@@ -853,7 +853,6 @@ func TestRouteVersionedAllVersionFolderPathsSkipped(t *testing.T) {
 		})
 	}
 }
-
 
 func bootstrapVersionEntry(versionID string, mtime time.Time, isDeleteMarker bool) *filer_pb.Entry {
 	ext := map[string][]byte{
@@ -1431,7 +1430,7 @@ func TestRoutePointerTransitionNewerNoncurrentExpansionFiresOnCrossingThreshold(
 	// Successor mtime (cached on container) is "now" — the new latest.
 	ev := versionsContainerEvent("bk", "logs/foo", "v-cur", "v-new", now.Unix())
 	allVersions := []*filer_pb.Entry{
-		displacedVersionEntry("v-new", now.Unix()),                  // newest
+		displacedVersionEntry("v-new", now.Unix()), // newest
 		displacedVersionEntry("v-cur", now.AddDate(0, 0, -1).Unix()),
 		displacedVersionEntry("v-mid", now.AddDate(0, 0, -10).Unix()),
 		displacedVersionEntry("v-old", now.AddDate(0, 0, -30).Unix()), // oldest

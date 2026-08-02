@@ -35,7 +35,7 @@ func (b *MessageQueueBroker) appendToFileWithBufferIndex(targetFile string, data
 	// find out existing entry
 	fullpath := util.FullPath(targetFile)
 	dir, name := fullpath.DirAndName()
-	entry, err := filer_pb.GetEntry(context.Background(), b, fullpath)
+	entry, _, _, err := filer_pb.GetEntry(context.Background(), b, fullpath)
 	var offset int64 = 0
 	if err == filer_pb.ErrNotFound {
 		entry = &filer_pb.Entry{

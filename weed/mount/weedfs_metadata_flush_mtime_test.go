@@ -22,9 +22,9 @@ import (
 // the entry's mtime is unchanged.
 func TestFlushFileMetadataPreservesUserMtime(t *testing.T) {
 	wfs := &WFS{
-		inodeToPath:  NewInodeToPath(util.FullPath("/"), 0),
-		fhLockTable:  util.NewLockTable[FileHandleId](),
-		option:       &Option{},
+		inodeToPath: NewInodeToPath(util.FullPath("/"), 0),
+		fhLockTable: util.NewLockTable[FileHandleId](),
+		option:      &Option{},
 	}
 
 	const inode = uint64(42)

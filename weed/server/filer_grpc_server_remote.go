@@ -64,8 +64,9 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 // doCacheRemoteObjectToLocalCluster performs the actual caching operation.
 // This is called from singleflight, so only one instance runs per object.
 func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, req *filer_pb.CacheRemoteObjectToLocalClusterRequest) (*filer_pb.CacheRemoteObjectToLocalClusterResponse, error) {
-	// find the entry first to check if already cached
-	entry, err := fs.filer.FindEntry(ctx, util.JoinPath(req.Directory, req.Name))
+	lockPath := util.JoinPath(req.Directory, req.Name)
+	entry, logTsNs, err := fs.fencedFindEntry(ctx, lockPath)
+
 	if err == filer_pb.ErrNotFound {
 		return nil, err
 	}
@@ -73,7 +74,7 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 		return nil, fmt.Errorf("find entry %s/%s: %v", req.Directory, req.Name, err)
 	}
 
-	resp := &filer_pb.CacheRemoteObjectToLocalClusterResponse{}
+	resp := &filer_pb.CacheRemoteObjectToLocalClusterResponse{LogTsNs: logTsNs, LogSignature: fs.filer.Signature}
 
 	// Early return if not a remote-only object or already cached
 	if entry.Remote == nil || entry.Remote.RemoteSize == 0 {
@@ -297,6 +298,34 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 		return nil, err
 	}
 
+	// Commit under the mutation path lock so a fenced lookup cannot land
+	// between the store update and its notification, handing out
+	// under-versioned state. Re-read under it: the entry may have changed
+	// during the unlocked download, and the stale base would clobber it.
+	commitLock := fs.entryLockTable.AcquireLock("CacheRemoteObjectToLocalCluster", lockPath, util.ExclusiveLock)
+	defer fs.entryLockTable.ReleaseLock(lockPath, commitLock)
+
+	commitLogTsNs := time.Now().UnixNano()
+	current, err := fs.filer.FindEntry(ctx, lockPath)
+	if err != nil {
+		fs.filer.DeleteUncommittedChunks(ctx, chunks)
+		if err == filer_pb.ErrNotFound {
+			// Deleted while the download ran; keep the sentinel so callers
+			// still surface a 404 rather than a generic failure.
+			return nil, err
+		}
+		return nil, fmt.Errorf("find entry %s before commit: %v", lockPath, err)
+	}
+	if !filer.EqualEntry(current, entry) {
+		// Changed during the download: that writer supersedes the cached
+		// content. Return the current state, fenced at this read.
+		fs.filer.DeleteUncommittedChunks(ctx, chunks)
+		resp.Entry = current.ToProtoEntry()
+		resp.LogTsNs = commitLogTsNs
+		resp.LogSignature = fs.filer.Signature
+		return resp, nil
+	}
+
 	garbage := entry.GetChunks()
 
 	newEntry := entry.ShallowClone()
@@ -317,6 +346,8 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 
 	resp.Entry = newEntry.ToProtoEntry()
 	resp.MetadataEvent = eventSink.Last()
+	resp.LogTsNs = commitLogTsNs
+	resp.LogSignature = fs.filer.Signature
 
 	return resp, nil
 

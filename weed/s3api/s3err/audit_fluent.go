@@ -23,13 +23,14 @@ type AccessLogExtend struct {
 }
 
 type AccessLog struct {
-	Bucket           string `msg:"bucket" json:"bucket"`                   // awsexamplebucket1
-	Time             int64  `msg:"time" json:"time"`                       // [06/Feb/2019:00:00:38 +0000]
-	RemoteIP         string `msg:"remote_ip" json:"remote_ip,omitempty"`   // 192.0.2.3
-	Requester        string `msg:"requester" json:"requester,omitempty"`   // IAM user id
-	RequestID        string `msg:"request_id" json:"request_id,omitempty"` // 3E57427F33A59F07
-	Operation        string `msg:"operation" json:"operation,omitempty"`   // REST.HTTP_method.resource_type REST.PUT.OBJECT
-	Key              string `msg:"key" json:"key,omitempty"`               // /photos/2019/08/puppy.jpg
+	Bucket           string `msg:"bucket" json:"bucket"`                         // awsexamplebucket1
+	Time             int64  `msg:"time" json:"time"`                             // [06/Feb/2019:00:00:38 +0000]
+	RemoteIP         string `msg:"remote_ip" json:"remote_ip,omitempty"`         // 192.0.2.3
+	Requester        string `msg:"requester" json:"requester,omitempty"`         // IAM user id
+	RequesterArn     string `msg:"requester_arn" json:"requester_arn,omitempty"` // arn:aws:sts::0:assumed-role/Role/session
+	RequestID        string `msg:"request_id" json:"request_id,omitempty"`       // 3E57427F33A59F07
+	Operation        string `msg:"operation" json:"operation,omitempty"`         // REST.HTTP_method.resource_type REST.PUT.OBJECT
+	Key              string `msg:"key" json:"key,omitempty"`                     // /photos/2019/08/puppy.jpg
 	ErrorCode        string `msg:"error_code" json:"error_code,omitempty"`
 	HostId           string `msg:"host_id" json:"host_id,omitempty"`
 	HostHeader       string `msg:"host_header" json:"host_header,omitempty"` // s3.us-west-2.amazonaws.com
@@ -112,28 +113,28 @@ func getREST(httpMetod string, resourceType string) string {
 	return fmt.Sprintf("REST.%s.%s", httpMetod, resourceType)
 }
 
-func getResourceType(object string, query_key string, metod string) (string, bool) {
+func getResourceType(object string, query_key string, method string) (string, bool) {
 	if object == "/" {
 		switch query_key {
 		case "delete":
 			return "BATCH.DELETE.OBJECT", true
 		case "tagging":
-			return getREST(metod, "OBJECTTAGGING"), true
+			return getREST(method, "OBJECTTAGGING"), true
 		case "lifecycle":
-			return getREST(metod, "LIFECYCLECONFIGURATION"), true
+			return getREST(method, "LIFECYCLECONFIGURATION"), true
 		case "acl":
-			return getREST(metod, "ACCESSCONTROLPOLICY"), true
+			return getREST(method, "ACCESSCONTROLPOLICY"), true
 		case "policy":
-			return getREST(metod, "BUCKETPOLICY"), true
+			return getREST(method, "BUCKETPOLICY"), true
 		default:
-			return getREST(metod, "BUCKET"), false
+			return getREST(method, "BUCKET"), false
 		}
 	} else {
 		switch query_key {
 		case "tagging":
-			return getREST(metod, "OBJECTTAGGING"), true
+			return getREST(method, "OBJECTTAGGING"), true
 		default:
-			return getREST(metod, "OBJECT"), false
+			return getREST(method, "OBJECT"), false
 		}
 	}
 }
@@ -170,6 +171,7 @@ func GetAccessLog(r *http.Request, HTTPStatusCode int, s3errCode ErrorCode) *Acc
 		RequestID:        request_id.GetFromRequest(r),
 		RemoteIP:         remoteIP,
 		Requester:        s3_constants.GetIdentityNameFromContext(r), // Get from context, not header (secure)
+		RequesterArn:     s3_constants.GetPrincipalArnFromContext(r),
 		SignatureVersion: r.Header.Get(s3_constants.AmzAuthType),
 		UserAgent:        r.Header.Get("user-agent"),
 		HostId:           hostname,

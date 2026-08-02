@@ -400,7 +400,7 @@ const (
 	benchBucket     = 1000000000 / benchResolution
 )
 
-// An efficient statics collecting and rendering
+// An efficient statistics collecting and rendering
 type stats struct {
 	data       []int
 	overflow   []int

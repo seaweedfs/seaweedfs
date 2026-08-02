@@ -19,6 +19,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blockblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/container"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
@@ -94,6 +95,20 @@ func init() {
 	remote_storage.RemoteStorageClientMakers["azure"] = new(azureRemoteStorageMaker)
 }
 
+// resolveAzureAccount completes the configured account from the environment. A
+// configured client id asks for Entra ID, so a key left over in the environment
+// must not quietly take the request back to shared key auth.
+func resolveAzureAccount(conf *remote_pb.RemoteConf) (accountName, accountKey string) {
+	accountName, accountKey = conf.AzureAccountName, conf.AzureAccountKey
+	if len(accountName) == 0 {
+		accountName = os.Getenv("AZURE_STORAGE_ACCOUNT")
+	}
+	if len(accountKey) == 0 && len(conf.AzureClientId) == 0 {
+		accountKey = os.Getenv("AZURE_STORAGE_ACCESS_KEY")
+	}
+	return
+}
+
 type azureRemoteStorageMaker struct{}
 
 func (s azureRemoteStorageMaker) HasBucket() bool {
@@ -106,24 +121,14 @@ func (s azureRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storag
 		conf: conf,
 	}
 
-	accountName, accountKey := conf.AzureAccountName, conf.AzureAccountKey
-	if len(accountName) == 0 || len(accountKey) == 0 {
-		accountName, accountKey = os.Getenv("AZURE_STORAGE_ACCOUNT"), os.Getenv("AZURE_STORAGE_ACCESS_KEY")
-		if len(accountName) == 0 || len(accountKey) == 0 {
-			return nil, fmt.Errorf("either AZURE_STORAGE_ACCOUNT or AZURE_STORAGE_ACCESS_KEY environment variable is not set")
-		}
+	accountName, accountKey := resolveAzureAccount(conf)
+	if len(accountName) == 0 {
+		return nil, fmt.Errorf("neither azure_account_name nor the AZURE_STORAGE_ACCOUNT environment variable is set")
 	}
 
-	// Create credential and client
-	credential, err := azblob.NewSharedKeyCredential(accountName, accountKey)
+	azClient, err := NewAzBlobClient(accountName, accountKey, conf.AzureClientId, conf.AzureEndpoint)
 	if err != nil {
-		return nil, fmt.Errorf("invalid Azure credential with account name:%s: %w", accountName, err)
-	}
-
-	serviceURL := fmt.Sprintf("https://%s.blob.core.windows.net/", accountName)
-	azClient, err := azblob.NewClientWithSharedKeyCredential(serviceURL, credential, DefaultAzBlobClientOptions())
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Azure client: %w", err)
+		return nil, err
 	}
 
 	client.client = azClient
@@ -378,6 +383,39 @@ func (az *azureRemoteStorageClient) WriteDirectory(loc *remote_pb.RemoteStorageL
 }
 
 func (az *azureRemoteStorageClient) RemoveDirectory(loc *remote_pb.RemoteStorageLocation) (err error) {
+	// the trailing slash keeps sibling prefixes that share the name intact
+	prefix := loc.Path[1:]
+	if prefix != "" && !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+	if prefix == "" {
+		// the mount root maps to the whole container; wiping every blob from a
+		// single namespace event is too destructive, so keep them
+		glog.Warningf("azure %s: skip removing directory mapped to the container root", loc.Bucket)
+		return nil
+	}
+
+	containerClient := az.client.ServiceClient().NewContainerClient(loc.Bucket)
+	pager := containerClient.NewListBlobsFlatPager(&container.ListBlobsFlatOptions{
+		Prefix: &prefix,
+	})
+	for pager.More() {
+		resp, pageErr := pager.NextPage(context.Background())
+		if pageErr != nil {
+			return fmt.Errorf("azure list %s/%s: %w", loc.Bucket, prefix, pageErr)
+		}
+		for _, blobItem := range resp.Segment.BlobItems {
+			if blobItem.Name == nil {
+				continue
+			}
+			_, delErr := containerClient.NewBlobClient(*blobItem.Name).Delete(context.Background(), &blob.DeleteOptions{
+				DeleteSnapshots: to.Ptr(blob.DeleteSnapshotsOptionTypeInclude),
+			})
+			if delErr != nil && !bloberror.HasCode(delErr, bloberror.BlobNotFound) {
+				return fmt.Errorf("azure delete %s/%s: %w", loc.Bucket, *blobItem.Name, delErr)
+			}
+		}
+	}
 	return nil
 }
 

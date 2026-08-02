@@ -44,18 +44,28 @@ type tableMetadataEnvelope struct {
 	PlanningIndex json.RawMessage `json:"planningIndex,omitempty"`
 }
 
-func parseTableMetadataEnvelope(metadataBytes []byte) (table.Metadata, string, *planningIndex, error) {
+// tableState is the catalog's view of one table: its Iceberg metadata, the
+// metadata file backing it, where its files live, and the cached planning index.
+type tableState struct {
+	Metadata         table.Metadata
+	MetadataFileName string
+	// DataPath is the bucket-relative directory holding metadata/ and data/.
+	DataPath      string
+	PlanningIndex *planningIndex
+}
+
+func parseTableMetadataEnvelope(metadataBytes []byte, bucketName, tablePath string) (*tableState, error) {
 	var envelope tableMetadataEnvelope
 	if err := json.Unmarshal(metadataBytes, &envelope); err != nil {
-		return nil, "", nil, fmt.Errorf("parse metadata xattr: %w", err)
+		return nil, fmt.Errorf("parse metadata xattr: %w", err)
 	}
 	if envelope.Metadata == nil || len(envelope.Metadata.FullMetadata) == 0 {
-		return nil, "", nil, fmt.Errorf("no fullMetadata in table xattr")
+		return nil, fmt.Errorf("no fullMetadata in table xattr")
 	}
 
 	meta, err := table.ParseMetadataBytes(envelope.Metadata.FullMetadata)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("parse iceberg metadata: %w", err)
+		return nil, fmt.Errorf("parse iceberg metadata: %w", err)
 	}
 
 	var index *planningIndex
@@ -66,11 +76,30 @@ func parseTableMetadataEnvelope(metadataBytes []byte) (table.Metadata, string, *
 		}
 	}
 
-	metadataFileName := metadataFileNameFromLocation(envelope.MetadataLocation, "", "")
+	metadataFileName := metadataFileNameFromLocation(envelope.MetadataLocation)
 	if metadataFileName == "" {
 		metadataFileName = fmt.Sprintf("v%d.metadata.json", envelope.MetadataVersion)
 	}
-	return meta, metadataFileName, index, nil
+	return &tableState{
+		Metadata:         meta,
+		MetadataFileName: metadataFileName,
+		DataPath:         tableDataPath(bucketName, tablePath, envelope.MetadataLocation),
+		PlanningIndex:    index,
+	}, nil
+}
+
+// tableDataPath resolves the bucket-relative directory holding a table's files.
+// The catalog records the table's real location in the metadata location, which
+// is the catalog path only for tables the catalog placed there itself: a client
+// creating a table through the REST catalog can be handed a location elsewhere
+// in the bucket, e.g. "ns/table-<uuid>" when the catalog path was occupied.
+// Locations outside the table's own bucket fall back to the catalog path.
+func tableDataPath(bucketName, tablePath, metadataLocation string) string {
+	dataDir := s3tables.TableDataDirFromMetadataLocation(metadataLocation)
+	if rel, ok := cutPathPrefix(dataDir, path.Join(s3tables.TablesPath, bucketName)); ok && rel != "" {
+		return rel
+	}
+	return tablePath
 }
 
 func (idx *planningIndex) matchesSnapshot(meta table.Metadata) bool {
@@ -140,7 +169,7 @@ func mergePlanningIndexSections(index, existing *planningIndex) *planningIndex {
 func buildPlanningIndexFromManifests(
 	ctx context.Context,
 	filerClient filer_pb.SeaweedFilerClient,
-	bucketName, tablePath string,
+	bucketName, dataPath string,
 	meta table.Metadata,
 	config Config,
 	ops []string,
@@ -159,7 +188,7 @@ func buildPlanningIndexFromManifests(
 	}
 
 	if operationRequested(ops, "compact") {
-		eligible, err := hasEligibleCompaction(ctx, filerClient, bucketName, tablePath, manifests, config, meta, nil)
+		eligible, err := hasEligibleCompaction(ctx, filerClient, bucketName, dataPath, manifests, config, meta, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -213,8 +242,8 @@ func persistPlanningIndex(
 	if err := json.Unmarshal(existingXattr, &internalMeta); err != nil {
 		return fmt.Errorf("unmarshal metadata xattr: %w", err)
 	}
-	if _, _, existingIndex, err := parseTableMetadataEnvelope(existingXattr); err == nil {
-		index = mergePlanningIndexSections(index, existingIndex)
+	if existingState, err := parseTableMetadataEnvelope(existingXattr, bucketName, tablePath); err == nil {
+		index = mergePlanningIndexSections(index, existingState.PlanningIndex)
 	}
 
 	indexJSON, err := json.Marshal(index)

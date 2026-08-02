@@ -161,6 +161,30 @@ func (vs *VolumeServer) VolumeUnmount(ctx context.Context, req *volume_server_pb
 
 }
 
+func (vs *VolumeServer) VolumeConsolidateIndex(ctx context.Context, req *volume_server_pb.VolumeConsolidateIndexRequest) (*volume_server_pb.VolumeConsolidateIndexResponse, error) {
+
+	resp := &volume_server_pb.VolumeConsolidateIndexResponse{}
+
+	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
+		return resp, err
+	}
+
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return resp, err
+	}
+
+	err := vs.store.ConsolidateVolumeIndex(needle.VolumeId(req.VolumeId))
+
+	if err != nil {
+		glog.Errorf("volume consolidate index %v: %v", req, err)
+	} else {
+		glog.V(2).Infof("volume consolidate index %v", req)
+	}
+
+	return resp, err
+
+}
+
 func (vs *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.VolumeDeleteRequest) (*volume_server_pb.VolumeDeleteResponse, error) {
 	resp := &volume_server_pb.VolumeDeleteResponse{}
 

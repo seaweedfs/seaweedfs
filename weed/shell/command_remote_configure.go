@@ -38,6 +38,7 @@ func (c *commandRemoteConfigure) Help() string {
 	remote.configure -name=cloud1_deep -type=s3 -s3.access_key=xxx -s3.secret_key=yyy -s3.region=us-east-2 -s3.storage_class=DEEP_ARCHIVE
 	remote.configure -name=cloud2 -type=gcs -gcs.appCredentialsFile=~/service-account-file.json -gcs.projectId=yyy
 	remote.configure -name=cloud3 -type=azure -azure.account_name=xxx -azure.account_key=yyy
+	remote.configure -name=cloud3 -type=azure -azure.account_name=xxx -azure.client_id=zzz
 	remote.configure -name=cloud4 -type=aliyun -aliyun.access_key=xxx -aliyun.secret_key=yyy -aliyun.endpoint=oss-cn-shenzhen.aliyuncs.com -aliyun.region=cn-sehnzhen
 	remote.configure -name=cloud5 -type=tencent -tencent.secret_id=xxx -tencent.secret_key=yyy -tencent.endpoint=cos.ap-guangzhou.myqcloud.com
 	remote.configure -name=cloud6 -type=wasabi -wasabi.access_key=xxx -wasabi.secret_key=yyy -wasabi.endpoint=s3.us-west-1.wasabisys.com -wasabi.region=us-west-1
@@ -81,7 +82,9 @@ func (c *commandRemoteConfigure) Do(args []string, commandEnv *CommandEnv, write
 	remoteConfigureCommand.StringVar(&conf.GcsProjectId, "gcs.projectId", "", "google cloud storage project id, default to use env GOOGLE_CLOUD_PROJECT")
 
 	remoteConfigureCommand.StringVar(&conf.AzureAccountName, "azure.account_name", "", "azure account name, default to use env AZURE_STORAGE_ACCOUNT")
-	remoteConfigureCommand.StringVar(&conf.AzureAccountKey, "azure.account_key", "", "azure account name, default to use env AZURE_STORAGE_ACCESS_KEY")
+	remoteConfigureCommand.StringVar(&conf.AzureAccountKey, "azure.account_key", "", "azure account key, default to use env AZURE_STORAGE_ACCESS_KEY. Leave empty to authenticate with Entra ID")
+	remoteConfigureCommand.StringVar(&conf.AzureClientId, "azure.client_id", "", "azure user-assigned identity to authenticate, when no account key is given. Workload identity also reads env AZURE_TENANT_ID and AZURE_FEDERATED_TOKEN_FILE")
+	remoteConfigureCommand.StringVar(&conf.AzureEndpoint, "azure.endpoint", "", "azure blob service url, for accounts outside the public cloud, e.g. https://xxx.blob.core.usgovcloudapi.net/")
 
 	remoteConfigureCommand.StringVar(&conf.BackblazeKeyId, "b2.key_id", "", "backblaze keyID")
 	remoteConfigureCommand.StringVar(&conf.BackblazeApplicationKey, "b2.application_key", "", "backblaze applicationKey. Note that your Master Application Key will not work with the S3 Compatible API. You must create a new key that is eligible for use. For more information: https://help.backblaze.com/hc/en-us/articles/360047425453")

@@ -141,8 +141,8 @@ type FileFilter struct {
 
 func newFileFilter(remoteMountCommand *flag.FlagSet) (ff *FileFilter) {
 	ff = &FileFilter{}
-	ff.include = remoteMountCommand.String("include", "", "pattens of file names, e.g., *.pdf, *.html, ab?d.txt")
-	ff.exclude = remoteMountCommand.String("exclude", "", "pattens of file names, e.g., *.pdf, *.html, ab?d.txt")
+	ff.include = remoteMountCommand.String("include", "", "patterns of file names, e.g., *.pdf, *.html, ab?d.txt")
+	ff.exclude = remoteMountCommand.String("exclude", "", "patterns of file names, e.g., *.pdf, *.html, ab?d.txt")
 	ff.minSize = remoteMountCommand.Int64("minSize", -1, "minimum file size in bytes")
 	ff.maxSize = remoteMountCommand.Int64("maxSize", -1, "maximum file size in bytes")
 	ff.minAge = remoteMountCommand.Int64("minAge", -1, "minimum file age in seconds (created time)")

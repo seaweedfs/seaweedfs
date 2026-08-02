@@ -633,16 +633,19 @@ func TestRunLaneSchedulerIterationLockBehavior(t *testing.T) {
 			t.Parallel()
 
 			lm := &trackingLockManager{}
-			pluginSvc, err := New(Options{
-				LockManager: lm,
-				ClusterContextProvider: func(context.Context) (*plugin_pb.ClusterContext, error) {
-					return &plugin_pb.ClusterContext{}, nil
-				},
-			})
+			// Construct without a cluster-context provider so the background
+			// lane loops do not start: they call runLaneSchedulerIteration on
+			// the same lane and would race this test's own manual call,
+			// consuming the due job before it observes the lock. The provider
+			// is set afterward so the manual iteration can still detect.
+			pluginSvc, err := New(Options{LockManager: lm})
 			if err != nil {
 				t.Fatalf("New: %v", err)
 			}
 			defer pluginSvc.Shutdown()
+			pluginSvc.clusterContextProvider = func(context.Context) (*plugin_pb.ClusterContext, error) {
+				return &plugin_pb.ClusterContext{}, nil
+			}
 
 			// Register a detectable worker for the job type.
 			pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{

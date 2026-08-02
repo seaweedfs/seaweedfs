@@ -131,7 +131,7 @@ func doVolumeTierUpload(commandEnv *CommandEnv, writer io.Writer, collection str
 		return fmt.Errorf("volume %d not found in collection %s", vid, collection)
 	}
 
-	err = markVolumeReplicasWritable(commandEnv.option.GrpcDialOption, vid, existingLocations, false, false)
+	err = markVolumeReplicasWritable(context.Background(), commandEnv.option.GrpcDialOption, vid, existingLocations, false, false)
 	if err != nil {
 		return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, existingLocations[0].Url, err)
 	}
@@ -153,7 +153,7 @@ func doVolumeTierUpload(commandEnv *CommandEnv, writer io.Writer, collection str
 			continue
 		}
 		fmt.Fprintf(writer, "replicate remote volume %d metadata from %s to %s\n", vid, existingLocations[0].Url, location.Url)
-		err = replicateVolumeToServer(commandEnv.option.GrpcDialOption, writer, vid, existingLocations[0].ServerAddress(), location.ServerAddress(), "")
+		err = replicateVolumeToServer(context.Background(), commandEnv.option.GrpcDialOption, writer, vid, existingLocations[0].ServerAddress(), location.ServerAddress(), "")
 		if err != nil {
 			return fmt.Errorf("replicate volume %d from %s to %s: %v", vid, existingLocations[0].Url, location.Url, err)
 		}

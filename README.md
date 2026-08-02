@@ -510,7 +510,7 @@ SeaweedFS Filer uses off-the-shelf stores, such as MySql, Postgres, Sqlite, Mong
 
 ### Compared to MinIO ###
 
-Please note, as Apr 25, 2026 MinIO ceased developement. It's strongly discouraged to use that unmaintained software with multiple security bugs.
+Please note, as Apr 25, 2026 MinIO ceased development. It's strongly discouraged to use that unmaintained software with multiple security bugs.
 
 MinIO followed AWS S3 closely and was ideal for testing for S3 API. It had good UI, policies, versionings, etc. SeaweedFS is trying to catch up here. 
 

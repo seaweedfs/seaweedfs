@@ -192,7 +192,7 @@ func (h *Handler) handleJoinGroup(connContext *ConnectionContext, correlationID 
 		// leader's upcoming SyncGroup will omit this member. That leaves it
 		// with an empty Assignment when the group goes Stable, and its own
 		// SyncGroup then silently serves the empty assignment (the
-		// CI-observed orphan). Pre-empt that: bump the generation so the
+		// CI-observed orphan). Preempt that: bump the generation so the
 		// leader's in-flight SyncGroup fails its generation check and the
 		// join cycle restarts with the new member in the leader's snapshot.
 		// (handleSyncGroup also catches this at commit time as a

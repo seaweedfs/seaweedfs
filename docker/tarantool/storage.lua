@@ -46,7 +46,7 @@ local filer_metadata = {
     delete_by_directory_idx = function(directory)
         local space = box.space.filer_metadata
         local index = space.index.directory_idx
-        -- for each finded directories
+        -- for each found directory
         for _, tuple in index:pairs({ directory }, { iterator = 'EQ' }) do
             space:delete({ tuple[1], tuple[3] })
         end
@@ -64,7 +64,7 @@ local filer_metadata = {
         end
         -- init results
         local results = {}
-        -- for each finded directories
+        -- for each found directory
         for _, tuple in directory_idx:pairs({ dirPath }, { iterator = 'EQ' }) do
             -- filter by name
             if filter_filename_func(tuple[3]) then

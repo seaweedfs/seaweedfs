@@ -20,7 +20,7 @@ func insertCacheEntry(t *testing.T, mc *MetaCache, path util.FullPath) {
 			Mode:     0100644,
 			FileSize: 1,
 		},
-	}); err != nil {
+	}, 0); err != nil {
 		t.Fatalf("insert %s: %v", path, err)
 	}
 }
@@ -69,7 +69,7 @@ func TestPurgeSkippedWhileDirectoryBuilding(t *testing.T) {
 		t.Fatal("/dir should be cached after build completes")
 	}
 	for _, name := range []string{"/dir/a.txt", "/dir/b.txt"} {
-		if _, err := mc.FindEntry(context.Background(), util.FullPath(name)); err != nil {
+		if _, _, err := mc.FindEntry(context.Background(), util.FullPath(name)); err != nil {
 			t.Fatalf("%s missing after mid-build purge: %v", name, err)
 		}
 	}
@@ -92,7 +92,7 @@ func TestPurgeClearsWhenNotBuilding(t *testing.T) {
 	if got := atomic.LoadInt32(&resetCalls); got != 1 {
 		t.Fatalf("resetFn ran %d times; want 1", got)
 	}
-	if _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/a.txt")); err == nil {
+	if _, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/a.txt")); err == nil {
 		t.Fatal("/dir/a.txt should have been purged")
 	}
 }

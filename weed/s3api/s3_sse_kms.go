@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -22,12 +21,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
-)
-
-// Compiled regex patterns for KMS key validation
-var (
-	uuidRegex = regexp.MustCompile(`^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$`)
-	arnRegex  = regexp.MustCompile(`^arn:aws:kms:[a-z0-9-]+:\d{12}:(key|alias)/.+$`)
 )
 
 // SSEKMSKey contains the metadata for an SSE-KMS encrypted object
@@ -43,14 +36,14 @@ type SSEKMSKey struct {
 
 // SSEKMSMetadata represents the metadata stored with SSE-KMS objects
 type SSEKMSMetadata struct {
-	Algorithm         string            `json:"algorithm"`         // "aws:kms"
-	KeyID             string            `json:"keyId"`             // KMS key identifier
-	EncryptedDataKey  string            `json:"encryptedDataKey"`  // Base64-encoded encrypted data key
-	EncryptionContext map[string]string `json:"encryptionContext"` // Encryption context
-	BucketKeyEnabled  bool              `json:"bucketKeyEnabled"`  // S3 Bucket Key optimization
-	IV                string            `json:"iv"`                // Base64-encoded initialization vector
-	PartOffset        int64             `json:"partOffset"`        // Offset within original multipart part (for IV calculation)
-	KeyCommitment     string            `json:"keyCommitment,omitempty"`     // Base64-encoded HMAC key commitment
+	Algorithm         string            `json:"algorithm"`               // "aws:kms"
+	KeyID             string            `json:"keyId"`                   // KMS key identifier
+	EncryptedDataKey  string            `json:"encryptedDataKey"`        // Base64-encoded encrypted data key
+	EncryptionContext map[string]string `json:"encryptionContext"`       // Encryption context
+	BucketKeyEnabled  bool              `json:"bucketKeyEnabled"`        // S3 Bucket Key optimization
+	IV                string            `json:"iv"`                      // Base64-encoded initialization vector
+	PartOffset        int64             `json:"partOffset"`              // Offset within original multipart part (for IV calculation)
+	KeyCommitment     string            `json:"keyCommitment,omitempty"` // Base64-encoded HMAC key commitment
 }
 
 const (

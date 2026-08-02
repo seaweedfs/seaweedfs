@@ -317,7 +317,7 @@ func (wfs *WFS) touchDirMtimeCtimeBest(dirPath util.FullPath) {
 // touchDirMtimeCtime updates a directory's mtime and ctime on the filer.
 // POSIX requires this when entries are created or removed in the directory.
 func (wfs *WFS) touchDirMtimeCtime(dirPath util.FullPath) {
-	dirEntry, code := wfs.maybeLoadEntry(dirPath)
+	dirEntry, _, code := wfs.maybeLoadEntry(dirPath)
 	if code != fuse.OK || dirEntry == nil || dirEntry.Attributes == nil {
 		return
 	}

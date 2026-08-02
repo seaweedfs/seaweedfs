@@ -26,7 +26,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
 	"google.golang.org/protobuf/proto"
@@ -2516,9 +2515,7 @@ func (e *EmbeddedIamApi) AuthIam(f http.HandlerFunc, _ Action) http.HandlerFunc 
 
 		// Store identity in context
 		if identity != nil && identity.Name != "" {
-			ctx := SetIdentityNameInContext(r.Context(), identity.Name)
-			ctx = SetIdentityInContext(ctx, identity)
-			r = r.WithContext(ctx)
+			r = r.WithContext(recordIdentityInContext(r, identity))
 		}
 
 		// Check permissions based on action type

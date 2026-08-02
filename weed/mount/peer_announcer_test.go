@@ -88,7 +88,7 @@ func TestPeerAnnouncer_FlushGroupsByOwner(t *testing.T) {
 		return "owner-2:18081"
 	}
 
-	a := NewPeerAnnouncer("self:18080", "", "",ownerFor, fakeDialer(fc, rec), nil)
+	a := NewPeerAnnouncer("self:18080", "", "", ownerFor, fakeDialer(fc, rec), nil)
 
 	a.EnqueueAnnounce("3,a")
 	a.EnqueueAnnounce("3,b")
@@ -96,7 +96,8 @@ func TestPeerAnnouncer_FlushGroupsByOwner(t *testing.T) {
 
 	a.FlushForTest(context.Background())
 
-	dialed := rec.snapshot(); sort.Strings(dialed)
+	dialed := rec.snapshot()
+	sort.Strings(dialed)
 	if len(dialed) != 2 || dialed[0] != "owner-1:18081" || dialed[1] != "owner-2:18081" {
 		t.Errorf("expected both owners dialed once, got %v", dialed)
 	}
@@ -111,7 +112,7 @@ func TestPeerAnnouncer_SkipOwnerEqualsSelf(t *testing.T) {
 	fc := &fakeMountPeerClient{announcedBy: map[string][]filerAnnouncement{}}
 	rec := &dialRecorder{}
 
-	a := NewPeerAnnouncer("self:18080", "", "",func(fid string) string {
+	a := NewPeerAnnouncer("self:18080", "", "", func(fid string) string {
 		return "self:18080"
 	}, fakeDialer(fc, rec), nil)
 
@@ -140,7 +141,7 @@ func TestPeerAnnouncer_RequeueOnRejection(t *testing.T) {
 	}
 	rec := &dialRecorder{}
 
-	a := NewPeerAnnouncer("self:18080", "", "",func(fid string) string {
+	a := NewPeerAnnouncer("self:18080", "", "", func(fid string) string {
 		return "owner:18081"
 	}, fakeDialer(fc, rec), nil)
 	a.EnqueueAnnounce("3,x")
@@ -170,7 +171,7 @@ func TestPeerAnnouncer_TTLRenewal(t *testing.T) {
 	rec := &dialRecorder{}
 
 	now := time.Unix(1000, 0)
-	a := NewPeerAnnouncer("self:18080", "", "",func(fid string) string {
+	a := NewPeerAnnouncer("self:18080", "", "", func(fid string) string {
 		return "owner:18081"
 	}, fakeDialer(fc, rec), nil)
 	a.clock = func() time.Time { return now }
@@ -355,7 +356,7 @@ func TestPeerAnnouncer_DialerErrorRequeues(t *testing.T) {
 	errDialer := func(ctx context.Context, peerAddr string) (mount_peer_pb.MountPeerClient, func(), error) {
 		return nil, func() {}, context.DeadlineExceeded
 	}
-	a := NewPeerAnnouncer("self:18080", "", "",func(fid string) string {
+	a := NewPeerAnnouncer("self:18080", "", "", func(fid string) string {
 		return "owner:18081"
 	}, errDialer, nil)
 	a.EnqueueAnnounce("3,a")

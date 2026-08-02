@@ -7,6 +7,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,7 +26,11 @@ type FilerClient interface {
 	GetDataCenter() string
 }
 
-func GetEntry(ctx context.Context, filerClient FilerClient, fullFilePath util.FullPath) (entry *Entry, err error) {
+// GetEntry returns the entry together with the log position the filer stamped
+// for it and the signature of the filer that stamped it — positions are only
+// comparable within one filer's clock. Both are zero against a filer that does
+// not stamp them.
+func GetEntry(ctx context.Context, filerClient FilerClient, fullFilePath util.FullPath) (entry *Entry, logTsNs int64, logSignature int32, err error) {
 
 	dir, name := fullFilePath.DirAndName()
 
@@ -49,11 +54,18 @@ func GetEntry(ctx context.Context, filerClient FilerClient, fullFilePath util.Fu
 		}
 
 		entry = resp.Entry
+		logTsNs = resp.LogTsNs
+		logSignature = resp.LogSignature
 		return nil
 	})
 
 	return
 }
+
+// ListSnapshotTsNsTrailerKey carries the listing snapshot in the ListEntries
+// stream trailer, so empty listings can convey it without a response older
+// consumers would mistake for an entry.
+const ListSnapshotTsNsTrailerKey = "sw-list-snapshot-ts-ns"
 
 type EachEntryFunction func(entry *Entry, isLast bool) error
 
@@ -154,6 +166,16 @@ func DoSeaweedListWithSnapshot(ctx context.Context, client SeaweedFilerClient, f
 				if prevEntry != nil {
 					if err := fn(prevEntry, true); err != nil {
 						return actualSnapshotTsNs, err
+					}
+				}
+				// An empty listing carries no in-band snapshot (a snapshot-only
+				// response would be read as an entry by older consumers); newer
+				// filers send it in the stream trailer instead.
+				if actualSnapshotTsNs == 0 {
+					if values := stream.Trailer().Get(ListSnapshotTsNsTrailerKey); len(values) > 0 {
+						if trailerTsNs, parseErr := strconv.ParseInt(values[0], 10, 64); parseErr == nil {
+							actualSnapshotTsNs = trailerTsNs
+						}
 					}
 				}
 				break

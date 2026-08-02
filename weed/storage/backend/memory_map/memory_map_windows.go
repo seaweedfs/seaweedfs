@@ -152,7 +152,7 @@ func allocate(hMapFile windows.Handle, offset uint64, length uint64, write bool)
 
 	mBuffer := MemoryBuffer{}
 
-	//align memory allocations to the minium virtual memory allocation size
+	//align memory allocations to the minimum virtual memory allocation size
 	dwSysGran := systemInfo.dwAllocationGranularity
 
 	start := (offset / uint64(dwSysGran)) * uint64(dwSysGran)

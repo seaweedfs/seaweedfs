@@ -263,3 +263,44 @@ func BenchmarkMarshalIntoBuffer(b *testing.B) {
 		})
 	}
 }
+
+// The log position fields must survive VT round-trips, or a VT-marshaled
+// response silently loses the version the mount fences handles with.
+func TestVtProtoPreservesLogTsNs(t *testing.T) {
+	messages := []interface {
+		MarshalVT() ([]byte, error)
+	}{
+		&LookupDirectoryEntryResponse{LogTsNs: 42},
+		&CacheRemoteObjectToLocalClusterResponse{LogTsNs: 43},
+		&CreateEntryResponse{LogTsNs: 44},
+		&UpdateEntryResponse{LogTsNs: 45},
+	}
+	for i, m := range messages {
+		data, err := m.MarshalVT()
+		if err != nil {
+			t.Fatalf("MarshalVT %d: %v", i, err)
+		}
+		switch v := m.(type) {
+		case *LookupDirectoryEntryResponse:
+			out := &LookupDirectoryEntryResponse{}
+			if err := out.UnmarshalVT(data); err != nil || out.LogTsNs != v.LogTsNs {
+				t.Fatalf("LookupDirectoryEntryResponse round-trip LogTsNs = %d, %v; want %d", out.LogTsNs, err, v.LogTsNs)
+			}
+		case *CacheRemoteObjectToLocalClusterResponse:
+			out := &CacheRemoteObjectToLocalClusterResponse{}
+			if err := out.UnmarshalVT(data); err != nil || out.LogTsNs != v.LogTsNs {
+				t.Fatalf("CacheRemoteObjectToLocalClusterResponse round-trip LogTsNs = %d, %v; want %d", out.LogTsNs, err, v.LogTsNs)
+			}
+		case *CreateEntryResponse:
+			out := &CreateEntryResponse{}
+			if err := out.UnmarshalVT(data); err != nil || out.LogTsNs != v.LogTsNs {
+				t.Fatalf("CreateEntryResponse round-trip LogTsNs = %d, %v; want %d", out.LogTsNs, err, v.LogTsNs)
+			}
+		case *UpdateEntryResponse:
+			out := &UpdateEntryResponse{}
+			if err := out.UnmarshalVT(data); err != nil || out.LogTsNs != v.LogTsNs {
+				t.Fatalf("UpdateEntryResponse round-trip LogTsNs = %d, %v; want %d", out.LogTsNs, err, v.LogTsNs)
+			}
+		}
+	}
+}

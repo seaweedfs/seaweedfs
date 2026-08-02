@@ -385,14 +385,28 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Record the caller so the audit entry for the AssumeRole call itself names
+	// who asked for the session, not just the session it minted.
+	r = r.WithContext(recordIdentityInContext(r, identity))
+
 	glog.V(2).Infof("AssumeRole: caller identity=%s, roleArn=%s, sessionName=%s",
 		identity.Name, roleArn, roleSessionName)
+
+	assumesSelf := roleArn == ""
 
 	// A named role is authorized by its trust policy, which declares which
 	// principals may assume it, so no separate identity-side sts:AssumeRole allow
 	// is required. An explicit identity-side deny still wins (deny-always-wins).
 	// Without a RoleArn the caller assumes a session for itself.
 	if roleArn != "" {
+		// An ARN that names something other than a role can never resolve to one,
+		// and reporting that as "not authorized" sends the caller looking for a
+		// permission problem they do not have.
+		if utils.ExtractRoleNameFromArn(roleArn) == "" {
+			h.writeSTSErrorResponse(w, r, STSErrInvalidParameterValue,
+				fmt.Errorf("RoleArn %q is not an IAM role ARN, expected arn:aws:iam::<account>:role/<name>", roleArn))
+			return
+		}
 		callerArn := h.callerPrincipalArn(identity)
 		if err := h.iam.ValidateTrustPolicyForPrincipal(r.Context(), roleArn, callerArn); err != nil {
 			glog.V(2).Infof("AssumeRole: %s not authorized to assume %s: %v", identity.Name, roleArn, err)
@@ -407,7 +421,9 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		roleArn = identity.PrincipalArn
+		// Synthesize the caller ARN when the identity carries none, else the
+		// session ends up with an empty role name in its assumed-role ARN.
+		roleArn = h.callerPrincipalArn(identity)
 		glog.V(2).Infof("AssumeRole: no RoleArn provided, defaulting to caller identity: %s", roleArn)
 		if authErr := h.iam.VerifyActionPermission(r, identity, Action(sts.ActionAssumeRole), "", ""); authErr != s3err.ErrNone {
 			glog.Warningf("AssumeRole: caller %s attempted to assume role without RoleArn and lacks global sts:AssumeRole permission", identity.Name)
@@ -423,9 +439,12 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Prepare custom claims for the session
+	// is_admin lets the session bypass base policy evaluation, so it may only
+	// travel into a session the caller assumed for itself — a legacy static admin
+	// carries no IAM policies for such a session to inherit. Assuming a named role
+	// scopes the session to that role's policies, admin caller or not.
 	var modifyClaims func(claims *sts.STSSessionClaims)
-	if identity.isAdmin() {
+	if assumesSelf && identity.isAdmin() {
 		modifyClaims = func(claims *sts.STSSessionClaims) {
 			if claims.RequestContext == nil {
 				claims.RequestContext = make(map[string]interface{})
@@ -669,6 +688,8 @@ func (h *STSHandlers) handleGetFederationToken(w http.ResponseWriter, r *http.Re
 			fmt.Errorf("unable to identify caller"))
 		return
 	}
+
+	r = r.WithContext(recordIdentityInContext(r, identity))
 
 	glog.V(2).Infof("GetFederationToken: caller identity=%s, name=%s", identity.Name, name)
 
@@ -942,6 +963,8 @@ func (h *STSHandlers) handleGetCallerIdentity(w http.ResponseWriter, r *http.Req
 	accountID := h.getAccountID()
 	arn := h.callerPrincipalArn(identity)
 	userId := identity.Name
+
+	r = r.WithContext(recordIdentityInContext(r, identity))
 
 	glog.V(2).Infof("GetCallerIdentity: identity=%s, arn=%s, account=%s", identity.Name, arn, accountID)
 

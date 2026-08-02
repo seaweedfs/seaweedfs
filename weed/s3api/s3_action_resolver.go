@@ -334,6 +334,10 @@ func mapBaseActionToS3Format(baseAction string) string {
 		return s3_constants.S3_ACTION_GET_BUCKET_OBJECT_LOCK
 	case s3_constants.ACTION_PUT_BUCKET_OBJECT_LOCK_CONFIG:
 		return s3_constants.S3_ACTION_PUT_BUCKET_OBJECT_LOCK
+	case s3_constants.ACTION_PUT_BUCKET_POLICY:
+		return s3_constants.S3_ACTION_PUT_BUCKET_POLICY
+	case s3_constants.ACTION_DELETE_BUCKET_POLICY:
+		return s3_constants.S3_ACTION_DELETE_BUCKET_POLICY
 	default:
 		// For unknown actions, prefix with s3: to maintain format consistency
 		return "s3:" + baseAction

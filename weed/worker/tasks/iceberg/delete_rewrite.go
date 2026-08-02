@@ -40,13 +40,13 @@ type positionDeleteRow struct {
 func hasEligibleDeleteRewrite(
 	ctx context.Context,
 	filerClient filer_pb.SeaweedFilerClient,
-	bucketName, tablePath string,
+	bucketName, dataPath string,
 	manifests []iceberg.ManifestFile,
 	config Config,
 	meta table.Metadata,
 	predicate *partitionPredicate,
 ) (bool, error) {
-	groups, _, err := collectDeleteRewriteGroups(ctx, filerClient, bucketName, tablePath, manifests)
+	groups, _, err := collectDeleteRewriteGroups(ctx, filerClient, bucketName, dataPath, manifests)
 	if err != nil {
 		return false, err
 	}
@@ -74,7 +74,7 @@ func hasEligibleDeleteRewrite(
 func collectDeleteRewriteGroups(
 	ctx context.Context,
 	filerClient filer_pb.SeaweedFilerClient,
-	bucketName, tablePath string,
+	bucketName, dataPath string,
 	manifests []iceberg.ManifestFile,
 ) (map[string]*deleteRewriteGroup, []iceberg.ManifestEntry, error) {
 	groups := make(map[string]*deleteRewriteGroup)
@@ -85,7 +85,7 @@ func collectDeleteRewriteGroups(
 			continue
 		}
 
-		manifestData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, mf.FilePath())
+		manifestData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, dataPath, mf.FilePath())
 		if err != nil {
 			return nil, nil, fmt.Errorf("read delete manifest %s: %w", mf.FilePath(), err)
 		}
@@ -101,7 +101,7 @@ func collectDeleteRewriteGroups(
 
 			allPositionEntries = append(allPositionEntries, entry)
 
-			fileDeletes, err := readPositionDeleteFile(ctx, filerClient, bucketName, tablePath, entry.DataFile().FilePath())
+			fileDeletes, err := readPositionDeleteFile(ctx, filerClient, bucketName, dataPath, entry.DataFile().FilePath())
 			if err != nil {
 				return nil, nil, fmt.Errorf("read position delete file %s: %w", entry.DataFile().FilePath(), err)
 			}
@@ -113,7 +113,13 @@ func collectDeleteRewriteGroups(
 			var referencedPath string
 			var positions []int64
 			for fp, pos := range fileDeletes {
-				referencedPath = normalizeIcebergPath(fp, bucketName, tablePath)
+				normalized, err := normalizeIcebergPath(fp, bucketName, dataPath)
+				if err != nil {
+					return nil, nil, fmt.Errorf("resolve deleted file %s: %w", fp, err)
+				}
+				// The rewritten delete file has to name the data file the way the
+				// table does, so keep the absolute form readers compare against.
+				referencedPath = absoluteIcebergPath(bucketName, normalized)
 				positions = append(positions, pos...)
 			}
 			sort.Slice(positions, func(i, j int) bool { return positions[i] < positions[j] })
@@ -263,21 +269,22 @@ func (h *Handler) rewritePositionDeleteFiles(
 	config Config,
 ) (string, map[string]int64, error) {
 	start := time.Now()
-	meta, metadataFileName, err := loadCurrentMetadata(ctx, filerClient, bucketName, tablePath)
+	state, err := loadCurrentMetadata(ctx, filerClient, bucketName, tablePath)
 	if err != nil {
 		return "", nil, fmt.Errorf("load metadata: %w", err)
 	}
+	meta, dataPath := state.Metadata, state.DataPath
 
 	currentSnap := meta.CurrentSnapshot()
 	if currentSnap == nil || currentSnap.ManifestList == "" {
 		return "no current snapshot", nil, nil
 	}
 
-	manifestListData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, currentSnap.ManifestList)
+	manifestListData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, dataPath, currentSnap.ManifestList)
 	if err != nil {
 		return "", nil, fmt.Errorf("read manifest list: %w", err)
 	}
-	manifests, err := iceberg.ReadManifestList(bytes.NewReader(manifestListData))
+	manifests, err := s3tables.ReadManifestList(manifestListData)
 	if err != nil {
 		return "", nil, fmt.Errorf("parse manifest list: %w", err)
 	}
@@ -289,7 +296,7 @@ func (h *Handler) rewritePositionDeleteFiles(
 		case iceberg.ManifestContentData:
 			dataManifests = append(dataManifests, mf)
 		case iceberg.ManifestContentDeletes:
-			manifestData, readErr := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, mf.FilePath())
+			manifestData, readErr := loadFileByIcebergPath(ctx, filerClient, bucketName, dataPath, mf.FilePath())
 			if readErr != nil {
 				return "", nil, fmt.Errorf("read delete manifest %s: %w", mf.FilePath(), readErr)
 			}
@@ -305,7 +312,7 @@ func (h *Handler) rewritePositionDeleteFiles(
 		}
 	}
 
-	groupMap, allPositionEntries, err := collectDeleteRewriteGroups(ctx, filerClient, bucketName, tablePath, manifests)
+	groupMap, allPositionEntries, err := collectDeleteRewriteGroups(ctx, filerClient, bucketName, dataPath, manifests)
 	if err != nil {
 		return "", nil, err
 	}
@@ -355,11 +362,12 @@ func (h *Handler) rewritePositionDeleteFiles(
 	version := meta.Version()
 	snapshotID := currentSnap.SnapshotID
 	seqNum := currentSnap.SequenceNumber + 1
-	metaDir := path.Join(s3tables.TablesPath, bucketName, tablePath, "metadata")
-	dataDir := path.Join(s3tables.TablesPath, bucketName, tablePath, "data")
+	metaDir := path.Join(s3tables.TablesPath, bucketName, dataPath, "metadata")
+	dataDir := path.Join(s3tables.TablesPath, bucketName, dataPath, "data")
 	artifactSuffix := compactRandomSuffix()
 
 	replacedPaths := make(map[string]struct{})
+	var summary snapshotSummary
 	var rewrittenGroups int64
 	var skippedGroups int64
 	var deleteFilesRewritten int64
@@ -440,7 +448,7 @@ func (h *Handler) rewritePositionDeleteFiles(
 			dfBuilder, err := iceberg.NewDataFileBuilder(
 				spec,
 				iceberg.EntryContentPosDeletes,
-				absoluteIcebergPath(bucketName, tablePath, "data", fileName),
+				absoluteIcebergPath(bucketName, dataPath, "data", fileName),
 				iceberg.ParquetFile,
 				group.Partition,
 				nil, nil,
@@ -450,12 +458,14 @@ func (h *Handler) rewritePositionDeleteFiles(
 			if err != nil {
 				return "", nil, fmt.Errorf("build rewritten delete file: %w", err)
 			}
-			entry := iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &newSnapID, nil, nil, dfBuilder.Build())
-			addToSpec(group.SpecID, entry)
+			rewrittenDeleteFile := dfBuilder.Build()
+			summary.addFile(rewrittenDeleteFile)
+			addToSpec(group.SpecID, iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &newSnapID, nil, nil, rewrittenDeleteFile))
 			deleteFilesWritten++
 		}
 
 		for _, input := range group.Inputs {
+			summary.removeFile(input.Entry.DataFile())
 			delEntry := iceberg.NewManifestEntry(
 				iceberg.EntryStatusDELETED,
 				&newSnapID,
@@ -512,7 +522,7 @@ func (h *Handler) rewritePositionDeleteFiles(
 			return "", nil, fmt.Errorf("partition spec %d not found", specID)
 		}
 		manifestName := fmt.Sprintf("rewrite-delete-%d-%s-spec%d.avro", newSnapID, artifactSuffix, specID)
-		manifestPath := absoluteIcebergPath(bucketName, tablePath, "metadata", manifestName)
+		manifestPath := absoluteIcebergPath(bucketName, dataPath, "metadata", manifestName)
 		mf, manifestBytes, err := writeManifestWithContent(
 			manifestPath,
 			version,
@@ -542,8 +552,8 @@ func (h *Handler) rewritePositionDeleteFiles(
 	}
 	writtenArtifacts = append(writtenArtifacts, artifact{dir: metaDir, fileName: manifestListName})
 
-	manifestListLocation := absoluteIcebergPath(bucketName, tablePath, "metadata", manifestListName)
-	err = h.commitWithRetry(ctx, filerClient, bucketName, tablePath, metadataFileName, config, func(currentMeta table.Metadata, builder *table.MetadataBuilder) error {
+	manifestListLocation := absoluteIcebergPath(bucketName, dataPath, "metadata", manifestListName)
+	err = h.commitWithRetry(ctx, filerClient, bucketName, tablePath, state.MetadataFileName, config, func(currentMeta table.Metadata, builder *table.MetadataBuilder) error {
 		cs := currentMeta.CurrentSnapshot()
 		if cs == nil || cs.SnapshotID != snapshotID {
 			return errStalePlan
@@ -554,15 +564,12 @@ func (h *Handler) rewritePositionDeleteFiles(
 			SequenceNumber:   seqNum,
 			TimestampMs:      newSnapID,
 			ManifestList:     manifestListLocation,
-			Summary: &table.Summary{
-				Operation: table.OpReplace,
-				Properties: map[string]string{
-					"maintenance":            "rewrite_position_delete_files",
-					"delete-files-rewritten": fmt.Sprintf("%d", deleteFilesRewritten),
-					"delete-files-written":   fmt.Sprintf("%d", deleteFilesWritten),
-					"delete-groups":          fmt.Sprintf("%d", rewrittenGroups),
-				},
-			},
+			Summary: summary.build(table.OpReplace, cs, map[string]string{
+				"maintenance":            "rewrite_position_delete_files",
+				"delete-files-rewritten": fmt.Sprintf("%d", deleteFilesRewritten),
+				"delete-files-written":   fmt.Sprintf("%d", deleteFilesWritten),
+				"delete-groups":          fmt.Sprintf("%d", rewrittenGroups),
+			}),
 			SchemaID: func() *int {
 				id := meta.CurrentSchema().ID
 				return &id

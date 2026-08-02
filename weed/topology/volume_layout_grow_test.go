@@ -240,6 +240,35 @@ func TestPlanRackAwareGrowth_EvenDistributionAcrossUnevenDCs(t *testing.T) {
 	}
 }
 
+// Volumes packed to capacity (e.g. by fs.mergeVolumes) go crowded and then
+// unwritable, but stay in the crowded map. ShouldGrowVolumes must count only
+// writable crowded volumes, or those leftovers keep writable <= crowded true
+// forever and every assign-path grow request passes the gate.
+func TestShouldGrowVolumes_UnwritableCrowdedVolumes(t *testing.T) {
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	vl := NewVolumeLayout(rp, needle.EMPTY_TTL, types.HardDriveType, 30000, false)
+
+	vl.accessLock.Lock()
+	vl.setVolumeWritable(1)
+	vl.setVolumeWritable(2)
+	vl.accessLock.Unlock()
+
+	vl.SetVolumeCrowded(1)
+	vl.SetVolumeCapacityFull(1)
+
+	if _, crowded := vl.GetWritableVolumeCount(); crowded != 0 {
+		t.Fatalf("expected 0 writable crowded volumes, got %d", crowded)
+	}
+	if vl.ShouldGrowVolumes() {
+		t.Fatal("volume 2 still has room, growth is not needed")
+	}
+
+	vl.SetVolumeCrowded(2)
+	if !vl.ShouldGrowVolumes() {
+		t.Fatal("every writable volume is crowded, growth is needed")
+	}
+}
+
 func restoreCopyCounts(copy1, copy2 uint32) {
 	VolumeGrowStrategy.Copy1Count = copy1
 	VolumeGrowStrategy.Copy2Count = copy2

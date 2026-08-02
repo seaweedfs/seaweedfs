@@ -110,17 +110,19 @@ func (l *DiskLocation) FindEcShard(vid needle.VolumeId, shardId erasure_coding.S
 // from the .ecx that travels with the first shard, which is the source of
 // the orphan-shard layout reported in #9212.
 func (l *DiskLocation) HasEcxFileOnDisk(collection string, vid needle.VolumeId) bool {
-	idxBase := erasure_coding.EcShardFileName(collection, l.IdxDirectory, int(vid))
+	// Prefer the local data directory, where the index sits co-located with the
+	// shards during a move or reconstruct, then the shared IdxDirectory.
 	// A 0-byte .ecx is a corrupt stub left by a failed EC distribute copy;
 	// it cannot drive mount and must not steer placement decisions toward
 	// this disk. Treat it as absent so the caller falls through to a
 	// sibling disk that may hold a valid index.
-	if info, err := os.Stat(idxBase + ".ecx"); err == nil && !info.IsDir() && info.Size() > 0 {
+	dataBase := erasure_coding.EcShardFileName(collection, l.Directory, int(vid))
+	if info, err := os.Stat(dataBase + ".ecx"); err == nil && !info.IsDir() && info.Size() > 0 {
 		return true
 	}
 	if l.IdxDirectory != l.Directory {
-		dataBase := erasure_coding.EcShardFileName(collection, l.Directory, int(vid))
-		if info, err := os.Stat(dataBase + ".ecx"); err == nil && !info.IsDir() && info.Size() > 0 {
+		idxBase := erasure_coding.EcShardFileName(collection, l.IdxDirectory, int(vid))
+		if info, err := os.Stat(idxBase + ".ecx"); err == nil && !info.IsDir() && info.Size() > 0 {
 			return true
 		}
 	}

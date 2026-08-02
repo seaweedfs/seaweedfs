@@ -34,8 +34,8 @@ func (h *Handler) CollectTelemetry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read protobuf request
-	body, err := io.ReadAll(r.Body)
+	// Read protobuf request; real reports are well under 1 KB
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestBytes))
 	if err != nil {
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
 		return
@@ -53,9 +53,8 @@ func (h *Handler) CollectTelemetry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate required fields
-	if data.TopologyId == "" || data.Version == "" || data.Os == "" {
-		http.Error(w, "Missing required fields", http.StatusBadRequest)
+	if err := validateTelemetryData(data); err != nil {
+		http.Error(w, "Invalid telemetry data: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -149,4 +148,60 @@ func (h *Handler) GetMetrics(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(metrics)
+}
+
+func (h *Handler) GetClusterSizes(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	days := 30 // default
+	if daysStr := r.URL.Query().Get("days"); daysStr != "" {
+		if d, err := strconv.Atoi(daysStr); err == nil && d > 0 && d <= 365 {
+			days = d
+		}
+	}
+
+	limit := 20 // default
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 1000 {
+			limit = l
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(h.storage.GetClusterSizeSeries(days, limit))
+}
+
+func (h *Handler) GetHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	clusterId := r.URL.Query().Get("cluster_id")
+	if clusterId == "" {
+		http.Error(w, "cluster_id is required", http.StatusBadRequest)
+		return
+	}
+
+	days := 90 // default
+	if daysStr := r.URL.Query().Get("days"); daysStr != "" {
+		if d, err := strconv.Atoi(daysStr); err == nil && d > 0 && d <= 365 {
+			days = d
+		}
+	}
+
+	samples, ok := h.storage.GetHistory(clusterId, days)
+	if !ok {
+		http.Error(w, "Unknown cluster_id", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"cluster_id": clusterId,
+		"samples":    samples,
+	})
 }

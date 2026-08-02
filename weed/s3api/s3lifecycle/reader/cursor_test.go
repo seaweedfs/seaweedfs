@@ -21,7 +21,7 @@ func TestCursorAdvanceMonotonic(t *testing.T) {
 	c := NewCursor()
 	k := key("b", s3lifecycle.ActionKindExpirationDays)
 	c.Advance(k, 100)
-	c.Advance(k, 50) // backward, ignored
+	c.Advance(k, 50)  // backward, ignored
 	c.Advance(k, 100) // equal, ignored
 	c.Advance(k, 200)
 	if got := c.Get(k); got != 200 {

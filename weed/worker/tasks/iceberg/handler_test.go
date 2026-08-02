@@ -445,17 +445,24 @@ func TestManifestRewriteNestedPathConsistency(t *testing.T) {
 				t.Errorf("FilePath() = %q, want %q", mf.FilePath(), tc.manifestPath)
 			}
 
-			// normalizeIcebergPath should return the path unchanged when already relative
-			normalized := normalizeIcebergPath(tc.manifestPath, "bucket", "ns/table")
-			if normalized != tc.manifestPath {
-				t.Errorf("normalizeIcebergPath(%q) = %q, want %q", tc.manifestPath, normalized, tc.manifestPath)
+			// A relative path resolves under the table's own directory
+			want := "ns/table/" + tc.manifestPath
+			normalized, err := normalizeIcebergPath(tc.manifestPath, "bucket", "ns/table")
+			if err != nil {
+				t.Fatalf("normalizeIcebergPath(%q): %v", tc.manifestPath, err)
+			}
+			if normalized != want {
+				t.Errorf("normalizeIcebergPath(%q) = %q, want %q", tc.manifestPath, normalized, want)
 			}
 
-			// Verify normalization strips S3 scheme prefix correctly
+			// The S3 URL for the same file resolves to the same place
 			s3Path := "s3://bucket/ns/table/" + tc.manifestPath
-			normalized = normalizeIcebergPath(s3Path, "bucket", "ns/table")
-			if normalized != tc.manifestPath {
-				t.Errorf("normalizeIcebergPath(%q) = %q, want %q", s3Path, normalized, tc.manifestPath)
+			normalized, err = normalizeIcebergPath(s3Path, "bucket", "ns/table")
+			if err != nil {
+				t.Fatalf("normalizeIcebergPath(%q): %v", s3Path, err)
+			}
+			if normalized != want {
+				t.Errorf("normalizeIcebergPath(%q) = %q, want %q", s3Path, normalized, want)
 			}
 		})
 	}
@@ -466,53 +473,133 @@ func TestNormalizeIcebergPath(t *testing.T) {
 		name        string
 		icebergPath string
 		bucket      string
-		tablePath   string
+		dataPath    string
 		expected    string
+		wantErr     bool
 	}{
 		{
-			"relative metadata path",
-			"metadata/snap-1.avro",
-			"mybucket", "ns/table",
-			"metadata/snap-1.avro",
+			name:        "relative metadata path",
+			icebergPath: "metadata/snap-1.avro",
+			bucket:      "mybucket", dataPath: "ns/table",
+			expected: "ns/table/metadata/snap-1.avro",
 		},
 		{
-			"relative data path",
-			"data/file.parquet",
-			"mybucket", "ns/table",
-			"data/file.parquet",
+			name:        "relative data path",
+			icebergPath: "data/file.parquet",
+			bucket:      "mybucket", dataPath: "ns/table",
+			expected: "ns/table/data/file.parquet",
 		},
 		{
-			"S3 URL",
-			"s3://mybucket/ns/table/metadata/snap-1.avro",
-			"mybucket", "ns/table",
-			"metadata/snap-1.avro",
+			name:        "S3 URL",
+			icebergPath: "s3://mybucket/ns/table/metadata/snap-1.avro",
+			bucket:      "mybucket", dataPath: "ns/table",
+			expected: "ns/table/metadata/snap-1.avro",
 		},
 		{
-			"absolute filer path",
-			"/buckets/mybucket/ns/table/data/file.parquet",
-			"mybucket", "ns/table",
-			"data/file.parquet",
+			name:        "absolute filer path",
+			icebergPath: "/buckets/mybucket/ns/table/data/file.parquet",
+			bucket:      "mybucket", dataPath: "ns/table",
+			expected: "ns/table/data/file.parquet",
 		},
 		{
-			"nested data path",
-			"data/region=us/city=sf/file.parquet",
-			"mybucket", "ns/table",
-			"data/region=us/city=sf/file.parquet",
+			name:        "nested data path",
+			icebergPath: "data/region=us/city=sf/file.parquet",
+			bucket:      "mybucket", dataPath: "ns/table",
+			expected: "ns/table/data/region=us/city=sf/file.parquet",
 		},
 		{
-			"S3 URL nested",
-			"s3://mybucket/ns/table/data/region=us/file.parquet",
-			"mybucket", "ns/table",
-			"data/region=us/file.parquet",
+			name:        "S3 URL nested",
+			icebergPath: "s3://mybucket/ns/table/data/region=us/file.parquet",
+			bucket:      "mybucket", dataPath: "ns/table",
+			expected: "ns/table/data/region=us/file.parquet",
+		},
+		{
+			// Written by a client that created the table at its own location.
+			name:        "S3 URL outside the catalog path",
+			icebergPath: "s3://mybucket/ns/table-9f1c/metadata/snap-1.avro",
+			bucket:      "mybucket", dataPath: "ns/table-9f1c",
+			expected: "ns/table-9f1c/metadata/snap-1.avro",
+		},
+		{
+			// Same file, referenced while the worker believes the table sits at
+			// its catalog path: the URI still wins.
+			name:        "S3 URL wins over a stale data path",
+			icebergPath: "s3://mybucket/ns/table-9f1c/metadata/snap-1.avro",
+			bucket:      "mybucket", dataPath: "ns/table",
+			expected: "ns/table-9f1c/metadata/snap-1.avro",
+		},
+		{
+			name:        "other bucket",
+			icebergPath: "s3://otherbucket/ns/table/metadata/snap-1.avro",
+			bucket:      "mybucket", dataPath: "ns/table",
+			wantErr: true,
+		},
+		{
+			name:        "traversal out of the bucket",
+			icebergPath: "../../etc/passwd",
+			bucket:      "mybucket", dataPath: "ns/table",
+			wantErr: true,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result := normalizeIcebergPath(tc.icebergPath, tc.bucket, tc.tablePath)
+			result, err := normalizeIcebergPath(tc.icebergPath, tc.bucket, tc.dataPath)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("normalizeIcebergPath(%q, %q, %q) = %q, want error",
+						tc.icebergPath, tc.bucket, tc.dataPath, result)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("normalizeIcebergPath(%q, %q, %q): %v", tc.icebergPath, tc.bucket, tc.dataPath, err)
+			}
 			if result != tc.expected {
 				t.Errorf("normalizeIcebergPath(%q, %q, %q) = %q, want %q",
-					tc.icebergPath, tc.bucket, tc.tablePath, result, tc.expected)
+					tc.icebergPath, tc.bucket, tc.dataPath, result, tc.expected)
+			}
+		})
+	}
+}
+
+func TestTableDataPath(t *testing.T) {
+	tests := []struct {
+		name             string
+		metadataLocation string
+		expected         string
+	}{
+		{
+			name:             "catalog path",
+			metadataLocation: "s3://mybucket/ns/table/metadata/v1.metadata.json",
+			expected:         "ns/table",
+		},
+		{
+			name:             "location outside the catalog path",
+			metadataLocation: "s3://mybucket/ns/table-9f1c/metadata/v3-171.metadata.json",
+			expected:         "ns/table-9f1c",
+		},
+		{
+			name:             "relative location",
+			metadataLocation: "metadata/v1.metadata.json",
+			expected:         "ns/table",
+		},
+		{
+			name:             "missing location",
+			metadataLocation: "",
+			expected:         "ns/table",
+		},
+		{
+			name:             "location in another bucket",
+			metadataLocation: "s3://otherbucket/ns/table/metadata/v1.metadata.json",
+			expected:         "ns/table",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tableDataPath("mybucket", "ns/table", tc.metadataLocation); got != tc.expected {
+				t.Errorf("tableDataPath(%q) = %q, want %q", tc.metadataLocation, got, tc.expected)
 			}
 		})
 	}
@@ -972,16 +1059,16 @@ func TestCollectPositionDeletes(t *testing.T) {
 		t.Fatalf("collectPositionDeletes: %v", err)
 	}
 
-	// Verify results
-	if len(result["data/file1.parquet"]) != 3 {
-		t.Errorf("expected 3 positions for file1, got %d", len(result["data/file1.parquet"]))
+	// Deleted files are keyed by their bucket-relative path
+	if len(result["ns/tbl/data/file1.parquet"]) != 3 {
+		t.Errorf("expected 3 positions for file1, got %d", len(result["ns/tbl/data/file1.parquet"]))
 	}
-	if len(result["data/file2.parquet"]) != 1 {
-		t.Errorf("expected 1 position for file2, got %d", len(result["data/file2.parquet"]))
+	if len(result["ns/tbl/data/file2.parquet"]) != 1 {
+		t.Errorf("expected 1 position for file2, got %d", len(result["ns/tbl/data/file2.parquet"]))
 	}
 
 	// Verify sorted
-	positions := result["data/file1.parquet"]
+	positions := result["ns/tbl/data/file1.parquet"]
 	for i := 1; i < len(positions); i++ {
 		if positions[i] <= positions[i-1] {
 			t.Errorf("positions not sorted: %v", positions)
@@ -1107,7 +1194,7 @@ func TestMergeParquetFilesWithPositionDeletes(t *testing.T) {
 
 	// Delete rows 1 (bob) and 3 (dave) from file1
 	posDeletes := map[string][]int64{
-		"data/file1.parquet": {1, 3},
+		"ns/tbl/data/file1.parquet": {1, 3},
 	}
 
 	merged, count, err := mergeParquetFiles(

@@ -23,16 +23,30 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
+
+// fencedFindEntry reads an entry with an exact log-position fence: the stamp
+// and the read share the path lock mutations hold across write and notify, so
+// every event at or below the fence is in the entry and none above it are.
+// Any read whose result a client versions must go through here.
+func (fs *FilerServer) fencedFindEntry(ctx context.Context, path util.FullPath) (entry *filer.Entry, logTsNs int64, err error) {
+	pathLock := fs.entryLockTable.AcquireLock("fencedFindEntry", path, util.SharedLock)
+	logTsNs = time.Now().UnixNano()
+	entry, err = fs.filer.FindEntry(ctx, path)
+	fs.entryLockTable.ReleaseLock(path, pathLock)
+	return
+}
 
 func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
 
 	glog.V(4).InfofCtx(ctx, "LookupDirectoryEntry %s", filepath.Join(req.Directory, req.Name))
 
-	entry, err := fs.filer.FindEntry(ctx, util.JoinPath(req.Directory, req.Name))
+	entry, logTsNs, err := fs.fencedFindEntry(ctx, util.JoinPath(req.Directory, req.Name))
+
 	if err == filer_pb.ErrNotFound {
-		return &filer_pb.LookupDirectoryEntryResponse{}, err
+		return &filer_pb.LookupDirectoryEntryResponse{LogTsNs: logTsNs, LogSignature: fs.filer.Signature}, err
 	}
 	if err != nil {
 		glog.V(3).InfofCtx(ctx, "LookupDirectoryEntry %s: %+v, ", filepath.Join(req.Directory, req.Name), err)
@@ -40,7 +54,9 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 	}
 
 	return &filer_pb.LookupDirectoryEntryResponse{
-		Entry: entry.ToProtoEntry(),
+		Entry:        entry.ToProtoEntry(),
+		LogTsNs:      logTsNs,
+		LogSignature: fs.filer.Signature,
 	}, nil
 }
 
@@ -102,12 +118,10 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 
 	}
 
-	// For empty directories we intentionally do NOT send a snapshot-only
-	// response (Entry == nil). Many consumers (Java FilerClient, S3 listing,
-	// etc.) treat any received response as an entry. The Go client-side
-	// DoSeaweedListWithSnapshot generates a client-side cutoff when the
-	// server sends no snapshot, so snapshot consistency is preserved
-	// without a server-side send.
+	// No snapshot-only response for empty directories: many consumers (Java
+	// FilerClient, S3 listing) treat any response as an entry. The trailer
+	// carries it instead; older clients ignore trailers.
+	stream.SetTrailer(metadata.Pairs(filer_pb.ListSnapshotTsNsTrailerKey, strconv.FormatInt(snapshotTsNs, 10)))
 
 	return nil
 }
@@ -187,6 +201,11 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	fullpath := newEntry.FullPath
 	pathLock := fs.entryLockTable.AcquireLock("CreateEntry", fullpath, util.ExclusiveLock)
 	defer fs.entryLockTable.ReleaseLock(fullpath, pathLock)
+
+	// Fence stamped under the lock: a no-op create returns no event, but the
+	// acknowledged state still reflects everything at or below this.
+	resp.LogTsNs = time.Now().UnixNano()
+	resp.LogSignature = fs.filer.Signature
 
 	// Evaluate the optional precondition against the current entry while the
 	// path lock is held, so the check and the write are atomic on this filer.
@@ -603,6 +622,10 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	pathLock := fs.entryLockTable.AcquireLock("UpdateEntry", lockPath, util.ExclusiveLock)
 	defer fs.entryLockTable.ReleaseLock(lockPath, pathLock)
 
+	// Fence stamped under the lock: the no-change path below returns no event,
+	// but the acknowledged state still reflects everything at or below this.
+	logTsNs := time.Now().UnixNano()
+
 	entry, err := fs.filer.FindEntry(ctx, lockPath)
 	if err != nil {
 		return &filer_pb.UpdateEntryResponse{}, fmt.Errorf("not found %s: %v", fullpath, err)
@@ -629,11 +652,11 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	}
 
 	if filer.EqualEntry(entry, newEntry) {
-		return &filer_pb.UpdateEntryResponse{}, err
+		return &filer_pb.UpdateEntryResponse{LogTsNs: logTsNs, LogSignature: fs.filer.Signature}, err
 	}
 
 	ctx, eventSink := filer.WithMetadataEventSink(ctx)
-	resp := &filer_pb.UpdateEntryResponse{}
+	resp := &filer_pb.UpdateEntryResponse{LogTsNs: logTsNs, LogSignature: fs.filer.Signature}
 	if err = fs.filer.UpdateEntry(ctx, entry, newEntry); err == nil {
 		fs.filer.DeleteChunksNotRecursive(garbage)
 

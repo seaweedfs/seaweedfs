@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -465,25 +464,14 @@ func isEofError(err error) bool {
 }
 
 // isRetryableNetworkError reports whether err is a transient network failure worth
-// a backoff-and-retry: EOF, timeout (e.g. the destination's idle deadline under
-// load), or a reset/broken connection. The volume server returns the timeout as a
-// JSON string, so match on text as well as the net.Error interface.
+// a backoff-and-retry. A bare io.EOF counts here but not in util.IsTransientError:
+// mid-transfer it means the chunk read was truncated, not that a stream ended
+// cleanly.
 func isRetryableNetworkError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if isEofError(err) {
-		return true
-	}
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
-		return true
-	}
-	// lower-cased to also catch capitalized variants
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "i/o timeout") ||
-		strings.Contains(msg, "connection reset") ||
-		strings.Contains(msg, "broken pipe")
+	return isEofError(err) || util.IsTransientError(err)
 }
 
 // errChunkSizeMismatch is a permanent (non-retriable) replication failure.
@@ -517,7 +505,7 @@ func SourceSupersedes(ctx context.Context, filerSource *source.FilerSource, sour
 	if filerSource == nil {
 		return false
 	}
-	sourceEntry, err := filer_pb.GetEntry(ctx, filerSource, sourcePath)
+	sourceEntry, _, _, err := filer_pb.GetEntry(ctx, filerSource, sourcePath)
 	return sourceSupersedes(sourcePath, sourceEntry, err, mtimeNs)
 }
 

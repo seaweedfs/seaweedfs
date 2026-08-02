@@ -12,6 +12,7 @@ type MountOptions struct {
 	dirAutoCreate        *bool
 	collection           *string
 	collectionQuota      *int
+	logicalDiskUsage     *bool
 	replication          *string
 	diskType             *string
 	ttlSec               *int
@@ -99,6 +100,7 @@ func init() {
 	mountOptions.dirAutoCreate = cmdMount.Flag.Bool("dirAutoCreate", false, "auto create the directory to mount to")
 	mountOptions.collection = cmdMount.Flag.String("collection", "", "collection to create the files")
 	mountOptions.collectionQuota = cmdMount.Flag.Int("collectionQuotaMB", 0, "quota for the collection")
+	mountOptions.logicalDiskUsage = cmdMount.Flag.Bool("df.logical", false, "report data sizes to df and the quota, instead of the space they occupy with replicas and ec parity")
 	mountOptions.replication = cmdMount.Flag.String("replication", "", "replication(e.g. 000, 001) to create to files. If empty, let filer decide.")
 	mountOptions.diskType = cmdMount.Flag.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
 	mountOptions.ttlSec = cmdMount.Flag.Int("ttl", 0, "file ttl in seconds")

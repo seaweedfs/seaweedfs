@@ -30,7 +30,7 @@ import (
 // Re-balance topic partitions for publishing
 //   1. collect stats from all the brokers
 //   2. Rebalance and configure new generation of partitions on brokers
-//   3. Tell brokers to close current gneration of publishing.
+//   3. Tell brokers to close current generation of publishing.
 // Publishers needs to lookup again and publish to the new generation of partitions.
 
 // Re-balance topic partitions for subscribing

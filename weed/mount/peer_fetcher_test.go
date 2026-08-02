@@ -109,13 +109,13 @@ func TestSortHoldersByLocality(t *testing.T) {
 	selfDC, selfRack := "dc1", "r1"
 	// Input order mimics a server-side LRU list (newest first).
 	holders := []peerHolder{
-		{addr: "far-newest", dc: "dc2", rack: "r9"},        // bucket 2 (diff DC)
-		{addr: "mid-newer", dc: "dc1", rack: "r2"},         // bucket 1 (same DC, diff rack)
-		{addr: "local-newer", dc: "dc1", rack: "r1"},       // bucket 0 (same rack)
-		{addr: "far-older", dc: "dc2", rack: "r9"},         // bucket 2
-		{addr: "mid-older", dc: "dc1", rack: "r2"},         // bucket 1
-		{addr: "local-older", dc: "dc1", rack: "r1"},       // bucket 0
-		{addr: "unlabeled-older", dc: "", rack: ""},        // bucket 2 (unknown)
+		{addr: "far-newest", dc: "dc2", rack: "r9"},  // bucket 2 (diff DC)
+		{addr: "mid-newer", dc: "dc1", rack: "r2"},   // bucket 1 (same DC, diff rack)
+		{addr: "local-newer", dc: "dc1", rack: "r1"}, // bucket 0 (same rack)
+		{addr: "far-older", dc: "dc2", rack: "r9"},   // bucket 2
+		{addr: "mid-older", dc: "dc1", rack: "r2"},   // bucket 1
+		{addr: "local-older", dc: "dc1", rack: "r1"}, // bucket 0
+		{addr: "unlabeled-older", dc: "", rack: ""},  // bucket 2 (unknown)
 	}
 
 	sortHoldersByLocality(holders, selfDC, selfRack)

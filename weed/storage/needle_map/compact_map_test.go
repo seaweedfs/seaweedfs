@@ -37,7 +37,7 @@ func TestSegmentBsearchKey(t *testing.T) {
 			wantFound: false,
 		},
 		{
-			name:      "new key, insert at beggining",
+			name:      "new key, insert at beginning",
 			cs:        testSegment,
 			key:       5,
 			wantIndex: 0,
@@ -141,7 +141,7 @@ func TestSegmentSet(t *testing.T) {
 		wantSize   types.Size
 	}{
 		{
-			name: "insert at beggining",
+			name: "insert at beginning",
 			key:  5, offset: types.Uint32ToOffset(1000), size: 123,
 			wantOffset: types.Uint32ToOffset(0), wantSize: 0,
 		},

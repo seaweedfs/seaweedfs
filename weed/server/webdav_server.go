@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path"
 	"strings"
@@ -45,7 +46,7 @@ type WebDavOption struct {
 type WebDavServer struct {
 	option         *WebDavOption
 	grpcDialOption grpc.DialOption
-	Handler        *webdav.Handler
+	Handler        http.Handler
 }
 
 func max(x, y int64) int64 {
@@ -71,9 +72,11 @@ func NewWebDavServer(option *WebDavOption) (ws *WebDavServer, err error) {
 	ws = &WebDavServer{
 		option:         option,
 		grpcDialOption: security.LoadClientTLS(util.GetViper(), "grpc.filer"),
-		Handler: &webdav.Handler{
-			FileSystem: fs,
-			LockSystem: webdav.NewMemLS(),
+		Handler: listedEntriesHandler{
+			next: &webdav.Handler{
+				FileSystem: fs,
+				LockSystem: webdav.NewMemLS(),
+			},
 		},
 	}
 
@@ -370,30 +373,43 @@ func (fs *WebDavFileSystem) stat(ctx context.Context, fullFilePath string) (os.F
 
 	fullpath := util.FullPath(fullFilePath)
 
-	var fi FileInfo
-	entry, err := filer_pb.GetEntry(context.Background(), fs, fullpath)
+	if listedFi := listedEntriesFrom(ctx).get(string(fullpath)); listedFi != nil {
+		// the caller's spelling of the path, trailing slash and all, is what a
+		// lookup would have reported back
+		fi := *listedFi
+		fi.name = string(fullpath)
+		return &fi, nil
+	}
+
+	entry, _, _, err := filer_pb.GetEntry(ctx, fs, fullpath)
 	if err != nil {
 		if err == filer_pb.ErrNotFound {
 			return nil, os.ErrNotExist
 		}
-		fi.err = err
-		return &fi, nil
+		return &FileInfo{err: err}, nil
 	}
 	if entry == nil {
 		return nil, os.ErrNotExist
 	}
-	fi.size = int64(filer.FileSize(entry))
-	fi.name = string(fullpath)
-	fi.mode = os.FileMode(entry.Attributes.FileMode)
-	fi.modifiedTime = time.Unix(entry.Attributes.Mtime, 0)
-	fi.etag = filer.ETag(entry)
-	fi.isDirectory = entry.IsDirectory
+
+	return toFileInfo(fullpath, entry), nil
+}
+
+func toFileInfo(fullpath util.FullPath, entry *filer_pb.Entry) *FileInfo {
+	fi := &FileInfo{
+		size:         int64(filer.FileSize(entry)),
+		name:         string(fullpath),
+		mode:         os.FileMode(entry.Attributes.FileMode),
+		modifiedTime: time.Unix(entry.Attributes.Mtime, 0),
+		etag:         filer.ETag(entry),
+		isDirectory:  entry.IsDirectory,
+	}
 
 	if fi.name == "/" {
 		fi.modifiedTime = time.Now()
 		fi.isDirectory = true
 	}
-	return &fi, nil
+	return fi
 }
 
 func (fs *WebDavFileSystem) Stat(ctx context.Context, name string) (os.FileInfo, error) {
@@ -435,7 +451,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 	var getErr error
 	ctx := context.Background()
 	if f.entry == nil {
-		f.entry, getErr = filer_pb.GetEntry(context.Background(), f.fs, fullPath)
+		f.entry, _, _, getErr = filer_pb.GetEntry(context.Background(), f.fs, fullPath)
 	}
 
 	if f.entry == nil {
@@ -526,7 +542,7 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 	glog.V(2).Infof("WebDavFileSystem.Read %v", f.name)
 
 	if f.entry == nil {
-		f.entry, err = filer_pb.GetEntry(context.Background(), f.fs, util.FullPath(f.name))
+		f.entry, _, _, err = filer_pb.GetEntry(context.Background(), f.fs, util.FullPath(f.name))
 	}
 	if f.entry == nil {
 		return 0, err
@@ -566,7 +582,10 @@ func (f *WebDavFile) Readdir(count int) (ret []os.FileInfo, err error) {
 
 	dir, _ := util.FullPath(f.name).DirAndName()
 
-	err = filer_pb.ReadDirAllEntries(context.Background(), f.fs, util.FullPath(dir), "", func(entry *filer_pb.Entry, isLast bool) error {
+	ctx := f.requestContext()
+	listed := listedEntriesFrom(ctx)
+
+	err = filer_pb.ReadDirAllEntries(ctx, f.fs, util.FullPath(dir), "", func(entry *filer_pb.Entry, isLast bool) error {
 		fi := FileInfo{
 			size:         int64(filer.FileSize(entry)),
 			name:         entry.Name,
@@ -578,7 +597,12 @@ func (f *WebDavFile) Readdir(count int) (ret []os.FileInfo, err error) {
 		if !strings.HasSuffix(fi.name, "/") && fi.IsDir() {
 			fi.name += "/"
 		}
+
 		glog.V(4).Infof("entry: %v", fi.name)
+
+		childPath := util.NewFullPath(dir, entry.Name)
+		listed.put(string(childPath), toFileInfo(childPath, entry))
+
 		ret = append(ret, &fi)
 		return nil
 	})
@@ -610,7 +634,7 @@ func (f *WebDavFile) Seek(offset int64, whence int) (int64, error) {
 
 	glog.V(2).Infof("WebDavFile.Seek %v %v %v", f.name, offset, whence)
 
-	ctx := context.Background()
+	ctx := f.requestContext()
 
 	var err error
 	switch whence {
@@ -631,7 +655,14 @@ func (f *WebDavFile) Stat() (os.FileInfo, error) {
 
 	glog.V(2).Infof("WebDavFile.Stat %v", f.name)
 
-	ctx := context.Background()
+	return f.fs.stat(f.requestContext(), f.name)
+}
 
-	return f.fs.stat(ctx, f.name)
+// the context of the request that opened the file, or a bare one for files
+// opened outside a request
+func (f *WebDavFile) requestContext() context.Context {
+	if f.ctx != nil {
+		return f.ctx
+	}
+	return context.Background()
 }

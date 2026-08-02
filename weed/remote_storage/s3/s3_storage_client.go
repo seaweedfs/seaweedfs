@@ -47,8 +47,7 @@ func (s s3RemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.R
 // a guarded DialContext.
 func MakeWithHTTPClient(conf *remote_pb.RemoteConf, httpClient *http.Client) (remote_storage.RemoteStorageClient, error) {
 	client := &s3RemoteStorageClient{
-		supportTagging: true,
-		conf:           conf,
+		conf: conf,
 	}
 	config := &aws.Config{
 		Region:                        aws.String(conf.S3Region),
@@ -82,12 +81,11 @@ func MakeWithHTTPClient(conf *remote_pb.RemoteConf, httpClient *http.Client) (re
 }
 
 type s3RemoteStorageClient struct {
-	conf           *remote_pb.RemoteConf
-	conn           s3iface.S3API
-	supportTagging bool
+	conf *remote_pb.RemoteConf
+	conn s3iface.S3API
 }
 
-var _ = remote_storage.RemoteStorageClient(&s3RemoteStorageClient{supportTagging: true})
+var _ = remote_storage.RemoteStorageClient(&s3RemoteStorageClient{})
 
 func (s *s3RemoteStorageClient) Traverse(remote *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
 
@@ -285,6 +283,57 @@ func (s *s3RemoteStorageClient) WriteDirectory(loc *remote_pb.RemoteStorageLocat
 }
 
 func (s *s3RemoteStorageClient) RemoveDirectory(loc *remote_pb.RemoteStorageLocation) (err error) {
+	// the trailing slash keeps sibling prefixes that share the name intact
+	prefix := loc.Path[1:]
+	if prefix != "" && !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+	if prefix == "" {
+		// the mount root maps to the whole bucket; wiping every object from a
+		// single namespace event is too destructive, so keep them
+		glog.Warningf("s3 %s: skip removing directory mapped to the bucket root", loc.Bucket)
+		return nil
+	}
+
+	listInput := &s3.ListObjectsV2Input{
+		Bucket: aws.String(loc.Bucket),
+		Prefix: aws.String(prefix),
+	}
+	var deleteErr error
+	listErr := s.conn.ListObjectsV2Pages(listInput, func(page *s3.ListObjectsV2Output, lastPage bool) bool {
+		var objects []*s3.ObjectIdentifier
+		for _, content := range page.Contents {
+			objects = append(objects, &s3.ObjectIdentifier{Key: content.Key})
+		}
+		if len(objects) == 0 {
+			return true
+		}
+		// a listing page holds at most 1000 keys, the DeleteObjects limit
+		resp, batchErr := s.conn.DeleteObjects(&s3.DeleteObjectsInput{
+			Bucket: aws.String(loc.Bucket),
+			Delete: &s3.Delete{
+				Objects: objects,
+				Quiet:   aws.Bool(true),
+			},
+		})
+		if batchErr != nil {
+			deleteErr = batchErr
+			return false
+		}
+		if len(resp.Errors) > 0 {
+			// a batch can fail 1000 keys; report the scope, not every key
+			failed := resp.Errors[0]
+			deleteErr = fmt.Errorf("%d keys failed, first is %s: %s %s", len(resp.Errors), aws.StringValue(failed.Key), aws.StringValue(failed.Code), aws.StringValue(failed.Message))
+			return false
+		}
+		return true
+	})
+	if listErr != nil {
+		return fmt.Errorf("list %s/%s: %w", loc.Bucket, prefix, listErr)
+	}
+	if deleteErr != nil {
+		return fmt.Errorf("remove directory %s/%s: %w", loc.Bucket, prefix, deleteErr)
+	}
 	return nil
 }
 
@@ -419,12 +468,18 @@ func (s *s3RemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStorageL
 		}
 	}
 
+	// same as the write path: a remote without tagging support rejects both
+	// PutObjectTagging and DeleteObjectTagging
+	if !s.conf.S3SupportTagging {
+		return
+	}
+
 	tagging := toTagging(newEntry.Extended)
 	if len(tagging.TagSet) > 0 {
 		_, err = s.conn.PutObjectTagging(&s3.PutObjectTaggingInput{
 			Bucket:  aws.String(loc.Bucket),
 			Key:     aws.String(loc.Path[1:]),
-			Tagging: toTagging(newEntry.Extended),
+			Tagging: tagging,
 		})
 	} else {
 		_, err = s.conn.DeleteObjectTagging(&s3.DeleteObjectTaggingInput{

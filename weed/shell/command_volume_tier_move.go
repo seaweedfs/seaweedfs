@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -316,7 +317,7 @@ func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer i
 	}
 
 	// mark all replicas as read only
-	if err = markVolumeReplicasWritable(commandEnv.option.GrpcDialOption, vid, locations, false, false); err != nil {
+	if err = markVolumeReplicasWritable(context.Background(), commandEnv.option.GrpcDialOption, vid, locations, false, false); err != nil {
 		return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, locations[0].Url, err)
 	}
 	newAddress := pb.NewServerAddressFromDataNode(dst.dataNode)
@@ -325,9 +326,9 @@ func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer i
 	deletedSource := sourceVolumeServer
 	if alreadyPlaced {
 		deletedSource = ""
-	} else if err = LiveMoveVolume(commandEnv.option.GrpcDialOption, writer, vid, sourceVolumeServer, newAddress, 5*time.Second, toDiskType.ReadableString(), ioBytePerSecond, true); err != nil {
+	} else if err = LiveMoveVolume(context.Background(), commandEnv.option.GrpcDialOption, writer, vid, sourceVolumeServer, newAddress, 5*time.Second, toDiskType.ReadableString(), ioBytePerSecond, true); err != nil {
 		// mark all replicas as writable
-		if err = markVolumeReplicasWritable(commandEnv.option.GrpcDialOption, vid, locations, true, false); err != nil {
+		if err = markVolumeReplicasWritable(context.Background(), commandEnv.option.GrpcDialOption, vid, locations, true, false); err != nil {
 			glog.Errorf("mark volume %d as writable on %s: %v", vid, locations[0].Url, err)
 		}
 
@@ -336,7 +337,7 @@ func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer i
 
 	// If move is successful and replication is not empty, alter moved volume's replication setting
 	if *replicationString != "" {
-		if err = configureVolumeReplication(commandEnv.option.GrpcDialOption, vid, newAddress, *replicationString); err != nil {
+		if err = configureVolumeReplication(context.Background(), commandEnv.option.GrpcDialOption, vid, newAddress, *replicationString); err != nil {
 			// LiveMoveVolume already deleted sourceVolumeServer; mark surviving
 			// old replicas writable before aborting so the volume stays accessible.
 			restoreSurvivingReplicasWritable(commandEnv, vid, locations, deletedSource)
@@ -360,7 +361,7 @@ func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer i
 	// stay read-only since we're keeping rather than deleting them.
 	for _, loc := range locations {
 		if preserveServers[loc.Url] {
-			if markErr := markVolumeWritable(commandEnv.option.GrpcDialOption, vid, loc.ServerAddress(), true, false); markErr != nil {
+			if markErr := markVolumeWritable(context.Background(), commandEnv.option.GrpcDialOption, vid, loc.ServerAddress(), true, false); markErr != nil {
 				glog.Errorf("mark volume %d as writable on preserved replica %s: %v", vid, loc.Url, markErr)
 			}
 		}
@@ -378,7 +379,7 @@ func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer i
 		}
 		// keepRemoteData=true: remote-tiered replicas share one cloud object, so
 		// deleting a replica must not delete the object the survivors still point at.
-		if err = deleteVolume(commandEnv.option.GrpcDialOption, vid, loc.ServerAddress(), false, true); err != nil {
+		if err = deleteVolume(context.Background(), commandEnv.option.GrpcDialOption, vid, loc.ServerAddress(), false, true); err != nil {
 			fmt.Fprintf(writer, "failed to delete volume %d on %s: %v\n", vid, loc.Url, err)
 		}
 	}
@@ -392,7 +393,7 @@ func restoreSurvivingReplicasWritable(commandEnv *CommandEnv, vid needle.VolumeI
 		if loc.ServerAddress() == deletedSource {
 			continue
 		}
-		if markErr := markVolumeWritable(commandEnv.option.GrpcDialOption, vid, loc.ServerAddress(), true, false); markErr != nil {
+		if markErr := markVolumeWritable(context.Background(), commandEnv.option.GrpcDialOption, vid, loc.ServerAddress(), true, false); markErr != nil {
 			glog.Errorf("mark volume %d as writable on %s: %v", vid, loc.Url, markErr)
 		}
 	}
@@ -475,7 +476,7 @@ func (c *commandVolumeTierMove) ensureReplicationFulfilled(commandEnv *CommandEn
 	if replicationString != "" {
 		for _, r := range targetTierReplicas {
 			addr := pb.NewServerAddressFromDataNode(r.location.dataNode)
-			if configErr := configureVolumeReplication(commandEnv.option.GrpcDialOption, vid, addr, replicationString); configErr != nil {
+			if configErr := configureVolumeReplication(context.Background(), commandEnv.option.GrpcDialOption, vid, addr, replicationString); configErr != nil {
 				return nil, fmt.Errorf("volume %d: failed to configure replication on existing replica %s: %v", vid, r.location.dataNode.Id, configErr)
 			}
 		}
@@ -509,14 +510,14 @@ func (c *commandVolumeTierMove) ensureReplicationFulfilled(commandEnv *CommandEn
 		candidateAddress := pb.NewServerAddressFromDataNode(candidateDst.dataNode)
 		fmt.Fprintf(writer, "volume %d: replicating from %s to %s\n", vid, sourceAddress, candidateDst.dataNode.Id)
 
-		if copyErr := replicateVolumeToServer(commandEnv.option.GrpcDialOption, writer, vid, sourceAddress, candidateAddress, toDiskType.ReadableString()); copyErr != nil {
+		if copyErr := replicateVolumeToServer(context.Background(), commandEnv.option.GrpcDialOption, writer, vid, sourceAddress, candidateAddress, toDiskType.ReadableString()); copyErr != nil {
 			return nil, fmt.Errorf("replicate volume %d to %s: %v", vid, candidateDst.dataNode.Id, copyErr)
 		}
 
 		// Configure replication on the new replica if an explicit -toReplication was given.
 		// Without it, VolumeCopy already preserves the source's replication from the super block.
 		if replicationString != "" {
-			if configErr := configureVolumeReplication(commandEnv.option.GrpcDialOption, vid, candidateAddress, replicationString); configErr != nil {
+			if configErr := configureVolumeReplication(context.Background(), commandEnv.option.GrpcDialOption, vid, candidateAddress, replicationString); configErr != nil {
 				return nil, fmt.Errorf("volume %d: failed to configure replication on %s: %v", vid, candidateDst.dataNode.Id, configErr)
 			}
 		}

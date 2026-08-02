@@ -43,6 +43,9 @@ Steps to apply erasure coding to .dat .idx files
 
 // VolumeEcShardsGenerate generates the .ecx and .ec00 ~ .ec13 files
 func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_server_pb.VolumeEcShardsGenerateRequest) (*volume_server_pb.VolumeEcShardsGenerateResponse, error) {
+	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
+		return nil, err
+	}
 	if err := vs.CheckMaintenanceMode(); err != nil {
 		return nil, err
 	}
@@ -182,6 +185,9 @@ func recordEcRebuild(result string, d time.Duration) {
 
 // VolumeEcShardsRebuild generates the any of the missing .ec00 ~ .ec13 files
 func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_server_pb.VolumeEcShardsRebuildRequest) (*volume_server_pb.VolumeEcShardsRebuildResponse, error) {
+	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
+		return nil, err
+	}
 	if err := vs.CheckMaintenanceMode(); err != nil {
 		return nil, err
 	}
@@ -292,6 +298,9 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 
 // VolumeEcShardsCopy copy the .ecx and some ec data slices
 func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_server_pb.VolumeEcShardsCopyRequest) (*volume_server_pb.VolumeEcShardsCopyResponse, error) {
+	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
+		return nil, err
+	}
 	if err := vs.CheckMaintenanceMode(); err != nil {
 		return nil, err
 	}
@@ -769,6 +778,9 @@ func (vs *VolumeServer) VolumeEcShardsMount(ctx context.Context, req *volume_ser
 }
 
 func (vs *VolumeServer) VolumeEcShardsUnmount(ctx context.Context, req *volume_server_pb.VolumeEcShardsUnmountRequest) (*volume_server_pb.VolumeEcShardsUnmountResponse, error) {
+	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
+		return nil, err
+	}
 
 	glog.V(0).Infof("VolumeEcShardsUnmount: %v", req)
 
@@ -900,11 +912,22 @@ func (vs *VolumeServer) VolumeEcBlobDelete(ctx context.Context, req *volume_serv
 
 // VolumeEcShardsToVolume generates the .idx, .dat files from .ecx, .ecj and .ec01 ~ .ec14 files
 func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_server_pb.VolumeEcShardsToVolumeRequest) (*volume_server_pb.VolumeEcShardsToVolumeResponse, error) {
+	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
+		return nil, err
+	}
 	if err := vs.CheckMaintenanceMode(); err != nil {
 		return nil, err
 	}
 
 	glog.V(0).Infof("VolumeEcShardsToVolume: %v", req)
+
+	// Staged mode: the caller decoded the shards off-box and streamed the normal
+	// volume here as <base><ext>.copying (ReceiveFile staged-new-volume). Adopt
+	// those files as a normal volume; this server holds no EC shards for the vid,
+	// so there is no local EC decode to run.
+	if req.FromStaged {
+		return vs.adoptStagedVolume(req)
+	}
 
 	// Collect all EC shards (NewEcVolume will load EC config from .vif into v.ECContext)
 	// Use MaxShardCount (32) to support custom EC ratios up to 32 total shards
@@ -1009,6 +1032,81 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 		glog.Errorf("CompactVolumeFiles %s: %v", dataBaseFileName, err)
 	}
 
+	// Co-locate the rebuilt index with the data. The rebuild wrote the .idx to
+	// the shared -dir.idx directory, but the on-demand VolumeMount scans only
+	// the data directory and matches on .idx/.vif: with the index off in the
+	// index directory it would find the volume's leftover EC .vif instead and
+	// skip it as EC metadata. Moving the .idx next to the .dat lets the mount
+	// find the volume; VolumeConsolidateIndex returns it to the index directory
+	// once the EC shards are deleted.
+	if volumeLocation.IdxDirectory != volumeLocation.Directory {
+		idxSrc := storage.VolumeFileName(volumeLocation.IdxDirectory, v.Collection, int(req.VolumeId)) + ".idx"
+		idxDst := storage.VolumeFileName(volumeLocation.Directory, v.Collection, int(req.VolumeId)) + ".idx"
+		if util.FileExists(idxSrc) {
+			if moveErr := storage.RenameOrCopyFile(idxSrc, idxDst); moveErr != nil {
+				glog.Warningf("co-locate rebuilt index %s -> %s: %v", idxSrc, idxDst, moveErr)
+			}
+		}
+	}
+
+	return &volume_server_pb.VolumeEcShardsToVolumeResponse{}, nil
+}
+
+// adoptStagedVolume finalizes a normal volume the caller decoded off-box and
+// streamed here as <base><ext>.copying (ReceiveFile staged-new-volume mode). It
+// renames the staged files into place under a .note in-progress marker and
+// mounts the volume, so <vid> is registered here only as a normal volume — never
+// as an EC/normal twin in one directory.
+func (vs *VolumeServer) adoptStagedVolume(req *volume_server_pb.VolumeEcShardsToVolumeRequest) (*volume_server_pb.VolumeEcShardsToVolumeResponse, error) {
+	vid := needle.VolumeId(req.VolumeId)
+	if vs.store.GetVolume(vid) != nil {
+		return nil, fmt.Errorf("staged volume %d already exists on this server", req.VolumeId)
+	}
+	want := types.ToDiskType(req.DiskType)
+
+	// Locate the disk the ReceiveFile push staged onto: the disk_type location
+	// whose <base>.dat.copying exists.
+	var base string
+	for _, l := range vs.store.Locations {
+		if l.DiskType != want {
+			continue
+		}
+		candidate := storage.VolumeFileName(l.Directory, req.Collection, int(req.VolumeId))
+		if util.FileExists(candidate + ".dat.copying") {
+			base = candidate
+			break
+		}
+	}
+	if base == "" {
+		return nil, fmt.Errorf("staged volume %d: no .dat.copying found on a %s disk", req.VolumeId, req.DiskType)
+	}
+	for _, ext := range []string{".dat", ".idx", ".vif"} {
+		if !util.FileExists(base + ext + ".copying") {
+			return nil, fmt.Errorf("staged volume %d missing %s.copying", req.VolumeId, ext)
+		}
+	}
+
+	// .note in-progress marker (VolumeCopy discipline): a crash mid-rename leaves a
+	// .note that fails the load and sweeps the partial volume on restart.
+	noteFile := base + ".note"
+	if err := util.WriteFile(noteFile, []byte(fmt.Sprintf("adopting decoded volume %d", req.VolumeId)), 0644); err != nil {
+		return nil, fmt.Errorf("write .note for volume %d: %w", req.VolumeId, err)
+	}
+
+	// Rename staged files into place, then drop the .note before mounting — a
+	// volume that still carries a .note is swept by loadExistingVolume.
+	for _, ext := range []string{".vif", ".dat", ".idx"} {
+		if err := os.Rename(base+ext+".copying", base+ext); err != nil {
+			os.Remove(noteFile)
+			return nil, fmt.Errorf("rename staged %s for volume %d: %w", ext, req.VolumeId, err)
+		}
+	}
+	os.Remove(noteFile)
+
+	if err := vs.store.MountVolume(vid); err != nil {
+		return nil, fmt.Errorf("mount staged volume %d: %w", req.VolumeId, err)
+	}
+	glog.V(0).Infof("VolumeEcShardsToVolume: adopted decoded volume %d from staging (%s)", req.VolumeId, base)
 	return &volume_server_pb.VolumeEcShardsToVolumeResponse{}, nil
 }
 

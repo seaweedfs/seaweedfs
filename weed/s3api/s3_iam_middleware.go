@@ -516,12 +516,6 @@ func (s3a *S3ApiServer) SetIAMIntegration(iamManager *integration.IAMManager) {
 	}
 }
 
-// EnhancedS3ApiServer extends S3ApiServer with IAM integration
-type EnhancedS3ApiServer struct {
-	*S3ApiServer
-	iamIntegration IAMIntegration
-}
-
 // OIDCIdentity represents an identity validated through OIDC
 type OIDCIdentity struct {
 	UserID      string

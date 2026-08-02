@@ -6,6 +6,8 @@ import (
 	"io"
 	"sort"
 
+	"google.golang.org/protobuf/proto"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -193,14 +195,52 @@ func (fh *FileHandle) downloadRemoteEntry(entry *LockedEntry) error {
 			return fmt.Errorf("CacheRemoteObjectToLocalCluster file %s: %v", fileFullPath, err)
 		}
 
-		fh.SetEntry(resp.Entry)
-
-		// Async: a sync apply deadlocks against the apply loop's invalidate, which needs this read's file-handle lock.
-		event := resp.GetMetadataEvent()
-		if event == nil {
-			event = metadataUpdateEvent(request.Directory, resp.Entry)
+		// Entry and base are kept in local uid/gid form like every other
+		// install path; the response carries filer ids. Without mapping, an
+		// unchanged re-delivery compares unequal and destroys dirty pages.
+		localEntry := proto.Clone(resp.Entry).(*filer_pb.Entry)
+		if localEntry.Attributes != nil && fh.wfs.option.UidGidMapper != nil {
+			localEntry.Attributes.Uid, localEntry.Attributes.Gid = fh.wfs.option.UidGidMapper.FilerToLocal(localEntry.Attributes.Uid, localEntry.Attributes.Gid)
 		}
-		fh.wfs.applyLocalMetadataEventAsync(event)
+
+		versionTsNs := ackVersionTsNs(resp)
+
+		// Two concurrent reads can both be here (the handle lock is shared;
+		// invalidation is excluded by the exclusive one). Install as one unit,
+		// and only if at least as new — an older response landing last would
+		// keep the newer version over an older entry, fencing out corrections.
+		installed := false
+		fh.remoteInstallMu.Lock()
+		switch {
+		case versionTsNs >= fh.entryVersionTsNs.Load():
+			fh.SetEntry(localEntry)
+			fh.setAuthoritativeBase(proto.Clone(localEntry).(*filer_pb.Entry))
+			fh.advanceEntryVersion(versionTsNs, resp.GetLogSignature())
+			installed = true
+		case versionTsNs == 0 && fh.GetEntry().GetEntry().IsInRemoteOnly():
+			// Unversioned response (pre-upgrade filer) and the handle still has
+			// no local chunks to read: take the content, but claim no position.
+			// A response that is merely *older* is refused instead — its content
+			// predates what the handle already reflects.
+			fh.SetEntry(localEntry)
+			fh.setAuthoritativeBase(proto.Clone(localEntry).(*filer_pb.Entry))
+		}
+		fh.remoteInstallMu.Unlock()
+
+		// Only publish state we accepted, and only when it carries a position
+		// to order it by: an unversioned event would clear the cache entry's
+		// version and let an older subscriber event roll the cache back.
+		// Async: a sync apply deadlocks against the apply loop's invalidate, which needs this read's file-handle lock.
+		if installed && versionTsNs != 0 {
+			event := resp.GetMetadataEvent()
+			if event == nil {
+				event = metadataUpdateEvent(request.Directory, resp.Entry)
+				if event != nil {
+					event.TsNs = versionTsNs
+				}
+			}
+			fh.wfs.applyLocalMetadataEventAsync(event)
+		}
 
 		return nil
 	})

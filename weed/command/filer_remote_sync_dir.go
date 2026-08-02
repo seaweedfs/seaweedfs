@@ -272,7 +272,7 @@ func collectLastSyncOffset(filerClient filer_pb.FilerClient, grpcDialOption grpc
 	// 3. directory creation time
 	var lastOffsetTs time.Time
 	if timeAgo == 0 {
-		mountedDirEntry, err := filer_pb.GetEntry(context.Background(), filerClient, util.FullPath(mountedDir))
+		mountedDirEntry, _, _, err := filer_pb.GetEntry(context.Background(), filerClient, util.FullPath(mountedDir))
 		if err != nil {
 			glog.V(0).Infof("get mounted directory %s: %v", mountedDir, err)
 			return time.Now()

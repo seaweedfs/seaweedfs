@@ -14,7 +14,6 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
@@ -704,9 +703,7 @@ func (s3a *S3ApiServer) authenticateS3Tables(f http.HandlerFunc) http.HandlerFun
 		// Store the authenticated identity in request context
 		if identity != nil && identity.Name != "" {
 			glog.V(2).Infof("S3Tables: authenticated identity Name=%s Account.Id=%s", identity.Name, identity.Account.Id)
-			ctx := s3_constants.SetIdentityNameInContext(r.Context(), identity.Name)
-			ctx = s3_constants.SetIdentityInContext(ctx, identity)
-			r = r.WithContext(ctx)
+			r = r.WithContext(recordIdentityInContext(r, identity))
 		} else {
 			glog.V(2).Infof("S3Tables: authenticated identity is nil or empty name")
 		}

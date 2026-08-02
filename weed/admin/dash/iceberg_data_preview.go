@@ -213,7 +213,7 @@ func (s *AdminServer) listIcebergDataFiles(ctx context.Context, bucketName, name
 	if err != nil {
 		return nil, false, nil, fmt.Errorf("read manifest list %s: %w", manifestListLocation, err)
 	}
-	manifests, err := iceberg.ReadManifestList(bytes.NewReader(listBytes))
+	manifests, err := s3tables.ReadManifestList(listBytes)
 	if err != nil {
 		return nil, false, nil, fmt.Errorf("parse manifest list: %w", err)
 	}

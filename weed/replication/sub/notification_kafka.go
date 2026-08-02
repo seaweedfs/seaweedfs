@@ -23,6 +23,7 @@ type KafkaInput struct {
 	topic       string
 	consumer    sarama.Consumer
 	messageChan chan *sarama.ConsumerMessage
+	progress    *KafkaProgress
 }
 
 func (k *KafkaInput) GetName() string {
@@ -81,6 +82,8 @@ func (k *KafkaInput) initialize(hosts []string, topic string, offsetFile string,
 	progress.lastSaveTime = time.Now()
 	progress.offsetFile = offsetFile
 	progress.offsetSaveIntervalSeconds = offsetSaveIntervalSeconds
+	progress.failedOffsets = make(map[int32]int64)
+	k.progress = progress
 
 	for _, partition := range partitions {
 		offset, found := progress.PartitionOffsets[partition]
@@ -100,9 +103,6 @@ func (k *KafkaInput) initialize(hosts []string, topic string, offsetFile string,
 					fmt.Println(err)
 				case msg := <-partitionConsumer.Messages():
 					k.messageChan <- msg
-					if err := progress.setOffset(msg.Partition, msg.Offset); err != nil {
-						glog.Warningf("set kafka offset: %v", err)
-					}
 				}
 			}
 		}()
@@ -114,6 +114,17 @@ func (k *KafkaInput) initialize(hosts []string, topic string, offsetFile string,
 func (k *KafkaInput) ReceiveMessage() (key string, message *filer_pb.EventNotification, onSuccessFn func(), onFailureFn func(), err error) {
 
 	msg := <-k.messageChan
+
+	// Commit only once the message has been replicated. Committing on receipt
+	// leaves nothing to redeliver when the sink write fails.
+	onSuccessFn = func() {
+		if err := k.progress.setOffset(msg.Partition, msg.Offset); err != nil {
+			glog.Warningf("set kafka offset: %v", err)
+		}
+	}
+	onFailureFn = func() {
+		k.progress.markFailed(msg.Partition, msg.Offset)
+	}
 
 	key = string(msg.Key)
 	message = &filer_pb.EventNotification{}
@@ -128,6 +139,10 @@ type KafkaProgress struct {
 	offsetFile                string
 	lastSaveTime              time.Time
 	offsetSaveIntervalSeconds int
+	// failedOffsets is the oldest offset that failed to replicate in each
+	// partition. Nothing at or past it is ever committed, so a restart
+	// redelivers from the failure instead of resuming after it.
+	failedOffsets map[int32]int64
 	sync.Mutex
 }
 
@@ -164,9 +179,25 @@ func (progress *KafkaProgress) setOffset(partition int32, offset int64) error {
 	progress.Lock()
 	defer progress.Unlock()
 
+	if failedOffset, found := progress.failedOffsets[partition]; found && offset >= failedOffset {
+		return nil
+	}
+
 	progress.PartitionOffsets[partition] = offset
 	if int(time.Now().Sub(progress.lastSaveTime).Seconds()) > progress.offsetSaveIntervalSeconds {
 		return progress.saveProgress()
 	}
 	return nil
+}
+
+// markFailed records an offset that could not be replicated, holding the
+// committed offset for that partition behind it.
+func (progress *KafkaProgress) markFailed(partition int32, offset int64) {
+	progress.Lock()
+	defer progress.Unlock()
+
+	if failedOffset, found := progress.failedOffsets[partition]; !found || offset < failedOffset {
+		progress.failedOffsets[partition] = offset
+		glog.Errorf("replicate kafka %s partition %d offset %d failed; holding the committed offset before it", progress.Topic, partition, offset)
+	}
 }

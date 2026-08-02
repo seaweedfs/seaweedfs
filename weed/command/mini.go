@@ -433,7 +433,7 @@ func initMiniMasterFlags() {
 	miniMasterOptions.raftHashicorp = cmdMini.Flag.Bool("master.raftHashicorp", false, "use hashicorp raft")
 	miniMasterOptions.raftBootstrap = cmdMini.Flag.Bool("master.raftBootstrap", false, "whether to bootstrap the Raft cluster")
 	miniMasterOptions.telemetryUrl = cmdMini.Flag.String("master.telemetry.url", "https://telemetry.seaweedfs.com/api/collect", "telemetry server URL")
-	miniMasterOptions.telemetryEnabled = cmdMini.Flag.Bool("master.telemetry", false, "enable telemetry reporting")
+	miniMasterOptions.telemetryEnabled = cmdMini.Flag.Bool("master.telemetry", true, "report anonymous cluster statistics to master.telemetry.url, use -master.telemetry=false to opt out")
 }
 
 // initMiniFilerFlags initializes Filer server flag options
@@ -1223,6 +1223,7 @@ func runMini(cmd *Command, args []string) bool {
 	miniFilerOptions.masters = pb.ServerAddresses(actualPeersForComponents).ToServiceDiscovery()
 	miniFilerOptions.ip = miniIp
 	miniFilerOptions.bindIp = miniBindIp
+	miniS3Options.ip = miniIp
 	miniS3Options.bindIp = miniBindIp
 	miniWebDavOptions.ipBind = miniBindIp
 	miniOptions.v.ip = miniIp

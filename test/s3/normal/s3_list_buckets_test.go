@@ -35,7 +35,15 @@ func TestListBucketsPaginationAndOwnerIndex(t *testing.T) {
 	    {"name": "carol", "credentials": [{"accessKey": "carol", "secretKey": "carol_secret"}],
 	     "actions": ["List:alice-b1"]},
 	    {"name": "bob", "credentials": [{"accessKey": "bob", "secretKey": "bob_secret"}],
-	     "actions": ["Read:alice-b1"]}
+	     "actions": ["Read:alice-b1"]},
+	    {"name": "dana", "credentials": [{"accessKey": "dana", "secretKey": "dana_secret"}],
+	     "policyNames": ["ReadAliceB1"]},
+	    {"name": "erin", "credentials": [{"accessKey": "erin", "secretKey": "erin_secret"}],
+	     "policyNames": ["ListEveryBucket"]}
+	  ],
+	  "policies": [
+	    {"name": "ReadAliceB1", "content": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:GetBucketLocation\",\"s3:ListBucket\"],\"Resource\":[\"arn:aws:s3:::alice-b1\"]},{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\"],\"Resource\":[\"arn:aws:s3:::alice-b1/*\"]},{\"Effect\":\"Allow\",\"Action\":[\"s3:ListAllMyBuckets\"],\"Resource\":\"*\"}]}"},
+	    {"name": "ListEveryBucket", "content": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:ListBucket\"],\"Resource\":[\"arn:aws:s3:::*\"]}]}"}
 	  ]
 	}`
 	configPath := filepath.Join(t.TempDir(), "s3.json")
@@ -61,6 +69,8 @@ func TestListBucketsPaginationAndOwnerIndex(t *testing.T) {
 	alice := newClient("alice", "alice_secret")
 	carol := newClient("carol", "carol_secret")
 	bob := newClient("bob", "bob_secret")
+	dana := newClient("dana", "dana_secret")
+	erin := newClient("erin", "erin_secret")
 
 	// Non-admin listings use the owner index once the backfill marker exists.
 	markerURL := fmt.Sprintf("http://127.0.0.1:%d/buckets/.system/owners/.complete", cluster.filerPort)
@@ -124,6 +134,25 @@ func TestListBucketsPaginationAndOwnerIndex(t *testing.T) {
 		out, err := bob.ListBuckets(ctx, &s3v2.ListBucketsInput{})
 		require.NoError(t, err)
 		assert.Empty(t, bucketNames(out.Buckets))
+	})
+
+	// An attached IAM policy grants listing on a bucket the identity never
+	// created, so ListBuckets has to report it.
+	t.Run("PolicyGrantVisible", func(t *testing.T) {
+		out, err := dana.ListBuckets(ctx, &s3v2.ListBucketsInput{})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"alice-b1"}, bucketNames(out.Buckets))
+
+		_, err = dana.ListObjectsV2(ctx, &s3v2.ListObjectsV2Input{Bucket: aws.String("alice-b1")})
+		assert.NoError(t, err, "the same policy authorizes reads")
+		_, err = dana.ListObjectsV2(ctx, &s3v2.ListObjectsV2Input{Bucket: aws.String("alice-b3")})
+		assert.Error(t, err, "and grants nothing beyond the bucket it names")
+	})
+
+	t.Run("PolicyWildcardResourceVisible", func(t *testing.T) {
+		out, err := erin.ListBuckets(ctx, &s3v2.ListBucketsInput{})
+		require.NoError(t, err)
+		assert.Equal(t, append(append([]string{}, adminBuckets...), aliceBuckets...), bucketNames(out.Buckets))
 	})
 
 	t.Run("AdminPaginatesAll", func(t *testing.T) {

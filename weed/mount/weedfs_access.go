@@ -17,8 +17,8 @@ type cachedGroupIDs struct {
 }
 
 var (
-	supplementaryGroupCache   = make(map[uint32]*cachedGroupIDs)
-	supplementaryGroupCacheMu sync.RWMutex
+	supplementaryGroupCache    = make(map[uint32]*cachedGroupIDs)
+	supplementaryGroupCacheMu  sync.RWMutex
 	supplementaryGroupCacheTTL = 5 * time.Minute
 
 	lookupSupplementaryGroupIDs = func(callerUid uint32) ([]string, error) {

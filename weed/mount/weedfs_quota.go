@@ -64,8 +64,8 @@ func (wfs *WFS) IsOverQuotaWithUncommitted() bool {
 	}
 	// Check if uncommitted writes would exceed quota
 	uncommitted := atomic.LoadInt64(&uncommittedBytes)
-	usedSize := int64(wfs.stats.UsedSize)
-	return (usedSize + uncommitted) > wfs.option.Quota
+	_, usedSize := wfs.diskSizes()
+	return (int64(usedSize) + uncommitted) > wfs.option.Quota
 }
 
 func (wfs *WFS) loopCheckQuota() {
@@ -98,9 +98,9 @@ func (wfs *WFS) getQuotaCheckInterval() time.Duration {
 		return defaultQuotaCheckInterval
 	}
 
-	usedSize := int64(wfs.stats.UsedSize)
+	_, usedSize := wfs.diskSizes()
 	uncommitted := atomic.LoadInt64(&uncommittedBytes)
-	totalUsed := usedSize + uncommitted
+	totalUsed := int64(usedSize) + uncommitted
 
 	// If we're at 90% or more of quota, check more frequently
 	if float64(totalUsed) >= float64(wfs.option.Quota)*quotaWarningThreshold {
@@ -129,15 +129,18 @@ func (wfs *WFS) checkQuotaOnce() {
 		// Update the stats cache with latest filer data
 		wfs.stats.UsedSize = resp.UsedSize
 		wfs.stats.TotalSize = resp.TotalSize
+		wfs.stats.LogicalUsedSize = resp.LogicalUsedSize
+		wfs.stats.LogicalTotalSize = resp.LogicalTotalSize
 
 		// Reset uncommitted counter since we now have fresh data from filer
 		wfs.ResetUncommittedBytes()
 
-		isOverQuota := int64(resp.UsedSize) > wfs.option.Quota
+		_, usedSize := wfs.diskSizes()
+		isOverQuota := int64(usedSize) > wfs.option.Quota
 		if isOverQuota && !wfs.IsOverQuota {
-			glog.Warningf("Quota Exceeded! quota:%d used:%d", wfs.option.Quota, resp.UsedSize)
+			glog.Warningf("Quota Exceeded! quota:%d used:%d", wfs.option.Quota, usedSize)
 		} else if !isOverQuota && wfs.IsOverQuota {
-			glog.Warningf("Within quota limit! quota:%d used:%d", wfs.option.Quota, resp.UsedSize)
+			glog.Warningf("Within quota limit! quota:%d used:%d", wfs.option.Quota, usedSize)
 		}
 		wfs.IsOverQuota = isOverQuota
 

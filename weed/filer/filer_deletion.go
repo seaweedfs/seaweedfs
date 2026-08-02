@@ -40,25 +40,24 @@ const (
 	DeletionBatchSize = 100000
 )
 
-// retryablePatterns contains error message patterns that indicate temporary/transient conditions
-// that should be retried. These patterns are based on actual error messages from the deletion pipeline.
+// retryablePatterns contains transient conditions specific to the deletion
+// pipeline, on top of the network and service failures util.IsTransientErrorMessage
+// already covers.
+//
+// Context cancellation counts as retryable here but not in util: this decides
+// whether to requeue the deletion, not whether to retry a call, and a cancelled
+// batch leaves the file still needing deletion.
 var retryablePatterns = []string{
 	"is read only",              // Volume temporarily read-only (tiering, maintenance)
 	"error reading from server", // Network I/O errors
-	"connection reset by peer",  // Network connection issues
 	"closed network connection", // Network connection closed unexpectedly
-	"connection refused",        // Server temporarily unavailable
 	"timeout",                   // Operation timeout (network or server)
 	"deadline exceeded",         // Context deadline exceeded
-	"context canceled",          // Context cancellation (may be transient)
+	"context canceled",          // Context cancellation
 	"lookup error",              // Volume lookup failures
 	"lookup failed",             // Volume server discovery issues
 	"too many requests",         // Rate limiting / backpressure
-	"service unavailable",       // HTTP 503 errors
-	"temporarily unavailable",   // Temporary service issues
 	"try again",                 // Explicit retry suggestion
-	"i/o timeout",               // Network I/O timeout
-	"broken pipe",               // Connection broken during operation
 }
 
 // DeletionRetryItem represents a file deletion that failed and needs to be retried
@@ -489,6 +488,10 @@ func isRetryableError(errorMsg string) bool {
 	// Empty errors are not retryable
 	if errorMsg == "" {
 		return false
+	}
+
+	if util.IsTransientErrorMessage(errorMsg) {
+		return true
 	}
 
 	errorLower := strings.ToLower(errorMsg)

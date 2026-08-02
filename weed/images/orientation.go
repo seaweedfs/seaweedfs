@@ -133,7 +133,7 @@ func rotate(im image.Image, angle int) image.Image {
 
 // flip returns a flipped version of the image im, according to
 // the direction(s) in dir.
-// It may flip the imput im in place and return it, or it may allocate a
+// It may flip the input im in place and return it, or it may allocate a
 // new NRGBA (if im is an *image.YCbCr).
 func flip(im image.Image, dir FlipDirection) image.Image {
 	if dir == 0 {

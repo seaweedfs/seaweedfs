@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -96,7 +97,7 @@ func (c *commandVolumeMark) Do(args []string, commandEnv *CommandEnv, writer io.
 		}
 		var failures []error
 		for _, target := range targets {
-			if err := markVolumeWritable(commandEnv.option.GrpcDialOption, target.volumeId, target.sourceVolumeServer, markWritable, true); err != nil {
+			if err := markVolumeWritable(context.Background(), commandEnv.option.GrpcDialOption, target.volumeId, target.sourceVolumeServer, markWritable, true); err != nil {
 				failures = append(failures, fmt.Errorf("mark volume %d on %s: %w", target.volumeId, target.sourceVolumeServer, err))
 				fmt.Fprintf(writer, "volume %d on %s: %v\n", target.volumeId, target.sourceVolumeServer, err)
 				continue
@@ -113,7 +114,7 @@ func (c *commandVolumeMark) Do(args []string, commandEnv *CommandEnv, writer io.
 
 	volumeId := needle.VolumeId(*volumeIdInt)
 
-	return markVolumeWritable(commandEnv.option.GrpcDialOption, volumeId, sourceVolumeServer, markWritable, true)
+	return markVolumeWritable(context.Background(), commandEnv.option.GrpcDialOption, volumeId, sourceVolumeServer, markWritable, true)
 }
 
 type volumeMarkTarget struct {

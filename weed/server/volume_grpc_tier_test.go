@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -21,12 +22,19 @@ import (
 
 const tierTimestampTestBackendName = "tier_timestamp_test.default"
 
+// discardServerStream drops everything sent to it. The embedded
+// grpc.ServerStream is nil, so Context is implemented here rather than promoted
+// -- the tier RPCs read it to authorize the caller.
 type discardServerStream[T any] struct {
 	grpc.ServerStream
 }
 
 func (s *discardServerStream[T]) Send(*T) error {
 	return nil
+}
+
+func (s *discardServerStream[T]) Context() context.Context {
+	return context.Background()
 }
 
 type tierTimestampTestBackend struct {

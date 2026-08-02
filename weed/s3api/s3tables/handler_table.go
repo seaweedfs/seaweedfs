@@ -1182,7 +1182,7 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 
 	// Delete the table
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		dataPath := tableDataDirFromMetadataLocation(metadata.MetadataLocation)
+		dataPath := TableDataDirFromMetadataLocation(metadata.MetadataLocation)
 		if dataPath != "" && dataPath != tablePath && strings.HasPrefix(dataPath+"/", GetTableBucketPath(bucketName)+"/") {
 			// Refuse to purge a data path that is an ancestor of the table's own
 			// name path (e.g. corrupt metadata resolving to the bucket or

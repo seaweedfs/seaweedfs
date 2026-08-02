@@ -136,7 +136,7 @@ func TestApplyMultipartSSES3HeadersFromUploadEntry(t *testing.T) {
 		existingKey := []byte("existing-key-bytes")
 		existingHeader := []byte("aws:kms")
 		finalEntry := &filer_pb.Entry{Extended: map[string][]byte{
-			s3_constants.SeaweedFSSSES3Key:      existingKey,
+			s3_constants.SeaweedFSSSES3Key:       existingKey,
 			s3_constants.AmzServerSideEncryption: existingHeader,
 		}}
 		applyMultipartSSES3HeadersFromUploadEntry(finalEntry, sses3Info)

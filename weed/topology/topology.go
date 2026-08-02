@@ -431,8 +431,9 @@ func (t *Topology) GetVolumeLayout(collectionName string, rp *super_block.Replic
 	}).(*Collection).GetOrCreateVolumeLayout(rp, ttl, diskType)
 }
 
-// CollectionVolumeStats aggregates stats across all volume layouts of one
-// collection, or across every collection when collectionName is empty.
+// CollectionVolumeStats aggregates stats across all volume layouts and EC
+// volumes of one collection, or across every collection when collectionName is
+// empty.
 func (t *Topology) CollectionVolumeStats(collectionName string) *VolumeLayoutStats {
 	ret := &VolumeLayoutStats{}
 	var collections []*Collection
@@ -448,9 +449,17 @@ func (t *Topology) CollectionVolumeStats(collectionName string) *VolumeLayoutSta
 			stats := vl.Stats()
 			ret.TotalSize += stats.TotalSize
 			ret.UsedSize += stats.UsedSize
+			ret.LogicalUsedSize += stats.LogicalUsedSize
 			ret.FileCount += stats.FileCount
 		}
 	}
+	// EC volumes live outside collectionMap, so a collection whose volumes are
+	// all encoded has no layout left to report them
+	ecStats := t.CollectionEcVolumeStats(collectionName)
+	ret.TotalSize += ecStats.TotalSize
+	ret.UsedSize += ecStats.UsedSize
+	ret.LogicalUsedSize += ecStats.LogicalUsedSize
+	ret.FileCount += ecStats.FileCount
 	return ret
 }
 

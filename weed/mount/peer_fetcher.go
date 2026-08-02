@@ -46,13 +46,14 @@ const maxPeerFetchChunkBytes = 64 * 1024 * 1024
 // entryChunkGroup.ReadDataAt (the volume-server path).
 //
 // Flow:
-//   1. Resolve the offset's leaf chunk (flattening manifests).
-//   2. Ask the HRW owner mount for current holders via ChunkLookup.
-//   3. For each holder (LRU order from PR #5), open a FetchChunk stream,
-//      assemble frames into a size-bounded buffer, and verify MD5
-//      end-to-end against FileChunk.ETag.
-//   4. On success, populate chunk_cache and enqueue an announce so
-//      other mounts can discover us as a new holder.
+//  1. Resolve the offset's leaf chunk (flattening manifests).
+//  2. Ask the HRW owner mount for current holders via ChunkLookup.
+//  3. For each holder (LRU order from PR #5), open a FetchChunk stream,
+//     assemble frames into a size-bounded buffer, and verify MD5
+//     end-to-end against FileChunk.ETag.
+//  4. On success, populate chunk_cache and enqueue an announce so
+//     other mounts can discover us as a new holder.
+//
 // chunks is a snapshot captured under the LockedEntry lock by the caller.
 func (fh *FileHandle) tryPeerRead(ctx context.Context, fileSize int64, buff []byte, offset int64, chunks []*filer_pb.FileChunk) (int64, int64, error) {
 	if fh.wfs.peerRegistrar == nil || fh.wfs.peerConnPool == nil {

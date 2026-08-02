@@ -369,8 +369,14 @@ func (x *LookupDirectoryEntryRequest) GetName() string {
 }
 
 type LookupDirectoryEntryResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Entry         *Entry                 `protobuf:"bytes,1,opt,name=entry,proto3" json:"entry,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Entry *Entry                 `protobuf:"bytes,1,opt,name=entry,proto3" json:"entry,omitempty"`
+	// filer log position stamped before the entry read: every event at or
+	// below it is reflected in the returned entry
+	LogTsNs int64 `protobuf:"varint,2,opt,name=log_ts_ns,json=logTsNs,proto3" json:"log_ts_ns,omitempty"`
+	// signature of the filer whose clock stamped log_ts_ns; positions are
+	// only comparable with events that filer logged
+	LogSignature  int32 `protobuf:"varint,3,opt,name=log_signature,json=logSignature,proto3" json:"log_signature,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -410,6 +416,20 @@ func (x *LookupDirectoryEntryResponse) GetEntry() *Entry {
 		return x.Entry
 	}
 	return nil
+}
+
+func (x *LookupDirectoryEntryResponse) GetLogTsNs() int64 {
+	if x != nil {
+		return x.LogTsNs
+	}
+	return 0
+}
+
+func (x *LookupDirectoryEntryResponse) GetLogSignature() int32 {
+	if x != nil {
+		return x.LogSignature
+	}
+	return 0
 }
 
 type ListEntriesRequest struct {
@@ -2251,6 +2271,10 @@ type CreateEntryResponse struct {
 	Error         string                     `protobuf:"bytes,1,opt,name=error,proto3" json:"error,omitempty"` // kept for human readability + backward compat
 	MetadataEvent *SubscribeMetadataResponse `protobuf:"bytes,2,opt,name=metadata_event,json=metadataEvent,proto3" json:"metadata_event,omitempty"`
 	ErrorCode     FilerError                 `protobuf:"varint,3,opt,name=error_code,json=errorCode,proto3,enum=filer_pb.FilerError" json:"error_code,omitempty"` // machine-readable error code
+	// filer log position stamped under the path lock before the write:
+	// every event at or below it is reflected in the acknowledged state
+	LogTsNs       int64 `protobuf:"varint,4,opt,name=log_ts_ns,json=logTsNs,proto3" json:"log_ts_ns,omitempty"`
+	LogSignature  int32 `protobuf:"varint,5,opt,name=log_signature,json=logSignature,proto3" json:"log_signature,omitempty"` // filer whose clock stamped log_ts_ns
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2304,6 +2328,20 @@ func (x *CreateEntryResponse) GetErrorCode() FilerError {
 		return x.ErrorCode
 	}
 	return FilerError_OK
+}
+
+func (x *CreateEntryResponse) GetLogTsNs() int64 {
+	if x != nil {
+		return x.LogTsNs
+	}
+	return 0
+}
+
+func (x *CreateEntryResponse) GetLogSignature() int32 {
+	if x != nil {
+		return x.LogSignature
+	}
+	return 0
 }
 
 type UpdateEntryRequest struct {
@@ -2396,6 +2434,10 @@ func (x *UpdateEntryRequest) GetCondition() *WriteCondition {
 type UpdateEntryResponse struct {
 	state         protoimpl.MessageState     `protogen:"open.v1"`
 	MetadataEvent *SubscribeMetadataResponse `protobuf:"bytes,1,opt,name=metadata_event,json=metadataEvent,proto3" json:"metadata_event,omitempty"`
+	// filer log position stamped under the path lock before the write:
+	// every event at or below it is reflected in the acknowledged state
+	LogTsNs       int64 `protobuf:"varint,2,opt,name=log_ts_ns,json=logTsNs,proto3" json:"log_ts_ns,omitempty"`
+	LogSignature  int32 `protobuf:"varint,3,opt,name=log_signature,json=logSignature,proto3" json:"log_signature,omitempty"` // filer whose clock stamped log_ts_ns
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2435,6 +2477,20 @@ func (x *UpdateEntryResponse) GetMetadataEvent() *SubscribeMetadataResponse {
 		return x.MetadataEvent
 	}
 	return nil
+}
+
+func (x *UpdateEntryResponse) GetLogTsNs() int64 {
+	if x != nil {
+		return x.LogTsNs
+	}
+	return 0
+}
+
+func (x *UpdateEntryResponse) GetLogSignature() int32 {
+	if x != nil {
+		return x.LogSignature
+	}
+	return 0
 }
 
 type TouchAccessTimeRequest struct {
@@ -3751,12 +3807,15 @@ func (x *StatisticsRequest) GetDiskType() string {
 }
 
 type StatisticsResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	TotalSize     uint64                 `protobuf:"varint,4,opt,name=total_size,json=totalSize,proto3" json:"total_size,omitempty"`
-	UsedSize      uint64                 `protobuf:"varint,5,opt,name=used_size,json=usedSize,proto3" json:"used_size,omitempty"`
-	FileCount     uint64                 `protobuf:"varint,6,opt,name=file_count,json=fileCount,proto3" json:"file_count,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	TotalSize uint64                 `protobuf:"varint,4,opt,name=total_size,json=totalSize,proto3" json:"total_size,omitempty"`
+	UsedSize  uint64                 `protobuf:"varint,5,opt,name=used_size,json=usedSize,proto3" json:"used_size,omitempty"`
+	FileCount uint64                 `protobuf:"varint,6,opt,name=file_count,json=fileCount,proto3" json:"file_count,omitempty"`
+	// sizes counting one copy of the data, as reported by the master
+	LogicalTotalSize uint64 `protobuf:"varint,7,opt,name=logical_total_size,json=logicalTotalSize,proto3" json:"logical_total_size,omitempty"`
+	LogicalUsedSize  uint64 `protobuf:"varint,8,opt,name=logical_used_size,json=logicalUsedSize,proto3" json:"logical_used_size,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *StatisticsResponse) Reset() {
@@ -3806,6 +3865,20 @@ func (x *StatisticsResponse) GetUsedSize() uint64 {
 func (x *StatisticsResponse) GetFileCount() uint64 {
 	if x != nil {
 		return x.FileCount
+	}
+	return 0
+}
+
+func (x *StatisticsResponse) GetLogicalTotalSize() uint64 {
+	if x != nil {
+		return x.LogicalTotalSize
+	}
+	return 0
+}
+
+func (x *StatisticsResponse) GetLogicalUsedSize() uint64 {
+	if x != nil {
+		return x.LogicalUsedSize
 	}
 	return 0
 }
@@ -5262,6 +5335,10 @@ type CacheRemoteObjectToLocalClusterResponse struct {
 	state         protoimpl.MessageState     `protogen:"open.v1"`
 	Entry         *Entry                     `protobuf:"bytes,1,opt,name=entry,proto3" json:"entry,omitempty"`
 	MetadataEvent *SubscribeMetadataResponse `protobuf:"bytes,2,opt,name=metadata_event,json=metadataEvent,proto3" json:"metadata_event,omitempty"`
+	// filer log position stamped before the entry read: every event at or
+	// below it is reflected in the returned entry
+	LogTsNs       int64 `protobuf:"varint,3,opt,name=log_ts_ns,json=logTsNs,proto3" json:"log_ts_ns,omitempty"`
+	LogSignature  int32 `protobuf:"varint,4,opt,name=log_signature,json=logSignature,proto3" json:"log_signature,omitempty"` // filer whose clock stamped log_ts_ns
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5308,6 +5385,20 @@ func (x *CacheRemoteObjectToLocalClusterResponse) GetMetadataEvent() *SubscribeM
 		return x.MetadataEvent
 	}
 	return nil
+}
+
+func (x *CacheRemoteObjectToLocalClusterResponse) GetLogTsNs() int64 {
+	if x != nil {
+		return x.LogTsNs
+	}
+	return 0
+}
+
+func (x *CacheRemoteObjectToLocalClusterResponse) GetLogSignature() int32 {
+	if x != nil {
+		return x.LogSignature
+	}
+	return 0
 }
 
 // ///////////////////////
@@ -6673,23 +6764,24 @@ func (x *LocateBrokerResponse_Resource) GetResourceCount() int32 {
 }
 
 type FilerConf_PathConf struct {
-	state                    protoimpl.MessageState `protogen:"open.v1"`
-	LocationPrefix           string                 `protobuf:"bytes,1,opt,name=location_prefix,json=locationPrefix,proto3" json:"location_prefix,omitempty"`
-	Collection               string                 `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
-	Replication              string                 `protobuf:"bytes,3,opt,name=replication,proto3" json:"replication,omitempty"`
-	Ttl                      string                 `protobuf:"bytes,4,opt,name=ttl,proto3" json:"ttl,omitempty"`
-	DiskType                 string                 `protobuf:"bytes,5,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
-	Fsync                    bool                   `protobuf:"varint,6,opt,name=fsync,proto3" json:"fsync,omitempty"`
-	VolumeGrowthCount        uint32                 `protobuf:"varint,7,opt,name=volume_growth_count,json=volumeGrowthCount,proto3" json:"volume_growth_count,omitempty"`
-	ReadOnly                 bool                   `protobuf:"varint,8,opt,name=read_only,json=readOnly,proto3" json:"read_only,omitempty"`
-	DataCenter               string                 `protobuf:"bytes,9,opt,name=data_center,json=dataCenter,proto3" json:"data_center,omitempty"`
-	Rack                     string                 `protobuf:"bytes,10,opt,name=rack,proto3" json:"rack,omitempty"`
-	DataNode                 string                 `protobuf:"bytes,11,opt,name=data_node,json=dataNode,proto3" json:"data_node,omitempty"`
-	MaxFileNameLength        uint32                 `protobuf:"varint,12,opt,name=max_file_name_length,json=maxFileNameLength,proto3" json:"max_file_name_length,omitempty"`
-	DisableChunkDeletion     bool                   `protobuf:"varint,13,opt,name=disable_chunk_deletion,json=disableChunkDeletion,proto3" json:"disable_chunk_deletion,omitempty"`
-	Worm                     bool                   `protobuf:"varint,14,opt,name=worm,proto3" json:"worm,omitempty"`
-	WormGracePeriodSeconds   uint64                 `protobuf:"varint,15,opt,name=worm_grace_period_seconds,json=wormGracePeriodSeconds,proto3" json:"worm_grace_period_seconds,omitempty"`
-	WormRetentionTimeSeconds uint64                 `protobuf:"varint,16,opt,name=worm_retention_time_seconds,json=wormRetentionTimeSeconds,proto3" json:"worm_retention_time_seconds,omitempty"`
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	LocationPrefix       string                 `protobuf:"bytes,1,opt,name=location_prefix,json=locationPrefix,proto3" json:"location_prefix,omitempty"`
+	Collection           string                 `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
+	Replication          string                 `protobuf:"bytes,3,opt,name=replication,proto3" json:"replication,omitempty"`
+	Ttl                  string                 `protobuf:"bytes,4,opt,name=ttl,proto3" json:"ttl,omitempty"`
+	DiskType             string                 `protobuf:"bytes,5,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
+	Fsync                bool                   `protobuf:"varint,6,opt,name=fsync,proto3" json:"fsync,omitempty"`
+	VolumeGrowthCount    uint32                 `protobuf:"varint,7,opt,name=volume_growth_count,json=volumeGrowthCount,proto3" json:"volume_growth_count,omitempty"`
+	ReadOnly             bool                   `protobuf:"varint,8,opt,name=read_only,json=readOnly,proto3" json:"read_only,omitempty"`
+	DataCenter           string                 `protobuf:"bytes,9,opt,name=data_center,json=dataCenter,proto3" json:"data_center,omitempty"`
+	Rack                 string                 `protobuf:"bytes,10,opt,name=rack,proto3" json:"rack,omitempty"`
+	DataNode             string                 `protobuf:"bytes,11,opt,name=data_node,json=dataNode,proto3" json:"data_node,omitempty"`
+	MaxFileNameLength    uint32                 `protobuf:"varint,12,opt,name=max_file_name_length,json=maxFileNameLength,proto3" json:"max_file_name_length,omitempty"`
+	DisableChunkDeletion bool                   `protobuf:"varint,13,opt,name=disable_chunk_deletion,json=disableChunkDeletion,proto3" json:"disable_chunk_deletion,omitempty"`
+	// unset inherits from the enclosing path rule, set overrides it
+	Worm                     *bool  `protobuf:"varint,14,opt,name=worm,proto3,oneof" json:"worm,omitempty"`
+	WormGracePeriodSeconds   uint64 `protobuf:"varint,15,opt,name=worm_grace_period_seconds,json=wormGracePeriodSeconds,proto3" json:"worm_grace_period_seconds,omitempty"`
+	WormRetentionTimeSeconds uint64 `protobuf:"varint,16,opt,name=worm_retention_time_seconds,json=wormRetentionTimeSeconds,proto3" json:"worm_retention_time_seconds,omitempty"`
 	unknownFields            protoimpl.UnknownFields
 	sizeCache                protoimpl.SizeCache
 }
@@ -6816,8 +6908,8 @@ func (x *FilerConf_PathConf) GetDisableChunkDeletion() bool {
 }
 
 func (x *FilerConf_PathConf) GetWorm() bool {
-	if x != nil {
-		return x.Worm
+	if x != nil && x.Worm != nil {
+		return *x.Worm
 	}
 	return false
 }
@@ -6843,9 +6935,11 @@ const file_filer_proto_rawDesc = "" +
 	"\vfiler.proto\x12\bfiler_pb\"O\n" +
 	"\x1bLookupDirectoryEntryRequest\x12\x1c\n" +
 	"\tdirectory\x18\x01 \x01(\tR\tdirectory\x12\x12\n" +
-	"\x04name\x18\x02 \x01(\tR\x04name\"E\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\"\x86\x01\n" +
 	"\x1cLookupDirectoryEntryResponse\x12%\n" +
-	"\x05entry\x18\x01 \x01(\v2\x0f.filer_pb.EntryR\x05entry\"\xe4\x01\n" +
+	"\x05entry\x18\x01 \x01(\v2\x0f.filer_pb.EntryR\x05entry\x12\x1a\n" +
+	"\tlog_ts_ns\x18\x02 \x01(\x03R\alogTsNs\x12#\n" +
+	"\rlog_signature\x18\x03 \x01(\x05R\flogSignature\"\xe4\x01\n" +
 	"\x12ListEntriesRequest\x12\x1c\n" +
 	"\tdirectory\x18\x01 \x01(\tR\tdirectory\x12\x16\n" +
 	"\x06prefix\x18\x02 \x01(\tR\x06prefix\x12,\n" +
@@ -7058,12 +7152,14 @@ const file_filer_proto_rawDesc = "" +
 	"\x1dObjectTransactionBatchRequest\x12F\n" +
 	"\ftransactions\x18\x01 \x03(\v2\".filer_pb.ObjectTransactionRequestR\ftransactions\"c\n" +
 	"\x1eObjectTransactionBatchResponse\x12A\n" +
-	"\tresponses\x18\x01 \x03(\v2#.filer_pb.ObjectTransactionResponseR\tresponses\"\xac\x01\n" +
+	"\tresponses\x18\x01 \x03(\v2#.filer_pb.ObjectTransactionResponseR\tresponses\"\xed\x01\n" +
 	"\x13CreateEntryResponse\x12\x14\n" +
 	"\x05error\x18\x01 \x01(\tR\x05error\x12J\n" +
 	"\x0emetadata_event\x18\x02 \x01(\v2#.filer_pb.SubscribeMetadataResponseR\rmetadataEvent\x123\n" +
 	"\n" +
-	"error_code\x18\x03 \x01(\x0e2\x14.filer_pb.FilerErrorR\terrorCode\"\x8a\x03\n" +
+	"error_code\x18\x03 \x01(\x0e2\x14.filer_pb.FilerErrorR\terrorCode\x12\x1a\n" +
+	"\tlog_ts_ns\x18\x04 \x01(\x03R\alogTsNs\x12#\n" +
+	"\rlog_signature\x18\x05 \x01(\x05R\flogSignature\"\x8a\x03\n" +
 	"\x12UpdateEntryRequest\x12\x1c\n" +
 	"\tdirectory\x18\x01 \x01(\tR\tdirectory\x12%\n" +
 	"\x05entry\x18\x02 \x01(\v2\x0f.filer_pb.EntryR\x05entry\x121\n" +
@@ -7075,9 +7171,11 @@ const file_filer_proto_rawDesc = "" +
 	"\tcondition\x18\x06 \x01(\v2\x18.filer_pb.WriteConditionR\tcondition\x1aC\n" +
 	"\x15ExpectedExtendedEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01\"a\n" +
+	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01\"\xa2\x01\n" +
 	"\x13UpdateEntryResponse\x12J\n" +
-	"\x0emetadata_event\x18\x01 \x01(\v2#.filer_pb.SubscribeMetadataResponseR\rmetadataEvent\"r\n" +
+	"\x0emetadata_event\x18\x01 \x01(\v2#.filer_pb.SubscribeMetadataResponseR\rmetadataEvent\x12\x1a\n" +
+	"\tlog_ts_ns\x18\x02 \x01(\x03R\alogTsNs\x12#\n" +
+	"\rlog_signature\x18\x03 \x01(\x05R\flogSignature\"r\n" +
 	"\x16TouchAccessTimeRequest\x12\x1c\n" +
 	"\tdirectory\x18\x01 \x01(\tR\tdirectory\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12&\n" +
@@ -7189,13 +7287,15 @@ const file_filer_proto_rawDesc = "" +
 	"collection\x18\x02 \x01(\tR\n" +
 	"collection\x12\x10\n" +
 	"\x03ttl\x18\x03 \x01(\tR\x03ttl\x12\x1b\n" +
-	"\tdisk_type\x18\x04 \x01(\tR\bdiskType\"o\n" +
+	"\tdisk_type\x18\x04 \x01(\tR\bdiskType\"\xc9\x01\n" +
 	"\x12StatisticsResponse\x12\x1d\n" +
 	"\n" +
 	"total_size\x18\x04 \x01(\x04R\ttotalSize\x12\x1b\n" +
 	"\tused_size\x18\x05 \x01(\x04R\busedSize\x12\x1d\n" +
 	"\n" +
-	"file_count\x18\x06 \x01(\x04R\tfileCount\"F\n" +
+	"file_count\x18\x06 \x01(\x04R\tfileCount\x12,\n" +
+	"\x12logical_total_size\x18\a \x01(\x04R\x10logicalTotalSize\x12*\n" +
+	"\x11logical_used_size\x18\b \x01(\x04R\x0flogicalUsedSize\"F\n" +
 	"\vPingRequest\x12\x16\n" +
 	"\x06target\x18\x01 \x01(\tR\x06target\x12\x1f\n" +
 	"\vtarget_type\x18\x02 \x01(\tR\n" +
@@ -7304,10 +7404,10 @@ const file_filer_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\fR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\fR\x05value\"%\n" +
 	"\rKvPutResponse\x12\x14\n" +
-	"\x05error\x18\x01 \x01(\tR\x05error\"\xb2\x05\n" +
+	"\x05error\x18\x01 \x01(\tR\x05error\"\xc0\x05\n" +
 	"\tFilerConf\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x05R\aversion\x12:\n" +
-	"\tlocations\x18\x02 \x03(\v2\x1c.filer_pb.FilerConf.PathConfR\tlocations\x1a\xce\x04\n" +
+	"\tlocations\x18\x02 \x03(\v2\x1c.filer_pb.FilerConf.PathConfR\tlocations\x1a\xdc\x04\n" +
 	"\bPathConf\x12'\n" +
 	"\x0flocation_prefix\x18\x01 \x01(\tR\x0elocationPrefix\x12\x1e\n" +
 	"\n" +
@@ -7325,18 +7425,21 @@ const file_filer_proto_rawDesc = "" +
 	" \x01(\tR\x04rack\x12\x1b\n" +
 	"\tdata_node\x18\v \x01(\tR\bdataNode\x12/\n" +
 	"\x14max_file_name_length\x18\f \x01(\rR\x11maxFileNameLength\x124\n" +
-	"\x16disable_chunk_deletion\x18\r \x01(\bR\x14disableChunkDeletion\x12\x12\n" +
-	"\x04worm\x18\x0e \x01(\bR\x04worm\x129\n" +
+	"\x16disable_chunk_deletion\x18\r \x01(\bR\x14disableChunkDeletion\x12\x17\n" +
+	"\x04worm\x18\x0e \x01(\bH\x00R\x04worm\x88\x01\x01\x129\n" +
 	"\x19worm_grace_period_seconds\x18\x0f \x01(\x04R\x16wormGracePeriodSeconds\x12=\n" +
-	"\x1bworm_retention_time_seconds\x18\x10 \x01(\x04R\x18wormRetentionTimeSeconds\"\xba\x01\n" +
+	"\x1bworm_retention_time_seconds\x18\x10 \x01(\x04R\x18wormRetentionTimeSecondsB\a\n" +
+	"\x05_worm\"\xba\x01\n" +
 	"&CacheRemoteObjectToLocalClusterRequest\x12\x1c\n" +
 	"\tdirectory\x18\x01 \x01(\tR\tdirectory\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12+\n" +
 	"\x11chunk_concurrency\x18\x03 \x01(\x05R\x10chunkConcurrency\x121\n" +
-	"\x14download_concurrency\x18\x04 \x01(\x05R\x13downloadConcurrency\"\x9c\x01\n" +
+	"\x14download_concurrency\x18\x04 \x01(\x05R\x13downloadConcurrency\"\xdd\x01\n" +
 	"'CacheRemoteObjectToLocalClusterResponse\x12%\n" +
 	"\x05entry\x18\x01 \x01(\v2\x0f.filer_pb.EntryR\x05entry\x12J\n" +
-	"\x0emetadata_event\x18\x02 \x01(\v2#.filer_pb.SubscribeMetadataResponseR\rmetadataEvent\"\x9b\x01\n" +
+	"\x0emetadata_event\x18\x02 \x01(\v2#.filer_pb.SubscribeMetadataResponseR\rmetadataEvent\x12\x1a\n" +
+	"\tlog_ts_ns\x18\x03 \x01(\x03R\alogTsNs\x12#\n" +
+	"\rlog_signature\x18\x04 \x01(\x05R\flogSignature\"\x9b\x01\n" +
 	"\vLockRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12&\n" +
 	"\x0fseconds_to_lock\x18\x02 \x01(\x03R\rsecondsToLock\x12\x1f\n" +
@@ -7775,6 +7878,7 @@ func file_filer_proto_init() {
 		(*StreamMutateEntryResponse_DeleteResponse)(nil),
 		(*StreamMutateEntryResponse_RenameResponse)(nil),
 	}
+	file_filer_proto_msgTypes[98].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

@@ -205,16 +205,47 @@ func (ms *MasterServer) Statistics(ctx context.Context, req *master_pb.Statistic
 	}
 
 	// an empty collection means all collections, and a named collection covers
-	// all its layouts, so used size matches the topology-wide total size below
+	// all its layouts and EC volumes
 	stats := ms.Topo.CollectionVolumeStats(req.Collection)
-	totalSize := ms.Topo.GetDiskUsages().GetMaxVolumeCount() * int64(ms.option.VolumeSizeLimitMB) * 1024 * 1024
+	totalSize := uint64(ms.Topo.GetDiskUsages().GetMaxVolumeCount() * int64(ms.option.VolumeSizeLimitMB) * 1024 * 1024)
+	// capacity is cluster-wide, so what is left over is what every collection
+	// has not taken, not just the one asked about
+	clusterUsedSize := stats.UsedSize
+	if req.Collection != "" {
+		clusterUsedSize = ms.Topo.CollectionVolumeStats("").UsedSize
+	}
+	// and the free space holds that many copies fewer of whatever the caller writes
+	var freeSize uint64
+	if totalSize > clusterUsedSize {
+		freeSize = (totalSize - clusterUsedSize) / uint64(ms.replicaCopyCount(req.Replication))
+	}
 	resp := &master_pb.StatisticsResponse{
-		TotalSize: uint64(totalSize),
-		UsedSize:  stats.UsedSize,
-		FileCount: stats.FileCount,
+		TotalSize:        totalSize,
+		UsedSize:         stats.UsedSize,
+		FileCount:        stats.FileCount,
+		LogicalTotalSize: stats.LogicalUsedSize + freeSize,
+		LogicalUsedSize:  stats.LogicalUsedSize,
 	}
 
 	return resp, nil
+}
+
+// replicaCopyCount returns how many copies the given replication makes, falling
+// back to the master default and then to a single copy. Unparsable input is
+// reported rather than failing the call: statistics are informational.
+func (ms *MasterServer) replicaCopyCount(replication string) int {
+	for _, s := range []string{replication, ms.option.DefaultReplicaPlacement} {
+		if s == "" {
+			continue
+		}
+		rp, err := super_block.NewReplicaPlacementFromString(s)
+		if err != nil {
+			glog.V(1).Infof("statistics replication %q: %v", s, err)
+			continue
+		}
+		return rp.GetCopyCount()
+	}
+	return 1
 }
 
 func (ms *MasterServer) VolumeList(ctx context.Context, req *master_pb.VolumeListRequest) (*master_pb.VolumeListResponse, error) {

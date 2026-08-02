@@ -11,6 +11,7 @@ on:
       - 'weed/pb/filer.proto'
       - 'test/fuse_p2p/**'
       - '.github/workflows/fuse-p2p-integration.yml'
+      - '.github/actions/fix-fusermount-setuid/**'
   push:
     branches: [master]
     paths:
@@ -21,6 +22,7 @@ on:
       - 'weed/pb/mount_peer.proto'
       - 'weed/pb/filer.proto'
       - 'test/fuse_p2p/**'
+      - '.github/actions/fix-fusermount-setuid/**'
 
 concurrency:
   group: ${{ github.head_ref || github.ref }}/fuse-p2p-integration
@@ -50,6 +52,9 @@ jobs:
           sudo apt-get install -y libfuse3-dev
           echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
           sudo chmod 644 /etc/fuse.conf
+
+      - name: Repair the fusermount3 setuid bit
+        uses: ./.github/actions/fix-fusermount-setuid
 
       - name: Build SeaweedFS
         run: go build -o weed/weed -buildvcs=false ./weed

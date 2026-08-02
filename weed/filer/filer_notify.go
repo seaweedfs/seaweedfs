@@ -7,6 +7,7 @@ import (
 	"io"
 	nethttp "net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -155,6 +156,32 @@ func (f *Filer) triggerLocalEmptyFolderCleanup(oldEntry, newEntry *Entry) {
 	}
 }
 
+// metadataLogUploadLimit is the piece size a metadata log flush starts with. A
+// volume server refuses anything over its -fileSizeLimitMB (256 MB by default),
+// and a single oversized event — a CreateEntry carrying a large inline Content,
+// say — grows the log buffer well past that, leaving a blob that can never be
+// written and blocks every later flush behind it. BufferSize is what an
+// ordinary flush already produces, so it is a size the volume server accepts
+// under any configuration that works at all; a cluster running below it says so
+// in the rejection and volumeFileSizeLimit picks the real limit up from there.
+const metadataLogUploadLimit = log_buffer.BufferSize
+
+var fileSizeLimitPattern = regexp.MustCompile(`file over the limited (\d+) bytes`)
+
+// volumeFileSizeLimit reads the byte limit back out of a volume server's size
+// rejection, and returns 0 for any other error.
+func volumeFileSizeLimit(err error) int {
+	match := fileSizeLimitPattern.FindStringSubmatch(err.Error())
+	if match == nil {
+		return 0
+	}
+	limit, convErr := strconv.Atoi(match[1])
+	if convErr != nil {
+		return 0
+	}
+	return limit
+}
+
 func (f *Filer) logFlushFunc(logBuffer *log_buffer.LogBuffer, startTime, stopTime time.Time, buf []byte, minOffset, maxOffset int64) {
 
 	if len(buf) == 0 {
@@ -168,14 +195,50 @@ func (f *Filer) logFlushFunc(logBuffer *log_buffer.LogBuffer, startTime, stopTim
 		// startTime.Second(), startTime.Nanosecond(),
 	)
 
-	for {
-		if err := f.appendToFile(targetFile, buf); err != nil {
+	// One piece at a time, each retried on its own so a partial success is not
+	// replayed, and the piece size follows the limit the volume servers report.
+	limit := metadataLogUploadLimit
+	for len(buf) > 0 {
+		piece := nextLogPiece(buf, limit)
+		if err := f.appendToFile(targetFile, piece); err != nil {
 			glog.V(0).Infof("metadata log write failed %s: %v", targetFile, err)
+			if reported := volumeFileSizeLimit(err); reported > 0 && reported < limit {
+				glog.V(0).Infof("metadata log upload limit lowered to %d bytes", reported)
+				limit = reported
+				continue
+			}
 			time.Sleep(737 * time.Millisecond)
-		} else {
+			continue
+		}
+		buf = buf[len(piece):]
+	}
+}
+
+// nextLogPiece returns the leading piece of a flushed log buffer, at most
+// maxSize bytes and ending on a record boundary where it can so the piece still
+// decodes on its own. A record longer than maxSize is cut by size instead; the
+// readers fall back to streaming the whole file when a chunk does not decode
+// standalone, so a record may cross a chunk boundary.
+func nextLogPiece(buf []byte, maxSize int) []byte {
+	if len(buf) <= maxSize {
+		return buf
+	}
+
+	pos := 0
+	for pos+4 <= len(buf) {
+		size := int(util.BytesToUint32(buf[pos : pos+4]))
+		end := pos + 4 + size
+		if size <= 0 || end > len(buf) || end > maxSize {
 			break
 		}
+		pos = end
 	}
+	if pos == 0 {
+		// Either the leading record alone is over the limit, or buf starts
+		// mid-record because the piece before it was cut by size.
+		return buf[:maxSize]
+	}
+	return buf[:pos]
 }
 
 var (

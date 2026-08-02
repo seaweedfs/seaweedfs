@@ -148,8 +148,8 @@ func TestFilerListFunc_PropagatesTagsOnFlatFiles(t *testing.T) {
 func TestFilerListFunc_RecursesIntoSubdirs(t *testing.T) {
 	mtime := time.Now()
 	client := &fakeFiler{tree: map[string][]*filer_pb.Entry{
-		"/buckets/bkt":         {dir("logs"), file("root.txt", mtime, 1)},
-		"/buckets/bkt/logs":    {dir("2026"), file("a.log", mtime, 5)},
+		"/buckets/bkt":           {dir("logs"), file("root.txt", mtime, 1)},
+		"/buckets/bkt/logs":      {dir("2026"), file("a.log", mtime, 5)},
 		"/buckets/bkt/logs/2026": {file("b.log", mtime, 7)},
 	}}
 	listFn := FilerListFunc(client, "/buckets")

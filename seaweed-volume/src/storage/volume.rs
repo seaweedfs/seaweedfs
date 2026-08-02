@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::sync::{Condvar, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use tracing::warn;
+use tracing::{info, warn};
 
 #[cfg(test)]
 use crate::storage::idx;
@@ -771,6 +771,23 @@ impl Volume {
         }
 
         if also_load_index {
+            // Recover rows that deletes on a tiered read-only volume overwrote
+            // at the front of .idx. Best effort: a volume that cannot be
+            // repaired is still servable for everything the surviving rows
+            // index.
+            match self.repair_idx_head_tombstones() {
+                Ok(0) => {}
+                Ok(restored) => info!(
+                    volume_id = self.id.0,
+                    restored, "recovered overwritten .idx rows from .dat"
+                ),
+                Err(e) => warn!(
+                    volume_id = self.id.0,
+                    error = %e,
+                    "recover overwritten .idx rows"
+                ),
+            }
+
             self.load_index()?;
 
             // Match Go: CheckVolumeDataIntegrity after loading index (volume_loading.go L154-159)
@@ -990,7 +1007,11 @@ impl Volume {
         Ok(())
     }
 
-    fn read_exact_at_backend(&self, buf: &mut [u8], offset: u64) -> Result<(), VolumeError> {
+    pub(crate) fn read_exact_at_backend(
+        &self,
+        buf: &mut [u8],
+        offset: u64,
+    ) -> Result<(), VolumeError> {
         if let Some(dat_file) = self.dat_file.as_ref() {
             #[cfg(unix)]
             {
@@ -2713,6 +2734,11 @@ impl Volume {
         needle_blob: &[u8],
         size: Size,
     ) -> Result<(), VolumeError> {
+        // nm.put on a read-only volume fails only after the blob is appended to .dat.
+        if self.is_read_only() {
+            return Err(VolumeError::ReadOnly);
+        }
+
         // Dedup check: if the same needle already exists with matching content, skip the write.
         // Matches Go's WriteNeedleBlob which reads existing needle and compares cookie+checksum+data.
         if let Some(nm) = &self.nm {

@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -396,7 +397,7 @@ func (c *commandVolumeFixReplication) deleteOneVolume(commandEnv *CommandEnv, wr
 
 		// Surplus replica being trimmed; keep the remote object since other
 		// replicas of the same .vif still reference it.
-		if err := deleteVolume(commandEnv.option.GrpcDialOption, needle.VolumeId(replica.info.Id),
+		if err := deleteVolume(context.Background(), commandEnv.option.GrpcDialOption, needle.VolumeId(replica.info.Id),
 			pb.NewServerAddressFromDataNode(replica.location.dataNode), false, true); err != nil {
 			fmt.Fprintf(writer, "deleting volume %d from %s : %v", replica.info.Id, replica.location.dataNode.Id, err)
 		} else {
@@ -538,7 +539,7 @@ func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *Co
 		return true, nil
 	}
 
-	err := replicateVolumeToServer(commandEnv.option.GrpcDialOption, writer, needle.VolumeId(replica.info.Id),
+	err := replicateVolumeToServer(context.Background(), commandEnv.option.GrpcDialOption, writer, needle.VolumeId(replica.info.Id),
 		pb.NewServerAddressFromDataNode(replica.location.dataNode),
 		pb.NewServerAddressFromDataNode(dst.dataNode),
 		replica.info.DiskType)

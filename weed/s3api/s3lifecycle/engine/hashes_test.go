@@ -155,8 +155,8 @@ func TestPromotedHash_ChangesOnWalkToReplayDemotion(t *testing.T) {
 	}
 	snap := buildSnapshotForViews(t, "b1", rule)
 
-	before := PromotedHash(snap, s3lifecycle.DaysToDuration(7))   // walk
-	after := PromotedHash(snap, s3lifecycle.DaysToDuration(365))  // demoted back to replay
+	before := PromotedHash(snap, s3lifecycle.DaysToDuration(7))  // walk
+	after := PromotedHash(snap, s3lifecycle.DaysToDuration(365)) // demoted back to replay
 
 	var empty [32]byte
 	assert.NotEqual(t, empty, before)

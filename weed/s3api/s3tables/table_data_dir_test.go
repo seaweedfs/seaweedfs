@@ -16,8 +16,8 @@ func TestTableDataDirFromMetadataLocation(t *testing.T) {
 		{"", ""},
 	}
 	for _, c := range cases {
-		if got := tableDataDirFromMetadataLocation(c.loc); got != c.want {
-			t.Errorf("tableDataDirFromMetadataLocation(%q) = %q, want %q", c.loc, got, c.want)
+		if got := TableDataDirFromMetadataLocation(c.loc); got != c.want {
+			t.Errorf("TableDataDirFromMetadataLocation(%q) = %q, want %q", c.loc, got, c.want)
 		}
 	}
 }

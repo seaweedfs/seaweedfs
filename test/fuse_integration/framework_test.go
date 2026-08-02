@@ -24,8 +24,8 @@ type FuseTestFramework struct {
 	mountPoint   string
 	dataDir      string
 	logDir       string
-	miniProcess  *os.Process
-	mountProcess *os.Process
+	miniProcess  *managedProcess
+	mountProcess *managedProcess
 	filerAddr    string
 	filerPort    int
 	weedBinary   string
@@ -146,7 +146,7 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 	}
 
 	// Wait for filer to be ready (mini starts all services on filerPort)
-	if err := f.waitForService(f.filerAddr, 30*time.Second); err != nil {
+	if err := f.waitForService(f.miniProcess, f.filerAddr, 30*time.Second); err != nil {
 		f.dumpLog("mini")
 		return fmt.Errorf("weed mini not ready: %v", err)
 	}
@@ -173,16 +173,11 @@ func (f *FuseTestFramework) Cleanup() {
 		f.DumpLogs()
 	}
 
-	if f.mountProcess != nil {
-		f.unmountFuse()
-	}
-
 	// Stop processes in reverse order
-	for _, proc := range []*os.Process{f.mountProcess, f.miniProcess} {
-		if proc != nil {
-			proc.Signal(syscall.SIGTERM)
-			proc.Wait()
-		}
+	f.unmountFuse()
+	if f.miniProcess != nil {
+		f.miniProcess.stop()
+		f.miniProcess = nil
 	}
 
 	f.copyLogsForCI()
@@ -209,9 +204,43 @@ func (f *FuseTestFramework) GetFilerAddr() string {
 	return f.filerAddr
 }
 
+// managedProcess is a started weed sub-command whose exit is watched, so a wait
+// for it to come up ends the moment it dies instead of burning its full timeout.
+type managedProcess struct {
+	cmd  *exec.Cmd
+	done chan struct{}
+	err  error // exit error, read only after done is closed
+}
+
+// exited returns the exit error once the process is gone, nil while it runs.
+func (p *managedProcess) exited() error {
+	select {
+	case <-p.done:
+		if p.err != nil {
+			return p.err
+		}
+		return fmt.Errorf("exit status 0")
+	default:
+		return nil
+	}
+}
+
+// stop asks the process to terminate and waits for it to go away.
+func (p *managedProcess) stop() {
+	// Signal fails with os.ErrProcessDone when the child is already gone, which
+	// is exactly the case the select below handles.
+	_ = p.cmd.Process.Signal(syscall.SIGTERM)
+	select {
+	case <-p.done:
+	case <-time.After(10 * time.Second):
+		p.cmd.Process.Kill()
+		<-p.done
+	}
+}
+
 // startProcess is a helper that starts a weed sub-command with output captured
 // to a log file in f.logDir.
-func (f *FuseTestFramework) startProcess(name string, args []string) (*os.Process, error) {
+func (f *FuseTestFramework) startProcess(name string, args []string) (*managedProcess, error) {
 	logFile, err := os.Create(filepath.Join(f.logDir, name+".log"))
 	if err != nil {
 		return nil, fmt.Errorf("create log file: %v", err)
@@ -226,7 +255,13 @@ func (f *FuseTestFramework) startProcess(name string, args []string) (*os.Proces
 	}
 	// Close the file handle — the child process inherited it.
 	logFile.Close()
-	return cmd.Process, nil
+
+	p := &managedProcess{cmd: cmd, done: make(chan struct{})}
+	go func() {
+		p.err = cmd.Wait()
+		close(p.done)
+	}()
+	return p, nil
 }
 
 // dumpLog prints the last lines of a process log file to the test output
@@ -326,8 +361,7 @@ func (f *FuseTestFramework) mountFuse(config *TestConfig) error {
 // unmountFuse unmounts the FUSE filesystem
 func (f *FuseTestFramework) unmountFuse() error {
 	if f.mountProcess != nil {
-		f.mountProcess.Signal(syscall.SIGTERM)
-		f.mountProcess.Wait()
+		f.mountProcess.stop()
 		f.mountProcess = nil
 	}
 
@@ -338,13 +372,16 @@ func (f *FuseTestFramework) unmountFuse() error {
 }
 
 // waitForService waits for a service to be available
-func (f *FuseTestFramework) waitForService(addr string, timeout time.Duration) error {
+func (f *FuseTestFramework) waitForService(proc *managedProcess, addr string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		conn, err := net.DialTimeout("tcp", addr, 1*time.Second)
 		if err == nil {
 			conn.Close()
 			return nil
+		}
+		if exitErr := proc.exited(); exitErr != nil {
+			return fmt.Errorf("process exited (%v) before %s accepted connections", exitErr, addr)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -367,6 +404,11 @@ func (f *FuseTestFramework) waitForMount(timeout time.Duration) error {
 			if _, err := os.ReadDir(f.mountPoint); err == nil {
 				return nil
 			}
+		}
+		// A mount that cannot mount at all (no /dev/fuse, fusermount not setuid)
+		// dies within a second; reporting that beats waiting out the timeout.
+		if exitErr := f.mountProcess.exited(); exitErr != nil {
+			return fmt.Errorf("mount process exited (%v)", exitErr)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}

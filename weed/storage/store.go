@@ -4,10 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
@@ -808,6 +810,70 @@ func (s *Store) UnmountVolume(i needle.VolumeId) error {
 		s.DeletedVolumesChan <- &message
 	}
 	return errors.Join(errs...)
+}
+
+// ConsolidateVolumeIndex returns a volume's index to the configured -dir.idx
+// directory when it is currently co-located with the data. A decode/reconstruct
+// leaves the rebuilt .idx next to the .dat so the on-demand mount can find the
+// volume while the old EC .ecx still coexists in the index directory; once the
+// shards are gone this puts the index back on its own tier. It is a no-op when
+// no separate index directory is configured or the index is already there.
+//
+// The relocation happens in place under the volume lock (see RelocateIndexTo),
+// so the volume never leaves the mounted set and a concurrent read blocks
+// briefly rather than failing.
+func (s *Store) ConsolidateVolumeIndex(i needle.VolumeId) error {
+	for _, location := range s.Locations {
+		if v, found := location.FindVolume(i); found {
+			if location.IdxDirectory == location.Directory {
+				return nil
+			}
+			return v.RelocateIndexTo(location.IdxDirectory)
+		}
+	}
+	return fmt.Errorf("volume %d not found on disk", i)
+}
+
+// RenameOrCopyFile moves src to dst, falling back to a copy when the two sit on
+// different filesystems (os.Rename returns EXDEV across the data and -dir.idx
+// disks, the separate media the flag exists to use).
+func RenameOrCopyFile(src, dst string) error {
+	if err := os.Rename(src, dst); err == nil {
+		return nil
+	} else if !errors.Is(err, syscall.EXDEV) {
+		return err
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		os.Remove(dst)
+		return err
+	}
+	if err := out.Sync(); err != nil {
+		out.Close()
+		os.Remove(dst)
+		return err
+	}
+	if err := out.Close(); err != nil {
+		os.Remove(dst)
+		return err
+	}
+	// Roll the copy back if the source cannot be removed, so a failure never
+	// leaves two divergent copies (the loader would keep using the data-dir one
+	// while the idx-dir orphan goes stale).
+	if err := os.Remove(src); err != nil {
+		os.Remove(dst)
+		return err
+	}
+	return nil
 }
 
 func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool, keepRemoteData bool) error {

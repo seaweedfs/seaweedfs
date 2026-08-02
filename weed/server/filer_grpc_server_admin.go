@@ -23,7 +23,7 @@ func (fs *FilerServer) Statistics(ctx context.Context, req *filer_pb.StatisticsR
 
 	err = fs.filer.MasterClient.WithClient(false, func(masterClient master_pb.SeaweedClient) error {
 		grpcResponse, grpcErr := masterClient.Statistics(context.Background(), &master_pb.StatisticsRequest{
-			Replication: req.Replication,
+			Replication: fs.statisticsReplication(req.Replication),
 			Collection:  req.Collection,
 			Ttl:         req.Ttl,
 			DiskType:    req.DiskType,
@@ -41,10 +41,23 @@ func (fs *FilerServer) Statistics(ctx context.Context, req *filer_pb.StatisticsR
 	}
 
 	return &filer_pb.StatisticsResponse{
-		TotalSize: output.TotalSize,
-		UsedSize:  output.UsedSize,
-		FileCount: output.FileCount,
+		TotalSize:        output.TotalSize,
+		UsedSize:         output.UsedSize,
+		FileCount:        output.FileCount,
+		LogicalTotalSize: output.LogicalTotalSize,
+		LogicalUsedSize:  output.LogicalUsedSize,
 	}, nil
+}
+
+// statisticsReplication names the replication the caller's writes will use, so
+// the master sizes free space by the right number of copies. Writes through
+// this filer follow its default, not the master's, so fill that in when the
+// request leaves the choice open.
+func (fs *FilerServer) statisticsReplication(requested string) string {
+	if requested != "" {
+		return requested
+	}
+	return fs.option.DefaultReplication
 }
 
 // isKnownPingTarget reports whether target is a peer the filer has learned

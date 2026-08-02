@@ -172,6 +172,76 @@ func (t *Topology) LookupEcShards(vid needle.VolumeId) (locations *EcShardLocati
 	return
 }
 
+// ecVolumeCounts accumulates one EC volume's data size and needle counts while
+// they are collected from every node reporting its shards.
+type ecVolumeCounts struct {
+	countedShards erasure_coding.ShardBits
+	dataSize      uint64
+	fileCount     uint64
+	deleteCount   uint64
+}
+
+// CollectionEcVolumeStats sums the disk footprint and live needle count of the
+// EC volumes in one collection, or in every collection when collectionName is
+// empty. Every shard copy counts, parity included, the way a regular volume's
+// used size counts every replica; needle counts are per volume, again as a
+// regular volume reports them. The logical size instead counts each volume's
+// data shards once, leaving out parity and over-replicated copies.
+func (t *Topology) CollectionEcVolumeStats(collectionName string) *VolumeLayoutStats {
+	ret := &VolumeLayoutStats{}
+	perVolume := make(map[needle.VolumeId]*ecVolumeCounts)
+
+	for _, c := range t.Children() {
+		for _, r := range c.(*DataCenter).Children() {
+			for _, n := range r.(*Rack).Children() {
+				for _, ecInfo := range n.(*DataNode).GetEcShards() {
+					if collectionName != "" && ecInfo.Collection != collectionName {
+						continue
+					}
+					ret.UsedSize += uint64(ecInfo.ShardsInfo.TotalSize())
+					counts, found := perVolume[ecInfo.VolumeId]
+					if !found {
+						counts = &ecVolumeCounts{}
+						perVolume[ecInfo.VolumeId] = counts
+					}
+					dataShards := ecInfo.DataShardsOrDefault()
+					for id := range erasure_coding.ShardBits(ecInfo.ShardsInfo.Bitmap()).All() {
+						if int(id) >= dataShards || counts.countedShards.Has(id) {
+							continue
+						}
+						counts.countedShards = counts.countedShards.Set(id)
+						counts.dataSize += uint64(ecInfo.ShardsInfo.Size(id))
+					}
+					// .ecx and .ecj are both volume-wide files that travel with
+					// the shards, so take the largest count any holder reports
+					// rather than summing: a node still loading .ecx reports 0
+					// and must not pin the total down, and a shard move copies
+					// the journal, so several holders can report the same
+					// tombstones. Deletes recorded only on another holder since
+					// then are missed, which errs toward reporting files that
+					// are gone rather than losing a whole volume's count.
+					if ecInfo.FileCount > counts.fileCount {
+						counts.fileCount = ecInfo.FileCount
+					}
+					if ecInfo.DeleteCount > counts.deleteCount {
+						counts.deleteCount = ecInfo.DeleteCount
+					}
+				}
+			}
+		}
+	}
+
+	// an EC volume is sealed, so it offers no room beyond what it holds
+	ret.TotalSize = ret.UsedSize
+	for _, counts := range perVolume {
+		ret.LogicalUsedSize += counts.dataSize
+		if counts.fileCount > counts.deleteCount {
+			ret.FileCount += counts.fileCount - counts.deleteCount
+		}
+	}
+	return ret
+}
+
 func (t *Topology) ListEcServersByCollection(collection string) (dataNodes []pb.ServerAddress) {
 	t.ecShardMapLock.RLock()
 	defer t.ecShardMapLock.RUnlock()

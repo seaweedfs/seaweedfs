@@ -2,6 +2,7 @@ package command
 
 import (
 	"container/heap"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -609,4 +610,77 @@ func TestMetadataProcessorEmptyMarkerKeepsWatermarkStale(t *testing.T) {
 		t.Fatalf("empty marker advanced watermark to %d; want it to stay stale at %d", got, staleOffset)
 	}
 	t.Logf("marker carried fresh ts %d but watermark stayed stale at %d", freshTs, staleOffset)
+}
+
+// waitForJobsToDrain blocks until every job goroutine has finished bookkeeping.
+func waitForJobsToDrain(t *testing.T, p *MetadataProcessor) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		p.activeJobsLock.Lock()
+		remaining := len(p.activeJobs)
+		p.activeJobsLock.Unlock()
+		if remaining == 0 {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("timed out waiting for sync jobs to drain")
+}
+
+// TestFailedJobHoldsWatermark verifies that a job that returns an error keeps
+// the watermark — and therefore the persisted sync offset — behind the failed
+// event, so a restart replays it. Advancing past it drops the event for good:
+// the file stays local-only and nothing ever retries the upload.
+func TestFailedJobHoldsWatermark(t *testing.T) {
+	const failedTsNs = int64(200)
+	// a permanent error, so util.Retry gives up on the first attempt
+	fn := func(resp *filer_pb.SubscribeMetadataResponse) error {
+		if resp.TsNs == failedTsNs {
+			return errors.New("AccessDenied: Access Denied")
+		}
+		return nil
+	}
+	// concurrency 1 runs the jobs serially in timestamp order
+	p := NewMetadataProcessor(fn, 1, 0)
+
+	p.AddSyncJob(makeResp("/dir", "a.txt", false, 100, true))
+	waitForJobsToDrain(t, p)
+	if got := p.processedTsWatermark.Load(); got != 100 {
+		t.Fatalf("watermark = %d after a successful job, want 100", got)
+	}
+
+	p.AddSyncJob(makeResp("/dir", "b.txt", false, failedTsNs, true))
+	waitForJobsToDrain(t, p)
+	if got := p.processedTsWatermark.Load(); got != 100 {
+		t.Fatalf("watermark = %d after a failed job, want it held at 100", got)
+	}
+
+	// later events keep flowing, but the offset stays behind the failure
+	p.AddSyncJob(makeResp("/dir", "c.txt", false, 300, true))
+	waitForJobsToDrain(t, p)
+	if got := p.processedTsWatermark.Load(); got != 100 {
+		t.Fatalf("watermark = %d after a later success, want it held at 100", got)
+	}
+}
+
+// TestFailedJobHoldsWatermarkAtOldestFailure verifies that the watermark is
+// pinned by the oldest failure, not the most recent one.
+func TestFailedJobHoldsWatermarkAtOldestFailure(t *testing.T) {
+	fn := func(resp *filer_pb.SubscribeMetadataResponse) error {
+		if resp.TsNs == 200 || resp.TsNs == 400 {
+			return errors.New("AccessDenied: Access Denied")
+		}
+		return nil
+	}
+	p := NewMetadataProcessor(fn, 1, 0)
+
+	for _, ts := range []int64{100, 200, 300, 400, 500} {
+		p.AddSyncJob(makeResp("/dir", fmt.Sprintf("f%d.txt", ts), false, ts, true))
+		waitForJobsToDrain(t, p)
+	}
+
+	if got := p.processedTsWatermark.Load(); got != 100 {
+		t.Fatalf("watermark = %d, want it held at 100 by the failure at 200", got)
+	}
 }

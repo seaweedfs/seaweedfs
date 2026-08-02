@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
 
@@ -245,6 +245,172 @@ jobs:
               sys.exit(1)
           PYEOF
           echo "IAM gRPC decoupling tests passed"
+
+          echo ""
+          echo "=== Testing bucket hook credentials ==="
+          # The bucket hook pipes s3.configure into `weed shell`, which needs
+          # the filer JWT signing key once jwtSigning.filerWrite is on: the
+          # filer rejects unsigned IAM gRPC calls, and `weed shell` still
+          # exits 0, so the Job goes green while anonymousRead is dropped.
+          # The key reaches the hook either through security.toml or through
+          # an environment override in extraEnvironmentVars.
+          python3 - "$CHART_DIR" <<'PYEOF'
+          import re, subprocess, sys, yaml
+
+          chart = sys.argv[1]
+
+          def render(values):
+              args = ["helm", "template", "test", chart]
+              for k, v in values.items():
+                  args += ["--set", f"{k}={v}"]
+              return subprocess.check_output(args, text=True)
+
+          def hook_pod(manifest):
+              for d in yaml.safe_load_all(manifest):
+                  if d and d.get("kind") == "Job" and d["metadata"]["name"].endswith("-bucket-hook"):
+                      return d["spec"]["template"]["spec"]
+              return None
+
+          def cluster_endpoints(manifest):
+              """Where the chart's own Services put master and filer.
+
+              The hook's WEED_CLUSTER_* values have to match these: a defined
+              name pointing anywhere else fails the readiness wait exactly as
+              an undefined one does.
+              """
+              wanted = {"-master": "swfs-master", "-filer-client": "swfs-filer"}
+              found = {}
+              for d in yaml.safe_load_all(manifest):
+                  if not d or d.get("kind") != "Service":
+                      continue
+                  for suffix, portName in wanted.items():
+                      if not d["metadata"]["name"].endswith(suffix):
+                          continue
+                      port = next((p["port"] for p in d["spec"]["ports"] if p.get("name") == portName), None)
+                      if port:
+                          found[suffix] = f"{d['metadata']['name']}.{d['metadata']['namespace']}:{port}"
+              return found.get("-master"), found.get("-filer-client")
+
+          buckets = {
+              "s3.enabled": "true",
+              "s3.createBuckets[0].name": "data",
+              "s3.createBuckets[0].anonymousRead": "true",
+          }
+          jwt = dict(buckets, **{"global.seaweedfs.securityConfig.jwtSigning.filerWrite": "true"})
+
+          failed = []
+
+          # The script in the hook addresses master and filer through
+          # WEED_CLUSTER_*, now rendered next to extraEnvironmentVars.
+          # Duplicate names would be a rendering bug.
+          out = render(buckets)
+          pod = hook_pod(out)
+          if pod is None:
+              failed.append("createBuckets: bucket hook Job missing")
+          else:
+              env = pod["containers"][0]["env"]
+              names = [e["name"] for e in env]
+              dupes = sorted({n for n in names if names.count(n) > 1})
+              if dupes:
+                  failed.append(f"createBuckets: duplicate env entries {dupes}")
+              values = {e["name"]: e.get("value") for e in env}
+              if not values.get("WEED_CLUSTER_DEFAULT"):
+                  failed.append("createBuckets: hook env WEED_CLUSTER_DEFAULT is empty")
+              rendered = (values.get("WEED_CLUSTER_SW_MASTER"), values.get("WEED_CLUSTER_SW_FILER"))
+              expected = cluster_endpoints(out)
+              if not all(expected):
+                  failed.append(f"createBuckets: no master/filer-client Service to compare against, found {expected}")
+              elif rendered != expected:
+                  failed.append(f"createBuckets: hook env holds {rendered}, the services are at {expected}")
+              elif not dupes:
+                  print("createBuckets: hook env resolves the cluster addresses once")
+              if any(v["name"] == "security-config" for v in pod.get("volumes", [])):
+                  failed.append("createBuckets: hook mounts security-config without JWT signing")
+
+          # filerWrite=true: the hook needs the same security.toml the filer
+          # gets, otherwise s3.configure fails with "missing authorization
+          # metadata".
+          pod = hook_pod(render(jwt))
+          if pod is None:
+              failed.append("filerWrite=true: bucket hook Job missing")
+          else:
+              vol = next((v for v in pod.get("volumes", []) if v["name"] == "security-config"), None)
+              mount = next((m for m in pod["containers"][0].get("volumeMounts", []) if m["name"] == "security-config"), None)
+              # The file has to land on one of weed's config search paths, so
+              # the target matters as much as the volume itself - and a volume
+              # of that name backed by anything but the chart's ConfigMap
+              # leaves `weed shell` without the signing key just the same.
+              target = ("/etc/seaweedfs/security.toml", "security.toml")
+              configmap = "test-seaweedfs-security-config"
+              if vol is None or mount is None:
+                  failed.append("filerWrite=true: bucket hook does not mount security-config (s3.configure would fail)")
+              elif (mount.get("mountPath"), mount.get("subPath")) != target:
+                  failed.append(f"filerWrite=true: bucket hook mounts security-config as {mount}")
+              elif vol.get("configMap", {}).get("name") != configmap:
+                  failed.append(f"filerWrite=true: security-config is not backed by the {configmap} ConfigMap: {vol}")
+              else:
+                  print("filerWrite=true: bucket hook mounts security-config at /etc/seaweedfs/security.toml")
+
+          # The readiness waits dereference the cluster env names, so renaming
+          # the cluster alias has to rename them too: an undefined name leaves
+          # the hook polling "http://" for five minutes and then failing the
+          # release. The endpoints stay chart-computed, so an address kept in
+          # extraEnvironmentVars is replaced, not rendered twice.
+          out = render(dict(buckets, **{
+              "global.seaweedfs.extraEnvironmentVars.WEED_CLUSTER_DEFAULT": "prod",
+              "global.seaweedfs.extraEnvironmentVars.WEED_CLUSTER_PROD_MASTER": "stale:9333",
+              "global.seaweedfs.extraEnvironmentVars.WEED_CLUSTER_SW_MASTER": "null",
+              "global.seaweedfs.extraEnvironmentVars.WEED_CLUSTER_SW_FILER": "null",
+          }))
+          pod = hook_pod(out)
+          if pod is None:
+              failed.append("cluster alias: bucket hook Job missing")
+          else:
+              container = pod["containers"][0]
+              env = {e["name"]: e.get("value") for e in container["env"]}
+              waited = re.findall(r'wait_for_service "http://\$(\w+)', container["command"][2])
+              undefined = sorted(n for n in set(waited) if not env.get(n))
+              renamed = (env.get("WEED_CLUSTER_PROD_MASTER"), env.get("WEED_CLUSTER_PROD_FILER"))
+              expected = cluster_endpoints(out)
+              if not waited:
+                  failed.append("cluster alias: hook script has no readiness waits")
+              elif undefined:
+                  failed.append(f"cluster alias: hook waits on undefined env {undefined}")
+              elif not all(expected):
+                  failed.append(f"cluster alias: no master/filer-client Service to compare against, found {expected}")
+              elif renamed != expected:
+                  # Both addresses under the renamed alias, not just the one
+                  # the values tried to keep: the stale one would fail the
+                  # release, and a missing filer address just as much.
+                  failed.append(f"cluster alias: hook waits on {renamed}, the services are at {expected}")
+              else:
+                  print("cluster alias: hook waits on the renamed names and the chart's addresses")
+
+          # Keys kept in a Secret are referenced, not inlined, so the hook
+          # must render valueFrom for non-string extraEnvironmentVars.
+          out = render(dict(jwt, **{
+              "global.seaweedfs.extraEnvironmentVars.WEED_JWT_FILER_SIGNING_KEY.secretKeyRef.name": "signing-keys",
+              "global.seaweedfs.extraEnvironmentVars.WEED_JWT_FILER_SIGNING_KEY.secretKeyRef.key": "filerWrite",
+          }))
+          pod = hook_pod(out)
+          if pod is None:
+              failed.append("secretKeyRef: bucket hook Job missing")
+          else:
+              entry = next((e for e in pod["containers"][0]["env"] if e["name"] == "WEED_JWT_FILER_SIGNING_KEY"), None)
+              if entry is None:
+                  failed.append("secretKeyRef: hook env WEED_JWT_FILER_SIGNING_KEY missing")
+              elif entry.get("valueFrom", {}).get("secretKeyRef") != {"name": "signing-keys", "key": "filerWrite"}:
+                  failed.append(f"secretKeyRef: hook env rendered as {entry}")
+              else:
+                  print("secretKeyRef: hook env keeps the secret reference")
+
+          if failed:
+              print("\nFAIL:", file=sys.stderr)
+              for f in failed:
+                  print(f"  - {f}", file=sys.stderr)
+              sys.exit(1)
+          PYEOF
+          echo "Bucket hook credential tests passed"
 
           echo "=== Testing with monitoring enabled ==="
           helm template test $CHART_DIR \
@@ -697,6 +863,439 @@ jobs:
           echo "$BOOL_FALSE" | grep -q -- '-status Suspended' || { echo "FAIL: bool false versioning did not Suspend the bucket"; exit 1; }
           echo "Bucket versioning: YAML bool false suspends consistently with string \"false\""
 
+          echo ""
+          echo "=== Testing hook Job labels ==="
+          # The hook Jobs were the only pods in the chart without the standard
+          # app.kubernetes.io label set, so nothing label-based could target
+          # them - NetworkPolicy podSelectors, monitoring, kubectl -l. Assert
+          # both the Job and its pod template carry the same name/instance/
+          # component triple the other components use, and that the triple is
+          # the hook's own so a per-component selector cannot match it too.
+          #
+          # Only the bucket hook is covered: the volume resize hook is gated on
+          # lookup finding a StatefulSet with a smaller PVC than requested, and
+          # lookup returns nothing under helm template, so it never renders here.
+          python3 - "$CHART_DIR" <<'PYEOF'
+          import subprocess, sys, yaml
+
+          chart = sys.argv[1]
+          # The three a selector keys on, and the full set the other workloads
+          # carry - a missing chart or managed-by label is not a selector
+          # problem, but it does leave the hook Jobs looking unlike everything
+          # else the release owns.
+          TRIPLE = ("app.kubernetes.io/name", "app.kubernetes.io/instance",
+                    "app.kubernetes.io/component")
+          # The labels that identify the release rather than the workload, and
+          # so have to hold the same values everywhere. They are compared
+          # against a workload that already renders them instead of being
+          # spelled out here, which keeps the chart version out of the test.
+          # managed-by is not among them on purpose: the chart puts it on
+          # workload metadata but not on pod templates, so it cannot be part of
+          # a cross-workload comparison. Its presence is still checked below.
+          RELEASE = ("app.kubernetes.io/name", "app.kubernetes.io/instance",
+                     "helm.sh/chart")
+          STANDARD = TRIPLE + ("helm.sh/chart", "app.kubernetes.io/managed-by")
+
+          def render(values):
+              args = ["helm", "template", "test", chart]
+              for k, v in values.items():
+                  args += ["--set", f"{k}={v}"]
+              return subprocess.check_output(args, text=True)
+
+          def docs(manifest):
+              return [d for d in yaml.safe_load_all(manifest) if d]
+
+          def hook_job(manifest):
+              for d in docs(manifest):
+                  if d.get("kind") == "Job" and d["metadata"]["name"].endswith("-bucket-hook"):
+                      return d
+              return None
+
+          def triple(labels):
+              return {k: labels.get(k) for k in TRIPLE}
+
+          def release(labels):
+              return {k: labels.get(k) for k in RELEASE}
+
+          def reference(manifest):
+              """Any long-running workload; they all carry the release labels."""
+              for d in docs(manifest):
+                  if d.get("kind") in ("Deployment", "StatefulSet"):
+                      return d
+              return None
+
+          modes = {
+              "s3": {"s3.enabled": "true",
+                     "s3.createBuckets[0].name": "b"},
+              "filer.s3": {"filer.s3.enabled": "true",
+                           "filer.s3.createBuckets[0].name": "b"},
+              "allInOne": {"allInOne.enabled": "true",
+                           "allInOne.s3.enabled": "true",
+                           "allInOne.s3.createBuckets[0].name": "b"},
+          }
+
+          failed = []
+          for mode, values in modes.items():
+              before = len(failed)
+              out = render(values)
+              job = hook_job(out)
+              if job is None:
+                  failed.append(f"{mode}: bucket hook Job not rendered")
+                  continue
+              job_labels = job["metadata"].get("labels", {})
+              pod_labels = job["spec"]["template"]["metadata"].get("labels", {})
+              ref = reference(out)
+              if ref is None:
+                  failed.append(f"{mode}: no workload to compare the release labels against")
+                  continue
+              ref_labels = release(ref["spec"]["template"]["metadata"].get("labels", {}))
+              for where, labels in (("Job", job_labels), ("pod", pod_labels)):
+                  missing = [k for k in STANDARD if not labels.get(k)]
+                  if missing:
+                      failed.append(f"{mode}: bucket hook {where} has no {missing}, "
+                                    "nothing can select it")
+                  component = labels.get("app.kubernetes.io/component")
+                  if component != "bucket-hook":
+                      failed.append(f"{mode}: bucket hook {where} component is "
+                                    f"{component!r}, expected 'bucket-hook'")
+                  # Present is not enough: the values have to be the release's
+                  # own, or a selector written for this release misses the hook.
+                  if release(labels) != ref_labels:
+                      failed.append(f"{mode}: bucket hook {where} release labels "
+                                    f"{release(labels)} differ from "
+                                    f"{ref['metadata']['name']}'s {ref_labels}")
+              # A selector written against the Job has to find its pods.
+              if triple(job_labels) != triple(pod_labels):
+                  failed.append(f"{mode}: bucket hook Job and pod disagree: "
+                                f"{triple(job_labels)} vs {triple(pod_labels)}")
+              # The triple must not also match another component's pods, or a
+              # selector meant for that component would pull the hook pod in.
+              for d in docs(out):
+                  if d.get("kind") not in ("Deployment", "StatefulSet"):
+                      continue
+                  other = d["spec"]["template"]["metadata"].get("labels", {})
+                  if triple(other) == triple(pod_labels):
+                      failed.append(f"{mode}: bucket hook pod shares its label triple "
+                                    f"with {d['metadata']['name']}")
+              if len(failed) == before:
+                  print(f"{mode}: bucket hook Job and pod carry a distinct label triple")
+
+          if failed:
+              print("\nFAIL:", file=sys.stderr)
+              for f in failed:
+                  print(f"  - {f}", file=sys.stderr)
+              sys.exit(1)
+          PYEOF
+          echo "Hook Job label tests passed"
+
+          echo ""
+          echo "=== Testing NetworkPolicy rendering ==="
+          # The policies are only exercised for real by the networkpolicy-install
+          # job below. These assertions cover what template rendering can see:
+          # that the flag stays off by default, that every deployed component has
+          # exactly one policy, that each policy allows every port its workload
+          # declares, and that egress stays a separate opt-in.
+          python3 - "$CHART_DIR" <<'PYEOF'
+          import subprocess, sys, yaml
+
+          chart = sys.argv[1]
+
+          def render(values, json_values=None):
+              args = ["helm", "template", "test", chart]
+              for k, v in values.items():
+                  args += ["--set", f"{k}={v}"]
+              for k, v in (json_values or {}).items():
+                  args += ["--set-json", f"{k}={v}"]
+              return subprocess.check_output(args, text=True, stderr=subprocess.STDOUT)
+
+          def expect_failure(values, needle, label, json_values=None):
+              try:
+                  render(values, json_values)
+              except subprocess.CalledProcessError as e:
+                  if needle not in (e.output or ""):
+                      failed.append(f"{label}: unexpected error: {(e.output or '')[:200]}")
+                  else:
+                      print(label)
+                  return
+              failed.append(f"{label}: render should have failed")
+
+          def docs(manifest):
+              return [d for d in yaml.safe_load_all(manifest) if d]
+
+          def component(labels):
+              return labels.get("app.kubernetes.io/component")
+
+          def policies(manifest):
+              out = {}
+              for d in docs(manifest):
+                  if d.get("kind") != "NetworkPolicy":
+                      continue
+                  out[component(d["spec"]["podSelector"]["matchLabels"])] = d
+              return out
+
+          def workloads(manifest, kinds=("Deployment", "StatefulSet")):
+              out = {}
+              for d in docs(manifest):
+                  if d.get("kind") in kinds:
+                      out[component(d["spec"]["template"]["metadata"]["labels"])] = d
+              return out
+
+          def allowed_ports(policy):
+              ports = set()
+              for rule in policy["spec"].get("ingress") or []:
+                  for p in rule.get("ports") or []:
+                      ports.add(p["port"])
+              return ports
+
+          def container_ports(workload):
+              ports = set()
+              for c in workload["spec"]["template"]["spec"].get("containers", []):
+                  for p in c.get("ports") or []:
+                      ports.add(p["containerPort"])
+              return ports
+
+          EVERYTHING = {
+              "s3.enabled": "true",
+              "sftp.enabled": "true",
+              "admin.enabled": "true",
+              "worker.enabled": "true",
+              "cosi.enabled": "true",
+              "s3.createBuckets[0].name": "b",
+              "volumes.ssd.port": "8081",
+              "global.seaweedfs.monitoring.enabled": "true",
+          }
+
+          failed = []
+
+          # Off by default: the chart has never shipped a NetworkPolicy and must not
+          # start now, or every existing release in a default-deny namespace changes
+          # behaviour on the next upgrade.
+          if policies(render(EVERYTHING)):
+              failed.append("networkPolicy.enabled unset: policies rendered anyway")
+          else:
+              print("networkPolicy off by default: no policies rendered")
+
+          on = dict(EVERYTHING, **{"networkPolicy.enabled": "true"})
+          out = render(on)
+          pols = policies(out)
+          wls = workloads(out)
+
+          # Every workload gets exactly one policy, and every policy has a workload.
+          # A component with no policy is wide open under default-deny; a policy with
+          # no component is dead weight that hides a renamed label.
+          for comp in wls:
+              if comp not in pols:
+                  failed.append(f"{comp}: workload has no NetworkPolicy")
+          for comp in pols:
+              # The bucket hook Job is covered too, and a Job is not a workload here.
+              if comp not in wls and comp != "bucket-hook":
+                  failed.append(f"{comp}: NetworkPolicy selects a component that is not deployed")
+
+          # The ports a component listens on come from the same values as its
+          # containerPorts, so the two must agree. This is what catches a port added to
+          # a workload and forgotten in the policy - the failure mode that only shows up
+          # once someone turns the flag on.
+          for comp, wl in wls.items():
+              if comp not in pols:
+                  continue
+              declared = container_ports(wl)
+              allowed = allowed_ports(pols[comp])
+              missing = sorted(declared - allowed)
+              if missing:
+                  failed.append(f"{comp}: listens on {missing} but its policy does not allow it")
+          if not failed:
+              print("every workload has a policy covering all of its containerPorts")
+
+          # The bucket hook Job and its policy are gated on one shared helper, and
+          # this pins that down: a Job without its policy hangs under default-deny,
+          # a policy without its Job is noise. The combinations cover the modes that
+          # decide it, including the ones where a bucket list is ignored.
+          hook_cases = {
+              "nothing": {},
+              "s3 without buckets": {"s3.enabled": "true"},
+              "s3 with buckets": {"s3.enabled": "true", "s3.createBuckets[0].name": "b"},
+              "filer.s3 without buckets": {"filer.s3.enabled": "true"},
+              "filer.s3 with buckets": {"filer.s3.enabled": "true",
+                                        "filer.s3.createBuckets[0].name": "b"},
+              "s3 gateway, buckets on filer.s3": {"s3.enabled": "true",
+                                                  "filer.s3.createBuckets[0].name": "b"},
+              "allInOne without buckets": {"allInOne.enabled": "true",
+                                           "allInOne.s3.enabled": "true"},
+              "allInOne with buckets": {"allInOne.enabled": "true",
+                                        "allInOne.s3.enabled": "true",
+                                        "allInOne.s3.createBuckets[0].name": "b"},
+              # allInOne reads only its own bucket list, so s3.createBuckets is
+              # not enough to produce the Job.
+              "allInOne, buckets on s3": {"allInOne.enabled": "true",
+                                          "allInOne.s3.enabled": "true",
+                                          "s3.createBuckets[0].name": "b"},
+              "master off": {"master.enabled": "false", "s3.enabled": "true",
+                             "s3.createBuckets[0].name": "b"},
+              "buckets but no S3 endpoint": {"s3.createBuckets[0].name": "b"},
+          }
+          for label, values in hook_cases.items():
+              out = render(dict(values, **{"networkPolicy.enabled": "true"}))
+              job = any(d.get("kind") == "Job"
+                        and d["metadata"]["name"].endswith("-bucket-hook")
+                        for d in docs(out))
+              policy = "bucket-hook" in policies(out)
+              if job != policy:
+                  failed.append(f"{label}: bucket hook Job={job} but its policy={policy}; "
+                                "the two are gated on seaweedfs.bucketHookEnabled and "
+                                "have to appear together")
+          if not failed:
+              print(f"bucket hook Job and policy agree across {len(hook_cases)} modes")
+
+          # Egress is its own opt-in: with it off the policies must not constrain
+          # outbound traffic at all, or enabling networkPolicy alone would cut the filer
+          # off from its store.
+          for comp, p in pols.items():
+              if "Egress" in p["spec"]["policyTypes"]:
+                  failed.append(f"{comp}: Egress in policyTypes while networkPolicy.egress.enabled is false")
+          if not any("Egress" in p["spec"]["policyTypes"] for p in pols.values()):
+              print("egress off by default: policies are ingress-only")
+
+          # Components that need the API server must not silently lose it: rendering
+          # fails with a pointer to the value instead.
+          expect_failure(dict(on, **{"networkPolicy.egress.enabled": "true"}),
+                         "kubeApiServer.cidrs is empty",
+                         "empty kubeApiServer.cidrs fails the render with a pointer to the value")
+
+          egress_on = dict(on, **{
+              "networkPolicy.egress.enabled": "true",
+              "networkPolicy.egress.kubeApiServer.cidrs[0]": "10.96.0.1/32",
+          })
+
+          # An empty port or peer list is "everything" in a NetworkPolicy, not
+          # "nothing", so the two places that could be emptied have to be refused
+          # rather than quietly widened.
+          expect_failure(egress_on, "kubeApiServer.ports is empty",
+                         "empty kubeApiServer.ports is refused instead of allowing every port",
+                         json_values={"networkPolicy.egress.kubeApiServer.ports": "[]"})
+          expect_failure(egress_on, "allowDNS is on but both",
+                         "DNS with no selector is refused instead of allowing every pod",
+                         json_values={"networkPolicy.egress.dnsNamespaceSelector": "null",
+                                      "networkPolicy.egress.dnsPodSelector": "null"})
+
+          # Dropping one of the two DNS selectors must leave the key out, not
+          # render it as null - null namespaceSelector means this namespace and
+          # null podSelector means every pod in the peer namespace.
+          for dropped in ("dnsNamespaceSelector", "dnsPodSelector"):
+              out = render(egress_on, {f"networkPolicy.egress.{dropped}": "null"})
+              nulls = [(c, k) for c, p in policies(out).items()
+                       for r in p["spec"]["egress"]
+                       for t in r.get("to") or []
+                       for k, v in t.items() if v is None]
+              nulls += [(c, "ports") for c, p in policies(out).items()
+                        for r in p["spec"]["egress"] if "ports" in r and r["ports"] is None]
+              if nulls:
+                  failed.append(f"{dropped}=null: rendered null keys {sorted(set(nulls))}")
+              else:
+                  print(f"{dropped}=null: the key is left out rather than rendered as null")
+
+          # Helm allows a release named "123", and an unquoted label value then
+          # renders as a YAML integer. Label values are strings in the API, so the
+          # whole object gets rejected - a policy that never applies, silently.
+          # Every label the policies emit, in metadata and in every selector, has
+          # to survive that release name as a string.
+          numeric = subprocess.check_output(
+              ["helm", "template", "123", chart,
+               "--set", "networkPolicy.enabled=true",
+               "--set", "networkPolicy.egress.enabled=true",
+               "--set", "networkPolicy.egress.kubeApiServer.cidrs[0]=10.96.0.1/32",
+               "--set", "s3.enabled=true", "--set", "s3.createBuckets[0].name=b"],
+              text=True, stderr=subprocess.STDOUT)
+
+          def label_maps(policy):
+              yield "metadata", policy["metadata"].get("labels", {})
+              yield "podSelector", policy["spec"]["podSelector"]["matchLabels"]
+              for direction in ("ingress", "egress"):
+                  for i, rule in enumerate(policy["spec"].get(direction) or []):
+                      for peer in rule.get("to") or rule.get("from") or []:
+                          for key in ("podSelector", "namespaceSelector"):
+                              sel = peer.get(key) or {}
+                              yield f"{direction}[{i}].{key}", sel.get("matchLabels", {})
+
+          coerced = [(comp, where, k, v)
+                     for comp, p in policies(numeric).items()
+                     for where, labels in label_maps(p)
+                     for k, v in labels.items() if not isinstance(v, str)]
+          if coerced:
+              failed.append(f"release name 123: label values are not strings, so the API "
+                            f"server rejects the policy: {coerced}")
+          else:
+              print("a numeric release name keeps every policy label a string")
+
+          out = render(egress_on)
+          pols = policies(out)
+
+          # DNS for everyone: every component addresses its peers by service name.
+          for comp, p in pols.items():
+              dns = [r for r in p["spec"]["egress"]
+                     if {x["port"] for x in r.get("ports") or []} == {53}]
+              if not dns:
+                  failed.append(f"{comp}: egress on but no DNS rule")
+          if not failed:
+              print("every policy allows DNS when egress is on")
+
+          # The API server rule goes only to what talks to it, which is the COSI
+          # sidecar and, on an upgrade that grows a PVC, the resize hook. No
+          # seaweedfs binary does - there is no client-go in go.mod - so admin
+          # must not be in here: it would force everyone running admin to name an
+          # API server address for a connection that is never made.
+          apiserver = {c for c, p in pols.items()
+                       if any("ipBlock" in t for r in p["spec"]["egress"] for t in r.get("to") or [])}
+          expected = {"objectstorage-provisioner"}
+          if apiserver != expected:
+              failed.append(f"API server egress granted to {sorted(apiserver)}, expected {sorted(expected)}")
+          else:
+              print(f"API server egress limited to {sorted(expected)}")
+
+          # Which means egress on its own must render for a release that runs
+          # neither COSI nor a resize: no component of it reaches the API server,
+          # so nothing may demand a CIDR for one.
+          for label, values in {"defaults": {}, "admin": {"admin.enabled": "true"}}.items():
+              try:
+                  render(dict(values, **{"networkPolicy.enabled": "true",
+                                         "networkPolicy.egress.enabled": "true"}))
+                  print(f"egress on {label} renders without kubeApiServer.cidrs")
+              except subprocess.CalledProcessError as e:
+                  failed.append(f"{label}: egress needs kubeApiServer.cidrs but nothing "
+                                f"in the release talks to the API server: {(e.output or '')[:200]}")
+
+          # The resize hook's policy is gated on the same lookup as its Job, so
+          # neither is ever in a rendered set - a policy on its own would be an
+          # orphaned hook resource on every install, since Helm does not collect
+          # those. The hook annotations it carries when the lookup does hit are
+          # only reachable against a live cluster.
+          if "volume-resize-hook" in pols:
+              failed.append("volume-resize-hook policy rendered without its Job; the two "
+                            "are gated on seaweedfs.volumeResizeHookCommands and have to "
+                            "appear together")
+          else:
+              print("volume-resize-hook policy tracks its Job rather than rendering always")
+
+          # A components key that names nothing reads as "these rules are applied"
+          # and silently does not apply them.
+          expect_failure(dict(on, **{"networkPolicy.components.filerr.extraIngress[0].ports[0].port": "1"}),
+                         '"filerr" is not a component of this chart',
+                         "a misspelled networkPolicy.components key fails the render")
+
+          # The bucket hook is post-install, so the release manifest is already applied;
+          # its policy must be a plain resource that uninstall cleans up.
+          if "helm.sh/hook" in (pols["bucket-hook"]["metadata"].get("annotations") or {}):
+              failed.append("bucket-hook policy is a hook resource; post-install runs after the manifest is applied")
+          else:
+              print("bucket-hook policy is a plain release resource")
+
+          if failed:
+              print("\nFAIL:", file=sys.stderr)
+              for f in failed:
+                  print(f"  - {f}", file=sys.stderr)
+              sys.exit(1)
+          PYEOF
+          echo "NetworkPolicy rendering tests passed"
+
           echo "All template rendering tests passed!"
 
       - name: Create kind cluster
@@ -749,3 +1348,113 @@ jobs:
 
           kubectl delete namespace "$NS"
           echo "SFTP host key lifecycle tests passed"
+
+      - name: Verify install into a default-deny namespace
+        run: |
+          set -e
+          CHART_DIR="k8s/charts/seaweedfs"
+          NS="netpol"
+
+          # kind enforces NetworkPolicy out of the box since v0.24 (kindnetd
+          # runs sigs.k8s.io/kube-network-policies), so the cluster created for
+          # chart-testing above is enough and no extra CNI is needed. The two
+          # probes at the end fail loudly if that ever stops being true, rather
+          # than letting this pass vacuously.
+          kubectl create namespace "$NS"
+          kubectl apply -n "$NS" -f - <<'EOF'
+          apiVersion: networking.k8s.io/v1
+          kind: NetworkPolicy
+          metadata:
+            name: default-deny
+          spec:
+            podSelector: {}
+            policyTypes: [Ingress, Egress]
+          EOF
+
+          # The backend address, not the kubernetes service ClusterIP: kube-proxy
+          # rewrites the destination, so an ipBlock has to name the real endpoint.
+          APISERVER=$(kubectl get endpointslice kubernetes \
+            -o jsonpath='{.endpoints[0].addresses[0]}' 2>/dev/null || true)
+          if [ -z "$APISERVER" ]; then
+            APISERVER=$(kubectl get endpoints kubernetes -o jsonpath='{.subsets[0].addresses[0].ip}')
+          fi
+          echo "kube-apiserver at $APISERVER"
+
+          echo "=== install with the policies on ==="
+          # Without them this hangs: the components cannot resolve or reach each
+          # other, and the post-install bucket hook waits on master and filer
+          # until it gives up. --wait covers the components, and helm fails the
+          # release if the hook Job does not finish, so a clean install is the
+          # assertion.
+          helm install np $CHART_DIR -n "$NS" --wait --timeout 8m \
+            --set s3.enabled=true \
+            --set s3.createBuckets[0].name=testbucket \
+            --set networkPolicy.enabled=true \
+            --set networkPolicy.egress.enabled=true \
+            --set networkPolicy.egress.kubeApiServer.cidrs[0]="$APISERVER/32"
+          echo "release came up and the bucket hook finished under default-deny"
+
+          FILER_IP=$(kubectl get pod -n "$NS" -l app.kubernetes.io/component=filer \
+            -o jsonpath='{.items[0].status.podIP}')
+          echo "filer pod at $FILER_IP"
+
+          # Both probes get their own all-egress policy, so the namespace-wide
+          # default-deny is not what decides the outcome: the only thing left in
+          # the way is the filer's own policy, which admits release pods only.
+          # Probing the pod IP keeps DNS out of it.
+          kubectl apply -n "$NS" -f - <<'EOF'
+          apiVersion: networking.k8s.io/v1
+          kind: NetworkPolicy
+          metadata:
+            name: probe-egress
+          spec:
+            podSelector:
+              matchExpressions:
+                - key: probe
+                  operator: Exists
+            policyTypes: [Egress]
+            egress:
+              - {}
+          EOF
+
+          # Only the marker line, so a probe that never produced one cannot be
+          # mistaken for a verdict: "pod/x created" on stdout would read as
+          # "not exit=0", which is how the denied case passes. busybox wget
+          # reports a timeout on stderr even under -q and kubectl logs returns
+          # both streams, so the marker has to be picked out rather than taken
+          # as the whole log. Empty output stays empty - the callers fail on it.
+          probe() {
+            local name=$1
+            local labels=$2
+            kubectl run "$name" -n "$NS" --image=busybox:1.36 --restart=Never \
+              --labels="probe=$name,$labels" --command -- \
+              sh -c "wget -T 5 -q -O /dev/null http://$FILER_IP:8888/; echo exit=\$?" >/dev/null
+            kubectl wait -n "$NS" --for=jsonpath='{.status.phase}'=Succeeded \
+              "pod/$name" --timeout=120s >/dev/null
+            kubectl logs -n "$NS" "$name" | grep '^exit=' || true
+          }
+
+          # A pod carrying the release labels is what the filer's policy allows.
+          # This has to succeed, otherwise the policies are blocking traffic they
+          # are supposed to permit - or nothing is enforced and the next probe
+          # would be meaningless.
+          ALLOWED=$(probe probe-allowed "app.kubernetes.io/name=seaweedfs,app.kubernetes.io/instance=np")
+          echo "labelled probe: $ALLOWED"
+          case "$ALLOWED" in
+            exit=0) echo "a pod with the release labels reaches the filer";;
+            *) echo "FAIL: the filer policy rejects a pod carrying the release labels"; exit 1;;
+          esac
+
+          # The same probe without those labels must not get through. Assert the
+          # wget failure rather than the absence of a success, so an empty log
+          # fails the job instead of reading as a denial.
+          DENIED=$(probe probe-denied "role=outsider")
+          echo "unlabelled probe: $DENIED"
+          case "$DENIED" in
+            exit=0) echo "FAIL: a pod outside the release reached the filer; the policy over-allows"; exit 1;;
+            exit=*) echo "the filer policy refuses a pod outside the release";;
+            *) echo "FAIL: the probe produced no result, so nothing was tested: '$DENIED'"; exit 1;;
+          esac
+
+          kubectl delete namespace "$NS" --wait=false
+          echo "default-deny namespace tests passed"

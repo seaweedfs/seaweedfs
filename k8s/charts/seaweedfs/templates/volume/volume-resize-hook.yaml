@@ -1,58 +1,20 @@
 {{- $seaweedfsName := include "seaweedfs.fullname" $ }}
-{{- $volumes := deepCopy .Values.volumes | mergeOverwrite (dict "" .Values.volume)  }}
+{{- /* Shared with networkpolicy.yaml, which renders this Job's policy exactly
+       when the Job itself renders. */}}
+{{- /* trim: include returns a string, and a whitespace-only one is truthy. */}}
+{{- $commands := include "seaweedfs.volumeResizeHookCommands" . | trim }}
 
-
-{{- if .Values.volume.resizeHook.enabled }}
-{{-   $commands := list }}
-{{-   range $vname, $volume := $volumes }}
-{{-     $volumeName := trimSuffix "-" (printf "volume-%s" $vname) }}
-{{-     $volume := mergeOverwrite (deepCopy $.Values.volume) (dict "enabled" true) $volume }}
-
-{{-     if $volume.enabled }}
-{{-       $replicas := int $volume.replicas -}}
-{{-       $statefulsetName := printf "%s-%s" $seaweedfsName $volumeName -}}
-{{-       $statefulset := (lookup "apps/v1" "StatefulSet" $.Release.Namespace $statefulsetName) -}}
-
-{{/*      Check for changes in volumeClaimTemplates */}}
-{{-       if $statefulset }}
-{{-         range $dir := $volume.dataDirs }}
-{{-           if eq .type "persistentVolumeClaim" }}
-{{-             $desiredSize := .size }}
-{{-             range $statefulset.spec.volumeClaimTemplates }}
-{{-               if and (eq .metadata.name $dir.name) (ne .spec.resources.requests.storage $desiredSize) }}
-{{-                 $commands = append $commands (printf "kubectl delete statefulset %s --cascade=orphan" $statefulsetName) }}
-{{-               end }}
-{{-             end }}
-{{-           end }}
-{{-         end }}
-{{-       end }}
-
-{{/*      Check for the need for patching existing PVCs */}}
-{{-       range $dir := $volume.dataDirs }}
-{{-         if eq .type "persistentVolumeClaim" }}
-{{-           $desiredSize := .size }}
-{{-           range $i, $e := until $replicas }}
-{{-             $pvcName := printf "%s-%s-%s-%d" $dir.name $seaweedfsName $volumeName $e }}
-{{-             $currentPVC := (lookup "v1" "PersistentVolumeClaim" $.Release.Namespace $pvcName) }}
-{{-             if and $currentPVC }}
-{{-             $oldSize := include "seaweedfs.resource-quantity" $currentPVC.spec.resources.requests.storage }}
-{{-             $newSize := include "seaweedfs.resource-quantity" $desiredSize }}
-{{-               if gt $newSize $oldSize }}
-{{-               $commands = append $commands (printf "kubectl patch pvc %s-%s-%s-%d -p '{\"spec\":{\"resources\":{\"requests\":{\"storage\":\"%s\"}}}}'" $dir.name $seaweedfsName $volumeName $e $desiredSize) }}
-{{-               end }}
-{{-             end }}
-{{-           end }}
-{{-         end }}
-{{-       end }}
-
-{{-     end }}
-{{-   end }}
-
-{{-   if $commands }}
+{{- if $commands }}
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: "{{ $seaweedfsName }}-volume-resize-hook"
+  labels:
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/managed-by: {{ .Release.Service | quote }}
+    app.kubernetes.io/instance: {{ .Release.Name | quote }}
+    app.kubernetes.io/component: volume-resize-hook
   annotations:
     helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "0"
@@ -60,6 +22,13 @@ metadata:
 spec:
   backoffLimit: 1
   template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+        helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+        app.kubernetes.io/managed-by: {{ .Release.Service | quote }}
+        app.kubernetes.io/instance: {{ .Release.Name | quote }}
+        app.kubernetes.io/component: volume-resize-hook
     spec:
       serviceAccountName: {{ $seaweedfsName }}-volume-resize-hook
       restartPolicy: Never
@@ -69,9 +38,7 @@ spec:
           command: ["sh", "-xec"]
           args:
             - |
-              {{- range $commands }}
-              {{ . }}
-              {{- end }}
+{{ $commands | indent 14 }}
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -113,5 +80,4 @@ roleRef:
   kind: Role
   name: {{ $seaweedfsName }}-volume-resize-hook
   apiGroup: rbac.authorization.k8s.io
-{{-   end }}
 {{- end }}

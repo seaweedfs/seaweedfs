@@ -45,7 +45,7 @@
 [seaweedfs]
     path = @SHARE_PATH@
     comment = SeaweedFS share backed by a FUSE mount
-    browseable = yes
+    browsable = yes
     read only = no
     create mask = 0644
     directory mask = 0755

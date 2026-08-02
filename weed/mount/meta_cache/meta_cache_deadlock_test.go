@@ -58,7 +58,7 @@ func TestApplyLoopInvalidateDoesNotDeadlockWithLockHoldingEnqueuer(t *testing.T)
 			defer cachedMu.Unlock()
 			return cached[path]
 		},
-		func(path util.FullPath, entry *filer_pb.Entry) {
+		func(inv EntryInvalidation) {
 			// Mirrors the wfs invalidateFunc: it takes the open file
 			// handle's exclusive lock before refreshing the handle entry.
 			enteredOnce.Do(func() { close(invalidateEntered) })

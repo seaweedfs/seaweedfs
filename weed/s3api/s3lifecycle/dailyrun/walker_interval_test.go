@@ -64,11 +64,11 @@ func TestWalkerDue(t *testing.T) {
 // (tests, in-repo integration) doesn't regress.
 func TestRunShard_WalkerThrottle(t *testing.T) {
 	cases := []struct {
-		name             string
-		interval         time.Duration
-		secondPassAfter  time.Duration
-		wantTotalCalls   int
-		wantSecondAdvNs  bool // did LastWalkedNs change between pass 1 and pass 2?
+		name            string
+		interval        time.Duration
+		secondPassAfter time.Duration
+		wantTotalCalls  int
+		wantSecondAdvNs bool // did LastWalkedNs change between pass 1 and pass 2?
 	}{
 		{"interval=0 fires every pass", 0, 30 * time.Second, 2, true},
 		{"throttled: second pass within interval", time.Hour, 30 * time.Second, 1, false},

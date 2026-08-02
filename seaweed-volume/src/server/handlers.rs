@@ -733,7 +733,7 @@ async fn proxy_or_redirect_to_target(
     // Shuffle for load balancing
     if candidates.len() >= 2 {
         use rand::seq::SliceRandom;
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         candidates.shuffle(&mut rng);
     }
 

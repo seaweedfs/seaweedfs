@@ -93,13 +93,15 @@ func (l *ExclusiveLocker) RequestLock(clientName string) {
 	if l.renewGoroutineRunning.CompareAndSwap(false, true) {
 		// start a goroutine to renew the lease
 		go func() {
-			defer l.renewGoroutineRunning.Store(false)
 			ctx2, cancel2 := context.WithCancel(context.Background())
 			defer cancel2()
 
 			for {
 				if err := l.renewLease(ctx2); err != nil {
 					glog.Warningf("Failed to renew lock %s: %v", l.lockName, err)
+					// clear the running flag before isLocked, so a RequestLock that
+					// reacquires (once isLocked is false) starts a replacement renewer
+					l.renewGoroutineRunning.Store(false)
 					l.isLocked.Store(false)
 					return
 				}

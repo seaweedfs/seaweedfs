@@ -496,7 +496,7 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 
 // purgeOneVolume picks the orphan fids to delete for a single volume and
 // fires the delete RPC. It's split out of findExtraChunksInVolumeServers so
-// the `defer markVolumeWritable(..., false, false)` at the bottom fires
+// the `defer markVolumeWritable(context.Background(), ..., false, false)` at the bottom fires
 // between volumes — putting that defer inside the caller's for-loop would
 // leave every processed volume writable until the whole fsck run finished.
 func (c *commandVolumeFsck) purgeOneVolume(volumeId uint32, orphanReplicaFileIds map[string]int, replicaCount int, readOnlyReplicas []pb.ServerAddress) error {
@@ -518,12 +518,12 @@ func (c *commandVolumeFsck) purgeOneVolume(volumeId uint32, orphanReplicaFileIds
 
 	needleVID := needle.VolumeId(volumeId)
 	for _, server := range readOnlyReplicas {
-		if err := markVolumeWritable(c.env.option.GrpcDialOption, needleVID, server, true, false); err != nil {
+		if err := markVolumeWritable(context.Background(), c.env.option.GrpcDialOption, needleVID, server, true, false); err != nil {
 			// Replicas flipped writable earlier roll back via the defer.
 			return fmt.Errorf("mark %v writable: %v", server, err)
 		}
 		fmt.Fprintf(c.writer, "temporarily marked %d on server %v writable for forced purge\n", volumeId, server)
-		defer markVolumeWritable(c.env.option.GrpcDialOption, needleVID, server, false, false)
+		defer markVolumeWritable(context.Background(), c.env.option.GrpcDialOption, needleVID, server, false, false)
 	}
 
 	if *c.verbose {

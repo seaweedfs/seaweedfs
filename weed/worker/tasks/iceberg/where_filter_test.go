@@ -241,11 +241,11 @@ func TestCompactDataFilesWhereFilter(t *testing.T) {
 		t.Fatalf("unexpected result: %q", result)
 	}
 
-	meta, _, err := loadCurrentMetadata(context.Background(), client, setup.BucketName, setup.tablePath())
+	state, err := loadCurrentMetadata(context.Background(), client, setup.BucketName, setup.tablePath())
 	if err != nil {
 		t.Fatalf("loadCurrentMetadata: %v", err)
 	}
-	manifests, err := loadCurrentManifests(context.Background(), client, setup.BucketName, setup.tablePath(), meta)
+	manifests, err := loadCurrentManifests(context.Background(), client, setup.BucketName, state.DataPath, state.Metadata)
 	if err != nil {
 		t.Fatalf("loadCurrentManifests: %v", err)
 	}

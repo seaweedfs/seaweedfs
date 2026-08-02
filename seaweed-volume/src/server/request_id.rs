@@ -88,13 +88,13 @@ pub fn outgoing_request_id_interceptor(mut request: Request<()>) -> Result<Reque
 }
 
 pub fn generate_http_request_id() -> String {
-    use rand::Rng;
+    use rand::RngExt;
 
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos() as u64;
-    let rand_val: u32 = rand::thread_rng().gen();
+    let rand_val: u32 = rand::rng().random();
     format!("{:X}{:08X}", nanos, rand_val)
 }
 

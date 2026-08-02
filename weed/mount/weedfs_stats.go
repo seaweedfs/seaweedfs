@@ -18,6 +18,19 @@ type statsCache struct {
 	lastChecked int64 // unix time in seconds
 }
 
+// diskSizes reports the sizes df and the quota work from. By default that is
+// the space the cluster gives up to the data, counting every replica and every
+// EC shard. Under -df.logical it is the data itself, with the free space
+// converted to how much more of it the mount's replication setting allows.
+func (wfs *WFS) diskSizes() (totalSize, usedSize uint64) {
+	// a filer older than the logical sizes sends zeros, so keep reporting the
+	// raw ones rather than an empty filesystem
+	if wfs.option.LogicalDiskUsage && wfs.stats.LogicalTotalSize > 0 {
+		return wfs.stats.LogicalTotalSize, wfs.stats.LogicalUsedSize
+	}
+	return wfs.stats.TotalSize, wfs.stats.UsedSize
+}
+
 func (wfs *WFS) StatFs(cancel <-chan struct{}, in *fuse.InHeader, out *fuse.StatfsOut) (code fuse.Status) {
 
 	// glog.V(4).Infof("reading fs stats")
@@ -43,6 +56,8 @@ func (wfs *WFS) StatFs(cancel <-chan struct{}, in *fuse.InHeader, out *fuse.Stat
 
 			wfs.stats.TotalSize = resp.TotalSize
 			wfs.stats.UsedSize = resp.UsedSize
+			wfs.stats.LogicalTotalSize = resp.LogicalTotalSize
+			wfs.stats.LogicalUsedSize = resp.LogicalUsedSize
 			wfs.stats.FileCount = resp.FileCount
 			wfs.stats.lastChecked = time.Now().Unix()
 
@@ -54,8 +69,7 @@ func (wfs *WFS) StatFs(cancel <-chan struct{}, in *fuse.InHeader, out *fuse.Stat
 		}
 	}
 
-	totalDiskSize := wfs.stats.TotalSize
-	usedDiskSize := wfs.stats.UsedSize
+	totalDiskSize, usedDiskSize := wfs.diskSizes()
 	actualFileCount := wfs.stats.FileCount
 
 	if wfs.option.Quota > 0 && totalDiskSize > uint64(wfs.option.Quota) {
