@@ -41,16 +41,10 @@ func NewWinFS(wfs *mount.WFS, uid, gid uint32) *WinFS {
 	return &WinFS{wfs: wfs, uid: uid, gid: gid}
 }
 
-// walk resolves a path to an inode. A path the mount already tracks resolves
-// straight out of its table; anything else is looked up a component at a time,
-// which also registers the mappings the raw operations index by.
+// walk resolves a path one component at a time. Lookup does more than find an
+// inode: it refreshes what the mount knows about the entry, so the result of a
+// preceding truncate or write is visible to the caller.
 func (w *WinFS) walk(parts []string) (uint64, fuse.Status) {
-	if len(parts) == 0 {
-		return rootInode, fuse.OK
-	}
-	if inode, ok := w.wfs.KnownInode(strings.Join(parts, "/")); ok {
-		return inode, fuse.OK
-	}
 	inode := uint64(rootInode)
 	for _, name := range parts {
 		var out fuse.EntryOut
@@ -67,6 +61,21 @@ func (w *WinFS) resolve(path string) (uint64, fuse.Status) {
 	return w.walk(splitPath(path))
 }
 
+// walkDir resolves a directory chain, preferring an inode the mount already
+// tracks. The Lookup refresh is skipped only here, where the caller wants
+// somewhere to create or delete in rather than fresh attributes: re-walking
+// the chain on every create is hundreds of concurrent lookups of one
+// directory, and lookupEntry reports ENOENT if one lands mid cache refresh.
+func (w *WinFS) walkDir(parts []string) (uint64, fuse.Status) {
+	if len(parts) == 0 {
+		return rootInode, fuse.OK
+	}
+	if inode, ok := w.wfs.KnownInode(strings.Join(parts, "/")); ok {
+		return inode, fuse.OK
+	}
+	return w.walk(parts)
+}
+
 // resolveParent resolves everything but the last component, which the create
 // and delete operations need separately.
 func (w *WinFS) resolveParent(path string) (uint64, string, fuse.Status) {
@@ -74,7 +83,7 @@ func (w *WinFS) resolveParent(path string) (uint64, string, fuse.Status) {
 	if !ok {
 		return 0, "", fuse.EINVAL
 	}
-	parent, status := w.walk(parentParts)
+	parent, status := w.walkDir(parentParts)
 	if status != fuse.OK {
 		return 0, "", status
 	}
