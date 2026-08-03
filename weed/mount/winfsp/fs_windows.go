@@ -148,6 +148,7 @@ func (w *WinFS) Statfs(path string, stat *cgofuse.Statfs_t) int {
 func (w *WinFS) Getattr(path string, stat *cgofuse.Stat_t, fh uint64) int {
 	inode, status := w.resolve(path)
 	if status != fuse.OK {
+		glog.Errorf("getattr %s: resolving: %v", path, status)
 		return toErrno(status)
 	}
 	in := &fuse.GetAttrIn{InHeader: fuse.InHeader{NodeId: inode}}
@@ -225,14 +226,13 @@ func (w *WinFS) Create(path string, flags int, mode uint32) (int, uint64) {
 func (w *WinFS) Open(path string, flags int) (int, uint64) {
 	inode, status := w.resolve(path)
 	if status != fuse.OK {
-		if status != fuse.ENOENT {
-			glog.Errorf("open %s: resolving: %v", path, status)
-		}
+		glog.Errorf("open %s: resolving: %v", path, status)
 		return toErrno(status), noHandle
 	}
 	in := &fuse.OpenIn{InHeader: fuse.InHeader{NodeId: inode}, Flags: translateOpenFlags(flags)}
 	var out fuse.OpenOut
 	if status := w.wfs.Open(never, in, &out); status != fuse.OK {
+		glog.Errorf("open %s inode %d: %v", path, inode, status)
 		return toErrno(status), noHandle
 	}
 	return 0, out.Fh
