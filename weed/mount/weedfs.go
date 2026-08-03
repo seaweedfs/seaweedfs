@@ -600,6 +600,14 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, entryVersion,
 	dir, _ := fullpath.DirAndName()
 	dirPath := util.FullPath(dir)
 
+	// A lookup racing the async flush of a just-closed handle would read the
+	// filer's pre-close metadata — a truncate's old size, a write's old
+	// chunks. Wait like AcquireHandle does, so a path probe right after
+	// close sees what the close wrote.
+	if inode, found := wfs.inodeToPath.GetInode(fullpath); found {
+		wfs.waitForPendingAsyncFlush(inode)
+	}
+
 	if wfs.metaCache.IsDirectoryCached(dirPath) {
 		cachedEntry, cachedVersionTsNs, cacheErr := wfs.metaCache.FindEntry(context.Background(), fullpath)
 		if cacheErr != nil && cacheErr != filer_pb.ErrNotFound {
