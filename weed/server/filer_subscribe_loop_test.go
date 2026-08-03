@@ -507,10 +507,16 @@ func TestSubscribeLoop_BoundedSubscriptionTerminates(t *testing.T) {
 func TestSubscribeLoop_FlushProvenGapSkipsToRetained(t *testing.T) {
 	h := newSubscribeHarness(t)
 
-	for w := 0; w < log_buffer.PreviousBufferCount+2; w++ {
+	windows := log_buffer.PreviousBufferCount + 2
+	for w := 0; w < windows; w++ {
 		h.append(h.tsAt(w, 0))
 	}
-	waitForFlushedFiles(t, h)
+	// The last append seals the window before it, so every window but the
+	// current one is queued for flush. Wait for all of them, not just the one
+	// the eviction watermark names: a flush still in flight writes its file
+	// back after the delete below, and the subscriber then serves that window
+	// from disk instead of taking the gap path this test is about.
+	waitForFlushedFiles(t, h, h.tsAt(windows-2, 0))
 	if h.f.LocalMetaLogBuffer.GetLastEvictedTsNs() == 0 {
 		t.Fatal("precondition: nothing evicted")
 	}
@@ -518,7 +524,7 @@ func TestSubscribeLoop_FlushProvenGapSkipsToRetained(t *testing.T) {
 
 	earliest := h.f.LocalMetaLogBuffer.GetEarliestTime().UnixNano()
 	var retained []int64
-	for w := 0; w < log_buffer.PreviousBufferCount+2; w++ {
+	for w := 0; w < windows; w++ {
 		if ts := h.tsAt(w, 0); ts >= earliest {
 			retained = append(retained, ts)
 		}
@@ -528,11 +534,14 @@ func TestSubscribeLoop_FlushProvenGapSkipsToRetained(t *testing.T) {
 	waitForEvents(t, r, retained, 5*time.Second)
 }
 
-func waitForFlushedFiles(t *testing.T, h *subscribeHarness) {
+// waitForFlushedFiles waits until the flush of the window ending at
+// throughTsNs has landed. Flushes run in queue order on one goroutine, so that
+// also proves every window sealed before it is on disk and none is in flight.
+func waitForFlushedFiles(t *testing.T, h *subscribeHarness, throughTsNs int64) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if h.f.LocalMetaLogBuffer.GetLastFlushTsNs() >= h.f.LocalMetaLogBuffer.GetLastEvictedTsNs() {
+		if h.f.LocalMetaLogBuffer.GetLastFlushTsNs() >= throughTsNs {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
