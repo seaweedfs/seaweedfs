@@ -44,7 +44,9 @@ func runMount(cmd *Command, args []string) bool {
 	}
 	util.RetryWaitTime = *mountReadRetryTime
 
-	umask, umaskErr := strconv.ParseUint(*mountOptions.umaskString, 8, 64)
+	// 32 bits, not 64: os.FileMode is uint32, so a wider parse would let a
+	// nonsense umask truncate silently instead of being rejected here.
+	umask, umaskErr := strconv.ParseUint(*mountOptions.umaskString, 8, 32)
 	if umaskErr != nil {
 		fmt.Printf("can not parse umask %s", *mountOptions.umaskString)
 		return false
