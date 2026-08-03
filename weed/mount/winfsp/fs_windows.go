@@ -378,11 +378,32 @@ type readdirSink struct {
 	offsets []uint64
 	attrs   []*fuse.EntryOut
 	limit   int
+
+	// lastOffset advances over dropped entries too, so a batch that is all
+	// dot entries still moves the enumeration along.
+	lastOffset uint64
+	seen       int
+
+	// discard absorbs the attributes of an entry that is being dropped; the
+	// raw filesystem fills the block after handing it back.
+	discard fuse.EntryOut
+}
+
+// The kernel expects readdir to report "." and "..", but Windows enumerates a
+// directory without them and shows whatever it is given, so they are dropped
+// rather than surfaced as two extra children.
+func isDotEntry(name string) bool {
+	return name == "." || name == ".."
 }
 
 func (s *readdirSink) AddEntry(entry fuse.DirEntry) bool {
 	if len(s.names) >= s.limit {
 		return false
+	}
+	s.seen++
+	s.lastOffset = entry.Off
+	if isDotEntry(entry.Name) {
+		return true
 	}
 	s.names = append(s.names, entry.Name)
 	s.offsets = append(s.offsets, entry.Off)
@@ -393,6 +414,11 @@ func (s *readdirSink) AddEntry(entry fuse.DirEntry) bool {
 func (s *readdirSink) AddEntryPlus(entry fuse.DirEntry) *fuse.EntryOut {
 	if len(s.names) >= s.limit {
 		return nil
+	}
+	s.seen++
+	s.lastOffset = entry.Off
+	if isDotEntry(entry.Name) {
+		return &s.discard
 	}
 	out := &fuse.EntryOut{}
 	s.names = append(s.names, entry.Name)
@@ -418,7 +444,7 @@ func (w *WinFS) Readdir(path string, fill func(name string, stat *cgofuse.Stat_t
 		if status := w.wfs.ReadDirectoryInto(in, sink, true); status != fuse.OK {
 			return toErrno(status)
 		}
-		if len(sink.names) == 0 {
+		if sink.seen == 0 {
 			return 0
 		}
 		for i, name := range sink.names {
@@ -432,11 +458,10 @@ func (w *WinFS) Readdir(path string, fill func(name string, stat *cgofuse.Stat_t
 				return 0
 			}
 		}
-		next := sink.offsets[len(sink.offsets)-1]
-		if next <= offset {
+		if sink.lastOffset <= offset {
 			return 0
 		}
-		offset = next
+		offset = sink.lastOffset
 	}
 }
 
