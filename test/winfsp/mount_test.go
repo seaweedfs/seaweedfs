@@ -99,6 +99,9 @@ func TestSeekWriteAndOverwrite(t *testing.T) {
 	if string(got[:4]) != "head" || string(got[4096:]) != "tail" {
 		t.Fatalf("content at the edges is wrong: %q ... %q", got[:4], got[4096:])
 	}
+	if !bytes.Equal(got[4:4096], make([]byte, 4092)) {
+		t.Fatal("the hole between the two writes is not zero-filled")
+	}
 }
 
 func TestRenameAndDelete(t *testing.T) {
