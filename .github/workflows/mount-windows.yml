@@ -54,19 +54,21 @@ jobs:
       run: |
         New-Item -ItemType Directory -Force -Path C:\seaweed-data | Out-Null
         Start-Process -FilePath .\weed.exe `
-          -ArgumentList 'mini','-dir=C:\seaweed-data' `
+          -ArgumentList 'mini','-dir=C:\seaweed-data','-ip=127.0.0.1' `
           -RedirectStandardOutput C:\seaweed-mini.log `
           -RedirectStandardError C:\seaweed-mini.err.log
+        function Test-Port($port) {
+          # A plain connect, because Test-NetConnection has reported success
+          # here for a port nothing was listening on.
+          $client = New-Object System.Net.Sockets.TcpClient
+          try { $client.Connect('127.0.0.1', $port); return $client.Connected }
+          catch { return $false }
+          finally { $client.Dispose() }
+        }
         $deadline = (Get-Date).AddMinutes(3)
         while ((Get-Date) -lt $deadline) {
-          $http = $false
-          try {
-            Invoke-WebRequest -Uri http://127.0.0.1:8888/ -UseBasicParsing -TimeoutSec 3 | Out-Null
-            $http = $true
-          } catch { }
-          # The mount dials grpc, not http, so wait for that port too.
-          $grpc = (Test-NetConnection -ComputerName 127.0.0.1 -Port 18888 -InformationLevel Quiet -WarningAction SilentlyContinue)
-          if ($http -and $grpc) {
+          # The mount dials grpc, not http, so both ports have to answer.
+          if ((Test-Port 8888) -and (Test-Port 18888)) {
             Write-Host "filer is up on http 8888 and grpc 18888"
             exit 0
           }
