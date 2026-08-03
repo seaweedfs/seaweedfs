@@ -27,7 +27,7 @@ jobs:
   mount-windows:
     name: Mount on Windows
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     env:
       # The runner ships MinGW, so cgo is on by default and cgofuse picks its
       # cgo variant, which wants WinFsp's headers. The nocgo variant loads
@@ -49,14 +49,14 @@ jobs:
     - name: Build weed.exe
       run: go build -o weed.exe ./weed
 
-    - name: Start a cluster
+    # The runner tears down a step's process tree when its shell exits, so a
+    # cluster started in one step is gone by the next. Everything that needs
+    # the cluster and the mount alive has to share a step.
+    - name: Mount and exercise
       shell: pwsh
       run: |
-        New-Item -ItemType Directory -Force -Path C:\seaweed-data | Out-Null
-        Start-Process -FilePath .\weed.exe `
-          -ArgumentList 'mini','-dir=C:\seaweed-data','-ip=127.0.0.1' `
-          -RedirectStandardOutput C:\seaweed-mini.log `
-          -RedirectStandardError C:\seaweed-mini.err.log
+        $ErrorActionPreference = 'Stop'
+
         function Test-Port($port) {
           # A plain connect, because Test-NetConnection has reported success
           # here for a port nothing was listening on.
@@ -65,85 +65,68 @@ jobs:
           catch { return $false }
           finally { $client.Dispose() }
         }
+
+        function Start-Mount($log) {
+          Start-Process -FilePath .\weed.exe `
+            -ArgumentList 'mount','-filer=127.0.0.1:8888','-dir=S:' `
+            -RedirectStandardOutput "C:\$log.log" -RedirectStandardError "C:\$log.err.log"
+          $deadline = (Get-Date).AddMinutes(2)
+          while ((Get-Date) -lt $deadline) {
+            if (Test-Path S:\) { Write-Host "S: is mounted"; return }
+            Start-Sleep -Seconds 2
+          }
+          Get-Content "C:\$log.log", "C:\$log.err.log" -ErrorAction SilentlyContinue
+          throw "S: never appeared"
+        }
+
+        function Stop-Mount {
+          Get-CimInstance Win32_Process -Filter "Name = 'weed.exe'" |
+            Where-Object { $_.CommandLine -like '*mount*' } |
+            ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+          $deadline = (Get-Date).AddMinutes(1)
+          while ((Get-Date) -lt $deadline -and (Test-Path S:\)) { Start-Sleep -Seconds 2 }
+          if (Test-Path S:\) { throw "S: still present after stopping the mount" }
+          Write-Host "unmounted"
+        }
+
+        function Invoke-Tests($label, [string[]]$goArgs) {
+          Write-Host "::group::$label"
+          & go @goArgs
+          $code = $LASTEXITCODE
+          Write-Host "::endgroup::"
+          if ($code -ne 0) { throw "$label failed with exit $code" }
+        }
+
+        New-Item -ItemType Directory -Force -Path C:\seaweed-data | Out-Null
+        # -ip pins the cluster to loopback; it otherwise advertises and binds
+        # the runner's LAN address, which 127.0.0.1 cannot reach.
+        Start-Process -FilePath .\weed.exe `
+          -ArgumentList 'mini','-dir=C:\seaweed-data','-ip=127.0.0.1' `
+          -RedirectStandardOutput C:\seaweed-mini.log -RedirectStandardError C:\seaweed-mini.err.log
+
         $deadline = (Get-Date).AddMinutes(3)
         while ((Get-Date) -lt $deadline) {
           # The mount dials grpc, not http, so both ports have to answer.
-          if ((Test-Port 8888) -and (Test-Port 18888)) {
-            Write-Host "filer is up on http 8888 and grpc 18888"
-            exit 0
-          }
+          if ((Test-Port 8888) -and (Test-Port 18888)) { break }
           Start-Sleep -Seconds 3
         }
-        Write-Host "filer never came up"
-        Get-Content C:\seaweed-mini.log, C:\seaweed-mini.err.log -ErrorAction SilentlyContinue
-        exit 1
-
-    - name: Show what is listening
-      shell: pwsh
-      run: |
-        Get-Process weed -ErrorAction SilentlyContinue |
-          Select-Object Id, ProcessName, StartTime | Format-Table | Out-String | Write-Host
-        netstat -ano | Select-String 'LISTENING' |
-          Select-String ':8888|:18888|:9333|:19333|:8333' | Out-String | Write-Host
-        Get-CimInstance Win32_Process -Filter "Name = 'weed.exe'" |
-          ForEach-Object { Write-Host "pid=$($_.ProcessId) cmd=$($_.CommandLine)" }
-
-    - name: "Mount S:"
-      shell: pwsh
-      run: |
-        Start-Process -FilePath .\weed.exe `
-          -ArgumentList 'mount','-filer=127.0.0.1:8888','-dir=S:' `
-          -RedirectStandardOutput C:\seaweed-mount.log `
-          -RedirectStandardError C:\seaweed-mount.err.log
-        $deadline = (Get-Date).AddMinutes(2)
-        while ((Get-Date) -lt $deadline) {
-          if (Test-Path S:\) {
-            Write-Host "S: is mounted"
-            exit 0
-          }
-          Start-Sleep -Seconds 2
+        if (-not ((Test-Port 8888) -and (Test-Port 18888))) {
+          Get-Content C:\seaweed-mini.log, C:\seaweed-mini.err.log -ErrorAction SilentlyContinue
+          throw "filer never came up"
         }
-        Write-Host "S: never appeared"
-        Get-Content C:\seaweed-mount.log, C:\seaweed-mount.err.log -ErrorAction SilentlyContinue
-        exit 1
+        Write-Host "filer is up on http 8888 and grpc 18888"
 
-    - name: Exercise the mount
-      run: go test -v -timeout 20m ./test/winfsp -mountpoint=S:\
+        Start-Mount 'seaweed-mount'
 
-    - name: Persist across a remount (write)
-      run: go test -v -timeout 15m ./test/winfsp -run TestPersistence -mountpoint=S:\ -phase=write -filer=127.0.0.1:8888
+        Invoke-Tests 'exercise' @('test','-v','-timeout','20m','./test/winfsp','-mountpoint=S:\')
+        Invoke-Tests 'persist-write' @('test','-v','-timeout','15m','./test/winfsp','-run','TestPersistence','-mountpoint=S:\','-phase=write','-filer=127.0.0.1:8888')
 
-    - name: Remount
-      shell: pwsh
-      run: |
-        # Only the mount is stopped; the cluster has to stay up.
-        Get-CimInstance Win32_Process -Filter "Name = 'weed.exe'" |
-          Where-Object { $_.CommandLine -like '*mount*' } |
-          ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
-        $deadline = (Get-Date).AddMinutes(1)
-        while ((Get-Date) -lt $deadline -and (Test-Path S:\)) { Start-Sleep -Seconds 2 }
-        if (Test-Path S:\) { throw "S: still present after stopping the mount" }
-        Write-Host "unmounted"
+        Stop-Mount
+        Start-Mount 'seaweed-remount'
 
-        Start-Process -FilePath .\weed.exe `
-          -ArgumentList 'mount','-filer=127.0.0.1:8888','-dir=S:' `
-          -RedirectStandardOutput C:\seaweed-remount.log `
-          -RedirectStandardError C:\seaweed-remount.err.log
-        $deadline = (Get-Date).AddMinutes(2)
-        while ((Get-Date) -lt $deadline) {
-          if (Test-Path S:\) { Write-Host "remounted"; exit 0 }
-          Start-Sleep -Seconds 2
-        }
-        Write-Host "S: never came back"
-        Get-Content C:\seaweed-remount.log, C:\seaweed-remount.err.log -ErrorAction SilentlyContinue
-        exit 1
+        Invoke-Tests 'persist-verify' @('test','-v','-timeout','15m','./test/winfsp','-run','TestPersistence','-mountpoint=S:\','-phase=verify')
 
-    - name: Persist across a remount (verify)
-      run: go test -v -timeout 15m ./test/winfsp -run TestPersistence -mountpoint=S:\ -phase=verify
-
-    - name: Explorer-style walk
-      shell: pwsh
-      run: |
+        Write-Host "::group::explorer-style walk"
         New-Item -ItemType Directory -Force -Path S:\walk | Out-Null
         1..200 | ForEach-Object { Set-Content -Path "S:\walk\f$_.txt" -Value "line $_" }
         $count = (Get-ChildItem S:\walk | Measure-Object).Count
@@ -153,16 +136,10 @@ jobs:
         Copy-Item S:\walk\f42.txt S:\walk\copy.txt
         Remove-Item S:\walk -Recurse -Force
         if (Test-Path S:\walk) { throw "directory survived recursive delete" }
-
-    - name: Unmount
-      if: always()
-      shell: pwsh
-      run: |
-        Get-Process weed -ErrorAction SilentlyContinue | Stop-Process -Force
-        Start-Sleep -Seconds 3
+        Write-Host "::endgroup::"
 
     - name: Logs
-      if: failure()
+      if: always()
       shell: pwsh
       run: |
         foreach ($f in 'C:\seaweed-mount.log','C:\seaweed-mount.err.log','C:\seaweed-remount.log','C:\seaweed-remount.err.log','C:\seaweed-mini.log','C:\seaweed-mini.err.log') {
