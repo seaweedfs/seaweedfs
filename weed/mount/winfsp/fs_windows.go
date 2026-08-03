@@ -2,6 +2,7 @@ package winfsp
 
 import (
 	"os"
+	"strings"
 	"syscall"
 
 	cgofuse "github.com/winfsp/cgofuse/fuse"
@@ -40,9 +41,16 @@ func NewWinFS(wfs *mount.WFS, uid, gid uint32) *WinFS {
 	return &WinFS{wfs: wfs, uid: uid, gid: gid}
 }
 
-// walk looks up each component in turn, which also registers the mappings the
-// raw operations index by.
+// walk resolves a path to an inode. A path the mount already tracks resolves
+// straight out of its table; anything else is looked up a component at a time,
+// which also registers the mappings the raw operations index by.
 func (w *WinFS) walk(parts []string) (uint64, fuse.Status) {
+	if len(parts) == 0 {
+		return rootInode, fuse.OK
+	}
+	if inode, ok := w.wfs.KnownInode(strings.Join(parts, "/")); ok {
+		return inode, fuse.OK
+	}
 	inode := uint64(rootInode)
 	for _, name := range parts {
 		var out fuse.EntryOut
