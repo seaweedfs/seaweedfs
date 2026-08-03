@@ -59,11 +59,18 @@ jobs:
           -RedirectStandardError C:\seaweed-mini.err.log
         $deadline = (Get-Date).AddMinutes(3)
         while ((Get-Date) -lt $deadline) {
+          $http = $false
           try {
-            Invoke-WebRequest -Uri http://localhost:8888/ -UseBasicParsing -TimeoutSec 3 | Out-Null
-            Write-Host "filer is up"
+            Invoke-WebRequest -Uri http://127.0.0.1:8888/ -UseBasicParsing -TimeoutSec 3 | Out-Null
+            $http = $true
+          } catch { }
+          # The mount dials grpc, not http, so wait for that port too.
+          $grpc = (Test-NetConnection -ComputerName 127.0.0.1 -Port 18888 -InformationLevel Quiet -WarningAction SilentlyContinue)
+          if ($http -and $grpc) {
+            Write-Host "filer is up on http 8888 and grpc 18888"
             exit 0
-          } catch { Start-Sleep -Seconds 3 }
+          }
+          Start-Sleep -Seconds 3
         }
         Write-Host "filer never came up"
         Get-Content C:\seaweed-mini.log, C:\seaweed-mini.err.log -ErrorAction SilentlyContinue
@@ -73,7 +80,7 @@ jobs:
       shell: pwsh
       run: |
         Start-Process -FilePath .\weed.exe `
-          -ArgumentList 'mount','-filer=localhost:8888','-dir=S:' `
+          -ArgumentList 'mount','-filer=127.0.0.1:8888','-dir=S:' `
           -RedirectStandardOutput C:\seaweed-mount.log `
           -RedirectStandardError C:\seaweed-mount.err.log
         $deadline = (Get-Date).AddMinutes(2)
@@ -90,6 +97,37 @@ jobs:
 
     - name: Exercise the mount
       run: go test -v -timeout 20m ./test/winfsp -mountpoint=S:\
+
+    - name: Persist across a remount (write)
+      run: go test -v -timeout 15m ./test/winfsp -run TestPersistence -mountpoint=S:\ -phase=write -filer=127.0.0.1:8888
+
+    - name: Remount
+      shell: pwsh
+      run: |
+        # Only the mount is stopped; the cluster has to stay up.
+        Get-CimInstance Win32_Process -Filter "Name = 'weed.exe'" |
+          Where-Object { $_.CommandLine -like '*mount*' } |
+          ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+        $deadline = (Get-Date).AddMinutes(1)
+        while ((Get-Date) -lt $deadline -and (Test-Path S:\)) { Start-Sleep -Seconds 2 }
+        if (Test-Path S:\) { throw "S: still present after stopping the mount" }
+        Write-Host "unmounted"
+
+        Start-Process -FilePath .\weed.exe `
+          -ArgumentList 'mount','-filer=127.0.0.1:8888','-dir=S:' `
+          -RedirectStandardOutput C:\seaweed-remount.log `
+          -RedirectStandardError C:\seaweed-remount.err.log
+        $deadline = (Get-Date).AddMinutes(2)
+        while ((Get-Date) -lt $deadline) {
+          if (Test-Path S:\) { Write-Host "remounted"; exit 0 }
+          Start-Sleep -Seconds 2
+        }
+        Write-Host "S: never came back"
+        Get-Content C:\seaweed-remount.log, C:\seaweed-remount.err.log -ErrorAction SilentlyContinue
+        exit 1
+
+    - name: Persist across a remount (verify)
+      run: go test -v -timeout 15m ./test/winfsp -run TestPersistence -mountpoint=S:\ -phase=verify
 
     - name: Explorer-style walk
       shell: pwsh
@@ -115,6 +153,6 @@ jobs:
       if: failure()
       shell: pwsh
       run: |
-        foreach ($f in 'C:\seaweed-mount.log','C:\seaweed-mount.err.log','C:\seaweed-mini.log','C:\seaweed-mini.err.log') {
+        foreach ($f in 'C:\seaweed-mount.log','C:\seaweed-mount.err.log','C:\seaweed-remount.log','C:\seaweed-remount.err.log','C:\seaweed-mini.log','C:\seaweed-mini.err.log') {
           if (Test-Path $f) { Write-Host "===== $f"; Get-Content $f -Tail 200 }
         }
