@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
@@ -124,4 +125,74 @@ func TestUnscopedIdentityReusesConfiguredAccount(t *testing.T) {
 	require.NotNil(t, alice.Account)
 	assert.Equal(t, "Alice Smith", alice.Account.DisplayName,
 		"identity must reuse the configured account, not the synthesized one")
+}
+
+// Users created through the IAM API carry their account inline on the identity,
+// and no credential store emits a top-level accounts list. Such an account must
+// be registered rather than collapsed into the admin account, which gave every
+// one of those users the same owner id for ownership checks.
+func TestInlineIdentityAccountIsRegistered(t *testing.T) {
+	resetMemoryStore()
+
+	config := `{
+  "identities": [
+    {"name": "alice", "account": {"id": "100000000001", "displayName": "Alice", "emailAddress": "alice@example.com"}, "credentials": [{"accessKey": "alice_ak", "secretKey": "alice_sk"}], "actions": ["Read", "Write"]},
+    {"name": "bob", "account": {"id": "100000000002", "displayName": "Bob", "emailAddress": "bob@example.com"}, "credentials": [{"accessKey": "bob_ak", "secretKey": "bob_sk"}], "actions": ["Read", "Write"]}
+  ]
+}`
+	tmp, err := os.CreateTemp("", "s3-config-*.json")
+	require.NoError(t, err)
+	defer os.Remove(tmp.Name())
+	_, err = tmp.WriteString(config)
+	require.NoError(t, err)
+	require.NoError(t, tmp.Close())
+
+	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{Config: tmp.Name()}, nil, "memory")
+
+	alice, _, found := iam.LookupByAccessKey("alice_ak")
+	require.True(t, found)
+	require.NotNil(t, alice.Account)
+	assert.Equal(t, "100000000001", alice.Account.Id, "an undeclared inline account must not collapse into admin")
+
+	bob, _, found := iam.LookupByAccessKey("bob_ak")
+	require.True(t, found)
+	require.NotNil(t, bob.Account)
+	assert.NotEqual(t, alice.Account.Id, bob.Account.Id, "distinct users must not share an owner id")
+
+	assert.Equal(t, "Alice", iam.GetAccountNameById("100000000001"), "the registered account must resolve for ACL/owner display")
+	assert.Equal(t, "100000000002", iam.GetAccountIdByEmail("bob@example.com"), "the registered account must resolve by email")
+}
+
+// A dynamic update carries a single identity with no accounts list, so the merge
+// path must register the inline account the same way the full load does.
+func TestInlineIdentityAccountIsRegisteredOnUpsert(t *testing.T) {
+	resetMemoryStore()
+
+	config := `{
+  "identities": [
+    {"name": "admin", "credentials": [{"accessKey": "admin_ak", "secretKey": "admin_sk"}], "actions": ["Admin"]}
+  ]
+}`
+	tmp, err := os.CreateTemp("", "s3-config-*.json")
+	require.NoError(t, err)
+	defer os.Remove(tmp.Name())
+	_, err = tmp.WriteString(config)
+	require.NoError(t, err)
+	require.NoError(t, tmp.Close())
+
+	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{Config: tmp.Name()}, nil, "memory")
+
+	require.NoError(t, iam.UpsertIdentity(&iam_pb.Identity{
+		Name:        "alice",
+		Account:     &iam_pb.Account{Id: "100000000001", DisplayName: "Alice", EmailAddress: "alice@example.com"},
+		Credentials: []*iam_pb.Credential{{AccessKey: "alice_ak", SecretKey: "alice_sk"}},
+		Actions:     []string{"Read", "Write"},
+	}))
+
+	alice, _, found := iam.LookupByAccessKey("alice_ak")
+	require.True(t, found)
+	require.NotNil(t, alice.Account)
+	assert.Equal(t, "100000000001", alice.Account.Id, "a pushed identity must keep its own account id")
+	assert.NotEqual(t, AccountAdmin.Id, alice.Account.Id, "a pushed identity must not inherit the admin account")
+	assert.Equal(t, "Alice", iam.GetAccountNameById("100000000001"), "the registered account must resolve for ACL/owner display")
 }

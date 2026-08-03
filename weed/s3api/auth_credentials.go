@@ -160,6 +160,42 @@ func accountForUnscopedIdentity(name string) *Account {
 	}
 }
 
+// resolveIdentityAccount returns the account an identity owns resources under,
+// registering it in accounts when it is not already known so the id resolves
+// through GetAccountNameById. Credential stores persist an account inline on the
+// identity and never emit a top-level accounts list, so an id missing from
+// accounts means undeclared, not invalid: falling back to the admin account
+// would give every such identity the same owner id.
+func resolveIdentityAccount(ident *iam_pb.Identity, accounts map[string]*Account, emailAccount map[string]*Account) *Account {
+	if ident.Account == nil || ident.Account.Id == "" {
+		synthesized := accountForUnscopedIdentity(ident.Name)
+		if existing, ok := accounts[synthesized.Id]; ok {
+			return existing
+		}
+		accounts[synthesized.Id] = synthesized
+		return synthesized
+	}
+
+	if existing, ok := accounts[ident.Account.Id]; ok {
+		return existing
+	}
+
+	account := &Account{
+		Id:           ident.Account.Id,
+		DisplayName:  ident.Account.DisplayName,
+		EmailAddress: ident.Account.EmailAddress,
+	}
+	glog.V(3).Infof("registering account %s from identity %s", account.Id, ident.Name)
+	accounts[account.Id] = account
+	// a declared account keeps an email it already claimed
+	if account.EmailAddress != "" {
+		if _, taken := emailAccount[account.EmailAddress]; !taken {
+			emailAccount[account.EmailAddress] = account
+		}
+	}
+	return account
+}
+
 type Credential struct {
 	AccessKey  string
 	SecretKey  string
@@ -689,30 +725,11 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 			Disabled:     ident.Disabled, // false (default) = enabled, true = disabled
 			PolicyNames:  ident.PolicyNames,
 		}
-		switch {
-		case ident.Name == AccountAnonymous.Id:
+		if ident.Name == AccountAnonymous.Id {
 			t.Account = &AccountAnonymous
 			identityAnonymous = t
-		case ident.Account == nil:
-			// Account-less identities own resources under a distinct id derived
-			// from their name. Reuse an explicitly-configured account with that
-			// id if one exists (preserving its display name/email); otherwise
-			// synthesize one and register it so the id resolves via
-			// GetAccountNameById (ACL grantee validation, owner display).
-			synthesized := accountForUnscopedIdentity(t.Name)
-			if existing, ok := accounts[synthesized.Id]; ok {
-				t.Account = existing
-			} else {
-				t.Account = synthesized
-				accounts[synthesized.Id] = synthesized
-			}
-		default:
-			if account, ok := accounts[ident.Account.Id]; ok {
-				t.Account = account
-			} else {
-				t.Account = &AccountAdmin
-				glog.Warningf("identity %s is associated with a non exist account ID, the association is invalid", ident.Name)
-			}
+		} else {
+			t.Account = resolveIdentityAccount(ident, accounts, emailAccount)
 		}
 
 		for _, action := range ident.Actions {
@@ -926,30 +943,11 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 			IsStatic: fromStaticFile,
 		}
 
-		switch {
-		case ident.Name == AccountAnonymous.Id:
+		if ident.Name == AccountAnonymous.Id {
 			t.Account = &AccountAnonymous
 			identityAnonymous = t
-		case ident.Account == nil:
-			// Account-less identities own resources under a distinct id derived
-			// from their name. Reuse an explicitly-configured account with that
-			// id if one exists (preserving its display name/email); otherwise
-			// synthesize one and register it so the id resolves via
-			// GetAccountNameById (ACL grantee validation, owner display).
-			synthesized := accountForUnscopedIdentity(t.Name)
-			if existing, ok := accounts[synthesized.Id]; ok {
-				t.Account = existing
-			} else {
-				t.Account = synthesized
-				accounts[synthesized.Id] = synthesized
-			}
-		default:
-			if account, ok := accounts[ident.Account.Id]; ok {
-				t.Account = account
-			} else {
-				t.Account = &AccountAdmin
-				glog.Warningf("identity %s is associated with a non exist account ID, the association is invalid", ident.Name)
-			}
+		} else {
+			t.Account = resolveIdentityAccount(ident, accounts, emailAccount)
 		}
 
 		for _, action := range ident.Actions {
