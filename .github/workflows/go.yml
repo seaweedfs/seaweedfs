@@ -75,8 +75,8 @@ jobs:
     - name: Build
       run: cd weed; go build -tags "elastic gocdk sqlite ydb tarantool tikv rclone" -v .
 
-  build-windows:
-    name: Build windows
+  build-cross:
+    name: Build cross-platform
     runs-on: ubuntu-latest
     steps:
     - name: Check out code into the Go module directory
@@ -85,10 +85,14 @@ jobs:
       uses: actions/setup-go@v7
       with:
         go-version-file: 'go.mod'
-    # weed/mount builds here but cannot mount yet. Without this the unix-only
-    # syscall constants it needs creep back in unnoticed.
-    - name: Build windows/amd64
-      run: GOOS=windows GOARCH=amd64 go build ./weed/...
+    # Nothing else on a PR compiles these, so per-OS syscall constants creep
+    # back into shared files unnoticed and only a release build catches it.
+    - name: Cross-compile
+      run: |
+        for target in windows/amd64 windows/arm64 freebsd/amd64 darwin/arm64; do
+          echo "== $target"
+          GOOS=${target%/*} GOARCH=${target#*/} go build ./weed/...
+        done
 
   test:
     name: Test
