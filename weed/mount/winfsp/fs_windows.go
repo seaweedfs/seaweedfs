@@ -2,7 +2,6 @@ package winfsp
 
 import (
 	"os"
-	"strings"
 	"syscall"
 
 	cgofuse "github.com/winfsp/cgofuse/fuse"
@@ -56,39 +55,11 @@ func (w *WinFS) walk(parts []string) (uint64, fuse.Status) {
 	return inode, fuse.OK
 }
 
-// resolve walks a WinFsp path down to an inode. The directories leading up to
-// it come from the mount's table when they are already known; only the final
-// component goes through Lookup, which is what refreshes the entry so a
-// preceding truncate or write is visible.
+// resolve walks a WinFsp path down to an inode. Every component goes through
+// Lookup, which both finds the inode and refreshes what the mount knows about
+// the entry, so a preceding truncate or write is visible to the caller.
 func (w *WinFS) resolve(path string) (uint64, fuse.Status) {
-	parentParts, name, ok := splitParent(path)
-	if !ok {
-		return rootInode, fuse.OK
-	}
-	parent, status := w.walkDir(parentParts)
-	if status != fuse.OK {
-		return 0, status
-	}
-	var out fuse.EntryOut
-	if status := w.wfs.Lookup(never, &fuse.InHeader{NodeId: parent}, name, &out); status != fuse.OK {
-		return 0, status
-	}
-	return out.NodeId, fuse.OK
-}
-
-// walkDir resolves a directory chain, preferring an inode the mount already
-// tracks. The Lookup refresh is skipped only here, where the caller wants
-// somewhere to create or delete in rather than fresh attributes: re-walking
-// the chain on every create is hundreds of concurrent lookups of one
-// directory, and lookupEntry reports ENOENT if one lands mid cache refresh.
-func (w *WinFS) walkDir(parts []string) (uint64, fuse.Status) {
-	if len(parts) == 0 {
-		return rootInode, fuse.OK
-	}
-	if inode, ok := w.wfs.KnownInode(strings.Join(parts, "/")); ok {
-		return inode, fuse.OK
-	}
-	return w.walk(parts)
+	return w.walk(splitPath(path))
 }
 
 // resolveParent resolves everything but the last component, which the create
@@ -98,7 +69,7 @@ func (w *WinFS) resolveParent(path string) (uint64, string, fuse.Status) {
 	if !ok {
 		return 0, "", fuse.EINVAL
 	}
-	parent, status := w.walkDir(parentParts)
+	parent, status := w.walk(parentParts)
 	if status != fuse.OK {
 		return 0, "", status
 	}
