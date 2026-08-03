@@ -188,6 +188,7 @@ func (w *WinFS) Rename(oldpath string, newpath string) int {
 func (w *WinFS) Create(path string, flags int, mode uint32) (int, uint64) {
 	parent, name, status := w.resolveParent(path)
 	if status != fuse.OK {
+		glog.Errorf("create %s: resolving the parent directory: %v", path, status)
 		return toErrno(status), noHandle
 	}
 	if flags&cgofuse.O_EXCL != 0 {
@@ -198,6 +199,7 @@ func (w *WinFS) Create(path string, flags int, mode uint32) (int, uint64) {
 	in := &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: parent}, Flags: translateOpenFlags(flags), Mode: mode}
 	var out fuse.CreateOut
 	if status := w.wfs.Create(never, in, name, &out); status != fuse.OK {
+		glog.Errorf("create %s in inode %d: %v", name, parent, status)
 		return toErrno(status), noHandle
 	}
 	return 0, out.Fh
@@ -206,6 +208,9 @@ func (w *WinFS) Create(path string, flags int, mode uint32) (int, uint64) {
 func (w *WinFS) Open(path string, flags int) (int, uint64) {
 	inode, status := w.resolve(path)
 	if status != fuse.OK {
+		if status != fuse.ENOENT {
+			glog.Errorf("open %s: resolving: %v", path, status)
+		}
 		return toErrno(status), noHandle
 	}
 	in := &fuse.OpenIn{InHeader: fuse.InHeader{NodeId: inode}, Flags: translateOpenFlags(flags)}
