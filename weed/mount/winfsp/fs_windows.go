@@ -56,9 +56,24 @@ func (w *WinFS) walk(parts []string) (uint64, fuse.Status) {
 	return inode, fuse.OK
 }
 
-// resolve walks a WinFsp path down to an inode.
+// resolve walks a WinFsp path down to an inode. The directories leading up to
+// it come from the mount's table when they are already known; only the final
+// component goes through Lookup, which is what refreshes the entry so a
+// preceding truncate or write is visible.
 func (w *WinFS) resolve(path string) (uint64, fuse.Status) {
-	return w.walk(splitPath(path))
+	parentParts, name, ok := splitParent(path)
+	if !ok {
+		return rootInode, fuse.OK
+	}
+	parent, status := w.walkDir(parentParts)
+	if status != fuse.OK {
+		return 0, status
+	}
+	var out fuse.EntryOut
+	if status := w.wfs.Lookup(never, &fuse.InHeader{NodeId: parent}, name, &out); status != fuse.OK {
+		return 0, status
+	}
+	return out.NodeId, fuse.OK
 }
 
 // walkDir resolves a directory chain, preferring an inode the mount already
