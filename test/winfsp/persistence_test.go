@@ -90,7 +90,10 @@ func persistenceWrite(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 			t.Fatalf("mkdir for %s: %v", f.relPath, err)
 		}
-		if err := os.WriteFile(target, contentFor(f.relPath, f.size), 0644); err != nil {
+		// Sync before closing: the mount is killed rather than unmounted, so
+		// anything still queued for flush is legitimately lost. Testing
+		// durability means testing what survives after an explicit sync.
+		if err := writeAndSync(target, contentFor(f.relPath, f.size)); err != nil {
 			t.Fatalf("write %s: %v", f.relPath, err)
 		}
 		t.Logf("wrote %s (%d bytes)", f.relPath, f.size)
@@ -150,6 +153,22 @@ func persistenceVerify(t *testing.T) {
 	if err := os.RemoveAll(root); err != nil {
 		t.Errorf("cleanup: %v", err)
 	}
+}
+
+func writeAndSync(path string, content []byte) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(content); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 func fetchFromFiler(addr, filerPath string) ([]byte, error) {
