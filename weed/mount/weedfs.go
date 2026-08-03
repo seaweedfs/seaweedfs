@@ -667,6 +667,18 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, entryVersion,
 						glog.V(4).Infof("lookupEntry found deferred entry in local cache %s", fullpath)
 						return localEntry, entryVersion{tsNs: localVersionTsNs}, fuse.OK
 					}
+					// Creating many files at once can push the directory past
+					// the hot threshold and evict it, which drops the local
+					// placeholder a deferred create left behind. The handle
+					// still holding the unflushed entry is authoritative for
+					// it, so read it from there rather than reporting a file
+					// that plainly exists as missing.
+					if fh, fhFound := wfs.fhMap.FindFileHandle(inode); fhFound {
+						if pbEntry := fh.GetEntry().GetEntry(); pbEntry != nil {
+							glog.V(4).Infof("lookupEntry found deferred entry on its open handle %s", fullpath)
+							return filer.FromPbEntry(dir, pbEntry), entryVersion{}, fuse.OK
+						}
+					}
 				}
 			}
 			if inodeFound {
