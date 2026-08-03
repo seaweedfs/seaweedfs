@@ -216,8 +216,12 @@ func TestOAuthTokenEndpoint(t *testing.T) {
 	t.Run("bearer token auth on catalog endpoint", func(t *testing.T) {
 		token := requestOAuthToken(t, env, env.accessKey, env.secretKey)
 
-		// Use the token to call the catalog
-		req, err := http.NewRequest(http.MethodGet, env.icebergURL()+"/v1/namespaces", nil)
+		// Point the call at a table bucket that exists, so anything but 200 is an
+		// auth or routing fault rather than the catalog reporting a missing bucket.
+		bucketName := "oauth-bearer-" + randomSuffix()
+		createTableBucketViaShell(t, env, bucketName)
+
+		req, err := http.NewRequest(http.MethodGet, env.icebergURL()+"/v1/"+bucketName+"/namespaces", nil)
 		if err != nil {
 			t.Fatalf("create request: %v", err)
 		}
@@ -225,17 +229,12 @@ func TestOAuthTokenEndpoint(t *testing.T) {
 
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
-			t.Fatalf("GET /v1/namespaces with Bearer: %v", err)
+			t.Fatalf("GET /v1/%s/namespaces with Bearer: %v", bucketName, err)
 		}
 		defer resp.Body.Close()
 
-		// Auth should pass. We accept 200 (success) or 500 (missing warehouse bucket
-		// is an internal error, not an auth error). Reject 401/403/404/405.
 		body, _ := io.ReadAll(resp.Body)
-		switch resp.StatusCode {
-		case http.StatusOK, http.StatusInternalServerError:
-			t.Logf("Bearer token auth succeeded, status=%d", resp.StatusCode)
-		default:
+		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("Bearer auth failed unexpectedly: status=%d body=%s", resp.StatusCode, body)
 		}
 	})
