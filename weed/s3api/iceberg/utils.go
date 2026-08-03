@@ -141,6 +141,16 @@ func writeManagerError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "BadRequestException", err.Error())
 		return
 	}
+	// A missing table bucket means the catalog the client selected does not
+	// exist, not a server fault. The storage-layer message names the resolved
+	// bucket, which for a client that sent no warehouse at all is the default
+	// one it never asked for, so say how to select a real table bucket.
+	var tableErr *s3tables.S3TablesError
+	if errors.As(err, &tableErr) && tableErr.Type == s3tables.ErrCodeNoSuchBucket {
+		writeError(w, http.StatusNotFound, "NoSuchNamespaceException",
+			fmt.Sprintf("%s: each table bucket is a separate catalog, select one with warehouse=s3://<table-bucket>/ or /v1/<table-bucket>/", tableErr.Message))
+		return
+	}
 	writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
 }
 

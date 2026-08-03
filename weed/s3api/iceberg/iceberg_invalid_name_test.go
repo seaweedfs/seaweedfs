@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/apache/iceberg-go"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
 func TestNameValidationError(t *testing.T) {
@@ -45,6 +46,7 @@ func TestWriteManagerError(t *testing.T) {
 		{"invalid name is a client error", fmt.Errorf("invalid namespace name: only 'a-z', '0-9', and '_' are allowed"), http.StatusBadRequest, "BadRequestException"},
 		{"rejected schema is a client error", fmt.Errorf("%w: for v2: variant is not supported until v3", iceberg.ErrInvalidSchema), http.StatusBadRequest, "BadRequestException"},
 		{"bad format version is a client error", fmt.Errorf("%w: 4", iceberg.ErrInvalidFormatVersion), http.StatusBadRequest, "BadRequestException"},
+		{"missing table bucket is a client error", fmt.Errorf("all filers failed, last error: %w", &s3tables.S3TablesError{Type: s3tables.ErrCodeNoSuchBucket, Message: "table bucket warehouse not found"}), http.StatusNotFound, "NoSuchNamespaceException"},
 		{"everything else is a server fault", fmt.Errorf("all filers failed, last error: connection refused"), http.StatusInternalServerError, "InternalServerError"},
 	}
 	for _, c := range cases {
