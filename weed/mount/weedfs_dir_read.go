@@ -139,14 +139,14 @@ func (wfs *WFS) FsyncDir(cancel <-chan struct{}, input *fuse.FsyncIn) (code fuse
  * '1'.
  */
 func (wfs *WFS) ReadDir(cancel <-chan struct{}, input *fuse.ReadIn, out *fuse.DirEntryList) (code fuse.Status) {
-	return wfs.doReadDirectory(input, out, false)
+	return wfs.doReadDirectory(input, fuseDirEntryList{out}, false)
 }
 
 func (wfs *WFS) ReadDirPlus(cancel <-chan struct{}, input *fuse.ReadIn, out *fuse.DirEntryList) (code fuse.Status) {
-	return wfs.doReadDirectory(input, out, true)
+	return wfs.doReadDirectory(input, fuseDirEntryList{out}, true)
 }
 
-func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPlusMode bool) fuse.Status {
+func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out DirEntrySink, isPlusMode bool) fuse.Status {
 	// Get the directory handle and lock it for the duration of this operation.
 	// This serializes concurrent readdir calls on the same handle, fixing the
 	// race condition that caused hangs with NFS-Ganesha.
@@ -182,11 +182,11 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 		dirEntry.Off = dh.entryStreamOffset + uint64(index) + 1
 
 		if !isPlusMode {
-			if !out.AddDirEntry(dirEntry) {
+			if !out.AddEntry(dirEntry) {
 				return false
 			}
 		} else {
-			entryOut := out.AddDirLookupEntry(dirEntry)
+			entryOut := out.AddEntryPlus(dirEntry)
 			if entryOut == nil {
 				return false
 			}
@@ -203,14 +203,14 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 	if input.Offset < directoryStreamBaseOffset {
 		if !isPlusMode {
 			if input.Offset == 0 {
-				out.AddDirEntry(fuse.DirEntry{Mode: fuse.S_IFDIR, Name: ".", Off: 1})
+				out.AddEntry(fuse.DirEntry{Mode: fuse.S_IFDIR, Name: ".", Off: 1})
 			}
-			out.AddDirEntry(fuse.DirEntry{Mode: fuse.S_IFDIR, Name: "..", Off: 2})
+			out.AddEntry(fuse.DirEntry{Mode: fuse.S_IFDIR, Name: "..", Off: 2})
 		} else {
 			if input.Offset == 0 {
-				out.AddDirLookupEntry(fuse.DirEntry{Mode: fuse.S_IFDIR, Name: ".", Off: 1})
+				out.AddEntryPlus(fuse.DirEntry{Mode: fuse.S_IFDIR, Name: ".", Off: 1})
 			}
-			out.AddDirLookupEntry(fuse.DirEntry{Mode: fuse.S_IFDIR, Name: "..", Off: 2})
+			out.AddEntryPlus(fuse.DirEntry{Mode: fuse.S_IFDIR, Name: "..", Off: 2})
 		}
 		input.Offset = directoryStreamBaseOffset
 	}
@@ -296,7 +296,7 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 	return fuse.OK
 }
 
-func (wfs *WFS) readDirectoryDirect(input *fuse.ReadIn, out *fuse.DirEntryList, dh *DirectoryHandle, dirPath util.FullPath, processEachEntryFn func(entry *filer.Entry, index int64) bool) fuse.Status {
+func (wfs *WFS) readDirectoryDirect(input *fuse.ReadIn, out DirEntrySink, dh *DirectoryHandle, dirPath util.FullPath, processEachEntryFn func(entry *filer.Entry, index int64) bool) fuse.Status {
 	var lastEntryName string
 
 	if input.Offset >= dh.entryStreamOffset {
