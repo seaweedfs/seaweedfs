@@ -125,6 +125,11 @@ type Account struct {
 
 	//Id is used to identify an Account when granting cross-account access(ACLs) to buckets and objects
 	Id string
+
+	// declared marks an account from a top-level accounts list or a predefined
+	// default. An account registered from an identity's inline block is not
+	// declared, and the identity stays authoritative for its metadata.
+	declared bool
 }
 
 // Default account ID for all automated SeaweedFS accounts and fallback
@@ -137,6 +142,7 @@ var (
 		DisplayName:  "admin",
 		EmailAddress: "admin@example.com",
 		Id:           s3_constants.AccountAdminId,
+		declared:     true,
 	}
 
 	// AccountAnonymous is used to represent the account for anonymous access
@@ -144,6 +150,7 @@ var (
 		DisplayName:  "anonymous",
 		EmailAddress: "anonymous@example.com",
 		Id:           s3_constants.AccountAnonymousId,
+		declared:     true,
 	}
 )
 
@@ -160,12 +167,30 @@ func accountForUnscopedIdentity(name string) *Account {
 	}
 }
 
+// indexAccountEmail points an email at its account unless a different account
+// already claims it, so an inline block cannot take over a declared account's
+// email.
+func indexAccountEmail(emailAccount map[string]*Account, account *Account) {
+	if account.EmailAddress == "" {
+		return
+	}
+	if claimed, taken := emailAccount[account.EmailAddress]; taken && claimed.Id != account.Id {
+		return
+	}
+	emailAccount[account.EmailAddress] = account
+}
+
 // resolveIdentityAccount returns the account an identity owns resources under,
 // registering it in accounts when it is not already known so the id resolves
 // through GetAccountNameById. Credential stores persist an account inline on the
 // identity and never emit a top-level accounts list, so an id missing from
 // accounts means undeclared, not invalid: falling back to the admin account
 // would give every such identity the same owner id.
+//
+// An undeclared account is only described by the identity carrying it, so its
+// metadata is refreshed from every load — the merge path starts from the live
+// cache, and a user whose email changed would otherwise keep the old one
+// indexed. A declared account outranks the inline block and is left alone.
 func resolveIdentityAccount(ident *iam_pb.Identity, accounts map[string]*Account, emailAccount map[string]*Account) *Account {
 	if ident.Account == nil || ident.Account.Id == "" {
 		synthesized := accountForUnscopedIdentity(ident.Name)
@@ -176,23 +201,28 @@ func resolveIdentityAccount(ident *iam_pb.Identity, accounts map[string]*Account
 		return synthesized
 	}
 
-	if existing, ok := accounts[ident.Account.Id]; ok {
-		return existing
-	}
-
 	account := &Account{
 		Id:           ident.Account.Id,
 		DisplayName:  ident.Account.DisplayName,
 		EmailAddress: ident.Account.EmailAddress,
 	}
-	glog.V(3).Infof("registering account %s from identity %s", account.Id, ident.Name)
-	accounts[account.Id] = account
-	// a declared account keeps an email it already claimed
-	if account.EmailAddress != "" {
-		if _, taken := emailAccount[account.EmailAddress]; !taken {
-			emailAccount[account.EmailAddress] = account
+
+	existing, ok := accounts[account.Id]
+	if ok {
+		if existing.declared || (existing.DisplayName == account.DisplayName && existing.EmailAddress == account.EmailAddress) {
+			return existing
 		}
+		glog.V(3).Infof("refreshing account %s from identity %s", account.Id, ident.Name)
+		// drop the email this account itself indexed; another account's claim stands
+		if claimed, indexed := emailAccount[existing.EmailAddress]; indexed && claimed.Id == existing.Id {
+			delete(emailAccount, existing.EmailAddress)
+		}
+	} else {
+		glog.V(3).Infof("registering account %s from identity %s", account.Id, ident.Name)
 	}
+
+	accounts[account.Id] = account
+	indexAccountEmail(emailAccount, account)
 	return account
 }
 
@@ -675,6 +705,7 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 			Id:           account.Id,
 			DisplayName:  account.DisplayName,
 			EmailAddress: account.EmailAddress,
+			declared:     true,
 		}
 		switch account.Id {
 		case AccountAdmin.Id:
@@ -691,6 +722,7 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 			DisplayName:  AccountAdmin.DisplayName,
 			EmailAddress: AccountAdmin.EmailAddress,
 			Id:           AccountAdmin.Id,
+			declared:     true,
 		}
 		emailAccount[AccountAdmin.EmailAddress] = accounts[AccountAdmin.Id]
 	}
@@ -699,6 +731,7 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 			DisplayName:  AccountAnonymous.DisplayName,
 			EmailAddress: AccountAnonymous.EmailAddress,
 			Id:           AccountAnonymous.Id,
+			declared:     true,
 		}
 		emailAccount[AccountAnonymous.EmailAddress] = accounts[AccountAnonymous.Id]
 	}
@@ -898,6 +931,7 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 				Id:           account.Id,
 				DisplayName:  account.DisplayName,
 				EmailAddress: account.EmailAddress,
+				declared:     true,
 			}
 			if account.EmailAddress != "" {
 				emailAccount[account.EmailAddress] = accounts[account.Id]
@@ -911,6 +945,7 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 			DisplayName:  AccountAdmin.DisplayName,
 			EmailAddress: AccountAdmin.EmailAddress,
 			Id:           AccountAdmin.Id,
+			declared:     true,
 		}
 		emailAccount[AccountAdmin.EmailAddress] = accounts[AccountAdmin.Id]
 	}
@@ -919,6 +954,7 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 			DisplayName:  AccountAnonymous.DisplayName,
 			EmailAddress: AccountAnonymous.EmailAddress,
 			Id:           AccountAnonymous.Id,
+			declared:     true,
 		}
 		emailAccount[AccountAnonymous.EmailAddress] = accounts[AccountAnonymous.Id]
 	}

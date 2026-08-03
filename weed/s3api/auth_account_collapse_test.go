@@ -195,4 +195,44 @@ func TestInlineIdentityAccountIsRegisteredOnUpsert(t *testing.T) {
 	assert.Equal(t, "100000000001", alice.Account.Id, "a pushed identity must keep its own account id")
 	assert.NotEqual(t, AccountAdmin.Id, alice.Account.Id, "a pushed identity must not inherit the admin account")
 	assert.Equal(t, "Alice", iam.GetAccountNameById("100000000001"), "the registered account must resolve for ACL/owner display")
+
+	// Changing the email keeps the account id, so the merge starts from a cached
+	// account that still carries the old address.
+	require.NoError(t, iam.UpsertIdentity(&iam_pb.Identity{
+		Name:        "alice",
+		Account:     &iam_pb.Account{Id: "100000000001", DisplayName: "Alice Smith", EmailAddress: "alice.smith@example.com"},
+		Credentials: []*iam_pb.Credential{{AccessKey: "alice_ak", SecretKey: "alice_sk"}},
+		Actions:     []string{"Read", "Write"},
+	}))
+
+	assert.Equal(t, "100000000001", iam.GetAccountIdByEmail("alice.smith@example.com"), "the new email must be indexed")
+	assert.Empty(t, iam.GetAccountIdByEmail("alice@example.com"), "the replaced email must no longer resolve")
+	assert.Equal(t, "Alice Smith", iam.GetAccountNameById("100000000001"), "the display name must follow the update")
+}
+
+// An account declared in a top-level accounts list outranks an identity's inline
+// block, which must not rewrite its metadata or take over its email.
+func TestDeclaredAccountOutranksInlineIdentityAccount(t *testing.T) {
+	resetMemoryStore()
+
+	config := `{
+  "accounts": [
+    {"id": "100000000001", "displayName": "Alice Smith", "emailAddress": "alice@example.com"}
+  ],
+  "identities": [
+    {"name": "alice", "account": {"id": "100000000001", "displayName": "wrong", "emailAddress": "wrong@example.com"}, "credentials": [{"accessKey": "alice_ak", "secretKey": "alice_sk"}], "actions": ["Read"]}
+  ]
+}`
+	tmp, err := os.CreateTemp("", "s3-config-*.json")
+	require.NoError(t, err)
+	defer os.Remove(tmp.Name())
+	_, err = tmp.WriteString(config)
+	require.NoError(t, err)
+	require.NoError(t, tmp.Close())
+
+	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{Config: tmp.Name()}, nil, "memory")
+
+	assert.Equal(t, "Alice Smith", iam.GetAccountNameById("100000000001"), "the declared display name must win")
+	assert.Equal(t, "100000000001", iam.GetAccountIdByEmail("alice@example.com"), "the declared email must stay indexed")
+	assert.Empty(t, iam.GetAccountIdByEmail("wrong@example.com"), "an inline block must not claim an email for a declared account")
 }
