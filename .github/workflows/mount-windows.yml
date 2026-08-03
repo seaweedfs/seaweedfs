@@ -78,6 +78,16 @@ jobs:
         Get-Content C:\seaweed-mini.log, C:\seaweed-mini.err.log -ErrorAction SilentlyContinue
         exit 1
 
+    - name: Show what is listening
+      shell: pwsh
+      run: |
+        Get-Process weed -ErrorAction SilentlyContinue |
+          Select-Object Id, ProcessName, StartTime | Format-Table | Out-String | Write-Host
+        netstat -ano | Select-String 'LISTENING' |
+          Select-String ':8888|:18888|:9333|:19333|:8333' | Out-String | Write-Host
+        Get-CimInstance Win32_Process -Filter "Name = 'weed.exe'" |
+          ForEach-Object { Write-Host "pid=$($_.ProcessId) cmd=$($_.CommandLine)" }
+
     - name: "Mount S:"
       shell: pwsh
       run: |
