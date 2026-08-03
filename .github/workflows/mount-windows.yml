@@ -8,8 +8,9 @@ on:
       - 'weed/command/mount*.go'
       - 'test/winfsp/**'
       - '.github/workflows/mount-windows.yml'
+  # No base branch filter: this is the only thing that runs the Windows mount,
+  # so it should cover a pull request stacked on another one too.
   pull_request:
-    branches: [ master ]
     paths:
       - 'weed/mount/**'
       - 'weed/command/mount*.go'
