@@ -80,8 +80,8 @@ func TestGetMetricsWindowStartsAtOldestSample(t *testing.T) {
 	}
 }
 
-// "Total Disk Usage Over Time" and the stacked "Cluster Sizes Over Time" sit on
-// the same dashboard, so their last day has to add up to the same number.
+// /api/metrics is the fleet total that /api/cluster-sizes breaks down per
+// cluster, so their last day has to add up to the same number.
 func TestGetMetricsAgreesWithClusterSizes(t *testing.T) {
 	s := newPrometheusStorage(prometheus.NewRegistry())
 	seedSamples(s, "daily", HistorySample{TotalDiskBytes: 300, VolumeServerCount: 3},

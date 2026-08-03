@@ -151,25 +151,19 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
                 <canvas id="osChart" width="400" height="200"></canvas>
             </div>
 
-            
-
-            <div class="chart-container">
-                <div class="chart-title">Volume Servers Over Time</div>
-                <div class="chart-subtitle">Confirmed clusters only</div>
-                <canvas id="serverChart" width="400" height="200"></canvas>
-            </div>
-
-            <div class="chart-container">
-                <div class="chart-title">Total Disk Usage Over Time</div>
-                <div class="chart-subtitle">Confirmed clusters only</div>
-                <canvas id="diskChart" width="400" height="200"></canvas>
-            </div>
-
             <div class="chart-container">
                 <div class="chart-title">Cluster Sizes Over Time</div>
                 <div class="chart-subtitle" id="clusterSizesTotal"></div>
                 <div style="position: relative; height: 420px;">
                     <canvas id="clusterSizeChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-container">
+                <div class="chart-title">Volume Servers Over Time</div>
+                <div class="chart-subtitle" id="clusterServersTotal"></div>
+                <div style="position: relative; height: 420px;">
+                    <canvas id="serverChart"></canvas>
                 </div>
             </div>
 
@@ -198,17 +192,13 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
                 // Load stats
                 const statsResponse = await fetch('/api/stats');
                 const stats = await statsResponse.json();
-                
-                // Load metrics
-                const metricsResponse = await fetch('/api/metrics?days=30');
-                const metrics = await metricsResponse.json();
 
                 // Load per-cluster sizes over time
                 const sizesResponse = await fetch('/api/cluster-sizes?days=30&limit=20');
                 const sizes = await sizesResponse.json();
 
                 updateStats(stats);
-                updateCharts(stats, metrics);
+                updateCharts(stats);
                 updateClusterSizes(sizes);
                 
                 document.getElementById('loading').style.display = 'none';
@@ -227,25 +217,9 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
             document.getElementById('totalOS').textContent = Object.keys(stats.os_distribution || {}).length;
         }
 
-        function updateCharts(stats, metrics) {
-            // Version chart
+        function updateCharts(stats) {
             createPieChart('versionChart', 'Version Distribution', stats.versions || {});
-            
-            // OS chart
             createPieChart('osChart', 'Operating System Distribution', stats.os_distribution || {});
-            
-
-            
-            // Server count over time
-            if (metrics.dates && metrics.server_counts) {
-                createLineChart('serverChart', 'Volume Servers', metrics.dates, metrics.server_counts, '#2196F3');
-            }
-            
-            // Disk usage over time
-            if (metrics.dates && metrics.disk_usage) {
-                const diskUsageGB = metrics.disk_usage.map(bytes => Math.round(bytes / (1024 * 1024 * 1024)));
-                createLineChart('diskChart', 'Disk Usage (GB)', metrics.dates, diskUsageGB, '#4CAF50');
-            }
         }
 
         function createPieChart(canvasId, title, data) {
@@ -324,37 +298,50 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
             return (unit === 0 ? value : value.toFixed(value >= 100 ? 0 : 1)) + ' ' + units[unit];
         }
 
-        // One stacked band per cluster over time: the band is that cluster's
-        // size, the top of the stack is the fleet total. Clusters beyond the
-        // requested limit are summed into a trailing "other" band so the stack
-        // still adds up.
+        // Disk usage and volume servers both drawn as one stacked band per
+        // cluster over time: the band is that cluster's share, the top of the
+        // stack is the fleet total. Clusters beyond the requested limit are
+        // summed into a trailing "other" band so the stack still adds up.
         function updateClusterSizes(series) {
             const clusters = series.clusters || [];
             const dates = series.dates || [];
             const count = series.cluster_count || 0;
-
-            document.getElementById('clusterSizesTotal').textContent =
-                formatBytes(series.total_disk) + ' across ' + count + ' cluster' + (count === 1 ? '' : 's') +
+            const servers = series.total_servers || 0;
+            const across = ' across ' + count + ' cluster' + (count === 1 ? '' : 's') +
                 ' on ' + (dates[dates.length - 1] || 'no data');
 
+            document.getElementById('clusterSizesTotal').textContent = formatBytes(series.total_disk) + across;
+            document.getElementById('clusterServersTotal').textContent =
+                servers + ' volume server' + (servers === 1 ? '' : 's') + across;
+
             clusterSizeIds = clusters.map(c => c.cluster_id);
+            if (series.other) {
+                clusterSizeIds.push(null);
+            }
+
+            stackedChart('clusterSizeChart', dates, clusters, series.other, 'disk', formatBytes);
+            stackedChart('serverChart', dates, clusters, series.other, 'servers', value => value);
+        }
+
+        // The stacks share one cluster order, so a cluster keeps its colour and
+        // its legend entry across both of them.
+        function stackedChart(canvasId, dates, clusters, other, key, format) {
             const datasets = clusters.map((c, i) => {
                 // Evenly spaced hues keep neighbouring bands distinguishable.
                 const hue = Math.round(i * 360 / clusters.length);
-                return band(c.cluster_id.slice(0, 8), c.disk,
+                return band(c.cluster_id.slice(0, 8), c[key],
                     'hsl(' + hue + ', 65%, 45%)', 'hsla(' + hue + ', 65%, 55%, 0.75)');
             });
-            if (series.other) {
-                clusterSizeIds.push(null);
-                datasets.push(band('other (' + series.other.count + ')', series.other.disk,
+            if (other) {
+                datasets.push(band('other (' + other.count + ')', other[key],
                     '#9E9E9E', 'rgba(158, 158, 158, 0.6)'));
             }
 
-            const ctx = document.getElementById('clusterSizeChart').getContext('2d');
-            if (charts.clusterSizeChart) {
-                charts.clusterSizeChart.destroy();
+            const ctx = document.getElementById(canvasId).getContext('2d');
+            if (charts[canvasId]) {
+                charts[canvasId].destroy();
             }
-            charts.clusterSizeChart = new Chart(ctx, {
+            charts[canvasId] = new Chart(ctx, {
                 type: 'line',
                 data: { labels: dates, datasets: datasets },
                 options: {
@@ -374,7 +361,7 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
                             callbacks: {
                                 label: item => {
                                     const id = clusterSizeIds[item.datasetIndex];
-                                    return (id || item.dataset.label) + ': ' + formatBytes(item.raw);
+                                    return (id || item.dataset.label) + ': ' + format(item.raw);
                                 }
                             }
                         }
@@ -384,7 +371,7 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
                         y: {
                             stacked: true,
                             beginAtZero: true,
-                            ticks: { callback: value => formatBytes(value) }
+                            ticks: { precision: 0, callback: value => format(value) }
                         }
                     }
                 }
