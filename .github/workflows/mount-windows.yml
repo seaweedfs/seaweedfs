@@ -28,6 +28,11 @@ jobs:
     name: Mount on Windows
     runs-on: windows-latest
     timeout-minutes: 30
+    env:
+      # The runner ships MinGW, so cgo is on by default and cgofuse picks its
+      # cgo variant, which wants WinFsp's headers. The nocgo variant loads
+      # winfsp-x64.dll at run time instead, which is how weed.exe is released.
+      CGO_ENABLED: 0
 
     steps:
     - uses: actions/checkout@v7
