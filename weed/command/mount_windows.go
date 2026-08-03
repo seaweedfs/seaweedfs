@@ -2,6 +2,7 @@ package command
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -143,13 +144,45 @@ func checkWindowsMountPoint(dir string) error {
 	if strings.HasPrefix(dir, `\\`) {
 		return nil
 	}
-	if _, err := os.Stat(dir); err == nil {
-		return fmt.Errorf("mount point %s already exists; WinFsp needs a drive letter or a path that does not exist yet", dir)
+
+	// WinFsp turns a directory mount point into a reparse point, and NTFS
+	// only allows that on an empty directory. A missing one is fine: WinFsp
+	// creates it, and removes it again when the filesystem goes away.
+	info, err := os.Stat(dir)
+	if os.IsNotExist(err) {
+		if _, err := os.Stat(filepath.Dir(dir)); err != nil {
+			return fmt.Errorf("parent of mount point %s does not exist", dir)
+		}
+		return nil
 	}
-	if _, err := os.Stat(filepath.Dir(dir)); err != nil {
-		return fmt.Errorf("parent of mount point %s does not exist", dir)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("mount point %s is a file", dir)
+	}
+	empty, err := isEmptyDir(dir)
+	if err != nil {
+		return fmt.Errorf("reading mount point %s: %w", dir, err)
+	}
+	if !empty {
+		return fmt.Errorf("mount point %s is not empty; WinFsp can only mount over an empty directory", dir)
 	}
 	return nil
+}
+
+func isEmptyDir(dir string) (bool, error) {
+	f, err := os.Open(dir)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	if _, err := f.Readdirnames(1); err == io.EOF {
+		return true, nil
+	} else if err != nil {
+		return false, err
+	}
+	return false, nil
 }
 
 func isDriveLetter(dir string) bool {
