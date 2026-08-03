@@ -151,14 +151,6 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
                 <canvas id="osChart" width="400" height="200"></canvas>
             </div>
 
-            
-
-            <div class="chart-container">
-                <div class="chart-title">Total Disk Usage Over Time</div>
-                <div class="chart-subtitle">Confirmed clusters only</div>
-                <canvas id="diskChart" width="400" height="200"></canvas>
-            </div>
-
             <div class="chart-container">
                 <div class="chart-title">Cluster Sizes Over Time</div>
                 <div class="chart-subtitle" id="clusterSizesTotal"></div>
@@ -200,17 +192,13 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
                 // Load stats
                 const statsResponse = await fetch('/api/stats');
                 const stats = await statsResponse.json();
-                
-                // Load metrics
-                const metricsResponse = await fetch('/api/metrics?days=30');
-                const metrics = await metricsResponse.json();
 
                 // Load per-cluster sizes over time
                 const sizesResponse = await fetch('/api/cluster-sizes?days=30&limit=20');
                 const sizes = await sizesResponse.json();
 
                 updateStats(stats);
-                updateCharts(stats, metrics);
+                updateCharts(stats);
                 updateClusterSizes(sizes);
                 
                 document.getElementById('loading').style.display = 'none';
@@ -229,20 +217,9 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
             document.getElementById('totalOS').textContent = Object.keys(stats.os_distribution || {}).length;
         }
 
-        function updateCharts(stats, metrics) {
-            // Version chart
+        function updateCharts(stats) {
             createPieChart('versionChart', 'Version Distribution', stats.versions || {});
-            
-            // OS chart
             createPieChart('osChart', 'Operating System Distribution', stats.os_distribution || {});
-            
-
-
-            // Disk usage over time
-            if (metrics.dates && metrics.disk_usage) {
-                const diskUsageGB = metrics.disk_usage.map(bytes => Math.round(bytes / (1024 * 1024 * 1024)));
-                createLineChart('diskChart', 'Disk Usage (GB)', metrics.dates, diskUsageGB, '#4CAF50');
-            }
         }
 
         function createPieChart(canvasId, title, data) {
