@@ -75,6 +75,21 @@ jobs:
     - name: Build
       run: cd weed; go build -tags "elastic gocdk sqlite ydb tarantool tikv rclone" -v .
 
+  build-windows:
+    name: Build windows
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v7
+    - name: Set up Go
+      uses: actions/setup-go@v7
+      with:
+        go-version-file: 'go.mod'
+    # weed/mount builds here but cannot mount yet. Without this the unix-only
+    # syscall constants it needs creep back in unnoticed.
+    - name: Build windows/amd64
+      run: GOOS=windows GOARCH=amd64 go build ./weed/...
+
   test:
     name: Test
     runs-on: ubuntu-latest
