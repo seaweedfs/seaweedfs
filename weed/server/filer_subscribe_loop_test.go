@@ -507,10 +507,14 @@ func TestSubscribeLoop_BoundedSubscriptionTerminates(t *testing.T) {
 func TestSubscribeLoop_FlushProvenGapSkipsToRetained(t *testing.T) {
 	h := newSubscribeHarness(t)
 
+	lastSealed := log_buffer.PreviousBufferCount
 	for w := 0; w < log_buffer.PreviousBufferCount+2; w++ {
 		h.append(h.tsAt(w, 0))
 	}
-	waitForFlushedFiles(t, h)
+	// Through the last sealed window, not just the evicted one: a flush landing
+	// after the delete would put that window back on disk, and the disk pass
+	// would drag the cursor past the retained windows this test is about.
+	waitForFlushedThrough(t, h, h.tsAt(lastSealed, 0))
 	if h.f.LocalMetaLogBuffer.GetLastEvictedTsNs() == 0 {
 		t.Fatal("precondition: nothing evicted")
 	}
@@ -528,11 +532,14 @@ func TestSubscribeLoop_FlushProvenGapSkipsToRetained(t *testing.T) {
 	waitForEvents(t, r, retained, 5*time.Second)
 }
 
-func waitForFlushedFiles(t *testing.T, h *subscribeHarness) {
+// waitForFlushedThrough waits until every window up to throughTsNs is on disk.
+// Windows flush in seal order, so the watermark reaching it means nothing
+// earlier is still queued behind it.
+func waitForFlushedThrough(t *testing.T, h *subscribeHarness, throughTsNs int64) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if h.f.LocalMetaLogBuffer.GetLastFlushTsNs() >= h.f.LocalMetaLogBuffer.GetLastEvictedTsNs() {
+		if h.f.LocalMetaLogBuffer.GetLastFlushTsNs() >= throughTsNs {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
