@@ -123,7 +123,7 @@ require (
 	github.com/apple/foundationdb/bindings/go v0.0.0-20250911184653-27f7192f47c3
 	github.com/arangodb/go-driver v1.6.9
 	github.com/armon/go-metrics v0.4.1
-	github.com/aws/aws-sdk-go-v2 v1.43.0
+	github.com/aws/aws-sdk-go-v2 v1.43.2
 	github.com/aws/aws-sdk-go-v2/config v1.32.25
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.30
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.102.2
@@ -334,7 +334,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sso v1.33.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.38.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.45.0
-	github.com/aws/smithy-go v1.27.3
+	github.com/aws/smithy-go v1.27.5
 	github.com/boltdb/bolt v1.3.1 // indirect
 	github.com/bradenaw/juniper v0.15.3 // indirect
 	github.com/bradfitz/iter v0.0.0-20191230175014-e8f45d346db8 // indirect
