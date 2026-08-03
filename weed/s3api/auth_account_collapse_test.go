@@ -210,6 +210,60 @@ func TestInlineIdentityAccountIsRegisteredOnUpsert(t *testing.T) {
 	assert.Equal(t, "Alice Smith", iam.GetAccountNameById("100000000001"), "the display name must follow the update")
 }
 
+// Two inline accounts can carry the same email. The first to register keeps the
+// lookup, and the loser can claim it once the holder moves away — otherwise an
+// email freed by an update would resolve to nobody.
+func TestInlineAccountEmailClaimAndHandoff(t *testing.T) {
+	resetMemoryStore()
+
+	config := `{
+  "identities": [
+    {"name": "admin", "credentials": [{"accessKey": "admin_ak", "secretKey": "admin_sk"}], "actions": ["Admin"]}
+  ]
+}`
+	tmp, err := os.CreateTemp("", "s3-config-*.json")
+	require.NoError(t, err)
+	defer os.Remove(tmp.Name())
+	_, err = tmp.WriteString(config)
+	require.NoError(t, err)
+	require.NoError(t, tmp.Close())
+
+	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{Config: tmp.Name()}, nil, "memory")
+
+	require.NoError(t, iam.UpsertIdentity(&iam_pb.Identity{
+		Name:        "alice",
+		Account:     &iam_pb.Account{Id: "100000000001", DisplayName: "Alice", EmailAddress: "shared@example.com"},
+		Credentials: []*iam_pb.Credential{{AccessKey: "alice_ak", SecretKey: "alice_sk"}},
+		Actions:     []string{"Read"},
+	}))
+	require.NoError(t, iam.UpsertIdentity(&iam_pb.Identity{
+		Name:        "bob",
+		Account:     &iam_pb.Account{Id: "100000000002", DisplayName: "Bob", EmailAddress: "shared@example.com"},
+		Credentials: []*iam_pb.Credential{{AccessKey: "bob_ak", SecretKey: "bob_sk"}},
+		Actions:     []string{"Read"},
+	}))
+
+	assert.Equal(t, "100000000001", iam.GetAccountIdByEmail("shared@example.com"), "the first account to claim an email keeps it")
+
+	// alice moves off the shared address, freeing it
+	require.NoError(t, iam.UpsertIdentity(&iam_pb.Identity{
+		Name:        "alice",
+		Account:     &iam_pb.Account{Id: "100000000001", DisplayName: "Alice", EmailAddress: "alice@example.com"},
+		Credentials: []*iam_pb.Credential{{AccessKey: "alice_ak", SecretKey: "alice_sk"}},
+		Actions:     []string{"Read"},
+	}))
+	assert.Equal(t, "100000000001", iam.GetAccountIdByEmail("alice@example.com"), "the moved account indexes its new email")
+
+	// bob re-syncs unchanged and picks up the address he never got to claim
+	require.NoError(t, iam.UpsertIdentity(&iam_pb.Identity{
+		Name:        "bob",
+		Account:     &iam_pb.Account{Id: "100000000002", DisplayName: "Bob", EmailAddress: "shared@example.com"},
+		Credentials: []*iam_pb.Credential{{AccessKey: "bob_ak", SecretKey: "bob_sk"}},
+		Actions:     []string{"Read"},
+	}))
+	assert.Equal(t, "100000000002", iam.GetAccountIdByEmail("shared@example.com"), "a freed email resolves to the account still holding it")
+}
+
 // An account declared in a top-level accounts list outranks an identity's inline
 // block, which must not rewrite its metadata or take over its email.
 func TestDeclaredAccountOutranksInlineIdentityAccount(t *testing.T) {

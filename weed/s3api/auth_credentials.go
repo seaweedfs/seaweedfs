@@ -209,7 +209,12 @@ func resolveIdentityAccount(ident *iam_pb.Identity, accounts map[string]*Account
 
 	existing, ok := accounts[account.Id]
 	if ok {
-		if existing.declared || (existing.DisplayName == account.DisplayName && existing.EmailAddress == account.EmailAddress) {
+		if existing.declared {
+			return existing
+		}
+		if existing.DisplayName == account.DisplayName && existing.EmailAddress == account.EmailAddress {
+			// an email this account lost to another one is claimable once freed
+			indexAccountEmail(emailAccount, existing)
 			return existing
 		}
 		glog.V(3).Infof("refreshing account %s from identity %s", account.Id, ident.Name)
