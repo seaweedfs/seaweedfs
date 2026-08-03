@@ -3,6 +3,7 @@ package iceberg
 import (
 	"encoding/json"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 )
 
@@ -47,11 +48,11 @@ func TestHandleConfigWarehouseSpellings(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			url := "/v1/config"
+			target := "/v1/config"
 			if tc.warehouse != "" {
-				url += "?warehouse=" + tc.warehouse
+				target += "?" + url.Values{"warehouse": {tc.warehouse}}.Encode()
 			}
-			r := httptest.NewRequest("GET", url, nil)
+			r := httptest.NewRequest("GET", target, nil)
 			rec := httptest.NewRecorder()
 			(&Server{}).handleConfig(rec, r)
 
