@@ -167,6 +167,11 @@ func (w *WinFS) Create(path string, flags int, mode uint32) (int, uint64) {
 	if status != fuse.OK {
 		return toErrno(status), noHandle
 	}
+	if flags&cgofuse.O_EXCL != 0 {
+		if _, status := w.resolve(path); status == fuse.OK {
+			return -eEXIST, noHandle
+		}
+	}
 	in := &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: parent}, Flags: uint32(flags), Mode: mode}
 	var out fuse.CreateOut
 	if status := w.wfs.Create(never, in, name, &out); status != fuse.OK {
@@ -189,15 +194,13 @@ func (w *WinFS) Open(path string, flags int) (int, uint64) {
 }
 
 func (w *WinFS) Read(path string, buff []byte, ofst int64, fh uint64) int {
-	inode, status := w.resolve(path)
-	if status != fuse.OK {
-		return toErrno(status)
+	if fh == noHandle {
+		return -eBADF
 	}
 	in := &fuse.ReadIn{
-		InHeader: fuse.InHeader{NodeId: inode},
-		Fh:       fh,
-		Offset:   uint64(ofst),
-		Size:     uint32(len(buff)),
+		Fh:     fh,
+		Offset: uint64(ofst),
+		Size:   uint32(len(buff)),
 	}
 	result, status := w.wfs.Read(never, in, buff)
 	if status != fuse.OK {
@@ -214,15 +217,13 @@ func (w *WinFS) Read(path string, buff []byte, ofst int64, fh uint64) int {
 }
 
 func (w *WinFS) Write(path string, buff []byte, ofst int64, fh uint64) int {
-	inode, status := w.resolve(path)
-	if status != fuse.OK {
-		return toErrno(status)
+	if fh == noHandle {
+		return -eBADF
 	}
 	in := &fuse.WriteIn{
-		InHeader: fuse.InHeader{NodeId: inode},
-		Fh:       fh,
-		Offset:   uint64(ofst),
-		Size:     uint32(len(buff)),
+		Fh:     fh,
+		Offset: uint64(ofst),
+		Size:   uint32(len(buff)),
 	}
 	written, status := w.wfs.Write(never, in, buff)
 	if status != fuse.OK {
@@ -280,29 +281,24 @@ func (w *WinFS) Utimens(path string, tmsp []cgofuse.Timespec) int {
 }
 
 func (w *WinFS) Flush(path string, fh uint64) int {
-	inode, status := w.resolve(path)
-	if status != fuse.OK {
-		return toErrno(status)
+	if fh == noHandle {
+		return 0
 	}
-	in := &fuse.FlushIn{InHeader: fuse.InHeader{NodeId: inode}, Fh: fh}
-	return toErrno(w.wfs.Flush(never, in))
+	return toErrno(w.wfs.Flush(never, &fuse.FlushIn{Fh: fh}))
 }
 
 func (w *WinFS) Fsync(path string, datasync bool, fh uint64) int {
-	inode, status := w.resolve(path)
-	if status != fuse.OK {
-		return toErrno(status)
+	if fh == noHandle {
+		return 0
 	}
-	in := &fuse.FsyncIn{InHeader: fuse.InHeader{NodeId: inode}, Fh: fh}
-	return toErrno(w.wfs.Fsync(never, in))
+	return toErrno(w.wfs.Fsync(never, &fuse.FsyncIn{Fh: fh}))
 }
 
 func (w *WinFS) Release(path string, fh uint64) int {
-	inode, status := w.resolve(path)
-	if status != fuse.OK {
-		return toErrno(status)
+	if fh == noHandle {
+		return 0
 	}
-	w.wfs.Release(never, &fuse.ReleaseIn{InHeader: fuse.InHeader{NodeId: inode}, Fh: fh})
+	w.wfs.Release(never, &fuse.ReleaseIn{Fh: fh})
 	return 0
 }
 
@@ -319,11 +315,10 @@ func (w *WinFS) Opendir(path string) (int, uint64) {
 }
 
 func (w *WinFS) Releasedir(path string, fh uint64) int {
-	inode, status := w.resolve(path)
-	if status != fuse.OK {
-		return toErrno(status)
+	if fh == noHandle {
+		return 0
 	}
-	w.wfs.ReleaseDir(&fuse.ReleaseIn{InHeader: fuse.InHeader{NodeId: inode}, Fh: fh})
+	w.wfs.ReleaseDir(&fuse.ReleaseIn{Fh: fh})
 	return 0
 }
 
@@ -409,13 +404,11 @@ func (w *WinFS) Readlink(path string) (int, string) {
 	return 0, string(target)
 }
 
+// Symlink is refused for now. The entry is easy to create, but WinFsp only
+// follows it once the reparse point is wired up, so it would otherwise read
+// back as an empty file.
 func (w *WinFS) Symlink(target string, newpath string) int {
-	parent, name, status := w.resolveParent(newpath)
-	if status != fuse.OK {
-		return toErrno(status)
-	}
-	var out fuse.EntryOut
-	return toErrno(w.wfs.Symlink(never, &fuse.InHeader{NodeId: parent}, target, name, &out))
+	return -eNOSYS
 }
 
 // Link is not implemented: WinFsp has no hard links.

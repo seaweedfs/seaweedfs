@@ -387,24 +387,16 @@ func TestHardLinkUnsupported(t *testing.T) {
 	}
 }
 
-func TestSymlink(t *testing.T) {
+// Symlinks are refused rather than half-supported: WinFsp needs a reparse
+// point to follow one, and an entry it cannot follow reads back empty.
+func TestSymlinkUnsupported(t *testing.T) {
 	dir := testRoot(t)
 	target := filepath.Join(dir, "target.txt")
 	if err := os.WriteFile(target, []byte("pointed at"), 0644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	link := filepath.Join(dir, "link.txt")
-	if err := os.Symlink(target, link); err != nil {
-		// Creating symlinks needs a privilege or developer mode on Windows,
-		// so an unprivileged runner legitimately cannot do this.
-		t.Skipf("symlinks unavailable here: %v", err)
-	}
-	got, err := os.ReadFile(link)
-	if err != nil {
-		t.Fatalf("read through link: %v", err)
-	}
-	if string(got) != "pointed at" {
-		t.Fatalf("content through link = %q", got)
+	if err := os.Symlink(target, filepath.Join(dir, "link.txt")); err == nil {
+		t.Fatal("symlink creation reported success")
 	}
 }
 
