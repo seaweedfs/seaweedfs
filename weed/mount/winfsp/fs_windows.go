@@ -2,10 +2,12 @@ package winfsp
 
 import (
 	"os"
+	"syscall"
 
 	cgofuse "github.com/winfsp/cgofuse/fuse"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mount"
 )
 
@@ -86,6 +88,27 @@ func (w *WinFS) attrToStat(attr *fuse.Attr, stat *cgofuse.Stat_t) {
 	// Windows shows a creation time and has nothing to derive it from; ctime
 	// is the closest the filer tracks.
 	stat.Birthtim = stat.Ctim
+}
+
+// translateOpenFlags converts cgofuse's open flags, which follow MSVC's
+// numbering, into the values the raw filesystem tests against. Only the access
+// mode and O_TRUNC happen to agree; O_EXCL would otherwise read as O_APPEND.
+func translateOpenFlags(flags int) uint32 {
+	out := uint32(flags & cgofuse.O_ACCMODE)
+	for _, pair := range []struct {
+		from int
+		to   int
+	}{
+		{cgofuse.O_APPEND, syscall.O_APPEND},
+		{cgofuse.O_CREAT, syscall.O_CREAT},
+		{cgofuse.O_TRUNC, syscall.O_TRUNC},
+		{cgofuse.O_EXCL, syscall.O_EXCL},
+	} {
+		if flags&pair.from != 0 {
+			out |= uint32(pair.to)
+		}
+	}
+	return out
 }
 
 func (w *WinFS) Statfs(path string, stat *cgofuse.Statfs_t) int {
@@ -172,7 +195,7 @@ func (w *WinFS) Create(path string, flags int, mode uint32) (int, uint64) {
 			return -eEXIST, noHandle
 		}
 	}
-	in := &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: parent}, Flags: uint32(flags), Mode: mode}
+	in := &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: parent}, Flags: translateOpenFlags(flags), Mode: mode}
 	var out fuse.CreateOut
 	if status := w.wfs.Create(never, in, name, &out); status != fuse.OK {
 		return toErrno(status), noHandle
@@ -185,7 +208,7 @@ func (w *WinFS) Open(path string, flags int) (int, uint64) {
 	if status != fuse.OK {
 		return toErrno(status), noHandle
 	}
-	in := &fuse.OpenIn{InHeader: fuse.InHeader{NodeId: inode}, Flags: uint32(flags)}
+	in := &fuse.OpenIn{InHeader: fuse.InHeader{NodeId: inode}, Flags: translateOpenFlags(flags)}
 	var out fuse.OpenOut
 	if status := w.wfs.Open(never, in, &out); status != fuse.OK {
 		return toErrno(status), noHandle
@@ -227,6 +250,9 @@ func (w *WinFS) Write(path string, buff []byte, ofst int64, fh uint64) int {
 	}
 	written, status := w.wfs.Write(never, in, buff)
 	if status != fuse.OK {
+		if status == fuse.ENOENT {
+			glog.Errorf("write %s: handle %d is not open", path, fh)
+		}
 		return toErrno(status)
 	}
 	return int(written)
