@@ -302,13 +302,14 @@ catalog = load_catalog(
     **{
         "type": "rest",
         "uri": "http://localhost:` + fmt.Sprintf("%d", data.IcebergPort) + `",
+        "warehouse": "s3://my-table-bucket/",
     }
 )
 
 # List namespaces
 namespaces = catalog.list_namespaces()`)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_catalog.templ`, Line: 241, Col: 39}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_catalog.templ`, Line: 242, Col: 39}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 		if templ_7745c5c3_Err != nil {

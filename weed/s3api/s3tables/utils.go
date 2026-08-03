@@ -50,6 +50,11 @@ func ParseBucketNameFromARN(arn string) (string, error) {
 	return parseBucketNameFromARN(arn)
 }
 
+// IsValidBucketName is a wrapper to validate a table bucket name for other packages.
+func IsValidBucketName(name string) bool {
+	return isValidBucketName(name)
+}
+
 // parseTableFromARN extracts bucket name, namespace, and table name from ARN
 // ARN format: arn:aws:s3tables:{region}:{account}:bucket/{bucket-name}/table/{namespace}/{table-name}
 func parseTableFromARN(arn string) (bucketName, namespace, tableName string, err error) {

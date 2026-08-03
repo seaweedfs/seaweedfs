@@ -16,12 +16,12 @@ import (
 
 // handleConfig returns catalog configuration.
 //
-// When a client passes ?warehouse=s3://<bucket>/, the Iceberg REST spec
-// expects the server to echo a catalog identifier back as overrides.prefix
-// so subsequent calls use /v1/{prefix}/... and land on the right table
-// bucket. Without this, clients like DuckDB's ATTACH flow fall back to an
-// unprefixed path that resolves to the wrong bucket and report phantom
-// "schema does not exist" errors. See issue #9103.
+// When a client passes ?warehouse=, the Iceberg REST spec expects the server
+// to echo a catalog identifier back as overrides.prefix so subsequent calls
+// use /v1/{prefix}/... and land on the right table bucket. Without this,
+// clients like DuckDB's ATTACH flow fall back to an unprefixed path that
+// resolves to the wrong bucket and report phantom "schema does not exist"
+// errors.
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	config := CatalogConfig{
@@ -29,13 +29,15 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		Overrides: map[string]string{},
 	}
 	if warehouse := strings.TrimSpace(r.URL.Query().Get("warehouse")); warehouse != "" {
-		// Only the bucket portion of the warehouse URL is meaningful today —
+		// Only the bucket portion of the warehouse is meaningful today —
 		// SeaweedFS table-bucket routing is bucket-scoped, so any sub-path
 		// (e.g. s3://bucket/prefix/) is ignored here and clients that try to
 		// scope a catalog under a sub-prefix will still land on the bucket.
-		if bucket, _, err := parseS3Location(warehouse); err == nil && bucket != "" {
+		if bucket := resolveWarehouseBucket(warehouse); bucket != "" {
 			config.Overrides["prefix"] = bucket
-			config.Defaults["warehouse"] = warehouse
+			// Echo the location form regardless of how the client spelled the
+			// warehouse: clients derive default table locations from it.
+			config.Defaults["warehouse"] = "s3://" + bucket
 		}
 	}
 	if err := json.NewEncoder(w).Encode(config); err != nil {
