@@ -128,6 +128,17 @@ func translateOpenFlags(flags int) uint32 {
 	return out
 }
 
+// logResolveFailure keeps a missing file quiet. Windows probes for entries
+// that do not exist as a matter of course, so ENOENT is an answer rather than
+// a fault; anything else is worth a line.
+func logResolveFailure(op, path string, status fuse.Status) {
+	if status == fuse.ENOENT {
+		glog.V(4).Infof("%s %s: no such entry", op, path)
+		return
+	}
+	glog.Errorf("%s %s: resolving: %v", op, path, status)
+}
+
 func (w *WinFS) Statfs(path string, stat *cgofuse.Statfs_t) int {
 	var out fuse.StatfsOut
 	if status := w.wfs.StatFs(never, &fuse.InHeader{NodeId: rootInode}, &out); status != fuse.OK {
@@ -148,7 +159,7 @@ func (w *WinFS) Statfs(path string, stat *cgofuse.Statfs_t) int {
 func (w *WinFS) Getattr(path string, stat *cgofuse.Stat_t, fh uint64) int {
 	inode, status := w.resolve(path)
 	if status != fuse.OK {
-		glog.Errorf("getattr %s: resolving: %v", path, status)
+		logResolveFailure("getattr", path, status)
 		return toErrno(status)
 	}
 	in := &fuse.GetAttrIn{InHeader: fuse.InHeader{NodeId: inode}}
@@ -226,7 +237,7 @@ func (w *WinFS) Create(path string, flags int, mode uint32) (int, uint64) {
 func (w *WinFS) Open(path string, flags int) (int, uint64) {
 	inode, status := w.resolve(path)
 	if status != fuse.OK {
-		glog.Errorf("open %s: resolving: %v", path, status)
+		logResolveFailure("open", path, status)
 		return toErrno(status), noHandle
 	}
 	in := &fuse.OpenIn{InHeader: fuse.InHeader{NodeId: inode}, Flags: translateOpenFlags(flags)}
