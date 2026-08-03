@@ -22,8 +22,18 @@ func TestGetBucketFromPrefix_WarehouseQueryFallback(t *testing.T) {
 			want: "another",
 		},
 		{
-			name: "malformed warehouse value falls through to default",
+			name: "bare bucket name is taken as the table bucket",
 			url:  "/v1/namespaces?warehouse=not-a-url",
+			want: "not-a-url",
+		},
+		{
+			name: "table bucket ARN routes to its bucket",
+			url:  "/v1/namespaces?warehouse=arn%3Aaws%3As3tables%3Aus-east-1%3Aadmin%3Abucket%2Fseaweed-iceberg",
+			want: "seaweed-iceberg",
+		},
+		{
+			name: "unusable warehouse value falls through to default",
+			url:  "/v1/namespaces?warehouse=file%3A%2F%2F%2Ftmp%2Fwh",
 			want: "warehouse",
 		},
 		{
