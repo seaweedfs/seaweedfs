@@ -2,7 +2,6 @@ package winfsp
 
 import (
 	"os"
-	"strings"
 
 	cgofuse "github.com/winfsp/cgofuse/fuse"
 
@@ -39,18 +38,11 @@ func NewWinFS(wfs *mount.WFS, uid, gid uint32) *WinFS {
 	return &WinFS{wfs: wfs, uid: uid, gid: gid}
 }
 
-// resolve walks a WinFsp path down to an inode, one Lookup per component.
-// Lookup also registers the mapping the raw operations index by.
-func (w *WinFS) resolve(path string) (uint64, fuse.Status) {
-	trimmed := strings.Trim(strings.ReplaceAll(path, `\`, "/"), "/")
-	if trimmed == "" {
-		return rootInode, fuse.OK
-	}
+// walk looks up each component in turn, which also registers the mappings the
+// raw operations index by.
+func (w *WinFS) walk(parts []string) (uint64, fuse.Status) {
 	inode := uint64(rootInode)
-	for _, name := range strings.Split(trimmed, "/") {
-		if name == "" || name == "." {
-			continue
-		}
+	for _, name := range parts {
 		var out fuse.EntryOut
 		if status := w.wfs.Lookup(never, &fuse.InHeader{NodeId: inode}, name, &out); status != fuse.OK {
 			return 0, status
@@ -60,18 +52,19 @@ func (w *WinFS) resolve(path string) (uint64, fuse.Status) {
 	return inode, fuse.OK
 }
 
+// resolve walks a WinFsp path down to an inode.
+func (w *WinFS) resolve(path string) (uint64, fuse.Status) {
+	return w.walk(splitPath(path))
+}
+
 // resolveParent resolves everything but the last component, which the create
 // and delete operations need separately.
 func (w *WinFS) resolveParent(path string) (uint64, string, fuse.Status) {
-	trimmed := strings.Trim(strings.ReplaceAll(path, `\`, "/"), "/")
-	if trimmed == "" {
+	parentParts, name, ok := splitParent(path)
+	if !ok {
 		return 0, "", fuse.EINVAL
 	}
-	dir, name := "", trimmed
-	if i := strings.LastIndex(trimmed, "/"); i >= 0 {
-		dir, name = trimmed[:i], trimmed[i+1:]
-	}
-	parent, status := w.resolve(dir)
+	parent, status := w.walk(parentParts)
 	if status != fuse.OK {
 		return 0, "", status
 	}
