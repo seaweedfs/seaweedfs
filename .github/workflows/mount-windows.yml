@@ -1,0 +1,115 @@
+name: "mount: windows"
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'weed/mount/**'
+      - 'weed/command/mount*.go'
+      - 'test/winfsp/**'
+      - '.github/workflows/mount-windows.yml'
+  pull_request:
+    branches: [ master ]
+    paths:
+      - 'weed/mount/**'
+      - 'weed/command/mount*.go'
+      - 'test/winfsp/**'
+      - '.github/workflows/mount-windows.yml'
+
+concurrency:
+  group: ${{ github.head_ref }}/mount-windows
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  mount-windows:
+    name: Mount on Windows
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v7
+
+    - uses: actions/setup-go@v7
+      with:
+        go-version-file: 'go.mod'
+
+    # cgofuse loads winfsp-x64.dll at run time, so WinFsp is needed here but
+    # not to build.
+    - name: Install WinFsp
+      run: choco install winfsp -y --no-progress
+
+    - name: Build weed.exe
+      run: go build -o weed.exe ./weed
+
+    - name: Start a cluster
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force -Path C:\seaweed-data | Out-Null
+        Start-Process -FilePath .\weed.exe `
+          -ArgumentList 'mini','-dir=C:\seaweed-data' `
+          -RedirectStandardOutput C:\seaweed-mini.log `
+          -RedirectStandardError C:\seaweed-mini.err.log
+        $deadline = (Get-Date).AddMinutes(3)
+        while ((Get-Date) -lt $deadline) {
+          try {
+            Invoke-WebRequest -Uri http://localhost:8888/ -UseBasicParsing -TimeoutSec 3 | Out-Null
+            Write-Host "filer is up"
+            exit 0
+          } catch { Start-Sleep -Seconds 3 }
+        }
+        Write-Host "filer never came up"
+        Get-Content C:\seaweed-mini.log, C:\seaweed-mini.err.log -ErrorAction SilentlyContinue
+        exit 1
+
+    - name: "Mount S:"
+      shell: pwsh
+      run: |
+        Start-Process -FilePath .\weed.exe `
+          -ArgumentList 'mount','-filer=localhost:8888','-dir=S:' `
+          -RedirectStandardOutput C:\seaweed-mount.log `
+          -RedirectStandardError C:\seaweed-mount.err.log
+        $deadline = (Get-Date).AddMinutes(2)
+        while ((Get-Date) -lt $deadline) {
+          if (Test-Path S:\) {
+            Write-Host "S: is mounted"
+            exit 0
+          }
+          Start-Sleep -Seconds 2
+        }
+        Write-Host "S: never appeared"
+        Get-Content C:\seaweed-mount.log, C:\seaweed-mount.err.log -ErrorAction SilentlyContinue
+        exit 1
+
+    - name: Exercise the mount
+      run: go test -v -timeout 20m ./test/winfsp -mountpoint=S:\
+
+    - name: Explorer-style walk
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force -Path S:\walk | Out-Null
+        1..200 | ForEach-Object { Set-Content -Path "S:\walk\f$_.txt" -Value "line $_" }
+        $count = (Get-ChildItem S:\walk | Measure-Object).Count
+        if ($count -ne 200) { throw "listed $count files, expected 200" }
+        $body = Get-Content S:\walk\f42.txt
+        if ($body -ne 'line 42') { throw "unexpected content: $body" }
+        Copy-Item S:\walk\f42.txt S:\walk\copy.txt
+        Remove-Item S:\walk -Recurse -Force
+        if (Test-Path S:\walk) { throw "directory survived recursive delete" }
+
+    - name: Unmount
+      if: always()
+      shell: pwsh
+      run: |
+        Get-Process weed -ErrorAction SilentlyContinue | Stop-Process -Force
+        Start-Sleep -Seconds 3
+
+    - name: Logs
+      if: failure()
+      shell: pwsh
+      run: |
+        foreach ($f in 'C:\seaweed-mount.log','C:\seaweed-mount.err.log','C:\seaweed-mini.log','C:\seaweed-mini.err.log') {
+          if (Test-Path $f) { Write-Host "===== $f"; Get-Content $f -Tail 200 }
+        }
