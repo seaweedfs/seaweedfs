@@ -68,7 +68,7 @@ jobs:
 
         function Start-Mount($log) {
           Start-Process -FilePath .\weed.exe `
-            -ArgumentList 'mount','-filer=127.0.0.1:8888','-dir=S:' `
+            -ArgumentList '-logtostderr','mount','-filer=127.0.0.1:8888','-dir=S:' `
             -RedirectStandardOutput "C:\$log.log" -RedirectStandardError "C:\$log.err.log"
           $deadline = (Get-Date).AddMinutes(2)
           while ((Get-Date) -lt $deadline) {
@@ -101,7 +101,7 @@ jobs:
         # -ip pins the cluster to loopback; it otherwise advertises and binds
         # the runner's LAN address, which 127.0.0.1 cannot reach.
         Start-Process -FilePath .\weed.exe `
-          -ArgumentList 'mini','-dir=C:\seaweed-data','-ip=127.0.0.1' `
+          -ArgumentList '-logtostderr','mini','-dir=C:\seaweed-data','-ip=127.0.0.1' `
           -RedirectStandardOutput C:\seaweed-mini.log -RedirectStandardError C:\seaweed-mini.err.log
 
         $deadline = (Get-Date).AddMinutes(3)
