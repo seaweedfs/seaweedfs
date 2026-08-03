@@ -22,6 +22,11 @@ import (
 // matching the uid=-1 option handed to WinFsp.
 const ownedByMounter = ^uint32(0)
 
+// windowsAttrTimeoutSec bounds how long WinFsp may serve cached attributes.
+// Nothing invalidates that cache from this side, so it stays short rather than
+// borrowing an unrelated flag's value.
+const windowsAttrTimeoutSec = 1.0
+
 func RunMount(option *MountOptions, umask os.FileMode) bool {
 	chunkSizeLimitMB := *mountOptions.chunkSizeLimitMB
 	if chunkSizeLimitMB <= 0 {
@@ -93,19 +98,20 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	}
 
 	host := winfsp.New(seaweedFileSystem, winfsp.Options{
-		VolumeName:      strings.ReplaceAll(*option.filer, ",", "+"),
-		CaseInsensitive: option.windowsCaseInsensitive != nil && *option.windowsCaseInsensitive,
-		Uid:             ownedByMounter,
-		Gid:             ownedByMounter,
-		AttrTimeout:     float64(*option.cacheMetaTtlSec),
-		ReadOnly:        *option.readOnly,
-		Debug:           *option.debugFuse,
-		ExtraOptions:    option.extraOptions,
+		VolumeName:   strings.ReplaceAll(*option.filer, ",", "+"),
+		Uid:          ownedByMounter,
+		Gid:          ownedByMounter,
+		AttrTimeout:  windowsAttrTimeoutSec,
+		ReadOnly:     *option.readOnly,
+		Debug:        *option.debugFuse,
+		ExtraOptions: option.extraOptions,
 	})
 
 	grace.OnInterrupt(func() {
 		// The signal handler exits the process as soon as the hooks return, so
 		// anything still queued has to be flushed here rather than after Serve.
+		// WaitForAsyncFlush is idempotent, so the post-Serve call below is
+		// harmless if both run.
 		host.Unmount()
 		seaweedFileSystem.WaitForAsyncFlush()
 	})
@@ -136,7 +142,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 // worth doing up front because its own failure is a bare false.
 func checkWindowsMountPoint(dir string) error {
 	if isDriveLetter(dir) {
-		if _, err := os.Stat(dir + `\`); err == nil {
+		if _, err := os.Stat(strings.TrimRight(dir, `\/`) + `\`); err == nil {
 			return fmt.Errorf("drive %s is already in use", dir)
 		}
 		return nil
@@ -185,10 +191,13 @@ func isEmptyDir(dir string) (bool, error) {
 	return false, nil
 }
 
+// isDriveLetter accepts both "S:" and "S:\\"; the trailing separator is how
+// the drive is usually written and WinFsp takes either.
 func isDriveLetter(dir string) bool {
-	if len(dir) != 2 || dir[1] != ':' {
+	trimmed := strings.TrimRight(dir, `\/`)
+	if len(trimmed) != 2 || trimmed[1] != ':' {
 		return false
 	}
-	c := dir[0]
+	c := trimmed[0]
 	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
 }

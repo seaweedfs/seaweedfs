@@ -7,9 +7,10 @@ import (
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 )
 
-// The numbers have to be POSIX regardless of how the host platform spells its
-// own errno constants, because WinFsp reads them on the other side.
-func TestToErrnoIsPosix(t *testing.T) {
+// The numbers have to match what cgofuse decodes on the far side, regardless
+// of how the host platform spells its own errno constants. That numbering is
+// MSVC's, which parts company with Linux above 35.
+func TestToErrnoUsesCgofuseNumbering(t *testing.T) {
 	cases := []struct {
 		status fuse.Status
 		want   int
@@ -19,10 +20,10 @@ func TestToErrnoIsPosix(t *testing.T) {
 		{fuse.EIO, -5},
 		{fuse.EACCES, -13},
 		{fuse.EINVAL, -22},
-		{fuse.ENOSYS, -38},
+		{fuse.ENOSYS, -40},
 		{fuse.Status(syscall.EEXIST), -17},
 		{fuse.Status(syscall.ENOSPC), -28},
-		{fuse.Status(syscall.ENOTEMPTY), -39},
+		{fuse.Status(syscall.ENOTEMPTY), -41},
 	}
 	for _, c := range cases {
 		if got := toErrno(c.status); got != c.want {

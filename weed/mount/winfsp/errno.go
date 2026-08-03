@@ -11,9 +11,10 @@ import (
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 )
 
-// WinFsp's FUSE layer expects POSIX errno numbers. They are spelled out rather
-// than taken from syscall because Go numbers Windows errnos as offsets from
-// APPLICATION_ERROR, nothing like the POSIX values the other side reads.
+// cgofuse decodes what these operations return using MSVC/UCRT numbering,
+// which parts company with Linux above 35: ENAMETOOLONG is 38 there and 36 is
+// EDEADLK, so borrowing the Linux values silently reported the wrong error.
+// errno_windows_test.go pins each of these to cgofuse's own constant.
 const (
 	ePERM   = 1
 	eNOENT  = 2
@@ -41,12 +42,12 @@ const (
 	ePIPE   = 32
 	eRANGE  = 34
 
-	eNAMETOOLONG = 36
-	eNOSYS       = 38
-	eNOTEMPTY    = 39
-	eLOOP        = 40
-	eNODATA      = 61
-	eNOTSUP      = 95
+	eNAMETOOLONG = 38
+	eNOSYS       = 40
+	eNOTEMPTY    = 41
+	eLOOP        = 114
+	eNODATA      = 120
+	eNOTSUP      = 129
 )
 
 // statusErrno is keyed by the running platform's errno values, since that is

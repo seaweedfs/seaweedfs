@@ -3,6 +3,7 @@ package winfsp
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	cgofuse "github.com/winfsp/cgofuse/fuse"
 
@@ -13,11 +14,6 @@ import (
 type Options struct {
 	// VolumeName labels the drive in Explorer.
 	VolumeName string
-
-	// CaseInsensitive matches how most Windows software expects a filesystem
-	// to behave. The filer itself is case-sensitive, so two names differing
-	// only in case become unreachable when this is set.
-	CaseInsensitive bool
 
 	// Uid and Gid are reported for every entry. The default of -1 leaves
 	// ownership to WinFsp, which attributes files to the mounting user.
@@ -48,7 +44,6 @@ type Host struct {
 func New(wfs *mount.WFS, options Options) *Host {
 	host := cgofuse.NewFileSystemHost(NewWinFS(wfs, options.Uid, options.Gid))
 	host.SetCapReaddirPlus(true)
-	host.SetCapCaseInsensitive(options.CaseInsensitive)
 	host.SetUseIno(true)
 	return &Host{host: host, options: options}
 }
@@ -76,6 +71,21 @@ func (h *Host) Serve(mountPoint string) error {
 		opts = append(opts, "-o", extra)
 	}
 
+	if err := h.mount(mountPoint, opts); err != nil {
+		return err
+	}
+	return nil
+}
+
+// mount turns a refusal into an error. cgofuse panics rather than returning
+// when winfsp-x64.dll is missing, which is the most likely reason for a
+// failure here and the one worth naming.
+func (h *Host) mount(mountPoint string, opts []string) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("mounting %s failed (%v); is WinFsp installed?", mountPoint, r)
+		}
+	}()
 	if !h.host.Mount(mountPoint, opts) {
 		return fmt.Errorf("WinFsp refused to mount %s; check that WinFsp is installed and the mount point is free", mountPoint)
 	}
@@ -87,9 +97,13 @@ func (h *Host) Unmount() bool {
 	return h.host.Unmount()
 }
 
+// volumeName keeps the label parseable: WinFsp splits options on commas, so a
+// label carrying one would be cut short and take the rest of the option string
+// with it.
 func (h *Host) volumeName() string {
-	if h.options.VolumeName == "" {
+	name := strings.ReplaceAll(h.options.VolumeName, ",", "+")
+	if name == "" {
 		return "SeaweedFS"
 	}
-	return h.options.VolumeName
+	return name
 }

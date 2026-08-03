@@ -6,42 +6,41 @@ import (
 )
 
 type MountOptions struct {
-	filer                  *string
-	filerMountRootPath     *string
-	dir                    *string
-	dirAutoCreate          *bool
-	collection             *string
-	collectionQuota        *int
-	logicalDiskUsage       *bool
-	replication            *string
-	diskType               *string
-	ttlSec                 *int
-	chunkSizeLimitMB       *int
-	concurrentWriters      *int
-	concurrentReaders      *int
-	cacheMetaTtlSec        *int
-	cacheDirForRead        *string
-	cacheDirForWrite       *string
-	cacheSizeMBForRead     *int64
-	writeBufferSizeMB      *int64
-	dataCenter             *string
-	allowOthers            *bool
-	defaultPermissions     *bool
-	umaskString            *string
-	nonempty               *bool
-	volumeServerAccess     *string
-	uidMap                 *string
-	gidMap                 *string
-	readOnly               *bool
-	includeSystemEntries   *bool
-	debug                  *bool
-	debugPort              *int
-	debugFuse              *bool
-	localSocket            *string
-	disableXAttr           *bool
-	windowsCaseInsensitive *bool
-	extraOptions           []string
-	fuseCommandPid         int
+	filer                *string
+	filerMountRootPath   *string
+	dir                  *string
+	dirAutoCreate        *bool
+	collection           *string
+	collectionQuota      *int
+	logicalDiskUsage     *bool
+	replication          *string
+	diskType             *string
+	ttlSec               *int
+	chunkSizeLimitMB     *int
+	concurrentWriters    *int
+	concurrentReaders    *int
+	cacheMetaTtlSec      *int
+	cacheDirForRead      *string
+	cacheDirForWrite     *string
+	cacheSizeMBForRead   *int64
+	writeBufferSizeMB    *int64
+	dataCenter           *string
+	allowOthers          *bool
+	defaultPermissions   *bool
+	umaskString          *string
+	nonempty             *bool
+	volumeServerAccess   *string
+	uidMap               *string
+	gidMap               *string
+	readOnly             *bool
+	includeSystemEntries *bool
+	debug                *bool
+	debugPort            *int
+	debugFuse            *bool
+	localSocket          *string
+	disableXAttr         *bool
+	extraOptions         []string
+	fuseCommandPid       int
 
 	// Periodic metadata flush to protect against orphan chunk cleanup
 	metadataFlushSeconds *int
@@ -128,7 +127,6 @@ func init() {
 	mountOptions.debugFuse = cmdMount.Flag.Bool("debug.fuse", false, "log raw FUSE protocol requests and responses")
 	mountOptions.localSocket = cmdMount.Flag.String("localSocket", "", "default to /tmp/seaweedfs-mount-<mount_dir_hash>.sock")
 	mountOptions.disableXAttr = cmdMount.Flag.Bool("disableXAttr", false, "disable xattr")
-	mountOptions.windowsCaseInsensitive = cmdMount.Flag.Bool("windows.caseInsensitive", false, "windows only: match names case-insensitively, hiding entries that differ only in case")
 	mountOptions.hasAutofs = cmdMount.Flag.Bool("autofs", false, "ignore autofs mounted on the same mountpoint (useful when systemd.automount and autofs is used)")
 	mountOptions.fuseCommandPid = 0
 

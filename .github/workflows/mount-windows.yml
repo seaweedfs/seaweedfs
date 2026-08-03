@@ -18,7 +18,7 @@ on:
       - '.github/workflows/mount-windows.yml'
 
 concurrency:
-  group: ${{ github.head_ref }}/mount-windows
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
 permissions:
@@ -37,6 +37,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
 
     - uses: actions/setup-go@v7
       with:
@@ -138,7 +140,12 @@ jobs:
         $deadline = (Get-Date).AddMinutes(2)
         $ok = $false
         while ((Get-Date) -lt $deadline) {
-          try { Get-ChildItem C:\seaweed-mnt -ErrorAction Stop | Out-Null; $ok = $true; break } catch { Start-Sleep -Seconds 2 }
+          # Listing succeeds on the plain empty directory too, so wait for the
+          # reparse point WinFsp turns it into. Otherwise this step passes
+          # without a mount and writes to local disk.
+          $item = Get-Item C:\seaweed-mnt -Force -ErrorAction SilentlyContinue
+          if ($null -ne $item -and $item.Attributes.ToString() -like '*ReparsePoint*') { $ok = $true; break }
+          Start-Sleep -Seconds 2
         }
         if (-not $ok) {
           Get-Content C:\seaweed-dirmount.log, C:\seaweed-dirmount.err.log -ErrorAction SilentlyContinue

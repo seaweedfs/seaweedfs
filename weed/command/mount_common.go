@@ -141,11 +141,12 @@ func connectToFiler(option *MountOptions) (filerAddresses []pb.ServerAddress, gr
 			bucketRootPath = resp.DirBuckets
 			return nil
 		})
-		if err != nil {
-			glog.V(0).Infof("failed to talk to filer %v: %v", filerAddresses, err)
-			glog.V(0).Infof("wait for %d seconds ...", i+1)
-			time.Sleep(time.Duration(i+1) * time.Second)
+		if err == nil {
+			break
 		}
+		glog.V(0).Infof("failed to talk to filer %v: %v", filerAddresses, err)
+		glog.V(0).Infof("wait for %d seconds ...", i+1)
+		time.Sleep(time.Duration(i+1) * time.Second)
 	}
 	if err != nil {
 		glog.Errorf("failed to talk to filer %v: %v", filerAddresses, err)

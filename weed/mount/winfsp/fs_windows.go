@@ -1,7 +1,6 @@
 package winfsp
 
 import (
-	"os"
 	"syscall"
 
 	cgofuse "github.com/winfsp/cgofuse/fuse"
@@ -38,6 +37,16 @@ type WinFS struct {
 
 func NewWinFS(wfs *mount.WFS, uid, gid uint32) *WinFS {
 	return &WinFS{wfs: wfs, uid: uid, gid: gid}
+}
+
+// caller identifies who the raw filesystem should record as the owner of
+// anything it creates. Windows has no uid to pass through, so entries carry
+// the identity the mount was started with rather than root.
+func (w *WinFS) caller(inode uint64) fuse.InHeader {
+	return fuse.InHeader{
+		NodeId: inode,
+		Caller: fuse.Caller{Owner: fuse.Owner{Uid: w.uid, Gid: w.gid}},
+	}
 }
 
 // walk resolves a path one component at a time. Lookup does more than find an
@@ -166,7 +175,7 @@ func (w *WinFS) Mkdir(path string, mode uint32) int {
 	if status != fuse.OK {
 		return toErrno(status)
 	}
-	in := &fuse.MkdirIn{InHeader: fuse.InHeader{NodeId: parent}, Mode: mode | uint32(os.ModeDir.Perm())}
+	in := &fuse.MkdirIn{InHeader: w.caller(parent), Mode: mode}
 	var out fuse.EntryOut
 	return toErrno(w.wfs.Mkdir(never, in, name, &out))
 }
@@ -211,7 +220,7 @@ func (w *WinFS) Create(path string, flags int, mode uint32) (int, uint64) {
 			return -eEXIST, noHandle
 		}
 	}
-	in := &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: parent}, Flags: translateOpenFlags(flags), Mode: mode}
+	in := &fuse.CreateIn{InHeader: w.caller(parent), Flags: translateOpenFlags(flags), Mode: mode}
 	var out fuse.CreateOut
 	if status := w.wfs.Create(never, in, name, &out); status != fuse.OK {
 		glog.Errorf("create %s in inode %d: %v", name, parent, status)
@@ -329,7 +338,7 @@ func (w *WinFS) Flush(path string, fh uint64) int {
 	if fh == noHandle {
 		return 0
 	}
-	return toErrno(w.wfs.Flush(never, &fuse.FlushIn{Fh: fh}))
+	return toErrno(w.wfs.Flush(never, &fuse.FlushIn{InHeader: w.caller(0), Fh: fh}))
 }
 
 func (w *WinFS) Fsync(path string, datasync bool, fh uint64) int {
