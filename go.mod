@@ -148,7 +148,7 @@ require (
 	github.com/rdleal/intervalst v1.5.0
 	github.com/redis/go-redis/v9 v9.21.0
 	github.com/schollz/progressbar/v3 v3.19.1
-	github.com/seaweedfs/go-fuse/v2 v2.9.4-0.20260803074752-bd46d45ccb3b
+	github.com/seaweedfs/go-fuse/v2 v2.9.4
 	github.com/shirou/gopsutil/v4 v4.26.6
 	github.com/tarantool/go-option v1.1.0
 	github.com/tarantool/go-tarantool/v3 v3.0.0
