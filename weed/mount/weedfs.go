@@ -185,7 +185,8 @@ type WFS struct {
 
 	// asyncFlushWg tracks pending background flush work items for writebackCache mode.
 	// Must be waited on before unmount cleanup to prevent data loss.
-	asyncFlushWg sync.WaitGroup
+	asyncFlushWg    sync.WaitGroup
+	asyncFlushClose sync.Once
 
 	// asyncFlushCh is a bounded work queue for background flush operations.
 	// A fixed pool of worker goroutines processes items from this channel,
@@ -627,6 +628,14 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, entryVersion,
 		}
 	}
 
+	// About to trust the filer, so first let any async flush of a just-closed
+	// handle land: it would otherwise answer with pre-close metadata, a
+	// truncate's old size or a write's old chunks. The cache paths above are
+	// already consistent and must not pay this wait.
+	if inode, found := wfs.inodeToPath.GetInode(fullpath); found {
+		wfs.waitForPendingAsyncFlush(inode)
+	}
+
 	// Directory not cached - fetch directly from filer without caching the entire directory.
 	glog.V(4).Infof("lookupEntry fetching from filer %s", fullpath)
 	var entry *filer_pb.Entry
@@ -666,6 +675,28 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, entryVersion,
 					if localEntry, localVersionTsNs, localErr := wfs.metaCache.FindEntry(context.Background(), fullpath); localErr == nil && localEntry != nil {
 						glog.V(4).Infof("lookupEntry found deferred entry in local cache %s", fullpath)
 						return localEntry, entryVersion{tsNs: localVersionTsNs}, fuse.OK
+					}
+					// Creating many files at once can push the directory past
+					// the hot threshold and evict it, which drops the local
+					// placeholder a deferred create left behind. The handle
+					// still holding the unflushed entry is authoritative for
+					// it, so read it from there rather than reporting a file
+					// that plainly exists as missing.
+					if fh, fhFound := wfs.fhMap.FindFileHandle(inode); fhFound {
+						// Async upload workers append chunks under this lock;
+						// hold it for reading so FromPbEntry does not walk the
+						// chunk slice mid-reallocation.
+						fh.entryLock.RLock()
+						pbEntry := fh.GetEntry().GetEntry()
+						var localEntry *filer.Entry
+						if pbEntry != nil {
+							localEntry = filer.FromPbEntry(dir, pbEntry)
+						}
+						fh.entryLock.RUnlock()
+						if localEntry != nil {
+							glog.V(4).Infof("lookupEntry found deferred entry on its open handle %s", fullpath)
+							return localEntry, entryVersion{}, fuse.OK
+						}
 					}
 				}
 			}

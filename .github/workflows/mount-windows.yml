@@ -1,0 +1,183 @@
+name: "mount: windows"
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'weed/mount/**'
+      - 'weed/command/mount*.go'
+      - 'test/winfsp/**'
+      - '.github/workflows/mount-windows.yml'
+  # No base branch filter: this is the only thing that runs the Windows mount,
+  # so it should cover a pull request stacked on another one too.
+  pull_request:
+    paths:
+      - 'weed/mount/**'
+      - 'weed/command/mount*.go'
+      - 'test/winfsp/**'
+      - '.github/workflows/mount-windows.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  mount-windows:
+    name: Mount on Windows
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      # The runner ships MinGW, so cgo is on by default and cgofuse picks its
+      # cgo variant, which wants WinFsp's headers. The nocgo variant loads
+      # winfsp-x64.dll at run time instead, which is how weed.exe is released.
+      CGO_ENABLED: 0
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
+
+    - uses: actions/setup-go@v7
+      with:
+        go-version-file: 'go.mod'
+
+    # cgofuse loads winfsp-x64.dll at run time, so WinFsp is needed here but
+    # not to build.
+    - name: Install WinFsp
+      run: choco install winfsp -y --no-progress
+
+    - name: Build weed.exe
+      run: go build -o weed.exe ./weed
+
+    # The runner tears down a step's process tree when its shell exits, so a
+    # cluster started in one step is gone by the next. Everything that needs
+    # the cluster and the mount alive has to share a step.
+    - name: Mount and exercise
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+
+        function Test-Port($port) {
+          # A plain connect, because Test-NetConnection has reported success
+          # here for a port nothing was listening on.
+          $client = New-Object System.Net.Sockets.TcpClient
+          try { $client.Connect('127.0.0.1', $port); return $client.Connected }
+          catch { return $false }
+          finally { $client.Dispose() }
+        }
+
+        function Start-Mount($log) {
+          Start-Process -FilePath .\weed.exe `
+            -ArgumentList '-logtostderr','mount','-filer=127.0.0.1:8888','-dir=S:' `
+            -RedirectStandardOutput "C:\$log.log" -RedirectStandardError "C:\$log.err.log"
+          $deadline = (Get-Date).AddMinutes(2)
+          while ((Get-Date) -lt $deadline) {
+            if (Test-Path S:\) { Write-Host "S: is mounted"; return }
+            Start-Sleep -Seconds 2
+          }
+          Get-Content "C:\$log.log", "C:\$log.err.log" -ErrorAction SilentlyContinue
+          throw "S: never appeared"
+        }
+
+        function Stop-Mount {
+          Get-CimInstance Win32_Process -Filter "Name = 'weed.exe'" |
+            Where-Object { $_.CommandLine -like '*mount*' } |
+            ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+          $deadline = (Get-Date).AddMinutes(1)
+          while ((Get-Date) -lt $deadline -and (Test-Path S:\)) { Start-Sleep -Seconds 2 }
+          if (Test-Path S:\) { throw "S: still present after stopping the mount" }
+          Write-Host "unmounted"
+        }
+
+        function Invoke-Tests($label, [string[]]$goArgs) {
+          Write-Host "::group::$label"
+          & go @goArgs
+          $code = $LASTEXITCODE
+          Write-Host "::endgroup::"
+          if ($code -ne 0) { throw "$label failed with exit $code" }
+        }
+
+        New-Item -ItemType Directory -Force -Path C:\seaweed-data | Out-Null
+        # -ip pins the cluster to loopback; it otherwise advertises and binds
+        # the runner's LAN address, which 127.0.0.1 cannot reach.
+        Start-Process -FilePath .\weed.exe `
+          -ArgumentList '-logtostderr','mini','-dir=C:\seaweed-data','-ip=127.0.0.1' `
+          -RedirectStandardOutput C:\seaweed-mini.log -RedirectStandardError C:\seaweed-mini.err.log
+
+        $deadline = (Get-Date).AddMinutes(3)
+        while ((Get-Date) -lt $deadline) {
+          # The mount dials grpc, not http, so both ports have to answer.
+          if ((Test-Port 8888) -and (Test-Port 18888)) { break }
+          Start-Sleep -Seconds 3
+        }
+        if (-not ((Test-Port 8888) -and (Test-Port 18888))) {
+          Get-Content C:\seaweed-mini.log, C:\seaweed-mini.err.log -ErrorAction SilentlyContinue
+          throw "filer never came up"
+        }
+        Write-Host "filer is up on http 8888 and grpc 18888"
+
+        Start-Mount 'seaweed-mount'
+
+        Invoke-Tests 'exercise' @('test','-v','-timeout','20m','./test/winfsp','-mountpoint=S:\')
+        Invoke-Tests 'persist-write' @('test','-v','-timeout','15m','./test/winfsp','-run','TestPersistence','-mountpoint=S:\','-phase=write','-filer=127.0.0.1:8888')
+
+        Stop-Mount
+        Start-Mount 'seaweed-remount'
+
+        Invoke-Tests 'persist-verify' @('test','-v','-timeout','15m','./test/winfsp','-run','TestPersistence','-mountpoint=S:\','-phase=verify')
+
+        # WinFsp creates the mount directory itself, so the path must not
+        # exist; only its parent has to.
+        Write-Host "::group::mount over a directory"
+        Stop-Mount
+        Remove-Item C:\seaweed-mnt -Recurse -Force -ErrorAction SilentlyContinue
+        Start-Process -FilePath .\weed.exe `
+          -ArgumentList '-logtostderr','mount','-filer=127.0.0.1:8888','-dir=C:\seaweed-mnt' `
+          -RedirectStandardOutput C:\seaweed-dirmount.log -RedirectStandardError C:\seaweed-dirmount.err.log
+        $deadline = (Get-Date).AddMinutes(2)
+        $ok = $false
+        while ((Get-Date) -lt $deadline) {
+          # Listing succeeds on the plain empty directory too, so wait for the
+          # reparse point WinFsp turns it into. Otherwise this step passes
+          # without a mount and writes to local disk.
+          $item = Get-Item C:\seaweed-mnt -Force -ErrorAction SilentlyContinue
+          if ($null -ne $item -and $item.Attributes.ToString() -like '*ReparsePoint*') { $ok = $true; break }
+          Start-Sleep -Seconds 2
+        }
+        if (-not $ok) {
+          Get-Content C:\seaweed-dirmount.log, C:\seaweed-dirmount.err.log -ErrorAction SilentlyContinue
+          throw "mounting over a directory failed"
+        }
+        Set-Content -Path C:\seaweed-mnt\dirmount.txt -Value 'via directory mount'
+        if ((Get-Content C:\seaweed-mnt\dirmount.txt) -ne 'via directory mount') { throw "readback through the directory mount differs" }
+        Remove-Item C:\seaweed-mnt\dirmount.txt -Force
+        Get-CimInstance Win32_Process -Filter "Name = 'weed.exe'" |
+          Where-Object { $_.CommandLine -like '*mount*' } |
+          ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+        Start-Sleep -Seconds 5
+        Write-Host "::endgroup::"
+
+        Start-Mount 'seaweed-remount2'
+
+        Write-Host "::group::explorer-style walk"
+        New-Item -ItemType Directory -Force -Path S:\walk | Out-Null
+        1..200 | ForEach-Object { Set-Content -Path "S:\walk\f$_.txt" -Value "line $_" }
+        $count = (Get-ChildItem S:\walk | Measure-Object).Count
+        if ($count -ne 200) { throw "listed $count files, expected 200" }
+        $body = Get-Content S:\walk\f42.txt
+        if ($body -ne 'line 42') { throw "unexpected content: $body" }
+        Copy-Item S:\walk\f42.txt S:\walk\copy.txt
+        Remove-Item S:\walk -Recurse -Force
+        if (Test-Path S:\walk) { throw "directory survived recursive delete" }
+        Write-Host "::endgroup::"
+
+    - name: Logs
+      if: always()
+      shell: pwsh
+      run: |
+        foreach ($f in 'C:\seaweed-mount.log','C:\seaweed-mount.err.log','C:\seaweed-remount.log','C:\seaweed-remount.err.log','C:\seaweed-remount2.log','C:\seaweed-remount2.err.log','C:\seaweed-dirmount.log','C:\seaweed-dirmount.err.log','C:\seaweed-mini.log','C:\seaweed-mini.err.log') {
+          if (Test-Path $f) { Write-Host "===== $f"; Get-Content $f -Tail 200 }
+        }

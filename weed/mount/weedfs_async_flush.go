@@ -133,10 +133,14 @@ func (wfs *WFS) flushMetadataWithRetry(fh *FileHandle, dir, name string, fileFul
 // Called before unmount cleanup to ensure no data is lost.
 func (wfs *WFS) WaitForAsyncFlush() {
 	wfs.asyncFlushWg.Wait()
-	if wfs.asyncFlushCh != nil {
-		close(wfs.asyncFlushCh)
-	}
-	if wfs.streamMutate != nil {
-		wfs.streamMutate.Close()
-	}
+	// Shutdown reaches here from both the interrupt hook and the path that
+	// resumes once serving stops, so closing has to survive a second caller.
+	wfs.asyncFlushClose.Do(func() {
+		if wfs.asyncFlushCh != nil {
+			close(wfs.asyncFlushCh)
+		}
+		if wfs.streamMutate != nil {
+			wfs.streamMutate.Close()
+		}
+	})
 }
