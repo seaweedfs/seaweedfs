@@ -600,28 +600,16 @@ type readdirSink struct {
 	// dot entries still moves the enumeration along.
 	lastOffset uint64
 	seen       int
-
-	// discard absorbs the attributes of an entry that is being dropped; the
-	// raw filesystem fills the block after handing it back.
-	discard fuse.EntryOut
 }
 
-// The kernel expects readdir to report "." and "..", but Windows enumerates a
-// directory without them and shows whatever it is given, so they are dropped
-// rather than surfaced as two extra children.
-func isDotEntry(name string) bool {
-	return name == "." || name == ".."
-}
-
+// WinFsp strips "." and ".." for the root directory itself and expects every
+// other directory to report them, the way a real NTFS enumeration does.
 func (s *readdirSink) AddEntry(entry fuse.DirEntry) bool {
 	if len(s.names) >= s.limit {
 		return false
 	}
 	s.seen++
 	s.lastOffset = entry.Off
-	if isDotEntry(entry.Name) {
-		return true
-	}
 	s.names = append(s.names, entry.Name)
 	s.offsets = append(s.offsets, entry.Off)
 	s.inodes = append(s.inodes, entry.Ino)
@@ -635,9 +623,6 @@ func (s *readdirSink) AddEntryPlus(entry fuse.DirEntry) *fuse.EntryOut {
 	}
 	s.seen++
 	s.lastOffset = entry.Off
-	if isDotEntry(entry.Name) {
-		return &s.discard
-	}
 	out := &fuse.EntryOut{}
 	s.names = append(s.names, entry.Name)
 	s.offsets = append(s.offsets, entry.Off)
