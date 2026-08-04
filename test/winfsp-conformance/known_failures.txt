@@ -5,7 +5,8 @@
 # the run; a failure in anything NOT listed fails CI, which is what catches a
 # regression.
 #
-# Populated from the first real run: 20 of 50 passed. Every entry below is a
+# Populated from the first real run: 20 of 50 passed. Extended attributes are
+# forwarded now, so that group runs rather than being excluded. Every entry below is a
 # gap in the mount rather than a quirk of the suite, and the list is meant to
 # shrink. Keep a reason on each group — an entry with no reason cannot be told
 # apart from one nobody has looked at.
@@ -17,8 +18,6 @@
 stream_*
 # Reparse points: Symlink is refused, so there is nothing to resolve.
 reparse_*
-# Extended attributes: forwarded only once #10554 lands.
-ea_*
 # Byte-range locks live in the WinFsp driver, so they never reach the mount.
 lock_*
 
