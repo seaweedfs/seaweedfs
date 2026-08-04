@@ -80,6 +80,7 @@ type FilerOptions struct {
 	allowedOrigins            *string
 	exposeDirectoryData       *bool
 	tusBasePath               *string
+	nfsInodeIndexPrefixes     *string
 	s3ConfigFile              *string // optional path to static S3 identity config
 	// shutdownCtx, when non-nil, tells startFiler to gracefully shut down its
 	// HTTP/gRPC servers once the ctx is cancelled. Used by integration tests
@@ -123,6 +124,12 @@ func init() {
 	f.allowedOrigins = cmdFiler.Flag.String("allowedOrigins", "*", "comma separated list of allowed origins")
 	f.exposeDirectoryData = cmdFiler.Flag.Bool("exposeDirectoryData", true, "whether to return directory metadata and content in Filer UI")
 	f.tusBasePath = cmdFiler.Flag.String("tusBasePath", "/.tus", "TUS resumable upload endpoint base path (e.g., /.tus)")
+	// nfs.inodeIndexPrefixes enables the inode→path reverse-lookup index used by
+	// the weed nfs gateway to resolve deterministic filehandles. Empty (default)
+	// disables it entirely, so zero index rows are written and filer behaviour
+	// is identical to upstream 4.38. Set to a comma-separated list of path
+	// prefixes (e.g. "/exports") to confine index writes to those subtrees.
+	f.nfsInodeIndexPrefixes = cmdFiler.Flag.String("nfs.inodeIndexPrefixes", "", "comma-separated filer path prefixes that get an inode→path index for the weed nfs gateway; empty (default) disables the index entirely")
 
 	// start s3 on filer
 	filerStartS3 = cmdFiler.Flag.Bool("s3", false, "whether to start S3 gateway")
@@ -236,6 +243,14 @@ func runFiler(cmd *Command, args []string) bool {
 	filerWebDavOptions.resolvePaths()
 	filerSftpOptions.resolvePaths()
 	util.LoadSecurityConfiguration()
+
+	// Configure the opt-in inode→path index used by the weed nfs gateway.
+	// This must run before the filer store starts mutating entries. Empty
+	// (the default) disables the index entirely, matching upstream 4.38.
+	filer.SetInodeIndexPrefixes(util.StringSplit(*f.nfsInodeIndexPrefixes, ","))
+	if len(*f.nfsInodeIndexPrefixes) > 0 {
+		glog.V(0).Infof("inode index scoping enabled for prefixes: %v", util.StringSplit(*f.nfsInodeIndexPrefixes, ","))
+	}
 
 	// Share the S3 static identity config file with the filer regardless of
 	// whether the embedded S3 gateway runs on this node: the IAM gRPC service
