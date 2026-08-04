@@ -108,6 +108,10 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		ExtraOptions: option.extraOptions,
 	})
 
+	// Windows caches entries on its own side and the mount cannot invalidate
+	// that cache directly, so changes made elsewhere have to be pushed out.
+	host.Notify(seaweedFileSystem)
+
 	grace.OnInterrupt(func() {
 		// The signal handler exits the process as soon as the hooks return, so
 		// anything still queued has to be flushed here rather than after Serve.

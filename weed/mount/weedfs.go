@@ -185,7 +185,12 @@ type WFS struct {
 
 	// asyncFlushWg tracks pending background flush work items for writebackCache mode.
 	// Must be waited on before unmount cleanup to prevent data loss.
-	asyncFlushWg    sync.WaitGroup
+	asyncFlushWg sync.WaitGroup
+
+	// entryChanged is notified of every applied metadata event, for a front
+	// end that has to push invalidations to its own client.
+	entryChangeMu   sync.RWMutex
+	entryChanged    func(meta_cache.EntryInvalidation)
 	asyncFlushClose sync.Once
 
 	// asyncFlushCh is a bounded work queue for background flush operations.
@@ -305,7 +310,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 			wfs.inodeToPath.MarkChildrenCached(path)
 		}, func(path util.FullPath) bool {
 			return wfs.inodeToPath.IsChildrenCached(path)
-		}, wfs.invalidateOpenFileHandle, func(dirPath util.FullPath) {
+		}, wfs.onEntryInvalidation, func(dirPath util.FullPath) {
 			if wfs.inodeToPath.RecordDirectoryUpdate(dirPath, time.Now(), wfs.dirHotWindow, wfs.dirHotThreshold) {
 				wfs.markDirectoryReadThrough(dirPath)
 			}
@@ -777,6 +782,35 @@ func sameEntryContent(a, b *filer_pb.Entry) bool {
 // invalidateOpenFileHandle refreshes an open file handle from a metadata
 // subscription event. No filer lookup here: it can fail transiently, and with
 // the subscription cursor already past the event, nothing would retry.
+
+// SetEntryChangeListener registers a callback for every metadata event this
+// mount applies. A front end whose client caches entries on its own side, and
+// which the mount cannot invalidate directly, uses it to push the change out.
+func (wfs *WFS) SetEntryChangeListener(fn func(meta_cache.EntryInvalidation)) {
+	wfs.entryChangeMu.Lock()
+	wfs.entryChanged = fn
+	wfs.entryChangeMu.Unlock()
+}
+
+// onEntryInvalidation runs for every applied event, whether or not the path is
+// open here, so a listener sees changes made anywhere in the cluster.
+func (wfs *WFS) onEntryInvalidation(invalidation meta_cache.EntryInvalidation) {
+	wfs.entryChangeMu.RLock()
+	listener := wfs.entryChanged
+	wfs.entryChangeMu.RUnlock()
+	if listener != nil {
+		listener(invalidation)
+	}
+	wfs.invalidateOpenFileHandle(invalidation)
+}
+
+// MountRoot is the filer path this mount is rooted at. Event paths are absolute
+// on the filer; a front end that addresses files relative to the mount needs it
+// to translate them.
+func (wfs *WFS) MountRoot() util.FullPath {
+	return util.FullPath(wfs.option.FilerMountRootPath)
+}
+
 func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidation) {
 	filePath, eventEntry, eventTsNs := invalidation.Path, invalidation.Entry, invalidation.TsNs
 	inode, inodeFound := wfs.inodeToPath.GetInode(filePath)
