@@ -64,11 +64,11 @@ exec_rename_dir_test
 
 # File information
 # ----------------
-# Windows attributes (hidden, system, readonly) and creation time are not
-# round-tripped: attrToStat leaves Flags unset and reports ctime as birthtime.
-create_fileattr_test
+# Hidden, system and readonly are still not round-tripped, and creation time
+# is reported as ctime because the raw protocol's Attr carries no field for it
+# outside darwin. create_fileattr and getfileinfo are off this list now that a
+# regular file reports as archived and a zero timestamp is left alone.
 create_readonlydir_test
-getfileinfo_test
 setfileinfo_test
 
 # Directory enumeration

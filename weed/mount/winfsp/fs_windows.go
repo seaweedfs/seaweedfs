@@ -231,9 +231,16 @@ func (w *WinFS) attrToStat(attr *fuse.Attr, stat *cgofuse.Stat_t) {
 	stat.Atim = cgofuse.Timespec{Sec: int64(attr.Atime), Nsec: int64(attr.Atimensec)}
 	stat.Mtim = cgofuse.Timespec{Sec: int64(attr.Mtime), Nsec: int64(attr.Mtimensec)}
 	stat.Ctim = cgofuse.Timespec{Sec: int64(attr.Ctime), Nsec: int64(attr.Ctimensec)}
-	// Windows shows a creation time and has nothing to derive it from; ctime
-	// is the closest the filer tracks.
+	// The filer records a creation time, but the raw protocol's Attr carries no
+	// field for it outside darwin, so ctime stands in until there is a way to
+	// read it through.
 	stat.Birthtim = stat.Ctim
+	// Windows expects a regular file to be marked archived; with no flags at
+	// all it synthesises NORMAL, which is a different thing and what
+	// create_fileattr_test checks.
+	if attr.Mode&fuse.S_IFDIR == 0 {
+		stat.Flags |= cgofuse.UF_ARCHIVE
+	}
 }
 
 // translateOpenFlags converts cgofuse's open flags, which follow MSVC's
@@ -533,10 +540,12 @@ func (w *WinFS) Utimens(path string, tmsp []cgofuse.Timespec) int {
 }
 
 // applyTimespec reports whether a timestamp should be written. UTIME_OMIT asks
-// for the existing value to be kept, and a time at or below Windows' own 1601
-// epoch arrives as a large negative second count that would be stored verbatim.
+// for the existing value to be kept; a time at or below Windows' own 1601 epoch
+// arrives as a large negative second count; and zero is what Windows sends for
+// a field it is not setting, which stored as 1970 and then read back as the
+// file's access time.
 func applyTimespec(ts cgofuse.Timespec) bool {
-	return ts.Nsec != utimeOmit && ts.Sec > windowsEpochCutoff
+	return ts.Nsec != utimeOmit && ts.Sec > 0 && ts.Sec > windowsEpochCutoff
 }
 
 func (w *WinFS) Flush(path string, fh uint64) int {
