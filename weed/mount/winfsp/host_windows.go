@@ -51,6 +51,13 @@ func New(wfs *mount.WFS, options Options) *Host {
 	return &Host{host: host, options: options}
 }
 
+// Notify wires the mount's metadata events to Windows. Called once before
+// Serve; the host has to exist first, which is why it is not done in New.
+func (h *Host) Notify(wfs *mount.WFS) {
+	n := &notifier{host: h.host, mountRoot: wfs.MountRoot()}
+	wfs.SetEntryChangeListener(n.notify)
+}
+
 // Serve attaches the filesystem at mountPoint, which is a drive letter ("S:"),
 // a directory that does not yet exist, or a UNC path. It blocks until the
 // filesystem is unmounted.
