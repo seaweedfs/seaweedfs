@@ -62,19 +62,40 @@ Push-Location $workDir
 try {
     # --fuse-external: a third-party FUSE filesystem, not the bundled memfs.
     # --resilient:     tolerate operations this filesystem does not implement.
-    # --no-abort:      report every failure instead of stopping at the first.
-    $arguments = @('--fuse-external', '--resilient', '--no-abort')
-    foreach ($name in $excluded) {
-        $arguments += "-$name"
+    #
+    # One test per invocation, each in its own directory. Batched with
+    # --no-abort, a test that failed part way left its files behind and the
+    # next one failed creating them, reporting a cascade of failures that were
+    # really one. This costs a process start per test and makes the list mean
+    # what it says.
+    $base = @('--fuse-external', '--resilient')
+    $names = @(& $exe @base '--list' 2>&1 |
+        ForEach-Object { if ($_ -match '^([a-z_0-9]+)\s*$') { $Matches[1] } })
+    if ($names.Count -eq 0) { throw "could not list tests" }
+    Write-Host "listed $($names.Count) tests"
+
+    $failed = @()
+    $ran = 0
+    foreach ($name in $names) {
+        if ($excluded | Where-Object { $name -like $_ }) { continue }
+        $ran++
+        $caseDir = Join-Path $workDir $name
+        # -Force creates the directory but leaves anything already in it, and
+        # a leftover file is the very thing this isolation exists to avoid.
+        Remove-Item $caseDir -Recurse -Force -ErrorAction SilentlyContinue
+        New-Item -ItemType Directory -Force -Path $caseDir | Out-Null
+        Push-Location $caseDir
+        try {
+            $out = & $exe @base $name 2>&1
+            $out | ForEach-Object { Write-Host $_ }
+            if ($out -match '\s+KO\s*$' -or $LASTEXITCODE -ne 0) { $failed += $name }
+        } finally {
+            Pop-Location
+            Remove-Item $caseDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
-    Write-Host "running winfsp-tests with $($excluded.Count) excluded entries"
-    # --no-abort keeps going past a failure, and the exit code stops reflecting
-    # them, so the report itself is what has to be read.
-    $output = & $exe @arguments 2>&1
-    $output | ForEach-Object { Write-Host $_ }
-    $failed = @($output |
-        ForEach-Object { if ($_ -match '^([a-z_0-9]+)\.+\s+KO') { $Matches[1] } })
-    $code = if ($failed.Count -gt 0) { 1 } else { $LASTEXITCODE }
+    Write-Host "ran $ran tests, $($failed.Count) failed"
+    $code = if ($failed.Count -gt 0) { 1 } else { 0 }
 } finally {
     Pop-Location
     Remove-Item $workDir -Recurse -Force -ErrorAction SilentlyContinue
