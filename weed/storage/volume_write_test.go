@@ -9,9 +9,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func TestSearchVolumesWithDeletedNeedles(t *testing.T) {
@@ -176,11 +178,12 @@ func TestWriteNeedleBlobRejectedOnReadOnlyVolume(t *testing.T) {
 	if err != nil {
 		t.Fatalf("volume creation: %v", err)
 	}
-	offset, size, _, err := v.writeNeedle2(newRandomNeedle(1), true, false)
+	n := newRandomNeedle(1)
+	offset, _, _, err := v.writeNeedle2(n, true, false)
 	if err != nil {
 		t.Fatalf("write needle: %v", err)
 	}
-	blob, err := v.ReadNeedleBlob(int64(offset), size)
+	blob, err := v.ReadNeedleBlob(int64(offset), n.Size)
 	if err != nil {
 		t.Fatalf("read needle blob: %v", err)
 	}
@@ -198,7 +201,7 @@ func TestWriteNeedleBlobRejectedOnReadOnlyVolume(t *testing.T) {
 
 	datSizeBefore, _, _ := v.DataBackend.GetStat()
 
-	err = v.WriteNeedleBlob(types.Uint64ToNeedleId(2), blob, size)
+	err = v.WriteNeedleBlob(types.Uint64ToNeedleId(2), blob, n.Size)
 	if err == nil {
 		t.Fatalf("expected WriteNeedleBlob to be rejected on a read-only volume")
 	}
@@ -209,5 +212,47 @@ func TestWriteNeedleBlobRejectedOnReadOnlyVolume(t *testing.T) {
 	datSizeAfter, _, _ := v.DataBackend.GetStat()
 	if datSizeAfter != datSizeBefore {
 		t.Errorf("read-only volume .dat grew from %d to %d, leaving an unindexed needle", datSizeBefore, datSizeAfter)
+	}
+}
+
+// A size disagreeing with the blob's own header indexes the needle at the wrong
+// length and, on v3, stamps the append timestamp into the middle of the needle.
+func TestWriteNeedleBlobRejectsSizeMismatch(t *testing.T) {
+	dir := t.TempDir()
+	location := NewDiskLocation(dir, 10, util.MinFreeSpace{}, dir, "", nil, stats.DefaultDiskIOProbeConfig())
+	defer location.Close()
+
+	v, err := NewVolume(dir, dir, "", 7, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+	location.SetVolume(7, v)
+
+	n := newRandomNeedle(1)
+	offset, _, _, err := v.writeNeedle2(n, true, false)
+	if err != nil {
+		t.Fatalf("write needle: %v", err)
+	}
+	blob, err := v.ReadNeedleBlob(int64(offset), n.Size)
+	if err != nil {
+		t.Fatalf("read needle blob: %v", err)
+	}
+
+	datSizeBefore, _, _ := v.DataBackend.GetStat()
+
+	// types.Size(n.DataSize) is what needle.Append reports, and what a caller
+	// following the payload-size convention would send.
+	if err = v.WriteNeedleBlob(types.Uint64ToNeedleId(2), blob, types.Size(n.DataSize)); err == nil {
+		t.Fatal("expected WriteNeedleBlob to reject a size that disagrees with the blob header")
+	}
+
+	datSizeAfter, _, _ := v.DataBackend.GetStat()
+	if datSizeAfter != datSizeBefore {
+		t.Errorf(".dat grew from %d to %d on a rejected blob", datSizeBefore, datSizeAfter)
+	}
+
+	if err = v.WriteNeedleBlob(types.Uint64ToNeedleId(2), blob, n.Size); err != nil {
+		t.Fatalf("write needle blob with the header size: %v", err)
 	}
 }

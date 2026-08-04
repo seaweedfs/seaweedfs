@@ -378,6 +378,17 @@ func (v *Volume) WriteNeedleBlob(needleId NeedleId, needleBlob []byte, size Size
 		return fmt.Errorf("volume %d is read only", v.Id)
 	}
 
+	// size indexes the needle and places the v3 append timestamp, so a caller using
+	// the payload-only DataSize corrupts both, silently until the needle is read back.
+	if len(needleBlob) < NeedleHeaderSize {
+		return fmt.Errorf("needle %d blob of %d bytes is shorter than a needle header", needleId, len(needleBlob))
+	}
+	var blobHeader needle.Needle
+	blobHeader.ParseNeedleHeader(needleBlob)
+	if blobHeader.Size != size {
+		return fmt.Errorf("needle %d size %d does not match its blob header size %d", needleId, size, blobHeader.Size)
+	}
+
 	if MaxPossibleVolumeSize < v.nm.ContentSize()+uint64(len(needleBlob)) {
 		return fmt.Errorf("volume size limit %d exceeded! current size is %d", MaxPossibleVolumeSize, v.nm.ContentSize())
 	}

@@ -2739,6 +2739,29 @@ impl Volume {
             return Err(VolumeError::ReadOnly);
         }
 
+        // size indexes the needle and places the v3 append timestamp, so a caller using
+        // the payload-only DataSize corrupts both, silently until the needle is read back.
+        if needle_blob.len() < NEEDLE_HEADER_SIZE {
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "needle {} blob of {} bytes is shorter than a needle header",
+                    needle_id.0,
+                    needle_blob.len()
+                ),
+            )));
+        }
+        let (_, _, header_size) = Needle::parse_header(needle_blob);
+        if header_size != size {
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "needle {} size {} does not match its blob header size {}",
+                    needle_id.0, size.0, header_size.0
+                ),
+            )));
+        }
+
         // Dedup check: if the same needle already exists with matching content, skip the write.
         // Matches Go's WriteNeedleBlob which reads existing needle and compares cookie+checksum+data.
         if let Some(nm) = &self.nm {
@@ -4443,6 +4466,39 @@ mod tests {
         };
         let err = v.write_needle(&mut n2, true).unwrap_err();
         assert!(matches!(err, VolumeError::CookieMismatch(_)));
+    }
+
+    // A size disagreeing with the blob's own header indexes the needle at the wrong
+    // length and, on v3, stamps the append timestamp into the middle of the needle.
+    #[test]
+    fn test_write_needle_blob_rejects_size_mismatch() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let mut n = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(0x12345678),
+            data: b"the merged payload".to_vec(),
+            data_size: 18,
+            ..Needle::default()
+        };
+        n.checksum = CRC::new(&n.data);
+        let (offset, _, _) = v.write_needle(&mut n, true).unwrap();
+        let blob = v.read_needle_blob(offset as i64, n.size).unwrap();
+
+        let dat_size_before = v.dat_file_size().unwrap();
+
+        // Size(n.data_size) is what append reports, and what a caller following the
+        // payload-size convention would send.
+        let err = v
+            .write_needle_blob_and_index(NeedleId(2), &blob, Size(n.data_size as i32))
+            .unwrap_err();
+        assert!(matches!(err, VolumeError::Io(_)), "got {err:?}");
+        assert_eq!(v.dat_file_size().unwrap(), dat_size_before);
+
+        v.write_needle_blob_and_index(NeedleId(2), &blob, n.size)
+            .unwrap();
     }
 
     #[test]
