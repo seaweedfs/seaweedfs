@@ -63,11 +63,11 @@ try {
     # --fuse-external: a third-party FUSE filesystem, not the bundled memfs.
     # --resilient:     tolerate operations this filesystem does not implement.
     #
-    # One test per invocation, each in its own directory. Run as a batch with
-    # --no-abort, a test that fails part way leaves its files behind and the
-    # next one fails creating them — reporting a cascade of failures that are
-    # really one. Isolation costs a process start per test and makes the list
-    # mean what it says.
+    # One test per invocation, each in its own directory. Batched with
+    # --no-abort, a test that failed part way left its files behind and the
+    # next one failed creating them, reporting a cascade of failures that were
+    # really one. This costs a process start per test and makes the list mean
+    # what it says.
     $base = @('--fuse-external', '--resilient')
     $names = @(& $exe @base '--list' 2>&1 |
         ForEach-Object { if ($_ -match '^([a-z_0-9]+)\s*$') { $Matches[1] } })
@@ -80,6 +80,9 @@ try {
         if ($excluded | Where-Object { $name -like $_ }) { continue }
         $ran++
         $caseDir = Join-Path $workDir $name
+        # -Force creates the directory but leaves anything already in it, and
+        # a leftover file is the very thing this isolation exists to avoid.
+        Remove-Item $caseDir -Recurse -Force -ErrorAction SilentlyContinue
         New-Item -ItemType Directory -Force -Path $caseDir | Out-Null
         Push-Location $caseDir
         try {
