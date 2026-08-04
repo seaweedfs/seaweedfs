@@ -129,11 +129,11 @@ jobs:
 
         Invoke-Tests 'persist-verify' @('test','-v','-timeout','15m','./test/winfsp','-run','TestPersistence','-mountpoint=S:\','-phase=verify')
 
-        # WinFsp mounts over an empty directory by turning it into a reparse
-        # point, so a pre-created one has to work.
-        Write-Host "::group::mount over an empty directory"
+        # WinFsp creates the mount directory itself, so the path must not
+        # exist; only its parent has to.
+        Write-Host "::group::mount over a directory"
         Stop-Mount
-        New-Item -ItemType Directory -Force -Path C:\seaweed-mnt | Out-Null
+        Remove-Item C:\seaweed-mnt -Recurse -Force -ErrorAction SilentlyContinue
         Start-Process -FilePath .\weed.exe `
           -ArgumentList '-logtostderr','mount','-filer=127.0.0.1:8888','-dir=C:\seaweed-mnt' `
           -RedirectStandardOutput C:\seaweed-dirmount.log -RedirectStandardError C:\seaweed-dirmount.err.log
@@ -149,7 +149,7 @@ jobs:
         }
         if (-not $ok) {
           Get-Content C:\seaweed-dirmount.log, C:\seaweed-dirmount.err.log -ErrorAction SilentlyContinue
-          throw "mounting over an empty directory failed"
+          throw "mounting over a directory failed"
         }
         Set-Content -Path C:\seaweed-mnt\dirmount.txt -Value 'via directory mount'
         if ((Get-Content C:\seaweed-mnt\dirmount.txt) -ne 'via directory mount') { throw "readback through the directory mount differs" }
