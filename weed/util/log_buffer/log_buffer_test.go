@@ -576,3 +576,24 @@ func TestLoopProcessLogDataWithOffset_DiskReadRetry(t *testing.T) {
 		t.Logf("✓ SUCCESS: Message received after %d disk read attempts", finalDiskReadCount)
 	}
 }
+
+// A buffer shut down long before its flush interval elapses must not keep its
+// loops - and the tens of megabytes of slabs they reach - alive until the next
+// tick would have fired.
+func TestShutdownStopsGoroutinesPromptly(t *testing.T) {
+	lb := NewLogBuffer("shutdown", time.Hour, nil, nil, nil)
+	// let both loops start and park in their waits before shutting down
+	time.Sleep(100 * time.Millisecond)
+	lb.ShutdownLogBuffer()
+
+	done := make(chan struct{})
+	go func() {
+		lb.loopsDone.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("log buffer goroutines still running 5s after shutdown")
+	}
+}

@@ -46,7 +46,7 @@ func newTusTestServer(t *testing.T, sessions map[string]string) (*FilerServer, *
 	t.Helper()
 	store := newRenameTestStore()
 	fs := &FilerServer{
-		filer:      newRenameTestFiler(store),
+		filer:      newRenameTestFiler(t, store),
 		filerGuard: security.NewGuard(nil, tusTestWriteKey, 0, tusTestReadKey, 0),
 		option:     &FilerOption{TusBasePath: "/.tus"},
 	}
