@@ -42,6 +42,12 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      # cargo tracks its own inputs but not the runner's C toolchain, so a cached
+      # target/ can carry C objects built against a different glibc than we link against.
+      - name: Fingerprint build toolchain
+        id: toolchain
+        run: echo "fingerprint=$(getconf GNU_LIBC_VERSION | tr ' ' '-')-rustc-$(rustc -V | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
       - name: Cache cargo registry and target
         uses: actions/cache@v6
         with:
@@ -49,9 +55,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             seaweed-volume/target
-          key: rust-${{ hashFiles('seaweed-volume/Cargo.lock') }}
+          key: rust-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('seaweed-volume/Cargo.lock') }}
           restore-keys: |
-            rust-
+            rust-${{ steps.toolchain.outputs.fingerprint }}-
 
       - name: Build Rust volume server
         run: cd seaweed-volume && cargo build --release
@@ -79,6 +85,12 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      # cargo tracks its own inputs but not the runner's C toolchain, so a cached
+      # target/ can carry C objects built against a different glibc than we link against.
+      - name: Fingerprint build toolchain
+        id: toolchain
+        run: echo "fingerprint=$(getconf GNU_LIBC_VERSION | tr ' ' '-')-rustc-$(rustc -V | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
       - name: Cache cargo registry and target
         uses: actions/cache@v6
         with:
@@ -86,9 +98,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             seaweed-volume/target
-          key: rust-${{ hashFiles('seaweed-volume/Cargo.lock') }}
+          key: rust-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('seaweed-volume/Cargo.lock') }}
           restore-keys: |
-            rust-
+            rust-${{ steps.toolchain.outputs.fingerprint }}-
 
       - name: Build Go weed binary
         run: |
@@ -155,6 +167,12 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      # cargo tracks its own inputs but not the runner's C toolchain, so a cached
+      # target/ can carry C objects built against a different glibc than we link against.
+      - name: Fingerprint build toolchain
+        id: toolchain
+        run: echo "fingerprint=$(getconf GNU_LIBC_VERSION | tr ' ' '-')-rustc-$(rustc -V | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
       - name: Cache cargo registry and target
         uses: actions/cache@v6
         with:
@@ -162,9 +180,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             seaweed-volume/target
-          key: rust-${{ hashFiles('seaweed-volume/Cargo.lock') }}
+          key: rust-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('seaweed-volume/Cargo.lock') }}
           restore-keys: |
-            rust-
+            rust-${{ steps.toolchain.outputs.fingerprint }}-
 
       - name: Build Go weed binary
         run: |
