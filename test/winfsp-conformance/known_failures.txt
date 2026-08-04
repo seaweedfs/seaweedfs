@@ -73,10 +73,9 @@ setfileinfo_test
 
 # Directory enumeration
 # ---------------------
-# Marker-based resumption and the buffer-overflow path, neither of which the
-# hand-written suite reaches.
-querydir_test
-querydir_buffer_overflow_test
+# querydir_namelen only: checkName caps at 255 bytes while WinFsp counts 255
+# characters. The other two are expected to pass now that "." and ".." are
+# reported for non-root directories, which is what WinFsp enumerates.
 querydir_namelen_test
 
 # Name length

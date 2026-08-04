@@ -270,35 +270,6 @@ func TestAwkwardNames(t *testing.T) {
 	}
 }
 
-// Windows enumerates a directory without "." and "..", and shows whatever the
-// filesystem reports, so they must not reach it. os.ReadDir filters them, so
-// this reads the handle the way Windows tooling does.
-func TestNoDotEntriesInListing(t *testing.T) {
-	dir := testRoot(t)
-	for i := 0; i < 3; i++ {
-		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("f%d", i)), []byte("x"), 0644); err != nil {
-			t.Fatalf("write: %v", err)
-		}
-	}
-	f, err := os.Open(dir)
-	if err != nil {
-		t.Fatalf("open dir: %v", err)
-	}
-	defer f.Close()
-	names, err := f.Readdirnames(-1)
-	if err != nil {
-		t.Fatalf("readdirnames: %v", err)
-	}
-	for _, name := range names {
-		if name == "." || name == ".." {
-			t.Errorf("listing includes %q", name)
-		}
-	}
-	if len(names) != 3 {
-		t.Fatalf("listing has %d entries (%v), want 3", len(names), names)
-	}
-}
-
 func TestDeepDirectoryNesting(t *testing.T) {
 	dir := testRoot(t)
 	deep := dir
