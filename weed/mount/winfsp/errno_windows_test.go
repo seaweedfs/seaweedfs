@@ -76,3 +76,12 @@ func TestOpenFlagTranslation(t *testing.T) {
 		t.Errorf("access mode not preserved: %#x", got)
 	}
 }
+
+// Setxattr passes cgofuse's flags straight to the raw filesystem, which is
+// only correct while the two number them identically. The other side is
+// pinned by TestXattrFlagValues in weed/mount, so editing either alone fails.
+func TestXattrFlagValues(t *testing.T) {
+	if cgofuse.XATTR_CREATE != 1 || cgofuse.XATTR_REPLACE != 2 {
+		t.Fatalf("cgofuse xattr flags moved: create=%d replace=%d", cgofuse.XATTR_CREATE, cgofuse.XATTR_REPLACE)
+	}
+}
