@@ -15,8 +15,9 @@ type Options struct {
 	// VolumeName labels the drive in Explorer.
 	VolumeName string
 
-	// Uid and Gid are reported for every entry. The default of -1 leaves
-	// ownership to WinFsp, which attributes files to the mounting user.
+	// Uid and Gid are reported for every entry. WinFsp overrides what is
+	// reported anyway (see the uid=-1 option below), so these are what gets
+	// written to the filer and read by every other client.
 	Uid uint32
 	Gid uint32
 

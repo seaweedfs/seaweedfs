@@ -18,8 +18,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 )
 
-// ownedByMounter reports entries as belonging to whoever started the mount,
-// matching the uid=-1 option handed to WinFsp.
+// ownedByMounter reports the mount root as belonging to whoever started it,
+// matching the uid=-1 option handed to WinFsp. It is a display value only:
+// WinFsp substitutes the calling user, and it must never be persisted, since
+// every other client would read the entry as owned by uid 4294967295.
 const ownedByMounter = ^uint32(0)
 
 // windowsAttrTimeoutSec bounds how long WinFsp may serve cached attributes.

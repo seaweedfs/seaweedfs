@@ -39,6 +39,8 @@ type MountOptions struct {
 	debugFuse            *bool
 	localSocket          *string
 	disableXAttr         *bool
+	windowsUid           *int
+	windowsGid           *int
 	extraOptions         []string
 	fuseCommandPid       int
 
@@ -127,6 +129,8 @@ func init() {
 	mountOptions.debugFuse = cmdMount.Flag.Bool("debug.fuse", false, "log raw FUSE protocol requests and responses")
 	mountOptions.localSocket = cmdMount.Flag.String("localSocket", "", "default to /tmp/seaweedfs-mount-<mount_dir_hash>.sock")
 	mountOptions.disableXAttr = cmdMount.Flag.Bool("disableXAttr", false, "disable xattr")
+	mountOptions.windowsUid = cmdMount.Flag.Int("windows.uid", 0, "windows only: uid recorded on entries this mount creates, which other clients read")
+	mountOptions.windowsGid = cmdMount.Flag.Int("windows.gid", 0, "windows only: gid recorded on entries this mount creates, which other clients read")
 	mountOptions.hasAutofs = cmdMount.Flag.Bool("autofs", false, "ignore autofs mounted on the same mountpoint (useful when systemd.automount and autofs is used)")
 	mountOptions.fuseCommandPid = 0
 
