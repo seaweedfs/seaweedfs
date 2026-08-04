@@ -113,6 +113,21 @@ func (w *WinFS) releaseRetained(table map[uint64]*handleRef, handle uint64) uint
 // how a read-only mount is enforced: WinFsp discards its own "ro" option.
 func (w *WinFS) denied() bool { return w.readOnly }
 
+// inodeForHandle reports the inode an open handle is holding, or 0. WinFsp
+// keeps the path it opened with and never updates it across a rename, so a
+// handle is the more reliable of the two.
+func (w *WinFS) inodeForHandle(table map[uint64]*handleRef, handle uint64) uint64 {
+	if handle == noHandle {
+		return 0
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if existing, found := table[handle]; found {
+		return existing.inode
+	}
+	return 0
+}
+
 // ptr is for the operations that take the header by pointer.
 func ptr(h fuse.InHeader) *fuse.InHeader { return &h }
 
@@ -267,12 +282,17 @@ func (w *WinFS) Statfs(path string, stat *cgofuse.Statfs_t) int {
 }
 
 func (w *WinFS) Getattr(path string, stat *cgofuse.Stat_t, fh uint64) int {
-	inode, ref, status := w.resolve(path)
-	if status != fuse.OK {
-		logResolveFailure("getattr", path, status)
-		return toErrno(status)
+	inode := w.inodeForHandle(w.fileInodes, fh)
+	if inode == 0 {
+		var ref *lookupRef
+		var status fuse.Status
+		inode, ref, status = w.resolve(path)
+		if status != fuse.OK {
+			logResolveFailure("getattr", path, status)
+			return toErrno(status)
+		}
+		defer ref.release()
 	}
-	defer ref.release()
 	in := &fuse.GetAttrIn{InHeader: w.caller(inode)}
 	if fh != noHandle {
 		in.Fh_ = fh
@@ -436,11 +456,16 @@ func (w *WinFS) Truncate(path string, size int64, fh uint64) int {
 	if w.denied() {
 		return -eROFS
 	}
-	inode, ref, status := w.resolve(path)
-	if status != fuse.OK {
-		return toErrno(status)
+	inode := w.inodeForHandle(w.fileInodes, fh)
+	if inode == 0 {
+		var ref *lookupRef
+		var status fuse.Status
+		inode, ref, status = w.resolve(path)
+		if status != fuse.OK {
+			return toErrno(status)
+		}
+		defer ref.release()
 	}
-	defer ref.release()
 	in := &fuse.SetAttrIn{}
 	in.NodeId = inode
 	in.Valid = fuse.FATTR_SIZE
@@ -660,6 +685,12 @@ func (w *WinFS) Readdir(path string, fill func(name string, stat *cgofuse.Stat_t
 }
 
 func (w *WinFS) Readlink(path string) (int, string) {
+	// WinFsp probes the root to decide whether the volume has symlinks, and
+	// turns them on unless this fails. Leaving them on costs a getattr per
+	// path component on every open, for a feature Symlink already refuses.
+	if len(splitPath(path)) == 0 {
+		return -eNOSYS, ""
+	}
 	inode, ref, status := w.resolve(path)
 	if status != fuse.OK {
 		return toErrno(status), ""
