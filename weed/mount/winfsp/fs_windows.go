@@ -17,6 +17,10 @@ const (
 	// WinFsp passes this when an operation carries no open handle.
 	noHandle = ^uint64(0)
 
+	// utimeOmit is the nanosecond marker asking for a timestamp to be left as
+	// it is; cgofuse hands it through rather than resolving it.
+	utimeOmit = (1 << 30) - 2
+
 	// windowsEpochCutoff is 1601-01-02 in unix seconds. Anything at or below
 	// it is Windows' own epoch leaking through rather than a real time.
 	windowsEpochCutoff = -11644387200
@@ -512,11 +516,11 @@ func (w *WinFS) Utimens(path string, tmsp []cgofuse.Timespec) int {
 		// Windows sends times around its own 1601 epoch, which arrive here as
 		// a large negative second count and would be stored as a year-1601
 		// timestamp that every other client then reads. Leave those alone.
-		if tmsp[0].Sec > windowsEpochCutoff {
+		if applyTimespec(tmsp[0]) {
 			in.Valid |= fuse.FATTR_ATIME
 			in.Atime, in.Atimensec = uint64(tmsp[0].Sec), uint32(tmsp[0].Nsec)
 		}
-		if tmsp[1].Sec > windowsEpochCutoff {
+		if applyTimespec(tmsp[1]) {
 			in.Valid |= fuse.FATTR_MTIME
 			in.Mtime, in.Mtimensec = uint64(tmsp[1].Sec), uint32(tmsp[1].Nsec)
 		}
@@ -526,6 +530,13 @@ func (w *WinFS) Utimens(path string, tmsp []cgofuse.Timespec) int {
 	}
 	var out fuse.AttrOut
 	return toErrno(w.wfs.SetAttr(never, in, &out))
+}
+
+// applyTimespec reports whether a timestamp should be written. UTIME_OMIT asks
+// for the existing value to be kept, and a time at or below Windows' own 1601
+// epoch arrives as a large negative second count that would be stored verbatim.
+func applyTimespec(ts cgofuse.Timespec) bool {
+	return ts.Nsec != utimeOmit && ts.Sec > windowsEpochCutoff
 }
 
 func (w *WinFS) Flush(path string, fh uint64) int {
@@ -636,11 +647,16 @@ func (s *readdirSink) AddEntryPlus(entry fuse.DirEntry) *fuse.EntryOut {
 }
 
 func (w *WinFS) Readdir(path string, fill func(name string, stat *cgofuse.Stat_t, ofst int64) bool, ofst int64, fh uint64) int {
-	inode, ref, status := w.resolve(path)
-	if status != fuse.OK {
-		return toErrno(status)
+	inode := w.inodeForHandle(w.dirInodes, fh)
+	if inode == 0 {
+		var ref *lookupRef
+		var status fuse.Status
+		inode, ref, status = w.resolve(path)
+		if status != fuse.OK {
+			return toErrno(status)
+		}
+		defer ref.release()
 	}
-	defer ref.release()
 	offset := uint64(ofst)
 	for {
 		sink := &readdirSink{limit: readdirBatch}
