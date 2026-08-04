@@ -68,15 +68,24 @@ try {
         $arguments += "-$name"
     }
     Write-Host "running winfsp-tests with $($excluded.Count) excluded entries"
-    & $exe @arguments
-    $code = $LASTEXITCODE
+    # --no-abort keeps going past a failure, and the exit code stops reflecting
+    # them, so the report itself is what has to be read.
+    $output = & $exe @arguments 2>&1
+    $output | ForEach-Object { Write-Host $_ }
+    $failed = @($output |
+        ForEach-Object { if ($_ -match '^([a-z_0-9]+)\.+\s+KO') { $Matches[1] } })
+    $code = if ($failed.Count -gt 0) { 1 } else { $LASTEXITCODE }
 } finally {
     Pop-Location
     Remove-Item $workDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+if ($failed.Count -gt 0) {
+    Write-Host "::error::winfsp-tests failures outside known_failures.txt: $($failed -join ', ')"
+    exit 1
+}
 if ($code -ne 0) {
-    Write-Host "::error::winfsp-tests reported failures outside known_failures.txt"
+    Write-Host "::error::winfsp-tests exited $code with no failure reported"
     exit $code
 }
 Write-Host 'winfsp-tests passed'
