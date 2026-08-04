@@ -71,6 +71,43 @@ func TestGenerateLevelDbFileStaleWatermarkRebuilds(t *testing.T) {
 	}
 }
 
+// The write on a watermarkBatchSize boundary is the one that must persist the
+// replay watermark; the ordinary writes in between must leave it alone. Passing
+// "watermark == 0" inverted that and pinned the stored watermark at 0, so every
+// rebuild replayed the whole .idx. Deletes count too: tombstones are .idx
+// entries and advance the watermark the same way.
+func TestLevelDbNeedleMapWatermarkAdvances(t *testing.T) {
+	dir := t.TempDir()
+
+	indexFile, err := os.Create(filepath.Join(dir, "wm.idx"))
+	if err != nil {
+		t.Fatalf("create index file: %v", err)
+	}
+	m, err := NewLevelDbNeedleMap(filepath.Join(dir, "wm.ldb"), indexFile, nil, 0, needle.GetCurrentVersion())
+	if err != nil {
+		t.Fatalf("NewLevelDbNeedleMap: %v", err)
+	}
+	defer m.Close()
+
+	for i := uint64(1); i <= watermarkBatchSize; i++ {
+		if err := m.Put(types.Uint64ToNeedleId(i), types.ToOffset(int64(i*1024)), types.Size(512)); err != nil {
+			t.Fatalf("put %d: %v", i, err)
+		}
+	}
+	if got := getWatermark(m.db); got != watermarkBatchSize {
+		t.Errorf("after %d puts: watermark = %d, want %d", watermarkBatchSize, got, watermarkBatchSize)
+	}
+
+	for i := uint64(1); i <= watermarkBatchSize; i++ {
+		if err := m.Delete(types.Uint64ToNeedleId(i), types.ToOffset(int64(i*1024))); err != nil {
+			t.Fatalf("delete %d: %v", i, err)
+		}
+	}
+	if got, want := getWatermark(m.db), uint64(2*watermarkBatchSize); got != want {
+		t.Errorf("after %d deletes: watermark = %d, want %d", watermarkBatchSize, got, want)
+	}
+}
+
 func TestLevelDbNeedleMap_Concurrency(t *testing.T) {
 	dir, err := os.MkdirTemp("", "test_leveldb_concurrency")
 	if err != nil {
