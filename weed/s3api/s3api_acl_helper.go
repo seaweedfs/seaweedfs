@@ -18,6 +18,7 @@ import (
 type AccountManager interface {
 	GetAccountNameById(canonicalId string) string
 	GetAccountIdByEmail(email string) string
+	GetAccountIdByIdentityName(name string) string
 }
 
 // ExtractAcl extracts the acl from the request body, or from the header if request body is empty
