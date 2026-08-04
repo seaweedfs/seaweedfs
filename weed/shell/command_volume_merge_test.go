@@ -1,11 +1,14 @@
 package shell
 
 import (
+	"bytes"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 type sliceNeedleStream struct {
@@ -452,6 +455,80 @@ func TestMergeWorkflowValidation(t *testing.T) {
 	t.Logf("Volume merge workflow validated: %d stages", len(expectedWorkflow))
 	for stage, description := range expectedWorkflow {
 		t.Logf("  %s: %s", stage, description)
+	}
+}
+
+// The size returned alongside the blob travels in WriteNeedleBlobRequest.Size, and
+// the target stores it in .idx and uses it to place the v3 append timestamp. Feed a
+// needle through the whole path and read it back the way a GET does.
+func TestNeedleBlobFromNeedleRoundTrip(t *testing.T) {
+	version := needle.GetCurrentVersion()
+	modified := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+
+	source := &needle.Needle{
+		Id:           types.Uint64ToNeedleId(42),
+		Cookie:       types.Cookie(0x12345678),
+		Data:         []byte("the merged payload"),
+		Name:         []byte("report.txt"),
+		Mime:         []byte("text/plain"),
+		LastModified: uint64(modified.Unix()),
+		AppendAtNs:   uint64(modified.UnixNano()),
+	}
+	source.Checksum = needle.NewCRC(source.Data)
+	source.SetHasName()
+	source.SetHasMime()
+	source.SetHasLastModifiedDate()
+
+	blob, size, err := needleBlobFromNeedle(source, version)
+	if err != nil {
+		t.Fatalf("serialize needle: %v", err)
+	}
+
+	var header needle.Needle
+	header.ParseNeedleHeader(blob)
+	if size != header.Size {
+		t.Fatalf("needleBlobFromNeedle returned size %d, but the blob's own header says %d", size, header.Size)
+	}
+
+	// Replay what the target volume server does with the blob and the size.
+	dat := newMemoryBackendFile()
+	defer dat.Close()
+	appendAtNs := uint64(time.Date(2026, 6, 7, 8, 9, 10, 0, time.UTC).UnixNano())
+	offset, err := needle.WriteNeedleBlob(dat, blob, size, appendAtNs, version)
+	if err != nil {
+		t.Fatalf("write needle blob: %v", err)
+	}
+
+	// ... and what a GET does with the size the target recorded in .idx.
+	stored, err := needle.ReadNeedleBlob(dat, int64(offset), size, version)
+	if err != nil {
+		t.Fatalf("read needle blob back: %v", err)
+	}
+	var got needle.Needle
+	if err = got.ReadBytes(stored, int64(offset), size, version); err != nil {
+		t.Fatalf("read merged needle: %v", err)
+	}
+
+	if !bytes.Equal(got.Data, source.Data) {
+		t.Errorf("data: got %q, want %q", got.Data, source.Data)
+	}
+	if got.Flags != source.Flags {
+		t.Errorf("flags: got %#x, want %#x", got.Flags, source.Flags)
+	}
+	if !bytes.Equal(got.Name, source.Name) {
+		t.Errorf("name: got %q, want %q", got.Name, source.Name)
+	}
+	if !bytes.Equal(got.Mime, source.Mime) {
+		t.Errorf("mime: got %q, want %q", got.Mime, source.Mime)
+	}
+	if got.LastModified != source.LastModified {
+		t.Errorf("lastModified: got %d, want %d", got.LastModified, source.LastModified)
+	}
+	if got.HasTtl() {
+		t.Errorf("merged needle grew a phantom ttl %v", got.Ttl)
+	}
+	if got.AppendAtNs != appendAtNs {
+		t.Errorf("appendAtNs: got %d, want %d", got.AppendAtNs, appendAtNs)
 	}
 }
 

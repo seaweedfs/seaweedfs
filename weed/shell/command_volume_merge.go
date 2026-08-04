@@ -423,7 +423,9 @@ func needleBlobFromNeedle(n *needle.Needle, version needle.Version) ([]byte, typ
 	memFile := newMemoryBackendFile()
 	defer memFile.Close()
 
-	_, size, actualSize, err := n.Append(memFile, version)
+	// Append reports Size(n.DataSize); the .dat header and the needle map both use
+	// n.Size, which Append fills in as it serializes.
+	_, _, actualSize, err := n.Append(memFile, version)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -433,7 +435,7 @@ func needleBlobFromNeedle(n *needle.Needle, version needle.Version) ([]byte, typ
 	if err != nil && err != io.EOF {
 		return nil, 0, err
 	}
-	return buf[:read], size, nil
+	return buf[:read], n.Size, nil
 }
 
 func allocateMergeVolumeOnThirdLocation(grpcDialOption grpc.DialOption, allLocations []location, replicas []*VolumeReplica, info *master_pb.VolumeInformationMessage, replicaPlacement *super_block.ReplicaPlacement) (pb.ServerAddress, error) {
