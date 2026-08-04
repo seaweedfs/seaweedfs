@@ -23,16 +23,11 @@ func (n *notifier) notify(invalidation meta_cache.EntryInvalidation) {
 	if n.host == nil {
 		return
 	}
+	// A rename arrives as two invalidations, one vacating the old path and one
+	// describing the new, so reporting RenamedTo here as well would send the
+	// destination twice — and as a create even when a directory moved.
 	if path, ok := relativeToMount(n.mountRoot, invalidation.Path); ok {
 		n.send(path, n.action(invalidation))
-	}
-	// A rename vacates one path and fills another; the destination is a
-	// separate notification, and its own event may never arrive if the
-	// destination sits outside this mount.
-	if invalidation.RenamedTo != "" {
-		if path, ok := relativeToMount(n.mountRoot, invalidation.RenamedTo); ok {
-			n.send(path, cgofuse.NOTIFY_CREATE)
-		}
 	}
 }
 
