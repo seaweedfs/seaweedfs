@@ -186,7 +186,7 @@ func (m *LevelDbNeedleMap) Put(key NeedleId, offset Offset, size Size) error {
 		watermark = (m.recordCount / watermarkBatchSize) * watermarkBatchSize
 		glog.V(1).Infof("put cnt:%d for %s,watermark: %d", m.recordCount, m.dbFileName, watermark)
 	}
-	return levelDbWrite(m.db, key, offset, size, watermark == 0, watermark)
+	return levelDbWrite(m.db, key, offset, size, watermark != 0, watermark)
 }
 
 func getWatermark(db *leveldb.DB) uint64 {
@@ -252,7 +252,7 @@ func (m *LevelDbNeedleMap) Delete(key NeedleId, offset Offset) error {
 	} else {
 		watermark = (m.recordCount / watermarkBatchSize) * watermarkBatchSize
 	}
-	return levelDbWrite(m.db, key, oldNeedle.Offset, -oldNeedle.Size, watermark == 0, watermark)
+	return levelDbWrite(m.db, key, oldNeedle.Offset, -oldNeedle.Size, watermark != 0, watermark)
 }
 
 func (m *LevelDbNeedleMap) Close() {
