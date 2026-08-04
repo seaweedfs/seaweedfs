@@ -13,8 +13,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-func newPosixTestServer() *FilerServer {
-	fs, _ := newTxnTestServer(nil)
+func newPosixTestServer(t *testing.T) *FilerServer {
+	fs, _ := newTxnTestServer(t, nil)
 	fs.posixLocks = posixlock.NewManager()
 	return fs
 }
@@ -33,7 +33,7 @@ func posixOp(t *testing.T, fs *FilerServer, op filer_pb.PosixLockOp, lk *filer_p
 }
 
 func TestPosixLockGrantAndConflict(t *testing.T) {
-	fs := newPosixTestServer()
+	fs := newPosixTestServer(t)
 
 	if r := posixOp(t, fs, filer_pb.PosixLockOp_TRY_LOCK, pbLock(0, 99, posixlock.Write, 1, 1, 7, false)); !r.Granted {
 		t.Fatal("first lock should be granted")
@@ -49,7 +49,7 @@ func TestPosixLockGrantAndConflict(t *testing.T) {
 }
 
 func TestPosixLockUnlockThenReacquire(t *testing.T) {
-	fs := newPosixTestServer()
+	fs := newPosixTestServer(t)
 	posixOp(t, fs, filer_pb.PosixLockOp_TRY_LOCK, pbLock(0, 99, posixlock.Write, 1, 1, 7, false))
 	posixOp(t, fs, filer_pb.PosixLockOp_UNLOCK, pbLock(0, 99, posixlock.Unlock, 1, 1, 7, false))
 	if r := posixOp(t, fs, filer_pb.PosixLockOp_TRY_LOCK, pbLock(0, 99, posixlock.Write, 2, 1, 8, false)); !r.Granted {
@@ -58,7 +58,7 @@ func TestPosixLockUnlockThenReacquire(t *testing.T) {
 }
 
 func TestPosixLockGetLk(t *testing.T) {
-	fs := newPosixTestServer()
+	fs := newPosixTestServer(t)
 	posixOp(t, fs, filer_pb.PosixLockOp_TRY_LOCK, pbLock(10, 50, posixlock.Write, 1, 1, 7, false))
 
 	r := posixOp(t, fs, filer_pb.PosixLockOp_GET_LK, pbLock(30, 70, posixlock.Read, 2, 1, 8, false))
@@ -73,7 +73,7 @@ func TestPosixLockGetLk(t *testing.T) {
 }
 
 func TestPosixLockReleasePosixOwnerKeepsFlock(t *testing.T) {
-	fs := newPosixTestServer()
+	fs := newPosixTestServer(t)
 	posixOp(t, fs, filer_pb.PosixLockOp_TRY_LOCK, pbLock(0, 99, posixlock.Write, 1, 1, 7, false))
 	posixOp(t, fs, filer_pb.PosixLockOp_TRY_LOCK, pbLock(0, 1<<63, posixlock.Write, 1, 1, 7, true))
 
@@ -89,7 +89,7 @@ func TestPosixLockReleasePosixOwnerKeepsFlock(t *testing.T) {
 }
 
 func TestPosixLockKeepAlive(t *testing.T) {
-	fs := newPosixTestServer()
+	fs := newPosixTestServer(t)
 	resp, err := fs.PosixLock(context.Background(), &filer_pb.PosixLockRequest{
 		Key: "s3.fuse.lock:/x", Op: filer_pb.PosixLockOp_KEEP_ALIVE,
 		Lock: pbLock(0, 0, posixlock.Unlock, 7, 0, 0, false),
@@ -109,7 +109,7 @@ func TestPosixLockKeepAlive(t *testing.T) {
 // sender, so without is_moved on the forwarded hop it would re-forward and fail.
 func TestPosixLockForwardsToOwner(t *testing.T) {
 	const key = "s3.fuse.lock:/x"
-	owner := newPosixTestServer()
+	owner := newPosixTestServer(t)
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -126,7 +126,7 @@ func TestPosixLockForwardsToOwner(t *testing.T) {
 	go srv.Serve(lis)
 	t.Cleanup(srv.Stop)
 
-	self := newPosixTestServer()
+	self := newPosixTestServer(t)
 	withRing(self, sender, ownerAddr)
 	self.grpcDialOption = grpc.WithTransportCredentials(insecure.NewCredentials())
 
@@ -151,7 +151,7 @@ func TestPosixLockForwardsToOwner(t *testing.T) {
 }
 
 func TestPosixLockWarmupDefersGrants(t *testing.T) {
-	fs := newPosixTestServer()
+	fs := newPosixTestServer(t)
 	fs.posixLockReadyAt.Store(time.Now().UnixNano()) // warming up
 
 	// A would-be grant is deferred (not granted, no conflict) so the client retries.

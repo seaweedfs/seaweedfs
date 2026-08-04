@@ -215,7 +215,7 @@ func TestCreateEntryConditionEnforced(t *testing.T) {
 		Attr:     filer.Attr{Inode: 1, Mtime: time.Unix(1700000000, 0)},
 		Extended: map[string][]byte{s3_constants.ExtETagKey: []byte("abc")},
 	}
-	f := newRenameTestFiler(store)
+	f := newRenameTestFiler(t, store)
 	f.DirBucketsPath = "/buckets"
 	fs := &FilerServer{filer: f, option: &FilerOption{}, entryLockTable: util.NewLockTable[util.FullPath]()}
 
@@ -268,7 +268,7 @@ func TestCreateEntryReusesProvidedExisting(t *testing.T) {
 	// during the overwrite are the same in both runs).
 	store := newRenameTestStore()
 	store.entries["/test/obj"] = existing.ShallowClone()
-	f := newRenameTestFiler(store)
+	f := newRenameTestFiler(t, store)
 	if err := f.CreateEntry(context.Background(), newEntry(), existing, false, false, nil, true, f.MaxFilenameLength); err != nil {
 		t.Fatalf("create with existing: %v", err)
 	}
@@ -276,7 +276,7 @@ func TestCreateEntryReusesProvidedExisting(t *testing.T) {
 
 	store2 := newRenameTestStore()
 	store2.entries["/test/obj"] = existing.ShallowClone()
-	f2 := newRenameTestFiler(store2)
+	f2 := newRenameTestFiler(t, store2)
 	if err := f2.CreateEntry(context.Background(), newEntry(), nil, false, false, nil, true, f2.MaxFilenameLength); err != nil {
 		t.Fatalf("create with nil: %v", err)
 	}
@@ -298,7 +298,7 @@ func TestUpdateEntryConditionEnforced(t *testing.T) {
 			Attr:     filer.Attr{Inode: 1, Mtime: time.Unix(1700000000, 0), Mode: 0644},
 			Extended: map[string][]byte{s3_constants.ExtETagKey: []byte("abc")},
 		}
-		f := newRenameTestFiler(store)
+		f := newRenameTestFiler(t, store)
 		return &FilerServer{filer: f, option: &FilerOption{}, entryLockTable: util.NewLockTable[util.FullPath]()}, store
 	}
 

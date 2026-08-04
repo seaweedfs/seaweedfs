@@ -17,13 +17,13 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-func newTxnTestServer(seed map[string]*filer.Entry) (*FilerServer, *renameTestStore) {
+func newTxnTestServer(t *testing.T, seed map[string]*filer.Entry) (*FilerServer, *renameTestStore) {
 	store := newRenameTestStore()
 	for path, entry := range seed {
 		entry.FullPath = util.FullPath(path)
 		store.entries[path] = entry
 	}
-	f := newRenameTestFiler(store)
+	f := newRenameTestFiler(t, store)
 	f.DirBucketsPath = "/buckets"
 	fs := &FilerServer{filer: f, option: &FilerOption{}, entryLockTable: util.NewLockTable[util.FullPath]()}
 	return fs, store
@@ -34,7 +34,7 @@ func newTxnTestServer(seed map[string]*filer.Entry) (*FilerServer, *renameTestSt
 // all three atomically under one lock keyed on the object path.
 func TestObjectTransactionMultiEntry(t *testing.T) {
 	now := time.Unix(1700000000, 0)
-	fs, store := newTxnTestServer(map[string]*filer.Entry{
+	fs, store := newTxnTestServer(t, map[string]*filer.Entry{
 		"/buckets/b/obj": {
 			Attr:     filer.Attr{Inode: 1, Mtime: now, Crtime: now, Mode: 0644},
 			Extended: map[string][]byte{s3_constants.ExtETagKey: []byte("abc")},
@@ -86,7 +86,7 @@ func TestObjectTransactionPatchNotifies(t *testing.T) {
 	swapNotificationQueue(t, queue)
 
 	now := time.Unix(1700000000, 0)
-	fs, _ := newTxnTestServer(map[string]*filer.Entry{
+	fs, _ := newTxnTestServer(t, map[string]*filer.Entry{
 		"/buckets/b/obj/.versions": {
 			Attr:     filer.Attr{Inode: 2, Mtime: now, Crtime: now, Mode: 0755 | (1 << 31)},
 			Extended: map[string][]byte{"latest": []byte("v1")},
@@ -121,7 +121,7 @@ func TestObjectTransactionPatchNotifies(t *testing.T) {
 // and preserving the rest; without set_content, Content is left untouched.
 func TestObjectTransactionPatchContent(t *testing.T) {
 	now := time.Unix(1700000000, 0)
-	fs, store := newTxnTestServer(map[string]*filer.Entry{
+	fs, store := newTxnTestServer(t, map[string]*filer.Entry{
 		"/buckets/b": {
 			Attr:     filer.Attr{Inode: 1, Mtime: now, Crtime: now, Mode: 0755 | (1 << 31)},
 			Extended: map[string][]byte{"versioning": []byte("Enabled")},
@@ -197,7 +197,7 @@ func TestObjectTransactionPatchContent(t *testing.T) {
 // A failing precondition aborts before any mutation is applied.
 func TestObjectTransactionPreconditionAborts(t *testing.T) {
 	now := time.Unix(1700000000, 0)
-	fs, store := newTxnTestServer(map[string]*filer.Entry{
+	fs, store := newTxnTestServer(t, map[string]*filer.Entry{
 		"/buckets/b/obj": {
 			Attr:     filer.Attr{Inode: 1, Mtime: now, Crtime: now, Mode: 0644},
 			Extended: map[string][]byte{s3_constants.ExtETagKey: []byte("abc")},
@@ -236,7 +236,7 @@ func TestObjectTransactionRecomputeLatest(t *testing.T) {
 			Extended: map[string][]byte{"vid": []byte(id), "etag": []byte("etag-" + id)},
 		}
 	}
-	fs, store := newTxnTestServer(map[string]*filer.Entry{
+	fs, store := newTxnTestServer(t, map[string]*filer.Entry{
 		"/buckets/b/obj/.versions": {
 			Attr: filer.Attr{Inode: 2, Mtime: now, Crtime: now, Mode: 0755 | (1 << 31)},
 			Extended: map[string][]byte{
@@ -304,7 +304,7 @@ func TestObjectTransactionRecomputeAscending(t *testing.T) {
 	ver := func(id string) *filer.Entry {
 		return &filer.Entry{Attr: filer.Attr{Inode: 10, Mtime: now, Crtime: now, Mode: 0644}, Extended: map[string][]byte{"vid": []byte(id)}}
 	}
-	fs, store := newTxnTestServer(map[string]*filer.Entry{
+	fs, store := newTxnTestServer(t, map[string]*filer.Entry{
 		"/buckets/b/obj/.versions":        {Attr: filer.Attr{Inode: 2, Mtime: now, Crtime: now, Mode: 0755 | (1 << 31)}, Extended: map[string][]byte{}},
 		"/buckets/b/obj/.versions/v1.ver": ver("v1"),
 		"/buckets/b/obj/.versions/v2.ver": ver("v2"),
@@ -339,7 +339,7 @@ func TestObjectTransactionBatchIndependent(t *testing.T) {
 			Extended: map[string][]byte{s3_constants.ExtETagKey: []byte("abc")},
 		}
 	}
-	fs, store := newTxnTestServer(map[string]*filer.Entry{
+	fs, store := newTxnTestServer(t, map[string]*filer.Entry{
 		"/buckets/b/a": obj(1),
 		"/buckets/b/c": obj(3),
 	})
@@ -386,7 +386,7 @@ func TestObjectTransactionBatchIndependent(t *testing.T) {
 // panicking, keeping responses parallel to the requests.
 func TestObjectTransactionBatchNilTransaction(t *testing.T) {
 	now := time.Unix(1700000000, 0)
-	fs, store := newTxnTestServer(map[string]*filer.Entry{
+	fs, store := newTxnTestServer(t, map[string]*filer.Entry{
 		"/buckets/b/a": {Attr: filer.Attr{Inode: 1, Mtime: now, Crtime: now, Mode: 0644}},
 	})
 
@@ -418,7 +418,7 @@ func TestObjectTransactionBatchNilTransaction(t *testing.T) {
 // DELETE and PATCH of an absent entry are no-ops, so a replayed transaction
 // does not error.
 func TestObjectTransactionIdempotentNoops(t *testing.T) {
-	fs, _ := newTxnTestServer(nil)
+	fs, _ := newTxnTestServer(t, nil)
 
 	req := &filer_pb.ObjectTransactionRequest{
 		LockKey: "/buckets/b/obj",
@@ -449,7 +449,7 @@ func TestObjectTransactionRecomputeDemoteAndAttrs(t *testing.T) {
 			Extended: map[string][]byte{"vid": []byte(id)},
 		}
 	}
-	fs, store := newTxnTestServer(map[string]*filer.Entry{
+	fs, store := newTxnTestServer(t, map[string]*filer.Entry{
 		"/buckets/b/obj/.versions": {
 			Attr:     filer.Attr{Inode: 2, Mtime: t0, Crtime: t0, Mode: 0755 | (1 << 31)},
 			Extended: map[string][]byte{"latestName": []byte("v1.ver"), "latestVid": []byte("v1")},
@@ -503,7 +503,7 @@ func TestObjectTransactionRecomputeDemoteAndAttrs(t *testing.T) {
 func TestObjectTransactionPutThenRecomputeLatest(t *testing.T) {
 	t0 := time.Unix(1700000000, 0)
 	t1 := time.Unix(1700000100, 0)
-	fs, store := newTxnTestServer(map[string]*filer.Entry{
+	fs, store := newTxnTestServer(t, map[string]*filer.Entry{
 		"/buckets/b/obj/.versions": {
 			Attr:     filer.Attr{Inode: 2, Mtime: t0, Crtime: t0, Mode: 0755 | (1 << 31)},
 			Extended: map[string][]byte{"latestName": []byte("v1.ver"), "latestVid": []byte("v1")},
@@ -589,7 +589,7 @@ func TestObjectTransactionVersionDeleteWithWorm(t *testing.T) {
 	}
 
 	// Legal hold ON: the WORM guard blocks; version and pointer untouched.
-	fs, store := newTxnTestServer(seed(true))
+	fs, store := newTxnTestServer(t, seed(true))
 	resp, err := fs.ObjectTransaction(context.Background(), mkReq())
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -605,7 +605,7 @@ func TestObjectTransactionVersionDeleteWithWorm(t *testing.T) {
 	}
 
 	// No legal hold: pointer recomputes to v_b (excluding v_c), then v_c is deleted.
-	fs, store = newTxnTestServer(seed(false))
+	fs, store = newTxnTestServer(t, seed(false))
 	resp, err = fs.ObjectTransaction(context.Background(), mkReq())
 	if err != nil || resp.Error != "" {
 		t.Fatalf("unlocked delete failed: err=%v resp=%q", err, resp.Error)
@@ -659,7 +659,7 @@ func TestObjectTransactionDeleteRemovesEmptyParent(t *testing.T) {
 	}
 
 	// Last version: the emptied directory goes with it.
-	fs, store := newTxnTestServer(seed(false))
+	fs, store := newTxnTestServer(t, seed(false))
 	resp, err := fs.ObjectTransaction(context.Background(), mkReq())
 	if err != nil || resp.Error != "" {
 		t.Fatalf("txn failed: err=%v resp=%q", err, resp.Error)
@@ -672,7 +672,7 @@ func TestObjectTransactionDeleteRemovesEmptyParent(t *testing.T) {
 	}
 
 	// A remaining child keeps the directory (non-recursive teardown declines).
-	fs, store = newTxnTestServer(seed(true))
+	fs, store = newTxnTestServer(t, seed(true))
 	resp, err = fs.ObjectTransaction(context.Background(), mkReq())
 	if err != nil || resp.Error != "" {
 		t.Fatalf("txn failed: err=%v resp=%q", err, resp.Error)
@@ -685,7 +685,7 @@ func TestObjectTransactionDeleteRemovesEmptyParent(t *testing.T) {
 	}
 
 	// Replay: the child is already gone, the empty parent is still tidied.
-	fs, store = newTxnTestServer(map[string]*filer.Entry{
+	fs, store = newTxnTestServer(t, map[string]*filer.Entry{
 		"/buckets/b/obj/.versions": {
 			Attr: filer.Attr{Inode: 2, Mtime: now, Crtime: now, Mode: 0755 | (1 << 31)},
 		},
@@ -703,7 +703,7 @@ func TestObjectTransactionDeleteRemovesEmptyParent(t *testing.T) {
 // copy) while merging Extended.
 func TestObjectTransactionPatchTouchMtime(t *testing.T) {
 	old := time.Unix(1600000000, 0)
-	fs, store := newTxnTestServer(map[string]*filer.Entry{
+	fs, store := newTxnTestServer(t, map[string]*filer.Entry{
 		"/buckets/b/obj": {
 			FullPath: "/buckets/b/obj",
 			Attr:     filer.Attr{Inode: 1, Mtime: old, Crtime: old, Mode: 0644},
@@ -748,7 +748,7 @@ func withRing(fs *FilerServer, self pb.ServerAddress, servers ...pb.ServerAddres
 // forwarding to itself.
 func TestObjectTransactionRouteKeyOwnerAppliesLocally(t *testing.T) {
 	self := pb.ServerAddress("localhost:1")
-	fs, store := newTxnTestServer(map[string]*filer.Entry{
+	fs, store := newTxnTestServer(t, map[string]*filer.Entry{
 		"/buckets/b/obj": {FullPath: "/buckets/b/obj", Attr: filer.Attr{Inode: 1, Mode: 0644}},
 	})
 	withRing(fs, self, self)
@@ -776,7 +776,7 @@ func TestObjectTransactionRouteKeyOwnerAppliesLocally(t *testing.T) {
 func TestObjectTransactionIsMovedSkipsForward(t *testing.T) {
 	self := pb.ServerAddress("localhost:1")
 	other := pb.ServerAddress("localhost:2")
-	fs, store := newTxnTestServer(map[string]*filer.Entry{
+	fs, store := newTxnTestServer(t, map[string]*filer.Entry{
 		"/buckets/b/obj": {FullPath: "/buckets/b/obj", Attr: filer.Attr{Inode: 1, Mode: 0644}},
 	})
 	withRing(fs, self, other) // ring owner is "other", not self
@@ -803,7 +803,7 @@ func TestObjectTransactionIsMovedSkipsForward(t *testing.T) {
 // sender, so it would re-forward and fail to dial unless is_moved is set on the
 // forwarded request — making this also assert that one-hop bound over the wire.
 func TestObjectTransactionForwardsToOwner(t *testing.T) {
-	owner, ownerStore := newTxnTestServer(map[string]*filer.Entry{
+	owner, ownerStore := newTxnTestServer(t, map[string]*filer.Entry{
 		"/buckets/b/obj": {FullPath: "/buckets/b/obj", Attr: filer.Attr{Inode: 1, Mode: 0644}},
 	})
 
@@ -827,7 +827,7 @@ func TestObjectTransactionForwardsToOwner(t *testing.T) {
 	go srv.Serve(lis)
 	t.Cleanup(srv.Stop)
 
-	self, selfStore := newTxnTestServer(nil)
+	self, selfStore := newTxnTestServer(t, nil)
 	withRing(self, sender, ownerAddr) // ring owner is the real owner; self forwards
 	self.grpcDialOption = grpc.WithTransportCredentials(insecure.NewCredentials())
 

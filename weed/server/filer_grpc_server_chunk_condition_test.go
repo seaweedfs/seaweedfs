@@ -80,7 +80,7 @@ func TestUpdateEntryChunkConditionPreventsStrand(t *testing.T) {
 			Attr:     filer.Attr{Inode: 1, Mtime: time.Unix(1700000000, 0), Mode: 0644},
 			Chunks:   storedChunks,
 		}
-		f := newRenameTestFiler(store)
+		f := newRenameTestFiler(t, store)
 		return &FilerServer{filer: f, option: &FilerOption{}, entryLockTable: util.NewLockTable[util.FullPath]()}, store
 	}
 
@@ -161,7 +161,7 @@ func TestDeleteEntryWaitsForPathLock(t *testing.T) {
 		FullPath: "/test/obj",
 		Attr:     filer.Attr{Inode: 1, Mtime: time.Unix(1700000000, 0), Mode: 0644},
 	}
-	f := newRenameTestFiler(store)
+	f := newRenameTestFiler(t, store)
 	fs := &FilerServer{filer: f, option: &FilerOption{}, entryLockTable: util.NewLockTable[util.FullPath]()}
 
 	lockPath := util.FullPath("/test/obj")
