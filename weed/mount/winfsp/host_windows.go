@@ -25,7 +25,9 @@ type Options struct {
 	// Nothing invalidates its cache, so this is the only coherence knob.
 	AttrTimeout float64
 
-	// ReadOnly rejects every modification at the WinFsp layer.
+	// ReadOnly rejects every modification. WinFsp has no "ro" option — it
+	// discards the flag and leaves the volume writable — so the refusal has
+	// to happen in the operations themselves.
 	ReadOnly bool
 
 	// Debug turns on cgofuse's operation trace.
@@ -43,7 +45,7 @@ type Host struct {
 
 // New wires wfs up to WinFsp. Nothing is mounted until Serve.
 func New(wfs *mount.WFS, options Options) *Host {
-	host := cgofuse.NewFileSystemHost(NewWinFS(wfs, options.Uid, options.Gid))
+	host := cgofuse.NewFileSystemHost(NewWinFS(wfs, options.Uid, options.Gid, options.ReadOnly))
 	host.SetCapReaddirPlus(true)
 	host.SetUseIno(true)
 	return &Host{host: host, options: options}
@@ -61,9 +63,6 @@ func (h *Host) Serve(mountPoint string) error {
 	if h.options.AttrTimeout > 0 {
 		timeout := strconv.FormatFloat(h.options.AttrTimeout, 'f', -1, 64)
 		opts = append(opts, "-o", "attr_timeout="+timeout, "-o", "entry_timeout="+timeout)
-	}
-	if h.options.ReadOnly {
-		opts = append(opts, "-o", "ro")
 	}
 	if h.options.Debug {
 		opts = append(opts, "-d")

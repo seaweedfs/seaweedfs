@@ -129,7 +129,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	glog.V(0).Infof("This is SeaweedFS version %s %s %s", version.Version(), runtime.GOOS, runtime.GOARCH)
 	glog.V(0).Infof("Windows mount is beta: hard links are unavailable and byte-range locks are not shared across mounts")
 
-	if err := host.Serve(dir); err != nil {
+	if err := host.Serve(windowsMountPoint(dir)); err != nil {
 		glog.Errorf("%v", err)
 		return false
 	}
@@ -193,8 +193,18 @@ func isEmptyDir(dir string) (bool, error) {
 	return false, nil
 }
 
+// windowsMountPoint drops a trailing separator from a drive letter. WinFsp
+// recognises a drive only as exactly two characters; "S:\\" falls through to
+// its directory handling and the mount fails.
+func windowsMountPoint(dir string) string {
+	if isDriveLetter(dir) {
+		return strings.TrimRight(dir, `\/`)
+	}
+	return dir
+}
+
 // isDriveLetter accepts both "S:" and "S:\\"; the trailing separator is how
-// the drive is usually written and WinFsp takes either.
+// the drive is usually written, and windowsMountPoint normalises it.
 func isDriveLetter(dir string) bool {
 	trimmed := strings.TrimRight(dir, `\/`)
 	if len(trimmed) != 2 || trimmed[1] != ':' {

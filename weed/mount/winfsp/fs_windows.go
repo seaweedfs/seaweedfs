@@ -17,6 +17,10 @@ const (
 	// WinFsp passes this when an operation carries no open handle.
 	noHandle = ^uint64(0)
 
+	// windowsEpochCutoff is 1601-01-02 in unix seconds. Anything at or below
+	// it is Windows' own epoch leaking through rather than a real time.
+	windowsEpochCutoff = -11644387200
+
 	// How many entries to pull from one readdir round before handing them to
 	// WinFsp. Bounded so a directory with millions of children does not
 	// materialise in one slice.
@@ -31,9 +35,10 @@ var never chan struct{}
 type WinFS struct {
 	cgofuse.FileSystemBase
 
-	wfs *mount.WFS
-	uid uint32
-	gid uint32
+	wfs      *mount.WFS
+	uid      uint32
+	gid      uint32
+	readOnly bool
 
 	// An open handle holds the lookup reference for its inode until Release,
 	// the way the kernel keeps one for an open file. WinFsp hands back only
@@ -44,11 +49,12 @@ type WinFS struct {
 	dirInodes  map[uint64]*handleRef
 }
 
-func NewWinFS(wfs *mount.WFS, uid, gid uint32) *WinFS {
+func NewWinFS(wfs *mount.WFS, uid, gid uint32, readOnly bool) *WinFS {
 	return &WinFS{
 		wfs:        wfs,
 		uid:        uid,
 		gid:        gid,
+		readOnly:   readOnly,
 		fileInodes: make(map[uint64]*handleRef),
 		dirInodes:  make(map[uint64]*handleRef),
 	}
@@ -103,6 +109,13 @@ func (w *WinFS) releaseRetained(table map[uint64]*handleRef, handle uint64) uint
 // caller identifies who the raw filesystem should record as the owner of
 // anything it creates. Windows has no uid to pass through, so entries carry
 // the identity the mount was started with rather than root.
+// denied reports whether a modification should be refused outright, which is
+// how a read-only mount is enforced: WinFsp discards its own "ro" option.
+func (w *WinFS) denied() bool { return w.readOnly }
+
+// ptr is for the operations that take the header by pointer.
+func ptr(h fuse.InHeader) *fuse.InHeader { return &h }
+
 func (w *WinFS) caller(inode uint64) fuse.InHeader {
 	return fuse.InHeader{
 		NodeId: inode,
@@ -157,7 +170,7 @@ func (w *WinFS) walk(parts []string) (uint64, *lookupRef, fuse.Status) {
 	inode := uint64(rootInode)
 	for _, name := range parts {
 		var out fuse.EntryOut
-		if status := w.wfs.Lookup(never, &fuse.InHeader{NodeId: inode}, name, &out); status != fuse.OK {
+		if status := w.wfs.Lookup(never, ptr(w.caller(inode)), name, &out); status != fuse.OK {
 			ref.release()
 			return 0, nil, status
 		}
@@ -238,7 +251,7 @@ func logResolveFailure(op, path string, status fuse.Status) {
 
 func (w *WinFS) Statfs(path string, stat *cgofuse.Statfs_t) int {
 	var out fuse.StatfsOut
-	if status := w.wfs.StatFs(never, &fuse.InHeader{NodeId: rootInode}, &out); status != fuse.OK {
+	if status := w.wfs.StatFs(never, ptr(w.caller(rootInode)), &out); status != fuse.OK {
 		return toErrno(status)
 	}
 	stat.Bsize = uint64(out.Bsize)
@@ -260,7 +273,7 @@ func (w *WinFS) Getattr(path string, stat *cgofuse.Stat_t, fh uint64) int {
 		return toErrno(status)
 	}
 	defer ref.release()
-	in := &fuse.GetAttrIn{InHeader: fuse.InHeader{NodeId: inode}}
+	in := &fuse.GetAttrIn{InHeader: w.caller(inode)}
 	if fh != noHandle {
 		in.Fh_ = fh
 		in.Flags_ = fuse.FUSE_GETATTR_FH
@@ -274,6 +287,9 @@ func (w *WinFS) Getattr(path string, stat *cgofuse.Stat_t, fh uint64) int {
 }
 
 func (w *WinFS) Mkdir(path string, mode uint32) int {
+	if w.denied() {
+		return -eROFS
+	}
 	parent, name, ref, status := w.resolveParent(path)
 	if status != fuse.OK {
 		return toErrno(status)
@@ -290,24 +306,33 @@ func (w *WinFS) Mkdir(path string, mode uint32) int {
 }
 
 func (w *WinFS) Rmdir(path string) int {
+	if w.denied() {
+		return -eROFS
+	}
 	parent, name, ref, status := w.resolveParent(path)
 	if status != fuse.OK {
 		return toErrno(status)
 	}
 	defer ref.release()
-	return toErrno(w.wfs.Rmdir(never, &fuse.InHeader{NodeId: parent}, name))
+	return toErrno(w.wfs.Rmdir(never, ptr(w.caller(parent)), name))
 }
 
 func (w *WinFS) Unlink(path string) int {
+	if w.denied() {
+		return -eROFS
+	}
 	parent, name, ref, status := w.resolveParent(path)
 	if status != fuse.OK {
 		return toErrno(status)
 	}
 	defer ref.release()
-	return toErrno(w.wfs.Unlink(never, &fuse.InHeader{NodeId: parent}, name))
+	return toErrno(w.wfs.Unlink(never, ptr(w.caller(parent)), name))
 }
 
 func (w *WinFS) Rename(oldpath string, newpath string) int {
+	if w.denied() {
+		return -eROFS
+	}
 	oldParent, oldName, oldRef, status := w.resolveParent(oldpath)
 	if status != fuse.OK {
 		return toErrno(status)
@@ -318,11 +343,14 @@ func (w *WinFS) Rename(oldpath string, newpath string) int {
 		return toErrno(status)
 	}
 	defer newRef.release()
-	in := &fuse.RenameIn{InHeader: fuse.InHeader{NodeId: oldParent}, Newdir: newParent}
+	in := &fuse.RenameIn{InHeader: w.caller(oldParent), Newdir: newParent}
 	return toErrno(w.wfs.Rename(never, in, oldName, newName))
 }
 
 func (w *WinFS) Create(path string, flags int, mode uint32) (int, uint64) {
+	if w.denied() {
+		return -eROFS, noHandle
+	}
 	parent, name, ref, status := w.resolveParent(path)
 	if status != fuse.OK {
 		glog.Errorf("create %s: resolving the parent directory: %v", path, status)
@@ -348,7 +376,7 @@ func (w *WinFS) Open(path string, flags int) (int, uint64) {
 		return toErrno(status), noHandle
 	}
 	defer ref.release()
-	in := &fuse.OpenIn{InHeader: fuse.InHeader{NodeId: inode}, Flags: translateOpenFlags(flags)}
+	in := &fuse.OpenIn{InHeader: w.caller(inode), Flags: translateOpenFlags(flags)}
 	var out fuse.OpenOut
 	if status := w.wfs.Open(never, in, &out); status != fuse.OK {
 		glog.Errorf("open %s inode %d: %v", path, inode, status)
@@ -383,6 +411,9 @@ func (w *WinFS) Read(path string, buff []byte, ofst int64, fh uint64) int {
 }
 
 func (w *WinFS) Write(path string, buff []byte, ofst int64, fh uint64) int {
+	if w.denied() {
+		return -eROFS
+	}
 	if fh == noHandle {
 		return -eBADF
 	}
@@ -402,6 +433,9 @@ func (w *WinFS) Write(path string, buff []byte, ofst int64, fh uint64) int {
 }
 
 func (w *WinFS) Truncate(path string, size int64, fh uint64) int {
+	if w.denied() {
+		return -eROFS
+	}
 	inode, ref, status := w.resolve(path)
 	if status != fuse.OK {
 		return toErrno(status)
@@ -420,6 +454,9 @@ func (w *WinFS) Truncate(path string, size int64, fh uint64) int {
 }
 
 func (w *WinFS) Chmod(path string, mode uint32) int {
+	if w.denied() {
+		return -eROFS
+	}
 	inode, ref, status := w.resolve(path)
 	if status != fuse.OK {
 		return toErrno(status)
@@ -434,6 +471,9 @@ func (w *WinFS) Chmod(path string, mode uint32) int {
 }
 
 func (w *WinFS) Utimens(path string, tmsp []cgofuse.Timespec) int {
+	if w.denied() {
+		return -eROFS
+	}
 	inode, ref, status := w.resolve(path)
 	if status != fuse.OK {
 		return toErrno(status)
@@ -444,9 +484,20 @@ func (w *WinFS) Utimens(path string, tmsp []cgofuse.Timespec) int {
 	if len(tmsp) < 2 {
 		in.Valid = fuse.FATTR_ATIME_NOW | fuse.FATTR_MTIME_NOW
 	} else {
-		in.Valid = fuse.FATTR_ATIME | fuse.FATTR_MTIME
-		in.Atime, in.Atimensec = uint64(tmsp[0].Sec), uint32(tmsp[0].Nsec)
-		in.Mtime, in.Mtimensec = uint64(tmsp[1].Sec), uint32(tmsp[1].Nsec)
+		// Windows sends times around its own 1601 epoch, which arrive here as
+		// a large negative second count and would be stored as a year-1601
+		// timestamp that every other client then reads. Leave those alone.
+		if tmsp[0].Sec > windowsEpochCutoff {
+			in.Valid |= fuse.FATTR_ATIME
+			in.Atime, in.Atimensec = uint64(tmsp[0].Sec), uint32(tmsp[0].Nsec)
+		}
+		if tmsp[1].Sec > windowsEpochCutoff {
+			in.Valid |= fuse.FATTR_MTIME
+			in.Mtime, in.Mtimensec = uint64(tmsp[1].Sec), uint32(tmsp[1].Nsec)
+		}
+		if in.Valid == 0 {
+			return 0
+		}
 	}
 	var out fuse.AttrOut
 	return toErrno(w.wfs.SetAttr(never, in, &out))
@@ -482,7 +533,7 @@ func (w *WinFS) Opendir(path string) (int, uint64) {
 	}
 	defer ref.release()
 	var out fuse.OpenOut
-	if status := w.wfs.OpenDir(never, &fuse.OpenIn{InHeader: fuse.InHeader{NodeId: inode}}, &out); status != fuse.OK {
+	if status := w.wfs.OpenDir(never, &fuse.OpenIn{InHeader: w.caller(inode)}, &out); status != fuse.OK {
 		return toErrno(status), noHandle
 	}
 	ref.keepLast()
@@ -569,7 +620,7 @@ func (w *WinFS) Readdir(path string, fill func(name string, stat *cgofuse.Stat_t
 	for {
 		sink := &readdirSink{limit: readdirBatch}
 		in := &fuse.ReadIn{
-			InHeader: fuse.InHeader{NodeId: inode},
+			InHeader: w.caller(inode),
 			Fh:       fh,
 			Offset:   offset,
 			Size:     1 << 20,
@@ -614,7 +665,7 @@ func (w *WinFS) Readlink(path string) (int, string) {
 		return toErrno(status), ""
 	}
 	defer ref.release()
-	target, status := w.wfs.Readlink(never, &fuse.InHeader{NodeId: inode})
+	target, status := w.wfs.Readlink(never, ptr(w.caller(inode)))
 	if status != fuse.OK {
 		return toErrno(status), ""
 	}
@@ -626,6 +677,13 @@ func (w *WinFS) Readlink(path string) (int, string) {
 // back as an empty file.
 func (w *WinFS) Symlink(target string, newpath string) int {
 	return -eNOSYS
+}
+
+// Chown accepts and discards. Windows has no uid to record, but WinFsp passes
+// a chown failure straight out of SetSecurity, so refusing it breaks Explorer's
+// Security tab and icacls for changes that are not about ownership at all.
+func (w *WinFS) Chown(path string, uid uint32, gid uint32) int {
+	return 0
 }
 
 // Link is not implemented: WinFsp has no hard links.
