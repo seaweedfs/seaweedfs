@@ -165,8 +165,13 @@ jobs:
         Write-Host "::group::explorer-style walk"
         New-Item -ItemType Directory -Force -Path S:\walk | Out-Null
         1..200 | ForEach-Object { Set-Content -Path "S:\walk\f$_.txt" -Value "line $_" }
-        $count = (Get-ChildItem S:\walk | Measure-Object).Count
-        if ($count -ne 200) { throw "listed $count files, expected 200" }
+        $names = @(Get-ChildItem S:\walk | ForEach-Object { $_.Name })
+        if ($names.Count -ne 200) {
+          # Name the strays: a dot entry surfacing here is a different problem
+          # from a missing or duplicated file.
+          $unexpected = $names | Where-Object { $_ -notmatch '^f\d+\.txt$' }
+          throw "listed $($names.Count) entries, expected 200; unexpected: $($unexpected -join ', ')"
+        }
         $body = Get-Content S:\walk\f42.txt
         if ($body -ne 'line 42') { throw "unexpected content: $body" }
         Copy-Item S:\walk\f42.txt S:\walk\copy.txt

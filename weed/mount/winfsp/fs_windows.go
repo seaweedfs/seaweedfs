@@ -593,6 +593,7 @@ type readdirSink struct {
 	names   []string
 	offsets []uint64
 	inodes  []uint64
+	modes   []uint32
 	attrs   []*fuse.EntryOut
 	limit   int
 
@@ -613,6 +614,7 @@ func (s *readdirSink) AddEntry(entry fuse.DirEntry) bool {
 	s.names = append(s.names, entry.Name)
 	s.offsets = append(s.offsets, entry.Off)
 	s.inodes = append(s.inodes, entry.Ino)
+	s.modes = append(s.modes, entry.Mode)
 	s.attrs = append(s.attrs, nil)
 	return true
 }
@@ -627,6 +629,7 @@ func (s *readdirSink) AddEntryPlus(entry fuse.DirEntry) *fuse.EntryOut {
 	s.names = append(s.names, entry.Name)
 	s.offsets = append(s.offsets, entry.Off)
 	s.inodes = append(s.inodes, entry.Ino)
+	s.modes = append(s.modes, entry.Mode)
 	s.attrs = append(s.attrs, out)
 	return out
 }
@@ -661,8 +664,18 @@ func (w *WinFS) Readdir(path string, fill func(name string, stat *cgofuse.Stat_t
 		for i, name := range sink.names {
 			var stat cgofuse.Stat_t
 			var statp *cgofuse.Stat_t
-			if attr := sink.attrs[i]; attr != nil {
+			if attr := sink.attrs[i]; attr != nil && attr.Attr.Mode != 0 {
 				w.attrToStat(&attr.Attr, &stat)
+				statp = &stat
+			} else if sink.modes[i] != 0 {
+				// "." and ".." are reported without attributes: the readdir
+				// only fills a block for real children. Windows still needs
+				// their type, and enumerating a directory whose first entry is
+				// not marked as one fails outright.
+				stat.Mode = sink.modes[i]
+				stat.Ino = sink.inodes[i]
+				stat.Nlink = 1
+				stat.Uid, stat.Gid = w.uid, w.gid
 				statp = &stat
 			}
 			if filled && !fill(name, statp, int64(sink.offsets[i])) {
