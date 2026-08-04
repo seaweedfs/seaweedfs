@@ -92,6 +92,11 @@ jobs:
         for target in windows/amd64 windows/arm64 freebsd/amd64 darwin/arm64; do
           echo "== $target"
           GOOS=${target%/*} GOARCH=${target#*/} go build ./weed/...
+          # Tests too: they reach for per-OS syscall constants the build does
+          # not, and only compiling them catches an untagged one.
+          GOOS=${target%/*} GOARCH=${target#*/} go vet ./weed/mount/... ./weed/command/... 2>&1 |
+            grep -v "MessageState contains sync.Mutex" | tee /tmp/vet-$$.txt
+          if grep -q "vet:" /tmp/vet-$$.txt; then exit 1; fi
         done
 
   test:
