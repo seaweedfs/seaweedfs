@@ -120,7 +120,7 @@ func TestOnlyDirectoriesGetDirState(t *testing.T) {
 	}
 
 	// forgetting the directory drops its dirState
-	itp.Forget(dirInode, 1, nil)
+	itp.Forget(dirInode, 1, nil, nil)
 	if _, ok := itp.dirStates[dirInode]; ok {
 		t.Fatal("forgotten directory must be removed from dirStates")
 	}
@@ -163,5 +163,39 @@ func TestMarkChildrenCachedClearsReadThroughMode(t *testing.T) {
 	}
 	if inodeToPath.ShouldReadDirectoryDirect(dir) {
 		t.Fatal("directory should leave read-through mode after caching")
+	}
+}
+
+// State keyed by an inode number has to be dropped while the table is locked.
+// The numbers come from the path, so a lookup racing a forget is handed the
+// same one back, and a cleanup running after the unlock would wipe what that
+// lookup just stored.
+func TestForgetOnReleaseRunsUnderLock(t *testing.T) {
+	itp := NewInodeToPath(util.FullPath("/"), 60)
+	file := util.FullPath("/data/f.txt")
+	inode := itp.Lookup(file, time.Now().Unix(), false, false, 0, true)
+
+	itp.Lookup(file, time.Now().Unix(), false, false, 0, true) // nlookup is 2 now
+
+	calls := 0
+	onRelease := func(released uint64) {
+		calls++
+		if released != inode {
+			t.Errorf("released inode = %d, want %d", released, inode)
+		}
+		if itp.TryLock() {
+			itp.Unlock()
+			t.Error("onRelease ran outside the critical section")
+		}
+	}
+
+	itp.Forget(inode, 1, onRelease, nil)
+	if calls != 0 {
+		t.Fatalf("partial forget must not release: onRelease called %d times", calls)
+	}
+
+	itp.Forget(inode, 1, onRelease, nil)
+	if calls != 1 {
+		t.Fatalf("onRelease called %d times, want 1", calls)
 	}
 }

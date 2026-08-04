@@ -20,7 +20,7 @@ func TestFileHandleFullPathFallsBackAfterForget(t *testing.T) {
 	}
 	fh.RememberPath(fullPath)
 
-	wfs.inodeToPath.Forget(inode, 1, nil)
+	wfs.inodeToPath.Forget(inode, 1, nil, nil)
 
 	if got := fh.FullPath(); got != fullPath {
 		t.Fatalf("FullPath() after forget = %q, want %q", got, fullPath)
@@ -44,7 +44,7 @@ func TestFileHandleFullPathUsesSavedRenamePathAfterForget(t *testing.T) {
 
 	wfs.inodeToPath.MovePath(oldPath, newPath)
 	fh.RememberPath(newPath)
-	wfs.inodeToPath.Forget(inode, 1, nil)
+	wfs.inodeToPath.Forget(inode, 1, nil, nil)
 
 	if got := fh.FullPath(); got != newPath {
 		t.Fatalf("FullPath() after rename+forget = %q, want %q", got, newPath)
