@@ -782,6 +782,7 @@ func sameEntryContent(a, b *filer_pb.Entry) bool {
 // invalidateOpenFileHandle refreshes an open file handle from a metadata
 // subscription event. No filer lookup here: it can fail transiently, and with
 // the subscription cursor already past the event, nothing would retry.
+
 // SetEntryChangeListener registers a callback for every metadata event this
 // mount applies. A front end whose client caches entries on its own side, and
 // which the mount cannot invalidate directly, uses it to push the change out.

@@ -48,16 +48,17 @@ func (n *notifier) send(path string, action uint32) {
 // entry from a modified one, and Windows treats an unexpected create on an
 // existing name as a refresh, so create is the safe report.
 func (n *notifier) action(invalidation meta_cache.EntryInvalidation) uint32 {
-	isDir := invalidation.Entry.GetIsDirectory()
-	switch {
-	case invalidation.Deleted || invalidation.Entry == nil:
-		if isDir {
+	if invalidation.Deleted || invalidation.Entry == nil {
+		// The entry is gone, so only WasDirectory still says what it was, and
+		// Windows watches directory and file removals through different
+		// filters.
+		if invalidation.WasDirectory {
 			return cgofuse.NOTIFY_RMDIR
 		}
 		return cgofuse.NOTIFY_UNLINK
-	case isDir:
-		return cgofuse.NOTIFY_MKDIR
-	default:
-		return cgofuse.NOTIFY_CREATE
 	}
+	if invalidation.Entry.GetIsDirectory() {
+		return cgofuse.NOTIFY_MKDIR
+	}
+	return cgofuse.NOTIFY_CREATE
 }
