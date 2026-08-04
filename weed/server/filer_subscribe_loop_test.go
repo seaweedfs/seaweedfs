@@ -176,6 +176,11 @@ type subscribeHarness struct {
 	// stalls the metadata log flush" state the whole PR exists to handle.
 	gateMu    sync.Mutex
 	flushGate chan struct{}
+
+	// flushMu guards stopped against the flushes still in flight when the test
+	// ends, so none of them writes through a store the cleanup has closed.
+	flushMu sync.RWMutex
+	stopped bool
 }
 
 const testFilerIdSuffix = "0000abcd"
@@ -221,7 +226,12 @@ func newSubscribeHarness(t *testing.T) *subscribeHarness {
 	// layer the way logFlushFunc writes through real volumes.
 	f.LocalMetaLogBuffer.ShutdownLogBuffer()
 	f.LocalMetaLogBuffer = log_buffer.NewLogBuffer("local", time.Minute, h.flushToStore, nil, nil)
-	t.Cleanup(f.LocalMetaLogBuffer.ShutdownLogBuffer)
+	// Shutting the buffer down is not enough: NewFiler's deletion loop keeps the
+	// filer - and so the replacement buffer's tens of megabytes - reachable for
+	// the rest of the run. Quiesce the flush path first, since Filer.Shutdown
+	// closes the store a flush still in flight would write through.
+	t.Cleanup(f.Shutdown)
+	t.Cleanup(h.stopFlushes)
 
 	h.fs = &FilerServer{
 		filer:          f,
@@ -248,12 +258,27 @@ func (h *subscribeHarness) releaseFlushes() {
 	}
 }
 
+// stopFlushes lets go of any gated flush and waits for the ones in flight to
+// finish, then refuses the rest, so the store stays untouched from here on.
+func (h *subscribeHarness) stopFlushes() {
+	h.releaseFlushes()
+	h.flushMu.Lock()
+	defer h.flushMu.Unlock()
+	h.stopped = true
+}
+
 func (h *subscribeHarness) flushToStore(lb *log_buffer.LogBuffer, startTime, stopTime time.Time, buf []byte, minOffset, maxOffset int64) {
 	h.gateMu.Lock()
 	gate := h.flushGate
 	h.gateMu.Unlock()
 	if gate != nil {
 		<-gate
+	}
+
+	h.flushMu.RLock()
+	defer h.flushMu.RUnlock()
+	if h.stopped {
+		return
 	}
 
 	// The same file naming and append shape as logFlushFunc, against the fake

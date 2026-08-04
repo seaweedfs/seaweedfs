@@ -193,7 +193,8 @@ type LogBuffer struct {
 	// Notified only when a flush lands, for readers that cannot act on an append
 	flushSubscribers map[string]chan struct{}
 	isStopping       *atomic.Bool
-	shutdownCh       chan struct{} // closed by ShutdownLogBuffer to wake blocked subscribers
+	shutdownCh       chan struct{}  // closed by ShutdownLogBuffer to wake blocked subscribers
+	loopsDone        sync.WaitGroup // loopFlush and loopInterval signal exit
 	isAllFlushed     bool
 	flushChan        chan *dataToFlush
 	flushBudget      *flushBudget
@@ -235,6 +236,7 @@ func NewLogBuffer(name string, flushInterval time.Duration, flushFn LogFlushFunc
 		},
 	}
 	lb.lastFlushedOffset.Store(-1) // Nothing flushed to disk yet
+	lb.loopsDone.Add(2)
 	go lb.loopFlush()
 	go lb.loopInterval()
 	return lb
@@ -740,6 +742,7 @@ func (logBuffer *LogBuffer) queueFlush(d *dataToFlush) bool {
 }
 
 func (logBuffer *LogBuffer) loopFlush() {
+	defer logBuffer.loopsDone.Done()
 	for d := range logBuffer.flushChan {
 		if d == nil {
 			break // shutdown sentinel
@@ -777,10 +780,17 @@ func (logBuffer *LogBuffer) loopFlush() {
 }
 
 func (logBuffer *LogBuffer) loopInterval() {
-	for !logBuffer.IsStopping() {
-		time.Sleep(logBuffer.flushInterval)
-		if logBuffer.IsStopping() {
+	defer logBuffer.loopsDone.Done()
+	// Wake on shutdown instead of sleeping through the interval: a goroutine
+	// parked in time.Sleep keeps the buffer and its ~40MB of slabs reachable
+	// for up to flushInterval after ShutdownLogBuffer.
+	ticker := time.NewTicker(logBuffer.flushInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-logBuffer.shutdownCh:
 			return
+		case <-ticker.C:
 		}
 
 		logBuffer.Lock()

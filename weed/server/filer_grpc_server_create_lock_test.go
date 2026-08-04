@@ -18,7 +18,7 @@ import (
 func TestCreateEntryOExclSerialized(t *testing.T) {
 	store := newRenameTestStore()
 	store.findDelay = 5 * time.Millisecond
-	f := newRenameTestFiler(store)
+	f := newRenameTestFiler(t, store)
 	f.DirBucketsPath = "/buckets"
 
 	fs := &FilerServer{

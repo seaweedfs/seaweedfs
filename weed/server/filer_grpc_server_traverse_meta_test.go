@@ -63,7 +63,7 @@ func TestTraverseBfsMetadata(t *testing.T) {
 		store.entries[file] = newFileEntry(file, 2)
 	}
 
-	server := &FilerServer{filer: newRenameTestFiler(store)}
+	server := &FilerServer{filer: newRenameTestFiler(t, store)}
 	stream := &captureTraverseStream{ctx: context.Background()}
 
 	err := server.TraverseBfsMetadata(&filer_pb.TraverseBfsMetadataRequest{

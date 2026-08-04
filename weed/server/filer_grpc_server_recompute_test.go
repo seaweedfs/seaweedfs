@@ -21,7 +21,7 @@ func TestRecomputeLatestEmitsPointerUpdateEvent(t *testing.T) {
 	queue := &captureQueue{}
 	swapNotificationQueue(t, queue)
 
-	server := &FilerServer{filer: newRenameTestFiler(store)}
+	server := &FilerServer{filer: newRenameTestFiler(t, store)}
 	m := &filer_pb.ObjectMutation{
 		Type:      filer_pb.ObjectMutation_RECOMPUTE_LATEST,
 		Directory: "/buckets/b",
@@ -82,7 +82,7 @@ func TestRecomputeLatestDemoteEmitsEvent(t *testing.T) {
 	queue := &captureQueue{}
 	swapNotificationQueue(t, queue)
 
-	server := &FilerServer{filer: newRenameTestFiler(store)}
+	server := &FilerServer{filer: newRenameTestFiler(t, store)}
 	m := &filer_pb.ObjectMutation{
 		Type:      filer_pb.ObjectMutation_RECOMPUTE_LATEST,
 		Directory: "/buckets/b",

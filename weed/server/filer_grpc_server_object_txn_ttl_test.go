@@ -18,7 +18,7 @@ func mustSetObjectTxnStorageConf(t *testing.T, fs *FilerServer, conf *filer_pb.F
 }
 
 func TestObjectTransactionPutAppliesConfiguredTTLAndExpires(t *testing.T) {
-	fs, store := newTxnTestServer(nil)
+	fs, store := newTxnTestServer(t, nil)
 
 	mustSetObjectTxnStorageConf(t, fs, &filer_pb.FilerConf_PathConf{
 		LocationPrefix: "/buckets/video/",
@@ -72,7 +72,7 @@ func TestObjectTransactionPutAppliesConfiguredTTLAndExpires(t *testing.T) {
 }
 
 func TestObjectTransactionPutPreservesExplicitTTL(t *testing.T) {
-	fs, store := newTxnTestServer(nil)
+	fs, store := newTxnTestServer(t, nil)
 
 	mustSetObjectTxnStorageConf(t, fs, &filer_pb.FilerConf_PathConf{
 		LocationPrefix: "/buckets/video/",
@@ -117,7 +117,7 @@ func TestObjectTransactionPutPreservesExplicitTTL(t *testing.T) {
 }
 
 func TestObjectTransactionPutClearsTTLForRemoteEntry(t *testing.T) {
-	fs, store := newTxnTestServer(nil)
+	fs, store := newTxnTestServer(t, nil)
 
 	mustSetObjectTxnStorageConf(t, fs, &filer_pb.FilerConf_PathConf{
 		LocationPrefix: "/buckets/video/",
@@ -163,7 +163,7 @@ func TestObjectTransactionPutClearsTTLForRemoteEntry(t *testing.T) {
 }
 
 func TestObjectTransactionPutHonorsMaxFileNameLengthRule(t *testing.T) {
-	fs, store := newTxnTestServer(nil)
+	fs, store := newTxnTestServer(t, nil)
 
 	mustSetObjectTxnStorageConf(t, fs, &filer_pb.FilerConf_PathConf{
 		LocationPrefix:    "/buckets/video/",
@@ -205,7 +205,7 @@ func TestObjectTransactionPutHonorsMaxFileNameLengthRule(t *testing.T) {
 func TestObjectTransactionPutFailsOnReadOnlyStorageConfig(t *testing.T) {
 	// An explicit TTL must not bypass the read-only rule.
 	for _, ttlSec := range []int32{0, 7200} {
-		fs, store := newTxnTestServer(nil)
+		fs, store := newTxnTestServer(t, nil)
 
 		mustSetObjectTxnStorageConf(t, fs, &filer_pb.FilerConf_PathConf{
 			LocationPrefix: "/buckets/video/",
