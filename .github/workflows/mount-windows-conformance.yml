@@ -104,7 +104,7 @@ jobs:
         Start-Mount 'seaweed-mount'
 
         Write-Host "::group::winfsp-tests"
-        & powershell -ExecutionPolicy Bypass -File test\winfsp-conformance\run.ps1 -MountPoint S:\
+        & pwsh -File test/winfsp-conformance/run.ps1 -MountPoint S:\
         $code = $LASTEXITCODE
         Write-Host "::endgroup::"
         if ($code -ne 0) { throw "winfsp-tests failed with exit $code" }

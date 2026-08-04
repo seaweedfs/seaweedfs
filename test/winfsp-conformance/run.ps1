@@ -14,6 +14,19 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# "S:" and "S:\" mean different things to Join-Path: without the separator the
+# result is relative to the drive's current directory, not its root.
+if ($MountPoint -notmatch '[\\/]$') { $MountPoint = $MountPoint + '\' }
+
+# winfsp-tests links against winfsp-x64.dll, which the MSI puts somewhere the
+# loader does not look by default.
+foreach ($candidate in @("${env:ProgramFiles(x86)}\WinFsp\bin", "$env:ProgramFiles\WinFsp\bin")) {
+    if (Test-Path $candidate) {
+        $env:PATH = "$candidate;$env:PATH"
+        Write-Host "using WinFsp binaries from $candidate"
+    }
+}
+
 $toolDir = Join-Path $env:TEMP 'winfsp-tests'
 $exe = Join-Path $toolDir 'winfsp-tests-x64.exe'
 if (-not (Test-Path $exe)) {
@@ -28,11 +41,17 @@ if (-not (Test-Path $exe)) {
     throw "winfsp-tests-x64.exe not found under $toolDir"
 }
 
-$excluded = @()
-if (Test-Path $KnownFailures) {
-    $excluded = Get-Content $KnownFailures |
-        ForEach-Object { $_.Trim() } |
-        Where-Object { $_ -and -not $_.StartsWith('#') }
+# A missing or unreadable list would otherwise run with nothing excluded and
+# report that as normal, which reads like a pass with no known failures.
+if (-not (Test-Path $KnownFailures)) {
+    throw "known failures list not found at $KnownFailures"
+}
+$excluded = @(Get-Content $KnownFailures |
+    ForEach-Object { $_.Trim() } |
+    Where-Object { $_ -and -not $_.StartsWith('#') })
+Write-Host "read $($excluded.Count) exclusions from $KnownFailures"
+if ($excluded.Count -eq 0) {
+    throw "known failures list at $KnownFailures parsed to nothing"
 }
 
 # The suite refuses to run anywhere but a drive, and works in the current
