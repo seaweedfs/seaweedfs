@@ -310,7 +310,10 @@ func (s *AdminServer) SetBucketOwner(bucketName string, owner string) error {
 			bucketEntry.Extended = make(map[string][]byte)
 		}
 
-		// Set or remove the owner
+		// Set or remove the owner. The account id recorded by the S3 API goes with
+		// it: the S3 API derives it from the owning identity when it is absent, so
+		// leaving the old one behind would keep the previous owner of the objects.
+		delete(bucketEntry.Extended, s3_constants.ExtAmzOwnerKey)
 		if owner == "" {
 			delete(bucketEntry.Extended, s3_constants.AmzIdentityId)
 		} else {
