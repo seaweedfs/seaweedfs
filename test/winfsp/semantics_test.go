@@ -2,6 +2,7 @@ package winfsp
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -501,17 +502,22 @@ func TestDeleteOnClose(t *testing.T) {
 
 	h, err := createDeleteOnClose(path)
 	if err != nil {
-		t.Skipf("cannot open with delete-on-close here: %v", err)
+		if errors.Is(err, errWindowsOnly) {
+			t.Skip("delete-on-close needs the Win32 create call")
+		}
+		t.Fatalf("open with delete-on-close: %v", err)
 	}
 	if _, err := os.Stat(path); err != nil {
 		closeHandle(h)
-		t.Fatalf("file is not visible while open: %v", err)
+		t.Fatalf("file is not visible while its handle is open: %v", err)
 	}
 	if err := closeHandle(h); err != nil {
 		t.Fatalf("close: %v", err)
 	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("file outlived its last handle: %v", err)
+	if _, err := os.Stat(path); err == nil {
+		t.Fatal("file outlived its last handle")
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("stat after close: %v", err)
 	}
 	// The name has to be free again, which is what the conformance suite
 	// tripped over when an aborted test left its file behind.
@@ -519,5 +525,7 @@ func TestDeleteOnClose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("recreating the same name failed: %v", err)
 	}
-	closeHandle(h)
+	if err := closeHandle(h); err != nil {
+		t.Fatalf("close after recreate: %v", err)
+	}
 }
