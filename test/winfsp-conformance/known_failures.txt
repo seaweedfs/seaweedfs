@@ -1,0 +1,25 @@
+# Known winfsp-tests failures for the SeaweedFS Windows mount.
+#
+# One test name per line, as winfsp-tests reports it. A trailing * matches a
+# prefix, so "stream_*" covers a whole group. Listed tests are excluded from
+# the run; a failure in anything NOT listed fails CI, which is what catches a
+# regression.
+#
+# Keep a reason on every entry. An entry with no reason is indistinguishable
+# from one nobody has looked at.
+
+# Alternate data streams: the filer stores one byte range per entry, and the
+# mount exposes no second stream, so the whole group is inapplicable.
+stream_*
+
+# Reparse points and symlinks: Symlink is refused (WinFsp needs a reparse
+# point the adapter does not create), so these cannot pass.
+reparse_*
+
+# Extended attributes: forwarded only once #10554 lands; until then the
+# adapter answers -ENOSYS.
+ea_*
+
+# Byte-range locks live in the WinFsp driver rather than the mount, so they
+# are local to one machine and the mount has nothing to assert here.
+lock_*
