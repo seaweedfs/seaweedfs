@@ -387,6 +387,20 @@ func (wfs *WFS) setAtime(inode uint64, t time.Time) {
 }
 
 // applyInMemoryAtime overlays the in-memory atime onto a fuse.Attr if present.
+// forgetInMemoryTimes drops the overlays for an inode. Both maps are keyed by
+// inode and inodes are derived from the path, so a delete and recreate can
+// hand the same number to a different file — which would then inherit the
+// previous one's access or modification time.
+func (wfs *WFS) forgetInMemoryTimes(inode uint64) {
+	wfs.atimeMu.Lock()
+	delete(wfs.atimeMap, inode)
+	wfs.atimeMu.Unlock()
+
+	wfs.dirMtimeMu.Lock()
+	delete(wfs.dirMtimeMap, inode)
+	wfs.dirMtimeMu.Unlock()
+}
+
 func (wfs *WFS) applyInMemoryAtime(out *fuse.Attr, inode uint64) {
 	wfs.atimeMu.Lock()
 	if t, ok := wfs.atimeMap[inode]; ok {
