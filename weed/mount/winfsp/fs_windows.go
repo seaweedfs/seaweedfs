@@ -238,7 +238,7 @@ func (w *WinFS) attrToStat(attr *fuse.Attr, stat *cgofuse.Stat_t) {
 	// Windows expects a regular file to be marked archived; with no flags at
 	// all it synthesises NORMAL, which is a different thing and what
 	// create_fileattr_test checks.
-	if attr.Mode&fuse.S_IFDIR == 0 {
+	if attr.Mode&cgofuse.S_IFMT == cgofuse.S_IFREG {
 		stat.Flags |= cgofuse.UF_ARCHIVE
 	}
 }
@@ -540,12 +540,20 @@ func (w *WinFS) Utimens(path string, tmsp []cgofuse.Timespec) int {
 }
 
 // applyTimespec reports whether a timestamp should be written. UTIME_OMIT asks
-// for the existing value to be kept; a time at or below Windows' own 1601 epoch
-// arrives as a large negative second count; and zero is what Windows sends for
-// a field it is not setting, which stored as 1970 and then read back as the
-// file's access time.
+// for the existing value to be kept, and a time at or below Windows' own 1601
+// epoch arrives as a large negative second count. Exactly zero is what Windows
+// sends for a field it is not setting; storing it put 1970 in the atime
+// overlay, which then read back as the file's access time. A date genuinely
+// before 1970 is still allowed through — only the epoch itself is the
+// sentinel.
 func applyTimespec(ts cgofuse.Timespec) bool {
-	return ts.Nsec != utimeOmit && ts.Sec > 0 && ts.Sec > windowsEpochCutoff
+	if ts.Nsec == utimeOmit {
+		return false
+	}
+	if ts.Sec == 0 && ts.Nsec == 0 {
+		return false
+	}
+	return ts.Sec > windowsEpochCutoff
 }
 
 func (w *WinFS) Flush(path string, fh uint64) int {

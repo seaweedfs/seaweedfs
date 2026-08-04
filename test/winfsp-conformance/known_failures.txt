@@ -64,10 +64,11 @@ exec_rename_dir_test
 
 # File information
 # ----------------
-# Hidden, system and readonly are still not round-tripped, and creation time
-# is reported as ctime because the raw protocol's Attr carries no field for it
-# outside darwin. create_fileattr and getfileinfo are off this list now that a
-# regular file reports as archived and a zero timestamp is left alone.
+# A regular file reports as archived now, but hidden, system and readonly are
+# still not round-tripped: create_fileattr gets past the archive check and then
+# asks for READONLY as well, which needs Chflags. Creation time is reported as
+# ctime because the raw protocol's Attr carries no field for it outside darwin.
+create_fileattr_test
 create_readonlydir_test
 setfileinfo_test
 
