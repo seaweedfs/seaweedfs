@@ -75,6 +75,26 @@ func tableLocationFromMetadataLocation(metadataLocation string) string {
 	return trimmed
 }
 
+// accessDelegationHeader is how a client asks the catalog to hand back storage
+// credentials along with the table metadata.
+const accessDelegationHeader = "X-Iceberg-Access-Delegation"
+
+// wantsVendedCredentials reports whether the client asked for vended
+// credentials. The header carries a comma-separated list of mechanisms.
+func wantsVendedCredentials(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	for _, value := range r.Header.Values(accessDelegationHeader) {
+		for _, mechanism := range strings.Split(value, ",") {
+			if strings.EqualFold(strings.TrimSpace(mechanism), "vended-credentials") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // writeJSON writes a JSON response.
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")

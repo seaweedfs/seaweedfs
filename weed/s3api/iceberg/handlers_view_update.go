@@ -133,7 +133,7 @@ func (s *Server) handleUpdateView(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, ViewResponse{
 				MetadataLocation: newMetadataLocation,
 				Metadata:         newMetadata,
-				Config:           s.buildFileIOConfig(),
+				Config:           s.buildFileIOConfig(r),
 			})
 			return
 		}
