@@ -1,0 +1,118 @@
+name: "mount: windows conformance"
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'weed/mount/**'
+      - 'weed/command/mount*.go'
+      - 'test/winfsp-conformance/**'
+      - '.github/workflows/mount-windows-conformance.yml'
+  # No base branch filter: this is the only thing that runs the Windows mount,
+  # so it should cover a pull request stacked on another one too.
+  pull_request:
+    paths:
+      - 'weed/mount/**'
+      - 'weed/command/mount*.go'
+      - 'test/winfsp-conformance/**'
+      - '.github/workflows/mount-windows-conformance.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  conformance:
+    name: WinFsp conformance
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      # The runner ships MinGW, so cgo is on by default and cgofuse picks its
+      # cgo variant, which wants WinFsp's headers. The nocgo variant loads
+      # winfsp-x64.dll at run time instead, which is how weed.exe is released.
+      CGO_ENABLED: 0
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
+
+    - uses: actions/setup-go@v7
+      with:
+        go-version-file: 'go.mod'
+
+    # cgofuse loads winfsp-x64.dll at run time, so WinFsp is needed here but
+    # not to build.
+    - name: Install WinFsp
+      run: choco install winfsp -y --no-progress
+
+    - name: Build weed.exe
+      run: go build -o weed.exe ./weed
+
+    # The runner tears down a step's process tree when its shell exits, so a
+    # cluster started in one step is gone by the next. Everything that needs
+    # the cluster and the mount alive has to share a step.
+    - name: Mount and run winfsp-tests
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+
+        function Test-Port($port) {
+          # A plain connect, because Test-NetConnection has reported success
+          # here for a port nothing was listening on.
+          $client = New-Object System.Net.Sockets.TcpClient
+          try { $client.Connect('127.0.0.1', $port); return $client.Connected }
+          catch { return $false }
+          finally { $client.Dispose() }
+        }
+
+        function Start-Mount($log) {
+          Start-Process -FilePath .\weed.exe `
+            -ArgumentList '-logtostderr','mount','-filer=127.0.0.1:8888','-dir=S:' `
+            -RedirectStandardOutput "C:\$log.log" -RedirectStandardError "C:\$log.err.log"
+          $deadline = (Get-Date).AddMinutes(2)
+          while ((Get-Date) -lt $deadline) {
+            if (Test-Path S:\) { Write-Host "S: is mounted"; return }
+            Start-Sleep -Seconds 2
+          }
+          Get-Content "C:\$log.log", "C:\$log.err.log" -ErrorAction SilentlyContinue
+          throw "S: never appeared"
+        }
+
+        New-Item -ItemType Directory -Force -Path C:\seaweed-data | Out-Null
+        # -ip pins the cluster to loopback; it otherwise advertises and binds
+        # the runner's LAN address, which 127.0.0.1 cannot reach.
+        Start-Process -FilePath .\weed.exe `
+          -ArgumentList '-logtostderr','mini','-dir=C:\seaweed-data','-ip=127.0.0.1' `
+          -RedirectStandardOutput C:\seaweed-mini.log -RedirectStandardError C:\seaweed-mini.err.log
+
+        $deadline = (Get-Date).AddMinutes(3)
+        while ((Get-Date) -lt $deadline) {
+          # The mount dials grpc, not http, so both ports have to answer.
+          if ((Test-Port 8888) -and (Test-Port 18888)) { break }
+          Start-Sleep -Seconds 3
+        }
+        if (-not ((Test-Port 8888) -and (Test-Port 18888))) {
+          Get-Content C:\seaweed-mini.log, C:\seaweed-mini.err.log -ErrorAction SilentlyContinue
+          throw "filer never came up"
+        }
+        Write-Host "filer is up on http 8888 and grpc 18888"
+
+        Start-Mount 'seaweed-mount'
+
+        Write-Host "::group::winfsp-tests"
+        & pwsh -File test/winfsp-conformance/run.ps1 -MountPoint S:\
+        $code = $LASTEXITCODE
+        Write-Host "::endgroup::"
+        if ($code -ne 0) { throw "winfsp-tests failed with exit $code" }
+
+    - name: Logs
+      if: always()
+      shell: pwsh
+      run: |
+        foreach ($f in 'C:\seaweed-mount.log','C:\seaweed-mount.err.log','C:\seaweed-mini.log','C:\seaweed-mini.err.log') {
+          if (Test-Path $f) { Write-Host "===== $f"; Get-Content $f -Tail 200 }
+        }

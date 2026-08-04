@@ -1,0 +1,92 @@
+# Known winfsp-tests failures for the SeaweedFS Windows mount.
+#
+# One test name per line, as winfsp-tests reports it. A trailing * matches a
+# prefix, so "stream_*" covers a whole group. Listed tests are excluded from
+# the run; a failure in anything NOT listed fails CI, which is what catches a
+# regression.
+#
+# Populated from the first real run: 20 of 50 passed. Extended attributes are
+# forwarded now, so that group runs rather than being excluded. Every entry below is a
+# gap in the mount rather than a quirk of the suite, and the list is meant to
+# shrink. Keep a reason on each group — an entry with no reason cannot be told
+# apart from one nobody has looked at.
+
+# Cannot pass by construction
+# ---------------------------
+# Alternate data streams: the filer stores one byte range per entry, and the
+# mount exposes no second stream.
+stream_*
+# Reparse points: Symlink is refused, so there is nothing to resolve.
+reparse_*
+# Byte-range locks live in the WinFsp driver, so they never reach the mount.
+lock_*
+
+# Security descriptors
+# --------------------
+# The mount carries unix mode bits and no ACL, and Chown accepts and discards,
+# so a descriptor written here does not read back.
+create_sd_test
+getsecurity_test
+
+# Cached and overlapped IO
+# ------------------------
+# The whole rdwr group fails together, so this is one defect rather than nine:
+# the mount does not yet satisfy what Windows expects of cached, write-through
+# and overlapped IO. The first thing worth fixing.
+rdwr_cached_test
+rdwr_cached_append_test
+rdwr_cached_overlapped_test
+rdwr_noncached_test
+rdwr_noncached_overlapped_test
+rdwr_writethru_test
+rdwr_writethru_append_test
+rdwr_writethru_overlapped_test
+rdwr_mixed_test
+flush_test
+
+# Delete semantics
+# ----------------
+# WinFsp advertises POSIX unlink, so a file can be deleted while handles are
+# still open; the mount does not implement the delete-pending state.
+delete_access_test
+delete_ex_test
+delete_mmap_test
+delete_pending_test
+
+# Rename semantics
+# ----------------
+# Rename over an open file, and rename of a directory holding open handles,
+# which WinFsp is stricter about than POSIX.
+rename_ex_test
+rename_mmap_test
+rename_open_test
+exec_rename_dir_test
+
+# File information
+# ----------------
+# Windows attributes (hidden, system, readonly) and creation time are not
+# round-tripped: attrToStat leaves Flags unset and reports ctime as birthtime.
+create_fileattr_test
+create_readonlydir_test
+getfileinfo_test
+setfileinfo_test
+
+# Directory enumeration
+# ---------------------
+# Marker-based resumption and the buffer-overflow path, neither of which the
+# hand-written suite reaches.
+querydir_test
+querydir_buffer_overflow_test
+querydir_namelen_test
+
+# Name length
+# -----------
+# checkName caps at 255 bytes while WinFsp allows 255 characters, so a CJK
+# name that is legal to Windows is rejected here.
+create_namelen_test
+
+# Sharing modes
+# -------------
+# Windows share-access checking on create, which the mount does not enforce.
+create_share_test
+create_test
