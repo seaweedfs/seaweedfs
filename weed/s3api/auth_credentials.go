@@ -1443,6 +1443,16 @@ func (iam *IdentityAccessManagement) GetAccountNameById(canonicalId string) stri
 	return ""
 }
 
+// GetAccountIdByIdentityName resolves an identity name to the account its
+// resources are owned under. Bucket owners recorded outside the S3 API (the
+// admin UI, weed shell) name an identity, not an account.
+func (iam *IdentityAccessManagement) GetAccountIdByIdentityName(name string) string {
+	if identity := iam.lookupByIdentityName(name); identity != nil && identity.Account != nil {
+		return identity.Account.Id
+	}
+	return ""
+}
+
 func (iam *IdentityAccessManagement) GetAccountIdByEmail(email string) string {
 	iam.m.RLock()
 	defer iam.m.RUnlock()
