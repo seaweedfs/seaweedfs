@@ -5,8 +5,10 @@
 # the run; a failure in anything NOT listed fails CI, which is what catches a
 # regression.
 #
-# Populated from the first real run: 20 of 50 passed. Extended attributes are
-# forwarded now, so that group runs rather than being excluded. Every entry below is a
+# Every test runs on its own in a clean directory, so an entry here is a real
+# defect rather than the wreckage of the test before it. The rdwr and flush
+# group is gone from this list for exactly that reason: it passes in isolation
+# and only failed as collateral. Every entry below is a
 # gap in the mount rather than a quirk of the suite, and the list is meant to
 # shrink. Keep a reason on each group — an entry with no reason cannot be told
 # apart from one nobody has looked at.
@@ -28,21 +30,13 @@ lock_*
 create_sd_test
 getsecurity_test
 
-# Cached and overlapped IO
-# ------------------------
-# The whole rdwr group fails together, so this is one defect rather than nine:
-# the mount does not yet satisfy what Windows expects of cached, write-through
-# and overlapped IO. The first thing worth fixing.
-rdwr_cached_test
-rdwr_cached_append_test
-rdwr_cached_overlapped_test
-rdwr_noncached_test
-rdwr_noncached_overlapped_test
-rdwr_writethru_test
-rdwr_writethru_append_test
-rdwr_writethru_overlapped_test
-rdwr_mixed_test
-flush_test
+# Memory-mapped IO
+# ----------------
+# rdwr-test.c:645 compares the mapped bytes against the pattern that was
+# written and finds them different. A real data mismatch, not a cascade: it
+# only surfaced once each test ran on its own and this one got far enough to
+# check. Worth its own investigation.
+rdwr_mmap_test
 
 # Delete semantics
 # ----------------
