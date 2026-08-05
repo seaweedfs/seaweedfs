@@ -12,6 +12,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // idleSubscribeStream models the filer's SubscribeMetadata stream on a
@@ -86,4 +88,79 @@ func TestRun_EndsOnIdleSubscription(t *testing.T) {
 
 	req := <-client.gotReq
 	assert.Equal(t, runNow.UnixNano(), req.UntilNs, "subscription must stop at the pass boundary")
+}
+
+// failingSubscribeClient fails the subscribe call outright.
+type failingSubscribeClient struct {
+	filer_pb.SeaweedFilerClient
+	err error
+}
+
+func (c *failingSubscribeClient) SubscribeMetadata(_ context.Context, _ *filer_pb.SubscribeMetadataRequest, _ ...grpc.CallOption) (filer_pb.SeaweedFiler_SubscribeMetadataClient, error) {
+	return nil, c.err
+}
+
+// TestRun_ReaderFailureFailsThePass guards the flip side of closing the
+// event channel when the reader exits: every shard drain now ends
+// cleanly on a dead subscription, so without this the pass would report
+// success and the job would go green while lifecycle processed nothing.
+func TestRun_ReaderFailureFailsThePass(t *testing.T) {
+	e := engine.New()
+	e.Compile([]engine.CompileInput{
+		{Bucket: "b1", Rules: []*s3lifecycle.Rule{
+			{ID: "r", Status: s3lifecycle.StatusEnabled, ExpirationDays: 30},
+		}},
+	}, engine.CompileOptions{})
+
+	cfg := Config{
+		Shards:      []int{0, 1},
+		BucketsPath: "/buckets",
+		Engine:      e,
+		FilerClient: &failingSubscribeClient{err: status.Error(codes.Unavailable, "filer down")},
+		Client:      stubLifecycleClient{},
+		Persister:   newMemPersister(),
+		Lister:      stubSiblingLister{},
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- Run(context.Background(), cfg) }()
+	select {
+	case err := <-done:
+		require.Error(t, err, "a dead subscription must not report a successful pass")
+		assert.Contains(t, err.Error(), "subscription")
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not return after the subscription failed")
+	}
+}
+
+// TestRun_CancellationIsNotAPassFailure keeps the wall-clock-capped
+// pass (the shell driver's -runtime) reporting success. gRPC surfaces a
+// canceled stream as a status code, not a wrapped context.Canceled, so
+// a naive errors.Is check would turn every capped pass into a failure.
+func TestRun_CancellationIsNotAPassFailure(t *testing.T) {
+	e := engine.New()
+	e.Compile([]engine.CompileInput{
+		{Bucket: "b1", Rules: []*s3lifecycle.Rule{
+			{ID: "r", Status: s3lifecycle.StatusEnabled, ExpirationDays: 30},
+		}},
+	}, engine.CompileOptions{})
+
+	cfg := Config{
+		Shards:      []int{0, 1},
+		BucketsPath: "/buckets",
+		Engine:      e,
+		FilerClient: &failingSubscribeClient{err: status.Error(codes.Canceled, "context canceled")},
+		Client:      stubLifecycleClient{},
+		Persister:   newMemPersister(),
+		Lister:      stubSiblingLister{},
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- Run(context.Background(), cfg) }()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not return after the subscription was canceled")
+	}
 }

@@ -18,6 +18,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"golang.org/x/time/rate"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // LifecycleClient mirrors dispatcher's contract; duplicated to avoid an
@@ -175,11 +177,18 @@ func Run(ctx context.Context, cfg Config) error {
 	// Tear down the shared subscription. cancelRead unblocks both the
 	// reader's gRPC stream and the fan-out's send loop; we wait on both
 	// so their goroutines don't outlive Run.
+	var readerErr error
 	if cancelRead != nil {
 		cancelRead()
 		<-fanoutDone
-		if rerr := <-readerDone; rerr != nil && !errors.Is(rerr, context.Canceled) && !errors.Is(rerr, context.DeadlineExceeded) {
-			glog.V(2).Infof("daily_run: shared reader returned: %v", rerr)
+		if rerr := <-readerDone; rerr != nil && !isCanceled(rerr) {
+			// A stream that dies mid-pass ends every shard's drain on a
+			// closed channel, so the pass is truncated. Cursors still
+			// hold what was processed and the next pass resumes there,
+			// but this must not report success — a job that goes green
+			// on a dead subscription is how lifecycle silently stops.
+			readerErr = fmt.Errorf("shared meta-log subscription: %w", rerr)
+			glog.Warningf("daily_run: %v", readerErr)
 		}
 	}
 
@@ -191,6 +200,12 @@ func Run(ctx context.Context, cfg Config) error {
 			first = err
 		} else {
 			glog.V(1).Infof("daily_run: additional shard error: %v", err)
+		}
+	}
+	if readerErr != nil {
+		errCount++
+		if first == nil {
+			first = readerErr
 		}
 	}
 	status := "ok"
@@ -377,6 +392,21 @@ func startSharedSubscription(ctx context.Context, cfg Config, runNow time.Time, 
 	}()
 
 	return shardEvents, readerDone, fanoutDone, cancelReader
+}
+
+// isCanceled reports whether err is the pass ending on purpose — its
+// own teardown, or a caller-imposed wall-clock cap. A canceled gRPC
+// stream surfaces as a status code rather than a wrapped
+// context.Canceled, so both forms have to be checked.
+func isCanceled(err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	switch status.Code(err) {
+	case codes.Canceled, codes.DeadlineExceeded:
+		return true
+	}
+	return false
 }
 
 func validate(cfg Config) error {
