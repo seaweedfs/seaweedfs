@@ -1293,10 +1293,6 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 	glog.V(3).Infof("putSuspendedVersioningObject: START bucket=%s, object=%s, normalized=%s",
 		bucket, object, normalizedObject)
 
-	// The null version now lives at the regular path, so any null version recorded in
-	// .versions is stale (S3 has the suspended write overwrite it, not accumulate).
-	s3a.removeNullVersionFile(bucket, normalizedObject)
-
 	filePath := s3a.toFilerPath(bucket, normalizedObject)
 
 	body := dataReader
@@ -1360,15 +1356,18 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 	}
 
 	// Versioned/suspended bucket → resolver returns 0; pass it directly.
-	// afterCreate clears the prior latest pointer and stamps the displaced version
-	// with NoncurrentSinceNs — off-ring under the write lock, routed off-lock after
-	// the PUT. Best-effort either way: a stale flag self-heals on the next list.
+	// afterCreate retires the null delete marker a preceding DELETE left, clears the
+	// prior latest pointer and stamps the displaced version with NoncurrentSinceNs —
+	// off-ring under the write lock, routed off-lock after the PUT. Only once the write
+	// has committed: retiring the marker for a write that then fails leaves the pointer
+	// naming a marker that is gone, and the read path heals that by promoting an older
+	// version, republishing the deleted key. Best-effort, as a stale flag self-heals on
+	// the next list.
 	etag, errCode, sseMetadata = s3a.putToFiler(r, filePath, body, bucket, normalizedObject, 1, 0, &putFinalize{
-		afterCreate: func(_ *filer_pb.Entry) s3err.ErrorCode {
-			if err := s3a.updateIsLatestFlagsForSuspendedVersioning(bucket, normalizedObject); err != nil {
-				// Best-effort: a stale IsLatest flag is recoverable on the
-				// next list-versions resync, so don't fail the PUT.
-				glog.Warningf("putSuspendedVersioningObject: failed to update IsLatest flags: %v", err)
+		afterCreate: func(entry *filer_pb.Entry) s3err.ErrorCode {
+			writtenETag := string(entry.Extended[s3_constants.ExtETagKey])
+			if err := s3a.finalizeSuspendedNullWrite("", bucket, normalizedObject, s3_constants.ExtETagKey, writtenETag); err != nil {
+				glog.Warningf("putSuspendedVersioningObject: failed to retire the null delete marker: %v", err)
 			}
 			return s3err.ErrNone
 		},
