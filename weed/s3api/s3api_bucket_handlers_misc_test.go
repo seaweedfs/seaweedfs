@@ -152,6 +152,28 @@ func TestPutBucketOwnershipControlsRejectsRuleWithoutObjectOwnership(t *testing.
 	}
 }
 
+func TestGetBucketOwnershipControlsDefaultsToBucketOwnerEnforced(t *testing.T) {
+	ownerID := AccountAdmin.Id
+	s3a := newMiscTestServer(t, "b")
+	s3a.bucketRegistry = NewBucketRegistry(nil)
+	s3a.bucketRegistry.setMetadataCache(&BucketMetaData{
+		Name:  "b",
+		Owner: &s3.Owner{ID: &ownerID},
+	})
+	req := newBucketRequest(http.MethodGet, "b", "ownershipControls=", "")
+	req.Header.Set(s3_constants.AmzAccountId, AccountAdmin.Id)
+	rec := httptest.NewRecorder()
+
+	s3a.GetBucketOwnershipControls(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "<ObjectOwnership>"+s3_constants.OwnershipBucketOwnerEnforced+"</ObjectOwnership>") {
+		t.Fatalf("body missing default ownership: %s", rec.Body.String())
+	}
+}
+
 func TestGetBucketAccelerateConfiguration(t *testing.T) {
 	s3a := newMiscTestServer(t, "b")
 	req := newBucketRequest(http.MethodGet, "b", "accelerate=", "")

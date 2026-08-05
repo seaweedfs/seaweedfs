@@ -1276,19 +1276,10 @@ func (s3a *S3ApiServer) PutBucketOwnershipControls(w http.ResponseWriter, r *htt
 		return
 	}
 
-	// Check if ownership needs to be updated
-	currentOwnership, errCode := s3a.getBucketOwnership(bucket)
-	if errCode != s3err.ErrNone {
+	// Persist even when it matches the implicit default, so a later delete has something to remove.
+	if errCode := s3a.setBucketOwnership(bucket, ownership); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
-	}
-
-	if currentOwnership != ownership {
-		errCode = s3a.setBucketOwnership(bucket, ownership)
-		if errCode != s3err.ErrNone {
-			s3err.WriteErrorResponse(w, r, errCode)
-			return
-		}
 	}
 
 	if printOwnership {

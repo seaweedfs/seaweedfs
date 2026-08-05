@@ -101,7 +101,7 @@ func buildBucketMetadata(accountManager AccountManager, entry *filer_pb.Entry) *
 		IsTableBucket: s3tables.IsTableBucketEntry(entry),
 
 		//Default ownership: OwnershipBucketOwnerEnforced, which means Acl is disabled
-		ObjectOwnership: s3_constants.OwnershipBucketOwnerEnforced,
+		ObjectOwnership: s3_constants.DefaultOwnershipForExists,
 
 		// Default owner: `AccountAdmin`
 		Owner: &s3.Owner{
@@ -111,15 +111,11 @@ func buildBucketMetadata(accountManager AccountManager, entry *filer_pb.Entry) *
 	}
 	if entry.Extended != nil {
 		//ownership control
-		ownership, ok := entry.Extended[s3_constants.ExtOwnershipKey]
-		if ok {
-			ownership := string(ownership)
-			valid := s3_constants.ValidateOwnership(ownership)
-			if valid {
-				bucketMetadata.ObjectOwnership = ownership
-			} else {
-				glog.Warningf("Invalid ownership: %s, bucket: %s", ownership, bucketMetadata.Name)
+		if ownership, ok := entry.Extended[s3_constants.ExtOwnershipKey]; ok {
+			if !s3_constants.ValidateOwnership(string(ownership)) {
+				glog.Warningf("Invalid ownership: %s, bucket: %s", string(ownership), bucketMetadata.Name)
 			}
+			bucketMetadata.ObjectOwnership = s3_constants.EffectiveOwnership(string(ownership))
 		}
 
 		//access control policy
