@@ -8,6 +8,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestSuspendedVersioningNullOverwrite tests the scenario where:
@@ -254,4 +256,42 @@ func TestEnabledVersioningReturnsVersionId(t *testing.T) {
 	for i, v := range listResp.Versions {
 		t.Logf("  Version %d: VersionId=%s, Size=%d, IsLatest=%v", i, *v.VersionId, v.Size, v.IsLatest)
 	}
+}
+
+// The suspended PUT retires the null delete marker a preceding DELETE left, the same
+// as the copy and multipart paths. While the regular-path object owns the null slot a
+// leftover marker is shadowed, so it only shows once that null version goes away.
+func TestSuspendedPutRetiresDeleteMarker(t *testing.T) {
+	client := getS3Client(t)
+	bucketName := getNewBucketName()
+
+	createBucket(t, client, bucketName)
+	defer deleteBucket(t, client, bucketName)
+
+	objectKey := "suspended-put-after-delete.txt"
+
+	enableVersioning(t, client, bucketName)
+	putObject(t, client, bucketName, objectKey, "pre-suspension-content")
+	suspendVersioning(t, client, bucketName)
+
+	putObject(t, client, bucketName, objectKey, "null-version-content")
+	deleteKey(t, client, bucketName, objectKey)
+	putObject(t, client, bucketName, objectKey, "replacement-content")
+
+	headObject(t, client, bucketName, objectKey)
+
+	// Drop the null version just written; a retired marker leaves nothing behind.
+	_, err := client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+		Bucket:    aws.String(bucketName),
+		Key:       aws.String(objectKey),
+		VersionId: aws.String("null"),
+	})
+	require.NoError(t, err)
+
+	listResp, err := client.ListObjectVersions(context.TODO(), &s3.ListObjectVersionsInput{
+		Bucket: aws.String(bucketName),
+		Prefix: aws.String(objectKey),
+	})
+	require.NoError(t, err)
+	assert.Empty(t, listResp.DeleteMarkers, "the suspended PUT should have retired the null delete marker")
 }
