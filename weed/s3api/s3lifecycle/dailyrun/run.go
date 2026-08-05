@@ -159,6 +159,14 @@ func Run(ctx context.Context, cfg Config) error {
 			if err := runShard(ctx, cfg, snap, runNow, sh, ch); err != nil {
 				errCh <- err
 			}
+			// runShard can return before its channel is closed — a
+			// halted dispatch stops the drain mid-stream. Keep
+			// discarding, or the fan-out blocks on this shard's full
+			// buffer and starves every other shard's drain.
+			if ch != nil {
+				for range ch {
+				}
+			}
 		}()
 	}
 	wg.Wait()
