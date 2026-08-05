@@ -301,22 +301,33 @@ func startSharedSubscription(ctx context.Context, cfg Config, runNow time.Time, 
 		clientID = int32(util.RandomInt32())
 	}
 
+	runUpTo := runNow.UnixNano()
 	events := make(chan *reader.Event, 4*len(cfg.Shards))
 	rd := &reader.Reader{
 		ShardPredicate: func(id int) bool { return shardSet[id] },
 		BucketsPath:    cfg.BucketsPath,
 		StartTsNs:      globalStartTsNs,
-		Events:         events,
-		EventBudget:    cfg.EventBudget,
+		// The pass covers (globalStartTsNs, runUpTo]; bounding the
+		// subscription there makes the filer end the stream once it has
+		// delivered that range. Without it the pass ends only when some
+		// unrelated write pushes an event past runUpTo, so a cluster
+		// that goes quiet parks the reader in Recv, starves all shard
+		// drains, and wedges the job indefinitely.
+		UntilTsNs:   runUpTo,
+		Events:      events,
+		EventBudget: cfg.EventBudget,
 	}
 
 	readerCtx, cancelReader := context.WithCancel(ctx)
 	readerDone := make(chan error, 1)
 	go func() {
 		readerDone <- rd.Run(readerCtx, cfg.FilerClient, clientName, clientID)
+		// The reader is the only sender; closing here is what ends the
+		// fan-out (and through it every shard drain) when the stream
+		// finishes on its own rather than by cancellation.
+		close(events)
 	}()
 
-	runUpTo := runNow.UnixNano()
 	fanoutDone := make(chan struct{})
 	go func() {
 		defer close(fanoutDone)
@@ -554,18 +565,18 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 	}
 
 	lastOK, _, drainErr := drainShardEvents(ctx, cfg, runNow, shardID, snap, startTsNs, events)
-	// Cursor save uses a fresh ctx because the steady-state drain exits
-	// via passCtx cancellation (the only signal the filer subscription
-	// gets when no new events arrive). Saving with the canceled passCtx
-	// would silently drop the cursor and the next pass would re-replay
-	// from the same floor — defeating advancement entirely.
+	// Cursor save uses a fresh ctx because a caller-imposed wall-clock
+	// cap on the pass (the shell driver's -runtime) cancels the drain's
+	// ctx. Saving with the canceled ctx would silently drop the cursor
+	// and the next pass would re-replay from the same floor — defeating
+	// advancement entirely.
 	saveCtx, saveCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer saveCancel()
 	if drainErr != nil {
 		_ = saveCursorAndPublish(saveCtx, cfg.Persister, shardID, Cursor{TsNs: lastOK, RuleSetHash: rsh, PromotedHash: promoted, LastWalkedNs: lastWalkedNs})
-		// passCtx timeout is the expected end-of-pass for an idle
-		// subscription; not a real error. Other drain errors still
-		// propagate.
+		// A pass cut short by its wall-clock cap is a truncated pass,
+		// not a failure; the cursor above carries the progress forward.
+		// Other drain errors still propagate.
 		if errors.Is(drainErr, context.DeadlineExceeded) || errors.Is(drainErr, context.Canceled) {
 			return nil
 		}

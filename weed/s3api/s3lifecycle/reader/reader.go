@@ -75,6 +75,13 @@ type Reader struct {
 	StartTsNs int64
 	Events    chan<- *Event
 
+	// UntilTsNs bounds the subscription: the filer ends the stream once
+	// it has delivered everything up to this timestamp, and Run returns
+	// nil. Zero follows the meta-log indefinitely, which only terminates
+	// on ctx cancellation or a stream error — a caller running a bounded
+	// pass must set this, or an idle cluster parks it in Recv forever.
+	UntilTsNs int64
+
 	// EventBudget caps how many events Run processes before returning nil.
 	// Zero = unbounded; the run continues until ctx cancellation or stream
 	// error. Used by the worker scheduler to bound a single READ task.
@@ -115,6 +122,7 @@ func (r *Reader) Run(ctx context.Context, client filer_pb.SeaweedFilerClient, cl
 		ClientName:             clientName,
 		PathPrefix:             r.BucketsPath,
 		SinceNs:                sinceNs,
+		UntilNs:                r.UntilTsNs,
 		ClientId:               clientID,
 		ClientSupportsBatching: true,
 	})
