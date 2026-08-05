@@ -830,18 +830,38 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			// regular path. Both steps run only after the write commits: undoing them on a
 			// failed write would republish the deleted key as its newest real version.
 			//
-			// Clearing the pointer is what hands the read back to the regular path, so it must
-			// come first — removing the marker while the pointer still names it makes reads
-			// rescan and promote an older version. Failing it leaves the key reading as deleted,
-			// so report that rather than answering 200 for an object HEAD and GET still miss;
-			// the caller's retry replays the completion, since a non-ErrNone finalize keeps the
-			// upload directory. Dropping the marker afterwards is only list hygiene: with the
-			// pointer gone the regular-path null version already wins the read.
-			if err := s3a.updateIsLatestFlagsForSuspendedVersioning(*input.Bucket, normalizedKey); err != nil {
-				glog.Errorf("completeMultipartUpload: failed to clear the latest-version pointer for %s/%s: %v", *input.Bucket, normalizedKey, err)
+			// They rewrite shared .versions state unconditionally, and the routed completion
+			// runs off the object write lock, so first confirm the object we just wrote is
+			// still the current one. A DELETE that landed in between owns the null slot now,
+			// and clearing its pointer would resurrect an older version under a key that was
+			// successfully deleted. This narrows the window rather than closing it — a delete
+			// landing after this read still loses; a compare-and-set pointer flip is the real
+			// answer and wants its own change.
+			currentEntry, currentErr := s3a.getObjectEntryRoutedByKey(*input.Bucket, normalizedKey)
+			if currentErr != nil && !errors.Is(currentErr, filer_pb.ErrNotFound) {
+				glog.Errorf("completeMultipartUpload: failed to re-read %s/%s before the null cleanup: %v", *input.Bucket, normalizedKey, currentErr)
 				return s3err.ErrInternalError
 			}
-			s3a.removeNullVersionFile(*input.Bucket, normalizedKey)
+			supersededByConcurrentWrite := currentEntry == nil ||
+				string(currentEntry.Extended[s3_constants.SeaweedFSUploadId]) != *input.UploadId
+
+			if supersededByConcurrentWrite {
+				// Last writer wins: the completion did happen, someone else moved the key on.
+				glog.V(2).Infof("completeMultipartUpload: skipping the null cleanup for %s/%s, superseded by a concurrent write", *input.Bucket, normalizedKey)
+			} else {
+				// Clearing the pointer is what hands the read back to the regular path, so it
+				// must come first — removing the marker while the pointer still names it makes
+				// reads rescan and promote an older version. Failing it leaves the key reading
+				// as deleted, so report that rather than answering 200 for an object HEAD and
+				// GET still miss; the caller's retry replays the completion, since a non-ErrNone
+				// finalize keeps the upload directory. Dropping the marker afterwards is only
+				// list hygiene: with the pointer gone the regular-path null version already wins.
+				if err := s3a.updateIsLatestFlagsForSuspendedVersioning(*input.Bucket, normalizedKey); err != nil {
+					glog.Errorf("completeMultipartUpload: failed to clear the latest-version pointer for %s/%s: %v", *input.Bucket, normalizedKey, err)
+					return s3err.ErrInternalError
+				}
+				s3a.removeNullVersionFile(*input.Bucket, normalizedKey)
+			}
 
 			// Note: Suspended versioning should NOT return VersionId field according to AWS S3 spec
 			output = &CompleteMultipartUploadResult{
