@@ -1,4 +1,4 @@
-package shell
+package placement
 
 import (
 	"sort"
@@ -46,7 +46,7 @@ type PlacementPreference struct {
 // since each pick would see the capacity its predecessors already took. Callers
 // therefore pass a snapshot they own and may mutate.
 func PickTarget(topo *master_pb.TopologyInfo, pref PlacementPreference) *master_pb.DataNodeInfo {
-	nodes := collectVolumeServersByDcRackNode(topo, pref.AnchorDataCenter, "", "")
+	nodes := candidateNodes(topo, pref.AnchorDataCenter)
 
 	var srcDc, srcRack string
 	for _, n := range nodes {
@@ -57,7 +57,7 @@ func PickTarget(topo *master_pb.TopologyInfo, pref PlacementPreference) *master_
 	}
 
 	type candidate struct {
-		node     *Node
+		node     *node
 		locality int // 0 same rack, 1 same dc, 2 elsewhere
 		bytes    uint64
 		hasBytes bool
@@ -69,15 +69,13 @@ func PickTarget(topo *master_pb.TopologyInfo, pref PlacementPreference) *master_
 		if n.info.Id == pref.Source || pref.Exclude[n.info.Id] {
 			continue
 		}
-		if !n.hasFreeVolumeSlot(pref.DiskType) {
+		d := n.disk(pref.DiskType)
+		if d == nil || d.VolumeCount >= d.MaxVolumeCount {
 			continue
 		}
 		c := candidate{node: n}
-		_, free, ok := n.diskBytes(pref.DiskType)
-		c.bytes, c.hasBytes = free, ok
-		if d, found := n.info.DiskInfos[string(pref.DiskType)]; found && d != nil {
-			c.slots = d.MaxVolumeCount - d.VolumeCount
-		}
+		c.bytes, c.hasBytes = d.DiskFreeBytes, d.DiskTotalBytes != 0
+		c.slots = d.MaxVolumeCount - d.VolumeCount
 		switch {
 		case srcRack != "" && n.rack == srcRack && n.dc == srcDc:
 			c.locality = 0
@@ -144,4 +142,36 @@ func max64(a, b int64) int64 {
 		return a
 	}
 	return b
+}
+
+// node is a volume server as a placement snapshot sees it: where it sits and
+// what it has free. Deliberately smaller than the balancer's Node, which also
+// carries the volumes it holds -- placement never needs those.
+type node struct {
+	info *master_pb.DataNodeInfo
+	dc   string
+	rack string
+}
+
+func (n *node) disk(diskType types.DiskType) *master_pb.DiskInfo {
+	d, found := n.info.DiskInfos[string(diskType)]
+	if !found {
+		return nil
+	}
+	return d
+}
+
+// candidateNodes flattens the topology, keeping one data center when anchored.
+func candidateNodes(topo *master_pb.TopologyInfo, anchorDataCenter string) (nodes []*node) {
+	for _, dc := range topo.GetDataCenterInfos() {
+		if anchorDataCenter != "" && dc.GetId() != anchorDataCenter {
+			continue
+		}
+		for _, rack := range dc.GetRackInfos() {
+			for _, dn := range rack.GetDataNodeInfos() {
+				nodes = append(nodes, &node{info: dn, dc: dc.GetId(), rack: rack.GetId()})
+			}
+		}
+	}
+	return nodes
 }
