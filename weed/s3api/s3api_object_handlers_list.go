@@ -812,10 +812,11 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 	}
 }
 
-// isLiveDirectoryKeyObject reports whether entry still stands for the key "<dir>/".
-// A directory marker deleted in a versioned bucket keeps its payload — that payload
-// is the key's null version — so the entry is demoted in memory instead, which also
-// stops the listing callback from reporting it as a key.
+// isLiveDirectoryKeyObject reports whether entry still stands for the key "<dir>/",
+// and strips entry in place when it does not. A directory marker deleted in a versioned
+// bucket keeps its payload on disk — that payload is the key's null version — so the
+// copy this listing holds is demoted instead, which is what stops the callback further
+// down from reporting the entry as a key while the directory still serves as a prefix.
 func (s3a *S3ApiServer) isLiveDirectoryKeyObject(ctx context.Context, client filer_pb.SeaweedFilerClient, entry *filer_pb.Entry, dirPath string, cursor *ListingCursor) bool {
 	if !entry.IsDirectoryKeyObject() {
 		return false
@@ -833,6 +834,10 @@ func (s3a *S3ApiServer) isLiveDirectoryKeyObject(ctx context.Context, client fil
 // every pointer flip maintains — one lookup, no version scan. An unstamped history
 // leaves the key visible, as it was before this check existed.
 func directoryMarkerIsDeleted(ctx context.Context, client filer_pb.SeaweedFilerClient, dirPath string) bool {
+	// The answer comes off the first entry, so cancel on return rather than draining.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	stream, err := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{
 		Directory: dirPath,
 		Prefix:    s3_constants.VersionsFolder,
