@@ -769,6 +769,12 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		}
 
 		if versioningState == s3_constants.VersioningSuspended {
+			normalizedKey := strings.TrimPrefix(*input.Key, "/")
+
+			// The null version lands at the regular path below, so drop the stale one .versions
+			// still holds — a suspended DELETE leaves a null delete marker reads resolve to.
+			s3a.removeNullVersionFile(*input.Bucket, normalizedKey)
+
 			// For suspended versioning, add "null" version ID metadata and return "null" version ID
 			if err := s3a.writeMultipartObject(owner, routeKey, dirName, entryName, completionState.finalParts, func(entry *filer_pb.Entry) {
 				if entry.Extended == nil {
@@ -821,6 +827,12 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			}); err != nil {
 				glog.Errorf("completeMultipartUpload: failed to create suspended versioning object: %v", err)
 				return s3err.ErrInternalError
+			}
+
+			// Clear the .versions latest pointer so the null object just written wins the read.
+			// Best-effort, as in putSuspendedVersioningObject: a stale flag self-heals on the next list.
+			if err := s3a.updateIsLatestFlagsForSuspendedVersioning(*input.Bucket, normalizedKey); err != nil {
+				glog.Warningf("completeMultipartUpload: failed to update IsLatest flags for %s/%s: %v", *input.Bucket, normalizedKey, err)
 			}
 
 			// Note: Suspended versioning should NOT return VersionId field according to AWS S3 spec
