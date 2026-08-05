@@ -696,7 +696,7 @@ func (s3a *S3ApiServer) getBucketOwnership(bucket string) (string, s3err.ErrorCo
 		return "", errCode
 	}
 
-	return config.Ownership, s3err.ErrNone
+	return s3_constants.EffectiveOwnership(config.Ownership), s3err.ErrNone
 }
 
 // setBucketOwnership sets the ownership setting for a bucket
