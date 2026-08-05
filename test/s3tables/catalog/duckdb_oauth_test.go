@@ -38,6 +38,9 @@ type oauthTestEnv struct {
 	weedCancel     context.CancelFunc
 	accessKey      string
 	secretKey      string
+	// s3ExternalURL, when set before start, is the S3 endpoint the catalog
+	// advertises to clients in LoadTable FileIO config.
+	s3ExternalURL string
 }
 
 func newOAuthTestEnv(t *testing.T) *oauthTestEnv {
@@ -108,7 +111,7 @@ func (env *oauthTestEnv) start(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	env.weedCancel = cancel
 
-	cmd := exec.CommandContext(ctx, env.weedBinary, "mini",
+	args := []string{"mini",
 		"-master.port", fmt.Sprintf("%d", env.masterPort),
 		"-master.port.grpc", fmt.Sprintf("%d", env.masterGrpcPort),
 		"-volume.port", fmt.Sprintf("%d", env.volumePort),
@@ -123,7 +126,12 @@ func (env *oauthTestEnv) start(t *testing.T) {
 		"-ip", env.bindIP,
 		"-ip.bind", "0.0.0.0",
 		"-dir", env.dataDir,
-	)
+	}
+	if env.s3ExternalURL != "" {
+		args = append(args, "-s3.externalUrl", env.s3ExternalURL)
+	}
+
+	cmd := exec.CommandContext(ctx, env.weedBinary, args...)
 	cmd.Dir = env.dataDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
