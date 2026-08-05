@@ -377,8 +377,9 @@ func (v *Volume) cleanupCompact() error {
 }
 
 // fsyncDir fsyncs a directory so a rename/create/unlink inside it is durable.
-// A failure to open the directory for sync is non-fatal on platforms that do
-// not support it.
+// Windows has no directory fsync, so the .cpc protocol leans on NTFS metadata
+// ordering there. An unopenable directory is tolerated, unlike util.FsyncDir,
+// because the caller has already closed the needle map.
 func fsyncDir(dir string) error {
 	if runtime.GOOS == "windows" {
 		return nil

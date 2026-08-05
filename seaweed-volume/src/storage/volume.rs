@@ -3627,7 +3627,7 @@ fn get_append_at_ns(last: u64) -> u64 {
 /// durable, propagating a sync failure so the commit path can abort rather than
 /// proceed with an undurable rename or marker. A path with no openable parent is
 /// tolerated; directory fsync is unsupported on Windows, so it is a no-op there
-/// (matching the Go fsyncDir helper, which ignores that error).
+/// (matching the Go fsyncDir helper, which skips it too).
 pub(crate) fn fsync_dir(path: &str) -> io::Result<()> {
     #[cfg(windows)]
     {
