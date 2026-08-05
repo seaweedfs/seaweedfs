@@ -415,3 +415,82 @@ func TestUploadReaderInChunksTagsTruncatedBody(t *testing.T) {
 		t.Errorf("expected io.ErrUnexpectedEOF to remain in the chain, got %v", err)
 	}
 }
+
+// uploadOneChunk runs a single-chunk upload against uploadFunc, handing out a
+// fresh volume on every assignment, and reports how many assignments it took.
+func uploadSingleChunk(t *testing.T, uploadFunc func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error)) (*ChunkedUploadResult, int, error) {
+	t.Helper()
+
+	assigns := 0
+	assignFunc := func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error) {
+		assigns++
+		return nil, &AssignResult{
+			Fid:   fmt.Sprintf("%d,0a0b0c0d", assigns),
+			Url:   fmt.Sprintf("volume-%d:8080", assigns),
+			Count: 1,
+		}, nil
+	}
+
+	result, err := UploadReaderInChunks(context.Background(), bytes.NewReader(bytes.Repeat([]byte("x"), 4096)), &ChunkedUploadOption{
+		ChunkSize:  8 * 1024,
+		Collection: "test",
+		AssignFunc: assignFunc,
+		UploadFunc: uploadFunc,
+	})
+	return result, assigns, err
+}
+
+// A volume at capacity answers every attempt against the same fid with a 500,
+// so the chunk has to move to a freshly assigned volume rather than take the
+// whole object down with it.
+func TestUploadReaderInChunksReassignsOnFullVolume(t *testing.T) {
+	result, assigns, err := uploadSingleChunk(t, func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) {
+		if strings.Contains(option.UploadUrl, "volume-1:") {
+			return nil, &uploadStatusError{
+				StatusCode: http.StatusInternalServerError,
+				err:        errors.New("failed to write to local disk: Volume Size 34361499680 Exceeded 34359738368"),
+			}
+		}
+		return &UploadResult{Size: uint32(len(data))}, nil
+	})
+
+	if err != nil {
+		t.Fatalf("expected the chunk to land on the reassigned volume, got %v", err)
+	}
+	if assigns != 2 {
+		t.Fatalf("expected 2 assignments, got %d", assigns)
+	}
+	if len(result.FileChunks) != 1 {
+		t.Fatalf("expected 1 chunk, got %d", len(result.FileChunks))
+	}
+	if got := result.FileChunks[0].FileId; got != "2,0a0b0c0d" {
+		t.Errorf("expected the chunk to record the reassigned fid, got %s", got)
+	}
+}
+
+func TestUploadReaderInChunksDoesNotReassignOnClientError(t *testing.T) {
+	_, assigns, err := uploadSingleChunk(t, func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) {
+		return nil, &uploadStatusError{StatusCode: http.StatusBadRequest, err: errors.New("mismatching cookie")}
+	})
+
+	if err == nil {
+		t.Fatal("expected a 4xx to fail the upload")
+	}
+	// Another volume would reject the same request the same way.
+	if assigns != 1 {
+		t.Fatalf("expected 1 assignment, got %d", assigns)
+	}
+}
+
+func TestUploadReaderInChunksBoundsReassignment(t *testing.T) {
+	_, assigns, err := uploadSingleChunk(t, func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) {
+		return nil, &uploadStatusError{StatusCode: http.StatusInternalServerError, err: errors.New("volume full")}
+	})
+
+	if err == nil {
+		t.Fatal("expected the upload to fail once every volume it is offered is full")
+	}
+	if assigns != chunkAssignAttempts {
+		t.Fatalf("expected %d assignments, got %d", chunkAssignAttempts, assigns)
+	}
+}
