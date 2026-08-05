@@ -20,6 +20,12 @@ type PlacementPreference struct {
 	// Exclude names nodes already spoken for by the same plan, so a caller
 	// placing several copies does not stack them on one node.
 	Exclude map[string]bool
+	// Accept rejects candidates the caller cannot use for reasons placement does
+	// not model -- replica placement rules, a node already holding the volume.
+	// It receives the candidate's rack and data center because the constraints
+	// that need them are exactly the ones a bare node cannot express. Nil
+	// accepts everything.
+	Accept func(node *master_pb.DataNodeInfo, dataCenter, rack string) bool
 	// VolumeBytes is what this move will actually consume on the destination.
 	// Zero falls back to the tier's average volume size, which is all a caller
 	// planning a not-yet-created volume can know.
@@ -71,6 +77,9 @@ func PickTarget(topo *master_pb.TopologyInfo, pref PlacementPreference) *master_
 		}
 		d := n.disk(pref.DiskType)
 		if d == nil || d.VolumeCount >= d.MaxVolumeCount {
+			continue
+		}
+		if pref.Accept != nil && !pref.Accept(n.info, n.dc, n.rack) {
 			continue
 		}
 		c := candidate{node: n}
