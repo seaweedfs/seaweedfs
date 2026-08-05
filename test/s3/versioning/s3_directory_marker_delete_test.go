@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"context"
+	"io"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -131,6 +132,39 @@ func TestDirectoryMarkerDeleteMatchesUnversioned(t *testing.T) {
 			"versioned=%v: the marker key is gone, the child stays", versioned)
 		assert.Equal(t, []string{"m/"}, listPrefixes(t, client, bucketName, ""),
 			"versioned=%v: the prefix survives its live child", versioned)
+
+		deleteBucket(t, client, bucketName)
+	}
+}
+
+// TestDeleteDirectoryMarkerSparesAPromotedFile guards the sharp edge of storing a key
+// on a directory entry: writing under an existing object turns that object's entry into
+// a directory while it keeps its data, so "m2/" and "m2" end up on the same entry. They
+// are still different keys, and deleting one must not destroy the other.
+func TestDeleteDirectoryMarkerSparesAPromotedFile(t *testing.T) {
+	client := getS3Client(t)
+
+	for _, versioned := range []bool{false, true} {
+		bucketName := getNewBucketName()
+		createBucket(t, client, bucketName)
+
+		putObject(t, client, bucketName, "m2", "important data")
+		if versioned {
+			enableVersioning(t, client, bucketName)
+		}
+		putObject(t, client, bucketName, "m2/child.txt", "child")
+
+		deleteKey(t, client, bucketName, "m2/")
+
+		got, err := client.GetObject(context.TODO(), &s3.GetObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String("m2"),
+		})
+		require.NoError(t, err, "versioned=%v: deleting m2/ must not delete m2", versioned)
+		body, err := io.ReadAll(got.Body)
+		require.NoError(t, err)
+		require.NoError(t, got.Body.Close())
+		assert.Equal(t, "important data", string(body), "versioned=%v", versioned)
 
 		deleteBucket(t, client, bucketName)
 	}

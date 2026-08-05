@@ -237,10 +237,17 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 	var deleteResult deleteMutationResult
 	var deleteCode s3err.ErrorCode
 
+	// A trailing-slash key is a directory marker in every bucket, versioned or not, and
+	// is deleted the same way: the raw delete below cannot handle a directory that still
+	// has children, and versioning has nothing to add to a key that is not an object.
+	deleteHandled := false
+	if versionId == "" && strings.HasSuffix(object, "/") {
+		deleteCode, deleteHandled = s3a.deleteDirectoryMarker(bucket, object), true
+	}
+
 	// Fast path: route the delete to the owner filer under its per-path lock;
 	// routedObjectOwner excludes versioned/object-lock buckets.
-	deleteHandled := false
-	if !versioningConfigured {
+	if !deleteHandled && !versioningConfigured {
 		if cond, condOk := buildDeleteCondition(r); condOk {
 			if owner, ownerOk := s3a.routedObjectOwner(bucket, object); ownerOk {
 				resp, err := s3a.routedDelete(owner, bucket, object, cond)
