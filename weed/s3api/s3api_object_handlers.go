@@ -471,7 +471,16 @@ func (s3a *S3ApiServer) handleVersionedDirectoryObjectRequest(w http.ResponseWri
 	if !strings.HasSuffix(object, "/") {
 		return false
 	}
-	if versioningConfigured, err := s3a.isVersioningConfigured(bucket); err != nil || !versioningConfigured {
+	// A lookup that fails for any reason other than "not there" leaves the key's state
+	// unknown, and falling through would serve a directory whose current version may be
+	// a delete marker. Only a confirmed absence takes the unversioned path.
+	versioningConfigured, err := s3a.isVersioningConfigured(bucket)
+	if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		glog.Errorf("%s: versioning state of %s unknown: %v", handlerName, bucket, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return true
+	}
+	if !versioningConfigured {
 		return false
 	}
 
@@ -493,9 +502,15 @@ func (s3a *S3ApiServer) handleVersionedDirectoryObjectRequest(w http.ResponseWri
 	}
 
 	normalizedObject := s3_constants.NormalizeObjectKey(object)
-	if _, err := s3a.getEntry(s3a.bucketDir(bucket), normalizedObject+s3_constants.VersionsFolder); err != nil {
+	if _, historyErr := s3a.getEntry(s3a.bucketDir(bucket), normalizedObject+s3_constants.VersionsFolder); historyErr != nil {
+		if !errors.Is(historyErr, filer_pb.ErrNotFound) {
+			glog.Errorf("%s: version history of %s/%s unknown: %v", handlerName, bucket, object, historyErr)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return true
+		}
 		return false
 	}
+	// A failure here is reported the way the regular-object GET path reports it.
 	entry, err := s3a.getLatestObjectVersion(bucket, object)
 	if err != nil {
 		glog.V(2).Infof("%s: no current version of directory object %s/%s: %v", handlerName, bucket, object, err)

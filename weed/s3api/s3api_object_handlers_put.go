@@ -191,8 +191,16 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		}
 		// A directory marker is stored as the directory itself, so it is the key's null
 		// version. Re-creating one after a delete has to retire that delete marker,
-		// otherwise the key stays invisible to every versioned read.
-		if state, stateErr := s3a.getVersioningState(bucket); stateErr == nil && state != "" {
+		// otherwise the key stays invisible to every versioned read. Reporting the PUT
+		// as successful before that is known to have happened would hand the client a
+		// marker it cannot see, so an unreadable versioning state fails the request.
+		state, stateErr := s3a.getVersioningState(bucket)
+		if stateErr != nil && !errors.Is(stateErr, filer_pb.ErrNotFound) {
+			glog.Errorf("PutObjectHandler: versioning state of %s unknown: %v", bucket, stateErr)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
+		}
+		if state != "" {
 			if err := s3a.restoreNullVersion(bucket, strings.TrimPrefix(object, "/")); err != nil {
 				glog.Errorf("PutObjectHandler: failed to restore directory marker %s/%s: %v", bucket, object, err)
 				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -1395,10 +1403,15 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 
 // restoreNullVersion makes the object at the regular path the current version again:
 // it drops a stale null version from .versions and clears the latest-version pointer,
-// which is the recorded way of saying "the null object is current".
+// which is the recorded way of saying "the null object is current". The clearing helper
+// is named for suspended versioning but does exactly this, and an enabled bucket needs
+// the same thing when a directory marker is re-created over its delete marker.
 func (s3a *S3ApiServer) restoreNullVersion(bucket, object string) error {
 	if _, err := s3a.getEntry(s3a.bucketDir(bucket), object+s3_constants.VersionsFolder); err != nil {
-		return nil // no history, so the object at the regular path is already current
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return nil // no history, so the object at the regular path is already current
+		}
+		return fmt.Errorf("read version history of %s/%s: %w", bucket, object, err)
 	}
 	s3a.removeNullVersionFile(bucket, object)
 	return s3a.updateIsLatestFlagsForSuspendedVersioning(bucket, object)
