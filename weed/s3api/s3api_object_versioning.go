@@ -649,8 +649,9 @@ func (vc *versionCollector) processVersionsDirectory(entryPath string) error {
 	return nil
 }
 
-// processExplicitDirectory handles an explicit S3 directory object
-func (vc *versionCollector) processExplicitDirectory(entryPath string, entry *filer_pb.Entry) {
+// processExplicitDirectory handles an explicit S3 directory object. containerPath is
+// the directory's own filer path, which is where the key's version history lives.
+func (vc *versionCollector) processExplicitDirectory(entryPath, containerPath string, entry *filer_pb.Entry) {
 	directoryKey := entryPath
 	if !strings.HasSuffix(directoryKey, "/") {
 		directoryKey += "/"
@@ -670,10 +671,19 @@ func (vc *versionCollector) processExplicitDirectory(entryPath string, entry *fi
 		return
 	}
 
+	// The directory entry is this key's null version. A history under it names the
+	// current version, so the null is only latest when there is no pointer to follow.
+	isLatest := true
+	if versionsEntry, err := vc.s3a.getEntry(containerPath, s3_constants.VersionsFolder); err == nil {
+		if _, hasPointer := versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey]; hasPointer {
+			isLatest = false
+		}
+	}
+
 	versionEntry := &VersionEntry{
 		Key:          directoryKey,
 		VersionId:    "null",
-		IsLatest:     true,
+		IsLatest:     isLatest,
 		LastModified: time.Unix(entry.Attributes.Mtime, 0),
 		ETag:         "\"d41d8cd98f00b204e9800998ecf8427e\"", // Empty content ETag
 		Size:         0,
@@ -870,7 +880,7 @@ func (vc *versionCollector) processDirectory(currentPath, entryPath string, entr
 	// an SDK PutObject of "dir/" carries a default Content-Type, so the two
 	// listings must agree on what counts as a directory key.
 	if entry.IsDirectoryKeyObject() {
-		vc.processExplicitDirectory(entryPath, entry)
+		vc.processExplicitDirectory(entryPath, path.Join(currentPath, entry.Name), entry)
 	}
 
 	// Skip entire subdirectory if all keys within it are before the keyMarker.
