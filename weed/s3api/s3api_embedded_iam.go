@@ -2474,14 +2474,39 @@ func iamRequiresAdminForOthers(action string) bool {
 	return iamSelfServiceActions[action]
 }
 
-// AuthIam provides IAM-specific authentication that allows self-service operations.
-// Users can manage their own access keys without admin rights, but need admin for operations on other users.
-// The action parameter is accepted for interface compatibility with cb.Limit but is not used
-// since IAM permission checking is done based on the IAM Action parameter in the request.
-func (e *EmbeddedIamApi) AuthIam(f http.HandlerFunc, _ Action) http.HandlerFunc {
+// AuthorizeIamAction authorizes an IAM management action for identity, with
+// targetUserName taken from the request's UserName parameter.
+//
+// IAM management is not part of the S3 data plane, so the grant is checked as
+// iam:<Action>. A coarse S3 action would instead be matched by an ordinary
+// data-plane policy, which says nothing about administering the credential
+// store.
+//
+// Users may run self-service actions against their own identity without any
+// IAM grant, matching AWS.
+func (iam *IdentityAccessManagement) AuthorizeIamAction(r *http.Request, identity *Identity, action, targetUserName string) s3err.ErrorCode {
+	// The anonymous identity has no user of its own, so every self-service
+	// action it names would run against someone else's.
+	if identity == nil || identity.Name == s3_constants.AccountAnonymousId {
+		return s3err.ErrAccessDenied
+	}
+	if iamRequiresAdminForOthers(action) && (targetUserName == "" || targetUserName == identity.Name) {
+		return s3err.ErrNone
+	}
+	if identity.isAdmin() {
+		return s3err.ErrNone
+	}
+	return iam.VerifyActionPermission(r, identity, Action("iam:"+action), "arn:aws:iam:::*", "")
+}
+
+// AuthIamManagement authenticates an IAM management request and authorizes the
+// action it carries. It is the entry point for both IAM API surfaces — the
+// embedded one on the S3 port and the standalone `weed iam` server — so the two
+// cannot drift apart.
+func (iam *IdentityAccessManagement) AuthIamManagement(f http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// If auth is not enabled, allow all
-		if !e.iam.isEnabled() {
+		if !iam.isEnabled() {
 			f(w, r)
 			return
 		}
@@ -2491,7 +2516,7 @@ func (e *EmbeddedIamApi) AuthIam(f http.HandlerFunc, _ Action) http.HandlerFunc 
 		// needs to hash the body for IAM requests (service != "s3").
 		// The streamHashRequestBody function in auth_signature_v4.go preserves the body
 		// after reading it, so ParseForm() will work correctly after authentication.
-		identity, errCode := e.iam.AuthSignatureOnly(r)
+		identity, errCode := iam.AuthSignatureOnly(r)
 		if errCode != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, errCode)
 			return
@@ -2503,48 +2528,27 @@ func (e *EmbeddedIamApi) AuthIam(f http.HandlerFunc, _ Action) http.HandlerFunc 
 			return
 		}
 
-		action := r.Form.Get("Action")
-		targetUserName := r.PostForm.Get("UserName")
-
-		// IAM API requests must be authenticated - reject nil identity
-		// (can happen for authTypePostPolicy or authTypeStreamingUnsigned)
-		if identity == nil {
-			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		// UserName comes from the body only, the same place the handlers read it
+		// from, so the authorized target and the acted-on target cannot differ.
+		if errCode := iam.AuthorizeIamAction(r, identity, r.Form.Get("Action"), r.PostForm.Get("UserName")); errCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, errCode)
 			return
 		}
 
-		// Store identity in context
-		if identity != nil && identity.Name != "" {
+		if identity.Name != "" {
 			r = r.WithContext(recordIdentityInContext(r, identity))
-		}
-
-		// Check permissions based on action type
-		if iamRequiresAdminForOthers(action) {
-			// Self-service action: allow if operating on own resources or no target specified
-			if targetUserName == "" || targetUserName == identity.Name {
-				// Self-service: allowed
-				f(w, r)
-				return
-			}
-			// Operating on another user: require admin or permission
-			if !identity.isAdmin() {
-				if e.iam.VerifyActionPermission(r, identity, Action("iam:"+action), "arn:aws:iam:::*", "") != s3err.ErrNone {
-					s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-					return
-				}
-			}
-		} else {
-			// All other IAM actions require admin or permission
-			if !identity.isAdmin() {
-				if e.iam.VerifyActionPermission(r, identity, Action("iam:"+action), "arn:aws:iam:::*", "") != s3err.ErrNone {
-					s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-					return
-				}
-			}
 		}
 
 		f(w, r)
 	}
+}
+
+// AuthIam provides IAM-specific authentication that allows self-service operations.
+// Users can manage their own access keys without admin rights, but need admin for operations on other users.
+// The action parameter is accepted for interface compatibility with cb.Limit but is not used
+// since IAM permission checking is done based on the IAM Action parameter in the request.
+func (e *EmbeddedIamApi) AuthIam(f http.HandlerFunc, _ Action) http.HandlerFunc {
+	return e.iam.AuthIamManagement(f)
 }
 
 // ExecuteAction executes an IAM action with the given values.
