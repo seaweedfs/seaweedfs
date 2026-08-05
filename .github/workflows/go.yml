@@ -76,8 +76,17 @@ jobs:
       run: cd weed; go build -tags "elastic gocdk sqlite ydb tarantool tikv rclone" -v .
 
   build-cross:
-    name: Build cross-platform
+    name: Build cross-platform (${{ matrix.goos }}/${{ matrix.goarch }})
     runs-on: ubuntu-latest
+    strategy:
+      # One target's breakage should not hide the other three.
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: windows, goarch: amd64 }
+          - { goos: windows, goarch: arm64 }
+          - { goos: freebsd, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
     steps:
     - name: Check out code into the Go module directory
       uses: actions/checkout@v7
@@ -88,16 +97,16 @@ jobs:
     # Nothing else on a PR compiles these, so per-OS syscall constants creep
     # back into shared files unnoticed and only a release build catches it.
     - name: Cross-compile
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
       run: |
-        for target in windows/amd64 windows/arm64 freebsd/amd64 darwin/arm64; do
-          echo "== $target"
-          GOOS=${target%/*} GOARCH=${target#*/} go build ./weed/...
-          # Tests too: they reach for per-OS syscall constants the build does
-          # not, and only compiling them catches an untagged one.
-          GOOS=${target%/*} GOARCH=${target#*/} go vet ./weed/mount/... ./weed/command/... 2>&1 |
-            grep -v "MessageState contains sync.Mutex" | tee /tmp/vet-$$.txt
-          if grep -q "vet:" /tmp/vet-$$.txt; then exit 1; fi
-        done
+        go build ./weed/...
+        # Tests too: they reach for per-OS syscall constants the build does
+        # not, and only compiling them catches an untagged one.
+        go vet ./weed/mount/... ./weed/command/... 2>&1 |
+          grep -v "MessageState contains sync.Mutex" | tee /tmp/vet.txt
+        if grep -q "vet:" /tmp/vet.txt; then exit 1; fi
 
   test:
     name: Test
