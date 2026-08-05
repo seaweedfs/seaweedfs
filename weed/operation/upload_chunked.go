@@ -10,7 +10,6 @@ import (
 	"hash"
 	"io"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -193,64 +192,24 @@ uploadLoop:
 			var uploadResult *UploadResult
 			var uploadResultErr error
 
-			holders := chunkHolders(assignResult)
-			// Fan out to every holder, except for cipher: per-call encryption
-			// would give each replica different bytes, so keep its relay path.
-			// Retry with a fresh volume assignment if a replica is full — a single
-			// capacity-full replica kills the whole fan-out, but re-assigning picks a
-			// volume where both replicas still have space.
-			const maxReassignAttempts = 3
-			for attempt := 0; attempt < maxReassignAttempts; attempt++ {
-				if opt.UploadFunc == nil && !opt.Cipher && len(holders) > 1 {
-					uploadResult, uploadResultErr = uploadChunkToHolders(ctx, holders, assignResult.Fid, buf.Bytes(), jwt, chunkMd5B64, opt)
-				} else {
-					uploadOption := &UploadOption{
-						UploadUrl:         fmt.Sprintf("http://%s/%s", assignResult.Url, assignResult.Fid),
-						Cipher:            opt.Cipher,
-						IsInputCompressed: false,
-						MimeType:          opt.MimeType,
-						PairMap:           nil,
-						Jwt:               jwt,
-						Md5:               chunkMd5B64,
-					}
-					// Use mock upload function if provided (for testing), otherwise use real uploader
-					if opt.UploadFunc != nil {
-						uploadResult, uploadResultErr = opt.UploadFunc(ctx, buf.Bytes(), uploadOption)
-					} else {
-						uploader, uploaderErr := NewUploader()
-						if uploaderErr != nil {
-							uploadErrLock.Lock()
-							if uploadErr == nil {
-								uploadErr = fmt.Errorf("create uploader: %w", uploaderErr)
-							}
-							uploadErrLock.Unlock()
-							return
-						}
-						uploadResult, uploadResultErr = uploader.UploadData(ctx, buf.Bytes(), uploadOption)
-					}
-				}
-
-				if uploadResultErr == nil {
+			// A target that fills up, loses its replica peer, or goes away fails
+			// every attempt against the same fid, so ask for a fresh assignment and
+			// retry there rather than losing the whole object to one bad volume.
+			for attempt := 1; ; attempt++ {
+				uploadResult, uploadResultErr = uploadChunk(ctx, assignResult, buf.Bytes(), jwt, chunkMd5B64, opt)
+				if uploadResultErr == nil || attempt == chunkAssignAttempts || !shouldReassignUpload(uploadResultErr) {
 					break
 				}
-
-				// If a replica is full, re-assign to a new volume and retry.
-				if attempt < maxReassignAttempts-1 && strings.Contains(strings.ToLower(uploadResultErr.Error()), "volume size") {
-					glog.V(2).Infof("re-assigning chunk: replica full, attempt %d/%d", attempt+1, maxReassignAttempts)
-					_, assignResult, assignErr = opt.AssignFunc(ctx, 1, uint64(size))
-					if assignErr != nil {
-						uploadResultErr = fmt.Errorf("reassign volume: %w", assignErr)
-						break
-					}
-					jwt = opt.Jwt
-					assignJwt := assignResult.Auth
-					if assignJwt != "" {
-						jwt = security.EncodedJwt(assignJwt)
-					}
-					holders = chunkHolders(assignResult)
-					continue
+				glog.V(2).Infof("re-assigning chunk at offset %d after attempt %d/%d: %v", offset, attempt, chunkAssignAttempts, uploadResultErr)
+				_, assignResult, assignErr = opt.AssignFunc(ctx, 1, uint64(size))
+				if assignErr != nil {
+					uploadResultErr = fmt.Errorf("reassign volume: %w", assignErr)
+					break
 				}
-				break
+				jwt = opt.Jwt
+				if assignResult.Auth != "" {
+					jwt = assignResult.Auth
+				}
 			}
 
 			if uploadResultErr != nil {
@@ -318,6 +277,38 @@ uploadLoop:
 		TotalSize:    chunkOffset,
 		SmallContent: nil,
 	}, nil
+}
+
+// chunkAssignAttempts bounds how many volumes one chunk may be offered to
+// before the upload gives up.
+const chunkAssignAttempts = 3
+
+// uploadChunk writes one chunk to its assigned volume. It fans out to every
+// holder, except for cipher: per-call encryption would give each replica
+// different bytes, so keep its relay path.
+func uploadChunk(ctx context.Context, assignResult *AssignResult, data []byte, jwt security.EncodedJwt, md5b64 string, opt *ChunkedUploadOption) (*UploadResult, error) {
+	holders := chunkHolders(assignResult)
+	if opt.UploadFunc == nil && !opt.Cipher && len(holders) > 1 {
+		return uploadChunkToHolders(ctx, holders, assignResult.Fid, data, jwt, md5b64, opt)
+	}
+	uploadOption := &UploadOption{
+		UploadUrl:         fmt.Sprintf("http://%s/%s", assignResult.Url, assignResult.Fid),
+		Cipher:            opt.Cipher,
+		IsInputCompressed: false,
+		MimeType:          opt.MimeType,
+		PairMap:           nil,
+		Jwt:               jwt,
+		Md5:               md5b64,
+	}
+	// Use mock upload function if provided (for testing), otherwise use real uploader
+	if opt.UploadFunc != nil {
+		return opt.UploadFunc(ctx, data, uploadOption)
+	}
+	uploader, err := NewUploader()
+	if err != nil {
+		return nil, fmt.Errorf("create uploader: %w", err)
+	}
+	return uploader.UploadData(ctx, data, uploadOption)
 }
 
 // chunkHolders returns the assigned volume plus its replica holders.
