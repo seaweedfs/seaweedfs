@@ -217,7 +217,7 @@ uploadLoop:
 				deleteChunkFromHolders(chunkHolders(assignResult), assignResult.Fid, jwt)
 				_, assignResult, assignErr = opt.AssignFunc(ctx, 1, uint64(size))
 				if assignErr != nil {
-					uploadResultErr = fmt.Errorf("reassign volume: %w", assignErr)
+					uploadResultErr = fmt.Errorf("reassign volume after %w: %w", uploadResultErr, assignErr)
 					break
 				}
 				jwt = opt.Jwt
@@ -380,9 +380,15 @@ func uploadChunkToHolders(ctx context.Context, hosts []string, fid string, data 
 	for range hosts {
 		o := <-outcomes
 		if o.err != nil {
+			// Once one holder fails the rest are cancelled, so errors arrive in
+			// no fixed order. Prefer one the caller can act on, or the choice of
+			// which host to report — and whether to retry elsewhere — turns on
+			// goroutine scheduling.
 			if firstErr == nil {
 				firstErr = o.err
 				cancel()
+			} else if !shouldReassignUpload(firstErr) && shouldReassignUpload(o.err) {
+				firstErr = o.err
 			}
 		} else {
 			succeeded = append(succeeded, o.host)

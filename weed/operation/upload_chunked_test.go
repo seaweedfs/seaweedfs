@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/security"
 )
 
 // TestUploadReaderInChunksReturnsPartialResultsOnError verifies that when
@@ -416,7 +418,7 @@ func TestUploadReaderInChunksTagsTruncatedBody(t *testing.T) {
 	}
 }
 
-// uploadOneChunk runs a single-chunk upload against uploadFunc, handing out a
+// uploadSingleChunk runs a single-chunk upload against uploadFunc, handing out a
 // fresh volume on every assignment, and reports how many assignments it took.
 func uploadSingleChunk(t *testing.T, uploadFunc func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error)) (*ChunkedUploadResult, int, error) {
 	t.Helper()
@@ -427,6 +429,7 @@ func uploadSingleChunk(t *testing.T, uploadFunc func(ctx context.Context, data [
 		return nil, &AssignResult{
 			Fid:   fmt.Sprintf("%d,0a0b0c0d", assigns),
 			Url:   fmt.Sprintf("volume-%d:8080", assigns),
+			Auth:  security.EncodedJwt(fmt.Sprintf("jwt-%d", assigns)),
 			Count: 1,
 		}, nil
 	}
@@ -444,7 +447,9 @@ func uploadSingleChunk(t *testing.T, uploadFunc func(ctx context.Context, data [
 // so the chunk has to move to a freshly assigned volume rather than take the
 // whole object down with it.
 func TestUploadReaderInChunksReassignsOnFullVolume(t *testing.T) {
+	var jwts []security.EncodedJwt
 	result, assigns, err := uploadSingleChunk(t, func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) {
+		jwts = append(jwts, option.Jwt)
 		if strings.Contains(option.UploadUrl, "volume-1:") {
 			return nil, &uploadStatusError{
 				StatusCode: http.StatusInternalServerError,
@@ -459,6 +464,11 @@ func TestUploadReaderInChunksReassignsOnFullVolume(t *testing.T) {
 	}
 	if assigns != 2 {
 		t.Fatalf("expected 2 assignments, got %d", assigns)
+	}
+	// A secured cluster mints a JWT per assignment; presenting the full volume's
+	// token to the new one would 401.
+	if len(jwts) != 2 || jwts[0] != "jwt-1" || jwts[1] != "jwt-2" {
+		t.Errorf("expected each attempt to carry its own assignment JWT, got %v", jwts)
 	}
 	if len(result.FileChunks) != 1 {
 		t.Fatalf("expected 1 chunk, got %d", len(result.FileChunks))
@@ -490,8 +500,11 @@ func TestUploadReaderInChunksBoundsReassignment(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected the upload to fail once every volume it is offered is full")
 	}
-	if assigns != chunkAssignAttempts {
-		t.Fatalf("expected %d assignments, got %d", chunkAssignAttempts, assigns)
+	// Spelled out rather than compared to chunkAssignAttempts: the budget is
+	// what bounds this against retriedUploadData's own attempts, so raising it
+	// should fail here, not pass silently.
+	if assigns != 3 {
+		t.Fatalf("expected 3 assignments, got %d", assigns)
 	}
 }
 
