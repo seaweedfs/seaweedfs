@@ -583,7 +583,8 @@ func (s3a *S3ApiServer) finalizeCopyDestination(dstBucket, dstObject, dstVersion
 			return "", "", err
 		}
 
-		if err = s3a.finalizeSuspendedNullWrite(dstBucket, normalizedObject); err != nil {
+		// mkFile writes through the default filer, so the ownership check reads there too.
+		if err = s3a.finalizeSuspendedNullWrite("", dstBucket, normalizedObject, s3_constants.ExtETagKey, etag); err != nil {
 			glog.Warningf("CopyObjectHandler: failed to retire the null delete marker for %s/%s: %v", dstBucket, normalizedObject, err)
 		}
 

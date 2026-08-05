@@ -1,6 +1,8 @@
 package s3api
 
 import (
+	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -201,7 +203,25 @@ func (s3a *S3ApiServer) versionedFinalize(bucket, object, versionId, versionFile
 // makes reads rescan .versions and promote an older version. Call only once the
 // write has committed — retiring the marker for a write that then fails republishes
 // the deleted key.
-func (s3a *S3ApiServer) finalizeSuspendedNullWrite(bucket, object string) error {
+//
+// identityKey/identityValue name the extended attribute that marks the entry as the
+// caller's write (an upload id, an etag). The cleanup rewrites shared .versions state
+// off the object write lock, so it is skipped unless the regular path still holds that
+// write: a DELETE that landed in between owns the null slot, and retiring its marker
+// would resurrect an older version under a key that was deleted. Narrows that race,
+// does not close it. owner, when set, is the filer the write went to, so the check
+// reads its own write back rather than a peer that may be behind.
+func (s3a *S3ApiServer) finalizeSuspendedNullWrite(owner pb.ServerAddress, bucket, object, identityKey, identityValue string) error {
+	dir, name := util.FullPath(s3a.toFilerPath(bucket, object)).DirAndName()
+	current, err := s3a.lookupEntryPreferringOwner(owner, dir, name)
+	if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		return fmt.Errorf("re-read %s/%s: %w", bucket, object, err)
+	}
+	if current == nil || string(current.Extended[identityKey]) != identityValue {
+		glog.V(2).Infof("finalizeSuspendedNullWrite: %s/%s superseded by a concurrent write", bucket, object)
+		return nil
+	}
+
 	if err := s3a.updateIsLatestFlagsForSuspendedVersioning(bucket, object); err != nil {
 		return err
 	}
