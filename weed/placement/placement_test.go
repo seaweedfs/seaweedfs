@@ -224,3 +224,35 @@ func TestPickTargetReservesTheVolumeSize(t *testing.T) {
 		t.Fatalf("second pick %q, want a2 after 800 bytes were spent on a1", second.GetId())
 	}
 }
+
+func TestPickTargetHonoursTheCallerPredicate(t *testing.T) {
+	// Constraints placement does not model -- replica placement, a node already
+	// holding the volume -- stay with the caller, which keeps them out of the
+	// ranking rather than duplicating them here.
+	topo := placementTopo(
+		placementNode("a1", 10, 1, 1000, 900),
+		placementNode("a2", 10, 1, 1000, 500),
+	)
+	got := PickTarget(topo, PlacementPreference{
+		Source: "z9", DiskType: types.SsdType,
+		Accept: func(n *master_pb.DataNodeInfo, dc, rack string) bool { return n.Id != "a1" },
+	})
+	if got.GetId() != "a2" {
+		t.Fatalf("got %q, want a2 -- a1 was rejected despite being emptier", got.GetId())
+	}
+}
+
+func TestPickTargetPredicateSeesRackAndDataCenter(t *testing.T) {
+	topo := placementTopo(placementNode("a1", 10, 1, 1000, 900))
+	var sawDc, sawRack string
+	PickTarget(topo, PlacementPreference{
+		Source: "z9", DiskType: types.SsdType,
+		Accept: func(n *master_pb.DataNodeInfo, dc, rack string) bool {
+			sawDc, sawRack = dc, rack
+			return true
+		},
+	})
+	if sawDc != "dc1" || sawRack != "a" {
+		t.Fatalf("predicate saw dc=%q rack=%q, want dc1/a", sawDc, sawRack)
+	}
+}
