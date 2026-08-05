@@ -3,6 +3,7 @@ package dailyrun
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,19 +16,25 @@ import (
 // memPersister is a minimal in-memory CursorPersister. Phase 4b tests
 // drive runShard directly; the recovery-branch path returns before
 // drainShardEvents so the heavier filer/client/lister fakes aren't
-// needed here.
+// needed here. Locked because Run fans out a goroutine per shard and
+// they all load and save through the same persister.
 type memPersister struct {
+	mu    sync.Mutex
 	store map[int]Cursor
 }
 
 func newMemPersister() *memPersister { return &memPersister{store: map[int]Cursor{}} }
 
 func (p *memPersister) Load(_ context.Context, shardID int) (Cursor, bool, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	c, ok := p.store[shardID]
 	return c, ok, nil
 }
 
 func (p *memPersister) Save(_ context.Context, shardID int, c Cursor) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.store[shardID] = c
 	return nil
 }

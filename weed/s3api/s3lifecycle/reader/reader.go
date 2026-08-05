@@ -75,15 +75,55 @@ type Reader struct {
 	StartTsNs int64
 	Events    chan<- *Event
 
+	// UntilTsNs ends the stream once the filer has delivered through this
+	// timestamp. Zero follows forever, which on an idle cluster parks a
+	// bounded caller in Recv until something unrelated is written.
+	UntilTsNs int64
+
 	// EventBudget caps how many events Run processes before returning nil.
 	// Zero = unbounded; the run continues until ctx cancellation or stream
 	// error. Used by the worker scheduler to bound a single READ task.
 	EventBudget int
 
+	// ReceiveTimeout bounds the wait for each response, covering a filer
+	// that stops producing while the transport still answers keepalives.
+	// Also opts into idle heartbeats so a caught-up stream stays alive.
+	// Keep above the filer's 15m maxGapStall — a subscriber parked on a
+	// gap sends nothing and is not stuck. Zero disables it.
+	ReceiveTimeout time.Duration
+
 	// bucketsPathSlash is BucketsPath with a guaranteed trailing slash,
 	// computed once on Run and reused per event to avoid recomputing the
 	// normalized prefix in extractBucketKey.
 	bucketsPathSlash string
+}
+
+// ErrReceiveTimeout: stream still open, but no events and no heartbeats.
+var ErrReceiveTimeout = errors.New("reader: metadata receive timeout")
+
+type receiveResult struct {
+	resp *filer_pb.SubscribeMetadataResponse
+	err  error
+}
+
+// awaitResponse waits for the next response under ReceiveTimeout. Started
+// per call, so it times the filer only — a slow Events consumer blocks in
+// dispatchOne, outside this window, and can't trip the watchdog.
+func (r *Reader) awaitResponse(ctx context.Context, received <-chan receiveResult) (*filer_pb.SubscribeMetadataResponse, error, bool) {
+	var timeout <-chan time.Time
+	if r.ReceiveTimeout > 0 {
+		timer := time.NewTimer(r.ReceiveTimeout)
+		defer timer.Stop()
+		timeout = timer.C
+	}
+	select {
+	case result := <-received:
+		return result.resp, result.err, false
+	case <-timeout:
+		return nil, nil, true
+	case <-ctx.Done():
+		return nil, ctx.Err(), false
+	}
 }
 
 // Run subscribes via SubscribeMetadata starting at the configured position,
@@ -102,6 +142,9 @@ func (r *Reader) Run(ctx context.Context, client filer_pb.SeaweedFilerClient, cl
 	if r.BucketsPath == "" {
 		return errors.New("reader: empty BucketsPath")
 	}
+	if r.ReceiveTimeout < 0 {
+		return fmt.Errorf("reader: negative ReceiveTimeout %v", r.ReceiveTimeout)
+	}
 	r.bucketsPathSlash = r.BucketsPath
 	if !strings.HasSuffix(r.bucketsPathSlash, "/") {
 		r.bucketsPathSlash += "/"
@@ -111,20 +154,47 @@ func (r *Reader) Run(ctx context.Context, client filer_pb.SeaweedFilerClient, cl
 	if sinceNs == 0 && r.Cursor != nil {
 		sinceNs = r.Cursor.MinTsNs()
 	}
-	stream, err := client.SubscribeMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
+	// Own context: aborting the RPC is the only way to unblock Recv.
+	streamCtx, cancelStream := context.WithCancel(ctx)
+	defer cancelStream()
+	stream, err := client.SubscribeMetadata(streamCtx, &filer_pb.SubscribeMetadataRequest{
 		ClientName:             clientName,
 		PathPrefix:             r.BucketsPath,
 		SinceNs:                sinceNs,
+		UntilNs:                r.UntilTsNs,
 		ClientId:               clientID,
 		ClientSupportsBatching: true,
+		// dispatchOne drops these, but arriving at all is the point.
+		ClientSupportsIdleHeartbeat: r.ReceiveTimeout > 0,
 	})
 	if err != nil {
 		return fmt.Errorf("subscribe: %w", err)
 	}
 
+	// Buffered so a response landing as the watchdog fires doesn't strand
+	// this goroutine.
+	received := make(chan receiveResult, 1)
+	go func() {
+		for {
+			resp, recvErr := stream.Recv()
+			select {
+			case received <- receiveResult{resp: resp, err: recvErr}:
+			case <-streamCtx.Done():
+				return
+			}
+			if recvErr != nil {
+				return
+			}
+		}
+	}()
+
 	processed := 0
 	for {
-		resp, recvErr := stream.Recv()
+		resp, recvErr, timedOut := r.awaitResponse(streamCtx, received)
+		if timedOut {
+			cancelStream() // unwind the goroutine blocked in Recv
+			return fmt.Errorf("%w after %s", ErrReceiveTimeout, r.ReceiveTimeout)
+		}
 		if recvErr == io.EOF {
 			return nil
 		}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -88,7 +89,14 @@ type Config struct {
 
 	// 0 -> unbounded.
 	EventBudget int
+
+	// 0 -> defaultSubscriptionReceiveTimeout.
+	SubscriptionReceiveTimeout time.Duration
 }
+
+// Above the filer's 15m maxGapStall, so a subscriber parked on a gap is
+// not mistaken for a stalled one.
+const defaultSubscriptionReceiveTimeout = 20 * time.Minute
 
 // Run executes the daily replay for every shard in cfg.Shards
 // concurrently. Returns the first shard error; the rest log and run to
@@ -132,6 +140,9 @@ func Run(ctx context.Context, cfg Config) error {
 		fanoutDone      chan struct{}
 		cancelRead      context.CancelFunc
 		globalStartTsNs int64
+		// Set by the reader goroutine when it stops for a reason we asked
+		// for, rather than a broken stream.
+		stoppedOnPurpose atomic.Bool
 	)
 	if rsh != [32]byte{} {
 		// Pre-load all per-shard cursors so the shared subscription
@@ -141,7 +152,7 @@ func Run(ctx context.Context, cfg Config) error {
 		// exactly the case where a rule's TTL equals maxTTL and an
 		// older event still has DueTime <= runNow.
 		globalStartTsNs = computeGlobalStartTsNs(ctx, cfg, runNow, maxTTL)
-		shardEvents, readerDone, fanoutDone, cancelRead = startSharedSubscription(ctx, cfg, runNow, globalStartTsNs)
+		shardEvents, readerDone, fanoutDone, cancelRead = startSharedSubscription(ctx, cfg, runNow, globalStartTsNs, &stoppedOnPurpose)
 		defer cancelRead()
 	}
 
@@ -159,6 +170,13 @@ func Run(ctx context.Context, cfg Config) error {
 			if err := runShard(ctx, cfg, snap, runNow, sh, ch); err != nil {
 				errCh <- err
 			}
+			// A halted dispatch returns runShard mid-stream. Keep
+			// discarding, or the fan-out blocks on this shard's full
+			// buffer and starves every other drain.
+			if ch != nil {
+				for range ch {
+				}
+			}
 		}()
 	}
 	wg.Wait()
@@ -167,11 +185,16 @@ func Run(ctx context.Context, cfg Config) error {
 	// Tear down the shared subscription. cancelRead unblocks both the
 	// reader's gRPC stream and the fan-out's send loop; we wait on both
 	// so their goroutines don't outlive Run.
+	var readerErr error
 	if cancelRead != nil {
 		cancelRead()
 		<-fanoutDone
-		if rerr := <-readerDone; rerr != nil && !errors.Is(rerr, context.Canceled) && !errors.Is(rerr, context.DeadlineExceeded) {
-			glog.V(2).Infof("daily_run: shared reader returned: %v", rerr)
+		if rerr := <-readerDone; rerr != nil && !stoppedOnPurpose.Load() {
+			// The drains ended on a closed channel, so the pass is
+			// truncated. Cursors hold what was processed; what matters is
+			// that the job doesn't go green on a dead subscription.
+			readerErr = fmt.Errorf("shared meta-log subscription: %w", rerr)
+			glog.Warningf("daily_run: %v", readerErr)
 		}
 	}
 
@@ -183,6 +206,12 @@ func Run(ctx context.Context, cfg Config) error {
 			first = err
 		} else {
 			glog.V(1).Infof("daily_run: additional shard error: %v", err)
+		}
+	}
+	if readerErr != nil {
+		errCount++
+		if first == nil {
+			first = readerErr
 		}
 	}
 	status := "ok"
@@ -280,7 +309,9 @@ func computeGlobalStartTsNs(ctx context.Context, cfg Config, runNow time.Time, m
 // Events arriving with TsNs > runUpTo (the pass boundary) cause the
 // fan-out to cancel the reader and close all per-shard channels,
 // ending the pass.
-func startSharedSubscription(ctx context.Context, cfg Config, runNow time.Time, globalStartTsNs int64) (map[int]chan *reader.Event, chan error, chan struct{}, context.CancelFunc) {
+func startSharedSubscription(ctx context.Context, cfg Config, runNow time.Time, globalStartTsNs int64, stoppedOnPurpose *atomic.Bool) (map[int]chan *reader.Event, chan error, chan struct{}, context.CancelFunc) {
+	// Set by the fan-out when it ends the pass on an event past runUpTo.
+	var pastBoundary atomic.Bool
 	shardSet := make(map[int]bool, len(cfg.Shards))
 	shardEvents := make(map[int]chan *reader.Event, len(cfg.Shards))
 	for _, sh := range cfg.Shards {
@@ -301,22 +332,40 @@ func startSharedSubscription(ctx context.Context, cfg Config, runNow time.Time, 
 		clientID = int32(util.RandomInt32())
 	}
 
+	runUpTo := runNow.UnixNano()
+	receiveTimeout := cfg.SubscriptionReceiveTimeout
+	if receiveTimeout == 0 {
+		receiveTimeout = defaultSubscriptionReceiveTimeout
+	}
 	events := make(chan *reader.Event, 4*len(cfg.Shards))
 	rd := &reader.Reader{
 		ShardPredicate: func(id int) bool { return shardSet[id] },
 		BucketsPath:    cfg.BucketsPath,
 		StartTsNs:      globalStartTsNs,
+		// The pass covers (globalStartTsNs, runUpTo]. Unbounded, it ends
+		// only when an unrelated write pushes an event past runUpTo — so
+		// a quiet cluster wedges it.
+		UntilTsNs:      runUpTo,
 		Events:         events,
 		EventBudget:    cfg.EventBudget,
+		ReceiveTimeout: receiveTimeout,
 	}
 
 	readerCtx, cancelReader := context.WithCancel(ctx)
 	readerDone := make(chan error, 1)
 	go func() {
-		readerDone <- rd.Run(readerCtx, cfg.FilerClient, clientName, clientID)
+		rerr := rd.Run(readerCtx, cfg.FilerClient, clientName, clientID)
+		// Not decidable from the error: a stream we cancel and one the
+		// filer cancels both arrive as codes.Canceled. Snapshot intent
+		// here rather than after teardown, or a deadline expiring during
+		// the drains and cursor saves masks a real failure.
+		stoppedOnPurpose.Store(ctx.Err() != nil || pastBoundary.Load())
+		readerDone <- rerr
+		// Only sender. Closing is what ends the fan-out, and through it
+		// every drain, when the stream finishes on its own.
+		close(events)
 	}()
 
-	runUpTo := runNow.UnixNano()
 	fanoutDone := make(chan struct{})
 	go func() {
 		defer close(fanoutDone)
@@ -341,6 +390,7 @@ func startSharedSubscription(ctx context.Context, cfg Config, runNow time.Time, 
 				// too. Cancel the reader so subsequent passes don't
 				// pay for stream tail we'd drop anyway.
 				if ev.TsNs > runUpTo {
+					pastBoundary.Store(true)
 					cancelReader()
 					return
 				}
@@ -388,6 +438,10 @@ func validate(cfg Config) error {
 	// a loud failure instead.
 	if cfg.WalkerInterval < 0 {
 		return fmt.Errorf("daily_run: negative WalkerInterval %v (0 = unthrottled, positive values throttle)", cfg.WalkerInterval)
+	}
+	// Negative would reach the reader as "disabled" by accident.
+	if cfg.SubscriptionReceiveTimeout < 0 {
+		return fmt.Errorf("daily_run: negative SubscriptionReceiveTimeout %v (0 = default %v)", cfg.SubscriptionReceiveTimeout, defaultSubscriptionReceiveTimeout)
 	}
 	for _, sh := range cfg.Shards {
 		if sh < 0 || sh >= s3lifecycle.ShardCount {
@@ -554,18 +608,15 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 	}
 
 	lastOK, _, drainErr := drainShardEvents(ctx, cfg, runNow, shardID, snap, startTsNs, events)
-	// Cursor save uses a fresh ctx because the steady-state drain exits
-	// via passCtx cancellation (the only signal the filer subscription
-	// gets when no new events arrive). Saving with the canceled passCtx
-	// would silently drop the cursor and the next pass would re-replay
-	// from the same floor — defeating advancement entirely.
+	// Fresh ctx: a wall-clock cap on the pass (the shell driver's
+	// -runtime) cancels the drain's, and saving with it would drop the
+	// cursor and re-replay from the same floor next pass.
 	saveCtx, saveCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer saveCancel()
 	if drainErr != nil {
 		_ = saveCursorAndPublish(saveCtx, cfg.Persister, shardID, Cursor{TsNs: lastOK, RuleSetHash: rsh, PromotedHash: promoted, LastWalkedNs: lastWalkedNs})
-		// passCtx timeout is the expected end-of-pass for an idle
-		// subscription; not a real error. Other drain errors still
-		// propagate.
+		// Cut short by its wall-clock cap: truncated, not failed — the
+		// cursor above carries progress forward.
 		if errors.Is(drainErr, context.DeadlineExceeded) || errors.Is(drainErr, context.Canceled) {
 			return nil
 		}

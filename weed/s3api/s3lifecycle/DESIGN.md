@@ -108,7 +108,7 @@ One filer `SubscribeMetadata` stream per `dailyrun.Run()` call, covering every s
 
 `globalStartTsNs = min(per-shard cursor, runNow - maxTTL)`. Pre-loaded once at pass start so the subscription's `StartTsNs` covers every shard's needed range; per-shard drains then filter `ev.TsNs <= shard.startTsNs` locally.
 
-Fan-out cancels the reader on the first `ev.TsNs > runNow` (meta-log events arrive in TsNs order; everything after is past the pass boundary). Per-shard channels are buffered to 256 events — large enough to absorb bursts without back-pressuring the fan-out.
+The subscription is bounded: `UntilNs = runNow`, so the filer ends the stream once it has delivered everything up to the pass boundary and the pass ends on its own. Fan-out also cancels the reader on the first `ev.TsNs > runNow` as a backstop (meta-log events arrive in TsNs order; everything after is past the boundary) — that used to be the *only* way a pass ended, which wedged the job for as long as the cluster stayed quiet. Per-shard channels are buffered to 256 events — large enough to absorb bursts without back-pressuring the fan-out.
 
 ## Action kinds and dispatch paths
 
@@ -140,7 +140,7 @@ type Cursor struct {
 
 `LastWalkedNs` is JSON-omitempty, so cursor files written before that field existed decode cleanly as zero (treated as "never walked steady-state" → next pass seeds the anchor).
 
-Cursor save uses a fresh `context.Background()` with a 5s timeout because the steady-state drain exits via passCtx cancellation (the only way an idle subscription ends). Saving with the canceled passCtx would silently drop the cursor and the next pass would re-replay from the same floor.
+Cursor save uses a fresh `context.Background()` with a 5s timeout because a caller-imposed wall-clock cap on the pass (the shell driver's `-runtime`) cancels the drain's context. Saving with the canceled context would silently drop the cursor and the next pass would re-replay from the same floor.
 
 In steady state the start position honors the cursor verbatim — the floor `runNow - maxTTL` is applied only on cold start (`!found`). The drain freezes the cursor at the last pre-skip event so pending matches with `DueTime == TsNs + maxTTL` stay in scope across passes; bumping forward in steady state would orphan exactly those events.
 
