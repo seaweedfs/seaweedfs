@@ -649,9 +649,10 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			glog.Errorf("completeMultipartUpload: failed to get versioning state for bucket %s: %v", *input.Bucket, vErr)
 			return s3err.ErrInternalError
 		}
+		// Full object key, not just entryName, so the right .versions directory is used.
+		normalizedKey := s3_constants.NormalizeObjectKey(*input.Key)
+
 		if versioningState == s3_constants.VersioningEnabled {
-			// Use full object key (not just entryName) to ensure correct .versions directory is checked
-			normalizedKey := strings.TrimPrefix(*input.Key, "/")
 			useInvertedFormat := s3a.getVersionIdFormat(*input.Bucket, normalizedKey)
 			versionId := generateVersionId(useInvertedFormat)
 			versionFileName := s3a.getVersionFileName(versionId)
@@ -820,6 +821,14 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				entry.Attributes.FileSize = uint64(completionState.offset)
 			}); err != nil {
 				glog.Errorf("completeMultipartUpload: failed to create suspended versioning object: %v", err)
+				return s3err.ErrInternalError
+			}
+
+			// A failed finalize leaves the key reading as deleted, so fail rather than
+			// return 200 — a non-ErrNone finalize keeps the upload directory, so the
+			// caller's retry replays.
+			if err := s3a.finalizeSuspendedNullWrite(owner, *input.Bucket, normalizedKey, s3_constants.SeaweedFSUploadId, *input.UploadId); err != nil {
+				glog.Errorf("completeMultipartUpload: failed to retire the null delete marker for %s/%s: %v", *input.Bucket, normalizedKey, err)
 				return s3err.ErrInternalError
 			}
 

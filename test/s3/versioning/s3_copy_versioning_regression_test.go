@@ -250,3 +250,59 @@ func TestSelfCopyWithSuspendedVersioningIsRejected(t *testing.T) {
 		assert.Equal(t, "InvalidRequest", apiErr.ErrorCode())
 	}
 }
+
+// A suspended-versioning CopyObject writes the null version at the regular path, so
+// like PutObject and multipart completion it has to retire the null delete marker a
+// preceding DELETE left in .versions. While the regular-path object owns the null
+// slot the leftover marker is shadowed, but it resurfaces as a phantom delete the
+// moment that null version goes away.
+func TestSuspendedCopyRetiresDeleteMarker(t *testing.T) {
+	client := getS3Client(t)
+	bucketName := getNewBucketName()
+
+	createBucket(t, client, bucketName)
+	defer deleteBucket(t, client, bucketName)
+
+	sourceKey := "suspended-copy-source.txt"
+	objectKey := "suspended-copy-dest.txt"
+
+	enableVersioning(t, client, bucketName)
+	putObject(t, client, bucketName, objectKey, "pre-suspension-content")
+	suspendVersioning(t, client, bucketName)
+
+	putObject(t, client, bucketName, sourceKey, "source-content")
+	putObject(t, client, bucketName, objectKey, "null-version-content")
+	deleteKey(t, client, bucketName, objectKey)
+
+	_, err := client.CopyObject(context.TODO(), &s3.CopyObjectInput{
+		Bucket:     aws.String(bucketName),
+		Key:        aws.String(objectKey),
+		CopySource: aws.String(versioningCopySource(bucketName, sourceKey)),
+	})
+	require.NoError(t, err)
+
+	getResp, err := client.GetObject(context.TODO(), &s3.GetObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err)
+	defer getResp.Body.Close()
+	body, err := io.ReadAll(getResp.Body)
+	require.NoError(t, err)
+	assert.Equal(t, "source-content", string(body))
+
+	// Drop the null version the copy just wrote; a retired marker leaves nothing behind.
+	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+		Bucket:    aws.String(bucketName),
+		Key:       aws.String(objectKey),
+		VersionId: aws.String("null"),
+	})
+	require.NoError(t, err)
+
+	listResp, err := client.ListObjectVersions(context.TODO(), &s3.ListObjectVersionsInput{
+		Bucket: aws.String(bucketName),
+		Prefix: aws.String(objectKey),
+	})
+	require.NoError(t, err)
+	assert.Empty(t, listResp.DeleteMarkers, "the copy should have retired the null delete marker")
+}
