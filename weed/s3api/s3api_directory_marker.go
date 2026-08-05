@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -22,24 +23,40 @@ import (
 // to tell what a directory stands for, and a bucket made of directory markers costs
 // the same to list versioned as unversioned.
 
-// deleteDirectoryMarker removes the key "<dir>/", along with any version history an
-// older build recorded for it - nothing writes one now, and leaving it behind would
-// let a stale delete marker shadow a key that exists.
+// deleteDirectoryMarker removes the key "<dir>/" under the object write lock, so the
+// entry it decides about cannot change under it.
 func (s3a *S3ApiServer) deleteDirectoryMarker(bucket, object string) s3err.ErrorCode {
-	markerDir := s3a.bucketDir(bucket) + "/" + strings.TrimSuffix(strings.TrimPrefix(object, "/"), "/")
+	return s3a.withObjectWriteLock(bucket, object, nil, func() s3err.ErrorCode {
+		return s3a.doDeleteDirectoryMarker(bucket, object)
+	})
+}
 
-	// A directory that holds uploaded data is a file a child write promoted, not a
-	// marker: the data belongs to the key without the trailing slash, which this
-	// request does not name. Deleting it would destroy another key's object.
+func (s3a *S3ApiServer) doDeleteDirectoryMarker(bucket, object string) s3err.ErrorCode {
+	markerDir := s3a.bucketDir(bucket) + "/" + strings.TrimSuffix(strings.TrimPrefix(object, "/"), "/")
 	dir, name := util.FullPath(markerDir).DirAndName()
-	if entry, err := s3a.getEntry(dir, name); err == nil && (len(entry.GetChunks()) > 0 || entry.IsInRemoteOnly()) {
-		glog.V(2).Infof("deleteDirectoryMarker: %s/%s is a promoted file, leaving it alone", bucket, object)
+
+	entry, err := s3a.getEntry(dir, name)
+	switch {
+	case errors.Is(err, filer_pb.ErrNotFound):
+		return s3err.ErrNone // deleting a key that is not there is a success
+	case err != nil:
+		// The entry may be a file a child write promoted to a directory, whose data
+		// belongs to the key without the trailing slash. Deleting without knowing
+		// would destroy it, so fail and leave the retry to the client.
+		glog.Errorf("deleteDirectoryMarker: cannot read %s/%s: %v", bucket, object, err)
+		return s3err.ErrInternalError
+	case len(entry.GetChunks()) > 0 || entry.IsInRemoteOnly():
+		// A promoted file, not a marker: "dir/" does not name its data.
+		glog.V(2).Infof("deleteDirectoryMarker: %s/%s holds uploaded data, leaving it alone", bucket, object)
 		return s3err.ErrNone
 	}
 
+	// Drop a history an older build recorded for this key. Nothing writes one now, and
+	// leaving it behind keeps reporting the key in ListObjectVersions.
 	if _, err := s3a.getEntry(markerDir, s3_constants.VersionsFolder); err == nil {
 		if rmErr := s3a.rm(markerDir, s3_constants.VersionsFolder, true, true); rmErr != nil {
-			glog.Warningf("deleteDirectoryMarker: %s/%s: stale history: %v", bucket, object, rmErr)
+			glog.Errorf("deleteDirectoryMarker: failed to remove stale history of %s/%s: %v", bucket, object, rmErr)
+			return s3err.ErrInternalError
 		}
 	}
 
