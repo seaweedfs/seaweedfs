@@ -39,10 +39,11 @@ func (s3a *S3ApiServer) latestPointerRecompute(bucket, object string, useInverte
 		SizeToKey:  s3_constants.ExtLatestVersionSizeKey,
 		MtimeToKey: s3_constants.ExtLatestVersionMtimeKey,
 		CopyExtended: map[string]string{
-			s3_constants.ExtLatestVersionIdKey:          s3_constants.ExtVersionIdKey,
-			s3_constants.ExtLatestVersionETagKey:        s3_constants.ExtETagKey,
-			s3_constants.ExtLatestVersionOwnerKey:       s3_constants.ExtAmzOwnerKey,
-			s3_constants.ExtLatestVersionIsDeleteMarker: s3_constants.ExtDeleteMarkerKey,
+			s3_constants.ExtLatestVersionIdKey:           s3_constants.ExtVersionIdKey,
+			s3_constants.ExtLatestVersionETagKey:         s3_constants.ExtETagKey,
+			s3_constants.ExtLatestVersionOwnerKey:        s3_constants.ExtAmzOwnerKey,
+			s3_constants.ExtLatestVersionIsDeleteMarker:  s3_constants.ExtDeleteMarkerKey,
+			s3_constants.ExtLatestVersionStorageClassKey: s3_constants.AmzStorageClass,
 		},
 		ExcludeName: excludeName,
 	}

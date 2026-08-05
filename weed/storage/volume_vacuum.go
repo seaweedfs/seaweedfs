@@ -187,36 +187,36 @@ func (v *Volume) CommitCompact() error {
 	v.DataBackend = nil
 	stats.VolumeServerVolumeGauge.WithLabelValues(v.Collection, "volume").Dec()
 
-	var e error
-	if e = v.makeupDiff(v.FileName(".cpd"), v.FileName(".cpx"), v.FileName(".dat"), v.FileName(".idx")); e != nil {
-		glog.V(0).Infof("makeupDiff in CommitCompact volume %d failed %v", v.Id, e)
-		e = os.Remove(v.FileName(".cpd"))
-		if e != nil {
-			return e
+	if compactErr := v.makeupDiff(v.FileName(".cpd"), v.FileName(".cpx"), v.FileName(".dat"), v.FileName(".idx")); compactErr != nil {
+		glog.V(0).Infof("makeupDiff in CommitCompact volume %d failed %v", v.Id, compactErr)
+		if e := os.Remove(v.FileName(".cpd")); e != nil && !os.IsNotExist(e) {
+			glog.V(0).Infof("remove %s: %v", v.FileName(".cpd"), e)
 		}
-		e = os.Remove(v.FileName(".cpx"))
-		if e != nil {
-			return e
+		if e := os.Remove(v.FileName(".cpx")); e != nil && !os.IsNotExist(e) {
+			glog.V(0).Infof("remove %s: %v", v.FileName(".cpx"), e)
 		}
-	} else {
-		// makeupDiff has fsynced the .cpd/.cpx contents. Persist a durable .cpc
-		// commit marker BEFORE renaming so the two renames are atomic across a
-		// crash: a marker on disk means the swap is decided and reconcile rolls
-		// forward; no marker means roll back. Without it, a crash between the
-		// two renames leaves a stale .idx that a later vacuum compacts to empty.
-		if e = v.writeCompactCommitMarker(); e != nil {
-			return e
-		}
-		if e = v.applyCompactSwap(); e != nil {
-			return e
-		}
+		// Report the abandoned compaction rather than a cleanup failure that
+		// reconcile rolls back anyway, and never fall through to the reload.
+		return compactErr
+	}
+
+	// makeupDiff has fsynced the .cpd/.cpx contents. Persist a durable .cpc
+	// commit marker BEFORE renaming so the two renames are atomic across a
+	// crash: a marker on disk means the swap is decided and reconcile rolls
+	// forward; no marker means roll back. Without it, a crash between the
+	// two renames leaves a stale .idx that a later vacuum compacts to empty.
+	if e := v.writeCompactCommitMarker(); e != nil {
+		return e
+	}
+	if e := v.applyCompactSwap(); e != nil {
+		return e
 	}
 
 	//glog.V(3).Infof("Pretending to be vacuuming...")
 	//time.Sleep(20 * time.Second)
 
 	glog.V(3).Infof("Loading volume %d commit file...", v.Id)
-	if e = v.load(true, false, v.needleMapKind, 0, v.Version()); e != nil {
+	if e := v.load(true, false, v.needleMapKind, 0, v.Version()); e != nil {
 		return e
 	}
 	glog.V(3).Infof("Finish committing volume %d", v.Id)
@@ -377,9 +377,13 @@ func (v *Volume) cleanupCompact() error {
 }
 
 // fsyncDir fsyncs a directory so a rename/create/unlink inside it is durable.
-// A failure to open the directory for sync is non-fatal on platforms that do
-// not support it.
+// Windows has no directory fsync, so the .cpc protocol leans on NTFS metadata
+// ordering there. An unopenable directory is tolerated, unlike util.FsyncDir,
+// because the caller has already closed the needle map.
 func fsyncDir(dir string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
 	d, err := os.Open(dir)
 	if err != nil {
 		return nil

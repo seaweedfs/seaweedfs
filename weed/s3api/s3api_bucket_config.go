@@ -420,9 +420,7 @@ func (s3a *S3ApiServer) newBucketConfigFromEntry(bucket string, entry *filer_pb.
 			// Parse ACL once and cache public-read status.
 			config.IsPublicRead = parseAndCachePublicReadStatus(acl)
 		}
-		if owner, exists := entry.Extended[s3_constants.ExtAmzOwnerKey]; exists {
-			config.Owner = string(owner)
-		}
+		config.Owner = bucketOwnerAccountId(s3a.iam, entry)
 		if identityId, exists := entry.Extended[s3_constants.AmzIdentityId]; exists {
 			config.IdentityId = string(identityId)
 		}

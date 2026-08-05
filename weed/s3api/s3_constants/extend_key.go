@@ -14,12 +14,13 @@ const (
 	ExtLatestVersionFileNameKey = "Seaweed-X-Amz-Latest-Version-File-Name"
 	ExtAllowEmptyFolders        = "Seaweed-X-Amz-Allow-Empty-Folders"
 	// Cached list metadata in .versions directory for single-scan efficiency
-	ExtLatestVersionSizeKey        = "Seaweed-X-Amz-Latest-Version-Size"
-	ExtLatestVersionETagKey        = "Seaweed-X-Amz-Latest-Version-ETag"
-	ExtLatestVersionMtimeKey       = "Seaweed-X-Amz-Latest-Version-Mtime"
-	ExtLatestVersionOwnerKey       = "Seaweed-X-Amz-Latest-Version-Owner"
-	ExtLatestVersionIsDeleteMarker = "Seaweed-X-Amz-Latest-Version-Is-Delete-Marker"
-	ExtMultipartObjectKey          = "key"
+	ExtLatestVersionSizeKey         = "Seaweed-X-Amz-Latest-Version-Size"
+	ExtLatestVersionETagKey         = "Seaweed-X-Amz-Latest-Version-ETag"
+	ExtLatestVersionMtimeKey        = "Seaweed-X-Amz-Latest-Version-Mtime"
+	ExtLatestVersionOwnerKey        = "Seaweed-X-Amz-Latest-Version-Owner"
+	ExtLatestVersionIsDeleteMarker  = "Seaweed-X-Amz-Latest-Version-Is-Delete-Marker"
+	ExtLatestVersionStorageClassKey = "Seaweed-X-Amz-Latest-Version-Storage-Class"
+	ExtMultipartObjectKey           = "key"
 	// Wall-clock nanoseconds (int64 as decimal string) captured at the
 	// moment a versioned entry was demoted from current to noncurrent
 	// by a later PUT or delete marker. Read by the s3 lifecycle engine

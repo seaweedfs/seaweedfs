@@ -188,9 +188,10 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build proper Iceberg table metadata using iceberg-go types
-	metadata := newTableMetadata(tableUUID, location, req.Schema, req.PartitionSpec, req.WriteOrder, req.Properties)
-	if metadata == nil {
-		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build table metadata")
+	metadata, err := newTableMetadata(tableUUID, location, req.Schema, req.PartitionSpec, req.WriteOrder, req.Properties)
+	if err != nil {
+		glog.V(1).Infof("Iceberg: CreateTable %s metadata error: %v", req.Name, err)
+		writeManagerError(w, err)
 		return
 	}
 
@@ -245,8 +246,13 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	if existsErr == nil {
 		// Table already registered. Return the existing definition so CTAS/IF NOT
 		// EXISTS flows see a stable response instead of a 409.
-		result := s.buildLoadTableResult(existsResp, bucketName, namespace, tableName)
-		writeJSON(w, http.StatusOK, result)
+		result, buildErr := s.buildLoadTableResult(r, existsResp, bucketName, namespace, tableName)
+		if buildErr != nil {
+			glog.Errorf("Iceberg: CreateTable load existing %s: %v", tableName, buildErr)
+			writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build table metadata")
+			return
+		}
+		writeLoadResult(w, http.StatusOK, result)
 		return
 	}
 	if !isNoSuchTableError(existsErr) {
@@ -269,9 +275,9 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		result := LoadTableResult{
 			MetadataLocation: metadataLocation,
 			Metadata:         metadata,
-			Config:           s.buildFileIOConfig(),
+			Config:           s.buildFileIOConfig(r),
 		}
-		writeJSON(w, http.StatusOK, result)
+		writeLoadResult(w, http.StatusOK, result)
 		return
 	}
 	if err := s.saveMetadataFile(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataBytes); err != nil {
@@ -318,8 +324,13 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusConflict, "AlreadyExistsException", err.Error())
 				return
 			}
-			result := s.buildLoadTableResult(getResp, bucketName, namespace, tableName)
-			writeJSON(w, http.StatusOK, result)
+			result, buildErr := s.buildLoadTableResult(r, getResp, bucketName, namespace, tableName)
+			if buildErr != nil {
+				glog.Errorf("Iceberg: CreateTable load existing %s: %v", tableName, buildErr)
+				writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build table metadata")
+				return
+			}
+			writeLoadResult(w, http.StatusOK, result)
 			return
 		}
 		if strings.Contains(err.Error(), "already exists") {
@@ -337,8 +348,13 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusConflict, "AlreadyExistsException", err.Error())
 				return
 			}
-			result := s.buildLoadTableResult(getResp, bucketName, namespace, tableName)
-			writeJSON(w, http.StatusOK, result)
+			result, buildErr := s.buildLoadTableResult(r, getResp, bucketName, namespace, tableName)
+			if buildErr != nil {
+				glog.Errorf("Iceberg: CreateTable load existing %s: %v", tableName, buildErr)
+				writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build table metadata")
+				return
+			}
+			writeLoadResult(w, http.StatusOK, result)
 			return
 		}
 		glog.V(1).Infof("Iceberg: CreateTable error: %v", err)
@@ -358,9 +374,9 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	result := LoadTableResult{
 		MetadataLocation: finalLocation,
 		Metadata:         metadata,
-		Config:           s.buildFileIOConfig(),
+		Config:           s.buildFileIOConfig(r),
 	}
-	writeJSON(w, http.StatusOK, result)
+	writeLoadResult(w, http.StatusOK, result)
 }
 
 // handleRegisterTable registers an existing metadata.json under a new catalog
@@ -449,8 +465,13 @@ func (s *Server) handleRegisterTable(w http.ResponseWriter, r *http.Request) {
 		MetadataLocation: req.MetadataLocation,
 		Metadata:         &s3tables.TableMetadata{FullMetadata: json.RawMessage(metadataBytes)},
 	}
-	result := s.buildLoadTableResult(getResp, bucketName, namespace, req.Name)
-	writeJSON(w, http.StatusOK, result)
+	result, buildErr := s.buildLoadTableResult(r, getResp, bucketName, namespace, req.Name)
+	if buildErr != nil {
+		glog.Errorf("Iceberg: RegisterTable %s: %v", req.Name, buildErr)
+		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build table metadata")
+		return
+	}
+	writeLoadResult(w, http.StatusOK, result)
 }
 
 // handleLoadTable loads table metadata.
@@ -493,11 +514,16 @@ func (s *Server) handleLoadTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result := s.buildLoadTableResult(getResp, bucketName, namespace, tableName)
-	writeJSON(w, http.StatusOK, result)
+	result, buildErr := s.buildLoadTableResult(r, getResp, bucketName, namespace, tableName)
+	if buildErr != nil {
+		glog.Errorf("Iceberg: LoadTable %s: %v", tableName, buildErr)
+		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build table metadata")
+		return
+	}
+	writeLoadResult(w, http.StatusOK, result)
 }
 
-func (s *Server) buildLoadTableResult(getResp s3tables.GetTableResponse, bucketName string, namespace []string, tableName string) LoadTableResult {
+func (s *Server) buildLoadTableResult(r *http.Request, getResp s3tables.GetTableResponse, bucketName string, namespace []string, tableName string) (LoadTableResult, error) {
 	location := tableLocationFromMetadataLocation(getResp.MetadataLocation)
 	if location == "" {
 		location = fmt.Sprintf("s3://%s/%s", bucketName, path.Join(flattenNamespacePath(namespace), tableName))
@@ -512,27 +538,32 @@ func (s *Server) buildLoadTableResult(getResp s3tables.GetTableResponse, bucketN
 	// Stability is guaranteed by not generating random UUIDs on read
 
 	var metadata table.Metadata
+	var err error
 	if getResp.Metadata != nil && len(getResp.Metadata.FullMetadata) > 0 {
-		var err error
 		metadata, err = table.ParseMetadataBytes(getResp.Metadata.FullMetadata)
 		if err != nil {
 			glog.Warningf("Iceberg: Failed to parse persisted metadata for %s: %v", tableName, err)
 			// Attempt to reconstruct from IcebergMetadata if available, otherwise synthetic
 			// TODO: Extract schema/spec from getResp.Metadata.Iceberg if FullMetadata fails but partial info exists?
 			// For now, fallback to empty metadata
-			metadata = newTableMetadata(tableUUID, location, nil, nil, nil, nil)
+			metadata, err = newTableMetadata(tableUUID, location, nil, nil, nil, nil)
 		}
 	} else {
 		// No full metadata, create synthetic
 		// TODO: If we had stored schema in IcebergMetadata, we would pass it here
-		metadata = newTableMetadata(tableUUID, location, nil, nil, nil, nil)
+		metadata, err = newTableMetadata(tableUUID, location, nil, nil, nil, nil)
+	}
+	// A nil metadata would serialize as "metadata":null under HTTP 200, which no
+	// Iceberg client can parse. Fail the request instead.
+	if err != nil {
+		return LoadTableResult{}, fmt.Errorf("build metadata for %s: %w", tableName, err)
 	}
 
 	return LoadTableResult{
 		MetadataLocation: getResp.MetadataLocation,
 		Metadata:         metadata,
-		Config:           s.buildFileIOConfig(),
-	}
+		Config:           s.buildFileIOConfig(r),
+	}, nil
 }
 
 // buildFileIOConfig returns the FileIO properties to advertise to catalog
@@ -540,13 +571,21 @@ func (s *Server) buildLoadTableResult(getResp s3tables.GetTableResponse, bucketN
 // separately discovering the endpoint. The region defaults to the same
 // value baked into table bucket ARNs so clients like DuckDB that require
 // a region on attach don't need to be told it out-of-band. See issue #9103.
-func (s *Server) buildFileIOConfig() iceberg.Properties {
+func (s *Server) buildFileIOConfig(r *http.Request) iceberg.Properties {
 	config := make(iceberg.Properties)
-	if s.s3Endpoint != "" {
-		config["s3.endpoint"] = s.s3Endpoint
-		config["s3.path-style-access"] = "true"
-		config["s3.region"] = s3tables.DefaultRegion
+	if s.s3Endpoint == "" {
+		return config
 	}
+	// A client asking for vended credentials builds its storage credential out
+	// of whatever comes back here and stops using the one it was configured
+	// with. We vend none, so an endpoint on its own leaves it sending unsigned
+	// requests; say nothing instead and let it keep its own credentials.
+	if wantsVendedCredentials(r) {
+		return config
+	}
+	config["s3.endpoint"] = s.s3Endpoint
+	config["s3.path-style-access"] = "true"
+	config["s3.region"] = s3tables.DefaultRegion
 	return config
 }
 
@@ -780,7 +819,7 @@ func newTableMetadata(
 	partitionSpec *iceberg.PartitionSpec,
 	sortOrder *table.SortOrder,
 	props iceberg.Properties,
-) table.Metadata {
+) (table.Metadata, error) {
 	// Add schema - use provided or create empty schema
 	var s *iceberg.Schema
 	if schema != nil {
@@ -812,11 +851,5 @@ func newTableMetadata(
 	}
 
 	// Create metadata directly using the constructor which ensures spec compliance for V2
-	metadata, err := table.NewMetadataWithUUID(s, pSpec, so, location, props, tableUUID)
-	if err != nil {
-		glog.Errorf("Failed to create metadata: %v", err)
-		return nil
-	}
-
-	return metadata
+	return table.NewMetadataWithUUID(s, pSpec, so, location, props, tableUUID)
 }

@@ -565,7 +565,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			s3a.deleteOrphanedChunks(chunkResult.FileChunks)
 		}
 
-		return "", mapChunkedUploadErrorToS3Error(err), SSEResponseMetadata{}
+		return "", mapChunkedUploadErrorToS3Error(r.Context(), err), SSEResponseMetadata{}
 	}
 
 	// Step 3: Calculate MD5 hash and add SSE metadata to chunks
@@ -1204,11 +1204,27 @@ func filerErrorToS3Error(err error) s3err.ErrorCode {
 // IncompleteBody (400) rather than a 500 a reverse proxy would relay as a confusing
 // 502. Only the source read is tagged, so a volume-server upload fault still maps to
 // InternalError.
-func mapChunkedUploadErrorToS3Error(err error) s3err.ErrorCode {
+//
+// reqCtx is the request context, which separates the two ways a body ends early: a
+// peer that went away, and a body that arrived short while the peer was still there.
+// Both surface as the same read error, so without this they are indistinguishable in
+// logs even though they point at opposite causes — a network path versus a client.
+// The upload itself deliberately runs on a background context, so cancellation of
+// reqCtx races the read error; a missed signal degrades to IncompleteBody as before.
+//
+// This reads cancellation as "the peer is gone", which is what net/http means by it
+// today: nothing on the S3 request path cancels reqCtx for its own reasons. Anything
+// added later that does — a request budget, an auth deadline, shutdown draining —
+// would have to cancel with its own cause and be excluded here, otherwise a body
+// truncated at that instant gets attributed to the peer.
+func mapChunkedUploadErrorToS3Error(reqCtx context.Context, err error) s3err.ErrorCode {
 	switch {
 	case strings.Contains(err.Error(), s3err.ErrMsgPayloadChecksumMismatch):
 		return s3err.ErrInvalidDigest
 	case errors.Is(err, operation.ErrTruncatedBody):
+		if errors.Is(reqCtx.Err(), context.Canceled) {
+			return s3err.ErrClientDisconnected
+		}
 		return s3err.ErrIncompleteBody
 	default:
 		return s3err.ErrInternalError
@@ -1277,39 +1293,9 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 	glog.V(3).Infof("putSuspendedVersioningObject: START bucket=%s, object=%s, normalized=%s",
 		bucket, object, normalizedObject)
 
-	bucketDir := s3a.bucketDir(bucket)
-
-	// Check if there's an existing null version in .versions directory and delete it
-	// This ensures suspended versioning properly overwrites the null version as per S3 spec
-	// Note: We only delete null versions, NOT regular versions (those should be preserved)
-	versionsObjectPath := normalizedObject + s3_constants.VersionsFolder
-	versionsDir := bucketDir + "/" + versionsObjectPath
-	entries, _, err := s3a.list(versionsDir, "", "", false, 1000)
-	if err == nil {
-		// .versions directory exists
-		glog.V(3).Infof("putSuspendedVersioningObject: found %d entries in .versions for %s/%s", len(entries), bucket, object)
-		for _, entry := range entries {
-			if entry.Extended != nil {
-				if versionIdBytes, ok := entry.Extended[s3_constants.ExtVersionIdKey]; ok {
-					versionId := string(versionIdBytes)
-					glog.V(3).Infof("putSuspendedVersioningObject: found version '%s' in .versions", versionId)
-					if versionId == "null" {
-						// Only delete null version - preserve real versioned entries
-						glog.V(3).Infof("putSuspendedVersioningObject: deleting null version from .versions")
-						err := s3a.rm(versionsDir, entry.Name, true, false)
-						if err != nil {
-							glog.Warningf("putSuspendedVersioningObject: failed to delete null version: %v", err)
-						} else {
-							glog.V(3).Infof("putSuspendedVersioningObject: successfully deleted null version")
-						}
-						break
-					}
-				}
-			}
-		}
-	} else {
-		glog.V(3).Infof("putSuspendedVersioningObject: no .versions directory for %s/%s", bucket, object)
-	}
+	// The null version now lives at the regular path, so any null version recorded in
+	// .versions is stale (S3 has the suspended write overwrite it, not accumulate).
+	s3a.removeNullVersionFile(bucket, normalizedObject)
 
 	filePath := s3a.toFilerPath(bucket, normalizedObject)
 
@@ -1395,6 +1381,26 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 	glog.V(2).Infof("putSuspendedVersioningObject: successfully created null version for %s/%s", bucket, object)
 
 	return etag, s3err.ErrNone, sseMetadata
+}
+
+// removeNullVersionFile deletes the "null" version file from an object's .versions
+// directory, leaving real versions alone. Best-effort: a leftover null version is
+// superseded by the object at the regular path on the next read.
+func (s3a *S3ApiServer) removeNullVersionFile(bucket, object string) {
+	versionsDir := s3a.bucketDir(bucket) + "/" + object + s3_constants.VersionsFolder
+	entries, _, err := s3a.list(versionsDir, "", "", false, 1000)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if string(entry.Extended[s3_constants.ExtVersionIdKey]) != "null" {
+			continue
+		}
+		if rmErr := s3a.rm(versionsDir, entry.Name, true, false); rmErr != nil {
+			glog.Warningf("removeNullVersionFile: %s/%s: %v", bucket, object, rmErr)
+		}
+		return
+	}
 }
 
 // updateIsLatestFlagsForSuspendedVersioning sets IsLatest=false on all existing versions/delete markers

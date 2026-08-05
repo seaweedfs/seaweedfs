@@ -155,7 +155,7 @@ func checkStickyBit(dirMode, dirUid, targetUid, callerUid uint32) fuse.Status {
 
 // openFlagsToAccessMask converts open(2) flags to an access permission mask.
 func openFlagsToAccessMask(flags uint32) uint32 {
-	switch flags & uint32(syscall.O_ACCMODE) {
+	switch flags & uint32(o_ACCMODE) {
 	case syscall.O_WRONLY:
 		return fuse.W_OK
 	case syscall.O_RDWR:

@@ -3,121 +3,25 @@
 package command
 
 import (
-	"context"
 	"fmt"
 	"net"
-	"net/http"
 	"os"
 	"os/user"
-	"path"
 	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/mount"
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
 	"github.com/seaweedfs/seaweedfs/weed/mount/unmount"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/mount_pb"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-	"github.com/seaweedfs/seaweedfs/weed/security"
-	"github.com/seaweedfs/seaweedfs/weed/storage/types"
-	"google.golang.org/grpc/reflection"
 
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 )
-
-func runMount(cmd *Command, args []string) bool {
-
-	if *mountOptions.debug {
-		go http.ListenAndServe(fmt.Sprintf(":%d", *mountOptions.debugPort), nil)
-	}
-
-	*mountCpuProfile = util.ResolvePath(*mountCpuProfile)
-	*mountMemProfile = util.ResolvePath(*mountMemProfile)
-	grace.SetupProfiling(*mountCpuProfile, *mountMemProfile)
-	if *mountReadRetryTime < time.Second {
-		*mountReadRetryTime = time.Second
-	}
-	util.RetryWaitTime = *mountReadRetryTime
-
-	umask, umaskErr := strconv.ParseUint(*mountOptions.umaskString, 8, 64)
-	if umaskErr != nil {
-		fmt.Printf("can not parse umask %s", *mountOptions.umaskString)
-		return false
-	}
-
-	if len(args) > 0 {
-		return false
-	}
-
-	return RunMount(&mountOptions, os.FileMode(umask))
-}
-
-func ensureBucketAllowEmptyFolders(ctx context.Context, filerClient filer_pb.FilerClient, mountRoot, bucketRootPath string) error {
-	bucketPath, isBucketRootMount := bucketPathForMountRoot(mountRoot, bucketRootPath)
-	if !isBucketRootMount {
-		return nil
-	}
-
-	entry, _, _, err := filer_pb.GetEntry(ctx, filerClient, util.FullPath(bucketPath))
-	if err != nil {
-		return err
-	}
-	if entry == nil {
-		return fmt.Errorf("bucket %s not found", bucketPath)
-	}
-
-	if entry.Extended == nil {
-		entry.Extended = make(map[string][]byte)
-	}
-	if strings.EqualFold(strings.TrimSpace(string(entry.Extended[s3_constants.ExtAllowEmptyFolders])), "true") {
-		return nil
-	}
-
-	entry.Extended[s3_constants.ExtAllowEmptyFolders] = []byte("true")
-
-	bucketFullPath := util.FullPath(bucketPath)
-	parent, _ := bucketFullPath.DirAndName()
-	if err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
-			Directory: parent,
-			Entry:     entry,
-		})
-	}); err != nil {
-		return err
-	}
-
-	glog.V(3).Infof("RunMount: set bucket %s %s=true", bucketPath, s3_constants.ExtAllowEmptyFolders)
-	return nil
-}
-
-func bucketPathForMountRoot(mountRoot, bucketRootPath string) (string, bool) {
-	cleanPath := path.Clean("/" + strings.TrimPrefix(mountRoot, "/"))
-	cleanBucketRoot := path.Clean("/" + strings.TrimPrefix(bucketRootPath, "/"))
-	if cleanBucketRoot == "/" {
-		return "", false
-	}
-	prefix := cleanBucketRoot + "/"
-	if !strings.HasPrefix(cleanPath, prefix) {
-		return "", false
-	}
-	rest := strings.TrimPrefix(cleanPath, prefix)
-
-	bucketParts := strings.Split(rest, "/")
-	if len(bucketParts) != 1 || bucketParts[0] == "" {
-		return "", false
-	}
-	return cleanBucketRoot + "/" + bucketParts[0], true
-}
 
 func RunMount(option *MountOptions, umask os.FileMode) bool {
 
@@ -128,35 +32,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		return false
 	}
 
-	// try to connect to filer
-	filerAddresses := pb.ServerAddresses(*option.filer).ToAddresses()
-	util.LoadSecurityConfiguration()
-	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
-	var cipher bool
-	var bucketRootPath string
-	var err error
-	for i := 0; i < 10; i++ {
-		err = pb.WithOneOfGrpcFilerClients(false, filerAddresses, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
-			if err != nil {
-				return fmt.Errorf("get filer grpc address %v configuration: %w", filerAddresses, err)
-			}
-			cipher = resp.Cipher
-			bucketRootPath = resp.DirBuckets
-			return nil
-		})
-		if err != nil {
-			glog.V(0).Infof("failed to talk to filer %v: %v", filerAddresses, err)
-			glog.V(0).Infof("wait for %d seconds ...", i+1)
-			time.Sleep(time.Duration(i+1) * time.Second)
-		}
-	}
-	if err != nil {
-		glog.Errorf("failed to talk to filer %v: %v", filerAddresses, err)
+	filerAddresses, grpcDialOption, cipher, bucketRootPath, ok := connectToFiler(option)
+	if !ok {
 		return true
-	}
-	if bucketRootPath == "" {
-		bucketRootPath = "/buckets"
 	}
 
 	filerMountRootPath := *option.filerMountRootPath
@@ -316,88 +194,35 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		fuseMountOptions.EnableSymlinkCaching = true
 	}
 
-	// find mount point
-	mountRoot := filerMountRootPath
-	if mountRoot != "/" && strings.HasSuffix(mountRoot, "/") {
-		mountRoot = mountRoot[0 : len(mountRoot)-1]
-	}
+	mountRoot := resolveMountRoot(filerMountRootPath)
+	cacheDirForRead, cacheDirForWrite := resolveCacheDirs(option)
 
-	cacheDirForRead := util.ResolvePath(*option.cacheDirForRead)
-	cacheDirForWrite := util.ResolvePath(*option.cacheDirForWrite)
-	if cacheDirForWrite == "" {
-		cacheDirForWrite = cacheDirForRead
-	}
-
-	seaweedFileSystem := mount.NewSeaweedFileSystem(&mount.Option{
-		MountDirectory:              dir,
-		FilerAddresses:              filerAddresses,
-		GrpcDialOption:              grpcDialOption,
-		FilerSigningKey:             security.SigningKey(util.GetViper().GetString("jwt.filer_signing.key")),
-		FilerSigningExpiresAfterSec: util.GetViper().GetInt("jwt.filer_signing.expires_after_seconds"),
-		FilerMountRootPath:          mountRoot,
-		Collection:                  *option.collection,
-		Replication:                 *option.replication,
-		TtlSec:                      int32(*option.ttlSec),
-		DiskType:                    types.ToDiskType(*option.diskType),
-		ChunkSizeLimit:              int64(chunkSizeLimitMB) * 1024 * 1024,
-		ConcurrentWriters:           *option.concurrentWriters,
-		ConcurrentReaders:           *option.concurrentReaders,
-		CacheDirForRead:             cacheDirForRead,
-		CacheSizeMBForRead:          *option.cacheSizeMBForRead,
-		CacheDirForWrite:            cacheDirForWrite,
-		WriteBufferSizeMB:           *option.writeBufferSizeMB,
-		CacheMetaTTlSec:             *option.cacheMetaTtlSec,
-		DataCenter:                  *option.dataCenter,
-		Quota:                       int64(*option.collectionQuota) * 1024 * 1024,
-		LogicalDiskUsage:            *option.logicalDiskUsage,
-		MountUid:                    uid,
-		MountGid:                    gid,
-		MountMode:                   mountMode,
-		MountCtime:                  fileInfo.ModTime(),
-		MountMtime:                  time.Now(),
-		Umask:                       umask,
-		VolumeServerAccess:          *mountOptions.volumeServerAccess,
-		Cipher:                      cipher,
-		UidGidMapper:                uidGidMapper,
-		IncludeSystemEntries:        *option.includeSystemEntries,
-		DefaultPermissions:          *option.defaultPermissions,
-		DisableXAttr:                *option.disableXAttr,
-		IsMacOs:                     runtime.GOOS == "darwin",
-		MetadataFlushSeconds:        *option.metadataFlushSeconds,
-		// RDMA acceleration options
-		RdmaEnabled:           *option.rdmaEnabled,
-		RdmaSidecarAddr:       *option.rdmaSidecarAddr,
-		RdmaFallback:          *option.rdmaFallback,
-		RdmaReadOnly:          *option.rdmaReadOnly,
-		RdmaMaxConcurrent:     *option.rdmaMaxConcurrent,
-		RdmaTimeoutMs:         *option.rdmaTimeoutMs,
-		DirIdleEvictSec:       *option.dirIdleEvictSec,
-		EnableDistributedLock: option.distributedLock != nil && *option.distributedLock,
-		WritebackCache:        option.writebackCache != nil && *option.writebackCache,
-		PosixDirNlink:         option.posixDirNlink != nil && *option.posixDirNlink,
-		// Peer chunk sharing
-		PeerEnabled:    option.peerEnabled != nil && *option.peerEnabled,
-		PeerListen:     peerStringOrEmpty(option.peerListen),
-		PeerAdvertise:  peerStringOrEmpty(option.peerAdvertise),
-		PeerDataCenter: peerStringOrEmpty(option.peerDataCenter),
-		PeerRack:       peerStringOrEmpty(option.peerRack),
+	seaweedFileSystem := buildSeaweedFileSystem(option, fileSystemParams{
+		dir:              dir,
+		mountRoot:        mountRoot,
+		filerAddresses:   filerAddresses,
+		grpcDialOption:   grpcDialOption,
+		cipher:           cipher,
+		uidGidMapper:     uidGidMapper,
+		uid:              uid,
+		gid:              gid,
+		mountMode:        mountMode,
+		mountCtime:       fileInfo.ModTime(),
+		umask:            umask,
+		chunkSizeLimitMB: chunkSizeLimitMB,
+		cacheDirForRead:  cacheDirForRead,
+		cacheDirForWrite: cacheDirForWrite,
 	})
 
-	// create mount root
-	mountRootPath := util.FullPath(mountRoot)
-	mountRootParent, mountDir := mountRootPath.DirAndName()
-	if err = filer_pb.Mkdir(context.Background(), seaweedFileSystem, mountRootParent, mountDir, nil); err != nil {
-		fmt.Printf("failed to create dir %s on filer %s: %v\n", mountRoot, filerAddresses, err)
-		return false
-	}
-	if err := ensureBucketAllowEmptyFolders(context.Background(), seaweedFileSystem, mountRoot, bucketRootPath); err != nil {
-		fmt.Printf("failed to set bucket auto-remove-empty-folders policy for %s: %v\n", mountRoot, err)
+	if !createMountRoot(seaweedFileSystem, mountRoot, bucketRootPath, filerAddresses) {
 		return false
 	}
 
 	server, err := fuse.NewServer(seaweedFileSystem, dir, fuseMountOptions)
 	if err != nil {
-		glog.Fatalf("Mount fail: %v", err)
+		// A failed mount is an environment problem (no /dev/fuse, fusermount not
+		// setuid, stale mount point); the goroutine dump Fatalf adds buries it.
+		glog.Exitf("Mount fail: %v", err)
 	}
 	grace.OnInterrupt(func() {
 		if err := unmount.Unmount(dir); err != nil {
@@ -414,10 +239,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		}
 	}
 
-	grpcS := pb.NewGrpcServer()
-	mount_pb.RegisterSeaweedMountServer(grpcS, seaweedFileSystem)
-	reflection.Register(grpcS)
-	go grpcS.Serve(montSocketListener)
+	serveMountGrpc(seaweedFileSystem, montSocketListener)
 
 	err = seaweedFileSystem.StartBackgroundTasks()
 	if err != nil {
@@ -437,11 +259,4 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	seaweedFileSystem.ClearCacheDir()
 
 	return true
-}
-
-func peerStringOrEmpty(p *string) string {
-	if p == nil {
-		return ""
-	}
-	return *p
 }

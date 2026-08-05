@@ -1,11 +1,13 @@
 package filer
 
 import (
+	"bytes"
 	"reflect"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestFilerConf(t *testing.T) {
@@ -49,6 +51,68 @@ func TestFilerConf(t *testing.T) {
 
 }
 
+func TestWormInheritance(t *testing.T) {
+	fc := NewFilerConf()
+	fc.doLoadConf(&filer_pb.FilerConf{
+		Version: FilerConfVersion,
+		Locations: []*filer_pb.FilerConf_PathConf{
+			{LocationPrefix: "/buckets/b/", Worm: proto.Bool(true), Ttl: "7d"},
+			{LocationPrefix: "/buckets/b/quiet/", Collection: "quiet"},
+			{LocationPrefix: "/buckets/b/scratch/", Worm: proto.Bool(false)},
+			{LocationPrefix: "/buckets/b/scratch/keep/", Worm: proto.Bool(true)},
+		},
+	})
+
+	// a rule that says nothing about worm keeps inheriting it, along with the ttl
+	rule := fc.MatchStorageRule("/buckets/b/quiet/x")
+	assert.True(t, rule.GetWorm())
+	assert.Equal(t, "7d", rule.Ttl)
+
+	// an explicit false turns it off, and a deeper rule turns it back on
+	assert.False(t, fc.MatchStorageRule("/buckets/b/scratch/x").GetWorm())
+	assert.True(t, fc.MatchStorageRule("/buckets/b/scratch/keep/x").GetWorm())
+
+	// paths with no rule at all are unaffected
+	assert.False(t, fc.MatchStorageRule("/buckets/other/x").GetWorm())
+}
+
+// TestWormLegacyFalseIsNotAnOverride pins that the explicit "worm": false every
+// version 0 configuration carries does not read as a per-path opt-out.
+func TestWormLegacyFalseIsNotAnOverride(t *testing.T) {
+	const conf = `{
+	  "locations": [
+	    {"locationPrefix": "/buckets/b/", "worm": true},
+	    {"locationPrefix": "/buckets/b/sub/", "collection": "sub", "worm": false}
+	  ]
+	}`
+
+	fc := NewFilerConf()
+	assert.NoError(t, fc.LoadFromBytes([]byte(conf)))
+	assert.True(t, fc.MatchStorageRule("/buckets/b/sub/x").GetWorm())
+
+	// the same file at the current version means what it says
+	fc = NewFilerConf()
+	assert.NoError(t, fc.LoadFromBytes([]byte(`{"version": 1,`+conf[1:])))
+	assert.False(t, fc.MatchStorageRule("/buckets/b/sub/x").GetWorm())
+}
+
+// TestWormSurvivesRoundTrip guards the write side: an explicit false has to be
+// stamped along with a version that says to honor it.
+func TestWormSurvivesRoundTrip(t *testing.T) {
+	fc := NewFilerConf()
+	fc.SetLocationConf(&filer_pb.FilerConf_PathConf{LocationPrefix: "/buckets/b/", Worm: proto.Bool(true)})
+	fc.SetLocationConf(&filer_pb.FilerConf_PathConf{LocationPrefix: "/buckets/b/sub/", Worm: proto.Bool(false)})
+	fc.SetLocationConf(&filer_pb.FilerConf_PathConf{LocationPrefix: "/buckets/b/other/", Ttl: "7d"})
+
+	var buf bytes.Buffer
+	assert.NoError(t, fc.ToText(&buf))
+
+	reloaded := NewFilerConf()
+	assert.NoError(t, reloaded.LoadFromBytes(buf.Bytes()))
+	assert.False(t, reloaded.MatchStorageRule("/buckets/b/sub/x").GetWorm())
+	assert.True(t, reloaded.MatchStorageRule("/buckets/b/other/x").GetWorm())
+}
+
 // TestClonePathConf verifies that ClonePathConf copies all exported fields.
 // Uses reflection to automatically detect new fields added to the protobuf,
 // ensuring the test fails if ClonePathConf is not updated for new fields.
@@ -68,7 +132,7 @@ func TestClonePathConf(t *testing.T) {
 		Rack:                     "rack1",
 		DataNode:                 "node1",
 		DisableChunkDeletion:     true,
-		Worm:                     true,
+		Worm:                     proto.Bool(true),
 		WormGracePeriodSeconds:   3600,
 		WormRetentionTimeSeconds: 86400,
 	}
@@ -119,8 +183,10 @@ func TestClonePathConf(t *testing.T) {
 	// Verify mutation of clone doesn't affect source
 	clone.Collection = "modified"
 	clone.ReadOnly = false
+	*clone.Worm = false
 	assert.Equal(t, "test_collection", src.Collection, "Modifying clone should not affect source Collection")
 	assert.Equal(t, true, src.ReadOnly, "Modifying clone should not affect source ReadOnly")
+	assert.Equal(t, true, src.GetWorm(), "Modifying clone should not affect source Worm")
 }
 
 func TestClonePathConfNil(t *testing.T) {

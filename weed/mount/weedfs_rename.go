@@ -8,7 +8,6 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/seaweedfs/go-fuse/v2/fs"
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -160,7 +159,7 @@ renameat2()
 const (
 	RenameEmptyFlag = 0
 	RenameNoReplace = 1
-	RenameExchange  = fs.RENAME_EXCHANGE
+	RenameExchange  = 2
 	RenameWhiteout  = 3
 )
 

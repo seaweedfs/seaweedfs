@@ -158,12 +158,12 @@ func (s *Server) handleCreateView(w http.ResponseWriter, r *http.Request) {
 	// short-circuits with its stored definition (idempotent CreateView) so we
 	// never overwrite the persisted metadata of an existing view.
 	if existsResp, existsErr := s.getView(r, namespace, req.Name); existsErr == nil {
-		result, buildErr := s.buildViewResponse(existsResp, bucketName, namespace, req.Name)
+		result, buildErr := s.buildViewResponse(r, existsResp, bucketName, namespace, req.Name)
 		if buildErr != nil {
 			writeError(w, http.StatusInternalServerError, "InternalServerError", buildErr.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, result)
+		writeLoadResult(w, http.StatusOK, result)
 		return
 	} else if !isViewNotFound(existsErr) {
 		glog.V(1).Infof("Iceberg: CreateView existence check failed for %s.%s: %v", flattenNamespacePath(namespace), req.Name, existsErr)
@@ -218,10 +218,10 @@ func (s *Server) handleCreateView(w http.ResponseWriter, r *http.Request) {
 	if finalLocation == "" {
 		finalLocation = metadataLocation
 	}
-	writeJSON(w, http.StatusOK, ViewResponse{
+	writeLoadResult(w, http.StatusOK, ViewResponse{
 		MetadataLocation: finalLocation,
 		Metadata:         metadata,
-		Config:           s.buildFileIOConfig(),
+		Config:           s.buildFileIOConfig(r),
 	})
 }
 
@@ -246,12 +246,12 @@ func (s *Server) handleLoadView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := s.buildViewResponse(getResp, getBucketFromPrefix(r), namespace, viewName)
+	result, err := s.buildViewResponse(r, getResp, getBucketFromPrefix(r), namespace, viewName)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	writeLoadResult(w, http.StatusOK, result)
 }
 
 // handleViewExists checks if a view exists.
@@ -340,7 +340,7 @@ func (s *Server) getView(r *http.Request, namespace []string, viewName string) (
 }
 
 // buildViewResponse parses the stored view metadata into a ViewResponse.
-func (s *Server) buildViewResponse(getResp s3tables.GetViewResponse, bucketName string, namespace []string, viewName string) (ViewResponse, error) {
+func (s *Server) buildViewResponse(r *http.Request, getResp s3tables.GetViewResponse, bucketName string, namespace []string, viewName string) (ViewResponse, error) {
 	if getResp.Metadata == nil || len(getResp.Metadata.FullMetadata) == 0 {
 		return ViewResponse{}, fmt.Errorf("view %s has no metadata", viewName)
 	}
@@ -351,7 +351,7 @@ func (s *Server) buildViewResponse(getResp s3tables.GetViewResponse, bucketName 
 	return ViewResponse{
 		MetadataLocation: getResp.MetadataLocation,
 		Metadata:         metadata,
-		Config:           s.buildFileIOConfig(),
+		Config:           s.buildFileIOConfig(r),
 	}, nil
 }
 

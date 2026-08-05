@@ -4814,9 +4814,9 @@ func (m *FilerConf_PathConf) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i--
 		dAtA[i] = 0x78
 	}
-	if m.Worm {
+	if m.Worm != nil {
 		i--
-		if m.Worm {
+		if *m.Worm {
 			dAtA[i] = 1
 		} else {
 			dAtA[i] = 0
@@ -8166,7 +8166,7 @@ func (m *FilerConf_PathConf) SizeVT() (n int) {
 	if m.DisableChunkDeletion {
 		n += 2
 	}
-	if m.Worm {
+	if m.Worm != nil {
 		n += 2
 	}
 	if m.WormGracePeriodSeconds != 0 {
@@ -21715,7 +21715,8 @@ func (m *FilerConf_PathConf) UnmarshalVT(dAtA []byte) error {
 					break
 				}
 			}
-			m.Worm = bool(v != 0)
+			b := bool(v != 0)
+			m.Worm = &b
 		case 15:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field WormGracePeriodSeconds", wireType)

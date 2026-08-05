@@ -125,6 +125,11 @@ type Account struct {
 
 	//Id is used to identify an Account when granting cross-account access(ACLs) to buckets and objects
 	Id string
+
+	// declared marks an account from a top-level accounts list or a predefined
+	// default. An account registered from an identity's inline block is not
+	// declared, and the identity stays authoritative for its metadata.
+	declared bool
 }
 
 // Default account ID for all automated SeaweedFS accounts and fallback
@@ -137,6 +142,7 @@ var (
 		DisplayName:  "admin",
 		EmailAddress: "admin@example.com",
 		Id:           s3_constants.AccountAdminId,
+		declared:     true,
 	}
 
 	// AccountAnonymous is used to represent the account for anonymous access
@@ -144,6 +150,7 @@ var (
 		DisplayName:  "anonymous",
 		EmailAddress: "anonymous@example.com",
 		Id:           s3_constants.AccountAnonymousId,
+		declared:     true,
 	}
 )
 
@@ -158,6 +165,70 @@ func accountForUnscopedIdentity(name string) *Account {
 		Id:          name,
 		DisplayName: name,
 	}
+}
+
+// indexAccountEmail points an email at its account unless a different account
+// already claims it, so an inline block cannot take over a declared account's
+// email.
+func indexAccountEmail(emailAccount map[string]*Account, account *Account) {
+	if account.EmailAddress == "" {
+		return
+	}
+	if claimed, taken := emailAccount[account.EmailAddress]; taken && claimed.Id != account.Id {
+		return
+	}
+	emailAccount[account.EmailAddress] = account
+}
+
+// resolveIdentityAccount returns the account an identity owns resources under,
+// registering it in accounts when it is not already known so the id resolves
+// through GetAccountNameById. Credential stores persist an account inline on the
+// identity and never emit a top-level accounts list, so an id missing from
+// accounts means undeclared, not invalid: falling back to the admin account
+// would give every such identity the same owner id.
+//
+// An undeclared account is only described by the identity carrying it, so its
+// metadata is refreshed from every load — the merge path starts from the live
+// cache, and a user whose email changed would otherwise keep the old one
+// indexed. A declared account outranks the inline block and is left alone.
+func resolveIdentityAccount(ident *iam_pb.Identity, accounts map[string]*Account, emailAccount map[string]*Account) *Account {
+	if ident.Account == nil || ident.Account.Id == "" {
+		synthesized := accountForUnscopedIdentity(ident.Name)
+		if existing, ok := accounts[synthesized.Id]; ok {
+			return existing
+		}
+		accounts[synthesized.Id] = synthesized
+		return synthesized
+	}
+
+	account := &Account{
+		Id:           ident.Account.Id,
+		DisplayName:  ident.Account.DisplayName,
+		EmailAddress: ident.Account.EmailAddress,
+	}
+
+	existing, ok := accounts[account.Id]
+	if ok {
+		if existing.declared {
+			return existing
+		}
+		if existing.DisplayName == account.DisplayName && existing.EmailAddress == account.EmailAddress {
+			// an email this account lost to another one is claimable once freed
+			indexAccountEmail(emailAccount, existing)
+			return existing
+		}
+		glog.V(3).Infof("refreshing account %s from identity %s", account.Id, ident.Name)
+		// drop the email this account itself indexed; another account's claim stands
+		if claimed, indexed := emailAccount[existing.EmailAddress]; indexed && claimed.Id == existing.Id {
+			delete(emailAccount, existing.EmailAddress)
+		}
+	} else {
+		glog.V(3).Infof("registering account %s from identity %s", account.Id, ident.Name)
+	}
+
+	accounts[account.Id] = account
+	indexAccountEmail(emailAccount, account)
+	return account
 }
 
 type Credential struct {
@@ -580,7 +651,7 @@ func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromBytes(content []b
 
 func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromBytes(content []byte, fromStaticFile bool) (*iam_pb.S3ApiConfiguration, error) {
 	s3ApiConfiguration := &iam_pb.S3ApiConfiguration{}
-	if err := filer.ParseS3ConfigurationFromBytes(content, s3ApiConfiguration); err != nil {
+	if err := filer.ParseS3ConfigurationFromBytes(normalizeAdvancedIAMPolicies(content), s3ApiConfiguration); err != nil {
 		glog.Warningf("unmarshal error: %v", err)
 		return nil, fmt.Errorf("unmarshal error: %w", err)
 	}
@@ -639,6 +710,7 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 			Id:           account.Id,
 			DisplayName:  account.DisplayName,
 			EmailAddress: account.EmailAddress,
+			declared:     true,
 		}
 		switch account.Id {
 		case AccountAdmin.Id:
@@ -655,6 +727,7 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 			DisplayName:  AccountAdmin.DisplayName,
 			EmailAddress: AccountAdmin.EmailAddress,
 			Id:           AccountAdmin.Id,
+			declared:     true,
 		}
 		emailAccount[AccountAdmin.EmailAddress] = accounts[AccountAdmin.Id]
 	}
@@ -663,6 +736,7 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 			DisplayName:  AccountAnonymous.DisplayName,
 			EmailAddress: AccountAnonymous.EmailAddress,
 			Id:           AccountAnonymous.Id,
+			declared:     true,
 		}
 		emailAccount[AccountAnonymous.EmailAddress] = accounts[AccountAnonymous.Id]
 	}
@@ -689,30 +763,11 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 			Disabled:     ident.Disabled, // false (default) = enabled, true = disabled
 			PolicyNames:  ident.PolicyNames,
 		}
-		switch {
-		case ident.Name == AccountAnonymous.Id:
+		if ident.Name == AccountAnonymous.Id {
 			t.Account = &AccountAnonymous
 			identityAnonymous = t
-		case ident.Account == nil:
-			// Account-less identities own resources under a distinct id derived
-			// from their name. Reuse an explicitly-configured account with that
-			// id if one exists (preserving its display name/email); otherwise
-			// synthesize one and register it so the id resolves via
-			// GetAccountNameById (ACL grantee validation, owner display).
-			synthesized := accountForUnscopedIdentity(t.Name)
-			if existing, ok := accounts[synthesized.Id]; ok {
-				t.Account = existing
-			} else {
-				t.Account = synthesized
-				accounts[synthesized.Id] = synthesized
-			}
-		default:
-			if account, ok := accounts[ident.Account.Id]; ok {
-				t.Account = account
-			} else {
-				t.Account = &AccountAdmin
-				glog.Warningf("identity %s is associated with a non exist account ID, the association is invalid", ident.Name)
-			}
+		} else {
+			t.Account = resolveIdentityAccount(ident, accounts, emailAccount)
 		}
 
 		for _, action := range ident.Actions {
@@ -881,6 +936,7 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 				Id:           account.Id,
 				DisplayName:  account.DisplayName,
 				EmailAddress: account.EmailAddress,
+				declared:     true,
 			}
 			if account.EmailAddress != "" {
 				emailAccount[account.EmailAddress] = accounts[account.Id]
@@ -894,6 +950,7 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 			DisplayName:  AccountAdmin.DisplayName,
 			EmailAddress: AccountAdmin.EmailAddress,
 			Id:           AccountAdmin.Id,
+			declared:     true,
 		}
 		emailAccount[AccountAdmin.EmailAddress] = accounts[AccountAdmin.Id]
 	}
@@ -902,6 +959,7 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 			DisplayName:  AccountAnonymous.DisplayName,
 			EmailAddress: AccountAnonymous.EmailAddress,
 			Id:           AccountAnonymous.Id,
+			declared:     true,
 		}
 		emailAccount[AccountAnonymous.EmailAddress] = accounts[AccountAnonymous.Id]
 	}
@@ -926,30 +984,11 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 			IsStatic: fromStaticFile,
 		}
 
-		switch {
-		case ident.Name == AccountAnonymous.Id:
+		if ident.Name == AccountAnonymous.Id {
 			t.Account = &AccountAnonymous
 			identityAnonymous = t
-		case ident.Account == nil:
-			// Account-less identities own resources under a distinct id derived
-			// from their name. Reuse an explicitly-configured account with that
-			// id if one exists (preserving its display name/email); otherwise
-			// synthesize one and register it so the id resolves via
-			// GetAccountNameById (ACL grantee validation, owner display).
-			synthesized := accountForUnscopedIdentity(t.Name)
-			if existing, ok := accounts[synthesized.Id]; ok {
-				t.Account = existing
-			} else {
-				t.Account = synthesized
-				accounts[synthesized.Id] = synthesized
-			}
-		default:
-			if account, ok := accounts[ident.Account.Id]; ok {
-				t.Account = account
-			} else {
-				t.Account = &AccountAdmin
-				glog.Warningf("identity %s is associated with a non exist account ID, the association is invalid", ident.Name)
-			}
+		} else {
+			t.Account = resolveIdentityAccount(ident, accounts, emailAccount)
 		}
 
 		for _, action := range ident.Actions {
@@ -1404,6 +1443,16 @@ func (iam *IdentityAccessManagement) GetAccountNameById(canonicalId string) stri
 	return ""
 }
 
+// GetAccountIdByIdentityName resolves an identity name to the account its
+// resources are owned under. Bucket owners recorded outside the S3 API (the
+// admin UI, weed shell) name an identity, not an account.
+func (iam *IdentityAccessManagement) GetAccountIdByIdentityName(name string) string {
+	if identity := iam.lookupByIdentityName(name); identity != nil && identity.Account != nil {
+		return identity.Account.Id
+	}
+	return ""
+}
+
 func (iam *IdentityAccessManagement) GetAccountIdByEmail(email string) string {
 	iam.m.RLock()
 	defer iam.m.RUnlock()
@@ -1467,15 +1516,27 @@ func (iam *IdentityAccessManagement) AuthPostPolicy(f http.HandlerFunc, action A
 	}
 }
 
+// recordIdentityInContext stores the authenticated identity, its name and its
+// principal ARN in the request context. An STS session's name is only an opaque
+// subject, so the ARN is what carries the assumed role and session name to the
+// audit log. A JWT-authenticated identity carries no PrincipalArn of its own,
+// hence the resolution through buildPrincipalARN.
+func recordIdentityInContext(r *http.Request, identity *Identity) context.Context {
+	if identity == nil {
+		return r.Context()
+	}
+	ctx := s3_constants.SetIdentityNameInContext(r.Context(), identity.Name)
+	ctx = s3_constants.SetPrincipalArnInContext(ctx, buildPrincipalARN(identity, r))
+	// Also store the full identity object for handlers that need it (e.g., ListBuckets)
+	// This is especially important for JWT users whose identity is not in the identities list
+	return s3_constants.SetIdentityInContext(ctx, identity)
+}
+
 func (iam *IdentityAccessManagement) handleAuthResult(w http.ResponseWriter, r *http.Request, identity *Identity, errCode s3err.ErrorCode, f http.HandlerFunc) {
 	if errCode == s3err.ErrNone {
 		// Store the authenticated identity in request context (secure, cannot be spoofed)
 		if identity != nil && identity.Name != "" {
-			ctx := s3_constants.SetIdentityNameInContext(r.Context(), identity.Name)
-			// Also store the full identity object for handlers that need it (e.g., ListBuckets)
-			// This is especially important for JWT users whose identity is not in the identities list
-			ctx = s3_constants.SetIdentityInContext(ctx, identity)
-			r = r.WithContext(ctx)
+			r = r.WithContext(recordIdentityInContext(r, identity))
 		}
 		f(w, r)
 		return

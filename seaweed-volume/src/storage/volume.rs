@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::sync::{Condvar, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use tracing::warn;
+use tracing::{info, warn};
 
 #[cfg(test)]
 use crate::storage::idx;
@@ -771,6 +771,23 @@ impl Volume {
         }
 
         if also_load_index {
+            // Recover rows that deletes on a tiered read-only volume overwrote
+            // at the front of .idx. Best effort: a volume that cannot be
+            // repaired is still servable for everything the surviving rows
+            // index.
+            match self.repair_idx_head_tombstones() {
+                Ok(0) => {}
+                Ok(restored) => info!(
+                    volume_id = self.id.0,
+                    restored, "recovered overwritten .idx rows from .dat"
+                ),
+                Err(e) => warn!(
+                    volume_id = self.id.0,
+                    error = %e,
+                    "recover overwritten .idx rows"
+                ),
+            }
+
             self.load_index()?;
 
             // Match Go: CheckVolumeDataIntegrity after loading index (volume_loading.go L154-159)
@@ -990,7 +1007,11 @@ impl Volume {
         Ok(())
     }
 
-    fn read_exact_at_backend(&self, buf: &mut [u8], offset: u64) -> Result<(), VolumeError> {
+    pub(crate) fn read_exact_at_backend(
+        &self,
+        buf: &mut [u8],
+        offset: u64,
+    ) -> Result<(), VolumeError> {
         if let Some(dat_file) = self.dat_file.as_ref() {
             #[cfg(unix)]
             {
@@ -2718,6 +2739,29 @@ impl Volume {
             return Err(VolumeError::ReadOnly);
         }
 
+        // size indexes the needle and places the v3 append timestamp, so a caller using
+        // the payload-only DataSize corrupts both, silently until the needle is read back.
+        if needle_blob.len() < NEEDLE_HEADER_SIZE {
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "needle {} blob of {} bytes is shorter than a needle header",
+                    needle_id.0,
+                    needle_blob.len()
+                ),
+            )));
+        }
+        let (_, _, header_size) = Needle::parse_header(needle_blob);
+        if header_size != size {
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "needle {} size {} does not match its blob header size {}",
+                    needle_id.0, size.0, header_size.0
+                ),
+            )));
+        }
+
         // Dedup check: if the same needle already exists with matching content, skip the write.
         // Matches Go's WriteNeedleBlob which reads existing needle and compares cookie+checksum+data.
         if let Some(nm) = &self.nm {
@@ -3583,7 +3627,7 @@ fn get_append_at_ns(last: u64) -> u64 {
 /// durable, propagating a sync failure so the commit path can abort rather than
 /// proceed with an undurable rename or marker. A path with no openable parent is
 /// tolerated; directory fsync is unsupported on Windows, so it is a no-op there
-/// (matching the Go fsyncDir helper, which ignores that error).
+/// (matching the Go fsyncDir helper, which skips it too).
 pub(crate) fn fsync_dir(path: &str) -> io::Result<()> {
     #[cfg(windows)]
     {
@@ -4422,6 +4466,39 @@ mod tests {
         };
         let err = v.write_needle(&mut n2, true).unwrap_err();
         assert!(matches!(err, VolumeError::CookieMismatch(_)));
+    }
+
+    // A size disagreeing with the blob's own header indexes the needle at the wrong
+    // length and, on v3, stamps the append timestamp into the middle of the needle.
+    #[test]
+    fn test_write_needle_blob_rejects_size_mismatch() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let mut n = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(0x12345678),
+            data: b"the merged payload".to_vec(),
+            data_size: 18,
+            ..Needle::default()
+        };
+        n.checksum = CRC::new(&n.data);
+        let (offset, _, _) = v.write_needle(&mut n, true).unwrap();
+        let blob = v.read_needle_blob(offset as i64, n.size).unwrap();
+
+        let dat_size_before = v.dat_file_size().unwrap();
+
+        // Size(n.data_size) is what append reports, and what a caller following the
+        // payload-size convention would send.
+        let err = v
+            .write_needle_blob_and_index(NeedleId(2), &blob, Size(n.data_size as i32))
+            .unwrap_err();
+        assert!(matches!(err, VolumeError::Io(_)), "got {err:?}");
+        assert_eq!(v.dat_file_size().unwrap(), dat_size_before);
+
+        v.write_needle_blob_and_index(NeedleId(2), &blob, n.size)
+            .unwrap();
     }
 
     #[test]

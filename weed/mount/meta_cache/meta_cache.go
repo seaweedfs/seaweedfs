@@ -795,6 +795,10 @@ type EntryInvalidation struct {
 	// Signatures from the event. The filer that logged it appends its own, so
 	// this identifies the clock domain TsNs belongs to.
 	Signatures []int32
+	// WasDirectory records what used to be at a vacated path. Entry is nil
+	// once the path is empty, so this is the only thing left saying whether a
+	// directory or a file went away.
+	WasDirectory bool
 }
 
 type metadataResponseSideEffects struct {
@@ -1250,7 +1254,7 @@ func collectEntryInvalidations(resp *filer_pb.SubscribeMetadataResponse) []Entry
 		}
 		if message.OldEntry.Name != message.NewEntry.Name || resp.Directory != newDir {
 			newKey := util.NewFullPath(newDir, message.NewEntry.Name)
-			invalidations = append(invalidations, EntryInvalidation{Path: oldKey, TsNs: resp.TsNs, Signatures: signatures, RenamedTo: newKey})
+			invalidations = append(invalidations, EntryInvalidation{Path: oldKey, TsNs: resp.TsNs, Signatures: signatures, RenamedTo: newKey, WasDirectory: message.OldEntry.IsDirectory})
 			invalidations = append(invalidations, EntryInvalidation{Path: newKey, Entry: message.NewEntry, TsNs: resp.TsNs, Signatures: signatures})
 		} else {
 			invalidations = append(invalidations, EntryInvalidation{Path: oldKey, Entry: message.NewEntry, TsNs: resp.TsNs, Signatures: signatures})
@@ -1269,7 +1273,7 @@ func collectEntryInvalidations(resp *filer_pb.SubscribeMetadataResponse) []Entry
 
 	if filer_pb.IsDelete(resp) && message.OldEntry != nil {
 		oldKey := util.NewFullPath(resp.Directory, message.OldEntry.Name)
-		invalidations = append(invalidations, EntryInvalidation{Path: oldKey, TsNs: resp.TsNs, Deleted: true, Signatures: signatures})
+		invalidations = append(invalidations, EntryInvalidation{Path: oldKey, TsNs: resp.TsNs, Deleted: true, Signatures: signatures, WasDirectory: message.OldEntry.IsDirectory})
 	}
 
 	return invalidations

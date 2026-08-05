@@ -1,6 +1,7 @@
 package iceberg
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"testing"
 )
@@ -22,8 +23,18 @@ func TestGetBucketFromPrefix_WarehouseQueryFallback(t *testing.T) {
 			want: "another",
 		},
 		{
-			name: "malformed warehouse value falls through to default",
+			name: "bare bucket name is taken as the table bucket",
 			url:  "/v1/namespaces?warehouse=not-a-url",
+			want: "not-a-url",
+		},
+		{
+			name: "table bucket ARN routes to its bucket",
+			url:  "/v1/namespaces?warehouse=arn%3Aaws%3As3tables%3Aus-east-1%3Aadmin%3Abucket%2Fseaweed-iceberg",
+			want: "seaweed-iceberg",
+		},
+		{
+			name: "unusable warehouse value falls through to default",
+			url:  "/v1/namespaces?warehouse=file%3A%2F%2F%2Ftmp%2Fwh",
 			want: "warehouse",
 		},
 		{
@@ -44,9 +55,13 @@ func TestGetBucketFromPrefix_WarehouseQueryFallback(t *testing.T) {
 }
 
 func TestBuildFileIOConfig(t *testing.T) {
+	loadTable := func() *http.Request {
+		return httptest.NewRequest(http.MethodGet, "/v1/namespaces/ns/tables/t", nil)
+	}
+
 	t.Run("no endpoint configured yields empty config", func(t *testing.T) {
 		s := &Server{}
-		got := s.buildFileIOConfig()
+		got := s.buildFileIOConfig(loadTable())
 		if len(got) != 0 {
 			t.Fatalf("buildFileIOConfig() = %v, want empty", got)
 		}
@@ -54,7 +69,7 @@ func TestBuildFileIOConfig(t *testing.T) {
 
 	t.Run("endpoint is advertised with path-style-access and region", func(t *testing.T) {
 		s := &Server{s3Endpoint: "http://seaweed.example:8333"}
-		got := s.buildFileIOConfig()
+		got := s.buildFileIOConfig(loadTable())
 		if got["s3.endpoint"] != "http://seaweed.example:8333" {
 			t.Fatalf("s3.endpoint = %q, want %q", got["s3.endpoint"], "http://seaweed.example:8333")
 		}

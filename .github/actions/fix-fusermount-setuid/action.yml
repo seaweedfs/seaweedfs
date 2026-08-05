@@ -1,0 +1,66 @@
+name: Fix fusermount3 setuid
+description: >
+  Make sure the fusermount3 an unprivileged mount will find can actually mount.
+  Some runner images carry a second, source-built fusermount3 in /usr/local/bin
+  that shadows the distro one in PATH; it is neither setuid nor root-owned, so
+  every mount fails with "mount failed: Operation not permitted". Both the Go
+  mount and sw-fuse resolve the helper through PATH.
+  Run it after the step that apt-installs fuse3.
+
+runs:
+  using: composite
+  steps:
+    - name: Point PATH at a fusermount3 that can mount
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        # setuid only grants root when root owns the file, and exec follows
+        # symlinks, so judge the target.
+        can_mount() {
+          [ -u "$1" ] && [ "$(stat -Lc %u "$1")" = 0 ]
+        }
+
+        bin=$(command -v fusermount3 || true)
+        if [ -z "$bin" ]; then
+          echo "no fusermount3 in PATH" >&2
+          exit 1
+        fi
+        if can_mount "$bin"; then
+          ls -l "$bin"
+          exit 0
+        fi
+        echo "$bin cannot mount unprivileged:"
+        ls -l "$bin"
+
+        # The distro fusermount3 is setuid root and is the one meant to be used.
+        # Reach it through a symlink earlier in PATH: exec resolves the link, so
+        # the target keeps its setuid bit, and nothing on the image is modified.
+        for distro in /usr/bin/fusermount3 /bin/fusermount3; do
+          if [ "$distro" != "$bin" ] && can_mount "$distro"; then
+            mkdir -p "$RUNNER_TEMP/fuse-bin"
+            ln -sf "$distro" "$RUNNER_TEMP/fuse-bin/fusermount3"
+            echo "$RUNNER_TEMP/fuse-bin" >> "$GITHUB_PATH"
+            echo "using $distro instead"
+            ls -l "$distro"
+            exit 0
+          fi
+        done
+
+        # No usable distro binary, so setting the bit is the only way out - but
+        # the target came from PATH: do that only for a root-owned system binary,
+        # never for anything else that happens to sit there.
+        case "$bin" in
+          /bin/*|/sbin/*|/usr/bin/*|/usr/sbin/*|/usr/local/bin/*|/usr/local/sbin/*) ;;
+          *) echo "refusing to setuid $bin: outside the system bin paths" >&2; exit 1 ;;
+        esac
+        if [ -L "$bin" ] || [ ! -f "$bin" ] || [ ! -x "$bin" ]; then
+          echo "refusing to setuid $bin: not a regular executable file" >&2
+          exit 1
+        fi
+        if [ "$(stat -c %u "$bin")" != 0 ] || [ "$(stat -c %g "$bin")" != 0 ]; then
+          echo "refusing to setuid $bin: not owned by root:root" >&2
+          exit 1
+        fi
+        sudo chmod u+s "$bin"
+        ls -l "$bin"

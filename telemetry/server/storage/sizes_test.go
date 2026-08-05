@@ -8,15 +8,14 @@ import (
 	"github.com/seaweedfs/seaweedfs/telemetry/proto"
 )
 
-// seedHistory gives a cluster one sample per listed day offset (0 is today).
-func seedHistory(s *PrometheusStorage, id string, disk uint64, dayOffsets ...int) {
+// seedSamples gives a cluster one sample per listed day offset (0 is today).
+// The sample's Ts is filled in per day offset.
+func seedSamples(s *PrometheusStorage, id string, sample HistorySample, dayOffsets ...int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, offset := range dayOffsets {
-		s.histories[id] = append(s.histories[id], HistorySample{
-			Ts:             time.Now().AddDate(0, 0, offset).Unix(),
-			TotalDiskBytes: disk,
-		})
+		sample.Ts = time.Now().AddDate(0, 0, offset).Unix()
+		s.histories[id] = append(s.histories[id], sample)
 	}
 }
 
@@ -24,12 +23,15 @@ func TestClusterSizeSeries(t *testing.T) {
 	s := newPrometheusStorage(prometheus.NewRegistry())
 
 	// Reported every day of the window.
-	seedHistory(s, "daily", 300, -9, -8, -7, -6, -5, -4, -3, -2, -1, 0)
+	seedSamples(s, "daily", HistorySample{TotalDiskBytes: 300, VolumeServerCount: 3},
+		-9, -8, -7, -6, -5, -4, -3, -2, -1, 0)
 	// Reported two days ago and not since: still active, so its size is held
 	// to the right edge instead of dropping out of the stack.
-	seedHistory(s, "lagging", 200, -2)
+	seedSamples(s, "lagging", HistorySample{TotalDiskBytes: 200, VolumeServerCount: 2}, -3, -2)
 	// Stopped reporting past the active window: its own days only.
-	seedHistory(s, "gone", 900, -9, -8)
+	seedSamples(s, "gone", HistorySample{TotalDiskBytes: 900, VolumeServerCount: 9}, -9, -8)
+	// One day of history only: unconfirmed, so it stays out of the stack.
+	seedSamples(s, "oneshot", HistorySample{TotalDiskBytes: 400, VolumeServerCount: 4}, -1)
 
 	series := s.GetClusterSizeSeries(10, 0)
 	if len(series.Dates) != 10 {
@@ -39,23 +41,40 @@ func TestClusterSizeSeries(t *testing.T) {
 		t.Fatalf("cluster_count = %d, want 3", series.ClusterCount)
 	}
 
-	byId := map[string][]uint64{}
+	byId := map[string]ClusterSeries{}
 	for _, c := range series.Clusters {
-		byId[c.ClusterId] = c.Disk
+		byId[c.ClusterId] = c
 	}
-	if got := byId["daily"]; !equal(got, []uint64{300, 300, 300, 300, 300, 300, 300, 300, 300, 300}) {
+	if got := byId["daily"].Disk; !equal(got, []uint64{300, 300, 300, 300, 300, 300, 300, 300, 300, 300}) {
 		t.Errorf("daily = %v, want 300 every day", got)
 	}
-	if got := byId["lagging"]; !equal(got, []uint64{0, 0, 0, 0, 0, 0, 0, 200, 200, 200}) {
+	if got := byId["lagging"].Disk; !equal(got, []uint64{0, 0, 0, 0, 0, 0, 200, 200, 200, 200}) {
 		t.Errorf("lagging = %v, want its size carried to the right edge", got)
 	}
-	if got := byId["gone"]; !equal(got, []uint64{900, 900, 0, 0, 0, 0, 0, 0, 0, 0}) {
+	if got := byId["gone"].Disk; !equal(got, []uint64{900, 900, 0, 0, 0, 0, 0, 0, 0, 0}) {
 		t.Errorf("gone = %v, want no capacity after its last report", got)
 	}
+	if _, ok := byId["oneshot"]; ok {
+		t.Errorf("unconfirmed cluster in the stack: %+v", byId["oneshot"])
+	}
 
-	// The total is the last day's stack height: daily + lagging, not gone.
+	// Volume servers ride the same axis and the same hold-forward rule.
+	if got := byId["daily"].Servers; !equal(got, []uint64{3, 3, 3, 3, 3, 3, 3, 3, 3, 3}) {
+		t.Errorf("daily servers = %v, want 3 every day", got)
+	}
+	if got := byId["lagging"].Servers; !equal(got, []uint64{0, 0, 0, 0, 0, 0, 2, 2, 2, 2}) {
+		t.Errorf("lagging servers = %v, want carried to the right edge", got)
+	}
+	if got := byId["gone"].Servers; !equal(got, []uint64{9, 9, 0, 0, 0, 0, 0, 0, 0, 0}) {
+		t.Errorf("gone servers = %v, want none after its last report", got)
+	}
+
+	// The totals are the last day's stack height: daily + lagging, not gone.
 	if series.TotalDisk != 500 {
 		t.Errorf("total_disk = %d, want 500", series.TotalDisk)
+	}
+	if series.TotalServers != 5 {
+		t.Errorf("total_servers = %d, want 5", series.TotalServers)
 	}
 	// Largest on the last day comes first so the stack reads top-down.
 	if series.Clusters[0].ClusterId != "daily" {
@@ -70,11 +89,15 @@ func TestClusterSizeSeries(t *testing.T) {
 	if series.Other == nil || series.Other.Count != 2 {
 		t.Fatalf("other = %+v, want 2 clusters", series.Other)
 	}
-	if !equal(series.Other.Disk, []uint64{900, 900, 0, 0, 0, 0, 0, 200, 200, 200}) {
+	if !equal(series.Other.Disk, []uint64{900, 900, 0, 0, 0, 0, 200, 200, 200, 200}) {
 		t.Errorf("other = %v, want lagging+gone summed per day", series.Other.Disk)
 	}
-	if series.ClusterCount != 3 || series.TotalDisk != 500 {
-		t.Errorf("limit changed totals: count=%d disk=%d, want 3/500", series.ClusterCount, series.TotalDisk)
+	if !equal(series.Other.Servers, []uint64{9, 9, 0, 0, 0, 0, 2, 2, 2, 2}) {
+		t.Errorf("other servers = %v, want lagging+gone summed per day", series.Other.Servers)
+	}
+	if series.ClusterCount != 3 || series.TotalDisk != 500 || series.TotalServers != 5 {
+		t.Errorf("limit changed totals: count=%d disk=%d servers=%d, want 3/500/5",
+			series.ClusterCount, series.TotalDisk, series.TotalServers)
 	}
 }
 
@@ -84,28 +107,38 @@ func TestClusterSizeSeriesUsesLatestDailySample(t *testing.T) {
 	s := newPrometheusStorage(prometheus.NewRegistry())
 
 	data := &proto.TelemetryData{
-		TopologyId:     "aaaaaaaa-0000-0000-0000-000000000001",
-		Version:        "4.40",
-		Os:             "linux/amd64",
-		TotalDiskBytes: 100,
+		TopologyId:        "aaaaaaaa-0000-0000-0000-000000000001",
+		Version:           "4.40",
+		Os:                "linux/amd64",
+		TotalDiskBytes:    100,
+		VolumeServerCount: 4,
 	}
 	if err := s.StoreTelemetry(data); err != nil {
 		t.Fatal(err)
 	}
 	data.TotalDiskBytes = 700
+	data.VolumeServerCount = 6
 	if err := s.StoreTelemetry(data); err != nil {
 		t.Fatal(err)
 	}
 
+	// Nothing was reported before today, so the axis is today alone rather
+	// than the full 3 days padded out with zeros.
 	series := s.GetClusterSizeSeries(3, 0)
 	if len(series.Clusters) != 1 {
 		t.Fatalf("clusters = %+v, want 1", series.Clusters)
 	}
-	if got := series.Clusters[0].Disk; !equal(got, []uint64{0, 0, 700}) {
+	if today := time.Now().UTC().Format("2006-01-02"); len(series.Dates) != 1 || series.Dates[0] != today {
+		t.Errorf("dates = %v, want %s only", series.Dates, today)
+	}
+	if got := series.Clusters[0].Disk; !equal(got, []uint64{700}) {
 		t.Errorf("disk = %v, want today's latest sample only", got)
 	}
-	if series.TotalDisk != 700 {
-		t.Errorf("total_disk = %d, want 700", series.TotalDisk)
+	if got := series.Clusters[0].Servers; !equal(got, []uint64{6}) {
+		t.Errorf("servers = %v, want today's latest sample only", got)
+	}
+	if series.TotalDisk != 700 || series.TotalServers != 6 {
+		t.Errorf("totals = %d disk / %d servers, want 700/6", series.TotalDisk, series.TotalServers)
 	}
 }
 

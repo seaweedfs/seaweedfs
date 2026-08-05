@@ -234,6 +234,7 @@ catalog = load_catalog(
     **{
         "type": "rest",
         "uri": "http://localhost:` + fmt.Sprintf("%d", data.IcebergPort) + `",
+        "warehouse": "s3://my-table-bucket/",
     }
 )
 

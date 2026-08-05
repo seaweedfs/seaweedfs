@@ -8,7 +8,7 @@ A privacy-respecting telemetry system for SeaweedFS that collects cluster-level 
 - **Prometheus Integration**: Native Prometheus metrics for monitoring and alerting
 - **Grafana Dashboards**: Pre-built dashboards for data visualization
 - **Protocol Buffers**: Efficient binary data transmission for optimal performance
-- **Opt-in Only**: Disabled by default, requires explicit configuration
+- **Opt-out**: On by default, turned off with a single flag
 - **Docker Compose**: Complete monitoring stack deployment
 - **Automatic Cleanup**: Configurable data retention policies
 
@@ -51,7 +51,7 @@ message TelemetryData {
 - **No Personal Data**: No hostnames, IP addresses, or user information
 - **In-Memory IDs**: Cluster IDs are generated in-memory and change on restart
 - **Aggregated Data**: Only cluster-level statistics, no individual file/user data
-- **Opt-in Only**: Telemetry is disabled by default
+- **Opt-out Anytime**: `-telemetry=false` on the master stops all reporting
 - **Transparent**: Open source implementation, clear data collection policy
 
 ## Collected Data
@@ -86,14 +86,15 @@ go run . -port=8080 -dashboard=true
 ### 2. Configure SeaweedFS
 
 ```bash
-# Enable telemetry in SeaweedFS master (uses default telemetry.seaweedfs.com)
-weed master -telemetry=true
+# Reporting to telemetry.seaweedfs.com is on by default
+weed master
 
-# Or in server mode
-weed server -telemetry=true
+# Send to your own telemetry server instead
+weed master -telemetry.url=http://localhost:8080/api/collect
 
-# Or specify custom telemetry server
-weed master -telemetry=true -telemetry.url=http://localhost:8080/api/collect
+# Turn reporting off
+weed master -telemetry=false
+weed server -master.telemetry=false
 ```
 
 ### 3. Access Dashboards
@@ -107,12 +108,14 @@ weed master -telemetry=true -telemetry.url=http://localhost:8080/api/collect
 ### SeaweedFS Master/Server
 
 ```bash
-# Enable telemetry
--telemetry=true
+# Disable telemetry (enabled by default)
+-telemetry=false
 
 # Set custom telemetry server URL (optional, defaults to telemetry.seaweedfs.com)
 -telemetry.url=http://your-telemetry-server:8080/api/collect
 ```
+
+In `weed server` and `weed mini` the flags are prefixed: `-master.telemetry=false` and `-master.telemetry.url=...`.
 
 ### Telemetry Server
 
@@ -178,7 +181,8 @@ GET /api/metrics?days=30
 # Get one cluster's daily usage history (disk bytes, volumes, volume servers)
 GET /api/history?cluster_id=<uuid>&days=90
 
-# Get per-cluster disk usage over time, largest first, the rest summed as "other"
+# Get per-cluster disk usage and volume servers over time, largest first,
+# the rest summed as "other"
 GET /api/cluster-sizes?days=30&limit=20
 ```
 

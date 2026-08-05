@@ -365,6 +365,47 @@ helm install seaweedfs-worker-vacuum seaweedfs/seaweedfs -f values-worker-vacuum
 helm install seaweedfs-worker-balance seaweedfs/seaweedfs -f values-worker-balance.yaml
 ```
 
+## Network Policies
+
+In a namespace with a default-deny policy the install hangs: the components cannot resolve each other, and the post-install bucket hook waits on the master and filer until it gives up. `networkPolicy.enabled` renders one `NetworkPolicy` per component, selecting its pods by the standard `app.kubernetes.io/{name,instance,component}` labels and admitting traffic from the other pods of the release on the ports that component listens on.
+
+```bash
+helm install seaweedfs seaweedfs/seaweedfs --set networkPolicy.enabled=true
+```
+
+That alone leaves outbound traffic untouched, which is enough when the namespace's default-deny only restricts ingress. If it lists `Egress` in its `policyTypes` too - the usual baseline - the components still cannot resolve DNS, and you need the second opt-in below as well.
+
+Egress is separate because the chart knows where its own components live but not where your filer store, notification sink or remote tier does, and because in a namespace with no default-deny at all, adding egress rules would narrow the components from "may reach anything" to "may reach these peers":
+
+```yaml
+networkPolicy:
+  enabled: true
+  egress:
+    enabled: true
+    kubeApiServer:
+      # the endpoint behind the kubernetes service, not its ClusterIP
+      cidrs: ["172.18.0.2/32"]
+    extraEgress:
+      - to:
+          - podSelector:
+              matchLabels:
+                app.kubernetes.io/name: postgresql
+        ports:
+          - protocol: TCP
+            port: 5432
+```
+
+`kubeApiServer.cidrs` is only demanded when something in the release actually needs the API server, which is the COSI sidecar and, on an upgrade that grows a volume PVC, the resize hook. No seaweedfs component itself speaks to it.
+
+Anything reaching the release from outside - an ingress controller, a Prometheus in another namespace - goes into `networkPolicy.extraIngress`, or into `networkPolicy.components.<component>.extraIngress` for a single component. See the `networkPolicy` block in `values.yaml` for the full set.
+
+Two things worth knowing before you turn this on:
+
+- **Monitoring stops.** The metrics ports are admitted from release pods like every other port, so with `global.seaweedfs.monitoring.enabled` the ServiceMonitors keep scraping targets a Prometheus in another namespace can no longer reach. Nothing reports it; add the scraper's namespace to `extraIngress`.
+- **The resize hook's policy is a Helm hook.** Its Job runs before the release manifest is applied, so the policy has to be a `pre-install` hook too. Helm does not garbage-collect hook resources, so on an upgrade that grows a volume PVC the policy is created and then left behind on uninstall - delete `<release>-seaweedfs-volume-resize-hook` by hand if it bothers you.
+
+The DNS selectors default to CoreDNS as kubeadm, kind and the managed offerings from AWS, Google and Azure install it. On OpenShift, override `egress.dnsNamespaceSelector` and `egress.dnsPodSelector` to match `openshift-dns`; see the comment in `values.yaml`.
+
 ## OpenShift Support
 
 SeaweedFS can be deployed on OpenShift or any cluster enforcing the Kubernetes "restricted" Pod Security Standard. By default, OpenShift blocks containers that run as root or use `hostPath` volumes.

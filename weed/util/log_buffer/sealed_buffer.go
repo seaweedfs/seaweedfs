@@ -13,6 +13,8 @@ type MemBuffer struct {
 	stopTime    time.Time
 	startOffset int64 // First offset in this buffer
 	offset      int64 // Last offset in this buffer (endOffset)
+	// max pre-bump entry timestamp; stamped by the sealer after SealBuffer
+	maxOriginalTsNs int64
 
 	// snapshot is a GC-owned copy of buf[:size] shared by all readers of this
 	// sealed window, so N subscribers reading the same window cost one copy
@@ -62,6 +64,7 @@ func (sbs *SealedBuffers) SealBuffer(startTime, stopTime time.Time, buf []byte, 
 		sbs.buffers[i].startOffset = sbs.buffers[i+1].startOffset
 		sbs.buffers[i].offset = sbs.buffers[i+1].offset
 		sbs.buffers[i].snapshot = sbs.buffers[i+1].snapshot // snapshot follows its window
+		sbs.buffers[i].maxOriginalTsNs = sbs.buffers[i+1].maxOriginalTsNs
 	}
 	sbs.buffers[size-1].buf = buf
 	sbs.buffers[size-1].size = pos
@@ -70,6 +73,7 @@ func (sbs *SealedBuffers) SealBuffer(startTime, stopTime time.Time, buf []byte, 
 	sbs.buffers[size-1].startOffset = startOffset
 	sbs.buffers[size-1].offset = endOffset
 	sbs.buffers[size-1].snapshot = nil
+	sbs.buffers[size-1].maxOriginalTsNs = 0
 	return oldBuf
 }
 

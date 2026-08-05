@@ -678,7 +678,13 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 			// listFilerEntries always calls doListFilerEntries with inclusiveStartFrom=false
 			// (S3 marker semantics are exclusive), but keep the guard explicit to preserve
 			// behavior if inclusive callers are introduced in the future.
-			if !inclusiveStartFrom && marker != "" && entry.Name == marker {
+			// A versioned object lives in a "<key>.versions" directory, so the marker also
+			// has to be matched against the object name that directory stands for.
+			markerName := entry.Name
+			if entry.IsDirectory {
+				markerName = strings.TrimSuffix(markerName, s3_constants.VersionsFolder)
+			}
+			if !inclusiveStartFrom && marker != "" && (entry.Name == marker || markerName == marker) {
 				continue
 			}
 
@@ -711,6 +717,11 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 				// Process .versions directories immediately to create logical versioned object entries
 				// These directories are never traversed (we continue here), so each is only encountered once
 				if strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
+					if entry.Name == s3_constants.VersionsFolder {
+						// The history of the key "<dir>/", not of a child. The parent
+						// listing decides that key when it reaches the directory entry.
+						continue
+					}
 					// Extract object name from .versions directory name
 					baseObjectName := strings.TrimSuffix(entry.Name, s3_constants.VersionsFolder)
 					// Construct full object path relative to bucket

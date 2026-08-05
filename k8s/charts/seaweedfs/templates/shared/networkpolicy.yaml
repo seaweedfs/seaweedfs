@@ -1,0 +1,261 @@
+{{- include "seaweedfs.compat" . -}}
+{{- if .Values.networkPolicy.enabled }}
+{{- $np := .Values.networkPolicy }}
+{{- $egressCfg := $np.egress | default dict }}
+{{- $overrides := $np.components | default dict }}
+
+{{- /* One entry per rendered workload, keyed by its app.kubernetes.io/component
+       label. "ports" is everything the workload listens on, taken from the same
+       values the containerPorts are taken from, so a changed port cannot drift
+       out of the policy. "apiserver" marks the workloads that talk to the
+       Kubernetes API. "name" overrides the object name where the component
+       label already reads as a full name. */}}
+{{- $targets := list }}
+
+{{- /* allInOne.enabled does not turn the individual components off - their
+       templates only look at their own enabled flag - so the all-in-one pod is
+       an addition here, not an alternative. */}}
+{{- if .Values.allInOne.enabled }}
+{{-   $ports := list .Values.master.port .Values.master.grpcPort .Values.volume.port .Values.volume.grpcPort .Values.filer.port .Values.filer.grpcPort }}
+{{-   if .Values.allInOne.metricsPort }}
+{{-     $ports = append $ports .Values.allInOne.metricsPort }}
+{{-   end }}
+{{-   if .Values.allInOne.s3.enabled }}
+{{-     $ports = append $ports (.Values.allInOne.s3.port | default .Values.s3.port) }}
+{{-     $https := .Values.allInOne.s3.httpsPort | default .Values.s3.httpsPort }}
+{{-     if and $https (gt (int $https) 0) }}
+{{-       $ports = append $ports $https }}
+{{-     end }}
+{{-   end }}
+{{-   if .Values.allInOne.sftp.enabled }}
+{{-     $ports = append $ports (.Values.allInOne.sftp.port | default .Values.sftp.port) }}
+{{-   end }}
+{{-   $targets = append $targets (dict "component" "seaweedfs-all-in-one" "name" "all-in-one" "ports" $ports) }}
+{{- end }}
+{{- if .Values.master.enabled }}
+{{-   $ports := list .Values.master.port .Values.master.grpcPort }}
+{{-   if .Values.master.metricsPort }}
+{{-     $ports = append $ports .Values.master.metricsPort }}
+{{-   end }}
+{{-   $targets = append $targets (dict "component" "master" "ports" $ports) }}
+{{- end }}
+{{- /* Every volume group carries its own component label and its own ports. */}}
+{{- $volumes := deepCopy .Values.volumes | mergeOverwrite (dict "" .Values.volume) }}
+{{- range $vname, $volume := $volumes }}
+{{-   $volumeName := trimSuffix "-" (printf "volume-%s" $vname) }}
+{{-   $volume := mergeOverwrite (deepCopy $.Values.volume) (dict "enabled" true) $volume }}
+{{-   if $volume.enabled }}
+{{-     $ports := list $volume.port $volume.grpcPort }}
+{{-     if $volume.metricsPort }}
+{{-       $ports = append $ports $volume.metricsPort }}
+{{-     end }}
+{{-     $targets = append $targets (dict "component" $volumeName "ports" $ports) }}
+{{-   end }}
+{{- end }}
+{{- if .Values.filer.enabled }}
+{{-   $ports := list .Values.filer.port .Values.filer.grpcPort }}
+{{-   if .Values.filer.metricsPort }}
+{{-     $ports = append $ports .Values.filer.metricsPort }}
+{{-   end }}
+{{-   if .Values.filer.s3.enabled }}
+{{-     $ports = append $ports .Values.filer.s3.port }}
+{{-     if and .Values.filer.s3.httpsPort (gt (int .Values.filer.s3.httpsPort) 0) }}
+{{-       $ports = append $ports .Values.filer.s3.httpsPort }}
+{{-     end }}
+{{-   end }}
+{{-   $targets = append $targets (dict "component" "filer" "ports" $ports) }}
+{{- end }}
+{{- if .Values.s3.enabled }}
+{{-   $ports := list .Values.s3.port }}
+{{-   if and .Values.s3.httpsPort (gt (int .Values.s3.httpsPort) 0) }}
+{{-     $ports = append $ports .Values.s3.httpsPort }}
+{{-   end }}
+{{-   if .Values.s3.icebergPort }}
+{{-     $ports = append $ports .Values.s3.icebergPort }}
+{{-   end }}
+{{-   if .Values.s3.metricsPort }}
+{{-     $ports = append $ports .Values.s3.metricsPort }}
+{{-   end }}
+{{-   $targets = append $targets (dict "component" "s3" "ports" $ports) }}
+{{- end }}
+{{- if .Values.sftp.enabled }}
+{{-   $ports := list .Values.sftp.port }}
+{{-   if .Values.sftp.metricsPort }}
+{{-     $ports = append $ports .Values.sftp.metricsPort }}
+{{-   end }}
+{{-   $targets = append $targets (dict "component" "sftp" "ports" $ports) }}
+{{- end }}
+{{- /* No seaweedfs binary speaks to the Kubernetes API - the repository has no
+       client-go dependency - so admin gets no apiserver rule. The pod-RW
+       ClusterRole under global.seaweedfs.createClusterRole is a leftover from a
+       migration and is not exercised by any component. */}}
+{{- if .Values.admin.enabled }}
+{{-   $targets = append $targets (dict "component" "admin" "ports" (list .Values.admin.port .Values.admin.grpcPort)) }}
+{{- end }}
+{{- if .Values.worker.enabled }}
+{{-   $ports := list }}
+{{-   if .Values.worker.metricsPort }}
+{{-     $ports = append $ports .Values.worker.metricsPort }}
+{{-   end }}
+{{-   $targets = append $targets (dict "component" "worker" "ports" $ports) }}
+{{- end }}
+
+{{- if .Values.cosi.enabled }}
+{{- /* The provisioner sidecar watches the COSI CRs, so it needs the API
+       server; nothing needs to reach the driver itself. */}}
+{{-   $targets = append $targets (dict "component" "objectstorage-provisioner" "ports" (list) "apiserver" true) }}
+{{- end }}
+
+{{- /* The hook Jobs. Nothing connects to either, but under a default-deny
+       namespace they need egress or they hang: the bucket hook waits on the
+       master and filer, the resize hook shells out to kubectl.
+
+       The bucket hook is post-install, and Helm applies the release manifest
+       before post-install hooks run, so a plain policy is already in place by
+       then. The resize hook is pre-install weight 0, which runs before the
+       manifest is applied at all, so its policy has to be a pre-install hook
+       itself, at a weight below the Job's. */}}
+{{- if include "seaweedfs.bucketHookEnabled" . }}
+{{-   $targets = append $targets (dict "component" "bucket-hook" "ports" (list)) }}
+{{- end }}
+{{- /* Same cluster lookup the Job is gated on, so the policy appears on exactly
+       the upgrades that grow a PVC and never on the ones that do not. Helm does
+       not garbage-collect hook resources, so a policy rendered unconditionally
+       would be left in the namespace by every install that uninstalls again -
+       and would make egress.kubeApiServer.cidrs mandatory for every release,
+       for a Job most of them never run. */}}
+{{- if include "seaweedfs.volumeResizeHookCommands" . | trim }}
+{{-   $targets = append $targets (dict "component" "volume-resize-hook" "ports" (list) "apiserver" true "hook" "pre-install,pre-upgrade" "hookWeight" "-10") }}
+{{- end }}
+
+{{- /* A key under networkPolicy.components that names no component would be
+       read as "these rules are applied" and silently do nothing. Check against
+       every component the chart can produce rather than the ones enabled here,
+       so one values file can still carry overrides for a component this release
+       leaves off. */}}
+{{- $known := list "master" "filer" "s3" "sftp" "admin" "worker" "volume" "bucket-hook" "volume-resize-hook" "objectstorage-provisioner" "seaweedfs-all-in-one" }}
+{{- range $vname, $_ := (.Values.volumes | default dict) }}
+{{-   $known = append $known (trimSuffix "-" (printf "volume-%s" $vname)) }}
+{{- end }}
+{{- range $name, $_ := $overrides }}
+{{-   if not (has $name $known) }}
+{{-     fail (printf "networkPolicy.components: %q is not a component of this chart, so its rules would never be applied. Known components: %s." $name (join ", " (sortAlpha $known))) }}
+{{-   end }}
+{{- end }}
+
+{{- range $target := $targets }}
+{{- $component := $target.component }}
+{{- $override := get $overrides $component | default dict }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "seaweedfs.componentName" (list $ ($target.name | default $component)) }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ include "seaweedfs.name" $ | quote }}
+    helm.sh/chart: {{ $.Chart.Name }}-{{ $.Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/managed-by: {{ $.Release.Service | quote }}
+    app.kubernetes.io/instance: {{ $.Release.Name | quote }}
+    app.kubernetes.io/component: {{ $component | quote }}
+{{- if $target.hook }}
+  annotations:
+    {{- /* Only before-hook-creation: the policy has to outlive the Job it
+           covers, so it must not be deleted when the Job succeeds. That does
+           leave it behind on uninstall, the usual trade-off for Helm hook
+           resources. */}}
+    "helm.sh/hook": {{ $target.hook }}
+    "helm.sh/hook-weight": {{ $target.hookWeight | quote }}
+    "helm.sh/hook-delete-policy": before-hook-creation
+{{- end }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "seaweedfs.name" $ | quote }}
+      app.kubernetes.io/instance: {{ $.Release.Name | quote }}
+      app.kubernetes.io/component: {{ $component | quote }}
+  policyTypes:
+    - Ingress
+{{- if $egressCfg.enabled }}
+    - Egress
+{{- end }}
+  ingress:
+{{- $extraIngress := concat ($np.extraIngress | default list) ($override.extraIngress | default list) }}
+{{- if and (not $target.ports) (not $extraIngress) }}
+    []
+{{- end }}
+{{- if $target.ports }}
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "seaweedfs.name" $ | quote }}
+              app.kubernetes.io/instance: {{ $.Release.Name | quote }}
+      ports:
+{{- range $port := $target.ports }}
+        - protocol: TCP
+          port: {{ $port }}
+{{- end }}
+{{- end }}
+{{- with $extraIngress }}
+{{- toYaml . | nindent 4 }}
+{{- end }}
+{{- if $egressCfg.enabled }}
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "seaweedfs.name" $ | quote }}
+              app.kubernetes.io/instance: {{ $.Release.Name | quote }}
+{{- if $egressCfg.allowDNS }}
+{{- /* Emit only the selectors that are set. An empty one has to be left out
+       rather than rendered as null: a missing podSelector means every pod in
+       the namespace, and a missing namespaceSelector means this namespace
+       instead of the one DNS runs in. */}}
+{{- if not (or $egressCfg.dnsNamespaceSelector $egressCfg.dnsPodSelector) }}
+{{- fail "networkPolicy: egress.allowDNS is on but both egress.dnsNamespaceSelector and egress.dnsPodSelector are empty, which would open port 53 to every pod in the release namespace. Set at least one of them, or turn allowDNS off and name the resolver in egress.extraEgress." }}
+{{- end }}
+    - to:
+{{- if and $egressCfg.dnsNamespaceSelector $egressCfg.dnsPodSelector }}
+        - namespaceSelector:
+            {{- toYaml $egressCfg.dnsNamespaceSelector | nindent 12 }}
+          podSelector:
+            {{- toYaml $egressCfg.dnsPodSelector | nindent 12 }}
+{{- else if $egressCfg.dnsNamespaceSelector }}
+        - namespaceSelector:
+            {{- toYaml $egressCfg.dnsNamespaceSelector | nindent 12 }}
+{{- else }}
+        - podSelector:
+            {{- toYaml $egressCfg.dnsPodSelector | nindent 12 }}
+{{- end }}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+{{- end }}
+{{- if and $target.apiserver ($egressCfg.kubeApiServer).enabled }}
+{{- if not $egressCfg.kubeApiServer.cidrs }}
+{{- fail (printf "networkPolicy: %s needs the Kubernetes API server, but networkPolicy.egress.kubeApiServer.cidrs is empty. Set it to your API server address(es), or disable networkPolicy.egress.kubeApiServer and allow it through networkPolicy.egress.extraEgress." $component) }}
+{{- end }}
+{{- /* An empty port list is not "no ports" in a NetworkPolicy, it is every
+       port, so refuse it rather than quietly opening the CIDR up. */}}
+{{- if not $egressCfg.kubeApiServer.ports }}
+{{- fail "networkPolicy: egress.kubeApiServer.ports is empty, which allows every port on the API server CIDR(s) rather than none. Set it (the default is [443, 6443]), or turn egress.kubeApiServer off and describe the access in egress.extraEgress." }}
+{{- end }}
+{{- range $cidr := $egressCfg.kubeApiServer.cidrs }}
+    - to:
+        - ipBlock:
+            cidr: {{ $cidr }}
+      ports:
+{{- range $port := $egressCfg.kubeApiServer.ports }}
+        - protocol: TCP
+          port: {{ $port }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- with concat ($egressCfg.extraEgress | default list) ($override.extraEgress | default list) }}
+{{- toYaml . | nindent 4 }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

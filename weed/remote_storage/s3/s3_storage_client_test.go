@@ -2,13 +2,16 @@ package s3
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
 
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	awss3 "github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
@@ -69,6 +72,125 @@ func TestS3RemoteStorageClientImplementsInterface(t *testing.T) {
 func TestS3ErrRemoteObjectNotFoundIsAccessible(t *testing.T) {
 	require.Error(t, remote_storage.ErrRemoteObjectNotFound)
 	require.Equal(t, "remote object not found", remote_storage.ErrRemoteObjectNotFound.Error())
+}
+
+// removeDirectoryMock serves canned listing pages and records the delete batches.
+type removeDirectoryMock struct {
+	s3iface.S3API
+	pages        []*awss3.ListObjectsV2Output
+	listInputs   []*awss3.ListObjectsV2Input
+	deleteInputs []*awss3.DeleteObjectsInput
+	deleteResp   *awss3.DeleteObjectsOutput
+	deleteErr    error
+}
+
+func (m *removeDirectoryMock) ListObjectsV2Pages(input *awss3.ListObjectsV2Input, fn func(*awss3.ListObjectsV2Output, bool) bool) error {
+	m.listInputs = append(m.listInputs, input)
+	for i, page := range m.pages {
+		if !fn(page, i == len(m.pages)-1) {
+			return nil
+		}
+	}
+	return nil
+}
+
+func (m *removeDirectoryMock) DeleteObjects(input *awss3.DeleteObjectsInput) (*awss3.DeleteObjectsOutput, error) {
+	m.deleteInputs = append(m.deleteInputs, input)
+	if m.deleteErr != nil {
+		return nil, m.deleteErr
+	}
+	if m.deleteResp != nil {
+		return m.deleteResp, nil
+	}
+	return &awss3.DeleteObjectsOutput{}, nil
+}
+
+func listPage(keys ...string) *awss3.ListObjectsV2Output {
+	page := &awss3.ListObjectsV2Output{}
+	for _, key := range keys {
+		page.Contents = append(page.Contents, &awss3.Object{Key: aws.String(key)})
+	}
+	return page
+}
+
+func deletedKeys(input *awss3.DeleteObjectsInput) (keys []string) {
+	for _, object := range input.Delete.Objects {
+		keys = append(keys, aws.StringValue(object.Key))
+	}
+	return
+}
+
+func TestS3RemoveDirectoryDeletesEveryListedObject(t *testing.T) {
+	mock := &removeDirectoryMock{
+		pages: []*awss3.ListObjectsV2Output{
+			listPage("testdir/a.bin", "testdir/sub/b.bin"),
+			listPage("testdir/z.bin"),
+		},
+	}
+	client := &s3RemoteStorageClient{conf: &remote_pb.RemoteConf{Name: "test"}, conn: mock}
+	loc := &remote_pb.RemoteStorageLocation{Name: "test", Bucket: "bucket", Path: "/testdir"}
+
+	require.NoError(t, client.RemoveDirectory(loc))
+
+	require.Len(t, mock.listInputs, 1)
+	// without the trailing slash the listing would also match /testdir2
+	require.Equal(t, "testdir/", aws.StringValue(mock.listInputs[0].Prefix))
+	require.Len(t, mock.deleteInputs, 2)
+	require.Equal(t, []string{"testdir/a.bin", "testdir/sub/b.bin"}, deletedKeys(mock.deleteInputs[0]))
+	require.Equal(t, []string{"testdir/z.bin"}, deletedKeys(mock.deleteInputs[1]))
+}
+
+func TestS3RemoveDirectoryEmptyListingSendsNoDeletes(t *testing.T) {
+	mock := &removeDirectoryMock{pages: []*awss3.ListObjectsV2Output{listPage()}}
+	client := &s3RemoteStorageClient{conf: &remote_pb.RemoteConf{Name: "test"}, conn: mock}
+	loc := &remote_pb.RemoteStorageLocation{Name: "test", Bucket: "bucket", Path: "/testdir"}
+
+	require.NoError(t, client.RemoveDirectory(loc))
+	require.Empty(t, mock.deleteInputs)
+}
+
+func TestS3RemoveDirectoryRefusesBucketRoot(t *testing.T) {
+	mock := &removeDirectoryMock{pages: []*awss3.ListObjectsV2Output{listPage("a.bin")}}
+	client := &s3RemoteStorageClient{conf: &remote_pb.RemoteConf{Name: "test"}, conn: mock}
+	loc := &remote_pb.RemoteStorageLocation{Name: "test", Bucket: "bucket", Path: "/"}
+
+	require.NoError(t, client.RemoveDirectory(loc))
+	require.Empty(t, mock.listInputs)
+	require.Empty(t, mock.deleteInputs)
+}
+
+func TestS3RemoveDirectoryReturnsBatchError(t *testing.T) {
+	mock := &removeDirectoryMock{
+		pages:     []*awss3.ListObjectsV2Output{listPage("testdir/a.bin")},
+		deleteErr: fmt.Errorf("access denied"),
+	}
+	client := &s3RemoteStorageClient{conf: &remote_pb.RemoteConf{Name: "test"}, conn: mock}
+	loc := &remote_pb.RemoteStorageLocation{Name: "test", Bucket: "bucket", Path: "/testdir"}
+
+	require.ErrorContains(t, client.RemoveDirectory(loc), "access denied")
+}
+
+func TestS3RemoveDirectoryReturnsPerKeyError(t *testing.T) {
+	mock := &removeDirectoryMock{
+		pages: []*awss3.ListObjectsV2Output{listPage("testdir/a.bin", "testdir/b.bin")},
+		deleteResp: &awss3.DeleteObjectsOutput{
+			Errors: []*awss3.Error{{
+				Key:     aws.String("testdir/a.bin"),
+				Code:    aws.String("InternalError"),
+				Message: aws.String("try again"),
+			}, {
+				Key:     aws.String("testdir/b.bin"),
+				Code:    aws.String("InternalError"),
+				Message: aws.String("try again"),
+			}},
+		},
+	}
+	client := &s3RemoteStorageClient{conf: &remote_pb.RemoteConf{Name: "test"}, conn: mock}
+	loc := &remote_pb.RemoteStorageLocation{Name: "test", Bucket: "bucket", Path: "/testdir"}
+
+	err := client.RemoveDirectory(loc)
+	require.ErrorContains(t, err, "2 keys failed")
+	require.ErrorContains(t, err, "testdir/a.bin")
 }
 
 // captureRoundTripper records the PUT request that the s3manager uploader
@@ -134,6 +256,73 @@ func TestS3WriteFilePassesMimeAsContentType(t *testing.T) {
 
 	require.NotNil(t, rt.uploadReq, "uploader should have issued a PUT")
 	require.Equal(t, "text/html", rt.uploadContentType(), "Content-Type should match entry.Attributes.Mime")
+}
+
+// recordingRoundTripper records every request and answers all of them with a 200.
+type recordingRoundTripper struct {
+	requests []*http.Request
+}
+
+func (c *recordingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	c.requests = append(c.requests, req.Clone(req.Context()))
+	if req.Body != nil {
+		_, _ = io.Copy(io.Discard, req.Body)
+		_ = req.Body.Close()
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader("")),
+		Header:     http.Header{},
+		Request:    req,
+	}, nil
+}
+
+func newRecordingS3Client(t *testing.T, supportTagging bool) (*s3RemoteStorageClient, *recordingRoundTripper) {
+	t.Helper()
+	rt := &recordingRoundTripper{}
+	conf := &remote_pb.RemoteConf{
+		Name:             "test",
+		S3Region:         "us-east-1",
+		S3Endpoint:       "https://example.invalid",
+		S3ForcePathStyle: true,
+		S3AccessKey:      "test-key",
+		S3SecretKey:      "test-secret",
+		S3SupportTagging: supportTagging,
+	}
+	rs, err := MakeWithHTTPClient(conf, &http.Client{Transport: rt})
+	require.NoError(t, err)
+	return rs.(*s3RemoteStorageClient), rt
+}
+
+func TestS3UpdateFileMetadataSkipsTaggingWhenUnsupported(t *testing.T) {
+	client, rt := newRecordingS3Client(t, false)
+	loc := &remote_pb.RemoteStorageLocation{Name: "test", Bucket: "bucket", Path: "/dir/file.bin"}
+	plain := &filer_pb.Entry{}
+	tagged := &filer_pb.Entry{Extended: map[string][]byte{"k1": []byte("v1")}}
+
+	require.NoError(t, client.UpdateFileMetadata(loc, plain, tagged))
+	require.Empty(t, rt.requests, "adding attributes must not send PutObjectTagging")
+
+	require.NoError(t, client.UpdateFileMetadata(loc, tagged, plain))
+	require.Empty(t, rt.requests, "removing attributes must not send DeleteObjectTagging")
+}
+
+func TestS3UpdateFileMetadataSendsTaggingWhenSupported(t *testing.T) {
+	client, rt := newRecordingS3Client(t, true)
+	loc := &remote_pb.RemoteStorageLocation{Name: "test", Bucket: "bucket", Path: "/dir/file.bin"}
+	plain := &filer_pb.Entry{}
+	tagged := &filer_pb.Entry{Extended: map[string][]byte{"k1": []byte("v1")}}
+
+	require.NoError(t, client.UpdateFileMetadata(loc, plain, tagged))
+	require.Len(t, rt.requests, 1)
+	require.Equal(t, http.MethodPut, rt.requests[0].Method)
+	require.Contains(t, rt.requests[0].URL.RawQuery, "tagging")
+
+	rt.requests = nil
+	require.NoError(t, client.UpdateFileMetadata(loc, tagged, plain))
+	require.Len(t, rt.requests, 1)
+	require.Equal(t, http.MethodDelete, rt.requests[0].Method)
+	require.Contains(t, rt.requests[0].URL.RawQuery, "tagging")
 }
 
 func TestS3WriteFileOmitsContentTypeWhenMimeMissing(t *testing.T) {

@@ -160,6 +160,9 @@ const (
 
 	// Truncated request body (fewer bytes than Content-Length)
 	ErrIncompleteBody
+
+	// Peer went away before the request body was fully received
+	ErrClientDisconnected
 )
 
 // Error message constants for checksum validation
@@ -316,6 +319,13 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Code:           "IncompleteBody",
 		Description:    "You did not provide the number of bytes specified by the Content-Length HTTP header.",
 		HTTPStatusCode: http.StatusBadRequest,
+	},
+	// 499 has no RFC; it is nginx's code for a client that went away, and is what
+	// log pipelines already recognise for this case.
+	ErrClientDisconnected: {
+		Code:           "ClientDisconnected",
+		Description:    "The client disconnected before the request body was fully received.",
+		HTTPStatusCode: 499,
 	},
 
 	ErrInvalidPart: {

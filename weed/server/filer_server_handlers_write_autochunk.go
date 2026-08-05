@@ -177,7 +177,7 @@ func (fs *FilerServer) checkPermissions(ctx context.Context, r *http.Request, fi
 
 func (fs *FilerServer) wormEnforcedForEntry(ctx context.Context, fullPath string) (bool, error) {
 	rule := fs.filer.FilerConf.MatchStorageRule(fullPath)
-	if !rule.Worm {
+	if !rule.GetWorm() {
 		return false, nil
 	}
 

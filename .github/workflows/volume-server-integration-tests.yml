@@ -29,6 +29,8 @@ permissions:
 
 env:
   TEST_TIMEOUT: '30m'
+  # Keep in step with the length of matrix.shard below.
+  SHARD_COUNT: 3
 
 jobs:
   volume-server-integration-tests:
@@ -57,28 +59,26 @@ jobs:
           chmod +x weed
           ./weed version
 
+      # Dealing the listed tests out one by one keeps the shards even. Bucketing
+      # them by first letter did not: names cluster, so ^Test[I-S] drew 50 of
+      # the 114 grpc tests and ran nearly twice as long as the other two shards.
+      - name: Select this shard's tests
+        env:
+          TEST_TYPE: ${{ matrix.test-type }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          tests=$(go test ./test/volume_server/"$TEST_TYPE"/... -list '.*' | grep '^Test' | sort -u)
+          # An empty list would make -run match nothing and the shard pass vacuously.
+          [ -n "$tests" ] || { echo "listed no tests in test/volume_server/$TEST_TYPE"; exit 1; }
+          selected=$(echo "$tests" | awk -v n="$SHARD_COUNT" -v i="$SHARD" 'NR % n == i - 1')
+          echo "shard $SHARD of $SHARD_COUNT runs $(echo "$selected" | wc -l) of $(echo "$tests" | wc -l) tests"
+          echo "TEST_PATTERN=^($(echo "$selected" | paste -sd'|' -))\$" >> "$GITHUB_ENV"
+
       - name: Run volume server integration tests
         env:
           WEED_BINARY: ${{ github.workspace }}/weed/weed
         run: |
-          if [ "${{ matrix.test-type }}" == "grpc" ]; then
-            if [ "${{ matrix.shard }}" == "1" ]; then
-              TEST_PATTERN="^Test[A-H]"
-            elif [ "${{ matrix.shard }}" == "2" ]; then
-              TEST_PATTERN="^Test[I-S]"
-            else
-              TEST_PATTERN="^Test[T-Z]"
-            fi
-          else
-            if [ "${{ matrix.shard }}" == "1" ]; then
-              TEST_PATTERN="^Test[A-G]"
-            elif [ "${{ matrix.shard }}" == "2" ]; then
-              TEST_PATTERN="^Test[H-R]"
-            else
-              TEST_PATTERN="^Test[S-Z]"
-            fi
-          fi
-          echo "Running volume server integration tests for ${{ matrix.test-type }} (Shard ${{ matrix.shard }}, pattern: ${TEST_PATTERN})..."
+          echo "Running volume server integration tests for ${{ matrix.test-type }} (Shard ${{ matrix.shard }} of ${SHARD_COUNT})..."
           go test -v -count=1 -timeout=${{ env.TEST_TIMEOUT }} ./test/volume_server/${{ matrix.test-type }}/... -run "${TEST_PATTERN}"
 
       - name: Collect logs on failure
@@ -99,23 +99,6 @@ jobs:
       - name: Test summary
         if: always()
         run: |
-          if [ "${{ matrix.test-type }}" == "grpc" ]; then
-            if [ "${{ matrix.shard }}" == "1" ]; then
-              TEST_PATTERN="^Test[A-H]"
-            elif [ "${{ matrix.shard }}" == "2" ]; then
-              TEST_PATTERN="^Test[I-S]"
-            else
-              TEST_PATTERN="^Test[T-Z]"
-            fi
-          else
-            if [ "${{ matrix.shard }}" == "1" ]; then
-              TEST_PATTERN="^Test[A-G]"
-            elif [ "${{ matrix.shard }}" == "2" ]; then
-              TEST_PATTERN="^Test[H-R]"
-            else
-              TEST_PATTERN="^Test[S-Z]"
-            fi
-          fi
           echo "## Volume Server Integration Test Summary (${{ matrix.test-type }} - Shard ${{ matrix.shard }})" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Suite: test/volume_server/${{ matrix.test-type }} (Pattern: ${TEST_PATTERN})" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Command: go test -v -count=1 -timeout=${{ env.TEST_TIMEOUT }} ./test/volume_server/${{ matrix.test-type }}/... -run \"${TEST_PATTERN}\"" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Suite: test/volume_server/${{ matrix.test-type }} (shard ${{ matrix.shard }} of ${SHARD_COUNT}, see 'Select this shard's tests' for the split)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Command: go test -v -count=1 -timeout=${{ env.TEST_TIMEOUT }} ./test/volume_server/${{ matrix.test-type }}/... -run \"\${TEST_PATTERN}\"" >> "$GITHUB_STEP_SUMMARY"

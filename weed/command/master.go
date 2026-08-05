@@ -106,7 +106,7 @@ func init() {
 	m.raftHashicorp = cmdMaster.Flag.Bool("raftHashicorp", false, "use hashicorp raft")
 	m.raftBootstrap = cmdMaster.Flag.Bool("raftBootstrap", false, "Whether to bootstrap the Raft cluster")
 	m.telemetryUrl = cmdMaster.Flag.String("telemetry.url", "https://telemetry.seaweedfs.com/api/collect", "telemetry server URL to send usage statistics")
-	m.telemetryEnabled = cmdMaster.Flag.Bool("telemetry", false, "enable telemetry reporting")
+	m.telemetryEnabled = cmdMaster.Flag.Bool("telemetry", true, "report anonymous cluster statistics to telemetry.url, use -telemetry=false to opt out")
 	m.debug = cmdMaster.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
 	m.debugPort = cmdMaster.Flag.Int("debug.port", 6060, "http port for debugging")
 }

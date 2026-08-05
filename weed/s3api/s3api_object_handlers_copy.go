@@ -200,7 +200,9 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	sameDestination := srcBucket == dstBucket && srcObject == dstObject
-	if sameDestination && !(replaceMeta || replaceTagging) {
+	// A self-copy into a versioned bucket writes a new version instead of overwriting in
+	// place, so it is not the no-op AWS rejects. It is how an earlier version is restored.
+	if sameDestination && !(replaceMeta || replaceTagging) && srcVersioningState != s3_constants.VersioningEnabled {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopyDest)
 		return
 	}

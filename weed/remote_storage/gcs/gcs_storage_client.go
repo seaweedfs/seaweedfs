@@ -220,7 +220,34 @@ func (gcs *gcsRemoteStorageClient) WriteDirectory(loc *remote_pb.RemoteStorageLo
 }
 
 func (gcs *gcsRemoteStorageClient) RemoveDirectory(loc *remote_pb.RemoteStorageLocation) (err error) {
-	return nil
+	// the trailing slash keeps sibling prefixes that share the name intact
+	prefix := loc.Path[1:]
+	if prefix != "" && !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+	if prefix == "" {
+		// the mount root maps to the whole bucket; wiping every object from a
+		// single namespace event is too destructive, so keep them
+		glog.Warningf("gcs %s: skip removing directory mapped to the bucket root", loc.Bucket)
+		return nil
+	}
+
+	bucket := gcs.client.Bucket(loc.Bucket)
+	objectIterator := bucket.Objects(context.Background(), &storage.Query{
+		Prefix: prefix,
+	})
+	for {
+		objectAttr, iterErr := objectIterator.Next()
+		if iterErr == iterator.Done {
+			return nil
+		}
+		if iterErr != nil {
+			return fmt.Errorf("gcs list %s/%s: %w", loc.Bucket, prefix, iterErr)
+		}
+		if delErr := bucket.Object(objectAttr.Name).Delete(context.Background()); delErr != nil && !errors.Is(delErr, storage.ErrObjectNotExist) {
+			return fmt.Errorf("gcs delete %s/%s: %w", loc.Bucket, objectAttr.Name, delErr)
+		}
+	}
 }
 
 func (gcs *gcsRemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry, reader io.Reader) (remoteEntry *filer_pb.RemoteEntry, err error) {

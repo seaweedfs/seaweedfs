@@ -31,8 +31,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
-
-	"github.com/seaweedfs/go-fuse/v2/fs"
 )
 
 type Option struct {
@@ -136,7 +134,6 @@ type WFS struct {
 	// follow https://github.com/hanwen/go-fuse/blob/master/fuse/api.go
 	fuse.RawFileSystem
 	mount_pb.UnimplementedSeaweedMountServer
-	fs.Inode
 	option                *Option
 	metaCache             *meta_cache.MetaCache
 	stats                 statsCache
@@ -189,6 +186,12 @@ type WFS struct {
 	// asyncFlushWg tracks pending background flush work items for writebackCache mode.
 	// Must be waited on before unmount cleanup to prevent data loss.
 	asyncFlushWg sync.WaitGroup
+
+	// entryChanged is notified of every applied metadata event, for a front
+	// end that has to push invalidations to its own client.
+	entryChangeMu   sync.RWMutex
+	entryChanged    func(meta_cache.EntryInvalidation)
+	asyncFlushClose sync.Once
 
 	// asyncFlushCh is a bounded work queue for background flush operations.
 	// A fixed pool of worker goroutines processes items from this channel,
@@ -307,7 +310,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 			wfs.inodeToPath.MarkChildrenCached(path)
 		}, func(path util.FullPath) bool {
 			return wfs.inodeToPath.IsChildrenCached(path)
-		}, wfs.invalidateOpenFileHandle, func(dirPath util.FullPath) {
+		}, wfs.onEntryInvalidation, func(dirPath util.FullPath) {
 			if wfs.inodeToPath.RecordDirectoryUpdate(dirPath, time.Now(), wfs.dirHotWindow, wfs.dirHotThreshold) {
 				wfs.markDirectoryReadThrough(dirPath)
 			}
@@ -630,6 +633,14 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, entryVersion,
 		}
 	}
 
+	// About to trust the filer, so first let any async flush of a just-closed
+	// handle land: it would otherwise answer with pre-close metadata, a
+	// truncate's old size or a write's old chunks. The cache paths above are
+	// already consistent and must not pay this wait.
+	if inode, found := wfs.inodeToPath.GetInode(fullpath); found {
+		wfs.waitForPendingAsyncFlush(inode)
+	}
+
 	// Directory not cached - fetch directly from filer without caching the entire directory.
 	glog.V(4).Infof("lookupEntry fetching from filer %s", fullpath)
 	var entry *filer_pb.Entry
@@ -669,6 +680,28 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, entryVersion,
 					if localEntry, localVersionTsNs, localErr := wfs.metaCache.FindEntry(context.Background(), fullpath); localErr == nil && localEntry != nil {
 						glog.V(4).Infof("lookupEntry found deferred entry in local cache %s", fullpath)
 						return localEntry, entryVersion{tsNs: localVersionTsNs}, fuse.OK
+					}
+					// Creating many files at once can push the directory past
+					// the hot threshold and evict it, which drops the local
+					// placeholder a deferred create left behind. The handle
+					// still holding the unflushed entry is authoritative for
+					// it, so read it from there rather than reporting a file
+					// that plainly exists as missing.
+					if fh, fhFound := wfs.fhMap.FindFileHandle(inode); fhFound {
+						// Async upload workers append chunks under this lock;
+						// hold it for reading so FromPbEntry does not walk the
+						// chunk slice mid-reallocation.
+						fh.entryLock.RLock()
+						pbEntry := fh.GetEntry().GetEntry()
+						var localEntry *filer.Entry
+						if pbEntry != nil {
+							localEntry = filer.FromPbEntry(dir, pbEntry)
+						}
+						fh.entryLock.RUnlock()
+						if localEntry != nil {
+							glog.V(4).Infof("lookupEntry found deferred entry on its open handle %s", fullpath)
+							return localEntry, entryVersion{}, fuse.OK
+						}
 					}
 				}
 			}
@@ -749,6 +782,35 @@ func sameEntryContent(a, b *filer_pb.Entry) bool {
 // invalidateOpenFileHandle refreshes an open file handle from a metadata
 // subscription event. No filer lookup here: it can fail transiently, and with
 // the subscription cursor already past the event, nothing would retry.
+
+// SetEntryChangeListener registers a callback for every metadata event this
+// mount applies. A front end whose client caches entries on its own side, and
+// which the mount cannot invalidate directly, uses it to push the change out.
+func (wfs *WFS) SetEntryChangeListener(fn func(meta_cache.EntryInvalidation)) {
+	wfs.entryChangeMu.Lock()
+	wfs.entryChanged = fn
+	wfs.entryChangeMu.Unlock()
+}
+
+// onEntryInvalidation runs for every applied event, whether or not the path is
+// open here, so a listener sees changes made anywhere in the cluster.
+func (wfs *WFS) onEntryInvalidation(invalidation meta_cache.EntryInvalidation) {
+	wfs.entryChangeMu.RLock()
+	listener := wfs.entryChanged
+	wfs.entryChangeMu.RUnlock()
+	if listener != nil {
+		listener(invalidation)
+	}
+	wfs.invalidateOpenFileHandle(invalidation)
+}
+
+// MountRoot is the filer path this mount is rooted at. Event paths are absolute
+// on the filer; a front end that addresses files relative to the mount needs it
+// to translate them.
+func (wfs *WFS) MountRoot() util.FullPath {
+	return util.FullPath(wfs.option.FilerMountRootPath)
+}
+
 func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidation) {
 	filePath, eventEntry, eventTsNs := invalidation.Path, invalidation.Entry, invalidation.TsNs
 	inode, inodeFound := wfs.inodeToPath.GetInode(filePath)
