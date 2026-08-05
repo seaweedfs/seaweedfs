@@ -113,3 +113,28 @@ func TestResolveS3Action_AttributesBeforeVersionId(t *testing.T) {
 		})
 	}
 }
+
+// A base action naming another service carries no S3 request shape, so a query
+// parameter on the request must not redirect it to an S3 action.
+func TestResolveS3ActionKeepsNonS3Service(t *testing.T) {
+	tests := []struct {
+		name       string
+		method     string
+		url        string
+		baseAction string
+	}{
+		{"iam action with batch delete query", http.MethodPost, "http://localhost/?delete", "iam:CreateUser"},
+		{"iam action with acl query", http.MethodPut, "http://localhost/?acl", "iam:AttachUserPolicy"},
+		{"iam action with tagging query", http.MethodGet, "http://localhost/?tagging", "iam:ListUsers"},
+		{"sts action with batch delete query", http.MethodPost, "http://localhost/?delete", "sts:AssumeRole"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, _ := http.NewRequest(tt.method, tt.url, nil)
+			if got := ResolveS3Action(r, tt.baseAction, "", ""); got != tt.baseAction {
+				t.Errorf("ResolveS3Action() = %q, want %q", got, tt.baseAction)
+			}
+		})
+	}
+}
