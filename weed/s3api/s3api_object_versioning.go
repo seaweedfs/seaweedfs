@@ -649,9 +649,8 @@ func (vc *versionCollector) processVersionsDirectory(entryPath string) error {
 	return nil
 }
 
-// processExplicitDirectory handles an explicit S3 directory object. containerPath is
-// the directory's own filer path, which is where the key's version history lives.
-func (vc *versionCollector) processExplicitDirectory(entryPath, containerPath string, entry *filer_pb.Entry) error {
+// processExplicitDirectory handles an explicit S3 directory object
+func (vc *versionCollector) processExplicitDirectory(entryPath string, entry *filer_pb.Entry) {
 	directoryKey := entryPath
 	if !strings.HasSuffix(directoryKey, "/") {
 		directoryKey += "/"
@@ -663,33 +662,18 @@ func (vc *versionCollector) processExplicitDirectory(entryPath, containerPath st
 	// this mirrors ListObjectsV2 and AWS, and stops clients like Veeam that
 	// reject unexpected keys in a listing from aborting.
 	if !strings.HasPrefix(directoryKey, vc.prefix) {
-		return nil
+		return
 	}
 
 	// Skip directories at or before keyMarker
 	if vc.keyMarker != "" && directoryKey <= vc.keyMarker {
-		return nil
-	}
-
-	// The directory entry is this key's null version. A history under it names the
-	// current version, so the null is only latest when there is no pointer to follow.
-	// A history we cannot read leaves that unknown, and claiming latest would hide a
-	// current delete marker, so the listing fails instead of guessing.
-	isLatest := true
-	versionsEntry, err := vc.s3a.getEntry(containerPath, s3_constants.VersionsFolder)
-	switch {
-	case err == nil:
-		if _, hasPointer := versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey]; hasPointer {
-			isLatest = false
-		}
-	case !errors.Is(err, filer_pb.ErrNotFound):
-		return fmt.Errorf("read version history of %s: %w", containerPath, err)
+		return
 	}
 
 	versionEntry := &VersionEntry{
 		Key:          directoryKey,
 		VersionId:    "null",
-		IsLatest:     isLatest,
+		IsLatest:     true,
 		LastModified: time.Unix(entry.Attributes.Mtime, 0),
 		ETag:         "\"d41d8cd98f00b204e9800998ecf8427e\"", // Empty content ETag
 		Size:         0,
@@ -697,7 +681,6 @@ func (vc *versionCollector) processExplicitDirectory(entryPath, containerPath st
 		StorageClass: StorageClass(vc.s3a.getStorageClassFromExtended(entry.Extended)),
 	}
 	*vc.allVersions = append(*vc.allVersions, versionEntry)
-	return nil
 }
 
 // processRegularFile handles a regular file entry (pre-versioning or suspended-versioning object)
@@ -887,9 +870,7 @@ func (vc *versionCollector) processDirectory(currentPath, entryPath string, entr
 	// an SDK PutObject of "dir/" carries a default Content-Type, so the two
 	// listings must agree on what counts as a directory key.
 	if entry.IsDirectoryKeyObject() {
-		if err := vc.processExplicitDirectory(entryPath, path.Join(currentPath, entry.Name), entry); err != nil {
-			return err
-		}
+		vc.processExplicitDirectory(entryPath, entry)
 	}
 
 	// Skip entire subdirectory if all keys within it are before the keyMarker.
