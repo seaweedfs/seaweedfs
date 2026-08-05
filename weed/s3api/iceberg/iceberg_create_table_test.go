@@ -3,6 +3,8 @@ package iceberg
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -96,7 +98,8 @@ func TestBuildLoadTableResultNeverReturnsNilMetadata(t *testing.T) {
 	}
 	for name, getResp := range cases {
 		t.Run(name, func(t *testing.T) {
-			result, err := (&Server{}).buildLoadTableResult(getResp, "bkt", []string{"ns"}, "t")
+			r := httptest.NewRequest(http.MethodGet, "/v1/namespaces/ns/tables/t", nil)
+			result, err := (&Server{}).buildLoadTableResult(r, getResp, "bkt", []string{"ns"}, "t")
 			if err != nil {
 				t.Fatalf("buildLoadTableResult() error = %v, want nil", err)
 			}
