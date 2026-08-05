@@ -89,7 +89,20 @@ type Config struct {
 
 	// 0 -> unbounded.
 	EventBudget int
+
+	// SubscriptionReceiveTimeout bounds the gap between responses on the
+	// shared meta-log stream; 0 takes defaultSubscriptionReceiveTimeout.
+	// UntilNs already ends a healthy stream and gRPC keepalive catches a
+	// dead connection — this is the remaining case, a filer that answers
+	// pings but stops producing.
+	SubscriptionReceiveTimeout time.Duration
 }
+
+// defaultSubscriptionReceiveTimeout sits above the filer's 15-minute
+// metadata-gap recovery budget (maxGapStall in
+// weed/server/filer_grpc_server_sub_meta.go), so a subscriber legitimately
+// parked on a gap is never mistaken for a stalled one.
+const defaultSubscriptionReceiveTimeout = 20 * time.Minute
 
 // Run executes the daily replay for every shard in cfg.Shards
 // concurrently. Returns the first shard error; the rest log and run to
@@ -334,6 +347,10 @@ func startSharedSubscription(ctx context.Context, cfg Config, runNow time.Time, 
 	}
 
 	runUpTo := runNow.UnixNano()
+	receiveTimeout := cfg.SubscriptionReceiveTimeout
+	if receiveTimeout == 0 {
+		receiveTimeout = defaultSubscriptionReceiveTimeout
+	}
 	events := make(chan *reader.Event, 4*len(cfg.Shards))
 	rd := &reader.Reader{
 		ShardPredicate: func(id int) bool { return shardSet[id] },
@@ -345,9 +362,10 @@ func startSharedSubscription(ctx context.Context, cfg Config, runNow time.Time, 
 		// unrelated write pushes an event past runUpTo, so a cluster
 		// that goes quiet parks the reader in Recv, starves all shard
 		// drains, and wedges the job indefinitely.
-		UntilTsNs:   runUpTo,
-		Events:      events,
-		EventBudget: cfg.EventBudget,
+		UntilTsNs:      runUpTo,
+		Events:         events,
+		EventBudget:    cfg.EventBudget,
+		ReceiveTimeout: receiveTimeout,
 	}
 
 	readerCtx, cancelReader := context.WithCancel(ctx)
@@ -432,6 +450,11 @@ func validate(cfg Config) error {
 	// a loud failure instead.
 	if cfg.WalkerInterval < 0 {
 		return fmt.Errorf("daily_run: negative WalkerInterval %v (0 = unthrottled, positive values throttle)", cfg.WalkerInterval)
+	}
+	// Negative would reach the reader as "disabled" only by accident;
+	// 0 is the documented way to take the default.
+	if cfg.SubscriptionReceiveTimeout < 0 {
+		return fmt.Errorf("daily_run: negative SubscriptionReceiveTimeout %v (0 = default %v)", cfg.SubscriptionReceiveTimeout, defaultSubscriptionReceiveTimeout)
 	}
 	for _, sh := range cfg.Shards {
 		if sh < 0 || sh >= s3lifecycle.ShardCount {

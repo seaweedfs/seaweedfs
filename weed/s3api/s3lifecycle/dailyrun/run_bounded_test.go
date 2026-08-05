@@ -9,6 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/reader"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -189,6 +190,48 @@ func TestRun_CappedPassIsNotAFailure(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("Run did not return after the pass was capped")
 	}
+}
+
+// TestRun_StalledSubscriptionTimesOutThePass covers the case neither
+// UntilNs nor gRPC keepalive reaches: the connection is healthy and
+// answering pings, but the filer's handler has stopped producing. The
+// pass must end on the watchdog rather than wait out the job's
+// effectively-unlimited execution timeout.
+func TestRun_StalledSubscriptionTimesOutThePass(t *testing.T) {
+	e := engine.New()
+	e.Compile([]engine.CompileInput{
+		{Bucket: "b1", Rules: []*s3lifecycle.Rule{
+			{ID: "r", Status: s3lifecycle.StatusEnabled, ExpirationDays: 30},
+		}},
+	}, engine.CompileOptions{})
+
+	cfg := Config{
+		Shards:                     []int{0, 1},
+		BucketsPath:                "/buckets",
+		Engine:                     e,
+		FilerClient:                &blockingSubscribeClient{},
+		Client:                     stubLifecycleClient{},
+		Persister:                  newMemPersister(),
+		Lister:                     stubSiblingLister{},
+		SubscriptionReceiveTimeout: 50 * time.Millisecond,
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- Run(context.Background(), cfg) }()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, reader.ErrReceiveTimeout)
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not return on a stalled subscription")
+	}
+}
+
+func TestValidate_RejectsNegativeSubscriptionReceiveTimeout(t *testing.T) {
+	cfg := validatableConfig()
+	cfg.SubscriptionReceiveTimeout = -time.Second
+	require.ErrorContains(t, validate(cfg), "SubscriptionReceiveTimeout")
+	cfg.SubscriptionReceiveTimeout = 0
+	require.NoError(t, validate(cfg))
 }
 
 // TestRun_ServerSideCancelFailsThePass is the case status-code
