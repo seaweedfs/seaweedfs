@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/placement"
 	"io"
 	"path/filepath"
 	"sync"
@@ -489,26 +490,36 @@ func (c *commandVolumeTierMove) ensureReplicationFulfilled(commandEnv *CommandEn
 
 	fmt.Fprintf(writer, "volume %d: creating %d additional replica(s) for replication %s\n", vid, additionalCopiesNeeded, replicaPlacement)
 
-	fn := capacityByFreeVolumeCount(toDiskType)
+	// One picker decides where copies go, so this command spreads and stays near
+	// the source the same way every other mover does. Constraints it cannot model
+	// -- replica placement, and a node already holding the volume -- stay here.
+	topo := topologyFromLocations(allLocations)
+	// The picker answers with a node; replica placement is judged on where that
+	// node sits, so keep the mapping back to its rack and data center.
+	placeOf := make(map[string]location, len(allLocations))
+	for _, l := range allLocations {
+		placeOf[l.dataNode.Id] = l
+	}
+	taken := make(map[string]bool)
 	copiesMade := 0
-	for _, candidateDst := range allLocations {
-		if copiesMade >= additionalCopiesNeeded {
+	for copiesMade < additionalCopiesNeeded {
+		dst := placement.PickTarget(topo, placement.PlacementPreference{
+			Source:   sourceAddress.String(),
+			DiskType: toDiskType,
+			Exclude:  taken,
+			Accept: func(dn *master_pb.DataNodeInfo, dc, rack string) bool {
+				if nodesWithVolume[dn.Id] {
+					return false
+				}
+				return satisfyReplicaPlacement(replicaPlacement, targetTierReplicas, newLocation(dc, rack, dn))
+			},
+		})
+		if dst == nil {
 			break
 		}
-		if fn(candidateDst.dataNode) <= 0 {
-			continue
-		}
-		// Skip nodes that already host this volume on any disk type to avoid
-		// VolumeCopy conflicts (e.g., same volume on source tier and target tier).
-		if nodesWithVolume[candidateDst.dataNode.Id] {
-			continue
-		}
-		if !satisfyReplicaPlacement(replicaPlacement, targetTierReplicas, candidateDst) {
-			continue
-		}
-
-		candidateAddress := pb.NewServerAddressFromDataNode(candidateDst.dataNode)
-		fmt.Fprintf(writer, "volume %d: replicating from %s to %s\n", vid, sourceAddress, candidateDst.dataNode.Id)
+		taken[dst.Id] = true
+		candidateDst := placeOf[dst.Id]
+		candidateAddress := pb.NewServerAddressFromDataNode(dst)
 
 		if copyErr := replicateVolumeToServer(context.Background(), commandEnv.option.GrpcDialOption, writer, vid, sourceAddress, candidateAddress, toDiskType.ReadableString()); copyErr != nil {
 			return nil, fmt.Errorf("replicate volume %d to %s: %v", vid, candidateDst.dataNode.Id, copyErr)
@@ -527,7 +538,8 @@ func (c *commandVolumeTierMove) ensureReplicationFulfilled(commandEnv *CommandEn
 			location: &candidateDst,
 			info:     targetTierReplicas[0].info,
 		})
-		addVolumeCount(candidateDst.dataNode.DiskInfos[string(toDiskType)], 1)
+		// PickTarget already spent the slot in topo, which shares these DataNodeInfo
+		// pointers with allLocations, so counting it again here would double it.
 		copiesMade++
 	}
 
@@ -590,4 +602,32 @@ func collectVolumeIdsForTierChange(topologyInfo *master_pb.TopologyInfo, volumeS
 	}
 
 	return
+}
+
+// topologyFromLocations rebuilds a topology snapshot from the locations a
+// command already collected, so placement sees exactly the candidate set the
+// command would have iterated.
+func topologyFromLocations(locations []location) *master_pb.TopologyInfo {
+	dcs := make(map[string]map[string][]*master_pb.DataNodeInfo)
+	var dcOrder []string
+	rackOrder := make(map[string][]string)
+	for _, l := range locations {
+		if _, ok := dcs[l.dc]; !ok {
+			dcs[l.dc] = make(map[string][]*master_pb.DataNodeInfo)
+			dcOrder = append(dcOrder, l.dc)
+		}
+		if _, ok := dcs[l.dc][l.rack]; !ok {
+			rackOrder[l.dc] = append(rackOrder[l.dc], l.rack)
+		}
+		dcs[l.dc][l.rack] = append(dcs[l.dc][l.rack], l.dataNode)
+	}
+	topo := &master_pb.TopologyInfo{}
+	for _, dc := range dcOrder {
+		dcInfo := &master_pb.DataCenterInfo{Id: dc}
+		for _, rack := range rackOrder[dc] {
+			dcInfo.RackInfos = append(dcInfo.RackInfos, &master_pb.RackInfo{Id: rack, DataNodeInfos: dcs[dc][rack]})
+		}
+		topo.DataCenterInfos = append(topo.DataCenterInfos, dcInfo)
+	}
+	return topo
 }
