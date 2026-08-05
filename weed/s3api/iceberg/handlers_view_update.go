@@ -130,7 +130,7 @@ func (s *Server) handleUpdateView(w http.ResponseWriter, r *http.Request) {
 			return s.tablesManager.Execute(r.Context(), mgrClient, "UpdateView", updateReq, nil, identityName)
 		})
 		if err == nil {
-			writeJSON(w, http.StatusOK, ViewResponse{
+			writeLoadResult(w, http.StatusOK, ViewResponse{
 				MetadataLocation: newMetadataLocation,
 				Metadata:         newMetadata,
 				Config:           s.buildFileIOConfig(r),

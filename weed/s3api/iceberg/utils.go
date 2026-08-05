@@ -95,6 +95,14 @@ func wantsVendedCredentials(r *http.Request) bool {
 	return false
 }
 
+// writeLoadResult writes a table or view load response. The FileIO config it
+// carries depends on the delegation the client asked for, so a cache between
+// us and the client must key on that header and not on the URL alone.
+func writeLoadResult(w http.ResponseWriter, status int, v interface{}) {
+	w.Header().Set("Vary", accessDelegationHeader)
+	writeJSON(w, status, v)
+}
+
 // writeJSON writes a JSON response.
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")

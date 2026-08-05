@@ -53,6 +53,16 @@ func TestBuildFileIOConfigWithholdsEndpointFromCredentialVendingClients(t *testi
 	}
 }
 
+// The body of a load response depends on the delegation header, so a cache in
+// front of the catalog must not key on the URL alone.
+func TestWriteLoadResultVariesOnTheDelegationHeader(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeLoadResult(rec, http.StatusOK, LoadTableResult{})
+	if got := rec.Header().Get("Vary"); got != accessDelegationHeader {
+		t.Fatalf("Vary = %q, want %q", got, accessDelegationHeader)
+	}
+}
+
 func TestLoadTableResultOmitsConfigForCredentialVendingClients(t *testing.T) {
 	s := &Server{s3Endpoint: "http://seaweed.example:8333"}
 	r := httptest.NewRequest(http.MethodGet, "/v1/namespaces/ns/tables/t", nil)

@@ -252,7 +252,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build table metadata")
 			return
 		}
-		writeJSON(w, http.StatusOK, result)
+		writeLoadResult(w, http.StatusOK, result)
 		return
 	}
 	if !isNoSuchTableError(existsErr) {
@@ -277,7 +277,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 			Metadata:         metadata,
 			Config:           s.buildFileIOConfig(r),
 		}
-		writeJSON(w, http.StatusOK, result)
+		writeLoadResult(w, http.StatusOK, result)
 		return
 	}
 	if err := s.saveMetadataFile(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataBytes); err != nil {
@@ -330,7 +330,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build table metadata")
 				return
 			}
-			writeJSON(w, http.StatusOK, result)
+			writeLoadResult(w, http.StatusOK, result)
 			return
 		}
 		if strings.Contains(err.Error(), "already exists") {
@@ -354,7 +354,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build table metadata")
 				return
 			}
-			writeJSON(w, http.StatusOK, result)
+			writeLoadResult(w, http.StatusOK, result)
 			return
 		}
 		glog.V(1).Infof("Iceberg: CreateTable error: %v", err)
@@ -376,7 +376,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		Metadata:         metadata,
 		Config:           s.buildFileIOConfig(r),
 	}
-	writeJSON(w, http.StatusOK, result)
+	writeLoadResult(w, http.StatusOK, result)
 }
 
 // handleRegisterTable registers an existing metadata.json under a new catalog
@@ -471,7 +471,7 @@ func (s *Server) handleRegisterTable(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build table metadata")
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	writeLoadResult(w, http.StatusOK, result)
 }
 
 // handleLoadTable loads table metadata.
@@ -520,7 +520,7 @@ func (s *Server) handleLoadTable(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build table metadata")
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	writeLoadResult(w, http.StatusOK, result)
 }
 
 func (s *Server) buildLoadTableResult(r *http.Request, getResp s3tables.GetTableResponse, bucketName string, namespace []string, tableName string) (LoadTableResult, error) {

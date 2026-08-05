@@ -163,7 +163,7 @@ func (s *Server) handleCreateView(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "InternalServerError", buildErr.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, result)
+		writeLoadResult(w, http.StatusOK, result)
 		return
 	} else if !isViewNotFound(existsErr) {
 		glog.V(1).Infof("Iceberg: CreateView existence check failed for %s.%s: %v", flattenNamespacePath(namespace), req.Name, existsErr)
@@ -218,7 +218,7 @@ func (s *Server) handleCreateView(w http.ResponseWriter, r *http.Request) {
 	if finalLocation == "" {
 		finalLocation = metadataLocation
 	}
-	writeJSON(w, http.StatusOK, ViewResponse{
+	writeLoadResult(w, http.StatusOK, ViewResponse{
 		MetadataLocation: finalLocation,
 		Metadata:         metadata,
 		Config:           s.buildFileIOConfig(r),
@@ -251,7 +251,7 @@ func (s *Server) handleLoadView(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	writeLoadResult(w, http.StatusOK, result)
 }
 
 // handleViewExists checks if a view exists.
