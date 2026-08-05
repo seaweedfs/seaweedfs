@@ -19,19 +19,25 @@ import (
 
 // recordingClient captures every LifecycleDelete request the
 // daily-run path emits. Default outcome is DONE; tests that need
-// other outcomes set responses by index.
+// other outcomes set responses by index, or outcomeByObject when
+// shards dispatch concurrently and call order isn't fixed.
 type recordingClient struct {
-	mu        sync.Mutex
-	requests  []*s3_lifecycle_pb.LifecycleDeleteRequest
-	responses []s3_lifecycle_pb.LifecycleDeleteOutcome
-	calls     atomic.Int32
+	mu              sync.Mutex
+	requests        []*s3_lifecycle_pb.LifecycleDeleteRequest
+	responses       []s3_lifecycle_pb.LifecycleDeleteOutcome
+	outcomeByObject map[string]s3_lifecycle_pb.LifecycleDeleteOutcome
+	calls           atomic.Int32
 }
 
 func (c *recordingClient) LifecycleDelete(_ context.Context, req *s3_lifecycle_pb.LifecycleDeleteRequest) (*s3_lifecycle_pb.LifecycleDeleteResponse, error) {
 	c.mu.Lock()
 	c.requests = append(c.requests, req)
 	idx := int(c.calls.Add(1)) - 1
+	byObject, pinned := c.outcomeByObject[req.ObjectPath]
 	c.mu.Unlock()
+	if pinned {
+		return &s3_lifecycle_pb.LifecycleDeleteResponse{Outcome: byObject}, nil
+	}
 	out := s3_lifecycle_pb.LifecycleDeleteOutcome_DONE
 	if idx < len(c.responses) {
 		out = c.responses[idx]

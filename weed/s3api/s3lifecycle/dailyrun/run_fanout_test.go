@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
@@ -104,8 +105,10 @@ func TestRun_HaltedShardDoesNotStarveOthers(t *testing.T) {
 	responses = append(responses, subscribeResponse(bucket, starvedKey, evTime, runNow.Add(-time.Hour).UnixNano()))
 
 	// BLOCKED halts the first shard's drain on its very first dispatch.
-	client := &recordingClient{responses: []s3_lifecycle_pb.LifecycleDeleteOutcome{
-		s3_lifecycle_pb.LifecycleDeleteOutcome_BLOCKED,
+	// Pinned per object rather than by call index: the two shards
+	// dispatch from separate goroutines.
+	client := &recordingClient{outcomeByObject: map[string]s3_lifecycle_pb.LifecycleDeleteOutcome{
+		haltedKey: s3_lifecycle_pb.LifecycleDeleteOutcome_BLOCKED,
 	}}
 
 	// Seed cursors so both shards resume from before the events rather
@@ -141,4 +144,14 @@ func TestRun_HaltedShardDoesNotStarveOthers(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("Run wedged: the fan-out blocked on a shard that had stopped draining")
 	}
+
+	// Returning isn't enough — dropping the starved shard's events
+	// would return just as cleanly. It has to have been dispatched, and
+	// its cursor has to have advanced onto that event.
+	assert.Contains(t, client.seenObjects(), starvedKey,
+		"the shard behind the halted one must still get its events")
+	starvedCursor, found, err := persister.Load(context.Background(), starvedShard)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Greater(t, starvedCursor.TsNs, seeded.TsNs, "starved shard's cursor must advance")
 }
