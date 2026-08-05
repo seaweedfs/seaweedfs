@@ -133,11 +133,70 @@ func TestRun_ReaderFailureFailsThePass(t *testing.T) {
 	}
 }
 
-// TestRun_CancellationIsNotAPassFailure keeps the wall-clock-capped
-// pass (the shell driver's -runtime) reporting success. gRPC surfaces a
-// canceled stream as a status code, not a wrapped context.Canceled, so
-// a naive errors.Is check would turn every capped pass into a failure.
-func TestRun_CancellationIsNotAPassFailure(t *testing.T) {
+// blockingSubscribeStream never delivers, so the pass can only end by
+// the caller's wall-clock cap. Models the shell driver's -runtime.
+type blockingSubscribeStream struct {
+	grpc.ClientStream
+	ctx context.Context
+}
+
+func (s *blockingSubscribeStream) Recv() (*filer_pb.SubscribeMetadataResponse, error) {
+	<-s.ctx.Done()
+	// What gRPC actually returns for a canceled stream: a status code,
+	// not a wrapped context.Canceled.
+	return nil, status.Error(codes.Canceled, "context canceled")
+}
+
+type blockingSubscribeClient struct {
+	filer_pb.SeaweedFilerClient
+}
+
+func (c *blockingSubscribeClient) SubscribeMetadata(ctx context.Context, _ *filer_pb.SubscribeMetadataRequest, _ ...grpc.CallOption) (filer_pb.SeaweedFiler_SubscribeMetadataClient, error) {
+	return &blockingSubscribeStream{ctx: ctx}, nil
+}
+
+// TestRun_CappedPassIsNotAFailure keeps a wall-clock-capped pass (the
+// shell driver's -runtime) reporting success. It is the counterweight
+// to TestRun_ReaderFailureFailsThePass: both end with the reader
+// returning codes.Canceled, and only the caller's intent separates the
+// truncated-on-purpose pass from the broken one — which is why the
+// decision reads ctx rather than the error.
+func TestRun_CappedPassIsNotAFailure(t *testing.T) {
+	e := engine.New()
+	e.Compile([]engine.CompileInput{
+		{Bucket: "b1", Rules: []*s3lifecycle.Rule{
+			{ID: "r", Status: s3lifecycle.StatusEnabled, ExpirationDays: 30},
+		}},
+	}, engine.CompileOptions{})
+
+	cfg := Config{
+		Shards:      []int{0, 1},
+		BucketsPath: "/buckets",
+		Engine:      e,
+		FilerClient: &blockingSubscribeClient{},
+		Client:      stubLifecycleClient{},
+		Persister:   newMemPersister(),
+		Lister:      stubSiblingLister{},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- Run(ctx, cfg) }()
+	select {
+	case err := <-done:
+		require.NoError(t, err, "a pass truncated by its own wall-clock cap is not a failure")
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not return after the pass was capped")
+	}
+}
+
+// TestRun_ServerSideCancelFailsThePass is the case status-code
+// classification could not express: the filer cancels the stream while
+// the caller's context is untouched. Indistinguishable from the capped
+// pass above by error alone, so a codes.Canceled check would report a
+// truncated pass as a success.
+func TestRun_ServerSideCancelFailsThePass(t *testing.T) {
 	e := engine.New()
 	e.Compile([]engine.CompileInput{
 		{Bucket: "b1", Rules: []*s3lifecycle.Rule{
@@ -159,7 +218,7 @@ func TestRun_CancellationIsNotAPassFailure(t *testing.T) {
 	go func() { done <- Run(context.Background(), cfg) }()
 	select {
 	case err := <-done:
-		require.NoError(t, err)
+		require.Error(t, err, "a peer-canceled stream truncates the pass and must not report success")
 	case <-time.After(10 * time.Second):
 		t.Fatal("Run did not return after the subscription was canceled")
 	}

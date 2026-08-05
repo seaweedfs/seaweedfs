@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -18,8 +19,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"golang.org/x/time/rate"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 // LifecycleClient mirrors dispatcher's contract; duplicated to avoid an
@@ -134,6 +133,10 @@ func Run(ctx context.Context, cfg Config) error {
 		fanoutDone      chan struct{}
 		cancelRead      context.CancelFunc
 		globalStartTsNs int64
+		// Set when the fan-out ends the pass itself on an event past
+		// runUpTo, so the reader's resulting cancellation is read as an
+		// intentional stop rather than a broken stream.
+		pastBoundary atomic.Bool
 	)
 	if rsh != [32]byte{} {
 		// Pre-load all per-shard cursors so the shared subscription
@@ -143,7 +146,7 @@ func Run(ctx context.Context, cfg Config) error {
 		// exactly the case where a rule's TTL equals maxTTL and an
 		// older event still has DueTime <= runNow.
 		globalStartTsNs = computeGlobalStartTsNs(ctx, cfg, runNow, maxTTL)
-		shardEvents, readerDone, fanoutDone, cancelRead = startSharedSubscription(ctx, cfg, runNow, globalStartTsNs)
+		shardEvents, readerDone, fanoutDone, cancelRead = startSharedSubscription(ctx, cfg, runNow, globalStartTsNs, &pastBoundary)
 		defer cancelRead()
 	}
 
@@ -177,11 +180,17 @@ func Run(ctx context.Context, cfg Config) error {
 	// Tear down the shared subscription. cancelRead unblocks both the
 	// reader's gRPC stream and the fan-out's send loop; we wait on both
 	// so their goroutines don't outlive Run.
+	// Whether the reader stopped because we asked it to. Deciding this
+	// from the error is not possible: a stream we cancel and a stream the
+	// filer cancels both arrive as codes.Canceled, so classifying by
+	// status would let a truncated pass report success. The two ways a
+	// stop is intentional are both knowable here.
+	stoppedOnPurpose := ctx.Err() != nil || pastBoundary.Load()
 	var readerErr error
 	if cancelRead != nil {
 		cancelRead()
 		<-fanoutDone
-		if rerr := <-readerDone; rerr != nil && !isCanceled(rerr) {
+		if rerr := <-readerDone; rerr != nil && !stoppedOnPurpose {
 			// A stream that dies mid-pass ends every shard's drain on a
 			// closed channel, so the pass is truncated. Cursors still
 			// hold what was processed and the next pass resumes there,
@@ -303,7 +312,7 @@ func computeGlobalStartTsNs(ctx context.Context, cfg Config, runNow time.Time, m
 // Events arriving with TsNs > runUpTo (the pass boundary) cause the
 // fan-out to cancel the reader and close all per-shard channels,
 // ending the pass.
-func startSharedSubscription(ctx context.Context, cfg Config, runNow time.Time, globalStartTsNs int64) (map[int]chan *reader.Event, chan error, chan struct{}, context.CancelFunc) {
+func startSharedSubscription(ctx context.Context, cfg Config, runNow time.Time, globalStartTsNs int64, pastBoundary *atomic.Bool) (map[int]chan *reader.Event, chan error, chan struct{}, context.CancelFunc) {
 	shardSet := make(map[int]bool, len(cfg.Shards))
 	shardEvents := make(map[int]chan *reader.Event, len(cfg.Shards))
 	for _, sh := range cfg.Shards {
@@ -375,6 +384,7 @@ func startSharedSubscription(ctx context.Context, cfg Config, runNow time.Time, 
 				// too. Cancel the reader so subsequent passes don't
 				// pay for stream tail we'd drop anyway.
 				if ev.TsNs > runUpTo {
+					pastBoundary.Store(true)
 					cancelReader()
 					return
 				}
@@ -392,21 +402,6 @@ func startSharedSubscription(ctx context.Context, cfg Config, runNow time.Time, 
 	}()
 
 	return shardEvents, readerDone, fanoutDone, cancelReader
-}
-
-// isCanceled reports whether err is the pass ending on purpose — its
-// own teardown, or a caller-imposed wall-clock cap. A canceled gRPC
-// stream surfaces as a status code rather than a wrapped
-// context.Canceled, so both forms have to be checked.
-func isCanceled(err error) bool {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return true
-	}
-	switch status.Code(err) {
-	case codes.Canceled, codes.DeadlineExceeded:
-		return true
-	}
-	return false
 }
 
 func validate(cfg Config) error {
