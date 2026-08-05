@@ -88,7 +88,15 @@ type Config struct {
 
 	// 0 -> unbounded.
 	EventBudget int
+
+	// SubscriptionReceiveTimeout bounds the gap between responses on the
+	// shared metadata stream. 0 uses the production default. The filer sends
+	// idle heartbeats once the reader catches up, while the generous default
+	// still permits the filer's bounded metadata-gap recovery to run.
+	SubscriptionReceiveTimeout time.Duration
 }
+
+const defaultSubscriptionReceiveTimeout = 20 * time.Minute
 
 // Run executes the daily replay for every shard in cfg.Shards
 // concurrently. Returns the first shard error; the rest log and run to
@@ -167,11 +175,12 @@ func Run(ctx context.Context, cfg Config) error {
 	// Tear down the shared subscription. cancelRead unblocks both the
 	// reader's gRPC stream and the fan-out's send loop; we wait on both
 	// so their goroutines don't outlive Run.
+	var subscriptionErr error
 	if cancelRead != nil {
 		cancelRead()
 		<-fanoutDone
 		if rerr := <-readerDone; rerr != nil && !errors.Is(rerr, context.Canceled) && !errors.Is(rerr, context.DeadlineExceeded) {
-			glog.V(2).Infof("daily_run: shared reader returned: %v", rerr)
+			subscriptionErr = fmt.Errorf("daily_run: shared subscription: %w", rerr)
 		}
 	}
 
@@ -183,6 +192,14 @@ func Run(ctx context.Context, cfg Config) error {
 			first = err
 		} else {
 			glog.V(1).Infof("daily_run: additional shard error: %v", err)
+		}
+	}
+	if subscriptionErr != nil {
+		errCount++
+		if first == nil {
+			first = subscriptionErr
+		} else {
+			glog.V(1).Infof("daily_run: additional subscription error: %v", subscriptionErr)
 		}
 	}
 	status := "ok"
@@ -277,9 +294,9 @@ func computeGlobalStartTsNs(ctx context.Context, cfg Config, runNow time.Time, m
 // Subscription floor is the caller-supplied globalStartTsNs (typically
 // min over per-shard cursors). Shards whose own startTsNs is fresher
 // filter out already-past events themselves inside drainShardEvents.
-// Events arriving with TsNs > runUpTo (the pass boundary) cause the
-// fan-out to cancel the reader and close all per-shard channels,
-// ending the pass.
+// The filer-side UntilNs bound normally ends the stream at runNow. Events
+// arriving with TsNs > runUpTo are retained as a defensive fallback: they
+// cause the fan-out to cancel the reader and close all per-shard channels.
 func startSharedSubscription(ctx context.Context, cfg Config, runNow time.Time, globalStartTsNs int64) (map[int]chan *reader.Event, chan error, chan struct{}, context.CancelFunc) {
 	shardSet := make(map[int]bool, len(cfg.Shards))
 	shardEvents := make(map[int]chan *reader.Event, len(cfg.Shards))
@@ -302,18 +319,28 @@ func startSharedSubscription(ctx context.Context, cfg Config, runNow time.Time, 
 	}
 
 	events := make(chan *reader.Event, 4*len(cfg.Shards))
+	receiveTimeout := cfg.SubscriptionReceiveTimeout
+	if receiveTimeout == 0 {
+		receiveTimeout = defaultSubscriptionReceiveTimeout
+	}
 	rd := &reader.Reader{
 		ShardPredicate: func(id int) bool { return shardSet[id] },
 		BucketsPath:    cfg.BucketsPath,
 		StartTsNs:      globalStartTsNs,
+		UntilTsNs:      runNow.UnixNano(),
 		Events:         events,
 		EventBudget:    cfg.EventBudget,
+		ReceiveTimeout: receiveTimeout,
 	}
 
 	readerCtx, cancelReader := context.WithCancel(ctx)
 	readerDone := make(chan error, 1)
 	go func() {
 		readerDone <- rd.Run(readerCtx, cfg.FilerClient, clientName, clientID)
+		// EOF, a transport error, or the receive watchdog must all release
+		// the fan-out so it closes every shard channel. Without this signal,
+		// runShard waits forever even though no reader can produce more events.
+		cancelReader()
 	}()
 
 	runUpTo := runNow.UnixNano()
@@ -388,6 +415,9 @@ func validate(cfg Config) error {
 	// a loud failure instead.
 	if cfg.WalkerInterval < 0 {
 		return fmt.Errorf("daily_run: negative WalkerInterval %v (0 = unthrottled, positive values throttle)", cfg.WalkerInterval)
+	}
+	if cfg.SubscriptionReceiveTimeout < 0 {
+		return fmt.Errorf("daily_run: negative SubscriptionReceiveTimeout %v", cfg.SubscriptionReceiveTimeout)
 	}
 	for _, sh := range cfg.Shards {
 		if sh < 0 || sh >= s3lifecycle.ShardCount {

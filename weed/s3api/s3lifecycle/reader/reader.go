@@ -73,7 +73,16 @@ type Reader struct {
 	// then means "subscribe from the start of the meta-log".
 	Cursor    *Cursor
 	StartTsNs int64
+	// UntilTsNs bounds the subscription at an inclusive metadata timestamp.
+	// Zero leaves the stream unbounded.
+	UntilTsNs int64
 	Events    chan<- *Event
+
+	// ReceiveTimeout bounds the time spent waiting for the next stream
+	// response. The filer sends idle heartbeats to readers that opt in, so a
+	// caught-up but healthy stream remains active while a half-open stream
+	// eventually fails. Zero disables the timeout.
+	ReceiveTimeout time.Duration
 
 	// EventBudget caps how many events Run processes before returning nil.
 	// Zero = unbounded; the run continues until ctx cancellation or stream
@@ -102,6 +111,9 @@ func (r *Reader) Run(ctx context.Context, client filer_pb.SeaweedFilerClient, cl
 	if r.BucketsPath == "" {
 		return errors.New("reader: empty BucketsPath")
 	}
+	if r.ReceiveTimeout < 0 {
+		return fmt.Errorf("reader: negative ReceiveTimeout %v", r.ReceiveTimeout)
+	}
 	r.bucketsPathSlash = r.BucketsPath
 	if !strings.HasSuffix(r.bucketsPathSlash, "/") {
 		r.bucketsPathSlash += "/"
@@ -111,20 +123,70 @@ func (r *Reader) Run(ctx context.Context, client filer_pb.SeaweedFilerClient, cl
 	if sinceNs == 0 && r.Cursor != nil {
 		sinceNs = r.Cursor.MinTsNs()
 	}
-	stream, err := client.SubscribeMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
+	streamCtx, cancelStream := context.WithCancel(ctx)
+	defer cancelStream()
+	stream, err := client.SubscribeMetadata(streamCtx, &filer_pb.SubscribeMetadataRequest{
 		ClientName:             clientName,
 		PathPrefix:             r.BucketsPath,
 		SinceNs:                sinceNs,
 		ClientId:               clientID,
+		UntilNs:                r.UntilTsNs,
 		ClientSupportsBatching: true,
+		// Heartbeats provide application-level proof that the response path is
+		// alive. They are consumed below like any other response but filtered
+		// out by dispatchOne because they carry no EventNotification.
+		ClientSupportsIdleHeartbeat: r.ReceiveTimeout > 0,
 	})
 	if err != nil {
 		return fmt.Errorf("subscribe: %w", err)
 	}
 
+	type receiveResult struct {
+		response *filer_pb.SubscribeMetadataResponse
+		err      error
+	}
+	receiveCh := make(chan receiveResult, 1)
+	go func() {
+		for {
+			resp, recvErr := stream.Recv()
+			select {
+			case receiveCh <- receiveResult{response: resp, err: recvErr}:
+			case <-streamCtx.Done():
+				return
+			}
+			if recvErr != nil {
+				return
+			}
+		}
+	}()
+
 	processed := 0
 	for {
-		resp, recvErr := stream.Recv()
+		var (
+			resp    *filer_pb.SubscribeMetadataResponse
+			recvErr error
+			timer   *time.Timer
+			timeout <-chan time.Time
+		)
+		if r.ReceiveTimeout > 0 {
+			timer = time.NewTimer(r.ReceiveTimeout)
+			timeout = timer.C
+		}
+		select {
+		case result := <-receiveCh:
+			if timer != nil {
+				timer.Stop()
+			}
+			resp, recvErr = result.response, result.err
+		case <-timeout:
+			cancelStream()
+			return fmt.Errorf("%w after %s", ErrReceiveTimeout, r.ReceiveTimeout)
+		case <-streamCtx.Done():
+			if timer != nil {
+				timer.Stop()
+			}
+			return streamCtx.Err()
+		}
 		if recvErr == io.EOF {
 			return nil
 		}
@@ -146,6 +208,10 @@ func (r *Reader) Run(ctx context.Context, client filer_pb.SeaweedFilerClient, cl
 		}
 	}
 }
+
+// ErrReceiveTimeout reports that an otherwise open subscription stopped
+// delivering both metadata events and negotiated idle heartbeats.
+var ErrReceiveTimeout = errors.New("reader: metadata receive timeout")
 
 func (r *Reader) dispatchOne(ctx context.Context, resp *filer_pb.SubscribeMetadataResponse, processed *int) error {
 	if resp == nil || resp.EventNotification == nil {
