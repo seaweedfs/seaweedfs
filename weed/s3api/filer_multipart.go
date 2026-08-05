@@ -825,24 +825,12 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				return s3err.ErrInternalError
 			}
 
-			// A suspended DELETE leaves a null delete marker in .versions that reads keep
-			// resolving to, so retire it now that the replacement null version exists at the
-			// regular path. Both steps run only after the write commits: undoing them on a
-			// failed write would republish the deleted key as its newest real version.
-			//
-			// They rewrite shared .versions state unconditionally, and the routed completion
-			// runs off the object write lock, so first confirm the object we just wrote is
-			// still the current one: a DELETE that landed in between owns the null slot now,
-			// and clearing its pointer would resurrect an older version under a key that was
-			// successfully deleted. Narrows that window rather than closing it — a delete
-			// landing after this read still wins. Closing it wants a conditional cleanup
-			// transaction (ObjectTransaction condition_key + IF_ETAG_MATCH on the object),
-			// across this path and putSuspendedVersioningObject both, in its own change.
-			//
-			// Read back from whichever filer took the write, not via getObjectEntryRoutedByKey:
-			// that skips an owner it recently found unreachable and reads local-first, which
-			// can miss a write that just landed on the owner and read as superseded — skipping
-			// the cleanup and leaving the key unreadable, the very bug this fixes.
+			// Retire the null delete marker a suspended DELETE leaves, now that the
+			// replacement null version is at the regular path. Only after the write commits:
+			// undoing it on a failed write republishes the deleted key as an older version.
+			// Read back from the filer that took the write — getObjectEntryRoutedByKey drops
+			// a recently-unreachable owner and reads local-first, so it can miss the write.
+			// A concurrent DELETE owns the null slot instead; narrows that race, not closes it.
 			var currentEntry *filer_pb.Entry
 			var currentErr error
 			if owner != "" {
@@ -858,16 +846,12 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				string(currentEntry.Extended[s3_constants.SeaweedFSUploadId]) != *input.UploadId
 
 			if supersededByConcurrentWrite {
-				// Last writer wins: the completion did happen, someone else moved the key on.
 				glog.V(2).Infof("completeMultipartUpload: skipping the null cleanup for %s/%s, superseded by a concurrent write", *input.Bucket, normalizedKey)
 			} else {
-				// Clearing the pointer is what hands the read back to the regular path, so it
-				// must come first — removing the marker while the pointer still names it makes
-				// reads rescan and promote an older version. Failing it leaves the key reading
-				// as deleted, so report that rather than answering 200 for an object HEAD and
-				// GET still miss; the caller's retry replays the completion, since a non-ErrNone
-				// finalize keeps the upload directory. Dropping the marker afterwards is only
-				// list hygiene: with the pointer gone the regular-path null version already wins.
+				// Pointer first: removing the marker while the pointer still names it makes
+				// reads rescan and promote an older version. A failed clear leaves the key
+				// reading as deleted, so fail instead of returning 200 — a non-ErrNone
+				// finalize keeps the upload directory, so the caller's retry replays.
 				if err := s3a.updateIsLatestFlagsForSuspendedVersioning(*input.Bucket, normalizedKey); err != nil {
 					glog.Errorf("completeMultipartUpload: failed to clear the latest-version pointer for %s/%s: %v", *input.Bucket, normalizedKey, err)
 					return s3err.ErrInternalError

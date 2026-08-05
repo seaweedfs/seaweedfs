@@ -82,10 +82,9 @@ func TestSuspendedDeleteCreatesDeleteMarker(t *testing.T) {
 	assert.Equal(t, "versioned-content", string(body))
 }
 
-// A suspended-versioning multipart completion writes the null version at the regular
-// path, so it has to drop the null delete marker a preceding DELETE left in .versions.
-// Otherwise the completion reports 200 and the object lists, but HEAD/GET keep
-// resolving to the delete marker and answer NoSuchKey.
+// A suspended-versioning completion must drop the null delete marker a preceding
+// DELETE left in .versions, or it reports 200 and the object lists while HEAD/GET
+// keep resolving the marker and answer NoSuchKey.
 func TestSuspendedMultipartOverwritesDeleteMarker(t *testing.T) {
 	client := getS3Client(t)
 	bucketName := getNewBucketName()
@@ -96,8 +95,7 @@ func TestSuspendedMultipartOverwritesDeleteMarker(t *testing.T) {
 	objectKey := "suspended-multipart-after-delete.bin"
 	partData := bytes.Repeat([]byte("a"), 5*1024*1024)
 
-	// A real version from before suspension must survive the whole sequence: the
-	// cleanup below only retires the null version, never the key's real history.
+	// The cleanup retires only the null version, never the key's real history.
 	enableVersioning(t, client, bucketName)
 	realVersion, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
 		Bucket: aws.String(bucketName),
