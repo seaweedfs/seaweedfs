@@ -649,9 +649,10 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			glog.Errorf("completeMultipartUpload: failed to get versioning state for bucket %s: %v", *input.Bucket, vErr)
 			return s3err.ErrInternalError
 		}
+		// Full object key, not just entryName, so the right .versions directory is used.
+		normalizedKey := s3_constants.NormalizeObjectKey(*input.Key)
+
 		if versioningState == s3_constants.VersioningEnabled {
-			// Use full object key (not just entryName) to ensure correct .versions directory is checked
-			normalizedKey := strings.TrimPrefix(*input.Key, "/")
 			useInvertedFormat := s3a.getVersionIdFormat(*input.Bucket, normalizedKey)
 			versionId := generateVersionId(useInvertedFormat)
 			versionFileName := s3a.getVersionFileName(versionId)
@@ -769,8 +770,6 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		}
 
 		if versioningState == s3_constants.VersioningSuspended {
-			normalizedKey := strings.TrimPrefix(*input.Key, "/")
-
 			// For suspended versioning, add "null" version ID metadata and return "null" version ID
 			if err := s3a.writeMultipartObject(owner, routeKey, dirName, entryName, completionState.finalParts, func(entry *filer_pb.Entry) {
 				if entry.Extended == nil {
@@ -825,38 +824,26 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				return s3err.ErrInternalError
 			}
 
-			// Retire the null delete marker a suspended DELETE leaves, now that the
-			// replacement null version is at the regular path. Only after the write commits:
-			// undoing it on a failed write republishes the deleted key as an older version.
-			// Read back from the filer that took the write — getObjectEntryRoutedByKey drops
-			// a recently-unreachable owner and reads local-first, so it can miss the write.
-			// A concurrent DELETE owns the null slot instead; narrows that race, not closes it.
-			var currentEntry *filer_pb.Entry
-			var currentErr error
-			if owner != "" {
-				currentEntry, currentErr = s3a.lookupEntryOnFiler(owner, dirName, entryName)
-			} else {
-				currentEntry, currentErr = s3a.getEntry(dirName, entryName)
-			}
+			// The cleanup rewrites shared .versions state, and the routed completion runs
+			// off the object write lock, so only run it while this upload still owns the
+			// key: a DELETE that landed in between owns the null slot now, and retiring
+			// its marker would resurrect an older version under a deleted key. Narrows
+			// that race, does not close it.
+			currentEntry, currentErr := s3a.lookupEntryPreferringOwner(owner, dirName, entryName)
 			if currentErr != nil && !errors.Is(currentErr, filer_pb.ErrNotFound) {
 				glog.Errorf("completeMultipartUpload: failed to re-read %s/%s before the null cleanup: %v", *input.Bucket, normalizedKey, currentErr)
 				return s3err.ErrInternalError
 			}
-			supersededByConcurrentWrite := currentEntry == nil ||
-				string(currentEntry.Extended[s3_constants.SeaweedFSUploadId]) != *input.UploadId
-
-			if supersededByConcurrentWrite {
-				glog.V(2).Infof("completeMultipartUpload: skipping the null cleanup for %s/%s, superseded by a concurrent write", *input.Bucket, normalizedKey)
-			} else {
-				// Pointer first: removing the marker while the pointer still names it makes
-				// reads rescan and promote an older version. A failed clear leaves the key
-				// reading as deleted, so fail instead of returning 200 — a non-ErrNone
-				// finalize keeps the upload directory, so the caller's retry replays.
-				if err := s3a.updateIsLatestFlagsForSuspendedVersioning(*input.Bucket, normalizedKey); err != nil {
-					glog.Errorf("completeMultipartUpload: failed to clear the latest-version pointer for %s/%s: %v", *input.Bucket, normalizedKey, err)
+			if currentEntry != nil && string(currentEntry.Extended[s3_constants.SeaweedFSUploadId]) == *input.UploadId {
+				// A failed finalize leaves the key reading as deleted, so fail rather than
+				// return 200 — a non-ErrNone finalize keeps the upload directory, so the
+				// caller's retry replays.
+				if err := s3a.finalizeSuspendedNullWrite(*input.Bucket, normalizedKey); err != nil {
+					glog.Errorf("completeMultipartUpload: failed to retire the null delete marker for %s/%s: %v", *input.Bucket, normalizedKey, err)
 					return s3err.ErrInternalError
 				}
-				s3a.removeNullVersionFile(*input.Bucket, normalizedKey)
+			} else {
+				glog.V(2).Infof("completeMultipartUpload: skipping the null cleanup for %s/%s, superseded by a concurrent write", *input.Bucket, normalizedKey)
 			}
 
 			// Note: Suspended versioning should NOT return VersionId field according to AWS S3 spec

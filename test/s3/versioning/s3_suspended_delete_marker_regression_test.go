@@ -97,12 +97,7 @@ func TestSuspendedMultipartOverwritesDeleteMarker(t *testing.T) {
 
 	// The cleanup retires only the null version, never the key's real history.
 	enableVersioning(t, client, bucketName)
-	realVersion, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
-		Bucket: aws.String(bucketName),
-		Key:    aws.String(objectKey),
-		Body:   bytes.NewReader([]byte("pre-suspension-content")),
-	})
-	require.NoError(t, err)
+	realVersion := putObject(t, client, bucketName, objectKey, "pre-suspension-content")
 	require.NotNil(t, realVersion.VersionId)
 	suspendVersioning(t, client, bucketName)
 
@@ -135,20 +130,10 @@ func TestSuspendedMultipartOverwritesDeleteMarker(t *testing.T) {
 	}
 
 	completeSuspendedMultipart()
-
-	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
-		Bucket: aws.String(bucketName),
-		Key:    aws.String(objectKey),
-	})
-	require.NoError(t, err)
-
+	deleteKey(t, client, bucketName, objectKey)
 	completeSuspendedMultipart()
 
-	headResp, err := client.HeadObject(context.TODO(), &s3.HeadObjectInput{
-		Bucket: aws.String(bucketName),
-		Key:    aws.String(objectKey),
-	})
-	require.NoError(t, err)
+	headResp := headObject(t, client, bucketName, objectKey)
 	require.NotNil(t, headResp.ContentLength)
 	assert.Equal(t, int64(len(partData)), *headResp.ContentLength)
 
@@ -169,10 +154,9 @@ func TestSuspendedMultipartOverwritesDeleteMarker(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, listResp.DeleteMarkers)
 
-	listedVersionIds := make([]string, 0, len(listResp.Versions))
+	var listedVersionIds []string
 	for _, version := range listResp.Versions {
-		require.NotNil(t, version.VersionId)
-		listedVersionIds = append(listedVersionIds, *version.VersionId)
+		listedVersionIds = append(listedVersionIds, aws.ToString(version.VersionId))
 	}
 	assert.ElementsMatch(t, []string{*realVersion.VersionId, "null"}, listedVersionIds)
 

@@ -194,3 +194,19 @@ func (s3a *S3ApiServer) versionedFinalize(bucket, object, versionId, versionFile
 		},
 	}
 }
+
+// finalizeSuspendedNullWrite retires the null delete marker a suspended DELETE left
+// in .versions, so reads resolve the null version the caller just wrote at the
+// regular path. Pointer first: clearing the marker while the pointer still names it
+// makes reads rescan .versions and promote an older version. Call only once the
+// write has committed — retiring the marker for a write that then fails republishes
+// the deleted key.
+func (s3a *S3ApiServer) finalizeSuspendedNullWrite(bucket, object string) error {
+	if err := s3a.updateIsLatestFlagsForSuspendedVersioning(bucket, object); err != nil {
+		return err
+	}
+	// Best-effort: with the pointer gone the regular-path object already owns the
+	// null slot, so a surviving marker is neither read nor listed.
+	s3a.removeNullVersionFile(bucket, object)
+	return nil
+}
