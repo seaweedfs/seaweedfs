@@ -832,12 +832,24 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			//
 			// They rewrite shared .versions state unconditionally, and the routed completion
 			// runs off the object write lock, so first confirm the object we just wrote is
-			// still the current one. A DELETE that landed in between owns the null slot now,
+			// still the current one: a DELETE that landed in between owns the null slot now,
 			// and clearing its pointer would resurrect an older version under a key that was
-			// successfully deleted. This narrows the window rather than closing it — a delete
-			// landing after this read still loses; a compare-and-set pointer flip is the real
-			// answer and wants its own change.
-			currentEntry, currentErr := s3a.getObjectEntryRoutedByKey(*input.Bucket, normalizedKey)
+			// successfully deleted. Narrows that window rather than closing it — a delete
+			// landing after this read still wins. Closing it wants a conditional cleanup
+			// transaction (ObjectTransaction condition_key + IF_ETAG_MATCH on the object),
+			// across this path and putSuspendedVersioningObject both, in its own change.
+			//
+			// Read back from whichever filer took the write, not via getObjectEntryRoutedByKey:
+			// that skips an owner it recently found unreachable and reads local-first, which
+			// can miss a write that just landed on the owner and read as superseded — skipping
+			// the cleanup and leaving the key unreadable, the very bug this fixes.
+			var currentEntry *filer_pb.Entry
+			var currentErr error
+			if owner != "" {
+				currentEntry, currentErr = s3a.lookupEntryOnFiler(owner, dirName, entryName)
+			} else {
+				currentEntry, currentErr = s3a.getEntry(dirName, entryName)
+			}
 			if currentErr != nil && !errors.Is(currentErr, filer_pb.ErrNotFound) {
 				glog.Errorf("completeMultipartUpload: failed to re-read %s/%s before the null cleanup: %v", *input.Bucket, normalizedKey, currentErr)
 				return s3err.ErrInternalError
