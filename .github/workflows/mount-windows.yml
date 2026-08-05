@@ -6,6 +6,7 @@ on:
     paths:
       - 'weed/mount/**'
       - 'weed/command/mount*.go'
+      - 'weed/storage/volume_vacuum.go'
       - 'test/winfsp/**'
       - '.github/workflows/mount-windows.yml'
   # No base branch filter: this is the only thing that runs the Windows mount,
@@ -14,6 +15,7 @@ on:
     paths:
       - 'weed/mount/**'
       - 'weed/command/mount*.go'
+      - 'weed/storage/volume_vacuum.go'
       - 'test/winfsp/**'
       - '.github/workflows/mount-windows.yml'
 

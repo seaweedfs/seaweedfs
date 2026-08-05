@@ -380,6 +380,9 @@ func (v *Volume) cleanupCompact() error {
 // A failure to open the directory for sync is non-fatal on platforms that do
 // not support it.
 func fsyncDir(dir string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
 	d, err := os.Open(dir)
 	if err != nil {
 		return nil
