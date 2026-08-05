@@ -463,9 +463,70 @@ func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Req
 	}
 }
 
+// handleVersionedDirectoryObjectRequest answers GET/HEAD for the key "<dir>/" out of
+// its version history, which for a directory marker lives inside the directory the key
+// names. Without a history the key is whatever the directory entry says, which is the
+// unversioned path the caller falls through to.
+func (s3a *S3ApiServer) handleVersionedDirectoryObjectRequest(w http.ResponseWriter, r *http.Request, bucket, object, handlerName string) bool {
+	if !strings.HasSuffix(object, "/") {
+		return false
+	}
+	if versioningConfigured, err := s3a.isVersioningConfigured(bucket); err != nil || !versioningConfigured {
+		return false
+	}
+
+	if versionId := r.URL.Query().Get("versionId"); versionId != "" {
+		entry, err := s3a.getSpecificObjectVersion(bucket, object, versionId)
+		if err != nil {
+			glog.V(2).Infof("%s: no version %s of directory object %s/%s: %v", handlerName, versionId, bucket, object, err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchVersion)
+			return true
+		}
+		w.Header().Set("x-amz-version-id", versionId)
+		if isDeleteMarkerEntry(entry) {
+			w.Header().Set(s3_constants.AmzDeleteMarker, "true")
+			s3err.WriteErrorResponse(w, r, s3err.ErrMethodNotAllowed)
+			return true
+		}
+		s3a.serveDirectoryContent(w, r, entry)
+		return true
+	}
+
+	normalizedObject := s3_constants.NormalizeObjectKey(object)
+	if _, err := s3a.getEntry(s3a.bucketDir(bucket), normalizedObject+s3_constants.VersionsFolder); err != nil {
+		return false
+	}
+	entry, err := s3a.getLatestObjectVersion(bucket, object)
+	if err != nil {
+		glog.V(2).Infof("%s: no current version of directory object %s/%s: %v", handlerName, bucket, object, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+		return true
+	}
+	versionId := string(entry.Extended[s3_constants.ExtVersionIdKey])
+	if versionId == "" {
+		versionId = "null"
+	}
+	w.Header().Set("x-amz-version-id", versionId)
+	if isDeleteMarkerEntry(entry) {
+		w.Header().Set(s3_constants.AmzDeleteMarker, "true")
+		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+		return true
+	}
+	s3a.serveDirectoryContent(w, r, entry)
+	return true
+}
+
+func isDeleteMarkerEntry(entry *filer_pb.Entry) bool {
+	return entry != nil && string(entry.Extended[s3_constants.ExtDeleteMarkerKey]) == "true"
+}
+
 // handleDirectoryObjectRequest is a helper function that handles directory object requests
 // for both GET and HEAD operations, eliminating code duplication
 func (s3a *S3ApiServer) handleDirectoryObjectRequest(w http.ResponseWriter, r *http.Request, bucket, object, handlerName string) bool {
+	if s3a.handleVersionedDirectoryObjectRequest(w, r, bucket, object, handlerName) {
+		return true
+	}
+
 	// Check if this is a directory object and handle it directly
 	if dirEntry, isDirectoryObject, err := s3a.checkDirectoryObject(bucket, object); err != nil {
 		glog.Errorf("%s: error checking directory object %s/%s: %v", handlerName, bucket, object, err)
