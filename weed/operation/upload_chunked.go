@@ -206,15 +206,18 @@ uploadLoop:
 			// retry there rather than losing the whole object to one bad volume.
 			for attempt := 1; ; attempt++ {
 				uploadResult, uploadResultErr = uploadChunk(ctx, assignResult, buf.Bytes(), jwt, chunkMd5B64, opt)
-				if uploadResultErr == nil || attempt == chunkAssignAttempts || !shouldReassignUpload(uploadResultErr) || objectFailed() {
+				if uploadResultErr == nil {
+					break
+				}
+				// The volume server commits the needle before replicating, so a
+				// failed write can still leave a copy behind. No chunk will name
+				// this fid whether we retry or give up here, and an unreferenced
+				// needle is not garbage vacuum can find, so drop it either way.
+				deleteChunkFromHolders(chunkHolders(assignResult), assignResult.Fid, jwt)
+				if attempt == chunkAssignAttempts || !shouldReassignUpload(uploadResultErr) || objectFailed() {
 					break
 				}
 				glog.V(2).Infof("re-assigning chunk at offset %d after attempt %d/%d: %v", offset, attempt, chunkAssignAttempts, uploadResultErr)
-				// The volume server commits the needle before replicating, so a
-				// 5xx can still leave a copy behind. Nothing will reference the
-				// fid we are abandoning, and an unreferenced needle is not
-				// garbage vacuum can find, so drop it now.
-				deleteChunkFromHolders(chunkHolders(assignResult), assignResult.Fid, jwt)
 				_, assignResult, assignErr = opt.AssignFunc(ctx, 1, uint64(size))
 				if assignErr != nil {
 					uploadResultErr = fmt.Errorf("reassign volume after %w: %w", uploadResultErr, assignErr)
@@ -313,10 +316,13 @@ func uploadChunk(ctx context.Context, assignResult *AssignResult, data []byte, j
 		PairMap:           nil,
 		Jwt:               jwt,
 		Md5:               md5b64,
-		// One attempt per assignment: the caller retries everything a same-URL
-		// retry would, and a different volume is the better second try. The
-		// fan-out path keeps its inner retries, where absorbing a blip locally
-		// beats cancelling every holder and re-uploading the chunk.
+		// One upload call per assignment: the caller retries everything a
+		// same-URL retry would, and a different volume is the better second try.
+		// This bounds retriedUploadData only — doUploadData still reissues once
+		// on a connection reset, with a rewound body, which is a transport
+		// stutter rather than a fresh attempt at the volume. The fan-out path
+		// keeps its retries, where absorbing a blip locally beats cancelling
+		// every holder and re-uploading the chunk.
 		MaxAttempts: 1,
 	}
 	// Use mock upload function if provided (for testing), otherwise use real uploader

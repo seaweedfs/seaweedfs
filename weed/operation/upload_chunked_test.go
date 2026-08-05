@@ -597,11 +597,16 @@ func TestUploadReaderInChunksReassignsAcrossHolders(t *testing.T) {
 
 // retriedUploadData retries the same URL three times by default. On the relay
 // path the reassignment loop retries everything that would, so leaving both in
-// place would multiply into nine POSTs for one chunk.
+// place would multiply into nine upload calls for one chunk.
+//
+// This counts calls that reached a handler and answered. doUploadData reissues
+// once more on a connection reset before any of them return, which no HTTP
+// status can provoke; upload_content_test covers that separately.
 func TestUploadReaderInChunksDoesNotMultiplyRelayAttempts(t *testing.T) {
-	var posts int32
+	var posts, deletes int32
 	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodDelete {
+			atomic.AddInt32(&deletes, 1)
 			w.WriteHeader(http.StatusAccepted)
 			return
 		}
@@ -626,6 +631,11 @@ func TestUploadReaderInChunksDoesNotMultiplyRelayAttempts(t *testing.T) {
 		t.Fatal("expected the upload to fail once every volume it is offered is full")
 	}
 	if got := atomic.LoadInt32(&posts); got != 3 {
-		t.Errorf("expected 3 POSTs, one per assignment, got %d", got)
+		t.Errorf("expected 3 upload calls, one per assignment, got %d", got)
+	}
+	// Including the last one: giving up does not make the needle it may have
+	// committed anyone else's to find, and no chunk will ever name that fid.
+	if got := atomic.LoadInt32(&deletes); got != 3 {
+		t.Errorf("expected every abandoned fid to be rolled back, got %d deletes", got)
 	}
 }
