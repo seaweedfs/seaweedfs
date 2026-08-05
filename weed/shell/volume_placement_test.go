@@ -189,3 +189,38 @@ func TestPickTargetStopsWhenTheSnapshotIsSpent(t *testing.T) {
 		t.Fatalf("got %q, want nil once the snapshot is spent", got.GetId())
 	}
 }
+
+func TestPickTargetUsesOneMetricWhenReportingIsMixed(t *testing.T) {
+	// b1 has the most free bytes but the fewest slots; a2 the reverse. With a3
+	// reporting no bytes at all, every candidate must be ordered on slots, or
+	// the comparator is intransitive and the winner depends on sort order.
+	topo := placementTopo(
+		placementNode("a1", 10, 1, 1000, 500), // source
+		placementNode("a2", 10, 1, 1000, 100),
+		placementNode("a3", 10, 2, 0, 0), // too old to report bytes
+		placementNode("a4", 10, 8, 1000, 900),
+	)
+	got := PickTarget(topo, PlacementPreference{Source: "a1", DiskType: types.SsdType})
+	if got.GetId() != "a2" {
+		t.Fatalf("got %q, want a2 -- the most free slots once bytes are unusable", got.GetId())
+	}
+}
+
+func TestPickTargetReservesTheVolumeSize(t *testing.T) {
+	// A volume far bigger than the tier average must be charged at its real
+	// size, or a batch of them overcommits the destination.
+	topo := placementTopo(
+		placementNode("a1", 10, 0, 1000, 1000),
+		placementNode("a2", 10, 0, 1000, 900),
+	)
+	first := PickTarget(topo, PlacementPreference{Source: "z9", DiskType: types.SsdType, VolumeBytes: 800})
+	if first.GetId() != "a1" {
+		t.Fatalf("first pick %q, want a1", first.GetId())
+	}
+	// a1 now reports 200 free against a2's 900, so the next move must go there
+	// rather than to the node that merely started emptiest.
+	second := PickTarget(topo, PlacementPreference{Source: "z9", DiskType: types.SsdType, VolumeBytes: 800})
+	if second.GetId() != "a2" {
+		t.Fatalf("second pick %q, want a2 after 800 bytes were spent on a1", second.GetId())
+	}
+}

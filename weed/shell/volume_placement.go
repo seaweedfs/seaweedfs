@@ -20,6 +20,10 @@ type PlacementPreference struct {
 	// Exclude names nodes already spoken for by the same plan, so a caller
 	// placing several copies does not stack them on one node.
 	Exclude map[string]bool
+	// VolumeBytes is what this move will actually consume on the destination.
+	// Zero falls back to the tier's average volume size, which is all a caller
+	// planning a not-yet-created volume can know.
+	VolumeBytes uint64
 }
 
 // PickTarget chooses where a volume that has to leave its node should land:
@@ -88,14 +92,25 @@ func PickTarget(topo *master_pb.TopologyInfo, pref PlacementPreference) *master_
 		return nil
 	}
 
+	// One metric decides the whole ordering. Comparing some pairs on bytes and
+	// others on slots is intransitive -- with A,B reporting bytes and C not, the
+	// order of A and C depends on which the sort happens to compare first -- so a
+	// single node too old to report filesystem bytes puts every candidate on
+	// slots rather than silently mixing the two.
+	byBytes := true
+	for _, c := range candidates {
+		if !c.hasBytes {
+			byBytes = false
+			break
+		}
+	}
+
 	sort.SliceStable(candidates, func(i, j int) bool {
 		a, b := candidates[i], candidates[j]
 		if a.locality != b.locality {
 			return a.locality < b.locality
 		}
-		// A node that reports filesystem bytes is compared on them; one that does
-		// not falls back to slots rather than being read as having zero free.
-		if a.hasBytes && b.hasBytes && a.bytes != b.bytes {
+		if byBytes && a.bytes != b.bytes {
 			return a.bytes > b.bytes
 		}
 		return a.slots > b.slots
@@ -105,11 +120,17 @@ func PickTarget(topo *master_pb.TopologyInfo, pref PlacementPreference) *master_
 	if d, ok := chosen.DiskInfos[string(pref.DiskType)]; ok && d != nil {
 		d.VolumeCount++
 		if d.DiskTotalBytes != 0 && d.DiskFreeBytes != 0 {
-			// Spend the slot's worth of space too, so the next pick from this
-			// snapshot sees the node as fuller by the same amount.
-			perVolume := d.DiskTotalBytes / uint64(max64(d.MaxVolumeCount, 1))
-			if d.DiskFreeBytes > perVolume {
-				d.DiskFreeBytes -= perVolume
+			// Spend the space this move actually takes, so the next pick from
+			// this snapshot sees the node as fuller by the right amount. A big
+			// volume charged the tier average would let a batch overcommit the
+			// destination; a small one would divert later moves off a node that
+			// still had room.
+			spend := pref.VolumeBytes
+			if spend == 0 {
+				spend = d.DiskTotalBytes / uint64(max64(d.MaxVolumeCount, 1))
+			}
+			if d.DiskFreeBytes > spend {
+				d.DiskFreeBytes -= spend
 			} else {
 				d.DiskFreeBytes = 0
 			}
