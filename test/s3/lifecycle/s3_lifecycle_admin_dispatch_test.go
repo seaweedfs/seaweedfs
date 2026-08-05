@@ -36,12 +36,65 @@ func TestLifecycleAdminDispatchSucceedsWithCustomFilerGrpcPort(t *testing.T) {
 
 	waitForLifecycleWorkerReady(t, adminEndpoint)
 
-	// Lifecycle is a long-running batch; the run endpoint cancels it at
-	// this timeout, which converts a healthy run into canceled_count=1.
-	const runTimeoutSeconds = 30
-	body, err := json.Marshal(map[string]any{
-		"timeout_seconds": runTimeoutSeconds,
-	})
+	payload := runLifecycleJob(t, adminEndpoint, 30)
+
+	require.GreaterOrEqual(t, jsonNumber(t, payload, "detected_count"), 1)
+	require.Equal(t, 0, jsonNumber(t, payload, "error_count"),
+		"dispatched job errored — likely filer_grpc_address was raw host:httpPort.grpcPort")
+
+	require.Eventuallyf(t, func() bool {
+		_, err := c.HeadObject(context.Background(), &s3.HeadObjectInput{
+			Bucket: aws.String(bucket), Key: aws.String(oldKey),
+		})
+		return err != nil
+	}, 30*time.Second, 500*time.Millisecond,
+		"expected %s/%s to be deleted after admin-dispatched lifecycle run", bucket, oldKey)
+}
+
+// A worker-dispatched pass with rules in place but nothing due: the
+// invariant is that a pass returns on its own, so the admin never has to
+// cancel it and the executor slot is free for the next one.
+//
+// Not a regression test for the wedge this scenario comes from. Before
+// the subscription was bounded a pass ended only when some write landed
+// past its boundary, and on a shared test cluster something usually
+// does — verified: the whole suite passes on the unfixed build. The
+// deterministic guards are the dailyrun unit tests. This covers the
+// worker path end-to-end and would catch a pass that hangs
+// unconditionally.
+func TestLifecycleAdminDispatchCompletesWithNothingDue(t *testing.T) {
+	adminEndpoint := envOr("ADMIN_ENDPOINT", defaultAdminEndpoint)
+
+	c := s3Client(t)
+	bucket := uniqueBucket("admin-idle")
+	mustCreateBucket(t, c, bucket)
+	putExpirationLifecycle(t, c, bucket, "expire/", 1)
+	// Deliberately not backdated: the rule matches the prefix but nothing
+	// is due, so the pass dispatches nothing.
+	putObject(t, c, bucket, "expire/fresh.txt", "fresh")
+
+	waitForLifecycleWorkerReady(t, adminEndpoint)
+
+	// Let the writes above settle below the pass boundary, or one of them
+	// ends the pass and the wedge is masked.
+	time.Sleep(2 * time.Second)
+
+	payload := runLifecycleJob(t, adminEndpoint, 30)
+
+	require.Equal(t, 0, jsonNumber(t, payload, "canceled_count"),
+		"pass did not return on its own; the admin cancelled it at the run timeout")
+	require.GreaterOrEqual(t, jsonNumber(t, payload, "success_count"), 1,
+		"expected the dispatched pass to complete")
+	require.Equal(t, 0, jsonNumber(t, payload, "skipped_active_count"),
+		"a previous pass still held the executor slot")
+}
+
+// runLifecycleJob drives the admin's run endpoint and returns its decoded
+// response. timeoutSeconds bounds the run admin-side: a pass that never
+// returns comes back as canceled_count=1 after that long.
+func runLifecycleJob(t *testing.T, adminEndpoint string, timeoutSeconds int) map[string]any {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{"timeout_seconds": timeoutSeconds})
 	require.NoError(t, err)
 	req, err := http.NewRequestWithContext(
 		context.Background(), http.MethodPost,
@@ -59,18 +112,7 @@ func TestLifecycleAdminDispatchSucceedsWithCustomFilerGrpcPort(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
 	t.Logf("admin /api/plugin/job-types/s3_lifecycle/run response: %v", payload)
 	require.Equal(t, http.StatusOK, resp.StatusCode, "admin run endpoint failed: %v", payload)
-
-	require.GreaterOrEqual(t, jsonNumber(t, payload, "detected_count"), 1)
-	require.Equal(t, 0, jsonNumber(t, payload, "error_count"),
-		"dispatched job errored — likely filer_grpc_address was raw host:httpPort.grpcPort")
-
-	require.Eventuallyf(t, func() bool {
-		_, err := c.HeadObject(context.Background(), &s3.HeadObjectInput{
-			Bucket: aws.String(bucket), Key: aws.String(oldKey),
-		})
-		return err != nil
-	}, 30*time.Second, 500*time.Millisecond,
-		"expected %s/%s to be deleted after admin-dispatched lifecycle run", bucket, oldKey)
+	return payload
 }
 
 func jsonNumber(t *testing.T, payload map[string]any, key string) int {
