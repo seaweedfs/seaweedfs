@@ -235,12 +235,14 @@ uploadLoop:
 				}
 
 				// If a replica is full, re-assign to a new volume and retry.
-				if attempt < maxReassignAttempts-1 && strings.Contains(uploadResultErr.Error(), "Volume Size") {
+				if attempt < maxReassignAttempts-1 && strings.Contains(strings.ToLower(uploadResultErr.Error()), "volume size") {
 					glog.V(2).Infof("re-assigning chunk: replica full, attempt %d/%d", attempt+1, maxReassignAttempts)
 					_, assignResult, assignErr = opt.AssignFunc(ctx, 1, uint64(size))
 					if assignErr != nil {
-						break // Can't get a new volume; let the error propagate.
+						uploadResultErr = fmt.Errorf("reassign volume: %w", assignErr)
+						break
 					}
+					jwt = opt.Jwt
 					assignJwt := assignResult.Auth
 					if assignJwt != "" {
 						jwt = security.EncodedJwt(assignJwt)
