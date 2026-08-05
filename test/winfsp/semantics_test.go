@@ -2,6 +2,7 @@ package winfsp
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -459,5 +460,43 @@ func TestStatfsIsSelfConsistent(t *testing.T) {
 	}
 	if totalFree > total {
 		t.Fatalf("total free (%d) exceeds total (%d)", totalFree, total)
+	}
+}
+
+// TestDeleteOnClose covers the pattern Windows software uses for temporaries:
+// the file goes away when the last handle closes, with no explicit delete. A
+// filesystem that ignores the flag leaves the name behind, and the next
+// program to create it gets a collision.
+func TestDeleteOnClose(t *testing.T) {
+	dir := testRoot(t)
+	path := filepath.Join(dir, "ephemeral.tmp")
+
+	h, err := createDeleteOnClose(path)
+	if err != nil {
+		if errors.Is(err, errWindowsOnly) {
+			t.Skip("delete-on-close needs the Win32 create call")
+		}
+		t.Fatalf("open with delete-on-close: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		closeHandle(h)
+		t.Fatalf("file is not visible while its handle is open: %v", err)
+	}
+	if err := closeHandle(h); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if _, err := os.Stat(path); err == nil {
+		t.Fatal("file outlived its last handle")
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("stat after close: %v", err)
+	}
+	// The name has to be free again, which is what the conformance suite
+	// tripped over when an aborted test left its file behind.
+	h, err = createDeleteOnClose(path)
+	if err != nil {
+		t.Fatalf("recreating the same name failed: %v", err)
+	}
+	if err := closeHandle(h); err != nil {
+		t.Fatalf("close after recreate: %v", err)
 	}
 }
