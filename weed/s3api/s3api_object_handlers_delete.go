@@ -122,6 +122,13 @@ func (s3a *S3ApiServer) checkDeleteIfMatch(bucket, object, versionId, versioning
 func (s3a *S3ApiServer) deleteVersionedObject(r *http.Request, bucket, object, versionId, versioningState string) (deleteMutationResult, s3err.ErrorCode) {
 	var result deleteMutationResult
 
+	// The key "dir/" is the filer directory itself, which a delete marker cannot stand
+	// in for without hiding the children underneath it. It is not a versioned object,
+	// so it is deleted the way an unversioned bucket deletes it.
+	if versionId == "" && strings.HasSuffix(object, "/") {
+		return result, s3a.deleteDirectoryMarker(bucket, object)
+	}
+
 	switch {
 	case versionId != "":
 		versionEntry, versionLookupErr := s3a.getSpecificObjectVersion(bucket, object, versionId)

@@ -12,8 +12,8 @@ import (
 )
 
 // TestDeletedDirectoryMarkerDisappears covers the rclone directory_markers flow: a key
-// created with PutObject on "m2/" is deleted, and every current-version surface has to
-// agree it is gone even though the filer directory that carries it survives.
+// created with PutObject on "m2/" is deleted, and stops being a key everywhere. The
+// directory that carried it goes with it once nothing is left underneath.
 func TestDeletedDirectoryMarkerDisappears(t *testing.T) {
 	client := getS3Client(t)
 	bucketName := getNewBucketName()
@@ -24,7 +24,6 @@ func TestDeletedDirectoryMarkerDisappears(t *testing.T) {
 
 	putObject(t, client, bucketName, "m2/", "")
 	putObject(t, client, bucketName, "m2/f.txt", "hi")
-
 	assert.Equal(t, []string{"m2/", "m2/f.txt"}, listKeys(t, client, bucketName, ""))
 
 	deleteKey(t, client, bucketName, "m2/f.txt")
@@ -32,39 +31,22 @@ func TestDeletedDirectoryMarkerDisappears(t *testing.T) {
 
 	assert.Empty(t, listKeys(t, client, bucketName, ""), "the deleted marker is not a key")
 	assert.Empty(t, listPrefixes(t, client, bucketName, ""), "and it names no prefix")
-	assert.Empty(t, listKeys(t, client, bucketName, "m2/"), "prefix=m2/ answers empty")
 
-	_, err := client.HeadObject(context.TODO(), &s3.HeadObjectInput{
-		Bucket: aws.String(bucketName),
-		Key:    aws.String("m2/"),
-	})
-	require.Error(t, err, "HEAD on a deleted directory marker must not answer 200")
-	_, err = client.GetObject(context.TODO(), &s3.GetObjectInput{
-		Bucket: aws.String(bucketName),
-		Key:    aws.String("m2/"),
-	})
-	requireAPIError(t, err, "NoSuchKey")
-
-	// The key appears once in the version listing, as its delete marker.
+	// The file's own version history is untouched by deleting the directory key.
 	versions, err := client.ListObjectVersions(context.TODO(), &s3.ListObjectVersionsInput{
 		Bucket: aws.String(bucketName),
-		Prefix: aws.String("m2/"),
 	})
 	require.NoError(t, err)
-	latest := 0
 	for _, v := range versions.Versions {
-		if *v.Key == "m2/" && *v.IsLatest {
-			latest++
-		}
+		assert.NotEqual(t, "m2/", *v.Key, "a directory marker is not a versioned object")
 	}
 	for _, m := range versions.DeleteMarkers {
-		if *m.Key == "m2/" && *m.IsLatest {
-			latest++
-		}
+		assert.NotEqual(t, "m2/", *m.Key, "deleting one writes no delete marker")
 	}
-	assert.Equal(t, 1, latest, "exactly one version of m2/ is the latest")
+	assert.Len(t, versions.Versions, 1, "m2/f.txt keeps its version")
+	assert.Len(t, versions.DeleteMarkers, 1, "and its delete marker")
 
-	// Re-creating the marker retires the delete marker and keeps the history.
+	// Re-creating the marker brings the key back.
 	putObject(t, client, bucketName, "m2/", "")
 	assert.Equal(t, []string{"m2/"}, listKeys(t, client, bucketName, ""))
 	_, err = client.HeadObject(context.TODO(), &s3.HeadObjectInput{
@@ -72,18 +54,6 @@ func TestDeletedDirectoryMarkerDisappears(t *testing.T) {
 		Key:    aws.String("m2/"),
 	})
 	require.NoError(t, err)
-
-	versions, err = client.ListObjectVersions(context.TODO(), &s3.ListObjectVersionsInput{
-		Bucket: aws.String(bucketName),
-		Prefix: aws.String("m2/"),
-	})
-	require.NoError(t, err)
-	assert.NotEmpty(t, versions.DeleteMarkers, "the delete marker stays in the history")
-	for _, m := range versions.DeleteMarkers {
-		if *m.Key == "m2/" {
-			assert.False(t, *m.IsLatest, "the delete marker is no longer current")
-		}
-	}
 }
 
 // TestDeletedDirectoryMarkerKeepsItsSubtree pins the boundary: deleting the key "m2/"
@@ -101,29 +71,69 @@ func TestDeletedDirectoryMarkerKeepsItsSubtree(t *testing.T) {
 
 	deleteKey(t, client, bucketName, "m2/")
 
-	assert.Equal(t, []string{"m2/keep.txt"}, listKeys(t, client, bucketName, ""))
+	assert.Equal(t, []string{"m2/keep.txt"}, listKeys(t, client, bucketName, ""), "the marker key is gone")
 	assert.Equal(t, []string{"m2/"}, listPrefixes(t, client, bucketName, ""),
-		"a live child keeps the prefix even though the marker key is gone")
+		"a live child keeps the prefix")
 	assert.Equal(t, []string{"m2/keep.txt"}, listKeys(t, client, bucketName, "m2/"))
+
+	// The surviving object is still readable through the prefix that no longer has a key.
+	got, err := client.GetObject(context.TODO(), &s3.GetObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String("m2/keep.txt"),
+	})
+	require.NoError(t, err)
+	require.NoError(t, got.Body.Close())
 }
 
-// TestDirectoryMarkerSurvivesWithoutVersioning guards the unversioned path, which has no
-// history to consult and must keep answering as before.
-func TestDirectoryMarkerSurvivesWithoutVersioning(t *testing.T) {
+// TestDeletedDirectoryMarkerIsGoneFromReads checks the read surfaces once nothing is
+// left under the deleted key: the directory goes with it, so the path is not there.
+func TestDeletedDirectoryMarkerIsGoneFromReads(t *testing.T) {
 	client := getS3Client(t)
 	bucketName := getNewBucketName()
 
 	createBucket(t, client, bucketName)
 	defer deleteBucket(t, client, bucketName)
+	enableVersioning(t, client, bucketName)
 
 	putObject(t, client, bucketName, "m2/", "")
-	assert.Equal(t, []string{"m2/"}, listKeys(t, client, bucketName, ""))
+	deleteKey(t, client, bucketName, "m2/")
 
 	_, err := client.HeadObject(context.TODO(), &s3.HeadObjectInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String("m2/"),
 	})
-	require.NoError(t, err)
+	require.Error(t, err, "HEAD on a deleted directory marker must not answer 200")
+	_, err = client.GetObject(context.TODO(), &s3.GetObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String("m2/"),
+	})
+	requireAPIError(t, err, "NoSuchKey")
+	assert.Empty(t, listKeys(t, client, bucketName, "m2/"))
+}
+
+// TestDirectoryMarkerDeleteMatchesUnversioned pins the point of the change: a directory
+// marker is deleted the same way whether or not the bucket is versioned.
+func TestDirectoryMarkerDeleteMatchesUnversioned(t *testing.T) {
+	client := getS3Client(t)
+
+	for _, versioned := range []bool{false, true} {
+		bucketName := getNewBucketName()
+		createBucket(t, client, bucketName)
+		if versioned {
+			enableVersioning(t, client, bucketName)
+		}
+
+		putObject(t, client, bucketName, "m/", "")
+		putObject(t, client, bucketName, "m/child.txt", "x")
+		deleteKey(t, client, bucketName, "m/")
+
+		assert.Equal(t, []string{"m/child.txt"}, listKeys(t, client, bucketName, ""),
+			"versioned=%v: the marker key is gone, the child stays", versioned)
+		assert.Equal(t, []string{"m/"}, listPrefixes(t, client, bucketName, ""),
+			"versioned=%v: the prefix survives its live child", versioned)
+
+		deleteBucket(t, client, bucketName)
+	}
 }
 
 func listObjects(t *testing.T, client *s3.Client, bucketName, prefix, delimiter string) *s3.ListObjectsV2Output {
