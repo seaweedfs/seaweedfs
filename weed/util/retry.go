@@ -40,7 +40,6 @@ var transientErrorMessages = []string{
 	"internalerror",
 	"resourceexhausted",
 	"unavailable",
-	"volume size",
 }
 
 // IsTransientErrorMessage reports whether an error message describes a network
