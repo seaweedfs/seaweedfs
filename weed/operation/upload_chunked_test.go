@@ -581,3 +581,38 @@ func TestUploadReaderInChunksReassignsAcrossHolders(t *testing.T) {
 		t.Error("the reassigned volume kept the chunk; it must not be rolled back")
 	}
 }
+
+// retriedUploadData retries the same URL three times by default. On the relay
+// path the reassignment loop retries everything that would, so leaving both in
+// place would multiply into nine POSTs for one chunk.
+func TestUploadReaderInChunksDoesNotMultiplyRelayAttempts(t *testing.T) {
+	var posts int32
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		atomic.AddInt32(&posts, 1)
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `{"error":"failed to write to local disk: Volume Size 34361499680 Exceeded 34359738368"}`)
+	}))
+	defer dead.Close()
+
+	assigns := 0
+	_, err := UploadReaderInChunks(context.Background(), bytes.NewReader(bytes.Repeat([]byte("x"), 4096)), &ChunkedUploadOption{
+		ChunkSize:  8 * 1024,
+		Collection: "test",
+		AssignFunc: func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error) {
+			assigns++
+			// One holder, so uploadChunk takes the relay path.
+			return nil, &AssignResult{Fid: fmt.Sprintf("%d,0a0b0c0d", assigns), Url: strings.TrimPrefix(dead.URL, "http://"), Count: 1}, nil
+		},
+	})
+
+	if err == nil {
+		t.Fatal("expected the upload to fail once every volume it is offered is full")
+	}
+	if got := atomic.LoadInt32(&posts); got != 3 {
+		t.Errorf("expected 3 POSTs, one per assignment, got %d", got)
+	}
+}

@@ -71,6 +71,15 @@ func UploadReaderInChunks(ctx context.Context, reader io.Reader, opt *ChunkedUpl
 	const bytesBufferCounter = 4
 	bytesBufferLimitChan := make(chan struct{}, bytesBufferCounter)
 
+	// objectFailed reports whether another chunk has already doomed the upload,
+	// so an in-flight chunk stops spending its retry budget on bytes nobody
+	// will reference.
+	objectFailed := func() bool {
+		uploadErrLock.Lock()
+		defer uploadErrLock.Unlock()
+		return uploadErr != nil
+	}
+
 uploadLoop:
 	for {
 		// Throttle buffer usage
@@ -197,7 +206,7 @@ uploadLoop:
 			// retry there rather than losing the whole object to one bad volume.
 			for attempt := 1; ; attempt++ {
 				uploadResult, uploadResultErr = uploadChunk(ctx, assignResult, buf.Bytes(), jwt, chunkMd5B64, opt)
-				if uploadResultErr == nil || attempt == chunkAssignAttempts || !shouldReassignUpload(uploadResultErr) {
+				if uploadResultErr == nil || attempt == chunkAssignAttempts || !shouldReassignUpload(uploadResultErr) || objectFailed() {
 					break
 				}
 				glog.V(2).Infof("re-assigning chunk at offset %d after attempt %d/%d: %v", offset, attempt, chunkAssignAttempts, uploadResultErr)
@@ -304,6 +313,11 @@ func uploadChunk(ctx context.Context, assignResult *AssignResult, data []byte, j
 		PairMap:           nil,
 		Jwt:               jwt,
 		Md5:               md5b64,
+		// One attempt per assignment: the caller retries everything a same-URL
+		// retry would, and a different volume is the better second try. The
+		// fan-out path keeps its inner retries, where absorbing a blip locally
+		// beats cancelling every holder and re-uploading the chunk.
+		MaxAttempts: 1,
 	}
 	// Use mock upload function if provided (for testing), otherwise use real uploader
 	if opt.UploadFunc != nil {
