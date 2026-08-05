@@ -494,3 +494,90 @@ func TestUploadReaderInChunksBoundsReassignment(t *testing.T) {
 		t.Fatalf("expected %d assignments, got %d", chunkAssignAttempts, assigns)
 	}
 }
+
+// The fan-out path is what a real multi-replica cluster takes, and it behaves
+// differently from the relay path under failure: it cancels its siblings and
+// rolls back the copies that landed. Drive the reassignment loop through it.
+func TestUploadReaderInChunksReassignsAcrossHolders(t *testing.T) {
+	var primaryDeletes, fullDeletes int32
+
+	healthy := func(deletes *int32) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodDelete {
+				atomic.AddInt32(deletes, 1)
+				w.WriteHeader(http.StatusAccepted)
+				return
+			}
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{"name":"chunk","size":4096}`)
+		}))
+	}
+
+	full := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			atomic.AddInt32(&fullDeletes, 1)
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `{"error":"failed to write to local disk: Volume Size 34361499680 Exceeded 34359738368"}`)
+	}))
+	defer full.Close()
+
+	var secondaryDeletes int32
+	primary, secondary := healthy(&primaryDeletes), healthy(&secondaryDeletes)
+	defer primary.Close()
+	defer secondary.Close()
+
+	host := func(s *httptest.Server) string { return strings.TrimPrefix(s.URL, "http://") }
+
+	assigns := 0
+	assignFunc := func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error) {
+		assigns++
+		if assigns == 1 {
+			// Two holders, so uploadChunk takes the fan-out path; one is full.
+			return nil, &AssignResult{
+				Fid:      "1,0a0b0c0d",
+				Url:      host(primary),
+				Replicas: []Location{{Url: host(full)}},
+				Count:    1,
+			}, nil
+		}
+		return nil, &AssignResult{
+			Fid:      "2,0a0b0c0d",
+			Url:      host(primary),
+			Replicas: []Location{{Url: host(secondary)}},
+			Count:    1,
+		}, nil
+	}
+
+	result, err := UploadReaderInChunks(context.Background(), bytes.NewReader(bytes.Repeat([]byte("x"), 4096)), &ChunkedUploadOption{
+		ChunkSize:  8 * 1024,
+		Collection: "test",
+		AssignFunc: assignFunc,
+	})
+
+	if err != nil {
+		t.Fatalf("expected the chunk to land on the reassigned volume, got %v", err)
+	}
+	if assigns != 2 {
+		t.Fatalf("expected 2 assignments, got %d", assigns)
+	}
+	if len(result.FileChunks) != 1 || result.FileChunks[0].FileId != "2,0a0b0c0d" {
+		t.Fatalf("expected the chunk to record the reassigned fid, got %+v", result.FileChunks)
+	}
+	// The copy that landed on the healthy holder before its peer reported full
+	// is referenced by nothing, so it has to be rolled back.
+	if atomic.LoadInt32(&primaryDeletes) == 0 {
+		t.Error("expected the copy that landed to be rolled back")
+	}
+	// The full holder is not in uploadChunkToHolders' succeeded set, so only the
+	// loop's own rollback reaches it — and it has to, because a 5xx there can
+	// still mean the needle was committed before replication failed.
+	if atomic.LoadInt32(&fullDeletes) == 0 {
+		t.Error("expected the abandoned fid to be deleted from the failed holder too")
+	}
+	if atomic.LoadInt32(&secondaryDeletes) != 0 {
+		t.Error("the reassigned volume kept the chunk; it must not be rolled back")
+	}
+}

@@ -201,6 +201,11 @@ uploadLoop:
 					break
 				}
 				glog.V(2).Infof("re-assigning chunk at offset %d after attempt %d/%d: %v", offset, attempt, chunkAssignAttempts, uploadResultErr)
+				// The volume server commits the needle before replicating, so a
+				// 5xx can still leave a copy behind. Nothing will reference the
+				// fid we are abandoning, and an unreferenced needle is not
+				// garbage vacuum can find, so drop it now.
+				deleteChunkFromHolders(chunkHolders(assignResult), assignResult.Fid, jwt)
 				_, assignResult, assignErr = opt.AssignFunc(ctx, 1, uint64(size))
 				if assignErr != nil {
 					uploadResultErr = fmt.Errorf("reassign volume: %w", assignErr)
