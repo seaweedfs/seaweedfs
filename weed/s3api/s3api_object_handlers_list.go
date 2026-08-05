@@ -752,7 +752,7 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 					if cursor.prefixEndsOnDelimiter {
 						cursor.prefixEndsOnDelimiter = false
 					}
-					isKeyObject := s3a.isLiveDirectoryKeyObject(ctx, client, entry, dir+"/"+entry.Name, cursor)
+					isKeyObject := entry.IsDirectoryKeyObject()
 					if isKeyObject {
 						// Directory key objects (created via PutObject with trailing "/")
 						// must appear as regular keys in recursive listing mode.
@@ -792,7 +792,7 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 						return
 					}
 					// println("doListFilerEntries2 nextMarker", nextMarker)
-				} else if s3a.isLiveDirectoryKeyObject(ctx, client, entry, dir+"/"+entry.Name, cursor) || !s3a.dirHoldsOnlyHiddenEntries(ctx, client, bucket, dir+"/"+entry.Name, cursor) {
+				} else if entry.IsDirectoryKeyObject() || !s3a.dirHoldsOnlyHiddenEntries(ctx, client, bucket, dir+"/"+entry.Name, cursor) {
 					eachEntryFn(dir, entry)
 				}
 			} else {
@@ -809,55 +809,6 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 		}
 		marker = lastEntryName
 		inclusiveStartFrom = false
-	}
-}
-
-// isLiveDirectoryKeyObject reports whether entry still stands for the key "<dir>/",
-// and strips entry in place when it does not. A directory marker deleted in a versioned
-// bucket keeps its payload on disk — that payload is the key's null version — so the
-// copy this listing holds is demoted instead, which is what stops the callback further
-// down from reporting the entry as a key while the directory still serves as a prefix.
-func (s3a *S3ApiServer) isLiveDirectoryKeyObject(ctx context.Context, client filer_pb.SeaweedFilerClient, entry *filer_pb.Entry, dirPath string, cursor *ListingCursor) bool {
-	if !entry.IsDirectoryKeyObject() {
-		return false
-	}
-	if !cursor.hideDeletedPrefixes || !directoryMarkerIsDeleted(ctx, client, dirPath) {
-		return true
-	}
-	clearDirectoryMarkerMetadata(entry)
-	return false
-}
-
-// directoryMarkerIsDeleted reports whether the key "<dir>/" currently resolves to a
-// delete marker. An explicit directory marker is the filer directory itself, so its
-// version history is the container's own .versions entry, whose current-version stamp
-// every pointer flip maintains — one lookup, no version scan. An unstamped history
-// leaves the key visible, as it was before this check existed.
-func directoryMarkerIsDeleted(ctx context.Context, client filer_pb.SeaweedFilerClient, dirPath string) bool {
-	// The answer comes off the first entry, so cancel on return rather than draining.
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	stream, err := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{
-		Directory: dirPath,
-		Prefix:    s3_constants.VersionsFolder,
-		Limit:     1,
-	})
-	if err != nil {
-		if !errors.Is(err, filer_pb.ErrNotFound) {
-			glog.V(1).Infof("directoryMarkerIsDeleted %s: %v", dirPath, err)
-		}
-		return false
-	}
-	for {
-		resp, recvErr := stream.Recv()
-		if recvErr != nil {
-			return false
-		}
-		if resp.Entry == nil || resp.Entry.Name != s3_constants.VersionsFolder {
-			continue
-		}
-		return string(resp.Entry.Extended[s3_constants.ExtLatestVersionIsDeleteMarker]) == "true"
 	}
 }
 
@@ -947,7 +898,7 @@ func (s3a *S3ApiServer) dirHoldsOnlyHiddenEntries(ctx context.Context, client fi
 				}
 				return false
 			}
-			if s3a.isLiveDirectoryKeyObject(ctx, client, entry, dir+"/"+entry.Name, cursor) {
+			if entry.IsDirectoryKeyObject() {
 				return false
 			}
 			if !s3a.dirHoldsOnlyHiddenEntries(ctx, client, bucket, dir+"/"+entry.Name, cursor) {

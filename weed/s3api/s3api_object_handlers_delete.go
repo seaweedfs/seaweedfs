@@ -122,6 +122,13 @@ func (s3a *S3ApiServer) checkDeleteIfMatch(bucket, object, versionId, versioning
 func (s3a *S3ApiServer) deleteVersionedObject(r *http.Request, bucket, object, versionId, versioningState string) (deleteMutationResult, s3err.ErrorCode) {
 	var result deleteMutationResult
 
+	// The key "dir/" is the filer directory itself, which a delete marker cannot stand
+	// in for without hiding the children underneath it. It is not a versioned object,
+	// so it is deleted the way an unversioned bucket deletes it.
+	if versionId == "" && strings.HasSuffix(object, "/") {
+		return result, s3a.deleteDirectoryMarker(bucket, object)
+	}
+
 	switch {
 	case versionId != "":
 		versionEntry, versionLookupErr := s3a.getSpecificObjectVersion(bucket, object, versionId)
@@ -230,10 +237,21 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 	var deleteResult deleteMutationResult
 	var deleteCode s3err.ErrorCode
 
+	// A trailing-slash key is a directory marker in every bucket, versioned or not, and
+	// is deleted the same way: the raw delete below cannot handle a directory that still
+	// has children, and versioning has nothing to add to a key that is not an object.
+	deleteHandled := false
+	if versionId == "" && strings.HasSuffix(object, "/") {
+		deleteCode, deleteHandled = s3a.withObjectWriteLock(bucket, object, func() s3err.ErrorCode {
+			return s3a.checkDeleteIfMatch(bucket, object, versionId, versioningState, r.Header.Get(s3_constants.IfMatch), s3err.ErrPreconditionFailed)
+		}, func() s3err.ErrorCode {
+			return s3a.deleteDirectoryMarker(bucket, object)
+		}), true
+	}
+
 	// Fast path: route the delete to the owner filer under its per-path lock;
 	// routedObjectOwner excludes versioned/object-lock buckets.
-	deleteHandled := false
-	if !versioningConfigured {
+	if !deleteHandled && !versioningConfigured {
 		if cond, condOk := buildDeleteCondition(r); condOk {
 			if owner, ownerOk := s3a.routedObjectOwner(bucket, object); ownerOk {
 				resp, err := s3a.routedDelete(owner, bucket, object, cond)
@@ -466,6 +484,10 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 				if err := s3a.enforceObjectLockProtections(r, bucket, object.Key, "", governanceBypassAllowed); err != nil {
 					glog.V(2).Infof("DeleteMultipleObjectsHandler: object lock check failed for %s/%s: %v", bucket, object.Key, err)
 					return s3err.ErrAccessDenied
+				}
+
+				if strings.HasSuffix(object.Key, "/") {
+					return s3a.deleteDirectoryMarker(bucket, object.Key)
 				}
 
 				if err := s3a.deleteUnversionedObjectWithClient(client, bucket, object.Key, false); err != nil {
