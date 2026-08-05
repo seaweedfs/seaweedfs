@@ -189,6 +189,24 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			s3err.WriteErrorResponse(w, r, filerErrorToS3Error(err))
 			return
 		}
+		// A directory marker is stored as the directory itself, so it is the key's null
+		// version. Re-creating one after a delete has to retire that delete marker,
+		// otherwise the key stays invisible to every versioned read. Reporting the PUT
+		// as successful before that is known to have happened would hand the client a
+		// marker it cannot see, so an unreadable versioning state fails the request.
+		state, stateErr := s3a.getVersioningState(bucket)
+		if stateErr != nil && !errors.Is(stateErr, filer_pb.ErrNotFound) {
+			glog.Errorf("PutObjectHandler: versioning state of %s unknown: %v", bucket, stateErr)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
+		}
+		if state != "" {
+			if err := s3a.restoreNullVersion(bucket, strings.TrimPrefix(object, "/")); err != nil {
+				glog.Errorf("PutObjectHandler: failed to restore directory marker %s/%s: %v", bucket, object, err)
+				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+				return
+			}
+		}
 		setEtag(w, dirEtag)
 	} else {
 		// Get detailed versioning state for the bucket
@@ -1293,39 +1311,9 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 	glog.V(3).Infof("putSuspendedVersioningObject: START bucket=%s, object=%s, normalized=%s",
 		bucket, object, normalizedObject)
 
-	bucketDir := s3a.bucketDir(bucket)
-
-	// Check if there's an existing null version in .versions directory and delete it
-	// This ensures suspended versioning properly overwrites the null version as per S3 spec
-	// Note: We only delete null versions, NOT regular versions (those should be preserved)
-	versionsObjectPath := normalizedObject + s3_constants.VersionsFolder
-	versionsDir := bucketDir + "/" + versionsObjectPath
-	entries, _, err := s3a.list(versionsDir, "", "", false, 1000)
-	if err == nil {
-		// .versions directory exists
-		glog.V(3).Infof("putSuspendedVersioningObject: found %d entries in .versions for %s/%s", len(entries), bucket, object)
-		for _, entry := range entries {
-			if entry.Extended != nil {
-				if versionIdBytes, ok := entry.Extended[s3_constants.ExtVersionIdKey]; ok {
-					versionId := string(versionIdBytes)
-					glog.V(3).Infof("putSuspendedVersioningObject: found version '%s' in .versions", versionId)
-					if versionId == "null" {
-						// Only delete null version - preserve real versioned entries
-						glog.V(3).Infof("putSuspendedVersioningObject: deleting null version from .versions")
-						err := s3a.rm(versionsDir, entry.Name, true, false)
-						if err != nil {
-							glog.Warningf("putSuspendedVersioningObject: failed to delete null version: %v", err)
-						} else {
-							glog.V(3).Infof("putSuspendedVersioningObject: successfully deleted null version")
-						}
-						break
-					}
-				}
-			}
-		}
-	} else {
-		glog.V(3).Infof("putSuspendedVersioningObject: no .versions directory for %s/%s", bucket, object)
-	}
+	// The null version now lives at the regular path, so any null version recorded in
+	// .versions is stale (S3 has the suspended write overwrite it, not accumulate).
+	s3a.removeNullVersionFile(bucket, normalizedObject)
 
 	filePath := s3a.toFilerPath(bucket, normalizedObject)
 
@@ -1411,6 +1399,42 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 	glog.V(2).Infof("putSuspendedVersioningObject: successfully created null version for %s/%s", bucket, object)
 
 	return etag, s3err.ErrNone, sseMetadata
+}
+
+// restoreNullVersion makes the object at the regular path the current version again:
+// it drops a stale null version from .versions and clears the latest-version pointer,
+// which is the recorded way of saying "the null object is current". The clearing helper
+// is named for suspended versioning but does exactly this, and an enabled bucket needs
+// the same thing when a directory marker is re-created over its delete marker.
+func (s3a *S3ApiServer) restoreNullVersion(bucket, object string) error {
+	if _, err := s3a.getEntry(s3a.bucketDir(bucket), object+s3_constants.VersionsFolder); err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return nil // no history, so the object at the regular path is already current
+		}
+		return fmt.Errorf("read version history of %s/%s: %w", bucket, object, err)
+	}
+	s3a.removeNullVersionFile(bucket, object)
+	return s3a.updateIsLatestFlagsForSuspendedVersioning(bucket, object)
+}
+
+// removeNullVersionFile deletes the "null" version file from an object's .versions
+// directory, leaving real versions alone. Best-effort: a leftover null version is
+// superseded by the object at the regular path on the next read.
+func (s3a *S3ApiServer) removeNullVersionFile(bucket, object string) {
+	versionsDir := s3a.bucketDir(bucket) + "/" + object + s3_constants.VersionsFolder
+	entries, _, err := s3a.list(versionsDir, "", "", false, 1000)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if string(entry.Extended[s3_constants.ExtVersionIdKey]) != "null" {
+			continue
+		}
+		if rmErr := s3a.rm(versionsDir, entry.Name, true, false); rmErr != nil {
+			glog.Warningf("removeNullVersionFile: %s/%s: %v", bucket, object, rmErr)
+		}
+		return
+	}
 }
 
 // updateIsLatestFlagsForSuspendedVersioning sets IsLatest=false on all existing versions/delete markers

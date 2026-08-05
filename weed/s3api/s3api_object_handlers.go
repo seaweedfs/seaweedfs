@@ -463,9 +463,85 @@ func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Req
 	}
 }
 
+// handleVersionedDirectoryObjectRequest answers GET/HEAD for the key "<dir>/" out of
+// its version history, which for a directory marker lives inside the directory the key
+// names. Without a history the key is whatever the directory entry says, which is the
+// unversioned path the caller falls through to.
+func (s3a *S3ApiServer) handleVersionedDirectoryObjectRequest(w http.ResponseWriter, r *http.Request, bucket, object, handlerName string) bool {
+	if !strings.HasSuffix(object, "/") {
+		return false
+	}
+	// A lookup that fails for any reason other than "not there" leaves the key's state
+	// unknown, and falling through would serve a directory whose current version may be
+	// a delete marker. Only a confirmed absence takes the unversioned path.
+	versioningConfigured, err := s3a.isVersioningConfigured(bucket)
+	if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		glog.Errorf("%s: versioning state of %s unknown: %v", handlerName, bucket, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return true
+	}
+	if !versioningConfigured {
+		return false
+	}
+
+	if versionId := r.URL.Query().Get("versionId"); versionId != "" {
+		entry, err := s3a.getSpecificObjectVersion(bucket, object, versionId)
+		if err != nil {
+			glog.V(2).Infof("%s: no version %s of directory object %s/%s: %v", handlerName, versionId, bucket, object, err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchVersion)
+			return true
+		}
+		w.Header().Set("x-amz-version-id", versionId)
+		if isDeleteMarkerEntry(entry) {
+			w.Header().Set(s3_constants.AmzDeleteMarker, "true")
+			s3err.WriteErrorResponse(w, r, s3err.ErrMethodNotAllowed)
+			return true
+		}
+		s3a.serveDirectoryContent(w, r, entry)
+		return true
+	}
+
+	normalizedObject := s3_constants.NormalizeObjectKey(object)
+	if _, historyErr := s3a.getEntry(s3a.bucketDir(bucket), normalizedObject+s3_constants.VersionsFolder); historyErr != nil {
+		if !errors.Is(historyErr, filer_pb.ErrNotFound) {
+			glog.Errorf("%s: version history of %s/%s unknown: %v", handlerName, bucket, object, historyErr)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return true
+		}
+		return false
+	}
+	// A failure here is reported the way the regular-object GET path reports it.
+	entry, err := s3a.getLatestObjectVersion(bucket, object)
+	if err != nil {
+		glog.V(2).Infof("%s: no current version of directory object %s/%s: %v", handlerName, bucket, object, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+		return true
+	}
+	versionId := string(entry.Extended[s3_constants.ExtVersionIdKey])
+	if versionId == "" {
+		versionId = "null"
+	}
+	w.Header().Set("x-amz-version-id", versionId)
+	if isDeleteMarkerEntry(entry) {
+		w.Header().Set(s3_constants.AmzDeleteMarker, "true")
+		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+		return true
+	}
+	s3a.serveDirectoryContent(w, r, entry)
+	return true
+}
+
+func isDeleteMarkerEntry(entry *filer_pb.Entry) bool {
+	return entry != nil && string(entry.Extended[s3_constants.ExtDeleteMarkerKey]) == "true"
+}
+
 // handleDirectoryObjectRequest is a helper function that handles directory object requests
 // for both GET and HEAD operations, eliminating code duplication
 func (s3a *S3ApiServer) handleDirectoryObjectRequest(w http.ResponseWriter, r *http.Request, bucket, object, handlerName string) bool {
+	if s3a.handleVersionedDirectoryObjectRequest(w, r, bucket, object, handlerName) {
+		return true
+	}
+
 	// Check if this is a directory object and handle it directly
 	if dirEntry, isDirectoryObject, err := s3a.checkDirectoryObject(bucket, object); err != nil {
 		glog.Errorf("%s: error checking directory object %s/%s: %v", handlerName, bucket, object, err)
