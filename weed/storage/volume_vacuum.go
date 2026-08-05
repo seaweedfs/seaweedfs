@@ -187,36 +187,36 @@ func (v *Volume) CommitCompact() error {
 	v.DataBackend = nil
 	stats.VolumeServerVolumeGauge.WithLabelValues(v.Collection, "volume").Dec()
 
-	var e error
-	if e = v.makeupDiff(v.FileName(".cpd"), v.FileName(".cpx"), v.FileName(".dat"), v.FileName(".idx")); e != nil {
-		glog.V(0).Infof("makeupDiff in CommitCompact volume %d failed %v", v.Id, e)
-		e = os.Remove(v.FileName(".cpd"))
-		if e != nil {
+	if compactErr := v.makeupDiff(v.FileName(".cpd"), v.FileName(".cpx"), v.FileName(".dat"), v.FileName(".idx")); compactErr != nil {
+		glog.V(0).Infof("makeupDiff in CommitCompact volume %d failed %v", v.Id, compactErr)
+		if e := os.Remove(v.FileName(".cpd")); e != nil {
 			return e
 		}
-		e = os.Remove(v.FileName(".cpx"))
-		if e != nil {
+		if e := os.Remove(v.FileName(".cpx")); e != nil {
 			return e
 		}
-	} else {
-		// makeupDiff has fsynced the .cpd/.cpx contents. Persist a durable .cpc
-		// commit marker BEFORE renaming so the two renames are atomic across a
-		// crash: a marker on disk means the swap is decided and reconcile rolls
-		// forward; no marker means roll back. Without it, a crash between the
-		// two renames leaves a stale .idx that a later vacuum compacts to empty.
-		if e = v.writeCompactCommitMarker(); e != nil {
-			return e
-		}
-		if e = v.applyCompactSwap(); e != nil {
-			return e
-		}
+		// The compaction is abandoned, not committed: report it instead of
+		// falling through to reload the volume against the discarded generation.
+		return compactErr
+	}
+
+	// makeupDiff has fsynced the .cpd/.cpx contents. Persist a durable .cpc
+	// commit marker BEFORE renaming so the two renames are atomic across a
+	// crash: a marker on disk means the swap is decided and reconcile rolls
+	// forward; no marker means roll back. Without it, a crash between the
+	// two renames leaves a stale .idx that a later vacuum compacts to empty.
+	if e := v.writeCompactCommitMarker(); e != nil {
+		return e
+	}
+	if e := v.applyCompactSwap(); e != nil {
+		return e
 	}
 
 	//glog.V(3).Infof("Pretending to be vacuuming...")
 	//time.Sleep(20 * time.Second)
 
 	glog.V(3).Infof("Loading volume %d commit file...", v.Id)
-	if e = v.load(true, false, v.needleMapKind, 0, v.Version()); e != nil {
+	if e := v.load(true, false, v.needleMapKind, 0, v.Version()); e != nil {
 		return e
 	}
 	glog.V(3).Infof("Finish committing volume %d", v.Id)
