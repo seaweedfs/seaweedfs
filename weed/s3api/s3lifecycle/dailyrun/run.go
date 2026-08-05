@@ -90,18 +90,12 @@ type Config struct {
 	// 0 -> unbounded.
 	EventBudget int
 
-	// SubscriptionReceiveTimeout bounds the gap between responses on the
-	// shared meta-log stream; 0 takes defaultSubscriptionReceiveTimeout.
-	// UntilNs already ends a healthy stream and gRPC keepalive catches a
-	// dead connection — this is the remaining case, a filer that answers
-	// pings but stops producing.
+	// 0 -> defaultSubscriptionReceiveTimeout.
 	SubscriptionReceiveTimeout time.Duration
 }
 
-// defaultSubscriptionReceiveTimeout sits above the filer's 15-minute
-// metadata-gap recovery budget (maxGapStall in
-// weed/server/filer_grpc_server_sub_meta.go), so a subscriber legitimately
-// parked on a gap is never mistaken for a stalled one.
+// Above the filer's 15m maxGapStall, so a subscriber parked on a gap is
+// not mistaken for a stalled one.
 const defaultSubscriptionReceiveTimeout = 20 * time.Minute
 
 // Run executes the daily replay for every shard in cfg.Shards
@@ -146,9 +140,7 @@ func Run(ctx context.Context, cfg Config) error {
 		fanoutDone      chan struct{}
 		cancelRead      context.CancelFunc
 		globalStartTsNs int64
-		// Set when the fan-out ends the pass itself on an event past
-		// runUpTo, so the reader's resulting cancellation is read as an
-		// intentional stop rather than a broken stream.
+		// Fan-out ended the pass itself; see stoppedOnPurpose below.
 		pastBoundary atomic.Bool
 	)
 	if rsh != [32]byte{} {
@@ -177,10 +169,9 @@ func Run(ctx context.Context, cfg Config) error {
 			if err := runShard(ctx, cfg, snap, runNow, sh, ch); err != nil {
 				errCh <- err
 			}
-			// runShard can return before its channel is closed — a
-			// halted dispatch stops the drain mid-stream. Keep
+			// A halted dispatch returns runShard mid-stream. Keep
 			// discarding, or the fan-out blocks on this shard's full
-			// buffer and starves every other shard's drain.
+			// buffer and starves every other drain.
 			if ch != nil {
 				for range ch {
 				}
@@ -193,22 +184,17 @@ func Run(ctx context.Context, cfg Config) error {
 	// Tear down the shared subscription. cancelRead unblocks both the
 	// reader's gRPC stream and the fan-out's send loop; we wait on both
 	// so their goroutines don't outlive Run.
-	// Whether the reader stopped because we asked it to. Deciding this
-	// from the error is not possible: a stream we cancel and a stream the
-	// filer cancels both arrive as codes.Canceled, so classifying by
-	// status would let a truncated pass report success. The two ways a
-	// stop is intentional are both knowable here.
-	stoppedOnPurpose := ctx.Err() != nil || pastBoundary.Load()
 	var readerErr error
 	if cancelRead != nil {
+		// Not decidable from the error: a stream we cancel and one the
+		// filer cancels both arrive as codes.Canceled. Track intent.
+		stoppedOnPurpose := ctx.Err() != nil || pastBoundary.Load()
 		cancelRead()
 		<-fanoutDone
 		if rerr := <-readerDone; rerr != nil && !stoppedOnPurpose {
-			// A stream that dies mid-pass ends every shard's drain on a
-			// closed channel, so the pass is truncated. Cursors still
-			// hold what was processed and the next pass resumes there,
-			// but this must not report success — a job that goes green
-			// on a dead subscription is how lifecycle silently stops.
+			// The drains ended on a closed channel, so the pass is
+			// truncated. Cursors hold what was processed; what matters is
+			// that the job doesn't go green on a dead subscription.
 			readerErr = fmt.Errorf("shared meta-log subscription: %w", rerr)
 			glog.Warningf("daily_run: %v", readerErr)
 		}
@@ -356,12 +342,9 @@ func startSharedSubscription(ctx context.Context, cfg Config, runNow time.Time, 
 		ShardPredicate: func(id int) bool { return shardSet[id] },
 		BucketsPath:    cfg.BucketsPath,
 		StartTsNs:      globalStartTsNs,
-		// The pass covers (globalStartTsNs, runUpTo]; bounding the
-		// subscription there makes the filer end the stream once it has
-		// delivered that range. Without it the pass ends only when some
-		// unrelated write pushes an event past runUpTo, so a cluster
-		// that goes quiet parks the reader in Recv, starves all shard
-		// drains, and wedges the job indefinitely.
+		// The pass covers (globalStartTsNs, runUpTo]. Unbounded, it ends
+		// only when an unrelated write pushes an event past runUpTo — so
+		// a quiet cluster wedges it.
 		UntilTsNs:      runUpTo,
 		Events:         events,
 		EventBudget:    cfg.EventBudget,
@@ -372,9 +355,8 @@ func startSharedSubscription(ctx context.Context, cfg Config, runNow time.Time, 
 	readerDone := make(chan error, 1)
 	go func() {
 		readerDone <- rd.Run(readerCtx, cfg.FilerClient, clientName, clientID)
-		// The reader is the only sender; closing here is what ends the
-		// fan-out (and through it every shard drain) when the stream
-		// finishes on its own rather than by cancellation.
+		// Only sender. Closing is what ends the fan-out, and through it
+		// every drain, when the stream finishes on its own.
 		close(events)
 	}()
 
@@ -451,8 +433,7 @@ func validate(cfg Config) error {
 	if cfg.WalkerInterval < 0 {
 		return fmt.Errorf("daily_run: negative WalkerInterval %v (0 = unthrottled, positive values throttle)", cfg.WalkerInterval)
 	}
-	// Negative would reach the reader as "disabled" only by accident;
-	// 0 is the documented way to take the default.
+	// Negative would reach the reader as "disabled" by accident.
 	if cfg.SubscriptionReceiveTimeout < 0 {
 		return fmt.Errorf("daily_run: negative SubscriptionReceiveTimeout %v (0 = default %v)", cfg.SubscriptionReceiveTimeout, defaultSubscriptionReceiveTimeout)
 	}
@@ -621,18 +602,15 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 	}
 
 	lastOK, _, drainErr := drainShardEvents(ctx, cfg, runNow, shardID, snap, startTsNs, events)
-	// Cursor save uses a fresh ctx because a caller-imposed wall-clock
-	// cap on the pass (the shell driver's -runtime) cancels the drain's
-	// ctx. Saving with the canceled ctx would silently drop the cursor
-	// and the next pass would re-replay from the same floor — defeating
-	// advancement entirely.
+	// Fresh ctx: a wall-clock cap on the pass (the shell driver's
+	// -runtime) cancels the drain's, and saving with it would drop the
+	// cursor and re-replay from the same floor next pass.
 	saveCtx, saveCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer saveCancel()
 	if drainErr != nil {
 		_ = saveCursorAndPublish(saveCtx, cfg.Persister, shardID, Cursor{TsNs: lastOK, RuleSetHash: rsh, PromotedHash: promoted, LastWalkedNs: lastWalkedNs})
-		// A pass cut short by its wall-clock cap is a truncated pass,
-		// not a failure; the cursor above carries the progress forward.
-		// Other drain errors still propagate.
+		// Cut short by its wall-clock cap: truncated, not failed — the
+		// cursor above carries progress forward.
 		if errors.Is(drainErr, context.DeadlineExceeded) || errors.Is(drainErr, context.Canceled) {
 			return nil
 		}

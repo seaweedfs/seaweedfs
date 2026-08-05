@@ -16,8 +16,8 @@ import (
 	"google.golang.org/grpc"
 )
 
-// scriptedSubscribeStream replays a fixed response list and then ends
-// the stream, standing in for a filer honoring the pass's UntilNs.
+// scriptedSubscribeStream replays a fixed list, then EOFs like a filer
+// honoring UntilNs.
 type scriptedSubscribeStream struct {
 	grpc.ClientStream
 	responses []*filer_pb.SubscribeMetadataResponse
@@ -68,12 +68,9 @@ func keyForShard(t *testing.T, bucket string, shardID int) string {
 	return ""
 }
 
-// TestRun_HaltedShardDoesNotStarveOthers pins the second way a pass
-// could wedge: a shard whose drain stops early (a BLOCKED dispatch
-// halts it) leaves its per-shard channel unread, and once the 256-event
-// buffer fills, the shared fan-out blocks on the send. Every other
-// shard then starves, Run's WaitGroup never drains, and nothing
-// cancels the reader because that only happens after the wait.
+// The second wedge: a drain halted by a BLOCKED dispatch stops reading
+// its channel, the fan-out blocks once the 256 buffer fills, and every
+// other shard starves behind it.
 func TestRun_HaltedShardDoesNotStarveOthers(t *testing.T) {
 	const bucket = "bk"
 	rule := &s3lifecycle.Rule{ID: "r", Status: s3lifecycle.StatusEnabled, ExpirationDays: 1}
@@ -95,26 +92,21 @@ func TestRun_HaltedShardDoesNotStarveOthers(t *testing.T) {
 
 	runNow := time.Now().UTC()
 	evTime := runNow.Add(-48 * time.Hour) // past the 1-day expiration
-	// One more than the per-shard channel buffer, so the fan-out is
-	// guaranteed to block on the halted shard before it ever reaches
-	// the starved shard's event.
+	// Past the 256 buffer, so the fan-out blocks on the halted shard
+	// before reaching the starved shard's event.
 	var responses []*filer_pb.SubscribeMetadataResponse
 	for i := 0; i < 300; i++ {
 		responses = append(responses, subscribeResponse(bucket, haltedKey, evTime, evTime.UnixNano()+int64(i)))
 	}
 	responses = append(responses, subscribeResponse(bucket, starvedKey, evTime, runNow.Add(-time.Hour).UnixNano()))
 
-	// BLOCKED halts the first shard's drain on its very first dispatch.
-	// Pinned per object rather than by call index: the two shards
-	// dispatch from separate goroutines.
+	// Pinned per object, not call index: the shards dispatch concurrently.
 	client := &recordingClient{outcomeByObject: map[string]s3_lifecycle_pb.LifecycleDeleteOutcome{
 		haltedKey: s3_lifecycle_pb.LifecycleDeleteOutcome_BLOCKED,
 	}}
 
-	// Seed cursors so both shards resume from before the events rather
-	// than from the cold-start floor, which would skip them as already
-	// past. Hashes must match or runShard takes the recovery branch and
-	// returns before draining.
+	// Resume from before the events; the cold-start floor would skip them.
+	// Hashes must match or runShard takes the recovery branch instead.
 	persister := newMemPersister()
 	seeded := Cursor{
 		TsNs:         runNow.Add(-72 * time.Hour).UnixNano(),
@@ -145,9 +137,8 @@ func TestRun_HaltedShardDoesNotStarveOthers(t *testing.T) {
 		t.Fatal("Run wedged: the fan-out blocked on a shard that had stopped draining")
 	}
 
-	// Returning isn't enough — dropping the starved shard's events
-	// would return just as cleanly. It has to have been dispatched, and
-	// its cursor has to have advanced onto that event.
+	// Returning isn't enough: dropping the starved shard's events would
+	// return just as cleanly.
 	assert.Contains(t, client.seenObjects(), starvedKey,
 		"the shard behind the halted one must still get its events")
 	starvedCursor, found, err := persister.Load(context.Background(), starvedShard)

@@ -75,11 +75,9 @@ type Reader struct {
 	StartTsNs int64
 	Events    chan<- *Event
 
-	// UntilTsNs bounds the subscription: the filer ends the stream once
-	// it has delivered everything up to this timestamp, and Run returns
-	// nil. Zero follows the meta-log indefinitely, which only terminates
-	// on ctx cancellation or a stream error — a caller running a bounded
-	// pass must set this, or an idle cluster parks it in Recv forever.
+	// UntilTsNs ends the stream once the filer has delivered through this
+	// timestamp. Zero follows forever, which on an idle cluster parks a
+	// bounded caller in Recv until something unrelated is written.
 	UntilTsNs int64
 
 	// EventBudget caps how many events Run processes before returning nil.
@@ -87,16 +85,11 @@ type Reader struct {
 	// error. Used by the worker scheduler to bound a single READ task.
 	EventBudget int
 
-	// ReceiveTimeout bounds the wait for the next response on an open
-	// stream. UntilTsNs ends a healthy stream, and gRPC keepalive catches
-	// a dead connection, but neither covers a filer whose handler stops
-	// producing while the transport keeps answering pings. Setting this
-	// also opts into the filer's idle heartbeats, so a caught-up stream
-	// proves liveness instead of looking stalled. Zero disables it.
-	//
-	// Keep it above the filer's metadata-gap recovery budget (maxGapStall,
-	// 15m in weed/server/filer_grpc_server_sub_meta.go): a subscriber
-	// parked on a gap sends nothing and is not stuck.
+	// ReceiveTimeout bounds the wait for each response, covering a filer
+	// that stops producing while the transport still answers keepalives.
+	// Also opts into idle heartbeats so a caught-up stream stays alive.
+	// Keep above the filer's 15m maxGapStall — a subscriber parked on a
+	// gap sends nothing and is not stuck. Zero disables it.
 	ReceiveTimeout time.Duration
 
 	// bucketsPathSlash is BucketsPath with a guaranteed trailing slash,
@@ -105,8 +98,7 @@ type Reader struct {
 	bucketsPathSlash string
 }
 
-// ErrReceiveTimeout reports that a stream stayed open but stopped
-// delivering both events and the idle heartbeats it negotiated.
+// ErrReceiveTimeout: stream still open, but no events and no heartbeats.
 var ErrReceiveTimeout = errors.New("reader: metadata receive timeout")
 
 type receiveResult struct {
@@ -114,10 +106,9 @@ type receiveResult struct {
 	err  error
 }
 
-// awaitResponse waits for the next stream response, bounded by
-// ReceiveTimeout. The timer covers only the wait for the filer — it is
-// started per call, so a slow consumer downstream of Events (which
-// blocks in dispatchOne, not here) can never trip the watchdog.
+// awaitResponse waits for the next response under ReceiveTimeout. Started
+// per call, so it times the filer only — a slow Events consumer blocks in
+// dispatchOne, outside this window, and can't trip the watchdog.
 func (r *Reader) awaitResponse(ctx context.Context, received <-chan receiveResult) (*filer_pb.SubscribeMetadataResponse, error, bool) {
 	var timeout <-chan time.Time
 	if r.ReceiveTimeout > 0 {
@@ -163,8 +154,7 @@ func (r *Reader) Run(ctx context.Context, client filer_pb.SeaweedFilerClient, cl
 	if sinceNs == 0 && r.Cursor != nil {
 		sinceNs = r.Cursor.MinTsNs()
 	}
-	// The stream gets its own context so the watchdog can abort the RPC,
-	// which is what unblocks the receive goroutine below.
+	// Own context: aborting the RPC is the only way to unblock Recv.
 	streamCtx, cancelStream := context.WithCancel(ctx)
 	defer cancelStream()
 	stream, err := client.SubscribeMetadata(streamCtx, &filer_pb.SubscribeMetadataRequest{
@@ -174,19 +164,15 @@ func (r *Reader) Run(ctx context.Context, client filer_pb.SeaweedFilerClient, cl
 		UntilNs:                r.UntilTsNs,
 		ClientId:               clientID,
 		ClientSupportsBatching: true,
-		// Heartbeats arrive as responses with no EventNotification;
-		// dispatchOne drops them, but reaching the watchdog at all is
-		// the point — they distinguish caught-up from stalled.
+		// dispatchOne drops these, but arriving at all is the point.
 		ClientSupportsIdleHeartbeat: r.ReceiveTimeout > 0,
 	})
 	if err != nil {
 		return fmt.Errorf("subscribe: %w", err)
 	}
 
-	// Recv is only interruptible by killing the RPC, so it runs on its own
-	// goroutine and the loop below waits on the result with a deadline.
-	// Buffered by one so a response handed over just as the watchdog fires
-	// doesn't leak the goroutine.
+	// Buffered so a response landing as the watchdog fires doesn't strand
+	// this goroutine.
 	received := make(chan receiveResult, 1)
 	go func() {
 		for {
@@ -206,9 +192,7 @@ func (r *Reader) Run(ctx context.Context, client filer_pb.SeaweedFilerClient, cl
 	for {
 		resp, recvErr, timedOut := r.awaitResponse(streamCtx, received)
 		if timedOut {
-			// Cancel before returning so the receive goroutine's blocked
-			// Recv unwinds instead of outliving the pass.
-			cancelStream()
+			cancelStream() // unwind the goroutine blocked in Recv
 			return fmt.Errorf("%w after %s", ErrReceiveTimeout, r.ReceiveTimeout)
 		}
 		if recvErr == io.EOF {

@@ -17,10 +17,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// idleSubscribeStream models the filer's SubscribeMetadata stream on a
-// cluster with no writes past the pass boundary: everything up to
-// UntilNs has been delivered (here: nothing), so a bounded subscription
-// ends with io.EOF and an unbounded one blocks in Recv forever.
+// idleSubscribeStream: nothing to deliver past the pass boundary. A
+// bounded subscription gets EOF; an unbounded one blocks forever.
 type idleSubscribeStream struct {
 	grpc.ClientStream
 	ctx     context.Context
@@ -48,13 +46,9 @@ func (c *idleSubscribeClient) SubscribeMetadata(ctx context.Context, req *filer_
 	return &idleSubscribeStream{ctx: ctx, untilNs: req.UntilNs}, nil
 }
 
-// TestRun_EndsOnIdleSubscription is the regression for a daily-replay
-// pass that never returned: the pass only ended when an unrelated write
-// pushed a meta-log event past its boundary, so on a quiet cluster the
-// reader parked in Recv, all 16 shard drains starved, and Run's
-// WaitGroup never reached zero. Bounding the subscription at the pass
-// boundary makes the end of the pass the filer's decision, not the
-// cluster's write traffic.
+// The reported wedge: the pass ended only when an unrelated write pushed
+// an event past its boundary, so a quiet cluster starved every drain and
+// Run's WaitGroup never reached zero.
 func TestRun_EndsOnIdleSubscription(t *testing.T) {
 	e := engine.New()
 	e.Compile([]engine.CompileInput{
@@ -101,10 +95,9 @@ func (c *failingSubscribeClient) SubscribeMetadata(_ context.Context, _ *filer_p
 	return nil, c.err
 }
 
-// TestRun_ReaderFailureFailsThePass guards the flip side of closing the
-// event channel when the reader exits: every shard drain now ends
-// cleanly on a dead subscription, so without this the pass would report
-// success and the job would go green while lifecycle processed nothing.
+// Flip side of closing the event channel: the drains now end cleanly on
+// a dead subscription, so the pass would otherwise go green having
+// processed nothing.
 func TestRun_ReaderFailureFailsThePass(t *testing.T) {
 	e := engine.New()
 	e.Compile([]engine.CompileInput{
@@ -134,8 +127,7 @@ func TestRun_ReaderFailureFailsThePass(t *testing.T) {
 	}
 }
 
-// blockingSubscribeStream never delivers, so the pass can only end by
-// the caller's wall-clock cap. Models the shell driver's -runtime.
+// blockingSubscribeStream never delivers; only a cap ends the pass.
 type blockingSubscribeStream struct {
 	grpc.ClientStream
 	ctx context.Context
@@ -143,8 +135,7 @@ type blockingSubscribeStream struct {
 
 func (s *blockingSubscribeStream) Recv() (*filer_pb.SubscribeMetadataResponse, error) {
 	<-s.ctx.Done()
-	// What gRPC actually returns for a canceled stream: a status code,
-	// not a wrapped context.Canceled.
+	// A canceled gRPC stream returns a status code, not context.Canceled.
 	return nil, status.Error(codes.Canceled, "context canceled")
 }
 
@@ -156,12 +147,9 @@ func (c *blockingSubscribeClient) SubscribeMetadata(ctx context.Context, _ *file
 	return &blockingSubscribeStream{ctx: ctx}, nil
 }
 
-// TestRun_CappedPassIsNotAFailure keeps a wall-clock-capped pass (the
-// shell driver's -runtime) reporting success. It is the counterweight
-// to TestRun_ReaderFailureFailsThePass: both end with the reader
-// returning codes.Canceled, and only the caller's intent separates the
-// truncated-on-purpose pass from the broken one — which is why the
-// decision reads ctx rather than the error.
+// Counterweight to TestRun_ServerSideCancelFailsThePass: same
+// codes.Canceled from the reader, opposite verdict. Only intent
+// separates them, which is why the decision reads ctx not the error.
 func TestRun_CappedPassIsNotAFailure(t *testing.T) {
 	e := engine.New()
 	e.Compile([]engine.CompileInput{
@@ -192,11 +180,8 @@ func TestRun_CappedPassIsNotAFailure(t *testing.T) {
 	}
 }
 
-// TestRun_StalledSubscriptionTimesOutThePass covers the case neither
-// UntilNs nor gRPC keepalive reaches: the connection is healthy and
-// answering pings, but the filer's handler has stopped producing. The
-// pass must end on the watchdog rather than wait out the job's
-// effectively-unlimited execution timeout.
+// Neither UntilNs nor keepalive reaches this: a healthy connection whose
+// filer has stopped producing.
 func TestRun_StalledSubscriptionTimesOutThePass(t *testing.T) {
 	e := engine.New()
 	e.Compile([]engine.CompileInput{
@@ -234,11 +219,8 @@ func TestValidate_RejectsNegativeSubscriptionReceiveTimeout(t *testing.T) {
 	require.NoError(t, validate(cfg))
 }
 
-// TestRun_ServerSideCancelFailsThePass is the case status-code
-// classification could not express: the filer cancels the stream while
-// the caller's context is untouched. Indistinguishable from the capped
-// pass above by error alone, so a codes.Canceled check would report a
-// truncated pass as a success.
+// The case status-code classification could not express: the filer
+// cancels while the caller's context is untouched.
 func TestRun_ServerSideCancelFailsThePass(t *testing.T) {
 	e := engine.New()
 	e.Compile([]engine.CompileInput{

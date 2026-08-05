@@ -12,8 +12,8 @@ import (
 	"google.golang.org/grpc"
 )
 
-// stalledStream stays open and never delivers — the filer answering
-// keepalive pings while its handler has stopped producing.
+// stalledStream stays open and never delivers: keepalives answered, no
+// progress.
 type stalledStream struct {
 	grpc.ClientStream
 	ctx context.Context
@@ -55,8 +55,7 @@ func TestRun_ReceiveTimeoutOnStalledStream(t *testing.T) {
 		"a reader with a receive timeout must ask for heartbeats, or a caught-up stream looks stalled")
 }
 
-// heartbeatStream delivers only idle heartbeats: responses carrying a
-// timestamp and no EventNotification.
+// heartbeatStream delivers only heartbeats: a ts, no EventNotification.
 type heartbeatStream struct {
 	grpc.ClientStream
 	every time.Duration
@@ -82,9 +81,8 @@ func (c *heartbeatClient) SubscribeMetadata(_ context.Context, _ *filer_pb.Subsc
 	return c.stream, nil
 }
 
-// TestRun_HeartbeatsHoldTheStreamOpen is the reason the timeout is safe
-// to set at all: a caught-up stream keeps arriving as heartbeats, so the
-// watchdog only fires on real silence, not on an idle cluster.
+// Why the timeout is safe to set: a caught-up stream keeps arriving, so
+// the watchdog fires on real silence, not on an idle cluster.
 func TestRun_HeartbeatsHoldTheStreamOpen(t *testing.T) {
 	stream := &heartbeatStream{every: 20 * time.Millisecond, max: 10}
 	r := &Reader{
