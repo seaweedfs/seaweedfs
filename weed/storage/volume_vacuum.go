@@ -189,14 +189,14 @@ func (v *Volume) CommitCompact() error {
 
 	if compactErr := v.makeupDiff(v.FileName(".cpd"), v.FileName(".cpx"), v.FileName(".dat"), v.FileName(".idx")); compactErr != nil {
 		glog.V(0).Infof("makeupDiff in CommitCompact volume %d failed %v", v.Id, compactErr)
-		if e := os.Remove(v.FileName(".cpd")); e != nil {
-			return e
+		if e := os.Remove(v.FileName(".cpd")); e != nil && !os.IsNotExist(e) {
+			glog.V(0).Infof("remove %s: %v", v.FileName(".cpd"), e)
 		}
-		if e := os.Remove(v.FileName(".cpx")); e != nil {
-			return e
+		if e := os.Remove(v.FileName(".cpx")); e != nil && !os.IsNotExist(e) {
+			glog.V(0).Infof("remove %s: %v", v.FileName(".cpx"), e)
 		}
-		// The compaction is abandoned, not committed: report it instead of
-		// falling through to reload the volume against the discarded generation.
+		// Report the abandoned compaction rather than a cleanup failure that
+		// reconcile rolls back anyway, and never fall through to the reload.
 		return compactErr
 	}
 
