@@ -93,11 +93,20 @@ func TestSuspendedMultipartOverwritesDeleteMarker(t *testing.T) {
 	createBucket(t, client, bucketName)
 	defer deleteBucket(t, client, bucketName)
 
-	enableVersioning(t, client, bucketName)
-	suspendVersioning(t, client, bucketName)
-
 	objectKey := "suspended-multipart-after-delete.bin"
 	partData := bytes.Repeat([]byte("a"), 5*1024*1024)
+
+	// A real version from before suspension must survive the whole sequence: the
+	// cleanup below only retires the null version, never the key's real history.
+	enableVersioning(t, client, bucketName)
+	realVersion, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+		Body:   bytes.NewReader([]byte("pre-suspension-content")),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, realVersion.VersionId)
+	suspendVersioning(t, client, bucketName)
 
 	completeSuspendedMultipart := func() {
 		t.Helper()
@@ -129,7 +138,7 @@ func TestSuspendedMultipartOverwritesDeleteMarker(t *testing.T) {
 
 	completeSuspendedMultipart()
 
-	_, err := client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(objectKey),
 	})
@@ -161,7 +170,22 @@ func TestSuspendedMultipartOverwritesDeleteMarker(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Empty(t, listResp.DeleteMarkers)
-	require.Len(t, listResp.Versions, 1)
-	require.NotNil(t, listResp.Versions[0].VersionId)
-	assert.Equal(t, "null", *listResp.Versions[0].VersionId)
+
+	listedVersionIds := make([]string, 0, len(listResp.Versions))
+	for _, version := range listResp.Versions {
+		require.NotNil(t, version.VersionId)
+		listedVersionIds = append(listedVersionIds, *version.VersionId)
+	}
+	assert.ElementsMatch(t, []string{*realVersion.VersionId, "null"}, listedVersionIds)
+
+	realVersionResp, err := client.GetObject(context.TODO(), &s3.GetObjectInput{
+		Bucket:    aws.String(bucketName),
+		Key:       aws.String(objectKey),
+		VersionId: realVersion.VersionId,
+	})
+	require.NoError(t, err)
+	defer realVersionResp.Body.Close()
+	realVersionBody, err := io.ReadAll(realVersionResp.Body)
+	require.NoError(t, err)
+	assert.Equal(t, "pre-suspension-content", string(realVersionBody))
 }

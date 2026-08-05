@@ -771,10 +771,6 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		if versioningState == s3_constants.VersioningSuspended {
 			normalizedKey := strings.TrimPrefix(*input.Key, "/")
 
-			// The null version lands at the regular path below, so drop the stale one .versions
-			// still holds — a suspended DELETE leaves a null delete marker reads resolve to.
-			s3a.removeNullVersionFile(*input.Bucket, normalizedKey)
-
 			// For suspended versioning, add "null" version ID metadata and return "null" version ID
 			if err := s3a.writeMultipartObject(owner, routeKey, dirName, entryName, completionState.finalParts, func(entry *filer_pb.Entry) {
 				if entry.Extended == nil {
@@ -829,11 +825,23 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				return s3err.ErrInternalError
 			}
 
-			// Clear the .versions latest pointer so the null object just written wins the read.
-			// Best-effort, as in putSuspendedVersioningObject: a stale flag self-heals on the next list.
+			// A suspended DELETE leaves a null delete marker in .versions that reads keep
+			// resolving to, so retire it now that the replacement null version exists at the
+			// regular path. Both steps run only after the write commits: undoing them on a
+			// failed write would republish the deleted key as its newest real version.
+			//
+			// Clearing the pointer is what hands the read back to the regular path, so it must
+			// come first — removing the marker while the pointer still names it makes reads
+			// rescan and promote an older version. Failing it leaves the key reading as deleted,
+			// so report that rather than answering 200 for an object HEAD and GET still miss;
+			// the caller's retry replays the completion, since a non-ErrNone finalize keeps the
+			// upload directory. Dropping the marker afterwards is only list hygiene: with the
+			// pointer gone the regular-path null version already wins the read.
 			if err := s3a.updateIsLatestFlagsForSuspendedVersioning(*input.Bucket, normalizedKey); err != nil {
-				glog.Warningf("completeMultipartUpload: failed to update IsLatest flags for %s/%s: %v", *input.Bucket, normalizedKey, err)
+				glog.Errorf("completeMultipartUpload: failed to clear the latest-version pointer for %s/%s: %v", *input.Bucket, normalizedKey, err)
+				return s3err.ErrInternalError
 			}
+			s3a.removeNullVersionFile(*input.Bucket, normalizedKey)
 
 			// Note: Suspended versioning should NOT return VersionId field according to AWS S3 spec
 			output = &CompleteMultipartUploadResult{
