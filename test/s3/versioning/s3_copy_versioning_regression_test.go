@@ -6,8 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -29,6 +32,153 @@ func suspendVersioning(t *testing.T, client *s3.Client, bucketName string) {
 		},
 	})
 	require.NoError(t, err)
+}
+
+// vacuumVolumes asks the master to compact away the needles a delete tombstoned.
+// Tests that assert a surviving object still has its data need this: deleting an
+// entry only tombstones the needles it points at, so a shared chunk list reads
+// fine right up until the vacuum makes the loss permanent.
+func vacuumVolumes(t *testing.T) {
+	if defaultConfig.MasterEndpoint == "" {
+		return
+	}
+	endpoint := strings.TrimRight(defaultConfig.MasterEndpoint, "/") + "/vol/vacuum?garbageThreshold=0.001"
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	resp, err := httpClient.Get(endpoint)
+	if err != nil {
+		t.Logf("Note: vacuum request failed: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+}
+
+func requireVersionBody(t *testing.T, client *s3.Client, bucketName, objectKey, versionId string, want []byte, msg string) {
+	t.Helper()
+	getResp, err := client.GetObject(context.TODO(), &s3.GetObjectInput{
+		Bucket:    aws.String(bucketName),
+		Key:       aws.String(objectKey),
+		VersionId: aws.String(versionId),
+	})
+	require.NoError(t, err, msg)
+	defer getResp.Body.Close()
+	body, err := io.ReadAll(getResp.Body)
+	require.NoError(t, err, msg)
+	require.Equal(t, len(want), len(body), msg)
+	require.True(t, bytes.Equal(want, body), msg)
+}
+
+// chunkedTestContent returns a body large enough to land in volume needles rather
+// than inline in the filer entry, so a copy that reuses the source fids is visible
+// once those needles are freed.
+func chunkedTestContent(size int) []byte {
+	content := make([]byte, size)
+	for i := range content {
+		content[i] = byte(i * 31 % 251)
+	}
+	return content
+}
+
+// TestVersioningSelfCopyMetadataReplaceKeepsChunksIndependent covers the copy that
+// only rewrites metadata: it used to hand the source version's chunk fids to the
+// new version, so nothing owned those needles and deleting either version freed
+// the survivor's data (silently, once a vacuum ran).
+func TestVersioningSelfCopyMetadataReplaceKeepsChunksIndependent(t *testing.T) {
+	client := getS3Client(t)
+	bucketName := getNewBucketName()
+
+	createBucket(t, client, bucketName)
+	defer deleteBucket(t, client, bucketName)
+
+	enableVersioning(t, client, bucketName)
+
+	objectKey := "self-copy-chunk-ownership.bin"
+	content := chunkedTestContent(6 << 20)
+
+	putResp, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+		Body:   bytes.NewReader(content),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, putResp.VersionId)
+
+	copyResp, err := client.CopyObject(context.TODO(), &s3.CopyObjectInput{
+		Bucket:            aws.String(bucketName),
+		Key:               aws.String(objectKey),
+		CopySource:        aws.String(versioningCopySource(bucketName, objectKey)),
+		Metadata:          map[string]string{"mtime": "1653465360"},
+		MetadataDirective: types.MetadataDirectiveReplace,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, copyResp.VersionId)
+	require.NotEqual(t, *putResp.VersionId, *copyResp.VersionId)
+
+	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+		Bucket:    aws.String(bucketName),
+		Key:       aws.String(objectKey),
+		VersionId: putResp.VersionId,
+	})
+	require.NoError(t, err)
+
+	// The filer frees a deleted entry's chunks asynchronously, so re-check across
+	// a few vacuum rounds instead of racing a single one.
+	for round := 0; round < 4; round++ {
+		time.Sleep(time.Second)
+		vacuumVolumes(t)
+		requireVersionBody(t, client, bucketName, objectKey, *copyResp.VersionId, content,
+			"the surviving version must keep its own data after the other version is deleted")
+	}
+}
+
+// TestSuspendedSelfCopyMetadataReplaceKeepsChunksIndependent is the same defect on
+// a suspended bucket: the null version the copy writes sits beside a .versions/
+// entry that stays live, so the two must not share needles either.
+func TestSuspendedSelfCopyMetadataReplaceKeepsChunksIndependent(t *testing.T) {
+	client := getS3Client(t)
+	bucketName := getNewBucketName()
+
+	createBucket(t, client, bucketName)
+	defer deleteBucket(t, client, bucketName)
+
+	enableVersioning(t, client, bucketName)
+
+	objectKey := "suspended-self-copy-chunk-ownership.bin"
+	content := chunkedTestContent(6 << 20)
+
+	putResp, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+		Body:   bytes.NewReader(content),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, putResp.VersionId)
+
+	suspendVersioning(t, client, bucketName)
+
+	_, err = client.CopyObject(context.TODO(), &s3.CopyObjectInput{
+		Bucket:            aws.String(bucketName),
+		Key:               aws.String(objectKey),
+		CopySource:        aws.String(versioningCopySource(bucketName, objectKey)),
+		Metadata:          map[string]string{"mtime": "1653465360"},
+		MetadataDirective: types.MetadataDirectiveReplace,
+	})
+	require.NoError(t, err)
+
+	// Drop the version the copy read from; the null version it wrote must survive.
+	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+		Bucket:    aws.String(bucketName),
+		Key:       aws.String(objectKey),
+		VersionId: putResp.VersionId,
+	})
+	require.NoError(t, err)
+
+	for round := 0; round < 4; round++ {
+		time.Sleep(time.Second)
+		vacuumVolumes(t)
+		requireVersionBody(t, client, bucketName, objectKey, "null", content,
+			"the null version must keep its own data after the version it was copied from is deleted")
+	}
 }
 
 func TestVersioningSelfCopyMetadataReplaceCreatesNewVersion(t *testing.T) {

@@ -232,12 +232,12 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if sameDestination && (replaceMeta || replaceTagging) && s3a.canUseMetadataOnlySelfCopy(entry, r, dstBucket, dstObject) {
+	if sameDestination && (replaceMeta || replaceTagging) && selfCopyReplacesSourceEntry(dstVersioningState, srcVersionId) &&
+		s3a.canUseMetadataOnlySelfCopy(entry, r, dstBucket, dstObject) {
 		var dstVersionId string
 		var etag string
-		// A non-versioned in-place metadata replace routes to the owner as a
-		// serialized PATCH (off the distributed lock); versioned/suspended (which
-		// create a new version) and the no-owner bootstrap keep the lock.
+		// An in-place metadata replace routes to the owner as a serialized PATCH
+		// (off the distributed lock); the no-owner bootstrap keeps the lock.
 		//
 		// REPLACE can also change Content-Type, which lives on Attributes.Mime,
 		// not Extended. The routed PATCH only carries Extended keys, so when the
@@ -246,7 +246,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		owner := s3a.objectWriteOwner(dstBucket, dstObject)
 		sourceMime := entry.GetAttributes().GetMime()
 		mimeChanged := resolveDestinationMime(r.Header, sourceMime, replaceMeta) != sourceMime
-		routeInPlace := owner != "" && dstVersioningState == "" && !mimeChanged
+		routeInPlace := owner != "" && !mimeChanged
 		selfCopyBody := func() s3err.ErrorCode {
 			currentEntry, currentErr := s3a.resolveCopySourceEntry(srcBucket, srcObject, srcVersionId, srcVersioningState)
 			if errCode := classifyCopySourceError(currentEntry, currentErr); errCode != s3err.ErrNone {
@@ -472,6 +472,18 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 
 	writeSuccessResponseXML(w, r, response)
 
+}
+
+// selfCopyReplacesSourceEntry reports whether a self-copy writes back to the very
+// entry it read. The metadata-only path clones the source entry, chunk fids and
+// all, which only stays correct while one entry owns those needles: nothing
+// refcounts a plain shared chunk list, so a second live entry on the same chunks
+// loses its data as soon as either side is deleted. A versioned destination
+// writes a new version file, a suspended one writes the null version next to a
+// .versions/ entry that stays live, and a source pinned to a versionId reads a
+// version file that outlives the copy — those all need the chunks copied for real.
+func selfCopyReplacesSourceEntry(dstVersioningState, srcVersionId string) bool {
+	return dstVersioningState == "" && srcVersionId == ""
 }
 
 func cloneProtoEntry(entry *filer_pb.Entry) *filer_pb.Entry {
