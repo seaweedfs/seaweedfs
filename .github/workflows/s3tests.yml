@@ -694,10 +694,12 @@ jobs:
           export WEED_DATA_DIR="/tmp/seaweedfs-copy-test-$(date +%s)"
           mkdir -p "$WEED_DATA_DIR"
           set -x
+          # Each test bucket is its own collection and grows 7 volumes; the suite runs
+          # faster than the heartbeat that returns slots from the deleted collections.
           weed -v 0 server -filer -filer.maxMB=64 -s3 -ip.bind 0.0.0.0 \
             -dir="$WEED_DATA_DIR" \
             -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=100 \
-            -volume.max=100 -volume.preStopSeconds=1 \
+            -volume.max=300 -volume.preStopSeconds=1 \
             -master.port=9336 -volume.port=8083 -filer.port=8891 -s3.port=8003 -metricsPort=9327 \
             -s3.allowDeleteBucketNotEmpty=true -s3.config="$GITHUB_WORKSPACE/docker/compose/s3.json" -master.peers=none &
           pid=$!
