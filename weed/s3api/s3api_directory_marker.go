@@ -23,15 +23,9 @@ import (
 // to tell what a directory stands for, and a bucket made of directory markers costs
 // the same to list versioned as unversioned.
 
-// deleteDirectoryMarker removes the key "<dir>/" under the object write lock, so the
-// entry it decides about cannot change under it.
+// deleteDirectoryMarker removes the key "<dir>/". Callers hold the object write lock,
+// so the entry this decides about cannot change between the read and the delete.
 func (s3a *S3ApiServer) deleteDirectoryMarker(bucket, object string) s3err.ErrorCode {
-	return s3a.withObjectWriteLock(bucket, object, nil, func() s3err.ErrorCode {
-		return s3a.doDeleteDirectoryMarker(bucket, object)
-	})
-}
-
-func (s3a *S3ApiServer) doDeleteDirectoryMarker(bucket, object string) s3err.ErrorCode {
 	markerDir := s3a.bucketDir(bucket) + "/" + strings.TrimSuffix(strings.TrimPrefix(object, "/"), "/")
 	dir, name := util.FullPath(markerDir).DirAndName()
 
@@ -52,12 +46,17 @@ func (s3a *S3ApiServer) doDeleteDirectoryMarker(bucket, object string) s3err.Err
 	}
 
 	// Drop a history an older build recorded for this key. Nothing writes one now, and
-	// leaving it behind keeps reporting the key in ListObjectVersions.
-	if _, err := s3a.getEntry(markerDir, s3_constants.VersionsFolder); err == nil {
+	// leaving it behind keeps reporting the key in ListObjectVersions, so a history we
+	// cannot read or remove fails the delete rather than half finishing it.
+	switch _, historyErr := s3a.getEntry(markerDir, s3_constants.VersionsFolder); {
+	case historyErr == nil:
 		if rmErr := s3a.rm(markerDir, s3_constants.VersionsFolder, true, true); rmErr != nil {
 			glog.Errorf("deleteDirectoryMarker: failed to remove stale history of %s/%s: %v", bucket, object, rmErr)
 			return s3err.ErrInternalError
 		}
+	case !errors.Is(historyErr, filer_pb.ErrNotFound):
+		glog.Errorf("deleteDirectoryMarker: cannot read stale history of %s/%s: %v", bucket, object, historyErr)
+		return s3err.ErrInternalError
 	}
 
 	if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
