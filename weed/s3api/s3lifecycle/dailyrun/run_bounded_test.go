@@ -219,6 +219,53 @@ func TestValidate_RejectsNegativeSubscriptionReceiveTimeout(t *testing.T) {
 	require.NoError(t, validate(cfg))
 }
 
+// slowSavePersister stretches teardown past the caller's deadline.
+type slowSavePersister struct {
+	*memPersister
+	delay time.Duration
+}
+
+func (p *slowSavePersister) Save(ctx context.Context, shardID int, c Cursor) error {
+	time.Sleep(p.delay)
+	return p.memPersister.Save(ctx, shardID, c)
+}
+
+// A reader that fails while the caller's deadline is still live, on a
+// pass whose teardown then outlives that deadline. Sampling ctx.Err()
+// after the drains and cursor saves would read the late deadline as
+// intent and report the truncated pass as a success.
+func TestRun_LateDeadlineDoesNotMaskReaderFailure(t *testing.T) {
+	e := engine.New()
+	e.Compile([]engine.CompileInput{
+		{Bucket: "b1", Rules: []*s3lifecycle.Rule{
+			{ID: "r", Status: s3lifecycle.StatusEnabled, ExpirationDays: 30},
+		}},
+	}, engine.CompileOptions{})
+
+	cfg := Config{
+		Shards:      []int{0, 1},
+		BucketsPath: "/buckets",
+		Engine:      e,
+		FilerClient: &failingSubscribeClient{err: status.Error(codes.Unavailable, "filer down")},
+		Client:      stubLifecycleClient{},
+		Persister:   &slowSavePersister{memPersister: newMemPersister(), delay: 300 * time.Millisecond},
+		Lister:      stubSiblingLister{},
+	}
+
+	// Deadline lands during the cursor saves, well after the reader failed.
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- Run(ctx, cfg) }()
+	select {
+	case err := <-done:
+		require.Error(t, err, "a deadline expiring during teardown must not excuse an earlier reader failure")
+		require.NotNil(t, ctx.Err(), "test is meaningless unless the deadline did expire")
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not return")
+	}
+}
+
 // The case status-code classification could not express: the filer
 // cancels while the caller's context is untouched.
 func TestRun_ServerSideCancelFailsThePass(t *testing.T) {
