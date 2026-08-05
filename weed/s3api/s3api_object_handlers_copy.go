@@ -583,8 +583,8 @@ func (s3a *S3ApiServer) finalizeCopyDestination(dstBucket, dstObject, dstVersion
 			return "", "", err
 		}
 
-		if err = s3a.updateIsLatestFlagsForSuspendedVersioning(dstBucket, normalizedObject); err != nil {
-			glog.Warningf("CopyObjectHandler: failed to update suspended version latest flags for %s/%s: %v", dstBucket, normalizedObject, err)
+		if err = s3a.finalizeSuspendedNullWrite(dstBucket, normalizedObject); err != nil {
+			glog.Warningf("CopyObjectHandler: failed to retire the null delete marker for %s/%s: %v", dstBucket, normalizedObject, err)
 		}
 
 		return "", etag, nil
