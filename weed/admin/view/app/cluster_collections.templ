@@ -87,15 +87,15 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                     <div class="card-body">
                         <div class="row no-gutters align-items-center">
                             <div class="col mr-2">
-                                <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">
-                                    Total Files
+                                <div class="text-xs font-weight-bold text-warning text-uppercase mb-1" title="Chunks stored in volumes. A file is split into one or more chunks, so this is not the number of files.">
+                                    Total Chunks
                                 </div>
                                 <div class="h5 mb-0 font-weight-bold text-gray-800">
-                                    {fmt.Sprintf("%d", data.TotalFiles)}
+                                    {fmt.Sprintf("%d", data.TotalChunks)}
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-file fa-2x text-gray-300"></i>
+                                <i class="fas fa-cubes fa-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
@@ -139,7 +139,7 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                                     <th>Collection Name</th>
                                     <th>Regular Volumes</th>
                                     <th>EC Volumes</th>
-                                    <th>Files</th>
+                                    <th>Chunks</th>
                                     <th>Size (Logical)</th>
                                     <th>Disk Types</th>
                                     <th>Actions</th>
@@ -179,8 +179,8 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                                         </td>
                                         <td>
                                             <div class="d-flex align-items-center">
-                                                <i class="fas fa-file me-2 text-muted"></i>
-                                                {fmt.Sprintf("%d", collection.FileCount)}
+                                                <i class="fas fa-cubes me-2 text-muted"></i>
+                                                {fmt.Sprintf("%d", collection.ChunkCount)}
                                             </div>
                                         </td>
                                         <td>
@@ -209,7 +209,7 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                                                     data-datacenter={collection.DataCenter}
                                                     data-volume-count={fmt.Sprintf("%d", collection.VolumeCount)}
                                                     data-ec-volume-count={fmt.Sprintf("%d", collection.EcVolumeCount)}
-                                                    data-file-count={fmt.Sprintf("%d", collection.FileCount)}
+                                                    data-chunk-count={fmt.Sprintf("%d", collection.ChunkCount)}
                                                     data-total-size={fmt.Sprintf("%d", collection.TotalSize)}
                                                     data-disk-types={formatDiskTypes(collection.DiskTypes)}>
                                                 <i class="fas fa-eye"></i>
@@ -262,7 +262,7 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                         datacenter: button.getAttribute('data-datacenter'),
                         volumeCount: parseInt(button.getAttribute('data-volume-count')),
                         ecVolumeCount: parseInt(button.getAttribute('data-ec-volume-count')),
-                        fileCount: parseInt(button.getAttribute('data-file-count')),
+                        chunkCount: parseInt(button.getAttribute('data-chunk-count')),
                         totalSize: parseInt(button.getAttribute('data-total-size')),
                         diskTypes: button.getAttribute('data-disk-types')
                     };
@@ -311,10 +311,10 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
             '<span>' + collection.ecVolumeCount.toLocaleString() + '</span>' +
             '</div>' +
             '</td></tr>' +
-            '<tr><td><strong>Total Files:</strong></td><td>' +
+            '<tr><td><strong>Total Chunks:</strong></td><td>' +
             '<div class="d-flex align-items-center">' +
-            '<i class="fas fa-file me-2 text-muted"></i>' +
-            '<span>' + collection.fileCount.toLocaleString() + '</span>' +
+            '<i class="fas fa-cubes me-2 text-muted"></i>' +
+            '<span>' + collection.chunkCount.toLocaleString() + '</span>' +
             '</div>' +
             '</td></tr>' +
             '<tr><td><strong>Total Size (Logical):</strong></td><td>' +
@@ -396,17 +396,18 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                 return {
                     name: cells[0].textContent.trim(),
                     volumes: cells[1].textContent.trim(),
-                    files: cells[2].textContent.trim(),
-                    size: cells[3].textContent.trim(),
-                    diskTypes: cells[4].textContent.trim()
+                    ecVolumes: cells[2].textContent.trim(),
+                    chunks: cells[3].textContent.trim(),
+                    size: cells[4].textContent.trim(),
+                    diskTypes: cells[5].textContent.trim()
                 };
             }
             return null;
         }).filter(row => row !== null);
-        
-        const csvContent = "data:text/csv;charset=utf-8," + 
-            "Collection Name,Volumes,Files,Size,Disk Types\n" +
-            rows.map(r => '"' + r.name + '","' + r.volumes + '","' + r.files + '","' + r.size + '","' + r.diskTypes + '"').join("\n");
+
+        const csvContent = "data:text/csv;charset=utf-8," +
+            "Collection Name,Volumes,EC Volumes,Chunks,Size,Disk Types\n" +
+            rows.map(r => '"' + r.name + '","' + r.volumes + '","' + r.ecVolumes + '","' + r.chunks + '","' + r.size + '","' + r.diskTypes + '"').join("\n");
         
         const encodedUri = encodeURI(csvContent);
         const link = document.createElement("a");

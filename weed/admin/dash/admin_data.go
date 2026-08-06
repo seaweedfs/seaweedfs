@@ -23,7 +23,7 @@ const (
 type AdminData struct {
 	Username          string              `json:"username"`
 	TotalVolumes      int                 `json:"total_volumes"`
-	TotalFiles        int64               `json:"total_files"`
+	TotalChunks       int64               `json:"total_chunks"`
 	TotalSize         int64               `json:"total_size"`
 	VolumeSizeLimitMB uint64              `json:"volume_size_limit_mb"`
 	MasterNodes       []MasterNode        `json:"master_nodes"`
@@ -199,7 +199,7 @@ func (s *AdminServer) GetAdminData(username string) (AdminData, error) {
 	adminData := AdminData{
 		Username:          username,
 		TotalVolumes:      topology.TotalVolumes,
-		TotalFiles:        topology.TotalFiles,
+		TotalChunks:       topology.TotalChunks,
 		TotalSize:         topology.TotalSize,
 		VolumeSizeLimitMB: volumeSizeLimitMB,
 		MasterNodes:       masterNodes,

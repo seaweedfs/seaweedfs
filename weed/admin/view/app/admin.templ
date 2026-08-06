@@ -50,18 +50,18 @@ templ Admin(data dash.AdminData) {
                     <div class="card-body">
                         <div class="row no-gutters align-items-center">
                             <div class="col mr-2">
-                                <div class="text-xs font-weight-bold text-info text-uppercase mb-1">
-                                    Total Files
+                                <div class="text-xs font-weight-bold text-info text-uppercase mb-1" title="Chunks stored in volumes. A file is split into one or more chunks, so this is not the number of files.">
+                                    Total Chunks
                                 </div>
                                 <div class="h5 mb-0 font-weight-bold text-gray-800">
-                                    {formatNumber(data.TotalFiles)}
+                                    {formatNumber(data.TotalChunks)}
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-file fa-2x text-gray-300"></i>
+                                <i class="fas fa-cubes fa-2x text-gray-300"></i>
                             </div>
                         </div>
-                        @templ.Raw(data.Trends.Files)
+                        @templ.Raw(data.Trends.Chunks)
                     </div>
                 </div>
             </div>

@@ -1928,9 +1928,20 @@ type ecVolumeCounts struct {
 	deleteCount uint64
 }
 
+// volumeLiveCount is the live chunk count of one regular volume. Replicas
+// mirror each other's needles and their deletes, so the fullest report is the
+// volume's count — dividing each report by the copy count instead would lose
+// a chunk to integer truncation and would halve a volume whose second replica
+// has not reported yet.
+type volumeLiveCount struct {
+	collection string
+	live       uint64
+}
+
 func collectCollectionStats(topologyInfo *master_pb.TopologyInfo) map[string]collectionStats {
 	collectionMap := make(map[string]collectionStats)
 	ecVolumeAgg := make(map[uint32]*ecVolumeCounts)
+	volumeAgg := make(map[uint32]*volumeLiveCount)
 	for _, dc := range topologyInfo.DataCenterInfos {
 		for _, rack := range dc.RackInfos {
 			for _, node := range rack.DataNodeInfos {
@@ -1951,10 +1962,18 @@ func collectCollectionStats(topologyInfo *master_pb.TopologyInfo) map[string]col
 						if volInfo.Size >= volInfo.DeletedByteCount {
 							data.LogicalSize += int64(volInfo.Size-volInfo.DeletedByteCount) / replicaCount
 						}
-						if volInfo.FileCount >= volInfo.DeleteCount {
-							data.FileCount += int64(volInfo.FileCount-volInfo.DeleteCount) / replicaCount
-						}
 						collectionMap[collection] = data
+
+						if volInfo.FileCount >= volInfo.DeleteCount {
+							agg, ok := volumeAgg[volInfo.Id]
+							if !ok {
+								agg = &volumeLiveCount{collection: collection}
+								volumeAgg[volInfo.Id] = agg
+							}
+							if live := volInfo.FileCount - volInfo.DeleteCount; live > agg.live {
+								agg.live = live
+							}
+						}
 					}
 					for _, ecShardInfo := range diskInfo.EcShardInfos {
 						collection := ecShardInfo.Collection
@@ -1987,6 +2006,14 @@ func collectCollectionStats(topologyInfo *master_pb.TopologyInfo) map[string]col
 		}
 	}
 
+	// Fold the per-volume live counts in, one entry per volume id no matter
+	// how many replicas reported it.
+	for _, agg := range volumeAgg {
+		data := collectionMap[agg.collection]
+		data.FileCount += int64(agg.live)
+		collectionMap[agg.collection] = data
+	}
+
 	// Fold EC per-volume counts into the collection totals. fileCount is
 	// deduped via max across every node reporting shards for the volume;
 	// deleteCount is summed across the same nodes.
@@ -2002,6 +2029,17 @@ func collectCollectionStats(topologyInfo *master_pb.TopologyInfo) map[string]col
 	}
 
 	return collectionMap
+}
+
+// totalCollectionFileCount is the cluster-wide live chunk count: the sum of
+// every collection's deduped count. Volumes and EC volumes are reported by
+// each replica or shard holder, so only this aggregation counts a chunk once.
+func totalCollectionFileCount(topologyInfo *master_pb.TopologyInfo) int64 {
+	var total int64
+	for _, stats := range collectCollectionStats(topologyInfo) {
+		total += stats.FileCount
+	}
+	return total
 }
 
 // getCollectionStats returns current collection statistics with caching
