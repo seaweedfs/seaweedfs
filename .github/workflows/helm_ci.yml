@@ -1409,6 +1409,29 @@ jobs:
                       else:
                           print("SEAWEED_LICENSE: reserved, rendered once, points at the mount")
 
+          # Same reservation on the secretExtraEnvironmentVars path, which
+          # all-in-one renders outside the merge helper.
+          out = render({
+              "allInOne.enabled": "true",
+              "master.enabled": "false",
+              "volume.enabled": "false",
+              "filer.enabled": "false",
+              "global.seaweedfs.license.existingSecret": "lic",
+              "allInOne.secretExtraEnvironmentVars.SEAWEED_LICENSE.secretKeyRef.name": "x",
+              "allInOne.secretExtraEnvironmentVars.SEAWEED_LICENSE.secretKeyRef.key": "y",
+          })
+          for d in workloads(out):
+              if not d["metadata"]["name"].endswith("-all-in-one"):
+                  continue
+              for c in d["spec"]["template"]["spec"].get("containers", []):
+                  names = [e["name"] for e in c.get("env", [])]
+                  if names.count("SEAWEED_LICENSE") != 1:
+                      failed.append(f"all-in-one: SEAWEED_LICENSE rendered {names.count('SEAWEED_LICENSE')} times via secretExtraEnvironmentVars")
+                  elif next(e.get("value") for e in c["env"] if e["name"] == "SEAWEED_LICENSE") != LICENSE_PATH:
+                      failed.append("all-in-one: secretExtraEnvironmentVars overrode SEAWEED_LICENSE")
+                  else:
+                      print("all-in-one: SEAWEED_LICENSE reserved on the secret env path too")
+
           # Case 3: the master keeps its Raft state -- and with it the
           # cluster UUID an enterprise license is issued against -- on a
           # claim by default, not on a node-local hostPath.

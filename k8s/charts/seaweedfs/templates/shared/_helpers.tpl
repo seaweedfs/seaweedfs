@@ -476,10 +476,10 @@ true
     secretName: {{ .Values.global.seaweedfs.license.existingSecret }}
     defaultMode: 0444
     # Project only the license key, so an unrelated key in the same
-    # Secret is not exposed to every SeaweedFS container.
+    # Secret is not exposed to the container.
     items:
-      - key: {{ .Values.global.seaweedfs.license.secretKey | default "seaweed-license.json" }}
-        path: {{ .Values.global.seaweedfs.license.secretKey | default "seaweed-license.json" }}
+      - key: {{ .Values.global.seaweedfs.license.secretKey | default "seaweed-license.json" | quote }}
+        path: {{ .Values.global.seaweedfs.license.secretKey | default "seaweed-license.json" | quote }}
 {{- end }}
 {{- end -}}
 

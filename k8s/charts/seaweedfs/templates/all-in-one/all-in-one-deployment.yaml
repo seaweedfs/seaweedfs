@@ -121,9 +121,11 @@ spec:
               value: {{ include "seaweedfs.cluster.filerAddress" . | quote }}
             {{- if .Values.allInOne.secretExtraEnvironmentVars }}
             {{- range $key, $value := .Values.allInOne.secretExtraEnvironmentVars }}
+            {{- if not (and $key (eq $key "SEAWEED_LICENSE") (include "seaweedfs.licenseEnabled" $)) }}
             - name: {{ $key }}
               valueFrom:
                 {{ toYaml $value | nindent 16 }}
+            {{- end }}
             {{- end }}
             {{- end }}
           command:
