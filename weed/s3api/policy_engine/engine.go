@@ -26,7 +26,6 @@ type PolicyEvaluationContext struct {
 	bucketName string
 	policy     *CompiledPolicy
 	cache      *PolicyCache
-	mutex      sync.RWMutex
 }
 
 // PolicyEngine is the main policy evaluation engine
