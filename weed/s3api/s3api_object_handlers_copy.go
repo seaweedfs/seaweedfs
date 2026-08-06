@@ -232,8 +232,9 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if sameDestination && (replaceMeta || replaceTagging) && selfCopyReplacesSourceEntry(dstVersioningState, srcVersionId) &&
-		s3a.canUseMetadataOnlySelfCopy(entry, r, dstBucket, dstObject) {
+	replacesSource := copyReplacesSourceEntry(sameDestination, dstVersioningState, srcVersionId)
+
+	if replacesSource && (replaceMeta || replaceTagging) && s3a.canUseMetadataOnlySelfCopy(entry, r, dstBucket, dstObject) {
 		var dstVersionId string
 		var etag string
 		// An in-place metadata replace routes to the owner as a serialized PATCH
@@ -416,7 +417,6 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		}
 	} else {
 		// Use unified copy strategy approach
-		replacesSource := sameDestination && selfCopyReplacesSourceEntry(dstVersioningState, srcVersionId)
 		dstChunks, dstMetadata, copyErr := s3a.executeUnifiedCopyStrategy(entry, r, srcBucket, dstBucket, srcObject, dstObject, replacesSource)
 		if copyErr != nil {
 			glog.Errorf("CopyObjectHandler unified copy error: %v", copyErr)
@@ -475,16 +475,16 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 
 }
 
-// selfCopyReplacesSourceEntry reports whether a self-copy writes back to the very
-// entry it read. The metadata-only path clones the source entry, chunk fids and
-// all, which only stays correct while one entry owns those needles: nothing
-// refcounts a plain shared chunk list, so a second live entry on the same chunks
-// loses its data as soon as either side is deleted. A versioned destination
-// writes a new version file, a suspended one writes the null version next to a
-// .versions/ entry that stays live, and a source pinned to a versionId reads a
-// version file that outlives the copy — those all need the chunks copied for real.
-func selfCopyReplacesSourceEntry(dstVersioningState, srcVersionId string) bool {
-	return dstVersioningState == "" && srcVersionId == ""
+// copyReplacesSourceEntry reports whether a copy writes back to the very entry it
+// read, which is what lets a strategy hand the source's chunk fids to the
+// destination instead of copying the data. Nothing refcounts a plain shared chunk
+// list, so a second live entry on the same chunks loses its data as soon as either
+// side is deleted. A versioned destination writes a new version file, a suspended
+// one writes the null version next to a .versions/ entry that stays live, and a
+// source pinned to a versionId reads a version file that outlives the copy — those
+// all need the chunks copied for real, as does any copy to a different key.
+func copyReplacesSourceEntry(sameDestination bool, dstVersioningState, srcVersionId string) bool {
+	return sameDestination && dstVersioningState == "" && srcVersionId == ""
 }
 
 func cloneProtoEntry(entry *filer_pb.Entry) *filer_pb.Entry {
