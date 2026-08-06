@@ -146,12 +146,17 @@ master:
   #    type: "emptyDir"
   # -mdir holds the Raft log, peer config and snapshots, and with them the
   # cluster's identity (its topology UUID). A hostPath does not follow a
-  # rescheduled pod, so a claim is the default; a master that comes back with
-  # an empty -mdir generates a fresh cluster UUID. Set type to "hostPath"
-  # (with hostPathPrefix) to keep the old behaviour. See the README for
-  # migrating an existing release.
+  # rescheduled pod, so a master that lands on another node comes back with an
+  # empty -mdir and a freshly generated cluster UUID. Prefer a claim:
+  #
+  #  data:
+  #    type: "persistentVolumeClaim"
+  #    size: "1Gi"
+  #
+  # The default stays hostPath so existing releases keep upgrading — see the
+  # README for switching an existing release over.
   data:
-    type: "persistentVolumeClaim"
+    type: "hostPath"
     size: "1Gi"
     storageClass: ""
     hostPathPrefix: /ssd

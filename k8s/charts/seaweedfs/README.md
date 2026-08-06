@@ -107,37 +107,43 @@ https://github.com/rancher/local-path-provisioner
 you can use ANY storage class you like, just update the correct storage-class
 for your deployment.
 
-### Master data: upgrading from the hostPath default
+### Master data: hostPath vs a claim
 
-`master.data.type` now defaults to `persistentVolumeClaim`. The master's
-`-mdir` holds its Raft log and snapshots, and with them the cluster's identity
-(its topology UUID). A hostPath does not follow a pod to another node, so a
-rescheduled master used to come back with an empty data directory and a brand
-new cluster UUID.
+The master's `-mdir` holds its Raft log and snapshots, and with them the
+cluster's identity (its topology UUID). `master.data.type` defaults to
+`hostPath`, which does not follow a pod to another node: a master that is
+rescheduled comes back with an empty data directory and a brand new cluster
+UUID. With the chart's default of a single master replica there is no peer to
+recover the identity from either.
 
-**This is a breaking change for existing releases.** `volumeClaimTemplates` is
-immutable on a StatefulSet, so `helm upgrade` on a release installed with the
-old default fails with:
+Putting the master's data on a claim avoids that:
+
+```yaml
+master:
+  data:
+    type: "persistentVolumeClaim"
+    size: "1Gi"
+    storageClass: ""   # empty uses the cluster's default StorageClass
+```
+
+Raft state is small, so a modest claim is enough — sizing matters far more for
+volume and filer.
+
+The default is left at `hostPath` for backward compatibility:
+`volumeClaimTemplates` is immutable on a StatefulSet, so flipping the type on a
+release that already exists fails, whether the chart changes the default or you
+change it yourself:
 
 ```
 StatefulSet.apps "<release>-seaweedfs-master" is invalid: spec: Forbidden:
 updates to statefulset spec for fields other than 'replicas', ... are forbidden
 ```
 
-Pick one of:
-
-**Keep the previous behaviour** — one line, no migration:
-
-```yaml
-master:
-  data:
-    type: "hostPath"
-    hostPathPrefix: /ssd
-```
-
-**Move the master onto a claim, keeping the cluster UUID.** The claim has to be
-seeded while the master is stopped: a running master rewrites its Raft state,
-so copying into a live pod is silently undone by the next restart.
+New installs can set the claim from the start. To move an **existing** release
+onto a claim without losing the cluster UUID, use the migration below. The
+claim has to be seeded while the master is stopped: a running master rewrites
+its Raft state, so copying into a live pod is silently undone by the next
+restart.
 
 The steps below are for the chart's default of a single master
 (`master.replicas: 1`). With several master replicas, repeat steps 1, 3 and 4
@@ -561,7 +567,9 @@ and on all-in-one (which runs `weed server -master`). It is mounted as a
 directory, not a `subPath`, so a renewed Secret reaches the running master —
 which re-reads the file periodically — without a restart.
 
-The license is tied to the cluster UUID kept in the master's Raft state, which
-is why `master.data` defaults to a claim; see
-[Master data](#master-data-upgrading-from-the-hostpath-default). Check it with
-`kubectl exec <master-pod> -- curl -s localhost:9333/license/status`.
+The license is tied to the cluster UUID kept in the master's Raft state, so put
+`master.data` on a claim — a master that restarts onto an empty data directory
+generates a new UUID and the license stops matching. See
+[Master data](#master-data-hostpath-vs-a-claim). Check the binding with
+`kubectl exec <master-pod> -- curl -s localhost:9333/license/status`
+(`cluster_uuid` must equal `license_uuid`).

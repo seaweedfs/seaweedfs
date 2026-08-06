@@ -1433,32 +1433,44 @@ jobs:
                       print("all-in-one: SEAWEED_LICENSE reserved on the secret env path too")
 
           # Case 3: the master keeps its Raft state -- and with it the
-          # cluster UUID an enterprise license is issued against -- on a
-          # claim by default, not on a node-local hostPath.
-          out = render({})
-          for d in workloads(out):
-              if not d["metadata"]["name"].endswith("-master"):
-                  continue
+          # cluster UUID an enterprise license is issued against -- can go on a
+          # claim, while the default stays hostPath so existing releases keep
+          # upgrading (volumeClaimTemplates is immutable on a StatefulSet).
+          masters = [d for d in workloads(render({})) if d["metadata"]["name"].endswith("-master")]
+          if len(masters) != 1:
+              failed.append(f"master: expected 1 StatefulSet by default, got {len(masters)}")
+          else:
+              d = masters[0]
               claims = [c["metadata"]["name"] for c in d["spec"].get("volumeClaimTemplates", [])]
-              if not any(c.startswith("data-") for c in claims):
-                  failed.append(f"master: no data volumeClaimTemplate by default (got {claims})")
-              else:
-                  print(f"master: data persisted via volumeClaimTemplate {claims}")
-              # Only the data volume matters here; logs stay on a hostPath.
+              if any(c.startswith("data-") for c in claims):
+                  failed.append(f"master: default grew a data volumeClaimTemplate ({claims}); "
+                                "that breaks helm upgrade on existing releases")
               data_host = [v["name"] for v in d["spec"]["template"]["spec"].get("volumes", [])
                            if v.get("hostPath") and v["name"].startswith("data-")]
-              if data_host:
-                  failed.append(f"master: data still on a hostPath by default ({data_host})")
+              if not data_host:
+                  failed.append("master: default no longer renders a hostPath data volume")
+              else:
+                  print("master: default still hostPath (upgrade-compatible)")
 
-          # Case 4: hostPath remains available for anyone who wants it.
-          out = render({"master.data.type": "hostPath"})
-          for d in workloads(out):
-              if d["metadata"]["name"].endswith("-master"):
-                  vols = d["spec"]["template"]["spec"].get("volumes", [])
-                  if not any(v.get("hostPath") and v["name"].startswith("data-") for v in vols):
-                      failed.append("master.data.type=hostPath: no hostPath data volume rendered")
-                  else:
-                      print("master.data.type=hostPath: still supported")
+          # Case 4: opting into a claim renders one, with the requested size.
+          masters = [d for d in workloads(render({"master.data.type": "persistentVolumeClaim"}))
+                     if d["metadata"]["name"].endswith("-master")]
+          if len(masters) != 1:
+              failed.append(f"master.data.type=persistentVolumeClaim: expected 1 StatefulSet, got {len(masters)}")
+          else:
+              d = masters[0]
+              claims = {c["metadata"]["name"]: c["spec"]["resources"]["requests"]["storage"]
+                        for c in d["spec"].get("volumeClaimTemplates", [])}
+              data = {k: v for k, v in claims.items() if k.startswith("data-")}
+              if not data:
+                  failed.append(f"master.data.type=persistentVolumeClaim: no data claim rendered ({claims})")
+              elif set(data.values()) != {"1Gi"}:
+                  failed.append(f"master.data.type=persistentVolumeClaim: unexpected size {data}")
+              else:
+                  print(f"master.data.type=persistentVolumeClaim: renders {sorted(data)} at 1Gi")
+              if any(v.get("hostPath") and v["name"].startswith("data-")
+                     for v in d["spec"]["template"]["spec"].get("volumes", [])):
+                  failed.append("master.data.type=persistentVolumeClaim: data still on a hostPath")
 
           if failed:
               print("\nFAIL:", file=sys.stderr)
