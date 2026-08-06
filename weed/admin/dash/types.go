@@ -276,7 +276,7 @@ type CollectionInfo struct {
 	DataCenter    string   `json:"datacenter"`
 	VolumeCount   int      `json:"volume_count"`
 	EcVolumeCount int      `json:"ec_volume_count"`
-	FileCount     int64    `json:"file_count"`
+	ChunkCount    int64    `json:"chunk_count"`
 	TotalSize     int64    `json:"total_size"`
 	DiskTypes     []string `json:"disk_types"`
 }
@@ -287,7 +287,7 @@ type ClusterCollectionsData struct {
 	TotalCollections int              `json:"total_collections"`
 	TotalVolumes     int              `json:"total_volumes"`
 	TotalEcVolumes   int              `json:"total_ec_volumes"`
-	TotalFiles       int64            `json:"total_files"`
+	TotalChunks      int64            `json:"total_chunks"`
 	TotalSize        int64            `json:"total_size"`
 	LastUpdated      time.Time        `json:"last_updated"`
 }
@@ -590,7 +590,7 @@ type CollectionDetailsData struct {
 	EcVolumes      []EcVolumeWithShards `json:"ec_volumes"`
 	TotalVolumes   int                  `json:"total_volumes"`
 	TotalEcVolumes int                  `json:"total_ec_volumes"`
-	TotalFiles     int64                `json:"total_files"`
+	TotalChunks    int64                `json:"total_chunks"`
 	TotalSize      int64                `json:"total_size"`
 	DataCenters    []string             `json:"data_centers"`
 	DiskTypes      []string             `json:"disk_types"`

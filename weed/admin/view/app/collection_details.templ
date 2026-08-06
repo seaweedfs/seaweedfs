@@ -71,12 +71,12 @@ templ CollectionDetails(data dash.CollectionDetailsData) {
 				<div class="card-body">
 					<div class="d-flex justify-content-between">
 						<div>
-							<h6 class="card-title">Total Files</h6>
-							<h4 class="mb-0">{fmt.Sprintf("%d", data.TotalFiles)}</h4>
-							<small>Files stored</small>
+							<h6 class="card-title">Total Chunks</h6>
+							<h4 class="mb-0">{fmt.Sprintf("%d", data.TotalChunks)}</h4>
+							<small>A file is split into one or more chunks</small>
 						</div>
 						<div class="align-self-center">
-							<i class="fas fa-file fa-2x"></i>
+							<i class="fas fa-cubes fa-2x"></i>
 						</div>
 					</div>
 				</div>
@@ -169,7 +169,7 @@ templ CollectionDetails(data dash.CollectionDetailsData) {
 						</a>
 					</th>
 					<th class="text-dark">Logical Size / Shard Count</th>
-					<th class="text-dark">Files</th>
+					<th class="text-dark">Chunks</th>
 					<th class="text-dark">Status</th>
 					<th class="text-dark">Actions</th>
 				</tr>
