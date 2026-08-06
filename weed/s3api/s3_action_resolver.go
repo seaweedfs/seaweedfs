@@ -26,6 +26,13 @@ import (
 //   - Falls back to base action mapping if no specific resolution is possible
 //   - Always returns a valid S3 action string (never empty)
 func ResolveS3Action(r *http.Request, baseAction string, bucket string, object string) string {
+	// An action naming another service is already resolved, and an S3 request
+	// shape says nothing about it: a query parameter on an IAM or STS request
+	// must not turn it into the S3 action that parameter stands for.
+	if strings.HasPrefix(baseAction, "iam:") || strings.HasPrefix(baseAction, "sts:") {
+		return baseAction
+	}
+
 	if r == nil || r.URL == nil {
 		// No HTTP context available: fall back to coarse-grained mapping
 		// This ensures consistent behavior and avoids returning empty strings

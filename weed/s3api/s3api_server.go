@@ -723,21 +723,11 @@ func (s3a *S3ApiServer) UnifiedPostHandler(w http.ResponseWriter, r *http.Reques
 		// Always set identity in context when non-nil to ensure downstream handlers have access
 		r = r.WithContext(recordIdentityInContext(r, identity))
 
-		targetUserName := r.Form.Get("UserName")
-
-		// Check permissions based on action type
-		isSelfServiceAction := iamRequiresAdminForOthers(action)
-		isActingOnSelf := targetUserName == "" || targetUserName == identity.Name
-
-		// Permission check is required for all actions except for self-service actions
-		// performed on the user's own identity.
-		if !(isSelfServiceAction && isActingOnSelf) {
-			if !identity.isAdmin() {
-				if s3a.iam.VerifyActionPermission(r, identity, Action("iam:"+action), "arn:aws:iam:::*", "") != s3err.ErrNone {
-					s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-					return
-				}
-			}
+		// UserName comes from the body only, the same place DoActions reads it
+		// from, so the authorized target and the acted-on target cannot differ.
+		if s3a.iam.AuthorizeIamAction(r, identity, action, r.PostForm.Get("UserName")) != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+			return
 		}
 
 		// Call Limit middleware + DoActions
