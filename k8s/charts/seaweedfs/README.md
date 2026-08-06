@@ -134,7 +134,7 @@ The default is left at `hostPath` for backward compatibility:
 release that already exists fails, whether the chart changes the default or you
 change it yourself:
 
-```
+```text
 StatefulSet.apps "<release>-seaweedfs-master" is invalid: spec: Forbidden:
 updates to statefulset spec for fields other than 'replicas', ... are forbidden
 ```
@@ -156,7 +156,9 @@ helper, so `<release>-seaweedfs` is not always right:
 
 ```bash
 NS=<namespace>; REL=<release>
-STS=$(kubectl -n $NS get sts -l app.kubernetes.io/component=master \
+# scope by instance as well as component: several releases can share a namespace
+STS=$(kubectl -n $NS get sts \
+        -l app.kubernetes.io/instance=$REL,app.kubernetes.io/component=master \
         -o jsonpath='{.items[0].metadata.name}')
 POD=$STS-0
 # a StatefulSet names its claims <template>-<statefulset>-<ordinal>, and this
