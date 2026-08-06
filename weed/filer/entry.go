@@ -190,6 +190,12 @@ func (entry *Entry) ApplyS3ExpiryMetadata() {
 		return
 	}
 
+	// The s3 expiry path skips versioned entries, so stamping one would drop its
+	// expiry entirely instead of moving it onto mtime.
+	if entry.IsS3Versioning() {
+		return
+	}
+
 	if !entry.isS3Entry() {
 		return
 	}
