@@ -396,17 +396,18 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                 return {
                     name: cells[0].textContent.trim(),
                     volumes: cells[1].textContent.trim(),
-                    chunks: cells[2].textContent.trim(),
-                    size: cells[3].textContent.trim(),
-                    diskTypes: cells[4].textContent.trim()
+                    ecVolumes: cells[2].textContent.trim(),
+                    chunks: cells[3].textContent.trim(),
+                    size: cells[4].textContent.trim(),
+                    diskTypes: cells[5].textContent.trim()
                 };
             }
             return null;
         }).filter(row => row !== null);
-        
-        const csvContent = "data:text/csv;charset=utf-8," + 
-            "Collection Name,Volumes,Chunks,Size,Disk Types\n" +
-            rows.map(r => '"' + r.name + '","' + r.volumes + '","' + r.chunks + '","' + r.size + '","' + r.diskTypes + '"').join("\n");
+
+        const csvContent = "data:text/csv;charset=utf-8," +
+            "Collection Name,Volumes,EC Volumes,Chunks,Size,Disk Types\n" +
+            rows.map(r => '"' + r.name + '","' + r.volumes + '","' + r.ecVolumes + '","' + r.chunks + '","' + r.size + '","' + r.diskTypes + '"').join("\n");
         
         const encodedUri = encodeURI(csvContent);
         const link = document.createElement("a");
