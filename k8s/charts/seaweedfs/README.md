@@ -111,9 +111,9 @@ for your deployment.
 
 `master.data.type` now defaults to `persistentVolumeClaim`. The master's
 `-mdir` holds its Raft log and snapshots, and with them the cluster's identity
-(its topology UUID, which an enterprise license is issued against). A hostPath
-does not follow a pod to another node, so a rescheduled master used to come
-back with an empty data directory and a brand new cluster UUID.
+(its topology UUID). A hostPath does not follow a pod to another node, so a
+rescheduled master used to come back with an empty data directory and a brand
+new cluster UUID.
 
 **This is a breaking change for existing releases.** `volumeClaimTemplates` is
 immutable on a StatefulSet, so `helm upgrade` on a release installed with the
@@ -136,38 +136,79 @@ master:
 ```
 
 **Move the master onto a claim, keeping the cluster UUID.** The claim has to be
-seeded while the master is stopped; a running master rewrites its Raft state,
-so copying data into a live pod does not work.
+seeded while the master is stopped: a running master rewrites its Raft state,
+so copying into a live pod is silently undone by the next restart.
+
+The steps below are for the chart's default of a single master
+(`master.replicas: 1`). With several master replicas, repeat steps 1, 3 and 4
+for every ordinal, or migrate one at a time and let the remaining quorum
+re-replicate.
+
+Take the names from the cluster rather than assembling them — the release
+name, `nameOverride` and `fullnameOverride` all feed the chart's fullname
+helper, so `<release>-seaweedfs` is not always right:
 
 ```bash
 NS=<namespace>; REL=<release>
+STS=$(kubectl -n $NS get sts -l app.kubernetes.io/component=master \
+        -o jsonpath='{.items[0].metadata.name}')
+POD=$STS-0
+# a StatefulSet names its claims <template>-<statefulset>-<ordinal>, and this
+# chart's template is data-<namespace>
+PVC=data-$NS-$STS-0
+
 # 1. back up the master data directory
-kubectl -n $NS cp $REL-seaweedfs-master-0:/data ./master-backup
-# 2. stop the master, keeping the rest of the release running
-kubectl -n $NS delete sts $REL-seaweedfs-master --cascade=orphan
-kubectl -n $NS delete pod $REL-seaweedfs-master-0
-# 3. create the claim the StatefulSet will adopt, and seed it
-kubectl -n $NS create -f - <<EOF
+kubectl -n $NS cp $POD:/data ./master-backup
+
+# 2. stop the master, leaving the rest of the release running
+kubectl -n $NS delete sts $STS --cascade=orphan
+kubectl -n $NS delete pod $POD
+
+# 3. create the claim the new StatefulSet will adopt, and seed it through a
+#    pod that actually mounts it
+kubectl -n $NS apply -f - <<EOF
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: data-$NS-$REL-seaweedfs-master-0
+  name: $PVC
 spec:
   accessModes: ["ReadWriteOnce"]
   resources:
     requests:
       storage: 1Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: seed
+spec:
+  containers:
+    - name: seed
+      image: alpine:3.20
+      command: ["sleep", "600"]
+      volumeMounts:
+        - name: d
+          mountPath: /data
+  volumes:
+    - name: d
+      persistentVolumeClaim:
+        claimName: $PVC
 EOF
-kubectl -n $NS run seed --image=alpine:3.20 --restart=Never -- sleep 600
-#   (mount the claim at /data on that pod, then:)
+kubectl -n $NS wait --for=condition=Ready pod/seed --timeout=120s
 kubectl -n $NS cp ./master-backup/m9333 seed:/data/
+kubectl -n $NS exec seed -- ls /data/m9333    # conf, log, snapshot, state
 kubectl -n $NS delete pod seed
+
 # 4. upgrade; the StatefulSet adopts the claim you created
 helm upgrade $REL seaweedfs/seaweedfs -n $NS -f values.yaml
 ```
 
-Confirm the UUID survived with
-`kubectl -n $NS exec $REL-seaweedfs-master-0 -- curl -s localhost:9333/license/status`.
+Confirm the UUID survived — it must match what the cluster reported before the
+migration:
+
+```bash
+kubectl -n $NS exec $POD -- curl -s localhost:9333/license/status
+```
 
 **Or accept a new cluster UUID** and, if you run the enterprise edition, have
 the license re-issued against it.
@@ -492,61 +533,35 @@ helm install seaweedfs seaweedfs/seaweedfs \
 For enterprise users, please visit [seaweedfs.com](https://seaweedfs.com) for the SeaweedFS Enterprise Edition, 
 which has advanced features, including data recovery, self-healing storage, customizable erasure coding, EC vacuum and repair, etc.
 
-### Running the enterprise image
-
-The enterprise image is a drop-in replacement — same commands and flags, plus
-the license-gated features:
-
-```yaml
-global:
-  seaweedfs:
-    image:
-      name: chrislusf/seaweedfs-enterprise
-```
-
-Set it globally rather than per component. A per-component `imageOverride`
-takes precedence over this value, so a cluster that mixes editions comes up
-looking healthy while enterprise features stay off: the community master does
-not report a deletion-retention window and rejects the enterprise-only flags,
-which is enough to leave Data Recovery and Point-in-Time Recovery disabled in
-the Admin UI with no obvious cause.
-
-### License
-
-Put the contents of `seaweed-license.json` in a Secret and point the chart at
-it. The Secret is mounted read-only into every SeaweedFS component and
-`SEAWEED_LICENSE` is set to the mounted file:
+To run it, set the image and point the chart at a Secret holding the license
+file:
 
 ```bash
-kubectl create secret generic seaweedfs-license \
+kubectl create secret generic seaweedfs-license -n <namespace> \
   --from-file=seaweed-license.json=/path/to/seaweed-license.json
 ```
 
 ```yaml
 global:
   seaweedfs:
+    image:
+      name: chrislusf/seaweedfs-enterprise
     license:
       existingSecret: seaweedfs-license
       # secretKey: seaweed-license.json     # key within the Secret
       # mountPath: /etc/seaweedfs/license   # directory it is mounted at
 ```
 
-Renewing the license does not require restarting pods. The Secret is mounted
-as a directory rather than with `subPath`, so kubelet refreshes the file in
-place (within about a minute), and the master re-reads the license every 10
-minutes. Only the master re-reads on a timer today — filer, volume, s3 and
-admin read the license once at startup, so they pick up a renewal on their
-next restart.
+Set the image globally rather than per component: a per-component
+`imageOverride` wins, and a cluster that mixes editions comes up looking
+healthy with enterprise features quietly off.
 
-The license is bound to the cluster's UUID, which lives in the master's Raft
-state under its `-mdir`. That is why `master.data` defaults to a
-`persistentVolumeClaim`: a master that restarts onto an empty data directory
-generates a fresh cluster UUID, and a license issued against the old one stops
-matching. Check the binding with:
+Only the master reads the license, so the Secret is mounted read-only there
+and on all-in-one (which runs `weed server -master`). It is mounted as a
+directory, not a `subPath`, so a renewed Secret reaches the running master —
+which re-reads the file periodically — without a restart.
 
-```bash
-kubectl exec <master-pod> -- curl -s localhost:9333/license/status
-```
-
-`cluster_uuid` and `license_uuid` must match (an empty `license_uuid` means the
-license carries no cluster binding).
+The license is tied to the cluster UUID kept in the master's Raft state, which
+is why `master.data` defaults to a claim; see
+[Master data](#master-data-upgrading-from-the-hostpath-default). Check it with
+`kubectl exec <master-pod> -- curl -s localhost:9333/license/status`.
