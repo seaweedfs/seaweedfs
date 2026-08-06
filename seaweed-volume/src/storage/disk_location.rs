@@ -122,8 +122,11 @@ impl DiskLocation {
         // Scan for .dat files
         let entries = fs::read_dir(&self.directory)?;
         let mut dat_files: Vec<(String, VolumeId)> = Vec::new();
-        let mut to_load: Vec<(String, VolumeId)> = Vec::new();
-        let mut queued: HashSet<VolumeId> = HashSet::new();
+        // One entry per volume id, holding every collection name that claims it
+        // in scan order -- the loader tries them in turn and keeps the first
+        // that opens, so a corrupt candidate does not shadow a good one.
+        let mut to_load: Vec<(VolumeId, Vec<String>)> = Vec::new();
+        let mut queued: HashMap<VolumeId, usize> = HashMap::new();
         let mut seen = HashSet::new();
 
         for entry in entries {
@@ -203,11 +206,6 @@ impl DiskLocation {
                 continue;
             }
 
-            // Skip volumes already queued under a different collection name for
-            // the same id -- the loader below keys results by id.
-            if !queued.insert(vid) {
-                continue;
-            }
 
             // Load existing data only; never create a phantom `.dat`. A lone
             // `.vif`/`.idx` (e.g. an EC sidecar whose `.ecx` is on a sibling
@@ -229,7 +227,13 @@ impl DiskLocation {
                 continue;
             }
 
-            to_load.push((collection, vid));
+            match queued.get(&vid) {
+                Some(&i) => to_load[i].1.push(collection),
+                None => {
+                    queued.insert(vid, to_load.len());
+                    to_load.push((vid, vec![collection]));
+                }
+            }
         }
 
         for (collection, vid, v) in self.open_volumes(to_load, needle_map_kind) {
@@ -257,9 +261,13 @@ impl DiskLocation {
     /// serial index reads to come up. Mirrors Go's concurrentLoadingVolumes,
     /// including its max(cores, 10) worker count -- the work is IO-bound, so
     /// the floor keeps a small-core box from loading one volume at a time.
+    ///
+    /// Each id carries every collection name that claims it, tried in scan
+    /// order until one opens: an id is only spoken for once a volume actually
+    /// loads, so a corrupt `colA_5.dat` still leaves `colB_5.dat` a chance.
     fn open_volumes(
         &self,
-        to_load: Vec<(String, VolumeId)>,
+        to_load: Vec<(VolumeId, Vec<String>)>,
         needle_map_kind: NeedleMapKind,
     ) -> Vec<(String, VolumeId, Volume)> {
         if to_load.is_empty() {
@@ -277,26 +285,29 @@ impl DiskLocation {
             for _ in 0..workers {
                 scope.spawn(|| loop {
                     let i = next.fetch_add(1, Ordering::Relaxed);
-                    let Some((collection, vid)) = to_load.get(i) else {
+                    let Some((vid, collections)) = to_load.get(i) else {
                         return;
                     };
-                    match Volume::new(
-                        &self.directory,
-                        &self.idx_directory,
-                        collection,
-                        *vid,
-                        needle_map_kind,
-                        None, // replica placement read from superblock
-                        None, // TTL read from superblock
-                        0,    // no preallocate on load
-                        Version::current(),
-                    ) {
-                        Ok(mut v) => {
-                            v.location_disk_space_low = self.is_disk_space_low.clone();
-                            opened.lock().unwrap().push((collection.clone(), *vid, v));
-                        }
-                        Err(e) => {
-                            warn!(volume_id = vid.0, error = %e, "failed to load volume");
+                    for collection in collections {
+                        match Volume::new(
+                            &self.directory,
+                            &self.idx_directory,
+                            collection,
+                            *vid,
+                            needle_map_kind,
+                            None, // replica placement read from superblock
+                            None, // TTL read from superblock
+                            0,    // no preallocate on load
+                            Version::current(),
+                        ) {
+                            Ok(mut v) => {
+                                v.location_disk_space_low = self.is_disk_space_low.clone();
+                                opened.lock().unwrap().push((collection.clone(), *vid, v));
+                                break;
+                            }
+                            Err(e) => {
+                                warn!(volume_id = vid.0, error = %e, "failed to load volume");
+                            }
                         }
                     }
                 });
@@ -1539,6 +1550,62 @@ mod tests {
         let ids = loc.volume_ids();
         assert!(ids.contains(&VolumeId(1)));
         assert!(ids.contains(&VolumeId(2)));
+    }
+
+    // Two collections can name the same volume id on one disk. The id is only
+    // spoken for once a volume actually opens, so a candidate that fails to
+    // load must not shadow a good one behind it.
+    #[test]
+    fn test_open_volumes_falls_back_past_a_corrupt_candidate() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        {
+            let mut loc = DiskLocation::new(
+                dir,
+                dir,
+                10,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+            loc.create_volume(
+                VolumeId(9),
+                "good",
+                NeedleMapKind::InMemory,
+                None,
+                None,
+                0,
+                Version::current(),
+            )
+            .unwrap();
+            loc.close();
+        }
+
+        // Same id under another collection, with a superblock this build
+        // cannot read -- Volume::new fails on it.
+        let mut bad = vec![0u8; 16];
+        bad[0] = 9; // unsupported version
+        std::fs::write(format!("{}/bad_9.dat", dir), &bad).unwrap();
+
+        let loc = DiskLocation::new(
+            dir,
+            dir,
+            10,
+            DiskType::HardDrive,
+            MinFreeSpace::Percent(1.0),
+            Vec::new(),
+        )
+        .unwrap();
+        let opened = loc.open_volumes(
+            vec![(VolumeId(9), vec!["bad".to_string(), "good".to_string()])],
+            NeedleMapKind::InMemory,
+        );
+
+        assert_eq!(opened.len(), 1, "the good candidate should still open");
+        assert_eq!(opened[0].0, "good");
+        assert_eq!(opened[0].1, VolumeId(9));
     }
 
     #[test]
