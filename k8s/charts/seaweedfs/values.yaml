@@ -14,12 +14,10 @@ global:
       repository: ""
       # chrislusf/seaweedfs-enterprise for the enterprise edition
       name: chrislusf/seaweedfs
-    # Enterprise license file, held in a Secret in the release namespace.
-    # Mounted read-only on the components that run a master (the master is
-    # what reads it), with SEAWEED_LICENSE pointing at the file. Mounted as a
-    # directory, not a subPath, so a renewed Secret reaches the running master,
-    # which re-reads the file periodically. SEAWEED_LICENSE is reserved here:
-    # an extraEnvironmentVars entry of that name is dropped.
+    # Enterprise license file, held in a Secret in the release namespace and
+    # mounted read-only on the components that run a master. A renewed Secret
+    # reaches the running master without a restart. SEAWEED_LICENSE is reserved
+    # while this is set: an extraEnvironmentVars entry of that name is dropped.
     license:
       existingSecret: ""
       secretKey: seaweed-license.json
@@ -144,17 +142,10 @@ master:
   # You can also use emptyDir storage:
   #  data:
   #    type: "emptyDir"
-  # -mdir holds the Raft log, peer config and snapshots, and with them the
-  # cluster's identity (its topology UUID). A hostPath does not follow a
-  # rescheduled pod, so a master that lands on another node comes back with an
-  # empty -mdir and a freshly generated cluster UUID. Prefer a claim:
-  #
-  #  data:
-  #    type: "persistentVolumeClaim"
-  #    size: "1Gi"
-  #
-  # The default stays hostPath so existing releases keep upgrading — see the
-  # README for switching an existing release over.
+  # -mdir holds the Raft log and snapshots, and with them the cluster's
+  # identity (its topology UUID). A hostPath does not follow a rescheduled pod,
+  # so prefer type "persistentVolumeClaim" for new installs. The default stays
+  # hostPath so existing releases keep upgrading; see the README to switch one.
   data:
     type: "hostPath"
     size: "1Gi"

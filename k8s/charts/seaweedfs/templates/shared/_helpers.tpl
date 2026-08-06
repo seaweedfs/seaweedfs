@@ -69,9 +69,8 @@ Inject extra environment vars in the format key:value, if populated
 {{- range $key, $value := $component }}
 {{- $_ := set $target $key $value }}
 {{- end }}
-{{/* The license block owns SEAWEED_LICENSE: it points at the path the
-     chart mounts the Secret on. Letting an extraEnvironmentVars entry
-     through as well would render the key twice in one container. */}}
+{{/* the license block owns SEAWEED_LICENSE; letting one through here too would
+     render the key twice in one container */}}
 {{- if ((.global | default dict).license | default dict).existingSecret }}
 {{- $_ := unset $target "SEAWEED_LICENSE" }}
 {{- end }}
@@ -463,27 +462,21 @@ true
 {{- end -}}
 {{- end -}}
 
-{{/* Enterprise license volume.
-
-     Deliberately a whole-directory mount rather than a subPath: kubelet
-     refreshes projected Secret contents in place, but a subPath mount is
-     resolved once at container start and never updates. Mounting the
-     directory is what lets a renewed license reach the running master. */}}
+{{/* Enterprise license volume. Projects just the license key. */}}
 {{- define "seaweedfs.licenseVolume" -}}
 {{- if include "seaweedfs.licenseEnabled" . -}}
 - name: seaweedfs-license
   secret:
     secretName: {{ .Values.global.seaweedfs.license.existingSecret }}
     defaultMode: 0444
-    # Project only the license key, so an unrelated key in the same
-    # Secret is not exposed to the container.
     items:
       - key: {{ .Values.global.seaweedfs.license.secretKey | default "seaweed-license.json" | quote }}
         path: {{ .Values.global.seaweedfs.license.secretKey | default "seaweed-license.json" | quote }}
 {{- end }}
 {{- end -}}
 
-{{/* Enterprise license volume mount. */}}
+{{/* Enterprise license volume mount. Never a subPath: that is resolved once at
+     container start, so a renewed Secret would not reach a running master. */}}
 {{- define "seaweedfs.licenseVolumeMount" -}}
 {{- if include "seaweedfs.licenseEnabled" . -}}
 - name: seaweedfs-license
@@ -492,9 +485,8 @@ true
 {{- end }}
 {{- end -}}
 
-{{/* SEAWEED_LICENSE points the master at the mounted file. Set explicitly
-     rather than relying on the binary's search paths, which depend on the
-     working directory. */}}
+{{/* SEAWEED_LICENSE, set explicitly rather than relying on the binary's search
+     paths, which depend on the working directory. */}}
 {{- define "seaweedfs.licenseEnv" -}}
 {{- if include "seaweedfs.licenseEnabled" . -}}
 - name: SEAWEED_LICENSE

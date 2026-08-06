@@ -1321,17 +1321,14 @@ jobs:
           }
           failed = []
 
-          # Case 1: no license configured renders nothing license-related,
-          # so this stays a no-op for every existing install.
+          # Case 1: unconfigured renders nothing, so existing installs are unaffected.
           out = render(ALL_ON)
           if "SEAWEED_LICENSE" in out or "seaweedfs-license" in out:
               failed.append("defaults: license plumbing should not render")
           else:
               print("defaults: no license volume/env (unchanged)")
 
-          # Case 2: with a Secret configured, exactly the workloads that run a
-          # master carry the license -- nothing else needs it, and the master
-          # is what validates it and binds it to the cluster UUID.
+          # Case 2: only the workloads that run a master carry the license.
           LICENSE_PATH = "/etc/seaweedfs/license/seaweed-license.json"
           out = render(dict(ALL_ON, **{
               "global.seaweedfs.license.existingSecret": "lic",
@@ -1347,8 +1344,6 @@ jobs:
               secret = vols[0].get("secret", {})
               if secret.get("secretName") != "lic":
                   failed.append(f"{name}: license volume points at {secret.get('secretName')!r}, not the configured Secret")
-              # Project just the license key, so an unrelated key in the same
-              # Secret does not land in the container.
               items = [i.get("key") for i in secret.get("items", [])]
               if items != ["seaweed-license.json"]:
                   failed.append(f"{name}: license volume projects {items}, expected only the license key")
@@ -1357,8 +1352,7 @@ jobs:
                   if not mounts:
                       failed.append(f"{name}/{c['name']}: license volume not mounted")
                       continue
-                  # subPath would freeze the file at container start, which
-                  # is exactly what breaks in-place license renewal.
+                  # subPath would freeze the file at container start.
                   if any("subPath" in m for m in mounts):
                       failed.append(f"{name}/{c['name']}: license mount uses subPath (renewals would not propagate)")
                   if not all(m.get("readOnly") for m in mounts):
@@ -1389,8 +1383,7 @@ jobs:
               else:
                   print("all-in-one: carries the license")
 
-          # SEAWEED_LICENSE is reserved: an extraEnvironmentVars entry of that
-          # name must not render a second env var with the same key.
+          # SEAWEED_LICENSE is reserved on both env paths.
           out = render({
               "global.seaweedfs.license.existingSecret": "lic",
               "global.seaweedfs.extraEnvironmentVars.SEAWEED_LICENSE": "/tmp/bogus.json",
@@ -1409,8 +1402,7 @@ jobs:
                       else:
                           print("SEAWEED_LICENSE: reserved, rendered once, points at the mount")
 
-          # Same reservation on the secretExtraEnvironmentVars path, which
-          # all-in-one renders outside the merge helper.
+          # secretExtraEnvironmentVars is rendered outside the merge helper.
           out = render({
               "allInOne.enabled": "true",
               "master.enabled": "false",
@@ -1432,10 +1424,8 @@ jobs:
                   else:
                       print("all-in-one: SEAWEED_LICENSE reserved on the secret env path too")
 
-          # Case 3: the master keeps its Raft state -- and with it the
-          # cluster UUID an enterprise license is issued against -- can go on a
-          # claim, while the default stays hostPath so existing releases keep
-          # upgrading (volumeClaimTemplates is immutable on a StatefulSet).
+          # Case 3: the default stays hostPath. volumeClaimTemplates is immutable,
+          # so growing one here would break helm upgrade on existing releases.
           masters = [d for d in workloads(render({})) if d["metadata"]["name"].endswith("-master")]
           if len(masters) != 1:
               failed.append(f"master: expected 1 StatefulSet by default, got {len(masters)}")
