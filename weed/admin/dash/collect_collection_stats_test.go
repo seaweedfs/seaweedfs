@@ -240,7 +240,8 @@ func TestCollectCollectionStatsECFileCountMaxDedupe(t *testing.T) {
 // chunk once per replicated volume and per EC volume, and nets out deletes.
 func TestTotalCollectionFileCount(t *testing.T) {
 	// Volume 1 has replication 001 (two copies), so both nodes report the same
-	// 100 chunks with 10 deleted: 90 live chunks in total, not 180.
+	// 101 chunks with 10 deleted: 91 live chunks in total, not 182 and not the
+	// 90 that halving each report would give.
 	replica := func() *master_pb.DiskInfo {
 		return &master_pb.DiskInfo{
 			VolumeInfos: []*master_pb.VolumeInformationMessage{
@@ -248,7 +249,7 @@ func TestTotalCollectionFileCount(t *testing.T) {
 					Id:               1,
 					Collection:       "bucket-a",
 					ReplicaPlacement: 1,
-					FileCount:        100,
+					FileCount:        101,
 					DeleteCount:      10,
 				},
 			},
@@ -290,7 +291,40 @@ func TestTotalCollectionFileCount(t *testing.T) {
 		},
 	}
 
-	if got := totalCollectionFileCount(topo); got != 110 {
-		t.Errorf("totalCollectionFileCount: got %d, want 110 (90 replicated + 20 EC)", got)
+	if got := totalCollectionFileCount(topo); got != 111 {
+		t.Errorf("totalCollectionFileCount: got %d, want 111 (91 replicated + 20 EC)", got)
+	}
+}
+
+// TestTotalCollectionFileCountUnderReplicated verifies a volume whose second
+// replica has not reported yet still contributes its full live count.
+func TestTotalCollectionFileCountUnderReplicated(t *testing.T) {
+	topo := &master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{
+			{
+				RackInfos: []*master_pb.RackInfo{
+					{
+						DataNodeInfos: []*master_pb.DataNodeInfo{
+							{DiskInfos: map[string]*master_pb.DiskInfo{
+								"disk1": {
+									VolumeInfos: []*master_pb.VolumeInformationMessage{
+										{
+											Id:               1,
+											Collection:       "bucket-a",
+											ReplicaPlacement: 1,
+											FileCount:        50,
+										},
+									},
+								},
+							}},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	if got := totalCollectionFileCount(topo); got != 50 {
+		t.Errorf("totalCollectionFileCount: got %d, want 50 (one replica reporting, not halved)", got)
 	}
 }
