@@ -387,6 +387,7 @@ func (fs *FilerServer) applyStorageDefaultsToEntry(ctx context.Context, entry *f
 	} else if entry.TtlSec == 0 {
 		entry.TtlSec = so.TtlSeconds
 	}
+	entry.ApplyS3ExpiryMetadata()
 	return so, nil
 }
 

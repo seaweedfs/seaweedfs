@@ -2,6 +2,7 @@ package filer
 
 import (
 	"os"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -157,6 +158,51 @@ func (entry *Entry) IsExpireS3Enabled() (exist bool) {
 		_, exist = entry.Extended[s3_constants.SeaweedFSExpiresS3]
 	}
 	return exist
+}
+
+func (entry *Entry) isS3Entry() bool {
+	if entry.Extended == nil {
+		return false
+	}
+
+	if _, found := entry.Extended[s3_constants.ExtAmzOwnerKey]; found {
+		return true
+	}
+
+	if _, found := entry.Extended[s3_constants.ExtETagKey]; found {
+		return true
+	}
+
+	for key := range entry.Extended {
+		if strings.HasPrefix(key, s3_constants.ExtAmzPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func (entry *Entry) ApplyS3ExpiryMetadata() {
+	if entry.TtlSec == 0 {
+		return
+	}
+
+	if _, found := entry.Extended[s3_constants.SeaweedFSExpiresS3]; found {
+		return
+	}
+
+	// The s3 expiry path skips versioned entries, so stamping one would drop its
+	// expiry entirely instead of moving it onto mtime.
+	if entry.IsS3Versioning() {
+		return
+	}
+
+	if !entry.isS3Entry() {
+		return
+	}
+
+	entry.Extended[s3_constants.SeaweedFSExpiresS3] = []byte("true")
+
+	return
 }
 
 func (entry *Entry) IsS3Versioning() (exist bool) {
