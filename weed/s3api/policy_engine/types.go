@@ -7,7 +7,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	s3const "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -320,8 +319,7 @@ type PolicyEvaluationArgs struct {
 
 // PolicyCache for caching compiled policies
 type PolicyCache struct {
-	policies   map[string]*CompiledPolicy
-	lastUpdate time.Time
+	policies map[string]*CompiledPolicy
 }
 
 // CompiledPolicy represents a policy that has been compiled for efficient evaluation
