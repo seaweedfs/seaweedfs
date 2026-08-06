@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/security"
 )
 
 // TestUploadReaderInChunksReturnsPartialResultsOnError verifies that when
@@ -413,5 +415,227 @@ func TestUploadReaderInChunksTagsTruncatedBody(t *testing.T) {
 	}
 	if !errors.Is(err, io.ErrUnexpectedEOF) {
 		t.Errorf("expected io.ErrUnexpectedEOF to remain in the chain, got %v", err)
+	}
+}
+
+// uploadSingleChunk runs a single-chunk upload against uploadFunc, handing out a
+// fresh volume on every assignment, and reports how many assignments it took.
+func uploadSingleChunk(t *testing.T, uploadFunc func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error)) (*ChunkedUploadResult, int, error) {
+	t.Helper()
+
+	assigns := 0
+	assignFunc := func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error) {
+		assigns++
+		return nil, &AssignResult{
+			Fid:   fmt.Sprintf("%d,0a0b0c0d", assigns),
+			Url:   fmt.Sprintf("volume-%d:8080", assigns),
+			Auth:  security.EncodedJwt(fmt.Sprintf("jwt-%d", assigns)),
+			Count: 1,
+		}, nil
+	}
+
+	result, err := UploadReaderInChunks(context.Background(), bytes.NewReader(bytes.Repeat([]byte("x"), 4096)), &ChunkedUploadOption{
+		ChunkSize:  8 * 1024,
+		Collection: "test",
+		AssignFunc: assignFunc,
+		UploadFunc: uploadFunc,
+	})
+	return result, assigns, err
+}
+
+// A volume at capacity answers every attempt against the same fid with a 500,
+// so the chunk has to move to a freshly assigned volume rather than take the
+// whole object down with it.
+func TestUploadReaderInChunksReassignsOnFullVolume(t *testing.T) {
+	var jwts []security.EncodedJwt
+	result, assigns, err := uploadSingleChunk(t, func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) {
+		jwts = append(jwts, option.Jwt)
+		if strings.Contains(option.UploadUrl, "volume-1:") {
+			return nil, &uploadStatusError{
+				StatusCode: http.StatusInternalServerError,
+				err:        errors.New("failed to write to local disk: Volume Size 34361499680 Exceeded 34359738368"),
+			}
+		}
+		return &UploadResult{Size: uint32(len(data))}, nil
+	})
+
+	if err != nil {
+		t.Fatalf("expected the chunk to land on the reassigned volume, got %v", err)
+	}
+	if assigns != 2 {
+		t.Fatalf("expected 2 assignments, got %d", assigns)
+	}
+	// A secured cluster mints a JWT per assignment; presenting the full volume's
+	// token to the new one would 401.
+	if len(jwts) != 2 || jwts[0] != "jwt-1" || jwts[1] != "jwt-2" {
+		t.Errorf("expected each attempt to carry its own assignment JWT, got %v", jwts)
+	}
+	if len(result.FileChunks) != 1 {
+		t.Fatalf("expected 1 chunk, got %d", len(result.FileChunks))
+	}
+	if got := result.FileChunks[0].FileId; got != "2,0a0b0c0d" {
+		t.Errorf("expected the chunk to record the reassigned fid, got %s", got)
+	}
+}
+
+func TestUploadReaderInChunksDoesNotReassignOnClientError(t *testing.T) {
+	_, assigns, err := uploadSingleChunk(t, func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) {
+		return nil, &uploadStatusError{StatusCode: http.StatusBadRequest, err: errors.New("mismatching cookie")}
+	})
+
+	if err == nil {
+		t.Fatal("expected a 4xx to fail the upload")
+	}
+	// Another volume would reject the same request the same way.
+	if assigns != 1 {
+		t.Fatalf("expected 1 assignment, got %d", assigns)
+	}
+}
+
+func TestUploadReaderInChunksBoundsReassignment(t *testing.T) {
+	_, assigns, err := uploadSingleChunk(t, func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) {
+		return nil, &uploadStatusError{StatusCode: http.StatusInternalServerError, err: errors.New("volume full")}
+	})
+
+	if err == nil {
+		t.Fatal("expected the upload to fail once every volume it is offered is full")
+	}
+	// Spelled out rather than compared to chunkAssignAttempts: the budget is
+	// what bounds this against retriedUploadData's own attempts, so raising it
+	// should fail here, not pass silently.
+	if assigns != 3 {
+		t.Fatalf("expected 3 assignments, got %d", assigns)
+	}
+}
+
+// The fan-out path is what a real multi-replica cluster takes, and it behaves
+// differently from the relay path under failure: it cancels its siblings and
+// rolls back the copies that landed. Drive the reassignment loop through it.
+func TestUploadReaderInChunksReassignsAcrossHolders(t *testing.T) {
+	var primaryDeletes, fullDeletes int32
+
+	healthy := func(deletes *int32) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodDelete {
+				atomic.AddInt32(deletes, 1)
+				w.WriteHeader(http.StatusAccepted)
+				return
+			}
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{"name":"chunk","size":4096}`)
+		}))
+	}
+
+	full := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			atomic.AddInt32(&fullDeletes, 1)
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `{"error":"failed to write to local disk: Volume Size 34361499680 Exceeded 34359738368"}`)
+	}))
+	defer full.Close()
+
+	var secondaryDeletes int32
+	primary, secondary := healthy(&primaryDeletes), healthy(&secondaryDeletes)
+	defer primary.Close()
+	defer secondary.Close()
+
+	host := func(s *httptest.Server) string { return strings.TrimPrefix(s.URL, "http://") }
+
+	assigns := 0
+	assignFunc := func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error) {
+		assigns++
+		if assigns == 1 {
+			// Two holders, so uploadChunk takes the fan-out path; one is full.
+			return nil, &AssignResult{
+				Fid:      "1,0a0b0c0d",
+				Url:      host(primary),
+				Replicas: []Location{{Url: host(full)}},
+				Count:    1,
+			}, nil
+		}
+		return nil, &AssignResult{
+			Fid:      "2,0a0b0c0d",
+			Url:      host(primary),
+			Replicas: []Location{{Url: host(secondary)}},
+			Count:    1,
+		}, nil
+	}
+
+	result, err := UploadReaderInChunks(context.Background(), bytes.NewReader(bytes.Repeat([]byte("x"), 4096)), &ChunkedUploadOption{
+		ChunkSize:  8 * 1024,
+		Collection: "test",
+		AssignFunc: assignFunc,
+	})
+
+	if err != nil {
+		t.Fatalf("expected the chunk to land on the reassigned volume, got %v", err)
+	}
+	if assigns != 2 {
+		t.Fatalf("expected 2 assignments, got %d", assigns)
+	}
+	if len(result.FileChunks) != 1 || result.FileChunks[0].FileId != "2,0a0b0c0d" {
+		t.Fatalf("expected the chunk to record the reassigned fid, got %+v", result.FileChunks)
+	}
+	// The copy that landed on the healthy holder before its peer reported full
+	// is referenced by nothing, so it has to be rolled back.
+	if atomic.LoadInt32(&primaryDeletes) == 0 {
+		t.Error("expected the copy that landed to be rolled back")
+	}
+	// The full holder is not in uploadChunkToHolders' succeeded set, so only the
+	// loop's own rollback reaches it — and it has to, because a 5xx there can
+	// still mean the needle was committed before replication failed.
+	if atomic.LoadInt32(&fullDeletes) == 0 {
+		t.Error("expected the abandoned fid to be deleted from the failed holder too")
+	}
+	if atomic.LoadInt32(&secondaryDeletes) != 0 {
+		t.Error("the reassigned volume kept the chunk; it must not be rolled back")
+	}
+}
+
+// retriedUploadData retries the same URL three times by default. On the relay
+// path the reassignment loop retries everything that would, so leaving both in
+// place would multiply into nine upload calls for one chunk.
+//
+// This counts calls that reached a handler and answered. doUploadData reissues
+// once more on a connection reset before any of them return, which no HTTP
+// status can provoke; upload_content_test covers that separately.
+func TestUploadReaderInChunksDoesNotMultiplyRelayAttempts(t *testing.T) {
+	var posts, deletes int32
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			atomic.AddInt32(&deletes, 1)
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		atomic.AddInt32(&posts, 1)
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `{"error":"failed to write to local disk: Volume Size 34361499680 Exceeded 34359738368"}`)
+	}))
+	defer dead.Close()
+
+	assigns := 0
+	_, err := UploadReaderInChunks(context.Background(), bytes.NewReader(bytes.Repeat([]byte("x"), 4096)), &ChunkedUploadOption{
+		ChunkSize:  8 * 1024,
+		Collection: "test",
+		AssignFunc: func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error) {
+			assigns++
+			// One holder, so uploadChunk takes the relay path.
+			return nil, &AssignResult{Fid: fmt.Sprintf("%d,0a0b0c0d", assigns), Url: strings.TrimPrefix(dead.URL, "http://"), Count: 1}, nil
+		},
+	})
+
+	if err == nil {
+		t.Fatal("expected the upload to fail once every volume it is offered is full")
+	}
+	if got := atomic.LoadInt32(&posts); got != 3 {
+		t.Errorf("expected 3 upload calls, one per assignment, got %d", got)
+	}
+	// Including the last one: giving up does not make the needle it may have
+	// committed anyone else's to find, and no chunk will ever name that fid.
+	if got := atomic.LoadInt32(&deletes); got != 3 {
+		t.Errorf("expected every abandoned fid to be rolled back, got %d deletes", got)
 	}
 }

@@ -71,6 +71,15 @@ func UploadReaderInChunks(ctx context.Context, reader io.Reader, opt *ChunkedUpl
 	const bytesBufferCounter = 4
 	bytesBufferLimitChan := make(chan struct{}, bytesBufferCounter)
 
+	// objectFailed reports whether another chunk has already doomed the upload,
+	// so an in-flight chunk stops spending its retry budget on bytes nobody
+	// will reference.
+	objectFailed := func() bool {
+		uploadErrLock.Lock()
+		defer uploadErrLock.Unlock()
+		return uploadErr != nil
+	}
+
 uploadLoop:
 	for {
 		// Throttle buffer usage
@@ -192,35 +201,31 @@ uploadLoop:
 			var uploadResult *UploadResult
 			var uploadResultErr error
 
-			holders := chunkHolders(assignResult)
-			// Fan out to every holder, except for cipher: per-call encryption
-			// would give each replica different bytes, so keep its relay path.
-			if opt.UploadFunc == nil && !opt.Cipher && len(holders) > 1 {
-				uploadResult, uploadResultErr = uploadChunkToHolders(ctx, holders, assignResult.Fid, buf.Bytes(), jwt, chunkMd5B64, opt)
-			} else {
-				uploadOption := &UploadOption{
-					UploadUrl:         fmt.Sprintf("http://%s/%s", assignResult.Url, assignResult.Fid),
-					Cipher:            opt.Cipher,
-					IsInputCompressed: false,
-					MimeType:          opt.MimeType,
-					PairMap:           nil,
-					Jwt:               jwt,
-					Md5:               chunkMd5B64,
+			// A target that fills up, loses its replica peer, or goes away fails
+			// every attempt against the same fid, so ask for a fresh assignment and
+			// retry there rather than losing the whole object to one bad volume.
+			for attempt := 1; ; attempt++ {
+				uploadResult, uploadResultErr = uploadChunk(ctx, assignResult, buf.Bytes(), jwt, chunkMd5B64, opt)
+				if uploadResultErr == nil {
+					break
 				}
-				// Use mock upload function if provided (for testing), otherwise use real uploader
-				if opt.UploadFunc != nil {
-					uploadResult, uploadResultErr = opt.UploadFunc(ctx, buf.Bytes(), uploadOption)
-				} else {
-					uploader, uploaderErr := NewUploader()
-					if uploaderErr != nil {
-						uploadErrLock.Lock()
-						if uploadErr == nil {
-							uploadErr = fmt.Errorf("create uploader: %w", uploaderErr)
-						}
-						uploadErrLock.Unlock()
-						return
-					}
-					uploadResult, uploadResultErr = uploader.UploadData(ctx, buf.Bytes(), uploadOption)
+				// The volume server commits the needle before replicating, so a
+				// failed write can still leave a copy behind. No chunk will name
+				// this fid whether we retry or give up here, and an unreferenced
+				// needle is not garbage vacuum can find, so drop it either way.
+				deleteChunkFromHolders(chunkHolders(assignResult), assignResult.Fid, jwt)
+				if attempt == chunkAssignAttempts || !shouldReassignUpload(uploadResultErr) || objectFailed() {
+					break
+				}
+				glog.V(2).Infof("re-assigning chunk at offset %d after attempt %d/%d: %v", offset, attempt, chunkAssignAttempts, uploadResultErr)
+				_, assignResult, assignErr = opt.AssignFunc(ctx, 1, uint64(size))
+				if assignErr != nil {
+					uploadResultErr = fmt.Errorf("reassign volume after %w: %w", uploadResultErr, assignErr)
+					break
+				}
+				jwt = opt.Jwt
+				if assignResult.Auth != "" {
+					jwt = assignResult.Auth
 				}
 			}
 
@@ -291,6 +296,46 @@ uploadLoop:
 	}, nil
 }
 
+// chunkAssignAttempts bounds how many volumes one chunk may be offered to
+// before the upload gives up.
+const chunkAssignAttempts = 3
+
+// uploadChunk writes one chunk to its assigned volume. It fans out to every
+// holder, except for cipher: per-call encryption would give each replica
+// different bytes, so keep its relay path.
+func uploadChunk(ctx context.Context, assignResult *AssignResult, data []byte, jwt security.EncodedJwt, md5b64 string, opt *ChunkedUploadOption) (*UploadResult, error) {
+	holders := chunkHolders(assignResult)
+	if opt.UploadFunc == nil && !opt.Cipher && len(holders) > 1 {
+		return uploadChunkToHolders(ctx, holders, assignResult.Fid, data, jwt, md5b64, opt)
+	}
+	uploadOption := &UploadOption{
+		UploadUrl:         fmt.Sprintf("http://%s/%s", assignResult.Url, assignResult.Fid),
+		Cipher:            opt.Cipher,
+		IsInputCompressed: false,
+		MimeType:          opt.MimeType,
+		PairMap:           nil,
+		Jwt:               jwt,
+		Md5:               md5b64,
+		// One upload call per assignment: the caller retries everything a
+		// same-URL retry would, and a different volume is the better second try.
+		// This bounds retriedUploadData only — doUploadData still reissues once
+		// on a connection reset, with a rewound body, which is a transport
+		// stutter rather than a fresh attempt at the volume. The fan-out path
+		// keeps its retries, where absorbing a blip locally beats cancelling
+		// every holder and re-uploading the chunk.
+		MaxAttempts: 1,
+	}
+	// Use mock upload function if provided (for testing), otherwise use real uploader
+	if opt.UploadFunc != nil {
+		return opt.UploadFunc(ctx, data, uploadOption)
+	}
+	uploader, err := NewUploader()
+	if err != nil {
+		return nil, fmt.Errorf("create uploader: %w", err)
+	}
+	return uploader.UploadData(ctx, data, uploadOption)
+}
+
 // chunkHolders returns the assigned volume plus its replica holders.
 func chunkHolders(assignResult *AssignResult) []string {
 	hosts := []string{assignResult.Url}
@@ -341,9 +386,15 @@ func uploadChunkToHolders(ctx context.Context, hosts []string, fid string, data 
 	for range hosts {
 		o := <-outcomes
 		if o.err != nil {
+			// Once one holder fails the rest are cancelled, so errors arrive in
+			// no fixed order. Prefer one the caller can act on, or the choice of
+			// which host to report — and whether to retry elsewhere — turns on
+			// goroutine scheduling.
 			if firstErr == nil {
 				firstErr = o.err
 				cancel()
+			} else if !shouldReassignUpload(firstErr) && shouldReassignUpload(o.err) {
+				firstErr = o.err
 			}
 		} else {
 			succeeded = append(succeeded, o.host)
