@@ -83,6 +83,7 @@ spec:
           image: {{ template "seaweedfs.master.image" . }}
           imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
           env:
+            {{- include "seaweedfs.licenseEnv" . | nindent 12 }}
             - name: POD_IP
               valueFrom:
                 fieldRef:
@@ -211,6 +212,7 @@ spec:
               readOnly: true
               mountPath: /usr/local/share/ca-certificates/client/
             {{- end }}
+            {{- include "seaweedfs.licenseVolumeMount" . | nindent 12 }}
             {{ tpl .Values.master.extraVolumeMounts . | nindent 12 | trim }}
           ports:
             - containerPort: {{ .Values.master.port }}
@@ -256,6 +258,7 @@ spec:
         {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.master.sidecars "context" $) | nindent 8 }}
         {{- end }}
       volumes:
+        {{- include "seaweedfs.licenseVolume" . | nindent 8 }}
         {{- if eq .Values.master.logs.type "hostPath" }}
         - name: seaweedfs-master-log-volume
           hostPath:

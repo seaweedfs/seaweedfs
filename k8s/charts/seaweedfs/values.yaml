@@ -12,7 +12,16 @@ global:
     image:
       # if repository is set, it overrides the namespace part of image.name
       repository: ""
+      # chrislusf/seaweedfs-enterprise for the enterprise edition
       name: chrislusf/seaweedfs
+    # Enterprise license file, held in a Secret in the release namespace and
+    # mounted read-only on the components that run a master. A renewed Secret
+    # reaches the running master without a restart. SEAWEED_LICENSE is reserved
+    # while this is set: an extraEnvironmentVars entry of that name is dropped.
+    license:
+      existingSecret: ""
+      secretKey: seaweed-license.json
+      mountPath: /etc/seaweedfs/license
     imagePullPolicy: IfNotPresent
     restartPolicy: Always
     loggingLevel: 1
@@ -133,8 +142,13 @@ master:
   # You can also use emptyDir storage:
   #  data:
   #    type: "emptyDir"
+  # -mdir holds the Raft log and snapshots, and with them the cluster's
+  # identity (its topology UUID). A hostPath does not follow a rescheduled pod,
+  # so prefer type "persistentVolumeClaim" for new installs. The default stays
+  # hostPath so existing releases keep upgrading; see the README to switch one.
   data:
     type: "hostPath"
+    size: "1Gi"
     storageClass: ""
     hostPathPrefix: /ssd
 

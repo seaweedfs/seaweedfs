@@ -69,6 +69,11 @@ Inject extra environment vars in the format key:value, if populated
 {{- range $key, $value := $component }}
 {{- $_ := set $target $key $value }}
 {{- end }}
+{{/* the license block owns SEAWEED_LICENSE; letting one through here too would
+     render the key twice in one container */}}
+{{- if ((.global | default dict).license | default dict).existingSecret }}
+{{- $_ := unset $target "SEAWEED_LICENSE" }}
+{{- end }}
 {{- end -}}
 
 {{/* Return the proper filer image */}}
@@ -447,6 +452,47 @@ true
 - name: s3-tls-cert
   secret:
     secretName: {{ .Values.s3.tlsSecret }}
+{{- end }}
+{{- end -}}
+
+{{/* True when an enterprise license Secret is configured. */}}
+{{- define "seaweedfs.licenseEnabled" -}}
+{{- if ((.Values.global.seaweedfs).license).existingSecret -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{/* Enterprise license volume. Projects just the license key. */}}
+{{- define "seaweedfs.licenseVolume" -}}
+{{- if include "seaweedfs.licenseEnabled" . -}}
+- name: seaweedfs-license
+  secret:
+    secretName: {{ .Values.global.seaweedfs.license.existingSecret }}
+    defaultMode: 0444
+    items:
+      - key: {{ .Values.global.seaweedfs.license.secretKey | default "seaweed-license.json" | quote }}
+        path: {{ .Values.global.seaweedfs.license.secretKey | default "seaweed-license.json" | quote }}
+{{- end }}
+{{- end -}}
+
+{{/* Enterprise license volume mount. Never a subPath: that is resolved once at
+     container start, so a renewed Secret would not reach a running master. */}}
+{{- define "seaweedfs.licenseVolumeMount" -}}
+{{- if include "seaweedfs.licenseEnabled" . -}}
+- name: seaweedfs-license
+  readOnly: true
+  mountPath: {{ .Values.global.seaweedfs.license.mountPath | default "/etc/seaweedfs/license" | quote }}
+{{- end }}
+{{- end -}}
+
+{{/* SEAWEED_LICENSE, set explicitly rather than relying on the binary's search
+     paths, which depend on the working directory. */}}
+{{- define "seaweedfs.licenseEnv" -}}
+{{- if include "seaweedfs.licenseEnabled" . -}}
+- name: SEAWEED_LICENSE
+  value: {{ printf "%s/%s"
+      (.Values.global.seaweedfs.license.mountPath | default "/etc/seaweedfs/license")
+      (.Values.global.seaweedfs.license.secretKey | default "seaweed-license.json") | quote }}
 {{- end }}
 {{- end -}}
 
