@@ -38,7 +38,22 @@ jobs:
         working-directory: test/s3/versioning
         run: |
           set -x
-          make test-with-server TEST_PATTERN="TestVersioningCompleteMultipartUploadIsIdempotent|TestVersioningSelfCopyMetadataReplaceCreatesNewVersion|TestVersioningSelfCopyMetadataReplaceSuspendedKeepsNullVersion|TestSuspendedDeleteCreatesDeleteMarker"
+          # Run every versioning test, so a regression test lands covered instead
+          # of waiting for someone to remember this file. Name a test in EXCLUDE,
+          # with the reason, to keep it out.
+          #
+          # TestVersioningPagination*: opt-in stress tests that build 1500+
+          # versions. They self-skip without ENABLE_STRESS_TESTS and have their
+          # own make target, so this gate should not carry them.
+          EXCLUDE='TestVersioningPagination.*'
+          tests=$(go test . -list '.*' | grep '^Test' | sort -u)
+          # An empty list would make -run match nothing and pass this job vacuously.
+          [ -n "$tests" ] || { echo "listed no versioning tests"; exit 1; }
+          selected=$(echo "$tests" | grep -vE "^($EXCLUDE)$")
+          [ -n "$selected" ] || { echo "EXCLUDE matched every test"; exit 1; }
+          echo "running $(echo "$selected" | wc -l) of $(echo "$tests" | wc -l) versioning tests"
+          # make swallows a lone trailing $, taking the anchor with it, so escape it.
+          make test-with-server TEST_PATTERN="^($(echo "$selected" | paste -sd'|' -))"'$$'
 
       - name: Show server logs on failure
         if: failure()
