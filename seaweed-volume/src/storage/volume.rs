@@ -1974,11 +1974,9 @@ impl Volume {
     /// Extra bytes mean an unindexed trailing record (a torn append);
     /// appending after one would place the next needle at an offset the
     /// 8-byte .idx encoding may not represent, so the volume is quarantined
-    /// read-only instead. Mirrors Go's verifyNeedleIntegrity, including its
-    /// v3-only tail check: v1/v2 volumes predate the append timestamp the
-    /// check rides along with, and Go serves them read-write regardless, so
-    /// checking them here would flip a whole legacy cluster read-only the
-    /// first time it boots on this server.
+    /// read-only instead. Mirrors Go's verifyNeedleIntegrity, whose tail
+    /// check is v3-only -- a v1/v2 volume Go serves read-write must not go
+    /// read-only here.
     fn verify_needle_integrity(
         &mut self,
         actual_offset: i64,
@@ -4120,10 +4118,9 @@ mod tests {
         );
     }
 
-    // Go only compares the .dat tail on v3 volumes -- the comparison rides
-    // along with the v3 append-timestamp read -- so it serves a v1/v2 volume
-    // with an unindexed tail read-write. Checking it here anyway flipped every
-    // such volume read-only, which on a legacy cluster is the whole disk.
+    // Go's tail check is v3-only, so it serves a v1/v2 volume with an
+    // unindexed tail read-write. Checking it here flipped whole legacy disks
+    // read-only on their first boot under this server.
     #[test]
     fn test_integrity_skips_dat_tail_check_before_v3() {
         let tmp = TempDir::new().unwrap();

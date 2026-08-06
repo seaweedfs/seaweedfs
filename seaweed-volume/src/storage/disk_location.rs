@@ -122,9 +122,8 @@ impl DiskLocation {
         // Scan for .dat files
         let entries = fs::read_dir(&self.directory)?;
         let mut dat_files: Vec<(String, VolumeId)> = Vec::new();
-        // One entry per volume id, holding every collection name that claims it
-        // in scan order -- the loader tries them in turn and keeps the first
-        // that opens, so a corrupt candidate does not shadow a good one.
+        // Every collection claiming an id, in scan order; open_volumes keeps
+        // the first that opens.
         let mut to_load: Vec<(VolumeId, Vec<String>)> = Vec::new();
         let mut queued: HashMap<VolumeId, usize> = HashMap::new();
         let mut seen = HashSet::new();
@@ -255,16 +254,14 @@ impl DiskLocation {
         Ok(())
     }
 
-    /// Open the volumes the directory scan selected, on a pool of worker
-    /// threads. Opening a volume is dominated by reading its .idx into the
-    /// needle map, so a disk holding thousands of them takes thousands of
-    /// serial index reads to come up. Mirrors Go's concurrentLoadingVolumes,
-    /// including its max(cores, 10) worker count -- the work is IO-bound, so
-    /// the floor keeps a small-core box from loading one volume at a time.
+    /// Open the volumes the directory scan selected. Opening one is dominated
+    /// by reading its .idx into the needle map, so a disk holding thousands
+    /// takes thousands of serial index reads to come up; mirrors Go's
+    /// concurrentLoadingVolumes down to the max(cores, 10) worker count, whose
+    /// floor keeps a small-core box off one-at-a-time on IO-bound work.
     ///
-    /// Each id carries every collection name that claims it, tried in scan
-    /// order until one opens: an id is only spoken for once a volume actually
-    /// loads, so a corrupt `colA_5.dat` still leaves `colB_5.dat` a chance.
+    /// An id is only spoken for once a volume actually loads, so a corrupt
+    /// `colA_5.dat` still leaves `colB_5.dat` a chance.
     fn open_volumes(
         &self,
         to_load: Vec<(VolumeId, Vec<String>)>,
@@ -1552,9 +1549,8 @@ mod tests {
         assert!(ids.contains(&VolumeId(2)));
     }
 
-    // Two collections can name the same volume id on one disk. The id is only
-    // spoken for once a volume actually opens, so a candidate that fails to
-    // load must not shadow a good one behind it.
+    // Two collections can name the same volume id on one disk; a candidate
+    // that fails to open must not shadow a good one behind it.
     #[test]
     fn test_open_volumes_falls_back_past_a_corrupt_candidate() {
         let tmp = TempDir::new().unwrap();
@@ -1583,8 +1579,7 @@ mod tests {
             loc.close();
         }
 
-        // Same id under another collection, with a superblock this build
-        // cannot read -- Volume::new fails on it.
+        // Same id under another collection, unopenable.
         let mut bad = vec![0u8; 16];
         bad[0] = 9; // unsupported version
         std::fs::write(format!("{}/bad_9.dat", dir), &bad).unwrap();
