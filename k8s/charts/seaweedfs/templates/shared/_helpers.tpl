@@ -468,7 +468,7 @@ true
      Deliberately a whole-directory mount rather than a subPath: kubelet
      refreshes projected Secret contents in place, but a subPath mount is
      resolved once at container start and never updates. Mounting the
-     directory is what lets a renewed license reach a running pod. */}}
+     directory is what lets a renewed license reach the running master. */}}
 {{- define "seaweedfs.licenseVolume" -}}
 {{- if include "seaweedfs.licenseEnabled" . -}}
 - name: seaweedfs-license
@@ -492,9 +492,9 @@ true
 {{- end }}
 {{- end -}}
 
-{{/* SEAWEED_LICENSE points every component at the mounted file. Set explicitly
-     rather than relying on the binary's search paths, so the license is found
-     regardless of the component's working directory. */}}
+{{/* SEAWEED_LICENSE points the master at the mounted file. Set explicitly
+     rather than relying on the binary's search paths, which depend on the
+     working directory. */}}
 {{- define "seaweedfs.licenseEnv" -}}
 {{- if include "seaweedfs.licenseEnabled" . -}}
 - name: SEAWEED_LICENSE
