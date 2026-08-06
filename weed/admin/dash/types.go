@@ -14,9 +14,11 @@ type ClusterTopology struct {
 	DataCenters   []DataCenter   `json:"datacenters"`
 	VolumeServers []VolumeServer `json:"volume_servers"`
 	TotalVolumes  int            `json:"total_volumes"`
-	TotalFiles    int64          `json:"total_files"`
-	TotalSize     int64          `json:"total_size"`
-	UpdatedAt     time.Time      `json:"updated_at"`
+	// TotalChunks counts chunks stored in volumes, not filer entries: a file
+	// is split into one or more chunks.
+	TotalChunks int64     `json:"total_chunks"`
+	TotalSize   int64     `json:"total_size"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type MasterNode struct {

@@ -209,7 +209,7 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 			// Chunk counts come from the shared collection aggregation, which
 			// nets out tombstones and counts a chunk once no matter how many
 			// volume replicas or EC shard holders report it.
-			topology.TotalFiles = totalCollectionFileCount(resp.TopologyInfo)
+			topology.TotalChunks = totalCollectionFileCount(resp.TopologyInfo)
 		}
 
 		return nil

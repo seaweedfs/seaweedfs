@@ -18,7 +18,7 @@ type dashSample struct {
 	volumes  float64
 	ecShards float64
 	diskUsed float64
-	files    float64
+	chunks   float64
 	tasks    float64 // pending/assigned/in-progress maintenance tasks
 	workers  float64
 }
@@ -33,7 +33,7 @@ type DashboardTrends struct {
 
 	// Sparklines (raw <svg>) for the existing summary cards.
 	Volumes  string `json:"-"`
-	Files    string `json:"-"`
+	Chunks   string `json:"-"`
 	DiskUsed string `json:"-"`
 	EcShards string `json:"-"`
 
@@ -61,7 +61,7 @@ func (s *AdminServer) recordDashboardSample() {
 		volumes:  float64(topology.TotalVolumes),
 		ecShards: float64(ecShards),
 		diskUsed: float64(topology.TotalSize),
-		files:    float64(topology.TotalFiles),
+		chunks:   float64(topology.TotalChunks),
 	}
 	if s.maintenanceManager != nil {
 		if stats := s.maintenanceManager.GetStats(); stats != nil {
@@ -106,7 +106,7 @@ func (s *AdminServer) GetDashboardTrends() DashboardTrends {
 	return DashboardTrends{
 		Samples:      len(samples),
 		Volumes:      sparklineSVG(series(func(s dashSample) float64 { return s.volumes }), "#1cc88a"),  // success
-		Files:        sparklineSVG(series(func(s dashSample) float64 { return s.files }), "#36b9cc"),    // info
+		Chunks:       sparklineSVG(series(func(s dashSample) float64 { return s.chunks }), "#36b9cc"),   // info
 		DiskUsed:     sparklineSVG(series(func(s dashSample) float64 { return s.diskUsed }), "#f6c23e"), // warning
 		EcShards:     sparklineSVG(series(func(s dashSample) float64 { return s.ecShards }), "#5a5c69"), // dark
 		Tasks:        sparklineSVG(tasks, "#36b9cc"),

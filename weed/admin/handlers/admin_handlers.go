@@ -577,7 +577,7 @@ func (h *AdminHandlers) getAdminData(r *http.Request) dash.AdminData {
 		return dash.AdminData{
 			Username:      username,
 			TotalVolumes:  0,
-			TotalFiles:    0,
+			TotalChunks:   0,
 			TotalSize:     0,
 			MasterNodes:   masterNodes,
 			VolumeServers: []dash.VolumeServer{},
