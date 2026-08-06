@@ -7,8 +7,8 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use tracing::warn;
 
@@ -122,6 +122,10 @@ impl DiskLocation {
         // Scan for .dat files
         let entries = fs::read_dir(&self.directory)?;
         let mut dat_files: Vec<(String, VolumeId)> = Vec::new();
+        // Every collection claiming an id, in scan order; open_volumes keeps
+        // the first that opens.
+        let mut to_load: Vec<(VolumeId, Vec<String>)> = Vec::new();
+        let mut queued: HashMap<VolumeId, usize> = HashMap::new();
         let mut seen = HashSet::new();
 
         for entry in entries {
@@ -201,6 +205,7 @@ impl DiskLocation {
                 continue;
             }
 
+
             // Load existing data only; never create a phantom `.dat`. A lone
             // `.vif`/`.idx` (e.g. an EC sidecar whose `.ecx` is on a sibling
             // disk) would otherwise have Volume::new write an 8-byte stub that
@@ -221,28 +226,20 @@ impl DiskLocation {
                 continue;
             }
 
-            match Volume::new(
-                &self.directory,
-                &self.idx_directory,
-                &collection,
-                vid,
-                needle_map_kind,
-                None, // replica placement read from superblock
-                None, // TTL read from superblock
-                0,    // no preallocate on load
-                Version::current(),
-            ) {
-                Ok(mut v) => {
-                    v.location_disk_space_low = self.is_disk_space_low.clone();
-                    crate::metrics::VOLUME_GAUGE
-                        .with_label_values(&[&collection, "volume"])
-                        .inc();
-                    self.volumes.insert(vid, v);
-                }
-                Err(e) => {
-                    warn!(volume_id = vid.0, error = %e, "failed to load volume");
+            match queued.get(&vid) {
+                Some(&i) => to_load[i].1.push(collection),
+                None => {
+                    queued.insert(vid, to_load.len());
+                    to_load.push((vid, vec![collection]));
                 }
             }
+        }
+
+        for (collection, vid, v) in self.open_volumes(to_load, needle_map_kind) {
+            crate::metrics::VOLUME_GAUGE
+                .with_label_values(&[&collection, "volume"])
+                .inc();
+            self.volumes.insert(vid, v);
         }
 
         // After regular volumes, auto-discover EC shards on disk so a
@@ -255,6 +252,65 @@ impl DiskLocation {
         }
 
         Ok(())
+    }
+
+    /// Open the volumes the directory scan selected. Opening one is dominated
+    /// by reading its .idx into the needle map, so a disk holding thousands
+    /// takes thousands of serial index reads to come up; mirrors Go's
+    /// concurrentLoadingVolumes down to the max(cores, 10) worker count, whose
+    /// floor keeps a small-core box off one-at-a-time on IO-bound work.
+    ///
+    /// An id is only spoken for once a volume actually loads, so a corrupt
+    /// `colA_5.dat` still leaves `colB_5.dat` a chance.
+    fn open_volumes(
+        &self,
+        to_load: Vec<(VolumeId, Vec<String>)>,
+        needle_map_kind: NeedleMapKind,
+    ) -> Vec<(String, VolumeId, Volume)> {
+        if to_load.is_empty() {
+            return Vec::new();
+        }
+        let workers = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+            .max(10)
+            .min(to_load.len());
+
+        let next = AtomicUsize::new(0);
+        let opened = Mutex::new(Vec::with_capacity(to_load.len()));
+        std::thread::scope(|scope| {
+            for _ in 0..workers {
+                scope.spawn(|| loop {
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    let Some((vid, collections)) = to_load.get(i) else {
+                        return;
+                    };
+                    for collection in collections {
+                        match Volume::new(
+                            &self.directory,
+                            &self.idx_directory,
+                            collection,
+                            *vid,
+                            needle_map_kind,
+                            None, // replica placement read from superblock
+                            None, // TTL read from superblock
+                            0,    // no preallocate on load
+                            Version::current(),
+                        ) {
+                            Ok(mut v) => {
+                                v.location_disk_space_low = self.is_disk_space_low.clone();
+                                opened.lock().unwrap().push((collection.clone(), *vid, v));
+                                break;
+                            }
+                            Err(e) => {
+                                warn!(volume_id = vid.0, error = %e, "failed to load volume");
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        opened.into_inner().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Directory pre-pass that recovers interrupted compaction commits. Collects
@@ -1491,6 +1547,60 @@ mod tests {
         let ids = loc.volume_ids();
         assert!(ids.contains(&VolumeId(1)));
         assert!(ids.contains(&VolumeId(2)));
+    }
+
+    // Two collections can name the same volume id on one disk; a candidate
+    // that fails to open must not shadow a good one behind it.
+    #[test]
+    fn test_open_volumes_falls_back_past_a_corrupt_candidate() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        {
+            let mut loc = DiskLocation::new(
+                dir,
+                dir,
+                10,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+            loc.create_volume(
+                VolumeId(9),
+                "good",
+                NeedleMapKind::InMemory,
+                None,
+                None,
+                0,
+                Version::current(),
+            )
+            .unwrap();
+            loc.close();
+        }
+
+        // Same id under another collection, unopenable.
+        let mut bad = vec![0u8; 16];
+        bad[0] = 9; // unsupported version
+        std::fs::write(format!("{}/bad_9.dat", dir), &bad).unwrap();
+
+        let loc = DiskLocation::new(
+            dir,
+            dir,
+            10,
+            DiskType::HardDrive,
+            MinFreeSpace::Percent(1.0),
+            Vec::new(),
+        )
+        .unwrap();
+        let opened = loc.open_volumes(
+            vec![(VolumeId(9), vec!["bad".to_string(), "good".to_string()])],
+            NeedleMapKind::InMemory,
+        );
+
+        assert_eq!(opened.len(), 1, "the good candidate should still open");
+        assert_eq!(opened[0].0, "good");
+        assert_eq!(opened[0].1, VolumeId(9));
     }
 
     #[test]
