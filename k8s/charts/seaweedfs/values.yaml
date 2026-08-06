@@ -12,29 +12,14 @@ global:
     image:
       # if repository is set, it overrides the namespace part of image.name
       repository: ""
-      # Set to chrislusf/seaweedfs-enterprise to run SeaweedFS Enterprise.
-      # The enterprise image is a drop-in replacement: same commands and
-      # flags, plus the license-gated features. Pair it with the license
-      # settings below. Per-component `imageOverride` still wins, so an
-      # enterprise cluster wants either this value or an override on every
-      # component — a mix of editions leaves enterprise features silently
-      # off, because the community master reports no retention window and
-      # does not accept the enterprise-only flags.
+      # chrislusf/seaweedfs-enterprise for the enterprise edition
       name: chrislusf/seaweedfs
-    # Enterprise license, distributed as a Secret whose key holds the
-    # contents of seaweed-license.json. The Secret is mounted read-only into
-    # every SeaweedFS component and SEAWEED_LICENSE points at it.
-    #
-    # Renewals do not need a restart: the Secret is mounted as a directory
-    # (never a subPath, which would freeze the file at container start), so
-    # kubelet refreshes the contents in place and the master re-reads the
-    # license every 10 minutes. Note that only the master re-reads it on a
-    # timer today — filer, volume, s3 and admin read the license once at
-    # startup, so they pick a renewal up on their next restart.
-    #
-    # Create the Secret with, e.g.:
-    #   kubectl create secret generic seaweedfs-license \
-    #     --from-file=seaweed-license.json=/path/to/seaweed-license.json
+    # Enterprise license file, held in a Secret in the release namespace.
+    # Mounted read-only on the components that run a master (the master is
+    # what reads it), with SEAWEED_LICENSE pointing at the file. Mounted as a
+    # directory, not a subPath, so a renewed Secret reaches the running master,
+    # which re-reads the file periodically. SEAWEED_LICENSE is reserved here:
+    # an extraEnvironmentVars entry of that name is dropped.
     license:
       existingSecret: ""
       secretKey: seaweed-license.json
@@ -159,12 +144,12 @@ master:
   # You can also use emptyDir storage:
   #  data:
   #    type: "emptyDir"
-  # The master's -mdir holds the Raft log, peer config and snapshots, and
-  # with them the cluster's identity (its topology UUID). A master that
-  # comes back with an empty -mdir generates a fresh cluster UUID, which an
-  # enterprise license issued against the old one no longer matches. A
-  # hostPath does not follow a rescheduled pod, so the default is a claim.
-  # Set type to "hostPath" (with hostPathPrefix) to keep the old behaviour.
+  # -mdir holds the Raft log, peer config and snapshots, and with them the
+  # cluster's identity (its topology UUID). A hostPath does not follow a
+  # rescheduled pod, so a claim is the default; a master that comes back with
+  # an empty -mdir generates a fresh cluster UUID. Set type to "hostPath"
+  # (with hostPathPrefix) to keep the old behaviour. See the README for
+  # migrating an existing release.
   data:
     type: "persistentVolumeClaim"
     size: "1Gi"

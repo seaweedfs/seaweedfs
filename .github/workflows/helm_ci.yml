@@ -1329,21 +1329,29 @@ jobs:
           else:
               print("defaults: no license volume/env (unchanged)")
 
-          # Case 2: with a Secret configured, every SeaweedFS workload gets
-          # the volume, the mount and the env var pointing at the file.
+          # Case 2: with a Secret configured, exactly the workloads that run a
+          # master carry the license -- nothing else needs it, and the master
+          # is what validates it and binds it to the cluster UUID.
+          LICENSE_PATH = "/etc/seaweedfs/license/seaweed-license.json"
           out = render(dict(ALL_ON, **{
               "global.seaweedfs.license.existingSecret": "lic",
           }))
-          seen = 0
+          carrying = set()
           for d in workloads(out):
               name = d["metadata"]["name"]
               pod = d["spec"]["template"]["spec"]
-              if not any(v.get("name") == "seaweedfs-license" for v in pod.get("volumes", [])):
-                  # cosi runs its own image, not weed
-                  if "cosi" not in name:
-                      failed.append(f"{name}: missing seaweedfs-license volume")
+              vols = [v for v in pod.get("volumes", []) if v.get("name") == "seaweedfs-license"]
+              if not vols:
                   continue
-              seen += 1
+              carrying.add(name)
+              secret = vols[0].get("secret", {})
+              if secret.get("secretName") != "lic":
+                  failed.append(f"{name}: license volume points at {secret.get('secretName')!r}, not the configured Secret")
+              # Project just the license key, so an unrelated key in the same
+              # Secret does not land in the container.
+              items = [i.get("key") for i in secret.get("items", [])]
+              if items != ["seaweed-license.json"]:
+                  failed.append(f"{name}: license volume projects {items}, expected only the license key")
               for c in pod.get("containers", []):
                   mounts = [m for m in c.get("volumeMounts", []) if m["name"] == "seaweedfs-license"]
                   if not mounts:
@@ -1353,13 +1361,53 @@ jobs:
                   # is exactly what breaks in-place license renewal.
                   if any("subPath" in m for m in mounts):
                       failed.append(f"{name}/{c['name']}: license mount uses subPath (renewals would not propagate)")
+                  if not all(m.get("readOnly") for m in mounts):
+                      failed.append(f"{name}/{c['name']}: license mount is not readOnly")
                   env = {e["name"]: e.get("value") for e in c.get("env", [])}
-                  if env.get("SEAWEED_LICENSE") != "/etc/seaweedfs/license/seaweed-license.json":
+                  if env.get("SEAWEED_LICENSE") != LICENSE_PATH:
                       failed.append(f"{name}/{c['name']}: SEAWEED_LICENSE not set to the mounted file")
-          if seen < 6:
-              failed.append(f"license: only {seen} workloads carry the license volume")
+          if carrying != {"test-seaweedfs-master"}:
+              failed.append(f"license: expected only the master to carry it, got {sorted(carrying)}")
           else:
-              print(f"license: {seen} workloads mount the Secret, no subPath, SEAWEED_LICENSE set")
+              print("license: master only, key-scoped, readOnly, no subPath, SEAWEED_LICENSE set")
+
+          # all-in-one runs `weed server -master`, so it needs the license too.
+          out = render({
+              "allInOne.enabled": "true",
+              "master.enabled": "false",
+              "volume.enabled": "false",
+              "filer.enabled": "false",
+              "global.seaweedfs.license.existingSecret": "lic",
+          })
+          aio = [d for d in workloads(out) if d["metadata"]["name"].endswith("-all-in-one")]
+          if len(aio) != 1:
+              failed.append(f"all-in-one: expected 1 workload, got {len(aio)}")
+          else:
+              pod = aio[0]["spec"]["template"]["spec"]
+              if not any(v.get("name") == "seaweedfs-license" for v in pod.get("volumes", [])):
+                  failed.append("all-in-one: missing the license volume")
+              else:
+                  print("all-in-one: carries the license")
+
+          # SEAWEED_LICENSE is reserved: an extraEnvironmentVars entry of that
+          # name must not render a second env var with the same key.
+          out = render({
+              "global.seaweedfs.license.existingSecret": "lic",
+              "global.seaweedfs.extraEnvironmentVars.SEAWEED_LICENSE": "/tmp/bogus.json",
+          })
+          for d in workloads(out):
+              if not d["metadata"]["name"].endswith("-master"):
+                  continue
+              for c in d["spec"]["template"]["spec"].get("containers", []):
+                  names = [e["name"] for e in c.get("env", [])]
+                  if names.count("SEAWEED_LICENSE") != 1:
+                      failed.append(f"SEAWEED_LICENSE rendered {names.count('SEAWEED_LICENSE')} times")
+                  else:
+                      value = next(e.get("value") for e in c["env"] if e["name"] == "SEAWEED_LICENSE")
+                      if value != LICENSE_PATH:
+                          failed.append(f"SEAWEED_LICENSE overridden to {value!r} by extraEnvironmentVars")
+                      else:
+                          print("SEAWEED_LICENSE: reserved, rendered once, points at the mount")
 
           # Case 3: the master keeps its Raft state -- and with it the
           # cluster UUID an enterprise license is issued against -- on a

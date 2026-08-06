@@ -77,7 +77,6 @@ spec:
           image: {{ template "seaweedfs.sftp.image" . }}
           imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
           env:
-            {{- include "seaweedfs.licenseEnv" . | nindent 12 }}
             - name: POD_IP
               valueFrom:
                 fieldRef:
@@ -208,7 +207,6 @@ spec:
               readOnly: true
               mountPath: /usr/local/share/ca-certificates/client/
             {{- end }}
-            {{- include "seaweedfs.licenseVolumeMount" . | nindent 12 }}
             {{ tpl .Values.sftp.extraVolumeMounts . | nindent 12 | trim }}
           ports:
             - containerPort: {{ .Values.sftp.port }}
@@ -248,7 +246,6 @@ spec:
       {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.sftp.sidecars "context" $) | nindent 8 }}
       {{- end }}
       volumes:
-        {{- include "seaweedfs.licenseVolume" . | nindent 8 }}
         {{- if .Values.sftp.enableAuth }}
         - name: config-users
           secret:

@@ -69,6 +69,12 @@ Inject extra environment vars in the format key:value, if populated
 {{- range $key, $value := $component }}
 {{- $_ := set $target $key $value }}
 {{- end }}
+{{/* The license block owns SEAWEED_LICENSE: it points at the path the
+     chart mounts the Secret on. Letting an extraEnvironmentVars entry
+     through as well would render the key twice in one container. */}}
+{{- if ((.global | default dict).license | default dict).existingSecret }}
+{{- $_ := unset $target "SEAWEED_LICENSE" }}
+{{- end }}
 {{- end -}}
 
 {{/* Return the proper filer image */}}
@@ -469,6 +475,11 @@ true
   secret:
     secretName: {{ .Values.global.seaweedfs.license.existingSecret }}
     defaultMode: 0444
+    # Project only the license key, so an unrelated key in the same
+    # Secret is not exposed to every SeaweedFS container.
+    items:
+      - key: {{ .Values.global.seaweedfs.license.secretKey | default "seaweed-license.json" }}
+        path: {{ .Values.global.seaweedfs.license.secretKey | default "seaweed-license.json" }}
 {{- end }}
 {{- end -}}
 

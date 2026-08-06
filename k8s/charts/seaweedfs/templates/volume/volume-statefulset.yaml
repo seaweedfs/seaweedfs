@@ -127,7 +127,6 @@ spec:
           image: {{ template "seaweedfs.volume.image" $ }}
           imagePullPolicy: {{ default "IfNotPresent" $.Values.global.seaweedfs.imagePullPolicy }}
           env:
-            {{- include "seaweedfs.licenseEnv" $ | nindent 12 }}
             - name: POD_NAME
               valueFrom:
                 fieldRef:
@@ -259,7 +258,6 @@ spec:
               readOnly: true
               mountPath: /usr/local/share/ca-certificates/client/
             {{- end }}
-            {{- include "seaweedfs.licenseVolumeMount" $ | nindent 12 }}
             {{ tpl (printf "{{ $volumeName := \"%s\" }}%s" $volumeName $volume.extraVolumeMounts) $ | indent 12 | trim }}
           ports:
             - containerPort: {{ $volume.port }}
@@ -305,7 +303,6 @@ spec:
       {{- include "seaweedfs.tplvalues.render" (dict "value" (printf "{{ $volumeName := \"%s\" }}%s" $volumeName $volume.sidecars) "context" $) | nindent 8 }}
       {{- end }}
       volumes:
-        {{- include "seaweedfs.licenseVolume" $ | nindent 8 }}
 
      {{- range $dir := $volume.dataDirs }}
 
