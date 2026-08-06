@@ -426,3 +426,49 @@ helm install seaweedfs seaweedfs/seaweedfs \
 
 For enterprise users, please visit [seaweedfs.com](https://seaweedfs.com) for the SeaweedFS Enterprise Edition, 
 which has advanced features, including data recovery, self-healing storage, customizable erasure coding, EC vacuum and repair, etc.
+
+### Running the enterprise image
+
+The enterprise image is a drop-in replacement — same commands and flags, plus
+the license-gated features:
+
+```yaml
+global:
+  seaweedfs:
+    image:
+      name: chrislusf/seaweedfs-enterprise
+```
+
+Set it globally rather than per component. A per-component `imageOverride`
+takes precedence over this value, so a cluster that mixes editions comes up
+looking healthy while enterprise features stay off: the community master does
+not report a deletion-retention window and rejects the enterprise-only flags,
+which is enough to leave Data Recovery and Point-in-Time Recovery disabled in
+the Admin UI with no obvious cause.
+
+### License
+
+Put the contents of `seaweed-license.json` in a Secret and point the chart at
+it. The Secret is mounted read-only into every SeaweedFS component and
+`SEAWEED_LICENSE` is set to the mounted file:
+
+```bash
+kubectl create secret generic seaweedfs-license \
+  --from-file=seaweed-license.json=/path/to/seaweed-license.json
+```
+
+```yaml
+global:
+  seaweedfs:
+    license:
+      existingSecret: seaweedfs-license
+      # secretKey: seaweed-license.json     # key within the Secret
+      # mountPath: /etc/seaweedfs/license   # directory it is mounted at
+```
+
+Renewing the license does not require restarting pods. The Secret is mounted
+as a directory rather than with `subPath`, so kubelet refreshes the file in
+place (within about a minute), and the master re-reads the license every 10
+minutes. Only the master re-reads on a timer today — filer, volume, s3 and
+admin read the license once at startup, so they pick up a renewal on their
+next restart.

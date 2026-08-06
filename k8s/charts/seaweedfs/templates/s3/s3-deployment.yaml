@@ -77,6 +77,7 @@ spec:
           image: {{ template "seaweedfs.s3.image" . }}
           imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
           env:
+            {{- include "seaweedfs.licenseEnv" . | nindent 12 }}
             - name: POD_IP
               valueFrom:
                 fieldRef:
@@ -180,6 +181,7 @@ spec:
               mountPath: /usr/local/share/ca-certificates/client/
             {{- include "seaweedfs.s3.tlsVolumeMount" . | nindent 12 }}
             {{- end }}
+            {{- include "seaweedfs.licenseVolumeMount" . | nindent 12 }}
             {{ tpl .Values.s3.extraVolumeMounts . | nindent 12 | trim }}
           ports:
             - containerPort: {{ .Values.s3.port }}
@@ -231,6 +233,7 @@ spec:
       {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.s3.sidecars "context" $) | nindent 8 }}
       {{- end }}
       volumes:
+        {{- include "seaweedfs.licenseVolume" . | nindent 8 }}
         {{- if .Values.s3.enableAuth }}
         - name: config-users
           secret:

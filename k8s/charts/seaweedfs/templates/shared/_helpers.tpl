@@ -450,6 +450,49 @@ true
 {{- end }}
 {{- end -}}
 
+{{/* True when an enterprise license Secret is configured. */}}
+{{- define "seaweedfs.licenseEnabled" -}}
+{{- if ((.Values.global.seaweedfs).license).existingSecret -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{/* Enterprise license volume.
+
+     Deliberately a whole-directory mount rather than a subPath: kubelet
+     refreshes projected Secret contents in place, but a subPath mount is
+     resolved once at container start and never updates. Mounting the
+     directory is what lets a renewed license reach a running pod. */}}
+{{- define "seaweedfs.licenseVolume" -}}
+{{- if include "seaweedfs.licenseEnabled" . -}}
+- name: seaweedfs-license
+  secret:
+    secretName: {{ .Values.global.seaweedfs.license.existingSecret }}
+    defaultMode: 0444
+{{- end }}
+{{- end -}}
+
+{{/* Enterprise license volume mount. */}}
+{{- define "seaweedfs.licenseVolumeMount" -}}
+{{- if include "seaweedfs.licenseEnabled" . -}}
+- name: seaweedfs-license
+  readOnly: true
+  mountPath: {{ .Values.global.seaweedfs.license.mountPath | default "/etc/seaweedfs/license" | quote }}
+{{- end }}
+{{- end -}}
+
+{{/* SEAWEED_LICENSE points every component at the mounted file. Set explicitly
+     rather than relying on the binary's search paths, so the license is found
+     regardless of the component's working directory. */}}
+{{- define "seaweedfs.licenseEnv" -}}
+{{- if include "seaweedfs.licenseEnabled" . -}}
+- name: SEAWEED_LICENSE
+  value: {{ printf "%s/%s"
+      (.Values.global.seaweedfs.license.mountPath | default "/etc/seaweedfs/license")
+      (.Values.global.seaweedfs.license.secretKey | default "seaweed-license.json") | quote }}
+{{- end }}
+{{- end -}}
+
 {{/* Generate a compatible trafficDistribution value due to "PreferClose" fast deprecation in k8s v1.35.
      Accepts a dict with "value" (the trafficDistribution string) and "Capabilities". */}}
 {{- define "seaweedfs.trafficDistribution" -}}

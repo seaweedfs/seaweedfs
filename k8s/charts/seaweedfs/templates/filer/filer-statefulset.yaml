@@ -89,6 +89,7 @@ spec:
           image: {{ template "seaweedfs.filer.image" . }}
           imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
           env:
+            {{- include "seaweedfs.licenseEnv" . | nindent 12 }}
             - name: POD_IP
               valueFrom:
                 fieldRef:
@@ -260,6 +261,7 @@ spec:
             {{- include "seaweedfs.s3.tlsVolumeMount" . | nindent 12 }}
             {{- end }}
             {{- end }}
+            {{- include "seaweedfs.licenseVolumeMount" . | nindent 12 }}
             {{ tpl .Values.filer.extraVolumeMounts . | nindent 12 | trim }}
           ports:
             - containerPort: {{ .Values.filer.port }}
@@ -323,6 +325,7 @@ spec:
         {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.filer.sidecars "context" $) | nindent 8 }}
         {{- end }}
       volumes:
+        {{- include "seaweedfs.licenseVolume" . | nindent 8 }}
         {{- if eq .Values.filer.logs.type "hostPath" }}
         - name: seaweedfs-filer-log-volume
           hostPath:

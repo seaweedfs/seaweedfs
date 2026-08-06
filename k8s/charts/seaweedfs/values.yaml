@@ -12,7 +12,33 @@ global:
     image:
       # if repository is set, it overrides the namespace part of image.name
       repository: ""
+      # Set to chrislusf/seaweedfs-enterprise to run SeaweedFS Enterprise.
+      # The enterprise image is a drop-in replacement: same commands and
+      # flags, plus the license-gated features. Pair it with the license
+      # settings below. Per-component `imageOverride` still wins, so an
+      # enterprise cluster wants either this value or an override on every
+      # component — a mix of editions leaves enterprise features silently
+      # off, because the community master reports no retention window and
+      # does not accept the enterprise-only flags.
       name: chrislusf/seaweedfs
+    # Enterprise license, distributed as a Secret whose key holds the
+    # contents of seaweed-license.json. The Secret is mounted read-only into
+    # every SeaweedFS component and SEAWEED_LICENSE points at it.
+    #
+    # Renewals do not need a restart: the Secret is mounted as a directory
+    # (never a subPath, which would freeze the file at container start), so
+    # kubelet refreshes the contents in place and the master re-reads the
+    # license every 10 minutes. Note that only the master re-reads it on a
+    # timer today — filer, volume, s3 and admin read the license once at
+    # startup, so they pick a renewal up on their next restart.
+    #
+    # Create the Secret with, e.g.:
+    #   kubectl create secret generic seaweedfs-license \
+    #     --from-file=seaweed-license.json=/path/to/seaweed-license.json
+    license:
+      existingSecret: ""
+      secretKey: seaweed-license.json
+      mountPath: /etc/seaweedfs/license
     imagePullPolicy: IfNotPresent
     restartPolicy: Always
     loggingLevel: 1

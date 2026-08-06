@@ -80,6 +80,7 @@ spec:
           image: {{ template "seaweedfs.master.image" . }}
           imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
           env:
+            {{- include "seaweedfs.licenseEnv" . | nindent 12 }}
             {{- /* Determine default cluster alias and the corresponding env var keys to avoid conflicts */}}
             {{- $mergedExtraEnvironmentVars := dict }}
             {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global.seaweedfs "component" .Values.allInOne "target" $mergedExtraEnvironmentVars) }}
@@ -352,6 +353,7 @@ spec:
             {{- include "seaweedfs.s3.tlsVolumeMount" . | nindent 12 }}
             {{- end }}
             {{- end }}
+            {{- include "seaweedfs.licenseVolumeMount" . | nindent 12 }}
             {{ tpl .Values.allInOne.extraVolumeMounts . | nindent 12 }}
           ports:
             - containerPort: {{ .Values.master.port }}
@@ -419,6 +421,7 @@ spec:
       {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.allInOne.sidecars "context" $) | nindent 8 }}
       {{- end }}
       volumes:
+        {{- include "seaweedfs.licenseVolume" . | nindent 8 }}
         - name: data
           {{- if eq .Values.allInOne.data.type "hostPath" }}
           hostPath:

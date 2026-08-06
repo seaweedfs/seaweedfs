@@ -80,6 +80,7 @@ spec:
           image: {{ template "seaweedfs.worker.image" . }}
           imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
           env:
+            {{- include "seaweedfs.licenseEnv" . | nindent 12 }}
             - name: POD_IP
               valueFrom:
                 fieldRef:
@@ -175,6 +176,7 @@ spec:
               readOnly: true
               mountPath: /usr/local/share/ca-certificates/worker/
             {{- end }}
+            {{- include "seaweedfs.licenseVolumeMount" . | nindent 12 }}
             {{ tpl .Values.worker.extraVolumeMounts . | nindent 12 | trim }}
           ports:
             {{- if .Values.worker.metricsPort }}
@@ -224,6 +226,7 @@ spec:
       {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.worker.sidecars "context" $) | nindent 8 }}
       {{- end }}
       volumes:
+        {{- include "seaweedfs.licenseVolume" . | nindent 8 }}
         {{- if eq .Values.worker.data.type "hostPath" }}
         - name: worker-data
           hostPath:
