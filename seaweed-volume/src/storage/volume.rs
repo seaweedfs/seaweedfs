@@ -1970,11 +1970,15 @@ impl Volume {
     }
 
     /// Verify the live needle at the .dat tail: its header must match the
-    /// .idx entry and the .dat must end exactly at its on-disk end. Extra
-    /// bytes mean an unindexed trailing record (a torn append); appending
-    /// after one would place the next needle at an offset the 8-byte .idx
-    /// encoding may not represent, so the volume is quarantined read-only
-    /// instead. Mirrors Go's verifyNeedleIntegrity.
+    /// .idx entry and, on v3, the .dat must end exactly at its on-disk end.
+    /// Extra bytes mean an unindexed trailing record (a torn append);
+    /// appending after one would place the next needle at an offset the
+    /// 8-byte .idx encoding may not represent, so the volume is quarantined
+    /// read-only instead. Mirrors Go's verifyNeedleIntegrity, including its
+    /// v3-only tail check: v1/v2 volumes predate the append timestamp the
+    /// check rides along with, and Go serves them read-write regardless, so
+    /// checking them here would flip a whole legacy cluster read-only the
+    /// first time it boots on this server.
     fn verify_needle_integrity(
         &mut self,
         actual_offset: i64,
@@ -2013,15 +2017,16 @@ impl Volume {
             )));
         }
 
-        if version == VERSION_3 {
-            let ts_offset =
-                checked_offset as u64 + NEEDLE_HEADER_SIZE as u64 + size.0 as u64 + 4; // skip checksum
-            let mut ts_buf = [0u8; 8];
-            self.read_exact_at_backend(&mut ts_buf, ts_offset)?;
-            let ts = u64::from_be_bytes(ts_buf);
-            if ts > 0 {
-                self.last_append_at_ns = ts;
-            }
+        if version != VERSION_3 {
+            return Ok(());
+        }
+
+        let ts_offset = checked_offset as u64 + NEEDLE_HEADER_SIZE as u64 + size.0 as u64 + 4; // skip checksum
+        let mut ts_buf = [0u8; 8];
+        self.read_exact_at_backend(&mut ts_buf, ts_offset)?;
+        let ts = u64::from_be_bytes(ts_buf);
+        if ts > 0 {
+            self.last_append_at_ns = ts;
         }
 
         self.verify_dat_ends_at(checked_offset + get_actual_size(size, version))
@@ -4112,6 +4117,55 @@ mod tests {
         assert!(
             v.is_no_write_or_delete(),
             "volume with unindexed .dat tail must load read-only"
+        );
+    }
+
+    // Go only compares the .dat tail on v3 volumes -- the comparison rides
+    // along with the v3 append-timestamp read -- so it serves a v1/v2 volume
+    // with an unindexed tail read-write. Checking it here anyway flipped every
+    // such volume read-only, which on a legacy cluster is the whole disk.
+    #[test]
+    fn test_integrity_skips_dat_tail_check_before_v3() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        {
+            let mut v = Volume::new(
+                dir,
+                dir,
+                "",
+                VolumeId(1),
+                NeedleMapKind::InMemory,
+                None,
+                None,
+                0,
+                VERSION_2,
+            )
+            .unwrap();
+            for i in 1..=3u64 {
+                let data = format!("data {}", i);
+                let mut n = Needle {
+                    id: NeedleId(i),
+                    cookie: Cookie(i as u32),
+                    data: data.as_bytes().to_vec(),
+                    data_size: data.len() as u32,
+                    ..Needle::default()
+                };
+                v.write_needle(&mut n, true).unwrap();
+            }
+            v.sync_to_disk().unwrap();
+        }
+
+        let dat_path = volume_file_name(dir, "", VolumeId(1)) + ".dat";
+        let mut f = OpenOptions::new().append(true).open(&dat_path).unwrap();
+        f.write_all(&[0xFFu8; 96]).unwrap();
+        f.sync_all().unwrap();
+        drop(f);
+
+        let v = reload_volume(dir);
+        assert_eq!(v.version(), VERSION_2, "volume should reload as v2");
+        assert!(
+            !v.is_no_write_or_delete(),
+            "v2 volume with unindexed .dat tail must stay writable, as in Go"
         );
     }
 
