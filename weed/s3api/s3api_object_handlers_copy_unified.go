@@ -12,8 +12,10 @@ import (
 )
 
 // executeUnifiedCopyStrategy executes the appropriate copy strategy based on encryption state
-// Returns chunks and destination metadata that should be applied to the destination entry
-func (s3a *S3ApiServer) executeUnifiedCopyStrategy(entry *filer_pb.Entry, r *http.Request, srcBucket, dstBucket, srcObject, dstObject string) ([]*filer_pb.FileChunk, map[string][]byte, error) {
+// Returns chunks and destination metadata that should be applied to the destination entry.
+// replacesSource says the destination entry is the source entry, which is what lets the
+// key-rotation strategy hand back the source chunks instead of copying them.
+func (s3a *S3ApiServer) executeUnifiedCopyStrategy(entry *filer_pb.Entry, r *http.Request, srcBucket, dstBucket, srcObject, dstObject string, replacesSource bool) ([]*filer_pb.FileChunk, map[string][]byte, error) {
 	// Per-chunk copy must see data chunks: a manifest chunk copied raw becomes
 	// object data. Resolved manifests stay with the source.
 	if _, err := s3a.flattenManifestChunks(r.Context(), entry); err != nil {
@@ -51,7 +53,7 @@ func (s3a *S3ApiServer) executeUnifiedCopyStrategy(entry *filer_pb.Entry, r *htt
 		return chunks, nil, err
 
 	case CopyStrategyKeyRotation:
-		return s3a.executeKeyRotation(entry, r, state, dstBucket, dstPath)
+		return s3a.executeKeyRotation(entry, r, state, dstBucket, dstPath, replacesSource)
 
 	case CopyStrategyEncrypt:
 		return s3a.executeEncryptCopy(entry, r, state, dstBucket, dstPath)
@@ -96,7 +98,7 @@ func (s3a *S3ApiServer) mapCopyErrorToS3Error(err error) s3err.ErrorCode {
 }
 
 // executeKeyRotation handles key rotation for same-object copies
-func (s3a *S3ApiServer) executeKeyRotation(entry *filer_pb.Entry, r *http.Request, state *EncryptionState, dstBucket, dstPath string) ([]*filer_pb.FileChunk, map[string][]byte, error) {
+func (s3a *S3ApiServer) executeKeyRotation(entry *filer_pb.Entry, r *http.Request, state *EncryptionState, dstBucket, dstPath string, replacesSource bool) ([]*filer_pb.FileChunk, map[string][]byte, error) {
 	// For key rotation, we only need to update metadata, not re-copy chunks
 	// This is a significant optimization for same-object key changes
 
@@ -105,7 +107,10 @@ func (s3a *S3ApiServer) executeKeyRotation(entry *filer_pb.Entry, r *http.Reques
 		return s3a.executeReencryptCopy(entry, r, state, dstBucket, dstPath)
 	}
 
-	if state.SrcSSEKMS && state.DstSSEKMS {
+	// Handing back the source chunks leaves the destination sharing needles nothing
+	// refcounts, so it is only safe when the destination overwrites the source entry.
+	// A versioned rotation writes a new version beside the source and has to reencrypt.
+	if state.SrcSSEKMS && state.DstSSEKMS && replacesSource {
 		// SSE-KMS key rotation - return existing chunks, metadata will be updated by caller
 		return entry.GetChunks(), nil, nil
 	}
