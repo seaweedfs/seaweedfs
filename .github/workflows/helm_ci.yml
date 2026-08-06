@@ -1361,6 +1361,34 @@ jobs:
           else:
               print(f"license: {seen} workloads mount the Secret, no subPath, SEAWEED_LICENSE set")
 
+          # Case 3: the master keeps its Raft state -- and with it the
+          # cluster UUID an enterprise license is issued against -- on a
+          # claim by default, not on a node-local hostPath.
+          out = render({})
+          for d in workloads(out):
+              if not d["metadata"]["name"].endswith("-master"):
+                  continue
+              claims = [c["metadata"]["name"] for c in d["spec"].get("volumeClaimTemplates", [])]
+              if not any(c.startswith("data-") for c in claims):
+                  failed.append(f"master: no data volumeClaimTemplate by default (got {claims})")
+              else:
+                  print(f"master: data persisted via volumeClaimTemplate {claims}")
+              # Only the data volume matters here; logs stay on a hostPath.
+              data_host = [v["name"] for v in d["spec"]["template"]["spec"].get("volumes", [])
+                           if v.get("hostPath") and v["name"].startswith("data-")]
+              if data_host:
+                  failed.append(f"master: data still on a hostPath by default ({data_host})")
+
+          # Case 4: hostPath remains available for anyone who wants it.
+          out = render({"master.data.type": "hostPath"})
+          for d in workloads(out):
+              if d["metadata"]["name"].endswith("-master"):
+                  vols = d["spec"]["template"]["spec"].get("volumes", [])
+                  if not any(v.get("hostPath") and v["name"].startswith("data-") for v in vols):
+                      failed.append("master.data.type=hostPath: no hostPath data volume rendered")
+                  else:
+                      print("master.data.type=hostPath: still supported")
+
           if failed:
               print("\nFAIL:", file=sys.stderr)
               for f in failed:

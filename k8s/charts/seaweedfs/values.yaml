@@ -159,8 +159,15 @@ master:
   # You can also use emptyDir storage:
   #  data:
   #    type: "emptyDir"
+  # The master's -mdir holds the Raft log, peer config and snapshots, and
+  # with them the cluster's identity (its topology UUID). A master that
+  # comes back with an empty -mdir generates a fresh cluster UUID, which an
+  # enterprise license issued against the old one no longer matches. A
+  # hostPath does not follow a rescheduled pod, so the default is a claim.
+  # Set type to "hostPath" (with hostPathPrefix) to keep the old behaviour.
   data:
-    type: "hostPath"
+    type: "persistentVolumeClaim"
+    size: "1Gi"
     storageClass: ""
     hostPathPrefix: /ssd
 

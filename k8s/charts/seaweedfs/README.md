@@ -107,6 +107,71 @@ https://github.com/rancher/local-path-provisioner
 you can use ANY storage class you like, just update the correct storage-class
 for your deployment.
 
+### Master data: upgrading from the hostPath default
+
+`master.data.type` now defaults to `persistentVolumeClaim`. The master's
+`-mdir` holds its Raft log and snapshots, and with them the cluster's identity
+(its topology UUID, which an enterprise license is issued against). A hostPath
+does not follow a pod to another node, so a rescheduled master used to come
+back with an empty data directory and a brand new cluster UUID.
+
+**This is a breaking change for existing releases.** `volumeClaimTemplates` is
+immutable on a StatefulSet, so `helm upgrade` on a release installed with the
+old default fails with:
+
+```
+StatefulSet.apps "<release>-seaweedfs-master" is invalid: spec: Forbidden:
+updates to statefulset spec for fields other than 'replicas', ... are forbidden
+```
+
+Pick one of:
+
+**Keep the previous behaviour** — one line, no migration:
+
+```yaml
+master:
+  data:
+    type: "hostPath"
+    hostPathPrefix: /ssd
+```
+
+**Move the master onto a claim, keeping the cluster UUID.** The claim has to be
+seeded while the master is stopped; a running master rewrites its Raft state,
+so copying data into a live pod does not work.
+
+```bash
+NS=<namespace>; REL=<release>
+# 1. back up the master data directory
+kubectl -n $NS cp $REL-seaweedfs-master-0:/data ./master-backup
+# 2. stop the master, keeping the rest of the release running
+kubectl -n $NS delete sts $REL-seaweedfs-master --cascade=orphan
+kubectl -n $NS delete pod $REL-seaweedfs-master-0
+# 3. create the claim the StatefulSet will adopt, and seed it
+kubectl -n $NS create -f - <<EOF
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: data-$NS-$REL-seaweedfs-master-0
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+EOF
+kubectl -n $NS run seed --image=alpine:3.20 --restart=Never -- sleep 600
+#   (mount the claim at /data on that pod, then:)
+kubectl -n $NS cp ./master-backup/m9333 seed:/data/
+kubectl -n $NS delete pod seed
+# 4. upgrade; the StatefulSet adopts the claim you created
+helm upgrade $REL seaweedfs/seaweedfs -n $NS -f values.yaml
+```
+
+Confirm the UUID survived with
+`kubectl -n $NS exec $REL-seaweedfs-master-0 -- curl -s localhost:9333/license/status`.
+
+**Or accept a new cluster UUID** and, if you run the enterprise edition, have
+the license re-issued against it.
+
 ## current instances config (AIO):
 
 1 instance for each type (master/filer+s3/volume)
@@ -472,3 +537,16 @@ place (within about a minute), and the master re-reads the license every 10
 minutes. Only the master re-reads on a timer today — filer, volume, s3 and
 admin read the license once at startup, so they pick up a renewal on their
 next restart.
+
+The license is bound to the cluster's UUID, which lives in the master's Raft
+state under its `-mdir`. That is why `master.data` defaults to a
+`persistentVolumeClaim`: a master that restarts onto an empty data directory
+generates a fresh cluster UUID, and a license issued against the old one stops
+matching. Check the binding with:
+
+```bash
+kubectl exec <master-pod> -- curl -s localhost:9333/license/status
+```
+
+`cluster_uuid` and `license_uuid` must match (an empty `license_uuid` means the
+license carries no cluster binding).
