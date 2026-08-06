@@ -2004,6 +2004,17 @@ func collectCollectionStats(topologyInfo *master_pb.TopologyInfo) map[string]col
 	return collectionMap
 }
 
+// totalCollectionFileCount is the cluster-wide live chunk count: the sum of
+// every collection's deduped count. Volumes and EC volumes are reported by
+// each replica or shard holder, so only this aggregation counts a chunk once.
+func totalCollectionFileCount(topologyInfo *master_pb.TopologyInfo) int64 {
+	var total int64
+	for _, stats := range collectCollectionStats(topologyInfo) {
+		total += stats.FileCount
+	}
+	return total
+}
+
 // getCollectionStats returns current collection statistics with caching
 func (s *AdminServer) getCollectionStats() (map[string]collectionStats, error) {
 	now := time.Now()
