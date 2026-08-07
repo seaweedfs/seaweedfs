@@ -72,19 +72,6 @@ type EcVolume struct {
 	bitrotStatus BitrotStatus
 }
 
-// statEcxSize returns the size of an .ecx file, os.ErrNotExist when it is absent
-// (or a directory), so the resolver can prefer a non-empty copy.
-func statEcxSize(path string) (int64, error) {
-	info, statErr := os.Stat(path)
-	if statErr != nil {
-		return 0, statErr
-	}
-	if info.IsDir() {
-		return 0, os.ErrNotExist
-	}
-	return info.Size(), nil
-}
-
 func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection string, vid needle.VolumeId) (ev *EcVolume, err error) {
 	ev = &EcVolume{dir: dir, dirIdx: dirIdx, Collection: collection, VolumeId: vid, diskType: diskType}
 
@@ -100,36 +87,25 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 	// stream is indistinguishable from that empty case by file size alone;
 	// preventing such stubs is the receiver-side cleanup in writeToFile's
 	// job, not this open path.
-	// Resolve the .ecx, preferring the copy co-located with the shard data on
-	// this disk — where a move or reconstruct leaves it — then the caller's
-	// index directory. That directory is either the shared -dir.idx dir or a
-	// sibling disk that owns the .ecx when this disk holds only a 0-byte stub
-	// left by an interrupted copy (#9212). A 0-byte .ecx is a legitimate empty
-	// index, so the local copy yields only to a *non-empty* copy elsewhere,
-	// never to a mere absence: prefer a non-empty .ecx local-first, then fall
-	// back to whichever exists at all.
-	localBaseFileName := dataBaseFileName
-	sharedBaseFileName := indexBaseFileName
-	localSize, localErr := statEcxSize(localBaseFileName + ".ecx")
-	sharedSize, sharedErr := int64(0), os.ErrNotExist
-	if dirIdx != dir {
-		sharedSize, sharedErr = statEcxSize(sharedBaseFileName + ".ecx")
-	}
-	switch {
-	case localErr == nil && localSize > 0:
-		indexBaseFileName, ev.ecxActualDir = localBaseFileName, dir
-	case sharedErr == nil && sharedSize > 0:
-		indexBaseFileName, ev.ecxActualDir = sharedBaseFileName, dirIdx
-		glog.V(1).Infof("ecx not local at %s.ecx, using %s.ecx", localBaseFileName, sharedBaseFileName)
-	case localErr == nil: // local exists but is a 0-byte empty index
-		indexBaseFileName, ev.ecxActualDir = localBaseFileName, dir
-	case sharedErr == nil: // only a 0-byte copy in the index dir
-		indexBaseFileName, ev.ecxActualDir = sharedBaseFileName, dirIdx
-	default:
-		return nil, fmt.Errorf("cannot open ec volume index %s.ecx (or %s.ecx): %w", localBaseFileName, sharedBaseFileName, os.ErrNotExist)
-	}
+	ev.ecxActualDir = dirIdx
 	if ev.ecxFile, err = os.OpenFile(indexBaseFileName+".ecx", os.O_RDWR, 0644); err != nil {
-		return nil, fmt.Errorf("cannot open ec volume index %s.ecx: %w", indexBaseFileName, err)
+		if dirIdx != dir && os.IsNotExist(err) {
+			// fall back to data directory if idx directory does not have the .ecx file
+			firstErr := err
+			glog.V(1).Infof("ecx file not found at %s.ecx, falling back to %s.ecx", indexBaseFileName, dataBaseFileName)
+			if ev.ecxFile, err = os.OpenFile(dataBaseFileName+".ecx", os.O_RDWR, 0644); err != nil {
+				if os.IsNotExist(err) {
+					return nil, fmt.Errorf("open ecx index %s.ecx (fallback %s.ecx): %w", indexBaseFileName, dataBaseFileName, os.ErrNotExist)
+				}
+				return nil, fmt.Errorf("open ecx index %s.ecx: %v; fallback %s.ecx: %w", indexBaseFileName, firstErr, dataBaseFileName, err)
+			}
+			indexBaseFileName = dataBaseFileName
+			ev.ecxActualDir = dir
+		} else if os.IsNotExist(err) {
+			return nil, fmt.Errorf("cannot open ec volume index %s.ecx: %w", indexBaseFileName, os.ErrNotExist)
+		} else {
+			return nil, fmt.Errorf("cannot open ec volume index %s.ecx: %w", indexBaseFileName, err)
+		}
 	}
 	ecxFi, statErr := ev.ecxFile.Stat()
 	if statErr != nil {
@@ -301,17 +277,8 @@ func (ev *EcVolume) Destroy() {
 	for _, s := range ev.Shards {
 		s.Destroy()
 	}
-	// Sweep the EC-only index files from BOTH the data directory and the shared
-	// index directory. A move or reconstruct can leave a copy in whichever
-	// directory is not ecxActualDir; removing only the active one leaves a stale
-	// index that a later reload could pick up and re-mount as a phantom EC
-	// volume. .ecx/.ecj are EC-specific, so removing both copies is safe.
-	for _, base := range ev.ecIndexBaseNames() {
-		os.Remove(base + ".ecx")
-		os.Remove(base + ".ecj")
-	}
-	// The .vif is shared with a coexisting normal volume (e.g. mid-decode), so
-	// only remove the active copy, not both.
+	os.Remove(ev.FileName(".ecx"))
+	os.Remove(ev.FileName(".ecj"))
 	os.Remove(ev.FileName(".vif"))
 	// Remove the bitrot checksum sidecar(s) so a later volume reuse cannot load
 	// stale protection. Search both the data and index bases.
@@ -319,16 +286,6 @@ func (ev *EcVolume) Destroy() {
 	if ev.IndexBaseFileName() != ev.DataBaseFileName() {
 		RemoveBitrotSidecars(ev.IndexBaseFileName())
 	}
-}
-
-// ecIndexBaseNames returns the base paths for the volume's EC index files in
-// both the data and index directories, deduplicated when they coincide.
-func (ev *EcVolume) ecIndexBaseNames() []string {
-	bases := []string{ev.DataBaseFileName()}
-	if ev.IndexBaseFileName() != ev.DataBaseFileName() {
-		bases = append(bases, ev.IndexBaseFileName())
-	}
-	return bases
 }
 
 // DiskType returns the disk type the EC volume currently reports under.
