@@ -160,3 +160,68 @@ func TestVolumeDigestFollowsDeltaRegistration(t *testing.T) {
 		t.Error("a full heartbeat did not restore the digest after an unmount")
 	}
 }
+
+// The point of the digest is not to detect that volumes changed -- in any live
+// cluster some always have. It is to confirm that after applying the changes a
+// heartbeat did carry, the master holds what the volume server holds. So a
+// heartbeat reporting only the volumes that moved must still reconcile.
+func TestVolumeDigestMatchesAfterApplyingOnlyChangedVolumes(t *testing.T) {
+	const total = 50
+	full := make([]*master_pb.VolumeInformationMessage, 0, total)
+	for i := 1; i <= total; i++ {
+		v := digestTestVolume(uint32(i))
+		v.ReadOnly = i > 5 // only the first few are writable, as in a tiered cluster
+		full = append(full, v)
+	}
+
+	topo, dn := digestTestNode(t)
+	topo.SyncDataNodeRegistration(full, dn)
+
+	// Three writable volumes take writes between two heartbeats.
+	changed := make([]storage.VolumeInfo, 0, 3)
+	for _, v := range full[:3] {
+		v.Size += 4096
+		v.FileCount++
+		v.ModifiedAtSecond += 5
+		vi, err := storage.NewVolumeInfo(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		changed = append(changed, vi)
+	}
+
+	// What the volume server would now report for its whole set.
+	reference, referenceNode := digestTestNode(t)
+	reference.SyncDataNodeRegistration(full, referenceNode)
+	want := referenceNode.VolumeDigest()
+
+	if dn.VolumeDigest() == want {
+		t.Fatal("expected the master to be behind before the changes are applied")
+	}
+
+	// The heartbeat carries three volumes, not fifty.
+	dn.DeltaUpdateVolumes(changed, nil)
+
+	if got := dn.VolumeDigest(); got != want {
+		t.Errorf("digest still disagrees after applying the reported changes: %d != %d", got, want)
+	}
+}
+
+// A volume that disappears without a delta is exactly what the full list exists
+// to catch, and is the case the digest has to keep catching.
+func TestVolumeDigestCatchesASilentlyLostVolume(t *testing.T) {
+	full := []*master_pb.VolumeInformationMessage{
+		digestTestVolume(1), digestTestVolume(2), digestTestVolume(3),
+	}
+
+	topo, dn := digestTestNode(t)
+	topo.SyncDataNodeRegistration(full, dn)
+
+	// The volume server no longer has volume 2 and never got to say so.
+	reference, referenceNode := digestTestNode(t)
+	reference.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{full[0], full[2]}, referenceNode)
+
+	if dn.VolumeDigest() == referenceNode.VolumeDigest() {
+		t.Error("a volume lost without a delta went undetected, which is what the full list is for")
+	}
+}
