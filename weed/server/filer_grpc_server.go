@@ -88,10 +88,15 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 			hasEntries = true
 			pbEntry := entry.ToProtoEntry()
 			if req.OmitChunks {
-				// The size the caller needs is already in the attributes, where
-				// the store decode folded the chunk extents in. The entries are
-				// still read whole, because expiring one here deletes its data
-				// and that needs the chunks.
+				// Stamp the size before dropping the only other thing carrying
+				// it. Most stores fold the chunk extents into FileSize when they
+				// decode, but one that keeps entries as JSON rather than as an
+				// encoded Entry never re-derives it, and the caller would be
+				// left with a zero. The entries are still read whole, because
+				// expiring one here deletes its data and that needs the chunks.
+				if pbEntry.Attributes != nil {
+					pbEntry.Attributes.FileSize = filer.FileSize(pbEntry)
+				}
 				pbEntry.Chunks = nil
 			}
 			resp := &filer_pb.ListEntriesResponse{
