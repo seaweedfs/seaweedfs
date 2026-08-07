@@ -143,15 +143,24 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
 
             <div class="chart-container">
                 <div class="chart-title">Version Distribution</div>
-                <div class="chart-subtitle" id="versionTotal"></div>
-                <div style="position: relative; height: 420px;">
+                <div style="position: relative; height: 320px;">
                     <canvas id="versionChart"></canvas>
                 </div>
             </div>
 
             <div class="chart-container">
+                <div class="chart-title">Versions Over Time</div>
+                <div class="chart-subtitle" id="versionSeriesTotal"></div>
+                <div style="position: relative; height: 420px;">
+                    <canvas id="versionSeriesChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-container">
                 <div class="chart-title">Operating System Distribution</div>
-                <canvas id="osChart" width="400" height="200"></canvas>
+                <div style="position: relative; height: 320px;">
+                    <canvas id="osChart"></canvas>
+                </div>
             </div>
 
             <div class="chart-container">
@@ -204,13 +213,16 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
                 const versionsResponse = await fetch('/api/versions?days=30&limit=8');
                 const versions = await versionsResponse.json();
 
-                updateStats(stats);
-                createPieChart('osChart', stats.os_distribution || {});
-                updateVersions(versions);
-                updateClusterSizes(sizes);
-
+                // Show the dashboard before drawing into it: a canvas in a
+                // display:none container measures zero, and a pie sized from
+                // that never grows back.
                 document.getElementById('loading').style.display = 'none';
                 document.getElementById('dashboard').style.display = 'block';
+
+                updateStats(stats);
+                updateCharts(stats);
+                updateVersions(versions);
+                updateClusterSizes(sizes);
             } catch (error) {
                 console.error('Error loading dashboard:', error);
                 showError('Failed to load telemetry data: ' + error.message);
@@ -225,7 +237,12 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
             document.getElementById('totalOS').textContent = Object.keys(stats.os_distribution || {}).length;
         }
 
-        function createPieChart(canvasId, data) {
+        function updateCharts(stats) {
+            createPieChart('versionChart', 'Version Distribution', stats.versions || {});
+            createPieChart('osChart', 'Operating System Distribution', stats.os_distribution || {});
+        }
+
+        function createPieChart(canvasId, title, data) {
             const ctx = document.getElementById(canvasId).getContext('2d');
             
             if (charts[canvasId]) {
@@ -249,6 +266,9 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
                 },
                 options: {
                     responsive: true,
+                    // Without this the canvas keeps its 2:1 attribute ratio at
+                    // the card's full width, drawing a pie taller than the card.
+                    maintainAspectRatio: false,
                     plugins: {
                         legend: {
                             position: 'bottom'
@@ -309,12 +329,13 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
 
         // One stacked band per version: the band is how many clusters ran that
         // version that day, the top of the stack is the confirmed fleet, so the
-        // chart shows both how it grows and what it upgrades to.
+        // chart shows both how it grows and what it upgrades to. The pie above
+        // it is the same fleet on the last of these days.
         function updateVersions(series) {
             const versions = series.versions || [];
             const dates = series.dates || [];
             const total = series.total_clusters || 0;
-            document.getElementById('versionTotal').textContent =
+            document.getElementById('versionSeriesTotal').textContent =
                 total + ' cluster' + (total === 1 ? '' : 's') + ' on ' + (dates[dates.length - 1] || 'no data');
 
             // Newest release on the floor, oldest on top: the current release
@@ -329,7 +350,7 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
                     '#ffffff', '#9a9a94', 2));
             }
 
-            stackedArea('versionChart', dates, datasets, value => value, { plugins: [bandLabels] });
+            stackedArea('versionSeriesChart', dates, datasets, value => value, { plugins: [bandLabels] });
         }
 
         // Writes each version into its own band, so the chart reads without
