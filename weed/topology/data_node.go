@@ -2,7 +2,6 @@ package topology
 
 import (
 	"fmt"
-	"slices"
 	"sync/atomic"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -391,29 +390,4 @@ func (dn *DataNode) UpdateDiskTags(tags []*master_pb.DiskTag) {
 	dn.Lock()
 	dn.diskMetas = metas
 	dn.Unlock()
-}
-
-// GetVolumeIds returns the human readable volume ids limited to count of max 100.
-func (dn *DataNode) GetVolumeIds() string {
-	dn.RLock()
-	defer dn.RUnlock()
-	existingVolumes := dn.getVolumes()
-	ids := make([]int, 0, len(existingVolumes))
-
-	for k := range existingVolumes {
-		ids = append(ids, int(k))
-	}
-
-	slices.Sort(ids)
-
-	return util.HumanReadableIntsMax(100, ids...)
-}
-
-func (dn *DataNode) getVolumes() []storage.VolumeInfo {
-	var existingVolumes []storage.VolumeInfo
-	for _, c := range dn.children {
-		disk := c.(*Disk)
-		existingVolumes = append(existingVolumes, disk.GetVolumes()...)
-	}
-	return existingVolumes
 }
