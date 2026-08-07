@@ -2,6 +2,7 @@ package mount
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -268,7 +269,11 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out DirEntrySink, isPlusMode
 		if len(dh.entryStream) == 0 && input.Offset > dh.entryStreamOffset {
 			skipCount := int64(input.Offset - dh.entryStreamOffset)
 
-			if err := meta_cache.EnsureVisited(wfs.metaCache, wfs, dirPath); err != nil {
+			if err := wfs.ensureDirectoryVisited(dirPath); err != nil {
+				var tooLarge *meta_cache.DirectoryTooLargeError
+				if errors.As(err, &tooLarge) {
+					return wfs.readDirectoryDirect(input, out, dh, dirPath, processEachEntryFn)
+				}
 				glog.Errorf("dir ReadDirAll %s: %v", dirPath, err)
 				return fuse.EIO
 			}
@@ -311,7 +316,13 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out DirEntrySink, isPlusMode
 		}
 
 		// Cache exhausted, load next batch
-		if err := meta_cache.EnsureVisited(wfs.metaCache, wfs, dirPath); err != nil {
+		if err := wfs.ensureDirectoryVisited(dirPath); err != nil {
+			var tooLarge *meta_cache.DirectoryTooLargeError
+			if errors.As(err, &tooLarge) {
+				// The direct path keeps the same pagination state on dh, so it
+				// carries on from wherever the cached walk reached.
+				return wfs.readDirectoryDirect(input, out, dh, dirPath, processEachEntryFn)
+			}
 			glog.Errorf("dir ReadDirAll %s: %v", dirPath, err)
 			return fuse.EIO
 		}
@@ -349,6 +360,18 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out DirEntrySink, isPlusMode
 	}
 
 	return fuse.OK
+}
+
+// ensureDirectoryVisited pulls the directory into the local cache, unless it is
+// too large to cache: then the directory is marked read-through, so later
+// listings go straight to the filer without re-asking.
+func (wfs *WFS) ensureDirectoryVisited(dirPath util.FullPath) error {
+	err := meta_cache.EnsureVisited(wfs.metaCache, wfs, dirPath, wfs.option.CacheDirMaxEntries)
+	var tooLarge *meta_cache.DirectoryTooLargeError
+	if errors.As(err, &tooLarge) {
+		wfs.inodeToPath.MarkDirectoryReadThrough(dirPath, time.Now())
+	}
+	return err
 }
 
 func (wfs *WFS) readDirectoryDirect(input *fuse.ReadIn, out DirEntrySink, dh *DirectoryHandle, dirPath util.FullPath, processEachEntryFn func(entry *filer.Entry, index int64) bool) fuse.Status {

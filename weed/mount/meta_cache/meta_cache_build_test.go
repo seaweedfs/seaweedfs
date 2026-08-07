@@ -110,7 +110,7 @@ func TestEnsureVisitedReplaysBufferedEventsAfterSnapshot(t *testing.T) {
 		},
 	}
 
-	if err := EnsureVisited(mc, accessor, util.FullPath("/dir")); err != nil {
+	if err := EnsureVisited(mc, accessor, util.FullPath("/dir"), 0); err != nil {
 		t.Fatalf("ensure visited: %v", err)
 	}
 	if applyErr != nil {
@@ -504,7 +504,7 @@ func TestEnsureVisitedPreservesLocalOnlyEntry(t *testing.T) {
 		}},
 	}}
 
-	if err := EnsureVisited(mc, accessor, util.FullPath("/dir")); err != nil {
+	if err := EnsureVisited(mc, accessor, util.FullPath("/dir"), 0); err != nil {
 		t.Fatalf("ensure visited: %v", err)
 	}
 	if !mc.IsDirectoryCached(util.FullPath("/dir")) {
@@ -550,7 +550,7 @@ func TestEnsureVisitedDropsUnpinnedStaleEntry(t *testing.T) {
 		}},
 	}}
 
-	if err := EnsureVisited(mc, accessor, util.FullPath("/dir")); err != nil {
+	if err := EnsureVisited(mc, accessor, util.FullPath("/dir"), 0); err != nil {
 		t.Fatalf("ensure visited: %v", err)
 	}
 	if entry, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/stale.txt")); err != filer_pb.ErrNotFound || entry != nil {
@@ -597,7 +597,7 @@ func TestEnsureVisitedConfirmsTransientEmptyListing(t *testing.T) {
 		},
 	}}
 
-	if err := EnsureVisited(mc, accessor, util.FullPath("/dir")); err != nil {
+	if err := EnsureVisited(mc, accessor, util.FullPath("/dir"), 0); err != nil {
 		t.Fatalf("ensure visited: %v", err)
 	}
 	if !mc.IsDirectoryCached(util.FullPath("/dir")) {
@@ -619,7 +619,7 @@ func TestEnsureVisitedCachesGenuinelyEmptyDirectory(t *testing.T) {
 	}
 	accessor := &buildFilerAccessor{client: client}
 
-	if err := EnsureVisited(mc, accessor, util.FullPath("/empty")); err != nil {
+	if err := EnsureVisited(mc, accessor, util.FullPath("/empty"), 0); err != nil {
 		t.Fatalf("ensure visited: %v", err)
 	}
 	if !mc.IsDirectoryCached(util.FullPath("/empty")) {

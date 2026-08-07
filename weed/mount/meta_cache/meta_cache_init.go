@@ -2,6 +2,7 @@ package meta_cache
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -13,7 +14,19 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.FullPath) error {
+// DirectoryTooLargeError reports a directory the mount refuses to cache
+// locally. Its listings read through to the filer instead.
+type DirectoryTooLargeError struct {
+	Path util.FullPath
+}
+
+func (e *DirectoryTooLargeError) Error() string {
+	return fmt.Sprintf("directory %s is too large to cache locally", e.Path)
+}
+
+// maxCacheableEntries is the directory size above which a build gives up, or 0
+// to cache everything.
+func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.FullPath, maxCacheableEntries int) error {
 	// Collect all uncached paths from target directory up to root
 	var uncachedPaths []util.FullPath
 	currentPath := dirPath
@@ -23,7 +36,15 @@ func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.Full
 		if mc.isCachedFn(currentPath) {
 			break
 		}
-		uncachedPaths = append(uncachedPaths, currentPath)
+		if mc.isOversized(currentPath) {
+			// The directory itself reads through; an ancestor is stepped over,
+			// or it would wedge every listing beneath it forever.
+			if currentPath == dirPath {
+				return &DirectoryTooLargeError{Path: currentPath}
+			}
+		} else {
+			uncachedPaths = append(uncachedPaths, currentPath)
+		}
 
 		// Continue to parent directory
 		if currentPath != mc.root {
@@ -44,7 +65,7 @@ func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.Full
 	for _, p := range uncachedPaths {
 		path := p // capture for closure
 		g.Go(func() error {
-			return doEnsureVisited(ctx, mc, client, path)
+			return doEnsureVisited(ctx, mc, client, path, maxCacheableEntries)
 		})
 	}
 	return g.Wait()
@@ -60,7 +81,7 @@ const (
 	emptyRebuildConfirmDelay  = 50 * time.Millisecond
 )
 
-func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerClient, path util.FullPath) error {
+func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerClient, path util.FullPath, maxCacheableEntries int) error {
 	// Use singleflight to deduplicate concurrent requests for the same path
 	_, err, _ := mc.visitGroup.Do(string(path), func() (interface{}, error) {
 		// Check for cancellation before starting
@@ -116,6 +137,9 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 						return nil
 					}
 
+					if maxCacheableEntries > 0 && entryCount >= maxCacheableEntries {
+						return &DirectoryTooLargeError{Path: path}
+					}
 					batch = append(batch, entry)
 					entryCount++
 
@@ -143,6 +167,15 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 
 		entryCount, snapshotTsNs, fetchErr := reloadFromFiler()
 		if fetchErr != nil {
+			var tooLarge *DirectoryTooLargeError
+			if errors.As(fetchErr, &tooLarge) {
+				// Remember the refusal so the next visit fails fast instead of
+				// streaming up to the limit again to rediscover it.
+				mc.markOversized(path)
+				glog.V(0).Infof("directory %s exceeds %d entries, reading it through instead of caching", path, maxCacheableEntries)
+				cleanupBuild("oversized")
+				return nil, fetchErr
+			}
 			cleanupBuild("failed")
 			return nil, fmt.Errorf("list %s: %w", path, fetchErr)
 		}

@@ -43,6 +43,11 @@ type MetaCache struct {
 	dedupRing            dedupRingBuffer
 	includeSystemEntries bool
 
+	// oversizedDirs are directories the mount refused to cache for their size.
+	// Their listings read through to the filer, and a later visit fails fast
+	// instead of streaming to the limit again to rediscover them.
+	oversizedDirs map[util.FullPath]struct{}
+
 	// dirVersionFloors is each cached directory's listing snapshot: the
 	// version of every child the listing covered, present or absent, unless
 	// a later event gave that child its own record. One map write per build
@@ -119,6 +124,7 @@ func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPat
 		buildingDirs:         make(map[util.FullPath]*directoryBuildState),
 		dedupRing:            newDedupRingBuffer(),
 		dirVersionFloors:     make(map[util.FullPath]int64),
+		oversizedDirs:        make(map[util.FullPath]struct{}),
 	}
 	mc.invalidateWorker = util.NewAsyncBatchWorker(func(batch []EntryInvalidation) {
 		for _, invalidation := range batch {
@@ -647,6 +653,19 @@ func (mc *MetaCache) ListDirectoryEntries(ctx context.Context, dirPath util.Full
 		mc.mapIdFromFilerToLocal(entry)
 		return eachEntryFunc(entry)
 	})
+}
+
+func (mc *MetaCache) markOversized(dirPath util.FullPath) {
+	mc.Lock()
+	defer mc.Unlock()
+	mc.oversizedDirs[dirPath] = struct{}{}
+}
+
+func (mc *MetaCache) isOversized(dirPath util.FullPath) bool {
+	mc.RLock()
+	defer mc.RUnlock()
+	_, found := mc.oversizedDirs[dirPath]
+	return found
 }
 
 func (mc *MetaCache) Shutdown() {
