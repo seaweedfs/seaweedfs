@@ -3,6 +3,9 @@ package topology
 import (
 	"testing"
 
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
@@ -68,44 +71,61 @@ func TestVolumeDigestIsIndependentOfReportOrder(t *testing.T) {
 	}
 }
 
+// Every field of VolumeInformationMessage has to reach the digest: one the hash
+// skips is a change the master would never be told about. Enumerated from the
+// message rather than listed here, so a field added later cannot quietly fall
+// outside the digest while this still passes.
 func TestVolumeDigestTracksEveryReportedField(t *testing.T) {
 	base := digestTestVolume(1)
-	mutations := map[string]func(*master_pb.VolumeInformationMessage){
-		"Id":                func(m *master_pb.VolumeInformationMessage) { m.Id = 2 },
-		"Size":              func(m *master_pb.VolumeInformationMessage) { m.Size++ },
-		"Collection":        func(m *master_pb.VolumeInformationMessage) { m.Collection = "other" },
-		"FileCount":         func(m *master_pb.VolumeInformationMessage) { m.FileCount++ },
-		"DeleteCount":       func(m *master_pb.VolumeInformationMessage) { m.DeleteCount++ },
-		"DeletedByteCount":  func(m *master_pb.VolumeInformationMessage) { m.DeletedByteCount++ },
-		"ReadOnly":          func(m *master_pb.VolumeInformationMessage) { m.ReadOnly = true },
-		"ReplicaPlacement":  func(m *master_pb.VolumeInformationMessage) { m.ReplicaPlacement = 10 },
-		"Version":           func(m *master_pb.VolumeInformationMessage) { m.Version = 2 },
-		"Ttl":               func(m *master_pb.VolumeInformationMessage) { m.Ttl = 3 << 8 },
-		"CompactRevision":   func(m *master_pb.VolumeInformationMessage) { m.CompactRevision++ },
-		"ModifiedAtSecond":  func(m *master_pb.VolumeInformationMessage) { m.ModifiedAtSecond++ },
-		"RemoteStorageName": func(m *master_pb.VolumeInformationMessage) { m.RemoteStorageName = "s3" },
-		"RemoteStorageKey":  func(m *master_pb.VolumeInformationMessage) { m.RemoteStorageKey = "k" },
-		"DiskType":          func(m *master_pb.VolumeInformationMessage) { m.DiskType = "ssd" },
-		"DiskId":            func(m *master_pb.VolumeInformationMessage) { m.DiskId = 1 },
-	}
-
 	baseInfo, err := storage.NewVolumeInfo(base)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, mutate := range mutations {
-		t.Run(name, func(t *testing.T) {
-			changed := digestTestVolume(1)
-			mutate(changed)
-			changedInfo, err := storage.NewVolumeInfo(changed)
-			if err != nil {
-				t.Fatal(err)
+
+	fields := base.ProtoReflect().Descriptor().Fields()
+	for i := 0; i < fields.Len(); i++ {
+		fd := fields.Get(i)
+		t.Run(string(fd.Name()), func(t *testing.T) {
+			candidates := distinctValuesFor(t, fd, base.ProtoReflect().Get(fd))
+			for _, candidate := range candidates {
+				changed := proto.Clone(base).(*master_pb.VolumeInformationMessage)
+				changed.ProtoReflect().Set(fd, candidate)
+				changedInfo, err := storage.NewVolumeInfo(changed)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if baseInfo.ReportHash() != changedInfo.ReportHash() {
+					return
+				}
 			}
-			if baseInfo.ReportHash() == changedInfo.ReportHash() {
-				t.Errorf("a change to %s is invisible to the digest, so the master would never be told about it", name)
-			}
+			t.Errorf("no change to %s moves the digest, so the master would never be told about one", fd.Name())
 		})
 	}
+}
+
+// distinctValuesFor offers values that differ from current. Several, because
+// some fields are narrowed or normalised on the way into VolumeInfo and the
+// smallest change to the wire value can land back on the stored one.
+func distinctValuesFor(t *testing.T, fd protoreflect.FieldDescriptor, current protoreflect.Value) []protoreflect.Value {
+	t.Helper()
+	switch fd.Kind() {
+	case protoreflect.BoolKind:
+		return []protoreflect.Value{protoreflect.ValueOfBool(!current.Bool())}
+	case protoreflect.Uint32Kind:
+		return []protoreflect.Value{
+			protoreflect.ValueOfUint32(uint32(current.Uint()) + 1),
+			protoreflect.ValueOfUint32(uint32(current.Uint()) + 1<<8),
+			protoreflect.ValueOfUint32(uint32(current.Uint()) + 1<<16),
+		}
+	case protoreflect.Uint64Kind:
+		return []protoreflect.Value{protoreflect.ValueOfUint64(current.Uint() + 1)}
+	case protoreflect.Int64Kind:
+		return []protoreflect.Value{protoreflect.ValueOfInt64(current.Int() + 1)}
+	case protoreflect.StringKind:
+		return []protoreflect.Value{protoreflect.ValueOfString(current.String() + "x")}
+	}
+	t.Fatalf("field %s has kind %s, which this test does not know how to vary", fd.Name(), fd.Kind())
+	return nil
 }
 
 func TestVolumeDigestFollowsVolumeChanges(t *testing.T) {
