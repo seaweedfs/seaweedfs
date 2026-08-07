@@ -143,9 +143,14 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
 
             <div class="chart-container">
                 <div class="chart-title">Version Distribution</div>
-                <div class="chart-subtitle" id="versionTotal"></div>
+                <canvas id="versionChart" width="400" height="200"></canvas>
+            </div>
+
+            <div class="chart-container">
+                <div class="chart-title">Versions Over Time</div>
+                <div class="chart-subtitle" id="versionSeriesTotal"></div>
                 <div style="position: relative; height: 420px;">
-                    <canvas id="versionChart"></canvas>
+                    <canvas id="versionSeriesChart"></canvas>
                 </div>
             </div>
 
@@ -205,7 +210,7 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
                 const versions = await versionsResponse.json();
 
                 updateStats(stats);
-                createPieChart('osChart', stats.os_distribution || {});
+                updateCharts(stats);
                 updateVersions(versions);
                 updateClusterSizes(sizes);
 
@@ -225,7 +230,12 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
             document.getElementById('totalOS').textContent = Object.keys(stats.os_distribution || {}).length;
         }
 
-        function createPieChart(canvasId, data) {
+        function updateCharts(stats) {
+            createPieChart('versionChart', 'Version Distribution', stats.versions || {});
+            createPieChart('osChart', 'Operating System Distribution', stats.os_distribution || {});
+        }
+
+        function createPieChart(canvasId, title, data) {
             const ctx = document.getElementById(canvasId).getContext('2d');
             
             if (charts[canvasId]) {
@@ -309,12 +319,13 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
 
         // One stacked band per version: the band is how many clusters ran that
         // version that day, the top of the stack is the confirmed fleet, so the
-        // chart shows both how it grows and what it upgrades to.
+        // chart shows both how it grows and what it upgrades to. The pie above
+        // it is the same fleet on the last of these days.
         function updateVersions(series) {
             const versions = series.versions || [];
             const dates = series.dates || [];
             const total = series.total_clusters || 0;
-            document.getElementById('versionTotal').textContent =
+            document.getElementById('versionSeriesTotal').textContent =
                 total + ' cluster' + (total === 1 ? '' : 's') + ' on ' + (dates[dates.length - 1] || 'no data');
 
             // Newest release on the floor, oldest on top: the current release
@@ -329,7 +340,7 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
                     '#ffffff', '#9a9a94', 2));
             }
 
-            stackedArea('versionChart', dates, datasets, value => value, { plugins: [bandLabels] });
+            stackedArea('versionSeriesChart', dates, datasets, value => value, { plugins: [bandLabels] });
         }
 
         // Writes each version into its own band, so the chart reads without
