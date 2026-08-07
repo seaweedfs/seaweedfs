@@ -1,10 +1,12 @@
 package filer
 
 import (
+	"bytes"
 	"context"
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 )
@@ -39,5 +41,47 @@ func TestNotifyUpdateEventRecordsRequestMetadataEvent(t *testing.T) {
 	}
 	if event.TsNs == 0 {
 		t.Fatal("expected event timestamp to be set")
+	}
+}
+
+func TestNotifyUpdateEventReloadsLocalFilerConfiguration(t *testing.T) {
+	f := &Filer{
+		Signature: 42,
+		FilerConf: NewFilerConf(),
+		LocalMetaLogBuffer: log_buffer.NewLogBuffer(
+			"test",
+			time.Hour,
+			func(*log_buffer.LogBuffer, time.Time, time.Time, []byte, int64, int64) {},
+			nil,
+			nil,
+		),
+	}
+
+	updatedConf := NewFilerConf()
+	if err := updatedConf.SetLocationConf(&filer_pb.FilerConf_PathConf{
+		LocationPrefix: "/data/",
+		Collection:     "hot",
+	}); err != nil {
+		t.Fatalf("set location conf: %v", err)
+	}
+	var content bytes.Buffer
+	if err := updatedConf.ToText(&content); err != nil {
+		t.Fatalf("serialize filer conf: %v", err)
+	}
+
+	f.NotifyUpdateEvent(context.Background(), nil, &Entry{
+		FullPath: util.NewFullPath(DirectoryEtcSeaweedFS, FilerConfName),
+		Attr: Attr{
+			FileSize: uint64(content.Len()),
+		},
+		Content: content.Bytes(),
+	}, false, false, nil)
+
+	locConf, found := f.FilerConf.GetLocationConf("/data/")
+	if !found {
+		t.Fatal("expected local filer configuration to reload /data/ rule")
+	}
+	if locConf.Collection != "hot" {
+		t.Fatalf("collection = %q, want hot", locConf.Collection)
 	}
 }

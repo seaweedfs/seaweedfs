@@ -71,9 +71,7 @@ func (f *Filer) notifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry
 		sink.Record(event)
 	}
 
-	// Trigger empty folder cleanup for local events
-	// Remote events are handled via MetaAggregator.onMetadataChangeEvent
-	f.triggerLocalEmptyFolderCleanup(oldEntry, newEntry)
+	f.onMetadataChangeEvent(event)
 
 	return event
 }
@@ -119,41 +117,6 @@ func (f *Filer) logMetaEvent(ctx context.Context, event *filer_pb.SubscribeMetad
 		glog.Errorf("failed to add data to log buffer for %s: %v", event.Directory, err)
 	}
 
-}
-
-// triggerLocalEmptyFolderCleanup triggers empty folder cleanup for local events
-// This is needed because onMetadataChangeEvent is only called for remote peer events
-func (f *Filer) triggerLocalEmptyFolderCleanup(oldEntry, newEntry *Entry) {
-	if f.EmptyFolderCleaner == nil || !f.EmptyFolderCleaner.IsEnabled() {
-		return
-	}
-
-	eventTime := time.Now()
-
-	// Handle delete events (oldEntry exists, newEntry is nil)
-	if oldEntry != nil && newEntry == nil {
-		dir, name := oldEntry.FullPath.DirAndName()
-		f.EmptyFolderCleaner.OnDeleteEvent(dir, name, oldEntry.IsDirectory(), eventTime)
-	}
-
-	// Handle create events (oldEntry is nil, newEntry exists)
-	if oldEntry == nil && newEntry != nil {
-		dir, name := newEntry.FullPath.DirAndName()
-		f.EmptyFolderCleaner.OnCreateEvent(dir, name, newEntry.IsDirectory())
-	}
-
-	// Handle rename/move events (both exist but paths differ)
-	if oldEntry != nil && newEntry != nil {
-		oldDir, oldName := oldEntry.FullPath.DirAndName()
-		newDir, newName := newEntry.FullPath.DirAndName()
-
-		if oldDir != newDir || oldName != newName {
-			// Treat old location as delete
-			f.EmptyFolderCleaner.OnDeleteEvent(oldDir, oldName, oldEntry.IsDirectory(), eventTime)
-			// Treat new location as create
-			f.EmptyFolderCleaner.OnCreateEvent(newDir, newName, newEntry.IsDirectory())
-		}
-	}
 }
 
 // metadataLogUploadLimit is the piece size a metadata log flush starts with. A
