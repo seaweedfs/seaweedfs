@@ -39,6 +39,21 @@ func (dn *DataNode) HasConsistentVolumeIndex() bool {
 	return held == servable
 }
 
+// moveLookupOwnership transfers the digest bit for vid from the node a lookup
+// entry used to name to the node it now names. Either may be nil, for an entry
+// being created or dropped.
+func moveLookupOwnership(vid needle.VolumeId, from, to *DataNode) {
+	if from == to {
+		return
+	}
+	if from != nil {
+		from.trackLookupChange(vid)
+	}
+	if to != nil {
+		to.trackLookupChange(vid)
+	}
+}
+
 // trackLookupChange records that vid became reachable through this node, or
 // stopped being: xor is its own inverse, so both are the same update. Volume
 // layouts for different collections share the node, so it cannot assume the

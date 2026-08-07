@@ -339,3 +339,72 @@ func TestVolumeDigestRefusesDuplicateVolumeIds(t *testing.T) {
 		t.Error("digest did not settle on the surviving copy")
 	}
 }
+
+// Two volume servers can hold one address. GetOrCreateDataNode keys on the id a
+// server reports and deliberately refuses to merge a new id onto an address an
+// older node still claims, while the lookup list keys on address alone -- so
+// registering the second server displaces the first from the lookup entry
+// without either node being told. The digest has to follow the entry, not the
+// node that was passed in.
+func addressSharingNodes(t *testing.T) (*Topology, *DataNode, *DataNode) {
+	t.Helper()
+	topo := NewTopology("digest", nil, 32*1024*1024*1024, 5, false)
+	rack := topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1")
+	counts := map[string]uint32{"": 1000}
+	old := rack.GetOrCreateDataNode("10.1.2.3", 8080, 18080, "", "n1", counts)
+	fresh := rack.GetOrCreateDataNode("10.1.2.3", 8080, 18080, "", "n2", counts)
+	if old == fresh {
+		t.Skip("address reuse no longer produces two nodes")
+	}
+	return topo, old, fresh
+}
+
+func TestVolumeIndexDigestFollowsDisplacedLookupEntry(t *testing.T) {
+	topo, old, fresh := addressSharingNodes(t)
+	v := digestTestVolume(1)
+
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{v}, old)
+	if !old.HasConsistentVolumeIndex() {
+		t.Fatal("the first node should be consistent before it is displaced")
+	}
+
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{v}, fresh)
+
+	servable := map[*DataNode]bool{}
+	for _, dn := range topo.Lookup("", needle.VolumeId(1)) {
+		servable[dn] = true
+	}
+	if servable[old] || !servable[fresh] {
+		t.Fatalf("expected the lookup entry to move to the new node, got old=%v fresh=%v",
+			servable[old], servable[fresh])
+	}
+
+	if old.HasConsistentVolumeIndex() {
+		t.Error("the displaced node still holds the volume and can no longer serve it, so its index must read as inconsistent")
+	}
+	if !fresh.HasConsistentVolumeIndex() {
+		t.Error("the node the lookup entry now names reads as inconsistent")
+	}
+}
+
+func TestVolumeIndexDigestFollowsRemovedLookupEntry(t *testing.T) {
+	topo, old, fresh := addressSharingNodes(t)
+	v := digestTestVolume(1)
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{v}, old)
+
+	// fresh shares old's address, so unregistering through it removes old's
+	// lookup entry. The digest must come off the node that was actually removed.
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	vl := topo.GetVolumeLayout("c", rp, needle.EMPTY_TTL, types.HardDriveType)
+	vl.SetVolumeUnavailable(fresh, needle.VolumeId(1))
+
+	if got := topo.Lookup("c", needle.VolumeId(1)); got != nil {
+		t.Fatalf("expected the lookup entry to be gone, got %v", got)
+	}
+	if old.HasConsistentVolumeIndex() {
+		t.Error("the removed node still holds the volume and cannot serve it, so its index must read as inconsistent")
+	}
+	if _, servable := fresh.VolumeIndexDigests(); servable != 0 {
+		t.Error("the node that was merely passed in should never have gained the entry")
+	}
+}
