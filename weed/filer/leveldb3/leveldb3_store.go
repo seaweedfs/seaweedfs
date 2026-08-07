@@ -199,7 +199,15 @@ func (store *LevelDB3Store) InsertEntry(ctx context.Context, entry *filer.Entry)
 		value = weed_util.MaybeGzipData(value)
 	}
 
-	err = db.Put(key, value, nil)
+	if collection := filer.EntryCollection(entry); collection != "" {
+		// atomically write the entry together with its collection index key
+		batch := new(leveldb.Batch)
+		batch.Put(key, value)
+		batch.Put(filer.ColIdxKey(collection, entry.FullPath), nil)
+		err = db.Write(batch, nil)
+	} else {
+		err = db.Put(key, value, nil)
+	}
 
 	if err != nil {
 		return fmt.Errorf("persisting %s : %v", entry.FullPath, err)
@@ -256,6 +264,19 @@ func (store *LevelDB3Store) DeleteEntry(ctx context.Context, fullpath weed_util.
 
 	dir, name := shortPath.DirAndName()
 	key := genKey(dir, name)
+
+	// remove the collection index key together with the entry, if any
+	if entry, findErr := store.FindEntry(ctx, fullpath); findErr == nil {
+		if collection := filer.EntryCollection(entry); collection != "" {
+			batch := new(leveldb.Batch)
+			batch.Delete(key)
+			batch.Delete(filer.ColIdxKey(collection, fullpath))
+			if err = db.Write(batch, nil); err != nil {
+				return fmt.Errorf("delete %s : %v", fullpath, err)
+			}
+			return nil
+		}
+	}
 
 	err = db.Delete(key, nil)
 	if err != nil {
@@ -400,4 +421,81 @@ func (store *LevelDB3Store) Shutdown() {
 	for _, db := range store.dbs {
 		db.Close()
 	}
+}
+
+// ============================================================
+// Collection -> Filer Path reverse index
+// Key format and shared helpers in weed/filer/collection_index.go
+// ============================================================
+
+// DeleteCollectionEntries deletes all entries recorded under the given
+// collection via the collection index, returning the number of deleted
+// files and the set of parent directories that may now be empty.
+// Stale index keys (entry already gone) are removed without being counted.
+func (store *LevelDB3Store) DeleteCollectionEntries(ctx context.Context, collection string) (deletedFiles int, parentDirs []weed_util.FullPath, err error) {
+	if collection == "" {
+		return 0, nil, fmt.Errorf("collection is required")
+	}
+
+	prefix := filer.ColIdxPrefix(collection)
+	dirSet := make(map[weed_util.FullPath]bool)
+
+	store.dbsLock.RLock()
+	dbs := make([]*leveldb.DB, 0, len(store.dbs))
+	for _, db := range store.dbs {
+		dbs = append(dbs, db)
+	}
+	store.dbsLock.RUnlock()
+
+	for _, db := range dbs {
+		batch := new(leveldb.Batch)
+		batchCount := 0
+
+		iter := db.NewIterator(leveldb_util.BytesPrefix(prefix), nil)
+		for iter.Next() {
+			idxKey := append([]byte(nil), iter.Key()...)
+			fullPath := weed_util.FullPath(idxKey[len(prefix):])
+
+			// route through findDB so bucket-relative entry keys are computed
+			// correctly (index keys always live in the same db as their entry)
+			if entryDb, _, shortPath, findErr := store.findDB(fullPath, false); findErr == nil {
+				sDir, sName := shortPath.DirAndName()
+				entryKey := genKey(sDir, sName)
+				if has, _ := entryDb.Has(entryKey, nil); has {
+					if entryDb == db {
+						batch.Delete(entryKey)
+						batchCount++
+					} else {
+						entryDb.Delete(entryKey, nil)
+					}
+					deletedFiles++
+					dir, _ := fullPath.DirAndName()
+					dirSet[weed_util.FullPath(dir)] = true
+				}
+			}
+			batch.Delete(idxKey)
+			batchCount++
+
+			if batchCount >= filer.ColIdxDeleteBatchSize {
+				if err = db.Write(batch, nil); err != nil {
+					iter.Release()
+					return deletedFiles, nil, fmt.Errorf("delete collection %s entries: %v", collection, err)
+				}
+				batch.Reset()
+				batchCount = 0
+			}
+		}
+		iter.Release()
+
+		if batchCount > 0 {
+			if err = db.Write(batch, nil); err != nil {
+				return deletedFiles, nil, fmt.Errorf("delete collection %s entries: %v", collection, err)
+			}
+		}
+	}
+
+	for dir := range dirSet {
+		parentDirs = append(parentDirs, dir)
+	}
+	return deletedFiles, parentDirs, nil
 }
