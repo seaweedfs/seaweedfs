@@ -165,6 +165,11 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out DirEntrySink, isPlusMode
 
 	if input.Offset == 0 {
 		dh.reset()
+	} else if input.Offset < dh.entryStreamOffset {
+		// Seeking back before what the handle still holds. Start the directory
+		// again rather than reporting nothing; the preload below refills up to
+		// the requested offset.
+		dh.reset()
 	} else if dh.isFinished && input.Offset >= dh.entryStreamOffset {
 		entryCurrentIndex := input.Offset - dh.entryStreamOffset
 		if uint64(len(dh.entryStream)) <= entryCurrentIndex {
@@ -245,6 +250,19 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out DirEntrySink, isPlusMode
 
 	// Read from cache first, then load next batch if needed
 	if input.Offset >= dh.entryStreamOffset {
+		// Drop what the client has walked past. Offsets are indexes into the
+		// stream from entryStreamOffset, so advancing the two together keeps
+		// them lined up; one entry is kept back because the next batch resumes
+		// from the name immediately before the offset.
+		if trim := int(input.Offset-dh.entryStreamOffset) - 1; trim > 0 && trim <= len(dh.entryStream) {
+			copy(dh.entryStream, dh.entryStream[trim:])
+			for i := len(dh.entryStream) - trim; i < len(dh.entryStream); i++ {
+				dh.entryStream[i] = nil
+			}
+			dh.entryStream = dh.entryStream[:len(dh.entryStream)-trim]
+			dh.entryStreamOffset += uint64(trim)
+		}
+
 		// Handle case: new handle with non-zero offset but empty cache
 		// This happens when NFS-Ganesha opens multiple directory handles
 		if len(dh.entryStream) == 0 && input.Offset > dh.entryStreamOffset {

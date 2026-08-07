@@ -182,3 +182,65 @@ func TestReadDirWithExpiredEntries(t *testing.T) {
 		t.Fatalf("listed %d entries %v, want the %d live ones %v", len(seen), seen, len(live), live)
 	}
 }
+
+// TestReadDirTrimsConsumedEntries checks that a walk does not accumulate the
+// whole directory in the handle. Offsets index into the stream from
+// entryStreamOffset, so the two have to advance together or the listing
+// silently misaligns.
+func TestReadDirTrimsConsumedEntries(t *testing.T) {
+	dir := util.FullPath("/d")
+	const total = 5000
+	var names []string
+	for i := 0; i < total; i++ {
+		names = append(names, fmt.Sprintf("f%05d", i))
+	}
+	wfs := newPagingWFS(t, dir, names, 0)
+	dirInode, _ := wfs.inodeToPath.GetInode(dir)
+
+	dhid, dh := wfs.AcquireDirectoryHandle()
+	defer wfs.ReleaseDirectoryHandle(dhid)
+
+	// A small sink forces many rounds, which is when the stream would grow.
+	sink := &pagingSink{limit: 64}
+	var offset uint64
+	var seen []string
+	peak := 0
+	for round := 0; round < 500; round++ {
+		sink.round = 0
+		before := len(sink.names)
+		status := wfs.doReadDirectory(&fuse.ReadIn{
+			InHeader: fuse.InHeader{NodeId: dirInode},
+			Fh:       uint64(dhid),
+			Offset:   offset,
+			Size:     1 << 20,
+		}, sink, false)
+		if status != fuse.OK {
+			t.Fatalf("readdir: %v", status)
+		}
+		if n := len(dh.entryStream); n > peak {
+			peak = n
+		}
+		if len(sink.names) == before || sink.lastOff <= offset {
+			break
+		}
+		offset = sink.lastOff
+	}
+	for _, n := range sink.names {
+		if n != "." && n != ".." {
+			seen = append(seen, n)
+		}
+	}
+
+	if len(seen) != total {
+		t.Fatalf("listed %d entries, want %d", len(seen), total)
+	}
+	for i, name := range seen {
+		if want := fmt.Sprintf("f%05d", i); name != want {
+			t.Fatalf("entry %d is %q, want %q -- trimming misaligned the offsets", i, name, want)
+		}
+	}
+	// Without trimming the handle ends up holding every entry.
+	if peak >= total {
+		t.Errorf("handle held %d entries at peak, want well under the %d in the directory", peak, total)
+	}
+}
