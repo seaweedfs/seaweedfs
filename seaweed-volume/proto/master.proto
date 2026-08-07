@@ -105,6 +105,12 @@ message Heartbeat {
   // physical disk capacity per disk type, in bytes, from the underlying filesystem
   map<string, uint64> disk_total_bytes = 25;
   map<string, uint64> disk_free_bytes = 26;
+
+  // Digest of every volume in this heartbeat's view of the server, letting the
+  // master check its copy is current without being sent the whole list. Absent
+  // from servers that do not compute it, and distinct from a digest of 0, which
+  // is what a server holding no volumes reports.
+  optional uint64 volume_digest = 27;
 }
 
 message HeartbeatResponse {
@@ -115,6 +121,9 @@ message HeartbeatResponse {
   repeated StorageBackend storage_backends = 5;
   repeated string duplicated_uuids = 6;
   bool preallocate = 7;
+  // The master's view of this server's volumes disagrees with the reported
+  // digest, so it needs the full volume list rather than changes alone.
+  bool resend_full_volume_list = 8;
 }
 
 message VolumeInformationMessage {
@@ -294,6 +303,11 @@ message StatisticsResponse {
   uint64 total_size = 4;
   uint64 used_size = 5;
   uint64 file_count = 6;
+  // sizes counting one copy of the data: a single replica of a regular volume,
+  // the data shards of an ec volume. logical_total_size scales the free space
+  // by the copies the requested replication makes.
+  uint64 logical_total_size = 7;
+  uint64 logical_used_size = 8;
 }
 
 //
