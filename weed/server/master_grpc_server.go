@@ -28,6 +28,16 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/topology"
 )
 
+// shouldBroadcastVolumeRemoval reports whether clients should be told the
+// volume has left this node. A volume moved between the node's own disks is
+// removed from one and added to the other, so it appears in both lists of the
+// same heartbeat, and clients apply additions before deletions -- passing the
+// removal on would drop a location that is still good. Mirrors the guard the ec
+// shard paths already apply.
+func shouldBroadcastVolumeRemoval(dn *topology.DataNode, vid needle.VolumeId) bool {
+	return !dn.HasVolumesById(vid)
+}
+
 func (ms *MasterServer) RegisterUuids(heartbeat *master_pb.Heartbeat) (duplicated_uuids []string, err error) {
 	ms.Topo.UuidAccessLock.Lock()
 	defer ms.Topo.UuidAccessLock.Unlock()
@@ -207,15 +217,20 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			stats.MasterReceivedHeartbeatCounter.WithLabelValues("deletedVolumes").Inc()
 		}
 		if len(heartbeat.NewVolumes) > 0 || len(heartbeat.DeletedVolumes) > 0 {
+			// update master internal volume layouts first, so the removals below
+			// are judged against where the volumes ended up
+			ms.Topo.IncrementalSyncDataNodeRegistration(heartbeat.NewVolumes, heartbeat.DeletedVolumes, dn)
+
 			// process delta volume ids if exists for fast volume id updates
 			for _, volInfo := range heartbeat.NewVolumes {
 				message.NewVids = append(message.NewVids, volInfo.Id)
 			}
 			for _, volInfo := range heartbeat.DeletedVolumes {
+				if !shouldBroadcastVolumeRemoval(dn, needle.VolumeId(volInfo.Id)) {
+					continue
+				}
 				message.DeletedVids = append(message.DeletedVids, volInfo.Id)
 			}
-			// update master internal volume layouts
-			ms.Topo.IncrementalSyncDataNodeRegistration(heartbeat.NewVolumes, heartbeat.DeletedVolumes, dn)
 		}
 
 		if len(heartbeat.Volumes) > 0 || heartbeat.HasNoVolumes {
@@ -234,6 +249,9 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			}
 			for _, v := range deletedVolumes {
 				glog.V(1).Infof("master see deleted volume %d from %s", uint32(v.Id), dn.Url())
+				if !shouldBroadcastVolumeRemoval(dn, v.Id) {
+					continue
+				}
 				message.DeletedVids = append(message.DeletedVids, uint32(v.Id))
 			}
 		}
