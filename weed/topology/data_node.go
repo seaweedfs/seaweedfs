@@ -211,6 +211,19 @@ func (dn *DataNode) GetVolumes() (ret []storage.VolumeInfo) {
 	return ret
 }
 
+// VolumeDigest summarises every volume the master believes this node holds. A
+// volume server that reports a different digest has drifted from the master and
+// needs to resend its volume list.
+func (dn *DataNode) VolumeDigest() uint64 {
+	dn.RLock()
+	defer dn.RUnlock()
+	var digest uint64
+	for _, c := range dn.children {
+		digest ^= c.(*Disk).VolumeDigest()
+	}
+	return digest
+}
+
 func (dn *DataNode) GetVolumesById(id needle.VolumeId) (vInfo storage.VolumeInfo, err error) {
 	dn.RLock()
 	defer dn.RUnlock()
