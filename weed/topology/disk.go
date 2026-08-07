@@ -202,14 +202,19 @@ func (d *Disk) doAddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChanged bool)
 	return
 }
 
-func (d *Disk) GetVolumes() (ret []storage.VolumeInfo) {
+func (d *Disk) GetVolumes() []storage.VolumeInfo {
+	return d.AppendVolumes(make([]storage.VolumeInfo, 0, d.VolumeCount()))
+}
+
+// AppendVolumes appends the disk's volumes to dst, so a caller gathering
+// several disks fills one slice instead of concatenating a copy per disk.
+func (d *Disk) AppendVolumes(dst []storage.VolumeInfo) []storage.VolumeInfo {
 	d.RLock()
-	ret = make([]storage.VolumeInfo, 0, len(d.volumes))
+	defer d.RUnlock()
 	for _, v := range d.volumes {
-		ret = append(ret, v)
+		dst = append(dst, v)
 	}
-	d.RUnlock()
-	return ret
+	return dst
 }
 
 func (d *Disk) VolumeCount() int {

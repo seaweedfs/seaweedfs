@@ -207,7 +207,7 @@ func (dn *DataNode) GetVolumes() (ret []storage.VolumeInfo) {
 	}
 	ret = make([]storage.VolumeInfo, 0, total)
 	for _, c := range dn.children {
-		ret = append(ret, c.(*Disk).GetVolumes()...)
+		ret = c.(*Disk).AppendVolumes(ret)
 	}
 	return ret
 }
