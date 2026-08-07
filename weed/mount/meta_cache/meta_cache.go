@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"os"
+	"sort"
 	"sync"
 	"time"
 
@@ -42,6 +43,11 @@ type MetaCache struct {
 	buildingDirs         map[util.FullPath]*directoryBuildState
 	dedupRing            dedupRingBuffer
 	includeSystemEntries bool
+
+	// listings holds directories walked all the way through, so walking one
+	// again reads and decodes nothing. Every store write drops the directory it
+	// touched; see the storeX wrappers.
+	listings *listingCache
 
 	// dirVersionFloors is each cached directory's listing snapshot: the
 	// version of every child the listing covered, present or absent, unless
@@ -103,6 +109,13 @@ type metadataApplyRequest struct {
 
 func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPath, includeSystemEntries bool,
 	markCachedFn func(path util.FullPath), isCachedFn func(path util.FullPath) bool, invalidateFunc func(EntryInvalidation), onDirectoryUpdate func(dir util.FullPath)) *MetaCache {
+	return NewMetaCacheWithListingCache(dbFolder, uidGidMapper, root, includeSystemEntries, markCachedFn, isCachedFn, invalidateFunc, onDirectoryUpdate, DefaultListingCacheEntries)
+}
+
+// NewMetaCacheWithListingCache sizes the directory listing cache; zero disables it.
+func NewMetaCacheWithListingCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPath, includeSystemEntries bool,
+	markCachedFn func(path util.FullPath), isCachedFn func(path util.FullPath) bool, invalidateFunc func(EntryInvalidation), onDirectoryUpdate func(dir util.FullPath),
+	listingCacheEntries int) *MetaCache {
 	leveldbStore, virtualStore := openMetaStore(dbFolder)
 	mc := &MetaCache{
 		root:                 root,
@@ -119,6 +132,7 @@ func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPat
 		buildingDirs:         make(map[util.FullPath]*directoryBuildState),
 		dedupRing:            newDedupRingBuffer(),
 		dirVersionFloors:     make(map[util.FullPath]int64),
+		listings:             newListingCache(listingCacheEntries),
 	}
 	mc.invalidateWorker = util.NewAsyncBatchWorker(func(batch []EntryInvalidation) {
 		for _, invalidation := range batch {
@@ -157,7 +171,7 @@ func (mc *MetaCache) InsertEntry(ctx context.Context, entry *filer.Entry, versio
 }
 
 func (mc *MetaCache) doInsertEntry(ctx context.Context, entry *filer.Entry, versionTsNs int64) error {
-	if err := mc.localStore.InsertEntry(ctx, entry); err != nil {
+	if err := mc.storeInsertEntry(ctx, entry); err != nil {
 		return err
 	}
 	mc.setEntryVersionLocked(ctx, entry.FullPath, versionTsNs)
@@ -187,7 +201,7 @@ func (mc *MetaCache) atomicUpdateEntryFromFilerLocked(ctx context.Context, oldPa
 	if entry != nil && vacatingOldPath {
 		ctx = context.WithValue(ctx, "OP", "MV")
 		glog.V(3).Infof("DeleteEntry %s", oldPath)
-		if err := mc.localStore.DeleteEntry(ctx, oldPath); err != nil {
+		if err := mc.storeDeleteEntry(ctx, oldPath); err != nil {
 			return err
 		}
 	}
@@ -209,7 +223,7 @@ func (mc *MetaCache) atomicUpdateEntryFromFilerLocked(ctx context.Context, oldPa
 		newDir, _ := newEntry.DirAndName()
 		if allowUncachedInsert || mc.isCachedFn(util.FullPath(newDir)) {
 			glog.V(3).Infof("InsertEntry %s/%s", newDir, newEntry.Name())
-			if err := mc.localStore.InsertEntry(ctx, newEntry); err != nil {
+			if err := mc.storeInsertEntry(ctx, newEntry); err != nil {
 				return err
 			}
 			mc.setEntryVersionLocked(ctx, newEntry.FullPath, versionTsNs)
@@ -230,11 +244,11 @@ func (mc *MetaCache) purgeEntryLocked(ctx context.Context, fullpath util.FullPat
 	if fullpath == "" {
 		return nil
 	}
-	if err := mc.localStore.DeleteEntry(ctx, fullpath); err != nil {
+	if err := mc.storeDeleteEntry(ctx, fullpath); err != nil {
 		return err
 	}
 	if isDirectory {
-		if err := mc.localStore.DeleteFolderChildren(ctx, fullpath); err != nil {
+		if err := mc.storeDeleteFolderChildren(ctx, fullpath); err != nil {
 			return err
 		}
 	}
@@ -303,7 +317,10 @@ func (mc *MetaCache) applyMetadataResponseEnqueue(ctx context.Context, resp *fil
 	}
 }
 
+// BeginDirectoryBuild drops the cached listing: a rebuild replaces the whole
+// child set, and nothing may be served from the old one meanwhile.
 func (mc *MetaCache) BeginDirectoryBuild(ctx context.Context, dirPath util.FullPath) error {
+	mc.listings.invalidate(dirPath)
 	return mc.enqueueAndWait(ctx, metadataApplyRequest{
 		kind:      metadataBeginBuild,
 		buildPath: dirPath,
@@ -311,6 +328,7 @@ func (mc *MetaCache) BeginDirectoryBuild(ctx context.Context, dirPath util.FullP
 }
 
 func (mc *MetaCache) CompleteDirectoryBuild(ctx context.Context, dirPath util.FullPath, snapshotTsNs int64) error {
+	mc.listings.invalidate(dirPath)
 	return mc.enqueueAndWait(ctx, metadataApplyRequest{
 		kind:         metadataCompleteBuild,
 		buildPath:    dirPath,
@@ -319,6 +337,7 @@ func (mc *MetaCache) CompleteDirectoryBuild(ctx context.Context, dirPath util.Fu
 }
 
 func (mc *MetaCache) AbortDirectoryBuild(ctx context.Context, dirPath util.FullPath) error {
+	mc.listings.invalidate(dirPath)
 	return mc.enqueueAndWait(ctx, metadataApplyRequest{
 		kind:      metadataAbortBuild,
 		buildPath: dirPath,
@@ -330,6 +349,7 @@ func (mc *MetaCache) AbortDirectoryBuild(ctx context.Context, dirPath util.FullP
 // like kernel Forget don't block; see purgeDirectoryChildrenNow for why off-loop
 // callers must route through here rather than wiping the store directly.
 func (mc *MetaCache) PurgeDirectoryChildren(dirPath util.FullPath, resetFn func()) {
+	mc.listings.invalidate(dirPath)
 	_ = mc.enqueueApplyRequest(metadataApplyRequest{
 		ctx:       context.Background(),
 		kind:      metadataPurgeDir,
@@ -342,7 +362,7 @@ func (mc *MetaCache) PurgeDirectoryChildren(dirPath util.FullPath, resetFn func(
 func (mc *MetaCache) UpdateEntry(ctx context.Context, entry *filer.Entry) error {
 	mc.Lock()
 	defer mc.Unlock()
-	if err := mc.localStore.UpdateEntry(ctx, entry); err != nil {
+	if err := mc.storeUpdateEntry(ctx, entry); err != nil {
 		return err
 	}
 	mc.markEntryUnversionedLocked(ctx, entry.FullPath)
@@ -365,7 +385,7 @@ func (mc *MetaCache) TouchDirMtimeCtime(ctx context.Context, dirPath util.FullPa
 	}
 	entry.Attr.Mtime = now
 	entry.Attr.Ctime = now
-	if err := mc.localStore.UpdateEntry(ctx, entry); err != nil {
+	if err := mc.storeUpdateEntry(ctx, entry); err != nil {
 		return err
 	}
 	mc.markEntryUnversionedLocked(ctx, dirPath)
@@ -576,7 +596,7 @@ func (mc *MetaCache) deleteChildVersionRecordsLocked(ctx context.Context, dirPat
 func (mc *MetaCache) DeleteEntry(ctx context.Context, fp util.FullPath) (err error) {
 	mc.Lock()
 	defer mc.Unlock()
-	if err = mc.localStore.DeleteEntry(ctx, fp); err != nil {
+	if err = mc.storeDeleteEntry(ctx, fp); err != nil {
 		return err
 	}
 	mc.clearEntryVersionLocked(ctx, fp)
@@ -587,7 +607,7 @@ func (mc *MetaCache) DeleteFolderChildren(ctx context.Context, fp util.FullPath)
 	defer mc.Unlock()
 	delete(mc.dirVersionFloors, fp)
 	mc.deleteChildVersionRecordsLocked(ctx, fp)
-	return mc.localStore.DeleteFolderChildren(ctx, fp)
+	return mc.storeDeleteFolderChildren(ctx, fp)
 }
 
 // SetPinnedChildFn installs a predicate reporting whether a child holds
@@ -606,7 +626,7 @@ func (mc *MetaCache) deleteFolderChildrenForRebuild(ctx context.Context, dirPath
 	mc.Lock()
 	defer mc.Unlock()
 	if mc.pinnedChildFn == nil {
-		return mc.localStore.DeleteFolderChildren(ctx, dirPath)
+		return mc.storeDeleteFolderChildren(ctx, dirPath)
 	}
 	var pinned []*filer.Entry
 	if _, err := mc.localStore.ListDirectoryEntries(ctx, dirPath, "", true, math.MaxInt64, func(entry *filer.Entry) (bool, error) {
@@ -617,7 +637,7 @@ func (mc *MetaCache) deleteFolderChildrenForRebuild(ctx context.Context, dirPath
 	}); err != nil {
 		return err
 	}
-	if err := mc.localStore.DeleteFolderChildren(ctx, dirPath); err != nil {
+	if err := mc.storeDeleteFolderChildren(ctx, dirPath); err != nil {
 		return err
 	}
 	if len(pinned) > 0 {
@@ -631,6 +651,10 @@ func (mc *MetaCache) deleteFolderChildrenForRebuild(ctx context.Context, dirPath
 // the store has already spent it against limit. A caller paginating by count
 // would read a short batch as the end of the directory, and one resuming from
 // the last name it saw would re-read the dropped ones forever.
+//
+// A directory already walked all the way through is served from memory. Only a
+// listing that leaves out chunk lists is cached or served, so an entry from the
+// cache can never be handed to a caller that wanted chunks.
 func (mc *MetaCache) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 	mc.RLock()
 	defer mc.RUnlock()
@@ -638,15 +662,126 @@ func (mc *MetaCache) ListDirectoryEntries(ctx context.Context, dirPath util.Full
 	if !mc.isCachedFn(dirPath) {
 		// if this request comes after renaming, it should be fine
 		glog.Warningf("unsynchronized dir: %v", dirPath)
+		mc.listings.invalidate(dirPath)
+		return mc.listFromStore(ctx, dirPath, startFileName, includeStartFile, limit, eachEntryFunc, nil)
 	}
 
+	cacheable := filer_pb.ChunksOmitted(ctx)
+	if cacheable {
+		if entries, found := mc.listings.lookup(dirPath); found {
+			return serveCachedListing(entries, startFileName, includeStartFile, limit, eachEntryFunc)
+		}
+	}
+
+	var build *listingBuild
+	if cacheable {
+		build = mc.listings.beginOrContinue(dirPath, startFileName, includeStartFile)
+	}
+
+	storeCount := int64(0)
+	stoppedEarly := false
+	wrapped := func(entry *filer.Entry) (bool, error) {
+		ok, err := eachEntryFunc(entry)
+		if err != nil || !ok {
+			stoppedEarly = true
+		}
+		return ok, err
+	}
+	lastFileName, err = mc.listFromStore(ctx, dirPath, startFileName, includeStartFile, limit, wrapped, func(entry *filer.Entry) {
+		storeCount++
+		if build != nil {
+			build.entries = append(build.entries, entry)
+		}
+	})
+	if err != nil {
+		mc.listings.invalidate(dirPath)
+		return lastFileName, err
+	}
+	if build != nil {
+		// A short page means the store ran out only if the caller did not stop
+		// it first. A caller whose buffer filled has seen part of a page, and
+		// the rest of the directory is still out there.
+		if storeCount < limit && !stoppedEarly {
+			mc.listings.publish(dirPath, build)
+		} else {
+			mc.listings.carry(dirPath, build, lastFileName)
+		}
+	}
+	return lastFileName, nil
+}
+
+// listFromStore reads a page, dropping expired children and mapping ids. observe,
+// when set, sees every entry the store produced, expired ones included, since
+// those are what limit was spent on.
+func (mc *MetaCache) listFromStore(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc, observe func(*filer.Entry)) (string, error) {
 	return mc.localStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit, func(entry *filer.Entry) (bool, error) {
-		if entry.TtlSec > 0 && entry.Crtime.Add(time.Duration(entry.TtlSec)*time.Second).Before(time.Now()) {
+		mc.mapIdFromFilerToLocal(entry)
+		if observe != nil {
+			observe(entry)
+		}
+		if isTtlExpired(entry) {
 			return true, nil
 		}
-		mc.mapIdFromFilerToLocal(entry)
 		return eachEntryFunc(entry)
 	})
+}
+
+// serveCachedListing walks an in-memory listing the way the store would: limit
+// counts every child it steps over, expired or not, and lastFileName is the last
+// one stepped over rather than the last one reported. Expiry is applied here
+// rather than at cache time, so a listing does not go stale as children age out.
+func serveCachedListing(entries []*filer.Entry, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
+	start := sort.Search(len(entries), func(i int) bool {
+		if includeStartFile {
+			return entries[i].Name() >= startFileName
+		}
+		return entries[i].Name() > startFileName
+	})
+	for i := start; i < len(entries) && int64(i-start) < limit; i++ {
+		entry := entries[i]
+		lastFileName = entry.Name()
+		if isTtlExpired(entry) {
+			continue
+		}
+		if ok, err := eachEntryFunc(entry); err != nil || !ok {
+			return lastFileName, err
+		}
+	}
+	return lastFileName, nil
+}
+
+// Every write to the local store goes through these, so a directory's cached
+// listing cannot outlive a change to it. Reaching past them to mc.localStore
+// for a write would leave the listing stale.
+func (mc *MetaCache) storeInsertEntry(ctx context.Context, entry *filer.Entry) error {
+	mc.listings.invalidateChild(entry.FullPath)
+	return mc.localStore.InsertEntry(ctx, entry)
+}
+
+func (mc *MetaCache) storeUpdateEntry(ctx context.Context, entry *filer.Entry) error {
+	mc.listings.invalidateChild(entry.FullPath)
+	return mc.localStore.UpdateEntry(ctx, entry)
+}
+
+func (mc *MetaCache) storeDeleteEntry(ctx context.Context, fp util.FullPath) error {
+	mc.listings.invalidateChild(fp)
+	return mc.localStore.DeleteEntry(ctx, fp)
+}
+
+func (mc *MetaCache) storeDeleteFolderChildren(ctx context.Context, fp util.FullPath) error {
+	mc.listings.invalidate(fp)
+	return mc.localStore.DeleteFolderChildren(ctx, fp)
+}
+
+// InvalidateAllListings distrusts every cached listing, for when a subscription
+// gap means the mount cannot know what it missed.
+func (mc *MetaCache) InvalidateAllListings() {
+	mc.listings.invalidateAll()
+}
+
+// ListingCacheSize reports the cached directories and the children they hold.
+func (mc *MetaCache) ListingCacheSize() (dirs, entries int) {
+	return mc.listings.size()
 }
 
 func (mc *MetaCache) Shutdown() {
@@ -935,7 +1070,7 @@ func (mc *MetaCache) applyMetadataResponseLocked(ctx context.Context, resp *file
 		isDelete := message.NewEntry == nil
 		isMove := message.NewEntry != nil && (message.NewParentPath != resp.Directory || message.NewEntry.Name != message.OldEntry.Name)
 		if isDelete || isMove {
-			if deleteErr := mc.localStore.DeleteFolderChildren(ctx, oldPath); deleteErr != nil {
+			if deleteErr := mc.storeDeleteFolderChildren(ctx, oldPath); deleteErr != nil {
 				glog.V(2).Infof("delete descendants of %s: %v", oldPath, deleteErr)
 			}
 		}
@@ -977,7 +1112,7 @@ func (mc *MetaCache) purgeDirectoryChildrenNow(ctx context.Context, dirPath util
 	defer mc.Unlock()
 	delete(mc.dirVersionFloors, dirPath)
 	mc.deleteChildVersionRecordsLocked(ctx, dirPath)
-	return mc.localStore.DeleteFolderChildren(ctx, dirPath)
+	return mc.storeDeleteFolderChildren(ctx, dirPath)
 }
 
 func (mc *MetaCache) completeDirectoryBuildNow(ctx context.Context, dirPath util.FullPath, snapshotTsNs int64) error {
