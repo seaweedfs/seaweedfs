@@ -355,7 +355,7 @@ func (vl *VolumeLayout) ensureCorrectWritables(vid needle.VolumeId) {
 		glog.V(0).Infof("volume %d does not have enough copies", vid)
 	}
 	if !isAllWritable {
-		glog.V(0).Infof("volume %d are not all writable", vid)
+		glog.V(0).Infof("volume %d is not fully writable", vid)
 	}
 	if isOversizedVolume {
 		glog.V(0).Infof("volume %d is oversized", vid)
