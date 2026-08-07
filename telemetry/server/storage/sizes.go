@@ -48,11 +48,11 @@ func (s *PrometheusStorage) GetClusterSizeSeries(days, limit int) ClusterSizeSer
 	series := ClusterSizeSeries{Dates: axis.dates}
 
 	for id, history := range histories {
-		disk, ok := axis.align(history, activeSince, diskBytes)
+		disk, ok := align(axis, history, activeSince, diskBytes)
 		if !ok {
 			continue
 		}
-		servers, _ := axis.align(history, activeSince, serverCount)
+		servers, _ := align(axis, history, activeSince, serverCount)
 		series.Clusters = append(series.Clusters, ClusterSeries{ClusterId: id, Disk: disk, Servers: servers})
 		series.TotalDisk += disk[last]
 		series.TotalServers += servers[last]

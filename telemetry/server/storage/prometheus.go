@@ -180,12 +180,12 @@ func (s *PrometheusStorage) GetMetrics(days int) (map[string]interface{}, error)
 	diskUsage := make([]uint64, len(axis.dates))
 	serverCounts := make([]int64, len(axis.dates))
 	for _, history := range histories {
-		if disk, ok := axis.align(history, activeSince, diskBytes); ok {
+		if disk, ok := align(axis, history, activeSince, diskBytes); ok {
 			for i, v := range disk {
 				diskUsage[i] += v
 			}
 		}
-		if servers, ok := axis.align(history, activeSince, serverCount); ok {
+		if servers, ok := align(axis, history, activeSince, serverCount); ok {
 			for i, v := range servers {
 				serverCounts[i] += int64(v)
 			}
