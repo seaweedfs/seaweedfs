@@ -626,7 +626,12 @@ func (mc *MetaCache) deleteFolderChildrenForRebuild(ctx context.Context, dirPath
 	return nil
 }
 
-func (mc *MetaCache) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) error {
+// ListDirectoryEntries reports the last name the store reached, which is not
+// the last name handed to eachEntryFunc: an expired child is dropped here after
+// the store has already spent it against limit. A caller paginating by count
+// would read a short batch as the end of the directory, and one resuming from
+// the last name it saw would re-read the dropped ones forever.
+func (mc *MetaCache) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 	mc.RLock()
 	defer mc.RUnlock()
 
@@ -635,17 +640,13 @@ func (mc *MetaCache) ListDirectoryEntries(ctx context.Context, dirPath util.Full
 		glog.Warningf("unsynchronized dir: %v", dirPath)
 	}
 
-	_, err := mc.localStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit, func(entry *filer.Entry) (bool, error) {
+	return mc.localStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit, func(entry *filer.Entry) (bool, error) {
 		if entry.TtlSec > 0 && entry.Crtime.Add(time.Duration(entry.TtlSec)*time.Second).Before(time.Now()) {
 			return true, nil
 		}
 		mc.mapIdFromFilerToLocal(entry)
 		return eachEntryFunc(entry)
 	})
-	if err != nil {
-		return err
-	}
-	return err
 }
 
 func (mc *MetaCache) Shutdown() {

@@ -27,7 +27,7 @@ func TestListDirectoryEntriesOmitsChunks(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var seen int
-			err := wfs.metaCache.ListDirectoryEntries(tc.ctx, dir, "", false, 100, func(entry *filer.Entry) (bool, error) {
+			_, err := wfs.metaCache.ListDirectoryEntries(tc.ctx, dir, "", false, 100, func(entry *filer.Entry) (bool, error) {
 				seen++
 				if got := len(entry.Chunks) > 0; got != tc.wantChunks {
 					t.Errorf("%s: has chunks = %v, want %v", entry.Name(), got, tc.wantChunks)

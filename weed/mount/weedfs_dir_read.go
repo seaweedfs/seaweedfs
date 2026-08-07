@@ -33,11 +33,15 @@ type DirectoryHandle struct {
 	isFinished        bool
 	entryStream       []*filer.Entry
 	entryStreamOffset uint64
-	snapshotTsNs      int64 // snapshot timestamp for consistent readdir in direct mode
+	// lastListedName is how far the store itself reached, which runs ahead of
+	// the last visible entry whenever children are dropped as expired.
+	lastListedName string
+	snapshotTsNs   int64 // snapshot timestamp for consistent readdir in direct mode
 }
 
 func (dh *DirectoryHandle) reset() {
 	dh.isFinished = false
+	dh.lastListedName = ""
 	dh.snapshotTsNs = 0
 	// Nil out pointers to allow garbage collection of old entries,
 	// then reuse the slice's capacity to avoid re-allocations.
@@ -161,6 +165,11 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out DirEntrySink, isPlusMode
 
 	if input.Offset == 0 {
 		dh.reset()
+	} else if input.Offset < dh.entryStreamOffset {
+		// Seeking back before what the handle still holds. Start the directory
+		// again rather than reporting nothing; the preload below refills up to
+		// the requested offset.
+		dh.reset()
 	} else if dh.isFinished && input.Offset >= dh.entryStreamOffset {
 		entryCurrentIndex := input.Offset - dh.entryStreamOffset
 		if uint64(len(dh.entryStream)) <= entryCurrentIndex {
@@ -241,6 +250,19 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out DirEntrySink, isPlusMode
 
 	// Read from cache first, then load next batch if needed
 	if input.Offset >= dh.entryStreamOffset {
+		// Drop what the client has walked past. Offsets are indexes into the
+		// stream from entryStreamOffset, so advancing the two together keeps
+		// them lined up; one entry is kept back because the next batch resumes
+		// from the name immediately before the offset.
+		if trim := int(input.Offset-dh.entryStreamOffset) - 1; trim > 0 && trim <= len(dh.entryStream) {
+			copy(dh.entryStream, dh.entryStream[trim:])
+			for i := len(dh.entryStream) - trim; i < len(dh.entryStream); i++ {
+				dh.entryStream[i] = nil
+			}
+			dh.entryStream = dh.entryStream[:len(dh.entryStream)-trim]
+			dh.entryStreamOffset += uint64(trim)
+		}
+
 		// Handle case: new handle with non-zero offset but empty cache
 		// This happens when NFS-Ganesha opens multiple directory handles
 		if len(dh.entryStream) == 0 && input.Offset > dh.entryStreamOffset {
@@ -252,10 +274,11 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out DirEntrySink, isPlusMode
 			}
 
 			// Load entries from beginning to fill cache up to the requested offset
-			loadErr := wfs.metaCache.ListDirectoryEntries(readdirContext, dirPath, "", false, skipCount+int64(batchSize), func(entry *filer.Entry) (bool, error) {
+			storeLastName, loadErr := wfs.metaCache.ListDirectoryEntries(readdirContext, dirPath, "", false, skipCount+int64(batchSize), func(entry *filer.Entry) (bool, error) {
 				dh.entryStream = append(dh.entryStream, entry)
 				return true, nil
 			})
+			dh.lastListedName = storeLastName
 			if loadErr != nil {
 				glog.Errorf("list meta cache: %v", loadErr)
 				return fuse.EIO
@@ -266,6 +289,13 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out DirEntrySink, isPlusMode
 			entryPreviousIndex := (input.Offset - dh.entryStreamOffset) - 1
 			if uint64(len(dh.entryStream)) > entryPreviousIndex {
 				lastEntryName = dh.entryStream[entryPreviousIndex].Name()
+			} else {
+				// The stream runs from the directory's first child, so failing to
+				// reach the entry before this offset means the directory has since
+				// shrunk past it. Listing on from an empty name would replay the
+				// directory from the start and hand the client every name twice.
+				dh.isFinished = true
+				return fuse.OK
 			}
 		}
 
@@ -286,13 +316,18 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out DirEntrySink, isPlusMode
 			return fuse.EIO
 		}
 
-		// Batch loading: fetch batchSize entries starting from lastEntryName
-		loadedCount := 0
+		// Page from where the store itself reached, not from the last entry the
+		// sink saw. An expired child is counted against the batch and then
+		// dropped, so resuming from the last visible name would re-read it every
+		// round and never get past a batch that was entirely expired.
+		if dh.lastListedName > lastEntryName {
+			lastEntryName = dh.lastListedName
+		}
+
 		bufferFull := false
-		loadErr := wfs.metaCache.ListDirectoryEntries(readdirContext, dirPath, lastEntryName, false, int64(batchSize), func(entry *filer.Entry) (bool, error) {
+		storeLastName, loadErr := wfs.metaCache.ListDirectoryEntries(readdirContext, dirPath, lastEntryName, false, int64(batchSize), func(entry *filer.Entry) (bool, error) {
 			currentIndex := int64(len(dh.entryStream))
 			dh.entryStream = append(dh.entryStream, entry)
-			loadedCount++
 			if !processEachEntryFn(entry, currentIndex) {
 				bufferFull = true
 				return false, nil
@@ -303,10 +338,12 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out DirEntrySink, isPlusMode
 			glog.Errorf("list meta cache: %v", loadErr)
 			return fuse.EIO
 		}
+		dh.lastListedName = storeLastName
 
-		// Mark finished only when loading completed normally (not buffer full)
-		// and we got fewer entries than requested
-		if !bufferFull && loadedCount < batchSize {
+		// The store reaching nothing is the only sound end-of-directory signal:
+		// a batch can come back short because entries expired, not because the
+		// directory ran out.
+		if !bufferFull && storeLastName == "" {
 			dh.isFinished = true
 		}
 	}
@@ -335,6 +372,11 @@ func (wfs *WFS) readDirectoryDirect(input *fuse.ReadIn, out DirEntrySink, dh *Di
 			entryPreviousIndex := (input.Offset - dh.entryStreamOffset) - 1
 			if uint64(len(dh.entryStream)) > entryPreviousIndex {
 				lastEntryName = dh.entryStream[entryPreviousIndex].Name()
+			} else {
+				// See the cached path: the directory shrank past this offset, and
+				// resuming from an empty name would replay it from the start.
+				dh.isFinished = true
+				return fuse.OK
 			}
 		}
 
@@ -379,7 +421,14 @@ func (wfs *WFS) readDirectoryDirect(input *fuse.ReadIn, out DirEntrySink, dh *Di
 }
 
 func loadDirectoryEntriesDirect(ctx context.Context, client filer_pb.FilerClient, uidGidMapper *meta_cache.UidGidMapper, dirPath util.FullPath, startFileName string, includeStart bool, limit uint32, snapshotTsNs int64, includeSystemEntries bool) ([]*filer.Entry, int64, error) {
-	entries := make([]*filer.Entry, 0, limit)
+	// limit can be a client-supplied resume offset rather than a batch size, so
+	// preallocating for it would size the slice from where the caller happened to
+	// seek. Reserve a batch and let append find the rest.
+	prealloc := limit
+	if prealloc > batchSize {
+		prealloc = batchSize
+	}
+	entries := make([]*filer.Entry, 0, prealloc)
 	var actualSnapshotTsNs int64
 	err := client.WithFilerClient(false, func(sc filer_pb.SeaweedFilerClient) error {
 		var innerErr error
