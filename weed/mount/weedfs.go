@@ -53,6 +53,7 @@ type Option struct {
 	CacheDirForWrite            string
 	WriteBufferSizeMB           int64
 	CacheMetaTTlSec             int
+	DirListCacheEntries         int
 	DataCenter                  string
 	Umask                       os.FileMode
 	Quota                       int64
@@ -303,7 +304,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		wfs.writeBufferAccountant.SetEvictor(wfs.evictOneWritableChunk)
 	}
 
-	wfs.metaCache = meta_cache.NewMetaCache(path.Join(option.getUniqueCacheDirForRead(), "meta"), option.UidGidMapper,
+	wfs.metaCache = meta_cache.NewMetaCacheWithListingCache(path.Join(option.getUniqueCacheDirForRead(), "meta"), option.UidGidMapper,
 		util.FullPath(option.FilerMountRootPath),
 		option.IncludeSystemEntries,
 		func(path util.FullPath) {
@@ -314,7 +315,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 			if wfs.inodeToPath.RecordDirectoryUpdate(dirPath, time.Now(), wfs.dirHotWindow, wfs.dirHotThreshold) {
 				wfs.markDirectoryReadThrough(dirPath)
 			}
-		})
+		}, option.DirListCacheEntries)
 	wfs.metaCache.SetPinnedChildFn(wfs.isLocalOnlyEntry)
 	grace.OnInterrupt(func() {
 		// grace calls os.Exit(0) after all hooks, so WaitForAsyncFlush
@@ -506,6 +507,7 @@ func (wfs *WFS) StartBackgroundTasks() error {
 		// wipe the root's stale children through the apply loop so the delete
 		// cannot strand a concurrent rebuild cached-but-empty.
 		wfs.inodeToPath.InvalidateAllChildrenCache()
+		wfs.metaCache.InvalidateAllListings()
 		wfs.purgeDirectoryCache(util.FullPath(wfs.option.FilerMountRootPath))
 	}, follower)
 	go wfs.loopCheckQuota()

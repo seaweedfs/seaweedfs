@@ -197,6 +197,7 @@ func buildSeaweedFileSystem(option *MountOptions, p fileSystemParams) *mount.WFS
 		CacheDirForWrite:            p.cacheDirForWrite,
 		WriteBufferSizeMB:           *option.writeBufferSizeMB,
 		CacheMetaTTlSec:             *option.cacheMetaTtlSec,
+		DirListCacheEntries:         *option.dirListCacheEntries,
 		DataCenter:                  *option.dataCenter,
 		Quota:                       int64(*option.collectionQuota) * 1024 * 1024,
 		LogicalDiskUsage:            *option.logicalDiskUsage,
