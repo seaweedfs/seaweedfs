@@ -440,8 +440,12 @@ type ListEntriesRequest struct {
 	InclusiveStartFrom bool                   `protobuf:"varint,4,opt,name=inclusiveStartFrom,proto3" json:"inclusiveStartFrom,omitempty"`
 	Limit              uint32                 `protobuf:"varint,5,opt,name=limit,proto3" json:"limit,omitempty"`
 	SnapshotTsNs       int64                  `protobuf:"varint,6,opt,name=snapshot_ts_ns,json=snapshotTsNs,proto3" json:"snapshot_ts_ns,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Leave the chunk list out of every entry in the response. The attributes
+	// still carry the file size, so a listing that only reads attributes can
+	// ask for this and skip the largest part of the payload.
+	OmitChunks    bool `protobuf:"varint,7,opt,name=omit_chunks,json=omitChunks,proto3" json:"omit_chunks,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ListEntriesRequest) Reset() {
@@ -514,6 +518,13 @@ func (x *ListEntriesRequest) GetSnapshotTsNs() int64 {
 		return x.SnapshotTsNs
 	}
 	return 0
+}
+
+func (x *ListEntriesRequest) GetOmitChunks() bool {
+	if x != nil {
+		return x.OmitChunks
+	}
+	return false
 }
 
 type ListEntriesResponse struct {
@@ -6939,14 +6950,16 @@ const file_filer_proto_rawDesc = "" +
 	"\x1cLookupDirectoryEntryResponse\x12%\n" +
 	"\x05entry\x18\x01 \x01(\v2\x0f.filer_pb.EntryR\x05entry\x12\x1a\n" +
 	"\tlog_ts_ns\x18\x02 \x01(\x03R\alogTsNs\x12#\n" +
-	"\rlog_signature\x18\x03 \x01(\x05R\flogSignature\"\xe4\x01\n" +
+	"\rlog_signature\x18\x03 \x01(\x05R\flogSignature\"\x85\x02\n" +
 	"\x12ListEntriesRequest\x12\x1c\n" +
 	"\tdirectory\x18\x01 \x01(\tR\tdirectory\x12\x16\n" +
 	"\x06prefix\x18\x02 \x01(\tR\x06prefix\x12,\n" +
 	"\x11startFromFileName\x18\x03 \x01(\tR\x11startFromFileName\x12.\n" +
 	"\x12inclusiveStartFrom\x18\x04 \x01(\bR\x12inclusiveStartFrom\x12\x14\n" +
 	"\x05limit\x18\x05 \x01(\rR\x05limit\x12$\n" +
-	"\x0esnapshot_ts_ns\x18\x06 \x01(\x03R\fsnapshotTsNs\"b\n" +
+	"\x0esnapshot_ts_ns\x18\x06 \x01(\x03R\fsnapshotTsNs\x12\x1f\n" +
+	"\vomit_chunks\x18\a \x01(\bR\n" +
+	"omitChunks\"b\n" +
 	"\x13ListEntriesResponse\x12%\n" +
 	"\x05entry\x18\x01 \x01(\v2\x0f.filer_pb.EntryR\x05entry\x12$\n" +
 	"\x0esnapshot_ts_ns\x18\x02 \x01(\x03R\fsnapshotTsNs\"\xa1\x02\n" +

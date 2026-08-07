@@ -28,24 +28,10 @@ var attributesScratchPool = sync.Pool{
 	},
 }
 
-type omitChunksKey struct{}
-
-// WithChunksOmitted marks a listing as wanting attributes only. A store may
-// then skip building chunk lists its caller would discard; one that ignores the
-// hint stays correct, just slower.
-func WithChunksOmitted(ctx context.Context) context.Context {
-	return context.WithValue(ctx, omitChunksKey{}, true)
-}
-
-// ChunksOmitted reports whether the listing wants attributes only.
-func ChunksOmitted(ctx context.Context) bool {
-	return ctx.Value(omitChunksKey{}) != nil
-}
-
 // DecodeListedEntry decodes one listed entry, dropping the chunk list when the
 // listing asked for attributes only.
 func DecodeListedEntry(ctx context.Context, entry *Entry, blob []byte) error {
-	if ChunksOmitted(ctx) {
+	if filer_pb.ChunksOmitted(ctx) {
 		return entry.DecodeAttributesOnly(blob)
 	}
 	return entry.DecodeAttributesAndChunks(blob)

@@ -139,6 +139,7 @@ func DoSeaweedListWithSnapshot(ctx context.Context, client SeaweedFilerClient, f
 		Limit:              redLimit,
 		InclusiveStartFrom: inclusive,
 		SnapshotTsNs:       snapshotTsNs,
+		OmitChunks:         ChunksOmitted(ctx),
 	}
 
 	// Preserve the caller-requested snapshot so pagination uses the same

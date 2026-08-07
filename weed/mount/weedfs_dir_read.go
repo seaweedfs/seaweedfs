@@ -23,7 +23,7 @@ const (
 // readdirContext marks the meta cache listing as reading attributes only. A
 // readdir never looks at a chunk list, and building one per child is most of
 // the cost of decoding a wide directory.
-var readdirContext = filer.WithChunksOmitted(context.Background())
+var readdirContext = filer_pb.WithChunksOmitted(context.Background())
 
 // DirectoryHandle represents an open directory handle.
 // It maintains state for directory listing pagination and is protected by a mutex
@@ -320,7 +320,7 @@ func (wfs *WFS) readDirectoryDirect(input *fuse.ReadIn, out DirEntrySink, dh *Di
 	if input.Offset >= dh.entryStreamOffset {
 		if len(dh.entryStream) == 0 && input.Offset > dh.entryStreamOffset {
 			skipCount := uint32(input.Offset-dh.entryStreamOffset) + batchSize
-			entries, snapshotTs, err := loadDirectoryEntriesDirect(context.Background(), wfs, wfs.option.UidGidMapper, dirPath, "", false, skipCount, dh.snapshotTsNs, wfs.option.IncludeSystemEntries)
+			entries, snapshotTs, err := loadDirectoryEntriesDirect(readdirContext, wfs, wfs.option.UidGidMapper, dirPath, "", false, skipCount, dh.snapshotTsNs, wfs.option.IncludeSystemEntries)
 			if err != nil {
 				glog.Errorf("list filer directory: %v", err)
 				return fuse.EIO
@@ -349,7 +349,7 @@ func (wfs *WFS) readDirectoryDirect(input *fuse.ReadIn, out DirEntrySink, dh *Di
 			}
 		}
 
-		entries, snapshotTs, err := loadDirectoryEntriesDirect(context.Background(), wfs, wfs.option.UidGidMapper, dirPath, lastEntryName, false, batchSize, dh.snapshotTsNs, wfs.option.IncludeSystemEntries)
+		entries, snapshotTs, err := loadDirectoryEntriesDirect(readdirContext, wfs, wfs.option.UidGidMapper, dirPath, lastEntryName, false, batchSize, dh.snapshotTsNs, wfs.option.IncludeSystemEntries)
 		if err != nil {
 			glog.Errorf("list filer directory: %v", err)
 			return fuse.EIO

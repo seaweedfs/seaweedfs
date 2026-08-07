@@ -149,6 +149,16 @@ func (m *ListEntriesRequest) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if m.OmitChunks {
+		i--
+		if m.OmitChunks {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x38
+	}
 	if m.SnapshotTsNs != 0 {
 		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.SnapshotTsNs))
 		i--
@@ -6285,6 +6295,9 @@ func (m *ListEntriesRequest) SizeVT() (n int) {
 	if m.SnapshotTsNs != 0 {
 		n += 1 + protohelpers.SizeOfVarint(uint64(m.SnapshotTsNs))
 	}
+	if m.OmitChunks {
+		n += 2
+	}
 	n += len(m.unknownFields)
 	return n
 }
@@ -9140,6 +9153,26 @@ func (m *ListEntriesRequest) UnmarshalVT(dAtA []byte) error {
 					break
 				}
 			}
+		case 7:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field OmitChunks", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.OmitChunks = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])

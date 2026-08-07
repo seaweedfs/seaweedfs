@@ -86,8 +86,16 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 		var hasEntries bool
 		lastFileName, listErr = fs.filer.StreamListDirectoryEntries(stream.Context(), util.FullPath(req.Directory), lastFileName, includeLastFile, int64(paginationLimit), req.Prefix, "", "", func(entry *filer.Entry) (bool, error) {
 			hasEntries = true
+			pbEntry := entry.ToProtoEntry()
+			if req.OmitChunks {
+				// The size the caller needs is already in the attributes, where
+				// the store decode folded the chunk extents in. The entries are
+				// still read whole, because expiring one here deletes its data
+				// and that needs the chunks.
+				pbEntry.Chunks = nil
+			}
 			resp := &filer_pb.ListEntriesResponse{
-				Entry: entry.ToProtoEntry(),
+				Entry: pbEntry,
 			}
 			if !sentSnapshot {
 				resp.SnapshotTsNs = snapshotTsNs

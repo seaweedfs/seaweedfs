@@ -257,3 +257,38 @@ func BenchmarkDecode(b *testing.B) {
 		})
 	}
 }
+
+// TestProtoEntryWithoutChunksKeepsSize covers the wire contract the filer's
+// omit_chunks listing relies on: the size a client needs survives in the
+// attributes once the chunk list is dropped, including for the entries that
+// store a zero FileSize and take their size from the chunks.
+func TestProtoEntryWithoutChunksKeepsSize(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	for _, storedSize := range []uint64{0, 7, 1 << 30} {
+		stored := &Entry{
+			FullPath: util.FullPath("/d/obj"),
+			Attr:     Attr{Mode: 0o644, Mtime: now, Crtime: now, FileSize: storedSize},
+			Chunks:   []*filer_pb.FileChunk{chunkAt(0, 4<<20, 0), chunkAt(4<<20, 1234, 1)},
+		}
+		blob, err := stored.EncodeAttributesAndChunks()
+		if err != nil {
+			t.Fatalf("encode: %v", err)
+		}
+		// What the filer holds after reading the entry out of its store.
+		var loaded Entry
+		loaded.FullPath = stored.FullPath
+		if err := loaded.DecodeAttributesAndChunks(blob); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		want := FileSize(loaded.ToProtoEntry())
+
+		pbEntry := loaded.ToProtoEntry()
+		pbEntry.Chunks = nil
+		if got := FileSize(pbEntry); got != want {
+			t.Errorf("stored FileSize %d: size over the wire = %d, want %d", storedSize, got, want)
+		}
+		if got := FromPbEntry("/d", pbEntry).Size(); got != want {
+			t.Errorf("stored FileSize %d: size at the client = %d, want %d", storedSize, got, want)
+		}
+	}
+}

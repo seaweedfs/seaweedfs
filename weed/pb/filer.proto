@@ -136,6 +136,10 @@ message ListEntriesRequest {
     bool inclusiveStartFrom = 4;
     uint32 limit = 5;
     int64 snapshot_ts_ns = 6;
+    // Leave the chunk list out of every entry in the response. The attributes
+    // still carry the file size, so a listing that only reads attributes can
+    // ask for this and skip the largest part of the payload.
+    bool omit_chunks = 7;
 }
 
 message ListEntriesResponse {
