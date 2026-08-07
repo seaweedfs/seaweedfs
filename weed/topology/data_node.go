@@ -200,11 +200,15 @@ func (dn *DataNode) AdjustDiskUsageBytes(diskTotalBytes, diskFreeBytes map[strin
 
 func (dn *DataNode) GetVolumes() (ret []storage.VolumeInfo) {
 	dn.RLock()
+	defer dn.RUnlock()
+	total := 0
 	for _, c := range dn.children {
-		disk := c.(*Disk)
-		ret = append(ret, disk.GetVolumes()...)
+		total += c.(*Disk).VolumeCount()
 	}
-	dn.RUnlock()
+	ret = make([]storage.VolumeInfo, 0, total)
+	for _, c := range dn.children {
+		ret = c.(*Disk).AppendVolumes(ret)
+	}
 	return ret
 }
 
