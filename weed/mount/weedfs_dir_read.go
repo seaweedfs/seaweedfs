@@ -205,8 +205,8 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out DirEntrySink, isPlusMode
 			}
 			wfs.outputFilerEntry(entryOut, inode, entry)
 			// Taken only once the entry is really in the sink, so one that did not
-			// fit leaves no reference behind.
-			if takesLookupRef {
+			// fit leaves no reference behind. The fallback covers a racing Forget.
+			if takesLookupRef && !wfs.inodeToPath.IncrementNlookup(inode) {
 				wfs.inodeToPath.Lookup(childPath, entry.Crtime.Unix(), entry.IsDirectory(), len(entry.HardLinkId) > 0, entry.Inode, true)
 			}
 		}
