@@ -66,6 +66,7 @@ func TestApplyLoopInvalidateDoesNotDeadlockWithLockHoldingEnqueuer(t *testing.T)
 			fhLockTable.ReleaseLock(fhKey, lock)
 		},
 		func(dir util.FullPath) {},
+		DefaultListingCacheEntries,
 	)
 	defer func() {
 		// Only safe to shut down once the apply loop is unwedged.

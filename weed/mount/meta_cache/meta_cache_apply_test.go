@@ -506,6 +506,7 @@ func newTestMetaCache(t *testing.T, cached map[util.FullPath]bool) (*MetaCache, 
 		func(dir util.FullPath) {
 			notifications.record(dir)
 		},
+		DefaultListingCacheEntries,
 	)
 
 	return mc, cached, notifications, invalidations

@@ -19,7 +19,7 @@ func newListingTestCache(t *testing.T, maxEntries int) *MetaCache {
 		t.Fatalf("uid/gid mapper: %v", err)
 	}
 	cached := map[util.FullPath]bool{}
-	mc := NewMetaCacheWithListingCache(t.TempDir(), uidGidMapper, util.FullPath("/"), false,
+	mc := NewMetaCache(t.TempDir(), uidGidMapper, util.FullPath("/"), false,
 		func(p util.FullPath) { cached[p] = true },
 		func(p util.FullPath) bool { return cached[p] },
 		func(EntryInvalidation) {}, nil, maxEntries)

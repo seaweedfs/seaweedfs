@@ -348,6 +348,7 @@ func newCopyRangeTestWFSWithMetaCache(t *testing.T) *WFS {
 		},
 		func(meta_cache.EntryInvalidation) {},
 		nil,
+		meta_cache.DefaultListingCacheEntries,
 	)
 	t.Cleanup(func() {
 		wfs.metaCache.Shutdown()

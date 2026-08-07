@@ -110,6 +110,7 @@ func newBenchWFS(tb testing.TB, dir util.FullPath, n int) *WFS {
 		func(path util.FullPath) bool { return wfs.inodeToPath.IsChildrenCached(path) },
 		func(meta_cache.EntryInvalidation) {},
 		nil,
+		meta_cache.DefaultListingCacheEntries,
 	)
 	tb.Cleanup(wfs.metaCache.Shutdown)
 

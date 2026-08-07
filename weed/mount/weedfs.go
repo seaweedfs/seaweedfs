@@ -304,7 +304,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		wfs.writeBufferAccountant.SetEvictor(wfs.evictOneWritableChunk)
 	}
 
-	wfs.metaCache = meta_cache.NewMetaCacheWithListingCache(path.Join(option.getUniqueCacheDirForRead(), "meta"), option.UidGidMapper,
+	wfs.metaCache = meta_cache.NewMetaCache(path.Join(option.getUniqueCacheDirForRead(), "meta"), option.UidGidMapper,
 		util.FullPath(option.FilerMountRootPath),
 		option.IncludeSystemEntries,
 		func(path util.FullPath) {

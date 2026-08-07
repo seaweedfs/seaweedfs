@@ -107,13 +107,8 @@ type metadataApplyRequest struct {
 	done         chan error
 }
 
+// listingCacheEntries sizes the directory listing cache; zero disables it.
 func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPath, includeSystemEntries bool,
-	markCachedFn func(path util.FullPath), isCachedFn func(path util.FullPath) bool, invalidateFunc func(EntryInvalidation), onDirectoryUpdate func(dir util.FullPath)) *MetaCache {
-	return NewMetaCacheWithListingCache(dbFolder, uidGidMapper, root, includeSystemEntries, markCachedFn, isCachedFn, invalidateFunc, onDirectoryUpdate, DefaultListingCacheEntries)
-}
-
-// NewMetaCacheWithListingCache sizes the directory listing cache; zero disables it.
-func NewMetaCacheWithListingCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPath, includeSystemEntries bool,
 	markCachedFn func(path util.FullPath), isCachedFn func(path util.FullPath) bool, invalidateFunc func(EntryInvalidation), onDirectoryUpdate func(dir util.FullPath),
 	listingCacheEntries int) *MetaCache {
 	leveldbStore, virtualStore := openMetaStore(dbFolder)

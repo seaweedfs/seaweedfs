@@ -63,6 +63,7 @@ func newPagingWFS(tb testing.TB, dir util.FullPath, names []string, ttlSec int32
 		func(p util.FullPath) { wfs.inodeToPath.MarkChildrenCached(p) },
 		func(p util.FullPath) bool { return wfs.inodeToPath.IsChildrenCached(p) },
 		func(meta_cache.EntryInvalidation) {}, nil,
+		meta_cache.DefaultListingCacheEntries,
 	)
 	tb.Cleanup(wfs.metaCache.Shutdown)
 

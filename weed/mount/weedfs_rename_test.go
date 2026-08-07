@@ -32,6 +32,7 @@ func TestHandleRenameResponseLeavesUncachedTargetOutOfCache(t *testing.T) {
 		},
 		func(meta_cache.EntryInvalidation) {},
 		nil,
+		meta_cache.DefaultListingCacheEntries,
 	)
 	defer mc.Shutdown()
 
