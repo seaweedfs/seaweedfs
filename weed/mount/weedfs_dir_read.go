@@ -20,6 +20,11 @@ const (
 	batchSize                 = 1000
 )
 
+// readdirContext marks the meta cache listing as reading attributes only. A
+// readdir never looks at a chunk list, and building one per child is most of
+// the cost of decoding a wide directory.
+var readdirContext = filer.WithChunksOmitted(context.Background())
+
 // DirectoryHandle represents an open directory handle.
 // It maintains state for directory listing pagination and is protected by a mutex
 // to handle concurrent readdir operations from NFS-Ganesha and other multi-threaded clients.
@@ -247,7 +252,7 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out DirEntrySink, isPlusMode
 			}
 
 			// Load entries from beginning to fill cache up to the requested offset
-			loadErr := wfs.metaCache.ListDirectoryEntries(context.Background(), dirPath, "", false, skipCount+int64(batchSize), func(entry *filer.Entry) (bool, error) {
+			loadErr := wfs.metaCache.ListDirectoryEntries(readdirContext, dirPath, "", false, skipCount+int64(batchSize), func(entry *filer.Entry) (bool, error) {
 				dh.entryStream = append(dh.entryStream, entry)
 				return true, nil
 			})
@@ -284,7 +289,7 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out DirEntrySink, isPlusMode
 		// Batch loading: fetch batchSize entries starting from lastEntryName
 		loadedCount := 0
 		bufferFull := false
-		loadErr := wfs.metaCache.ListDirectoryEntries(context.Background(), dirPath, lastEntryName, false, int64(batchSize), func(entry *filer.Entry) (bool, error) {
+		loadErr := wfs.metaCache.ListDirectoryEntries(readdirContext, dirPath, lastEntryName, false, int64(batchSize), func(entry *filer.Entry) (bool, error) {
 			currentIndex := int64(len(dh.entryStream))
 			dh.entryStream = append(dh.entryStream, entry)
 			loadedCount++
