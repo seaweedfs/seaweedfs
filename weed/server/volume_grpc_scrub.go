@@ -46,6 +46,9 @@ func (vs *VolumeServer) ScrubVolume(ctx context.Context, req *volume_server_pb.S
 		case volume_server_pb.VolumeScrubMode_LOCAL:
 			// LOCAL is equivalent to FULL for regular volumes
 			fallthrough
+		case volume_server_pb.VolumeScrubMode_READS:
+			// READS is equivalent to FULL for regular volumes
+			fallthrough
 		case volume_server_pb.VolumeScrubMode_FULL:
 			files, serrs = v.Scrub()
 		default:
@@ -130,8 +133,10 @@ func (vs *VolumeServer) ScrubEcVolume(ctx context.Context, req *volume_server_pb
 			files, serrs = v.ScrubIndex()
 		case volume_server_pb.VolumeScrubMode_LOCAL:
 			files, shardInfos, serrs = v.ScrubLocal()
+		case volume_server_pb.VolumeScrubMode_READS:
+			files, shardInfos, serrs = vs.store.ScrubEcVolume(v.VolumeId, req.GetForceDeletedNeedlesCheck(), true)
 		case volume_server_pb.VolumeScrubMode_FULL:
-			files, shardInfos, serrs = vs.store.ScrubEcVolume(v.VolumeId, req.GetForceDeletedNeedlesCheck())
+			files, shardInfos, serrs = vs.store.ScrubEcVolume(v.VolumeId, req.GetForceDeletedNeedlesCheck(), false)
 		case volume_server_pb.VolumeScrubMode_CHECKSUM:
 			// Verify each local shard's raw bytes against the bitrot sidecar,
 			// exercising cold parity shards. Read-only. ChecksumScrub's first

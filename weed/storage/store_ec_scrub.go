@@ -13,7 +13,7 @@ import (
 
 // ScrubEcVolume checks the full integrity of a EC volume, across both local and remote shards.
 // Returns a count of processed file entries, slice of found broken shards, and slice of found errors.
-func (s *Store) ScrubEcVolume(vid needle.VolumeId, forceDeletedNeedlesCheck bool) (int64, []*volume_server_pb.EcShardInfo, []error) {
+func (s *Store) ScrubEcVolume(vid needle.VolumeId, forceDeletedNeedlesCheck bool, doReadRecovery bool) (int64, []*volume_server_pb.EcShardInfo, []error) {
 	ecv, found := s.FindEcVolume(vid)
 	if !found {
 		return 0, nil, []error{fmt.Errorf("EC volume id %d not found", vid)}
@@ -47,29 +47,37 @@ func (s *Store) ScrubEcVolume(vid needle.VolumeId, forceDeletedNeedlesCheck bool
 		slices.Sort(shardIds)
 
 		for i, iv := range intervals {
+			var err error
 			chunk := make([]byte, iv.Size)
 			shardId, offset := s.IntervalToShardIdAndOffset(iv)
 
-			// try a local shard read first...
-			if err := s.readLocalEcShardInterval(ecv, shardId, chunk, offset); err == nil {
+			// try a local shard read first
+			if err = s.readLocalEcShardInterval(ecv, shardId, chunk, offset); err == nil {
 				data = append(data, chunk...)
 				continue
 			}
 
-			// ...then remote. note we do not try to recover EC-encoded data upon read failures;
-			// we want check that shards are valid without decoding
+			// ...then remote.
 			ecv.ShardLocationsLock.RLock()
 			sourceDataNodes, ok := ecv.ShardLocations[shardId]
 			ecv.ShardLocationsLock.RUnlock()
 			if ok {
-				if _, _, err := s.readRemoteEcShardInterval(sourceDataNodes, id, ecv.VolumeId, shardId, chunk, offset, ecv.EncodeTsNs); err == nil {
+				// try reading the remote shard interval first...
+				if _, _, err = s.readRemoteEcShardInterval(sourceDataNodes, id, ecv.VolumeId, shardId, chunk, offset, ecv.EncodeTsNs); err == nil {
+					data = append(data, chunk...)
+					continue
+				}
+			}
+			if doReadRecovery {
+				// ..then reconstructing it from other shards.
+				if _, _, err = s.recoverOneRemoteEcShardInterval(id, ecv, shardId, chunk, offset); err == nil {
 					data = append(data, chunk...)
 					continue
 				}
 			}
 
 			// chunk read for shard failed :(
-			errs = append(errs, fmt.Errorf("failed to read EC shard %d for needle %d on volume %d (interval %d/%d)", shardId, id, ecv.VolumeId, i+1, len(intervals)))
+			errs = append(errs, fmt.Errorf("failed to read EC shard %d for needle %d on volume %d (interval %d/%d): %v", shardId, id, ecv.VolumeId, i+1, len(intervals), err))
 			brokenShardsMap[shardId] = &volume_server_pb.EcShardInfo{
 				ShardId:    uint32(shardId),
 				Size:       int64(iv.Size),

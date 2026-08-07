@@ -50,7 +50,7 @@ func (c *commandEcVolumeScrub) Do(args []string, commandEnv *CommandEnv, writer 
 	volScrubCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	nodesStr := volScrubCommand.String("node", "", "comma-separated list of volume server <host>:<port> (optional)")
 	volumeIDsStr := volScrubCommand.String("volumeId", "", "comma-separated EC volume IDs to process (optional)")
-	mode := volScrubCommand.String("mode", "local", "scrubbing mode (index/local/full/checksum)")
+	mode := volScrubCommand.String("mode", "local", "scrubbing mode (index/local/reads/full/checksum)")
 	maxParallelization := volScrubCommand.Int("maxParallelization", DefaultMaxParallelization, "run up to X tasks in parallel, whenever possible")
 	showDetails := volScrubCommand.Bool("details", false, "display scrub result details, if available")
 	forceDeletedNeedlesCheck := volScrubCommand.Bool("forceDeletedNeedlesCheck", false, "force strict verification of deleted needles (full mode only); may report false positives when EC indexes disagree")
@@ -101,6 +101,8 @@ func (c *commandEcVolumeScrub) Do(args []string, commandEnv *CommandEnv, writer 
 		c.mode = volume_server_pb.VolumeScrubMode_FULL
 	case "CHECKSUM":
 		c.mode = volume_server_pb.VolumeScrubMode_CHECKSUM
+	case "READS":
+		c.mode = volume_server_pb.VolumeScrubMode_READS
 	default:
 		return fmt.Errorf("unsupported scrubbing mode %q", *mode)
 	}
