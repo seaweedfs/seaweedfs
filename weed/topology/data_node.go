@@ -86,6 +86,7 @@ func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (newVolume
 	dn.Lock()
 	defer dn.Unlock()
 
+	keptCount := 0
 	for _, c := range dn.children {
 		disk := c.(*Disk)
 		for _, v := range disk.RemoveVolumesNotIn(actualVolumeIds) {
@@ -102,6 +103,13 @@ func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (newVolume
 			}
 			disk.UpAdjustDiskUsageDelta(types.ToDiskType(v.DiskType), deltaDiskUsage)
 		}
+		keptCount += disk.VolumeCount()
+	}
+	// Everything still on the node is also in this heartbeat, so the remainder
+	// is what the node is about to gain. A steady-state heartbeat gains nothing
+	// and must not allocate here; a reconnecting server gains all of them.
+	if addedCount := len(actualVolumes) - keptCount; addedCount > 0 {
+		newVolumes = make([]storage.VolumeInfo, 0, addedCount)
 	}
 	for _, v := range actualVolumes {
 		isNew, isChanged := dn.doAddOrUpdateVolume(v)
