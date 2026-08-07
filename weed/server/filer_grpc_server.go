@@ -86,8 +86,21 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 		var hasEntries bool
 		lastFileName, listErr = fs.filer.StreamListDirectoryEntries(stream.Context(), util.FullPath(req.Directory), lastFileName, includeLastFile, int64(paginationLimit), req.Prefix, "", "", func(entry *filer.Entry) (bool, error) {
 			hasEntries = true
+			pbEntry := entry.ToProtoEntry()
+			if req.OmitChunks {
+				// Stamp the size before dropping the only other thing carrying
+				// it. Most stores fold the chunk extents into FileSize when they
+				// decode, but one that keeps entries as JSON rather than as an
+				// encoded Entry never re-derives it, and the caller would be
+				// left with a zero. The entries are still read whole, because
+				// expiring one here deletes its data and that needs the chunks.
+				if pbEntry.Attributes != nil {
+					pbEntry.Attributes.FileSize = filer.FileSize(pbEntry)
+				}
+				pbEntry.Chunks = nil
+			}
 			resp := &filer_pb.ListEntriesResponse{
-				Entry: entry.ToProtoEntry(),
+				Entry: pbEntry,
 			}
 			if !sentSnapshot {
 				resp.SnapshotTsNs = snapshotTsNs

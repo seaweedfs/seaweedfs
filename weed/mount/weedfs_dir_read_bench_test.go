@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -126,7 +127,17 @@ func newBenchWFS(tb testing.TB, dir util.FullPath, n int) *WFS {
 			FullPath: child,
 			// The filer stamps an inode on every entry it stores, so a listing
 			// arrives with one and never has to derive its own.
-			Attr: filer.Attr{Mode: 0o644, Mtime: now, Crtime: now, Uid: 99, Gid: 100, FileSize: 4096, Inode: child.AsInode(now.Unix())},
+			Attr: filer.Attr{Mode: 0o644, Mtime: now, Crtime: now, Uid: 99, Gid: 100, FileSize: 4 << 20, Inode: child.AsInode(now.Unix())},
+			// A real file has chunks, and building them is most of what decoding
+			// an entry costs.
+			// No FileId: BeforeEntrySerialization reparses that legacy string
+			// over Fid on the way in, which would make every entry's chunk
+			// byte-identical instead of varying per file.
+			Chunks: []*filer_pb.FileChunk{{
+				Size: 4 << 20, ModifiedTsNs: now.UnixNano(),
+				ETag: "1a2b3c4d5e6f7890",
+				Fid:  &filer_pb.FileId{VolumeId: 3, FileKey: uint64(i), Cookie: 0x1637037d},
+			}},
 		}, 0); err != nil {
 			tb.Fatalf("insert entry %d: %v", i, err)
 		}

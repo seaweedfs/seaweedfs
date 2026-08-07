@@ -237,7 +237,7 @@ func (store *LevelDBStore) ListDirectoryPrefixedEntries(ctx context.Context, dir
 		entry := &filer.Entry{
 			FullPath: weed_util.NewFullPath(string(dirPath), fileName),
 		}
-		if decodeErr := entry.DecodeAttributesAndChunks(weed_util.MaybeDecompressData(iter.Value())); decodeErr != nil {
+		if decodeErr := filer.DecodeListedEntry(ctx, entry, weed_util.MaybeDecompressData(iter.Value())); decodeErr != nil {
 			err = decodeErr
 			glog.V(0).InfofCtx(ctx, "list %s : %v", entry.FullPath, err)
 			break
