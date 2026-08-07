@@ -33,11 +33,15 @@ type DirectoryHandle struct {
 	isFinished        bool
 	entryStream       []*filer.Entry
 	entryStreamOffset uint64
-	snapshotTsNs      int64 // snapshot timestamp for consistent readdir in direct mode
+	// lastListedName is how far the store itself reached, which runs ahead of
+	// the last visible entry whenever children are dropped as expired.
+	lastListedName string
+	snapshotTsNs   int64 // snapshot timestamp for consistent readdir in direct mode
 }
 
 func (dh *DirectoryHandle) reset() {
 	dh.isFinished = false
+	dh.lastListedName = ""
 	dh.snapshotTsNs = 0
 	// Nil out pointers to allow garbage collection of old entries,
 	// then reuse the slice's capacity to avoid re-allocations.
@@ -252,10 +256,11 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out DirEntrySink, isPlusMode
 			}
 
 			// Load entries from beginning to fill cache up to the requested offset
-			loadErr := wfs.metaCache.ListDirectoryEntries(readdirContext, dirPath, "", false, skipCount+int64(batchSize), func(entry *filer.Entry) (bool, error) {
+			storeLastName, loadErr := wfs.metaCache.ListDirectoryEntries(readdirContext, dirPath, "", false, skipCount+int64(batchSize), func(entry *filer.Entry) (bool, error) {
 				dh.entryStream = append(dh.entryStream, entry)
 				return true, nil
 			})
+			dh.lastListedName = storeLastName
 			if loadErr != nil {
 				glog.Errorf("list meta cache: %v", loadErr)
 				return fuse.EIO
@@ -293,13 +298,18 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out DirEntrySink, isPlusMode
 			return fuse.EIO
 		}
 
-		// Batch loading: fetch batchSize entries starting from lastEntryName
-		loadedCount := 0
+		// Page from where the store itself reached, not from the last entry the
+		// sink saw. An expired child is counted against the batch and then
+		// dropped, so resuming from the last visible name would re-read it every
+		// round and never get past a batch that was entirely expired.
+		if dh.lastListedName > lastEntryName {
+			lastEntryName = dh.lastListedName
+		}
+
 		bufferFull := false
-		loadErr := wfs.metaCache.ListDirectoryEntries(readdirContext, dirPath, lastEntryName, false, int64(batchSize), func(entry *filer.Entry) (bool, error) {
+		storeLastName, loadErr := wfs.metaCache.ListDirectoryEntries(readdirContext, dirPath, lastEntryName, false, int64(batchSize), func(entry *filer.Entry) (bool, error) {
 			currentIndex := int64(len(dh.entryStream))
 			dh.entryStream = append(dh.entryStream, entry)
-			loadedCount++
 			if !processEachEntryFn(entry, currentIndex) {
 				bufferFull = true
 				return false, nil
@@ -310,10 +320,12 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out DirEntrySink, isPlusMode
 			glog.Errorf("list meta cache: %v", loadErr)
 			return fuse.EIO
 		}
+		dh.lastListedName = storeLastName
 
-		// Mark finished only when loading completed normally (not buffer full)
-		// and we got fewer entries than requested
-		if !bufferFull && loadedCount < batchSize {
+		// The store reaching nothing is the only sound end-of-directory signal:
+		// a batch can come back short because entries expired, not because the
+		// directory ran out.
+		if !bufferFull && storeLastName == "" {
 			dh.isFinished = true
 		}
 	}

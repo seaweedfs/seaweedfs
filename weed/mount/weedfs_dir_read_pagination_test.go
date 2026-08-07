@@ -123,3 +123,62 @@ func TestReadDirResumePastShrunkDirectory(t *testing.T) {
 		t.Errorf("resuming past the end returned %d entries (first %q), want none", len(sink.names), sink.names[0])
 	}
 }
+
+// TestReadDirWithExpiredEntries covers a batch the store fills to the limit but
+// whose entries the meta cache then drops as expired. The post-filter count used
+// to be read as end-of-directory, silently hiding every later child.
+func TestReadDirWithExpiredEntries(t *testing.T) {
+	dir := util.FullPath("/d")
+	// One full store batch of entries that all expire, then live ones behind
+	// them. Nothing survives the first batch, which is the case that latched.
+	var names []string
+	for i := 0; i < batchSize; i++ {
+		names = append(names, fmt.Sprintf("a%05d", i))
+	}
+	wfs := newPagingWFS(t, dir, names, 30)
+
+	live := []string{"z001", "z002", "z003"}
+	now := time.Now()
+	for _, name := range live {
+		child := dir.Child(name)
+		if err := wfs.metaCache.InsertEntry(context.Background(), &filer.Entry{
+			FullPath: child,
+			Attr:     filer.Attr{Mode: 0o644, Mtime: now, Crtime: now, FileSize: 1, Inode: child.AsInode(now.Unix())},
+		}, 0); err != nil {
+			t.Fatalf("insert %s: %v", name, err)
+		}
+	}
+
+	dirInode, _ := wfs.inodeToPath.GetInode(dir)
+	dhid, _ := wfs.AcquireDirectoryHandle()
+	defer wfs.ReleaseDirectoryHandle(dhid)
+
+	sink := &pagingSink{limit: 4096}
+	var offset uint64
+	for round := 0; round < 20; round++ {
+		sink.round = 0
+		status := wfs.doReadDirectory(&fuse.ReadIn{
+			InHeader: fuse.InHeader{NodeId: dirInode},
+			Fh:       uint64(dhid),
+			Offset:   offset,
+			Size:     1 << 20,
+		}, sink, false)
+		if status != fuse.OK {
+			t.Fatalf("readdir: %v", status)
+		}
+		if sink.lastOff <= offset {
+			break
+		}
+		offset = sink.lastOff
+	}
+
+	var seen []string
+	for _, n := range sink.names {
+		if n != "." && n != ".." {
+			seen = append(seen, n)
+		}
+	}
+	if len(seen) != len(live) {
+		t.Fatalf("listed %d entries %v, want the %d live ones %v", len(seen), seen, len(live), live)
+	}
+}
