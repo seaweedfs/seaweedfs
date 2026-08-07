@@ -121,9 +121,12 @@ func newBenchWFS(tb testing.TB, dir util.FullPath, n int) *WFS {
 		tb.Fatalf("insert dir: %v", err)
 	}
 	for i := 0; i < n; i++ {
+		child := dir.Child(fmt.Sprintf("image-%08d.jpg", i))
 		if err := wfs.metaCache.InsertEntry(ctx, &filer.Entry{
-			FullPath: dir.Child(fmt.Sprintf("image-%08d.jpg", i)),
-			Attr:     filer.Attr{Mode: 0o644, Mtime: now, Crtime: now, Uid: 99, Gid: 100, FileSize: 4096},
+			FullPath: child,
+			// The filer stamps an inode on every entry it stores, so a listing
+			// arrives with one and never has to derive its own.
+			Attr: filer.Attr{Mode: 0o644, Mtime: now, Crtime: now, Uid: 99, Gid: 100, FileSize: 4096, Inode: child.AsInode(now.Unix())},
 		}, 0); err != nil {
 			tb.Fatalf("insert entry %d: %v", i, err)
 		}
@@ -181,7 +184,10 @@ func walkOnce(tb testing.TB, wfs *WFS, dirInode uint64, sink *benchSink, forgets
 var benchCases = []struct {
 	name string
 	plus bool
-	ref  bool
+	// ref mirrors the sink's TakesLookupRef. The kernel's reports true whatever
+	// the mode, exactly as fuseDirEntryList does; it is the mode that decides
+	// whether a reference is actually granted.
+	ref bool
 	// forgets is what the front end does after a round: the kernel returns one
 	// FORGET per readdirplus entry and none for a plain readdir, and the WinFsp
 	// adapter hands back everything a round gave it.
