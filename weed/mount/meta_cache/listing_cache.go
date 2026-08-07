@@ -9,9 +9,14 @@ import (
 )
 
 // DefaultListingCacheEntries is how many directory children the mount will hold
-// decoded in memory across every cached listing. A chunkless entry runs a few
-// hundred bytes, so this is tens of megabytes.
-const DefaultListingCacheEntries = 200000
+// decoded in memory across every cached listing.
+//
+// This is a ceiling, not a reservation: nothing is held for a directory that was
+// never walked, so a mount over ordinary directories never approaches it. A
+// chunkless child measured about 480 bytes, so reaching the default means
+// holding something near 450MB, and a mount that wants a tighter bound should
+// lower it rather than rely on never walking that far.
+const DefaultListingCacheEntries = 1000000
 
 // listingCache keeps directories that have been walked all the way through, so
 // walking one again costs no store reads and no decoding. It holds only what the

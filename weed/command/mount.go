@@ -117,7 +117,7 @@ func init() {
 	mountOptions.cacheDirForWrite = cmdMount.Flag.String("cacheDirWrite", "", "buffer writes mostly for large files")
 	mountOptions.writeBufferSizeMB = cmdMount.Flag.Int64("writeBufferSizeMB", 0, "global cap on the per-mount write buffer (memory + swap) in MB, 0 means unlimited. Bounds /tmp growth when volume uploads stall")
 	mountOptions.cacheMetaTtlSec = cmdMount.Flag.Int("cacheMetaTtlSec", 60, "metadata cache validity seconds")
-	mountOptions.dirListCacheEntries = cmdMount.Flag.Int("dirListCacheEntries", meta_cache.DefaultListingCacheEntries, "directory children kept decoded in memory, so reopening a folder rereads nothing; 0 disables")
+	mountOptions.dirListCacheEntries = cmdMount.Flag.Int("dirListCacheEntries", meta_cache.DefaultListingCacheEntries, "directory children kept decoded in memory, so reopening a folder rereads nothing. A ceiling, not a reservation: only walked directories are held, at roughly half a kilobyte per child. 0 disables")
 	mountOptions.dataCenter = cmdMount.Flag.String("dataCenter", "", "prefer to write to the data center")
 	mountOptions.allowOthers = cmdMount.Flag.Bool("allowOthers", true, "allows other users to access the file system")
 	mountOptions.defaultPermissions = cmdMount.Flag.Bool("defaultPermissions", true, "enforce permissions by the operating system")
