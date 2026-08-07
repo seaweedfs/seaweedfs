@@ -299,3 +299,43 @@ func TestVolumeIndexDigestFollowsNodeLifecycle(t *testing.T) {
 		t.Errorf("an unregistered node should hold nothing: held=%d servable=%d", held, servable)
 	}
 }
+
+// A volume id mounted on two disks of one server is reported twice with
+// different disk ids, but the master keys volumes by id alone, so it keeps only
+// one copy and its digest can never equal the server's. Resending the full list
+// cannot fix that, so the node has to be excluded from digest comparison
+// entirely rather than resend forever.
+func TestVolumeDigestRefusesDuplicateVolumeIds(t *testing.T) {
+	topo, dn := digestTestNode(t)
+
+	first := digestTestVolume(1)
+	second := digestTestVolume(1)
+	second.DiskId = 1
+	second.Size = first.Size * 2
+
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{first, second}, dn)
+	if !dn.HasDuplicateVolumeIds() {
+		t.Fatal("a volume id reported twice went unnoticed, so the digest would be trusted and never reconcile")
+	}
+
+	firstInfo, err := storage.NewVolumeInfo(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondInfo, err := storage.NewVolumeInfo(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dn.VolumeDigest() == firstInfo.ReportHash()^secondInfo.ReportHash() {
+		t.Error("expected the master to be unable to represent both copies; if it now can, the guard is no longer needed")
+	}
+
+	// Once the stale twin is gone the node is comparable again.
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{first}, dn)
+	if dn.HasDuplicateVolumeIds() {
+		t.Error("the node stayed marked as duplicated after reporting a clean list")
+	}
+	if dn.VolumeDigest() != firstInfo.ReportHash() {
+		t.Error("digest did not settle on the surviving copy")
+	}
+}
