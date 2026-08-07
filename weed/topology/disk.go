@@ -211,6 +211,21 @@ func (d *Disk) GetVolumes() (ret []storage.VolumeInfo) {
 	return ret
 }
 
+// RemoveVolumesNotIn drops the volumes whose ids are absent from keep and
+// returns them, so a heartbeat can be diffed without first copying the whole
+// volume map out.
+func (d *Disk) RemoveVolumesNotIn(keep map[needle.VolumeId]struct{}) (removed []storage.VolumeInfo) {
+	d.Lock()
+	defer d.Unlock()
+	for vid, v := range d.volumes {
+		if _, ok := keep[vid]; !ok {
+			removed = append(removed, v)
+			delete(d.volumes, vid)
+		}
+	}
+	return removed
+}
+
 func (d *Disk) GetVolumesById(id needle.VolumeId) (storage.VolumeInfo, error) {
 	d.RLock()
 	defer d.RUnlock()

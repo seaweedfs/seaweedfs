@@ -86,14 +86,10 @@ func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (newVolume
 	dn.Lock()
 	defer dn.Unlock()
 
-	existingVolumes := dn.getVolumes()
-
-	for _, v := range existingVolumes {
-		vid := v.Id
-		if _, ok := actualVolumeIds[vid]; !ok {
-			glog.V(0).Infoln("Deleting volume id:", vid)
-			disk := dn.getOrCreateDisk(v.DiskType)
-			disk.DeleteVolumeById(vid)
+	for _, c := range dn.children {
+		disk := c.(*Disk)
+		for _, v := range disk.RemoveVolumesNotIn(actualVolumeIds) {
+			glog.V(0).Infoln("Deleting volume id:", v.Id)
 			deletedVolumes = append(deletedVolumes, v)
 
 			deltaDiskUsage := &DiskUsageCounts{}
