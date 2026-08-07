@@ -343,18 +343,22 @@ func (vl *VolumeLayout) ensureCorrectWritables(vid needle.VolumeId) {
 	isOversizedVolume := vl.oversizedVolumes.IsTrue(vid)
 	if isEnoughCopies && isAllWritable && !isOversizedVolume {
 		vl.setVolumeWritable(vid)
-	} else {
-		if !isEnoughCopies {
-			glog.V(0).Infof("volume %d does not have enough copies", vid)
-		}
-		if !isAllWritable {
-			glog.V(0).Infof("volume %d are not all writable", vid)
-		}
-		if isOversizedVolume {
-			glog.V(1).Infof("volume %d are oversized", vid)
-		}
-		glog.V(0).Infof("volume %d remove from writable", vid)
-		vl.removeFromWritable(vid)
+		return
+	}
+	// removeFromWritable reports the transition itself, and only when there is
+	// one. Explain it only then: every heartbeat re-runs this for every volume,
+	// so a volume that is simply staying read-only must not log.
+	if !vl.removeFromWritable(vid) {
+		return
+	}
+	if !isEnoughCopies {
+		glog.V(0).Infof("volume %d does not have enough copies", vid)
+	}
+	if !isAllWritable {
+		glog.V(0).Infof("volume %d are not all writable", vid)
+	}
+	if isOversizedVolume {
+		glog.V(0).Infof("volume %d is oversized", vid)
 	}
 }
 
