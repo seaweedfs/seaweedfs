@@ -311,9 +311,11 @@ func (d *Disk) ToDiskInfo() *master_pb.DiskInfo {
 		DiskTotalBytes:    uint64(max(0, diskUsage.diskTotalBytes)),
 		DiskFreeBytes:     uint64(max(0, diskUsage.diskFreeBytes)),
 	}
+	m.VolumeInfos = make([]*master_pb.VolumeInformationMessage, 0, len(volumes))
 	for _, v := range volumes {
 		m.VolumeInfos = append(m.VolumeInfos, v.ToVolumeInformationMessage())
 	}
+	m.EcShardInfos = make([]*master_pb.VolumeEcShardInformationMessage, 0, len(ecShards))
 	for _, ecv := range ecShards {
 		m.EcShardInfos = append(m.EcShardInfos, ecv.ToVolumeEcShardInformationMessage())
 	}
