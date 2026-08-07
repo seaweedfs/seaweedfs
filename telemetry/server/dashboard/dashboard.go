@@ -143,7 +143,9 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
 
             <div class="chart-container">
                 <div class="chart-title">Version Distribution</div>
-                <canvas id="versionChart" width="400" height="200"></canvas>
+                <div style="position: relative; height: 320px;">
+                    <canvas id="versionChart"></canvas>
+                </div>
             </div>
 
             <div class="chart-container">
@@ -156,7 +158,9 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
 
             <div class="chart-container">
                 <div class="chart-title">Operating System Distribution</div>
-                <canvas id="osChart" width="400" height="200"></canvas>
+                <div style="position: relative; height: 320px;">
+                    <canvas id="osChart"></canvas>
+                </div>
             </div>
 
             <div class="chart-container">
@@ -209,13 +213,16 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
                 const versionsResponse = await fetch('/api/versions?days=30&limit=8');
                 const versions = await versionsResponse.json();
 
+                // Show the dashboard before drawing into it: a canvas in a
+                // display:none container measures zero, and a pie sized from
+                // that never grows back.
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('dashboard').style.display = 'block';
+
                 updateStats(stats);
                 updateCharts(stats);
                 updateVersions(versions);
                 updateClusterSizes(sizes);
-
-                document.getElementById('loading').style.display = 'none';
-                document.getElementById('dashboard').style.display = 'block';
             } catch (error) {
                 console.error('Error loading dashboard:', error);
                 showError('Failed to load telemetry data: ' + error.message);
@@ -259,6 +266,9 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
                 },
                 options: {
                     responsive: true,
+                    // Without this the canvas keeps its 2:1 attribute ratio at
+                    // the card's full width, drawing a pie taller than the card.
+                    maintainAspectRatio: false,
                     plugins: {
                         legend: {
                             position: 'bottom'
