@@ -379,7 +379,14 @@ func (wfs *WFS) readDirectoryDirect(input *fuse.ReadIn, out DirEntrySink, dh *Di
 }
 
 func loadDirectoryEntriesDirect(ctx context.Context, client filer_pb.FilerClient, uidGidMapper *meta_cache.UidGidMapper, dirPath util.FullPath, startFileName string, includeStart bool, limit uint32, snapshotTsNs int64, includeSystemEntries bool) ([]*filer.Entry, int64, error) {
-	entries := make([]*filer.Entry, 0, limit)
+	// limit can be a client-supplied resume offset rather than a batch size, so
+	// preallocating for it would size the slice from where the caller happened to
+	// seek. Reserve a batch and let append find the rest.
+	prealloc := limit
+	if prealloc > batchSize {
+		prealloc = batchSize
+	}
+	entries := make([]*filer.Entry, 0, prealloc)
 	var actualSnapshotTsNs int64
 	err := client.WithFilerClient(false, func(sc filer_pb.SeaweedFilerClient) error {
 		var innerErr error
