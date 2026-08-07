@@ -196,7 +196,7 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 
 	defer vl.rememberOversizedVolume(v, dn)
 
-	vl.getOrCreateLocationList(v.Id).Set(dn)
+	moveLookupOwnership(v.Id, vl.getOrCreateLocationList(v.Id).Set(dn), dn)
 	vl.initSizeTracking(v.Id, v.Size, v.CompactRevision)
 	// glog.V(4).Infof("volume %d added to %s len %d copy %d", v.Id, dn.Id(), vl.vid2location[v.Id].Length(), v.ReplicaPlacement.GetCopyCount())
 	for _, dn := range vl.vid2location[v.Id].list {
@@ -315,7 +315,8 @@ func (vl *VolumeLayout) UnRegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 		return
 	}
 
-	if location.Remove(dn) {
+	if removed := location.Remove(dn); removed != nil {
+		moveLookupOwnership(v.Id, removed, nil)
 
 		vl.readonlyVolumes.Remove(v.Id, dn)
 		vl.oversizedVolumes.Remove(v.Id, dn)
@@ -879,7 +880,8 @@ func (vl *VolumeLayout) SetVolumeUnavailable(dn *DataNode, vid needle.VolumeId) 
 	defer vl.accessLock.Unlock()
 
 	if location, ok := vl.vid2location[vid]; ok {
-		if location.Remove(dn) {
+		if removed := location.Remove(dn); removed != nil {
+			moveLookupOwnership(vid, removed, nil)
 			vl.readonlyVolumes.Remove(vid, dn)
 			vl.oversizedVolumes.Remove(vid, dn)
 			wasWritable := false
@@ -919,7 +921,7 @@ func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId, is
 	// A disconnect during a long vacuum can drop the entry while the volume is
 	// still on the node; re-create it (and seed size tracking) instead of
 	// dereferencing a nil location, so the commit also repairs the split.
-	vl.getOrCreateLocationList(vid).Set(dn)
+	moveLookupOwnership(vid, vl.getOrCreateLocationList(vid).Set(dn), dn)
 	vl.initSizeTracking(vid, vInfo.Size, vInfo.CompactRevision)
 
 	if vInfo.ReadOnly || isReadOnly || isFullCapacity {

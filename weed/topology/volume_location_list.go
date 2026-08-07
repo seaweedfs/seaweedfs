@@ -46,24 +46,35 @@ func (dnll *VolumeLocationList) Length() int {
 	return len(dnll.list)
 }
 
-func (dnll *VolumeLocationList) Set(loc *DataNode) {
+// Set adds loc, or replaces the entry at the same address, returning the node it
+// displaced. Two volume servers can share an address -- GetOrCreateDataNode keys
+// on the reported id and refuses to merge a new id onto an address an older node
+// still claims -- so the displaced node is not necessarily loc, and callers
+// tracking which node a volume is reachable through must move their bookkeeping
+// off it rather than assume loc already owned the entry.
+func (dnll *VolumeLocationList) Set(loc *DataNode) (displaced *DataNode) {
 	for i := 0; i < len(dnll.list); i++ {
 		if loc.Ip == dnll.list[i].Ip && loc.Port == dnll.list[i].Port {
+			displaced = dnll.list[i]
 			dnll.list[i] = loc
-			return
+			return displaced
 		}
 	}
 	dnll.list = append(dnll.list, loc)
+	return nil
 }
 
-func (dnll *VolumeLocationList) Remove(loc *DataNode) bool {
+// Remove drops the entry at loc's address and returns the node removed, or nil
+// if the volume was not reachable there. As with Set, the removed node is
+// matched by address and need not be loc.
+func (dnll *VolumeLocationList) Remove(loc *DataNode) (removed *DataNode) {
 	for i, dnl := range dnll.list {
 		if loc.Ip == dnl.Ip && loc.Port == dnl.Port {
 			dnll.list = append(dnll.list[:i], dnll.list[i+1:]...)
-			return true
+			return dnl
 		}
 	}
-	return false
+	return nil
 }
 
 func (dnll *VolumeLocationList) Refresh(freshThreshHold int64) {

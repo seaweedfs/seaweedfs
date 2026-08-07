@@ -24,6 +24,12 @@ type DataNode struct {
 	IsTerminating bool
 
 	MaintenanceMode bool
+	// lookupDigest covers the volumes reachable through this node in the volume
+	// layouts, for comparison against what its disks actually hold.
+	lookupDigest atomic.Uint64
+	// duplicateVolumeIds records that the node last reported one volume id more
+	// than once, which the master cannot represent.
+	duplicateVolumeIds atomic.Bool
 	// diskMetas holds each physical disk's tags, type, and capacity from the
 	// heartbeat DiskTags, including disks with no volumes or EC shards.
 	diskMetas map[uint32]diskMeta
@@ -81,6 +87,13 @@ func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (newVolume
 	for _, v := range actualVolumes {
 		actualVolumeIds[v.Id] = struct{}{}
 	}
+
+	// A volume id mounted on two disks of one server -- a stale twin re-attached
+	// after a disk repair -- is reported twice, but the master keys volumes by
+	// id alone and keeps only the last copy. Its digest can then never equal the
+	// server's however often the list is resent, so record it and let the
+	// heartbeat fall back to the full list for this node.
+	dn.duplicateVolumeIds.Store(len(actualVolumeIds) < len(actualVolumes))
 
 	dn.Lock()
 	defer dn.Unlock()
@@ -209,6 +222,25 @@ func (dn *DataNode) GetVolumes() (ret []storage.VolumeInfo) {
 		ret = c.(*Disk).AppendVolumes(ret)
 	}
 	return ret
+}
+
+// HasDuplicateVolumeIds reports whether the node's last full report named one
+// volume id more than once. While it does, the node's digest is not meaningful.
+func (dn *DataNode) HasDuplicateVolumeIds() bool {
+	return dn.duplicateVolumeIds.Load()
+}
+
+// VolumeDigest summarises every volume the master believes this node holds. A
+// volume server that reports a different digest has drifted from the master and
+// needs to resend its volume list.
+func (dn *DataNode) VolumeDigest() uint64 {
+	dn.RLock()
+	defer dn.RUnlock()
+	var digest uint64
+	for _, c := range dn.children {
+		digest ^= c.(*Disk).VolumeDigest()
+	}
+	return digest
 }
 
 func (dn *DataNode) GetVolumesById(id needle.VolumeId) (vInfo storage.VolumeInfo, err error) {

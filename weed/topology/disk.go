@@ -26,6 +26,15 @@ type Disk struct {
 	// outer key is the volume id; the inner key is the physical disk id.
 	ecShards     map[needle.VolumeId]map[types.DiskId]*erasure_coding.EcVolumeInfo
 	ecShardsLock sync.RWMutex
+	// volumeDigest is the xor of every volume's ReportHash. Order-independent
+	// and its own inverse, so it stays current by xoring a volume out before
+	// its old state is dropped and back in after the new one lands.
+	volumeDigest uint64
+	// volumeIdDigest covers which volumes are on the disk, ignoring their
+	// state, so it can be compared against the lookup index the master serves
+	// reads from. The two indexes are maintained separately and have been seen
+	// to drift.
+	volumeIdDigest uint64
 }
 
 // ecShardSlots returns the number of volume slots consumed by the given
@@ -163,6 +172,8 @@ func (d *Disk) doAddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChanged bool)
 	deltaDiskUsage := &DiskUsageCounts{}
 	if oldV, ok := d.volumes[v.Id]; !ok {
 		d.volumes[v.Id] = v
+		d.volumeDigest ^= v.ReportHash()
+		d.volumeIdDigest ^= VolumeIdDigestHash(v.Id)
 		deltaDiskUsage.volumeCount = 1
 		if v.IsRemote() {
 			deltaDiskUsage.remoteVolumeCount = 1
@@ -183,6 +194,7 @@ func (d *Disk) doAddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChanged bool)
 			}
 			d.UpAdjustDiskUsageDelta(types.ToDiskType(v.DiskType), deltaDiskUsage)
 		}
+		d.volumeDigest ^= oldV.ReportHash() ^ v.ReportHash()
 		isChanged = d.volumes[v.Id].ReadOnly != v.ReadOnly
 		if isChanged {
 			// Adjust active volume count when ReadOnly status changes
@@ -233,6 +245,8 @@ func (d *Disk) RemoveVolumesNotIn(keep map[needle.VolumeId]struct{}) (removed []
 		if _, ok := keep[vid]; !ok {
 			removed = append(removed, v)
 			delete(d.volumes, vid)
+			d.volumeDigest ^= v.ReportHash()
+			d.volumeIdDigest ^= VolumeIdDigestHash(vid)
 		}
 	}
 	return removed
@@ -252,7 +266,25 @@ func (d *Disk) GetVolumesById(id needle.VolumeId) (storage.VolumeInfo, error) {
 func (d *Disk) DeleteVolumeById(id needle.VolumeId) {
 	d.Lock()
 	defer d.Unlock()
-	delete(d.volumes, id)
+	if v, ok := d.volumes[id]; ok {
+		d.volumeDigest ^= v.ReportHash()
+		d.volumeIdDigest ^= VolumeIdDigestHash(id)
+		delete(d.volumes, id)
+	}
+}
+
+// VolumeDigest returns the disk's running volume digest.
+func (d *Disk) VolumeDigest() uint64 {
+	d.RLock()
+	defer d.RUnlock()
+	return d.volumeDigest
+}
+
+// VolumeIdDigest returns the digest of which volumes the disk holds.
+func (d *Disk) VolumeIdDigest() uint64 {
+	d.RLock()
+	defer d.RUnlock()
+	return d.volumeIdDigest
 }
 
 func (d *Disk) GetDataCenter() *DataCenter {
