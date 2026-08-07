@@ -266,6 +266,13 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out DirEntrySink, isPlusMode
 			entryPreviousIndex := (input.Offset - dh.entryStreamOffset) - 1
 			if uint64(len(dh.entryStream)) > entryPreviousIndex {
 				lastEntryName = dh.entryStream[entryPreviousIndex].Name()
+			} else {
+				// The stream runs from the directory's first child, so failing to
+				// reach the entry before this offset means the directory has since
+				// shrunk past it. Listing on from an empty name would replay the
+				// directory from the start and hand the client every name twice.
+				dh.isFinished = true
+				return fuse.OK
 			}
 		}
 
@@ -335,6 +342,11 @@ func (wfs *WFS) readDirectoryDirect(input *fuse.ReadIn, out DirEntrySink, dh *Di
 			entryPreviousIndex := (input.Offset - dh.entryStreamOffset) - 1
 			if uint64(len(dh.entryStream)) > entryPreviousIndex {
 				lastEntryName = dh.entryStream[entryPreviousIndex].Name()
+			} else {
+				// See the cached path: the directory shrank past this offset, and
+				// resuming from an empty name would replay it from the start.
+				dh.isFinished = true
+				return fuse.OK
 			}
 		}
 
