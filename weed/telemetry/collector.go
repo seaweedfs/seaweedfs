@@ -6,6 +6,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/telemetry/proto"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/topology"
 )
 
@@ -152,6 +153,7 @@ func (c *Collector) countVolumeServers() int {
 func (c *Collector) collectVolumeStats() (uint64, int) {
 	var totalDiskBytes uint64
 	var totalVolumeCount int
+	ecVolumeIds := make(map[needle.VolumeId]struct{})
 
 	for _, dcNode := range c.topo.Children() {
 		dc := dcNode.(*topology.DataCenter)
@@ -164,11 +166,21 @@ func (c *Collector) collectVolumeStats() (uint64, int) {
 					totalVolumeCount++
 					totalDiskBytes += volumeInfo.Size
 				}
+				// An encoded volume leaves GetVolumes and is reported as
+				// shards, so without this a cluster reports none of the
+				// bytes it erasure-coded. Every shard copy counts, parity
+				// included, the way a replicated volume counts every replica.
+				for _, ecInfo := range dn.GetEcShards() {
+					totalDiskBytes += uint64(ecInfo.ShardsInfo.TotalSize())
+					// One volume's shards are spread over many nodes, so
+					// count the volume once rather than once per holder.
+					ecVolumeIds[ecInfo.VolumeId] = struct{}{}
+				}
 			}
 		}
 	}
 
-	return totalDiskBytes, totalVolumeCount
+	return totalDiskBytes, totalVolumeCount + len(ecVolumeIds)
 }
 
 // countFilers counts the number of active filer servers across all groups
