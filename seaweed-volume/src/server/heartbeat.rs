@@ -19,6 +19,7 @@ use crate::pb::master_pb::seaweed_client::SeaweedClient;
 use crate::pb::volume_server_pb;
 use crate::remote_storage::s3_tier::{S3TierBackend, S3TierConfig};
 use crate::storage::store::Store;
+use crate::storage::volume_report_hash::report_hash;
 use crate::storage::types::NeedleId;
 
 const DUPLICATE_UUID_RETRY_MESSAGE: &str = "duplicate UUIDs detected, retrying connection";
@@ -800,6 +801,10 @@ fn build_heartbeat_with_ec_status(
     }
 
     let mut volumes = Vec::new();
+    // Digest of exactly what this heartbeat reports, so the master can tell
+    // whether its copy is current. Volumes skipped above -- quarantined,
+    // phantom, expired -- are absent from both the list and the digest.
+    let mut volume_digest: u64 = 0;
     let mut max_file_key = NeedleId(0);
     let mut max_volume_counts: HashMap<String, u32> = HashMap::new();
     let mut disk_total_bytes: HashMap<String, u64> = HashMap::new();
@@ -875,7 +880,7 @@ fn build_heartbeat_with_ec_status(
                 }
 
                 let (remote_storage_name, remote_storage_key) = vol.remote_storage_name_key();
-                volumes.push(master_pb::VolumeInformationMessage {
+                let volume_message = master_pb::VolumeInformationMessage {
                     id: vol.id.0,
                     size: volume_size,
                     collection: vol.collection.clone(),
@@ -892,8 +897,9 @@ fn build_heartbeat_with_ec_status(
                     disk_id: disk_id as u32,
                     remote_storage_name,
                     remote_storage_key,
-                    ..Default::default()
-                });
+                };
+                volume_digest ^= report_hash(&volume_message);
+                volumes.push(volume_message);
             } else if vol.is_expired_long_enough(MAX_TTL_VOLUME_REMOVAL_DELAY) {
                 delete_vids.push(vol.id);
                 should_delete_volume = true;
@@ -967,6 +973,7 @@ fn build_heartbeat_with_ec_status(
         rack: config.rack.clone(),
         admin_port: config.port as u32,
         volumes,
+        volume_digest: Some(volume_digest),
         deleted_ec_shards,
         has_no_volumes,
         has_no_ec_shards,
@@ -1244,6 +1251,55 @@ mod tests {
 
         assert!(heartbeat.volumes.is_empty());
         assert!(heartbeat.has_no_volumes);
+    }
+
+    // The digest must cover exactly the volumes the heartbeat carries. A volume
+    // reported but left out of the digest, or the reverse, makes the master's
+    // comparison disagree forever. An empty store still reports a digest, so
+    // the master can tell it from a server that computes none.
+    #[test]
+    fn test_build_heartbeat_digests_exactly_what_it_reports() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                8,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+
+        let empty = build_heartbeat(&test_config(), &mut store);
+        assert_eq!(empty.volume_digest, Some(0));
+
+        for vid in [VolumeId(1), VolumeId(2)] {
+            store
+                .add_volume(
+                    vid,
+                    "pics",
+                    None,
+                    None,
+                    0,
+                    DiskType::HardDrive,
+                    Version::current(),
+                )
+                .unwrap();
+        }
+
+        let heartbeat = build_heartbeat(&test_config(), &mut store);
+        assert_eq!(heartbeat.volumes.len(), 2);
+
+        let expected = heartbeat
+            .volumes
+            .iter()
+            .fold(0u64, |acc, m| acc ^ crate::storage::volume_report_hash::report_hash(m));
+        assert_eq!(heartbeat.volume_digest, Some(expected));
+        assert_ne!(heartbeat.volume_digest, Some(0));
     }
 
     #[test]

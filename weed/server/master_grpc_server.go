@@ -275,7 +275,53 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		if len(message.NewVids) > 0 || len(message.DeletedVids) > 0 || len(message.NewEcVids) > 0 || len(message.DeletedEcVids) > 0 {
 			ms.broadcastToClients(&master_pb.KeepConnectedResponse{VolumeLocation: message})
 		}
+
+		// Checked after everything the heartbeat carried has been applied, so a
+		// match means the master is current, not that nothing changed.
+		if resend := ms.checkVolumeDigest(heartbeat, dn); resend {
+			if err := stream.Send(&master_pb.HeartbeatResponse{ResendFullVolumeList: true}); err != nil {
+				glog.Warningf("SendHeartbeat.Send resend request to %s:%d %v", dn.Ip, dn.Port, err)
+				return err
+			}
+		}
 	}
+}
+
+// checkVolumeDigest compares the digest a volume server reported against the
+// master's own, and reports whether the master needs the full volume list to
+// recover. Servers that report no digest are left alone: they still send the
+// whole list every time.
+func (ms *MasterServer) checkVolumeDigest(heartbeat *master_pb.Heartbeat, dn *topology.DataNode) bool {
+	if heartbeat.VolumeDigest == nil {
+		return false
+	}
+	// One volume id mounted on two disks is reported twice but stored once, so
+	// the digests cannot agree however often the list is resent. Asking would
+	// loop forever.
+	if dn.HasDuplicateVolumeIds() {
+		stats.MasterReceivedHeartbeatCounter.WithLabelValues("volumeDigestNotComparable").Inc()
+		return false
+	}
+
+	reported := heartbeat.GetVolumeDigest()
+	held := dn.VolumeDigest()
+	if held == reported {
+		stats.MasterReceivedHeartbeatCounter.WithLabelValues("volumeDigestMatch").Inc()
+		return false
+	}
+
+	stats.MasterReceivedHeartbeatCounter.WithLabelValues("volumeDigestMismatch").Inc()
+	// A heartbeat that already carried the full list has nothing more to give;
+	// asking again would just repeat. Say so instead, because at this point the
+	// two ends genuinely disagree about what the server holds.
+	if len(heartbeat.Volumes) > 0 || heartbeat.HasNoVolumes {
+		glog.Warningf("volume server %s reported digest %d after a full volume list, master holds %d",
+			dn.Url(), reported, held)
+		return false
+	}
+	glog.V(0).Infof("volume server %s reported digest %d, master holds %d: requesting the full volume list",
+		dn.Url(), reported, held)
+	return true
 }
 
 // KeepConnected keep a stream gRPC call to the master. Used by clients to know the master is up.

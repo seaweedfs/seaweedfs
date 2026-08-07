@@ -121,8 +121,13 @@ type Heartbeat struct {
 	// physical disk capacity per disk type, in bytes, from the underlying filesystem
 	DiskTotalBytes map[string]uint64 `protobuf:"bytes,25,rep,name=disk_total_bytes,json=diskTotalBytes,proto3" json:"disk_total_bytes,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
 	DiskFreeBytes  map[string]uint64 `protobuf:"bytes,26,rep,name=disk_free_bytes,json=diskFreeBytes,proto3" json:"disk_free_bytes,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Digest of every volume in this heartbeat's view of the server, letting the
+	// master check its copy is current without being sent the whole list. Absent
+	// from servers that do not compute it, and distinct from a digest of 0, which
+	// is what a server holding no volumes reports.
+	VolumeDigest  *uint64 `protobuf:"varint,27,opt,name=volume_digest,json=volumeDigest,proto3,oneof" json:"volume_digest,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Heartbeat) Reset() {
@@ -316,6 +321,13 @@ func (x *Heartbeat) GetDiskFreeBytes() map[string]uint64 {
 	return nil
 }
 
+func (x *Heartbeat) GetVolumeDigest() uint64 {
+	if x != nil && x.VolumeDigest != nil {
+		return *x.VolumeDigest
+	}
+	return 0
+}
+
 type HeartbeatResponse struct {
 	state                  protoimpl.MessageState `protogen:"open.v1"`
 	VolumeSizeLimit        uint64                 `protobuf:"varint,1,opt,name=volume_size_limit,json=volumeSizeLimit,proto3" json:"volume_size_limit,omitempty"`
@@ -325,8 +337,11 @@ type HeartbeatResponse struct {
 	StorageBackends        []*StorageBackend      `protobuf:"bytes,5,rep,name=storage_backends,json=storageBackends,proto3" json:"storage_backends,omitempty"`
 	DuplicatedUuids        []string               `protobuf:"bytes,6,rep,name=duplicated_uuids,json=duplicatedUuids,proto3" json:"duplicated_uuids,omitempty"`
 	Preallocate            bool                   `protobuf:"varint,7,opt,name=preallocate,proto3" json:"preallocate,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	// The master's view of this server's volumes disagrees with the reported
+	// digest, so it needs the full volume list rather than changes alone.
+	ResendFullVolumeList bool `protobuf:"varint,8,opt,name=resend_full_volume_list,json=resendFullVolumeList,proto3" json:"resend_full_volume_list,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *HeartbeatResponse) Reset() {
@@ -404,6 +419,13 @@ func (x *HeartbeatResponse) GetDuplicatedUuids() []string {
 func (x *HeartbeatResponse) GetPreallocate() bool {
 	if x != nil {
 		return x.Preallocate
+	}
+	return false
+}
+
+func (x *HeartbeatResponse) GetResendFullVolumeList() bool {
+	if x != nil {
+		return x.ResendFullVolumeList
 	}
 	return false
 }
@@ -4569,8 +4591,7 @@ const file_master_proto_rawDesc = "" +
 	"\adisk_id\x18\x01 \x01(\rR\x06diskId\x12\x12\n" +
 	"\x04tags\x18\x02 \x03(\tR\x04tags\x12\x12\n" +
 	"\x04type\x18\x03 \x01(\tR\x04type\x12(\n" +
-	"\x10max_volume_count\x18\x04 \x01(\x03R\x0emaxVolumeCount\"\xe6\n" +
-	"\n" +
+	"\x10max_volume_count\x18\x04 \x01(\x03R\x0emaxVolumeCount\"\xa2\v\n" +
 	"\tHeartbeat\x12\x0e\n" +
 	"\x02ip\x18\x01 \x01(\tR\x02ip\x12\x12\n" +
 	"\x04port\x18\x02 \x01(\rR\x04port\x12\x1d\n" +
@@ -4600,7 +4621,8 @@ const file_master_proto_rawDesc = "" +
 	"\x05state\x18\x17 \x01(\v2#.volume_server_pb.VolumeServerStateR\x05state\x12/\n" +
 	"\tdisk_tags\x18\x18 \x03(\v2\x12.master_pb.DiskTagR\bdiskTags\x12R\n" +
 	"\x10disk_total_bytes\x18\x19 \x03(\v2(.master_pb.Heartbeat.DiskTotalBytesEntryR\x0ediskTotalBytes\x12O\n" +
-	"\x0fdisk_free_bytes\x18\x1a \x03(\v2'.master_pb.Heartbeat.DiskFreeBytesEntryR\rdiskFreeBytes\x1aB\n" +
+	"\x0fdisk_free_bytes\x18\x1a \x03(\v2'.master_pb.Heartbeat.DiskFreeBytesEntryR\rdiskFreeBytes\x12(\n" +
+	"\rvolume_digest\x18\x1b \x01(\x04H\x00R\fvolumeDigest\x88\x01\x01\x1aB\n" +
 	"\x14MaxVolumeCountsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\rR\x05value:\x028\x01\x1aA\n" +
@@ -4609,7 +4631,8 @@ const file_master_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\x04R\x05value:\x028\x01\x1a@\n" +
 	"\x12DiskFreeBytesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\x04R\x05value:\x028\x01\"\xcd\x02\n" +
+	"\x05value\x18\x02 \x01(\x04R\x05value:\x028\x01B\x10\n" +
+	"\x0e_volume_digest\"\x84\x03\n" +
 	"\x11HeartbeatResponse\x12*\n" +
 	"\x11volume_size_limit\x18\x01 \x01(\x04R\x0fvolumeSizeLimit\x12\x16\n" +
 	"\x06leader\x18\x02 \x01(\tR\x06leader\x12'\n" +
@@ -4617,7 +4640,8 @@ const file_master_proto_rawDesc = "" +
 	"\x18metrics_interval_seconds\x18\x04 \x01(\rR\x16metricsIntervalSeconds\x12D\n" +
 	"\x10storage_backends\x18\x05 \x03(\v2\x19.master_pb.StorageBackendR\x0fstorageBackends\x12)\n" +
 	"\x10duplicated_uuids\x18\x06 \x03(\tR\x0fduplicatedUuids\x12 \n" +
-	"\vpreallocate\x18\a \x01(\bR\vpreallocate\"\xb1\x04\n" +
+	"\vpreallocate\x18\a \x01(\bR\vpreallocate\x125\n" +
+	"\x17resend_full_volume_list\x18\b \x01(\bR\x14resendFullVolumeList\"\xb1\x04\n" +
 	"\x18VolumeInformationMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12\x12\n" +
 	"\x04size\x18\x02 \x01(\x04R\x04size\x12\x1e\n" +
@@ -5203,6 +5227,7 @@ func file_master_proto_init() {
 	if File_master_proto != nil {
 		return
 	}
+	file_master_proto_msgTypes[1].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
