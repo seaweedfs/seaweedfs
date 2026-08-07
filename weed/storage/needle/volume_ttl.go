@@ -88,20 +88,39 @@ func fitTtlCount(count int, unit byte) *TTL {
 	return EMPTY_TTL
 }
 
-// read stored bytes to a ttl
-func LoadTTLFromBytes(input []byte) (t *TTL) {
-	if input[0] == 0 && input[1] == 0 {
+// storedTTLs interns every count paired with a defined unit. The master decodes
+// one per volume in every heartbeat and keeps it for the volume's lifetime, so
+// sharing spares a cluster with millions of volume replicas a distinct two-byte
+// object for each.
+//
+// Entries are immutable. Callers must not write through the returned pointer.
+var storedTTLs = func() (table [256][Year + 1]TTL) {
+	for count := range table {
+		for unit := range table[count] {
+			table[count][unit] = TTL{Count: byte(count), Unit: byte(unit)}
+		}
+	}
+	return table
+}()
+
+func loadTTL(count, unit byte) *TTL {
+	if count == 0 && unit == 0 {
 		return EMPTY_TTL
 	}
-	return &TTL{Count: input[0], Unit: input[1]}
+	if unit <= Year {
+		return &storedTTLs[count][unit]
+	}
+	return &TTL{Count: count, Unit: unit}
+}
+
+// read stored bytes to a ttl
+func LoadTTLFromBytes(input []byte) (t *TTL) {
+	return loadTTL(input[0], input[1])
 }
 
 // read stored bytes to a ttl
 func LoadTTLFromUint32(ttl uint32) (t *TTL) {
-	input := make([]byte, 2)
-	input[1] = byte(ttl)
-	input[0] = byte(ttl >> 8)
-	return LoadTTLFromBytes(input)
+	return loadTTL(byte(ttl>>8), byte(ttl))
 }
 
 // save stored bytes to an output with 2 bytes
