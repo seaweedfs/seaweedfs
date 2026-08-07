@@ -72,8 +72,9 @@ func (t *Topology) ToVolumeMap() interface{} {
 			dataNodes := make(map[NodeId]interface{})
 			for _, d := range rack.Children() {
 				dn := d.(*DataNode)
-				var volumes []interface{}
-				for _, v := range dn.GetVolumes() {
+				dnVolumes := dn.GetVolumes()
+				volumes := make([]interface{}, 0, len(dnVolumes))
+				for _, v := range dnVolumes {
 					volumes = append(volumes, v)
 				}
 				dataNodes[d.Id()] = volumes
@@ -99,7 +100,9 @@ func (t *Topology) ToVolumeLocations() (volumeLocations []*master_pb.VolumeLocat
 					DataCenter: dn.GetDataCenterId(),
 					GrpcPort:   uint32(dn.GrpcPort),
 				}
-				for _, v := range dn.GetVolumes() {
+				dnVolumes := dn.GetVolumes()
+				volumeLocation.NewVids = make([]uint32, 0, len(dnVolumes))
+				for _, v := range dnVolumes {
 					volumeLocation.NewVids = append(volumeLocation.NewVids, uint32(v.Id))
 				}
 				// A single EC volume's shards can live on multiple disks of
