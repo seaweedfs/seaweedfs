@@ -204,6 +204,7 @@ func (d *Disk) doAddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChanged bool)
 
 func (d *Disk) GetVolumes() (ret []storage.VolumeInfo) {
 	d.RLock()
+	ret = make([]storage.VolumeInfo, 0, len(d.volumes))
 	for _, v := range d.volumes {
 		ret = append(ret, v)
 	}
