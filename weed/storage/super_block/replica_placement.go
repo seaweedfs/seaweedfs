@@ -43,8 +43,26 @@ func NewReplicaPlacementFromString(t string) (*ReplicaPlacement, error) {
 	return rp, nil
 }
 
+// replicaPlacementsByByte is one 6KB pointer-free array covering every encoding
+// a byte can hold. The master decodes one per volume in every volume server
+// heartbeat and keeps it for the volume's lifetime, so handing out a shared
+// element keeps that path off fmt and off the heap entirely.
+//
+// Elements are immutable. Callers must not write through the returned pointer.
+var replicaPlacementsByByte [256]ReplicaPlacement
+
+func init() {
+	for b := range replicaPlacementsByByte {
+		replicaPlacementsByByte[b] = ReplicaPlacement{
+			DiffDataCenterCount: b / 100,
+			DiffRackCount:       b / 10 % 10,
+			SameRackCount:       b % 10,
+		}
+	}
+}
+
 func NewReplicaPlacementFromByte(b byte) (*ReplicaPlacement, error) {
-	return NewReplicaPlacementFromString(fmt.Sprintf("%03d", b))
+	return &replicaPlacementsByByte[b], nil
 }
 
 func (rp *ReplicaPlacement) HasReplication() bool {
