@@ -212,6 +212,12 @@ func (d *Disk) GetVolumes() (ret []storage.VolumeInfo) {
 	return ret
 }
 
+func (d *Disk) VolumeCount() int {
+	d.RLock()
+	defer d.RUnlock()
+	return len(d.volumes)
+}
+
 // RemoveVolumesNotIn drops the volumes whose ids are absent from keep and
 // returns them, so a heartbeat can be diffed without first copying the whole
 // volume map out.
