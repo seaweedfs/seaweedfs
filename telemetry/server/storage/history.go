@@ -20,6 +20,7 @@ type HistorySample struct {
 	TotalDiskBytes    uint64 `json:"disk"`
 	TotalVolumeCount  int32  `json:"volumes"`
 	VolumeServerCount int32  `json:"servers"`
+	Version           string `json:"ver,omitempty"` // empty in samples written before this was recorded
 }
 
 // appendHistory records the report as the cluster's sample for the day,
@@ -30,6 +31,7 @@ func (s *PrometheusStorage) appendHistory(data *proto.TelemetryData, receivedAt 
 		TotalDiskBytes:    data.TotalDiskBytes,
 		TotalVolumeCount:  data.TotalVolumeCount,
 		VolumeServerCount: data.VolumeServerCount,
+		Version:           data.Version,
 	}
 	h := s.histories[data.TopologyId]
 	if n := len(h); n > 0 && sameUTCDay(h[n-1].Ts, sample.Ts) {
@@ -110,16 +112,17 @@ func utcDay(ts int64) time.Time {
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
 }
 
-func diskBytes(s HistorySample) uint64   { return s.TotalDiskBytes }
-func serverCount(s HistorySample) uint64 { return uint64(s.VolumeServerCount) }
+func diskBytes(s HistorySample) uint64     { return s.TotalDiskBytes }
+func serverCount(s HistorySample) uint64   { return uint64(s.VolumeServerCount) }
+func sampleVersion(s HistorySample) string { return s.Version }
 
 // align lays one cluster's history onto the axis, picking `value` out of each
 // sample. Clusters report roughly once a day at no fixed hour, so a day without
 // a report carries the previous value forward rather than dropping to zero; a
 // cluster that stopped reporting altogether ends at its last sample instead of
 // holding capacity forever. Reports false when the cluster has nothing in range.
-func (d dailySeries) align(history []HistorySample, activeSince int64, value func(HistorySample) uint64) ([]uint64, bool) {
-	out := make([]uint64, len(d.dates))
+func align[T any](d dailySeries, history []HistorySample, activeSince int64, value func(HistorySample) T) ([]T, bool) {
+	out := make([]T, len(d.dates))
 	reported := make([]bool, len(d.dates))
 	first, last := -1, -1
 	for _, sample := range history {

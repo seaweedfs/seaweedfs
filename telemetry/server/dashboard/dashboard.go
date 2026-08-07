@@ -143,7 +143,10 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
 
             <div class="chart-container">
                 <div class="chart-title">Version Distribution</div>
-                <canvas id="versionChart" width="400" height="200"></canvas>
+                <div class="chart-subtitle" id="versionTotal"></div>
+                <div style="position: relative; height: 420px;">
+                    <canvas id="versionChart"></canvas>
+                </div>
             </div>
 
             <div class="chart-container">
@@ -197,10 +200,15 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
                 const sizesResponse = await fetch('/api/cluster-sizes?days=30&limit=20');
                 const sizes = await sizesResponse.json();
 
+                // Load the fleet's version make-up over time
+                const versionsResponse = await fetch('/api/versions?days=30&limit=8');
+                const versions = await versionsResponse.json();
+
                 updateStats(stats);
-                updateCharts(stats);
+                createPieChart('osChart', stats.os_distribution || {});
+                updateVersions(versions);
                 updateClusterSizes(sizes);
-                
+
                 document.getElementById('loading').style.display = 'none';
                 document.getElementById('dashboard').style.display = 'block';
             } catch (error) {
@@ -217,12 +225,7 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
             document.getElementById('totalOS').textContent = Object.keys(stats.os_distribution || {}).length;
         }
 
-        function updateCharts(stats) {
-            createPieChart('versionChart', 'Version Distribution', stats.versions || {});
-            createPieChart('osChart', 'Operating System Distribution', stats.os_distribution || {});
-        }
-
-        function createPieChart(canvasId, title, data) {
+        function createPieChart(canvasId, data) {
             const ctx = document.getElementById(canvasId).getContext('2d');
             
             if (charts[canvasId]) {
@@ -298,6 +301,75 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
             return (unit === 0 ? value : value.toFixed(value >= 100 ? 0 : 1)) + ' ' + units[unit];
         }
 
+        // Fixed hues rather than the evenly spaced ones the cluster stacks use:
+        // a handful of versions is a set you read, and evenly spaced hues put
+        // pairs next to each other that colour-blind readers can't separate.
+        const versionColors = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100',
+                               '#e87ba4', '#008300', '#4a3aa7', '#e34948'];
+
+        // One stacked band per version: the band is how many clusters ran that
+        // version that day, the top of the stack is the confirmed fleet, so the
+        // chart shows both how it grows and what it upgrades to.
+        function updateVersions(series) {
+            const versions = series.versions || [];
+            const dates = series.dates || [];
+            const total = series.total_clusters || 0;
+            document.getElementById('versionTotal').textContent =
+                total + ' cluster' + (total === 1 ? '' : 's') + ' on ' + (dates[dates.length - 1] || 'no data');
+
+            // Newest release on the floor, oldest on top: the current release
+            // is the band being read, and one anchored to the baseline reads
+            // straight off the axis instead of riding on everything below it.
+            // Colours follow the same order, so a release keeps its colour as
+            // older ones age out from the top.
+            const datasets = versions.slice().reverse().map((v, i) =>
+                band(v.version, v.clusters, '#ffffff', versionColors[i % versionColors.length], 2));
+            if (series.other) {
+                datasets.push(band('other (' + series.other.count + ' versions)', series.other.clusters,
+                    '#ffffff', '#9a9a94', 2));
+            }
+
+            stackedArea('versionChart', dates, datasets, value => value, { plugins: [bandLabels] });
+        }
+
+        // Writes each version into its own band, so the chart reads without
+        // matching colours against the legend. Bands too thin to hold the text
+        // keep it, and the halo carries it over whatever it crosses.
+        const bandLabels = {
+            id: 'bandLabels',
+            afterDatasetsDraw(chart) {
+                const ctx = chart.ctx;
+                ctx.save();
+                ctx.font = '600 12px -apple-system, BlinkMacSystemFont, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.lineJoin = 'round';
+                chart.data.datasets.forEach((dataset, d) => {
+                    const meta = chart.getDatasetMeta(d);
+                    if (meta.hidden) return;
+                    // Label where the band is thickest, so the text has room.
+                    let at = -1, thickest = 0;
+                    dataset.data.forEach((value, i) => {
+                        if (value > thickest) {
+                            thickest = value;
+                            at = i;
+                        }
+                    });
+                    const point = at >= 0 && meta.data[at];
+                    if (!point) return;
+                    const below = d === 0 ? chart.scales.y.getPixelForValue(0)
+                                          : chart.getDatasetMeta(d - 1).data[at].y;
+                    if (below - point.y < 18) return;
+                    ctx.lineWidth = 3;
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+                    ctx.strokeText(dataset.label, point.x, (point.y + below) / 2);
+                    ctx.fillStyle = '#1a1a1a';
+                    ctx.fillText(dataset.label, point.x, (point.y + below) / 2);
+                });
+                ctx.restore();
+            }
+        };
+
         // Disk usage and volume servers both drawn as one stacked band per
         // cluster over time: the band is that cluster's share, the top of the
         // stack is the fleet total. Clusters beyond the requested limit are
@@ -337,6 +409,24 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
                     '#9E9E9E', 'rgba(158, 158, 158, 0.6)'));
             }
 
+            stackedArea(canvasId, dates, datasets, format, {
+                onClick: (event, elements) => {
+                    const id = elements.length && clusterSizeIds[elements[0].datasetIndex];
+                    if (id) {
+                        document.getElementById('clusterIdInput').value = id;
+                        loadClusterHistory();
+                    }
+                },
+                // The legend shows shortened ids; the tooltip has room for the
+                // full one to paste into the lookup box.
+                label: item => (clusterSizeIds[item.datasetIndex] || item.dataset.label) + ': ' + format(item.raw)
+            });
+        }
+
+        // Draws the bands as one stack, so their heights add up to the day's
+        // total. hooks.onClick, hooks.label and hooks.plugins are optional.
+        function stackedArea(canvasId, dates, datasets, format, hooks) {
+            hooks = hooks || {};
             const ctx = document.getElementById(canvasId).getContext('2d');
             if (charts[canvasId]) {
                 charts[canvasId].destroy();
@@ -344,25 +434,17 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
             charts[canvasId] = new Chart(ctx, {
                 type: 'line',
                 data: { labels: dates, datasets: datasets },
+                plugins: hooks.plugins,
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
                     interaction: { mode: 'band', intersect: false },
-                    onClick: (event, elements) => {
-                        const id = elements.length && clusterSizeIds[elements[0].datasetIndex];
-                        if (id) {
-                            document.getElementById('clusterIdInput').value = id;
-                            loadClusterHistory();
-                        }
-                    },
+                    onClick: hooks.onClick,
                     plugins: {
                         legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
                         tooltip: {
                             callbacks: {
-                                label: item => {
-                                    const id = clusterSizeIds[item.datasetIndex];
-                                    return (id || item.dataset.label) + ': ' + format(item.raw);
-                                }
+                                label: hooks.label || (item => item.dataset.label + ': ' + format(item.raw))
                             }
                         }
                     },
@@ -396,13 +478,13 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
             return [];
         };
 
-        function band(label, data, borderColor, backgroundColor) {
+        function band(label, data, borderColor, backgroundColor, borderWidth) {
             return {
                 label: label,
                 data: data,
                 borderColor: borderColor,
                 backgroundColor: backgroundColor,
-                borderWidth: 1,
+                borderWidth: borderWidth || 1,
                 pointRadius: 0,
                 pointHitRadius: 8,
                 fill: true,

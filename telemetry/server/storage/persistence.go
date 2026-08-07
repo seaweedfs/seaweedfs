@@ -44,9 +44,18 @@ func (s *PrometheusStorage) LoadState(path string) (int, error) {
 		loaded++
 	}
 	for id, h := range state.Histories {
-		if _, ok := s.instances[id]; ok && len(h) > 0 {
-			s.histories[id] = h
+		instance, ok := s.instances[id]
+		if !ok || len(h) == 0 {
+			continue
 		}
+		// State written before versions were recorded carries none on its
+		// samples. The newest sample is the report the instance record itself
+		// came from, so that day's version is known and the version series can
+		// start there rather than a day after the upgrade.
+		if newest := len(h) - 1; h[newest].Version == "" {
+			h[newest].Version = instance.TelemetryData.Version
+		}
+		s.histories[id] = h
 	}
 	s.updateStats()
 	return loaded, nil

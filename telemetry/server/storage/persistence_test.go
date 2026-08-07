@@ -72,3 +72,38 @@ func TestStateRoundTrip(t *testing.T) {
 		t.Error("dirty flag set after load")
 	}
 }
+
+// State written before versions were recorded still knows the version of the
+// report its newest sample came from: the instance record's.
+func TestLoadStateFillsNewestSampleVersion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "telemetry-state.json")
+
+	s := newPrometheusStorage(prometheus.NewRegistry())
+	report := &proto.TelemetryData{TopologyId: "test-cluster-1", Version: "4.40", Os: "linux/amd64"}
+	if err := s.StoreTelemetry(report); err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	yesterday := time.Now().AddDate(0, 0, -1).Unix()
+	s.histories[report.TopologyId] = []HistorySample{
+		{Ts: yesterday, TotalDiskBytes: 10},
+		{Ts: time.Now().Unix(), TotalDiskBytes: 20},
+	}
+	if err := s.SaveStateIfDirty(path); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	s = newPrometheusStorage(prometheus.NewRegistry())
+	if _, err := s.LoadState(path); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	loaded := s.histories[report.TopologyId]
+	if len(loaded) != 2 {
+		t.Fatalf("history = %+v, want 2 samples", loaded)
+	}
+	if loaded[1].Version != report.Version {
+		t.Errorf("newest sample version = %q, want %q", loaded[1].Version, report.Version)
+	}
+	if loaded[0].Version != "" {
+		t.Errorf("older sample version = %q, want it left unknown", loaded[0].Version)
+	}
+}
