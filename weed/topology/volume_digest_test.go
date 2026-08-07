@@ -4,10 +4,12 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func digestTestNode(t *testing.T) (*Topology, *DataNode) {
@@ -406,5 +408,45 @@ func TestVolumeIndexDigestFollowsRemovedLookupEntry(t *testing.T) {
 	}
 	if _, servable := fresh.VolumeIndexDigests(); servable != 0 {
 		t.Error("the node that was merely passed in should never have gained the entry")
+	}
+}
+
+// The two ends must agree on real heartbeat data, not just on hand-built
+// messages: the volume server hashes what it is about to send, the master
+// hashes what it stored from it.
+func TestMasterDigestMatchesWhatAVolumeServerReports(t *testing.T) {
+	dir := t.TempDir()
+	loc := storage.NewDiskLocation(dir, 100, util.MinFreeSpace{}, "", types.HardDriveType, nil,
+		stats.DefaultDiskIOProbeConfig())
+	for _, vid := range []needle.VolumeId{1, 2, 3} {
+		v, err := storage.NewVolume(loc.Directory, loc.IdxDirectory, "", vid, storage.NeedleMapInMemory,
+			&super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		loc.SetVolume(vid, v)
+	}
+
+	reported := make([]*master_pb.VolumeInformationMessage, 0, 3)
+	var serverDigest uint64
+	for _, vid := range []needle.VolumeId{1, 2, 3} {
+		v, _ := loc.FindVolume(vid)
+		_, m := v.ToVolumeInformationMessage()
+		if m == nil {
+			t.Fatalf("volume %d reported nothing", vid)
+		}
+		vi, err := storage.NewVolumeInfo(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		serverDigest ^= vi.ReportHash()
+		reported = append(reported, m)
+	}
+
+	topo, dn := digestTestNode(t)
+	topo.SyncDataNodeRegistration(reported, dn)
+
+	if got := dn.VolumeDigest(); got != serverDigest {
+		t.Errorf("master digest %d does not match the reporting server's %d", got, serverDigest)
 	}
 }

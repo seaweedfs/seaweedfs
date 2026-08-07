@@ -414,6 +414,10 @@ func (s *Store) GetRack() string {
 
 func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	var volumeMessages []*master_pb.VolumeInformationMessage
+	// Digest of exactly what this heartbeat reports, so the master can tell
+	// whether its copy is current. Volumes skipped above -- quarantined,
+	// phantom, expired -- are absent from both the list and the digest.
+	var volumeDigest uint64
 	maxVolumeCounts := make(map[string]uint32)
 	// Per-disk effective max for DiskTag, captured alongside the per-type sum.
 	diskMaxByID := make(map[int]int32)
@@ -487,6 +491,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 			shouldDeleteVolume := false
 			if !v.expired(volumeMessage.Size, s.GetVolumeSizeLimit()) {
 				volumeMessages = append(volumeMessages, volumeMessage)
+				volumeDigest ^= reportHashOf(volumeMessage)
 			} else {
 				if v.expiredLongEnough(MAX_TTL_VOLUME_REMOVAL_DELAY) {
 					deleteVids = append(deleteVids, v.Id)
@@ -594,6 +599,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		DataCenter:      s.dataCenter,
 		Rack:            s.rack,
 		Volumes:         volumeMessages,
+		VolumeDigest:    &volumeDigest,
 		DeletedEcShards: deletedEcVolumes,
 		HasNoVolumes:    len(volumeMessages) == 0,
 		HasNoEcShards:   len(ecVolumeMessages) == 0,
@@ -601,6 +607,18 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		DiskTags:        diskTags,
 	}
 
+}
+
+// reportHashOf digests a volume exactly as the master will digest what it
+// stores for that volume, by running the master's own hash over the same
+// conversion the master applies to the message.
+func reportHashOf(m *master_pb.VolumeInformationMessage) uint64 {
+	vi, err := NewVolumeInfo(m)
+	if err != nil {
+		glog.Warningf("volume %d: cannot digest heartbeat report: %v", m.Id, err)
+		return 0
+	}
+	return vi.ReportHash()
 }
 
 func (s *Store) deleteExpiredEcVolumes() (ecShards, deleted []*master_pb.VolumeEcShardInformationMessage) {
