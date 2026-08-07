@@ -10,6 +10,9 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/protobuf/encoding/protowire"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
 // decodeBothWays round-trips entry and returns what each decoder made of it.
@@ -290,5 +293,152 @@ func TestProtoEntryWithoutChunksKeepsSize(t *testing.T) {
 		if got := FromPbEntry("/d", pbEntry).Size(); got != want {
 			t.Errorf("stored FileSize %d: size at the client = %d, want %d", storedSize, got, want)
 		}
+	}
+}
+
+// TestChunkValidationCoversEveryField keeps the hand-rolled chunk walk honest as
+// filer.proto grows. The generated unmarshaller never sees the chunk bytes, so
+// every FileChunk field whose contents it would have checked -- a submessage, or
+// a proto3 string's UTF-8 -- has to be listed for the walk to check instead.
+func TestChunkValidationCoversEveryField(t *testing.T) {
+	fields := (&filer_pb.FileChunk{}).ProtoReflect().Descriptor().Fields()
+	for i := 0; i < fields.Len(); i++ {
+		f := fields.Get(i)
+		switch f.Kind() {
+		case protoreflect.MessageKind, protoreflect.GroupKind:
+			if !fileChunkMessageFields[protowire.Number(f.Number())] {
+				t.Errorf("FileChunk.%s (field %d) is a message but is not in fileChunkMessageFields, so a corrupt one would pass the listing decoder and fail the full one", f.Name(), f.Number())
+			}
+		case protoreflect.StringKind:
+			if !fileChunkStringFields[protowire.Number(f.Number())] {
+				t.Errorf("FileChunk.%s (field %d) is a string but is not in fileChunkStringFields, so invalid UTF-8 would pass the listing decoder and fail the full one", f.Name(), f.Number())
+			}
+		}
+	}
+}
+
+// corruptChunkBlobs builds entry blobs whose chunk bytes are damaged in ways the
+// generated unmarshaller rejects.
+func corruptChunkBlobs(t *testing.T) map[string][]byte {
+	t.Helper()
+	now := time.Unix(1700000000, 0)
+	base := func() *filer_pb.FileChunk {
+		return &filer_pb.FileChunk{Offset: 0, Size: 1024, Fid: &filer_pb.FileId{VolumeId: 3, FileKey: 7, Cookie: 9}}
+	}
+	blobFor := func(mangle func(raw []byte) []byte) []byte {
+		chunk := base()
+		chunkBytes, err := proto.Marshal(chunk)
+		if err != nil {
+			t.Fatalf("marshal chunk: %v", err)
+		}
+		chunkBytes = mangle(chunkBytes)
+		var blob []byte
+		blob = protowire.AppendTag(blob, entryChunksField, protowire.BytesType)
+		blob = protowire.AppendBytes(blob, chunkBytes)
+		attrs, err := proto.Marshal(&filer_pb.FuseAttributes{FileSize: 0, Mtime: now.Unix(), FileMode: 0o644})
+		if err != nil {
+			t.Fatalf("marshal attrs: %v", err)
+		}
+		blob = protowire.AppendTag(blob, 4, protowire.BytesType)
+		return protowire.AppendBytes(blob, attrs)
+	}
+
+	out := map[string][]byte{}
+	// The exact probe from review: a nested fid whose payload is not a message.
+	out["corrupt nested fid"] = blobFor(func(raw []byte) []byte {
+		var b []byte
+		b = protowire.AppendTag(b, 2, protowire.VarintType)
+		b = protowire.AppendVarint(b, 0)
+		b = protowire.AppendTag(b, 3, protowire.VarintType)
+		b = protowire.AppendVarint(b, 1024)
+		b = protowire.AppendTag(b, 7, protowire.BytesType)
+		return protowire.AppendBytes(b, []byte{0xff, 0xff, 0xff, 0xff})
+	})
+	out["invalid utf8 in file_id"] = blobFor(func(raw []byte) []byte {
+		var b []byte
+		b = protowire.AppendTag(b, 1, protowire.BytesType)
+		b = protowire.AppendBytes(b, []byte{0xff, 0xfe, 0xfd})
+		b = protowire.AppendTag(b, 3, protowire.VarintType)
+		return protowire.AppendVarint(b, 1024)
+	})
+	out["truncated chunk"] = blobFor(func(raw []byte) []byte { return raw[:len(raw)-1] })
+	return out
+}
+
+// TestDecodeAttributesOnlyRejectsWhatFullDecodeRejects is the invariant that
+// keeps a listing from showing a file that cannot then be opened: the fast path
+// must never accept a blob the full decoder turns away.
+func TestDecodeAttributesOnlyRejectsWhatFullDecodeRejects(t *testing.T) {
+	for name, blob := range corruptChunkBlobs(t) {
+		t.Run(name, func(t *testing.T) {
+			var full, attrsOnly Entry
+			full.FullPath = util.FullPath("/d/corrupt")
+			attrsOnly.FullPath = full.FullPath
+			fullErr := full.DecodeAttributesAndChunks(blob)
+			attrsErr := attrsOnly.DecodeAttributesOnly(blob)
+			if fullErr == nil {
+				t.Skip("full decoder accepts this blob, nothing to match")
+			}
+			if attrsErr == nil {
+				t.Errorf("full decode rejected the blob (%v) but attributes-only accepted it with FileSize=%d", fullErr, attrsOnly.FileSize)
+			}
+		})
+	}
+}
+
+// TestDecodeAttributesOnlyManifestChunk pins that a manifest chunk needs no
+// resolving: it carries the offset and size of the range it stands for, and
+// TotalSize does not resolve it either, so both decoders see one number.
+func TestDecodeAttributesOnlyManifestChunk(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	manifest := chunkAt(0, 64<<20, 0)
+	manifest.IsChunkManifest = true
+	entry := &Entry{
+		FullPath: util.FullPath("/d/big"),
+		// Zero stored size, so the manifest's extent is the only source.
+		Attr:   Attr{Mode: 0o644, Mtime: now, Crtime: now, FileSize: 0},
+		Chunks: []*filer_pb.FileChunk{manifest},
+	}
+	full, attrsOnly := decodeBothWays(t, entry)
+	assertSameButChunks(t, full, attrsOnly)
+	if attrsOnly.FileSize != 64<<20 {
+		t.Errorf("FileSize = %d, want %d from the manifest extent", attrsOnly.FileSize, 64<<20)
+	}
+}
+
+// TestDecodeAttributesOnlyFieldBeforeChunks exercises the prefix copy, which no
+// other case reaches: EncodeAttributesAndChunks emits chunks before every field
+// the other tests set, so `dropping` always turns on at pos 0 there.
+func TestDecodeAttributesOnlyFieldBeforeChunks(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	attrs, err := proto.Marshal(&filer_pb.FuseAttributes{FileSize: 0, Mtime: now.Unix(), FileMode: 0o755})
+	if err != nil {
+		t.Fatalf("marshal attrs: %v", err)
+	}
+	chunkBytes, err := proto.Marshal(chunkAt(0, 4<<20, 0))
+	if err != nil {
+		t.Fatalf("marshal chunk: %v", err)
+	}
+	// is_directory (2) ahead of chunks (3), so the walk has a prefix to copy.
+	var blob []byte
+	blob = protowire.AppendTag(blob, 2, protowire.VarintType)
+	blob = protowire.AppendVarint(blob, 1)
+	blob = protowire.AppendTag(blob, entryChunksField, protowire.BytesType)
+	blob = protowire.AppendBytes(blob, chunkBytes)
+	blob = protowire.AppendTag(blob, 4, protowire.BytesType)
+	blob = protowire.AppendBytes(blob, attrs)
+
+	var full, attrsOnly Entry
+	full.FullPath = util.FullPath("/d/dirwithchunks")
+	attrsOnly.FullPath = full.FullPath
+	if err := full.DecodeAttributesAndChunks(blob); err != nil {
+		t.Fatalf("full decode: %v", err)
+	}
+	if err := attrsOnly.DecodeAttributesOnly(blob); err != nil {
+		t.Fatalf("attributes-only decode: %v", err)
+	}
+	assertSameButChunks(t, full, attrsOnly)
+	if attrsOnly.FileSize != 4<<20 {
+		t.Errorf("FileSize = %d, want %d", attrsOnly.FileSize, 4<<20)
 	}
 }
