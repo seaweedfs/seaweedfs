@@ -184,6 +184,10 @@ GET /api/history?cluster_id=<uuid>&days=90
 # Get per-cluster disk usage and volume servers over time, largest first,
 # the rest summed as "other"
 GET /api/cluster-sizes?days=30&limit=20
+
+# Get how many clusters ran each version over time, oldest version first,
+# the rest summed as "other"
+GET /api/versions?days=30&limit=8
 ```
 
 ### Monitoring
