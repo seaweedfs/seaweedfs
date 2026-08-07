@@ -78,22 +78,18 @@ func (dn *DataNode) doAddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChanged 
 // used in master to notify master clients of these changes.
 func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (newVolumes, deletedVolumes, changedVolumes []storage.VolumeInfo) {
 
-	actualVolumeMap := make(map[needle.VolumeId]storage.VolumeInfo)
+	actualVolumeIds := make(map[needle.VolumeId]struct{}, len(actualVolumes))
 	for _, v := range actualVolumes {
-		actualVolumeMap[v.Id] = v
+		actualVolumeIds[v.Id] = struct{}{}
 	}
 
 	dn.Lock()
 	defer dn.Unlock()
 
-	existingVolumes := dn.getVolumes()
-
-	for _, v := range existingVolumes {
-		vid := v.Id
-		if _, ok := actualVolumeMap[vid]; !ok {
-			glog.V(0).Infoln("Deleting volume id:", vid)
-			disk := dn.getOrCreateDisk(v.DiskType)
-			disk.DeleteVolumeById(vid)
+	for _, c := range dn.children {
+		disk := c.(*Disk)
+		for _, v := range disk.RemoveVolumesNotIn(actualVolumeIds) {
+			glog.V(0).Infoln("Deleting volume id:", v.Id)
 			deletedVolumes = append(deletedVolumes, v)
 
 			deltaDiskUsage := &DiskUsageCounts{}
