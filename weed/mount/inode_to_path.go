@@ -137,6 +137,22 @@ func (i *InodeToPath) Lookup(path util.FullPath, unixTime int64, isDirectory boo
 	return inode
 }
 
+// InodeForListing returns the inode number a readdir should report for path
+// without entering it in the table. Nothing is reserved, so the collision probe
+// Lookup does is skipped: the worst case is a repeated st_ino in one listing.
+func (i *InodeToPath) InodeForListing(path util.FullPath, unixTime int64, possibleInode uint64) uint64 {
+	i.RLock()
+	inode, found := i.path2inode[path]
+	i.RUnlock()
+	if found {
+		return inode
+	}
+	if possibleInode != 0 {
+		return possibleInode
+	}
+	return path.AsInode(unixTime)
+}
+
 func (i *InodeToPath) AllocateInode(path util.FullPath, unixTime int64) uint64 {
 	if path == "/" {
 		return 1

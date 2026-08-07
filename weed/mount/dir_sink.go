@@ -15,6 +15,10 @@ type DirEntrySink interface {
 	// AddEntryPlus is AddEntry for readdirplus, returning the attribute block
 	// to fill in, or nil once the sink is full.
 	AddEntryPlus(entry fuse.DirEntry) *fuse.EntryOut
+
+	// TakesLookupRef reports whether AddEntryPlus hands the sink a reference the
+	// mount must hold until a FORGET returns it.
+	TakesLookupRef() bool
 }
 
 // fuseDirEntryList adapts the kernel reply buffer to DirEntrySink.
@@ -29,6 +33,8 @@ func (l fuseDirEntryList) AddEntry(entry fuse.DirEntry) bool {
 func (l fuseDirEntryList) AddEntryPlus(entry fuse.DirEntry) *fuse.EntryOut {
 	return l.AddDirLookupEntry(entry)
 }
+
+func (l fuseDirEntryList) TakesLookupRef() bool { return true }
 
 // ReadDirectoryInto runs a readdir against sink. ReadDir and ReadDirPlus are
 // this with the kernel reply buffer as the sink.

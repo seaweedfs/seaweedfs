@@ -651,6 +651,9 @@ func (s *readdirSink) AddEntryPlus(entry fuse.DirEntry) *fuse.EntryOut {
 	return out
 }
 
+// WinFsp has no FORGET, and every EntryOut is converted before the round ends.
+func (s *readdirSink) TakesLookupRef() bool { return false }
+
 func (w *WinFS) Readdir(path string, fill func(name string, stat *cgofuse.Stat_t, ofst int64) bool, ofst int64, fh uint64) int {
 	inode := w.inodeForHandle(w.dirInodes, fh)
 	if inode == 0 {
@@ -698,12 +701,6 @@ func (w *WinFS) Readdir(path string, fill func(name string, stat *cgofuse.Stat_t
 			if filled && !fill(name, statp, int64(sink.offsets[i])) {
 				filled = false
 			}
-		}
-		// A readdirplus entry carries a reference of its own. Give every one
-		// of them back, including any the fill above stopped short of, or a
-		// single walk of a wide directory strands one reference per child.
-		for _, child := range sink.inodes {
-			w.forget(child)
 		}
 		if !filled {
 			return 0

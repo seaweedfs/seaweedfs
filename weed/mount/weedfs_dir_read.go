@@ -170,12 +170,21 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out DirEntrySink, isPlusMode
 	wfs.inodeToPath.TouchDirectory(dirPath)
 
 	var dirEntry fuse.DirEntry
+	// Only a reference makes a child worth entering in the inode table: without
+	// one nothing ever arrives to take the entry back out again.
+	takesLookupRef := isPlusMode && out.TakesLookupRef()
 
 	// index is the position in entryStream, used to calculate the offset for next readdir
 	processEachEntryFn := func(entry *filer.Entry, index int64) bool {
 		dirEntry.Name = entry.Name()
 		dirEntry.Mode = toSyscallMode(entry.Mode)
-		inode := wfs.inodeToPath.Lookup(dirPath.Child(dirEntry.Name), entry.Crtime.Unix(), entry.IsDirectory(), len(entry.HardLinkId) > 0, entry.Inode, false)
+		childPath := dirPath.Child(dirEntry.Name)
+		var inode uint64
+		if takesLookupRef {
+			inode = wfs.inodeToPath.Lookup(childPath, entry.Crtime.Unix(), entry.IsDirectory(), len(entry.HardLinkId) > 0, entry.Inode, false)
+		} else {
+			inode = wfs.inodeToPath.InodeForListing(childPath, entry.Crtime.Unix(), entry.Inode)
+		}
 		dirEntry.Ino = inode
 
 		// Set Off to the next offset so client can resume from correct position
@@ -191,11 +200,15 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out DirEntrySink, isPlusMode
 				return false
 			}
 			if fh, found := wfs.fhMap.FindFileHandle(inode); found {
-				glog.V(4).Infof("readdir opened file %s", dirPath.Child(dirEntry.Name))
+				glog.V(4).Infof("readdir opened file %s", childPath)
 				entry = filer.FromPbEntry(string(dirPath), fh.GetEntry().GetEntry())
 			}
 			wfs.outputFilerEntry(entryOut, inode, entry)
-			wfs.inodeToPath.Lookup(dirPath.Child(dirEntry.Name), entry.Crtime.Unix(), entry.IsDirectory(), len(entry.HardLinkId) > 0, entry.Inode, true)
+			// Taken only once the entry is really in the sink, so one that did not
+			// fit leaves no reference behind.
+			if takesLookupRef {
+				wfs.inodeToPath.Lookup(childPath, entry.Crtime.Unix(), entry.IsDirectory(), len(entry.HardLinkId) > 0, entry.Inode, true)
+			}
 		}
 		return true
 	}
