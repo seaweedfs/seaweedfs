@@ -46,14 +46,18 @@ func (dnll *VolumeLocationList) Length() int {
 	return len(dnll.list)
 }
 
-func (dnll *VolumeLocationList) Set(loc *DataNode) {
+// Set adds loc, or replaces the existing entry at the same address. It reports
+// whether the volume became newly reachable through loc, which is what the
+// node's lookup digest tracks.
+func (dnll *VolumeLocationList) Set(loc *DataNode) (added bool) {
 	for i := 0; i < len(dnll.list); i++ {
 		if loc.Ip == dnll.list[i].Ip && loc.Port == dnll.list[i].Port {
 			dnll.list[i] = loc
-			return
+			return false
 		}
 	}
 	dnll.list = append(dnll.list, loc)
+	return true
 }
 
 func (dnll *VolumeLocationList) Remove(loc *DataNode) bool {

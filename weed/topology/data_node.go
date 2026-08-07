@@ -24,6 +24,9 @@ type DataNode struct {
 	IsTerminating bool
 
 	MaintenanceMode bool
+	// lookupDigest covers the volumes reachable through this node in the volume
+	// layouts, for comparison against what its disks actually hold.
+	lookupDigest atomic.Uint64
 	// diskMetas holds each physical disk's tags, type, and capacity from the
 	// heartbeat DiskTags, including disks with no volumes or EC shards.
 	diskMetas map[uint32]diskMeta

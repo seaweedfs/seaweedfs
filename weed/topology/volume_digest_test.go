@@ -5,6 +5,9 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 func digestTestNode(t *testing.T) (*Topology, *DataNode) {
@@ -223,5 +226,76 @@ func TestVolumeDigestCatchesASilentlyLostVolume(t *testing.T) {
 
 	if dn.VolumeDigest() == referenceNode.VolumeDigest() {
 		t.Error("a volume lost without a delta went undetected, which is what the full list is for")
+	}
+}
+
+// The disk map and the lookup index are maintained separately, and a disconnect
+// racing a reconnect has been seen to drop a volume from the lookup index while
+// leaving it on the node. The volume server's report is identical either way, so
+// the heartbeat digest cannot see it and the master has to notice on its own.
+func TestVolumeIndexDigestSeesLookupDivergence(t *testing.T) {
+	topo, dn := digestTestNode(t)
+	v := digestTestVolume(1)
+	v.Collection = "drr"
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{v}, dn)
+
+	if !dn.HasConsistentVolumeIndex() {
+		t.Fatal("a freshly registered node should have a consistent index")
+	}
+	reported := dn.VolumeDigest()
+
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	vl := topo.GetVolumeLayout("drr", rp, needle.EMPTY_TTL, types.HardDriveType)
+	vl.SetVolumeUnavailable(dn, needle.VolumeId(1))
+
+	if got := topo.Lookup("drr", needle.VolumeId(1)); got != nil {
+		t.Fatalf("expected the volume to have become unservable, got %v", got)
+	}
+	if _, err := dn.GetVolumesById(needle.VolumeId(1)); err != nil {
+		t.Fatalf("the volume should still be on the node: %v", err)
+	}
+	if dn.VolumeDigest() != reported {
+		t.Error("the reported digest should not move: the volume server sees no change")
+	}
+	if dn.HasConsistentVolumeIndex() {
+		t.Error("a volume held but not servable left the index digests agreeing, so nothing would repair it")
+	}
+
+	// The full heartbeat self-heal puts it back.
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{v}, dn)
+	if !dn.HasConsistentVolumeIndex() {
+		t.Error("the self-heal did not restore index consistency")
+	}
+}
+
+func TestVolumeIndexDigestFollowsNodeLifecycle(t *testing.T) {
+	topo, dn := digestTestNode(t)
+	full := []*master_pb.VolumeInformationMessage{digestTestVolume(1), digestTestVolume(2), digestTestVolume(3)}
+	topo.SyncDataNodeRegistration(full, dn)
+	if !dn.HasConsistentVolumeIndex() {
+		t.Fatal("registration left the indexes disagreeing")
+	}
+
+	topo.SyncDataNodeRegistration(full[:2], dn)
+	if !dn.HasConsistentVolumeIndex() {
+		t.Error("dropping a volume left the indexes disagreeing")
+	}
+
+	topo.IncrementalSyncDataNodeRegistration(
+		[]*master_pb.VolumeShortInformationMessage{{Id: 9}}, nil, dn)
+	if !dn.HasConsistentVolumeIndex() {
+		t.Error("a mount delta left the indexes disagreeing")
+	}
+
+	topo.IncrementalSyncDataNodeRegistration(
+		nil, []*master_pb.VolumeShortInformationMessage{{Id: 9}}, dn)
+	if !dn.HasConsistentVolumeIndex() {
+		t.Error("an unmount delta left the indexes disagreeing")
+	}
+
+	topo.UnRegisterDataNode(dn)
+	held, servable := dn.VolumeIndexDigests()
+	if held != 0 || servable != 0 {
+		t.Errorf("an unregistered node should hold nothing: held=%d servable=%d", held, servable)
 	}
 }
