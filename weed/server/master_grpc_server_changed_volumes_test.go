@@ -145,3 +145,30 @@ func TestRepairedLookupEntryIsAnnounced(t *testing.T) {
 		})
 	}
 }
+
+// Deleting a collection throws its layouts away wholesale. The lookup bits
+// they held must go with them: leaked bits keep the node's held and servable
+// digests apart forever, and the master then asks for the full volume list on
+// every heartbeat for the rest of the process's life.
+func TestDeletedCollectionReleasesTheLookupIndex(t *testing.T) {
+	topo, dn := changedTestCluster(t)
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{
+		changedTestVolume(1, 1024), changedTestVolume(2, 1024),
+	}, dn)
+	if !dn.HasConsistentVolumeIndex() {
+		t.Fatal("expected a freshly synced node to be consistent")
+	}
+
+	topo.DeleteCollection("c")
+	// The node still holds the volumes until a heartbeat names their
+	// departure; this is that heartbeat.
+	topo.IncrementalSyncDataNodeRegistration(nil, []*master_pb.VolumeShortInformationMessage{
+		{Id: 1, Collection: "c", Version: 3},
+		{Id: 2, Collection: "c", Version: 3},
+	}, dn)
+
+	if !dn.HasConsistentVolumeIndex() {
+		t.Fatal("the deleted collection's lookup entries were not released")
+	}
+}
+
