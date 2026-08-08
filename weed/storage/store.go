@@ -81,7 +81,7 @@ type Store struct {
 	NewEcShardsChan     chan *master_pb.VolumeEcShardInformationMessage
 	DeletedEcShardsChan chan *master_pb.VolumeEcShardInformationMessage
 	isStopping          bool
-	volumeReport        *volumeReportState
+	volumeReport        volumeReportState
 }
 
 func (s *Store) String() (str string) {
@@ -115,7 +115,6 @@ func NewStore(
 		DeletedVolumesChan:  make(chan *master_pb.VolumeShortInformationMessage, HEARTBEAT_CHAN_SIZE),
 		NewEcShardsChan:     make(chan *master_pb.VolumeEcShardInformationMessage, HEARTBEAT_CHAN_SIZE),
 		DeletedEcShardsChan: make(chan *master_pb.VolumeEcShardInformationMessage, HEARTBEAT_CHAN_SIZE),
-		volumeReport:        newVolumeReportState(),
 	}
 
 	var wg sync.WaitGroup

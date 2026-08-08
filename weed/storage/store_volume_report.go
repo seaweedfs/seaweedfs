@@ -19,7 +19,8 @@ type volumeReportKey struct {
 //
 // It is per-connection: a server that reconnects, or reaches a different
 // master, knows nothing about what that master holds and starts again from the
-// full list.
+// full list. The zero value has told no master anything, so it sends the whole
+// list until one accepts changes.
 type volumeReportState struct {
 	mu sync.Mutex
 	// deltasAccepted is set once the master says it compares digests. Until
@@ -27,10 +28,6 @@ type volumeReportState struct {
 	deltasAccepted bool
 	fullListNeeded bool
 	lastReported   map[volumeReportKey]uint64
-}
-
-func newVolumeReportState() *volumeReportState {
-	return &volumeReportState{fullListNeeded: true}
 }
 
 // reset drops everything known about the master's view.
