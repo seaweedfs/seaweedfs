@@ -78,3 +78,21 @@ func TestVolumeUnmountedViaDeltaIsBroadcastAsRemoved(t *testing.T) {
 		t.Error("clients were not told about a volume that really was unmounted")
 	}
 }
+
+// Clients track normal and ec locations separately, and prefer the normal one
+// when both come from the same generation. A replica that became ec shards has
+// genuinely left, so the removal must still go out.
+func TestVolumeReplacedByEcShardsIsBroadcastAsRemoved(t *testing.T) {
+	topo, dn := moveTestNode(t)
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{moveTestVolume("", 0)}, dn)
+	topo.SyncDataNodeEcShards([]*master_pb.VolumeEcShardInformationMessage{
+		{Id: 1, Collection: "c", EcIndexBits: 0x3fff},
+	}, dn)
+
+	if _, deleted := topo.SyncDataNodeRegistration(nil, dn); len(deleted) != 1 {
+		t.Fatalf("expected the normal volume to be removed, got %d removals", len(deleted))
+	}
+	if !shouldBroadcastVolumeRemoval(dn, needle.VolumeId(1)) {
+		t.Error("clients kept a normal-volume location for a replica that became ec shards")
+	}
+}

@@ -30,9 +30,12 @@ import (
 
 // A volume moved between the node's disks appears in both lists, and clients
 // apply additions before deletions, so passing the removal on would drop a
-// location that is still good.
+// location that is still good. Not HasVolumesById, which answers for ec shards
+// too: clients hold those separately and prefer the normal location, so a
+// replica that became ec shards has to be reported gone.
 func shouldBroadcastVolumeRemoval(dn *topology.DataNode, vid needle.VolumeId) bool {
-	return !dn.HasVolumesById(vid)
+	_, err := dn.GetVolumesById(vid)
+	return err != nil
 }
 
 func (ms *MasterServer) RegisterUuids(heartbeat *master_pb.Heartbeat) (duplicated_uuids []string, err error) {
