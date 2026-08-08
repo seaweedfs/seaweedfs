@@ -465,7 +465,12 @@ func (c *commandFsMergeVolumes) getVolumeSizeBasedOnPlan(plan map[needle.VolumeI
 	return size
 }
 
+// getVolumeSize is the volume's live data size, clamped since
+// DeletedByteCount can transiently exceed Size.
 func (c *commandFsMergeVolumes) getVolumeSize(volume *master_pb.VolumeInformationMessage) uint64 {
+	if volume.Size < volume.DeletedByteCount {
+		return 0
+	}
 	return volume.Size - volume.DeletedByteCount
 }
 
