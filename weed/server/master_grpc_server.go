@@ -38,6 +38,16 @@ func shouldBroadcastVolumeRemoval(dn *topology.DataNode, vid needle.VolumeId) bo
 	return err != nil
 }
 
+// heartbeatResponse carries the options a volume server takes from every
+// response it receives. A response that left them out would be read as the
+// master turning them off, so anything sent mid-stream has to start here.
+func (ms *MasterServer) heartbeatResponse() *master_pb.HeartbeatResponse {
+	return &master_pb.HeartbeatResponse{
+		VolumeSizeLimit: uint64(ms.option.VolumeSizeLimitMB) * 1024 * 1024,
+		Preallocate:     ms.preallocateSize > 0,
+	}
+}
+
 func (ms *MasterServer) RegisterUuids(heartbeat *master_pb.Heartbeat) (duplicated_uuids []string, err error) {
 	ms.Topo.UuidAccessLock.Lock()
 	defer ms.Topo.UuidAccessLock.Unlock()
@@ -170,11 +180,9 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 				return err
 			}
 
-			if err := stream.Send(&master_pb.HeartbeatResponse{
-				VolumeSizeLimit:       uint64(ms.option.VolumeSizeLimitMB) * 1024 * 1024,
-				Preallocate:           ms.preallocateSize > 0,
-				VolumeDigestSupported: true,
-			}); err != nil {
+			response := ms.heartbeatResponse()
+			response.VolumeDigestSupported = true
+			if err := stream.Send(response); err != nil {
 				glog.Warningf("SendHeartbeat.Send volume size to %s:%d %v", dn.Ip, dn.Port, err)
 				return err
 			}
@@ -304,7 +312,9 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		// Checked after everything the heartbeat carried has been applied, so a
 		// match means the master is current, not that nothing changed.
 		if resend := ms.checkVolumeDigest(heartbeat, dn); resend {
-			if err := stream.Send(&master_pb.HeartbeatResponse{ResendFullVolumeList: true}); err != nil {
+			response := ms.heartbeatResponse()
+			response.ResendFullVolumeList = true
+			if err := stream.Send(response); err != nil {
 				glog.Warningf("SendHeartbeat.Send resend request to %s:%d %v", dn.Ip, dn.Port, err)
 				return err
 			}

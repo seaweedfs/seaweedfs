@@ -127,3 +127,20 @@ func TestDigestCheckAsksForTheListWhenTheLookupIndexDrifts(t *testing.T) {
 		t.Error("a volume that stopped being servable left the node sending only changes, so nothing would repair it")
 	}
 }
+
+// A volume server takes the options from every response it receives, and
+// preallocate is a bare bool with no way to tell "off" from "not mentioned". A
+// response that left it out would turn preallocation off until reconnect.
+func TestHeartbeatResponsesCarryTheVolumeOptions(t *testing.T) {
+	ms := &MasterServer{option: &MasterOption{VolumeSizeLimitMB: 1024}, preallocateSize: 1}
+
+	resend := ms.heartbeatResponse()
+	resend.ResendFullVolumeList = true
+
+	if !resend.Preallocate {
+		t.Error("a resend request would turn off preallocation on the volume server")
+	}
+	if resend.VolumeSizeLimit != 1024*1024*1024 {
+		t.Errorf("a resend request carried volume size limit %d, want the configured one", resend.VolumeSizeLimit)
+	}
+}
