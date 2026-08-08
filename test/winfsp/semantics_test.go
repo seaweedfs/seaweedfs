@@ -352,6 +352,21 @@ func TestConcurrentReaders(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
+	// WriteFile's own existence probe ran while the file did not exist, and
+	// WinFsp may serve that answer from its metadata cache for up to the
+	// mount's FileInfoTimeout. Establish visibility once before racing the
+	// readers, so the race exercises concurrent reading rather than the
+	// cache window.
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if _, err := os.Stat(path); err == nil {
+			break
+		} else if time.Now().After(deadline) {
+			t.Fatalf("file never became visible: %v", err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
 	var wg sync.WaitGroup
 	errs := make(chan error, 8)
 	for r := 0; r < 8; r++ {
