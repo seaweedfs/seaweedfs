@@ -351,6 +351,22 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 	return nextHintedLeader
 }
 
+// addedVids indexes added ids that are also being removed. A volume moved
+// between a server's disks is reported both ways in one message, and the server
+// still has it -- acting on the removal would drop a good location, whichever
+// order the two lists happen to be applied in. Empty unless both lists are
+// non-empty, so the full id list a client gets on connect costs nothing.
+func addedVids(added, removed []uint32) map[uint32]struct{} {
+	if len(added) == 0 || len(removed) == 0 {
+		return nil
+	}
+	index := make(map[uint32]struct{}, len(added))
+	for _, vid := range added {
+		index[vid] = struct{}{}
+	}
+	return index
+}
+
 func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 	if resp.VolumeLocation.IsEmptyUrl() {
 		glog.V(0).Infof("updateVidMap ignore short heartbeat: %+v", resp)
@@ -363,19 +379,27 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 		DataCenter: resp.VolumeLocation.DataCenter,
 		GrpcPort:   int(resp.VolumeLocation.GrpcPort),
 	}
+	stillOnServer := addedVids(resp.VolumeLocation.NewVids, resp.VolumeLocation.DeletedVids)
 	for _, newVid := range resp.VolumeLocation.NewVids {
 		glog.V(2).Infof("%s.%s: %s masterClient adds volume %d", mc.FilerGroup, mc.clientType, loc.Url, newVid)
 		mc.addLocation(newVid, loc)
 	}
 	for _, deletedVid := range resp.VolumeLocation.DeletedVids {
+		if _, moved := stillOnServer[deletedVid]; moved {
+			continue
+		}
 		glog.V(2).Infof("%s.%s: %s masterClient removes volume %d", mc.FilerGroup, mc.clientType, loc.Url, deletedVid)
 		mc.deleteLocation(deletedVid, loc)
 	}
+	stillOnServerEc := addedVids(resp.VolumeLocation.NewEcVids, resp.VolumeLocation.DeletedEcVids)
 	for _, newEcVid := range resp.VolumeLocation.NewEcVids {
 		glog.V(2).Infof("%s.%s: %s masterClient adds ec volume %d", mc.FilerGroup, mc.clientType, loc.Url, newEcVid)
 		mc.addEcLocation(newEcVid, loc)
 	}
 	for _, deletedEcVid := range resp.VolumeLocation.DeletedEcVids {
+		if _, moved := stillOnServerEc[deletedEcVid]; moved {
+			continue
+		}
 		glog.V(2).Infof("%s.%s: %s masterClient removes ec volume %d", mc.FilerGroup, mc.clientType, loc.Url, deletedEcVid)
 		mc.deleteEcLocation(deletedEcVid, loc)
 	}
