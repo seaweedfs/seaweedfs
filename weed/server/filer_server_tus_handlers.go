@@ -175,7 +175,7 @@ func writeTusCompleteError(w http.ResponseWriter, err error) {
 func (fs *FilerServer) tusOptionsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Tus-Version", TusVersion)
 	w.Header().Set("Tus-Extension", TusExtensions)
-	w.Header().Set("Tus-Max-Size", strconv.FormatInt(TusMaxSize, 10))
+	w.Header().Set("Tus-Max-Size", strconv.FormatInt(fs.option.TusMaxSize, 10))
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -197,7 +197,7 @@ func (fs *FilerServer) tusCreateHandler(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "Invalid Upload-Length", http.StatusBadRequest)
 		return
 	}
-	if uploadLength > TusMaxSize {
+	if uploadLength > fs.option.TusMaxSize {
 		http.Error(w, "Upload-Length exceeds maximum", http.StatusRequestEntityTooLarge)
 		return
 	}

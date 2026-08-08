@@ -84,6 +84,8 @@ type FilerOption struct {
 	AllowedOrigins            []string
 	ExposeDirectoryData       bool
 	TusBasePath               string
+	TusMaxSize                int64
+	TusSessionExpiry          time.Duration
 	S3ConfigFile              string // optional path to static S3 identity config file
 	CredentialManager         *credential.CredentialManager
 }
@@ -254,6 +256,12 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 			if option.TusBasePath == "" {
 				glog.Warningf("Invalid TUS base path; TUS disabled (must not be root '/')")
 			} else {
+				if option.TusMaxSize <= 0 {
+					option.TusMaxSize = TusDefaultMaxSize
+				}
+				if option.TusSessionExpiry <= 0 {
+					option.TusSessionExpiry = TusDefaultSessionExpiry
+				}
 				handlePath := option.TusBasePath + "/"
 				defaultMux.HandleFunc(handlePath, fs.filerGuard.WhiteList(requestIDMiddleware(fs.tusHandler)))
 				// Start background cleanup of expired TUS sessions (every hour)

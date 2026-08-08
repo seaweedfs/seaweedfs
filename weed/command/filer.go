@@ -80,6 +80,8 @@ type FilerOptions struct {
 	allowedOrigins            *string
 	exposeDirectoryData       *bool
 	tusBasePath               *string
+	tusMaxSizeMB              *int
+	tusSessionExpiry          *time.Duration
 	s3ConfigFile              *string // optional path to static S3 identity config
 	// shutdownCtx, when non-nil, tells startFiler to gracefully shut down its
 	// HTTP/gRPC servers once the ctx is cancelled. Used by integration tests
@@ -123,6 +125,8 @@ func init() {
 	f.allowedOrigins = cmdFiler.Flag.String("allowedOrigins", "*", "comma separated list of allowed origins")
 	f.exposeDirectoryData = cmdFiler.Flag.Bool("exposeDirectoryData", true, "whether to return directory metadata and content in Filer UI")
 	f.tusBasePath = cmdFiler.Flag.String("tusBasePath", "/.tus", "TUS resumable upload endpoint base path (e.g., /.tus)")
+	f.tusMaxSizeMB = cmdFiler.Flag.Int("tusMaxSizeMB", 5*1024, "maximum TUS upload size in MB")
+	f.tusSessionExpiry = cmdFiler.Flag.Duration("tusSessionExpiry", 7*24*time.Hour, "incomplete TUS upload sessions are cleaned up after this duration, e.g. \"24h\", \"7h30m\"")
 
 	// start s3 on filer
 	filerStartS3 = cmdFiler.Flag.Bool("s3", false, "whether to start S3 gateway")
@@ -386,6 +390,8 @@ func (fo *FilerOptions) startFiler() {
 		DiskType:                  *fo.diskType,
 		AllowedOrigins:            strings.Split(*fo.allowedOrigins, ","),
 		TusBasePath:               *fo.tusBasePath,
+		TusMaxSize:                int64(*fo.tusMaxSizeMB) * 1024 * 1024,
+		TusSessionExpiry:          *fo.tusSessionExpiry,
 		CredentialManager:         credentialManager,
 	})
 	if nfs_err != nil {

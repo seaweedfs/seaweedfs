@@ -82,7 +82,7 @@ func TestFilerServer_tusHandler_RejectsAliasesAndInvalidMetadata(t *testing.T) {
 		{"empty stored target", tusTestUploadID, TusSession{ID: tusTestUploadID, TargetPath: "", Size: 1}},
 		{"root stored target", tusTestUploadID, TusSession{ID: tusTestUploadID, TargetPath: "/", Size: 1}},
 		{"relative stored target", tusTestUploadID, TusSession{ID: tusTestUploadID, TargetPath: "buckets/secret/x.bin", Size: 1}},
-		{"oversize stored size", tusTestUploadID, TusSession{ID: tusTestUploadID, TargetPath: "/buckets/secret/victim.bin", Size: TusMaxSize + 1}},
+		{"oversize stored size", tusTestUploadID, TusSession{ID: tusTestUploadID, TargetPath: "/buckets/secret/victim.bin", Size: TusDefaultMaxSize + 1}},
 	}
 
 	for _, tt := range tests {
