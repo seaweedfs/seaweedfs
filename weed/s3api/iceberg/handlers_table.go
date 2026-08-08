@@ -849,6 +849,7 @@ func newTableMetadata(
 	if props == nil {
 		props = make(iceberg.Properties)
 	}
+	props = ensureDefaultNameMapping(props, s)
 
 	// Create metadata directly using the constructor which ensures spec compliance for V2
 	return table.NewMetadataWithUUID(s, pSpec, so, location, props, tableUUID)
