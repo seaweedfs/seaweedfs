@@ -32,6 +32,12 @@ database engine.
    - `ReadWrittenDataCount` and `ReadWrittenDataValues`: ClickHouse reads back
      the three PyIceberg-appended rows and the values match. This exercises the
      actual data path (parquet reads via S3), not just metadata.
+   - `WriteReadBack`: ClickHouse inserts rows with its experimental Iceberg
+     write support using default settings, which produces manifests without
+     avro field-ids, bucket-relative paths, and parquet without field ids. The
+     SeaweedFS catalog repairs the manifests at commit time and stamps a
+     default name mapping on the table, so PyIceberg (`read_rows.py`, a strict
+     reader) must return the rows ClickHouse wrote.
 
 Queries go through ClickHouse's HTTP interface (port 8123, mapped to a
 dynamically allocated host port), so the test needs no ClickHouse client
