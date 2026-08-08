@@ -630,6 +630,11 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 			// RegisterVolumeLayout, which would repeat the GetVolumeLayout lookup.
 			vl.RegisterVolume(&v, dn)
 			vl.EnsureCorrectWritables(&v)
+			// Volumes new to the disk map were registered above, so reaching
+			// here means only the lookup index had lost it. Clients were told
+			// it went when the node dropped out, so the repair has to tell them
+			// it is back.
+			newVolumes = append(newVolumes, v)
 		}
 		if vl.UpdateVolumeSize(v.Id, v.Size, v.CompactRevision) {
 			vl.AdjustActiveVolumeCountAfterRecovery(v.Id)
@@ -666,6 +671,52 @@ func (t *Topology) IncrementalSyncDataNodeRegistration(newVolumes, deletedVolume
 	}
 
 	return
+}
+
+// ApplyVolumeChanges records the volumes a heartbeat reported as changed and
+// returns the ones the node did not already have. Only the named volumes are
+// touched: unlike a full report, silence about a volume says nothing about
+// whether the server still has it.
+//
+// Most changes are a volume growing, which moves no location, so returning
+// only the arrivals keeps a busy cluster from telling every client about
+// volumes they can already reach.
+func (t *Topology) ApplyVolumeChanges(changed []*master_pb.VolumeInformationMessage, dn *DataNode) (newVolumes []storage.VolumeInfo) {
+	volumeInfos := make([]storage.VolumeInfo, 0, len(changed))
+	for _, v := range changed {
+		vi, err := storage.NewVolumeInfo(v)
+		if err != nil {
+			glog.V(0).Infof("Fail to convert changed volume information: %v", err)
+			continue
+		}
+		volumeInfos = append(volumeInfos, vi)
+	}
+
+	for _, vi := range volumeInfos {
+		isNew, _ := dn.AddOrUpdateVolume(vi)
+		if vi.ReplicaPlacement == nil {
+			if isNew {
+				newVolumes = append(newVolumes, vi)
+			}
+			continue
+		}
+		vl := t.GetVolumeLayout(vi.Collection, vi.ReplicaPlacement, vi.Ttl, types.ToDiskType(vi.DiskType))
+		// Reaching the lookup index is what makes a volume servable, so a
+		// volume only that index had lost is an arrival as far as clients are
+		// concerned: they were told it went when the node dropped out.
+		becameServable := !vl.HasDataNode(vi.Id, dn)
+		if becameServable {
+			vl.RegisterVolume(&vi, dn)
+		}
+		if isNew || becameServable {
+			newVolumes = append(newVolumes, vi)
+		}
+		vl.EnsureCorrectWritables(&vi)
+		if vl.UpdateVolumeSize(vi.Id, vi.Size, vi.CompactRevision) {
+			vl.AdjustActiveVolumeCountAfterRecovery(vi.Id)
+		}
+	}
+	return newVolumes
 }
 
 func (t *Topology) DataNodeRegistration(dcName, rackName string, dn *DataNode) {

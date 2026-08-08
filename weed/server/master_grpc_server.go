@@ -38,6 +38,16 @@ func shouldBroadcastVolumeRemoval(dn *topology.DataNode, vid needle.VolumeId) bo
 	return err != nil
 }
 
+// heartbeatResponse carries the options a volume server takes from every
+// response it receives. A response that left them out would be read as the
+// master turning them off, so anything sent mid-stream has to start here.
+func (ms *MasterServer) heartbeatResponse() *master_pb.HeartbeatResponse {
+	return &master_pb.HeartbeatResponse{
+		VolumeSizeLimit: uint64(ms.option.VolumeSizeLimitMB) * 1024 * 1024,
+		Preallocate:     ms.preallocateSize > 0,
+	}
+}
+
 func (ms *MasterServer) RegisterUuids(heartbeat *master_pb.Heartbeat) (duplicated_uuids []string, err error) {
 	ms.Topo.UuidAccessLock.Lock()
 	defer ms.Topo.UuidAccessLock.Unlock()
@@ -170,10 +180,9 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 				return err
 			}
 
-			if err := stream.Send(&master_pb.HeartbeatResponse{
-				VolumeSizeLimit: uint64(ms.option.VolumeSizeLimitMB) * 1024 * 1024,
-				Preallocate:     ms.preallocateSize > 0,
-			}); err != nil {
+			response := ms.heartbeatResponse()
+			response.VolumeDigestSupported = true
+			if err := stream.Send(response); err != nil {
 				glog.Warningf("SendHeartbeat.Send volume size to %s:%d %v", dn.Ip, dn.Port, err)
 				return err
 			}
@@ -229,6 +238,13 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 					continue
 				}
 				message.DeletedVids = append(message.DeletedVids, volInfo.Id)
+			}
+		}
+
+		if len(heartbeat.ChangedVolumes) > 0 {
+			stats.MasterReceivedHeartbeatCounter.WithLabelValues("changedVolumes").Inc()
+			for _, v := range ms.Topo.ApplyVolumeChanges(heartbeat.ChangedVolumes, dn) {
+				message.NewVids = append(message.NewVids, uint32(v.Id))
 			}
 		}
 
@@ -296,7 +312,9 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		// Checked after everything the heartbeat carried has been applied, so a
 		// match means the master is current, not that nothing changed.
 		if resend := ms.checkVolumeDigest(heartbeat, dn); resend {
-			if err := stream.Send(&master_pb.HeartbeatResponse{ResendFullVolumeList: true}); err != nil {
+			response := ms.heartbeatResponse()
+			response.ResendFullVolumeList = true
+			if err := stream.Send(response); err != nil {
 				glog.Warningf("SendHeartbeat.Send resend request to %s:%d %v", dn.Ip, dn.Port, err)
 				return err
 			}
@@ -312,32 +330,43 @@ func (ms *MasterServer) checkVolumeDigest(heartbeat *master_pb.Heartbeat, dn *to
 	if heartbeat.VolumeDigest == nil {
 		return false
 	}
-	// One volume id mounted on two disks is reported twice but stored once, so
-	// the digests cannot agree however often the list is resent. Asking would
-	// loop forever.
-	if dn.HasDuplicateVolumeIds() {
-		stats.MasterReceivedHeartbeatCounter.WithLabelValues("volumeDigestNotComparable").Inc()
-		return false
-	}
 
 	reported := heartbeat.GetVolumeDigest()
 	held := dn.VolumeDigest()
-	if held == reported {
+	needsFullList, reason := true, ""
+	switch {
+	case dn.HasDuplicateVolumeIds():
+		// Reported twice but stored once, so the digests can never agree. The
+		// server has to keep sending its whole list, since nothing else would
+		// tell the master what it had stopped holding.
+		stats.MasterReceivedHeartbeatCounter.WithLabelValues("volumeDigestNotComparable").Inc()
+	case !dn.HasConsistentVolumeIndex():
+		// The lookup index has drifted from the disks, which the server cannot
+		// see and its digest cannot show. Only a full report re-registers the
+		// volumes that stopped being servable.
+		stats.MasterReceivedHeartbeatCounter.WithLabelValues("volumeIndexInconsistent").Inc()
+		reason = "lookup index disagrees with the volumes held"
+	case held != reported:
+		stats.MasterReceivedHeartbeatCounter.WithLabelValues("volumeDigestMismatch").Inc()
+		reason = fmt.Sprintf("reported digest %d, master holds %d", reported, held)
+	default:
 		stats.MasterReceivedHeartbeatCounter.WithLabelValues("volumeDigestMatch").Inc()
+		needsFullList = false
+	}
+	if !needsFullList {
 		return false
 	}
 
-	stats.MasterReceivedHeartbeatCounter.WithLabelValues("volumeDigestMismatch").Inc()
-	// A heartbeat that already carried the full list has nothing more to give;
-	// asking again would just repeat. Say so instead, because at this point the
-	// two ends genuinely disagree about what the server holds.
+	// A heartbeat that already carried the full list has nothing more to give.
 	if len(heartbeat.Volumes) > 0 || heartbeat.HasNoVolumes {
-		glog.Warningf("volume server %s reported digest %d after a full volume list, master holds %d",
-			dn.Url(), reported, held)
+		if reason != "" {
+			glog.Warningf("volume server %s still disagrees after a full volume list: %s", dn.Url(), reason)
+		}
 		return false
 	}
-	glog.V(0).Infof("volume server %s reported digest %d, master holds %d: requesting the full volume list",
-		dn.Url(), reported, held)
+	if reason != "" {
+		glog.V(0).Infof("volume server %s: %s, requesting the full volume list", dn.Url(), reason)
+	}
 	return true
 }
 

@@ -19,6 +19,7 @@ use crate::pb::master_pb::seaweed_client::SeaweedClient;
 use crate::pb::volume_server_pb;
 use crate::remote_storage::s3_tier::{S3TierBackend, S3TierConfig};
 use crate::storage::store::Store;
+use crate::storage::volume_report::VolumeReportKey;
 use crate::storage::volume_report_hash::report_hash;
 use crate::storage::types::NeedleId;
 
@@ -274,6 +275,13 @@ fn duplicate_directories(store: &Store, duplicated_uuids: &[String]) -> Vec<Stri
 }
 
 fn apply_master_volume_options(store: &Store, hb_resp: &master_pb::HeartbeatResponse) -> bool {
+    if hb_resp.volume_digest_supported {
+        store.volume_report.accept_deltas();
+    }
+    if hb_resp.resend_full_volume_list {
+        info!("master asked for the full volume list");
+        store.volume_report.request_full_list();
+    }
     let mut volume_opts_changed = false;
     if store.get_preallocate() != hb_resp.preallocate {
         store.set_preallocate(hb_resp.preallocate);
@@ -384,13 +392,14 @@ async fn do_heartbeat(
 
     let (tx, rx) = tokio::sync::mpsc::channel::<master_pb::Heartbeat>(32);
 
+    // This master may know nothing about this server, and has not yet said
+    // whether it understands digests, so start from the whole list.
+    state.store.read().unwrap().volume_report.reset();
+
     // Keep track of what we sent, to generate delta updates
-    let initial_hb = collect_heartbeat(config, state);
-    let mut last_volumes: HashMap<u32, master_pb::VolumeInformationMessage> = initial_hb
-        .volumes
-        .iter()
-        .map(|v| (v.id, v.clone()))
-        .collect();
+    let (initial_hb, initial_volumes) = collect_heartbeat_with_snapshot(config, state);
+    let mut last_volumes: HashMap<u32, master_pb::VolumeInformationMessage> =
+        initial_volumes.iter().map(|v| (v.id, v.clone())).collect();
     let mut last_ec_shards = {
         let store = state.store.read().unwrap();
         collect_ec_shard_delta_messages(&store)
@@ -455,9 +464,10 @@ async fn do_heartbeat(
                             apply_master_volume_options(&s, &hb_resp)
                         };
                         if changed {
-                            let adjusted_hb = collect_heartbeat(config, state);
+                            let (adjusted_hb, adjusted_volumes) =
+                                collect_heartbeat_with_snapshot(config, state);
                             last_volumes =
-                                adjusted_hb.volumes.iter().map(|v| (v.id, v.clone())).collect();
+                                adjusted_volumes.iter().map(|v| (v.id, v.clone())).collect();
                             last_ec_shards = {
                                 let store = state.store.read().unwrap();
                                 collect_ec_shard_delta_messages(&store)
@@ -490,8 +500,8 @@ async fn do_heartbeat(
                     let s = state.store.read().unwrap();
                     s.maybe_adjust_volume_max();
                 }
-                let current_hb = collect_heartbeat(config, state);
-                last_volumes = current_hb.volumes.iter().map(|v| (v.id, v.clone())).collect();
+                let (current_hb, current_volumes) = collect_heartbeat_with_snapshot(config, state);
+                last_volumes = current_volumes.iter().map(|v| (v.id, v.clone())).collect();
                 last_ec_shards = {
                     let store = state.store.read().unwrap();
                     collect_ec_shard_delta_messages(&store)
@@ -519,8 +529,8 @@ async fn do_heartbeat(
                     info!("Heartbeat stopping");
                     return Ok(None);
                 }
-                let current_hb = collect_heartbeat(config, state);
-                let current_volumes: HashMap<u32, _> = current_hb.volumes.iter().map(|v| (v.id, v.clone())).collect();
+                let held_volumes = collect_volume_snapshot(config, state);
+                let current_volumes: HashMap<u32, _> = held_volumes.iter().map(|v| (v.id, v.clone())).collect();
                 let current_ec_shards = {
                     let store = state.store.read().unwrap();
                     collect_ec_shard_delta_messages(&store)
@@ -735,10 +745,10 @@ fn parse_bool_property(value: Option<&String>) -> bool {
 }
 
 /// Collect volume information into a Heartbeat message.
-fn collect_heartbeat(
+fn collect_heartbeat_with_snapshot(
     config: &HeartbeatConfig,
     state: &Arc<VolumeServerState>,
-) -> master_pb::Heartbeat {
+) -> (master_pb::Heartbeat, Vec<master_pb::VolumeInformationMessage>) {
     let mut store = state.store.write().unwrap();
     let (ec_shards, deleted_ec_shards) = store.delete_expired_ec_volumes();
     build_heartbeat_with_ec_status(
@@ -746,7 +756,26 @@ fn collect_heartbeat(
         &mut store,
         deleted_ec_shards,
         ec_shards.is_empty(),
+        true,
     )
+}
+
+/// Lists the volumes the server holds without touching reporting state or
+/// expiring anything, for callers that only need to diff against a previous
+/// snapshot and send a message of their own.
+fn collect_volume_snapshot(
+    config: &HeartbeatConfig,
+    state: &Arc<VolumeServerState>,
+) -> Vec<master_pb::VolumeInformationMessage> {
+    let mut store = state.store.write().unwrap();
+    build_heartbeat_with_ec_status(config, &mut store, Vec::new(), true, false).1
+}
+
+fn collect_heartbeat(
+    config: &HeartbeatConfig,
+    state: &Arc<VolumeServerState>,
+) -> master_pb::Heartbeat {
+    collect_heartbeat_with_snapshot(config, state).0
 }
 
 fn collect_location_metadata(
@@ -781,15 +810,19 @@ fn collect_location_metadata(
 #[cfg(test)]
 fn build_heartbeat(config: &HeartbeatConfig, store: &mut Store) -> master_pb::Heartbeat {
     let has_no_ec_shards = collect_live_ec_shards(store, false).is_empty();
-    build_heartbeat_with_ec_status(config, store, Vec::new(), has_no_ec_shards)
+    build_heartbeat_with_ec_status(config, store, Vec::new(), has_no_ec_shards, true).0
 }
 
+/// Returns the heartbeat to send and, separately, every volume held. The
+/// caller derives mount and unmount deltas by diffing successive snapshots, so
+/// it must not be handed the partial list a heartbeat may carry.
 fn build_heartbeat_with_ec_status(
     config: &HeartbeatConfig,
     store: &mut Store,
     deleted_ec_shards: Vec<master_pb::VolumeEcShardInformationMessage>,
     has_no_ec_shards: bool,
-) -> master_pb::Heartbeat {
+    commit_report: bool,
+) -> (master_pb::Heartbeat, Vec<master_pb::VolumeInformationMessage>) {
     const MAX_TTL_VOLUME_REMOVAL_DELAY: u32 = 10;
 
     #[derive(Default)]
@@ -801,10 +834,13 @@ fn build_heartbeat_with_ec_status(
     }
 
     let mut volumes = Vec::new();
-    // Digest of exactly what this heartbeat reports, so the master can tell
-    // whether its copy is current. Volumes skipped above -- quarantined,
-    // phantom, expired -- are absent from both the list and the digest.
+    // Covers every volume held, whether or not this heartbeat names it, so the
+    // master can tell whether applying what it was sent leaves it current.
+    // Volumes skipped below -- quarantined, phantom, expired -- are in neither.
     let mut volume_digest: u64 = 0;
+    let (send_full_list, report_generation) = store.volume_report.begin();
+    let mut reported_hashes: HashMap<VolumeReportKey, u64> = HashMap::new();
+    let mut changed_volumes = Vec::new();
     let mut max_file_key = NeedleId(0);
     let mut max_volume_counts: HashMap<String, u32> = HashMap::new();
     let mut disk_total_bytes: HashMap<String, u64> = HashMap::new();
@@ -898,7 +934,13 @@ fn build_heartbeat_with_ec_status(
                     remote_storage_name,
                     remote_storage_key,
                 };
-                volume_digest ^= report_hash(&volume_message);
+                let hash = report_hash(&volume_message);
+                volume_digest ^= hash;
+                let key: VolumeReportKey = (volume_message.disk_id, volume_message.id);
+                reported_hashes.insert(key, hash);
+                if send_full_list || store.volume_report.changed(key, hash) {
+                    changed_volumes.push(volume_message.clone());
+                }
                 volumes.push(volume_message);
             } else if vol.is_expired_long_enough(MAX_TTL_VOLUME_REMOVAL_DELAY) {
                 delete_vids.push(vol.id);
@@ -960,10 +1002,23 @@ fn build_heartbeat_with_ec_status(
     let total_max: i64 = max_volume_counts.values().map(|v| *v as i64).sum();
     crate::metrics::MAX_VOLUMES.set(total_max);
 
-    let has_no_volumes = volumes.is_empty();
+    // Only when this heartbeat is going to be sent: marking volumes reported
+    // and then discarding the message would leave the master never told.
+    if commit_report {
+        store.volume_report.commit(reported_hashes, report_generation);
+    }
+
+    // has_no_volumes says the server holds nothing, so it may only be derived
+    // from a full list. Deriving it from a changed-only heartbeat would make a
+    // quiet one read as an empty server and drop every volume on it.
+    let (heartbeat_volumes, changed_volumes, has_no_volumes) = if send_full_list {
+        (changed_volumes, Vec::new(), volumes.is_empty())
+    } else {
+        (Vec::new(), changed_volumes, false)
+    };
     let (location_uuids, disk_tags) = collect_location_metadata(store, &disk_max_by_id);
 
-    master_pb::Heartbeat {
+    let heartbeat = master_pb::Heartbeat {
         id: store.id.clone(),
         ip: config.ip.clone(),
         port: config.port as u32,
@@ -972,7 +1027,8 @@ fn build_heartbeat_with_ec_status(
         data_center: config.data_center.clone(),
         rack: config.rack.clone(),
         admin_port: config.port as u32,
-        volumes,
+        volumes: heartbeat_volumes,
+        changed_volumes,
         volume_digest: Some(volume_digest),
         deleted_ec_shards,
         has_no_volumes,
@@ -984,7 +1040,8 @@ fn build_heartbeat_with_ec_status(
         location_uuids,
         disk_tags,
         ..Default::default()
-    }
+    };
+    (heartbeat, volumes)
 }
 
 fn collect_live_ec_shards(
@@ -1257,6 +1314,156 @@ mod tests {
     // reported but left out of the digest, or the reverse, makes the master's
     // comparison disagree forever. An empty store still reports a digest, so
     // the master can tell it from a server that computes none.
+    fn reporting_store(dir: &str, count: u32) -> Store {
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                16,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+        for id in 1..=count {
+            store
+                .add_volume(
+                    VolumeId(id),
+                    "pics",
+                    None,
+                    None,
+                    0,
+                    DiskType::HardDrive,
+                    Version::current(),
+                )
+                .unwrap();
+        }
+        store.volume_report.reset();
+        store
+    }
+
+    // Until the master says it compares digests it may be one that reads a
+    // partial list as the whole truth, so it keeps getting the whole list.
+    #[test]
+    fn test_heartbeat_sends_full_list_until_the_master_accepts() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut store = reporting_store(temp_dir.path().to_str().unwrap(), 2);
+
+        for _ in 0..3 {
+            let heartbeat = build_heartbeat(&test_config(), &mut store);
+            assert_eq!(heartbeat.volumes.len(), 2);
+            assert!(heartbeat.changed_volumes.is_empty());
+        }
+    }
+
+    // The one that would be catastrophic: a heartbeat with nothing to report
+    // must not look like a server that has lost every volume.
+    #[test]
+    fn test_quiet_heartbeat_does_not_look_like_an_empty_server() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut store = reporting_store(temp_dir.path().to_str().unwrap(), 2);
+        store.volume_report.accept_deltas();
+        let full = build_heartbeat(&test_config(), &mut store);
+
+        let quiet = build_heartbeat(&test_config(), &mut store);
+        assert!(quiet.volumes.is_empty());
+        assert!(quiet.changed_volumes.is_empty());
+        assert!(!quiet.has_no_volumes);
+        // The digest still covers everything held, not just what was sent.
+        assert_eq!(quiet.volume_digest, full.volume_digest);
+    }
+
+    #[test]
+    fn test_heartbeat_reports_only_what_changed() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut store = reporting_store(temp_dir.path().to_str().unwrap(), 2);
+        store.volume_report.accept_deltas();
+        build_heartbeat(&test_config(), &mut store);
+
+        store
+            .add_volume(
+                VolumeId(3),
+                "pics",
+                None,
+                None,
+                0,
+                DiskType::HardDrive,
+                Version::current(),
+            )
+            .unwrap();
+
+        let heartbeat = build_heartbeat(&test_config(), &mut store);
+        assert!(heartbeat.volumes.is_empty());
+        assert_eq!(heartbeat.changed_volumes.len(), 1);
+        assert_eq!(heartbeat.changed_volumes[0].id, 3);
+    }
+
+    #[test]
+    fn test_heartbeat_returns_to_the_full_list_on_request() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut store = reporting_store(temp_dir.path().to_str().unwrap(), 2);
+        store.volume_report.accept_deltas();
+        build_heartbeat(&test_config(), &mut store);
+
+        store.volume_report.request_full_list();
+        let resent = build_heartbeat(&test_config(), &mut store);
+        assert_eq!(resent.volumes.len(), 2);
+        assert!(resent.changed_volumes.is_empty());
+
+        let next = build_heartbeat(&test_config(), &mut store);
+        assert!(next.volumes.is_empty());
+    }
+
+    // A request that lands while a heartbeat is being built asked about a later
+    // state than that heartbeat carries, so it must survive being committed over.
+    #[test]
+    fn test_full_list_request_during_collection_survives() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut store = reporting_store(temp_dir.path().to_str().unwrap(), 2);
+        store.volume_report.accept_deltas();
+        build_heartbeat(&test_config(), &mut store);
+
+        let (full, generation) = store.volume_report.begin();
+        assert!(!full);
+        store.volume_report.request_full_list();
+        store.volume_report.commit(HashMap::new(), generation);
+
+        let heartbeat = build_heartbeat(&test_config(), &mut store);
+        assert_eq!(heartbeat.volumes.len(), 2);
+    }
+
+    // Taking a snapshot must not mark volumes as told to a master that is
+    // getting a different message.
+    #[test]
+    fn test_snapshot_does_not_mark_volumes_reported() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut store = reporting_store(temp_dir.path().to_str().unwrap(), 2);
+        store.volume_report.accept_deltas();
+        build_heartbeat(&test_config(), &mut store);
+
+        store
+            .add_volume(
+                VolumeId(3),
+                "pics",
+                None,
+                None,
+                0,
+                DiskType::HardDrive,
+                Version::current(),
+            )
+            .unwrap();
+
+        // What the notify path does: collect a snapshot, send a message of its own.
+        let snapshot =
+            build_heartbeat_with_ec_status(&test_config(), &mut store, Vec::new(), true, false).1;
+        assert_eq!(snapshot.len(), 3);
+
+        let heartbeat = build_heartbeat(&test_config(), &mut store);
+        assert_eq!(heartbeat.changed_volumes.len(), 1);
+        assert_eq!(heartbeat.changed_volumes[0].id, 3);
+    }
+
     #[test]
     fn test_build_heartbeat_digests_exactly_what_it_reports() {
         let temp_dir = tempfile::tempdir().unwrap();
