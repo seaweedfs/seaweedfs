@@ -204,19 +204,22 @@ pub async fn read_ec_shard_needle_distributed(
     Ok(Some(n))
 }
 
-/// FULL EC scrub: verify every needle's bytes across local AND remote shards,
-/// without decoding (so genuine shard faults are reported rather than healed).
-/// Mirrors Go's `Store.ScrubEcVolume`. Returns (rows walked, broken shards,
-/// errors). `force_deleted_needles_check` disables the benign delete-state
-/// size-mismatch suppression.
+/// FULL/READS EC scrub: verify every needle's bytes across local AND remote
+/// shards. Mirrors Go's `Store.ScrubEcVolume`. Returns (rows walked, broken
+/// shards, errors). `force_deleted_needles_check` disables the benign
+/// delete-state size-mismatch suppression. `do_read_recovery` (READS mode)
+/// reconstructs unreadable intervals from the remaining shards — exercising
+/// parity data — before flagging them; FULL reports genuine shard faults
+/// rather than healing around them.
 ///
 /// Shard locations are refreshed once up front. Each needle is then processed via
-/// `scrub_snapshot_under_lock` + lock-drop + no-reconstruct `read_remote_ec_shard_interval`,
+/// `scrub_snapshot_under_lock` + lock-drop + `read_remote_ec_shard_interval`,
 /// so no `!Send` store guard is held across an `.await`.
 pub async fn scrub_ec_volume_distributed(
     state: &Arc<VolumeServerState>,
     vid: VolumeId,
     force_deleted_needles_check: bool,
+    do_read_recovery: bool,
 ) -> (i64, Vec<crate::pb::volume_server_pb::EcShardInfo>, Vec<String>) {
     // Phase A — under the Store read lock, run the index scrub and grab the
     // paths/scalars + shard-location staleness; release the lock before any await.
@@ -340,8 +343,9 @@ pub async fn scrub_ec_volume_distributed(
             }
         };
 
-        // Read each interval local-then-remote WITHOUT reconstructing: we verify
-        // the shards are valid, we do not heal them. Locations refreshed above.
+        // Read each interval local-then-remote. FULL does NOT reconstruct — it
+        // verifies the shards are valid, it does not heal around them; READS
+        // falls back to reconstruction below. Locations refreshed above.
         let n_intervals = snapshot.intervals.len();
         let mut data: Vec<u8> = Vec::with_capacity(snapshot.actual_size);
         for (i, res) in snapshot.intervals.iter().enumerate() {
@@ -371,10 +375,34 @@ pub async fn scrub_ec_volume_distributed(
                         // -> the delete-state suppression (mirrors Go's pre-zeroed buffer).
                         Ok((_, true)) => data.resize(data.len() + *ssize, 0),
                         Ok((buf, false)) => data.extend_from_slice(&buf),
-                        Err(_) => {
+                        Err(read_err) => {
+                            let mut last_err = read_err;
+                            if do_read_recovery {
+                                // ...then reconstruct it from the other shards.
+                                match recover_one_remote_ec_shard_interval(
+                                    state,
+                                    vid,
+                                    id,
+                                    *shard_id,
+                                    *shard_offset,
+                                    *ssize,
+                                    &locations,
+                                    data_shards,
+                                    total_shards - data_shards,
+                                    snapshot.encode_ts_ns,
+                                )
+                                .await
+                                {
+                                    Ok(buf) => {
+                                        data.extend_from_slice(&buf);
+                                        continue;
+                                    }
+                                    Err(e) => last_err = e,
+                                }
+                            }
                             errs.push(format!(
-                                "failed to read EC shard {} for needle {} on volume {} (interval {}/{})",
-                                shard_id, id.0, vid.0, i + 1, n_intervals
+                                "failed to read EC shard {} for needle {} on volume {} (interval {}/{}): {}",
+                                shard_id, id.0, vid.0, i + 1, n_intervals, last_err
                             ));
                             broken_shards.insert(
                                 *shard_id,
