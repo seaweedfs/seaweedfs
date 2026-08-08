@@ -670,12 +670,16 @@ func readIcebergRows(t *testing.T, env *TestEnvironment, bucketName string, name
 		args = append(args, "--namespace", level)
 	}
 
+	// Keep stdout separate: the caller compares it exactly, and warnings on
+	// stderr from the python stack must not pollute the row data.
 	cmd := exec.Command("docker", args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("PyIceberg reader failed: %v\n%s", err, out)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("PyIceberg reader failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 	}
-	return strings.TrimSpace(string(out))
+	return strings.TrimSpace(stdout.String())
 }
 
 // doIcebergJSONRequest issues an authenticated JSON request to the Iceberg
