@@ -29,8 +29,6 @@ func heldCopies(dn *DataNode) int {
 	return total
 }
 
-// Moving a volume between disks of one server only changes the disk it is
-// reported on. The master has to follow it rather than keep the disk it left.
 func TestVolumeMovedBetweenDisks(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -65,9 +63,8 @@ func TestVolumeMovedBetweenDisks(t *testing.T) {
 	}
 }
 
-// A server can legitimately hold one volume id on two disks when a stale twin is
-// re-attached. Those are two reports, not a move, and dropping one would tell
-// the master a replica vanished.
+// A stale twin is two reports, not a move: dropping one would tell the master a
+// replica vanished.
 func TestVolumeReportedOnTwoDiskTypesIsKept(t *testing.T) {
 	topo, dn := diskMoveNode(t)
 	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{
@@ -81,14 +78,12 @@ func TestVolumeReportedOnTwoDiskTypesIsKept(t *testing.T) {
 		t.Error("a volume on two disk types is representable, so it should not disable digest comparison")
 	}
 
-	// Once the twin is gone the master follows.
 	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{diskMoveVolume(1, "ssd", 1)}, dn)
 	if got := heldCopies(dn); got != 1 {
 		t.Errorf("master holds %d copies after the twin was unmounted, want 1", got)
 	}
 }
 
-// Twice on one disk type is the case the master genuinely cannot represent.
 func TestVolumeReportedTwiceOnOneDiskTypeIsFlagged(t *testing.T) {
 	topo, dn := diskMoveNode(t)
 	first := diskMoveVolume(1, "ssd", 0)

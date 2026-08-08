@@ -236,10 +236,8 @@ func (d *Disk) VolumeCount() int {
 }
 
 // RemoveVolumesNotIn drops the volumes the heartbeat did not name on this disk
-// and returns them, so a heartbeat can be diffed without first copying the whole
-// volume map out. A volume the heartbeat names on a different disk counts as
-// absent here: it moved, and leaving it behind would keep a second copy of it
-// on the node forever.
+// and returns them, so a heartbeat can be diffed without copying the volume map
+// out. A volume named on another disk has moved, and counts as absent here.
 func (d *Disk) RemoveVolumesNotIn(reported *reportedVolumes) (removed []storage.VolumeInfo) {
 	diskTypeIndex := reported.diskTypeIndex(string(d.Id()))
 	d.Lock()

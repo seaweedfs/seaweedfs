@@ -23,10 +23,8 @@ func moveTestVolume(diskType string, diskId uint32) *master_pb.VolumeInformation
 	}
 }
 
-// A volume moved between a node's disks leaves one disk and joins another, so
-// the master sees it as both removed and added. Clients apply additions before
-// deletions, so telling them about the removal would leave them with no location
-// for a volume that never went anywhere.
+// Clients apply additions before deletions, so a move reported as both would
+// leave them with no location for a volume that never went anywhere.
 func TestVolumeMovedBetweenDisksIsNotBroadcastAsRemoved(t *testing.T) {
 	topo, dn := moveTestNode(t)
 	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{moveTestVolume("", 0)}, dn)
@@ -54,8 +52,6 @@ func TestVolumeGoneFromTheNodeIsBroadcastAsRemoved(t *testing.T) {
 	}
 }
 
-// The same volume can be unmounted from one disk and mounted on another in one
-// delta heartbeat, which reaches the master as both a deletion and an addition.
 func TestVolumeRemountedOnAnotherDiskIsNotBroadcastAsRemoved(t *testing.T) {
 	topo, dn := moveTestNode(t)
 	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{moveTestVolume("", 0)}, dn)
@@ -70,9 +66,7 @@ func TestVolumeRemountedOnAnotherDiskIsNotBroadcastAsRemoved(t *testing.T) {
 	}
 }
 
-// The mirror case, and the reason the topology update has to run before the
-// removals are judged: a volume unmounted and not remounted anywhere really has
-// left, and clients still need to hear about it.
+// Fails if the topology update stops running before the removals are judged.
 func TestVolumeUnmountedViaDeltaIsBroadcastAsRemoved(t *testing.T) {
 	topo, dn := moveTestNode(t)
 	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{moveTestVolume("", 0)}, dn)

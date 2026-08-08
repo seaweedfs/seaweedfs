@@ -28,12 +28,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/topology"
 )
 
-// shouldBroadcastVolumeRemoval reports whether clients should be told the
-// volume has left this node. A volume moved between the node's own disks is
-// removed from one and added to the other, so it appears in both lists of the
-// same heartbeat, and clients apply additions before deletions -- passing the
-// removal on would drop a location that is still good. Mirrors the guard the ec
-// shard paths already apply.
+// A volume moved between the node's disks appears in both lists, and clients
+// apply additions before deletions, so passing the removal on would drop a
+// location that is still good.
 func shouldBroadcastVolumeRemoval(dn *topology.DataNode, vid needle.VolumeId) bool {
 	return !dn.HasVolumesById(vid)
 }
@@ -217,8 +214,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			stats.MasterReceivedHeartbeatCounter.WithLabelValues("deletedVolumes").Inc()
 		}
 		if len(heartbeat.NewVolumes) > 0 || len(heartbeat.DeletedVolumes) > 0 {
-			// update master internal volume layouts first, so the removals below
-			// are judged against where the volumes ended up
+			// first, so the removals below see where the volumes ended up
 			ms.Topo.IncrementalSyncDataNodeRegistration(heartbeat.NewVolumes, heartbeat.DeletedVolumes, dn)
 
 			// process delta volume ids if exists for fast volume id updates

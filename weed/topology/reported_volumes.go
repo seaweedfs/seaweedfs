@@ -5,21 +5,16 @@ import (
 )
 
 // reportedVolumes records which disk types a heartbeat named each volume on, so
-// a volume that moved between disks of one server is dropped from the disk it
-// left rather than lingering there as a second copy.
-//
-// Disk types are interned to an index: a server reports a handful of them
-// across hundreds of thousands of volumes, and a string header per volume would
-// cost more than the map holding them.
+// a volume that moved between a server's disks is dropped from the one it left.
+// Disk types are interned because a string header per volume would cost more
+// than the map holding them.
 type reportedVolumes struct {
 	diskTypes []string
 	byVolume  map[needle.VolumeId]int32
-	// extra covers volumes named on more than one disk type, which a server can
-	// legitimately do when a stale twin is re-attached on another disk. Stays
-	// nil otherwise.
+	// extra covers volumes named on several disk types, a stale twin rather than
+	// a move. Nil otherwise.
 	extra map[needle.VolumeId][]int32
-	// duplicated records the same volume named twice on one disk type, which
-	// the master stores once and so cannot represent.
+	// duplicated: named twice on one disk type, which the master stores once.
 	duplicated bool
 }
 
@@ -52,8 +47,7 @@ func (r *reportedVolumes) internDiskType(diskType string) int32 {
 	return int32(len(r.diskTypes) - 1)
 }
 
-// diskTypeIndex resolves a disk type to its index, or -1 when the heartbeat
-// named no volume on it.
+// diskTypeIndex returns -1 when the heartbeat named no volume on the type.
 func (r *reportedVolumes) diskTypeIndex(diskType string) int32 {
 	for i, known := range r.diskTypes {
 		if known == diskType {
@@ -63,7 +57,6 @@ func (r *reportedVolumes) diskTypeIndex(diskType string) int32 {
 	return -1
 }
 
-// namedOn reports whether the heartbeat placed vid on the disk type at index.
 func (r *reportedVolumes) namedOn(vid needle.VolumeId, index int32) bool {
 	if index < 0 {
 		return false
