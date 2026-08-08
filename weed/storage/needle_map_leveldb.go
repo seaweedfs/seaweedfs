@@ -359,7 +359,7 @@ func (m *LevelDbNeedleMap) DoOffsetLoading(v *Volume, indexFile *os.File, startF
 
 	}()
 	if dbErr != nil {
-		if errors.IsCorrupted(err) {
+		if errors.IsCorrupted(dbErr) {
 			db, dbErr = leveldb.RecoverFile(dbFileName, nil)
 		}
 		if dbErr != nil {
