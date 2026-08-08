@@ -20,12 +20,13 @@ import (
 )
 
 const (
-	TusVersion       = "1.0.0"
-	TusMaxSize       = int64(5 * 1024 * 1024 * 1024) // 5GB default max size
-	TusUploadsFolder = ".uploads.tus"
-	TusInfoFileName  = ".info"
-	TusChunkExt      = ".chunk"
-	TusExtensions    = "creation,creation-with-upload,termination"
+	TusVersion              = "1.0.0"
+	TusDefaultMaxSize       = int64(5 * 1024 * 1024 * 1024) // 5GB
+	TusDefaultSessionExpiry = 24 * time.Hour
+	TusUploadsFolder        = ".uploads.tus"
+	TusInfoFileName         = ".info"
+	TusChunkExt             = ".chunk"
+	TusExtensions           = "creation,creation-with-upload,termination"
 )
 
 // ErrWormEnforced marks a TUS completion rejected because the target entry is
@@ -124,7 +125,7 @@ func (fs *FilerServer) createTusSession(ctx context.Context, uploadID, targetPat
 		Offset:     0,
 		Metadata:   metadata,
 		CreatedAt:  time.Now(),
-		ExpiresAt:  time.Now().Add(7 * 24 * time.Hour), // 7 days default expiration
+		ExpiresAt:  time.Now().Add(fs.option.TusSessionExpiry),
 		Chunks:     []*TusChunkInfo{},
 	}
 
@@ -209,7 +210,7 @@ func (fs *FilerServer) readTusSessionInfo(ctx context.Context, uploadID string) 
 	if target == "" || target == "/" {
 		return nil, fmt.Errorf("invalid TUS target path: %q", session.TargetPath)
 	}
-	if session.Size < 0 || session.Size > TusMaxSize {
+	if session.Size < 0 || session.Size > fs.option.TusMaxSize {
 		return nil, fmt.Errorf("invalid TUS upload size: %d", session.Size)
 	}
 	// Pin authorization and every later operation to the same canonical path.

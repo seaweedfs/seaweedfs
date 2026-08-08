@@ -48,7 +48,7 @@ func newTusTestServer(t *testing.T, sessions map[string]string) (*FilerServer, *
 	fs := &FilerServer{
 		filer:      newRenameTestFiler(t, store),
 		filerGuard: security.NewGuard(nil, tusTestWriteKey, 0, tusTestReadKey, 0),
-		option:     &FilerOption{TusBasePath: "/.tus"},
+		option:     &FilerOption{TusBasePath: "/.tus", TusMaxSize: TusDefaultMaxSize},
 	}
 	for uploadID, targetPath := range sessions {
 		seedTusSession(t, fs, store, TusSession{ID: uploadID, TargetPath: targetPath, Size: 1})
