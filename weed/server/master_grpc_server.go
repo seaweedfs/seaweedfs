@@ -171,8 +171,9 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			}
 
 			if err := stream.Send(&master_pb.HeartbeatResponse{
-				VolumeSizeLimit: uint64(ms.option.VolumeSizeLimitMB) * 1024 * 1024,
-				Preallocate:     ms.preallocateSize > 0,
+				VolumeSizeLimit:       uint64(ms.option.VolumeSizeLimitMB) * 1024 * 1024,
+				Preallocate:           ms.preallocateSize > 0,
+				VolumeDigestSupported: true,
 			}); err != nil {
 				glog.Warningf("SendHeartbeat.Send volume size to %s:%d %v", dn.Ip, dn.Port, err)
 				return err
@@ -229,6 +230,14 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 					continue
 				}
 				message.DeletedVids = append(message.DeletedVids, volInfo.Id)
+			}
+		}
+
+		if len(heartbeat.ChangedVolumes) > 0 {
+			stats.MasterReceivedHeartbeatCounter.WithLabelValues("changedVolumes").Inc()
+			ms.Topo.ApplyVolumeChanges(heartbeat.ChangedVolumes, dn)
+			for _, v := range heartbeat.ChangedVolumes {
+				message.NewVids = append(message.NewVids, v.Id)
 			}
 		}
 

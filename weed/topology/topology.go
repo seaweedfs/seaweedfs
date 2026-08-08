@@ -668,6 +668,37 @@ func (t *Topology) IncrementalSyncDataNodeRegistration(newVolumes, deletedVolume
 	return
 }
 
+// ApplyVolumeChanges records the volumes a heartbeat reported as changed. Only
+// the named volumes are touched: unlike a full report, silence about a volume
+// says nothing about whether the server still has it.
+func (t *Topology) ApplyVolumeChanges(changed []*master_pb.VolumeInformationMessage, dn *DataNode) {
+	volumeInfos := make([]storage.VolumeInfo, 0, len(changed))
+	for _, v := range changed {
+		vi, err := storage.NewVolumeInfo(v)
+		if err != nil {
+			glog.V(0).Infof("Fail to convert changed volume information: %v", err)
+			continue
+		}
+		volumeInfos = append(volumeInfos, vi)
+	}
+
+	dn.DeltaUpdateVolumes(volumeInfos, nil)
+
+	for _, vi := range volumeInfos {
+		if vi.ReplicaPlacement == nil {
+			continue
+		}
+		vl := t.GetVolumeLayout(vi.Collection, vi.ReplicaPlacement, vi.Ttl, types.ToDiskType(vi.DiskType))
+		if !vl.HasDataNode(vi.Id, dn) {
+			vl.RegisterVolume(&vi, dn)
+		}
+		vl.EnsureCorrectWritables(&vi)
+		if vl.UpdateVolumeSize(vi.Id, vi.Size, vi.CompactRevision) {
+			vl.AdjustActiveVolumeCountAfterRecovery(vi.Id)
+		}
+	}
+}
+
 func (t *Topology) DataNodeRegistration(dcName, rackName string, dn *DataNode) {
 	if dn.Parent() != nil {
 		return
