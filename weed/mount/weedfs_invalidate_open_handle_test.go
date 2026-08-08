@@ -1405,7 +1405,7 @@ func TestEmptyListingTrailerSnapshotSetsAbsenceFloor(t *testing.T) {
 	startFakeFiler(t, wfs, &fakeFilerServer{listSnapshotTrailerTsNs: 4000})
 
 	wfs.inodeToPath.Lookup(util.FullPath("/dir"), time.Now().Unix(), true, false, 0, false)
-	if err := meta_cache.EnsureVisited(wfs.metaCache, wfs, util.FullPath("/dir")); err != nil {
+	if err := meta_cache.EnsureVisited(wfs.metaCache, wfs, util.FullPath("/dir"), 0); err != nil {
 		t.Fatalf("EnsureVisited: %v", err)
 	}
 

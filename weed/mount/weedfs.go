@@ -53,6 +53,7 @@ type Option struct {
 	CacheDirForWrite            string
 	WriteBufferSizeMB           int64
 	CacheMetaTTlSec             int
+	CacheDirMaxEntries          int
 	DataCenter                  string
 	Umask                       os.FileMode
 	Quota                       int64
