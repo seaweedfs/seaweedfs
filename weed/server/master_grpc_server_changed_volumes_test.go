@@ -5,7 +5,10 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/sequence"
+	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/topology"
 )
 
@@ -99,5 +102,46 @@ func TestChangedVolumesAnnounceOnlyArrivals(t *testing.T) {
 	}, dn)
 	if len(arrived) != 1 || arrived[0].Id != needle.VolumeId(7) {
 		t.Errorf("expected only the volume that arrived, got %v", arrived)
+	}
+}
+
+// A node dropping out tells clients its volumes went. If the lookup index then
+// loses one while the disk map keeps it, repairing the index has to announce it
+// as well: nothing else will, and the clients that heard it go would never hear
+// otherwise.
+func TestRepairedLookupEntryIsAnnounced(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		apply func(*topology.Topology, *topology.DataNode, *master_pb.VolumeInformationMessage) []storage.VolumeInfo
+	}{
+		{"ViaChanges", func(topo *topology.Topology, dn *topology.DataNode, v *master_pb.VolumeInformationMessage) []storage.VolumeInfo {
+			return topo.ApplyVolumeChanges([]*master_pb.VolumeInformationMessage{v}, dn)
+		}},
+		{"ViaFullList", func(topo *topology.Topology, dn *topology.DataNode, v *master_pb.VolumeInformationMessage) []storage.VolumeInfo {
+			announced, _ := topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{v}, dn)
+			return announced
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			topo, dn := changedTestCluster(t)
+			volume := changedTestVolume(1, 1024)
+			topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{volume}, dn)
+
+			rp, _ := super_block.NewReplicaPlacementFromString("000")
+			vl := topo.GetVolumeLayout("c", rp, needle.EMPTY_TTL, types.HardDriveType)
+			vl.SetVolumeUnavailable(dn, needle.VolumeId(1))
+			if locations := topo.Lookup("c", needle.VolumeId(1)); locations != nil {
+				t.Fatalf("expected the volume to be unservable, got %v", locations)
+			}
+
+			announced := tc.apply(topo, dn, changedTestVolume(1, 1024))
+
+			if locations := topo.Lookup("c", needle.VolumeId(1)); len(locations) != 1 {
+				t.Fatalf("the repair did not make the volume servable again: %v", locations)
+			}
+			if len(announced) != 1 || announced[0].Id != needle.VolumeId(1) {
+				t.Errorf("the repair was not announced to clients, so those told it went stay stale: %v", announced)
+			}
+		})
 	}
 }
