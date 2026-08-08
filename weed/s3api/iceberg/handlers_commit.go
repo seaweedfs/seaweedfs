@@ -67,21 +67,27 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// Manifest repair runs once, as soon as the table location is known; on
-	// commit retries the updates already reference the repaired files.
+	// commit retries the updates already reference the repaired files. Repair
+	// is best effort end to end: the originals parsed already, so a repair
+	// that fails to re-parse is discarded rather than failing the commit.
 	manifestsRepaired := false
-	repairManifests := func(location string) error {
+	repairManifests := func(location string) {
 		if manifestsRepaired {
-			return nil
+			return
 		}
 		manifestsRepaired = true
 		repaired, changed := s.repairAddSnapshotManifests(r.Context(), location, raw.Updates)
 		if !changed {
-			return nil
+			return
+		}
+		repairedUpdates, repairedStatistics, err := parseCommitUpdates(repaired)
+		if err != nil {
+			glog.Warningf("Iceberg: repaired updates failed to parse, keeping originals: %v", err)
+			return
 		}
 		raw.Updates = repaired
-		var err error
-		req.Updates, statisticsUpdates, err = parseCommitUpdates(raw.Updates)
-		return err
+		req.Updates = repairedUpdates
+		statisticsUpdates = repairedStatistics
 	}
 
 	maxCommitAttempts := 3
@@ -186,10 +192,7 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 
-				if err := repairManifests(location); err != nil {
-					writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid updates: "+err.Error())
-					return
-				}
+				repairManifests(location)
 
 				result, reqErr := s.finalizeCreateOnCommit(r.Context(), createOnCommitInput{
 					bucketARN:         bucketARN,
@@ -255,10 +258,7 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		if err := repairManifests(location); err != nil {
-			writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid updates: "+err.Error())
-			return
-		}
+		repairManifests(location)
 
 		builder, err := table.MetadataBuilderFromBase(currentMetadata, getResp.MetadataLocation)
 		if err != nil {
