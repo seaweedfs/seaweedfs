@@ -951,7 +951,7 @@ type UnsafeVolumeServerServer interface {
 }
 
 func RegisterVolumeServerServer(s grpc.ServiceRegistrar, srv VolumeServerServer) {
-	// If the following call pancis, it indicates UnimplementedVolumeServerServer was
+	// If the following call panics, it indicates UnimplementedVolumeServerServer was
 	// embedded by pointer and is nil.  This will cause panics if an
 	// unimplemented method is ever invoked, so we test this at initialization
 	// time to prevent it from happening at runtime later due to I/O.
