@@ -28,21 +28,23 @@ func TestCrowdedVolumesAreOnesThatCanTakeWrites(t *testing.T) {
 	// The channels are unbuffered and normally drained by the writable-refresh
 	// loop, which is not running here.
 	crowded := map[needle.VolumeId]bool{}
-	collected := make(chan struct{})
+	stop, done := make(chan struct{}), make(chan struct{})
 	go func() {
+		defer close(done)
 		for {
 			select {
 			case v := <-topo.chanCrowdedVolumes:
 				crowded[v.Id] = true
 			case <-topo.chanFullVolumes:
-			case <-collected:
+			case <-stop:
 				return
 			}
 		}
 	}()
 	topo.CollectDeadNodeAndFullVolumes(time.Now().Unix()-1, topo.volumeSizeLimit, 0.9)
 	time.Sleep(50 * time.Millisecond)
-	close(collected)
+	close(stop)
+	<-done // the collector owns the map until it returns
 
 	if !crowded[needle.VolumeId(1)] {
 		t.Error("a writable volume past the threshold was not reported crowded")
