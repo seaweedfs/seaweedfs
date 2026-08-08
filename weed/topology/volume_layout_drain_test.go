@@ -38,7 +38,7 @@ func TestGetPendingSize(t *testing.T) {
 	}
 
 	// UpdateVolumeSize (heartbeat) decays pending
-	vl.UpdateVolumeSize(1, 3000, 0)
+	vl.UpdateVolumeSize(1, 3000, 0, false)
 	// effective was 6000, reported 3000 → decay to 3000 + (6000-3000)/2 = 4500
 	// pending = 4500 - 3000 = 1500
 	if p := vl.GetPendingSize(1); p != 1500 {
@@ -72,7 +72,7 @@ func TestGetPendingSize_CompactionResets(t *testing.T) {
 	// Compaction happens — size drops from 5000 to 2000, revision changes.
 	// Without compaction awareness, decay would give: 2000 + (9000-2000)/2 = 5500.
 	// With compaction awareness, vid2size resets to 2000 (the real size).
-	vl.UpdateVolumeSize(1, 2000, 1) // revision 0 → 1
+	vl.UpdateVolumeSize(1, 2000, 1, false) // revision 0 → 1
 
 	if p := vl.GetPendingSize(1); p != 0 {
 		t.Errorf("expected 0 pending after compaction reset, got %d", p)
@@ -198,7 +198,7 @@ func TestDrainAndRemoveFromWritable_DecaysViaConcurrentHeartbeat(t *testing.T) {
 				st.lastUpdateTime = time.Time{} // reset to allow update
 			}
 			vl.accessLock.Unlock()
-			vl.UpdateVolumeSize(1, 1000+uint64(i+1)*1000, 0)
+			vl.UpdateVolumeSize(1, 1000+uint64(i+1)*1000, 0, false)
 		}
 	}()
 

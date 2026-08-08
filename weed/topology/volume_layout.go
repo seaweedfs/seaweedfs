@@ -197,7 +197,9 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 	defer vl.rememberOversizedVolume(v, dn)
 
 	moveLookupOwnership(v.Id, vl.getOrCreateLocationList(v.Id).Set(dn), dn)
-	vl.initSizeTracking(v.Id, v.Size, v.CompactRevision)
+	if !v.ReadOnly {
+		vl.initSizeTracking(v.Id, v.Size, v.CompactRevision)
+	}
 	// glog.V(4).Infof("volume %d added to %s len %d copy %d", v.Id, dn.Id(), vl.vid2location[v.Id].Length(), v.ReplicaPlacement.GetCopyCount())
 	for _, dn := range vl.vid2location[v.Id].list {
 		if vInfo, err := dn.GetVolumesById(v.Id); err == nil {
@@ -239,9 +241,19 @@ func (vl *VolumeLayout) rememberOversizedVolume(v *storage.VolumeInfo, dn *DataN
 // previously eagerly removed by RecordAssign back under the writable
 // threshold and this call re-added it to the writable list. The caller
 // should mirror the activeVolumeCount bookkeeping.
-func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint64, compactRevision uint32) (recoveredToWritable bool) {
+func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint64, compactRevision uint32, readOnly bool) (recoveredToWritable bool) {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
+
+	if readOnly {
+		// Tracking exists to place writes, and nothing is written to a
+		// read-only volume. Most volumes in a tiered cluster are read-only, so
+		// an entry each is the layout's largest cost. A volume held out of the
+		// writable list for capacity is not read-only and keeps its entry,
+		// which is what enforces the recovery delay.
+		delete(vl.sizeTracking, vid)
+		return false
+	}
 
 	now := time.Now()
 	st := vl.sizeTracking[vid]
@@ -919,14 +931,14 @@ func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId, is
 	}
 
 	// A disconnect during a long vacuum can drop the entry while the volume is
-	// still on the node; re-create it (and seed size tracking) instead of
-	// dereferencing a nil location, so the commit also repairs the split.
+	// still on the node; re-create it instead of dereferencing a nil location,
+	// so the commit also repairs the split.
 	moveLookupOwnership(vid, vl.getOrCreateLocationList(vid).Set(dn), dn)
-	vl.initSizeTracking(vid, vInfo.Size, vInfo.CompactRevision)
 
 	if vInfo.ReadOnly || isReadOnly || isFullCapacity {
 		return false
 	}
+	vl.initSizeTracking(vid, vInfo.Size, vInfo.CompactRevision)
 
 	if vl.enoughCopies(vid) {
 		becameWritable = vl.setVolumeWritable(vid)

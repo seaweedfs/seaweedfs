@@ -46,13 +46,13 @@ func TestSetVolumeCapacityFullStampsFullSinceAndRecovers(t *testing.T) {
 
 	// No recovery before capacityRecoveryDelay.
 	advanceSizeTrackingClock(vl, 1, 3*time.Second)
-	if vl.UpdateVolumeSize(1, 4000, 0) {
+	if vl.UpdateVolumeSize(1, 4000, 0, false) {
 		t.Fatalf("recovery should not fire before capacityRecoveryDelay")
 	}
 
 	// After the delay, a smaller size restores it.
 	advanceSizeTrackingClock(vl, 1, capacityRecoveryDelay)
-	if !vl.UpdateVolumeSize(1, 4000, 0) {
+	if !vl.UpdateVolumeSize(1, 4000, 0, false) {
 		t.Fatalf("expected volume to recover to writable after shrinking")
 	}
 	vl.AdjustActiveVolumeCountAfterRecovery(1)
@@ -109,7 +109,7 @@ func TestSetVolumeAvailableRestoresActiveCountForCapacityFullVolume(t *testing.T
 	}
 
 	advanceSizeTrackingClock(vl, 1, capacityRecoveryDelay+time.Second)
-	if vl.UpdateVolumeSize(1, 4000, 0) {
+	if vl.UpdateVolumeSize(1, 4000, 0, false) {
 		t.Fatalf("heartbeat recovery should not fire after SetVolumeAvailable already restored the volume")
 	}
 	if got := topo.diskUsages.usages[types.HardDriveType].activeVolumeCount; got != initialActive {
