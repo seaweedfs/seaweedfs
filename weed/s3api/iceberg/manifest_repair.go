@@ -418,18 +418,18 @@ func manifestContentValue(record map[string]any) int {
 	return 0
 }
 
-// fixManifestOCFMetadata fills in OCF metadata keys the spec requires of
-// manifests but lax writers omit: "content" (readers reject v2 manifests
-// without it; the value must agree with the manifest-list entry) and
+// fixManifestOCFMetadata fixes OCF metadata keys the spec requires of
+// manifests but lax writers omit or contradict: "content" must agree with the
+// manifest-list entry, which is what readers trust for scan planning, and
 // "partition-spec-id" (ClickHouse writes the underscore variant).
 func fixManifestOCFMetadata(listContent int) func(map[string][]byte) bool {
 	return func(meta map[string][]byte) bool {
 		changed := false
-		if _, ok := meta["content"]; !ok {
-			content := "data"
-			if listContent == 1 {
-				content = "deletes"
-			}
+		content := "data"
+		if listContent == 1 {
+			content = "deletes"
+		}
+		if string(meta["content"]) != content {
 			meta["content"] = []byte(content)
 			changed = true
 		}

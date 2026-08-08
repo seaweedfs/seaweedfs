@@ -213,16 +213,30 @@ func TestRepairKeepsDeleteManifestContent(t *testing.T) {
 		t.Fatalf(`OCF content = %q, want "deletes"`, got)
 	}
 
-	repaired, _, err = repairManifest(raw, relTableLocation, 0)
+	asData, _, err := repairManifest(raw, relTableLocation, 0)
 	if err != nil {
 		t.Fatalf("repairManifest: %v", err)
 	}
-	reader, err = goavro.NewOCFReader(bytes.NewReader(repaired))
+	reader, err = goavro.NewOCFReader(bytes.NewReader(asData))
 	if err != nil {
 		t.Fatalf("read repaired manifest: %v", err)
 	}
 	if got := string(reader.MetaData()["content"]); got != "data" {
 		t.Fatalf(`OCF content = %q, want "data"`, got)
+	}
+
+	// An existing content value that contradicts the manifest-list entry is
+	// corrected, not preserved.
+	relabeled, changed, err := repairManifest(asData, relTableLocation, 1)
+	if err != nil || !changed {
+		t.Fatalf("repairManifest on mismatched content: changed=%v err=%v", changed, err)
+	}
+	reader, err = goavro.NewOCFReader(bytes.NewReader(relabeled))
+	if err != nil {
+		t.Fatalf("read relabeled manifest: %v", err)
+	}
+	if got := string(reader.MetaData()["content"]); got != "deletes" {
+		t.Fatalf(`OCF content after relabel = %q, want "deletes"`, got)
 	}
 }
 
