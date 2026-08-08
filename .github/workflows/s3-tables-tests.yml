@@ -353,6 +353,79 @@ jobs:
           path: test/s3tables/catalog_doris/test-output.log
           retention-days: 3
 
+  clickhouse-iceberg-catalog-tests:
+    name: ClickHouse Iceberg Catalog Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+
+      - name: Pre-pull images
+        run: |
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          pull clickhouse/clickhouse-server:25.8
+          pull python:3.11-slim
+
+      - name: Run go mod tidy
+        run: go mod tidy
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false ./weed
+
+      - name: Run ClickHouse Iceberg Catalog Integration Tests
+        timeout-minutes: 25
+        working-directory: test/s3tables/catalog_clickhouse
+        run: |
+          set -x
+          set -o pipefail
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          df -h
+          docker info
+          echo "=== Starting ClickHouse Iceberg Catalog Tests ==="
+
+          go test -v -timeout 20m . 2>&1 | tee test-output.log || {
+            echo "ClickHouse Iceberg catalog integration tests failed"
+            exit 1
+          }
+
+      - name: Show test output on failure
+        if: failure()
+        working-directory: test/s3tables/catalog_clickhouse
+        run: |
+          echo "=== Test Output ==="
+          if [ -f test-output.log ]; then
+            tail -200 test-output.log
+          fi
+
+          echo "=== Process information ==="
+          ps aux | grep -E "(weed|test|docker|clickhouse)" || true
+          echo "=== ClickHouse containers ==="
+          docker ps -a --filter "name=seaweed-clickhouse" || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: clickhouse-iceberg-catalog-test-logs
+          path: test/s3tables/catalog_clickhouse/test-output.log
+          retention-days: 3
+
   polaris-integration-tests:
     name: Polaris Integration Tests
     runs-on: ubuntu-22.04
