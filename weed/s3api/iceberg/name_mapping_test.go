@@ -2,6 +2,7 @@ package iceberg
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/apache/iceberg-go"
@@ -69,9 +70,9 @@ func TestEnsureDefaultNameMapping(t *testing.T) {
 	}
 }
 
-// evolveMetadataSchema returns serialized metadata whose schema gained an
-// "extra" column while the properties still carry the creation-time mapping,
-// simulating a schema-evolution commit.
+// evolveMetadataSchema returns serialized metadata whose schema renamed
+// "label" to "tag" and gained an "extra" column while the properties still
+// carry the creation-time mapping, simulating a schema-evolution commit.
 func evolveMetadataSchema(t *testing.T, base table.Metadata) []byte {
 	t.Helper()
 
@@ -81,7 +82,7 @@ func evolveMetadataSchema(t *testing.T, base table.Metadata) []byte {
 	}
 	evolved := iceberg.NewSchema(0,
 		iceberg.NestedField{ID: 1, Name: "id", Type: iceberg.PrimitiveTypes.Int64, Required: true},
-		iceberg.NestedField{ID: 2, Name: "label", Type: iceberg.PrimitiveTypes.String},
+		iceberg.NestedField{ID: 2, Name: "tag", Type: iceberg.PrimitiveTypes.String},
 		iceberg.NestedField{ID: 3, Name: "extra", Type: iceberg.PrimitiveTypes.String},
 	)
 	schemaJSON, err := json.Marshal(evolved)
@@ -116,7 +117,7 @@ func TestRefreshDefaultNameMappingOnSchemaEvolution(t *testing.T) {
 		t.Fatalf("parse evolved metadata: %v", err)
 	}
 
-	refreshed := refreshDefaultNameMapping(edited, base, updated)
+	refreshed := refreshDefaultNameMapping(edited, updated)
 	final, err := table.ParseMetadataBytes(refreshed)
 	if err != nil {
 		t.Fatalf("parse refreshed metadata: %v", err)
@@ -128,9 +129,14 @@ func TestRefreshDefaultNameMappingOnSchemaEvolution(t *testing.T) {
 	if len(mapping) != 3 || mapping[2].ID() != 3 || mapping[2].Names[0] != "extra" {
 		t.Fatalf("mapping was not refreshed for the evolved schema: %s", final.Properties()[table.DefaultNameMappingKey])
 	}
+	// The renamed column keeps its historical name so files written under the
+	// old physical name stay resolvable.
+	if mapping[1].ID() != 2 || !slices.Contains(mapping[1].Names, "tag") || !slices.Contains(mapping[1].Names, "label") {
+		t.Fatalf("renamed column lost a name: %s", final.Properties()[table.DefaultNameMappingKey])
+	}
 }
 
-func TestRefreshDefaultNameMappingLeavesUserMappingAlone(t *testing.T) {
+func TestRefreshDefaultNameMappingKeepsUserNames(t *testing.T) {
 	schema := iceberg.NewSchema(0,
 		iceberg.NestedField{ID: 1, Name: "id", Type: iceberg.PrimitiveTypes.Int64, Required: true},
 		iceberg.NestedField{ID: 2, Name: "label", Type: iceberg.PrimitiveTypes.String},
@@ -147,13 +153,18 @@ func TestRefreshDefaultNameMappingLeavesUserMappingAlone(t *testing.T) {
 		t.Fatalf("parse evolved metadata: %v", err)
 	}
 
-	refreshed := refreshDefaultNameMapping(edited, base, updated)
+	refreshed := refreshDefaultNameMapping(edited, updated)
 	final, err := table.ParseMetadataBytes(refreshed)
 	if err != nil {
 		t.Fatalf("parse refreshed metadata: %v", err)
 	}
-	if got := final.Properties()[table.DefaultNameMappingKey]; got != `[{"names":["custom"],"field-id":1}]` {
-		t.Fatalf("user-managed mapping was replaced: %s", got)
+	var mapping iceberg.NameMapping
+	if err := json.Unmarshal([]byte(final.Properties()[table.DefaultNameMappingKey]), &mapping); err != nil {
+		t.Fatalf("parse refreshed mapping: %v", err)
+	}
+	// The user's alias survives the merge alongside the schema name.
+	if mapping[0].ID() != 1 || !slices.Contains(mapping[0].Names, "custom") || !slices.Contains(mapping[0].Names, "id") {
+		t.Fatalf("user alias was dropped: %s", final.Properties()[table.DefaultNameMappingKey])
 	}
 }
 

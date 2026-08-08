@@ -2,6 +2,7 @@ package iceberg
 
 import (
 	"encoding/json"
+	"slices"
 
 	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/table"
@@ -42,11 +43,12 @@ func mappedFieldsOfType(typ iceberg.Type) []iceberg.MappedField {
 
 // refreshDefaultNameMapping keeps schema.name-mapping.default in sync with
 // the current schema across commits, so schema evolution does not strand
-// readers of field-id-less data files on the creation-time mapping. Only
-// mappings the catalog generated itself are replaced: a stored mapping that
-// differs from the one derived from the pre-commit schema was set by the user
-// and is left alone. Returns the (possibly patched) serialized metadata.
-func refreshDefaultNameMapping(raw []byte, base, updated table.Metadata) []byte {
+// readers of field-id-less data files on the creation-time mapping. The
+// stored mapping is merged rather than replaced: per field-id, names already
+// present are kept alongside the current schema name, so files written under
+// a renamed column's old name (and user-added aliases) stay resolvable.
+// Returns the (possibly patched) serialized metadata.
+func refreshDefaultNameMapping(raw []byte, updated table.Metadata) []byte {
 	if updated == nil {
 		return raw
 	}
@@ -54,28 +56,24 @@ func refreshDefaultNameMapping(raw []byte, base, updated table.Metadata) []byte 
 	if updatedSchema == nil || len(updatedSchema.Fields()) == 0 {
 		return raw
 	}
-	wantJSON, err := json.Marshal(nameMappingFromSchema(updatedSchema))
+	mapping := nameMappingFromSchema(updatedSchema)
+
+	existing := updated.Properties()[table.DefaultNameMappingKey]
+	if existing != "" {
+		var existingMapping iceberg.NameMapping
+		if err := json.Unmarshal([]byte(existing), &existingMapping); err != nil {
+			// Not a mapping we can merge; leave whatever the user stored.
+			return raw
+		}
+		mapping = mergeMappedFields(existingMapping, mapping)
+	}
+	wantJSON, err := json.Marshal(mapping)
 	if err != nil {
 		return raw
 	}
 	want := string(wantJSON)
-
-	existing := updated.Properties()[table.DefaultNameMappingKey]
 	if existing == want {
 		return raw
-	}
-	if existing != "" {
-		if base == nil {
-			return raw
-		}
-		baseSchema := base.CurrentSchema()
-		if baseSchema == nil {
-			return raw
-		}
-		baseJSON, err := json.Marshal(nameMappingFromSchema(baseSchema))
-		if err != nil || existing != string(baseJSON) {
-			return raw
-		}
 	}
 
 	var metadata map[string]json.RawMessage
@@ -103,6 +101,30 @@ func refreshDefaultNameMapping(raw []byte, base, updated table.Metadata) []byte 
 		return raw
 	}
 	return patched
+}
+
+// mergeMappedFields folds the names of an existing mapping into the mapping
+// derived from the current schema. Fields are matched by field-id per nesting
+// level; entries whose ids left the schema are dropped, since current readers
+// cannot project those fields anyway.
+func mergeMappedFields(existing, derived []iceberg.MappedField) []iceberg.MappedField {
+	byID := make(map[int]*iceberg.MappedField, len(existing))
+	for i := range existing {
+		byID[existing[i].ID()] = &existing[i]
+	}
+	for i := range derived {
+		prior, ok := byID[derived[i].ID()]
+		if !ok {
+			continue
+		}
+		for _, name := range prior.Names {
+			if !slices.Contains(derived[i].Names, name) {
+				derived[i].Names = append(derived[i].Names, name)
+			}
+		}
+		derived[i].Fields = mergeMappedFields(prior.Fields, derived[i].Fields)
+	}
+	return derived
 }
 
 // ensureDefaultNameMapping sets schema.name-mapping.default so engines can
