@@ -90,7 +90,7 @@ func TestCopyFileIgnoreNotFoundAndStopOffsetZeroPaths(t *testing.T) {
 
 	missingNoIgnore, err := grpcClient.CopyFile(ctx, &volume_server_pb.CopyFileRequest{
 		VolumeId:                 volumeID,
-		Ext:                      ".definitely-missing",
+		Ext:                      ".missing",
 		CompactionRevision:       math.MaxUint32,
 		StopOffset:               1,
 		IgnoreSourceFileNotFound: false,
@@ -104,7 +104,7 @@ func TestCopyFileIgnoreNotFoundAndStopOffsetZeroPaths(t *testing.T) {
 
 	missingIgnored, err := grpcClient.CopyFile(ctx, &volume_server_pb.CopyFileRequest{
 		VolumeId:                 volumeID,
-		Ext:                      ".definitely-missing",
+		Ext:                      ".missing",
 		CompactionRevision:       math.MaxUint32,
 		StopOffset:               1,
 		IgnoreSourceFileNotFound: true,
@@ -119,7 +119,7 @@ func TestCopyFileIgnoreNotFoundAndStopOffsetZeroPaths(t *testing.T) {
 
 	stopZeroStream, err := grpcClient.CopyFile(ctx, &volume_server_pb.CopyFileRequest{
 		VolumeId:                 volumeID,
-		Ext:                      ".definitely-missing",
+		Ext:                      ".missing",
 		CompactionRevision:       math.MaxUint32,
 		StopOffset:               0,
 		IgnoreSourceFileNotFound: false,

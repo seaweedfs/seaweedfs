@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -480,10 +481,51 @@ func (vs *VolumeServer) ReadVolumeFileStatus(ctx context.Context, req *volume_se
 	return resp, nil
 }
 
+// checkVolumeFileExtension guards the client-supplied Ext that CopyFile and
+// ReceiveFile turn into an on-disk path. Both RPCs are intentionally ungated
+// for cluster-internal peers (see volume_grpc_admin_auth_coverage_test.go), so
+// this is the only check standing between a peer request and the os.Open /
+// os.Create target: without it an Ext like "/../../x" is joined onto the volume
+// directory and, once path-cleaned, resolves outside it. A genuine extension is
+// a leading dot followed by alphanumerics -- ".dat", ".idx", ".vif", ".ecx",
+// ".ecj", ".ecsum", ".ec00".. -- and never contains a separator or "..".
+func checkVolumeFileExtension(ext string) error {
+	if len(ext) < 2 || ext[0] != '.' {
+		return fmt.Errorf("invalid file extension %q", ext)
+	}
+	for _, r := range ext[1:] {
+		if r < '0' || (r > '9' && r < 'A') || (r > 'Z' && r < 'a') || r > 'z' {
+			return fmt.Errorf("invalid file extension %q", ext)
+		}
+	}
+	return nil
+}
+
+// checkVolumeCollection guards the client-supplied Collection, which CopyFile
+// and ReceiveFile fold into a path component ("<collection>_<vid>"). An empty
+// collection is the default; any other value must be a single path element so a
+// collection like "../../x" cannot climb out of the volume directory once
+// path-cleaned. Collection names are user-facing and may hold '.' or '-', so
+// this rejects only separators and bare parent references rather than the
+// stricter alphanumeric rule used for extensions.
+func checkVolumeCollection(collection string) error {
+	if collection == "." || collection == ".." || strings.ContainsAny(collection, `/\`) {
+		return fmt.Errorf("invalid collection %q", collection)
+	}
+	return nil
+}
+
 // CopyFile client pulls the volume related file from the source server.
 // if req.CompactionRevision != math.MaxUint32, it ensures the compact revision is as expected
 // The copying still stop at req.StopOffset, but you can set it to math.MaxUint64 in order to read all data.
 func (vs *VolumeServer) CopyFile(req *volume_server_pb.CopyFileRequest, stream volume_server_pb.VolumeServer_CopyFileServer) error {
+
+	if err := checkVolumeFileExtension(req.Ext); err != nil {
+		return err
+	}
+	if err := checkVolumeCollection(req.Collection); err != nil {
+		return err
+	}
 
 	var fileName string
 	if !req.IsEcVolume {
@@ -651,6 +693,19 @@ func (vs *VolumeServer) ReceiveFile(stream volume_server_pb.VolumeServer_Receive
 			fileInfo = data.Info
 			glog.V(1).Infof("ReceiveFile: volume %d, ext %s, collection %s, shard %d, size %d",
 				fileInfo.VolumeId, fileInfo.Ext, fileInfo.Collection, fileInfo.ShardId, fileInfo.FileSize)
+
+			if err := checkVolumeFileExtension(fileInfo.Ext); err != nil {
+				glog.Errorf("ReceiveFile: %v", err)
+				return stream.SendAndClose(&volume_server_pb.ReceiveFileResponse{
+					Error: err.Error(),
+				})
+			}
+			if err := checkVolumeCollection(fileInfo.Collection); err != nil {
+				glog.Errorf("ReceiveFile: %v", err)
+				return stream.SendAndClose(&volume_server_pb.ReceiveFileResponse{
+					Error: err.Error(),
+				})
+			}
 
 			if fileInfo.IsEcVolume {
 				// os.Create below truncates in place; a mounted EcVolume
