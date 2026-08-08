@@ -92,16 +92,49 @@ func TestReceiveFile_RejectsTraversalExt(t *testing.T) {
 	assertNoEscapedFile(t, root, storeDir, "pwned")
 }
 
-// TestReceiveFile_AcceptsNormalExt is the positive control: a legitimate EC
-// shard extension still lands inside the volume directory.
-func TestReceiveFile_AcceptsNormalExt(t *testing.T) {
-	storeDir := t.TempDir()
+// TestReceiveFile_RejectsTraversalCollection covers the sibling vector: the
+// Collection is folded into the path as "<collection>_<vid>", so a value with
+// a separator escapes the volume directory the same way a traversal ext does.
+func TestReceiveFile_RejectsTraversalCollection(t *testing.T) {
+	root := t.TempDir()
+	storeDir := filepath.Join(root, "a", "b", "store")
+	if err := os.MkdirAll(storeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	vs := &VolumeServer{store: newTraversalTestStore(storeDir)}
 
 	stream := &fakeReceiveFileStream{reqs: []*volume_server_pb.ReceiveFileRequest{
 		infoReq(&volume_server_pb.ReceiveFileInfo{
 			VolumeId:   4,
 			Ext:        ".ec00",
+			Collection: "../../pwned",
+			IsEcVolume: true,
+			FileSize:   5,
+		}),
+		contentReq([]byte("pwned")),
+	}}
+
+	if err := vs.ReceiveFile(stream); err != nil {
+		t.Fatalf("ReceiveFile returned transport error: %v", err)
+	}
+	if stream.resp == nil || stream.resp.Error == "" {
+		t.Errorf("traversal collection was accepted; response = %+v", stream.resp)
+	}
+	assertNoEscapedFile(t, root, storeDir, "pwned")
+}
+
+// TestReceiveFile_AcceptsNormalExt is the positive control: a legitimate EC
+// shard extension still lands inside the volume directory.
+func TestReceiveFile_AcceptsNormalExt(t *testing.T) {
+	storeDir := t.TempDir()
+	vs := &VolumeServer{store: newTraversalTestStore(storeDir)}
+
+	// A realistic collection name holding '.' and '-' must still be accepted.
+	stream := &fakeReceiveFileStream{reqs: []*volume_server_pb.ReceiveFileRequest{
+		infoReq(&volume_server_pb.ReceiveFileInfo{
+			VolumeId:   4,
+			Ext:        ".ec00",
+			Collection: "my.bucket-1",
 			IsEcVolume: true,
 			FileSize:   5,
 		}),
@@ -114,7 +147,7 @@ func TestReceiveFile_AcceptsNormalExt(t *testing.T) {
 	if stream.resp == nil || stream.resp.Error != "" {
 		t.Fatalf("normal ext rejected: %+v", stream.resp)
 	}
-	if got, err := os.ReadFile(filepath.Join(storeDir, "4.ec00")); err != nil || string(got) != "shard" {
+	if got, err := os.ReadFile(filepath.Join(storeDir, "my.bucket-1_4.ec00")); err != nil || string(got) != "shard" {
 		t.Fatalf("expected shard written inside volume dir, got %q err %v", got, err)
 	}
 }

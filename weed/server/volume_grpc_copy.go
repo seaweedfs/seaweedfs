@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -500,12 +501,29 @@ func checkVolumeFileExtension(ext string) error {
 	return nil
 }
 
+// checkVolumeCollection guards the client-supplied Collection, which CopyFile
+// and ReceiveFile fold into a path component ("<collection>_<vid>"). An empty
+// collection is the default; any other value must be a single path element so a
+// collection like "../../x" cannot climb out of the volume directory once
+// path-cleaned. Collection names are user-facing and may hold '.' or '-', so
+// this rejects only separators and bare parent references rather than the
+// stricter alphanumeric rule used for extensions.
+func checkVolumeCollection(collection string) error {
+	if collection == "." || collection == ".." || strings.ContainsAny(collection, `/\`) {
+		return fmt.Errorf("invalid collection %q", collection)
+	}
+	return nil
+}
+
 // CopyFile client pulls the volume related file from the source server.
 // if req.CompactionRevision != math.MaxUint32, it ensures the compact revision is as expected
 // The copying still stop at req.StopOffset, but you can set it to math.MaxUint64 in order to read all data.
 func (vs *VolumeServer) CopyFile(req *volume_server_pb.CopyFileRequest, stream volume_server_pb.VolumeServer_CopyFileServer) error {
 
 	if err := checkVolumeFileExtension(req.Ext); err != nil {
+		return err
+	}
+	if err := checkVolumeCollection(req.Collection); err != nil {
 		return err
 	}
 
@@ -677,6 +695,12 @@ func (vs *VolumeServer) ReceiveFile(stream volume_server_pb.VolumeServer_Receive
 				fileInfo.VolumeId, fileInfo.Ext, fileInfo.Collection, fileInfo.ShardId, fileInfo.FileSize)
 
 			if err := checkVolumeFileExtension(fileInfo.Ext); err != nil {
+				glog.Errorf("ReceiveFile: %v", err)
+				return stream.SendAndClose(&volume_server_pb.ReceiveFileResponse{
+					Error: err.Error(),
+				})
+			}
+			if err := checkVolumeCollection(fileInfo.Collection); err != nil {
 				glog.Errorf("ReceiveFile: %v", err)
 				return stream.SendAndClose(&volume_server_pb.ReceiveFileResponse{
 					Error: err.Error(),
