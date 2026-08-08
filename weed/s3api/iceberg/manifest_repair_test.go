@@ -226,6 +226,24 @@ func TestRepairKeepsDeleteManifestContent(t *testing.T) {
 	}
 }
 
+func TestManifestContentValue(t *testing.T) {
+	cases := []struct {
+		record map[string]any
+		want   int
+	}{
+		{map[string]any{"content": int32(1)}, 1},
+		{map[string]any{"content": int64(1)}, 1},
+		{map[string]any{"content": map[string]any{"int": int32(1)}}, 1},
+		{map[string]any{"content": nil}, 0},
+		{map[string]any{}, 0},
+	}
+	for _, c := range cases {
+		if got := manifestContentValue(c.record); got != c.want {
+			t.Errorf("manifestContentValue(%v) = %d, want %d", c.record, got, c.want)
+		}
+	}
+}
+
 func TestRepairSkipsLocationsOutsideMetadataDir(t *testing.T) {
 	store := newFakeManifestStore()
 	rawUpdates := addSnapshotUpdateJSON(t, "s3://other-bucket/elsewhere/list.avro")

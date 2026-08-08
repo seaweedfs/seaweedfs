@@ -181,6 +181,11 @@ func annotateAvroType(node any, spec avroFieldIDs) (changed, ok bool) {
 			}
 			itemChanged, itemOK := annotateAvroType(t["items"], spec)
 			return changed || itemChanged, itemOK
+		case "map":
+			// The spec wants key-id/value-id on genuine avro maps; this repair
+			// only knows the array-of-key_value encoding, so leave the file to
+			// its writer rather than half-annotating it.
+			return changed, false
 		default:
 			return false, true
 		}
@@ -296,6 +301,11 @@ func metadataFileName(tableLocation, location string) (string, bool) {
 
 const repairedManifestPrefix = "repaired-"
 
+// maxRepairableManifestSize bounds how much manifest data the repair path
+// buffers in memory; anything larger fails the repair and the commit
+// proceeds with the writer's original files.
+const maxRepairableManifestSize = 64 << 20
+
 // hasFieldIDAnnotations is the cheap compliance probe: spec-compliant writers
 // annotate every manifest avro schema with field-id, and a writer that
 // annotates the manifest list annotates its manifests too.
@@ -388,8 +398,16 @@ func repairManifestList(ctx context.Context, store manifestStore, tableLocation,
 
 // manifestContentValue reads the manifest-list entry's content field
 // (0 = data, 1 = deletes); v1 lists have no such field and default to data.
+// Union-typed values arrive from goavro as a single-branch map.
 func manifestContentValue(record map[string]any) int {
-	switch v := record["content"].(type) {
+	value := record["content"]
+	if union, isUnion := value.(map[string]any); isUnion {
+		for _, branch := range union {
+			value = branch
+			break
+		}
+	}
+	switch v := value.(type) {
 	case int32:
 		return int(v)
 	case int64:
@@ -582,6 +600,9 @@ func (s *Server) loadTableMetadataBlob(ctx context.Context, bucketName, tablePat
 	}
 	if len(entry.Content) > 0 || len(entry.GetChunks()) == 0 {
 		return entry.Content, nil
+	}
+	if size := filer.FileSize(entry); size > maxRepairableManifestSize {
+		return nil, fmt.Errorf("%s is %d bytes, larger than the %d byte repair limit", fileName, size, maxRepairableManifestSize)
 	}
 
 	fullClient, ok := s.filerClient.(filer_pb.FilerClient)
