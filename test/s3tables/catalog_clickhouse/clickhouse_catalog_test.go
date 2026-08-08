@@ -105,6 +105,10 @@ func TestClickHouseIcebergCatalog(t *testing.T) {
 	buildClickHouseWriterImage(t)
 	writeIcebergRows(t, env, tableBucket, []string{namespace}, populatedTable)
 
+	// Empty table that ClickHouse writes into during the WriteReadBack subtest.
+	writeTable := "chwrite_" + randomString(6)
+	createIcebergTable(t, env, icebergToken, tableBucket, namespace, writeTable)
+
 	env.startClickHouseContainer(t)
 	env.waitForClickHouse(t, clickhouseStartTimeout)
 
@@ -167,6 +171,28 @@ func TestClickHouseIcebergCatalog(t *testing.T) {
 		want := "1\tone\n2\ttwo\n3\tthree"
 		if out != want {
 			t.Fatalf("SELECT id, label FROM %s = %q, want %q", populatedRef, out, want)
+		}
+	})
+
+	// ClickHouse's experimental Iceberg writes produce manifests without avro
+	// field-ids, bucket-relative paths, and parquet without field ids. The
+	// catalog repairs the manifests at commit and stamps a name mapping on the
+	// table, so a strict reader (PyIceberg) must see ClickHouse's rows.
+	t.Run("WriteReadBack", func(t *testing.T) {
+		writeRef := fmt.Sprintf("%s.`%s.%s`", clickhouseDatabase, namespace, writeTable)
+		insert := fmt.Sprintf("INSERT INTO %s (id, label) VALUES (1, 'alpha'), (2, 'beta')", writeRef)
+		if _, err := env.query(insert, map[string]string{"allow_experimental_insert_into_iceberg": "1"}); err != nil {
+			t.Fatalf("%s: %v\nContainer logs:\n%s", insert, err, clickhouseContainerLogs(env.clickhouseContainer))
+		}
+
+		out := env.mustQuery(t, fmt.Sprintf("SELECT id, label FROM %s ORDER BY id", writeRef))
+		if want := "1\talpha\n2\tbeta"; out != want {
+			t.Fatalf("ClickHouse read-back = %q, want %q", out, want)
+		}
+
+		rows := readIcebergRows(t, env, tableBucket, []string{namespace}, writeTable)
+		if want := "1,alpha\n2,beta"; rows != want {
+			t.Fatalf("PyIceberg read of ClickHouse-written table = %q, want %q", rows, want)
 		}
 	})
 }
@@ -618,6 +644,42 @@ func writeIcebergRows(t *testing.T, env *TestEnvironment, bucketName string, nam
 		t.Fatalf("PyIceberg writer failed: %v\n%s", err, out)
 	}
 	t.Logf("PyIceberg writer output: %s", strings.TrimSpace(string(out)))
+}
+
+// readIcebergRows scans a table with PyIceberg through the REST catalog and
+// returns its "id,label" lines, ordered by id.
+func readIcebergRows(t *testing.T, env *TestEnvironment, bucketName string, namespace []string, tableName string) string {
+	t.Helper()
+
+	args := []string{
+		"run", "--rm",
+		"--add-host", "host.docker.internal:host-gateway",
+		"--entrypoint", "python3",
+		clickhouseWriterImage,
+		"/app/read_rows.py",
+		"--catalog-url", fmt.Sprintf("http://host.docker.internal:%d", env.icebergPort),
+		"--warehouse", "s3://" + bucketName,
+		"--prefix", bucketName,
+		"--s3-endpoint", fmt.Sprintf("http://host.docker.internal:%d", env.s3Port),
+		"--access-key", env.accessKey,
+		"--secret-key", env.secretKey,
+		"--region", "us-west-2",
+		"--table", tableName,
+	}
+	for _, level := range namespace {
+		args = append(args, "--namespace", level)
+	}
+
+	// Keep stdout separate: the caller compares it exactly, and warnings on
+	// stderr from the python stack must not pollute the row data.
+	cmd := exec.Command("docker", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("PyIceberg reader failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	return strings.TrimSpace(stdout.String())
 }
 
 // doIcebergJSONRequest issues an authenticated JSON request to the Iceberg
