@@ -53,9 +53,10 @@ func (ma *MetaAggregator) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, star
 
 	address := pb.ServerAddress(update.Address)
 	if update.IsAdd {
-		// cancel previous subscription if any
-		if prevChan, found := ma.peerChans[address]; found {
-			close(prevChan)
+		// the peer is already followed, restarting would only lose the events
+		// in between
+		if _, found := ma.peerChans[address]; found {
+			return
 		}
 		stopChan := make(chan struct{})
 		ma.peerChans[address] = stopChan
