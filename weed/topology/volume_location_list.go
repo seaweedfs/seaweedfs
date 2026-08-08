@@ -6,8 +6,18 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
 
+// maxTrackedLocations is how many replicas of one volume can carry per-node
+// state. Beyond that the flags are simply not recorded, which loses a read-only
+// or oversized marking rather than misreporting one.
+const maxTrackedLocations = 32
+
 type VolumeLocationList struct {
 	list []*DataNode
+	// readOnly and oversized mirror list by index, so the per-node state that
+	// used to need an index of its own rides along with the location it
+	// describes. Both are only ever asked whether any node reports them.
+	readOnly  uint32
+	oversized uint32
 }
 
 func NewVolumeLocationList() *VolumeLocationList {
@@ -22,8 +32,61 @@ func (dnll *VolumeLocationList) Copy() *VolumeLocationList {
 	list := make([]*DataNode, len(dnll.list))
 	copy(list, dnll.list)
 	return &VolumeLocationList{
-		list: list,
+		list:      list,
+		readOnly:  dnll.readOnly,
+		oversized: dnll.oversized,
 	}
+}
+
+func (dnll *VolumeLocationList) indexOf(loc *DataNode) int {
+	for i, dnl := range dnll.list {
+		if loc.Ip == dnl.Ip && loc.Port == dnl.Port {
+			return i
+		}
+	}
+	return -1
+}
+
+func setFlag(flags *uint32, index int, on bool) {
+	if index < 0 || index >= maxTrackedLocations {
+		return
+	}
+	if on {
+		*flags |= 1 << uint(index)
+	} else {
+		*flags &^= 1 << uint(index)
+	}
+}
+
+// removeFlag drops the bit at index and closes the gap, keeping the flags
+// aligned with the locations after one is removed.
+func removeFlag(flags *uint32, index int) {
+	if index < 0 || index >= maxTrackedLocations {
+		return
+	}
+	low := *flags & (1<<uint(index) - 1)
+	high := *flags >> uint(index+1) << uint(index)
+	*flags = low | high
+}
+
+// SetReadOnly records whether loc reports the volume read-only.
+func (dnll *VolumeLocationList) SetReadOnly(loc *DataNode, readOnly bool) {
+	setFlag(&dnll.readOnly, dnll.indexOf(loc), readOnly)
+}
+
+// AnyReadOnly reports whether any location has the volume read-only.
+func (dnll *VolumeLocationList) AnyReadOnly() bool {
+	return dnll != nil && dnll.readOnly != 0
+}
+
+// SetOversized records whether loc reports the volume past the size limit.
+func (dnll *VolumeLocationList) SetOversized(loc *DataNode, oversized bool) {
+	setFlag(&dnll.oversized, dnll.indexOf(loc), oversized)
+}
+
+// AnyOversized reports whether any location has the volume past the size limit.
+func (dnll *VolumeLocationList) AnyOversized() bool {
+	return dnll != nil && dnll.oversized != 0
 }
 
 func (dnll *VolumeLocationList) Head() *DataNode {
@@ -71,6 +134,8 @@ func (dnll *VolumeLocationList) Remove(loc *DataNode) (removed *DataNode) {
 	for i, dnl := range dnll.list {
 		if loc.Ip == dnl.Ip && loc.Port == dnl.Port {
 			dnll.list = append(dnll.list[:i], dnll.list[i+1:]...)
+			removeFlag(&dnll.readOnly, i)
+			removeFlag(&dnll.oversized, i)
 			return dnl
 		}
 	}

@@ -344,7 +344,7 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 // it so a benignly read-only (full/oversized) volume can be reclaimed.
 func (t *Topology) vacuumOneVolumeId(grpcDialOption grpc.DialOption, volumeLayout *VolumeLayout, c *Collection, garbageThreshold float64, locationList *VolumeLocationList, vid needle.VolumeId, preallocate int64, skipReadOnly bool) {
 	volumeLayout.accessLock.RLock()
-	isReadOnly := volumeLayout.readonlyVolumes.IsTrue(vid)
+	isReadOnly := volumeLayout.vid2location[vid].AnyReadOnly()
 	isEnoughCopies := volumeLayout.enoughCopies(vid)
 	volumeLayout.accessLock.RUnlock()
 
