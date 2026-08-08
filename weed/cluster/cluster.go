@@ -138,6 +138,16 @@ func (cluster *Cluster) ListClusterNode(filerGroup FilerGroupName, nodeType stri
 	return
 }
 
+// ListClusterNodeUpdates reports the current members as add updates, so a
+// client that just connected can rebuild the membership it missed while it was
+// away.
+func (cluster *Cluster) ListClusterNodeUpdates(filerGroup FilerGroupName, nodeType string) (updates []*master_pb.KeepConnectedResponse) {
+	for _, node := range cluster.ListClusterNode(filerGroup, nodeType) {
+		updates = append(updates, buildClusterNodeUpdateMessage(true, filerGroup, nodeType, node.Address)...)
+	}
+	return
+}
+
 // IsKnownNode reports whether address is currently registered under nodeType
 // in any filer group. The lookup is intentionally group-agnostic because callers
 // (e.g. Ping admission) only know the target address, not the group it joined.

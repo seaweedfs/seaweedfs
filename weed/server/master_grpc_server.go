@@ -437,6 +437,14 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 		}
 	}
 
+	// Cluster node changes are only broadcast to the clients connected at that
+	// moment, so a client that reconnects has to be told who is around now.
+	for _, update := range ms.Cluster.ListClusterNodeUpdates(cluster.FilerGroupName(req.FilerGroup), cluster.FilerType) {
+		if sendErr := stream.Send(update); sendErr != nil {
+			return sendErr
+		}
+	}
+
 	if initialLockRingUpdate := ms.initialLockRingUpdate(req.ClientType, req.FilerGroup); initialLockRingUpdate != nil {
 		if sendErr := stream.Send(initialLockRingUpdate); sendErr != nil {
 			return sendErr
