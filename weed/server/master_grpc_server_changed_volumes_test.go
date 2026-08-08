@@ -77,3 +77,27 @@ func TestChangedVolumesRegisterUnknownVolumes(t *testing.T) {
 		t.Error("applying changes left the lookup index disagreeing with the disks")
 	}
 }
+
+// Volumes grow constantly, and a growth moves no location. Telling every
+// connected client about each one would flood bounded broadcast queues and push
+// out the topology updates that do matter.
+func TestChangedVolumesAnnounceOnlyArrivals(t *testing.T) {
+	topo, dn := changedTestCluster(t)
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{
+		changedTestVolume(1, 1024), changedTestVolume(2, 1024),
+	}, dn)
+
+	grown := topo.ApplyVolumeChanges([]*master_pb.VolumeInformationMessage{
+		changedTestVolume(1, 8192), changedTestVolume(2, 9216),
+	}, dn)
+	if len(grown) != 0 {
+		t.Errorf("volumes that only grew were announced as new locations: %v", grown)
+	}
+
+	arrived := topo.ApplyVolumeChanges([]*master_pb.VolumeInformationMessage{
+		changedTestVolume(1, 16384), changedTestVolume(7, 1024),
+	}, dn)
+	if len(arrived) != 1 || arrived[0].Id != needle.VolumeId(7) {
+		t.Errorf("expected only the volume that arrived, got %v", arrived)
+	}
+}

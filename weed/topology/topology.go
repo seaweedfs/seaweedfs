@@ -668,10 +668,15 @@ func (t *Topology) IncrementalSyncDataNodeRegistration(newVolumes, deletedVolume
 	return
 }
 
-// ApplyVolumeChanges records the volumes a heartbeat reported as changed. Only
-// the named volumes are touched: unlike a full report, silence about a volume
-// says nothing about whether the server still has it.
-func (t *Topology) ApplyVolumeChanges(changed []*master_pb.VolumeInformationMessage, dn *DataNode) {
+// ApplyVolumeChanges records the volumes a heartbeat reported as changed and
+// returns the ones the node did not already have. Only the named volumes are
+// touched: unlike a full report, silence about a volume says nothing about
+// whether the server still has it.
+//
+// Most changes are a volume growing, which moves no location, so returning
+// only the arrivals keeps a busy cluster from telling every client about
+// volumes they can already reach.
+func (t *Topology) ApplyVolumeChanges(changed []*master_pb.VolumeInformationMessage, dn *DataNode) (newVolumes []storage.VolumeInfo) {
 	volumeInfos := make([]storage.VolumeInfo, 0, len(changed))
 	for _, v := range changed {
 		vi, err := storage.NewVolumeInfo(v)
@@ -682,7 +687,11 @@ func (t *Topology) ApplyVolumeChanges(changed []*master_pb.VolumeInformationMess
 		volumeInfos = append(volumeInfos, vi)
 	}
 
-	dn.DeltaUpdateVolumes(volumeInfos, nil)
+	for _, vi := range volumeInfos {
+		if isNew, _ := dn.AddOrUpdateVolume(vi); isNew {
+			newVolumes = append(newVolumes, vi)
+		}
+	}
 
 	for _, vi := range volumeInfos {
 		if vi.ReplicaPlacement == nil {
@@ -697,6 +706,7 @@ func (t *Topology) ApplyVolumeChanges(changed []*master_pb.VolumeInformationMess
 			vl.AdjustActiveVolumeCountAfterRecovery(vi.Id)
 		}
 	}
+	return newVolumes
 }
 
 func (t *Topology) DataNodeRegistration(dcName, rackName string, dn *DataNode) {
