@@ -81,6 +81,7 @@ type Store struct {
 	NewEcShardsChan     chan *master_pb.VolumeEcShardInformationMessage
 	DeletedEcShardsChan chan *master_pb.VolumeEcShardInformationMessage
 	isStopping          bool
+	volumeReport        *volumeReportState
 }
 
 func (s *Store) String() (str string) {
@@ -114,6 +115,7 @@ func NewStore(
 		DeletedVolumesChan:  make(chan *master_pb.VolumeShortInformationMessage, HEARTBEAT_CHAN_SIZE),
 		NewEcShardsChan:     make(chan *master_pb.VolumeEcShardInformationMessage, HEARTBEAT_CHAN_SIZE),
 		DeletedEcShardsChan: make(chan *master_pb.VolumeEcShardInformationMessage, HEARTBEAT_CHAN_SIZE),
+		volumeReport:        newVolumeReportState(),
 	}
 
 	var wg sync.WaitGroup
@@ -414,10 +416,12 @@ func (s *Store) GetRack() string {
 
 func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	var volumeMessages []*master_pb.VolumeInformationMessage
-	// Digest of exactly what this heartbeat reports, so the master can tell
-	// whether its copy is current. Volumes skipped above -- quarantined,
-	// phantom, expired -- are absent from both the list and the digest.
+	// Covers every volume held, whether or not this heartbeat names it, so the
+	// master can tell whether applying what it was sent leaves it current.
+	// Volumes skipped below -- quarantined, phantom, expired -- are in neither.
 	var volumeDigest uint64
+	sendFullList := s.volumeReport.begin()
+	reportedHashes := make(map[volumeReportKey]uint64)
 	maxVolumeCounts := make(map[string]uint32)
 	// Per-disk effective max for DiskTag, captured alongside the per-type sum.
 	diskMaxByID := make(map[int]int32)
@@ -490,8 +494,12 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 
 			shouldDeleteVolume := false
 			if !v.expired(volumeMessage.Size, s.GetVolumeSizeLimit()) {
-				volumeMessages = append(volumeMessages, volumeMessage)
-				volumeDigest ^= reportHashOf(volumeMessage)
+				reportHash := reportHashOf(volumeMessage)
+				volumeDigest ^= reportHash
+				reportedHashes[volumeReportKey{diskId: volumeMessage.DiskId, volumeId: volumeMessage.Id}] = reportHash
+				if sendFullList || s.volumeReport.changed(volumeMessage, reportHash) {
+					volumeMessages = append(volumeMessages, volumeMessage)
+				}
 			} else {
 				if v.expiredLongEnough(MAX_TTL_VOLUME_REMOVAL_DELAY) {
 					deleteVids = append(deleteVids, v.Id)
@@ -586,6 +594,18 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		}
 	}
 
+	s.volumeReport.commit(reportedHashes)
+
+	// has_no_volumes says the server holds nothing, so it may only be derived
+	// from a full list. Deriving it from a changed-only heartbeat would make a
+	// quiet one read as an empty server and drop every volume on it.
+	heartbeatVolumes, changedVolumes := volumeMessages, []*master_pb.VolumeInformationMessage(nil)
+	hasNoVolumes := len(volumeMessages) == 0
+	if !sendFullList {
+		heartbeatVolumes, changedVolumes = nil, volumeMessages
+		hasNoVolumes = false
+	}
+
 	return &master_pb.Heartbeat{
 		Ip:              s.Ip,
 		Port:            uint32(s.Port),
@@ -598,10 +618,11 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		MaxFileKey:      NeedleIdToUint64(maxFileKey),
 		DataCenter:      s.dataCenter,
 		Rack:            s.rack,
-		Volumes:         volumeMessages,
+		Volumes:         heartbeatVolumes,
+		ChangedVolumes:  changedVolumes,
 		VolumeDigest:    &volumeDigest,
 		DeletedEcShards: deletedEcVolumes,
-		HasNoVolumes:    len(volumeMessages) == 0,
+		HasNoVolumes:    hasNoVolumes,
 		HasNoEcShards:   len(ecVolumeMessages) == 0,
 		LocationUuids:   uuidList,
 		DiskTags:        diskTags,
@@ -619,6 +640,24 @@ func reportHashOf(m *master_pb.VolumeInformationMessage) uint64 {
 		return 0
 	}
 	return vi.ReportHash()
+}
+
+// ResetVolumeReporting forgets what the master was told, so the next heartbeat
+// carries the whole list. Called when a connection is established, since a
+// reconnect may reach a master that knows nothing about this server.
+func (s *Store) ResetVolumeReporting() {
+	s.volumeReport.reset()
+}
+
+// AcceptVolumeChanges records that the master compares digests, so heartbeats
+// may carry only what changed.
+func (s *Store) AcceptVolumeChanges() {
+	s.volumeReport.acceptDeltas()
+}
+
+// RequestFullVolumeList makes the next heartbeat carry the whole list.
+func (s *Store) RequestFullVolumeList() {
+	s.volumeReport.requestFullList()
 }
 
 func (s *Store) deleteExpiredEcVolumes() (ecShards, deleted []*master_pb.VolumeEcShardInformationMessage) {
