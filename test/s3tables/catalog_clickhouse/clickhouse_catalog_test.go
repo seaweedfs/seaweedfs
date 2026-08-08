@@ -338,7 +338,8 @@ func testIcebergRestAPI(t *testing.T, env *TestEnvironment) {
 	t.Helper()
 
 	url := fmt.Sprintf("http://%s:%d/v1/config", env.bindIP, env.icebergPort)
-	resp, err := http.Get(url)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(url)
 	if err != nil {
 		t.Fatalf("Failed to connect to Iceberg REST API at %s: %v", url, err)
 	}
@@ -506,7 +507,8 @@ func containsLine(out, want string) bool {
 func requestIcebergOAuthToken(t *testing.T, env *TestEnvironment) string {
 	t.Helper()
 
-	resp, err := http.PostForm(fmt.Sprintf("http://%s:%d/v1/oauth/tokens", env.bindIP, env.icebergPort), url.Values{
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.PostForm(fmt.Sprintf("http://%s:%d/v1/oauth/tokens", env.bindIP, env.icebergPort), url.Values{
 		"grant_type":    {"client_credentials"},
 		"client_id":     {env.accessKey},
 		"client_secret": {env.secretKey},
