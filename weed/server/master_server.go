@@ -531,13 +531,10 @@ func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startF
 			defer cancel()
 			if _, err := client.Ping(ctx, &master_pb.PingRequest{Target: string(peerAddress), TargetType: cluster.MasterType}); err != nil {
 				glog.V(0).Infof("master %s didn't respond to pings. remove raft server", peerName)
-				if err := ms.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
-					_, err := client.RaftRemoveServer(context.Background(), &master_pb.RaftRemoveServerRequest{
-						Id:    peerName,
-						Force: false,
-					})
-					return err
-				}); err != nil {
+				// We are the leader here, so drop the dead peer through the local
+				// raft handle, mirroring the AddVoter branch above, instead of
+				// dialing our own RaftRemoveServer RPC.
+				if err := ms.Topo.HashicorpRaft.RemoveServer(hashicorpRaft.ServerID(peerName), 0, 0).Error(); err != nil {
 					glog.Warningf("failed removing old raft server: %v", err)
 					return err
 				}
