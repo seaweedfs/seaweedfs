@@ -235,14 +235,15 @@ func (d *Disk) VolumeCount() int {
 	return len(d.volumes)
 }
 
-// RemoveVolumesNotIn drops the volumes whose ids are absent from keep and
-// returns them, so a heartbeat can be diffed without first copying the whole
-// volume map out.
-func (d *Disk) RemoveVolumesNotIn(keep map[needle.VolumeId]struct{}) (removed []storage.VolumeInfo) {
+// RemoveVolumesNotIn drops the volumes the heartbeat did not name on this disk
+// and returns them, so a heartbeat can be diffed without copying the volume map
+// out. A volume named on another disk has moved, and counts as absent here.
+func (d *Disk) RemoveVolumesNotIn(reported *reportedVolumes) (removed []storage.VolumeInfo) {
+	diskTypeIndex := reported.diskTypeIndex(string(d.Id()))
 	d.Lock()
 	defer d.Unlock()
 	for vid, v := range d.volumes {
-		if _, ok := keep[vid]; !ok {
+		if !reported.namedOn(vid, diskTypeIndex) {
 			removed = append(removed, v)
 			delete(d.volumes, vid)
 			d.volumeDigest ^= v.ReportHash()

@@ -83,9 +83,9 @@ func (dn *DataNode) doAddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChanged 
 // used in master to notify master clients of these changes.
 func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (newVolumes, deletedVolumes, changedVolumes []storage.VolumeInfo) {
 
-	actualVolumeIds := make(map[needle.VolumeId]struct{}, len(actualVolumes))
+	reported := newReportedVolumes(len(actualVolumes))
 	for _, v := range actualVolumes {
-		actualVolumeIds[v.Id] = struct{}{}
+		reported.add(v.Id, v.DiskType)
 	}
 
 	// A volume id mounted on two disks of one server -- a stale twin re-attached
@@ -93,7 +93,7 @@ func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (newVolume
 	// id alone and keeps only the last copy. Its digest can then never equal the
 	// server's however often the list is resent, so record it and let the
 	// heartbeat fall back to the full list for this node.
-	dn.duplicateVolumeIds.Store(len(actualVolumeIds) < len(actualVolumes))
+	dn.duplicateVolumeIds.Store(reported.duplicated)
 
 	dn.Lock()
 	defer dn.Unlock()
@@ -101,7 +101,7 @@ func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (newVolume
 	keptCount := 0
 	for _, c := range dn.children {
 		disk := c.(*Disk)
-		for _, v := range disk.RemoveVolumesNotIn(actualVolumeIds) {
+		for _, v := range disk.RemoveVolumesNotIn(reported) {
 			glog.V(0).Infoln("Deleting volume id:", v.Id)
 			deletedVolumes = append(deletedVolumes, v)
 
@@ -120,7 +120,7 @@ func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (newVolume
 	// Everything still on the node is also in this heartbeat, so the remainder
 	// is what the node is about to gain. A steady-state heartbeat gains nothing
 	// and must not allocate here; a reconnecting server gains all of them.
-	if addedCount := len(actualVolumes) - keptCount; addedCount > 0 {
+	if addedCount := reported.count() - keptCount; addedCount > 0 {
 		newVolumes = make([]storage.VolumeInfo, 0, addedCount)
 	}
 	for _, v := range actualVolumes {
