@@ -529,7 +529,7 @@ async fn do_heartbeat(
                     info!("Heartbeat stopping");
                     return Ok(None);
                 }
-                let (_current_hb, held_volumes) = collect_heartbeat_with_snapshot(config, state);
+                let held_volumes = collect_volume_snapshot(config, state);
                 let current_volumes: HashMap<u32, _> = held_volumes.iter().map(|v| (v.id, v.clone())).collect();
                 let current_ec_shards = {
                     let store = state.store.read().unwrap();
@@ -1002,8 +1002,11 @@ fn build_heartbeat_with_ec_status(
     let total_max: i64 = max_volume_counts.values().map(|v| *v as i64).sum();
     crate::metrics::MAX_VOLUMES.set(total_max);
 
-    let _ = commit_report;
-    store.volume_report.commit(reported_hashes, report_generation);
+    // Only when this heartbeat is going to be sent: marking volumes reported
+    // and then discarding the message would leave the master never told.
+    if commit_report {
+        store.volume_report.commit(reported_hashes, report_generation);
+    }
 
     // has_no_volumes says the server holds nothing, so it may only be derived
     // from a full list. Deriving it from a changed-only heartbeat would make a
@@ -1428,6 +1431,37 @@ mod tests {
 
         let heartbeat = build_heartbeat(&test_config(), &mut store);
         assert_eq!(heartbeat.volumes.len(), 2);
+    }
+
+    // Taking a snapshot must not mark volumes as told to a master that is
+    // getting a different message.
+    #[test]
+    fn test_snapshot_does_not_mark_volumes_reported() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut store = reporting_store(temp_dir.path().to_str().unwrap(), 2);
+        store.volume_report.accept_deltas();
+        build_heartbeat(&test_config(), &mut store);
+
+        store
+            .add_volume(
+                VolumeId(3),
+                "pics",
+                None,
+                None,
+                0,
+                DiskType::HardDrive,
+                Version::current(),
+            )
+            .unwrap();
+
+        // What the notify path does: collect a snapshot, send a message of its own.
+        let snapshot =
+            build_heartbeat_with_ec_status(&test_config(), &mut store, Vec::new(), true, false).1;
+        assert_eq!(snapshot.len(), 3);
+
+        let heartbeat = build_heartbeat(&test_config(), &mut store);
+        assert_eq!(heartbeat.changed_volumes.len(), 1);
+        assert_eq!(heartbeat.changed_volumes[0].id, 3);
     }
 
     #[test]
