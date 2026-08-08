@@ -1,10 +1,14 @@
 package command
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
+
+	"google.golang.org/grpc"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -52,6 +56,13 @@ var cmdFilerMetaScan = &Command{
 
 	Pass -raw to report the stored paths instead.
 
+	Persisted ranges are read straight from the volume servers, so the filer
+	hands out log chunk ids instead of decoding and filtering the whole range
+	itself — worth having on a busy cluster, where that decode is the expensive
+	part and is charged to the filer no matter how narrow the prefix is. It
+	needs a route to the volume servers; without one the scan falls back to
+	reading through the filer, and -directRead=false forces that path.
+
   `,
 }
 
@@ -67,7 +78,24 @@ var (
 	scanOp           = cmdFilerMetaScan.Flag.String("op", "", "only report these operations, comma-separated: CREATE,DELETE,UPDATE,RENAME")
 	scanRaw          = cmdFilerMetaScan.Flag.Bool("raw", false, "report stored paths instead of resolving .versions/v_<id> back to the object key")
 	scanFollow       = cmdFilerMetaScan.Flag.Bool("follow", false, "keep following after reaching the end of the range")
+	scanDirectRead   = cmdFilerMetaScan.Flag.Bool("directRead", true, "read log chunks straight from the volume servers, so the filer does not decode the range; needs volume server access, falls back automatically")
 )
+
+// scanFilerClient adapts a filer address to filer_pb.FilerClient so the chunk
+// reader can resolve a log chunk's volume locations.
+type scanFilerClient struct {
+	address        pb.ServerAddress
+	grpcDialOption grpc.DialOption
+	signature      int32
+}
+
+func (c *scanFilerClient) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+	return pb.WithFilerClient(streamingMode, c.signature, c.address, c.grpcDialOption, fn)
+}
+
+func (c *scanFilerClient) AdjustedUrl(location *filer_pb.Location) string { return location.Url }
+
+func (c *scanFilerClient) GetDataCenter() string { return "" }
 
 const scanTimeLayout = "2006-01-02 15:04:05"
 
@@ -245,17 +273,10 @@ func runFilerMetaScan(cmd *Command, args []string) bool {
 	util.LoadSecurityConfiguration()
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
+	filerAddress := pb.ServerAddress(*scanFiler)
 	matched := 0
-	followErr := pb.FollowMetadata(pb.ServerAddress(*scanFiler), grpcDialOption, &pb.MetadataFollowOption{
-		ClientName:     "scan",
-		ClientId:       util.RandomInt32(),
-		ClientEpoch:    0,
-		SelfSignature:  0,
-		PathPrefix:     *scanPathPrefix,
-		StartTsNs:      startTs.UnixNano(),
-		StopTsNs:       stopTsNs,
-		EventErrorType: pb.TrivialOnError,
-	}, func(resp *filer_pb.SubscribeMetadataResponse) error {
+
+	emit := func(resp *filer_pb.SubscribeMetadataResponse) error {
 		if filer_pb.IsEmpty(resp) {
 			return nil
 		}
@@ -273,7 +294,41 @@ func runFilerMetaScan(cmd *Command, args []string) bool {
 		fmt.Printf("%s\t%s\t%s\t%s\n",
 			time.Unix(0, event.tsNs).Format(time.RFC3339), event.op, event.path, event.details)
 		return nil
-	})
+	}
+
+	scan := func(directRead bool) error {
+		option := &pb.MetadataFollowOption{
+			ClientName:     "scan",
+			ClientId:       util.RandomInt32(),
+			ClientEpoch:    0,
+			SelfSignature:  0,
+			PathPrefix:     *scanPathPrefix,
+			StartTsNs:      startTs.UnixNano(),
+			StopTsNs:       stopTsNs,
+			EventErrorType: pb.TrivialOnError,
+		}
+		if directRead {
+			// The server hands out log chunk fids and this reads them straight
+			// from the volume servers, so the filer never decodes the range.
+			// The prefix filter is re-applied client-side by ReadLogFileRefs,
+			// so the result is the same either way.
+			client := &scanFilerClient{address: filerAddress, grpcDialOption: grpcDialOption, signature: option.SelfSignature}
+			lookupFn := filer.LookupFn(client)
+			option.LogFileReaderFn = func(chunks []*filer_pb.FileChunk) (io.ReadCloser, error) {
+				return filer.NewChunkStreamReaderFromLookup(context.Background(), lookupFn, chunks), nil
+			}
+		}
+		return pb.FollowMetadata(filerAddress, grpcDialOption, option, emit)
+	}
+
+	followErr := scan(*scanDirectRead)
+	if followErr != nil && *scanDirectRead && matched == 0 {
+		// Reading chunks needs a route to the volume servers that the filer
+		// itself does not. Retry through the filer, but only while nothing has
+		// been printed — replaying after partial output would duplicate lines.
+		fmt.Fprintf(os.Stderr, "direct read failed (%v); retrying through the filer\n", followErr)
+		followErr = scan(false)
+	}
 
 	if followErr != nil {
 		fmt.Fprintf(os.Stderr, "scan %s: %v\n", *scanFiler, followErr)
