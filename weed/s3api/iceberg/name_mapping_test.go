@@ -40,33 +40,46 @@ func TestNameMappingFromSchema(t *testing.T) {
 	}
 }
 
-func TestEnsureDefaultNameMapping(t *testing.T) {
+func TestRefreshDefaultNameMappingDropsReassignedNames(t *testing.T) {
+	// The stored mapping was derived from a schema whose ids were later
+	// reassigned (id<->name swapped). The merged mapping must follow the
+	// current schema exactly: duplicating names across ids makes Java readers
+	// reject the whole mapping.
 	schema := iceberg.NewSchema(0,
 		iceberg.NestedField{ID: 1, Name: "id", Type: iceberg.PrimitiveTypes.Int64, Required: true},
+		iceberg.NestedField{ID: 2, Name: "name", Type: iceberg.PrimitiveTypes.String},
 	)
+	metadata, err := newTableMetadata(uuid.New(), "s3://bucket/ns/tbl", schema, nil, nil,
+		iceberg.Properties{table.DefaultNameMappingKey: `[{"names":["name"],"field-id":1},{"names":["id"],"field-id":2}]`})
+	if err != nil {
+		t.Fatalf("newTableMetadata: %v", err)
+	}
+	raw, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatalf("marshal metadata: %v", err)
+	}
 
-	props := ensureDefaultNameMapping(nil, schema)
-	mappingJSON, ok := props[table.DefaultNameMappingKey]
-	if !ok {
-		t.Fatalf("property %s not set", table.DefaultNameMappingKey)
+	refreshed := refreshDefaultNameMapping(raw, metadata)
+	final, err := table.ParseMetadataBytes(refreshed)
+	if err != nil {
+		t.Fatalf("parse refreshed metadata: %v", err)
 	}
 	var mapping iceberg.NameMapping
-	if err := json.Unmarshal([]byte(mappingJSON), &mapping); err != nil {
-		t.Fatalf("stored mapping is not valid NameMapping JSON: %v", err)
+	if err := json.Unmarshal([]byte(final.Properties()[table.DefaultNameMappingKey]), &mapping); err != nil {
+		t.Fatalf("parse refreshed mapping: %v", err)
 	}
-	if len(mapping) != 1 || mapping[0].ID() != 1 {
-		t.Fatalf("unexpected mapping: %s", mappingJSON)
+	seen := map[string]int{}
+	for _, field := range mapping {
+		for _, name := range field.Names {
+			if prior, dup := seen[name]; dup {
+				t.Fatalf("name %q mapped to both field %d and field %d: %s",
+					name, prior, field.ID(), final.Properties()[table.DefaultNameMappingKey])
+			}
+			seen[name] = field.ID()
+		}
 	}
-
-	// An existing mapping is preserved.
-	existing := iceberg.Properties{table.DefaultNameMappingKey: "custom"}
-	if got := ensureDefaultNameMapping(existing, schema)[table.DefaultNameMappingKey]; got != "custom" {
-		t.Fatalf("existing mapping overwritten: %s", got)
-	}
-
-	// An empty schema gets no mapping.
-	if got := ensureDefaultNameMapping(nil, iceberg.NewSchema(0)); len(got) != 0 {
-		t.Fatalf("empty schema produced properties: %v", got)
+	if seen["id"] != 1 || seen["name"] != 2 {
+		t.Fatalf("current schema names must win: %s", final.Properties()[table.DefaultNameMappingKey])
 	}
 }
 
@@ -169,15 +182,32 @@ func TestRefreshDefaultNameMappingKeepsUserNames(t *testing.T) {
 }
 
 func TestCreateTableSetsDefaultNameMapping(t *testing.T) {
+	// Request ids are deliberately non-sequential: the metadata constructor
+	// reassigns fresh ids, and the stamped mapping must follow the final
+	// schema, not the request.
 	schema := iceberg.NewSchema(0,
-		iceberg.NestedField{ID: 1, Name: "id", Type: iceberg.PrimitiveTypes.Int64, Required: true},
-		iceberg.NestedField{ID: 2, Name: "label", Type: iceberg.PrimitiveTypes.String},
+		iceberg.NestedField{ID: 7, Name: "id", Type: iceberg.PrimitiveTypes.Int64, Required: true},
+		iceberg.NestedField{ID: 3, Name: "label", Type: iceberg.PrimitiveTypes.String},
 	)
 	metadata, err := newTableMetadata(uuid.New(), "s3://bucket/ns/tbl", schema, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("newTableMetadata: %v", err)
 	}
-	if _, ok := metadata.Properties()[table.DefaultNameMappingKey]; !ok {
+	mappingJSON, ok := metadata.Properties()[table.DefaultNameMappingKey]
+	if !ok {
 		t.Fatalf("newTableMetadata did not set %s: %v", table.DefaultNameMappingKey, metadata.Properties())
+	}
+	var mapping iceberg.NameMapping
+	if err := json.Unmarshal([]byte(mappingJSON), &mapping); err != nil {
+		t.Fatalf("parse stamped mapping: %v", err)
+	}
+	finalSchema := metadata.CurrentSchema()
+	if len(mapping) != len(finalSchema.Fields()) {
+		t.Fatalf("mapping has %d entries, schema has %d", len(mapping), len(finalSchema.Fields()))
+	}
+	for i, field := range finalSchema.Fields() {
+		if mapping[i].ID() != field.ID || mapping[i].Names[0] != field.Name {
+			t.Fatalf("mapping entry %d = %v, want id %d name %s", i, mapping[i], field.ID, field.Name)
+		}
 	}
 }

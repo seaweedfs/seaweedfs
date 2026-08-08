@@ -1,6 +1,7 @@
 package iceberg
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -849,8 +850,22 @@ func newTableMetadata(
 	if props == nil {
 		props = make(iceberg.Properties)
 	}
-	props = ensureDefaultNameMapping(props, s)
 
 	// Create metadata directly using the constructor which ensures spec compliance for V2
-	return table.NewMetadataWithUUID(s, pSpec, so, location, props, tableUUID)
+	metadata, err := table.NewMetadataWithUUID(s, pSpec, so, location, props, tableUUID)
+	if err != nil {
+		return nil, err
+	}
+	// The constructor reassigns field ids, so the default name mapping must be
+	// derived from the final schema rather than the request's.
+	raw, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, err
+	}
+	if patched := refreshDefaultNameMapping(raw, metadata); !bytes.Equal(patched, raw) {
+		if withMapping, err := table.ParseMetadataBytes(patched); err == nil {
+			return withMapping, nil
+		}
+	}
+	return metadata, nil
 }

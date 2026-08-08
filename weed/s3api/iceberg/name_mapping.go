@@ -106,11 +106,21 @@ func refreshDefaultNameMapping(raw []byte, updated table.Metadata) []byte {
 // mergeMappedFields folds the names of an existing mapping into the mapping
 // derived from the current schema. Fields are matched by field-id per nesting
 // level; entries whose ids left the schema are dropped, since current readers
-// cannot project those fields anyway.
+// cannot project those fields anyway. A name can belong to only one field per
+// level (Java readers reject ambiguous mappings), so a historical name that
+// the current schema assigns to a different field-id stays with its new owner
+// instead of being duplicated onto the old one — which also keeps mappings
+// clean when a commit replaces the schema with reassigned field ids.
 func mergeMappedFields(existing, derived []iceberg.MappedField) []iceberg.MappedField {
 	byID := make(map[int]*iceberg.MappedField, len(existing))
 	for i := range existing {
 		byID[existing[i].ID()] = &existing[i]
+	}
+	nameOwner := make(map[string]int)
+	for _, d := range derived {
+		for _, name := range d.Names {
+			nameOwner[name] = d.ID()
+		}
 	}
 	for i := range derived {
 		prior, ok := byID[derived[i].ID()]
@@ -118,32 +128,15 @@ func mergeMappedFields(existing, derived []iceberg.MappedField) []iceberg.Mapped
 			continue
 		}
 		for _, name := range prior.Names {
+			if ownerID, taken := nameOwner[name]; taken && ownerID != derived[i].ID() {
+				continue
+			}
 			if !slices.Contains(derived[i].Names, name) {
 				derived[i].Names = append(derived[i].Names, name)
+				nameOwner[name] = derived[i].ID()
 			}
 		}
 		derived[i].Fields = mergeMappedFields(prior.Fields, derived[i].Fields)
 	}
 	return derived
-}
-
-// ensureDefaultNameMapping sets schema.name-mapping.default so engines can
-// read data files written without parquet field ids by falling back to
-// name-based column resolution. Existing mappings are left untouched.
-func ensureDefaultNameMapping(props iceberg.Properties, schema *iceberg.Schema) iceberg.Properties {
-	if schema == nil || len(schema.Fields()) == 0 {
-		return props
-	}
-	if _, ok := props[table.DefaultNameMappingKey]; ok {
-		return props
-	}
-	mappingJSON, err := json.Marshal(nameMappingFromSchema(schema))
-	if err != nil {
-		return props
-	}
-	if props == nil {
-		props = make(iceberg.Properties)
-	}
-	props[table.DefaultNameMappingKey] = string(mappingJSON)
-	return props
 }
