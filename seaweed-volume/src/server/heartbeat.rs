@@ -801,9 +801,8 @@ fn build_heartbeat_with_ec_status(
     }
 
     let mut volumes = Vec::new();
-    // Digest of exactly what this heartbeat reports, so the master can tell
-    // whether its copy is current. Volumes skipped above -- quarantined,
-    // phantom, expired -- are absent from both the list and the digest.
+    // Covers exactly what is reported: volumes skipped below are absent from
+    // both the list and the digest.
     let mut volume_digest: u64 = 0;
     let mut max_file_key = NeedleId(0);
     let mut max_volume_counts: HashMap<String, u32> = HashMap::new();
@@ -1253,10 +1252,8 @@ mod tests {
         assert!(heartbeat.has_no_volumes);
     }
 
-    // The digest must cover exactly the volumes the heartbeat carries. A volume
-    // reported but left out of the digest, or the reverse, makes the master's
-    // comparison disagree forever. An empty store still reports a digest, so
-    // the master can tell it from a server that computes none.
+    // A volume reported but left out of the digest, or the reverse, makes the
+    // master's comparison disagree forever.
     #[test]
     fn test_build_heartbeat_digests_exactly_what_it_reports() {
         let temp_dir = tempfile::tempdir().unwrap();

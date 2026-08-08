@@ -414,9 +414,8 @@ func (s *Store) GetRack() string {
 
 func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	var volumeMessages []*master_pb.VolumeInformationMessage
-	// Digest of exactly what this heartbeat reports, so the master can tell
-	// whether its copy is current. Volumes skipped above -- quarantined,
-	// phantom, expired -- are absent from both the list and the digest.
+	// Covers exactly what is reported: volumes skipped below are absent from
+	// both the list and the digest.
 	var volumeDigest uint64
 	maxVolumeCounts := make(map[string]uint32)
 	// Per-disk effective max for DiskTag, captured alongside the per-type sum.
@@ -609,9 +608,8 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 
 }
 
-// reportHashOf digests a volume exactly as the master will digest what it
-// stores for that volume, by running the master's own hash over the same
-// conversion the master applies to the message.
+// Runs the master's own hash over the master's own conversion of the message,
+// so the two ends cannot drift.
 func reportHashOf(m *master_pb.VolumeInformationMessage) uint64 {
 	vi, err := NewVolumeInfo(m)
 	if err != nil {

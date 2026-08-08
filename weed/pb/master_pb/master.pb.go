@@ -121,10 +121,9 @@ type Heartbeat struct {
 	// physical disk capacity per disk type, in bytes, from the underlying filesystem
 	DiskTotalBytes map[string]uint64 `protobuf:"bytes,25,rep,name=disk_total_bytes,json=diskTotalBytes,proto3" json:"disk_total_bytes,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
 	DiskFreeBytes  map[string]uint64 `protobuf:"bytes,26,rep,name=disk_free_bytes,json=diskFreeBytes,proto3" json:"disk_free_bytes,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
-	// Digest of every volume in this heartbeat's view of the server, letting the
-	// master check its copy is current without being sent the whole list. Absent
-	// from servers that do not compute it, and distinct from a digest of 0, which
-	// is what a server holding no volumes reports.
+	// Lets the master check its copy is current without being sent the whole
+	// list. Optional because a server holding no volumes reports 0, which must
+	// stay distinct from a server that computes none.
 	VolumeDigest  *uint64 `protobuf:"varint,27,opt,name=volume_digest,json=volumeDigest,proto3,oneof" json:"volume_digest,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -337,8 +336,7 @@ type HeartbeatResponse struct {
 	StorageBackends        []*StorageBackend      `protobuf:"bytes,5,rep,name=storage_backends,json=storageBackends,proto3" json:"storage_backends,omitempty"`
 	DuplicatedUuids        []string               `protobuf:"bytes,6,rep,name=duplicated_uuids,json=duplicatedUuids,proto3" json:"duplicated_uuids,omitempty"`
 	Preallocate            bool                   `protobuf:"varint,7,opt,name=preallocate,proto3" json:"preallocate,omitempty"`
-	// The master's view of this server's volumes disagrees with the reported
-	// digest, so it needs the full volume list rather than changes alone.
+	// The reported digest disagrees, so changes alone are not enough.
 	ResendFullVolumeList bool `protobuf:"varint,8,opt,name=resend_full_volume_list,json=resendFullVolumeList,proto3" json:"resend_full_volume_list,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache

@@ -106,10 +106,9 @@ message Heartbeat {
   map<string, uint64> disk_total_bytes = 25;
   map<string, uint64> disk_free_bytes = 26;
 
-  // Digest of every volume in this heartbeat's view of the server, letting the
-  // master check its copy is current without being sent the whole list. Absent
-  // from servers that do not compute it, and distinct from a digest of 0, which
-  // is what a server holding no volumes reports.
+  // Lets the master check its copy is current without being sent the whole
+  // list. Optional because a server holding no volumes reports 0, which must
+  // stay distinct from a server that computes none.
   optional uint64 volume_digest = 27;
 }
 
@@ -121,8 +120,7 @@ message HeartbeatResponse {
   repeated StorageBackend storage_backends = 5;
   repeated string duplicated_uuids = 6;
   bool preallocate = 7;
-  // The master's view of this server's volumes disagrees with the reported
-  // digest, so it needs the full volume list rather than changes alone.
+  // The reported digest disagrees, so changes alone are not enough.
   bool resend_full_volume_list = 8;
 }
 

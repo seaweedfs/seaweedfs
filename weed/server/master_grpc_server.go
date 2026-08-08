@@ -276,8 +276,8 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			ms.broadcastToClients(&master_pb.KeepConnectedResponse{VolumeLocation: message})
 		}
 
-		// Checked after everything the heartbeat carried has been applied, so a
-		// match means the master is current, not that nothing changed.
+		// After everything the heartbeat carried is applied, so a match means
+		// the master is current, not that nothing changed.
 		if resend := ms.checkVolumeDigest(heartbeat, dn); resend {
 			if err := stream.Send(&master_pb.HeartbeatResponse{ResendFullVolumeList: true}); err != nil {
 				glog.Warningf("SendHeartbeat.Send resend request to %s:%d %v", dn.Ip, dn.Port, err)
@@ -287,17 +287,13 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 	}
 }
 
-// checkVolumeDigest compares the digest a volume server reported against the
-// master's own, and reports whether the master needs the full volume list to
-// recover. Servers that report no digest are left alone: they still send the
-// whole list every time.
+// checkVolumeDigest reports whether the master needs the full volume list to
+// recover. Servers reporting no digest are left alone; they send it anyway.
 func (ms *MasterServer) checkVolumeDigest(heartbeat *master_pb.Heartbeat, dn *topology.DataNode) bool {
 	if heartbeat.VolumeDigest == nil {
 		return false
 	}
-	// One volume id mounted on two disks is reported twice but stored once, so
-	// the digests cannot agree however often the list is resent. Asking would
-	// loop forever.
+	// Reported twice but stored once, so no amount of resending can agree.
 	if dn.HasDuplicateVolumeIds() {
 		stats.MasterReceivedHeartbeatCounter.WithLabelValues("volumeDigestNotComparable").Inc()
 		return false
@@ -311,9 +307,7 @@ func (ms *MasterServer) checkVolumeDigest(heartbeat *master_pb.Heartbeat, dn *to
 	}
 
 	stats.MasterReceivedHeartbeatCounter.WithLabelValues("volumeDigestMismatch").Inc()
-	// A heartbeat that already carried the full list has nothing more to give;
-	// asking again would just repeat. Say so instead, because at this point the
-	// two ends genuinely disagree about what the server holds.
+	// Nothing further to ask for, so say so rather than repeat the request.
 	if len(heartbeat.Volumes) > 0 || heartbeat.HasNoVolumes {
 		glog.Warningf("volume server %s reported digest %d after a full volume list, master holds %d",
 			dn.Url(), reported, held)

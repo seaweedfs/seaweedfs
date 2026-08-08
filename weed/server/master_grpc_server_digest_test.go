@@ -22,9 +22,7 @@ func digestTestVolumeMessage(id uint32) *master_pb.VolumeInformationMessage {
 	}
 }
 
-// A volume server that predates the digest keeps sending its whole list and
-// must never be asked for anything, whatever the master computes. This is what
-// lets the two sides be upgraded in either order.
+// What lets the two sides be upgraded in either order.
 func TestDigestCheckIgnoresServersThatReportNone(t *testing.T) {
 	ms, dn := digestTestCluster(t)
 	ms.Topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{digestTestVolumeMessage(1)}, dn)
@@ -47,9 +45,6 @@ func TestDigestCheckAcceptsAMatchingReport(t *testing.T) {
 	}
 }
 
-// A heartbeat that already carried the whole list has nothing further to give,
-// so a mismatch there is a genuine disagreement to report rather than something
-// to ask about again.
 func TestDigestCheckDoesNotReaskAfterAFullList(t *testing.T) {
 	ms, dn := digestTestCluster(t)
 	volumes := []*master_pb.VolumeInformationMessage{digestTestVolumeMessage(1)}
@@ -61,8 +56,6 @@ func TestDigestCheckDoesNotReaskAfterAFullList(t *testing.T) {
 	}
 }
 
-// The case the request exists for: a heartbeat carrying no list whose digest
-// disagrees means the master has drifted and needs the list back.
 func TestDigestCheckAsksForTheListWhenADeltaDisagrees(t *testing.T) {
 	ms, dn := digestTestCluster(t)
 	ms.Topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{digestTestVolumeMessage(1)}, dn)
@@ -73,8 +66,6 @@ func TestDigestCheckAsksForTheListWhenADeltaDisagrees(t *testing.T) {
 	}
 }
 
-// A node reporting one volume id twice is stored once, so the digests cannot
-// agree however often the list is resent.
 func TestDigestCheckSkipsNodesWithDuplicateVolumeIds(t *testing.T) {
 	ms, dn := digestTestCluster(t)
 	duplicated := digestTestVolumeMessage(1)

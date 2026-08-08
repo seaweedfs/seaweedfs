@@ -71,10 +71,8 @@ func TestVolumeDigestIsIndependentOfReportOrder(t *testing.T) {
 	}
 }
 
-// Every field of VolumeInformationMessage has to reach the digest: one the hash
-// skips is a change the master would never be told about. Enumerated from the
-// message rather than listed here, so a field added later cannot quietly fall
-// outside the digest while this still passes.
+// Enumerated from the message rather than listed here, so a field added later
+// cannot quietly fall outside the digest while this still passes.
 func TestVolumeDigestTracksEveryReportedField(t *testing.T) {
 	base := digestTestVolume(1)
 	baseInfo, err := storage.NewVolumeInfo(base)
@@ -103,8 +101,7 @@ func TestVolumeDigestTracksEveryReportedField(t *testing.T) {
 	}
 }
 
-// distinctValuesFor offers values that differ from current. Several, because
-// some fields are narrowed or normalised on the way into VolumeInfo and the
+// Several, because some fields are narrowed on the way into VolumeInfo and the
 // smallest change to the wire value can land back on the stored one.
 func distinctValuesFor(t *testing.T, fd protoreflect.FieldDescriptor, current protoreflect.Value) []protoreflect.Value {
 	t.Helper()
@@ -186,10 +183,9 @@ func TestVolumeDigestFollowsDeltaRegistration(t *testing.T) {
 	}
 }
 
-// The point of the digest is not to detect that volumes changed -- in any live
-// cluster some always have. It is to confirm that after applying the changes a
-// heartbeat did carry, the master holds what the volume server holds. So a
-// heartbeat reporting only the volumes that moved must still reconcile.
+// The digest is not a change detector: in a live cluster some volumes always
+// have changed. It asks whether the master is current once the heartbeat's own
+// changes are applied.
 func TestVolumeDigestMatchesAfterApplyingOnlyChangedVolumes(t *testing.T) {
 	const total = 50
 	full := make([]*master_pb.VolumeInformationMessage, 0, total)
@@ -232,8 +228,7 @@ func TestVolumeDigestMatchesAfterApplyingOnlyChangedVolumes(t *testing.T) {
 	}
 }
 
-// A volume that disappears without a delta is exactly what the full list exists
-// to catch, and is the case the digest has to keep catching.
+// What the full list exists to catch, and the digest has to keep catching.
 func TestVolumeDigestCatchesASilentlyLostVolume(t *testing.T) {
 	full := []*master_pb.VolumeInformationMessage{
 		digestTestVolume(1), digestTestVolume(2), digestTestVolume(3),
@@ -431,9 +426,7 @@ func TestVolumeIndexDigestFollowsRemovedLookupEntry(t *testing.T) {
 	}
 }
 
-// The two ends must agree on real heartbeat data, not just on hand-built
-// messages: the volume server hashes what it is about to send, the master
-// hashes what it stored from it.
+// Real heartbeat data, not hand-built messages.
 func TestMasterDigestMatchesWhatAVolumeServerReports(t *testing.T) {
 	dir := t.TempDir()
 	loc := storage.NewDiskLocation(dir, 100, util.MinFreeSpace{}, "", types.HardDriveType, nil,

@@ -17,9 +17,8 @@ func mountTestVolume(t *testing.T, loc *DiskLocation, vid needle.VolumeId) {
 	loc.SetVolume(vid, v)
 }
 
-// The digest has to cover exactly the volumes the heartbeat carries. A volume
-// reported but left out of the digest, or the reverse, makes the master's
-// comparison disagree forever.
+// A volume reported but left out of the digest, or the reverse, makes the
+// master's comparison disagree forever.
 func TestCollectHeartbeatDigestsExactlyWhatItReports(t *testing.T) {
 	store := newTestStore(t, 2)
 	mountTestVolume(t, store.Locations[0], 1)
@@ -47,9 +46,7 @@ func TestCollectHeartbeatDigestsExactlyWhatItReports(t *testing.T) {
 	}
 }
 
-// A server holding nothing reports a digest of 0, which is why the field needs
-// explicit presence: it must stay distinguishable from a server that computes
-// no digest at all.
+// 0 must stay distinguishable from a server that computes no digest at all.
 func TestCollectHeartbeatDigestsAnEmptyStore(t *testing.T) {
 	store := newTestStore(t, 1)
 

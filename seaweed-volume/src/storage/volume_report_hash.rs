@@ -1,17 +1,12 @@
-//! Mirror of `weed/storage/volume_report_hash.go`.
-//!
-//! The master compares the digest a volume server reports against one it
-//! computes itself, so this has to agree with the Go implementation
-//! byte-for-byte. `report_hash_vectors` pins that against values produced by
-//! the Go side; do not change the layout without regenerating them there.
+//! Mirror of `weed/storage/volume_report_hash.go`. Has to agree with it byte
+//! for byte, so `report_hash_vectors` pins the layout against values produced
+//! there; regenerate them before changing it.
 
 use xxhash_rust::xxh64::xxh64;
 
 use crate::pb::master_pb;
 
-/// Digests everything a volume server reports about a volume.
-///
-/// It must cover every field of `VolumeInformationMessage`: a change the hash
+/// Must cover every field of `VolumeInformationMessage`: a change the hash
 /// misses is a change the master would never be told about.
 pub fn report_hash(m: &master_pb::VolumeInformationMessage) -> u64 {
     let mut buf = [0u8; 57];
@@ -20,8 +15,7 @@ pub fn report_hash(m: &master_pb::VolumeInformationMessage) -> u64 {
     buf[12..20].copy_from_slice(&m.file_count.to_le_bytes());
     buf[20..28].copy_from_slice(&m.delete_count.to_le_bytes());
     buf[28..36].copy_from_slice(&m.deleted_byte_count.to_le_bytes());
-    // The master stores these narrowed, so hash what it will hold, not what the
-    // wire type could carry.
+    // The master stores these narrowed, so hash what it will hold.
     buf[36..40].copy_from_slice(&((m.replica_placement as u8) as u32).to_le_bytes());
     buf[40..44].copy_from_slice(&((m.version as u8) as u32).to_le_bytes());
     buf[44..48].copy_from_slice(&normalize_ttl(m.ttl).to_le_bytes());
@@ -40,8 +34,7 @@ pub fn report_hash(m: &master_pb::VolumeInformationMessage) -> u64 {
     h
 }
 
-/// A ttl whose count is zero encodes as zero however the unit is set, matching
-/// what the master stores after decoding it.
+/// A zero count encodes as zero however the unit is set, as the master stores it.
 fn normalize_ttl(ttl: u32) -> u32 {
     let count = (ttl >> 8) & 0xff;
     if count == 0 {
@@ -50,8 +43,7 @@ fn normalize_ttl(ttl: u32) -> u32 {
     (count << 8) | (ttl & 0xff)
 }
 
-/// Combines two hashes order-dependently, so swapping two string fields is not
-/// invisible.
+/// Order-dependent, so swapping two string fields is not invisible.
 fn fold(h: u64, x: u64) -> u64 {
     let h = (h ^ x).wrapping_mul(0x9E37_79B9_7F4A_7C15);
     h ^ (h >> 29)
@@ -61,9 +53,8 @@ fn fold(h: u64, x: u64) -> u64 {
 mod tests {
     use super::*;
 
-    // Produced by the Go implementation. If these drift, every volume server
-    // running this build reports a digest the master can never match, and falls
-    // back to sending its whole volume list forever.
+    // Produced by the Go implementation. Drift here means every volume server on
+    // this build silently falls back to sending its whole volume list forever.
     #[test]
     fn report_hash_vectors() {
         let empty = master_pb::VolumeInformationMessage::default();
