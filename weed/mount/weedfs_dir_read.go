@@ -108,6 +108,12 @@ func (wfs *WFS) OpenDir(cancel <-chan struct{}, input *fuse.OpenIn, out *fuse.Op
 	}
 	dhid, _ := wfs.AcquireDirectoryHandle()
 	out.Fh = uint64(dhid)
+	// Let the kernel keep the listing in the directory's page cache, so
+	// reopening the directory does not reach the mount at all. Local mutations
+	// drop that cache in the kernel; remote ones arrive through the metadata
+	// subscription, which notifies the kernel per changed directory. A kernel
+	// too old for the flag ignores it.
+	out.OpenFlags |= fuse.FOPEN_CACHE_DIR | fuse.FOPEN_KEEP_CACHE
 	return fuse.OK
 }
 

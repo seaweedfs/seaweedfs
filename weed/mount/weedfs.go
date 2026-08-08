@@ -801,7 +801,31 @@ func (wfs *WFS) onEntryInvalidation(invalidation meta_cache.EntryInvalidation) {
 	if listener != nil {
 		listener(invalidation)
 	}
+	wfs.invalidateKernelDirListing(invalidation.Path)
 	wfs.invalidateOpenFileHandle(invalidation)
+}
+
+// invalidateKernelDirListing drops the kernel's cached listing of the directory
+// holding path. Safe here because invalidations run on their own worker, never
+// on a thread serving a kernel request; notifying from a handler can deadlock
+// against the page it holds, which is why the file paths avoid InodeNotify.
+// A directory the kernel has not looked up has no inode here and nothing
+// cached, so it is skipped.
+func (wfs *WFS) invalidateKernelDirListing(path util.FullPath) {
+	server := wfs.fuseServer
+	if server == nil {
+		return
+	}
+	dir, _ := path.DirAndName()
+	dirInode, found := wfs.inodeToPath.GetInode(util.FullPath(dir))
+	if !found {
+		return
+	}
+	// ENOENT is the kernel not holding the inode, ENOSYS a kernel without the
+	// notify; neither is worth a line.
+	if status := server.InodeNotify(dirInode, 0, -1); status != fuse.OK && status != fuse.ENOENT && status != fuse.ENOSYS {
+		glog.V(4).Infof("invalidate kernel listing of %s: %v", dir, status)
+	}
 }
 
 // MountRoot is the filer path this mount is rooted at. Event paths are absolute
