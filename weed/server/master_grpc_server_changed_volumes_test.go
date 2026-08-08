@@ -172,3 +172,34 @@ func TestDeletedCollectionReleasesTheLookupIndex(t *testing.T) {
 	}
 }
 
+// A full list races the growth that runs while it is in flight: collected
+// before the grow finished, it cannot name the volumes the grow registered.
+// Erasing them strands their collection without writable volumes until a
+// later report happens to re-add them.
+func TestStaleFullListDoesNotEraseAFreshGrow(t *testing.T) {
+	topo, dn := changedTestCluster(t)
+	full := []*master_pb.VolumeInformationMessage{changedTestVolume(1, 1024)}
+	topo.SyncDataNodeRegistration(full, dn)
+
+	// what volume growth registers, after the list above was collected
+	vi, err := storage.NewVolumeInfo(changedTestVolume(2, 8))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dn.AddProvisionalVolume(vi)
+	topo.RegisterVolumeLayout(vi, dn)
+
+	// the stale list arrives
+	topo.SyncDataNodeRegistration(full, dn)
+	if _, err := dn.GetVolumesById(needle.VolumeId(2)); err != nil {
+		t.Fatal("a stale full list erased a freshly grown volume")
+	}
+
+	// once a report names it, a list without it means it is really gone
+	confirmed := append(append([]*master_pb.VolumeInformationMessage{}, full...), changedTestVolume(2, 8))
+	topo.SyncDataNodeRegistration(confirmed, dn)
+	topo.SyncDataNodeRegistration(full, dn)
+	if _, err := dn.GetVolumesById(needle.VolumeId(2)); err == nil {
+		t.Fatal("a confirmed volume survived a list that dropped it")
+	}
+}
