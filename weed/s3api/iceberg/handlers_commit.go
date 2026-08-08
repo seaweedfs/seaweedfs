@@ -66,6 +66,24 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Manifest repair runs once, as soon as the table location is known; on
+	// commit retries the updates already reference the repaired files.
+	manifestsRepaired := false
+	repairManifests := func(location string) error {
+		if manifestsRepaired {
+			return nil
+		}
+		manifestsRepaired = true
+		repaired, changed := s.repairAddSnapshotManifests(r.Context(), location, raw.Updates)
+		if !changed {
+			return nil
+		}
+		raw.Updates = repaired
+		var err error
+		req.Updates, statisticsUpdates, err = parseCommitUpdates(raw.Updates)
+		return err
+	}
+
 	maxCommitAttempts := 3
 	generatedLegacyUUID := uuid.New()
 	stageCreateEnabled := isStageCreateEnabled()
@@ -168,6 +186,11 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 
+				if err := repairManifests(location); err != nil {
+					writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid updates: "+err.Error())
+					return
+				}
+
 				result, reqErr := s.finalizeCreateOnCommit(r.Context(), createOnCommitInput{
 					bucketARN:         bucketARN,
 					markerBucket:      bucketName,
@@ -230,6 +253,11 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusConflict, "CommitFailedException", "Requirement failed: "+err.Error())
 				return
 			}
+		}
+
+		if err := repairManifests(location); err != nil {
+			writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid updates: "+err.Error())
+			return
 		}
 
 		builder, err := table.MetadataBuilderFromBase(currentMetadata, getResp.MetadataLocation)
