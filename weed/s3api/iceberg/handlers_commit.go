@@ -294,6 +294,7 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "BadRequestException", "Failed to apply statistics updates: "+err.Error())
 			return
 		}
+		metadataBytes = refreshDefaultNameMapping(metadataBytes, currentMetadata, newMetadata)
 		// Same spec-compliance fixup we apply on create-table; ensures
 		// v{N}.metadata.json files written during commit are also readable by
 		// strict Iceberg clients reading directly from S3, and that the

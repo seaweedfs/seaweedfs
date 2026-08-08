@@ -69,6 +69,94 @@ func TestEnsureDefaultNameMapping(t *testing.T) {
 	}
 }
 
+// evolveMetadataSchema returns serialized metadata whose schema gained an
+// "extra" column while the properties still carry the creation-time mapping,
+// simulating a schema-evolution commit.
+func evolveMetadataSchema(t *testing.T, base table.Metadata) []byte {
+	t.Helper()
+
+	raw, err := json.Marshal(base)
+	if err != nil {
+		t.Fatalf("marshal base metadata: %v", err)
+	}
+	evolved := iceberg.NewSchema(0,
+		iceberg.NestedField{ID: 1, Name: "id", Type: iceberg.PrimitiveTypes.Int64, Required: true},
+		iceberg.NestedField{ID: 2, Name: "label", Type: iceberg.PrimitiveTypes.String},
+		iceberg.NestedField{ID: 3, Name: "extra", Type: iceberg.PrimitiveTypes.String},
+	)
+	schemaJSON, err := json.Marshal(evolved)
+	if err != nil {
+		t.Fatalf("marshal evolved schema: %v", err)
+	}
+	var metadata map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &metadata); err != nil {
+		t.Fatalf("unmarshal metadata: %v", err)
+	}
+	metadata["schemas"] = json.RawMessage("[" + string(schemaJSON) + "]")
+	edited, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatalf("marshal edited metadata: %v", err)
+	}
+	return edited
+}
+
+func TestRefreshDefaultNameMappingOnSchemaEvolution(t *testing.T) {
+	schema := iceberg.NewSchema(0,
+		iceberg.NestedField{ID: 1, Name: "id", Type: iceberg.PrimitiveTypes.Int64, Required: true},
+		iceberg.NestedField{ID: 2, Name: "label", Type: iceberg.PrimitiveTypes.String},
+	)
+	base, err := newTableMetadata(uuid.New(), "s3://bucket/ns/tbl", schema, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("newTableMetadata: %v", err)
+	}
+
+	edited := evolveMetadataSchema(t, base)
+	updated, err := table.ParseMetadataBytes(edited)
+	if err != nil {
+		t.Fatalf("parse evolved metadata: %v", err)
+	}
+
+	refreshed := refreshDefaultNameMapping(edited, base, updated)
+	final, err := table.ParseMetadataBytes(refreshed)
+	if err != nil {
+		t.Fatalf("parse refreshed metadata: %v", err)
+	}
+	var mapping iceberg.NameMapping
+	if err := json.Unmarshal([]byte(final.Properties()[table.DefaultNameMappingKey]), &mapping); err != nil {
+		t.Fatalf("parse refreshed mapping: %v", err)
+	}
+	if len(mapping) != 3 || mapping[2].ID() != 3 || mapping[2].Names[0] != "extra" {
+		t.Fatalf("mapping was not refreshed for the evolved schema: %s", final.Properties()[table.DefaultNameMappingKey])
+	}
+}
+
+func TestRefreshDefaultNameMappingLeavesUserMappingAlone(t *testing.T) {
+	schema := iceberg.NewSchema(0,
+		iceberg.NestedField{ID: 1, Name: "id", Type: iceberg.PrimitiveTypes.Int64, Required: true},
+		iceberg.NestedField{ID: 2, Name: "label", Type: iceberg.PrimitiveTypes.String},
+	)
+	base, err := newTableMetadata(uuid.New(), "s3://bucket/ns/tbl", schema, nil, nil,
+		iceberg.Properties{table.DefaultNameMappingKey: `[{"names":["custom"],"field-id":1}]`})
+	if err != nil {
+		t.Fatalf("newTableMetadata: %v", err)
+	}
+
+	edited := evolveMetadataSchema(t, base)
+	updated, err := table.ParseMetadataBytes(edited)
+	if err != nil {
+		t.Fatalf("parse evolved metadata: %v", err)
+	}
+
+	refreshed := refreshDefaultNameMapping(edited, base, updated)
+	final, err := table.ParseMetadataBytes(refreshed)
+	if err != nil {
+		t.Fatalf("parse refreshed metadata: %v", err)
+	}
+	if got := final.Properties()[table.DefaultNameMappingKey]; got != `[{"names":["custom"],"field-id":1}]` {
+		t.Fatalf("user-managed mapping was replaced: %s", got)
+	}
+}
+
 func TestCreateTableSetsDefaultNameMapping(t *testing.T) {
 	schema := iceberg.NewSchema(0,
 		iceberg.NestedField{ID: 1, Name: "id", Type: iceberg.PrimitiveTypes.Int64, Required: true},
