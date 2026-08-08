@@ -5,7 +5,7 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir "pyiceberg[s3fs]" pyarrow
+RUN pip install --no-cache-dir "pyiceberg[s3fs]==0.11.1" "pyarrow==25.0.0"
 
 COPY append_rows.py /app/
 
