@@ -53,16 +53,28 @@ func TestRemovalsAlongsideAMoveStillApply(t *testing.T) {
 	}
 }
 
+func moveEcResponse(newEcVids, deletedEcVids []uint32) *master_pb.KeepConnectedResponse {
+	return &master_pb.KeepConnectedResponse{VolumeLocation: &master_pb.VolumeLocation{
+		Url: "server:8080", PublicUrl: "server:8080", NewEcVids: newEcVids, DeletedEcVids: deletedEcVids,
+	}}
+}
+
 func TestEcVolumeMovedKeepsItsLocation(t *testing.T) {
 	mc := moveClient()
-	resp := &master_pb.KeepConnectedResponse{VolumeLocation: &master_pb.VolumeLocation{
-		Url: "server:8080", PublicUrl: "server:8080", NewEcVids: []uint32{7},
-	}}
-	mc.updateVidMap(resp)
-	resp.VolumeLocation.DeletedEcVids = []uint32{7}
-	mc.updateVidMap(resp)
+	mc.updateVidMap(moveEcResponse([]uint32{7}, nil))
+	mc.updateVidMap(moveEcResponse([]uint32{7}, []uint32{7}))
 
 	if locations, found := mc.GetLocations(7); !found || len(locations) != 1 {
 		t.Errorf("an ec volume reported both ways lost its location: found=%v %v", found, locations)
+	}
+}
+
+func TestEcVolumeRemovedLosesItsLocation(t *testing.T) {
+	mc := moveClient()
+	mc.updateVidMap(moveEcResponse([]uint32{7}, nil))
+	mc.updateVidMap(moveEcResponse(nil, []uint32{7}))
+
+	if locations, found := mc.GetLocations(7); found && len(locations) > 0 {
+		t.Errorf("an ec volume that left the server kept its location: %v", locations)
 	}
 }
