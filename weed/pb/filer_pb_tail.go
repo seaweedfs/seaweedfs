@@ -135,10 +135,38 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 
 		var pendingRefs []*filer_pb.LogFileChunkRef
 
+		// drainPendingRefs reads whatever chunk refs have accumulated. The server
+		// sends refs in their own responses, so they can only be read once
+		// something tells us the run of refs has ended — either a normal event, or
+		// the end of the stream. A bounded subscription (StopTsNs set, range
+		// already in the past) may get nothing but refs and then EOF, so draining
+		// only on the former silently returns no events at all.
+		drainPendingRefs := func() error {
+			if len(pendingRefs) == 0 || option.LogFileReaderFn == nil {
+				return nil
+			}
+			lastTs, readErr := ReadLogFileRefs(pendingRefs, option.LogFileReaderFn,
+				option.StartTsNs, option.StopTsNs,
+				PathFilter{
+					PathPrefix:             option.PathPrefix,
+					AdditionalPathPrefixes: option.AdditionalPathPrefixes,
+					DirectoriesToWatch:     option.DirectoriesToWatch,
+				},
+				processEventFn)
+			if readErr != nil {
+				return fmt.Errorf("read log file refs: %w", readErr)
+			}
+			if lastTs > 0 {
+				option.StartTsNs = lastTs
+			}
+			pendingRefs = nil
+			return nil
+		}
+
 		for {
 			resp, listenErr := stream.Recv()
 			if listenErr == io.EOF {
-				return nil
+				return drainPendingRefs()
 			}
 			if listenErr != nil {
 				return listenErr
@@ -151,22 +179,8 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 			}
 
 			// Process accumulated refs before handling normal events (transition point)
-			if len(pendingRefs) > 0 && option.LogFileReaderFn != nil {
-				lastTs, readErr := ReadLogFileRefs(pendingRefs, option.LogFileReaderFn,
-					option.StartTsNs, option.StopTsNs,
-					PathFilter{
-						PathPrefix:             option.PathPrefix,
-						AdditionalPathPrefixes: option.AdditionalPathPrefixes,
-						DirectoriesToWatch:     option.DirectoriesToWatch,
-					},
-					processEventFn)
-				if readErr != nil {
-					return fmt.Errorf("read log file refs: %w", readErr)
-				}
-				if lastTs > 0 {
-					option.StartTsNs = lastTs
-				}
-				pendingRefs = nil
+			if err := drainPendingRefs(); err != nil {
+				return err
 			}
 
 			// Process the envelope event (top-level fields) and any batched tail.
