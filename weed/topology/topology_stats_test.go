@@ -111,3 +111,25 @@ func TestCollectionVolumeStatsWithEcVolumes(t *testing.T) {
 		t.Errorf("ec stats query should not create a phantom collection")
 	}
 }
+
+func TestCollectionVolumeStatsClampsDeletedOverTotals(t *testing.T) {
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+
+	rack := topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1")
+	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", "", map[string]uint32{"": 25})
+
+	// Volume 1 reports more deleted than it holds, on both counters.
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{
+		{Id: 1, Size: 1000, FileCount: 10, DeletedByteCount: 4000, DeleteCount: 40, Version: uint32(needle.GetCurrentVersion())},
+		{Id: 2, Size: 3000, FileCount: 30, DeletedByteCount: 1000, DeleteCount: 10, Version: uint32(needle.GetCurrentVersion())},
+	}, dn)
+
+	// VolumeLocationList.Stats only counts nodes connected for over a minute
+	dn.LastSeen = time.Now().Unix() - 61
+
+	stats := topo.CollectionVolumeStats("")
+	// Volume 1 contributes nothing rather than wrapping.
+	assert(t, "used size", int(stats.UsedSize), 2000)
+	assert(t, "logical used size", int(stats.LogicalUsedSize), 2000)
+	assert(t, "file count", int(stats.FileCount), 20)
+}

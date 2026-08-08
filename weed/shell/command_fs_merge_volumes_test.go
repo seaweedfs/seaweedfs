@@ -123,3 +123,18 @@ func TestCreateMergePlan_DirectedRejectsIneligible(t *testing.T) {
 		})
 	}
 }
+
+// A volume reporting more deleted bytes than it holds must read as empty.
+func TestGetVolumeSize_ClampsDeletedOverSize(t *testing.T) {
+	c := newMergeCmd(250000)
+
+	overDeleted := &master_pb.VolumeInformationMessage{Id: 1, Size: 1000, DeletedByteCount: 4000}
+	if got := c.getVolumeSize(overDeleted); got != 0 {
+		t.Errorf("expected 0 for a volume with more deleted than stored, got %d", got)
+	}
+
+	healthy := &master_pb.VolumeInformationMessage{Id: 2, Size: 3000, DeletedByteCount: 1000}
+	if got := c.getVolumeSize(healthy); got != 2000 {
+		t.Errorf("expected 2000, got %d", got)
+	}
+}

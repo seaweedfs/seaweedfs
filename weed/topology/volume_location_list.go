@@ -96,13 +96,21 @@ func (dnll *VolumeLocationList) Refresh(freshThreshHold int64) {
 	}
 }
 
-// Stats returns logic size and count
+// Stats returns logic size and count. Both subtractions are clamped: the
+// deleted counters are maintained apart from the totals they come off and can
+// transiently exceed them.
 func (dnll *VolumeLocationList) Stats(vid needle.VolumeId, freshThreshHold int64) (size uint64, fileCount int) {
 	for _, dnl := range dnll.list {
 		if dnl.LastSeen < freshThreshHold {
 			vinfo, err := dnl.GetVolumesById(vid)
 			if err == nil {
-				return (vinfo.Size - vinfo.DeletedByteCount), vinfo.FileCount - vinfo.DeleteCount
+				if vinfo.Size > vinfo.DeletedByteCount {
+					size = vinfo.Size - vinfo.DeletedByteCount
+				}
+				if vinfo.FileCount > vinfo.DeleteCount {
+					fileCount = vinfo.FileCount - vinfo.DeleteCount
+				}
+				return size, fileCount
 			}
 		}
 	}
