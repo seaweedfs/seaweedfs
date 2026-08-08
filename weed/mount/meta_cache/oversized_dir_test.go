@@ -10,6 +10,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/grpc"
 )
 
 func listResponses(n int) []*filer_pb.ListEntriesResponse {
@@ -96,5 +97,42 @@ func TestEnsureVisitedUnderTheLimitStillCaches(t *testing.T) {
 	}
 	if !mc.IsDirectoryCached(util.FullPath("/dir")) {
 		t.Error("directory at the limit was not cached")
+	}
+}
+
+// pathListClient serves canned listings per directory, so one visit can see
+// directories of different sizes.
+type pathListClient struct {
+	filer_pb.SeaweedFilerClient
+	perDir map[string][]*filer_pb.ListEntriesResponse
+}
+
+func (c *pathListClient) ListEntries(ctx context.Context, in *filer_pb.ListEntriesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
+	return &buildListStream{responses: c.perDir[in.Directory]}, nil
+}
+
+// TestEnsureVisitedAncestorFoundOversizedMidVisit covers the first discovery:
+// the ancestor's refusal must neither cancel the descendant's build nor be
+// reported as the descendant's own.
+func TestEnsureVisitedAncestorFoundOversizedMidVisit(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
+	defer mc.Shutdown()
+
+	accessor := &buildFilerAccessor{client: &pathListClient{perDir: map[string][]*filer_pb.ListEntriesResponse{
+		"/huge":     listResponses(10),
+		"/huge/sub": listResponses(3),
+	}}}
+
+	if err := EnsureVisited(mc, accessor, util.FullPath("/huge/sub"), 5); err != nil {
+		t.Fatalf("EnsureVisited: %v", err)
+	}
+	if !mc.IsDirectoryCached(util.FullPath("/huge/sub")) {
+		t.Error("descendant of a just-discovered oversized ancestor was not cached")
+	}
+	if mc.IsDirectoryCached(util.FullPath("/huge")) {
+		t.Error("oversized ancestor became cached")
+	}
+	if !mc.isOversized(util.FullPath("/huge")) {
+		t.Error("oversized ancestor was not remembered")
 	}
 }

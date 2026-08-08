@@ -65,7 +65,16 @@ func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.Full
 	for _, p := range uncachedPaths {
 		path := p // capture for closure
 		g.Go(func() error {
-			return doEnsureVisited(ctx, mc, client, path, maxCacheableEntries)
+			err := doEnsureVisited(ctx, mc, client, path, maxCacheableEntries)
+			var tooLarge *DirectoryTooLargeError
+			if errors.As(err, &tooLarge) && path != dirPath {
+				// An ancestor found oversized just reads through; failing the
+				// group here would cancel the builds of its cacheable
+				// descendants, and the caller would treat the refusal as the
+				// listed directory's own.
+				return nil
+			}
+			return err
 		})
 	}
 	return g.Wait()
