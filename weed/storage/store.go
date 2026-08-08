@@ -420,7 +420,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	// Volumes skipped below -- quarantined, phantom, expired -- are in neither.
 	var volumeDigest uint64
 	sendFullList, reportGeneration := s.volumeReport.begin()
-	reportedHashes := make(map[volumeReportKey]uint64)
+	reported := make(map[volumeReportKey]reportedVolume)
 	maxVolumeCounts := make(map[string]uint32)
 	// Per-disk effective max for DiskTag, captured alongside the per-type sum.
 	diskMaxByID := make(map[int]int32)
@@ -495,7 +495,18 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 			if !v.expired(volumeMessage.Size, s.GetVolumeSizeLimit()) {
 				reportHash := reportHashOf(volumeMessage)
 				volumeDigest ^= reportHash
-				reportedHashes[volumeReportKey{diskId: volumeMessage.DiskId, volumeId: volumeMessage.Id}] = reportHash
+				reported[volumeReportKey{diskId: volumeMessage.DiskId, volumeId: volumeMessage.Id}] = reportedVolume{
+					hash: reportHash,
+					short: &master_pb.VolumeShortInformationMessage{
+						Id:               volumeMessage.Id,
+						Collection:       volumeMessage.Collection,
+						ReplicaPlacement: volumeMessage.ReplicaPlacement,
+						Version:          volumeMessage.Version,
+						Ttl:              volumeMessage.Ttl,
+						DiskType:         volumeMessage.DiskType,
+						DiskId:           volumeMessage.DiskId,
+					},
+				}
 				if sendFullList || s.volumeReport.changed(volumeMessage, reportHash) {
 					volumeMessages = append(volumeMessages, volumeMessage)
 				}
@@ -593,7 +604,16 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		}
 	}
 
-	s.volumeReport.commit(reportedHashes, reportGeneration)
+	// A delta says nothing through silence, so volumes gone since the last
+	// report -- a deleted collection, an expired ttl -- must be named, or the
+	// master counts them until a digest mismatch buys it a full list. A full
+	// list needs no such naming: it is already the whole truth.
+	var departedVolumes []*master_pb.VolumeShortInformationMessage
+	if !sendFullList {
+		departedVolumes = s.volumeReport.departed(reported)
+	}
+
+	s.volumeReport.commit(reported, reportGeneration)
 
 	// has_no_volumes says the server holds nothing, so it may only be derived
 	// from a full list. Deriving it from a changed-only heartbeat would make a
@@ -619,6 +639,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		Rack:            s.rack,
 		Volumes:         heartbeatVolumes,
 		ChangedVolumes:  changedVolumes,
+		DeletedVolumes:  departedVolumes,
 		VolumeDigest:    &volumeDigest,
 		DeletedEcShards: deletedEcVolumes,
 		HasNoVolumes:    hasNoVolumes,
