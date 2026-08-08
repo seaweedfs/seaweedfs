@@ -133,3 +133,23 @@ func TestRemountedVolumeIsReportedAgain(t *testing.T) {
 		t.Errorf("a remounted volume was not reported: %v", heartbeat.ChangedVolumes)
 	}
 }
+
+// A request that lands while a heartbeat is being built asked about a later
+// state than that heartbeat carries, so it must survive being committed over.
+func TestFullListRequestDuringCollectionSurvives(t *testing.T) {
+	store := reportingStore(t, 1, 2)
+	store.ResetVolumeReporting()
+	store.AcceptVolumeChanges()
+	store.CollectHeartbeat()
+
+	full, generation := store.volumeReport.begin()
+	if full {
+		t.Fatal("expected to be past the first full list")
+	}
+	store.RequestFullVolumeList()
+	store.volumeReport.commit(map[volumeReportKey]uint64{}, generation)
+
+	if heartbeat := store.CollectHeartbeat(); len(heartbeat.Volumes) != 2 {
+		t.Errorf("a resend request made during collection was lost: %d volumes sent", len(heartbeat.Volumes))
+	}
+}

@@ -1,7 +1,7 @@
 //! Mirror of `weed/storage/store_volume_report.go`.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
 /// Identifies one reported copy. Keyed by disk as well as id because a volume
@@ -22,6 +22,9 @@ pub struct VolumeReportState {
     /// goes every time, which is what an older master needs.
     deltas_accepted: AtomicBool,
     full_list_needed: AtomicBool,
+    /// Counts requests for the whole list, so one arriving while a heartbeat is
+    /// being built is not marked satisfied by it.
+    full_list_generation: AtomicU64,
     last_reported: Mutex<HashMap<VolumeReportKey, u64>>,
 }
 
@@ -30,6 +33,7 @@ impl VolumeReportState {
     pub fn reset(&self) {
         self.deltas_accepted.store(false, Ordering::Relaxed);
         self.full_list_needed.store(true, Ordering::Relaxed);
+        self.full_list_generation.fetch_add(1, Ordering::Relaxed);
         self.last_reported.lock().unwrap().clear();
     }
 
@@ -39,12 +43,15 @@ impl VolumeReportState {
 
     pub fn request_full_list(&self) {
         self.full_list_needed.store(true, Ordering::Relaxed);
+        self.full_list_generation.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Reports whether this heartbeat must carry the whole list.
-    pub fn begin(&self) -> bool {
-        self.full_list_needed.load(Ordering::Relaxed)
-            || !self.deltas_accepted.load(Ordering::Relaxed)
+    /// Reports whether this heartbeat must carry the whole list, and the
+    /// request it answers.
+    pub fn begin(&self) -> (bool, u64) {
+        let full = self.full_list_needed.load(Ordering::Relaxed)
+            || !self.deltas_accepted.load(Ordering::Relaxed);
+        (full, self.full_list_generation.load(Ordering::Relaxed))
     }
 
     /// Reports whether the master needs telling about this volume, given what
@@ -55,8 +62,12 @@ impl VolumeReportState {
 
     /// Records what this heartbeat told the master. Volumes absent from
     /// `reported` are forgotten, so one that comes back is reported again.
-    pub fn commit(&self, reported: HashMap<VolumeReportKey, u64>) {
+    pub fn commit(&self, reported: HashMap<VolumeReportKey, u64>, generation: u64) {
         *self.last_reported.lock().unwrap() = reported;
-        self.full_list_needed.store(false, Ordering::Relaxed);
+        // A request that arrived while this heartbeat was being built asked
+        // about a later state than it carries, so it stands.
+        if self.full_list_generation.load(Ordering::Relaxed) == generation {
+            self.full_list_needed.store(false, Ordering::Relaxed);
+        }
     }
 }

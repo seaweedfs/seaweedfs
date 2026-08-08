@@ -27,7 +27,10 @@ type volumeReportState struct {
 	// then the whole list goes every time, which is what an older master needs.
 	deltasAccepted bool
 	fullListNeeded bool
-	lastReported   map[volumeReportKey]uint64
+	// fullListGeneration counts requests for the whole list, so one arriving
+	// while a heartbeat is being built is not marked satisfied by it.
+	fullListGeneration uint64
+	lastReported       map[volumeReportKey]uint64
 }
 
 // reset drops everything known about the master's view.
@@ -36,6 +39,7 @@ func (s *volumeReportState) reset() {
 	defer s.mu.Unlock()
 	s.deltasAccepted = false
 	s.fullListNeeded = true
+	s.fullListGeneration++
 	s.lastReported = nil
 }
 
@@ -49,13 +53,15 @@ func (s *volumeReportState) requestFullList() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.fullListNeeded = true
+	s.fullListGeneration++
 }
 
-// begin reports whether this heartbeat must carry the whole list.
-func (s *volumeReportState) begin() (full bool) {
+// begin reports whether this heartbeat must carry the whole list, and the
+// request it answers.
+func (s *volumeReportState) begin() (full bool, generation uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.fullListNeeded || !s.deltasAccepted
+	return s.fullListNeeded || !s.deltasAccepted, s.fullListGeneration
 }
 
 // changed reports whether the master needs telling about this volume, given
@@ -69,9 +75,13 @@ func (s *volumeReportState) changed(m *master_pb.VolumeInformationMessage, hash 
 
 // commit records what this heartbeat told the master. Volumes absent from
 // reported are forgotten, so one that comes back is reported again.
-func (s *volumeReportState) commit(reported map[volumeReportKey]uint64) {
+func (s *volumeReportState) commit(reported map[volumeReportKey]uint64, generation uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lastReported = reported
-	s.fullListNeeded = false
+	// A request that arrived while this heartbeat was being built asked about a
+	// later state than it carries, so it stands.
+	if s.fullListGeneration == generation {
+		s.fullListNeeded = false
+	}
 }

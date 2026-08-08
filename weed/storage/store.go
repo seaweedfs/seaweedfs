@@ -419,7 +419,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	// master can tell whether applying what it was sent leaves it current.
 	// Volumes skipped below -- quarantined, phantom, expired -- are in neither.
 	var volumeDigest uint64
-	sendFullList := s.volumeReport.begin()
+	sendFullList, reportGeneration := s.volumeReport.begin()
 	reportedHashes := make(map[volumeReportKey]uint64)
 	maxVolumeCounts := make(map[string]uint32)
 	// Per-disk effective max for DiskTag, captured alongside the per-type sum.
@@ -593,7 +593,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		}
 	}
 
-	s.volumeReport.commit(reportedHashes)
+	s.volumeReport.commit(reportedHashes, reportGeneration)
 
 	// has_no_volumes says the server holds nothing, so it may only be derived
 	// from a full list. Deriving it from a changed-only heartbeat would make a
