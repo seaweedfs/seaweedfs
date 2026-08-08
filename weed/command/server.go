@@ -131,7 +131,7 @@ func init() {
 	filerOptions.exposeDirectoryData = cmdServer.Flag.Bool("filer.exposeDirectoryData", true, "expose directory data via filer. If false, filer UI will be inaccessible.")
 	filerOptions.tusBasePath = cmdServer.Flag.String("filer.tusBasePath", "/.tus", "TUS resumable upload endpoint base path (e.g., /.tus)")
 	filerOptions.tusMaxSizeMB = cmdServer.Flag.Int("filer.tusMaxSizeMB", 5*1024, "maximum TUS upload size in MB")
-	filerOptions.tusSessionExpiry = cmdServer.Flag.Duration("filer.tusSessionExpiry", 7*24*time.Hour, "incomplete TUS upload sessions are cleaned up after this duration, e.g. \"24h\", \"7h30m\"")
+	filerOptions.tusSessionExpiry = cmdServer.Flag.Duration("filer.tusSessionExpiry", 24*time.Hour, "incomplete TUS upload sessions are cleaned up after this duration, e.g. \"48h\", \"7h30m\"")
 
 	serverOptions.v.port = cmdServer.Flag.Int("volume.port", 8080, "volume server http listen port")
 	serverOptions.v.portGrpc = cmdServer.Flag.Int("volume.port.grpc", 0, "volume server grpc listen port")

@@ -22,7 +22,7 @@ import (
 const (
 	TusVersion              = "1.0.0"
 	TusDefaultMaxSize       = int64(5 * 1024 * 1024 * 1024) // 5GB
-	TusDefaultSessionExpiry = 7 * 24 * time.Hour
+	TusDefaultSessionExpiry = 24 * time.Hour
 	TusUploadsFolder        = ".uploads.tus"
 	TusInfoFileName         = ".info"
 	TusChunkExt             = ".chunk"

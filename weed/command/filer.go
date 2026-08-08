@@ -126,7 +126,7 @@ func init() {
 	f.exposeDirectoryData = cmdFiler.Flag.Bool("exposeDirectoryData", true, "whether to return directory metadata and content in Filer UI")
 	f.tusBasePath = cmdFiler.Flag.String("tusBasePath", "/.tus", "TUS resumable upload endpoint base path (e.g., /.tus)")
 	f.tusMaxSizeMB = cmdFiler.Flag.Int("tusMaxSizeMB", 5*1024, "maximum TUS upload size in MB")
-	f.tusSessionExpiry = cmdFiler.Flag.Duration("tusSessionExpiry", 7*24*time.Hour, "incomplete TUS upload sessions are cleaned up after this duration, e.g. \"24h\", \"7h30m\"")
+	f.tusSessionExpiry = cmdFiler.Flag.Duration("tusSessionExpiry", 24*time.Hour, "incomplete TUS upload sessions are cleaned up after this duration, e.g. \"48h\", \"7h30m\"")
 
 	// start s3 on filer
 	filerStartS3 = cmdFiler.Flag.Bool("s3", false, "whether to start S3 gateway")
