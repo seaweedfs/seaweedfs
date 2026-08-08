@@ -5,6 +5,9 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/sequence"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/topology"
 )
 
@@ -75,7 +78,10 @@ func TestDigestCheckAsksForTheListWhenADeltaDisagrees(t *testing.T) {
 
 // A node reporting one volume id twice is stored once, so the digests cannot
 // agree however often the list is resent.
-func TestDigestCheckSkipsNodesWithDuplicateVolumeIds(t *testing.T) {
+// A node reporting one volume id twice is stored once, so no digest can ever
+// agree. It has to keep sending its whole list: nothing else would tell the
+// master what it stopped holding.
+func TestDigestCheckKeepsDuplicateNodesOnFullLists(t *testing.T) {
 	ms, dn := digestTestCluster(t)
 	duplicated := digestTestVolumeMessage(1)
 	duplicated.DiskId = 1
@@ -83,8 +89,41 @@ func TestDigestCheckSkipsNodesWithDuplicateVolumeIds(t *testing.T) {
 		digestTestVolumeMessage(1), duplicated,
 	}, dn)
 
-	wrong := dn.VolumeDigest() ^ 1
-	if ms.checkVolumeDigest(&master_pb.Heartbeat{VolumeDigest: &wrong}, dn) {
-		t.Error("a node the master cannot represent was asked to resend, which would repeat forever")
+	digest := dn.VolumeDigest()
+	if !ms.checkVolumeDigest(&master_pb.Heartbeat{VolumeDigest: &digest}, dn) {
+		t.Error("a node whose digest can never be verified was left sending only changes")
+	}
+	// And is not asked again for a list it just sent.
+	if ms.checkVolumeDigest(&master_pb.Heartbeat{
+		Volumes:      []*master_pb.VolumeInformationMessage{digestTestVolumeMessage(1), duplicated},
+		VolumeDigest: &digest,
+	}, dn) {
+		t.Error("a node that just sent its whole list was asked for it again")
+	}
+}
+
+// The lookup index can drift from the disks without the volume server seeing
+// anything, so its digest still matches. Only a full report re-registers the
+// volumes that stopped being servable, and in delta mode nothing else asks for
+// one.
+func TestDigestCheckAsksForTheListWhenTheLookupIndexDrifts(t *testing.T) {
+	ms, dn := digestTestCluster(t)
+	volumes := []*master_pb.VolumeInformationMessage{digestTestVolumeMessage(1), digestTestVolumeMessage(2)}
+	ms.Topo.SyncDataNodeRegistration(volumes, dn)
+
+	digest := dn.VolumeDigest()
+	if ms.checkVolumeDigest(&master_pb.Heartbeat{VolumeDigest: &digest}, dn) {
+		t.Fatal("a healthy node was asked to resend")
+	}
+
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	vl := ms.Topo.GetVolumeLayout("c", rp, needle.EMPTY_TTL, types.HardDriveType)
+	vl.SetVolumeUnavailable(dn, needle.VolumeId(1))
+
+	if dn.VolumeDigest() != digest {
+		t.Fatal("expected the reported digest to be unaffected, which is why the index has to be checked")
+	}
+	if !ms.checkVolumeDigest(&master_pb.Heartbeat{VolumeDigest: &digest}, dn) {
+		t.Error("a volume that stopped being servable left the node sending only changes, so nothing would repair it")
 	}
 }
