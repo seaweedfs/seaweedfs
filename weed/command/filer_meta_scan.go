@@ -322,12 +322,24 @@ func runFilerMetaScan(cmd *Command, args []string) bool {
 	}
 
 	followErr := scan(*scanDirectRead)
-	if followErr != nil && *scanDirectRead && matched == 0 {
-		// Reading chunks needs a route to the volume servers that the filer
-		// itself does not. Retry through the filer, but only while nothing has
-		// been printed — replaying after partial output would duplicate lines.
-		fmt.Fprintf(os.Stderr, "direct read failed (%v); retrying through the filer\n", followErr)
+	if *scanDirectRead && matched == 0 {
+		// Two ways direct read can come back with nothing: it failed outright
+		// (reading chunks needs a route to the volume servers that the filer
+		// does not), or it succeeded and found none. The second is the
+		// dangerous one — for an audit an empty answer reads as "nothing
+		// happened here", so it has to be confirmed rather than trusted.
+		// Re-running is safe precisely because nothing was printed; after
+		// partial output a replay would duplicate lines instead.
+		if followErr != nil {
+			fmt.Fprintf(os.Stderr, "direct read failed (%v); retrying through the filer\n", followErr)
+		} else {
+			fmt.Fprintln(os.Stderr, "direct read found nothing; confirming through the filer")
+		}
 		followErr = scan(false)
+		if followErr == nil && matched > 0 {
+			fmt.Fprintf(os.Stderr, "warning: direct read missed %d change(s) the filer returned; "+
+				"please report this, and pass -directRead=false meanwhile\n", matched)
+		}
 	}
 
 	if followErr != nil {
