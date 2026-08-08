@@ -207,6 +207,20 @@ func Test_normalizePrefixMarker(t *testing.T) {
 			"parent",
 			"parentDir/data/0e/0e149049a2137b0cc12e",
 		},
+		{"partial name prefix, marker resumes inside a matching subdirectory",
+			args{"data/a",
+				"data/a/1"},
+			"data",
+			"a",
+			"a/1",
+		},
+		{"top-level partial name prefix, marker resumes inside a matching subdirectory",
+			args{"a",
+				"a/1"},
+			"",
+			"a",
+			"a/1",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
