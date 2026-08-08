@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	icebergmanifest "github.com/apache/iceberg-go"
+	"github.com/linkedin/goavro/v2"
 )
 
 // The testdata fixtures were written by ClickHouse 25.8's experimental
@@ -193,6 +194,35 @@ func TestRepairedManifestsAreLeftAlone(t *testing.T) {
 	}
 	if len(store.saved) != 0 {
 		t.Fatalf("second pass saved files: %v", store.saved)
+	}
+}
+
+func TestRepairKeepsDeleteManifestContent(t *testing.T) {
+	// The fixture lacks the OCF "content" key; the repaired copy must take the
+	// content declared by the manifest-list entry, not default to data.
+	raw := loadFixture(t, "clickhouse_rel", relManifestName)
+	repaired, changed, err := repairManifest(raw, relTableLocation, 1)
+	if err != nil || !changed {
+		t.Fatalf("repairManifest: changed=%v err=%v", changed, err)
+	}
+	reader, err := goavro.NewOCFReader(bytes.NewReader(repaired))
+	if err != nil {
+		t.Fatalf("read repaired manifest: %v", err)
+	}
+	if got := string(reader.MetaData()["content"]); got != "deletes" {
+		t.Fatalf(`OCF content = %q, want "deletes"`, got)
+	}
+
+	repaired, _, err = repairManifest(raw, relTableLocation, 0)
+	if err != nil {
+		t.Fatalf("repairManifest: %v", err)
+	}
+	reader, err = goavro.NewOCFReader(bytes.NewReader(repaired))
+	if err != nil {
+		t.Fatalf("read repaired manifest: %v", err)
+	}
+	if got := string(reader.MetaData()["content"]); got != "data" {
+		t.Fatalf(`OCF content = %q, want "data"`, got)
 	}
 }
 

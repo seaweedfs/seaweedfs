@@ -348,7 +348,7 @@ func repairManifestList(ctx context.Context, store manifestStore, tableLocation,
 			manifestErr = fmt.Errorf("load manifest %s: %w", absManifest, err)
 			return recordChanged
 		}
-		repaired, changed, err := repairManifest(manifestBytes, tableLocation)
+		repaired, changed, err := repairManifest(manifestBytes, tableLocation, manifestContentValue(record))
 		if err != nil {
 			manifestErr = fmt.Errorf("repair manifest %s: %w", absManifest, err)
 			return recordChanged
@@ -386,28 +386,49 @@ func repairManifestList(ctx context.Context, store manifestStore, tableLocation,
 	return absListLocation, true, nil
 }
 
+// manifestContentValue reads the manifest-list entry's content field
+// (0 = data, 1 = deletes); v1 lists have no such field and default to data.
+func manifestContentValue(record map[string]any) int {
+	switch v := record["content"].(type) {
+	case int32:
+		return int(v)
+	case int64:
+		return int(v)
+	case int:
+		return v
+	}
+	return 0
+}
+
 // fixManifestOCFMetadata fills in OCF metadata keys the spec requires of
 // manifests but lax writers omit: "content" (readers reject v2 manifests
-// without it) and "partition-spec-id" (ClickHouse writes the underscore
-// variant).
-func fixManifestOCFMetadata(meta map[string][]byte) bool {
-	changed := false
-	if _, ok := meta["content"]; !ok {
-		meta["content"] = []byte("data")
-		changed = true
-	}
-	if _, ok := meta["partition-spec-id"]; !ok {
-		if v, ok := meta["partition_spec_id"]; ok {
-			meta["partition-spec-id"] = v
+// without it; the value must agree with the manifest-list entry) and
+// "partition-spec-id" (ClickHouse writes the underscore variant).
+func fixManifestOCFMetadata(listContent int) func(map[string][]byte) bool {
+	return func(meta map[string][]byte) bool {
+		changed := false
+		if _, ok := meta["content"]; !ok {
+			content := "data"
+			if listContent == 1 {
+				content = "deletes"
+			}
+			meta["content"] = []byte(content)
 			changed = true
 		}
+		if _, ok := meta["partition-spec-id"]; !ok {
+			if v, ok := meta["partition_spec_id"]; ok {
+				meta["partition-spec-id"] = v
+				changed = true
+			}
+		}
+		return changed
 	}
-	return changed
 }
 
 // repairManifest annotates a single manifest's schema and absolutizes the
-// data file paths inside it.
-func repairManifest(raw []byte, tableLocation string) ([]byte, bool, error) {
+// data file paths inside it. listContent is the content declared by the
+// manifest-list entry referencing this manifest.
+func repairManifest(raw []byte, tableLocation string, listContent int) ([]byte, bool, error) {
 	reader, err := goavro.NewOCFReader(bytes.NewReader(raw))
 	if err != nil {
 		return nil, false, fmt.Errorf("open manifest avro: %w", err)
@@ -428,7 +449,7 @@ func repairManifest(raw []byte, tableLocation string) ([]byte, bool, error) {
 		}
 		dataFile["file_path"] = absPath
 		return true
-	}, fixManifestOCFMetadata)
+	}, fixManifestOCFMetadata(listContent))
 }
 
 // repairAddSnapshotUpdates rewrites the manifest-list references of
