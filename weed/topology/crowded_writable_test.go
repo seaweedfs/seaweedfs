@@ -41,8 +41,9 @@ func TestCrowdedVolumesAreOnesThatCanTakeWrites(t *testing.T) {
 			}
 		}
 	}()
+	// The channels are unbuffered, so every send has been received by the time
+	// this returns; waiting for the collector to finish covers the recording.
 	topo.CollectDeadNodeAndFullVolumes(time.Now().Unix()-1, topo.volumeSizeLimit, 0.9)
-	time.Sleep(50 * time.Millisecond)
 	close(stop)
 	<-done // the collector owns the map until it returns
 
