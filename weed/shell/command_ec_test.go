@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -456,5 +457,63 @@ func TestCommandEcBalanceIssue8793Topology(t *testing.T) {
 			t.Errorf("node %s fullness %.1f%% deviates from overall %.1f%% by more than %.0f points",
 				node.info.Id, fullness*100, overallFullness*100, tolerance*100)
 		}
+	}
+}
+
+// TestCommandEcBalanceVolumeIdsFilter checks that -volumeIds keeps every phase,
+// dedup included, off the volumes that were not asked for.
+func TestCommandEcBalanceVolumeIdsFilter(t *testing.T) {
+	ecb := &ecBalancer{
+		ecNodes: []*EcNode{
+			// Volume 1: all shards on one node, so balancing has plenty to move.
+			newEcNode("dc1", "rack1", "dn1", 100).addEcVolumeAndShardsForTest(1, "c1", []erasure_coding.ShardId{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}),
+			// Volume 2 is equally lopsided, and shard 0 is duplicated on dn3.
+			newEcNode("dc1", "rack2", "dn2", 100).addEcVolumeAndShardsForTest(2, "c1", []erasure_coding.ShardId{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}),
+			newEcNode("dc1", "rack3", "dn3", 100).addEcVolumeAndShardsForTest(2, "c1", []erasure_coding.ShardId{0}),
+			newEcNode("dc1", "rack4", "dn4", 100),
+			newEcNode("dc1", "rack5", "dn5", 100),
+			newEcNode("dc1", "rack6", "dn6", 100),
+		},
+		applyBalancing: false,
+		diskType:       types.HardDriveType,
+		volumeIds:      map[uint32]bool{1: true},
+	}
+
+	if err := ecb.balance([]string{"c1"}); err != nil {
+		t.Fatalf("balance: %v", err)
+	}
+
+	// Volume 1 spreads out.
+	if count := ecb.ecNodes[0].localShardIdCount(1); count == 14 {
+		t.Errorf("volume 1 was not balanced: dn1 still holds all %d shards", count)
+	}
+
+	// Volume 2 keeps every shard where it was, duplicate included.
+	if count := ecb.ecNodes[1].localShardIdCount(2); count != 14 {
+		t.Errorf("dn2 holds %d shards of the unselected volume 2, want 14", count)
+	}
+	if count := ecb.ecNodes[2].localShardIdCount(2); count != 1 {
+		t.Errorf("dn3 holds %d shards of the unselected volume 2, want the duplicate to survive", count)
+	}
+}
+
+func TestCommandEcBalanceVolumeIdsNotFound(t *testing.T) {
+	ecb := &ecBalancer{
+		ecNodes: []*EcNode{
+			newEcNode("dc1", "rack1", "dn1", 100).addEcVolumeAndShardsForTest(1, "c1", []erasure_coding.ShardId{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}),
+			newEcNode("dc1", "rack2", "dn2", 100),
+		},
+		applyBalancing: false,
+		diskType:       types.HardDriveType,
+		volumeIds:      map[uint32]bool{1: true, 99: true},
+	}
+
+	err := ecb.balance([]string{"c1"})
+	if err == nil || !strings.Contains(err.Error(), "[99]") {
+		t.Fatalf("want an error naming volume 99, got %v", err)
+	}
+	// The valid id must not be balanced either: the plan is all-or-nothing.
+	if count := ecb.ecNodes[0].localShardIdCount(1); count != 14 {
+		t.Errorf("dn1 holds %d shards, want the rejected plan to leave volume 1 untouched", count)
 	}
 }

@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -848,6 +850,9 @@ type ecBalancer struct {
 	applyBalancing     bool
 	maxParallelization int
 	diskType           types.DiskType
+	// volumeIds narrows the plan to these ec volume ids; nil balances every volume
+	// of the selected collections.
+	volumeIds map[uint32]bool
 }
 
 // excludeNodes is a set of server addresses kept out of the balance as copy/move
@@ -855,7 +860,10 @@ type ecBalancer struct {
 // reach: such a node may still hold a stale-generation shard orphan, and pairing
 // it with a new-generation shard from a balance copy would mix generations on one
 // node. The standalone ec.balance command passes nil.
-func EcBalance(commandEnv *CommandEnv, collections []string, dc string, ecReplicaPlacement *super_block.ReplicaPlacement, diskType types.DiskType, maxParallelization int, applyBalancing bool, excludeNodes map[pb.ServerAddress]struct{}) (err error) {
+//
+// volumeIds, when non-empty, restricts the plan to those ec volume ids; empty
+// balances every volume of the given collections.
+func EcBalance(commandEnv *CommandEnv, collections []string, dc string, ecReplicaPlacement *super_block.ReplicaPlacement, diskType types.DiskType, maxParallelization int, applyBalancing bool, excludeNodes map[pb.ServerAddress]struct{}, volumeIds []needle.VolumeId) (err error) {
 	// collect all ec nodes
 	allEcNodes, totalFreeEcSlots, err := collectEcNodesForDC(commandEnv, dc, diskType)
 	if err != nil {
@@ -883,6 +891,14 @@ func EcBalance(commandEnv *CommandEnv, collections []string, dc string, ecReplic
 		return fmt.Errorf("no free ec shard slots. only %d left", totalFreeEcSlots)
 	}
 
+	var volumeIdFilter map[uint32]bool
+	if len(volumeIds) > 0 {
+		volumeIdFilter = make(map[uint32]bool, len(volumeIds))
+		for _, vid := range volumeIds {
+			volumeIdFilter[uint32(vid)] = true
+		}
+	}
+
 	ecb := &ecBalancer{
 		commandEnv:         commandEnv,
 		ecNodes:            allEcNodes,
@@ -890,6 +906,7 @@ func EcBalance(commandEnv *CommandEnv, collections []string, dc string, ecReplic
 		applyBalancing:     applyBalancing,
 		maxParallelization: maxParallelization,
 		diskType:           diskType,
+		volumeIds:          volumeIdFilter,
 	}
 
 	if len(collections) == 0 {
@@ -908,7 +925,24 @@ func shellECRatio(_ string) (int, int) {
 // balance plans EC shard moves with the shared planner and executes them. When
 // collections is empty all collections present are balanced.
 func (ecb *ecBalancer) balance(collections []string) error {
-	topo, volumeRatio := toBalancerTopology(ecb.ecNodes, collections, ecb.diskType)
+	topo, volumeRatio, selected := toBalancerTopology(ecb.ecNodes, collections, ecb.diskType, ecb.volumeIds)
+	if len(ecb.volumeIds) > 0 {
+		requested := make([]uint32, 0, len(ecb.volumeIds))
+		for vid := range ecb.volumeIds {
+			requested = append(requested, vid)
+		}
+		slices.Sort(requested)
+		var missing []uint32
+		for _, vid := range requested {
+			if !selected[vid] {
+				missing = append(missing, vid)
+			}
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf("no ec shards found for volume(s) %v: not an ec volume, or outside the selected collection, dataCenter or diskType", missing)
+		}
+		fmt.Printf("balancing ec volume(s) %v\n", requested)
+	}
 	moves := ecbalancer.Plan(topo, ecbalancer.Options{
 		DiskType:           string(ecb.diskType),
 		ImbalanceThreshold: 0, // the shell balances to an even distribution
@@ -923,15 +957,27 @@ func (ecb *ecBalancer) balance(collections []string) error {
 		// shard count when capacities are uniform.
 		GlobalUtilizationBased: true,
 	})
+	if len(ecb.volumeIds) > 0 {
+		var deletions int
+		for _, m := range moves {
+			if m.Phase == "dedup" {
+				deletions++
+			}
+		}
+		fmt.Printf("planned %d ec shard move(s) and %d ec shard deletion(s)\n", len(moves)-deletions, deletions)
+	}
 	return ecb.executeMoves(moves)
 }
 
 // toBalancerTopology builds an ecbalancer.Topology from the shell's EcNode model,
-// including the shards of the requested collections (all collections when empty).
+// including the shards of the requested collections (all collections when empty)
+// and, when volumeIds is non-nil, only those volume ids. Volumes left out here are
+// invisible to the planner, so no phase - dedup included - can plan against them.
 // It also returns a per-volume ratio lookup built from each shard's heartbeat
 // (0,0 when unreported, e.g. always in OSS), which Plan prefers over the
-// collection ratio for mixed-ratio clusters.
-func toBalancerTopology(ecNodes []*EcNode, collections []string, diskType types.DiskType) (*ecbalancer.Topology, func(collection string, vid uint32) (int, int)) {
+// collection ratio for mixed-ratio clusters, and the set of volume ids that made
+// it into the topology.
+func toBalancerTopology(ecNodes []*EcNode, collections []string, diskType types.DiskType, volumeIds map[uint32]bool) (*ecbalancer.Topology, func(collection string, vid uint32) (int, int), map[uint32]bool) {
 	allowed := make(map[string]bool, len(collections))
 	for _, c := range collections {
 		allowed[c] = true
@@ -942,6 +988,7 @@ func toBalancerTopology(ecNodes []*EcNode, collections []string, diskType types.
 		vid        uint32
 	}
 	volRatios := make(map[volRatioKey][2]int)
+	selected := make(map[uint32]bool)
 
 	topo := ecbalancer.NewTopology()
 	for _, en := range ecNodes {
@@ -961,6 +1008,10 @@ func toBalancerTopology(ecNodes []*EcNode, collections []string, diskType types.
 			if len(allowed) > 0 && !allowed[eci.Collection] {
 				continue
 			}
+			if volumeIds != nil && !volumeIds[eci.Id] {
+				continue
+			}
+			selected[eci.Id] = true
 			node.AddShards(eci.Id, eci.Collection, eci.DiskId, erasure_coding.ShardBits(eci.EcIndexBits))
 			if d, p := ecbalancer.VolumeShardRatio(eci); d > 0 || p > 0 {
 				volRatios[volRatioKey{eci.Collection, eci.Id}] = [2]int{d, p}
@@ -972,7 +1023,7 @@ func toBalancerTopology(ecNodes []*EcNode, collections []string, diskType types.
 		r := volRatios[volRatioKey{collection, vid}]
 		return r[0], r[1]
 	}
-	return topo, volumeRatio
+	return topo, volumeRatio, selected
 }
 
 // executeMoves carries out the planned moves. Phases run in order (a within-rack
@@ -1094,6 +1145,35 @@ func (ecb *ecBalancer) applyShardMoveRPC(src, dst *EcNode, collection string, vi
 		return err
 	}
 	return sourceServerDeleteEcShards(grpcDialOption, collection, vid, srcAddr, copiedShardIds)
+}
+
+// parseVolumeIdsFlag parses a comma-separated -volumeIds flag value, dropping
+// duplicates and keeping the given order.
+func parseVolumeIdsFlag(volumeIdsStr string) ([]needle.VolumeId, error) {
+	var volumeIds []needle.VolumeId
+	seen := make(map[needle.VolumeId]bool)
+	for _, part := range strings.Split(volumeIdsStr, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		vidValue, err := strconv.ParseUint(part, 10, 32)
+		if err != nil || vidValue == 0 {
+			return nil, fmt.Errorf("invalid volume id %q in -volumeIds", part)
+		}
+		// ParseUint with bitSize 32 bounds the value; convert through uint32
+		// (matching the rest of the codebase) so the narrowing is provably safe.
+		vid := needle.VolumeId(uint32(vidValue))
+		if seen[vid] {
+			continue
+		}
+		seen[vid] = true
+		volumeIds = append(volumeIds, vid)
+	}
+	if len(volumeIds) == 0 {
+		return nil, fmt.Errorf("-volumeIds does not contain any valid volume id")
+	}
+	return volumeIds, nil
 }
 
 // compileCollectionPattern compiles a regex pattern for collection matching.
