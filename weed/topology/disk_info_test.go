@@ -6,8 +6,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
-// ToDiskInfo is what VolumeList reports, and it is built straight from the
-// volume map rather than from a copy of it.
 func TestDiskInfoReportsEveryVolume(t *testing.T) {
 	topo := NewTopology("diskinfo", nil, 32*1024*1024*1024, 5, false)
 	dn := topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
@@ -51,7 +49,6 @@ func TestDiskInfoReportsEveryVolume(t *testing.T) {
 	}
 }
 
-// A disk holding only ec shards still has to report which disk it is.
 func TestDiskInfoReportsTheDiskIdOfEcOnlyDisks(t *testing.T) {
 	topo := NewTopology("diskinfo", nil, 32*1024*1024*1024, 5, false)
 	dn := topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").

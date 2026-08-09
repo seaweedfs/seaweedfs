@@ -371,10 +371,8 @@ func (d *Disk) FreeSpace() int64 {
 func (d *Disk) ToDiskInfo() *master_pb.DiskInfo {
 	diskUsage := d.diskUsages.getOrCreateDisk(types.ToDiskType(string(d.Id())))
 
-	// Built while holding the read lock rather than from a copy of the volume
-	// map: the copy was the same size as the messages themselves and thrown
-	// away immediately. Nothing here reaches back into the topology, so the
-	// lock cannot be held against anything that wants it.
+	// Built under the read lock rather than from a copy as large as the
+	// messages it fed. Nothing here re-enters the topology, so the hold is safe.
 	d.RLock()
 	volumeInfos := make([]*master_pb.VolumeInformationMessage, 0, len(d.volumes))
 	var diskId uint32
