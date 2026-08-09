@@ -3,6 +3,7 @@ package storage
 import (
 	"fmt"
 	"sort"
+	"unique"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -32,7 +33,7 @@ func NewVolumeInfo(m *master_pb.VolumeInformationMessage) (vi VolumeInfo, err er
 	vi = VolumeInfo{
 		Id:                needle.VolumeId(m.Id),
 		Size:              m.Size,
-		Collection:        m.Collection,
+		Collection:        internVolumeString(m.Collection),
 		FileCount:         int(m.FileCount),
 		DeleteCount:       int(m.DeleteCount),
 		DeletedByteCount:  m.DeletedByteCount,
@@ -40,9 +41,9 @@ func NewVolumeInfo(m *master_pb.VolumeInformationMessage) (vi VolumeInfo, err er
 		Version:           needle.Version(m.Version),
 		CompactRevision:   m.CompactRevision,
 		ModifiedAtSecond:  m.ModifiedAtSecond,
-		RemoteStorageName: m.RemoteStorageName,
+		RemoteStorageName: internVolumeString(m.RemoteStorageName),
 		RemoteStorageKey:  m.RemoteStorageKey,
-		DiskType:          m.DiskType,
+		DiskType:          internVolumeString(m.DiskType),
 		DiskId:            m.DiskId,
 	}
 	rp, e := super_block.NewReplicaPlacementFromByte(byte(m.ReplicaPlacement))
@@ -57,7 +58,7 @@ func NewVolumeInfo(m *master_pb.VolumeInformationMessage) (vi VolumeInfo, err er
 func NewVolumeInfoFromShort(m *master_pb.VolumeShortInformationMessage) (vi VolumeInfo, err error) {
 	vi = VolumeInfo{
 		Id:         needle.VolumeId(m.Id),
-		Collection: m.Collection,
+		Collection: internVolumeString(m.Collection),
 		Version:    needle.Version(m.Version),
 	}
 	rp, e := super_block.NewReplicaPlacementFromByte(byte(m.ReplicaPlacement))
@@ -66,8 +67,23 @@ func NewVolumeInfoFromShort(m *master_pb.VolumeShortInformationMessage) (vi Volu
 	}
 	vi.ReplicaPlacement = rp
 	vi.Ttl = needle.LoadTTLFromUint32(m.Ttl)
-	vi.DiskType = m.DiskType
+	vi.DiskType = internVolumeString(m.DiskType)
 	return vi, nil
+}
+
+// internVolumeString shares one copy of the values a cluster repeats across
+// every volume -- collection, disk type, remote backend. Decoding a heartbeat
+// allocates a fresh string for each, so a master holding a million volumes
+// otherwise holds a million copies of the same handful of names.
+//
+// Only for values drawn from a small set. Interning something unique per
+// volume, such as a remote storage key, would fill the table instead of
+// sharing anything.
+func internVolumeString(s string) string {
+	if s == "" {
+		return ""
+	}
+	return unique.Make(s).Value()
 }
 
 func (vi VolumeInfo) IsRemote() bool {
