@@ -79,6 +79,15 @@ func (dn *DataNode) doAddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChanged 
 	return disk.AddOrUpdateVolume(v)
 }
 
+// AddProvisionalVolume records a volume the master registered on its own,
+// ahead of any server report naming it. See Disk.AddProvisionalVolume.
+func (dn *DataNode) AddProvisionalVolume(v storage.VolumeInfo) (isNew, isChanged bool) {
+	dn.Lock()
+	defer dn.Unlock()
+	disk := dn.getOrCreateDisk(v.DiskType)
+	return disk.AddProvisionalVolume(v)
+}
+
 // UpdateVolumes detects new/deleted/changed volumes on a volume server
 // used in master to notify master clients of these changes.
 func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (newVolumes, deletedVolumes, changedVolumes []storage.VolumeInfo) {

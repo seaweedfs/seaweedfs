@@ -145,3 +145,61 @@ func TestRepairedLookupEntryIsAnnounced(t *testing.T) {
 		})
 	}
 }
+
+// Deleting a collection throws its layouts away wholesale. The lookup bits
+// they held must go with them: leaked bits keep the node's held and servable
+// digests apart forever, and the master then asks for the full volume list on
+// every heartbeat for the rest of the process's life.
+func TestDeletedCollectionReleasesTheLookupIndex(t *testing.T) {
+	topo, dn := changedTestCluster(t)
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{
+		changedTestVolume(1, 1024), changedTestVolume(2, 1024),
+	}, dn)
+	if !dn.HasConsistentVolumeIndex() {
+		t.Fatal("expected a freshly synced node to be consistent")
+	}
+
+	topo.DeleteCollection("c")
+	// The node still holds the volumes until a heartbeat names their
+	// departure; this is that heartbeat.
+	topo.IncrementalSyncDataNodeRegistration(nil, []*master_pb.VolumeShortInformationMessage{
+		{Id: 1, Collection: "c", Version: 3},
+		{Id: 2, Collection: "c", Version: 3},
+	}, dn)
+
+	if !dn.HasConsistentVolumeIndex() {
+		t.Fatal("the deleted collection's lookup entries were not released")
+	}
+}
+
+// A full list races the growth that runs while it is in flight: collected
+// before the grow finished, it cannot name the volumes the grow registered.
+// Erasing them strands their collection without writable volumes until a
+// later report happens to re-add them.
+func TestStaleFullListDoesNotEraseAFreshGrow(t *testing.T) {
+	topo, dn := changedTestCluster(t)
+	full := []*master_pb.VolumeInformationMessage{changedTestVolume(1, 1024)}
+	topo.SyncDataNodeRegistration(full, dn)
+
+	// what volume growth registers, after the list above was collected
+	vi, err := storage.NewVolumeInfo(changedTestVolume(2, 8))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dn.AddProvisionalVolume(vi)
+	topo.RegisterVolumeLayout(vi, dn)
+
+	// the stale list arrives
+	topo.SyncDataNodeRegistration(full, dn)
+	if _, err := dn.GetVolumesById(needle.VolumeId(2)); err != nil {
+		t.Fatal("a stale full list erased a freshly grown volume")
+	}
+
+	// once a report names it, a list without it means it is really gone
+	confirmed := append(append([]*master_pb.VolumeInformationMessage{}, full...), changedTestVolume(2, 8))
+	topo.SyncDataNodeRegistration(confirmed, dn)
+	topo.SyncDataNodeRegistration(full, dn)
+	if _, err := dn.GetVolumesById(needle.VolumeId(2)); err == nil {
+		t.Fatal("a confirmed volume survived a list that dropped it")
+	}
+}

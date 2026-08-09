@@ -660,10 +660,17 @@ impl VolumeServer for VolumeGrpcService {
     ) -> Result<Response<volume_server_pb::DeleteCollectionResponse>, Status> {
         self.check_grpc_admin_auth(&request)?;
         let collection = &request.into_inner().collection;
-        let mut store = self.state.store.write().unwrap();
-        store
-            .delete_collection(collection)
-            .map_err(|e| Status::internal(e))?;
+        {
+            let mut store = self.state.store.write().unwrap();
+            store
+                .delete_collection(collection)
+                .map_err(|e| Status::internal(e))?;
+        }
+        // The delta the notify path derives is the only thing that tells the
+        // master these slots came free: a heartbeat carries the whole list only
+        // when the master asks, and a volume grown and destroyed between two of
+        // them was never in one at all.
+        self.state.volume_state_notify.notify_one();
         Ok(Response::new(volume_server_pb::DeleteCollectionResponse {}))
     }
 
