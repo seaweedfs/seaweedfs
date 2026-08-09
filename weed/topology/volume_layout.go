@@ -66,6 +66,8 @@ type VolumeLayout struct {
 	replicationAsMin bool
 	accessLock       sync.RWMutex
 	sizeTracking     map[needle.VolumeId]*volumeSizeTracking
+	// dropped: the layout went away with its collection; late registrations must re-resolve.
+	dropped bool
 }
 
 type VolumeLayoutStats struct {
@@ -119,9 +121,15 @@ func (vl *VolumeLayout) initSizeTracking(vid needle.VolumeId, size uint64, compa
 	}
 }
 
-func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
+// RegisterVolume records a volume location. It refuses a layout dropped with
+// its collection — the caller must re-resolve, or the bits it sets would leak.
+func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) bool {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
+
+	if vl.dropped {
+		return false
+	}
 
 	defer vl.rememberOversizedVolume(v, dn)
 
@@ -137,17 +145,17 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 				glog.V(1).Infof("vid %d removed from writable", v.Id)
 				vl.removeFromWritable(v.Id)
 				location.SetReadOnly(dn, true)
-				return
+				return true
 			}
 			location.SetReadOnly(dn, false)
 		} else {
 			glog.V(1).Infof("vid %d removed from writable", v.Id)
 			vl.removeFromWritable(v.Id)
 			location.SetReadOnly(dn, false)
-			return
+			return true
 		}
 	}
-
+	return true
 }
 
 func (vl *VolumeLayout) rememberOversizedVolume(v *storage.VolumeInfo, dn *DataNode) {
@@ -853,6 +861,9 @@ func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId, is
 
 	vInfo, err := dn.GetVolumesById(vid)
 	if err != nil {
+		return false
+	}
+	if vl.dropped {
 		return false
 	}
 

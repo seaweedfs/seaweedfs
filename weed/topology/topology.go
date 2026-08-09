@@ -503,12 +503,15 @@ func (t *Topology) DeleteCollection(collectionName string) {
 	// holds a bit in its node's lookup digest. Left in place, those bits keep
 	// the node's held and servable digests apart forever, and the master asks
 	// for the full volume list on every heartbeat from then on.
-	if collection, found := t.FindCollection(collectionName); found {
-		for _, vl := range collection.GetAllVolumeLayouts() {
-			vl.releaseLookupOwnership()
-		}
-	}
+	// Unpublish first so a racing registration re-resolves into a fresh collection.
+	collection, found := t.FindCollection(collectionName)
 	t.collectionMap.Delete(collectionName)
+	if !found {
+		return
+	}
+	for _, vl := range collection.GetAllVolumeLayouts() {
+		vl.releaseLookupOwnership()
+	}
 }
 
 func (t *Topology) DeleteLayout(collectionName string, rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType types.DiskType) {
@@ -524,9 +527,14 @@ func (t *Topology) DeleteLayout(collectionName string, rp *super_block.ReplicaPl
 
 func (t *Topology) RegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 	diskType := types.ToDiskType(v.DiskType)
-	vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
-	vl.RegisterVolume(&v, dn)
-	vl.EnsureCorrectWritables(&v)
+	for {
+		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
+		if vl.RegisterVolume(&v, dn) {
+			vl.EnsureCorrectWritables(&v)
+			return
+		}
+		// Dropped with its collection; the next lookup creates a fresh one.
+	}
 }
 
 func (t *Topology) UnRegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
@@ -635,10 +643,12 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 		// Without this, the volume stays visible in volume.list/admin UI yet
 		// LookupVolume returns "volume id not found".
 		if !vl.HasDataNode(v.Id, dn) {
-			// vl is already resolved above; call it directly instead of
-			// RegisterVolumeLayout, which would repeat the GetVolumeLayout lookup.
-			vl.RegisterVolume(&v, dn)
-			vl.EnsureCorrectWritables(&v)
+			if vl.RegisterVolume(&v, dn) {
+				vl.EnsureCorrectWritables(&v)
+			} else {
+				// Dropped with its collection; re-resolve.
+				t.RegisterVolumeLayout(v, dn)
+			}
 			// Volumes new to the disk map were registered above, so reaching
 			// here means only the lookup index had lost it. Clients were told
 			// it went when the node dropped out, so the repair has to tell them
@@ -714,8 +724,9 @@ func (t *Topology) ApplyVolumeChanges(changed []*master_pb.VolumeInformationMess
 		// volume only that index had lost is an arrival as far as clients are
 		// concerned: they were told it went when the node dropped out.
 		becameServable := !vl.HasDataNode(vi.Id, dn)
-		if becameServable {
-			vl.RegisterVolume(&vi, dn)
+		for becameServable && !vl.RegisterVolume(&vi, dn) {
+			// Dropped with its collection; the next lookup creates a fresh one.
+			vl = t.GetVolumeLayout(vi.Collection, vi.ReplicaPlacement, vi.Ttl, types.ToDiskType(vi.DiskType))
 		}
 		if isNew || becameServable {
 			newVolumes = append(newVolumes, vi)
