@@ -107,6 +107,12 @@ func TestLocationFlagsRebuiltByRefresh(t *testing.T) {
 	if list.Length() != 2 {
 		t.Fatalf("expected the stale location to be dropped, got %d", list.Length())
 	}
+	// Both halves are needed: that the flag survived at all, and that it
+	// survived against the right location. Rebuilding the mask as empty would
+	// pass the second on its own.
+	if !list.AnyReadOnly() {
+		t.Fatal("the flag was dropped rather than carried across the rebuild")
+	}
 	list.SetReadOnly(alsoFresh, false)
 	if list.AnyReadOnly() {
 		t.Error("the flag did not move with its location, so it now describes another server")
