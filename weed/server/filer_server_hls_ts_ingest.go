@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,18 @@ import (
 
 type hlsTsStorageError struct {
 	err error
+}
+
+// encodeHlsTsMetadata serializes the segment index without constructing JSON
+// through string interpolation.
+func encodeHlsTsMetadata(metadata *media_hls.Metadata) ([]byte, error) {
+	var encoded bytes.Buffer
+	encoder := json.NewEncoder(&encoded)
+	encoder.SetEscapeHTML(true)
+	if err := encoder.Encode(metadata); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(encoded.Bytes(), []byte{'\n'}), nil
 }
 
 // Error returns the underlying storage failure.
@@ -139,7 +152,7 @@ func (fs *FilerServer) hlsTsIngestHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	metadataBytes, err := json.Marshal(metadata)
+	metadataBytes, err := encodeHlsTsMetadata(metadata)
 	if err != nil {
 		cleanup()
 		writeJsonError(w, r, http.StatusInternalServerError, err)
