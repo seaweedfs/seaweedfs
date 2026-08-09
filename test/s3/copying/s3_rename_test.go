@@ -260,6 +260,29 @@ func TestRenameObjectSourceShadowingTheBucketName(t *testing.T) {
 	assert.True(t, objectExists(t, client, bucketName, "source.txt"), "the bare key must be left alone")
 }
 
+// TestRenameObjectSourceShadowedByADirectory: the literal reading of the source
+// names a directory here, and the bucket-qualified reading names a live object.
+// Naming a directory is an error about that directory — falling through to the
+// other reading would rename a different object than the one asked for.
+func TestRenameObjectSourceShadowedByADirectory(t *testing.T) {
+	client := getS3Client(t)
+	bucketName := getNewBucketName()
+	createBucket(t, client, bucketName)
+	defer deleteBucket(t, client, bucketName)
+
+	putObject(t, client, bucketName, bucketName+"/source.txt/child.txt", "child")
+	putObject(t, client, bucketName, "source.txt", "bare")
+
+	_, err := client.RenameObject(context.TODO(), &s3.RenameObjectInput{
+		Bucket:       aws.String(bucketName),
+		Key:          aws.String("target.txt"),
+		RenameSource: aws.String(createQualifiedRenameSource(bucketName, "source.txt")),
+	})
+	requireRenameStatus(t, err, 404)
+	assert.True(t, objectExists(t, client, bucketName, "source.txt"), "the bare key must be left alone")
+	assert.False(t, objectExists(t, client, bucketName, "target.txt"))
+}
+
 // TestRenameObjectCrossBucket: RenameObject moves within one bucket, so another
 // bucket's name in the source is just part of a key this bucket does not hold.
 func TestRenameObjectCrossBucket(t *testing.T) {

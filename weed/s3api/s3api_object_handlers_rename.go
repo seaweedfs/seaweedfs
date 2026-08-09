@@ -13,6 +13,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 var renameSourceConditionalHeaders = sourceConditionalHeaderNames{
@@ -156,8 +158,14 @@ func renameSourceCandidates(r *http.Request, bucket string) ([]string, s3err.Err
 
 // pickRenameSource resolves which reading of the source header the bucket
 // actually holds. A single candidate is returned unprobed, so the common bare
-// key costs no extra lookup; when both readings are possible the one that names
-// a live object wins, and when neither does the last is reported missing.
+// key costs no extra lookup; when both readings are possible the one the bucket
+// holds wins, and when neither does the last is reported missing.
+//
+// Only a proven absence moves on to the next reading. A path that holds
+// something the rename cannot move — a directory, say — is still the path the
+// caller named, and answering for it beats renaming a different object under
+// the other reading; so is a path whose lookup merely failed, since a blip must
+// not be able to redirect a rename.
 func (s3a *S3ApiServer) pickRenameSource(bucket string, candidates []string) string {
 	for _, candidate := range candidates[:len(candidates)-1] {
 		// A trailing slash never names an object, and never reaches a usable
@@ -165,12 +173,21 @@ func (s3a *S3ApiServer) pickRenameSource(bucket string, candidates []string) str
 		if strings.HasSuffix(candidate, "/") {
 			continue
 		}
-		entry, err := s3a.resolveCopySourceEntry(bucket, candidate, "", "")
-		if classifyCopySourceError(entry, err) == s3err.ErrNone {
+		if !renameSourceAbsent(s3a.resolveCopySourceEntry(bucket, candidate, "", "")) {
 			return candidate
 		}
 	}
 	return candidates[len(candidates)-1]
+}
+
+// renameSourceAbsent reports whether a lookup proved the candidate absent. Only
+// the filer saying so counts; a lookup that failed for any other reason is not
+// a proof of absence.
+func renameSourceAbsent(entry *filer_pb.Entry, err error) bool {
+	if entry != nil {
+		return false
+	}
+	return err == nil || errors.Is(err, filer_pb.ErrNotFound) || status.Code(err) == codes.NotFound
 }
 
 func (s3a *S3ApiServer) authorizeRenameSource(r *http.Request, bucket, srcObject string) s3err.ErrorCode {
