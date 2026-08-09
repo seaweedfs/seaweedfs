@@ -136,6 +136,10 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 		fs.move(ctx, w, r, so)
 	} else if query.Has("cp.from") {
 		fs.copy(ctx, w, r, so)
+	} else if query.Get("format") != "" {
+		fs.formatIngest(ctx, w, r, so)
+	} else if query.Get("repack") != "" {
+		fs.formatRepack(ctx, w, r, so)
 	} else {
 		fs.autoChunk(ctx, w, r, contentLength, so)
 	}

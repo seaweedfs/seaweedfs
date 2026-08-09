@@ -139,6 +139,11 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if viewName := query.Get("view"); viewName != "" {
+		fs.serveFormatView(ctx, w, r, entry, viewName)
+		return
+	}
+
 	if checkPreconditions(w, r, entry) {
 		return
 	}
