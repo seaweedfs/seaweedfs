@@ -58,10 +58,16 @@ func (t *Topology) CollectionStatistics() []*CollectionStatistics {
 			for vid, locations := range vl.vid2location {
 				stats := statsFor(collection.Name)
 				// Replicas of one volume can disagree while a write is landing
-				// or a heartbeat is late. Count the largest, so the answer does
-				// not depend on which replica is looked at first and usage is
-				// never reported lower than some replica already holds.
+				// or a heartbeat is late. Count the one holding the most live
+				// data, so the answer does not depend on which replica is
+				// looked at first and usage is never reported lower than some
+				// replica already holds. Quotas are enforced on size less
+				// deletions, so that is what has to be the largest -- a replica
+				// with the biggest raw size can be the one that has deleted the
+				// most, and picking it would leave an over-quota bucket
+				// writable.
 				var largest storage.VolumeInfo
+				var largestLive uint64
 				found := false
 				for _, dn := range locations.list {
 					v, err := dn.GetVolumesById(vid)
@@ -69,8 +75,14 @@ func (t *Topology) CollectionStatistics() []*CollectionStatistics {
 						continue
 					}
 					stats.PhysicalSize += v.Size
-					if !found || v.Size > largest.Size {
-						largest, found = v, true
+					live := v.Size
+					if v.DeletedByteCount < live {
+						live -= v.DeletedByteCount
+					} else {
+						live = 0
+					}
+					if !found || live > largestLive {
+						largest, largestLive, found = v, live, true
 					}
 				}
 				if !found {

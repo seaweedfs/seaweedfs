@@ -84,8 +84,9 @@ func statsTopology(t *testing.T) *Topology {
 			"10.0.0."+string(rune('1'+i)), 8080, 18080, "", "", map[string]uint32{"": 1000, "ssd": 1000})
 	}
 
-	// Two collections, replicated volumes, one volume on a second disk type,
-	// and a volume whose replicas disagree on size mid-write.
+	// Two collections, replicated volumes, one volume on a second disk type.
+	// Replicas agree here; disagreement is covered on its own, where the
+	// listing this is compared against is itself order dependent.
 	report := func(dn *DataNode, msgs ...*master_pb.VolumeInformationMessage) {
 		topo.SyncDataNodeRegistration(msgs, dn)
 	}
@@ -244,5 +245,38 @@ func TestCollectionStatisticsCountsRegularAndEcTogether(t *testing.T) {
 	}
 	if stats.PhysicalSize != 514 {
 		t.Errorf("physical size %d, want 500 regular plus all 14 shards", stats.PhysicalSize)
+	}
+}
+
+// Quotas are enforced on size less deletions, so the replica holding the most
+// live data is the one to count. The replica with the biggest raw size can be
+// the one that has deleted the most, and counting that one would report a
+// bucket smaller than it is and leave it writable over its quota.
+func TestCollectionStatisticsPicksTheReplicaHoldingTheMostLiveData(t *testing.T) {
+	topo := NewTopology("stats", nil, 32*1024*1024*1024, 5, false)
+	rack := topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1")
+	bigMostlyDeleted := rack.GetOrCreateDataNode("10.0.0.1", 8080, 18080, "", "a", map[string]uint32{"": 100})
+	smallerButLive := rack.GetOrCreateDataNode("10.0.0.2", 8080, 18080, "", "b", map[string]uint32{"": 100})
+
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{{
+		Id: 1, Collection: "bucket-a", Size: 1000, DeletedByteCount: 900,
+		Version: 3, ReplicaPlacement: 1,
+	}}, bigMostlyDeleted)
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{{
+		Id: 1, Collection: "bucket-a", Size: 900, DeletedByteCount: 0,
+		Version: 3, ReplicaPlacement: 1,
+	}}, smallerButLive)
+
+	stats := statsByCollection(topo)["bucket-a"]
+	if stats == nil {
+		t.Fatal("expected bucket-a to be reported")
+	}
+	live := stats.Size - stats.DeletedByteCount
+	if live != 900 {
+		t.Errorf("reported %d bytes live (size %d less %d deleted), want the 900 one replica holds",
+			live, stats.Size, stats.DeletedByteCount)
+	}
+	if stats.PhysicalSize != 1900 {
+		t.Errorf("physical size %d, want both replicas summed", stats.PhysicalSize)
 	}
 }
