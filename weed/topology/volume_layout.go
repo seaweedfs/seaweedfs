@@ -197,7 +197,9 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 	defer vl.rememberOversizedVolume(v, dn)
 
 	moveLookupOwnership(v.Id, vl.getOrCreateLocationList(v.Id).Set(dn), dn)
-	vl.initSizeTracking(v.Id, v.Size, v.CompactRevision)
+	if !v.ReadOnly {
+		vl.initSizeTracking(v.Id, v.Size, v.CompactRevision)
+	}
 	// glog.V(4).Infof("volume %d added to %s len %d copy %d", v.Id, dn.Id(), vl.vid2location[v.Id].Length(), v.ReplicaPlacement.GetCopyCount())
 	for _, dn := range vl.vid2location[v.Id].list {
 		if vInfo, err := dn.GetVolumesById(v.Id); err == nil {
@@ -242,6 +244,19 @@ func (vl *VolumeLayout) rememberOversizedVolume(v *storage.VolumeInfo, dn *DataN
 func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint64, compactRevision uint32) (recoveredToWritable bool) {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
+
+	// Tracking exists to place writes, and nothing is written to a volume any
+	// replica reports read-only. Most volumes in a tiered cluster are read-only,
+	// so an entry each is the layout's largest cost. Asked of the volume rather
+	// than of the replica reporting, so which replica arrives first cannot
+	// decide the answer. A volume held out of the writable list for capacity is
+	// still all-writable and keeps its entry, which is what enforces the
+	// recovery delay.
+	if !vl.isAllWritable(vid) {
+		delete(vl.sizeTracking, vid)
+		vl.removeFromCrowded(vid)
+		return false
+	}
 
 	now := time.Now()
 	st := vl.sizeTracking[vid]
@@ -919,14 +934,14 @@ func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId, is
 	}
 
 	// A disconnect during a long vacuum can drop the entry while the volume is
-	// still on the node; re-create it (and seed size tracking) instead of
-	// dereferencing a nil location, so the commit also repairs the split.
+	// still on the node; re-create it instead of dereferencing a nil location,
+	// so the commit also repairs the split.
 	moveLookupOwnership(vid, vl.getOrCreateLocationList(vid).Set(dn), dn)
-	vl.initSizeTracking(vid, vInfo.Size, vInfo.CompactRevision)
 
 	if vInfo.ReadOnly || isReadOnly || isFullCapacity {
 		return false
 	}
+	vl.initSizeTracking(vid, vInfo.Size, vInfo.CompactRevision)
 
 	if vl.enoughCopies(vid) {
 		becameWritable = vl.setVolumeWritable(vid)
