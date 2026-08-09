@@ -1,3 +1,4 @@
+// Package hls provides helpers for chunk-aligned HLS MPEG-TS VOD metadata.
 package hls
 
 import (
@@ -11,19 +12,19 @@ import (
 )
 
 const (
-	MetadataVersion  = 1
+	// MetadataVersion identifies the persisted HLS TS metadata format.
+	MetadataVersion = 1
+	// MaxPlaylistBytes is the maximum accepted ingest playlist size.
 	MaxPlaylistBytes = 16 * 1024 * 1024
-
-	// TSPacketSize is the fixed MPEG-TS transport packet length. Every packet
-	// starts with the 0x47 sync byte, and a TS muxer emits nothing but whole
-	// packets, so a valid single-file HLS media payload is always a multiple of
-	// this size.
+	// TSPacketSize is the fixed MPEG-TS packet size in bytes.
 	TSPacketSize = 188
-	tsSyncByte   = 0x47
+
+	tsSyncByte = 0x47
 
 	maxInt64Value int64 = 1<<63 - 1
 )
 
+// Metadata describes the HLS segment layout stored with a filer entry.
 type Metadata struct {
 	Version        int       `json:"version"`
 	TargetDuration int       `json:"target_duration"`
@@ -31,20 +32,16 @@ type Metadata struct {
 	Segments       []Segment `json:"segments"`
 }
 
+// Segment describes one MPEG-TS segment within the logical media file.
 type Segment struct {
 	Offset   int64   `json:"offset"`
 	Size     int64   `json:"size"`
 	Duration float64 `json:"duration"`
 }
 
-// ParseSingleFilePlaylist parses a VOD HLS media playlist where every segment
-// references the same media URI via EXT-X-BYTERANGE. This is the layout emitted
-// by FFmpeg's HLS muxer with -hls_flags single_file.
-//
-// Part 1 deliberately supports only the subset that can be reproduced as a
-// plain VOD playlist without carrying additional per-segment state. Tags whose
-// semantics would be lost by regeneration are rejected instead of being
-// silently dropped.
+// ParseSingleFilePlaylist parses a VOD HLS media playlist whose segments use
+// EXT-X-BYTERANGE references to one shared media URI. Tags whose state cannot
+// be preserved in the generated playback playlist are rejected.
 func ParseSingleFilePlaylist(data []byte) (*Metadata, error) {
 	if len(data) > MaxPlaylistBytes {
 		return nil, fmt.Errorf("playlist is too large: %d bytes", len(data))
@@ -203,6 +200,8 @@ func ParseSingleFilePlaylist(data []byte) (*Metadata, error) {
 	return metadata, nil
 }
 
+// Validate checks metadata consistency. A negative fileSize skips the total
+// size check, and a non-positive maxSegmentSize disables the segment size limit.
 func Validate(metadata *Metadata, fileSize, maxSegmentSize int64) error {
 	if metadata == nil || metadata.Version != MetadataVersion {
 		return errors.New("unsupported HLS TS metadata version")
@@ -238,12 +237,8 @@ func Validate(metadata *Metadata, fileSize, maxSegmentSize int64) error {
 	return nil
 }
 
-// ValidateTSPackets verifies that data is a whole number of MPEG-TS packets,
-// each beginning with the 0x47 sync byte. Media segmented by a TS muxer is
-// always packet aligned, so a payload that fails this check is not the MPEG-TS
-// content this endpoint serves (an MP4 or fragmented MP4, say). Callers pass
-// packet-aligned buffers, so the check runs during ingest and rejects an
-// unsupported upload immediately instead of deferring the failure to playback.
+// ValidateTSPackets verifies that data contains only complete MPEG-TS packets
+// with the expected sync byte at each packet boundary.
 func ValidateTSPackets(data []byte) error {
 	if len(data)%TSPacketSize != 0 {
 		return fmt.Errorf("media is not MPEG-TS: %d bytes is not a multiple of the %d-byte packet size", len(data), TSPacketSize)
@@ -256,6 +251,7 @@ func ValidateTSPackets(data []byte) error {
 	return nil
 }
 
+// RenderMediaPlaylist renders metadata as a VOD playlist with numbered .ts URLs.
 func RenderMediaPlaylist(metadata *Metadata) []byte {
 	var out strings.Builder
 	out.WriteString("#EXTM3U\n")

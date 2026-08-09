@@ -12,13 +12,11 @@ import (
 
 const (
 	hlsTsVirtualPrefix = "/hls/"
-	// Use the existing x-seaweedfs-* internal metadata namespace so normal filer
-	// GETs never turn the potentially large segment index into an HTTP header.
+	// Keep the segment index in the internal x-seaweedfs-* namespace so normal
+	// filer GETs do not expose it as an HTTP header.
 	hlsTsMetadataKey = "x-seaweedfs-hls-ts-metadata"
 
-	// hlsTsSegmentPrefetch bounds how many chunks a multi-chunk segment read
-	// fetches concurrently. It matches the value the normal filer read handler
-	// uses and is capped by the segment's own chunk count.
+	// Match the normal filer read prefetch concurrency.
 	hlsTsSegmentPrefetch = 4
 
 	hlsTsMiB       = int64(1024 * 1024)
@@ -44,12 +42,8 @@ func (fs *FilerServer) hlsTsEnabled() bool {
 	return fs.option != nil && fs.option.HlsTsEnabled
 }
 
-// hlsTsMaxChunkBytes follows the same maxMB semantics as normal filer
-// auto-chunking: a positive request maxMB overrides the filer-wide MaxMB,
-// otherwise the regular filer MaxMB is inherited. A media segment larger than
-// this is stored as several chunks so no single chunk exceeds the regular filer
-// chunk size; the trailing chunk holds only the remainder, and a segment read
-// still fetches just the chunks that belong to that segment.
+// hlsTsMaxChunkBytes returns the effective filer maxMB limit aligned down to a
+// whole MPEG-TS packet. A request maxMB overrides the filer-wide value.
 func (fs *FilerServer) hlsTsMaxChunkBytes(r *http.Request) int64 {
 	var maxMB int64
 	if value := r.URL.Query().Get("maxMB"); value != "" {
@@ -61,8 +55,7 @@ func (fs *FilerServer) hlsTsMaxChunkBytes(r *http.Request) int64 {
 	if maxMB <= 0 && fs.option != nil && fs.option.MaxMB > 0 {
 		maxMB = int64(fs.option.MaxMB)
 		if maxMB > hlsTsMaxSafeMB {
-			// An invalid filer-wide value must not overflow the MiB-to-bytes
-			// conversion. Clamp it to the largest representable byte limit.
+			// Clamp invalid configuration before converting MiB to bytes.
 			maxMB = hlsTsMaxSafeMB
 		}
 	}
@@ -71,9 +64,6 @@ func (fs *FilerServer) hlsTsMaxChunkBytes(r *http.Request) int64 {
 	}
 
 	limit := maxMB * hlsTsMiB
-	// Align the limit down to a whole number of MPEG-TS packets so a chunk split
-	// never cuts a packet; the segment's trailing chunk still carries the
-	// remainder. A zero limit (no maxMB configured) stores one chunk per segment.
 	return limit - limit%media_hls.TSPacketSize
 }
 
@@ -128,9 +118,8 @@ func hlsTsJwtSourcePath(requestPath, method string) (string, bool) {
 	return parsed.SourcePath, true
 }
 
-// shouldBypassHlsTsReadJwt reports whether this GET/HEAD belongs to the HLS
-// virtual namespace and security.toml explicitly allows HLS playback without a
-// filer read JWT. HLS ingest never bypasses the normal filer write JWT policy.
+// shouldBypassHlsTsReadJwt reports whether public HLS playback is enabled for
+// this GET/HEAD request. HLS ingest always follows the filer write JWT policy.
 func (fs *FilerServer) shouldBypassHlsTsReadJwt(r *http.Request) bool {
 	if !fs.hlsTsEnabled() || fs.hlsTsReadJwtRequired.Load() {
 		return false

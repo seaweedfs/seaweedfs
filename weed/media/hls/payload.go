@@ -6,18 +6,10 @@ import (
 	"math"
 )
 
-// WalkSegmentChunks reads each segment from reader and splits it into storage
-// chunks no larger than maxChunkSize, invoking fn once per chunk with the
-// chunk's absolute byte offset in the media file and a fresh slice owned by the
-// caller. A chunk never spans a segment boundary, so every segment maps to a
-// contiguous run of whole chunks and a later segment read fetches only those
-// chunks instead of slicing a larger object; the trailing chunk of a segment
-// holds only the remainder so no padding is stored or read. maxChunkSize <= 0
-// stores each segment as a single chunk.
-//
-// The function rejects truncated input and trailing bytes, which prevents
-// committing an entry whose logical file differs from the playlist used to
-// segment it.
+// WalkSegmentChunks reads media segments sequentially and splits each segment
+// into chunks no larger than maxChunkSize. Chunks never cross segment
+// boundaries. A non-positive maxChunkSize keeps each segment in one chunk.
+// Truncated input and trailing media data are rejected.
 func WalkSegmentChunks(reader io.Reader, metadata *Metadata, maxChunkSize int64, fn func(segmentIndex int, chunkOffset int64, data []byte) error) error {
 	if err := Validate(metadata, -1, 0); err != nil {
 		return err
@@ -45,8 +37,7 @@ func WalkSegmentChunks(reader io.Reader, metadata *Metadata, maxChunkSize int64,
 		}
 	}
 
-	// io.Reader is allowed to return (0, nil), especially for streaming readers.
-	// ReadFull keeps reading until it sees one trailing byte or a definitive EOF.
+	// ReadFull tolerates readers that transiently return (0, nil) before EOF.
 	var extra [1]byte
 	n, err := io.ReadFull(reader, extra[:])
 	if n != 0 {
@@ -61,6 +52,7 @@ func WalkSegmentChunks(reader io.Reader, metadata *Metadata, maxChunkSize int64,
 	return fmt.Errorf("media payload has trailing bytes after the last segment")
 }
 
+// TotalSize returns the total media size described by metadata.
 func TotalSize(metadata *Metadata) int64 {
 	var total int64
 	if metadata == nil {
