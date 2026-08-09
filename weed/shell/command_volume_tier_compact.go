@@ -140,7 +140,7 @@ func findRemoteVolumeInTopology(topoInfo *master_pb.TopologyInfo, vid needle.Vol
 		}
 		for _, diskInfo := range dn.DiskInfos {
 			for _, v := range diskInfo.VolumeInfos {
-				if needle.VolumeId(v.Id) == vid && v.RemoteStorageName != "" && v.RemoteStorageKey != "" {
+				if needle.VolumeId(v.Id) == vid && v.RemoteStorageName != "" {
 					if !matchesCollection(v.Collection) {
 						continue
 					}
@@ -171,7 +171,7 @@ func collectRemoteVolumesWithInfo(topoInfo *master_pb.TopologyInfo, collectionPa
 	eachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
 		for _, diskInfo := range dn.DiskInfos {
 			for _, v := range diskInfo.VolumeInfos {
-				if v.RemoteStorageName == "" || v.RemoteStorageKey == "" {
+				if v.RemoteStorageName == "" {
 					continue
 				}
 				if !collectionRegex.MatchString(v.Collection) {

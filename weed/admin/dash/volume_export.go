@@ -93,7 +93,6 @@ type ExportVolume struct {
 	DiskType          string  `json:"disk_type"`
 	DiskId            uint32  `json:"disk_id"`
 	RemoteStorageName string  `json:"remote_storage_name,omitempty"`
-	RemoteStorageKey  string  `json:"remote_storage_key,omitempty"`
 }
 
 type ExportEcShard struct {
@@ -251,7 +250,6 @@ func buildExportVolume(m *master_pb.VolumeInformationMessage, volumeSizeLimit ui
 		DiskType:          m.DiskType,
 		DiskId:            m.DiskId,
 		RemoteStorageName: m.RemoteStorageName,
-		RemoteStorageKey:  m.RemoteStorageKey,
 	}
 	// Decode replica placement and TTL the way volume.list does.
 	if vi, err := storage.NewVolumeInfo(m); err == nil {

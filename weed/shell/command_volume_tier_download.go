@@ -104,7 +104,7 @@ func collectRemoteVolumes(topoInfo *master_pb.TopologyInfo, collectionPattern st
 	eachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
 		for _, diskInfo := range dn.DiskInfos {
 			for _, v := range diskInfo.VolumeInfos {
-				if collectionRegex.MatchString(v.Collection) && v.RemoteStorageKey != "" && v.RemoteStorageName != "" {
+				if collectionRegex.MatchString(v.Collection) && v.RemoteStorageName != "" {
 					vidMap[v.Id] = true
 				}
 			}

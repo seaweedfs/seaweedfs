@@ -37,7 +37,6 @@ func (vi VolumeInfo) ReportHash() uint64 {
 	h = foldReportHash(h, xxhash.Sum64String(vi.Collection))
 	h = foldReportHash(h, xxhash.Sum64String(vi.DiskType))
 	h = foldReportHash(h, xxhash.Sum64String(vi.RemoteStorageName))
-	h = foldReportHash(h, xxhash.Sum64String(vi.RemoteStorageKey))
 	return h
 }
 

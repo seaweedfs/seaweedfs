@@ -178,7 +178,7 @@ func collectVolumeTierUploadLocations(topoInfo *master_pb.TopologyInfo, vid need
 						GrpcPort:   int(dn.GrpcPort),
 						DataCenter: string(dc),
 					}
-					if vi.RemoteStorageKey != "" {
+					if vi.RemoteStorageName != "" {
 						tiered = append(tiered, loc)
 					} else {
 						local = append(local, loc)

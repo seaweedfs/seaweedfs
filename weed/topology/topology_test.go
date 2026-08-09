@@ -320,7 +320,7 @@ func TestVolumeReadOnlyAndRemoteStatusChange(t *testing.T) {
 	// Simultaneously change to read-only AND remote
 	v.ReadOnly = true
 	v.RemoteStorageName = "s3"
-	v.RemoteStorageKey = "key1"
+	v.RemoteStorageName = "s3.default"
 	dn.UpdateVolumes([]storage.VolumeInfo{v})
 
 	// Check counts after both changes
@@ -340,7 +340,7 @@ func TestVolumeReadOnlyAndRemoteStatusChange(t *testing.T) {
 	// Change back to local AND read-only simultaneously
 	v.ReadOnly = true
 	v.RemoteStorageName = ""
-	v.RemoteStorageKey = ""
+	v.RemoteStorageName = ""
 	dn.UpdateVolumes([]storage.VolumeInfo{v})
 
 	// Check final counts
