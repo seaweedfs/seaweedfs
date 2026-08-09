@@ -9,10 +9,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestAuthorizeBatchDeleteKey_AwsCanonicalPolicy: a policy granting s3:DeleteObject
+// TestAuthorizeObjectDelete_AwsCanonicalPolicy: a policy granting s3:DeleteObject
 // on <bucket>/* must allow per-key batch deletes. Pre-fix the bucket-level check
 // built arn:aws:s3:::<bucket> and never matched the object-scoped policy.
-func TestAuthorizeBatchDeleteKey_AwsCanonicalPolicy(t *testing.T) {
+func TestAuthorizeObjectDelete_AwsCanonicalPolicy(t *testing.T) {
 	const bucket = "test-bucket"
 	const policyName = "delete-test-bucket-objects"
 
@@ -43,17 +43,17 @@ func TestAuthorizeBatchDeleteKey_AwsCanonicalPolicy(t *testing.T) {
 	r := httptest.NewRequest("POST", "/"+bucket+"?delete", nil)
 
 	require.Equal(t, s3err.ErrNone,
-		iam.AuthorizeBatchDeleteKey(r, identity, bucket, "objects/a.txt", ""),
+		iam.AuthorizeObjectDelete(r, identity, bucket, "objects/a.txt", ""),
 		"s3:DeleteObject on arn:aws:s3:::%s/* must allow deleting %s/objects/a.txt", bucket, bucket)
 
 	require.Equal(t, s3err.ErrAccessDenied,
-		iam.AuthorizeBatchDeleteKey(r, identity, "other-bucket", "objects/a.txt", ""),
+		iam.AuthorizeObjectDelete(r, identity, "other-bucket", "objects/a.txt", ""),
 		"keys outside the granted bucket must be denied")
 }
 
-// TestAuthorizeBatchDeleteKey_PrefixScopedPolicy: a prefix-scoped policy must allow
+// TestAuthorizeObjectDelete_PrefixScopedPolicy: a prefix-scoped policy must allow
 // batch deletes under the prefix and deny keys outside it, per-key.
-func TestAuthorizeBatchDeleteKey_PrefixScopedPolicy(t *testing.T) {
+func TestAuthorizeObjectDelete_PrefixScopedPolicy(t *testing.T) {
 	const bucket = "test-bucket"
 	const policyName = "delete-prefix-only"
 
@@ -84,10 +84,10 @@ func TestAuthorizeBatchDeleteKey_PrefixScopedPolicy(t *testing.T) {
 	r := httptest.NewRequest("POST", "/"+bucket+"?delete", nil)
 
 	require.Equal(t, s3err.ErrNone,
-		iam.AuthorizeBatchDeleteKey(r, identity, bucket, "safe/inside.txt", ""),
+		iam.AuthorizeObjectDelete(r, identity, bucket, "safe/inside.txt", ""),
 		"key under granted prefix must be allowed")
 
 	require.Equal(t, s3err.ErrAccessDenied,
-		iam.AuthorizeBatchDeleteKey(r, identity, bucket, "danger/outside.txt", ""),
+		iam.AuthorizeObjectDelete(r, identity, bucket, "danger/outside.txt", ""),
 		"key outside the granted prefix must be denied per-key, not at the batch level")
 }
