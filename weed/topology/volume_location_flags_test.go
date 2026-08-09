@@ -90,3 +90,25 @@ func TestLocationFlagsIgnoreUntrackableReplicaCounts(t *testing.T) {
 		t.Error("a flag within the tracked width was lost")
 	}
 }
+
+// Refresh drops stale locations, so it has to rebuild the flags with them.
+func TestLocationFlagsRebuiltByRefresh(t *testing.T) {
+	stale, fresh, alsoFresh := flagNode("10.0.0.1"), flagNode("10.0.0.2"), flagNode("10.0.0.3")
+	stale.LastSeen, fresh.LastSeen, alsoFresh.LastSeen = 100, 500, 500
+
+	list := NewVolumeLocationList()
+	for _, dn := range []*DataNode{stale, fresh, alsoFresh} {
+		list.Set(dn)
+	}
+	list.SetReadOnly(alsoFresh, true)
+
+	list.Refresh(400)
+
+	if list.Length() != 2 {
+		t.Fatalf("expected the stale location to be dropped, got %d", list.Length())
+	}
+	list.SetReadOnly(alsoFresh, false)
+	if list.AnyReadOnly() {
+		t.Error("the flag did not move with its location, so it now describes another server")
+	}
+}

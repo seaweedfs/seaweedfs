@@ -58,6 +58,10 @@ func setFlag(flags *uint32, index int, on bool) {
 	}
 }
 
+func hasFlag(flags uint32, index int) bool {
+	return index >= 0 && index < maxTrackedLocations && flags&(1<<uint(index)) != 0
+}
+
 // removeFlag drops the bit at index and closes the gap, keeping the flags
 // aligned with the locations after one is removed.
 func removeFlag(flags *uint32, index int) {
@@ -150,15 +154,22 @@ func (dnll *VolumeLocationList) Refresh(freshThreshHold int64) {
 			break
 		}
 	}
-	if changed {
-		var l []*DataNode
-		for _, dnl := range dnll.list {
-			if dnl.LastSeen >= freshThreshHold {
-				l = append(l, dnl)
-			}
-		}
-		dnll.list = l
+	if !changed {
+		return
 	}
+	// The flags index the locations, so dropping some means rebuilding both
+	// rather than leaving bits describing whoever moved into their place.
+	var l []*DataNode
+	var readOnly, oversized uint32
+	for i, dnl := range dnll.list {
+		if dnl.LastSeen < freshThreshHold {
+			continue
+		}
+		setFlag(&readOnly, len(l), hasFlag(dnll.readOnly, i))
+		setFlag(&oversized, len(l), hasFlag(dnll.oversized, i))
+		l = append(l, dnl)
+	}
+	dnll.list, dnll.readOnly, dnll.oversized = l, readOnly, oversized
 }
 
 // Stats returns logic size and count. Both subtractions are clamped: the
