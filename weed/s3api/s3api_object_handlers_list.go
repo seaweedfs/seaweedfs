@@ -301,7 +301,7 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 	// check filer
 	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		var lastEntryWasCommonPrefix bool
-		var lastCommonPrefixName string
+		var lastCommonPrefix string
 
 		// Hoist versioning check out of per-entry callback
 		versioningState, _ := s3a.getVersioningState(bucket)
@@ -361,7 +361,7 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 							delimitedPrefix := originalPrefix + delimitedPath[0] + delimiter
 
 							// Check if this CommonPrefix already exists
-							if !lastEntryWasCommonPrefix || lastCommonPrefixName != delimitedPath[0] {
+							if !lastEntryWasCommonPrefix || lastCommonPrefix != delimitedPrefix {
 								// New CommonPrefix found
 								commonPrefixes = append(commonPrefixes, PrefixEntry{
 									Prefix: delimitedPrefix,
@@ -369,7 +369,7 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 								cursor.maxKeys--
 								delimiterFound = true
 								lastEntryWasCommonPrefix = true
-								lastCommonPrefixName = delimitedPath[0]
+								lastCommonPrefix = delimitedPrefix
 							} else {
 								// This directory object belongs to an existing CommonPrefix, skip it
 								delimiterFound = true
@@ -391,13 +391,14 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 					} else if delimiter != "" { // A response can contain CommonPrefixes only if you specify a delimiter.
 						// Use raw dir and entry.Name (not encoded) to ensure consistent handling
 						// Encoding will be applied after sorting if encodingTypeUrl is set
+						dirPrefix := fmt.Sprintf("%s/%s/", dir, entry.Name)[len(bucketPrefix):]
 						commonPrefixes = append(commonPrefixes, PrefixEntry{
-							Prefix: fmt.Sprintf("%s/%s/", dir, entry.Name)[len(bucketPrefix):],
+							Prefix: dirPrefix,
 						})
 						//All of the keys (up to 1,000) rolled up into a common prefix count as a single return when calculating the number of returns.
 						cursor.maxKeys--
 						lastEntryWasCommonPrefix = true
-						lastCommonPrefixName = entry.Name
+						lastCommonPrefix = dirPrefix
 					}
 				} else {
 					var delimiterFound bool
@@ -429,7 +430,7 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 								cursor.maxKeys--
 								delimiterFound = true
 								lastEntryWasCommonPrefix = true
-								lastCommonPrefixName = delimitedPath[0]
+								lastCommonPrefix = delimitedPrefix
 							} else {
 								// This object belongs to an existing CommonPrefix, skip it
 								// but continue processing to maintain correct flow
@@ -454,9 +455,8 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 				return doErr
 			}
 
-			// Adjust nextMarker for CommonPrefixes to include trailing slash (AWS S3 compliance)
 			if cursor.isTruncated {
-				nextMarker = buildTruncatedNextMarker(requestDir, prefix, nextMarker, lastEntryWasCommonPrefix, lastCommonPrefixName)
+				nextMarker = buildTruncatedNextMarker(requestDir, nextMarker, lastEntryWasCommonPrefix, lastCommonPrefix)
 			}
 
 			if cursor.isTruncated {
@@ -535,13 +535,9 @@ func normalizePrefixMarker(prefix, marker string) (alignedDir, alignedPrefix, al
 		// something wrong
 		return "", prefix, marker
 	}
-	if strings.HasPrefix(marker, prefix+"/") {
-		alignedDir = prefix
-		alignedPrefix = ""
-		alignedMarker = marker[len(alignedDir)+1:]
-		return
-	}
-
+	// Resolve the listing dir from the prefix, not the marker: a partial name prefix like
+	// "data/a" also matches siblings such as "data/ab/", which narrowing to the marker's
+	// subtree would drop.
 	alignedDir, alignedPrefix = toDirAndName(prefix)
 	if alignedDir != "" {
 		alignedMarker = marker[len(alignedDir)+1:]
@@ -571,19 +567,12 @@ func toParentAndDescendants(dirAndName string) (dir, name string) {
 	return
 }
 
-func buildTruncatedNextMarker(requestDir, prefix, nextMarker string, lastEntryWasCommonPrefix bool, lastCommonPrefixName string) string {
-	if lastEntryWasCommonPrefix && lastCommonPrefixName != "" {
-		// For CommonPrefixes, NextMarker should include the trailing slash
-		if requestDir != "" {
-			if prefix != "" {
-				return requestDir + "/" + prefix + "/" + lastCommonPrefixName + "/"
-			}
-			return requestDir + "/" + lastCommonPrefixName + "/"
-		}
-		if prefix != "" {
-			return prefix + "/" + lastCommonPrefixName + "/"
-		}
-		return lastCommonPrefixName + "/"
+func buildTruncatedNextMarker(requestDir, nextMarker string, lastEntryWasCommonPrefix bool, lastCommonPrefix string) string {
+	// The emitted CommonPrefix is already the full key path with its trailing delimiter.
+	// Rebuilding it from requestDir plus the listing prefix breaks when that prefix is a
+	// partial name, not a directory.
+	if lastEntryWasCommonPrefix && lastCommonPrefix != "" {
+		return lastCommonPrefix
 	}
 
 	if requestDir != "" {
