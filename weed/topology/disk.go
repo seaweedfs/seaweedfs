@@ -368,24 +368,35 @@ func (d *Disk) FreeSpace() int64 {
 	return t.FreeSpace()
 }
 
-func (d *Disk) ToDiskInfo() *master_pb.DiskInfo {
+func (d *Disk) ToDiskInfo(filter VolumeFilter) *master_pb.DiskInfo {
 	diskUsage := d.diskUsages.getOrCreateDisk(types.ToDiskType(string(d.Id())))
 
 	// Built under the read lock rather than from a copy as large as the
 	// messages it fed. Nothing here re-enters the topology, so the hold is safe.
 	d.RLock()
-	volumeInfos := make([]*master_pb.VolumeInformationMessage, 0, len(d.volumes))
+	// Reserving room for every volume would keep what a filter set out not to
+	// build.
+	capacity := 0
+	if filter.SelectsEverything() {
+		capacity = len(d.volumes)
+	}
+	volumeInfos := make([]*master_pb.VolumeInformationMessage, 0, capacity)
 	var diskId uint32
+	var haveDiskId bool
 	for _, v := range d.volumes {
-		if len(volumeInfos) == 0 {
-			diskId = v.DiskId
+		// Any volume names the disk, including one filtered out.
+		if !haveDiskId {
+			diskId, haveDiskId = v.DiskId, true
+		}
+		if !filter.matches(v.Collection, v.Id) {
+			continue
 		}
 		volumeInfos = append(volumeInfos, v.ToVolumeInformationMessage())
 	}
 	d.RUnlock()
 
 	ecShards := d.GetEcShards()
-	if len(volumeInfos) == 0 && len(ecShards) > 0 {
+	if !haveDiskId && len(ecShards) > 0 {
 		diskId = ecShards[0].DiskId
 	}
 
@@ -401,8 +412,15 @@ func (d *Disk) ToDiskInfo() *master_pb.DiskInfo {
 		DiskFreeBytes:     uint64(max(0, diskUsage.diskFreeBytes)),
 	}
 	m.VolumeInfos = volumeInfos
-	m.EcShardInfos = make([]*master_pb.VolumeEcShardInformationMessage, 0, len(ecShards))
+	ecCapacity := 0
+	if filter.SelectsEverything() {
+		ecCapacity = len(ecShards)
+	}
+	m.EcShardInfos = make([]*master_pb.VolumeEcShardInformationMessage, 0, ecCapacity)
 	for _, ecv := range ecShards {
+		if !filter.matches(ecv.Collection, ecv.VolumeId) {
+			continue
+		}
 		m.EcShardInfos = append(m.EcShardInfos, ecv.ToVolumeEcShardInformationMessage())
 	}
 	return m

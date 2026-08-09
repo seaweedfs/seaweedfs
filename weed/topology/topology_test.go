@@ -176,7 +176,7 @@ func TestDataNodeToDataNodeInfo_IncludeEmptyDiskFromUsage(t *testing.T) {
 	usage := dn.diskUsages.getOrCreateDisk(types.HardDriveType)
 	usage.maxVolumeCount = 8
 
-	info := dn.ToDataNodeInfo()
+	info := dn.ToDataNodeInfo(VolumeFilter{})
 	diskInfo, found := info.DiskInfos[""]
 	if !found {
 		t.Fatalf("expected default disk entry for empty node")

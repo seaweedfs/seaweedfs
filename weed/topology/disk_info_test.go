@@ -23,7 +23,7 @@ func TestDiskInfoReportsEveryVolume(t *testing.T) {
 
 	var info *master_pb.DiskInfo
 	for _, c := range dn.Children() {
-		info = c.(*Disk).ToDiskInfo()
+		info = c.(*Disk).ToDiskInfo(VolumeFilter{})
 	}
 	if info == nil {
 		t.Fatal("the node reported no disk")
@@ -58,7 +58,7 @@ func TestDiskInfoReportsTheDiskIdOfEcOnlyDisks(t *testing.T) {
 	}, dn)
 
 	for _, c := range dn.Children() {
-		info := c.(*Disk).ToDiskInfo()
+		info := c.(*Disk).ToDiskInfo(VolumeFilter{})
 		if len(info.VolumeInfos) != 0 {
 			t.Fatalf("expected no regular volumes, got %d", len(info.VolumeInfos))
 		}

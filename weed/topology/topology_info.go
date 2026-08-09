@@ -124,14 +124,14 @@ func (t *Topology) ToVolumeLocations() (volumeLocations []*master_pb.VolumeLocat
 	return
 }
 
-func (t *Topology) ToTopologyInfo() *master_pb.TopologyInfo {
+func (t *Topology) ToTopologyInfo(filter VolumeFilter) *master_pb.TopologyInfo {
 	m := &master_pb.TopologyInfo{
 		Id:        string(t.Id()),
 		DiskInfos: t.diskUsages.ToDiskInfo(),
 	}
 	for _, c := range t.Children() {
 		dc := c.(*DataCenter)
-		m.DataCenterInfos = append(m.DataCenterInfos, dc.ToDataCenterInfo())
+		m.DataCenterInfos = append(m.DataCenterInfos, dc.ToDataCenterInfo(filter))
 	}
 	return m
 }
