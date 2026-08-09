@@ -241,17 +241,20 @@ func (vl *VolumeLayout) rememberOversizedVolume(v *storage.VolumeInfo, dn *DataN
 // previously eagerly removed by RecordAssign back under the writable
 // threshold and this call re-added it to the writable list. The caller
 // should mirror the activeVolumeCount bookkeeping.
-func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint64, compactRevision uint32, readOnly bool) (recoveredToWritable bool) {
+func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint64, compactRevision uint32) (recoveredToWritable bool) {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
-	if readOnly {
-		// Tracking exists to place writes, and nothing is written to a
-		// read-only volume. Most volumes in a tiered cluster are read-only, so
-		// an entry each is the layout's largest cost. A volume held out of the
-		// writable list for capacity is not read-only and keeps its entry,
-		// which is what enforces the recovery delay.
+	// Tracking exists to place writes, and nothing is written to a volume any
+	// replica reports read-only. Most volumes in a tiered cluster are read-only,
+	// so an entry each is the layout's largest cost. Asked of the volume rather
+	// than of the replica reporting, so which replica arrives first cannot
+	// decide the answer. A volume held out of the writable list for capacity is
+	// still all-writable and keeps its entry, which is what enforces the
+	// recovery delay.
+	if !vl.isAllWritable(vid) {
 		delete(vl.sizeTracking, vid)
+		vl.removeFromCrowded(vid)
 		return false
 	}
 

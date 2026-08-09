@@ -94,3 +94,70 @@ func TestSizeTrackingSurvivesAFullVolume(t *testing.T) {
 		t.Error("a full volume did not record when it filled, so the recovery delay cannot apply")
 	}
 }
+
+// A volume is unwritable if any replica is read-only, so the answer must not
+// depend on which replica's heartbeat arrives first.
+func TestSizeTrackingIgnoresReplicaReportOrder(t *testing.T) {
+	for _, readOnlyFirst := range []bool{true, false} {
+		name := "WritableFirst"
+		if readOnlyFirst {
+			name = "ReadOnlyFirst"
+		}
+		t.Run(name, func(t *testing.T) {
+			topo := NewTopology("st", nil, 32*1024, 5, false)
+			rack := topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1")
+			writableNode := rack.GetOrCreateDataNode("10.0.0.1", 8080, 18080, "", "a", map[string]uint32{"": 100})
+			readOnlyNode := rack.GetOrCreateDataNode("10.0.0.2", 8080, 18080, "", "b", map[string]uint32{"": 100})
+
+			report := func(dn *DataNode, readOnly bool) {
+				topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{
+					{Id: 1, Size: 1000, Collection: "c", Version: 3, ReplicaPlacement: 1, ReadOnly: readOnly},
+				}, dn)
+			}
+			if readOnlyFirst {
+				report(readOnlyNode, true)
+				report(writableNode, false)
+			} else {
+				report(writableNode, false)
+				report(readOnlyNode, true)
+			}
+
+			rp, _ := super_block.NewReplicaPlacementFromString("001")
+			vl := topo.GetVolumeLayout("c", rp, needle.EMPTY_TTL, types.HardDriveType)
+			vl.accessLock.RLock()
+			_, tracked := vl.sizeTracking[needle.VolumeId(1)]
+			_, crowded := vl.crowded[needle.VolumeId(1)]
+			vl.accessLock.RUnlock()
+
+			if tracked {
+				t.Error("a volume with a read-only replica is tracked for writes it cannot take")
+			}
+			if crowded {
+				t.Error("a volume with a read-only replica was left in the crowded set")
+			}
+		})
+	}
+}
+
+// The crowded entry has to go with the tracking, or the memory this releases
+// is only moved.
+func TestCrowdedEntryReleasedWithSizeTracking(t *testing.T) {
+	topo, dn, vl := sizeTrackingLayout(t)
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{sizeTrackingVolume(1, 31000, false)}, dn)
+
+	vl.accessLock.RLock()
+	_, crowdedWhileWritable := vl.crowded[needle.VolumeId(1)]
+	vl.accessLock.RUnlock()
+	if !crowdedWhileWritable {
+		t.Fatal("expected a nearly full writable volume to be crowded")
+	}
+
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{sizeTrackingVolume(1, 31000, true)}, dn)
+
+	vl.accessLock.RLock()
+	_, stillCrowded := vl.crowded[needle.VolumeId(1)]
+	vl.accessLock.RUnlock()
+	if stillCrowded {
+		t.Error("a volume that became read-only kept its crowded entry")
+	}
+}
