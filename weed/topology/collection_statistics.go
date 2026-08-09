@@ -91,7 +91,12 @@ func (t *Topology) CollectionStatistics() []*CollectionStatistics {
 				stats.Size += largest.Size
 				stats.FileCount += uint64(largest.FileCount)
 				stats.DeleteCount += uint64(largest.DeleteCount)
-				stats.DeletedByteCount += largest.DeletedByteCount
+				// Never more deletions than the volume holds. Live usage is
+				// read as the collection's size less its deletions, so a volume
+				// reporting more deleted bytes than it has would cancel live
+				// bytes belonging to other volumes and report the bucket
+				// smaller than it is.
+				stats.DeletedByteCount += largest.Size - largestLive
 				stats.VolumeCount++
 			}
 			vl.accessLock.RUnlock()

@@ -280,3 +280,30 @@ func TestCollectionStatisticsPicksTheReplicaHoldingTheMostLiveData(t *testing.T)
 		t.Errorf("physical size %d, want both replicas summed", stats.PhysicalSize)
 	}
 }
+
+// Live usage is read as the collection's size less its deletions, so a volume
+// reporting more deleted bytes than it holds must not cancel live bytes
+// belonging to other volumes in the same bucket.
+func TestCollectionStatisticsDeletionsNeverExceedTheVolume(t *testing.T) {
+	topo := NewTopology("stats", nil, 32*1024*1024*1024, 5, false)
+	dn := topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+		GetOrCreateDataNode("10.0.0.1", 8080, 18080, "", "a", map[string]uint32{"": 100})
+
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{
+		// More deleted bytes than the volume holds, which a compaction can
+		// leave behind, and a healthy volume beside it.
+		{Id: 1, Collection: "bucket-a", Size: 100, DeletedByteCount: 500, Version: 3},
+		{Id: 2, Collection: "bucket-a", Size: 1000, DeletedByteCount: 0, Version: 3},
+	}, dn)
+
+	stats := statsByCollection(topo)["bucket-a"]
+	if stats == nil {
+		t.Fatal("expected bucket-a to be reported")
+	}
+	if stats.DeletedByteCount > stats.Size {
+		t.Errorf("deletions %d exceed size %d, so live usage reads as zero", stats.DeletedByteCount, stats.Size)
+	}
+	if live := stats.Size - stats.DeletedByteCount; live != 1000 {
+		t.Errorf("reported %d bytes live, want the 1000 the second volume holds", live)
+	}
+}
