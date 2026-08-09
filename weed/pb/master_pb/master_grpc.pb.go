@@ -28,6 +28,7 @@ const (
 	Seaweed_CollectionList_FullMethodName         = "/master_pb.Seaweed/CollectionList"
 	Seaweed_CollectionDelete_FullMethodName       = "/master_pb.Seaweed/CollectionDelete"
 	Seaweed_VolumeList_FullMethodName             = "/master_pb.Seaweed/VolumeList"
+	Seaweed_VolumeListStream_FullMethodName       = "/master_pb.Seaweed/VolumeListStream"
 	Seaweed_LookupEcVolume_FullMethodName         = "/master_pb.Seaweed/LookupEcVolume"
 	Seaweed_VacuumVolume_FullMethodName           = "/master_pb.Seaweed/VacuumVolume"
 	Seaweed_DisableVacuum_FullMethodName          = "/master_pb.Seaweed/DisableVacuum"
@@ -60,6 +61,7 @@ type SeaweedClient interface {
 	CollectionList(ctx context.Context, in *CollectionListRequest, opts ...grpc.CallOption) (*CollectionListResponse, error)
 	CollectionDelete(ctx context.Context, in *CollectionDeleteRequest, opts ...grpc.CallOption) (*CollectionDeleteResponse, error)
 	VolumeList(ctx context.Context, in *VolumeListRequest, opts ...grpc.CallOption) (*VolumeListResponse, error)
+	VolumeListStream(ctx context.Context, in *VolumeListRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VolumeListStreamResponse], error)
 	LookupEcVolume(ctx context.Context, in *LookupEcVolumeRequest, opts ...grpc.CallOption) (*LookupEcVolumeResponse, error)
 	VacuumVolume(ctx context.Context, in *VacuumVolumeRequest, opts ...grpc.CallOption) (*VacuumVolumeResponse, error)
 	DisableVacuum(ctx context.Context, in *DisableVacuumRequest, opts ...grpc.CallOption) (*DisableVacuumResponse, error)
@@ -185,6 +187,25 @@ func (c *seaweedClient) VolumeList(ctx context.Context, in *VolumeListRequest, o
 	}
 	return out, nil
 }
+
+func (c *seaweedClient) VolumeListStream(ctx context.Context, in *VolumeListRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VolumeListStreamResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Seaweed_ServiceDesc.Streams[3], Seaweed_VolumeListStream_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[VolumeListRequest, VolumeListStreamResponse]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Seaweed_VolumeListStreamClient = grpc.ServerStreamingClient[VolumeListStreamResponse]
 
 func (c *seaweedClient) LookupEcVolume(ctx context.Context, in *LookupEcVolumeRequest, opts ...grpc.CallOption) (*LookupEcVolumeResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -369,6 +390,7 @@ type SeaweedServer interface {
 	CollectionList(context.Context, *CollectionListRequest) (*CollectionListResponse, error)
 	CollectionDelete(context.Context, *CollectionDeleteRequest) (*CollectionDeleteResponse, error)
 	VolumeList(context.Context, *VolumeListRequest) (*VolumeListResponse, error)
+	VolumeListStream(*VolumeListRequest, grpc.ServerStreamingServer[VolumeListStreamResponse]) error
 	LookupEcVolume(context.Context, *LookupEcVolumeRequest) (*LookupEcVolumeResponse, error)
 	VacuumVolume(context.Context, *VacuumVolumeRequest) (*VacuumVolumeResponse, error)
 	DisableVacuum(context.Context, *DisableVacuumRequest) (*DisableVacuumResponse, error)
@@ -422,6 +444,9 @@ func (UnimplementedSeaweedServer) CollectionDelete(context.Context, *CollectionD
 }
 func (UnimplementedSeaweedServer) VolumeList(context.Context, *VolumeListRequest) (*VolumeListResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method VolumeList not implemented")
+}
+func (UnimplementedSeaweedServer) VolumeListStream(*VolumeListRequest, grpc.ServerStreamingServer[VolumeListStreamResponse]) error {
+	return status.Error(codes.Unimplemented, "method VolumeListStream not implemented")
 }
 func (UnimplementedSeaweedServer) LookupEcVolume(context.Context, *LookupEcVolumeRequest) (*LookupEcVolumeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method LookupEcVolume not implemented")
@@ -623,6 +648,17 @@ func _Seaweed_VolumeList_Handler(srv interface{}, ctx context.Context, dec func(
 	}
 	return interceptor(ctx, in, info, handler)
 }
+
+func _Seaweed_VolumeListStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(VolumeListRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(SeaweedServer).VolumeListStream(m, &grpc.GenericServerStream[VolumeListRequest, VolumeListStreamResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Seaweed_VolumeListStreamServer = grpc.ServerStreamingServer[VolumeListStreamResponse]
 
 func _Seaweed_LookupEcVolume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(LookupEcVolumeRequest)
@@ -1048,6 +1084,11 @@ var Seaweed_ServiceDesc = grpc.ServiceDesc{
 			Handler:       _Seaweed_StreamAssign_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
+		},
+		{
+			StreamName:    "VolumeListStream",
+			Handler:       _Seaweed_VolumeListStream_Handler,
+			ServerStreams: true,
 		},
 	},
 	Metadata: "master.proto",
