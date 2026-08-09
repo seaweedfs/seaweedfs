@@ -35,73 +35,6 @@ const (
 	NoWritableVolumes             = "No writable volumes"
 )
 
-type stateIndicator func(copyState) bool
-
-func ExistCopies() stateIndicator {
-	return func(state copyState) bool { return state != noCopies }
-}
-
-type volumesBinaryState struct {
-	rp        *super_block.ReplicaPlacement
-	name      volumeState    // the name for volume state (eg. "Readonly", "Oversized")
-	indicator stateIndicator // indicate whether the volumes should be marked as `name`
-	copyMap   map[needle.VolumeId]*VolumeLocationList
-}
-
-func NewVolumesBinaryState(name volumeState, rp *super_block.ReplicaPlacement, indicator stateIndicator) *volumesBinaryState {
-	return &volumesBinaryState{
-		rp:        rp,
-		name:      name,
-		indicator: indicator,
-		copyMap:   make(map[needle.VolumeId]*VolumeLocationList),
-	}
-}
-
-func (v *volumesBinaryState) Dump() (res []uint32) {
-	for vid, list := range v.copyMap {
-		if v.indicator(v.copyState(list)) {
-			res = append(res, uint32(vid))
-		}
-	}
-	return
-}
-
-func (v *volumesBinaryState) IsTrue(vid needle.VolumeId) bool {
-	list, _ := v.copyMap[vid]
-	return v.indicator(v.copyState(list))
-}
-
-func (v *volumesBinaryState) Add(vid needle.VolumeId, dn *DataNode) {
-	list, _ := v.copyMap[vid]
-	if list != nil {
-		list.Set(dn)
-		return
-	}
-	list = NewVolumeLocationList()
-	list.Set(dn)
-	v.copyMap[vid] = list
-}
-
-func (v *volumesBinaryState) Remove(vid needle.VolumeId, dn *DataNode) {
-	list, _ := v.copyMap[vid]
-	if list != nil {
-		list.Remove(dn)
-		if list.Length() == 0 {
-			delete(v.copyMap, vid)
-		}
-	}
-}
-
-func (v *volumesBinaryState) copyState(list *VolumeLocationList) copyState {
-	if list == nil {
-		return noCopies
-	}
-	if list.Length() < v.rp.GetCopyCount() {
-		return insufficientCopies
-	}
-	return enoughCopies
-}
-
 // volumeSizeTracking holds per-volume size accounting for weighted assignment.
 type volumeSizeTracking struct {
 	effectiveSize   uint64    // reported + pending assigned bytes
@@ -128,8 +61,6 @@ type VolumeLayout struct {
 	vid2location     map[needle.VolumeId]*VolumeLocationList
 	writables        []needle.VolumeId // transient array of writable volume id
 	crowded          map[needle.VolumeId]struct{}
-	readonlyVolumes  *volumesBinaryState // readonly volumes
-	oversizedVolumes *volumesBinaryState // oversized volumes
 	vacuumedVolumes  map[needle.VolumeId]time.Time
 	volumeSizeLimit  uint64
 	replicationAsMin bool
@@ -154,8 +85,6 @@ func NewVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType
 		vid2location:     make(map[needle.VolumeId]*VolumeLocationList),
 		writables:        *new([]needle.VolumeId),
 		crowded:          make(map[needle.VolumeId]struct{}),
-		readonlyVolumes:  NewVolumesBinaryState(readOnlyState, rp, ExistCopies()),
-		oversizedVolumes: NewVolumesBinaryState(oversizedState, rp, ExistCopies()),
 		vacuumedVolumes:  make(map[needle.VolumeId]time.Time),
 		volumeSizeLimit:  volumeSizeLimit,
 		replicationAsMin: replicationAsMin,
@@ -201,20 +130,20 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 		vl.initSizeTracking(v.Id, v.Size, v.CompactRevision)
 	}
 	// glog.V(4).Infof("volume %d added to %s len %d copy %d", v.Id, dn.Id(), vl.vid2location[v.Id].Length(), v.ReplicaPlacement.GetCopyCount())
-	for _, dn := range vl.vid2location[v.Id].list {
+	location := vl.vid2location[v.Id]
+	for _, dn := range location.list {
 		if vInfo, err := dn.GetVolumesById(v.Id); err == nil {
 			if vInfo.ReadOnly {
 				glog.V(1).Infof("vid %d removed from writable", v.Id)
 				vl.removeFromWritable(v.Id)
-				vl.readonlyVolumes.Add(v.Id, dn)
+				location.SetReadOnly(dn, true)
 				return
-			} else {
-				vl.readonlyVolumes.Remove(v.Id, dn)
 			}
+			location.SetReadOnly(dn, false)
 		} else {
 			glog.V(1).Infof("vid %d removed from writable", v.Id)
 			vl.removeFromWritable(v.Id)
-			vl.readonlyVolumes.Remove(v.Id, dn)
+			location.SetReadOnly(dn, false)
 			return
 		}
 	}
@@ -222,10 +151,8 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 }
 
 func (vl *VolumeLayout) rememberOversizedVolume(v *storage.VolumeInfo, dn *DataNode) {
-	if vl.isOversized(v) {
-		vl.oversizedVolumes.Add(v.Id, dn)
-	} else {
-		vl.oversizedVolumes.Remove(v.Id, dn)
+	if location, ok := vl.vid2location[v.Id]; ok {
+		location.SetOversized(dn, vl.isOversized(v))
 	}
 }
 
@@ -305,7 +232,7 @@ func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint6
 	if reportedSize >= vl.volumeSizeLimit {
 		return false // actual on-disk size still over limit; stay out
 	}
-	if vl.oversizedVolumes.IsTrue(vid) {
+	if vl.vid2location[vid].AnyOversized() {
 		return false
 	}
 	if !vl.enoughCopies(vid) || !vl.isAllWritable(vid) {
@@ -333,8 +260,6 @@ func (vl *VolumeLayout) UnRegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 	if removed := location.Remove(dn); removed != nil {
 		moveLookupOwnership(v.Id, removed, nil)
 
-		vl.readonlyVolumes.Remove(v.Id, dn)
-		vl.oversizedVolumes.Remove(v.Id, dn)
 		vl.ensureCorrectWritables(v.Id)
 
 		if location.Length() == 0 {
@@ -356,7 +281,7 @@ func (vl *VolumeLayout) EnsureCorrectWritables(v *storage.VolumeInfo) {
 func (vl *VolumeLayout) ensureCorrectWritables(vid needle.VolumeId) {
 	isEnoughCopies := vl.enoughCopies(vid)
 	isAllWritable := vl.isAllWritable(vid)
-	isOversizedVolume := vl.oversizedVolumes.IsTrue(vid)
+	isOversizedVolume := vl.vid2location[vid].AnyOversized()
 	if isEnoughCopies && isAllWritable && !isOversizedVolume {
 		vl.setVolumeWritable(vid)
 		return
@@ -869,8 +794,8 @@ func (vl *VolumeLayout) SetVolumeReadOnly(dn *DataNode, vid needle.VolumeId) boo
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
-	if _, ok := vl.vid2location[vid]; ok {
-		vl.readonlyVolumes.Add(vid, dn)
+	if location, ok := vl.vid2location[vid]; ok {
+		location.SetReadOnly(dn, true)
 		return vl.removeFromWritable(vid)
 	}
 	return true
@@ -880,8 +805,8 @@ func (vl *VolumeLayout) SetVolumeWritable(dn *DataNode, vid needle.VolumeId) boo
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
-	if _, ok := vl.vid2location[vid]; ok {
-		vl.readonlyVolumes.Remove(vid, dn)
+	if location, ok := vl.vid2location[vid]; ok {
+		location.SetReadOnly(dn, false)
 	}
 
 	if vl.enoughCopies(vid) {
@@ -897,8 +822,6 @@ func (vl *VolumeLayout) SetVolumeUnavailable(dn *DataNode, vid needle.VolumeId) 
 	if location, ok := vl.vid2location[vid]; ok {
 		if removed := location.Remove(dn); removed != nil {
 			moveLookupOwnership(vid, removed, nil)
-			vl.readonlyVolumes.Remove(vid, dn)
-			vl.oversizedVolumes.Remove(vid, dn)
 			wasWritable := false
 			if location.Length() < vl.rp.GetCopyCount() {
 				glog.V(0).Infoln("Volume", vid, "has", location.Length(), "replica, less than required", vl.rp.GetCopyCount())
@@ -1044,7 +967,7 @@ func (vl *VolumeLayout) Stats() *VolumeLayoutStats {
 		ret.FileCount += uint64(fileCount)
 		ret.UsedSize += size * uint64(vll.Length())
 		ret.LogicalUsedSize += size
-		if vl.readonlyVolumes.IsTrue(vid) {
+		if vll.AnyReadOnly() {
 			ret.TotalSize += size * uint64(vll.Length())
 		} else {
 			ret.TotalSize += vl.volumeSizeLimit * uint64(vll.Length())
