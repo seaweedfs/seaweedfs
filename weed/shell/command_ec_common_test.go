@@ -4,7 +4,9 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/stretchr/testify/assert"
 )
 
 // countFreeShardSlots must report zero for a physically near-full disk even
@@ -34,4 +36,16 @@ func TestCountFreeShardSlotsPhysicalDiskGate(t *testing.T) {
 	if got := countFreeShardSlots(mk(0, 0), types.HardDriveType); got <= 0 {
 		t.Errorf("unreported-bytes disk free shard slots = %d, want > 0 (slot fallback)", got)
 	}
+}
+
+func TestParseVolumeIdsFlag(t *testing.T) {
+	vids, err := parseVolumeIdsFlag("101, 102,101, 103")
+	assert.NoError(t, err)
+	assert.Equal(t, []needle.VolumeId{101, 102, 103}, vids)
+
+	_, err = parseVolumeIdsFlag("101,abc")
+	assert.Error(t, err)
+
+	_, err = parseVolumeIdsFlag(" , ")
+	assert.Error(t, err)
 }

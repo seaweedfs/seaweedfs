@@ -163,7 +163,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 		if *volumeId != 0 {
 			volumeIds = append(volumeIds, needle.VolumeId(*volumeId))
 		} else {
-			volumeIds, err = parseEcEncodeVolumeIds(*volumeIdsStr)
+			volumeIds, err = parseVolumeIdsFlag(*volumeIdsStr)
 			if err != nil {
 				return err
 			}
@@ -200,33 +200,6 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	}
 
 	return nil
-}
-
-func parseEcEncodeVolumeIds(volumeIdsStr string) ([]needle.VolumeId, error) {
-	var volumeIds []needle.VolumeId
-	seen := make(map[needle.VolumeId]bool)
-	for _, part := range strings.Split(volumeIdsStr, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		vidValue, err := strconv.ParseUint(part, 10, 32)
-		if err != nil || vidValue == 0 {
-			return nil, fmt.Errorf("invalid volume id %q in -volumeIds", part)
-		}
-		// ParseUint with bitSize 32 bounds the value; convert through uint32
-		// (matching the rest of the codebase) so the narrowing is provably safe.
-		vid := needle.VolumeId(uint32(vidValue))
-		if seen[vid] {
-			continue
-		}
-		seen[vid] = true
-		volumeIds = append(volumeIds, vid)
-	}
-	if len(volumeIds) == 0 {
-		return nil, fmt.Errorf("-volumeIds does not contain any valid volume id")
-	}
-	return volumeIds, nil
 }
 
 func chunkVolumeIds(volumeIds []needle.VolumeId, batchSize int) [][]needle.VolumeId {
@@ -288,7 +261,7 @@ func processEcEncodeBatch(commandEnv *CommandEnv, writer io.Writer, volumeIds []
 	// safely verified and deleted without waiting for all batches to finish.
 	// skippedNodes are excluded so a recovered node's stale orphan is never
 	// paired with a new-generation shard.
-	if err := EcBalance(commandEnv, balanceCollections, "", rp, diskType, maxParallelization, applyBalancing, skippedNodes); err != nil {
+	if err := EcBalance(commandEnv, balanceCollections, "", rp, diskType, maxParallelization, applyBalancing, skippedNodes, nil); err != nil {
 		return fmt.Errorf("re-balance ec shards for collection(s) %v: %w", balanceCollections, err)
 	}
 	if err := verifyEcShardsBeforeDelete(commandEnv, volumeIds, diskType, applyBalancing); err != nil {
@@ -518,7 +491,7 @@ func clearPreexistingEcShards(commandEnv *CommandEnv, topologyInfo *master_pb.To
 	// it. Always delete the full shard-id range so a wider custom ratio's
 	// leftovers are covered too.
 	reportedKey := func(addr pb.ServerAddress, vid uint32) string {
-		return string(addr) + "\x00" + strconv.Itoa(int(vid))
+		return string(addr) + "\x00" + strconv.FormatUint(uint64(vid), 10)
 	}
 	reported := make(map[string]struct{})
 	var nodes []pb.ServerAddress
