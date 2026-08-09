@@ -155,14 +155,14 @@ func (h *ClusterHandlers) ShowVolumeDetails(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	volumeID, err := strconv.Atoi(volumeIDStr)
+	volumeID, err := strconv.ParseUint(volumeIDStr, 10, 32)
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Invalid volume ID")
 		return
 	}
 
 	// Get volume details
-	volumeDetails, err := h.adminServer.GetVolumeDetails(volumeID, server)
+	volumeDetails, err := h.adminServer.GetVolumeDetails(uint32(volumeID), server)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "Failed to get volume details: "+err.Error())
 		return
