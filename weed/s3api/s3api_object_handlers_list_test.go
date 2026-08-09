@@ -241,21 +241,25 @@ func Test_normalizePrefixMarker(t *testing.T) {
 
 func TestBuildTruncatedNextMarker(t *testing.T) {
 	t.Run("does not duplicate prefix segment in next continuation token", func(t *testing.T) {
-		prefix := "export_2026-02-10_17-00-23"
 		nextMarker := "export_2026-02-10_17-00-23/4156000e.jpg"
 
-		actual := buildTruncatedNextMarker("xemu", prefix, nextMarker, false, "")
+		actual := buildTruncatedNextMarker("xemu", nextMarker, false, "")
 		assert.Equal(t, "xemu/export_2026-02-10_17-00-23/4156000e.jpg", actual)
 	})
 
 	t.Run("keeps common prefix marker trailing slash", func(t *testing.T) {
-		actual := buildTruncatedNextMarker("xemu", "export_2026-02-10_17-00-23", "", true, "nested")
+		actual := buildTruncatedNextMarker("xemu", "", true, "xemu/export_2026-02-10_17-00-23/nested/")
 		assert.Equal(t, "xemu/export_2026-02-10_17-00-23/nested/", actual)
 	})
 
-	t.Run("includes prefix for common prefix marker when request dir is empty", func(t *testing.T) {
-		actual := buildTruncatedNextMarker("", "foo", "", true, "bar")
+	t.Run("keeps common prefix marker when request dir is empty", func(t *testing.T) {
+		actual := buildTruncatedNextMarker("", "", true, "foo/bar/")
 		assert.Equal(t, "foo/bar/", actual)
+	})
+
+	t.Run("does not fold a partial name prefix into the common prefix marker", func(t *testing.T) {
+		actual := buildTruncatedNextMarker("data", "", true, "data/ab/")
+		assert.Equal(t, "data/ab/", actual)
 	})
 }
 
