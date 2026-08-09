@@ -442,7 +442,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 	deletedCount := 0
 
 	// Per-key authorization: keys arrive in the body, so the route Auth middleware
-	// only authenticated. Authorize each key via AuthorizeBatchDeleteKey below.
+	// only authenticated. Authorize each key via AuthorizeObjectDelete below.
 	var identity *Identity
 	if id := s3_constants.GetIdentityFromContext(r); id != nil {
 		identity, _ = id.(*Identity)
@@ -462,7 +462,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 				deleteErrors = append(deleteErrors, deleteErrorFromCode(s3err.ErrAccessDenied, object.Key, object.VersionId))
 				continue
 			}
-			if authErr := s3a.iam.AuthorizeBatchDeleteKey(r, identity, bucket, object.Key, object.VersionId); authErr != s3err.ErrNone {
+			if authErr := s3a.iam.AuthorizeObjectDelete(r, identity, bucket, object.Key, object.VersionId); authErr != s3err.ErrNone {
 				deleteErrors = append(deleteErrors, deleteErrorFromCode(authErr, object.Key, object.VersionId))
 				continue
 			}

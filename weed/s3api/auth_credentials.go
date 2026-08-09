@@ -1671,7 +1671,7 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 
 	// Batch DeleteObjects keys arrive in the body, not the URL: a bucket-level check
 	// here can't match object-scoped policies. DeleteMultipleObjectsHandler authorizes
-	// each key via AuthorizeBatchDeleteKey.
+	// each key via AuthorizeObjectDelete.
 	if action == s3_constants.ACTION_WRITE && r.Method == http.MethodPost &&
 		object == "" && r.URL.Query().Has("delete") {
 		r.Header.Set(s3_constants.AmzAccountId, identity.Account.Id)
@@ -2739,11 +2739,11 @@ func (iam *IdentityAccessManagement) AuthorizeCopySource(r *http.Request, identi
 	return iam.VerifyActionPermission(srcReq, identity, Action(action), srcBucket, srcObject)
 }
 
-// AuthorizeBatchDeleteKey authorizes one key from a DeleteObjects body. The route
-// Auth middleware only authenticated the caller (keys arrive in the body, not the
-// URL), so each key is checked here against a synthetic DELETE /<bucket>/<key> that
-// makes ResolveS3Action and buildResourceARN target the object. Mirrors AuthorizeCopySource.
-func (iam *IdentityAccessManagement) AuthorizeBatchDeleteKey(r *http.Request, identity *Identity, bucket, objectKey, versionId string) s3err.ErrorCode {
+// AuthorizeObjectDelete authorizes removing one key the request URL does not
+// name: a key from a DeleteObjects body, or the source of a RenameObject. It is
+// checked against a synthetic DELETE /<bucket>/<key> so that ResolveS3Action and
+// buildResourceARN target the object. Mirrors AuthorizeCopySource.
+func (iam *IdentityAccessManagement) AuthorizeObjectDelete(r *http.Request, identity *Identity, bucket, objectKey, versionId string) s3err.ErrorCode {
 	if !iam.isEnabled() {
 		return s3err.ErrNone
 	}

@@ -1502,56 +1502,69 @@ func (s3a *S3ApiServer) copyChunksForRange(entry *filer_pb.Entry, startOffset, e
 
 // Helper methods for copy operations to avoid code duplication
 
+// sourceConditionalHeaderNames names the four headers an operation uses to make
+// itself conditional on the state of its source object. CopyObject spells them
+// x-amz-copy-source-if-*, RenameObject x-amz-rename-source-if-*.
+type sourceConditionalHeaderNames struct {
+	ifMatch           string
+	ifNoneMatch       string
+	ifModifiedSince   string
+	ifUnmodifiedSince string
+}
+
+var copySourceConditionalHeaders = sourceConditionalHeaderNames{
+	ifMatch:           s3_constants.AmzCopySourceIfMatch,
+	ifNoneMatch:       s3_constants.AmzCopySourceIfNoneMatch,
+	ifModifiedSince:   s3_constants.AmzCopySourceIfModifiedSince,
+	ifUnmodifiedSince: s3_constants.AmzCopySourceIfUnmodifiedSince,
+}
+
 // validateConditionalCopyHeaders validates the conditional copy headers against the source entry
 func (s3a *S3ApiServer) validateConditionalCopyHeaders(r *http.Request, entry *filer_pb.Entry) s3err.ErrorCode {
-	sourceETag := copyEntryETag(entry)
+	return validateSourceConditionalHeaders(r, entry, copySourceConditionalHeaders)
+}
 
-	// Check X-Amz-Copy-Source-If-Match
-	if ifMatch := r.Header.Get(s3_constants.AmzCopySourceIfMatch); ifMatch != "" {
-		// Remove quotes if present
+// validateSourceConditionalHeaders evaluates the conditional headers against an
+// already-resolved source entry, so the source is known to exist here.
+func validateSourceConditionalHeaders(r *http.Request, entry *filer_pb.Entry, names sourceConditionalHeaderNames) s3err.ErrorCode {
+	sourceETag := strings.Trim(copyEntryETag(entry), `"`)
+
+	if ifMatch := r.Header.Get(names.ifMatch); ifMatch != "" {
 		ifMatch = strings.Trim(ifMatch, `"`)
-		sourceETag = strings.Trim(sourceETag, `"`)
-		glog.V(3).Infof("CopyObjectHandler: If-Match check - expected %s, got %s", ifMatch, sourceETag)
-		if ifMatch != sourceETag {
-			glog.V(3).Infof("CopyObjectHandler: If-Match failed - expected %s, got %s", ifMatch, sourceETag)
+		if ifMatch != "*" && ifMatch != sourceETag {
+			glog.V(3).Infof("%s failed - expected %s, got %s", names.ifMatch, ifMatch, sourceETag)
 			return s3err.ErrPreconditionFailed
 		}
 	}
 
-	// Check X-Amz-Copy-Source-If-None-Match
-	if ifNoneMatch := r.Header.Get(s3_constants.AmzCopySourceIfNoneMatch); ifNoneMatch != "" {
-		// Remove quotes if present
+	if ifNoneMatch := r.Header.Get(names.ifNoneMatch); ifNoneMatch != "" {
 		ifNoneMatch = strings.Trim(ifNoneMatch, `"`)
-		sourceETag = strings.Trim(sourceETag, `"`)
-		glog.V(3).Infof("CopyObjectHandler: If-None-Match check - comparing %s with %s", ifNoneMatch, sourceETag)
-		if ifNoneMatch == sourceETag {
-			glog.V(3).Infof("CopyObjectHandler: If-None-Match failed - matched %s", sourceETag)
+		if ifNoneMatch == "*" || ifNoneMatch == sourceETag {
+			glog.V(3).Infof("%s failed - matched %s", names.ifNoneMatch, sourceETag)
 			return s3err.ErrPreconditionFailed
 		}
 	}
 
-	// Check X-Amz-Copy-Source-If-Modified-Since
-	if ifModifiedSince := r.Header.Get(s3_constants.AmzCopySourceIfModifiedSince); ifModifiedSince != "" {
+	if ifModifiedSince := r.Header.Get(names.ifModifiedSince); ifModifiedSince != "" {
 		t, err := parseHTTPDate(ifModifiedSince)
 		if err != nil {
-			glog.V(3).Infof("CopyObjectHandler: Invalid If-Modified-Since header: %v", err)
+			glog.V(3).Infof("invalid %s header: %v", names.ifModifiedSince, err)
 			return s3err.ErrInvalidRequest
 		}
 		if !time.Unix(entry.Attributes.Mtime, 0).After(t) {
-			glog.V(3).Infof("CopyObjectHandler: If-Modified-Since failed")
+			glog.V(3).Infof("%s failed", names.ifModifiedSince)
 			return s3err.ErrPreconditionFailed
 		}
 	}
 
-	// Check X-Amz-Copy-Source-If-Unmodified-Since
-	if ifUnmodifiedSince := r.Header.Get(s3_constants.AmzCopySourceIfUnmodifiedSince); ifUnmodifiedSince != "" {
+	if ifUnmodifiedSince := r.Header.Get(names.ifUnmodifiedSince); ifUnmodifiedSince != "" {
 		t, err := parseHTTPDate(ifUnmodifiedSince)
 		if err != nil {
-			glog.V(3).Infof("CopyObjectHandler: Invalid If-Unmodified-Since header: %v", err)
+			glog.V(3).Infof("invalid %s header: %v", names.ifUnmodifiedSince, err)
 			return s3err.ErrInvalidRequest
 		}
 		if time.Unix(entry.Attributes.Mtime, 0).After(t) {
-			glog.V(3).Infof("CopyObjectHandler: If-Unmodified-Since failed")
+			glog.V(3).Infof("%s failed", names.ifUnmodifiedSince)
 			return s3err.ErrPreconditionFailed
 		}
 	}

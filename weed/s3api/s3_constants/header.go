@@ -106,6 +106,13 @@ const (
 	AmzCopySourceIfModifiedSince   = "X-Amz-Copy-Source-If-Modified-Since"
 	AmzCopySourceIfUnmodifiedSince = "X-Amz-Copy-Source-If-Unmodified-Since"
 
+	// RenameObject
+	AmzRenameSource                  = "X-Amz-Rename-Source"
+	AmzRenameSourceIfMatch           = "X-Amz-Rename-Source-If-Match"
+	AmzRenameSourceIfNoneMatch       = "X-Amz-Rename-Source-If-None-Match"
+	AmzRenameSourceIfModifiedSince   = "X-Amz-Rename-Source-If-Modified-Since"
+	AmzRenameSourceIfUnmodifiedSince = "X-Amz-Rename-Source-If-Unmodified-Since"
+
 	// S3 Server-Side Encryption with Customer-provided Keys (SSE-C)
 	AmzServerSideEncryptionCustomerAlgorithm = "X-Amz-Server-Side-Encryption-Customer-Algorithm"
 	AmzServerSideEncryptionCustomerKey       = "X-Amz-Server-Side-Encryption-Customer-Key"

@@ -163,6 +163,9 @@ const (
 
 	// Peer went away before the request body was fully received
 	ErrClientDisconnected
+
+	ErrInvalidRenameSource
+	ErrRenameDestinationSameAsSource
 )
 
 // Error message constants for checksum validation
@@ -347,6 +350,16 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrInvalidCopySource: {
 		Code:           "InvalidArgument",
 		Description:    "Copy Source must mention the source bucket and key: sourcebucket/sourcekey.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrInvalidRenameSource: {
+		Code:           "InvalidArgument",
+		Description:    "Rename Source must mention the source bucket and key: sourcebucket/sourcekey.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrRenameDestinationSameAsSource: {
+		Code:           "InvalidRequest",
+		Description:    "This rename request is illegal because it is trying to rename an object to itself.",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 	ErrInvalidTag: {
