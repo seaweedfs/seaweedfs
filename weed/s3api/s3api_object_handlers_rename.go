@@ -35,11 +35,12 @@ var renameSourceConditionalHeaders = sourceConditionalHeaderNames{
 func (s3a *S3ApiServer) RenameObjectHandler(w http.ResponseWriter, r *http.Request) {
 	bucket, dstObject := s3_constants.GetBucketAndObject(r)
 
-	srcObject, errCode := renameSourceObject(r, bucket)
+	candidates, errCode := renameSourceCandidates(r, bucket)
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
+	srcObject := s3a.pickRenameSource(bucket, candidates)
 
 	glog.V(3).Infof("RenameObjectHandler %s: %s => %s", bucket, srcObject, dstObject)
 
@@ -111,14 +112,20 @@ func (s3a *S3ApiServer) RenameObjectHandler(w http.ResponseWriter, r *http.Reque
 	writeSuccessResponseEmpty(w, r)
 }
 
-// renameSourceObject reads x-amz-rename-source, which names the source the same
-// way x-amz-copy-source does: an optionally leading-slashed bucket/key. The
-// bucket must be the request's own, since the filer refuses to move an entry
-// across buckets and AWS renames within one bucket too.
-func renameSourceObject(r *http.Request, bucket string) (string, s3err.ErrorCode) {
+// renameSourceCandidates reads x-amz-rename-source into the source keys it may
+// mean, best guess first.
+//
+// AWS spells the source both ways: its CLI, Java and Rust examples pass a bare
+// key, while a second CLI example and the boto3 conditional example pass
+// bucket/key. A value is therefore read as a literal key first — that is the
+// form AWS leads with, and it is the only reading that can never name the wrong
+// object — and, when it is prefixed with the request's own bucket, as that
+// bucket-qualified form second. There is no cross-bucket reading: RenameObject
+// moves within one bucket, and the filer refuses to move an entry between two.
+func renameSourceCandidates(r *http.Request, bucket string) ([]string, s3err.ErrorCode) {
 	rawSource := r.Header.Get(s3_constants.AmzRenameSource)
 	if rawSource == "" {
-		return "", s3err.ErrInvalidRenameSource
+		return nil, s3err.ErrInvalidRenameSource
 	}
 	// PathUnescape, not QueryUnescape: the value is a path, where '+' is a
 	// literal plus and not a space.
@@ -127,17 +134,43 @@ func renameSourceObject(r *http.Request, bucket string) (string, s3err.ErrorCode
 		source = rawSource
 	}
 
-	srcBucket, srcObject := pathToBucketAndObject(source)
-	srcObject = s3_constants.NormalizeObjectKey(srcObject)
-	if srcBucket != bucket || srcObject == "" {
-		return "", s3err.ErrInvalidRenameSource
+	// NormalizeObjectKey drops the leading slash both forms may carry.
+	source = s3_constants.NormalizeObjectKey(source)
+	if source == "" {
+		return nil, s3err.ErrInvalidRenameSource
+	}
+
+	candidates := []string{source}
+	if qualified := strings.TrimPrefix(source, bucket+"/"); qualified != source && qualified != "" {
+		candidates = append(candidates, qualified)
 	}
 	// `.`/`..` segments are collapsed by the filer's path join, so reject them
 	// here as the request URL's own key already is.
-	if !s3_constants.IsValidObjectKey(srcObject) {
-		return "", s3err.ErrInvalidRenameSource
+	for _, candidate := range candidates {
+		if !s3_constants.IsValidObjectKey(candidate) {
+			return nil, s3err.ErrInvalidRenameSource
+		}
 	}
-	return srcObject, s3err.ErrNone
+	return candidates, s3err.ErrNone
+}
+
+// pickRenameSource resolves which reading of the source header the bucket
+// actually holds. A single candidate is returned unprobed, so the common bare
+// key costs no extra lookup; when both readings are possible the one that names
+// a live object wins, and when neither does the last is reported missing.
+func (s3a *S3ApiServer) pickRenameSource(bucket string, candidates []string) string {
+	for _, candidate := range candidates[:len(candidates)-1] {
+		// A trailing slash never names an object, and never reaches a usable
+		// directory/name split either.
+		if strings.HasSuffix(candidate, "/") {
+			continue
+		}
+		entry, err := s3a.resolveCopySourceEntry(bucket, candidate, "", "")
+		if classifyCopySourceError(entry, err) == s3err.ErrNone {
+			return candidate
+		}
+	}
+	return candidates[len(candidates)-1]
 }
 
 func (s3a *S3ApiServer) authorizeRenameSource(r *http.Request, bucket, srcObject string) s3err.ErrorCode {

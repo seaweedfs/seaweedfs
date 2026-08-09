@@ -13,24 +13,33 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRenameSourceObject(t *testing.T) {
+// TestRenameSourceCandidates: AWS spells x-amz-rename-source as a bare key in
+// its CLI, Java and Rust examples and as bucket/key in a second CLI example and
+// the boto3 conditional one, so both readings have to survive parsing. The
+// literal key leads; the bucket-qualified reading follows only when the value
+// carries the request's own bucket.
+func TestRenameSourceCandidates(t *testing.T) {
 	tests := []struct {
-		name       string
-		source     string
-		wantObject string
-		wantErr    s3err.ErrorCode
+		name    string
+		source  string
+		want    []string
+		wantErr s3err.ErrorCode
 	}{
-		{"bucket qualified", "/bucket/dir/key.txt", "dir/key.txt", s3err.ErrNone},
-		{"no leading slash", "bucket/key.txt", "key.txt", s3err.ErrNone},
-		{"percent encoded", "/bucket/a%20b.txt", "a b.txt", s3err.ErrNone},
-		{"plus stays literal", "/bucket/a+b.txt", "a+b.txt", s3err.ErrNone},
-		{"duplicate slashes collapse", "/bucket//dir//key.txt", "dir/key.txt", s3err.ErrNone},
-		{"missing header", "", "", s3err.ErrInvalidRenameSource},
-		{"key without bucket", "/key.txt", "", s3err.ErrInvalidRenameSource},
-		{"another bucket", "/other/key.txt", "", s3err.ErrInvalidRenameSource},
-		{"empty key", "/bucket/", "", s3err.ErrInvalidRenameSource},
-		{"parent traversal", "/bucket/../other/key.txt", "", s3err.ErrInvalidRenameSource},
-		{"encoded parent traversal", "/bucket/%2e%2e/other/key.txt", "", s3err.ErrInvalidRenameSource},
+		{"bare key", "source.txt", []string{"source.txt"}, s3err.ErrNone},
+		{"bare key with leading slash", "/source.txt", []string{"source.txt"}, s3err.ErrNone},
+		{"bare key with prefix", "dir/source.txt", []string{"dir/source.txt"}, s3err.ErrNone},
+		{"bucket qualified", "/bucket/dir/key.txt", []string{"bucket/dir/key.txt", "dir/key.txt"}, s3err.ErrNone},
+		{"bucket qualified without leading slash", "bucket/key.txt", []string{"bucket/key.txt", "key.txt"}, s3err.ErrNone},
+		{"key whose first segment is another bucket", "other/key.txt", []string{"other/key.txt"}, s3err.ErrNone},
+		{"percent encoded", "a%20b.txt", []string{"a b.txt"}, s3err.ErrNone},
+		{"plus stays literal", "a+b.txt", []string{"a+b.txt"}, s3err.ErrNone},
+		{"duplicate slashes collapse", "//dir//key.txt", []string{"dir/key.txt"}, s3err.ErrNone},
+		{"bucket name alone is a key", "bucket", []string{"bucket"}, s3err.ErrNone},
+		{"bucket prefix with empty key", "bucket/", []string{"bucket/"}, s3err.ErrNone},
+		{"missing header", "", nil, s3err.ErrInvalidRenameSource},
+		{"parent traversal", "../other/key.txt", nil, s3err.ErrInvalidRenameSource},
+		{"encoded parent traversal", "%2e%2e/other/key.txt", nil, s3err.ErrInvalidRenameSource},
+		{"parent traversal behind the bucket", "/bucket/../other/key.txt", nil, s3err.ErrInvalidRenameSource},
 	}
 
 	for _, tc := range tests {
@@ -41,9 +50,9 @@ func TestRenameSourceObject(t *testing.T) {
 				r.Header.Set(s3_constants.AmzRenameSource, tc.source)
 			}
 
-			object, errCode := renameSourceObject(r, "bucket")
+			candidates, errCode := renameSourceCandidates(r, "bucket")
 			assert.Equal(t, tc.wantErr, errCode)
-			assert.Equal(t, tc.wantObject, object)
+			assert.Equal(t, tc.want, candidates)
 		})
 	}
 }

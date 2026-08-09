@@ -15,10 +15,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// createRenameSource builds the x-amz-rename-source value: the source bucket and
-// key, URL encoded, the way x-amz-copy-source is built.
-func createRenameSource(bucketName, key string) string {
-	return fmt.Sprintf("/%s/%s", bucketName, url.PathEscape(key))
+// createRenameSource builds the x-amz-rename-source value the way the AWS CLI,
+// Java and Rust examples do: the bare source key, URL encoded.
+func createRenameSource(key string) string {
+	return url.PathEscape(key)
+}
+
+// createQualifiedRenameSource builds the alternate bucket/key form the second
+// AWS CLI example and the boto3 conditional example use.
+func createQualifiedRenameSource(bucketName, key string) string {
+	return fmt.Sprintf("%s/%s", bucketName, url.PathEscape(key))
 }
 
 func renameObject(t *testing.T, client *s3.Client, bucketName, srcKey, dstKey string) {
@@ -26,7 +32,7 @@ func renameObject(t *testing.T, client *s3.Client, bucketName, srcKey, dstKey st
 	_, err := client.RenameObject(context.TODO(), &s3.RenameObjectInput{
 		Bucket:       aws.String(bucketName),
 		Key:          aws.String(dstKey),
-		RenameSource: aws.String(createRenameSource(bucketName, srcKey)),
+		RenameSource: aws.String(createRenameSource(srcKey)),
 	})
 	require.NoError(t, err)
 }
@@ -102,7 +108,7 @@ func TestRenameObjectIfNoneMatch(t *testing.T) {
 	_, err := client.RenameObject(context.TODO(), &s3.RenameObjectInput{
 		Bucket:                 aws.String(bucketName),
 		Key:                    aws.String("target.txt"),
-		RenameSource:           aws.String(createRenameSource(bucketName, "source.txt")),
+		RenameSource:           aws.String(createRenameSource("source.txt")),
 		DestinationIfNoneMatch: aws.String("*"),
 	})
 	requireRenameStatus(t, err, 412)
@@ -115,7 +121,7 @@ func TestRenameObjectIfNoneMatch(t *testing.T) {
 	_, err = client.RenameObject(context.TODO(), &s3.RenameObjectInput{
 		Bucket:                 aws.String(bucketName),
 		Key:                    aws.String("free.txt"),
-		RenameSource:           aws.String(createRenameSource(bucketName, "source.txt")),
+		RenameSource:           aws.String(createRenameSource("source.txt")),
 		DestinationIfNoneMatch: aws.String("*"),
 	})
 	require.NoError(t, err)
@@ -133,7 +139,7 @@ func TestRenameObjectSourceIfMatch(t *testing.T) {
 	_, err := client.RenameObject(context.TODO(), &s3.RenameObjectInput{
 		Bucket:        aws.String(bucketName),
 		Key:           aws.String("target.txt"),
-		RenameSource:  aws.String(createRenameSource(bucketName, "source.txt")),
+		RenameSource:  aws.String(createRenameSource("source.txt")),
 		SourceIfMatch: aws.String("\"00000000000000000000000000000000\""),
 	})
 	requireRenameStatus(t, err, 412)
@@ -142,7 +148,7 @@ func TestRenameObjectSourceIfMatch(t *testing.T) {
 	_, err = client.RenameObject(context.TODO(), &s3.RenameObjectInput{
 		Bucket:        aws.String(bucketName),
 		Key:           aws.String("target.txt"),
-		RenameSource:  aws.String(createRenameSource(bucketName, "source.txt")),
+		RenameSource:  aws.String(createRenameSource("source.txt")),
 		SourceIfMatch: put.ETag,
 	})
 	require.NoError(t, err)
@@ -164,7 +170,7 @@ func TestRenameObjectOntoDirectory(t *testing.T) {
 	_, err := client.RenameObject(context.TODO(), &s3.RenameObjectInput{
 		Bucket:       aws.String(bucketName),
 		Key:          aws.String("target"),
-		RenameSource: aws.String(createRenameSource(bucketName, "source.txt")),
+		RenameSource: aws.String(createRenameSource("source.txt")),
 	})
 	requireRenameStatus(t, err, 409)
 	assert.True(t, objectExists(t, client, bucketName, "source.txt"))
@@ -186,7 +192,7 @@ func TestRenameObjectDirectorySource(t *testing.T) {
 		_, err := client.RenameObject(context.TODO(), &s3.RenameObjectInput{
 			Bucket:       aws.String(bucketName),
 			Key:          aws.String("target.txt"),
-			RenameSource: aws.String(createRenameSource(bucketName, src)),
+			RenameSource: aws.String(createRenameSource(src)),
 		})
 		requireRenameStatus(t, err, 404)
 	}
@@ -204,12 +210,58 @@ func TestRenameObjectMissingSource(t *testing.T) {
 	_, err := client.RenameObject(context.TODO(), &s3.RenameObjectInput{
 		Bucket:       aws.String(bucketName),
 		Key:          aws.String("target.txt"),
-		RenameSource: aws.String(createRenameSource(bucketName, "absent.txt")),
+		RenameSource: aws.String(createRenameSource("absent.txt")),
 	})
 	requireRenameStatus(t, err, 404)
 }
 
-// TestRenameObjectCrossBucket: the source must name the request's own bucket.
+// TestRenameObjectQualifiedSource: the bucket/key form AWS's second CLI example
+// and the boto3 conditional example use resolves to the same object as the bare
+// key.
+func TestRenameObjectQualifiedSource(t *testing.T) {
+	client := getS3Client(t)
+	bucketName := getNewBucketName()
+	createBucket(t, client, bucketName)
+	defer deleteBucket(t, client, bucketName)
+
+	putObject(t, client, bucketName, "dir/source.txt", "content")
+
+	_, err := client.RenameObject(context.TODO(), &s3.RenameObjectInput{
+		Bucket:       aws.String(bucketName),
+		Key:          aws.String("target.txt"),
+		RenameSource: aws.String(createQualifiedRenameSource(bucketName, "dir/source.txt")),
+	})
+	require.NoError(t, err)
+	assert.False(t, objectExists(t, client, bucketName, "dir/source.txt"))
+	assert.Equal(t, "content", getObjectBody(t, getObject(t, client, bucketName, "target.txt")))
+}
+
+// TestRenameObjectSourceShadowingTheBucketName: a key whose own first segment is
+// the bucket name is a real key, and must win over reading the same value as a
+// bucket-qualified source.
+func TestRenameObjectSourceShadowingTheBucketName(t *testing.T) {
+	client := getS3Client(t)
+	bucketName := getNewBucketName()
+	createBucket(t, client, bucketName)
+	defer deleteBucket(t, client, bucketName)
+
+	shadowed := bucketName + "/source.txt"
+	putObject(t, client, bucketName, shadowed, "shadowed")
+	putObject(t, client, bucketName, "source.txt", "bare")
+
+	_, err := client.RenameObject(context.TODO(), &s3.RenameObjectInput{
+		Bucket:       aws.String(bucketName),
+		Key:          aws.String("target.txt"),
+		RenameSource: aws.String(createQualifiedRenameSource(bucketName, "source.txt")),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "shadowed", getObjectBody(t, getObject(t, client, bucketName, "target.txt")))
+	assert.False(t, objectExists(t, client, bucketName, shadowed))
+	assert.True(t, objectExists(t, client, bucketName, "source.txt"), "the bare key must be left alone")
+}
+
+// TestRenameObjectCrossBucket: RenameObject moves within one bucket, so another
+// bucket's name in the source is just part of a key this bucket does not hold.
 func TestRenameObjectCrossBucket(t *testing.T) {
 	client := getS3Client(t)
 	srcBucket := getNewBucketName()
@@ -224,9 +276,9 @@ func TestRenameObjectCrossBucket(t *testing.T) {
 	_, err := client.RenameObject(context.TODO(), &s3.RenameObjectInput{
 		Bucket:       aws.String(dstBucket),
 		Key:          aws.String("target.txt"),
-		RenameSource: aws.String(createRenameSource(srcBucket, "source.txt")),
+		RenameSource: aws.String(createQualifiedRenameSource(srcBucket, "source.txt")),
 	})
-	requireRenameStatus(t, err, 400)
+	requireRenameStatus(t, err, 404)
 	assert.True(t, objectExists(t, client, srcBucket, "source.txt"))
 }
 
@@ -249,7 +301,7 @@ func TestRenameObjectVersionedBucket(t *testing.T) {
 	_, err = client.RenameObject(context.TODO(), &s3.RenameObjectInput{
 		Bucket:       aws.String(bucketName),
 		Key:          aws.String("target.txt"),
-		RenameSource: aws.String(createRenameSource(bucketName, "source.txt")),
+		RenameSource: aws.String(createRenameSource("source.txt")),
 	})
 	requireRenameStatus(t, err, 501)
 	assert.True(t, objectExists(t, client, bucketName, "source.txt"))
