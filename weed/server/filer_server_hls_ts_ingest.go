@@ -90,11 +90,8 @@ func (fs *FilerServer) hlsTsIngestHandler(w http.ResponseWriter, r *http.Request
 	}
 	defer mediaPart.Close()
 
-	// HLS ingest follows configured filer storage rules. Do not forward arbitrary
-	// request query values into storage placement: those values eventually reach
-	// backend-specific database and filesystem code and must not become a second,
-	// unvalidated configuration surface for the virtual HLS endpoint.
-	so, err := fs.detectStorageOption0(ctx, sourcePath, "", "", "", "", "", "", "", "", "false")
+	query := r.URL.Query()
+	so, err := fs.detectStorageOption0(ctx, sourcePath, query.Get("collection"), query.Get("replication"), query.Get("ttl"), query.Get("disk"), query.Get("fsync"), query.Get("dataCenter"), query.Get("rack"), query.Get("dataNode"), "false")
 	if err != nil {
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
@@ -113,10 +110,7 @@ func (fs *FilerServer) hlsTsIngestHandler(w http.ResponseWriter, r *http.Request
 		if err := media_hls.ValidateTSPackets(data); err != nil {
 			return err
 		}
-		// dataToChunkWithSSE currently does not consume the request. Passing the
-		// external request here needlessly propagates HTTP taint into the internal
-		// volume upload path.
-		chunks, uploadErr := fs.dataToChunkWithSSE(ctx, nil, path.Base(sourcePath), "video/MP2T", data, chunkOffset, so)
+		chunks, uploadErr := fs.dataToChunkWithSSE(ctx, r, path.Base(sourcePath), "video/MP2T", data, chunkOffset, so)
 		fileChunks = append(fileChunks, chunks...)
 		if uploadErr != nil {
 			return &hlsTsStorageError{err: uploadErr}
@@ -145,7 +139,6 @@ func (fs *FilerServer) hlsTsIngestHandler(w http.ResponseWriter, r *http.Request
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
 	}
-	query := r.URL.Query()
 	mode := uint64(0660)
 	if text := query.Get("mode"); text != "" {
 		mode, err = strconv.ParseUint(text, 8, 32)
@@ -161,11 +154,6 @@ func (fs *FilerServer) hlsTsIngestHandler(w http.ResponseWriter, r *http.Request
 		Attr:     filer.Attr{Mtime: now, Crtime: now, Mode: os.FileMode(mode), Uid: OS_UID, Gid: OS_GID, TtlSec: so.TtlSeconds, Mime: "video/MP2T", FileSize: uint64(totalSize)},
 		Chunks:   fileChunks,
 		Extended: map[string][]byte{hlsTsMetadataKey: metadataBytes},
-	}
-	for _, header := range []string{"Cache-Control", "Expires", "Content-Disposition"} {
-		if value := r.Header.Get(header); value != "" {
-			entry.Extended[header] = []byte(value)
-		}
 	}
 	if err := fs.filer.CreateEntry(context.WithoutCancel(ctx), entry, nil, false, false, nil, false, so.MaxFileNameLength); err != nil {
 		cleanup()
