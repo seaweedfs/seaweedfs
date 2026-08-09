@@ -198,6 +198,31 @@ func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupV
 	return resp, nil
 }
 
+// CollectionStatistics summarises every collection, so callers tracking usage
+// do not pull the whole volume list to add it up themselves.
+func (ms *MasterServer) CollectionStatistics(ctx context.Context, req *master_pb.CollectionStatisticsRequest) (*master_pb.CollectionStatisticsResponse, error) {
+	if !ms.Topo.IsLeader() {
+		return nil, raft.NotLeaderError
+	}
+
+	stats := ms.Topo.CollectionStatistics()
+	resp := &master_pb.CollectionStatisticsResponse{
+		Collections: make([]*master_pb.CollectionStatistics, 0, len(stats)),
+	}
+	for _, s := range stats {
+		resp.Collections = append(resp.Collections, &master_pb.CollectionStatistics{
+			Collection:       s.Collection,
+			FileCount:        s.FileCount,
+			DeleteCount:      s.DeleteCount,
+			DeletedByteCount: s.DeletedByteCount,
+			Size:             s.Size,
+			PhysicalSize:     s.PhysicalSize,
+			VolumeCount:      s.VolumeCount,
+		})
+	}
+	return resp, nil
+}
+
 func (ms *MasterServer) Statistics(ctx context.Context, req *master_pb.StatisticsRequest) (*master_pb.StatisticsResponse, error) {
 
 	if !ms.Topo.IsLeader() {
