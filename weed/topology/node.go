@@ -514,7 +514,11 @@ func (n *NodeImpl) CollectDeadNodeAndFullVolumes(freshThreshHoldUnixTime int64, 
 						//fmt.Println("volume",v.Id,"size",v.Size,">",volumeSizeLimit)
 						topo.chanFullVolumes <- v
 					}
-				} else if float64(v.Size) > float64(volumeSizeLimit)*growThreshold {
+				} else if !v.ReadOnly && float64(v.Size) > float64(volumeSizeLimit)*growThreshold {
+					// Crowding asks for more room to write into, which a
+					// read-only volume can never provide. Growth already
+					// discounts them by intersecting with the writable list, so
+					// marking one only costs the entry.
 					topo.chanCrowdedVolumes <- v
 				}
 				copyCount := v.ReplicaPlacement.GetCopyCount()
