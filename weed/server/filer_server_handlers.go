@@ -83,6 +83,9 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
+		if fs.maybeHandleHlsTs(w, r) {
+			return
+		}
 		fs.GetOrHeadHandler(w, r)
 	case http.MethodDelete:
 		if _, ok := r.URL.Query()["tagging"]; ok {
@@ -127,6 +130,9 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 			fs.inFlightDataLimitCond.Signal()
 		}()
 
+		if fs.maybeHandleHlsTs(w, r) {
+			return
+		}
 		if r.Method == http.MethodPut {
 			if _, ok := r.URL.Query()["tagging"]; ok {
 				fs.PutTaggingHandler(w, r)
@@ -191,6 +197,9 @@ func (fs *FilerServer) readonlyFilerHandler(w http.ResponseWriter, r *http.Reque
 
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
+		if fs.maybeHandleHlsTs(w, r) {
+			return
+		}
 		fs.GetOrHeadHandler(w, r)
 	default:
 		requestMethod = "INVALID"
@@ -212,11 +221,14 @@ func OptionsHandler(w http.ResponseWriter, r *http.Request, isReadOnly bool) {
 // maybeCheckJwtAuthorization returns true if access should be granted, false if it should be denied
 func (fs *FilerServer) maybeCheckJwtAuthorization(r *http.Request, isWrite bool) bool {
 
+	if !isWrite && fs.shouldBypassHlsTsReadJwt(r) {
+		return true
+	}
 	if !isWrite && r.URL.Path == "/" {
 		return true
 	}
 
-	return fs.checkJwtAuthorization(r, isWrite, jwtScopedRequestPaths(r))
+	return fs.checkJwtAuthorization(r, isWrite, fs.jwtScopedRequestPaths(r))
 }
 
 // checkJwtAuthorization verifies the request carries a valid filer JWT for the
@@ -307,9 +319,16 @@ func authorizeFilerJwtPaths(r *http.Request, claims *security.SeaweedFilerClaims
 
 // jwtScopedRequestPaths returns every filer path a request touches that must be
 // covered by the JWT AllowedPrefixes: the write target (r.URL.Path) plus any
-// copy/move source named by the cp.from / mv.from query parameters.
-func jwtScopedRequestPaths(r *http.Request) []string {
-	paths := []string{r.URL.Path}
+// copy/move source named by the cp.from / mv.from query parameters. HLS virtual
+// requests are authorized against their underlying filer entry path.
+func (fs *FilerServer) jwtScopedRequestPaths(r *http.Request) []string {
+	targetPath := r.URL.Path
+	if fs.hlsTsEnabled() {
+		if sourcePath, ok := hlsTsJwtSourcePath(r.URL.Path, r.Method); ok {
+			targetPath = sourcePath
+		}
+	}
+	paths := []string{targetPath}
 	if query := r.URL.Query(); query.Has("cp.from") || query.Has("mv.from") {
 		if from := query.Get("cp.from"); from != "" {
 			paths = append(paths, from)
