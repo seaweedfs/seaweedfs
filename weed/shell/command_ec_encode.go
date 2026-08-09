@@ -964,11 +964,11 @@ func selectVolumeIdsFromTopology(topologyInfo *master_pb.TopologyInfo, volumeSiz
 				totalVolumes++
 
 				// ignore remote volumes
-				if v.RemoteStorageName != "" && v.RemoteStorageKey != "" {
+				if v.RemoteStorageName != "" {
 					remoteVolumes++
 					if verbose {
-						fmt.Printf("skip volume %d on %s: remote volume (storage: %s, key: %s)\n",
-							v.Id, dn.Id, v.RemoteStorageName, v.RemoteStorageKey)
+						fmt.Printf("skip volume %d on %s: remote volume (storage: %s)\n",
+							v.Id, dn.Id, v.RemoteStorageName)
 					}
 					continue
 				}

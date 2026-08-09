@@ -393,7 +393,7 @@ func collectStatForOneVolume(vid needle.VolumeId, v *Volume) (s *VolumeInfo) {
 		DiskType:         v.DiskType().String(),
 		DiskId:           v.diskId,
 	}
-	s.RemoteStorageName, s.RemoteStorageKey = v.RemoteStorageNameKey()
+	s.RemoteStorageName, _ = v.RemoteStorageNameKey()
 
 	v.dataFileAccessLock.RLock()
 	defer v.dataFileAccessLock.RUnlock()

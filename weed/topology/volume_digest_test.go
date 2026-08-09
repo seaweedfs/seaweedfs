@@ -75,6 +75,12 @@ func TestVolumeDigestIsIndependentOfReportOrder(t *testing.T) {
 // skips is a change the master would never be told about. Enumerated from the
 // message rather than listed here, so a field added later cannot quietly fall
 // outside the digest while this still passes.
+// Fields a server reports that the master deliberately does not keep, so a
+// change to one alters nothing it holds and the digest is right not to move.
+var notRetainedByTheMaster = map[string]string{
+	"remote_storage_key": "unique per volume, and the master decides nothing from it",
+}
+
 func TestVolumeDigestTracksEveryReportedField(t *testing.T) {
 	base := digestTestVolume(1)
 	baseInfo, err := storage.NewVolumeInfo(base)
@@ -86,6 +92,7 @@ func TestVolumeDigestTracksEveryReportedField(t *testing.T) {
 	for i := 0; i < fields.Len(); i++ {
 		fd := fields.Get(i)
 		t.Run(string(fd.Name()), func(t *testing.T) {
+			why, skipped := notRetainedByTheMaster[string(fd.Name())]
 			candidates := distinctValuesFor(t, fd, base.ProtoReflect().Get(fd))
 			for _, candidate := range candidates {
 				changed := proto.Clone(base).(*master_pb.VolumeInformationMessage)
@@ -95,8 +102,14 @@ func TestVolumeDigestTracksEveryReportedField(t *testing.T) {
 					t.Fatal(err)
 				}
 				if baseInfo.ReportHash() != changedInfo.ReportHash() {
+					if skipped {
+						t.Errorf("%s moves the digest, but is listed as not retained by the master (%s)", fd.Name(), why)
+					}
 					return
 				}
+			}
+			if skipped {
+				return
 			}
 			t.Errorf("no change to %s moves the digest, so the master would never be told about one", fd.Name())
 		})

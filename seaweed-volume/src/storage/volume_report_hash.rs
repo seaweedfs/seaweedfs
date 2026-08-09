@@ -35,8 +35,9 @@ pub fn report_hash(m: &master_pb::VolumeInformationMessage) -> u64 {
     h = fold(h, xxh64(&(m.modified_at_second as u64).to_le_bytes(), 0));
     h = fold(h, xxh64(m.collection.as_bytes(), 0));
     h = fold(h, xxh64(m.disk_type.as_bytes(), 0));
+    // Not the remote storage key: the master does not keep it, so a change to
+    // it alters nothing its copy holds.
     h = fold(h, xxh64(m.remote_storage_name.as_bytes(), 0));
-    h = fold(h, xxh64(m.remote_storage_key.as_bytes(), 0));
     h
 }
 
@@ -67,11 +68,11 @@ mod tests {
     #[test]
     fn report_hash_vectors() {
         let empty = master_pb::VolumeInformationMessage::default();
-        assert_eq!(report_hash(&empty), 17122085700329870549);
+        assert_eq!(report_hash(&empty), 10988706248825469653);
 
         let mut one = master_pb::VolumeInformationMessage::default();
         one.id = 1;
-        assert_eq!(report_hash(&one), 12867601919960834066);
+        assert_eq!(report_hash(&one), 2035849960016744285);
 
         let full = master_pb::VolumeInformationMessage {
             id: 42,
@@ -91,7 +92,7 @@ mod tests {
             disk_type: "ssd".to_string(),
             disk_id: 2,
         };
-        assert_eq!(report_hash(&full), 12500327696413250175);
+        assert_eq!(report_hash(&full), 2748844479819636032);
     }
 
     #[test]

@@ -13,10 +13,12 @@ import (
 // Held for every volume replica, so the fields are grouped by size rather than
 // by meaning: interleaved, each one-byte field rounds up to a whole word.
 type VolumeInfo struct {
-	Collection        string
-	DiskType          string
+	Collection string
+	DiskType   string
+	// The backend a remote volume lives in. Not the key within it: a master
+	// decides nothing from the key and would hold one per volume, unique and so
+	// unshareable, while the server holding the volume reports it on demand.
 	RemoteStorageName string
-	RemoteStorageKey  string
 
 	ReplicaPlacement *super_block.ReplicaPlacement
 	Ttl              *needle.TTL
@@ -48,7 +50,6 @@ func NewVolumeInfo(m *master_pb.VolumeInformationMessage) (vi VolumeInfo, err er
 		CompactRevision:   m.CompactRevision,
 		ModifiedAtSecond:  m.ModifiedAtSecond,
 		RemoteStorageName: internVolumeString(m.RemoteStorageName),
-		RemoteStorageKey:  m.RemoteStorageKey,
 		DiskType:          internVolumeString(m.DiskType),
 		DiskId:            m.DiskId,
 	}
@@ -125,7 +126,7 @@ func (vi VolumeInfo) String() string {
 	s := fmt.Sprintf("Id:%d, Size:%d, ReplicaPlacement:%s, Collection:%s, Version:%v, Ttl:%s, FileCount:%d, DeleteCount:%d, DeletedByteCount:%d, ReadOnly:%v, ModifiedAtSecond:%d",
 		vi.Id, vi.Size, vi.ReplicaPlacement, vi.Collection, vi.Version, vi.Ttl.String(), vi.FileCount, vi.DeleteCount, vi.DeletedByteCount, vi.ReadOnly, vi.ModifiedAtSecond)
 	if vi.IsRemote() {
-		s += fmt.Sprintf(", RemoteStorageName:%s, RemoteStorageKey:%s", vi.RemoteStorageName, vi.RemoteStorageKey)
+		s += fmt.Sprintf(", RemoteStorageName:%s", vi.RemoteStorageName)
 	}
 	return s
 }
@@ -145,7 +146,6 @@ func (vi VolumeInfo) ToVolumeInformationMessage() *master_pb.VolumeInformationMe
 		CompactRevision:   vi.CompactRevision,
 		ModifiedAtSecond:  vi.ModifiedAtSecond,
 		RemoteStorageName: vi.RemoteStorageName,
-		RemoteStorageKey:  vi.RemoteStorageKey,
 		DiskType:          vi.DiskType,
 		DiskId:            vi.DiskId,
 	}
