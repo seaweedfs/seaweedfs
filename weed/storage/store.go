@@ -243,12 +243,26 @@ func (s *Store) AddVolume(volumeId needle.VolumeId, collection string, needleMap
 
 func (s *Store) DeleteCollection(collection string) (e error) {
 	for _, location := range s.Locations {
-		e = location.DeleteCollectionFromDiskLocation(collection)
-		if e != nil {
-			return
+		deleted, err := location.DeleteCollectionFromDiskLocation(collection)
+		// Name every volume destroyed. Waiting for the next heartbeat to say so
+		// by omission only works while heartbeats carry the whole list, and a
+		// volume grown and destroyed between two of them was never reported at
+		// all, so nothing else would ever tell the master its slot came free.
+		for _, v := range deleted {
+			s.DeletedVolumesChan <- &master_pb.VolumeShortInformationMessage{
+				Id:               uint32(v.Id),
+				Collection:       v.Collection,
+				ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
+				Version:          uint32(v.Version()),
+				Ttl:              v.Ttl.ToUint32(),
+				DiskType:         string(location.DiskType),
+				DiskId:           v.diskId,
+			}
+		}
+		if err != nil {
+			return err
 		}
 		stats.DeleteCollectionMetrics(collection)
-		// let the heartbeat send the list of volumes, instead of sending the deleted volume ids to DeletedVolumesChan
 	}
 	return
 }
