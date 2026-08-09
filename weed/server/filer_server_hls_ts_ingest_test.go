@@ -25,6 +25,7 @@ func TestHlsTsIngestErrorStatus(t *testing.T) {
 
 func TestEncodeHlsTsMetadataProducesValidJSON(t *testing.T) {
 	metadata := &media_hls.Metadata{
+		Version:        1,
 		TargetDuration: 6,
 		MediaSequence:  7,
 		Segments: []media_hls.Segment{
@@ -44,7 +45,7 @@ func TestEncodeHlsTsMetadataProducesValidJSON(t *testing.T) {
 	if err := json.Unmarshal(encoded, decoded); err != nil {
 		t.Fatalf("decode metadata: %v; JSON = %q", err, encoded)
 	}
-	if decoded.TargetDuration != metadata.TargetDuration || decoded.MediaSequence != metadata.MediaSequence || len(decoded.Segments) != 1 || decoded.Segments[0] != metadata.Segments[0] {
+	if decoded.Version != metadata.Version || decoded.TargetDuration != metadata.TargetDuration || decoded.MediaSequence != metadata.MediaSequence || len(decoded.Segments) != 1 || decoded.Segments[0] != metadata.Segments[0] {
 		t.Fatalf("metadata round trip = %+v, want %+v", decoded, metadata)
 	}
 }
