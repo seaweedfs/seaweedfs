@@ -535,11 +535,9 @@ func normalizePrefixMarker(prefix, marker string) (alignedDir, alignedPrefix, al
 		// something wrong
 		return "", prefix, marker
 	}
-	// Resolve the listing directory from the prefix, not from the marker. A prefix
-	// like "data/a" is a name prefix within "data" that also matches sibling
-	// directories such as "data/ab/", so a marker that has descended into "data/a/"
-	// must not narrow the listing to that one subdirectory - doing so drops the
-	// siblings once the marker's subtree is exhausted.
+	// Resolve the listing dir from the prefix, not the marker: a partial name prefix like
+	// "data/a" also matches siblings such as "data/ab/", which narrowing to the marker's
+	// subtree would drop.
 	alignedDir, alignedPrefix = toDirAndName(prefix)
 	if alignedDir != "" {
 		alignedMarker = marker[len(alignedDir)+1:]
