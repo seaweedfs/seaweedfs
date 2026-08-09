@@ -7,6 +7,6 @@ WORKDIR /app
 
 RUN pip install --no-cache-dir "pyiceberg[s3fs]==0.11.1" "pyarrow==25.0.0"
 
-COPY append_rows.py /app/
+COPY append_rows.py read_rows.py /app/
 
 ENTRYPOINT ["python3", "/app/append_rows.py"]

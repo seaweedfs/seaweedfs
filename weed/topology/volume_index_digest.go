@@ -39,6 +39,20 @@ func (dn *DataNode) HasConsistentVolumeIndex() bool {
 	return held == servable
 }
 
+// releaseLookupOwnership clears the lookup digest bit of every location this
+// layout serves. Used when the layout is dropped wholesale with its collection
+// rather than volume by volume.
+func (vl *VolumeLayout) releaseLookupOwnership() {
+	vl.accessLock.Lock()
+	defer vl.accessLock.Unlock()
+	for vid, location := range vl.vid2location {
+		for _, dn := range location.list {
+			moveLookupOwnership(vid, dn, nil)
+		}
+	}
+	vl.vid2location = make(map[needle.VolumeId]*VolumeLocationList)
+}
+
 // moveLookupOwnership transfers the digest bit for vid from the node a lookup
 // entry used to name to the node it now names. Either may be nil, for an entry
 // being created or dropped.

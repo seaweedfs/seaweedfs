@@ -392,7 +392,7 @@ func (vg *VolumeGrowth) grow(grpcDialOption grpc.DialOption, topo *Topology, vid
 	if growErr == nil {
 		for i, vi := range createdVolumes {
 			server := servers[i]
-			server.AddOrUpdateVolume(vi)
+			server.AddProvisionalVolume(vi)
 			topo.RegisterVolumeLayout(vi, server)
 			glog.V(0).Infof("Registered Volume %d on %s", vid, server.NodeImpl.String())
 		}
