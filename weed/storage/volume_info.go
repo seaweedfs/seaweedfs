@@ -10,23 +10,29 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 )
 
+// Held for every volume replica, so the fields are grouped by size rather than
+// by meaning: interleaved, each one-byte field rounds up to a whole word.
 type VolumeInfo struct {
-	Id                needle.VolumeId
-	Size              uint64
-	ReplicaPlacement  *super_block.ReplicaPlacement
-	Ttl               *needle.TTL
-	DiskType          string
-	DiskId            uint32
 	Collection        string
-	Version           needle.Version
-	FileCount         int
-	DeleteCount       int
-	DeletedByteCount  uint64
-	ReadOnly          bool
-	CompactRevision   uint32
-	ModifiedAtSecond  int64
+	DiskType          string
 	RemoteStorageName string
 	RemoteStorageKey  string
+
+	ReplicaPlacement *super_block.ReplicaPlacement
+	Ttl              *needle.TTL
+
+	Size             uint64
+	FileCount        int
+	DeleteCount      int
+	DeletedByteCount uint64
+	ModifiedAtSecond int64
+
+	Id              needle.VolumeId
+	DiskId          uint32
+	CompactRevision uint32
+
+	Version  needle.Version
+	ReadOnly bool
 }
 
 func NewVolumeInfo(m *master_pb.VolumeInformationMessage) (vi VolumeInfo, err error) {
