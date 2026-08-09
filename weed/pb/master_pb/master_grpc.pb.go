@@ -44,6 +44,7 @@ const (
 	Seaweed_RaftRemoveServer_FullMethodName       = "/master_pb.Seaweed/RaftRemoveServer"
 	Seaweed_RaftLeadershipTransfer_FullMethodName = "/master_pb.Seaweed/RaftLeadershipTransfer"
 	Seaweed_VolumeGrow_FullMethodName             = "/master_pb.Seaweed/VolumeGrow"
+	Seaweed_CollectionStatistics_FullMethodName   = "/master_pb.Seaweed/CollectionStatistics"
 )
 
 // SeaweedClient is the client API for Seaweed service.
@@ -75,6 +76,7 @@ type SeaweedClient interface {
 	RaftRemoveServer(ctx context.Context, in *RaftRemoveServerRequest, opts ...grpc.CallOption) (*RaftRemoveServerResponse, error)
 	RaftLeadershipTransfer(ctx context.Context, in *RaftLeadershipTransferRequest, opts ...grpc.CallOption) (*RaftLeadershipTransferResponse, error)
 	VolumeGrow(ctx context.Context, in *VolumeGrowRequest, opts ...grpc.CallOption) (*VolumeGrowResponse, error)
+	CollectionStatistics(ctx context.Context, in *CollectionStatisticsRequest, opts ...grpc.CallOption) (*CollectionStatisticsResponse, error)
 }
 
 type seaweedClient struct {
@@ -344,6 +346,16 @@ func (c *seaweedClient) VolumeGrow(ctx context.Context, in *VolumeGrowRequest, o
 	return out, nil
 }
 
+func (c *seaweedClient) CollectionStatistics(ctx context.Context, in *CollectionStatisticsRequest, opts ...grpc.CallOption) (*CollectionStatisticsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CollectionStatisticsResponse)
+	err := c.cc.Invoke(ctx, Seaweed_CollectionStatistics_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SeaweedServer is the server API for Seaweed service.
 // All implementations must embed UnimplementedSeaweedServer
 // for forward compatibility.
@@ -373,6 +385,7 @@ type SeaweedServer interface {
 	RaftRemoveServer(context.Context, *RaftRemoveServerRequest) (*RaftRemoveServerResponse, error)
 	RaftLeadershipTransfer(context.Context, *RaftLeadershipTransferRequest) (*RaftLeadershipTransferResponse, error)
 	VolumeGrow(context.Context, *VolumeGrowRequest) (*VolumeGrowResponse, error)
+	CollectionStatistics(context.Context, *CollectionStatisticsRequest) (*CollectionStatisticsResponse, error)
 	mustEmbedUnimplementedSeaweedServer()
 }
 
@@ -457,6 +470,9 @@ func (UnimplementedSeaweedServer) RaftLeadershipTransfer(context.Context, *RaftL
 }
 func (UnimplementedSeaweedServer) VolumeGrow(context.Context, *VolumeGrowRequest) (*VolumeGrowResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method VolumeGrow not implemented")
+}
+func (UnimplementedSeaweedServer) CollectionStatistics(context.Context, *CollectionStatisticsRequest) (*CollectionStatisticsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CollectionStatistics not implemented")
 }
 func (UnimplementedSeaweedServer) mustEmbedUnimplementedSeaweedServer() {}
 func (UnimplementedSeaweedServer) testEmbeddedByValue()                 {}
@@ -896,6 +912,24 @@ func _Seaweed_VolumeGrow_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Seaweed_CollectionStatistics_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CollectionStatisticsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedServer).CollectionStatistics(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Seaweed_CollectionStatistics_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedServer).CollectionStatistics(ctx, req.(*CollectionStatisticsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Seaweed_ServiceDesc is the grpc.ServiceDesc for Seaweed service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -990,6 +1024,10 @@ var Seaweed_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "VolumeGrow",
 			Handler:    _Seaweed_VolumeGrow_Handler,
+		},
+		{
+			MethodName: "CollectionStatistics",
+			Handler:    _Seaweed_CollectionStatistics_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
