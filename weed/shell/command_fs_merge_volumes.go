@@ -22,6 +22,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -331,7 +332,7 @@ func (c *commandFsMergeVolumes) reloadVolumesInfo(masterClient *wdclient.MasterC
 	c.volumes = make(map[needle.VolumeId]*master_pb.VolumeInformationMessage)
 
 	return masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
-		volumes, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		volumes, err := pb.CollectVolumeList(context.Background(), client, &master_pb.VolumeListRequest{})
 		if err != nil {
 			return err
 		}

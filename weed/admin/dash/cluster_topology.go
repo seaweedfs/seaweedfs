@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
@@ -116,7 +117,7 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 
 	// Get cluster status from master
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		resp, err := pb.CollectVolumeList(context.Background(), client, &master_pb.VolumeListRequest{})
 		if err != nil {
 			currentMaster := s.masterClient.GetMaster(context.Background())
 			glog.Errorf("Failed to get volume list from master %s: %v", currentMaster, err)
