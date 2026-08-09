@@ -3,6 +3,7 @@ package hls
 import (
 	"fmt"
 	"io"
+	"math"
 )
 
 // WalkSegmentChunks reads each segment from reader and splits it into storage
@@ -21,7 +22,6 @@ func WalkSegmentChunks(reader io.Reader, metadata *Metadata, maxChunkSize int64,
 	if err := Validate(metadata, -1, 0); err != nil {
 		return err
 	}
-	maxInt := int64(int(^uint(0) >> 1))
 	for i, segment := range metadata.Segments {
 		offset := segment.Offset
 		remaining := segment.Size
@@ -30,10 +30,10 @@ func WalkSegmentChunks(reader io.Reader, metadata *Metadata, maxChunkSize int64,
 			if maxChunkSize > 0 && chunkSize > maxChunkSize {
 				chunkSize = maxChunkSize
 			}
-			if chunkSize > maxInt {
+			if chunkSize > int64(math.MaxInt) {
 				return fmt.Errorf("segment %d chunk at offset %d is too large for this platform: %d", i, offset, chunkSize)
 			}
-			data := make([]byte, int(chunkSize))
+			data := make([]byte, chunkSize)
 			if _, err := io.ReadFull(reader, data); err != nil {
 				return fmt.Errorf("read segment %d chunk at offset %d (%d bytes): %w", i, offset, chunkSize, err)
 			}

@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"math"
 	"net/http"
 	"path"
 	"strconv"
@@ -19,6 +20,9 @@ const (
 	// fetches concurrently. It matches the value the normal filer read handler
 	// uses and is capped by the segment's own chunk count.
 	hlsTsSegmentPrefetch = 4
+
+	hlsTsMiB       = int64(1024 * 1024)
+	hlsTsMaxSafeMB = int64(math.MaxInt64) / hlsTsMiB
 )
 
 type hlsTsRequestKind int
@@ -47,12 +51,26 @@ func (fs *FilerServer) hlsTsEnabled() bool {
 // chunk size; the trailing chunk holds only the remainder, and a segment read
 // still fetches just the chunks that belong to that segment.
 func (fs *FilerServer) hlsTsMaxChunkBytes(r *http.Request) int64 {
-	parsedMaxMB, _ := strconv.ParseInt(r.URL.Query().Get("maxMB"), 10, 32)
-	maxMB := int32(parsedMaxMB)
-	if maxMB <= 0 && fs.option.MaxMB > 0 {
-		maxMB = int32(fs.option.MaxMB)
+	var maxMB int64
+	if value := r.URL.Query().Get("maxMB"); value != "" {
+		parsedMaxMB, err := strconv.ParseInt(value, 10, 64)
+		if err == nil && parsedMaxMB > 0 && parsedMaxMB <= hlsTsMaxSafeMB {
+			maxMB = parsedMaxMB
+		}
 	}
-	limit := int64(maxMB) * 1024 * 1024
+	if maxMB <= 0 && fs.option != nil && fs.option.MaxMB > 0 {
+		maxMB = int64(fs.option.MaxMB)
+		if maxMB > hlsTsMaxSafeMB {
+			// An invalid filer-wide value must not overflow the MiB-to-bytes
+			// conversion. Clamp it to the largest representable byte limit.
+			maxMB = hlsTsMaxSafeMB
+		}
+	}
+	if maxMB <= 0 {
+		return 0
+	}
+
+	limit := maxMB * hlsTsMiB
 	// Align the limit down to a whole number of MPEG-TS packets so a chunk split
 	// never cuts a packet; the segment's trailing chunk still carries the
 	// remainder. A zero limit (no maxMB configured) stores one chunk per segment.

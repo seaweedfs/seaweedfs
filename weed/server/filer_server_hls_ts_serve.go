@@ -102,13 +102,14 @@ func (fs *FilerServer) hlsTsSegmentHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	streamCtx, cancel := context.WithCancel(context.WithoutCancel(r.Context()))
+	streamCtx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	// A segment may span several chunks when it is larger than the chunk limit.
 	// Prefetch overlaps the next chunk's volume fetch with delivering the
 	// current one, and stays within the requested [offset,size) range so it
 	// never reads past the segment. A single-chunk segment has nothing to
-	// prefetch, so this matches the plain streaming path there.
+	// prefetch, so this matches the plain streaming path there. Keep the request
+	// context attached so a client disconnect cancels in-flight volume reads.
 	streamFn, err := filer.PrepareStreamContentWithPrefetch(streamCtx, fs.filer.MasterClient, fs.maybeGetVolumeReadJwtAuthorizationToken, entry.GetChunks(), segment.Offset, segment.Size, fs.option.DownloadMaxBytesPs, hlsTsSegmentPrefetch)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
