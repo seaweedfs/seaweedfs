@@ -3,7 +3,7 @@ package storage
 import (
 	"fmt"
 	"sort"
-	"unique"
+	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -71,19 +71,44 @@ func NewVolumeInfoFromShort(m *master_pb.VolumeShortInformationMessage) (vi Volu
 	return vi, nil
 }
 
-// internVolumeString shares one copy of the values a cluster repeats across
-// every volume -- collection, disk type, remote backend. Decoding a heartbeat
+// internedVolumeStrings holds one copy of each value a cluster repeats across
+// its volumes. It only ever grows, which is why it must stay restricted to
+// values drawn from a small set: collection, disk type, remote backend. A
+// cluster with ten thousand collections keeps a few hundred kilobytes here.
+//
+// unique.Make would clear entries by weak reference, but its canonical value
+// does not survive a collection even while a caller still holds the string it
+// returned, so a later volume would get a second copy. Holding them is the
+// point.
+var (
+	internedVolumeStringsLock sync.RWMutex
+	internedVolumeStrings     = make(map[string]string)
+)
+
+// internVolumeString shares one copy of a repeated value. Decoding a heartbeat
 // allocates a fresh string for each, so a master holding a million volumes
 // otherwise holds a million copies of the same handful of names.
 //
-// Only for values drawn from a small set. Interning something unique per
-// volume, such as a remote storage key, would fill the table instead of
-// sharing anything.
+// Never for something unique per volume, such as a remote storage key: that
+// would fill the table rather than share anything.
 func internVolumeString(s string) string {
 	if s == "" {
 		return ""
 	}
-	return unique.Make(s).Value()
+	internedVolumeStringsLock.RLock()
+	shared, found := internedVolumeStrings[s]
+	internedVolumeStringsLock.RUnlock()
+	if found {
+		return shared
+	}
+
+	internedVolumeStringsLock.Lock()
+	defer internedVolumeStringsLock.Unlock()
+	if shared, found = internedVolumeStrings[s]; found {
+		return shared
+	}
+	internedVolumeStrings[s] = s
+	return s
 }
 
 func (vi VolumeInfo) IsRemote() bool {
