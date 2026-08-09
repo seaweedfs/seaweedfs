@@ -491,7 +491,7 @@ func clearPreexistingEcShards(commandEnv *CommandEnv, topologyInfo *master_pb.To
 	// it. Always delete the full shard-id range so a wider custom ratio's
 	// leftovers are covered too.
 	reportedKey := func(addr pb.ServerAddress, vid uint32) string {
-		return string(addr) + "\x00" + strconv.Itoa(int(vid))
+		return string(addr) + "\x00" + strconv.FormatUint(uint64(vid), 10)
 	}
 	reported := make(map[string]struct{})
 	var nodes []pb.ServerAddress
