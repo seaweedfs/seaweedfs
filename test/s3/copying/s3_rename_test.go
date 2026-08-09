@@ -171,6 +171,29 @@ func TestRenameObjectOntoDirectory(t *testing.T) {
 	assert.True(t, objectExists(t, client, bucketName, "target/child.txt"))
 }
 
+// TestRenameObjectDirectorySource: a directory can be named without a trailing
+// slash, and renaming one would move a whole subtree. It is not an object, so it
+// is a missing key.
+func TestRenameObjectDirectorySource(t *testing.T) {
+	client := getS3Client(t)
+	bucketName := getNewBucketName()
+	createBucket(t, client, bucketName)
+	defer deleteBucket(t, client, bucketName)
+
+	putObject(t, client, bucketName, "source/child.txt", "child")
+
+	for _, src := range []string{"source", "source/"} {
+		_, err := client.RenameObject(context.TODO(), &s3.RenameObjectInput{
+			Bucket:       aws.String(bucketName),
+			Key:          aws.String("target.txt"),
+			RenameSource: aws.String(createRenameSource(bucketName, src)),
+		})
+		requireRenameStatus(t, err, 404)
+	}
+	assert.True(t, objectExists(t, client, bucketName, "source/child.txt"))
+	assert.False(t, objectExists(t, client, bucketName, "target.txt"))
+}
+
 // TestRenameObjectMissingSource reports a missing source as NoSuchKey.
 func TestRenameObjectMissingSource(t *testing.T) {
 	client := getS3Client(t)
