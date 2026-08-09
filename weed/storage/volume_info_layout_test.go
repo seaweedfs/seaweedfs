@@ -6,10 +6,8 @@ import (
 	"unsafe"
 )
 
-// VolumeInfo is held for every volume replica in the cluster, so padding in it
-// is multiplied by however many volumes a master tracks. Field order is the
-// only thing keeping it down, and nothing else in the package would notice if
-// someone grouped the fields by meaning again.
+// Nothing else in the package would notice if someone grouped the fields by
+// meaning again, and the padding is multiplied by every volume a master holds.
 func TestVolumeInfoHasNoInteriorPadding(t *testing.T) {
 	typ := reflect.TypeOf(VolumeInfo{})
 

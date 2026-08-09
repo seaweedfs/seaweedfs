@@ -10,11 +10,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 )
 
-// VolumeInfo is held for every volume replica in the cluster, so its field
-// order is grouped by alignment rather than by meaning: strings and pointers
-// first, then the eight-byte counters, then the small fields last. Interleaved,
-// each one-byte field rounds up to a whole word and the struct grows by 16
-// bytes it does not use.
+// Held for every volume replica, so the fields are grouped by size rather than
+// by meaning: interleaved, each one-byte field rounds up to a whole word.
 type VolumeInfo struct {
 	Collection        string
 	DiskType          string
