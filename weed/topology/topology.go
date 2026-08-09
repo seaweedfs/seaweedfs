@@ -499,6 +499,15 @@ func (t *Topology) FindCollection(collectionName string) (*Collection, bool) {
 }
 
 func (t *Topology) DeleteCollection(collectionName string) {
+	// The layouts vanish with the collection, but every location they served
+	// holds a bit in its node's lookup digest. Left in place, those bits keep
+	// the node's held and servable digests apart forever, and the master asks
+	// for the full volume list on every heartbeat from then on.
+	if collection, found := t.FindCollection(collectionName); found {
+		for _, vl := range collection.GetAllVolumeLayouts() {
+			vl.releaseLookupOwnership()
+		}
+	}
 	t.collectionMap.Delete(collectionName)
 }
 

@@ -14,6 +14,13 @@ type volumeReportKey struct {
 	volumeId uint32
 }
 
+// reportedVolume is what the master was told about one volume copy: the hash
+// that detects change, and enough identity to name the volume if it departs.
+type reportedVolume struct {
+	hash  uint64
+	short *master_pb.VolumeShortInformationMessage
+}
+
 // volumeReportState remembers what the master was last told about each volume,
 // so a heartbeat can carry only what moved since.
 //
@@ -30,7 +37,7 @@ type volumeReportState struct {
 	// fullListGeneration counts requests for the whole list, so one arriving
 	// while a heartbeat is being built is not marked satisfied by it.
 	fullListGeneration uint64
-	lastReported       map[volumeReportKey]uint64
+	lastReported       map[volumeReportKey]reportedVolume
 }
 
 // reset drops everything known about the master's view.
@@ -70,12 +77,41 @@ func (s *volumeReportState) changed(m *master_pb.VolumeInformationMessage, hash 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	previous, known := s.lastReported[volumeReportKey{diskId: m.DiskId, volumeId: m.Id}]
-	return !known || previous != hash
+	return !known || previous.hash != hash
+}
+
+// departed returns the volumes the master was told about that the current
+// report no longer holds on any disk. A delta heartbeat says nothing through
+// silence, so these must be named or the master keeps counting them until a
+// digest mismatch buys it a full list — long enough for a busy cluster to run
+// its free-slot accounting dry. A volume that moved disks is still held, so it
+// is not a departure.
+func (s *volumeReportState) departed(current map[volumeReportKey]reportedVolume) []*master_pb.VolumeShortInformationMessage {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.lastReported) == 0 {
+		return nil
+	}
+	liveIds := make(map[uint32]bool, len(current))
+	for key := range current {
+		liveIds[key.volumeId] = true
+	}
+	var gone []*master_pb.VolumeShortInformationMessage
+	for key, prior := range s.lastReported {
+		if _, still := current[key]; still {
+			continue
+		}
+		if liveIds[key.volumeId] {
+			continue
+		}
+		gone = append(gone, prior.short)
+	}
+	return gone
 }
 
 // commit records what this heartbeat told the master. Volumes absent from
 // reported are forgotten, so one that comes back is reported again.
-func (s *volumeReportState) commit(reported map[volumeReportKey]uint64, generation uint64) {
+func (s *volumeReportState) commit(reported map[volumeReportKey]reportedVolume, generation uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lastReported = reported

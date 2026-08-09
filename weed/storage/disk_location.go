@@ -429,7 +429,10 @@ func (l *DiskLocation) reconcileCompactStates() {
 	}
 }
 
-func (l *DiskLocation) DeleteCollectionFromDiskLocation(collection string) (e error) {
+// DeleteCollectionFromDiskLocation destroys the collection's volumes and ec
+// shards, and returns the volumes it destroyed so the caller can tell the
+// master they are gone.
+func (l *DiskLocation) DeleteCollectionFromDiskLocation(collection string) (deleted []*Volume, e error) {
 
 	l.volumesLock.Lock()
 	delVolsMap := l.unmountVolumeByCollection(collection)
@@ -450,6 +453,7 @@ func (l *DiskLocation) DeleteCollectionFromDiskLocation(collection string) (e er
 				l.volumesLock.Lock()
 				delete(l.volumes, k)
 				l.volumesLock.Unlock()
+				deleted = append(deleted, v)
 			}
 		}
 		wg.Done()
