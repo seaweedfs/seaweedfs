@@ -31,6 +31,7 @@ pub struct Store {
     pub public_url: String,
     pub data_center: String,
     pub rack: String,
+    pub volume_report: crate::storage::volume_report::VolumeReportState,
 }
 
 impl Store {
@@ -45,6 +46,7 @@ impl Store {
             port: 0,
             grpc_port: 0,
             public_url: String::new(),
+            volume_report: Default::default(),
             data_center: String::new(),
             rack: String::new(),
         }

@@ -234,6 +234,13 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 					}
 				}
 			}
+			if in.GetVolumeDigestSupported() {
+				vs.store.AcceptVolumeChanges()
+			}
+			if in.GetResendFullVolumeList() {
+				glog.V(0).Infof("master %s asked for the full volume list", masterAddress)
+				vs.store.RequestFullVolumeList()
+			}
 			if in.GetLeader() != "" {
 				current := vs.getCurrentMaster()
 				if !current.Equals(pb.ServerAddress(in.GetLeader())) {
@@ -245,6 +252,10 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 			}
 		}
 	}()
+
+	// This master may know nothing about this server, and has not yet said
+	// whether it understands digests, so start from the whole list.
+	vs.store.ResetVolumeReporting()
 
 	if err = stream.Send(vs.store.CollectHeartbeat()); err != nil {
 		glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterAddress, err)

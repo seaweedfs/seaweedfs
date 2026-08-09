@@ -3,12 +3,49 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"net"
 
 	"github.com/hashicorp/raft"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/status"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
+
+// checkGrpcAdminAuth authorizes the raft membership RPCs that mutate cluster
+// quorum. It mirrors the volume server's gate: the caller's peer IP is matched
+// against the master's -whiteList. With no whitelist configured IsWhiteListed
+// allows everyone, so default and single-master deployments are unaffected;
+// operators who set a whitelist get these RPCs locked down to it. The cluster's
+// own dead-peer eviction no longer dials these RPCs (it uses the local raft
+// handle), so the only remaining callers are operator tooling.
+func (ms *MasterServer) checkGrpcAdminAuth(ctx context.Context) error {
+	if ms.guard == nil {
+		return nil
+	}
+	pr, ok := peer.FromContext(ctx)
+	if !ok {
+		glog.V(0).Infof("gRPC raft admin auth failed: no peer info")
+		return status.Error(codes.PermissionDenied, "no peer info")
+	}
+	addr := pr.Addr.String()
+	var host string
+	if tcpAddr, ok := pr.Addr.(*net.TCPAddr); ok {
+		host = tcpAddr.IP.String()
+	} else if h, _, splitErr := net.SplitHostPort(addr); splitErr == nil {
+		host = h
+	} else {
+		host = addr
+	}
+	if !ms.guard.IsWhiteListed(host) {
+		glog.V(0).Infof("gRPC raft admin auth failed: %s is not whitelisted (remote: %s)", host, addr)
+		return status.Errorf(codes.PermissionDenied, "not authorized: %s", host)
+	}
+	return nil
+}
 
 func (ms *MasterServer) RaftListClusterServers(ctx context.Context, req *master_pb.RaftListClusterServersRequest) (*master_pb.RaftListClusterServersResponse, error) {
 	resp := &master_pb.RaftListClusterServersResponse{}
@@ -62,6 +99,10 @@ func (ms *MasterServer) RaftListClusterServers(ctx context.Context, req *master_
 func (ms *MasterServer) RaftAddServer(ctx context.Context, req *master_pb.RaftAddServerRequest) (*master_pb.RaftAddServerResponse, error) {
 	resp := &master_pb.RaftAddServerResponse{}
 
+	if err := ms.checkGrpcAdminAuth(ctx); err != nil {
+		return resp, err
+	}
+
 	ms.Topo.RaftServerAccessLock.RLock()
 	defer ms.Topo.RaftServerAccessLock.RUnlock()
 
@@ -88,6 +129,10 @@ func (ms *MasterServer) RaftAddServer(ctx context.Context, req *master_pb.RaftAd
 
 func (ms *MasterServer) RaftRemoveServer(ctx context.Context, req *master_pb.RaftRemoveServerRequest) (*master_pb.RaftRemoveServerResponse, error) {
 	resp := &master_pb.RaftRemoveServerResponse{}
+
+	if err := ms.checkGrpcAdminAuth(ctx); err != nil {
+		return resp, err
+	}
 
 	ms.Topo.RaftServerAccessLock.RLock()
 	defer ms.Topo.RaftServerAccessLock.RUnlock()
@@ -118,6 +163,10 @@ func (ms *MasterServer) RaftRemoveServer(ctx context.Context, req *master_pb.Raf
 
 func (ms *MasterServer) RaftLeadershipTransfer(ctx context.Context, req *master_pb.RaftLeadershipTransferRequest) (*master_pb.RaftLeadershipTransferResponse, error) {
 	resp := &master_pb.RaftLeadershipTransferResponse{}
+
+	if err := ms.checkGrpcAdminAuth(ctx); err != nil {
+		return resp, err
+	}
 
 	ms.Topo.RaftServerAccessLock.RLock()
 	defer ms.Topo.RaftServerAccessLock.RUnlock()

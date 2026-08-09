@@ -111,6 +111,10 @@ message Heartbeat {
   // from servers that do not compute it, and distinct from a digest of 0, which
   // is what a server holding no volumes reports.
   optional uint64 volume_digest = 27;
+  // Volumes whose reported state changed since the last heartbeat, sent in
+  // place of `volumes`. A master that does not understand this never sets
+  // volume_digest_supported, so it keeps being sent the whole list.
+  repeated VolumeInformationMessage changed_volumes = 28;
 }
 
 message HeartbeatResponse {
@@ -124,6 +128,9 @@ message HeartbeatResponse {
   // The master's view of this server's volumes disagrees with the reported
   // digest, so it needs the full volume list rather than changes alone.
   bool resend_full_volume_list = 8;
+  // The master compares volume digests, so a server that reports one may send
+  // changed_volumes in place of its whole list.
+  bool volume_digest_supported = 9;
 }
 
 message VolumeInformationMessage {
