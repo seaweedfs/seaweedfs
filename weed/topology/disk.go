@@ -5,6 +5,7 @@ import (
 	"slices"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -35,7 +36,19 @@ type Disk struct {
 	// reads from. The two indexes are maintained separately and have been seen
 	// to drift.
 	volumeIdDigest uint64
+	// volumeAddedAt remembers when each volume reached this view of the disk
+	// without a server report having confirmed it yet. Registration by the
+	// master itself -- volume growth -- races the heartbeat in flight, which
+	// cannot name a volume created after it was collected.
+	volumeAddedAt map[needle.VolumeId]time.Time
 }
+
+// volumeRemovalGracePeriod is how long an unconfirmed volume survives a report
+// that does not name it. Removing a just-grown volume strands its collection
+// without writable volumes, so the report that raced the grow does not get to
+// erase it; the cap keeps a registration that never materializes server-side
+// from lingering forever.
+const volumeRemovalGracePeriod = 10 * time.Second
 
 // ecShardSlots returns the number of volume slots consumed by the given
 // number of EC shards, rounded up to whole-volume equivalents.
@@ -49,6 +62,7 @@ func NewDisk(diskType string) *Disk {
 	s.nodeType = "Disk"
 	s.diskUsages = newDiskUsages()
 	s.volumes = make(map[needle.VolumeId]storage.VolumeInfo, 2)
+	s.volumeAddedAt = make(map[needle.VolumeId]time.Time, 2)
 	s.ecShards = make(map[needle.VolumeId]map[types.DiskId]*erasure_coding.EcVolumeInfo, 2)
 	s.NodeImpl.value = s
 	return s
@@ -165,13 +179,25 @@ func (d *Disk) String() string {
 func (d *Disk) AddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChanged bool) {
 	d.Lock()
 	defer d.Unlock()
-	return d.doAddOrUpdateVolume(v)
+	return d.doAddOrUpdateVolume(v, true)
 }
 
-func (d *Disk) doAddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChanged bool) {
+// AddProvisionalVolume records a volume the master registered on its own --
+// volume growth -- before any server report has named it. Until one does, the
+// volume is protected from removal by a report that raced its creation.
+func (d *Disk) AddProvisionalVolume(v storage.VolumeInfo) (isNew, isChanged bool) {
+	d.Lock()
+	defer d.Unlock()
+	return d.doAddOrUpdateVolume(v, false)
+}
+
+func (d *Disk) doAddOrUpdateVolume(v storage.VolumeInfo, fromReport bool) (isNew, isChanged bool) {
 	deltaDiskUsage := &DiskUsageCounts{}
 	if oldV, ok := d.volumes[v.Id]; !ok {
 		d.volumes[v.Id] = v
+		if !fromReport {
+			d.volumeAddedAt[v.Id] = time.Now()
+		}
 		d.volumeDigest ^= v.ReportHash()
 		d.volumeIdDigest ^= VolumeIdDigestHash(v.Id)
 		deltaDiskUsage.volumeCount = 1
@@ -195,6 +221,9 @@ func (d *Disk) doAddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChanged bool)
 			d.UpAdjustDiskUsageDelta(types.ToDiskType(v.DiskType), deltaDiskUsage)
 		}
 		d.volumeDigest ^= oldV.ReportHash() ^ v.ReportHash()
+		if fromReport {
+			delete(d.volumeAddedAt, v.Id)
+		}
 		isChanged = d.volumes[v.Id].ReadOnly != v.ReadOnly
 		if isChanged {
 			// Adjust active volume count when ReadOnly status changes
@@ -242,13 +271,26 @@ func (d *Disk) RemoveVolumesNotIn(reported *reportedVolumes) (removed []storage.
 	diskTypeIndex := reported.diskTypeIndex(string(d.Id()))
 	d.Lock()
 	defer d.Unlock()
+	now := time.Now()
 	for vid, v := range d.volumes {
-		if !reported.namedOn(vid, diskTypeIndex) {
-			removed = append(removed, v)
-			delete(d.volumes, vid)
-			d.volumeDigest ^= v.ReportHash()
-			d.volumeIdDigest ^= VolumeIdDigestHash(vid)
+		if reported.namedOn(vid, diskTypeIndex) {
+			// The server confirmed this volume; from here on its absence from
+			// a report is meaningful.
+			delete(d.volumeAddedAt, vid)
+			continue
 		}
+		// A volume the master registered itself and no report has confirmed
+		// yet is likely racing the list being applied, which was collected
+		// before the grow finished. Explicitly reported deletions still
+		// remove immediately through DeleteVolumeById.
+		if addedAt, unconfirmed := d.volumeAddedAt[vid]; unconfirmed && now.Sub(addedAt) < volumeRemovalGracePeriod {
+			continue
+		}
+		removed = append(removed, v)
+		delete(d.volumes, vid)
+		delete(d.volumeAddedAt, vid)
+		d.volumeDigest ^= v.ReportHash()
+		d.volumeIdDigest ^= VolumeIdDigestHash(vid)
 	}
 	return removed
 }
@@ -271,6 +313,7 @@ func (d *Disk) DeleteVolumeById(id needle.VolumeId) {
 		d.volumeDigest ^= v.ReportHash()
 		d.volumeIdDigest ^= VolumeIdDigestHash(id)
 		delete(d.volumes, id)
+		delete(d.volumeAddedAt, id)
 	}
 }
 

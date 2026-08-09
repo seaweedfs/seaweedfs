@@ -75,6 +75,9 @@ func (c *Collection) DeleteVolumeLayout(rp *super_block.ReplicaPlacement, ttl *n
 	if diskType != types.HardDriveType {
 		keyString += string(diskType)
 	}
+	if vl, found := c.GetVolumeLayout(rp, ttl, diskType); found {
+		vl.releaseLookupOwnership()
+	}
 	c.storageType2VolumeLayout.Delete(keyString)
 }
 
