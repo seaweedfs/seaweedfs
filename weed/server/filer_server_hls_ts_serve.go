@@ -17,6 +17,7 @@ import (
 
 const maxHlsTsFileSize = uint64(1<<63 - 1)
 
+// loadHlsTsEntry loads and validates the persisted HLS segment index.
 func (fs *FilerServer) loadHlsTsEntry(ctx context.Context, sourcePath string) (*filer.Entry, *media_hls.Metadata, error) {
 	entry, err := fs.filer.FindEntry(ctx, util.FullPath(sourcePath))
 	if err != nil {
@@ -39,6 +40,7 @@ func (fs *FilerServer) loadHlsTsEntry(ctx context.Context, sourcePath string) (*
 	return entry, metadata, nil
 }
 
+// applyHlsTsPassthroughHeaders copies the small allowlist safe for playback.
 func applyHlsTsPassthroughHeaders(w http.ResponseWriter, entry *filer.Entry) {
 	for _, header := range []string{"Cache-Control", "Expires"} {
 		if value := entry.Extended[header]; len(value) != 0 {
@@ -47,6 +49,7 @@ func applyHlsTsPassthroughHeaders(w http.ResponseWriter, entry *filer.Entry) {
 	}
 }
 
+// hlsTsPlaylistHandler renders the virtual media playlist for an asset.
 func (fs *FilerServer) hlsTsPlaylistHandler(w http.ResponseWriter, r *http.Request, sourcePath string) {
 	entry, metadata, err := fs.loadHlsTsEntry(r.Context(), sourcePath)
 	if err != nil {
@@ -68,6 +71,7 @@ func (fs *FilerServer) hlsTsPlaylistHandler(w http.ResponseWriter, r *http.Reque
 	_, _ = w.Write(body)
 }
 
+// hlsTsSegmentForSequence resolves an HLS sequence number without overflowing.
 func hlsTsSegmentForSequence(metadata *media_hls.Metadata, sequence int64) (media_hls.Segment, bool) {
 	if metadata == nil || sequence < metadata.MediaSequence {
 		return media_hls.Segment{}, false
@@ -79,6 +83,7 @@ func hlsTsSegmentForSequence(metadata *media_hls.Metadata, sequence int64) (medi
 	return metadata.Segments[index], true
 }
 
+// hlsTsSegmentHandler streams one virtual MPEG-TS segment from filer chunks.
 func (fs *FilerServer) hlsTsSegmentHandler(w http.ResponseWriter, r *http.Request, sourcePath string, sequence int64) {
 	entry, metadata, err := fs.loadHlsTsEntry(r.Context(), sourcePath)
 	if err != nil {

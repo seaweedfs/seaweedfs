@@ -22,9 +22,13 @@ type hlsTsStorageError struct {
 	err error
 }
 
+// Error returns the underlying storage failure.
 func (e *hlsTsStorageError) Error() string { return e.err.Error() }
+
+// Unwrap exposes the underlying storage failure to errors.Is and errors.As.
 func (e *hlsTsStorageError) Unwrap() error { return e.err }
 
+// hlsTsIngestErrorStatus separates invalid media from storage failures.
 func hlsTsIngestErrorStatus(err error) int {
 	var storageErr *hlsTsStorageError
 	if errors.As(err, &storageErr) {
@@ -33,6 +37,7 @@ func hlsTsIngestErrorStatus(err error) int {
 	return http.StatusBadRequest
 }
 
+// hlsTsIngestHandler validates and stores a single-file HLS MPEG-TS asset.
 func (fs *FilerServer) hlsTsIngestHandler(w http.ResponseWriter, r *http.Request, sourcePath string) {
 	ctx := r.Context()
 	if enforced, err := fs.wormEnforcedForEntry(ctx, sourcePath); err != nil {
@@ -90,8 +95,9 @@ func (fs *FilerServer) hlsTsIngestHandler(w http.ResponseWriter, r *http.Request
 	}
 	defer mediaPart.Close()
 
-	query := r.URL.Query()
-	so, err := fs.detectStorageOption0(ctx, sourcePath, query.Get("collection"), query.Get("replication"), query.Get("ttl"), query.Get("disk"), query.Get("fsync"), query.Get("dataCenter"), query.Get("rack"), query.Get("dataNode"), "false")
+	// HLS ingestion follows path-based storage rules. Request parameters must not
+	// override placement, replication, TTL, disk type, or durability settings.
+	so, err := fs.detectStorageOption0(ctx, sourcePath, "", "", "", "", "", "", "", "", "false")
 	if err != nil {
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
@@ -110,7 +116,7 @@ func (fs *FilerServer) hlsTsIngestHandler(w http.ResponseWriter, r *http.Request
 		if err := media_hls.ValidateTSPackets(data); err != nil {
 			return err
 		}
-		chunks, uploadErr := fs.dataToChunkWithSSE(ctx, r, path.Base(sourcePath), "video/MP2T", data, chunkOffset, so)
+		chunks, uploadErr := fs.dataToChunkWithSSE(ctx, nil, path.Base(sourcePath), "video/MP2T", data, chunkOffset, so)
 		fileChunks = append(fileChunks, chunks...)
 		if uploadErr != nil {
 			return &hlsTsStorageError{err: uploadErr}
@@ -140,6 +146,7 @@ func (fs *FilerServer) hlsTsIngestHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 	mode := uint64(0660)
+	query := r.URL.Query()
 	if text := query.Get("mode"); text != "" {
 		mode, err = strconv.ParseUint(text, 8, 32)
 		if err != nil {

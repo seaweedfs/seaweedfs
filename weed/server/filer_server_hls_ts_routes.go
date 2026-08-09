@@ -38,6 +38,7 @@ type hlsTsRequest struct {
 	Sequence   int64
 }
 
+// hlsTsEnabled reports whether the virtual HLS namespace is enabled.
 func (fs *FilerServer) hlsTsEnabled() bool {
 	return fs.option != nil && fs.option.HlsTsEnabled
 }
@@ -47,9 +48,9 @@ func (fs *FilerServer) hlsTsEnabled() bool {
 func (fs *FilerServer) hlsTsMaxChunkBytes(r *http.Request) int64 {
 	var maxMB int64
 	if value := r.URL.Query().Get("maxMB"); value != "" {
-		parsedMaxMB, err := strconv.ParseInt(value, 10, 64)
-		if err == nil && parsedMaxMB > 0 && parsedMaxMB <= hlsTsMaxSafeMB {
-			maxMB = parsedMaxMB
+		parsedMaxMB, err := strconv.ParseUint(value, 10, 64)
+		if err == nil && parsedMaxMB > 0 && parsedMaxMB <= uint64(hlsTsMaxSafeMB) {
+			maxMB = int64(parsedMaxMB)
 		}
 	}
 	if maxMB <= 0 && fs.option != nil && fs.option.MaxMB > 0 {
@@ -67,6 +68,7 @@ func (fs *FilerServer) hlsTsMaxChunkBytes(r *http.Request) int64 {
 	return limit - limit%media_hls.TSPacketSize
 }
 
+// parseHlsTsRequest maps a virtual HLS URL to its underlying filer entry.
 func parseHlsTsRequest(requestPath string, method string) (hlsTsRequest, bool) {
 	if !strings.HasPrefix(requestPath, hlsTsVirtualPrefix) {
 		return hlsTsRequest{}, false
@@ -110,6 +112,7 @@ func parseHlsTsRequest(requestPath string, method string) (hlsTsRequest, bool) {
 	return hlsTsRequest{SourcePath: path.Clean("/" + source), Kind: hlsTsRequestSegment, Sequence: sequence}, true
 }
 
+// hlsTsJwtSourcePath returns the underlying filer path used for JWT scopes.
 func hlsTsJwtSourcePath(requestPath, method string) (string, bool) {
 	parsed, belongs := parseHlsTsRequest(requestPath, method)
 	if !belongs || parsed.Kind == hlsTsRequestInvalid {
@@ -131,6 +134,7 @@ func (fs *FilerServer) shouldBypassHlsTsReadJwt(r *http.Request) bool {
 	return belongs
 }
 
+// maybeHandleHlsTs dispatches requests belonging to the virtual HLS namespace.
 func (fs *FilerServer) maybeHandleHlsTs(w http.ResponseWriter, r *http.Request) bool {
 	if !fs.hlsTsEnabled() {
 		return false
