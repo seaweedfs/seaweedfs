@@ -59,6 +59,8 @@ service Seaweed {
   }
   rpc VolumeGrow (VolumeGrowRequest) returns (VolumeGrowResponse) {
   }
+  rpc CollectionStatistics (CollectionStatisticsRequest) returns (CollectionStatisticsResponse) {
+  }
 }
 
 //////////////////////////////////////////////////
@@ -329,6 +331,26 @@ message CollectionListRequest {
 }
 message CollectionListResponse {
   repeated Collection collections = 1;
+}
+
+// Summarises what each collection holds, so a caller tracking usage does not
+// have to be sent every volume in the cluster to add it up itself.
+message CollectionStatisticsRequest {
+}
+message CollectionStatisticsResponse {
+  repeated CollectionStatistics collections = 1;
+}
+message CollectionStatistics {
+  string collection = 1;
+  uint64 file_count = 2;
+  uint64 delete_count = 3;
+  uint64 deleted_byte_count = 4;
+  // one copy of the data: a single replica of a regular volume, the data
+  // shards of an ec volume
+  uint64 size = 5;
+  // what is on disk: every replica, and parity shards
+  uint64 physical_size = 6;
+  uint64 volume_count = 7;
 }
 
 message CollectionDeleteRequest {

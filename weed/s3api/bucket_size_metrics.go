@@ -15,7 +15,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
-	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
 
 const (
@@ -44,12 +43,6 @@ func (c *CollectionInfo) LogicalSize() float64 {
 		return 0
 	}
 	return c.Size - c.DeletedByteCount
-}
-
-// volumeKey uniquely identifies a volume for deduplication
-type volumeKey struct {
-	collection string
-	volumeId   uint32
 }
 
 // startBucketSizeMetricsLoop periodically collects bucket size metrics and updates Prometheus gauges.
@@ -185,18 +178,28 @@ func (s3a *S3ApiServer) collectCollectionInfoFromMaster(ctx context.Context) (ma
 		masterMap[string(master)] = master
 	}
 
-	// Connect to any available master and get volume list with topology
+	// Ask the master to summarise. Adding this up here instead would mean
+	// being sent every volume in the cluster once a minute.
 	collectionInfos := make(map[string]*CollectionInfo)
 
 	err := pb.WithOneOfGrpcMasterClients(false, masterMap, s3a.option.GrpcDialOption, func(client master_pb.SeaweedClient) error {
-		resp, err := client.VolumeList(ctx, &master_pb.VolumeListRequest{})
+		resp, err := client.CollectionStatistics(ctx, &master_pb.CollectionStatisticsRequest{})
 		if err != nil {
-			return fmt.Errorf("failed to get volume list: %w", err)
+			return fmt.Errorf("failed to get collection statistics: %w", err)
 		}
-		if resp == nil || resp.TopologyInfo == nil {
-			return fmt.Errorf("empty topology info from master")
+		if resp == nil {
+			return fmt.Errorf("empty collection statistics from master")
 		}
-		collectCollectionInfoFromTopology(resp.TopologyInfo, collectionInfos)
+		for _, c := range resp.Collections {
+			collectionInfos[c.Collection] = &CollectionInfo{
+				FileCount:        float64(c.FileCount),
+				DeleteCount:      float64(c.DeleteCount),
+				DeletedByteCount: float64(c.DeletedByteCount),
+				Size:             float64(c.Size),
+				PhysicalSize:     float64(c.PhysicalSize),
+				VolumeCount:      int(c.VolumeCount),
+			}
+		}
 		return nil
 	})
 	if err != nil {
@@ -255,106 +258,4 @@ func (s3a *S3ApiServer) listBuckets(ctx context.Context) ([]*filer_pb.Entry, err
 	})
 
 	return buckets, err
-}
-
-// ecVolumeAgg accumulates per-volume EC counts across the shard holders.
-// fileCount is volume-wide (every holder sees the same .ecx) so we take the
-// max across reporters to avoid a slow node with a not-yet-loaded .ecx
-// pinning the aggregate at 0. deleteCount is node-local to each .ecj
-// deletion journal, so it's summed across reporters.
-type ecVolumeAgg struct {
-	collection  string
-	fileCount   uint64
-	deleteCount uint64
-}
-
-// collectCollectionInfoFromTopology extracts collection info from topology.
-// Deduplicates by volume ID to correctly handle missing replicas.
-// Unlike dividing by copyCount (which would give wrong results if replicas are missing),
-// we track seen volume IDs and only count each volume once for logical size/count.
-// EC-encoded volumes are folded in via per-shard aggregation: every shard is
-// node-local (not a replica), so shard sizes are summed across nodes; the
-// per-volume file/delete counts carried on each shard message are deduped
-// via max/sum so the aggregate doesn't double-count or drop after a volume
-// is converted from regular to erasure coding.
-func collectCollectionInfoFromTopology(t *master_pb.TopologyInfo, collectionInfos map[string]*CollectionInfo) {
-	// Track which volumes we've already seen to deduplicate by volume ID
-	seenVolumes := make(map[volumeKey]bool)
-	ecVolumes := make(map[volumeKey]*ecVolumeAgg)
-
-	for _, dc := range t.DataCenterInfos {
-		for _, r := range dc.RackInfos {
-			for _, dn := range r.DataNodeInfos {
-				for _, diskInfo := range dn.DiskInfos {
-					for _, vi := range diskInfo.VolumeInfos {
-						c := vi.Collection
-						cif, found := collectionInfos[c]
-						if !found {
-							cif = &CollectionInfo{}
-							collectionInfos[c] = cif
-						}
-
-						// Always add to physical size (all replicas)
-						cif.PhysicalSize += float64(vi.Size)
-
-						// Check if we've already counted this volume for logical stats
-						key := volumeKey{collection: c, volumeId: vi.Id}
-						if seenVolumes[key] {
-							// Already counted this volume, skip logical stats
-							continue
-						}
-						seenVolumes[key] = true
-
-						// First time seeing this volume - add to logical stats
-						cif.Size += float64(vi.Size)
-						cif.FileCount += float64(vi.FileCount)
-						cif.DeleteCount += float64(vi.DeleteCount)
-						cif.DeletedByteCount += float64(vi.DeletedByteCount)
-						cif.VolumeCount++
-					}
-
-					for _, esi := range diskInfo.EcShardInfos {
-						c := esi.Collection
-						cif, found := collectionInfos[c]
-						if !found {
-							cif = &CollectionInfo{}
-							collectionInfos[c] = cif
-						}
-
-						// EC shards are node-local (no replication), so both
-						// physical and logical shard sizes sum across nodes
-						// without any dedupe. Logical size excludes parity
-						// shards; physical size includes them. Upstream OSS
-						// uses the fixed 10+4 ratio (dataShards=0 → default);
-						// forks with per-volume ratio metadata can pass the
-						// configured value here.
-						cif.PhysicalSize += float64(erasure_coding.EcShardsTotalSize(esi))
-						cif.Size += float64(erasure_coding.EcShardsDataSize(esi, 0))
-
-						key := volumeKey{collection: c, volumeId: esi.Id}
-						agg, ok := ecVolumes[key]
-						if !ok {
-							agg = &ecVolumeAgg{collection: c}
-							ecVolumes[key] = agg
-							cif.VolumeCount++
-						}
-						if esi.FileCount > agg.fileCount {
-							agg.fileCount = esi.FileCount
-						}
-						agg.deleteCount += esi.DeleteCount
-					}
-				}
-			}
-		}
-	}
-
-	// Fold deduped EC file/delete counts into each collection's totals.
-	for _, agg := range ecVolumes {
-		cif := collectionInfos[agg.collection]
-		if cif == nil {
-			continue
-		}
-		cif.FileCount += float64(agg.fileCount)
-		cif.DeleteCount += float64(agg.deleteCount)
-	}
 }
