@@ -1526,26 +1526,29 @@ func (s3a *S3ApiServer) validateConditionalCopyHeaders(r *http.Request, entry *f
 
 // validateSourceConditionalHeaders evaluates the conditional headers against an
 // already-resolved source entry, so the source is known to exist here.
+//
+// The evaluation order is RFC 7232's, the same one validateConditionalHeadersForReads
+// applies: an ETag precondition wins over the date precondition on its own side, so a
+// matched If-Match makes If-Unmodified-Since moot and a passed If-None-Match makes
+// If-Modified-Since moot. AWS documents that precedence for CopyObject too — a
+// matching x-amz-copy-source-if-match with a failing x-amz-copy-source-if-unmodified-since
+// copies rather than returning 412.
 func validateSourceConditionalHeaders(r *http.Request, entry *filer_pb.Entry, names sourceConditionalHeaderNames) s3err.ErrorCode {
 	sourceETag := strings.Trim(copyEntryETag(entry), `"`)
+	ifMatch := strings.Trim(r.Header.Get(names.ifMatch), `"`)
+	ifNoneMatch := strings.Trim(r.Header.Get(names.ifNoneMatch), `"`)
 
-	if ifMatch := r.Header.Get(names.ifMatch); ifMatch != "" {
-		ifMatch = strings.Trim(ifMatch, `"`)
-		if ifMatch != "*" && ifMatch != sourceETag {
-			glog.V(3).Infof("%s failed - expected %s, got %s", names.ifMatch, ifMatch, sourceETag)
-			return s3err.ErrPreconditionFailed
-		}
+	if ifMatch != "" && ifMatch != "*" && ifMatch != sourceETag {
+		glog.V(3).Infof("%s failed - expected %s, got %s", names.ifMatch, ifMatch, sourceETag)
+		return s3err.ErrPreconditionFailed
 	}
 
-	if ifNoneMatch := r.Header.Get(names.ifNoneMatch); ifNoneMatch != "" {
-		ifNoneMatch = strings.Trim(ifNoneMatch, `"`)
-		if ifNoneMatch == "*" || ifNoneMatch == sourceETag {
-			glog.V(3).Infof("%s failed - matched %s", names.ifNoneMatch, sourceETag)
-			return s3err.ErrPreconditionFailed
-		}
+	if ifNoneMatch != "" && (ifNoneMatch == "*" || ifNoneMatch == sourceETag) {
+		glog.V(3).Infof("%s failed - matched %s", names.ifNoneMatch, sourceETag)
+		return s3err.ErrPreconditionFailed
 	}
 
-	if ifModifiedSince := r.Header.Get(names.ifModifiedSince); ifModifiedSince != "" {
+	if ifModifiedSince := r.Header.Get(names.ifModifiedSince); ifModifiedSince != "" && ifNoneMatch == "" {
 		t, err := parseHTTPDate(ifModifiedSince)
 		if err != nil {
 			glog.V(3).Infof("invalid %s header: %v", names.ifModifiedSince, err)
@@ -1557,7 +1560,7 @@ func validateSourceConditionalHeaders(r *http.Request, entry *filer_pb.Entry, na
 		}
 	}
 
-	if ifUnmodifiedSince := r.Header.Get(names.ifUnmodifiedSince); ifUnmodifiedSince != "" {
+	if ifUnmodifiedSince := r.Header.Get(names.ifUnmodifiedSince); ifUnmodifiedSince != "" && ifMatch == "" {
 		t, err := parseHTTPDate(ifUnmodifiedSince)
 		if err != nil {
 			glog.V(3).Infof("invalid %s header: %v", names.ifUnmodifiedSince, err)

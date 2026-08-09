@@ -92,6 +92,49 @@ func TestRenameSourceConditionalHeaders(t *testing.T) {
 	})
 }
 
+// TestSourceConditionalHeaderPrecedence: RFC 7232 lets an ETag precondition
+// settle its own side, so the date header next to it is not evaluated. AWS
+// documents the same for CopyObject: a matching x-amz-copy-source-if-match with
+// a failing x-amz-copy-source-if-unmodified-since copies instead of returning 412.
+func TestSourceConditionalHeaderPrecedence(t *testing.T) {
+	mtime := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
+	etag := "d41d8cd98f00b204e9800998ecf8427e"
+	entry := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{Mtime: mtime.Unix()},
+		Extended:   map[string][]byte{s3_constants.ExtETagKey: []byte(etag)},
+	}
+	before := mtime.Add(-time.Hour).Format(http.TimeFormat)
+	after := mtime.Add(time.Hour).Format(http.TimeFormat)
+
+	for _, names := range []sourceConditionalHeaderNames{copySourceConditionalHeaders, renameSourceConditionalHeaders} {
+		t.Run(names.ifMatch, func(t *testing.T) {
+			t.Run("matched if-match outranks a failing if-unmodified-since", func(t *testing.T) {
+				r, err := http.NewRequest(http.MethodPut, "/bucket/dst.txt", nil)
+				require.NoError(t, err)
+				r.Header.Set(names.ifMatch, etag)
+				r.Header.Set(names.ifUnmodifiedSince, before)
+				assert.Equal(t, s3err.ErrNone, validateSourceConditionalHeaders(r, entry, names))
+			})
+
+			t.Run("passed if-none-match outranks a failing if-modified-since", func(t *testing.T) {
+				r, err := http.NewRequest(http.MethodPut, "/bucket/dst.txt", nil)
+				require.NoError(t, err)
+				r.Header.Set(names.ifNoneMatch, "0000")
+				r.Header.Set(names.ifModifiedSince, after)
+				assert.Equal(t, s3err.ErrNone, validateSourceConditionalHeaders(r, entry, names))
+			})
+
+			t.Run("a failing if-match still loses", func(t *testing.T) {
+				r, err := http.NewRequest(http.MethodPut, "/bucket/dst.txt", nil)
+				require.NoError(t, err)
+				r.Header.Set(names.ifMatch, "0000")
+				r.Header.Set(names.ifUnmodifiedSince, after)
+				assert.Equal(t, s3err.ErrPreconditionFailed, validateSourceConditionalHeaders(r, entry, names))
+			})
+		})
+	}
+}
+
 // TestRouting_RenameObject pins PUT /bucket/key?renameObject to the RenameObject
 // route rather than the plain PutObject one that would otherwise match it.
 func TestRouting_RenameObject(t *testing.T) {
