@@ -371,13 +371,23 @@ func (d *Disk) FreeSpace() int64 {
 func (d *Disk) ToDiskInfo() *master_pb.DiskInfo {
 	diskUsage := d.diskUsages.getOrCreateDisk(types.ToDiskType(string(d.Id())))
 
-	// Get disk ID from first volume or EC shard
+	// Built while holding the read lock rather than from a copy of the volume
+	// map: the copy was the same size as the messages themselves and thrown
+	// away immediately. Nothing here reaches back into the topology, so the
+	// lock cannot be held against anything that wants it.
+	d.RLock()
+	volumeInfos := make([]*master_pb.VolumeInformationMessage, 0, len(d.volumes))
 	var diskId uint32
-	volumes := d.GetVolumes()
+	for _, v := range d.volumes {
+		if len(volumeInfos) == 0 {
+			diskId = v.DiskId
+		}
+		volumeInfos = append(volumeInfos, v.ToVolumeInformationMessage())
+	}
+	d.RUnlock()
+
 	ecShards := d.GetEcShards()
-	if len(volumes) > 0 {
-		diskId = volumes[0].DiskId
-	} else if len(ecShards) > 0 {
+	if len(volumeInfos) == 0 && len(ecShards) > 0 {
 		diskId = ecShards[0].DiskId
 	}
 
@@ -392,10 +402,7 @@ func (d *Disk) ToDiskInfo() *master_pb.DiskInfo {
 		DiskTotalBytes:    uint64(max(0, diskUsage.diskTotalBytes)),
 		DiskFreeBytes:     uint64(max(0, diskUsage.diskFreeBytes)),
 	}
-	m.VolumeInfos = make([]*master_pb.VolumeInformationMessage, 0, len(volumes))
-	for _, v := range volumes {
-		m.VolumeInfos = append(m.VolumeInfos, v.ToVolumeInformationMessage())
-	}
+	m.VolumeInfos = volumeInfos
 	m.EcShardInfos = make([]*master_pb.VolumeEcShardInformationMessage, 0, len(ecShards))
 	for _, ecv := range ecShards {
 		m.EcShardInfos = append(m.EcShardInfos, ecv.ToVolumeEcShardInformationMessage())
