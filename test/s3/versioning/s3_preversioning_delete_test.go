@@ -183,6 +183,44 @@ func TestPreVersioningDeletedPrefixHidesCommonPrefix(t *testing.T) {
 	assert.Empty(t, page.CommonPrefixes, "no listable key remains under p/")
 }
 
+// A non-slash delimiter derives prefixes straight from base-path keys, so a
+// delete-marked null object must take its prefix along; a live key under the
+// same prefix brings it back.
+func TestPreVersioningDeletedKeyHidesCustomDelimiterPrefix(t *testing.T) {
+	client := getS3Client(t)
+	bucketName := getNewBucketName()
+	createBucket(t, client, bucketName)
+	defer deleteBucket(t, client, bucketName)
+
+	putObject(t, client, bucketName, "group-item", "pre-versioning")
+	putObject(t, client, bucketName, "solo", "pre-versioning")
+	enableVersioning(t, client, bucketName)
+	deleteObject(t, client, bucketName, "group-item")
+
+	listDashed := func() (keys, prefixes []string) {
+		page, err := client.ListObjectsV2(context.TODO(), &s3.ListObjectsV2Input{
+			Bucket: aws.String(bucketName), Delimiter: aws.String("-"),
+		})
+		require.NoError(t, err)
+		for _, o := range page.Contents {
+			keys = append(keys, *o.Key)
+		}
+		for _, p := range page.CommonPrefixes {
+			prefixes = append(prefixes, *p.Prefix)
+		}
+		return
+	}
+
+	keys, prefixes := listDashed()
+	assert.Equal(t, []string{"solo"}, keys)
+	assert.Empty(t, prefixes, "the deleted key was the prefix's only backer")
+
+	putObject(t, client, bucketName, "group-live", "versioned")
+	keys, prefixes = listDashed()
+	assert.Equal(t, []string{"solo"}, keys)
+	assert.Equal(t, []string{"group-"}, prefixes, "a live key restores the prefix")
+}
+
 // Nested names (k, k!, k!!, ...) can hold more unresolved null objects than the
 // pending cap; the evicted key must still be settled, on any page size.
 func TestPreVersioningNestedNullObjectsBeyondCap(t *testing.T) {
