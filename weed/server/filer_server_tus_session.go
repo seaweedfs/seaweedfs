@@ -491,6 +491,15 @@ func (fs *FilerServer) completeTusUpload(ctx context.Context, session *TusSessio
 		return ErrWormEnforced
 	}
 
+	// Claim the chunks for the entry before creating it: once the marker is
+	// durable, a failed cleanup below cannot lead DELETE or expiry to free the
+	// entry's chunks. If the entry creation then fails, the client retry re-runs
+	// completion; an abandoned marked session leaks its chunks instead of
+	// corrupting a live entry.
+	if err := fs.markTusSessionConsumed(ctx, session.ID, false); err != nil {
+		return fmt.Errorf("mark session consumed: %w", err)
+	}
+
 	entry := &filer.Entry{
 		FullPath: targetPath,
 		Attr: filer.Attr{
@@ -507,12 +516,6 @@ func (fs *FilerServer) completeTusUpload(ctx context.Context, session *TusSessio
 	// Ensure parent directory exists
 	if err := fs.filer.CreateEntry(ctx, entry, nil, false, false, nil, false, fs.filer.MaxFilenameLength); err != nil {
 		return fmt.Errorf("create final file entry: %w", err)
-	}
-
-	// The chunks now belong to the entry: mark the session consumed so that if
-	// the cleanup below fails, a later expiry cannot free the entry's chunks.
-	if err := fs.markTusSessionConsumed(ctx, session.ID, false); err != nil {
-		glog.V(1).Infof("Failed to mark TUS session %s consumed: %v", session.ID, err)
 	}
 
 	// Delete the session (but keep the chunks since they're now part of the final file)
