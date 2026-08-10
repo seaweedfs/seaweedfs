@@ -27,6 +27,8 @@ const (
 	TusInfoFileName         = ".info"
 	TusChunkExt             = ".chunk"
 	TusExtensions           = "creation,creation-with-upload,termination"
+	TusConcatPartial        = "partial"
+	TusConcatFinalPrefix    = "final;"
 )
 
 // ErrWormEnforced marks a TUS completion rejected because the target entry is
@@ -43,7 +45,18 @@ type TusSession struct {
 	Metadata   map[string]string `json:"metadata,omitempty"`
 	CreatedAt  time.Time         `json:"created_at"`
 	ExpiresAt  time.Time         `json:"expires_at,omitempty"`
+	Concat     string            `json:"concat,omitempty"`
 	Chunks     []*TusChunkInfo   `json:"chunks,omitempty"`
+}
+
+// isPartial reports whether the session is a concatenation partial upload: it
+// holds chunks for a later final upload instead of landing at its target path.
+func (session *TusSession) isPartial() bool {
+	return session.Concat == TusConcatPartial
+}
+
+func (session *TusSession) isFinal() bool {
+	return strings.HasPrefix(session.Concat, TusConcatFinalPrefix)
 }
 
 // TusChunkInfo tracks individual chunk uploads within a session
@@ -117,7 +130,7 @@ func parseTusChunkPath(entry *filer.Entry) (*TusChunkInfo, error) {
 }
 
 // createTusSession creates a new TUS upload session
-func (fs *FilerServer) createTusSession(ctx context.Context, uploadID, targetPath string, size int64, metadata map[string]string) (*TusSession, error) {
+func (fs *FilerServer) createTusSession(ctx context.Context, uploadID, targetPath string, size int64, metadata map[string]string, concat string) (*TusSession, error) {
 	session := &TusSession{
 		ID:         uploadID,
 		TargetPath: targetPath,
@@ -126,6 +139,7 @@ func (fs *FilerServer) createTusSession(ctx context.Context, uploadID, targetPat
 		Metadata:   metadata,
 		CreatedAt:  time.Now(),
 		ExpiresAt:  time.Now().Add(fs.option.TusSessionExpiry),
+		Concat:     concat,
 		Chunks:     []*TusChunkInfo{},
 	}
 

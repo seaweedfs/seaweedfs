@@ -186,6 +186,13 @@ func (fs *FilerServer) tusCreateHandler(w http.ResponseWriter, r *http.Request) 
 	// may exceed the filer's client connection inactivity timeout.
 	ctx := context.WithoutCancel(r.Context())
 
+	// Only plain uploads and concatenation partial uploads are created here.
+	concat := r.Header.Get("Upload-Concat")
+	if concat != "" && concat != TusConcatPartial {
+		http.Error(w, "Invalid Upload-Concat", http.StatusBadRequest)
+		return
+	}
+
 	// Parse Upload-Length header (required)
 	uploadLengthStr := r.Header.Get("Upload-Length")
 	if uploadLengthStr == "" {
@@ -226,7 +233,7 @@ func (fs *FilerServer) tusCreateHandler(w http.ResponseWriter, r *http.Request) 
 	uploadID := uuid.New().String()
 
 	// Create upload session
-	session, err := fs.createTusSession(ctx, uploadID, targetPath, uploadLength, metadata)
+	session, err := fs.createTusSession(ctx, uploadID, targetPath, uploadLength, metadata, concat)
 	if err != nil {
 		glog.Errorf("Failed to create TUS session: %v", err)
 		http.Error(w, "Failed to create upload", http.StatusInternalServerError)
@@ -265,8 +272,9 @@ func (fs *FilerServer) tusCreateHandler(w http.ResponseWriter, r *http.Request) 
 			// Update offset in response header
 			w.Header().Set("Upload-Offset", strconv.FormatInt(bytesWritten, 10))
 
-			// Check if upload is complete
-			if bytesWritten == session.Size {
+			// Check if upload is complete; a partial upload keeps its chunks for
+			// a later concatenation instead of landing at the target path.
+			if bytesWritten == session.Size && !session.isPartial() {
 				// Ensure the pinned session still exists, then refresh its chunks.
 				if err = fs.refreshTusSessionChunks(ctx, session); err != nil {
 					glog.Errorf("Failed to get updated TUS session: %v", err)
@@ -289,6 +297,9 @@ func (fs *FilerServer) tusCreateHandler(w http.ResponseWriter, r *http.Request) 
 
 // tusHeadHandler handles HEAD requests to get current upload offset
 func (fs *FilerServer) tusHeadHandler(w http.ResponseWriter, session *TusSession) {
+	if session.Concat != "" {
+		w.Header().Set("Upload-Concat", session.Concat)
+	}
 	w.Header().Set("Upload-Offset", strconv.FormatInt(session.Offset, 10))
 	w.Header().Set("Upload-Length", strconv.FormatInt(session.Size, 10))
 	w.Header().Set("Cache-Control", "no-store")
@@ -348,8 +359,9 @@ func (fs *FilerServer) tusPatchHandler(w http.ResponseWriter, r *http.Request, s
 
 	newOffset := uploadOffset + bytesWritten
 
-	// Check if upload is complete
-	if newOffset == session.Size {
+	// Check if upload is complete; a partial upload keeps its chunks for a later
+	// concatenation instead of landing at the target path.
+	if newOffset == session.Size && !session.isPartial() {
 		// Ensure the authorized session still exists, then refresh its chunks.
 		if err = fs.refreshTusSessionChunks(ctx, session); err != nil {
 			glog.Errorf("Failed to get updated TUS session: %v", err)
