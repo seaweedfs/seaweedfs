@@ -98,16 +98,19 @@ func (d *DiskUsages) negative() *DiskUsages {
 }
 
 func (d *DiskUsages) ToDiskInfo() map[string]*master_pb.DiskInfo {
+	d.RLock()
+	defer d.RUnlock()
 	ret := make(map[string]*master_pb.DiskInfo)
 	for diskType, diskUsageCounts := range d.usages {
+		usage := diskUsageCounts.snapshot()
 		m := &master_pb.DiskInfo{
-			VolumeCount:       diskUsageCounts.volumeCount,
-			MaxVolumeCount:    diskUsageCounts.maxVolumeCount,
-			FreeVolumeCount:   diskUsageCounts.maxVolumeCount - (diskUsageCounts.volumeCount - diskUsageCounts.remoteVolumeCount) - ecShardSlots(diskUsageCounts.ecShardCount),
-			ActiveVolumeCount: diskUsageCounts.activeVolumeCount,
-			RemoteVolumeCount: diskUsageCounts.remoteVolumeCount,
-			DiskTotalBytes:    uint64(max(0, diskUsageCounts.diskTotalBytes)),
-			DiskFreeBytes:     uint64(max(0, diskUsageCounts.diskFreeBytes)),
+			VolumeCount:       usage.volumeCount,
+			MaxVolumeCount:    usage.maxVolumeCount,
+			FreeVolumeCount:   usage.maxVolumeCount - (usage.volumeCount - usage.remoteVolumeCount) - ecShardSlots(usage.ecShardCount),
+			ActiveVolumeCount: usage.activeVolumeCount,
+			RemoteVolumeCount: usage.remoteVolumeCount,
+			DiskTotalBytes:    uint64(max(0, usage.diskTotalBytes)),
+			DiskFreeBytes:     uint64(max(0, usage.diskFreeBytes)),
 		}
 		ret[string(diskType)] = m
 	}
@@ -154,8 +157,24 @@ func (a *DiskUsageCounts) addDiskUsageCounts(b *DiskUsageCounts) {
 	atomic.AddInt64(&a.diskFreeBytes, b.diskFreeBytes)
 }
 
+// snapshot reads each counter atomically, so a reader sees whole values rather
+// than ones a concurrent heartbeat is halfway through writing. They are still
+// read one at a time, so they need not all describe the same instant.
+func (a *DiskUsageCounts) snapshot() DiskUsageCounts {
+	return DiskUsageCounts{
+		volumeCount:       atomic.LoadInt64(&a.volumeCount),
+		remoteVolumeCount: atomic.LoadInt64(&a.remoteVolumeCount),
+		activeVolumeCount: atomic.LoadInt64(&a.activeVolumeCount),
+		ecShardCount:      atomic.LoadInt64(&a.ecShardCount),
+		maxVolumeCount:    atomic.LoadInt64(&a.maxVolumeCount),
+		diskTotalBytes:    atomic.LoadInt64(&a.diskTotalBytes),
+		diskFreeBytes:     atomic.LoadInt64(&a.diskFreeBytes),
+	}
+}
+
 func (a *DiskUsageCounts) FreeSpace() int64 {
-	return a.maxVolumeCount + a.remoteVolumeCount - a.volumeCount - ecShardSlots(a.ecShardCount)
+	u := a.snapshot()
+	return u.maxVolumeCount + u.remoteVolumeCount - u.volumeCount - ecShardSlots(u.ecShardCount)
 }
 
 func (du *DiskUsages) getOrCreateDisk(diskType types.DiskType) *DiskUsageCounts {
@@ -368,24 +387,35 @@ func (d *Disk) FreeSpace() int64 {
 	return t.FreeSpace()
 }
 
-func (d *Disk) ToDiskInfo() *master_pb.DiskInfo {
-	diskUsage := d.diskUsages.getOrCreateDisk(types.ToDiskType(string(d.Id())))
+func (d *Disk) ToDiskInfo(filter VolumeFilter) *master_pb.DiskInfo {
+	diskUsage := d.diskUsages.getOrCreateDisk(types.ToDiskType(string(d.Id()))).snapshot()
 
 	// Built under the read lock rather than from a copy as large as the
 	// messages it fed. Nothing here re-enters the topology, so the hold is safe.
 	d.RLock()
-	volumeInfos := make([]*master_pb.VolumeInformationMessage, 0, len(d.volumes))
+	// Reserving room for every volume would keep what a filter set out not to
+	// build.
+	capacity := 0
+	if filter.SelectsEverything() {
+		capacity = len(d.volumes)
+	}
+	volumeInfos := make([]*master_pb.VolumeInformationMessage, 0, capacity)
 	var diskId uint32
+	var haveDiskId bool
 	for _, v := range d.volumes {
-		if len(volumeInfos) == 0 {
-			diskId = v.DiskId
+		// Any volume names the disk, including one filtered out.
+		if !haveDiskId {
+			diskId, haveDiskId = v.DiskId, true
+		}
+		if !filter.matches(v.Collection, v.Id) {
+			continue
 		}
 		volumeInfos = append(volumeInfos, v.ToVolumeInformationMessage())
 	}
 	d.RUnlock()
 
 	ecShards := d.GetEcShards()
-	if len(volumeInfos) == 0 && len(ecShards) > 0 {
+	if !haveDiskId && len(ecShards) > 0 {
 		diskId = ecShards[0].DiskId
 	}
 
@@ -401,8 +431,15 @@ func (d *Disk) ToDiskInfo() *master_pb.DiskInfo {
 		DiskFreeBytes:     uint64(max(0, diskUsage.diskFreeBytes)),
 	}
 	m.VolumeInfos = volumeInfos
-	m.EcShardInfos = make([]*master_pb.VolumeEcShardInformationMessage, 0, len(ecShards))
+	ecCapacity := 0
+	if filter.SelectsEverything() {
+		ecCapacity = len(ecShards)
+	}
+	m.EcShardInfos = make([]*master_pb.VolumeEcShardInformationMessage, 0, ecCapacity)
 	for _, ecv := range ecShards {
+		if !filter.matches(ecv.Collection, ecv.VolumeId) {
+			continue
+		}
 		m.EcShardInfos = append(m.EcShardInfos, ecv.ToVolumeEcShardInformationMessage())
 	}
 	return m

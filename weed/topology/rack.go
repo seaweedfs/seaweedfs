@@ -148,14 +148,14 @@ func (r *Rack) ToInfo() (info RackInfo) {
 	return
 }
 
-func (r *Rack) ToRackInfo() *master_pb.RackInfo {
+func (r *Rack) ToRackInfo(filter VolumeFilter) *master_pb.RackInfo {
 	m := &master_pb.RackInfo{
 		Id:        string(r.Id()),
 		DiskInfos: r.diskUsages.ToDiskInfo(),
 	}
 	for _, c := range r.Children() {
 		dn := c.(*DataNode)
-		m.DataNodeInfos = append(m.DataNodeInfos, dn.ToDataNodeInfo())
+		m.DataNodeInfos = append(m.DataNodeInfos, dn.ToDataNodeInfo(filter))
 	}
 	return m
 }

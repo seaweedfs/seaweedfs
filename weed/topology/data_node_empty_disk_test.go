@@ -21,7 +21,7 @@ func TestToDataNodeInfoReportsEmptyPhysicalDisks(t *testing.T) {
 		{DiskId: 2, Type: "", MaxVolumeCount: 300}, // empty disk, never held a volume
 	})
 
-	info := dn.ToDataNodeInfo()
+	info := dn.ToDataNodeInfo(VolumeFilter{})
 	di, ok := info.DiskInfos[""]
 	if !ok {
 		t.Fatalf("missing HDD disk info")
@@ -61,7 +61,7 @@ func TestToDataNodeInfoKeepsZeroCapacityDisk(t *testing.T) {
 		{DiskId: 2, Type: "", MaxVolumeCount: 0}, // unavailable disk
 	})
 
-	di := dn.ToDataNodeInfo().DiskInfos[""]
+	di := dn.ToDataNodeInfo(VolumeFilter{}).DiskInfos[""]
 	if len(di.MaxVolumeCountByDisk) != 3 {
 		t.Fatalf("want 3 physical disks (incl the zero-capacity one), got %d", len(di.MaxVolumeCountByDisk))
 	}
@@ -81,7 +81,7 @@ func TestToDataNodeInfoFallsBackWhenNoCapacityReported(t *testing.T) {
 		{DiskId: 1},
 	})
 
-	di := dn.ToDataNodeInfo().DiskInfos[""]
+	di := dn.ToDataNodeInfo(VolumeFilter{}).DiskInfos[""]
 	if len(di.MaxVolumeCountByDisk) != 0 {
 		t.Fatalf("want no per-disk max (fallback), got %d", len(di.MaxVolumeCountByDisk))
 	}

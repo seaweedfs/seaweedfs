@@ -406,6 +406,13 @@ message TopologyInfo {
   map<string, DiskInfo> diskInfos = 3;
 }
 message VolumeListRequest {
+  // Empty and zero take everything. Only the volumes and ec shards listed
+  // under a disk are selected; the topology and its disk counters are always
+  // reported in full.
+  string collection = 1;
+  uint32 volume_id = 2;
+  // The one collection the empty string cannot name. A named collection wins.
+  bool default_collection_only = 3;
 }
 message VolumeListResponse {
   TopologyInfo topology_info = 1;

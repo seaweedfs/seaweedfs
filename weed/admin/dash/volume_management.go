@@ -309,7 +309,7 @@ func (s *AdminServer) sortVolumes(volumes []VolumeWithTopology, sortBy string, s
 }
 
 // GetVolumeDetails retrieves detailed information about a specific volume
-func (s *AdminServer) GetVolumeDetails(volumeID int, server string) (*VolumeDetailsData, error) {
+func (s *AdminServer) GetVolumeDetails(volumeID uint32, server string) (*VolumeDetailsData, error) {
 	var primaryVolume VolumeWithTopology
 	var replicas []VolumeWithTopology
 	var volumeSizeLimit uint64
@@ -317,7 +317,7 @@ func (s *AdminServer) GetVolumeDetails(volumeID int, server string) (*VolumeDeta
 
 	// Find the volume and all its replicas in the cluster
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{VolumeId: volumeID})
 		if err != nil {
 			return err
 		}
@@ -328,7 +328,8 @@ func (s *AdminServer) GetVolumeDetails(volumeID int, server string) (*VolumeDeta
 					for _, node := range rack.DataNodeInfos {
 						for _, diskInfo := range node.DiskInfos {
 							for _, volInfo := range diskInfo.VolumeInfos {
-								if int(volInfo.Id) == volumeID {
+								// An older master ignores the filter.
+								if volInfo.Id == volumeID {
 									diskType := volInfo.DiskType
 									if diskType == "" {
 										diskType = "hdd"
