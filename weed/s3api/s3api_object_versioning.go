@@ -732,11 +732,12 @@ func (vc *versionCollector) processRegularFile(currentPath, entryPath string, en
 	vc.seenVersionIds[versionKey] = true
 
 	// A latest-version pointer on the .versions sibling names the current version
-	// (a suspended-versioning write clears it), so the null object is not latest.
-	// With no pointer, the sibling may still hold replicated versions the lagging
-	// pointer has not caught up with; the nullObjectWins rule decides.
+	// (a suspended-versioning write clears it and leaves the explicit null
+	// signal), so the null object is not latest. With no pointer and no signal,
+	// the sibling may still hold replicated versions the lagging pointer has not
+	// caught up with; the nullObjectWins rule decides.
 	isLatest := true
-	if versionsErr == nil {
+	if versionsErr == nil && !nullVersionIsLatest(versionsDirEntry) {
 		if len(versionsDirEntry.Extended[s3_constants.ExtLatestVersionIdKey]) > 0 {
 			isLatest = false
 		} else if latestVersion, _, _, _, scanErr := vc.s3a.scanLatestVersionEntry(currentPath + "/" + versionsEntryName); scanErr == nil && latestVersion != nil && !nullObjectWins(entry, latestVersion) {
@@ -2042,7 +2043,7 @@ func (s3a *S3ApiServer) getLatestVersionEntryFromDirectoryEntry(bucket, object s
 	// here). Indexing a nil Extended map is safe and yields !ok.
 	latestVersionIdBytes, hasLatestVersionId := versionsDirEntry.Extended[s3_constants.ExtLatestVersionIdKey]
 	if !hasLatestVersionId {
-		return s3a.recoverLatestListEntryByScan(bucket, normalizedObject)
+		return s3a.recoverLatestListEntryByScan(bucket, normalizedObject, nullVersionIsLatest(versionsDirEntry))
 	}
 
 	// Check if this is a delete marker (should not be shown in regular list)
@@ -2108,7 +2109,7 @@ func (s3a *S3ApiServer) getLatestVersionEntryFromDirectoryEntry(bucket, object s
 	// Fallback: fetch version file if cached metadata not available (for older versions)
 	latestVersionFileBytes, hasLatestVersionFile := versionsDirEntry.Extended[s3_constants.ExtLatestVersionFileNameKey]
 	if !hasLatestVersionFile {
-		return s3a.recoverLatestListEntryByScan(bucket, normalizedObject)
+		return s3a.recoverLatestListEntryByScan(bucket, normalizedObject, nullVersionIsLatest(versionsDirEntry))
 	}
 	latestVersionFile := string(latestVersionFileBytes)
 
@@ -2141,22 +2142,24 @@ func (s3a *S3ApiServer) getLatestVersionEntryFromDirectoryEntry(bucket, object s
 	return logicalEntry, nil
 }
 
-// nullObjectWins decides, with no latest-version pointer to consult, whether the
-// base-path null object or the newest scanned version is the current version.
-// The suspended write that makes a null current stamps the version it displaces
-// before clearing the pointer, so the stamp is authoritative; otherwise the
-// newer mtime wins, and a tie goes to the version, since second-resolution
-// mtimes cannot order same-second writes and an intentional null leaves the stamp.
+// nullObjectWins decides, with no latest-version pointer and no null-is-latest
+// signal to consult, whether the base-path null object or the newest scanned
+// version is the current version: the newer mtime wins, and a tie goes to the
+// version, since second-resolution mtimes cannot order same-second writes and
+// an intentional null carries the ExtNullVersionIsLatestKey signal. The
+// NoncurrentSinceNs demotion stamp is deliberately not consulted: promotions
+// do not clear it, so it does not prove the null displaced the version.
 func nullObjectWins(regular, latest *filer_pb.Entry) bool {
 	if latest == nil {
 		return true
 	}
-	if latest.Extended != nil {
-		if _, displaced := latest.Extended[s3_constants.ExtNoncurrentSinceNsKey]; displaced {
-			return true
-		}
-	}
 	return regular.GetAttributes().GetMtime() > latest.GetAttributes().GetMtime()
+}
+
+// nullVersionIsLatest reports the explicit signal a suspended-versioning write
+// leaves on the .versions directory when the null object is current.
+func nullVersionIsLatest(versionsDirEntry *filer_pb.Entry) bool {
+	return versionsDirEntry != nil && string(versionsDirEntry.Extended[s3_constants.ExtNullVersionIsLatestKey]) == "true"
 }
 
 // recoverLatestListEntryByScan rebuilds an object's current-version list entry by
@@ -2170,14 +2173,18 @@ func nullObjectWins(regular, latest *filer_pb.Entry) bool {
 // a write per diverged object); convergence is handled on the write/replication
 // side. Returns ErrDeleteMarker when the current version is a delete marker
 // (excluded from a regular listing) and filer_pb.ErrNotFound when nothing remains.
-func (s3a *S3ApiServer) recoverLatestListEntryByScan(bucket, normalizedObject string) (*filer_pb.Entry, error) {
+func (s3a *S3ApiServer) recoverLatestListEntryByScan(bucket, normalizedObject string, nullIsLatest bool) (*filer_pb.Entry, error) {
 	bucketDir := s3a.bucketDir(bucket)
 	versionsDir := bucketDir + "/" + normalizedObject + s3_constants.VersionsFolder
 
 	// An absent pointer can mean a suspended-versioning write made the null
-	// object current (the write clears the pointer), or that the pointer has not
-	// replicated to this filer while the version files have.
+	// object current (the write clears the pointer and leaves the explicit
+	// nullIsLatest signal), or that the pointer has not replicated to this
+	// filer while the version files have.
 	regularEntry, regularErr := s3a.getEntry(bucketDir, normalizedObject)
+	if regularErr == nil && nullIsLatest {
+		return regularEntry, nil
+	}
 
 	latestEntry, latestVersionId, _, isDeleteMarker, err := s3a.scanLatestVersionEntry(versionsDir)
 	if err != nil {
