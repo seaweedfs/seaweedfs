@@ -119,10 +119,19 @@ func (fs *FilerServer) claimTusPartial(ctx context.Context, partial *TusSession)
 		return err
 	}
 	if err := fs.refreshTusSessionChunks(ctx, partial); err != nil {
-		fs.filer.DeleteEntryMetaAndData(ctx, util.FullPath(fs.tusSessionConsumedPath(partial.ID)), false, false, false, false, nil, 0)
+		fs.rollbackTusSessionConsumed(ctx, partial.ID)
 		return err
 	}
 	return nil
+}
+
+// rollbackTusSessionConsumed releases a consumed marker after a failed claim or
+// completion. A failed rollback wedges the session as consumed: DELETE and
+// expiry then preserve its chunks, which leak until removed by fsck.
+func (fs *FilerServer) rollbackTusSessionConsumed(ctx context.Context, uploadID string) {
+	if err := fs.filer.DeleteEntryMetaAndData(ctx, util.FullPath(fs.tusSessionConsumedPath(uploadID)), false, false, false, false, nil, 0); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		glog.Errorf("TUS session %s wedged as consumed, marker rollback failed: %v", uploadID, err)
+	}
 }
 
 func (fs *FilerServer) isTusSessionConsumed(ctx context.Context, uploadID string) (bool, error) {
@@ -540,7 +549,7 @@ func (fs *FilerServer) completeTusUpload(ctx context.Context, session *TusSessio
 	// the marker: a session whose .info is still present here cannot have its
 	// chunks freed by a delete that missed the marker just made durable.
 	if err := fs.verifyTusSessionUnchanged(ctx, session); err != nil {
-		fs.filer.DeleteEntryMetaAndData(ctx, util.FullPath(fs.tusSessionConsumedPath(session.ID)), false, false, false, false, nil, 0)
+		fs.rollbackTusSessionConsumed(ctx, session.ID)
 		return fmt.Errorf("session deleted before completion: %w", err)
 	}
 

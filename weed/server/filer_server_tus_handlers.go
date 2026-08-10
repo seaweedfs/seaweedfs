@@ -373,9 +373,7 @@ func (fs *FilerServer) tusConcatFinalHandler(w http.ResponseWriter, r *http.Requ
 	var totalSize int64
 	releaseClaims := func() {
 		for _, claimedID := range claimedIDs {
-			if err := fs.filer.DeleteEntryMetaAndData(ctx, util.FullPath(fs.tusSessionConsumedPath(claimedID)), false, false, false, false, nil, 0); err != nil {
-				glog.V(1).Infof("Failed to release TUS partial claim %s: %v", claimedID, err)
-			}
+			fs.rollbackTusSessionConsumed(ctx, claimedID)
 		}
 	}
 	for _, partialID := range partialIDs {
