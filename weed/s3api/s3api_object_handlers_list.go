@@ -17,6 +17,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type OptionalString struct {
@@ -377,40 +379,59 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 			}
 		}
 
-		settlePendingNull := func(p pendingNull) {
+		// Only a definitive not-found means the null object is live; a transient
+		// failure leaves the entry unsettled and must not commit it to the page,
+		// since the next page would then skip the sibling for good.
+		settlePendingNull := func(p pendingNull) error {
 			versionsEntry, err := s3a.getEntry(p.dir, p.name+s3_constants.VersionsFolder)
 			if err != nil {
-				return
+				if errors.Is(err, filer_pb.ErrNotFound) || status.Code(err) == codes.NotFound {
+					return nil
+				}
+				return fmt.Errorf("settle null object %s/%s: %w", p.dir, p.name, err)
 			}
 			fullObjectPath := strings.TrimPrefix(p.dir+"/"+p.name, bucketPrefix)
-			if latest, lerr := s3a.getLatestVersionEntryFromDirectoryEntry(bucket, fullObjectPath, versionsEntry); lerr == nil {
+			latest, lerr := s3a.getLatestVersionEntryFromDirectoryEntry(bucket, fullObjectPath, versionsEntry)
+			switch {
+			case lerr == nil:
 				dirName, entryName, _ := entryUrlEncode(p.dir, latest.Name, encodingTypeUrl)
 				appendOrDedup(newListEntry(s3a, latest, "", dirName, entryName, bucketPrefix, fetchOwner, false, false))
-			} else if errors.Is(lerr, ErrDeleteMarker) {
+			case errors.Is(lerr, ErrDeleteMarker), errors.Is(lerr, filer_pb.ErrNotFound):
 				cursor.retractEntry(p.dir, p.name)
+			default:
+				return fmt.Errorf("settle null object %s/%s: %w", p.dir, p.name, lerr)
 			}
+			return nil
 		}
 
 		addPendingNull := func(dir, name string) {
 			if len(pendingNulls) >= 8 {
 				// Settle rather than silently evict: an unsettled null would leak past
-				// the page, and the resume skip would then keep it stale for good.
+				// the page, and the resume skip would then keep it stale for good. A
+				// failed settlement is retained for page-close resolution to retry.
 				settled := pendingNulls[0]
 				pendingNulls = pendingNulls[1:]
-				settlePendingNull(settled)
+				if settleErr := settlePendingNull(settled); settleErr != nil {
+					pendingNulls = append([]pendingNull{settled}, pendingNulls...)
+				}
 			}
 			pendingNulls = append(pendingNulls, pendingNull{dir, name})
 		}
 
 		// A page may fill while a trailing null object's .versions sibling is still
 		// unstreamed; settle each one by direct lookup before the page is declared
-		// final. A retraction here reopens the page's quota.
-		cursor.resolvePendingNulls = func() {
-			pending := pendingNulls
-			pendingNulls = nil
-			for _, p := range pending {
-				settlePendingNull(p)
+		// final. A retraction here reopens the page's quota, and a failure fails the
+		// listing rather than committing an unsettled entry.
+		cursor.resolvePendingNulls = func() error {
+			for len(pendingNulls) > 0 {
+				p := pendingNulls[0]
+				pendingNulls = pendingNulls[1:]
+				if settleErr := settlePendingNull(p); settleErr != nil {
+					pendingNulls = append([]pendingNull{p}, pendingNulls...)
+					return settleErr
+				}
 			}
+			return nil
 		}
 
 		for {
@@ -612,7 +633,7 @@ type ListingCursor struct {
 	retractEntry func(dir, name string)
 	// resolvePendingNulls settles trailing null objects whose .versions sibling
 	// has not streamed yet before a page is declared full.
-	resolvePendingNulls func()
+	resolvePendingNulls func() error
 }
 
 // the prefix and marker may be in different directories
@@ -790,7 +811,9 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 				entry.Name == nextMarker+s3_constants.VersionsFolder
 			if cursor.maxKeys <= 0 && !versionsSiblingOfLast {
 				if cursor.resolvePendingNulls != nil {
-					cursor.resolvePendingNulls()
+					if err = cursor.resolvePendingNulls(); err != nil {
+						return
+					}
 				}
 				if cursor.maxKeys <= 0 {
 					cursor.isTruncated = true
