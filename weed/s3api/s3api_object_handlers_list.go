@@ -362,13 +362,6 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 			}
 			pendingNulls = kept
 		}
-		addPendingNull := func(dir, name string) {
-			if len(pendingNulls) >= 8 {
-				pendingNulls = pendingNulls[1:]
-			}
-			pendingNulls = append(pendingNulls, pendingNull{dir, name})
-		}
-
 		// The null object for a key lists before its .versions sibling can reveal
 		// that the current version is a delete marker, so the reveal retracts it.
 		cursor.retractEntry = func(dir, name string) {
@@ -384,6 +377,31 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 			}
 		}
 
+		settlePendingNull := func(p pendingNull) {
+			versionsEntry, err := s3a.getEntry(p.dir, p.name+s3_constants.VersionsFolder)
+			if err != nil {
+				return
+			}
+			fullObjectPath := strings.TrimPrefix(p.dir+"/"+p.name, bucketPrefix)
+			if latest, lerr := s3a.getLatestVersionEntryFromDirectoryEntry(bucket, fullObjectPath, versionsEntry); lerr == nil {
+				dirName, entryName, _ := entryUrlEncode(p.dir, latest.Name, encodingTypeUrl)
+				appendOrDedup(newListEntry(s3a, latest, "", dirName, entryName, bucketPrefix, fetchOwner, false, false))
+			} else if errors.Is(lerr, ErrDeleteMarker) {
+				cursor.retractEntry(p.dir, p.name)
+			}
+		}
+
+		addPendingNull := func(dir, name string) {
+			if len(pendingNulls) >= 8 {
+				// Settle rather than silently evict: an unsettled null would leak past
+				// the page, and the resume skip would then keep it stale for good.
+				settled := pendingNulls[0]
+				pendingNulls = pendingNulls[1:]
+				settlePendingNull(settled)
+			}
+			pendingNulls = append(pendingNulls, pendingNull{dir, name})
+		}
+
 		// A page may fill while a trailing null object's .versions sibling is still
 		// unstreamed; settle each one by direct lookup before the page is declared
 		// final. A retraction here reopens the page's quota.
@@ -391,17 +409,7 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 			pending := pendingNulls
 			pendingNulls = nil
 			for _, p := range pending {
-				versionsEntry, err := s3a.getEntry(p.dir, p.name+s3_constants.VersionsFolder)
-				if err != nil {
-					continue
-				}
-				fullObjectPath := strings.TrimPrefix(p.dir+"/"+p.name, bucketPrefix)
-				if latest, lerr := s3a.getLatestVersionEntryFromDirectoryEntry(bucket, fullObjectPath, versionsEntry); lerr == nil {
-					dirName, entryName, _ := entryUrlEncode(p.dir, latest.Name, encodingTypeUrl)
-					appendOrDedup(newListEntry(s3a, latest, "", dirName, entryName, bucketPrefix, fetchOwner, false, false))
-				} else if errors.Is(lerr, ErrDeleteMarker) {
-					cursor.retractEntry(p.dir, p.name)
-				}
+				settlePendingNull(p)
 			}
 		}
 
