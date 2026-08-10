@@ -718,6 +718,10 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// The marker this page started from, unlike marker below, which advances with
+	// each request window inside the page.
+	pageMarker := marker
+
 	// Entries that emit nothing (empty directories, the .uploads folder, the marker
 	// echo) consume the request window without consuming maxKeys, so one window may
 	// end before maxKeys is satisfied. Keep requesting from the last received entry
@@ -817,6 +821,17 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 					}
 					// Extract object name from .versions directory name
 					baseObjectName := strings.TrimSuffix(entry.Name, s3_constants.VersionsFolder)
+					// A page resuming from a marker inside the base key's extension
+					// region ("k.bak" sorts between "k" and "k.versions") means an
+					// earlier page already listed and settled the base null object;
+					// resolving this directory again would duplicate the key. Without
+					// a base object the key has not been listed yet, so it still
+					// resolves here.
+					if pageMarker != "" && baseObjectName < pageMarker {
+						if _, baseErr := s3a.getEntry(dir, baseObjectName); baseErr == nil {
+							continue
+						}
+					}
 					// Construct full object path relative to bucket
 					bucketFullPath := s3a.bucketDir(bucket)
 					bucketRelativePath := strings.TrimPrefix(dir, bucketFullPath)
