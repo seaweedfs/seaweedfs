@@ -117,9 +117,10 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 		fileHandle.SetEntry(newEntry)
 	}
 	fileHandle.RememberPath(entryFullPath)
-	// Mark dirty so the deferred filer create happens on Flush,
-	// even if the file is closed without any writes.
-	fileHandle.dirtyMetadata = true
+	// Mark dirty so the deferred filer create happens on Flush, even if the
+	// file is closed without any writes. An eager create has already
+	// persisted the entry, so its handle starts clean.
+	fileHandle.dirtyMetadata = !wfs.option.EagerFilerCreate
 
 	// Acquire DLM lock for new file creation (Create bypasses AcquireHandle
 	// so we must acquire the lock here). Always lock on Create since file
@@ -244,15 +245,11 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	// finishes first; even if it recreated the entry, the filer delete below
 	// will remove it again.
 	if inode, found := wfs.inodeToPath.GetInode(entryFullPath); found {
-		if fh, fhFound := wfs.fhMap.FindFileHandle(inode); fhFound {
-			fh.isDeleted = true
-		}
+		wfs.markHandleDeleted(inode)
 		wfs.waitForPendingAsyncFlush(inode)
 	} else if entry != nil && entry.Attributes != nil && entry.Attributes.Inode != 0 {
 		inodeFromEntry := entry.Attributes.Inode
-		if fh, fhFound := wfs.fhMap.FindFileHandle(inodeFromEntry); fhFound {
-			fh.isDeleted = true
-		}
+		wfs.markHandleDeleted(inodeFromEntry)
 		wfs.waitForPendingAsyncFlush(inodeFromEntry)
 	}
 
@@ -436,6 +433,21 @@ func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode u
 	}
 
 	return inode, newEntry, fuse.OK
+}
+
+// markHandleDeleted flags the inode's open handle so its flushes stop writing
+// the entry back. Taken and released under the handle's flush lock: a flush
+// already holding it finishes before the caller's delete runs, and any later
+// flush sees the flag; setting the flag bare raced the flush's own check and
+// resurrected the entry right after the delete.
+func (wfs *WFS) markHandleDeleted(inode uint64) {
+	fh, found := wfs.fhMap.FindFileHandle(inode)
+	if !found {
+		return
+	}
+	fhActiveLock := wfs.fhLockTable.AcquireLock("Unlink", fh.fh, util.ExclusiveLock)
+	fh.isDeleted = true
+	wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 }
 
 // asyncCreateEntry sends a CreateEntry RPC to the filer in the background.
