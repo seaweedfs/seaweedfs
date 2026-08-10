@@ -338,17 +338,26 @@ func (fs *FilerServer) loadTusSessionChunks(ctx context.Context, session *TusSes
 	return nil
 }
 
-// refreshTusSessionChunks verifies the pinned session still exists and still
-// identifies the same upload before refreshing its chunk state, so a PATCH
-// cannot complete after a concurrent DELETE or metadata replacement and land at
-// a TargetPath other than the one that was authorized.
-func (fs *FilerServer) refreshTusSessionChunks(ctx context.Context, session *TusSession) error {
+// verifyTusSessionUnchanged confirms the stored .info still identifies the same
+// pinned session.
+func (fs *FilerServer) verifyTusSessionUnchanged(ctx context.Context, session *TusSession) error {
 	stored, err := fs.readTusSessionInfo(ctx, session.ID)
 	if err != nil {
 		return err
 	}
 	if stored.TargetPath != session.TargetPath || stored.Size != session.Size || !stored.CreatedAt.Equal(session.CreatedAt) {
 		return fmt.Errorf("TUS session identity changed: %s", session.ID)
+	}
+	return nil
+}
+
+// refreshTusSessionChunks verifies the pinned session still exists and still
+// identifies the same upload before refreshing its chunk state, so a PATCH
+// cannot complete after a concurrent DELETE or metadata replacement and land at
+// a TargetPath other than the one that was authorized.
+func (fs *FilerServer) refreshTusSessionChunks(ctx context.Context, session *TusSession) error {
+	if err := fs.verifyTusSessionUnchanged(ctx, session); err != nil {
+		return err
 	}
 	return fs.loadTusSessionChunks(ctx, session)
 }
@@ -498,6 +507,14 @@ func (fs *FilerServer) completeTusUpload(ctx context.Context, session *TusSessio
 	// corrupting a live entry.
 	if err := fs.markTusSessionConsumed(ctx, session.ID, false); err != nil {
 		return fmt.Errorf("mark session consumed: %w", err)
+	}
+
+	// Handshake with deleteTusSession, which removes the .info before checking
+	// the marker: a session whose .info is still present here cannot have its
+	// chunks freed by a delete that missed the marker just made durable.
+	if err := fs.verifyTusSessionUnchanged(ctx, session); err != nil {
+		fs.filer.DeleteEntryMetaAndData(ctx, util.FullPath(fs.tusSessionConsumedPath(session.ID)), false, false, false, false, nil, 0)
+		return fmt.Errorf("session deleted before completion: %w", err)
 	}
 
 	entry := &filer.Entry{
