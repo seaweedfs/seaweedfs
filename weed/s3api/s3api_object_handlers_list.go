@@ -692,7 +692,12 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 				continue
 			}
 
-			if cursor.maxKeys <= 0 {
+			// The .versions sibling of the key just emitted still decides that key's
+			// fate (metadata replacement or retraction) and consumes no quota of its
+			// own, so it must not be pushed past the page boundary.
+			versionsSiblingOfLast := cursor.hideDeletedPrefixes && entry.IsDirectory &&
+				entry.Name == nextMarker+s3_constants.VersionsFolder
+			if cursor.maxKeys <= 0 && !versionsSiblingOfLast {
 				cursor.isTruncated = true
 				break
 			}
