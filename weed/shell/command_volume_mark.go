@@ -27,10 +27,14 @@ func (c *commandVolumeMark) Name() string {
 func (c *commandVolumeMark) Help() string {
 	return `Mark volume writable or readonly from one volume server, or all volume replicas in one collection
 
-	volume.mark -node <volume server host:port> -volumeId <volume id> -writable or -readonly
-	volume.mark -collection <collection> -writable or -readonly
+	volume.mark -node <volume server host:port> -volumeId <volume id> -writable, -readonly or -readonlyCanDelete
+	volume.mark -collection <collection> -writable, -readonly or -readonlyCanDelete
 
 	Use -collection ` + CollectionDefault + ` to target volumes that belong to no named collection.
+
+	-readonlyCanDelete rejects new writes but keeps accepting deletes, so a
+	volume holding expiring data drains over time until it can be vacuumed
+	away or merged into other volumes with fs.mergeVolumes.
 `
 }
 
@@ -46,6 +50,7 @@ func (c *commandVolumeMark) Do(args []string, commandEnv *CommandEnv, writer io.
 	collection := volMarkCommand.String("collection", "", "the collection name")
 	writable := volMarkCommand.Bool("writable", false, "volume mark writable")
 	readonly := volMarkCommand.Bool("readonly", false, "volume mark readonly")
+	readonlyCanDelete := volMarkCommand.Bool("readonlyCanDelete", false, "volume mark readonly but still accepting deletes")
 	if err = volMarkCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -60,12 +65,16 @@ func (c *commandVolumeMark) Do(args []string, commandEnv *CommandEnv, writer io.
 			volumeIdSet = true
 		}
 	})
-	markWritable := false
-	if (*writable && *readonly) || (!*writable && !*readonly) {
-		return fmt.Errorf("use -readonly or -writable")
-	} else if *writable {
-		markWritable = true
+	modeCount := 0
+	for _, set := range []bool{*writable, *readonly, *readonlyCanDelete} {
+		if set {
+			modeCount++
+		}
 	}
+	if modeCount != 1 {
+		return fmt.Errorf("use exactly one of -writable, -readonly or -readonlyCanDelete")
+	}
+	markWritable := *writable
 
 	if collectionSet {
 		if *collection == "" {
@@ -94,10 +103,12 @@ func (c *commandVolumeMark) Do(args []string, commandEnv *CommandEnv, writer io.
 		state := "readonly"
 		if markWritable {
 			state = "writable"
+		} else if *readonlyCanDelete {
+			state = "readonly (can delete)"
 		}
 		var failures []error
 		for _, target := range targets {
-			if err := markVolumeWritable(context.Background(), commandEnv.option.GrpcDialOption, target.volumeId, target.sourceVolumeServer, markWritable, true); err != nil {
+			if err := markVolumeState(context.Background(), commandEnv.option.GrpcDialOption, target.volumeId, target.sourceVolumeServer, markWritable, *readonlyCanDelete, true); err != nil {
 				failures = append(failures, fmt.Errorf("mark volume %d on %s: %w", target.volumeId, target.sourceVolumeServer, err))
 				fmt.Fprintf(writer, "volume %d on %s: %v\n", target.volumeId, target.sourceVolumeServer, err)
 				continue
@@ -114,7 +125,7 @@ func (c *commandVolumeMark) Do(args []string, commandEnv *CommandEnv, writer io.
 
 	volumeId := needle.VolumeId(*volumeIdInt)
 
-	return markVolumeWritable(context.Background(), commandEnv.option.GrpcDialOption, volumeId, sourceVolumeServer, markWritable, true)
+	return markVolumeState(context.Background(), commandEnv.option.GrpcDialOption, volumeId, sourceVolumeServer, markWritable, *readonlyCanDelete, true)
 }
 
 type volumeMarkTarget struct {

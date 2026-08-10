@@ -536,9 +536,10 @@ func (v *Volume) IsReadOnly() bool {
 	return v.noWriteOrDelete || v.noWriteCanDelete || v.location.isDiskSpaceLow.Load()
 }
 
-func (v *Volume) PersistReadOnly(readOnly bool) {
-	v.volumeInfoRWLock.RLock()
-	defer v.volumeInfoRWLock.RUnlock()
+func (v *Volume) PersistReadOnly(readOnly bool, canDelete bool) {
+	v.volumeInfoRWLock.Lock()
+	defer v.volumeInfoRWLock.Unlock()
 	v.volumeInfo.ReadOnly = readOnly
+	v.volumeInfo.ReadOnlyCanDelete = readOnly && canDelete
 	v.SaveVolumeInfo()
 }

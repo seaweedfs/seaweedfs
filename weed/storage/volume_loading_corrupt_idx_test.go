@@ -20,7 +20,7 @@ func TestLoad_CorruptIdx_NoSegfault(t *testing.T) {
 	if _, _, _, err := v.writeNeedle2(newRandomNeedle(1), true, false); err != nil {
 		t.Fatalf("seed write: %v", err)
 	}
-	v.PersistReadOnly(true) // reload goes through SortedFileNeedleMap
+	v.PersistReadOnly(true, false) // reload goes through SortedFileNeedleMap
 	v.Close()
 
 	// Truncate .idx to a non-aligned size so the walk rejects it.

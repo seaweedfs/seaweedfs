@@ -807,15 +807,28 @@ func (s *Store) HasVolume(i needle.VolumeId) bool {
 	return v != nil
 }
 
-func (s *Store) MarkVolumeReadonly(i needle.VolumeId, persist bool) error {
+func (s *Store) MarkVolumeReadonly(i needle.VolumeId, canDelete bool, persist bool) error {
 	v := s.findVolume(i)
 	if v == nil {
 		return fmt.Errorf("volume %d not found", i)
 	}
+	if canDelete && !v.HasRemoteFile() {
+		// deletes append tombstones to .idx, which a readonly boot opened
+		// O_RDONLY; remote volumes already delete through a RDWR idx
+		if err := v.reopenIdxForWrite(); err != nil {
+			return fmt.Errorf("volume %d reopen idx for write: %v", i, err)
+		}
+	}
 	v.noWriteLock.Lock()
-	v.noWriteOrDelete = true
+	v.noWriteOrDelete = !canDelete
+	if canDelete {
+		v.noWriteCanDelete = true
+	} else if !v.HasRemoteFile() {
+		// downgrading a canDelete mark; remote volumes keep their derived flag
+		v.noWriteCanDelete = false
+	}
 	if persist {
-		v.PersistReadOnly(true)
+		v.PersistReadOnly(true, canDelete)
 	}
 	v.noWriteLock.Unlock()
 	return nil
@@ -835,7 +848,11 @@ func (s *Store) MarkVolumeWritable(i needle.VolumeId) error {
 	}
 	v.noWriteLock.Lock()
 	v.noWriteOrDelete = false
-	v.PersistReadOnly(false)
+	// Remote-tiered volumes must stay noWriteCanDelete regardless of marks.
+	if !v.HasRemoteFile() {
+		v.noWriteCanDelete = false
+	}
+	v.PersistReadOnly(false, false)
 	v.noWriteLock.Unlock()
 	// Clear the EIO streak and the sticky quarantine flag so the next
 	// CollectHeartbeat can announce the volume again. If the disk is

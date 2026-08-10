@@ -265,6 +265,8 @@ message VolumeDeleteResponse {
 message VolumeMarkReadonlyRequest {
     uint32 volume_id = 1;
     bool persist = 2;
+    // reject writes but keep accepting deletes, so expiring data can drain the volume
+    bool can_delete = 3;
 }
 message VolumeMarkReadonlyResponse {
 }
@@ -604,6 +606,7 @@ message VolumeInfo {
     uint64 expire_at_sec = 6; // expiration time of ec volume
     bool read_only = 7;
     EcShardConfig ec_shard_config = 8; // EC shard configuration (optional, null = use default 10+4)
+    bool read_only_can_delete = 9; // with read_only: writes are rejected but deletes still land
 }
 
 // EcShardConfig specifies erasure coding shard configuration
