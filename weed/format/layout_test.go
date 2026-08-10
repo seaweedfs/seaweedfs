@@ -66,6 +66,7 @@ func TestLayoutValidate(t *testing.T) {
 		{"no extents", Layout{Format: "x", Align: 1}, -1, "no extents"},
 		{"bad align", Layout{Format: "x", ExtentSizes: []int64{5}, Align: 0}, -1, "align"},
 		{"no name", Layout{ExtentSizes: []int64{5}, Align: 1}, -1, "format name"},
+		{"name too long", Layout{Format: strings.Repeat("x", MaxFormatNameBytes+1), ExtentSizes: []int64{5}, Align: 1}, -1, "too long"},
 	}
 	for _, test := range tests {
 		err := test.layout.Validate(test.fileSize)

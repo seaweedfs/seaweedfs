@@ -16,6 +16,8 @@ const (
 	MaxExtentCount = 1 << 20
 	// MaxPayloadBytes bounds the adapter payload carried in entry metadata.
 	MaxPayloadBytes = 16 << 20
+	// MaxFormatNameBytes bounds the encoded adapter name.
+	MaxFormatNameBytes = 256
 )
 
 // TotalSize returns the file size the layout describes.
@@ -43,6 +45,9 @@ func (l *Layout) ExtentRange(i int) (offset, size int64, ok bool) {
 func (l *Layout) Validate(fileSize int64) error {
 	if l.Format == "" {
 		return fmt.Errorf("layout has no format name")
+	}
+	if len(l.Format) > MaxFormatNameBytes {
+		return fmt.Errorf("layout format name is too long: %d bytes", len(l.Format))
 	}
 	if l.Align < 1 {
 		return fmt.Errorf("layout align %d is invalid", l.Align)
@@ -97,7 +102,7 @@ func DecodeLayout(data []byte) (*Layout, error) {
 	if err != nil || version != layoutVersion {
 		return nil, fmt.Errorf("unsupported layout version")
 	}
-	name, err := readUvarintBytes(reader, 256)
+	name, err := readUvarintBytes(reader, MaxFormatNameBytes)
 	if err != nil {
 		return nil, fmt.Errorf("read layout format: %w", err)
 	}
