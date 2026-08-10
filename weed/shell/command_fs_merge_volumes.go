@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -47,7 +48,11 @@ func (c *commandFsMergeVolumes) Help() string {
 
 	This would help clear half-full volumes and let vacuum system to delete them later.
 
-	fs.mergeVolumes [-toVolumeId=y] [-fromVolumeId=x] [-collection="*"] [-dir=/] [-apply]
+	fs.mergeVolumes [-toVolumeId=y[,z]] [-fromVolumeId=x] [-collection="*"] [-dir=/] [-apply]
+
+	-toVolumeId accepts a comma-separated list. With -fromVolumeId, the source
+	chunks are distributed across the listed volumes by remaining capacity, so a
+	volume that does not fit into any single target can still be cleared.
 `
 }
 
@@ -60,7 +65,7 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 	fsMergeVolumesCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	dirArg := fsMergeVolumesCommand.String("dir", "/", "base directory to find and update files")
 	fromVolumeArg := fsMergeVolumesCommand.Uint("fromVolumeId", 0, "move chunks with this volume id")
-	toVolumeArg := fsMergeVolumesCommand.Uint("toVolumeId", 0, "change chunks to this volume id")
+	toVolumeArg := fsMergeVolumesCommand.String("toVolumeId", "", "change chunks to this volume id, or distribute across a comma-separated list of volume ids")
 	collectionArg := fsMergeVolumesCommand.String("collection", "*", "Name of collection to merge")
 	apply := fsMergeVolumesCommand.Bool("apply", false, "applying the metadata changes")
 	if err = fsMergeVolumesCommand.Parse(args); err != nil {
@@ -79,12 +84,12 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 	if *fromVolumeArg > maxVolumeID {
 		return fmt.Errorf("fromVolumeId %d exceeds max volume id %d", *fromVolumeArg, maxVolumeID)
 	}
-	if *toVolumeArg > maxVolumeID {
-		return fmt.Errorf("toVolumeId %d exceeds max volume id %d", *toVolumeArg, maxVolumeID)
-	}
 
 	fromVolumeId := needle.VolumeId(*fromVolumeArg)
-	toVolumeId := needle.VolumeId(*toVolumeArg)
+	toVolumeIds, err := parseTargetVolumeIds(*toVolumeArg)
+	if err != nil {
+		return err
+	}
 
 	if err = c.reloadVolumesInfo(commandEnv.MasterClient); err != nil {
 		return fmt.Errorf("reload volumes info: %w", err)
@@ -99,43 +104,20 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 			return fmt.Errorf("fromVolumeId %d not found on master", fromVolumeId)
 		}
 	}
-	if toVolumeId != 0 {
+	for _, toVolumeId := range toVolumeIds {
 		if _, err := c.getVolumeInfoById(toVolumeId); err != nil {
 			return fmt.Errorf("toVolumeId %d not found on master", toVolumeId)
 		}
 	}
 
-	if fromVolumeId != 0 && toVolumeId != 0 {
-		if fromVolumeId == toVolumeId {
-			return fmt.Errorf("no volume id changes, %d == %d", fromVolumeId, toVolumeId)
-		}
-		compatible, err := c.volumesAreCompatible(fromVolumeId, toVolumeId)
-		if err != nil {
-			return fmt.Errorf("cannot determine volumes are compatible: %d and %d", fromVolumeId, toVolumeId)
-		}
-		if !compatible {
-			return fmt.Errorf("volume %d is not compatible with volume %d", fromVolumeId, toVolumeId)
-		}
-		fromSize := c.getVolumeSizeById(fromVolumeId)
-		toSize := c.getVolumeSizeById(toVolumeId)
-		if fromSize+toSize > c.volumeSizeLimit {
-			return fmt.Errorf(
-				"volume %d (%d MB) cannot merge into volume %d (%d MB_ due to volume size limit (%d MB)",
-				fromVolumeId, fromSize/1024/1024,
-				toVolumeId, toSize/1024/1024,
-				c.volumeSizeLimit/1024/1024,
-			)
-		}
-	}
-
-	plan, err := c.createMergePlan(*collectionArg, toVolumeId, fromVolumeId)
+	plan, err := c.createMergePlan(*collectionArg, toVolumeIds, fromVolumeId)
 
 	if err != nil {
 		return err
 	}
 	c.printPlan(plan)
 
-	if len(plan) == 0 {
+	if len(plan.targets) == 0 {
 		return nil
 	}
 
@@ -204,19 +186,24 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 				}
 
 				chunkVolumeId := needle.VolumeId(chunk.Fid.VolumeId)
-				toVolumeId, found := plan[chunkVolumeId]
-				if !found {
+				if !plan.isSource(chunkVolumeId) {
 					continue
 				}
 
 				oldFid := chunk.GetFileIdString()
 				oldVid := chunk.Fid.VolumeId
-				fmt.Printf("move %s(%s)\n", entryPath, oldFid)
+				toVolumeId, ok := plan.allocate(chunkVolumeId, chunk.Size)
+				if !ok {
+					fmt.Printf("skip %s(%s): no target volume has room\n", entryPath, oldFid)
+					continue
+				}
+				fmt.Printf("move %s(%s) => volume %d\n", entryPath, oldFid, toVolumeId)
 				if !*apply {
 					continue
 				}
 				if mvErr := moveChunk(chunk, toVolumeId, commandEnv.MasterClient); mvErr != nil {
 					fmt.Printf("failed to move %s(%s): %v\n", entryPath, oldFid, mvErr)
+					plan.release(chunkVolumeId, toVolumeId, chunk.Size)
 					continue
 				}
 				entryChanged = true
@@ -357,16 +344,107 @@ func (c *commandFsMergeVolumes) reloadVolumesInfo(masterClient *wdclient.MasterC
 	})
 }
 
-func (c *commandFsMergeVolumes) createMergePlan(collection string, toVolumeId needle.VolumeId, fromVolumeId needle.VolumeId) (map[needle.VolumeId]needle.VolumeId, error) {
+// mergePlan maps each source volume to candidate targets: a single-target
+// source sends every chunk there (historic behavior), a multi-target source
+// allocates per chunk under mu since TraverseBfs callbacks run in parallel.
+type mergePlan struct {
+	mu              sync.Mutex
+	targets         map[needle.VolumeId][]needle.VolumeId
+	plannedSize     map[needle.VolumeId]uint64
+	volumeSizeLimit uint64
+}
+
+func newMergePlan(volumeSizeLimit uint64) *mergePlan {
+	return &mergePlan{
+		targets:         make(map[needle.VolumeId][]needle.VolumeId),
+		plannedSize:     make(map[needle.VolumeId]uint64),
+		volumeSizeLimit: volumeSizeLimit,
+	}
+}
+
+func (p *mergePlan) isSource(vid needle.VolumeId) bool {
+	_, found := p.targets[vid]
+	return found
+}
+
+// allocate picks the candidate with the most remaining capacity that still
+// fits the chunk, and reserves the chunk size against it.
+func (p *mergePlan) allocate(src needle.VolumeId, size uint64) (needle.VolumeId, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	candidates := p.targets[src]
+	if len(candidates) == 0 {
+		return 0, false
+	}
+	if len(candidates) == 1 {
+		return candidates[0], true
+	}
+	var best needle.VolumeId
+	var bestRemaining uint64
+	found := false
+	for _, t := range candidates {
+		used := p.plannedSize[t]
+		if used+size > p.volumeSizeLimit {
+			continue
+		}
+		if remaining := p.volumeSizeLimit - used; !found || remaining > bestRemaining {
+			best, bestRemaining, found = t, remaining, true
+		}
+	}
+	if !found {
+		return 0, false
+	}
+	p.plannedSize[best] += size
+	return best, true
+}
+
+// release returns a failed move's reservation so later chunks can use it.
+// Single-target sources reserve at plan time, not per chunk.
+func (p *mergePlan) release(src, target needle.VolumeId, size uint64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.targets[src]) <= 1 {
+		return
+	}
+	if p.plannedSize[target] >= size {
+		p.plannedSize[target] -= size
+	}
+}
+
+// Empty or "0" means unset, matching the old numeric flag's default.
+func parseTargetVolumeIds(arg string) ([]needle.VolumeId, error) {
+	arg = strings.TrimSpace(arg)
+	if arg == "" || arg == "0" {
+		return nil, nil
+	}
+	var ids []needle.VolumeId
+	seen := make(map[needle.VolumeId]bool)
+	for _, part := range strings.Split(arg, ",") {
+		part = strings.TrimSpace(part)
+		v, err := strconv.ParseUint(part, 10, 32)
+		if err != nil || v == 0 {
+			return nil, fmt.Errorf("invalid toVolumeId %q", part)
+		}
+		vid := needle.VolumeId(v)
+		if seen[vid] {
+			return nil, fmt.Errorf("duplicate toVolumeId %d", vid)
+		}
+		seen[vid] = true
+		ids = append(ids, vid)
+	}
+	return ids, nil
+}
+
+func (c *commandFsMergeVolumes) createMergePlan(collection string, toVolumeIds []needle.VolumeId, fromVolumeId needle.VolumeId) (*mergePlan, error) {
 	// When the user names both endpoints, honor that exact direction. The
 	// heuristic below only ever merges a smaller volume into a larger one, so
 	// an explicit "merge larger into smaller" request would otherwise yield an
 	// empty plan and silently do nothing.
-	if fromVolumeId != 0 && toVolumeId != 0 {
-		return c.createDirectedMergePlan(collection, fromVolumeId, toVolumeId)
+	if fromVolumeId != 0 && len(toVolumeIds) > 0 {
+		return c.createDirectedMergePlan(collection, fromVolumeId, toVolumeIds)
 	}
 
-	plan := make(map[needle.VolumeId]needle.VolumeId)
+	plan := newMergePlan(c.volumeSizeLimit)
 	volumeIds := maps.Keys(c.volumes)
 	sort.Slice(volumeIds, func(a, b int) bool {
 		return c.volumes[volumeIds[b]].Size < c.volumes[volumeIds[a]].Size
@@ -377,7 +455,7 @@ func (c *commandFsMergeVolumes) createMergePlan(collection string, toVolumeId ne
 		volume := c.volumes[volumeIds[i]]
 		if volume.GetReadOnly() || c.getVolumeSize(volume) == 0 || (collection != "*" && collection != volume.GetCollection()) {
 
-			if fromVolumeId != 0 && volumeIds[i] == fromVolumeId || toVolumeId != 0 && volumeIds[i] == toVolumeId {
+			if fromVolumeId != 0 && volumeIds[i] == fromVolumeId || slices.Contains(toVolumeIds, volumeIds[i]) {
 				if volume.GetReadOnly() {
 					return nil, fmt.Errorf("volume %d is readonly", volumeIds[i])
 				}
@@ -397,10 +475,10 @@ func (c *commandFsMergeVolumes) createMergePlan(collection string, toVolumeId ne
 		}
 		for j := 0; j < i; j++ {
 			candidate := volumeIds[j]
-			if toVolumeId != 0 && candidate != toVolumeId {
+			if len(toVolumeIds) > 0 && !slices.Contains(toVolumeIds, candidate) {
 				continue
 			}
-			if _, moving := plan[candidate]; moving {
+			if _, moving := plan.targets[candidate]; moving {
 				continue
 			}
 			compatible, err := c.volumesAreCompatible(src, candidate)
@@ -411,7 +489,10 @@ func (c *commandFsMergeVolumes) createMergePlan(collection string, toVolumeId ne
 				fmt.Printf("volume %d is not compatible with volume %d\n", src, candidate)
 				continue
 			}
-			candidatePlannedSize := c.getVolumeSizeBasedOnPlan(plan, candidate)
+			if _, tracked := plan.plannedSize[candidate]; !tracked {
+				plan.plannedSize[candidate] = c.getVolumeSizeById(candidate)
+			}
+			candidatePlannedSize := plan.plannedSize[candidate]
 			if candidatePlannedSize+c.getVolumeSizeById(src) > c.volumeSizeLimit {
 				fmt.Printf("volume %d (%d MB) merge into volume %d (%d MB, %d MB with plan) exceeds volume size limit (%d MB)\n",
 					src, c.getVolumeSizeById(src)/1024/1024,
@@ -419,7 +500,8 @@ func (c *commandFsMergeVolumes) createMergePlan(collection string, toVolumeId ne
 					c.volumeSizeLimit/1024/1024)
 				continue
 			}
-			plan[src] = candidate
+			plan.targets[src] = []needle.VolumeId{candidate}
+			plan.plannedSize[candidate] += c.getVolumeSizeById(src)
 			break
 		}
 	}
@@ -427,16 +509,13 @@ func (c *commandFsMergeVolumes) createMergePlan(collection string, toVolumeId ne
 	return plan, nil
 }
 
-// createDirectedMergePlan builds the single-pair plan {from: to} exactly as the
-// user requested, skipping the smaller-into-larger ordering the heuristic
-// planner uses. Compatibility and the combined size limit are already checked
-// by Do before this runs; here we only reject endpoints that cannot
-// participate (read-only, empty, or outside the requested collection).
-func (c *commandFsMergeVolumes) createDirectedMergePlan(collection string, from, to needle.VolumeId) (map[needle.VolumeId]needle.VolumeId, error) {
-	if from == to {
-		return nil, fmt.Errorf("no volume id changes, %d == %d", from, to)
+// createDirectedMergePlan honors the exact direction the user named, skipping
+// the heuristic planner's smaller-into-larger ordering.
+func (c *commandFsMergeVolumes) createDirectedMergePlan(collection string, from needle.VolumeId, toIds []needle.VolumeId) (*mergePlan, error) {
+	if slices.Contains(toIds, from) {
+		return nil, fmt.Errorf("no volume id changes, %d is both source and target", from)
 	}
-	for _, vid := range []needle.VolumeId{from, to} {
+	for _, vid := range append([]needle.VolumeId{from}, toIds...) {
 		volume, err := c.getVolumeInfoById(vid)
 		if err != nil {
 			return nil, err
@@ -452,18 +531,37 @@ func (c *commandFsMergeVolumes) createDirectedMergePlan(collection string, from,
 		if vid == from && c.getVolumeSize(volume) == 0 {
 			return nil, fmt.Errorf("volume %d is empty", vid)
 		}
-	}
-	return map[needle.VolumeId]needle.VolumeId{from: to}, nil
-}
-
-func (c *commandFsMergeVolumes) getVolumeSizeBasedOnPlan(plan map[needle.VolumeId]needle.VolumeId, vid needle.VolumeId) uint64 {
-	size := c.getVolumeSizeById(vid)
-	for src, dest := range plan {
-		if dest == vid {
-			size += c.getVolumeSizeById(src)
+		if vid != from {
+			compatible, err := c.volumesAreCompatible(from, vid)
+			if err != nil {
+				return nil, err
+			}
+			if !compatible {
+				return nil, fmt.Errorf("volume %d is not compatible with volume %d", from, vid)
+			}
 		}
 	}
-	return size
+
+	plan := newMergePlan(c.volumeSizeLimit)
+	fromSize := c.getVolumeSizeById(from)
+	var totalFree uint64
+	for _, to := range toIds {
+		toSize := c.getVolumeSizeById(to)
+		plan.plannedSize[to] = toSize
+		if toSize < c.volumeSizeLimit {
+			totalFree += c.volumeSizeLimit - toSize
+		}
+	}
+	if fromSize > totalFree {
+		return nil, fmt.Errorf(
+			"volume %d (%d MB) cannot merge into volumes %v (%d MB free) due to volume size limit (%d MB)",
+			from, fromSize/1024/1024,
+			toIds, totalFree/1024/1024,
+			c.volumeSizeLimit/1024/1024,
+		)
+	}
+	plan.targets[from] = toIds
+	return plan, nil
 }
 
 // getVolumeSize is the volume's live data size, clamped since
@@ -479,11 +577,16 @@ func (c *commandFsMergeVolumes) getVolumeSizeById(vid needle.VolumeId) uint64 {
 	return c.getVolumeSize(c.volumes[vid])
 }
 
-func (c *commandFsMergeVolumes) printPlan(plan map[needle.VolumeId]needle.VolumeId) {
+func (c *commandFsMergeVolumes) printPlan(plan *mergePlan) {
 	fmt.Printf("max volume size: %d MB\n", c.volumeSizeLimit/1024/1024)
 	reversePlan := make(map[needle.VolumeId][]needle.VolumeId)
-	for src, dest := range plan {
-		reversePlan[dest] = append(reversePlan[dest], src)
+	for src, dests := range plan.targets {
+		if len(dests) > 1 {
+			fmt.Printf("volume %d (%d MB) distribute across volumes %v by remaining capacity\n",
+				src, c.getVolumeSizeById(src)/1024/1024, dests)
+			continue
+		}
+		reversePlan[dests[0]] = append(reversePlan[dests[0]], src)
 	}
 	for dest, srcs := range reversePlan {
 		currentSize := c.getVolumeSizeById(dest)
@@ -518,7 +621,7 @@ func (c *commandFsMergeVolumes) rewriteManifestChunk(
 	ctx context.Context,
 	commandEnv *CommandEnv,
 	lookupFn wdclient.LookupFileIdFunctionType,
-	plan map[needle.VolumeId]needle.VolumeId,
+	plan *mergePlan,
 	entryPath util.FullPath,
 	chunk *filer_pb.FileChunk,
 	apply bool,
@@ -555,19 +658,24 @@ func (c *commandFsMergeVolumes) rewriteManifestChunk(
 			continue
 		}
 		subVid := needle.VolumeId(sub.Fid.VolumeId)
-		toVid, ok := plan[subVid]
-		if !ok {
+		if !plan.isSource(subVid) {
 			continue
 		}
 		oldSubFid := sub.GetFileIdString()
 		oldSubVid := sub.Fid.VolumeId
-		fmt.Printf("move %s(%s) [inside manifest %s]\n", entryPath, oldSubFid, chunk.GetFileIdString())
+		toVid, ok := plan.allocate(subVid, sub.Size)
+		if !ok {
+			fmt.Printf("skip %s(%s) [inside manifest %s]: no target volume has room\n", entryPath, oldSubFid, chunk.GetFileIdString())
+			continue
+		}
+		fmt.Printf("move %s(%s) => volume %d [inside manifest %s]\n", entryPath, oldSubFid, toVid, chunk.GetFileIdString())
 		if !apply {
 			anySubChanged = true
 			continue
 		}
 		if mErr := moveChunk(sub, toVid, commandEnv.MasterClient); mErr != nil {
 			fmt.Printf("failed to move %s(%s): %v\n", entryPath, oldSubFid, mErr)
+			plan.release(subVid, toVid, sub.Size)
 			continue
 		}
 		anySubChanged = true
@@ -575,7 +683,7 @@ func (c *commandFsMergeVolumes) rewriteManifestChunk(
 	}
 
 	manifestVid := needle.VolumeId(chunk.Fid.VolumeId)
-	_, manifestMustMove := plan[manifestVid]
+	manifestMustMove := plan.isSource(manifestVid)
 
 	if !anySubChanged && !manifestMustMove {
 		return chunk, false, nil, nil
@@ -626,7 +734,7 @@ func (c *commandFsMergeVolumes) uploadManifestChunk(
 	commandEnv *CommandEnv,
 	entryPath util.FullPath,
 	collection string,
-	plan map[needle.VolumeId]needle.VolumeId,
+	plan *mergePlan,
 	data []byte,
 ) (*filer_pb.FileChunk, error) {
 	const manifestAssignAttempts = 10
@@ -653,7 +761,7 @@ func (c *commandFsMergeVolumes) uploadManifestChunk(
 			if parseErr != nil {
 				return fmt.Errorf("parse assigned fid %q: %w", resp.FileId, parseErr)
 			}
-			if _, isSource := plan[needle.VolumeId(fid.VolumeId)]; !isSource {
+			if !plan.isSource(needle.VolumeId(fid.VolumeId)) {
 				assignResp = resp
 				return nil
 			}
