@@ -67,6 +67,7 @@ func NewVolumeInfoFromShort(m *master_pb.VolumeShortInformationMessage) (vi Volu
 		Id:         needle.VolumeId(m.Id),
 		Collection: internVolumeString(m.Collection),
 		Version:    needle.Version(m.Version),
+		DiskId:     m.DiskId,
 	}
 	rp, e := super_block.NewReplicaPlacementFromByte(byte(m.ReplicaPlacement))
 	if e != nil {
