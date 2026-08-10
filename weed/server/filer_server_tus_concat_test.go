@@ -273,6 +273,58 @@ func TestFilerServer_tusConcatFinal_Validation(t *testing.T) {
 	}
 }
 
+// TestFilerServer_tusConcatFinal_ClaimedPartialRejected verifies a partial
+// already claimed by a concurrent final cannot be consumed again, and that the
+// foreign claim is left in place.
+func TestFilerServer_tusConcatFinal_ClaimedPartialRejected(t *testing.T) {
+	fs, store := newTusTestServer(t, nil)
+	seedTusSession(t, fs, store, TusSession{ID: tusTestPartialAID, TargetPath: "/buckets/data/a.bin", Size: 4, Concat: TusConcatPartial})
+	seedTusChunk(t, fs, store, tusTestPartialAID, 0, 4, "3,01637037d6")
+	markerPath := util.FullPath(fs.tusSessionConsumedPath(tusTestPartialAID))
+	if err := store.InsertEntry(context.Background(), &filer.Entry{FullPath: markerPath}); err != nil {
+		t.Fatalf("seed consumed marker: %v", err)
+	}
+
+	req := tusRequest(http.MethodPost, "/.tus/buckets/data/final.bin", map[string]string{
+		"Authorization": "Bearer " + signFilerToken(t, tusTestWriteKey, nil, nil),
+		"Upload-Concat": "final;/.tus/.uploads/" + tusTestPartialAID,
+	}, "")
+	rec := httptest.NewRecorder()
+	fs.tusHandler(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("final POST = %d, want %d; body=%q", rec.Code, http.StatusConflict, rec.Body.String())
+	}
+	if _, err := store.FindEntry(context.Background(), markerPath); err != nil {
+		t.Fatal("foreign claim was released by the losing request")
+	}
+}
+
+// TestFilerServer_tusDeleteHandler_ConsumedSessionKeepsChunks verifies deleting
+// a consumed session removes its metadata without freeing its chunks. The test
+// filer has no chunk deletion queue, so an attempt to free chunks would panic.
+func TestFilerServer_tusDeleteHandler_ConsumedSessionKeepsChunks(t *testing.T) {
+	fs, store := newTusTestServer(t, nil)
+	seedTusSession(t, fs, store, TusSession{ID: tusTestPartialAID, TargetPath: "/buckets/data/a.bin", Size: 4, Concat: TusConcatPartial})
+	seedTusChunk(t, fs, store, tusTestPartialAID, 0, 4, "3,01637037d6")
+	if err := store.InsertEntry(context.Background(), &filer.Entry{FullPath: util.FullPath(fs.tusSessionConsumedPath(tusTestPartialAID))}); err != nil {
+		t.Fatalf("seed consumed marker: %v", err)
+	}
+
+	req := tusRequest(http.MethodDelete, "/.tus/.uploads/"+tusTestPartialAID, map[string]string{
+		"Authorization": "Bearer " + signFilerToken(t, tusTestWriteKey, nil, nil),
+	}, "")
+	rec := httptest.NewRecorder()
+	fs.tusHandler(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("DELETE = %d, want %d; body=%q", rec.Code, http.StatusNoContent, rec.Body.String())
+	}
+	if _, err := store.FindEntry(context.Background(), util.FullPath(fs.tusSessionInfoPath(tusTestPartialAID))); err == nil {
+		t.Fatal("consumed session metadata still present after DELETE")
+	}
+}
+
 // TestFilerServer_tusPatchHandler_FinalRejected verifies PATCH against a final
 // upload URL is refused, per the concatenation extension.
 func TestFilerServer_tusPatchHandler_FinalRejected(t *testing.T) {

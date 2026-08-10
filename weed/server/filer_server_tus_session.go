@@ -25,6 +25,7 @@ const (
 	TusDefaultSessionExpiry = 24 * time.Hour
 	TusUploadsFolder        = ".uploads.tus"
 	TusInfoFileName         = ".info"
+	TusConsumedFileName     = ".consumed"
 	TusChunkExt             = ".chunk"
 	TusExtensions           = "creation,creation-with-upload,termination,concatenation"
 	TusConcatPartial        = "partial"
@@ -80,6 +81,33 @@ func (fs *FilerServer) tusSessionPath(uploadID string) string {
 // tusSessionInfoPath returns the path to the session info file
 func (fs *FilerServer) tusSessionInfoPath(uploadID string) string {
 	return fmt.Sprintf("/%s/%s/%s", TusUploadsFolder, uploadID, TusInfoFileName)
+}
+
+// tusSessionConsumedPath returns the path of the marker recording that a
+// session's chunks belong to a completed upload and must not be freed with it.
+func (fs *FilerServer) tusSessionConsumedPath(uploadID string) string {
+	return fmt.Sprintf("/%s/%s/%s", TusUploadsFolder, uploadID, TusConsumedFileName)
+}
+
+// markTusSessionConsumed claims a session's chunks for a completed upload. With
+// exclusive set, a session already claimed by a concurrent request fails with
+// filer_pb.ErrEntryAlreadyExists so one partial cannot be consumed twice.
+func (fs *FilerServer) markTusSessionConsumed(ctx context.Context, uploadID string, exclusive bool) error {
+	return fs.filer.CreateEntry(ctx, &filer.Entry{
+		FullPath: util.FullPath(fs.tusSessionConsumedPath(uploadID)),
+		Attr: filer.Attr{
+			Mode:   0644,
+			Crtime: time.Now(),
+			Mtime:  time.Now(),
+			Uid:    OS_UID,
+			Gid:    OS_GID,
+		},
+	}, nil, exclusive, false, nil, true, fs.filer.MaxFilenameLength)
+}
+
+func (fs *FilerServer) isTusSessionConsumed(ctx context.Context, uploadID string) bool {
+	_, err := fs.filer.FindEntry(ctx, util.FullPath(fs.tusSessionConsumedPath(uploadID)))
+	return err == nil
 }
 
 // tusChunkPath returns the path to store a chunk info file
@@ -355,8 +383,9 @@ func (fs *FilerServer) deleteTusSession(ctx context.Context, uploadID string) er
 		return nil
 	}
 
-	// Batch delete all uploaded chunks from volume servers
-	if len(session.Chunks) > 0 {
+	// Batch delete all uploaded chunks from volume servers, unless the session
+	// was consumed: then the chunks belong to a completed upload's entry.
+	if len(session.Chunks) > 0 && !fs.isTusSessionConsumed(ctx, uploadID) {
 		var chunksToDelete []*filer_pb.FileChunk
 		for _, chunk := range session.Chunks {
 			if chunk.FileId != "" {
@@ -458,6 +487,12 @@ func (fs *FilerServer) completeTusUpload(ctx context.Context, session *TusSessio
 	// Ensure parent directory exists
 	if err := fs.filer.CreateEntry(ctx, entry, nil, false, false, nil, false, fs.filer.MaxFilenameLength); err != nil {
 		return fmt.Errorf("create final file entry: %w", err)
+	}
+
+	// The chunks now belong to the entry: mark the session consumed so that if
+	// the cleanup below fails, a later expiry cannot free the entry's chunks.
+	if err := fs.markTusSessionConsumed(ctx, session.ID, false); err != nil {
+		glog.V(1).Infof("Failed to mark TUS session %s consumed: %v", session.ID, err)
 	}
 
 	// Delete the session (but keep the chunks since they're now part of the final file)
