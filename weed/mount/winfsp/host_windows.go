@@ -83,6 +83,12 @@ func (h *Host) Serve(mountPoint string) error {
 		// past cleanup, deferring the close — and with it the flush that
 		// persists a written file — until Windows reclaims the memory.
 		"-o", "FileInfoTimeout=-1",
+		// FlushOnCleanup is absent for the same reason: it makes every
+		// handle's cleanup flush, and those flushes race the unlinks of
+		// delete-on-close. The flush stays at close, which WinFsp runs after
+		// CloseHandle has returned; the mount persists entries eagerly at
+		// create instead, so nothing that reads through the filer depends on
+		// when the flush runs.
 	}
 	if h.options.CacheTimeout > 0 {
 		ms := strconv.FormatInt(h.options.CacheTimeout.Milliseconds(), 10)

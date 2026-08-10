@@ -120,6 +120,13 @@ type Option struct {
 	// When true, Flush() returns immediately and data upload + metadata flush happen in background.
 	WritebackCache bool
 
+	// EagerFilerCreate persists a created file's entry at create time instead
+	// of deferring it to flush. Deferring is only safe when the flush runs
+	// before the application's close returns; a platform that cannot
+	// guarantee that sets this so listings and reopens through the filer
+	// cannot race an unflushed close.
+	EagerFilerCreate bool
+
 	// PosixDirNlink enables POSIX-compliant directory nlink counting
 	// (nlink = 2 + number_of_subdirectories). This requires listing
 	// cached directory entries on every stat, which has a performance cost.

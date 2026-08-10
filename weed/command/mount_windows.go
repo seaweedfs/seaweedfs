@@ -93,6 +93,10 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		chunkSizeLimitMB: chunkSizeLimitMB,
 		cacheDirForRead:  cacheDirForRead,
 		cacheDirForWrite: cacheDirForWrite,
+		// WinFsp posts the cleanup and close that carry the flush after
+		// CloseHandle has already returned, so entry creation cannot wait
+		// for the flush the way it does when close(2) runs it synchronously.
+		eagerFilerCreate: true,
 	})
 
 	if !createMountRoot(seaweedFileSystem, mountRoot, bucketRootPath, filerAddresses) {
