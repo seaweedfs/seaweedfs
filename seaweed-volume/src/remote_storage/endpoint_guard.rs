@@ -81,7 +81,12 @@ fn is_cgnat(ip: IpAddr) -> bool {
 /// already normalized via `to_ipv4_mapped`.
 fn embedded_transition_ipv4(v6: Ipv6Addr) -> Option<Ipv4Addr> {
     let o = v6.octets();
-    if o[0] == 0x00 && o[1] == 0x64 && o[2] == 0xff && o[3] == 0x9b {
+    if o[0] == 0x00
+        && o[1] == 0x64
+        && o[2] == 0xff
+        && o[3] == 0x9b
+        && o[4..12].iter().all(|&b| b == 0)
+    {
         return Some(Ipv4Addr::new(o[12], o[13], o[14], o[15]));
     }
     if o[0] == 0x20 && o[1] == 0x02 {
@@ -400,8 +405,15 @@ mod tests {
                 .unwrap_err()
                 .contains("loopback")
         );
-        // A transition address embedding a public IPv4 still passes.
+        // A NAT64 address outside the 64:ff9b::/96 well-known prefix is not
+        // decoded (its embedded IPv4 lives elsewhere), so it is left as-is.
+        assert!(check_blocked_ip("e", ip("64:ff9b:1::a9fe:a9fe")).is_ok());
+        // Every transition form embedding a public IPv4 (8.8.8.8) still passes:
+        // NAT64, 6to4, Teredo, IPv4-compatible.
         assert!(check_blocked_ip("e", ip("64:ff9b::808:808")).is_ok());
+        assert!(check_blocked_ip("e", ip("2002:808:808::")).is_ok());
+        assert!(check_blocked_ip("e", ip("2001::f7f7:f7f7")).is_ok());
+        assert!(check_blocked_ip("e", ip("::808:808")).is_ok());
         // Bracketed transition literal via the full endpoint path.
         assert!(precheck_endpoint("http://[64:ff9b::a9fe:a9fe]/")
             .unwrap_err()

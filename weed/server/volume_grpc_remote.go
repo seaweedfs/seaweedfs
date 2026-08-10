@@ -128,7 +128,7 @@ func embeddedTransitionIPv4(ip net.IP) net.IP {
 		return nil
 	}
 	switch {
-	case v6[0] == 0x00 && v6[1] == 0x64 && v6[2] == 0xff && v6[3] == 0x9b:
+	case v6[0] == 0x00 && v6[1] == 0x64 && v6[2] == 0xff && v6[3] == 0x9b && allZero(v6[4:12]):
 		return net.IPv4(v6[12], v6[13], v6[14], v6[15])
 	case v6[0] == 0x20 && v6[1] == 0x02:
 		return net.IPv4(v6[2], v6[3], v6[4], v6[5])

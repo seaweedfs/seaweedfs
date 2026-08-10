@@ -202,6 +202,26 @@ func TestValidateRemoteEndpoint(t *testing.T) {
 			wantErr:  false,
 		},
 		{
+			name:     "6to4 public passes",
+			endpoint: "http://[2002:808:808::]/",
+			wantErr:  false,
+		},
+		{
+			name:     "teredo public passes",
+			endpoint: "http://[2001::f7f7:f7f7]/",
+			wantErr:  false,
+		},
+		{
+			name:     "ipv4-compatible public passes",
+			endpoint: "http://[::808:808]/",
+			wantErr:  false,
+		},
+		{
+			name:     "nat64 non-wellknown-prefix not decoded",
+			endpoint: "http://[64:ff9b:1::a9fe:a9fe]/",
+			wantErr:  false,
+		},
+		{
 			name:     "public s3",
 			endpoint: "https://s3.us-east-1.amazonaws.com/",
 			wantErr:  false,
