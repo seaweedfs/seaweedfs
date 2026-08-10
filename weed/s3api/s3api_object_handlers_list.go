@@ -319,12 +319,13 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 
 		var lastEntryWasCommonPrefix bool
 		var lastCommonPrefix string
-		// Backing for the newest CommonPrefix: how many unsettled null objects
-		// stand behind it, and whether anything definitely listable does. A prefix
-		// whose null backers all settle as delete-marked names nothing and is
-		// retracted. Contributors to a prefix stream contiguously, so only the
-		// newest prefix ever needs the accounting.
-		var lastPrefixNullBacking int
+		// Backing for the newest CommonPrefix: which unsettled null objects stand
+		// behind it, and whether anything definitely listable does. A prefix whose
+		// null backers all settle as delete-marked names nothing and is retracted;
+		// tracking backers by key keeps a marker that never joined the prefix (a
+		// version-only key with no base object) from debiting it. Contributors to
+		// a prefix stream contiguously, so only the newest prefix needs this.
+		var lastPrefixNullBackers map[string]bool
 		var lastPrefixConfirmed bool
 
 		// Hoist versioning check out of per-entry callback
@@ -399,12 +400,12 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 			return ""
 		}
 
-		retractPrefixBacking := func(prefix string) {
-			if prefix != lastCommonPrefix {
+		retractPrefixBacking := func(prefix, dir, name string) {
+			if prefix != lastCommonPrefix || !lastPrefixNullBackers[dir+"/"+name] {
 				return
 			}
-			lastPrefixNullBacking--
-			if lastPrefixNullBacking <= 0 && !lastPrefixConfirmed &&
+			delete(lastPrefixNullBackers, dir+"/"+name)
+			if len(lastPrefixNullBackers) == 0 && !lastPrefixConfirmed &&
 				len(commonPrefixes) > 0 && commonPrefixes[len(commonPrefixes)-1].Prefix == prefix {
 				commonPrefixes = commonPrefixes[:len(commonPrefixes)-1]
 				cursor.maxKeys++
@@ -428,7 +429,7 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 				}
 			}
 			if prefix := prefixForKey(dir, name); prefix != "" {
-				retractPrefixBacking(prefix)
+				retractPrefixBacking(prefix, dir, name)
 			}
 		}
 
@@ -539,7 +540,7 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 								delimiterFound = true
 								lastEntryWasCommonPrefix = true
 								lastCommonPrefix = delimitedPrefix
-								lastPrefixNullBacking, lastPrefixConfirmed = 0, true
+								lastPrefixNullBackers, lastPrefixConfirmed = nil, true
 							} else {
 								// This directory object belongs to an existing CommonPrefix, skip it
 								delimiterFound = true
@@ -570,7 +571,7 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 						cursor.maxKeys--
 						lastEntryWasCommonPrefix = true
 						lastCommonPrefix = dirPrefix
-						lastPrefixNullBacking, lastPrefixConfirmed = 0, true
+						lastPrefixNullBackers, lastPrefixConfirmed = nil, true
 					}
 				} else {
 					var delimiterFound bool
@@ -612,9 +613,9 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 								delimiterFound = true
 								lastEntryWasCommonPrefix = true
 								lastCommonPrefix = delimitedPrefix
-								lastPrefixNullBacking, lastPrefixConfirmed = 0, !isNullBacker
+								lastPrefixNullBackers, lastPrefixConfirmed = nil, !isNullBacker
 								if isNullBacker {
-									lastPrefixNullBacking = 1
+									lastPrefixNullBackers = map[string]bool{dir + "/" + entry.Name: true}
 									addPendingNull(dir, entry.Name)
 								}
 							} else {
@@ -623,7 +624,10 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 								delimiterFound = true
 								if delimitedPrefix == lastCommonPrefix {
 									if isNullBacker {
-										lastPrefixNullBacking++
+										if lastPrefixNullBackers == nil {
+											lastPrefixNullBackers = map[string]bool{}
+										}
+										lastPrefixNullBackers[dir+"/"+entry.Name] = true
 										addPendingNull(dir, entry.Name)
 									} else {
 										lastPrefixConfirmed = true
