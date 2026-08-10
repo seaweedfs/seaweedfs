@@ -219,6 +219,17 @@ func (dn *DataNode) AdjustDiskUsageBytes(diskTotalBytes, diskFreeBytes map[strin
 	}
 }
 
+// AppendVolumeIds appends the ids of this node's volumes to dst, without
+// copying the volume records to read them.
+func (dn *DataNode) AppendVolumeIds(dst []uint32) []uint32 {
+	dn.RLock()
+	defer dn.RUnlock()
+	for _, c := range dn.children {
+		dst = c.(*Disk).AppendVolumeIds(dst)
+	}
+	return dst
+}
+
 func (dn *DataNode) GetVolumes() (ret []storage.VolumeInfo) {
 	dn.RLock()
 	defer dn.RUnlock()

@@ -274,6 +274,18 @@ func (d *Disk) GetVolumes() []storage.VolumeInfo {
 	return d.AppendVolumes(make([]storage.VolumeInfo, 0, d.VolumeCount()))
 }
 
+// AppendVolumeIds appends the ids of the disk's volumes to dst. Callers that
+// only need to name volumes use this rather than AppendVolumes, which copies
+// a whole record per volume to be read for four bytes of it.
+func (d *Disk) AppendVolumeIds(dst []uint32) []uint32 {
+	d.RLock()
+	defer d.RUnlock()
+	for id := range d.volumes {
+		dst = append(dst, uint32(id))
+	}
+	return dst
+}
+
 // AppendVolumes appends the disk's volumes to dst, so a caller gathering
 // several disks fills one slice instead of concatenating a copy per disk.
 func (d *Disk) AppendVolumes(dst []storage.VolumeInfo) []storage.VolumeInfo {
