@@ -474,7 +474,10 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 		select {
 		case message := <-messageChan:
 			if err := stream.Send(message); err != nil {
-				glog.V(0).Infof("=> client %v: %+v", clientName, message)
+				// The error, not the message: it carries every volume id on a
+				// newly connected node, and formatting a proto that size to
+				// say a client went away costs more than the send did.
+				glog.V(0).Infof("=> client %v: %v", clientName, err)
 				return err
 			}
 		case <-ticker.C:
