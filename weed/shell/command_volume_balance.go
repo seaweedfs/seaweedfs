@@ -776,6 +776,9 @@ func (c *commandVolumeBalance) executeParallelMove(move volumeBalanceMove, volum
 	}
 
 	if err := moveVolume(c.commandEnv, move.volume, move.source, move.target, c.applyBalancing); err != nil {
+		if c.commandEnv != nil && c.commandEnv.verbose {
+			fmt.Fprintf(os.Stdout, "attempt to parallel move volume error %+v\n", err)
+		}
 		c.balanceMu.Lock()
 		rollbackParallelMove(move, volumeReplicas)
 		c.movedCount--
