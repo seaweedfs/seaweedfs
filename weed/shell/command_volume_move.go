@@ -45,6 +45,7 @@ func (c *commandVolumeMove) Help() string {
 	4. This command asks the source volume server to delete the source volume.
 
 	The option "-disk [hdd|ssd|<tag>]" can be used to change the volume disk type.
+	The option "-timeout" fails the whole move if it does not finish in time.
 
 `
 }
@@ -61,6 +62,7 @@ func (c *commandVolumeMove) Do(args []string, commandEnv *CommandEnv, writer io.
 	targetNodeStr := volMoveCommand.String("target", "", "the target volume server <host>:<port>")
 	diskTypeStr := volMoveCommand.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
 	ioBytePerSecond := volMoveCommand.Int64("ioBytePerSecond", 0, "limit the speed of move")
+	timeout := volMoveCommand.Duration("timeout", 0, "wall-clock cap on the whole move; 0 = no timeout")
 	noLock := volMoveCommand.Bool("noLock", false, "do not lock the admin shell at one's own risk")
 
 	if err = volMoveCommand.Parse(args); err != nil {
@@ -83,7 +85,14 @@ func (c *commandVolumeMove) Do(args []string, commandEnv *CommandEnv, writer io.
 		return fmt.Errorf("source and target volume servers are the same!")
 	}
 
-	return LiveMoveVolume(context.Background(), commandEnv.option.GrpcDialOption, writer, volumeId, sourceVolumeServer, targetVolumeServer, 5*time.Second, *diskTypeStr, *ioBytePerSecond, false)
+	ctx := context.Background()
+	if *timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, *timeout)
+		defer cancel()
+	}
+
+	return LiveMoveVolume(ctx, commandEnv.option.GrpcDialOption, writer, volumeId, sourceVolumeServer, targetVolumeServer, 5*time.Second, *diskTypeStr, *ioBytePerSecond, false)
 }
 
 // LiveMoveVolume moves one volume from one source volume server to one target volume server, with idleTimeout to drain the incoming requests.
