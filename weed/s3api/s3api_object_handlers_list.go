@@ -305,14 +305,15 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 
 		// Hoist versioning check out of per-entry callback
 		versioningState, _ := s3a.getVersioningState(bucket)
-		versioningEnabled := versioningState == "Enabled"
-		// Suspending versioning keeps the delete markers already written, so both states
-		// can hold a directory whose objects are all gone from the current-version view.
-		cursor.hideDeletedPrefixes = versioningState != ""
+		// Suspending versioning keeps the .versions directories already written, so both
+		// states can emit a key twice (base-path null object plus its .versions sibling)
+		// and can hold a directory whose objects are all gone from the current-version view.
+		versioningConfigured := versioningState != ""
+		cursor.hideDeletedPrefixes = versioningConfigured
 
 		// Helper function to handle dedup/append logic
 		appendOrDedup := func(newEntry ListEntry) {
-			if versioningEnabled {
+			if versioningConfigured {
 				// For versioned buckets, we need to handle duplicates between the main file and the .versions directory
 				if len(contents) > 0 && contents[len(contents)-1].Key == newEntry.Key {
 					glog.V(3).Infof("listFilerEntries deduplicating versioned entry: %s", newEntry.Key)
