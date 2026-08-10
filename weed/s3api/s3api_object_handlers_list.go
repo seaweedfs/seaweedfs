@@ -300,8 +300,23 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 		return
 	}
 
+	alignedMarker := marker
+
 	// check filer
 	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		// The failover wrapper retries this callback on another filer after a
+		// transport error, so every attempt rebuilds the page from scratch: a
+		// partially built page must not leak into the retry.
+		contents = nil
+		commonPrefixes = nil
+		doErr = nil
+		nextMarker = ""
+		marker = alignedMarker
+		*cursor = ListingCursor{
+			maxKeys:               maxKeys,
+			prefixEndsOnDelimiter: strings.HasSuffix(originalPrefix, "/") && len(originalMarker) == 0,
+		}
+
 		var lastEntryWasCommonPrefix bool
 		var lastCommonPrefix string
 		// Backing for the newest CommonPrefix: how many unsettled null objects
