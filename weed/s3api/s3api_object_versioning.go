@@ -733,9 +733,15 @@ func (vc *versionCollector) processRegularFile(currentPath, entryPath string, en
 
 	// A latest-version pointer on the .versions sibling names the current version
 	// (a suspended-versioning write clears it), so the null object is not latest.
+	// With no pointer, the sibling may still hold replicated versions the lagging
+	// pointer has not caught up with; the nullObjectWins rule decides.
 	isLatest := true
-	if versionsErr == nil && len(versionsDirEntry.Extended[s3_constants.ExtLatestVersionIdKey]) > 0 {
-		isLatest = false
+	if versionsErr == nil {
+		if len(versionsDirEntry.Extended[s3_constants.ExtLatestVersionIdKey]) > 0 {
+			isLatest = false
+		} else if latestVersion, _, _, _, scanErr := vc.s3a.scanLatestVersionEntry(currentPath + "/" + versionsEntryName); scanErr == nil && latestVersion != nil && !nullObjectWins(entry, latestVersion) {
+			isLatest = false
+		}
 	}
 
 	versionEntry := &VersionEntry{
