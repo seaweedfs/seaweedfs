@@ -2,6 +2,8 @@ package s3api
 
 import (
 	"context"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -156,6 +158,52 @@ func TestPreVersioningInterveningKeyMetadata(t *testing.T) {
 			token = page.NextContinuationToken
 		}
 		assert.Equal(t, []string{"a.txt", "a.txt.bak"}, keys, "maxKeys=%d", maxKeys)
+	}
+}
+
+// CommonPrefixes derive from listable keys, so deleting the only pre-versioning
+// object under a prefix takes the prefix with it.
+func TestPreVersioningDeletedPrefixHidesCommonPrefix(t *testing.T) {
+	client := getS3Client(t)
+	bucketName := getNewBucketName()
+	createBucket(t, client, bucketName)
+	defer deleteBucket(t, client, bucketName)
+
+	putObject(t, client, bucketName, "p/k.txt", "pre-versioning")
+	enableVersioning(t, client, bucketName)
+	deleteObject(t, client, bucketName, "p/k.txt")
+
+	page, err := client.ListObjectsV2(context.TODO(), &s3.ListObjectsV2Input{
+		Bucket: aws.String(bucketName), Delimiter: aws.String("/"),
+	})
+	require.NoError(t, err)
+	assert.Empty(t, page.Contents)
+	assert.Empty(t, page.CommonPrefixes, "no listable key remains under p/")
+}
+
+// Nested names (k, k!, k!!, ...) can hold more unresolved null objects than the
+// pending cap; the evicted key must still be settled, on any page size.
+func TestPreVersioningNestedNullObjectsBeyondCap(t *testing.T) {
+	client := getS3Client(t)
+	bucketName := getNewBucketName()
+	createBucket(t, client, bucketName)
+	defer deleteBucket(t, client, bucketName)
+
+	var live []string
+	for i := 0; i < 10; i++ {
+		key := "k" + strings.Repeat("!", i)
+		putObject(t, client, bucketName, key, "pre-versioning")
+		if i > 0 {
+			live = append(live, key)
+		}
+	}
+	enableVersioning(t, client, bucketName)
+	deleteObject(t, client, bucketName, "k")
+
+	sort.Strings(live)
+	for _, maxKeys := range []int32{0, 3, 9} {
+		assert.Equal(t, live, listAllKeys(t, client, bucketName, maxKeys),
+			"maxKeys=%d must not list the deleted key", maxKeys)
 	}
 }
 
