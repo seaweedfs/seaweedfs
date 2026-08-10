@@ -236,6 +236,14 @@ func getBucketFromPrefix(r *http.Request) string {
 	if bucket := os.Getenv("S3TABLES_DEFAULT_BUCKET"); bucket != "" {
 		return bucket
 	}
+	// Some writers commit to the unprefixed path even though their reads
+	// honor the /v1/config prefix; the deployment's first table bucket is
+	// where those commits belong.
+	for _, name := range strings.Split(os.Getenv("S3_TABLE_BUCKET"), ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			return name
+		}
+	}
 	// Default bucket if no prefix - use "warehouse" for Iceberg
 	return "warehouse"
 }
