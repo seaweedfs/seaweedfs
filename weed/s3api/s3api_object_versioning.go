@@ -2143,16 +2143,18 @@ func (s3a *S3ApiServer) recoverLatestListEntryByScan(bucket, normalizedObject st
 	bucketDir := s3a.bucketDir(bucket)
 	versionsDir := bucketDir + "/" + normalizedObject + s3_constants.VersionsFolder
 
+	// An absent pointer is the legitimate signal that a pre-versioning or
+	// suspended-versioning "null" object at the base path is current, so it wins
+	// over a rescan, mirroring the read path's recoverLatestVersionWithoutPointer.
+	if regularEntry, regularErr := s3a.getEntry(bucketDir, normalizedObject); regularErr == nil {
+		return regularEntry, nil
+	}
+
 	latestEntry, latestVersionId, _, isDeleteMarker, err := s3a.scanLatestVersionEntry(versionsDir)
 	if err != nil {
 		return nil, err
 	}
 	if latestEntry == nil {
-		// No version files remain. A pre-versioning / suspended "null" object at the
-		// base path is the current version if one exists.
-		if regularEntry, regularErr := s3a.getEntry(bucketDir, normalizedObject); regularErr == nil {
-			return regularEntry, nil
-		}
 		return nil, fmt.Errorf("%w: no current version for %s/%s", filer_pb.ErrNotFound, bucket, normalizedObject)
 	}
 	if isDeleteMarker {
