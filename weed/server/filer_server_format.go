@@ -262,6 +262,10 @@ func (fs *FilerServer) formatRepack(ctx context.Context, w http.ResponseWriter, 
 		}
 	}
 
+	// Repack rewrites where bytes are cut, never their lifetime: new chunks
+	// must carry the entry's TTL, not whatever the request query implies.
+	so.TtlSeconds = entry.TtlSec
+
 	size := int64(entry.FileSize)
 	lookup := fs.filer.MasterClient.GetLookupFileIdFunction()
 	chunkViews := filer.ViewFromChunks(ctx, lookup, oldChunks, 0, size)
@@ -343,6 +347,9 @@ func (fs *FilerServer) formatRepack(ctx context.Context, w http.ResponseWriter, 
 		return
 	}
 	fs.filer.DeleteChunks(context.WithoutCancel(ctx), fullPath, oldChunks)
+	// Filer.UpdateEntry only writes the store; notify subscribers (sync,
+	// backup, replication) of the new chunk ids like the gRPC path does.
+	fs.filer.NotifyUpdateEvent(ctx, entry, &newEntry, true, false, nil)
 	writeJsonQuiet(w, r, http.StatusOK, map[string]interface{}{
 		"name": entry.Name(), "size": size, "extents": len(layout.ExtentSizes),
 	})
