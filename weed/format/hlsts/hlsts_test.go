@@ -121,11 +121,11 @@ func TestViewPlaylist(t *testing.T) {
 #EXT-X-MEDIA-SEQUENCE:0
 #EXT-X-PLAYLIST-TYPE:VOD
 #EXTINF:6.000,
-movie.ts?view=hls-ts&seq=0
+movie.ts?format.view=hls-ts&seq=0
 #EXTINF:6.000,
-movie.ts?view=hls-ts&seq=1
+movie.ts?format.view=hls-ts&seq=1
 #EXTINF:2.500,
-movie.ts?view=hls-ts&seq=2
+movie.ts?format.view=hls-ts&seq=2
 #EXT-X-ENDLIST
 `
 	if string(plan.Body) != want {

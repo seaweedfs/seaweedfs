@@ -227,12 +227,17 @@ func (Adapter) IndexSidecar(sidecar []byte) (*format.Layout, error) {
 		return nil, fmt.Errorf("EXT-X-TARGETDURATION %d is smaller than the longest segment duration %d", info.TargetDuration, minimumTarget)
 	}
 
-	return &format.Layout{
+	layout := &format.Layout{
 		Format:      FormatName,
 		ExtentSizes: sizes,
 		Align:       TSPacketSize,
 		Payload:     info.encode(),
-	}, nil
+	}
+	// valid by construction, but enforce the formattest invariant explicitly
+	if err := layout.Validate(-1); err != nil {
+		return nil, err
+	}
+	return layout, nil
 }
 
 // View serves the generated playlist, or maps ?seq=N to its extent.
@@ -265,7 +270,7 @@ func renderPlaylist(name string, info *playlistInfo) []byte {
 	escapedName := url.PathEscape(name)
 	for i, durationMs := range info.DurationsMs {
 		fmt.Fprintf(&out, "#EXTINF:%.3f,\n", float64(durationMs)/1000)
-		fmt.Fprintf(&out, "%s?view=%s&seq=%d\n", escapedName, FormatName, int64(i)+info.MediaSequence)
+		fmt.Fprintf(&out, "%s?%s=%s&seq=%d\n", escapedName, format.ViewParam, FormatName, int64(i)+info.MediaSequence)
 	}
 	out.WriteString("#EXT-X-ENDLIST\n")
 	return []byte(out.String())

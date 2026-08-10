@@ -26,6 +26,11 @@ import (
 )
 
 const (
+	// Query parameters follow the mv.from/cp.from dotted convention so the
+	// general POST endpoint cannot collide with pass-through client params.
+	formatIngestParam = "format.ingest"
+	formatRepackParam = "format.repack"
+
 	maxFormatSidecarBytes = 16 << 20
 	formatSniffBytes      = 512
 	// defaultFormatChunkSizeMB caps extent chunks when no maxMB is configured.
@@ -60,11 +65,11 @@ func copyStandardHeadersToExtended(r *http.Request, extended map[string][]byte) 
 	}
 }
 
-// formatIngest handles POST /path?format=<adapter>: a multipart body with an
-// "index" sidecar part describing the media's extents, then the "media" bytes.
-// Storage chunks are cut on the extent boundaries the sidecar declares.
+// formatIngest handles POST /path?format.ingest=<adapter>: a multipart body
+// with an "index" sidecar part describing the media's extents, then the
+// "media" bytes. Storage chunks are cut on the boundaries the sidecar declares.
 func (fs *FilerServer) formatIngest(ctx context.Context, w http.ResponseWriter, r *http.Request, so *operation.StorageOption) {
-	adapterName := r.URL.Query().Get("format")
+	adapterName := r.URL.Query().Get(formatIngestParam)
 	adapter := format.ByName(adapterName)
 	if adapter == nil {
 		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("unknown format %q", adapterName))
@@ -137,7 +142,7 @@ func (fs *FilerServer) formatIngest(ctx context.Context, w http.ResponseWriter, 
 	}
 
 	cutter := layout.Cutter(fs.formatChunkSizeLimit(r))
-	fileChunks, md5Hash, written, uploadErr, _ := fs.uploadReaderToBoundedChunks(ctx, r, mediaPart, 0, cutter, false, path.Base(r.URL.Path), contentType, false, so)
+	fileChunks, md5Hash, written, uploadErr, _ := fs.uploadReaderToBoundedChunks(ctx, r, mediaPart, 0, cutter, path.Base(r.URL.Path), contentType, false, so)
 	cleanup := func() { fs.filer.DeleteUncommittedChunks(context.WithoutCancel(ctx), fileChunks) }
 	if uploadErr != nil {
 		cleanup()
@@ -204,11 +209,11 @@ func (fs *FilerServer) formatIngest(ctx context.Context, w http.ResponseWriter, 
 	writeJsonQuiet(w, r, http.StatusCreated, FilerPostResult{Name: entry.Name(), Size: written})
 }
 
-// formatRepack handles POST /path?repack=<adapter>: it derives the layout from
-// the stored bytes and rewrites the entry's chunks cut on extent boundaries.
-// The bytes do not change, only where they are cut.
+// formatRepack handles POST /path?format.repack=<adapter>: it derives the
+// layout from the stored bytes and rewrites the entry's chunks cut on extent
+// boundaries. The bytes do not change, only where they are cut.
 func (fs *FilerServer) formatRepack(ctx context.Context, w http.ResponseWriter, r *http.Request, so *operation.StorageOption) {
-	adapterName := r.URL.Query().Get("repack")
+	adapterName := r.URL.Query().Get(formatRepackParam)
 	adapter := format.ByName(adapterName)
 	if adapter == nil {
 		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("unknown format %q", adapterName))
@@ -306,7 +311,7 @@ func (fs *FilerServer) formatRepack(ctx context.Context, w http.ResponseWriter, 
 	}
 
 	cutter := layout.Cutter(fs.formatChunkSizeLimit(r))
-	newChunks, md5Hash, written, uploadErr, _ := fs.uploadReaderToBoundedChunks(ctx, r, io.NewSectionReader(readerAt, 0, size), 0, cutter, false, entry.Name(), entry.Attr.Mime, false, so)
+	newChunks, md5Hash, written, uploadErr, _ := fs.uploadReaderToBoundedChunks(ctx, r, io.NewSectionReader(readerAt, 0, size), 0, cutter, entry.Name(), entry.Attr.Mime, false, so)
 	cleanup := func() { fs.filer.DeleteUncommittedChunks(context.WithoutCancel(ctx), newChunks) }
 	if uploadErr != nil {
 		cleanup()
@@ -402,6 +407,8 @@ func (fs *FilerServer) serveFormatView(ctx context.Context, w http.ResponseWrite
 			w.Header().Set(k, string(v))
 		}
 	}
+	// view responses are whole documents or whole extents
+	w.Header().Set("Accept-Ranges", "none")
 	w.Header().Set("Content-Type", plan.ContentType)
 	SetEtag(w, filer.ETagEntry(entry))
 

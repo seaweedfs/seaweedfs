@@ -18,6 +18,10 @@ import (
 // x-seaweedfs- prefix keeps it out of HTTP response headers.
 const LayoutKey = "x-seaweedfs-format-layout"
 
+// ViewParam is the query parameter selecting a format view on GET requests.
+// Adapters rendering self-referential URLs must use it.
+const ViewParam = "format.view"
+
 // ErrNoSuchView reports that a view request addresses nothing servable; the
 // server answers 404.
 var ErrNoSuchView = errors.New("no such view")
