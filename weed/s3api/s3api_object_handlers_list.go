@@ -955,6 +955,10 @@ func (s3a *S3ApiServer) dirHoldsOnlyHiddenEntries(ctx context.Context, client fi
 
 	sawEntry := false
 	startFrom := ""
+	// A plain file is a null object that its .versions sibling, streaming later,
+	// may prove delete-marked; it stays pending until then. A pending file whose
+	// sibling window closes without one is a live key.
+	var pendingFiles []string
 	for {
 		request := &filer_pb.ListEntriesRequest{
 			Directory:         dir,
@@ -992,8 +996,14 @@ func (s3a *S3ApiServer) dirHoldsOnlyHiddenEntries(ctx context.Context, client fi
 				return false
 			}
 
+			for _, pendingFile := range pendingFiles {
+				if entry.Name > pendingFile+s3_constants.VersionsFolder {
+					return false
+				}
+			}
 			if !entry.IsDirectory {
-				return false
+				pendingFiles = append(pendingFiles, entry.Name)
+				continue
 			}
 			if entry.Name == s3_constants.MultipartUploadsFolder {
 				continue
@@ -1007,6 +1017,15 @@ func (s3a *S3ApiServer) dirHoldsOnlyHiddenEntries(ctx context.Context, client fi
 				// serving this list - and an unknown object keeps its prefix rather than
 				// turning one listing into a version rescan per object.
 				if isDeleteMarker, stamped := entry.Extended[s3_constants.ExtLatestVersionIsDeleteMarker]; stamped && string(isDeleteMarker) == "true" {
+					// The marker also hides the null object the key left at the base path.
+					base := strings.TrimSuffix(entry.Name, s3_constants.VersionsFolder)
+					kept := pendingFiles[:0]
+					for _, pendingFile := range pendingFiles {
+						if pendingFile != base {
+							kept = append(kept, pendingFile)
+						}
+					}
+					pendingFiles = kept
 					continue
 				}
 				return false
@@ -1020,7 +1039,7 @@ func (s3a *S3ApiServer) dirHoldsOnlyHiddenEntries(ctx context.Context, client fi
 		}
 
 		if entriesReceived < request.Limit {
-			return sawEntry
+			return sawEntry && len(pendingFiles) == 0
 		}
 	}
 }
