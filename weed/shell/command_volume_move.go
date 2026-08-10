@@ -99,10 +99,23 @@ func (c *commandVolumeMove) Do(args []string, commandEnv *CommandEnv, writer io.
 func LiveMoveVolume(ctx context.Context, grpcDialOption grpc.DialOption, writer io.Writer, volumeId needle.VolumeId, sourceVolumeServer, targetVolumeServer pb.ServerAddress, idleTimeout time.Duration, diskType string, ioBytePerSecond int64, skipTailError bool) (err error) {
 
 	log.Printf("copying volume %d from %s to %s", volumeId, sourceVolumeServer, targetVolumeServer)
-	lastAppendAtNs, err := copyVolume(ctx, grpcDialOption, writer, volumeId, sourceVolumeServer, targetVolumeServer, diskType, ioBytePerSecond, false)
+	lastAppendAtNs, leftReadonly, err := copyVolume(ctx, grpcDialOption, writer, volumeId, sourceVolumeServer, targetVolumeServer, diskType, ioBytePerSecond, false)
 	if err != nil {
 		return fmt.Errorf("copy volume %d from %s to %s: %v", volumeId, sourceVolumeServer, targetVolumeServer, err)
 	}
+
+	// A move aborted after the copy must restore the source writability, or
+	// the source volume is left permanently readonly.
+	defer func() {
+		if err == nil || !leftReadonly {
+			return
+		}
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cleanupCancel()
+		if wErr := markVolumeWritable(cleanupCtx, grpcDialOption, volumeId, sourceVolumeServer, true, false); wErr != nil {
+			log.Printf("failed to restore volume %d writable on %s: %v", volumeId, sourceVolumeServer, wErr)
+		}
+	}()
 
 	log.Printf("tailing volume %d from %s to %s", volumeId, sourceVolumeServer, targetVolumeServer)
 	if err = tailVolume(ctx, grpcDialOption, volumeId, sourceVolumeServer, targetVolumeServer, lastAppendAtNs, idleTimeout); err != nil {
@@ -122,7 +135,7 @@ func LiveMoveVolume(ctx context.Context, grpcDialOption grpc.DialOption, writer 
 	return nil
 }
 
-func copyVolume(ctx context.Context, grpcDialOption grpc.DialOption, writer io.Writer, volumeId needle.VolumeId, sourceVolumeServer, targetVolumeServer pb.ServerAddress, diskType string, ioBytePerSecond int64, restoreWritable bool) (lastAppendAtNs uint64, err error) {
+func copyVolume(ctx context.Context, grpcDialOption grpc.DialOption, writer io.Writer, volumeId needle.VolumeId, sourceVolumeServer, targetVolumeServer pb.ServerAddress, diskType string, ioBytePerSecond int64, restoreWritable bool) (lastAppendAtNs uint64, leftReadonly bool, err error) {
 
 	// check to see if the volume is already read-only and if its not then we need
 	// to mark it as read-only and then before we return we need to undo what we
@@ -133,6 +146,7 @@ func copyVolume(ctx context.Context, grpcDialOption grpc.DialOption, writer io.W
 			return
 		}
 		if !restoreWritable && err == nil {
+			leftReadonly = true
 			return
 		}
 
