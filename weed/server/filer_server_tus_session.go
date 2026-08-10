@@ -105,9 +105,17 @@ func (fs *FilerServer) markTusSessionConsumed(ctx context.Context, uploadID stri
 	}, nil, exclusive, false, nil, true, fs.filer.MaxFilenameLength)
 }
 
-func (fs *FilerServer) isTusSessionConsumed(ctx context.Context, uploadID string) bool {
+// isTusSessionConsumed fails closed: when the marker cannot be looked up, the
+// caller must not treat the session's chunks as free.
+func (fs *FilerServer) isTusSessionConsumed(ctx context.Context, uploadID string) (bool, error) {
 	_, err := fs.filer.FindEntry(ctx, util.FullPath(fs.tusSessionConsumedPath(uploadID)))
-	return err == nil
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, filer_pb.ErrNotFound) {
+		return false, nil
+	}
+	return false, err
 }
 
 // tusChunkPath returns the path to store a chunk info file
@@ -383,9 +391,21 @@ func (fs *FilerServer) deleteTusSession(ctx context.Context, uploadID string) er
 		return nil
 	}
 
+	// Remove the .info before deciding about chunk data: a final request claims
+	// its consumed marker before re-verifying the .info, so once the .info is
+	// gone no new claim can pass verification, and a claim that did pass was
+	// created earlier and is visible at the check below.
+	if err := fs.filer.DeleteEntryMetaAndData(ctx, util.FullPath(fs.tusSessionInfoPath(uploadID)), false, false, false, false, nil, 0); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		return fmt.Errorf("delete session info: %w", err)
+	}
+
 	// Batch delete all uploaded chunks from volume servers, unless the session
 	// was consumed: then the chunks belong to a completed upload's entry.
-	if len(session.Chunks) > 0 && !fs.isTusSessionConsumed(ctx, uploadID) {
+	consumed, err := fs.isTusSessionConsumed(ctx, uploadID)
+	if err != nil {
+		return fmt.Errorf("check consumed marker: %w", err)
+	}
+	if len(session.Chunks) > 0 && !consumed {
 		var chunksToDelete []*filer_pb.FileChunk
 		for _, chunk := range session.Chunks {
 			if chunk.FileId != "" {
