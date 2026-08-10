@@ -115,12 +115,13 @@ func TestPreVersioningInterveningKeyRetraction(t *testing.T) {
 	defer deleteBucket(t, client, bucketName)
 
 	putObject(t, client, bucketName, "a.txt", "pre-versioning")
+	putObject(t, client, bucketName, "a.txt!between", "pre-versioning")
 	putObject(t, client, bucketName, "a.txt.bak", "pre-versioning")
 	enableVersioning(t, client, bucketName)
 	deleteObject(t, client, bucketName, "a.txt")
 
 	for _, maxKeys := range []int32{0, 1, 2} {
-		assert.Equal(t, []string{"a.txt.bak"}, listAllKeys(t, client, bucketName, maxKeys),
+		assert.Equal(t, []string{"a.txt!between", "a.txt.bak"}, listAllKeys(t, client, bucketName, maxKeys),
 			"maxKeys=%d must not list the deleted key", maxKeys)
 	}
 }
@@ -133,6 +134,7 @@ func TestPreVersioningInterveningKeyMetadata(t *testing.T) {
 
 	overwrite := "versioned overwrite"
 	putObject(t, client, bucketName, "a.txt", "old")
+	putObject(t, client, bucketName, "a.txt!between", "pre-versioning")
 	putObject(t, client, bucketName, "a.txt.bak", "pre-versioning")
 	enableVersioning(t, client, bucketName)
 	putObject(t, client, bucketName, "a.txt", overwrite)
@@ -157,7 +159,7 @@ func TestPreVersioningInterveningKeyMetadata(t *testing.T) {
 			}
 			token = page.NextContinuationToken
 		}
-		assert.Equal(t, []string{"a.txt", "a.txt.bak"}, keys, "maxKeys=%d", maxKeys)
+		assert.Equal(t, []string{"a.txt", "a.txt!between", "a.txt.bak"}, keys, "maxKeys=%d", maxKeys)
 	}
 }
 
