@@ -111,16 +111,18 @@ func LiveMoveVolume(ctx context.Context, grpcDialOption grpc.DialOption, writer 
 		if err == nil || !leftReadonly {
 			return
 		}
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		defer cleanupCancel()
 		if !sourceDeleteStarted {
 			// The target copy may be missing tailed entries; remove it so the
 			// restored source stays the only replica.
-			if dErr := deleteVolume(cleanupCtx, grpcDialOption, volumeId, targetVolumeServer, false, true); dErr != nil {
+			deleteCtx, deleteCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			defer deleteCancel()
+			if dErr := deleteVolume(deleteCtx, grpcDialOption, volumeId, targetVolumeServer, false, true); dErr != nil {
 				log.Printf("failed to delete the incomplete copy of volume %d on %s: %v", volumeId, targetVolumeServer, dErr)
 			}
 		}
-		if wErr := markVolumeWritable(cleanupCtx, grpcDialOption, volumeId, sourceVolumeServer, true, false); wErr != nil {
+		restoreCtx, restoreCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer restoreCancel()
+		if wErr := markVolumeWritable(restoreCtx, grpcDialOption, volumeId, sourceVolumeServer, true, false); wErr != nil {
 			log.Printf("failed to restore volume %d writable on %s: %v", volumeId, sourceVolumeServer, wErr)
 		}
 	}()
