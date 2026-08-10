@@ -337,9 +337,42 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 			}
 		}
 
+		// Null objects whose .versions sibling has not streamed yet, and so may still
+		// turn out to be shadowed by a delete marker. Entries stream in order, so a
+		// pending null is dropped once the stream passes its sibling's name; the cap
+		// only binds on pathological prefix nests and falls back to sibling-adjacent
+		// behavior for the evicted oldest.
+		type pendingNull struct{ dir, name string }
+		var pendingNulls []pendingNull
+		prunePendingNulls := func(dir, passedName string) {
+			kept := pendingNulls[:0]
+			for _, p := range pendingNulls {
+				if p.dir != dir || p.name+s3_constants.VersionsFolder >= passedName {
+					kept = append(kept, p)
+				}
+			}
+			pendingNulls = kept
+		}
+		dropPendingNull := func(dir, name string) {
+			kept := pendingNulls[:0]
+			for _, p := range pendingNulls {
+				if p.dir != dir || p.name != name {
+					kept = append(kept, p)
+				}
+			}
+			pendingNulls = kept
+		}
+		addPendingNull := func(dir, name string) {
+			if len(pendingNulls) >= 8 {
+				pendingNulls = pendingNulls[1:]
+			}
+			pendingNulls = append(pendingNulls, pendingNull{dir, name})
+		}
+
 		// The null object for a key lists before its .versions sibling can reveal
 		// that the current version is a delete marker, so the reveal retracts it.
 		cursor.retractEntry = func(dir, name string) {
+			dropPendingNull(dir, name)
 			dirName, entryName, _ := entryUrlEncode(dir, name, encodingTypeUrl)
 			key := fmt.Sprintf("%s/%s", dirName, entryName)[len(bucketPrefix):]
 			for i := len(contents) - 1; i >= 0 && contents[i].Key >= key; i-- {
@@ -351,11 +384,33 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 			}
 		}
 
+		// A page may fill while a trailing null object's .versions sibling is still
+		// unstreamed; settle each one by direct lookup before the page is declared
+		// final. A retraction here reopens the page's quota.
+		cursor.resolvePendingNulls = func() {
+			pending := pendingNulls
+			pendingNulls = nil
+			for _, p := range pending {
+				versionsEntry, err := s3a.getEntry(p.dir, p.name+s3_constants.VersionsFolder)
+				if err != nil {
+					continue
+				}
+				fullObjectPath := strings.TrimPrefix(p.dir+"/"+p.name, bucketPrefix)
+				if latest, lerr := s3a.getLatestVersionEntryFromDirectoryEntry(bucket, fullObjectPath, versionsEntry); lerr == nil {
+					dirName, entryName, _ := entryUrlEncode(p.dir, latest.Name, encodingTypeUrl)
+					appendOrDedup(newListEntry(s3a, latest, "", dirName, entryName, bucketPrefix, fetchOwner, false, false))
+				} else if errors.Is(lerr, ErrDeleteMarker) {
+					cursor.retractEntry(p.dir, p.name)
+				}
+			}
+		}
+
 		for {
 			empty := true
 
 			nextMarker, doErr = s3a.doListFilerEntries(ctx, client, listDirectoryRequest{dir: reqDir, prefix: prefix, marker: marker, delimiter: delimiter, bucket: bucket}, cursor, func(dir string, entry *filer_pb.Entry) {
 				empty = false
+				prunePendingNulls(dir, entry.Name)
 				dirName, entryName, _ := entryUrlEncode(dir, entry.Name, encodingTypeUrl)
 				if entry.IsDirectory {
 					if originalPrefix != "" {
@@ -467,6 +522,15 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 						newEntry := newListEntry(s3a, entry, "", dirName, entryName, bucketPrefix, fetchOwner, false, false)
 						appendOrDedup(newEntry)
 						lastEntryWasCommonPrefix = false
+						if versioningConfigured {
+							// A real version id means the .versions sibling resolved this
+							// key; anything else is a null object the sibling may shadow.
+							if vid := string(entry.Extended[s3_constants.ExtVersionIdKey]); vid == "" || vid == "null" {
+								addPendingNull(dir, entry.Name)
+							} else {
+								dropPendingNull(dir, entry.Name)
+							}
+						}
 					}
 				}
 			})
@@ -538,6 +602,9 @@ type ListingCursor struct {
 	// retractEntry undoes the listing of a base-path null object once its .versions
 	// sibling reveals that the current version is a delete marker.
 	retractEntry func(dir, name string)
+	// resolvePendingNulls settles trailing null objects whose .versions sibling
+	// has not streamed yet before a page is declared full.
+	resolvePendingNulls func()
 }
 
 // the prefix and marker may be in different directories
@@ -710,8 +777,13 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 			versionsSiblingOfLast := cursor.hideDeletedPrefixes && entry.IsDirectory &&
 				entry.Name == nextMarker+s3_constants.VersionsFolder
 			if cursor.maxKeys <= 0 && !versionsSiblingOfLast {
-				cursor.isTruncated = true
-				break
+				if cursor.resolvePendingNulls != nil {
+					cursor.resolvePendingNulls()
+				}
+				if cursor.maxKeys <= 0 {
+					cursor.isTruncated = true
+					break
+				}
 			}
 
 			// Set nextMarker only when we have quota to process this entry
