@@ -167,6 +167,41 @@ func TestValidateRemoteEndpoint(t *testing.T) {
 			wantSub:  "CGNAT",
 		},
 		{
+			name:     "nat64 imds",
+			endpoint: "http://[64:ff9b::a9fe:a9fe]/",
+			wantErr:  true,
+			wantSub:  "metadata",
+		},
+		{
+			name:     "nat64 loopback",
+			endpoint: "http://[64:ff9b::7f00:1]/",
+			wantErr:  true,
+			wantSub:  "loopback",
+		},
+		{
+			name:     "6to4 private",
+			endpoint: "http://[2002:a00:1::]/",
+			wantErr:  true,
+			wantSub:  "private",
+		},
+		{
+			name:     "teredo loopback",
+			endpoint: "http://[2001:0:4136:e378:8000:63bf:80ff:fffe]/",
+			wantErr:  true,
+			wantSub:  "loopback",
+		},
+		{
+			name:     "ipv4-compatible loopback",
+			endpoint: "http://[::7f00:1]/",
+			wantErr:  true,
+			wantSub:  "loopback",
+		},
+		{
+			name:     "nat64 public passes",
+			endpoint: "http://[64:ff9b::808:808]/",
+			wantErr:  false,
+		},
+		{
 			name:     "public s3",
 			endpoint: "https://s3.us-east-1.amazonaws.com/",
 			wantErr:  false,

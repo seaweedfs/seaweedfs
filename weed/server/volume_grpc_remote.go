@@ -107,7 +107,48 @@ func checkBlockedIP(endpoint string, ip net.IP) error {
 	case cgnatNet.Contains(ip):
 		return fmt.Errorf("remote endpoint %q resolves to CGNAT address %s", endpoint, ip)
 	}
+	// IPv6 transition addresses embed an IPv4 destination that routes to the
+	// same host wherever the matching relay exists (common in IPv6-only cloud).
+	// net.IP only normalizes ::ffff: mapped addresses, so pull the embedded
+	// IPv4 out of the other forms and re-check it against the deny list.
+	if embedded := embeddedTransitionIPv4(ip); embedded != nil {
+		return checkBlockedIP(endpoint, embedded)
+	}
 	return nil
+}
+
+// embeddedTransitionIPv4 returns the IPv4 address carried by an IPv6 transition
+// address -- NAT64 64:ff9b::/96 (RFC 6052), 6to4 2002::/16 (RFC 3056), Teredo
+// 2001:0000::/32 (RFC 4380), and the deprecated IPv4-compatible ::/96 (RFC
+// 4291) -- or nil when ip is not one of those. IPv4-mapped ::ffff:0:0/96 is
+// excluded because net.IP already normalizes it via To4.
+func embeddedTransitionIPv4(ip net.IP) net.IP {
+	v6 := ip.To16()
+	if v6 == nil || ip.To4() != nil {
+		return nil
+	}
+	switch {
+	case v6[0] == 0x00 && v6[1] == 0x64 && v6[2] == 0xff && v6[3] == 0x9b:
+		return net.IPv4(v6[12], v6[13], v6[14], v6[15])
+	case v6[0] == 0x20 && v6[1] == 0x02:
+		return net.IPv4(v6[2], v6[3], v6[4], v6[5])
+	case v6[0] == 0x20 && v6[1] == 0x01 && v6[2] == 0x00 && v6[3] == 0x00:
+		// Teredo obfuscates the client IPv4 as its ones' complement.
+		return net.IPv4(v6[12]^0xff, v6[13]^0xff, v6[14]^0xff, v6[15]^0xff)
+	case allZero(v6[:12]):
+		// IPv4-compatible ::a.b.c.d; :: and ::1 are already handled above.
+		return net.IPv4(v6[12], v6[13], v6[14], v6[15])
+	}
+	return nil
+}
+
+func allZero(b []byte) bool {
+	for _, c := range b {
+		if c != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // guardedDialer returns a DialContext that resolves the host itself and
