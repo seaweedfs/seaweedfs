@@ -2135,6 +2135,24 @@ func (s3a *S3ApiServer) getLatestVersionEntryFromDirectoryEntry(bucket, object s
 	return logicalEntry, nil
 }
 
+// nullObjectWins decides, with no latest-version pointer to consult, whether the
+// base-path null object or the newest scanned version is the current version.
+// The suspended write that makes a null current stamps the version it displaces
+// before clearing the pointer, so the stamp is authoritative; otherwise the
+// newer mtime wins, and a tie goes to the version, since second-resolution
+// mtimes cannot order same-second writes and an intentional null leaves the stamp.
+func nullObjectWins(regular, latest *filer_pb.Entry) bool {
+	if latest == nil {
+		return true
+	}
+	if latest.Extended != nil {
+		if _, displaced := latest.Extended[s3_constants.ExtNoncurrentSinceNsKey]; displaced {
+			return true
+		}
+	}
+	return regular.GetAttributes().GetMtime() > latest.GetAttributes().GetMtime()
+}
+
 // recoverLatestListEntryByScan rebuilds an object's current-version list entry by
 // rescanning .versions/ when the cached latest-version pointer is missing on the
 // filer serving the list. This is the listing-path counterpart to the read path's
@@ -2152,15 +2170,14 @@ func (s3a *S3ApiServer) recoverLatestListEntryByScan(bucket, normalizedObject st
 
 	// An absent pointer can mean a suspended-versioning write made the null
 	// object current (the write clears the pointer), or that the pointer has not
-	// replicated to this filer while the version files have. The chronologically
-	// newest of the null object and the scanned versions tells the two apart.
+	// replicated to this filer while the version files have.
 	regularEntry, regularErr := s3a.getEntry(bucketDir, normalizedObject)
 
 	latestEntry, latestVersionId, _, isDeleteMarker, err := s3a.scanLatestVersionEntry(versionsDir)
 	if err != nil {
 		return nil, err
 	}
-	if regularErr == nil && (latestEntry == nil || regularEntry.GetAttributes().GetMtime() >= latestEntry.GetAttributes().GetMtime()) {
+	if regularErr == nil && nullObjectWins(regularEntry, latestEntry) {
 		return regularEntry, nil
 	}
 	if latestEntry == nil {
