@@ -297,6 +297,59 @@ func TestBalance(t *testing.T) {
 
 }
 
+func TestBalanceParallel(t *testing.T) {
+	const mb = 1024 * 1024
+	volumeSizeLimitMb := uint64(100)
+
+	volumes := make([]*master_pb.VolumeInformationMessage, 0, 8)
+	for id := uint32(1); id <= 8; id++ {
+		volumes = append(volumes, &master_pb.VolumeInformationMessage{Id: id, Size: 95 * mb})
+	}
+	fullNode := &Node{
+		info: &master_pb.DataNodeInfo{
+			Id: "full",
+			DiskInfos: map[string]*master_pb.DiskInfo{
+				"": {MaxVolumeCount: 10, VolumeCount: int64(len(volumes)), VolumeInfos: volumes},
+			},
+		},
+		dc: "dc1", rack: "rack1",
+	}
+	emptyNode := &Node{
+		info: &master_pb.DataNodeInfo{
+			Id: "empty",
+			DiskInfos: map[string]*master_pb.DiskInfo{
+				"": {MaxVolumeCount: 10},
+			},
+		},
+		dc: "dc1", rack: "rack1",
+	}
+
+	c := &commandVolumeBalance{
+		volumeSizeLimitMb:  volumeSizeLimitMb,
+		maxParallelization: 3,
+	}
+	runBalance(t, c, []*Node{fullNode, emptyNode})
+
+	if c.movedCount == 0 {
+		t.Fatal("expected parallel balance to move at least one volume")
+	}
+	if diff := len(fullNode.info.DiskInfos[""].VolumeInfos) - len(emptyNode.info.DiskInfos[""].VolumeInfos); diff > 1 || diff < -1 {
+		t.Fatalf("expected balanced distribution, got full=%d empty=%d", len(fullNode.info.DiskInfos[""].VolumeInfos), len(emptyNode.info.DiskInfos[""].VolumeInfos))
+	}
+
+	seen := make(map[uint32]int)
+	for _, node := range []*Node{fullNode, emptyNode} {
+		for _, volume := range node.info.DiskInfos[""].VolumeInfos {
+			seen[volume.Id]++
+		}
+	}
+	for id, count := range seen {
+		if count != 1 {
+			t.Fatalf("volume %d appears %d times after parallel balance", id, count)
+		}
+	}
+}
+
 // Regression test: a freshly added empty volume server must end up sharing the
 // data roughly evenly, not having every volume drained onto it. Before the fix,
 // adjustAfterMove never updated the per-disk VolumeInfos that the density-based
