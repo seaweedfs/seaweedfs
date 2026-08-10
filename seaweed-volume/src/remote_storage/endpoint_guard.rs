@@ -17,7 +17,7 @@
 //! narrow TOCTOU window (a hostname that resolves to a public IP here and then
 //! flips to a blocked one when the SDK dials) remains as a follow-up.
 
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 /// AWS/Azure/GCP IPv4 instance-metadata-service (IMDS) address. It is
 /// link-local and thus already covered by [`is_link_local`], but is named
@@ -74,6 +74,41 @@ fn is_cgnat(ip: IpAddr) -> bool {
     }
 }
 
+/// Returns the IPv4 address carried by an IPv6 transition address -- NAT64
+/// 64:ff9b::/96 (RFC 6052), 6to4 2002::/16 (RFC 3056), Teredo 2001:0000::/32
+/// (RFC 4380), and the deprecated IPv4-compatible ::/96 (RFC 4291) -- or None
+/// when it is not one of those. IPv4-mapped ::ffff:0:0/96 is excluded; it is
+/// already normalized via `to_ipv4_mapped`.
+fn embedded_transition_ipv4(v6: Ipv6Addr) -> Option<Ipv4Addr> {
+    let o = v6.octets();
+    if o[0] == 0x00
+        && o[1] == 0x64
+        && o[2] == 0xff
+        && o[3] == 0x9b
+        && o[4..12].iter().all(|&b| b == 0)
+    {
+        return Some(Ipv4Addr::new(o[12], o[13], o[14], o[15]));
+    }
+    if o[0] == 0x20 && o[1] == 0x02 {
+        return Some(Ipv4Addr::new(o[2], o[3], o[4], o[5]));
+    }
+    if o[0] == 0x20 && o[1] == 0x01 && o[2] == 0x00 && o[3] == 0x00 {
+        // Teredo obfuscates the client IPv4 as its ones' complement.
+        return Some(Ipv4Addr::new(
+            o[12] ^ 0xff,
+            o[13] ^ 0xff,
+            o[14] ^ 0xff,
+            o[15] ^ 0xff,
+        ));
+    }
+    if o[..12].iter().all(|&b| b == 0) {
+        // IPv4-compatible ::a.b.c.d; :: and ::1 are already handled by the
+        // unspecified / loopback checks before extraction runs.
+        return Some(Ipv4Addr::new(o[12], o[13], o[14], o[15]));
+    }
+    None
+}
+
 /// Returns an error if `ip` is not safe to dial from a server that can reach
 /// cluster-internal hosts. Mirrors Go's `checkBlockedIP`.
 pub fn check_blocked_ip(endpoint: &str, ip: IpAddr) -> Result<(), String> {
@@ -123,6 +158,15 @@ pub fn check_blocked_ip(endpoint: &str, ip: IpAddr) -> Result<(), String> {
             "remote endpoint {:?} resolves to CGNAT address {}",
             endpoint, ip
         ));
+    }
+    // IPv6 transition addresses embed an IPv4 destination that routes to the
+    // same host wherever the matching relay exists (common in IPv6-only cloud).
+    // to_ipv4_mapped above only covers ::ffff: mapped addresses, so pull the
+    // embedded IPv4 out of the other forms and re-check it against the rules.
+    if let IpAddr::V6(v6) = ip {
+        if let Some(v4) = embedded_transition_ipv4(v6) {
+            return check_blocked_ip(endpoint, IpAddr::V4(v4));
+        }
     }
     Ok(())
 }
@@ -331,6 +375,49 @@ mod tests {
             .contains("private"));
         assert!(check_blocked_ip("e", ip("52.216.10.10")).is_ok());
         assert!(check_blocked_ip("e", ip("2606:4700:4700::1111")).is_ok());
+    }
+
+    #[test]
+    fn rejects_ipv6_transition_addresses() {
+        // Every transition form encoding an internal IPv4 must be blocked.
+        assert!(
+            check_blocked_ip("e", ip("64:ff9b::a9fe:a9fe")) // NAT64 -> IMDS
+                .unwrap_err()
+                .contains("metadata")
+        );
+        assert!(
+            check_blocked_ip("e", ip("64:ff9b::7f00:1")) // NAT64 -> loopback
+                .unwrap_err()
+                .contains("loopback")
+        );
+        assert!(
+            check_blocked_ip("e", ip("2002:a00:1::")) // 6to4 -> 10.0.0.1
+                .unwrap_err()
+                .contains("private")
+        );
+        assert!(
+            check_blocked_ip("e", ip("2001:0:4136:e378:8000:63bf:80ff:fffe")) // Teredo -> loopback
+                .unwrap_err()
+                .contains("loopback")
+        );
+        assert!(
+            check_blocked_ip("e", ip("::7f00:1")) // IPv4-compatible -> loopback
+                .unwrap_err()
+                .contains("loopback")
+        );
+        // A NAT64 address outside the 64:ff9b::/96 well-known prefix is not
+        // decoded (its embedded IPv4 lives elsewhere), so it is left as-is.
+        assert!(check_blocked_ip("e", ip("64:ff9b:1::a9fe:a9fe")).is_ok());
+        // Every transition form embedding a public IPv4 (8.8.8.8) still passes:
+        // NAT64, 6to4, Teredo, IPv4-compatible.
+        assert!(check_blocked_ip("e", ip("64:ff9b::808:808")).is_ok());
+        assert!(check_blocked_ip("e", ip("2002:808:808::")).is_ok());
+        assert!(check_blocked_ip("e", ip("2001::f7f7:f7f7")).is_ok());
+        assert!(check_blocked_ip("e", ip("::808:808")).is_ok());
+        // Bracketed transition literal via the full endpoint path.
+        assert!(precheck_endpoint("http://[64:ff9b::a9fe:a9fe]/")
+            .unwrap_err()
+            .contains("metadata"));
     }
 
     #[test]
