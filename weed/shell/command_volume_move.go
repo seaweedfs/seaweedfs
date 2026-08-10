@@ -259,6 +259,11 @@ func deleteVolume(ctx context.Context, grpcDialOption grpc.DialOption, volumeId 
 }
 
 func markVolumeWritable(ctx context.Context, grpcDialOption grpc.DialOption, volumeId needle.VolumeId, sourceVolumeServer pb.ServerAddress, writable, persist bool) (err error) {
+	return markVolumeState(ctx, grpcDialOption, volumeId, sourceVolumeServer, writable, false, persist)
+}
+
+// canDelete: readonly that still accepts deletes, so expiring data drains the volume.
+func markVolumeState(ctx context.Context, grpcDialOption grpc.DialOption, volumeId needle.VolumeId, sourceVolumeServer pb.ServerAddress, writable, canDelete, persist bool) (err error) {
 	return operation.WithVolumeServerClient(false, sourceVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		if writable {
 			_, err = volumeServerClient.VolumeMarkWritable(ctx, &volume_server_pb.VolumeMarkWritableRequest{
@@ -266,8 +271,9 @@ func markVolumeWritable(ctx context.Context, grpcDialOption grpc.DialOption, vol
 			})
 		} else {
 			_, err = volumeServerClient.VolumeMarkReadonly(ctx, &volume_server_pb.VolumeMarkReadonlyRequest{
-				VolumeId: uint32(volumeId),
-				Persist:  persist,
+				VolumeId:  uint32(volumeId),
+				Persist:   persist,
+				CanDelete: canDelete,
 			})
 		}
 		return err

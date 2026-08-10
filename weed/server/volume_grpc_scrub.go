@@ -66,7 +66,7 @@ func (vs *VolumeServer) ScrubVolume(ctx context.Context, req *volume_server_pb.S
 	errs := []error{}
 	if req.GetMarkBrokenVolumesReadonly() {
 		for _, v := range brokenVolumes {
-			if err := vs.makeVolumeReadonly(ctx, v, true); err != nil {
+			if err := vs.makeVolumeReadonly(ctx, v, false, true); err != nil {
 				errs = append(errs, err)
 				details = append(details, err.Error())
 			} else {

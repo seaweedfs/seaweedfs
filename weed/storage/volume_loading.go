@@ -154,7 +154,11 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 
 	if v.volumeInfo.ReadOnly && !v.HasRemoteFile() {
 		// this covers the case where the volume is marked as read-only and has no remote file
-		v.noWriteOrDelete = true
+		if v.volumeInfo.ReadOnlyCanDelete {
+			v.noWriteCanDelete = true
+		} else {
+			v.noWriteOrDelete = true
+		}
 	}
 
 	if v.HasRemoteFile() {

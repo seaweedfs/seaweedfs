@@ -237,12 +237,17 @@ impl VolumeGrpcService {
         Ok(())
     }
 
-    /// Shared helper matching Go's `makeVolumeReadonly(ctx, v, persist)`.
+    /// Shared helper matching Go's `makeVolumeReadonly(ctx, v, canDelete, persist)`.
     /// 1. Check maintenance mode
     /// 2. Notify master (readonly=true)
     /// 3. Mark local volume readonly
     /// 4. Notify master again (cover heartbeat race)
-    async fn make_volume_readonly(&self, vid: VolumeId, persist: bool) -> Result<(), Status> {
+    async fn make_volume_readonly(
+        &self,
+        vid: VolumeId,
+        can_delete: bool,
+        persist: bool,
+    ) -> Result<(), Status> {
         self.state.check_maintenance()?;
 
         let info = {
@@ -268,7 +273,7 @@ impl VolumeGrpcService {
         {
             let mut store = self.state.store.write().unwrap();
             if let Some((_, vol)) = store.find_volume_mut(vid) {
-                vol.set_read_only_persist(persist)
+                vol.set_read_only_persist(can_delete, persist)
                     .map_err(|e| Status::internal(e.to_string()))?;
             }
             self.state.volume_state_notify.notify_one();
@@ -977,7 +982,8 @@ impl VolumeServer for VolumeGrpcService {
                 .find_volume(vid)
                 .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?;
         }
-        self.make_volume_readonly(vid, req.persist).await?;
+        self.make_volume_readonly(vid, req.can_delete, req.persist)
+            .await?;
         Ok(Response::new(
             volume_server_pb::VolumeMarkReadonlyResponse {},
         ))
@@ -4067,7 +4073,7 @@ impl VolumeServer for VolumeGrpcService {
         let mut errs: Vec<String> = Vec::new();
         if req.mark_broken_volumes_readonly {
             for vid in &broken_vids {
-                match self.make_volume_readonly(*vid, true).await {
+                match self.make_volume_readonly(*vid, false, true).await {
                     Ok(()) => {
                         details.push(format!("volume {} is now read-only", vid.0));
                     }
