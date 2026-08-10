@@ -104,6 +104,61 @@ func TestPreVersioningNullObjectMetadataAcrossPageBoundary(t *testing.T) {
 		"a page ending on the null object must still pick up the current version's metadata")
 }
 
+// A key such as "a.txt.bak" sorts between "a.txt" and "a.txt.versions", so the
+// sibling's outcome arrives entries later, possibly on a later page.
+func TestPreVersioningInterveningKeyRetraction(t *testing.T) {
+	client := getS3Client(t)
+	bucketName := getNewBucketName()
+	createBucket(t, client, bucketName)
+	defer deleteBucket(t, client, bucketName)
+
+	putObject(t, client, bucketName, "a.txt", "pre-versioning")
+	putObject(t, client, bucketName, "a.txt.bak", "pre-versioning")
+	enableVersioning(t, client, bucketName)
+	deleteObject(t, client, bucketName, "a.txt")
+
+	for _, maxKeys := range []int32{0, 1, 2} {
+		assert.Equal(t, []string{"a.txt.bak"}, listAllKeys(t, client, bucketName, maxKeys),
+			"maxKeys=%d must not list the deleted key", maxKeys)
+	}
+}
+
+func TestPreVersioningInterveningKeyMetadata(t *testing.T) {
+	client := getS3Client(t)
+	bucketName := getNewBucketName()
+	createBucket(t, client, bucketName)
+	defer deleteBucket(t, client, bucketName)
+
+	overwrite := "versioned overwrite"
+	putObject(t, client, bucketName, "a.txt", "old")
+	putObject(t, client, bucketName, "a.txt.bak", "pre-versioning")
+	enableVersioning(t, client, bucketName)
+	putObject(t, client, bucketName, "a.txt", overwrite)
+
+	for _, maxKeys := range []int32{1, 2} {
+		var keys []string
+		var token *string
+		for {
+			page, err := client.ListObjectsV2(context.TODO(), &s3.ListObjectsV2Input{
+				Bucket: aws.String(bucketName), MaxKeys: aws.Int32(maxKeys), ContinuationToken: token,
+			})
+			require.NoError(t, err)
+			for _, o := range page.Contents {
+				keys = append(keys, *o.Key)
+				if *o.Key == "a.txt" {
+					assert.Equal(t, int64(len(overwrite)), *o.Size,
+						"maxKeys=%d must list the current version's metadata", maxKeys)
+				}
+			}
+			if page.IsTruncated == nil || !*page.IsTruncated {
+				break
+			}
+			token = page.NextContinuationToken
+		}
+		assert.Equal(t, []string{"a.txt", "a.txt.bak"}, keys, "maxKeys=%d", maxKeys)
+	}
+}
+
 // A suspended-versioning write is the current null version; its .versions
 // sibling (whose latest pointer the write cleared) must not list it a second
 // time or resurrect an older version's metadata.
