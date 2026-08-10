@@ -28,6 +28,9 @@ import (
 const (
 	maxFormatSidecarBytes = 16 << 20
 	formatSniffBytes      = 512
+	// defaultFormatChunkSizeMB caps extent chunks when no maxMB is configured.
+	// Extent chunks are buffered in memory, so the limit must never be absent.
+	defaultFormatChunkSizeMB = 4
 )
 
 // formatChunkSizeLimit mirrors the autoChunk maxMB resolution.
@@ -36,6 +39,9 @@ func (fs *FilerServer) formatChunkSizeLimit(r *http.Request) int64 {
 	maxMB := int32(parsedMaxMB)
 	if maxMB <= 0 && fs.option.MaxMB > 0 {
 		maxMB = int32(fs.option.MaxMB)
+	}
+	if maxMB <= 0 {
+		maxMB = defaultFormatChunkSizeMB
 	}
 	return int64(maxMB) * 1024 * 1024
 }
@@ -261,6 +267,8 @@ func (fs *FilerServer) formatRepack(ctx context.Context, w http.ResponseWriter, 
 	chunkViews := filer.ViewFromChunks(ctx, lookup, oldChunks, 0, size)
 	readerCache := filer.NewReaderCache(8, chunk_cache.NewChunkCacheInMemory(16), lookup, nil)
 	readerAt := filer.NewChunkReaderAtFromClient(ctx, readerCache, chunkViews, size, filer.DefaultPrefetchCount)
+	// Close releases the private reader cache and its in-flight prefetches.
+	defer readerAt.Close()
 
 	hint := format.Hint{Name: entry.Name(), ContentType: entry.Attr.Mime, Size: size}
 	sniffSize := int64(formatSniffBytes)
@@ -321,7 +329,7 @@ func (fs *FilerServer) formatRepack(ctx context.Context, w http.ResponseWriter, 
 
 	newEntry := *entry
 	newEntry.Chunks = newChunks
-	newEntry.Extended = make(map[string][]byte, len(entry.Extended)+1)
+	newEntry.Extended = make(map[string][]byte)
 	for k, v := range entry.Extended {
 		newEntry.Extended[k] = v
 	}
