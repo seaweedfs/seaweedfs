@@ -784,6 +784,14 @@ func sameEntryContent(a, b *filer_pb.Entry) bool {
 // subscription event. No filer lookup here: it can fail transiently, and with
 // the subscription cursor already past the event, nothing would retry.
 
+// IsFileOpen reports whether any open file handle refers to the inode, which
+// tells a caching front end that the handle's view of the file, not its own
+// cached copy, is current.
+func (wfs *WFS) IsFileOpen(inode uint64) bool {
+	_, found := wfs.fhMap.FindFileHandle(inode)
+	return found
+}
+
 // SetEntryChangeListener registers a callback for every metadata event this
 // mount applies. A front end whose client caches entries on its own side, and
 // which the mount cannot invalidate directly, uses it to push the change out.

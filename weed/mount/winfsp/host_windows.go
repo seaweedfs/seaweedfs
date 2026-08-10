@@ -44,21 +44,23 @@ type Options struct {
 // Host is a WinFsp mount that has not been started yet.
 type Host struct {
 	host    *cgofuse.FileSystemHost
+	fs      *WinFS
 	options Options
 }
 
 // New wires wfs up to WinFsp. Nothing is mounted until Serve.
 func New(wfs *mount.WFS, options Options) *Host {
-	host := cgofuse.NewFileSystemHost(NewWinFS(wfs, options.Uid, options.Gid, options.ReadOnly))
+	fs := NewWinFS(wfs, options.Uid, options.Gid, options.ReadOnly, options.CacheTimeout)
+	host := cgofuse.NewFileSystemHost(fs)
 	host.SetCapReaddirPlus(true)
 	host.SetUseIno(true)
-	return &Host{host: host, options: options}
+	return &Host{host: host, fs: fs, options: options}
 }
 
 // Notify wires the mount's metadata events to Windows. Called once before
 // Serve; the host has to exist first, which is why it is not done in New.
 func (h *Host) Notify(wfs *mount.WFS) {
-	n := &notifier{host: h.host, mountRoot: wfs.MountRoot()}
+	n := &notifier{host: h.host, fs: h.fs, mountRoot: wfs.MountRoot()}
 	wfs.SetEntryChangeListener(n.notify)
 }
 

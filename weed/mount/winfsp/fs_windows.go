@@ -1,8 +1,10 @@
 package winfsp
 
 import (
+	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	cgofuse "github.com/winfsp/cgofuse/fuse"
 
@@ -29,6 +31,11 @@ const (
 	// WinFsp. Bounded so a directory with millions of children does not
 	// materialise in one slice.
 	readdirBatch = 4096
+
+	// stealAttempts bounds the resolve-then-steal loop in the open paths. A
+	// miss needs the entry to be evicted in the instant between the two calls,
+	// so a second round is already unlikely.
+	stealAttempts = 4
 )
 
 // never is a nil channel: receiving blocks forever, which is what the raw
@@ -44,7 +51,11 @@ type WinFS struct {
 	gid      uint32
 	readOnly bool
 
-	// An open handle holds the lookup reference for its inode until Release,
+	// paths holds the lookup references for resolved paths, standing in for
+	// the kernel caches of the unix mounts.
+	paths *pathCache
+
+	// An open handle holds a lookup reference for its inode until Release,
 	// the way the kernel keeps one for an open file. WinFsp hands back only
 	// the handle, and the raw filesystem reuses one handle for repeated opens
 	// of the same inode, so the references are counted.
@@ -53,8 +64,8 @@ type WinFS struct {
 	dirInodes  map[uint64]*handleRef
 }
 
-func NewWinFS(wfs *mount.WFS, uid, gid uint32, readOnly bool) *WinFS {
-	return &WinFS{
+func NewWinFS(wfs *mount.WFS, uid, gid uint32, readOnly bool, cacheTimeout time.Duration) *WinFS {
+	w := &WinFS{
 		wfs:        wfs,
 		uid:        uid,
 		gid:        gid,
@@ -62,6 +73,15 @@ func NewWinFS(wfs *mount.WFS, uid, gid uint32, readOnly bool) *WinFS {
 		fileInodes: make(map[uint64]*handleRef),
 		dirInodes:  make(map[uint64]*handleRef),
 	}
+	w.paths = newPathCache(cacheTimeout, w.forget)
+	return w
+}
+
+// invalidatePath is what the notifier calls when a metadata event arrives:
+// whatever is cached for that path is out of date. Directories take their
+// subtree with them, since the children's cached paths point through them.
+func (w *WinFS) invalidatePath(path string, isDirectory bool) {
+	w.paths.purge(cacheKey(path), isDirectory)
 }
 
 // handleRef is the lookup references an open handle is holding, one per open
@@ -142,36 +162,6 @@ func (w *WinFS) caller(inode uint64) fuse.InHeader {
 	}
 }
 
-// lookupRef collects the references a resolution took. Every operation that
-// hands back an EntryOut grants the caller one, which the Linux kernel returns
-// with FORGET. WinFsp has no FORGET, so anything the adapter looks up it has
-// to release itself or the mount's inode table grows for the life of the
-// process.
-type lookupRef struct {
-	w      *WinFS
-	inodes []uint64
-}
-
-// release returns every reference still held.
-func (r *lookupRef) release() {
-	if r == nil {
-		return
-	}
-	for _, inode := range r.inodes {
-		r.w.forget(inode)
-	}
-	r.inodes = nil
-}
-
-// keepLast hands the reference on the final component to the caller, which
-// becomes responsible for releasing it. An open handle takes it this way and
-// gives it back on Release.
-func (r *lookupRef) keepLast() {
-	if r != nil && len(r.inodes) > 0 {
-		r.inodes = r.inodes[:len(r.inodes)-1]
-	}
-}
-
 // forget returns one reference. The root is never looked up, so it never holds
 // one to give back.
 func (w *WinFS) forget(inode uint64) {
@@ -181,42 +171,66 @@ func (w *WinFS) forget(inode uint64) {
 	w.wfs.Forget(inode, 1)
 }
 
-// walk resolves a path one component at a time. Lookup does more than find an
-// inode: it refreshes what the mount knows about the entry, so the result of a
-// preceding truncate or write is visible to the caller.
-func (w *WinFS) walk(parts []string) (uint64, *lookupRef, fuse.Status) {
-	ref := &lookupRef{w: w}
+// walk resolves a path one component at a time, filling the path cache as it
+// goes. Every reference a lookup grants is owned by the cache, which keeps the
+// returned inode alive for at least one cache sweep; an operation that needs
+// to hold the inode longer steals the reference from the cache.
+func (w *WinFS) walk(parts []string) (uint64, fuse.Status) {
 	inode := uint64(rootInode)
-	for _, name := range parts {
+	for i, name := range parts {
+		key := strings.Join(parts[:i+1], "/")
+		if cached, _, ok := w.paths.lookup(key); ok {
+			inode = cached
+			continue
+		}
 		var out fuse.EntryOut
 		if status := w.wfs.Lookup(never, ptr(w.caller(inode)), name, &out); status != fuse.OK {
-			ref.release()
-			return 0, nil, status
+			return 0, status
 		}
+		w.paths.insert(key, out.NodeId, out.Attr)
 		inode = out.NodeId
-		ref.inodes = append(ref.inodes, inode)
 	}
-	return inode, ref, fuse.OK
+	return inode, fuse.OK
 }
 
-// resolve walks a WinFsp path down to an inode. The caller must release the
-// returned reference.
-func (w *WinFS) resolve(path string) (uint64, *lookupRef, fuse.Status) {
+// resolve walks a WinFsp path down to an inode, valid at least until the next
+// cache sweep.
+func (w *WinFS) resolve(path string) (uint64, fuse.Status) {
 	return w.walk(splitPath(path))
 }
 
 // resolveParent resolves everything but the last component, which the create
-// and delete operations need separately. The caller must release the reference.
-func (w *WinFS) resolveParent(path string) (uint64, string, *lookupRef, fuse.Status) {
+// and delete operations need separately.
+func (w *WinFS) resolveParent(path string) (uint64, string, fuse.Status) {
 	parentParts, name, ok := splitParent(path)
 	if !ok {
-		return 0, "", nil, fuse.EINVAL
+		return 0, "", fuse.EINVAL
 	}
-	parent, ref, status := w.walk(parentParts)
+	parent, status := w.walk(parentParts)
 	if status != fuse.OK {
-		return 0, "", nil, status
+		return 0, "", status
 	}
-	return parent, name, ref, fuse.OK
+	return parent, name, fuse.OK
+}
+
+// resolveAndSteal resolves path and takes over the cache's reference on the
+// final inode, for the open paths that hold it for the life of a handle. The
+// root is handed out without a reference; it does not need one.
+func (w *WinFS) resolveAndSteal(path string) (uint64, fuse.Status) {
+	key := cacheKey(path)
+	for attempt := 0; attempt < stealAttempts; attempt++ {
+		inode, status := w.resolve(path)
+		if status != fuse.OK {
+			return 0, status
+		}
+		if key == "" {
+			return inode, fuse.OK
+		}
+		if stolen, ok := w.paths.steal(key); ok {
+			return stolen, fuse.OK
+		}
+	}
+	return 0, fuse.EIO
 }
 
 func (w *WinFS) attrToStat(attr *fuse.Attr, stat *cgofuse.Stat_t) {
@@ -292,17 +306,39 @@ func (w *WinFS) Statfs(path string, stat *cgofuse.Statfs_t) int {
 	return 0
 }
 
+// getattrFromCache serves attributes the way the kernel would from its
+// attribute cache. A file with an open handle is excluded: its live size is
+// on the handle, not in the cache.
+func (w *WinFS) getattrFromCache(key string, stat *cgofuse.Stat_t) bool {
+	if key == "" {
+		return false
+	}
+	inode, attr, ok := w.paths.lookup(key)
+	if !ok || w.wfs.IsFileOpen(inode) {
+		return false
+	}
+	w.attrToStat(&attr, stat)
+	return true
+}
+
 func (w *WinFS) Getattr(path string, stat *cgofuse.Stat_t, fh uint64) int {
 	inode := w.inodeForHandle(w.fileInodes, fh)
 	if inode == 0 {
-		var ref *lookupRef
+		key := cacheKey(path)
+		if fh == noHandle && w.getattrFromCache(key, stat) {
+			return 0
+		}
 		var status fuse.Status
-		inode, ref, status = w.resolve(path)
+		inode, status = w.resolve(path)
 		if status != fuse.OK {
 			logResolveFailure("getattr", path, status)
 			return toErrno(status)
 		}
-		defer ref.release()
+		// The walk just refreshed the cache, so this hits unless the file is
+		// open or is the root, and saves the second load of the same entry.
+		if fh == noHandle && w.getattrFromCache(key, stat) {
+			return 0
+		}
 	}
 	in := &fuse.GetAttrIn{InHeader: w.caller(inode)}
 	if fh != noHandle {
@@ -317,21 +353,31 @@ func (w *WinFS) Getattr(path string, stat *cgofuse.Stat_t, fh uint64) int {
 	return 0
 }
 
+// purgeWithParent drops a mutated path from the cache along with its parent,
+// whose cached mtime the mutation just outdated.
+func (w *WinFS) purgeWithParent(path string, prefix bool) {
+	key := cacheKey(path)
+	w.paths.purge(key, prefix)
+	if i := strings.LastIndexByte(key, '/'); i > 0 {
+		w.paths.purge(key[:i], false)
+	}
+}
+
 func (w *WinFS) Mkdir(path string, mode uint32) int {
 	if w.denied() {
 		return -eROFS
 	}
-	parent, name, ref, status := w.resolveParent(path)
+	parent, name, status := w.resolveParent(path)
 	if status != fuse.OK {
 		return toErrno(status)
 	}
-	defer ref.release()
 	in := &fuse.MkdirIn{InHeader: w.caller(parent), Mode: mode}
 	var out fuse.EntryOut
 	status = w.wfs.Mkdir(never, in, name, &out)
 	if status == fuse.OK {
-		// Mkdir hands back an EntryOut, and nothing on this side will forget it.
-		w.forget(out.NodeId)
+		w.purgeWithParent(path, false)
+		// The new directory is about to be filled; cache it, reference and all.
+		w.paths.insert(cacheKey(path), out.NodeId, out.Attr)
 	}
 	return toErrno(status)
 }
@@ -340,60 +386,72 @@ func (w *WinFS) Rmdir(path string) int {
 	if w.denied() {
 		return -eROFS
 	}
-	parent, name, ref, status := w.resolveParent(path)
+	parent, name, status := w.resolveParent(path)
 	if status != fuse.OK {
 		return toErrno(status)
 	}
-	defer ref.release()
-	return toErrno(w.wfs.Rmdir(never, ptr(w.caller(parent)), name))
+	status = w.wfs.Rmdir(never, ptr(w.caller(parent)), name)
+	if status == fuse.OK {
+		w.purgeWithParent(path, true)
+	}
+	return toErrno(status)
 }
 
 func (w *WinFS) Unlink(path string) int {
 	if w.denied() {
 		return -eROFS
 	}
-	parent, name, ref, status := w.resolveParent(path)
+	parent, name, status := w.resolveParent(path)
 	if status != fuse.OK {
 		return toErrno(status)
 	}
-	defer ref.release()
-	return toErrno(w.wfs.Unlink(never, ptr(w.caller(parent)), name))
+	status = w.wfs.Unlink(never, ptr(w.caller(parent)), name)
+	if status == fuse.OK {
+		w.purgeWithParent(path, false)
+	}
+	return toErrno(status)
 }
 
 func (w *WinFS) Rename(oldpath string, newpath string) int {
 	if w.denied() {
 		return -eROFS
 	}
-	oldParent, oldName, oldRef, status := w.resolveParent(oldpath)
+	oldParent, oldName, status := w.resolveParent(oldpath)
 	if status != fuse.OK {
 		return toErrno(status)
 	}
-	defer oldRef.release()
-	newParent, newName, newRef, status := w.resolveParent(newpath)
+	newParent, newName, status := w.resolveParent(newpath)
 	if status != fuse.OK {
 		return toErrno(status)
 	}
-	defer newRef.release()
 	in := &fuse.RenameIn{InHeader: w.caller(oldParent), Newdir: newParent}
-	return toErrno(w.wfs.Rename(never, in, oldName, newName))
+	status = w.wfs.Rename(never, in, oldName, newName)
+	if status == fuse.OK {
+		// Directories carry their subtree's cached paths with them, and the
+		// rename may have replaced an entry at the destination.
+		w.purgeWithParent(oldpath, true)
+		w.purgeWithParent(newpath, true)
+	}
+	return toErrno(status)
 }
 
 func (w *WinFS) Create(path string, flags int, mode uint32) (int, uint64) {
 	if w.denied() {
 		return -eROFS, noHandle
 	}
-	parent, name, ref, status := w.resolveParent(path)
+	parent, name, status := w.resolveParent(path)
 	if status != fuse.OK {
 		glog.Errorf("create %s: resolving the parent directory: %v", path, status)
 		return toErrno(status), noHandle
 	}
-	defer ref.release()
 	in := &fuse.CreateIn{InHeader: w.caller(parent), Flags: translateOpenFlags(flags), Mode: mode}
 	var out fuse.CreateOut
 	if status := w.wfs.Create(never, in, name, &out); status != fuse.OK {
 		glog.Errorf("create %s in inode %d: %v", name, parent, status)
 		return toErrno(status), noHandle
 	}
+	// Whatever the cache held for this path was replaced by the create.
+	w.purgeWithParent(path, false)
 	// Create grants a reference on the new inode; hold it for as long as the
 	// handle lives and give it back in Release.
 	w.retain(w.fileInodes, out.Fh, out.NodeId)
@@ -401,19 +459,18 @@ func (w *WinFS) Create(path string, flags int, mode uint32) (int, uint64) {
 }
 
 func (w *WinFS) Open(path string, flags int) (int, uint64) {
-	inode, ref, status := w.resolve(path)
+	inode, status := w.resolveAndSteal(path)
 	if status != fuse.OK {
 		logResolveFailure("open", path, status)
 		return toErrno(status), noHandle
 	}
-	defer ref.release()
 	in := &fuse.OpenIn{InHeader: w.caller(inode), Flags: translateOpenFlags(flags)}
 	var out fuse.OpenOut
 	if status := w.wfs.Open(never, in, &out); status != fuse.OK {
 		glog.Errorf("open %s inode %d: %v", path, inode, status)
+		w.forget(inode)
 		return toErrno(status), noHandle
 	}
-	ref.keepLast()
 	w.retain(w.fileInodes, out.Fh, inode)
 	return 0, out.Fh
 }
@@ -469,13 +526,11 @@ func (w *WinFS) Truncate(path string, size int64, fh uint64) int {
 	}
 	inode := w.inodeForHandle(w.fileInodes, fh)
 	if inode == 0 {
-		var ref *lookupRef
 		var status fuse.Status
-		inode, ref, status = w.resolve(path)
+		inode, status = w.resolve(path)
 		if status != fuse.OK {
 			return toErrno(status)
 		}
-		defer ref.release()
 	}
 	in := &fuse.SetAttrIn{}
 	in.NodeId = inode
@@ -486,35 +541,41 @@ func (w *WinFS) Truncate(path string, size int64, fh uint64) int {
 		in.Fh = fh
 	}
 	var out fuse.AttrOut
-	return toErrno(w.wfs.SetAttr(never, in, &out))
+	status := w.wfs.SetAttr(never, in, &out)
+	if status == fuse.OK {
+		w.paths.purge(cacheKey(path), false)
+	}
+	return toErrno(status)
 }
 
 func (w *WinFS) Chmod(path string, mode uint32) int {
 	if w.denied() {
 		return -eROFS
 	}
-	inode, ref, status := w.resolve(path)
+	inode, status := w.resolve(path)
 	if status != fuse.OK {
 		return toErrno(status)
 	}
-	defer ref.release()
 	in := &fuse.SetAttrIn{}
 	in.NodeId = inode
 	in.Valid = fuse.FATTR_MODE
 	in.Mode = mode
 	var out fuse.AttrOut
-	return toErrno(w.wfs.SetAttr(never, in, &out))
+	status = w.wfs.SetAttr(never, in, &out)
+	if status == fuse.OK {
+		w.paths.purge(cacheKey(path), false)
+	}
+	return toErrno(status)
 }
 
 func (w *WinFS) Utimens(path string, tmsp []cgofuse.Timespec) int {
 	if w.denied() {
 		return -eROFS
 	}
-	inode, ref, status := w.resolve(path)
+	inode, status := w.resolve(path)
 	if status != fuse.OK {
 		return toErrno(status)
 	}
-	defer ref.release()
 	in := &fuse.SetAttrIn{}
 	in.NodeId = inode
 	if len(tmsp) < 2 {
@@ -536,7 +597,11 @@ func (w *WinFS) Utimens(path string, tmsp []cgofuse.Timespec) int {
 		}
 	}
 	var out fuse.AttrOut
-	return toErrno(w.wfs.SetAttr(never, in, &out))
+	status = w.wfs.SetAttr(never, in, &out)
+	if status == fuse.OK {
+		w.paths.purge(cacheKey(path), false)
+	}
+	return toErrno(status)
 }
 
 // applyTimespec reports whether a timestamp should be written. UTIME_OMIT asks
@@ -576,20 +641,21 @@ func (w *WinFS) Release(path string, fh uint64) int {
 	}
 	w.wfs.Release(never, &fuse.ReleaseIn{Fh: fh})
 	w.forget(w.releaseRetained(w.fileInodes, fh))
+	// The close flushed writes, so cached attributes for the path are behind.
+	w.paths.purge(cacheKey(path), false)
 	return 0
 }
 
 func (w *WinFS) Opendir(path string) (int, uint64) {
-	inode, ref, status := w.resolve(path)
+	inode, status := w.resolveAndSteal(path)
 	if status != fuse.OK {
 		return toErrno(status), noHandle
 	}
-	defer ref.release()
 	var out fuse.OpenOut
 	if status := w.wfs.OpenDir(never, &fuse.OpenIn{InHeader: w.caller(inode)}, &out); status != fuse.OK {
+		w.forget(inode)
 		return toErrno(status), noHandle
 	}
-	ref.keepLast()
 	w.retain(w.dirInodes, out.Fh, inode)
 	return 0, out.Fh
 }
@@ -657,13 +723,11 @@ func (s *readdirSink) TakesLookupRef() bool { return false }
 func (w *WinFS) Readdir(path string, fill func(name string, stat *cgofuse.Stat_t, ofst int64) bool, ofst int64, fh uint64) int {
 	inode := w.inodeForHandle(w.dirInodes, fh)
 	if inode == 0 {
-		var ref *lookupRef
 		var status fuse.Status
-		inode, ref, status = w.resolve(path)
+		inode, status = w.resolve(path)
 		if status != fuse.OK {
 			return toErrno(status)
 		}
-		defer ref.release()
 	}
 	offset := uint64(ofst)
 	for {
@@ -719,11 +783,10 @@ func (w *WinFS) Readlink(path string) (int, string) {
 	if len(splitPath(path)) == 0 {
 		return -eNOSYS, ""
 	}
-	inode, ref, status := w.resolve(path)
+	inode, status := w.resolve(path)
 	if status != fuse.OK {
 		return toErrno(status), ""
 	}
-	defer ref.release()
 	target, status := w.wfs.Readlink(never, ptr(w.caller(inode)))
 	if status != fuse.OK {
 		return toErrno(status), ""
