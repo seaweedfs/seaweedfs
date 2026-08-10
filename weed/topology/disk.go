@@ -411,8 +411,10 @@ func (d *Disk) ToDiskInfo(filter VolumeFilter) *master_pb.DiskInfo {
 	var diskId uint32
 	var haveDiskId bool
 	for _, v := range d.volumes {
-		// Any volume names the disk, including one filtered out.
-		if !haveDiskId {
+		// Any volume names the disk, including one filtered out. The smallest
+		// rather than whichever the map yields first, so that two listings of
+		// an unchanged disk agree when it fronts several physical disks.
+		if !haveDiskId || v.DiskId < diskId {
 			diskId, haveDiskId = v.DiskId, true
 		}
 		if !filter.matches(v.Collection, v.Id) {
@@ -423,8 +425,12 @@ func (d *Disk) ToDiskInfo(filter VolumeFilter) *master_pb.DiskInfo {
 	d.RUnlock()
 
 	ecShards := d.GetEcShards()
-	if !haveDiskId && len(ecShards) > 0 {
-		diskId = ecShards[0].DiskId
+	if !haveDiskId {
+		for _, ecv := range ecShards {
+			if !haveDiskId || ecv.DiskId < diskId {
+				diskId, haveDiskId = ecv.DiskId, true
+			}
+		}
 	}
 
 	m := &master_pb.DiskInfo{

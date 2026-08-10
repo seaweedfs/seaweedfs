@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
@@ -121,7 +122,7 @@ func (s *AdminServer) ExportClusterVolumeList(ctx context.Context, collection st
 	}
 
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.VolumeList(ctx, &master_pb.VolumeListRequest{})
+		resp, err := pb.CollectVolumeList(ctx, client, &master_pb.VolumeListRequest{})
 		if err != nil {
 			return err
 		}

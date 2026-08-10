@@ -108,7 +108,7 @@ func FetchVolumeList(ctx context.Context, address string, grpcDialOption grpc.Di
 
 		client := master_pb.NewSeaweedClient(conn)
 		callCtx, cancelCall := context.WithTimeout(ctx, 10*time.Second)
-		response, callErr := client.VolumeList(callCtx, &master_pb.VolumeListRequest{})
+		response, callErr := pb.CollectVolumeList(callCtx, client, &master_pb.VolumeListRequest{})
 		cancelCall()
 		_ = conn.Close()
 
