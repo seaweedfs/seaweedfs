@@ -111,7 +111,7 @@ require (
 )
 
 require (
-	cloud.google.com/go/kms v1.31.0
+	cloud.google.com/go/kms v1.33.0
 	github.com/Azure/azure-sdk-for-go/sdk/keyvault/azkeys v0.10.0
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/Jille/raft-grpc-transport v1.6.1
