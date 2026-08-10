@@ -230,6 +230,14 @@ func (d *Disk) doAddOrUpdateVolume(v storage.VolumeInfo, fromReport bool) (isNew
 		d.UpAdjustDiskUsageDelta(types.ToDiskType(v.DiskType), deltaDiskUsage)
 		isNew = true
 	} else {
+		if !fromReport && v.DiskId == 0 && oldV.DiskId != 0 {
+			// A provisional (grow-time) record carries no disk id -- the
+			// master cannot know which directory the server chose. Keep the
+			// one the server's report already named, before the digest below
+			// is computed, or the stored record would drift from what the
+			// server keeps reporting.
+			v.DiskId = oldV.DiskId
+		}
 		if oldV.IsRemote() != v.IsRemote() {
 			if v.IsRemote() {
 				deltaDiskUsage.remoteVolumeCount = 1
