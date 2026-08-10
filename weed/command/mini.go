@@ -1344,6 +1344,10 @@ func runMini(cmd *Command, args []string) bool {
 	tableBucketSpec := *miniTableBucket
 	if tableBucketSpec == "" {
 		tableBucketSpec = os.Getenv("S3_TABLE_BUCKET")
+	} else if os.Getenv("S3_TABLE_BUCKET") == "" {
+		// The catalog routes unprefixed requests to the first S3_TABLE_BUCKET
+		// entry; let the -tableBucket flag mean the same thing.
+		os.Setenv("S3_TABLE_BUCKET", tableBucketSpec)
 	}
 	if err := ensureMiniTableBuckets(tableBucketSpec); err != nil {
 		glog.Warningf("failed to ensure table buckets %q: %v", tableBucketSpec, err)
