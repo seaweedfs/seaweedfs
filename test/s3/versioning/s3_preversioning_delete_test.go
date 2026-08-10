@@ -221,6 +221,28 @@ func TestPreVersioningDeletedKeyHidesCustomDelimiterPrefix(t *testing.T) {
 	assert.Equal(t, []string{"group-"}, prefixes, "a live key restores the prefix")
 }
 
+// A delete marker for a version-only key (never a base object) must not debit
+// the backers of a prefix a live null object still stands behind.
+func TestVersionOnlyMarkerLeavesForeignPrefixAlone(t *testing.T) {
+	client := getS3Client(t)
+	bucketName := getNewBucketName()
+	createBucket(t, client, bucketName)
+	defer deleteBucket(t, client, bucketName)
+
+	putObject(t, client, bucketName, "group-a", "pre-versioning")
+	enableVersioning(t, client, bucketName)
+	putObjectVersioned(t, client, bucketName, "group-b")
+	deleteObject(t, client, bucketName, "group-b")
+
+	page, err := client.ListObjectsV2(context.TODO(), &s3.ListObjectsV2Input{
+		Bucket: aws.String(bucketName), Delimiter: aws.String("-"),
+	})
+	require.NoError(t, err)
+	assert.Empty(t, page.Contents)
+	require.Len(t, page.CommonPrefixes, 1, "group-a still backs the prefix")
+	assert.Equal(t, "group-", *page.CommonPrefixes[0].Prefix)
+}
+
 // Nested names (k, k!, k!!, ...) can hold more unresolved null objects than the
 // pending cap; the evicted key must still be settled, on any page size.
 func TestPreVersioningNestedNullObjectsBeyondCap(t *testing.T) {
