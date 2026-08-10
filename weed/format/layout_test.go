@@ -162,3 +162,30 @@ func TestCutterUnlimitedKeepsOneChunkPerExtent(t *testing.T) {
 		t.Fatalf("chunks = %v, want %v", chunks, want)
 	}
 }
+
+// A hostile layout may declare an enormous extent; the cutter must stay O(1)
+// per query instead of materializing every interior cut.
+func TestCutterHugeExtentStaysLazy(t *testing.T) {
+	const quantum = 4 << 20 // 4MiB, already a multiple of align 1
+	layout := &Layout{Format: "x", ExtentSizes: []int64{1 << 50, 188}, Align: 188}
+	cutter := layout.Cutter(quantum)
+	alignedQuantum := int64(quantum - quantum%188)
+	if got := cutter.NextChunkSize(0); got != alignedQuantum {
+		t.Fatalf("NextChunkSize(0) = %d, want %d", got, alignedQuantum)
+	}
+	if got := cutter.NextChunkSize(alignedQuantum * 1000); got != alignedQuantum {
+		t.Fatalf("mid-extent chunk = %d, want %d", got, alignedQuantum)
+	}
+	// the final interior chunk stops at the extent boundary
+	last := (int64(1<<50) / alignedQuantum) * alignedQuantum
+	if got := cutter.NextChunkSize(last); got != int64(1<<50)-last {
+		t.Fatalf("tail chunk = %d, want %d", got, int64(1<<50)-last)
+	}
+	// the next extent still cuts independently
+	if got := cutter.NextChunkSize(1 << 50); got != 188 {
+		t.Fatalf("second extent chunk = %d, want 188", got)
+	}
+	if got := cutter.NextChunkSize(1<<50 + 188); got != 0 {
+		t.Fatalf("past end = %d, want 0", got)
+	}
+}

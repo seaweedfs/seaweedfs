@@ -151,9 +151,13 @@ func readUvarintBytes(reader *bytes.Reader, limit uint64) ([]byte, error) {
 
 // Cutter yields upload chunk boundaries: every extent boundary, plus
 // align-quantized cuts inside extents larger than maxChunkSize. A non-positive
-// maxChunkSize keeps each extent in one chunk.
+// maxChunkSize keeps each extent in one chunk. Interior cuts are computed
+// lazily, so memory stays bounded by the extent count no matter how large an
+// untrusted layout declares its extents to be.
 type Cutter struct {
-	cuts []int64 // absolute end offset of every chunk, ascending
+	starts  []int64 // extent start offsets, ascending
+	total   int64
+	quantum int64 // interior cut spacing; 0 = one chunk per extent
 }
 
 func (l *Layout) Cutter(maxChunkSize int64) *Cutter {
@@ -165,27 +169,31 @@ func (l *Layout) Cutter(maxChunkSize int64) *Cutter {
 			quantum = l.Align
 		}
 	}
-	var cuts []int64
+	starts := make([]int64, len(l.ExtentSizes))
 	var offset int64
-	for _, size := range l.ExtentSizes {
-		end := offset + size
-		if quantum > 0 {
-			for next := offset + quantum; next < end; next += quantum {
-				cuts = append(cuts, next)
-			}
-		}
-		cuts = append(cuts, end)
-		offset = end
+	for i, size := range l.ExtentSizes {
+		starts[i] = offset
+		offset += size
 	}
-	return &Cutter{cuts: cuts}
+	return &Cutter{starts: starts, total: offset, quantum: quantum}
 }
 
 // NextChunkSize returns the size of the chunk starting at offset, or 0 past
 // the end. It satisfies the filer upload loop's ChunkBoundaries interface.
 func (c *Cutter) NextChunkSize(offset int64) int64 {
-	i := sort.Search(len(c.cuts), func(i int) bool { return c.cuts[i] > offset })
-	if i == len(c.cuts) {
+	if offset < 0 || offset >= c.total {
 		return 0
 	}
-	return c.cuts[i] - offset
+	i := sort.Search(len(c.starts), func(i int) bool { return c.starts[i] > offset }) - 1
+	end := c.total
+	if i+1 < len(c.starts) {
+		end = c.starts[i+1]
+	}
+	remaining := end - offset
+	if c.quantum > 0 {
+		if step := c.quantum - (offset-c.starts[i])%c.quantum; step < remaining {
+			return step
+		}
+	}
+	return remaining
 }
