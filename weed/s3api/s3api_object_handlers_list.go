@@ -314,14 +314,23 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 		// Helper function to handle dedup/append logic
 		appendOrDedup := func(newEntry ListEntry) {
 			if versioningConfigured {
-				// For versioned buckets, we need to handle duplicates between the main file and the .versions directory
-				if len(contents) > 0 && contents[len(contents)-1].Key == newEntry.Key {
-					glog.V(3).Infof("listFilerEntries deduplicating versioned entry: %s", newEntry.Key)
-					contents[len(contents)-1] = newEntry
-				} else {
-					contents = append(contents, newEntry)
-					cursor.maxKeys--
+				// A key's .versions sibling resolves after every key that sorts between
+				// them ("k.bak" lists between "k" and "k.versions"), so the base entry is
+				// found by scanning back through the page and a late resolution is
+				// inserted where it keeps the page sorted, not at the end.
+				insertAt := len(contents)
+				for insertAt > 0 && contents[insertAt-1].Key > newEntry.Key {
+					insertAt--
 				}
+				if insertAt > 0 && contents[insertAt-1].Key == newEntry.Key {
+					glog.V(3).Infof("listFilerEntries deduplicating versioned entry: %s", newEntry.Key)
+					contents[insertAt-1] = newEntry
+					return
+				}
+				contents = append(contents, ListEntry{})
+				copy(contents[insertAt+1:], contents[insertAt:])
+				contents[insertAt] = newEntry
+				cursor.maxKeys--
 			} else {
 				contents = append(contents, newEntry)
 				cursor.maxKeys--
@@ -333,9 +342,12 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 		cursor.retractEntry = func(dir, name string) {
 			dirName, entryName, _ := entryUrlEncode(dir, name, encodingTypeUrl)
 			key := fmt.Sprintf("%s/%s", dirName, entryName)[len(bucketPrefix):]
-			if len(contents) > 0 && contents[len(contents)-1].Key == key {
-				contents = contents[:len(contents)-1]
-				cursor.maxKeys++
+			for i := len(contents) - 1; i >= 0 && contents[i].Key >= key; i-- {
+				if contents[i].Key == key {
+					contents = append(contents[:i], contents[i+1:]...)
+					cursor.maxKeys++
+					return
+				}
 			}
 		}
 
