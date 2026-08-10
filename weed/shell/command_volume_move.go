@@ -117,7 +117,10 @@ func LiveMoveVolume(ctx context.Context, grpcDialOption grpc.DialOption, writer 
 			deleteCtx, deleteCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			defer deleteCancel()
 			if dErr := deleteVolume(deleteCtx, grpcDialOption, volumeId, targetVolumeServer, false, true); dErr != nil {
-				log.Printf("failed to delete the incomplete copy of volume %d on %s: %v", volumeId, targetVolumeServer, dErr)
+				// Restoring the source while the stale target stays mounted
+				// risks divergent replicas; re-running the move recovers both.
+				log.Printf("volume %d is left readonly on %s: failed to delete the incomplete copy on %s: %v; re-run volume.move to recover", volumeId, sourceVolumeServer, targetVolumeServer, dErr)
+				return
 			}
 		}
 		restoreCtx, restoreCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
