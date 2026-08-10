@@ -708,7 +708,7 @@ func (vc *versionCollector) processRegularFile(currentPath, entryPath string, en
 
 	// Check if a .versions directory exists for this object
 	versionsEntryName := entry.Name + s3_constants.VersionsFolder
-	_, versionsErr := vc.s3a.getEntry(currentPath, versionsEntryName)
+	versionsDirEntry, versionsErr := vc.s3a.getEntry(currentPath, versionsEntryName)
 	if versionsErr == nil && !hasVersionMeta {
 		// .versions exists but file has no version metadata - check for null version in .versions
 		versions, err := vc.s3a.getObjectVersionList(vc.bucket, normalizedObjectKey)
@@ -731,10 +731,17 @@ func (vc *versionCollector) processRegularFile(currentPath, entryPath string, en
 	}
 	vc.seenVersionIds[versionKey] = true
 
+	// A latest-version pointer on the .versions sibling names the current version
+	// (a suspended-versioning write clears it), so the null object is not latest.
+	isLatest := true
+	if versionsErr == nil && len(versionsDirEntry.Extended[s3_constants.ExtLatestVersionIdKey]) > 0 {
+		isLatest = false
+	}
+
 	versionEntry := &VersionEntry{
 		Key:          normalizedObjectKey,
 		VersionId:    "null",
-		IsLatest:     true,
+		IsLatest:     isLatest,
 		LastModified: time.Unix(entry.Attributes.Mtime, 0),
 		ETag:         vc.s3a.calculateETagFromChunks(entry.Chunks),
 		Size:         int64(entry.Attributes.FileSize),
