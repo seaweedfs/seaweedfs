@@ -144,6 +144,9 @@ func TestCutterAlignLargerThanChunkLimit(t *testing.T) {
 	layout := &Layout{Format: "x", ExtentSizes: []int64{20}, Align: 8}
 	chunks := collectChunks(t, layout.Cutter(5))
 	want := [][2]int64{{0, 8}, {8, 8}, {16, 4}}
+	if len(chunks) != len(want) {
+		t.Fatalf("chunks = %v, want %v", chunks, want)
+	}
 	for i := range want {
 		if chunks[i] != want[i] {
 			t.Fatalf("chunk %d = %v, want %v", i, chunks[i], want[i])
