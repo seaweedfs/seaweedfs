@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	cgofuse "github.com/winfsp/cgofuse/fuse"
 
@@ -21,9 +22,11 @@ type Options struct {
 	Uid uint32
 	Gid uint32
 
-	// AttrTimeout bounds how long WinFsp caches attributes, in seconds.
-	// Nothing invalidates its cache, so this is the only coherence knob.
-	AttrTimeout float64
+	// CacheTimeout bounds how long resolved paths and attributes may be
+	// served from the adapter's cache, and how long WinFsp may serve cached
+	// directory listings. Metadata events shorten it by purging; nothing
+	// else invalidates these caches.
+	CacheTimeout time.Duration
 
 	// ReadOnly rejects every modification. WinFsp has no "ro" option — it
 	// discards the flag and leaves the volume writable — so the refusal has
@@ -33,7 +36,8 @@ type Options struct {
 	// Debug turns on cgofuse's operation trace.
 	Debug bool
 
-	// ExtraOptions are passed through to WinFsp as -o arguments.
+	// ExtraOptions are passed through to WinFsp as -o arguments, after the
+	// defaults, so they win when they name the same option.
 	ExtraOptions []string
 }
 
@@ -66,10 +70,26 @@ func (h *Host) Serve(mountPoint string) error {
 		"-o", "volname=" + h.volumeName(),
 		"-o", "uid=-1",
 		"-o", "gid=-1",
+		// Only an infinite FileInfoTimeout lets the Windows cache manager
+		// cache file data; at any finite value every application read and
+		// write is a synchronous trip into this process at whatever size the
+		// application issued. Remote changes stay visible because every
+		// applied metadata event goes through Notify, which purges the file's
+		// cached pages along with its attributes.
+		//
+		// KeepFileCache is deliberately absent: it would keep the cache alive
+		// past cleanup, deferring the close — and with it the flush that
+		// persists a written file — until Windows reclaims the memory.
+		"-o", "FileInfoTimeout=-1",
 	}
-	if h.options.AttrTimeout > 0 {
-		timeout := strconv.FormatFloat(h.options.AttrTimeout, 'f', -1, 64)
-		opts = append(opts, "-o", "attr_timeout="+timeout, "-o", "entry_timeout="+timeout)
+	if h.options.CacheTimeout > 0 {
+		ms := strconv.FormatInt(h.options.CacheTimeout.Milliseconds(), 10)
+		// These would silently inherit the infinite FileInfoTimeout.
+		opts = append(opts,
+			"-o", "DirInfoTimeout="+ms,
+			"-o", "VolumeInfoTimeout="+ms,
+			"-o", "EaTimeout="+ms,
+		)
 	}
 	if h.options.Debug {
 		opts = append(opts, "-d")
