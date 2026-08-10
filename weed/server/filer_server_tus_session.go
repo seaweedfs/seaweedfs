@@ -26,7 +26,7 @@ const (
 	TusUploadsFolder        = ".uploads.tus"
 	TusInfoFileName         = ".info"
 	TusChunkExt             = ".chunk"
-	TusExtensions           = "creation,creation-with-upload,termination"
+	TusExtensions           = "creation,creation-with-upload,termination,concatenation"
 	TusConcatPartial        = "partial"
 	TusConcatFinalPrefix    = "final;"
 )
