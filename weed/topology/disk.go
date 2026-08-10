@@ -19,7 +19,7 @@ import (
 
 type Disk struct {
 	NodeImpl
-	volumes map[needle.VolumeId]storage.VolumeInfo
+	volumes map[needle.VolumeId]*storage.VolumeInfo
 	// ecShards is nested so the same volume can retain separate entries per
 	// physical disk id. A single topology Disk represents one DiskType on a
 	// DataNode and may front multiple physical disks of that type, so EC
@@ -61,7 +61,7 @@ func NewDisk(diskType string) *Disk {
 	s.id = NodeId(diskType)
 	s.nodeType = "Disk"
 	s.diskUsages = newDiskUsages()
-	s.volumes = make(map[needle.VolumeId]storage.VolumeInfo, 2)
+	s.volumes = make(map[needle.VolumeId]*storage.VolumeInfo, 2)
 	s.volumeAddedAt = make(map[needle.VolumeId]time.Time, 2)
 	s.ecShards = make(map[needle.VolumeId]map[types.DiskId]*erasure_coding.EcVolumeInfo, 2)
 	s.NodeImpl.value = s
@@ -213,7 +213,8 @@ func (d *Disk) AddProvisionalVolume(v storage.VolumeInfo) (isNew, isChanged bool
 func (d *Disk) doAddOrUpdateVolume(v storage.VolumeInfo, fromReport bool) (isNew, isChanged bool) {
 	deltaDiskUsage := &DiskUsageCounts{}
 	if oldV, ok := d.volumes[v.Id]; !ok {
-		d.volumes[v.Id] = v
+		stored := v
+		d.volumes[v.Id] = &stored
 		if !fromReport {
 			d.volumeAddedAt[v.Id] = time.Now()
 		}
@@ -251,7 +252,7 @@ func (d *Disk) doAddOrUpdateVolume(v storage.VolumeInfo, fromReport bool) (isNew
 		if fromReport {
 			delete(d.volumeAddedAt, v.Id)
 		}
-		isChanged = d.volumes[v.Id].ReadOnly != v.ReadOnly
+		isChanged = oldV.ReadOnly != v.ReadOnly
 		if isChanged {
 			// Adjust active volume count when ReadOnly status changes
 			// Use a separate delta object to avoid affecting other metric adjustments
@@ -265,7 +266,9 @@ func (d *Disk) doAddOrUpdateVolume(v storage.VolumeInfo, fromReport bool) (isNew
 			}
 			d.UpAdjustDiskUsageDelta(types.ToDiskType(v.DiskType), readOnlyDelta)
 		}
-		d.volumes[v.Id] = v
+		// Written through the pointer the map already holds, and only after
+		// everything above has read the old value off it.
+		*oldV = v
 	}
 	return
 }
@@ -280,7 +283,7 @@ func (d *Disk) AppendVolumes(dst []storage.VolumeInfo) []storage.VolumeInfo {
 	d.RLock()
 	defer d.RUnlock()
 	for _, v := range d.volumes {
-		dst = append(dst, v)
+		dst = append(dst, *v)
 	}
 	return dst
 }
@@ -313,7 +316,7 @@ func (d *Disk) RemoveVolumesNotIn(reported *reportedVolumes) (removed []storage.
 		if addedAt, unconfirmed := d.volumeAddedAt[vid]; unconfirmed && now.Sub(addedAt) < volumeRemovalGracePeriod {
 			continue
 		}
-		removed = append(removed, v)
+		removed = append(removed, *v)
 		delete(d.volumes, vid)
 		delete(d.volumeAddedAt, vid)
 		d.volumeDigest ^= v.ReportHash()
@@ -327,7 +330,7 @@ func (d *Disk) GetVolumesById(id needle.VolumeId) (storage.VolumeInfo, error) {
 	defer d.RUnlock()
 	vInfo, ok := d.volumes[id]
 	if ok {
-		return vInfo, nil
+		return *vInfo, nil
 	} else {
 		return storage.VolumeInfo{}, fmt.Errorf("volumeInfo not found")
 	}
