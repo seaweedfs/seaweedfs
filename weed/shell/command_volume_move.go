@@ -106,12 +106,20 @@ func LiveMoveVolume(ctx context.Context, grpcDialOption grpc.DialOption, writer 
 
 	// A move aborted after the copy must restore the source writability, or
 	// the source volume is left permanently readonly.
+	var sourceDeleteStarted bool
 	defer func() {
 		if err == nil || !leftReadonly {
 			return
 		}
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cleanupCancel()
+		if !sourceDeleteStarted {
+			// The target copy may be missing tailed entries; remove it so the
+			// restored source stays the only replica.
+			if dErr := deleteVolume(cleanupCtx, grpcDialOption, volumeId, targetVolumeServer, false, true); dErr != nil {
+				log.Printf("failed to delete the incomplete copy of volume %d on %s: %v", volumeId, targetVolumeServer, dErr)
+			}
+		}
 		if wErr := markVolumeWritable(cleanupCtx, grpcDialOption, volumeId, sourceVolumeServer, true, false); wErr != nil {
 			log.Printf("failed to restore volume %d writable on %s: %v", volumeId, sourceVolumeServer, wErr)
 		}
@@ -127,6 +135,7 @@ func LiveMoveVolume(ctx context.Context, grpcDialOption grpc.DialOption, writer 
 	}
 
 	log.Printf("deleting volume %d from %s", volumeId, sourceVolumeServer)
+	sourceDeleteStarted = true
 	if err = deleteVolume(ctx, grpcDialOption, volumeId, sourceVolumeServer, false, true); err != nil {
 		return fmt.Errorf("delete volume %d from %s: %v", volumeId, sourceVolumeServer, err)
 	}
