@@ -402,24 +402,21 @@ func (fs *FilerServer) tusConcatFinalHandler(w http.ResponseWriter, r *http.Requ
 			http.Error(w, "Combined upload size exceeds maximum", http.StatusRequestEntityTooLarge)
 			return
 		}
-		if err := fs.markTusSessionConsumed(ctx, partialID, true); err != nil {
+		if err := fs.claimTusPartial(ctx, partial); err != nil {
 			releaseClaims()
-			if errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
+			switch {
+			case errors.Is(err, filer_pb.ErrEntryAlreadyExists):
 				http.Error(w, "Partial upload already consumed: "+partialID, http.StatusConflict)
-			} else {
+			case errors.Is(err, filer_pb.ErrNotFound):
+				glog.V(1).Infof("TUS partial %s changed before concatenation: %v", partialID, err)
+				http.Error(w, "Partial upload not found", http.StatusNotFound)
+			default:
 				glog.Errorf("Failed to claim TUS partial %s: %v", partialID, err)
 				http.Error(w, "Failed to create upload", http.StatusInternalServerError)
 			}
 			return
 		}
 		claimedIDs = append(claimedIDs, partialID)
-		// Re-verify the pinned partial now that it cannot lose its chunks.
-		if err := fs.refreshTusSessionChunks(ctx, partial); err != nil {
-			glog.V(1).Infof("TUS partial %s changed before concatenation: %v", partialID, err)
-			releaseClaims()
-			http.Error(w, "Partial upload not found", http.StatusNotFound)
-			return
-		}
 		if partial.Offset != partial.Size {
 			releaseClaims()
 			http.Error(w, "Partial upload not finished: "+partialID, http.StatusBadRequest)

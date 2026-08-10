@@ -107,6 +107,24 @@ func (fs *FilerServer) markTusSessionConsumed(ctx context.Context, uploadID stri
 
 // isTusSessionConsumed fails closed: when the marker cannot be looked up, the
 // caller must not treat the session's chunks as free.
+// claimTusPartial claims a partial for one final upload, serialized per session
+// on this filer, and re-verifies the pinned session under the claim. A failed
+// verification releases the claim before returning.
+func (fs *FilerServer) claimTusPartial(ctx context.Context, partial *TusSession) error {
+	sessionPath := util.FullPath(fs.tusSessionPath(partial.ID))
+	pathLock := fs.entryLockTable.AcquireLock("tusClaim", sessionPath, util.ExclusiveLock)
+	defer fs.entryLockTable.ReleaseLock(sessionPath, pathLock)
+
+	if err := fs.markTusSessionConsumed(ctx, partial.ID, true); err != nil {
+		return err
+	}
+	if err := fs.refreshTusSessionChunks(ctx, partial); err != nil {
+		fs.filer.DeleteEntryMetaAndData(ctx, util.FullPath(fs.tusSessionConsumedPath(partial.ID)), false, false, false, false, nil, 0)
+		return err
+	}
+	return nil
+}
+
 func (fs *FilerServer) isTusSessionConsumed(ctx context.Context, uploadID string) (bool, error) {
 	_, err := fs.filer.FindEntry(ctx, util.FullPath(fs.tusSessionConsumedPath(uploadID)))
 	if err == nil {
@@ -392,6 +410,9 @@ func (fs *FilerServer) saveTusChunk(ctx context.Context, uploadID string, chunk 
 
 // deleteTusSession removes a TUS upload session and all its data
 func (fs *FilerServer) deleteTusSession(ctx context.Context, uploadID string) error {
+	sessionPath := util.FullPath(fs.tusSessionPath(uploadID))
+	pathLock := fs.entryLockTable.AcquireLock("tusDelete", sessionPath, util.ExclusiveLock)
+	defer fs.entryLockTable.ReleaseLock(sessionPath, pathLock)
 
 	session, err := fs.getTusSession(ctx, uploadID)
 	if err != nil {
@@ -441,6 +462,12 @@ func (fs *FilerServer) completeTusUpload(ctx context.Context, session *TusSessio
 	if session.Offset != session.Size {
 		return fmt.Errorf("upload incomplete: offset=%d, expected=%d", session.Offset, session.Size)
 	}
+
+	// Serialize the ownership transition with deleteTusSession on this filer;
+	// the marker/.info handshake below covers a delete served by another filer.
+	sessionPath := util.FullPath(fs.tusSessionPath(session.ID))
+	pathLock := fs.entryLockTable.AcquireLock("tusComplete", sessionPath, util.ExclusiveLock)
+	defer fs.entryLockTable.ReleaseLock(sessionPath, pathLock)
 
 	// Sort chunks by offset to ensure correct order
 	sort.Slice(session.Chunks, func(i, j int) bool {
