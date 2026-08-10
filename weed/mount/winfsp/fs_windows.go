@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mount"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 const (
@@ -46,10 +47,11 @@ var never chan struct{}
 type WinFS struct {
 	cgofuse.FileSystemBase
 
-	wfs      *mount.WFS
-	uid      uint32
-	gid      uint32
-	readOnly bool
+	wfs       *mount.WFS
+	mountRoot util.FullPath
+	uid       uint32
+	gid       uint32
+	readOnly  bool
 
 	// paths holds the lookup references for resolved paths, standing in for
 	// the kernel caches of the unix mounts.
@@ -67,6 +69,7 @@ type WinFS struct {
 func NewWinFS(wfs *mount.WFS, uid, gid uint32, readOnly bool, cacheTimeout time.Duration) *WinFS {
 	w := &WinFS{
 		wfs:        wfs,
+		mountRoot:  wfs.MountRoot(),
 		uid:        uid,
 		gid:        gid,
 		readOnly:   readOnly,
@@ -75,6 +78,18 @@ func NewWinFS(wfs *mount.WFS, uid, gid uint32, readOnly bool, cacheTimeout time.
 	}
 	w.paths = newPathCache(cacheTimeout, w.forget)
 	return w
+}
+
+// stillNames reports whether the mount still tracks inode at the mount-relative
+// key, which a delete-on-close or a rename while the handle was open has
+// changed.
+func (w *WinFS) stillNames(key string, inode uint64) bool {
+	current, ok := w.wfs.PathForInode(inode)
+	if !ok {
+		return false
+	}
+	rel, ok := relativeToMount(w.mountRoot, current)
+	return ok && cacheKey(rel) == key
 }
 
 // invalidatePath is what the notifier calls when a metadata event arrives:
@@ -639,10 +654,32 @@ func (w *WinFS) Release(path string, fh uint64) int {
 	if fh == noHandle {
 		return 0
 	}
+	// The handle's view of the file is the freshest there is, and the close
+	// has flushed by now, so read it before the handle goes away: the next
+	// operation on the path — a stat right after a copy, most often — is then
+	// served from the cache instead of walking to the filer again.
+	var attr *fuse.Attr
+	if inode := w.inodeForHandle(w.fileInodes, fh); inode != 0 {
+		in := &fuse.GetAttrIn{InHeader: w.caller(inode)}
+		in.Fh_ = fh
+		in.Flags_ = fuse.FUSE_GETATTR_FH
+		var out fuse.AttrOut
+		if w.wfs.GetAttr(never, in, &out) == fuse.OK {
+			attr = &out.Attr
+		}
+	}
 	w.wfs.Release(never, &fuse.ReleaseIn{Fh: fh})
-	w.forget(w.releaseRetained(w.fileInodes, fh))
-	// The close flushed writes, so cached attributes for the path are behind.
-	w.paths.purge(cacheKey(path), false)
+	if inode := w.releaseRetained(w.fileInodes, fh); inode != 0 {
+		// The reference moves from the handle to the cache — but only if the
+		// path still names this inode: WinFsp reports the path the handle
+		// opened with, and after a delete-on-close or a rename caching it
+		// would resurrect an entry that is gone.
+		if key := cacheKey(path); attr != nil && w.stillNames(key, inode) {
+			w.paths.insert(key, inode, *attr)
+		} else {
+			w.forget(inode)
+		}
+	}
 	return 0
 }
 

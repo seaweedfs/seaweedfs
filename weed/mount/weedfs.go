@@ -792,6 +792,14 @@ func (wfs *WFS) IsFileOpen(inode uint64) bool {
 	return found
 }
 
+// PathForInode reports the path the mount currently tracks for the inode, so
+// a caching front end can tell whether a path it resolved earlier still names
+// the same file. An unlinked file has no path while its handles drain.
+func (wfs *WFS) PathForInode(inode uint64) (util.FullPath, bool) {
+	path, status := wfs.inodeToPath.GetPath(inode)
+	return path, status == fuse.OK
+}
+
 // SetEntryChangeListener registers a callback for every metadata event this
 // mount applies. A front end whose client caches entries on its own side, and
 // which the mount cannot invalidate directly, uses it to push the change out.
