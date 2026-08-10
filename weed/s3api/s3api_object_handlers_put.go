@@ -1474,6 +1474,9 @@ func (s3a *S3ApiServer) updateIsLatestFlagsForSuspendedVersioning(bucket, object
 		delete(versionsEntry.Extended, s3_constants.ExtLatestVersionIdKey)
 		delete(versionsEntry.Extended, s3_constants.ExtLatestVersionFileNameKey)
 		clearCachedVersionMetadata(versionsEntry.Extended)
+		// Record that the null object is current explicitly: an absent pointer
+		// alone also looks like replication lag to a reader.
+		versionsEntry.Extended[s3_constants.ExtNullVersionIsLatestKey] = []byte("true")
 
 		// Update the .versions directory entry
 		err = s3a.mkFile(bucketDir, versionsObjectPath, versionsEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
@@ -1624,6 +1627,7 @@ func (s3a *S3ApiServer) updateLatestVersionInDirectory(bucket, object, versionId
 
 	versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey] = []byte(versionId)
 	versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey] = []byte(versionFileName)
+	delete(versionsEntry.Extended, s3_constants.ExtNullVersionIsLatestKey)
 
 	// Cache list metadata for single-scan efficiency (avoids extra getEntry per object during list)
 	setCachedListMetadata(versionsEntry, versionEntry)
