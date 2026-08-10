@@ -328,6 +328,17 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 			}
 		}
 
+		// The null object for a key lists before its .versions sibling can reveal
+		// that the current version is a delete marker, so the reveal retracts it.
+		cursor.retractEntry = func(dir, name string) {
+			dirName, entryName, _ := entryUrlEncode(dir, name, encodingTypeUrl)
+			key := fmt.Sprintf("%s/%s", dirName, entryName)[len(bucketPrefix):]
+			if len(contents) > 0 && contents[len(contents)-1].Key == key {
+				contents = contents[:len(contents)-1]
+				cursor.maxKeys++
+			}
+		}
+
 		for {
 			empty := true
 
@@ -512,6 +523,9 @@ type ListingCursor struct {
 	// something to find once a bucket has version history to leave behind.
 	hideDeletedPrefixes bool
 	probedEntries       int
+	// retractEntry undoes the listing of a base-path null object once its .versions
+	// sibling reveals that the current version is a delete marker.
+	retractEntry func(dir, name string)
 }
 
 // the prefix and marker may be in different directories
@@ -727,8 +741,13 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 					// Use metadata from the already-fetched .versions directory entry
 					if latestVersionEntry, err := s3a.getLatestVersionEntryFromDirectoryEntry(bucket, fullObjectPath, entry); err == nil {
 						eachEntryFn(dir, latestVersionEntry)
-					} else if !errors.Is(err, ErrDeleteMarker) {
-						// Log unexpected errors (delete markers are expected)
+					} else if errors.Is(err, ErrDeleteMarker) {
+						// The current version is a delete marker, so a null object listed
+						// for the base path just before this directory is stale.
+						if cursor.retractEntry != nil {
+							cursor.retractEntry(dir, baseObjectName)
+						}
+					} else {
 						glog.V(2).Infof("Skipping versioned object %s due to error: %v", fullObjectPath, err)
 					}
 					continue
