@@ -692,6 +692,7 @@ func executeChunkMoves(
 			var resp *http.Response
 			var reader io.ReadCloser
 			var readErr error
+			readJwt := filer.JwtForVolumeServer(oldFidStr)
 			for _, serverURL := range downloadURLs {
 				var dlReq *http.Request
 				dlReq, readErr = http.NewRequestWithContext(dlCtx, http.MethodGet, fmt.Sprintf("http://%s/%s", serverURL, oldFidStr), nil)
@@ -699,6 +700,9 @@ func executeChunkMoves(
 					continue
 				}
 				dlReq.Header.Add("Accept-Encoding", "gzip")
+				if readJwt != "" {
+					dlReq.Header.Set("Authorization", security.BearerPrefix+readJwt)
+				}
 				resp, readErr = util_http.GetGlobalHttpClient().Do(dlReq)
 				if readErr == nil && resp.StatusCode >= 400 {
 					util_http.CloseResponse(resp)
