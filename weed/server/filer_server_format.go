@@ -260,6 +260,12 @@ func (fs *FilerServer) formatRepack(ctx context.Context, w http.ResponseWriter, 
 		writeJsonError(w, r, http.StatusBadRequest, errors.New("cannot repack hard-linked or remote entries"))
 		return
 	}
+	// S3 object versions may share one chunk list; deleting the old chunks
+	// here would corrupt sibling versions.
+	if entry.IsS3Versioning() {
+		writeJsonError(w, r, http.StatusBadRequest, errors.New("cannot repack S3-versioned entries"))
+		return
+	}
 	for _, chunk := range oldChunks {
 		if chunk.SseType != filer_pb.SSEType_NONE {
 			writeJsonError(w, r, http.StatusBadRequest, errors.New("cannot repack server-side encrypted entries"))
@@ -268,8 +274,17 @@ func (fs *FilerServer) formatRepack(ctx context.Context, w http.ResponseWriter, 
 	}
 
 	// Repack rewrites where bytes are cut, never their lifetime: new chunks
-	// must carry the entry's TTL, not whatever the request query implies.
+	// carry the entry's remaining TTL, not the request query's nor a restart
+	// of the original span.
 	so.TtlSeconds = entry.TtlSec
+	if entry.TtlSec > 0 {
+		remaining := int64(entry.TtlSec) - int64(time.Since(entry.Crtime)/time.Second)
+		if remaining <= 0 {
+			writeJsonError(w, r, http.StatusBadRequest, errors.New("entry TTL has already expired"))
+			return
+		}
+		so.TtlSeconds = int32(remaining)
+	}
 
 	size := int64(entry.FileSize)
 	lookup := fs.filer.MasterClient.GetLookupFileIdFunction()
