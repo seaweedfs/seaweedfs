@@ -95,9 +95,10 @@ func quotaChangeEvent(bucket string, quota int64) *filer_pb.SubscribeMetadataRes
 }
 
 // maybeReplicateMetadataChange used to log a Replay error and return while the
-// offset advanced past the event anyway, so one transient store error left that
-// entry diverged from the peer for good. Against that body this test fails: a
-// single failure and the store is never updated.
+// offset advanced past the event anyway. On a filer with its own store rather
+// than a shared backend, that left the entry diverged from the peer for good.
+// Against that body this test fails: a single failure and the store is never
+// updated.
 func TestReplicateMetadataChangeRetriesTransientFailure(t *testing.T) {
 	// Typed so the value stays int64 in t.Fatalf's ...any; untyped it defaults to
 	// int and overflows a 32-bit build.
