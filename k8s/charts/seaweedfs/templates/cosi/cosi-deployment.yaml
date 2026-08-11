@@ -57,6 +57,9 @@ spec:
       {{- if .Values.cosi.priorityClassName }}
       priorityClassName: {{ .Values.cosi.priorityClassName | quote }}
       {{- end }}
+      {{- if .Values.cosi.schedulerName }}
+      schedulerName: {{ .Values.cosi.schedulerName | quote }}
+      {{- end }}
       enableServiceLinks: false
       serviceAccountName: {{ include "seaweedfs.componentName" (list . "objectstorage-provisioner") }}
       {{- if .Values.cosi.initContainers }}
