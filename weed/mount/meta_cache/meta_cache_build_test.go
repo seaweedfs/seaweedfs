@@ -208,7 +208,7 @@ func TestDirectoryNotificationsSuppressedDuringBuild(t *testing.T) {
 	}
 
 	// Complete the build — buffered events should be replayed
-	if err := mc.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 150); err != nil {
+	if err := mc.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 150, nil); err != nil {
 		t.Fatalf("complete build: %v", err)
 	}
 
@@ -274,7 +274,7 @@ func TestEmptyDirectoryBuildReplaysAllBufferedEvents(t *testing.T) {
 	}
 
 	// Complete with snapshotTsNs=0 — simulates empty directory listing
-	if err := mc.CompleteDirectoryBuild(context.Background(), util.FullPath("/empty"), 0); err != nil {
+	if err := mc.CompleteDirectoryBuild(context.Background(), util.FullPath("/empty"), 0, nil); err != nil {
 		t.Fatalf("complete build: %v", err)
 	}
 
@@ -350,7 +350,7 @@ func TestBuildCompletionSurvivesCallerCancellation(t *testing.T) {
 	// ctx.Done() first, but the operation itself still completes in the
 	// apply loop. Poll for the observable side effect instead of using
 	// a fixed sleep.
-	_ = mc.CompleteDirectoryBuild(cancelledCtx, util.FullPath("/dir"), 100)
+	_ = mc.CompleteDirectoryBuild(cancelledCtx, util.FullPath("/dir"), 100, nil)
 
 	// Poll until the build completes or a deadline elapses.
 	deadline := time.After(2 * time.Second)
@@ -445,7 +445,7 @@ func TestBufferedRenameUpdatesOtherDirectoryBeforeBuildCompletes(t *testing.T) {
 		t.Fatalf("new path should stay hidden until build completes: %+v", newEntry)
 	}
 
-	if err := mc.CompleteDirectoryBuild(context.Background(), util.FullPath("/dst"), 100); err != nil {
+	if err := mc.CompleteDirectoryBuild(context.Background(), util.FullPath("/dst"), 100, nil); err != nil {
 		t.Fatalf("complete build: %v", err)
 	}
 

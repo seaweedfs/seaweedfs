@@ -54,6 +54,11 @@ type MetaCache struct {
 	// instead of a record per child.
 	dirVersionFloors map[util.FullPath]int64
 
+	// dirSections is each cached directory's listing split into name-range
+	// sections, so a churn burst invalidates one section instead of the
+	// whole listing. See meta_cache_sections.go.
+	dirSections map[util.FullPath]*dirSections
+
 	// Entry invalidations run on a worker, not inline on the apply loop:
 	// invalidateFunc takes the fh lock, which a flush can hold while waiting on
 	// the apply loop (flushMetadataToFiler -> applyLocalMetadataEvent), so inline
@@ -92,18 +97,23 @@ const (
 	metadataCompleteBuild
 	metadataAbortBuild
 	metadataPurgeDir
+	metadataSectionRefresh
 	metadataShutdown
 )
 
 type metadataApplyRequest struct {
-	ctx          context.Context
-	kind         metadataApplyRequestKind
-	resp         *filer_pb.SubscribeMetadataResponse
-	options      MetadataResponseApplyOptions
-	buildPath    util.FullPath
-	snapshotTsNs int64
-	resetFn      func()
-	done         chan error
+	ctx            context.Context
+	kind           metadataApplyRequestKind
+	resp           *filer_pb.SubscribeMetadataResponse
+	options        MetadataResponseApplyOptions
+	buildPath      util.FullPath
+	snapshotTsNs   int64
+	sectionBounds  []string
+	sectionLo      string
+	sectionHi      string
+	sectionEntries []*filer.Entry
+	resetFn        func()
+	done           chan error
 }
 
 func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPath, includeSystemEntries bool,
@@ -124,6 +134,7 @@ func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPat
 		buildingDirs:         make(map[util.FullPath]*directoryBuildState),
 		dedupRing:            newDedupRingBuffer(),
 		dirVersionFloors:     make(map[util.FullPath]int64),
+		dirSections:          make(map[util.FullPath]*dirSections),
 		oversizedDirs:        make(map[util.FullPath]struct{}),
 	}
 	mc.invalidateWorker = util.NewAsyncBatchWorker(func(batch []EntryInvalidation) {
@@ -316,11 +327,12 @@ func (mc *MetaCache) BeginDirectoryBuild(ctx context.Context, dirPath util.FullP
 	})
 }
 
-func (mc *MetaCache) CompleteDirectoryBuild(ctx context.Context, dirPath util.FullPath, snapshotTsNs int64) error {
+func (mc *MetaCache) CompleteDirectoryBuild(ctx context.Context, dirPath util.FullPath, snapshotTsNs int64, sectionBounds []string) error {
 	return mc.enqueueAndWait(ctx, metadataApplyRequest{
-		kind:         metadataCompleteBuild,
-		buildPath:    dirPath,
-		snapshotTsNs: snapshotTsNs,
+		kind:          metadataCompleteBuild,
+		buildPath:     dirPath,
+		snapshotTsNs:  snapshotTsNs,
+		sectionBounds: sectionBounds,
 	})
 }
 
@@ -592,6 +604,7 @@ func (mc *MetaCache) DeleteFolderChildren(ctx context.Context, fp util.FullPath)
 	mc.Lock()
 	defer mc.Unlock()
 	delete(mc.dirVersionFloors, fp)
+	delete(mc.dirSections, fp)
 	mc.deleteChildVersionRecordsLocked(ctx, fp)
 	return mc.localStore.DeleteFolderChildren(ctx, fp)
 }
@@ -790,11 +803,13 @@ func (mc *MetaCache) handleApplyRequest(req metadataApplyRequest) error {
 	case metadataBeginBuild:
 		return mc.beginDirectoryBuildNow(req.buildPath)
 	case metadataCompleteBuild:
-		return mc.completeDirectoryBuildNow(req.ctx, req.buildPath, req.snapshotTsNs)
+		return mc.completeDirectoryBuildNow(req.ctx, req.buildPath, req.snapshotTsNs, req.sectionBounds)
 	case metadataAbortBuild:
 		return mc.abortDirectoryBuildNow(req.buildPath)
 	case metadataPurgeDir:
 		return mc.purgeDirectoryChildrenNow(req.ctx, req.buildPath, req.resetFn)
+	case metadataSectionRefresh:
+		return mc.applySectionRefreshNow(req.ctx, req)
 	case metadataShutdown:
 		return nil
 	default:
@@ -942,6 +957,17 @@ func (mc *MetaCache) applyMetadataResponseLocked(ctx context.Context, resp *file
 			newEntry = nil
 		}
 	}
+	// Only foreign churn counts toward section invalidation: this mount's own
+	// writes are ground truth for its cache.
+	if options.InvalidateEntries {
+		now := time.Now()
+		if oldPath != "" {
+			mc.noteSectionChangeLocked(oldPath, now)
+		}
+		if newEntry != nil && newEntry.FullPath != oldPath {
+			mc.noteSectionChangeLocked(newEntry.FullPath, now)
+		}
+	}
 	err := mc.atomicUpdateEntryFromFilerLocked(ctx, oldPath, newEntry, allowUncachedInsert, resp.TsNs)
 	if err == nil && hideNewPath {
 		if purgeErr := mc.purgeEntryLocked(ctx, newPath, message.NewEntry.IsDirectory); purgeErr != nil {
@@ -954,6 +980,7 @@ func (mc *MetaCache) applyMetadataResponseLocked(ctx context.Context, resp *file
 		isDelete := message.NewEntry == nil
 		isMove := message.NewEntry != nil && (message.NewParentPath != resp.Directory || message.NewEntry.Name != message.OldEntry.Name)
 		if isDelete || isMove {
+			delete(mc.dirSections, oldPath)
 			if deleteErr := mc.localStore.DeleteFolderChildren(ctx, oldPath); deleteErr != nil {
 				glog.V(2).Infof("delete descendants of %s: %v", oldPath, deleteErr)
 			}
@@ -995,11 +1022,12 @@ func (mc *MetaCache) purgeDirectoryChildrenNow(ctx context.Context, dirPath util
 	mc.Lock()
 	defer mc.Unlock()
 	delete(mc.dirVersionFloors, dirPath)
+	delete(mc.dirSections, dirPath)
 	mc.deleteChildVersionRecordsLocked(ctx, dirPath)
 	return mc.localStore.DeleteFolderChildren(ctx, dirPath)
 }
 
-func (mc *MetaCache) completeDirectoryBuildNow(ctx context.Context, dirPath util.FullPath, snapshotTsNs int64) error {
+func (mc *MetaCache) completeDirectoryBuildNow(ctx context.Context, dirPath util.FullPath, snapshotTsNs int64, sectionBounds []string) error {
 	state := mc.buildingDirs[dirPath]
 	delete(mc.buildingDirs, dirPath)
 
@@ -1012,6 +1040,7 @@ func (mc *MetaCache) completeDirectoryBuildNow(ctx context.Context, dirPath util
 	// touches it. An unversioned listing (pre-upgrade filer) instead clears the
 	// children's records, or a re-inserted entry would inherit a stale one.
 	mc.Lock()
+	mc.dirSections[dirPath] = newDirSections(sectionBounds)
 	if snapshotTsNs != 0 {
 		mc.dirVersionFloors[dirPath] = snapshotTsNs
 		mc.pruneSupersededTombstonesLocked(ctx, dirPath, snapshotTsNs)

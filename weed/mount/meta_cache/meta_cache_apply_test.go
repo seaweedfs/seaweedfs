@@ -621,7 +621,7 @@ func TestUnversionedRebuildClearsStaleVersions(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("batch insert: %v", err)
 	}
-	if err := mc.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 0); err != nil {
+	if err := mc.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 0, nil); err != nil {
 		t.Fatalf("complete unversioned build: %v", err)
 	}
 
@@ -717,7 +717,7 @@ func TestBuildCompletionPrunesSupersededTombstones(t *testing.T) {
 	if err := mc.BeginDirectoryBuild(context.Background(), util.FullPath("/dir")); err != nil {
 		t.Fatalf("begin build: %v", err)
 	}
-	if err := mc.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 3000); err != nil {
+	if err := mc.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 3000, nil); err != nil {
 		t.Fatalf("complete build: %v", err)
 	}
 
@@ -806,7 +806,7 @@ func TestBuildFloorVersionsChildrenWithoutPerChildRecords(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("batch insert: %v", err)
 	}
-	if err := mc.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 2000); err != nil {
+	if err := mc.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 2000, nil); err != nil {
 		t.Fatalf("complete build: %v", err)
 	}
 
@@ -889,7 +889,7 @@ func TestUnversionedWriteDoesNotInheritDirectoryFloor(t *testing.T) {
 	if err := mc.BeginDirectoryBuild(context.Background(), util.FullPath("/dir")); err != nil {
 		t.Fatalf("begin build: %v", err)
 	}
-	if err := mc.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 2000); err != nil {
+	if err := mc.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 2000, nil); err != nil {
 		t.Fatalf("complete build: %v", err)
 	}
 
