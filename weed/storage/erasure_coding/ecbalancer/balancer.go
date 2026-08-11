@@ -12,6 +12,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/topology/balancer"
 )
 
 // Topology is a snapshot of EC shard placement to plan against. Build it with
@@ -449,8 +450,7 @@ func pickNodeInRack(r *rack, vk volKey, rp *super_block.ReplicaPlacement) *Node 
 // pickBestNodeForVolume returns the node with the fewest shards of the volume that
 // has a free slot and is under the SameRackCount cap, or nil.
 func pickBestNodeForVolume(nodes []*Node, vk volKey, rp *super_block.ReplicaPlacement) *Node {
-	var best *Node
-	bestCount := -1
+	candidates := make([]balancer.NodeLoad, 0, len(nodes))
 	for _, node := range nodes {
 		if node.freeSlots <= 0 {
 			continue
@@ -459,11 +459,16 @@ func pickBestNodeForVolume(nodes []*Node, vk volKey, rp *super_block.ReplicaPlac
 		if rp != nil && rp.SameRackCount > 0 && count >= rp.SameRackCount {
 			continue
 		}
-		if best == nil || count < bestCount {
-			best, bestCount = node, count
+		candidates = append(candidates, balancer.NodeLoad{ID: node.id, Score: float64(count)})
+	}
+	if index := balancer.PickLeastLoaded(candidates); index >= 0 {
+		for _, node := range nodes {
+			if node.id == candidates[index].ID {
+				return node
+			}
 		}
 	}
-	return best
+	return nil
 }
 
 // detectWithinRackImbalance spreads a volume's shards within each rack, data then
@@ -723,10 +728,7 @@ func detectGlobalImbalance(nodes map[string]*Node, racks map[string]*rack, diskT
 			iterations = totalShards
 		}
 		for i := 0; i < iterations; i++ {
-			var minNode, maxNode *Node
-			minUtil := math.Inf(1)
-			maxUtil := -1.0
-			var minCount, maxCount int
+			var sourceCandidates, targetCandidates []balancer.NodeLoad
 			for _, nodeID := range sortedNodeKeys(r.nodes) {
 				count := nodeShardCounts[nodeID]
 				node := r.nodes[nodeID]
@@ -735,16 +737,20 @@ func detectGlobalImbalance(nodes map[string]*Node, racks map[string]*rack, diskT
 					continue
 				}
 				util := float64(count) / float64(capacity)
-				if util < minUtil && node.freeSlots > 0 {
-					minUtil, minCount, minNode = util, count, node
-				}
-				if util > maxUtil {
-					maxUtil, maxCount, maxNode = util, count, node
+				sourceCandidates = append(sourceCandidates, balancer.NodeLoad{ID: nodeID, Score: util})
+				if node.freeSlots > 0 {
+					targetCandidates = append(targetCandidates, balancer.NodeLoad{ID: nodeID, Score: util})
 				}
 			}
-			if maxNode == nil || minNode == nil || maxNode.id == minNode.id {
+			sourceIndex := balancer.PickMostLoaded(sourceCandidates)
+			targetIndex := balancer.PickLeastLoaded(targetCandidates)
+			if sourceIndex < 0 || targetIndex < 0 || sourceCandidates[sourceIndex].ID == targetCandidates[targetIndex].ID {
 				break
 			}
+			maxNode := r.nodes[sourceCandidates[sourceIndex].ID]
+			minNode := r.nodes[targetCandidates[targetIndex].ID]
+			maxCount := nodeShardCounts[maxNode.id]
+			minCount := nodeShardCounts[minNode.id]
 
 			maxCap := nodeCapacity[maxNode.id]
 			minCap := nodeCapacity[minNode.id]
@@ -860,8 +866,7 @@ func shardsByGroup(vk volKey, nodes map[string]*Node, dataShards int, key func(*
 // key order, so selection is deterministic.
 func pickTarget(candidates []string, shardsPerTarget map[string][]int, maxPerTarget int, antiAffinity map[string]bool, hasFreeSlots, withinLimit func(string) bool) (string, bool) {
 	try := func(skipAnti bool) (string, bool) {
-		best := ""
-		bestCount := maxPerTarget + 1
+		eligible := make([]balancer.NodeLoad, 0, len(candidates))
 		for _, c := range candidates {
 			if skipAnti && antiAffinity[c] {
 				continue
@@ -875,11 +880,12 @@ func pickTarget(candidates []string, shardsPerTarget map[string][]int, maxPerTar
 			if !withinLimit(c) {
 				continue
 			}
-			if cnt := len(shardsPerTarget[c]); cnt < bestCount {
-				best, bestCount = c, cnt
-			}
+			eligible = append(eligible, balancer.NodeLoad{ID: c, Score: float64(len(shardsPerTarget[c]))})
 		}
-		return best, best != ""
+		if index := balancer.PickLeastLoaded(eligible); index >= 0 {
+			return eligible[index].ID, true
+		}
+		return "", false
 	}
 	if len(antiAffinity) > 0 {
 		if t, ok := try(true); ok {
