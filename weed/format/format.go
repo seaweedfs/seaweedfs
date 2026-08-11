@@ -47,6 +47,12 @@ type Hint struct {
 // discovered by type assertion.
 type Format interface {
 	Name() string
+}
+
+// Sniffer cheaply recognizes the format from identification signals. Repack
+// gates on it before parsing, and policy-driven detection will rely on it;
+// ingest-only adapters, whose files carry their layout from birth, skip it.
+type Sniffer interface {
 	Sniff(h Hint) bool
 }
 

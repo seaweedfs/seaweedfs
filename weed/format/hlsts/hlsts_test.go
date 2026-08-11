@@ -190,14 +190,3 @@ func TestMediaSequenceBoundaryRoundTrip(t *testing.T) {
 	}
 }
 
-func TestSniff(t *testing.T) {
-	head := make([]byte, 400)
-	head[0], head[TSPacketSize] = tsSyncByte, tsSyncByte
-	if !(Adapter{}).Sniff(format.Hint{Head: head}) {
-		t.Fatalf("Sniff() rejected TS head")
-	}
-	head[TSPacketSize] = 0
-	if (Adapter{}).Sniff(format.Hint{Head: head}) {
-		t.Fatalf("Sniff() accepted non-TS head")
-	}
-}

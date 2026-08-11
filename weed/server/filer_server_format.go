@@ -373,25 +373,28 @@ func (fs *FilerServer) formatRepack(ctx context.Context, w http.ResponseWriter, 
 	// Close releases the private reader cache and its in-flight prefetches.
 	defer readerAt.Close()
 
-	hint := format.Hint{Name: entry.Name(), ContentType: entry.Attr.Mime, Size: size}
-	sniffSize := int64(formatSniffBytes)
-	if sniffSize > size {
-		sniffSize = size
-	}
-	head := make([]byte, sniffSize)
-	if _, err := readerAt.ReadAt(head, 0); err != nil && err != io.EOF {
-		writeJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("read head: %w", err))
-		return
-	}
-	tail := make([]byte, sniffSize)
-	if _, err := readerAt.ReadAt(tail, size-sniffSize); err != nil && err != io.EOF {
-		writeJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("read tail: %w", err))
-		return
-	}
-	hint.Head, hint.Tail = head, tail
-	if !adapter.Sniff(hint) {
-		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("%s does not look like %s", entry.Name(), adapterName))
-		return
+	// cheap magic-byte gate before handing the bytes to the parser
+	if sniffer, ok := adapter.(format.Sniffer); ok {
+		hint := format.Hint{Name: entry.Name(), ContentType: entry.Attr.Mime, Size: size}
+		sniffSize := int64(formatSniffBytes)
+		if sniffSize > size {
+			sniffSize = size
+		}
+		head := make([]byte, sniffSize)
+		if _, err := readerAt.ReadAt(head, 0); err != nil && err != io.EOF {
+			writeJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("read head: %w", err))
+			return
+		}
+		tail := make([]byte, sniffSize)
+		if _, err := readerAt.ReadAt(tail, size-sniffSize); err != nil && err != io.EOF {
+			writeJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("read tail: %w", err))
+			return
+		}
+		hint.Head, hint.Tail = head, tail
+		if !sniffer.Sniff(hint) {
+			writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("%s does not look like %s", entry.Name(), adapterName))
+			return
+		}
 	}
 
 	layout, err := indexer.Index(ctx, readerAt, size)
