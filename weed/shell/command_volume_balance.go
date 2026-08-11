@@ -512,21 +512,22 @@ func selectVolumesByActive(volumeSize uint64, volumeByActive *bool, volumeSizeLi
 	}
 }
 
-func (c *commandVolumeBalance) balanceSelectedVolume(diskType types.DiskType, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, sortCandidatesFn func(volumes []*master_pb.VolumeInformationMessage)) (err error) {
-	if c.maxParallelization > 1 {
-		return c.balanceSelectedVolumeParallel(diskType, volumeReplicas, nodes, sortCandidatesFn)
-	}
-
-	selectedVolumeCount, volumeCapacities := uint64(0), float64(0)
-	var nodesWithCapacity []*Node
-	volumeSizeLimitMb := c.volumeSizeLimitMb
+// planBalance computes the state shared by both the sequential and parallel
+// balancing paths: the nodes that have spare capacity, the density function
+// used to rank them, and the ideal volume ratio this pass is aiming for.
+// ok is false when there is no capacity to balance against (volumeCapacities
+// == 0); callers should return nil without doing any work in that case.
+func (c *commandVolumeBalance) planBalance(diskType types.DiskType, nodes []*Node) (nodesWithCapacity []*Node, capacityFunc DensityFunc, idealVolumeRatio float64, volumeSizeLimitMb uint64, ok bool) {
+	volumeSizeLimitMb = c.volumeSizeLimitMb
 	if volumeSizeLimitMb == 0 {
 		volumeSizeLimitMb = util.VolumeSizeLimitGB * util.KiByte
 	}
-	capacityFunc := capacityByMinVolumeDensity(diskType, volumeSizeLimitMb)
+	capacityFunc = capacityByMinVolumeDensity(diskType, volumeSizeLimitMb)
 	if c.byDiskUsage {
 		capacityFunc = capacityByDiskUsage(diskType, volumeSizeLimitMb, nodes)
 	}
+
+	selectedVolumeCount, volumeCapacities := uint64(0), float64(0)
 	for _, dn := range nodes {
 		capacity, volumeCount := capacityFunc(dn.info)
 		if capacity > 0 {
@@ -536,15 +537,28 @@ func (c *commandVolumeBalance) balanceSelectedVolume(diskType types.DiskType, vo
 		selectedVolumeCount += volumeCount
 	}
 	if volumeCapacities == 0 {
-		return nil
+		return nil, nil, 0, volumeSizeLimitMb, false
 	}
-	idealVolumeRatio := float64(selectedVolumeCount) / volumeCapacities
-
-	hasMoved := true
+	idealVolumeRatio = float64(selectedVolumeCount) / volumeCapacities
 
 	if c.commandEnv != nil && c.commandEnv.verbose {
-		fmt.Fprintf(os.Stdout, "selected nodes %d, volumes:%d, cap:%d, idealVolumeRatio %f\n", len(nodesWithCapacity), selectedVolumeCount, int64(volumeCapacities), idealVolumeRatio*100)
+		fmt.Fprintf(os.Stdout, "selected nodes %d, volumes:%d, cap:%d, idealVolumeRatio %f\n",
+			len(nodesWithCapacity), selectedVolumeCount, int64(volumeCapacities), idealVolumeRatio*100)
 	}
+	return nodesWithCapacity, capacityFunc, idealVolumeRatio, volumeSizeLimitMb, true
+}
+
+func (c *commandVolumeBalance) balanceSelectedVolume(diskType types.DiskType, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, sortCandidatesFn func(volumes []*master_pb.VolumeInformationMessage)) (err error) {
+	if c.maxParallelization > 1 {
+		return c.balanceSelectedVolumeParallel(diskType, volumeReplicas, nodes, sortCandidatesFn)
+	}
+
+	nodesWithCapacity, capacityFunc, idealVolumeRatio, volumeSizeLimitMb, ok := c.planBalance(diskType, nodes)
+	if !ok {
+		return nil
+	}
+
+	hasMoved := true
 	for hasMoved {
 		hasMoved = false
 		if c.volumesPerExec > 0 && c.movedCount >= c.volumesPerExec {
@@ -631,33 +645,11 @@ func (c *commandVolumeBalance) balanceSelectedVolume(diskType types.DiskType, vo
 }
 
 func (c *commandVolumeBalance) balanceSelectedVolumeParallel(diskType types.DiskType, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, sortCandidatesFn func(volumes []*master_pb.VolumeInformationMessage)) error {
-	selectedVolumeCount, volumeCapacities := uint64(0), float64(0)
-	var nodesWithCapacity []*Node
-	volumeSizeLimitMb := c.volumeSizeLimitMb
-	if volumeSizeLimitMb == 0 {
-		volumeSizeLimitMb = util.VolumeSizeLimitGB * util.KiByte
-	}
-	capacityFunc := capacityByMinVolumeDensity(diskType, volumeSizeLimitMb)
-	if c.byDiskUsage {
-		capacityFunc = capacityByDiskUsage(diskType, volumeSizeLimitMb, nodes)
-	}
-	for _, dn := range nodes {
-		capacity, volumeCount := capacityFunc(dn.info)
-		if capacity > 0 {
-			nodesWithCapacity = append(nodesWithCapacity, dn)
-		}
-		volumeCapacities += capacity
-		selectedVolumeCount += volumeCount
-	}
-	if volumeCapacities == 0 {
+	nodesWithCapacity, capacityFunc, idealVolumeRatio, volumeSizeLimitMb, ok := c.planBalance(diskType, nodes)
+	if !ok {
 		return nil
 	}
-	idealVolumeRatio := float64(selectedVolumeCount) / volumeCapacities
 	failedTargets := make(map[string]struct{})
-
-	if c.commandEnv != nil && c.commandEnv.verbose {
-		fmt.Fprintf(os.Stdout, "selected nodes %d, volumes:%d, cap:%d, idealVolumeRatio %f\n", len(nodesWithCapacity), selectedVolumeCount, int64(volumeCapacities), idealVolumeRatio*100)
-	}
 
 	for {
 		c.balanceMu.Lock()
