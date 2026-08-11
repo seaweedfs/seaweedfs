@@ -69,6 +69,9 @@ spec:
       {{- if .Values.admin.priorityClassName }}
       priorityClassName: {{ .Values.admin.priorityClassName | quote }}
       {{- end }}
+      {{- if .Values.admin.schedulerName }}
+      schedulerName: {{ .Values.admin.schedulerName | quote }}
+      {{- end }}
       enableServiceLinks: false
       {{- if .Values.admin.serviceAccountName }}
       serviceAccountName: {{ .Values.admin.serviceAccountName | quote }}

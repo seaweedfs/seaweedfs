@@ -76,6 +76,9 @@ spec:
       {{- if .Values.filer.priorityClassName }}
       priorityClassName: {{ .Values.filer.priorityClassName | quote }}
       {{- end }}
+      {{- if .Values.filer.schedulerName }}
+      schedulerName: {{ .Values.filer.schedulerName | quote }}
+      {{- end }}
       enableServiceLinks: false
       {{- if .Values.filer.initContainers }}
       initContainers:

@@ -61,6 +61,9 @@ spec:
       {{- if .Values.sftp.priorityClassName }}
       priorityClassName: {{ .Values.sftp.priorityClassName | quote }}
       {{- end }}
+      {{- if .Values.sftp.schedulerName }}
+      schedulerName: {{ .Values.sftp.schedulerName | quote }}
+      {{- end }}
       enableServiceLinks: false
       {{- if .Values.sftp.serviceAccountName }}
       serviceAccountName: {{ .Values.sftp.serviceAccountName | quote }}
