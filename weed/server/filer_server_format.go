@@ -45,11 +45,15 @@ const (
 	defaultFormatChunkSizeMB = 4
 )
 
-// formatChunkIdentity digests the chunk list a layout was written against.
+// formatChunkIdentity digests the chunk list a layout was written against,
+// covering every field that changes what a read returns: a FUSE truncate, for
+// one, mutates Size while keeping the chunk's id.
 func formatChunkIdentity(chunks []*filer_pb.FileChunk) []byte {
 	digest := md5.New()
 	for _, chunk := range chunks {
-		fmt.Fprintf(digest, "%d:%s;", chunk.Offset, chunk.GetFileIdString())
+		fmt.Fprintf(digest, "%d:%s:%d:%d:%x:%t:%t:%d;",
+			chunk.Offset, chunk.GetFileIdString(), chunk.Size, chunk.ModifiedTsNs,
+			chunk.CipherKey, chunk.IsCompressed, chunk.IsChunkManifest, chunk.SseType)
 	}
 	return digest.Sum(nil)
 }

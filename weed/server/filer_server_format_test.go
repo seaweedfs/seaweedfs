@@ -68,4 +68,26 @@ func TestFormatChunkIdentity(t *testing.T) {
 	if bytes.Equal(identity, formatChunkIdentity(changedOffset)) {
 		t.Fatalf("identity ignored an offset change")
 	}
+	// a truncate mutates Size while keeping the chunk id
+	changedSize := []*filer_pb.FileChunk{
+		{FileId: "1,ab", Offset: 0, Size: 10},
+		{FileId: "2,cd", Offset: 10, Size: 15},
+	}
+	if bytes.Equal(identity, formatChunkIdentity(changedSize)) {
+		t.Fatalf("identity ignored a size change")
+	}
+	changedMtime := []*filer_pb.FileChunk{
+		{FileId: "1,ab", Offset: 0, Size: 10},
+		{FileId: "2,cd", Offset: 10, Size: 20, ModifiedTsNs: 7},
+	}
+	if bytes.Equal(identity, formatChunkIdentity(changedMtime)) {
+		t.Fatalf("identity ignored a modification timestamp change")
+	}
+	changedManifest := []*filer_pb.FileChunk{
+		{FileId: "1,ab", Offset: 0, Size: 10},
+		{FileId: "2,cd", Offset: 10, Size: 20, IsChunkManifest: true},
+	}
+	if bytes.Equal(identity, formatChunkIdentity(changedManifest)) {
+		t.Fatalf("identity ignored a manifest flag change")
+	}
 }
