@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"crypto/md5"
 	"errors"
 	"fmt"
 	"io"
@@ -400,7 +401,17 @@ func (fs *FilerServer) serveFormatView(ctx context.Context, w http.ResponseWrite
 		http.Error(w, "format layout is stale", http.StatusNotFound)
 		return
 	}
-	if checkPreconditions(w, r, entry) {
+
+	// The view's validator must change when the layout or the requested
+	// representation changes, even when the media bytes and their MD5 do not:
+	// re-ingesting with a different sidecar must invalidate cached views.
+	viewIdentity := md5.New()
+	viewIdentity.Write([]byte(filer.ETagEntry(entry)))
+	viewIdentity.Write(encoded)
+	viewIdentity.Write([]byte(r.URL.RawQuery))
+	viewEntry := *entry
+	viewEntry.Md5 = viewIdentity.Sum(nil)
+	if checkPreconditions(w, r, &viewEntry) {
 		return
 	}
 
@@ -425,7 +436,7 @@ func (fs *FilerServer) serveFormatView(ctx context.Context, w http.ResponseWrite
 	// view responses are whole documents or whole extents
 	w.Header().Set("Accept-Ranges", "none")
 	w.Header().Set("Content-Type", plan.ContentType)
-	SetEtag(w, filer.ETagEntry(entry))
+	SetEtag(w, filer.ETagEntry(&viewEntry))
 
 	if plan.Body != nil {
 		w.Header().Set("Content-Length", strconv.Itoa(len(plan.Body)))
