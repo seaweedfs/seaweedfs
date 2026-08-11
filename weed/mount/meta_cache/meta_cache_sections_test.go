@@ -404,3 +404,80 @@ func TestEnsureListingFreshGivesUpOnOvergrownRange(t *testing.T) {
 		t.Fatal("an aborted refresh must leave the section stale")
 	}
 }
+
+func TestSectionNoteChangeWindowExpiry(t *testing.T) {
+	ds := newDirSections(nil)
+	t0 := time.Unix(100, 0)
+	for i := 0; i < sectionHotThreshold-1; i++ {
+		ds.noteChange(fmt.Sprintf("f-%03d", i), t0)
+	}
+	if !ds.isFresh("f-000") {
+		t.Fatal("below the threshold the section must stay fresh")
+	}
+
+	// the burst never completed inside one window, so the count restarts
+	t1 := t0.Add(sectionHotWindow + time.Second)
+	for i := 0; i < sectionHotThreshold-1; i++ {
+		ds.noteChange(fmt.Sprintf("f-%03d", i), t1)
+	}
+	if !ds.isFresh("f-000") {
+		t.Fatal("an expired window must not carry its count forward")
+	}
+
+	ds.noteChange("f-999", t1)
+	if ds.isFresh("f-000") {
+		t.Fatal("a full burst within one window must invalidate the section")
+	}
+}
+
+func TestSectionCompleteRefreshGuardsChangedTable(t *testing.T) {
+	ds := newDirSections([]string{"g", "p"})
+	ds.sections[1].stale = true
+
+	if ds.completeRefresh("g", "q", []string{"h"}) {
+		t.Fatal("a range the table no longer has must be ignored")
+	}
+	if ds.isFresh("h") {
+		t.Fatal("an ignored refresh must not mark anything fresh")
+	}
+	if !ds.completeRefresh("g", "p", []string{"h"}) {
+		t.Fatal("the matching range must be accepted")
+	}
+	if !ds.isFresh("h") {
+		t.Fatal("section should be fresh after the refresh")
+	}
+}
+
+func TestSectionCompleteRefreshSplitsMiddleSection(t *testing.T) {
+	ds := newDirSections([]string{"g", "p"})
+	ds.sections[1].stale = true
+
+	names := make([]string, 0, 2*dirSectionSize+1)
+	for i := 0; i <= 2*dirSectionSize; i++ {
+		names = append(names, fmt.Sprintf("g-%05d", i))
+	}
+	if !ds.completeRefresh("g", "p", names) {
+		t.Fatal("refresh of the middle section must be accepted")
+	}
+
+	wantBounds := []string{"g", names[dirSectionSize], names[2*dirSectionSize], "p"}
+	if len(ds.bounds) != len(wantBounds) {
+		t.Fatalf("bounds = %v, want %v", ds.bounds, wantBounds)
+	}
+	for i, b := range wantBounds {
+		if ds.bounds[i] != b {
+			t.Fatalf("bounds = %v, want %v", ds.bounds, wantBounds)
+		}
+	}
+	if len(ds.sections) != len(ds.bounds)+1 {
+		t.Fatalf("sections = %d, want %d", len(ds.sections), len(ds.bounds)+1)
+	}
+	for _, name := range []string{"a", "g-00000", names[dirSectionSize], "z"} {
+		if !ds.isFresh(name) {
+			t.Fatalf("%q should be fresh after the split", name)
+		}
+	}
+	if got := ds.sectionOf(names[dirSectionSize+1]); got != 2 {
+		t.Fatalf("sectionOf(%q) = %d, want 2", names[dirSectionSize+1], got)
+	}
+}

@@ -38,7 +38,9 @@ const (
 var ErrRefreshRangeTooLarge = errors.New("section outgrew one refresh")
 
 // dirSections: bounds[i] is the first name of section i+1; section 0 starts at
-// the beginning of the namespace, the last section runs to the end.
+// the beginning of the namespace, the last section runs to the end. It is a
+// plain state machine — no locking, no store; MetaCache drives it under its
+// own mutex.
 type dirSections struct {
 	bounds   []string
 	sections []sectionState
@@ -73,14 +75,9 @@ func (ds *dirSections) sectionRange(idx int) (lo, hi string) {
 	return
 }
 
-// noteSectionChangeLocked counts one remote change against the section it
-// lands in, marking the section stale when a burst crosses the threshold.
-func (mc *MetaCache) noteSectionChangeLocked(fp util.FullPath, now time.Time) {
-	dir, name := fp.DirAndName()
-	ds := mc.dirSections[util.FullPath(dir)]
-	if ds == nil {
-		return
-	}
+// noteChange counts one change against the section it lands in, marking the
+// section stale when a burst crosses the threshold.
+func (ds *dirSections) noteChange(name string, now time.Time) {
 	s := &ds.sections[ds.sectionOf(name)]
 	if s.stale {
 		return
@@ -95,16 +92,7 @@ func (mc *MetaCache) noteSectionChangeLocked(fp util.FullPath, now time.Time) {
 	}
 }
 
-// IsNameFresh reports whether the cached listing still vouches for this name.
-// A directory without section state vouches for all of it.
-func (mc *MetaCache) IsNameFresh(fp util.FullPath) bool {
-	dir, name := fp.DirAndName()
-	mc.RLock()
-	defer mc.RUnlock()
-	ds := mc.dirSections[util.FullPath(dir)]
-	if ds == nil {
-		return true
-	}
+func (ds *dirSections) isFresh(name string) bool {
 	return !ds.sections[ds.sectionOf(name)].stale
 }
 
@@ -114,13 +102,7 @@ type nameRange struct {
 
 // staleRangesAhead returns the invalidated ranges among the count sections
 // starting at the one holding startName.
-func (mc *MetaCache) staleRangesAhead(dirPath util.FullPath, startName string, count int) (ranges []nameRange) {
-	mc.RLock()
-	defer mc.RUnlock()
-	ds := mc.dirSections[dirPath]
-	if ds == nil {
-		return nil
-	}
+func (ds *dirSections) staleRangesAhead(startName string, count int) (ranges []nameRange) {
 	idx := ds.sectionOf(startName)
 	for i := idx; i < idx+count && i < len(ds.sections); i++ {
 		if ds.sections[i].stale {
@@ -131,14 +113,70 @@ func (mc *MetaCache) staleRangesAhead(dirPath util.FullPath, startName string, c
 	return
 }
 
-func (mc *MetaCache) rangeStale(dirPath util.FullPath, lo string) bool {
+// completeRefresh marks the section covering exactly [lo, hi) fresh after a
+// re-listing that fetched names, re-splitting a section that outgrew twice its
+// target size. It reports false without touching anything when the table no
+// longer has that section — rebuilt or re-split since the listing was taken —
+// as splicing bounds from a stale range could leave the table unsorted.
+func (ds *dirSections) completeRefresh(lo, hi string, names []string) bool {
+	idx := ds.sectionOf(lo)
+	if curLo, curHi := ds.sectionRange(idx); curLo != lo || curHi != hi {
+		return false
+	}
+	if len(names) > 2*dirSectionSize {
+		var newBounds []string
+		for i := dirSectionSize; i < len(names); i += dirSectionSize {
+			newBounds = append(newBounds, names[i])
+		}
+		bounds := make([]string, 0, len(ds.bounds)+len(newBounds))
+		bounds = append(bounds, ds.bounds[:idx]...)
+		bounds = append(bounds, newBounds...)
+		bounds = append(bounds, ds.bounds[idx:]...)
+		sections := make([]sectionState, 0, len(bounds)+1)
+		sections = append(sections, ds.sections[:idx]...)
+		sections = append(sections, make([]sectionState, len(newBounds)+1)...)
+		sections = append(sections, ds.sections[idx+1:]...)
+		ds.bounds, ds.sections = bounds, sections
+	} else {
+		ds.sections[idx] = sectionState{}
+	}
+	return true
+}
+
+// noteSectionChangeLocked counts one remote change against the section of the
+// directory it lands in.
+func (mc *MetaCache) noteSectionChangeLocked(fp util.FullPath, now time.Time) {
+	dir, name := fp.DirAndName()
+	if ds := mc.dirSections[util.FullPath(dir)]; ds != nil {
+		ds.noteChange(name, now)
+	}
+}
+
+// IsNameFresh reports whether the cached listing still vouches for this name.
+// A directory without section state vouches for all of it.
+func (mc *MetaCache) IsNameFresh(fp util.FullPath) bool {
+	dir, name := fp.DirAndName()
+	mc.RLock()
+	defer mc.RUnlock()
+	ds := mc.dirSections[util.FullPath(dir)]
+	return ds == nil || ds.isFresh(name)
+}
+
+func (mc *MetaCache) staleRangesAhead(dirPath util.FullPath, startName string, count int) []nameRange {
 	mc.RLock()
 	defer mc.RUnlock()
 	ds := mc.dirSections[dirPath]
 	if ds == nil {
-		return false
+		return nil
 	}
-	return ds.sections[ds.sectionOf(lo)].stale
+	return ds.staleRangesAhead(startName, count)
+}
+
+func (mc *MetaCache) rangeStale(dirPath util.FullPath, lo string) bool {
+	mc.RLock()
+	defer mc.RUnlock()
+	ds := mc.dirSections[dirPath]
+	return ds != nil && !ds.isFresh(lo)
 }
 
 // EnsureListingFresh re-validates invalidated sections before a listing pages
@@ -241,8 +279,10 @@ func (mc *MetaCache) applySectionRefreshNow(ctx context.Context, req metadataApp
 	mc.Lock()
 	defer mc.Unlock()
 
+	fetchedNames := make([]string, 0, len(req.sectionEntries))
 	fetched := make(map[string]struct{}, len(req.sectionEntries))
 	for _, entry := range req.sectionEntries {
+		fetchedNames = append(fetchedNames, entry.Name())
 		fetched[entry.Name()] = struct{}{}
 		if snapshotTsNs == 0 {
 			// A pre-upgrade filer stamps no snapshot, leaving nothing to
@@ -292,34 +332,8 @@ func (mc *MetaCache) applySectionRefreshNow(ctx context.Context, req metadataApp
 		}
 	}
 
-	ds := mc.dirSections[dirPath]
-	if ds == nil {
-		return nil
-	}
-	idx := ds.sectionOf(lo)
-	// The table can be rebuilt or re-split between the listing and this
-	// apply; only touch it if the section still covers the range just read.
-	if curLo, curHi := ds.sectionRange(idx); curLo != lo || curHi != hi {
-		return nil
-	}
-	if len(req.sectionEntries) > 2*dirSectionSize {
-		// the section outgrew its target size; re-derive bounds inside it so
-		// the next burst invalidates a slice of it, not all of it
-		var newBounds []string
-		for i := dirSectionSize; i < len(req.sectionEntries); i += dirSectionSize {
-			newBounds = append(newBounds, req.sectionEntries[i].Name())
-		}
-		bounds := make([]string, 0, len(ds.bounds)+len(newBounds))
-		bounds = append(bounds, ds.bounds[:idx]...)
-		bounds = append(bounds, newBounds...)
-		bounds = append(bounds, ds.bounds[idx:]...)
-		sections := make([]sectionState, 0, len(bounds)+1)
-		sections = append(sections, ds.sections[:idx]...)
-		sections = append(sections, make([]sectionState, len(newBounds)+1)...)
-		sections = append(sections, ds.sections[idx+1:]...)
-		ds.bounds, ds.sections = bounds, sections
-	} else {
-		ds.sections[idx] = sectionState{}
+	if ds := mc.dirSections[dirPath]; ds != nil {
+		ds.completeRefresh(lo, hi, fetchedNames)
 	}
 	return nil
 }
