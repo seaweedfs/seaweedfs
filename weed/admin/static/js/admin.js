@@ -88,9 +88,9 @@ function setActiveNavigation() {
 
         if (href === currentPath) {
             isActive = true;
-        } else if (currentPath === '/' && href === '/admin') {
+        } else if (currentPath === basePath('/') && href === basePath('/admin')) {
             isActive = true;
-        } else if (currentPath.startsWith('/s3/') && href === '/s3/buckets') {
+        } else if (currentPath.startsWith(basePath('/s3/')) && href === basePath('/s3/buckets')) {
             isActive = true;
         }
         // Note: Removed the problematic cluster condition that was highlighting all submenu items
@@ -108,7 +108,7 @@ function setupSubmenuBehavior() {
     const currentPath = window.location.pathname;
 
     // If we're on a cluster page, expand the cluster submenu
-    if (currentPath.startsWith('/cluster/')) {
+    if (currentPath.startsWith(basePath('/cluster/'))) {
         const clusterSubmenu = document.getElementById('clusterSubmenu');
         if (clusterSubmenu) {
             clusterSubmenu.classList.add('show');
@@ -123,7 +123,7 @@ function setupSubmenuBehavior() {
     }
 
     // If we're on an object store page, expand the object store submenu
-    if (currentPath.startsWith('/object-store/')) {
+    if (currentPath.startsWith(basePath('/object-store/'))) {
         const objectStoreSubmenu = document.getElementById('objectStoreSubmenu');
         if (objectStoreSubmenu) {
             objectStoreSubmenu.classList.add('show');
