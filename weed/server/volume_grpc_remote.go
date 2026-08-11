@@ -229,22 +229,28 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 
 	remoteConf := req.RemoteConf
 
+	// Every S3-SDK-backed backend (s3, wasabi, b2, storj, contabo, tencent,
+	// aliyun, baidu, filebase) dials this caller-supplied endpoint directly,
+	// so the guard must cover all of them, not just type "s3". Other backends
+	// (gcs, azure, ...) authenticate against their own SDKs and don't accept
+	// an attacker-controlled host.
+	endpoint, isS3Compatible := "", false
+	if remoteConf != nil {
+		endpoint, isS3Compatible = s3remote.S3CompatibleEndpoint(remoteConf)
+	}
+
 	var client remote_storage.RemoteStorageClient
 	var getClientErr error
-	if !vs.AllowUntrustedRemoteEndpoints && remoteConf != nil && remoteConf.Type == "s3" {
-		// Endpoint validation is S3-specific: only RemoteConf.S3Endpoint
-		// is a URL the volume server dials directly. Other backends
-		// (gcs, azure, ...) authenticate against their own SDKs and
-		// don't accept an attacker-controlled host.
-		if validateErr := validateRemoteEndpoint(ctx, remoteConf.S3Endpoint); validateErr != nil {
+	if !vs.AllowUntrustedRemoteEndpoints && isS3Compatible {
+		if validateErr := validateRemoteEndpoint(ctx, endpoint); validateErr != nil {
 			return nil, fmt.Errorf("reject remote endpoint: %w", validateErr)
 		}
-		// Build a one-shot S3 client whose dial path re-validates the
-		// resolved IP every time. This pins the validated endpoint against
-		// DNS rebinding (a hostname that resolves to a public IP for
+		// Build a one-shot client whose dial path re-validates the resolved
+		// IP every time. This pins the validated endpoint against DNS
+		// rebinding (a hostname that resolves to a public IP for
 		// validateRemoteEndpoint and then flips to 127.0.0.1 / 169.254.x.x
 		// when the AWS SDK dials).
-		client, getClientErr = s3remote.MakeWithHTTPClient(remoteConf, newGuardedHTTPClient(remoteConf.S3Endpoint))
+		client, getClientErr = s3remote.MakeWithHTTPClient(remoteConf, newGuardedHTTPClient(endpoint))
 	} else {
 		client, getClientErr = remote_storage.GetRemoteStorage(remoteConf)
 	}
