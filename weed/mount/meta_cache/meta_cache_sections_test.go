@@ -2,9 +2,15 @@ package meta_cache
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
+	"sync"
 	"testing"
 	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -239,5 +245,162 @@ func TestSectionRefreshSplitsOvergrownSection(t *testing.T) {
 	}
 	if sections != len(bounds)+1 {
 		t.Fatalf("sections = %d, want %d", sections, len(bounds)+1)
+	}
+}
+
+type sectionFilerServer struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+	mu       sync.Mutex
+	names    []string // sorted; all under one directory
+	snapshot int64
+	requests []*filer_pb.ListEntriesRequest
+}
+
+func (s *sectionFilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream filer_pb.SeaweedFiler_ListEntriesServer) error {
+	s.mu.Lock()
+	s.requests = append(s.requests, req)
+	names := s.names
+	snapshot := s.snapshot
+	s.mu.Unlock()
+
+	sent := uint32(0)
+	first := true
+	for _, name := range names {
+		if name < req.StartFromFileName || (name == req.StartFromFileName && !req.InclusiveStartFrom) {
+			continue
+		}
+		resp := &filer_pb.ListEntriesResponse{Entry: &filer_pb.Entry{
+			Name:       name,
+			Attributes: &filer_pb.FuseAttributes{Crtime: 1, Mtime: 1, FileMode: 0100644, FileSize: 1},
+		}}
+		if first {
+			resp.SnapshotTsNs = snapshot
+			first = false
+		}
+		if err := stream.Send(resp); err != nil {
+			return err
+		}
+		sent++
+		if req.Limit > 0 && sent >= req.Limit {
+			break
+		}
+	}
+	return nil
+}
+
+func (s *sectionFilerServer) listRequests() []*filer_pb.ListEntriesRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]*filer_pb.ListEntriesRequest(nil), s.requests...)
+}
+
+type sectionTestFilerClient struct {
+	addr string
+}
+
+func (c *sectionTestFilerClient) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+	conn, err := grpc.NewClient(c.addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	return fn(filer_pb.NewSeaweedFilerClient(conn))
+}
+
+func (c *sectionTestFilerClient) AdjustedUrl(location *filer_pb.Location) string { return location.Url }
+
+func (c *sectionTestFilerClient) GetDataCenter() string { return "" }
+
+func startSectionFilerServer(t *testing.T, s *sectionFilerServer) filer_pb.FilerClient {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	srv := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(srv, s)
+	go srv.Serve(listener)
+	t.Cleanup(srv.Stop)
+	return &sectionTestFilerClient{addr: listener.Addr().String()}
+}
+
+func TestEnsureListingFreshRefreshesFromFiler(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+		"/":    true,
+		"/dir": true,
+	})
+	defer mc.Shutdown()
+
+	server := &sectionFilerServer{snapshot: 5000}
+	for i := 0; i < 1500; i++ {
+		server.names = append(server.names, fmt.Sprintf("b-%04d", i))
+	}
+	server.names = append(server.names, "z-1") // beyond the section, must not be applied
+	client := startSectionFilerServer(t, server)
+
+	buildSectionedDir(t, mc, util.FullPath("/dir"), 1000, []string{"m"})
+	applyChurn(t, mc, "/dir", "a-", sectionHotThreshold, 2000, SubscriberMetadataResponseApplyOptions)
+	if mc.IsNameFresh(util.FullPath("/dir/a-000")) {
+		t.Fatal("section should be stale before the refresh")
+	}
+
+	if err := EnsureListingFresh(context.Background(), mc, client, util.FullPath("/dir"), ""); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	if !mc.IsNameFresh(util.FullPath("/dir/a-000")) {
+		t.Fatal("section should be fresh after the refresh")
+	}
+	for _, name := range []string{"b-0000", "b-1499"} {
+		if entry, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/"+name)); err != nil || entry == nil {
+			t.Fatalf("%s missing after refresh: %v", name, err)
+		}
+	}
+	if _, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/a-000")); err != filer_pb.ErrNotFound {
+		t.Fatalf("churned a-000 error = %v, want not found", err)
+	}
+	if _, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/z-1")); err != filer_pb.ErrNotFound {
+		t.Fatalf("z-1 beyond the section was applied: %v", err)
+	}
+
+	requests := server.listRequests()
+	if len(requests) < 2 {
+		t.Fatalf("multi-page refresh made %d requests, want at least 2", len(requests))
+	}
+	if requests[0].SnapshotTsNs != 0 || requests[1].SnapshotTsNs != 5000 {
+		t.Fatalf("snapshot not pinned across pages: %d then %d", requests[0].SnapshotTsNs, requests[1].SnapshotTsNs)
+	}
+
+	// a fresh section costs no filer calls
+	if err := EnsureListingFresh(context.Background(), mc, client, util.FullPath("/dir"), ""); err != nil {
+		t.Fatalf("second refresh: %v", err)
+	}
+	if got := len(server.listRequests()); got != len(requests) {
+		t.Fatalf("fresh section still listed the filer: %d requests, was %d", got, len(requests))
+	}
+}
+
+func TestEnsureListingFreshGivesUpOnOvergrownRange(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+		"/":    true,
+		"/dir": true,
+	})
+	defer mc.Shutdown()
+
+	server := &sectionFilerServer{snapshot: 5000}
+	for i := 0; i <= sectionRefreshMaxEntries; i++ {
+		server.names = append(server.names, fmt.Sprintf("c-%05d", i))
+	}
+	client := startSectionFilerServer(t, server)
+
+	buildSectionedDir(t, mc, util.FullPath("/dir"), 1000, nil)
+	applyChurn(t, mc, "/dir", "x-", sectionHotThreshold, 2000, SubscriberMetadataResponseApplyOptions)
+
+	err := EnsureListingFresh(context.Background(), mc, client, util.FullPath("/dir"), "")
+	if !errors.Is(err, ErrRefreshRangeTooLarge) {
+		t.Fatalf("refresh error = %v, want ErrRefreshRangeTooLarge", err)
+	}
+	if mc.IsNameFresh(util.FullPath("/dir/x-000")) {
+		t.Fatal("an aborted refresh must leave the section stale")
 	}
 }

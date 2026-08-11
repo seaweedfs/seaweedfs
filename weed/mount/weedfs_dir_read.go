@@ -286,6 +286,11 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out DirEntrySink, isPlusMode
 
 			// Serve the maintained-but-unverified cache if the filer is unreachable.
 			if err := meta_cache.EnsureListingFresh(context.Background(), wfs.metaCache, wfs, dirPath, ""); err != nil {
+				if errors.Is(err, meta_cache.ErrRefreshRangeTooLarge) {
+					// re-tile with a full rebuild; serve this request direct
+					wfs.purgeDirectoryCache(dirPath)
+					return wfs.readDirectoryDirect(input, out, dh, dirPath, processEachEntryFn)
+				}
 				glog.V(1).Infof("refresh %s sections: %v", dirPath, err)
 			}
 
@@ -348,6 +353,11 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out DirEntrySink, isPlusMode
 
 		// Serve the maintained-but-unverified cache if the filer is unreachable.
 		if err := meta_cache.EnsureListingFresh(context.Background(), wfs.metaCache, wfs, dirPath, lastEntryName); err != nil {
+			if errors.Is(err, meta_cache.ErrRefreshRangeTooLarge) {
+				// re-tile with a full rebuild; serve this request direct
+				wfs.purgeDirectoryCache(dirPath)
+				return wfs.readDirectoryDirect(input, out, dh, dirPath, processEachEntryFn)
+			}
 			glog.V(1).Infof("refresh %s sections: %v", dirPath, err)
 		}
 

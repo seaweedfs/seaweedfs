@@ -2,6 +2,7 @@ package meta_cache
 
 import (
 	"context"
+	"errors"
 	"math"
 	"sort"
 	"time"
@@ -24,7 +25,17 @@ const (
 	// the section they land in.
 	sectionHotThreshold = 64
 	sectionHotWindow    = 2 * time.Second
+	// sectionRefreshTimeout bounds how long a readdir waits on re-validating
+	// a section before serving the maintained-but-unverified cache instead.
+	sectionRefreshTimeout = 5 * time.Second
+	// sectionRefreshMaxEntries is the most one refresh will carry; a section
+	// grown past it is cheaper to re-tile with a full directory rebuild.
+	sectionRefreshMaxEntries = 4 * dirSectionSize
 )
+
+// ErrRefreshRangeTooLarge reports a section that outgrew one refresh; the
+// caller should drop the directory cache so a full rebuild re-tiles it.
+var ErrRefreshRangeTooLarge = errors.New("section outgrew one refresh")
 
 // dirSections: bounds[i] is the first name of section i+1; section 0 starts at
 // the beginning of the namespace, the last section runs to the end.
@@ -135,7 +146,13 @@ func (mc *MetaCache) rangeStale(dirPath util.FullPath, lo string) bool {
 // as far as one readdir batch can reach. Sections further on are handled by
 // the batches that reach them.
 func EnsureListingFresh(ctx context.Context, mc *MetaCache, client filer_pb.FilerClient, dirPath util.FullPath, startName string) error {
-	for _, r := range mc.staleRangesAhead(dirPath, startName, 2) {
+	ranges := mc.staleRangesAhead(dirPath, startName, 2)
+	if len(ranges) == 0 {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, sectionRefreshTimeout)
+	defer cancel()
+	for _, r := range ranges {
 		if err := mc.refreshSection(ctx, client, dirPath, r.lo, r.hi); err != nil {
 			return err
 		}
@@ -203,6 +220,9 @@ func (mc *MetaCache) listFilerRange(ctx context.Context, client filer_pb.FilerCl
 			return nil, 0, err
 		}
 		entries = append(entries, page...)
+		if len(entries) > sectionRefreshMaxEntries {
+			return nil, 0, ErrRefreshRangeTooLarge
+		}
 		if done || pageCount < dirSectionSize {
 			return entries, snapshotTsNs, nil
 		}
@@ -224,7 +244,17 @@ func (mc *MetaCache) applySectionRefreshNow(ctx context.Context, req metadataApp
 	fetched := make(map[string]struct{}, len(req.sectionEntries))
 	for _, entry := range req.sectionEntries {
 		fetched[entry.Name()] = struct{}{}
-		if snapshotTsNs != 0 && mc.entryVersionBlocksLocked(ctx, entry.FullPath, snapshotTsNs) {
+		if snapshotTsNs == 0 {
+			// A pre-upgrade filer stamps no snapshot, leaving nothing to
+			// order against: only fill gaps, so a concurrently applied event
+			// can never be rolled back.
+			if mc.entryExistsLocked(ctx, entry.FullPath) {
+				continue
+			}
+			if _, tombstone := mc.getEntryVersionRecordLocked(ctx, entry.FullPath); tombstone {
+				continue
+			}
+		} else if mc.entryVersionBlocksLocked(ctx, entry.FullPath, snapshotTsNs) {
 			continue
 		}
 		if err := mc.localStore.InsertEntry(ctx, entry); err != nil {
@@ -233,32 +263,32 @@ func (mc *MetaCache) applySectionRefreshNow(ctx context.Context, req metadataApp
 		mc.setEntryVersionLocked(ctx, entry.FullPath, snapshotTsNs)
 	}
 
-	var vanished []*filer.Entry
-	if _, err := mc.localStore.ListDirectoryEntries(ctx, dirPath, lo, true, math.MaxInt64, func(entry *filer.Entry) (bool, error) {
-		if hi != "" && entry.Name() >= hi {
-			return false, nil
-		}
-		if _, found := fetched[entry.Name()]; !found {
-			vanished = append(vanished, entry)
-		}
-		return true, nil
-	}); err != nil {
-		return err
-	}
-	for _, entry := range vanished {
-		if mc.pinnedChildFn != nil && mc.pinnedChildFn(entry) {
-			continue
-		}
-		if snapshotTsNs != 0 && mc.entryVersionBlocksLocked(ctx, entry.FullPath, snapshotTsNs) {
-			continue
-		}
-		if err := mc.localStore.DeleteEntry(ctx, entry.FullPath); err != nil {
+	// Deletions need the snapshot as an ordering reference; without one a
+	// name created after the listing would be swept away.
+	if snapshotTsNs != 0 {
+		var vanished []*filer.Entry
+		if _, err := mc.localStore.ListDirectoryEntries(ctx, dirPath, lo, true, math.MaxInt64, func(entry *filer.Entry) (bool, error) {
+			if hi != "" && entry.Name() >= hi {
+				return false, nil
+			}
+			if _, found := fetched[entry.Name()]; !found {
+				vanished = append(vanished, entry)
+			}
+			return true, nil
+		}); err != nil {
 			return err
 		}
-		if snapshotTsNs != 0 {
+		for _, entry := range vanished {
+			if mc.pinnedChildFn != nil && mc.pinnedChildFn(entry) {
+				continue
+			}
+			if mc.entryVersionBlocksLocked(ctx, entry.FullPath, snapshotTsNs) {
+				continue
+			}
+			if err := mc.localStore.DeleteEntry(ctx, entry.FullPath); err != nil {
+				return err
+			}
 			mc.setEntryTombstoneLocked(ctx, entry.FullPath, snapshotTsNs)
-		} else {
-			mc.clearEntryVersionLocked(ctx, entry.FullPath)
 		}
 	}
 
@@ -267,6 +297,11 @@ func (mc *MetaCache) applySectionRefreshNow(ctx context.Context, req metadataApp
 		return nil
 	}
 	idx := ds.sectionOf(lo)
+	// The table can be rebuilt or re-split between the listing and this
+	// apply; only touch it if the section still covers the range just read.
+	if curLo, curHi := ds.sectionRange(idx); curLo != lo || curHi != hi {
+		return nil
+	}
 	if len(req.sectionEntries) > 2*dirSectionSize {
 		// the section outgrew its target size; re-derive bounds inside it so
 		// the next burst invalidates a slice of it, not all of it
