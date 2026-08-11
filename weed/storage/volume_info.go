@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"sync"
 
@@ -24,17 +25,29 @@ type VolumeInfo struct {
 	Ttl              *needle.TTL
 
 	Size             uint64
-	FileCount        int
-	DeleteCount      int
 	DeletedByteCount uint64
 	ModifiedAtSecond int64
 
 	Id              needle.VolumeId
 	DiskId          uint32
 	CompactRevision uint32
+	// Counted in uint32: a volume is capped well below 4.29 billion needles,
+	// and two words per replica is worth more than the headroom.
+	FileCount   uint32
+	DeleteCount uint32
 
 	Version  needle.Version
 	ReadOnly bool
+}
+
+// countAsUint32 narrows a reported count without letting it wrap. Nothing
+// should reach the ceiling, and a count that pretends to is better pinned
+// there than turned into a small number.
+func countAsUint32(n uint64) uint32 {
+	if n > math.MaxUint32 {
+		return math.MaxUint32
+	}
+	return uint32(n)
 }
 
 func NewVolumeInfo(m *master_pb.VolumeInformationMessage) (vi VolumeInfo, err error) {
@@ -42,8 +55,8 @@ func NewVolumeInfo(m *master_pb.VolumeInformationMessage) (vi VolumeInfo, err er
 		Id:                needle.VolumeId(m.Id),
 		Size:              m.Size,
 		Collection:        internVolumeString(m.Collection),
-		FileCount:         int(m.FileCount),
-		DeleteCount:       int(m.DeleteCount),
+		FileCount:         countAsUint32(m.FileCount),
+		DeleteCount:       countAsUint32(m.DeleteCount),
 		DeletedByteCount:  m.DeletedByteCount,
 		ReadOnly:          m.ReadOnly,
 		Version:           needle.Version(m.Version),
