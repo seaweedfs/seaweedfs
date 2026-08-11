@@ -38,6 +38,12 @@ database engine.
      SeaweedFS catalog repairs the manifests at commit time and stamps a
      default name mapping on the table, so PyIceberg (`read_rows.py`, a strict
      reader) must return the rows ClickHouse wrote.
+   - `CreateTableViaCatalog`: ClickHouse creates a table through the catalog
+     (`CREATE TABLE ... ENGINE = IcebergS3(...)` with
+     `write_full_path_in_iceberg_metadata = 1`), the test verifies it is
+     registered in the REST catalog, inserts rows, reads them back, and has
+     PyIceberg read them too. ClickHouse only issues the catalog createTable
+     from 26.4, so the subtest skips on older servers.
 
 Queries go through ClickHouse's HTTP interface (port 8123, mapped to a
 dynamically allocated host port), so the test needs no ClickHouse client
@@ -52,8 +58,16 @@ cd test/s3tables/catalog_clickhouse
 go test -v -timeout 20m .
 ```
 
+The ClickHouse image defaults to `clickhouse/clickhouse-server:25.8` and can
+be overridden:
+
+```bash
+CLICKHOUSE_IMAGE=clickhouse/clickhouse-server:latest go test -v -timeout 20m .
+```
+
 The test requires Docker. The GitHub Actions job runs on `ubuntu-22.04` and
-executes the test for pull requests.
+executes the test for pull requests against both the pinned baseline image
+and `latest`, so new ClickHouse releases are covered as they ship.
 
 ## Configuration
 
