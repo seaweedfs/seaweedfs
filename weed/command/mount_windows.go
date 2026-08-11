@@ -23,10 +23,11 @@ import (
 // every other client would read the entry as owned by uid 4294967295.
 const ownedByMounter = ^uint32(0)
 
-// windowsAttrTimeoutSec bounds how long WinFsp may serve cached attributes.
-// Nothing invalidates that cache from this side, so it stays short rather than
-// borrowing an unrelated flag's value.
-const windowsAttrTimeoutSec = 1.0
+// windowsCacheTimeout bounds how long the adapter serves cached paths and
+// attributes and WinFsp serves cached directory listings, matching what the
+// kernel caches would be allowed on a unix mount. Metadata events purge
+// entries earlier; this is the backstop for anything an event misses.
+const windowsCacheTimeout = time.Second
 
 func RunMount(option *MountOptions, umask os.FileMode) bool {
 	chunkSizeLimitMB := *mountOptions.chunkSizeLimitMB
@@ -92,6 +93,10 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		chunkSizeLimitMB: chunkSizeLimitMB,
 		cacheDirForRead:  cacheDirForRead,
 		cacheDirForWrite: cacheDirForWrite,
+		// WinFsp posts the cleanup and close that carry the flush after
+		// CloseHandle has already returned, so entry creation cannot wait
+		// for the flush the way it does when close(2) runs it synchronously.
+		eagerFilerCreate: true,
 	})
 
 	if !createMountRoot(seaweedFileSystem, mountRoot, bucketRootPath, filerAddresses) {
@@ -102,7 +107,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		VolumeName:   strings.ReplaceAll(*option.filer, ",", "+"),
 		Uid:          ownedByMounter,
 		Gid:          ownedByMounter,
-		AttrTimeout:  windowsAttrTimeoutSec,
+		CacheTimeout: windowsCacheTimeout,
 		ReadOnly:     *option.readOnly,
 		Debug:        *option.debugFuse,
 		ExtraOptions: option.extraOptions,

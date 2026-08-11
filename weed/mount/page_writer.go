@@ -53,6 +53,10 @@ func (pw *PageWriter) FlushData() error {
 	return pw.randomWriter.FlushData()
 }
 
+func (pw *PageWriter) HasWrites() bool {
+	return pw.randomWriter.HasWrites()
+}
+
 func (pw *PageWriter) ReadDirtyDataAt(data []byte, offset int64, tsNs int64) (maxStop int64) {
 	glog.V(4).Infof("ReadDirtyDataAt %v [%d, %d)", pw.fh.inode, offset, offset+int64(len(data)))
 

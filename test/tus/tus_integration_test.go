@@ -685,6 +685,135 @@ func TestTusCreationWithUpload(t *testing.T) {
 	assert.Equal(t, testData, body)
 }
 
+// TestTusConcatenation tests the concatenation extension: partial uploads
+// assembled into a final upload
+func TestTusConcatenation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	cluster, err := startTestCluster(t, ctx)
+	require.NoError(t, err)
+	defer func() {
+		cluster.Stop()
+		os.RemoveAll(cluster.dataDir)
+	}()
+
+	client := &http.Client{}
+
+	// The extension is announced
+	optionsReq, err := http.NewRequest(http.MethodOptions, cluster.TusURL()+"/", nil)
+	require.NoError(t, err)
+	optionsReq.Header.Set("Tus-Resumable", TusVersion)
+	optionsResp, err := client.Do(optionsReq)
+	require.NoError(t, err)
+	optionsResp.Body.Close()
+	assert.Contains(t, optionsResp.Header.Get("Tus-Extension"), "concatenation")
+
+	partA := []byte("Hello, ")
+	partB := []byte("concatenated TUS world!")
+	targetPath := "/concat/final.txt"
+
+	createPartial := func(size int) string {
+		req, err := http.NewRequest(http.MethodPost, cluster.TusURL()+targetPath, nil)
+		require.NoError(t, err)
+		req.Header.Set("Tus-Resumable", TusVersion)
+		req.Header.Set("Upload-Length", strconv.Itoa(size))
+		req.Header.Set("Upload-Concat", "partial")
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		require.Equal(t, http.StatusCreated, resp.StatusCode)
+		location := resp.Header.Get("Location")
+		require.NotEmpty(t, location)
+		return location
+	}
+
+	patchAll := func(location string, data []byte) {
+		req, err := http.NewRequest(http.MethodPatch, cluster.FullURL(location), bytes.NewReader(data))
+		require.NoError(t, err)
+		req.Header.Set("Tus-Resumable", TusVersion)
+		req.Header.Set("Upload-Offset", "0")
+		req.Header.Set("Content-Type", "application/offset+octet-stream")
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		resp.Body.Close()
+		require.Equal(t, http.StatusNoContent, resp.StatusCode)
+	}
+
+	locationA := createPartial(len(partA))
+	locationB := createPartial(len(partB))
+	concatHeader := "final;" + locationA + " " + locationB
+
+	patchAll(locationA, partA)
+
+	// Concatenation is rejected while a listed partial is unfinished
+	prematureReq, err := http.NewRequest(http.MethodPost, cluster.TusURL()+targetPath, nil)
+	require.NoError(t, err)
+	prematureReq.Header.Set("Tus-Resumable", TusVersion)
+	prematureReq.Header.Set("Upload-Concat", concatHeader)
+	prematureResp, err := client.Do(prematureReq)
+	require.NoError(t, err)
+	prematureResp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, prematureResp.StatusCode)
+
+	patchAll(locationB, partB)
+
+	// A completed partial reports its status and does not land at the target
+	headReq, err := http.NewRequest(http.MethodHead, cluster.FullURL(locationA), nil)
+	require.NoError(t, err)
+	headReq.Header.Set("Tus-Resumable", TusVersion)
+	headResp, err := client.Do(headReq)
+	require.NoError(t, err)
+	headResp.Body.Close()
+	require.Equal(t, http.StatusOK, headResp.StatusCode)
+	assert.Equal(t, "partial", headResp.Header.Get("Upload-Concat"))
+
+	getResp, err := client.Get(cluster.FilerURL() + targetPath)
+	require.NoError(t, err)
+	getResp.Body.Close()
+	require.Equal(t, http.StatusNotFound, getResp.StatusCode,
+		"completed partials should not land at the target path")
+
+	// Concatenate into the final upload
+	finalReq, err := http.NewRequest(http.MethodPost, cluster.TusURL()+targetPath, nil)
+	require.NoError(t, err)
+	finalReq.Header.Set("Tus-Resumable", TusVersion)
+	finalReq.Header.Set("Upload-Concat", concatHeader)
+	finalReq.Header.Set("Upload-Metadata", encodeTusMetadata(map[string]string{
+		"content-type": "text/plain",
+	}))
+	finalResp, err := client.Do(finalReq)
+	require.NoError(t, err)
+	finalResp.Body.Close()
+	require.Equal(t, http.StatusCreated, finalResp.StatusCode)
+	assert.NotEmpty(t, finalResp.Header.Get("Location"))
+
+	// The target file holds both parts in order
+	expected := append(append([]byte{}, partA...), partB...)
+	getResp2, err := client.Get(cluster.FilerURL() + targetPath)
+	require.NoError(t, err)
+	defer getResp2.Body.Close()
+	require.Equal(t, http.StatusOK, getResp2.StatusCode)
+	body, err := io.ReadAll(getResp2.Body)
+	require.NoError(t, err)
+	assert.Equal(t, expected, body, "Concatenated file should hold both parts in order")
+	assert.Contains(t, getResp2.Header.Get("Content-Type"), "text/plain")
+
+	// The consumed partials are gone
+	headReq2, err := http.NewRequest(http.MethodHead, cluster.FullURL(locationA), nil)
+	require.NoError(t, err)
+	headReq2.Header.Set("Tus-Resumable", TusVersion)
+	headResp2, err := client.Do(headReq2)
+	require.NoError(t, err)
+	headResp2.Body.Close()
+	require.Equal(t, http.StatusNotFound, headResp2.StatusCode,
+		"consumed partial should be removed after concatenation")
+}
+
 // TestTusResumeAfterInterruption simulates resuming an upload after failure
 func TestTusResumeAfterInterruption(t *testing.T) {
 	if testing.Short() {

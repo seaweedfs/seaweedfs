@@ -12,11 +12,10 @@ import (
 const xattrBufferSize = 64 * 1024
 
 func (w *WinFS) Getxattr(path string, name string) (int, []byte) {
-	inode, ref, status := w.resolve(path)
+	inode, status := w.resolve(path)
 	if status != fuse.OK {
 		return toErrno(status), nil
 	}
-	defer ref.release()
 
 	dest := make([]byte, xattrBufferSize)
 	size, status := w.wfs.GetXAttr(never, ptr(w.caller(inode)), name, dest)
@@ -30,11 +29,10 @@ func (w *WinFS) Setxattr(path string, name string, value []byte, flags int) int 
 	if w.denied() {
 		return -eROFS
 	}
-	inode, ref, status := w.resolve(path)
+	inode, status := w.resolve(path)
 	if status != fuse.OK {
 		return toErrno(status)
 	}
-	defer ref.release()
 
 	// cgofuse and the raw filesystem number XATTR_CREATE and XATTR_REPLACE the
 	// same, so the flags pass straight through; TestXattrFlagValues pins that.
@@ -48,20 +46,18 @@ func (w *WinFS) Removexattr(path string, name string) int {
 	if w.denied() {
 		return -eROFS
 	}
-	inode, ref, status := w.resolve(path)
+	inode, status := w.resolve(path)
 	if status != fuse.OK {
 		return toErrno(status)
 	}
-	defer ref.release()
 	return toErrno(w.wfs.RemoveXAttr(never, ptr(w.caller(inode)), name))
 }
 
 func (w *WinFS) Listxattr(path string, fill func(name string) bool) int {
-	inode, ref, status := w.resolve(path)
+	inode, status := w.resolve(path)
 	if status != fuse.OK {
 		return toErrno(status)
 	}
-	defer ref.release()
 
 	dest := make([]byte, xattrBufferSize)
 	size, status := w.wfs.ListXAttr(never, ptr(w.caller(inode)), dest)

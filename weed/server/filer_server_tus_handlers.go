@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"path"
 	"strconv"
 	"strings"
@@ -112,7 +113,7 @@ func (fs *FilerServer) tusHandler(w http.ResponseWriter, r *http.Request) {
 			writeJsonError(w, r, http.StatusUnauthorized, errors.New("wrong jwt"))
 			return
 		}
-		fs.tusCreateHandler(w, r)
+		fs.tusCreateHandler(w, r, claims)
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
@@ -180,11 +181,21 @@ func (fs *FilerServer) tusOptionsHandler(w http.ResponseWriter, r *http.Request)
 }
 
 // tusCreateHandler handles POST requests to create new uploads
-func (fs *FilerServer) tusCreateHandler(w http.ResponseWriter, r *http.Request) {
+func (fs *FilerServer) tusCreateHandler(w http.ResponseWriter, r *http.Request, claims *security.SeaweedFilerClaims) {
 	// Use a context that ignores cancellation from the request context.
 	// Internal operations (creating TUS session, writing data, completing uploads)
 	// may exceed the filer's client connection inactivity timeout.
 	ctx := context.WithoutCancel(r.Context())
+
+	concat := r.Header.Get("Upload-Concat")
+	if strings.HasPrefix(concat, TusConcatFinalPrefix) {
+		fs.tusConcatFinalHandler(w, r, claims, concat)
+		return
+	}
+	if concat != "" && concat != TusConcatPartial {
+		http.Error(w, "Invalid Upload-Concat", http.StatusBadRequest)
+		return
+	}
 
 	// Parse Upload-Length header (required)
 	uploadLengthStr := r.Header.Get("Upload-Length")
@@ -205,9 +216,6 @@ func (fs *FilerServer) tusCreateHandler(w http.ResponseWriter, r *http.Request) 
 	// Parse Upload-Metadata header (optional)
 	metadata := parseTusMetadata(r.Header.Get("Upload-Metadata"))
 
-	// TusBasePath is pre-normalized in filer_server.go (leading slash, no trailing slash)
-	tusPrefix := fs.option.TusBasePath
-
 	// Determine target path from request URL (leading slash guaranteed)
 	targetPath := fs.tusTargetPath(r)
 	if targetPath == "" || targetPath == "/" {
@@ -226,18 +234,14 @@ func (fs *FilerServer) tusCreateHandler(w http.ResponseWriter, r *http.Request) 
 	uploadID := uuid.New().String()
 
 	// Create upload session
-	session, err := fs.createTusSession(ctx, uploadID, targetPath, uploadLength, metadata)
+	session, err := fs.createTusSession(ctx, uploadID, targetPath, uploadLength, metadata, concat)
 	if err != nil {
 		glog.Errorf("Failed to create TUS session: %v", err)
 		http.Error(w, "Failed to create upload", http.StatusInternalServerError)
 		return
 	}
 
-	// Build upload location URL (ensure it starts with single /)
-	uploadLocation := path.Clean(fmt.Sprintf("%s/.uploads/%s", tusPrefix, uploadID))
-	if !strings.HasPrefix(uploadLocation, "/") {
-		uploadLocation = "/" + uploadLocation
-	}
+	uploadLocation := fs.tusUploadLocation(uploadID)
 
 	// Handle creation-with-upload extension
 	// TUS requires Content-Length for uploads; reject chunked encoding
@@ -265,8 +269,9 @@ func (fs *FilerServer) tusCreateHandler(w http.ResponseWriter, r *http.Request) 
 			// Update offset in response header
 			w.Header().Set("Upload-Offset", strconv.FormatInt(bytesWritten, 10))
 
-			// Check if upload is complete
-			if bytesWritten == session.Size {
+			// Check if upload is complete; a partial upload keeps its chunks for
+			// a later concatenation instead of landing at the target path.
+			if bytesWritten == session.Size && !session.isPartial() {
 				// Ensure the pinned session still exists, then refresh its chunks.
 				if err = fs.refreshTusSessionChunks(ctx, session); err != nil {
 					glog.Errorf("Failed to get updated TUS session: %v", err)
@@ -287,8 +292,185 @@ func (fs *FilerServer) tusCreateHandler(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusCreated)
 }
 
+// tusUploadLocation builds the upload URL path for a session id (single leading /)
+func (fs *FilerServer) tusUploadLocation(uploadID string) string {
+	// TusBasePath is pre-normalized in filer_server.go (leading slash, no trailing slash)
+	uploadLocation := path.Clean(fmt.Sprintf("%s/.uploads/%s", fs.option.TusBasePath, uploadID))
+	if !strings.HasPrefix(uploadLocation, "/") {
+		uploadLocation = "/" + uploadLocation
+	}
+	return uploadLocation
+}
+
+// parseTusConcatFinal extracts the partial upload ids from an Upload-Concat
+// final header. Each reference may be an absolute URL or a path, must point at
+// this server's upload location, and may appear only once since concatenation
+// consumes the partial.
+func (fs *FilerServer) parseTusConcatFinal(concat string) ([]string, error) {
+	uploadsPrefix := fs.option.TusBasePath + "/.uploads/"
+	var partialIDs []string
+	seen := make(map[string]bool)
+	for _, ref := range strings.Fields(strings.TrimPrefix(concat, TusConcatFinalPrefix)) {
+		refURL, err := url.Parse(ref)
+		if err != nil {
+			return nil, fmt.Errorf("invalid partial upload reference %q", ref)
+		}
+		partialID := strings.TrimPrefix(refURL.Path, uploadsPrefix)
+		if partialID == refURL.Path || !isCanonicalTusUploadID(partialID) {
+			return nil, fmt.Errorf("invalid partial upload reference %q", ref)
+		}
+		if seen[partialID] {
+			return nil, fmt.Errorf("duplicate partial upload reference %q", ref)
+		}
+		seen[partialID] = true
+		partialIDs = append(partialIDs, partialID)
+	}
+	if len(partialIDs) == 0 {
+		return nil, errors.New("no partial uploads listed")
+	}
+	return partialIDs, nil
+}
+
+// tusConcatFinalHandler handles POST requests carrying Upload-Concat final. It
+// stitches the listed completed partial uploads, in order, into one entry at
+// the request's target path.
+func (fs *FilerServer) tusConcatFinalHandler(w http.ResponseWriter, r *http.Request, claims *security.SeaweedFilerClaims, concat string) {
+	ctx := context.WithoutCancel(r.Context())
+
+	// The final upload's length is the sum of the partial lengths.
+	if r.Header.Get("Upload-Length") != "" {
+		http.Error(w, "Upload-Length not allowed for a final upload", http.StatusBadRequest)
+		return
+	}
+	if r.ContentLength > 0 {
+		http.Error(w, "Cannot upload data to a final upload", http.StatusForbidden)
+		return
+	}
+
+	partialIDs, err := fs.parseTusConcatFinal(concat)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	targetPath := fs.tusTargetPath(r)
+	if targetPath == "" || targetPath == "/" {
+		http.Error(w, "Target path required", http.StatusBadRequest)
+		return
+	}
+	if fs.filer.FilerConf.MatchStorageRule(targetPath).ReadOnly {
+		http.Error(w, ErrReadOnly.Error(), http.StatusInsufficientStorage)
+		return
+	}
+
+	// Every partial must exist, be authorized for this credential, and be
+	// complete; concatenation-unfinished is not offered. Each one is claimed
+	// with an exclusive consumed marker before its chunks are read, so a
+	// concurrent final cannot consume the same partial and a concurrent DELETE
+	// or expiry cleanup cannot free chunks that move to the final entry.
+	var partials []*TusSession
+	var claimedIDs []string
+	var totalSize int64
+	releaseClaims := func() {
+		for _, claimedID := range claimedIDs {
+			fs.rollbackTusSessionConsumed(ctx, claimedID)
+		}
+	}
+	for _, partialID := range partialIDs {
+		partial, err := fs.readTusSessionInfo(ctx, partialID)
+		if err != nil {
+			glog.V(1).Infof("TUS partial %s not resolved: %v", partialID, err)
+			releaseClaims()
+			http.Error(w, "Partial upload not found", http.StatusNotFound)
+			return
+		}
+		if !authorizeFilerJwtPaths(r, claims, []string{partial.TargetPath}) {
+			releaseClaims()
+			writeJsonError(w, r, http.StatusUnauthorized, errors.New("wrong jwt"))
+			return
+		}
+		if !partial.isPartial() {
+			releaseClaims()
+			http.Error(w, "Not a partial upload: "+partialID, http.StatusBadRequest)
+			return
+		}
+		totalSize += partial.Size
+		if totalSize > fs.option.TusMaxSize {
+			releaseClaims()
+			http.Error(w, "Combined upload size exceeds maximum", http.StatusRequestEntityTooLarge)
+			return
+		}
+		if err := fs.claimTusPartial(ctx, partial); err != nil {
+			releaseClaims()
+			switch {
+			case errors.Is(err, filer_pb.ErrEntryAlreadyExists):
+				http.Error(w, "Partial upload already consumed: "+partialID, http.StatusConflict)
+			case errors.Is(err, filer_pb.ErrNotFound):
+				glog.V(1).Infof("TUS partial %s changed before concatenation: %v", partialID, err)
+				http.Error(w, "Partial upload not found", http.StatusNotFound)
+			default:
+				glog.Errorf("Failed to claim TUS partial %s: %v", partialID, err)
+				http.Error(w, "Failed to create upload", http.StatusInternalServerError)
+			}
+			return
+		}
+		claimedIDs = append(claimedIDs, partialID)
+		if partial.Offset != partial.Size {
+			releaseClaims()
+			http.Error(w, "Partial upload not finished: "+partialID, http.StatusBadRequest)
+			return
+		}
+		partials = append(partials, partial)
+	}
+
+	metadata := parseTusMetadata(r.Header.Get("Upload-Metadata"))
+	uploadID := uuid.New().String()
+	session, err := fs.createTusSession(ctx, uploadID, targetPath, totalSize, metadata, concat)
+	if err != nil {
+		glog.Errorf("Failed to create TUS session: %v", err)
+		releaseClaims()
+		http.Error(w, "Failed to create upload", http.StatusInternalServerError)
+		return
+	}
+
+	// Re-base each partial's chunks onto the final upload's offset space.
+	for _, partial := range partials {
+		for _, chunk := range partial.Chunks {
+			session.Chunks = append(session.Chunks, &TusChunkInfo{
+				Offset:   session.Offset + chunk.Offset,
+				Size:     chunk.Size,
+				FileId:   chunk.FileId,
+				UploadAt: chunk.UploadAt,
+			})
+		}
+		session.Offset += partial.Size
+	}
+
+	if err := fs.completeTusUpload(ctx, session); err != nil {
+		fs.deleteTusSession(ctx, uploadID)
+		releaseClaims()
+		glog.Errorf("Failed to complete TUS concatenation: %v", err)
+		writeTusCompleteError(w, err)
+		return
+	}
+
+	// The chunks now belong to the final entry, so remove only the partials'
+	// session metadata.
+	for _, partial := range partials {
+		if err := fs.filer.DeleteEntryMetaAndData(ctx, util.FullPath(fs.tusSessionPath(partial.ID)), true, false, false, false, nil, 0); err != nil {
+			glog.V(1).Infof("Failed to cleanup TUS partial session %s: %v", partial.ID, err)
+		}
+	}
+
+	w.Header().Set("Location", fs.tusUploadLocation(uploadID))
+	w.WriteHeader(http.StatusCreated)
+}
+
 // tusHeadHandler handles HEAD requests to get current upload offset
 func (fs *FilerServer) tusHeadHandler(w http.ResponseWriter, session *TusSession) {
+	if session.Concat != "" {
+		w.Header().Set("Upload-Concat", session.Concat)
+	}
 	w.Header().Set("Upload-Offset", strconv.FormatInt(session.Offset, 10))
 	w.Header().Set("Upload-Length", strconv.FormatInt(session.Size, 10))
 	w.Header().Set("Cache-Control", "no-store")
@@ -297,6 +479,11 @@ func (fs *FilerServer) tusHeadHandler(w http.ResponseWriter, session *TusSession
 
 // tusPatchHandler handles PATCH requests to upload data
 func (fs *FilerServer) tusPatchHandler(w http.ResponseWriter, r *http.Request, session *TusSession) {
+	if session.isFinal() {
+		http.Error(w, "Cannot PATCH a final upload", http.StatusForbidden)
+		return
+	}
+
 	// Use a context that ignores cancellation from the request context.
 	// The filer's connection has an inactivity timeout: after the request body is fully read,
 	// internal operations (assigning file IDs, uploading to volume servers, completing uploads)
@@ -348,8 +535,9 @@ func (fs *FilerServer) tusPatchHandler(w http.ResponseWriter, r *http.Request, s
 
 	newOffset := uploadOffset + bytesWritten
 
-	// Check if upload is complete
-	if newOffset == session.Size {
+	// Check if upload is complete; a partial upload keeps its chunks for a later
+	// concatenation instead of landing at the target path.
+	if newOffset == session.Size && !session.isPartial() {
 		// Ensure the authorized session still exists, then refresh its chunks.
 		if err = fs.refreshTusSessionChunks(ctx, session); err != nil {
 			glog.Errorf("Failed to get updated TUS session: %v", err)

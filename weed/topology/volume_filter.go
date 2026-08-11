@@ -11,6 +11,14 @@ import (
 type VolumeFilter struct {
 	Collection *string
 	VolumeId   *needle.VolumeId
+	// nothing selects the topology alone, for a listing whose volumes travel
+	// in messages of their own.
+	nothing bool
+}
+
+// NoVolumes selects the topology and no volume in it.
+func NoVolumes() VolumeFilter {
+	return VolumeFilter{nothing: true}
 }
 
 // NewVolumeFilter reads what a VolumeList request asked for, where empty and
@@ -35,10 +43,13 @@ func NewVolumeFilter(req *master_pb.VolumeListRequest) VolumeFilter {
 
 // SelectsEverything lets a caller size its result for the whole disk up front.
 func (f VolumeFilter) SelectsEverything() bool {
-	return f.Collection == nil && f.VolumeId == nil
+	return !f.nothing && f.Collection == nil && f.VolumeId == nil
 }
 
 func (f VolumeFilter) matches(collection string, id needle.VolumeId) bool {
+	if f.nothing {
+		return false
+	}
 	if f.Collection != nil && *f.Collection != collection {
 		return false
 	}

@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"context"
 	"os"
 	"syscall"
 	"time"
@@ -74,6 +75,18 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 	path, fh, entry, status := wfs.maybeReadEntry(input.NodeId)
 	if status != fuse.OK || entry == nil {
 		return status
+	}
+	if size, ok := input.GetSize(); ok && fh != nil && fh.dirtyPages.HasWrites() && size < filer.FileSize(entry) {
+		// The truncation below trims chunks; dirty pages it cannot see. Left
+		// alone, pages beyond the new size come back with the next flush and
+		// grow the file again, so turn them into chunks first. Runs before
+		// the entry locks below: the flush takes its own.
+		ctx, cancelFunc := context.WithTimeout(context.Background(), metadataFlushTimeout)
+		flushStatus := wfs.doFlush(ctx, fh, input.Uid, input.Gid, false)
+		cancelFunc()
+		if flushStatus != fuse.OK {
+			return flushStatus
+		}
 	}
 	if fh != nil {
 		fh.entryLock.Lock()

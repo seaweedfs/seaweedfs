@@ -46,6 +46,9 @@ func (s3a *S3ApiServer) latestPointerRecompute(bucket, object string, useInverte
 			s3_constants.ExtLatestVersionOwnerKey:        s3_constants.ExtAmzOwnerKey,
 			s3_constants.ExtLatestVersionIsDeleteMarker:  s3_constants.ExtDeleteMarkerKey,
 			s3_constants.ExtLatestVersionStorageClassKey: s3_constants.AmzStorageClass,
+			// Version files never carry the null-current signal, so this mapping
+			// deletes a stale one from the pointer whenever it recomputes.
+			s3_constants.ExtNullVersionIsLatestKey: s3_constants.ExtNullVersionIsLatestKey,
 		},
 		ExcludeName: excludeName,
 	}

@@ -1549,9 +1549,11 @@ func (*VolumeDeleteResponse) Descriptor() ([]byte, []int) {
 }
 
 type VolumeMarkReadonlyRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	VolumeId      uint32                 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
-	Persist       bool                   `protobuf:"varint,2,opt,name=persist,proto3" json:"persist,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	VolumeId uint32                 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	Persist  bool                   `protobuf:"varint,2,opt,name=persist,proto3" json:"persist,omitempty"`
+	// reject writes but keep accepting deletes, so expiring data can drain the volume
+	CanDelete     bool `protobuf:"varint,3,opt,name=can_delete,json=canDelete,proto3" json:"can_delete,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1596,6 +1598,13 @@ func (x *VolumeMarkReadonlyRequest) GetVolumeId() uint32 {
 func (x *VolumeMarkReadonlyRequest) GetPersist() bool {
 	if x != nil {
 		return x.Persist
+	}
+	return false
+}
+
+func (x *VolumeMarkReadonlyRequest) GetCanDelete() bool {
+	if x != nil {
+		return x.CanDelete
 	}
 	return false
 }
@@ -5012,17 +5021,18 @@ func (x *RemoteFile) GetExtension() string {
 }
 
 type VolumeInfo struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Files         []*RemoteFile          `protobuf:"bytes,1,rep,name=files,proto3" json:"files,omitempty"`
-	Version       uint32                 `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
-	Replication   string                 `protobuf:"bytes,3,opt,name=replication,proto3" json:"replication,omitempty"`
-	BytesOffset   uint32                 `protobuf:"varint,4,opt,name=bytes_offset,json=bytesOffset,proto3" json:"bytes_offset,omitempty"`
-	DatFileSize   int64                  `protobuf:"varint,5,opt,name=dat_file_size,json=datFileSize,proto3" json:"dat_file_size,omitempty"` // store the original dat file size
-	ExpireAtSec   uint64                 `protobuf:"varint,6,opt,name=expire_at_sec,json=expireAtSec,proto3" json:"expire_at_sec,omitempty"` // expiration time of ec volume
-	ReadOnly      bool                   `protobuf:"varint,7,opt,name=read_only,json=readOnly,proto3" json:"read_only,omitempty"`
-	EcShardConfig *EcShardConfig         `protobuf:"bytes,8,opt,name=ec_shard_config,json=ecShardConfig,proto3" json:"ec_shard_config,omitempty"` // EC shard configuration (optional, null = use default 10+4)
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Files             []*RemoteFile          `protobuf:"bytes,1,rep,name=files,proto3" json:"files,omitempty"`
+	Version           uint32                 `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
+	Replication       string                 `protobuf:"bytes,3,opt,name=replication,proto3" json:"replication,omitempty"`
+	BytesOffset       uint32                 `protobuf:"varint,4,opt,name=bytes_offset,json=bytesOffset,proto3" json:"bytes_offset,omitempty"`
+	DatFileSize       int64                  `protobuf:"varint,5,opt,name=dat_file_size,json=datFileSize,proto3" json:"dat_file_size,omitempty"` // store the original dat file size
+	ExpireAtSec       uint64                 `protobuf:"varint,6,opt,name=expire_at_sec,json=expireAtSec,proto3" json:"expire_at_sec,omitempty"` // expiration time of ec volume
+	ReadOnly          bool                   `protobuf:"varint,7,opt,name=read_only,json=readOnly,proto3" json:"read_only,omitempty"`
+	EcShardConfig     *EcShardConfig         `protobuf:"bytes,8,opt,name=ec_shard_config,json=ecShardConfig,proto3" json:"ec_shard_config,omitempty"`                // EC shard configuration (optional, null = use default 10+4)
+	ReadOnlyCanDelete bool                   `protobuf:"varint,9,opt,name=read_only_can_delete,json=readOnlyCanDelete,proto3" json:"read_only_can_delete,omitempty"` // with read_only: writes are rejected but deletes still land
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *VolumeInfo) Reset() {
@@ -5109,6 +5119,13 @@ func (x *VolumeInfo) GetEcShardConfig() *EcShardConfig {
 		return x.EcShardConfig
 	}
 	return nil
+}
+
+func (x *VolumeInfo) GetReadOnlyCanDelete() bool {
+	if x != nil {
+		return x.ReadOnlyCanDelete
+	}
+	return false
 }
 
 // EcShardConfig specifies erasure coding shard configuration
@@ -7258,10 +7275,12 @@ const file_volume_server_proto_rawDesc = "" +
 	"\n" +
 	"only_empty\x18\x02 \x01(\bR\tonlyEmpty\x12(\n" +
 	"\x10keep_remote_data\x18\x03 \x01(\bR\x0ekeepRemoteData\"\x16\n" +
-	"\x14VolumeDeleteResponse\"R\n" +
+	"\x14VolumeDeleteResponse\"q\n" +
 	"\x19VolumeMarkReadonlyRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x18\n" +
-	"\apersist\x18\x02 \x01(\bR\apersist\"\x1c\n" +
+	"\apersist\x18\x02 \x01(\bR\apersist\x12\x1d\n" +
+	"\n" +
+	"can_delete\x18\x03 \x01(\bR\tcanDelete\"\x1c\n" +
 	"\x1aVolumeMarkReadonlyResponse\"8\n" +
 	"\x19VolumeMarkWritableRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\"\x1c\n" +
@@ -7540,7 +7559,7 @@ const file_volume_server_proto_rawDesc = "" +
 	"\x06offset\x18\x04 \x01(\x04R\x06offset\x12\x1b\n" +
 	"\tfile_size\x18\x05 \x01(\x04R\bfileSize\x12#\n" +
 	"\rmodified_time\x18\x06 \x01(\x04R\fmodifiedTime\x12\x1c\n" +
-	"\textension\x18\a \x01(\tR\textension\"\xcd\x02\n" +
+	"\textension\x18\a \x01(\tR\textension\"\xfe\x02\n" +
 	"\n" +
 	"VolumeInfo\x122\n" +
 	"\x05files\x18\x01 \x03(\v2\x1c.volume_server_pb.RemoteFileR\x05files\x12\x18\n" +
@@ -7550,7 +7569,8 @@ const file_volume_server_proto_rawDesc = "" +
 	"\rdat_file_size\x18\x05 \x01(\x03R\vdatFileSize\x12\"\n" +
 	"\rexpire_at_sec\x18\x06 \x01(\x04R\vexpireAtSec\x12\x1b\n" +
 	"\tread_only\x18\a \x01(\bR\breadOnly\x12G\n" +
-	"\x0fec_shard_config\x18\b \x01(\v2\x1f.volume_server_pb.EcShardConfigR\recShardConfig\"w\n" +
+	"\x0fec_shard_config\x18\b \x01(\v2\x1f.volume_server_pb.EcShardConfigR\recShardConfig\x12/\n" +
+	"\x14read_only_can_delete\x18\t \x01(\bR\x11readOnlyCanDelete\"w\n" +
 	"\rEcShardConfig\x12\x1f\n" +
 	"\vdata_shards\x18\x01 \x01(\rR\n" +
 	"dataShards\x12#\n" +

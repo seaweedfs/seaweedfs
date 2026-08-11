@@ -210,6 +210,14 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("doFlush", fh.fh, util.ExclusiveLock)
 	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 
+	// Re-check under the lock: Unlink sets the flag under it, so a flush that
+	// was already past the earlier check cannot write the entry back after
+	// the delete removed it.
+	if fh.isDeleted {
+		glog.V(3).Infof("flushMetadataToFiler %s fh %d: file was unlinked, skipping", fileFullPath, fh.fh)
+		return nil
+	}
+
 	entry := fh.GetEntry()
 	entry.Name = name // this flush may be just after a rename operation
 

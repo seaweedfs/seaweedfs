@@ -145,7 +145,7 @@ templ ClusterFilers(data dash.ClusterFilersData) {
 	
 	function openFilerBrowser(address) {
 		// Open file browser for specific filer
-		window.open('/files?filer=' + encodeURIComponent(address), '_blank');
+		window.open((window.__BASE_PATH__ || '') + '/files?filer=' + encodeURIComponent(address), '_blank');
 	}
 	
 	function exportFilers() {

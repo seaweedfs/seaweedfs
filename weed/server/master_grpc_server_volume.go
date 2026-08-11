@@ -287,6 +287,29 @@ func (ms *MasterServer) VolumeList(ctx context.Context, req *master_pb.VolumeLis
 	return resp, nil
 }
 
+// VolumeListStream answers VolumeList without building the whole reply first.
+// The topology goes out on its own, then the volumes in batches, so the master
+// holds one batch rather than every volume in the cluster.
+func (ms *MasterServer) VolumeListStream(req *master_pb.VolumeListRequest, stream master_pb.Seaweed_VolumeListStreamServer) error {
+
+	if !ms.Topo.IsLeader() {
+		return raft.NotLeaderError
+	}
+
+	listed := ms.Topo.ToTopologyInfo(topology.NoVolumes())
+	err := stream.Send(&master_pb.VolumeListStreamResponse{
+		Header: &master_pb.VolumeListResponse{
+			TopologyInfo:      listed,
+			VolumeSizeLimitMb: uint64(ms.option.VolumeSizeLimitMB),
+		},
+	})
+	if err != nil {
+		return err
+	}
+
+	return ms.Topo.StreamVolumes(listed, topology.NewVolumeFilter(req), 0, stream.Send)
+}
+
 func (ms *MasterServer) LookupEcVolume(ctx context.Context, req *master_pb.LookupEcVolumeRequest) (*master_pb.LookupEcVolumeResponse, error) {
 
 	if !ms.Topo.IsLeader() {

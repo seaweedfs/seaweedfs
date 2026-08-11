@@ -708,7 +708,7 @@ func (vc *versionCollector) processRegularFile(currentPath, entryPath string, en
 
 	// Check if a .versions directory exists for this object
 	versionsEntryName := entry.Name + s3_constants.VersionsFolder
-	_, versionsErr := vc.s3a.getEntry(currentPath, versionsEntryName)
+	versionsDirEntry, versionsErr := vc.s3a.getEntry(currentPath, versionsEntryName)
 	if versionsErr == nil && !hasVersionMeta {
 		// .versions exists but file has no version metadata - check for null version in .versions
 		versions, err := vc.s3a.getObjectVersionList(vc.bucket, normalizedObjectKey)
@@ -731,10 +731,26 @@ func (vc *versionCollector) processRegularFile(currentPath, entryPath string, en
 	}
 	vc.seenVersionIds[versionKey] = true
 
+	// A latest-version pointer on the .versions sibling names the current version
+	// and outranks a stale null-current signal a recompute may not have cleared
+	// yet. With no pointer, the explicit signal decides; with neither, the
+	// sibling may still hold replicated versions the lagging pointer has not
+	// caught up with, and the nullObjectWins rule decides.
+	isLatest := true
+	if versionsErr == nil {
+		if len(versionsDirEntry.Extended[s3_constants.ExtLatestVersionIdKey]) > 0 {
+			isLatest = false
+		} else if !nullVersionIsLatest(versionsDirEntry) {
+			if latestVersion, _, _, _, scanErr := vc.s3a.scanLatestVersionEntry(currentPath + "/" + versionsEntryName); scanErr == nil && latestVersion != nil && !nullObjectWins(entry, latestVersion) {
+				isLatest = false
+			}
+		}
+	}
+
 	versionEntry := &VersionEntry{
 		Key:          normalizedObjectKey,
 		VersionId:    "null",
-		IsLatest:     true,
+		IsLatest:     isLatest,
 		LastModified: time.Unix(entry.Attributes.Mtime, 0),
 		ETag:         vc.s3a.calculateETagFromChunks(entry.Chunks),
 		Size:         int64(entry.Attributes.FileSize),
@@ -2029,7 +2045,7 @@ func (s3a *S3ApiServer) getLatestVersionEntryFromDirectoryEntry(bucket, object s
 	// here). Indexing a nil Extended map is safe and yields !ok.
 	latestVersionIdBytes, hasLatestVersionId := versionsDirEntry.Extended[s3_constants.ExtLatestVersionIdKey]
 	if !hasLatestVersionId {
-		return s3a.recoverLatestListEntryByScan(bucket, normalizedObject)
+		return s3a.recoverLatestListEntryByScan(bucket, normalizedObject, nullVersionIsLatest(versionsDirEntry))
 	}
 
 	// Check if this is a delete marker (should not be shown in regular list)
@@ -2095,7 +2111,7 @@ func (s3a *S3ApiServer) getLatestVersionEntryFromDirectoryEntry(bucket, object s
 	// Fallback: fetch version file if cached metadata not available (for older versions)
 	latestVersionFileBytes, hasLatestVersionFile := versionsDirEntry.Extended[s3_constants.ExtLatestVersionFileNameKey]
 	if !hasLatestVersionFile {
-		return s3a.recoverLatestListEntryByScan(bucket, normalizedObject)
+		return s3a.recoverLatestListEntryByScan(bucket, normalizedObject, nullVersionIsLatest(versionsDirEntry))
 	}
 	latestVersionFile := string(latestVersionFileBytes)
 
@@ -2128,6 +2144,26 @@ func (s3a *S3ApiServer) getLatestVersionEntryFromDirectoryEntry(bucket, object s
 	return logicalEntry, nil
 }
 
+// nullObjectWins decides, with no latest-version pointer and no null-is-latest
+// signal to consult, whether the base-path null object or the newest scanned
+// version is the current version: the newer mtime wins, and a tie goes to the
+// version, since second-resolution mtimes cannot order same-second writes and
+// an intentional null carries the ExtNullVersionIsLatestKey signal. The
+// NoncurrentSinceNs demotion stamp is deliberately not consulted: promotions
+// do not clear it, so it does not prove the null displaced the version.
+func nullObjectWins(regular, latest *filer_pb.Entry) bool {
+	if latest == nil {
+		return true
+	}
+	return regular.GetAttributes().GetMtime() > latest.GetAttributes().GetMtime()
+}
+
+// nullVersionIsLatest reports the explicit signal a suspended-versioning write
+// leaves on the .versions directory when the null object is current.
+func nullVersionIsLatest(versionsDirEntry *filer_pb.Entry) bool {
+	return versionsDirEntry != nil && string(versionsDirEntry.Extended[s3_constants.ExtNullVersionIsLatestKey]) == "true"
+}
+
 // recoverLatestListEntryByScan rebuilds an object's current-version list entry by
 // rescanning .versions/ when the cached latest-version pointer is missing on the
 // filer serving the list. This is the listing-path counterpart to the read path's
@@ -2139,20 +2175,27 @@ func (s3a *S3ApiServer) getLatestVersionEntryFromDirectoryEntry(bucket, object s
 // a write per diverged object); convergence is handled on the write/replication
 // side. Returns ErrDeleteMarker when the current version is a delete marker
 // (excluded from a regular listing) and filer_pb.ErrNotFound when nothing remains.
-func (s3a *S3ApiServer) recoverLatestListEntryByScan(bucket, normalizedObject string) (*filer_pb.Entry, error) {
+func (s3a *S3ApiServer) recoverLatestListEntryByScan(bucket, normalizedObject string, nullIsLatest bool) (*filer_pb.Entry, error) {
 	bucketDir := s3a.bucketDir(bucket)
 	versionsDir := bucketDir + "/" + normalizedObject + s3_constants.VersionsFolder
+
+	// An absent pointer can mean a suspended-versioning write made the null
+	// object current (the write clears the pointer and leaves the explicit
+	// nullIsLatest signal), or that the pointer has not replicated to this
+	// filer while the version files have.
+	regularEntry, regularErr := s3a.getEntry(bucketDir, normalizedObject)
+	if regularErr == nil && nullIsLatest {
+		return regularEntry, nil
+	}
 
 	latestEntry, latestVersionId, _, isDeleteMarker, err := s3a.scanLatestVersionEntry(versionsDir)
 	if err != nil {
 		return nil, err
 	}
+	if regularErr == nil && nullObjectWins(regularEntry, latestEntry) {
+		return regularEntry, nil
+	}
 	if latestEntry == nil {
-		// No version files remain. A pre-versioning / suspended "null" object at the
-		// base path is the current version if one exists.
-		if regularEntry, regularErr := s3a.getEntry(bucketDir, normalizedObject); regularErr == nil {
-			return regularEntry, nil
-		}
 		return nil, fmt.Errorf("%w: no current version for %s/%s", filer_pb.ErrNotFound, bucket, normalizedObject)
 	}
 	if isDeleteMarker {

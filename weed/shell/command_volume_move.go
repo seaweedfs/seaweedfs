@@ -45,6 +45,7 @@ func (c *commandVolumeMove) Help() string {
 	4. This command asks the source volume server to delete the source volume.
 
 	The option "-disk [hdd|ssd|<tag>]" can be used to change the volume disk type.
+	The option "-timeout" fails the whole move if it does not finish in time.
 
 `
 }
@@ -61,6 +62,7 @@ func (c *commandVolumeMove) Do(args []string, commandEnv *CommandEnv, writer io.
 	targetNodeStr := volMoveCommand.String("target", "", "the target volume server <host>:<port>")
 	diskTypeStr := volMoveCommand.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
 	ioBytePerSecond := volMoveCommand.Int64("ioBytePerSecond", 0, "limit the speed of move")
+	timeout := volMoveCommand.Duration("timeout", 0, "wall-clock cap on the whole move; 0 = no timeout")
 	noLock := volMoveCommand.Bool("noLock", false, "do not lock the admin shell at one's own risk")
 
 	if err = volMoveCommand.Parse(args); err != nil {
@@ -83,17 +85,50 @@ func (c *commandVolumeMove) Do(args []string, commandEnv *CommandEnv, writer io.
 		return fmt.Errorf("source and target volume servers are the same!")
 	}
 
-	return LiveMoveVolume(context.Background(), commandEnv.option.GrpcDialOption, writer, volumeId, sourceVolumeServer, targetVolumeServer, 5*time.Second, *diskTypeStr, *ioBytePerSecond, false)
+	ctx := context.Background()
+	if *timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, *timeout)
+		defer cancel()
+	}
+
+	return LiveMoveVolume(ctx, commandEnv.option.GrpcDialOption, writer, volumeId, sourceVolumeServer, targetVolumeServer, 5*time.Second, *diskTypeStr, *ioBytePerSecond, false)
 }
 
 // LiveMoveVolume moves one volume from one source volume server to one target volume server, with idleTimeout to drain the incoming requests.
 func LiveMoveVolume(ctx context.Context, grpcDialOption grpc.DialOption, writer io.Writer, volumeId needle.VolumeId, sourceVolumeServer, targetVolumeServer pb.ServerAddress, idleTimeout time.Duration, diskType string, ioBytePerSecond int64, skipTailError bool) (err error) {
 
 	log.Printf("copying volume %d from %s to %s", volumeId, sourceVolumeServer, targetVolumeServer)
-	lastAppendAtNs, err := copyVolume(ctx, grpcDialOption, writer, volumeId, sourceVolumeServer, targetVolumeServer, diskType, ioBytePerSecond, false)
+	lastAppendAtNs, leftReadonly, err := copyVolume(ctx, grpcDialOption, writer, volumeId, sourceVolumeServer, targetVolumeServer, diskType, ioBytePerSecond, false)
 	if err != nil {
 		return fmt.Errorf("copy volume %d from %s to %s: %v", volumeId, sourceVolumeServer, targetVolumeServer, err)
 	}
+
+	// A move aborted after the copy must restore the source writability, or
+	// the source volume is left permanently readonly.
+	var sourceDeleteStarted bool
+	defer func() {
+		if err == nil || !leftReadonly {
+			return
+		}
+		if !sourceDeleteStarted {
+			// The target copy may be missing tailed entries; remove it so the
+			// restored source stays the only replica.
+			deleteCtx, deleteCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			defer deleteCancel()
+			if dErr := deleteVolume(deleteCtx, grpcDialOption, volumeId, targetVolumeServer, false, true); dErr != nil {
+				// Restoring the source while the stale target stays mounted
+				// risks divergent replicas; re-running the move recovers both.
+				log.Printf("volume %d is left readonly on %s: failed to delete the incomplete copy on %s: %v; re-run volume.move to recover", volumeId, sourceVolumeServer, targetVolumeServer, dErr)
+				return
+			}
+		}
+		restoreCtx, restoreCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer restoreCancel()
+		if wErr := markVolumeWritable(restoreCtx, grpcDialOption, volumeId, sourceVolumeServer, true, false); wErr != nil {
+			log.Printf("failed to restore volume %d writable on %s: %v", volumeId, sourceVolumeServer, wErr)
+		}
+	}()
 
 	log.Printf("tailing volume %d from %s to %s", volumeId, sourceVolumeServer, targetVolumeServer)
 	if err = tailVolume(ctx, grpcDialOption, volumeId, sourceVolumeServer, targetVolumeServer, lastAppendAtNs, idleTimeout); err != nil {
@@ -105,6 +140,7 @@ func LiveMoveVolume(ctx context.Context, grpcDialOption grpc.DialOption, writer 
 	}
 
 	log.Printf("deleting volume %d from %s", volumeId, sourceVolumeServer)
+	sourceDeleteStarted = true
 	if err = deleteVolume(ctx, grpcDialOption, volumeId, sourceVolumeServer, false, true); err != nil {
 		return fmt.Errorf("delete volume %d from %s: %v", volumeId, sourceVolumeServer, err)
 	}
@@ -113,7 +149,7 @@ func LiveMoveVolume(ctx context.Context, grpcDialOption grpc.DialOption, writer 
 	return nil
 }
 
-func copyVolume(ctx context.Context, grpcDialOption grpc.DialOption, writer io.Writer, volumeId needle.VolumeId, sourceVolumeServer, targetVolumeServer pb.ServerAddress, diskType string, ioBytePerSecond int64, restoreWritable bool) (lastAppendAtNs uint64, err error) {
+func copyVolume(ctx context.Context, grpcDialOption grpc.DialOption, writer io.Writer, volumeId needle.VolumeId, sourceVolumeServer, targetVolumeServer pb.ServerAddress, diskType string, ioBytePerSecond int64, restoreWritable bool) (lastAppendAtNs uint64, leftReadonly bool, err error) {
 
 	// check to see if the volume is already read-only and if its not then we need
 	// to mark it as read-only and then before we return we need to undo what we
@@ -124,6 +160,7 @@ func copyVolume(ctx context.Context, grpcDialOption grpc.DialOption, writer io.W
 			return
 		}
 		if !restoreWritable && err == nil {
+			leftReadonly = true
 			return
 		}
 
@@ -222,6 +259,11 @@ func deleteVolume(ctx context.Context, grpcDialOption grpc.DialOption, volumeId 
 }
 
 func markVolumeWritable(ctx context.Context, grpcDialOption grpc.DialOption, volumeId needle.VolumeId, sourceVolumeServer pb.ServerAddress, writable, persist bool) (err error) {
+	return markVolumeState(ctx, grpcDialOption, volumeId, sourceVolumeServer, writable, false, persist)
+}
+
+// canDelete: readonly that still accepts deletes, so expiring data drains the volume.
+func markVolumeState(ctx context.Context, grpcDialOption grpc.DialOption, volumeId needle.VolumeId, sourceVolumeServer pb.ServerAddress, writable, canDelete, persist bool) (err error) {
 	return operation.WithVolumeServerClient(false, sourceVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		if writable {
 			_, err = volumeServerClient.VolumeMarkWritable(ctx, &volume_server_pb.VolumeMarkWritableRequest{
@@ -229,8 +271,9 @@ func markVolumeWritable(ctx context.Context, grpcDialOption grpc.DialOption, vol
 			})
 		} else {
 			_, err = volumeServerClient.VolumeMarkReadonly(ctx, &volume_server_pb.VolumeMarkReadonlyRequest{
-				VolumeId: uint32(volumeId),
-				Persist:  persist,
+				VolumeId:  uint32(volumeId),
+				Persist:   persist,
+				CanDelete: canDelete,
 			})
 		}
 		return err

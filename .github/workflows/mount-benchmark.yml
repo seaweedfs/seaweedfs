@@ -1,0 +1,203 @@
+name: "mount: benchmark"
+
+# Manual benchmark: native WinFsp mount vs rclone+WebDAV on the same Windows
+# runner, with a Linux FUSE mount of the same build as a reference. Numbers
+# from shared runners are noisy; this is for finding factor-of-N gaps, not
+# regressions of a few percent.
+on:
+  workflow_dispatch:
+  push:
+    branches: [ 'winfsp-bench**' ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  bench-windows:
+    name: Windows native vs rclone
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      CGO_ENABLED: 0
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
+
+    - uses: actions/setup-go@v7
+      with:
+        go-version-file: 'go.mod'
+
+    - name: Install WinFsp and rclone
+      run: choco install winfsp rclone -y --no-progress
+
+    - name: Build weed.exe
+      run: go build -o weed.exe ./weed
+
+    - name: Benchmark both mounts
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+
+        function Test-Port($port) {
+          $client = New-Object System.Net.Sockets.TcpClient
+          try { $client.Connect('127.0.0.1', $port); return $client.Connected }
+          catch { return $false }
+          finally { $client.Dispose() }
+        }
+
+        function Wait-Drive($drive, $what) {
+          $deadline = (Get-Date).AddMinutes(2)
+          while ((Get-Date) -lt $deadline) {
+            if (Test-Path "${drive}\") { Write-Host "$what is mounted on $drive"; return }
+            Start-Sleep -Seconds 2
+          }
+          throw "$what never appeared on $drive"
+        }
+
+        function Invoke-Bench($dir, $label, $out) {
+          Write-Host "::group::bench $label"
+          & go run ./test/mount_bench -dir $dir -label $label -filer 127.0.0.1:8888 -out $out
+          $code = $LASTEXITCODE
+          Write-Host "::endgroup::"
+          if ($code -ne 0) { throw "bench $label failed with exit $code" }
+        }
+
+        New-Item -ItemType Directory -Force -Path C:\seaweed-data | Out-Null
+        Start-Process -FilePath .\weed.exe `
+          -ArgumentList '-logtostderr','mini','-dir=C:\seaweed-data','-ip=127.0.0.1' `
+          -RedirectStandardOutput C:\seaweed-mini.log -RedirectStandardError C:\seaweed-mini.err.log
+
+        $deadline = (Get-Date).AddMinutes(3)
+        while ((Get-Date) -lt $deadline) {
+          if ((Test-Port 8888) -and (Test-Port 18888) -and (Test-Port 7333)) { break }
+          Start-Sleep -Seconds 3
+        }
+        if (-not ((Test-Port 8888) -and (Test-Port 18888) -and (Test-Port 7333))) {
+          Get-Content C:\seaweed-mini.log, C:\seaweed-mini.err.log -ErrorAction SilentlyContinue
+          throw "mini cluster never came up"
+        }
+        Write-Host "filer on 8888/18888, webdav on 7333"
+
+        # --- native WinFsp mount ---
+        Start-Process -FilePath .\weed.exe `
+          -ArgumentList '-logtostderr','mount','-filer=127.0.0.1:8888','-dir=S:' `
+          -RedirectStandardOutput C:\seaweed-mount.log -RedirectStandardError C:\seaweed-mount.err.log
+        Wait-Drive 'S:' 'weed mount'
+
+        Invoke-Bench 'S:\bench-native' 'winfsp-native' 'C:\results-native.json'
+
+        Get-CimInstance Win32_Process -Filter "Name = 'weed.exe'" |
+          Where-Object { $_.CommandLine -like '*mount*' } |
+          ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+        $deadline = (Get-Date).AddMinutes(1)
+        while ((Get-Date) -lt $deadline -and (Test-Path S:\)) { Start-Sleep -Seconds 2 }
+
+        # --- rclone + WebDAV on the same WinFsp ---
+        # rclone serves listings from a directory cache it fills lazily, so the
+        # big-listing files have to exist before it mounts or it never sees them.
+        & go run ./test/mount_bench -filer 127.0.0.1:8888 -seed bench-rclone/biglist
+        if ($LASTEXITCODE -ne 0) { throw "seeding failed" }
+
+        $env:RCLONE_CONFIG_SEAWEED_TYPE = 'webdav'
+        $env:RCLONE_CONFIG_SEAWEED_URL = 'http://127.0.0.1:7333'
+        $env:RCLONE_CONFIG_SEAWEED_VENDOR = 'other'
+        Start-Process -FilePath rclone `
+          -ArgumentList 'mount','seaweed:','T:','--vfs-cache-mode=writes','-v','--log-file=C:\rclone.log'
+        Wait-Drive 'T:' 'rclone mount'
+
+        Invoke-Bench 'T:\bench-rclone' 'rclone-webdav' 'C:\results-rclone.json'
+
+        Stop-Process -Name rclone -Force -ErrorAction SilentlyContinue
+
+        # --- comparison ---
+        $table = & go run ./test/mount_bench -compare C:\results-native.json,C:\results-rclone.json
+        $table | Write-Host
+        "## Windows: native WinFsp vs rclone+WebDAV" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+        $table | Out-File -Append $env:GITHUB_STEP_SUMMARY
+
+    - name: Logs
+      if: always()
+      shell: pwsh
+      run: |
+        foreach ($f in 'C:\seaweed-mount.log','C:\seaweed-mount.err.log','C:\rclone.log','C:\seaweed-mini.log','C:\seaweed-mini.err.log') {
+          if (Test-Path $f) { Write-Host "===== $f"; Get-Content $f -Tail 100 }
+        }
+
+    - name: Results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: results-windows
+        path: C:\results-*.json
+        if-no-files-found: ignore
+
+  bench-linux:
+    name: Linux FUSE reference
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
+
+    - uses: actions/setup-go@v7
+      with:
+        go-version-file: 'go.mod'
+
+    - name: Repair the fusermount3 setuid bit
+      uses: ./.github/actions/fix-fusermount-setuid
+
+    - name: Allow non-root FUSE mounts with allow_other
+      run: |
+        echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
+        sudo chmod 644 /etc/fuse.conf
+
+    - name: Build weed
+      run: go build -o /tmp/weed ./weed
+
+    - name: Benchmark FUSE mount
+      run: |
+        set -e
+        mkdir -p /tmp/seaweed-data
+        /tmp/weed -logtostderr mini -dir=/tmp/seaweed-data -ip=127.0.0.1 > /tmp/mini.log 2>&1 &
+
+        for i in $(seq 1 60); do
+          if nc -z 127.0.0.1 8888 && nc -z 127.0.0.1 18888; then break; fi
+          sleep 3
+        done
+        nc -z 127.0.0.1 8888 || { cat /tmp/mini.log; echo "filer never came up"; exit 1; }
+
+        mkdir -p "$HOME/mnt"
+        /tmp/weed -logtostderr mount -filer=127.0.0.1:8888 -dir="$HOME/mnt" > /tmp/mount.log 2>&1 &
+        for i in $(seq 1 60); do
+          if mountpoint -q "$HOME/mnt"; then break; fi
+          sleep 2
+        done
+        mountpoint -q "$HOME/mnt" || { cat /tmp/mount.log; echo "mount never appeared"; exit 1; }
+
+        go run ./test/mount_bench -dir "$HOME/mnt/bench-linux" -label linux-fuse -filer 127.0.0.1:8888 -out /tmp/results-linux.json
+
+        {
+          echo "## Linux FUSE reference"
+          go run ./test/mount_bench -compare /tmp/results-linux.json
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Logs
+      if: always()
+      run: |
+        tail -n 100 /tmp/mount.log /tmp/mini.log 2>/dev/null || true
+
+    - name: Results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: results-linux
+        path: /tmp/results-linux.json
+        if-no-files-found: ignore

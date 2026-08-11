@@ -101,6 +101,34 @@ func TestLivePrefixIsStillACommonPrefix(t *testing.T) {
 	assert.Equal(t, []string{"20260102"}, seen, "only the date prefix with a current version is listed")
 }
 
+// TestDeletedPrefixWithNullObjectIsNotACommonPrefix covers a key written before
+// versioning was enabled: the delete marker leaves its null object at the base
+// path, and that file must not keep the prefix alive.
+func TestDeletedPrefixWithNullObjectIsNotACommonPrefix(t *testing.T) {
+	nullObject := &filer_pb.Entry{Name: "manifest", Attributes: &filer_pb.FuseAttributes{Mtime: time.Now().Unix(), FileSize: 6}}
+	client := &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/test":        {newDir("backup")},
+			"/buckets/test/backup": {nullObject, deleteMarkedVersionsDir("manifest")},
+		},
+	}
+
+	seen := listedNames(t, client, listDirectoryRequest{dir: "/buckets/test", delimiter: "/", bucket: "test"}, &ListingCursor{maxKeys: 1000, hideDeletedPrefixes: true})
+	assert.Empty(t, seen, "the null object is shadowed by the delete marker, so nothing under the prefix is a key")
+
+	// A second, unshadowed null object keeps the prefix live.
+	liveNull := &filer_pb.Entry{Name: "kept", Attributes: &filer_pb.FuseAttributes{Mtime: time.Now().Unix(), FileSize: 6}}
+	client = &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/test":        {newDir("backup")},
+			"/buckets/test/backup": {liveNull, nullObject, deleteMarkedVersionsDir("manifest")},
+		},
+	}
+
+	seen = listedNames(t, client, listDirectoryRequest{dir: "/buckets/test", delimiter: "/", bucket: "test"}, &ListingCursor{maxKeys: 1000, hideDeletedPrefixes: true})
+	assert.Equal(t, []string{"backup"}, seen)
+}
+
 // TestDeletedPrefixGetsNoDirectoryMarker checks the trailing-slash probe. The empty
 // directory marker exists for directories created out of band; a directory that only
 // holds version history names nothing, so the probe answers empty like AWS does.

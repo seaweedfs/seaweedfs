@@ -45,6 +45,7 @@ func TestAttrChunkRace(t *testing.T) {
 		entry:           &LockedEntry{Entry: entry},
 		entryChunkGroup: chunkGroup,
 	}
+	fh.dirtyPages = newPageWriter(fh, 1<<20)
 	wfs.fhMap.inode2fh[inode] = fh
 	wfs.fhMap.fh2inode[fh.fh] = inode
 
@@ -124,6 +125,7 @@ func TestReadFromChunksRace(t *testing.T) {
 		entry:           &LockedEntry{Entry: entry},
 		entryChunkGroup: chunkGroup,
 	}
+	fh.dirtyPages = newPageWriter(fh, 1<<20)
 	wfs.fhMap.inode2fh[inode] = fh
 	wfs.fhMap.fh2inode[fh.fh] = inode
 

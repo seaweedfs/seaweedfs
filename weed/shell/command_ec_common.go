@@ -173,7 +173,7 @@ func collectTopologyInfo(commandEnv *CommandEnv, delayBeforeCollecting time.Dura
 
 	var resp *master_pb.VolumeListResponse
 	err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
-		resp, err = client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		resp, err = pb.CollectVolumeList(context.Background(), client, &master_pb.VolumeListRequest{})
 		return err
 	})
 	if err != nil {
