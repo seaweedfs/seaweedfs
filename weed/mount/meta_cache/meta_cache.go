@@ -980,6 +980,7 @@ func (mc *MetaCache) applyMetadataResponseLocked(ctx context.Context, resp *file
 		isDelete := message.NewEntry == nil
 		isMove := message.NewEntry != nil && (message.NewParentPath != resp.Directory || message.NewEntry.Name != message.OldEntry.Name)
 		if isDelete || isMove {
+			delete(mc.dirVersionFloors, oldPath)
 			delete(mc.dirSections, oldPath)
 			if deleteErr := mc.localStore.DeleteFolderChildren(ctx, oldPath); deleteErr != nil {
 				glog.V(2).Infof("delete descendants of %s: %v", oldPath, deleteErr)
