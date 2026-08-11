@@ -256,12 +256,6 @@ func (fsw *FilerStoreWrapper) DeleteEntry(ctx context.Context, fp util.FullPath)
 
 	existingEntry, findErr := fsw.FindEntry(ctx, fp)
 	if findErr == filer_pb.ErrNotFound || existingEntry == nil {
-		// Treating an absent path as already deleted makes retries of a plain
-		// delete safe, but it also means a store whose DeleteEntry removes the
-		// primary key before a secondary mutation (redis: parent-directory
-		// membership) can never have that secondary mutation retried once the
-		// primary key is gone: a caller retrying after such a partial failure
-		// sees this as a clean no-op, not as unfinished cleanup.
 		return nil
 	}
 	if len(existingEntry.HardLinkId) != 0 {

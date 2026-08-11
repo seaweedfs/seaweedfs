@@ -315,18 +315,10 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 	return lastTsNs, err
 }
 
-// replicateMetadataChange retries only while util.Retry judges the error
-// transient. A failure that outlives the retry budget is skipped, not
-// propagated: refusing to advance past an event that can never replay would
-// block every later event from this peer forever, which is worse than one entry
-// staying stale. The skip is counted and logged so the divergence is not silent.
-//
-// A retry that eventually succeeds is not counted or logged at all, on the
-// assumption that a successful Replay left the store consistent. See
-// Replay's doc comment: for a delete that partially applied before failing,
-// that assumption can be wrong, and this is the one path where that goes
-// unrecorded. Fixing it needs a store-level change (see the DeleteEntry
-// comment in filerstore_wrapper.go), not a different retry policy here.
+// replicateMetadataChange retries transient Replay failures with bounded
+// backoff. A failure that outlives the retry budget is counted and logged,
+// then skipped: blocking on an event that can never replay would stall every
+// later event from this peer, which is worse than one entry staying stale.
 func replicateMetadataChange(store FilerStore, peer pb.ServerAddress, event *filer_pb.SubscribeMetadataResponse) {
 	err := util.Retry("replicate metadata change from "+string(peer), func() error {
 		return Replay(store, event)
@@ -339,8 +331,7 @@ func replicateMetadataChange(store FilerStore, peer pb.ServerAddress, event *fil
 	if name == "" {
 		name = event.GetEventNotification().GetOldEntry().GetName()
 	}
-	glog.Errorf("giving up replicating metadata change from %s (dir=%s name=%s ts=%d): %v; this entry stays diverged from %s until a later write to it succeeds",
-		peer, event.Directory, name, event.TsNs, err, peer)
+	glog.Errorf("giving up replicating metadata change from %s for %s/%s (ts=%d): %v", peer, event.Directory, name, event.TsNs, err)
 }
 
 // traversePeerMetadata does a full BFS traversal of a peer filer's metadata

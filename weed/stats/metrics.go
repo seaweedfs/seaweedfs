@@ -255,7 +255,7 @@ var (
 			Namespace: Namespace,
 			Subsystem: subsystemFiler,
 			Name:      "meta_aggregator_replay_failures",
-			Help:      "Times a peer's metadata event could not be replayed into this filer's store after retries and was skipped, leaving that entry diverged from the peer.",
+			Help:      "Number of peer metadata events skipped after replay retries were exhausted, leaving that entry diverged from the peer.",
 		}, []string{"peer"})
 
 	// Sampled only on first creation, so counts track distinct objects.
