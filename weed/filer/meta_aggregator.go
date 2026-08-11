@@ -315,14 +315,11 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 	return lastTsNs, err
 }
 
-// replicateMetadataChange applies a peer's metadata event to the local store,
-// retrying a failure that looks transient (store busy, a network blip to a
-// remote-backed store, ...) before giving up on it. Propagating the failure
-// instead so the caller would refuse to advance past it would make a single
-// entry that can never replay - a poison event - block every later event from
-// this peer forever, which is worse than the one entry staying stale. So a
-// failure that survives the retry budget is skipped, but loudly: counted and
-// logged, so the divergence is discoverable instead of silent.
+// replicateMetadataChange retries only while util.Retry judges the error
+// transient. A failure that outlives the retry budget is skipped, not
+// propagated: refusing to advance past an event that can never replay would
+// block every later event from this peer forever, which is worse than one entry
+// staying stale. The skip is counted and logged so the divergence is not silent.
 func replicateMetadataChange(store FilerStore, peer pb.ServerAddress, event *filer_pb.SubscribeMetadataResponse) {
 	err := util.Retry("replicate metadata change from "+string(peer), func() error {
 		return Replay(store, event)

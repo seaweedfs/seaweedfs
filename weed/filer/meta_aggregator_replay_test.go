@@ -15,9 +15,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-// fakeReplayStore fails InsertEntry with a fixed error for its first
-// failUntil calls, then succeeds. Everything else is a no-op: Replay only
-// exercises InsertEntry/DeleteEntry for a create-only event.
+// fakeReplayStore fails InsertEntry for its first failUntil calls, then
+// succeeds. The other methods can be no-ops because Replay of a create-only
+// event only reaches InsertEntry.
 type fakeReplayStore struct {
 	mu        sync.Mutex
 	failUntil int
@@ -94,20 +94,13 @@ func quotaChangeEvent(bucket string, quota int64) *filer_pb.SubscribeMetadataRes
 	}
 }
 
-// TestReplicateMetadataChangeRetriesTransientFailure pins the regression: a
-// filer with its own store (leveldb3-per-pod, no shared backend) that hits one
-// transient error while replaying a peer's bucket-quota update used to log it
-// and move on, per the old body of maybeReplicateMetadataChange in
-// doSubscribeToOneFiler ("if err := Replay(...); err != nil { glog.Errorf(...);
-// return }"). The offset still advanced past the event afterwards, so the
-// bucket's quota on this filer diverged from the peer permanently - exactly
-// the mechanism behind three filers enforcing three different quota values for
-// the same bucket. With the retry this test would fail: a single failure would
-// leave the store never updated. It passes now because the transient failure
-// gets a second attempt.
+// maybeReplicateMetadataChange used to log a Replay error and return while the
+// offset advanced past the event anyway, so one transient store error left that
+// entry diverged from the peer for good. Against that body this test fails: a
+// single failure and the store is never updated.
 func TestReplicateMetadataChangeRetriesTransientFailure(t *testing.T) {
-	// Typed so the value stays int64 when passed to t.Fatalf's ...any; an untyped
-	// constant defaults to int and overflows a 32-bit build.
+	// Typed so the value stays int64 in t.Fatalf's ...any; untyped it defaults to
+	// int and overflows a 32-bit build.
 	const wantQuota int64 = 131072 << 20
 
 	store := &fakeReplayStore{failUntil: 1, err: errors.New("i/o timeout talking to store")}
@@ -128,13 +121,10 @@ func TestReplicateMetadataChangeRetriesTransientFailure(t *testing.T) {
 	}
 }
 
-// TestReplicateMetadataChangeGivesUpLoudlyOnPermanentFailure covers the other
-// side of the tradeoff: an event that can never replay must not be retried
-// forever, since doing so inside the subscribe stream would block every later
-// event from that peer behind it. It must also stop being silent, which is
-// the defect this change exists to fix: today's glog.Errorf-and-move-on has no
-// counter and no bounded retry, so a permanent failure and a transient one are
-// indistinguishable from the outside.
+// The other side of the tradeoff: an event that can never replay must not be
+// retried forever, since retrying inside the subscribe stream would block every
+// later event from that peer. It must still be counted, or a permanent failure
+// is indistinguishable from a transient one from the outside.
 func TestReplicateMetadataChangeGivesUpLoudlyOnPermanentFailure(t *testing.T) {
 	store := &fakeReplayStore{failUntil: 1 << 30, err: errors.New("entry checksum mismatch")}
 	peer := pb.ServerAddress("peer-permanent:1")
