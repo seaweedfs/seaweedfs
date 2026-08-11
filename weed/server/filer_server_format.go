@@ -65,7 +65,9 @@ func roundUpToVolumeTTL(seconds int64) int32 {
 			return int32(count * unit)
 		}
 	}
-	return math.MaxInt32
+	// Nothing above ~68 years rounds up within int32; no volume TTL keeps the
+	// chunks past the entry, which is the safe direction.
+	return 0
 }
 
 // formatChunkSizeLimit mirrors the autoChunk maxMB resolution.

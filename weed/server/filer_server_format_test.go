@@ -23,23 +23,24 @@ func TestRoundUpToVolumeTTL(t *testing.T) {
 		{3601, 3660},
 		{255 * 60, 255 * 60},
 		{255*60 + 1, 5 * 3600},           // minutes overflow 255, ceil to hours
-		{20_000_000, 232 * 24 * 3600},    // ~231.5 days, ceil to days
-		{int64(math.MaxInt32), math.MaxInt32}, // beyond every unit's 255 cap
+		{20_000_000, 232 * 24 * 3600}, // ~231.5 days, ceil to days
+		{int64(math.MaxInt32), 0},     // beyond every unit's 255 cap: no TTL, never a shortened one
 	}
 	for _, test := range tests {
 		got := roundUpToVolumeTTL(test.seconds)
 		if got != test.want {
 			t.Fatalf("roundUpToVolumeTTL(%d) = %d, want %d", test.seconds, got, test.want)
 		}
-		if int64(got) < test.seconds && got != math.MaxInt32 {
+		if got == 0 {
+			continue // no volume TTL: chunks outlive the entry
+		}
+		if int64(got) < test.seconds {
 			t.Fatalf("roundUpToVolumeTTL(%d) = %d shortened the lifetime", test.seconds, got)
 		}
 		// the rounded value must survive the volume TTL string conversion intact
-		if got != math.MaxInt32 {
-			ttl, err := needle.ReadTTL(needle.SecondsToTTL(got))
-			if err != nil || int64(ttl.Minutes())*60 != int64(got) {
-				t.Fatalf("SecondsToTTL(%d) = %q does not round-trip (err %v)", got, needle.SecondsToTTL(got), err)
-			}
+		ttl, err := needle.ReadTTL(needle.SecondsToTTL(got))
+		if err != nil || int64(ttl.Minutes())*60 != int64(got) {
+			t.Fatalf("SecondsToTTL(%d) = %q does not round-trip (err %v)", got, needle.SecondsToTTL(got), err)
 		}
 	}
 }
