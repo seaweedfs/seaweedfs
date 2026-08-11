@@ -307,6 +307,7 @@ func (fs *FilerServer) formatRepack(ctx context.Context, w http.ResponseWriter, 
 		return
 	}
 	oldChunks := entry.GetChunks()
+	oldIdentity := formatChunkIdentity(oldChunks)
 	if len(oldChunks) == 0 {
 		writeJsonError(w, r, http.StatusBadRequest, errors.New("entry has no chunks to repack"))
 		return
@@ -406,10 +407,41 @@ func (fs *FilerServer) formatRepack(ctx context.Context, w http.ResponseWriter, 
 		return
 	}
 
-	newEntry := *entry
+	// The entry lock is filer-local, so a writer on another filer is not
+	// blocked by it. Re-read from the store and revalidate right before the
+	// swap: the unguarded window shrinks from the whole repack to this
+	// commit. Full enforcement needs owner routing.
+	current, err := fs.filer.FindEntry(ctx, fullPath)
+	if err != nil {
+		cleanup()
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			writeJsonError(w, r, http.StatusConflict, errors.New("entry was deleted during repack"))
+		} else {
+			writeJsonError(w, r, http.StatusInternalServerError, err)
+		}
+		return
+	}
+	if !bytes.Equal(formatChunkIdentity(current.GetChunks()), oldIdentity) {
+		cleanup()
+		writeJsonError(w, r, http.StatusConflict, errors.New("entry changed during repack"))
+		return
+	}
+	if enforced, wormErr := fs.wormEnforcedForEntry(ctx, r.URL.Path); wormErr != nil {
+		cleanup()
+		writeJsonError(w, r, http.StatusInternalServerError, wormErr)
+		return
+	} else if enforced {
+		cleanup()
+		writeJsonError(w, r, http.StatusForbidden, errors.New("cannot repack WORM-enforced entry"))
+		return
+	}
+
+	// build from the fresh read so a concurrent metadata-only update on
+	// another filer is carried forward, not clobbered
+	newEntry := *current
 	newEntry.Chunks = newChunks
 	newEntry.Extended = make(map[string][]byte)
-	for k, v := range entry.Extended {
+	for k, v := range current.Extended {
 		newEntry.Extended[k] = v
 	}
 	newEntry.Extended[format.LayoutKey] = encoded
@@ -417,15 +449,15 @@ func (fs *FilerServer) formatRepack(ctx context.Context, w http.ResponseWriter, 
 	if len(newEntry.Md5) == 0 {
 		newEntry.Md5 = md5Hash.Sum(nil)
 	}
-	if err := fs.filer.UpdateEntry(context.WithoutCancel(ctx), entry, &newEntry); err != nil {
+	if err := fs.filer.UpdateEntry(context.WithoutCancel(ctx), current, &newEntry); err != nil {
 		cleanup()
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
 	}
-	fs.filer.DeleteChunks(context.WithoutCancel(ctx), fullPath, oldChunks)
+	fs.filer.DeleteChunks(context.WithoutCancel(ctx), fullPath, current.GetChunks())
 	// Filer.UpdateEntry only writes the store; notify subscribers (sync,
 	// backup, replication) of the new chunk ids like the gRPC path does.
-	fs.filer.NotifyUpdateEvent(ctx, entry, &newEntry, true, false, nil)
+	fs.filer.NotifyUpdateEvent(ctx, current, &newEntry, true, false, nil)
 	writeJsonQuiet(w, r, http.StatusOK, map[string]interface{}{
 		"name": entry.Name(), "size": size, "extents": len(layout.ExtentSizes),
 	})
