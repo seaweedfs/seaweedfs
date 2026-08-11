@@ -67,8 +67,9 @@ func decodePlaylistInfo(payload []byte, extentCount int) (*playlistInfo, error) 
 	if err != nil || target == 0 || target > math.MaxInt32 {
 		return nil, fmt.Errorf("invalid hls-ts target duration")
 	}
+	// mirror the ingest bound: the last segment number is sequence+count-1
 	sequence, err := binary.ReadUvarint(reader)
-	if err != nil || sequence > math.MaxInt64-uint64(extentCount) {
+	if err != nil || sequence > math.MaxInt64-uint64(extentCount-1) {
 		return nil, fmt.Errorf("invalid hls-ts media sequence")
 	}
 	info := &playlistInfo{TargetDuration: int64(target), MediaSequence: int64(sequence), DurationsMs: make([]int64, extentCount)}

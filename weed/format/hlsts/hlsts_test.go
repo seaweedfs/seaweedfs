@@ -168,6 +168,28 @@ func TestViewSegmentHonorsMediaSequence(t *testing.T) {
 	}
 }
 
+// The ingest bound admits mediaSequence = MaxInt64-(count-1); the payload
+// decoder must accept the same boundary or every view of such an asset fails.
+func TestMediaSequenceBoundaryRoundTrip(t *testing.T) {
+	playlist := "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:9223372036854775806\n" +
+		"#EXTINF:6,\n#EXT-X-BYTERANGE:188@0\nv.ts\n#EXTINF:6,\n#EXT-X-BYTERANGE:188\nv.ts\n#EXT-X-ENDLIST\n"
+	layout, err := Adapter{}.IndexSidecar([]byte(playlist))
+	if err != nil {
+		t.Fatalf("IndexSidecar() error = %v", err)
+	}
+	obj := format.Object{Name: "v.ts", Size: layout.TotalSize(), Layout: layout}
+	if _, err := (Adapter{}).View(format.ViewRequest{Query: url.Values{}}, obj); err != nil {
+		t.Fatalf("playlist view error = %v", err)
+	}
+	plan, err := Adapter{}.View(format.ViewRequest{Query: url.Values{"seq": {"9223372036854775807"}}}, obj)
+	if err != nil {
+		t.Fatalf("last segment view error = %v", err)
+	}
+	if plan.Extent != 1 {
+		t.Fatalf("Extent = %d, want 1", plan.Extent)
+	}
+}
+
 func TestSniff(t *testing.T) {
 	head := make([]byte, 400)
 	head[0], head[TSPacketSize] = tsSyncByte, tsSyncByte
