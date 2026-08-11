@@ -5,6 +5,15 @@ function basePath(path) {
     return (window.__BASE_PATH__ || '') + path;
 }
 
+// Current-location checks against app paths, ignoring the URL prefix
+function isCurrentPath(path) {
+    return window.location.pathname === basePath(path);
+}
+
+function currentPathStartsWith(path) {
+    return window.location.pathname.startsWith(basePath(path));
+}
+
 // Global variables
 let bucketToDelete = '';
 
@@ -16,7 +25,7 @@ document.addEventListener('DOMContentLoaded', function () {
     setupFileManagerEventHandlers();
 
     // Initialize delete button visibility on file browser page
-    if (window.location.pathname === basePath('/files')) {
+    if (isCurrentPath('/files')) {
         updateDeleteSelectedButton();
     }
 });
@@ -71,7 +80,7 @@ function initializeTooltips() {
 function setupAutoRefresh() {
     // Refresh dashboard data every 30 seconds
     setInterval(function () {
-        if (window.location.pathname === basePath('/dashboard')) {
+        if (isCurrentPath('/dashboard')) {
             htmx.trigger('#dashboard-content', 'refresh');
         }
     }, 30000);
@@ -88,9 +97,9 @@ function setActiveNavigation() {
 
         if (href === currentPath) {
             isActive = true;
-        } else if (currentPath === '/' && href === '/admin') {
+        } else if (isCurrentPath('/') && href === basePath('/admin')) {
             isActive = true;
-        } else if (currentPath.startsWith('/s3/') && href === '/s3/buckets') {
+        } else if (currentPathStartsWith('/s3/') && href === basePath('/s3/buckets')) {
             isActive = true;
         }
         // Note: Removed the problematic cluster condition that was highlighting all submenu items
@@ -105,10 +114,8 @@ function setActiveNavigation() {
 
 // Set up submenu behavior
 function setupSubmenuBehavior() {
-    const currentPath = window.location.pathname;
-
     // If we're on a cluster page, expand the cluster submenu
-    if (currentPath.startsWith('/cluster/')) {
+    if (currentPathStartsWith('/cluster/')) {
         const clusterSubmenu = document.getElementById('clusterSubmenu');
         if (clusterSubmenu) {
             clusterSubmenu.classList.add('show');
@@ -123,7 +130,7 @@ function setupSubmenuBehavior() {
     }
 
     // If we're on an object store page, expand the object store submenu
-    if (currentPath.startsWith('/object-store/')) {
+    if (currentPathStartsWith('/object-store/')) {
         const objectStoreSubmenu = document.getElementById('objectStoreSubmenu');
         if (objectStoreSubmenu) {
             objectStoreSubmenu.classList.add('show');

@@ -202,7 +202,7 @@ templ Admin(data dash.AdminData) {
                         <h6 class="m-0 font-weight-bold text-primary">
                             <i class="fas fa-plug me-2"></i>Mount Clients
                         </h6>
-                        <a id="mountClientsDetailsLink" href="/cluster/mount-clients" class="btn btn-sm btn-outline-primary">
+                        <a href={ dash.PUrl(ctx, "/cluster/mount-clients") } class="btn btn-sm btn-outline-primary">
                             View Details <i class="fas fa-arrow-right ms-1"></i>
                         </a>
                     </div>
@@ -218,9 +218,6 @@ templ Admin(data dash.AdminData) {
                 </div>
             </div>
         </div>
-        <script>
-        (function(){var l=document.getElementById('mountClientsDetailsLink'); if(l){l.href=(window.__BASE_PATH__||'')+'/cluster/mount-clients';}})();
-        </script>
 
         <!-- Master Nodes Status -->
         <div class="row mb-4">
