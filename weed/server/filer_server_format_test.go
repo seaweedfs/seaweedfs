@@ -2,8 +2,10 @@ package weed_server
 
 import (
 	"bytes"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"math"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -22,7 +24,7 @@ func TestRoundUpToVolumeTTL(t *testing.T) {
 		{3600, 3600},
 		{3601, 3660},
 		{255 * 60, 255 * 60},
-		{255*60 + 1, 5 * 3600},           // minutes overflow 255, ceil to hours
+		{255*60 + 1, 5 * 3600},        // minutes overflow 255, ceil to hours
 		{20_000_000, 232 * 24 * 3600}, // ~231.5 days, ceil to days
 		{int64(math.MaxInt32), 0},     // beyond every unit's 255 cap: no TTL, never a shortened one
 	}
@@ -41,6 +43,39 @@ func TestRoundUpToVolumeTTL(t *testing.T) {
 		ttl, err := needle.ReadTTL(needle.SecondsToTTL(got))
 		if err != nil || int64(ttl.Minutes())*60 != int64(got) {
 			t.Fatalf("SecondsToTTL(%d) = %q does not round-trip (err %v)", got, needle.SecondsToTTL(got), err)
+		}
+	}
+}
+
+func TestRepackSourceIdentity(t *testing.T) {
+	base := func() *filer.Entry {
+		return &filer.Entry{
+			FullPath: "/videos/movie.ts",
+			Attr: filer.Attr{
+				FileSize: 30, TtlSec: 600,
+				Crtime: time.Unix(1000, 0), Mtime: time.Unix(2000, 0),
+			},
+			Chunks: []*filer_pb.FileChunk{{FileId: "1,ab", Offset: 0, Size: 30}},
+		}
+	}
+	identity := repackSourceIdentity(base())
+	if !bytes.Equal(identity, repackSourceIdentity(base())) {
+		t.Fatalf("identity is not deterministic")
+	}
+	mutations := map[string]func(*filer.Entry){
+		"ttl cleared":  func(e *filer.Entry) { e.TtlSec = 0 },
+		"size changed": func(e *filer.Entry) { e.FileSize = 31 },
+		"mtime moved":  func(e *filer.Entry) { e.Mtime = time.Unix(3000, 0) },
+		"crtime moved": func(e *filer.Entry) { e.Crtime = time.Unix(1001, 0) },
+		"hard linked":  func(e *filer.Entry) { e.HardLinkId = []byte{1} },
+		"went remote":  func(e *filer.Entry) { e.Remote = &filer_pb.RemoteEntry{} },
+		"chunk moved":  func(e *filer.Entry) { e.Chunks[0].Offset = 1 },
+	}
+	for name, mutate := range mutations {
+		changed := base()
+		mutate(changed)
+		if bytes.Equal(identity, repackSourceIdentity(changed)) {
+			t.Fatalf("identity ignored: %s", name)
 		}
 	}
 }

@@ -58,6 +58,19 @@ func formatChunkIdentity(chunks []*filer_pb.FileChunk) []byte {
 	return digest.Sum(nil)
 }
 
+// repackSourceIdentity digests every entry field that influenced a repack's
+// output: the chunk list it read, the size the layout was validated against,
+// the TTL and expiry anchors its new chunks were assigned with, and the
+// hard-link and remote state its guards evaluated.
+func repackSourceIdentity(entry *filer.Entry) []byte {
+	digest := md5.New()
+	digest.Write(formatChunkIdentity(entry.GetChunks()))
+	fmt.Fprintf(digest, "%d:%d:%d:%d:%t:%x:%t",
+		entry.FileSize, entry.TtlSec, entry.Crtime.UnixNano(), entry.Mtime.UnixNano(),
+		entry.IsExpireS3Enabled(), []byte(entry.HardLinkId), entry.Remote != nil)
+	return digest.Sum(nil)
+}
+
 // roundUpToVolumeTTL returns the smallest volume-TTL-representable seconds
 // value not below the argument. A volume TTL is at most 255 of one unit and
 // SecondsToTTL truncates anything else downward, which would let chunks
@@ -307,7 +320,7 @@ func (fs *FilerServer) formatRepack(ctx context.Context, w http.ResponseWriter, 
 		return
 	}
 	oldChunks := entry.GetChunks()
-	oldIdentity := formatChunkIdentity(oldChunks)
+	sourceIdentity := repackSourceIdentity(entry)
 	if len(oldChunks) == 0 {
 		writeJsonError(w, r, http.StatusBadRequest, errors.New("entry has no chunks to repack"))
 		return
@@ -408,9 +421,12 @@ func (fs *FilerServer) formatRepack(ctx context.Context, w http.ResponseWriter, 
 	}
 
 	// The entry lock is filer-local, so a writer on another filer is not
-	// blocked by it. Re-read from the store and revalidate right before the
-	// swap: the unguarded window shrinks from the whole repack to this
-	// commit. Full enforcement needs owner routing.
+	// blocked by it. Re-read from the store and conflict on any change to
+	// state that influenced this repack - chunks, size, TTL and expiry
+	// anchors, hard-link and remote state - so the swap can never pair fresh
+	// metadata with chunks built from stale inputs. The unguarded window
+	// shrinks from the whole repack to this commit; within it repack races
+	// like any ordinary writer. Closing it needs owner routing.
 	current, err := fs.filer.FindEntry(ctx, fullPath)
 	if err != nil {
 		cleanup()
@@ -421,7 +437,7 @@ func (fs *FilerServer) formatRepack(ctx context.Context, w http.ResponseWriter, 
 		}
 		return
 	}
-	if !bytes.Equal(formatChunkIdentity(current.GetChunks()), oldIdentity) {
+	if !bytes.Equal(repackSourceIdentity(current), sourceIdentity) {
 		cleanup()
 		writeJsonError(w, r, http.StatusConflict, errors.New("entry changed during repack"))
 		return
