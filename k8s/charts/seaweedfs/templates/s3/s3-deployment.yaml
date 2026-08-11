@@ -61,6 +61,9 @@ spec:
       {{- if .Values.s3.priorityClassName }}
       priorityClassName: {{ .Values.s3.priorityClassName | quote }}
       {{- end }}
+      {{- if .Values.s3.schedulerName }}
+      schedulerName: {{ .Values.s3.schedulerName | quote }}
+      {{- end }}
       enableServiceLinks: false
       {{- if .Values.s3.serviceAccountName }}
       serviceAccountName: {{ .Values.s3.serviceAccountName | quote }}

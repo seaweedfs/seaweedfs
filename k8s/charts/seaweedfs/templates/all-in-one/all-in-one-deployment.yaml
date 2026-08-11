@@ -64,6 +64,9 @@ spec:
       {{- if .Values.allInOne.priorityClassName }}
       priorityClassName: {{ .Values.allInOne.priorityClassName | quote }}
       {{- end }}
+      {{- if .Values.allInOne.schedulerName }}
+      schedulerName: {{ .Values.allInOne.schedulerName | quote }}
+      {{- end }}
       {{- if .Values.allInOne.serviceAccountName }}
       serviceAccountName: {{ .Values.allInOne.serviceAccountName | quote }}
       {{- end }}

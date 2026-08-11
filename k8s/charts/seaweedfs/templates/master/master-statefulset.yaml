@@ -69,6 +69,9 @@ spec:
       {{- if .Values.master.priorityClassName }}
       priorityClassName: {{ .Values.master.priorityClassName | quote }}
       {{- end }}
+      {{- if .Values.master.schedulerName }}
+      schedulerName: {{ .Values.master.schedulerName | quote }}
+      {{- end }}
       enableServiceLinks: false
       serviceAccountName: {{ .Values.master.serviceAccountName | default (include "seaweedfs.serviceAccountName" .) | quote }} # for deleting statefulset pods after migration
       {{- if .Values.master.initContainers }}
