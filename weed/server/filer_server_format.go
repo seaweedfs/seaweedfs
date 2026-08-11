@@ -1,11 +1,13 @@
 package weed_server
 
 import (
+	"bytes"
 	"context"
 	"crypto/md5"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"path"
@@ -32,12 +34,39 @@ const (
 	formatIngestParam = "format.ingest"
 	formatRepackParam = "format.repack"
 
+	// formatLayoutChunksKey binds a layout to the chunk list it described, so
+	// any other writer that changes the chunks invalidates the views.
+	formatLayoutChunksKey = "x-seaweedfs-format-layout-chunks"
+
 	maxFormatSidecarBytes = 16 << 20
 	formatSniffBytes      = 512
 	// defaultFormatChunkSizeMB caps extent chunks when no maxMB is configured.
 	// Extent chunks are buffered in memory, so the limit must never be absent.
 	defaultFormatChunkSizeMB = 4
 )
+
+// formatChunkIdentity digests the chunk list a layout was written against.
+func formatChunkIdentity(chunks []*filer_pb.FileChunk) []byte {
+	digest := md5.New()
+	for _, chunk := range chunks {
+		fmt.Fprintf(digest, "%d:%s;", chunk.Offset, chunk.GetFileIdString())
+	}
+	return digest.Sum(nil)
+}
+
+// roundUpToVolumeTTL returns the smallest volume-TTL-representable seconds
+// value not below the argument. A volume TTL is at most 255 of one unit and
+// SecondsToTTL truncates anything else downward, which would let chunks
+// expire before their entry - or, under a minute, never.
+func roundUpToVolumeTTL(seconds int64) int32 {
+	for _, unit := range []int64{60, 3600, 24 * 3600, 7 * 24 * 3600, 30 * 24 * 3600, 365 * 24 * 3600} {
+		count := (seconds + unit - 1) / unit
+		if count <= 255 && count*unit <= math.MaxInt32 {
+			return int32(count * unit)
+		}
+	}
+	return math.MaxInt32
+}
 
 // formatChunkSizeLimit mirrors the autoChunk maxMB resolution.
 func (fs *FilerServer) formatChunkSizeLimit(r *http.Request) int64 {
@@ -198,8 +227,11 @@ func (fs *FilerServer) formatIngest(ctx context.Context, w http.ResponseWriter, 
 			TtlSec: so.TtlSeconds, Mime: contentType,
 			Md5: md5Hash.Sum(nil), FileSize: uint64(written),
 		},
-		Chunks:   fileChunks,
-		Extended: map[string][]byte{format.LayoutKey: encoded},
+		Chunks: fileChunks,
+		Extended: map[string][]byte{
+			format.LayoutKey:      encoded,
+			formatLayoutChunksKey: formatChunkIdentity(fileChunks),
+		},
 	}
 	copyStandardHeadersToExtended(r, entry.Extended)
 	// commit under the entry lock like saveMetaData, so ingest overwrites
@@ -289,12 +321,18 @@ func (fs *FilerServer) formatRepack(ctx context.Context, w http.ResponseWriter, 
 	// of the original span.
 	so.TtlSeconds = entry.TtlSec
 	if entry.TtlSec > 0 {
-		remaining := int64(entry.TtlSec) - int64(time.Since(entry.Crtime)/time.Second)
+		// mirror FindEntry's expiry anchors: S3-expiring entries age from
+		// Mtime, everything else from Crtime
+		expiresAt := entry.Crtime.Add(time.Duration(entry.TtlSec) * time.Second)
+		if entry.IsExpireS3Enabled() {
+			expiresAt = entry.GetS3ExpireTime()
+		}
+		remaining := (int64(time.Until(expiresAt)) + int64(time.Second) - 1) / int64(time.Second)
 		if remaining <= 0 {
 			writeJsonError(w, r, http.StatusBadRequest, errors.New("entry TTL has already expired"))
 			return
 		}
-		so.TtlSeconds = int32(remaining)
+		so.TtlSeconds = roundUpToVolumeTTL(remaining)
 	}
 
 	size := int64(entry.FileSize)
@@ -369,6 +407,7 @@ func (fs *FilerServer) formatRepack(ctx context.Context, w http.ResponseWriter, 
 		newEntry.Extended[k] = v
 	}
 	newEntry.Extended[format.LayoutKey] = encoded
+	newEntry.Extended[formatLayoutChunksKey] = formatChunkIdentity(newChunks)
 	if len(newEntry.Md5) == 0 {
 		newEntry.Md5 = md5Hash.Sum(nil)
 	}
@@ -408,6 +447,14 @@ func (fs *FilerServer) serveFormatView(ctx context.Context, w http.ResponseWrite
 	}
 	if err := layout.Validate(int64(entry.FileSize)); err != nil {
 		glog.WarningfCtx(ctx, "stale format layout on %s: %v", entry.FullPath, err)
+		http.Error(w, "format layout is stale", http.StatusNotFound)
+		return
+	}
+	// A write outside the format endpoints (offset writes, appends, mounts)
+	// changes the chunks but keeps Extended, so the layout no longer
+	// describes the bytes even when the total size still matches.
+	if !bytes.Equal(entry.Extended[formatLayoutChunksKey], formatChunkIdentity(entry.GetChunks())) {
+		glog.WarningfCtx(ctx, "format layout on %s no longer matches its chunks", entry.FullPath)
 		http.Error(w, "format layout is stale", http.StatusNotFound)
 		return
 	}
