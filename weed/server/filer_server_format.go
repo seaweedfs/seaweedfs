@@ -202,6 +202,10 @@ func (fs *FilerServer) formatIngest(ctx context.Context, w http.ResponseWriter, 
 		Extended: map[string][]byte{format.LayoutKey: encoded},
 	}
 	copyStandardHeadersToExtended(r, entry.Extended)
+	// commit under the entry lock like saveMetaData, so ingest overwrites
+	// serialize with gRPC writers, renames, and repack
+	pathLock := fs.entryLockTable.AcquireLock("formatIngest", entry.FullPath, util.ExclusiveLock)
+	defer fs.entryLockTable.ReleaseLock(entry.FullPath, pathLock)
 	if err := fs.filer.CreateEntry(context.WithoutCancel(ctx), entry, nil, false, false, nil, skipCheckParentDirEntry(r), so.MaxFileNameLength); err != nil {
 		cleanup()
 		writeJsonError(w, r, http.StatusInternalServerError, err)

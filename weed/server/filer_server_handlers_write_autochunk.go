@@ -246,6 +246,12 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 	// fix the path
 	path := fs.fixFilePath(ctx, r, fileName)
 
+	// Commit under the entry lock so plain HTTP overwrites serialize with
+	// gRPC writers, renames, and format repack.
+	fullPath := util.FullPath(path)
+	pathLock := fs.entryLockTable.AcquireLock("saveMetaData", fullPath, util.ExclusiveLock)
+	defer fs.entryLockTable.ReleaseLock(fullPath, pathLock)
+
 	var entry *filer.Entry
 	var newChunks []*filer_pb.FileChunk
 	var mergedChunks []*filer_pb.FileChunk
