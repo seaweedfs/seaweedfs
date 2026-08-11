@@ -677,12 +677,10 @@ func nodeByID(nodes []*Node, id string) *Node {
 }
 
 func (c *commandVolumeBalance) printBalancePlan(diskType types.DiskType, plan *volumeBalancePlan, capacityFunc DensityFunc, idealVolumeRatio float64) {
-	fullRatio := plan.source.localVolumeDensityRatio(capacityFunc)
-	emptyNextRatio := plan.target.localVolumeDensityNextRatio(capacityFunc)
-	fmt.Fprintf(os.Stdout, "%s %.2f %.2f:%.2f\t", diskType.ReadableString(), idealVolumeRatio, fullRatio, emptyNextRatio)
 	if c.commandEnv != nil && c.commandEnv.verbose {
-		fmt.Fprintf(os.Stdout, "%s %.1f %.1f:%.1f\t", diskType.ReadableString(), idealVolumeRatio*100,
-			fullRatio*100, emptyNextRatio*100)
+		fullRatio := plan.source.localVolumeDensityRatio(capacityFunc)
+		emptyNextRatio := plan.target.localVolumeDensityNextRatio(capacityFunc)
+		fmt.Fprintf(os.Stdout, "%s %.2f %.2f:%.2f\t", diskType.ReadableString(), idealVolumeRatio, fullRatio, emptyNextRatio)
 	}
 }
 
