@@ -19,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 )
 
@@ -187,10 +188,7 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 		var counter int64
 		var synced bool
 		maybeReplicateMetadataChange = func(event *filer_pb.SubscribeMetadataResponse) {
-			if err := Replay(f.Store, event); err != nil {
-				glog.Errorf("failed to reply metadata change from %v: %v", peer, err)
-				return
-			}
+			replicateMetadataChange(f.Store, peer, event)
 			counter++
 			if lastPersistTime.Add(time.Minute).Before(time.Now()) {
 				if err := ma.updateOffset(f, peer, peerSignature, event.TsNs); err == nil {
@@ -315,6 +313,26 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 		}
 	})
 	return lastTsNs, err
+}
+
+// replicateMetadataChange applies a peer's metadata event to the local store,
+// retrying a failure that looks transient (store busy, a network blip to a
+// remote-backed store, ...) before giving up on it. Propagating the failure
+// instead so the caller would refuse to advance past it would make a single
+// entry that can never replay - a poison event - block every later event from
+// this peer forever, which is worse than the one entry staying stale. So a
+// failure that survives the retry budget is skipped, but loudly: counted and
+// logged, so the divergence is discoverable instead of silent.
+func replicateMetadataChange(store FilerStore, peer pb.ServerAddress, event *filer_pb.SubscribeMetadataResponse) {
+	err := util.Retry("replicate metadata change from "+string(peer), func() error {
+		return Replay(store, event)
+	})
+	if err == nil {
+		return
+	}
+	stats.FilerMetaAggregatorReplayFailures.WithLabelValues(string(peer)).Inc()
+	glog.Errorf("giving up replicating metadata change from %s (dir=%s ts=%d): %v; this entry stays diverged from %s until a later write to it succeeds",
+		peer, event.Directory, event.TsNs, err, peer)
 }
 
 // traversePeerMetadata does a full BFS traversal of a peer filer's metadata
