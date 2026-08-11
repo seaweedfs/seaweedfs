@@ -106,9 +106,13 @@ func quotaChangeEvent(bucket string, quota int64) *filer_pb.SubscribeMetadataRes
 // leave the store never updated. It passes now because the transient failure
 // gets a second attempt.
 func TestReplicateMetadataChangeRetriesTransientFailure(t *testing.T) {
+	// Typed so the value stays int64 when passed to t.Fatalf's ...any; an untyped
+	// constant defaults to int and overflows a 32-bit build.
+	const wantQuota int64 = 131072 << 20
+
 	store := &fakeReplayStore{failUntil: 1, err: errors.New("i/o timeout talking to store")}
 	peer := pb.ServerAddress("peer-transient:1")
-	event := quotaChangeEvent("my-bucket", 131072<<20)
+	event := quotaChangeEvent("my-bucket", wantQuota)
 
 	replicateMetadataChange(store, peer, event)
 
@@ -116,8 +120,8 @@ func TestReplicateMetadataChangeRetriesTransientFailure(t *testing.T) {
 	if inserted == nil {
 		t.Fatal("expected the entry to be inserted once the transient failure is retried past")
 	}
-	if inserted.Quota != 131072<<20 {
-		t.Fatalf("quota = %d, want %d", inserted.Quota, 131072<<20)
+	if inserted.Quota != wantQuota {
+		t.Fatalf("quota = %d, want %d", inserted.Quota, wantQuota)
 	}
 	if got := store.attemptCount(); got < 2 {
 		t.Fatalf("attempts = %d, want at least 2: a one-shot Replay would have swallowed the failure and never retried", got)
