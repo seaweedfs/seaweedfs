@@ -25,6 +25,11 @@ func init() {
 
 type Adapter struct{}
 
+var (
+	_ format.Sniffer = Adapter{}
+	_ format.Indexer = Adapter{}
+)
+
 func (Adapter) Name() string { return FormatName }
 
 func (Adapter) Sniff(h format.Hint) bool {

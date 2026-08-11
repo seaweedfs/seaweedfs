@@ -23,6 +23,8 @@ const (
 	// interior chunk cuts land on packet boundaries.
 	TSPacketSize = 188
 
+	tsSyncByte = 0x47
+
 	PlaylistContentType = "application/vnd.apple.mpegurl"
 	MediaContentType    = "video/MP2T"
 )
@@ -33,7 +35,20 @@ func init() {
 
 type Adapter struct{}
 
+var (
+	_ format.Sniffer        = Adapter{}
+	_ format.SidecarIndexer = Adapter{}
+	_ format.Viewer         = Adapter{}
+)
+
 func (Adapter) Name() string { return FormatName }
+
+func (Adapter) Sniff(h format.Hint) bool {
+	if len(h.Head) > TSPacketSize {
+		return h.Head[0] == tsSyncByte && h.Head[TSPacketSize] == tsSyncByte
+	}
+	return len(h.Head) > 0 && h.Head[0] == tsSyncByte
+}
 
 // playlistInfo is the adapter payload: what the generated playback playlist
 // needs beyond the extent sizes.
