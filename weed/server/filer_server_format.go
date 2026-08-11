@@ -65,8 +65,9 @@ func formatChunkIdentity(chunks []*filer_pb.FileChunk) []byte {
 func repackSourceIdentity(entry *filer.Entry) []byte {
 	digest := md5.New()
 	digest.Write(formatChunkIdentity(entry.GetChunks()))
-	fmt.Fprintf(digest, "%d:%d:%d:%d:%t:%x:%t",
-		entry.FileSize, entry.TtlSec, entry.Crtime.UnixNano(), entry.Mtime.UnixNano(),
+	digest.Write(entry.Content)
+	fmt.Fprintf(digest, "%d:%d:%d:%d:%d:%t:%x:%t",
+		len(entry.Content), entry.FileSize, entry.TtlSec, entry.Crtime.UnixNano(), entry.Mtime.UnixNano(),
 		entry.IsExpireS3Enabled(), []byte(entry.HardLinkId), entry.Remote != nil)
 	return digest.Sum(nil)
 }
@@ -329,6 +330,11 @@ func (fs *FilerServer) formatRepack(ctx context.Context, w http.ResponseWriter, 
 		writeJsonError(w, r, http.StatusBadRequest, errors.New("cannot repack hard-linked or remote entries"))
 		return
 	}
+	// the repack reader sees only chunks; inline content would be dropped
+	if len(entry.Content) != 0 {
+		writeJsonError(w, r, http.StatusBadRequest, errors.New("cannot repack entries with inline content"))
+		return
+	}
 	for _, chunk := range oldChunks {
 		if chunk.SseType != filer_pb.SSEType_NONE {
 			writeJsonError(w, r, http.StatusBadRequest, errors.New("cannot repack server-side encrypted entries"))
@@ -506,9 +512,11 @@ func (fs *FilerServer) serveFormatView(ctx context.Context, w http.ResponseWrite
 	}
 	// A write outside the format endpoints (offset writes, appends, mounts)
 	// changes the chunks but keeps Extended, so the layout no longer
-	// describes the bytes even when the total size still matches.
-	if !bytes.Equal(entry.Extended[formatLayoutChunksKey], formatChunkIdentity(entry.GetChunks())) {
-		glog.WarningfCtx(ctx, "format layout on %s no longer matches its chunks", entry.FullPath)
+	// describes the bytes even when the total size still matches. Inline
+	// content is disqualifying outright: format entries are never written
+	// with it, and reads would prefer it over the chunks the layout maps.
+	if len(entry.Content) != 0 || !bytes.Equal(entry.Extended[formatLayoutChunksKey], formatChunkIdentity(entry.GetChunks())) {
+		glog.WarningfCtx(ctx, "format layout on %s no longer matches its bytes", entry.FullPath)
 		http.Error(w, "format layout is stale", http.StatusNotFound)
 		return
 	}
@@ -567,10 +575,6 @@ func (fs *FilerServer) serveFormatView(ctx context.Context, w http.ResponseWrite
 	}
 	w.Header().Set("Content-Length", strconv.FormatInt(extentSize, 10))
 	if r.Method == http.MethodHead {
-		return
-	}
-	if offset+extentSize <= int64(len(entry.Content)) {
-		_, _ = w.Write(entry.Content[offset : offset+extentSize])
 		return
 	}
 	streamCtx, cancel := context.WithCancel(ctx)

@@ -70,6 +70,7 @@ func TestRepackSourceIdentity(t *testing.T) {
 		"hard linked":  func(e *filer.Entry) { e.HardLinkId = []byte{1} },
 		"went remote":  func(e *filer.Entry) { e.Remote = &filer_pb.RemoteEntry{} },
 		"chunk moved":  func(e *filer.Entry) { e.Chunks[0].Offset = 1 },
+		"content set":  func(e *filer.Entry) { e.Content = []byte{0x47} },
 	}
 	for name, mutate := range mutations {
 		changed := base()
