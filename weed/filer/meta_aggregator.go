@@ -331,8 +331,12 @@ func replicateMetadataChange(store FilerStore, peer pb.ServerAddress, event *fil
 		return
 	}
 	stats.FilerMetaAggregatorReplayFailures.WithLabelValues(string(peer)).Inc()
-	glog.Errorf("giving up replicating metadata change from %s (dir=%s ts=%d): %v; this entry stays diverged from %s until a later write to it succeeds",
-		peer, event.Directory, event.TsNs, err, peer)
+	name := event.GetEventNotification().GetNewEntry().GetName()
+	if name == "" {
+		name = event.GetEventNotification().GetOldEntry().GetName()
+	}
+	glog.Errorf("giving up replicating metadata change from %s (dir=%s name=%s ts=%d): %v; this entry stays diverged from %s until a later write to it succeeds",
+		peer, event.Directory, name, event.TsNs, err, peer)
 }
 
 // traversePeerMetadata does a full BFS traversal of a peer filer's metadata
