@@ -361,6 +361,10 @@ func (fs *FilerServer) formatRepack(ctx context.Context, w http.ResponseWriter, 
 		so.TtlSeconds = roundUpToVolumeTTL(remaining)
 	}
 
+	if entry.FileSize > math.MaxInt64 {
+		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("file size %d overflows int64", entry.FileSize))
+		return
+	}
 	size := int64(entry.FileSize)
 	lookup := fs.filer.MasterClient.GetLookupFileIdFunction()
 	chunkViews := filer.ViewFromChunks(ctx, lookup, oldChunks, 0, size)
@@ -503,6 +507,12 @@ func (fs *FilerServer) serveFormatView(ctx context.Context, w http.ResponseWrite
 	layout, err := format.DecodeLayout(encoded)
 	if err != nil || layout.Format != viewName {
 		http.Error(w, "entry has no such format layout", http.StatusNotFound)
+		return
+	}
+	// a size beyond int64 would read as negative, which Validate treats as
+	// "skip the size check"
+	if entry.FileSize > math.MaxInt64 {
+		http.Error(w, "format layout is stale", http.StatusNotFound)
 		return
 	}
 	if err := layout.Validate(int64(entry.FileSize)); err != nil {
