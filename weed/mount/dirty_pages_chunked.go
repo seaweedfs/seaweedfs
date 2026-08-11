@@ -55,6 +55,10 @@ func (pages *ChunkedDirtyPages) AddPage(offset int64, data []byte, isSequential 
 	return err
 }
 
+func (pages *ChunkedDirtyPages) HasWrites() bool {
+	return pages.hasWrites
+}
+
 func (pages *ChunkedDirtyPages) FlushData() error {
 	if !pages.hasWrites {
 		return nil

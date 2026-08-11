@@ -175,6 +175,12 @@ type fileSystemParams struct {
 	chunkSizeLimitMB int
 	cacheDirForRead  string
 	cacheDirForWrite string
+
+	// eagerFilerCreate persists a created file's entry at create time rather
+	// than at flush. A platform sets it when it cannot run the flush before
+	// the application's close returns, so nothing that reads through the
+	// filer can race an unflushed close.
+	eagerFilerCreate bool
 }
 
 func buildSeaweedFileSystem(option *MountOptions, p fileSystemParams) *mount.WFS {
@@ -225,6 +231,7 @@ func buildSeaweedFileSystem(option *MountOptions, p fileSystemParams) *mount.WFS
 		DirIdleEvictSec:       *option.dirIdleEvictSec,
 		EnableDistributedLock: option.distributedLock != nil && *option.distributedLock,
 		WritebackCache:        option.writebackCache != nil && *option.writebackCache,
+		EagerFilerCreate:      p.eagerFilerCreate,
 		PosixDirNlink:         option.posixDirNlink != nil && *option.posixDirNlink,
 		// Peer chunk sharing
 		PeerEnabled:    option.peerEnabled != nil && *option.peerEnabled,

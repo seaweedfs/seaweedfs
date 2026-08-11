@@ -120,6 +120,13 @@ type Option struct {
 	// When true, Flush() returns immediately and data upload + metadata flush happen in background.
 	WritebackCache bool
 
+	// EagerFilerCreate persists a created file's entry at create time instead
+	// of deferring it to flush. Deferring is only safe when the flush runs
+	// before the application's close returns; a platform that cannot
+	// guarantee that sets this so listings and reopens through the filer
+	// cannot race an unflushed close.
+	EagerFilerCreate bool
+
 	// PosixDirNlink enables POSIX-compliant directory nlink counting
 	// (nlink = 2 + number_of_subdirectories). This requires listing
 	// cached directory entries on every stat, which has a performance cost.
@@ -783,6 +790,22 @@ func sameEntryContent(a, b *filer_pb.Entry) bool {
 // invalidateOpenFileHandle refreshes an open file handle from a metadata
 // subscription event. No filer lookup here: it can fail transiently, and with
 // the subscription cursor already past the event, nothing would retry.
+
+// IsFileOpen reports whether any open file handle refers to the inode, which
+// tells a caching front end that the handle's view of the file, not its own
+// cached copy, is current.
+func (wfs *WFS) IsFileOpen(inode uint64) bool {
+	_, found := wfs.fhMap.FindFileHandle(inode)
+	return found
+}
+
+// PathForInode reports the path the mount currently tracks for the inode, so
+// a caching front end can tell whether a path it resolved earlier still names
+// the same file. An unlinked file has no path while its handles drain.
+func (wfs *WFS) PathForInode(inode uint64) (util.FullPath, bool) {
+	path, status := wfs.inodeToPath.GetPath(inode)
+	return path, status == fuse.OK
+}
 
 // SetEntryChangeListener registers a callback for every metadata event this
 // mount applies. A front end whose client caches entries on its own side, and
