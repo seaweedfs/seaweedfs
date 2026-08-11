@@ -225,7 +225,23 @@ func TestClickHouseIcebergCatalog(t *testing.T) {
 		listing := doIcebergJSONRequest(t, env, token, http.MethodGet,
 			fmt.Sprintf("/v1/%s/namespaces/%s/tables", url.PathEscape(tableBucket), url.PathEscape(namespace)),
 			nil, http.StatusOK)
-		if !strings.Contains(listing, `"`+ddlTable+`"`) {
+		var tables struct {
+			Identifiers []struct {
+				Namespace []string `json:"namespace"`
+				Name      string   `json:"name"`
+			} `json:"identifiers"`
+		}
+		if err := json.Unmarshal([]byte(listing), &tables); err != nil {
+			t.Fatalf("decode catalog table listing: %v\n%s", err, listing)
+		}
+		registered := false
+		for _, id := range tables.Identifiers {
+			if id.Name == ddlTable && len(id.Namespace) == 1 && id.Namespace[0] == namespace {
+				registered = true
+				break
+			}
+		}
+		if !registered {
 			t.Fatalf("catalog table listing is missing %s: %s", ddlTable, listing)
 		}
 

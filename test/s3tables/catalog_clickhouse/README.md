@@ -15,7 +15,9 @@ database engine.
 4. Creates a second table and populates it with three rows by running a
    PyIceberg writer container (`Dockerfile.writer` + `append_rows.py`) before
    ClickHouse connects, so the snapshot is part of the catalog's first scan.
-5. Starts `clickhouse/clickhouse-server:25.8` and waits for the HTTP interface.
+5. Starts the ClickHouse server container (`clickhouse/clickhouse-server:25.8`
+   by default, overridable via `CLICKHOUSE_IMAGE`) and waits for the HTTP
+   interface.
 6. Attaches the catalog with `CREATE DATABASE ... ENGINE = DataLakeCatalog`
    (`catalog_type = 'rest'`), authenticating to the catalog via the OAuth2
    client-credentials flow (`catalog_credential` + `oauth_server_uri`) and to
