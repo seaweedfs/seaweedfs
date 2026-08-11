@@ -320,6 +320,13 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 // propagated: refusing to advance past an event that can never replay would
 // block every later event from this peer forever, which is worse than one entry
 // staying stale. The skip is counted and logged so the divergence is not silent.
+//
+// A retry that eventually succeeds is not counted or logged at all, on the
+// assumption that a successful Replay left the store consistent. See
+// Replay's doc comment: for a delete that partially applied before failing,
+// that assumption can be wrong, and this is the one path where that goes
+// unrecorded. Fixing it needs a store-level change (see the DeleteEntry
+// comment in filerstore_wrapper.go), not a different retry policy here.
 func replicateMetadataChange(store FilerStore, peer pb.ServerAddress, event *filer_pb.SubscribeMetadataResponse) {
 	err := util.Retry("replicate metadata change from "+string(peer), func() error {
 		return Replay(store, event)

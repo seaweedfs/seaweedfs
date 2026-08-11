@@ -151,3 +151,188 @@ func TestReplicateMetadataChangeGivesUpLoudlyOnPermanentFailure(t *testing.T) {
 		t.Fatalf("FilerMetaAggregatorReplayFailures[%s] = %v, want %v: a permanently failing replay must be counted, not silent", peer, got, before+1)
 	}
 }
+
+// fakeMultiStepReplayStore models a store whose DeleteEntry, like the redis
+// families, removes the primary key and the parent-directory membership as
+// two separate steps, and whose InsertEntry likewise sets the primary key
+// before adding the membership. Each can be made to fail after mutating but
+// before the membership step, for a configured number of attempts.
+type fakeMultiStepReplayStore struct {
+	mu          sync.Mutex
+	entries     map[string]*Entry
+	dirChildren map[string]map[string]bool
+
+	deleteAttempts, deleteFailUntil int
+	deleteErr                       error
+
+	insertAttempts, insertFailUntil int
+	insertErr                       error
+}
+
+func newFakeMultiStepReplayStore() *fakeMultiStepReplayStore {
+	return &fakeMultiStepReplayStore{
+		entries:     make(map[string]*Entry),
+		dirChildren: make(map[string]map[string]bool),
+	}
+}
+
+func (s *fakeMultiStepReplayStore) seed(entry *Entry) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.entries[string(entry.FullPath)] = entry
+	dir, name := entry.FullPath.DirAndName()
+	if s.dirChildren[dir] == nil {
+		s.dirChildren[dir] = make(map[string]bool)
+	}
+	s.dirChildren[dir][name] = true
+}
+
+func (s *fakeMultiStepReplayStore) hasChild(dir, name string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.dirChildren[dir][name]
+}
+
+func (s *fakeMultiStepReplayStore) entry(path util.FullPath) *Entry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.entries[string(path)]
+}
+
+func (s *fakeMultiStepReplayStore) GetName() string                             { return "fake-multi-step-store" }
+func (s *fakeMultiStepReplayStore) Initialize(util.Configuration, string) error { return nil }
+func (s *fakeMultiStepReplayStore) UpdateEntry(context.Context, *Entry) error   { return nil }
+
+func (s *fakeMultiStepReplayStore) FindEntry(_ context.Context, fp util.FullPath) (*Entry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry, ok := s.entries[string(fp)]
+	if !ok {
+		return nil, filer_pb.ErrNotFound
+	}
+	return entry, nil
+}
+
+// DeleteEntry mirrors UniversalRedisStore.DeleteEntry: the primary key is
+// removed before the parent-directory membership, so a failure in between
+// leaves the membership stale.
+func (s *fakeMultiStepReplayStore) DeleteEntry(_ context.Context, fp util.FullPath) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deleteAttempts++
+	delete(s.entries, string(fp))
+	if s.deleteAttempts <= s.deleteFailUntil {
+		return s.deleteErr
+	}
+	dir, name := fp.DirAndName()
+	if s.dirChildren[dir] != nil {
+		delete(s.dirChildren[dir], name)
+	}
+	return nil
+}
+
+// InsertEntry mirrors UniversalRedisStore.InsertEntry: the primary key is set
+// before the parent-directory membership is added.
+func (s *fakeMultiStepReplayStore) InsertEntry(_ context.Context, entry *Entry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.insertAttempts++
+	s.entries[string(entry.FullPath)] = entry
+	if s.insertAttempts <= s.insertFailUntil {
+		return s.insertErr
+	}
+	dir, name := entry.FullPath.DirAndName()
+	if s.dirChildren[dir] == nil {
+		s.dirChildren[dir] = make(map[string]bool)
+	}
+	s.dirChildren[dir][name] = true
+	return nil
+}
+
+func (s *fakeMultiStepReplayStore) DeleteFolderChildren(context.Context, util.FullPath) error {
+	return nil
+}
+func (s *fakeMultiStepReplayStore) ListDirectoryEntries(context.Context, util.FullPath, string, bool, int64, ListEachEntryFunc) (string, error) {
+	return "", nil
+}
+func (s *fakeMultiStepReplayStore) ListDirectoryPrefixedEntries(context.Context, util.FullPath, string, bool, int64, string, ListEachEntryFunc) (string, error) {
+	return "", nil
+}
+func (s *fakeMultiStepReplayStore) BeginTransaction(ctx context.Context) (context.Context, error) {
+	return ctx, nil
+}
+func (s *fakeMultiStepReplayStore) CommitTransaction(context.Context) error     { return nil }
+func (s *fakeMultiStepReplayStore) RollbackTransaction(context.Context) error   { return nil }
+func (s *fakeMultiStepReplayStore) KvPut(context.Context, []byte, []byte) error { return nil }
+func (s *fakeMultiStepReplayStore) KvGet(context.Context, []byte) ([]byte, error) {
+	return nil, ErrKvNotFound
+}
+func (s *fakeMultiStepReplayStore) KvDelete(context.Context, []byte) error { return nil }
+func (s *fakeMultiStepReplayStore) Shutdown()                              {}
+
+func renameEvent(dir, oldName, newName string, quota int64) *filer_pb.SubscribeMetadataResponse {
+	return &filer_pb.SubscribeMetadataResponse{
+		Directory: dir,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: oldName, IsDirectory: true},
+			NewEntry: &filer_pb.Entry{Name: newName, IsDirectory: true, Quota: quota},
+		},
+		TsNs: time.Now().UnixNano(),
+	}
+}
+
+// CodeRabbit's review flagged that FilerStoreWrapper.DeleteEntry skips the
+// delete once FindEntry reports the path gone, and that the redis store
+// families remove the primary key before the parent-directory membership.
+// Chained together: a delete that fails between those two steps is retried
+// as a no-op (FindEntry now reports "already gone"), the stale membership is
+// never revisited, replicateMetadataChange reports overall success, and
+// FilerMetaAggregatorReplayFailures never fires.
+//
+// This wraps the fake store in the real FilerStoreWrapper (as production
+// does via Filer.Store) rather than passing the fake directly, so the
+// FindEntry short-circuit under test is the real one. The hazard is
+// inherited from FilerStoreWrapper.DeleteEntry and the store layer, not
+// created by this retry (see Replay's doc comment): a single non-retried
+// Replay call already leaves the same stale membership behind, just with an
+// error surfaced. What retry changes here is that it also hides it.
+func TestReplicateMetadataChangeRetryHidesStaleDirectoryIndexOnDelete(t *testing.T) {
+	// Typed so the value stays int64 in t.Fatalf's ...any; untyped it defaults to
+	// int and overflows a 32-bit build.
+	const wantQuota int64 = 4096 << 20
+	const dir = "/buckets"
+	fake := newFakeMultiStepReplayStore()
+	fake.seed(&Entry{FullPath: util.NewFullPath(dir, "old-name")})
+	fake.deleteFailUntil = 1
+	fake.deleteErr = errors.New("connection reset by peer")
+	fake.insertFailUntil = 1
+	fake.insertErr = errors.New("connection reset by peer")
+
+	store := NewFilerStoreWrapper(fake)
+	peer := pb.ServerAddress("peer-rename:1")
+	event := renameEvent(dir, "old-name", "new-name", wantQuota)
+
+	before := replayFailureCount(t, peer)
+
+	replicateMetadataChange(store, peer, event)
+
+	if got := replayFailureCount(t, peer); got != before {
+		t.Fatalf("FilerMetaAggregatorReplayFailures[%s] = %v, want unchanged at %v: replay reported overall success", peer, got, before)
+	}
+	if entry := fake.entry(util.NewFullPath(dir, "old-name")); entry != nil {
+		t.Fatalf("old entry %v should have been deleted", entry.FullPath)
+	}
+	newEntry := fake.entry(util.NewFullPath(dir, "new-name"))
+	if newEntry == nil {
+		t.Fatal("expected the new entry to be inserted once its transient failure is retried past")
+	}
+	if newEntry.Quota != wantQuota {
+		t.Fatalf("quota = %d, want %d", newEntry.Quota, wantQuota)
+	}
+	if !fake.hasChild(dir, "new-name") {
+		t.Fatal("new entry should be present in the parent directory's listing")
+	}
+	if !fake.hasChild(dir, "old-name") {
+		t.Fatal("expected the known stale-directory-index hazard: the old name is still listed in the parent directory even though replay reported success. If this now fails, the hazard was fixed at the store layer and this test (and the doc comments referencing it) should be updated")
+	}
+}
