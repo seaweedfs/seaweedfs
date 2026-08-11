@@ -823,7 +823,7 @@ func moveChunk(chunk *filer_pb.FileChunk, toVolumeId needle.VolumeId, masterClie
 	}
 	uploadURL := fmt.Sprintf("http://%s/%s", uploadURLs[0], toFid.String())
 
-	resp, reader, err := readUrl(downloadURL)
+	resp, reader, err := readUrl(downloadURL, filer.JwtForVolumeServer(fromFid.String()))
 	if err != nil {
 		return err
 	}
@@ -877,13 +877,16 @@ func moveChunk(chunk *filer_pb.FileChunk, toVolumeId needle.VolumeId, masterClie
 	return nil
 }
 
-func readUrl(fileUrl string) (*http.Response, io.ReadCloser, error) {
+func readUrl(fileUrl string, jwt string) (*http.Response, io.ReadCloser, error) {
 
 	req, err := http.NewRequest(http.MethodGet, fileUrl, nil)
 	if err != nil {
 		return nil, nil, err
 	}
 	req.Header.Add("Accept-Encoding", "gzip")
+	if jwt != "" {
+		req.Header.Set("Authorization", security.BearerPrefix+jwt)
+	}
 
 	r, err := util_http.GetGlobalHttpClient().Do(req)
 	if err != nil {
