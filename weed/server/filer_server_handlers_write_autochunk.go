@@ -247,10 +247,18 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 	path := fs.fixFilePath(ctx, r, fileName)
 
 	// Commit under the entry lock so plain HTTP overwrites serialize with
-	// gRPC writers, renames, and format repack.
+	// gRPC writers, renames, and format repack on this filer; cross-filer
+	// serialization needs owner routing.
 	fullPath := util.FullPath(path)
 	pathLock := fs.entryLockTable.AcquireLock("saveMetaData", fullPath, util.ExclusiveLock)
 	defer fs.entryLockTable.ReleaseLock(fullPath, pathLock)
+
+	// recheck under the lock: WORM may have been enabled during the upload
+	if enforced, wormErr := fs.wormEnforcedForEntry(ctx, path); wormErr != nil {
+		return nil, wormErr
+	} else if enforced {
+		return nil, errors.New(constants.ErrMsgOperationNotPermitted)
+	}
 
 	var entry *filer.Entry
 	var newChunks []*filer_pb.FileChunk

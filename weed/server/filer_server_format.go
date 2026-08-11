@@ -206,6 +206,16 @@ func (fs *FilerServer) formatIngest(ctx context.Context, w http.ResponseWriter, 
 	// serialize with gRPC writers, renames, and repack
 	pathLock := fs.entryLockTable.AcquireLock("formatIngest", entry.FullPath, util.ExclusiveLock)
 	defer fs.entryLockTable.ReleaseLock(entry.FullPath, pathLock)
+	// recheck under the lock: WORM may have been enabled during the upload
+	if enforced, wormErr := fs.wormEnforcedForEntry(ctx, r.URL.Path); wormErr != nil {
+		cleanup()
+		writeJsonError(w, r, http.StatusInternalServerError, wormErr)
+		return
+	} else if enforced {
+		cleanup()
+		writeJsonError(w, r, http.StatusForbidden, errors.New("cannot replace WORM-enforced entry"))
+		return
+	}
 	if err := fs.filer.CreateEntry(context.WithoutCancel(ctx), entry, nil, false, false, nil, skipCheckParentDirEntry(r), so.MaxFileNameLength); err != nil {
 		cleanup()
 		writeJsonError(w, r, http.StatusInternalServerError, err)
@@ -230,6 +240,13 @@ func (fs *FilerServer) formatRepack(ctx context.Context, w http.ResponseWriter, 
 		return
 	}
 	fullPath := util.FullPath(r.URL.Path)
+	// Serializes gRPC writers, renames, and this filer's HTTP overwrites;
+	// cross-filer serialization needs owner routing.
+	pathLock := fs.entryLockTable.AcquireLock("formatRepack", fullPath, util.ExclusiveLock)
+	defer fs.entryLockTable.ReleaseLock(fullPath, pathLock)
+
+	// checked under the lock so a concurrent WORM enable cannot land between
+	// validation and the entry swap
 	if enforced, err := fs.wormEnforcedForEntry(ctx, r.URL.Path); err != nil {
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
@@ -237,11 +254,6 @@ func (fs *FilerServer) formatRepack(ctx context.Context, w http.ResponseWriter, 
 		writeJsonError(w, r, http.StatusForbidden, errors.New("cannot repack WORM-enforced entry"))
 		return
 	}
-
-	// The lock covers gRPC writers and renames; plain HTTP overwrites do not
-	// take it, so repack targets should be quiescent.
-	pathLock := fs.entryLockTable.AcquireLock("formatRepack", fullPath, util.ExclusiveLock)
-	defer fs.entryLockTable.ReleaseLock(fullPath, pathLock)
 
 	entry, err := fs.filer.FindEntry(ctx, fullPath)
 	if err != nil {
