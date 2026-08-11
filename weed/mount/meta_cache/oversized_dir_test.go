@@ -32,7 +32,7 @@ func listResponses(n int) []*filer_pb.ListEntriesResponse {
 // limit is not cached, that the refusal is remembered, and that the partial
 // build leaves nothing behind in the local store.
 func TestEnsureVisitedRefusesOversizedDirectory(t *testing.T) {
-	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
+	mc, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
 	defer mc.Shutdown()
 
 	accessor := &buildFilerAccessor{client: &buildListClient{responses: listResponses(10)}}
@@ -69,7 +69,7 @@ func TestEnsureVisitedRefusesOversizedDirectory(t *testing.T) {
 // TestEnsureVisitedStepsOverOversizedAncestor checks a huge ancestor does not
 // wedge the caching of its subdirectories.
 func TestEnsureVisitedStepsOverOversizedAncestor(t *testing.T) {
-	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
+	mc, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
 	defer mc.Shutdown()
 	mc.markOversized(util.FullPath("/huge"))
 
@@ -88,7 +88,7 @@ func TestEnsureVisitedStepsOverOversizedAncestor(t *testing.T) {
 // TestEnsureVisitedUnderTheLimitStillCaches pins that the gate does not change
 // behaviour for ordinary directories.
 func TestEnsureVisitedUnderTheLimitStillCaches(t *testing.T) {
-	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
+	mc, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
 	defer mc.Shutdown()
 
 	accessor := &buildFilerAccessor{client: &buildListClient{responses: listResponses(5)}}
@@ -115,7 +115,7 @@ func (c *pathListClient) ListEntries(ctx context.Context, in *filer_pb.ListEntri
 // the ancestor's refusal must neither cancel the descendant's build nor be
 // reported as the descendant's own.
 func TestEnsureVisitedAncestorFoundOversizedMidVisit(t *testing.T) {
-	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
+	mc, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
 	defer mc.Shutdown()
 
 	accessor := &buildFilerAccessor{client: &pathListClient{perDir: map[string][]*filer_pb.ListEntriesResponse{

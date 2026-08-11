@@ -14,7 +14,7 @@ import (
 )
 
 func TestApplyMetadataResponseAppliesEventsInOrder(t *testing.T) {
-	mc, _, notifications, invalidations := newTestMetaCache(t, map[util.FullPath]bool{
+	mc, _, invalidations := newTestMetaCache(t, map[util.FullPath]bool{
 		"/":    true,
 		"/dir": true,
 	})
@@ -97,9 +97,6 @@ func TestApplyMetadataResponseAppliesEventsInOrder(t *testing.T) {
 		t.Fatalf("deleted entry still cached: %+v", entry)
 	}
 
-	if got := countPath(notifications.paths(), util.FullPath("/dir")); got != 3 {
-		t.Fatalf("directory notifications for /dir = %d, want 3", got)
-	}
 	mc.WaitForEntryInvalidations()
 	if got := countPath(invalidations.paths(), util.FullPath("/dir/file.txt")); got != 3 {
 		t.Fatalf("invalidations for /dir/file.txt = %d, want 3 (create + update + delete)", got)
@@ -107,7 +104,7 @@ func TestApplyMetadataResponseAppliesEventsInOrder(t *testing.T) {
 }
 
 func TestApplyMetadataResponseRenamesAcrossCachedDirectories(t *testing.T) {
-	mc, _, notifications, invalidations := newTestMetaCache(t, map[util.FullPath]bool{
+	mc, _, invalidations := newTestMetaCache(t, map[util.FullPath]bool{
 		"/":    true,
 		"/src": true,
 		"/dst": true,
@@ -165,12 +162,6 @@ func TestApplyMetadataResponseRenamesAcrossCachedDirectories(t *testing.T) {
 		t.Fatalf("renamed file size = %d, want 41", newEntry.FileSize)
 	}
 
-	if got := countPath(notifications.paths(), util.FullPath("/src")); got != 1 {
-		t.Fatalf("directory notifications for /src = %d, want 1", got)
-	}
-	if got := countPath(notifications.paths(), util.FullPath("/dst")); got != 1 {
-		t.Fatalf("directory notifications for /dst = %d, want 1", got)
-	}
 	mc.WaitForEntryInvalidations()
 	if got := countPath(invalidations.paths(), util.FullPath("/src/file.tmp")); got != 1 {
 		t.Fatalf("invalidations for /src/file.tmp = %d, want 1", got)
@@ -181,7 +172,7 @@ func TestApplyMetadataResponseRenamesAcrossCachedDirectories(t *testing.T) {
 }
 
 func TestApplyMetadataResponseLocalOptionsSkipInvalidations(t *testing.T) {
-	mc, _, notifications, invalidations := newTestMetaCache(t, map[util.FullPath]bool{
+	mc, _, invalidations := newTestMetaCache(t, map[util.FullPath]bool{
 		"/":    true,
 		"/dir": true,
 	})
@@ -229,9 +220,6 @@ func TestApplyMetadataResponseLocalOptionsSkipInvalidations(t *testing.T) {
 	if entry.FileSize != 17 {
 		t.Fatalf("updated file size = %d, want 17", entry.FileSize)
 	}
-	if got := countPath(notifications.paths(), util.FullPath("/dir")); got != 1 {
-		t.Fatalf("directory notifications for /dir = %d, want 1", got)
-	}
 	mc.WaitForEntryInvalidations()
 	if got := len(invalidations.paths()); got != 0 {
 		t.Fatalf("invalidations = %d, want 0", got)
@@ -239,7 +227,7 @@ func TestApplyMetadataResponseLocalOptionsSkipInvalidations(t *testing.T) {
 }
 
 func TestApplyMetadataResponseDeduplicatesRepeatedFilerEvent(t *testing.T) {
-	mc, _, notifications, invalidations := newTestMetaCache(t, map[util.FullPath]bool{
+	mc, _, invalidations := newTestMetaCache(t, map[util.FullPath]bool{
 		"/":    true,
 		"/dir": true,
 	})
@@ -292,9 +280,6 @@ func TestApplyMetadataResponseDeduplicatesRepeatedFilerEvent(t *testing.T) {
 	if entry.FileSize != 15 {
 		t.Fatalf("updated file size = %d, want 15", entry.FileSize)
 	}
-	if got := countPath(notifications.paths(), util.FullPath("/dir")); got != 1 {
-		t.Fatalf("directory notifications for /dir = %d, want 1", got)
-	}
 	mc.WaitForEntryInvalidations()
 	if got := countPath(invalidations.paths(), util.FullPath("/dir/file.txt")); got != 1 {
 		t.Fatalf("invalidations for /dir/file.txt = %d, want 1", got)
@@ -302,7 +287,7 @@ func TestApplyMetadataResponseDeduplicatesRepeatedFilerEvent(t *testing.T) {
 }
 
 func TestApplyMetadataResponseSkipsHiddenSystemEntryWhenDisabled(t *testing.T) {
-	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+	mc, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
 		"/": true,
 	})
 	defer mc.Shutdown()
@@ -336,7 +321,7 @@ func TestApplyMetadataResponseSkipsHiddenSystemEntryWhenDisabled(t *testing.T) {
 }
 
 func TestApplyMetadataResponsePurgesHiddenDestinationPath(t *testing.T) {
-	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+	mc, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
 		"/":    true,
 		"/src": true,
 	})
@@ -473,7 +458,7 @@ func TestCollectEntryInvalidationsCarryAuthoritativeEntries(t *testing.T) {
 	}
 }
 
-func newTestMetaCache(t *testing.T, cached map[util.FullPath]bool) (*MetaCache, map[util.FullPath]bool, *recordedPaths, *recordedPaths) {
+func newTestMetaCache(t *testing.T, cached map[util.FullPath]bool) (*MetaCache, map[util.FullPath]bool, *recordedPaths) {
 	t.Helper()
 
 	mapper, err := NewUidGidMapper("", "")
@@ -482,7 +467,6 @@ func newTestMetaCache(t *testing.T, cached map[util.FullPath]bool) (*MetaCache, 
 	}
 
 	var cachedMu sync.Mutex
-	notifications := &recordedPaths{}
 	invalidations := &recordedPaths{}
 
 	mc := NewMetaCache(
@@ -503,12 +487,9 @@ func newTestMetaCache(t *testing.T, cached map[util.FullPath]bool) (*MetaCache, 
 		func(inv EntryInvalidation) {
 			invalidations.record(inv.Path)
 		},
-		func(dir util.FullPath) {
-			notifications.record(dir)
-		},
 	)
 
-	return mc, cached, notifications, invalidations
+	return mc, cached, invalidations
 }
 
 type recordedPaths struct {
@@ -542,7 +523,7 @@ func countPath(paths []util.FullPath, target util.FullPath) int {
 // claim no longer describes it and must be cleared — keeping it would fence
 // out events correcting the unversioned state.
 func TestUnversionedWriteClearsEntryVersion(t *testing.T) {
-	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+	mc, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
 		"/":    true,
 		"/dir": true,
 	})
@@ -587,7 +568,7 @@ func TestUnversionedWriteClearsEntryVersion(t *testing.T) {
 // incarnations left behind, or valid events below the stale claim are
 // rejected.
 func TestUnversionedRebuildClearsStaleVersions(t *testing.T) {
-	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+	mc, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
 		"/":    true,
 		"/dir": true,
 	})
@@ -635,7 +616,7 @@ func TestUnversionedRebuildClearsStaleVersions(t *testing.T) {
 // protects; an uncached parent never serves from the store nor applies the
 // resurrecting insert, so a tombstone there would only accumulate.
 func TestTombstonesScopedToCachedDirectories(t *testing.T) {
-	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+	mc, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
 		"/":       true,
 		"/cached": true,
 	})
@@ -670,7 +651,7 @@ func TestTombstonesScopedToCachedDirectories(t *testing.T) {
 // A completed listing's absence floor supersedes the direct-child tombstones
 // at or below its snapshot; newer tombstones survive.
 func TestBuildCompletionPrunesSupersededTombstones(t *testing.T) {
-	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+	mc, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
 		"/":    true,
 		"/dir": true,
 	})
@@ -737,7 +718,7 @@ func TestBuildCompletionPrunesSupersededTombstones(t *testing.T) {
 // tombstone) so they cannot accumulate for the lifetime of a long-running
 // mount.
 func TestDirectoryEvictionClearsVersionRecords(t *testing.T) {
-	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+	mc, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
 		"/":    true,
 		"/dir": true,
 	})
@@ -786,7 +767,7 @@ func TestDirectoryEvictionClearsVersionRecords(t *testing.T) {
 // than a version record per child, and the floor fences exactly as per-child
 // records did.
 func TestBuildFloorVersionsChildrenWithoutPerChildRecords(t *testing.T) {
-	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+	mc, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
 		"/":    true,
 		"/dir": true,
 	})
@@ -843,7 +824,7 @@ func TestBuildFloorVersionsChildrenWithoutPerChildRecords(t *testing.T) {
 // logically-expired entry is judged by its directory's floor rather than by
 // the stale version record it still carries.
 func TestExpiredEntryIsJudgedByDirectoryFloor(t *testing.T) {
-	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+	mc, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
 		"/":    true,
 		"/dir": true,
 	})
@@ -880,7 +861,7 @@ func TestExpiredEntryIsJudgedByDirectoryFloor(t *testing.T) {
 // must not inherit the directory's listing floor — that would fence the very
 // events needed to correct it.
 func TestUnversionedWriteDoesNotInheritDirectoryFloor(t *testing.T) {
-	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+	mc, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
 		"/":    true,
 		"/dir": true,
 	})

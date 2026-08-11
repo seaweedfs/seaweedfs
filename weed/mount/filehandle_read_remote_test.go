@@ -110,7 +110,6 @@ func TestReadUncachedRemoteEntryDoesNotDeadlock(t *testing.T) {
 			lock := wfs.fhLockTable.AcquireLock("invalidateFunc", fh.fh, util.ExclusiveLock)
 			wfs.fhLockTable.ReleaseLock(fh.fh, lock)
 		},
-		nil,
 	)
 	wfs.inodeToPath.MarkChildrenCached(root)
 	wfs.inodeToPath.Lookup(util.FullPath("/dir"), time.Now().Unix(), true, false, 0, false)

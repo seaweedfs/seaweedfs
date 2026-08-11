@@ -347,7 +347,6 @@ func newCopyRangeTestWFSWithMetaCache(t *testing.T) *WFS {
 			return wfs.inodeToPath.IsChildrenCached(path)
 		},
 		func(meta_cache.EntryInvalidation) {},
-		nil,
 	)
 	t.Cleanup(func() {
 		wfs.metaCache.Shutdown()

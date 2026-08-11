@@ -42,7 +42,7 @@ func barrier(t *testing.T, mc *MetaCache) {
 // store, and every file in it vanishes from the mount though it is safe on the
 // filer.
 func TestPurgeSkippedWhileDirectoryBuilding(t *testing.T) {
-	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
+	mc, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
 	defer mc.Shutdown()
 
 	dir := util.FullPath("/dir")
@@ -79,7 +79,7 @@ func TestPurgeSkippedWhileDirectoryBuilding(t *testing.T) {
 // apply loop: with no build in flight, the purge resets the cached flag and
 // wipes the store.
 func TestPurgeClearsWhenNotBuilding(t *testing.T) {
-	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true, "/dir": true})
+	mc, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true, "/dir": true})
 	defer mc.Shutdown()
 
 	dir := util.FullPath("/dir")

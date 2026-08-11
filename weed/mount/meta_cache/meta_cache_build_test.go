@@ -68,7 +68,7 @@ func (a *buildFilerAccessor) AdjustedUrl(*filer_pb.Location) string { return "" 
 func (a *buildFilerAccessor) GetDataCenter() string                 { return "" }
 
 func TestEnsureVisitedReplaysBufferedEventsAfterSnapshot(t *testing.T) {
-	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+	mc, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
 		"/": true,
 	})
 	defer mc.Shutdown()
@@ -137,13 +137,11 @@ func TestEnsureVisitedReplaysBufferedEventsAfterSnapshot(t *testing.T) {
 	}
 }
 
-// TestDirectoryNotificationsSuppressedDuringBuild verifies that metadata events
-// targeting a directory under active build do NOT fire onDirectoryUpdate for
-// that directory. In production, onDirectoryUpdate can trigger
-// markDirectoryReadThrough → DeleteFolderChildren, which would wipe entries
-// that EnsureVisited already inserted mid-build.
-func TestDirectoryNotificationsSuppressedDuringBuild(t *testing.T) {
-	mc, _, notifications, _ := newTestMetaCache(t, map[util.FullPath]bool{
+// TestEventsDuringBuildKeepInsertedEntries verifies that metadata events
+// targeting a directory under active build do not disturb entries the build
+// already inserted, and are replayed once the build completes.
+func TestEventsDuringBuildKeepInsertedEntries(t *testing.T) {
+	mc, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
 		"/": true,
 	})
 	defer mc.Shutdown()
@@ -167,8 +165,7 @@ func TestDirectoryNotificationsSuppressedDuringBuild(t *testing.T) {
 	}
 
 	// Simulate multiple metadata events arriving for /dir while the build
-	// is in progress. Each event would normally call noteDirectoryUpdate,
-	// which in production can trigger markDirectoryReadThrough and wipe entries.
+	// is in progress.
 	for i := 0; i < 5; i++ {
 		resp := &filer_pb.SubscribeMetadataResponse{
 			Directory: "/dir",
@@ -187,14 +184,6 @@ func TestDirectoryNotificationsSuppressedDuringBuild(t *testing.T) {
 		}
 		if err := mc.ApplyMetadataResponse(context.Background(), resp, SubscriberMetadataResponseApplyOptions); err != nil {
 			t.Fatalf("apply event %d: %v", i, err)
-		}
-	}
-
-	// The building directory /dir must NOT have received any notifications.
-	// If it did, markDirectoryReadThrough would wipe the cache mid-build.
-	for _, p := range notifications.paths() {
-		if p == util.FullPath("/dir") {
-			t.Fatal("onDirectoryUpdate was called for /dir during build; this would cause markDirectoryReadThrough to wipe entries mid-build")
 		}
 	}
 
@@ -240,7 +229,7 @@ func TestDirectoryNotificationsSuppressedDuringBuild(t *testing.T) {
 // without any TsNs filtering. This prevents clock-skew between client and
 // filer from dropping legitimate mutations.
 func TestEmptyDirectoryBuildReplaysAllBufferedEvents(t *testing.T) {
-	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+	mc, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
 		"/": true,
 	})
 	defer mc.Shutdown()
@@ -300,7 +289,7 @@ func TestEmptyDirectoryBuildReplaysAllBufferedEvents(t *testing.T) {
 // prevent the build from completing. The apply loop uses context.Background()
 // internally, so the operation finishes even if the caller gives up waiting.
 func TestBuildCompletionSurvivesCallerCancellation(t *testing.T) {
-	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+	mc, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
 		"/": true,
 	})
 	defer mc.Shutdown()
@@ -383,7 +372,7 @@ func TestBuildCompletionSurvivesCallerCancellation(t *testing.T) {
 }
 
 func TestBufferedRenameUpdatesOtherDirectoryBeforeBuildCompletes(t *testing.T) {
-	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+	mc, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
 		"/":    true,
 		"/src": true,
 	})
@@ -470,7 +459,7 @@ func TestBufferedRenameUpdatesOtherDirectoryBeforeBuildCompletes(t *testing.T) {
 // authoritatively cached (markCachedFn). The local entry vanishes although the
 // client created it: lookupEntry then returns an authoritative ENOENT for it.
 func TestEnsureVisitedPreservesLocalOnlyEntry(t *testing.T) {
-	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
+	mc, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
 	defer mc.Shutdown()
 
 	// The mount pins the un-flushed create (open dirty handle / pending flush),
@@ -527,7 +516,7 @@ func TestEnsureVisitedPreservesLocalOnlyEntry(t *testing.T) {
 // a cached child the filer listing no longer returns and that is NOT pinned must
 // still be wiped, so the rebuild can't resurrect a deleted/renamed entry.
 func TestEnsureVisitedDropsUnpinnedStaleEntry(t *testing.T) {
-	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
+	mc, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
 	defer mc.Shutdown()
 
 	mc.SetPinnedChildFn(func(*filer.Entry) bool { return false })
@@ -583,7 +572,7 @@ func (c *sequencedListClient) ListEntries(ctx context.Context, in *filer_pb.List
 // listing comes back empty must re-read and cache the real entries, not strand
 // the directory cached over an empty store (the ConcurrentReadWrite ENOENT flake).
 func TestEnsureVisitedConfirmsTransientEmptyListing(t *testing.T) {
-	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
+	mc, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
 	defer mc.Shutdown()
 
 	entry := &filer_pb.Entry{
@@ -611,7 +600,7 @@ func TestEnsureVisitedConfirmsTransientEmptyListing(t *testing.T) {
 // TestEnsureVisitedCachesGenuinelyEmptyDirectory: a really-empty directory lists
 // empty on every confirm and must still end up cached.
 func TestEnsureVisitedCachesGenuinelyEmptyDirectory(t *testing.T) {
-	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
+	mc, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
 	defer mc.Shutdown()
 
 	client := &sequencedListClient{

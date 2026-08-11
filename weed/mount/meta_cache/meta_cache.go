@@ -32,7 +32,6 @@ type MetaCache struct {
 	markCachedFn         func(fullpath util.FullPath)
 	isCachedFn           func(fullpath util.FullPath) bool
 	invalidateFunc       func(EntryInvalidation)
-	onDirectoryUpdate    func(dir util.FullPath)
 	pinnedChildFn        func(*filer.Entry) bool // a child a rebuild must not drop (local-only, not yet on the filer); nil disables
 	visitGroup           singleflight.Group      // deduplicates concurrent EnsureVisited calls for the same path
 	applyCh              chan metadataApplyRequest
@@ -64,16 +63,12 @@ type MetaCache struct {
 var errMetaCacheClosed = errors.New("metadata cache is shut down")
 
 type MetadataResponseApplyOptions struct {
-	NotifyDirectories bool
 	InvalidateEntries bool
 }
 
 var (
-	LocalMetadataResponseApplyOptions = MetadataResponseApplyOptions{
-		NotifyDirectories: true,
-	}
+	LocalMetadataResponseApplyOptions      = MetadataResponseApplyOptions{}
 	SubscriberMetadataResponseApplyOptions = MetadataResponseApplyOptions{
-		NotifyDirectories: true,
 		InvalidateEntries: true,
 	}
 )
@@ -107,7 +102,7 @@ type metadataApplyRequest struct {
 }
 
 func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPath, includeSystemEntries bool,
-	markCachedFn func(path util.FullPath), isCachedFn func(path util.FullPath) bool, invalidateFunc func(EntryInvalidation), onDirectoryUpdate func(dir util.FullPath)) *MetaCache {
+	markCachedFn func(path util.FullPath), isCachedFn func(path util.FullPath) bool, invalidateFunc func(EntryInvalidation)) *MetaCache {
 	leveldbStore, virtualStore := openMetaStore(dbFolder)
 	mc := &MetaCache{
 		root:                 root,
@@ -116,7 +111,6 @@ func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPat
 		markCachedFn:         markCachedFn,
 		isCachedFn:           isCachedFn,
 		uidGidMapper:         uidGidMapper,
-		onDirectoryUpdate:    onDirectoryUpdate,
 		includeSystemEntries: includeSystemEntries,
 		invalidateFunc:       invalidateFunc,
 		applyCh:              make(chan metadataApplyRequest, 128),
@@ -714,12 +708,6 @@ func (mc *MetaCache) IsDirectoryCached(dirPath util.FullPath) bool {
 	return mc.isCachedFn(dirPath)
 }
 
-func (mc *MetaCache) noteDirectoryUpdate(dirPath util.FullPath) {
-	if mc.onDirectoryUpdate != nil {
-		mc.onDirectoryUpdate(dirPath)
-	}
-}
-
 func (mc *MetaCache) enqueueAndWait(ctx context.Context, req metadataApplyRequest) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -821,11 +809,6 @@ type EntryInvalidation struct {
 	WasDirectory bool
 }
 
-type metadataResponseSideEffects struct {
-	dirsToNotify  []util.FullPath
-	invalidations []EntryInvalidation
-}
-
 func (mc *MetaCache) applyMetadataResponseNow(ctx context.Context, resp *filer_pb.SubscribeMetadataResponse, options MetadataResponseApplyOptions) error {
 	if mc.shouldSkipDuplicateEvent(resp) {
 		return nil
@@ -841,11 +824,7 @@ func (mc *MetaCache) applyMetadataResponseNow(ctx context.Context, resp *filer_p
 			return err
 		}
 	}
-	// Apply side effects but skip directory notifications for dirs that are
-	// currently being built. Notifying a building dir can trigger
-	// markDirectoryReadThrough → DeleteFolderChildren, wiping entries that
-	// EnsureVisited already inserted, leaving an incomplete cache.
-	mc.applyMetadataSideEffectsSkippingBuildingDirs(resp, options)
+	mc.applyMetadataSideEffects(resp, options)
 	for buildDir, events := range bufferedEvents {
 		state := mc.buildingDirs[buildDir]
 		if state == nil {
@@ -857,7 +836,7 @@ func (mc *MetaCache) applyMetadataResponseNow(ctx context.Context, resp *filer_p
 }
 
 func (mc *MetaCache) applyMetadataResponseDirect(ctx context.Context, resp *filer_pb.SubscribeMetadataResponse, options MetadataResponseApplyOptions, allowUncachedInsert bool) error {
-	if _, err := mc.applyMetadataResponseLocked(ctx, resp, options, allowUncachedInsert); err != nil {
+	if err := mc.applyMetadataResponseLocked(ctx, resp, options, allowUncachedInsert); err != nil {
 		return err
 	}
 	mc.applyMetadataSideEffects(resp, options)
@@ -865,36 +844,9 @@ func (mc *MetaCache) applyMetadataResponseDirect(ctx context.Context, resp *file
 }
 
 func (mc *MetaCache) applyMetadataSideEffects(resp *filer_pb.SubscribeMetadataResponse, options MetadataResponseApplyOptions) {
-	sideEffects := metadataResponseSideEffects{}
-	if options.NotifyDirectories {
-		sideEffects.dirsToNotify = collectDirectoryNotifications(resp)
-	}
 	if options.InvalidateEntries {
-		sideEffects.invalidations = collectEntryInvalidations(resp)
+		mc.invalidateWorker.Enqueue(collectEntryInvalidations(resp)...)
 	}
-	for _, dirPath := range sideEffects.dirsToNotify {
-		mc.noteDirectoryUpdate(dirPath)
-	}
-	mc.invalidateWorker.Enqueue(sideEffects.invalidations...)
-}
-
-// applyMetadataSideEffectsSkippingBuildingDirs is like applyMetadataSideEffects
-// but suppresses directory notifications for dirs currently in buildingDirs.
-// This prevents markDirectoryReadThrough from wiping entries mid-build.
-func (mc *MetaCache) applyMetadataSideEffectsSkippingBuildingDirs(resp *filer_pb.SubscribeMetadataResponse, options MetadataResponseApplyOptions) {
-	sideEffects := metadataResponseSideEffects{}
-	if options.NotifyDirectories {
-		sideEffects.dirsToNotify = collectDirectoryNotifications(resp)
-	}
-	if options.InvalidateEntries {
-		sideEffects.invalidations = collectEntryInvalidations(resp)
-	}
-	for _, dirPath := range sideEffects.dirsToNotify {
-		if _, building := mc.buildingDirs[dirPath]; !building {
-			mc.noteDirectoryUpdate(dirPath)
-		}
-	}
-	mc.invalidateWorker.Enqueue(sideEffects.invalidations...)
 }
 
 // WaitForEntryInvalidations blocks until every invalidation enqueued so far
@@ -904,10 +856,10 @@ func (mc *MetaCache) WaitForEntryInvalidations() {
 	mc.invalidateWorker.Drain()
 }
 
-func (mc *MetaCache) applyMetadataResponseLocked(ctx context.Context, resp *filer_pb.SubscribeMetadataResponse, options MetadataResponseApplyOptions, allowUncachedInsert bool) (metadataResponseSideEffects, error) {
+func (mc *MetaCache) applyMetadataResponseLocked(ctx context.Context, resp *filer_pb.SubscribeMetadataResponse, options MetadataResponseApplyOptions, allowUncachedInsert bool) error {
 	message := resp.GetEventNotification()
 	if message == nil {
-		return metadataResponseSideEffects{}, nil
+		return nil
 	}
 
 	var oldPath util.FullPath
@@ -960,10 +912,7 @@ func (mc *MetaCache) applyMetadataResponseLocked(ctx context.Context, resp *file
 		}
 	}
 	mc.Unlock()
-	if err != nil {
-		return metadataResponseSideEffects{}, err
-	}
-	return metadataResponseSideEffects{}, nil
+	return err
 }
 
 func (mc *MetaCache) beginDirectoryBuildNow(dirPath util.FullPath) error {
@@ -1214,47 +1163,6 @@ func (r *dedupRingBuffer) Add(key string) bool {
 	r.set[key] = struct{}{}
 	r.head = (r.head + 1) % recentEventDedupWindow
 	return true // new entry
-}
-
-func collectDirectoryNotifications(resp *filer_pb.SubscribeMetadataResponse) []util.FullPath {
-	message := resp.GetEventNotification()
-	if message == nil {
-		return nil
-	}
-
-	// At most 3 dirs: old parent, new parent, new child (if directory).
-	// Use a fixed slice with linear dedup to avoid map allocation.
-	var dirs [3]util.FullPath
-	n := 0
-	addUnique := func(p util.FullPath) {
-		for i := 0; i < n; i++ {
-			if dirs[i] == p {
-				return
-			}
-		}
-		dirs[n] = p
-		n++
-	}
-
-	if message.OldEntry != nil {
-		oldPath := util.NewFullPath(resp.Directory, message.OldEntry.Name)
-		parent, _ := oldPath.DirAndName()
-		addUnique(util.FullPath(parent))
-	}
-	if message.NewEntry != nil {
-		newDir := resp.Directory
-		if message.NewParentPath != "" {
-			newDir = message.NewParentPath
-		}
-		newPath := util.NewFullPath(newDir, message.NewEntry.Name)
-		parent, _ := newPath.DirAndName()
-		addUnique(util.FullPath(parent))
-		if message.NewEntry.IsDirectory {
-			addUnique(newPath)
-		}
-	}
-
-	return dirs[:n]
 }
 
 func collectEntryInvalidations(resp *filer_pb.SubscribeMetadataResponse) []EntryInvalidation {

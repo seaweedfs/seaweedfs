@@ -129,7 +129,6 @@ func newCreateTestWFS(t *testing.T) (*WFS, *createEntryTestServer) {
 			return wfs.inodeToPath.IsChildrenCached(path)
 		},
 		func(meta_cache.EntryInvalidation) {},
-		nil,
 	)
 	wfs.inodeToPath.MarkChildrenCached(root)
 	t.Cleanup(func() {

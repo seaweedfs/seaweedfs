@@ -31,7 +31,6 @@ func TestHandleRenameResponseLeavesUncachedTargetOutOfCache(t *testing.T) {
 			return inodeToPath.IsChildrenCached(path)
 		},
 		func(meta_cache.EntryInvalidation) {},
-		nil,
 	)
 	defer mc.Shutdown()
 

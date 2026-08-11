@@ -61,7 +61,6 @@ func newInvalidateTestWFS(t *testing.T) *WFS {
 		func(path util.FullPath) { wfs.inodeToPath.MarkChildrenCached(path) },
 		func(path util.FullPath) bool { return wfs.inodeToPath.IsChildrenCached(path) },
 		wfs.invalidateOpenFileHandle,
-		nil,
 	)
 	t.Cleanup(wfs.metaCache.Shutdown)
 
