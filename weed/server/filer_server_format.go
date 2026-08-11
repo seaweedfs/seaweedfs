@@ -265,12 +265,6 @@ func (fs *FilerServer) formatRepack(ctx context.Context, w http.ResponseWriter, 
 		writeJsonError(w, r, http.StatusBadRequest, errors.New("cannot repack hard-linked or remote entries"))
 		return
 	}
-	// S3 object versions may share one chunk list; deleting the old chunks
-	// here would corrupt sibling versions.
-	if entry.IsS3Versioning() {
-		writeJsonError(w, r, http.StatusBadRequest, errors.New("cannot repack S3-versioned entries"))
-		return
-	}
 	for _, chunk := range oldChunks {
 		if chunk.SseType != filer_pb.SSEType_NONE {
 			writeJsonError(w, r, http.StatusBadRequest, errors.New("cannot repack server-side encrypted entries"))
