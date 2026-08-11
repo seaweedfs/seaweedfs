@@ -354,9 +354,19 @@ jobs:
           retention-days: 3
 
   clickhouse-iceberg-catalog-tests:
-    name: ClickHouse Iceberg Catalog Integration Tests
+    name: ClickHouse Iceberg Catalog Integration Tests (${{ matrix.tag }})
     runs-on: ubuntu-22.04
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Pinned baseline, and latest so new ClickHouse releases are
+          # exercised without a code change.
+          - clickhouse-image: clickhouse/clickhouse-server:25.8
+            tag: "25.8"
+          - clickhouse-image: clickhouse/clickhouse-server:latest
+            tag: latest
 
     steps:
       - name: Check out code
@@ -376,7 +386,7 @@ jobs:
       - name: Pre-pull images
         run: |
           pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
-          pull clickhouse/clickhouse-server:25.8
+          pull ${{ matrix.clickhouse-image }}
           pull python:3.11-slim
 
       - name: Run go mod tidy
@@ -389,6 +399,8 @@ jobs:
       - name: Run ClickHouse Iceberg Catalog Integration Tests
         timeout-minutes: 25
         working-directory: test/s3tables/catalog_clickhouse
+        env:
+          CLICKHOUSE_IMAGE: ${{ matrix.clickhouse-image }}
         run: |
           set -x
           set -o pipefail
@@ -422,7 +434,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: clickhouse-iceberg-catalog-test-logs
+          name: clickhouse-iceberg-catalog-test-logs-${{ matrix.tag }}
           path: test/s3tables/catalog_clickhouse/test-output.log
           retention-days: 3
 

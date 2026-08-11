@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +23,7 @@ import (
 )
 
 const (
-	clickhouseImage        = "clickhouse/clickhouse-server:25.8"
+	clickhouseDefaultImage = "clickhouse/clickhouse-server:25.8"
 	clickhouseDatabase     = "iceberg_catalog"
 	clickhouseHTTPPort     = 8123
 	clickhouseStartTimeout = 2 * time.Minute
@@ -195,6 +196,92 @@ func TestClickHouseIcebergCatalog(t *testing.T) {
 			t.Fatalf("PyIceberg read of ClickHouse-written table = %q, want %q", rows, want)
 		}
 	})
+
+	// From 26.4 ClickHouse registers CREATE TABLE on a DataLakeCatalog database
+	// with the REST catalog; older versions write storage files without a
+	// catalog createTable, so the subtest skips there.
+	t.Run("CreateTableViaCatalog", func(t *testing.T) {
+		version := env.mustQuery(t, "SELECT version()")
+		if !versionAtLeast(version, 26, 4) {
+			t.Skipf("catalog CREATE TABLE requires ClickHouse 26.4+, server is %s", version)
+		}
+
+		ddlTable := "chddl_" + randomString(6)
+		ddlRef := fmt.Sprintf("%s.`%s.%s`", clickhouseDatabase, namespace, ddlTable)
+		location := fmt.Sprintf("http://host.docker.internal:%d/%s/%s/%s/", env.s3Port, tableBucket, namespace, ddlTable)
+		create := fmt.Sprintf("CREATE TABLE %s (id Int64, label Nullable(String)) ENGINE = IcebergS3('%s', '%s', '%s')",
+			ddlRef, location, env.accessKey, env.secretKey)
+		if _, err := env.query(create, map[string]string{
+			"allow_experimental_database_iceberg": "1",
+			// Without this ClickHouse registers a bare "/namespace/table"
+			// location, which the catalog rejects.
+			"write_full_path_in_iceberg_metadata": "1",
+		}); err != nil {
+			t.Fatalf("%s: %v\nContainer logs:\n%s", create, err, clickhouseContainerLogs(env.clickhouseContainer))
+		}
+
+		// The table must exist in the catalog itself, not just in ClickHouse.
+		token := requestIcebergOAuthToken(t, env)
+		listing := doIcebergJSONRequest(t, env, token, http.MethodGet,
+			fmt.Sprintf("/v1/%s/namespaces/%s/tables", url.PathEscape(tableBucket), url.PathEscape(namespace)),
+			nil, http.StatusOK)
+		var tables struct {
+			Identifiers []struct {
+				Namespace []string `json:"namespace"`
+				Name      string   `json:"name"`
+			} `json:"identifiers"`
+		}
+		if err := json.Unmarshal([]byte(listing), &tables); err != nil {
+			t.Fatalf("decode catalog table listing: %v\n%s", err, listing)
+		}
+		registered := false
+		for _, id := range tables.Identifiers {
+			if id.Name == ddlTable && len(id.Namespace) == 1 && id.Namespace[0] == namespace {
+				registered = true
+				break
+			}
+		}
+		if !registered {
+			t.Fatalf("catalog table listing is missing %s: %s", ddlTable, listing)
+		}
+
+		insert := fmt.Sprintf("INSERT INTO %s (id, label) VALUES (1, 'alpha'), (2, 'beta')", ddlRef)
+		if _, err := env.query(insert, map[string]string{"allow_experimental_insert_into_iceberg": "1"}); err != nil {
+			t.Fatalf("%s: %v\nContainer logs:\n%s", insert, err, clickhouseContainerLogs(env.clickhouseContainer))
+		}
+
+		out := env.mustQuery(t, fmt.Sprintf("SELECT id, label FROM %s ORDER BY id", ddlRef))
+		if want := "1\talpha\n2\tbeta"; out != want {
+			t.Fatalf("ClickHouse read-back = %q, want %q", out, want)
+		}
+
+		rows := readIcebergRows(t, env, tableBucket, []string{namespace}, ddlTable)
+		if want := "1,alpha\n2,beta"; rows != want {
+			t.Fatalf("PyIceberg read of ClickHouse-created table = %q, want %q", rows, want)
+		}
+	})
+}
+
+// TestVersionAtLeast exercises the gate that decides whether the catalog DDL
+// subtest runs.
+func TestVersionAtLeast(t *testing.T) {
+	cases := []struct {
+		version      string
+		major, minor int
+		want         bool
+	}{
+		{"26.7.3.19", 26, 4, true},
+		{"26.4.5.143", 26, 4, true},
+		{"26.3.17.110", 26, 4, false},
+		{"25.8.29.51", 26, 4, false},
+		{"27.1.1.1", 26, 4, true},
+		{"weird", 26, 4, false},
+	}
+	for _, c := range cases {
+		if got := versionAtLeast(c.version, c.major, c.minor); got != c.want {
+			t.Errorf("versionAtLeast(%q, %d, %d) = %v, want %v", c.version, c.major, c.minor, got, c.want)
+		}
+	}
 }
 
 // NewTestEnvironment allocates ports and returns an environment for the test.
@@ -393,11 +480,36 @@ func (env *TestEnvironment) startClickHouseContainer(t *testing.T) {
 		"--ulimit", "nofile=262144:262144",
 		"-e", "CLICKHOUSE_USER="+clickhouseUser,
 		"-e", "CLICKHOUSE_PASSWORD="+clickhousePassword,
-		clickhouseImage,
+		clickhouseImage(),
 	)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to start ClickHouse container: %v\n%s", err, string(output))
 	}
+}
+
+// clickhouseImage returns the server image under test. CI overrides it via
+// CLICKHOUSE_IMAGE to also run the suite against latest, so new ClickHouse
+// releases are exercised without a code change.
+func clickhouseImage() string {
+	if img := os.Getenv("CLICKHOUSE_IMAGE"); img != "" {
+		return img
+	}
+	return clickhouseDefaultImage
+}
+
+// versionAtLeast reports whether a "major.minor.*" version string is at least
+// major.minor.
+func versionAtLeast(version string, major, minor int) bool {
+	parts := strings.Split(strings.TrimSpace(version), ".")
+	if len(parts) < 2 {
+		return false
+	}
+	gotMajor, errMajor := strconv.Atoi(parts[0])
+	gotMinor, errMinor := strconv.Atoi(parts[1])
+	if errMajor != nil || errMinor != nil {
+		return false
+	}
+	return gotMajor > major || (gotMajor == major && gotMinor >= minor)
 }
 
 // clickhouseContainerLogs returns the tail of the container logs for diagnostics.
