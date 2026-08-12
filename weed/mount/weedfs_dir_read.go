@@ -284,6 +284,16 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out DirEntrySink, isPlusMode
 				return fuse.EIO
 			}
 
+			// Serve the maintained-but-unverified cache if the filer is unreachable.
+			if err := meta_cache.EnsureListingFresh(context.Background(), wfs.metaCache, wfs, dirPath, ""); err != nil {
+				if errors.Is(err, meta_cache.ErrRefreshRangeTooLarge) {
+					// re-tile with a full rebuild; serve this request direct
+					wfs.purgeDirectoryCache(dirPath)
+					return wfs.readDirectoryDirect(input, out, dh, dirPath, processEachEntryFn)
+				}
+				glog.V(1).Infof("refresh %s sections: %v", dirPath, err)
+			}
+
 			// Load entries from beginning to fill cache up to the requested offset
 			storeLastName, loadErr := wfs.metaCache.ListDirectoryEntries(readdirContext, dirPath, "", false, skipCount+int64(batchSize), func(entry *filer.Entry) (bool, error) {
 				dh.entryStream = append(dh.entryStream, entry)
@@ -339,6 +349,16 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out DirEntrySink, isPlusMode
 		// round and never get past a batch that was entirely expired.
 		if dh.lastListedName > lastEntryName {
 			lastEntryName = dh.lastListedName
+		}
+
+		// Serve the maintained-but-unverified cache if the filer is unreachable.
+		if err := meta_cache.EnsureListingFresh(context.Background(), wfs.metaCache, wfs, dirPath, lastEntryName); err != nil {
+			if errors.Is(err, meta_cache.ErrRefreshRangeTooLarge) {
+				// re-tile with a full rebuild; serve this request direct
+				wfs.purgeDirectoryCache(dirPath)
+				return wfs.readDirectoryDirect(input, out, dh, dirPath, processEachEntryFn)
+			}
+			glog.V(1).Infof("refresh %s sections: %v", dirPath, err)
 		}
 
 		bufferFull := false

@@ -34,8 +34,6 @@ type dirState struct {
 	cachedExpiresTime time.Time
 	lastAccess        time.Time
 	lastRefresh       time.Time
-	updateWindowStart time.Time
-	updateCount       int
 	subdirCount       int32 // tracked in-memory for POSIX directory nlink
 }
 
@@ -43,8 +41,6 @@ func (d *dirState) resetCacheState() {
 	d.isChildrenCached = false
 	d.readDirDirect = false
 	d.cachedExpiresTime = time.Time{}
-	d.updateCount = 0
-	d.updateWindowStart = time.Time{}
 }
 
 func (ie *InodeEntry) removeOnePath(p util.FullPath) bool {
@@ -245,8 +241,6 @@ func (i *InodeToPath) MarkChildrenCached(fullpath util.FullPath) {
 	now := time.Now()
 	d.lastAccess = now
 	d.lastRefresh = now
-	d.updateCount = 0
-	d.updateWindowStart = time.Time{}
 	if i.cacheMetaTtlSec > 0 {
 		d.cachedExpiresTime = now.Add(i.cacheMetaTtlSec)
 	}
@@ -376,41 +370,7 @@ func (i *InodeToPath) MarkDirectoryReadThrough(fullpath util.FullPath, now time.
 	d.cachedExpiresTime = time.Time{}
 	d.lastAccess = now
 	d.lastRefresh = time.Time{}
-	d.updateCount = 0
-	d.updateWindowStart = time.Time{}
 	return true
-}
-
-func (i *InodeToPath) RecordDirectoryUpdate(fullpath util.FullPath, now time.Time, window time.Duration, threshold int) bool {
-	if threshold <= 0 || window <= 0 {
-		return false
-	}
-	i.Lock()
-	defer i.Unlock()
-	inode, found := i.path2inode[fullpath]
-	if !found {
-		return false
-	}
-	d := i.dirStates[inode]
-	if d == nil || !d.isChildrenCached {
-		return false
-	}
-	if d.updateWindowStart.IsZero() || now.Sub(d.updateWindowStart) > window {
-		d.updateWindowStart = now
-		d.updateCount = 0
-	}
-	d.updateCount++
-	if d.updateCount >= threshold {
-		d.isChildrenCached = false
-		d.readDirDirect = true
-		d.cachedExpiresTime = time.Time{}
-		d.lastAccess = now
-		d.lastRefresh = time.Time{}
-		d.updateCount = 0
-		d.updateWindowStart = time.Time{}
-		return true
-	}
-	return false
 }
 
 func (i *InodeToPath) ShouldReadDirectoryDirect(fullpath util.FullPath) bool {
@@ -441,8 +401,6 @@ func (i *InodeToPath) MarkDirectoryRefreshed(fullpath util.FullPath, now time.Ti
 	d.lastRefresh = now
 	d.lastAccess = now
 	d.readDirDirect = false
-	d.updateCount = 0
-	d.updateWindowStart = time.Time{}
 	if i.cacheMetaTtlSec > 0 {
 		d.cachedExpiresTime = now.Add(i.cacheMetaTtlSec)
 	}
