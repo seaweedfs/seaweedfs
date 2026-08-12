@@ -289,11 +289,16 @@ func uploadPayload(data []byte) (needle.VolumeId, string, error) {
 	return fidObj.VolumeId, assignResult.Fid, nil
 }
 
+// readClient bounds every read so a restarting or stalled server cannot hang
+// the request past the Eventually deadline and the test's own context — a
+// slow location has to fail and be retried, not block.
+var readClient = &http.Client{Timeout: 10 * time.Second}
+
 // readFid locates the volume via the master and fetches the needle bytes from
 // a currently-registered location — the same route a client read takes, for a
 // plain volume before encoding and for the EC read path after.
 func readFid(fid string, volumeId uint32) ([]byte, error) {
-	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:9334/dir/lookup?volumeId=%d", volumeId))
+	resp, err := readClient.Get(fmt.Sprintf("http://127.0.0.1:9334/dir/lookup?volumeId=%d", volumeId))
 	if err != nil {
 		return nil, err
 	}
@@ -311,7 +316,7 @@ func readFid(fid string, volumeId uint32) ([]byte, error) {
 	}
 	var lastErr error
 	for _, loc := range lookup.Locations {
-		get, err := http.Get(fmt.Sprintf("http://%s/%s", loc.Url, fid))
+		get, err := readClient.Get(fmt.Sprintf("http://%s/%s", loc.Url, fid))
 		if err != nil {
 			lastErr = err
 			continue
