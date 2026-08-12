@@ -335,7 +335,8 @@ func TestEnsureListingFreshRefreshesFromFiler(t *testing.T) {
 	for i := 0; i < 1500; i++ {
 		server.names = append(server.names, fmt.Sprintf("b-%04d", i))
 	}
-	server.names = append(server.names, "z-1") // beyond the section, must not be applied
+	// at and beyond the section's end, must not be applied
+	server.names = append(server.names, "m", "z-1")
 	client := startSectionFilerServer(t, server)
 
 	buildSectionedDir(t, mc, util.FullPath("/dir"), 1000, []string{"m"})
@@ -359,8 +360,10 @@ func TestEnsureListingFreshRefreshesFromFiler(t *testing.T) {
 	if _, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/a-000")); err != filer_pb.ErrNotFound {
 		t.Fatalf("churned a-000 error = %v, want not found", err)
 	}
-	if _, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/z-1")); err != filer_pb.ErrNotFound {
-		t.Fatalf("z-1 beyond the section was applied: %v", err)
+	for _, name := range []string{"m", "z-1"} {
+		if _, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/"+name)); err != filer_pb.ErrNotFound {
+			t.Fatalf("%s at or beyond the section's end was applied: %v", name, err)
+		}
 	}
 
 	requests := server.listRequests()
@@ -794,5 +797,133 @@ func TestRefreshSkipsBuildingDirectory(t *testing.T) {
 	}
 	if err := mc.AbortDirectoryBuild(context.Background(), util.FullPath("/dir")); err != nil {
 		t.Fatalf("abort build: %v", err)
+	}
+}
+
+// TestSectionBorderEntries pins the border semantics: a bound-named entry
+// belongs to the section starting at the bound, a refresh sweeps [lo, hi)
+// inclusive of lo and exclusive of hi, and the neighboring sections' entries
+// come through untouched.
+func TestSectionBorderEntries(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+		"/":    true,
+		"/dir": true,
+	})
+	defer mc.Shutdown()
+
+	buildSectionedDir(t, mc, util.FullPath("/dir"), 1000, []string{"g", "p"})
+	for _, name := range []string{"g", "h", "p"} {
+		if err := mc.InsertEntry(context.Background(), &filer.Entry{
+			FullPath: util.FullPath("/dir/" + name),
+			Attr:     filer.Attr{Crtime: time.Unix(1, 0), Mtime: time.Unix(1, 0), Mode: 0100644, FileSize: 1},
+		}, 0); err != nil {
+			t.Fatalf("seed %s: %v", name, err)
+		}
+	}
+	applyChurn(t, mc, "/dir", "a-", sectionHotThreshold, 2000, SubscriberMetadataResponseApplyOptions)
+	applyChurn(t, mc, "/dir", "h-", sectionHotThreshold, 3000, SubscriberMetadataResponseApplyOptions)
+
+	// the bound name is part of the section starting at it
+	if mc.IsNameFresh(util.FullPath("/dir/a-000")) || mc.IsNameFresh(util.FullPath("/dir/g")) {
+		t.Fatal("both churned sections should be stale")
+	}
+
+	// refreshing [ , g) sweeps its churn but must not reach the bound entry
+	if err := mc.enqueueAndWait(context.Background(), metadataApplyRequest{
+		kind:      metadataSectionRefresh,
+		buildPath: util.FullPath("/dir"),
+		refresh:   &sectionRefresh{hi: "g", snapshotTsNs: 5000},
+	}); err != nil {
+		t.Fatalf("refresh section 0: %v", err)
+	}
+	if _, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/a-000")); err != filer_pb.ErrNotFound {
+		t.Fatalf("churned a-000 should be swept: %v", err)
+	}
+	for _, name := range []string{"g", "h", "p"} {
+		if _, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/"+name)); err != nil {
+			t.Fatalf("%s swept by the neighboring refresh: %v", name, err)
+		}
+	}
+	if !mc.IsNameFresh(util.FullPath("/dir/a-000")) || mc.IsNameFresh(util.FullPath("/dir/g")) {
+		t.Fatal("only the refreshed section should be fresh")
+	}
+
+	// refreshing [g, p) covers the bound entry itself and stops before p
+	if err := mc.enqueueAndWait(context.Background(), metadataApplyRequest{
+		kind:      metadataSectionRefresh,
+		buildPath: util.FullPath("/dir"),
+		refresh: &sectionRefresh{lo: "g", hi: "p", snapshotTsNs: 5001, entries: []*filer.Entry{{
+			FullPath: util.FullPath("/dir/h"),
+			Attr:     filer.Attr{Crtime: time.Unix(1, 0), Mtime: time.Unix(2, 0), Mode: 0100644, FileSize: 7},
+		}}},
+	}); err != nil {
+		t.Fatalf("refresh section 1: %v", err)
+	}
+	if _, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/g")); err != filer_pb.ErrNotFound {
+		t.Fatalf("vanished bound entry should be swept by its own section: %v", err)
+	}
+	if _, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/h-000")); err != filer_pb.ErrNotFound {
+		t.Fatalf("churned h-000 should be swept: %v", err)
+	}
+	if entry, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/h")); err != nil || entry.FileSize != 7 {
+		t.Fatalf("h = %+v, %v; want size 7", entry, err)
+	}
+	if _, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/p")); err != nil {
+		t.Fatalf("the next bound's entry is outside the range and must survive: %v", err)
+	}
+}
+
+func TestChurnBeyondBuiltEntriesLandsInEdgeSection(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+		"/":    true,
+		"/dir": true,
+	})
+	defer mc.Shutdown()
+
+	buildSectionedDir(t, mc, util.FullPath("/dir"), 1000, []string{"m"})
+
+	// names sorting past everything the build saw land in the last section
+	applyChurn(t, mc, "/dir", "z-", sectionHotThreshold, 2000, SubscriberMetadataResponseApplyOptions)
+
+	if mc.IsNameFresh(util.FullPath("/dir/z-000")) {
+		t.Fatal("the tail section should be invalidated")
+	}
+	if !mc.IsNameFresh(util.FullPath("/dir/a")) {
+		t.Fatal("the head section must stay fresh")
+	}
+}
+
+func TestRenameAcrossSectionsCountsBoth(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+		"/":    true,
+		"/dir": true,
+	})
+	defer mc.Shutdown()
+
+	buildSectionedDir(t, mc, util.FullPath("/dir"), 1000, []string{"m"})
+
+	for i := 0; i < sectionHotThreshold; i++ {
+		resp := &filer_pb.SubscribeMetadataResponse{
+			Directory: "/dir",
+			EventNotification: &filer_pb.EventNotification{
+				OldEntry: &filer_pb.Entry{Name: fmt.Sprintf("a-%03d", i)},
+				NewEntry: &filer_pb.Entry{
+					Name:       fmt.Sprintf("n-%03d", i),
+					Attributes: &filer_pb.FuseAttributes{Crtime: 1, Mtime: 1, FileMode: 0100644, FileSize: 1},
+				},
+				NewParentPath: "/dir",
+			},
+			TsNs: 2000 + int64(i),
+		}
+		if err := mc.ApplyMetadataResponse(context.Background(), resp, SubscriberMetadataResponseApplyOptions); err != nil {
+			t.Fatalf("apply rename %d: %v", i, err)
+		}
+	}
+
+	if mc.IsNameFresh(util.FullPath("/dir/a-000")) {
+		t.Fatal("the vacated side's section should be invalidated")
+	}
+	if mc.IsNameFresh(util.FullPath("/dir/n-000")) {
+		t.Fatal("the landing side's section should be invalidated")
 	}
 }
