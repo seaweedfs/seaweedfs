@@ -19,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 )
 
@@ -187,10 +188,7 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 		var counter int64
 		var synced bool
 		maybeReplicateMetadataChange = func(event *filer_pb.SubscribeMetadataResponse) {
-			if err := Replay(f.Store, event); err != nil {
-				glog.Errorf("failed to reply metadata change from %v: %v", peer, err)
-				return
-			}
+			replicateMetadataChange(f.Store, peer, event)
 			counter++
 			if lastPersistTime.Add(time.Minute).Before(time.Now()) {
 				if err := ma.updateOffset(f, peer, peerSignature, event.TsNs); err == nil {
@@ -315,6 +313,25 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 		}
 	})
 	return lastTsNs, err
+}
+
+// replicateMetadataChange retries transient Replay failures with bounded
+// backoff. A failure that outlives the retry budget is counted and logged,
+// then skipped: blocking on an event that can never replay would stall every
+// later event from this peer, which is worse than one entry staying stale.
+func replicateMetadataChange(store FilerStore, peer pb.ServerAddress, event *filer_pb.SubscribeMetadataResponse) {
+	err := util.Retry("replicate metadata change from "+string(peer), func() error {
+		return Replay(store, event)
+	})
+	if err == nil {
+		return
+	}
+	stats.FilerMetaAggregatorReplayFailures.WithLabelValues(string(peer)).Inc()
+	name := event.GetEventNotification().GetNewEntry().GetName()
+	if name == "" {
+		name = event.GetEventNotification().GetOldEntry().GetName()
+	}
+	glog.Errorf("giving up replicating metadata change from %s for %s/%s (ts=%d): %v", peer, event.Directory, name, event.TsNs, err)
 }
 
 // traversePeerMetadata does a full BFS traversal of a peer filer's metadata

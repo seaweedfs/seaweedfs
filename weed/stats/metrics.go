@@ -250,6 +250,14 @@ var (
 			Help:      "Number of metadata subscribers currently parked waiting to read past a gap in the metadata log.",
 		}, []string{"scope"})
 
+	FilerMetaAggregatorReplayFailures = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemFiler,
+			Name:      "meta_aggregator_replay_failures",
+			Help:      "Number of peer metadata events skipped after replay retries were exhausted, leaving that entry diverged from the peer.",
+		}, []string{"peer"})
+
 	// Sampled only on first creation, so counts track distinct objects.
 	FilerObjectSizeBytesHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
@@ -899,6 +907,7 @@ func init() {
 	Gather.MustRegister(FilerServerLastSendTsOfSubscribeGauge)
 	Gather.MustRegister(FilerSubscribeGapStalledGauge)
 	Gather.MustRegister(FilerSubscribeUnprovenGapCrossings)
+	Gather.MustRegister(FilerMetaAggregatorReplayFailures)
 	Gather.MustRegister(FilerObjectSizeBytesHistogram)
 	Gather.MustRegister(collectors.NewGoCollector())
 	Gather.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))

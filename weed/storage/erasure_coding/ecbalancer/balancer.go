@@ -75,6 +75,10 @@ type Move struct {
 	TargetDisk uint32
 	TargetRack string
 	Phase      string // "dedup", "cross_rack", "within_rack", "global"
+	// KeepNode is set for dedup moves: the node the plan chose to keep the
+	// shard on. The executor confirms it really holds the shard before
+	// deleting the copy.
+	KeepNode string
 }
 
 // Options tunes a Plan run.
@@ -115,6 +119,7 @@ type move struct {
 	target     *Node
 	targetDisk uint32
 	phase      string
+	keepNode   string
 }
 
 // NewTopology returns an empty topology to populate.
@@ -271,6 +276,7 @@ func Plan(topo *Topology, opts Options) []Move {
 			TargetDisk: m.targetDisk,
 			TargetRack: m.target.rack,
 			Phase:      m.phase,
+			KeepNode:   m.keepNode,
 		})
 	}
 	return out
@@ -319,6 +325,7 @@ func detectDuplicateShards(vk volKey, nodes map[string]*Node) []*move {
 			}
 			return locs[i].id < locs[j].id
 		})
+		keep := locs[len(locs)-1]
 		for _, node := range locs[:len(locs)-1] {
 			moves = append(moves, &move{
 				volumeID:   vk.vid,
@@ -329,6 +336,7 @@ func detectDuplicateShards(vk volKey, nodes map[string]*Node) []*move {
 				target:     node,
 				targetDisk: shardDiskID(node, vk, shardID),
 				phase:      "dedup",
+				keepNode:   keep.id,
 			})
 		}
 	}

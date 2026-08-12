@@ -8,6 +8,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+// Replay applies the delete and the insert as separate, non-transactional
+// store calls, so retrying it after a partial failure is not atomic.
 func Replay(filerStore FilerStore, resp *filer_pb.SubscribeMetadataResponse) error {
 	message := resp.EventNotification
 	var oldPath util.FullPath

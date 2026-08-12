@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"reflect"
 	"strings"
 
@@ -41,43 +42,186 @@ func (s s3RemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.R
 	return MakeWithHTTPClient(conf, nil)
 }
 
-// MakeWithHTTPClient builds an s3 remote storage client using the supplied
-// *http.Client (or the AWS SDK default when nil). Callers that need to pin
-// the dial path against DNS rebinding can pass a client whose transport has
-// a guarded DialContext.
+// s3CompatibleOptions carries the per-provider AWS SDK knobs the shared client
+// builder needs. Every S3-SDK-backed provider (s3 plus the wasabi/b2/... family)
+// converges on the same s3RemoteStorageClient and dials a caller-supplied
+// endpoint, differing only in which RemoteConf fields it reads.
+type s3CompatibleOptions struct {
+	name           string
+	endpoint       string
+	region         string
+	accessKey      string
+	secretKey      string
+	forcePathStyle bool
+	signV4         bool
+	// anonymousWhenNoCreds disables SigV4 signing for public buckets when no
+	// credentials are supplied. Only the generic "s3" provider does this.
+	anonymousWhenNoCreds bool
+	// setUserAgent adds the SeaweedFS User-Agent header (generic "s3" only).
+	setUserAgent bool
+}
+
+// s3CompatibleClientOptions returns the client knobs for an S3-SDK-backed
+// RemoteConf and whether conf is such a type. Keeping the type-to-fields
+// mapping in one place lets the client builder and the SSRF endpoint guard
+// agree on exactly which endpoint each provider dials.
+func s3CompatibleClientOptions(conf *remote_pb.RemoteConf) (s3CompatibleOptions, bool) {
+	switch conf.Type {
+	case "s3":
+		return s3CompatibleOptions{
+			name:                 "s3",
+			endpoint:             conf.S3Endpoint,
+			region:               conf.S3Region,
+			accessKey:            conf.S3AccessKey,
+			secretKey:            conf.S3SecretKey,
+			forcePathStyle:       conf.S3ForcePathStyle,
+			signV4:               conf.S3V4Signature,
+			anonymousWhenNoCreds: true,
+			setUserAgent:         true,
+		}, true
+	case "aliyun":
+		return s3CompatibleOptions{
+			name:      "aliyun",
+			endpoint:  conf.AliyunEndpoint,
+			region:    conf.AliyunRegion,
+			accessKey: util.Nvl(conf.AliyunAccessKey, os.Getenv("ALICLOUD_ACCESS_KEY_ID")),
+			secretKey: util.Nvl(conf.AliyunSecretKey, os.Getenv("ALICLOUD_ACCESS_KEY_SECRET")),
+		}, true
+	case "b2":
+		return s3CompatibleOptions{
+			name:           "backblaze",
+			endpoint:       conf.BackblazeEndpoint,
+			region:         conf.BackblazeRegion,
+			accessKey:      conf.BackblazeKeyId,
+			secretKey:      conf.BackblazeApplicationKey,
+			forcePathStyle: true,
+		}, true
+	case "baidu":
+		return s3CompatibleOptions{
+			name:      "baidu",
+			endpoint:  conf.BaiduEndpoint,
+			region:    conf.BaiduRegion,
+			accessKey: util.Nvl(conf.BaiduAccessKey, os.Getenv("BDCLOUD_ACCESS_KEY")),
+			secretKey: util.Nvl(conf.BaiduSecretKey, os.Getenv("BDCLOUD_SECRET_KEY")),
+			signV4:    true,
+		}, true
+	case "contabo":
+		return s3CompatibleOptions{
+			name:           "contabo",
+			endpoint:       conf.ContaboEndpoint,
+			region:         conf.ContaboRegion,
+			accessKey:      util.Nvl(conf.ContaboAccessKey, os.Getenv("ACCESS_KEY")),
+			secretKey:      util.Nvl(conf.ContaboSecretKey, os.Getenv("SECRET_KEY")),
+			forcePathStyle: true,
+		}, true
+	case "filebase":
+		return s3CompatibleOptions{
+			name:           "filebase",
+			endpoint:       conf.FilebaseEndpoint,
+			region:         "us-east-1",
+			accessKey:      util.Nvl(conf.FilebaseAccessKey, os.Getenv("AWS_ACCESS_KEY_ID")),
+			secretKey:      util.Nvl(conf.FilebaseSecretKey, os.Getenv("AWS_SECRET_ACCESS_KEY")),
+			forcePathStyle: true,
+			signV4:         true,
+		}, true
+	case "storj":
+		return s3CompatibleOptions{
+			name:           "storj",
+			endpoint:       conf.StorjEndpoint,
+			region:         "us-west-2",
+			accessKey:      util.Nvl(conf.StorjAccessKey, os.Getenv("AWS_ACCESS_KEY_ID")),
+			secretKey:      util.Nvl(conf.StorjSecretKey, os.Getenv("AWS_SECRET_ACCESS_KEY")),
+			forcePathStyle: true,
+		}, true
+	case "tencent":
+		return s3CompatibleOptions{
+			name:           "tencent",
+			endpoint:       conf.TencentEndpoint,
+			region:         "us-west-2",
+			accessKey:      util.Nvl(conf.TencentSecretId, os.Getenv("COS_SECRETID")),
+			secretKey:      util.Nvl(conf.TencentSecretKey, os.Getenv("COS_SECRETKEY")),
+			forcePathStyle: true,
+		}, true
+	case "wasabi":
+		return s3CompatibleOptions{
+			name:           "wasabi",
+			endpoint:       conf.WasabiEndpoint,
+			region:         conf.WasabiRegion,
+			accessKey:      conf.WasabiAccessKey,
+			secretKey:      conf.WasabiSecretKey,
+			forcePathStyle: true,
+		}, true
+	}
+	return s3CompatibleOptions{}, false
+}
+
+// S3CompatibleEndpoint returns the endpoint an S3-SDK-backed RemoteConf would
+// dial directly, and whether conf is such a type. The volume server validates
+// this endpoint against the SSRF deny-list for every S3-compatible provider,
+// not just the generic "s3" type.
+func S3CompatibleEndpoint(conf *remote_pb.RemoteConf) (string, bool) {
+	opt, ok := s3CompatibleClientOptions(conf)
+	if !ok {
+		return "", false
+	}
+	return opt.endpoint, true
+}
+
+// MakeWithHTTPClient builds the client for any S3-SDK-backed remote storage
+// type using the supplied *http.Client (or the AWS SDK default when nil).
+// Callers that need to pin the dial path against DNS rebinding can pass a
+// client whose transport has a guarded DialContext.
 func MakeWithHTTPClient(conf *remote_pb.RemoteConf, httpClient *http.Client) (remote_storage.RemoteStorageClient, error) {
+	opt, ok := s3CompatibleClientOptions(conf)
+	if !ok {
+		return nil, fmt.Errorf("%q is not an S3-compatible remote storage type", conf.Type)
+	}
 	client := &s3RemoteStorageClient{
 		conf: conf,
 	}
 	config := &aws.Config{
-		Region:                        aws.String(conf.S3Region),
-		Endpoint:                      aws.String(conf.S3Endpoint),
-		S3ForcePathStyle:              aws.Bool(conf.S3ForcePathStyle),
+		Region:                        aws.String(opt.region),
+		Endpoint:                      aws.String(opt.endpoint),
+		S3ForcePathStyle:              aws.Bool(opt.forcePathStyle),
 		S3DisableContentMD5Validation: aws.Bool(true),
 	}
 	if httpClient != nil {
 		config.HTTPClient = httpClient
 	}
-	if conf.S3AccessKey != "" && conf.S3SecretKey != "" {
-		config.Credentials = credentials.NewStaticCredentials(conf.S3AccessKey, conf.S3SecretKey, "")
-	} else if conf.S3AccessKey == "" && conf.S3SecretKey == "" {
+	if opt.accessKey != "" && opt.secretKey != "" {
+		config.Credentials = credentials.NewStaticCredentials(opt.accessKey, opt.secretKey, "")
+	} else if opt.anonymousWhenNoCreds && opt.accessKey == "" && opt.secretKey == "" {
 		// Explicitly disable signing for public buckets.
 		config.Credentials = credentials.AnonymousCredentials
 	}
 
 	sess, err := session.NewSession(config)
 	if err != nil {
-		return nil, fmt.Errorf("create aws session: %w", err)
+		return nil, fmt.Errorf("create %s session: %w", opt.name, err)
 	}
-	if conf.S3V4Signature {
+	if opt.signV4 {
 		sess.Handlers.Sign.PushBackNamed(v4.SignRequestHandler)
 	}
-	sess.Handlers.Build.PushBack(func(r *request.Request) {
-		r.HTTPRequest.Header.Set("User-Agent", "SeaweedFS/"+version.VERSION_NUMBER)
-	})
+	if opt.setUserAgent {
+		sess.Handlers.Build.PushBack(func(r *request.Request) {
+			r.HTTPRequest.Header.Set("User-Agent", "SeaweedFS/"+version.VERSION_NUMBER)
+		})
+	}
 	sess.Handlers.Build.PushFront(skipSha256PayloadSigning)
 	client.conn = s3.New(sess)
 	return client, nil
+}
+
+var skipSha256PayloadSigning = func(r *request.Request) {
+	// see https://github.com/ceph/ceph/pull/15965/files
+	if r.ClientInfo.ServiceID != "S3" {
+		return
+	}
+	if r.Operation.Name == "PutObject" || r.Operation.Name == "UploadPart" {
+		if len(r.HTTPRequest.Header.Get("X-Amz-Content-Sha256")) == 0 {
+			r.HTTPRequest.Header.Set("X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD")
+		}
+	}
 }
 
 type s3RemoteStorageClient struct {

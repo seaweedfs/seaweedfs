@@ -402,8 +402,8 @@ func collectStatForOneVolume(vid needle.VolumeId, v *Volume) (s *VolumeInfo) {
 		return
 	}
 
-	s.FileCount = v.nm.FileCount()
-	s.DeleteCount = v.nm.DeletedCount()
+	s.FileCount = countAsUint32(uint64(v.nm.FileCount()))
+	s.DeleteCount = countAsUint32(uint64(v.nm.DeletedCount()))
 	s.DeletedByteCount = v.nm.DeletedSize()
 	s.Size = v.nm.ContentSize()
 	if v.DataBackend != nil {

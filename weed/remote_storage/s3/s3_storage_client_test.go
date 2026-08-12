@@ -228,6 +228,7 @@ func newCapturingS3Client(t *testing.T) (*s3RemoteStorageClient, *captureRoundTr
 	t.Helper()
 	rt := &captureRoundTripper{}
 	conf := &remote_pb.RemoteConf{
+		Type:             "s3",
 		Name:             "test",
 		S3Region:         "us-east-1",
 		S3Endpoint:       "https://example.invalid",
@@ -281,6 +282,7 @@ func newRecordingS3Client(t *testing.T, supportTagging bool) (*s3RemoteStorageCl
 	t.Helper()
 	rt := &recordingRoundTripper{}
 	conf := &remote_pb.RemoteConf{
+		Type:             "s3",
 		Name:             "test",
 		S3Region:         "us-east-1",
 		S3Endpoint:       "https://example.invalid",

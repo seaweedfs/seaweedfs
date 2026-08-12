@@ -184,7 +184,7 @@ func (dnll *VolumeLocationList) Stats(vid needle.VolumeId, freshThreshHold int64
 					size = vinfo.Size - vinfo.DeletedByteCount
 				}
 				if vinfo.FileCount > vinfo.DeleteCount {
-					fileCount = vinfo.FileCount - vinfo.DeleteCount
+					fileCount = int(vinfo.FileCount - vinfo.DeleteCount)
 				}
 				return size, fileCount
 			}
