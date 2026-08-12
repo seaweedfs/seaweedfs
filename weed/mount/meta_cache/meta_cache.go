@@ -57,7 +57,7 @@ type MetaCache struct {
 	// dirSections is each cached directory's listing split into name-range
 	// sections, so a churn burst invalidates one section instead of the
 	// whole listing. See meta_cache_sections.go.
-	dirSections map[util.FullPath]*dirSections
+	dirSections map[util.FullPath]*sectionList
 
 	// Entry invalidations run on a worker, not inline on the apply loop:
 	// invalidateFunc takes the fh lock, which a flush can hold while waiting on
@@ -108,7 +108,7 @@ type metadataApplyRequest struct {
 	options      MetadataResponseApplyOptions
 	buildPath    util.FullPath
 	snapshotTsNs int64
-	sections     *dirSections    // the completed build's section table
+	sections     *sectionList    // the completed build's section table
 	refresh      *sectionRefresh // one section re-listing to reconcile
 	resetFn      func()
 	done         chan error
@@ -132,7 +132,7 @@ func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPat
 		buildingDirs:         make(map[util.FullPath]*directoryBuildState),
 		dedupRing:            newDedupRingBuffer(),
 		dirVersionFloors:     make(map[util.FullPath]int64),
-		dirSections:          make(map[util.FullPath]*dirSections),
+		dirSections:          make(map[util.FullPath]*sectionList),
 		oversizedDirs:        make(map[util.FullPath]struct{}),
 	}
 	mc.invalidateWorker = util.NewAsyncBatchWorker(func(batch []EntryInvalidation) {
@@ -330,7 +330,7 @@ func (mc *MetaCache) CompleteDirectoryBuild(ctx context.Context, dirPath util.Fu
 		kind:         metadataCompleteBuild,
 		buildPath:    dirPath,
 		snapshotTsNs: snapshotTsNs,
-		sections:     newDirSections(sectionBounds),
+		sections:     newSectionTable(sectionBounds),
 	})
 }
 
@@ -535,8 +535,8 @@ func (mc *MetaCache) entryVersionFloorLocked(fp util.FullPath, recordTsNs int64)
 	if floor := mc.dirVersionFloors[util.FullPath(dir)]; floor > recordTsNs {
 		recordTsNs = floor
 	}
-	if ds := mc.dirSections[util.FullPath(dir)]; ds != nil {
-		if floor := ds.floorOf(name); floor > recordTsNs {
+	if sl := mc.dirSections[util.FullPath(dir)]; sl != nil {
+		if floor := sl.floorOf(name); floor > recordTsNs {
 			recordTsNs = floor
 		}
 	}
@@ -1029,7 +1029,7 @@ func (mc *MetaCache) purgeDirectoryChildrenNow(ctx context.Context, dirPath util
 	return mc.localStore.DeleteFolderChildren(ctx, dirPath)
 }
 
-func (mc *MetaCache) completeDirectoryBuildNow(ctx context.Context, dirPath util.FullPath, snapshotTsNs int64, sections *dirSections) error {
+func (mc *MetaCache) completeDirectoryBuildNow(ctx context.Context, dirPath util.FullPath, snapshotTsNs int64, sections *sectionList) error {
 	state := mc.buildingDirs[dirPath]
 	delete(mc.buildingDirs, dirPath)
 

@@ -37,11 +37,11 @@ const (
 // caller should drop the directory cache so a full rebuild re-tiles it.
 var ErrRefreshRangeTooLarge = errors.New("section outgrew one refresh")
 
-// dirSections: bounds[i] is the first name of section i+1; section 0 starts at
+// sectionList: bounds[i] is the first name of section i+1; section 0 starts at
 // the beginning of the namespace, the last section runs to the end. It is a
 // plain state machine — no locking, no store; MetaCache drives it under its
 // own mutex.
-type dirSections struct {
+type sectionList struct {
 	bounds   []string
 	sections []sectionState
 }
@@ -60,8 +60,8 @@ type sectionState struct {
 	floorTsNs int64
 }
 
-func newDirSections(bounds []string) *dirSections {
-	return &dirSections{bounds: bounds, sections: make([]sectionState, len(bounds)+1)}
+func newSectionTable(bounds []string) *sectionList {
+	return &sectionList{bounds: bounds, sections: make([]sectionState, len(bounds)+1)}
 }
 
 // sectionBoundsCollector derives section boundaries from an ordered listing:
@@ -85,29 +85,29 @@ type sectionRefresh struct {
 	snapshotTsNs int64
 }
 
-func (ds *dirSections) sectionOf(name string) int {
-	idx := sort.SearchStrings(ds.bounds, name)
-	if idx < len(ds.bounds) && ds.bounds[idx] == name {
+func (sl *sectionList) sectionOf(name string) int {
+	idx := sort.SearchStrings(sl.bounds, name)
+	if idx < len(sl.bounds) && sl.bounds[idx] == name {
 		idx++
 	}
 	return idx
 }
 
 // sectionRange returns the [lo, hi) name range of section idx; "" is unbounded.
-func (ds *dirSections) sectionRange(idx int) (lo, hi string) {
+func (sl *sectionList) sectionRange(idx int) (lo, hi string) {
 	if idx > 0 {
-		lo = ds.bounds[idx-1]
+		lo = sl.bounds[idx-1]
 	}
-	if idx < len(ds.bounds) {
-		hi = ds.bounds[idx]
+	if idx < len(sl.bounds) {
+		hi = sl.bounds[idx]
 	}
 	return
 }
 
 // noteChange counts one change against the section it lands in, marking the
 // section stale when a burst crosses the threshold.
-func (ds *dirSections) noteChange(name string, now time.Time) {
-	s := &ds.sections[ds.sectionOf(name)]
+func (sl *sectionList) noteChange(name string, now time.Time) {
+	s := &sl.sections[sl.sectionOf(name)]
 	if s.stale {
 		return
 	}
@@ -121,15 +121,15 @@ func (ds *dirSections) noteChange(name string, now time.Time) {
 	}
 }
 
-func (ds *dirSections) isFresh(name string) bool {
-	return !ds.sections[ds.sectionOf(name)].stale
+func (sl *sectionList) isFresh(name string) bool {
+	return !sl.sections[sl.sectionOf(name)].stale
 }
 
 // floorOf returns the refresh snapshot covering this name, or zero when its
 // section has never been re-listed. A stale section keeps fencing: what its
 // last listing established stays established.
-func (ds *dirSections) floorOf(name string) int64 {
-	return ds.sections[ds.sectionOf(name)].floorTsNs
+func (sl *sectionList) floorOf(name string) int64 {
+	return sl.sections[sl.sectionOf(name)].floorTsNs
 }
 
 type nameRange struct {
@@ -138,10 +138,10 @@ type nameRange struct {
 
 // staleRangesAhead returns the invalidated ranges worth re-listing from the
 // section holding startName to the end of the directory.
-func (ds *dirSections) staleRangesAhead(startName string) (ranges []nameRange) {
-	for i := ds.sectionOf(startName); i < len(ds.sections); i++ {
-		if ds.sections[i].stale && !ds.sections[i].unverifiable {
-			lo, hi := ds.sectionRange(i)
+func (sl *sectionList) staleRangesAhead(startName string) (ranges []nameRange) {
+	for i := sl.sectionOf(startName); i < len(sl.sections); i++ {
+		if sl.sections[i].stale && !sl.sections[i].unverifiable {
+			lo, hi := sl.sectionRange(i)
 			ranges = append(ranges, nameRange{lo: lo, hi: hi})
 		}
 	}
@@ -151,8 +151,8 @@ func (ds *dirSections) staleRangesAhead(startName string) (ranges []nameRange) {
 // hasRange reports whether the table still has a section covering exactly
 // [lo, hi); a rebuild or re-split since a listing was taken retires the range
 // it described.
-func (ds *dirSections) hasRange(lo, hi string) bool {
-	curLo, curHi := ds.sectionRange(ds.sectionOf(lo))
+func (sl *sectionList) hasRange(lo, hi string) bool {
+	curLo, curHi := sl.sectionRange(sl.sectionOf(lo))
 	return curLo == lo && curHi == hi
 }
 
@@ -162,13 +162,13 @@ func (ds *dirSections) hasRange(lo, hi string) bool {
 // range the table no longer has is ignored — splicing bounds from a stale
 // range could leave the table unsorted — and an unversioned listing vouches
 // for nothing: the section stays stale, remembered as not worth re-listing.
-func (ds *dirSections) completeRefresh(lo, hi string, names []string, snapshotTsNs int64) bool {
-	idx := ds.sectionOf(lo)
-	if curLo, curHi := ds.sectionRange(idx); curLo != lo || curHi != hi {
+func (sl *sectionList) completeRefresh(lo, hi string, names []string, snapshotTsNs int64) bool {
+	idx := sl.sectionOf(lo)
+	if curLo, curHi := sl.sectionRange(idx); curLo != lo || curHi != hi {
 		return false
 	}
 	if snapshotTsNs == 0 {
-		ds.sections[idx].unverifiable = true
+		sl.sections[idx].unverifiable = true
 		return false
 	}
 	if len(names) > 2*dirSectionSize {
@@ -176,19 +176,19 @@ func (ds *dirSections) completeRefresh(lo, hi string, names []string, snapshotTs
 		for i := dirSectionSize; i < len(names); i += dirSectionSize {
 			newBounds = append(newBounds, names[i])
 		}
-		bounds := make([]string, 0, len(ds.bounds)+len(newBounds))
-		bounds = append(bounds, ds.bounds[:idx]...)
+		bounds := make([]string, 0, len(sl.bounds)+len(newBounds))
+		bounds = append(bounds, sl.bounds[:idx]...)
 		bounds = append(bounds, newBounds...)
-		bounds = append(bounds, ds.bounds[idx:]...)
+		bounds = append(bounds, sl.bounds[idx:]...)
 		sections := make([]sectionState, 0, len(bounds)+1)
-		sections = append(sections, ds.sections[:idx]...)
+		sections = append(sections, sl.sections[:idx]...)
 		for i := 0; i <= len(newBounds); i++ {
 			sections = append(sections, sectionState{floorTsNs: snapshotTsNs})
 		}
-		sections = append(sections, ds.sections[idx+1:]...)
-		ds.bounds, ds.sections = bounds, sections
+		sections = append(sections, sl.sections[idx+1:]...)
+		sl.bounds, sl.sections = bounds, sections
 	} else {
-		ds.sections[idx] = sectionState{floorTsNs: snapshotTsNs}
+		sl.sections[idx] = sectionState{floorTsNs: snapshotTsNs}
 	}
 	return true
 }
@@ -197,8 +197,8 @@ func (ds *dirSections) completeRefresh(lo, hi string, names []string, snapshotTs
 // directory it lands in.
 func (mc *MetaCache) noteSectionChangeLocked(fp util.FullPath, now time.Time) {
 	dir, name := fp.DirAndName()
-	if ds := mc.dirSections[util.FullPath(dir)]; ds != nil {
-		ds.noteChange(name, now)
+	if sl := mc.dirSections[util.FullPath(dir)]; sl != nil {
+		sl.noteChange(name, now)
 	}
 }
 
@@ -208,25 +208,25 @@ func (mc *MetaCache) IsNameFresh(fp util.FullPath) bool {
 	dir, name := fp.DirAndName()
 	mc.RLock()
 	defer mc.RUnlock()
-	ds := mc.dirSections[util.FullPath(dir)]
-	return ds == nil || ds.isFresh(name)
+	sl := mc.dirSections[util.FullPath(dir)]
+	return sl == nil || sl.isFresh(name)
 }
 
 func (mc *MetaCache) staleRangesAhead(dirPath util.FullPath, startName string) []nameRange {
 	mc.RLock()
 	defer mc.RUnlock()
-	ds := mc.dirSections[dirPath]
-	if ds == nil {
+	sl := mc.dirSections[dirPath]
+	if sl == nil {
 		return nil
 	}
-	return ds.staleRangesAhead(startName)
+	return sl.staleRangesAhead(startName)
 }
 
 func (mc *MetaCache) rangeStale(dirPath util.FullPath, lo string) bool {
 	mc.RLock()
 	defer mc.RUnlock()
-	ds := mc.dirSections[dirPath]
-	return ds != nil && !ds.isFresh(lo)
+	sl := mc.dirSections[dirPath]
+	return sl != nil && !sl.isFresh(lo)
 }
 
 // EnsureListingFresh re-validates every invalidated section from startName to
@@ -336,8 +336,8 @@ func (mc *MetaCache) applySectionRefreshNow(ctx context.Context, dirPath util.Fu
 	// range the rebuilt or re-split table no longer has gets no floor, so it
 	// must not touch the store either. The lock is held through the floor
 	// install below, so the check cannot go stale.
-	ds := mc.dirSections[dirPath]
-	if ds == nil || !ds.hasRange(lo, hi) {
+	sl := mc.dirSections[dirPath]
+	if sl == nil || !sl.hasRange(lo, hi) {
 		return nil
 	}
 
@@ -417,6 +417,6 @@ func (mc *MetaCache) applySectionRefreshNow(ctx context.Context, dirPath util.Fu
 	// The floor fences the whole range, absent names included; an unversioned
 	// listing sets none and the section stays stale, its lookups reading
 	// through, with no further re-listing attempts.
-	ds.completeRefresh(lo, hi, fetchedNames, snapshotTsNs)
+	sl.completeRefresh(lo, hi, fetchedNames, snapshotTsNs)
 	return nil
 }

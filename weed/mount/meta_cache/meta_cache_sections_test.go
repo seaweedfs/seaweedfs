@@ -18,23 +18,23 @@ import (
 )
 
 func TestSectionOf(t *testing.T) {
-	ds := newDirSections([]string{"g", "p"})
+	sl := newSectionTable([]string{"g", "p"})
 	for name, want := range map[string]int{
 		"a": 0, "f": 0,
 		"g": 1, "h": 1, "o": 1,
 		"p": 2, "z": 2,
 	} {
-		if got := ds.sectionOf(name); got != want {
+		if got := sl.sectionOf(name); got != want {
 			t.Errorf("sectionOf(%q) = %d, want %d", name, got, want)
 		}
 	}
-	if lo, hi := ds.sectionRange(0); lo != "" || hi != "g" {
+	if lo, hi := sl.sectionRange(0); lo != "" || hi != "g" {
 		t.Errorf("sectionRange(0) = %q..%q, want ..g", lo, hi)
 	}
-	if lo, hi := ds.sectionRange(1); lo != "g" || hi != "p" {
+	if lo, hi := sl.sectionRange(1); lo != "g" || hi != "p" {
 		t.Errorf("sectionRange(1) = %q..%q, want g..p", lo, hi)
 	}
-	if lo, hi := ds.sectionRange(2); lo != "p" || hi != "" {
+	if lo, hi := sl.sectionRange(2); lo != "p" || hi != "" {
 		t.Errorf("sectionRange(2) = %q..%q, want p..", lo, hi)
 	}
 }
@@ -235,9 +235,9 @@ func TestSectionRefreshSplitsOvergrownSection(t *testing.T) {
 	}
 
 	mc.RLock()
-	ds := mc.dirSections[util.FullPath("/dir")]
-	bounds := append([]string(nil), ds.bounds...)
-	sections := len(ds.sections)
+	sl := mc.dirSections[util.FullPath("/dir")]
+	bounds := append([]string(nil), sl.bounds...)
+	sections := len(sl.sections)
 	mc.RUnlock()
 	want := []string{fmt.Sprintf("f-%05d", dirSectionSize), fmt.Sprintf("f-%05d", 2*dirSectionSize)}
 	if len(bounds) != len(want) || bounds[0] != want[0] || bounds[1] != want[1] {
@@ -406,78 +406,78 @@ func TestEnsureListingFreshGivesUpOnOvergrownRange(t *testing.T) {
 }
 
 func TestSectionNoteChangeWindowExpiry(t *testing.T) {
-	ds := newDirSections(nil)
+	sl := newSectionTable(nil)
 	t0 := time.Unix(100, 0)
 	for i := 0; i < sectionHotThreshold-1; i++ {
-		ds.noteChange(fmt.Sprintf("f-%03d", i), t0)
+		sl.noteChange(fmt.Sprintf("f-%03d", i), t0)
 	}
-	if !ds.isFresh("f-000") {
+	if !sl.isFresh("f-000") {
 		t.Fatal("below the threshold the section must stay fresh")
 	}
 
 	// the burst never completed inside one window, so the count restarts
 	t1 := t0.Add(sectionHotWindow + time.Second)
 	for i := 0; i < sectionHotThreshold-1; i++ {
-		ds.noteChange(fmt.Sprintf("f-%03d", i), t1)
+		sl.noteChange(fmt.Sprintf("f-%03d", i), t1)
 	}
-	if !ds.isFresh("f-000") {
+	if !sl.isFresh("f-000") {
 		t.Fatal("an expired window must not carry its count forward")
 	}
 
-	ds.noteChange("f-999", t1)
-	if ds.isFresh("f-000") {
+	sl.noteChange("f-999", t1)
+	if sl.isFresh("f-000") {
 		t.Fatal("a full burst within one window must invalidate the section")
 	}
 }
 
 func TestSectionCompleteRefreshGuardsChangedTable(t *testing.T) {
-	ds := newDirSections([]string{"g", "p"})
-	ds.sections[1].stale = true
+	sl := newSectionTable([]string{"g", "p"})
+	sl.sections[1].stale = true
 
-	if ds.completeRefresh("g", "q", []string{"h"}, 5000) {
+	if sl.completeRefresh("g", "q", []string{"h"}, 5000) {
 		t.Fatal("a range the table no longer has must be ignored")
 	}
-	if ds.isFresh("h") {
+	if sl.isFresh("h") {
 		t.Fatal("an ignored refresh must not mark anything fresh")
 	}
-	if !ds.completeRefresh("g", "p", []string{"h"}, 5000) {
+	if !sl.completeRefresh("g", "p", []string{"h"}, 5000) {
 		t.Fatal("the matching range must be accepted")
 	}
-	if !ds.isFresh("h") {
+	if !sl.isFresh("h") {
 		t.Fatal("section should be fresh after the refresh")
 	}
 }
 
 func TestSectionCompleteRefreshSplitsMiddleSection(t *testing.T) {
-	ds := newDirSections([]string{"g", "p"})
-	ds.sections[1].stale = true
+	sl := newSectionTable([]string{"g", "p"})
+	sl.sections[1].stale = true
 
 	names := make([]string, 0, 2*dirSectionSize+1)
 	for i := 0; i <= 2*dirSectionSize; i++ {
 		names = append(names, fmt.Sprintf("g-%05d", i))
 	}
-	if !ds.completeRefresh("g", "p", names, 5000) {
+	if !sl.completeRefresh("g", "p", names, 5000) {
 		t.Fatal("refresh of the middle section must be accepted")
 	}
 
 	wantBounds := []string{"g", names[dirSectionSize], names[2*dirSectionSize], "p"}
-	if len(ds.bounds) != len(wantBounds) {
-		t.Fatalf("bounds = %v, want %v", ds.bounds, wantBounds)
+	if len(sl.bounds) != len(wantBounds) {
+		t.Fatalf("bounds = %v, want %v", sl.bounds, wantBounds)
 	}
 	for i, b := range wantBounds {
-		if ds.bounds[i] != b {
-			t.Fatalf("bounds = %v, want %v", ds.bounds, wantBounds)
+		if sl.bounds[i] != b {
+			t.Fatalf("bounds = %v, want %v", sl.bounds, wantBounds)
 		}
 	}
-	if len(ds.sections) != len(ds.bounds)+1 {
-		t.Fatalf("sections = %d, want %d", len(ds.sections), len(ds.bounds)+1)
+	if len(sl.sections) != len(sl.bounds)+1 {
+		t.Fatalf("sections = %d, want %d", len(sl.sections), len(sl.bounds)+1)
 	}
 	for _, name := range []string{"a", "g-00000", names[dirSectionSize], "z"} {
-		if !ds.isFresh(name) {
+		if !sl.isFresh(name) {
 			t.Fatalf("%q should be fresh after the split", name)
 		}
 	}
-	if got := ds.sectionOf(names[dirSectionSize+1]); got != 2 {
+	if got := sl.sectionOf(names[dirSectionSize+1]); got != 2 {
 		t.Fatalf("sectionOf(%q) = %d, want 2", names[dirSectionSize+1], got)
 	}
 }
@@ -582,22 +582,22 @@ func TestEnsureListingFreshCoversAllStaleSectionsAhead(t *testing.T) {
 }
 
 func TestSectionCompleteRefreshSetsFloors(t *testing.T) {
-	ds := newDirSections([]string{"g", "p"})
-	ds.sections[1].stale = true
+	sl := newSectionTable([]string{"g", "p"})
+	sl.sections[1].stale = true
 
 	names := make([]string, 0, 2*dirSectionSize+1)
 	for i := 0; i <= 2*dirSectionSize; i++ {
 		names = append(names, fmt.Sprintf("g-%05d", i))
 	}
-	if !ds.completeRefresh("g", "p", names, 7000) {
+	if !sl.completeRefresh("g", "p", names, 7000) {
 		t.Fatal("refresh must be accepted")
 	}
 	for _, name := range []string{"g", "g-99999", names[dirSectionSize+1]} {
-		if got := ds.floorOf(name); got != 7000 {
+		if got := sl.floorOf(name); got != 7000 {
 			t.Fatalf("floorOf(%q) = %d, want 7000", name, got)
 		}
 	}
-	if got := ds.floorOf("a"); got != 0 {
+	if got := sl.floorOf("a"); got != 0 {
 		t.Fatalf("floorOf(a) = %d, want 0 for a never-refreshed section", got)
 	}
 }
