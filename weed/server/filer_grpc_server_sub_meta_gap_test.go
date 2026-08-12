@@ -361,17 +361,21 @@ func TestReportUnprovenAggregatedCrossing(t *testing.T) {
 
 	start := crossings()
 	// Nothing evicted: no range to cross.
-	reportUnprovenAggregatedCrossing(before, after, 0, "c", "/")
+	reportUnprovenAggregatedCrossing(before, after, 0, 0, "c", "/")
 	// Cursor already past the watermark: the evicted range was behind it.
-	reportUnprovenAggregatedCrossing(evicted, after, evicted, "c", "/")
+	reportUnprovenAggregatedCrossing(evicted, after, evicted, 0, "c", "/")
 	// Cursor still short of the watermark: the gap is open, not crossed.
-	reportUnprovenAggregatedCrossing(before, evicted-1, evicted, "c", "/")
+	reportUnprovenAggregatedCrossing(before, evicted-1, evicted, 0, "c", "/")
+	// Crossed, but every peer's flush watermark already passed the eviction
+	// boundary: the crossed range was fully on peer disks — proven, not counted.
+	reportUnprovenAggregatedCrossing(before, after, evicted, evicted, "c", "/")
 	if got := crossings(); got != start {
 		t.Fatalf("counter moved by %v on advances that cross nothing", got-start)
 	}
 
-	// From below the watermark to above it: unproven.
-	reportUnprovenAggregatedCrossing(before, after, evicted, "c", "/")
+	// From below the watermark to above it, flush watermark short of the
+	// boundary: unproven.
+	reportUnprovenAggregatedCrossing(before, after, evicted, evicted-1, "c", "/")
 	if got := crossings(); got != start+1 {
 		t.Fatalf("counter = %v, want %v after one unproven crossing", got, start+1)
 	}

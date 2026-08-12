@@ -941,6 +941,18 @@ func (logBuffer *LogBuffer) GetEarliestPosition() MessagePosition {
 	}
 }
 
+// FlushedThroughTsNs reports the timestamp through which this buffer's data
+// is durably on disk: when nothing added is pending a flush, everything ever
+// added is flushed, so the buffer is flush-complete through "now" (any later
+// entry gets a newer timestamp); otherwise it is complete through the last
+// flushed window's stop time.
+func (logBuffer *LogBuffer) FlushedThroughTsNs(nowNs int64) int64 {
+	if logBuffer.LastTsNs.Load() <= logBuffer.lastFlushTsNs.Load() {
+		return nowNs
+	}
+	return logBuffer.lastFlushTsNs.Load()
+}
+
 // GetLastFlushTsNs returns the latest flushed timestamp in Unix nanoseconds.
 // Returns 0 if nothing has been flushed yet.
 func (logBuffer *LogBuffer) GetLastFlushTsNs() int64 {
