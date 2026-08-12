@@ -322,6 +322,13 @@ func (mc *MetaCache) listFilerRange(ctx context.Context, client filer_pb.FilerCl
 func (mc *MetaCache) applySectionRefreshNow(ctx context.Context, dirPath util.FullPath, r *sectionRefresh) error {
 	lo, hi, snapshotTsNs := r.lo, r.hi, r.snapshotTsNs
 
+	// A build wipes and repopulates the store off-loop; reconciling against
+	// it would sweep children the build already inserted and publish the
+	// directory incomplete. The staleness dies with the build's fresh table.
+	if mc.isBuildingDir(dirPath) {
+		return nil
+	}
+
 	mc.Lock()
 	defer mc.Unlock()
 
@@ -357,6 +364,15 @@ func (mc *MetaCache) applySectionRefreshNow(ctx context.Context, dirPath util.Fu
 		}
 		if mc.entryVersionBlocksLocked(ctx, entry.FullPath, snapshotTsNs) {
 			continue
+		}
+		// An unversioned marker would bypass the section floor, so it cannot
+		// outlive the snapshot write that replaces its content — but pinned
+		// local-only state stays authoritative and is not replaced at all.
+		if _, _, unversioned := mc.entryVersionRecordLocked(ctx, entry.FullPath); unversioned {
+			if existing, findErr := mc.localStore.FindEntry(ctx, entry.FullPath); findErr == nil && existing != nil && mc.pinnedChildFn != nil && mc.pinnedChildFn(existing) {
+				continue
+			}
+			mc.clearEntryVersionLocked(ctx, entry.FullPath)
 		}
 		// no per-entry version: the section floor set below covers the range
 		if err := mc.localStore.InsertEntry(ctx, entry); err != nil {

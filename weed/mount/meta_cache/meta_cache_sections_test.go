@@ -686,3 +686,113 @@ func TestMismatchedRefreshLeavesStoreAlone(t *testing.T) {
 		t.Fatal("mismatched refresh must not mark anything fresh")
 	}
 }
+
+func TestRefreshClearsUnversionedMarker(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+		"/":    true,
+		"/dir": true,
+	})
+	defer mc.Shutdown()
+	mc.SetPinnedChildFn(func(entry *filer.Entry) bool {
+		return entry.Name() == "b-pin"
+	})
+
+	buildSectionedDir(t, mc, util.FullPath("/dir"), 1000, nil)
+	for _, name := range []string{"b-local", "b-pin"} {
+		if err := mc.InsertEntry(context.Background(), &filer.Entry{
+			FullPath: util.FullPath("/dir/" + name),
+			Attr:     filer.Attr{Crtime: time.Unix(1, 0), Mtime: time.Unix(1, 0), Mode: 0100644, FileSize: 1},
+		}, 0); err != nil { // versionTsNs 0 leaves the unversioned marker
+			t.Fatalf("seed %s: %v", name, err)
+		}
+	}
+	applyChurn(t, mc, "/dir", "a-", sectionHotThreshold, 2000, SubscriberMetadataResponseApplyOptions)
+
+	refreshed := func(name string) *filer.Entry {
+		return &filer.Entry{
+			FullPath: util.FullPath("/dir/" + name),
+			Attr:     filer.Attr{Crtime: time.Unix(1, 0), Mtime: time.Unix(2, 0), Mode: 0100644, FileSize: 7},
+		}
+	}
+	if err := mc.enqueueAndWait(context.Background(), metadataApplyRequest{
+		kind:      metadataSectionRefresh,
+		buildPath: util.FullPath("/dir"),
+		refresh:   &sectionRefresh{snapshotTsNs: 5000, entries: []*filer.Entry{refreshed("b-local"), refreshed("b-pin")}},
+	}); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	entry, versionTsNs, err := mc.FindEntry(context.Background(), util.FullPath("/dir/b-local"))
+	if err != nil || entry.FileSize != 7 {
+		t.Fatalf("b-local = %+v, %v; want the snapshot's size 7", entry, err)
+	}
+	if versionTsNs != 5000 {
+		t.Fatalf("b-local version = %d, want the floor 5000 once the marker is cleared", versionTsNs)
+	}
+
+	// a delayed event below the floor must not roll the snapshot write back
+	if err := mc.ApplyMetadataResponse(context.Background(), &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		EventNotification: &filer_pb.EventNotification{
+			NewEntry: &filer_pb.Entry{
+				Name:       "b-local",
+				Attributes: &filer_pb.FuseAttributes{Crtime: 1, Mtime: 3, FileMode: 0100644, FileSize: 9},
+			},
+		},
+		TsNs: 4000,
+	}, SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply delayed event: %v", err)
+	}
+	if entry, _, err = mc.FindEntry(context.Background(), util.FullPath("/dir/b-local")); err != nil || entry.FileSize != 7 {
+		t.Fatalf("b-local rolled back to %+v, %v", entry, err)
+	}
+
+	// pinned local-only state is neither replaced nor unmarked
+	entry, versionTsNs, err = mc.FindEntry(context.Background(), util.FullPath("/dir/b-pin"))
+	if err != nil || entry.FileSize != 1 {
+		t.Fatalf("b-pin = %+v, %v; want local size 1 kept", entry, err)
+	}
+	if versionTsNs != 0 {
+		t.Fatalf("b-pin version = %d, want 0 while pinned", versionTsNs)
+	}
+}
+
+func TestRefreshSkipsBuildingDirectory(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+		"/":    true,
+		"/dir": true,
+	})
+	defer mc.Shutdown()
+
+	buildSectionedDir(t, mc, util.FullPath("/dir"), 1000, nil)
+	applyChurn(t, mc, "/dir", "a-", sectionHotThreshold, 2000, SubscriberMetadataResponseApplyOptions)
+
+	// a rebuild is streaming: its inserts must survive a refresh's sweep
+	if err := mc.BeginDirectoryBuild(context.Background(), util.FullPath("/dir")); err != nil {
+		t.Fatalf("begin build: %v", err)
+	}
+	if err := mc.InsertEntry(context.Background(), &filer.Entry{
+		FullPath: util.FullPath("/dir/b-built"),
+		Attr:     filer.Attr{Crtime: time.Unix(1, 0), Mtime: time.Unix(1, 0), Mode: 0100644, FileSize: 1},
+	}, 0); err != nil {
+		t.Fatalf("insert mid-build: %v", err)
+	}
+
+	if err := mc.enqueueAndWait(context.Background(), metadataApplyRequest{
+		kind:      metadataSectionRefresh,
+		buildPath: util.FullPath("/dir"),
+		refresh:   &sectionRefresh{snapshotTsNs: 5000},
+	}); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	if _, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/b-built")); err != nil {
+		t.Fatalf("refresh swept a mid-build insert: %v", err)
+	}
+	if mc.IsNameFresh(util.FullPath("/dir/a-000")) {
+		t.Fatal("a skipped refresh must not mark the section fresh")
+	}
+	if err := mc.AbortDirectoryBuild(context.Background(), util.FullPath("/dir")); err != nil {
+		t.Fatalf("abort build: %v", err)
+	}
+}
