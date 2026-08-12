@@ -54,6 +54,11 @@ type MetaCache struct {
 	// instead of a record per child.
 	dirVersionFloors map[util.FullPath]int64
 
+	// dirSections is each cached directory's listing split into name-range
+	// sections, so a churn burst invalidates one section instead of the
+	// whole listing. See meta_cache_sections.go.
+	dirSections map[util.FullPath]*sectionList
+
 	// Entry invalidations run on a worker, not inline on the apply loop:
 	// invalidateFunc takes the fh lock, which a flush can hold while waiting on
 	// the apply loop (flushMetadataToFiler -> applyLocalMetadataEvent), so inline
@@ -92,6 +97,7 @@ const (
 	metadataCompleteBuild
 	metadataAbortBuild
 	metadataPurgeDir
+	metadataSectionRefresh
 	metadataShutdown
 )
 
@@ -102,6 +108,8 @@ type metadataApplyRequest struct {
 	options      MetadataResponseApplyOptions
 	buildPath    util.FullPath
 	snapshotTsNs int64
+	sections     *sectionList    // the completed build's section table
+	refresh      *sectionRefresh // one section re-listing to reconcile
 	resetFn      func()
 	done         chan error
 }
@@ -124,6 +132,7 @@ func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPat
 		buildingDirs:         make(map[util.FullPath]*directoryBuildState),
 		dedupRing:            newDedupRingBuffer(),
 		dirVersionFloors:     make(map[util.FullPath]int64),
+		dirSections:          make(map[util.FullPath]*sectionList),
 		oversizedDirs:        make(map[util.FullPath]struct{}),
 	}
 	mc.invalidateWorker = util.NewAsyncBatchWorker(func(batch []EntryInvalidation) {
@@ -316,11 +325,12 @@ func (mc *MetaCache) BeginDirectoryBuild(ctx context.Context, dirPath util.FullP
 	})
 }
 
-func (mc *MetaCache) CompleteDirectoryBuild(ctx context.Context, dirPath util.FullPath, snapshotTsNs int64) error {
+func (mc *MetaCache) CompleteDirectoryBuild(ctx context.Context, dirPath util.FullPath, snapshotTsNs int64, sectionBounds []string) error {
 	return mc.enqueueAndWait(ctx, metadataApplyRequest{
 		kind:         metadataCompleteBuild,
 		buildPath:    dirPath,
 		snapshotTsNs: snapshotTsNs,
+		sections:     newSectionTable(sectionBounds),
 	})
 }
 
@@ -488,22 +498,19 @@ func (mc *MetaCache) entryVersionRecordLocked(ctx context.Context, fp util.FullP
 }
 
 // entryVersionBlocksLocked reports whether a write at tsNs is already
-// reflected at fp. A tombstone fences with no entry present. Otherwise the
-// path's version is its own record or, lacking one, its directory's listing
-// floor — which covers children the listing saw present and absent alike.
-// A plain record only counts while its entry exists: records linger after a
+// reflected at fp. The path's version is its own record or, lacking one, the
+// listing floors — which cover names a listing saw present and absent alike.
+// A tombstone fences with no entry present, and a later floor outranks it; a
+// plain record only counts while its entry exists: records linger after a
 // bulk folder wipe and must not fence a recreate.
 func (mc *MetaCache) entryVersionBlocksLocked(ctx context.Context, fp util.FullPath, tsNs int64) bool {
 	recordTsNs, tombstone, unversioned := mc.entryVersionRecordLocked(ctx, fp)
-	if tombstone {
-		return recordTsNs >= tsNs
-	}
 	if unversioned {
 		// Local content no log position describes: fence nothing, so any
 		// event can correct it.
 		return false
 	}
-	if !mc.entryExistsLocked(ctx, fp) {
+	if !tombstone && !mc.entryExistsLocked(ctx, fp) {
 		recordTsNs = 0
 	}
 	return mc.entryVersionFloorLocked(fp, recordTsNs) >= tsNs
@@ -520,12 +527,18 @@ func (mc *MetaCache) entryExistsLocked(ctx context.Context, fp util.FullPath) bo
 }
 
 // entryVersionFloorLocked raises a path's own version record to its
-// directory's listing floor: the listing covered every child at its snapshot,
-// so a child without a later record of its own is versioned at the snapshot.
+// directory's listing floor or its section's refresh floor: each listing
+// covered every name in its range at its snapshot, so a name without a later
+// record of its own is versioned at the snapshot.
 func (mc *MetaCache) entryVersionFloorLocked(fp util.FullPath, recordTsNs int64) int64 {
-	dir, _ := fp.DirAndName()
+	dir, name := fp.DirAndName()
 	if floor := mc.dirVersionFloors[util.FullPath(dir)]; floor > recordTsNs {
-		return floor
+		recordTsNs = floor
+	}
+	if sl := mc.dirSections[util.FullPath(dir)]; sl != nil {
+		if floor := sl.floorOf(name); floor > recordTsNs {
+			recordTsNs = floor
+		}
 	}
 	return recordTsNs
 }
@@ -592,6 +605,7 @@ func (mc *MetaCache) DeleteFolderChildren(ctx context.Context, fp util.FullPath)
 	mc.Lock()
 	defer mc.Unlock()
 	delete(mc.dirVersionFloors, fp)
+	delete(mc.dirSections, fp)
 	mc.deleteChildVersionRecordsLocked(ctx, fp)
 	return mc.localStore.DeleteFolderChildren(ctx, fp)
 }
@@ -790,11 +804,13 @@ func (mc *MetaCache) handleApplyRequest(req metadataApplyRequest) error {
 	case metadataBeginBuild:
 		return mc.beginDirectoryBuildNow(req.buildPath)
 	case metadataCompleteBuild:
-		return mc.completeDirectoryBuildNow(req.ctx, req.buildPath, req.snapshotTsNs)
+		return mc.completeDirectoryBuildNow(req.ctx, req.buildPath, req.snapshotTsNs, req.sections)
 	case metadataAbortBuild:
 		return mc.abortDirectoryBuildNow(req.buildPath)
 	case metadataPurgeDir:
 		return mc.purgeDirectoryChildrenNow(req.ctx, req.buildPath, req.resetFn)
+	case metadataSectionRefresh:
+		return mc.applySectionRefreshNow(req.ctx, req.buildPath, req.refresh)
 	case metadataShutdown:
 		return nil
 	default:
@@ -942,6 +958,17 @@ func (mc *MetaCache) applyMetadataResponseLocked(ctx context.Context, resp *file
 			newEntry = nil
 		}
 	}
+	// Only foreign churn counts toward section invalidation: this mount's own
+	// writes are ground truth for its cache.
+	if options.InvalidateEntries {
+		now := time.Now()
+		if oldPath != "" {
+			mc.noteSectionChangeLocked(oldPath, now)
+		}
+		if newEntry != nil && newEntry.FullPath != oldPath {
+			mc.noteSectionChangeLocked(newEntry.FullPath, now)
+		}
+	}
 	err := mc.atomicUpdateEntryFromFilerLocked(ctx, oldPath, newEntry, allowUncachedInsert, resp.TsNs)
 	if err == nil && hideNewPath {
 		if purgeErr := mc.purgeEntryLocked(ctx, newPath, message.NewEntry.IsDirectory); purgeErr != nil {
@@ -954,6 +981,8 @@ func (mc *MetaCache) applyMetadataResponseLocked(ctx context.Context, resp *file
 		isDelete := message.NewEntry == nil
 		isMove := message.NewEntry != nil && (message.NewParentPath != resp.Directory || message.NewEntry.Name != message.OldEntry.Name)
 		if isDelete || isMove {
+			delete(mc.dirVersionFloors, oldPath)
+			delete(mc.dirSections, oldPath)
 			if deleteErr := mc.localStore.DeleteFolderChildren(ctx, oldPath); deleteErr != nil {
 				glog.V(2).Infof("delete descendants of %s: %v", oldPath, deleteErr)
 			}
@@ -995,11 +1024,12 @@ func (mc *MetaCache) purgeDirectoryChildrenNow(ctx context.Context, dirPath util
 	mc.Lock()
 	defer mc.Unlock()
 	delete(mc.dirVersionFloors, dirPath)
+	delete(mc.dirSections, dirPath)
 	mc.deleteChildVersionRecordsLocked(ctx, dirPath)
 	return mc.localStore.DeleteFolderChildren(ctx, dirPath)
 }
 
-func (mc *MetaCache) completeDirectoryBuildNow(ctx context.Context, dirPath util.FullPath, snapshotTsNs int64) error {
+func (mc *MetaCache) completeDirectoryBuildNow(ctx context.Context, dirPath util.FullPath, snapshotTsNs int64, sections *sectionList) error {
 	state := mc.buildingDirs[dirPath]
 	delete(mc.buildingDirs, dirPath)
 
@@ -1012,6 +1042,7 @@ func (mc *MetaCache) completeDirectoryBuildNow(ctx context.Context, dirPath util
 	// touches it. An unversioned listing (pre-upgrade filer) instead clears the
 	// children's records, or a re-inserted entry would inherit a stale one.
 	mc.Lock()
+	mc.dirSections[dirPath] = sections
 	if snapshotTsNs != 0 {
 		mc.dirVersionFloors[dirPath] = snapshotTsNs
 		mc.pruneSupersededTombstonesLocked(ctx, dirPath, snapshotTsNs)

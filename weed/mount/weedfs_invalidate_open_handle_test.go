@@ -336,7 +336,7 @@ func TestBufferedBuildEventReinvalidatesOnCompletion(t *testing.T) {
 		t.Fatalf("insert listing entry: %v", err)
 	}
 
-	if err := wfs.metaCache.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 1000); err != nil {
+	if err := wfs.metaCache.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 1000, nil); err != nil {
 		t.Fatalf("complete build: %v", err)
 	}
 	wfs.metaCache.WaitForEntryInvalidations()
@@ -846,7 +846,7 @@ func TestFloorProtectsSnapshotStateFromDelayedEvents(t *testing.T) {
 	}, 2000); err != nil {
 		t.Fatalf("insert listing entry: %v", err)
 	}
-	if err := wfs.metaCache.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 2000); err != nil {
+	if err := wfs.metaCache.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 2000, nil); err != nil {
 		t.Fatalf("complete build: %v", err)
 	}
 
@@ -1131,7 +1131,7 @@ func TestAbsenceFloorBlocksGhostCreate(t *testing.T) {
 	}, 0); err != nil {
 		t.Fatalf("insert listing entry: %v", err)
 	}
-	if err := wfs.metaCache.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 2000); err != nil {
+	if err := wfs.metaCache.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 2000, nil); err != nil {
 		t.Fatalf("complete build: %v", err)
 	}
 
@@ -1281,7 +1281,7 @@ func TestNewerAbsenceFloorOverridesOlderTombstone(t *testing.T) {
 	if err := wfs.metaCache.BeginDirectoryBuild(context.Background(), util.FullPath("/dir")); err != nil {
 		t.Fatalf("begin build: %v", err)
 	}
-	if err := wfs.metaCache.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 3000); err != nil {
+	if err := wfs.metaCache.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 3000, nil); err != nil {
 		t.Fatalf("complete build: %v", err)
 	}
 

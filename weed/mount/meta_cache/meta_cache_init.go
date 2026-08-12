@@ -132,9 +132,10 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 		}()
 
 		// reloadFromFiler wipes the cached children and reloads them from the filer.
-		reloadFromFiler := func() (entryCount int, snapshotTsNs int64, err error) {
+		reloadFromFiler := func() (entryCount int, snapshotTsNs int64, sections sectionBoundsCollector, err error) {
 			err = util.Retry("ReadDirAllEntries", func() error {
 				entryCount = 0
+				sections = sectionBoundsCollector{}
 				var batch []*filer.Entry // reset on retry, allow GC of previous entries
 				if err := mc.deleteFolderChildrenForRebuild(ctx, path); err != nil {
 					return fmt.Errorf("clear existing entries for %s: %w", path, err)
@@ -149,6 +150,7 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 					if maxCacheableEntries > 0 && entryCount >= maxCacheableEntries {
 						return &DirectoryTooLargeError{Path: path}
 					}
+					sections.note(entry.Name())
 					batch = append(batch, entry)
 					entryCount++
 
@@ -171,10 +173,10 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 				}
 				return nil
 			})
-			return entryCount, snapshotTsNs, err
+			return entryCount, snapshotTsNs, sections, err
 		}
 
-		entryCount, snapshotTsNs, fetchErr := reloadFromFiler()
+		entryCount, snapshotTsNs, sections, fetchErr := reloadFromFiler()
 		if fetchErr != nil {
 			var tooLarge *DirectoryTooLargeError
 			if errors.As(fetchErr, &tooLarge) {
@@ -204,7 +206,7 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 					return nil, ctx.Err()
 				}
 			}
-			if entryCount, snapshotTsNs, fetchErr = reloadFromFiler(); fetchErr != nil {
+			if entryCount, snapshotTsNs, sections, fetchErr = reloadFromFiler(); fetchErr != nil {
 				cleanupBuild("failed")
 				return nil, fmt.Errorf("confirm empty list %s: %w", path, fetchErr)
 			}
@@ -213,7 +215,7 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 			}
 		}
 
-		if err := mc.CompleteDirectoryBuild(context.Background(), path, snapshotTsNs); err != nil {
+		if err := mc.CompleteDirectoryBuild(context.Background(), path, snapshotTsNs, sections.bounds); err != nil {
 			cleanupBuild("unreplayed")
 			return nil, fmt.Errorf("complete build for %s: %w", path, err)
 		}

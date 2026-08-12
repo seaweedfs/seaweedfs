@@ -179,8 +179,6 @@ type WFS struct {
 	dirMtimeMap           map[uint64]time.Time // inode -> mtime/ctime, in-memory overlay for dirs
 	entryValidSec         uint64               // kernel FUSE entry cache TTL in seconds
 	attrValidSec          uint64               // kernel FUSE attr cache TTL in seconds
-	dirHotWindow          time.Duration
-	dirHotThreshold       int
 	dirIdleEvict          time.Duration
 
 	// openMtimeCache maps inode -> [mtime_sec, mtime_ns] from the last Open.
@@ -222,11 +220,7 @@ type WFS struct {
 	lockClient *cluster.LockClient
 }
 
-const (
-	defaultDirHotWindow    = 2 * time.Second
-	defaultDirHotThreshold = 64
-	defaultDirIdleEvict    = 10 * time.Minute
-)
+const defaultDirIdleEvict = 10 * time.Minute
 
 func NewSeaweedFileSystem(option *Option) *WFS {
 	// Only create FilerClient for direct volume access modes
@@ -251,8 +245,6 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		)
 	}
 
-	dirHotWindow := defaultDirHotWindow
-	dirHotThreshold := defaultDirHotThreshold
 	dirIdleEvict := defaultDirIdleEvict
 	if option.DirIdleEvictSec != 0 {
 		dirIdleEvict = time.Duration(option.DirIdleEvictSec) * time.Second
@@ -281,8 +273,6 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		dirMtimeMap:       make(map[uint64]time.Time, 1024),
 		entryValidSec:     1,
 		attrValidSec:      1,
-		dirHotWindow:      dirHotWindow,
-		dirHotThreshold:   dirHotThreshold,
 		dirIdleEvict:      dirIdleEvict,
 	}
 
@@ -318,11 +308,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 			wfs.inodeToPath.MarkChildrenCached(path)
 		}, func(path util.FullPath) bool {
 			return wfs.inodeToPath.IsChildrenCached(path)
-		}, wfs.onEntryInvalidation, func(dirPath util.FullPath) {
-			if wfs.inodeToPath.RecordDirectoryUpdate(dirPath, time.Now(), wfs.dirHotWindow, wfs.dirHotThreshold) {
-				wfs.markDirectoryReadThrough(dirPath)
-			}
-		})
+		}, wfs.onEntryInvalidation, nil)
 	wfs.metaCache.SetPinnedChildFn(wfs.isLocalOnlyEntry)
 	grace.OnInterrupt(func() {
 		// grace calls os.Exit(0) after all hooks, so WaitForAsyncFlush
@@ -614,7 +600,7 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, entryVersion,
 	dir, _ := fullpath.DirAndName()
 	dirPath := util.FullPath(dir)
 
-	if wfs.metaCache.IsDirectoryCached(dirPath) {
+	if wfs.metaCache.IsDirectoryCached(dirPath) && wfs.metaCache.IsNameFresh(fullpath) {
 		cachedEntry, cachedVersionTsNs, cacheErr := wfs.metaCache.FindEntry(context.Background(), fullpath)
 		if cacheErr != nil && cacheErr != filer_pb.ErrNotFound {
 			glog.Errorf("lookupEntry: cache lookup for %s failed: %v", fullpath, cacheErr)
@@ -626,9 +612,9 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, entryVersion,
 			return cachedEntry, entryVersion{tsNs: cachedVersionTsNs}, fuse.OK
 		}
 		// Re-check: the directory may have been evicted from cache between
-		// our IsDirectoryCached check and FindEntry (e.g. markDirectoryReadThrough).
+		// our IsDirectoryCached check and FindEntry.
 		// If it's no longer cached, fall through to the filer lookup below.
-		if wfs.metaCache.IsDirectoryCached(dirPath) {
+		if wfs.metaCache.IsDirectoryCached(dirPath) && wfs.metaCache.IsNameFresh(fullpath) {
 			// Authoritative ENOENT only if inodeToPath also has no record.
 			// If the kernel still tracks this inode, the three layers
 			// disagree; trust the filer over the local cache (the
@@ -689,8 +675,7 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, entryVersion,
 						glog.V(4).Infof("lookupEntry found deferred entry in local cache %s", fullpath)
 						return localEntry, entryVersion{tsNs: localVersionTsNs}, fuse.OK
 					}
-					// Creating many files at once can push the directory past
-					// the hot threshold and evict it, which drops the local
+					// Cache eviction (idle, kernel Forget) can drop the local
 					// placeholder a deferred create left behind. The handle
 					// still holding the unflushed entry is authoritative for
 					// it, so read it from there rather than reporting a file
@@ -986,18 +971,6 @@ func (wfs *WFS) ClearCacheDir() {
 	wfs.metaCache.Shutdown()
 	os.RemoveAll(wfs.option.getUniqueCacheDirForWrite())
 	os.RemoveAll(wfs.option.getUniqueCacheDirForRead())
-}
-
-// markDirectoryReadThrough drops a hot directory's cached listing. Only safe
-// from the apply loop (onDirectoryUpdate), where it serializes with a build's
-// markCachedFn; off-loop callers must use purgeDirectoryCache.
-func (wfs *WFS) markDirectoryReadThrough(dirPath util.FullPath) {
-	if !wfs.inodeToPath.MarkDirectoryReadThrough(dirPath, time.Now()) {
-		return
-	}
-	if err := wfs.metaCache.DeleteFolderChildren(context.Background(), dirPath); err != nil {
-		glog.V(2).Infof("clear dir cache %s: %v", dirPath, err)
-	}
 }
 
 // purgeDirectoryCache drops a directory's cached listing from off the apply loop
