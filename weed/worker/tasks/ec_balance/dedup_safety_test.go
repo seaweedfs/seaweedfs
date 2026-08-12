@@ -21,14 +21,17 @@ import (
 // dedup to the same standard, because it is the more dangerous of the two: it
 // deletes without copying anything first.
 
-const dedupTestVolumeID = uint32(42561)
+const (
+	dedupTestVolumeID   = uint32(42561)
+	dedupTestCollection = "pm-itatiaiucu-01"
+)
 
 func dedupParams(sourceNode, keepNode string, shardID uint32) *worker_pb.TaskParams {
 	// Dedup is signalled by source and target being the same node and disk.
 	loc := &worker_pb.TaskSource{Node: sourceNode, DiskId: 0, ShardIds: []uint32{shardID}}
 	return &worker_pb.TaskParams{
 		VolumeId:   dedupTestVolumeID,
-		Collection: "pm-itatiaiucu-01",
+		Collection: dedupTestCollection,
 		Sources:    []*worker_pb.TaskSource{loc},
 		Targets:    []*worker_pb.TaskTarget{{Node: sourceNode, DiskId: 0, ShardIds: []uint32{shardID}}},
 		// The dedup branch is only reachable when EC params are present; without
@@ -40,7 +43,7 @@ func dedupParams(sourceNode, keepNode string, shardID uint32) *worker_pb.TaskPar
 }
 
 func newDedupTask() *ECBalanceTask {
-	return NewECBalanceTask("dedup-test", dedupTestVolumeID, "pm-itatiaiucu-01",
+	return NewECBalanceTask("dedup-test", dedupTestVolumeID, dedupTestCollection,
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 }
 
@@ -102,5 +105,24 @@ func TestDedupRefusesWhenThePeerCannotBeQueried(t *testing.T) {
 		return // kept the shard while the peer's state is unknown
 	}
 	t.Fatalf("dedup deleted shard %d.0 while the peer was unreachable (deleted=%v, err=%v)",
+		dedupTestVolumeID, holder.deletedShards(), err)
+}
+
+// Volume ids are allocated cluster-wide, but the inventory RPC is keyed by
+// volume id alone, so a server holding the same number for a different
+// collection answers "yes, I have that shard" to a question about this one.
+// Accepting that would delete the last real copy on the strength of an
+// unrelated volume.
+func TestDedupRefusesWhenTheKeepNodeHoldsAnotherCollection(t *testing.T) {
+	holder := startFakeEcVolumeServer(t, dedupTestVolumeID, 0)
+	// Same volume id, different collection: a plausible-looking but wrong match.
+	impostor := startFakeEcVolumeServerInCollection(t, "morro-agudo-01", dedupTestVolumeID, 0)
+
+	err := newDedupTask().Execute(context.Background(), dedupParams(holder.address(), impostor.address(), 0))
+
+	if holder.has(dedupTestVolumeID, 0) {
+		return // refused: the keep node's shard belongs to another collection
+	}
+	t.Fatalf("dedup deleted shard %d.0 after matching another collection's volume (deleted=%v, err=%v)",
 		dedupTestVolumeID, holder.deletedShards(), err)
 }

@@ -25,6 +25,9 @@ type fakeEcVolumeServer struct {
 	mu sync.Mutex
 	// shards actually present on this server's disks, per volume.
 	shards map[uint32]map[uint32]bool
+	// collection the held volume belongs to. Reported back on the inventory so
+	// a caller can tell this server's volume N from another collection's N.
+	collection string
 	// deleted/unmounted record what the job asked for, so a test can assert on
 	// the request even when it was a no-op against the inventory.
 	deleted   []string
@@ -40,8 +43,9 @@ func (f *fakeEcVolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume
 	resp := &volume_server_pb.VolumeEcShardsInfoResponse{}
 	for sid := range f.shards[req.VolumeId] {
 		resp.EcShardInfos = append(resp.EcShardInfos, &volume_server_pb.EcShardInfo{
-			VolumeId: req.VolumeId,
-			ShardId:  sid,
+			VolumeId:   req.VolumeId,
+			ShardId:    sid,
+			Collection: f.collection,
 		})
 	}
 	return resp, nil
@@ -82,6 +86,12 @@ func (f *fakeEcVolumeServer) deletedShards() []string {
 // startFakeEcVolumeServer listens on a loopback port and serves the EC subset
 // of the volume server API. present lists the shards this server really holds.
 func startFakeEcVolumeServer(t *testing.T, volumeID uint32, present ...uint32) *fakeEcVolumeServer {
+	return startFakeEcVolumeServerInCollection(t, dedupTestCollection, volumeID, present...)
+}
+
+// startFakeEcVolumeServerInCollection is the same, for a named collection, so a
+// test can stand up two servers holding the same volume id in different ones.
+func startFakeEcVolumeServerInCollection(t *testing.T, collection string, volumeID uint32, present ...uint32) *fakeEcVolumeServer {
 	t.Helper()
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -90,8 +100,9 @@ func startFakeEcVolumeServer(t *testing.T, volumeID uint32, present ...uint32) *
 	}
 
 	f := &fakeEcVolumeServer{
-		shards:   map[uint32]map[uint32]bool{volumeID: {}},
-		grpcAddr: listener.Addr().String(),
+		shards:     map[uint32]map[uint32]bool{volumeID: {}},
+		collection: collection,
+		grpcAddr:   listener.Addr().String(),
 	}
 	for _, sid := range present {
 		f.shards[volumeID][sid] = true

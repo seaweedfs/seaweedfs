@@ -155,24 +155,14 @@ func (t *ECBalanceTask) executeDedupDelete(ctx context.Context, volumeID uint32,
 }
 
 // verifyShardsOnKeepNode confirms the node the plan wants to keep the shard on
-// actually has every shard about to be deleted elsewhere.
+// actually has every shard about to be deleted elsewhere, for this collection.
 func (t *ECBalanceTask) verifyShardsOnKeepNode(ctx context.Context, volumeID uint32, keepNode string, shardIDs []uint32) error {
 	if keepNode == "" {
 		return fmt.Errorf("refusing dedup delete of volume %d shard(s) %v: no keep node recorded, so no surviving copy can be confirmed", volumeID, shardIDs)
 	}
-	keepAddr := pb.ServerAddress(keepNode)
-	_, perServer := erasure_coding.VerifyShardsAcrossServers(ctx, volumeID, []string{string(keepAddr)}, t.grpcDialOption)
-	inv, ok := perServer[string(keepAddr)]
-	if !ok {
-		return fmt.Errorf("refusing dedup delete of volume %d shard(s) %v: no inventory returned for keep node %s", volumeID, shardIDs, keepAddr)
-	}
-	if inv.QueryError != nil {
-		return fmt.Errorf("refusing dedup delete of volume %d shard(s) %v: keep node %s unreachable: %v", volumeID, shardIDs, keepAddr, inv.QueryError)
-	}
-	for _, sid := range shardIDs {
-		if !inv.Bits.Has(erasure_coding.ShardId(sid)) {
-			return fmt.Errorf("refusing dedup delete: keep node %s does not hold EC shard %d.%d, so this would remove the last copy", keepAddr, volumeID, sid)
-		}
+	if err := erasure_coding.VerifyShardsOnServer(ctx, t.collection, volumeID,
+		string(pb.ServerAddress(keepNode)), shardIDs, t.grpcDialOption); err != nil {
+		return fmt.Errorf("refusing dedup delete: %w", err)
 	}
 	return nil
 }
