@@ -137,3 +137,51 @@ func SummarizeShardInventory(perServer map[string]ServerShardInventory) string {
 	}
 	return string(b)
 }
+
+// VerifyShardsOnServer confirms one server really holds the named shards of a
+// specific (collection, volume), for callers about to delete another copy.
+//
+// Collection is checked, unlike in VerifyShardsAcrossServers: the inventory RPC
+// is keyed by volume id alone, so a server answering for volume N says nothing
+// about which collection's volume N it means. Approving a delete on the
+// strength of a different collection's shard would remove the last real copy —
+// the exact outcome the caller is trying to prevent.
+//
+// A server that cannot be queried is unknown, not confirmed, and returns an
+// error: treating an unreachable peer as proof of a surviving copy is how a
+// network blip becomes data loss.
+func VerifyShardsOnServer(ctx context.Context, collection string, volumeID uint32,
+	server string, shardIDs []uint32, dialOption grpc.DialOption) error {
+
+	if server == "" {
+		return fmt.Errorf("no server given to verify volume %d shard(s) %v", volumeID, shardIDs)
+	}
+
+	var present ShardBits
+	callErr := operation.WithVolumeServerClient(false, pb.ServerAddress(server), dialOption,
+		func(client volume_server_pb.VolumeServerClient) error {
+			resp, e := client.VolumeEcShardsInfo(ctx, &volume_server_pb.VolumeEcShardsInfoRequest{
+				VolumeId: volumeID,
+			})
+			if e != nil {
+				return e
+			}
+			for _, s := range resp.EcShardInfos {
+				if s.VolumeId != volumeID || s.Collection != collection || s.ShardId >= MaxShardCount {
+					continue
+				}
+				present = present.Set(ShardId(s.ShardId))
+			}
+			return nil
+		})
+	if callErr != nil {
+		return fmt.Errorf("verify volume %d shard(s) %v on %s: %w", volumeID, shardIDs, server, callErr)
+	}
+
+	for _, sid := range shardIDs {
+		if !present.Has(ShardId(sid)) {
+			return fmt.Errorf("%s does not hold ec shard %d.%d of collection %q", server, volumeID, sid, collection)
+		}
+	}
+	return nil
+}

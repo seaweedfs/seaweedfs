@@ -395,6 +395,10 @@ message EcBalanceTaskParams {
   int32 max_parallelization = 2;           // Max parallel shard moves within a batch
   int32 timeout_seconds = 3;               // Operation timeout per move
   repeated EcShardMoveSpec moves = 4;      // Batch: multiple shard moves in one job
+  // For a dedup move, the node that keeps the shard. The worker confirms this
+  // node really holds it before deleting the copy, so a topology entry naming a
+  // location that holds nothing cannot cause the last copy to be removed.
+  string dedup_keep_node = 5;
 }
 
 // EcShardMoveSpec describes a single EC shard move within a batch

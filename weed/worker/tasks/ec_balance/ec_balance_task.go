@@ -90,7 +90,7 @@ func (t *ECBalanceTask) Execute(ctx context.Context, params *worker_pb.TaskParam
 
 	// For dedup, we only unmount+delete from source (no copy needed)
 	if isDedupDelete {
-		return t.executeDedupDelete(ctx, params.VolumeId, sourceAddr, source.ShardIds)
+		return t.executeDedupDelete(ctx, params.VolumeId, sourceAddr, source.ShardIds, ecParams.GetDedupKeepNode())
 	}
 
 	// Step 1: Copy shard to destination and mount
@@ -127,8 +127,19 @@ func (t *ECBalanceTask) Execute(ctx context.Context, params *worker_pb.TaskParam
 	return nil
 }
 
-// executeDedupDelete removes a duplicate shard without copying
-func (t *ECBalanceTask) executeDedupDelete(ctx context.Context, volumeID uint32, sourceAddr pb.ServerAddress, shardIDs []uint32) error {
+// executeDedupDelete removes a duplicate shard without copying. Because nothing
+// is copied first, the only thing standing between this and data loss is that
+// another node really holds the shard -- and the plan asserting so is not
+// evidence. The topology can name a location that holds nothing (such a server
+// answers "not found ec volume id" when asked for the file), and deleting on the
+// strength of that removes the last copy while reporting success. So confirm the
+// shard on the node the plan chose to keep, and keep this copy if that cannot be
+// established. An unreachable peer is unknown, not confirmed.
+func (t *ECBalanceTask) executeDedupDelete(ctx context.Context, volumeID uint32, sourceAddr pb.ServerAddress, shardIDs []uint32, keepNode string) error {
+	if err := t.verifyShardsOnKeepNode(ctx, volumeID, keepNode, shardIDs); err != nil {
+		return err
+	}
+
 	t.reportProgress(25.0, "Unmounting duplicate EC shard")
 	if err := t.unmountShard(ctx, volumeID, sourceAddr, shardIDs); err != nil {
 		return fmt.Errorf("unmount duplicate shard: %w", err)
@@ -140,6 +151,19 @@ func (t *ECBalanceTask) executeDedupDelete(ctx context.Context, volumeID uint32,
 	}
 
 	t.reportProgress(100.0, "Duplicate shard removed")
+	return nil
+}
+
+// verifyShardsOnKeepNode confirms the node the plan wants to keep the shard on
+// actually has every shard about to be deleted elsewhere, for this collection.
+func (t *ECBalanceTask) verifyShardsOnKeepNode(ctx context.Context, volumeID uint32, keepNode string, shardIDs []uint32) error {
+	if keepNode == "" {
+		return fmt.Errorf("refusing dedup delete of volume %d shard(s) %v: no keep node recorded, so no surviving copy can be confirmed", volumeID, shardIDs)
+	}
+	if err := erasure_coding.VerifyShardsOnServer(ctx, t.collection, volumeID,
+		string(pb.ServerAddress(keepNode)), shardIDs, t.grpcDialOption); err != nil {
+		return fmt.Errorf("refusing dedup delete: %w", err)
+	}
 	return nil
 }
 

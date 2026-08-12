@@ -127,6 +127,7 @@ func Detection(
 				TaskParams: &worker_pb.TaskParams_EcBalanceParams{
 					EcBalanceParams: &worker_pb.EcBalanceTaskParams{
 						DiskType:       normalizedDiskType,
+						DedupKeepNode:  m.KeepNode,
 						TimeoutSeconds: 600,
 					},
 				},
