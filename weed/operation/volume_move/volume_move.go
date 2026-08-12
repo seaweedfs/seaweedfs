@@ -89,13 +89,29 @@ func (m *Mover) LiveMoveVolume(ctx context.Context, volumeId needle.VolumeId, so
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			defer cleanupCancel()
 			cleanupTarget := copyCompleted
-			if copyStarted && !copyCompleted && targetStateKnown && !targetHadVolume {
+			if copyStarted && !copyCompleted {
 				// The server can finish the copy and mount the target even when
-				// the client loses the stream, so probe rather than assume. A
-				// target that held this volume before the move — or whose prior
-				// state is unknown because the first probe failed — is treated
-				// as someone else's replica and never touched.
-				cleanupTarget = m.volumeExists(cleanupCtx, volumeId, target)
+				// the client loses the stream, so probe rather than assume.
+				exists, known := m.probeVolume(cleanupCtx, volumeId, target)
+				switch {
+				case known && !exists:
+					// nothing mounted on the target; just undo the freeze below
+				case known && exists && targetStateKnown && !targetHadVolume:
+					// the failed copy created it; remove it so the source stays
+					// the only replica
+					cleanupTarget = true
+				default:
+					// A copy may sit mounted on the target and its provenance
+					// cannot be proven: the prior state is unknown, the target
+					// held a replica before the move, or the probe failed.
+					// Deleting it risks someone else's replica; reopening the
+					// source beside it risks two writable replicas taking
+					// divergent writes. Keep the source readonly.
+					fmt.Fprintf(opts.Writer, "volume %d is left readonly on %s: a copy may exist on %s but its origin cannot be determined; delete one side explicitly, then re-run the move\n", volumeId, source, target)
+					glog.Warningf("volume %d is left readonly on %s: a copy may exist on %s but its origin cannot be determined; delete one side explicitly, then re-run the move", volumeId, source, target)
+					err = fmt.Errorf("%w: %w", ErrSourceKeptReadonly, err)
+					return
+				}
 			}
 			if cleanupTarget {
 				// The target copy may be missing tailed entries; remove it so
@@ -296,13 +312,6 @@ func (m *Mover) ensureVolumeReadonly(ctx context.Context, volumeId needle.Volume
 		return readonlyErr
 	})
 	return
-}
-
-// volumeExists reports whether server currently has the volume; a probe
-// failure counts as absent.
-func (m *Mover) volumeExists(ctx context.Context, volumeId needle.VolumeId, server pb.ServerAddress) bool {
-	exists, _ := m.probeVolume(ctx, volumeId, server)
-	return exists
 }
 
 // probeVolume reports whether server currently has the volume, and whether the

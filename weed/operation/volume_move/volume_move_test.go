@@ -287,20 +287,23 @@ func TestLiveMoveVolumeCopyErrorCleansMountedTarget(t *testing.T) {
 	}
 }
 
-func TestLiveMoveVolumeCopyErrorUnknownTargetStateSkipsCleanup(t *testing.T) {
+func TestLiveMoveVolumeCopyErrorUnknownTargetKeepsSourceReadonly(t *testing.T) {
 	// The pre-copy probe failed at the transport level, so whether the target
-	// held a replica before the move is unknown — cleanup must keep hands off
-	// or it could delete a healthy pre-existing replica.
+	// held a replica before the move is unknown; the failed copy may still
+	// have mounted a complete copy there (the server can finish after the
+	// client loses the stream). Deleting it risks a healthy pre-existing
+	// replica, and reopening the source beside it risks two writable replicas
+	// taking divergent writes — so the source stays readonly.
 	cluster := newFakeCluster()
 	cluster.status[string(srcAddr)] = volumeStatus(1000, 100, 10)
 	cluster.status[string(dstAddr)] = volumeStatus(1000, 100, 10)
 	cluster.statusFailures[string(dstAddr)] = 1
 	cluster.statusFailureErr = status.Error(codes.Unavailable, "connection refused")
-	cluster.errs["dst:8080 VolumeCopy"] = errors.New("copy failed")
+	cluster.errs["dst:8080 VolumeCopy"] = errors.New("stream lost")
 
 	err := cluster.mover().LiveMoveVolume(context.Background(), 7, srcAddr, dstAddr, VolumeMoveOptions{})
-	if err == nil {
-		t.Fatal("expected copy failure")
+	if err == nil || !errors.Is(err, ErrSourceKeptReadonly) {
+		t.Fatalf("expected kept-readonly failure, got: %v", err)
 	}
 
 	calls := cluster.callList()
@@ -308,9 +311,9 @@ func TestLiveMoveVolumeCopyErrorUnknownTargetStateSkipsCleanup(t *testing.T) {
 		if call == "dst:8080 VolumeDelete" {
 			t.Fatalf("deleted the target with its prior state unknown: %v", calls)
 		}
-	}
-	if calls[len(calls)-1] != "src:8080 VolumeMarkWritable" {
-		t.Fatalf("source writability not restored: %v", calls)
+		if call == "src:8080 VolumeMarkWritable" {
+			t.Fatalf("reopened the source beside a possibly-mounted copy: %v", calls)
+		}
 	}
 }
 
@@ -323,8 +326,8 @@ func TestLiveMoveVolumeCopyErrorLeavesPreexistingTarget(t *testing.T) {
 	cluster.errs["dst:8080 VolumeCopy"] = errors.New("copy failed")
 
 	err := cluster.mover().LiveMoveVolume(context.Background(), 7, srcAddr, dstAddr, VolumeMoveOptions{})
-	if err == nil {
-		t.Fatal("expected copy failure")
+	if err == nil || !errors.Is(err, ErrSourceKeptReadonly) {
+		t.Fatalf("expected kept-readonly failure, got: %v", err)
 	}
 
 	calls := cluster.callList()
@@ -332,9 +335,9 @@ func TestLiveMoveVolumeCopyErrorLeavesPreexistingTarget(t *testing.T) {
 		if call == "dst:8080 VolumeDelete" {
 			t.Fatalf("deleted a pre-existing target replica after a failed copy: %v", calls)
 		}
-	}
-	if calls[len(calls)-1] != "src:8080 VolumeMarkWritable" {
-		t.Fatalf("source writability not restored: %v", calls)
+		if call == "src:8080 VolumeMarkWritable" {
+			t.Fatalf("reopened the source with a copy of unprovable origin on the target: %v", calls)
+		}
 	}
 }
 
