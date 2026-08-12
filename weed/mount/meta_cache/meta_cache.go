@@ -530,12 +530,18 @@ func (mc *MetaCache) entryExistsLocked(ctx context.Context, fp util.FullPath) bo
 }
 
 // entryVersionFloorLocked raises a path's own version record to its
-// directory's listing floor: the listing covered every child at its snapshot,
-// so a child without a later record of its own is versioned at the snapshot.
+// directory's listing floor or its section's refresh floor: each listing
+// covered every name in its range at its snapshot, so a name without a later
+// record of its own is versioned at the snapshot.
 func (mc *MetaCache) entryVersionFloorLocked(fp util.FullPath, recordTsNs int64) int64 {
-	dir, _ := fp.DirAndName()
+	dir, name := fp.DirAndName()
 	if floor := mc.dirVersionFloors[util.FullPath(dir)]; floor > recordTsNs {
-		return floor
+		recordTsNs = floor
+	}
+	if ds := mc.dirSections[util.FullPath(dir)]; ds != nil {
+		if floor := ds.floorOf(name); floor > recordTsNs {
+			recordTsNs = floor
+		}
 	}
 	return recordTsNs
 }

@@ -434,13 +434,13 @@ func TestSectionCompleteRefreshGuardsChangedTable(t *testing.T) {
 	ds := newDirSections([]string{"g", "p"})
 	ds.sections[1].stale = true
 
-	if ds.completeRefresh("g", "q", []string{"h"}) {
+	if ds.completeRefresh("g", "q", []string{"h"}, 5000) {
 		t.Fatal("a range the table no longer has must be ignored")
 	}
 	if ds.isFresh("h") {
 		t.Fatal("an ignored refresh must not mark anything fresh")
 	}
-	if !ds.completeRefresh("g", "p", []string{"h"}) {
+	if !ds.completeRefresh("g", "p", []string{"h"}, 5000) {
 		t.Fatal("the matching range must be accepted")
 	}
 	if !ds.isFresh("h") {
@@ -456,7 +456,7 @@ func TestSectionCompleteRefreshSplitsMiddleSection(t *testing.T) {
 	for i := 0; i <= 2*dirSectionSize; i++ {
 		names = append(names, fmt.Sprintf("g-%05d", i))
 	}
-	if !ds.completeRefresh("g", "p", names) {
+	if !ds.completeRefresh("g", "p", names, 5000) {
 		t.Fatal("refresh of the middle section must be accepted")
 	}
 
@@ -479,5 +479,122 @@ func TestSectionCompleteRefreshSplitsMiddleSection(t *testing.T) {
 	}
 	if got := ds.sectionOf(names[dirSectionSize+1]); got != 2 {
 		t.Fatalf("sectionOf(%q) = %d, want 2", names[dirSectionSize+1], got)
+	}
+}
+
+func TestSectionFloorFencesAbsentNames(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+		"/":    true,
+		"/dir": true,
+	})
+	defer mc.Shutdown()
+
+	buildSectionedDir(t, mc, util.FullPath("/dir"), 1000, []string{"m"})
+	applyChurn(t, mc, "/dir", "a-", sectionHotThreshold, 2000, SubscriberMetadataResponseApplyOptions)
+
+	if err := mc.enqueueAndWait(context.Background(), metadataApplyRequest{
+		kind:      metadataSectionRefresh,
+		buildPath: util.FullPath("/dir"),
+		refresh:   &sectionRefresh{hi: "m", snapshotTsNs: 5000},
+	}); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	// a delayed create between the directory floor and the refresh snapshot,
+	// for a name neither the cache nor the listing ever held
+	ghost := func(tsNs int64) {
+		t.Helper()
+		if err := mc.ApplyMetadataResponse(context.Background(), &filer_pb.SubscribeMetadataResponse{
+			Directory: "/dir",
+			EventNotification: &filer_pb.EventNotification{
+				NewEntry: &filer_pb.Entry{
+					Name:       "b-ghost",
+					Attributes: &filer_pb.FuseAttributes{Crtime: 1, Mtime: 1, FileMode: 0100644, FileSize: 1},
+				},
+			},
+			TsNs: tsNs,
+		}, SubscriberMetadataResponseApplyOptions); err != nil {
+			t.Fatalf("apply ghost event: %v", err)
+		}
+	}
+	ghost(4500)
+	if _, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/b-ghost")); err != filer_pb.ErrNotFound {
+		t.Fatalf("pre-snapshot event resurrected an absent name: %v", err)
+	}
+	ghost(6000)
+	if _, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/b-ghost")); err != nil {
+		t.Fatalf("post-snapshot event must apply: %v", err)
+	}
+}
+
+func TestUnversionedRefreshStaysStale(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+		"/":    true,
+		"/dir": true,
+	})
+	defer mc.Shutdown()
+
+	buildSectionedDir(t, mc, util.FullPath("/dir"), 1000, nil)
+	applyChurn(t, mc, "/dir", "a-", sectionHotThreshold, 2000, SubscriberMetadataResponseApplyOptions)
+
+	if err := mc.enqueueAndWait(context.Background(), metadataApplyRequest{
+		kind:      metadataSectionRefresh,
+		buildPath: util.FullPath("/dir"),
+		refresh: &sectionRefresh{entries: []*filer.Entry{{
+			FullPath: util.FullPath("/dir/b-gap"),
+			Attr:     filer.Attr{Crtime: time.Unix(1, 0), Mtime: time.Unix(1, 0), Mode: 0100644, FileSize: 1},
+		}}},
+	}); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	if mc.IsNameFresh(util.FullPath("/dir/a-000")) {
+		t.Fatal("an unversioned refresh vouches for nothing and must stay stale")
+	}
+	if _, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/b-gap")); err != nil {
+		t.Fatalf("gap fill should still land: %v", err)
+	}
+}
+
+func TestEnsureListingFreshCoversAllStaleSectionsAhead(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+		"/":    true,
+		"/dir": true,
+	})
+	defer mc.Shutdown()
+
+	server := &sectionFilerServer{snapshot: 5000, names: []string{"b-1", "n-1"}}
+	client := startSectionFilerServer(t, server)
+
+	buildSectionedDir(t, mc, util.FullPath("/dir"), 1000, []string{"m"})
+	applyChurn(t, mc, "/dir", "a-", sectionHotThreshold, 2000, SubscriberMetadataResponseApplyOptions)
+	applyChurn(t, mc, "/dir", "n-", sectionHotThreshold, 3000, SubscriberMetadataResponseApplyOptions)
+
+	if err := EnsureListingFresh(context.Background(), mc, client, util.FullPath("/dir"), ""); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if !mc.IsNameFresh(util.FullPath("/dir/a-000")) || !mc.IsNameFresh(util.FullPath("/dir/n-000")) {
+		t.Fatal("one call must re-validate every stale section ahead of the start")
+	}
+}
+
+func TestSectionCompleteRefreshSetsFloors(t *testing.T) {
+	ds := newDirSections([]string{"g", "p"})
+	ds.sections[1].stale = true
+
+	names := make([]string, 0, 2*dirSectionSize+1)
+	for i := 0; i <= 2*dirSectionSize; i++ {
+		names = append(names, fmt.Sprintf("g-%05d", i))
+	}
+	if !ds.completeRefresh("g", "p", names, 7000) {
+		t.Fatal("refresh must be accepted")
+	}
+	for _, name := range []string{"g", "g-99999", names[dirSectionSize+1]} {
+		if got := ds.floorOf(name); got != 7000 {
+			t.Fatalf("floorOf(%q) = %d, want 7000", name, got)
+		}
+	}
+	if got := ds.floorOf("a"); got != 0 {
+		t.Fatalf("floorOf(a) = %d, want 0 for a never-refreshed section", got)
 	}
 }
