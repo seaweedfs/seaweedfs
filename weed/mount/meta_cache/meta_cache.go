@@ -498,22 +498,19 @@ func (mc *MetaCache) entryVersionRecordLocked(ctx context.Context, fp util.FullP
 }
 
 // entryVersionBlocksLocked reports whether a write at tsNs is already
-// reflected at fp. A tombstone fences with no entry present. Otherwise the
-// path's version is its own record or, lacking one, its directory's listing
-// floor — which covers children the listing saw present and absent alike.
-// A plain record only counts while its entry exists: records linger after a
+// reflected at fp. The path's version is its own record or, lacking one, the
+// listing floors — which cover names a listing saw present and absent alike.
+// A tombstone fences with no entry present, and a later floor outranks it; a
+// plain record only counts while its entry exists: records linger after a
 // bulk folder wipe and must not fence a recreate.
 func (mc *MetaCache) entryVersionBlocksLocked(ctx context.Context, fp util.FullPath, tsNs int64) bool {
 	recordTsNs, tombstone, unversioned := mc.entryVersionRecordLocked(ctx, fp)
-	if tombstone {
-		return recordTsNs >= tsNs
-	}
 	if unversioned {
 		// Local content no log position describes: fence nothing, so any
 		// event can correct it.
 		return false
 	}
-	if !mc.entryExistsLocked(ctx, fp) {
+	if !tombstone && !mc.entryExistsLocked(ctx, fp) {
 		recordTsNs = 0
 	}
 	return mc.entryVersionFloorLocked(fp, recordTsNs) >= tsNs

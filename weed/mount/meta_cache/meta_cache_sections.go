@@ -50,6 +50,10 @@ type sectionState struct {
 	stale       bool
 	updateCount int
 	windowStart time.Time
+	// unverifiable marks a stale section whose filer stamps no listing
+	// snapshots: re-listing it can never vouch for it, so stop trying and
+	// leave its lookups reading through.
+	unverifiable bool
 	// floorTsNs is the section's own listing snapshot: a refresh at it covered
 	// every name in the range, present or absent, so it fences like the
 	// directory floor but for this range alone.
@@ -132,11 +136,11 @@ type nameRange struct {
 	lo, hi string
 }
 
-// staleRangesAhead returns the invalidated ranges from the section holding
-// startName to the end of the directory.
+// staleRangesAhead returns the invalidated ranges worth re-listing from the
+// section holding startName to the end of the directory.
 func (ds *dirSections) staleRangesAhead(startName string) (ranges []nameRange) {
 	for i := ds.sectionOf(startName); i < len(ds.sections); i++ {
-		if ds.sections[i].stale {
+		if ds.sections[i].stale && !ds.sections[i].unverifiable {
 			lo, hi := ds.sectionRange(i)
 			ranges = append(ranges, nameRange{lo: lo, hi: hi})
 		}
@@ -144,19 +148,27 @@ func (ds *dirSections) staleRangesAhead(startName string) (ranges []nameRange) {
 	return
 }
 
+// hasRange reports whether the table still has a section covering exactly
+// [lo, hi); a rebuild or re-split since a listing was taken retires the range
+// it described.
+func (ds *dirSections) hasRange(lo, hi string) bool {
+	curLo, curHi := ds.sectionRange(ds.sectionOf(lo))
+	return curLo == lo && curHi == hi
+}
+
 // completeRefresh marks the section covering exactly [lo, hi) fresh after a
 // re-listing that fetched names at snapshotTsNs, re-splitting a section that
-// outgrew twice its target size. The snapshot becomes the section's floor. It
-// reports false without touching anything when there is no snapshot — an
-// unversioned listing vouches for nothing — or when the table no longer has
-// that section, rebuilt or re-split since the listing was taken, as splicing
-// bounds from a stale range could leave the table unsorted.
+// outgrew twice its target size. The snapshot becomes the section's floor. A
+// range the table no longer has is ignored — splicing bounds from a stale
+// range could leave the table unsorted — and an unversioned listing vouches
+// for nothing: the section stays stale, remembered as not worth re-listing.
 func (ds *dirSections) completeRefresh(lo, hi string, names []string, snapshotTsNs int64) bool {
-	if snapshotTsNs == 0 {
-		return false
-	}
 	idx := ds.sectionOf(lo)
 	if curLo, curHi := ds.sectionRange(idx); curLo != lo || curHi != hi {
+		return false
+	}
+	if snapshotTsNs == 0 {
+		ds.sections[idx].unverifiable = true
 		return false
 	}
 	if len(names) > 2*dirSectionSize {
@@ -313,6 +325,15 @@ func (mc *MetaCache) applySectionRefreshNow(ctx context.Context, dirPath util.Fu
 	mc.Lock()
 	defer mc.Unlock()
 
+	// With no per-entry versions, only the section floor fences this work; a
+	// range the rebuilt or re-split table no longer has gets no floor, so it
+	// must not touch the store either. The lock is held through the floor
+	// install below, so the check cannot go stale.
+	ds := mc.dirSections[dirPath]
+	if ds == nil || !ds.hasRange(lo, hi) {
+		return nil
+	}
+
 	fetchedNames := make([]string, 0, len(r.entries))
 	fetched := make(map[string]struct{}, len(r.entries))
 	for _, entry := range r.entries {
@@ -373,10 +394,8 @@ func (mc *MetaCache) applySectionRefreshNow(ctx context.Context, dirPath util.Fu
 	}
 
 	// The floor fences the whole range, absent names included; an unversioned
-	// listing sets none and the section stays stale, read through until a
-	// filer that stamps snapshots re-validates it.
-	if ds := mc.dirSections[dirPath]; ds != nil {
-		ds.completeRefresh(lo, hi, fetchedNames, snapshotTsNs)
-	}
+	// listing sets none and the section stays stale, its lookups reading
+	// through, with no further re-listing attempts.
+	ds.completeRefresh(lo, hi, fetchedNames, snapshotTsNs)
 	return nil
 }

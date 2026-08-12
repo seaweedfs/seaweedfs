@@ -554,6 +554,9 @@ func TestUnversionedRefreshStaysStale(t *testing.T) {
 	if _, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/b-gap")); err != nil {
 		t.Fatalf("gap fill should still land: %v", err)
 	}
+	if ranges := mc.staleRangesAhead(util.FullPath("/dir"), ""); len(ranges) != 0 {
+		t.Fatalf("an unverifiable section must not be re-listed, got %d ranges", len(ranges))
+	}
 }
 
 func TestEnsureListingFreshCoversAllStaleSectionsAhead(t *testing.T) {
@@ -596,5 +599,90 @@ func TestSectionCompleteRefreshSetsFloors(t *testing.T) {
 	}
 	if got := ds.floorOf("a"); got != 0 {
 		t.Fatalf("floorOf(a) = %d, want 0 for a never-refreshed section", got)
+	}
+}
+
+func TestSectionFloorOutranksOlderTombstone(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+		"/":    true,
+		"/dir": true,
+	})
+	defer mc.Shutdown()
+
+	buildSectionedDir(t, mc, util.FullPath("/dir"), 1000, nil)
+
+	event := func(tsNs int64, oldEntry, newEntry *filer_pb.Entry) {
+		t.Helper()
+		if err := mc.ApplyMetadataResponse(context.Background(), &filer_pb.SubscribeMetadataResponse{
+			Directory:         "/dir",
+			EventNotification: &filer_pb.EventNotification{OldEntry: oldEntry, NewEntry: newEntry},
+			TsNs:              tsNs,
+		}, SubscriberMetadataResponseApplyOptions); err != nil {
+			t.Fatalf("apply event at %d: %v", tsNs, err)
+		}
+	}
+	pbFile := &filer_pb.Entry{
+		Name:       "b-x",
+		Attributes: &filer_pb.FuseAttributes{Crtime: 1, Mtime: 1, FileMode: 0100644, FileSize: 1},
+	}
+	event(1500, nil, pbFile)                       // create
+	event(2000, &filer_pb.Entry{Name: "b-x"}, nil) // delete, leaves a tombstone at 2000
+
+	applyChurn(t, mc, "/dir", "a-", sectionHotThreshold, 2500, SubscriberMetadataResponseApplyOptions)
+	if err := mc.enqueueAndWait(context.Background(), metadataApplyRequest{
+		kind:      metadataSectionRefresh,
+		buildPath: util.FullPath("/dir"),
+		refresh:   &sectionRefresh{snapshotTsNs: 5000},
+	}); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	// the floor at 5000 outranks the tombstone at 2000
+	event(4000, nil, pbFile)
+	if _, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/b-x")); err != filer_pb.ErrNotFound {
+		t.Fatalf("pre-floor event applied over an older tombstone: %v", err)
+	}
+	event(6000, nil, pbFile)
+	if _, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/b-x")); err != nil {
+		t.Fatalf("post-floor event must apply: %v", err)
+	}
+}
+
+func TestMismatchedRefreshLeavesStoreAlone(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+		"/":    true,
+		"/dir": true,
+	})
+	defer mc.Shutdown()
+
+	buildSectionedDir(t, mc, util.FullPath("/dir"), 1000, []string{"m"})
+	if err := mc.InsertEntry(context.Background(), &filer.Entry{
+		FullPath: util.FullPath("/dir/b-keep"),
+		Attr:     filer.Attr{Crtime: time.Unix(1, 0), Mtime: time.Unix(1, 0), Mode: 0100644, FileSize: 1},
+	}, 0); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	applyChurn(t, mc, "/dir", "a-", sectionHotThreshold, 2000, SubscriberMetadataResponseApplyOptions)
+
+	// a range the table does not have: the reconcile must not touch the store
+	if err := mc.enqueueAndWait(context.Background(), metadataApplyRequest{
+		kind:      metadataSectionRefresh,
+		buildPath: util.FullPath("/dir"),
+		refresh: &sectionRefresh{hi: "q", snapshotTsNs: 5000, entries: []*filer.Entry{{
+			FullPath: util.FullPath("/dir/b-new"),
+			Attr:     filer.Attr{Crtime: time.Unix(2, 0), Mtime: time.Unix(2, 0), Mode: 0100644, FileSize: 3},
+		}}},
+	}); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	if _, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/b-new")); err != filer_pb.ErrNotFound {
+		t.Fatalf("mismatched refresh inserted an entry: %v", err)
+	}
+	if _, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/b-keep")); err != nil {
+		t.Fatalf("mismatched refresh swept an entry: %v", err)
+	}
+	if mc.IsNameFresh(util.FullPath("/dir/a-000")) {
+		t.Fatal("mismatched refresh must not mark anything fresh")
 	}
 }
