@@ -368,15 +368,20 @@ func (mc *MetaCache) applySectionRefreshNow(ctx context.Context, dirPath util.Fu
 		// An unversioned marker would bypass the section floor, so it cannot
 		// outlive the snapshot write that replaces its content — but pinned
 		// local-only state stays authoritative and is not replaced at all.
-		if _, _, unversioned := mc.entryVersionRecordLocked(ctx, entry.FullPath); unversioned {
+		_, _, unversioned := mc.entryVersionRecordLocked(ctx, entry.FullPath)
+		if unversioned {
 			if existing, findErr := mc.localStore.FindEntry(ctx, entry.FullPath); findErr == nil && existing != nil && mc.pinnedChildFn != nil && mc.pinnedChildFn(existing) {
 				continue
 			}
-			mc.clearEntryVersionLocked(ctx, entry.FullPath)
 		}
 		// no per-entry version: the section floor set below covers the range
 		if err := mc.localStore.InsertEntry(ctx, entry); err != nil {
 			return err
+		}
+		if unversioned {
+			// only once the write landed: if it fails, the old content keeps
+			// the marker, and with it the right to be corrected by any event
+			mc.clearEntryVersionLocked(ctx, entry.FullPath)
 		}
 	}
 
