@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
@@ -56,6 +57,9 @@ func (f *Filer) notifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry
 	}
 
 	event := f.newMetadataEvent(oldEntry, newEntry, deleteChunks, isFromOtherCluster, signatures)
+	// Clear the in-flight stamp once the event has been through logMetaEvent
+	// (deferred: it must outlive the buffer append below).
+	defer f.metaLogInflight.done(event.TsNs)
 	eventNotification := event.EventNotification
 
 	if notification.Queue != nil {
@@ -74,6 +78,71 @@ func (f *Filer) notifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry
 	f.onMetadataChangeEvent(event)
 
 	return event
+}
+
+// metaLogInflight tracks metadata events that have been stamped but not yet
+// appended to the local log buffer. The stamp and the append are separated by
+// notification work that can block (external queue, sinks), and a flush
+// watermark that ignored the window would assert durability for timestamps
+// still on their way into the buffer - a peer bounding its subscribers'
+// persisted-log reads by that watermark would then advance past them.
+// Stamping happens under the same lock the reader takes, so an event either
+// shows up here or (once appended, where the buffer bumps it monotonically)
+// in the buffer's own accounting - never in neither.
+type metaLogInflight struct {
+	sync.Mutex
+	stamped map[int64]int
+}
+
+// stamp assigns the event timestamp and registers it as in flight.
+func (t *metaLogInflight) stamp() int64 {
+	t.Lock()
+	defer t.Unlock()
+	tsNs := time.Now().UnixNano()
+	if t.stamped == nil {
+		t.stamped = make(map[int64]int)
+	}
+	t.stamped[tsNs]++
+	return tsNs
+}
+
+// done removes a stamp once the event has been appended to the buffer.
+func (t *metaLogInflight) done(tsNs int64) {
+	t.Lock()
+	defer t.Unlock()
+	if t.stamped[tsNs] <= 1 {
+		delete(t.stamped, tsNs)
+	} else {
+		t.stamped[tsNs]--
+	}
+}
+
+// minTsNs returns the oldest in-flight stamp, or 0 when nothing is in flight.
+func (t *metaLogInflight) minTsNs() int64 {
+	t.Lock()
+	defer t.Unlock()
+	var min int64
+	for tsNs := range t.stamped {
+		if min == 0 || tsNs < min {
+			min = tsNs
+		}
+	}
+	return min
+}
+
+// LocalFlushedThroughTsNs reports the timestamp through which this filer's
+// local meta log is durably on disk: everything at or below it has been
+// appended and flushed, and nothing still in flight can land at or below it.
+// The in-flight floor is read before the buffer claim: an event stamped after
+// that read gets a timestamp past nowNs (monotonic clock), so the claim never
+// covers it either way.
+func (f *Filer) LocalFlushedThroughTsNs(nowNs int64) int64 {
+	inflightTsNs := f.metaLogInflight.minTsNs()
+	claim := f.LocalMetaLogBuffer.FlushedThroughTsNs(nowNs)
+	if inflightTsNs > 0 && inflightTsNs-1 < claim {
+		claim = inflightTsNs - 1
+	}
+	return claim
 }
 
 func (f *Filer) newMetadataEvent(oldEntry, newEntry *Entry, deleteChunks, isFromOtherCluster bool, signatures []int32) *filer_pb.SubscribeMetadataResponse {
@@ -102,7 +171,9 @@ func (f *Filer) newMetadataEvent(oldEntry, newEntry *Entry, deleteChunks, isFrom
 			IsFromOtherCluster: isFromOtherCluster,
 			Signatures:         signatures,
 		},
-		TsNs: time.Now().UnixNano(),
+		// The stamp registers the event as in flight until it lands in the
+		// local log buffer (see metaLogInflight); NotifyUpdateEvent clears it.
+		TsNs: f.metaLogInflight.stamp(),
 	}
 }
 

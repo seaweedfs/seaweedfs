@@ -53,6 +53,21 @@ func TestPeerWatermarkBookkeeping(t *testing.T) {
 	if got := ma.PeerLowWatermarkTsNs(); got != 100 {
 		t.Fatalf("after delete: low=%d want 100", got)
 	}
+
+	// A removed peer's still-draining stream may signal after the deletion;
+	// that must not resurrect the entry, or it would pin the low-watermark
+	// forever once the stream is gone.
+	ma.advancePeerWatermark(b, 999)
+	ma.advancePeerFlushWatermark(b, 999)
+	if got := ma.PeerLowWatermarkTsNs(); got != 100 {
+		t.Fatalf("after late signal from removed peer: low=%d want 100", got)
+	}
+	if _, found := ma.peerWatermarks[b]; found {
+		t.Fatalf("removed peer resurrected in delivery watermark set")
+	}
+	if _, found := ma.peerFlushWatermarks[b]; found {
+		t.Fatalf("removed peer resurrected in flush watermark set")
+	}
 }
 
 // TestPeerFlushWatermarkBookkeeping mirrors the delivery-watermark semantics

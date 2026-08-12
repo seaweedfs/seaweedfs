@@ -2,12 +2,105 @@ package weed_server
 
 import (
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 )
+
+// sentRecord snapshots what a Send delivered at call time - the sender clears
+// the envelope's Events after a batched Send, so asserting on the retained
+// pointer would miss the nesting.
+type sentRecord struct {
+	hasNotification bool
+	tsNs            int64
+	flushedTsNs     int64
+	nested          int
+	nestedControl   int
+}
+
+// gatedRecordingStream blocks its first Send until the gate opens, letting a
+// test queue several messages into the pipelined sender deterministically.
+type gatedRecordingStream struct {
+	gate     chan struct{}
+	gateOnce sync.Once
+	records  []sentRecord
+}
+
+func (s *gatedRecordingStream) Send(msg *filer_pb.SubscribeMetadataResponse) error {
+	rec := sentRecord{
+		hasNotification: msg.EventNotification != nil,
+		tsNs:            msg.TsNs,
+		flushedTsNs:     msg.FlushedTsNs,
+		nested:          len(msg.Events),
+	}
+	for _, nested := range msg.Events {
+		if nested.EventNotification == nil || nested.FlushedTsNs != 0 {
+			rec.nestedControl++
+		}
+	}
+	s.records = append(s.records, rec)
+	s.gateOnce.Do(func() { <-s.gate })
+	return nil
+}
+
+// TestPipelinedSenderControlMessagesNeverNested pins the batching rule flush
+// reports rely on: a control message (nil EventNotification - a flush report
+// or an idle heartbeat) must never ride in a batch's Events tail, where the
+// peer aggregator's nil-guard would drop its watermark state. A starved flush
+// watermark looks stalled, and the settled-horizon escape would then allow
+// reads past it.
+func TestPipelinedSenderControlMessagesNeverNested(t *testing.T) {
+	stream := &gatedRecordingStream{gate: make(chan struct{})}
+	sender := newPipelinedSender(stream, 16, true)
+
+	oldTs := time.Now().Add(-time.Hour).UnixNano()
+	if err := sender.Send(makeEvent("/d", "e1", oldTs)); err != nil {
+		t.Fatalf("send e1: %v", err)
+	}
+	// While the stream is blocked on e1, queue a batchable backlog event, a
+	// flush report, and another event - the drain loop sees them together.
+	if err := sender.Send(makeEvent("/d", "e2", oldTs+1)); err != nil {
+		t.Fatalf("send e2: %v", err)
+	}
+	if err := sender.Send(&filer_pb.SubscribeMetadataResponse{FlushedTsNs: 123}); err != nil {
+		t.Fatalf("send flush report: %v", err)
+	}
+	if err := sender.Send(makeEvent("/d", "e3", oldTs+2)); err != nil {
+		t.Fatalf("send e3: %v", err)
+	}
+	close(stream.gate)
+	if err := sender.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	events, flushReports := 0, 0
+	for _, rec := range stream.records {
+		if rec.nestedControl > 0 {
+			t.Fatalf("control message nested in a batch: %+v", rec)
+		}
+		if rec.hasNotification {
+			events += 1 + rec.nested
+		}
+		if rec.flushedTsNs != 0 {
+			flushReports++
+			if rec.hasNotification || rec.nested != 0 {
+				t.Fatalf("flush report not sent solo: %+v", rec)
+			}
+			if rec.flushedTsNs != 123 {
+				t.Fatalf("flush report watermark = %d, want 123", rec.flushedTsNs)
+			}
+		}
+	}
+	if events != 3 {
+		t.Fatalf("delivered %d events, want 3", events)
+	}
+	if flushReports != 1 {
+		t.Fatalf("delivered %d flush reports, want 1", flushReports)
+	}
+}
 
 // TestResolveAggReadHoldTsNs pins the aggregated delivery hold point: a
 // subscriber may not read past the peers' delivery low-watermark (a source

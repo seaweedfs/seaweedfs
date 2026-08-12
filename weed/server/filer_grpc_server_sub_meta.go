@@ -104,7 +104,12 @@ func (s *pipelinedSender) sendLoop(stream metadataStreamSender) {
 		// envelope would drop its Events tail and refs inside Events would be
 		// applied as an (empty) event. Their TsNs is 0, which the batch
 		// heuristic would misread as far behind. Always send them solo.
-		shouldBatch := s.canBatch && len(msg.LogFileRefs) == 0 &&
+		// Control messages (idle heartbeats and flush reports - nil
+		// EventNotification, no refs) are unbatchable too: nested in an
+		// Events tail their watermark state is invisible to receivers that
+		// dereference EventNotification, and a flush report's TsNs of 0
+		// would likewise misread as far behind.
+		shouldBatch := s.canBatch && len(msg.LogFileRefs) == 0 && msg.EventNotification != nil &&
 			time.Now().UnixNano()-msg.TsNs > int64(batchBehindThreshold)
 
 		if !shouldBatch {
@@ -121,7 +126,7 @@ func (s *pipelinedSender) sendLoop(stream metadataStreamSender) {
 		// go in the Events slice. Old clients ignore the Events field.
 		batch := make([]*filer_pb.SubscribeMetadataResponse, 0, maxBatchSize)
 		batch = append(batch, msg)
-		var trailingRefs *filer_pb.SubscribeMetadataResponse
+		var trailingSolo *filer_pb.SubscribeMetadataResponse
 	drain:
 		for len(batch) < maxBatchSize {
 			select {
@@ -129,9 +134,9 @@ func (s *pipelinedSender) sendLoop(stream metadataStreamSender) {
 				if !ok {
 					break drain
 				}
-				if len(next.LogFileRefs) > 0 {
+				if len(next.LogFileRefs) > 0 || next.EventNotification == nil {
 					// already consumed; send it solo right after the batch
-					trailingRefs = next
+					trailingSolo = next
 					break drain
 				}
 				batch = append(batch, next)
@@ -155,8 +160,8 @@ func (s *pipelinedSender) sendLoop(stream metadataStreamSender) {
 		if toSend.Events != nil {
 			toSend.Events = nil
 		}
-		if trailingRefs != nil {
-			if err := stream.Send(trailingRefs); err != nil {
+		if trailingSolo != nil {
+			if err := stream.Send(trailingSolo); err != nil {
 				s.reportErr(err)
 				return
 			}
@@ -784,10 +789,18 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 			}
 		}
 
+		cursorBeforeResolveTsNs := lastReadTime.Time.UnixNano()
 		switch gaps.resolve(ctx, &lastReadTime, &readInMemoryLogErr, diskAdvanced) {
 		case gapDone:
 			return nil
 		case gapContinue:
+			// The only cursor move on this outcome is a give-up skip, and it
+			// moves to the original-space eviction watermark. Anchor it so a
+			// later eviction rewind cannot undo the counted decision and
+			// re-enter the same park forever.
+			if ts := lastReadTime.Time.UnixNano(); ts != cursorBeforeResolveTsNs && ts > diskAnchorTsNs {
+				diskAnchorTsNs = ts
+			}
 			continue
 		}
 
@@ -842,11 +855,15 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 				continue
 			}
 			if errors.Is(readInMemoryLogErr, log_buffer.ResumeFromDiskError) {
-				// Fell behind the ring: back to the disk pass. Resume it from
-				// the original-space disk anchor, not the bumped memory cursor
-				// (see diskAnchorTsNs) - re-reading what memory already
+				// Fell off the ring: resume the disk pass from the
+				// original-space disk anchor, not the (possibly bumped) memory
+				// cursor (see diskAnchorTsNs) - re-reading what memory already
 				// delivered is within the subscription's at-least-once
-				// contract, skipping what it never delivered is not.
+				// contract, skipping what it never delivered is not. When the
+				// cursor is already an anchored original-space position (a
+				// give-up skip, a drained disk pass) this is a no-op and the
+				// gap machinery's own escape - re-arming onto the retained
+				// window - stays reachable.
 				lastReadTime = log_buffer.NewMessagePosition(diskAnchorTsNs, gapResumeCursorOffset)
 				continue
 			}
@@ -1026,7 +1043,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 				return false
 			}
 			lastHeartbeatNs = fs.maybeSendIdleHeartbeat(req, sender, fs.filer.LocalMetaLogBuffer, lastReadTime.Time.UnixNano(), lastSeenTsNs, lastHeartbeatNs)
-			lastFlushReportNs = fs.maybeSendFlushReport(req, sender, fs.filer.LocalMetaLogBuffer, lastFlushReportNs)
+			lastFlushReportNs = fs.maybeSendFlushReport(req, sender, lastFlushReportNs)
 			return true
 		}, eachLogEntryFn)
 		if readInMemoryLogErr != nil {
@@ -1092,22 +1109,22 @@ func eachLogEntryFn(req *filer_pb.SubscribeMetadataRequest, sender metadataStrea
 	}
 }
 
-// maybeSendFlushReport periodically reports this buffer's flush-through
-// watermark to a subscriber that opted into idle heartbeats (peer
-// aggregators). Unlike idle heartbeats it is sent regardless of how far the
-// subscriber has caught up: the watermark bounds other subscribers'
+// maybeSendFlushReport periodically reports the local meta log's
+// flush-through watermark to a subscriber that opted into idle heartbeats
+// (peer aggregators). Unlike idle heartbeats it is sent regardless of how far
+// the subscriber has caught up: the watermark bounds other subscribers'
 // persisted-log reads, so it must keep advancing while this stream is busy
 // replaying a backlog. TsNs stays zero so it never advances delivery
 // freshness.
-func (fs *FilerServer) maybeSendFlushReport(req *filer_pb.SubscribeMetadataRequest, sender metadataStreamSender, logBuffer *log_buffer.LogBuffer, lastFlushReportNs int64) int64 {
-	if !req.ClientSupportsIdleHeartbeat {
+func (fs *FilerServer) maybeSendFlushReport(req *filer_pb.SubscribeMetadataRequest, sender metadataStreamSender, lastFlushReportNs int64) int64 {
+	if !req.ClientSupportsIdleHeartbeat || fs.filer == nil {
 		return lastFlushReportNs
 	}
 	now := time.Now().UnixNano()
 	if now-lastFlushReportNs < int64(idleHeartbeatInterval) {
 		return lastFlushReportNs
 	}
-	if err := sender.Send(&filer_pb.SubscribeMetadataResponse{FlushedTsNs: logBuffer.FlushedThroughTsNs(now)}); err != nil {
+	if err := sender.Send(&filer_pb.SubscribeMetadataResponse{FlushedTsNs: fs.filer.LocalFlushedThroughTsNs(now)}); err != nil {
 		glog.V(0).Infof("=> flush report to %s: %v", req.ClientName, err)
 		return lastFlushReportNs
 	}
@@ -1148,8 +1165,14 @@ func (fs *FilerServer) maybeSendIdleHeartbeat(req *filer_pb.SubscribeMetadataReq
 	}
 	// Piggyback the local flush watermark so a peer aggregator can bound its
 	// subscribers' persisted-log reads to flush-complete data (everything at
-	// or below it is on disk on this filer).
-	if err := sender.Send(&filer_pb.SubscribeMetadataResponse{TsNs: now, FlushedTsNs: logBuffer.FlushedThroughTsNs(now)}); err != nil {
+	// or below it is on disk on this filer). Only the local buffer has that
+	// meaning; the aggregated ring never flushes, so its heartbeats must not
+	// carry a durability claim.
+	heartbeat := &filer_pb.SubscribeMetadataResponse{TsNs: now}
+	if fs.filer != nil && logBuffer == fs.filer.LocalMetaLogBuffer {
+		heartbeat.FlushedTsNs = fs.filer.LocalFlushedThroughTsNs(now)
+	}
+	if err := sender.Send(heartbeat); err != nil {
 		glog.V(0).Infof("=> idle heartbeat to %s: %v", req.ClientName, err)
 		return lastHeartbeatNs
 	}

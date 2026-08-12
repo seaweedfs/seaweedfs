@@ -115,20 +115,23 @@ func (ma *MetaAggregator) initPeerWatermark(peer pb.ServerAddress) {
 
 // advancePeerWatermark records that this filer has received everything the
 // peer had to say up to tsNs (a real event or an idle heartbeat). Monotonic.
+// Only tracked peers advance: a removed peer's stream may still deliver a
+// few responses before its cancellation lands, and recreating the deleted
+// entry would pin the low-watermark forever once the stream is gone.
 func (ma *MetaAggregator) advancePeerWatermark(peer pb.ServerAddress, tsNs int64) {
 	ma.peerWatermarksLock.Lock()
 	defer ma.peerWatermarksLock.Unlock()
-	if cur, found := ma.peerWatermarks[peer]; !found || tsNs > cur {
+	if cur, found := ma.peerWatermarks[peer]; found && tsNs > cur {
 		ma.peerWatermarks[peer] = tsNs
 	}
 }
 
 // advancePeerFlushWatermark records the peer's reported flush watermark.
-// Monotonic.
+// Monotonic, and only for tracked peers (see advancePeerWatermark).
 func (ma *MetaAggregator) advancePeerFlushWatermark(peer pb.ServerAddress, tsNs int64) {
 	ma.peerWatermarksLock.Lock()
 	defer ma.peerWatermarksLock.Unlock()
-	if cur, found := ma.peerFlushWatermarks[peer]; !found || tsNs > cur {
+	if cur, found := ma.peerFlushWatermarks[peer]; found && tsNs > cur {
 		ma.peerFlushWatermarks[peer] = tsNs
 	}
 }
@@ -210,7 +213,7 @@ func (ma *MetaAggregator) loopSubscribeToOneFiler(f *Filer, self pb.ServerAddres
 	lastTsNs := startFrom.UnixNano()
 	for {
 		glog.V(0).Infof("loopSubscribeToOneFiler read %s start from %v %d", peer, time.Unix(0, lastTsNs), lastTsNs)
-		nextLastTsNs, err := ma.doSubscribeToOneFiler(f, self, peer, lastTsNs)
+		nextLastTsNs, err := ma.doSubscribeToOneFiler(f, self, peer, lastTsNs, stopChan)
 
 		// check stopChan to see if we should stop
 		select {
@@ -234,7 +237,7 @@ func (ma *MetaAggregator) loopSubscribeToOneFiler(f *Filer, self pb.ServerAddres
 	}
 }
 
-func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress, peer pb.ServerAddress, startFrom int64) (int64, error) {
+func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress, peer pb.ServerAddress, startFrom int64, stopChan <-chan struct{}) (int64, error) {
 
 	/*
 		Each filer reads the "filer.store.id", which is the store's signature when filer starts.
@@ -340,6 +343,18 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 	err = pb.WithFilerClient(true, 0, peer, ma.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
+		// A removed peer's watermark entry is deleted immediately, so its
+		// stream must stop feeding the aggregated buffer promptly too: an
+		// unaccounted merge source would let subscribers advance past events
+		// it is still inserting. Without this, the blocking Recv below only
+		// notices the removal when the stream errors on its own.
+		go func() {
+			select {
+			case <-stopChan:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
 		atomic.AddInt32(&ma.filer.UniqueFilerEpoch, 1)
 		// Construct a log file reader that reads chunks via the peer filer's LookupVolume.
 		lookupFn := LookupFn(filerClient{client})
@@ -417,9 +432,19 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 			}
 			// Process any additional batched events. Mirror the envelope's nil
 			// guard: the server can fold a freshness signal (nil EventNotification)
-			// into the batched tail, and processOne dereferences it.
+			// into the batched tail, and processOne dereferences it. A nested
+			// control message still carries watermark state - dropping it here
+			// would make healthy flush progress look stalled during a backlog
+			// replay, and the settled-horizon escape would then allow reads
+			// past the unadvanced watermark.
 			for _, batchedEvent := range resp.Events {
+				if batchedEvent.FlushedTsNs > 0 {
+					ma.advancePeerFlushWatermark(peer, batchedEvent.FlushedTsNs)
+				}
 				if batchedEvent.EventNotification == nil {
+					if batchedEvent.TsNs > 0 {
+						ma.advancePeerWatermark(peer, batchedEvent.TsNs)
+					}
 					continue
 				}
 				if err := processOne(batchedEvent); err != nil {
