@@ -7,6 +7,9 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
+	s3remote "github.com/seaweedfs/seaweedfs/weed/remote_storage/s3"
 )
 
 // stubLookup returns a resolver func that maps the supplied hostnames to
@@ -300,6 +303,42 @@ func TestGuardedDialerRebind(t *testing.T) {
 	}
 	if err == nil || !strings.Contains(err.Error(), "loopback") {
 		t.Fatalf("guarded dialer should fail with loopback error, got %v", err)
+	}
+}
+
+// TestRemoteEndpointGuardCoversS3CompatibleSiblings confirms the SSRF guard
+// reaches every S3-SDK-backed provider, not just type "s3". It replays the two
+// steps FetchAndWriteNeedle performs before building the client: resolve the
+// endpoint the type would dial, then validate it against the deny-list. A
+// sibling type pointed at an internal address must be rejected.
+func TestRemoteEndpointGuardCoversS3CompatibleSiblings(t *testing.T) {
+	cases := []struct {
+		conf    *remote_pb.RemoteConf
+		wantSub string
+	}{
+		{&remote_pb.RemoteConf{Type: "wasabi", WasabiEndpoint: "http://169.254.169.254/"}, "metadata"},
+		{&remote_pb.RemoteConf{Type: "b2", BackblazeEndpoint: "http://127.0.0.1/"}, "loopback"},
+		{&remote_pb.RemoteConf{Type: "aliyun", AliyunEndpoint: "http://192.168.0.1/"}, "private"},
+		{&remote_pb.RemoteConf{Type: "tencent", TencentEndpoint: "http://100.64.0.1/"}, "CGNAT"},
+		{&remote_pb.RemoteConf{Type: "baidu", BaiduEndpoint: "http://169.254.169.254/"}, "metadata"},
+		{&remote_pb.RemoteConf{Type: "filebase", FilebaseEndpoint: "http://172.16.0.1/"}, "private"},
+		{&remote_pb.RemoteConf{Type: "storj", StorjEndpoint: "http://10.0.0.5/"}, "private"},
+		{&remote_pb.RemoteConf{Type: "contabo", ContaboEndpoint: "http://[::1]/"}, "loopback"},
+	}
+	for _, tc := range cases {
+		endpoint, ok := s3remote.S3CompatibleEndpoint(tc.conf)
+		if !ok {
+			t.Errorf("type %q: not recognized as S3-compatible, guard would be skipped", tc.conf.Type)
+			continue
+		}
+		err := validateRemoteEndpoint(context.Background(), endpoint)
+		if err == nil {
+			t.Errorf("type %q: expected endpoint %q to be rejected", tc.conf.Type, endpoint)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.wantSub) {
+			t.Errorf("type %q: error %q missing %q", tc.conf.Type, err, tc.wantSub)
+		}
 	}
 }
 
