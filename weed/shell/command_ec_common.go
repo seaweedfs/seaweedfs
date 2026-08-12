@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"slices"
 	"sort"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/operation/volume_move"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
@@ -389,46 +391,17 @@ func oneServerCopyAndMountEcShardsFromSource(grpcDialOption grpc.DialOption,
 	fmt.Printf("allocate %d.%v %s => %s\n", volumeId, shardIdsToCopy, existingLocation, targetServer.info.Id)
 
 	targetAddress := pb.NewServerAddressFromDataNode(targetServer.info)
-	err = operation.WithVolumeServerClient(false, targetAddress, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-
-		if targetAddress != existingLocation {
-			fmt.Printf("copy %d.%v %s => %s\n", volumeId, shardIdsToCopy, existingLocation, targetServer.info.Id)
-			_, copyErr := volumeServerClient.VolumeEcShardsCopy(context.Background(), &volume_server_pb.VolumeEcShardsCopyRequest{
-				VolumeId:       uint32(volumeId),
-				Collection:     collection,
-				ShardIds:       erasure_coding.ShardIdsToUint32(shardIdsToCopy),
-				CopyEcxFile:    true,
-				CopyEcjFile:    true,
-				CopyVifFile:    true,
-				CopyEcsumFile:  true, // propagate the bitrot sidecar with the shards (no-op if the source has none)
-				SourceDataNode: string(existingLocation),
-				DiskId:         destDiskId,
-			})
-			if copyErr != nil {
-				return fmt.Errorf("copy %d.%v %s => %s : %v\n", volumeId, shardIdsToCopy, existingLocation, targetServer.info.Id, copyErr)
-			}
-		}
-
-		fmt.Printf("mount %d.%v on %s\n", volumeId, shardIdsToCopy, targetServer.info.Id)
-		_, mountErr := volumeServerClient.VolumeEcShardsMount(context.Background(), &volume_server_pb.VolumeEcShardsMountRequest{
-			VolumeId:   uint32(volumeId),
-			Collection: collection,
-			ShardIds:   erasure_coding.ShardIdsToUint32(shardIdsToCopy),
-		})
-		if mountErr != nil {
-			return fmt.Errorf("mount %d.%v on %s : %v\n", volumeId, shardIdsToCopy, targetServer.info.Id, mountErr)
-		}
-
-		if targetAddress != existingLocation {
-			copiedShardIds = shardIdsToCopy
-			glog.V(0).Infof("%s ec volume %d deletes shards %+v", existingLocation, volumeId, copiedShardIds)
-		}
-
-		return nil
-	})
-
+	err = volume_move.NewMover(grpcDialOption).CopyAndMountEcShards(context.Background(), volumeId, collection, shardIdsToCopy, existingLocation, targetAddress, destDiskId, os.Stdout)
 	if err != nil {
 		return
+	}
+
+	// SameServer, not ==: a representation mismatch here would report a
+	// same-server mount-in-place as a copy and have the caller delete the
+	// shards it kept.
+	if !volume_move.SameServer(targetAddress, existingLocation) {
+		copiedShardIds = shardIdsToCopy
+		glog.V(0).Infof("%s ec volume %d deletes shards %+v", existingLocation, volumeId, copiedShardIds)
 	}
 
 	return
@@ -582,15 +555,7 @@ func sourceServerDeleteEcShards(grpcDialOption grpc.DialOption, collection strin
 
 	fmt.Printf("delete %d.%v from %s\n", volumeId, toBeDeletedShardIds, sourceLocation)
 
-	return operation.WithVolumeServerClient(false, sourceLocation, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-		_, deleteErr := volumeServerClient.VolumeEcShardsDelete(context.Background(), &volume_server_pb.VolumeEcShardsDeleteRequest{
-			VolumeId:   uint32(volumeId),
-			Collection: collection,
-			ShardIds:   erasure_coding.ShardIdsToUint32(toBeDeletedShardIds),
-		})
-		return deleteErr
-	})
-
+	return volume_move.NewMover(grpcDialOption).DeleteEcShards(context.Background(), volumeId, collection, sourceLocation, toBeDeletedShardIds)
 }
 
 // errFullTeardownNotAcked marks a reachable server that completed the delete RPC
@@ -649,27 +614,14 @@ func unmountEcShards(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, s
 
 	fmt.Printf("unmount %d.%v from %s\n", volumeId, toBeUnmountedShardIds, sourceLocation)
 
-	return operation.WithVolumeServerClient(false, sourceLocation, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-		_, deleteErr := volumeServerClient.VolumeEcShardsUnmount(context.Background(), &volume_server_pb.VolumeEcShardsUnmountRequest{
-			VolumeId: uint32(volumeId),
-			ShardIds: erasure_coding.ShardIdsToUint32(toBeUnmountedShardIds),
-		})
-		return deleteErr
-	})
+	return volume_move.NewMover(grpcDialOption).UnmountEcShards(context.Background(), volumeId, sourceLocation, toBeUnmountedShardIds)
 }
 
 func mountEcShards(grpcDialOption grpc.DialOption, collection string, volumeId needle.VolumeId, sourceLocation pb.ServerAddress, toBeMountedShardIds []erasure_coding.ShardId) error {
 
 	fmt.Printf("mount %d.%v on %s\n", volumeId, toBeMountedShardIds, sourceLocation)
 
-	return operation.WithVolumeServerClient(false, sourceLocation, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-		_, mountErr := volumeServerClient.VolumeEcShardsMount(context.Background(), &volume_server_pb.VolumeEcShardsMountRequest{
-			VolumeId:   uint32(volumeId),
-			Collection: collection,
-			ShardIds:   erasure_coding.ShardIdsToUint32(toBeMountedShardIds),
-		})
-		return mountErr
-	})
+	return volume_move.NewMover(grpcDialOption).MountEcShards(context.Background(), volumeId, collection, sourceLocation, toBeMountedShardIds)
 }
 
 func ceilDivide(a, b int) int {
@@ -1157,23 +1109,26 @@ func (ecb *ecBalancer) executeMove(byID map[string]*EcNode, m ecbalancer.Move) e
 	return ecb.applyShardMoveRPC(src, dst, m.Collection, vid, shardId, m.TargetDisk)
 }
 
-// applyShardMoveRPC copies a shard to the destination disk, then unmounts and
-// deletes it on the source. It does not touch the in-memory model, so it is safe
-// to run concurrently across the moves of a phase.
+// applyShardMoveRPC copies a shard to the destination disk, verifies the
+// destination registered it, then unmounts and deletes it on the source. It
+// does not touch the in-memory model, so it is safe to run concurrently across
+// the moves of a phase.
 func (ecb *ecBalancer) applyShardMoveRPC(src, dst *EcNode, collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, destDiskId uint32) error {
-	grpcDialOption := ecb.commandEnv.option.GrpcDialOption
 	srcAddr := pb.NewServerAddressFromDataNode(src.info)
-	copiedShardIds, err := oneServerCopyAndMountEcShardsFromSource(grpcDialOption, dst, []erasure_coding.ShardId{shardId}, vid, collection, srcAddr, destDiskId)
-	if err != nil {
-		return err
-	}
-	if len(copiedShardIds) == 0 {
+	dstAddr := pb.NewServerAddressFromDataNode(dst.info)
+	if volume_move.SameServer(srcAddr, dstAddr) {
+		// A same-server (cross-disk) move cannot be expressed with these RPCs;
+		// leave the shard where it is.
 		return nil
 	}
-	if err := unmountEcShards(grpcDialOption, vid, srcAddr, copiedShardIds); err != nil {
-		return err
-	}
-	return sourceServerDeleteEcShards(grpcDialOption, collection, vid, srcAddr, copiedShardIds)
+	return volume_move.NewMover(ecb.commandEnv.option.GrpcDialOption).MoveEcShards(context.Background(), volume_move.EcShardMove{
+		VolumeId:   vid,
+		Collection: collection,
+		ShardIds:   []erasure_coding.ShardId{shardId},
+		Source:     srcAddr,
+		Target:     dstAddr,
+		TargetDisk: destDiskId,
+	}, volume_move.EcMoveOptions{Writer: os.Stdout})
 }
 
 // parseVolumeIdsFlag parses a comma-separated -volumeIds flag value, dropping
