@@ -571,6 +571,21 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	lastReadTime := log_buffer.NewMessagePosition(req.SinceNs, gapResumeCursorOffset)
 	glog.V(0).Infof(" %v starts to subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
+	// diskAnchorTsNs is the newest ORIGINAL-timestamp position this stream is
+	// proven complete through. The aggregated ring rewrites out-of-order peer
+	// arrivals to its head, so in-memory reads advance the cursor in bumped
+	// (arrival) space; persisted logs keep original timestamps. A reader that
+	// falls off the ring must not resume the disk pass from its bumped cursor -
+	// that skips every original-space entry below it that memory never
+	// delivered (a peer backlog merged in late is bumped to the ring head, and
+	// a slow reader's unread window can be evicted and only re-materialize on
+	// disk, below the bumped cursor). Disk passes advance the anchor directly;
+	// clean memory reads advance it to the peers' delivery low-watermark
+	// observed before the read - per-peer streams are ordered, so every event
+	// with an original timestamp at or below that watermark had already arrived
+	// (and was delivered) by then.
+	diskAnchorTsNs := req.SinceNs
+
 	sender := newPipelinedSender(stream, 1024, req.ClientSupportsBatching)
 	defer sender.Close()
 
@@ -712,6 +727,9 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 			// entry is re-read (and re-checked) by the next pass.
 			if processedTsNs > 0 {
 				lastReadTime = log_buffer.NewMessagePosition(processedTsNs, gapResumeCursorOffset)
+				if processedTsNs > diskAnchorTsNs {
+					diskAnchorTsNs = processedTsNs
+				}
 			}
 			// A hold is not a gap: clear any stale ResumeFromDiskError so the
 			// next pass's disk-miss handling cannot skip past the held entry.
@@ -739,6 +757,9 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 			gapStall.resumed()
 			reportUnprovenAggregatedCrossing(cursorBeforeDiskTsNs, processedTsNs, lastEvictedTsNs, diskPassFlushLowTsNs, clientName, req.PathPrefix)
 			lastReadTime = log_buffer.NewMessagePosition(processedTsNs, gapResumeCursorOffset)
+			if processedTsNs > diskAnchorTsNs {
+				diskAnchorTsNs = processedTsNs
+			}
 		} else if readInMemoryLogErr == nil {
 			// Nothing on disk and memory never spoke: scan forward for the next
 			// day that has logs.
@@ -756,6 +777,9 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 					gapStall.resumed()
 					reportUnprovenAggregatedCrossing(cursorBeforeDiskTsNs, nextDayTs, lastEvictedTsNs, diskPassFlushLowTsNs, clientName, req.PathPrefix)
 					lastReadTime = position
+					if nextDayTs > diskAnchorTsNs {
+						diskAnchorTsNs = nextDayTs
+					}
 				}
 			}
 		}
@@ -776,6 +800,12 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 
 		glog.V(4).Infof("read in memory %v aggregated subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
+		// Observed before the read: if the read stays contiguous (delivers or
+		// holds, rather than being refused off an evicted position), every
+		// event whose original timestamp is at or below this had arrived in
+		// the ring before the read began and was therefore delivered by it.
+		preMemDeliveryLowTsNs := fs.filer.MetaAggregator.PeerLowWatermarkTsNs()
+
 		lastReadTime, isDone, readInMemoryLogErr = fs.filer.MetaAggregator.MetaLogBuffer.LoopProcessLogData(aggReaderName, lastReadTime, req.UntilNs, func() bool {
 			select {
 			case <-ctx.Done():
@@ -785,11 +815,22 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 			if !fs.hasClient(req.ClientId, req.ClientEpoch) {
 				return false
 			}
+			// Caught up to the ring head: the read has been contiguous, so the
+			// anchor may advance to the current delivery low-watermark (see
+			// diskAnchorTsNs). Keeps the anchor fresh through long live tails,
+			// bounding how far back an eviction rewind has to go.
+			if dl := fs.filer.MetaAggregator.PeerLowWatermarkTsNs(); dl > diskAnchorTsNs {
+				diskAnchorTsNs = dl
+			}
 			lastHeartbeatNs = fs.maybeSendIdleHeartbeat(req, sender, fs.filer.MetaAggregator.MetaLogBuffer, lastReadTime.Time.UnixNano(), lastSeenTsNs, lastHeartbeatNs)
 			return true
 		}, memEachLogEntryFn)
 		if readInMemoryLogErr != nil {
 			if errors.Is(readInMemoryLogErr, errHeldByPeerWatermark) {
+				// The read was contiguous up to the hold: credit the anchor.
+				if preMemDeliveryLowTsNs > diskAnchorTsNs {
+					diskAnchorTsNs = preMemDeliveryLowTsNs
+				}
 				// The in-memory read cursor already advanced onto the held
 				// entry; rewind to the last entry actually delivered so nothing
 				// between the hold point and the held entry can be skipped.
@@ -801,8 +842,12 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 				continue
 			}
 			if errors.Is(readInMemoryLogErr, log_buffer.ResumeFromDiskError) {
-				// Fell behind the ring: back to the disk pass, and from there to
-				// the gap resolution above if the disk has nothing either.
+				// Fell behind the ring: back to the disk pass. Resume it from
+				// the original-space disk anchor, not the bumped memory cursor
+				// (see diskAnchorTsNs) - re-reading what memory already
+				// delivered is within the subscription's at-least-once
+				// contract, skipping what it never delivered is not.
+				lastReadTime = log_buffer.NewMessagePosition(diskAnchorTsNs, gapResumeCursorOffset)
 				continue
 			}
 			glog.Errorf("processed to %v: %v", lastReadTime, readInMemoryLogErr)
