@@ -202,7 +202,12 @@ func guardedDialer(endpoint string) func(ctx context.Context, network, addr stri
 func newGuardedHTTPClient(endpoint string) *http.Client {
 	return &http.Client{
 		Transport: &http.Transport{
-			Proxy:                 http.ProxyFromEnvironment,
+			// No proxy: guardedDialer must see the real target address. Through
+			// a proxy it would only validate the proxy's IP while the proxy
+			// re-resolves the endpoint host, reopening the rebinding window the
+			// dialer exists to close. Operators that need a proxy can opt out
+			// with -volume.allowUntrustedRemoteEndpoints.
+			Proxy:                 nil,
 			DialContext:           guardedDialer(endpoint),
 			ForceAttemptHTTP2:     true,
 			MaxIdleConns:          16,
