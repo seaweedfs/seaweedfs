@@ -280,7 +280,7 @@ func moveAwayOneNormalVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][
 		if freeVolumeCountfn(emptyNode.info) <= 0 {
 			continue
 		}
-		hasMoved, err = maybeMoveOneVolume(commandEnv, volumeReplicas, thisNode, vol, emptyNode, applyChange)
+		hasMoved, err = maybeMoveOneVolume(commandEnv, volumeReplicas, thisNode, vol, emptyNode, 0, applyChange)
 		if err != nil {
 			return
 		}

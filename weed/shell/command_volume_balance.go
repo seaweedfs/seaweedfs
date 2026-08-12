@@ -38,6 +38,7 @@ type commandVolumeBalance struct {
 	volumeByActive     *bool
 	applyBalancing     bool
 	volumesPerExec     int
+	ioBytePerSecond    int64
 	maxParallelization int
 	movedCount         int
 	byDiskUsage        bool
@@ -132,6 +133,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	dc := balanceCommand.String("dataCenter", "", "only apply the balancing for this dataCenter")
 	racks := balanceCommand.String("racks", "", "only apply the balancing for this racks")
 	nodes := balanceCommand.String("nodes", "", "only apply the balancing for this nodes")
+	ioBytePerSecond := balanceCommand.Int64("ioBytePerSecond", 0, "limit the speed of move")
 	noLock := balanceCommand.Bool("noLock", false, "do not lock the admin shell at one's own risk")
 	applyBalancing := balanceCommand.Bool("apply", false, "apply the balancing plan.")
 	// TODO: remove this alias
@@ -164,6 +166,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	if *maxParallelization < 1 {
 		return fmt.Errorf("maxParallelization must be >= 1")
 	}
+	c.ioBytePerSecond = *ioBytePerSecond
 	c.volumesPerExec = *volumesPerExec
 	c.maxParallelization = *maxParallelization
 	c.movedCount = 0
@@ -721,7 +724,7 @@ func (c *commandVolumeBalance) balanceSelectedVolume(diskType types.DiskType, vo
 
 		c.printBalancePlan(diskType, plan, capacityFunc, idealVolumeRatio)
 		hasMoved, err = attemptToMoveOneVolume(c.commandEnv, volumeReplicas, plan.source,
-			plan.candidateVolumes, plan.target, c.applyBalancing)
+			plan.candidateVolumes, plan.target, c.ioBytePerSecond, c.applyBalancing)
 		if err != nil {
 			if c.commandEnv != nil && c.commandEnv.verbose {
 				fmt.Fprintf(os.Stdout, "attempt to move one volume error %+v\n", err)
@@ -803,7 +806,7 @@ func (c *commandVolumeBalance) executeParallelMove(move volumeBalanceMove, volum
 		return fmt.Errorf("lock is lost")
 	}
 
-	if err := moveVolume(c.commandEnv, move.volume, move.source, move.target, c.applyBalancing); err != nil {
+	if err := moveVolume(c.commandEnv, move.volume, move.source, move.target, c.ioBytePerSecond, c.applyBalancing); err != nil {
 		if c.commandEnv != nil && c.commandEnv.verbose {
 			fmt.Fprintf(os.Stdout, "attempt to parallel move volume error %+v\n", err)
 		}
@@ -848,10 +851,10 @@ func rollbackParallelMove(move volumeBalanceMove, volumeReplicas map[uint32][]*V
 	}
 }
 
-func attemptToMoveOneVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*VolumeReplica, fullNode *Node, candidateVolumes []*master_pb.VolumeInformationMessage, emptyNode *Node, applyBalancing bool) (hasMoved bool, err error) {
+func attemptToMoveOneVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*VolumeReplica, fullNode *Node, candidateVolumes []*master_pb.VolumeInformationMessage, emptyNode *Node, ioBytePerSecond int64, applyBalancing bool) (hasMoved bool, err error) {
 
 	for _, v := range candidateVolumes {
-		hasMoved, err = maybeMoveOneVolume(commandEnv, volumeReplicas, fullNode, v, emptyNode, applyBalancing)
+		hasMoved, err = maybeMoveOneVolume(commandEnv, volumeReplicas, fullNode, v, emptyNode, ioBytePerSecond, applyBalancing)
 		if err != nil {
 			return
 		}
@@ -862,7 +865,7 @@ func attemptToMoveOneVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]
 	return
 }
 
-func maybeMoveOneVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*VolumeReplica, fullNode *Node, candidateVolume *master_pb.VolumeInformationMessage, emptyNode *Node, applyChange bool) (hasMoved bool, err error) {
+func maybeMoveOneVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*VolumeReplica, fullNode *Node, candidateVolume *master_pb.VolumeInformationMessage, emptyNode *Node, ioBytePerSecond int64, applyChange bool) (hasMoved bool, err error) {
 	if !commandEnv.isLocked() {
 		return false, fmt.Errorf("lock is lost")
 	}
@@ -878,7 +881,7 @@ func maybeMoveOneVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*Vol
 		}
 	}
 	if _, found := emptyNode.selectedVolumes[candidateVolume.Id]; !found {
-		if err = moveVolume(commandEnv, candidateVolume, fullNode, emptyNode, applyChange); err == nil {
+		if err = moveVolume(commandEnv, candidateVolume, fullNode, emptyNode, ioBytePerSecond, applyChange); err == nil {
 			adjustAfterMove(candidateVolume, volumeReplicas, fullNode, emptyNode)
 			return true, nil
 		} else {
@@ -888,14 +891,14 @@ func maybeMoveOneVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*Vol
 	return
 }
 
-func moveVolume(commandEnv *CommandEnv, v *master_pb.VolumeInformationMessage, fullNode *Node, emptyNode *Node, applyChange bool) error {
+func moveVolume(commandEnv *CommandEnv, v *master_pb.VolumeInformationMessage, fullNode *Node, emptyNode *Node, ioBytePerSecond int64, applyChange bool) error {
 	collectionPrefix := v.Collection + "_"
 	if v.Collection == "" {
 		collectionPrefix = ""
 	}
 	fmt.Fprintf(os.Stdout, "  moving %s volume %s%d %s => %s\n", v.DiskType, collectionPrefix, v.Id, fullNode.info.Id, emptyNode.info.Id)
 	if applyChange {
-		return LiveMoveVolume(context.Background(), commandEnv.option.GrpcDialOption, os.Stderr, needle.VolumeId(v.Id), pb.NewServerAddressFromDataNode(fullNode.info), pb.NewServerAddressFromDataNode(emptyNode.info), 5*time.Second, v.DiskType, 0, v.ReadOnly)
+		return LiveMoveVolume(context.Background(), commandEnv.option.GrpcDialOption, os.Stderr, needle.VolumeId(v.Id), pb.NewServerAddressFromDataNode(fullNode.info), pb.NewServerAddressFromDataNode(emptyNode.info), 5*time.Second, v.DiskType, ioBytePerSecond, v.ReadOnly)
 	}
 	return nil
 }
