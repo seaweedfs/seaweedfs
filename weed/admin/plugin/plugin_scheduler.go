@@ -34,6 +34,8 @@ const (
 	defaultWaitingBacklogFloor                 = 8
 	defaultWaitingBacklogMultiplier            = 4
 	maxEstimatedRuntimeCap                     = 8 * time.Hour
+	// How long started jobs may drain past the run window close.
+	scheduledExecutionDrainGrace = 30 * time.Minute
 )
 
 type schedulerPolicy struct {
@@ -411,15 +413,10 @@ func (r *Plugin) runJobTypeIteration(jobType string, policy schedulerPolicy) boo
 	if execPolicy.ExecutionTimeout <= 0 {
 		execPolicy.ExecutionTimeout = defaultScheduledExecutionTimeout
 	}
-	if execPolicy.ExecutionTimeout > remaining {
-		execPolicy.ExecutionTimeout = remaining
-	}
 
-	// jobCtx bounds how long this run keeps STARTING jobs; a started job
-	// runs on its own estimated-runtime deadline (see
-	// executeScheduledJobWithExecutor). Jobs still queued when the window
-	// closes are canceled and re-proposed by a later detection, so one large
-	// backlog cannot monopolise the lane for hours.
+	// jobCtx bounds how long this run keeps STARTING jobs; started jobs
+	// drain past the window close (see scheduledAttemptContext), while
+	// still-queued jobs are canceled and re-proposed by a later detection.
 	successCount, errorCount, canceledCount := r.dispatchScheduledProposals(jobCtx, jobType, filtered, clusterContext, execPolicy)
 
 	status := "success"
@@ -1201,6 +1198,7 @@ func (r *Plugin) executeScheduledJobWithExecutor(
 		// default execution timeout. This lets handlers like vacuum scale
 		// the timeout based on volume size so large volumes are not killed.
 		timeout := policy.ExecutionTimeout
+		hasEstimate := false
 		if job.Parameters != nil {
 			if est, ok := job.Parameters["estimated_runtime_seconds"]; ok {
 				if v := est.GetInt64Value(); v > 0 {
@@ -1210,15 +1208,12 @@ func (r *Plugin) executeScheduledJobWithExecutor(
 					}
 					if estimated > timeout {
 						timeout = estimated
+						hasEstimate = true
 					}
 				}
 			}
 		}
-		// The attempt runs against its own deadline, detached from the
-		// dispatch window (ctx): a job started near the end of the window
-		// may run to completion; the window only stops further jobs from
-		// starting.
-		execCtx, cancel := context.WithTimeout(context.Background(), timeout)
+		execCtx, cancel := scheduledAttemptContext(ctx, timeout, hasEstimate)
 		_, err := r.executeJobWithExecutor(execCtx, executor, job, clusterContext, int32(attempt))
 		cancel()
 		if err == nil {
@@ -1251,6 +1246,22 @@ func (r *Plugin) executeScheduledJobWithExecutor(
 		lastErr = fmt.Errorf("execution failed without an explicit error")
 	}
 	return lastErr
+}
+
+// scheduledAttemptContext bounds one execution attempt: its own timeout,
+// capped at the window deadline plus scheduledExecutionDrainGrace so a
+// draining job cannot hold the lane indefinitely. Estimated-runtime
+// attempts keep their full timeout.
+func scheduledAttemptContext(window context.Context, timeout time.Duration, hasEstimate bool) (context.Context, context.CancelFunc) {
+	deadline := time.Now().Add(timeout)
+	if !hasEstimate && window != nil {
+		if windowEnd, ok := window.Deadline(); ok {
+			if drainDeadline := windowEnd.Add(scheduledExecutionDrainGrace); deadline.After(drainDeadline) {
+				deadline = drainDeadline
+			}
+		}
+	}
+	return context.WithDeadline(context.Background(), deadline)
 }
 
 func (r *Plugin) shouldSkipDetectionForWaitingJobs(jobType string, policy schedulerPolicy) (bool, int, int) {
