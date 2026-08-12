@@ -1089,6 +1089,27 @@ func (ecb *ecBalancer) executePhase(byID map[string]*EcNode, moves []ecbalancer.
 	return ewg.Wait()
 }
 
+// verifyEcShardOnKeepNode confirms the node a dedup move chose to keep actually
+// holds the shard, so a duplicate is only removed when a real copy remains. An
+// unreachable keep node is unknown, not confirmed, and blocks the delete.
+func verifyEcShardOnKeepNode(grpcDialOption grpc.DialOption, vid needle.VolumeId, keepNode string, shardId erasure_coding.ShardId) error {
+	if keepNode == "" {
+		return fmt.Errorf("refusing dedup delete of %d.%d: no keep node recorded", vid, shardId)
+	}
+	_, perServer := erasure_coding.VerifyShardsAcrossServers(context.Background(), uint32(vid), []string{keepNode}, grpcDialOption)
+	inv, ok := perServer[keepNode]
+	if !ok {
+		return fmt.Errorf("refusing dedup delete of %d.%d: no inventory returned for keep node %s", vid, shardId, keepNode)
+	}
+	if inv.QueryError != nil {
+		return fmt.Errorf("refusing dedup delete of %d.%d: keep node %s unreachable: %v", vid, shardId, keepNode, inv.QueryError)
+	}
+	if !inv.Bits.Has(shardId) {
+		return fmt.Errorf("refusing dedup delete: keep node %s does not hold ec shard %d.%d, so this would remove the last copy", keepNode, vid, shardId)
+	}
+	return nil
+}
+
 func (ecb *ecBalancer) executeMove(byID map[string]*EcNode, m ecbalancer.Move) error {
 	src := byID[m.SourceNode]
 	if src == nil {
@@ -1105,6 +1126,13 @@ func (ecb *ecBalancer) executeMove(byID map[string]*EcNode, m ecbalancer.Move) e
 			return nil
 		}
 		grpcDialOption := ecb.commandEnv.option.GrpcDialOption
+		// Nothing is copied first, so the shard surviving elsewhere is the only
+		// thing making this safe -- and the plan saying so is not evidence. A
+		// topology entry can name a location holding nothing, and deleting on
+		// that basis removes the last copy. Confirm the keep node has it.
+		if err := verifyEcShardOnKeepNode(grpcDialOption, vid, m.KeepNode, shardId); err != nil {
+			return err
+		}
 		addr := pb.NewServerAddressFromDataNode(src.info)
 		if err := unmountEcShards(grpcDialOption, vid, addr, shardIds); err != nil {
 			return err
