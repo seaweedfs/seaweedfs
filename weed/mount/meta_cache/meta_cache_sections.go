@@ -56,6 +56,27 @@ func newDirSections(bounds []string) *dirSections {
 	return &dirSections{bounds: bounds, sections: make([]sectionState, len(bounds)+1)}
 }
 
+// sectionBoundsCollector derives section boundaries from an ordered listing:
+// every dirSectionSize-th name starts a new section.
+type sectionBoundsCollector struct {
+	count  int
+	bounds []string
+}
+
+func (c *sectionBoundsCollector) note(name string) {
+	if c.count > 0 && c.count%dirSectionSize == 0 {
+		c.bounds = append(c.bounds, name)
+	}
+	c.count++
+}
+
+// sectionRefresh carries one section's re-listing to the apply loop.
+type sectionRefresh struct {
+	lo, hi       string
+	entries      []*filer.Entry
+	snapshotTsNs int64
+}
+
 func (ds *dirSections) sectionOf(name string) int {
 	idx := sort.SearchStrings(ds.bounds, name)
 	if idx < len(ds.bounds) && ds.bounds[idx] == name {
@@ -208,12 +229,9 @@ func (mc *MetaCache) refreshSection(ctx context.Context, client filer_pb.FilerCl
 			return nil, err
 		}
 		return nil, mc.enqueueAndWait(ctx, metadataApplyRequest{
-			kind:           metadataSectionRefresh,
-			buildPath:      dirPath,
-			sectionLo:      lo,
-			sectionHi:      hi,
-			sectionEntries: entries,
-			snapshotTsNs:   snapshotTsNs,
+			kind:      metadataSectionRefresh,
+			buildPath: dirPath,
+			refresh:   &sectionRefresh{lo: lo, hi: hi, entries: entries, snapshotTsNs: snapshotTsNs},
 		})
 	})
 	return err
@@ -272,16 +290,15 @@ func (mc *MetaCache) listFilerRange(ctx context.Context, client filer_pb.FilerCl
 // range, then marks it fresh. Runs on the apply loop; mutations go through the
 // version gate so the listing cannot roll back a newer applied event, and
 // pinned local-only entries (deferred creates not yet on the filer) survive.
-func (mc *MetaCache) applySectionRefreshNow(ctx context.Context, req metadataApplyRequest) error {
-	dirPath, lo, hi := req.buildPath, req.sectionLo, req.sectionHi
-	snapshotTsNs := req.snapshotTsNs
+func (mc *MetaCache) applySectionRefreshNow(ctx context.Context, dirPath util.FullPath, r *sectionRefresh) error {
+	lo, hi, snapshotTsNs := r.lo, r.hi, r.snapshotTsNs
 
 	mc.Lock()
 	defer mc.Unlock()
 
-	fetchedNames := make([]string, 0, len(req.sectionEntries))
-	fetched := make(map[string]struct{}, len(req.sectionEntries))
-	for _, entry := range req.sectionEntries {
+	fetchedNames := make([]string, 0, len(r.entries))
+	fetched := make(map[string]struct{}, len(r.entries))
+	for _, entry := range r.entries {
 		fetchedNames = append(fetchedNames, entry.Name())
 		fetched[entry.Name()] = struct{}{}
 		if snapshotTsNs == 0 {

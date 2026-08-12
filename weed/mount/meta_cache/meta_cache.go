@@ -102,18 +102,16 @@ const (
 )
 
 type metadataApplyRequest struct {
-	ctx            context.Context
-	kind           metadataApplyRequestKind
-	resp           *filer_pb.SubscribeMetadataResponse
-	options        MetadataResponseApplyOptions
-	buildPath      util.FullPath
-	snapshotTsNs   int64
-	sectionBounds  []string
-	sectionLo      string
-	sectionHi      string
-	sectionEntries []*filer.Entry
-	resetFn        func()
-	done           chan error
+	ctx          context.Context
+	kind         metadataApplyRequestKind
+	resp         *filer_pb.SubscribeMetadataResponse
+	options      MetadataResponseApplyOptions
+	buildPath    util.FullPath
+	snapshotTsNs int64
+	sections     *dirSections    // the completed build's section table
+	refresh      *sectionRefresh // one section re-listing to reconcile
+	resetFn      func()
+	done         chan error
 }
 
 func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPath, includeSystemEntries bool,
@@ -329,10 +327,10 @@ func (mc *MetaCache) BeginDirectoryBuild(ctx context.Context, dirPath util.FullP
 
 func (mc *MetaCache) CompleteDirectoryBuild(ctx context.Context, dirPath util.FullPath, snapshotTsNs int64, sectionBounds []string) error {
 	return mc.enqueueAndWait(ctx, metadataApplyRequest{
-		kind:          metadataCompleteBuild,
-		buildPath:     dirPath,
-		snapshotTsNs:  snapshotTsNs,
-		sectionBounds: sectionBounds,
+		kind:         metadataCompleteBuild,
+		buildPath:    dirPath,
+		snapshotTsNs: snapshotTsNs,
+		sections:     newDirSections(sectionBounds),
 	})
 }
 
@@ -803,13 +801,13 @@ func (mc *MetaCache) handleApplyRequest(req metadataApplyRequest) error {
 	case metadataBeginBuild:
 		return mc.beginDirectoryBuildNow(req.buildPath)
 	case metadataCompleteBuild:
-		return mc.completeDirectoryBuildNow(req.ctx, req.buildPath, req.snapshotTsNs, req.sectionBounds)
+		return mc.completeDirectoryBuildNow(req.ctx, req.buildPath, req.snapshotTsNs, req.sections)
 	case metadataAbortBuild:
 		return mc.abortDirectoryBuildNow(req.buildPath)
 	case metadataPurgeDir:
 		return mc.purgeDirectoryChildrenNow(req.ctx, req.buildPath, req.resetFn)
 	case metadataSectionRefresh:
-		return mc.applySectionRefreshNow(req.ctx, req)
+		return mc.applySectionRefreshNow(req.ctx, req.buildPath, req.refresh)
 	case metadataShutdown:
 		return nil
 	default:
@@ -1028,7 +1026,7 @@ func (mc *MetaCache) purgeDirectoryChildrenNow(ctx context.Context, dirPath util
 	return mc.localStore.DeleteFolderChildren(ctx, dirPath)
 }
 
-func (mc *MetaCache) completeDirectoryBuildNow(ctx context.Context, dirPath util.FullPath, snapshotTsNs int64, sectionBounds []string) error {
+func (mc *MetaCache) completeDirectoryBuildNow(ctx context.Context, dirPath util.FullPath, snapshotTsNs int64, sections *dirSections) error {
 	state := mc.buildingDirs[dirPath]
 	delete(mc.buildingDirs, dirPath)
 
@@ -1041,7 +1039,7 @@ func (mc *MetaCache) completeDirectoryBuildNow(ctx context.Context, dirPath util
 	// touches it. An unversioned listing (pre-upgrade filer) instead clears the
 	// children's records, or a re-inserted entry would inherit a stale one.
 	mc.Lock()
-	mc.dirSections[dirPath] = newDirSections(sectionBounds)
+	mc.dirSections[dirPath] = sections
 	if snapshotTsNs != 0 {
 		mc.dirVersionFloors[dirPath] = snapshotTsNs
 		mc.pruneSupersededTombstonesLocked(ctx, dirPath, snapshotTsNs)

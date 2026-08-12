@@ -150,19 +150,20 @@ func TestSectionRefreshReconciles(t *testing.T) {
 	if err := mc.enqueueAndWait(context.Background(), metadataApplyRequest{
 		kind:      metadataSectionRefresh,
 		buildPath: util.FullPath("/dir"),
-		sectionLo: "",
-		sectionHi: "m",
-		sectionEntries: []*filer.Entry{
-			{
-				FullPath: util.FullPath("/dir/b-keep"),
-				Attr:     filer.Attr{Crtime: time.Unix(1, 0), Mtime: time.Unix(2, 0), Mode: 0100644, FileSize: 7},
+		refresh: &sectionRefresh{
+			hi: "m",
+			entries: []*filer.Entry{
+				{
+					FullPath: util.FullPath("/dir/b-keep"),
+					Attr:     filer.Attr{Crtime: time.Unix(1, 0), Mtime: time.Unix(2, 0), Mode: 0100644, FileSize: 7},
+				},
+				{
+					FullPath: util.FullPath("/dir/b-new"),
+					Attr:     filer.Attr{Crtime: time.Unix(2, 0), Mtime: time.Unix(2, 0), Mode: 0100644, FileSize: 3},
+				},
 			},
-			{
-				FullPath: util.FullPath("/dir/b-new"),
-				Attr:     filer.Attr{Crtime: time.Unix(2, 0), Mtime: time.Unix(2, 0), Mode: 0100644, FileSize: 3},
-			},
+			snapshotTsNs: 5000,
 		},
-		snapshotTsNs: 5000,
 	}); err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
@@ -226,10 +227,9 @@ func TestSectionRefreshSplitsOvergrownSection(t *testing.T) {
 		})
 	}
 	if err := mc.enqueueAndWait(context.Background(), metadataApplyRequest{
-		kind:           metadataSectionRefresh,
-		buildPath:      util.FullPath("/dir"),
-		sectionEntries: entries,
-		snapshotTsNs:   5000,
+		kind:      metadataSectionRefresh,
+		buildPath: util.FullPath("/dir"),
+		refresh:   &sectionRefresh{entries: entries, snapshotTsNs: 5000},
 	}); err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
