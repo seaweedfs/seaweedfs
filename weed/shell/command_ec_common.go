@@ -1026,19 +1026,19 @@ func (ecb *ecBalancer) executePhase(byID map[string]*EcNode, moves []ecbalancer.
 		}
 		byVol[m.VolumeID] = append(byVol[m.VolumeID], m)
 	}
-	ewg := NewErrorWaitGroup(ecb.maxParallelization)
+	taskGroups := make([][]ErrorWaitGroupTask, 0, len(order))
 	for _, vid := range order {
-		group := byVol[vid]
-		ewg.Add(func() error {
-			for _, m := range group {
-				if err := ecb.executeMove(byID, m); err != nil {
-					return err
-				}
-			}
-			return nil
-		})
+		movesForVolume := byVol[vid]
+		taskGroup := make([]ErrorWaitGroupTask, 0, len(movesForVolume))
+		for _, move := range movesForVolume {
+			move := move
+			taskGroup = append(taskGroup, func() error {
+				return ecb.executeMove(byID, move)
+			})
+		}
+		taskGroups = append(taskGroups, taskGroup)
 	}
-	return ewg.Wait()
+	return executeParallelTaskGroups(ecb.maxParallelization, taskGroups)
 }
 
 // verifyEcShardOnKeepNode confirms the node a dedup move chose to keep actually

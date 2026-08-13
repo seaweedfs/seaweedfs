@@ -9,8 +9,10 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/operation/volume_move"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"slices"
@@ -32,13 +34,15 @@ func init() {
 }
 
 type commandVolumeBalance struct {
-	volumeSizeLimitMb uint64
-	commandEnv        *CommandEnv
-	volumeByActive    *bool
-	applyBalancing    bool
-	volumesPerExec    int
-	movedCount        int
-	byDiskUsage       bool
+	volumeSizeLimitMb  uint64
+	commandEnv         *CommandEnv
+	volumeByActive     *bool
+	applyBalancing     bool
+	volumesPerExec     int
+	maxParallelization int
+	movedCount         int
+	byDiskUsage        bool
+	balanceMu          sync.Mutex
 
 	// diskUsageHighWaterPercent skips a move target whose physical disk used%
 	// is at or above this mark. 0 or >=100 disables the gate.
@@ -52,7 +56,7 @@ func (c *commandVolumeBalance) Name() string {
 func (c *commandVolumeBalance) Help() string {
 	return `balance all volumes among volume servers
 
-	volume.balance [-collection ALL_COLLECTIONS|EACH_COLLECTION|<collection_name>] [-apply] [-dataCenter=<data_center_name>] [-racks=rack_name_one,rack_name_two] [-nodes=192.168.0.1:8080,192.168.0.2:8080] [-volumesPerExec=5] [-byDiskUsage] [-maxDiskUsagePercent=90]
+	volume.balance [-collection ALL_COLLECTIONS|EACH_COLLECTION|<collection_name>] [-apply] [-dataCenter=<data_center_name>] [-racks=rack_name_one,rack_name_two] [-nodes=192.168.0.1:8080,192.168.0.2:8080] [-volumesPerExec=5] [-maxParallelization=1] [-byDiskUsage] [-maxDiskUsagePercent=90]
 
 	The -collection parameter supports:
 	  - ALL_COLLECTIONS: balance across all collections
@@ -65,6 +69,8 @@ func (c *commandVolumeBalance) Help() string {
 	The -volumesPerExec parameter limits the maximum number of volume moves in one command execution.
 	If unset - the command will try to balance all volumes at once.
 	It might be beneficial to set, if your cluster has lots of volumes growing and topology changes faster than balancing can occur.
+	The -maxParallelization parameter limits the number of volume moves running at the same time.
+	The default value of 1 keeps the original sequential behavior.
 
 	The -maxDiskUsagePercent flag (default 90) skips any move target whose physical disk is already used at
 	or above that percentage, using the real filesystem capacity each volume server reports. This is the
@@ -132,6 +138,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	// TODO: remove this alias
 	applyBalancingAlias := balanceCommand.Bool("force", false, "apply the balancing plan (alias for -apply)")
 	volumesPerExec := balanceCommand.Int("volumesPerExec", 0, "how many volumes to move in one run (default is 0 for unlimited)")
+	maxParallelization := balanceCommand.Int("maxParallelization", 1, "run up to X volume moves in parallel, whenever possible")
 	byDiskUsage := balanceCommand.Bool("byDiskUsage", false, "rank servers by reported physical disk used percent instead of slot density; falls back to sum of volume sizes for all servers when any server does not report disk bytes. Use when maxVolumeCount is set too high for the disk.")
 	maxDiskUsagePercent := balanceCommand.Int("maxDiskUsagePercent", balancer.DefaultMaxDiskUsagePercent, "skip a move target whose physical disk used%% is at/above this; judged per server against its own disk, so heterogeneous disk sizes are fine. 0 or >=100 disables. Auto-skipped for servers that do not report disk bytes.")
 
@@ -155,7 +162,11 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	if *volumesPerExec < 0 {
 		return fmt.Errorf("volumesPerExec must be >= 0")
 	}
+	if *maxParallelization < 1 {
+		return fmt.Errorf("maxParallelization must be >= 1")
+	}
 	c.volumesPerExec = *volumesPerExec
+	c.maxParallelization = *maxParallelization
 	c.movedCount = 0
 	c.byDiskUsage = *byDiskUsage
 	c.diskUsageHighWaterPercent = *maxDiskUsagePercent
@@ -320,6 +331,12 @@ type Node struct {
 	selectedVolumes map[uint32]*master_pb.VolumeInformationMessage
 	dc              string
 	rack            string
+}
+
+type volumeBalanceMove struct {
+	volume *master_pb.VolumeInformationMessage
+	source *Node
+	target *Node
 }
 
 type CapacityFunc func(*master_pb.DataNodeInfo) float64
@@ -496,14 +513,15 @@ func selectVolumesByActive(volumeSize uint64, volumeByActive *bool, volumeSizeLi
 	}
 }
 
-func (c *commandVolumeBalance) balanceSelectedVolume(diskType types.DiskType, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, sortCandidatesFn func(volumes []*master_pb.VolumeInformationMessage)) (err error) {
+// planBalance computes the state shared by sequential and parallel execution:
+// eligible nodes, the density function used to rank them, and the ideal ratio.
+func (c *commandVolumeBalance) planBalance(diskType types.DiskType, nodes []*Node) (nodesWithCapacity []*Node, capacityFunc DensityFunc, idealVolumeRatio float64, volumeSizeLimitMb uint64, ok bool) {
 	selectedVolumeCount, volumeCapacities := uint64(0), float64(0)
-	var nodesWithCapacity []*Node
-	volumeSizeLimitMb := c.volumeSizeLimitMb
+	volumeSizeLimitMb = c.volumeSizeLimitMb
 	if volumeSizeLimitMb == 0 {
 		volumeSizeLimitMb = util.VolumeSizeLimitGB * util.KiByte
 	}
-	capacityFunc := capacityByMinVolumeDensity(diskType, volumeSizeLimitMb)
+	capacityFunc = capacityByMinVolumeDensity(diskType, volumeSizeLimitMb)
 	if c.byDiskUsage {
 		capacityFunc = capacityByDiskUsage(diskType, volumeSizeLimitMb, nodes)
 	}
@@ -516,121 +534,216 @@ func (c *commandVolumeBalance) balanceSelectedVolume(diskType types.DiskType, vo
 		selectedVolumeCount += volumeCount
 	}
 	if volumeCapacities == 0 {
-		return nil
+		return nil, nil, 0, volumeSizeLimitMb, false
 	}
-	idealVolumeRatio := float64(selectedVolumeCount) / volumeCapacities
-
-	hasMoved := true
+	idealVolumeRatio = float64(selectedVolumeCount) / volumeCapacities
 
 	if c.commandEnv != nil && c.commandEnv.verbose {
 		fmt.Fprintf(os.Stdout, "selected nodes %d, volumes:%d, cap:%d, idealVolumeRatio %f\n", len(nodesWithCapacity), selectedVolumeCount, int64(volumeCapacities), idealVolumeRatio*100)
 	}
-	for hasMoved {
-		hasMoved = false
-		if c.volumesPerExec > 0 && c.movedCount >= c.volumesPerExec {
+	return nodesWithCapacity, capacityFunc, idealVolumeRatio, volumeSizeLimitMb, true
+}
+
+// planBalanceMove selects one volume move without mutating the topology. The
+// caller reserves the returned move before handing it to the shared executor.
+func (c *commandVolumeBalance) planBalanceMove(diskType types.DiskType, volumeReplicas map[uint32][]*VolumeReplica, nodesWithCapacity []*Node, sortCandidatesFn func(volumes []*master_pb.VolumeInformationMessage), capacityFunc DensityFunc, idealVolumeRatio float64, volumeSizeLimitMb uint64, failedTargets map[string]struct{}) *volumeBalanceMove {
+	slices.SortFunc(nodesWithCapacity, func(a, b *Node) int {
+		return cmp.Compare(a.localVolumeDensityRatio(capacityFunc), b.localVolumeDensityRatio(capacityFunc))
+	})
+	if len(nodesWithCapacity) == 0 {
+		return nil
+	}
+
+	var fullNode *Node
+	var fullNodeIndex int
+	for fullNodeIndex = len(nodesWithCapacity) - 1; fullNodeIndex >= 0; fullNodeIndex-- {
+		fullNode = nodesWithCapacity[fullNodeIndex]
+		if len(fullNode.selectedVolumes) == 0 {
+			continue
+		}
+		if !fullNode.isOneVolumeOnly() {
 			break
 		}
-		slices.SortFunc(nodesWithCapacity, func(a, b *Node) int {
-			return cmp.Compare(a.localVolumeDensityRatio(capacityFunc), b.localVolumeDensityRatio(capacityFunc))
-		})
-		if len(nodesWithCapacity) == 0 {
+	}
+	if fullNodeIndex == -1 {
+		return nil
+	}
+
+	var candidateVolumes []*master_pb.VolumeInformationMessage
+	for _, v := range fullNode.selectedVolumes {
+		candidateVolumes = append(candidateVolumes, v)
+	}
+	sortCandidatesFn(candidateVolumes)
+
+	for _, emptyNode := range nodesWithCapacity[:fullNodeIndex] {
+		if _, failed := failedTargets[emptyNode.info.Id]; failed {
+			continue
+		}
+		if c.byDiskUsage && !emptyNode.hasFreeVolumeSlot(diskType) {
+			continue
+		}
+		if c.targetDiskTooFull(emptyNode, diskType, volumeSizeLimitMb) {
 			if c.commandEnv != nil && c.commandEnv.verbose {
-				fmt.Fprintf(os.Stdout, "no volume server found with capacity for %s", diskType.ReadableString())
+				fmt.Fprintf(os.Stdout, "skip target %s: disk used%% >= %d%%\n", emptyNode.info.Id, c.diskUsageHighWaterPercent)
 			}
-			return nil
+			continue
+		}
+		if !(fullNode.localVolumeDensityNextRatio(capacityFunc) > idealVolumeRatio && emptyNode.localVolumeDensityNextRatio(capacityFunc) <= idealVolumeRatio) {
+			if c.commandEnv != nil && c.commandEnv.verbose {
+				fmt.Printf("no more volume servers with empty slots %s, idealVolumeRatio %f\n", emptyNode.info.Id, idealVolumeRatio)
+			}
+			break
 		}
 
-		var fullNode *Node
-		var fullNodeIndex int
-		for fullNodeIndex = len(nodesWithCapacity) - 1; fullNodeIndex >= 0; fullNodeIndex-- {
-			fullNode = nodesWithCapacity[fullNodeIndex]
-			if len(fullNode.selectedVolumes) == 0 {
+		for _, v := range candidateVolumes {
+			if _, found := emptyNode.selectedVolumes[v.Id]; found {
 				continue
 			}
-			if !fullNode.isOneVolumeOnly() {
-				break
-			}
-		}
-		var candidateVolumes []*master_pb.VolumeInformationMessage
-		for _, v := range fullNode.selectedVolumes {
-			candidateVolumes = append(candidateVolumes, v)
-		}
-		if fullNodeIndex == -1 {
-			if c.commandEnv != nil && c.commandEnv.verbose {
-				fmt.Fprintf(os.Stdout, "no nodes with capacity found for %s, nodes %d", diskType.ReadableString(), len(nodesWithCapacity))
-			}
-			return nil
-		}
-		sortCandidatesFn(candidateVolumes)
-		for _, emptyNode := range nodesWithCapacity[:fullNodeIndex] {
-			// In byte-usage mode the ranking ignores volume slots, so skip targets
-			// that are already at MaxVolumeCount so balancing never exceeds the
-			// slot limit.
-			if c.byDiskUsage && !emptyNode.hasFreeVolumeSlot(diskType) {
-				continue
-			}
-			// Never move onto a server whose physical disk is already near full,
-			// even if the slot-density metric ranks it as the emptiest node. This is
-			// the root-cause guard for an over-configured maxVolumeCount making a
-			// full disk look empty; it is judged per server against its own disk.
-			if c.targetDiskTooFull(emptyNode, diskType, volumeSizeLimitMb) {
-				if c.commandEnv != nil && c.commandEnv.verbose {
-					fmt.Fprintf(os.Stdout, "skip target %s: disk used%% >= %d%%\n", emptyNode.info.Id, c.diskUsageHighWaterPercent)
-				}
-				continue
-			}
-			if !(fullNode.localVolumeDensityNextRatio(capacityFunc) > idealVolumeRatio && emptyNode.localVolumeDensityNextRatio(capacityFunc) <= idealVolumeRatio) {
-				if c.commandEnv != nil && c.commandEnv.verbose {
-					fmt.Printf("no more volume servers with empty slots %s, idealVolumeRatio %f\n", emptyNode.info.Id, idealVolumeRatio)
-				}
-				break
-			}
-			fmt.Fprintf(os.Stdout, "%s %.2f %.2f:%.2f\t", diskType.ReadableString(), idealVolumeRatio,
-				fullNode.localVolumeDensityRatio(capacityFunc), emptyNode.localVolumeDensityNextRatio(capacityFunc))
-			if c.commandEnv != nil && c.commandEnv.verbose {
-				fmt.Fprintf(os.Stdout, "%s %.1f %.1f:%.1f\t", diskType.ReadableString(), idealVolumeRatio*100,
-					fullNode.localVolumeDensityRatio(capacityFunc)*100, emptyNode.localVolumeDensityNextRatio(capacityFunc)*100)
-			}
-			hasMoved, err = attemptToMoveOneVolume(c.commandEnv, volumeReplicas, fullNode, candidateVolumes, emptyNode, c.applyBalancing)
-			if err != nil {
-				if c.commandEnv != nil && c.commandEnv.verbose {
-					fmt.Fprintf(os.Stdout, "attempt to move one volume error %+v\n", err)
-				}
-				if strings.Contains(err.Error(), util.ErrVolumeNoSpaceLeft) {
+			if v.ReplicaPlacement > 0 {
+				replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(v.ReplicaPlacement))
+				if !isGoodMove(replicaPlacement, volumeReplicas[v.Id], fullNode, emptyNode) {
 					continue
 				}
-				return
 			}
-			if hasMoved {
-				c.movedCount++
-				break
-			}
+			return &volumeBalanceMove{volume: v, source: fullNode, target: emptyNode}
 		}
 	}
 	return nil
 }
 
-func attemptToMoveOneVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*VolumeReplica, fullNode *Node, candidateVolumes []*master_pb.VolumeInformationMessage, emptyNode *Node, applyBalancing bool) (hasMoved bool, err error) {
+func (c *commandVolumeBalance) printBalanceMove(diskType types.DiskType, move volumeBalanceMove, capacityFunc DensityFunc, idealVolumeRatio float64) {
+	fullRatio := move.source.localVolumeDensityRatio(capacityFunc)
+	emptyNextRatio := move.target.localVolumeDensityNextRatio(capacityFunc)
+	fmt.Fprintf(os.Stdout, "%s %.2f %.2f:%.2f\t", diskType.ReadableString(), idealVolumeRatio, fullRatio, emptyNextRatio)
+	if c.commandEnv != nil && c.commandEnv.verbose {
+		fmt.Fprintf(os.Stdout, "%s %.1f %.1f:%.1f\t", diskType.ReadableString(), idealVolumeRatio*100,
+			fullRatio*100, emptyNextRatio*100)
+	}
+}
 
-	for _, v := range candidateVolumes {
-		hasMoved, err = maybeMoveOneVolume(commandEnv, volumeReplicas, fullNode, v, emptyNode, applyBalancing)
-		if err != nil {
-			return
+func (c *commandVolumeBalance) balanceSelectedVolume(diskType types.DiskType, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, sortCandidatesFn func(volumes []*master_pb.VolumeInformationMessage)) error {
+	nodesWithCapacity, capacityFunc, idealVolumeRatio, volumeSizeLimitMb, ok := c.planBalance(diskType, nodes)
+	if !ok {
+		return nil
+	}
+	maxParallelization := c.maxParallelization
+	if maxParallelization < 1 {
+		maxParallelization = 1
+	}
+	failedTargets := make(map[string]struct{})
+
+	for {
+		moves := c.reserveBalanceMoves(maxParallelization, diskType, volumeReplicas, nodesWithCapacity,
+			sortCandidatesFn, capacityFunc, idealVolumeRatio, volumeSizeLimitMb, failedTargets)
+		if len(moves) == 0 {
+			return nil
 		}
-		if hasMoved {
-			break
+		if err := c.executeBalanceMoves(maxParallelization, moves, volumeReplicas, failedTargets); err != nil {
+			return err
 		}
 	}
-	return
+}
+
+func (c *commandVolumeBalance) reserveBalanceMoves(maxMoves int, diskType types.DiskType, volumeReplicas map[uint32][]*VolumeReplica, nodesWithCapacity []*Node, sortCandidatesFn func(volumes []*master_pb.VolumeInformationMessage), capacityFunc DensityFunc, idealVolumeRatio float64, volumeSizeLimitMb uint64, failedTargets map[string]struct{}) []volumeBalanceMove {
+	c.balanceMu.Lock()
+	defer c.balanceMu.Unlock()
+
+	moves := make([]volumeBalanceMove, 0, maxMoves)
+	for len(moves) < maxMoves && (c.volumesPerExec == 0 || c.movedCount < c.volumesPerExec) {
+		move := c.planBalanceMove(diskType, volumeReplicas, nodesWithCapacity, sortCandidatesFn,
+			capacityFunc, idealVolumeRatio, volumeSizeLimitMb, failedTargets)
+		if move == nil {
+			break
+		}
+		c.printBalanceMove(diskType, *move, capacityFunc, idealVolumeRatio)
+		// Reserve before releasing balanceMu so the next planner iteration observes
+		// the updated source, target, replica, and disk accounting.
+		adjustAfterMove(move.volume, volumeReplicas, move.source, move.target)
+		c.movedCount++
+		moves = append(moves, *move)
+	}
+	return moves
+}
+
+func (c *commandVolumeBalance) executeBalanceMoves(maxParallelization int, moves []volumeBalanceMove, volumeReplicas map[uint32][]*VolumeReplica, failedTargets map[string]struct{}) error {
+	taskGroups := make([][]ErrorWaitGroupTask, 0, len(moves))
+	for _, move := range moves {
+		move := move
+		taskGroups = append(taskGroups, []ErrorWaitGroupTask{func() error {
+			return c.executeBalanceMove(move, volumeReplicas, failedTargets)
+		}})
+	}
+	return executeParallelTaskGroups(maxParallelization, taskGroups)
+}
+
+func (c *commandVolumeBalance) executeBalanceMove(move volumeBalanceMove, volumeReplicas map[uint32][]*VolumeReplica, failedTargets map[string]struct{}) error {
+	if err := validateVolumeMove(c.commandEnv, move.volume); err != nil {
+		return c.failBalanceMove(move, volumeReplicas, failedTargets, err)
+	}
+
+	if err := moveVolume(c.commandEnv, move.volume, move.source, move.target, c.applyBalancing); err != nil {
+		return c.failBalanceMove(move, volumeReplicas, failedTargets, err)
+	}
+	return nil
+}
+
+func (c *commandVolumeBalance) failBalanceMove(move volumeBalanceMove, volumeReplicas map[uint32][]*VolumeReplica, failedTargets map[string]struct{}, err error) error {
+	if c.commandEnv != nil && c.commandEnv.verbose {
+		// Keep the error visible before a no-space failure blacklists its target.
+		fmt.Fprintf(os.Stdout, "attempt to move one volume error %+v\n", err)
+	}
+	c.balanceMu.Lock()
+	defer c.balanceMu.Unlock()
+
+	rollbackBalanceMove(move, volumeReplicas)
+	c.movedCount--
+	if strings.Contains(err.Error(), util.ErrVolumeNoSpaceLeft) {
+		failedTargets[move.target.info.Id] = struct{}{}
+		return nil
+	}
+	return err
+}
+
+func rollbackBalanceMove(move volumeBalanceMove, volumeReplicas map[uint32][]*VolumeReplica) {
+	delete(move.target.selectedVolumes, move.volume.Id)
+	if move.source.selectedVolumes == nil {
+		move.source.selectedVolumes = make(map[uint32]*master_pb.VolumeInformationMessage)
+	}
+	move.source.selectedVolumes[move.volume.Id] = move.volume
+
+	for _, replica := range volumeReplicas[move.volume.Id] {
+		if replica.location.dataNode.Id != move.target.info.Id || replica.location.rack != move.target.rack || replica.location.dc != move.target.dc {
+			continue
+		}
+		loc := newLocation(move.source.dc, move.source.rack, move.source.info)
+		replica.location = &loc
+		if targetDisk, found := move.target.info.DiskInfos[move.volume.DiskType]; found {
+			removeVolumeInfo(targetDisk, move.volume.Id)
+			addVolumeCount(targetDisk, -1)
+			addDiskFreeBytes(targetDisk, int64(move.volume.Size))
+		}
+		if sourceDisk, found := move.source.info.DiskInfos[move.volume.DiskType]; found {
+			sourceDisk.VolumeInfos = append(sourceDisk.VolumeInfos, move.volume)
+			addVolumeCount(sourceDisk, 1)
+			addDiskFreeBytes(sourceDisk, -int64(move.volume.Size))
+		}
+		return
+	}
+}
+
+func validateVolumeMove(commandEnv *CommandEnv, volume *master_pb.VolumeInformationMessage) error {
+	if !commandEnv.isLocked() {
+		return fmt.Errorf("lock is lost")
+	}
+	if volume.RemoteStorageName != "" {
+		return fmt.Errorf("does not move volume in remote storage")
+	}
+	return nil
 }
 
 func maybeMoveOneVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*VolumeReplica, fullNode *Node, candidateVolume *master_pb.VolumeInformationMessage, emptyNode *Node, applyChange bool) (hasMoved bool, err error) {
-	if !commandEnv.isLocked() {
-		return false, fmt.Errorf("lock is lost")
-	}
-
-	if candidateVolume.RemoteStorageName != "" {
-		return false, fmt.Errorf("does not move volume in remote storage")
+	if err = validateVolumeMove(commandEnv, candidateVolume); err != nil {
+		return false, err
 	}
 
 	if candidateVolume.ReplicaPlacement > 0 {
@@ -657,7 +770,12 @@ func moveVolume(commandEnv *CommandEnv, v *master_pb.VolumeInformationMessage, f
 	}
 	fmt.Fprintf(os.Stdout, "  moving %s volume %s%d %s => %s\n", v.DiskType, collectionPrefix, v.Id, fullNode.info.Id, emptyNode.info.Id)
 	if applyChange {
-		return LiveMoveVolume(context.Background(), commandEnv.option.GrpcDialOption, os.Stderr, needle.VolumeId(v.Id), pb.NewServerAddressFromDataNode(fullNode.info), pb.NewServerAddressFromDataNode(emptyNode.info), 5*time.Second, v.DiskType, 0)
+		return volume_move.NewMover(commandEnv.option.GrpcDialOption).LiveMoveVolume(context.Background(), needle.VolumeId(v.Id),
+			pb.NewServerAddressFromDataNode(fullNode.info), pb.NewServerAddressFromDataNode(emptyNode.info), volume_move.VolumeMoveOptions{
+				DiskType:    v.DiskType,
+				IdleTimeout: 5 * time.Second,
+				Writer:      os.Stderr,
+			})
 	}
 	return nil
 }

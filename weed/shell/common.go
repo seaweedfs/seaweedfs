@@ -27,6 +27,26 @@ type ErrorWaitGroup struct {
 
 type ErrorWaitGroupTask func() error
 
+// executeParallelTaskGroups runs tasks from each group sequentially and runs
+// independent groups with up to maxParallelization concurrency. EC balancing
+// uses one group per volume because its shard sidecar files are shared; volume
+// balancing uses one group per already-reserved volume move.
+func executeParallelTaskGroups(maxParallelization int, taskGroups [][]ErrorWaitGroupTask) error {
+	ewg := NewErrorWaitGroup(maxParallelization)
+	for _, taskGroup := range taskGroups {
+		taskGroup := taskGroup
+		ewg.Add(func() error {
+			for _, task := range taskGroup {
+				if err := task(); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	}
+	return ewg.Wait()
+}
+
 func NewErrorWaitGroup(maxConcurrency int) *ErrorWaitGroup {
 	if maxConcurrency <= 0 {
 		// no concurrency = one task at the time
