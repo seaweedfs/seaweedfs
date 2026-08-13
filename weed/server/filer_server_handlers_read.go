@@ -293,6 +293,7 @@ func (fs *FilerServer) streamFromRemote(ctx context.Context, dir, name string, o
 	downloadThrottler := util.NewWriteThrottler(fs.option.DownloadMaxBytesPs)
 	return func(writer io.Writer) error {
 		defer reader.Close()
+		var written int64
 		buf := make([]byte, 128*1024)
 		for {
 			n, readErr := reader.Read(buf)
@@ -300,9 +301,14 @@ func (fs *FilerServer) streamFromRemote(ctx context.Context, dir, name string, o
 				if _, writeErr := writer.Write(buf[:n]); writeErr != nil {
 					return writeErr
 				}
+				written += int64(n)
 				downloadThrottler.MaybeSlowdown(int64(n))
 			}
 			if readErr == io.EOF {
+				if written != size {
+					// the origin returned fewer bytes than the entry's RemoteSize
+					return fmt.Errorf("origin stream %s: %w after %d of %d bytes", remoteLocation.Path, io.ErrUnexpectedEOF, written, size)
+				}
 				return nil
 			}
 			if readErr != nil {

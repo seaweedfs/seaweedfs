@@ -1051,7 +1051,11 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 						}
 						TimeToFirstByte(r.Method, t0, r)
 						cw := &countingWriter{w: w}
-						_, copyErr := io.Copy(cw, remoteReader)
+						_, copyErr := io.CopyN(cw, remoteReader, size)
+						if copyErr == io.EOF {
+							// the origin returned fewer bytes than the entry's RemoteSize
+							copyErr = io.ErrUnexpectedEOF
+						}
 						if cw.written > 0 {
 							BucketTrafficSent(cw.written, r)
 						}

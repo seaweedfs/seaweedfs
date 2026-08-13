@@ -697,6 +697,22 @@ func TestS3ColdReadStreamsFromOrigin(t *testing.T) {
 		assert.Equal(t, fmt.Sprintf("bytes 2-5/%d", len(content)), w.Header().Get("Content-Range"))
 	})
 
+	t.Run("short origin read fails instead of silently truncating", func(t *testing.T) {
+		shortClient := &fakeStreamRemoteClient{data: content[:4]}
+		remote_storage.RemoteStorageClientMakers["faketest"] = &fakeStreamRemoteMaker{client: shortClient}
+		defer func() {
+			remote_storage.RemoteStorageClientMakers["faketest"] = &fakeStreamRemoteMaker{client: client}
+		}()
+		s3a := newRemoteCacheTestServer(startStreamThroughFiler(t, "faketest-short"))
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/mybucket/dir/obj.bin", nil)
+
+		err := s3a.streamFromVolumeServers(w, r, entry(), "", "mybucket", "dir/obj.bin", "")
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), io.ErrUnexpectedEOF.Error())
+	})
+
 	t.Run("version-specific read keeps 503 retry", func(t *testing.T) {
 		s3a := newRemoteCacheTestServer(startStreamThroughFiler(t, "faketest-versioned"))
 		w := httptest.NewRecorder()
