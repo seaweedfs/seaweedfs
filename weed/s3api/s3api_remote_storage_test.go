@@ -627,9 +627,9 @@ func (m *fakeStreamRemoteMaker) Make(conf *remote_pb.RemoteConf) (remote_storage
 }
 func (m *fakeStreamRemoteMaker) HasBucket() bool { return true }
 
-// startStreamThroughFiler serves a filer whose cache RPC always reports "still
-// caching" and whose /etc/remote mounts /buckets/mybucket on a fake origin.
-func startStreamThroughFiler(t *testing.T, remoteName string) pb.ServerAddress {
+// startStreamThroughFiler serves a filer whose cache RPC always fails with
+// cacheErr and whose /etc/remote mounts /buckets/mybucket on a fake origin.
+func startStreamThroughFiler(t *testing.T, remoteName string, cacheErr error) pb.ServerAddress {
 	mappingBytes, err := proto.Marshal(&remote_pb.RemoteStorageMapping{
 		Mappings: map[string]*remote_pb.RemoteStorageLocation{
 			"/buckets/mybucket": {Name: remoteName, Bucket: "origin-bucket", Path: "/data"},
@@ -640,7 +640,7 @@ func startStreamThroughFiler(t *testing.T, remoteName string) pb.ServerAddress {
 	require.NoError(t, err)
 	return startFakeCacheFiler(t, &fakeCacheFiler{
 		cache: func(ctx context.Context, req *filer_pb.CacheRemoteObjectToLocalClusterRequest) (*filer_pb.CacheRemoteObjectToLocalClusterResponse, error) {
-			return nil, status.Error(codes.DeadlineExceeded, "still caching")
+			return nil, cacheErr
 		},
 		entries: map[string][]byte{
 			"/etc/remote/mount.mapping":           mappingBytes,
@@ -648,6 +648,8 @@ func startStreamThroughFiler(t *testing.T, remoteName string) pb.ServerAddress {
 		},
 	})
 }
+
+var stillCachingErr = status.Error(codes.DeadlineExceeded, "still caching")
 
 // TestS3ColdReadStreamsFromOrigin pins the stream-through path: when the filer
 // reports the cache is still filling, the GET is served straight from the
@@ -666,7 +668,7 @@ func TestS3ColdReadStreamsFromOrigin(t *testing.T) {
 	}
 
 	t.Run("full read", func(t *testing.T) {
-		s3a := newRemoteCacheTestServer(startStreamThroughFiler(t, "faketest-full"))
+		s3a := newRemoteCacheTestServer(startStreamThroughFiler(t, "faketest-full", stillCachingErr))
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodGet, "/mybucket/dir/obj.bin", nil)
 
@@ -682,7 +684,7 @@ func TestS3ColdReadStreamsFromOrigin(t *testing.T) {
 	})
 
 	t.Run("range read", func(t *testing.T) {
-		s3a := newRemoteCacheTestServer(startStreamThroughFiler(t, "faketest-range"))
+		s3a := newRemoteCacheTestServer(startStreamThroughFiler(t, "faketest-range", stillCachingErr))
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodGet, "/mybucket/dir/obj.bin", nil)
 		r.Header.Set("Range", "bytes=2-5")
@@ -703,7 +705,7 @@ func TestS3ColdReadStreamsFromOrigin(t *testing.T) {
 		defer func() {
 			remote_storage.RemoteStorageClientMakers["faketest"] = &fakeStreamRemoteMaker{client: client}
 		}()
-		s3a := newRemoteCacheTestServer(startStreamThroughFiler(t, "faketest-short"))
+		s3a := newRemoteCacheTestServer(startStreamThroughFiler(t, "faketest-short", stillCachingErr))
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodGet, "/mybucket/dir/obj.bin", nil)
 
@@ -714,7 +716,7 @@ func TestS3ColdReadStreamsFromOrigin(t *testing.T) {
 	})
 
 	t.Run("version-specific read keeps 503 retry", func(t *testing.T) {
-		s3a := newRemoteCacheTestServer(startStreamThroughFiler(t, "faketest-versioned"))
+		s3a := newRemoteCacheTestServer(startStreamThroughFiler(t, "faketest-versioned", stillCachingErr))
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodGet, "/mybucket/dir/obj.bin?versionId=v123", nil)
 
@@ -723,5 +725,30 @@ func TestS3ColdReadStreamsFromOrigin(t *testing.T) {
 		require.Error(t, err)
 		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 		assert.Equal(t, "2", w.Header().Get("Retry-After"))
+	})
+
+	t.Run("local cache failure falls back to origin", func(t *testing.T) {
+		cacheErr := status.Error(codes.Internal, "assign: no free volumes")
+		s3a := newRemoteCacheTestServer(startStreamThroughFiler(t, "faketest-localfail", cacheErr))
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/mybucket/dir/obj.bin", nil)
+
+		err := s3a.streamFromVolumeServers(w, r, entry(), "", "mybucket", "dir/obj.bin", "")
+
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, content, w.Body.Bytes())
+	})
+
+	t.Run("entry not found stays 404", func(t *testing.T) {
+		cacheErr := status.Error(codes.NotFound, "entry vanished")
+		s3a := newRemoteCacheTestServer(startStreamThroughFiler(t, "faketest-notfound", cacheErr))
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/mybucket/dir/obj.bin", nil)
+
+		err := s3a.streamFromVolumeServers(w, r, entry(), "", "mybucket", "dir/obj.bin", "")
+
+		require.Error(t, err)
+		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
 }

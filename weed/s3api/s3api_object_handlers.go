@@ -1020,24 +1020,21 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 				chunks = cachedEntry.GetChunks()
 				entry = cachedEntry
 				glog.V(1).Infof("streamFromVolumeServers: successfully cached remote object, got %d chunks", len(chunks))
-			} else if cacheErr != nil && !errors.Is(cacheErr, context.DeadlineExceeded) && !errors.Is(cacheErr, context.Canceled) && status.Code(cacheErr) != codes.DeadlineExceeded && status.Code(cacheErr) != codes.Canceled {
-				// Permanent error (e.g. not found, permission denied) - return final status
-				glog.Errorf("streamFromVolumeServers: permanent cache error for %s/%s: %v", bucket, object, cacheErr)
-				if status.Code(cacheErr) == codes.NotFound {
-					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
-				} else {
-					s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-				}
+			} else if status.Code(cacheErr) == codes.NotFound {
+				// Authoritative: the entry vanished; the origin cannot resurrect it
+				glog.Errorf("streamFromVolumeServers: entry not found while caching %s/%s: %v", bucket, object, cacheErr)
+				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 				return newStreamErrorWithResponse(cacheErr)
 			} else {
-				// Client disconnected during the cache wait: report cancellation, not 503,
-				// so we don't write to a closed connection.
+				// Client disconnected during the cache wait: report cancellation, not an
+				// error response, so we don't write to a closed connection.
 				if ctxErr := r.Context().Err(); ctxErr != nil {
 					return ctxErr
 				}
-				// Cache not ready: serve straight from the origin while the detached
-				// cache keeps filling for later reads. A version-specific read cannot
-				// map to an origin key, so it keeps the 503 retry path.
+				// Cache not ready or failing locally (e.g. no assignable volume): serve
+				// straight from the origin while the detached cache keeps filling for
+				// later reads. A version-specific read cannot map to an origin key, so
+				// it keeps the error paths below.
 				if versionId == "" || versionId == "null" {
 					if remoteReader, remoteErr := s3a.openRemoteStream(r.Context(), bucket, object, offset, size); remoteErr == nil {
 						defer remoteReader.Close()
@@ -1068,7 +1065,13 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 						glog.Warningf("streamFromVolumeServers: origin stream %s/%s: %v", bucket, object, remoteErr)
 					}
 				}
-				// Origin unreadable; return 503 with Retry-After for client backoff
+				// Origin unreadable. A permanent cache error is final; a transient one
+				// gets 503 so the client retries the still-filling cache.
+				if cacheErr != nil && !errors.Is(cacheErr, context.DeadlineExceeded) && !errors.Is(cacheErr, context.Canceled) && status.Code(cacheErr) != codes.DeadlineExceeded && status.Code(cacheErr) != codes.Canceled {
+					glog.Errorf("streamFromVolumeServers: permanent cache error for %s/%s: %v", bucket, object, cacheErr)
+					s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+					return newStreamErrorWithResponse(cacheErr)
+				}
 				glog.V(1).Infof("streamFromVolumeServers: remote object %s/%s not cached yet, returning 503 for retry", bucket, object)
 				w.Header().Set("Retry-After", "2")
 				s3err.WriteErrorResponse(w, r, s3err.ErrServiceUnavailable)
