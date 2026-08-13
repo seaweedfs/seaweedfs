@@ -27,18 +27,17 @@ func newTestStore(t *testing.T, keyPrefix string) (*UniversalRedis2Store, util.F
 
 	ctx := context.Background()
 	client := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { client.Close() })
 	if err := client.Ping(ctx).Err(); err != nil {
 		t.Fatalf("connect to redis at %s: %v", addr, err)
 	}
 
 	store := &UniversalRedis2Store{Client: client, keyPrefix: keyPrefix}
-	store.loadSuperLargeDirectories(nil)
 
 	dir := util.FullPath(fmt.Sprintf("/redis2_test_%d", time.Now().UnixNano()))
 	t.Cleanup(func() {
 		store.DeleteFolderChildren(ctx, dir)
 		store.DeleteEntry(ctx, dir)
-		client.Close()
 	})
 
 	return store, dir
@@ -104,45 +103,53 @@ func TestListDirectoryEntriesRemovesOrphanedIndexMembers(t *testing.T) {
 }
 
 func TestRemoveOrphanedDirectoryListMemberKeepsRecreatedEntry(t *testing.T) {
-	store, dir := newTestStore(t, "")
+	for _, keyPrefix := range []string{"", "sw:"} {
+		t.Run("keyPrefix="+keyPrefix, func(t *testing.T) {
+			store, dir := newTestStore(t, keyPrefix)
 
-	path := dir.Child("recreated")
-	insertTestEntry(t, store, path, 0)
+			path := dir.Child("recreated")
+			insertTestEntry(t, store, path, 0)
 
-	store.removeOrphanedDirectoryListMember(context.Background(), dir, "recreated")
+			store.removeOrphanedDirectoryListMember(context.Background(), dir, "recreated")
 
-	if members := indexMembers(t, store, dir); len(members) != 1 || members[0] != "recreated" {
-		t.Fatalf("directory index holds %v, want [recreated]", members)
-	}
+			if members := indexMembers(t, store, dir); len(members) != 1 || members[0] != "recreated" {
+				t.Fatalf("directory index holds %v, want [recreated]", members)
+			}
 
-	if names := listNames(t, store, dir); len(names) != 1 || names[0] != "recreated" {
-		t.Fatalf("listed %v, want [recreated]", names)
+			if names := listNames(t, store, dir); len(names) != 1 || names[0] != "recreated" {
+				t.Fatalf("listed %v, want [recreated]", names)
+			}
+		})
 	}
 }
 
 func TestRemoveOrphanedDirectoryListMemberKeepsDirectoryWithChildren(t *testing.T) {
-	store, dir := newTestStore(t, "")
+	for _, keyPrefix := range []string{"", "sw:"} {
+		t.Run("keyPrefix="+keyPrefix, func(t *testing.T) {
+			store, dir := newTestStore(t, keyPrefix)
 
-	sub := dir.Child("sub")
-	insertTestEntry(t, store, sub, 0)
-	insertTestEntry(t, store, sub.Child("kid"), 0)
-	defer store.DeleteFolderChildren(context.Background(), sub)
+			sub := dir.Child("sub")
+			insertTestEntry(t, store, sub, 0)
+			insertTestEntry(t, store, sub.Child("kid"), 0)
+			defer store.DeleteFolderChildren(context.Background(), sub)
 
-	// evict the directory's own value while its child index is live
-	if err := store.Client.Del(context.Background(), store.getKey(string(sub))).Err(); err != nil {
-		t.Fatalf("drop value key: %v", err)
-	}
+			// evict the directory's own value while its child index is live
+			if err := store.Client.Del(context.Background(), store.getKey(string(sub))).Err(); err != nil {
+				t.Fatalf("drop value key: %v", err)
+			}
 
-	if names := listNames(t, store, dir); len(names) != 0 {
-		t.Fatalf("listed %v, want none", names)
-	}
+			if names := listNames(t, store, dir); len(names) != 0 {
+				t.Fatalf("listed %v, want none", names)
+			}
 
-	if members := indexMembers(t, store, dir); len(members) != 1 || members[0] != "sub" {
-		t.Fatalf("directory index holds %v, want [sub]", members)
-	}
+			if members := indexMembers(t, store, dir); len(members) != 1 || members[0] != "sub" {
+				t.Fatalf("directory index holds %v, want [sub]", members)
+			}
 
-	if exists, err := store.Client.Exists(context.Background(), store.getKey(string(sub.Child("kid")))).Result(); err != nil || exists != 1 {
-		t.Fatalf("child value key exists=%d err=%v, want it kept", exists, err)
+			if exists, err := store.Client.Exists(context.Background(), store.getKey(string(sub.Child("kid")))).Result(); err != nil || exists != 1 {
+				t.Fatalf("child value key exists=%d err=%v, want it kept", exists, err)
+			}
+		})
 	}
 }
 
