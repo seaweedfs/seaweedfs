@@ -205,6 +205,7 @@ func (store *UniversalRedis2Store) ListDirectoryEntries(ctx context.Context, dir
 		if err != nil {
 			glog.V(0).InfofCtx(ctx, "list %s : %v", path, err)
 			if err == filer_pb.ErrNotFound {
+				store.Client.ZRem(ctx, dirListKey, fileName).Result()
 				err = nil
 				continue
 			}
