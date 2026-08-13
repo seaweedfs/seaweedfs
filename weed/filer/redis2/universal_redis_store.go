@@ -205,7 +205,7 @@ func (store *UniversalRedis2Store) ListDirectoryEntries(ctx context.Context, dir
 		if err != nil {
 			glog.V(0).InfofCtx(ctx, "list %s : %v", path, err)
 			if err == filer_pb.ErrNotFound {
-				store.removeOrphanedDirectoryListMember(ctx, dirListKey, path, fileName)
+				store.removeOrphanedDirectoryListMember(ctx, dirPath, fileName)
 				err = nil
 				continue
 			}
@@ -234,7 +234,10 @@ func (store *UniversalRedis2Store) ListDirectoryEntries(ctx context.Context, dir
 	return lastFileName, err
 }
 
-func (store *UniversalRedis2Store) removeOrphanedDirectoryListMember(ctx context.Context, dirListKey string, path util.FullPath, fileName string) {
+func (store *UniversalRedis2Store) removeOrphanedDirectoryListMember(ctx context.Context, dirPath util.FullPath, fileName string) {
+	dirListKey := store.getKey(genDirectoryListKey(string(dirPath)))
+	path := util.NewFullPath(string(dirPath), fileName)
+
 	if err := store.Client.ZRem(ctx, dirListKey, fileName).Err(); err != nil {
 		return
 	}

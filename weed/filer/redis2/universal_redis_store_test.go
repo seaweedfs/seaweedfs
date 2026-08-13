@@ -109,7 +109,7 @@ func TestRemoveOrphanedDirectoryListMemberKeepsRecreatedEntry(t *testing.T) {
 	path := dir.Child("recreated")
 	insertTestEntry(t, store, path, 0)
 
-	store.removeOrphanedDirectoryListMember(context.Background(), store.getKey(genDirectoryListKey(string(dir))), path, "recreated")
+	store.removeOrphanedDirectoryListMember(context.Background(), dir, "recreated")
 
 	if members := indexMembers(t, store, dir); len(members) != 1 || members[0] != "recreated" {
 		t.Fatalf("directory index holds %v, want [recreated]", members)
