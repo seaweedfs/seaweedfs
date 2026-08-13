@@ -1058,9 +1058,9 @@ func (t *ErasureCodingTask) cleanupStaleEcShards(ctx context.Context) error {
 		}).Info("Clearing stale EC shards on destination before re-distribute")
 
 		// encodeTsNs=0 selects the server's blanket (generation-independent)
-		// teardown; see the function comment for why the fence is intentionally
-		// not used here.
-		if err := unmountAndDeleteEcShards(ctx, t.grpcDialOption, node, t.volumeID, t.collection, allShards, 0); err != nil {
+		// teardown; see erasure_coding.UnmountAndDeleteEcShards for why the
+		// fence is intentionally not used here.
+		if err := erasure_coding.UnmountAndDeleteEcShards(ctx, t.grpcDialOption, pb.ServerAddress(node), t.collection, t.volumeID, allShards, 0); err != nil {
 			cleanupErrors = append(cleanupErrors, fmt.Sprintf("%s: %v", node, err))
 			t.GetLogger().WithFields(map[string]interface{}{
 				"volume_id":   t.volumeID,
@@ -1093,47 +1093,6 @@ func fullShardIdRange(dataShards, parityShards int32) []uint32 {
 		ids[i] = uint32(i)
 	}
 	return ids
-}
-
-// unmountAndDeleteEcShards unmounts then deletes the named shards on one
-// destination. Unmount must precede delete (delete requires the shard be
-// unmounted); both RPCs are idempotent against missing shards.
-func unmountAndDeleteEcShards(
-	ctx context.Context,
-	dialOption grpc.DialOption,
-	destination string,
-	volumeID uint32,
-	collection string,
-	shardIds []uint32,
-	encodeTsNs int64,
-) error {
-	return operation.WithVolumeServerClient(false, pb.ServerAddress(destination), dialOption,
-		func(client volume_server_pb.VolumeServerClient) error {
-			// encodeTsNs fences both RPCs against a newer run on a shared node: the
-			// server skips a disk whose mounted/on-disk generation is same-or-newer.
-			// 0 (legacy/shell) leaves the unconditional unmount + blanket teardown.
-			if _, err := client.VolumeEcShardsUnmount(ctx, &volume_server_pb.VolumeEcShardsUnmountRequest{
-				VolumeId:   volumeID,
-				ShardIds:   shardIds,
-				EncodeTsNs: encodeTsNs,
-			}); err != nil {
-				return fmt.Errorf("unmount: %w", err)
-			}
-			resp, err := client.VolumeEcShardsDelete(ctx, &volume_server_pb.VolumeEcShardsDeleteRequest{
-				VolumeId:     volumeID,
-				Collection:   collection,
-				ShardIds:     shardIds,
-				FullTeardown: true,
-				EncodeTsNs:   encodeTsNs,
-			})
-			if err != nil {
-				return fmt.Errorf("delete: %w", err)
-			}
-			if !resp.GetFullTeardownDone() {
-				return fmt.Errorf("delete: %s did not perform full teardown (pre-upgrade volume server?); a stale EC generation may remain", destination)
-			}
-			return nil
-		})
 }
 
 // verifyDatIdxConsistency checks that all .idx entries reference data within the
