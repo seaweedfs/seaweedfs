@@ -186,12 +186,19 @@ func TestListDirectoryEntriesRemovesIndexMembersExpiredByRedis(t *testing.T) {
 
 	insertTestEntry(t, store, dir.Child("ttl"), 1)
 
-	time.Sleep(1500 * time.Millisecond)
-
-	if exists, err := store.Client.Exists(context.Background(), store.getKey(string(dir.Child("ttl")))).Result(); err != nil {
-		t.Fatalf("check value key: %v", err)
-	} else if exists != 0 {
-		t.Fatal("redis did not expire the value key, the logical expiry path is not being bypassed")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		exists, err := store.Client.Exists(context.Background(), store.getKey(string(dir.Child("ttl")))).Result()
+		if err != nil {
+			t.Fatalf("check value key: %v", err)
+		}
+		if exists == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("redis did not expire the value key, the logical expiry path is not being bypassed")
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 
 	if names := listNames(t, store, dir); len(names) != 0 {
