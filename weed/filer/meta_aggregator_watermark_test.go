@@ -2,20 +2,26 @@ package filer
 
 import (
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 )
+
+func newTestAggregator() *MetaAggregator {
+	return &MetaAggregator{
+		peerWatermarks:      make(map[pb.ServerAddress]int64),
+		peerFlushWatermarks: make(map[pb.ServerAddress]int64),
+		peerRemovedAtNs:     make(map[pb.ServerAddress]int64),
+	}
+}
 
 // TestPeerWatermarkBookkeeping pins the per-peer delivery watermark semantics
 // backing MetaAggregator.PeerLowWatermarkTsNs: the low-watermark is the minimum
 // received-through timestamp across tracked peers, a peer that has not
 // signalled yet holds it at zero (completeness unknown), advances are
-// monotonic, and removed peers stop participating.
+// monotonic, and removed peers stop participating only after the grace.
 func TestPeerWatermarkBookkeeping(t *testing.T) {
-	ma := &MetaAggregator{
-		peerWatermarks:      make(map[pb.ServerAddress]int64),
-		peerFlushWatermarks: make(map[pb.ServerAddress]int64),
-	}
+	ma := newTestAggregator()
 	a, b := pb.ServerAddress("filer-a:8888"), pb.ServerAddress("filer-b:8888")
 
 	if got := ma.PeerLowWatermarkTsNs(); got != 0 {
@@ -47,26 +53,72 @@ func TestPeerWatermarkBookkeeping(t *testing.T) {
 	if got := ma.PeerLowWatermarkTsNs(); got != 50 {
 		t.Fatalf("after re-init: low=%d want 50", got)
 	}
+}
 
-	// A removed peer no longer holds the watermark back.
-	ma.deletePeerWatermark(b)
-	if got := ma.PeerLowWatermarkTsNs(); got != 100 {
-		t.Fatalf("after delete: low=%d want 100", got)
+// TestPeerWatermarkRemovalGrace pins the removal semantics: a removed peer is
+// usually a flap (frozen or partitioned filer), so its watermarks keep
+// holding the low-watermarks for the grace period - de-accounting it at once
+// would let subscribers advance past its still-unflushed events. A re-add
+// within the grace continues the values; a peer gone past the grace is
+// dropped, so a decommission cannot pin the low-watermark, and its straggling
+// signals cannot resurrect the entry.
+func TestPeerWatermarkRemovalGrace(t *testing.T) {
+	ma := newTestAggregator()
+	a, b := pb.ServerAddress("filer-a:8888"), pb.ServerAddress("filer-b:8888")
+	ma.initPeerWatermark(a)
+	ma.initPeerWatermark(b)
+	ma.advancePeerWatermark(a, 100)
+	ma.advancePeerWatermark(b, 50)
+	ma.advancePeerFlushWatermark(a, 100)
+	ma.advancePeerFlushWatermark(b, 50)
+
+	// Freshly removed: still participates (the flap case that loses data if
+	// dropped at once).
+	ma.markPeerWatermarkRemoved(b)
+	if got := ma.PeerLowWatermarkTsNs(); got != 50 {
+		t.Fatalf("within grace: low=%d want 50", got)
+	}
+	if got := ma.PeerLowFlushWatermarkTsNs(); got != 50 {
+		t.Fatalf("within grace: flush low=%d want 50", got)
+	}
+	// Its draining stream may still advance it while marked.
+	ma.advancePeerWatermark(b, 60)
+	if got := ma.PeerLowWatermarkTsNs(); got != 60 {
+		t.Fatalf("marked peer advance: low=%d want 60", got)
 	}
 
-	// A removed peer's still-draining stream may signal after the deletion;
-	// that must not resurrect the entry, or it would pin the low-watermark
-	// forever once the stream is gone.
+	// Re-add within the grace: mark cleared, values continue.
+	ma.initPeerWatermark(b)
+	if _, marked := ma.peerRemovedAtNs[b]; marked {
+		t.Fatalf("re-added peer still marked removed")
+	}
+	if got := ma.PeerLowWatermarkTsNs(); got != 60 {
+		t.Fatalf("after re-add: low=%d want 60", got)
+	}
+
+	// Removal past the grace: dropped from both watermark sets.
+	ma.markPeerWatermarkRemoved(b)
+	ma.peerWatermarksLock.Lock()
+	ma.peerRemovedAtNs[b] = time.Now().UnixNano() - int64(peerWatermarkRemovalGrace) - int64(time.Second)
+	ma.peerWatermarksLock.Unlock()
+	if got := ma.PeerLowWatermarkTsNs(); got != 100 {
+		t.Fatalf("past grace: low=%d want 100", got)
+	}
+	if got := ma.PeerLowFlushWatermarkTsNs(); got != 100 {
+		t.Fatalf("past grace: flush low=%d want 100", got)
+	}
+
+	// A straggling signal after the drop must not resurrect the entry.
 	ma.advancePeerWatermark(b, 999)
 	ma.advancePeerFlushWatermark(b, 999)
 	if got := ma.PeerLowWatermarkTsNs(); got != 100 {
-		t.Fatalf("after late signal from removed peer: low=%d want 100", got)
+		t.Fatalf("after straggler: low=%d want 100", got)
 	}
 	if _, found := ma.peerWatermarks[b]; found {
-		t.Fatalf("removed peer resurrected in delivery watermark set")
+		t.Fatalf("dropped peer resurrected in delivery watermark set")
 	}
 	if _, found := ma.peerFlushWatermarks[b]; found {
-		t.Fatalf("removed peer resurrected in flush watermark set")
+		t.Fatalf("dropped peer resurrected in flush watermark set")
 	}
 }
 
@@ -74,10 +126,7 @@ func TestPeerWatermarkBookkeeping(t *testing.T) {
 // for the flush watermark that bounds persisted-log reads: min across peers,
 // zero until every peer has reported, monotonic advances.
 func TestPeerFlushWatermarkBookkeeping(t *testing.T) {
-	ma := &MetaAggregator{
-		peerWatermarks:      make(map[pb.ServerAddress]int64),
-		peerFlushWatermarks: make(map[pb.ServerAddress]int64),
-	}
+	ma := newTestAggregator()
 	a, b := pb.ServerAddress("filer-a:8888"), pb.ServerAddress("filer-b:8888")
 
 	ma.initPeerWatermark(a)
@@ -94,8 +143,5 @@ func TestPeerFlushWatermarkBookkeeping(t *testing.T) {
 	if got := ma.PeerLowFlushWatermarkTsNs(); got != 150 {
 		t.Fatalf("after stale: low=%d want 150", got)
 	}
-	ma.deletePeerWatermark(b)
-	if got := ma.PeerLowFlushWatermarkTsNs(); got != 200 {
-		t.Fatalf("after delete: low=%d want 200", got)
-	}
+	_ = a
 }

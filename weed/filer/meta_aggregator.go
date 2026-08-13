@@ -51,7 +51,18 @@ type MetaAggregator struct {
 	// persisted-log read may advance — beyond it some peer may still land a
 	// log file (or append a chunk) whose events a passed cursor would skip.
 	peerFlushWatermarks map[pb.ServerAddress]int64
-	peerWatermarksLock  sync.Mutex
+	// peerRemovedAtNs marks peers the master has removed from the cluster,
+	// with the removal time. A removed peer's watermarks keep participating
+	// in the low-watermarks for a grace period instead of vanishing at once:
+	// removal usually means the peer is flapping (frozen, partitioned), its
+	// unflushed events still exist and will land late, and de-accounting it
+	// immediately would let subscribers advance past them - the very loss
+	// the watermarks exist to prevent. A peer that stays gone is dropped
+	// when the grace expires, so a decommission cannot pin the low-watermark
+	// (the settled-horizon escape already caps its influence meanwhile). A
+	// re-add clears the mark and continues the watermarks monotonically.
+	peerRemovedAtNs    map[pb.ServerAddress]int64
+	peerWatermarksLock sync.Mutex
 }
 
 // MetaAggregator only aggregates data "on the fly". The logs are not re-persisted to disk.
@@ -64,6 +75,7 @@ func NewMetaAggregator(filer *Filer, self pb.ServerAddress, grpcDialOption grpc.
 		peerChans:           make(map[pb.ServerAddress]chan struct{}),
 		peerWatermarks:      make(map[pb.ServerAddress]int64),
 		peerFlushWatermarks: make(map[pb.ServerAddress]int64),
+		peerRemovedAtNs:     make(map[pb.ServerAddress]int64),
 	}
 	// nil notifyFn: aggregated subscribers wake through the buffer's
 	// subscriber channels, not a cond.
@@ -94,14 +106,25 @@ func (ma *MetaAggregator) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, star
 			close(prevChan)
 			delete(ma.peerChans, address)
 		}
-		// A removed peer no longer feeds the aggregated buffer; keeping it in
-		// the watermark set would freeze the low-watermark forever.
-		ma.deletePeerWatermark(address)
+		// Do NOT drop the peer's watermarks here: a removal is usually a flap
+		// (a frozen or partitioned filer the master timed out), its unflushed
+		// events still exist, and de-accounting it at once would let
+		// subscribers advance past them. Mark it and let the grace period
+		// decide (see peerRemovedAtNs).
+		ma.markPeerWatermarkRemoved(address)
 	}
 }
 
+// peerWatermarkRemovalGrace is how long a removed peer keeps participating in
+// the low-watermarks. Must cover the settled horizon the subscribe loops use
+// (2 x LogFlushInterval): within it, the horizon escape already bounds a
+// stale watermark's influence, and past it the loops would advance anyway.
+const peerWatermarkRemovalGrace = 2 * LogFlushInterval
+
 // initPeerWatermark ensures the peer participates in the low-watermark with a
-// zero (unknown) value until its stream delivers the first signal.
+// zero (unknown) value until its stream delivers the first signal. A re-added
+// peer keeps its prior values (monotonic continuity) and stops being
+// considered removed.
 func (ma *MetaAggregator) initPeerWatermark(peer pb.ServerAddress) {
 	ma.peerWatermarksLock.Lock()
 	defer ma.peerWatermarksLock.Unlock()
@@ -111,13 +134,39 @@ func (ma *MetaAggregator) initPeerWatermark(peer pb.ServerAddress) {
 	if _, found := ma.peerFlushWatermarks[peer]; !found {
 		ma.peerFlushWatermarks[peer] = 0
 	}
+	delete(ma.peerRemovedAtNs, peer)
+}
+
+func (ma *MetaAggregator) markPeerWatermarkRemoved(peer pb.ServerAddress) {
+	ma.peerWatermarksLock.Lock()
+	defer ma.peerWatermarksLock.Unlock()
+	if _, found := ma.peerWatermarks[peer]; found {
+		ma.peerRemovedAtNs[peer] = time.Now().UnixNano()
+	}
+}
+
+// dropExpiredRemovedPeersLocked drops peers whose removal outlived the grace
+// period, so a decommissioned peer cannot pin the low-watermarks forever.
+// Caller must hold peerWatermarksLock.
+func (ma *MetaAggregator) dropExpiredRemovedPeersLocked() {
+	if len(ma.peerRemovedAtNs) == 0 {
+		return
+	}
+	cutoff := time.Now().UnixNano() - int64(peerWatermarkRemovalGrace)
+	for peer, removedAt := range ma.peerRemovedAtNs {
+		if removedAt < cutoff {
+			delete(ma.peerRemovedAtNs, peer)
+			delete(ma.peerWatermarks, peer)
+			delete(ma.peerFlushWatermarks, peer)
+		}
+	}
 }
 
 // advancePeerWatermark records that this filer has received everything the
 // peer had to say up to tsNs (a real event or an idle heartbeat). Monotonic.
-// Only tracked peers advance: a removed peer's stream may still deliver a
-// few responses before its cancellation lands, and recreating the deleted
-// entry would pin the low-watermark forever once the stream is gone.
+// Only tracked peers advance: a dropped peer's straggling signal must not
+// recreate its entry and pin the low-watermark forever. (A peer inside the
+// removal grace still has its entry, so its draining stream advances it.)
 func (ma *MetaAggregator) advancePeerWatermark(peer pb.ServerAddress, tsNs int64) {
 	ma.peerWatermarksLock.Lock()
 	defer ma.peerWatermarksLock.Unlock()
@@ -142,6 +191,7 @@ func (ma *MetaAggregator) advancePeerFlushWatermark(peer pb.ServerAddress, tsNs 
 func (ma *MetaAggregator) PeerLowFlushWatermarkTsNs() int64 {
 	ma.peerWatermarksLock.Lock()
 	defer ma.peerWatermarksLock.Unlock()
+	ma.dropExpiredRemovedPeersLocked()
 	if len(ma.peerFlushWatermarks) == 0 {
 		return 0
 	}
@@ -154,13 +204,6 @@ func (ma *MetaAggregator) PeerLowFlushWatermarkTsNs() int64 {
 	return low
 }
 
-func (ma *MetaAggregator) deletePeerWatermark(peer pb.ServerAddress) {
-	ma.peerWatermarksLock.Lock()
-	defer ma.peerWatermarksLock.Unlock()
-	delete(ma.peerWatermarks, peer)
-	delete(ma.peerFlushWatermarks, peer)
-}
-
 // PeerLowWatermarkTsNs returns the minimum received-through timestamp across
 // all current peers (self included): MetaLogBuffer is complete up to this
 // time. Returns 0 when any peer has not signalled yet (or none are tracked),
@@ -168,6 +211,7 @@ func (ma *MetaAggregator) deletePeerWatermark(peer pb.ServerAddress) {
 func (ma *MetaAggregator) PeerLowWatermarkTsNs() int64 {
 	ma.peerWatermarksLock.Lock()
 	defer ma.peerWatermarksLock.Unlock()
+	ma.dropExpiredRemovedPeersLocked()
 	if len(ma.peerWatermarks) == 0 {
 		return 0
 	}
