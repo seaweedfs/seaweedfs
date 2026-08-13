@@ -2,7 +2,6 @@ package shell
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -561,8 +560,9 @@ func sourceServerDeleteEcShards(grpcDialOption grpc.DialOption, collection strin
 // errFullTeardownNotAcked marks a reachable server that completed the delete RPC
 // but did not report full_teardown_done (a pre-upgrade volume server). The orphan
 // sweep must treat this as fatal: the node may still hold an orphan that a later
-// copy would re-stamp into the new generation.
-var errFullTeardownNotAcked = errors.New("delete did not perform full teardown (pre-upgrade volume server?); a stale EC generation may remain")
+// copy would re-stamp into the new generation. Aliased to the shared sentinel so
+// the shell and the plugin-worker EC task agree on the teardown-not-acked signal.
+var errFullTeardownNotAcked = erasure_coding.ErrFullTeardownNotAcked
 
 // pingVolumeServer probes node liveness with an empty-target Ping, which is never
 // maintenance-gated, and returns the raw Ping error (nil on success). It lets the
@@ -586,28 +586,8 @@ func pingVolumeServer(grpcDialOption grpc.DialOption, location pb.ServerAddress)
 // Used by the orphan sweep, which fans out to every node x volume and would
 // otherwise flood the shell with no-op lines.
 func unmountAndDeleteEcShardsQuiet(grpcDialOption grpc.DialOption, collection string, volumeId needle.VolumeId, location pb.ServerAddress, shardIds []erasure_coding.ShardId) error {
-	ids := erasure_coding.ShardIdsToUint32(shardIds)
-	return operation.WithVolumeServerClient(false, location, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-		if _, err := volumeServerClient.VolumeEcShardsUnmount(context.Background(), &volume_server_pb.VolumeEcShardsUnmountRequest{
-			VolumeId: uint32(volumeId),
-			ShardIds: ids,
-		}); err != nil {
-			return fmt.Errorf("unmount: %w", err)
-		}
-		resp, err := volumeServerClient.VolumeEcShardsDelete(context.Background(), &volume_server_pb.VolumeEcShardsDeleteRequest{
-			VolumeId:     uint32(volumeId),
-			Collection:   collection,
-			ShardIds:     ids,
-			FullTeardown: true,
-		})
-		if err != nil {
-			return fmt.Errorf("delete: %w", err)
-		}
-		if !resp.GetFullTeardownDone() {
-			return fmt.Errorf("delete on %s: %w", location, errFullTeardownNotAcked)
-		}
-		return nil
-	})
+	return erasure_coding.UnmountAndDeleteEcShards(context.Background(), grpcDialOption, location, collection,
+		uint32(volumeId), erasure_coding.ShardIdsToUint32(shardIds), 0)
 }
 
 func unmountEcShards(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, sourceLocation pb.ServerAddress, toBeUnmountedShardIds []erasure_coding.ShardId) error {
