@@ -311,10 +311,20 @@ func rollbackFailedEcEncode(commandEnv *CommandEnv, writer io.Writer, volumeIds 
 		fmt.Fprintf(writer, "rollback: clear ec shards: %v\n", err)
 	}
 
-	// Restore the source volumes to writable.
+	// Restore the source volumes to writable. doEcEncode re-reads the locations
+	// and marks every replica of that later snapshot readonly, so re-read here
+	// too: a replica added or moved between the batch's initial snapshot
+	// (volumeLocationsMap) and doEcEncode's readonly-marking would otherwise be
+	// left readonly. Fall back to the initial snapshot if the re-read fails.
+	locations := volumeLocationsMap
+	if fresh, err := volumeLocations(commandEnv, volumeIds); err != nil {
+		fmt.Fprintf(writer, "rollback: re-read volume locations (using pre-encode snapshot): %v\n", err)
+	} else {
+		locations = fresh
+	}
 	ewg := NewErrorWaitGroup(maxParallelization)
 	for _, vid := range volumeIds {
-		for _, l := range volumeLocationsMap[vid] {
+		for _, l := range locations[vid] {
 			ewg.Add(func() error {
 				if err := markVolumeReplicaWritable(context.Background(), commandEnv.option.GrpcDialOption, vid, l, true, false); err != nil {
 					return fmt.Errorf("restore volume %d writable on %s: %w", vid, l.Url, err)
