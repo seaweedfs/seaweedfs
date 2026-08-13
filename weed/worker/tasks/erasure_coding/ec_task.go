@@ -157,6 +157,17 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 		}
 	}()
 
+	// Step 0: Establish start-of-task invariants before any destructive step.
+	// Verify the plan is complete and clear EC shards left by a prior
+	// interrupted encode of this volume, so the encode begins from a clean
+	// slate. Failing here returns before the source is marked readonly or
+	// copied — nothing to roll back.
+	t.ReportProgressWithStage(5.0, "Verifying preconditions and clearing stale EC state")
+	t.GetLogger().Info("Verifying preconditions and clearing stale EC state")
+	if err := t.ensureCleanEcStart(ctx); err != nil {
+		return fmt.Errorf("EC preflight failed for volume %d: %w", t.volumeID, err)
+	}
+
 	// Step 1: Mark all replicas readonly, then reconcile them and select the most
 	// complete replica as the encode source. Encoding a stale replica and then
 	// deleting the originals would silently lose entries that exist only on another
@@ -197,15 +208,11 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 		return fmt.Errorf("failed to generate EC shards: %w", err)
 	}
 
-	// Clear partial EC shards left over on destinations from a prior failed
-	// encode so distributeEcShards' ReceiveFile is not refused by the
-	// mounted-volume guard.
-	t.ReportProgressWithStage(55.0, "Clearing stale EC shards on destinations")
-	t.GetLogger().Info("Clearing stale EC shards on destinations")
-	if err := t.cleanupStaleEcShards(ctx); err != nil {
-		t.rollbackReadonly(ctx)
-		return fmt.Errorf("failed to clear stale EC shards on destinations: %w", err)
-	}
+	// Stale EC shards from a prior interrupted encode were already cleared in
+	// the Step 0 preflight, before the source was marked readonly. The admin
+	// dedupe key (erasure_coding:<vid>:<collection>) prevents a concurrent
+	// same-volume encode, so no destination can regain stale shards between
+	// the preflight and distributeEcShards below.
 
 	// Delete 0-byte stub replicas left by an interrupted encode before the new
 	// EC files land. A stub shares the <collection>_<vid>.vif path the EC
@@ -219,10 +226,18 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 		return fmt.Errorf("failed to remove empty stub replicas: %w", err)
 	}
 
-	// Step 4: Distribute shards to destinations
+	// Step 4: Distribute shards to destinations.
+	// From here on a failure has written shards to destinations. Until verify
+	// passes we are not committed to the EC copy, so a failure must roll the
+	// attempt back — tear down the shards it distributed and restore the
+	// sources to writable — otherwise a terminally-failed encode (a
+	// single-attempt job, or the last of a retry series, which has no successor
+	// to clean up at its Step 0 preflight) strands orphan shards and a source
+	// fenced readonly.
 	t.ReportProgressWithStage(60.0, "Distributing EC shards to destinations")
 	t.GetLogger().Info("Distributing EC shards to destinations")
 	if err := t.distributeEcShards(shardFiles); err != nil {
+		t.rollbackDistribute(ctx)
 		return fmt.Errorf("failed to distribute EC shards: %w", err)
 	}
 
@@ -230,6 +245,7 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 	t.ReportProgressWithStage(80.0, "Mounting EC shards")
 	t.GetLogger().Info("Mounting EC shards")
 	if err := t.mountEcShards(); err != nil {
+		t.rollbackDistribute(ctx)
 		return fmt.Errorf("failed to mount EC shards: %w", err)
 	}
 
@@ -238,8 +254,12 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 	t.ReportProgressWithStage(85.0, "Verifying EC shards across destinations")
 	t.GetLogger().Info("Verifying EC shards across destinations")
 	if err := t.verifyEcShardsBeforeDelete(ctx); err != nil {
+		t.rollbackDistribute(ctx)
 		return fmt.Errorf("EC shard verification failed; refusing to delete source volume %d: %w", t.volumeID, err)
 	}
+	// Past verify the EC copy is recoverable; a Step 7 failure must NOT tear the
+	// shards down — the remaining source replicas are cleaned by the next
+	// detection's cleanupOrphanSourceReplicas instead.
 
 	// Step 7: Delete original volume
 	t.ReportProgressWithStage(90.0, "Deleting original volume")
@@ -917,16 +937,98 @@ func replicasPendingDelete(replicas []string, alreadyDeleted map[string]bool) []
 	return pending
 }
 
-// cleanupStaleEcShards unmounts and deletes any EC shards still mounted on
-// destinations from a previous failed encode of this volume. Targets every
-// node we plan to write to (t.targets) plus every node detection saw EC
-// shards on (t.sources with ShardIds set), and issues the cleanup over the
-// full shard range so a stale topology snapshot — or shards landed by a
-// prior attempt that haven't heartbeated yet — cannot leave the
-// mounted-volume guard tripped during distributeEcShards. Safe by ordering:
-// runs after the source .dat is in the worker's workdir and a full local
-// shard set is generated. Per-destination errors are aggregated, not
-// short-circuited.
+// ensureCleanEcStart runs first, before any destructive step, to establish
+// the invariants a fresh encode depends on:
+//   - a target set exists: an empty or malformed plan must fail here, not
+//     after the source has been marked readonly and copied;
+//   - a source replica exists to encode from;
+//   - no EC shards from a prior interrupted encode of this volume survive on
+//     the nodes this task will touch. Leftover partial shards trip the
+//     mounted-volume guard in distributeEcShards' ReceiveFile, are loaded as
+//     orphans on the next volume-server restart, and make detection refuse the
+//     volume ("Manual intervention required"). cleanupStaleEcShards blanket-
+//     wipes this volume's EC state on every touched node regardless of shard
+//     generation (a retried attempt's shards share this job's encodeTsNs, and
+//     an interrupted distribute often leaves shards with an unreadable
+//     generation — a fenced teardown would strand both).
+//
+// Cleaning at the start (rather than just before distribute) means the encode
+// begins from a clean slate and a preflight failure leaves the source
+// untouched — there is nothing to roll back. It is safe to delete stale shards
+// this early: the source's regular replica still holds the data until the
+// post-verify delete in Step 7.
+func (t *ErasureCodingTask) ensureCleanEcStart(ctx context.Context) error {
+	if len(t.targets) == 0 {
+		return fmt.Errorf("no EC shard targets for volume %d; refusing to mark source readonly", t.volumeID)
+	}
+	// A non-empty slice is not enough: a target with an empty Node (or no
+	// assigned shards) is silently skipped by cleanupStaleEcShards and by
+	// distributeEcShards, so a plan of only such entries would pass the length
+	// check and mark the source readonly before failing. Reject any malformed
+	// target here, before the first destructive step.
+	for i, target := range t.targets {
+		if target == nil || target.Node == "" || len(target.ShardIds) == 0 {
+			return fmt.Errorf("malformed EC shard target %d for volume %d; refusing to mark source readonly", i, t.volumeID)
+		}
+	}
+	if t.server == "" && len(t.getReplicas()) == 0 {
+		return fmt.Errorf("no source replica for volume %d", t.volumeID)
+	}
+	return t.cleanupStaleEcShards(ctx)
+}
+
+// rollbackDistribute undoes a failed attempt that had already begun writing EC
+// shards to destinations but had not yet committed to the EC copy (verify not
+// passed, so the sources are intact). It tears down the shards this attempt
+// distributed and restores the sources to writable, so a terminally-failed
+// encode — a single-attempt job, or the last of a retry series — leaves no
+// orphan shards and no source stuck readonly. On a retry the next attempt's
+// Step 0 preflight would also clear the shards, but the final attempt has no
+// successor; this makes every post-distribute failure self-cleaning.
+// cleanupStaleEcShards blanket-wipes this volume's EC state regardless of shard
+// generation — necessary because an interrupted distribute leaves shards whose
+// .vif generation is unreadable, which a fenced teardown would preserve.
+// Best-effort and uses a fresh context since the caller's may already be
+// cancelled (the very failure that brought us here).
+func (t *ErasureCodingTask) rollbackDistribute(_ context.Context) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := t.cleanupStaleEcShards(ctx); err != nil {
+		// The teardown could not fully clear this volume's EC shards (e.g. an
+		// unreachable destination, or a shard that failed to unmount). Leave the
+		// source readonly rather than expose it for writes while stale shards
+		// linger: a writable source beside mounted stale shards would let reads
+		// and writes diverge, and orphan cleanup will not remove a writable
+		// source. The next encode's Step 0 preflight (or an operator) reconciles
+		// the state once the shards are reachable.
+		glog.Warningf("rollback: EC shard teardown incomplete for volume %d; leaving source readonly for reconciliation: %v", t.volumeID, err)
+		return
+	}
+	t.rollbackReadonly(ctx)
+}
+
+// cleanupStaleEcShards unmounts and deletes any EC shards for this volume on
+// destinations from a previous failed encode. Targets every node we plan to
+// write to (t.targets) plus every node detection saw EC shards on (t.sources
+// with ShardIds set), and issues the cleanup over the full shard range so a
+// stale topology snapshot — or shards landed by a prior attempt that haven't
+// heartbeated yet — cannot leave the mounted-volume guard tripped during
+// distributeEcShards. Called from the Step 0 preflight (ensureCleanEcStart) and
+// from rollbackDistribute.
+//
+// Teardown is UNFENCED (encodeTsNs=0 -> the server's blanket teardown), which
+// wipes every EC artifact for this volume on every disk regardless of
+// generation. A generation fence is wrong here for two reasons: (1) a retried
+// encode's prior attempt shares this job's encodeTsNs, and the server's fence
+// preserves same-or-newer, so a fenced teardown would strand it; (2) shards
+// left by an interrupted distribute often have an UNREADABLE .vif generation
+// (the sidecar never landed), which the fence also preserves. This is a
+// pre-encode / rollback wipe of a volume we are (re)encoding or abandoning, so
+// clearing all of its EC state is correct — the admin dedupe key
+// (erasure_coding:<vid>:<collection>) guarantees no concurrent newer encode of
+// this volume, and the blanket teardown's own replacement check aborts rather
+// than clobber a live newer mount. This mirrors the shell ec.encode pre-encode
+// cleanup. Per-destination errors are aggregated, not short-circuited.
 func (t *ErasureCodingTask) cleanupStaleEcShards(ctx context.Context) error {
 	nodes := make(map[string]struct{})
 	for _, source := range t.sources {
@@ -955,7 +1057,10 @@ func (t *ErasureCodingTask) cleanupStaleEcShards(ctx context.Context) error {
 			"shard_ids":   allShards,
 		}).Info("Clearing stale EC shards on destination before re-distribute")
 
-		if err := unmountAndDeleteEcShards(ctx, t.grpcDialOption, node, t.volumeID, t.collection, allShards, t.encodeTsNs); err != nil {
+		// encodeTsNs=0 selects the server's blanket (generation-independent)
+		// teardown; see the function comment for why the fence is intentionally
+		// not used here.
+		if err := unmountAndDeleteEcShards(ctx, t.grpcDialOption, node, t.volumeID, t.collection, allShards, 0); err != nil {
 			cleanupErrors = append(cleanupErrors, fmt.Sprintf("%s: %v", node, err))
 			t.GetLogger().WithFields(map[string]interface{}{
 				"volume_id":   t.volumeID,
