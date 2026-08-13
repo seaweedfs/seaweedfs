@@ -6,9 +6,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"net/http"
-	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -86,7 +86,6 @@ type chunkMove struct {
 	fromNode   string
 	toNode     string
 }
-
 
 func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 

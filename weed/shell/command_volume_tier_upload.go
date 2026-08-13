@@ -153,7 +153,7 @@ func doVolumeTierUpload(commandEnv *CommandEnv, writer io.Writer, collection str
 			continue
 		}
 		fmt.Fprintf(writer, "replicate remote volume %d metadata from %s to %s\n", vid, existingLocations[0].Url, location.Url)
-		err = replicateVolumeToServer(context.Background(), commandEnv.option.GrpcDialOption, writer, vid, existingLocations[0].ServerAddress(), location.ServerAddress(), "")
+		err = replicateVolumeToServer(context.Background(), commandEnv.option.GrpcDialOption, writer, vid, existingLocations[0].ServerAddress(), location.ServerAddress(), "", 0)
 		if err != nil {
 			return fmt.Errorf("replicate volume %d from %s to %s: %v", vid, existingLocations[0].Url, location.Url, err)
 		}

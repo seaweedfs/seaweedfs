@@ -77,7 +77,8 @@ func (t *BalanceTask) Execute(ctx context.Context, params *worker_pb.TaskParams)
 	// shell's volume.move/volume.balance commands.
 	mover := volume_move.NewMover(t.grpcDialOption)
 	err := mover.LiveMoveVolume(ctx, needle.VolumeId(t.volumeID), pb.ServerAddress(sourceNode), pb.ServerAddress(destNode), volume_move.VolumeMoveOptions{
-		IdleTimeout: 60 * time.Second,
+		IdleTimeout:     60 * time.Second,
+		IoBytePerSecond: balanceParams.IoBytePerSecond,
 		Progress: func(percent float64, stage string) {
 			t.ReportProgress(percent)
 			t.GetLogger().Info(stage)

@@ -14,6 +14,7 @@ type Config struct {
 	base.BaseConfig
 	ImbalanceThreshold float64 `json:"imbalance_threshold"`
 	MinServerCount     int     `json:"min_server_count"`
+	IoBytePerSecond    int64   `json:"io_byte_per_second"`
 	DataCenterFilter   string  `json:"-"` // per-detection-run, not persisted
 	RackFilter         string  `json:"-"` // per-detection-run, not persisted
 	NodeFilter         string  `json:"-"` // per-detection-run, not persisted
@@ -97,6 +98,21 @@ func GetConfigSpec() base.ConfigSpec {
 				CSSClasses:   "form-control",
 			},
 			{
+				Name:         "io_byte_per_second",
+				JSONName:     "io_byte_per_second",
+				Type:         config.FieldTypeInt,
+				DefaultValue: 0,
+				MinValue:     0,
+				Required:     false,
+				DisplayName:  "Move IO Limit (bytes/sec)",
+				Description:  "Limit each volume move's copy rate",
+				HelpText:     "0 falls back to each volume server's own maintenance rate (-maintenanceBytePerSecond)",
+				Placeholder:  "0 (server maintenance rate)",
+				Unit:         config.UnitNone,
+				InputType:    "number",
+				CSSClasses:   "form-control",
+			},
+			{
 				Name:         "min_server_count",
 				JSONName:     "min_server_count",
 				Type:         config.FieldTypeInt,
@@ -127,6 +143,7 @@ func (c *Config) ToTaskPolicy() *worker_pb.TaskPolicy {
 			BalanceConfig: &worker_pb.BalanceTaskConfig{
 				ImbalanceThreshold: float64(c.ImbalanceThreshold),
 				MinServerCount:     int32(c.MinServerCount),
+				IoBytePerSecond:    c.IoBytePerSecond,
 			},
 		},
 	}
@@ -147,6 +164,7 @@ func (c *Config) FromTaskPolicy(policy *worker_pb.TaskPolicy) error {
 	if balanceConfig := policy.GetBalanceConfig(); balanceConfig != nil {
 		c.ImbalanceThreshold = float64(balanceConfig.ImbalanceThreshold)
 		c.MinServerCount = int(balanceConfig.MinServerCount)
+		c.IoBytePerSecond = balanceConfig.IoBytePerSecond
 	}
 
 	return nil

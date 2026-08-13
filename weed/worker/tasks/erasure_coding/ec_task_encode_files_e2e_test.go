@@ -66,8 +66,8 @@ func TestEcEncodeLeavesRightFilesAndRemovesStubAndSource(t *testing.T) {
 
 	dataShards := int(erasure_coding.DataShardsCount)
 	totalShards := int(erasure_coding.DataShardsCount + erasure_coding.ParityShardsCount)
-	aShards := shardRange(0, dataShards)            // 0..DataShardsCount-1 on A
-	bShards := shardRange(dataShards, totalShards)  // parity range on B
+	aShards := shardRange(0, dataShards)           // 0..DataShardsCount-1 on A
+	bShards := shardRange(dataShards, totalShards) // parity range on B
 
 	task := NewErasureCodingTask("ec-e2e", addrA, volumeID, collection, dialOption)
 	params := &worker_pb.TaskParams{

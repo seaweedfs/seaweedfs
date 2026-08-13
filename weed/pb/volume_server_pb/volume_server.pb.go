@@ -3559,18 +3559,19 @@ func (x *VolumeEcShardsRebuildResponse) GetRebuiltShardIds() []uint32 {
 }
 
 type VolumeEcShardsCopyRequest struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	VolumeId       uint32                 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
-	Collection     string                 `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
-	ShardIds       []uint32               `protobuf:"varint,3,rep,packed,name=shard_ids,json=shardIds,proto3" json:"shard_ids,omitempty"`
-	CopyEcxFile    bool                   `protobuf:"varint,4,opt,name=copy_ecx_file,json=copyEcxFile,proto3" json:"copy_ecx_file,omitempty"`
-	SourceDataNode string                 `protobuf:"bytes,5,opt,name=source_data_node,json=sourceDataNode,proto3" json:"source_data_node,omitempty"`
-	CopyEcjFile    bool                   `protobuf:"varint,6,opt,name=copy_ecj_file,json=copyEcjFile,proto3" json:"copy_ecj_file,omitempty"`
-	CopyVifFile    bool                   `protobuf:"varint,7,opt,name=copy_vif_file,json=copyVifFile,proto3" json:"copy_vif_file,omitempty"`
-	DiskId         uint32                 `protobuf:"varint,8,opt,name=disk_id,json=diskId,proto3" json:"disk_id,omitempty"`                        // Target disk ID for storing EC shards
-	CopyEcsumFile  bool                   `protobuf:"varint,9,opt,name=copy_ecsum_file,json=copyEcsumFile,proto3" json:"copy_ecsum_file,omitempty"` // copy the bitrot checksum sidecar (.ecsum) when present; tolerant of a missing source (no-op), since this non-2PC path has no Prepare backstop
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	VolumeId        uint32                 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	Collection      string                 `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
+	ShardIds        []uint32               `protobuf:"varint,3,rep,packed,name=shard_ids,json=shardIds,proto3" json:"shard_ids,omitempty"`
+	CopyEcxFile     bool                   `protobuf:"varint,4,opt,name=copy_ecx_file,json=copyEcxFile,proto3" json:"copy_ecx_file,omitempty"`
+	SourceDataNode  string                 `protobuf:"bytes,5,opt,name=source_data_node,json=sourceDataNode,proto3" json:"source_data_node,omitempty"`
+	CopyEcjFile     bool                   `protobuf:"varint,6,opt,name=copy_ecj_file,json=copyEcjFile,proto3" json:"copy_ecj_file,omitempty"`
+	CopyVifFile     bool                   `protobuf:"varint,7,opt,name=copy_vif_file,json=copyVifFile,proto3" json:"copy_vif_file,omitempty"`
+	DiskId          uint32                 `protobuf:"varint,8,opt,name=disk_id,json=diskId,proto3" json:"disk_id,omitempty"`                                 // Target disk ID for storing EC shards
+	CopyEcsumFile   bool                   `protobuf:"varint,9,opt,name=copy_ecsum_file,json=copyEcsumFile,proto3" json:"copy_ecsum_file,omitempty"`          // copy the bitrot checksum sidecar (.ecsum) when present; tolerant of a missing source (no-op), since this non-2PC path has no Prepare backstop
+	IoBytePerSecond int64                  `protobuf:"varint,10,opt,name=io_byte_per_second,json=ioBytePerSecond,proto3" json:"io_byte_per_second,omitempty"` // limit the copy rate; 0 falls back to the server's maintenance rate
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *VolumeEcShardsCopyRequest) Reset() {
@@ -3664,6 +3665,13 @@ func (x *VolumeEcShardsCopyRequest) GetCopyEcsumFile() bool {
 		return x.CopyEcsumFile
 	}
 	return false
+}
+
+func (x *VolumeEcShardsCopyRequest) GetIoBytePerSecond() int64 {
+	if x != nil {
+		return x.IoBytePerSecond
+	}
+	return 0
 }
 
 type VolumeEcShardsCopyResponse struct {
@@ -7424,7 +7432,7 @@ const file_volume_server_proto_rawDesc = "" +
 	"collection\x122\n" +
 	"\x15unsafe_ignore_sidecar\x18\x03 \x01(\bR\x13unsafeIgnoreSidecar\"K\n" +
 	"\x1dVolumeEcShardsRebuildResponse\x12*\n" +
-	"\x11rebuilt_shard_ids\x18\x01 \x03(\rR\x0frebuiltShardIds\"\xcc\x02\n" +
+	"\x11rebuilt_shard_ids\x18\x01 \x03(\rR\x0frebuiltShardIds\"\xf9\x02\n" +
 	"\x19VolumeEcShardsCopyRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x1e\n" +
 	"\n" +
@@ -7436,7 +7444,9 @@ const file_volume_server_proto_rawDesc = "" +
 	"\rcopy_ecj_file\x18\x06 \x01(\bR\vcopyEcjFile\x12\"\n" +
 	"\rcopy_vif_file\x18\a \x01(\bR\vcopyVifFile\x12\x17\n" +
 	"\adisk_id\x18\b \x01(\rR\x06diskId\x12&\n" +
-	"\x0fcopy_ecsum_file\x18\t \x01(\bR\rcopyEcsumFile\"\x1c\n" +
+	"\x0fcopy_ecsum_file\x18\t \x01(\bR\rcopyEcsumFile\x12+\n" +
+	"\x12io_byte_per_second\x18\n" +
+	" \x01(\x03R\x0fioBytePerSecond\"\x1c\n" +
 	"\x1aVolumeEcShardsCopyResponse\"\xbe\x01\n" +
 	"\x1bVolumeEcShardsDeleteRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x1e\n" +

@@ -577,6 +577,7 @@ func decodeECBalanceTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParams, e
 	if targetDiskID < 0 || targetDiskID > math.MaxUint32 {
 		return nil, fmt.Errorf("decodeECBalanceTaskParams: invalid target_disk_id: %d", targetDiskID)
 	}
+	ioBytePerSecond := pluginworker.ReadInt64Config(job.Parameters, "io_byte_per_second", 0)
 
 	return &worker_pb.TaskParams{
 		TaskId:     job.JobId,
@@ -594,7 +595,8 @@ func decodeECBalanceTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParams, e
 		}},
 		TaskParams: &worker_pb.TaskParams_EcBalanceParams{
 			EcBalanceParams: &worker_pb.EcBalanceTaskParams{
-				TimeoutSeconds: 600,
+				TimeoutSeconds:  600,
+				IoBytePerSecond: ioBytePerSecond,
 			},
 		},
 	}, nil

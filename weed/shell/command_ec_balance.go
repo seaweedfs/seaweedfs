@@ -48,6 +48,7 @@ func (c *commandEcBalance) Do(args []string, commandEnv *CommandEnv, writer io.W
 	diskTypeStr := balanceCommand.String("diskType", "", "the disk type for EC shards (hdd, ssd, or empty for default hdd)")
 	volumeIdsStr := balanceCommand.String("volumeIds", "", "optional comma-separated list of ec volume ids to balance; defaults to all")
 	maxParallelization := balanceCommand.Int("maxParallelization", DefaultMaxParallelization, "run up to X tasks in parallel, whenever possible")
+	ioBytePerSecond := balanceCommand.Int64("ioBytePerSecond", 0, "limit the speed of each shard copy; 0 falls back to the volume server's maintenance rate")
 	applyBalancing := balanceCommand.Bool("apply", false, "apply the balancing plan")
 	// TODO: remove this alias
 	applyBalancingAlias := balanceCommand.Bool("force", false, "apply the balancing plan (alias for -apply)")
@@ -88,5 +89,5 @@ func (c *commandEcBalance) Do(args []string, commandEnv *CommandEnv, writer io.W
 
 	diskType := types.ToDiskType(*diskTypeStr)
 
-	return EcBalance(commandEnv, collections, *dc, rp, diskType, *maxParallelization, *applyBalancing, nil, volumeIds)
+	return EcBalance(commandEnv, collections, *dc, rp, diskType, *maxParallelization, *ioBytePerSecond, *applyBalancing, nil, volumeIds)
 }

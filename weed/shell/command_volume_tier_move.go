@@ -358,7 +358,7 @@ func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer i
 	// deleting old replicas to avoid data-loss risk.
 	// Use the explicit -toReplication if given, otherwise preserve the volume's
 	// existing replication from the source tier.
-	preserveServers, replicateErr := c.ensureReplicationFulfilled(commandEnv, writer, vid, toDiskType, toDataCenter, dst, *replicationString)
+	preserveServers, replicateErr := c.ensureReplicationFulfilled(commandEnv, writer, vid, toDiskType, toDataCenter, dst, *replicationString, ioBytePerSecond)
 	if replicateErr != nil {
 		// Replication not fully achieved — do NOT delete old replicas.
 		restoreSurvivingReplicasWritable(commandEnv, vid, locations, deletedSource)
@@ -413,7 +413,7 @@ func restoreSurvivingReplicasWritable(commandEnv *CommandEnv, vid needle.VolumeI
 // move so it can see the newly placed volume and find suitable destinations for additional copies.
 // It returns a set of server URLs (from the original locations) that host target-tier replicas
 // counted toward fulfillment, so the caller can avoid deleting them during cleanup.
-func (c *commandVolumeTierMove) ensureReplicationFulfilled(commandEnv *CommandEnv, writer io.Writer, vid needle.VolumeId, toDiskType types.DiskType, toDataCenter string, movedDst location, replicationString string) (preserveServers map[string]bool, err error) {
+func (c *commandVolumeTierMove) ensureReplicationFulfilled(commandEnv *CommandEnv, writer io.Writer, vid needle.VolumeId, toDiskType types.DiskType, toDataCenter string, movedDst location, replicationString string, ioBytePerSecond int64) (preserveServers map[string]bool, err error) {
 	preserveServers = make(map[string]bool)
 	// keeps an anchored pre-existing replica writable on the early-return paths
 	preserveServers[movedDst.dataNode.Id] = true
@@ -529,7 +529,7 @@ func (c *commandVolumeTierMove) ensureReplicationFulfilled(commandEnv *CommandEn
 		candidateDst := placeOf[dst.Id]
 		candidateAddress := pb.NewServerAddressFromDataNode(dst)
 
-		if copyErr := replicateVolumeToServer(context.Background(), commandEnv.option.GrpcDialOption, writer, vid, sourceAddress, candidateAddress, toDiskType.ReadableString()); copyErr != nil {
+		if copyErr := replicateVolumeToServer(context.Background(), commandEnv.option.GrpcDialOption, writer, vid, sourceAddress, candidateAddress, toDiskType.ReadableString(), ioBytePerSecond); copyErr != nil {
 			return nil, fmt.Errorf("replicate volume %d to %s: %v", vid, candidateDst.dataNode.Id, copyErr)
 		}
 

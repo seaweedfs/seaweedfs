@@ -124,7 +124,8 @@ func (t *ECBalanceTask) Execute(ctx context.Context, params *worker_pb.TaskParam
 		Target:     targetAddr,
 		TargetDisk: target.DiskId,
 	}, volume_move.EcMoveOptions{
-		Progress: t.reportProgress,
+		IoBytePerSecond: ecParams.GetIoBytePerSecond(),
+		Progress:        t.reportProgress,
 	})
 	if err != nil {
 		return err

@@ -1684,6 +1684,7 @@ type BalanceTaskParams struct {
 	TimeoutSeconds     int32                  `protobuf:"varint,2,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`               // Operation timeout
 	MaxConcurrentMoves int32                  `protobuf:"varint,3,opt,name=max_concurrent_moves,json=maxConcurrentMoves,proto3" json:"max_concurrent_moves,omitempty"` // Max concurrent moves in a batch job (0 = default 5)
 	Moves              []*BalanceMoveSpec     `protobuf:"bytes,4,rep,name=moves,proto3" json:"moves,omitempty"`                                                        // Batch: multiple volume moves in one job
+	IoBytePerSecond    int64                  `protobuf:"varint,5,opt,name=io_byte_per_second,json=ioBytePerSecond,proto3" json:"io_byte_per_second,omitempty"`        // limit each move's copy rate; 0 falls back to the volume server's maintenance rate
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -1744,6 +1745,13 @@ func (x *BalanceTaskParams) GetMoves() []*BalanceMoveSpec {
 		return x.Moves
 	}
 	return nil
+}
+
+func (x *BalanceTaskParams) GetIoBytePerSecond() int64 {
+	if x != nil {
+		return x.IoBytePerSecond
+	}
+	return 0
 }
 
 // ReplicationTaskParams for adding replicas
@@ -3050,6 +3058,7 @@ type BalanceTaskConfig struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
 	ImbalanceThreshold float64                `protobuf:"fixed64,1,opt,name=imbalance_threshold,json=imbalanceThreshold,proto3" json:"imbalance_threshold,omitempty"` // Threshold for triggering rebalancing (0.0-1.0)
 	MinServerCount     int32                  `protobuf:"varint,2,opt,name=min_server_count,json=minServerCount,proto3" json:"min_server_count,omitempty"`            // Minimum number of servers required for balancing
+	IoBytePerSecond    int64                  `protobuf:"varint,3,opt,name=io_byte_per_second,json=ioBytePerSecond,proto3" json:"io_byte_per_second,omitempty"`       // limit each move's copy rate; 0 falls back to the volume server's maintenance rate
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -3094,6 +3103,13 @@ func (x *BalanceTaskConfig) GetImbalanceThreshold() float64 {
 func (x *BalanceTaskConfig) GetMinServerCount() int32 {
 	if x != nil {
 		return x.MinServerCount
+	}
+	return 0
+}
+
+func (x *BalanceTaskConfig) GetIoBytePerSecond() int64 {
+	if x != nil {
+		return x.IoBytePerSecond
 	}
 	return 0
 }
@@ -3153,9 +3169,10 @@ type EcBalanceTaskParams struct {
 	// For a dedup move, the node that keeps the shard. The worker confirms this
 	// node really holds it before deleting the copy, so a topology entry naming a
 	// location that holds nothing cannot cause the last copy to be removed.
-	DedupKeepNode string `protobuf:"bytes,5,opt,name=dedup_keep_node,json=dedupKeepNode,proto3" json:"dedup_keep_node,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	DedupKeepNode   string `protobuf:"bytes,5,opt,name=dedup_keep_node,json=dedupKeepNode,proto3" json:"dedup_keep_node,omitempty"`
+	IoBytePerSecond int64  `protobuf:"varint,6,opt,name=io_byte_per_second,json=ioBytePerSecond,proto3" json:"io_byte_per_second,omitempty"` // limit each shard copy's rate; 0 falls back to the volume server's maintenance rate
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *EcBalanceTaskParams) Reset() {
@@ -3221,6 +3238,13 @@ func (x *EcBalanceTaskParams) GetDedupKeepNode() string {
 		return x.DedupKeepNode
 	}
 	return ""
+}
+
+func (x *EcBalanceTaskParams) GetIoBytePerSecond() int64 {
+	if x != nil {
+		return x.IoBytePerSecond
+	}
+	return 0
 }
 
 // EcShardMoveSpec describes a single EC shard move within a batch
@@ -3325,6 +3349,7 @@ type EcBalanceTaskConfig struct {
 	DiskType           string                 `protobuf:"bytes,4,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`                                 // Disk type filter
 	PreferredTags      []string               `protobuf:"bytes,5,rep,name=preferred_tags,json=preferredTags,proto3" json:"preferred_tags,omitempty"`                  // Preferred disk tags for placement
 	ReplicaPlacement   string                 `protobuf:"bytes,6,opt,name=replica_placement,json=replicaPlacement,proto3" json:"replica_placement,omitempty"`         // EC shard replica placement (e.g. "020"); empty falls back to master default replication
+	IoBytePerSecond    int64                  `protobuf:"varint,7,opt,name=io_byte_per_second,json=ioBytePerSecond,proto3" json:"io_byte_per_second,omitempty"`       // limit each shard copy's rate; 0 falls back to the volume server's maintenance rate
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -3399,6 +3424,13 @@ func (x *EcBalanceTaskConfig) GetReplicaPlacement() string {
 		return x.ReplicaPlacement
 	}
 	return ""
+}
+
+func (x *EcBalanceTaskConfig) GetIoBytePerSecond() int64 {
+	if x != nil {
+		return x.IoBytePerSecond
+	}
+	return 0
 }
 
 // MaintenanceTaskData represents complete task state for persistence
@@ -4118,13 +4150,14 @@ const file_worker_proto_rawDesc = "" +
 	"collection\x18\x04 \x01(\tR\n" +
 	"collection\x12\x1f\n" +
 	"\vvolume_size\x18\x05 \x01(\x04R\n" +
-	"volumeSize\"\xbf\x01\n" +
+	"volumeSize\"\xec\x01\n" +
 	"\x11BalanceTaskParams\x12\x1d\n" +
 	"\n" +
 	"force_move\x18\x01 \x01(\bR\tforceMove\x12'\n" +
 	"\x0ftimeout_seconds\x18\x02 \x01(\x05R\x0etimeoutSeconds\x120\n" +
 	"\x14max_concurrent_moves\x18\x03 \x01(\x05R\x12maxConcurrentMoves\x120\n" +
-	"\x05moves\x18\x04 \x03(\v2\x1a.worker_pb.BalanceMoveSpecR\x05moves\"k\n" +
+	"\x05moves\x18\x04 \x03(\v2\x1a.worker_pb.BalanceMoveSpecR\x05moves\x12+\n" +
+	"\x12io_byte_per_second\x18\x05 \x01(\x03R\x0fioBytePerSecond\"k\n" +
 	"\x15ReplicationTaskParams\x12#\n" +
 	"\rreplica_count\x18\x01 \x01(\x05R\freplicaCount\x12-\n" +
 	"\x12verify_consistency\x18\x02 \x01(\bR\x11verifyConsistency\"\x8e\x02\n" +
@@ -4254,18 +4287,20 @@ const file_worker_proto_rawDesc = "" +
 	"\x12min_volume_size_mb\x18\x03 \x01(\x05R\x0fminVolumeSizeMb\x12+\n" +
 	"\x11collection_filter\x18\x04 \x01(\tR\x10collectionFilter\x12%\n" +
 	"\x0epreferred_tags\x18\x05 \x03(\tR\rpreferredTags\x12+\n" +
-	"\x11replica_placement\x18\x06 \x01(\tR\x10replicaPlacement\"n\n" +
+	"\x11replica_placement\x18\x06 \x01(\tR\x10replicaPlacement\"\x9b\x01\n" +
 	"\x11BalanceTaskConfig\x12/\n" +
 	"\x13imbalance_threshold\x18\x01 \x01(\x01R\x12imbalanceThreshold\x12(\n" +
-	"\x10min_server_count\x18\x02 \x01(\x05R\x0eminServerCount\"I\n" +
+	"\x10min_server_count\x18\x02 \x01(\x05R\x0eminServerCount\x12+\n" +
+	"\x12io_byte_per_second\x18\x03 \x01(\x03R\x0fioBytePerSecond\"I\n" +
 	"\x15ReplicationTaskConfig\x120\n" +
-	"\x14target_replica_count\x18\x01 \x01(\x05R\x12targetReplicaCount\"\xe6\x01\n" +
+	"\x14target_replica_count\x18\x01 \x01(\x05R\x12targetReplicaCount\"\x93\x02\n" +
 	"\x13EcBalanceTaskParams\x12\x1b\n" +
 	"\tdisk_type\x18\x01 \x01(\tR\bdiskType\x12/\n" +
 	"\x13max_parallelization\x18\x02 \x01(\x05R\x12maxParallelization\x12'\n" +
 	"\x0ftimeout_seconds\x18\x03 \x01(\x05R\x0etimeoutSeconds\x120\n" +
 	"\x05moves\x18\x04 \x03(\v2\x1a.worker_pb.EcShardMoveSpecR\x05moves\x12&\n" +
-	"\x0fdedup_keep_node\x18\x05 \x01(\tR\rdedupKeepNode\"\xf7\x01\n" +
+	"\x0fdedup_keep_node\x18\x05 \x01(\tR\rdedupKeepNode\x12+\n" +
+	"\x12io_byte_per_second\x18\x06 \x01(\x03R\x0fioBytePerSecond\"\xf7\x01\n" +
 	"\x0fEcShardMoveSpec\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x19\n" +
 	"\bshard_id\x18\x02 \x01(\rR\ashardId\x12\x1e\n" +
@@ -4277,14 +4312,15 @@ const file_worker_proto_rawDesc = "" +
 	"\x0esource_disk_id\x18\x05 \x01(\rR\fsourceDiskId\x12\x1f\n" +
 	"\vtarget_node\x18\x06 \x01(\tR\n" +
 	"targetNode\x12$\n" +
-	"\x0etarget_disk_id\x18\a \x01(\rR\ftargetDiskId\"\x8e\x02\n" +
+	"\x0etarget_disk_id\x18\a \x01(\rR\ftargetDiskId\"\xbb\x02\n" +
 	"\x13EcBalanceTaskConfig\x12/\n" +
 	"\x13imbalance_threshold\x18\x01 \x01(\x01R\x12imbalanceThreshold\x12(\n" +
 	"\x10min_server_count\x18\x02 \x01(\x05R\x0eminServerCount\x12+\n" +
 	"\x11collection_filter\x18\x03 \x01(\tR\x10collectionFilter\x12\x1b\n" +
 	"\tdisk_type\x18\x04 \x01(\tR\bdiskType\x12%\n" +
 	"\x0epreferred_tags\x18\x05 \x03(\tR\rpreferredTags\x12+\n" +
-	"\x11replica_placement\x18\x06 \x01(\tR\x10replicaPlacement\"\xae\a\n" +
+	"\x11replica_placement\x18\x06 \x01(\tR\x10replicaPlacement\x12+\n" +
+	"\x12io_byte_per_second\x18\a \x01(\x03R\x0fioBytePerSecond\"\xae\a\n" +
 	"\x13MaintenanceTaskData\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04type\x18\x02 \x01(\tR\x04type\x12\x1a\n" +

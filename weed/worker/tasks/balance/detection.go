@@ -400,7 +400,7 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 				eligibleTargets[s] = c
 			}
 		}
-		task, destServerID := createBalanceTask(diskType, selectedVolume, clusterInfo, minServer, eligibleTargets)
+		task, destServerID := createBalanceTask(diskType, selectedVolume, clusterInfo, minServer, eligibleTargets, balanceConfig.IoBytePerSecond)
 		if task == nil {
 			glog.V(1).Infof("BALANCE [%s]: Cannot plan task for volume %d on server %s, trying next volume", diskType, selectedVolume.VolumeID, maxServer)
 			continue
@@ -438,7 +438,7 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 // allowedServers is the set of servers that passed DC/rack/node filtering in
 // the detection loop. When non-empty, the fallback destination planner is
 // checked against this set so that filter scope cannot leak.
-func createBalanceTask(diskType string, selectedVolume *types.VolumeHealthMetrics, clusterInfo *types.ClusterInfo, targetServer string, allowedServers map[string]int) (*types.TaskDetectionResult, string) {
+func createBalanceTask(diskType string, selectedVolume *types.VolumeHealthMetrics, clusterInfo *types.ClusterInfo, targetServer string, allowedServers map[string]int, ioBytePerSecond int64) (*types.TaskDetectionResult, string) {
 	taskID := fmt.Sprintf("balance_vol_%d_%d", selectedVolume.VolumeID, time.Now().UnixNano())
 
 	task := &types.TaskDetectionResult{
@@ -566,8 +566,9 @@ func createBalanceTask(diskType string, selectedVolume *types.VolumeHealthMetric
 
 		TaskParams: &worker_pb.TaskParams_BalanceParams{
 			BalanceParams: &worker_pb.BalanceTaskParams{
-				ForceMove:      false,
-				TimeoutSeconds: 600, // 10 minutes default
+				ForceMove:       false,
+				TimeoutSeconds:  600, // 10 minutes default
+				IoBytePerSecond: ioBytePerSecond,
 			},
 		},
 	}

@@ -80,13 +80,13 @@ func TestEmbeddedSourceAddressValidated(t *testing.T) {
 
 	ops := map[string]func(m *Mover) error{
 		"ReplicateVolume": func(m *Mover) error {
-			return m.ReplicateVolume(context.Background(), 7, bad, dstAddr, "", nil)
+			return m.ReplicateVolume(context.Background(), 7, bad, dstAddr, "", 0, nil)
 		},
 		"TailVolume": func(m *Mover) error {
 			return m.TailVolume(context.Background(), 7, bad, dstAddr, 0, time.Second)
 		},
 		"CopyAndMountEcShards": func(m *Mover) error {
-			return m.CopyAndMountEcShards(context.Background(), 7, "c1", []erasure_coding.ShardId{3}, bad, dstAddr, 0, nil)
+			return m.CopyAndMountEcShards(context.Background(), 7, "c1", []erasure_coding.ShardId{3}, bad, dstAddr, 0, 0, nil)
 		},
 		"MoveEcShards": func(m *Mover) error {
 			move := ecMove(3)
@@ -598,6 +598,18 @@ func TestLiveMoveVolumeReadonlyMarkFailureRestores(t *testing.T) {
 	calls := cluster.callList()
 	if calls[len(calls)-1] != "src:8080 VolumeMarkWritable" {
 		t.Fatalf("source writability not restored after failed readonly mark: %v", calls)
+	}
+}
+
+func TestReplicateVolumePropagatesThroughput(t *testing.T) {
+	cluster := newFakeCluster()
+
+	if err := cluster.mover().ReplicateVolume(context.Background(), 7, srcAddr, dstAddr, "ssd", 55, nil); err != nil {
+		t.Fatalf("ReplicateVolume: %v", err)
+	}
+	copyReq := cluster.copyReqs[0]
+	if copyReq.IoBytePerSecond != 55 || copyReq.DiskType != "ssd" {
+		t.Errorf("replicate request not propagated: %+v", copyReq)
 	}
 }
 

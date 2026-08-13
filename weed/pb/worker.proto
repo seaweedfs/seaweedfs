@@ -220,6 +220,7 @@ message BalanceTaskParams {
   int32 timeout_seconds = 2;              // Operation timeout
   int32 max_concurrent_moves = 3;         // Max concurrent moves in a batch job (0 = default 5)
   repeated BalanceMoveSpec moves = 4;     // Batch: multiple volume moves in one job
+  int64 io_byte_per_second = 5;           // limit each move's copy rate; 0 falls back to the volume server's maintenance rate
 }
 
 // ReplicationTaskParams for adding replicas
@@ -382,6 +383,7 @@ message ErasureCodingTaskConfig {
 message BalanceTaskConfig {
   double imbalance_threshold = 1;   // Threshold for triggering rebalancing (0.0-1.0)
   int32 min_server_count = 2;       // Minimum number of servers required for balancing
+  int64 io_byte_per_second = 3;     // limit each move's copy rate; 0 falls back to the volume server's maintenance rate
 }
 
 // ReplicationTaskConfig contains replication-specific configuration
@@ -399,6 +401,7 @@ message EcBalanceTaskParams {
   // node really holds it before deleting the copy, so a topology entry naming a
   // location that holds nothing cannot cause the last copy to be removed.
   string dedup_keep_node = 5;
+  int64 io_byte_per_second = 6;            // limit each shard copy's rate; 0 falls back to the volume server's maintenance rate
 }
 
 // EcShardMoveSpec describes a single EC shard move within a batch
@@ -420,6 +423,7 @@ message EcBalanceTaskConfig {
   string disk_type = 4;                   // Disk type filter
   repeated string preferred_tags = 5;     // Preferred disk tags for placement
   string replica_placement = 6;           // EC shard replica placement (e.g. "020"); empty falls back to master default replication
+  int64 io_byte_per_second = 7;           // limit each shard copy's rate; 0 falls back to the volume server's maintenance rate
 }
 
 // ========== Task Persistence Messages ==========

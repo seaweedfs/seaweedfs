@@ -542,7 +542,7 @@ func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *Co
 	err := replicateVolumeToServer(context.Background(), commandEnv.option.GrpcDialOption, writer, needle.VolumeId(replica.info.Id),
 		pb.NewServerAddressFromDataNode(replica.location.dataNode),
 		pb.NewServerAddressFromDataNode(dst.dataNode),
-		replica.info.DiskType)
+		replica.info.DiskType, 0)
 	scheduler.releaseTarget(dst, replica.info.DiskType, err == nil)
 	if err != nil {
 		return false, err

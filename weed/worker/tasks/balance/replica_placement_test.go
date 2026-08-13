@@ -240,7 +240,7 @@ func TestCreateBalanceTask_FallbackSelectsValidCompositeDestination(t *testing.T
 	task, destination := createBalanceTask("hdd", volumes[0], clusterInfo, "node-b", map[string]int{
 		"node-b": 0,
 		"node-c": 0,
-	})
+	}, 0)
 	if task == nil {
 		t.Fatal("expected a balance task")
 	}

@@ -159,8 +159,8 @@ func markVolumeReplicasWritable(ctx context.Context, grpcDialOption grpc.DialOpt
 }
 
 // replicateVolumeToServer copies a volume from sourceAddress to targetAddress via the VolumeCopy gRPC stream.
-func replicateVolumeToServer(ctx context.Context, grpcDialOption grpc.DialOption, writer io.Writer, volumeId needle.VolumeId, sourceAddress, targetAddress pb.ServerAddress, diskType string) error {
-	return volume_move.NewMover(grpcDialOption).ReplicateVolume(ctx, volumeId, sourceAddress, targetAddress, diskType, writer)
+func replicateVolumeToServer(ctx context.Context, grpcDialOption grpc.DialOption, writer io.Writer, volumeId needle.VolumeId, sourceAddress, targetAddress pb.ServerAddress, diskType string, ioBytePerSecond int64) error {
+	return volume_move.NewMover(grpcDialOption).ReplicateVolume(ctx, volumeId, sourceAddress, targetAddress, diskType, ioBytePerSecond, writer)
 }
 
 // configureVolumeReplication sets the replication setting on a volume at the given server.
