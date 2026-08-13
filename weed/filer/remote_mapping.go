@@ -12,10 +12,12 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// FindMountedRemoteMapping returns the mount point covering dir and its remote location.
+// FindMountedRemoteMapping returns the mount point covering dir and its remote
+// location. Matches on path components so a sibling name sharing a prefix does
+// not collide, and the longest mount wins when mounts nest.
 func FindMountedRemoteMapping(mappings *remote_pb.RemoteStorageMapping, dir string) (localMountedDir string, remoteStorageMountedLocation *remote_pb.RemoteStorageLocation, err error) {
 	for k, loc := range mappings.Mappings {
-		if strings.HasPrefix(dir, k) {
+		if (dir == k || strings.HasPrefix(dir, strings.TrimSuffix(k, "/")+"/")) && len(k) > len(localMountedDir) {
 			localMountedDir, remoteStorageMountedLocation = k, loc
 		}
 	}
