@@ -1198,19 +1198,9 @@ func (r *Plugin) executeScheduledJobWithExecutor(
 		// default execution timeout. This lets handlers like vacuum scale
 		// the timeout based on volume size so large volumes are not killed.
 		timeout := policy.ExecutionTimeout
-		estimated := time.Duration(0)
-		if job.Parameters != nil {
-			if est, ok := job.Parameters["estimated_runtime_seconds"]; ok {
-				if v := est.GetInt64Value(); v > 0 {
-					estimated = time.Duration(v) * time.Second
-					if estimated > maxEstimatedRuntimeCap {
-						estimated = maxEstimatedRuntimeCap
-					}
-					if estimated > timeout {
-						timeout = estimated
-					}
-				}
-			}
+		estimated := scheduledEstimatedRuntime(job.Parameters)
+		if estimated > timeout {
+			timeout = estimated
 		}
 		execCtx, cancel := scheduledAttemptContext(ctx, timeout, estimated)
 		_, err := r.executeJobWithExecutor(execCtx, executor, job, clusterContext, int32(attempt))
@@ -1245,6 +1235,24 @@ func (r *Plugin) executeScheduledJobWithExecutor(
 		lastErr = fmt.Errorf("execution failed without an explicit error")
 	}
 	return lastErr
+}
+
+// scheduledEstimatedRuntime returns the job's declared estimated runtime,
+// capped at maxEstimatedRuntimeCap. The seconds are capped before the
+// Duration conversion so oversized values cannot overflow.
+func scheduledEstimatedRuntime(parameters map[string]*plugin_pb.ConfigValue) time.Duration {
+	est, ok := parameters["estimated_runtime_seconds"]
+	if !ok {
+		return 0
+	}
+	v := est.GetInt64Value()
+	if v <= 0 {
+		return 0
+	}
+	if v > int64(maxEstimatedRuntimeCap/time.Second) {
+		v = int64(maxEstimatedRuntimeCap / time.Second)
+	}
+	return time.Duration(v) * time.Second
 }
 
 // scheduledAttemptContext bounds one execution attempt: its own timeout,

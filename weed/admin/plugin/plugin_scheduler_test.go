@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -781,6 +782,30 @@ func TestScheduledAttemptContextDrainGrace(t *testing.T) {
 	ctx, cancel = scheduledAttemptContext(context.Background(), 2*time.Hour, 0)
 	assertDeadline(t, ctx, time.Now().Add(2*time.Hour))
 	cancel()
+}
+
+func TestScheduledEstimatedRuntime(t *testing.T) {
+	t.Parallel()
+
+	estimate := func(v int64) map[string]*plugin_pb.ConfigValue {
+		return map[string]*plugin_pb.ConfigValue{
+			"estimated_runtime_seconds": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: v}},
+		}
+	}
+
+	if got := scheduledEstimatedRuntime(nil); got != 0 {
+		t.Fatalf("nil parameters: got=%v want=0", got)
+	}
+	if got := scheduledEstimatedRuntime(estimate(-5)); got != 0 {
+		t.Fatalf("negative estimate: got=%v want=0", got)
+	}
+	if got := scheduledEstimatedRuntime(estimate(600)); got != 10*time.Minute {
+		t.Fatalf("normal estimate: got=%v want=10m", got)
+	}
+	// Oversized seconds cap before the Duration conversion can overflow.
+	if got := scheduledEstimatedRuntime(estimate(math.MaxInt64)); got != maxEstimatedRuntimeCap {
+		t.Fatalf("oversized estimate: got=%v want=%v", got, maxEstimatedRuntimeCap)
+	}
 }
 
 func TestDispatchScheduledProposalsDrainsStartedJobOnWindowClose(t *testing.T) {
