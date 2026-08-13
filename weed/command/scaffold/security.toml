@@ -77,6 +77,12 @@ expires_after_seconds = 10           # seconds
 # All gRPC TLS authentications are mutual (mTLS)
 # The values for ca, cert, and key are paths to the certificate/key files
 # The host name is not checked, so the certificate files can be shared
+# Each [grpc.<component>] section also accepts optional client_cert/client_key,
+# presented when that component dials other servers. Set them when your CA
+# issues separate serverAuth-only and clientAuth-only certificates; when unset,
+# the component reuses cert/key for both directions.
+# If client and server certificates come from different issuing CAs, put both
+# CA certificates in the ca PEM file.
 [grpc]
 ca = ""
 # Set wildcard domain for enable TLS authentication by common names
@@ -87,6 +93,8 @@ allowed_wildcard_domain = "" # .mycompany.com
 [grpc.volume]
 cert = ""
 key = ""
+client_cert = ""
+client_key = ""
 allowed_commonNames = ""    # comma-separated SSL certificate common names
 
 # Master server gRPC options (server-side)
@@ -94,6 +102,8 @@ allowed_commonNames = ""    # comma-separated SSL certificate common names
 [grpc.master]
 cert = ""
 key = ""
+client_cert = ""
+client_key = ""
 allowed_commonNames = ""    # comma-separated SSL certificate common names
 
 # Filer server gRPC options (server-side)
@@ -101,6 +111,8 @@ allowed_commonNames = ""    # comma-separated SSL certificate common names
 [grpc.filer]
 cert = ""
 key = ""
+client_cert = ""
+client_key = ""
 allowed_commonNames = ""    # comma-separated SSL certificate common names
 
 # S3 server gRPC options (server-side)
@@ -108,31 +120,43 @@ allowed_commonNames = ""    # comma-separated SSL certificate common names
 [grpc.s3]
 cert = ""
 key = ""
+client_cert = ""
+client_key = ""
 allowed_commonNames = ""    # comma-separated SSL certificate common names
 
 [grpc.msg_broker]
 cert = ""
 key = ""
+client_cert = ""
+client_key = ""
 allowed_commonNames = ""    # comma-separated SSL certificate common names
 
 [grpc.msg_agent]
 cert = ""
 key = ""
+client_cert = ""
+client_key = ""
 allowed_commonNames = ""    # comma-separated SSL certificate common names
 
 [grpc.admin]
 cert = ""
 key = ""
+client_cert = ""
+client_key = ""
 allowed_commonNames = ""    # comma-separated SSL certificate common names
 
 [grpc.worker]
 cert = ""
 key = ""
+client_cert = ""
+client_key = ""
 allowed_commonNames = ""    # comma-separated SSL certificate common names
 
 [grpc.mq]
 cert = ""
 key = ""
+client_cert = ""
+client_key = ""
 allowed_commonNames = ""    # comma-separated SSL certificate common names
 
 # gRPC client configuration for outgoing gRPC connections

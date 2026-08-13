@@ -33,23 +33,31 @@ impl Error for GrpcClientError {}
 pub fn load_outgoing_grpc_tls(
     config: &VolumeServerConfig,
 ) -> Result<Option<OutgoingGrpcTlsConfig>, GrpcClientError> {
-    if config.grpc_cert_file.is_empty()
-        || config.grpc_key_file.is_empty()
-        || config.grpc_ca_file.is_empty()
+    // prefer a dedicated client certificate: CAs may issue certs with only one of the serverAuth/clientAuth EKUs
+    let (cert_file, key_file) = if !config.grpc_client_cert_file.is_empty()
+        && !config.grpc_client_key_file.is_empty()
     {
+        (&config.grpc_client_cert_file, &config.grpc_client_key_file)
+    } else {
+        if !config.grpc_client_cert_file.is_empty() || !config.grpc_client_key_file.is_empty() {
+            tracing::warn!("grpc.volume.client_cert and grpc.volume.client_key must both be set, falling back to grpc.volume.cert and grpc.volume.key");
+        }
+        (&config.grpc_cert_file, &config.grpc_key_file)
+    };
+    if cert_file.is_empty() || key_file.is_empty() || config.grpc_ca_file.is_empty() {
         return Ok(None);
     }
 
-    let cert_pem = std::fs::read_to_string(&config.grpc_cert_file).map_err(|e| {
+    let cert_pem = std::fs::read_to_string(cert_file).map_err(|e| {
         GrpcClientError(format!(
             "Failed to read outgoing gRPC cert '{}': {}",
-            config.grpc_cert_file, e
+            cert_file, e
         ))
     })?;
-    let key_pem = std::fs::read_to_string(&config.grpc_key_file).map_err(|e| {
+    let key_pem = std::fs::read_to_string(key_file).map_err(|e| {
         GrpcClientError(format!(
             "Failed to read outgoing gRPC key '{}': {}",
-            config.grpc_key_file, e
+            key_file, e
         ))
     })?;
     let ca_pem = std::fs::read_to_string(&config.grpc_ca_file).map_err(|e| {
@@ -236,6 +244,8 @@ mod tests {
             https_client_ca_file: String::new(),
             grpc_cert_file: String::new(),
             grpc_key_file: String::new(),
+            grpc_client_cert_file: String::new(),
+            grpc_client_key_file: String::new(),
             grpc_ca_file: String::new(),
             grpc_allowed_wildcard_domain: String::new(),
             grpc_volume_allowed_common_names: vec![],
@@ -263,6 +273,45 @@ mod tests {
         let mut config = sample_config();
         config.grpc_cert_file = "/tmp/client.pem".to_string();
         assert!(load_outgoing_grpc_tls(&config).unwrap().is_none());
+    }
+
+    fn write_pem_files(dir: &tempfile::TempDir, config: &mut VolumeServerConfig) {
+        let write = |name: &str, content: &str| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, content).unwrap();
+            path.to_str().unwrap().to_string()
+        };
+        config.grpc_cert_file = write("server.pem", "server-cert");
+        config.grpc_key_file = write("server.key", "server-key");
+        config.grpc_ca_file = write("ca.pem", "ca");
+    }
+
+    #[test]
+    fn test_load_outgoing_grpc_tls_prefers_client_cert() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut config = sample_config();
+        write_pem_files(&dir, &mut config);
+        let client_cert = dir.path().join("client.pem");
+        let client_key = dir.path().join("client.key");
+        std::fs::write(&client_cert, "client-cert").unwrap();
+        std::fs::write(&client_key, "client-key").unwrap();
+        config.grpc_client_cert_file = client_cert.to_str().unwrap().to_string();
+        config.grpc_client_key_file = client_key.to_str().unwrap().to_string();
+
+        let tls = load_outgoing_grpc_tls(&config).unwrap().unwrap();
+        assert_eq!(tls.cert_pem, "client-cert");
+        assert_eq!(tls.key_pem, "client-key");
+    }
+
+    #[test]
+    fn test_load_outgoing_grpc_tls_falls_back_to_server_cert() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut config = sample_config();
+        write_pem_files(&dir, &mut config);
+
+        let tls = load_outgoing_grpc_tls(&config).unwrap().unwrap();
+        assert_eq!(tls.cert_pem, "server-cert");
+        assert_eq!(tls.key_pem, "server-key");
     }
 
     #[test]
