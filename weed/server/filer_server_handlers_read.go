@@ -237,11 +237,16 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 				if errors.Is(err, filer_pb.ErrNotFound) || status.Code(err) == codes.NotFound {
 					return nil, filer_pb.ErrNotFound
 				}
-				glog.V(1).InfofCtx(ctx, "stream %s from remote while caching: %v", entry.FullPath, err)
-				if streamFn, remoteErr := fs.streamFromRemote(ctx, dir, name, offset, size); remoteErr == nil {
-					return streamFn, nil
-				} else {
-					glog.WarningfCtx(ctx, "stream %s from remote: %v", entry.FullPath, remoteErr)
+				// A multipart Range prepares every part before writing any, which
+				// would hold one open origin connection per part and leak them
+				// when a later prepare fails; keep those on the 503 retry path.
+				if !strings.Contains(r.Header.Get("Range"), ",") {
+					glog.V(1).InfofCtx(ctx, "stream %s from remote while caching: %v", entry.FullPath, err)
+					if streamFn, remoteErr := fs.streamFromRemote(ctx, dir, name, offset, size); remoteErr == nil {
+						return streamFn, nil
+					} else {
+						glog.WarningfCtx(ctx, "stream %s from remote: %v", entry.FullPath, remoteErr)
+					}
 				}
 				// Origin unreadable: tag with sentinel so caller maps to 503 + Retry-After.
 				glog.WarningfCtx(ctx, "CacheRemoteObjectToLocalCluster %s: %v", entry.FullPath, err)
