@@ -21,6 +21,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -3145,18 +3146,7 @@ var remoteCacheStreamingTimeoutNS = int64(20 * time.Second)
 // between transient errors (timeout) and permanent errors (not found, permission denied).
 // The filer continues caching on detached context, so retry finds cached chunks.
 func (s3a *S3ApiServer) cacheRemoteObjectForStreamingWithShortTimeout(r *http.Request, entry *filer_pb.Entry, bucket, object, versionId string) (*filer_pb.Entry, error) {
-	// Adaptive timeout: smaller files can afford to wait longer since cache completes faster
-	pollTimeout := 5 * time.Second
-	if entry.RemoteEntry != nil && entry.RemoteEntry.RemoteSize > 0 {
-		// For very large files (>500MB), use shorter timeout to improve TTFB
-		// For smaller files, allow longer to increase cache hit rate
-		remoteSize := entry.RemoteEntry.RemoteSize
-		if remoteSize > 500*1024*1024 {
-			pollTimeout = 2 * time.Second
-		} else if remoteSize < 50*1024*1024 {
-			pollTimeout = 10 * time.Second
-		}
-	}
+	pollTimeout := remote_storage.CacheWaitTimeout(entry.GetRemoteEntry().GetRemoteSize())
 
 	cacheCtx, cancel := context.WithTimeout(r.Context(), pollTimeout)
 	defer cancel()
