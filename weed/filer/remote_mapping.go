@@ -3,6 +3,7 @@ package filer
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -10,6 +11,19 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 )
+
+// FindMountedRemoteMapping returns the mount point covering dir and its remote location.
+func FindMountedRemoteMapping(mappings *remote_pb.RemoteStorageMapping, dir string) (localMountedDir string, remoteStorageMountedLocation *remote_pb.RemoteStorageLocation, err error) {
+	for k, loc := range mappings.Mappings {
+		if strings.HasPrefix(dir, k) {
+			localMountedDir, remoteStorageMountedLocation = k, loc
+		}
+	}
+	if localMountedDir == "" {
+		return "", nil, fmt.Errorf("%s is not mounted", dir)
+	}
+	return
+}
 
 func ReadMountMappings(grpcDialOption grpc.DialOption, filerAddress pb.ServerAddress) (mappings *remote_pb.RemoteStorageMapping, readErr error) {
 	var oldContent []byte

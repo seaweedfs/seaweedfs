@@ -164,15 +164,9 @@ func DetectMountInfo(grpcDialOption grpc.DialOption, filerAddress pb.ServerAddre
 		return mappings, "", nil, nil, fmt.Errorf("need to specify '-dir' option")
 	}
 
-	var localMountedDir string
-	var remoteStorageMountedLocation *remote_pb.RemoteStorageLocation
-	for k, loc := range mappings.Mappings {
-		if strings.HasPrefix(dir, k) {
-			localMountedDir, remoteStorageMountedLocation = k, loc
-		}
-	}
-	if localMountedDir == "" {
-		return mappings, localMountedDir, remoteStorageMountedLocation, nil, fmt.Errorf("%s is not mounted", dir)
+	localMountedDir, remoteStorageMountedLocation, findErr := FindMountedRemoteMapping(mappings, dir)
+	if findErr != nil {
+		return mappings, localMountedDir, remoteStorageMountedLocation, nil, findErr
 	}
 
 	// find remote storage configuration
