@@ -488,6 +488,51 @@ func TestLoopProcessLogDataWithOffset_StopTime(t *testing.T) {
 	t.Logf("Loop correctly exited for past stopTsNs in %v (waitForDataFn called %d times)", elapsed, callCount)
 }
 
+// TestLoopProcessLogData_BoundedEmptyBufferTerminates: a bounded subscription
+// (stopTsNs != 0) against a buffer that has never received a write - so
+// ReadFromBuffer returns ResumeFromDiskError - with no ReadFromDiskFn must
+// terminate like the caught-up path does, not park on the notification loop
+// forever. This is the filer SubscribeMetadata configuration: both meta log
+// buffers are built with ReadFromDiskFn == nil, and a freshly restarted filer
+// that has serviced zero metadata writes wedges every UntilNs-bounded
+// subscriber while heartbeats keep the stream looking alive.
+func TestLoopProcessLogData_BoundedEmptyBufferTerminates(t *testing.T) {
+	logBuffer := NewLogBuffer("test", time.Minute, nil, nil, nil)
+	defer logBuffer.ShutdownLogBuffer()
+
+	// Client stays connected, like the filer's heartbeat-sending closure.
+	waitForDataFn := func() bool { return true }
+	eachLogEntryFn := func(logEntry *filer_pb.LogEntry) (bool, error) {
+		t.Error("no entries should be delivered from an empty buffer")
+		return false, nil
+	}
+
+	startPosition := NewMessagePosition(time.Now().Add(-time.Hour).UnixNano(), EvictionGatedOffset)
+	stopTsNs := time.Now().UnixNano()
+
+	done := make(chan struct{})
+	var isDone bool
+	var err error
+	go func() {
+		_, isDone, err = logBuffer.LoopProcessLogData("bounded-empty", startPosition, stopTsNs, waitForDataFn, eachLogEntryFn)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		if !isDone {
+			t.Errorf("expected isDone=true for a bounded read of an empty buffer, got false")
+		}
+		// A leaked ResumeFromDiskError would send the filer's outer loop into
+		// its gap machinery, which parks the bounded subscriber all over again.
+		if err != nil {
+			t.Errorf("expected err=nil for a bounded read of an empty buffer, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("bounded LoopProcessLogData wedged on an empty buffer instead of terminating")
+	}
+}
+
 func TestLoopProcessLogData_SlowConsumerFallsBehind(t *testing.T) {
 	flushFn := func(logBuffer *LogBuffer, startTime, stopTime time.Time, buf []byte, minOffset, maxOffset int64) {}
 	logBuffer := NewLogBuffer("test", 1*time.Minute, flushFn, nil, nil)
