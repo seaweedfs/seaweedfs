@@ -21,6 +21,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // Validates the preconditions. Returns true if GET/HEAD operation should not proceed.
@@ -229,10 +231,11 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 				if ctxErr := ctx.Err(); ctxErr != nil {
 					return nil, ctxErr
 				}
-				// Entry vanished mid-cache: forward NotFound so caller maps to 404,
-				// not the 503 retry-loop.
-				if errors.Is(err, filer_pb.ErrNotFound) {
-					return nil, err
+				// Entry vanished mid-cache: forward the sentinel so caller maps to
+				// 404, not the 503 retry-loop. The cache RPC returns it as a
+				// canonical status, which errors.Is cannot see.
+				if errors.Is(err, filer_pb.ErrNotFound) || status.Code(err) == codes.NotFound {
+					return nil, filer_pb.ErrNotFound
 				}
 				glog.V(1).InfofCtx(ctx, "stream %s from remote while caching: %v", entry.FullPath, err)
 				if streamFn, remoteErr := fs.streamFromRemote(ctx, dir, name, offset, size); remoteErr == nil {

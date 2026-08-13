@@ -7,14 +7,20 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
-// isFilerListNotFound reports whether a filer list error is a not-found.
-// Unlike lookups (normalized in filer_pb.LookupEntry), list errors cross gRPC
-// as raw status errors, so the sentinel survives only as text. Callers must
-// pass errors from paths without user-controlled segments that could spoof it.
-func isFilerListNotFound(err error) bool {
-	return errors.Is(err, filer_pb.ErrNotFound) || strings.Contains(err.Error(), filer_pb.ErrNotFound.Error())
+// isFilerNotFound reports whether a filer error is a not-found.
+// Unlike lookups (normalized in filer_pb.LookupEntry), list and cache errors
+// cross gRPC as raw status errors, so the sentinel survives as codes.NotFound
+// or only as text. Callers must pass errors from paths without user-controlled
+// segments that could spoof it.
+func isFilerNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, filer_pb.ErrNotFound) || status.Code(err) == codes.NotFound || strings.Contains(err.Error(), filer_pb.ErrNotFound.Error())
 }
 
 // ErrorHandlers provide common error handling patterns for S3 API operations

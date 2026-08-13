@@ -760,14 +760,23 @@ func TestS3ColdReadStreamsFromOrigin(t *testing.T) {
 	})
 
 	t.Run("entry not found stays 404", func(t *testing.T) {
-		cacheErr := status.Error(codes.NotFound, "entry vanished")
-		s3a := newRemoteCacheTestServer(startStreamThroughFiler(t, "faketest-notfound", cacheErr))
-		w := httptest.NewRecorder()
-		r := httptest.NewRequest(http.MethodGet, "/mybucket/dir/obj.bin", nil)
+		notFoundForms := map[string]error{
+			"canonical status": status.Error(codes.NotFound, "entry vanished"),
+			// the filer returns the raw sentinel, which crosses gRPC as
+			// codes.Unknown with only the message surviving
+			"raw sentinel": filer_pb.ErrNotFound,
+		}
+		for name, cacheErr := range notFoundForms {
+			t.Run(name, func(t *testing.T) {
+				s3a := newRemoteCacheTestServer(startStreamThroughFiler(t, "faketest-notfound-"+name[:3], cacheErr))
+				w := httptest.NewRecorder()
+				r := httptest.NewRequest(http.MethodGet, "/mybucket/dir/obj.bin", nil)
 
-		err := s3a.streamFromVolumeServers(w, r, entry(), "", "mybucket", "dir/obj.bin", "")
+				err := s3a.streamFromVolumeServers(w, r, entry(), "", "mybucket", "dir/obj.bin", "")
 
-		require.Error(t, err)
-		assert.Equal(t, http.StatusNotFound, w.Code)
+				require.Error(t, err)
+				assert.Equal(t, http.StatusNotFound, w.Code)
+			})
+		}
 	})
 }

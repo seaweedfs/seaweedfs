@@ -1020,7 +1020,7 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 				chunks = cachedEntry.GetChunks()
 				entry = cachedEntry
 				glog.V(1).Infof("streamFromVolumeServers: successfully cached remote object, got %d chunks", len(chunks))
-			} else if status.Code(cacheErr) == codes.NotFound {
+			} else if isFilerNotFound(cacheErr) {
 				// Authoritative: the entry vanished; the origin cannot resurrect it
 				glog.Errorf("streamFromVolumeServers: entry not found while caching %s/%s: %v", bucket, object, cacheErr)
 				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)

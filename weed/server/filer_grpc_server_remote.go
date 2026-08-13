@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -16,6 +17,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -47,6 +50,11 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 			glog.V(2).Infof("CacheRemoteObjectToLocalCluster: shared result for %s", cacheKey)
 		}
 		if res.Err != nil {
+			// The sentinel would cross gRPC as codes.Unknown; make it canonical
+			// so remote callers can classify a vanished entry.
+			if errors.Is(res.Err, filer_pb.ErrNotFound) {
+				return nil, status.Error(codes.NotFound, res.Err.Error())
+			}
 			return nil, res.Err
 		}
 		if res.Val == nil {
