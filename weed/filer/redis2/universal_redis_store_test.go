@@ -202,3 +202,79 @@ func TestListDirectoryEntriesRemovesIndexMembersExpiredByRedis(t *testing.T) {
 		t.Fatalf("directory index holds %v, want none", members)
 	}
 }
+
+// logically expired (Crtime + TtlSec long past) while the physical key survives,
+// because the redis TTL re-arms from the SET time
+func insertLogicallyExpiredTestEntry(t *testing.T, store *UniversalRedis2Store, path util.FullPath) {
+	t.Helper()
+
+	created := time.Now().Add(-time.Hour)
+	if err := store.InsertEntry(context.Background(), &filer.Entry{
+		FullPath: path,
+		Attr:     filer.Attr{Crtime: created, Mtime: created, Mode: 0644, TtlSec: 60},
+	}); err != nil {
+		t.Fatalf("InsertEntry %s: %v", path, err)
+	}
+}
+
+func TestListDirectoryEntriesDeletesLogicallyExpiredEntries(t *testing.T) {
+	for _, keyPrefix := range []string{"", "sw:"} {
+		t.Run("keyPrefix="+keyPrefix, func(t *testing.T) {
+			store, dir := newTestStore(t, keyPrefix)
+
+			insertLogicallyExpiredTestEntry(t, store, dir.Child("stale"))
+
+			if names := listNames(t, store, dir); len(names) != 0 {
+				t.Fatalf("listed %v, want none", names)
+			}
+
+			if exists, err := store.Client.Exists(context.Background(), store.getKey(string(dir.Child("stale")))).Result(); err != nil || exists != 0 {
+				t.Fatalf("value key exists=%d err=%v, want it deleted", exists, err)
+			}
+
+			if members := indexMembers(t, store, dir); len(members) != 0 {
+				t.Fatalf("directory index holds %v, want none", members)
+			}
+		})
+	}
+}
+
+func TestDeleteExpiredEntryKeepsRecreatedValue(t *testing.T) {
+	store, dir := newTestStore(t, "")
+
+	path := dir.Child("phoenix")
+	insertLogicallyExpiredTestEntry(t, store, path)
+	// a recreate lands after the lister decided to expire the old value
+	insertTestEntry(t, store, path, 0)
+
+	store.deleteExpiredEntry(context.Background(), dir, path, "phoenix")
+
+	if names := listNames(t, store, dir); len(names) != 1 || names[0] != "phoenix" {
+		t.Fatalf("listed %v, want [phoenix]", names)
+	}
+
+	if members := indexMembers(t, store, dir); len(members) != 1 || members[0] != "phoenix" {
+		t.Fatalf("directory index holds %v, want [phoenix]", members)
+	}
+}
+
+func TestDeleteIfUnchangedScriptOnlyDeletesSameBytes(t *testing.T) {
+	store, dir := newTestStore(t, "")
+
+	key := store.getKey(string(dir.Child("guarded")))
+	if err := store.Client.Set(context.Background(), key, "v1", 0).Err(); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	if deleted, err := deleteIfUnchangedScript.Run(context.Background(), store.Client, []string{key}, []byte("v2")).Int(); err != nil || deleted != 0 {
+		t.Fatalf("deleted=%d err=%v, want no delete on changed bytes", deleted, err)
+	}
+
+	if deleted, err := deleteIfUnchangedScript.Run(context.Background(), store.Client, []string{key}, []byte("v1")).Int(); err != nil || deleted != 1 {
+		t.Fatalf("deleted=%d err=%v, want delete on matching bytes", deleted, err)
+	}
+
+	if exists, err := store.Client.Exists(context.Background(), key).Result(); err != nil || exists != 0 {
+		t.Fatalf("exists=%d err=%v, want key gone", exists, err)
+	}
+}
