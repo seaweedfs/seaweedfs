@@ -666,6 +666,42 @@ func TestBuildCompactionBinsFiltersLargeFiles(t *testing.T) {
 	}
 }
 
+// NewDataFileBuilder rejects lowercase formats, so wrap what the Avro reader passes through.
+type lowercaseFormatEntry struct {
+	iceberg.ManifestEntry
+}
+
+func (e lowercaseFormatEntry) DataFile() iceberg.DataFile {
+	return lowercaseFormatFile{e.ManifestEntry.DataFile()}
+}
+
+type lowercaseFormatFile struct {
+	iceberg.DataFile
+}
+
+func (f lowercaseFormatFile) FileFormat() iceberg.FileFormat { return "parquet" }
+
+func TestBuildCompactionBinsLowercaseParquetFormat(t *testing.T) {
+	targetSize := int64(256 * 1024 * 1024)
+	minFiles := 2
+
+	entries := makeTestEntries(t, []testEntrySpec{
+		{path: "data/f1.parquet", size: 1024, partition: map[int]any{}},
+		{path: "data/f2.parquet", size: 2048, partition: map[int]any{}},
+		{path: "data/f3.avro", size: 2048, partition: map[int]any{}, format: iceberg.AvroFile},
+	})
+	entries[0] = lowercaseFormatEntry{entries[0]}
+	entries[1] = lowercaseFormatEntry{entries[1]}
+
+	bins := buildCompactionBins(entries, targetSize, minFiles)
+	if len(bins) != 1 {
+		t.Fatalf("expected 1 bin, got %d", len(bins))
+	}
+	if len(bins[0].Entries) != 2 {
+		t.Errorf("expected 2 entries (avro excluded), got %d", len(bins[0].Entries))
+	}
+}
+
 func TestBuildCompactionBinsMinFilesThreshold(t *testing.T) {
 	targetSize := int64(256 * 1024 * 1024)
 	minFiles := 5
@@ -766,7 +802,8 @@ type testEntrySpec struct {
 	size          int64
 	partition     map[int]any
 	partitionSpec *iceberg.PartitionSpec
-	specID        int32 // partition spec ID; 0 uses UnpartitionedSpec
+	specID        int32              // partition spec ID; 0 uses UnpartitionedSpec
+	format        iceberg.FileFormat // empty uses ParquetFile
 }
 
 func buildTestDataFile(t *testing.T, spec testEntrySpec) iceberg.DataFile {
@@ -778,11 +815,15 @@ func buildTestDataFile(t *testing.T, spec testEntrySpec) iceberg.DataFile {
 	} else if len(spec.partition) > 0 {
 		t.Fatalf("partition spec is required for partitioned test entry %s", spec.path)
 	}
+	format := spec.format
+	if format == "" {
+		format = iceberg.ParquetFile
+	}
 	dfBuilder, err := iceberg.NewDataFileBuilder(
 		*partitionSpec,
 		iceberg.EntryContentData,
 		spec.path,
-		iceberg.ParquetFile,
+		format,
 		spec.partition,
 		nil, nil,
 		1, // recordCount (must be > 0)

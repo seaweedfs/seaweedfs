@@ -536,7 +536,8 @@ func buildCompactionBins(entries []iceberg.ManifestEntry, targetSize int64, minF
 	groups := make(map[string]*compactionBin)
 	for _, entry := range entries {
 		df := entry.DataFile()
-		if df.FileFormat() != iceberg.ParquetFile {
+		// DuckDB writes "parquet" lowercase.
+		if !strings.EqualFold(string(df.FileFormat()), string(iceberg.ParquetFile)) {
 			continue
 		}
 		if df.FileSizeBytes() >= targetSize {
