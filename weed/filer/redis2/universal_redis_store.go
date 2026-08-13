@@ -211,12 +211,9 @@ func (store *UniversalRedis2Store) ListDirectoryEntries(ctx context.Context, dir
 			}
 			break
 		} else {
-			if entry.TtlSec > 0 {
-				if entry.Attr.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
-					store.Client.Del(ctx, store.getKey(string(path))).Result()
-					store.Client.ZRem(ctx, dirListKey, fileName).Result()
-					continue
-				}
+			if isLogicallyExpired(entry) {
+				store.deleteExpiredEntry(ctx, dirPath, path, fileName)
+				continue
 			}
 
 			resEachEntryFunc, resEachEntryFuncErr := eachEntryFunc(entry)
@@ -266,6 +263,56 @@ func (store *UniversalRedis2Store) removeOrphanedDirectoryListMember(ctx context
 	if err := store.Client.ZAddNX(ctx, dirListKey, redis.Z{Score: 0, Member: fileName}).Err(); err != nil {
 		glog.V(0).InfofCtx(ctx, "restore %s in %s: %v", fileName, dirPath, err)
 	}
+}
+
+func isLogicallyExpired(entry *filer.Entry) bool {
+	return entry.TtlSec > 0 && entry.Attr.Crtime.Add(time.Duration(entry.TtlSec)*time.Second).Before(time.Now())
+}
+
+// deletes the value only when it still holds exactly the bytes the expiry decision was made on;
+// single-key, so it runs on all transports where a multi-key script would be CROSSSLOT.
+// -1: already gone, 0: changed under us, 1: deleted
+var deleteIfUnchangedScript = redis.NewScript(`
+local v = redis.call('GET', KEYS[1])
+if v == false then
+	return -1
+end
+if v == ARGV[1] then
+	return redis.call('DEL', KEYS[1])
+end
+return 0`)
+
+func (store *UniversalRedis2Store) deleteExpiredEntry(ctx context.Context, dirPath util.FullPath, path util.FullPath, fileName string) {
+	// survive the listing request being canceled mid-delete
+	ctx = context.WithoutCancel(ctx)
+	valueKey := store.getKey(string(path))
+
+	// re-read so the delete can be conditioned on exactly the bytes checked
+	data, err := store.Client.Get(ctx, valueKey).Bytes()
+	if err == redis.Nil {
+		store.removeOrphanedDirectoryListMember(ctx, dirPath, fileName)
+		return
+	}
+	if err != nil {
+		return
+	}
+
+	entry := &filer.Entry{FullPath: path}
+	if err := entry.DecodeAttributesAndChunks(util.MaybeDecompressData(data)); err != nil {
+		return
+	}
+	if !isLogicallyExpired(entry) {
+		// a concurrent insert recreated it
+		return
+	}
+
+	// 0 means a concurrent recreate changed the value: keep it. -1 means the redis
+	// TTL won after the re-read: the member still needs the not-found repair.
+	deleted, err := deleteIfUnchangedScript.Run(ctx, store.Client, []string{valueKey}, data).Int()
+	if err != nil || deleted == 0 {
+		return
+	}
+	store.removeOrphanedDirectoryListMember(ctx, dirPath, fileName)
 }
 
 func genDirectoryListKey(dir string) (dirList string) {
