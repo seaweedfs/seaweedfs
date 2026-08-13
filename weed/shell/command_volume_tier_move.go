@@ -2,15 +2,18 @@ package shell
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/placement"
 	"io"
 	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/placement"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/operation/volume_move"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
@@ -327,13 +330,18 @@ func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer i
 	deletedSource := sourceVolumeServer
 	if alreadyPlaced {
 		deletedSource = ""
-	} else if err = LiveMoveVolume(context.Background(), commandEnv.option.GrpcDialOption, writer, vid, sourceVolumeServer, newAddress, 5*time.Second, toDiskType.ReadableString(), ioBytePerSecond, true); err != nil {
-		// mark all replicas as writable
-		if err = markVolumeReplicasWritable(context.Background(), commandEnv.option.GrpcDialOption, vid, locations, true, false); err != nil {
-			glog.Errorf("mark volume %d as writable on %s: %v", vid, locations[0].Url, err)
+	} else if moveErr := LiveMoveVolume(context.Background(), commandEnv.option.GrpcDialOption, writer, vid, sourceVolumeServer, newAddress, 5*time.Second, toDiskType.ReadableString(), ioBytePerSecond); moveErr != nil {
+		// A move that deliberately kept the source readonly (its delete may
+		// have happened, leaving the target authoritative) must not be thawed
+		// — reopening the replicas beside that copy would fork the volume.
+		if !errors.Is(moveErr, volume_move.ErrSourceKeptReadonly) {
+			// mark all replicas as writable
+			if err = markVolumeReplicasWritable(context.Background(), commandEnv.option.GrpcDialOption, vid, locations, true, false); err != nil {
+				glog.Errorf("mark volume %d as writable on %s: %v", vid, locations[0].Url, err)
+			}
 		}
 
-		return fmt.Errorf("move volume %d %s => %s : %v", vid, locations[0].Url, dst.dataNode.Id, err)
+		return fmt.Errorf("move volume %d %s => %s : %v", vid, locations[0].Url, dst.dataNode.Id, moveErr)
 	}
 
 	// If move is successful and replication is not empty, alter moved volume's replication setting

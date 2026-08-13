@@ -389,7 +389,7 @@ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *
 	entries, _, err := s3a.list(uploadDirectory, "", "", false, s3_constants.MaxS3MultipartParts+1)
 	if err != nil {
 		glog.Errorf("completeMultipartUpload %s %s error: %v", *input.Bucket, *input.UploadId, err)
-		if isFilerListNotFound(err) {
+		if isFilerNotFound(err) {
 			stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedNoSuchUpload).Inc()
 			return nil, nil, s3err.ErrNoSuchUpload
 		}
@@ -1041,7 +1041,7 @@ func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput
 	if err != nil {
 		// A missing .uploads folder normally lists as empty with no error; a
 		// store that reports it as not-found still means an empty list.
-		if isFilerListNotFound(err) {
+		if isFilerNotFound(err) {
 			return output, s3err.ErrNone
 		}
 		// surface a real store error; a masked empty 200 makes a resuming client treat the upload as gone
@@ -1108,7 +1108,7 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 	if err != nil {
 		// A store that reports the missing upload directory as not-found means
 		// the upload is gone (completed or aborted), not a store error.
-		if isFilerListNotFound(err) {
+		if isFilerNotFound(err) {
 			return nil, s3err.ErrNoSuchUpload
 		}
 		glog.Errorf("listObjectParts %s %s error: %v", *input.Bucket, *input.UploadId, err)

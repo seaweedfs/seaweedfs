@@ -32,6 +32,7 @@ type VolumeServer struct {
 
 	mu                   sync.Mutex
 	receivedFiles        map[string]uint64
+	readonlyVolumes      map[uint32]bool
 	mountRequests        []*volume_server_pb.VolumeEcShardsMountRequest
 	deleteRequests       []*volume_server_pb.VolumeDeleteRequest
 	markReadonlyCalls    int
@@ -67,12 +68,13 @@ func NewVolumeServer(t *testing.T, baseDir string) *VolumeServer {
 	grpcPort := listener.Addr().(*net.TCPAddr).Port
 	server := pb.NewGrpcServer()
 	vs := &VolumeServer{
-		t:             t,
-		server:        server,
-		listener:      listener,
-		address:       fmt.Sprintf("127.0.0.1:0.%d", grpcPort),
-		baseDir:       baseDir,
-		receivedFiles: make(map[string]uint64),
+		t:               t,
+		server:          server,
+		listener:        listener,
+		address:         fmt.Sprintf("127.0.0.1:0.%d", grpcPort),
+		baseDir:         baseDir,
+		receivedFiles:   make(map[string]uint64),
+		readonlyVolumes: make(map[uint32]bool),
 	}
 
 	volume_server_pb.RegisterVolumeServerServer(server, vs)
@@ -386,6 +388,9 @@ func (v *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.V
 func (v *VolumeServer) VolumeMarkReadonly(ctx context.Context, req *volume_server_pb.VolumeMarkReadonlyRequest) (*volume_server_pb.VolumeMarkReadonlyResponse, error) {
 	v.mu.Lock()
 	v.markReadonlyCalls++
+	if req != nil {
+		v.readonlyVolumes[req.VolumeId] = true
+	}
 	v.mu.Unlock()
 	return &volume_server_pb.VolumeMarkReadonlyResponse{}, nil
 }
@@ -393,8 +398,17 @@ func (v *VolumeServer) VolumeMarkReadonly(ctx context.Context, req *volume_serve
 func (v *VolumeServer) VolumeMarkWritable(ctx context.Context, req *volume_server_pb.VolumeMarkWritableRequest) (*volume_server_pb.VolumeMarkWritableResponse, error) {
 	v.mu.Lock()
 	v.markWritableCalls++
+	if req != nil {
+		v.readonlyVolumes[req.VolumeId] = false
+	}
 	v.mu.Unlock()
 	return &volume_server_pb.VolumeMarkWritableResponse{}, nil
+}
+
+func (v *VolumeServer) VolumeStatus(ctx context.Context, req *volume_server_pb.VolumeStatusRequest) (*volume_server_pb.VolumeStatusResponse, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return &volume_server_pb.VolumeStatusResponse{IsReadOnly: v.readonlyVolumes[req.GetVolumeId()]}, nil
 }
 
 func (v *VolumeServer) ReadVolumeFileStatus(ctx context.Context, req *volume_server_pb.ReadVolumeFileStatusRequest) (*volume_server_pb.ReadVolumeFileStatusResponse, error) {

@@ -61,7 +61,7 @@ Table of Contents
 * [Features](#features)
     * [Additional Features](#additional-features)
     * [Filer Features](#filer-features)
-* [Example: Using Seaweed Object Store](#example-using-seaweed-object-store)
+* [Example: Using Seaweed Blob Store](#example-using-seaweed-blob-store)
 * [Architecture](#object-store-architecture)
 * [Compared to Other File Systems](#compared-to-other-file-systems)
     * [Compared to HDFS](#compared-to-hdfs)
