@@ -205,7 +205,7 @@ func (store *UniversalRedis2Store) ListDirectoryEntries(ctx context.Context, dir
 		if err != nil {
 			glog.V(0).InfofCtx(ctx, "list %s : %v", path, err)
 			if err == filer_pb.ErrNotFound {
-				store.removeOrphanedDirectoryListMember(ctx, dirListKey, path, fileName)
+				store.removeOrphanedDirectoryListMember(ctx, dirPath, fileName)
 				err = nil
 				continue
 			}
@@ -234,7 +234,18 @@ func (store *UniversalRedis2Store) ListDirectoryEntries(ctx context.Context, dir
 	return lastFileName, err
 }
 
-func (store *UniversalRedis2Store) removeOrphanedDirectoryListMember(ctx context.Context, dirListKey string, path util.FullPath, fileName string) {
+func (store *UniversalRedis2Store) removeOrphanedDirectoryListMember(ctx context.Context, dirPath util.FullPath, fileName string) {
+	// a directory converted to super large after accumulating members still has a legacy index
+	if store.isSuperLargeDirectory(string(dirPath)) {
+		return
+	}
+
+	// survive the listing request being canceled mid-repair
+	ctx = context.WithoutCancel(ctx)
+
+	dirListKey := store.getKey(genDirectoryListKey(string(dirPath)))
+	path := util.NewFullPath(string(dirPath), fileName)
+
 	if err := store.Client.ZRem(ctx, dirListKey, fileName).Err(); err != nil {
 		return
 	}
@@ -244,10 +255,17 @@ func (store *UniversalRedis2Store) removeOrphanedDirectoryListMember(ctx context
 	// and whose ZAddNX was therefore a no-op.
 	exists, err := store.Client.Exists(ctx, store.getKey(string(path))).Result()
 	if err == nil && exists == 0 {
-		return
+		// an evicted directory may still have a live child index; empty zsets self-delete,
+		// so a present index holds children a recursive delete still needs to reach
+		children, childrenErr := store.Client.Exists(ctx, store.getKey(genDirectoryListKey(string(path)))).Result()
+		if childrenErr == nil && children == 0 {
+			return
+		}
 	}
 
-	store.Client.ZAddNX(ctx, dirListKey, redis.Z{Score: 0, Member: fileName})
+	if err := store.Client.ZAddNX(ctx, dirListKey, redis.Z{Score: 0, Member: fileName}).Err(); err != nil {
+		glog.V(0).InfofCtx(ctx, "restore %s in %s: %v", fileName, dirPath, err)
+	}
 }
 
 func genDirectoryListKey(dir string) (dirList string) {
