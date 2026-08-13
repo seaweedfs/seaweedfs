@@ -205,7 +205,7 @@ func (store *UniversalRedis2Store) ListDirectoryEntries(ctx context.Context, dir
 		if err != nil {
 			glog.V(0).InfofCtx(ctx, "list %s : %v", path, err)
 			if err == filer_pb.ErrNotFound {
-				store.Client.ZRem(ctx, dirListKey, fileName).Result()
+				store.removeOrphanedDirectoryListMember(ctx, dirListKey, path, fileName)
 				err = nil
 				continue
 			}
@@ -232,6 +232,22 @@ func (store *UniversalRedis2Store) ListDirectoryEntries(ctx context.Context, dir
 	}
 
 	return lastFileName, err
+}
+
+func (store *UniversalRedis2Store) removeOrphanedDirectoryListMember(ctx context.Context, dirListKey string, path util.FullPath, fileName string) {
+	if err := store.Client.ZRem(ctx, dirListKey, fileName).Err(); err != nil {
+		return
+	}
+
+	// InsertEntry writes the value before adding the member, so a value present
+	// again here may belong to an insert that found the member still in place
+	// and whose ZAddNX was therefore a no-op.
+	exists, err := store.Client.Exists(ctx, store.getKey(string(path))).Result()
+	if err == nil && exists == 0 {
+		return
+	}
+
+	store.Client.ZAddNX(ctx, dirListKey, redis.Z{Score: 0, Member: fileName})
 }
 
 func genDirectoryListKey(dir string) (dirList string) {

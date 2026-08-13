@@ -103,6 +103,23 @@ func TestListDirectoryEntriesRemovesOrphanedIndexMembers(t *testing.T) {
 	}
 }
 
+func TestRemoveOrphanedDirectoryListMemberKeepsRecreatedEntry(t *testing.T) {
+	store, dir := newTestStore(t, "")
+
+	path := dir.Child("recreated")
+	insertTestEntry(t, store, path, 0)
+
+	store.removeOrphanedDirectoryListMember(context.Background(), store.getKey(genDirectoryListKey(string(dir))), path, "recreated")
+
+	if members := indexMembers(t, store, dir); len(members) != 1 || members[0] != "recreated" {
+		t.Fatalf("directory index holds %v, want [recreated]", members)
+	}
+
+	if names := listNames(t, store, dir); len(names) != 1 || names[0] != "recreated" {
+		t.Fatalf("listed %v, want [recreated]", names)
+	}
+}
+
 func TestListDirectoryEntriesRemovesIndexMembersExpiredByRedis(t *testing.T) {
 	store, dir := newTestStore(t, "")
 
