@@ -255,7 +255,12 @@ func (store *UniversalRedis2Store) removeOrphanedDirectoryListMember(ctx context
 	// and whose ZAddNX was therefore a no-op.
 	exists, err := store.Client.Exists(ctx, store.getKey(string(path))).Result()
 	if err == nil && exists == 0 {
-		return
+		// an evicted directory may still have a live child index; empty zsets self-delete,
+		// so a present index holds children a recursive delete still needs to reach
+		children, childrenErr := store.Client.Exists(ctx, store.getKey(genDirectoryListKey(string(path)))).Result()
+		if childrenErr == nil && children == 0 {
+			return
+		}
 	}
 
 	if err := store.Client.ZAddNX(ctx, dirListKey, redis.Z{Score: 0, Member: fileName}).Err(); err != nil {
