@@ -178,6 +178,38 @@ func TestEnsureCleanEcStartRejectsMissingTargets(t *testing.T) {
 		"error must name the missing-targets invariant, got: %v", err)
 }
 
+// A non-empty target slice whose entries are malformed (nil, empty Node, or no
+// assigned shards) must also be rejected before the source is marked readonly —
+// cleanupStaleEcShards silently skips such entries, so a length check alone
+// would let the encode proceed with nothing to distribute to.
+func TestEnsureCleanEcStartRejectsMalformedTarget(t *testing.T) {
+	cases := map[string][]*worker_pb.TaskTarget{
+		"nil target": {nil},
+		"empty node": {{Node: "", VolumeId: 42, ShardIds: []uint32{0}}},
+		"no shards":  {{Node: "10.0.0.2:8080", VolumeId: 42}},
+		"one good one bad": {
+			{Node: "10.0.0.2:8080", VolumeId: 42, ShardIds: []uint32{0}},
+			{Node: "", VolumeId: 42, ShardIds: []uint32{1}},
+		},
+	}
+	for name, targets := range cases {
+		t.Run(name, func(t *testing.T) {
+			task := NewErasureCodingTask(
+				"preflight-malformed-target",
+				"10.0.0.1:8080",
+				42,
+				"c",
+				grpc.WithTransportCredentials(insecure.NewCredentials()),
+			)
+			task.targets = targets
+			err := task.ensureCleanEcStart(context.Background())
+			require.Error(t, err, "preflight must reject a malformed target")
+			require.True(t, strings.Contains(err.Error(), "malformed EC shard target"),
+				"error must name the malformed-target invariant, got: %v", err)
+		})
+	}
+}
+
 // A plan with targets but no source replica and no assigned server must be
 // rejected before any destructive step.
 func TestEnsureCleanEcStartRejectsMissingSource(t *testing.T) {

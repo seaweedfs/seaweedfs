@@ -961,6 +961,16 @@ func (t *ErasureCodingTask) ensureCleanEcStart(ctx context.Context) error {
 	if len(t.targets) == 0 {
 		return fmt.Errorf("no EC shard targets for volume %d; refusing to mark source readonly", t.volumeID)
 	}
+	// A non-empty slice is not enough: a target with an empty Node (or no
+	// assigned shards) is silently skipped by cleanupStaleEcShards and by
+	// distributeEcShards, so a plan of only such entries would pass the length
+	// check and mark the source readonly before failing. Reject any malformed
+	// target here, before the first destructive step.
+	for i, target := range t.targets {
+		if target == nil || target.Node == "" || len(target.ShardIds) == 0 {
+			return fmt.Errorf("malformed EC shard target %d for volume %d; refusing to mark source readonly", i, t.volumeID)
+		}
+	}
 	if t.server == "" && len(t.getReplicas()) == 0 {
 		return fmt.Errorf("no source replica for volume %d", t.volumeID)
 	}
@@ -984,7 +994,15 @@ func (t *ErasureCodingTask) rollbackDistribute(_ context.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	if err := t.cleanupStaleEcShards(ctx); err != nil {
-		glog.Warningf("rollback: failed to tear down distributed EC shards for volume %d after EC task failure: %v", t.volumeID, err)
+		// The teardown could not fully clear this volume's EC shards (e.g. an
+		// unreachable destination, or a shard that failed to unmount). Leave the
+		// source readonly rather than expose it for writes while stale shards
+		// linger: a writable source beside mounted stale shards would let reads
+		// and writes diverge, and orphan cleanup will not remove a writable
+		// source. The next encode's Step 0 preflight (or an operator) reconciles
+		// the state once the shards are reachable.
+		glog.Warningf("rollback: EC shard teardown incomplete for volume %d; leaving source readonly for reconciliation: %v", t.volumeID, err)
+		return
 	}
 	t.rollbackReadonly(ctx)
 }
