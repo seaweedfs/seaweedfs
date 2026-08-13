@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::sync::{Condvar, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 #[cfg(test)]
 use crate::storage::idx;
@@ -3512,6 +3512,62 @@ impl Volume {
         self.nm = None;
     }
 
+    /// Move this volume's `.idx` (and `.sdx` when present) from its current
+    /// index directory into `new_idx_dir`, then reload in place. Mirrors Go's
+    /// `Volume::RelocateIndexTo`: it is a no-op when the index is already there
+    /// or nothing is co-located to move, and is used to pull an index a decode
+    /// or reconstruct left beside the data back into the configured `-dir.idx`.
+    pub fn relocate_index_to(&mut self, new_idx_dir: &str) -> Result<(), VolumeError> {
+        let _guard = self.data_file_access_control.write_lock();
+
+        if self.dir_idx == new_idx_dir {
+            return Ok(());
+        }
+        let old_base = volume_file_name(&self.dir_idx, &self.collection, self.id);
+        let old_idx = format!("{old_base}.idx");
+        if !Path::new(&old_idx).exists() {
+            return Ok(()); // nothing co-located to move
+        }
+        let new_base = volume_file_name(new_idx_dir, &self.collection, self.id);
+        let new_idx = format!("{new_base}.idx");
+
+        // Close the index and data handles before moving the index file.
+        let version = self.version();
+        self.close();
+
+        if let Err(e) = rename_or_copy(&old_idx, &new_idx) {
+            // Reopen against the old dir so the volume is not left down; surface
+            // a failed reopen since it leaves the volume unusable until reload.
+            if let Err(reopen) = self.load(true, false, 0, version) {
+                error!(
+                    "relocate volume {}: reopen after failed .idx move: {}",
+                    self.id, reopen
+                );
+            }
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::Other,
+                format!("relocate index for volume {}: move .idx: {e}", self.id),
+            )));
+        }
+
+        // The .sdx is a derived sorted index; move it when present, but a
+        // failure is not fatal — drop the stale copy so a reload rebuilds it.
+        let old_sdx = format!("{old_base}.sdx");
+        if Path::new(&old_sdx).exists() {
+            let new_sdx = format!("{new_base}.sdx");
+            if let Err(e) = rename_or_copy(&old_sdx, &new_sdx) {
+                warn!(
+                    "relocate volume {}: move .sdx: {} (will rebuild)",
+                    self.id, e
+                );
+                let _ = fs::remove_file(&old_sdx);
+            }
+        }
+
+        self.dir_idx = new_idx_dir.to_string();
+        self.load(true, false, 0, version)
+    }
+
     /// Remove all volume files from disk.
     /// Destroy removes everything related to this volume. When keep_remote_data
     /// is true the cloud-tier object backing the volume is left intact — used
@@ -3652,6 +3708,34 @@ pub fn volume_file_name(dir: &str, collection: &str, id: VolumeId) -> String {
     } else {
         format!("{}/{}_{}", dir, collection, id.0)
     }
+}
+
+/// Move `src` to `dst`, falling back to copy+remove when the two live on
+/// different filesystems (a real `-dir.idx` split). Mirrors Go's
+/// `RenameOrCopyFile`: any rename error other than cross-device is fatal, and a
+/// failed copy or a source that cannot be removed rolls the copy back so a
+/// failure never leaves two divergent files.
+fn rename_or_copy(src: &str, dst: &str) -> io::Result<()> {
+    match fs::rename(src, dst) {
+        Ok(()) => return Ok(()),
+        Err(e) if e.raw_os_error() != Some(libc::EXDEV) => return Err(e),
+        Err(_) => {}
+    }
+    fs::copy(src, dst)?;
+    // fsync the destination before dropping the source, matching Go's out.Sync().
+    if let Err(e) = OpenOptions::new()
+        .write(true)
+        .open(dst)
+        .and_then(|f| f.sync_all())
+    {
+        let _ = fs::remove_file(dst);
+        return Err(e);
+    }
+    if let Err(e) = fs::remove_file(src) {
+        let _ = fs::remove_file(dst);
+        return Err(e);
+    }
+    Ok(())
 }
 
 /// Generate a monotonically increasing append timestamp.
@@ -4533,6 +4617,96 @@ mod tests {
         };
         v.read_needle(&mut n).unwrap();
         assert_eq!(std::str::from_utf8(&n.data).unwrap(), "data 2");
+    }
+
+    #[test]
+    fn test_relocate_index_to_moves_index_and_serves_reads() {
+        let root = TempDir::new().unwrap();
+        let data_dir = root.path().join("data");
+        let idx_dir = root.path().join("idx");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::create_dir_all(&idx_dir).unwrap();
+        let data = data_dir.to_str().unwrap();
+        let idx = idx_dir.to_str().unwrap();
+
+        // Create the volume with its index co-located in the data dir (the state
+        // an EC reconstruct leaves), write a needle, and flush.
+        let mut v = Volume::new(
+            data,
+            data,
+            "",
+            VolumeId(7),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        let payload = b"payload-across-relocate".to_vec();
+        let mut n = Needle {
+            id: NeedleId(42),
+            cookie: Cookie(0x55),
+            data: payload.clone(),
+            data_size: payload.len() as u32,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true).unwrap();
+        v.sync_to_disk().unwrap();
+
+        let data_idx = format!("{data}/7.idx");
+        let idx_dir_idx = format!("{idx}/7.idx");
+        assert!(
+            Path::new(&data_idx).exists(),
+            "precondition: index co-located with the data"
+        );
+
+        v.relocate_index_to(idx).unwrap();
+
+        assert!(Path::new(&idx_dir_idx).exists(), "index moved to the idx dir");
+        assert!(
+            !Path::new(&data_idx).exists(),
+            "index gone from the data dir"
+        );
+        assert_eq!(v.file_count(), 1);
+
+        // The volume reloaded in place, so the needle still reads back.
+        let mut got = Needle {
+            id: NeedleId(42),
+            ..Needle::default()
+        };
+        v.read_needle(&mut got).unwrap();
+        assert_eq!(got.data, payload, "needle content survives the relocate");
+
+        // Relocating again is a no-op: the index is already where asked.
+        v.relocate_index_to(idx).unwrap();
+        assert!(Path::new(&idx_dir_idx).exists());
+    }
+
+    #[test]
+    fn test_relocate_index_to_noop_when_already_in_place() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+        let mut n = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(1),
+            data: b"x".to_vec(),
+            data_size: 1,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true).unwrap();
+        v.sync_to_disk().unwrap();
+
+        // Data and index share a directory, so there is nothing to move.
+        v.relocate_index_to(dir).unwrap();
+        assert!(Path::new(&format!("{dir}/1.idx")).exists());
+        let mut got = Needle {
+            id: NeedleId(1),
+            ..Needle::default()
+        };
+        v.read_needle(&mut got).unwrap();
+        assert_eq!(got.data, b"x");
     }
 
     #[test]

@@ -45,6 +45,8 @@ service VolumeServer {
     }
     rpc VolumeUnmount (VolumeUnmountRequest) returns (VolumeUnmountResponse) {
     }
+    rpc VolumeConsolidateIndex (VolumeConsolidateIndexRequest) returns (VolumeConsolidateIndexResponse) {
+    }
     rpc VolumeDelete (VolumeDeleteRequest) returns (VolumeDeleteResponse) {
     }
     rpc VolumeMarkReadonly (VolumeMarkReadonlyRequest) returns (VolumeMarkReadonlyResponse) {
@@ -242,6 +244,12 @@ message VolumeUnmountRequest {
     uint32 volume_id = 1;
 }
 message VolumeUnmountResponse {
+}
+
+message VolumeConsolidateIndexRequest {
+    uint32 volume_id = 1;
+}
+message VolumeConsolidateIndexResponse {
 }
 
 message VolumeDeleteRequest {
