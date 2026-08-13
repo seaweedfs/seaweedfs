@@ -181,17 +181,33 @@ func TestRemoveOrphanedDirectoryListMemberSkipsSuperLargeDirectory(t *testing.T)
 	}
 }
 
+func requireValueKey(t *testing.T, store *UniversalRedis2Store, path util.FullPath) {
+	t.Helper()
+
+	if exists, err := store.Client.Exists(context.Background(), store.getKey(string(path))).Result(); err != nil || exists != 1 {
+		t.Fatalf("value key %s exists=%d err=%v, want it present", path, exists, err)
+	}
+}
+
 func TestListDirectoryEntriesRemovesIndexMembersExpiredByRedis(t *testing.T) {
 	store, dir := newTestStore(t, "")
 
 	insertTestEntry(t, store, dir.Child("ttl"), 1)
+	requireValueKey(t, store, dir.Child("ttl"))
 
-	time.Sleep(1500 * time.Millisecond)
-
-	if exists, err := store.Client.Exists(context.Background(), store.getKey(string(dir.Child("ttl")))).Result(); err != nil {
-		t.Fatalf("check value key: %v", err)
-	} else if exists != 0 {
-		t.Fatal("redis did not expire the value key, the logical expiry path is not being bypassed")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		exists, err := store.Client.Exists(context.Background(), store.getKey(string(dir.Child("ttl")))).Result()
+		if err != nil {
+			t.Fatalf("check value key: %v", err)
+		}
+		if exists == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("redis did not expire the value key, the logical expiry path is not being bypassed")
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 
 	if names := listNames(t, store, dir); len(names) != 0 {
@@ -223,6 +239,7 @@ func TestListDirectoryEntriesDeletesLogicallyExpiredEntries(t *testing.T) {
 			store, dir := newTestStore(t, keyPrefix)
 
 			insertLogicallyExpiredTestEntry(t, store, dir.Child("stale"))
+			requireValueKey(t, store, dir.Child("stale"))
 
 			if names := listNames(t, store, dir); len(names) != 0 {
 				t.Fatalf("listed %v, want none", names)

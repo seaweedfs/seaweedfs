@@ -111,6 +111,16 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:8
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
     - name: Check out code into the Go module directory
       uses: actions/checkout@v7
@@ -119,6 +129,8 @@ jobs:
       with:
         go-version-file: 'go.mod'
     - name: Test
+      env:
+        RUN_REDIS_TESTS: "1"
       run: cd weed; go test -tags "elastic gocdk sqlite ydb tarantool tikv rclone" -v ./...
 
   test-32bit:
