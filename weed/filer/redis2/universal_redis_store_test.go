@@ -181,10 +181,19 @@ func TestRemoveOrphanedDirectoryListMemberSkipsSuperLargeDirectory(t *testing.T)
 	}
 }
 
+func requireValueKey(t *testing.T, store *UniversalRedis2Store, path util.FullPath) {
+	t.Helper()
+
+	if exists, err := store.Client.Exists(context.Background(), store.getKey(string(path))).Result(); err != nil || exists != 1 {
+		t.Fatalf("value key %s exists=%d err=%v, want it present", path, exists, err)
+	}
+}
+
 func TestListDirectoryEntriesRemovesIndexMembersExpiredByRedis(t *testing.T) {
 	store, dir := newTestStore(t, "")
 
 	insertTestEntry(t, store, dir.Child("ttl"), 1)
+	requireValueKey(t, store, dir.Child("ttl"))
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -230,6 +239,7 @@ func TestListDirectoryEntriesDeletesLogicallyExpiredEntries(t *testing.T) {
 			store, dir := newTestStore(t, keyPrefix)
 
 			insertLogicallyExpiredTestEntry(t, store, dir.Child("stale"))
+			requireValueKey(t, store, dir.Child("stale"))
 
 			if names := listNames(t, store, dir); len(names) != 0 {
 				t.Fatalf("listed %v, want none", names)
