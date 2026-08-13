@@ -155,6 +155,13 @@ impl VolumeGrpcService {
     /// SocketAddr; if it is somehow None we deny, matching "if we don't
     /// know who the caller is, refuse."
     fn check_grpc_admin_auth<T>(&self, request: &Request<T>) -> Result<(), Status> {
+        // Mirror Go's `if vs.guard == nil { return nil }`: with no whitelist and
+        // no signing key, write security is inactive and every caller is allowed.
+        // Real gRPC connections always carry peer info, so requiring it below only
+        // affects in-process callers (tests, upgrades) once a control is enabled.
+        if !self.state.guard.read().unwrap().is_write_active() {
+            return Ok(());
+        }
         let remote = match request.remote_addr() {
             Some(addr) => addr,
             None => {
@@ -293,6 +300,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::BatchDeleteRequest>,
     ) -> Result<Response<volume_server_pb::BatchDeleteResponse>, Status> {
+        self.check_grpc_admin_auth(&request)?;
         self.state.check_maintenance()?;
         let req = request.into_inner();
         let mut results = Vec::new();
@@ -1135,6 +1143,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::SetStateRequest>,
     ) -> Result<Response<volume_server_pb::SetStateResponse>, Status> {
+        self.check_grpc_admin_auth(&request)?;
         let req = request.into_inner();
 
         if let Some(new_state) = &req.state {
@@ -1187,6 +1196,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::VolumeCopyRequest>,
     ) -> Result<Response<Self::VolumeCopyStream>, Status> {
+        self.check_grpc_admin_auth(&request)?;
         self.state.check_maintenance()?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
@@ -1988,6 +1998,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::ReadAllNeedlesRequest>,
     ) -> Result<Response<Self::ReadAllNeedlesStream>, Status> {
+        self.check_grpc_admin_auth(&request)?;
         let req = request.into_inner();
         let state = self.state.clone();
 
@@ -2188,6 +2199,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::VolumeTailReceiverRequest>,
     ) -> Result<Response<volume_server_pb::VolumeTailReceiverResponse>, Status> {
+        self.check_grpc_admin_auth(&request)?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
 
@@ -2313,6 +2325,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::VolumeEcShardsGenerateRequest>,
     ) -> Result<Response<volume_server_pb::VolumeEcShardsGenerateResponse>, Status> {
+        self.check_grpc_admin_auth(&request)?;
         self.state.check_maintenance()?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
@@ -2413,6 +2426,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::VolumeEcShardsRebuildRequest>,
     ) -> Result<Response<volume_server_pb::VolumeEcShardsRebuildResponse>, Status> {
+        self.check_grpc_admin_auth(&request)?;
         self.state.check_maintenance()?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
@@ -2613,6 +2627,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::VolumeEcShardsCopyRequest>,
     ) -> Result<Response<volume_server_pb::VolumeEcShardsCopyResponse>, Status> {
+        self.check_grpc_admin_auth(&request)?;
         self.state.check_maintenance()?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
@@ -2995,6 +3010,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::VolumeEcShardsUnmountRequest>,
     ) -> Result<Response<volume_server_pb::VolumeEcShardsUnmountResponse>, Status> {
+        self.check_grpc_admin_auth(&request)?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
 
@@ -3158,6 +3174,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::VolumeEcShardsToVolumeRequest>,
     ) -> Result<Response<volume_server_pb::VolumeEcShardsToVolumeResponse>, Status> {
+        self.check_grpc_admin_auth(&request)?;
         self.state.check_maintenance()?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
@@ -3424,6 +3441,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::VolumeTierMoveDatToRemoteRequest>,
     ) -> Result<Response<Self::VolumeTierMoveDatToRemoteStream>, Status> {
+        self.check_grpc_admin_auth(&request)?;
         self.state.check_maintenance()?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
@@ -3590,6 +3608,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::VolumeTierMoveDatFromRemoteRequest>,
     ) -> Result<Response<Self::VolumeTierMoveDatFromRemoteStream>, Status> {
+        self.check_grpc_admin_auth(&request)?;
         // Note: Go does NOT check maintenance mode for TierMoveDatFromRemote
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
@@ -3850,6 +3869,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::FetchAndWriteNeedleRequest>,
     ) -> Result<Response<volume_server_pb::FetchAndWriteNeedleResponse>, Status> {
+        self.check_grpc_admin_auth(&request)?;
         self.state.check_maintenance()?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
@@ -4105,6 +4125,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::ScrubEcVolumeRequest>,
     ) -> Result<Response<volume_server_pb::ScrubEcVolumeResponse>, Status> {
+        self.check_grpc_admin_auth(&request)?;
         let req = request.into_inner();
 
         // Validate mode
@@ -4462,6 +4483,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::VolumeNeedleStatusRequest>,
     ) -> Result<Response<volume_server_pb::VolumeNeedleStatusResponse>, Status> {
+        self.check_grpc_admin_auth(&request)?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
         let needle_id = NeedleId(req.needle_id);
