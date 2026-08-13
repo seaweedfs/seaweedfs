@@ -110,6 +110,20 @@ type RemoteStorageStreamReader interface {
 	ReadFileAsStream(ctx context.Context, loc *remote_pb.RemoteStorageLocation, offset int64, size int64) (reader io.ReadCloser, err error)
 }
 
+// CacheWaitTimeout is how long a read of an uncached remote-only object waits
+// for the local cache before serving another way: small files wait longer since
+// their cache completes quickly, large files fail fast for better TTFB.
+func CacheWaitTimeout(remoteSize int64) time.Duration {
+	switch {
+	case remoteSize > 500*1024*1024:
+		return 2 * time.Second
+	case remoteSize > 0 && remoteSize < 50*1024*1024:
+		return 10 * time.Second
+	default:
+		return 5 * time.Second
+	}
+}
+
 type RemoteStorageClientMaker interface {
 	Make(remoteConf *remote_pb.RemoteConf) (RemoteStorageClient, error)
 	HasBucket() bool

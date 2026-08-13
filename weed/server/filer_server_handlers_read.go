@@ -16,10 +16,13 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // Validates the preconditions. Returns true if GET/HEAD operation should not proceed.
@@ -213,26 +216,43 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		chunks := entry.GetChunks()
 		if entry.IsInRemoteOnly() {
 			dir, name := entry.FullPath.DirAndName()
-			if resp, err := fs.CacheRemoteObjectToLocalCluster(ctx, &filer_pb.CacheRemoteObjectToLocalClusterRequest{
+			// Bounded wait: a large download outlasts any client timeout, so
+			// serve straight from the origin once the wait expires while the
+			// detached cache keeps filling for later reads.
+			cacheCtx, cancelCache := context.WithTimeout(ctx, remote_storage.CacheWaitTimeout(entry.Remote.RemoteSize))
+			resp, err := fs.CacheRemoteObjectToLocalCluster(cacheCtx, &filer_pb.CacheRemoteObjectToLocalClusterRequest{
 				Directory: dir,
 				Name:      name,
-			}); err != nil {
+			})
+			cancelCache()
+			if err != nil {
 				stats.FilerHandlerCounter.WithLabelValues(stats.ErrorReadCache).Inc()
 				// Client disconnected: surface ctx error so caller stays silent.
 				if ctxErr := ctx.Err(); ctxErr != nil {
 					return nil, ctxErr
 				}
-				// Entry vanished mid-cache: forward NotFound so caller maps to 404,
-				// not the 503 retry-loop.
-				if errors.Is(err, filer_pb.ErrNotFound) {
-					return nil, err
+				// Entry vanished mid-cache: forward the sentinel so caller maps to
+				// 404, not the 503 retry-loop. The cache RPC returns it as a
+				// canonical status, which errors.Is cannot see.
+				if errors.Is(err, filer_pb.ErrNotFound) || status.Code(err) == codes.NotFound {
+					return nil, filer_pb.ErrNotFound
 				}
-				// Cache still filling: tag with sentinel so caller maps to 503 + Retry-After.
+				// A multipart Range prepares every part before writing any, which
+				// would hold one open origin connection per part and leak them
+				// when a later prepare fails; keep those on the 503 retry path.
+				if !strings.Contains(r.Header.Get("Range"), ",") {
+					glog.V(1).InfofCtx(ctx, "stream %s from remote while caching: %v", entry.FullPath, err)
+					if streamFn, remoteErr := fs.streamFromRemote(ctx, dir, name, offset, size); remoteErr == nil {
+						return streamFn, nil
+					} else {
+						glog.WarningfCtx(ctx, "stream %s from remote: %v", entry.FullPath, remoteErr)
+					}
+				}
+				// Origin unreadable: tag with sentinel so caller maps to 503 + Retry-After.
 				glog.WarningfCtx(ctx, "CacheRemoteObjectToLocalCluster %s: %v", entry.FullPath, err)
 				return nil, fmt.Errorf("cache %s: %w", entry.FullPath, ErrCacheNotReady)
-			} else {
-				chunks = resp.Entry.GetChunks()
 			}
+			chunks = resp.Entry.GetChunks()
 		}
 
 		// Use a detached context for streaming so client disconnects/cancellations don't abort volume server operations,
@@ -257,6 +277,53 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			return err
 		}, nil
 	})
+}
+
+// streamFromRemote serves a byte range of a remote-only entry straight from the
+// mounted origin, so a first read is not blocked by the full local caching.
+func (fs *FilerServer) streamFromRemote(ctx context.Context, dir, name string, offset, size int64) (filer.DoStreamContent, error) {
+	storageConf, remoteLocation, err := fs.resolveMountedRemote(ctx, dir, name)
+	if err != nil {
+		return nil, err
+	}
+	client, err := remote_storage.GetRemoteStorage(storageConf)
+	if err != nil {
+		return nil, err
+	}
+	streamer, ok := client.(remote_storage.RemoteStorageStreamReader)
+	if !ok {
+		return nil, fmt.Errorf("remote storage type %s does not support streaming reads", storageConf.Type)
+	}
+	reader, err := streamer.ReadFileAsStream(ctx, remoteLocation, offset, size)
+	if err != nil {
+		return nil, err
+	}
+	downloadThrottler := util.NewWriteThrottler(fs.option.DownloadMaxBytesPs)
+	return func(writer io.Writer) error {
+		defer reader.Close()
+		var written int64
+		buf := make([]byte, 128*1024)
+		for {
+			n, readErr := reader.Read(buf)
+			if n > 0 {
+				if _, writeErr := writer.Write(buf[:n]); writeErr != nil {
+					return writeErr
+				}
+				written += int64(n)
+				downloadThrottler.MaybeSlowdown(int64(n))
+			}
+			if readErr == io.EOF {
+				if written != size {
+					// the origin returned fewer bytes than the entry's RemoteSize
+					return fmt.Errorf("origin stream %s: %w after %d of %d bytes", remoteLocation.Path, io.ErrUnexpectedEOF, written, size)
+				}
+				return nil
+			}
+			if readErr != nil {
+				return readErr
+			}
+		}
+	}, nil
 }
 
 func (fs *FilerServer) maybeGetVolumeReadJwtAuthorizationToken(fileId string) string {

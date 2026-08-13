@@ -21,7 +21,10 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
+	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -31,6 +34,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 // zeroBuf is a reusable buffer of zero bytes for padding operations
@@ -1016,22 +1020,59 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 				chunks = cachedEntry.GetChunks()
 				entry = cachedEntry
 				glog.V(1).Infof("streamFromVolumeServers: successfully cached remote object, got %d chunks", len(chunks))
-			} else if cacheErr != nil && !errors.Is(cacheErr, context.DeadlineExceeded) && !errors.Is(cacheErr, context.Canceled) && status.Code(cacheErr) != codes.DeadlineExceeded && status.Code(cacheErr) != codes.Canceled {
-				// Permanent error (e.g. not found, permission denied) - return final status
-				glog.Errorf("streamFromVolumeServers: permanent cache error for %s/%s: %v", bucket, object, cacheErr)
-				if status.Code(cacheErr) == codes.NotFound {
-					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
-				} else {
-					s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-				}
+			} else if isFilerNotFound(cacheErr) {
+				// Authoritative: the entry vanished; the origin cannot resurrect it
+				glog.Errorf("streamFromVolumeServers: entry not found while caching %s/%s: %v", bucket, object, cacheErr)
+				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 				return newStreamErrorWithResponse(cacheErr)
 			} else {
-				// Client disconnected during the cache wait: report cancellation, not 503,
-				// so we don't write to a closed connection.
+				// Client disconnected during the cache wait: report cancellation, not an
+				// error response, so we don't write to a closed connection.
 				if ctxErr := r.Context().Err(); ctxErr != nil {
 					return ctxErr
 				}
-				// Cache not ready yet; return 503 with Retry-After for client backoff
+				// Cache not ready or failing locally (e.g. no assignable volume): serve
+				// straight from the origin while the detached cache keeps filling for
+				// later reads. An entry resolved to a specific version -- even on a
+				// latest-version read -- has no origin key, so it keeps the error
+				// paths below.
+				if cacheVersionId == "" || cacheVersionId == "null" {
+					if remoteReader, remoteErr := s3a.openRemoteStream(r.Context(), bucket, object, offset, size); remoteErr == nil {
+						defer remoteReader.Close()
+						s3a.setResponseHeaders(w, r, entry, totalSize)
+						w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+						if isRangeRequest {
+							w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+size-1, totalSize))
+							w.WriteHeader(http.StatusPartialContent)
+						} else {
+							w.WriteHeader(http.StatusOK)
+						}
+						TimeToFirstByte(r.Method, t0, r)
+						cw := &countingWriter{w: w}
+						_, copyErr := io.CopyN(cw, remoteReader, size)
+						if copyErr == io.EOF {
+							// the origin returned fewer bytes than the entry's RemoteSize
+							copyErr = io.ErrUnexpectedEOF
+						}
+						if cw.written > 0 {
+							BucketTrafficSent(cw.written, r)
+						}
+						if copyErr != nil {
+							glog.V(2).Infof("streamFromVolumeServers: origin stream %s/%s ended after %d bytes: %v", bucket, object, cw.written, copyErr)
+							return newStreamErrorWithResponse(copyErr)
+						}
+						return nil
+					} else {
+						glog.Warningf("streamFromVolumeServers: origin stream %s/%s: %v", bucket, object, remoteErr)
+					}
+				}
+				// Origin unreadable. A permanent cache error is final; a transient one
+				// gets 503 so the client retries the still-filling cache.
+				if cacheErr != nil && !errors.Is(cacheErr, context.DeadlineExceeded) && !errors.Is(cacheErr, context.Canceled) && status.Code(cacheErr) != codes.DeadlineExceeded && status.Code(cacheErr) != codes.Canceled {
+					glog.Errorf("streamFromVolumeServers: permanent cache error for %s/%s: %v", bucket, object, cacheErr)
+					s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+					return newStreamErrorWithResponse(cacheErr)
+				}
 				glog.V(1).Infof("streamFromVolumeServers: remote object %s/%s not cached yet, returning 503 for retry", bucket, object)
 				w.Header().Set("Retry-After", "2")
 				s3err.WriteErrorResponse(w, r, s3err.ErrServiceUnavailable)
@@ -3096,6 +3137,52 @@ func (s3a *S3ApiServer) buildRemoteObjectPath(bucket, object string) (dir, name 
 	return dir, name
 }
 
+// openRemoteStream opens a ranged read of a remote-only object straight from
+// its mounted origin, resolving the mount and storage conf from the filer.
+func (s3a *S3ApiServer) openRemoteStream(ctx context.Context, bucket, object string, offset, size int64) (io.ReadCloser, error) {
+	dir, name := s3a.buildRemoteObjectPath(bucket, object)
+
+	var storageConf *remote_pb.RemoteConf
+	var localMountedDir string
+	var mountedLocation *remote_pb.RemoteStorageLocation
+	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		mappingContent, readErr := filer.ReadInsideFiler(ctx, client, filer.DirectoryEtcRemote, filer.REMOTE_STORAGE_MOUNT_FILE)
+		if readErr != nil {
+			return readErr
+		}
+		mappings, unmarshalErr := filer.UnmarshalRemoteStorageMappings(mappingContent)
+		if unmarshalErr != nil {
+			return unmarshalErr
+		}
+		var findErr error
+		localMountedDir, mountedLocation, findErr = filer.FindMountedRemoteMapping(mappings, dir)
+		if findErr != nil {
+			return findErr
+		}
+		confContent, readErr := filer.ReadInsideFiler(ctx, client, filer.DirectoryEtcRemote, mountedLocation.Name+filer.REMOTE_STORAGE_CONF_SUFFIX)
+		if readErr != nil {
+			return readErr
+		}
+		storageConf = &remote_pb.RemoteConf{}
+		return proto.Unmarshal(confContent, storageConf)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := remote_storage.GetRemoteStorage(storageConf)
+	if err != nil {
+		return nil, err
+	}
+	streamer, ok := client.(remote_storage.RemoteStorageStreamReader)
+	if !ok {
+		return nil, fmt.Errorf("remote storage type %s does not support streaming reads", storageConf.Type)
+	}
+
+	loc := filer.MapFullPathToRemoteStorageLocation(util.FullPath(localMountedDir), mountedLocation, util.FullPath(dir).Child(name))
+	return streamer.ReadFileAsStream(ctx, loc, offset, size)
+}
+
 // doCacheRemoteObject calls the filer's CacheRemoteObjectToLocalCluster gRPC endpoint.
 // This is the core caching function used by cacheRemoteObjectForStreaming.
 func (s3a *S3ApiServer) doCacheRemoteObject(ctx context.Context, dir, name string) (*filer_pb.Entry, error) {
@@ -3145,18 +3232,7 @@ var remoteCacheStreamingTimeoutNS = int64(20 * time.Second)
 // between transient errors (timeout) and permanent errors (not found, permission denied).
 // The filer continues caching on detached context, so retry finds cached chunks.
 func (s3a *S3ApiServer) cacheRemoteObjectForStreamingWithShortTimeout(r *http.Request, entry *filer_pb.Entry, bucket, object, versionId string) (*filer_pb.Entry, error) {
-	// Adaptive timeout: smaller files can afford to wait longer since cache completes faster
-	pollTimeout := 5 * time.Second
-	if entry.RemoteEntry != nil && entry.RemoteEntry.RemoteSize > 0 {
-		// For very large files (>500MB), use shorter timeout to improve TTFB
-		// For smaller files, allow longer to increase cache hit rate
-		remoteSize := entry.RemoteEntry.RemoteSize
-		if remoteSize > 500*1024*1024 {
-			pollTimeout = 2 * time.Second
-		} else if remoteSize < 50*1024*1024 {
-			pollTimeout = 10 * time.Second
-		}
-	}
+	pollTimeout := remote_storage.CacheWaitTimeout(entry.GetRemoteEntry().GetRemoteSize())
 
 	cacheCtx, cancel := context.WithTimeout(r.Context(), pollTimeout)
 	defer cancel()
