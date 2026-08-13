@@ -250,11 +250,11 @@ func (store *UniversalRedis2Store) removeOrphanedDirectoryListMember(ctx context
 	// InsertEntry writes the value before adding the member, so a value present
 	// again here may belong to an insert that found the member still in place
 	// and whose ZAddNX was therefore a no-op.
-	exists, err := store.Client.Exists(ctx, store.getKey(string(path))).Result()
+	exists, err := store.existsOnMaster(ctx, store.getKey(string(path)))
 	if err == nil && exists == 0 {
 		// an evicted directory may still have a live child index; empty zsets self-delete,
 		// so a present index holds children a recursive delete still needs to reach
-		children, childrenErr := store.Client.Exists(ctx, store.getKey(genDirectoryListKey(string(path)))).Result()
+		children, childrenErr := store.existsOnMaster(ctx, store.getKey(genDirectoryListKey(string(path))))
 		if childrenErr == nil && children == 0 {
 			return
 		}
@@ -263,6 +263,15 @@ func (store *UniversalRedis2Store) removeOrphanedDirectoryListMember(ctx context
 	if err := store.Client.ZAddNX(ctx, dirListKey, redis.Z{Score: 0, Member: fileName}).Err(); err != nil {
 		glog.V(0).InfofCtx(ctx, "restore %s in %s: %v", fileName, dirPath, err)
 	}
+}
+
+var existsScript = redis.NewScript(`return redis.call('EXISTS', KEYS[1])`)
+
+// replica-routed clients (useReadOnly, routeByLatency) would run a plain EXISTS on a lagging
+// replica and misread a live value as absent, turning the repair destructive; a script always
+// runs on the key's master
+func (store *UniversalRedis2Store) existsOnMaster(ctx context.Context, key string) (int64, error) {
+	return existsScript.Run(ctx, store.Client, []string{key}).Int64()
 }
 
 func isLogicallyExpired(entry *filer.Entry) bool {
