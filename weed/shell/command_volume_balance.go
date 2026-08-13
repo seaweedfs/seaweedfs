@@ -39,6 +39,7 @@ type commandVolumeBalance struct {
 	volumeByActive     *bool
 	applyBalancing     bool
 	volumesPerExec     int
+	ioBytePerSecond    int64
 	maxParallelization int
 	movedCount         int
 	byDiskUsage        bool
@@ -56,7 +57,7 @@ func (c *commandVolumeBalance) Name() string {
 func (c *commandVolumeBalance) Help() string {
 	return `balance all volumes among volume servers
 
-	volume.balance [-collection ALL_COLLECTIONS|EACH_COLLECTION|<collection_name>] [-apply] [-dataCenter=<data_center_name>] [-racks=rack_name_one,rack_name_two] [-nodes=192.168.0.1:8080,192.168.0.2:8080] [-volumesPerExec=5] [-maxParallelization=1] [-byDiskUsage] [-maxDiskUsagePercent=90]
+	volume.balance [-collection ALL_COLLECTIONS|EACH_COLLECTION|<collection_name>] [-apply] [-dataCenter=<data_center_name>] [-racks=rack_name_one,rack_name_two] [-nodes=192.168.0.1:8080,192.168.0.2:8080] [-volumesPerExec=5] [-maxParallelization=1] [-ioBytePerSecond=<bytes>] [-byDiskUsage] [-maxDiskUsagePercent=90]
 
 	The -collection parameter supports:
 	  - ALL_COLLECTIONS: balance across all collections
@@ -71,6 +72,7 @@ func (c *commandVolumeBalance) Help() string {
 	It might be beneficial to set, if your cluster has lots of volumes growing and topology changes faster than balancing can occur.
 	The -maxParallelization parameter limits the number of volume moves running at the same time.
 	The default value of 1 keeps the original sequential behavior.
+	The -ioBytePerSecond parameter limits copy throughput for each volume move. The default value of 0 is unlimited.
 
 	The -maxDiskUsagePercent flag (default 90) skips any move target whose physical disk is already used at
 	or above that percentage, using the real filesystem capacity each volume server reports. This is the
@@ -133,6 +135,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	dc := balanceCommand.String("dataCenter", "", "only apply the balancing for this dataCenter")
 	racks := balanceCommand.String("racks", "", "only apply the balancing for this racks")
 	nodes := balanceCommand.String("nodes", "", "only apply the balancing for this nodes")
+	ioBytePerSecond := balanceCommand.Int64("ioBytePerSecond", 0, "limit volume-move copy speed in bytes per second (default 0 is unlimited)")
 	noLock := balanceCommand.Bool("noLock", false, "do not lock the admin shell at one's own risk")
 	applyBalancing := balanceCommand.Bool("apply", false, "apply the balancing plan.")
 	// TODO: remove this alias
@@ -165,6 +168,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	if *maxParallelization < 1 {
 		return fmt.Errorf("maxParallelization must be >= 1")
 	}
+	c.ioBytePerSecond = *ioBytePerSecond
 	c.volumesPerExec = *volumesPerExec
 	c.maxParallelization = *maxParallelization
 	c.movedCount = 0
@@ -571,6 +575,9 @@ func (c *commandVolumeBalance) planBalanceMove(diskType types.DiskType, volumeRe
 
 	var candidateVolumes []*master_pb.VolumeInformationMessage
 	for _, v := range fullNode.selectedVolumes {
+		if v.RemoteStorageName != "" {
+			continue
+		}
 		candidateVolumes = append(candidateVolumes, v)
 	}
 	sortCandidatesFn(candidateVolumes)
@@ -681,7 +688,7 @@ func (c *commandVolumeBalance) executeBalanceMove(move volumeBalanceMove, volume
 		return c.failBalanceMove(move, volumeReplicas, failedTargets, err)
 	}
 
-	if err := moveVolume(c.commandEnv, move.volume, move.source, move.target, c.applyBalancing); err != nil {
+	if err := moveVolume(c.commandEnv, move.volume, move.source, move.target, c.ioBytePerSecond, c.applyBalancing); err != nil {
 		return c.failBalanceMove(move, volumeReplicas, failedTargets, err)
 	}
 	return nil
@@ -753,7 +760,7 @@ func maybeMoveOneVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*Vol
 		}
 	}
 	if _, found := emptyNode.selectedVolumes[candidateVolume.Id]; !found {
-		if err = moveVolume(commandEnv, candidateVolume, fullNode, emptyNode, applyChange); err == nil {
+		if err = moveVolume(commandEnv, candidateVolume, fullNode, emptyNode, 0, applyChange); err == nil {
 			adjustAfterMove(candidateVolume, volumeReplicas, fullNode, emptyNode)
 			return true, nil
 		} else {
@@ -763,7 +770,7 @@ func maybeMoveOneVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*Vol
 	return
 }
 
-func moveVolume(commandEnv *CommandEnv, v *master_pb.VolumeInformationMessage, fullNode *Node, emptyNode *Node, applyChange bool) error {
+func moveVolume(commandEnv *CommandEnv, v *master_pb.VolumeInformationMessage, fullNode *Node, emptyNode *Node, ioBytePerSecond int64, applyChange bool) error {
 	collectionPrefix := v.Collection + "_"
 	if v.Collection == "" {
 		collectionPrefix = ""
@@ -771,13 +778,18 @@ func moveVolume(commandEnv *CommandEnv, v *master_pb.VolumeInformationMessage, f
 	fmt.Fprintf(os.Stdout, "  moving %s volume %s%d %s => %s\n", v.DiskType, collectionPrefix, v.Id, fullNode.info.Id, emptyNode.info.Id)
 	if applyChange {
 		return volume_move.NewMover(commandEnv.option.GrpcDialOption).LiveMoveVolume(context.Background(), needle.VolumeId(v.Id),
-			pb.NewServerAddressFromDataNode(fullNode.info), pb.NewServerAddressFromDataNode(emptyNode.info), volume_move.VolumeMoveOptions{
-				DiskType:    v.DiskType,
-				IdleTimeout: 5 * time.Second,
-				Writer:      os.Stderr,
-			})
+			pb.NewServerAddressFromDataNode(fullNode.info), pb.NewServerAddressFromDataNode(emptyNode.info), volumeBalanceMoveOptions(v, ioBytePerSecond))
 	}
 	return nil
+}
+
+func volumeBalanceMoveOptions(v *master_pb.VolumeInformationMessage, ioBytePerSecond int64) volume_move.VolumeMoveOptions {
+	return volume_move.VolumeMoveOptions{
+		DiskType:        v.DiskType,
+		IoBytePerSecond: ioBytePerSecond,
+		IdleTimeout:     5 * time.Second,
+		Writer:          os.Stderr,
+	}
 }
 
 // toBalancerLocation converts a shell replica location to the shared placement

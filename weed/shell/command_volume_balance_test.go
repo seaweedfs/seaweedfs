@@ -350,18 +350,21 @@ func TestBalanceParallel(t *testing.T) {
 	}
 }
 
-func TestBalanceDoesNotMoveRemoteStorageVolumes(t *testing.T) {
+func TestBalanceSkipsRemoteStorageVolumes(t *testing.T) {
 	const mb = 1024 * 1024
 
 	for _, maxParallelization := range []int{0, 2} {
 		t.Run(fmt.Sprintf("maxParallelization=%d", maxParallelization), func(t *testing.T) {
 			volumes := make([]*master_pb.VolumeInformationMessage, 0, 8)
 			for id := uint32(1); id <= 8; id++ {
-				volumes = append(volumes, &master_pb.VolumeInformationMessage{
-					Id:                id,
-					Size:              95 * mb,
-					RemoteStorageName: "remote",
-				})
+				volume := &master_pb.VolumeInformationMessage{Id: id, Size: 95 * mb}
+				if id <= 4 {
+					// Make remote volumes sort before ordinary volumes. Without the
+					// planner filter, this is the volume that would abort balancing.
+					volume.Size = mb
+					volume.RemoteStorageName = "remote"
+				}
+				volumes = append(volumes, volume)
 			}
 			fullNode := &Node{
 				info: &master_pb.DataNodeInfo{
@@ -394,20 +397,36 @@ func TestBalanceDoesNotMoveRemoteStorageVolumes(t *testing.T) {
 				volumeSizeLimitMb:  100,
 				maxParallelization: maxParallelization,
 			}
-			if err := c.balanceSelectedVolume(types.HardDriveType, volumeReplicas, []*Node{fullNode, emptyNode}, sortWritableVolumes); err == nil {
-				t.Fatal("expected remote storage volume move to fail")
+			if err := c.balanceSelectedVolume(types.HardDriveType, volumeReplicas, []*Node{fullNode, emptyNode}, sortWritableVolumes); err != nil {
+				t.Fatalf("balanceSelectedVolume: %v", err)
 			}
-			if c.movedCount != 0 {
-				t.Fatalf("expected failed reservations to be rolled back, got movedCount=%d", c.movedCount)
+			if c.movedCount == 0 {
+				t.Fatal("expected ordinary volumes to be moved")
 			}
-			if got := len(fullNode.info.DiskInfos[""].VolumeInfos); got != len(volumes) {
-				t.Fatalf("expected all remote volumes to remain on source, got %d", got)
+			remoteOnSource := 0
+			for _, volume := range fullNode.info.DiskInfos[""].VolumeInfos {
+				if volume.RemoteStorageName != "" {
+					remoteOnSource++
+				}
 			}
-			if got := len(emptyNode.info.DiskInfos[""].VolumeInfos); got != 0 {
-				t.Fatalf("expected target to remain empty, got %d volumes", got)
+			if remoteOnSource != 4 {
+				t.Fatalf("expected all remote volumes to remain on source, got %d", remoteOnSource)
+			}
+			if got := len(emptyNode.info.DiskInfos[""].VolumeInfos); got == 0 {
+				t.Fatal("expected target to receive ordinary volumes")
+			}
+			for _, volume := range emptyNode.info.DiskInfos[""].VolumeInfos {
+				if volume.RemoteStorageName != "" {
+					t.Fatalf("remote volume %d must remain on source", volume.Id)
+				}
 			}
 		})
 	}
+}
+
+func TestVolumeBalanceMoveOptions(t *testing.T) {
+	options := volumeBalanceMoveOptions(&master_pb.VolumeInformationMessage{DiskType: "ssd"}, 1234)
+	assert.Equal(t, int64(1234), options.IoBytePerSecond)
 }
 
 // Regression test: a freshly added empty volume server must end up sharing the
