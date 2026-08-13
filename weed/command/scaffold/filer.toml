@@ -285,7 +285,7 @@ ca_cert_path = ""
 client_cert_path = ""
 client_key_path = ""
 # allows reads from slave servers or the master, but all writes still go to the master
-readOnly = false
+useReadOnly = false
 # automatically use the closest Redis server for reads
 routeByLatency = false
 # This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
