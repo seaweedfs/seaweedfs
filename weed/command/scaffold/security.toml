@@ -93,6 +93,8 @@ allowed_wildcard_domain = "" # .mycompany.com
 [grpc.volume]
 cert = ""
 key = ""
+client_cert = ""
+client_key = ""
 allowed_commonNames = ""    # comma-separated SSL certificate common names
 
 # Master server gRPC options (server-side)
@@ -100,6 +102,8 @@ allowed_commonNames = ""    # comma-separated SSL certificate common names
 [grpc.master]
 cert = ""
 key = ""
+client_cert = ""
+client_key = ""
 allowed_commonNames = ""    # comma-separated SSL certificate common names
 
 # Filer server gRPC options (server-side)
@@ -107,6 +111,8 @@ allowed_commonNames = ""    # comma-separated SSL certificate common names
 [grpc.filer]
 cert = ""
 key = ""
+client_cert = ""
+client_key = ""
 allowed_commonNames = ""    # comma-separated SSL certificate common names
 
 # S3 server gRPC options (server-side)
@@ -114,31 +120,43 @@ allowed_commonNames = ""    # comma-separated SSL certificate common names
 [grpc.s3]
 cert = ""
 key = ""
+client_cert = ""
+client_key = ""
 allowed_commonNames = ""    # comma-separated SSL certificate common names
 
 [grpc.msg_broker]
 cert = ""
 key = ""
+client_cert = ""
+client_key = ""
 allowed_commonNames = ""    # comma-separated SSL certificate common names
 
 [grpc.msg_agent]
 cert = ""
 key = ""
+client_cert = ""
+client_key = ""
 allowed_commonNames = ""    # comma-separated SSL certificate common names
 
 [grpc.admin]
 cert = ""
 key = ""
+client_cert = ""
+client_key = ""
 allowed_commonNames = ""    # comma-separated SSL certificate common names
 
 [grpc.worker]
 cert = ""
 key = ""
+client_cert = ""
+client_key = ""
 allowed_commonNames = ""    # comma-separated SSL certificate common names
 
 [grpc.mq]
 cert = ""
 key = ""
+client_cert = ""
+client_key = ""
 allowed_commonNames = ""    # comma-separated SSL certificate common names
 
 # gRPC client configuration for outgoing gRPC connections
