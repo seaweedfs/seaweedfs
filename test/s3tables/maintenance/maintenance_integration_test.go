@@ -796,7 +796,7 @@ func testCompactDataFiles(t *testing.T) {
 	}
 
 	require.Len(t, addedPaths, 1, "compaction should add exactly one merged parquet file")
-	assert.Contains(t, addedPaths, path.Join("data", compacted.Name))
+	assert.Contains(t, addedPaths, fmt.Sprintf("s3://%s/%s/data/%s", bucket, tablePath, compacted.Name))
 	require.Len(t, deletedPaths, len(files), "compaction should delete every original small input file")
 	for _, file := range files {
 		assert.Contains(t, deletedPaths, path.Join("data", file.name))
