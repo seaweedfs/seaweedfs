@@ -240,6 +240,9 @@ func (store *UniversalRedis2Store) removeOrphanedDirectoryListMember(ctx context
 		return
 	}
 
+	// survive the listing request being canceled mid-repair
+	ctx = context.WithoutCancel(ctx)
+
 	dirListKey := store.getKey(genDirectoryListKey(string(dirPath)))
 	path := util.NewFullPath(string(dirPath), fileName)
 
@@ -255,7 +258,9 @@ func (store *UniversalRedis2Store) removeOrphanedDirectoryListMember(ctx context
 		return
 	}
 
-	store.Client.ZAddNX(ctx, dirListKey, redis.Z{Score: 0, Member: fileName})
+	if err := store.Client.ZAddNX(ctx, dirListKey, redis.Z{Score: 0, Member: fileName}).Err(); err != nil {
+		glog.V(0).InfofCtx(ctx, "restore %s in %s: %v", fileName, dirPath, err)
+	}
 }
 
 func genDirectoryListKey(dir string) (dirList string) {
