@@ -27,7 +27,11 @@ func newTestStore(t *testing.T, keyPrefix string) (*UniversalRedis2Store, util.F
 
 	ctx := context.Background()
 	client := redis.NewClient(&redis.Options{Addr: addr})
-	t.Cleanup(func() { client.Close() })
+	t.Cleanup(func() {
+		if err := client.Close(); err != nil {
+			t.Errorf("close redis client: %v", err)
+		}
+	})
 	if err := client.Ping(ctx).Err(); err != nil {
 		t.Fatalf("connect to redis at %s: %v", addr, err)
 	}
@@ -36,8 +40,12 @@ func newTestStore(t *testing.T, keyPrefix string) (*UniversalRedis2Store, util.F
 
 	dir := util.FullPath(fmt.Sprintf("/redis2_test_%d", time.Now().UnixNano()))
 	t.Cleanup(func() {
-		store.DeleteFolderChildren(ctx, dir)
-		store.DeleteEntry(ctx, dir)
+		if err := store.DeleteFolderChildren(ctx, dir); err != nil {
+			t.Errorf("cleanup %s children: %v", dir, err)
+		}
+		if err := store.DeleteEntry(ctx, dir); err != nil {
+			t.Errorf("cleanup %s: %v", dir, err)
+		}
 	})
 
 	return store, dir
@@ -60,7 +68,7 @@ func listNames(t *testing.T, store *UniversalRedis2Store, dir util.FullPath) []s
 
 	names := []string{}
 	if _, err := store.ListDirectoryEntries(context.Background(), dir, "", true, 100, func(entry *filer.Entry) (bool, error) {
-		_, name := entry.FullPath.DirAndName()
+		_, name := entry.DirAndName()
 		names = append(names, name)
 		return true, nil
 	}); err != nil {
@@ -131,7 +139,11 @@ func TestRemoveOrphanedDirectoryListMemberKeepsDirectoryWithChildren(t *testing.
 			sub := dir.Child("sub")
 			insertTestEntry(t, store, sub, 0)
 			insertTestEntry(t, store, sub.Child("kid"), 0)
-			defer store.DeleteFolderChildren(context.Background(), sub)
+			defer func() {
+				if err := store.DeleteFolderChildren(context.Background(), sub); err != nil {
+					t.Errorf("cleanup %s children: %v", sub, err)
+				}
+			}()
 
 			// evict the directory's own value while its child index is live
 			if err := store.Client.Del(context.Background(), store.getKey(string(sub))).Err(); err != nil {
