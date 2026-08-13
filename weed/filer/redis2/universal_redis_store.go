@@ -235,6 +235,11 @@ func (store *UniversalRedis2Store) ListDirectoryEntries(ctx context.Context, dir
 }
 
 func (store *UniversalRedis2Store) removeOrphanedDirectoryListMember(ctx context.Context, dirPath util.FullPath, fileName string) {
+	// a directory converted to super large after accumulating members still has a legacy index
+	if store.isSuperLargeDirectory(string(dirPath)) {
+		return
+	}
+
 	dirListKey := store.getKey(genDirectoryListKey(string(dirPath)))
 	path := util.NewFullPath(string(dirPath), fileName)
 

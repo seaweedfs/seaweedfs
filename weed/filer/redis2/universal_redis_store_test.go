@@ -120,6 +120,22 @@ func TestRemoveOrphanedDirectoryListMemberKeepsRecreatedEntry(t *testing.T) {
 	}
 }
 
+func TestRemoveOrphanedDirectoryListMemberSkipsSuperLargeDirectory(t *testing.T) {
+	store, dir := newTestStore(t, "")
+	store.loadSuperLargeDirectories([]string{string(dir)})
+
+	// a member left from before the directory became super large
+	if err := store.Client.ZAdd(context.Background(), store.getKey(genDirectoryListKey(string(dir))), redis.Z{Score: 0, Member: "legacy"}).Err(); err != nil {
+		t.Fatalf("plant legacy member: %v", err)
+	}
+
+	store.removeOrphanedDirectoryListMember(context.Background(), dir, "legacy")
+
+	if members := indexMembers(t, store, dir); len(members) != 1 || members[0] != "legacy" {
+		t.Fatalf("directory index holds %v, want [legacy] untouched", members)
+	}
+}
+
 func TestListDirectoryEntriesRemovesIndexMembersExpiredByRedis(t *testing.T) {
 	store, dir := newTestStore(t, "")
 
