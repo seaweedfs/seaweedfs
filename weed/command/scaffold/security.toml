@@ -77,6 +77,12 @@ expires_after_seconds = 10           # seconds
 # All gRPC TLS authentications are mutual (mTLS)
 # The values for ca, cert, and key are paths to the certificate/key files
 # The host name is not checked, so the certificate files can be shared
+# Each [grpc.<component>] section also accepts optional client_cert/client_key,
+# presented when that component dials other servers. Set them when your CA
+# issues separate serverAuth-only and clientAuth-only certificates; when unset,
+# the component reuses cert/key for both directions.
+# If client and server certificates come from different issuing CAs, put both
+# CA certificates in the ca PEM file.
 [grpc]
 ca = ""
 # Set wildcard domain for enable TLS authentication by common names

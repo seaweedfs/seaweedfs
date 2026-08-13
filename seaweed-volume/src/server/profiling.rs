@@ -163,6 +163,8 @@ mod tests {
             https_client_ca_file: String::new(),
             grpc_cert_file: String::new(),
             grpc_key_file: String::new(),
+            grpc_client_cert_file: String::new(),
+            grpc_client_key_file: String::new(),
             grpc_ca_file: String::new(),
             grpc_allowed_wildcard_domain: String::new(),
             grpc_volume_allowed_common_names: vec![],

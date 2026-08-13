@@ -155,7 +155,7 @@ func LoadClientTLSFromFile(configFile string, component string) (grpc.DialOption
 	}
 	// Resolve relative PEM paths against the config file's directory.
 	configDir := filepath.Dir(configFile)
-	for _, key := range []string{"grpc.ca", component + ".cert", component + ".key"} {
+	for _, key := range []string{"grpc.ca", component + ".cert", component + ".key", component + ".client_cert", component + ".client_key"} {
 		p := v.GetString(key)
 		if p != "" && !filepath.IsAbs(p) {
 			v.Set(key, filepath.Join(configDir, p))
@@ -169,7 +169,15 @@ func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 		return grpc.WithTransportCredentials(insecure.NewCredentials())
 	}
 
-	certFileName, keyFileName, caFileName := config.GetString(component+".cert"), config.GetString(component+".key"), config.GetString("grpc.ca")
+	// prefer a dedicated client certificate: CAs may issue certs with only one of the serverAuth/clientAuth EKUs
+	certFileName, keyFileName := config.GetString(component+".client_cert"), config.GetString(component+".client_key")
+	if certFileName == "" || keyFileName == "" {
+		if certFileName != "" || keyFileName != "" {
+			glog.Warningf("%s.client_cert and %s.client_key must both be set, falling back to %s.cert and %s.key", component, component, component, component)
+		}
+		certFileName, keyFileName = config.GetString(component+".cert"), config.GetString(component+".key")
+	}
+	caFileName := config.GetString("grpc.ca")
 	if certFileName == "" || keyFileName == "" || caFileName == "" {
 		return grpc.WithTransportCredentials(insecure.NewCredentials())
 	}
