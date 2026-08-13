@@ -952,6 +952,22 @@ impl VolumeServer for VolumeGrpcService {
         Ok(Response::new(volume_server_pb::VolumeUnmountResponse {}))
     }
 
+    async fn volume_consolidate_index(
+        &self,
+        request: Request<volume_server_pb::VolumeConsolidateIndexRequest>,
+    ) -> Result<Response<volume_server_pb::VolumeConsolidateIndexResponse>, Status> {
+        self.check_grpc_admin_auth(&request)?;
+        self.state.check_maintenance()?;
+        let vid = VolumeId(request.into_inner().volume_id);
+        let mut store = self.state.store.write().unwrap();
+        store
+            .consolidate_volume_index(vid)
+            .map_err(|e| Status::internal(e.to_string()))?;
+        Ok(Response::new(
+            volume_server_pb::VolumeConsolidateIndexResponse {},
+        ))
+    }
+
     async fn volume_delete(
         &self,
         request: Request<volume_server_pb::VolumeDeleteRequest>,
@@ -5414,6 +5430,29 @@ mod tests {
         });
 
         (VolumeGrpcService { state }, tmp)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_volume_consolidate_index_rpc() {
+        let (service, _tmp) = make_local_service_with_volume("consolidate_rpc", None);
+
+        // Carry a peer address so the admin gate sees a caller; the test guard
+        // has an empty whitelist, so any peer is accepted.
+        let mut request = Request::new(volume_server_pb::VolumeConsolidateIndexRequest {
+            volume_id: 1,
+        });
+        request.extensions_mut().insert(tonic::transport::server::TcpConnectInfo {
+            local_addr: None,
+            remote_addr: Some("127.0.0.1:65000".parse().unwrap()),
+        });
+
+        service.volume_consolidate_index(request).await.unwrap();
+
+        // Data and index share a directory here, so there is nothing to move;
+        // the volume stays mounted and keeps its needle.
+        let store = service.state.store.read().unwrap();
+        let (_, v) = store.find_volume(VolumeId(1)).unwrap();
+        assert_eq!(v.file_count(), 1);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

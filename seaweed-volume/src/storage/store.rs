@@ -156,6 +156,26 @@ impl Store {
         self.find_volume(vid).is_some()
     }
 
+    /// Move a volume's index into the configured `-dir.idx` directory, reloading
+    /// the volume in place. A no-op when the location has no separate index
+    /// directory. Mirrors Go's `Store::ConsolidateVolumeIndex`.
+    pub fn consolidate_volume_index(&mut self, vid: VolumeId) -> Result<(), VolumeError> {
+        for loc in self.locations.iter_mut() {
+            let idx_dir = loc.idx_directory.clone();
+            let data_dir = loc.directory.clone();
+            if let Some(v) = loc.find_volume_mut(vid) {
+                if idx_dir == data_dir {
+                    return Ok(());
+                }
+                return v.relocate_index_to(&idx_dir);
+            }
+        }
+        Err(VolumeError::Io(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("volume {} not found on disk", vid),
+        )))
+    }
+
     // ---- Volume lifecycle ----
 
     /// Find the location with fewest volumes (load-balance) of the given disk type.
@@ -1386,6 +1406,73 @@ mod tests {
         };
         let deleted = store.delete_volume_needle(VolumeId(1), &mut del_n).unwrap();
         assert!(deleted.0 > 0);
+    }
+
+    #[test]
+    fn test_consolidate_volume_index_not_found() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut store = make_test_store(&[dir]);
+        let err = store.consolidate_volume_index(VolumeId(9)).unwrap_err();
+        assert!(matches!(err, VolumeError::Io(ref e)
+            if e.kind() == std::io::ErrorKind::NotFound));
+    }
+
+    #[test]
+    fn test_consolidate_volume_index_noop_with_separate_idx_dir() {
+        let root = TempDir::new().unwrap();
+        let data_dir = root.path().join("data");
+        let idx_dir = root.path().join("idx");
+        std::fs::create_dir_all(&data_dir).unwrap();
+        std::fs::create_dir_all(&idx_dir).unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                data_dir.to_str().unwrap(),
+                idx_dir.to_str().unwrap(),
+                10,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+        store
+            .add_volume(
+                VolumeId(1),
+                "",
+                None,
+                None,
+                0,
+                DiskType::HardDrive,
+                Version::current(),
+            )
+            .unwrap();
+        let mut n = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(0xaa),
+            data: b"co-located".to_vec(),
+            data_size: 10,
+            ..Needle::default()
+        };
+        store.write_volume_needle(VolumeId(1), &mut n).unwrap();
+
+        // add_volume already placed the index in the -dir.idx directory, so
+        // consolidation has nothing to move and leaves the volume readable.
+        store.consolidate_volume_index(VolumeId(1)).unwrap();
+        let idx_file = format!(
+            "{}.idx",
+            volume_file_name(idx_dir.to_str().unwrap(), "", VolumeId(1))
+        );
+        assert!(std::path::Path::new(&idx_file).exists());
+
+        let mut got = Needle {
+            id: NeedleId(1),
+            ..Needle::default()
+        };
+        let count = store.read_volume_needle(VolumeId(1), &mut got).unwrap();
+        assert_eq!(count, 10);
+        assert_eq!(got.data, b"co-located");
     }
 
     #[test]
