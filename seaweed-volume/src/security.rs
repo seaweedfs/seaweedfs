@@ -192,6 +192,13 @@ impl Guard {
         self.is_write_active = !is_empty_whitelist || !self.signing_key.is_empty();
     }
 
+    /// Whether any write-side control is configured: a non-empty whitelist or a
+    /// signing key. Mirrors Go's non-nil `guard` -- when this is false, every
+    /// caller is allowed and admin RPCs need not carry peer info.
+    pub fn is_write_active(&self) -> bool {
+        self.is_write_active
+    }
+
     /// Check if a remote IP is in the whitelist.
     /// Returns true if write security is inactive (no whitelist and no signing key),
     /// if the whitelist is empty, or if the IP matches.
