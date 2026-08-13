@@ -160,6 +160,16 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 				continue
 			}
 
+			// Nothing readable anywhere for this cursor: a bounded subscription is
+			// done, same as the caught-up path below. Without this a bounded
+			// subscriber on a buffer that never took a write (empty since process
+			// start, ReadFromDiskFn nil) parks here forever while heartbeats keep
+			// the stream looking alive. The nil error matters: err still holds
+			// ResumeFromDiskError, which callers treat as retry-the-disk-pass.
+			if stopTsNs != 0 {
+				return lastReadPosition, true, nil
+			}
+
 			// CRITICAL: Check if client is still connected
 			if !waitForDataFn() {
 				// Client disconnected - exit cleanly
