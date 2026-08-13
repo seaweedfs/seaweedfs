@@ -176,6 +176,14 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							Required:    true,
 							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 2}},
 						},
+						{
+							Name:        "io_byte_per_second",
+							Label:       "Move IO Limit (bytes/sec)",
+							Description: "Limit each volume move's copy's rate in bytes per second. 0 falls back to each volume server's own maintenance rate.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+						},
 					},
 				},
 				{
@@ -211,6 +219,9 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				"min_server_count": {
 					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 2},
 				},
+				"io_byte_per_second": {
+					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0},
+				},
 				"max_concurrent_moves": {
 					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(defaultMaxConcurrentMoves)},
 				},
@@ -237,6 +248,9 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			},
 			"min_server_count": {
 				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 2},
+			},
+			"io_byte_per_second": {
+				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0},
 			},
 			"max_concurrent_moves": {
 				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(defaultMaxConcurrentMoves)},
@@ -1017,11 +1031,13 @@ func (h *VolumeBalanceHandler) executeBatchMoves(
 func buildMoveTaskParams(move *worker_pb.BalanceMoveSpec, outerParams *worker_pb.BalanceTaskParams) *worker_pb.TaskParams {
 	timeoutSeconds := defaultBalanceTimeoutSeconds
 	forceMove := false
+	var ioBytePerSecond int64
 	if outerParams != nil {
 		if outerParams.TimeoutSeconds > 0 {
 			timeoutSeconds = outerParams.TimeoutSeconds
 		}
 		forceMove = outerParams.ForceMove
+		ioBytePerSecond = outerParams.IoBytePerSecond
 	}
 	return &worker_pb.TaskParams{
 		VolumeId:   move.VolumeId,
@@ -1035,8 +1051,9 @@ func buildMoveTaskParams(move *worker_pb.BalanceMoveSpec, outerParams *worker_pb
 		},
 		TaskParams: &worker_pb.TaskParams_BalanceParams{
 			BalanceParams: &worker_pb.BalanceTaskParams{
-				ForceMove:      forceMove,
-				TimeoutSeconds: timeoutSeconds,
+				ForceMove:       forceMove,
+				TimeoutSeconds:  timeoutSeconds,
+				IoBytePerSecond: ioBytePerSecond,
 			},
 		},
 	}
@@ -1067,6 +1084,12 @@ func deriveBalanceWorkerConfig(values map[string]*plugin_pb.ConfigValue) *volume
 		minServerCount = 2
 	}
 	taskConfig.MinServerCount = minServerCount
+
+	ioBytePerSecond := pluginworker.ReadInt64Config(values, "io_byte_per_second", taskConfig.IoBytePerSecond)
+	if ioBytePerSecond < 0 {
+		ioBytePerSecond = 0
+	}
+	taskConfig.IoBytePerSecond = ioBytePerSecond
 
 	maxConcurrentMoves := pluginworker.ReadIntConfig(values, "max_concurrent_moves", defaultMaxConcurrentMoves)
 	if maxConcurrentMoves < 1 {
@@ -1277,13 +1300,19 @@ func buildBatchVolumeBalanceProposals(
 			continue
 		}
 
-		// Serialize batch params
+		// Serialize batch params. The io limit rides along from the detection
+		// results, which carry it from the task configuration.
+		var ioBytePerSecond int64
+		if p := batch[0].TypedParams.GetBalanceParams(); p != nil {
+			ioBytePerSecond = p.IoBytePerSecond
+		}
 		taskParams := &worker_pb.TaskParams{
 			TaskParams: &worker_pb.TaskParams_BalanceParams{
 				BalanceParams: &worker_pb.BalanceTaskParams{
 					TimeoutSeconds:     defaultBalanceTimeoutSeconds,
 					MaxConcurrentMoves: int32(maxConcurrentMoves),
 					Moves:              moves,
+					IoBytePerSecond:    ioBytePerSecond,
 				},
 			},
 		}
@@ -1399,6 +1428,7 @@ func decodeVolumeBalanceTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParam
 		timeoutSeconds = defaultBalanceTimeoutSeconds
 	}
 	forceMove := readBoolConfig(job.Parameters, "force_move", false)
+	ioBytePerSecond := pluginworker.ReadInt64Config(job.Parameters, "io_byte_per_second", 0)
 
 	if volumeID == 0 {
 		return nil, fmt.Errorf("missing volume_id in job parameters")
@@ -1428,8 +1458,9 @@ func decodeVolumeBalanceTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParam
 		},
 		TaskParams: &worker_pb.TaskParams_BalanceParams{
 			BalanceParams: &worker_pb.BalanceTaskParams{
-				ForceMove:      forceMove,
-				TimeoutSeconds: timeoutSeconds,
+				ForceMove:       forceMove,
+				TimeoutSeconds:  timeoutSeconds,
+				IoBytePerSecond: ioBytePerSecond,
 			},
 		},
 	}, nil

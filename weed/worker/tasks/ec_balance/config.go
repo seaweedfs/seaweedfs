@@ -17,7 +17,8 @@ type Config struct {
 	CollectionFilter   string   `json:"collection_filter"`
 	DiskType           string   `json:"disk_type"`
 	PreferredTags      []string `json:"preferred_tags"`
-	ReplicaPlacement   string   `json:"replica_placement"` // e.g. "020"; empty falls back to the master default replication (even spread only when that default is empty or zero)
+	ReplicaPlacement   string   `json:"replica_placement"`  // e.g. "020"; empty falls back to the master default replication (even spread only when that default is empty or zero)
+	IoBytePerSecond    int64    `json:"io_byte_per_second"` // limit each shard copy's rate; 0 falls back to the volume server's maintenance rate
 	DataCenterFilter   string   `json:"-"`                  // per-detection-run, not persisted
 }
 
@@ -169,6 +170,21 @@ func GetConfigSpec() base.ConfigSpec {
 				InputType:    "text",
 				CSSClasses:   "form-control",
 			},
+			{
+				Name:         "io_byte_per_second",
+				JSONName:     "io_byte_per_second",
+				Type:         config.FieldTypeInt,
+				DefaultValue: 0,
+				MinValue:     0,
+				Required:     false,
+				DisplayName:  "Shard Copy IO Limit (bytes/sec)",
+				Description:  "Limit each EC shard copy's rate",
+				HelpText:     "0 falls back to each volume server's own maintenance rate (-maintenanceBytePerSecond)",
+				Placeholder:  "0 (server maintenance rate)",
+				Unit:         config.UnitNone,
+				InputType:    "number",
+				CSSClasses:   "form-control",
+			},
 		},
 	}
 }
@@ -189,6 +205,7 @@ func (c *Config) ToTaskPolicy() *worker_pb.TaskPolicy {
 				DiskType:           c.DiskType,
 				PreferredTags:      preferredTagsCopy,
 				ReplicaPlacement:   c.ReplicaPlacement,
+				IoBytePerSecond:    c.IoBytePerSecond,
 			},
 		},
 	}
@@ -211,6 +228,7 @@ func (c *Config) FromTaskPolicy(policy *worker_pb.TaskPolicy) error {
 		c.DiskType = ecbConfig.DiskType
 		c.PreferredTags = append([]string(nil), ecbConfig.PreferredTags...)
 		c.ReplicaPlacement = ecbConfig.ReplicaPlacement
+		c.IoBytePerSecond = ecbConfig.IoBytePerSecond
 	}
 
 	return nil

@@ -445,8 +445,9 @@ func (m *Mover) MarkVolumeWritable(ctx context.Context, volumeId needle.VolumeId
 }
 
 // ReplicateVolume copies a volume from source to target without touching the
-// source — the replica-creation half of a move.
-func (m *Mover) ReplicateVolume(ctx context.Context, volumeId needle.VolumeId, source, target pb.ServerAddress, diskType string, writer io.Writer) error {
+// source — the replica-creation half of a move. ioBytePerSecond limits the
+// copy rate; 0 falls back to the volume server's maintenance rate.
+func (m *Mover) ReplicateVolume(ctx context.Context, volumeId needle.VolumeId, source, target pb.ServerAddress, diskType string, ioBytePerSecond int64, writer io.Writer) error {
 	if writer == nil {
 		writer = io.Discard
 	}
@@ -460,9 +461,10 @@ func (m *Mover) ReplicateVolume(ctx context.Context, volumeId needle.VolumeId, s
 	}
 	return m.withClient(false, target, func(client volume_server_pb.VolumeServerClient) error {
 		stream, replicateErr := client.VolumeCopy(ctx, &volume_server_pb.VolumeCopyRequest{
-			VolumeId:       uint32(volumeId),
-			SourceDataNode: string(source),
-			DiskType:       diskType,
+			VolumeId:        uint32(volumeId),
+			SourceDataNode:  string(source),
+			DiskType:        diskType,
+			IoBytePerSecond: ioBytePerSecond,
 		})
 		if replicateErr != nil {
 			return replicateErr

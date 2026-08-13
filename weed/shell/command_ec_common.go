@@ -390,7 +390,7 @@ func oneServerCopyAndMountEcShardsFromSource(grpcDialOption grpc.DialOption,
 	fmt.Printf("allocate %d.%v %s => %s\n", volumeId, shardIdsToCopy, existingLocation, targetServer.info.Id)
 
 	targetAddress := pb.NewServerAddressFromDataNode(targetServer.info)
-	err = volume_move.NewMover(grpcDialOption).CopyAndMountEcShards(context.Background(), volumeId, collection, shardIdsToCopy, existingLocation, targetAddress, destDiskId, os.Stdout)
+	err = volume_move.NewMover(grpcDialOption).CopyAndMountEcShards(context.Background(), volumeId, collection, shardIdsToCopy, existingLocation, targetAddress, destDiskId, 0, os.Stdout)
 	if err != nil {
 		return
 	}
@@ -781,6 +781,7 @@ type ecBalancer struct {
 	replicaPlacement   *super_block.ReplicaPlacement
 	applyBalancing     bool
 	maxParallelization int
+	ioBytePerSecond    int64
 	diskType           types.DiskType
 	// volumeIds narrows the plan to these ec volume ids; nil balances every volume
 	// of the selected collections.
@@ -795,7 +796,7 @@ type ecBalancer struct {
 //
 // volumeIds, when non-empty, restricts the plan to those ec volume ids; empty
 // balances every volume of the given collections.
-func EcBalance(commandEnv *CommandEnv, collections []string, dc string, ecReplicaPlacement *super_block.ReplicaPlacement, diskType types.DiskType, maxParallelization int, applyBalancing bool, excludeNodes map[pb.ServerAddress]struct{}, volumeIds []needle.VolumeId) (err error) {
+func EcBalance(commandEnv *CommandEnv, collections []string, dc string, ecReplicaPlacement *super_block.ReplicaPlacement, diskType types.DiskType, maxParallelization int, ioBytePerSecond int64, applyBalancing bool, excludeNodes map[pb.ServerAddress]struct{}, volumeIds []needle.VolumeId) (err error) {
 	// collect all ec nodes
 	allEcNodes, totalFreeEcSlots, err := collectEcNodesForDC(commandEnv, dc, diskType)
 	if err != nil {
@@ -837,6 +838,7 @@ func EcBalance(commandEnv *CommandEnv, collections []string, dc string, ecReplic
 		replicaPlacement:   ecReplicaPlacement,
 		applyBalancing:     applyBalancing,
 		maxParallelization: maxParallelization,
+		ioBytePerSecond:    ioBytePerSecond,
 		diskType:           diskType,
 		volumeIds:          volumeIdFilter,
 	}
@@ -1108,7 +1110,7 @@ func (ecb *ecBalancer) applyShardMoveRPC(src, dst *EcNode, collection string, vi
 		Source:     srcAddr,
 		Target:     dstAddr,
 		TargetDisk: destDiskId,
-	}, volume_move.EcMoveOptions{Writer: os.Stdout})
+	}, volume_move.EcMoveOptions{IoBytePerSecond: ecb.ioBytePerSecond, Writer: os.Stdout})
 }
 
 // parseVolumeIdsFlag parses a comma-separated -volumeIds flag value, dropping

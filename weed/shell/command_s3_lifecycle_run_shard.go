@@ -180,7 +180,7 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 				// integration tests and CI. Fan out across the selected shards
 				// so recovery walks do not serialize 16 shard scans into a 10s
 				// timeout budget.
-				Workers: len(shards),
+				Workers:     len(shards),
 				Walker:      walker,
 				EventBudget: *eventBudget,
 				ClientName:  fmt.Sprintf("shell-lifecycle-%s", formatShardLabel(shards)),

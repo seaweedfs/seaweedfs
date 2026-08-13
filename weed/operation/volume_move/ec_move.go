@@ -24,6 +24,9 @@ type EcShardMove struct {
 
 // EcMoveOptions control MoveEcShards.
 type EcMoveOptions struct {
+	// IoBytePerSecond limits the shard copy rate; 0 falls back to the volume
+	// server's maintenance rate.
+	IoBytePerSecond int64
 	// Writer receives human-readable progress lines (nil discards them).
 	Writer io.Writer
 	// Progress, when set, receives percent/stage callbacks as the move advances.
@@ -54,7 +57,7 @@ func (m *Mover) MoveEcShards(ctx context.Context, move EcShardMove, opts EcMoveO
 	}
 
 	progress(10, fmt.Sprintf("copying EC shard(s) %d.%v from %s to %s", move.VolumeId, move.ShardIds, move.Source, move.Target))
-	if err := m.CopyAndMountEcShards(ctx, move.VolumeId, move.Collection, move.ShardIds, move.Source, move.Target, move.TargetDisk, writer); err != nil {
+	if err := m.CopyAndMountEcShards(ctx, move.VolumeId, move.Collection, move.ShardIds, move.Source, move.Target, move.TargetDisk, opts.IoBytePerSecond, writer); err != nil {
 		return err
 	}
 
@@ -83,7 +86,7 @@ func (m *Mover) MoveEcShards(ctx context.Context, move EcShardMove, opts EcMoveO
 // .vif/.ecsum sidecars) from source and mount them. A same-address call skips
 // the copy and just mounts — ec.encode uses that to bring freshly generated
 // shards online in place.
-func (m *Mover) CopyAndMountEcShards(ctx context.Context, volumeId needle.VolumeId, collection string, shardIds []erasure_coding.ShardId, source, target pb.ServerAddress, targetDisk uint32, writer io.Writer) error {
+func (m *Mover) CopyAndMountEcShards(ctx context.Context, volumeId needle.VolumeId, collection string, shardIds []erasure_coding.ShardId, source, target pb.ServerAddress, targetDisk uint32, ioBytePerSecond int64, writer io.Writer) error {
 	if writer == nil {
 		writer = io.Discard
 	}
@@ -98,15 +101,16 @@ func (m *Mover) CopyAndMountEcShards(ctx context.Context, volumeId needle.Volume
 		if !SameServer(target, source) {
 			fmt.Fprintf(writer, "copy %d.%v %s => %s\n", volumeId, shardIds, source, target)
 			_, copyErr := client.VolumeEcShardsCopy(ctx, &volume_server_pb.VolumeEcShardsCopyRequest{
-				VolumeId:       uint32(volumeId),
-				Collection:     collection,
-				ShardIds:       erasure_coding.ShardIdsToUint32(shardIds),
-				CopyEcxFile:    true,
-				CopyEcjFile:    true,
-				CopyVifFile:    true,
-				CopyEcsumFile:  true, // propagate the bitrot sidecar with the shards (no-op if the source has none)
-				SourceDataNode: string(source),
-				DiskId:         targetDisk,
+				VolumeId:        uint32(volumeId),
+				Collection:      collection,
+				ShardIds:        erasure_coding.ShardIdsToUint32(shardIds),
+				CopyEcxFile:     true,
+				CopyEcjFile:     true,
+				CopyVifFile:     true,
+				CopyEcsumFile:   true, // propagate the bitrot sidecar with the shards (no-op if the source has none)
+				SourceDataNode:  string(source),
+				DiskId:          targetDisk,
+				IoBytePerSecond: ioBytePerSecond,
 			})
 			if copyErr != nil {
 				return fmt.Errorf("copy %d.%v %s => %s: %v", volumeId, shardIds, source, target, copyErr)

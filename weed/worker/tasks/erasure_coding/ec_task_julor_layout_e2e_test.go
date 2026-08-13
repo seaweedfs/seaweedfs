@@ -108,9 +108,9 @@ func TestEcEncodeJulorLayoutConverges(t *testing.T) {
 		VolumeId:   volumeID,
 		Collection: collection,
 		Sources: []*worker_pb.TaskSource{
-			{Node: addr(srcServer), VolumeId: volumeID},                         // real source
-			{Node: addr(stubServer), VolumeId: volumeID},                        // 0-byte stub
-			{Node: addr(srcServer), VolumeId: volumeID, ShardIds: staleShards},  // stale EC shards to clear
+			{Node: addr(srcServer), VolumeId: volumeID},                        // real source
+			{Node: addr(stubServer), VolumeId: volumeID},                       // 0-byte stub
+			{Node: addr(srcServer), VolumeId: volumeID, ShardIds: staleShards}, // stale EC shards to clear
 		},
 		Targets: targets,
 		TaskParams: &worker_pb.TaskParams_ErasureCodingParams{

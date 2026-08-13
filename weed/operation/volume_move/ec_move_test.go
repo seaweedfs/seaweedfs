@@ -33,7 +33,7 @@ func TestMoveEcShardsSequence(t *testing.T) {
 	cluster := newFakeCluster()
 	cluster.ecShards[string(dstAddr)] = dstShards(3, 4)
 
-	err := cluster.mover().MoveEcShards(context.Background(), ecMove(3, 4), EcMoveOptions{})
+	err := cluster.mover().MoveEcShards(context.Background(), ecMove(3, 4), EcMoveOptions{IoBytePerSecond: 77})
 	if err != nil {
 		t.Fatalf("MoveEcShards: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestMoveEcShardsSequence(t *testing.T) {
 	if !copyReq.CopyEcxFile || !copyReq.CopyEcjFile || !copyReq.CopyVifFile || !copyReq.CopyEcsumFile {
 		t.Errorf("shard sidecars not all copied: %+v", copyReq)
 	}
-	if copyReq.DiskId != 2 || copyReq.SourceDataNode != string(srcAddr) || copyReq.Collection != "c1" {
+	if copyReq.DiskId != 2 || copyReq.SourceDataNode != string(srcAddr) || copyReq.Collection != "c1" || copyReq.IoBytePerSecond != 77 {
 		t.Errorf("copy request not propagated: %+v", copyReq)
 	}
 }
@@ -106,7 +106,7 @@ func TestRemoveEcShards(t *testing.T) {
 func TestCopyAndMountEcShardsSameAddressMountsOnly(t *testing.T) {
 	cluster := newFakeCluster()
 
-	err := cluster.mover().CopyAndMountEcShards(context.Background(), 7, "c1", []erasure_coding.ShardId{3}, srcAddr, srcAddr, 0, nil)
+	err := cluster.mover().CopyAndMountEcShards(context.Background(), 7, "c1", []erasure_coding.ShardId{3}, srcAddr, srcAddr, 0, 0, nil)
 	if err != nil {
 		t.Fatalf("CopyAndMountEcShards: %v", err)
 	}
