@@ -3,11 +3,13 @@ package plugin
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func TestLoadSchedulerPolicyUsesAdminConfig(t *testing.T) {
@@ -735,6 +737,144 @@ func TestDispatchScheduledProposalsLocksPerJob(t *testing.T) {
 				t.Fatalf("lock acquired %d times, want %d", got, tt.wantLocks)
 			}
 		})
+	}
+}
+
+func TestScheduledAttemptContextDrainGrace(t *testing.T) {
+	t.Parallel()
+
+	assertDeadline := func(t *testing.T, ctx context.Context, want time.Time) {
+		t.Helper()
+		got, ok := ctx.Deadline()
+		if !ok {
+			t.Fatal("expected attempt context to carry a deadline")
+		}
+		if diff := got.Sub(want); diff < -5*time.Second || diff > 5*time.Second {
+			t.Fatalf("unexpected attempt deadline: got=%v want~%v", got, want)
+		}
+	}
+
+	windowEnd := time.Now().Add(time.Minute)
+	window, cancelWindow := context.WithDeadline(context.Background(), windowEnd)
+	defer cancelWindow()
+
+	// Fits inside the window: keeps its own deadline.
+	ctx, cancel := scheduledAttemptContext(window, 30*time.Second, 0)
+	assertDeadline(t, ctx, time.Now().Add(30*time.Second))
+	cancel()
+
+	// Longer: capped at window close plus the grace.
+	ctx, cancel = scheduledAttemptContext(window, 3*time.Hour, 0)
+	assertDeadline(t, ctx, windowEnd.Add(scheduledExecutionDrainGrace))
+	cancel()
+
+	// Estimated runtime: keeps its full deadline.
+	ctx, cancel = scheduledAttemptContext(window, 3*time.Hour, 3*time.Hour)
+	assertDeadline(t, ctx, time.Now().Add(3*time.Hour))
+	cancel()
+
+	// An estimate below the timeout floors the drain cap.
+	ctx, cancel = scheduledAttemptContext(window, 3*time.Hour, 45*time.Minute)
+	assertDeadline(t, ctx, time.Now().Add(45*time.Minute))
+	cancel()
+
+	// No window deadline: the timeout stands alone.
+	ctx, cancel = scheduledAttemptContext(context.Background(), 2*time.Hour, 0)
+	assertDeadline(t, ctx, time.Now().Add(2*time.Hour))
+	cancel()
+}
+
+func TestScheduledEstimatedRuntime(t *testing.T) {
+	t.Parallel()
+
+	estimate := func(v int64) map[string]*plugin_pb.ConfigValue {
+		return map[string]*plugin_pb.ConfigValue{
+			"estimated_runtime_seconds": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: v}},
+		}
+	}
+
+	if got := scheduledEstimatedRuntime(nil); got != 0 {
+		t.Fatalf("nil parameters: got=%v want=0", got)
+	}
+	if got := scheduledEstimatedRuntime(estimate(-5)); got != 0 {
+		t.Fatalf("negative estimate: got=%v want=0", got)
+	}
+	if got := scheduledEstimatedRuntime(estimate(600)); got != 10*time.Minute {
+		t.Fatalf("normal estimate: got=%v want=10m", got)
+	}
+	// Oversized seconds cap before the Duration conversion can overflow.
+	if got := scheduledEstimatedRuntime(estimate(math.MaxInt64)); got != maxEstimatedRuntimeCap {
+		t.Fatalf("oversized estimate: got=%v want=%v", got, maxEstimatedRuntimeCap)
+	}
+}
+
+func TestDispatchScheduledProposalsDrainsStartedJobOnWindowClose(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	const workerID = "worker-drain"
+	const jobType = "s3_lifecycle" // lifecycle lane: no admin lock needed
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: workerID,
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: jobType, CanExecute: true, MaxExecutionConcurrency: 1},
+		},
+	})
+	session := &streamSession{workerID: workerID, outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 8), done: make(chan struct{})}
+	pluginSvc.putSession(session)
+
+	windowCtx, closeWindow := context.WithCancel(context.Background())
+	defer closeWindow()
+
+	policy := schedulerPolicy{
+		ExecutionConcurrency:   1,
+		PerWorkerConcurrency:   1,
+		ExecutionTimeout:       time.Hour,
+		ExecutorReserveBackoff: time.Millisecond,
+	}
+	proposals := []*plugin_pb.JobProposal{
+		{ProposalId: "p1", JobType: jobType, DedupeKey: "k1"},
+		{ProposalId: "p2", JobType: jobType, DedupeKey: "k2"},
+	}
+
+	resultCh := make(chan [3]int, 1)
+	go func() {
+		success, errCount, canceled := pluginSvc.dispatchScheduledProposals(
+			windowCtx, jobType, proposals, &plugin_pb.ClusterContext{}, policy)
+		resultCh <- [3]int{success, errCount, canceled}
+	}()
+
+	first := <-session.outgoing
+	execReq := first.GetExecuteJobRequest()
+	if execReq == nil {
+		t.Fatalf("expected execute_job_request, got %+v", first)
+	}
+
+	// Close the window mid-job: the job must drain to completion while the
+	// still-queued second proposal is canceled.
+	closeWindow()
+	pluginSvc.handleJobCompleted(&plugin_pb.JobCompleted{
+		RequestId:   first.RequestId,
+		JobId:       execReq.Job.JobId,
+		JobType:     jobType,
+		Success:     true,
+		CompletedAt: timestamppb.Now(),
+	})
+
+	result := <-resultCh
+	if result[0] != 1 || result[1] != 0 || result[2] != 1 {
+		t.Fatalf("unexpected dispatch counts: success=%d errors=%d canceled=%d", result[0], result[1], result[2])
+	}
+
+	select {
+	case unexpected := <-session.outgoing:
+		t.Fatalf("expected no further worker messages (no cancel for the draining job), got %+v", unexpected)
+	default:
 	}
 }
 
