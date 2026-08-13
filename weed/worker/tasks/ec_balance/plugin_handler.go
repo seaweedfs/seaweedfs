@@ -150,6 +150,14 @@ func (h *ECBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: ecBalanceMinServerCount}},
 						},
 						{
+							Name:        "io_byte_per_second",
+							Label:       "Shard Copy IO Limit (bytes/sec)",
+							Description: "Limit each EC shard copy's rate in bytes per second. 0 falls back to each volume server's own maintenance rate.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+						},
+						{
 							Name:        "preferred_tags",
 							Label:       "Preferred Tags",
 							Description: "Comma-separated disk tags to prioritize for shard placement, ordered by preference.",
@@ -163,6 +171,7 @@ func (h *ECBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
 				"imbalance_threshold": {Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.2}},
 				"min_server_count":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 3}},
+				"io_byte_per_second":  {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
 				"preferred_tags":      {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
 			},
 		},
@@ -181,6 +190,7 @@ func (h *ECBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 		WorkerDefaultValues: map[string]*plugin_pb.ConfigValue{
 			"imbalance_threshold": {Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.2}},
 			"min_server_count":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 3}},
+			"io_byte_per_second":  {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
 			"preferred_tags":      {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
 		},
 	}
@@ -417,6 +427,12 @@ func deriveECBalanceWorkerConfig(values map[string]*plugin_pb.ConfigValue) *ecBa
 		minServerCount = ecBalanceMinServerCount
 	}
 	taskConfig.MinServerCount = minServerCount
+
+	ioBytePerSecond := pluginworker.ReadInt64Config(values, "io_byte_per_second", taskConfig.IoBytePerSecond)
+	if ioBytePerSecond < 0 {
+		ioBytePerSecond = 0
+	}
+	taskConfig.IoBytePerSecond = ioBytePerSecond
 
 	taskConfig.PreferredTags = util.NormalizeTagList(pluginworker.ReadStringListConfig(values, "preferred_tags"))
 

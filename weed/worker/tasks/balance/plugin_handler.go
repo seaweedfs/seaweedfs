@@ -176,6 +176,14 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							Required:    true,
 							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 2}},
 						},
+						{
+							Name:        "io_byte_per_second",
+							Label:       "Move IO Limit (bytes/sec)",
+							Description: "Limit each volume move's copy's rate in bytes per second. 0 falls back to each volume server's own maintenance rate.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+						},
 					},
 				},
 				{
@@ -211,6 +219,9 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				"min_server_count": {
 					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 2},
 				},
+				"io_byte_per_second": {
+					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0},
+				},
 				"max_concurrent_moves": {
 					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(defaultMaxConcurrentMoves)},
 				},
@@ -237,6 +248,9 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			},
 			"min_server_count": {
 				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 2},
+			},
+			"io_byte_per_second": {
+				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0},
 			},
 			"max_concurrent_moves": {
 				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(defaultMaxConcurrentMoves)},
@@ -1070,6 +1084,12 @@ func deriveBalanceWorkerConfig(values map[string]*plugin_pb.ConfigValue) *volume
 		minServerCount = 2
 	}
 	taskConfig.MinServerCount = minServerCount
+
+	ioBytePerSecond := pluginworker.ReadInt64Config(values, "io_byte_per_second", taskConfig.IoBytePerSecond)
+	if ioBytePerSecond < 0 {
+		ioBytePerSecond = 0
+	}
+	taskConfig.IoBytePerSecond = ioBytePerSecond
 
 	maxConcurrentMoves := pluginworker.ReadIntConfig(values, "max_concurrent_moves", defaultMaxConcurrentMoves)
 	if maxConcurrentMoves < 1 {
