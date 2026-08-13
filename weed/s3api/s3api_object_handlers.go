@@ -1033,9 +1033,10 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 				}
 				// Cache not ready or failing locally (e.g. no assignable volume): serve
 				// straight from the origin while the detached cache keeps filling for
-				// later reads. A version-specific read cannot map to an origin key, so
-				// it keeps the error paths below.
-				if versionId == "" || versionId == "null" {
+				// later reads. An entry resolved to a specific version -- even on a
+				// latest-version read -- has no origin key, so it keeps the error
+				// paths below.
+				if cacheVersionId == "" || cacheVersionId == "null" {
 					if remoteReader, remoteErr := s3a.openRemoteStream(r.Context(), bucket, object, offset, size); remoteErr == nil {
 						defer remoteReader.Close()
 						s3a.setResponseHeaders(w, r, entry, totalSize)

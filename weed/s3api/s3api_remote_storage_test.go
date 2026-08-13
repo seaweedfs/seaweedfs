@@ -727,6 +727,25 @@ func TestS3ColdReadStreamsFromOrigin(t *testing.T) {
 		assert.Equal(t, "2", w.Header().Get("Retry-After"))
 	})
 
+	t.Run("latest read of a versioned entry keeps 503 retry", func(t *testing.T) {
+		freshClient := &fakeStreamRemoteClient{data: content}
+		remote_storage.RemoteStorageClientMakers["faketest"] = &fakeStreamRemoteMaker{client: freshClient}
+		defer func() {
+			remote_storage.RemoteStorageClientMakers["faketest"] = &fakeStreamRemoteMaker{client: client}
+		}()
+		s3a := newRemoteCacheTestServer(startStreamThroughFiler(t, "faketest-latest-versioned", stillCachingErr))
+		versionedEntry := entry()
+		versionedEntry.Extended = map[string][]byte{s3_constants.ExtVersionIdKey: []byte("v456")}
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/mybucket/dir/obj.bin", nil)
+
+		err := s3a.streamFromVolumeServers(w, r, versionedEntry, "", "mybucket", "dir/obj.bin", "")
+
+		require.Error(t, err)
+		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+		assert.Nil(t, freshClient.gotLoc, "the unversioned origin key must not be read for a versioned entry")
+	})
+
 	t.Run("local cache failure falls back to origin", func(t *testing.T) {
 		cacheErr := status.Error(codes.Internal, "assign: no free volumes")
 		s3a := newRemoteCacheTestServer(startStreamThroughFiler(t, "faketest-localfail", cacheErr))
