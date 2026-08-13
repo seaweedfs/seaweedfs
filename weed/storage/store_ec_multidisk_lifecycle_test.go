@@ -3,6 +3,8 @@ package storage
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
@@ -125,6 +127,34 @@ func registeredShards(store *Store) map[int][]int {
 	return byDisk
 }
 
+// assertRegistered fails unless the registered shard set matches want exactly,
+// disk by disk. Counts alone can pass while a reconcile associates a shard with
+// the wrong disk or loads a different shard than the file on disk; comparing the
+// actual ids per disk is what catches that. want maps disk index -> shard ids;
+// a disk absent from want must have no registered shards.
+func assertRegistered(t *testing.T, store *Store, phase string, want map[int][]int) {
+	t.Helper()
+	norm := func(m map[int][]int) map[int][]int {
+		out := map[int][]int{}
+		for d, ids := range m {
+			if len(ids) == 0 {
+				continue
+			}
+			cp := append([]int(nil), ids...)
+			sort.Ints(cp)
+			out[d] = cp
+		}
+		return out
+	}
+	got := norm(registeredShards(store))
+	exp := norm(want)
+	if !reflect.DeepEqual(got, exp) {
+		t.Fatalf("%s: registered shard set = %v, want %v; "+
+			"a shard on the wrong disk or the wrong id loaded keeps the counts right while corrupting the mapping",
+			phase, got, exp)
+	}
+}
+
 func countRegistered(store *Store) int {
 	n := 0
 	for _, ids := range registeredShards(store) {
@@ -174,11 +204,17 @@ func TestMultiDiskLifecycle_SpreadLayout(t *testing.T) {
 	}
 
 	// ── Phase A: cold start over the spread layout ──
+	// Register the first store's closer immediately, reading the closeStore
+	// variable at defer time so it also covers the second store after the
+	// restart below. Without this a Fatalf in phase A/B would leak the store
+	// and its notification-drainer goroutine.
 	store, closeStore := newLifecycleStore(t, dirs)
-	if got := registeredShards(store); len(got[0]) != 6 || len(got[1]) != 5 || len(got[2]) != 3 {
-		t.Fatalf("cold start over spread layout registered %v, want 6/5/3 across the disks; "+
-			"unregistered shards are invisible to heartbeat while their files sit on disk", got)
-	}
+	defer func() { closeStore() }()
+	assertRegistered(t, store, "cold start over spread layout", map[int][]int{
+		0: {0, 1, 2, 3, 4, 5},
+		1: {6, 7, 8, 9, 10},
+		2: {11, 12, 13},
+	})
 
 	// ── Phase B: a balance moves the sidecar disk's shards away ──
 	// Unmount and remove shards 0..5 from disk0. The sidecars must stay: disks
@@ -192,26 +228,21 @@ func TestMultiDiskLifecycle_SpreadLayout(t *testing.T) {
 			t.Fatalf("remove shard %d: %v", sid, err)
 		}
 	}
-	if got := countRegistered(store); got != 8 {
-		t.Fatalf("after balancing away the sidecar disk's shards, %d shards registered, want 8: %v",
-			got, registeredShards(store))
-	}
-	if _, _, found := store.FindEcVolumeWithShard(lifecycleVolumeId, 7); !found {
-		t.Fatal("shard 7 lost its registration when the sidecar disk's shards moved away")
-	}
+	assertRegistered(t, store, "after balancing away the sidecar disk's shards", map[int][]int{
+		1: {6, 7, 8, 9, 10},
+		2: {11, 12, 13},
+	})
 
 	// ── Phase C: restart in that state ──
 	// disk0 now holds only sidecars; every shard is on a disk with no local
 	// .ecx. This is the steady state a balanced multi-disk node reboots in.
 	closeStore()
 	store, closeStore = newLifecycleStore(t, dirs)
-	defer closeStore()
 
-	if got := registeredShards(store); len(got[1]) != 5 || len(got[2]) != 3 {
-		t.Fatalf("restart with sidecars on a shard-less disk registered %v, want 5 on disk1 and 3 on disk2; "+
-			"shards that fail to register here exist on disk but are missing from the master's view — "+
-			"rebuilds then count them missing and repair against the wrong set", got)
-	}
+	assertRegistered(t, store, "restart with sidecars on a shard-less disk", map[int][]int{
+		1: {6, 7, 8, 9, 10},
+		2: {11, 12, 13},
+	})
 	if n := shardFilesOnDisk(t, dirs[1]) + shardFilesOnDisk(t, dirs[2]); n != 8 {
 		t.Fatalf("restart changed what is on disk: %d shard files, want 8 — startup must never delete distributed EC shards", n)
 	}
@@ -224,9 +255,12 @@ func TestMultiDiskLifecycle_SpreadLayout(t *testing.T) {
 	if err := store.MountEcShards(lifecycleCollection, lifecycleVolumeId, 0, ""); err != nil {
 		t.Fatalf("mounting a shard delivered to a disk without local sidecars: %v", err)
 	}
-	if _, _, found := store.FindEcVolumeWithShard(lifecycleVolumeId, 0); !found {
-		t.Fatal("shard 0 mounted without error but is not findable")
-	}
+	// Shard 0 now lives on disk2 alongside 11/12/13; the mapping, not just the
+	// count, must reflect that.
+	assertRegistered(t, store, "cross-disk mount of a fresh shard", map[int][]int{
+		1: {6, 7, 8, 9, 10},
+		2: {0, 11, 12, 13},
+	})
 }
 
 // A dead disk that held the sidecars must degrade loudly but safely: the other
@@ -268,6 +302,13 @@ func TestMultiDiskLifecycle_SidecarDiskLost(t *testing.T) {
 	if n := shardFilesOnDisk(t, dirs[2]); n != 3 {
 		t.Fatalf("disk2 shard files after sidecar-disk loss: %d, want 3 untouched", n)
 	}
-	t.Logf("registered view without the sidecar disk: %v (files intact; shards without a reachable .ecx stay unloaded)",
-		registeredShards(store))
+	// The sidecar disk is gone, so no shard has a reachable .ecx: none may be
+	// registered. If a change ever registers shards without usable sidecars,
+	// this must fail rather than pass silently — a registered-but-unreadable
+	// shard is worse than an unregistered one, because the master advertises it.
+	if got := countRegistered(store); got != 0 {
+		t.Fatalf("registered view without the sidecar disk: %v, want empty "+
+			"(no shard can load without a reachable .ecx)", registeredShards(store))
+	}
+	t.Log("files intact; shards without a reachable .ecx stay unloaded, as required")
 }
