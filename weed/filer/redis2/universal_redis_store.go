@@ -270,9 +270,14 @@ func isLogicallyExpired(entry *filer.Entry) bool {
 }
 
 // deletes the value only when it still holds exactly the bytes the expiry decision was made on;
-// single-key, so it runs on all transports where a multi-key script would be CROSSSLOT
+// single-key, so it runs on all transports where a multi-key script would be CROSSSLOT.
+// -1: already gone, 0: changed under us, 1: deleted
 var deleteIfUnchangedScript = redis.NewScript(`
-if redis.call('GET', KEYS[1]) == ARGV[1] then
+local v = redis.call('GET', KEYS[1])
+if v == false then
+	return -1
+end
+if v == ARGV[1] then
 	return redis.call('DEL', KEYS[1])
 end
 return 0`)
@@ -301,6 +306,8 @@ func (store *UniversalRedis2Store) deleteExpiredEntry(ctx context.Context, dirPa
 		return
 	}
 
+	// 0 means a concurrent recreate changed the value: keep it. -1 means the redis
+	// TTL won after the re-read: the member still needs the not-found repair.
 	deleted, err := deleteIfUnchangedScript.Run(ctx, store.Client, []string{valueKey}, data).Int()
 	if err != nil || deleted == 0 {
 		return

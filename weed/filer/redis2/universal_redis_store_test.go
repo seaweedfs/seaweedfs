@@ -277,4 +277,8 @@ func TestDeleteIfUnchangedScriptOnlyDeletesSameBytes(t *testing.T) {
 	if exists, err := store.Client.Exists(context.Background(), key).Result(); err != nil || exists != 0 {
 		t.Fatalf("exists=%d err=%v, want key gone", exists, err)
 	}
+
+	if deleted, err := deleteIfUnchangedScript.Run(context.Background(), store.Client, []string{key}, []byte("v1")).Int(); err != nil || deleted != -1 {
+		t.Fatalf("deleted=%d err=%v, want -1 on a missing key", deleted, err)
+	}
 }
