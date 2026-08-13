@@ -758,22 +758,27 @@ func TestScheduledAttemptContextDrainGrace(t *testing.T) {
 	defer cancelWindow()
 
 	// Fits inside the window: keeps its own deadline.
-	ctx, cancel := scheduledAttemptContext(window, 30*time.Second, false)
+	ctx, cancel := scheduledAttemptContext(window, 30*time.Second, 0)
 	assertDeadline(t, ctx, time.Now().Add(30*time.Second))
 	cancel()
 
 	// Longer: capped at window close plus the grace.
-	ctx, cancel = scheduledAttemptContext(window, 3*time.Hour, false)
+	ctx, cancel = scheduledAttemptContext(window, 3*time.Hour, 0)
 	assertDeadline(t, ctx, windowEnd.Add(scheduledExecutionDrainGrace))
 	cancel()
 
 	// Estimated runtime: keeps its full deadline.
-	ctx, cancel = scheduledAttemptContext(window, 3*time.Hour, true)
+	ctx, cancel = scheduledAttemptContext(window, 3*time.Hour, 3*time.Hour)
 	assertDeadline(t, ctx, time.Now().Add(3*time.Hour))
 	cancel()
 
+	// An estimate below the timeout floors the drain cap.
+	ctx, cancel = scheduledAttemptContext(window, 3*time.Hour, 45*time.Minute)
+	assertDeadline(t, ctx, time.Now().Add(45*time.Minute))
+	cancel()
+
 	// No window deadline: the timeout stands alone.
-	ctx, cancel = scheduledAttemptContext(context.Background(), 2*time.Hour, false)
+	ctx, cancel = scheduledAttemptContext(context.Background(), 2*time.Hour, 0)
 	assertDeadline(t, ctx, time.Now().Add(2*time.Hour))
 	cancel()
 }

@@ -1198,22 +1198,21 @@ func (r *Plugin) executeScheduledJobWithExecutor(
 		// default execution timeout. This lets handlers like vacuum scale
 		// the timeout based on volume size so large volumes are not killed.
 		timeout := policy.ExecutionTimeout
-		hasEstimate := false
+		estimated := time.Duration(0)
 		if job.Parameters != nil {
 			if est, ok := job.Parameters["estimated_runtime_seconds"]; ok {
 				if v := est.GetInt64Value(); v > 0 {
-					estimated := time.Duration(v) * time.Second
+					estimated = time.Duration(v) * time.Second
 					if estimated > maxEstimatedRuntimeCap {
 						estimated = maxEstimatedRuntimeCap
 					}
 					if estimated > timeout {
 						timeout = estimated
-						hasEstimate = true
 					}
 				}
 			}
 		}
-		execCtx, cancel := scheduledAttemptContext(ctx, timeout, hasEstimate)
+		execCtx, cancel := scheduledAttemptContext(ctx, timeout, estimated)
 		_, err := r.executeJobWithExecutor(execCtx, executor, job, clusterContext, int32(attempt))
 		cancel()
 		if err == nil {
@@ -1250,13 +1249,16 @@ func (r *Plugin) executeScheduledJobWithExecutor(
 
 // scheduledAttemptContext bounds one execution attempt: its own timeout,
 // capped at the window deadline plus scheduledExecutionDrainGrace so a
-// draining job cannot hold the lane indefinitely. Estimated-runtime
-// attempts keep their full timeout.
-func scheduledAttemptContext(window context.Context, timeout time.Duration, hasEstimate bool) (context.Context, context.CancelFunc) {
+// draining job cannot hold the lane indefinitely, but never below the
+// job's declared estimated runtime.
+func scheduledAttemptContext(window context.Context, timeout, estimated time.Duration) (context.Context, context.CancelFunc) {
 	deadline := time.Now().Add(timeout)
-	if !hasEstimate && window != nil {
+	if window != nil {
 		if windowEnd, ok := window.Deadline(); ok {
 			if drainDeadline := windowEnd.Add(scheduledExecutionDrainGrace); deadline.After(drainDeadline) {
+				if floor := time.Now().Add(estimated); floor.After(drainDeadline) {
+					drainDeadline = floor
+				}
 				deadline = drainDeadline
 			}
 		}
