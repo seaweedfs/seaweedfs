@@ -217,7 +217,7 @@ func chunkVolumeIds(volumeIds []needle.VolumeId, batchSize int) [][]needle.Volum
 	return batches
 }
 
-func processEcEncodeBatch(commandEnv *CommandEnv, writer io.Writer, volumeIds []needle.VolumeId, rp *super_block.ReplicaPlacement, diskType types.DiskType, maxParallelization int, applyBalancing bool, collectionForMessage string) error {
+func processEcEncodeBatch(commandEnv *CommandEnv, writer io.Writer, volumeIds []needle.VolumeId, rp *super_block.ReplicaPlacement, diskType types.DiskType, maxParallelization int, applyBalancing bool, collectionForMessage string) (err error) {
 	topologyInfo, _, err := collectTopologyInfo(commandEnv, 0)
 	if err != nil {
 		return err
@@ -245,6 +245,19 @@ func processEcEncodeBatch(commandEnv *CommandEnv, writer io.Writer, volumeIds []
 		return err
 	}
 
+	// From here doEcEncode marks the volumes readonly and generates EC shards.
+	// If any step before the originals are deleted fails, roll the encode back:
+	// tear down the shards produced this run and restore the sources to writable,
+	// so a failed (and possibly abandoned) ec.encode does not strand volumes
+	// readonly or leave orphan EC shards behind. Once the shards are verified
+	// recoverable we are committed to the EC copy and must not roll back.
+	committed := false
+	defer func() {
+		if err != nil && !committed {
+			rollbackFailedEcEncode(commandEnv, writer, volumeIds, volumeIdToCollection, volumeLocationsMap, maxParallelization)
+		}
+	}()
+
 	skippedNodes, err := doEcEncode(commandEnv, writer, volumeIdToCollection, volumeIds, maxParallelization, topologyInfo)
 	if err != nil {
 		return fmt.Errorf("ec encode for volumes %v: %w", volumeIds, err)
@@ -267,12 +280,52 @@ func processEcEncodeBatch(commandEnv *CommandEnv, writer io.Writer, volumeIds []
 	if err := verifyEcShardsBeforeDelete(commandEnv, volumeIds, diskType, applyBalancing); err != nil {
 		return fmt.Errorf("verify EC shards before deleting originals: %w", err)
 	}
+	// Past verify the EC copy is recoverable; a delete failure below must not
+	// tear the shards down.
+	committed = true
 	fmt.Printf("Deleting original volumes after EC encoding...\n")
 	if err := doDeleteVolumesWithLocations(commandEnv, volumeIds, volumeLocationsMap, maxParallelization); err != nil {
 		return fmt.Errorf("delete original volumes after EC encoding: %w", err)
 	}
 	fmt.Printf("Successfully completed EC encoding for %d volumes\n", len(volumeIds))
 	return nil
+}
+
+// rollbackFailedEcEncode is a best-effort cleanup for an ec.encode that failed
+// after marking volumes readonly / generating shards but before the originals
+// were deleted. It tears down the EC shards this run produced (so they do not
+// survive as orphans until the next encode) and restores the source volumes to
+// writable (so a failed and possibly abandoned encode does not strand them
+// readonly). Errors are logged, not returned — we are already on the failure
+// path. Both operations are idempotent: clearPreexistingEcShards is a no-op when
+// no shards were generated, and marking an already-writable volume is a no-op,
+// so it is safe even for a failure before the volumes were marked readonly.
+func rollbackFailedEcEncode(commandEnv *CommandEnv, writer io.Writer, volumeIds []needle.VolumeId, volumeIdToCollection map[needle.VolumeId]string, volumeLocationsMap map[needle.VolumeId][]wdclient.Location, maxParallelization int) {
+	fmt.Fprintf(writer, "rolling back failed EC encode for volumes %v...\n", volumeIds)
+
+	// Tear down any EC shards this run produced. A fresh topology snapshot finds
+	// them wherever generate/balance left them; the teardown is blanket.
+	if topologyInfo, _, err := collectTopologyInfo(commandEnv, 0); err != nil {
+		fmt.Fprintf(writer, "rollback: collect topology to clear ec shards: %v\n", err)
+	} else if _, err := clearPreexistingEcShards(commandEnv, topologyInfo, volumeIds, volumeIdToCollection, maxParallelization); err != nil {
+		fmt.Fprintf(writer, "rollback: clear ec shards: %v\n", err)
+	}
+
+	// Restore the source volumes to writable.
+	ewg := NewErrorWaitGroup(maxParallelization)
+	for _, vid := range volumeIds {
+		for _, l := range volumeLocationsMap[vid] {
+			ewg.Add(func() error {
+				if err := markVolumeReplicaWritable(context.Background(), commandEnv.option.GrpcDialOption, vid, l, true, false); err != nil {
+					return fmt.Errorf("restore volume %d writable on %s: %w", vid, l.Url, err)
+				}
+				return nil
+			})
+		}
+	}
+	if err := ewg.Wait(); err != nil {
+		fmt.Fprintf(writer, "rollback: %v\n", err)
+	}
 }
 
 func checkEcEncodeCapacity(topologyInfo *master_pb.TopologyInfo, volumeCount int, diskType types.DiskType, collectionForMessage string) error {
