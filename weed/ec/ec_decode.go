@@ -27,12 +27,12 @@ func DoEcDecode(env *Env, topoInfo *master_pb.TopologyInfo, collection string, v
 	}
 
 	// find volume location
-	nodeToEcShardsInfo, dataShards := collectEcNodeShardsInfo(topoInfo, vid, diskType)
+	nodeToEcShardsInfo, dataShards := collectEcNodeShardsInfo(topoInfo, vid)
 
 	fmt.Printf("ec volume %d shard locations: %+v\n", vid, nodeToEcShardsInfo)
 
 	if len(nodeToEcShardsInfo) == 0 {
-		return fmt.Errorf("no EC shards found for volume %d (diskType %s)", vid, diskType.ReadableString())
+		return fmt.Errorf("no EC shards found for volume %d", vid)
 	}
 
 	var originalShardCounts map[pb.ServerAddress]int
@@ -311,14 +311,19 @@ func CollectEcShardIds(topoInfo *master_pb.TopologyInfo, collectionRegex *regexp
 	return
 }
 
-func collectEcNodeShardsInfo(topoInfo *master_pb.TopologyInfo, vid needle.VolumeId, diskType types.DiskType) (map[pb.ServerAddress]*erasure_coding.ShardsInfo, int) {
+func collectEcNodeShardsInfo(topoInfo *master_pb.TopologyInfo, vid needle.VolumeId) (map[pb.ServerAddress]*erasure_coding.ShardsInfo, int) {
 	res := make(map[pb.ServerAddress]*erasure_coding.ShardsInfo)
 	EachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
-		if diskInfo, found := dn.DiskInfos[string(diskType)]; found {
-			// A node may report several EcShardInfos for one volume — one per
-			// physical disk holding shards of it (multi-disk nodes). Union them
-			// rather than overwriting, or only the last disk's shards survive and
-			// the node looks like it is missing shards it actually has.
+		// Union across ALL disk-type buckets and, within a node, across its
+		// physical disks. Shards sit wherever encode generation and balance
+		// left them — a cross-tier encode leaves them in the source bucket, a
+		// partial migration straddles buckets — and a decode that only looks
+		// at one bucket reports a decodable volume as having no shards at all.
+		// (Same rationale as the encode's shard verification.)
+		for _, diskInfo := range dn.DiskInfos {
+			if diskInfo == nil {
+				continue
+			}
 			for _, v := range diskInfo.EcShardInfos {
 				if v.Id == uint32(vid) {
 					addr := pb.NewServerAddressFromDataNode(dn)
