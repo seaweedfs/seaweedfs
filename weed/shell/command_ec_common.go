@@ -49,16 +49,6 @@ type EcNode struct {
 	disks map[uint32]*EcDisk
 }
 
-type CandidateEcNode struct {
-	ecNode     *EcNode
-	shardCount int
-}
-
-type EcRack struct {
-	ecNodes    map[EcNodeId]*EcNode
-	freeEcSlot int
-}
-
 var (
 	ecBalanceAlgorithmDescription = `
 	func EcBalance() {
