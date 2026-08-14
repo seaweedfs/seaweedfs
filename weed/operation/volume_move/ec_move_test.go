@@ -24,7 +24,7 @@ func ecMove(shardIds ...erasure_coding.ShardId) EcShardMove {
 func dstShards(shardIds ...uint32) []*volume_server_pb.EcShardInfo {
 	var infos []*volume_server_pb.EcShardInfo
 	for _, sid := range shardIds {
-		infos = append(infos, &volume_server_pb.EcShardInfo{VolumeId: 7, ShardId: sid})
+		infos = append(infos, &volume_server_pb.EcShardInfo{VolumeId: 7, ShardId: sid, Size: 1024})
 	}
 	return infos
 }
@@ -67,6 +67,26 @@ func TestMoveEcShardsVerifyFailureKeepsSource(t *testing.T) {
 	for _, call := range cluster.callList() {
 		if call == "src:8080 VolumeEcShardsUnmount" || call == "src:8080 VolumeEcShardsDelete" {
 			t.Fatalf("source touched despite verification failure: %v", cluster.callList())
+		}
+	}
+}
+
+func TestMoveEcShardsZeroSizedDestinationKeepsSource(t *testing.T) {
+	// A zero-sized shard on the destination is residue of a failed operation
+	// (seaweedfs issue 10730); verification must not count it as a delivered
+	// shard, or the source is deleted behind a broken copy.
+	cluster := newFakeCluster()
+	cluster.ecShards[string(dstAddr)] = dstShards(3, 4)
+	cluster.ecShards[string(dstAddr)][1].Size = 0 // shard 4 landed as an empty file
+
+	err := cluster.mover().MoveEcShards(context.Background(), ecMove(3, 4), EcMoveOptions{})
+	if err == nil || !strings.Contains(err.Error(), "zero-sized EC shard 7.4") {
+		t.Fatalf("expected zero-sized-shard rejection, got: %v", err)
+	}
+
+	for _, call := range cluster.callList() {
+		if call == "src:8080 VolumeEcShardsUnmount" || call == "src:8080 VolumeEcShardsDelete" {
+			t.Fatalf("source touched despite zero-sized destination shard: %v", cluster.callList())
 		}
 	}
 }

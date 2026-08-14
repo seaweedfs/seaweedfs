@@ -27,11 +27,11 @@ func TestEagerPreGrow(t *testing.T) {
 	const sizeLimit = int64(256 * 1024 * 1024)
 
 	cases := []struct {
-		name        string
-		startCap    int
-		cl          int64
-		wantMinCap  int
-		wantNoop    bool // post: cap stays at startCap
+		name       string
+		startCap   int
+		cl         int64
+		wantMinCap int
+		wantNoop   bool // post: cap stays at startCap
 	}{
 		{
 			name:       "small content-length grows exactly",

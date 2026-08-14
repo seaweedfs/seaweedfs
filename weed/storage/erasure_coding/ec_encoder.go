@@ -167,21 +167,33 @@ func generateMissingEcFiles(baseFileName string, bufferSize int, largeBlockSize 
 	shardPaths := make([]string, ctx.Total()) // non-empty for present shards (also the in-place output for a reclassified-corrupt shard)
 	inputFiles := make([]*os.File, ctx.Total())
 	presentCount := 0
+	var zeroSized []int
 	for shardId := 0; shardId < ctx.Total(); shardId++ {
 		ext := ctx.ToExt(shardId)
 		shardPath := findShardFile(baseFileName, ext, additionalDirs)
-		if shardPath != "" {
-			shardHasData[shardId] = true
-			shardPaths[shardId] = shardPath
-			inputFiles[shardId], err = os.OpenFile(shardPath, os.O_RDONLY, 0)
-			if err != nil {
-				return nil, err
-			}
-			defer inputFiles[shardId].Close()
-			presentCount++
-		} else {
+		if shardPath == "" {
 			generatedShardIds = append(generatedShardIds, uint32(shardId))
+			continue
 		}
+		if fi, statErr := os.Stat(shardPath); statErr == nil && fi.Size() == 0 {
+			// A zero-sized shard file is residue of a failed operation, not a
+			// shard; feeding it to Reed-Solomon fails the whole rebuild with a
+			// size mismatch. Treat it as missing and regenerate over it in
+			// place, like a reclassified-corrupt shard.
+			glog.Warningf("shard %d for %s is zero-sized at %s; excluding from rebuild inputs and regenerating", shardId, baseFileName, shardPath)
+			shardPaths[shardId] = shardPath
+			zeroSized = append(zeroSized, shardId)
+			generatedShardIds = append(generatedShardIds, uint32(shardId))
+			continue
+		}
+		shardHasData[shardId] = true
+		shardPaths[shardId] = shardPath
+		inputFiles[shardId], err = os.OpenFile(shardPath, os.O_RDONLY, 0)
+		if err != nil {
+			return nil, err
+		}
+		defer inputFiles[shardId].Close()
+		presentCount++
 	}
 
 	// Bitrot verify-and-exclude: when a generation-0 checksum sidecar is present
@@ -190,6 +202,9 @@ func generateMissingEcFiles(baseFileName string, bufferSize int, largeBlockSize 
 	// silently consuming corrupt bytes. corruptOwned marks shards whose
 	// (corrupt) original file must be replaced in place at its discovered path.
 	corruptOwned := make([]bool, ctx.Total())
+	for _, shardId := range zeroSized {
+		corruptOwned[shardId] = true
+	}
 	prot, status := loadRebuildSidecar(baseFileName, ctx, additionalDirs)
 	switch status {
 	case BitrotInvalid:
