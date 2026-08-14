@@ -139,17 +139,28 @@ func (m *Mover) VerifyEcShards(ctx context.Context, volumeId needle.VolumeId, se
 		if err != nil {
 			return fmt.Errorf("verify EC shard(s) on %s for volume %d: %v", server, volumeId, err)
 		}
-		var bits erasure_coding.ShardBits
+		var bits, zeroSized erasure_coding.ShardBits
 		for _, s := range resp.EcShardInfos {
 			if s.VolumeId != uint32(volumeId) || s.ShardId >= erasure_coding.MaxShardCount {
+				continue
+			}
+			// A zero-sized shard is residue of a failed operation, not a
+			// shard; counting it as present would let a broken copy pass
+			// verification and the source be deleted behind it.
+			if s.Size <= 0 {
+				zeroSized = zeroSized.Set(erasure_coding.ShardId(s.ShardId))
 				continue
 			}
 			bits = bits.Set(erasure_coding.ShardId(s.ShardId))
 		}
 		for _, sid := range shardIds {
-			if !bits.Has(sid) {
-				return fmt.Errorf("%s missing EC shard %d.%d after copy/mount; keeping source", server, volumeId, sid)
+			if bits.Has(sid) {
+				continue
 			}
+			if zeroSized.Has(sid) {
+				return fmt.Errorf("%s has a zero-sized EC shard %d.%d after copy/mount; keeping source", server, volumeId, sid)
+			}
+			return fmt.Errorf("%s missing EC shard %d.%d after copy/mount; keeping source", server, volumeId, sid)
 		}
 		return nil
 	})
