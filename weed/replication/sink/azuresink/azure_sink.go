@@ -66,7 +66,7 @@ func (g *AzureSink) initialize(accountName, accountKey, clientID, endpoint, cont
 	g.container = container
 	g.dir = dir
 
-	client, err := azure.NewAzBlobClient(accountName, accountKey, clientID, endpoint)
+	client, err := azure.NewAzBlobClient(accountName, accountKey, clientID, endpoint, nil)
 	if err != nil {
 		return err
 	}

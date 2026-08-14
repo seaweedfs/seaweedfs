@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/http"
 	"os"
 	"reflect"
 	"regexp"
@@ -116,6 +117,14 @@ func (s azureRemoteStorageMaker) HasBucket() bool {
 }
 
 func (s azureRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
+	return MakeWithHTTPClient(conf, nil)
+}
+
+// MakeWithHTTPClient builds an azure client using the supplied *http.Client for
+// its transport (or the SDK default when nil). Callers that need to pin the dial
+// path against DNS rebinding pass a client whose transport has a guarded
+// DialContext, mirroring the S3 backend.
+func MakeWithHTTPClient(conf *remote_pb.RemoteConf, httpClient *http.Client) (remote_storage.RemoteStorageClient, error) {
 
 	client := &azureRemoteStorageClient{
 		conf: conf,
@@ -126,7 +135,7 @@ func (s azureRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storag
 		return nil, fmt.Errorf("neither azure_account_name nor the AZURE_STORAGE_ACCOUNT environment variable is set")
 	}
 
-	azClient, err := NewAzBlobClient(accountName, accountKey, conf.AzureClientId, conf.AzureEndpoint)
+	azClient, err := NewAzBlobClient(accountName, accountKey, conf.AzureClientId, conf.AzureEndpoint, httpClient)
 	if err != nil {
 		return nil, err
 	}
