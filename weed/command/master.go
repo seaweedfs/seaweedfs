@@ -88,7 +88,7 @@ func init() {
 	m.ipBind = cmdMaster.Flag.String("ip.bind", "", "ip address to bind to. If empty, default to same as -ip option.")
 	m.metaFolder = cmdMaster.Flag.String("mdir", os.TempDir(), "data directory to store meta data")
 	m.peers = cmdMaster.Flag.String("peers", "", "all master nodes in comma separated ip:port list, example: 127.0.0.1:9093,127.0.0.1:9094,127.0.0.1:9095; use 'none' for single-master mode")
-	m.volumeSizeLimitMB = cmdMaster.Flag.Uint("volumeSizeLimitMB", 30*1000, "Master stops directing writes to oversized volumes.")
+	m.volumeSizeLimitMB = cmdMaster.Flag.Uint("volumeSizeLimitMB", util.DefaultVolumeSizeLimitMB, "Master stops directing writes to oversized volumes.")
 	m.volumePreallocate = cmdMaster.Flag.Bool("volumePreallocate", false, "Preallocate disk space for volumes.")
 	m.maxParallelVacuumPerServer = cmdMaster.Flag.Int("maxParallelVacuumPerServer", 1, "maximum number of volumes to vacuum in parallel per volume server")
 	// m.pulseSeconds = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
@@ -160,8 +160,8 @@ func runMaster(cmd *Command, args []string) bool {
 	}
 
 	masterWhiteList := util.StringSplit(*m.whiteList, ",")
-	if *m.volumeSizeLimitMB > util.VolumeSizeLimitGB*1000 {
-		glog.Fatalf("volumeSizeLimitMB should be smaller than 30000")
+	if *m.volumeSizeLimitMB > util.MaxVolumeSizeLimitMB {
+		glog.Fatalf("volumeSizeLimitMB should not exceed %d", util.MaxVolumeSizeLimitMB)
 	}
 
 	switch {
