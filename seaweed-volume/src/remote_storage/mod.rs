@@ -211,4 +211,19 @@ mod tests {
         };
         assert_eq!(s3_compatible_endpoint(&gcs), None);
     }
+
+    #[test]
+    fn azure_endpoint_has_no_ssrf_path() {
+        // The Go volume server guards the caller-supplied azure endpoint against
+        // SSRF. This server has no azure backend, so there is nothing to dial:
+        // azure is not S3-compatible (the endpoint guard does not apply) and
+        // make_remote_storage_client rejects the type before building a client.
+        let azure = RemoteConf {
+            r#type: "azure".to_string(),
+            azure_endpoint: "https://169.254.169.254/".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(s3_compatible_endpoint(&azure), None);
+        assert!(make_remote_storage_client(&azure).is_err());
+    }
 }
