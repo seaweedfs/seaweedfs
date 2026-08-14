@@ -1,4 +1,4 @@
-package shell
+package ec
 
 import (
 	"testing"
@@ -11,28 +11,28 @@ func TestEcShardsFromString(t *testing.T) {
 	tests := []struct {
 		name    string
 		in      string
-		want    []*ecShard
+		want    []*ShardRef
 		wantErr bool
 	}{
 		{
 			name: "single id",
 			in:   "2",
-			want: []*ecShard{{ShardID: 2}},
+			want: []*ShardRef{{ShardID: 2}},
 		},
 		{
 			name: "list of ids",
 			in:   "0, 3 ,5",
-			want: []*ecShard{{ShardID: 0}, {ShardID: 3}, {ShardID: 5}},
+			want: []*ShardRef{{ShardID: 0}, {ShardID: 3}, {ShardID: 5}},
 		},
 		{
 			name: "qualified keeps host:port",
 			in:   "3@10.200.18.88:9007",
-			want: []*ecShard{{ShardID: 3, NodeAddress: "10.200.18.88:9007"}},
+			want: []*ShardRef{{ShardID: 3, NodeAddress: "10.200.18.88:9007"}},
 		},
 		{
 			name: "mixed bare and qualified",
 			in:   "2,3@10.200.18.88:9007",
-			want: []*ecShard{{ShardID: 2}, {ShardID: 3, NodeAddress: "10.200.18.88:9007"}},
+			want: []*ShardRef{{ShardID: 2}, {ShardID: 3, NodeAddress: "10.200.18.88:9007"}},
 		},
 		{
 			name:    "colon without node marker is not a shard ID",
@@ -43,7 +43,7 @@ func TestEcShardsFromString(t *testing.T) {
 			// shard IDs beyond the default 10+4 total are valid on custom-ratio volumes.
 			name: "shard id within MaxShardCount",
 			in:   "20",
-			want: []*ecShard{{ShardID: 20}},
+			want: []*ShardRef{{ShardID: 20}},
 		},
 		{
 			name:    "shard id at MaxShardCount is rejected",
@@ -78,7 +78,7 @@ func TestEcShardsFromString(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ecShardsFromString(tt.in)
+			got, err := ShardRefsFromString(tt.in)
 			if tt.wantErr {
 				assert.Error(t, err)
 				return
@@ -91,12 +91,12 @@ func TestEcShardsFromString(t *testing.T) {
 
 // the printed topology form must parse back, so entries can be copied verbatim.
 func TestEcShardStringRoundTrips(t *testing.T) {
-	for _, s := range []*ecShard{
+	for _, s := range []*ShardRef{
 		{ShardID: 2},
 		{ShardID: 3, NodeAddress: "10.200.18.88:9007"},
 	} {
-		got, err := ecShardsFromString(s.String())
+		got, err := ShardRefsFromString(s.String())
 		assert.NoError(t, err)
-		assert.Equal(t, []*ecShard{s}, got)
+		assert.Equal(t, []*ShardRef{s}, got)
 	}
 }

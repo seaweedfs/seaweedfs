@@ -1,18 +1,15 @@
 package shell
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"io"
 	"strconv"
 	"strings"
-	"sync"
 
-	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/ec"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
-	"google.golang.org/grpc"
 )
 
 func init() {
@@ -20,12 +17,6 @@ func init() {
 }
 
 type commandEcVolumeScrub struct {
-	env                      *CommandEnv
-	volumeServerAddrs        []pb.ServerAddress
-	volumeIDs                []uint32
-	mode                     volume_server_pb.VolumeScrubMode
-	forceDeletedNeedlesCheck bool
-	grpcDialOption           grpc.DialOption
 }
 
 func (c *commandEcVolumeScrub) Name() string {
@@ -62,10 +53,10 @@ func (c *commandEcVolumeScrub) Do(args []string, commandEnv *CommandEnv, writer 
 		return
 	}
 
-	c.volumeServerAddrs = []pb.ServerAddress{}
+	volumeServerAddrs := []pb.ServerAddress{}
 	if *nodesStr != "" {
 		for _, addr := range strings.Split(*nodesStr, ",") {
-			c.volumeServerAddrs = append(c.volumeServerAddrs, pb.ServerAddress(addr))
+			volumeServerAddrs = append(volumeServerAddrs, pb.ServerAddress(addr))
 		}
 	} else {
 		dns, err := collectDataNodes(commandEnv, 0)
@@ -73,11 +64,11 @@ func (c *commandEcVolumeScrub) Do(args []string, commandEnv *CommandEnv, writer 
 			return err
 		}
 		for _, dn := range dns {
-			c.volumeServerAddrs = append(c.volumeServerAddrs, pb.ServerAddress(dn.Address))
+			volumeServerAddrs = append(volumeServerAddrs, pb.ServerAddress(dn.Address))
 		}
 	}
 
-	c.volumeIDs = []uint32{}
+	volumeIDs := []uint32{}
 	if *volumeIDsStr != "" {
 		for _, vids := range strings.Split(*volumeIDsStr, ",") {
 			vids = strings.TrimSpace(vids)
@@ -85,96 +76,30 @@ func (c *commandEcVolumeScrub) Do(args []string, commandEnv *CommandEnv, writer 
 				continue
 			}
 			if vid, err := strconv.ParseUint(vids, 10, 32); err == nil {
-				c.volumeIDs = append(c.volumeIDs, uint32(vid))
+				volumeIDs = append(volumeIDs, uint32(vid))
 			} else {
 				return fmt.Errorf("invalid volume ID %q", vids)
 			}
 		}
 	}
 
+	var scrubMode volume_server_pb.VolumeScrubMode
 	switch strings.ToUpper(*mode) {
 	case "INDEX":
-		c.mode = volume_server_pb.VolumeScrubMode_INDEX
+		scrubMode = volume_server_pb.VolumeScrubMode_INDEX
 	case "LOCAL":
-		c.mode = volume_server_pb.VolumeScrubMode_LOCAL
+		scrubMode = volume_server_pb.VolumeScrubMode_LOCAL
 	case "FULL":
-		c.mode = volume_server_pb.VolumeScrubMode_FULL
+		scrubMode = volume_server_pb.VolumeScrubMode_FULL
 	case "CHECKSUM":
-		c.mode = volume_server_pb.VolumeScrubMode_CHECKSUM
+		scrubMode = volume_server_pb.VolumeScrubMode_CHECKSUM
 	default:
 		return fmt.Errorf("unsupported scrubbing mode %q", *mode)
 	}
-	fmt.Fprintf(writer, "using %s mode\n", c.mode.String())
-	c.env = commandEnv
-	c.forceDeletedNeedlesCheck = *forceDeletedNeedlesCheck
-	if c.forceDeletedNeedlesCheck && c.mode != volume_server_pb.VolumeScrubMode_FULL {
+	fmt.Fprintf(writer, "using %s mode\n", scrubMode.String())
+	if *forceDeletedNeedlesCheck && scrubMode != volume_server_pb.VolumeScrubMode_FULL {
 		return fmt.Errorf("deleted needle checks are only supported for FULL scrubs")
 	}
 
-	return c.scrubEcVolumes(writer, *maxParallelization, *showDetails)
-}
-
-func (c *commandEcVolumeScrub) scrubEcVolumes(writer io.Writer, maxParallelization int, showDetails bool) error {
-	var brokenVolumesStr, brokenShardsStr []string
-	var details []string
-	var totalVolumes, brokenVolumes, brokenShards, totalFiles uint64
-	var mu sync.Mutex
-
-	ewg := NewErrorWaitGroup(maxParallelization)
-	count := 0
-	for _, addr := range c.volumeServerAddrs {
-		ewg.Add(func() error {
-			mu.Lock()
-			count++
-			fmt.Fprintf(writer, "Scrubbing %s (%d/%d)...\n", addr.String(), count, len(c.volumeServerAddrs))
-			mu.Unlock()
-
-			err := operation.WithVolumeServerClient(false, addr, c.env.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-				res, err := volumeServerClient.ScrubEcVolume(context.Background(), &volume_server_pb.ScrubEcVolumeRequest{
-					Mode:                     c.mode,
-					VolumeIds:                c.volumeIDs,
-					ForceDeletedNeedlesCheck: c.forceDeletedNeedlesCheck,
-				})
-				if err != nil {
-					return err
-				}
-
-				mu.Lock()
-				defer mu.Unlock()
-
-				totalVolumes += res.GetTotalVolumes()
-				totalFiles += res.GetTotalFiles()
-				brokenVolumes += uint64(len(res.GetBrokenVolumeIds()))
-				brokenShards += uint64(len(res.GetBrokenShardInfos()))
-				for _, d := range res.GetDetails() {
-					details = append(details, fmt.Sprintf("[%s] %s", addr, d))
-				}
-				for _, vid := range res.GetBrokenVolumeIds() {
-					brokenVolumesStr = append(brokenVolumesStr, fmt.Sprintf("%s:%v", addr, vid))
-				}
-				for _, si := range res.GetBrokenShardInfos() {
-					brokenShardsStr = append(brokenShardsStr, fmt.Sprintf("%s:%v:%v", addr, si.VolumeId, si.ShardId))
-				}
-
-				return nil
-			})
-			return err
-		})
-	}
-	if err := ewg.Wait(); err != nil {
-		return err
-	}
-
-	fmt.Fprintf(writer, "Scrubbed %d EC files and %d volumes on %d nodes\n", totalFiles, totalVolumes, len(c.volumeServerAddrs))
-	if brokenVolumes != 0 {
-		fmt.Fprintf(writer, "\nGot scrub failures on %d EC volumes and %d EC shards :(\n", brokenVolumes, brokenShards)
-		fmt.Fprintf(writer, "Affected volumes: %s\n", strings.Join(brokenVolumesStr, ", "))
-		if len(brokenShardsStr) != 0 {
-			fmt.Fprintf(writer, "Affected shards:  %s\n", strings.Join(brokenShardsStr, ", "))
-		}
-		if showDetails && len(details) != 0 {
-			fmt.Fprintf(writer, "Details:\n\t%s\n", strings.Join(details, "\n\t"))
-		}
-	}
-	return nil
+	return ec.ScrubEcVolumes(commandEnv.ecEnv(), writer, volumeServerAddrs, volumeIDs, scrubMode, *forceDeletedNeedlesCheck, *maxParallelization, *showDetails)
 }

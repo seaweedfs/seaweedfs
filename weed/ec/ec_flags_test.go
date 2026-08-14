@@ -1,4 +1,4 @@
-package shell
+package ec
 
 import (
 	"testing"
@@ -25,27 +25,27 @@ func TestCountFreeShardSlotsPhysicalDiskGate(t *testing.T) {
 	}
 
 	// Physically empty: slot math applies, positive free slots.
-	if got := countFreeShardSlots(mk(1000*gb, 900*gb), types.HardDriveType); got <= 0 {
+	if got := CountFreeShardSlots(mk(1000*gb, 900*gb), types.HardDriveType); got <= 0 {
 		t.Errorf("physically empty disk free shard slots = %d, want > 0", got)
 	}
 	// Physically 96% full: gated to zero regardless of slot room.
-	if got := countFreeShardSlots(mk(1000*gb, 40*gb), types.HardDriveType); got != 0 {
+	if got := CountFreeShardSlots(mk(1000*gb, 40*gb), types.HardDriveType); got != 0 {
 		t.Errorf("physically full disk free shard slots = %d, want 0", got)
 	}
 	// No byte report (older server): fall back to slot math, positive.
-	if got := countFreeShardSlots(mk(0, 0), types.HardDriveType); got <= 0 {
+	if got := CountFreeShardSlots(mk(0, 0), types.HardDriveType); got <= 0 {
 		t.Errorf("unreported-bytes disk free shard slots = %d, want > 0 (slot fallback)", got)
 	}
 }
 
 func TestParseVolumeIdsFlag(t *testing.T) {
-	vids, err := parseVolumeIdsFlag("101, 102,101, 103")
+	vids, err := ParseVolumeIdsFlag("101, 102,101, 103")
 	assert.NoError(t, err)
 	assert.Equal(t, []needle.VolumeId{101, 102, 103}, vids)
 
-	_, err = parseVolumeIdsFlag("101,abc")
+	_, err = ParseVolumeIdsFlag("101,abc")
 	assert.Error(t, err)
 
-	_, err = parseVolumeIdsFlag(" , ")
+	_, err = ParseVolumeIdsFlag(" , ")
 	assert.Error(t, err)
 }
