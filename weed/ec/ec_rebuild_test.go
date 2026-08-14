@@ -90,7 +90,7 @@ func TestRebuildEcVolumesInsufficientShards(t *testing.T) {
 		addEcVolumeAndShardsForTest(1, "c1", []erasure_coding.ShardId{0, 1, 2, 3, 4}) // Only 5 shards
 
 	erb := &ecRebuilder{
-		env: &Env{},
+		env:     &Env{},
 		ewg:     util.NewErrorWaitGroup(10),
 		ecNodes: []*EcNode{node1},
 		writer:  &logBuffer,
@@ -118,7 +118,7 @@ func TestRebuildEcVolumesCompleteVolume(t *testing.T) {
 		addEcVolumeAndShardsForTest(1, "c1", []erasure_coding.ShardId{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13})
 
 	erb := &ecRebuilder{
-		env: &Env{},
+		env:          &Env{},
 		ewg:          util.NewErrorWaitGroup(10),
 		ecNodes:      []*EcNode{node1},
 		writer:       &logBuffer,
@@ -147,7 +147,7 @@ func TestRebuildEcVolumesInsufficientSpace(t *testing.T) {
 							addEcVolumeAndShardsForTest(1, "c1", []erasure_coding.ShardId{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
 
 	erb := &ecRebuilder{
-		env: &Env{},
+		env:          &Env{},
 		ewg:          util.NewErrorWaitGroup(10),
 		ecNodes:      []*EcNode{node1},
 		writer:       &logBuffer,
@@ -262,7 +262,7 @@ func TestPrepareDataToRecoverTargetShardCount(t *testing.T) {
 		addEcVolumeAndShardsForTest(1, "c1", []erasure_coding.ShardId{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
 
 	erb := &ecRebuilder{
-		env: &Env{},
+		env:     &Env{},
 		ecNodes: []*EcNode{node1},
 		writer:  &logBuffer,
 	}
