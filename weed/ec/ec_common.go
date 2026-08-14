@@ -298,7 +298,7 @@ func MoveMountedShardToEcNode(env *Env, existingLocation *EcNode, collection str
 	}
 
 	destinationEcNode.AddEcVolumeShards(vid, collection, copiedShardIds, diskType)
-	existingLocation.DeleteEcVolumeShards(vid, copiedShardIds, diskType)
+	existingLocation.DeleteEcVolumeShards(vid, copiedShardIds)
 
 	return nil
 
@@ -634,9 +634,18 @@ func (ecNode *EcNode) AddEcVolumeShards(vid needle.VolumeId, collection string, 
 	return ecNode
 }
 
-func (ecNode *EcNode) DeleteEcVolumeShards(vid needle.VolumeId, shardIds []erasure_coding.ShardId, diskType types.DiskType) *EcNode {
+// DeleteEcVolumeShards removes the shards from the node model wherever they
+// sit. A node holds a given shard in exactly one disk-type bucket, but which
+// bucket is not the caller's to know: a mid-migration (cross-tier encode)
+// volume keeps its fresh shards in the SOURCE disk's bucket while the balance
+// runs against the target type, so a bucket-scoped delete would miss them and
+// the dry-run model would count a moved shard twice.
+func (ecNode *EcNode) DeleteEcVolumeShards(vid needle.VolumeId, shardIds []erasure_coding.ShardId) *EcNode {
 
-	if diskInfo, found := ecNode.Info.DiskInfos[string(diskType)]; found {
+	for _, diskInfo := range ecNode.Info.DiskInfos {
+		if diskInfo == nil {
+			continue
+		}
 		for _, eci := range diskInfo.EcShardInfos {
 			if needle.VolumeId(eci.Id) == vid {
 				si := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(eci)
@@ -750,6 +759,9 @@ type ecBalancer struct {
 	// volumeIds narrows the plan to these ec volume ids; nil balances every volume
 	// of the selected collections.
 	volumeIds map[uint32]bool
+	// migratingVolumeIds are mid-encode volumes whose shards are ingested from
+	// every disk-type bucket; see EcBalance.
+	migratingVolumeIds map[uint32]bool
 }
 
 // excludeNodes is a set of server addresses kept out of the balance as copy/move
@@ -760,7 +772,16 @@ type ecBalancer struct {
 //
 // volumeIds, when non-empty, restricts the plan to those ec volume ids; empty
 // balances every volume of the given collections.
-func EcBalance(env *Env, collections []string, dc string, ecReplicaPlacement *super_block.ReplicaPlacement, diskType types.DiskType, maxParallelization int, ioBytePerSecond int64, applyBalancing bool, excludeNodes map[pb.ServerAddress]struct{}, volumeIds []needle.VolumeId) (err error) {
+//
+// migratingVolumeIds names volumes whose shards are ingested from EVERY
+// disk-type bucket, not just the diskType one. ec.encode passes its batch:
+// shard generation writes beside the source .dat, so a cross-tier encode
+// (source on hdd, -diskType=ssd) leaves the fresh shards in the source bucket,
+// where a target-bucket-only balance cannot see them — it plans no moves and
+// the encode's spread guard aborts. Everything else keeps the bucket filter,
+// so a plain ec.balance -diskType=X never drags deliberately tiered shards of
+// other types onto X disks.
+func EcBalance(env *Env, collections []string, dc string, ecReplicaPlacement *super_block.ReplicaPlacement, diskType types.DiskType, maxParallelization int, ioBytePerSecond int64, applyBalancing bool, excludeNodes map[pb.ServerAddress]struct{}, volumeIds []needle.VolumeId, migratingVolumeIds []needle.VolumeId) (err error) {
 	// collect all ec nodes
 	allEcNodes, totalFreeEcSlots, err := CollectEcNodesForDC(env, dc, diskType)
 	if err != nil {
@@ -795,6 +816,13 @@ func EcBalance(env *Env, collections []string, dc string, ecReplicaPlacement *su
 			volumeIdFilter[uint32(vid)] = true
 		}
 	}
+	var migrating map[uint32]bool
+	if len(migratingVolumeIds) > 0 {
+		migrating = make(map[uint32]bool, len(migratingVolumeIds))
+		for _, vid := range migratingVolumeIds {
+			migrating[uint32(vid)] = true
+		}
+	}
 
 	ecb := &ecBalancer{
 		env:                env,
@@ -805,6 +833,7 @@ func EcBalance(env *Env, collections []string, dc string, ecReplicaPlacement *su
 		ioBytePerSecond:    ioBytePerSecond,
 		diskType:           diskType,
 		volumeIds:          volumeIdFilter,
+		migratingVolumeIds: migrating,
 	}
 
 	if len(collections) == 0 {
@@ -823,7 +852,7 @@ func defaultECRatio(_ string) (int, int) {
 // balance plans EC shard moves with the shared planner and executes them. When
 // collections is empty all collections present are balanced.
 func (ecb *ecBalancer) balance(collections []string) error {
-	topo, volumeRatio, selected := toBalancerTopology(ecb.ecNodes, collections, ecb.diskType, ecb.volumeIds)
+	topo, volumeRatio, selected := toBalancerTopology(ecb.ecNodes, collections, ecb.diskType, ecb.volumeIds, ecb.migratingVolumeIds)
 	if len(ecb.volumeIds) > 0 {
 		requested := make([]uint32, 0, len(ecb.volumeIds))
 		for vid := range ecb.volumeIds {
@@ -875,7 +904,7 @@ func (ecb *ecBalancer) balance(collections []string) error {
 // (0,0 when unreported, e.g. always in OSS), which Plan prefers over the
 // collection ratio for mixed-ratio clusters, and the set of volume ids that made
 // it into the topology.
-func toBalancerTopology(ecNodes []*EcNode, collections []string, diskType types.DiskType, volumeIds map[uint32]bool) (*ecbalancer.Topology, func(collection string, vid uint32) (int, int), map[uint32]bool) {
+func toBalancerTopology(ecNodes []*EcNode, collections []string, diskType types.DiskType, volumeIds map[uint32]bool, migratingVolumeIds map[uint32]bool) (*ecbalancer.Topology, func(collection string, vid uint32) (int, int), map[uint32]bool) {
 	allowed := make(map[string]bool, len(collections))
 	for _, c := range collections {
 		allowed[c] = true
@@ -898,21 +927,29 @@ func toBalancerTopology(ecNodes []*EcNode, collections []string, diskType types.
 		for diskId, d := range en.Disks {
 			node.AddDisk(diskId, d.DiskType, d.FreeEcSlots, d.EcShardCount)
 		}
-		diskInfo, found := en.Info.DiskInfos[string(diskType)]
-		if !found {
-			continue
-		}
-		for _, eci := range diskInfo.EcShardInfos {
-			if len(allowed) > 0 && !allowed[eci.Collection] {
+		for diskTypeKey, diskInfo := range en.Info.DiskInfos {
+			if diskInfo == nil {
 				continue
 			}
-			if volumeIds != nil && !volumeIds[eci.Id] {
-				continue
-			}
-			selected[eci.Id] = true
-			node.AddShards(eci.Id, eci.Collection, eci.DiskId, erasure_coding.ShardBits(eci.EcIndexBits))
-			if d, p := ecbalancer.VolumeShardRatio(eci); d > 0 || p > 0 {
-				volRatios[volRatioKey{eci.Collection, eci.Id}] = [2]int{d, p}
+			for _, eci := range diskInfo.EcShardInfos {
+				// A migrating (mid-encode) volume's fresh shards sit beside the
+				// source .dat, in whatever bucket that disk belongs to; ingest
+				// them regardless so the balance can move them onto the target
+				// disk type. All other volumes keep the bucket filter.
+				if diskTypeKey != string(diskType) && !migratingVolumeIds[eci.Id] {
+					continue
+				}
+				if len(allowed) > 0 && !allowed[eci.Collection] {
+					continue
+				}
+				if volumeIds != nil && !volumeIds[eci.Id] {
+					continue
+				}
+				selected[eci.Id] = true
+				node.AddShards(eci.Id, eci.Collection, eci.DiskId, erasure_coding.ShardBits(eci.EcIndexBits))
+				if d, p := ecbalancer.VolumeShardRatio(eci); d > 0 || p > 0 {
+					volRatios[volRatioKey{eci.Collection, eci.Id}] = [2]int{d, p}
+				}
 			}
 		}
 	}
@@ -1021,7 +1058,7 @@ func (ecb *ecBalancer) executeMove(byID map[string]*EcNode, m ecbalancer.Move) e
 	if m.Phase == "dedup" {
 		fmt.Printf("dedup: delete ec shard %d.%d on %s\n", vid, shardId, m.SourceNode)
 		if !ecb.applyBalancing {
-			src.DeleteEcVolumeShards(vid, shardIds, ecb.diskType)
+			src.DeleteEcVolumeShards(vid, shardIds)
 			return nil
 		}
 		grpcDialOption := ecb.env.GrpcDialOption

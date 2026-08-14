@@ -138,7 +138,7 @@ func moveMountedShardToEcNode(commandEnv *CommandEnv, existingLocation *EcNode, 
 // EcBalance balances EC shards across the cluster; see ec.EcBalance for the
 // excludeNodes and volumeIds semantics.
 func EcBalance(commandEnv *CommandEnv, collections []string, dc string, ecReplicaPlacement *super_block.ReplicaPlacement, diskType types.DiskType, maxParallelization int, ioBytePerSecond int64, applyBalancing bool, excludeNodes map[pb.ServerAddress]struct{}, volumeIds []needle.VolumeId) (err error) {
-	return ec.EcBalance(commandEnv.ecEnv(), collections, dc, ecReplicaPlacement, diskType, maxParallelization, ioBytePerSecond, applyBalancing, excludeNodes, volumeIds)
+	return ec.EcBalance(commandEnv.ecEnv(), collections, dc, ecReplicaPlacement, diskType, maxParallelization, ioBytePerSecond, applyBalancing, excludeNodes, volumeIds, nil)
 }
 
 // compileCollectionPattern compiles a regex pattern for collection matching.
