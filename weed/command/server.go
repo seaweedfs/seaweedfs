@@ -175,6 +175,7 @@ func init() {
 	s3Options.auditLogConfig = cmdServer.Flag.String("s3.auditLogConfig", "", "path to the audit log config file")
 	cmdServer.Flag.Bool("s3.allowEmptyFolder", true, "deprecated, ignored. Empty folder cleanup is now automatic.")
 	s3Options.allowDeleteBucketNotEmpty = cmdServer.Flag.Bool("s3.allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
+	s3Options.autoCreateBucket = cmdServer.Flag.Bool("s3.autoCreateBucket", true, "create the bucket on upload if it does not exist, for admin identities only")
 	s3Options.localSocket = cmdServer.Flag.String("s3.localSocket", "", "default to /tmp/seaweedfs-s3-<port>.sock")
 	s3Options.bindIp = cmdServer.Flag.String("s3.ip.bind", "", "ip address to bind to. If empty, default to same as -ip.bind option.")
 	s3Options.idleTimeout = cmdServer.Flag.Int("s3.idleTimeout", 120, "connection idle seconds")
