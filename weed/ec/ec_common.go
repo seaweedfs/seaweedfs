@@ -119,6 +119,9 @@ var BalanceAlgorithmDescription = `
 	`
 
 func CollectEcNodesForDC(env *Env, selectedDataCenter string, diskType types.DiskType) (ecNodes []*EcNode, totalFreeEcSlots int, err error) {
+	if env == nil || env.FetchTopology == nil {
+		return nil, 0, fmt.Errorf("no topology source configured")
+	}
 	// list all possible locations
 	// collect topology information
 	topologyInfo, _, err := env.FetchTopology(0)
@@ -200,6 +203,9 @@ func CollectVolumeIdToCollection(t *master_pb.TopologyInfo, vids []needle.Volume
 		for _, r := range dc.RackInfos {
 			for _, dn := range r.DataNodeInfos {
 				for _, diskInfo := range dn.DiskInfos {
+					if diskInfo == nil {
+						continue
+					}
 					for _, vi := range diskInfo.VolumeInfos {
 						vid := needle.VolumeId(vi.Id)
 						if vidSet[vid] {
@@ -1093,6 +1099,9 @@ func CountExistingEcShardsForVolume(topologyInfo *master_pb.TopologyInfo, volume
 		for _, rack := range dc.RackInfos {
 			for _, node := range rack.DataNodeInfos {
 				for _, diskInfo := range node.DiskInfos {
+					if diskInfo == nil {
+						continue
+					}
 					for _, ecShardInfo := range diskInfo.EcShardInfos {
 						if ecShardInfo == nil {
 							continue
