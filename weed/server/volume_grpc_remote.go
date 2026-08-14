@@ -89,6 +89,15 @@ var imdsIPv4 = net.ParseIP("169.254.169.254")
 var cgnatNet = &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
 
 func checkBlockedIP(endpoint string, ip net.IP) error {
+	return checkBlockedIPPolicy(endpoint, ip, false)
+}
+
+// checkBlockedIPPolicy rejects addresses that must never be dialed from a
+// server with cluster-internal reach. allowPrivate keeps RFC 1918 / CGNAT
+// reachable for callers whose target legitimately sits on an internal network
+// (peer volume servers), while still blocking loopback, link-local (IMDS) and
+// unspecified.
+func checkBlockedIPPolicy(endpoint string, ip net.IP, allowPrivate bool) error {
 	if ip == nil {
 		return nil
 	}
@@ -104,17 +113,61 @@ func checkBlockedIP(endpoint string, ip net.IP) error {
 		return fmt.Errorf("remote endpoint %q resolves to link-local address %s", endpoint, ip)
 	case ip.IsInterfaceLocalMulticast():
 		return fmt.Errorf("remote endpoint %q resolves to interface-local address %s", endpoint, ip)
-	case ip.IsPrivate():
-		return fmt.Errorf("remote endpoint %q resolves to private address %s", endpoint, ip)
-	case cgnatNet.Contains(ip):
-		return fmt.Errorf("remote endpoint %q resolves to CGNAT address %s", endpoint, ip)
+	}
+	if !allowPrivate {
+		switch {
+		case ip.IsPrivate():
+			return fmt.Errorf("remote endpoint %q resolves to private address %s", endpoint, ip)
+		case cgnatNet.Contains(ip):
+			return fmt.Errorf("remote endpoint %q resolves to CGNAT address %s", endpoint, ip)
+		}
 	}
 	// IPv6 transition addresses embed an IPv4 destination that routes to the
 	// same host wherever the matching relay exists (common in IPv6-only cloud).
 	// net.IP only normalizes ::ffff: mapped addresses, so pull the embedded
 	// IPv4 out of the other forms and re-check it against the deny list.
 	if embedded := embeddedTransitionIPv4(ip); embedded != nil {
-		return checkBlockedIP(endpoint, embedded)
+		return checkBlockedIPPolicy(endpoint, embedded, allowPrivate)
+	}
+	return nil
+}
+
+// validateReplicaTarget rejects a replica upload target that could redirect the
+// forwarded write away from a peer volume server. The target must be a bare
+// host:port -- a scheme, userinfo, path, query or fragment can smuggle a
+// different destination through fmt.Sprintf -- whose host is not loopback,
+// link-local (IMDS) or unspecified. Cluster peers legitimately sit on private
+// networks, so RFC 1918 / CGNAT are allowed.
+func validateReplicaTarget(ctx context.Context, target string) error {
+	if strings.TrimSpace(target) == "" {
+		return fmt.Errorf("replica target is empty")
+	}
+	if strings.Contains(target, "://") || strings.ContainsAny(target, "/?#@\\") {
+		return fmt.Errorf("replica target %q must be a bare host:port", target)
+	}
+	host, _, splitErr := net.SplitHostPort(target)
+	if splitErr != nil {
+		return fmt.Errorf("replica target %q must be a bare host:port: %w", target, splitErr)
+	}
+	if host == "" {
+		return fmt.Errorf("replica target %q has no host", target)
+	}
+	if _, ok := blockedIMDSHosts[strings.ToLower(host)]; ok {
+		return fmt.Errorf("replica target %q targets instance metadata service", target)
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return checkBlockedIPPolicy(target, ip, true)
+	}
+	resolveCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	addrs, lookupErr := lookupIPAddrFunc(resolveCtx, host)
+	if lookupErr != nil {
+		return fmt.Errorf("resolve replica target host %q: %w", host, lookupErr)
+	}
+	for _, addr := range addrs {
+		if err := checkBlockedIPPolicy(target, addr.IP, true); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -160,6 +213,14 @@ func allZero(b []byte) bool {
 // client: even if the attacker's DNS flips to 127.0.0.1 (or any other
 // blocked range) after the up-front check, the dial is refused.
 func guardedDialer(endpoint string) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return guardedDialerPolicy(endpoint, false)
+}
+
+// guardedDialerPolicy is guardedDialer with the same allowPrivate knob as
+// checkBlockedIPPolicy, so the replica upload path can keep dialing private
+// peers while still refusing loopback / link-local / unspecified at connect
+// time (closing the rebinding window for replica hostnames too).
+func guardedDialerPolicy(endpoint string, allowPrivate bool) func(ctx context.Context, network, addr string) (net.Conn, error) {
 	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		host, port, splitErr := net.SplitHostPort(addr)
@@ -168,7 +229,7 @@ func guardedDialer(endpoint string) func(ctx context.Context, network, addr stri
 		}
 		// If the host is already a literal IP just validate and dial it.
 		if ip := net.ParseIP(host); ip != nil {
-			if err := checkBlockedIP(endpoint, ip); err != nil {
+			if err := checkBlockedIPPolicy(endpoint, ip, allowPrivate); err != nil {
 				return nil, err
 			}
 			return dialer.DialContext(ctx, network, addr)
@@ -183,7 +244,7 @@ func guardedDialer(endpoint string) func(ctx context.Context, network, addr stri
 		}
 		var firstBlockErr error
 		for _, a := range addrs {
-			if err := checkBlockedIP(endpoint, a.IP); err != nil {
+			if err := checkBlockedIPPolicy(endpoint, a.IP, allowPrivate); err != nil {
 				if firstBlockErr == nil {
 					firstBlockErr = err
 				}
@@ -202,6 +263,13 @@ func guardedDialer(endpoint string) func(ctx context.Context, network, addr stri
 // dial addresses that fail checkBlockedIP at connect time. It is meant for
 // per-request use; do not share across remote configs.
 func newGuardedHTTPClient(endpoint string) *http.Client {
+	return newGuardedHTTPClientPolicy(endpoint, false)
+}
+
+// newGuardedHTTPClientPolicy is newGuardedHTTPClient with the allowPrivate knob
+// for the replica upload path, whose targets are cluster peers on private
+// networks.
+func newGuardedHTTPClientPolicy(endpoint string, allowPrivate bool) *http.Client {
 	return &http.Client{
 		Transport: &http.Transport{
 			// No proxy: guardedDialer must see the real target address. Through
@@ -210,7 +278,7 @@ func newGuardedHTTPClient(endpoint string) *http.Client {
 			// dialer exists to close. Operators that need a proxy can opt out
 			// with -volume.allowUntrustedRemoteEndpoints.
 			Proxy:                 nil,
-			DialContext:           guardedDialer(endpoint),
+			DialContext:           guardedDialerPolicy(endpoint, allowPrivate),
 			ForceAttemptHTTP2:     true,
 			MaxIdleConns:          16,
 			IdleConnTimeout:       60 * time.Second,
@@ -242,6 +310,12 @@ func guardedRemoteClient(remoteConf *remote_pb.RemoteConf) (endpoint string, mak
 	return "", nil, false
 }
 
+// gcsCredentialsArePath reports whether a gcs credentials value is a filesystem
+// path rather than inline JSON, matching the gcs client's own inline detection.
+func gcsCredentialsArePath(creds string) bool {
+	return creds != "" && !strings.HasPrefix(creds, "{")
+}
+
 func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_server_pb.FetchAndWriteNeedleRequest) (resp *volume_server_pb.FetchAndWriteNeedleResponse, err error) {
 	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
 		return nil, err
@@ -257,6 +331,15 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 	}
 
 	remoteConf := req.RemoteConf
+
+	if !vs.AllowUntrustedRemoteEndpoints && remoteConf != nil {
+		// A gcs credentials value that is a filesystem path is read from disk by
+		// the SDK. Accept only inline JSON on the request; the server env var
+		// still supplies a path.
+		if gcsCredentialsArePath(remoteConf.GetGcsGoogleApplicationCredentials()) {
+			return nil, fmt.Errorf("reject remote credentials: gcs credentials must be inline JSON")
+		}
+	}
 
 	var client remote_storage.RemoteStorageClient
 	var getClientErr error
@@ -302,6 +385,16 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 		return nil, fmt.Errorf("read from remote %+v: got %d bytes, want %d", remoteStorageLocation, len(data), req.Size)
 	}
 
+	// Validate every replica target before writing anything, so a malformed or
+	// internal target fails the request instead of leaving a local write behind.
+	if !vs.AllowUntrustedRemoteEndpoints {
+		for _, replica := range req.Replicas {
+			if validateErr := validateReplicaTarget(ctx, replica.Url); validateErr != nil {
+				return nil, fmt.Errorf("reject replica target: %w", validateErr)
+			}
+		}
+	}
+
 	var wg sync.WaitGroup
 	var localErr error
 	replicaErrs := make([]error, len(req.Replicas))
@@ -340,10 +433,20 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 					Jwt:               security.EncodedJwt(req.Auth),
 				}
 
-				uploader, uploaderErr := operation.NewUploader()
-				if uploaderErr != nil {
-					replicaErrs[idx] = fmt.Errorf("remote write needle %d size %d: %v", req.NeedleId, req.Size, uploaderErr)
-					return
+				// Upload through a client that re-checks the target at connect
+				// time, so a replica hostname cannot rebind to a blocked address
+				// after validateReplicaTarget. Peers may be private, so allow
+				// private here; the opt-out uses the shared global client.
+				var uploader *operation.Uploader
+				if vs.AllowUntrustedRemoteEndpoints {
+					var uploaderErr error
+					uploader, uploaderErr = operation.NewUploader()
+					if uploaderErr != nil {
+						replicaErrs[idx] = fmt.Errorf("remote write needle %d size %d: %v", req.NeedleId, req.Size, uploaderErr)
+						return
+					}
+				} else {
+					uploader = operation.NewUploaderWithHttpClient(newGuardedHTTPClientPolicy(targetVolumeServer, true))
 				}
 
 				if _, replicaWriteErr := uploader.UploadData(ctx, data, uploadOption); replicaWriteErr != nil {

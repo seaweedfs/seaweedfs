@@ -7,7 +7,7 @@ pub mod endpoint_guard;
 pub mod s3;
 pub mod s3_tier;
 
-pub use endpoint_guard::validate_remote_endpoint;
+pub use endpoint_guard::{validate_remote_endpoint, validate_replica_target};
 
 use crate::pb::remote_pb::{RemoteConf, RemoteStorageLocation};
 
