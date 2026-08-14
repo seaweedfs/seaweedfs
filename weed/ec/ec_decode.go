@@ -214,6 +214,23 @@ func collectEcShards(env *Env, nodeToShardsInfo map[pb.ServerAddress]*erasure_co
 		return "", fmt.Errorf("no eligible target datanodes available to decode volume %d", vid)
 	}
 
+	// Trust only shards the target can actually serve: an interrupted earlier
+	// decode or balance can leave the master believing the target holds a
+	// shard whose file never landed. A phantom entry here would exclude the
+	// shard from the copy set and the decode would then fail with "missing
+	// shard"; probing the target's live inventory makes the re-run re-copy it.
+	if present, probeErr := erasure_coding.CollectShardsOnServer(context.Background(), collection, uint32(vid), string(targetNodeLocation), env.GrpcDialOption); probeErr == nil {
+		confirmed := erasure_coding.NewShardsInfo()
+		for _, sid := range existingShardsInfo.Ids() {
+			if present.Has(sid) {
+				confirmed.Set(erasure_coding.NewShardInfo(sid, 0))
+			}
+		}
+		existingShardsInfo = confirmed
+	} else {
+		fmt.Printf("collectEcShards: probe %s inventory for volume %d: %v (keeping the topology's view)\n", targetNodeLocation, vid, probeErr)
+	}
+
 	fmt.Printf("collectEcShards: ec volume %d collect shards to %s from: %+v\n", vid, targetNodeLocation, nodeToShardsInfo)
 
 	copiedShardsInfo := erasure_coding.NewShardsInfo()
