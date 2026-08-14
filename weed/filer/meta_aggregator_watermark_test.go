@@ -96,11 +96,13 @@ func TestPeerWatermarkRemovalGrace(t *testing.T) {
 		t.Fatalf("after re-add: low=%d want 60", got)
 	}
 
-	// Removal past the grace: dropped from both watermark sets.
+	// Removal past the grace: dropped from both watermark sets. A duplicate
+	// removal notification must not refresh the deadline (first mark wins).
 	ma.markPeerWatermarkRemoved(b)
 	ma.peerWatermarksLock.Lock()
 	ma.peerRemovedAtNs[b] = time.Now().UnixNano() - int64(peerWatermarkRemovalGrace) - int64(time.Second)
 	ma.peerWatermarksLock.Unlock()
+	ma.markPeerWatermarkRemoved(b) // duplicate removal: must not reset the clock
 	if got := ma.PeerLowWatermarkTsNs(); got != 100 {
 		t.Fatalf("past grace: low=%d want 100", got)
 	}

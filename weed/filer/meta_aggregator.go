@@ -140,7 +140,13 @@ func (ma *MetaAggregator) initPeerWatermark(peer pb.ServerAddress) {
 func (ma *MetaAggregator) markPeerWatermarkRemoved(peer pb.ServerAddress) {
 	ma.peerWatermarksLock.Lock()
 	defer ma.peerWatermarksLock.Unlock()
-	if _, found := ma.peerWatermarks[peer]; found {
+	if _, found := ma.peerWatermarks[peer]; !found {
+		return
+	}
+	// Keep the FIRST removal time: duplicate removal notifications for a peer
+	// that never came back must not keep refreshing the grace deadline, or a
+	// decommissioned peer would sit in the watermark sets forever.
+	if _, marked := ma.peerRemovedAtNs[peer]; !marked {
 		ma.peerRemovedAtNs[peer] = time.Now().UnixNano()
 	}
 }

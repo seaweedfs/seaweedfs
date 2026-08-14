@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 )
@@ -100,6 +101,45 @@ func TestPipelinedSenderControlMessagesNeverNested(t *testing.T) {
 	if flushReports != 1 {
 		t.Fatalf("delivered %d flush reports, want 1", flushReports)
 	}
+}
+
+// TestIdleHeartbeatCappedByInflightStamp pins the delivery-claim cap: an idle
+// heartbeat on the LOCAL stream is a delivery-completeness claim the peer
+// aggregator turns into its delivery low-watermark, so it must not claim past
+// an event that is stamped but not yet appended to the local buffer.
+func TestIdleHeartbeatCappedByInflightStamp(t *testing.T) {
+	lb := log_buffer.NewLogBuffer("hb-cap-test", time.Minute, nil, nil, nil)
+	defer lb.ShutdownLogBuffer()
+	f := &filer.Filer{LocalMetaLogBuffer: lb}
+	fs := &FilerServer{filer: f}
+	req := &filer_pb.SubscribeMetadataRequest{ClientSupportsIdleHeartbeat: true}
+
+	// Caught up, nothing in flight: heartbeat carries a current timestamp.
+	s := &collectingStream{}
+	got := fs.maybeSendIdleHeartbeat(req, s, lb, 0, 0, 0)
+	if len(s.messages) != 1 || s.messages[0].TsNs <= 0 {
+		t.Fatalf("baseline heartbeat missing: msgs=%d", len(s.messages))
+	}
+	if got != s.messages[0].TsNs {
+		// pacing returns the wall time it sent at; the claim may be lower
+		// only when something is in flight, which it is not here
+		t.Fatalf("baseline: returned %d, sent claim %d", got, s.messages[0].TsNs)
+	}
+
+	// An in-flight stamp caps the claim just below the stamp.
+	stampTsNs := f.StampMetaLogInflightForTest()
+	s = &collectingStream{}
+	fs.maybeSendIdleHeartbeat(req, s, lb, 0, 0, 0)
+	if len(s.messages) != 1 {
+		t.Fatalf("capped heartbeat missing: msgs=%d", len(s.messages))
+	}
+	if s.messages[0].TsNs != stampTsNs-1 {
+		t.Fatalf("heartbeat claim=%d, want in-flight floor %d", s.messages[0].TsNs, stampTsNs-1)
+	}
+	if s.messages[0].FlushedTsNs != stampTsNs-1 {
+		t.Fatalf("flush claim=%d, want in-flight floor %d", s.messages[0].FlushedTsNs, stampTsNs-1)
+	}
+	f.DoneMetaLogInflightForTest(stampTsNs)
 }
 
 // TestResolveAggReadHoldTsNs pins the aggregated delivery hold point: a

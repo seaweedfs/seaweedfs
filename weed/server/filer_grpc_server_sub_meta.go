@@ -1170,6 +1170,12 @@ func (fs *FilerServer) maybeSendIdleHeartbeat(req *filer_pb.SubscribeMetadataReq
 	// carry a durability claim.
 	heartbeat := &filer_pb.SubscribeMetadataResponse{TsNs: now}
 	if fs.filer != nil && logBuffer == fs.filer.LocalMetaLogBuffer {
+		// The heartbeat timestamp is a delivery-completeness claim to a peer
+		// aggregator (its delivery low-watermark). Cap it by the in-flight
+		// floor: an event stamped but not yet appended has not been streamed,
+		// and claiming past it would let aggregated subscribers advance over
+		// it before it arrives.
+		heartbeat.TsNs = fs.filer.LocalDeliveredThroughTsNs(now)
 		heartbeat.FlushedTsNs = fs.filer.LocalFlushedThroughTsNs(now)
 	}
 	if err := sender.Send(heartbeat); err != nil {

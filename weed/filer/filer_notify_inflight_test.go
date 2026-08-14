@@ -59,3 +59,43 @@ func TestLocalFlushedThroughTsNsBoundsInflight(t *testing.T) {
 		t.Fatalf("stamp cleared: claim=%d want now=%d", got, now)
 	}
 }
+
+// TestLocalDeliveredThroughTsNsBoundsInflight pins the delivery-freshness
+// cap: an idle heartbeat must not claim delivery-completeness past an event
+// that is stamped but not yet appended - the peer aggregator turns that claim
+// into its delivery low-watermark.
+func TestLocalDeliveredThroughTsNsBoundsInflight(t *testing.T) {
+	f := &Filer{
+		LocalMetaLogBuffer: log_buffer.NewLogBuffer("delivered-test", time.Minute, nil, nil, nil),
+	}
+	defer f.LocalMetaLogBuffer.ShutdownLogBuffer()
+
+	now := time.Now().UnixNano()
+	if got := f.LocalDeliveredThroughTsNs(now); got != now {
+		t.Fatalf("nothing in flight: claim=%d want now=%d", got, now)
+	}
+	ts := f.metaLogInflight.stamp()
+	if got := f.LocalDeliveredThroughTsNs(time.Now().UnixNano()); got != ts-1 {
+		t.Fatalf("with in-flight stamp %d: claim=%d want %d", ts, got, ts-1)
+	}
+	f.metaLogInflight.done(ts)
+}
+
+// TestMetaLogInflightStampMonotonic pins the registry-local monotonicity: a
+// wall clock stepping backwards must not let a new stamp slip under an
+// already-sampled floor.
+func TestMetaLogInflightStampMonotonic(t *testing.T) {
+	var inflight metaLogInflight
+	ts1 := inflight.stamp()
+	// Simulate a wall-clock step backwards: force the registry's history
+	// ahead of the clock; the next stamp must still move forward.
+	inflight.Lock()
+	inflight.lastStampNs = ts1 + int64(time.Hour)
+	inflight.Unlock()
+	ts2 := inflight.stamp()
+	if ts2 <= ts1+int64(time.Hour) {
+		t.Fatalf("stamp regressed: %d after forcing history to %d", ts2, ts1+int64(time.Hour))
+	}
+	inflight.done(ts1)
+	inflight.done(ts2)
+}
