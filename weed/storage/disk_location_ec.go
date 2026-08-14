@@ -267,17 +267,25 @@ func (l *DiskLocation) loadAllEcShards(onShardLoad func(collection string, vid n
 		// loaded, but its presence poisons later rebuilds, which select
 		// inputs from the directory). Delete it once it is old enough that
 		// it cannot be an in-flight copy's just-created file — this scan
-		// also runs from LoadNewVolumes while the server is serving.
-		if re.MatchString(ext) && info.Size() == 0 && time.Since(info.ModTime()) > staleZeroShardAge {
+		// also runs from LoadNewVolumes while the server is serving. The
+		// scan merges the Directory and IdxDirectory listings, so the entry
+		// and a candidate path can be different files with one name: each
+		// candidate's own age decides, and a same-named fresh file (possibly
+		// an in-flight copy's just-created one) always survives.
+		if re.MatchString(ext) && info.Size() == 0 {
 			for _, dir := range []string{l.Directory, l.IdxDirectory} {
 				p := path.Join(dir, name)
-				if fi, statErr := os.Stat(p); statErr == nil && !fi.IsDir() && fi.Size() == 0 {
-					if rmErr := os.Remove(p); rmErr != nil {
-						glog.Warningf("remove zero-sized ec shard %s: %v", p, rmErr)
-					} else {
-						glog.Warningf("removed zero-sized ec shard %s (residue of a failed operation)", p)
-					}
-					break
+				fi, statErr := os.Stat(p)
+				if statErr != nil || fi.IsDir() || fi.Size() != 0 {
+					continue
+				}
+				if time.Since(fi.ModTime()) <= staleZeroShardAge {
+					continue
+				}
+				if rmErr := os.Remove(p); rmErr != nil {
+					glog.Warningf("remove zero-sized ec shard %s: %v", p, rmErr)
+				} else {
+					glog.Warningf("removed zero-sized ec shard %s (residue of a failed operation)", p)
 				}
 			}
 			continue

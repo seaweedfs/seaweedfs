@@ -783,3 +783,39 @@ func TestLoadAllEcShardsDeletesStaleZeroSizedShards(t *testing.T) {
 		t.Errorf("fresh zero-sized shard %s must survive the scan: %v", fresh, err)
 	}
 }
+
+// TestLoadAllEcShardsSplitDirZeroSizedCleanup: the scan merges Directory and
+// IdxDirectory listings, so a stale zero-sized file in one directory and a
+// fresh same-named file in the other are different files behind one entry
+// name. Each candidate's own age must decide: the stale one is deleted, the
+// fresh one (possibly an in-flight copy's just-created file) survives.
+func TestLoadAllEcShardsSplitDirZeroSizedCleanup(t *testing.T) {
+	dataDir := t.TempDir()
+	idxDir := t.TempDir()
+	diskLocation := NewDiskLocation(dataDir, 10, util.MinFreeSpace{}, idxDir, types.HardDriveType, nil, stats.DefaultDiskIOProbeConfig())
+
+	fresh := filepath.Join(dataDir, "124.ec00")
+	stale := filepath.Join(idxDir, "124.ec00")
+	for _, p := range []string{fresh, stale} {
+		if f, err := os.Create(p); err != nil {
+			t.Fatalf("create %s: %v", p, err)
+		} else {
+			f.Close()
+		}
+	}
+	oldTime := time.Now().Add(-2 * staleZeroShardAge)
+	if err := os.Chtimes(stale, oldTime, oldTime); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	if err := diskLocation.loadAllEcShards(nil); err != nil {
+		t.Fatalf("loadAllEcShards: %v", err)
+	}
+
+	if _, err := os.Stat(fresh); err != nil {
+		t.Errorf("fresh zero-sized shard %s must survive the scan: %v", fresh, err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Errorf("stale zero-sized shard %s not deleted (err=%v)", stale, err)
+	}
+}
