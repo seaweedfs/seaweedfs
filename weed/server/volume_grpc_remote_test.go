@@ -475,6 +475,34 @@ func TestGuardedRemoteClientAzureBuildsGuardedClient(t *testing.T) {
 	}
 }
 
+// TestGcsCredentialsArePath confirms a caller-supplied gcs credentials value is
+// only accepted as inline JSON. A filesystem path would otherwise be read from
+// disk by the SDK when handling the request.
+func TestGcsCredentialsArePath(t *testing.T) {
+	paths := []string{
+		"/etc/hostname",
+		"/etc/shadow",
+		"/nope/nothere",
+		"~/creds.json",
+		"relative/creds.json",
+	}
+	for _, p := range paths {
+		if !gcsCredentialsArePath(p) {
+			t.Errorf("expected %q to be treated as a path", p)
+		}
+	}
+	inlineOrEmpty := []string{
+		"",
+		`{"type":"service_account"}`,
+		`{}`,
+	}
+	for _, c := range inlineOrEmpty {
+		if gcsCredentialsArePath(c) {
+			t.Errorf("expected %q to be accepted (inline or empty)", c)
+		}
+	}
+}
+
 // TestGuardedDialerLiteralBlocked confirms that a literal blocked IP target
 // is refused without any DNS lookup.
 func TestGuardedDialerLiteralBlocked(t *testing.T) {

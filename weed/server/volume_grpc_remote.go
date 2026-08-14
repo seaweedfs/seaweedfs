@@ -310,6 +310,12 @@ func guardedRemoteClient(remoteConf *remote_pb.RemoteConf) (endpoint string, mak
 	return "", nil, false
 }
 
+// gcsCredentialsArePath reports whether a gcs credentials value is a filesystem
+// path rather than inline JSON, matching the gcs client's own inline detection.
+func gcsCredentialsArePath(creds string) bool {
+	return creds != "" && !strings.HasPrefix(creds, "{")
+}
+
 func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_server_pb.FetchAndWriteNeedleRequest) (resp *volume_server_pb.FetchAndWriteNeedleResponse, err error) {
 	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
 		return nil, err
@@ -325,6 +331,15 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 	}
 
 	remoteConf := req.RemoteConf
+
+	if !vs.AllowUntrustedRemoteEndpoints && remoteConf != nil {
+		// A gcs credentials value that is a filesystem path is read from disk by
+		// the SDK. Accept only inline JSON on the request; the server env var
+		// still supplies a path.
+		if gcsCredentialsArePath(remoteConf.GetGcsGoogleApplicationCredentials()) {
+			return nil, fmt.Errorf("reject remote credentials: gcs credentials must be inline JSON")
+		}
+	}
 
 	var client remote_storage.RemoteStorageClient
 	var getClientErr error
