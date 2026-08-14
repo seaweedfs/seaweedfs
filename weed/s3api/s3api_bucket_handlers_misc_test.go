@@ -250,3 +250,24 @@ func TestHandleAutoCreateBucketNonAdmin(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
 	}
 }
+
+func TestPutDirectoryMarkerMissingBucket(t *testing.T) {
+	s3a := &S3ApiServer{
+		option:            &S3ApiServerOption{},
+		iam:               &IdentityAccessManagement{},
+		bucketConfigCache: NewBucketConfigCache(time.Minute),
+	}
+	s3a.bucketConfigCache.SetNegativeCache("missing")
+	req := httptest.NewRequest(http.MethodPut, "/missing/dir/", strings.NewReader(""))
+	req = mux.SetURLVars(req, map[string]string{"bucket": "missing", "object": "/dir/"})
+	rec := httptest.NewRecorder()
+
+	s3a.PutObjectHandler(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+	if !strings.Contains(rec.Body.String(), "NoSuchBucket") {
+		t.Fatalf("body = %s, want NoSuchBucket", rec.Body.String())
+	}
+}
