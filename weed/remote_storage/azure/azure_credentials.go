@@ -2,6 +2,7 @@ package azure
 
 import (
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"regexp"
@@ -27,7 +28,10 @@ var validAzureAccountName = regexp.MustCompile(`^[a-z0-9]{3,24}$`)
 //
 // endpoint is the blob service URL, for accounts outside the public cloud. An
 // empty endpoint derives the public one from accountName.
-func NewAzBlobClient(accountName, accountKey, clientID, endpoint string) (*azblob.Client, error) {
+//
+// A non-nil httpClient overrides the SDK transport; the volume server passes one
+// whose dialer pins the validated endpoint against DNS rebinding.
+func NewAzBlobClient(accountName, accountKey, clientID, endpoint string, httpClient *http.Client) (*azblob.Client, error) {
 
 	if accountName == "" {
 		return nil, fmt.Errorf("azure account name is required")
@@ -41,13 +45,18 @@ func NewAzBlobClient(accountName, accountKey, clientID, endpoint string) (*azblo
 		return nil, err
 	}
 
+	options := DefaultAzBlobClientOptions()
+	if httpClient != nil {
+		options.Transport = httpClient
+	}
+
 	if accountKey == "" {
 		credential, err := newAzureTokenCredential(clientID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create Azure Entra ID credential for account %s: %w", accountName, err)
 		}
 		glog.V(1).Infof("azure %s: authenticating with Entra ID", accountName)
-		client, err := azblob.NewClient(serviceURL, credential, DefaultAzBlobClientOptions())
+		client, err := azblob.NewClient(serviceURL, credential, options)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create Azure client: %w", err)
 		}
@@ -58,7 +67,7 @@ func NewAzBlobClient(accountName, accountKey, clientID, endpoint string) (*azblo
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Azure credential with account name:%s: %w", accountName, err)
 	}
-	client, err := azblob.NewClientWithSharedKeyCredential(serviceURL, credential, DefaultAzBlobClientOptions())
+	client, err := azblob.NewClientWithSharedKeyCredential(serviceURL, credential, options)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Azure client: %w", err)
 	}
