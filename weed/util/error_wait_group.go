@@ -1,0 +1,94 @@
+package util
+
+import (
+	"errors"
+	"fmt"
+	"sync"
+)
+
+// ErrorWaitGroup implements a goroutine wait group which aggregates errors, if any.
+type ErrorWaitGroup struct {
+	maxConcurrency int
+	wg             *sync.WaitGroup
+	wgSem          chan bool
+	errors         []error
+	errorsMu       sync.Mutex
+}
+
+type ErrorWaitGroupTask func() error
+
+// ExecuteParallelTaskGroups runs tasks from each group sequentially and runs
+// independent groups with up to maxParallelization concurrency. EC balancing
+// uses one group per volume because its shard sidecar files are shared; volume
+// balancing uses one group per already-reserved volume move.
+func ExecuteParallelTaskGroups(maxParallelization int, taskGroups [][]ErrorWaitGroupTask) error {
+	ewg := NewErrorWaitGroup(maxParallelization)
+	for _, taskGroup := range taskGroups {
+		taskGroup := taskGroup
+		ewg.Add(func() error {
+			for _, task := range taskGroup {
+				if err := task(); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	}
+	return ewg.Wait()
+}
+
+func NewErrorWaitGroup(maxConcurrency int) *ErrorWaitGroup {
+	if maxConcurrency <= 0 {
+		// no concurrency = one task at the time
+		maxConcurrency = 1
+	}
+	return &ErrorWaitGroup{
+		maxConcurrency: maxConcurrency,
+		wg:             &sync.WaitGroup{},
+		wgSem:          make(chan bool, maxConcurrency),
+	}
+}
+
+// Reset restarts an ErrorWaitGroup, keeping original settings. Errors and pending goroutines, if any, are flushed.
+func (ewg *ErrorWaitGroup) Reset() {
+	close(ewg.wgSem)
+
+	ewg.wg = &sync.WaitGroup{}
+	ewg.wgSem = make(chan bool, ewg.maxConcurrency)
+	ewg.errors = nil
+}
+
+// Add queues an ErrorWaitGroupTask to be executed as a goroutine.
+func (ewg *ErrorWaitGroup) Add(f ErrorWaitGroupTask) {
+	if ewg.maxConcurrency <= 1 {
+		// keep run order deterministic when parallelization is off
+		ewg.errors = append(ewg.errors, f())
+		return
+	}
+
+	ewg.wg.Add(1)
+	go func() {
+		ewg.wgSem <- true
+
+		err := f()
+		ewg.errorsMu.Lock()
+		ewg.errors = append(ewg.errors, err)
+		ewg.errorsMu.Unlock()
+
+		<-ewg.wgSem
+		ewg.wg.Done()
+	}()
+}
+
+// AddErrorf adds an error to an ErrorWaitGroupTask result, without queueing any goroutines.
+func (ewg *ErrorWaitGroup) AddErrorf(format string, a ...interface{}) {
+	ewg.errorsMu.Lock()
+	ewg.errors = append(ewg.errors, fmt.Errorf(format, a...))
+	ewg.errorsMu.Unlock()
+}
+
+// Wait sleeps until all ErrorWaitGroupTasks are completed, then returns errors for them.
+func (ewg *ErrorWaitGroup) Wait() error {
+	ewg.wg.Wait()
+	return errors.Join(ewg.errors...)
+}
