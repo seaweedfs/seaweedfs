@@ -246,7 +246,7 @@ func collectEcShards(env *Env, nodeToShardsInfo map[pb.ServerAddress]*erasure_co
 				SourceDataNode: string(loc),
 			})
 			if copyErr != nil {
-				return fmt.Errorf("copy %d.%v %s => %s : %v\n", vid, needToCopyShardsInfo.Ids(), loc, targetNodeLocation, copyErr)
+				return fmt.Errorf("copy %d.%v %s => %s: %v", vid, needToCopyShardsInfo.Ids(), loc, targetNodeLocation, copyErr)
 			}
 
 			if needToCopyShardsInfo.Count() > 0 {
@@ -257,7 +257,7 @@ func collectEcShards(env *Env, nodeToShardsInfo map[pb.ServerAddress]*erasure_co
 					ShardIds:   needToCopyShardsInfo.IdsUint32(),
 				})
 				if mountErr != nil {
-					return fmt.Errorf("mount %d.%v on %s : %v\n", vid, needToCopyShardsInfo.Ids(), targetNodeLocation, mountErr)
+					return fmt.Errorf("mount %d.%v on %s: %v", vid, needToCopyShardsInfo.Ids(), targetNodeLocation, mountErr)
 				}
 			}
 
