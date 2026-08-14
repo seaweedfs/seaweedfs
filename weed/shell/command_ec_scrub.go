@@ -56,6 +56,10 @@ func (c *commandEcVolumeScrub) Do(args []string, commandEnv *CommandEnv, writer 
 	volumeServerAddrs := []pb.ServerAddress{}
 	if *nodesStr != "" {
 		for _, addr := range strings.Split(*nodesStr, ",") {
+			addr = strings.TrimSpace(addr)
+			if addr == "" {
+				continue
+			}
 			volumeServerAddrs = append(volumeServerAddrs, pb.ServerAddress(addr))
 		}
 	} else {
