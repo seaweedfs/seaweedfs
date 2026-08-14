@@ -1,4 +1,4 @@
-package shell
+package ec
 
 import (
 	"bytes"
@@ -52,7 +52,7 @@ func TestAssertEncodableRegularVolumes(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := assertEncodableRegularVolumes(topoWith(tc.regular, tc.ec), tc.vids)
+			err := AssertEncodableRegularVolumes(topoWith(tc.regular, tc.ec), tc.vids)
 			if tc.wantErrSubstr == "" {
 				if err != nil {
 					t.Fatalf("want nil error, got %v", err)
@@ -68,7 +68,7 @@ func TestAssertEncodableRegularVolumes(t *testing.T) {
 
 func newDryRunRebuilder(log *bytes.Buffer, nodes ...*EcNode) *ecRebuilder {
 	return &ecRebuilder{
-		commandEnv:   &CommandEnv{env: make(map[string]string), noLock: true},
+		env:          &Env{},
 		ecNodes:      nodes,
 		writer:       log,
 		applyChanges: false,
@@ -114,7 +114,7 @@ func TestPrepareDataToRecover_UnionsLocalShardsAcrossDisks(t *testing.T) {
 	var log bytes.Buffer
 	rebuilder := newEcNode("dc1", "rack1", "rebuilder", 100).
 		addEcVolumeAndShardsForTest(1, "c1", []erasure_coding.ShardId{0, 1}).
-		addEcVolumeShards(needle.VolumeId(1), "c1", []erasure_coding.ShardId{5}, types.SsdType)
+		AddEcVolumeShards(needle.VolumeId(1), "c1", []erasure_coding.ShardId{5}, types.SsdType)
 	remote := newEcNode("dc1", "rack1", "remote", 100)
 	erb := newDryRunRebuilder(&log, rebuilder)
 
@@ -151,7 +151,7 @@ func TestCountLocalShards_UnionsAcrossDisks(t *testing.T) {
 	var log bytes.Buffer
 	rebuilder := newEcNode("dc1", "rack1", "rebuilder", 100).
 		addEcVolumeAndShardsForTest(1, "c1", []erasure_coding.ShardId{0, 1}).
-		addEcVolumeShards(needle.VolumeId(1), "c1", []erasure_coding.ShardId{5}, types.SsdType)
+		AddEcVolumeShards(needle.VolumeId(1), "c1", []erasure_coding.ShardId{5}, types.SsdType)
 	erb := newDryRunRebuilder(&log, rebuilder)
 
 	if got := erb.countLocalShards(rebuilder, "c1", needle.VolumeId(1)); got != 3 {
@@ -201,12 +201,8 @@ func TestPrepareDataToRecover_ApplyCopyFailureDoesNotCountAsRecoverable(t *testi
 	remote := newEcNode("dc1", "rack1", "127.0.0.1:2", 100).
 		addEcVolumeAndShardsForTest(1, "c1", []erasure_coding.ShardId{9})
 	erb := &ecRebuilder{
-		commandEnv: &CommandEnv{
-			env:    make(map[string]string),
-			noLock: true,
-			option: &ShellOptions{
-				GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
-			},
+		env: &Env{
+			GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
 		},
 		ecNodes:      []*EcNode{rebuilder, remote},
 		writer:       &log,

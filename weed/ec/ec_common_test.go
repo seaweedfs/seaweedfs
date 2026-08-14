@@ -1,4 +1,4 @@
-package shell
+package ec
 
 import (
 	"strings"
@@ -15,15 +15,15 @@ import (
 // best-scoring disk 0 (0 is also the zero value) and returned the fallback.
 func TestPickBestDiskOnNodeSelectsPhysicalDiskZero(t *testing.T) {
 	ecNode := &EcNode{
-		disks: map[uint32]*EcDisk{
-			0: {diskId: 0, diskType: string(types.SsdType), freeEcSlots: 10, ecShards: map[needle.VolumeId]*erasure_coding.ShardsInfo{}},
-			5: {diskId: 5, diskType: string(types.HardDriveType), freeEcSlots: 10, ecShards: map[needle.VolumeId]*erasure_coding.ShardsInfo{}},
+		Disks: map[uint32]*EcDisk{
+			0: {DiskId: 0, DiskType: string(types.SsdType), FreeEcSlots: 10, EcShards: map[needle.VolumeId]*erasure_coding.ShardsInfo{}},
+			5: {DiskId: 5, DiskType: string(types.HardDriveType), FreeEcSlots: 10, EcShards: map[needle.VolumeId]*erasure_coding.ShardsInfo{}},
 		},
 	}
 
 	// Disk 0 matches the requested type; it must win over the non-matching
 	// fallback on disk 5 instead of being treated as "no match".
-	if got := pickBestDiskOnNode(ecNode, needle.VolumeId(42), types.SsdType, false, 0, 0); got != 0 {
+	if got := PickBestDiskOnNode(ecNode, needle.VolumeId(42), types.SsdType, false, 0, 0); got != 0 {
 		t.Fatalf("want physical disk 0 (matching type), got %d", got)
 	}
 }
@@ -142,18 +142,18 @@ func TestCommandEcBalanceVolumeEvenButRackUneven(t *testing.T) {
 
 func newEcNode(dc string, rack string, dataNodeId string, freeEcSlot int) *EcNode {
 	return &EcNode{
-		info: &master_pb.DataNodeInfo{
+		Info: &master_pb.DataNodeInfo{
 			Id:        dataNodeId,
 			DiskInfos: make(map[string]*master_pb.DiskInfo),
 		},
-		dc:         DataCenterId(dc),
-		rack:       RackId(rack),
-		freeEcSlot: freeEcSlot,
+		DC:         DataCenterId(dc),
+		Rack:       RackId(rack),
+		FreeEcSlot: freeEcSlot,
 	}
 }
 
 func (ecNode *EcNode) addEcVolumeAndShardsForTest(vid uint32, collection string, shardIds []erasure_coding.ShardId) *EcNode {
-	return ecNode.addEcVolumeShards(needle.VolumeId(vid), collection, shardIds, types.HardDriveType)
+	return ecNode.AddEcVolumeShards(needle.VolumeId(vid), collection, shardIds, types.HardDriveType)
 }
 
 // TestCommandEcBalanceEvenDataAndParityDistribution verifies that after balancing:
@@ -190,8 +190,8 @@ func TestCommandEcBalanceEvenDataAndParityDistribution(t *testing.T) {
 	// With 6 racks:
 	// - Data shards (10): max 2 per rack (ceil(10/6) = 2)
 	// - Parity shards (4): max 1 per rack (ceil(4/6) = 1)
-	maxDataPerRack := ceilDivide(dataShardCount, 6)     // 2
-	maxParityPerRack := ceilDivide(parityShardCount, 6) // 1
+	maxDataPerRack := CeilDivide(dataShardCount, 6)     // 2
+	maxParityPerRack := CeilDivide(parityShardCount, 6) // 1
 
 	// Verify no rack has more than max data shards
 	for rackId, count := range dataPerRack {
@@ -247,9 +247,9 @@ func countDataAndParityShardsPerRack(ecNodes []*EcNode, vid needle.VolumeId, dat
 	parityPerRack = make(map[string]int)
 
 	for _, ecNode := range ecNodes {
-		si := findEcVolumeShardsInfo(ecNode, vid, types.HardDriveType)
+		si := FindEcVolumeShardsInfo(ecNode, vid, types.HardDriveType)
 		for _, shardId := range si.Ids() {
-			rackId := string(ecNode.rack)
+			rackId := string(ecNode.Rack)
 			if int(shardId) < dataShardCount {
 				dataPerRack[rackId]++
 			} else {
@@ -286,8 +286,8 @@ func TestCommandEcBalanceMultipleVolumesEvenDistribution(t *testing.T) {
 	for _, vid := range []needle.VolumeId{1, 2} {
 		dataPerRack, parityPerRack := countDataAndParityShardsPerRack(ecb.ecNodes, vid, erasure_coding.DataShardsCount)
 
-		maxDataPerRack := ceilDivide(erasure_coding.DataShardsCount, 6)
-		maxParityPerRack := ceilDivide(erasure_coding.ParityShardsCount, 6)
+		maxDataPerRack := CeilDivide(erasure_coding.DataShardsCount, 6)
+		maxParityPerRack := CeilDivide(erasure_coding.ParityShardsCount, 6)
 
 		for rackId, count := range dataPerRack {
 			if count > maxDataPerRack {
@@ -339,16 +339,16 @@ func TestCommandEcBalanceAllNodesShareAllVolumes(t *testing.T) {
 	// Count total shards per node after balancing
 	for _, node := range ecb.ecNodes {
 		count := 0
-		if diskInfo, found := node.info.DiskInfos[string(types.HardDriveType)]; found {
+		if diskInfo, found := node.Info.DiskInfos[string(types.HardDriveType)]; found {
 			for _, ecsi := range diskInfo.EcShardInfos {
 				count += erasure_coding.GetShardCount(ecsi)
 			}
 		}
 		// Average is 7, so all nodes should be at 7 (ceil(28/4) = 7)
 		if count > 7 {
-			t.Errorf("node %s has %d shards after balancing, expected at most 7", node.info.Id, count)
+			t.Errorf("node %s has %d shards after balancing, expected at most 7", node.Info.Id, count)
 		}
-		t.Logf("node %s: %d shards", node.info.Id, count)
+		t.Logf("node %s: %d shards", node.Info.Id, count)
 	}
 }
 
@@ -409,12 +409,12 @@ func TestCommandEcBalanceIssue8793Topology(t *testing.T) {
 	// Log initial state
 	for _, node := range ecb.ecNodes {
 		count := 0
-		if diskInfo, found := node.info.DiskInfos[string(types.HardDriveType)]; found {
+		if diskInfo, found := node.Info.DiskInfos[string(types.HardDriveType)]; found {
 			for _, ecsi := range diskInfo.EcShardInfos {
 				count += erasure_coding.GetShardCount(ecsi)
 			}
 		}
-		t.Logf("BEFORE node %s (max %d): %d shards", node.info.Id, node.freeEcSlot+count, count)
+		t.Logf("BEFORE node %s (max %d): %d shards", node.Info.Id, node.FreeEcSlot+count, count)
 	}
 
 	ecb.balance([]string{"cldata"})
@@ -433,14 +433,14 @@ func TestCommandEcBalanceIssue8793Topology(t *testing.T) {
 	shardCounts := make(map[string]int)
 	for _, node := range ecb.ecNodes {
 		count := 0
-		if diskInfo, found := node.info.DiskInfos[string(types.HardDriveType)]; found {
+		if diskInfo, found := node.Info.DiskInfos[string(types.HardDriveType)]; found {
 			for _, ecsi := range diskInfo.EcShardInfos {
 				count += erasure_coding.GetShardCount(ecsi)
 			}
 		}
-		shardCounts[node.info.Id] = count
+		shardCounts[node.Info.Id] = count
 		totalShards += count
-		totalCapacity += capacityByID[node.info.Id]
+		totalCapacity += capacityByID[node.Info.Id]
 	}
 	overallFullness := float64(totalShards) / float64(totalCapacity)
 
@@ -448,14 +448,14 @@ func TestCommandEcBalanceIssue8793Topology(t *testing.T) {
 	// would sit ~38 points above overall), but above integer-rounding skew.
 	const tolerance = 0.05
 	for _, node := range ecb.ecNodes {
-		count := shardCounts[node.info.Id]
-		capacity := capacityByID[node.info.Id]
+		count := shardCounts[node.Info.Id]
+		capacity := capacityByID[node.Info.Id]
 		fullness := float64(count) / float64(capacity)
 		t.Logf("AFTER  node %s: %d/%d shards (%.0f%% full, overall %.0f%%)",
-			node.info.Id, count, capacity, fullness*100, overallFullness*100)
+			node.Info.Id, count, capacity, fullness*100, overallFullness*100)
 		if diff := fullness - overallFullness; diff > tolerance || diff < -tolerance {
 			t.Errorf("node %s fullness %.1f%% deviates from overall %.1f%% by more than %.0f points",
-				node.info.Id, fullness*100, overallFullness*100, tolerance*100)
+				node.Info.Id, fullness*100, overallFullness*100, tolerance*100)
 		}
 	}
 }
@@ -484,15 +484,15 @@ func TestCommandEcBalanceVolumeIdsFilter(t *testing.T) {
 	}
 
 	// Volume 1 spreads out.
-	if count := ecb.ecNodes[0].localShardIdCount(1); count == 14 {
+	if count := ecb.ecNodes[0].LocalShardIdCount(1); count == 14 {
 		t.Errorf("volume 1 was not balanced: dn1 still holds all %d shards", count)
 	}
 
 	// Volume 2 keeps every shard where it was, duplicate included.
-	if count := ecb.ecNodes[1].localShardIdCount(2); count != 14 {
+	if count := ecb.ecNodes[1].LocalShardIdCount(2); count != 14 {
 		t.Errorf("dn2 holds %d shards of the unselected volume 2, want 14", count)
 	}
-	if count := ecb.ecNodes[2].localShardIdCount(2); count != 1 {
+	if count := ecb.ecNodes[2].LocalShardIdCount(2); count != 1 {
 		t.Errorf("dn3 holds %d shards of the unselected volume 2, want the duplicate to survive", count)
 	}
 }
@@ -513,7 +513,7 @@ func TestCommandEcBalanceVolumeIdsNotFound(t *testing.T) {
 		t.Fatalf("want an error naming volume 99, got %v", err)
 	}
 	// The valid id must not be balanced either: the plan is all-or-nothing.
-	if count := ecb.ecNodes[0].localShardIdCount(1); count != 14 {
+	if count := ecb.ecNodes[0].LocalShardIdCount(1); count != 14 {
 		t.Errorf("dn1 holds %d shards, want the rejected plan to leave volume 1 untouched", count)
 	}
 }

@@ -1,4 +1,4 @@
-package shell
+package ec
 
 import (
 	"bytes"
@@ -8,6 +8,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // TestEcShardMapRegister tests that EC shards are properly registered
@@ -37,12 +38,12 @@ func TestEcShardMapRegister(t *testing.T) {
 
 	// Verify shard distribution
 	for i := 0; i < 7; i++ {
-		if len(locations[i]) != 1 || locations[i][0].info.Id != "node1" {
+		if len(locations[i]) != 1 || locations[i][0].Info.Id != "node1" {
 			t.Errorf("Shard %d should be on node1", i)
 		}
 	}
 	for i := 7; i < erasure_coding.TotalShardsCount; i++ {
-		if len(locations[i]) != 1 || locations[i][0].info.Id != "node2" {
+		if len(locations[i]) != 1 || locations[i][0].Info.Id != "node2" {
 			t.Errorf("Shard %d should be on node2", i)
 		}
 	}
@@ -89,11 +90,8 @@ func TestRebuildEcVolumesInsufficientShards(t *testing.T) {
 		addEcVolumeAndShardsForTest(1, "c1", []erasure_coding.ShardId{0, 1, 2, 3, 4}) // Only 5 shards
 
 	erb := &ecRebuilder{
-		commandEnv: &CommandEnv{
-			env:    make(map[string]string),
-			noLock: true, // Bypass lock check for unit test
-		},
-		ewg:     NewErrorWaitGroup(DefaultMaxParallelization),
+		env: &Env{},
+		ewg:     util.NewErrorWaitGroup(10),
 		ecNodes: []*EcNode{node1},
 		writer:  &logBuffer,
 	}
@@ -120,11 +118,8 @@ func TestRebuildEcVolumesCompleteVolume(t *testing.T) {
 		addEcVolumeAndShardsForTest(1, "c1", []erasure_coding.ShardId{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13})
 
 	erb := &ecRebuilder{
-		commandEnv: &CommandEnv{
-			env:    make(map[string]string),
-			noLock: true, // Bypass lock check for unit test
-		},
-		ewg:          NewErrorWaitGroup(DefaultMaxParallelization),
+		env: &Env{},
+		ewg:          util.NewErrorWaitGroup(10),
 		ecNodes:      []*EcNode{node1},
 		writer:       &logBuffer,
 		applyChanges: false,
@@ -152,11 +147,8 @@ func TestRebuildEcVolumesInsufficientSpace(t *testing.T) {
 							addEcVolumeAndShardsForTest(1, "c1", []erasure_coding.ShardId{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
 
 	erb := &ecRebuilder{
-		commandEnv: &CommandEnv{
-			env:    make(map[string]string),
-			noLock: true, // Bypass lock check for unit test
-		},
-		ewg:          NewErrorWaitGroup(DefaultMaxParallelization),
+		env: &Env{},
+		ewg:          util.NewErrorWaitGroup(10),
 		ecNodes:      []*EcNode{node1},
 		writer:       &logBuffer,
 		applyChanges: false,
@@ -203,17 +195,17 @@ func TestMultipleNodesWithShards(t *testing.T) {
 
 	// Verify each shard is on the correct node
 	for i := 0; i < 4; i++ {
-		if len(locations[i]) != 1 || locations[i][0].info.Id != "node1" {
+		if len(locations[i]) != 1 || locations[i][0].Info.Id != "node1" {
 			t.Errorf("Shard %d should be on node1", i)
 		}
 	}
 	for i := 4; i < 8; i++ {
-		if len(locations[i]) != 1 || locations[i][0].info.Id != "node2" {
+		if len(locations[i]) != 1 || locations[i][0].Info.Id != "node2" {
 			t.Errorf("Shard %d should be on node2", i)
 		}
 	}
 	for i := 8; i < 10; i++ {
-		if len(locations[i]) != 1 || locations[i][0].info.Id != "node3" {
+		if len(locations[i]) != 1 || locations[i][0].Info.Id != "node3" {
 			t.Errorf("Shard %d should be on node3", i)
 		}
 	}
@@ -243,10 +235,10 @@ func TestDuplicateShards(t *testing.T) {
 	foundNode1 := false
 	foundNode2 := false
 	for _, node := range locations[0] {
-		if node.info.Id == "node1" {
+		if node.Info.Id == "node1" {
 			foundNode1 = true
 		}
-		if node.info.Id == "node2" {
+		if node.Info.Id == "node2" {
 			foundNode2 = true
 		}
 	}
@@ -270,10 +262,7 @@ func TestPrepareDataToRecoverTargetShardCount(t *testing.T) {
 		addEcVolumeAndShardsForTest(1, "c1", []erasure_coding.ShardId{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
 
 	erb := &ecRebuilder{
-		commandEnv: &CommandEnv{
-			env:    make(map[string]string),
-			noLock: true,
-		},
+		env: &Env{},
 		ecNodes: []*EcNode{node1},
 		writer:  &logBuffer,
 	}

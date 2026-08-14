@@ -1,4 +1,4 @@
-package shell
+package ec
 
 import (
 	"regexp"
@@ -177,7 +177,7 @@ func TestSelectVolumeIdsFromTopology(t *testing.T) {
 	// In the provided topology, FreeVolumeCount is 1 ("free:1"), so it is < 2.
 	// So ALL volumes should be skipped due to insufficient free disk space.
 
-	vids, _ := selectVolumeIdsFromTopology(topologyInfo, volumeSizeLimitMb, collectionRegex, nil, quietSeconds, nowUnixSeconds, fullPercentage, verbose)
+	vids, _ := SelectVolumeIdsFromTopology(topologyInfo, volumeSizeLimitMb, collectionRegex, nil, quietSeconds, nowUnixSeconds, fullPercentage, verbose)
 
 	assert.Equal(t, 0, len(vids), "Should select 0 volumes because FreeVolumeCount is 1 (less than 2)")
 
@@ -197,7 +197,7 @@ func TestSelectVolumeIdsFromTopology(t *testing.T) {
 
 	// So expected volumes: 10, 11, 12.
 
-	vids, _ = selectVolumeIdsFromTopology(topologyInfo, volumeSizeLimitMb, collectionRegex, nil, quietSeconds, nowUnixSeconds, fullPercentage, verbose)
+	vids, _ = SelectVolumeIdsFromTopology(topologyInfo, volumeSizeLimitMb, collectionRegex, nil, quietSeconds, nowUnixSeconds, fullPercentage, verbose)
 
 	expectedVids := []needle.VolumeId{10, 11, 12}
 	assert.Equal(t, len(expectedVids), len(vids), "Should select 3 volumes")
@@ -232,7 +232,7 @@ func TestEcEncodeNodeCountCheck(t *testing.T) {
 	}
 
 	nodeCount := 0
-	eachDataNode(topologyInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
+	EachDataNode(topologyInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
 		nodeCount++
 	})
 
@@ -257,9 +257,9 @@ func TestChunkVolumeIds(t *testing.T) {
 		{101, 102},
 		{103, 104},
 		{105},
-	}, chunkVolumeIds(vids, 2))
+	}, ChunkVolumeIds(vids, 2))
 
-	assert.Equal(t, [][]needle.VolumeId{vids}, chunkVolumeIds(vids, 0))
+	assert.Equal(t, [][]needle.VolumeId{vids}, ChunkVolumeIds(vids, 0))
 }
 
 func ecShardVisibilityTestTopology(nodes ...*master_pb.DataNodeInfo) *master_pb.TopologyInfo {
@@ -304,11 +304,11 @@ func TestCollectEcShardBitsByNode(t *testing.T) {
 	}
 	topo := ecShardVisibilityTestTopology(node1, node2)
 
-	byNode := collectEcShardBitsByNode(topo, needle.VolumeId(1))
+	byNode := CollectEcShardBitsByNode(topo, needle.VolumeId(1))
 	assert.Len(t, byNode, 1)
 	assert.Equal(t, erasure_coding.ShardBits(allBits), byNode[pb.NewServerAddressFromDataNode(node1)])
 
-	assert.Empty(t, collectEcShardBitsByNode(topo, needle.VolumeId(3)))
+	assert.Empty(t, CollectEcShardBitsByNode(topo, needle.VolumeId(3)))
 }
 
 func TestCollectEcShardBitsByNode_MixedGenerations(t *testing.T) {
@@ -332,18 +332,18 @@ func TestCollectEcShardBitsByNode_MixedGenerations(t *testing.T) {
 	// the registration union nor as a second holder.
 	fresh := nodeWithGeneration("node1:8080", 200)
 	orphan := nodeWithGeneration("node2:8080", 100)
-	byNode := collectEcShardBitsByNode(ecShardVisibilityTestTopology(fresh, orphan), needle.VolumeId(1))
+	byNode := CollectEcShardBitsByNode(ecShardVisibilityTestTopology(fresh, orphan), needle.VolumeId(1))
 	assert.Len(t, byNode, 1)
 	assert.Equal(t, erasure_coding.ShardBits(allBits), byNode[pb.NewServerAddressFromDataNode(fresh)])
 
 	// Un-stamped entries are the legacy generation zero: dropped when a stamped
 	// generation exists, all counted when nothing is stamped.
 	legacy := nodeWithGeneration("node2:8080", 0)
-	byNode = collectEcShardBitsByNode(ecShardVisibilityTestTopology(fresh, legacy), needle.VolumeId(1))
+	byNode = CollectEcShardBitsByNode(ecShardVisibilityTestTopology(fresh, legacy), needle.VolumeId(1))
 	assert.Len(t, byNode, 1)
 	assert.Equal(t, erasure_coding.ShardBits(allBits), byNode[pb.NewServerAddressFromDataNode(fresh)])
 
-	byNode = collectEcShardBitsByNode(
+	byNode = CollectEcShardBitsByNode(
 		ecShardVisibilityTestTopology(nodeWithGeneration("node1:8080", 0), nodeWithGeneration("node2:8080", 0)),
 		needle.VolumeId(1))
 	assert.Len(t, byNode, 2)
@@ -438,7 +438,7 @@ func TestEcShardCountIgnoresDiskTypeOfTheShards(t *testing.T) {
 	topo := ecShardVisibilityTestTopology(node)
 
 	var union erasure_coding.ShardBits
-	for _, bits := range collectEcShardBitsByNode(topo, needle.VolumeId(1)) {
+	for _, bits := range CollectEcShardBitsByNode(topo, needle.VolumeId(1)) {
 		union |= bits
 	}
 	assert.Equal(t, erasure_coding.TotalShardsCount, union.Count(),
