@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"slices"
 
@@ -210,6 +211,11 @@ func (l *DiskLocation) loadEcShards(shards []string, collection string, vid need
 	return nil
 }
 
+// staleZeroShardAge guards the zero-sized-shard cleanup in loadAllEcShards: a
+// just-created file of an in-flight VolumeEcShardsCopy is legitimately empty
+// for a moment, while failed-operation residue is old by the next scan.
+const staleZeroShardAge = time.Hour
+
 func (l *DiskLocation) loadAllEcShards(onShardLoad func(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, ecVolume *erasure_coding.EcVolume)) (err error) {
 
 	dirEntries, err := os.ReadDir(l.Directory)
@@ -254,6 +260,26 @@ func (l *DiskLocation) loadAllEcShards(onShardLoad func(collection string, vid n
 		info, err := fileInfo.Info()
 
 		if err != nil {
+			continue
+		}
+
+		// A zero-sized shard file is residue of a failed operation (never
+		// loaded, but its presence poisons later rebuilds, which select
+		// inputs from the directory). Delete it once it is old enough that
+		// it cannot be an in-flight copy's just-created file — this scan
+		// also runs from LoadNewVolumes while the server is serving.
+		if re.MatchString(ext) && info.Size() == 0 && time.Since(info.ModTime()) > staleZeroShardAge {
+			for _, dir := range []string{l.Directory, l.IdxDirectory} {
+				p := path.Join(dir, name)
+				if fi, statErr := os.Stat(p); statErr == nil && !fi.IsDir() && fi.Size() == 0 {
+					if rmErr := os.Remove(p); rmErr != nil {
+						glog.Warningf("remove zero-sized ec shard %s: %v", p, rmErr)
+					} else {
+						glog.Warningf("removed zero-sized ec shard %s (residue of a failed operation)", p)
+					}
+					break
+				}
+			}
 			continue
 		}
 

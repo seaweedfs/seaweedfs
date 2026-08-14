@@ -22,11 +22,11 @@ func (eioBackend) ReadAt(p []byte, off int64) (int, error) { return 0, syscall.E
 func (eioBackend) WriteAt(p []byte, off int64) (int, error) {
 	return len(p), nil
 }
-func (eioBackend) Truncate(int64) error                          { return nil }
-func (eioBackend) Close() error                                  { return nil }
-func (eioBackend) GetStat() (int64, time.Time, error)            { return 0, time.Time{}, nil }
-func (eioBackend) Name() string                                  { return "eio" }
-func (eioBackend) Sync() error                                   { return nil }
+func (eioBackend) Truncate(int64) error               { return nil }
+func (eioBackend) Close() error                       { return nil }
+func (eioBackend) GetStat() (int64, time.Time, error) { return 0, time.Time{}, nil }
+func (eioBackend) Name() string                       { return "eio" }
+func (eioBackend) Sync() error                        { return nil }
 
 func TestCheckReadWriteErrorTracksConsecutiveEIO(t *testing.T) {
 	v := &Volume{}

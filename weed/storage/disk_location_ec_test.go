@@ -5,10 +5,12 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"time"
 )
 
 // closeEcVolumes closes all EC volumes in the given DiskLocation to release file handles.
@@ -745,5 +747,39 @@ func TestLoadExistingVolumeSkipsVifWhenEcxPresent(t *testing.T) {
 				t.Fatalf("guard must not create a placeholder .dat for volume %d", vid)
 			}
 		})
+	}
+}
+
+// TestLoadAllEcShardsDeletesStaleZeroSizedShards: zero-sized shard files that
+// are old enough to be failed-operation residue (issue 10730) are deleted by
+// the scan; a fresh zero-sized file (possibly an in-flight copy's just-created
+// file) is left alone.
+func TestLoadAllEcShardsDeletesStaleZeroSizedShards(t *testing.T) {
+	dir := t.TempDir()
+	diskLocation := NewDiskLocation(dir, 10, util.MinFreeSpace{}, dir, types.HardDriveType, nil, stats.DefaultDiskIOProbeConfig())
+
+	stale := filepath.Join(dir, "123.ec00")
+	fresh := filepath.Join(dir, "123.ec01")
+	for _, p := range []string{stale, fresh} {
+		if f, err := os.Create(p); err != nil {
+			t.Fatalf("create %s: %v", p, err)
+		} else {
+			f.Close()
+		}
+	}
+	oldTime := time.Now().Add(-2 * staleZeroShardAge)
+	if err := os.Chtimes(stale, oldTime, oldTime); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	if err := diskLocation.loadAllEcShards(nil); err != nil {
+		t.Fatalf("loadAllEcShards: %v", err)
+	}
+
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Errorf("stale zero-sized shard %s not deleted (err=%v)", stale, err)
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Errorf("fresh zero-sized shard %s must survive the scan: %v", fresh, err)
 	}
 }
