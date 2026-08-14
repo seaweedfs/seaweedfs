@@ -295,10 +295,9 @@ func TestFindGreaterOrEqual(t *testing.T) {
 			}
 		} else {
 			lastNode, _ := list.GetLargestNode()
-			lastV := lastNode.GetValue()
-			// It is OK, to fail, as long as f is bigger than the last element.
-			if bytes.Compare(key, lastV) <= 0 {
-				t.Errorf("lastV: %s\n    key: %s\n\n", string(lastV), string(key))
+			// It is OK, to fail, as long as the key is bigger than the largest key.
+			if bytes.Compare(key, lastNode.Key) <= 0 {
+				t.Errorf("largest key: %s\n    key: %s\n\n", string(lastNode.Key), string(key))
 			}
 		}
 	}
