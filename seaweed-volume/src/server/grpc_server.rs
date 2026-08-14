@@ -3961,6 +3961,21 @@ impl VolumeServer for VolumeGrpcService {
             .as_secs();
         n.set_has_last_modified_date();
 
+        // Validate every replica target before writing anything, so a malformed
+        // or internal target fails the request instead of leaving a local write
+        // behind. Mirrors the Go volume server. NOTE: like the Rust S3 endpoint
+        // guard, this validates the up-front DNS answer but does not yet re-check
+        // at connect time, so a rebinding hostname remains a follow-up.
+        if !self.state.allow_untrusted_remote_endpoints {
+            for replica in &req.replicas {
+                crate::remote_storage::validate_replica_target(&replica.url)
+                    .await
+                    .map_err(|e| {
+                        Status::invalid_argument(format!("reject replica target: {}", e))
+                    })?;
+            }
+        }
+
         // Run local write and replica writes concurrently (matches Go's WaitGroup)
         let mut handles: Vec<tokio::task::JoinHandle<Result<(), String>>> = Vec::new();
 

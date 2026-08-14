@@ -374,6 +374,69 @@ func TestRemoteEndpointGuardCoversAzure(t *testing.T) {
 	}
 }
 
+// TestValidateReplicaTarget covers the replica upload leg of
+// FetchAndWriteNeedle. Replica targets are peer volume servers, so unlike the
+// remote endpoint they may sit on a private network; the guard still rejects
+// loopback / link-local / unspecified hosts and any target that is not a bare
+// host:port, since a scheme, path or query would move the upload to a different
+// URL through the format string.
+func TestValidateReplicaTarget(t *testing.T) {
+	originalLookup := lookupIPAddrFunc
+	t.Cleanup(func() { lookupIPAddrFunc = originalLookup })
+
+	lookupIPAddrFunc = stubLookup(t, map[string][]net.IP{
+		"peer.example.com":      {net.ParseIP("10.0.0.7")},
+		"loop.example.com":      {net.ParseIP("127.0.0.1")},
+		"linklocal.example.com": {net.ParseIP("169.254.169.254")},
+	})
+
+	cases := []struct {
+		name    string
+		target  string
+		wantErr bool
+		wantSub string
+	}{
+		// A path plus a trailing "?a=" would otherwise swallow ?type=replicate.
+		{"embedded path and query", "127.0.0.1:7000/status/x/?a=", true, "bare host:port"},
+		{"loopback literal", "127.0.0.1:8080", true, "loopback"},
+		{"ipv6 loopback", "[::1]:8080", true, "loopback"},
+		{"metadata literal", "169.254.169.254:80", true, "metadata"},
+		{"unspecified", "0.0.0.0:8080", true, "unspecified"},
+		{"metadata hostname", "metadata:80", true, "metadata"},
+		{"scheme rejected", "http://10.0.0.7:8080", true, "bare host:port"},
+		{"path rejected", "10.0.0.7:8080/x", true, "bare host:port"},
+		{"query rejected", "10.0.0.7:8080?a=b", true, "bare host:port"},
+		{"userinfo rejected", "user@10.0.0.7:8080", true, "bare host:port"},
+		{"missing port literal", "10.0.0.7", true, "bare host:port"},
+		{"missing port hostname", "peer.example.com", true, "bare host:port"},
+		{"empty", "", true, "empty"},
+		{"resolves to loopback", "loop.example.com:8080", true, "loopback"},
+		{"resolves to link-local", "linklocal.example.com:8080", true, "metadata"},
+		// Legitimate peer volume servers on private networks must pass.
+		{"private peer literal", "10.0.0.7:8080", false, ""},
+		{"private 192 peer", "192.168.1.5:8080", false, ""},
+		{"private peer hostname", "peer.example.com:8080", false, ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateReplicaTarget(context.Background(), tc.target)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for %q, got nil", tc.target)
+				}
+				if tc.wantSub != "" && !strings.Contains(err.Error(), tc.wantSub) {
+					t.Fatalf("expected error to contain %q, got %v", tc.wantSub, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error for %q: %v", tc.target, err)
+			}
+		})
+	}
+}
+
 // TestGuardedRemoteClientSkipsFixedHostBackends confirms backends that only
 // reach a fixed provider host bypass the endpoint guard: azure with no explicit
 // endpoint (public cloud, host derived from the account) and unrelated types.
@@ -430,5 +493,48 @@ func TestGuardedDialerLiteralBlocked(t *testing.T) {
 	}
 	if err == nil || !strings.Contains(err.Error(), "private") {
 		t.Fatalf("guarded dialer should fail with private-address error, got %v", err)
+	}
+}
+
+// TestGuardedReplicaDialerRebind confirms the replica upload's dial-time guard
+// refuses a hostname that rebinds to loopback after validateReplicaTarget, yet
+// keeps letting private peers through (allowPrivate).
+func TestGuardedReplicaDialerRebind(t *testing.T) {
+	originalLookup := lookupIPAddrFunc
+	t.Cleanup(func() { lookupIPAddrFunc = originalLookup })
+
+	const host = "replica.example.com"
+	var calls atomic.Int32
+	lookupIPAddrFunc = func(_ context.Context, name string) ([]net.IPAddr, error) {
+		if name != host {
+			return nil, &net.DNSError{Err: "no such host", Name: name, IsNotFound: true}
+		}
+		if calls.Add(1) == 1 {
+			return []net.IPAddr{{IP: net.ParseIP("52.216.10.10")}}, nil
+		}
+		return []net.IPAddr{{IP: net.ParseIP("127.0.0.1")}}, nil
+	}
+
+	// Up-front validation sees the public answer and accepts the target.
+	if err := validateReplicaTarget(context.Background(), host+":8080"); err != nil {
+		t.Fatalf("public replica target should validate, got %v", err)
+	}
+	// The dial then re-resolves to loopback and must refuse it.
+	dial := guardedDialerPolicy(host+":8080", true)
+	conn, err := dial(context.Background(), "tcp", host+":8080")
+	if conn != nil {
+		conn.Close()
+		t.Fatalf("guarded replica dialer must refuse loopback rebind, got conn")
+	}
+	if err == nil || !strings.Contains(err.Error(), "loopback") {
+		t.Fatalf("expected loopback refusal, got %v", err)
+	}
+
+	// A private literal peer is allowed through: the dial is attempted (and here
+	// fails on the already-cancelled context) rather than blocked as private.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, perr := guardedDialerPolicy("10.0.0.5:80", true)(ctx, "tcp", "10.0.0.5:80"); perr != nil && strings.Contains(perr.Error(), "private") {
+		t.Fatalf("private peer must be allowed by the replica dialer, got %v", perr)
 	}
 }
