@@ -589,6 +589,9 @@ func (s3a *S3ApiServer) checkBucket(r *http.Request, bucket string) s3err.ErrorC
 // ErrAutoCreatePermissionDenied is returned when a user lacks permission to auto-create buckets
 var ErrAutoCreatePermissionDenied = errors.New("permission denied - requires Admin permission")
 
+// ErrAutoCreateDisabled is returned when bucket auto-creation is disabled by configuration
+var ErrAutoCreateDisabled = errors.New("bucket auto-creation is disabled")
+
 // ErrInvalidBucketName is returned when a bucket name doesn't meet S3 naming requirements
 var ErrInvalidBucketName = errors.New("invalid bucket name")
 
@@ -685,6 +688,10 @@ func setBucketOwner(r *http.Request) func(entry *filer_pb.Entry) {
 // autoCreateBucket creates a bucket if it doesn't exist, setting the owner from the request context
 // Only users with admin permissions are allowed to auto-create buckets
 func (s3a *S3ApiServer) autoCreateBucket(r *http.Request, bucket string) error {
+	if !s3a.option.AutoCreateBucket {
+		return fmt.Errorf("auto-create bucket %s: %w", bucket, ErrAutoCreateDisabled)
+	}
+
 	// Validate the bucket name before auto-creating
 	if err := s3bucket.VerifyS3BucketName(bucket); err != nil {
 		return fmt.Errorf("auto-create bucket %s: %w", bucket, errors.Join(ErrInvalidBucketName, err))
@@ -758,7 +765,9 @@ func (s3a *S3ApiServer) handleAutoCreateBucket(w http.ResponseWriter, r *http.Re
 	if err := s3a.autoCreateBucket(r, bucket); err != nil {
 		glog.Warningf("%s: %v", handlerName, err)
 		// Check for specific errors to return appropriate S3 error codes
-		if errors.Is(err, ErrInvalidBucketName) {
+		if errors.Is(err, ErrAutoCreateDisabled) {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+		} else if errors.Is(err, ErrInvalidBucketName) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidBucketName)
 		} else if errors.Is(err, ErrAutoCreatePermissionDenied) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)

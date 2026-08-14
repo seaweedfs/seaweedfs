@@ -221,3 +221,32 @@ func TestGetBucketLogging(t *testing.T) {
 		t.Fatalf("missing xmlns: %s", got)
 	}
 }
+
+func TestHandleAutoCreateBucketDisabled(t *testing.T) {
+	s3a := &S3ApiServer{option: &S3ApiServerOption{}}
+	req := newBucketRequest(http.MethodPut, "test-bucket", "", "")
+	rec := httptest.NewRecorder()
+
+	if s3a.handleAutoCreateBucket(rec, req, "test-bucket", "PutObjectHandler") {
+		t.Fatal("expected auto-create to be rejected")
+	}
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+	if !strings.Contains(rec.Body.String(), "NoSuchBucket") {
+		t.Fatalf("body = %s, want NoSuchBucket", rec.Body.String())
+	}
+}
+
+func TestHandleAutoCreateBucketNonAdmin(t *testing.T) {
+	s3a := &S3ApiServer{option: &S3ApiServerOption{AutoCreateBucket: true}}
+	req := newBucketRequest(http.MethodPut, "test-bucket", "", "")
+	rec := httptest.NewRecorder()
+
+	if s3a.handleAutoCreateBucket(rec, req, "test-bucket", "PutObjectHandler") {
+		t.Fatal("expected auto-create to be rejected")
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+}
