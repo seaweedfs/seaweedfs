@@ -11,8 +11,10 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
+	azureremote "github.com/seaweedfs/seaweedfs/weed/remote_storage/azure"
 	s3remote "github.com/seaweedfs/seaweedfs/weed/remote_storage/s3"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -218,6 +220,28 @@ func newGuardedHTTPClient(endpoint string) *http.Client {
 	}
 }
 
+// guardedRemoteClient reports the caller-supplied endpoint a backend dials
+// directly and a constructor that routes through the given HTTP client, or
+// ok=false for backends that only reach a fixed provider host. The S3-SDK
+// family and azure (once AzureEndpoint is set) both honor an attacker-supplied
+// endpoint, so both must pass the SSRF deny-list and rebinding-safe dialer.
+func guardedRemoteClient(remoteConf *remote_pb.RemoteConf) (endpoint string, makeClient func(*http.Client) (remote_storage.RemoteStorageClient, error), ok bool) {
+	if remoteConf == nil {
+		return "", nil, false
+	}
+	if ep, isS3 := s3remote.S3CompatibleEndpoint(remoteConf); isS3 {
+		return ep, func(httpClient *http.Client) (remote_storage.RemoteStorageClient, error) {
+			return s3remote.MakeWithHTTPClient(remoteConf, httpClient)
+		}, true
+	}
+	if remoteConf.Type == "azure" && remoteConf.AzureEndpoint != "" {
+		return remoteConf.AzureEndpoint, func(httpClient *http.Client) (remote_storage.RemoteStorageClient, error) {
+			return azureremote.MakeWithHTTPClient(remoteConf, httpClient)
+		}, true
+	}
+	return "", nil, false
+}
+
 func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_server_pb.FetchAndWriteNeedleRequest) (resp *volume_server_pb.FetchAndWriteNeedleResponse, err error) {
 	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
 		return nil, err
@@ -234,19 +258,9 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 
 	remoteConf := req.RemoteConf
 
-	// Every S3-SDK-backed backend (s3, wasabi, b2, storj, contabo, tencent,
-	// aliyun, baidu, filebase) dials this caller-supplied endpoint directly,
-	// so the guard must cover all of them, not just type "s3". Other backends
-	// (gcs, azure, ...) authenticate against their own SDKs and don't accept
-	// an attacker-controlled host.
-	endpoint, isS3Compatible := "", false
-	if remoteConf != nil {
-		endpoint, isS3Compatible = s3remote.S3CompatibleEndpoint(remoteConf)
-	}
-
 	var client remote_storage.RemoteStorageClient
 	var getClientErr error
-	if !vs.AllowUntrustedRemoteEndpoints && isS3Compatible {
+	if endpoint, makeClient, ok := guardedRemoteClient(remoteConf); ok && !vs.AllowUntrustedRemoteEndpoints {
 		if validateErr := validateRemoteEndpoint(ctx, endpoint); validateErr != nil {
 			return nil, fmt.Errorf("reject remote endpoint: %w", validateErr)
 		}
@@ -254,8 +268,8 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 		// IP every time. This pins the validated endpoint against DNS
 		// rebinding (a hostname that resolves to a public IP for
 		// validateRemoteEndpoint and then flips to 127.0.0.1 / 169.254.x.x
-		// when the AWS SDK dials).
-		client, getClientErr = s3remote.MakeWithHTTPClient(remoteConf, newGuardedHTTPClient(endpoint))
+		// when the SDK dials).
+		client, getClientErr = makeClient(newGuardedHTTPClient(endpoint))
 	} else {
 		client, getClientErr = remote_storage.GetRemoteStorage(remoteConf)
 	}

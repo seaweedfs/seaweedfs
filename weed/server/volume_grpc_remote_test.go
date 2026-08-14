@@ -342,6 +342,76 @@ func TestRemoteEndpointGuardCoversS3CompatibleSiblings(t *testing.T) {
 	}
 }
 
+// TestRemoteEndpointGuardCoversAzure confirms the SSRF guard reaches the azure
+// backend, which dials a caller-supplied AzureEndpoint. It replays the two
+// steps FetchAndWriteNeedle performs before building the client: resolve the
+// endpoint the type would dial via guardedRemoteClient, then validate it. An
+// azure conf pointed at an internal address must be rejected.
+func TestRemoteEndpointGuardCoversAzure(t *testing.T) {
+	cases := []struct {
+		name    string
+		conf    *remote_pb.RemoteConf
+		wantSub string
+	}{
+		{"imds", &remote_pb.RemoteConf{Type: "azure", AzureEndpoint: "https://169.254.169.254/"}, "metadata"},
+		{"loopback", &remote_pb.RemoteConf{Type: "azure", AzureEndpoint: "https://127.0.0.1/"}, "loopback"},
+		{"private", &remote_pb.RemoteConf{Type: "azure", AzureEndpoint: "https://10.0.0.5/"}, "private"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			endpoint, _, ok := guardedRemoteClient(tc.conf)
+			if !ok {
+				t.Fatalf("azure endpoint %q not guarded, the SSRF check would be skipped", tc.conf.AzureEndpoint)
+			}
+			err := validateRemoteEndpoint(context.Background(), endpoint)
+			if err == nil {
+				t.Fatalf("expected endpoint %q to be rejected", endpoint)
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Fatalf("error %q missing %q", err, tc.wantSub)
+			}
+		})
+	}
+}
+
+// TestGuardedRemoteClientSkipsFixedHostBackends confirms backends that only
+// reach a fixed provider host bypass the endpoint guard: azure with no explicit
+// endpoint (public cloud, host derived from the account) and unrelated types.
+func TestGuardedRemoteClientSkipsFixedHostBackends(t *testing.T) {
+	for _, conf := range []*remote_pb.RemoteConf{
+		{Type: "azure", AzureAccountName: "acct"},
+		{Type: "gcs"},
+		nil,
+	} {
+		if _, _, ok := guardedRemoteClient(conf); ok {
+			t.Errorf("conf %+v should not be guarded", conf)
+		}
+	}
+}
+
+// TestGuardedRemoteClientAzureBuildsGuardedClient exercises the whole azure
+// path: a public endpoint passes validation and the constructor builds a client
+// through the guarded HTTP transport.
+func TestGuardedRemoteClientAzureBuildsGuardedClient(t *testing.T) {
+	conf := &remote_pb.RemoteConf{
+		Type:             "azure",
+		AzureAccountName: "testaccount",
+		AzureAccountKey:  "aW52YWxpZGtleQ==",
+		AzureEndpoint:    "https://testaccount.blob.core.usgovcloudapi.net/",
+	}
+	endpoint, makeClient, ok := guardedRemoteClient(conf)
+	if !ok {
+		t.Fatal("azure with an endpoint should be guarded")
+	}
+	client, err := makeClient(newGuardedHTTPClient(endpoint))
+	if err != nil {
+		t.Fatalf("build guarded azure client: %v", err)
+	}
+	if client == nil {
+		t.Fatal("expected a client")
+	}
+}
+
 // TestGuardedDialerLiteralBlocked confirms that a literal blocked IP target
 // is refused without any DNS lookup.
 func TestGuardedDialerLiteralBlocked(t *testing.T) {
