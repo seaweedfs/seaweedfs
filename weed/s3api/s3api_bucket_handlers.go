@@ -688,13 +688,13 @@ func setBucketOwner(r *http.Request) func(entry *filer_pb.Entry) {
 // autoCreateBucket creates a bucket if it doesn't exist, setting the owner from the request context
 // Only users with admin permissions are allowed to auto-create buckets
 func (s3a *S3ApiServer) autoCreateBucket(r *http.Request, bucket string) error {
-	if !s3a.option.AutoCreateBucket {
-		return fmt.Errorf("auto-create bucket %s: %w", bucket, ErrAutoCreateDisabled)
-	}
-
 	// Validate the bucket name before auto-creating
 	if err := s3bucket.VerifyS3BucketName(bucket); err != nil {
 		return fmt.Errorf("auto-create bucket %s: %w", bucket, errors.Join(ErrInvalidBucketName, err))
+	}
+
+	if !s3a.option.AutoCreateBucket {
+		return fmt.Errorf("auto-create bucket %s: %w", bucket, ErrAutoCreateDisabled)
 	}
 
 	// Check if user has admin permissions
