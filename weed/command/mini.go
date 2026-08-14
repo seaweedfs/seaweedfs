@@ -389,6 +389,7 @@ var (
 	miniS3Config                    = cmdMini.Flag.String("s3.config", "", "path to the S3 config file")
 	miniIamConfig                   = cmdMini.Flag.String("s3.iam.config", "", "path to the advanced IAM config file for S3")
 	miniS3AllowDeleteBucketNotEmpty = cmdMini.Flag.Bool("s3.allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
+	miniS3AutoCreateBucket          = cmdMini.Flag.Bool("s3.autoCreateBucket", true, "create the bucket on upload if it does not exist, for admin identities only")
 	miniBucket                      = cmdMini.Flag.String("bucket", "", "comma-separated S3 bucket names to create on startup if they do not already exist; leave empty to skip. Falls back to S3_BUCKET env var.")
 	miniTableBucket                 = cmdMini.Flag.String("tableBucket", "", "comma-separated S3 Tables bucket names to create on startup if they do not already exist; leave empty to skip. Falls back to S3_TABLE_BUCKET env var.")
 )
@@ -518,6 +519,7 @@ func initMiniS3Flags() {
 	miniS3Options.iamConfig = miniIamConfig
 	miniS3Options.auditLogConfig = cmdMini.Flag.String("s3.auditLogConfig", "", "path to the audit log config file")
 	miniS3Options.allowDeleteBucketNotEmpty = miniS3AllowDeleteBucketNotEmpty
+	miniS3Options.autoCreateBucket = miniS3AutoCreateBucket
 	miniS3Options.externalUrl = cmdMini.Flag.String("s3.externalUrl", "", "the external URL clients use to connect (e.g. https://api.example.com:9000). Used for S3 signature verification behind a reverse proxy. Falls back to S3_EXTERNAL_URL env var.")
 	miniS3Options.defaultFileMode = cmdMini.Flag.String("s3.defaultFileMode", "", "default file mode for S3 uploaded objects, e.g. 0660, 0644, 0666")
 	miniS3Options.cacheSizeMB = cmdMini.Flag.Int64("s3.cacheCapacityMB", 0, "in-memory chunk cache capacity in MB for S3 GETs shared across requests (0 disables)")

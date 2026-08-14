@@ -59,6 +59,7 @@ type S3Options struct {
 	metricsHttpPort           *int
 	metricsHttpIp             *string
 	allowDeleteBucketNotEmpty *bool
+	autoCreateBucket          *bool
 	auditLogConfig            *string
 	localFilerSocket          *string
 	dataCenter                *string
@@ -104,6 +105,7 @@ func init() {
 	s3StandaloneOptions.metricsHttpIp = cmdS3.Flag.String("metricsIp", "", "metrics listen ip. If empty, default to same as -ip.bind option.")
 	cmdS3.Flag.Bool("allowEmptyFolder", true, "deprecated, ignored. Empty folder cleanup is now automatic.")
 	s3StandaloneOptions.allowDeleteBucketNotEmpty = cmdS3.Flag.Bool("allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
+	s3StandaloneOptions.autoCreateBucket = cmdS3.Flag.Bool("autoCreateBucket", true, "create the bucket on upload if it does not exist, for admin identities only")
 	s3StandaloneOptions.localFilerSocket = cmdS3.Flag.String("localFilerSocket", "", "local filer socket path")
 	s3StandaloneOptions.localSocket = cmdS3.Flag.String("localSocket", "", "default to /tmp/seaweedfs-s3-<port>.sock")
 	s3StandaloneOptions.idleTimeout = cmdS3.Flag.Int("idleTimeout", 120, "connection idle seconds")
@@ -351,6 +353,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		BucketsPath:               filerBucketsPath,
 		GrpcDialOption:            grpcDialOption,
 		AllowDeleteBucketNotEmpty: *s3opt.allowDeleteBucketNotEmpty,
+		AutoCreateBucket:          *s3opt.autoCreateBucket,
 		LocalFilerSocket:          localFilerSocket,
 		DataCenter:                *s3opt.dataCenter,
 		FilerGroup:                filerGroup,

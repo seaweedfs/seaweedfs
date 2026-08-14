@@ -52,6 +52,7 @@ type S3ApiServerOption struct {
 	BucketsPath               string
 	GrpcDialOption            grpc.DialOption
 	AllowDeleteBucketNotEmpty bool
+	AutoCreateBucket          bool // create the bucket on upload if it does not exist
 	LocalFilerSocket          string
 	DataCenter                string
 	FilerGroup                string

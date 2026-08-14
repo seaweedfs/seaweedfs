@@ -145,6 +145,7 @@ func init() {
 	filerS3Options.metricsHttpIp = cmdFiler.Flag.String("s3.metricsIp", "", "metrics listen ip. If empty, default to same as -s3.ip.bind option.")
 	cmdFiler.Flag.Bool("s3.allowEmptyFolder", true, "deprecated, ignored. Empty folder cleanup is now automatic.")
 	filerS3Options.allowDeleteBucketNotEmpty = cmdFiler.Flag.Bool("s3.allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
+	filerS3Options.autoCreateBucket = cmdFiler.Flag.Bool("s3.autoCreateBucket", true, "create the bucket on upload if it does not exist, for admin identities only")
 	filerS3Options.localSocket = cmdFiler.Flag.String("s3.localSocket", "", "default to /tmp/seaweedfs-s3-<port>.sock")
 	filerS3Options.tlsCACertificate = cmdFiler.Flag.String("s3.cacert.file", "", "path to the TLS CA certificate file")
 	filerS3Options.tlsVerifyClientCert = cmdFiler.Flag.Bool("s3.tlsVerifyClientCert", false, "whether to verify the client's certificate")

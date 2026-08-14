@@ -221,3 +221,67 @@ func TestGetBucketLogging(t *testing.T) {
 		t.Fatalf("missing xmlns: %s", got)
 	}
 }
+
+func TestHandleAutoCreateBucketDisabled(t *testing.T) {
+	s3a := &S3ApiServer{option: &S3ApiServerOption{}}
+	req := newBucketRequest(http.MethodPut, "test-bucket", "", "")
+	rec := httptest.NewRecorder()
+
+	if s3a.handleAutoCreateBucket(rec, req, "test-bucket", "PutObjectHandler") {
+		t.Fatal("expected auto-create to be rejected")
+	}
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+	if !strings.Contains(rec.Body.String(), "NoSuchBucket") {
+		t.Fatalf("body = %s, want NoSuchBucket", rec.Body.String())
+	}
+}
+
+func TestHandleAutoCreateBucketNonAdmin(t *testing.T) {
+	s3a := &S3ApiServer{option: &S3ApiServerOption{AutoCreateBucket: true}}
+	req := newBucketRequest(http.MethodPut, "test-bucket", "", "")
+	rec := httptest.NewRecorder()
+
+	if s3a.handleAutoCreateBucket(rec, req, "test-bucket", "PutObjectHandler") {
+		t.Fatal("expected auto-create to be rejected")
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+}
+
+func TestUploadMissingBucketAutoCreateDisabled(t *testing.T) {
+	cases := []struct {
+		name    string
+		method  string
+		object  string
+		handler func(*S3ApiServer, http.ResponseWriter, *http.Request)
+	}{
+		{"put object", http.MethodPut, "/key", (*S3ApiServer).PutObjectHandler},
+		{"put directory marker", http.MethodPut, "/dir/", (*S3ApiServer).PutObjectHandler},
+		{"new multipart upload", http.MethodPost, "/key", (*S3ApiServer).NewMultipartUploadHandler},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s3a := &S3ApiServer{
+				option:            &S3ApiServerOption{},
+				iam:               &IdentityAccessManagement{},
+				bucketConfigCache: NewBucketConfigCache(time.Minute),
+			}
+			s3a.bucketConfigCache.SetNegativeCache("missing")
+			req := httptest.NewRequest(tc.method, "/missing"+tc.object, strings.NewReader(""))
+			req = mux.SetURLVars(req, map[string]string{"bucket": "missing", "object": tc.object})
+			rec := httptest.NewRecorder()
+
+			tc.handler(s3a, rec, req)
+
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+			}
+			if !strings.Contains(rec.Body.String(), "NoSuchBucket") {
+				t.Fatalf("body = %s, want NoSuchBucket", rec.Body.String())
+			}
+		})
+	}
+}

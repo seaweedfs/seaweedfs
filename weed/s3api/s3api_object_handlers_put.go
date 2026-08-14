@@ -131,6 +131,17 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	objectContentType := r.Header.Get("Content-Type")
 	if strings.HasSuffix(object, "/") && r.ContentLength <= 1024 {
+		// The filer mkdir below would implicitly create a missing bucket, so gate it
+		// on the same auto-create policy as regular uploads.
+		if err := s3a.checkBucket(r, bucket); err == s3err.ErrNoSuchBucket {
+			if !s3a.handleAutoCreateBucket(w, r, bucket, "PutObjectHandler") {
+				return
+			}
+		} else if err != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, err)
+			return
+		}
+
 		// Split the object into directory path and name
 		objectWithoutSlash := strings.TrimSuffix(object, "/")
 		dirName := path.Dir(objectWithoutSlash)
