@@ -177,7 +177,7 @@ func (c *commandVolumeServerEvacuate) evacuateEcVolumes(commandEnv *CommandEnv, 
 
 		// move away ec volumes for this disk type
 		for _, thisNode := range thisNodes {
-			diskInfo, found := thisNode.info.DiskInfos[string(diskType)]
+			diskInfo, found := thisNode.Info.DiskInfos[string(diskType)]
 			if !found {
 				continue
 			}
@@ -205,12 +205,12 @@ func (c *commandVolumeServerEvacuate) moveAwayOneEcVolume(commandEnv *CommandEnv
 		// Sort by: 1) fewest shards of this volume, 2) most free EC slots
 		// This ensures we prefer nodes with capacity and balanced shard distribution
 		slices.SortFunc(otherNodes, func(a, b *EcNode) int {
-			aShards := a.localShardIdCount(ecShardInfo.Id)
-			bShards := b.localShardIdCount(ecShardInfo.Id)
+			aShards := a.LocalShardIdCount(ecShardInfo.Id)
+			bShards := b.LocalShardIdCount(ecShardInfo.Id)
 			if aShards != bShards {
 				return aShards - bShards // Prefer fewer shards
 			}
-			return b.freeEcSlot - a.freeEcSlot // Then prefer more free slots
+			return b.FreeEcSlot - a.FreeEcSlot // Then prefer more free slots
 		})
 
 		shardMoved := false
@@ -219,7 +219,7 @@ func (c *commandVolumeServerEvacuate) moveAwayOneEcVolume(commandEnv *CommandEnv
 			emptyNode := otherNodes[i]
 
 			// Skip nodes with no free EC slots
-			if emptyNode.freeEcSlot <= 0 {
+			if emptyNode.FreeEcSlot <= 0 {
 				skippedNodes++
 				continue
 			}
@@ -233,9 +233,9 @@ func (c *commandVolumeServerEvacuate) moveAwayOneEcVolume(commandEnv *CommandEnv
 			// No anti-affinity needed for evacuation (dataShardCount=0)
 			destDiskId := pickBestDiskOnNode(emptyNode, vid, diskType, false, shardId, 0)
 			if destDiskId > 0 {
-				fmt.Fprintf(writer, "moving ec volume %s%d.%d %s => %s (disk %d)\n", collectionPrefix, ecShardInfo.Id, shardId, thisNode.info.Id, emptyNode.info.Id, destDiskId)
+				fmt.Fprintf(writer, "moving ec volume %s%d.%d %s => %s (disk %d)\n", collectionPrefix, ecShardInfo.Id, shardId, thisNode.Info.Id, emptyNode.Info.Id, destDiskId)
 			} else {
-				fmt.Fprintf(writer, "moving ec volume %s%d.%d %s => %s\n", collectionPrefix, ecShardInfo.Id, shardId, thisNode.info.Id, emptyNode.info.Id)
+				fmt.Fprintf(writer, "moving ec volume %s%d.%d %s => %s\n", collectionPrefix, ecShardInfo.Id, shardId, thisNode.Info.Id, emptyNode.Info.Id)
 			}
 			err = moveMountedShardToEcNode(commandEnv, thisNode, ecShardInfo.Collection, vid, shardId, emptyNode, destDiskId, applyChange, diskType)
 			if err != nil {
@@ -245,7 +245,7 @@ func (c *commandVolumeServerEvacuate) moveAwayOneEcVolume(commandEnv *CommandEnv
 				hasMoved = true
 				shardMoved = true
 				// Update the node's free slot count after successful move
-				emptyNode.freeEcSlot--
+				emptyNode.FreeEcSlot--
 				break
 			}
 		}
@@ -310,14 +310,14 @@ func (c *commandVolumeServerEvacuate) nodesOtherThan(volumeServers []*Node, this
 
 func (c *commandVolumeServerEvacuate) ecNodesOtherThan(volumeServers []*EcNode, thisServer string) (thisNodes []*EcNode, otherNodes []*EcNode) {
 	for _, node := range volumeServers {
-		if node.info.Id == thisServer || (*c.volumeRack != "" && string(node.rack) == *c.volumeRack) {
+		if node.Info.Id == thisServer || (*c.volumeRack != "" && string(node.Rack) == *c.volumeRack) {
 			thisNodes = append(thisNodes, node)
 			continue
 		}
-		if *c.volumeRack != "" && *c.volumeRack == string(node.rack) {
+		if *c.volumeRack != "" && *c.volumeRack == string(node.Rack) {
 			continue
 		}
-		if *c.targetServer != "" && *c.targetServer != node.info.Id {
+		if *c.targetServer != "" && *c.targetServer != node.Info.Id {
 			continue
 		}
 		otherNodes = append(otherNodes, node)

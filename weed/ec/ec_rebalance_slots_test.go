@@ -1,4 +1,4 @@
-package shell
+package ec
 
 import (
 	"testing"
@@ -33,7 +33,7 @@ func TestECRebalanceWithLimitedSlots(t *testing.T) {
 	topology := buildLimitedSlotsTopology()
 
 	// Collect EC nodes from the topology
-	ecNodes, totalFreeEcSlots := collectEcVolumeServersByDc(topology, "", types.HardDriveType)
+	ecNodes, totalFreeEcSlots := CollectEcVolumeServersByDc(topology, "", types.HardDriveType)
 
 	t.Logf("Topology summary:")
 	t.Logf("  Number of EC nodes: %d", len(ecNodes))
@@ -42,19 +42,19 @@ func TestECRebalanceWithLimitedSlots(t *testing.T) {
 	// Log per-node details
 	for _, node := range ecNodes {
 		shardCount := 0
-		for _, diskInfo := range node.info.DiskInfos {
+		for _, diskInfo := range node.Info.DiskInfos {
 			for _, ecShard := range diskInfo.EcShardInfos {
 				shardCount += erasure_coding.GetShardCount(ecShard)
 			}
 		}
 		t.Logf("  Node %s (rack %s): %d shards, %d free slots",
-			node.info.Id, node.rack, shardCount, node.freeEcSlot)
+			node.Info.Id, node.Rack, shardCount, node.FreeEcSlot)
 	}
 
 	// Calculate total EC shards
 	totalEcShards := 0
 	for _, node := range ecNodes {
-		for _, diskInfo := range node.info.DiskInfos {
+		for _, diskInfo := range node.Info.DiskInfos {
 			for _, ecShard := range diskInfo.EcShardInfos {
 				totalEcShards += erasure_coding.GetShardCount(ecShard)
 			}
@@ -115,20 +115,20 @@ func TestECRebalanceZeroFreeSlots(t *testing.T) {
 	// (VolumeCount still reflects the original volumes)
 	topology := buildZeroFreeSlotTopology()
 
-	ecNodes, totalFreeEcSlots := collectEcVolumeServersByDc(topology, "", types.HardDriveType)
+	ecNodes, totalFreeEcSlots := CollectEcVolumeServersByDc(topology, "", types.HardDriveType)
 
 	t.Logf("Zero free slots scenario:")
 	for _, node := range ecNodes {
 		shardCount := 0
-		for _, diskInfo := range node.info.DiskInfos {
+		for _, diskInfo := range node.Info.DiskInfos {
 			for _, ecShard := range diskInfo.EcShardInfos {
 				shardCount += erasure_coding.GetShardCount(ecShard)
 			}
 		}
 		t.Logf("  Node %s: %d shards, %d free slots, volumeCount=%d, max=%d",
-			node.info.Id, shardCount, node.freeEcSlot,
-			node.info.DiskInfos[string(types.HardDriveType)].VolumeCount,
-			node.info.DiskInfos[string(types.HardDriveType)].MaxVolumeCount)
+			node.Info.Id, shardCount, node.FreeEcSlot,
+			node.Info.DiskInfos[string(types.HardDriveType)].VolumeCount,
+			node.Info.DiskInfos[string(types.HardDriveType)].MaxVolumeCount)
 	}
 	t.Logf("  Total free slots: %d", totalFreeEcSlots)
 
