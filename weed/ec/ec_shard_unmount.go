@@ -167,6 +167,10 @@ func (c *ecShardUnmounter) doShardsUnmount() error {
 		return nil
 	}
 
+	if !c.env.isLocked() {
+		return fmt.Errorf("lock is lost")
+	}
+
 	for _, s := range targetShards {
 		if err := c.unmountShard(s); err != nil {
 			return err
