@@ -18,44 +18,19 @@ import (
 
 // The EC orchestration logic lives in weed/ec so the shell commands and the
 // maintenance workers share it. The aliases below keep the shell-internal
-// names working; command files migrate to the ec package incrementally.
+// names working for the command files that still use them.
 type DataCenterId = ec.DataCenterId
 type RackId = ec.RackId
 type EcNode = ec.EcNode
-type EcDisk = ec.EcDisk
-
-type nodeLiveness = ec.NodeLiveness
-
-const (
-	nodeUp              = ec.NodeUp
-	nodeDown            = ec.NodeDown
-	nodeLivenessUnknown = ec.NodeLivenessUnknown
-)
 
 var (
-	ecBalanceAlgorithmDescription    = ec.BalanceAlgorithmDescription
-	eachDataNode                     = ec.EachDataNode
-	sortEcNodesByFreeslotsDescending = ec.SortEcNodesByFreeslotsDescending
-	sortEcNodesByFreeslotsAscending  = ec.SortEcNodesByFreeslotsAscending
-	countShards                      = ec.CountShards
-	countFreeShardSlots              = ec.CountFreeShardSlots
-	collectEcVolumeServersByDc       = ec.CollectEcVolumeServersByDc
-	sourceServerDeleteEcShards       = ec.SourceServerDeleteEcShards
-	pingVolumeServer                 = ec.PingVolumeServer
-	isNodeUnreachable                = ec.IsNodeUnreachable
-	classifyNodeLiveness             = ec.ClassifyNodeLiveness
-	unmountAndDeleteEcShardsQuiet    = ec.UnmountAndDeleteEcShardsQuiet
-	unmountEcShards                  = ec.UnmountEcShards
-	mountEcShards                    = ec.MountEcShards
-	ceilDivide                       = ec.CeilDivide
-	findEcVolumeShardsInfo           = ec.FindEcVolumeShardsInfo
-	pickBestDiskOnNode               = ec.PickBestDiskOnNode
-	assertEncodableRegularVolumes    = ec.AssertEncodableRegularVolumes
-	collectVolumeIdToCollection      = ec.CollectVolumeIdToCollection
-	collectCollectionsForVolumeIds   = ec.CollectCollectionsForVolumeIds
-	parseVolumeIdsFlag               = ec.ParseVolumeIdsFlag
-	chunkVolumeIds                   = ec.ChunkVolumeIds
-	errFullTeardownNotAcked          = ec.ErrFullTeardownNotAcked
+	ecBalanceAlgorithmDescription = ec.BalanceAlgorithmDescription
+	eachDataNode                  = ec.EachDataNode
+	collectEcVolumeServersByDc    = ec.CollectEcVolumeServersByDc
+	pickBestDiskOnNode            = ec.PickBestDiskOnNode
+	collectVolumeIdToCollection   = ec.CollectVolumeIdToCollection
+	parseVolumeIdsFlag            = ec.ParseVolumeIdsFlag
+	chunkVolumeIds                = ec.ChunkVolumeIds
 )
 
 // ecEnv adapts a CommandEnv to the cluster access hooks the ec package needs.
