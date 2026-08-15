@@ -29,10 +29,12 @@ import (
 // The phase markers are the progress lines the pipelines print; each marker
 // below names the code that prints it. A marker is the START of its phase, so
 // killing on it lands the interruption inside that phase — deterministically
-// per phase, byte-exact timing within the phase left to the scheduler. If an
-// operation completes before its marker is matched (it never printed, or the
-// process exited first), the scenario degenerates to "interrupted after
-// completion", which the recovery classification handles and reports.
+// per phase, byte-exact timing within the phase left to the scheduler. Every
+// scenario REQUIRES its marker to appear: a marker that never prints means a
+// pipeline refactor renamed or dropped the progress line, and silently
+// degenerating into a no-interruption run would let CI pass without
+// exercising the boundary the scenario names. Update the marker with the
+// pipeline.
 //
 // Complementing this, weed/ec's TestECLifecycleModelExhaustive explores every
 // schedule of the same pipelines — crashes between every step, rollback
@@ -99,6 +101,7 @@ func TestECInterruptionMatrix(t *testing.T) {
 				fmt.Sprintf("ec.encode -volumeId %d -collection %s -force", vid, chaosCollection), sc.marker)
 			r.t.Logf("killed %s at %q (marker hit: %v); output:\n%s", sc.op, sc.marker, hit, out)
 			r.relock()
+			require.True(t, hit, "marker %q never appeared (printed by %s); update the marker with the pipeline", sc.marker, sc.printed)
 			r.recoverInterruptedEncode(vid)
 			r.verify(fmt.Sprintf("encode killed at %q", sc.marker))
 		})
@@ -112,6 +115,7 @@ func TestECInterruptionMatrix(t *testing.T) {
 				fmt.Sprintf("ec.decode -volumeId %d -collection %s -checkMinFreeSpace=false", vid, chaosCollection), sc.marker)
 			r.t.Logf("killed %s at %q (marker hit: %v); output:\n%s", sc.op, sc.marker, hit, out)
 			r.relock()
+			require.True(t, hit, "marker %q never appeared (printed by %s); update the marker with the pipeline", sc.marker, sc.printed)
 			r.recoverInterruptedDecode(vid)
 			r.verify(fmt.Sprintf("decode killed at %q", sc.marker))
 		})
@@ -132,6 +136,7 @@ func TestECInterruptionMatrix(t *testing.T) {
 			fmt.Sprintf("ec.balance -collection %s -apply", chaosCollection), "moves ec shard")
 		r.t.Logf("killed ec.balance at move (marker hit: %v); output:\n%s", hit, killOut)
 		r.relock()
+		require.True(t, hit, "the balance never printed a move; the -rebalance=false setup should have guaranteed one")
 		r.recoverInterruptedBalance()
 		r.verify("balance killed at move")
 	})
@@ -202,6 +207,16 @@ func runShellKillAtMarker(t *testing.T, ctx context.Context, command, marker str
 		hit = true
 	case <-scanDone: // shell exited before printing the marker
 	case <-time.After(90 * time.Second):
+	}
+	if !hit {
+		// A shell that printed the marker and exited immediately can make both
+		// channels ready at once, and select picks between ready cases at
+		// random; a printed marker must never be reported as missed.
+		select {
+		case <-markerSeen:
+			hit = true
+		default:
+		}
 	}
 	cmd.Process.Kill()
 	cmd.Wait()
