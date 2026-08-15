@@ -632,25 +632,18 @@ func (r *chaosRun) opInterruptedBalance() bool {
 // recoverInterruptedBalance is the prescribed recovery after a balance was
 // killed mid-flight: an interrupted move leaves a shard copied but not yet
 // deleted at the source. Re-running the balance must converge — its dedup
-// phase removes the extra copies — until the replication check is clean. The
-// master's cleanup of the killed shell's lock can invalidate the lock this
-// harness re-acquired right after the kill, so a lock error inside the loop
-// is answered the way an operator would: run lock again and retry.
+// phase removes the extra copies — until the replication check is clean. A
+// lock lost to the killed shell's reap is re-taken by shellCommand, so the
+// loop only has to judge convergence.
 func (r *chaosRun) recoverInterruptedBalance() {
 	r.t.Helper()
 	require.Eventually(r.t, func() bool {
-		relockOn := func(err error) bool {
-			if err != nil && strings.Contains(err.Error(), "lock") {
-				r.relock()
-			}
-			return err != nil
-		}
-		if _, err := r.shellCommand("ec.balance", "-collection", chaosCollection, "-apply"); relockOn(err) {
+		if _, err := r.shellCommand("ec.balance", "-collection", chaosCollection, "-apply"); err != nil {
 			r.t.Logf("recovery ec.balance: %v", err)
 			return false
 		}
 		report, err := r.shellCommand("ec.check.replication", "-details")
-		if relockOn(err) {
+		if err != nil {
 			r.t.Logf("ec.check.replication: %v", err)
 			return false
 		}
@@ -826,8 +819,32 @@ func (r *chaosRun) uploadOne() {
 	}
 }
 
+// lostShellLock reports whether a command failed because the shell lock this
+// harness holds is no longer recognised. A killed shell's lock is released
+// only when the master notices the dead connection, and that cleanup lands
+// asynchronously -- after the harness has already re-acquired the lock -- so
+// it can clear the lock this run holds and the next command then refuses with
+// `need to run "lock" first to continue`.
+func lostShellLock(err error) bool {
+	return err != nil && strings.Contains(err.Error(), `need to run "lock" first`)
+}
+
+// shellCommand runs a shell command, answering a lost lock the way an operator
+// would: run lock again and retry. Every recovery path needs this, not just the
+// balance one -- the reap can land during any command that follows a kill.
 func (r *chaosRun) shellCommand(name string, args ...string) (string, error) {
-	return captureCommandOutput(r.t, shell.Commands[findCommandIndex(name)], args, r.env)
+	const attempts = 3
+	var out string
+	var err error
+	for attempt := 0; attempt < attempts; attempt++ {
+		out, err = captureCommandOutput(r.t, shell.Commands[findCommandIndex(name)], args, r.env)
+		if !lostShellLock(err) {
+			return out, err
+		}
+		r.t.Logf("%s lost the shell lock (%v); re-locking and retrying", name, err)
+		r.relock()
+	}
+	return out, err
 }
 
 func (r *chaosRun) relock() {
