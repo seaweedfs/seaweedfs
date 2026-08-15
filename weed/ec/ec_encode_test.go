@@ -454,6 +454,10 @@ func TestEcShardCountIgnoresDiskTypeOfTheShards(t *testing.T) {
 	// having no shards at all.
 	byNode, _ := collectEcNodeShardsInfo(topo, needle.VolumeId(1))
 	assert.Len(t, byNode, 1, "decode discovery must see shards on a non-default medium")
+	for _, si := range byNode {
+		assert.Equal(t, erasure_coding.TotalShardsCount, si.Count(),
+			"decode discovery must include every shard on the non-default medium")
+	}
 }
 
 // The message an aborted deletion leaves behind is all the operator has to go

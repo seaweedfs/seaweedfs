@@ -242,16 +242,23 @@ func (r *chaosRun) verify(afterStep string) {
 	r.t.Helper()
 	for fid, want := range r.payloads {
 		fid, want := fid, want
+		// The condition runs on Eventually's own goroutine, where t.Fatalf
+		// would only kill that goroutine; record a corruption and fail on the
+		// test goroutine instead. A wrong read still ends the polling at once —
+		// waiting cannot fix wrong bytes, and the first wrong read is the most
+		// useful state to stop in.
+		var corrupted string
 		require.Eventuallyf(r.t, func() bool {
 			got, err := chaosReadFid(fid, r.fidVol[fid])
 			if err != nil {
 				return false
 			}
 			if !bytes.Equal(got, want) {
-				r.t.Fatalf("payload %s corrupted after %s: got %d bytes, want %d bytes", fid, afterStep, len(got), len(want))
+				corrupted = fmt.Sprintf("payload %s corrupted after %s: got %d bytes, want %d bytes", fid, afterStep, len(got), len(want))
 			}
 			return true
 		}, 90*time.Second, time.Second, "payload %s unreadable after %s", fid, afterStep)
+		require.Empty(r.t, corrupted, "%s", corrupted)
 	}
 	for fid := range r.deleted {
 		fid := fid
