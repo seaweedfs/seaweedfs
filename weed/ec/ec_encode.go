@@ -9,6 +9,7 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -576,6 +577,58 @@ func CollectEcShardBitsByNode(topoInfo *master_pb.TopologyInfo, vid needle.Volum
 	return res
 }
 
+// collectNewestGenerationShardsInfo answers the same question as
+// CollectEcShardBitsByNode -- which shards belong to the newest encode
+// generation -- and keeps the sizes with them.
+//
+// The two have to agree on the generation. A re-encode can change the ratio,
+// so an orphaned older generation's shards are a different length by nature:
+// merging them into the size comparison makes a healthy current set look
+// inconsistent, and since the orphan keeps being reported, every retry fails
+// and the encode is left holding both the volume and its shards forever.
+func collectNewestGenerationShardsInfo(topoInfo *master_pb.TopologyInfo, vid needle.VolumeId) map[pb.ServerAddress]*erasure_coding.ShardsInfo {
+	type shardEntry struct {
+		addr pb.ServerAddress
+		ts   int64
+		info *erasure_coding.ShardsInfo
+	}
+	var entries []shardEntry
+	var newestTs int64
+	EachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
+		for _, diskInfo := range dn.DiskInfos {
+			if diskInfo == nil {
+				continue
+			}
+			for _, ecInfo := range diskInfo.EcShardInfos {
+				if ecInfo.Id != uint32(vid) {
+					continue
+				}
+				entries = append(entries, shardEntry{
+					addr: pb.NewServerAddressFromDataNode(dn),
+					ts:   ecInfo.EncodeTsNs,
+					info: erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(ecInfo),
+				})
+				if ecInfo.EncodeTsNs > newestTs {
+					newestTs = ecInfo.EncodeTsNs
+				}
+			}
+		}
+	})
+
+	res := make(map[pb.ServerAddress]*erasure_coding.ShardsInfo)
+	for _, e := range entries {
+		if e.ts != newestTs {
+			continue
+		}
+		if existing, ok := res[e.addr]; ok {
+			existing.Add(e.info)
+		} else {
+			res[e.addr] = e.info
+		}
+	}
+	return res
+}
+
 // waitForEcShardsToRegister polls the master topology until every given volume
 // reports a full EC shard set. Mounting shards notifies the master
 // asynchronously (mount -> NewEcShardsChan -> delta heartbeat), so a topology
@@ -642,6 +695,55 @@ func ecShardsClumpedOnOneNode(topoInfo *master_pb.TopologyInfo, vid needle.Volum
 // sorted so the message is stable. It names the ids and not just the count: a
 // set holding shards 0-9 and one holding 4-13 are both "10 shards", and which
 // ones survived is what says whether the set is recoverable and from where.
+// requireUniformShardSizes reports shards whose size disagrees with the rest.
+// Every shard of a volume takes one piece of each block row, so they are all
+// written to the same length -- an odd one out is a shard that was truncated,
+// half copied, or written to a disk that filled up. Counting shards cannot see
+// that, and the encode is about to delete the volume they were made from.
+//
+// Sizes the cluster does not report (zero) are skipped rather than treated as
+// a disagreement: an older volume server, or one that has not yet heartbeated
+// its shard sizes, must not block an encode that is otherwise sound.
+func requireUniformShardSizes(vid needle.VolumeId, byNode map[pb.ServerAddress]*erasure_coding.ShardsInfo) error {
+	type holder struct {
+		server pb.ServerAddress
+		shard  erasure_coding.ShardId
+	}
+	sizes := make(map[int64][]holder)
+	for server, si := range byNode {
+		if si == nil {
+			continue
+		}
+		for _, id := range si.Ids() {
+			size := int64(si.Size(id))
+			if size == 0 {
+				continue
+			}
+			sizes[size] = append(sizes[size], holder{server: server, shard: id})
+		}
+	}
+	if len(sizes) <= 1 {
+		return nil
+	}
+
+	described := make([]string, 0, len(sizes))
+	for size, holders := range sizes {
+		sort.Slice(holders, func(i, j int) bool {
+			if holders[i].server == holders[j].server {
+				return holders[i].shard < holders[j].shard
+			}
+			return holders[i].server < holders[j].server
+		})
+		shards := make([]string, 0, len(holders))
+		for _, h := range holders {
+			shards = append(shards, fmt.Sprintf("%s.%d", h.server, h.shard))
+		}
+		described = append(described, fmt.Sprintf("%d bytes: %s", size, strings.Join(shards, " ")))
+	}
+	sort.Strings(described)
+	return fmt.Errorf("volume %d ec shards disagree on size, so at least one is incomplete (%s)", vid, strings.Join(described, "; "))
+}
+
 func ecShardSummaryByNode(byNode map[pb.ServerAddress]erasure_coding.ShardBits) []string {
 	summary := make([]string, 0, len(byNode))
 	for node, bits := range byNode {
@@ -698,6 +800,14 @@ func verifyEcShardsBeforeDelete(env *Env, volumeIds []needle.VolumeId, diskType 
 			degraded, err := erasure_coding.RequireRecoverableShardSet(uint32(vid), union, erasure_coding.DataShardsCount, totalShards)
 			if err != nil {
 				lastErr = fmt.Errorf("volume %d: %w (observed: %v)", vid, err, ecShardSummaryByNode(byNode))
+				break
+			}
+			// Counting the shards says they exist, not that they are whole. The
+			// source volume is about to be deleted on their word, so also require
+			// the sizes to agree -- judging the same generation the count above
+			// judged, or an orphaned older encode would veto a healthy set.
+			if err := requireUniformShardSizes(vid, collectNewestGenerationShardsInfo(topoInfo, vid)); err != nil {
+				lastErr = err
 				break
 			}
 			if expectSpread {
