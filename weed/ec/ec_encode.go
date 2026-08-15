@@ -577,6 +577,58 @@ func CollectEcShardBitsByNode(topoInfo *master_pb.TopologyInfo, vid needle.Volum
 	return res
 }
 
+// collectNewestGenerationShardsInfo answers the same question as
+// CollectEcShardBitsByNode -- which shards belong to the newest encode
+// generation -- and keeps the sizes with them.
+//
+// The two have to agree on the generation. A re-encode can change the ratio,
+// so an orphaned older generation's shards are a different length by nature:
+// merging them into the size comparison makes a healthy current set look
+// inconsistent, and since the orphan keeps being reported, every retry fails
+// and the encode is left holding both the volume and its shards forever.
+func collectNewestGenerationShardsInfo(topoInfo *master_pb.TopologyInfo, vid needle.VolumeId) map[pb.ServerAddress]*erasure_coding.ShardsInfo {
+	type shardEntry struct {
+		addr pb.ServerAddress
+		ts   int64
+		info *erasure_coding.ShardsInfo
+	}
+	var entries []shardEntry
+	var newestTs int64
+	EachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
+		for _, diskInfo := range dn.DiskInfos {
+			if diskInfo == nil {
+				continue
+			}
+			for _, ecInfo := range diskInfo.EcShardInfos {
+				if ecInfo.Id != uint32(vid) {
+					continue
+				}
+				entries = append(entries, shardEntry{
+					addr: pb.NewServerAddressFromDataNode(dn),
+					ts:   ecInfo.EncodeTsNs,
+					info: erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(ecInfo),
+				})
+				if ecInfo.EncodeTsNs > newestTs {
+					newestTs = ecInfo.EncodeTsNs
+				}
+			}
+		}
+	})
+
+	res := make(map[pb.ServerAddress]*erasure_coding.ShardsInfo)
+	for _, e := range entries {
+		if e.ts != newestTs {
+			continue
+		}
+		if existing, ok := res[e.addr]; ok {
+			existing.Add(e.info)
+		} else {
+			res[e.addr] = e.info
+		}
+	}
+	return res
+}
+
 // waitForEcShardsToRegister polls the master topology until every given volume
 // reports a full EC shard set. Mounting shards notifies the master
 // asynchronously (mount -> NewEcShardsChan -> delta heartbeat), so a topology
@@ -752,9 +804,9 @@ func verifyEcShardsBeforeDelete(env *Env, volumeIds []needle.VolumeId, diskType 
 			}
 			// Counting the shards says they exist, not that they are whole. The
 			// source volume is about to be deleted on their word, so also require
-			// the sizes to agree.
-			shardsByNode, _ := collectEcNodeShardsInfo(topoInfo, vid)
-			if err := requireUniformShardSizes(vid, shardsByNode); err != nil {
+			// the sizes to agree -- judging the same generation the count above
+			// judged, or an orphaned older encode would veto a healthy set.
+			if err := requireUniformShardSizes(vid, collectNewestGenerationShardsInfo(topoInfo, vid)); err != nil {
 				lastErr = err
 				break
 			}
