@@ -164,12 +164,17 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                                         <td>
                                             <div class="d-flex align-items-center">
                                                 <div class="progress me-2" style="width: 60px; height: 16px;">
-                                                    <div class="progress-bar" role="progressbar" 
+                                                    <div class="progress-bar" role="progressbar"
                                                          style={fmt.Sprintf("width: %d%%", calculatePercent(int(host.DiskUsage), int(host.DiskCapacity)))}>
                                                     </div>
                                                 </div>
                                                 <small>{formatBytes(host.DiskUsage)}</small>
                                             </div>
+                                            if host.RemoteSize > 0 {
+                                                <div class="mt-1">
+                                                    <small class="text-muted"><i class="fas fa-cloud me-1"></i>{formatBytes(host.RemoteSize)} remote</small>
+                                                </div>
+                                            }
                                         </td>
                                         <td>
                                             if host.PublicURL != "" {
@@ -186,6 +191,7 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                                                         data-max-volumes={fmt.Sprintf("%d", host.MaxVolumes)}
                                                         data-disk-usage={fmt.Sprintf("%d", host.DiskUsage)}
                                                         data-disk-capacity={fmt.Sprintf("%d", host.DiskCapacity)}
+                                                        data-remote-size={fmt.Sprintf("%d", host.RemoteSize)}
                                                         data-ec-volumes={fmt.Sprintf("%d", host.EcVolumes)}
                                                         data-ec-shards={fmt.Sprintf("%d", host.EcShards)}
                                                         data-last-heartbeat={host.LastHeartbeat.Format("2006-01-02 15:04:05")}>
@@ -205,6 +211,7 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                                                         data-max-volumes={fmt.Sprintf("%d", host.MaxVolumes)}
                                                         data-disk-usage={fmt.Sprintf("%d", host.DiskUsage)}
                                                         data-disk-capacity={fmt.Sprintf("%d", host.DiskCapacity)}
+                                                        data-remote-size={fmt.Sprintf("%d", host.RemoteSize)}
                                                         data-ec-volumes={fmt.Sprintf("%d", host.EcVolumes)}
                                                         data-ec-shards={fmt.Sprintf("%d", host.EcShards)}
                                                         data-last-heartbeat={host.LastHeartbeat.Format("2006-01-02 15:04:05")}>
@@ -260,6 +267,7 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                         maxVolumes: parseInt(button.getAttribute('data-max-volumes')),
                         diskUsage: parseInt(button.getAttribute('data-disk-usage')),
                         diskCapacity: parseInt(button.getAttribute('data-disk-capacity')),
+                        remoteSize: parseInt(button.getAttribute('data-remote-size')) || 0,
                         ecVolumes: parseInt(button.getAttribute('data-ec-volumes')),
                         ecShards: parseInt(button.getAttribute('data-ec-shards')),
                         lastHeartbeat: button.getAttribute('data-last-heartbeat')
@@ -314,6 +322,8 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
             '</div>' +
             '</td></tr>' +
             '<tr><td><strong>Available Space:</strong></td><td>' + formatBytes(server.diskCapacity - server.diskUsage) + '</td></tr>' +
+            (server.remoteSize > 0 ?
+            '<tr><td><strong>Remote Data:</strong></td><td><i class="fas fa-cloud me-1"></i>' + formatBytes(server.remoteSize) + '</td></tr>' : '') +
             '</table>' +
             '</div>' +
             '</div>' +

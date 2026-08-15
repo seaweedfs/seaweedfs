@@ -44,6 +44,10 @@ type AdminData struct {
 	// Trends holds at-a-glance sparklines built from the admin's own recent
 	// cluster snapshots (no Prometheus required).
 	Trends DashboardTrends `json:"trends"`
+
+	// TierStats breaks volumes and EC shards down by storage tier: local
+	// disk types plus one entry per remote storage holding tiered volumes.
+	TierStats []TierStats `json:"tier_stats"`
 }
 
 // Object Store Users management structures
@@ -213,6 +217,7 @@ func (s *AdminServer) GetAdminData(username string) (AdminData, error) {
 		TotalEcShards:     totalEcShards,
 		TotalMountClients: totalMountClients,
 		Trends:            s.GetDashboardTrends(),
+		TierStats:         topology.TierStats,
 	}
 
 	return adminData, nil

@@ -122,7 +122,11 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 	diskTypeMap := make(map[string]bool)
 	collectionMap := make(map[string]bool)
 	versionMap := make(map[string]bool)
+	hasRemoteVolumes := false
 	for _, volume := range volumes {
+		if volume.RemoteStorageName != "" {
+			hasRemoteVolumes = true
+		}
 		if volume.DataCenter != "" {
 			dataCenterMap[volume.DataCenter] = true
 		}
@@ -190,7 +194,9 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 	// Determine conditional display flags and extract single values
 	showDataCenterColumn := dataCenterCount > 1
 	showRackColumn := rackCount > 1
-	showDiskTypeColumn := diskTypeCount > 1
+	// Remote-tiered volumes surface in the disk type column, so show it
+	// whenever any volume lives on a remote tier.
+	showDiskTypeColumn := diskTypeCount > 1 || hasRemoteVolumes
 	showCollectionColumn := collectionCount > 1 && collection == "" // Hide column when filtering by collection
 	showVersionColumn := versionCount > 1
 
@@ -482,10 +488,17 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 								vs.DiskCapacity += int64(diskInfo.MaxVolumeCount) * int64(volumeSizeLimitMB) * 1024 * 1024
 							}
 
-							// Count regular volumes and calculate disk usage
+							// Count regular volumes and calculate disk usage.
+							// A remote-tiered volume reports its cloud object's
+							// size; keep those bytes out of the local disk usage
+							// that is compared against DiskCapacity.
 							for _, volInfo := range diskInfo.VolumeInfos {
 								vs.Volumes++
-								vs.DiskUsage += int64(volInfo.Size)
+								if volInfo.RemoteStorageName != "" {
+									vs.RemoteSize += int64(volInfo.Size)
+								} else {
+									vs.DiskUsage += int64(volInfo.Size)
+								}
 							}
 
 							// Accumulate EC shard information across all disks for this volume server

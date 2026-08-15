@@ -400,7 +400,12 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                         </td>
                                         if data.ShowDiskTypeColumn {
                                             <td>
-                                                <span class="badge bg-primary">{volume.DiskType}</span>
+                                                <span class="badge bg-primary">{displayDiskType(volume.DiskType)}</span>
+                                                if volume.RemoteStorageName != "" {
+                                                    <span class="badge bg-info text-white ms-1" title={volume.RemoteStorageKey}>
+                                                        <i class="fas fa-cloud me-1"></i>{volume.RemoteStorageName}
+                                                    </span>
+                                                }
                                             </td>
                                         }
                                         if data.ShowVersionColumn {
@@ -683,14 +688,18 @@ func countUniqueRacks(volumes []dash.VolumeWithTopology) int {
     return len(rackMap)
 }
 
+// displayDiskType maps the empty disk type to its display name.
+func displayDiskType(diskType string) string {
+    if diskType == "" {
+        return "hdd"
+    }
+    return diskType
+}
+
 func countUniqueDiskTypes(volumes []dash.VolumeWithTopology) int {
     diskTypeMap := make(map[string]bool)
     for _, volume := range volumes {
-        diskType := volume.DiskType
-        if diskType == "" {
-            diskType = "hdd"
-        }
-        diskTypeMap[diskType] = true
+        diskTypeMap[displayDiskType(volume.DiskType)] = true
     }
     return len(diskTypeMap)
 }
