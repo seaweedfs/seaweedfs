@@ -60,12 +60,13 @@ func TestECChaosLifecycle(t *testing.T) {
 		t.Skip("Skipping EC chaos lifecycle test in short mode")
 	}
 
-	seed := int64(1)
-	if s := os.Getenv("EC_CHAOS_SEED"); s != "" {
-		v, err := strconv.ParseInt(s, 10, 64)
-		require.NoError(t, err, "EC_CHAOS_SEED must be an integer")
-		seed = v
+	seedStr := os.Getenv("EC_CHAOS_SEED")
+	if seedStr == "" {
+		t.Skip("randomized exploration is opt-in: set EC_CHAOS_SEED to run it; " +
+			"systematic coverage lives in TestECInterruptionMatrix and weed/ec's TestECLifecycleModelExhaustive")
 	}
+	seed, err := strconv.ParseInt(seedStr, 10, 64)
+	require.NoError(t, err, "EC_CHAOS_SEED must be an integer")
 	steps := 8
 	if s := os.Getenv("EC_CHAOS_STEPS"); s != "" {
 		v, err := strconv.Atoi(s)
@@ -78,8 +79,8 @@ func TestECChaosLifecycle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
 
-	cluster, err := startChaosCluster(ctx, testDir)
-	require.NoError(t, err)
+	cluster, clusterErr := startChaosCluster(ctx, testDir)
+	require.NoError(t, clusterErr)
 	defer cluster.Stop()
 
 	require.NoError(t, waitForServer(chaosMasterAddr, 30*time.Second))
