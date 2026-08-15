@@ -60,12 +60,13 @@ func TestECChaosLifecycle(t *testing.T) {
 		t.Skip("Skipping EC chaos lifecycle test in short mode")
 	}
 
-	seed := int64(1)
-	if s := os.Getenv("EC_CHAOS_SEED"); s != "" {
-		v, err := strconv.ParseInt(s, 10, 64)
-		require.NoError(t, err, "EC_CHAOS_SEED must be an integer")
-		seed = v
+	seedStr := os.Getenv("EC_CHAOS_SEED")
+	if seedStr == "" {
+		t.Skip("randomized exploration is opt-in: set EC_CHAOS_SEED to run it; " +
+			"systematic coverage lives in TestECInterruptionMatrix and weed/ec's TestECLifecycleModelExhaustive")
 	}
+	seed, err := strconv.ParseInt(seedStr, 10, 64)
+	require.NoError(t, err, "EC_CHAOS_SEED must be an integer")
 	steps := 8
 	if s := os.Getenv("EC_CHAOS_STEPS"); s != "" {
 		v, err := strconv.Atoi(s)
@@ -78,8 +79,8 @@ func TestECChaosLifecycle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
 
-	cluster, err := startChaosCluster(ctx, testDir)
-	require.NoError(t, err)
+	cluster, clusterErr := startChaosCluster(ctx, testDir)
+	require.NoError(t, clusterErr)
 	defer cluster.Stop()
 
 	require.NoError(t, waitForServer(chaosMasterAddr, 30*time.Second))
@@ -95,49 +96,10 @@ func TestECChaosLifecycle(t *testing.T) {
 	})
 	connectToMasterAndSync(ctx, t, commandEnv)
 
-	r := &chaosRun{
-		t:        t,
-		ctx:      ctx,
-		cluster:  cluster,
-		env:      commandEnv,
-		rng:      mrand.New(mrand.NewSource(seed)),
-		testDir:  testDir,
-		payloads: map[string][]byte{},
-		deleted:  map[string]bool{},
-		fidVol:   map[string]uint32{},
-		volumes:  map[uint32]*chaosVolumeState{},
-	}
+	r := newChaosRun(t, ctx, cluster, commandEnv, testDir, seed)
 	r.relock()
 	defer r.unlockIfHeld()
-
-	// Seed the cluster with payloads across several volumes. The first upload
-	// also creates the collection, which the volume.grow spread below needs.
-	for i := 0; i < 24; i++ {
-		r.uploadOne()
-	}
-	require.GreaterOrEqual(t, len(r.volumes), 2, "seeding should produce at least two volumes")
-	time.Sleep(3 * time.Second)
-
-	// Spread volumes onto every disk of every node: the master only enumerates
-	// disks that already hold data, and shards only spread across enumerated
-	// disks (see TestMultiDiskECBalanceNoShardLoss). Without this a balance can
-	// find no eligible targets and the encode's clump guard aborts.
-	require.Eventually(t, func() bool {
-		spread := nodeVolumeDiskCounts(t, commandEnv)
-		if len(spread) == chaosServerCount && allAtLeast(spread, 2) {
-			return true
-		}
-		for i := 0; i < chaosServerCount; i++ {
-			server := "127.0.0.1:" + chaosVolumePort(i)
-			if spread[server] < 2 {
-				out, gerr := captureCommandOutput(t, shell.Commands[findCommandIndex("volume.grow")],
-					[]string{"-collection", chaosCollection, "-dataNode", server, "-count", "4"}, commandEnv)
-				t.Logf("volume.grow on %s: err=%v output:\n%s", server, gerr, out)
-			}
-		}
-		return false
-	}, 90*time.Second, 2*time.Second, "volumes never spread across >=2 disks on all %d nodes", chaosServerCount)
-
+	r.seedAndSpread()
 	r.verify("seeding")
 
 	// Random schedule. Every op re-verifies the full payload set.
@@ -572,15 +534,22 @@ func (r *chaosRun) opInterruptedEncode() bool {
 	r.t.Logf("killed ec.encode v%d after %v; output so far:\n%s", vid, killAfter, out)
 	r.relock()
 
-	// Recovery. If the kill came after the originals were deleted, the encode
-	// had effectively completed and the volume is EC now; any earlier kill
-	// leaves the regular volume in place (possibly readonly, possibly beside
-	// partial shards), and a re-run must sweep the leftovers and finish.
+	r.recoverInterruptedEncode(vid)
+	return true
+}
+
+// recoverInterruptedEncode is the prescribed recovery after an encode was
+// killed mid-flight: if the kill came after the originals were deleted, the
+// encode had effectively completed and the volume is EC now; any earlier kill
+// leaves the regular volume in place (possibly readonly, possibly beside
+// partial shards), and a re-run must sweep the leftovers and finish.
+func (r *chaosRun) recoverInterruptedEncode(vid uint32) {
+	r.t.Helper()
 	if !r.volumeHasRegularReplica(vid) {
 		r.t.Logf("interrupted encode of volume %d had already completed", vid)
 		r.volumes[vid].encoded = true
 		r.requireSingleGeneration(vid, "interrupted ec.encode (completed)")
-		return true
+		return
 	}
 	out2, err := r.shellCommand("ec.encode",
 		"-volumeId", fmt.Sprintf("%d", vid), "-collection", chaosCollection, "-force")
@@ -598,7 +567,6 @@ func (r *chaosRun) opInterruptedEncode() bool {
 	require.NoError(r.t, err, "recovery ec.encode volume %d after interruption", vid)
 	r.volumes[vid].encoded = true
 	r.requireSingleGeneration(vid, "recovery ec.encode")
-	return true
 }
 
 func (r *chaosRun) opInterruptedDecode() bool {
@@ -613,11 +581,18 @@ func (r *chaosRun) opInterruptedDecode() bool {
 	r.t.Logf("killed ec.decode v%d after %v; output so far:\n%s", vid, killAfter, out)
 	r.relock()
 
-	// Recovery: while any shards remain the decode is unfinished (the kill may
-	// have left a hybrid: regenerated volume plus undeleted shards); a re-run
-	// must complete it. No shards left means the decode had finished — and the
-	// master's view can lag the killed run's final deletions, so a re-run that
-	// finds no shards is also completion, not a failure.
+	r.recoverInterruptedDecode(vid)
+	return true
+}
+
+// recoverInterruptedDecode is the prescribed recovery after a decode was
+// killed mid-flight: while any shards remain the decode is unfinished (the
+// kill may have left a hybrid: regenerated volume plus undeleted shards) and
+// a re-run must complete it. No shards left means the decode had finished —
+// and the master's view can lag the killed run's final deletions, so a re-run
+// that finds no shards is also completion, not a failure.
+func (r *chaosRun) recoverInterruptedDecode(vid uint32) {
+	r.t.Helper()
 	if len(masterEcShardIds(r.env, vid)) > 0 {
 		out2, err := r.shellCommand("ec.decode",
 			"-volumeId", fmt.Sprintf("%d", vid), "-collection", chaosCollection, "-checkMinFreeSpace=false")
@@ -631,7 +606,6 @@ func (r *chaosRun) opInterruptedDecode() bool {
 		r.t.Logf("interrupted decode of volume %d had already completed", vid)
 	}
 	r.volumes[vid].encoded = false
-	return true
 }
 
 func (r *chaosRun) opInterruptedBalance() bool {
@@ -651,12 +625,19 @@ func (r *chaosRun) opInterruptedBalance() bool {
 	r.t.Logf("killed ec.balance after %v; output so far:\n%s", killAfter, out)
 	r.relock()
 
-	// Recovery: an interrupted move leaves a shard copied but not yet deleted
-	// at the source. Re-running the balance must converge — its dedup phase
-	// removes the extra copies — until the replication check is clean. The
-	// master's cleanup of the killed shell's lock can invalidate the lock this
-	// harness re-acquired right after the kill, so a lock error inside the
-	// loop is answered the way an operator would: run lock again and retry.
+	r.recoverInterruptedBalance()
+	return true
+}
+
+// recoverInterruptedBalance is the prescribed recovery after a balance was
+// killed mid-flight: an interrupted move leaves a shard copied but not yet
+// deleted at the source. Re-running the balance must converge — its dedup
+// phase removes the extra copies — until the replication check is clean. The
+// master's cleanup of the killed shell's lock can invalidate the lock this
+// harness re-acquired right after the kill, so a lock error inside the loop
+// is answered the way an operator would: run lock again and retry.
+func (r *chaosRun) recoverInterruptedBalance() {
+	r.t.Helper()
 	require.Eventually(r.t, func() bool {
 		relockOn := func(err error) bool {
 			if err != nil && strings.Contains(err.Error(), "lock") {
@@ -691,7 +672,6 @@ func (r *chaosRun) opInterruptedBalance() bool {
 		}
 		return true
 	}, 120*time.Second, 3*time.Second, "cluster never converged to clean replication after interrupted balance")
-	return true
 }
 
 // classifyOverReplication parses an ec.check.replication -details report and
@@ -721,6 +701,89 @@ func classifyOverReplication(report string) (crossNode, sameNode bool) {
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
+
+// newChaosRun wires a run driver over a started cluster. The rng only shapes
+// randomized schedules and payload sizes; deterministic drivers (the
+// interruption matrix) never draw from it beyond seeding uploads.
+func newChaosRun(t *testing.T, ctx context.Context, cluster *chaosCluster, env *shell.CommandEnv, testDir string, seed int64) *chaosRun {
+	return &chaosRun{
+		t:        t,
+		ctx:      ctx,
+		cluster:  cluster,
+		env:      env,
+		rng:      mrand.New(mrand.NewSource(seed)),
+		testDir:  testDir,
+		payloads: map[string][]byte{},
+		deleted:  map[string]bool{},
+		fidVol:   map[string]uint32{},
+		volumes:  map[uint32]*chaosVolumeState{},
+	}
+}
+
+// seedAndSpread uploads the payload set and then spreads volumes onto every
+// disk of every node: the master only enumerates disks that already hold
+// data, and shards only spread across enumerated disks (see
+// TestMultiDiskECBalanceNoShardLoss). Without this a balance can find no
+// eligible targets and the encode's clump guard aborts.
+func (r *chaosRun) seedAndSpread() {
+	r.t.Helper()
+	for i := 0; i < 24; i++ {
+		r.uploadOne()
+	}
+	require.GreaterOrEqual(r.t, len(r.volumes), 2, "seeding should produce at least two volumes")
+	time.Sleep(3 * time.Second)
+
+	require.Eventually(r.t, func() bool {
+		spread := nodeVolumeDiskCounts(r.t, r.env)
+		if len(spread) == chaosServerCount && allAtLeast(spread, 2) {
+			return true
+		}
+		for i := 0; i < chaosServerCount; i++ {
+			server := "127.0.0.1:" + chaosVolumePort(i)
+			if spread[server] < 2 {
+				out, gerr := captureCommandOutput(r.t, shell.Commands[findCommandIndex("volume.grow")],
+					[]string{"-collection", chaosCollection, "-dataNode", server, "-count", "4"}, r.env)
+				r.t.Logf("volume.grow on %s: err=%v output:\n%s", server, gerr, out)
+			}
+		}
+		return false
+	}, 90*time.Second, 2*time.Second, "volumes never spread across >=2 disks on all %d nodes", chaosServerCount)
+}
+
+// ensureRegularVolume returns a tracked volume in the regular (not encoded)
+// state, decoding one if every tracked volume is EC.
+func (r *chaosRun) ensureRegularVolume() uint32 {
+	r.t.Helper()
+	if vid, ok := r.pickVolume(false); ok {
+		return vid
+	}
+	vid, ok := r.pickVolume(true)
+	require.True(r.t, ok, "no volumes tracked at all")
+	out, err := r.shellCommand("ec.decode",
+		"-volumeId", fmt.Sprintf("%d", vid), "-collection", chaosCollection, "-checkMinFreeSpace=false")
+	r.t.Logf("ensureRegular ec.decode v%d output:\n%s", vid, out)
+	require.NoError(r.t, err, "decode volume %d to restore a regular volume", vid)
+	r.volumes[vid].encoded = false
+	return vid
+}
+
+// ensureEncodedVolume returns a tracked volume in the encoded state, encoding
+// one (hdd target, deterministic) if none is.
+func (r *chaosRun) ensureEncodedVolume() uint32 {
+	r.t.Helper()
+	if vid, ok := r.pickVolume(true); ok {
+		return vid
+	}
+	vid, ok := r.pickVolume(false)
+	require.True(r.t, ok, "no volumes tracked at all")
+	out, err := r.shellCommand("ec.encode",
+		"-volumeId", fmt.Sprintf("%d", vid), "-collection", chaosCollection, "-force")
+	r.t.Logf("ensureEncoded ec.encode v%d output:\n%s", vid, out)
+	require.NoError(r.t, err, "encode volume %d", vid)
+	r.volumes[vid].encoded = true
+	r.requireSingleGeneration(vid, "ensureEncodedVolume")
+	return vid
+}
 
 func (r *chaosRun) pickVolume(encoded bool) (uint32, bool) {
 	var candidates []uint32

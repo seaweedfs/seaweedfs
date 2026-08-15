@@ -43,7 +43,10 @@ jobs:
     - name: Run EC Integration Tests
       working-directory: test/erasure_coding
       run: |
-        go test -v
+        # The suite now includes the interruption matrix and runs close to Go's
+        # default 10m binary timeout on slower runners; bound it by the job's
+        # 30m budget instead.
+        go test -v -timeout 25m
 
     - name: Collect server logs on failure
       if: failure()
