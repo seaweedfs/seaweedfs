@@ -38,11 +38,27 @@ func TestCollectTierStats(t *testing.T) {
 							"ssd": {
 								Type:           "ssd",
 								MaxVolumeCount: 5,
-								// No statfs numbers: capacity falls back to slots.
+								// No statfs numbers: capacity falls back to
+								// slots and usage to logical bytes.
 								VolumeInfos: []*master_pb.VolumeInformationMessage{
 									{Id: 3, Size: 2000, DiskType: "ssd"},
 									{Id: 4, Size: 7000, DiskType: "ssd", RemoteStorageName: "s3.backup", RemoteStorageKey: "/4.dat"},
 									{Id: 5, Size: 100, DiskType: "ssd", RemoteStorageName: "gcs.archive", RemoteStorageKey: "/5.dat"},
+								},
+							},
+						},
+					},
+					{
+						// An old server without statfs numbers sharing the
+						// hdd tier with node1: its logical bytes must still
+						// count toward the tier's DiskUsed.
+						Id: "node3:8080",
+						DiskInfos: map[string]*master_pb.DiskInfo{
+							"": {
+								Type:           "",
+								MaxVolumeCount: 2,
+								VolumeInfos: []*master_pb.VolumeInformationMessage{
+									{Id: 6, Size: 800},
 								},
 							},
 						},
@@ -55,8 +71,8 @@ func TestCollectTierStats(t *testing.T) {
 	got := CollectTierStats(topo, 30)
 
 	want := []TierStats{
-		{Name: "hdd", VolumeCount: 1, EcShardCount: 3, DataSize: 1060, DiskUsed: 600_000, DiskCapacity: 1_000_000, MaxVolumes: 10},
-		{Name: "ssd", VolumeCount: 1, DataSize: 2000, DiskCapacity: 5 * 30 * 1024 * 1024, MaxVolumes: 5},
+		{Name: "hdd", VolumeCount: 2, EcShardCount: 3, DataSize: 1860, DiskUsed: 600_800, DiskCapacity: 1_000_000 + 2*30*1024*1024, MaxVolumes: 12},
+		{Name: "ssd", VolumeCount: 1, DataSize: 2000, DiskUsed: 2000, DiskCapacity: 5 * 30 * 1024 * 1024, MaxVolumes: 5},
 		{Name: "gcs.archive", IsRemote: true, VolumeCount: 1, DataSize: 100},
 		{Name: "s3.backup", IsRemote: true, VolumeCount: 2, DataSize: 12000},
 	}

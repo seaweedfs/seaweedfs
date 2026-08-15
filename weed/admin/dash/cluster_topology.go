@@ -125,6 +125,12 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 		}
 
 		if resp.TopologyInfo != nil {
+			// Get volume size limit from response, default to 30GB if not set
+			volumeSizeLimitMb := resp.VolumeSizeLimitMb
+			if volumeSizeLimitMb == 0 {
+				volumeSizeLimitMb = 30000
+			}
+
 			// Process gRPC response
 			for _, dc := range resp.TopologyInfo.DataCenterInfos {
 				dataCenter := DataCenter{
@@ -155,7 +161,7 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 							if diskInfo.DiskTotalBytes > 0 {
 								diskCapacity += int64(diskInfo.DiskTotalBytes)
 							} else {
-								diskCapacity += diskInfo.MaxVolumeCount * int64(resp.VolumeSizeLimitMb) * 1024 * 1024
+								diskCapacity += diskInfo.MaxVolumeCount * int64(volumeSizeLimitMb) * 1024 * 1024
 							}
 
 							// A remote-tiered volume reports its cloud object's
@@ -222,7 +228,7 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 			// volume replicas or EC shard holders report it.
 			topology.TotalChunks = totalCollectionFileCount(resp.TopologyInfo)
 
-			topology.TierStats = CollectTierStats(resp.TopologyInfo, resp.VolumeSizeLimitMb)
+			topology.TierStats = CollectTierStats(resp.TopologyInfo, volumeSizeLimitMb)
 		}
 
 		return nil

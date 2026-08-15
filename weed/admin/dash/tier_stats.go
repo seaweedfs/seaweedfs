@@ -23,18 +23,13 @@ type TierStats struct {
 	MaxVolumes   int64  `json:"max_volumes"`
 }
 
-// UsagePercent is the tier's local disk usage in percent, from the statfs
-// numbers when the volume servers report them, else from the logical data
-// size. Clamped to [0, 100]; remote tiers have no capacity and return 0.
+// UsagePercent is the tier's local disk usage in percent, clamped to
+// [0, 100]. Remote tiers have no capacity and return 0.
 func (t TierStats) UsagePercent() int {
 	if t.IsRemote || t.DiskCapacity <= 0 {
 		return 0
 	}
-	used := t.DiskUsed
-	if used == 0 {
-		used = t.DataSize
-	}
-	percent := int(used * 100 / t.DiskCapacity)
+	percent := int(float64(t.DiskUsed) / float64(t.DiskCapacity) * 100)
 	if percent < 0 {
 		return 0
 	}
@@ -54,9 +49,11 @@ func tierDiskType(diskType string) string {
 
 // CollectTierStats walks the topology and groups capacity and usage by
 // tier. DiskUsed/DiskCapacity come from the statfs numbers the volume
-// servers report per disk type; capacity falls back to the slot-based
-// estimate for servers that predate disk_total_bytes. Remote tiers have
-// no local disk, so only VolumeCount and DataSize are meaningful there.
+// servers report per disk type; a disk that predates disk_total_bytes
+// falls back to the slot-based capacity estimate and to the logical
+// bytes it holds, so mixed-version tiers don't underreport usage.
+// Remote tiers have no local disk, so only VolumeCount and DataSize are
+// meaningful there.
 func CollectTierStats(topo *master_pb.TopologyInfo, volumeSizeLimitMb uint64) []TierStats {
 	if topo == nil {
 		return nil
@@ -81,7 +78,8 @@ func CollectTierStats(topo *master_pb.TopologyInfo, volumeSizeLimitMb uint64) []
 				for _, diskInfo := range node.DiskInfos {
 					local := tier(tierDiskType(diskInfo.Type), false)
 					local.MaxVolumes += diskInfo.MaxVolumeCount
-					if diskInfo.DiskTotalBytes > 0 {
+					hasStatfs := diskInfo.DiskTotalBytes > 0
+					if hasStatfs {
 						local.DiskCapacity += int64(diskInfo.DiskTotalBytes)
 						if diskInfo.DiskTotalBytes > diskInfo.DiskFreeBytes {
 							local.DiskUsed += int64(diskInfo.DiskTotalBytes - diskInfo.DiskFreeBytes)
@@ -90,6 +88,7 @@ func CollectTierStats(topo *master_pb.TopologyInfo, volumeSizeLimitMb uint64) []
 						local.DiskCapacity += diskInfo.MaxVolumeCount * int64(volumeSizeLimitMb) * 1024 * 1024
 					}
 
+					var diskLocalBytes int64
 					for _, volInfo := range diskInfo.VolumeInfos {
 						if volInfo.RemoteStorageName != "" {
 							remote := tier(volInfo.RemoteStorageName, true)
@@ -98,6 +97,7 @@ func CollectTierStats(topo *master_pb.TopologyInfo, volumeSizeLimitMb uint64) []
 						} else {
 							local.VolumeCount++
 							local.DataSize += int64(volInfo.Size)
+							diskLocalBytes += int64(volInfo.Size)
 						}
 					}
 
@@ -105,7 +105,15 @@ func CollectTierStats(topo *master_pb.TopologyInfo, volumeSizeLimitMb uint64) []
 					// nodes gives the tier's physical footprint.
 					for _, ecShardInfo := range diskInfo.EcShardInfos {
 						local.EcShardCount += erasure_coding.GetShardCount(ecShardInfo)
-						local.DataSize += erasure_coding.EcShardsTotalSize(ecShardInfo)
+						ecBytes := erasure_coding.EcShardsTotalSize(ecShardInfo)
+						local.DataSize += ecBytes
+						diskLocalBytes += ecBytes
+					}
+
+					// Without statfs numbers, approximate this disk's
+					// footprint with the logical bytes it holds.
+					if !hasStatfs {
+						local.DiskUsed += diskLocalBytes
 					}
 				}
 			}
