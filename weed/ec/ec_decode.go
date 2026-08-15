@@ -35,6 +35,29 @@ func DoEcDecode(env *Env, topoInfo *master_pb.TopologyInfo, collection string, v
 		return fmt.Errorf("no EC shards found for volume %d", vid)
 	}
 
+	// A decode interrupted while deleting the shards leaves the regenerated
+	// volume in place with the set half gone, so a re-run finds both and fails
+	// re-collecting the first shard the interrupted run removed.
+	//
+	// Finding a volume beside the shards is not enough to act on: an encode
+	// interrupted before it deleted the original leaves the same shape, as does
+	// a decode killed while generating, whose volume may be half written. Both
+	// of those leave the shard set COMPLETE. Only the deletion phase can remove
+	// a data shard, so require one to be gone -- that is also exactly the state
+	// no decode can recover from, which makes finishing the cleanup the only
+	// move left rather than a choice between two.
+	if _, found := missingDataShard(nodeToEcShardsInfo, dataShards); found {
+		holder, hasVolume := regularVolumeHolder(topoInfo, vid)
+		if !hasVolume {
+			return fmt.Errorf("volume %d cannot be decoded: data shards are missing and no decoded volume exists to finish", vid)
+		}
+		if err := verifyDecodedVolumeBeforeDelete(env.GrpcDialOption, holder, vid); err != nil {
+			return fmt.Errorf("volume %d is already decoded on %s but did not verify, keeping its ec shards: %v", vid, holder, err)
+		}
+		fmt.Printf("volume %d is already decoded on %s; deleting the ec shards the interrupted run left behind\n", vid, holder)
+		return unmountAndDeleteEcShardsWithPrefix("deleteDecodedEcShards", env.GrpcDialOption, collection, nodeToEcShardsInfo, vid)
+	}
+
 	var originalShardCounts map[pb.ServerAddress]int
 	if diskUsageState != nil {
 		originalShardCounts = make(map[pb.ServerAddress]int, len(nodeToEcShardsInfo))
@@ -143,6 +166,48 @@ func unmountAndDeleteEcShardsWithPrefix(prefix string, grpcDialOption grpc.DialO
 		})
 	}
 	return ewg.Wait()
+}
+
+// missingDataShard reports the first data shard absent from every holder.
+// Parity shards are not enough to answer this: the decode rebuilds the volume
+// from the data shards, so one of those going missing is what makes a re-run
+// impossible.
+func missingDataShard(nodeToShardsInfo map[pb.ServerAddress]*erasure_coding.ShardsInfo, dataShards int) (erasure_coding.ShardId, bool) {
+	var present erasure_coding.ShardBits
+	for _, si := range nodeToShardsInfo {
+		for _, id := range si.Ids() {
+			present = present.Set(id)
+		}
+	}
+	for id := 0; id < dataShards; id++ {
+		if !present.Has(erasure_coding.ShardId(id)) {
+			return erasure_coding.ShardId(id), true
+		}
+	}
+	return 0, false
+}
+
+// regularVolumeHolder returns a server already serving vid as a regular
+// volume. A decode only finds one when an earlier run was interrupted between
+// regenerating the volume and deleting the shards it came from.
+func regularVolumeHolder(topoInfo *master_pb.TopologyInfo, vid needle.VolumeId) (pb.ServerAddress, bool) {
+	var holder pb.ServerAddress
+	found := false
+	EachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
+		if found {
+			return
+		}
+		for _, diskInfo := range dn.DiskInfos {
+			for _, vi := range diskInfo.VolumeInfos {
+				if needle.VolumeId(vi.Id) == vid {
+					holder = pb.NewServerAddressFromDataNode(dn)
+					found = true
+					return
+				}
+			}
+		}
+	})
+	return holder, found
 }
 
 func verifyDecodedVolumeBeforeDelete(grpcDialOption grpc.DialOption, target pb.ServerAddress, vid needle.VolumeId) error {
