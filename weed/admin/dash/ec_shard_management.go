@@ -66,6 +66,7 @@ func (s *AdminServer) GetClusterEcShards(page int, pageSize int, sortBy string, 
 
 								// Create individual shard entries for each shard this server has
 								shardBits := ecShardInfo.EcIndexBits
+								shardsInfo := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(ecShardInfo)
 								for shardId := 0; shardId < erasure_coding.MaxShardCount; shardId++ {
 									if (shardBits & (1 << uint(shardId))) != 0 {
 										// Mark this shard as present for this volume
@@ -75,7 +76,7 @@ func (s *AdminServer) GetClusterEcShards(page int, pageSize int, sortBy string, 
 											VolumeID:     volumeId,
 											ShardID:      uint32(shardId),
 											Collection:   ecShardInfo.Collection,
-											Size:         0, // EC shards don't have individual size in the API response
+											Size:         uint64(shardsInfo.Size(erasure_coding.ShardId(shardId))),
 											Server:       node.Id,
 											DataCenter:   dc.Id,
 											Rack:         rack.Id,

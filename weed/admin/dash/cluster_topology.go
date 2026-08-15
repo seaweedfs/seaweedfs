@@ -143,6 +143,7 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 						var totalVolumes int64
 						var totalMaxVolumes int64
 						var totalSize int64
+						var remoteSize int64
 						// Prefer the real physical disk capacity the volume server
 						// reports per disk; the slot-based estimate overstates capacity
 						// when maxVolumeCount is configured higher than the disk holds.
@@ -157,9 +158,15 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 								diskCapacity += diskInfo.MaxVolumeCount * int64(resp.VolumeSizeLimitMb) * 1024 * 1024
 							}
 
-							// Sum up individual volume information
+							// A remote-tiered volume reports its cloud object's
+							// size; keep those bytes out of the local disk usage
+							// that is compared against diskCapacity.
 							for _, volInfo := range diskInfo.VolumeInfos {
-								totalSize += int64(volInfo.Size)
+								if volInfo.RemoteStorageName != "" {
+									remoteSize += int64(volInfo.Size)
+								} else {
+									totalSize += int64(volInfo.Size)
+								}
 							}
 
 							// ShardSizes is local to this node, so summing
@@ -193,12 +200,15 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 							DiskUsage:     totalSize,
 							DiskCapacity:  diskCapacity,
 							LastHeartbeat: time.Now(),
+							RemoteSize:    remoteSize,
 						}
 
 						rackObj.Nodes = append(rackObj.Nodes, vs)
 						topology.VolumeServers = append(topology.VolumeServers, vs)
 						topology.TotalVolumes += vs.Volumes
-						topology.TotalSize += totalSize
+						// TotalSize is the logical data size, wherever the
+						// bytes live, so remote-tiered volumes still count.
+						topology.TotalSize += totalSize + remoteSize
 					}
 
 					dataCenter.Racks = append(dataCenter.Racks, rackObj)
@@ -211,6 +221,8 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 			// nets out tombstones and counts a chunk once no matter how many
 			// volume replicas or EC shard holders report it.
 			topology.TotalChunks = totalCollectionFileCount(resp.TopologyInfo)
+
+			topology.TierStats = CollectTierStats(resp.TopologyInfo, resp.VolumeSizeLimitMb)
 		}
 
 		return nil

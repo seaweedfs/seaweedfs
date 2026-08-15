@@ -19,6 +19,9 @@ type ClusterTopology struct {
 	TotalChunks int64     `json:"total_chunks"`
 	TotalSize   int64     `json:"total_size"`
 	UpdatedAt   time.Time `json:"updated_at"`
+	// TierStats breaks volumes and EC shards down by storage tier: local
+	// disk types plus one entry per remote storage holding tiered volumes.
+	TierStats []TierStats `json:"tier_stats"`
 }
 
 type MasterNode struct {
@@ -52,6 +55,11 @@ type VolumeServer struct {
 	EcVolumes      int                  `json:"ec_volumes"`       // Number of EC volumes this server has shards for
 	EcShards       int                  `json:"ec_shards"`        // Total number of EC shards on this server
 	EcShardDetails []VolumeServerEcInfo `json:"ec_shard_details"` // Detailed EC shard information
+
+	// RemoteSize is the bytes this server's remote-tiered volumes hold in
+	// cloud storage. Those bytes are excluded from DiskUsage, which only
+	// counts what occupies local disks.
+	RemoteSize int64 `json:"remote_size"`
 }
 
 func (vs *VolumeServer) GetDisplayAddress() string {

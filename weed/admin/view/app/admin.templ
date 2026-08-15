@@ -194,6 +194,87 @@ templ Admin(data dash.AdminData) {
             </div>
         </div>
 
+        <!-- Storage Tiers -->
+        if len(data.TierStats) > 0 {
+            <div class="row mb-4">
+                <div class="col-12">
+                    <div class="card shadow mb-4">
+                        <div class="card-header py-3">
+                            <h6 class="m-0 font-weight-bold text-primary">
+                                <i class="fas fa-layer-group me-2"></i>Storage Tiers
+                            </h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-hover" width="100%" cellspacing="0">
+                                    <thead>
+                                        <tr>
+                                            <th>Tier</th>
+                                            <th>Volumes</th>
+                                            <th>EC Shards</th>
+                                            <th>Data Size</th>
+                                            <th>Disk Used</th>
+                                            <th>Capacity</th>
+                                            <th>Usage</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        for _, tier := range data.TierStats {
+                                            <tr>
+                                                <td>
+                                                    if tier.IsRemote {
+                                                        <i class="fas fa-cloud me-1 text-info"></i>{tier.Name}
+                                                        <span class="badge bg-info text-white ms-1">remote</span>
+                                                    } else {
+                                                        <i class="fas fa-hdd me-1 text-muted"></i>{tier.Name}
+                                                    }
+                                                </td>
+                                                <td>{fmt.Sprintf("%d", tier.VolumeCount)}</td>
+                                                <td>
+                                                    if tier.IsRemote {
+                                                        <span class="text-muted">-</span>
+                                                    } else {
+                                                        {fmt.Sprintf("%d", tier.EcShardCount)}
+                                                    }
+                                                </td>
+                                                <td>{formatBytes(tier.DataSize)}</td>
+                                                <td>
+                                                    if tier.IsRemote || tier.DiskUsed == 0 {
+                                                        <span class="text-muted">-</span>
+                                                    } else {
+                                                        {formatBytes(tier.DiskUsed)}
+                                                    }
+                                                </td>
+                                                <td>
+                                                    if tier.IsRemote {
+                                                        <span class="text-muted">-</span>
+                                                    } else {
+                                                        {formatBytes(tier.DiskCapacity)}
+                                                    }
+                                                </td>
+                                                <td>
+                                                    if tier.IsRemote {
+                                                        <span class="text-muted">-</span>
+                                                    } else {
+                                                        <div class="progress" style="height: 20px;">
+                                                            <div class="progress-bar" role="progressbar"
+                                                                 style={fmt.Sprintf("width: %d%%", tier.UsagePercent())}>
+                                                                {fmt.Sprintf("%d%%", tier.UsagePercent())}
+                                                            </div>
+                                                        </div>
+                                                    }
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+
         <!-- Mount Clients -->
         <div class="row mb-4">
             <div class="col-12">
@@ -381,7 +462,13 @@ templ Admin(data dash.AdminData) {
                                                     <span class="text-muted">-</span>
                                                 }
                                             </td>
-                                            <td>{formatBytes(vs.DiskUsage)} / {formatBytes(vs.DiskCapacity)}</td>
+                                            <td>
+                                                {formatBytes(vs.DiskUsage)} / {formatBytes(vs.DiskCapacity)}
+                                                if vs.RemoteSize > 0 {
+                                                    <br/>
+                                                    <small class="text-muted"><i class="fas fa-cloud me-1"></i>{formatBytes(vs.RemoteSize)} remote</small>
+                                                }
+                                            </td>
                                         </tr>
                                     }
                                     if len(data.VolumeServers) == 0 {
