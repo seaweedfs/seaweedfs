@@ -150,15 +150,12 @@ func SummarizeShardInventory(perServer map[string]ServerShardInventory) string {
 // A server that cannot be queried is unknown, not confirmed, and returns an
 // error: treating an unreachable peer as proof of a surviving copy is how a
 // network blip becomes data loss.
-func VerifyShardsOnServer(ctx context.Context, collection string, volumeID uint32,
-	server string, shardIDs []uint32, dialOption grpc.DialOption) error {
-
-	if server == "" {
-		return fmt.Errorf("no server given to verify volume %d shard(s) %v", volumeID, shardIDs)
-	}
-
-	var present ShardBits
-	callErr := operation.WithVolumeServerClient(false, pb.ServerAddress(server), dialOption,
+// CollectShardsOnServer asks one volume server which shards of the volume it
+// actually serves right now — its live inventory, as opposed to what the
+// master's possibly stale topology claims for it.
+func CollectShardsOnServer(ctx context.Context, collection string, volumeID uint32,
+	server string, dialOption grpc.DialOption) (present ShardBits, err error) {
+	err = operation.WithVolumeServerClient(false, pb.ServerAddress(server), dialOption,
 		func(client volume_server_pb.VolumeServerClient) error {
 			resp, e := client.VolumeEcShardsInfo(ctx, &volume_server_pb.VolumeEcShardsInfoRequest{
 				VolumeId: volumeID,
@@ -174,6 +171,17 @@ func VerifyShardsOnServer(ctx context.Context, collection string, volumeID uint3
 			}
 			return nil
 		})
+	return present, err
+}
+
+func VerifyShardsOnServer(ctx context.Context, collection string, volumeID uint32,
+	server string, shardIDs []uint32, dialOption grpc.DialOption) error {
+
+	if server == "" {
+		return fmt.Errorf("no server given to verify volume %d shard(s) %v", volumeID, shardIDs)
+	}
+
+	present, callErr := CollectShardsOnServer(ctx, collection, volumeID, server, dialOption)
 	if callErr != nil {
 		return fmt.Errorf("verify volume %d shard(s) %v on %s: %w", volumeID, shardIDs, server, callErr)
 	}

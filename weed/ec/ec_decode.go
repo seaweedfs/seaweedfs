@@ -27,12 +27,12 @@ func DoEcDecode(env *Env, topoInfo *master_pb.TopologyInfo, collection string, v
 	}
 
 	// find volume location
-	nodeToEcShardsInfo, dataShards := collectEcNodeShardsInfo(topoInfo, vid, diskType)
+	nodeToEcShardsInfo, dataShards := collectEcNodeShardsInfo(topoInfo, vid)
 
 	fmt.Printf("ec volume %d shard locations: %+v\n", vid, nodeToEcShardsInfo)
 
 	if len(nodeToEcShardsInfo) == 0 {
-		return fmt.Errorf("no EC shards found for volume %d (diskType %s)", vid, diskType.ReadableString())
+		return fmt.Errorf("no EC shards found for volume %d", vid)
 	}
 
 	var originalShardCounts map[pb.ServerAddress]int
@@ -214,6 +214,23 @@ func collectEcShards(env *Env, nodeToShardsInfo map[pb.ServerAddress]*erasure_co
 		return "", fmt.Errorf("no eligible target datanodes available to decode volume %d", vid)
 	}
 
+	// Trust only shards the target can actually serve: an interrupted earlier
+	// decode or balance can leave the master believing the target holds a
+	// shard whose file never landed. A phantom entry here would exclude the
+	// shard from the copy set and the decode would then fail with "missing
+	// shard"; probing the target's live inventory makes the re-run re-copy it.
+	if present, probeErr := erasure_coding.CollectShardsOnServer(context.Background(), collection, uint32(vid), string(targetNodeLocation), env.GrpcDialOption); probeErr == nil {
+		confirmed := erasure_coding.NewShardsInfo()
+		for _, sid := range existingShardsInfo.Ids() {
+			if present.Has(sid) {
+				confirmed.Set(erasure_coding.NewShardInfo(sid, 0))
+			}
+		}
+		existingShardsInfo = confirmed
+	} else {
+		fmt.Printf("collectEcShards: probe %s inventory for volume %d: %v (keeping the topology's view)\n", targetNodeLocation, vid, probeErr)
+	}
+
 	fmt.Printf("collectEcShards: ec volume %d collect shards to %s from: %+v\n", vid, targetNodeLocation, nodeToShardsInfo)
 
 	copiedShardsInfo := erasure_coding.NewShardsInfo()
@@ -294,14 +311,19 @@ func CollectEcShardIds(topoInfo *master_pb.TopologyInfo, collectionRegex *regexp
 	return
 }
 
-func collectEcNodeShardsInfo(topoInfo *master_pb.TopologyInfo, vid needle.VolumeId, diskType types.DiskType) (map[pb.ServerAddress]*erasure_coding.ShardsInfo, int) {
+func collectEcNodeShardsInfo(topoInfo *master_pb.TopologyInfo, vid needle.VolumeId) (map[pb.ServerAddress]*erasure_coding.ShardsInfo, int) {
 	res := make(map[pb.ServerAddress]*erasure_coding.ShardsInfo)
 	EachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
-		if diskInfo, found := dn.DiskInfos[string(diskType)]; found {
-			// A node may report several EcShardInfos for one volume — one per
-			// physical disk holding shards of it (multi-disk nodes). Union them
-			// rather than overwriting, or only the last disk's shards survive and
-			// the node looks like it is missing shards it actually has.
+		// Union across ALL disk-type buckets and, within a node, across its
+		// physical disks. Shards sit wherever encode generation and balance
+		// left them — a cross-tier encode leaves them in the source bucket, a
+		// partial migration straddles buckets — and a decode that only looks
+		// at one bucket reports a decodable volume as having no shards at all.
+		// (Same rationale as the encode's shard verification.)
+		for _, diskInfo := range dn.DiskInfos {
+			if diskInfo == nil {
+				continue
+			}
 			for _, v := range diskInfo.EcShardInfos {
 				if v.Id == uint32(vid) {
 					addr := pb.NewServerAddressFromDataNode(dn)

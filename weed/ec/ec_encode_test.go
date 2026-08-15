@@ -449,10 +449,15 @@ func TestEcShardCountIgnoresDiskTypeOfTheShards(t *testing.T) {
 	assert.NoError(t, err, "a complete shard set must not read as unrecoverable")
 	assert.False(t, degraded)
 
-	// The disk-scoped view is what the check used to consult, and it is blind
-	// to this volume entirely.
-	scoped, _ := collectEcNodeShardsInfo(topo, needle.VolumeId(1), types.ToDiskType(""))
-	assert.Empty(t, scoped, "the hdd-scoped view cannot see ssd shards")
+	// The decode's node view unions across buckets for the same reason: a
+	// decode scoped to the hdd bucket would report this decodable volume as
+	// having no shards at all.
+	byNode, _ := collectEcNodeShardsInfo(topo, needle.VolumeId(1))
+	assert.Len(t, byNode, 1, "decode discovery must see shards on a non-default medium")
+	for _, si := range byNode {
+		assert.Equal(t, erasure_coding.TotalShardsCount, si.Count(),
+			"decode discovery must include every shard on the non-default medium")
+	}
 }
 
 // The message an aborted deletion leaves behind is all the operator has to go

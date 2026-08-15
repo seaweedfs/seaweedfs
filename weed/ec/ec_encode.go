@@ -117,7 +117,7 @@ func ProcessEcEncodeBatch(env *Env, writer io.Writer, volumeIds []needle.VolumeI
 	// safely verified and deleted without waiting for all batches to finish.
 	// skippedNodes are excluded so a recovered node's stale orphan is never
 	// paired with a new-generation shard.
-	if err := EcBalance(env, balanceCollections, "", rp, diskType, maxParallelization, 0, applyBalancing, skippedNodes, nil); err != nil {
+	if err := EcBalance(env, balanceCollections, "", rp, diskType, maxParallelization, 0, applyBalancing, skippedNodes, nil, volumeIds); err != nil {
 		return fmt.Errorf("re-balance ec shards for collection(s) %v: %w", balanceCollections, err)
 	}
 	if err := verifyEcShardsBeforeDelete(env, volumeIds, diskType, applyBalancing); err != nil {

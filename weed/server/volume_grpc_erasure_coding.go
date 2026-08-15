@@ -990,10 +990,12 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 		return nil, status.Errorf(codes.FailedPrecondition, "ec volume %d %s", req.VolumeId, erasure_coding.EcNoLiveEntriesSubstring)
 	}
 
-	// calculate .dat file size
-	datFileSize, err := erasure_coding.FindDatFileSize(dataBaseFileName, indexBaseFileName)
+	// calculate .dat file size. Pass shard 0's resolved path: on a multi-disk
+	// server the volume's shards can sit on several disks, so the .ec00 is not
+	// necessarily beside the EcVolume's own base path.
+	datFileSize, err := erasure_coding.FindDatFileSize(shardFileNames[0], indexBaseFileName)
 	if err != nil {
-		return nil, fmt.Errorf("FindDatFileSize %s: %v", dataBaseFileName, err)
+		return nil, fmt.Errorf("FindDatFileSize %s: %v", shardFileNames[0], err)
 	}
 
 	// The shard block layout was fixed by the .dat size at encode time (recorded

@@ -93,11 +93,15 @@ func WriteIdxFileFromEcIndex(baseFileName string) (err error) {
 // FindDatFileSize calculate .dat file size from max offset entry
 // there may be extra deletions after that entry
 // but they are deletions anyway
-func FindDatFileSize(dataBaseFileName, indexBaseFileName string) (datSize int64, err error) {
+// shard0FileName is the actual path of the .ec00 shard file, which on a
+// multi-disk server may sit on a different disk than the EcVolume's own base
+// path — the store registers shards per disk, so the caller must pass the
+// path CollectEcShards resolved rather than deriving it from a base name.
+func FindDatFileSize(shard0FileName, indexBaseFileName string) (datSize int64, err error) {
 
-	version, err := readEcVolumeVersion(dataBaseFileName)
+	version, err := readEcVolumeVersion(shard0FileName)
 	if err != nil {
-		return 0, fmt.Errorf("read ec volume %s version: %v", dataBaseFileName, err)
+		return 0, fmt.Errorf("read ec volume %s version: %v", shard0FileName, err)
 	}
 
 	// Safety: ensure datSize is at least SuperBlockSize. While the caller typically
@@ -122,19 +126,19 @@ func FindDatFileSize(dataBaseFileName, indexBaseFileName string) (datSize int64,
 	return
 }
 
-func readEcVolumeVersion(baseFileName string) (version needle.Version, err error) {
+func readEcVolumeVersion(shard0FileName string) (version needle.Version, err error) {
 
 	// find volume version
-	datFile, err := os.OpenFile(baseFileName+".ec00", os.O_RDONLY, 0644)
+	datFile, err := os.OpenFile(shard0FileName, os.O_RDONLY, 0644)
 	if err != nil {
-		return 0, fmt.Errorf("open ec volume %s superblock: %v", baseFileName, err)
+		return 0, fmt.Errorf("open ec volume %s superblock: %v", shard0FileName, err)
 	}
 	datBackend := backend.NewDiskFile(datFile)
 
 	superBlock, err := super_block.ReadSuperBlock(datBackend)
 	datBackend.Close()
 	if err != nil {
-		return 0, fmt.Errorf("read ec volume %s superblock: %v", baseFileName, err)
+		return 0, fmt.Errorf("read ec volume %s superblock: %v", shard0FileName, err)
 	}
 
 	return superBlock.Version, nil
