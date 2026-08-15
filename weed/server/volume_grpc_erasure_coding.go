@@ -1007,6 +1007,13 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 		return nil, fmt.Errorf("WriteDatFile %s: %v", dataBaseFileName, err)
 	}
 
+	// Fail the decode rather than report a short volume: the caller deletes the
+	// shards once this call returns, and today its only check is that the files
+	// are non-empty.
+	if err := erasure_coding.VerifyDecodedDatFile(dataBaseFileName, datFileSize); err != nil {
+		return nil, err
+	}
+
 	// write .idx file from .ecx and .ecj files
 	if err := erasure_coding.WriteIdxFileFromEcIndex(indexBaseFileName); err != nil {
 		return nil, fmt.Errorf("WriteIdxFileFromEcIndex %s: %v", v.IndexBaseFileName(), err)

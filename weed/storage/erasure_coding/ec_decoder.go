@@ -126,6 +126,24 @@ func FindDatFileSize(shard0FileName, indexBaseFileName string) (datSize int64, e
 	return
 }
 
+// VerifyDecodedDatFile checks that a reconstructed .dat is long enough to hold
+// every needle its index references. datFileSize is the extent the EC index
+// describes (see FindDatFileSize), so a shorter file cannot serve the needles
+// past the cut -- and the caller is about to delete the shards that are their
+// only other copy, which turns a short write into data loss rather than a
+// failed decode.
+func VerifyDecodedDatFile(dataBaseFileName string, datFileSize int64) error {
+	datPath := dataBaseFileName + ".dat"
+	stat, err := os.Stat(datPath)
+	if err != nil {
+		return fmt.Errorf("stat decoded %s: %w", datPath, err)
+	}
+	if stat.Size() < datFileSize {
+		return fmt.Errorf("decoded %s is %d bytes, short of the %d its ec index references", datPath, stat.Size(), datFileSize)
+	}
+	return nil
+}
+
 func readEcVolumeVersion(shard0FileName string) (version needle.Version, err error) {
 
 	// find volume version
