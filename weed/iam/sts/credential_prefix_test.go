@@ -1,6 +1,7 @@
 package sts
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"strings"
@@ -65,4 +66,35 @@ func TestTemporaryCredentialFormat(t *testing.T) {
 
 	// Verify session token is not empty
 	assert.NotEmpty(t, cred.SessionToken)
+}
+
+// A duration that came from configuration is bounded the same as one from a
+// request: the catalog passes -s3.iceberg.credentialDurationSeconds straight
+// through.
+func TestAssumeRoleForPrincipalValidatesDuration(t *testing.T) {
+	svc := NewSTSService()
+	err := svc.Initialize(&STSConfig{
+		TokenDuration:    FlexibleDuration{time.Hour},
+		MaxSessionLength: FlexibleDuration{12 * time.Hour},
+		Issuer:           "test-issuer",
+		SigningKey:       []byte("test-signing-key-at-least-32-bytes-long"),
+	})
+	if err != nil {
+		t.Fatalf("Initialize() error = %v", err)
+	}
+
+	for _, seconds := range []int64{60, 100000} {
+		duration := seconds
+		_, err := svc.AssumeRoleForPrincipal(context.Background(), &AssumeRoleForPrincipalRequest{
+			RoleArn:         "arn:aws:iam::role/IcebergTableAccess",
+			Principal:       "admin",
+			DurationSeconds: &duration,
+		})
+		if err == nil {
+			t.Fatalf("AssumeRoleForPrincipal(%ds) error = nil, want a validation error", seconds)
+		}
+		if !strings.Contains(err.Error(), "DurationSeconds") {
+			t.Errorf("AssumeRoleForPrincipal(%ds) error = %v, want it to name DurationSeconds", seconds, err)
+		}
+	}
 }

@@ -61,7 +61,7 @@ func TestBuildFileIOConfig(t *testing.T) {
 
 	t.Run("no endpoint configured yields empty config", func(t *testing.T) {
 		s := &Server{}
-		got := s.buildFileIOConfig(loadTable())
+		got, _ := s.buildFileIOConfig(loadTable(), "s3://warehouse/ns/t")
 		if len(got) != 0 {
 			t.Fatalf("buildFileIOConfig() = %v, want empty", got)
 		}
@@ -69,7 +69,7 @@ func TestBuildFileIOConfig(t *testing.T) {
 
 	t.Run("endpoint is advertised with path-style-access and region", func(t *testing.T) {
 		s := &Server{s3Endpoint: "http://seaweed.example:8333"}
-		got := s.buildFileIOConfig(loadTable())
+		got, _ := s.buildFileIOConfig(loadTable(), "s3://warehouse/ns/t")
 		if got["s3.endpoint"] != "http://seaweed.example:8333" {
 			t.Fatalf("s3.endpoint = %q, want %q", got["s3.endpoint"], "http://seaweed.example:8333")
 		}

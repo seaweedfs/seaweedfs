@@ -101,16 +101,25 @@ type RegisterTableRequest struct {
 }
 
 type LoadTableResult struct {
-	MetadataLocation string             `json:"metadata-location,omitempty"`
-	Metadata         table.Metadata     `json:"metadata"`
-	Config           iceberg.Properties `json:"config"`
+	MetadataLocation   string              `json:"metadata-location,omitempty"`
+	Metadata           table.Metadata      `json:"metadata"`
+	Config             iceberg.Properties  `json:"config"`
+	StorageCredentials []StorageCredential `json:"storage-credentials,omitempty"`
+}
+
+// StorageCredential is one set of credentials scoped to a location prefix, as
+// returned to clients that asked for credential vending.
+type StorageCredential struct {
+	Prefix string             `json:"prefix"`
+	Config iceberg.Properties `json:"config"`
 }
 
 // loadTableResultAlias is used for custom JSON unmarshaling.
 type loadTableResultAlias struct {
-	MetadataLocation string             `json:"metadata-location,omitempty"`
-	RawMetadata      json.RawMessage    `json:"metadata"`
-	Config           iceberg.Properties `json:"config,omitempty"`
+	MetadataLocation   string              `json:"metadata-location,omitempty"`
+	RawMetadata        json.RawMessage     `json:"metadata"`
+	Config             iceberg.Properties  `json:"config,omitempty"`
+	StorageCredentials []StorageCredential `json:"storage-credentials,omitempty"`
 }
 
 // MarshalJSON serializes LoadTableResult while backfilling spec-required
@@ -126,13 +135,15 @@ func (r LoadTableResult) MarshalJSON() ([]byte, error) {
 	metaBytes = ensureMetadataSpecCompliance(metaBytes)
 
 	return json.Marshal(struct {
-		MetadataLocation string             `json:"metadata-location,omitempty"`
-		Metadata         json.RawMessage    `json:"metadata"`
-		Config           iceberg.Properties `json:"config"`
+		MetadataLocation   string              `json:"metadata-location,omitempty"`
+		Metadata           json.RawMessage     `json:"metadata"`
+		Config             iceberg.Properties  `json:"config"`
+		StorageCredentials []StorageCredential `json:"storage-credentials,omitempty"`
 	}{
-		MetadataLocation: r.MetadataLocation,
-		Metadata:         metaBytes,
-		Config:           r.Config,
+		MetadataLocation:   r.MetadataLocation,
+		Metadata:           metaBytes,
+		Config:             r.Config,
+		StorageCredentials: r.StorageCredentials,
 	})
 }
 
@@ -146,6 +157,7 @@ func (r *LoadTableResult) UnmarshalJSON(data []byte) error {
 
 	r.MetadataLocation = alias.MetadataLocation
 	r.Config = alias.Config
+	r.StorageCredentials = alias.StorageCredentials
 
 	if len(alias.RawMetadata) > 0 {
 		metadata, err := table.ParseMetadataBytes(alias.RawMetadata)

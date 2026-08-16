@@ -35,20 +35,20 @@ func TestWantsVendedCredentials(t *testing.T) {
 }
 
 // A client that asked for vended credentials replaces its own storage
-// credentials with whatever the catalog returns. Since the catalog vends none,
-// an endpoint by itself would leave the client signing nothing and every data
-// file read and write would come back 403.
+// credentials with whatever the catalog returns. With no vending configured
+// there are none, so an endpoint by itself would leave the client signing
+// nothing and every data file read and write would come back 403.
 func TestBuildFileIOConfigWithholdsEndpointFromCredentialVendingClients(t *testing.T) {
 	s := &Server{s3Endpoint: "http://seaweed.example:8333"}
 
 	r := httptest.NewRequest(http.MethodGet, "/v1/namespaces/ns/tables/t", nil)
 	r.Header.Set(accessDelegationHeader, "vended-credentials")
-	if got := s.buildFileIOConfig(r); len(got) != 0 {
+	if got, _ := s.buildFileIOConfig(r, "s3://warehouse/ns/t"); len(got) != 0 {
 		t.Fatalf("buildFileIOConfig() = %v, want empty for a vended-credentials request", got)
 	}
 
 	plain := httptest.NewRequest(http.MethodGet, "/v1/namespaces/ns/tables/t", nil)
-	if got := s.buildFileIOConfig(plain); got["s3.endpoint"] != s.s3Endpoint {
+	if got, _ := s.buildFileIOConfig(plain, "s3://warehouse/ns/t"); got["s3.endpoint"] != s.s3Endpoint {
 		t.Fatalf("s3.endpoint = %q, want %q", got["s3.endpoint"], s.s3Endpoint)
 	}
 }
