@@ -553,6 +553,7 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 	totalOps := len(ops)
 	completedOps := 0
 	allMetrics := make(map[string]int64)
+	opErrors := make(map[string]error, totalOps)
 
 	// Execute operations in canonical maintenance order as defined by
 	// parseOperations.
@@ -614,6 +615,7 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 		}
 
 		completedOps++
+		opErrors[op] = opErr
 		if opErr != nil {
 			glog.Warningf("iceberg maintenance %s failed for %s/%s/%s: %v", op, bucketName, namespace, tableName, opErr)
 			results = append(results, fmt.Sprintf("%s: error: %v", op, opErr))
@@ -622,6 +624,8 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 			results = append(results, fmt.Sprintf("%s: %s", op, opResult))
 		}
 	}
+
+	recordJobStatus(ctx, filerClient, bucketName, tablePath, buildJobStatus(opErrors, time.Now().UTC()))
 
 	resultSummary := strings.Join(results, "; ")
 	success := lastErr == nil

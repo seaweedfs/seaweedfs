@@ -1,6 +1,7 @@
 package iceberg
 
 import (
+	"errors"
 	"math"
 	"testing"
 	"time"
@@ -283,5 +284,47 @@ func TestResolveTableConfigClampsUnreferencedDays(t *testing.T) {
 	}))
 	if got.OrphanOlderThanHours != 72 {
 		t.Errorf("expected 3 days to be 72 hours, got %d", got.OrphanOlderThanHours)
+	}
+}
+
+func TestBuildJobStatus(t *testing.T) {
+	ranAt := time.Unix(1755250000, 0).UTC()
+
+	jobStatus := buildJobStatus(map[string]error{
+		"compact":          nil,
+		"expire_snapshots": nil,
+	}, ranAt)
+
+	compaction := jobStatus[s3tables.MaintenanceTypeIcebergCompaction]
+	if compaction == nil || compaction.Status != s3tables.MaintenanceJobStatusSuccessful {
+		t.Fatalf("expected compaction successful, got %+v", compaction)
+	}
+	if compaction.LastRunTimestamp == nil || !compaction.LastRunTimestamp.Equal(ranAt) {
+		t.Errorf("expected lastRunTimestamp %v, got %v", ranAt, compaction.LastRunTimestamp)
+	}
+	if _, ok := jobStatus[s3tables.MaintenanceTypeIcebergUnreferencedFileRemoval]; ok {
+		t.Error("expected an operation that did not run to be left out")
+	}
+}
+
+// Several operations share one AWS job type, so one failure fails the type.
+func TestBuildJobStatusFailureWins(t *testing.T) {
+	jobStatus := buildJobStatus(map[string]error{
+		"compact":           nil,
+		"rewrite_manifests": errors.New("commit conflict"),
+	}, time.Unix(1755250000, 0).UTC())
+
+	compaction := jobStatus[s3tables.MaintenanceTypeIcebergCompaction]
+	if compaction.Status != s3tables.MaintenanceJobStatusFailed {
+		t.Errorf("expected compaction failed, got %q", compaction.Status)
+	}
+	if compaction.FailureMessage != "commit conflict" {
+		t.Errorf("expected the failure message carried, got %q", compaction.FailureMessage)
+	}
+}
+
+func TestBuildJobStatusEmpty(t *testing.T) {
+	if got := buildJobStatus(nil, time.Now()); len(got) != 0 {
+		t.Errorf("expected an empty status, got %v", got)
 	}
 }

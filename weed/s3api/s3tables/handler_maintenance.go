@@ -167,6 +167,81 @@ func (h *S3TablesHandler) handleGetTableMaintenanceConfiguration(w http.Response
 	return nil
 }
 
+// handleGetTableMaintenanceJobStatus reports the outcome of the last maintenance run on a table
+func (h *S3TablesHandler) handleGetTableMaintenanceJobStatus(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
+	var req GetTableMaintenanceJobStatusRequest
+	if err := h.readRequestBody(r, &req); err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return err
+	}
+
+	bucketName, namespaceName, tableName, err := h.parseTableTarget(req.TableBucketARN, req.Namespace, req.Name)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return err
+	}
+
+	tableARN, err := h.authorizeMaintenanceTable(r, filerClient, "GetTableMaintenanceJobStatus", bucketName, namespaceName, tableName)
+	if err != nil {
+		h.writeMaintenanceError(w, err, ErrCodeNoSuchTable, fmt.Sprintf("table %s not found", tableName))
+		return err
+	}
+
+	tablePath := GetTablePath(bucketName, namespaceName, tableName)
+
+	config, err := h.readMaintenanceConfiguration(r, filerClient, tablePath)
+	if err != nil {
+		h.writeMaintenanceError(w, err, ErrCodeNoSuchTable, fmt.Sprintf("table %s not found", tableName))
+		return err
+	}
+
+	recorded := MaintenanceJobStatus{}
+	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		data, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMaintenanceStatus)
+		if err != nil {
+			if errors.Is(err, ErrAttributeNotFound) {
+				return nil
+			}
+			return err
+		}
+		return json.Unmarshal(data, &recorded)
+	})
+	if err != nil {
+		h.writeMaintenanceError(w, err, ErrCodeNoSuchTable, fmt.Sprintf("table %s not found", tableName))
+		return err
+	}
+
+	h.writeJSON(w, http.StatusOK, &GetTableMaintenanceJobStatusResponse{
+		TableARN: tableARN,
+		Status:   buildJobStatusResponse(recorded, config),
+	})
+	return nil
+}
+
+// buildJobStatusResponse reports every job type: what the worker recorded, or
+// Disabled when the configuration switched the type off, or Not_Yet_Run.
+func buildJobStatusResponse(recorded MaintenanceJobStatus, config MaintenanceConfiguration) MaintenanceJobStatus {
+	jobTypes := []string{
+		MaintenanceTypeIcebergCompaction,
+		MaintenanceTypeIcebergSnapshotManagement,
+		MaintenanceTypeIcebergUnreferencedFileRemoval,
+	}
+
+	status := make(MaintenanceJobStatus, len(jobTypes))
+	for _, jobType := range jobTypes {
+		if value, ok := config[jobType]; ok && value != nil && value.Status == MaintenanceStatusDisabled {
+			status[jobType] = &MaintenanceJobStatusValue{Status: MaintenanceJobStatusDisabled}
+			continue
+		}
+		if value, ok := recorded[jobType]; ok && value != nil {
+			status[jobType] = value
+			continue
+		}
+		status[jobType] = &MaintenanceJobStatusValue{Status: MaintenanceJobStatusNotYetRun}
+	}
+	return status
+}
+
 // putMaintenanceConfiguration merges one maintenance type into the stored
 // configuration, leaving the other types alone.
 func (h *S3TablesHandler) putMaintenanceConfiguration(

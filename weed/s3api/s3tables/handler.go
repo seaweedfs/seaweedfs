@@ -27,7 +27,11 @@ const (
 	ExtendedKeyPolicy          = "s3tables.policy"
 	ExtendedKeyTags            = "s3tables.tags"
 	ExtendedKeyMaintenance     = "s3tables.maintenance"
-	ExtendedKeyEntryType       = "s3tables.entryType"
+	// Written by the maintenance worker, read by GetTableMaintenanceJobStatus.
+	// Separate from ExtendedKeyMaintenance so worker and operator writes do not
+	// contend on the same attribute.
+	ExtendedKeyMaintenanceStatus = "s3tables.maintenanceStatus"
+	ExtendedKeyEntryType         = "s3tables.entryType"
 
 	// Entry-type marker values for ExtendedKeyEntryType. Absent or "table" means
 	// a table; views are stored like tables but tagged "view".
@@ -192,6 +196,8 @@ func (h *S3TablesHandler) HandleRequest(w http.ResponseWriter, r *http.Request, 
 		err = h.handlePutTableMaintenanceConfiguration(w, r, filerClient)
 	case "GetTableMaintenanceConfiguration":
 		err = h.handleGetTableMaintenanceConfiguration(w, r, filerClient)
+	case "GetTableMaintenanceJobStatus":
+		err = h.handleGetTableMaintenanceJobStatus(w, r, filerClient)
 
 	// Tagging operations
 	case "TagResource":

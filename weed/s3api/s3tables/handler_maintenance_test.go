@@ -156,3 +156,36 @@ func TestParseTableTarget(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildJobStatusResponseReportsEveryType(t *testing.T) {
+	status := buildJobStatusResponse(nil, nil)
+	if len(status) != 3 {
+		t.Fatalf("expected all three job types reported, got %v", status)
+	}
+	for jobType, value := range status {
+		if value.Status != MaintenanceJobStatusNotYetRun {
+			t.Errorf("expected %s not yet run, got %q", jobType, value.Status)
+		}
+	}
+}
+
+func TestBuildJobStatusResponseDisabledBeatsRecorded(t *testing.T) {
+	recorded := MaintenanceJobStatus{
+		MaintenanceTypeIcebergCompaction:         {Status: MaintenanceJobStatusSuccessful},
+		MaintenanceTypeIcebergSnapshotManagement: {Status: MaintenanceJobStatusFailed, FailureMessage: "boom"},
+	}
+	config := MaintenanceConfiguration{
+		MaintenanceTypeIcebergCompaction: {Status: MaintenanceStatusDisabled},
+	}
+
+	status := buildJobStatusResponse(recorded, config)
+	if status[MaintenanceTypeIcebergCompaction].Status != MaintenanceJobStatusDisabled {
+		t.Errorf("expected a disabled type reported as disabled, got %q", status[MaintenanceTypeIcebergCompaction].Status)
+	}
+	if status[MaintenanceTypeIcebergSnapshotManagement].FailureMessage != "boom" {
+		t.Error("expected the recorded failure preserved")
+	}
+	if status[MaintenanceTypeIcebergUnreferencedFileRemoval].Status != MaintenanceJobStatusNotYetRun {
+		t.Error("expected an unrun type reported as not yet run")
+	}
+}

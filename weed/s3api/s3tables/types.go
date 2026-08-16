@@ -470,6 +470,36 @@ type GetTableMaintenanceConfigurationResponse struct {
 	Configuration MaintenanceConfiguration `json:"configuration"`
 }
 
+// Maintenance job status types
+
+const (
+	MaintenanceJobStatusNotYetRun  = "Not_Yet_Run"
+	MaintenanceJobStatusSuccessful = "Successful"
+	MaintenanceJobStatusFailed     = "Failed"
+	MaintenanceJobStatusDisabled   = "Disabled"
+)
+
+type MaintenanceJobStatusValue struct {
+	Status           string     `json:"status"`
+	LastRunTimestamp *time.Time `json:"lastRunTimestamp,omitempty"`
+	FailureMessage   string     `json:"failureMessage,omitempty"`
+}
+
+// MaintenanceJobStatus maps a maintenance type to the outcome of its last run.
+// The worker writes it; the control plane only reads it.
+type MaintenanceJobStatus map[string]*MaintenanceJobStatusValue
+
+type GetTableMaintenanceJobStatusRequest struct {
+	TableBucketARN string   `json:"tableBucketARN"`
+	Namespace      []string `json:"namespace"`
+	Name           string   `json:"name"`
+}
+
+type GetTableMaintenanceJobStatusResponse struct {
+	TableARN string               `json:"tableARN"`
+	Status   MaintenanceJobStatus `json:"status"`
+}
+
 // Tagging types
 
 type TagResourceRequest struct {
