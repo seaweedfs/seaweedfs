@@ -519,6 +519,17 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 	defer conn.Close()
 	filerClient := filer_pb.NewSeaweedFilerClient(conn)
 
+	// Resolve once for the whole job: compaction commits new metadata as it
+	// runs, and a job should not change settings halfway through. Failing to
+	// read the properties has to fail the job rather than fall back to the
+	// plugin config, or the operations would rewrite the table to a size it
+	// did not ask for.
+	state, err := loadCurrentMetadata(ctx, filerClient, bucketName, tablePath)
+	if err != nil {
+		return fmt.Errorf("read table properties for %s/%s: %w", bucketName, tablePath, err)
+	}
+	workerConfig = resolveTableConfig(workerConfig, state.Metadata.Properties())
+
 	var results []string
 	var lastErr error
 	totalOps := len(ops)

@@ -127,7 +127,9 @@ func (h *Handler) scanTablesForMaintenance(
 					continue
 				}
 
-				needsWork, err := h.tableNeedsMaintenance(ctx, filerClient, bucketName, tablePath, state, config, ops)
+				effective := resolveTableConfig(config, state.Metadata.Properties())
+
+				needsWork, err := h.tableNeedsMaintenance(ctx, filerClient, bucketName, tablePath, state, effective, ops)
 				if err != nil {
 					glog.V(2).Infof("iceberg maintenance: skipping %s/%s/%s: cannot evaluate maintenance need: %v", bucketName, nsName, tblName, err)
 					continue
