@@ -2,6 +2,7 @@ package s3tables
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -425,20 +426,45 @@ func TestARNPartitionForRegion(t *testing.T) {
 	}
 }
 
-// An ARN this handler emits for a partitioned region must parse back.
-func TestGeneratedARNRoundTripsInEveryPartition(t *testing.T) {
-	for _, region := range []string{"us-east-1", "cn-north-1", "us-gov-west-1"} {
+// An ARN this handler emits has to carry the partition its region belongs to,
+// not just parse back — a commercial ARN returned for a gov region still parses
+// but is wrong for IAM matching and for the caller.
+func TestGeneratedARNsUseTheRegionPartition(t *testing.T) {
+	for region, partition := range map[string]string{
+		"us-east-1":     "aws",
+		"cn-north-1":    "aws-cn",
+		"us-gov-west-1": "aws-us-gov",
+	} {
 		h := NewS3TablesHandler()
 		h.SetRegion(region)
 
-		arn := h.generateTableBucketARN(DefaultAccountID, "analytics")
-		got, err := parseBucketNameFromARN(arn)
+		bucketARN := h.generateTableBucketARN(DefaultAccountID, "analytics")
+		tableARN := h.generateTableARN(DefaultAccountID, "analytics", "sales/orders")
+		viewARN := h.generateViewARN(DefaultAccountID, "analytics", "sales/v1")
+		s3ARN := h.generateS3BucketARN("analytics")
+
+		for _, arn := range []string{bucketARN, tableARN, viewARN, s3ARN} {
+			if !strings.HasPrefix(arn, "arn:"+partition+":") {
+				t.Errorf("region %s: expected partition %q, got %s", region, partition, arn)
+			}
+		}
+
+		got, err := parseBucketNameFromARN(bucketARN)
 		if err != nil {
-			t.Errorf("generated ARN %s does not parse: %v", arn, err)
+			t.Errorf("generated ARN %s does not parse: %v", bucketARN, err)
 			continue
 		}
 		if got != "analytics" {
-			t.Errorf("expected analytics from %s, got %q", arn, got)
+			t.Errorf("expected analytics from %s, got %q", bucketARN, got)
+		}
+
+		bucket, namespace, table, err := parseTableFromARN(tableARN)
+		if err != nil {
+			t.Errorf("generated table ARN %s does not parse: %v", tableARN, err)
+			continue
+		}
+		if bucket != "analytics" || namespace != "sales" || table != "orders" {
+			t.Errorf("unexpected parse of %s: %s/%s/%s", tableARN, bucket, namespace, table)
 		}
 	}
 }

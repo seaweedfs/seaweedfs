@@ -394,15 +394,20 @@ func (h *S3TablesHandler) writeError(w http.ResponseWriter, status int, code, me
 // ARN generation helpers
 
 func (h *S3TablesHandler) generateTableBucketARN(ownerAccountID, bucketName string) string {
-	return fmt.Sprintf("arn:aws:s3tables:%s:%s:bucket/%s", h.region, ownerAccountID, bucketName)
+	return buildARN(h.region, ownerAccountID, fmt.Sprintf("bucket/%s", bucketName))
 }
 
 func (h *S3TablesHandler) generateTableARN(ownerAccountID, bucketName, tableID string) string {
-	return fmt.Sprintf("arn:aws:s3tables:%s:%s:bucket/%s/table/%s", h.region, ownerAccountID, bucketName, tableID)
+	return buildARN(h.region, ownerAccountID, fmt.Sprintf("bucket/%s/table/%s", bucketName, tableID))
 }
 
 func (h *S3TablesHandler) generateViewARN(ownerAccountID, bucketName, viewID string) string {
-	return fmt.Sprintf("arn:aws:s3tables:%s:%s:bucket/%s/view/%s", h.region, ownerAccountID, bucketName, viewID)
+	return buildARN(h.region, ownerAccountID, fmt.Sprintf("bucket/%s/view/%s", bucketName, viewID))
+}
+
+// generateS3BucketARN builds the plain S3 ARN used for IAM resource matching.
+func (h *S3TablesHandler) generateS3BucketARN(bucketName string) string {
+	return fmt.Sprintf("arn:%s:s3:::%s", arnPartitionForRegion(h.region), bucketName)
 }
 
 func isAuthError(err error) bool {
