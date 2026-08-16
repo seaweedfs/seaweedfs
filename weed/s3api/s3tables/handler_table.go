@@ -1200,7 +1200,8 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 				return err
 			}
 			return h.removeExtendedAttributes(r.Context(), client, tablePath,
-				ExtendedKeyMetadata, ExtendedKeyMetadataVersion, ExtendedKeyPolicy, ExtendedKeyTags, ExtendedKeyEntryType)
+				ExtendedKeyMetadata, ExtendedKeyMetadataVersion, ExtendedKeyPolicy, ExtendedKeyTags, ExtendedKeyEntryType,
+				ExtendedKeyMaintenance, ExtendedKeyMaintenanceStatus)
 		}
 		// Colocated table: the name path holds the data.
 		return h.deleteDirectory(r.Context(), client, tablePath)
@@ -1263,6 +1264,8 @@ func (h *S3TablesHandler) handleRenameTable(w http.ResponseWriter, r *http.Reque
 
 	var metadata tableMetadataInternal
 	var metadataVersionXattr []byte
+	var maintenanceXattr []byte
+	var maintenanceStatusXattr []byte
 	var tablePolicy string
 	var bucketPolicy string
 	var bucketTags map[string]string
@@ -1292,6 +1295,25 @@ func (h *S3TablesHandler) handleRenameTable(w http.ResponseWriter, r *http.Reque
 		tableTags, err = h.readTags(r.Context(), client, srcPath)
 		if err != nil {
 			return err
+		}
+
+		// The maintenance configuration and its last-run status belong to the
+		// table, so they move with it; leaving them behind re-enables
+		// maintenance under the new name and leaks the old settings onto
+		// whatever is created at the old one.
+		for _, attr := range []struct {
+			key  string
+			dest *[]byte
+		}{
+			{ExtendedKeyMaintenance, &maintenanceXattr},
+			{ExtendedKeyMaintenanceStatus, &maintenanceStatusXattr},
+		} {
+			data, err := h.getExtendedAttribute(r.Context(), client, srcPath, attr.key)
+			if err == nil {
+				*attr.dest = data
+			} else if !errors.Is(err, ErrAttributeNotFound) {
+				return fmt.Errorf("failed to fetch %s: %w", attr.key, err)
+			}
 		}
 
 		bucketPath := GetTableBucketPath(bucketName)
@@ -1452,11 +1474,22 @@ func (h *S3TablesHandler) handleRenameTable(w http.ResponseWriter, r *http.Reque
 				return err
 			}
 		}
+		if len(maintenanceXattr) > 0 {
+			if err := h.setExtendedAttribute(r.Context(), client, destPath, ExtendedKeyMaintenance, maintenanceXattr); err != nil {
+				return err
+			}
+		}
+		if len(maintenanceStatusXattr) > 0 {
+			if err := h.setExtendedAttribute(r.Context(), client, destPath, ExtendedKeyMaintenanceStatus, maintenanceStatusXattr); err != nil {
+				return err
+			}
+		}
 		// Soft-delete the source catalog identity in place: drop its catalog xattrs
 		// so the name stops resolving while the metadata/ and data/ children stay put
 		// (manifests embed absolute paths, so the data must not move).
 		return h.removeExtendedAttributes(r.Context(), client, srcPath,
-			ExtendedKeyMetadata, ExtendedKeyMetadataVersion, ExtendedKeyPolicy, ExtendedKeyTags)
+			ExtendedKeyMetadata, ExtendedKeyMetadataVersion, ExtendedKeyPolicy, ExtendedKeyTags,
+			ExtendedKeyMaintenance, ExtendedKeyMaintenanceStatus)
 	})
 
 	if err != nil {

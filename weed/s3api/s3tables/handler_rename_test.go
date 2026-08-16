@@ -352,3 +352,38 @@ func TestRenameTableInvalidName(t *testing.T) {
 	require.ErrorAs(t, err, &s3Err)
 	assert.Equal(t, ErrCodeInvalidRequest, s3Err.Type)
 }
+
+// A disabled maintenance configuration has to move with the table. Leaving it
+// behind re-enables maintenance under the new name, and leaks the old settings
+// onto whatever is created at the old one.
+func TestRenameTableCarriesMaintenanceConfiguration(t *testing.T) {
+	fs, m := startRenameManager(t)
+
+	src := fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "t")
+	require.NotNil(t, src)
+	config := []byte(`{"icebergSnapshotManagement":{"status":"disabled"}}`)
+	status := []byte(`{"icebergCompaction":{"status":"Successful"}}`)
+	src.Extended[ExtendedKeyMaintenance] = config
+	src.Extended[ExtendedKeyMaintenanceStatus] = status
+
+	require.NoError(t, runRename(t, m, fs, &RenameTableRequest{
+		TableBucketARN:  mustBucketARN(t),
+		SourceNamespace: []string{"ns"},
+		SourceName:      "t",
+		DestNamespace:   []string{"ns"},
+		DestName:        "t2",
+	}))
+
+	dest := fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "t2")
+	require.NotNil(t, dest)
+	assert.Equal(t, config, dest.Extended[ExtendedKeyMaintenance], "the disable must move with the table")
+	assert.Equal(t, status, dest.Extended[ExtendedKeyMaintenanceStatus])
+
+	// And must not linger on the old name, where a reused name would inherit it.
+	moved := fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "t")
+	require.NotNil(t, moved)
+	_, hasConfig := moved.Extended[ExtendedKeyMaintenance]
+	assert.False(t, hasConfig, "source maintenance configuration must be cleared")
+	_, hasStatus := moved.Extended[ExtendedKeyMaintenanceStatus]
+	assert.False(t, hasStatus, "source maintenance status must be cleared")
+}
