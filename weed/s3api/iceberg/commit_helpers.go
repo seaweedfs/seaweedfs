@@ -35,23 +35,18 @@ func sleepBeforeCommitRetry(attempt int) {
 // decides which commit won. This mirrors how the maintenance worker stages its
 // own metadata.
 func (s *Server) stageCommitMetadata(ctx context.Context, metadataBucket, metadataPath, location, metadataFileName string, metadataBytes []byte) (string, string, error) {
-	err := s.saveNewMetadataFile(ctx, metadataBucket, metadataPath, metadataFileName, metadataBytes)
+	err := s.saveMetadataFile(ctx, metadataBucket, metadataPath, metadataFileName, metadataBytes, true)
 	if errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
-		metadataFileName = uniqueMetadataFileName(metadataFileName)
+		// v{N}-{uuid}, a form both the catalog and the maintenance worker
+		// still read the version from.
+		metadataFileName = fmt.Sprintf("%s-%s.metadata.json", strings.TrimSuffix(metadataFileName, ".metadata.json"), uuid.NewString())
 		glog.V(1).Infof("Iceberg: metadata file already staged for %s, using %s", location, metadataFileName)
-		err = s.saveNewMetadataFile(ctx, metadataBucket, metadataPath, metadataFileName, metadataBytes)
+		err = s.saveMetadataFile(ctx, metadataBucket, metadataPath, metadataFileName, metadataBytes, true)
 	}
 	if err != nil {
 		return "", "", err
 	}
 	return metadataFileName, fmt.Sprintf("%s/metadata/%s", strings.TrimSuffix(location, "/"), metadataFileName), nil
-}
-
-// uniqueMetadataFileName turns v{N}.metadata.json into v{N}-{uuid}.metadata.json,
-// a form both the catalog and the maintenance worker still read the version from.
-func uniqueMetadataFileName(metadataFileName string) string {
-	base := strings.TrimSuffix(metadataFileName, ".metadata.json")
-	return fmt.Sprintf("%s-%s.metadata.json", base, uuid.NewString())
 }
 
 type icebergRequestError struct {
@@ -192,7 +187,7 @@ func (s *Server) finalizeCreateOnCommit(ctx context.Context, input createOnCommi
 			message: "Invalid table location: " + err.Error(),
 		}
 	}
-	if err := s.saveMetadataFile(ctx, metadataBucket, metadataPath, metadataFileName, metadataBytes); err != nil {
+	if err := s.saveMetadataFile(ctx, metadataBucket, metadataPath, metadataFileName, metadataBytes, false); err != nil {
 		return nil, &icebergRequestError{
 			status:  http.StatusInternalServerError,
 			errType: "InternalServerError",

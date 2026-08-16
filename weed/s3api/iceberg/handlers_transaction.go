@@ -84,7 +84,7 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request)
 	// Phase 2: write each new metadata.json object.
 	for i := range prepared {
 		pc := &prepared[i]
-		if err := s.saveMetadataFile(r.Context(), pc.metadataBucket, pc.metadataPath, pc.metadataFileName, pc.metadataBytes); err != nil {
+		if err := s.saveMetadataFile(r.Context(), pc.metadataBucket, pc.metadataPath, pc.metadataFileName, pc.metadataBytes, false); err != nil {
 			// No pointer flipped yet, so every written file is safe to delete.
 			s.cleanupPreparedMetadata(r.Context(), prepared[:i+1], nil)
 			writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save metadata file: "+err.Error())

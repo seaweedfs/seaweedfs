@@ -204,7 +204,7 @@ func (s *Server) handleCreateView(w http.ResponseWriter, r *http.Request) {
 
 	// Persist the metadata file only after the catalog registers the view, so a
 	// missing namespace or name collision fails before any bytes hit storage.
-	if err := s.saveMetadataFile(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataBytes); err != nil {
+	if err := s.saveMetadataFile(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataBytes, false); err != nil {
 		// Roll back the registered view so it doesn't linger pointing at metadata
 		// that was never written.
 		if dropErr := s.dropView(r, namespace, req.Name); dropErr != nil {
