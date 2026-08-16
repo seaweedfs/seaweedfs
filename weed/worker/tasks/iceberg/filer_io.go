@@ -438,15 +438,16 @@ func updateTableMetadataXattr(ctx context.Context, client filer_pb.SeaweedFilerC
 		return fmt.Errorf("marshal updated xattr: %w", err)
 	}
 
-	expectedVersionXattr := resp.Entry.Extended[s3tables.ExtendedKeyMetadataVersion]
+	// Assert the whole attribute set, not just the version: this rewrites the
+	// entry from the snapshot above, so a narrower precondition would delete an
+	// attribute a concurrent writer created, such as a maintenance configuration.
+	expectedExtended := s3tables.SnapshotExtended(resp.Entry.Extended)
 	resp.Entry.Extended[s3tables.ExtendedKeyMetadata] = updatedXattr
 	resp.Entry.Extended[s3tables.ExtendedKeyMetadataVersion] = metadataVersionXattr(newVersion)
 	_, err = client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{
-		Directory: parentDir,
-		Entry:     resp.Entry,
-		ExpectedExtended: map[string][]byte{
-			s3tables.ExtendedKeyMetadataVersion: expectedVersionXattr,
-		},
+		Directory:        parentDir,
+		Entry:            resp.Entry,
+		ExpectedExtended: expectedExtended,
 	})
 	if err != nil {
 		if status.Code(err) == codes.FailedPrecondition {

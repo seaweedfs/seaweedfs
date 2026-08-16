@@ -257,12 +257,7 @@ func persistPlanningIndex(
 		return fmt.Errorf("marshal updated metadata xattr: %w", err)
 	}
 
-	expectedExtended := map[string][]byte{
-		s3tables.ExtendedKeyMetadata: existingXattr,
-	}
-	if expectedVersionXattr, ok := resp.Entry.Extended[s3tables.ExtendedKeyMetadataVersion]; ok && len(expectedVersionXattr) > 0 {
-		expectedExtended[s3tables.ExtendedKeyMetadataVersion] = expectedVersionXattr
-	}
+	expectedExtended := s3tables.SnapshotExtended(resp.Entry.Extended)
 	resp.Entry.Extended[s3tables.ExtendedKeyMetadata] = updatedXattr
 	_, err = client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{
 		Directory:        parentDir,

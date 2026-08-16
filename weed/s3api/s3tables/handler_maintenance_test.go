@@ -274,7 +274,8 @@ func TestMergeMaintenanceConfiguration(t *testing.T) {
 }
 
 // UpdateEntry rewrites the whole entry, so the precondition has to cover every
-// attribute or this write silently reverts a concurrent one.
+// attribute this package stores — including the ones absent right now, which a
+// concurrent writer can create and this write would then delete.
 func TestSnapshotExtendedCoversEveryAttribute(t *testing.T) {
 	extended := map[string][]byte{
 		ExtendedKeyMetadata:    []byte(`{"a":1}`),
@@ -282,22 +283,43 @@ func TestSnapshotExtendedCoversEveryAttribute(t *testing.T) {
 	}
 
 	expected := SnapshotExtended(extended, ExtendedKeyMaintenanceStatus)
-	if len(expected) != 3 {
-		t.Fatalf("expected every attribute plus the target key, got %v", expected)
-	}
+
 	for key, want := range extended {
 		if string(expected[key]) != string(want) {
 			t.Errorf("attribute %s not carried into the precondition", key)
 		}
 	}
-	// The target key is asserted absent, so a concurrent create fails the write.
-	if got, ok := expected[ExtendedKeyMaintenanceStatus]; !ok || len(got) != 0 {
-		t.Errorf("expected the target key asserted absent, got %v", got)
+	for _, key := range s3tablesExtendedKeys {
+		if _, ok := expected[key]; !ok {
+			t.Errorf("attribute %s missing from the precondition", key)
+		}
+	}
+
+	// The absent ones are asserted absent, so a concurrent create fails the write.
+	for _, key := range []string{ExtendedKeyMaintenanceStatus, ExtendedKeyPolicy, ExtendedKeyTags} {
+		if got, ok := expected[key]; !ok || len(got) != 0 {
+			t.Errorf("expected %s asserted absent, got %v", key, got)
+		}
 	}
 
 	// Mutating the snapshot must not disturb the entry it came from.
 	expected[ExtendedKeyMetadata] = []byte("changed")
 	if string(extended[ExtendedKeyMetadata]) != `{"a":1}` {
 		t.Error("expected the source map left alone")
+	}
+}
+
+// The regression this closes: a maintenance configuration that did not exist
+// when the writer read the entry must still be asserted, or a first-time
+// disable lands between the read and the write and gets erased.
+func TestSnapshotExtendedAssertsAbsentMaintenanceKey(t *testing.T) {
+	expected := SnapshotExtended(map[string][]byte{ExtendedKeyMetadata: []byte(`{}`)})
+
+	value, ok := expected[ExtendedKeyMaintenance]
+	if !ok {
+		t.Fatal("expected the maintenance key asserted even when absent")
+	}
+	if len(value) != 0 {
+		t.Errorf("expected an absent assertion, got %v", value)
 	}
 }

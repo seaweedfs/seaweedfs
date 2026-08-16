@@ -141,21 +141,43 @@ func (h *S3TablesHandler) updateExtendedAttribute(
 	return fmt.Errorf("%w: %s", ErrConcurrentUpdate, key)
 }
 
-// SnapshotExtended captures every attribute on an entry as an UpdateEntry
-// precondition, so a whole-entry write cannot silently revert an attribute a
-// concurrent writer changed. key is asserted even when absent, which fails the
-// precondition if someone creates it first.
-func SnapshotExtended(extended map[string][]byte, key string) map[string][]byte {
-	return snapshotExtended(extended, key)
+// s3tablesExtendedKeys is every attribute this package stores on a bucket or
+// table entry. A whole-entry write has to assert the absent ones too: a key
+// missing from the precondition is a key a concurrent writer can create and
+// this write will then delete.
+var s3tablesExtendedKeys = []string{
+	ExtendedKeyTableBucket,
+	ExtendedKeyMetadata,
+	ExtendedKeyMetadataVersion,
+	ExtendedKeyPolicy,
+	ExtendedKeyTags,
+	ExtendedKeyMaintenance,
+	ExtendedKeyMaintenanceStatus,
+	ExtendedKeyEntryType,
 }
 
-func snapshotExtended(extended map[string][]byte, key string) map[string][]byte {
-	expected := make(map[string][]byte, len(extended)+1)
+// SnapshotExtended captures an entry's attributes as an UpdateEntry
+// precondition, so a whole-entry write cannot silently revert or delete an
+// attribute a concurrent writer touched. Attributes absent at read time are
+// asserted absent, which fails the precondition if someone creates one first.
+func SnapshotExtended(extended map[string][]byte, keys ...string) map[string][]byte {
+	return snapshotExtended(extended, keys...)
+}
+
+func snapshotExtended(extended map[string][]byte, keys ...string) map[string][]byte {
+	expected := make(map[string][]byte, len(extended)+len(s3tablesExtendedKeys))
 	for k, v := range extended {
 		expected[k] = v
 	}
-	if _, ok := expected[key]; !ok {
-		expected[key] = nil
+	for _, k := range s3tablesExtendedKeys {
+		if _, ok := expected[k]; !ok {
+			expected[k] = nil
+		}
+	}
+	for _, k := range keys {
+		if _, ok := expected[k]; !ok {
+			expected[k] = nil
+		}
 	}
 	return expected
 }
