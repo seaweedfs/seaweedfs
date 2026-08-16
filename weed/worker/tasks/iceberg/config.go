@@ -2,8 +2,10 @@ package iceberg
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
@@ -46,9 +48,29 @@ const (
 
 const bytesPerMB int64 = 1024 * 1024
 
+const msPerHour int64 = 3600 * 1000
+
+// maxOrphanOlderThanHours is the largest cutoff that still survives conversion
+// to a time.Duration. Beyond it the multiplication wraps negative, putting the
+// cutoff in the future and making every file look like an orphan.
+const maxOrphanOlderThanHours = int64(math.MaxInt64 / int64(time.Hour))
+
+// hoursToMs converts hours to milliseconds, saturating instead of overflowing.
+func hoursToMs(hours int64) int64 {
+	if hours <= 0 {
+		return 0
+	}
+	if hours > math.MaxInt64/msPerHour {
+		return math.MaxInt64
+	}
+	return hours * msPerHour
+}
+
 // Config holds parsed worker config values.
 type Config struct {
-	SnapshotRetentionHours      int64
+	// Milliseconds rather than hours so sub-hour retentions survive; the
+	// plugin config key stays in hours.
+	SnapshotRetentionMs         int64
 	MaxSnapshotsToKeep          int64
 	OrphanOlderThanHours        int64
 	MaxCommitRetries            int64
@@ -70,7 +92,7 @@ type Config struct {
 // Values are clamped to safe minimums to prevent misconfiguration.
 func ParseConfig(values map[string]*plugin_pb.ConfigValue) Config {
 	cfg := Config{
-		SnapshotRetentionHours:      readInt64Config(values, "snapshot_retention_hours", defaultSnapshotRetentionHours),
+		SnapshotRetentionMs:         hoursToMs(readInt64Config(values, "snapshot_retention_hours", defaultSnapshotRetentionHours)),
 		MaxSnapshotsToKeep:          readInt64Config(values, "max_snapshots_to_keep", defaultMaxSnapshotsToKeep),
 		OrphanOlderThanHours:        readInt64Config(values, "orphan_older_than_hours", defaultOrphanOlderThanHours),
 		MaxCommitRetries:            readInt64Config(values, "max_commit_retries", defaultMaxCommitRetries),
@@ -89,8 +111,8 @@ func ParseConfig(values map[string]*plugin_pb.ConfigValue) Config {
 	}
 
 	// Clamp the fields that are always defaulted by worker config parsing.
-	if cfg.SnapshotRetentionHours <= 0 {
-		cfg.SnapshotRetentionHours = defaultSnapshotRetentionHours
+	if cfg.SnapshotRetentionMs <= 0 {
+		cfg.SnapshotRetentionMs = hoursToMs(defaultSnapshotRetentionHours)
 	}
 	if cfg.MaxSnapshotsToKeep <= 0 {
 		cfg.MaxSnapshotsToKeep = defaultMaxSnapshotsToKeep
@@ -105,6 +127,9 @@ func ParseConfig(values map[string]*plugin_pb.ConfigValue) Config {
 func applyThresholdDefaults(cfg Config) Config {
 	if cfg.OrphanOlderThanHours <= 0 {
 		cfg.OrphanOlderThanHours = defaultOrphanOlderThanHours
+	}
+	if cfg.OrphanOlderThanHours > maxOrphanOlderThanHours {
+		cfg.OrphanOlderThanHours = maxOrphanOlderThanHours
 	}
 	if cfg.TargetFileSizeBytes <= 0 {
 		cfg.TargetFileSizeBytes = defaultTargetFileSizeMB * 1024 * 1024

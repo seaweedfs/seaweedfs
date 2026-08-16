@@ -557,10 +557,10 @@ func TestExpireSnapshotsExecution(t *testing.T) {
 
 	handler := NewHandler(nil)
 	config := Config{
-		SnapshotRetentionHours: 0, // expire everything eligible
-		MaxSnapshotsToKeep:     1, // keep only 1
-		MaxCommitRetries:       3,
-		Operations:             "expire_snapshots",
+		SnapshotRetentionMs: hoursToMs(0), // expire everything eligible
+		MaxSnapshotsToKeep:  1,            // keep only 1
+		MaxCommitRetries:    3,
+		Operations:          "expire_snapshots",
 	}
 
 	result, _, err := handler.expireSnapshots(context.Background(), client, setup.BucketName, setup.tablePath(), config)
@@ -598,9 +598,9 @@ func TestExpireSnapshotsNothingToExpire(t *testing.T) {
 
 	handler := NewHandler(nil)
 	config := Config{
-		SnapshotRetentionHours: 24 * 365, // very long retention
-		MaxSnapshotsToKeep:     10,
-		MaxCommitRetries:       3,
+		SnapshotRetentionMs: hoursToMs(24 * 365), // very long retention
+		MaxSnapshotsToKeep:  10,
+		MaxCommitRetries:    3,
 	}
 
 	result, _, err := handler.expireSnapshots(context.Background(), client, setup.BucketName, setup.tablePath(), config)
@@ -639,10 +639,10 @@ func TestMaintenanceOnExternalTableLocation(t *testing.T) {
 
 	handler := NewHandler(nil)
 	config := Config{
-		SnapshotRetentionHours: 0,
-		MaxSnapshotsToKeep:     1,
-		MaxCommitRetries:       3,
-		Operations:             "expire_snapshots",
+		SnapshotRetentionMs: hoursToMs(0),
+		MaxSnapshotsToKeep:  1,
+		MaxCommitRetries:    3,
+		Operations:          "expire_snapshots",
 	}
 
 	result, _, err := handler.expireSnapshots(context.Background(), client, setup.BucketName, setup.tablePath(), config)
@@ -1245,9 +1245,9 @@ func TestDetectWithFakeFiler(t *testing.T) {
 	handler := NewHandler(nil)
 
 	config := Config{
-		SnapshotRetentionHours: 0, // everything is expired
-		MaxSnapshotsToKeep:     2, // 3 > 2, needs maintenance
-		MaxCommitRetries:       3,
+		SnapshotRetentionMs: hoursToMs(0), // everything is expired
+		MaxSnapshotsToKeep:  2,            // 3 > 2, needs maintenance
+		MaxCommitRetries:    3,
 	}
 
 	tables, err := handler.scanTablesForMaintenance(
@@ -1302,9 +1302,9 @@ func TestDetectWithFilters(t *testing.T) {
 
 	handler := NewHandler(nil)
 	config := Config{
-		SnapshotRetentionHours: 0,
-		MaxSnapshotsToKeep:     2,
-		MaxCommitRetries:       3,
+		SnapshotRetentionMs: hoursToMs(0),
+		MaxSnapshotsToKeep:  2,
+		MaxCommitRetries:    3,
 	}
 
 	// Without filter: should find both
@@ -1390,11 +1390,11 @@ func TestDetectSchedulesCompactionWithoutSnapshotPressure(t *testing.T) {
 
 	handler := NewHandler(nil)
 	config := Config{
-		SnapshotRetentionHours: 24 * 365,
-		MaxSnapshotsToKeep:     10,
-		TargetFileSizeBytes:    4096,
-		MinInputFiles:          2,
-		Operations:             "compact",
+		SnapshotRetentionMs: hoursToMs(24 * 365),
+		MaxSnapshotsToKeep:  10,
+		TargetFileSizeBytes: 4096,
+		MinInputFiles:       2,
+		Operations:          "compact",
 	}
 
 	tables, err := handler.scanTablesForMaintenance(context.Background(), client, config, "", "", "", 0)
@@ -1495,11 +1495,11 @@ func TestDetectSchedulesCompactionWithDeleteManifestPresent(t *testing.T) {
 
 	handler := NewHandler(nil)
 	config := Config{
-		SnapshotRetentionHours: 24 * 365,
-		MaxSnapshotsToKeep:     10,
-		TargetFileSizeBytes:    4096,
-		MinInputFiles:          2,
-		Operations:             "compact",
+		SnapshotRetentionMs: hoursToMs(24 * 365),
+		MaxSnapshotsToKeep:  10,
+		TargetFileSizeBytes: 4096,
+		MinInputFiles:       2,
+		Operations:          "compact",
 	}
 
 	tables, err := handler.scanTablesForMaintenance(context.Background(), client, config, "", "", "", 0)
@@ -1542,9 +1542,9 @@ func TestDetectSchedulesSnapshotExpiryDespiteCompactionEvaluationError(t *testin
 
 	handler := NewHandler(nil)
 	config := Config{
-		SnapshotRetentionHours: 24 * 365, // very long retention so age doesn't trigger
-		MaxSnapshotsToKeep:     1,        // 2 snapshots > 1 triggers expiry
-		Operations:             "compact,expire_snapshots",
+		SnapshotRetentionMs: hoursToMs(24 * 365), // very long retention so age doesn't trigger
+		MaxSnapshotsToKeep:  1,                   // 2 snapshots > 1 triggers expiry
+		Operations:          "compact,expire_snapshots",
 	}
 
 	tables, err := handler.scanTablesForMaintenance(context.Background(), client, config, "", "", "", 0)
@@ -1580,10 +1580,10 @@ func TestDetectSchedulesManifestRewriteWithoutSnapshotPressure(t *testing.T) {
 
 	handler := NewHandler(nil)
 	config := Config{
-		SnapshotRetentionHours: 24 * 365,
-		MaxSnapshotsToKeep:     10,
-		MinManifestsToRewrite:  5,
-		Operations:             "rewrite_manifests",
+		SnapshotRetentionMs:   hoursToMs(24 * 365),
+		MaxSnapshotsToKeep:    10,
+		MinManifestsToRewrite: 5,
+		Operations:            "rewrite_manifests",
 	}
 
 	tables, err := handler.scanTablesForMaintenance(context.Background(), client, config, "", "", "", 0)
@@ -2029,10 +2029,10 @@ func TestDetectDoesNotScheduleManifestRewriteFromDeleteManifestsOnly(t *testing.
 
 	handler := NewHandler(nil)
 	config := Config{
-		SnapshotRetentionHours: 24 * 365,
-		MaxSnapshotsToKeep:     10,
-		MinManifestsToRewrite:  2,
-		Operations:             "rewrite_manifests",
+		SnapshotRetentionMs:   hoursToMs(24 * 365),
+		MaxSnapshotsToKeep:    10,
+		MinManifestsToRewrite: 2,
+		Operations:            "rewrite_manifests",
 	}
 
 	tables, err := handler.scanTablesForMaintenance(context.Background(), client, config, "", "", "", 0)
@@ -2070,10 +2070,10 @@ func TestDetectSchedulesOrphanCleanupWithoutSnapshotPressure(t *testing.T) {
 
 	handler := NewHandler(nil)
 	config := Config{
-		SnapshotRetentionHours: 24 * 365,
-		MaxSnapshotsToKeep:     10,
-		OrphanOlderThanHours:   72,
-		Operations:             "remove_orphans",
+		SnapshotRetentionMs:  hoursToMs(24 * 365),
+		MaxSnapshotsToKeep:   10,
+		OrphanOlderThanHours: 72,
+		Operations:           "remove_orphans",
 	}
 
 	tables, err := handler.scanTablesForMaintenance(context.Background(), client, config, "", "", "", 0)
@@ -3043,9 +3043,9 @@ func TestExpireSnapshotsMetrics(t *testing.T) {
 
 	handler := NewHandler(nil)
 	config := Config{
-		SnapshotRetentionHours: 0,
-		MaxSnapshotsToKeep:     1,
-		MaxCommitRetries:       3,
+		SnapshotRetentionMs: hoursToMs(0),
+		MaxSnapshotsToKeep:  1,
+		MaxCommitRetries:    3,
 	}
 
 	_, metrics, err := handler.expireSnapshots(context.Background(), client, setup.BucketName, setup.tablePath(), config)
@@ -3082,9 +3082,9 @@ func TestExecuteCompletionOutputValues(t *testing.T) {
 
 	handler := NewHandler(nil)
 	config := Config{
-		SnapshotRetentionHours: 0,
-		MaxSnapshotsToKeep:     1,
-		MaxCommitRetries:       3,
+		SnapshotRetentionMs: hoursToMs(0),
+		MaxSnapshotsToKeep:  1,
+		MaxCommitRetries:    3,
 	}
 
 	_, metrics, err := handler.expireSnapshots(context.Background(), client, setup.BucketName, setup.tablePath(), config)

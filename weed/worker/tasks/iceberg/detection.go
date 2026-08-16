@@ -127,7 +127,9 @@ func (h *Handler) scanTablesForMaintenance(
 					continue
 				}
 
-				needsWork, err := h.tableNeedsMaintenance(ctx, filerClient, bucketName, tablePath, state, config, ops)
+				effective := resolveTableConfig(config, state.Metadata.Properties())
+
+				needsWork, err := h.tableNeedsMaintenance(ctx, filerClient, bucketName, tablePath, state, effective, ops)
 				if err != nil {
 					glog.V(2).Infof("iceberg maintenance: skipping %s/%s/%s: cannot evaluate maintenance need: %v", bucketName, nsName, tblName, err)
 					continue
@@ -154,8 +156,8 @@ func (h *Handler) scanTablesForMaintenance(
 
 func normalizeDetectionConfig(config Config) Config {
 	config = applyThresholdDefaults(config)
-	if config.SnapshotRetentionHours <= 0 {
-		config.SnapshotRetentionHours = defaultSnapshotRetentionHours
+	if config.SnapshotRetentionMs <= 0 {
+		config.SnapshotRetentionMs = hoursToMs(defaultSnapshotRetentionHours)
 	}
 	if config.MaxSnapshotsToKeep <= 0 {
 		config.MaxSnapshotsToKeep = defaultMaxSnapshotsToKeep
@@ -481,7 +483,7 @@ func needsMaintenance(meta table.Metadata, config Config) bool {
 	}
 
 	// Check oldest snapshot age
-	retentionMs := config.SnapshotRetentionHours * 3600 * 1000
+	retentionMs := config.SnapshotRetentionMs
 	nowMs := time.Now().UnixMilli()
 	for _, snap := range snapshots {
 		if nowMs-snap.TimestampMs > retentionMs {

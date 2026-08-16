@@ -19,8 +19,8 @@ import (
 func TestParseConfig(t *testing.T) {
 	config := ParseConfig(nil)
 
-	if config.SnapshotRetentionHours != defaultSnapshotRetentionHours {
-		t.Errorf("expected SnapshotRetentionHours=%d, got %d", defaultSnapshotRetentionHours, config.SnapshotRetentionHours)
+	if config.SnapshotRetentionMs != hoursToMs(defaultSnapshotRetentionHours) {
+		t.Errorf("expected SnapshotRetentionMs=%d, got %d", hoursToMs(defaultSnapshotRetentionHours), config.SnapshotRetentionMs)
 	}
 	if config.MaxSnapshotsToKeep != defaultMaxSnapshotsToKeep {
 		t.Errorf("expected MaxSnapshotsToKeep=%d, got %d", defaultMaxSnapshotsToKeep, config.MaxSnapshotsToKeep)
@@ -115,8 +115,8 @@ func TestExtractMetadataVersion(t *testing.T) {
 
 func TestNeedsMaintenanceNoSnapshots(t *testing.T) {
 	config := Config{
-		SnapshotRetentionHours: 24,
-		MaxSnapshotsToKeep:     2,
+		SnapshotRetentionMs: hoursToMs(24),
+		MaxSnapshotsToKeep:  2,
 	}
 
 	meta := buildTestMetadata(t, nil)
@@ -127,8 +127,8 @@ func TestNeedsMaintenanceNoSnapshots(t *testing.T) {
 
 func TestNeedsMaintenanceExceedsMaxSnapshots(t *testing.T) {
 	config := Config{
-		SnapshotRetentionHours: 24 * 365, // very long retention
-		MaxSnapshotsToKeep:     2,
+		SnapshotRetentionMs: hoursToMs(24 * 365), // very long retention
+		MaxSnapshotsToKeep:  2,
 	}
 
 	now := time.Now().UnixMilli()
@@ -145,8 +145,8 @@ func TestNeedsMaintenanceExceedsMaxSnapshots(t *testing.T) {
 
 func TestNeedsMaintenanceWithinLimits(t *testing.T) {
 	config := Config{
-		SnapshotRetentionHours: 24 * 365, // very long retention
-		MaxSnapshotsToKeep:     5,
+		SnapshotRetentionMs: hoursToMs(24 * 365), // very long retention
+		MaxSnapshotsToKeep:  5,
 	}
 
 	now := time.Now().UnixMilli()
@@ -162,8 +162,8 @@ func TestNeedsMaintenanceWithinLimits(t *testing.T) {
 func TestNeedsMaintenanceOldSnapshot(t *testing.T) {
 	// Use a retention of 0 hours so that any snapshot is considered "old"
 	config := Config{
-		SnapshotRetentionHours: 0, // instant expiry
-		MaxSnapshotsToKeep:     10,
+		SnapshotRetentionMs: hoursToMs(0), // instant expiry
+		MaxSnapshotsToKeep:  10,
 	}
 
 	now := time.Now().UnixMilli()
@@ -1005,8 +1005,8 @@ func TestNormalizeDetectionConfigUsesSharedDefaults(t *testing.T) {
 	if config.OrphanOlderThanHours != defaultOrphanOlderThanHours {
 		t.Fatalf("expected OrphanOlderThanHours default, got %d", config.OrphanOlderThanHours)
 	}
-	if config.SnapshotRetentionHours != defaultSnapshotRetentionHours {
-		t.Fatalf("expected SnapshotRetentionHours default, got %d", config.SnapshotRetentionHours)
+	if config.SnapshotRetentionMs != hoursToMs(defaultSnapshotRetentionHours) {
+		t.Fatalf("expected SnapshotRetentionMs default, got %d", config.SnapshotRetentionMs)
 	}
 	if config.MaxSnapshotsToKeep != defaultMaxSnapshotsToKeep {
 		t.Fatalf("expected MaxSnapshotsToKeep default, got %d", config.MaxSnapshotsToKeep)
