@@ -27,7 +27,7 @@ func vendingServer(vendor CredentialVendor) *Server {
 	return s
 }
 
-func TestBuildStorageConfigVendsScopedCredentials(t *testing.T) {
+func TestBuildFileIOConfigVendingVendsScopedCredentials(t *testing.T) {
 	expiry := time.Now().Add(time.Hour).Truncate(time.Millisecond)
 	vendor := &stubVendor{credentials: &VendedCredentials{
 		AccessKeyID:     "ASIAEXAMPLE",
@@ -40,7 +40,7 @@ func TestBuildStorageConfigVendsScopedCredentials(t *testing.T) {
 	r := httptest.NewRequest("GET", "/v1/namespaces/ns/tables/t", nil)
 	r.Header.Set(accessDelegationHeader, "vended-credentials")
 
-	config, storageCredentials := s.buildStorageConfig(r, "s3://warehouse/ns/t")
+	config, storageCredentials := s.buildFileIOConfig(r, "s3://warehouse/ns/t")
 
 	if vendor.gotBucket != "warehouse" || vendor.gotPrefix != "ns/t" {
 		t.Errorf("vendor called with bucket=%q prefix=%q, want warehouse and ns/t", vendor.gotBucket, vendor.gotPrefix)
@@ -65,23 +65,23 @@ func TestBuildStorageConfigVendsScopedCredentials(t *testing.T) {
 // Without a vendor the response must stay silent about the endpoint too: a
 // client that asked for vended credentials would otherwise drop its own and
 // start sending unsigned requests.
-func TestBuildStorageConfigWithoutVendorSaysNothing(t *testing.T) {
+func TestBuildFileIOConfigVendingWithoutVendorSaysNothing(t *testing.T) {
 	s := &Server{s3Endpoint: "http://s3.example:8333"}
 	r := httptest.NewRequest("GET", "/v1/namespaces/ns/tables/t", nil)
 	r.Header.Set(accessDelegationHeader, "vended-credentials")
 
-	config, storageCredentials := s.buildStorageConfig(r, "s3://warehouse/ns/t")
+	config, storageCredentials := s.buildFileIOConfig(r, "s3://warehouse/ns/t")
 	if len(config) != 0 || storageCredentials != nil {
 		t.Errorf("config = %v, storage-credentials = %v, want both empty", config, storageCredentials)
 	}
 }
 
-func TestBuildStorageConfigFallsBackWhenVendingFails(t *testing.T) {
+func TestBuildFileIOConfigVendingFallsBackWhenVendingFails(t *testing.T) {
 	s := vendingServer(&stubVendor{err: errors.New("no role configured")})
 	r := httptest.NewRequest("GET", "/v1/namespaces/ns/tables/t", nil)
 	r.Header.Set(accessDelegationHeader, "vended-credentials")
 
-	config, storageCredentials := s.buildStorageConfig(r, "s3://warehouse/ns/t")
+	config, storageCredentials := s.buildFileIOConfig(r, "s3://warehouse/ns/t")
 	if len(config) != 0 || storageCredentials != nil {
 		t.Errorf("config = %v, storage-credentials = %v, want both empty", config, storageCredentials)
 	}
@@ -89,12 +89,12 @@ func TestBuildStorageConfigFallsBackWhenVendingFails(t *testing.T) {
 
 // A client that did not ask for delegation keeps the plain endpoint config and
 // must never be handed credentials.
-func TestBuildStorageConfigWithoutDelegationHeader(t *testing.T) {
+func TestBuildFileIOConfigVendingWithoutDelegationHeader(t *testing.T) {
 	vendor := &stubVendor{credentials: &VendedCredentials{AccessKeyID: "ASIAEXAMPLE"}}
 	s := vendingServer(vendor)
 
 	r := httptest.NewRequest("GET", "/v1/namespaces/ns/tables/t", nil)
-	config, storageCredentials := s.buildStorageConfig(r, "s3://warehouse/ns/t")
+	config, storageCredentials := s.buildFileIOConfig(r, "s3://warehouse/ns/t")
 
 	if _, vended := config["s3.access-key-id"]; vended {
 		t.Errorf("credentials vended without the delegation header: %v", config)

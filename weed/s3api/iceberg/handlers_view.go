@@ -218,10 +218,11 @@ func (s *Server) handleCreateView(w http.ResponseWriter, r *http.Request) {
 	if finalLocation == "" {
 		finalLocation = metadataLocation
 	}
+	config, _ := s.buildFileIOConfig(r, location)
 	writeLoadResult(w, http.StatusOK, ViewResponse{
 		MetadataLocation: finalLocation,
 		Metadata:         metadata,
-		Config:           s.buildFileIOConfig(r, location),
+		Config:           config,
 	})
 }
 
@@ -348,10 +349,11 @@ func (s *Server) buildViewResponse(r *http.Request, getResp s3tables.GetViewResp
 	if err != nil {
 		return ViewResponse{}, fmt.Errorf("failed to parse view metadata: %w", err)
 	}
+	config, _ := s.buildFileIOConfig(r, tableLocationFromMetadataLocation(getResp.MetadataLocation))
 	return ViewResponse{
 		MetadataLocation: getResp.MetadataLocation,
 		Metadata:         metadata,
-		Config:           s.buildFileIOConfig(r, tableLocationFromMetadataLocation(getResp.MetadataLocation)),
+		Config:           config,
 	}, nil
 }
 

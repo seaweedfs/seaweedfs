@@ -43,12 +43,12 @@ func TestBuildFileIOConfigWithholdsEndpointFromCredentialVendingClients(t *testi
 
 	r := httptest.NewRequest(http.MethodGet, "/v1/namespaces/ns/tables/t", nil)
 	r.Header.Set(accessDelegationHeader, "vended-credentials")
-	if got := s.buildFileIOConfig(r, "s3://warehouse/ns/t"); len(got) != 0 {
+	if got, _ := s.buildFileIOConfig(r, "s3://warehouse/ns/t"); len(got) != 0 {
 		t.Fatalf("buildFileIOConfig() = %v, want empty for a vended-credentials request", got)
 	}
 
 	plain := httptest.NewRequest(http.MethodGet, "/v1/namespaces/ns/tables/t", nil)
-	if got := s.buildFileIOConfig(plain, "s3://warehouse/ns/t"); got["s3.endpoint"] != s.s3Endpoint {
+	if got, _ := s.buildFileIOConfig(plain, "s3://warehouse/ns/t"); got["s3.endpoint"] != s.s3Endpoint {
 		t.Fatalf("s3.endpoint = %q, want %q", got["s3.endpoint"], s.s3Endpoint)
 	}
 }

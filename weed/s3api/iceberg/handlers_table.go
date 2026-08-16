@@ -274,7 +274,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		if markerErr := s.writeStageCreateMarker(r.Context(), bucketName, namespace, tableName, tableUUID, location, stagedMetadataLocation); markerErr != nil {
 			glog.V(1).Infof("Iceberg: failed to persist stage-create marker for %s.%s: %v", flattenNamespacePath(namespace), tableName, markerErr)
 		}
-		config, storageCredentials := s.buildStorageConfig(r, location)
+		config, storageCredentials := s.buildFileIOConfig(r, location)
 		result := LoadTableResult{
 			MetadataLocation:   metadataLocation,
 			Metadata:           metadata,
@@ -375,7 +375,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		glog.V(1).Infof("Iceberg: failed to cleanup stage-create markers for %s.%s after create: %v", flattenNamespacePath(namespace), tableName, markerErr)
 	}
 
-	config, storageCredentials := s.buildStorageConfig(r, location)
+	config, storageCredentials := s.buildFileIOConfig(r, location)
 	result := LoadTableResult{
 		MetadataLocation:   finalLocation,
 		Metadata:           metadata,
@@ -565,7 +565,7 @@ func (s *Server) buildLoadTableResult(r *http.Request, getResp s3tables.GetTable
 		return LoadTableResult{}, fmt.Errorf("build metadata for %s: %w", tableName, err)
 	}
 
-	config, storageCredentials := s.buildStorageConfig(r, location)
+	config, storageCredentials := s.buildFileIOConfig(r, location)
 	return LoadTableResult{
 		MetadataLocation:   getResp.MetadataLocation,
 		Metadata:           metadata,
@@ -579,14 +579,9 @@ func (s *Server) buildLoadTableResult(r *http.Request, getResp s3tables.GetTable
 // separately discovering the endpoint. The region defaults to the same
 // value baked into table bucket ARNs so clients like DuckDB that require
 // a region on attach don't need to be told it out-of-band. See issue #9103.
-func (s *Server) buildFileIOConfig(r *http.Request, location string) iceberg.Properties {
-	config, _ := s.buildStorageConfig(r, location)
-	return config
-}
-
-// buildStorageConfig returns the FileIO properties plus, for a client that
-// asked for credential vending, the credentials scoped to this table.
-func (s *Server) buildStorageConfig(r *http.Request, location string) (iceberg.Properties, []StorageCredential) {
+// It also returns, for a client that asked for credential vending, the
+// credentials scoped to this table.
+func (s *Server) buildFileIOConfig(r *http.Request, location string) (iceberg.Properties, []StorageCredential) {
 	config := make(iceberg.Properties)
 	if s.s3Endpoint == "" {
 		return config, nil
