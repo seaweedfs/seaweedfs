@@ -444,6 +444,27 @@ type MaintenanceConfigurationValue struct {
 // stored verbatim as the maintenance extended attribute so Get is a passthrough.
 type MaintenanceConfiguration map[string]*MaintenanceConfigurationValue
 
+// MergeMaintenanceConfiguration overlays a table's configuration on its
+// bucket's. Unreferenced file removal is only configurable on the bucket, so
+// anything reading a table's effective configuration has to consult both.
+func MergeMaintenanceConfiguration(bucket, table MaintenanceConfiguration) MaintenanceConfiguration {
+	if len(bucket) == 0 {
+		return table
+	}
+	if len(table) == 0 {
+		return bucket
+	}
+
+	merged := make(MaintenanceConfiguration, len(bucket)+len(table))
+	for k, v := range bucket {
+		merged[k] = v
+	}
+	for k, v := range table {
+		merged[k] = v
+	}
+	return merged
+}
+
 type PutTableBucketMaintenanceConfigurationRequest struct {
 	TableBucketARN string                         `json:"tableBucketARN"`
 	Type           string                         `json:"type"`

@@ -189,11 +189,19 @@ func (h *S3TablesHandler) handleGetTableMaintenanceJobStatus(w http.ResponseWrit
 
 	tablePath := GetTablePath(bucketName, namespaceName, tableName)
 
-	config, err := h.readMaintenanceConfiguration(r, filerClient, tablePath)
+	// Unreferenced file removal is configured on the bucket, so a bucket-level
+	// disable has to show up here as Disabled rather than a stale table status.
+	bucketConfig, err := h.readMaintenanceConfiguration(r, filerClient, GetTableBucketPath(bucketName))
+	if err != nil {
+		h.writeMaintenanceError(w, err, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
+		return err
+	}
+	tableConfig, err := h.readMaintenanceConfiguration(r, filerClient, tablePath)
 	if err != nil {
 		h.writeMaintenanceError(w, err, ErrCodeNoSuchTable, fmt.Sprintf("table %s not found", tableName))
 		return err
 	}
+	config := MergeMaintenanceConfiguration(bucketConfig, tableConfig)
 
 	recorded := MaintenanceJobStatus{}
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {

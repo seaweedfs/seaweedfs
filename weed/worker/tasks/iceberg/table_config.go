@@ -115,24 +115,7 @@ func enabledSettings(maintenance s3tables.MaintenanceConfiguration, maintenanceT
 	return value.Settings
 }
 
-// mergeMaintenanceConfiguration overlays a table's configuration on its bucket's.
-func mergeMaintenanceConfiguration(bucket, table s3tables.MaintenanceConfiguration) s3tables.MaintenanceConfiguration {
-	if len(bucket) == 0 {
-		return table
-	}
-	if len(table) == 0 {
-		return bucket
-	}
-
-	merged := make(s3tables.MaintenanceConfiguration, len(bucket)+len(table))
-	for k, v := range bucket {
-		merged[k] = v
-	}
-	for k, v := range table {
-		merged[k] = v
-	}
-	return merged
-}
+var mergeMaintenanceConfiguration = s3tables.MergeMaintenanceConfiguration
 
 // maintenanceJobType maps a worker operation onto the AWS job type that governs
 // it. Manifest and delete-file rewrites have no AWS equivalent and ride along

@@ -232,3 +232,43 @@ func TestMaintenanceConfigurationPreservesStrategy(t *testing.T) {
 		t.Errorf("expected the strategy preserved, got %q", got)
 	}
 }
+
+// Unreferenced file removal is configured on the bucket, so a bucket-level
+// disable has to surface here rather than a stale table status.
+func TestBuildJobStatusResponseHonoursBucketDisable(t *testing.T) {
+	recorded := MaintenanceJobStatus{
+		MaintenanceTypeIcebergUnreferencedFileRemoval: {Status: MaintenanceJobStatusSuccessful},
+	}
+	bucketConfig := MaintenanceConfiguration{
+		MaintenanceTypeIcebergUnreferencedFileRemoval: {Status: MaintenanceStatusDisabled},
+	}
+
+	status := buildJobStatusResponse(recorded, MergeMaintenanceConfiguration(bucketConfig, nil))
+	if got := status[MaintenanceTypeIcebergUnreferencedFileRemoval].Status; got != MaintenanceJobStatusDisabled {
+		t.Errorf("expected Disabled from the bucket configuration, got %q", got)
+	}
+}
+
+func TestMergeMaintenanceConfiguration(t *testing.T) {
+	bucket := MaintenanceConfiguration{
+		MaintenanceTypeIcebergUnreferencedFileRemoval: {Status: MaintenanceStatusEnabled},
+		MaintenanceTypeIcebergCompaction:              {Status: MaintenanceStatusEnabled},
+	}
+	table := MaintenanceConfiguration{
+		MaintenanceTypeIcebergCompaction: {Status: MaintenanceStatusDisabled},
+	}
+
+	merged := MergeMaintenanceConfiguration(bucket, table)
+	if merged[MaintenanceTypeIcebergCompaction].Status != MaintenanceStatusDisabled {
+		t.Error("expected the table entry to win")
+	}
+	if merged[MaintenanceTypeIcebergUnreferencedFileRemoval].Status != MaintenanceStatusEnabled {
+		t.Error("expected the bucket-only entry retained")
+	}
+	if got := MergeMaintenanceConfiguration(nil, table); len(got) != 1 {
+		t.Errorf("expected the table configuration passed through, got %v", got)
+	}
+	if got := MergeMaintenanceConfiguration(bucket, nil); len(got) != 2 {
+		t.Errorf("expected the bucket configuration passed through, got %v", got)
+	}
+}
