@@ -69,6 +69,11 @@ func (h *Handler) scanTablesForMaintenance(
 		if !wildcard.MatchesAnyWildcard(bucketMatchers, bucketName) {
 			continue
 		}
+		bucketMaintenance, err := parseMaintenanceConfiguration(bucketEntry.Extended, bucketName)
+		if err != nil {
+			glog.Warningf("iceberg maintenance: skipping bucket %s: %v", bucketName, err)
+			continue
+		}
 
 		// List namespaces within the bucket
 		bucketPath := path.Join(bucketsPath, bucketName)
@@ -127,9 +132,19 @@ func (h *Handler) scanTablesForMaintenance(
 					continue
 				}
 
-				effective := resolveTableConfig(config, state.Metadata.Properties())
+				tableMaintenance, err := parseMaintenanceConfiguration(tableEntry.Extended, path.Join(bucketName, tablePath))
+				if err != nil {
+					glog.Warningf("iceberg maintenance: skipping %s/%s/%s: %v", bucketName, nsName, tblName, err)
+					continue
+				}
+				maintenance := mergeMaintenanceConfiguration(bucketMaintenance, tableMaintenance)
+				tableOps := filterDisabledOperations(ops, maintenance)
+				if len(tableOps) == 0 {
+					continue
+				}
+				effective := resolveTableConfig(config, state.Metadata.Properties(), maintenance)
 
-				needsWork, err := h.tableNeedsMaintenance(ctx, filerClient, bucketName, tablePath, state, effective, ops)
+				needsWork, err := h.tableNeedsMaintenance(ctx, filerClient, bucketName, tablePath, state, effective, tableOps)
 				if err != nil {
 					glog.V(2).Infof("iceberg maintenance: skipping %s/%s/%s: cannot evaluate maintenance need: %v", bucketName, nsName, tblName, err)
 					continue
