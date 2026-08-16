@@ -133,7 +133,7 @@ func (s *Server) handleUpdateView(w http.ResponseWriter, r *http.Request) {
 			writeLoadResult(w, http.StatusOK, ViewResponse{
 				MetadataLocation: newMetadataLocation,
 				Metadata:         newMetadata,
-				Config:           s.buildFileIOConfig(r),
+				Config:           s.buildFileIOConfig(r, location),
 			})
 			return
 		}

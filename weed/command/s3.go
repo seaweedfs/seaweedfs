@@ -48,6 +48,8 @@ type S3Options struct {
 	portHttps                 *int
 	portGrpc                  *int
 	portIceberg               *int
+	icebergCredentialRole     *string
+	icebergCredentialDuration *int
 	config                    *string
 	iamConfig                 *string
 	domainName                *string
@@ -91,6 +93,8 @@ func init() {
 	s3StandaloneOptions.portHttps = cmdS3.Flag.Int("port.https", 0, "s3 server https listen port")
 	s3StandaloneOptions.portGrpc = cmdS3.Flag.Int("port.grpc", 0, "s3 server grpc listen port")
 	s3StandaloneOptions.portIceberg = cmdS3.Flag.Int("port.iceberg", 8181, "Iceberg REST Catalog server listen port (0 to disable)")
+	s3StandaloneOptions.icebergCredentialRole = cmdS3.Flag.String("iceberg.credentialRole", "", "IAM role ARN the Iceberg catalog assumes to vend table-scoped credentials (empty disables vending)")
+	s3StandaloneOptions.icebergCredentialDuration = cmdS3.Flag.Int("iceberg.credentialDurationSeconds", 3600, "lifetime of credentials vended by the Iceberg catalog")
 	s3StandaloneOptions.domainName = cmdS3.Flag.String("domainName", "", "suffix of the host name in comma separated list, {bucket}.{domainName}")
 	s3StandaloneOptions.allowedOrigins = cmdS3.Flag.String("allowedOrigins", "*", "comma separated list of allowed origins")
 	s3StandaloneOptions.dataCenter = cmdS3.Flag.String("dataCenter", "", "prefer to read and write to volumes in this data center")
@@ -544,6 +548,14 @@ func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer) {
 	// Create Iceberg server using the S3ApiServer as filer client
 	icebergServer := iceberg.NewServer(s3ApiServer, s3ApiServer)
 	icebergServer.SetCredentialValidator(s3ApiServer)
+	if s3opt.icebergCredentialRole != nil && *s3opt.icebergCredentialRole != "" {
+		duration := int64(0)
+		if s3opt.icebergCredentialDuration != nil {
+			duration = int64(*s3opt.icebergCredentialDuration)
+		}
+		s3ApiServer.SetIcebergCredentialRole(*s3opt.icebergCredentialRole, duration)
+		icebergServer.SetCredentialVendor(icebergCredentialVendor{s3ApiServer})
+	}
 	icebergServer.SetS3Endpoint(s3opt.deriveS3AdvertisedEndpoint())
 	icebergServer.RegisterRoutes(icebergRouter)
 
@@ -614,4 +626,23 @@ func (s3opt *S3Options) deriveS3AdvertisedEndpoint() string {
 		}
 	}
 	return fmt.Sprintf("%s://%s", scheme, util.JoinHostPort(host, port))
+}
+
+// icebergCredentialVendor adapts the S3 gateway's STS-backed vending to the
+// catalog's interface, keeping the two packages independent of each other.
+type icebergCredentialVendor struct {
+	server *s3api.S3ApiServer
+}
+
+func (v icebergCredentialVendor) VendTableCredentials(ctx context.Context, principal, bucket, prefix string) (*iceberg.VendedCredentials, error) {
+	credentials, err := v.server.VendTableCredentials(ctx, principal, bucket, prefix)
+	if err != nil || credentials == nil {
+		return nil, err
+	}
+	return &iceberg.VendedCredentials{
+		AccessKeyID:     credentials.AccessKeyID,
+		SecretAccessKey: credentials.SecretAccessKey,
+		SessionToken:    credentials.SessionToken,
+		Expiration:      credentials.Expiration,
+	}, nil
 }

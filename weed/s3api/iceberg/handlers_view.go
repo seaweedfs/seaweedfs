@@ -221,7 +221,7 @@ func (s *Server) handleCreateView(w http.ResponseWriter, r *http.Request) {
 	writeLoadResult(w, http.StatusOK, ViewResponse{
 		MetadataLocation: finalLocation,
 		Metadata:         metadata,
-		Config:           s.buildFileIOConfig(r),
+		Config:           s.buildFileIOConfig(r, location),
 	})
 }
 
@@ -351,7 +351,7 @@ func (s *Server) buildViewResponse(r *http.Request, getResp s3tables.GetViewResp
 	return ViewResponse{
 		MetadataLocation: getResp.MetadataLocation,
 		Metadata:         metadata,
-		Config:           s.buildFileIOConfig(r),
+		Config:           s.buildFileIOConfig(r, tableLocationFromMetadataLocation(getResp.MetadataLocation)),
 	}, nil
 }
 

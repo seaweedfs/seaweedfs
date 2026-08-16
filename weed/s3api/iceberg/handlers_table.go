@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 
 	"github.com/apache/iceberg-go"
@@ -273,10 +274,12 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		if markerErr := s.writeStageCreateMarker(r.Context(), bucketName, namespace, tableName, tableUUID, location, stagedMetadataLocation); markerErr != nil {
 			glog.V(1).Infof("Iceberg: failed to persist stage-create marker for %s.%s: %v", flattenNamespacePath(namespace), tableName, markerErr)
 		}
+		config, storageCredentials := s.buildStorageConfig(r, location)
 		result := LoadTableResult{
-			MetadataLocation: metadataLocation,
-			Metadata:         metadata,
-			Config:           s.buildFileIOConfig(r),
+			MetadataLocation:   metadataLocation,
+			Metadata:           metadata,
+			Config:             config,
+			StorageCredentials: storageCredentials,
 		}
 		writeLoadResult(w, http.StatusOK, result)
 		return
@@ -372,10 +375,12 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		glog.V(1).Infof("Iceberg: failed to cleanup stage-create markers for %s.%s after create: %v", flattenNamespacePath(namespace), tableName, markerErr)
 	}
 
+	config, storageCredentials := s.buildStorageConfig(r, location)
 	result := LoadTableResult{
-		MetadataLocation: finalLocation,
-		Metadata:         metadata,
-		Config:           s.buildFileIOConfig(r),
+		MetadataLocation:   finalLocation,
+		Metadata:           metadata,
+		Config:             config,
+		StorageCredentials: storageCredentials,
 	}
 	writeLoadResult(w, http.StatusOK, result)
 }
@@ -560,10 +565,12 @@ func (s *Server) buildLoadTableResult(r *http.Request, getResp s3tables.GetTable
 		return LoadTableResult{}, fmt.Errorf("build metadata for %s: %w", tableName, err)
 	}
 
+	config, storageCredentials := s.buildStorageConfig(r, location)
 	return LoadTableResult{
-		MetadataLocation: getResp.MetadataLocation,
-		Metadata:         metadata,
-		Config:           s.buildFileIOConfig(r),
+		MetadataLocation:   getResp.MetadataLocation,
+		Metadata:           metadata,
+		Config:             config,
+		StorageCredentials: storageCredentials,
 	}, nil
 }
 
@@ -572,22 +579,84 @@ func (s *Server) buildLoadTableResult(r *http.Request, getResp s3tables.GetTable
 // separately discovering the endpoint. The region defaults to the same
 // value baked into table bucket ARNs so clients like DuckDB that require
 // a region on attach don't need to be told it out-of-band. See issue #9103.
-func (s *Server) buildFileIOConfig(r *http.Request) iceberg.Properties {
+func (s *Server) buildFileIOConfig(r *http.Request, location string) iceberg.Properties {
+	config, _ := s.buildStorageConfig(r, location)
+	return config
+}
+
+// buildStorageConfig returns the FileIO properties plus, for a client that
+// asked for credential vending, the credentials scoped to this table.
+func (s *Server) buildStorageConfig(r *http.Request, location string) (iceberg.Properties, []StorageCredential) {
 	config := make(iceberg.Properties)
 	if s.s3Endpoint == "" {
-		return config
+		return config, nil
 	}
-	// A client asking for vended credentials builds its storage credential out
-	// of whatever comes back here and stops using the one it was configured
-	// with. We vend none, so an endpoint on its own leaves it sending unsigned
-	// requests; say nothing instead and let it keep its own credentials.
+
+	vended := iceberg.Properties(nil)
 	if wantsVendedCredentials(r) {
-		return config
+		vended = s.vendCredentials(r, location)
+		// A client asking for vended credentials builds its storage credential
+		// out of whatever comes back here and stops using the one it was
+		// configured with. With nothing to vend, an endpoint on its own leaves
+		// it sending unsigned requests; say nothing instead and let it keep its
+		// own credentials.
+		if vended == nil {
+			return config, nil
+		}
 	}
+
 	config["s3.endpoint"] = s.s3Endpoint
 	config["s3.path-style-access"] = "true"
 	config["s3.region"] = s3tables.DefaultRegion
-	return config
+	if vended == nil {
+		return config, nil
+	}
+
+	credentialConfig := make(iceberg.Properties, len(config)+len(vended))
+	for key, value := range config {
+		credentialConfig[key] = value
+	}
+	for key, value := range vended {
+		config[key] = value
+		credentialConfig[key] = value
+	}
+	return config, []StorageCredential{{Prefix: location, Config: credentialConfig}}
+}
+
+// vendCredentials mints credentials limited to this table's prefix. It returns
+// nil when the deployment has no vending configured or the mint failed, which
+// leaves the caller withholding the endpoint so the client keeps its own
+// credentials rather than falling back to unsigned requests.
+func (s *Server) vendCredentials(r *http.Request, location string) iceberg.Properties {
+	if s.credentialVendor == nil || location == "" {
+		return nil
+	}
+
+	bucket, prefix, err := parseS3Location(location)
+	if err != nil {
+		glog.V(1).Infof("Iceberg: cannot vend credentials for %s: %v", location, err)
+		return nil
+	}
+
+	principal := s3_constants.GetIdentityNameFromContext(r)
+	credentials, err := s.credentialVendor.VendTableCredentials(r.Context(), principal, bucket, prefix)
+	if err != nil {
+		glog.Warningf("Iceberg: failed to vend credentials for %s: %v", location, err)
+		return nil
+	}
+	if credentials == nil {
+		return nil
+	}
+
+	vended := iceberg.Properties{
+		"s3.access-key-id":     credentials.AccessKeyID,
+		"s3.secret-access-key": credentials.SecretAccessKey,
+		"s3.session-token":     credentials.SessionToken,
+	}
+	if !credentials.Expiration.IsZero() {
+		vended["s3.session-token-expires-at-ms"] = strconv.FormatInt(credentials.Expiration.UnixMilli(), 10)
+	}
+	return vended
 }
 
 // handleTableExists checks if a table exists.

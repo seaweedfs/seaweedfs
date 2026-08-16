@@ -1,7 +1,9 @@
 package iceberg
 
 import (
+	"context"
 	"net/http"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -33,6 +35,21 @@ type CredentialValidator interface {
 	GetCredentialByAccessKey(accessKey string) (identityName string, identity interface{}, secretKey string, err error)
 }
 
+// VendedCredentials are short-lived S3 credentials scoped to one table.
+type VendedCredentials struct {
+	AccessKeyID     string
+	SecretAccessKey string
+	SessionToken    string
+	Expiration      time.Time
+}
+
+// CredentialVendor mints credentials limited to a single table's prefix for a
+// caller the catalog has already authenticated and authorized. A nil result
+// with no error means the deployment has vending switched off.
+type CredentialVendor interface {
+	VendTableCredentials(ctx context.Context, principal, bucket, prefix string) (*VendedCredentials, error)
+}
+
 // Server implements the Iceberg REST Catalog API.
 type Server struct {
 	filerClient         FilerClient
@@ -40,6 +57,7 @@ type Server struct {
 	prefix              string // optional prefix for routes
 	authenticator       S3Authenticator
 	credentialValidator CredentialValidator
+	credentialVendor    CredentialVendor
 	s3Endpoint          string // http(s):// URL advertised in LoadTable FileIO config
 }
 
@@ -59,6 +77,12 @@ func NewServer(filerClient FilerClient, authenticator S3Authenticator) *Server {
 		prefix:        "",
 		authenticator: authenticator,
 	}
+}
+
+// SetCredentialVendor enables credential vending for clients that ask for it
+// with X-Iceberg-Access-Delegation: vended-credentials.
+func (s *Server) SetCredentialVendor(vendor CredentialVendor) {
+	s.credentialVendor = vendor
 }
 
 // SetCredentialValidator sets the credential validator for OAuth token support.

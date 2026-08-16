@@ -754,12 +754,20 @@ func (s *STSService) AssumeRoleWithCredentials(ctx context.Context, request *Ass
 		return nil, fmt.Errorf("role assumption denied: %w", err)
 	}
 
-	// 4. Calculate session duration
-	// For credential-based auth, there's no source token with expiration to cap against
-	sessionDuration := s.calculateSessionDuration(request.DurationSeconds, nil)
+	// 4-7. Mint the session. For credential-based auth there is no source token
+	// with an expiration to cap the duration against.
+	return s.issueSession(request.RoleArn, request.RoleSessionName, sessionPolicy,
+		request.DurationSeconds, nil, provider.Name(), externalIdentity.UserID)
+}
+
+// issueSession mints temporary credentials and the self-contained JWT that
+// carries the whole session, shared by every assume-role entry point.
+func (s *STSService) issueSession(roleArn, roleSessionName, sessionPolicy string,
+	durationSeconds *int64, tokenExpiration *time.Time, providerName, subject string) (*AssumeRoleResponse, error) {
+
+	sessionDuration := s.calculateSessionDuration(durationSeconds, tokenExpiration)
 	expiresAt := time.Now().Add(sessionDuration)
 
-	// 5. Generate session ID and temporary credentials
 	sessionId, err := GenerateSessionId()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate session ID: %w", err)
@@ -771,36 +779,94 @@ func (s *STSService) AssumeRoleWithCredentials(ctx context.Context, request *Ass
 		return nil, fmt.Errorf("failed to generate credentials: %w", err)
 	}
 
-	// 6. Create comprehensive JWT session token with all session information embedded
 	assumedRoleUser := &AssumedRoleUser{
-		AssumedRoleId: request.RoleArn,
-		Arn:           GenerateAssumedRoleArn(request.RoleArn, request.RoleSessionName),
-		Subject:       externalIdentity.UserID,
+		AssumedRoleId: roleArn,
+		Arn:           GenerateAssumedRoleArn(roleArn, roleSessionName),
+		Subject:       subject,
 	}
 
-	// Create rich JWT claims with all session information
 	sessionClaims := NewSTSSessionClaims(sessionId, s.Config.Issuer, expiresAt).
-		WithSessionName(request.RoleSessionName).
-		WithRoleInfo(request.RoleArn, assumedRoleUser.Arn, assumedRoleUser.Arn).
-		WithIdentityProvider(provider.Name(), externalIdentity.UserID, "").
+		WithSessionName(roleSessionName).
+		WithRoleInfo(roleArn, assumedRoleUser.Arn, assumedRoleUser.Arn).
+		WithIdentityProvider(providerName, subject, "").
 		WithMaxDuration(sessionDuration)
 	if sessionPolicy != "" {
 		sessionClaims.WithSessionPolicy(sessionPolicy)
 	}
 
-	// Generate self-contained JWT token with all session information
 	jwtToken, err := s.tokenGenerator.GenerateJWTWithClaims(sessionClaims)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate JWT session token: %w", err)
 	}
 	tempCredentials.SessionToken = jwtToken
 
-	// 7. Build and return response (no session storage needed!)
-
 	return &AssumeRoleResponse{
 		Credentials:     tempCredentials,
 		AssumedRoleUser: assumedRoleUser,
 	}, nil
+}
+
+// AssumeRoleForPrincipalRequest asks for a session on behalf of a principal the
+// calling service has already authenticated.
+type AssumeRoleForPrincipalRequest struct {
+	// RoleArn is the ARN of the role to assume.
+	RoleArn string
+
+	// Principal identifies the already-authenticated caller.
+	Principal string
+
+	// RoleSessionName names the session.
+	RoleSessionName string
+
+	// ProviderName records how the caller was authenticated.
+	ProviderName string
+
+	// Policy optionally narrows the session below the role's own permissions.
+	Policy *string
+
+	// DurationSeconds requests a session lifetime.
+	DurationSeconds *int64
+}
+
+// AssumeRoleForPrincipal issues session credentials for a caller that a
+// SeaweedFS service authenticated itself, such as the Iceberg catalog vending
+// scoped credentials for a table it has already authorized. There is no
+// external token left to verify at this point, so the role's trust policy is
+// the control point and is still enforced.
+func (s *STSService) AssumeRoleForPrincipal(ctx context.Context, request *AssumeRoleForPrincipalRequest) (*AssumeRoleResponse, error) {
+	if !s.initialized {
+		return nil, fmt.Errorf(ErrSTSServiceNotInitialized)
+	}
+	if request == nil {
+		return nil, fmt.Errorf("request cannot be nil")
+	}
+	if request.RoleArn == "" {
+		return nil, fmt.Errorf("role ARN cannot be empty")
+	}
+	if request.Principal == "" {
+		return nil, fmt.Errorf("principal cannot be empty")
+	}
+
+	sessionPolicy := ""
+	if request.Policy != nil {
+		normalized, err := NormalizeSessionPolicy(*request.Policy)
+		if err != nil {
+			return nil, fmt.Errorf("invalid session policy: %w", err)
+		}
+		sessionPolicy = normalized
+	}
+
+	identity := &providers.ExternalIdentity{
+		UserID:      request.Principal,
+		DisplayName: request.Principal,
+		Provider:    request.ProviderName,
+	}
+	if err := s.validateRoleAssumptionForCredentials(ctx, request.RoleArn, identity); err != nil {
+		return nil, fmt.Errorf("role assumption denied: %w", err)
+	}
+
+	return s.issueSession(request.RoleArn, request.RoleSessionName, sessionPolicy,
+		request.DurationSeconds, nil, request.ProviderName, request.Principal)
 }
 
 // ValidateSessionToken validates a session token and returns session information

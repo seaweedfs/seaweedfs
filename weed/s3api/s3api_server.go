@@ -98,8 +98,12 @@ type S3ApiServer struct {
 	inFlightDataLimitCond *sync.Cond
 	embeddedIam           *EmbeddedIamApi // Embedded IAM API server (when enabled)
 	stsHandlers           *STSHandlers    // STS HTTP handlers for AssumeRoleWithWebIdentity
-	cipher                bool            // encrypt data on volume servers
-	newObjectWriteLock    func(bucket, object string) objectWriteLock
+	// icebergCredentialRole is the role the Iceberg catalog assumes to vend
+	// table-scoped credentials; empty leaves vending off.
+	icebergCredentialRole     string
+	icebergCredentialDuration int64
+	cipher                    bool // encrypt data on volume servers
+	newObjectWriteLock        func(bucket, object string) objectWriteLock
 	// objectWriteLockClient resolves a key's owner filer for route-by-key.
 	objectWriteLockClient *cluster.LockClient
 	// unreachableOwners holds owners (pb.ServerAddress -> expiry time.Time) whose
