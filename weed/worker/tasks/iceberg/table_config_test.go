@@ -388,7 +388,7 @@ func TestResolveCompactionRewritePlanAuto(t *testing.T) {
 	cfg := baseTestConfig()
 	cfg.RewriteStrategy = rewriteStrategyAuto
 
-	unsorted := buildTestMetadata(t, nil)
+	unsorted := buildTestMetadata(t, nil, nil, 0)
 	plan, err := resolveCompactionRewritePlan(cfg, unsorted)
 	if err != nil {
 		t.Fatalf("auto must not fail on an unsorted table: %v", err)
