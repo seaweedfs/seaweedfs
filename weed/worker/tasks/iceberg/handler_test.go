@@ -143,6 +143,29 @@ func TestNeedsMaintenanceExceedsMaxSnapshots(t *testing.T) {
 	}
 }
 
+// Every expirable snapshot is pinned by a tag, so a job could only no-op.
+func TestNeedsMaintenanceSkipsRefPinnedSnapshots(t *testing.T) {
+	config := Config{
+		SnapshotRetentionMs: hoursToMs(0),
+		MaxSnapshotsToKeep:  1,
+	}
+
+	now := time.Now().Add(-30 * time.Second).UnixMilli()
+	snapshots := []table.Snapshot{
+		{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro"},
+		{SnapshotID: 2, TimestampMs: now + 1, ManifestList: "metadata/snap-2.avro"},
+	}
+	refs := map[string]table.SnapshotRef{
+		"release": {SnapshotID: 1, SnapshotRefType: table.TagRef},
+	}
+	if needsMaintenance(buildTestMetadataWithRefs(t, snapshots, refs), config) {
+		t.Error("expected no maintenance when the only old snapshot is tagged")
+	}
+	if !needsMaintenance(buildTestMetadata(t, snapshots), config) {
+		t.Error("expected maintenance for the same table without the tag")
+	}
+}
+
 func TestNeedsMaintenanceWithinLimits(t *testing.T) {
 	config := Config{
 		SnapshotRetentionMs: hoursToMs(24 * 365), // very long retention
@@ -163,17 +186,34 @@ func TestNeedsMaintenanceOldSnapshot(t *testing.T) {
 	// Use a retention of 0 hours so that any snapshot is considered "old"
 	config := Config{
 		SnapshotRetentionMs: hoursToMs(0), // instant expiry
+		MaxSnapshotsToKeep:  1,
+	}
+
+	now := time.Now().Add(-30 * time.Second).UnixMilli()
+	snapshots := []table.Snapshot{
+		{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro"},
+		{SnapshotID: 2, TimestampMs: now + 1, ManifestList: "metadata/snap-2.avro"},
+	}
+	meta := buildTestMetadata(t, snapshots)
+	if !needsMaintenance(meta, config) {
+		t.Error("expected maintenance for table with expired snapshot")
+	}
+}
+
+// The current snapshot is never expirable, so a single-snapshot table has no
+// work no matter how far past retention it is.
+func TestNeedsMaintenanceSingleSnapshot(t *testing.T) {
+	config := Config{
+		SnapshotRetentionMs: hoursToMs(0),
 		MaxSnapshotsToKeep:  10,
 	}
 
-	now := time.Now().UnixMilli()
+	now := time.Now().Add(-30 * time.Second).UnixMilli()
 	snapshots := []table.Snapshot{
-		{SnapshotID: 1, TimestampMs: now - 1, ManifestList: "metadata/snap-1.avro"},
+		{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro"},
 	}
-	meta := buildTestMetadata(t, snapshots)
-	// With 0 retention, any snapshot with timestamp < now should need maintenance
-	if !needsMaintenance(meta, config) {
-		t.Error("expected maintenance for table with expired snapshot")
+	if needsMaintenance(buildTestMetadata(t, snapshots), config) {
+		t.Error("expected no maintenance for a table with only the current snapshot")
 	}
 }
 
@@ -1412,6 +1452,13 @@ func TestExecuteNilRequest(t *testing.T) {
 // When snapshots is nil or empty, the metadata has no snapshots.
 func buildTestMetadata(t *testing.T, snapshots []table.Snapshot) table.Metadata {
 	t.Helper()
+	return buildTestMetadataWithRefs(t, snapshots, nil)
+}
+
+// buildTestMetadataWithRefs is buildTestMetadata with named branches and tags
+// on top of the main branch, which always points at the last snapshot.
+func buildTestMetadataWithRefs(t *testing.T, snapshots []table.Snapshot, refs map[string]table.SnapshotRef) table.Metadata {
+	t.Helper()
 
 	schema := newTestSchema()
 	meta, err := table.NewMetadata(schema, iceberg.UnpartitionedSpec, table.UnsortedSortOrder, "s3://test-bucket/test-table", nil)
@@ -1439,6 +1486,27 @@ func buildTestMetadata(t *testing.T, snapshots []table.Snapshot) table.Metadata 
 
 	if err := builder.SetSnapshotRef(table.MainBranch, lastSnapID, table.BranchRef); err != nil {
 		t.Fatalf("failed to set snapshot ref: %v", err)
+	}
+
+	// The option type is unexported, so each combination is spelled out.
+	for name, ref := range refs {
+		var refErr error
+		switch {
+		case ref.MinSnapshotsToKeep != nil && ref.MaxSnapshotAgeMs != nil:
+			refErr = builder.SetSnapshotRef(name, ref.SnapshotID, ref.SnapshotRefType,
+				table.WithMinSnapshotsToKeep(*ref.MinSnapshotsToKeep), table.WithMaxSnapshotAgeMs(*ref.MaxSnapshotAgeMs))
+		case ref.MinSnapshotsToKeep != nil:
+			refErr = builder.SetSnapshotRef(name, ref.SnapshotID, ref.SnapshotRefType,
+				table.WithMinSnapshotsToKeep(*ref.MinSnapshotsToKeep))
+		case ref.MaxSnapshotAgeMs != nil:
+			refErr = builder.SetSnapshotRef(name, ref.SnapshotID, ref.SnapshotRefType,
+				table.WithMaxSnapshotAgeMs(*ref.MaxSnapshotAgeMs))
+		default:
+			refErr = builder.SetSnapshotRef(name, ref.SnapshotID, ref.SnapshotRefType)
+		}
+		if refErr != nil {
+			t.Fatalf("failed to set ref %s: %v", name, refErr)
+		}
 	}
 
 	result, err := builder.Build()

@@ -477,21 +477,27 @@ func needsMaintenance(meta table.Metadata, config Config) bool {
 		return false
 	}
 
-	// Check snapshot count
-	if int64(len(snapshots)) > config.MaxSnapshotsToKeep {
-		return true
+	nowMs := time.Now().UnixMilli()
+	// A ref or the table head pins its snapshot for good. Counting those as
+	// work would keep proposing a job that can only no-op.
+	pinned := protectedSnapshots(meta, nowMs)
+	if current := meta.CurrentSnapshot(); current != nil {
+		pinned[current.SnapshotID] = struct{}{}
 	}
 
-	// Check oldest snapshot age
 	retentionMs := config.SnapshotRetentionMs
-	nowMs := time.Now().UnixMilli()
+	expirable := 0
 	for _, snap := range snapshots {
+		if _, isPinned := pinned[snap.SnapshotID]; isPinned {
+			continue
+		}
+		expirable++
 		if nowMs-snap.TimestampMs > retentionMs {
 			return true
 		}
 	}
 
-	return false
+	return expirable > 0 && int64(len(snapshots)) > config.MaxSnapshotsToKeep
 }
 
 // buildMaintenanceProposal creates a JobProposal for a table needing maintenance.

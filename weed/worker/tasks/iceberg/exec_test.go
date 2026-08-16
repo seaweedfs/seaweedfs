@@ -287,6 +287,9 @@ type tableSetup struct {
 	// that created it would record the table's running totals.
 	SnapshotSummary map[string]string
 	Snapshots       []table.Snapshot
+	// Refs are branches and tags beyond main, which always points at the last
+	// snapshot.
+	Refs map[string]table.SnapshotRef
 }
 
 func (ts tableSetup) tablePath() string {
@@ -314,7 +317,7 @@ func (ts tableSetup) fileRef(elem ...string) string {
 func populateTable(t *testing.T, fs *fakeFilerServer, setup tableSetup) table.Metadata {
 	t.Helper()
 
-	meta := buildTestMetadata(t, setup.Snapshots)
+	meta := buildTestMetadataWithRefs(t, setup.Snapshots, setup.Refs)
 	fullMetadataJSON, err := json.Marshal(meta)
 	if err != nil {
 		t.Fatalf("marshal metadata: %v", err)
@@ -579,6 +582,127 @@ func TestExpireSnapshotsExecution(t *testing.T) {
 	fs.mu.Unlock()
 	if updates == 0 {
 		t.Error("expected at least one UpdateEntry call for xattr update")
+	}
+}
+
+func TestExpireSnapshotsKeepsTaggedSnapshot(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now().Add(-10 * time.Second).UnixMilli()
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "analytics",
+		TableName:  "events",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro"},
+			{SnapshotID: 2, TimestampMs: now + 1, ManifestList: "metadata/snap-2.avro"},
+			{SnapshotID: 3, TimestampMs: now + 2, ManifestList: "metadata/snap-3.avro"},
+		},
+		Refs: map[string]table.SnapshotRef{
+			"release": {SnapshotID: 1, SnapshotRefType: table.TagRef},
+		},
+	}
+	populateTable(t, fs, setup)
+
+	handler := NewHandler(nil)
+	config := Config{
+		SnapshotRetentionMs: hoursToMs(0),
+		MaxSnapshotsToKeep:  1,
+		MaxCommitRetries:    3,
+		Operations:          "expire_snapshots",
+	}
+
+	if _, _, err := handler.expireSnapshots(context.Background(), client, setup.BucketName, setup.tablePath(), config); err != nil {
+		t.Fatalf("expireSnapshots failed: %v", err)
+	}
+
+	state, err := loadCurrentMetadata(context.Background(), client, setup.BucketName, setup.tablePath())
+	if err != nil {
+		t.Fatalf("reload metadata: %v", err)
+	}
+
+	remaining := map[int64]bool{}
+	for _, snap := range state.Metadata.Snapshots() {
+		remaining[snap.SnapshotID] = true
+	}
+	if !remaining[1] {
+		t.Error("tagged snapshot 1 was expired")
+	}
+	if remaining[2] {
+		t.Error("expected untagged snapshot 2 to be expired")
+	}
+
+	var tagged bool
+	for name, ref := range state.Metadata.Refs() {
+		if name == "release" {
+			tagged = true
+			if ref.SnapshotID != 1 {
+				t.Errorf("tag release points at snapshot %d, want 1", ref.SnapshotID)
+			}
+		}
+	}
+	if !tagged {
+		t.Error("tag release was dropped from the metadata")
+	}
+
+	metaDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.dataPath(), "metadata")
+	if fs.getEntry(metaDir, "snap-1.avro") == nil {
+		t.Error("manifest list of the tagged snapshot was deleted")
+	}
+	if fs.getEntry(metaDir, "snap-2.avro") != nil {
+		t.Error("expected the expired snapshot's manifest list to be deleted")
+	}
+}
+
+func TestExpireSnapshotsHonorsBranchRetention(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now().Add(-10 * time.Second).UnixMilli()
+	parent := int64(1)
+	minKeep := 2
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "analytics",
+		TableName:  "events",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro", SequenceNumber: 1},
+			{SnapshotID: 2, TimestampMs: now + 1, ManifestList: "metadata/snap-2.avro", ParentSnapshotID: &parent, SequenceNumber: 2},
+			{SnapshotID: 3, TimestampMs: now + 2, ManifestList: "metadata/snap-3.avro", SequenceNumber: 3},
+		},
+		Refs: map[string]table.SnapshotRef{
+			"audit": {SnapshotID: 2, SnapshotRefType: table.BranchRef, MinSnapshotsToKeep: &minKeep},
+		},
+	}
+	populateTable(t, fs, setup)
+
+	handler := NewHandler(nil)
+	config := Config{
+		SnapshotRetentionMs: hoursToMs(0),
+		MaxSnapshotsToKeep:  1,
+		MaxCommitRetries:    3,
+		Operations:          "expire_snapshots",
+	}
+
+	if _, _, err := handler.expireSnapshots(context.Background(), client, setup.BucketName, setup.tablePath(), config); err != nil {
+		t.Fatalf("expireSnapshots failed: %v", err)
+	}
+
+	state, err := loadCurrentMetadata(context.Background(), client, setup.BucketName, setup.tablePath())
+	if err != nil {
+		t.Fatalf("reload metadata: %v", err)
+	}
+	// min-snapshots-to-keep=2 on the branch head reaches back to its parent.
+	for _, want := range []int64{1, 2, 3} {
+		found := false
+		for _, snap := range state.Metadata.Snapshots() {
+			if snap.SnapshotID == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("snapshot %d was expired despite branch retention", want)
+		}
 	}
 }
 
