@@ -102,6 +102,9 @@ func TestStageCommitMetadataFallsBackToAUniqueName(t *testing.T) {
 	if stored != `{"orphan":true}` {
 		t.Errorf("the first file was overwritten: %s", stored)
 	}
+	if fallback := string(client.entries[path.Join(metadataDirPath("bkt", "ns/tbl"), name)]); fallback != `{"second":true}` {
+		t.Errorf("fallback file holds %s, want the second writer's metadata", fallback)
+	}
 }
 
 // Paths that legitimately rewrite a file, such as manifest repair, keep the

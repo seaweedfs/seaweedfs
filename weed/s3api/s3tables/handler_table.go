@@ -1576,6 +1576,7 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 	// Load existing metadata and policies for authorization
 	var metadata tableMetadataInternal
 	var storedMetadata []byte
+	var storedPolicy []byte
 	var tablePolicy string
 	var bucketPolicy string
 	var bucketTags map[string]string
@@ -1597,6 +1598,7 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 		policyData, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyPolicy)
 		if err == nil {
 			tablePolicy = string(policyData)
+			storedPolicy = policyData
 		} else if !errors.Is(err, ErrAttributeNotFound) {
 			return fmt.Errorf("failed to fetch table policy: %w", err)
 		}
@@ -1714,11 +1716,19 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 	// snapshot. mutateEntryExtended retries on a changed entry, so the check
 	// lives in the mutation, where it sees the value that is current now.
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return h.updateExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata, func(current []byte) ([]byte, error) {
-			if !bytes.Equal(current, storedMetadata) {
-				return nil, fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyMetadata)
+		return h.mutateEntryExtended(r.Context(), client, tablePath, func(extended map[string][]byte) error {
+			if !bytes.Equal(extended[ExtendedKeyMetadata], storedMetadata) {
+				return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyMetadata)
 			}
-			return metadataBytes, nil
+			// The policy this request was authorized against must still be the
+			// one in force: an administrator restricting it mid-commit should
+			// send the caller back through authorization, not have its decision
+			// applied afterwards.
+			if !bytes.Equal(extended[ExtendedKeyPolicy], storedPolicy) {
+				return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyPolicy)
+			}
+			extended[ExtendedKeyMetadata] = metadataBytes
+			return nil
 		})
 	})
 

@@ -56,9 +56,11 @@ func TestUpdateTableRejectsLostUpdate(t *testing.T) {
 	assert.Equal(t, winnerLocation, got.MetadataLocation, "the first commit must survive")
 }
 
-// The write replaces the whole entry, so a policy landing in the same window
-// must not be reverted by the commit's stale copy of it.
-func TestUpdateTableRejectsWhenAnotherAttributeChanges(t *testing.T) {
+// A policy written between the authorization check and the write decides
+// whether this caller may still commit, so the commit is rejected rather than
+// applied on a decision that has been overtaken - and the policy itself must
+// survive, not be reverted by the commit's stale copy of the entry.
+func TestUpdateTableRejectsWhenTheAuthorizingPolicyChanges(t *testing.T) {
 	fs, m := startRenameManager(t)
 
 	policy := []byte(`{"Version":"2012-10-17","Statement":[]}`)
@@ -68,8 +70,9 @@ func TestUpdateTableRejectsWhenAnotherAttributeChanges(t *testing.T) {
 		entry.Extended[ExtendedKeyPolicy] = policy
 	}
 
+	location := "s3://" + renameTestBucket + "/ns/t/metadata/v4.metadata.json"
 	err := m.Execute(context.Background(), NewManagerClient(fs.client), "UpdateTable",
-		updateTableRequest(t, "s3://"+renameTestBucket+"/ns/t/metadata/v4.metadata.json", 4), nil, "")
+		updateTableRequest(t, location, 4), nil, "")
 
 	require.Error(t, err)
 	var s3Err *S3TablesError
