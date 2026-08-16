@@ -63,43 +63,15 @@ func (h *S3TablesHandler) deleteEntryIfExists(ctx context.Context, client filer_
 	return filer_pb.DoRemove(ctx, client, dir, name, true, false, true, false, nil)
 }
 
-// setExtendedAttribute sets an extended attribute on an existing entry
-func (h *S3TablesHandler) setExtendedAttribute(ctx context.Context, client filer_pb.SeaweedFilerClient, path, key string, data []byte) error {
-	dir, name := splitPath(path)
-
-	// First, get the existing entry
-	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
-		Directory: dir,
-		Name:      name,
-	})
-	if err != nil {
-		return err
-	}
-
-	entry := resp.Entry
-
-	// Update the extended attributes
-	if entry.Extended == nil {
-		entry.Extended = make(map[string][]byte)
-	}
-	entry.Extended[key] = data
-
-	// Save the updated entry
-	return filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
-		Directory: dir,
-		Entry:     entry,
-	})
-}
-
-// updateExtendedAttribute applies mutate to the current value of key and writes
-// the result back, asserting that no attribute on the entry changed in between.
-// UpdateEntry rewrites the whole entry from the snapshot we read, so asserting
-// only our own key would let this write silently revert someone else's.
-func (h *S3TablesHandler) updateExtendedAttribute(
+// mutateEntryExtended applies mutate to an entry's extended attributes and
+// writes the entry back, asserting that nothing on it changed in between.
+// UpdateEntry rewrites the whole entry from the snapshot read here, so an
+// unconditional write would delete an attribute a concurrent writer created.
+func (h *S3TablesHandler) mutateEntryExtended(
 	ctx context.Context,
 	client filer_pb.SeaweedFilerClient,
-	path, key string,
-	mutate func(current []byte) ([]byte, error),
+	path string,
+	mutate func(extended map[string][]byte) error,
 ) error {
 	dir, name := splitPath(path)
 
@@ -113,17 +85,13 @@ func (h *S3TablesHandler) updateExtendedAttribute(
 		}
 
 		entry := resp.Entry
-		current := entry.Extended[key]
-		expected := snapshotExtended(entry.Extended, key)
-
-		updated, err := mutate(current)
-		if err != nil {
-			return err
-		}
+		expected := snapshotExtended(entry.Extended)
 		if entry.Extended == nil {
 			entry.Extended = make(map[string][]byte)
 		}
-		entry.Extended[key] = updated
+		if err := mutate(entry.Extended); err != nil {
+			return err
+		}
 
 		_, err = client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{
 			Directory:        dir,
@@ -138,7 +106,56 @@ func (h *S3TablesHandler) updateExtendedAttribute(
 		}
 	}
 
-	return fmt.Errorf("%w: %s", ErrConcurrentUpdate, key)
+	return fmt.Errorf("%w: %s", ErrConcurrentUpdate, path)
+}
+
+// setExtendedAttribute sets an extended attribute on an existing entry
+func (h *S3TablesHandler) setExtendedAttribute(ctx context.Context, client filer_pb.SeaweedFilerClient, path, key string, data []byte) error {
+	return h.mutateEntryExtended(ctx, client, path, func(extended map[string][]byte) error {
+		extended[key] = data
+		return nil
+	})
+}
+
+// setExtendedAttributes sets multiple extended attributes on an existing entry
+// in a single UpdateEntry, so callers don't leave the entry partially tagged.
+func (h *S3TablesHandler) setExtendedAttributes(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, attrs map[string][]byte) error {
+	return h.mutateEntryExtended(ctx, client, path, func(extended map[string][]byte) error {
+		for key, data := range attrs {
+			extended[key] = data
+		}
+		return nil
+	})
+}
+
+// removeExtendedAttributes deletes the given extended attributes from an entry,
+// leaving the directory and its children intact.
+func (h *S3TablesHandler) removeExtendedAttributes(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, keys ...string) error {
+	return h.mutateEntryExtended(ctx, client, path, func(extended map[string][]byte) error {
+		for _, key := range keys {
+			delete(extended, key)
+		}
+		return nil
+	})
+}
+
+// updateExtendedAttribute applies mutate to the current value of key and writes
+// the result back. mutate runs again on each retry, so it always sees the
+// current value.
+func (h *S3TablesHandler) updateExtendedAttribute(
+	ctx context.Context,
+	client filer_pb.SeaweedFilerClient,
+	path, key string,
+	mutate func(current []byte) ([]byte, error),
+) error {
+	return h.mutateEntryExtended(ctx, client, path, func(extended map[string][]byte) error {
+		updated, err := mutate(extended[key])
+		if err != nil {
+			return err
+		}
+		extended[key] = updated
+		return nil
+	})
 }
 
 // s3tablesExtendedKeys is every attribute this package stores on a bucket or
@@ -182,59 +199,6 @@ func snapshotExtended(extended map[string][]byte, keys ...string) map[string][]b
 	return expected
 }
 
-// removeExtendedAttributes deletes the given extended attributes from an entry,
-// leaving the directory and its children intact.
-func (h *S3TablesHandler) removeExtendedAttributes(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, keys ...string) error {
-	dir, name := splitPath(path)
-
-	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
-		Directory: dir,
-		Name:      name,
-	})
-	if err != nil {
-		return err
-	}
-
-	entry := resp.Entry
-	if entry.Extended != nil {
-		for _, key := range keys {
-			delete(entry.Extended, key)
-		}
-	}
-
-	return filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
-		Directory: dir,
-		Entry:     entry,
-	})
-}
-
-// setExtendedAttributes sets multiple extended attributes on an existing entry
-// in a single UpdateEntry, so callers don't leave the entry partially tagged.
-func (h *S3TablesHandler) setExtendedAttributes(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, attrs map[string][]byte) error {
-	dir, name := splitPath(path)
-
-	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
-		Directory: dir,
-		Name:      name,
-	})
-	if err != nil {
-		return err
-	}
-
-	entry := resp.Entry
-	if entry.Extended == nil {
-		entry.Extended = make(map[string][]byte)
-	}
-	for key, data := range attrs {
-		entry.Extended[key] = data
-	}
-
-	return filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
-		Directory: dir,
-		Entry:     entry,
-	})
-}
-
 // getExtendedAttribute gets an extended attribute from an entry
 func (h *S3TablesHandler) getExtendedAttribute(ctx context.Context, client filer_pb.SeaweedFilerClient, path, key string) ([]byte, error) {
 	dir, name := splitPath(path)
@@ -273,28 +237,9 @@ func (h *S3TablesHandler) lookupEntry(ctx context.Context, client filer_pb.Seawe
 
 // deleteExtendedAttribute deletes an extended attribute from an entry
 func (h *S3TablesHandler) deleteExtendedAttribute(ctx context.Context, client filer_pb.SeaweedFilerClient, path, key string) error {
-	dir, name := splitPath(path)
-
-	// Get the existing entry
-	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
-		Directory: dir,
-		Name:      name,
-	})
-	if err != nil {
-		return err
-	}
-
-	entry := resp.Entry
-
-	// Remove the extended attribute
-	if entry.Extended != nil {
-		delete(entry.Extended, key)
-	}
-
-	// Save the updated entry
-	return filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
-		Directory: dir,
-		Entry:     entry,
+	return h.mutateEntryExtended(ctx, client, path, func(extended map[string][]byte) error {
+		delete(extended, key)
+		return nil
 	})
 }
 
