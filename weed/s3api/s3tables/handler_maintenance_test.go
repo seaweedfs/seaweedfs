@@ -5,10 +5,12 @@ import (
 	"testing"
 )
 
+func settingPtr(v int64) *int64 { return &v }
+
 func TestValidateMaintenanceValueAcceptsScopedTypes(t *testing.T) {
 	err := validateMaintenanceValue(MaintenanceTypeIcebergCompaction, tableMaintenanceTypes, &MaintenanceConfigurationValue{
 		Status:   MaintenanceStatusEnabled,
-		Settings: &MaintenanceSettings{IcebergCompaction: &IcebergCompactionSettings{TargetFileSizeMB: 512}},
+		Settings: &MaintenanceSettings{IcebergCompaction: &IcebergCompactionSettings{TargetFileSizeMB: settingPtr(512)}},
 	})
 	if err != nil {
 		t.Errorf("expected compaction accepted on a table, got %v", err)
@@ -48,7 +50,7 @@ func TestValidateMaintenanceValueRejectsBadInput(t *testing.T) {
 		"bad status":   {MaintenanceTypeIcebergCompaction, &MaintenanceConfigurationValue{Status: "Enabled"}},
 		"settings for another type": {MaintenanceTypeIcebergCompaction, &MaintenanceConfigurationValue{
 			Status:   MaintenanceStatusEnabled,
-			Settings: &MaintenanceSettings{IcebergSnapshotManagement: &IcebergSnapshotManagementSettings{MinSnapshotsToKeep: 3}},
+			Settings: &MaintenanceSettings{IcebergSnapshotManagement: &IcebergSnapshotManagementSettings{MinSnapshotsToKeep: settingPtr(3)}},
 		}},
 	}
 
@@ -66,13 +68,13 @@ func TestMaintenanceConfigurationRoundTrip(t *testing.T) {
 	original := MaintenanceConfiguration{
 		MaintenanceTypeIcebergCompaction: {
 			Status:   MaintenanceStatusEnabled,
-			Settings: &MaintenanceSettings{IcebergCompaction: &IcebergCompactionSettings{TargetFileSizeMB: 512}},
+			Settings: &MaintenanceSettings{IcebergCompaction: &IcebergCompactionSettings{TargetFileSizeMB: settingPtr(512)}},
 		},
 		MaintenanceTypeIcebergSnapshotManagement: {
 			Status: MaintenanceStatusDisabled,
 			Settings: &MaintenanceSettings{IcebergSnapshotManagement: &IcebergSnapshotManagementSettings{
-				MinSnapshotsToKeep:  3,
-				MaxSnapshotAgeHours: 120,
+				MinSnapshotsToKeep:  settingPtr(3),
+				MaxSnapshotAgeHours: settingPtr(120),
 			}},
 		},
 	}
@@ -91,16 +93,16 @@ func TestMaintenanceConfigurationRoundTrip(t *testing.T) {
 	if compaction == nil || compaction.Settings == nil || compaction.Settings.IcebergCompaction == nil {
 		t.Fatalf("expected compaction settings, got %s", data)
 	}
-	if compaction.Settings.IcebergCompaction.TargetFileSizeMB != 512 {
-		t.Errorf("expected targetFileSizeMB=512, got %d", compaction.Settings.IcebergCompaction.TargetFileSizeMB)
+	if got := compaction.Settings.IcebergCompaction.TargetFileSizeMB; got == nil || *got != 512 {
+		t.Errorf("expected targetFileSizeMB=512, got %v", got)
 	}
 
 	snapshots := decoded[MaintenanceTypeIcebergSnapshotManagement]
 	if snapshots == nil || snapshots.Status != MaintenanceStatusDisabled {
 		t.Fatalf("expected snapshot management disabled, got %s", data)
 	}
-	if snapshots.Settings.IcebergSnapshotManagement.MaxSnapshotAgeHours != 120 {
-		t.Errorf("expected maxSnapshotAgeHours=120, got %d", snapshots.Settings.IcebergSnapshotManagement.MaxSnapshotAgeHours)
+	if got := snapshots.Settings.IcebergSnapshotManagement.MaxSnapshotAgeHours; got == nil || *got != 120 {
+		t.Errorf("expected maxSnapshotAgeHours=120, got %v", got)
 	}
 }
 
@@ -217,7 +219,7 @@ func TestMaintenanceConfigurationPreservesStrategy(t *testing.T) {
 	data, err := json.Marshal(MaintenanceConfiguration{
 		MaintenanceTypeIcebergCompaction: {
 			Status:   MaintenanceStatusEnabled,
-			Settings: &MaintenanceSettings{IcebergCompaction: &IcebergCompactionSettings{Strategy: CompactionStrategySort, TargetFileSizeMB: 512}},
+			Settings: &MaintenanceSettings{IcebergCompaction: &IcebergCompactionSettings{Strategy: CompactionStrategySort, TargetFileSizeMB: settingPtr(512)}},
 		},
 	})
 	if err != nil {
@@ -321,5 +323,68 @@ func TestSnapshotExtendedAssertsAbsentMaintenanceKey(t *testing.T) {
 	}
 	if len(value) != 0 {
 		t.Errorf("expected an absent assertion, got %v", value)
+	}
+}
+
+// AWS bounds every numeric setting to 1..2147483647. Accepting anything else
+// would store a value the worker ignores or saturates, so the configuration
+// read back would not be the one that runs.
+func TestValidateMaintenanceSettingRange(t *testing.T) {
+	compaction := func(v *int64) error {
+		return validateMaintenanceValue(MaintenanceTypeIcebergCompaction, tableMaintenanceTypes, &MaintenanceConfigurationValue{
+			Status:   MaintenanceStatusEnabled,
+			Settings: &MaintenanceSettings{IcebergCompaction: &IcebergCompactionSettings{TargetFileSizeMB: v}},
+		})
+	}
+
+	if err := compaction(nil); err != nil {
+		t.Errorf("expected an unset setting accepted, got %v", err)
+	}
+	for _, v := range []int64{1, 512, maintenanceSettingMax} {
+		if err := compaction(settingPtr(v)); err != nil {
+			t.Errorf("expected %d accepted, got %v", v, err)
+		}
+	}
+	for _, v := range []int64{0, -1, maintenanceSettingMax + 1, 1 << 62} {
+		if err := compaction(settingPtr(v)); err == nil {
+			t.Errorf("expected %d rejected", v)
+		}
+	}
+}
+
+func TestValidateMaintenanceSettingRangeCoversEveryField(t *testing.T) {
+	cases := map[string]*MaintenanceSettings{
+		"minSnapshotsToKeep":  {IcebergSnapshotManagement: &IcebergSnapshotManagementSettings{MinSnapshotsToKeep: settingPtr(0)}},
+		"maxSnapshotAgeHours": {IcebergSnapshotManagement: &IcebergSnapshotManagementSettings{MaxSnapshotAgeHours: settingPtr(-5)}},
+		"unreferencedDays":    {IcebergUnreferencedFileRemoval: &IcebergUnreferencedFileRemovalSettings{UnreferencedDays: settingPtr(maintenanceSettingMax + 1)}},
+		"nonCurrentDays":      {IcebergUnreferencedFileRemoval: &IcebergUnreferencedFileRemovalSettings{NonCurrentDays: settingPtr(0)}},
+	}
+
+	for name, settings := range cases {
+		t.Run(name, func(t *testing.T) {
+			if err := validateMaintenanceSettings(settings); err == nil {
+				t.Errorf("expected %s out of range to be rejected", name)
+			}
+		})
+	}
+}
+
+// An explicit zero has to be distinguishable from an omitted field, or it is
+// silently accepted and then ignored.
+func TestMaintenanceSettingsDistinguishZeroFromUnset(t *testing.T) {
+	var decoded MaintenanceSettings
+	if err := json.Unmarshal([]byte(`{"icebergCompaction":{"targetFileSizeMB":0}}`), &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if decoded.IcebergCompaction.TargetFileSizeMB == nil {
+		t.Fatal("expected an explicit zero to survive decoding")
+	}
+
+	var omitted MaintenanceSettings
+	if err := json.Unmarshal([]byte(`{"icebergCompaction":{}}`), &omitted); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if omitted.IcebergCompaction.TargetFileSizeMB != nil {
+		t.Error("expected an omitted field to stay unset")
 	}
 }

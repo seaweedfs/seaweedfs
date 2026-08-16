@@ -407,7 +407,7 @@ const (
 
 type IcebergCompactionSettings struct {
 	Strategy         string `json:"strategy,omitempty"`
-	TargetFileSizeMB int64  `json:"targetFileSizeMB,omitempty"`
+	TargetFileSizeMB *int64 `json:"targetFileSizeMB,omitempty"`
 }
 
 // Compaction strategies. AWS also defines z-order, which the maintenance
@@ -420,13 +420,13 @@ const (
 )
 
 type IcebergSnapshotManagementSettings struct {
-	MinSnapshotsToKeep  int64 `json:"minSnapshotsToKeep,omitempty"`
-	MaxSnapshotAgeHours int64 `json:"maxSnapshotAgeHours,omitempty"`
+	MinSnapshotsToKeep  *int64 `json:"minSnapshotsToKeep,omitempty"`
+	MaxSnapshotAgeHours *int64 `json:"maxSnapshotAgeHours,omitempty"`
 }
 
 type IcebergUnreferencedFileRemovalSettings struct {
-	UnreferencedDays int64 `json:"unreferencedDays,omitempty"`
-	NonCurrentDays   int64 `json:"nonCurrentDays,omitempty"`
+	UnreferencedDays *int64 `json:"unreferencedDays,omitempty"`
+	NonCurrentDays   *int64 `json:"nonCurrentDays,omitempty"`
 }
 
 type MaintenanceSettings struct {

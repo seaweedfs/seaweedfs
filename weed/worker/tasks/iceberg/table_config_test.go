@@ -10,6 +10,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
+func settingPtr(v int64) *int64 { return &v }
+
 func baseTestConfig() Config {
 	return applyThresholdDefaults(Config{
 		SnapshotRetentionMs:     hoursToMs(defaultSnapshotRetentionHours),
@@ -125,13 +127,13 @@ func TestResolveTableConfigAppliesMaintenanceConfig(t *testing.T) {
 	got := resolveTableConfig(baseTestConfig(), nil, maintenanceConfig(map[string]*s3tables.MaintenanceConfigurationValue{
 		s3tables.MaintenanceTypeIcebergCompaction: {
 			Status:   s3tables.MaintenanceStatusEnabled,
-			Settings: &s3tables.MaintenanceSettings{IcebergCompaction: &s3tables.IcebergCompactionSettings{TargetFileSizeMB: 512}},
+			Settings: &s3tables.MaintenanceSettings{IcebergCompaction: &s3tables.IcebergCompactionSettings{TargetFileSizeMB: settingPtr(512)}},
 		},
 		s3tables.MaintenanceTypeIcebergSnapshotManagement: {
 			Status: s3tables.MaintenanceStatusEnabled,
 			Settings: &s3tables.MaintenanceSettings{IcebergSnapshotManagement: &s3tables.IcebergSnapshotManagementSettings{
-				MinSnapshotsToKeep:  2,
-				MaxSnapshotAgeHours: 120,
+				MinSnapshotsToKeep:  settingPtr(2),
+				MaxSnapshotAgeHours: settingPtr(120),
 			}},
 		},
 	}))
@@ -153,7 +155,7 @@ func TestResolveTableConfigPropertyBeatsMaintenanceConfig(t *testing.T) {
 	maintenance := maintenanceConfig(map[string]*s3tables.MaintenanceConfigurationValue{
 		s3tables.MaintenanceTypeIcebergCompaction: {
 			Status:   s3tables.MaintenanceStatusEnabled,
-			Settings: &s3tables.MaintenanceSettings{IcebergCompaction: &s3tables.IcebergCompactionSettings{TargetFileSizeMB: 128}},
+			Settings: &s3tables.MaintenanceSettings{IcebergCompaction: &s3tables.IcebergCompactionSettings{TargetFileSizeMB: settingPtr(128)}},
 		},
 	})
 	props := iceberg.Properties{propTargetFileSize: "536870912"}
@@ -177,7 +179,7 @@ func TestResolveTableConfigIgnoresDisabledSettings(t *testing.T) {
 	got := resolveTableConfig(base, nil, maintenanceConfig(map[string]*s3tables.MaintenanceConfigurationValue{
 		s3tables.MaintenanceTypeIcebergCompaction: {
 			Status:   s3tables.MaintenanceStatusDisabled,
-			Settings: &s3tables.MaintenanceSettings{IcebergCompaction: &s3tables.IcebergCompactionSettings{TargetFileSizeMB: 512}},
+			Settings: &s3tables.MaintenanceSettings{IcebergCompaction: &s3tables.IcebergCompactionSettings{TargetFileSizeMB: settingPtr(512)}},
 		},
 	}))
 
@@ -262,7 +264,7 @@ func TestResolveTableConfigClampsUnreferencedDays(t *testing.T) {
 		s3tables.MaintenanceTypeIcebergUnreferencedFileRemoval: {
 			Status: s3tables.MaintenanceStatusEnabled,
 			Settings: &s3tables.MaintenanceSettings{
-				IcebergUnreferencedFileRemoval: &s3tables.IcebergUnreferencedFileRemovalSettings{UnreferencedDays: math.MaxInt64},
+				IcebergUnreferencedFileRemoval: &s3tables.IcebergUnreferencedFileRemovalSettings{UnreferencedDays: settingPtr(math.MaxInt64)},
 			},
 		},
 	}))
@@ -278,7 +280,7 @@ func TestResolveTableConfigClampsUnreferencedDays(t *testing.T) {
 		s3tables.MaintenanceTypeIcebergUnreferencedFileRemoval: {
 			Status: s3tables.MaintenanceStatusEnabled,
 			Settings: &s3tables.MaintenanceSettings{
-				IcebergUnreferencedFileRemoval: &s3tables.IcebergUnreferencedFileRemovalSettings{UnreferencedDays: 3},
+				IcebergUnreferencedFileRemoval: &s3tables.IcebergUnreferencedFileRemovalSettings{UnreferencedDays: settingPtr(3)},
 			},
 		},
 	}))
@@ -296,8 +298,8 @@ func TestResolveTableConfigAddsNonCurrentWindow(t *testing.T) {
 				Status: s3tables.MaintenanceStatusEnabled,
 				Settings: &s3tables.MaintenanceSettings{
 					IcebergUnreferencedFileRemoval: &s3tables.IcebergUnreferencedFileRemovalSettings{
-						UnreferencedDays: unreferenced,
-						NonCurrentDays:   nonCurrent,
+						UnreferencedDays: settingPtr(unreferenced),
+						NonCurrentDays:   settingPtr(nonCurrent),
 					},
 				},
 			},

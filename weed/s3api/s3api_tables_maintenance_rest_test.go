@@ -89,8 +89,8 @@ func TestBuildPutTableMaintenanceConfigurationRequest(t *testing.T) {
 	if got.Value == nil || got.Value.Settings == nil || got.Value.Settings.IcebergCompaction == nil {
 		t.Fatalf("expected the body value decoded, got %+v", got.Value)
 	}
-	if got.Value.Settings.IcebergCompaction.TargetFileSizeMB != 512 {
-		t.Errorf("expected targetFileSizeMB=512, got %d", got.Value.Settings.IcebergCompaction.TargetFileSizeMB)
+	if size := got.Value.Settings.IcebergCompaction.TargetFileSizeMB; size == nil || *size != 512 {
+		t.Errorf("expected targetFileSizeMB=512, got %v", size)
 	}
 }
 

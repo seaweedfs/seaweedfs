@@ -61,8 +61,8 @@ func applyTableProperties(cfg Config, props iceberg.Properties) Config {
 
 func applyMaintenanceConfig(cfg Config, maintenance s3tables.MaintenanceConfiguration) Config {
 	if s := compactionSettings(maintenance); s != nil {
-		if s.TargetFileSizeMB > 0 {
-			cfg.TargetFileSizeBytes = mbToBytes(s.TargetFileSizeMB)
+		if v := settingValue(s.TargetFileSizeMB); v > 0 {
+			cfg.TargetFileSizeBytes = mbToBytes(v)
 		}
 		switch s.Strategy {
 		case s3tables.CompactionStrategyBinpack, s3tables.CompactionStrategySort, s3tables.CompactionStrategyAuto:
@@ -70,22 +70,31 @@ func applyMaintenanceConfig(cfg Config, maintenance s3tables.MaintenanceConfigur
 		}
 	}
 	if s := snapshotSettings(maintenance); s != nil {
-		if s.MaxSnapshotAgeHours > 0 {
-			cfg.SnapshotRetentionMs = hoursToMs(s.MaxSnapshotAgeHours)
+		if v := settingValue(s.MaxSnapshotAgeHours); v > 0 {
+			cfg.SnapshotRetentionMs = hoursToMs(v)
 		}
-		if s.MinSnapshotsToKeep > 0 {
-			cfg.MaxSnapshotsToKeep = s.MinSnapshotsToKeep
+		if v := settingValue(s.MinSnapshotsToKeep); v > 0 {
+			cfg.MaxSnapshotsToKeep = v
 		}
 	}
 	// AWS marks a file non-current after unreferencedDays and deletes it a
 	// further nonCurrentDays later. remove_orphans deletes in one step, so the
 	// cutoff has to be the sum or the recovery window disappears.
 	if s := orphanSettings(maintenance); s != nil {
-		if days := addDays(s.UnreferencedDays, s.NonCurrentDays); days > 0 {
+		if days := addDays(settingValue(s.UnreferencedDays), settingValue(s.NonCurrentDays)); days > 0 {
 			cfg.OrphanOlderThanHours = daysToHours(days)
 		}
 	}
 	return cfg
+}
+
+// settingValue reads an optional maintenance setting, treating unset and
+// nonsensical values alike so the worker keeps its own configuration.
+func settingValue(v *int64) int64 {
+	if v == nil || *v < 0 {
+		return 0
+	}
+	return *v
 }
 
 func compactionSettings(maintenance s3tables.MaintenanceConfiguration) *s3tables.IcebergCompactionSettings {

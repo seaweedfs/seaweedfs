@@ -437,10 +437,55 @@ func validateMaintenanceValue(maintenanceType string, allowed map[string]bool, v
 	if value.Settings != nil && !settingsMatchType(maintenanceType, value.Settings) {
 		return fmt.Errorf("value.settings must only contain %s", maintenanceType)
 	}
-	if value.Settings != nil && value.Settings.IcebergCompaction != nil {
-		if err := validateCompactionStrategy(value.Settings.IcebergCompaction.Strategy); err != nil {
+	return validateMaintenanceSettings(value.Settings)
+}
+
+// AWS bounds every maintenance setting to a positive 32-bit value. Accepting
+// anything else would store a number the worker then ignores or saturates, so
+// the configuration read back would not be the one that runs.
+const (
+	maintenanceSettingMin int64 = 1
+	maintenanceSettingMax int64 = 2147483647
+)
+
+func validateMaintenanceSettings(settings *MaintenanceSettings) error {
+	if settings == nil {
+		return nil
+	}
+
+	if c := settings.IcebergCompaction; c != nil {
+		if err := validateCompactionStrategy(c.Strategy); err != nil {
 			return err
 		}
+		if err := validateMaintenanceSetting("targetFileSizeMB", c.TargetFileSizeMB); err != nil {
+			return err
+		}
+	}
+	if m := settings.IcebergSnapshotManagement; m != nil {
+		if err := validateMaintenanceSetting("minSnapshotsToKeep", m.MinSnapshotsToKeep); err != nil {
+			return err
+		}
+		if err := validateMaintenanceSetting("maxSnapshotAgeHours", m.MaxSnapshotAgeHours); err != nil {
+			return err
+		}
+	}
+	if u := settings.IcebergUnreferencedFileRemoval; u != nil {
+		if err := validateMaintenanceSetting("unreferencedDays", u.UnreferencedDays); err != nil {
+			return err
+		}
+		if err := validateMaintenanceSetting("nonCurrentDays", u.NonCurrentDays); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateMaintenanceSetting(name string, value *int64) error {
+	if value == nil {
+		return nil
+	}
+	if *value < maintenanceSettingMin || *value > maintenanceSettingMax {
+		return fmt.Errorf("%s must be between %d and %d, got %d", name, maintenanceSettingMin, maintenanceSettingMax, *value)
 	}
 	return nil
 }
