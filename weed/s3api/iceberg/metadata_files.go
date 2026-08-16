@@ -27,8 +27,21 @@ func (s *Server) saveMetadataFile(ctx context.Context, bucketName, tablePath, me
 	return s.saveMetadataBlob(ctx, bucketName, tablePath, metadataFileName, content, "application/json")
 }
 
+// saveNewMetadataFile writes the metadata file of a new table version and
+// fails with filer_pb.ErrEntryAlreadyExists if that version is already on
+// disk. Two commits racing off the same base pick the same v{N} file name, and
+// letting the second overwrite the first would leave the winner's catalog
+// pointer aimed at the loser's metadata.
+func (s *Server) saveNewMetadataFile(ctx context.Context, bucketName, tablePath, metadataFileName string, content []byte) error {
+	return s.saveMetadataBlobExclusive(ctx, bucketName, tablePath, metadataFileName, content, "application/json", true)
+}
+
 // saveMetadataBlob saves a file into the table's metadata directory.
 func (s *Server) saveMetadataBlob(ctx context.Context, bucketName, tablePath, metadataFileName string, content []byte, mimeType string) error {
+	return s.saveMetadataBlobExclusive(ctx, bucketName, tablePath, metadataFileName, content, mimeType, false)
+}
+
+func (s *Server) saveMetadataBlobExclusive(ctx context.Context, bucketName, tablePath, metadataFileName string, content []byte, mimeType string, exclusive bool) error {
 
 	// Create context with timeout for file operations
 	opCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -101,6 +114,7 @@ func (s *Server) saveMetadataBlob(ctx context.Context, bucketName, tablePath, me
 		// 4. Write the file
 		resp, err := client.CreateEntry(opCtx, &filer_pb.CreateEntryRequest{
 			Directory: metadataDir,
+			OExcl:     exclusive,
 			Entry: &filer_pb.Entry{
 				Name: metadataFileName,
 				Attributes: &filer_pb.FuseAttributes{

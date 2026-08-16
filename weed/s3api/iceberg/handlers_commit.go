@@ -4,11 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand/v2"
 	"net/http"
 	"path"
 	"strings"
-	"time"
 
 	"github.com/apache/iceberg-go/table"
 	"github.com/google/uuid"
@@ -311,7 +309,18 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "InternalServerError", "Invalid table location: "+err.Error())
 			return
 		}
-		if err := s.saveMetadataFile(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataBytes); err != nil {
+		if err := s.saveNewMetadataFile(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataBytes); err != nil {
+			if errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
+				// Another writer got this version out first. Nothing of ours is
+				// on disk, so re-read and rebuild on top of their commit.
+				if attempt < maxCommitAttempts {
+					glog.V(1).Infof("Iceberg: CommitTable lost the race for %s at %s (attempt %d/%d), retrying", tableName, metadataFileName, attempt, maxCommitAttempts)
+					sleepBeforeCommitRetry(attempt)
+					continue
+				}
+				writeError(w, http.StatusConflict, "CommitFailedException", "Table was updated concurrently")
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save metadata file: "+err.Error())
 			return
 		}
@@ -350,8 +359,7 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 			}
 			if attempt < maxCommitAttempts {
 				glog.V(1).Infof("Iceberg: CommitTable conflict for %s (attempt %d/%d), retrying", tableName, attempt, maxCommitAttempts)
-				jitter := time.Duration(rand.Int64N(int64(25 * time.Millisecond)))
-				time.Sleep(time.Duration(50*attempt)*time.Millisecond + jitter)
+				sleepBeforeCommitRetry(attempt)
 				continue
 			}
 			writeError(w, http.StatusConflict, "CommitFailedException", "Version token mismatch")

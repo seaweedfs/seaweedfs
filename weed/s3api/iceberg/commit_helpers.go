@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/apache/iceberg-go/table"
 	"github.com/google/uuid"
@@ -16,6 +18,13 @@ import (
 )
 
 const requirementAssertCreate = "assert-create"
+
+// sleepBeforeCommitRetry backs off between commit attempts, jittered so that
+// writers that collided do not line up again on the next try.
+func sleepBeforeCommitRetry(attempt int) {
+	jitter := time.Duration(rand.Int64N(int64(25 * time.Millisecond)))
+	time.Sleep(time.Duration(50*attempt)*time.Millisecond + jitter)
+}
 
 type icebergRequestError struct {
 	status  int

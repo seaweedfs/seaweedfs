@@ -1,6 +1,7 @@
 package s3tables
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1566,6 +1567,7 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 
 	// Load existing metadata and policies for authorization
 	var metadata tableMetadataInternal
+	var storedMetadata []byte
 	var tablePolicy string
 	var bucketPolicy string
 	var bucketTags map[string]string
@@ -1581,6 +1583,7 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 		if err := json.Unmarshal(data, &metadata); err != nil {
 			return fmt.Errorf("failed to unmarshal table metadata: %w", err)
 		}
+		storedMetadata = data
 
 		// 2. Get Table Policy & Tags
 		policyData, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyPolicy)
@@ -1697,14 +1700,25 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 		return err
 	}
 
+	// Conditional on the metadata this request read and authorized against:
+	// two commits that both passed the version-token check would otherwise each
+	// write their own metadata and the later one would drop the earlier
+	// snapshot. mutateEntryExtended retries on a changed entry, so the check
+	// lives in the mutation, where it sees the value that is current now.
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		if err := h.setExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata, metadataBytes); err != nil {
-			return err
-		}
-		return nil
+		return h.updateExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata, func(current []byte) ([]byte, error) {
+			if !bytes.Equal(current, storedMetadata) {
+				return nil, fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyMetadata)
+			}
+			return metadataBytes, nil
+		})
 	})
 
 	if err != nil {
+		if errors.Is(err, ErrConcurrentUpdate) {
+			h.writeError(w, http.StatusConflict, ErrCodeConflict, "table was updated concurrently")
+			return ErrVersionTokenMismatch
+		}
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to update metadata")
 		return err
 	}
