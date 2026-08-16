@@ -388,3 +388,57 @@ func TestMaintenanceSettingsDistinguishZeroFromUnset(t *testing.T) {
 		t.Error("expected an omitted field to stay unset")
 	}
 }
+
+// aws-cn and aws-us-gov ARNs are valid and must parse; the emitted ARN has to
+// use the partition its region belongs to so it round-trips.
+func TestARNPartitionsBeyondCommercial(t *testing.T) {
+	for _, arn := range []string{
+		"arn:aws:s3tables:us-east-1:123456789012:bucket/analytics",
+		"arn:aws-cn:s3tables:cn-north-1:123456789012:bucket/analytics",
+		"arn:aws-us-gov:s3tables:us-gov-west-1:123456789012:bucket/analytics",
+	} {
+		got, err := parseBucketNameFromARN(arn)
+		if err != nil {
+			t.Errorf("expected %s to parse, got %v", arn, err)
+			continue
+		}
+		if got != "analytics" {
+			t.Errorf("expected bucket analytics from %s, got %q", arn, got)
+		}
+	}
+
+	if _, err := parseBucketNameFromARN("arn:notaws:s3tables:us-east-1:123456789012:bucket/analytics"); err == nil {
+		t.Error("expected a non-AWS partition to be rejected")
+	}
+}
+
+func TestARNPartitionForRegion(t *testing.T) {
+	for region, want := range map[string]string{
+		"us-east-1":     "aws",
+		"eu-west-2":     "aws",
+		"cn-north-1":    "aws-cn",
+		"us-gov-west-1": "aws-us-gov",
+	} {
+		if got := arnPartitionForRegion(region); got != want {
+			t.Errorf("region %s: expected partition %q, got %q", region, want, got)
+		}
+	}
+}
+
+// An ARN this handler emits for a partitioned region must parse back.
+func TestGeneratedARNRoundTripsInEveryPartition(t *testing.T) {
+	for _, region := range []string{"us-east-1", "cn-north-1", "us-gov-west-1"} {
+		h := NewS3TablesHandler()
+		h.SetRegion(region)
+
+		arn := h.generateTableBucketARN(DefaultAccountID, "analytics")
+		got, err := parseBucketNameFromARN(arn)
+		if err != nil {
+			t.Errorf("generated ARN %s does not parse: %v", arn, err)
+			continue
+		}
+		if got != "analytics" {
+			t.Errorf("expected analytics from %s, got %q", arn, got)
+		}
+	}
+}

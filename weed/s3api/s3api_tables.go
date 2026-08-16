@@ -76,8 +76,9 @@ func (s3a *S3ApiServer) registerS3TablesRoutes(router *mux.Router) {
 		s3TablesApi.SetDefaultAllow(true)
 	}
 
-	// Regex for S3 Tables Bucket ARN
-	const tableBucketARNRegex = "arn:aws:s3tables:[^/:]*:[^/:]*:bucket/[^/]+"
+	// Regex for S3 Tables Bucket ARN. The partition is not fixed to "aws":
+	// aws-cn and aws-us-gov ARNs are valid and have to reach the handlers.
+	const tableBucketARNRegex = s3tables.ARNPrefixPatternStr + ":[^/:]*:[^/:]*:bucket/[^/]+"
 
 	// REST-style S3 Tables API routes (used by AWS CLI)
 	targetMatcher := func(r *http.Request, rm *mux.RouteMatch) bool {
@@ -144,11 +145,11 @@ func (s3a *S3ApiServer) registerS3TablesRoutes(router *mux.Router) {
 	router.Methods(http.MethodGet).Path("/tables/{tableBucketARN:" + tableBucketARNRegex + "}/{namespace}/{name}/maintenance-job-status").MatcherFunc(serviceMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("GetTableMaintenanceJobStatus", buildGetTableMaintenanceJobStatusRequest)), "S3Tables-GetTableMaintenanceJobStatus"))
 
-	router.Methods(http.MethodPost).Path("/tag/{resourceArn:arn:aws:s3tables:.*}").MatcherFunc(serviceMatcher).
+	router.Methods(http.MethodPost).Path("/tag/{resourceArn:" + s3tables.ARNPrefixPatternStr + ":.*}").MatcherFunc(serviceMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("TagResource", buildTagResourceRequest)), "S3Tables-TagResource"))
-	router.Methods(http.MethodGet).Path("/tag/{resourceArn:arn:aws:s3tables:.*}").MatcherFunc(serviceMatcher).
+	router.Methods(http.MethodGet).Path("/tag/{resourceArn:" + s3tables.ARNPrefixPatternStr + ":.*}").MatcherFunc(serviceMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("ListTagsForResource", buildListTagsForResourceRequest)), "S3Tables-ListTagsForResource"))
-	router.Methods(http.MethodDelete).Path("/tag/{resourceArn:arn:aws:s3tables:.*}").MatcherFunc(serviceMatcher).
+	router.Methods(http.MethodDelete).Path("/tag/{resourceArn:" + s3tables.ARNPrefixPatternStr + ":.*}").MatcherFunc(serviceMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("UntagResource", buildUntagResourceRequest)), "S3Tables-UntagResource"))
 
 	router.Methods(http.MethodGet).Path("/get-table").MatcherFunc(serviceMatcher).
