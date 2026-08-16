@@ -102,6 +102,15 @@ func (h *Handler) expireSnapshots(
 		if (cs == nil) != (currentSnapID == 0) || (cs != nil && cs.SnapshotID != currentSnapID) {
 			return errStalePlan
 		}
+		// A tag or branch created since planning can pin a snapshot this plan
+		// expires without moving the head, and RemoveSnapshots would drop that
+		// ref along with it. Re-plan instead.
+		nowProtected := protectedSnapshots(currentMeta, time.Now().UnixMilli())
+		for _, id := range toExpire {
+			if _, pinned := nowProtected[id]; pinned {
+				return errStalePlan
+			}
+		}
 		return builder.RemoveSnapshots(toExpire, false)
 	})
 	if err != nil {
