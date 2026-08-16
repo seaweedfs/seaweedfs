@@ -95,7 +95,7 @@ func init() {
 	masterOptions.portGrpc = cmdServer.Flag.Int("master.port.grpc", 0, "master server grpc listen port")
 	masterOptions.metaFolder = cmdServer.Flag.String("master.dir", "", "data directory to store meta data, default to same as -dir specified")
 	masterOptions.peers = cmdServer.Flag.String("master.peers", "", "all master nodes in comma separated ip:masterPort list")
-	masterOptions.volumeSizeLimitMB = cmdServer.Flag.Uint("master.volumeSizeLimitMB", 30*1000, "Master stops directing writes to oversized volumes.")
+	masterOptions.volumeSizeLimitMB = cmdServer.Flag.Uint("master.volumeSizeLimitMB", util.DefaultVolumeSizeLimitMB, "Master stops directing writes to oversized volumes.")
 	masterOptions.volumePreallocate = cmdServer.Flag.Bool("master.volumePreallocate", false, "Preallocate disk space for volumes.")
 	masterOptions.maxParallelVacuumPerServer = cmdServer.Flag.Int("master.maxParallelVacuumPerServer", 1, "maximum number of volumes to vacuum in parallel on one volume server")
 	masterOptions.defaultReplication = cmdServer.Flag.String("master.defaultReplication", "", "Default replication type if not specified.")
@@ -340,8 +340,8 @@ func runServer(cmd *Command, args []string) bool {
 	*volumeDataFolders = util.ResolveCommaSeparatedPaths(*volumeDataFolders)
 	folders := strings.Split(*volumeDataFolders, ",")
 
-	if *masterOptions.volumeSizeLimitMB > util.VolumeSizeLimitGB*1000 {
-		glog.Fatalf("masterVolumeSizeLimitMB should be less than 30000")
+	if *masterOptions.volumeSizeLimitMB > util.MaxVolumeSizeLimitMB {
+		glog.Fatalf("master.volumeSizeLimitMB should not exceed %d", util.MaxVolumeSizeLimitMB)
 	}
 
 	if *masterOptions.metaFolder == "" {

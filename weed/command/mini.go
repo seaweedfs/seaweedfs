@@ -1265,8 +1265,8 @@ func runMini(cmd *Command, args []string) bool {
 
 	go stats_collect.StartMetricsServer(*miniMetricsHttpIp, *miniMetricsHttpPort)
 
-	if *miniMasterOptions.volumeSizeLimitMB > util.VolumeSizeLimitGB*1000 {
-		glog.Fatalf("masterVolumeSizeLimitMB should be less than 30000")
+	if *miniMasterOptions.volumeSizeLimitMB > util.MaxVolumeSizeLimitMB {
+		glog.Fatalf("master.volumeSizeLimitMB should not exceed %d", util.MaxVolumeSizeLimitMB)
 	}
 
 	if *miniMasterOptions.metaFolder == "" {
