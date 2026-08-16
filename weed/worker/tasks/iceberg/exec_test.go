@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -40,6 +41,7 @@ type fakeFilerServer struct {
 	mu           sync.Mutex
 	entries      map[string]map[string]*filer_pb.Entry // dir → name → entry
 	beforeUpdate func(*fakeFilerServer, *filer_pb.UpdateEntryRequest) error
+	beforeLookup func(*fakeFilerServer, *filer_pb.LookupDirectoryEntryRequest)
 
 	// Set by enableAssign to serve AssignVolume against a fake volume server.
 	assignVolumeServer string
@@ -93,6 +95,13 @@ func (f *fakeFilerServer) listDir(dir string) []*filer_pb.Entry {
 }
 
 func (f *fakeFilerServer) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	f.mu.Lock()
+	beforeLookup := f.beforeLookup
+	f.mu.Unlock()
+	if beforeLookup != nil {
+		beforeLookup(f, req)
+	}
+
 	entry := f.getEntry(req.Directory, req.Name)
 	if entry == nil {
 		return nil, status.Errorf(codes.NotFound, "entry not found: %s/%s", req.Directory, req.Name)
@@ -287,6 +296,12 @@ type tableSetup struct {
 	// that created it would record the table's running totals.
 	SnapshotSummary map[string]string
 	Snapshots       []table.Snapshot
+	// Refs are branches and tags beyond main, which always points at the last
+	// snapshot.
+	Refs map[string]table.SnapshotRef
+	// Age backdates the whole table so its snapshots can sit outside a
+	// retention window.
+	Age time.Duration
 }
 
 func (ts tableSetup) tablePath() string {
@@ -314,7 +329,7 @@ func (ts tableSetup) fileRef(elem ...string) string {
 func populateTable(t *testing.T, fs *fakeFilerServer, setup tableSetup) table.Metadata {
 	t.Helper()
 
-	meta := buildTestMetadata(t, setup.Snapshots)
+	meta := buildTestMetadata(t, setup.Snapshots, setup.Refs, setup.Age)
 	fullMetadataJSON, err := json.Marshal(meta)
 	if err != nil {
 		t.Fatalf("marshal metadata: %v", err)
@@ -579,6 +594,244 @@ func TestExpireSnapshotsExecution(t *testing.T) {
 	fs.mu.Unlock()
 	if updates == 0 {
 		t.Error("expected at least one UpdateEntry call for xattr update")
+	}
+}
+
+func TestExpireSnapshotsKeepsTaggedSnapshot(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now().Add(-10 * time.Second).UnixMilli()
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "analytics",
+		TableName:  "events",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro"},
+			{SnapshotID: 2, TimestampMs: now + 1, ManifestList: "metadata/snap-2.avro"},
+			{SnapshotID: 3, TimestampMs: now + 2, ManifestList: "metadata/snap-3.avro"},
+		},
+		Refs: map[string]table.SnapshotRef{
+			"release": {SnapshotID: 1, SnapshotRefType: table.TagRef},
+		},
+	}
+	populateTable(t, fs, setup)
+
+	handler := NewHandler(nil)
+	config := Config{
+		SnapshotRetentionMs: hoursToMs(0),
+		MaxSnapshotsToKeep:  1,
+		MaxCommitRetries:    3,
+		Operations:          "expire_snapshots",
+	}
+
+	if _, _, err := handler.expireSnapshots(context.Background(), client, setup.BucketName, setup.tablePath(), config); err != nil {
+		t.Fatalf("expireSnapshots failed: %v", err)
+	}
+
+	state, err := loadCurrentMetadata(context.Background(), client, setup.BucketName, setup.tablePath())
+	if err != nil {
+		t.Fatalf("reload metadata: %v", err)
+	}
+
+	remaining := map[int64]bool{}
+	for _, snap := range state.Metadata.Snapshots() {
+		remaining[snap.SnapshotID] = true
+	}
+	if !remaining[1] {
+		t.Error("tagged snapshot 1 was expired")
+	}
+	if remaining[2] {
+		t.Error("expected untagged snapshot 2 to be expired")
+	}
+
+	var tagged bool
+	for name, ref := range state.Metadata.Refs() {
+		if name == "release" {
+			tagged = true
+			if ref.SnapshotID != 1 {
+				t.Errorf("tag release points at snapshot %d, want 1", ref.SnapshotID)
+			}
+		}
+	}
+	if !tagged {
+		t.Error("tag release was dropped from the metadata")
+	}
+
+	metaDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.dataPath(), "metadata")
+	if fs.getEntry(metaDir, "snap-1.avro") == nil {
+		t.Error("manifest list of the tagged snapshot was deleted")
+	}
+	if fs.getEntry(metaDir, "snap-2.avro") != nil {
+		t.Error("expected the expired snapshot's manifest list to be deleted")
+	}
+}
+
+func TestExpireSnapshotsHonorsBranchRetention(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	// The branch chain is 1 <- 2 <- 3, with main on 4. Backdating the table by
+	// Age gives every snapshot a real age; the ten-second spacing keeps them
+	// distinct and stays inside what iceberg-go accepts at build time.
+	now := time.Now().Add(-30 * time.Second).UnixMilli()
+	stepMs := int64(10 * time.Second / time.Millisecond)
+	first, second := int64(1), int64(2)
+	minKeep := 2
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "analytics",
+		TableName:  "events",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro", SequenceNumber: 1},
+			{SnapshotID: 2, TimestampMs: now + stepMs, ManifestList: "metadata/snap-2.avro", ParentSnapshotID: &first, SequenceNumber: 2},
+			{SnapshotID: 3, TimestampMs: now + 2*stepMs, ManifestList: "metadata/snap-3.avro", ParentSnapshotID: &second, SequenceNumber: 3},
+			{SnapshotID: 4, TimestampMs: now + 3*stepMs, ManifestList: "metadata/snap-4.avro", SequenceNumber: 4},
+		},
+		Refs: map[string]table.SnapshotRef{
+			"audit": {SnapshotID: 3, SnapshotRefType: table.BranchRef, MinSnapshotsToKeep: &minKeep},
+		},
+		Age: 5 * time.Hour,
+	}
+	populateTable(t, fs, setup)
+
+	handler := NewHandler(nil)
+	config := Config{
+		SnapshotRetentionMs: hoursToMs(0),
+		MaxSnapshotsToKeep:  1,
+		MaxCommitRetries:    3,
+		Operations:          "expire_snapshots",
+	}
+
+	if _, _, err := handler.expireSnapshots(context.Background(), client, setup.BucketName, setup.tablePath(), config); err != nil {
+		t.Fatalf("expireSnapshots failed: %v", err)
+	}
+
+	// min-snapshots-to-keep=2 reaches from the branch head back to its parent,
+	// and stops there: the grandparent is past the count and expires.
+	assertSnapshots(t, client, setup, []int64{2, 3, 4}, []int64{1})
+}
+
+func TestExpireSnapshotsHonorsBranchMaxSnapshotAge(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now().Add(-30 * time.Second).UnixMilli()
+	stepMs := int64(10 * time.Second / time.Millisecond)
+	first, second := int64(1), int64(2)
+	// Between the branch head's parent (5h20s) and its grandparent (5h30s), so
+	// the window has to reach past the head to be observable.
+	maxAgeMs := int64(5*time.Hour/time.Millisecond) + 25*1000
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "analytics",
+		TableName:  "events",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro", SequenceNumber: 1},
+			{SnapshotID: 2, TimestampMs: now + stepMs, ManifestList: "metadata/snap-2.avro", ParentSnapshotID: &first, SequenceNumber: 2},
+			{SnapshotID: 3, TimestampMs: now + 2*stepMs, ManifestList: "metadata/snap-3.avro", ParentSnapshotID: &second, SequenceNumber: 3},
+			{SnapshotID: 4, TimestampMs: now + 3*stepMs, ManifestList: "metadata/snap-4.avro", SequenceNumber: 4},
+		},
+		Refs: map[string]table.SnapshotRef{
+			"audit": {SnapshotID: 3, SnapshotRefType: table.BranchRef, MaxSnapshotAgeMs: &maxAgeMs},
+		},
+		Age: 5 * time.Hour,
+	}
+	populateTable(t, fs, setup)
+
+	handler := NewHandler(nil)
+	config := Config{
+		SnapshotRetentionMs: hoursToMs(0),
+		MaxSnapshotsToKeep:  1,
+		MaxCommitRetries:    3,
+		Operations:          "expire_snapshots",
+	}
+
+	if _, _, err := handler.expireSnapshots(context.Background(), client, setup.BucketName, setup.tablePath(), config); err != nil {
+		t.Fatalf("expireSnapshots failed: %v", err)
+	}
+
+	// The window reaches from the branch head back over its parent but stops
+	// short of the grandparent.
+	assertSnapshots(t, client, setup, []int64{2, 3, 4}, []int64{1})
+}
+
+// assertSnapshots reloads the table and checks exactly which snapshots survived.
+func assertSnapshots(t *testing.T, client filer_pb.SeaweedFilerClient, setup tableSetup, want, gone []int64) {
+	t.Helper()
+
+	state, err := loadCurrentMetadata(context.Background(), client, setup.BucketName, setup.tablePath())
+	if err != nil {
+		t.Fatalf("reload metadata: %v", err)
+	}
+	remaining := map[int64]bool{}
+	for _, snap := range state.Metadata.Snapshots() {
+		remaining[snap.SnapshotID] = true
+	}
+	for _, id := range want {
+		if !remaining[id] {
+			t.Errorf("snapshot %d was expired, want kept", id)
+		}
+	}
+	for _, id := range gone {
+		if remaining[id] {
+			t.Errorf("snapshot %d survived, want expired", id)
+		}
+	}
+}
+
+// A tag created between planning and commit pins a snapshot the plan was going
+// to expire. The head has not moved, so only a refs check can catch it.
+func TestExpireSnapshotsRejectsPlanWhenARefAppears(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now().Add(-30 * time.Second).UnixMilli()
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "analytics",
+		TableName:  "events",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro"},
+			{SnapshotID: 2, TimestampMs: now + 1, ManifestList: "metadata/snap-2.avro"},
+			{SnapshotID: 3, TimestampMs: now + 2, ManifestList: "metadata/snap-3.avro"},
+		},
+		Age: 200 * time.Hour,
+	}
+	populateTable(t, fs, setup)
+
+	// Re-publish the table with a tag on snapshot 1 while the commit is
+	// re-reading it, which is the window the guard closes.
+	tagged := setup
+	tagged.Refs = map[string]table.SnapshotRef{
+		"release": {SnapshotID: 1, SnapshotRefType: table.TagRef},
+	}
+	lookups := 0
+	fs.beforeLookup = func(f *fakeFilerServer, req *filer_pb.LookupDirectoryEntryRequest) {
+		if req.Name != setup.TableName {
+			return
+		}
+		lookups++
+		if lookups == 2 {
+			populateTable(t, f, tagged)
+		}
+	}
+
+	handler := NewHandler(nil)
+	config := Config{
+		SnapshotRetentionMs: hoursToMs(0),
+		MaxSnapshotsToKeep:  1,
+		MaxCommitRetries:    1,
+		Operations:          "expire_snapshots",
+	}
+
+	_, _, err := handler.expireSnapshots(context.Background(), client, setup.BucketName, setup.tablePath(), config)
+	if err == nil {
+		t.Fatal("expireSnapshots() error = nil, want the plan rejected as stale")
+	}
+	if !errors.Is(err, errStalePlan) {
+		t.Fatalf("expireSnapshots() error = %v, want errStalePlan", err)
+	}
+
+	metaDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.dataPath(), "metadata")
+	if fs.getEntry(metaDir, "snap-1.avro") == nil {
+		t.Error("the newly tagged snapshot's manifest list was deleted")
 	}
 }
 
@@ -1239,6 +1492,7 @@ func TestDetectWithFakeFiler(t *testing.T) {
 			{SnapshotID: 2, TimestampMs: now + 1, ManifestList: "metadata/snap-2.avro"},
 			{SnapshotID: 3, TimestampMs: now + 2, ManifestList: "metadata/snap-3.avro"},
 		},
+		Age: 200 * time.Hour, // past the default 7-day retention
 	}
 	populateTable(t, fs, setup)
 
@@ -1286,6 +1540,7 @@ func TestDetectWithFilters(t *testing.T) {
 			{SnapshotID: 2, TimestampMs: now + 1, ManifestList: "metadata/snap-2.avro"},
 			{SnapshotID: 3, TimestampMs: now + 2, ManifestList: "metadata/snap-3.avro"},
 		},
+		Age: 200 * time.Hour,
 	}
 	setup2 := tableSetup{
 		BucketName: "bucket-b",
@@ -1296,6 +1551,7 @@ func TestDetectWithFilters(t *testing.T) {
 			{SnapshotID: 5, TimestampMs: now + 4, ManifestList: "metadata/snap-5.avro"},
 			{SnapshotID: 6, TimestampMs: now + 5, ManifestList: "metadata/snap-6.avro"},
 		},
+		Age: 200 * time.Hour,
 	}
 	populateTable(t, fs, setup1)
 	populateTable(t, fs, setup2)
@@ -1523,6 +1779,7 @@ func TestDetectSchedulesSnapshotExpiryDespiteCompactionEvaluationError(t *testin
 			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro", SequenceNumber: 1},
 			{SnapshotID: 2, TimestampMs: now + 1, ManifestList: "metadata/snap-2.avro", SequenceNumber: 2},
 		},
+		Age: 400 * 24 * time.Hour, // past the year-long retention below
 	}
 	populateTable(t, fs, setup)
 

@@ -3,9 +3,11 @@ package iceberg
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"path"
+	"strconv"
 	"testing"
 	"time"
 
@@ -119,13 +121,33 @@ func TestNeedsMaintenanceNoSnapshots(t *testing.T) {
 		MaxSnapshotsToKeep:  2,
 	}
 
-	meta := buildTestMetadata(t, nil)
+	meta := buildTestMetadata(t, nil, nil, 0)
 	if needsMaintenance(meta, config) {
 		t.Error("expected no maintenance for table with no snapshots")
 	}
 }
 
 func TestNeedsMaintenanceExceedsMaxSnapshots(t *testing.T) {
+	config := Config{
+		SnapshotRetentionMs: hoursToMs(24),
+		MaxSnapshotsToKeep:  2,
+	}
+
+	now := time.Now().UnixMilli()
+	snapshots := []table.Snapshot{
+		{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro"},
+		{SnapshotID: 2, TimestampMs: now + 1, ManifestList: "metadata/snap-2.avro"},
+		{SnapshotID: 3, TimestampMs: now + 2, ManifestList: "metadata/snap-3.avro"},
+	}
+	meta := buildTestMetadata(t, snapshots, nil, 48*time.Hour)
+	if !needsMaintenance(meta, config) {
+		t.Error("expected maintenance for table exceeding max snapshots")
+	}
+}
+
+// Expiry always requires a snapshot to be past the retention window, so a table
+// over the quota whose snapshots are all young has nothing to do.
+func TestNeedsMaintenanceExceedsMaxSnapshotsWithinRetention(t *testing.T) {
 	config := Config{
 		SnapshotRetentionMs: hoursToMs(24 * 365), // very long retention
 		MaxSnapshotsToKeep:  2,
@@ -137,9 +159,31 @@ func TestNeedsMaintenanceExceedsMaxSnapshots(t *testing.T) {
 		{SnapshotID: 2, TimestampMs: now + 1, ManifestList: "metadata/snap-2.avro"},
 		{SnapshotID: 3, TimestampMs: now + 2, ManifestList: "metadata/snap-3.avro"},
 	}
-	meta := buildTestMetadata(t, snapshots)
-	if !needsMaintenance(meta, config) {
-		t.Error("expected maintenance for table exceeding max snapshots")
+	if needsMaintenance(buildTestMetadata(t, snapshots, nil, 0), config) {
+		t.Error("expected no maintenance while every snapshot is inside the retention window")
+	}
+}
+
+// Every expirable snapshot is pinned by a tag, so a job could only no-op.
+func TestNeedsMaintenanceSkipsRefPinnedSnapshots(t *testing.T) {
+	config := Config{
+		SnapshotRetentionMs: hoursToMs(0),
+		MaxSnapshotsToKeep:  1,
+	}
+
+	now := time.Now().Add(-30 * time.Second).UnixMilli()
+	snapshots := []table.Snapshot{
+		{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro"},
+		{SnapshotID: 2, TimestampMs: now + 1, ManifestList: "metadata/snap-2.avro"},
+	}
+	refs := map[string]table.SnapshotRef{
+		"release": {SnapshotID: 1, SnapshotRefType: table.TagRef},
+	}
+	if needsMaintenance(buildTestMetadata(t, snapshots, refs, 0), config) {
+		t.Error("expected no maintenance when the only old snapshot is tagged")
+	}
+	if !needsMaintenance(buildTestMetadata(t, snapshots, nil, 0), config) {
+		t.Error("expected maintenance for the same table without the tag")
 	}
 }
 
@@ -153,7 +197,7 @@ func TestNeedsMaintenanceWithinLimits(t *testing.T) {
 	snapshots := []table.Snapshot{
 		{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro"},
 	}
-	meta := buildTestMetadata(t, snapshots)
+	meta := buildTestMetadata(t, snapshots, nil, 0)
 	if needsMaintenance(meta, config) {
 		t.Error("expected no maintenance for table within limits")
 	}
@@ -163,17 +207,34 @@ func TestNeedsMaintenanceOldSnapshot(t *testing.T) {
 	// Use a retention of 0 hours so that any snapshot is considered "old"
 	config := Config{
 		SnapshotRetentionMs: hoursToMs(0), // instant expiry
+		MaxSnapshotsToKeep:  1,
+	}
+
+	now := time.Now().Add(-30 * time.Second).UnixMilli()
+	snapshots := []table.Snapshot{
+		{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro"},
+		{SnapshotID: 2, TimestampMs: now + 1, ManifestList: "metadata/snap-2.avro"},
+	}
+	meta := buildTestMetadata(t, snapshots, nil, 0)
+	if !needsMaintenance(meta, config) {
+		t.Error("expected maintenance for table with expired snapshot")
+	}
+}
+
+// The current snapshot is never expirable, so a single-snapshot table has no
+// work no matter how far past retention it is.
+func TestNeedsMaintenanceSingleSnapshot(t *testing.T) {
+	config := Config{
+		SnapshotRetentionMs: hoursToMs(0),
 		MaxSnapshotsToKeep:  10,
 	}
 
-	now := time.Now().UnixMilli()
+	now := time.Now().Add(-30 * time.Second).UnixMilli()
 	snapshots := []table.Snapshot{
-		{SnapshotID: 1, TimestampMs: now - 1, ManifestList: "metadata/snap-1.avro"},
+		{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro"},
 	}
-	meta := buildTestMetadata(t, snapshots)
-	// With 0 retention, any snapshot with timestamp < now should need maintenance
-	if !needsMaintenance(meta, config) {
-		t.Error("expected maintenance for table with expired snapshot")
+	if needsMaintenance(buildTestMetadata(t, snapshots, nil, 0), config) {
+		t.Error("expected no maintenance for a table with only the current snapshot")
 	}
 }
 
@@ -217,7 +278,7 @@ func TestBuildMaintenanceProposal(t *testing.T) {
 		{SnapshotID: 1, TimestampMs: now},
 		{SnapshotID: 2, TimestampMs: now + 1},
 	}
-	meta := buildTestMetadata(t, snapshots)
+	meta := buildTestMetadata(t, snapshots, nil, 0)
 
 	info := tableInfo{
 		BucketName: "my-bucket",
@@ -1408,9 +1469,14 @@ func TestExecuteNilRequest(t *testing.T) {
 // Test helpers
 // ---------------------------------------------------------------------------
 
-// buildTestMetadata creates a minimal Iceberg metadata for testing.
-// When snapshots is nil or empty, the metadata has no snapshots.
-func buildTestMetadata(t *testing.T, snapshots []table.Snapshot) table.Metadata {
+// buildTestMetadata creates a minimal Iceberg metadata for testing. When
+// snapshots is nil or empty the metadata has no snapshots; refs adds branches
+// and tags on top of the main branch, which always points at the last snapshot.
+// A positive age backdates the result, letting a test describe snapshots that
+// are genuinely past a retention window - iceberg-go refuses to add a snapshot
+// stamped more than a minute before the metadata's last-updated time, so the
+// shift has to happen after the build.
+func buildTestMetadata(t *testing.T, snapshots []table.Snapshot, refs map[string]table.SnapshotRef, age time.Duration) table.Metadata {
 	t.Helper()
 
 	schema := newTestSchema()
@@ -1441,11 +1507,80 @@ func buildTestMetadata(t *testing.T, snapshots []table.Snapshot) table.Metadata 
 		t.Fatalf("failed to set snapshot ref: %v", err)
 	}
 
+	// The option type is unexported, so each combination is spelled out.
+	for name, ref := range refs {
+		var refErr error
+		switch {
+		case ref.MinSnapshotsToKeep != nil && ref.MaxSnapshotAgeMs != nil:
+			refErr = builder.SetSnapshotRef(name, ref.SnapshotID, ref.SnapshotRefType,
+				table.WithMinSnapshotsToKeep(*ref.MinSnapshotsToKeep), table.WithMaxSnapshotAgeMs(*ref.MaxSnapshotAgeMs))
+		case ref.MinSnapshotsToKeep != nil:
+			refErr = builder.SetSnapshotRef(name, ref.SnapshotID, ref.SnapshotRefType,
+				table.WithMinSnapshotsToKeep(*ref.MinSnapshotsToKeep))
+		case ref.MaxSnapshotAgeMs != nil:
+			refErr = builder.SetSnapshotRef(name, ref.SnapshotID, ref.SnapshotRefType,
+				table.WithMaxSnapshotAgeMs(*ref.MaxSnapshotAgeMs))
+		default:
+			refErr = builder.SetSnapshotRef(name, ref.SnapshotID, ref.SnapshotRefType)
+		}
+		if refErr != nil {
+			t.Fatalf("failed to set ref %s: %v", name, refErr)
+		}
+	}
+
 	result, err := builder.Build()
 	if err != nil {
 		t.Fatalf("failed to build metadata: %v", err)
 	}
-	return result
+	metadata := result
+	if age <= 0 {
+		return metadata
+	}
+
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatalf("marshal metadata: %v", err)
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.UseNumber()
+	var doc map[string]any
+	if err := decoder.Decode(&doc); err != nil {
+		t.Fatalf("decode metadata: %v", err)
+	}
+
+	shiftMs := age.Milliseconds()
+	shift := func(container map[string]any, key string) {
+		raw, ok := container[key].(json.Number)
+		if !ok {
+			return
+		}
+		value, err := raw.Int64()
+		if err != nil {
+			t.Fatalf("parse %s: %v", key, err)
+		}
+		container[key] = json.Number(strconv.FormatInt(value-shiftMs, 10))
+	}
+
+	shift(doc, "last-updated-ms")
+	for _, listKey := range []string{"snapshots", "snapshot-log", "metadata-log"} {
+		entries, _ := doc[listKey].([]any)
+		for _, entry := range entries {
+			if item, ok := entry.(map[string]any); ok {
+				shift(item, "timestamp-ms")
+			}
+		}
+	}
+
+	aged, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("marshal aged metadata: %v", err)
+	}
+	parsed, err := table.ParseMetadataBytes(aged)
+	if err != nil {
+		t.Fatalf("parse aged metadata: %v", err)
+	}
+	return parsed
 }
 
 func newTestSchema() *iceberg.Schema {

@@ -486,27 +486,12 @@ func compactionMinInputFiles(minInputFiles int64) (int, error) {
 
 // needsMaintenance checks whether snapshot expiration work is needed based on
 // metadata-only thresholds.
+// It asks execution what it would do rather than reimplementing the rules:
+// expiry always requires a snapshot to be past the retention window, so a
+// table over the snapshot quota whose snapshots are all young, or all pinned by
+// refs, would otherwise be proposed for a job that can only no-op.
 func needsMaintenance(meta table.Metadata, config Config) bool {
-	snapshots := meta.Snapshots()
-	if len(snapshots) == 0 {
-		return false
-	}
-
-	// Check snapshot count
-	if int64(len(snapshots)) > config.MaxSnapshotsToKeep {
-		return true
-	}
-
-	// Check oldest snapshot age
-	retentionMs := config.SnapshotRetentionMs
-	nowMs := time.Now().UnixMilli()
-	for _, snap := range snapshots {
-		if nowMs-snap.TimestampMs > retentionMs {
-			return true
-		}
-	}
-
-	return false
+	return len(snapshotsToExpire(meta, config, time.Now().UnixMilli())) > 0
 }
 
 // buildMaintenanceProposal creates a JobProposal for a table needing maintenance.
