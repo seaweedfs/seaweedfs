@@ -26,6 +26,7 @@ const (
 	ExtendedKeyMetadataVersion = "s3tables.metadataVersion"
 	ExtendedKeyPolicy          = "s3tables.policy"
 	ExtendedKeyTags            = "s3tables.tags"
+	ExtendedKeyMaintenance     = "s3tables.maintenance"
 	ExtendedKeyEntryType       = "s3tables.entryType"
 
 	// Entry-type marker values for ExtendedKeyEntryType. Absent or "table" means
@@ -181,6 +182,16 @@ func (h *S3TablesHandler) HandleRequest(w http.ResponseWriter, r *http.Request, 
 		err = h.handleGetTablePolicy(w, r, filerClient)
 	case "DeleteTablePolicy":
 		err = h.handleDeleteTablePolicy(w, r, filerClient)
+
+	// Maintenance configuration operations
+	case "PutTableBucketMaintenanceConfiguration":
+		err = h.handlePutTableBucketMaintenanceConfiguration(w, r, filerClient)
+	case "GetTableBucketMaintenanceConfiguration":
+		err = h.handleGetTableBucketMaintenanceConfiguration(w, r, filerClient)
+	case "PutTableMaintenanceConfiguration":
+		err = h.handlePutTableMaintenanceConfiguration(w, r, filerClient)
+	case "GetTableMaintenanceConfiguration":
+		err = h.handleGetTableMaintenanceConfiguration(w, r, filerClient)
 
 	// Tagging operations
 	case "TagResource":

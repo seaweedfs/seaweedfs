@@ -394,6 +394,82 @@ type DeleteTablePolicyRequest struct {
 	Name           string   `json:"name"`
 }
 
+// Maintenance configuration types
+
+const (
+	MaintenanceTypeIcebergCompaction              = "icebergCompaction"
+	MaintenanceTypeIcebergSnapshotManagement      = "icebergSnapshotManagement"
+	MaintenanceTypeIcebergUnreferencedFileRemoval = "icebergUnreferencedFileRemoval"
+
+	MaintenanceStatusEnabled  = "enabled"
+	MaintenanceStatusDisabled = "disabled"
+)
+
+type IcebergCompactionSettings struct {
+	TargetFileSizeMB int64 `json:"targetFileSizeMB,omitempty"`
+}
+
+type IcebergSnapshotManagementSettings struct {
+	MinSnapshotsToKeep  int64 `json:"minSnapshotsToKeep,omitempty"`
+	MaxSnapshotAgeHours int64 `json:"maxSnapshotAgeHours,omitempty"`
+}
+
+type IcebergUnreferencedFileRemovalSettings struct {
+	UnreferencedDays int64 `json:"unreferencedDays,omitempty"`
+	NonCurrentDays   int64 `json:"nonCurrentDays,omitempty"`
+}
+
+type MaintenanceSettings struct {
+	IcebergCompaction              *IcebergCompactionSettings              `json:"icebergCompaction,omitempty"`
+	IcebergSnapshotManagement      *IcebergSnapshotManagementSettings      `json:"icebergSnapshotManagement,omitempty"`
+	IcebergUnreferencedFileRemoval *IcebergUnreferencedFileRemovalSettings `json:"icebergUnreferencedFileRemoval,omitempty"`
+}
+
+type MaintenanceConfigurationValue struct {
+	Status   string               `json:"status,omitempty"`
+	Settings *MaintenanceSettings `json:"settings,omitempty"`
+}
+
+// MaintenanceConfiguration maps a maintenance type to its configuration. It is
+// stored verbatim as the maintenance extended attribute so Get is a passthrough.
+type MaintenanceConfiguration map[string]*MaintenanceConfigurationValue
+
+type PutTableBucketMaintenanceConfigurationRequest struct {
+	TableBucketARN string                         `json:"tableBucketARN"`
+	Type           string                         `json:"type"`
+	Value          *MaintenanceConfigurationValue `json:"value"`
+}
+
+type GetTableBucketMaintenanceConfigurationRequest struct {
+	TableBucketARN string `json:"tableBucketARN"`
+}
+
+type GetTableBucketMaintenanceConfigurationResponse struct {
+	TableBucketARN string                   `json:"tableBucketArn"`
+	Configuration  MaintenanceConfiguration `json:"configuration"`
+}
+
+type PutTableMaintenanceConfigurationRequest struct {
+	TableBucketARN string                         `json:"tableBucketARN"`
+	Namespace      []string                       `json:"namespace"`
+	Name           string                         `json:"name"`
+	Type           string                         `json:"type"`
+	Value          *MaintenanceConfigurationValue `json:"value"`
+}
+
+type GetTableMaintenanceConfigurationRequest struct {
+	TableBucketARN string   `json:"tableBucketARN"`
+	Namespace      []string `json:"namespace"`
+	Name           string   `json:"name"`
+}
+
+type GetTableMaintenanceConfigurationResponse struct {
+	TableARN      string                   `json:"tableARN"`
+	Namespace     []string                 `json:"namespace"`
+	Name          string                   `json:"name"`
+	Configuration MaintenanceConfiguration `json:"configuration"`
+}
+
 // Tagging types
 
 type TagResourceRequest struct {

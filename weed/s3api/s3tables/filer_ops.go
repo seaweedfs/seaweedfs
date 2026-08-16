@@ -8,11 +8,18 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 var (
 	ErrAttributeNotFound = errors.New("attribute not found")
+	ErrConcurrentUpdate  = errors.New("attribute changed concurrently")
 )
+
+// extendedAttributeUpdateAttempts bounds the read-modify-write retry loop in
+// updateExtendedAttribute.
+const extendedAttributeUpdateAttempts = 5
 
 // Filer operations - Common functions for interacting with the filer
 
@@ -82,6 +89,56 @@ func (h *S3TablesHandler) setExtendedAttribute(ctx context.Context, client filer
 		Directory: dir,
 		Entry:     entry,
 	})
+}
+
+// updateExtendedAttribute applies mutate to the current value of key and writes
+// the result back, asserting the key has not changed in between. UpdateEntry
+// rewrites the whole entry, so a concurrent write to a different attribute can
+// still be lost; asserting our own key keeps two writers to this one from
+// silently clobbering each other.
+func (h *S3TablesHandler) updateExtendedAttribute(
+	ctx context.Context,
+	client filer_pb.SeaweedFilerClient,
+	path, key string,
+	mutate func(current []byte) ([]byte, error),
+) error {
+	dir, name := splitPath(path)
+
+	for attempt := 0; attempt < extendedAttributeUpdateAttempts; attempt++ {
+		resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
+			Directory: dir,
+			Name:      name,
+		})
+		if err != nil {
+			return err
+		}
+
+		entry := resp.Entry
+		current := entry.Extended[key]
+
+		updated, err := mutate(current)
+		if err != nil {
+			return err
+		}
+		if entry.Extended == nil {
+			entry.Extended = make(map[string][]byte)
+		}
+		entry.Extended[key] = updated
+
+		_, err = client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{
+			Directory:        dir,
+			Entry:            entry,
+			ExpectedExtended: map[string][]byte{key: current},
+		})
+		if err == nil {
+			return nil
+		}
+		if status.Code(err) != codes.FailedPrecondition {
+			return err
+		}
+	}
+
+	return fmt.Errorf("%w: %s", ErrConcurrentUpdate, key)
 }
 
 // removeExtendedAttributes deletes the given extended attributes from an entry,
