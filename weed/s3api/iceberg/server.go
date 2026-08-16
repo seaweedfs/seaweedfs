@@ -116,6 +116,8 @@ func (s *Server) RegisterRoutes(router *mux.Router) {
 	router.HandleFunc("/v1/namespaces/{namespace}/views/{view}", s.Auth(s.handleViewExists)).Methods(http.MethodHead)
 	router.HandleFunc("/v1/namespaces/{namespace}/views/{view}", s.Auth(s.handleDropView)).Methods(http.MethodDelete)
 	router.HandleFunc("/v1/namespaces/{namespace}/views/{view}", s.Auth(s.handleUpdateView)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/views/rename", s.Auth(s.handleRenameView)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/namespaces/{namespace}/tables/{table}/metrics", s.Auth(s.handleReportMetrics)).Methods(http.MethodPost)
 
 	// Multi-table transaction commit - wrapped with Auth middleware
 	router.HandleFunc("/v1/transactions/commit", s.Auth(s.handleCommitTransaction)).Methods(http.MethodPost)
@@ -141,6 +143,8 @@ func (s *Server) RegisterRoutes(router *mux.Router) {
 	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/views/{view}", s.Auth(s.handleViewExists)).Methods(http.MethodHead)
 	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/views/{view}", s.Auth(s.handleDropView)).Methods(http.MethodDelete)
 	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/views/{view}", s.Auth(s.handleUpdateView)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/{prefix}/views/rename", s.Auth(s.handleRenameView)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables/{table}/metrics", s.Auth(s.handleReportMetrics)).Methods(http.MethodPost)
 	router.HandleFunc("/v1/{prefix}/transactions/commit", s.Auth(s.handleCommitTransaction)).Methods(http.MethodPost)
 
 	// Catch-all for debugging

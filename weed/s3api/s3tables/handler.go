@@ -178,6 +178,8 @@ func (h *S3TablesHandler) HandleRequest(w http.ResponseWriter, r *http.Request, 
 		err = h.handleUpdateView(w, r, filerClient)
 	case "DeleteView":
 		err = h.handleDeleteView(w, r, filerClient)
+	case "RenameView":
+		err = h.handleRenameView(w, r, filerClient)
 
 	// Table Policy operations
 	case "PutTablePolicy":
