@@ -78,8 +78,13 @@ func applyMaintenanceConfig(cfg Config, maintenance s3tables.MaintenanceConfigur
 			cfg.MaxSnapshotsToKeep = s.MinSnapshotsToKeep
 		}
 	}
-	if s := orphanSettings(maintenance); s != nil && s.UnreferencedDays > 0 {
-		cfg.OrphanOlderThanHours = daysToHours(s.UnreferencedDays)
+	// AWS marks a file non-current after unreferencedDays and deletes it a
+	// further nonCurrentDays later. remove_orphans deletes in one step, so the
+	// cutoff has to be the sum or the recovery window disappears.
+	if s := orphanSettings(maintenance); s != nil {
+		if days := addDays(s.UnreferencedDays, s.NonCurrentDays); days > 0 {
+			cfg.OrphanOlderThanHours = daysToHours(days)
+		}
 	}
 	return cfg
 }

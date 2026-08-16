@@ -66,6 +66,21 @@ func mbToBytes(mb int64) int64 {
 	return mb * bytesPerMB
 }
 
+// addDays sums two day counts, saturating instead of overflowing. Negative
+// inputs are treated as unset.
+func addDays(a, b int64) int64 {
+	if a < 0 {
+		a = 0
+	}
+	if b < 0 {
+		b = 0
+	}
+	if a > math.MaxInt64-b {
+		return math.MaxInt64
+	}
+	return a + b
+}
+
 // daysToHours converts days to hours, saturating instead of overflowing.
 // applyThresholdDefaults clamps the result down to a usable cutoff.
 func daysToHours(days int64) int64 {

@@ -287,6 +287,34 @@ func TestResolveTableConfigClampsUnreferencedDays(t *testing.T) {
 	}
 }
 
+// AWS marks a file non-current after unreferencedDays and deletes it
+// nonCurrentDays later; deleting in one step has to wait for both.
+func TestResolveTableConfigAddsNonCurrentWindow(t *testing.T) {
+	orphan := func(unreferenced, nonCurrent int64) Config {
+		return resolveTableConfig(baseTestConfig(), nil, maintenanceConfig(map[string]*s3tables.MaintenanceConfigurationValue{
+			s3tables.MaintenanceTypeIcebergUnreferencedFileRemoval: {
+				Status: s3tables.MaintenanceStatusEnabled,
+				Settings: &s3tables.MaintenanceSettings{
+					IcebergUnreferencedFileRemoval: &s3tables.IcebergUnreferencedFileRemovalSettings{
+						UnreferencedDays: unreferenced,
+						NonCurrentDays:   nonCurrent,
+					},
+				},
+			},
+		}))
+	}
+
+	if got := orphan(3, 10); got.OrphanOlderThanHours != 13*24 {
+		t.Errorf("expected 3+10 days to be %d hours, got %d", 13*24, got.OrphanOlderThanHours)
+	}
+	if got := orphan(0, 10); got.OrphanOlderThanHours != 10*24 {
+		t.Errorf("expected nonCurrentDays alone to apply, got %d", got.OrphanOlderThanHours)
+	}
+	if got := orphan(math.MaxInt64, math.MaxInt64); got.OrphanOlderThanHours != maxOrphanOlderThanHours {
+		t.Errorf("expected the sum clamped, got %d", got.OrphanOlderThanHours)
+	}
+}
+
 func TestBuildJobStatus(t *testing.T) {
 	ranAt := time.Unix(1755250000, 0).UTC()
 
