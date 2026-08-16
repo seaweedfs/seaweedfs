@@ -26,6 +26,34 @@ func sleepBeforeCommitRetry(attempt int) {
 	time.Sleep(time.Duration(50*attempt)*time.Millisecond + jitter)
 }
 
+// stageCommitMetadata writes the metadata file a commit will point the catalog
+// at, returning the name and location it landed on. The exclusive create keeps
+// one writer from overwriting another's file; when the name is already taken
+// the metadata goes to a unique one instead of failing, because the file there
+// may be an orphan left by an interrupted commit, and refusing would wedge the
+// table until an orphan sweep ran. The catalog pointer, not the file name,
+// decides which commit won. This mirrors how the maintenance worker stages its
+// own metadata.
+func (s *Server) stageCommitMetadata(ctx context.Context, metadataBucket, metadataPath, location, metadataFileName string, metadataBytes []byte) (string, string, error) {
+	err := s.saveNewMetadataFile(ctx, metadataBucket, metadataPath, metadataFileName, metadataBytes)
+	if errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
+		metadataFileName = uniqueMetadataFileName(metadataFileName)
+		glog.V(1).Infof("Iceberg: metadata file already staged for %s, using %s", location, metadataFileName)
+		err = s.saveNewMetadataFile(ctx, metadataBucket, metadataPath, metadataFileName, metadataBytes)
+	}
+	if err != nil {
+		return "", "", err
+	}
+	return metadataFileName, fmt.Sprintf("%s/metadata/%s", strings.TrimSuffix(location, "/"), metadataFileName), nil
+}
+
+// uniqueMetadataFileName turns v{N}.metadata.json into v{N}-{uuid}.metadata.json,
+// a form both the catalog and the maintenance worker still read the version from.
+func uniqueMetadataFileName(metadataFileName string) string {
+	base := strings.TrimSuffix(metadataFileName, ".metadata.json")
+	return fmt.Sprintf("%s-%s.metadata.json", base, uuid.NewString())
+}
+
 type icebergRequestError struct {
 	status  int
 	errType string

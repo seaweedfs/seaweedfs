@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path"
+	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -64,6 +65,42 @@ func TestSaveNewMetadataFileRefusesToOverwrite(t *testing.T) {
 	stored := string(client.entries[path.Join(metadataDirPath("bkt", "ns/tbl"), "v2.metadata.json")])
 	if stored != `{"winner":true}` {
 		t.Errorf("stored metadata = %s, want the first writer's content", stored)
+	}
+}
+
+// A metadata file left behind by an interrupted commit must not wedge the
+// table: the next commit stages under a unique name rather than failing or
+// overwriting, and the catalog pointer still decides the winner.
+func TestStageCommitMetadataFallsBackToAUniqueName(t *testing.T) {
+	client := newStubFilerClient()
+	s := &Server{filerClient: client}
+	ctx := context.Background()
+
+	name, location, err := s.stageCommitMetadata(ctx, "bkt", "ns/tbl", "s3://bkt/ns/tbl", "v2.metadata.json", []byte(`{"orphan":true}`))
+	if err != nil {
+		t.Fatalf("first stage failed: %v", err)
+	}
+	if name != "v2.metadata.json" {
+		t.Errorf("first stage used %q, want the plain versioned name", name)
+	}
+	if location != "s3://bkt/ns/tbl/metadata/v2.metadata.json" {
+		t.Errorf("location = %q", location)
+	}
+
+	name, location, err = s.stageCommitMetadata(ctx, "bkt", "ns/tbl", "s3://bkt/ns/tbl", "v2.metadata.json", []byte(`{"second":true}`))
+	if err != nil {
+		t.Fatalf("second stage failed: %v", err)
+	}
+	if !strings.HasPrefix(name, "v2-") || !strings.HasSuffix(name, ".metadata.json") {
+		t.Errorf("second stage used %q, want a unique v2-* name", name)
+	}
+	if location != "s3://bkt/ns/tbl/metadata/"+name {
+		t.Errorf("location = %q, want it to match the staged name", location)
+	}
+
+	stored := string(client.entries[path.Join(metadataDirPath("bkt", "ns/tbl"), "v2.metadata.json")])
+	if stored != `{"orphan":true}` {
+		t.Errorf("the first file was overwritten: %s", stored)
 	}
 }
 

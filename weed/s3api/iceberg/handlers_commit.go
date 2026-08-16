@@ -309,18 +309,8 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "InternalServerError", "Invalid table location: "+err.Error())
 			return
 		}
-		if err := s.saveNewMetadataFile(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataBytes); err != nil {
-			if errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
-				// Another writer got this version out first. Nothing of ours is
-				// on disk, so re-read and rebuild on top of their commit.
-				if attempt < maxCommitAttempts {
-					glog.V(1).Infof("Iceberg: CommitTable lost the race for %s at %s (attempt %d/%d), retrying", tableName, metadataFileName, attempt, maxCommitAttempts)
-					sleepBeforeCommitRetry(attempt)
-					continue
-				}
-				writeError(w, http.StatusConflict, "CommitFailedException", "Table was updated concurrently")
-				return
-			}
+		metadataFileName, newMetadataLocation, err = s.stageCommitMetadata(r.Context(), metadataBucket, metadataPath, location, metadataFileName, metadataBytes)
+		if err != nil {
 			writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save metadata file: "+err.Error())
 			return
 		}

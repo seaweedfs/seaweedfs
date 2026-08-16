@@ -2,7 +2,6 @@ package iceberg
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -103,16 +102,8 @@ func (s *Server) handleUpdateView(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "InternalServerError", "Invalid view location: "+err.Error())
 			return
 		}
-		if err := s.saveNewMetadataFile(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataBytes); err != nil {
-			if errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
-				if attempt < maxCommitAttempts {
-					glog.V(1).Infof("Iceberg: UpdateView lost the race for %s at %s (attempt %d/%d), retrying", viewName, metadataFileName, attempt, maxCommitAttempts)
-					sleepBeforeCommitRetry(attempt)
-					continue
-				}
-				writeError(w, http.StatusConflict, "CommitFailedException", "View was updated concurrently")
-				return
-			}
+		metadataFileName, newMetadataLocation, err = s.stageCommitMetadata(r.Context(), metadataBucket, metadataPath, location, metadataFileName, metadataBytes)
+		if err != nil {
 			writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save view metadata file: "+err.Error())
 			return
 		}

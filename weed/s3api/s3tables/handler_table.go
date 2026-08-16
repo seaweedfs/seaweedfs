@@ -294,6 +294,14 @@ func metadataVersionFromLocation(metadataLocation string) int {
 	if v, err := strconv.Atoi(strings.TrimPrefix(name, "v")); err == nil && v > 0 {
 		return v
 	}
+	// v{N}-{unique} form, written when a commit finds v{N} already staged
+	if trimmed := strings.TrimPrefix(name, "v"); trimmed != name {
+		if idx := strings.IndexByte(trimmed, '-'); idx != -1 {
+			if v, err := strconv.Atoi(trimmed[:idx]); err == nil && v > 0 {
+				return v
+			}
+		}
+	}
 	// {NNNNN}-{uuid} form: the leading integer before the first '-'
 	if idx := strings.IndexByte(name, '-'); idx != -1 {
 		if v, err := strconv.Atoi(name[:idx]); err == nil && v > 0 {
