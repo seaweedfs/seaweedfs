@@ -27,10 +27,6 @@ func vendingServer(vendor CredentialVendor) *Server {
 	return s
 }
 
-func delegationRequest() *httptest.ResponseRecorder {
-	return httptest.NewRecorder()
-}
-
 func TestBuildStorageConfigVendsScopedCredentials(t *testing.T) {
 	expiry := time.Now().Add(time.Hour).Truncate(time.Millisecond)
 	vendor := &stubVendor{credentials: &VendedCredentials{

@@ -101,9 +101,31 @@ func (s3a *S3ApiServer) stsService() *sts.STSService {
 // bucket listing that clients need to resolve them.
 func tablePrefixSessionPolicy(bucket, prefix string) (string, error) {
 	prefix = strings.Trim(prefix, "/")
+	// A resource pattern is matched with wildcards, so a location carrying one
+	// would widen the session to sibling tables. Refuse rather than escape it:
+	// nothing SeaweedFS generates contains these.
+	if strings.ContainsAny(bucket, "*?") || strings.ContainsAny(prefix, "*?") {
+		return "", fmt.Errorf("refusing to scope credentials to a location with wildcards: s3://%s/%s", bucket, prefix)
+	}
+
 	objects := fmt.Sprintf("arn:aws:s3:::%s/*", bucket)
 	if prefix != "" {
 		objects = fmt.Sprintf("arn:aws:s3:::%s/%s/*", bucket, prefix)
+	}
+
+	bucketStatement := map[string]interface{}{
+		"Effect":   "Allow",
+		"Action":   []string{"s3:ListBucket", "s3:ListBucketMultipartUploads", "s3:GetBucketLocation"},
+		"Resource": []string{fmt.Sprintf("arn:aws:s3:::%s", bucket)},
+	}
+	if prefix != "" {
+		// Listing is granted on the bucket, so without this the session could
+		// enumerate every other table's object names.
+		bucketStatement["Condition"] = map[string]interface{}{
+			"StringLike": map[string]interface{}{
+				"s3:prefix": []string{prefix, prefix + "/*"},
+			},
+		}
 	}
 
 	policy := map[string]interface{}{
@@ -114,11 +136,7 @@ func tablePrefixSessionPolicy(bucket, prefix string) (string, error) {
 				"Action":   []string{"s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"},
 				"Resource": []string{objects},
 			},
-			{
-				"Effect":   "Allow",
-				"Action":   []string{"s3:ListBucket", "s3:ListBucketMultipartUploads", "s3:GetBucketLocation"},
-				"Resource": []string{fmt.Sprintf("arn:aws:s3:::%s", bucket)},
-			},
+			bucketStatement,
 		},
 	}
 

@@ -806,6 +806,19 @@ func (s *STSService) issueSession(roleArn, roleSessionName, sessionPolicy string
 	}, nil
 }
 
+// validateSessionDurationSeconds bounds a requested session lifetime the way
+// AWS STS does. Every assume-role entry point runs it, so a duration that came
+// from configuration is checked the same as one from a request.
+func validateSessionDurationSeconds(durationSeconds *int64) error {
+	if durationSeconds == nil {
+		return nil
+	}
+	if *durationSeconds < 900 || *durationSeconds > 43200 { // 15min to 12 hours
+		return fmt.Errorf("DurationSeconds must be between 900 and 43200 seconds")
+	}
+	return nil
+}
+
 // AssumeRoleForPrincipalRequest asks for a session on behalf of a principal the
 // calling service has already authenticated.
 type AssumeRoleForPrincipalRequest struct {
@@ -845,6 +858,9 @@ func (s *STSService) AssumeRoleForPrincipal(ctx context.Context, request *Assume
 	}
 	if request.Principal == "" {
 		return nil, fmt.Errorf("principal cannot be empty")
+	}
+	if err := validateSessionDurationSeconds(request.DurationSeconds); err != nil {
+		return nil, fmt.Errorf("invalid request: %w", err)
 	}
 
 	sessionPolicy := ""
@@ -921,14 +937,7 @@ func (s *STSService) validateAssumeRoleWithWebIdentityRequest(request *AssumeRol
 		return fmt.Errorf("RoleSessionName is required")
 	}
 
-	// Validate session duration if provided
-	if request.DurationSeconds != nil {
-		if *request.DurationSeconds < 900 || *request.DurationSeconds > 43200 { // 15min to 12 hours
-			return fmt.Errorf("DurationSeconds must be between 900 and 43200 seconds")
-		}
-	}
-
-	return nil
+	return validateSessionDurationSeconds(request.DurationSeconds)
 }
 
 // validateWebIdentityToken validates the web identity token with strict issuer-to-provider mapping
@@ -1161,14 +1170,7 @@ func (s *STSService) validateAssumeRoleWithCredentialsRequest(request *AssumeRol
 		return fmt.Errorf("ProviderName is required")
 	}
 
-	// Validate session duration if provided
-	if request.DurationSeconds != nil {
-		if *request.DurationSeconds < 900 || *request.DurationSeconds > 43200 { // 15min to 12 hours
-			return fmt.Errorf("DurationSeconds must be between 900 and 43200 seconds")
-		}
-	}
-
-	return nil
+	return validateSessionDurationSeconds(request.DurationSeconds)
 }
 
 // ExpireSessionForTesting manually expires a session for testing purposes
