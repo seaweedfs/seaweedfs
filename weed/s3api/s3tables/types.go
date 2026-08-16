@@ -394,6 +394,143 @@ type DeleteTablePolicyRequest struct {
 	Name           string   `json:"name"`
 }
 
+// Maintenance configuration types
+
+const (
+	MaintenanceTypeIcebergCompaction              = "icebergCompaction"
+	MaintenanceTypeIcebergSnapshotManagement      = "icebergSnapshotManagement"
+	MaintenanceTypeIcebergUnreferencedFileRemoval = "icebergUnreferencedFileRemoval"
+
+	MaintenanceStatusEnabled  = "enabled"
+	MaintenanceStatusDisabled = "disabled"
+)
+
+type IcebergCompactionSettings struct {
+	Strategy         string `json:"strategy,omitempty"`
+	TargetFileSizeMB *int64 `json:"targetFileSizeMB,omitempty"`
+}
+
+// Compaction strategies. AWS also defines z-order, which the maintenance
+// worker cannot produce, so it is rejected rather than silently binpacked.
+const (
+	CompactionStrategyAuto    = "auto"
+	CompactionStrategyBinpack = "binpack"
+	CompactionStrategySort    = "sort"
+	CompactionStrategyZOrder  = "z-order"
+)
+
+type IcebergSnapshotManagementSettings struct {
+	MinSnapshotsToKeep  *int64 `json:"minSnapshotsToKeep,omitempty"`
+	MaxSnapshotAgeHours *int64 `json:"maxSnapshotAgeHours,omitempty"`
+}
+
+type IcebergUnreferencedFileRemovalSettings struct {
+	UnreferencedDays *int64 `json:"unreferencedDays,omitempty"`
+	NonCurrentDays   *int64 `json:"nonCurrentDays,omitempty"`
+}
+
+type MaintenanceSettings struct {
+	IcebergCompaction              *IcebergCompactionSettings              `json:"icebergCompaction,omitempty"`
+	IcebergSnapshotManagement      *IcebergSnapshotManagementSettings      `json:"icebergSnapshotManagement,omitempty"`
+	IcebergUnreferencedFileRemoval *IcebergUnreferencedFileRemovalSettings `json:"icebergUnreferencedFileRemoval,omitempty"`
+}
+
+type MaintenanceConfigurationValue struct {
+	Status   string               `json:"status,omitempty"`
+	Settings *MaintenanceSettings `json:"settings,omitempty"`
+}
+
+// MaintenanceConfiguration maps a maintenance type to its configuration. It is
+// stored verbatim as the maintenance extended attribute so Get is a passthrough.
+type MaintenanceConfiguration map[string]*MaintenanceConfigurationValue
+
+// MergeMaintenanceConfiguration overlays a table's configuration on its
+// bucket's. Unreferenced file removal is only configurable on the bucket, so
+// anything reading a table's effective configuration has to consult both.
+func MergeMaintenanceConfiguration(bucket, table MaintenanceConfiguration) MaintenanceConfiguration {
+	if len(bucket) == 0 {
+		return table
+	}
+	if len(table) == 0 {
+		return bucket
+	}
+
+	merged := make(MaintenanceConfiguration, len(bucket)+len(table))
+	for k, v := range bucket {
+		merged[k] = v
+	}
+	for k, v := range table {
+		merged[k] = v
+	}
+	return merged
+}
+
+type PutTableBucketMaintenanceConfigurationRequest struct {
+	TableBucketARN string                         `json:"tableBucketARN"`
+	Type           string                         `json:"type"`
+	Value          *MaintenanceConfigurationValue `json:"value"`
+}
+
+type GetTableBucketMaintenanceConfigurationRequest struct {
+	TableBucketARN string `json:"tableBucketARN"`
+}
+
+type GetTableBucketMaintenanceConfigurationResponse struct {
+	TableBucketARN string                   `json:"tableBucketARN"`
+	Configuration  MaintenanceConfiguration `json:"configuration"`
+}
+
+type PutTableMaintenanceConfigurationRequest struct {
+	TableBucketARN string                         `json:"tableBucketARN"`
+	Namespace      []string                       `json:"namespace"`
+	Name           string                         `json:"name"`
+	Type           string                         `json:"type"`
+	Value          *MaintenanceConfigurationValue `json:"value"`
+}
+
+type GetTableMaintenanceConfigurationRequest struct {
+	TableBucketARN string   `json:"tableBucketARN"`
+	Namespace      []string `json:"namespace"`
+	Name           string   `json:"name"`
+}
+
+type GetTableMaintenanceConfigurationResponse struct {
+	TableARN      string                   `json:"tableARN"`
+	Namespace     []string                 `json:"namespace"`
+	Name          string                   `json:"name"`
+	Configuration MaintenanceConfiguration `json:"configuration"`
+}
+
+// Maintenance job status types
+
+const (
+	MaintenanceJobStatusNotYetRun  = "Not_Yet_Run"
+	MaintenanceJobStatusSuccessful = "Successful"
+	MaintenanceJobStatusFailed     = "Failed"
+	MaintenanceJobStatusDisabled   = "Disabled"
+)
+
+type MaintenanceJobStatusValue struct {
+	Status           string     `json:"status"`
+	LastRunTimestamp *time.Time `json:"lastRunTimestamp,omitempty"`
+	FailureMessage   string     `json:"failureMessage,omitempty"`
+}
+
+// MaintenanceJobStatus maps a maintenance type to the outcome of its last run.
+// The worker writes it; the control plane only reads it.
+type MaintenanceJobStatus map[string]*MaintenanceJobStatusValue
+
+type GetTableMaintenanceJobStatusRequest struct {
+	TableBucketARN string   `json:"tableBucketARN"`
+	Namespace      []string `json:"namespace"`
+	Name           string   `json:"name"`
+}
+
+type GetTableMaintenanceJobStatusResponse struct {
+	TableARN string               `json:"tableARN"`
+	Status   MaintenanceJobStatus `json:"status"`
+}
+
 // Tagging types
 
 type TagResourceRequest struct {

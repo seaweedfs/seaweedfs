@@ -23,9 +23,17 @@ const (
 	tableObjectRootDirName = ".objects"
 )
 
+// ARNPartitionPatternStr matches any AWS partition, not just the commercial
+// one: aws-cn and aws-us-gov ARNs are valid and must reach the handlers.
+const ARNPartitionPatternStr = `aws[-a-z0-9]*`
+
+// ARNPrefixPatternStr is the leading, partition-tolerant part of every S3
+// Tables ARN. The HTTP router shares it so routes and parsing agree.
+const ARNPrefixPatternStr = `arn:` + ARNPartitionPatternStr + `:s3tables`
+
 var (
-	bucketARNPattern = regexp.MustCompile(`^arn:aws:s3tables:[^:]*:[^:]*:bucket/(` + bucketNamePatternStr + `)$`)
-	tableARNPattern  = regexp.MustCompile(`^arn:aws:s3tables:[^:]*:[^:]*:bucket/(` + bucketNamePatternStr + `)/table/(` + tableNamespacePatternStr + `)/(` + tableNamePatternStr + `)$`)
+	bucketARNPattern = regexp.MustCompile(`^` + ARNPrefixPatternStr + `:[^:]*:[^:]*:bucket/(` + bucketNamePatternStr + `)$`)
+	tableARNPattern  = regexp.MustCompile(`^` + ARNPrefixPatternStr + `:[^:]*:[^:]*:bucket/(` + bucketNamePatternStr + `)/table/(` + tableNamespacePatternStr + `)/(` + tableNamePatternStr + `)$`)
 	tagPattern       = regexp.MustCompile(`^([\p{L}\p{Z}\p{N}_.:/=+\-@]*)$`)
 )
 
@@ -278,7 +286,30 @@ func BuildTableARN(region, accountID, bucketName, namespace, tableName string) (
 }
 
 func buildARN(region, accountID, resourcePath string) string {
-	return fmt.Sprintf("arn:aws:s3tables:%s:%s:%s", region, accountID, resourcePath)
+	return fmt.Sprintf("arn:%s:s3tables:%s:%s:%s", arnPartitionForRegion(region), region, accountID, resourcePath)
+}
+
+// arnPartitionForRegion returns the ARN partition a region belongs to, so an
+// ARN this handler emits round-trips through a client in that partition.
+func arnPartitionForRegion(region string) string {
+	switch {
+	case strings.HasPrefix(region, "cn-"):
+		return "aws-cn"
+	case strings.HasPrefix(region, "us-gov-"):
+		return "aws-us-gov"
+	case strings.HasPrefix(region, "us-iso-"):
+		return "aws-iso"
+	case strings.HasPrefix(region, "us-isob-"):
+		return "aws-iso-b"
+	case strings.HasPrefix(region, "eu-isoe-"):
+		return "aws-iso-e"
+	case strings.HasPrefix(region, "us-isof-"):
+		return "aws-iso-f"
+	case strings.HasPrefix(region, "eusc-"):
+		return "aws-eusc"
+	default:
+		return "aws"
+	}
 }
 
 // ValidateTags validates tags for S3 Tables.

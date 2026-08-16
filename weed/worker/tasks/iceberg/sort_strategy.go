@@ -29,6 +29,16 @@ func resolveCompactionRewritePlan(config Config, meta table.Metadata) (*compacti
 	if strategy == defaultRewriteStrategy {
 		return &compactionRewritePlan{strategy: defaultRewriteStrategy}, nil
 	}
+	// "auto" sorts tables that declare a usable sort order and bin-packs the
+	// rest, so an unsorted table is not an error the way an explicit "sort" is.
+	if strategy == rewriteStrategyAuto {
+		sortFields, err := resolveCompactionSortFields(meta)
+		if err != nil {
+			glog.V(2).Infof("iceberg compact: auto strategy falling back to binpack: %v", err)
+			return &compactionRewritePlan{strategy: defaultRewriteStrategy}, nil
+		}
+		return &compactionRewritePlan{strategy: "sort", sortFields: sortFields}, nil
+	}
 	if strategy != "sort" {
 		return nil, fmt.Errorf("unsupported rewrite strategy %q", config.RewriteStrategy)
 	}

@@ -76,8 +76,9 @@ func (s3a *S3ApiServer) registerS3TablesRoutes(router *mux.Router) {
 		s3TablesApi.SetDefaultAllow(true)
 	}
 
-	// Regex for S3 Tables Bucket ARN
-	const tableBucketARNRegex = "arn:aws:s3tables:[^/:]*:[^/:]*:bucket/[^/]+"
+	// Regex for S3 Tables Bucket ARN. The partition is not fixed to "aws":
+	// aws-cn and aws-us-gov ARNs are valid and have to reach the handlers.
+	const tableBucketARNRegex = s3tables.ARNPrefixPatternStr + ":[^/:]*:[^/:]*:bucket/[^/]+"
 
 	// REST-style S3 Tables API routes (used by AWS CLI)
 	targetMatcher := func(r *http.Request, rm *mux.RouteMatch) bool {
@@ -133,11 +134,22 @@ func (s3a *S3ApiServer) registerS3TablesRoutes(router *mux.Router) {
 	router.Methods(http.MethodDelete).Path("/tables/{tableBucketARN:" + tableBucketARNRegex + "}/{namespace}/{name}/policy").MatcherFunc(serviceMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("DeleteTablePolicy", buildDeleteTablePolicyRequest)), "S3Tables-DeleteTablePolicy"))
 
-	router.Methods(http.MethodPost).Path("/tag/{resourceArn:arn:aws:s3tables:.*}").MatcherFunc(serviceMatcher).
+	router.Methods(http.MethodPut).Path("/buckets/{tableBucketARN:" + tableBucketARNRegex + "}/maintenance/{type}").MatcherFunc(serviceMatcher).
+		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("PutTableBucketMaintenanceConfiguration", buildPutTableBucketMaintenanceConfigurationRequest)), "S3Tables-PutTableBucketMaintenanceConfiguration"))
+	router.Methods(http.MethodGet).Path("/buckets/{tableBucketARN:" + tableBucketARNRegex + "}/maintenance").MatcherFunc(serviceMatcher).
+		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("GetTableBucketMaintenanceConfiguration", buildGetTableBucketMaintenanceConfigurationRequest)), "S3Tables-GetTableBucketMaintenanceConfiguration"))
+	router.Methods(http.MethodPut).Path("/tables/{tableBucketARN:" + tableBucketARNRegex + "}/{namespace}/{name}/maintenance/{type}").MatcherFunc(serviceMatcher).
+		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("PutTableMaintenanceConfiguration", buildPutTableMaintenanceConfigurationRequest)), "S3Tables-PutTableMaintenanceConfiguration"))
+	router.Methods(http.MethodGet).Path("/tables/{tableBucketARN:" + tableBucketARNRegex + "}/{namespace}/{name}/maintenance").MatcherFunc(serviceMatcher).
+		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("GetTableMaintenanceConfiguration", buildGetTableMaintenanceConfigurationRequest)), "S3Tables-GetTableMaintenanceConfiguration"))
+	router.Methods(http.MethodGet).Path("/tables/{tableBucketARN:" + tableBucketARNRegex + "}/{namespace}/{name}/maintenance-job-status").MatcherFunc(serviceMatcher).
+		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("GetTableMaintenanceJobStatus", buildGetTableMaintenanceJobStatusRequest)), "S3Tables-GetTableMaintenanceJobStatus"))
+
+	router.Methods(http.MethodPost).Path("/tag/{resourceArn:" + s3tables.ARNPrefixPatternStr + ":.*}").MatcherFunc(serviceMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("TagResource", buildTagResourceRequest)), "S3Tables-TagResource"))
-	router.Methods(http.MethodGet).Path("/tag/{resourceArn:arn:aws:s3tables:.*}").MatcherFunc(serviceMatcher).
+	router.Methods(http.MethodGet).Path("/tag/{resourceArn:" + s3tables.ARNPrefixPatternStr + ":.*}").MatcherFunc(serviceMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("ListTagsForResource", buildListTagsForResourceRequest)), "S3Tables-ListTagsForResource"))
-	router.Methods(http.MethodDelete).Path("/tag/{resourceArn:arn:aws:s3tables:.*}").MatcherFunc(serviceMatcher).
+	router.Methods(http.MethodDelete).Path("/tag/{resourceArn:" + s3tables.ARNPrefixPatternStr + ":.*}").MatcherFunc(serviceMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("UntagResource", buildUntagResourceRequest)), "S3Tables-UntagResource"))
 
 	router.Methods(http.MethodGet).Path("/get-table").MatcherFunc(serviceMatcher).
@@ -710,4 +722,95 @@ func (s3a *S3ApiServer) authenticateS3Tables(f http.HandlerFunc) http.HandlerFun
 
 		f(w, r)
 	}
+}
+
+// maintenanceTableTarget pulls the bucket/namespace/table triple every
+// table-scoped maintenance route carries in its path.
+func maintenanceTableTarget(r *http.Request) (tableBucketARN string, namespace []string, name string, err error) {
+	if tableBucketARN, err = getDecodedPathParam(r, "tableBucketARN"); err != nil {
+		return "", nil, "", err
+	}
+	if namespace, err = parseRequiredNamespacePathParam(r, "namespace"); err != nil {
+		return "", nil, "", err
+	}
+	if name, err = getDecodedPathParam(r, "name"); err != nil {
+		return "", nil, "", err
+	}
+	if name == "" {
+		return "", nil, "", fmt.Errorf("name is required")
+	}
+	if _, err = s3tables.ValidateTableName(name); err != nil {
+		return "", nil, "", err
+	}
+	return tableBucketARN, namespace, name, nil
+}
+
+func buildPutTableBucketMaintenanceConfigurationRequest(r *http.Request) (interface{}, error) {
+	var req s3tables.PutTableBucketMaintenanceConfigurationRequest
+	if err := readS3TablesJSONBody(r, &req); err != nil {
+		return nil, err
+	}
+	tableBucketARN, err := getDecodedPathParam(r, "tableBucketARN")
+	if err != nil {
+		return nil, err
+	}
+	maintenanceType, err := getDecodedPathParam(r, "type")
+	if err != nil {
+		return nil, err
+	}
+	req.TableBucketARN = tableBucketARN
+	req.Type = maintenanceType
+	return &req, nil
+}
+
+func buildGetTableBucketMaintenanceConfigurationRequest(r *http.Request) (interface{}, error) {
+	tableBucketARN, err := getDecodedPathParam(r, "tableBucketARN")
+	if err != nil {
+		return nil, err
+	}
+	return &s3tables.GetTableBucketMaintenanceConfigurationRequest{TableBucketARN: tableBucketARN}, nil
+}
+
+func buildPutTableMaintenanceConfigurationRequest(r *http.Request) (interface{}, error) {
+	var req s3tables.PutTableMaintenanceConfigurationRequest
+	if err := readS3TablesJSONBody(r, &req); err != nil {
+		return nil, err
+	}
+	tableBucketARN, namespace, name, err := maintenanceTableTarget(r)
+	if err != nil {
+		return nil, err
+	}
+	maintenanceType, err := getDecodedPathParam(r, "type")
+	if err != nil {
+		return nil, err
+	}
+	req.TableBucketARN = tableBucketARN
+	req.Namespace = namespace
+	req.Name = name
+	req.Type = maintenanceType
+	return &req, nil
+}
+
+func buildGetTableMaintenanceConfigurationRequest(r *http.Request) (interface{}, error) {
+	tableBucketARN, namespace, name, err := maintenanceTableTarget(r)
+	if err != nil {
+		return nil, err
+	}
+	return &s3tables.GetTableMaintenanceConfigurationRequest{
+		TableBucketARN: tableBucketARN,
+		Namespace:      namespace,
+		Name:           name,
+	}, nil
+}
+
+func buildGetTableMaintenanceJobStatusRequest(r *http.Request) (interface{}, error) {
+	tableBucketARN, namespace, name, err := maintenanceTableTarget(r)
+	if err != nil {
+		return nil, err
+	}
+	return &s3tables.GetTableMaintenanceJobStatusRequest{
+		TableBucketARN: tableBucketARN,
+		Namespace:      namespace,
+		Name:           name,
+	}, nil
 }

@@ -25,6 +25,7 @@ const (
 	defaultDeleteMaxGroupSizeMB   = 256
 	defaultDeleteMaxOutputFiles   = 8
 	defaultRewriteStrategy        = "binpack"
+	rewriteStrategyAuto           = "auto"
 	defaultMinManifestsToRewrite  = 5
 	minManifestsToRewrite         = 2
 	defaultOperations             = "all"
@@ -55,6 +56,44 @@ const msPerHour int64 = 3600 * 1000
 // cutoff in the future and making every file look like an orphan.
 const maxOrphanOlderThanHours = int64(math.MaxInt64 / int64(time.Hour))
 
+// mbToBytes converts megabytes to bytes, saturating instead of overflowing.
+func mbToBytes(mb int64) int64 {
+	if mb <= 0 {
+		return 0
+	}
+	if mb > math.MaxInt64/bytesPerMB {
+		return math.MaxInt64
+	}
+	return mb * bytesPerMB
+}
+
+// addDays sums two day counts, saturating instead of overflowing. Negative
+// inputs are treated as unset.
+func addDays(a, b int64) int64 {
+	if a < 0 {
+		a = 0
+	}
+	if b < 0 {
+		b = 0
+	}
+	if a > math.MaxInt64-b {
+		return math.MaxInt64
+	}
+	return a + b
+}
+
+// daysToHours converts days to hours, saturating instead of overflowing.
+// applyThresholdDefaults clamps the result down to a usable cutoff.
+func daysToHours(days int64) int64 {
+	if days <= 0 {
+		return 0
+	}
+	if days > math.MaxInt64/24 {
+		return math.MaxInt64
+	}
+	return days * 24
+}
+
 // hoursToMs converts hours to milliseconds, saturating instead of overflowing.
 func hoursToMs(hours int64) int64 {
 	if hours <= 0 {
@@ -82,6 +121,7 @@ type Config struct {
 	DeleteMaxOutputFiles        int64
 	MinManifestsToRewrite       int64
 	Operations                  string
+	TablePropertiesOverride     bool
 	ApplyDeletes                bool
 	Where                       string
 	RewriteStrategy             string
@@ -104,6 +144,7 @@ func ParseConfig(values map[string]*plugin_pb.ConfigValue) Config {
 		DeleteMaxOutputFiles:        readInt64Config(values, "delete_max_output_files", defaultDeleteMaxOutputFiles),
 		MinManifestsToRewrite:       readInt64Config(values, "min_manifests_to_rewrite", defaultMinManifestsToRewrite),
 		Operations:                  readStringConfig(values, "operations", defaultOperations),
+		TablePropertiesOverride:     readBoolConfig(values, "table_properties_override", true),
 		ApplyDeletes:                readBoolConfig(values, "apply_deletes", true),
 		Where:                       strings.TrimSpace(readStringConfig(values, "where", "")),
 		RewriteStrategy:             strings.TrimSpace(strings.ToLower(readStringConfig(values, "rewrite_strategy", defaultRewriteStrategy))),
@@ -152,7 +193,7 @@ func applyThresholdDefaults(cfg Config) Config {
 	if cfg.RewriteStrategy == "" {
 		cfg.RewriteStrategy = defaultRewriteStrategy
 	}
-	if cfg.RewriteStrategy != "binpack" && cfg.RewriteStrategy != "sort" {
+	if cfg.RewriteStrategy != "binpack" && cfg.RewriteStrategy != "sort" && cfg.RewriteStrategy != rewriteStrategyAuto {
 		cfg.RewriteStrategy = defaultRewriteStrategy
 	}
 	if cfg.SortMaxInputBytes < 0 {

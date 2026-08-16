@@ -26,7 +26,12 @@ const (
 	ExtendedKeyMetadataVersion = "s3tables.metadataVersion"
 	ExtendedKeyPolicy          = "s3tables.policy"
 	ExtendedKeyTags            = "s3tables.tags"
-	ExtendedKeyEntryType       = "s3tables.entryType"
+	ExtendedKeyMaintenance     = "s3tables.maintenance"
+	// Written by the maintenance worker, read by GetTableMaintenanceJobStatus.
+	// Separate from ExtendedKeyMaintenance so worker and operator writes do not
+	// contend on the same attribute.
+	ExtendedKeyMaintenanceStatus = "s3tables.maintenanceStatus"
+	ExtendedKeyEntryType         = "s3tables.entryType"
 
 	// Entry-type marker values for ExtendedKeyEntryType. Absent or "table" means
 	// a table; views are stored like tables but tagged "view".
@@ -181,6 +186,18 @@ func (h *S3TablesHandler) HandleRequest(w http.ResponseWriter, r *http.Request, 
 		err = h.handleGetTablePolicy(w, r, filerClient)
 	case "DeleteTablePolicy":
 		err = h.handleDeleteTablePolicy(w, r, filerClient)
+
+	// Maintenance configuration operations
+	case "PutTableBucketMaintenanceConfiguration":
+		err = h.handlePutTableBucketMaintenanceConfiguration(w, r, filerClient)
+	case "GetTableBucketMaintenanceConfiguration":
+		err = h.handleGetTableBucketMaintenanceConfiguration(w, r, filerClient)
+	case "PutTableMaintenanceConfiguration":
+		err = h.handlePutTableMaintenanceConfiguration(w, r, filerClient)
+	case "GetTableMaintenanceConfiguration":
+		err = h.handleGetTableMaintenanceConfiguration(w, r, filerClient)
+	case "GetTableMaintenanceJobStatus":
+		err = h.handleGetTableMaintenanceJobStatus(w, r, filerClient)
 
 	// Tagging operations
 	case "TagResource":
@@ -377,15 +394,20 @@ func (h *S3TablesHandler) writeError(w http.ResponseWriter, status int, code, me
 // ARN generation helpers
 
 func (h *S3TablesHandler) generateTableBucketARN(ownerAccountID, bucketName string) string {
-	return fmt.Sprintf("arn:aws:s3tables:%s:%s:bucket/%s", h.region, ownerAccountID, bucketName)
+	return buildARN(h.region, ownerAccountID, fmt.Sprintf("bucket/%s", bucketName))
 }
 
 func (h *S3TablesHandler) generateTableARN(ownerAccountID, bucketName, tableID string) string {
-	return fmt.Sprintf("arn:aws:s3tables:%s:%s:bucket/%s/table/%s", h.region, ownerAccountID, bucketName, tableID)
+	return buildARN(h.region, ownerAccountID, fmt.Sprintf("bucket/%s/table/%s", bucketName, tableID))
 }
 
 func (h *S3TablesHandler) generateViewARN(ownerAccountID, bucketName, viewID string) string {
-	return fmt.Sprintf("arn:aws:s3tables:%s:%s:bucket/%s/view/%s", h.region, ownerAccountID, bucketName, viewID)
+	return buildARN(h.region, ownerAccountID, fmt.Sprintf("bucket/%s/view/%s", bucketName, viewID))
+}
+
+// generateS3BucketARN builds the plain S3 ARN used for IAM resource matching.
+func (h *S3TablesHandler) generateS3BucketARN(bucketName string) string {
+	return fmt.Sprintf("arn:%s:s3:::%s", arnPartitionForRegion(h.region), bucketName)
 }
 
 func isAuthError(err error) bool {
