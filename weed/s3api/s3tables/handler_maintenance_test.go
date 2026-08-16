@@ -272,3 +272,32 @@ func TestMergeMaintenanceConfiguration(t *testing.T) {
 		t.Errorf("expected the bucket configuration passed through, got %v", got)
 	}
 }
+
+// UpdateEntry rewrites the whole entry, so the precondition has to cover every
+// attribute or this write silently reverts a concurrent one.
+func TestSnapshotExtendedCoversEveryAttribute(t *testing.T) {
+	extended := map[string][]byte{
+		ExtendedKeyMetadata:    []byte(`{"a":1}`),
+		ExtendedKeyMaintenance: []byte(`{"icebergCompaction":{"status":"disabled"}}`),
+	}
+
+	expected := SnapshotExtended(extended, ExtendedKeyMaintenanceStatus)
+	if len(expected) != 3 {
+		t.Fatalf("expected every attribute plus the target key, got %v", expected)
+	}
+	for key, want := range extended {
+		if string(expected[key]) != string(want) {
+			t.Errorf("attribute %s not carried into the precondition", key)
+		}
+	}
+	// The target key is asserted absent, so a concurrent create fails the write.
+	if got, ok := expected[ExtendedKeyMaintenanceStatus]; !ok || len(got) != 0 {
+		t.Errorf("expected the target key asserted absent, got %v", got)
+	}
+
+	// Mutating the snapshot must not disturb the entry it came from.
+	expected[ExtendedKeyMetadata] = []byte("changed")
+	if string(extended[ExtendedKeyMetadata]) != `{"a":1}` {
+		t.Error("expected the source map left alone")
+	}
+}

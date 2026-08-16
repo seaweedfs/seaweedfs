@@ -92,10 +92,9 @@ func (h *S3TablesHandler) setExtendedAttribute(ctx context.Context, client filer
 }
 
 // updateExtendedAttribute applies mutate to the current value of key and writes
-// the result back, asserting the key has not changed in between. UpdateEntry
-// rewrites the whole entry, so a concurrent write to a different attribute can
-// still be lost; asserting our own key keeps two writers to this one from
-// silently clobbering each other.
+// the result back, asserting that no attribute on the entry changed in between.
+// UpdateEntry rewrites the whole entry from the snapshot we read, so asserting
+// only our own key would let this write silently revert someone else's.
 func (h *S3TablesHandler) updateExtendedAttribute(
 	ctx context.Context,
 	client filer_pb.SeaweedFilerClient,
@@ -115,6 +114,7 @@ func (h *S3TablesHandler) updateExtendedAttribute(
 
 		entry := resp.Entry
 		current := entry.Extended[key]
+		expected := snapshotExtended(entry.Extended, key)
 
 		updated, err := mutate(current)
 		if err != nil {
@@ -128,7 +128,7 @@ func (h *S3TablesHandler) updateExtendedAttribute(
 		_, err = client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{
 			Directory:        dir,
 			Entry:            entry,
-			ExpectedExtended: map[string][]byte{key: current},
+			ExpectedExtended: expected,
 		})
 		if err == nil {
 			return nil
@@ -139,6 +139,25 @@ func (h *S3TablesHandler) updateExtendedAttribute(
 	}
 
 	return fmt.Errorf("%w: %s", ErrConcurrentUpdate, key)
+}
+
+// SnapshotExtended captures every attribute on an entry as an UpdateEntry
+// precondition, so a whole-entry write cannot silently revert an attribute a
+// concurrent writer changed. key is asserted even when absent, which fails the
+// precondition if someone creates it first.
+func SnapshotExtended(extended map[string][]byte, key string) map[string][]byte {
+	return snapshotExtended(extended, key)
+}
+
+func snapshotExtended(extended map[string][]byte, key string) map[string][]byte {
+	expected := make(map[string][]byte, len(extended)+1)
+	for k, v := range extended {
+		expected[k] = v
+	}
+	if _, ok := expected[key]; !ok {
+		expected[key] = nil
+	}
+	return expected
 }
 
 // removeExtendedAttributes deletes the given extended attributes from an entry,

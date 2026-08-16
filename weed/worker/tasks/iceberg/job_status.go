@@ -14,8 +14,9 @@ import (
 )
 
 // jobStatusUpdateAttempts bounds the read-modify-write retry loop for the job
-// status attribute.
-const jobStatusUpdateAttempts = 2
+// status attribute. Asserting the whole attribute set makes a lost race more
+// likely, so allow a couple of retries before giving up.
+const jobStatusUpdateAttempts = 3
 
 // buildJobStatus folds the operations this job ran into the AWS job types that
 // govern them. Operations that did not run are left out so a partial run does
@@ -80,6 +81,10 @@ func recordJobStatus(
 
 		entry := resp.Entry
 		current := entry.Extended[s3tables.ExtendedKeyMaintenanceStatus]
+		// Assert every attribute, not just our own: UpdateEntry rewrites the
+		// whole entry, so a narrow assertion would let this write revert a
+		// maintenance configuration an operator just disabled.
+		expected := s3tables.SnapshotExtended(entry.Extended, s3tables.ExtendedKeyMaintenanceStatus)
 
 		merged := s3tables.MaintenanceJobStatus{}
 		if len(current) > 0 {
@@ -106,7 +111,7 @@ func recordJobStatus(
 		_, err = client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{
 			Directory:        dir,
 			Entry:            entry,
-			ExpectedExtended: map[string][]byte{s3tables.ExtendedKeyMaintenanceStatus: current},
+			ExpectedExtended: expected,
 		})
 		if err == nil {
 			return
