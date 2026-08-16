@@ -406,8 +406,18 @@ const (
 )
 
 type IcebergCompactionSettings struct {
-	TargetFileSizeMB int64 `json:"targetFileSizeMB,omitempty"`
+	Strategy         string `json:"strategy,omitempty"`
+	TargetFileSizeMB int64  `json:"targetFileSizeMB,omitempty"`
 }
+
+// Compaction strategies. AWS also defines z-order, which the maintenance
+// worker cannot produce, so it is rejected rather than silently binpacked.
+const (
+	CompactionStrategyAuto    = "auto"
+	CompactionStrategyBinpack = "binpack"
+	CompactionStrategySort    = "sort"
+	CompactionStrategyZOrder  = "z-order"
+)
 
 type IcebergSnapshotManagementSettings struct {
 	MinSnapshotsToKeep  int64 `json:"minSnapshotsToKeep,omitempty"`

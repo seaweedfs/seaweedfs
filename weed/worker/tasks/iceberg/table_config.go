@@ -60,8 +60,15 @@ func applyTableProperties(cfg Config, props iceberg.Properties) Config {
 }
 
 func applyMaintenanceConfig(cfg Config, maintenance s3tables.MaintenanceConfiguration) Config {
-	if s := compactionSettings(maintenance); s != nil && s.TargetFileSizeMB > 0 {
-		cfg.TargetFileSizeBytes = mbToBytes(s.TargetFileSizeMB)
+	if s := compactionSettings(maintenance); s != nil {
+		if s.TargetFileSizeMB > 0 {
+			cfg.TargetFileSizeBytes = mbToBytes(s.TargetFileSizeMB)
+		}
+		// "auto" leaves the choice to the worker's own configuration.
+		switch s.Strategy {
+		case s3tables.CompactionStrategyBinpack, s3tables.CompactionStrategySort:
+			cfg.RewriteStrategy = s.Strategy
+		}
 	}
 	if s := snapshotSettings(maintenance); s != nil {
 		if s.MaxSnapshotAgeHours > 0 {

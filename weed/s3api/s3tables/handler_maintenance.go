@@ -429,7 +429,26 @@ func validateMaintenanceValue(maintenanceType string, allowed map[string]bool, v
 	if value.Settings != nil && !settingsMatchType(maintenanceType, value.Settings) {
 		return fmt.Errorf("value.settings must only contain %s", maintenanceType)
 	}
+	if value.Settings != nil && value.Settings.IcebergCompaction != nil {
+		if err := validateCompactionStrategy(value.Settings.IcebergCompaction.Strategy); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// validateCompactionStrategy rejects a strategy the maintenance worker cannot
+// carry out, rather than accepting it and quietly compacting some other way.
+func validateCompactionStrategy(strategy string) error {
+	switch strategy {
+	case "", CompactionStrategyAuto, CompactionStrategyBinpack, CompactionStrategySort:
+		return nil
+	case CompactionStrategyZOrder:
+		return fmt.Errorf("compaction strategy %q is not supported", strategy)
+	default:
+		return fmt.Errorf("invalid compaction strategy %q, expected one of %q, %q, %q",
+			strategy, CompactionStrategyAuto, CompactionStrategyBinpack, CompactionStrategySort)
+	}
 }
 
 func settingsMatchType(maintenanceType string, settings *MaintenanceSettings) bool {

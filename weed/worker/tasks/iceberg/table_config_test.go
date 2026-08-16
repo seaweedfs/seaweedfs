@@ -328,3 +328,34 @@ func TestBuildJobStatusEmpty(t *testing.T) {
 		t.Errorf("expected an empty status, got %v", got)
 	}
 }
+
+func TestResolveTableConfigAppliesCompactionStrategy(t *testing.T) {
+	withStrategy := func(strategy string) Config {
+		return resolveTableConfig(baseTestConfig(), nil, maintenanceConfig(map[string]*s3tables.MaintenanceConfigurationValue{
+			s3tables.MaintenanceTypeIcebergCompaction: {
+				Status:   s3tables.MaintenanceStatusEnabled,
+				Settings: &s3tables.MaintenanceSettings{IcebergCompaction: &s3tables.IcebergCompactionSettings{Strategy: strategy}},
+			},
+		}))
+	}
+
+	if got := withStrategy(s3tables.CompactionStrategySort); got.RewriteStrategy != "sort" {
+		t.Errorf("expected sort, got %q", got.RewriteStrategy)
+	}
+	if got := withStrategy(s3tables.CompactionStrategyBinpack); got.RewriteStrategy != "binpack" {
+		t.Errorf("expected binpack, got %q", got.RewriteStrategy)
+	}
+
+	// "auto" defers to the worker's own configuration.
+	base := baseTestConfig()
+	base.RewriteStrategy = "sort"
+	got := resolveTableConfig(base, nil, maintenanceConfig(map[string]*s3tables.MaintenanceConfigurationValue{
+		s3tables.MaintenanceTypeIcebergCompaction: {
+			Status:   s3tables.MaintenanceStatusEnabled,
+			Settings: &s3tables.MaintenanceSettings{IcebergCompaction: &s3tables.IcebergCompactionSettings{Strategy: s3tables.CompactionStrategyAuto}},
+		},
+	}))
+	if got.RewriteStrategy != "sort" {
+		t.Errorf("expected auto to keep the worker setting, got %q", got.RewriteStrategy)
+	}
+}

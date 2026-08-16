@@ -189,3 +189,46 @@ func TestBuildJobStatusResponseDisabledBeatsRecorded(t *testing.T) {
 		t.Error("expected an unrun type reported as not yet run")
 	}
 }
+
+// A strategy the worker cannot carry out must be rejected, not accepted and
+// silently compacted some other way.
+func TestValidateMaintenanceValueCompactionStrategy(t *testing.T) {
+	for _, strategy := range []string{"", CompactionStrategyAuto, CompactionStrategyBinpack, CompactionStrategySort} {
+		if err := validateMaintenanceValue(MaintenanceTypeIcebergCompaction, tableMaintenanceTypes, &MaintenanceConfigurationValue{
+			Status:   MaintenanceStatusEnabled,
+			Settings: &MaintenanceSettings{IcebergCompaction: &IcebergCompactionSettings{Strategy: strategy}},
+		}); err != nil {
+			t.Errorf("expected strategy %q accepted, got %v", strategy, err)
+		}
+	}
+
+	for _, strategy := range []string{CompactionStrategyZOrder, "nonsense"} {
+		if err := validateMaintenanceValue(MaintenanceTypeIcebergCompaction, tableMaintenanceTypes, &MaintenanceConfigurationValue{
+			Status:   MaintenanceStatusEnabled,
+			Settings: &MaintenanceSettings{IcebergCompaction: &IcebergCompactionSettings{Strategy: strategy}},
+		}); err == nil {
+			t.Errorf("expected strategy %q rejected", strategy)
+		}
+	}
+}
+
+// Put then Get must return the strategy unchanged.
+func TestMaintenanceConfigurationPreservesStrategy(t *testing.T) {
+	data, err := json.Marshal(MaintenanceConfiguration{
+		MaintenanceTypeIcebergCompaction: {
+			Status:   MaintenanceStatusEnabled,
+			Settings: &MaintenanceSettings{IcebergCompaction: &IcebergCompactionSettings{Strategy: CompactionStrategySort, TargetFileSizeMB: 512}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var decoded MaintenanceConfiguration
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got := decoded[MaintenanceTypeIcebergCompaction].Settings.IcebergCompaction.Strategy; got != CompactionStrategySort {
+		t.Errorf("expected the strategy preserved, got %q", got)
+	}
+}
