@@ -23,8 +23,9 @@ func TestTablePrefixSessionPolicyScopesToTheTable(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &policy); err != nil {
 		t.Fatalf("policy is not valid JSON: %v", err)
 	}
-	if len(policy.Statement) != 2 {
-		t.Fatalf("policy has %d statements, want 2", len(policy.Statement))
+	// objects, conditioned bucket listing, and unconditioned location lookup
+	if len(policy.Statement) != 3 {
+		t.Fatalf("policy has %d statements, want 3", len(policy.Statement))
 	}
 
 	objects := policy.Statement[0]
@@ -41,13 +42,44 @@ func TestTablePrefixSessionPolicyScopesToTheTable(t *testing.T) {
 	}
 }
 
-func TestTablePrefixSessionPolicyWithoutPrefix(t *testing.T) {
-	raw, err := tablePrefixSessionPolicy("warehouse", "")
+// A table at the bucket root has no prefix to scope to, and vending would hand
+// out read and write over every other table in the bucket.
+func TestTablePrefixSessionPolicyRefusesAWholeBucket(t *testing.T) {
+	if _, err := tablePrefixSessionPolicy("warehouse", ""); err == nil {
+		t.Error("tablePrefixSessionPolicy() error = nil, want a refusal for an empty prefix")
+	}
+	if _, err := tablePrefixSessionPolicy("warehouse", "/"); err == nil {
+		t.Error("a prefix of only separators was accepted")
+	}
+}
+
+// GetBucketLocation carries no prefix, so conditioning it would deny location
+// discovery to every vended credential.
+func TestTablePrefixSessionPolicyLeavesBucketLocationUnconditioned(t *testing.T) {
+	raw, err := tablePrefixSessionPolicy("warehouse", "analytics/events")
 	if err != nil {
 		t.Fatalf("tablePrefixSessionPolicy() error = %v", err)
 	}
-	if !strings.Contains(raw, `"arn:aws:s3:::warehouse/*"`) {
-		t.Errorf("policy = %s, want the whole bucket when there is no prefix", raw)
+
+	var policy struct {
+		Statement []struct {
+			Action    []string       `json:"Action"`
+			Condition map[string]any `json:"Condition"`
+		} `json:"Statement"`
+	}
+	if err := json.Unmarshal([]byte(raw), &policy); err != nil {
+		t.Fatalf("policy is not valid JSON: %v", err)
+	}
+
+	for _, statement := range policy.Statement {
+		for _, action := range statement.Action {
+			if action == "s3:GetBucketLocation" && statement.Condition != nil {
+				t.Errorf("s3:GetBucketLocation carries a condition it can never satisfy: %v", statement.Condition)
+			}
+			if action == "s3:ListBucketMultipartUploads" {
+				t.Error("s3:ListBucketMultipartUploads is granted; it cannot be scoped by prefix")
+			}
+		}
 	}
 }
 

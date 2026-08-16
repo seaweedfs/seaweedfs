@@ -107,25 +107,11 @@ func tablePrefixSessionPolicy(bucket, prefix string) (string, error) {
 	if strings.ContainsAny(bucket, "*?") || strings.ContainsAny(prefix, "*?") {
 		return "", fmt.Errorf("refusing to scope credentials to a location with wildcards: s3://%s/%s", bucket, prefix)
 	}
-
-	objects := fmt.Sprintf("arn:aws:s3:::%s/*", bucket)
-	if prefix != "" {
-		objects = fmt.Sprintf("arn:aws:s3:::%s/%s/*", bucket, prefix)
-	}
-
-	bucketStatement := map[string]interface{}{
-		"Effect":   "Allow",
-		"Action":   []string{"s3:ListBucket", "s3:ListBucketMultipartUploads", "s3:GetBucketLocation"},
-		"Resource": []string{fmt.Sprintf("arn:aws:s3:::%s", bucket)},
-	}
-	if prefix != "" {
-		// Listing is granted on the bucket, so without this the session could
-		// enumerate every other table's object names.
-		bucketStatement["Condition"] = map[string]interface{}{
-			"StringLike": map[string]interface{}{
-				"s3:prefix": []string{prefix, prefix + "/*"},
-			},
-		}
+	// Without a prefix there is nothing to scope to, and the session would carry
+	// read and write over every table in the bucket. A table registered at the
+	// bucket root is the only way to get here.
+	if prefix == "" {
+		return "", fmt.Errorf("refusing to scope credentials to a whole bucket: s3://%s", bucket)
 	}
 
 	policy := map[string]interface{}{
@@ -134,9 +120,31 @@ func tablePrefixSessionPolicy(bucket, prefix string) (string, error) {
 			{
 				"Effect":   "Allow",
 				"Action":   []string{"s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"},
-				"Resource": []string{objects},
+				"Resource": []string{fmt.Sprintf("arn:aws:s3:::%s/%s/*", bucket, prefix)},
 			},
-			bucketStatement,
+			{
+				// Listing is granted on the bucket, so without the condition the
+				// session could enumerate every other table's object names.
+				"Effect":   "Allow",
+				"Action":   []string{"s3:ListBucket"},
+				"Resource": []string{fmt.Sprintf("arn:aws:s3:::%s", bucket)},
+				"Condition": map[string]interface{}{
+					"StringLike": map[string]interface{}{
+						"s3:prefix": []string{prefix, prefix + "/*"},
+					},
+				},
+			},
+			{
+				// GetBucketLocation carries no prefix to condition on, so it sits
+				// in its own statement rather than being denied by one.
+				// ListBucketMultipartUploads is deliberately absent: Iceberg
+				// writers complete and abort by upload id, and granting it either
+				// leaks in-flight keys bucket-wide or breaks on the same missing
+				// prefix.
+				"Effect":   "Allow",
+				"Action":   []string{"s3:GetBucketLocation"},
+				"Resource": []string{fmt.Sprintf("arn:aws:s3:::%s", bucket)},
+			},
 		},
 	}
 
