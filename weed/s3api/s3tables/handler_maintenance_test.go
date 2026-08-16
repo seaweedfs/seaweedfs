@@ -415,10 +415,16 @@ func TestARNPartitionsBeyondCommercial(t *testing.T) {
 
 func TestARNPartitionForRegion(t *testing.T) {
 	for region, want := range map[string]string{
-		"us-east-1":     "aws",
-		"eu-west-2":     "aws",
-		"cn-north-1":    "aws-cn",
-		"us-gov-west-1": "aws-us-gov",
+		"us-east-1":       "aws",
+		"eu-west-2":       "aws",
+		"cn-north-1":      "aws-cn",
+		"cn-northwest-1":  "aws-cn",
+		"us-gov-west-1":   "aws-us-gov",
+		"us-iso-east-1":   "aws-iso",
+		"us-isob-east-1":  "aws-iso-b",
+		"eu-isoe-west-1":  "aws-iso-e",
+		"us-isof-south-1": "aws-iso-f",
+		"eusc-de-east-1":  "aws-eusc",
 	} {
 		if got := arnPartitionForRegion(region); got != want {
 			t.Errorf("region %s: expected partition %q, got %q", region, want, got)

@@ -301,6 +301,12 @@ func arnPartitionForRegion(region string) string {
 		return "aws-iso"
 	case strings.HasPrefix(region, "us-isob-"):
 		return "aws-iso-b"
+	case strings.HasPrefix(region, "eu-isoe-"):
+		return "aws-iso-e"
+	case strings.HasPrefix(region, "us-isof-"):
+		return "aws-iso-f"
+	case strings.HasPrefix(region, "eusc-"):
+		return "aws-eusc"
 	default:
 		return "aws"
 	}
