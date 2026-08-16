@@ -1,6 +1,7 @@
 package s3tables
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -292,6 +293,14 @@ func metadataVersionFromLocation(metadataLocation string) int {
 	// v{N} form
 	if v, err := strconv.Atoi(strings.TrimPrefix(name, "v")); err == nil && v > 0 {
 		return v
+	}
+	// v{N}-{unique} form, written when a commit finds v{N} already staged
+	if trimmed := strings.TrimPrefix(name, "v"); trimmed != name {
+		if idx := strings.IndexByte(trimmed, '-'); idx != -1 {
+			if v, err := strconv.Atoi(trimmed[:idx]); err == nil && v > 0 {
+				return v
+			}
+		}
 	}
 	// {NNNNN}-{uuid} form: the leading integer before the first '-'
 	if idx := strings.IndexByte(name, '-'); idx != -1 {
@@ -1566,6 +1575,8 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 
 	// Load existing metadata and policies for authorization
 	var metadata tableMetadataInternal
+	var storedMetadata []byte
+	var storedPolicy []byte
 	var tablePolicy string
 	var bucketPolicy string
 	var bucketTags map[string]string
@@ -1581,11 +1592,13 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 		if err := json.Unmarshal(data, &metadata); err != nil {
 			return fmt.Errorf("failed to unmarshal table metadata: %w", err)
 		}
+		storedMetadata = data
 
 		// 2. Get Table Policy & Tags
 		policyData, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyPolicy)
 		if err == nil {
 			tablePolicy = string(policyData)
+			storedPolicy = policyData
 		} else if !errors.Is(err, ErrAttributeNotFound) {
 			return fmt.Errorf("failed to fetch table policy: %w", err)
 		}
@@ -1697,14 +1710,33 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 		return err
 	}
 
+	// Conditional on the metadata this request read and authorized against:
+	// two commits that both passed the version-token check would otherwise each
+	// write their own metadata and the later one would drop the earlier
+	// snapshot. mutateEntryExtended retries on a changed entry, so the check
+	// lives in the mutation, where it sees the value that is current now.
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		if err := h.setExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata, metadataBytes); err != nil {
-			return err
-		}
-		return nil
+		return h.mutateEntryExtended(r.Context(), client, tablePath, func(extended map[string][]byte) error {
+			if !bytes.Equal(extended[ExtendedKeyMetadata], storedMetadata) {
+				return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyMetadata)
+			}
+			// The policy this request was authorized against must still be the
+			// one in force: an administrator restricting it mid-commit should
+			// send the caller back through authorization, not have its decision
+			// applied afterwards.
+			if !bytes.Equal(extended[ExtendedKeyPolicy], storedPolicy) {
+				return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyPolicy)
+			}
+			extended[ExtendedKeyMetadata] = metadataBytes
+			return nil
+		})
 	})
 
 	if err != nil {
+		if errors.Is(err, ErrConcurrentUpdate) {
+			h.writeError(w, http.StatusConflict, ErrCodeConflict, "table was updated concurrently")
+			return ErrVersionTokenMismatch
+		}
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to update metadata")
 		return err
 	}

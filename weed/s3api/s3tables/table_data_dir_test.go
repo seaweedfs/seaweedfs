@@ -21,3 +21,17 @@ func TestTableDataDirFromMetadataLocation(t *testing.T) {
 		}
 	}
 }
+
+func TestMetadataVersionFromLocationUniqueSuffix(t *testing.T) {
+	cases := map[string]int{
+		"s3://bkt/ns/t/metadata/v4.metadata.json":                                      4,
+		"s3://bkt/ns/t/metadata/v4-0a1b2c3d-4e5f-6789-abcd-ef0123456789.metadata.json": 4,
+		"s3://bkt/ns/t/metadata/00007-0a1b2c3d.metadata.json":                          7,
+		"s3://bkt/ns/t/metadata/whatever.metadata.json":                                1,
+	}
+	for location, want := range cases {
+		if got := metadataVersionFromLocation(location); got != want {
+			t.Errorf("metadataVersionFromLocation(%q) = %d, want %d", location, got, want)
+		}
+	}
+}

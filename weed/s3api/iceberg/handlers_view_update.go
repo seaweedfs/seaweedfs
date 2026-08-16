@@ -3,10 +3,8 @@ package iceberg
 import (
 	"encoding/json"
 	"fmt"
-	"math/rand/v2"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/apache/iceberg-go/view"
 	"github.com/google/uuid"
@@ -104,7 +102,8 @@ func (s *Server) handleUpdateView(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "InternalServerError", "Invalid view location: "+err.Error())
 			return
 		}
-		if err := s.saveMetadataFile(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataBytes); err != nil {
+		metadataFileName, newMetadataLocation, err = s.stageCommitMetadata(r.Context(), metadataBucket, metadataPath, location, metadataFileName, metadataBytes)
+		if err != nil {
 			writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save view metadata file: "+err.Error())
 			return
 		}
@@ -144,8 +143,7 @@ func (s *Server) handleUpdateView(w http.ResponseWriter, r *http.Request) {
 			}
 			if attempt < maxCommitAttempts {
 				glog.V(1).Infof("Iceberg: UpdateView conflict for %s (attempt %d/%d), retrying", viewName, attempt, maxCommitAttempts)
-				jitter := time.Duration(rand.Int64N(int64(25 * time.Millisecond)))
-				time.Sleep(time.Duration(50*attempt)*time.Millisecond + jitter)
+				sleepBeforeCommitRetry(attempt)
 				continue
 			}
 			writeError(w, http.StatusConflict, "CommitFailedException", "Version token mismatch")

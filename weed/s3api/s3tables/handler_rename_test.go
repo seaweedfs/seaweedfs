@@ -1,6 +1,7 @@
 package s3tables
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net"
@@ -26,6 +27,9 @@ type memFilerServer struct {
 	filer_pb.UnimplementedSeaweedFilerServer
 	entries map[string]map[string]*filer_pb.Entry // dir -> name -> entry
 	client  filer_pb.SeaweedFilerClient
+	// beforeUpdate runs once, at the start of the next UpdateEntry, so a test
+	// can land a competing write in a handler's read-to-write window.
+	beforeUpdate func()
 }
 
 func newMemFilerServer() *memFilerServer {
@@ -81,6 +85,21 @@ func (f *memFilerServer) CreateEntry(_ context.Context, req *filer_pb.CreateEntr
 }
 
 func (f *memFilerServer) UpdateEntry(_ context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
+	if hook := f.beforeUpdate; hook != nil {
+		f.beforeUpdate = nil
+		hook()
+	}
+	// The real filer validates ExpectedExtended under the per-path lock; without
+	// it here a lost update would look like a success.
+	for key, expected := range req.ExpectedExtended {
+		var actual []byte
+		if existing := f.getEntry(req.Directory, req.Entry.Name); existing != nil {
+			actual = existing.Extended[key]
+		}
+		if !bytes.Equal(actual, expected) {
+			return nil, status.Errorf(codes.FailedPrecondition, "extended attribute %q changed", key)
+		}
+	}
 	if _, ok := f.entries[req.Directory]; !ok {
 		f.entries[req.Directory] = make(map[string]*filer_pb.Entry)
 	}

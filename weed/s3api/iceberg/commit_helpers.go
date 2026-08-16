@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/apache/iceberg-go/table"
 	"github.com/google/uuid"
@@ -16,6 +18,36 @@ import (
 )
 
 const requirementAssertCreate = "assert-create"
+
+// sleepBeforeCommitRetry backs off between commit attempts, jittered so that
+// writers that collided do not line up again on the next try.
+func sleepBeforeCommitRetry(attempt int) {
+	jitter := time.Duration(rand.Int64N(int64(25 * time.Millisecond)))
+	time.Sleep(time.Duration(50*attempt)*time.Millisecond + jitter)
+}
+
+// stageCommitMetadata writes the metadata file a commit will point the catalog
+// at, returning the name and location it landed on. The exclusive create keeps
+// one writer from overwriting another's file; when the name is already taken
+// the metadata goes to a unique one instead of failing, because the file there
+// may be an orphan left by an interrupted commit, and refusing would wedge the
+// table until an orphan sweep ran. The catalog pointer, not the file name,
+// decides which commit won. This mirrors how the maintenance worker stages its
+// own metadata.
+func (s *Server) stageCommitMetadata(ctx context.Context, metadataBucket, metadataPath, location, metadataFileName string, metadataBytes []byte) (string, string, error) {
+	err := s.saveMetadataFile(ctx, metadataBucket, metadataPath, metadataFileName, metadataBytes, true)
+	if errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
+		// v{N}-{uuid}, a form both the catalog and the maintenance worker
+		// still read the version from.
+		metadataFileName = fmt.Sprintf("%s-%s.metadata.json", strings.TrimSuffix(metadataFileName, ".metadata.json"), uuid.NewString())
+		glog.V(1).Infof("Iceberg: metadata file already staged for %s, using %s", location, metadataFileName)
+		err = s.saveMetadataFile(ctx, metadataBucket, metadataPath, metadataFileName, metadataBytes, true)
+	}
+	if err != nil {
+		return "", "", err
+	}
+	return metadataFileName, fmt.Sprintf("%s/metadata/%s", strings.TrimSuffix(location, "/"), metadataFileName), nil
+}
 
 type icebergRequestError struct {
 	status  int
@@ -155,7 +187,7 @@ func (s *Server) finalizeCreateOnCommit(ctx context.Context, input createOnCommi
 			message: "Invalid table location: " + err.Error(),
 		}
 	}
-	if err := s.saveMetadataFile(ctx, metadataBucket, metadataPath, metadataFileName, metadataBytes); err != nil {
+	if err := s.saveMetadataFile(ctx, metadataBucket, metadataPath, metadataFileName, metadataBytes, false); err != nil {
 		return nil, &icebergRequestError{
 			status:  http.StatusInternalServerError,
 			errType: "InternalServerError",
