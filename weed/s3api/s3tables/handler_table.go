@@ -1216,6 +1216,17 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 	return nil
 }
 
+// renamedTableAttributes are the catalog attributes a rename carries to the new
+// name and clears from the old one.
+var renamedTableAttributes = []string{
+	ExtendedKeyMetadata,
+	ExtendedKeyMetadataVersion,
+	ExtendedKeyPolicy,
+	ExtendedKeyTags,
+	ExtendedKeyMaintenance,
+	ExtendedKeyMaintenanceStatus,
+}
+
 // handleRenameTable moves a table's catalog entry to a new namespace/name within
 // the same bucket. It is catalog-only: the metadata.json and data files stay put,
 // the destination keeps the source's MetadataLocation, and the source name is
@@ -1266,6 +1277,10 @@ func (h *S3TablesHandler) handleRenameTable(w http.ResponseWriter, r *http.Reque
 	var metadataVersionXattr []byte
 	var maintenanceXattr []byte
 	var maintenanceStatusXattr []byte
+	// The values the rename copies. The source is only cleared while it still
+	// holds exactly these, so a write that lands mid-rename is not deleted here
+	// after having missed the copy to the destination.
+	var copiedFromSource map[string][]byte
 	var tablePolicy string
 	var bucketPolicy string
 	var bucketTags map[string]string
@@ -1295,6 +1310,15 @@ func (h *S3TablesHandler) handleRenameTable(w http.ResponseWriter, r *http.Reque
 		tableTags, err = h.readTags(r.Context(), client, srcPath)
 		if err != nil {
 			return err
+		}
+
+		srcEntry, err := h.lookupEntry(r.Context(), client, srcPath)
+		if err != nil {
+			return err
+		}
+		copiedFromSource = make(map[string][]byte, len(renamedTableAttributes))
+		for _, key := range renamedTableAttributes {
+			copiedFromSource[key] = srcEntry.Extended[key]
 		}
 
 		// The maintenance configuration and its last-run status belong to the
@@ -1487,12 +1511,15 @@ func (h *S3TablesHandler) handleRenameTable(w http.ResponseWriter, r *http.Reque
 		// Soft-delete the source catalog identity in place: drop its catalog xattrs
 		// so the name stops resolving while the metadata/ and data/ children stay put
 		// (manifests embed absolute paths, so the data must not move).
-		return h.removeExtendedAttributes(r.Context(), client, srcPath,
-			ExtendedKeyMetadata, ExtendedKeyMetadataVersion, ExtendedKeyPolicy, ExtendedKeyTags,
-			ExtendedKeyMaintenance, ExtendedKeyMaintenanceStatus)
+		return h.removeExtendedAttributesIf(r.Context(), client, srcPath, copiedFromSource,
+			renamedTableAttributes...)
 	})
 
 	if err != nil {
+		if errors.Is(err, ErrConcurrentUpdate) {
+			h.writeError(w, http.StatusConflict, ErrCodeConflict, "table changed during rename, retry the request")
+			return err
+		}
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to rename table")
 		return err
 	}

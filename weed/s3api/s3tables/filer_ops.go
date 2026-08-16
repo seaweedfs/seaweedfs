@@ -1,6 +1,7 @@
 package s3tables
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -132,6 +133,30 @@ func (h *S3TablesHandler) setExtendedAttributes(ctx context.Context, client file
 // leaving the directory and its children intact.
 func (h *S3TablesHandler) removeExtendedAttributes(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, keys ...string) error {
 	return h.mutateEntryExtended(ctx, client, path, func(extended map[string][]byte) error {
+		for _, key := range keys {
+			delete(extended, key)
+		}
+		return nil
+	})
+}
+
+// removeExtendedAttributesIf drops the given attributes only while they still
+// hold the values the caller captured. A rename copies attributes to the
+// destination and then clears the source; without this, a write that landed in
+// between is deleted here and never reaches the new name.
+func (h *S3TablesHandler) removeExtendedAttributesIf(
+	ctx context.Context,
+	client filer_pb.SeaweedFilerClient,
+	path string,
+	expected map[string][]byte,
+	keys ...string,
+) error {
+	return h.mutateEntryExtended(ctx, client, path, func(extended map[string][]byte) error {
+		for key, want := range expected {
+			if !bytes.Equal(extended[key], want) {
+				return fmt.Errorf("%w: %s changed on %s", ErrConcurrentUpdate, key, path)
+			}
+		}
 		for _, key := range keys {
 			delete(extended, key)
 		}

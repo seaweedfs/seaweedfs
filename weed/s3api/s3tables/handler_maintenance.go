@@ -251,7 +251,9 @@ func buildJobStatusResponse(recorded MaintenanceJobStatus, config MaintenanceCon
 }
 
 // putMaintenanceConfiguration merges one maintenance type into the stored
-// configuration, leaving the other types alone.
+// configuration, leaving the other types alone. The write checks the catalog
+// identity in the same conditional mutation, so it cannot land on a name a
+// concurrent rename or delete has already soft-deleted.
 func (h *S3TablesHandler) putMaintenanceConfiguration(
 	r *http.Request,
 	filerClient FilerClient,
@@ -259,15 +261,25 @@ func (h *S3TablesHandler) putMaintenanceConfiguration(
 	value *MaintenanceConfigurationValue,
 ) error {
 	return filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return h.updateExtendedAttribute(r.Context(), client, resourcePath, ExtendedKeyMaintenance, func(current []byte) ([]byte, error) {
+		return h.mutateEntryExtended(r.Context(), client, resourcePath, func(extended map[string][]byte) error {
+			if len(extended[ExtendedKeyMetadata]) == 0 {
+				return fmt.Errorf("%w: %s", filer_pb.ErrNotFound, resourcePath)
+			}
+
 			config := MaintenanceConfiguration{}
-			if len(current) > 0 {
+			if current := extended[ExtendedKeyMaintenance]; len(current) > 0 {
 				if err := json.Unmarshal(current, &config); err != nil {
-					return nil, fmt.Errorf("failed to unmarshal maintenance configuration: %w", err)
+					return fmt.Errorf("failed to unmarshal maintenance configuration: %w", err)
 				}
 			}
 			config[maintenanceType] = value
-			return json.Marshal(config)
+
+			data, err := json.Marshal(config)
+			if err != nil {
+				return err
+			}
+			extended[ExtendedKeyMaintenance] = data
+			return nil
 		})
 	})
 }

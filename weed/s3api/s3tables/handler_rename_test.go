@@ -387,3 +387,31 @@ func TestRenameTableCarriesMaintenanceConfiguration(t *testing.T) {
 	_, hasStatus := moved.Extended[ExtendedKeyMaintenanceStatus]
 	assert.False(t, hasStatus, "source maintenance status must be cleared")
 }
+
+// A maintenance configuration written after the rename copied the source must
+// not be deleted by the source cleanup: it would vanish without ever reaching
+// the destination.
+func TestRenameTableRejectsConcurrentMaintenanceWrite(t *testing.T) {
+	fs, _ := startRenameManager(t)
+
+	src := fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "t")
+	require.NotNil(t, src)
+	copied := []byte(`{"icebergCompaction":{"status":"enabled"}}`)
+	src.Extended[ExtendedKeyMaintenance] = copied
+
+	// Stand in for the Put that lands between the copy and the cleanup.
+	landedLate := []byte(`{"icebergSnapshotManagement":{"status":"disabled"}}`)
+	expected := map[string][]byte{ExtendedKeyMaintenance: copied}
+
+	src.Extended[ExtendedKeyMaintenance] = landedLate
+
+	h := NewS3TablesHandler()
+	err := NewManagerClient(fs.client).WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return h.removeExtendedAttributesIf(context.Background(),
+			client, GetTablePath(renameTestBucket, "ns", "t"), expected, renamedTableAttributes...)
+	})
+
+	require.Error(t, err, "cleanup must refuse to delete a configuration written after the copy")
+	assert.ErrorIs(t, err, ErrConcurrentUpdate)
+	assert.Equal(t, landedLate, src.Extended[ExtendedKeyMaintenance], "the late write must survive")
+}
