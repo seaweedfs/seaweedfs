@@ -58,7 +58,7 @@ func (h *Handler) expireSnapshots(
 		currentSnapID = currentSnap.SnapshotID
 	}
 
-	retentionMs := config.SnapshotRetentionHours * 3600 * 1000
+	retentionMs := config.SnapshotRetentionMs
 	nowMs := time.Now().UnixMilli()
 
 	// Sort snapshots by timestamp descending (most recent first) so that

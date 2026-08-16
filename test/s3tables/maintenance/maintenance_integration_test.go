@@ -600,9 +600,9 @@ func testExpireSnapshots(t *testing.T) {
 
 	handler := icebergHandler.NewHandler(nil)
 	config := icebergHandler.Config{
-		SnapshotRetentionHours: 0, // instant expiry — everything eligible
-		MaxSnapshotsToKeep:     1, // keep only the current snapshot
-		MaxCommitRetries:       3,
+		SnapshotRetentionMs: 0, // instant expiry — everything eligible
+		MaxSnapshotsToKeep:  1, // keep only the current snapshot
+		MaxCommitRetries:    3,
 	}
 
 	result, _, err := handler.ExpireSnapshots(context.Background(), client, bucket, path.Join(ns, tbl), config)
@@ -932,9 +932,9 @@ func testFullMaintenanceCycle(t *testing.T) {
 
 	// Step 1: Expire snapshots
 	expireConfig := icebergHandler.Config{
-		SnapshotRetentionHours: 0, // instant expiry
-		MaxSnapshotsToKeep:     1,
-		MaxCommitRetries:       3,
+		SnapshotRetentionMs: 0, // instant expiry
+		MaxSnapshotsToKeep:  1,
+		MaxCommitRetries:    3,
 	}
 	result, _, err := handler.ExpireSnapshots(ctx, client, bucket, tablePath, expireConfig)
 	require.NoError(t, err)
