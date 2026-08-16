@@ -445,7 +445,7 @@ type GetTableBucketMaintenanceConfigurationRequest struct {
 }
 
 type GetTableBucketMaintenanceConfigurationResponse struct {
-	TableBucketARN string                   `json:"tableBucketArn"`
+	TableBucketARN string                   `json:"tableBucketARN"`
 	Configuration  MaintenanceConfiguration `json:"configuration"`
 }
 
