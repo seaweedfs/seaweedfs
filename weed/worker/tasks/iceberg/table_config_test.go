@@ -1,7 +1,9 @@
 package iceberg
 
 import (
+	"math"
 	"testing"
+	"time"
 
 	"github.com/apache/iceberg-go"
 )
@@ -93,5 +95,21 @@ func TestResolveTableConfigLeavesOtherFields(t *testing.T) {
 	got := resolveTableConfig(base, iceberg.Properties{propTargetFileSize: "536870912"})
 	if got.Operations != "compact" || got.Where != "day = 3" || got.MinInputFiles != 9 {
 		t.Errorf("expected unrelated fields preserved, got %+v", got)
+	}
+}
+
+// An orphan cutoff large enough to overflow time.Duration would wrap negative,
+// put the cutoff in the future and make every file look like an orphan.
+func TestApplyThresholdDefaultsClampsOrphanCutoff(t *testing.T) {
+	got := applyThresholdDefaults(Config{OrphanOlderThanHours: math.MaxInt64})
+	if got.OrphanOlderThanHours != maxOrphanOlderThanHours {
+		t.Fatalf("expected the cutoff clamped to %d, got %d", maxOrphanOlderThanHours, got.OrphanOlderThanHours)
+	}
+	if cutoff := time.Duration(got.OrphanOlderThanHours) * time.Hour; cutoff <= 0 {
+		t.Errorf("expected a positive cutoff duration, got %v", cutoff)
+	}
+
+	if got := applyThresholdDefaults(Config{OrphanOlderThanHours: 72}); got.OrphanOlderThanHours != 72 {
+		t.Errorf("expected a normal cutoff untouched, got %d", got.OrphanOlderThanHours)
 	}
 }

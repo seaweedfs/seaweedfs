@@ -5,6 +5,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
@@ -48,6 +49,11 @@ const (
 const bytesPerMB int64 = 1024 * 1024
 
 const msPerHour int64 = 3600 * 1000
+
+// maxOrphanOlderThanHours is the largest cutoff that still survives conversion
+// to a time.Duration. Beyond it the multiplication wraps negative, putting the
+// cutoff in the future and making every file look like an orphan.
+const maxOrphanOlderThanHours = int64(math.MaxInt64 / int64(time.Hour))
 
 // hoursToMs converts hours to milliseconds, saturating instead of overflowing.
 func hoursToMs(hours int64) int64 {
@@ -121,6 +127,9 @@ func ParseConfig(values map[string]*plugin_pb.ConfigValue) Config {
 func applyThresholdDefaults(cfg Config) Config {
 	if cfg.OrphanOlderThanHours <= 0 {
 		cfg.OrphanOlderThanHours = defaultOrphanOlderThanHours
+	}
+	if cfg.OrphanOlderThanHours > maxOrphanOlderThanHours {
+		cfg.OrphanOlderThanHours = maxOrphanOlderThanHours
 	}
 	if cfg.TargetFileSizeBytes <= 0 {
 		cfg.TargetFileSizeBytes = defaultTargetFileSizeMB * 1024 * 1024
