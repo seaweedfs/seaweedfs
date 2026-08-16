@@ -25,6 +25,7 @@ const (
 	defaultDeleteMaxGroupSizeMB   = 256
 	defaultDeleteMaxOutputFiles   = 8
 	defaultRewriteStrategy        = "binpack"
+	rewriteStrategyAuto           = "auto"
 	defaultMinManifestsToRewrite  = 5
 	minManifestsToRewrite         = 2
 	defaultOperations             = "all"
@@ -192,7 +193,7 @@ func applyThresholdDefaults(cfg Config) Config {
 	if cfg.RewriteStrategy == "" {
 		cfg.RewriteStrategy = defaultRewriteStrategy
 	}
-	if cfg.RewriteStrategy != "binpack" && cfg.RewriteStrategy != "sort" {
+	if cfg.RewriteStrategy != "binpack" && cfg.RewriteStrategy != "sort" && cfg.RewriteStrategy != rewriteStrategyAuto {
 		cfg.RewriteStrategy = defaultRewriteStrategy
 	}
 	if cfg.SortMaxInputBytes < 0 {

@@ -64,9 +64,8 @@ func applyMaintenanceConfig(cfg Config, maintenance s3tables.MaintenanceConfigur
 		if s.TargetFileSizeMB > 0 {
 			cfg.TargetFileSizeBytes = mbToBytes(s.TargetFileSizeMB)
 		}
-		// "auto" leaves the choice to the worker's own configuration.
 		switch s.Strategy {
-		case s3tables.CompactionStrategyBinpack, s3tables.CompactionStrategySort:
+		case s3tables.CompactionStrategyBinpack, s3tables.CompactionStrategySort, s3tables.CompactionStrategyAuto:
 			cfg.RewriteStrategy = s.Strategy
 		}
 	}

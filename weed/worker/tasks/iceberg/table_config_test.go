@@ -374,16 +374,31 @@ func TestResolveTableConfigAppliesCompactionStrategy(t *testing.T) {
 		t.Errorf("expected binpack, got %q", got.RewriteStrategy)
 	}
 
-	// "auto" defers to the worker's own configuration.
-	base := baseTestConfig()
-	base.RewriteStrategy = "sort"
-	got := resolveTableConfig(base, nil, maintenanceConfig(map[string]*s3tables.MaintenanceConfigurationValue{
-		s3tables.MaintenanceTypeIcebergCompaction: {
-			Status:   s3tables.MaintenanceStatusEnabled,
-			Settings: &s3tables.MaintenanceSettings{IcebergCompaction: &s3tables.IcebergCompactionSettings{Strategy: s3tables.CompactionStrategyAuto}},
-		},
-	}))
-	if got.RewriteStrategy != "sort" {
-		t.Errorf("expected auto to keep the worker setting, got %q", got.RewriteStrategy)
+	// "auto" is carried through so the plan can pick per table.
+	if got := withStrategy(s3tables.CompactionStrategyAuto); got.RewriteStrategy != rewriteStrategyAuto {
+		t.Errorf("expected auto preserved, got %q", got.RewriteStrategy)
+	}
+}
+
+// AWS defines auto as sorting tables that declare a sort order and bin-packing
+// the rest, so it must not collapse to the worker default.
+func TestResolveCompactionRewritePlanAuto(t *testing.T) {
+	cfg := baseTestConfig()
+	cfg.RewriteStrategy = rewriteStrategyAuto
+
+	unsorted := buildTestMetadata(t, nil)
+	plan, err := resolveCompactionRewritePlan(cfg, unsorted)
+	if err != nil {
+		t.Fatalf("auto must not fail on an unsorted table: %v", err)
+	}
+	if plan.strategy != defaultRewriteStrategy {
+		t.Errorf("expected binpack for an unsorted table, got %q", plan.strategy)
+	}
+
+	// An explicit sort request on the same table is still an error, so auto is
+	// doing something the existing strategies did not.
+	cfg.RewriteStrategy = "sort"
+	if _, err := resolveCompactionRewritePlan(cfg, unsorted); err == nil {
+		t.Error("expected explicit sort to fail without a table sort order")
 	}
 }

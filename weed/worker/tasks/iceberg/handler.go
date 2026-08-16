@@ -187,7 +187,7 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						{
 							Name:        "rewrite_strategy",
 							Label:       "Rewrite Strategy",
-							Description: "binpack keeps the existing row order; sort rewrites each compaction bin using the Iceberg table sort order.",
+							Description: "binpack keeps the existing row order; sort rewrites each compaction bin using the Iceberg table sort order; auto sorts tables that declare one and bin-packs the rest.",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
 							Placeholder: "binpack or sort",
