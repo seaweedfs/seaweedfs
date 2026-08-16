@@ -1237,6 +1237,9 @@ type catalogEntryKind struct {
 	createOp     string
 	notFoundCode string
 	existsCode   string
+	// resourceARN builds the ARN a policy scoped to this entry would name, so a
+	// view is authorized against its view ARN and not a table ARN.
+	resourceARN func(h *S3TablesHandler, ownerAccountID, bucketName, id string) string
 }
 
 var (
@@ -1247,6 +1250,9 @@ var (
 		createOp:     "CreateTable",
 		notFoundCode: ErrCodeNoSuchTable,
 		existsCode:   ErrCodeTableAlreadyExists,
+		resourceARN: func(h *S3TablesHandler, ownerAccountID, bucketName, id string) string {
+			return h.generateTableARN(ownerAccountID, bucketName, id)
+		},
 	}
 	viewEntryKind = catalogEntryKind{
 		entryType:    EntryTypeView,
@@ -1255,6 +1261,9 @@ var (
 		createOp:     "CreateView",
 		notFoundCode: ErrCodeNoSuchView,
 		existsCode:   ErrCodeViewAlreadyExists,
+		resourceARN: func(h *S3TablesHandler, ownerAccountID, bucketName, id string) string {
+			return h.generateViewARN(ownerAccountID, bucketName, id)
+		},
 	}
 )
 
@@ -1329,12 +1338,6 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 	var bucketMetadata tableBucketMetadata
 	var srcExtended map[string][]byte
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		srcEntry, err := h.lookupEntry(r.Context(), client, srcPath)
-		if err != nil {
-			return err
-		}
-		srcExtended = srcEntry.Extended
-
 		data, err := h.getExtendedAttribute(r.Context(), client, srcPath, ExtendedKeyMetadata)
 		if err != nil {
 			return err
@@ -1364,6 +1367,7 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 		if err != nil {
 			return err
 		}
+		srcExtended = srcEntry.Extended
 		copiedFromSource = make(map[string][]byte, len(renamedTableAttributes))
 		for _, key := range renamedTableAttributes {
 			copiedFromSource[key] = srcEntry.Extended[key]
@@ -1427,7 +1431,7 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 		return fmt.Errorf("%s %s not found", kind.noun, srcName)
 	}
 
-	tableARN := h.generateTableARN(metadata.OwnerAccountID, bucketName, srcNamespace+"/"+srcName)
+	tableARN := kind.resourceARN(h, metadata.OwnerAccountID, bucketName, srcNamespace+"/"+srcName)
 	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
 	principal := h.getAccountID(r)
 	identityActions := getIdentityActions(r)
@@ -1583,7 +1587,7 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 	}
 
 	h.writeJSON(w, http.StatusOK, &RenameTableResponse{
-		TableARN:         h.generateTableARN(metadata.OwnerAccountID, bucketName, destNamespace+"/"+destName),
+		TableARN:         kind.resourceARN(h, metadata.OwnerAccountID, bucketName, destNamespace+"/"+destName),
 		MetadataLocation: metadata.MetadataLocation,
 	})
 	return nil

@@ -97,3 +97,38 @@ func TestRenameTableRejectsView(t *testing.T) {
 	require.ErrorAs(t, err, &s3Err)
 	assert.Equal(t, ErrCodeNoSuchTable, s3Err.Type)
 }
+
+// A policy scoped to the view ARN must authorize renaming that view. Checking
+// the source against a table ARN would silently ignore it.
+func TestRenameViewAuthorizesAgainstTheViewARN(t *testing.T) {
+	fs, m := startRenameManager(t)
+	m.SetTrusted(false)
+	m.SetDefaultAllow(false)
+	seedView(t, fs, "v")
+
+	const principal = "analyst"
+	viewARN := "arn:aws:s3tables:" + DefaultRegion + ":" + DefaultAccountID + ":bucket/" + renameTestBucket + "/view/ns/v"
+	viewPolicy := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"` + principal +
+		`","Action":"s3tables:RenameView","Resource":"` + viewARN + `"}]}`
+	view := fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "v")
+	require.NotNil(t, view)
+	view.Extended[ExtendedKeyPolicy] = []byte(viewPolicy)
+
+	// Landing in the namespace needs create permission there as well.
+	namespacePolicy := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"` + principal +
+		`","Action":"s3tables:CreateView","Resource":"` + mustBucketARN(t) + `"}]}`
+	namespace := fs.getEntry(GetTableBucketPath(renameTestBucket), "ns")
+	require.NotNil(t, namespace)
+	namespace.Extended[ExtendedKeyPolicy] = []byte(namespacePolicy)
+
+	err := m.Execute(context.Background(), NewManagerClient(fs.client), "RenameView", &RenameTableRequest{
+		TableBucketARN:  mustBucketARN(t),
+		SourceNamespace: []string{"ns"},
+		SourceName:      "v",
+		DestNamespace:   []string{"ns"},
+		DestName:        "v2",
+	}, nil, principal)
+	require.NoError(t, err)
+
+	assert.NotNil(t, fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "v2"))
+}

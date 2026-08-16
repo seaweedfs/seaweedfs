@@ -516,6 +516,11 @@ func (s *Server) handleLoadTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, buildErr := s.buildLoadTableResult(r, getResp, bucketName, namespace, tableName)
+	if buildErr == nil {
+		// Only LoadTable defines ?snapshots=; a create response always carries
+		// the metadata it just wrote.
+		result.Metadata, buildErr = applySnapshotsParam(r, result.Metadata)
+	}
 	if buildErr != nil {
 		glog.Errorf("Iceberg: LoadTable %s: %v", tableName, buildErr)
 		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build table metadata")
@@ -558,11 +563,6 @@ func (s *Server) buildLoadTableResult(r *http.Request, getResp s3tables.GetTable
 	// Iceberg client can parse. Fail the request instead.
 	if err != nil {
 		return LoadTableResult{}, fmt.Errorf("build metadata for %s: %w", tableName, err)
-	}
-
-	metadata, err = applySnapshotsParam(r, metadata)
-	if err != nil {
-		return LoadTableResult{}, err
 	}
 
 	return LoadTableResult{
