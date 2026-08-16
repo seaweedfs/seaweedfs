@@ -387,3 +387,61 @@ func isViewAlreadyExists(err error) bool {
 	}
 	return strings.Contains(strings.ToLower(err.Error()), "already exists")
 }
+
+// handleRenameView moves a view's catalog pointer to a new namespace/name,
+// the view counterpart of POST /v1/{prefix}/tables/rename.
+func (s *Server) handleRenameView(w http.ResponseWriter, r *http.Request) {
+	var req RenameTableRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid request body")
+		return
+	}
+
+	source := parseNamespace(encodeNamespace(req.Source.Namespace))
+	dest := parseNamespace(encodeNamespace(req.Destination.Namespace))
+	if len(source) == 0 || req.Source.Name == "" || len(dest) == 0 || req.Destination.Name == "" {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "source and destination namespace and name are required")
+		return
+	}
+
+	bucketName := getBucketFromPrefix(r)
+	identityName := s3_constants.GetIdentityNameFromContext(r)
+
+	renameReq := &s3tables.RenameTableRequest{
+		TableBucketARN:  buildTableBucketARN(bucketName),
+		SourceNamespace: source,
+		SourceName:      req.Source.Name,
+		DestNamespace:   dest,
+		DestName:        req.Destination.Name,
+	}
+
+	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		mgrClient := s3tables.NewManagerClient(client)
+		return s.tablesManager.Execute(r.Context(), mgrClient, "RenameView", renameReq, nil, identityName)
+	})
+
+	if err != nil {
+		var viewErr *s3tables.S3TablesError
+		if errors.As(err, &viewErr) {
+			switch viewErr.Type {
+			case s3tables.ErrCodeNoSuchView:
+				writeError(w, http.StatusNotFound, "NoSuchViewException", fmt.Sprintf("View does not exist: %s", req.Source.Name))
+				return
+			case s3tables.ErrCodeNoSuchNamespace:
+				writeError(w, http.StatusNotFound, "NoSuchNamespaceException", fmt.Sprintf("Namespace does not exist: %v", dest))
+				return
+			case s3tables.ErrCodeViewAlreadyExists:
+				writeError(w, http.StatusConflict, "AlreadyExistsException", fmt.Sprintf("View already exists: %s", req.Destination.Name))
+				return
+			case s3tables.ErrCodeInvalidRequest:
+				writeError(w, http.StatusBadRequest, "BadRequestException", viewErr.Message)
+				return
+			}
+		}
+		glog.V(1).Infof("Iceberg: RenameView error: %v", err)
+		writeManagerError(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}

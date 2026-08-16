@@ -516,6 +516,11 @@ func (s *Server) handleLoadTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, buildErr := s.buildLoadTableResult(r, getResp, bucketName, namespace, tableName)
+	if buildErr == nil {
+		// Only LoadTable defines ?snapshots=; a create response always carries
+		// the metadata it just wrote.
+		result.Metadata, buildErr = applySnapshotsParam(r, result.Metadata)
+	}
 	if buildErr != nil {
 		glog.Errorf("Iceberg: LoadTable %s: %v", tableName, buildErr)
 		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build table metadata")
@@ -565,6 +570,46 @@ func (s *Server) buildLoadTableResult(r *http.Request, getResp s3tables.GetTable
 		Metadata:         metadata,
 		Config:           s.buildFileIOConfig(r),
 	}, nil
+}
+
+// applySnapshotsParam honours ?snapshots=refs, which asks for only the
+// snapshots that branches and tags point at. Clients use it to avoid pulling a
+// long snapshot history they will not read. Anything else, including the
+// default, returns the metadata untouched.
+func applySnapshotsParam(r *http.Request, metadata table.Metadata) (table.Metadata, error) {
+	if !strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("snapshots")), "refs") {
+		return metadata, nil
+	}
+	if metadata == nil {
+		return metadata, nil
+	}
+
+	referenced := make(map[int64]struct{})
+	for _, ref := range metadata.Refs() {
+		referenced[ref.SnapshotID] = struct{}{}
+	}
+	if current := metadata.CurrentSnapshot(); current != nil {
+		referenced[current.SnapshotID] = struct{}{}
+	}
+
+	var unreferenced []int64
+	for _, snapshot := range metadata.Snapshots() {
+		if _, keep := referenced[snapshot.SnapshotID]; !keep {
+			unreferenced = append(unreferenced, snapshot.SnapshotID)
+		}
+	}
+	if len(unreferenced) == 0 {
+		return metadata, nil
+	}
+
+	builder, err := table.MetadataBuilderFromBase(metadata, "")
+	if err != nil {
+		return nil, err
+	}
+	if err := builder.RemoveSnapshots(unreferenced, false); err != nil {
+		return nil, err
+	}
+	return builder.Build()
 }
 
 // buildFileIOConfig returns the FileIO properties to advertise to catalog
