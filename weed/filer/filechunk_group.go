@@ -26,7 +26,7 @@ type ChunkGroup struct {
 // - Read-ahead prefetch parallelism
 // - Number of concurrent section reads for large files
 // If concurrentReaders <= 0, defaults to 16.
-func NewChunkGroup(lookupFn wdclient.LookupFileIdFunctionType, chunkCache chunk_cache.ChunkCache, chunks []*filer_pb.FileChunk, concurrentReaders int) (*ChunkGroup, error) {
+func NewChunkGroup(lookupFn wdclient.LookupFileIdFunctionType, chunkCache chunk_cache.ChunkCache, chunks []*filer_pb.FileChunk, concurrentReaders int, cacheInvalidator CacheInvalidator) (*ChunkGroup, error) {
 	if concurrentReaders <= 0 {
 		concurrentReaders = 16
 	}
@@ -41,7 +41,7 @@ func NewChunkGroup(lookupFn wdclient.LookupFileIdFunctionType, chunkCache chunk_
 	group := &ChunkGroup{
 		lookupFn:          lookupFn,
 		sections:          make(map[SectionIndex]*FileChunkSection),
-		readerCache:       NewReaderCache(readerCacheLimit, chunkCache, lookupFn, nil),
+		readerCache:       NewReaderCache(readerCacheLimit, chunkCache, lookupFn, cacheInvalidator),
 		concurrentReaders: concurrentReaders,
 	}
 

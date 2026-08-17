@@ -34,7 +34,7 @@ func TestAttrChunkRace(t *testing.T) {
 		Name:       "sample.txt",
 		Attributes: &filer_pb.FuseAttributes{FileMode: 0644},
 	}
-	chunkGroup, err := filer.NewChunkGroup(nil, nil, nil, 1)
+	chunkGroup, err := filer.NewChunkGroup(nil, nil, nil, 1, nil)
 	if err != nil {
 		t.Fatalf("NewChunkGroup: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestReadFromChunksRace(t *testing.T) {
 		Name:       "sample.txt",
 		Attributes: &filer_pb.FuseAttributes{FileMode: 0644},
 	}
-	chunkGroup, err := filer.NewChunkGroup(nil, nil, nil, 1)
+	chunkGroup, err := filer.NewChunkGroup(nil, nil, nil, 1, nil)
 	if err != nil {
 		t.Fatalf("NewChunkGroup: %v", err)
 	}
