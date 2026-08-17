@@ -1140,3 +1140,128 @@ func TestEmptyFolderCleaner_executeCleanup_directoryMarker(t *testing.T) {
 		})
 	}
 }
+
+func TestEmptyFolderCleaner_restoreIfWrittenTo(t *testing.T) {
+	lockRing := lock_manager.NewLockRing(5 * time.Second)
+	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"}, 0)
+
+	newCleaner := func(mock *mockFilerOps) *EmptyFolderCleaner {
+		return &EmptyFolderCleaner{
+			filer:                 mock,
+			lockRing:              lockRing,
+			host:                  "filer1:8888",
+			bucketPath:            "/buckets",
+			enabled:               true,
+			maxCountCheck:         DefaultMaxCountCheck,
+			cacheExpiry:           DefaultCacheExpiry,
+			folderCounts:          make(map[string]*folderState),
+			bucketCleanupPolicies: make(map[string]*bucketCleanupPolicyState),
+			deleted:               make(map[string]*deletedFolder),
+			cleanupQueue:          NewCleanupQueue(1000, 10*time.Minute),
+			stopCh:                make(chan struct{}),
+		}
+	}
+
+	const folder = "/buckets/mybucket/a/b"
+	const parent = "/buckets/mybucket/a"
+
+	t.Run("an entry that landed during the delete is restored without waiting for its event", func(t *testing.T) {
+		counts := map[string]int{}
+		var deleted, restored []string
+		mock := &mockFilerOps{
+			countFn: func(p util.FullPath) (int, error) { return counts[string(p)], nil },
+			deleteFn: func(p util.FullPath) error {
+				deleted = append(deleted, string(p))
+				if string(p) == folder {
+					// the racing write lands between the delete's own emptiness
+					// check and the removal of the folder entry
+					counts[folder] = 1
+				}
+				return nil
+			},
+			ensureDirFn: func(p util.FullPath, _ DirectoryAttributes) error { restored = append(restored, string(p)); return nil },
+		}
+
+		cleaner := newCleaner(mock)
+		cleaner.executeCleanup(folder, "obj")
+
+		if len(restored) != 1 || restored[0] != folder {
+			t.Fatalf("folder written to during the delete should be restored, got %v", restored)
+		}
+		if len(deleted) != 1 || deleted[0] != folder {
+			t.Fatalf("a restored folder leaves the parent non-empty, so it must not cascade, got %v", deleted)
+		}
+		if len(cleaner.deleted) != 0 {
+			t.Fatalf("a restored folder should stop being observed, got %d", len(cleaner.deleted))
+		}
+	})
+
+	t.Run("a folder still empty after the delete is not restored and the parent is cascaded", func(t *testing.T) {
+		var deleted, restored []string
+		mock := &mockFilerOps{
+			countFn:     func(util.FullPath) (int, error) { return 0, nil },
+			deleteFn:    func(p util.FullPath) error { deleted = append(deleted, string(p)); return nil },
+			ensureDirFn: func(p util.FullPath, _ DirectoryAttributes) error { restored = append(restored, string(p)); return nil },
+		}
+
+		cleaner := newCleaner(mock)
+		cleaner.executeCleanup(folder, "obj")
+
+		if len(restored) != 0 {
+			t.Fatalf("an empty folder should not be restored, got %v", restored)
+		}
+		if len(deleted) != 2 || deleted[0] != folder || deleted[1] != parent {
+			t.Fatalf("the parent should still be cascaded, got %v", deleted)
+		}
+	})
+
+	t.Run("a restore that fails is left marked for the deferred pass", func(t *testing.T) {
+		counts := map[string]int{}
+		mock := &mockFilerOps{
+			countFn: func(p util.FullPath) (int, error) { return counts[string(p)], nil },
+			deleteFn: func(p util.FullPath) error {
+				if string(p) == folder {
+					counts[folder] = 1
+				}
+				return nil
+			},
+			ensureDirFn: func(util.FullPath, DirectoryAttributes) error { return errors.New("store unavailable") },
+		}
+
+		cleaner := newCleaner(mock)
+		cleaner.executeCleanup(folder, "obj")
+
+		observed, found := cleaner.deleted[folder]
+		if !found {
+			t.Fatal("a folder whose restore failed must stay under observation")
+		}
+		if !observed.writtenTo {
+			t.Fatal("a folder seen to hold an entry must be marked, or the deferred pass skips it")
+		}
+	})
+
+	t.Run("a re-check that fails leaves the folder to the event path", func(t *testing.T) {
+		var restored []string
+		deletedFolder := false
+		mock := &mockFilerOps{
+			countFn: func(util.FullPath) (int, error) {
+				if deletedFolder {
+					return 0, errors.New("store unavailable")
+				}
+				return 0, nil
+			},
+			deleteFn:    func(p util.FullPath) error { deletedFolder = string(p) == folder; return nil },
+			ensureDirFn: func(p util.FullPath, _ DirectoryAttributes) error { restored = append(restored, string(p)); return nil },
+		}
+
+		cleaner := newCleaner(mock)
+		cleaner.executeCleanup(folder, "obj")
+
+		if len(restored) != 0 {
+			t.Fatalf("a failed re-check should not restore, got %v", restored)
+		}
+		if _, found := cleaner.deleted[folder]; !found {
+			t.Fatal("a folder whose re-check failed must stay under observation")
+		}
+	})
+}
