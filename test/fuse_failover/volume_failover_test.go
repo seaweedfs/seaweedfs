@@ -152,8 +152,30 @@ func TestReadWithVolumeServerDown(t *testing.T) {
 
 	t.Logf("topology before chaos:\n%s", c.MasterGet("/dir/status?pretty=y"))
 
+	alreadyRead := make(map[string]bool)
 	for victim := 0; victim < 3; victim++ {
-		name := fmt.Sprintf("readfile-%d", victim)
+		// Placement decides which two of the three servers hold each volume, so
+		// pick a file this victim actually backs: reading one it never held
+		// would pass without exercising recovery at all. Prefer a file no
+		// earlier iteration has read, whose chunks the reader has not cached.
+		name := ""
+		for _, allowRead := range []bool{false, true} {
+			for i := 0; i < 3 && name == ""; i++ {
+				candidate := fmt.Sprintf("readfile-%d", i)
+				if alreadyRead[candidate] && !allowRead {
+					continue
+				}
+				onVictim, err := c.FileIsOn("/"+candidate, c.VolumeServerAddress(victim))
+				require.NoError(t, err, "resolve placement of %s", candidate)
+				if onVictim {
+					name = candidate
+				}
+			}
+		}
+		require.NotEmpty(t, name, "no test file has a replica on volume%d, nothing to fail over from\n%s",
+			victim, c.MasterGet("/dir/status?pretty=y"))
+		alreadyRead[name] = true
+
 		c.KillVolume(victim)
 
 		start := time.Now()
@@ -165,7 +187,7 @@ func TestReadWithVolumeServerDown(t *testing.T) {
 		require.NoError(t, err, "read %s with volume %d down\n%s", name, victim, c.tailLog("mount1"))
 		require.Equal(t, sha256.Sum256(payloads[name]), sha256.Sum256(got),
 			"content mismatch for %s with volume %d down", name, victim)
-		t.Logf("read %s with volume%d down in %v", name, victim, elapsed)
+		t.Logf("read %s (held by volume%d) with volume%d down in %v", name, victim, victim, elapsed)
 
 		require.NoError(t, c.StartVolume(victim))
 		time.Sleep(3 * time.Second) // let the master see the heartbeat again

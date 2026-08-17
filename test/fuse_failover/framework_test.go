@@ -3,6 +3,7 @@
 package fuse_failover
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -261,6 +262,90 @@ func (c *failoverCluster) FilerGet(path string) ([]byte, error) {
 		return nil, fmt.Errorf("filer %s: %s", path, resp.Status)
 	}
 	return body, nil
+}
+
+// VolumeServerAddress is the address volume server i registers with the master.
+func (c *failoverCluster) VolumeServerAddress(i int) string {
+	return fmt.Sprintf("127.0.0.1:%d", c.volumePorts[i])
+}
+
+// FileVolumeIds returns the volume ids backing a file, read from the filer's
+// own entry rather than inferred, so a test can tell which servers a given
+// file actually depends on.
+func (c *failoverCluster) FileVolumeIds(path string) ([]uint32, error) {
+	body, err := c.FilerGet(path + "?metadata=true")
+	if err != nil {
+		return nil, err
+	}
+	var entry struct {
+		Chunks []struct {
+			FileId string `json:"file_id"`
+			Fid    struct {
+				VolumeId uint32 `json:"volume_id"`
+			} `json:"fid"`
+		} `json:"chunks"`
+	}
+	if err = json.Unmarshal(body, &entry); err != nil {
+		return nil, fmt.Errorf("decode entry %s: %w", path, err)
+	}
+	seen := make(map[uint32]bool)
+	var vids []uint32
+	for _, chunk := range entry.Chunks {
+		vid := chunk.Fid.VolumeId
+		if vid == 0 && chunk.FileId != "" {
+			parsed, parseErr := strconv.ParseUint(strings.SplitN(chunk.FileId, ",", 2)[0], 10, 32)
+			if parseErr != nil {
+				return nil, fmt.Errorf("parse file id %s: %w", chunk.FileId, parseErr)
+			}
+			vid = uint32(parsed)
+		}
+		if !seen[vid] {
+			seen[vid] = true
+			vids = append(vids, vid)
+		}
+	}
+	return vids, nil
+}
+
+// VolumeHolders returns the volume server addresses the master currently lists
+// for a volume id.
+func (c *failoverCluster) VolumeHolders(vid uint32) ([]string, error) {
+	var lookup struct {
+		Locations []struct {
+			Url string `json:"url"`
+		} `json:"locations"`
+	}
+	body := c.MasterGet(fmt.Sprintf("/dir/lookup?volumeId=%d", vid))
+	if err := json.Unmarshal([]byte(body), &lookup); err != nil {
+		return nil, fmt.Errorf("decode lookup for volume %d: %w (%s)", vid, err, body)
+	}
+	holders := make([]string, 0, len(lookup.Locations))
+	for _, loc := range lookup.Locations {
+		holders = append(holders, loc.Url)
+	}
+	return holders, nil
+}
+
+// FileIsOn reports whether any of path's chunks live on the given volume
+// server, i.e. whether taking that server down actually costs this file a
+// replica.
+func (c *failoverCluster) FileIsOn(path, serverAddress string) (bool, error) {
+	vids, err := c.FileVolumeIds(path)
+	if err != nil {
+		return false, err
+	}
+	for _, vid := range vids {
+		holders, holdersErr := c.VolumeHolders(vid)
+		if holdersErr != nil {
+			return false, holdersErr
+		}
+		for _, holder := range holders {
+			if holder == serverAddress {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 func (c *failoverCluster) masterAddress() string {
