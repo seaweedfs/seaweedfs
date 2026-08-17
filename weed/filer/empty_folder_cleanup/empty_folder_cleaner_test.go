@@ -354,6 +354,69 @@ func TestEmptyFolderCleaner_restoreFoldersWrittenDuringDelete(t *testing.T) {
 		}
 	})
 
+	t.Run("a folder whose restore keeps failing stops being observed", func(t *testing.T) {
+		mock := &mockFilerOps{
+			countFn:     func(util.FullPath) (int, error) { return 0, nil },
+			ensureDirFn: func(util.FullPath, DirectoryAttributes) error { return errors.New("store unavailable") },
+		}
+
+		cleaner := newCleaner(mock)
+		cleaner.executeCleanup(folder, "file.txt")
+		mock.countFn = func(util.FullPath) (int, error) { return 1, nil }
+		cleaner.OnCreateEvent(folder, "obj", false)
+
+		cleaner.processCleanupQueue()
+		if len(cleaner.deleted) != 1 {
+			t.Fatalf("a folder whose restore failed should be kept, got %d", len(cleaner.deleted))
+		}
+
+		// otherwise it would be retried on every pass for the rest of the process
+		cleaner.deleted[folder].deletedAt = time.Now().Add(-DefaultObservationWindow - time.Second)
+		cleaner.processCleanupQueue()
+		if len(cleaner.deleted) != 0 {
+			t.Fatalf("the window should apply to a failing folder too, got %d", len(cleaner.deleted))
+		}
+	})
+
+	t.Run("an ancestor taken by the cascade is restored with its own attributes", func(t *testing.T) {
+		const ancestor = "/buckets/mybucket/data"
+		const nested = ancestor + "/abc"
+
+		restored := map[string]DirectoryAttributes{}
+		var order []string
+		mock := &mockFilerOps{
+			countFn: func(util.FullPath) (int, error) { return 0, nil },
+			dirAttrsFn: func(p util.FullPath) (DirectoryAttributes, error) {
+				if string(p) == ancestor {
+					return DirectoryAttributes{Mode: 0700, Uid: 4242}, nil
+				}
+				return DirectoryAttributes{Mode: 0755, Uid: 7}, nil
+			},
+			ensureDirFn: func(p util.FullPath, attrs DirectoryAttributes) error {
+				restored[string(p)] = attrs
+				order = append(order, string(p))
+				return nil
+			},
+		}
+
+		cleaner := newCleaner(mock)
+		// the cascade takes the nested folder and then its parent
+		cleaner.executeCleanup(nested, "file.txt")
+		cleaner.executeCleanup(ancestor, "abc")
+
+		// only the nested folder is written to
+		mock.countFn = func(util.FullPath) (int, error) { return 1, nil }
+		cleaner.OnCreateEvent(nested, "obj", false)
+		cleaner.processCleanupQueue()
+
+		if len(order) != 2 || order[0] != ancestor {
+			t.Fatalf("the ancestor should be rebuilt first, got %v", order)
+		}
+		if got := restored[ancestor]; got.Mode != 0700 || got.Uid != 4242 {
+			t.Errorf("ancestor should keep its own attributes, got mode %o uid %d", got.Mode, got.Uid)
+		}
+	})
+
 	t.Run("a delete that reports failure is still observed", func(t *testing.T) {
 		// the redis stores drop the folder before its parent-list member, so a failure
 		// return is not proof that the folder survived

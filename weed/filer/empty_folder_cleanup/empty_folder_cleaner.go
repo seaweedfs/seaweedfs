@@ -301,12 +301,29 @@ func (efc *EmptyFolderCleaner) restoreFoldersWrittenDuringDelete() {
 	efc.deletedDropped = 0
 	var restore []*deletedFolder
 	for path, folder := range efc.deleted {
-		switch {
-		case folder.writtenTo:
+		// The window applies whatever the folder's state is. Checking writtenTo first
+		// would keep a folder whose restore keeps failing forever, re-counting it on
+		// every pass.
+		if time.Since(folder.deletedAt) >= DefaultObservationWindow {
+			delete(efc.deleted, path)
+			continue
+		}
+		if folder.writtenTo {
 			restore = append(restore, folder)
 			delete(efc.deleted, path)
-		case time.Since(folder.deletedAt) >= DefaultObservationWindow:
-			delete(efc.deleted, path)
+		}
+	}
+	// A cascade takes ancestors along with the folder. Rebuild those from what they
+	// were too: leaving them to the descendant's restore would mint them from the
+	// descendant's own attributes, handing back access the ancestor did not grant.
+	for i := 0; i < len(restore); i++ {
+		ancestor, _ := util.FullPath(restore[i].path).DirAndName()
+		for ancestor != "" && ancestor != "/" {
+			if folder, found := efc.deleted[ancestor]; found {
+				restore = append(restore, folder)
+				delete(efc.deleted, ancestor)
+			}
+			ancestor, _ = util.FullPath(ancestor).DirAndName()
 		}
 	}
 	efc.mu.Unlock()
@@ -331,18 +348,22 @@ func (efc *EmptyFolderCleaner) restoreFoldersWrittenDuringDelete() {
 			retry = append(retry, restore[i:]...)
 			break
 		}
-		// The entry may have been removed again between the event and now, in which
-		// case there is nothing to hold and the folder can stay gone.
-		count, err := efc.countItems(ctx, folder.path)
-		if err != nil {
-			glog.V(2).Infof("EmptyFolderCleaner: cannot count %s before restoring it: %v", folder.path, err)
-			retry = append(retry, folder)
-			continue
+		// An event named this folder, but the entry may have been removed again since,
+		// in which case there is nothing to hold and it can stay gone. Ancestors pulled
+		// in above carry no event and are rebuilt regardless, since the folder below
+		// them needs them.
+		if folder.writtenTo {
+			count, err := efc.countItems(ctx, folder.path)
+			if err != nil {
+				glog.V(2).Infof("EmptyFolderCleaner: cannot count %s before restoring it: %v", folder.path, err)
+				retry = append(retry, folder)
+				continue
+			}
+			if count == 0 {
+				continue
+			}
 		}
-		if count == 0 {
-			continue
-		}
-		glog.V(1).Infof("EmptyFolderCleaner: restoring %s, %d entries arrived while it was being deleted", folder.path, count)
+		glog.V(1).Infof("EmptyFolderCleaner: restoring %s, written to while it was being deleted", folder.path)
 		if err := efc.filer.EnsureDirectoryEntry(ctx, util.FullPath(folder.path), folder.attrs); err != nil {
 			glog.V(2).Infof("EmptyFolderCleaner: failed to restore %s: %v", folder.path, err)
 			retry = append(retry, folder)
@@ -354,13 +375,35 @@ func (efc *EmptyFolderCleaner) restoreFoldersWrittenDuringDelete() {
 	}
 	efc.mu.Lock()
 	for _, folder := range retry {
-		if _, found := efc.deleted[folder.path]; !found && len(efc.deleted) >= DefaultMaxDeletedKept {
-			efc.deletedDropped++
-			continue
+		if _, found := efc.deleted[folder.path]; !found {
+			efc.makeRoomForDeletedLocked()
 		}
 		efc.deleted[folder.path] = folder
 	}
 	efc.mu.Unlock()
+}
+
+// makeRoomForDeletedLocked drops the oldest of a small sample when the set is full.
+// The newest folders are the ones whose race is still live, so they must not be the
+// ones given up; sampling keeps this cheap under heavy deletion rates.
+func (efc *EmptyFolderCleaner) makeRoomForDeletedLocked() {
+	if len(efc.deleted) < DefaultMaxDeletedKept {
+		return
+	}
+	const sampleSize = 32
+	oldestPath, seen := "", 0
+	for path, folder := range efc.deleted {
+		if oldestPath == "" || folder.deletedAt.Before(efc.deleted[oldestPath].deletedAt) {
+			oldestPath = path
+		}
+		if seen++; seen >= sampleSize {
+			break
+		}
+	}
+	if oldestPath != "" {
+		delete(efc.deleted, oldestPath)
+		efc.deletedDropped++
+	}
 }
 
 // executeCleanup performs the actual cleanup of an empty folder
@@ -460,11 +503,8 @@ func (efc *EmptyFolderCleaner) executeCleanup(folder string, triggeredBy string)
 	if efc.deleted == nil {
 		efc.deleted = make(map[string]*deletedFolder)
 	}
-	if len(efc.deleted) < DefaultMaxDeletedKept {
-		efc.deleted[folder] = &deletedFolder{path: folder, attrs: attrs, deletedAt: time.Now()}
-	} else {
-		efc.deletedDropped++
-	}
+	efc.makeRoomForDeletedLocked()
+	efc.deleted[folder] = &deletedFolder{path: folder, attrs: attrs, deletedAt: time.Now()}
 	efc.mu.Unlock()
 
 	glog.Infof("EmptyFolderCleaner: deleting empty folder %s (triggered by %s)", folder, triggeredBy)

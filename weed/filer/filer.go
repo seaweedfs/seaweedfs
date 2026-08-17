@@ -379,8 +379,13 @@ func (f *Filer) DirectoryAttributes(ctx context.Context, dirPath util.FullPath) 
 	if err != nil {
 		return attrs, err
 	}
+	if entry == nil {
+		return attrs, filer_pb.ErrNotFound
+	}
 	return empty_folder_cleanup.DirectoryAttributes{
-		Mode:       entry.Mode.Perm(),
+		// everything but the type bits: Perm() alone would drop setgid, setuid and
+		// sticky, quietly changing group inheritance and delete semantics
+		Mode:       entry.Mode & (os.ModePerm | os.ModeSetuid | os.ModeSetgid | os.ModeSticky),
 		Uid:        entry.Uid,
 		Gid:        entry.Gid,
 		UserName:   entry.UserName,
