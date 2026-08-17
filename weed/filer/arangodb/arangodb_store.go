@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -275,7 +274,7 @@ func (store *ArangodbStore) DeleteFolderChildren(ctx context.Context, fullpath u
 	remove d._key in @@collection`
 	cur, err := store.database.Query(ctx, query, map[string]interface{}{
 		"@collection": targetCollection.Name(),
-		"dirPrefix":   strings.Join(strings.Split(string(fullpath), "/"), ",") + "/",
+		"dirPrefix":   string(fullpath) + "/",
 		"dir":         string(fullpath),
 	})
 	if err != nil {

@@ -156,6 +156,23 @@ func TestDeleteFolderChildrenAqlInjection(t *testing.T) {
 	}
 }
 
+func TestDeleteFolderChildrenRemovesSubtree(t *testing.T) {
+	store := newTestStore(t)
+
+	insertTestEntry(t, store, "/buckets/tenant/dir/file")
+	insertTestEntry(t, store, "/buckets/tenant/dir/sub/deep")
+	insertTestEntry(t, store, "/buckets/tenant/dirX/sibling")
+	insertTestEntry(t, store, "/buckets/tenant/other")
+
+	if err := store.DeleteFolderChildren(context.Background(), util.FullPath("/buckets/tenant/dir")); err != nil {
+		t.Fatalf("delete folder children: %v", err)
+	}
+
+	if got := countDocuments(t, store, "tenant"); got != 2 {
+		t.Errorf("tenant collection holds %d documents, want /buckets/tenant/dirX/sibling and /buckets/tenant/other", got)
+	}
+}
+
 // startFileName is request-controlled too and must not break out of the filter.
 func TestListDirectoryEntriesQuotedStartFileName(t *testing.T) {
 	store := newTestStore(t)
