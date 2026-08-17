@@ -78,7 +78,8 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 	var chunksToDelete []*filer_pb.FileChunk
 	lastFileName := ""
 	includeLastFile := false
-	if !isDeletingBucket || !f.Store.CanDropWholeBucket() {
+	listedChildren := !isDeletingBucket || !f.Store.CanDropWholeBucket()
+	if listedChildren {
 		for {
 			entries, _, err := f.ListDirectoryEntries(ctx, entry.FullPath, lastFileName, includeLastFile, PaginationSize, "", "", "")
 			if err != nil {
@@ -131,8 +132,12 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 
 	glog.V(3).InfofCtx(ctx, "deleting directory %v delete chunks: %v", entry.FullPath, shouldDeleteChunks)
 
-	if storeDeletionErr := f.Store.DeleteFolderChildren(ctx, entry.FullPath); storeDeletionErr != nil {
-		return fmt.Errorf("filer store delete: %w", storeDeletionErr)
+	// a non-recursive delete already proved the folder empty above, so sweeping the
+	// children now can only remove entries that raced in after that listing
+	if isRecursive || !listedChildren {
+		if storeDeletionErr := f.Store.DeleteFolderChildren(ctx, entry.FullPath); storeDeletionErr != nil {
+			return fmt.Errorf("filer store delete: %w", storeDeletionErr)
+		}
 	}
 
 	f.NotifyUpdateEvent(ctx, entry, nil, shouldDeleteChunks, isFromOtherCluster, signatures)
