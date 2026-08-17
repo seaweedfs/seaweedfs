@@ -42,6 +42,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer/posixlock"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/postgres"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/postgres2"
+	_ "github.com/seaweedfs/seaweedfs/weed/filer/postgres_s3"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/redis"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/redis2"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/redis3"
