@@ -2,6 +2,8 @@ package empty_folder_cleanup
 
 import (
 	"context"
+	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -20,8 +22,29 @@ const (
 	DefaultQueueMaxSize   = 1000
 	DefaultQueueMaxAge    = 2 * time.Minute
 	DefaultProcessorSleep = 30 * time.Second // How often to check queue
-	DefaultMaxDeletedKept = 10000            // Folders remembered per pass for the restore check
+	DefaultMaxDeletedKept = 10000            // Deleted folders remembered for the restore check
+	// How long a deleted folder stays under observation. Ticks coalesce when a pass
+	// runs long, so the next pass is not a reliable delay; this bounds it in wall
+	// clock instead, and the folder is re-checked on every pass until it expires.
+	DefaultRestoreCheckWindow = 2 * time.Minute
 )
+
+// DirectoryAttributes is what a restored directory needs to come back as it was.
+type DirectoryAttributes struct {
+	Mode       os.FileMode
+	Uid        uint32
+	Gid        uint32
+	UserName   string
+	GroupNames []string
+}
+
+// deletedFolder is a folder under observation for entries that landed while it was
+// being deleted.
+type deletedFolder struct {
+	path      string
+	attrs     DirectoryAttributes
+	deletedAt time.Time
+}
 
 // FilerOperations defines the filer operations needed by EmptyFolderCleaner
 type FilerOperations interface {
@@ -29,7 +52,8 @@ type FilerOperations interface {
 	DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isRecursive, ignoreRecursiveError, shouldDeleteChunks, isFromOtherCluster bool, signatures []int32, ifNotModifiedAfter int64) error
 	GetEntryAttributes(ctx context.Context, p util.FullPath) (attributes map[string][]byte, err error)
 	IsDirectoryKeyObject(ctx context.Context, p util.FullPath) (bool, error)
-	EnsureDirectoryEntry(ctx context.Context, p util.FullPath) error
+	DirectoryAttributes(ctx context.Context, p util.FullPath) (DirectoryAttributes, error)
+	EnsureDirectoryEntry(ctx context.Context, p util.FullPath, attrs DirectoryAttributes) error
 }
 
 // folderState tracks the state of a folder for empty folder cleanup
@@ -58,9 +82,9 @@ type EmptyFolderCleaner struct {
 	folderCounts          map[string]*folderState              // Rough count cache
 	bucketCleanupPolicies map[string]*bucketCleanupPolicyState // bucket path -> cleanup policy cache
 
-	// Folders deleted since the last pass, checked next pass for entries that
-	// landed while they were being deleted
-	deleted        []string
+	// Folders deleted recently, re-checked each pass for entries that landed while
+	// they were being deleted
+	deleted        []*deletedFolder
 	deletedDropped int
 
 	// Cleanup queue (thread-safe, has its own lock)
@@ -251,12 +275,16 @@ func (efc *EmptyFolderCleaner) processCleanupQueue() {
 	}
 }
 
-// restoreFoldersWrittenDuringDelete puts back folders that received an entry
-// between the emptiness check and the delete, which leaves that entry with no
-// directory holding it: reachable by its own path, but absent from any listing.
-// The check deliberately runs a pass after the delete. A writer looks up the
-// parent before inserting the child, so checking straight after the delete can
-// still run ahead of the insert and see nothing.
+// restoreFoldersWrittenDuringDelete puts back folders that received an entry between
+// the emptiness check and the delete, which leaves that entry with no directory
+// holding it: reachable by its own path, but absent from any listing.
+//
+// A folder stays under observation for DefaultRestoreCheckWindow rather than being
+// checked once. A writer looks up the parent before inserting the child, so a check
+// can land in that gap and see nothing; ticks also coalesce when a pass runs long, so
+// "next pass" is not a delay at all. Re-checking for a bounded wall-clock window
+// covers both. This narrows the exposure rather than closing it - only making the
+// emptiness check and the delete atomic would do that.
 func (efc *EmptyFolderCleaner) restoreFoldersWrittenDuringDelete() {
 	efc.mu.Lock()
 	folders, dropped := efc.deleted, efc.deletedDropped
@@ -264,45 +292,62 @@ func (efc *EmptyFolderCleaner) restoreFoldersWrittenDuringDelete() {
 	efc.mu.Unlock()
 
 	if dropped > 0 {
-		glog.V(1).Infof("EmptyFolderCleaner: %d deleted folders skipped the restore check, past the %d kept per pass", dropped, DefaultMaxDeletedKept)
+		glog.V(1).Infof("EmptyFolderCleaner: %d deleted folders left unobserved, past the %d kept", dropped, DefaultMaxDeletedKept)
 	}
 
-	// A folder whose check or restore fails goes back for the next pass. Dropping it
-	// would leave its entries out of listings until some later write recreates the
-	// folder, which is exactly what this is here to avoid.
 	ctx := context.Background()
-	var retry []string
+	var keep, restore []*deletedFolder
 	for i, folder := range folders {
 		if !efc.IsEnabled() {
-			retry = append(retry, folders[i:]...)
+			keep = append(keep, folders[i:]...)
 			break
 		}
-		count, err := efc.countItems(ctx, folder)
-		if err != nil {
-			glog.V(2).Infof("EmptyFolderCleaner: cannot count %s to check for a restore: %v", folder, err)
-			retry = append(retry, folder)
-			continue
-		}
-		if count == 0 {
-			continue
-		}
-		glog.V(1).Infof("EmptyFolderCleaner: restoring %s, %d entries arrived while it was being deleted", folder, count)
-		if err := efc.filer.EnsureDirectoryEntry(ctx, util.FullPath(folder)); err != nil {
-			glog.V(2).Infof("EmptyFolderCleaner: failed to restore %s: %v", folder, err)
-			retry = append(retry, folder)
+		count, err := efc.countItems(ctx, folder.path)
+		switch {
+		case err != nil:
+			// keep it: dropping it now would leave entries out of listings until some
+			// later write recreates the folder, which is what this is here to avoid
+			glog.V(2).Infof("EmptyFolderCleaner: cannot count %s to check for a restore: %v", folder.path, err)
+			keep = append(keep, folder)
+		case count > 0:
+			restore = append(restore, folder)
+		case time.Since(folder.deletedAt) < DefaultRestoreCheckWindow:
+			keep = append(keep, folder)
 		}
 	}
 
-	if len(retry) == 0 {
+	keep = append(keep, efc.restoreFolders(ctx, restore)...)
+
+	if len(keep) == 0 {
 		return
 	}
 	efc.mu.Lock()
-	efc.deleted = append(retry, efc.deleted...)
+	efc.deleted = append(keep, efc.deleted...)
 	if over := len(efc.deleted) - DefaultMaxDeletedKept; over > 0 {
 		efc.deleted = efc.deleted[:DefaultMaxDeletedKept]
 		efc.deletedDropped += over
 	}
 	efc.mu.Unlock()
+}
+
+// restoreFolders puts the given folders back, shallowest first so that a folder taken
+// by the parent cascade is recreated with its own attributes before anything below it
+// needs it as a parent. Returns the ones to try again.
+func (efc *EmptyFolderCleaner) restoreFolders(ctx context.Context, folders []*deletedFolder) (retry []*deletedFolder) {
+	if len(folders) == 0 {
+		return nil
+	}
+	sort.Slice(folders, func(i, j int) bool {
+		return strings.Count(folders[i].path, "/") < strings.Count(folders[j].path, "/")
+	})
+	for _, folder := range folders {
+		glog.V(1).Infof("EmptyFolderCleaner: restoring %s, entries arrived while it was being deleted", folder.path)
+		if err := efc.filer.EnsureDirectoryEntry(ctx, util.FullPath(folder.path), folder.attrs); err != nil {
+			glog.V(2).Infof("EmptyFolderCleaner: failed to restore %s: %v", folder.path, err)
+			retry = append(retry, folder)
+		}
+	}
+	return retry
 }
 
 // executeCleanup performs the actual cleanup of an empty folder
@@ -387,7 +432,25 @@ func (efc *EmptyFolderCleaner) executeCleanup(folder string, triggeredBy string)
 		return
 	}
 
-	// Delete the empty folder
+	// Read what it would take to put this folder back before removing it; without
+	// that a restore would have to invent attributes for it.
+	attrs, err := efc.filer.DirectoryAttributes(ctx, util.FullPath(folder))
+	if err != nil {
+		glog.V(2).Infof("EmptyFolderCleaner: cannot read %s before deleting it: %v", folder, err)
+		return
+	}
+
+	// Observe it before the delete rather than after. A delete can fail partway and
+	// still leave the folder gone - the redis stores remove the folder before their
+	// parent-list member - so a failure return is not proof that it is still there.
+	efc.mu.Lock()
+	if len(efc.deleted) < DefaultMaxDeletedKept {
+		efc.deleted = append(efc.deleted, &deletedFolder{path: folder, attrs: attrs, deletedAt: time.Now()})
+	} else {
+		efc.deletedDropped++
+	}
+	efc.mu.Unlock()
+
 	glog.Infof("EmptyFolderCleaner: deleting empty folder %s (triggered by %s)", folder, triggeredBy)
 	if err := efc.deleteFolder(ctx, folder); err != nil {
 		glog.V(2).Infof("EmptyFolderCleaner: failed to delete empty folder %s (triggered by %s): %v", folder, triggeredBy, err)
@@ -397,11 +460,6 @@ func (efc *EmptyFolderCleaner) executeCleanup(folder string, triggeredBy string)
 	// Clean up cache entry
 	efc.mu.Lock()
 	delete(efc.folderCounts, folder)
-	if len(efc.deleted) < DefaultMaxDeletedKept {
-		efc.deleted = append(efc.deleted, folder)
-	} else {
-		efc.deletedDropped++
-	}
 	efc.mu.Unlock()
 
 	// After deleting this folder, immediately try to clean the parent.

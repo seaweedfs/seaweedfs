@@ -17,14 +17,22 @@ type mockFilerOps struct {
 	deleteFn      func(path util.FullPath) error
 	attrsFn       func(path util.FullPath) (map[string][]byte, error)
 	isDirKeyObjFn func(path util.FullPath) (bool, error)
-	ensureDirFn   func(path util.FullPath) error
+	ensureDirFn   func(path util.FullPath, attrs DirectoryAttributes) error
+	dirAttrsFn    func(path util.FullPath) (DirectoryAttributes, error)
 }
 
-func (m *mockFilerOps) EnsureDirectoryEntry(_ context.Context, p util.FullPath) error {
+func (m *mockFilerOps) EnsureDirectoryEntry(_ context.Context, p util.FullPath, attrs DirectoryAttributes) error {
 	if m.ensureDirFn == nil {
 		return nil
 	}
-	return m.ensureDirFn(p)
+	return m.ensureDirFn(p, attrs)
+}
+
+func (m *mockFilerOps) DirectoryAttributes(_ context.Context, p util.FullPath) (DirectoryAttributes, error) {
+	if m.dirAttrsFn == nil {
+		return DirectoryAttributes{Mode: 0755}, nil
+	}
+	return m.dirAttrsFn(p)
 }
 
 func (m *mockFilerOps) CountDirectoryEntries(_ context.Context, dirPath util.FullPath, _ int) (int, error) {
@@ -242,7 +250,7 @@ func TestEmptyFolderCleaner_restoreFoldersWrittenDuringDelete(t *testing.T) {
 				return 0, nil
 			},
 			deleteFn:    func(util.FullPath) error { deleted = true; return nil },
-			ensureDirFn: func(p util.FullPath) error { restored = append(restored, string(p)); return nil },
+			ensureDirFn: func(p util.FullPath, _ DirectoryAttributes) error { restored = append(restored, string(p)); return nil },
 		}
 
 		cleaner := newCleaner(mock)
@@ -276,7 +284,7 @@ func TestEmptyFolderCleaner_restoreFoldersWrittenDuringDelete(t *testing.T) {
 				return 1, nil
 			},
 			deleteFn:    func(util.FullPath) error { deleted = true; return nil },
-			ensureDirFn: func(p util.FullPath) error { restored = append(restored, string(p)); return nil },
+			ensureDirFn: func(p util.FullPath, _ DirectoryAttributes) error { restored = append(restored, string(p)); return nil },
 		}
 
 		cleaner := newCleaner(mock)
@@ -293,11 +301,62 @@ func TestEmptyFolderCleaner_restoreFoldersWrittenDuringDelete(t *testing.T) {
 		}
 	})
 
+	t.Run("a delete that reports failure is still observed", func(t *testing.T) {
+		// the redis stores drop the folder before its parent-list member, so a failure
+		// return is not proof that the folder survived
+		var restored []string
+		mock := &mockFilerOps{
+			countFn:     func(util.FullPath) (int, error) { return 0, nil },
+			deleteFn:    func(util.FullPath) error { return errors.New("partial delete") },
+			ensureDirFn: func(p util.FullPath, _ DirectoryAttributes) error { restored = append(restored, string(p)); return nil },
+		}
+
+		cleaner := newCleaner(mock)
+		cleaner.executeCleanup(folder, "file.txt")
+		if got := len(cleaner.deleted); got != 1 {
+			t.Fatalf("a failed delete should still leave the folder under observation, got %d", got)
+		}
+
+		// once an entry shows up there, it is restored like any other
+		mock.countFn = func(util.FullPath) (int, error) { return 1, nil }
+		cleaner.processCleanupQueue()
+		if len(restored) != 1 || restored[0] != folder {
+			t.Fatalf("folder should be restored after a failed delete left it gone, got %v", restored)
+		}
+	})
+
+	t.Run("an empty folder stays under observation for the window", func(t *testing.T) {
+		var restored []string
+		mock := &mockFilerOps{
+			countFn:     func(util.FullPath) (int, error) { return 0, nil },
+			ensureDirFn: func(p util.FullPath, _ DirectoryAttributes) error { restored = append(restored, string(p)); return nil },
+		}
+
+		cleaner := newCleaner(mock)
+		cleaner.executeCleanup(folder, "file.txt")
+
+		// ticks coalesce when a pass runs long, so a single check right after the
+		// delete is not a delay; the folder is kept until the window has passed
+		cleaner.processCleanupQueue()
+		if got := len(cleaner.deleted); got != 1 {
+			t.Fatalf("folder should still be observed inside the window, got %d", got)
+		}
+
+		cleaner.deleted[0].deletedAt = time.Now().Add(-DefaultRestoreCheckWindow - time.Second)
+		cleaner.processCleanupQueue()
+		if got := len(cleaner.deleted); got != 0 {
+			t.Fatalf("folder should be dropped once the window has passed, got %d", got)
+		}
+		if len(restored) != 0 {
+			t.Fatalf("a folder that stayed empty should never be restored, got %v", restored)
+		}
+	})
+
 	t.Run("folder stays empty", func(t *testing.T) {
 		var restored []string
 		mock := &mockFilerOps{
 			countFn:     func(util.FullPath) (int, error) { return 0, nil },
-			ensureDirFn: func(p util.FullPath) error { restored = append(restored, string(p)); return nil },
+			ensureDirFn: func(p util.FullPath, _ DirectoryAttributes) error { restored = append(restored, string(p)); return nil },
 		}
 
 		cleaner := newCleaner(mock)

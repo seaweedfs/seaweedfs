@@ -102,3 +102,28 @@ func TestDeleteEntryKeepsChildListing(t *testing.T) {
 		t.Errorf("listing key should be removed with the children, still present")
 	}
 }
+
+func TestRemovingTheLastChildDropsTheListing(t *testing.T) {
+	store, dir := newTestStore(t)
+	ctx := context.Background()
+
+	now := time.Now()
+	child := dir.Child("obj")
+	if err := store.InsertEntry(ctx, &filer.Entry{
+		FullPath: child,
+		Attr:     filer.Attr{Crtime: now, Mtime: now, Mode: 0644},
+	}); err != nil {
+		t.Fatalf("InsertEntry %s: %v", child, err)
+	}
+
+	// An emptied listing must not leave its header behind: cleanup deletes such a
+	// folder without touching the listing, so the key would never be collected.
+	if err := store.DeleteEntry(ctx, child); err != nil {
+		t.Fatalf("DeleteEntry %s: %v", child, err)
+	}
+	if n, err := store.Client.Exists(ctx, genDirectoryListKey(string(dir))).Result(); err != nil {
+		t.Fatalf("exists %s: %v", dir, err)
+	} else if n != 0 {
+		t.Errorf("listing key should be gone once the last child is removed, still present")
+	}
+}

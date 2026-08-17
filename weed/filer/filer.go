@@ -373,29 +373,58 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 	return nil
 }
 
-// EnsureDirectoryEntry recreates dirPath, and any missing ancestor, for entries
-// that outlived the directory holding them. It is a no-op when dirPath is there.
-func (f *Filer) EnsureDirectoryEntry(ctx context.Context, dirPath util.FullPath) error {
-	holder := &Entry{FullPath: dirPath, Attr: Attr{Mode: 0755}}
+// DirectoryAttributes reads what a directory would need to be recreated as it is.
+func (f *Filer) DirectoryAttributes(ctx context.Context, dirPath util.FullPath) (attrs empty_folder_cleanup.DirectoryAttributes, err error) {
+	entry, err := f.FindEntry(ctx, dirPath)
+	if err != nil {
+		return attrs, err
+	}
+	return empty_folder_cleanup.DirectoryAttributes{
+		Mode:       entry.Mode.Perm(),
+		Uid:        entry.Uid,
+		Gid:        entry.Gid,
+		UserName:   entry.UserName,
+		GroupNames: entry.GroupNames,
+	}, nil
+}
 
-	// Inherit from the nearest ancestor still present. The original attributes went
-	// with the deleted entry, and a fixed mode would hand back a directory more
-	// permissive, or differently owned, than the one that held these entries.
-	ancestor, _ := dirPath.DirAndName()
-	for ancestor != "" && ancestor != "/" {
-		if entry, err := f.FindEntry(ctx, util.FullPath(ancestor)); err == nil && entry != nil {
-			holder.Attr.Mode = entry.Mode.Perm()
-			holder.Attr.Uid = entry.Uid
-			holder.Attr.Gid = entry.Gid
-			holder.Attr.UserName = entry.UserName
-			holder.Attr.GroupNames = entry.GroupNames
-			break
-		}
-		ancestor, _ = util.FullPath(ancestor).DirAndName()
+// EnsureDirectoryEntry recreates dirPath, and any missing ancestor, for entries that
+// outlived the directory holding them. dirPath comes back with the attributes it was
+// deleted with, so a restore cannot hand back a directory more permissive than the one
+// it replaces. It is a no-op when dirPath is already there.
+func (f *Filer) EnsureDirectoryEntry(ctx context.Context, dirPath util.FullPath, attrs empty_folder_cleanup.DirectoryAttributes) error {
+	existing, err := f.FindEntry(ctx, dirPath)
+	if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		return err
+	}
+	if existing != nil {
+		return nil
 	}
 
+	holder := &Entry{FullPath: dirPath, Attr: Attr{
+		Mode: attrs.Mode, Uid: attrs.Uid, Gid: attrs.Gid,
+		UserName: attrs.UserName, GroupNames: attrs.GroupNames,
+	}}
 	dirParts := strings.Split(string(dirPath), "/")
-	return f.ensureParentDirectoryEntry(ctx, holder, dirParts, len(dirParts), false)
+	if err := f.ensureParentDirectoryEntry(ctx, holder, dirParts, len(dirParts)-1, false); err != nil {
+		return err
+	}
+
+	now := time.Now()
+	dirEntry := &Entry{FullPath: dirPath, Attr: Attr{
+		Mtime: now, Crtime: now,
+		Mode:     os.ModeDir | attrs.Mode,
+		Uid:      attrs.Uid,
+		Gid:      attrs.Gid,
+		UserName: attrs.UserName, GroupNames: attrs.GroupNames,
+	}}
+	f.ensureEntryInode(dirEntry)
+	if err := f.Store.InsertEntry(ctx, dirEntry); err != nil {
+		return fmt.Errorf("restore directory %s: %v", dirPath, err)
+	}
+	f.NotifyUpdateEvent(ctx, nil, dirEntry, false, false, nil)
+
+	return nil
 }
 
 func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry) (err error) {

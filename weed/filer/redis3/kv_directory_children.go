@@ -73,6 +73,12 @@ func removeChild(ctx context.Context, redisStore *UniversalRedis3Store, key stri
 		return nil
 	}
 
+	// An emptied list reads the same as no list at all, and keeping the header would
+	// leave a key behind for every directory that is emptied.
+	if nameList.IsEmpty() {
+		return client.Del(ctx, key).Err()
+	}
+
 	if err := client.Set(ctx, key, nameList.ToBytes(), 0).Err(); err != nil {
 		return err
 	}

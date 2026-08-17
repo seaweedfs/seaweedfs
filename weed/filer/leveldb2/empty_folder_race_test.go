@@ -99,6 +99,12 @@ func TestEnsureDirectoryEntryRestoresRacingParent(t *testing.T) {
 		t.Fatalf("create folder: %v", err)
 	}
 
+	// the cleaner reads these before deleting, so a restore does not have to guess
+	attrs, err := testFiler.DirectoryAttributes(ctx, dir)
+	if err != nil {
+		t.Fatalf("read folder attributes: %v", err)
+	}
+
 	hooked.hook = func() {
 		entry := &filer.Entry{FullPath: child, Attr: filer.Attr{Mode: 0640}}
 		if err := testFiler.CreateEntry(ctx, entry, nil, false, false, nil, false, testFiler.MaxFilenameLength); err != nil {
@@ -114,7 +120,7 @@ func TestEnsureDirectoryEntryRestoresRacingParent(t *testing.T) {
 		t.Fatalf("folder should be gone from its parent before the restore, got %v", names)
 	}
 
-	if err := testFiler.EnsureDirectoryEntry(ctx, dir); err != nil {
+	if err := testFiler.EnsureDirectoryEntry(ctx, dir, attrs); err != nil {
 		t.Fatalf("restore folder: %v", err)
 	}
 
@@ -130,10 +136,10 @@ func TestEnsureDirectoryEntryRestoresRacingParent(t *testing.T) {
 	}
 }
 
-// TestEnsureDirectoryEntryInheritsAncestorOwnership checks that a restored
-// directory takes its ownership and permissions from the tree it belongs to,
-// rather than coming back wide open.
-func TestEnsureDirectoryEntryInheritsAncestorOwnership(t *testing.T) {
+// TestEnsureDirectoryEntryRestoresExactAttributes checks that a restored directory
+// comes back exactly as it was. Guessing from an ancestor, or forcing traversal bits,
+// would hand back a directory that grants access the original one denied.
+func TestEnsureDirectoryEntryRestoresExactAttributes(t *testing.T) {
 	testFiler := filer.NewFiler(pb.ServerDiscovery{}, nil, "", "", "", "", "", 255, nil)
 	store := &LevelDB2Store{}
 	if err := store.initialize(t.TempDir(), 2); err != nil {
@@ -142,14 +148,22 @@ func TestEnsureDirectoryEntryInheritsAncestorOwnership(t *testing.T) {
 	testFiler.SetStore(store)
 
 	ctx := filer.WithSuppressedMetadataEvents(context.Background())
-	parent := util.FullPath("/buckets/testbucket/data")
-	parentEntry := &filer.Entry{FullPath: parent, Attr: filer.Attr{Mode: os.ModeDir | 0700, Uid: 4242, Gid: 4343}}
-	if err := testFiler.CreateEntry(ctx, parentEntry, nil, false, false, nil, false, testFiler.MaxFilenameLength); err != nil {
-		t.Fatalf("create parent: %v", err)
+	// a private directory under a world-traversable parent
+	dir := util.FullPath("/buckets/testbucket/data").Child("private")
+	dirEntry := &filer.Entry{FullPath: dir, Attr: filer.Attr{Mode: os.ModeDir | 0700, Uid: 4242, Gid: 4343}}
+	if err := testFiler.CreateEntry(ctx, dirEntry, nil, false, false, nil, false, testFiler.MaxFilenameLength); err != nil {
+		t.Fatalf("create folder: %v", err)
 	}
 
-	dir := parent.Child("abc")
-	if err := testFiler.EnsureDirectoryEntry(ctx, dir); err != nil {
+	attrs, err := testFiler.DirectoryAttributes(ctx, dir)
+	if err != nil {
+		t.Fatalf("read folder attributes: %v", err)
+	}
+	if err := testFiler.DeleteEntryMetaAndData(ctx, dir, false, false, false, false, nil, 0); err != nil {
+		t.Fatalf("delete folder: %v", err)
+	}
+
+	if err := testFiler.EnsureDirectoryEntry(ctx, dir, attrs); err != nil {
 		t.Fatalf("restore folder: %v", err)
 	}
 
@@ -157,11 +171,14 @@ func TestEnsureDirectoryEntryInheritsAncestorOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatalf("find restored folder: %v", err)
 	}
-	if restored.Uid != 4242 || restored.Gid != 4343 {
-		t.Errorf("restored folder should keep the ancestor's owner, got uid=%d gid=%d", restored.Uid, restored.Gid)
+	if !restored.IsDirectory() {
+		t.Errorf("restored %s is not a directory", dir)
 	}
-	if restored.Mode.Perm() != 0711 {
-		t.Errorf("restored folder should derive its mode from the ancestor's 0700, got %o", restored.Mode.Perm())
+	if restored.Mode.Perm() != 0700 {
+		t.Errorf("restored folder should keep mode 0700, got %o", restored.Mode.Perm())
+	}
+	if restored.Uid != 4242 || restored.Gid != 4343 {
+		t.Errorf("restored folder should keep its owner, got uid=%d gid=%d", restored.Uid, restored.Gid)
 	}
 }
 
