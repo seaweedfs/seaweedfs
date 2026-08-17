@@ -1,0 +1,369 @@
+//go:build linux || darwin
+
+package fuse_failover
+
+import (
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/seaweedfs/seaweedfs/test/testutil"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/stretchr/testify/require"
+)
+
+// failoverCluster runs 1 master, N volume servers, 1 filer and M FUSE mounts,
+// with the master defaulting to 001 replication so every chunk lands on two
+// distinct volume servers. Individual volume servers can be stopped and started
+// while IO is in flight, which is what the Docker Swarm reports in discussion
+// 10206 exercise: a volume server disappears mid-append and the mounts must
+// keep reading from the surviving replica and keep writing on another volume.
+type failoverCluster struct {
+	t          testing.TB
+	baseDir    string
+	weedBinary string
+
+	masterPort     int
+	masterGrpcPort int
+	filerPort      int
+	filerGrpcPort  int
+	volumePorts    []int
+	volumeGrpcPort []int
+	volumeDirs     []string
+
+	masterCmd   *exec.Cmd
+	filerCmd    *exec.Cmd
+	volumeCmds  []*exec.Cmd
+	mountCmds   []*exec.Cmd
+	mountPoints []string
+	logFiles    []*os.File
+
+	logMu       sync.Mutex
+	cleanupOnce sync.Once
+}
+
+func startFailoverCluster(t testing.TB, numVolumes, numMounts int) *failoverCluster {
+	require.GreaterOrEqual(t, numVolumes, 2, "001 replication needs at least 2 volume servers")
+	require.GreaterOrEqual(t, numMounts, 1)
+
+	binary := findWeedBinary()
+	if binary == "" {
+		t.Skip("weed binary not found; set WEED_BINARY or ensure it is on PATH")
+	}
+	baseDir, err := os.MkdirTemp("", "seaweedfs_fuse_failover_")
+	require.NoError(t, err)
+
+	c := &failoverCluster{
+		t:              t,
+		baseDir:        baseDir,
+		weedBinary:     binary,
+		volumePorts:    make([]int, numVolumes),
+		volumeGrpcPort: make([]int, numVolumes),
+		volumeDirs:     make([]string, numVolumes),
+		volumeCmds:     make([]*exec.Cmd, numVolumes),
+		mountCmds:      make([]*exec.Cmd, numMounts),
+		mountPoints:    make([]string, numMounts),
+	}
+	t.Cleanup(c.Stop)
+
+	ports, err := testutil.AllocatePorts(4 + 2*numVolumes)
+	require.NoError(t, err)
+	c.masterPort, c.masterGrpcPort = ports[0], ports[1]
+	c.filerPort, c.filerGrpcPort = ports[2], ports[3]
+	for i := 0; i < numVolumes; i++ {
+		c.volumePorts[i] = ports[4+2*i]
+		c.volumeGrpcPort[i] = ports[5+2*i]
+		c.volumeDirs[i] = filepath.Join(baseDir, fmt.Sprintf("volume%d", i))
+		require.NoError(t, os.MkdirAll(c.volumeDirs[i], 0755))
+	}
+
+	require.NoError(t, c.startMaster())
+	require.NoError(t, c.waitForTCP(c.masterCmd, "master",
+		fmt.Sprintf("127.0.0.1:%d", c.masterPort), 30*time.Second))
+
+	for i := 0; i < numVolumes; i++ {
+		require.NoError(t, c.StartVolume(i))
+	}
+
+	require.NoError(t, c.startFiler())
+	require.NoError(t, c.waitForTCP(c.filerCmd, "filer",
+		fmt.Sprintf("127.0.0.1:%d", c.filerGrpcPort), 30*time.Second))
+
+	for i := 0; i < numMounts; i++ {
+		mp := filepath.Join(baseDir, fmt.Sprintf("mount%d", i))
+		require.NoError(t, os.MkdirAll(mp, 0755))
+		c.mountPoints[i] = mp
+		require.NoError(t, c.startMount(i))
+		require.NoError(t, c.waitForMount(mp, 30*time.Second),
+			"mount %d not ready\n%s", i, c.tailLog(fmt.Sprintf("mount%d", i)))
+	}
+	return c
+}
+
+func (c *failoverCluster) MountDir(i int) string { return c.mountPoints[i] }
+
+func (c *failoverCluster) Stop() {
+	if c == nil {
+		return
+	}
+	c.cleanupOnce.Do(func() {
+		for i := len(c.mountCmds) - 1; i >= 0; i-- {
+			stopCmd(c.mountCmds[i], syscall.SIGTERM)
+			exec.Command("fusermount3", "-u", c.mountPoints[i]).Run()
+			exec.Command("fusermount", "-u", c.mountPoints[i]).Run()
+		}
+		stopCmd(c.filerCmd, syscall.SIGTERM)
+		for i := len(c.volumeCmds) - 1; i >= 0; i-- {
+			stopCmd(c.volumeCmds[i], syscall.SIGTERM)
+		}
+		stopCmd(c.masterCmd, syscall.SIGTERM)
+
+		c.logMu.Lock()
+		for _, f := range c.logFiles {
+			f.Close()
+		}
+		c.logMu.Unlock()
+		c.copyLogsForCI()
+		if !c.t.Failed() {
+			os.RemoveAll(c.baseDir)
+		}
+	})
+}
+
+// KillVolume drops a volume server without letting it deregister, the closest
+// local equivalent of a Swarm task vanishing from the overlay network.
+func (c *failoverCluster) KillVolume(i int) {
+	stopCmd(c.volumeCmds[i], syscall.SIGKILL)
+	c.volumeCmds[i] = nil
+}
+
+// StartVolume (re)starts volume server i on its original ports and data dir.
+func (c *failoverCluster) StartVolume(i int) error {
+	cmd := exec.Command(c.weedBinary,
+		"-logdir="+filepath.Join(c.baseDir, "logs"),
+		"volume",
+		"-ip=127.0.0.1",
+		"-ip.bind=127.0.0.1",
+		"-port="+strconv.Itoa(c.volumePorts[i]),
+		"-port.grpc="+strconv.Itoa(c.volumeGrpcPort[i]),
+		"-master="+c.masterAddress(),
+		"-dir="+c.volumeDirs[i],
+		"-dataCenter=dc1",
+		"-rack=rack1",
+		"-max=10",
+	)
+	c.volumeCmds[i] = cmd
+	if err := c.startCmd(cmd, fmt.Sprintf("volume%d", i)); err != nil {
+		return err
+	}
+	return c.waitForTCP(cmd, fmt.Sprintf("volume%d", i),
+		fmt.Sprintf("127.0.0.1:%d", c.volumePorts[i]), 30*time.Second)
+}
+
+func (c *failoverCluster) startMaster() error {
+	c.masterCmd = exec.Command(c.weedBinary,
+		"-logdir="+filepath.Join(c.baseDir, "logs"),
+		"master",
+		"-ip=127.0.0.1",
+		"-ip.bind=127.0.0.1",
+		"-port="+strconv.Itoa(c.masterPort),
+		"-port.grpc="+strconv.Itoa(c.masterGrpcPort),
+		"-mdir="+filepath.Join(c.baseDir, "master"),
+		"-defaultReplication=001",
+		"-volumeSizeLimitMB=64",
+	)
+	return c.startCmd(c.masterCmd, "master")
+}
+
+func (c *failoverCluster) startFiler() error {
+	filerDir := filepath.Join(c.baseDir, "filer")
+	if err := os.MkdirAll(filerDir, 0755); err != nil {
+		return fmt.Errorf("create filer dir: %w", err)
+	}
+	c.filerCmd = exec.Command(c.weedBinary,
+		"-logdir="+filepath.Join(c.baseDir, "logs"),
+		"filer",
+		"-ip=127.0.0.1",
+		"-ip.bind=127.0.0.1",
+		"-port="+strconv.Itoa(c.filerPort),
+		"-port.grpc="+strconv.Itoa(c.filerGrpcPort),
+		"-master="+c.masterAddress(),
+		"-defaultReplicaPlacement=001",
+		"-defaultStoreDir="+filerDir,
+	)
+	return c.startCmd(c.filerCmd, "filer")
+}
+
+func (c *failoverCluster) startMount(idx int) error {
+	cacheDir := filepath.Join(c.baseDir, fmt.Sprintf("cache%d", idx))
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		return fmt.Errorf("create cache dir: %w", err)
+	}
+	c.mountCmds[idx] = exec.Command(c.weedBinary,
+		"-logdir="+filepath.Join(c.baseDir, "logs"),
+		"-v=2",
+		"mount",
+		"-filer="+c.filerAddress(),
+		"-dir="+c.mountPoints[idx],
+		"-filer.path=/",
+		"-dirAutoCreate",
+		"-allowOthers=false",
+		"-replication=001",
+		"-cacheDir="+cacheDir,
+	)
+	return c.startCmd(c.mountCmds[idx], fmt.Sprintf("mount%d", idx))
+}
+
+// MasterGet fetches a master HTTP endpoint, e.g. "/dir/status?pretty=y" or
+// "/dir/lookup?volumeId=6", so a failing test can show where the replicas are.
+func (c *failoverCluster) MasterGet(path string) string {
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d%s", c.masterPort, path))
+	if err != nil {
+		return fmt.Sprintf("(master %s failed: %v)", path, err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Sprintf("(master %s read failed: %v)", path, err)
+	}
+	return string(body)
+}
+
+func (c *failoverCluster) masterAddress() string {
+	return string(pb.NewServerAddress("127.0.0.1", c.masterPort, c.masterGrpcPort))
+}
+
+func (c *failoverCluster) filerAddress() string {
+	return string(pb.NewServerAddress("127.0.0.1", c.filerPort, c.filerGrpcPort))
+}
+
+func (c *failoverCluster) startCmd(cmd *exec.Cmd, name string) error {
+	logPath := filepath.Join(c.baseDir, "logs")
+	if err := os.MkdirAll(logPath, 0755); err != nil {
+		return fmt.Errorf("create log dir: %w", err)
+	}
+	// Append so a restarted volume server keeps the log of its earlier run.
+	logFile, err := os.OpenFile(filepath.Join(logPath, name+".log"),
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return err
+	}
+	c.logMu.Lock()
+	c.logFiles = append(c.logFiles, logFile)
+	c.logMu.Unlock()
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	return cmd.Start()
+}
+
+func (c *failoverCluster) tailLog(name string) string {
+	data, err := os.ReadFile(filepath.Join(c.baseDir, "logs", name+".log"))
+	if err != nil {
+		return fmt.Sprintf("(log %s not available: %v)", name, err)
+	}
+	const maxTail = 8192
+	if len(data) > maxTail {
+		data = data[len(data)-maxTail:]
+	}
+	return string(data)
+}
+
+func (c *failoverCluster) copyLogsForCI() {
+	// One directory per test: subtests share a log dir name otherwise, and the
+	// last one to finish would overwrite the logs of the one that failed.
+	ciLogDir := filepath.Join("/tmp/seaweedfs-fuse-failover-logs",
+		strings.ReplaceAll(c.t.Name(), "/", "_"))
+	os.MkdirAll(ciLogDir, 0755)
+	entries, err := os.ReadDir(filepath.Join(c.baseDir, "logs"))
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		data, err := os.ReadFile(filepath.Join(c.baseDir, "logs", e.Name()))
+		if err != nil {
+			continue
+		}
+		os.WriteFile(filepath.Join(ciLogDir, e.Name()), data, 0644)
+	}
+}
+
+func (c *failoverCluster) waitForTCP(cmd *exec.Cmd, name, addr string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", addr, time.Second)
+		if err == nil {
+			conn.Close()
+			return nil
+		}
+		if cmd != nil && cmd.Process != nil {
+			if sigErr := cmd.Process.Signal(syscall.Signal(0)); sigErr != nil {
+				return fmt.Errorf("%s exited before listening on %s: %v\n%s",
+					name, addr, sigErr, c.tailLog(name))
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return fmt.Errorf("service at %s not ready within timeout\n%s", addr, c.tailLog(name))
+}
+
+func (c *failoverCluster) waitForMount(mountPoint string, timeout time.Duration) error {
+	parentDir := filepath.Dir(mountPoint)
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		parentStat, err := os.Stat(parentDir)
+		if err != nil {
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		mountStat, err := os.Stat(mountPoint)
+		if err != nil {
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		if parentStat.Sys().(*syscall.Stat_t).Dev != mountStat.Sys().(*syscall.Stat_t).Dev {
+			return nil
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return fmt.Errorf("mount point %s not ready within timeout (FUSE not detected)", mountPoint)
+}
+
+func findWeedBinary() string {
+	if env := os.Getenv("WEED_BINARY"); env != "" {
+		if _, err := os.Stat(env); err == nil {
+			return env
+		}
+	}
+	if p, err := exec.LookPath("weed"); err == nil {
+		return p
+	}
+	return ""
+}
+
+func stopCmd(cmd *exec.Cmd, sig syscall.Signal) {
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	cmd.Process.Signal(sig)
+	done := make(chan struct{})
+	go func() {
+		cmd.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		cmd.Process.Signal(syscall.SIGKILL)
+		<-done
+	}
+}

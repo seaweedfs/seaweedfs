@@ -1,0 +1,73 @@
+name: "FUSE Volume Server Failover Tests"
+
+on:
+  pull_request:
+    paths:
+      - 'weed/command/mount*.go'
+      - 'weed/mount/**'
+      - 'weed/filer/**'
+      - 'weed/wdclient/**'
+      - 'weed/operation/upload_content.go'
+      - 'test/fuse_failover/**'
+      - '.github/workflows/fuse-failover.yml'
+      - '.github/actions/fix-fusermount-setuid/**'
+  push:
+    branches: [master]
+    paths:
+      - 'weed/command/mount*.go'
+      - 'weed/mount/**'
+      - 'weed/filer/**'
+      - 'weed/wdclient/**'
+      - 'weed/operation/upload_content.go'
+      - 'test/fuse_failover/**'
+      - '.github/workflows/fuse-failover.yml'
+      - '.github/actions/fix-fusermount-setuid/**'
+
+concurrency:
+  group: ${{ github.head_ref || github.ref }}/fuse-failover
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  fuse-failover:
+    name: FUSE Volume Server Failover
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Install FUSE dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfuse3-dev
+          echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
+          sudo chmod 644 /etc/fuse.conf
+
+      - name: Repair the fusermount3 setuid bit
+        uses: ./.github/actions/fix-fusermount-setuid
+
+      - name: Build SeaweedFS
+        run: go build -o weed/weed -buildvcs=false ./weed
+
+      - name: Run failover integration tests
+        timeout-minutes: 35
+        env:
+          WEED_BINARY: ${{ github.workspace }}/weed/weed
+        run: go test -v -count=1 -timeout=30m ./test/fuse_failover/...
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuse-failover-test-logs
+          path: /tmp/seaweedfs-fuse-failover-logs/
+          retention-days: 3
