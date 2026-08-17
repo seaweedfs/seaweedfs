@@ -1473,7 +1473,7 @@ func startMiniService(name string, fn func(), port int) {
 // waitForServiceReady pings the service HTTP endpoint to check if it's ready
 // to accept connections, and reports the transition to the progress board.
 func waitForServiceReady(name string, port int, bindIp string) {
-	address := fmt.Sprintf("http://%s:%d", bindIp, port)
+	address := "http://" + util.JoinHostPort(bindIp, port)
 	healthAddr := getHealthCheckAddr(address)
 	maxAttempts := 30 // 30 * 200ms = 6 seconds max wait
 	attempt := 0
@@ -1595,7 +1595,7 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	}()
 
 	// Wait for admin server's HTTP port to be ready before launching worker
-	adminAddr := fmt.Sprintf("http://%s:%d", bindIp, *miniAdminOptions.port)
+	adminAddr := "http://" + util.JoinHostPort(bindIp, *miniAdminOptions.port)
 	if err := waitForAdminServerReady(ctx, adminAddr); err != nil {
 		// If the parent context was cancelled (e.g. a previous in-process
 		// mini run is being torn down), bail out gracefully instead of
@@ -1900,7 +1900,7 @@ func printWelcomeMessage() {
 // Best-effort: any error returns ok=false so the welcome banner simply omits
 // the lines.
 func miniVolumeCounts() (max, free int64, ok bool) {
-	url := getHealthCheckAddr(fmt.Sprintf("http://%s:%d/dir/status", *miniIp, *miniMasterOptions.port))
+	url := getHealthCheckAddr("http://" + util.JoinHostPort(*miniIp, *miniMasterOptions.port) + "/dir/status")
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {

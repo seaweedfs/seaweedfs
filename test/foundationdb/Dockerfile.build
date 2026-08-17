@@ -1,6 +1,6 @@
 # Simplified single-stage build for SeaweedFS with FoundationDB support
 # Force x86_64 platform to use AMD64 FoundationDB packages
-FROM --platform=linux/amd64 golang:1.25-bookworm
+FROM --platform=linux/amd64 golang:1.26-bookworm
 
 ARG FOUNDATIONDB_VERSION=7.4.5
 ENV FOUNDATIONDB_VERSION=${FOUNDATIONDB_VERSION}
@@ -43,7 +43,7 @@ WORKDIR /build
 # Copy source code
 COPY . .
 
-# Using Go 1.24 to match project requirements
+# Using Go 1.26 to match project requirements
 
 # Download dependencies (using versions from go.mod for deterministic builds)
 RUN go mod download
