@@ -209,9 +209,14 @@ func (c *failoverCluster) startMount(idx int) error {
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {
 		return fmt.Errorf("create cache dir: %w", err)
 	}
+	// Chunk-level detail needs -v=4; keep CI at -v=2 so the logs stay small.
+	verbosity := os.Getenv("FUSE_FAILOVER_MOUNT_V")
+	if verbosity == "" {
+		verbosity = "2"
+	}
 	c.mountCmds[idx] = exec.Command(c.weedBinary,
 		"-logdir="+filepath.Join(c.baseDir, "logs"),
-		"-v=2",
+		"-v="+verbosity,
 		"mount",
 		"-filer="+c.filerAddress(),
 		"-dir="+c.mountPoints[idx],
@@ -237,6 +242,24 @@ func (c *failoverCluster) MasterGet(path string) string {
 		return fmt.Sprintf("(master %s read failed: %v)", path, err)
 	}
 	return string(body)
+}
+
+// FilerGet reads a file back through the filer's own HTTP handler: a view of
+// the chunk list that neither mount's cache can colour.
+func (c *failoverCluster) FilerGet(path string) ([]byte, error) {
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d%s", c.filerPort, path))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("filer %s: %s", path, resp.Status)
+	}
+	return body, nil
 }
 
 func (c *failoverCluster) masterAddress() string {

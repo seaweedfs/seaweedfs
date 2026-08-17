@@ -269,10 +269,12 @@ func runChaosAppend(t *testing.T, c *failoverCluster, name string, chaos func())
 	time.Sleep(5 * time.Second)
 	again1, _ := os.ReadFile(readPath)
 	again0, _ := os.ReadFile(writePath)
+	viaFiler, filerErr := c.FilerGet("/" + name)
 	require.Failf(t, "final content mismatch",
-		"%s: first difference at offset %d (want %d bytes, got %d)\nwant %q\ngot  %q\nafter 5s: mount1 matches=%v mount0 matches=%v\n%s",
+		"%s: first difference at offset %d (want %d bytes, got %d)\nwant %q\ngot  %q\nafter 5s: mount1 matches=%v mount0 matches=%v filer matches=%v (err %v)\n%s",
 		name, d, len(want), len(got), window(want, d), window(string(got), d),
-		string(again1) == want, string(again0) == want, c.tailLog("mount0"))
+		string(again1) == want, string(again0) == want, string(viaFiler) == want, filerErr,
+		c.tailLog("mount0"))
 }
 
 // firstDiff returns the offset of the first differing byte, or -1 when equal.
