@@ -48,7 +48,8 @@ type failoverCluster struct {
 	mountPoints []string
 	logFiles    []*os.File
 
-	logMu       sync.Mutex
+	mu          sync.Mutex
+	waits       map[*exec.Cmd]chan error
 	cleanupOnce sync.Once
 }
 
@@ -118,21 +119,21 @@ func (c *failoverCluster) Stop() {
 	}
 	c.cleanupOnce.Do(func() {
 		for i := len(c.mountCmds) - 1; i >= 0; i-- {
-			stopCmd(c.mountCmds[i], syscall.SIGTERM)
+			c.stopCmd(c.mountCmds[i], syscall.SIGTERM)
 			exec.Command("fusermount3", "-u", c.mountPoints[i]).Run()
 			exec.Command("fusermount", "-u", c.mountPoints[i]).Run()
 		}
-		stopCmd(c.filerCmd, syscall.SIGTERM)
+		c.stopCmd(c.filerCmd, syscall.SIGTERM)
 		for i := len(c.volumeCmds) - 1; i >= 0; i-- {
-			stopCmd(c.volumeCmds[i], syscall.SIGTERM)
+			c.stopCmd(c.volumeCmds[i], syscall.SIGTERM)
 		}
-		stopCmd(c.masterCmd, syscall.SIGTERM)
+		c.stopCmd(c.masterCmd, syscall.SIGTERM)
 
-		c.logMu.Lock()
+		c.mu.Lock()
 		for _, f := range c.logFiles {
 			f.Close()
 		}
-		c.logMu.Unlock()
+		c.mu.Unlock()
 		c.copyLogsForCI()
 		if !c.t.Failed() {
 			os.RemoveAll(c.baseDir)
@@ -143,7 +144,7 @@ func (c *failoverCluster) Stop() {
 // KillVolume drops a volume server without letting it deregister, the closest
 // local equivalent of a Swarm task vanishing from the overlay network.
 func (c *failoverCluster) KillVolume(i int) {
-	stopCmd(c.volumeCmds[i], syscall.SIGKILL)
+	c.stopCmd(c.volumeCmds[i], syscall.SIGKILL)
 	c.volumeCmds[i] = nil
 }
 
@@ -281,12 +282,40 @@ func (c *failoverCluster) startCmd(cmd *exec.Cmd, name string) error {
 	if err != nil {
 		return err
 	}
-	c.logMu.Lock()
+	c.mu.Lock()
 	c.logFiles = append(c.logFiles, logFile)
-	c.logMu.Unlock()
+	c.mu.Unlock()
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
-	return cmd.Start()
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	// Reap in the background and publish the result: Signal(0) succeeds for a
+	// zombie, so an unreaped child that died at startup would otherwise look
+	// alive until the readiness timeout expired.
+	ch := make(chan error, 1)
+	c.mu.Lock()
+	if c.waits == nil {
+		c.waits = make(map[*exec.Cmd]chan error)
+	}
+	c.waits[cmd] = ch
+	c.mu.Unlock()
+	go func() {
+		ch <- cmd.Wait()
+		close(ch)
+	}()
+	return nil
+}
+
+// waitChan returns the channel carrying cmd's exit, or nil if it was never
+// started through startCmd. It stays readable after the exit is consumed.
+func (c *failoverCluster) waitChan(cmd *exec.Cmd) chan error {
+	if cmd == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.waits[cmd]
 }
 
 func (c *failoverCluster) tailLog(name string) string {
@@ -328,10 +357,12 @@ func (c *failoverCluster) waitForTCP(cmd *exec.Cmd, name, addr string, timeout t
 			conn.Close()
 			return nil
 		}
-		if cmd != nil && cmd.Process != nil {
-			if sigErr := cmd.Process.Signal(syscall.Signal(0)); sigErr != nil {
+		if ch := c.waitChan(cmd); ch != nil {
+			select {
+			case waitErr := <-ch:
 				return fmt.Errorf("%s exited before listening on %s: %v\n%s",
-					name, addr, sigErr, c.tailLog(name))
+					name, addr, waitErr, c.tailLog(name))
+			default:
 			}
 		}
 		time.Sleep(200 * time.Millisecond)
@@ -373,16 +404,17 @@ func findWeedBinary() string {
 	return ""
 }
 
-func stopCmd(cmd *exec.Cmd, sig syscall.Signal) {
+// stopCmd signals cmd and waits for the reaper goroutine started by startCmd to
+// report its exit, escalating to SIGKILL if it does not go quietly.
+func (c *failoverCluster) stopCmd(cmd *exec.Cmd, sig syscall.Signal) {
 	if cmd == nil || cmd.Process == nil {
 		return
 	}
 	cmd.Process.Signal(sig)
-	done := make(chan struct{})
-	go func() {
-		cmd.Wait()
-		close(done)
-	}()
+	done := c.waitChan(cmd)
+	if done == nil {
+		return
+	}
 	select {
 	case <-done:
 	case <-time.After(10 * time.Second):
