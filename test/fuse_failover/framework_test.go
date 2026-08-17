@@ -121,8 +121,8 @@ func (c *failoverCluster) Stop() {
 	c.cleanupOnce.Do(func() {
 		for i := len(c.mountCmds) - 1; i >= 0; i-- {
 			c.stopCmd(c.mountCmds[i], syscall.SIGTERM)
-			exec.Command("fusermount3", "-u", c.mountPoints[i]).Run()
-			exec.Command("fusermount", "-u", c.mountPoints[i]).Run()
+			_ = exec.Command("fusermount3", "-u", c.mountPoints[i]).Run()
+			_ = exec.Command("fusermount", "-u", c.mountPoints[i]).Run()
 		}
 		c.stopCmd(c.filerCmd, syscall.SIGTERM)
 		for i := len(c.volumeCmds) - 1; i >= 0; i-- {
@@ -132,7 +132,7 @@ func (c *failoverCluster) Stop() {
 
 		c.mu.Lock()
 		for _, f := range c.logFiles {
-			f.Close()
+			_ = f.Close()
 		}
 		c.mu.Unlock()
 		c.copyLogsForCI()
@@ -495,7 +495,7 @@ func (c *failoverCluster) stopCmd(cmd *exec.Cmd, sig syscall.Signal) {
 	if cmd == nil || cmd.Process == nil {
 		return
 	}
-	cmd.Process.Signal(sig)
+	_ = cmd.Process.Signal(sig)
 	done := c.waitChan(cmd)
 	if done == nil {
 		return
@@ -503,7 +503,7 @@ func (c *failoverCluster) stopCmd(cmd *exec.Cmd, sig syscall.Signal) {
 	select {
 	case <-done:
 	case <-time.After(10 * time.Second):
-		cmd.Process.Signal(syscall.SIGKILL)
+		_ = cmd.Process.Signal(syscall.SIGKILL)
 		<-done
 	}
 }
