@@ -423,6 +423,7 @@ func TestSignatureV4WithoutProxy(t *testing.T) {
 	tests := []struct {
 		name         string
 		host         string
+		urlHost      string // request-URL form of host, when host is not valid in a URL
 		proto        string
 		expectedHost string
 	}{
@@ -489,12 +490,14 @@ func TestSignatureV4WithoutProxy(t *testing.T) {
 		{
 			name:         "IPv6 HTTP without port",
 			host:         "::1",
+			urlHost:      "[::1]",
 			proto:        "http",
 			expectedHost: "::1",
 		},
 		{
 			name:         "IPv6 HTTPS without port",
 			host:         "::1",
+			urlHost:      "[::1]",
 			proto:        "https",
 			expectedHost: "::1",
 		},
@@ -504,11 +507,19 @@ func TestSignatureV4WithoutProxy(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			iam := newTestIAM()
 
+			// A bare IPv6 literal is legal in a Host header but not in a URL, so the
+			// two forms are carried separately.
+			urlHost := tt.urlHost
+			if urlHost == "" {
+				urlHost = tt.host
+			}
+
 			// Create a request
-			r, err := newTestRequest("GET", tt.proto+"://"+tt.host+"/test-bucket/test-object", 0, nil)
+			r, err := newTestRequest("GET", tt.proto+"://"+urlHost+"/test-bucket/test-object", 0, nil)
 			if err != nil {
 				t.Fatalf("Failed to create test request: %v", err)
 			}
+			r.Host = tt.host
 
 			// Set the mux variables manually since we're not going through the actual router
 			r = mux.SetURLVars(r, map[string]string{
