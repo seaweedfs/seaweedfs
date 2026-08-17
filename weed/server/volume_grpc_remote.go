@@ -291,9 +291,10 @@ func newGuardedHTTPClientPolicy(endpoint string, allowPrivate bool) *http.Client
 
 // guardedRemoteClient reports the caller-supplied endpoint a backend dials
 // directly and a constructor that routes through the given HTTP client, or
-// ok=false for backends that only reach a fixed provider host. The S3-SDK
-// family and azure (once AzureEndpoint is set) both honor an attacker-supplied
-// endpoint, so both must pass the SSRF deny-list and rebinding-safe dialer.
+// ok=false when nothing in the conf steers a destination. The S3-SDK family,
+// azure (once AzureEndpoint is set) and the gcs token exchange all honor a
+// caller-supplied endpoint, so each must pass the SSRF deny-list and the
+// rebinding-safe dialer.
 func guardedRemoteClient(remoteConf *remote_pb.RemoteConf) (endpoint string, makeClient func(*http.Client) (remote_storage.RemoteStorageClient, error), ok bool) {
 	if remoteConf == nil {
 		return "", nil, false
@@ -307,6 +308,15 @@ func guardedRemoteClient(remoteConf *remote_pb.RemoteConf) (endpoint string, mak
 		return remoteConf.AzureEndpoint, func(httpClient *http.Client) (remote_storage.RemoteStorageClient, error) {
 			return azureremote.MakeWithHTTPClient(remoteConf, httpClient)
 		}, true
+	}
+	// gcs reaches a fixed object host, but the token exchange goes wherever the
+	// supplied credentials say, so guard that endpoint instead.
+	if remoteConf.Type == "gcs" && remoteConf.GcsGoogleApplicationCredentials != "" {
+		if _, tokenURL, err := gcsremote.ParseInlineCredentials(remoteConf.GcsGoogleApplicationCredentials); err == nil {
+			return tokenURL, func(httpClient *http.Client) (remote_storage.RemoteStorageClient, error) {
+				return gcsremote.MakeWithHTTPClient(remoteConf, httpClient)
+			}, true
+		}
 	}
 	return "", nil, false
 }

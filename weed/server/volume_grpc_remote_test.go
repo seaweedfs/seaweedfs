@@ -503,6 +503,45 @@ func TestGcsCredentialsArePath(t *testing.T) {
 	}
 }
 
+// TestGuardedRemoteClientGuardsGcsTokenURL confirms the token endpoint named by
+// inline gcs credentials is the endpoint the guard validates, so a loopback
+// token_uri is refused while the Google default passes.
+func TestGuardedRemoteClientGuardsGcsTokenURL(t *testing.T) {
+	originalLookup := lookupIPAddrFunc
+	t.Cleanup(func() { lookupIPAddrFunc = originalLookup })
+	lookupIPAddrFunc = stubLookup(t, map[string][]net.IP{
+		"oauth2.googleapis.com": {net.ParseIP("142.250.72.10")},
+	})
+
+	endpoint, makeClient, ok := guardedRemoteClient(&remote_pb.RemoteConf{
+		Type:                            "gcs",
+		GcsGoogleApplicationCredentials: `{"type":"service_account","token_uri":"http://127.0.0.1:9/token"}`,
+	})
+	if !ok {
+		t.Fatal("gcs conf with inline credentials should be guarded")
+	}
+	if endpoint != "http://127.0.0.1:9/token" {
+		t.Errorf("endpoint = %q, want the credential token_uri", endpoint)
+	}
+	if err := validateRemoteEndpoint(context.Background(), endpoint); err == nil {
+		t.Error("expected the loopback token endpoint to be rejected")
+	}
+	if makeClient == nil {
+		t.Error("expected a constructor")
+	}
+
+	endpoint, _, ok = guardedRemoteClient(&remote_pb.RemoteConf{
+		Type:                            "gcs",
+		GcsGoogleApplicationCredentials: `{"type":"service_account"}`,
+	})
+	if !ok {
+		t.Fatal("gcs conf with inline credentials should be guarded")
+	}
+	if err := validateRemoteEndpoint(context.Background(), endpoint); err != nil {
+		t.Errorf("default token endpoint %q should pass: %v", endpoint, err)
+	}
+}
+
 // TestCheckGcsCredentials confirms only inline credentials that carry their own
 // key material are accepted. The federated types name a url, file or executable
 // that the SDK reads the token from, none of which the endpoint guard sees.

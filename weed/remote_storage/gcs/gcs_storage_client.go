@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"reflect"
 	"strings"
@@ -55,8 +56,21 @@ func (s gcsRemoteStorageMaker) HasBucket() bool {
 }
 
 func (s gcsRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
+	return MakeWithHTTPClient(conf, nil)
+}
+
+// MakeWithHTTPClient builds a gcs client whose token exchange and object reads
+// both go through the supplied *http.Client (or the SDK default when nil).
+// Callers that need to pin the dial path against DNS rebinding pass a client
+// whose transport has a guarded DialContext, mirroring the S3 backend.
+func MakeWithHTTPClient(conf *remote_pb.RemoteConf, httpClient *http.Client) (remote_storage.RemoteStorageClient, error) {
 	client := &gcsRemoteStorageClient{
 		conf: conf,
+	}
+
+	ctx := context.Background()
+	if httpClient != nil {
+		ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
 	}
 
 	googleApplicationCredentials := conf.GcsGoogleApplicationCredentials
@@ -92,15 +106,14 @@ func (s gcsRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.
 				return nil, fmt.Errorf("failed to read credentials file %s: %w", googleApplicationCredentials, err)
 			}
 		}
-		creds, err := google.CredentialsFromJSON(context.Background(), data, storage.ScopeFullControl)
+		creds, err := google.CredentialsFromJSON(ctx, data, storage.ScopeFullControl)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse credentials: %w", err)
 		}
-		httpClient := oauth2.NewClient(context.Background(), creds.TokenSource)
-		clientOpts = append(clientOpts, option.WithHTTPClient(httpClient), option.WithoutAuthentication())
+		clientOpts = append(clientOpts, option.WithHTTPClient(oauth2.NewClient(ctx, creds.TokenSource)), option.WithoutAuthentication())
 	}
 
-	c, err := storage.NewClient(context.Background(), clientOpts...)
+	c, err := storage.NewClient(ctx, clientOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create client: %w", err)
 	}
