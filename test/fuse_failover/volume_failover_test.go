@@ -3,6 +3,7 @@
 package fuse_failover
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
@@ -23,6 +24,7 @@ import (
 const (
 	appendLines      = 200
 	maxAppendLatency = 10 * time.Second
+	convergeTimeout  = 30 * time.Second
 )
 
 type appendResult struct {
@@ -98,6 +100,27 @@ func (r *reader) Stop() []error {
 	close(r.stop)
 	<-r.done
 	return r.errs
+}
+
+// waitForContent re-reads path until it matches want or the timeout passes.
+// A mount caches metadata for about a second, so a read taken the instant the
+// writer's last close returned can legitimately still be behind; content that
+// is wrong rather than merely late never converges and still fails.
+func waitForContent(path string, want []byte, timeout time.Duration) (got []byte, ok bool) {
+	deadline := time.Now().Add(timeout)
+	for {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			got = data
+			if bytes.Equal(got, want) {
+				return got, true
+			}
+		}
+		if time.Now().After(deadline) {
+			return got, false
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
 }
 
 func expectedAppendContent(lines int) []byte {
@@ -225,9 +248,9 @@ func TestLargeWriteWhileVolumeServerStops(t *testing.T) {
 	}
 	require.NoError(t, f.Close())
 
-	got, err := os.ReadFile(filepath.Join(c.MountDir(1), "largefile"))
-	require.NoError(t, err, "read back large file\n%s", c.tailLog("mount1"))
-	require.Equal(t, sha256.Sum256(data), sha256.Sum256(got), "large file content mismatch")
+	got, converged := waitForContent(filepath.Join(c.MountDir(1), "largefile"), data, convergeTimeout)
+	require.True(t, converged, "large file did not converge on mount1: want %d bytes %x, got %d bytes %x\n%s",
+		len(data), sha256.Sum256(data), len(got), sha256.Sum256(got), c.tailLog("mount1"))
 }
 
 // runChaosAppend appends from mount0 with a reader tailing on mount1, firing
@@ -256,24 +279,24 @@ func runChaosAppend(t *testing.T, c *failoverCluster, name string, chaos func())
 	require.Less(t, res.maxLatency, maxAppendLatency,
 		"append %d stalled for %v\n%s", res.slowest, res.maxLatency, c.tailLog("mount0"))
 
-	want := string(expectedAppendContent(appendLines))
-	got, err := os.ReadFile(readPath)
-	require.NoError(t, err, "final read\n%s", c.tailLog("mount1"))
-	if string(got) == want {
+	wantBytes := expectedAppendContent(appendLines)
+	want := string(wantBytes)
+	gotBytes, converged := waitForContent(readPath, wantBytes, convergeTimeout)
+	got := string(gotBytes)
+	if converged {
 		return
 	}
 
-	// Tell a stale reader snapshot apart from a chunk the writer really lost:
-	// re-read both sides once the metadata caches have turned over.
-	d := firstDiff(want, string(got))
-	time.Sleep(5 * time.Second)
-	again1, _ := os.ReadFile(readPath)
-	again0, _ := os.ReadFile(writePath)
+	// The reader never caught up. Show where it diverges and what the writer's
+	// own mount and the filer make of the same file, which says whether the
+	// data was lost on the way in or is only invisible from this side.
+	d := firstDiff(want, got)
+	fromWriter, _ := os.ReadFile(writePath)
 	viaFiler, filerErr := c.FilerGet("/" + name)
 	require.Failf(t, "final content mismatch",
-		"%s: first difference at offset %d (want %d bytes, got %d)\nwant %q\ngot  %q\nafter 5s: mount1 matches=%v mount0 matches=%v filer matches=%v (err %v)\n%s",
-		name, d, len(want), len(got), window(want, d), window(string(got), d),
-		string(again1) == want, string(again0) == want, string(viaFiler) == want, filerErr,
+		"%s: first difference at offset %d (want %d bytes, got %d)\nwant %q\ngot  %q\nmount0 matches=%v filer matches=%v (err %v)\n%s",
+		name, d, len(want), len(got), window(want, d), window(got, d),
+		string(fromWriter) == want, string(viaFiler) == want, filerErr,
 		c.tailLog("mount0"))
 }
 
