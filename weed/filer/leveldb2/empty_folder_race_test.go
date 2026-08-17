@@ -2,11 +2,13 @@ package leveldb
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -64,5 +66,13 @@ func TestNonRecursiveFolderDeleteKeepsRacingChild(t *testing.T) {
 
 	if _, err := testFiler.FindEntry(ctx, child); err != nil {
 		t.Errorf("entry created during the folder delete was removed: %v", err)
+	}
+
+	// The folder entry itself still goes, so the surviving entry is reachable by
+	// path but absent from listings until the folder comes back. Pinning that here
+	// keeps the remaining exposure visible; tighten it if the two steps ever become
+	// atomic.
+	if _, err := testFiler.FindEntry(ctx, dir); !errors.Is(err, filer_pb.ErrNotFound) {
+		t.Errorf("folder entry should still be removed, got %v", err)
 	}
 }
