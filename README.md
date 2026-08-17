@@ -537,9 +537,9 @@ RustFS is a MinIO reimplementation in Rust. It keeps MinIO's storage model, down
 
 RustFS stores each object as a directory on every drive of its erasure set, holding a metadata file plus one erasure shard per part. Reading one object fans out metadata reads across the whole set, votes on a quorum copy, then reads the data shards. Small objects are inlined into the metadata file to avoid the extra shard files, but a 12-drive set still costs 12 directories and 12 metadata files for one small object. SeaweedFS packs small file content into volume files with O(1) disk read, and keeps file metadata in a proven store of your choice.
 
-RustFS erasure codes everything on write. SeaweedFS uses replication on hot data for faster speed and optionally applies erasure coding on warm data.
+Every write fans out to the whole set, so the amplification does not shrink with object size. One small object costs 12 metadata writes on a 12-drive set even after inlining saved it the shard files, and later changing only its tags or retention rewrites those 12 metadata files again. RustFS also erasure codes everything on write. SeaweedFS uses replication on hot data for faster speed and optionally applies erasure coding on warm data, and a metadata change is one write to the filer store.
 
-RustFS grows capacity a pool at a time, which means a whole symmetric group of drives. In SeaweedFS, just start one volume server pointing to the master.
+The layout is rigid, which makes it hard to scale out and to maintain. An erasure set must be 2 to 16 drives and must divide the drive list symmetrically, and the object-to-set hash is seeded with the set count, so an existing set cannot be widened without moving data. Capacity grows a pool at a time, meaning a whole new symmetric group of drives, and removing capacity means decommissioning a pool and draining it first. In SeaweedFS, just start one volume server pointing to the master. That's all.
 
 RustFS speaks S3, Swift, FTP, SFTP and WebDAV. It does not have POSIX-like API support.
 
