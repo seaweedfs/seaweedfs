@@ -26,9 +26,9 @@ stops answering.
 
 ## Running
 
-```
+```bash
 go build -o weed/weed ./weed
-WEED_BINARY=$PWD/weed/weed go test -v -count=1 -timeout=25m ./test/fuse_failover/...
+WEED_BINARY=$PWD/weed/weed go test -v -count=1 -timeout=30m ./test/fuse_failover/...
 ```
 
 Needs FUSE and, on Linux, a working `/dev/fuse`. Logs from a failed run are
