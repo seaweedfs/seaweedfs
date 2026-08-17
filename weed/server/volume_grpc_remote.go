@@ -373,7 +373,7 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 
 	remoteConf := req.RemoteConf
 
-	if !vs.AllowUntrustedRemoteEndpoints && remoteConf != nil {
+	if !vs.AllowUntrustedRemoteEndpoints && remoteConf.GetType() == "gcs" {
 		if credsErr := checkGcsCredentials(remoteConf.GetGcsGoogleApplicationCredentials()); credsErr != nil {
 			return nil, fmt.Errorf("reject remote credentials: %w", credsErr)
 		}
