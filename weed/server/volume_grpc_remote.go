@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -314,7 +315,7 @@ func guardedRemoteClient(remoteConf *remote_pb.RemoteConf) (endpoint string, mak
 	if remoteConf.Type == "gcs" && remoteConf.GcsGoogleApplicationCredentials != "" {
 		if _, tokenURL, err := gcsremote.ParseInlineCredentials(remoteConf.GcsGoogleApplicationCredentials); err == nil {
 			return tokenURL, func(httpClient *http.Client) (remote_storage.RemoteStorageClient, error) {
-				return gcsremote.MakeWithHTTPClient(remoteConf, httpClient)
+				return gcsremote.MakeWithHTTPClient(remoteConf, httpClient, gcsremote.StaticKeyCredentialTypes...)
 			}, true
 		}
 	}
@@ -327,17 +328,9 @@ func gcsCredentialsArePath(creds string) bool {
 	return creds != "" && !strings.HasPrefix(creds, "{")
 }
 
-// gcsStaticKeyCredentialTypes are the inline gcs credential types that carry
-// their own key material. Every other type tells the SDK to fetch the token
-// from a url, file or executable named inside the credentials, which the
-// endpoint guard never sees.
-var gcsStaticKeyCredentialTypes = map[string]struct{}{
-	"service_account": {},
-	"authorized_user": {},
-}
-
 // checkGcsCredentials rejects a caller-supplied gcs credentials value that
-// would make the SDK read from somewhere other than the credentials themselves.
+// would make the SDK read from somewhere other than the credentials themselves,
+// so the request fails before any client is built.
 func checkGcsCredentials(creds string) error {
 	if creds == "" {
 		return nil
@@ -351,7 +344,7 @@ func checkGcsCredentials(creds string) error {
 	if parseErr != nil {
 		return parseErr
 	}
-	if _, ok := gcsStaticKeyCredentialTypes[credType]; !ok {
+	if !slices.Contains(gcsremote.StaticKeyCredentialTypes, credType) {
 		return fmt.Errorf("gcs credential type %q is not accepted here", credType)
 	}
 	return nil
