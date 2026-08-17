@@ -81,7 +81,7 @@ func (t *BalanceTask) Execute(ctx context.Context, params *worker_pb.TaskParams)
 		IoBytePerSecond: balanceParams.IoBytePerSecond,
 		Progress: func(percent float64, stage string) {
 			t.ReportProgress(percent)
-			t.GetLogger().Info(stage)
+			t.GetLogger().Info("move stage: %s", stage)
 		},
 	})
 	if err != nil {
