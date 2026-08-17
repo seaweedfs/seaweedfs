@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/filer/empty_folder_cleanup"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -292,6 +293,120 @@ func TestCreateEntryDoesNotAnnounceAnEntryWhoseParentFailed(t *testing.T) {
 	}
 	if _, err := testFiler.FindEntry(ctx, child); err != nil {
 		t.Errorf("the entry itself is still kept: %v", err)
+	}
+}
+
+// TestEnsureDirectoryEntryNarrowsAWiderRestore covers a writer getting to the missing
+// parent first and minting it wider than the one that was deleted.
+func TestEnsureDirectoryEntryNarrowsAWiderRestore(t *testing.T) {
+	testFiler := filer.NewFiler(pb.ServerDiscovery{}, nil, "", "", "", "", "", 255, nil)
+	store := &LevelDB2Store{}
+	if err := store.initialize(t.TempDir(), 2); err != nil {
+		t.Fatal(err)
+	}
+	testFiler.SetStore(store)
+
+	ctx := filer.WithSuppressedMetadataEvents(context.Background())
+	dir := util.FullPath("/buckets/testbucket/data").Child("private")
+	dirEntry := &filer.Entry{FullPath: dir, Attr: filer.Attr{Mode: os.ModeDir | 0700, Uid: 4242, Gid: 4343}}
+	if err := testFiler.CreateEntry(ctx, dirEntry, nil, false, false, nil, false, testFiler.MaxFilenameLength); err != nil {
+		t.Fatalf("create folder: %v", err)
+	}
+	attrs, err := testFiler.DirectoryAttributes(ctx, dir)
+	if err != nil {
+		t.Fatalf("read folder attributes: %v", err)
+	}
+	if err := testFiler.DeleteEntryMetaAndData(ctx, dir, false, false, false, false, nil, 0); err != nil {
+		t.Fatalf("delete folder: %v", err)
+	}
+
+	// the writer's own entry is 0640, so the parent it mints comes back 0751
+	entry := &filer.Entry{FullPath: dir.Child("obj"), Attr: filer.Attr{Mode: 0640}}
+	if err := testFiler.CreateEntry(ctx, entry, nil, false, false, nil, false, testFiler.MaxFilenameLength); err != nil {
+		t.Fatalf("create entry: %v", err)
+	}
+	widened, err := testFiler.FindEntry(ctx, dir)
+	if err != nil {
+		t.Fatalf("find minted folder: %v", err)
+	}
+	if widened.Mode.Perm() == 0700 {
+		t.Skip("the writer no longer widens the parent, nothing left to narrow")
+	}
+
+	if err := testFiler.EnsureDirectoryEntry(ctx, dir, attrs); err != nil {
+		t.Fatalf("restore folder: %v", err)
+	}
+	restored, err := testFiler.FindEntry(ctx, dir)
+	if err != nil {
+		t.Fatalf("find restored folder: %v", err)
+	}
+	if !restored.IsDirectory() {
+		t.Errorf("restored %s is not a directory", dir)
+	}
+	if restored.Mode.Perm() != 0700 {
+		t.Errorf("restore should hand back mode 0700, got %o", restored.Mode.Perm())
+	}
+	if _, err := testFiler.FindEntry(ctx, entry.FullPath); err != nil {
+		t.Errorf("narrowing the folder should not disturb what it holds: %v", err)
+	}
+}
+
+// TestEnsureDirectoryEntryKeepsATightenedDirectory checks the other direction: a
+// restore only ever narrows, so a deliberate tightening is left alone.
+func TestEnsureDirectoryEntryKeepsATightenedDirectory(t *testing.T) {
+	testFiler := filer.NewFiler(pb.ServerDiscovery{}, nil, "", "", "", "", "", 255, nil)
+	store := &LevelDB2Store{}
+	if err := store.initialize(t.TempDir(), 2); err != nil {
+		t.Fatal(err)
+	}
+	testFiler.SetStore(store)
+
+	ctx := filer.WithSuppressedMetadataEvents(context.Background())
+	dir := util.FullPath("/buckets/testbucket/data").Child("tightened")
+	dirEntry := &filer.Entry{FullPath: dir, Attr: filer.Attr{Mode: os.ModeDir | 0700}}
+	if err := testFiler.CreateEntry(ctx, dirEntry, nil, false, false, nil, false, testFiler.MaxFilenameLength); err != nil {
+		t.Fatalf("create folder: %v", err)
+	}
+
+	if err := testFiler.EnsureDirectoryEntry(ctx, dir, empty_folder_cleanup.DirectoryAttributes{Mode: 0755}); err != nil {
+		t.Fatalf("restore folder: %v", err)
+	}
+	kept, err := testFiler.FindEntry(ctx, dir)
+	if err != nil {
+		t.Fatalf("find folder: %v", err)
+	}
+	if kept.Mode.Perm() != 0700 {
+		t.Errorf("a directory tightened since should keep mode 0700, got %o", kept.Mode.Perm())
+	}
+}
+
+// TestEnsureDirectoryEntryIntersectsMixedModes covers modes that are not nested, where
+// replacing rather than intersecting would grant a bit the directory denied.
+func TestEnsureDirectoryEntryIntersectsMixedModes(t *testing.T) {
+	testFiler := filer.NewFiler(pb.ServerDiscovery{}, nil, "", "", "", "", "", 255, nil)
+	store := &LevelDB2Store{}
+	if err := store.initialize(t.TempDir(), 2); err != nil {
+		t.Fatal(err)
+	}
+	testFiler.SetStore(store)
+
+	ctx := filer.WithSuppressedMetadataEvents(context.Background())
+	dir := util.FullPath("/buckets/testbucket/data").Child("mixed")
+	dirEntry := &filer.Entry{FullPath: dir, Attr: filer.Attr{Mode: os.ModeDir | 0705}}
+	if err := testFiler.CreateEntry(ctx, dirEntry, nil, false, false, nil, false, testFiler.MaxFilenameLength); err != nil {
+		t.Fatalf("create folder: %v", err)
+	}
+
+	// 0750 grants group access that 0705 denies, and denies the other access it grants
+	if err := testFiler.EnsureDirectoryEntry(ctx, dir, empty_folder_cleanup.DirectoryAttributes{Mode: 0750}); err != nil {
+		t.Fatalf("restore folder: %v", err)
+	}
+	restored, err := testFiler.FindEntry(ctx, dir)
+	if err != nil {
+		t.Fatalf("find folder: %v", err)
+	}
+	if restored.Mode.Perm() != 0700 {
+		t.Errorf("restore should grant only what both modes allow, got %o", restored.Mode.Perm())
 	}
 }
 
