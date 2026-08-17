@@ -194,6 +194,85 @@ func TestReadWithVolumeServerDown(t *testing.T) {
 	}
 }
 
+// TestReadAfterCachedLocationDies pins the reason the read path needs a cache
+// invalidator at all. Reading a file for the first time after a server dies
+// proves nothing: the lookup is fresh and simply returns the survivor. The
+// damage needs a reader whose cached location list is both stale and useless,
+// which is what this sequence builds:
+//
+//  1. kill one of the two servers holding a volume and wait for the master to
+//     drop it, so a lookup now resolves to the survivor alone;
+//  2. read a file on that volume, which caches exactly that one location;
+//  3. bring the first server back, which the reader never hears about;
+//  4. kill the survivor, and read another file on the same volume.
+//
+// The reader's only cached location is now dead while the data is live on the
+// restarted server. Without the invalidator the mount retries the corpse until
+// it gives up with EIO.
+func TestReadAfterCachedLocationDies(t *testing.T) {
+	c := startFailoverCluster(t, 3, 2)
+
+	// Small files so each is a single chunk on a single volume, which keeps the
+	// mapping from file to server unambiguous.
+	const fileSize = 256 << 10
+	payloads := make(map[string][]byte)
+	for i := 0; i < 6; i++ {
+		name := fmt.Sprintf("smallfile-%d", i)
+		data := make([]byte, fileSize)
+		_, err := rand.Read(data)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(c.MountDir(0), name), data, 0644))
+		payloads[name] = data
+	}
+	time.Sleep(2 * time.Second)
+
+	// Two files on one volume: one to prime the reader's cache, one to probe
+	// with afterwards. The probe has to be a file the reader has never read, or
+	// its chunk would come from the local cache without a lookup at all.
+	filesByVolume := make(map[uint32][]string)
+	for name := range payloads {
+		vids, err := c.FileVolumeIds("/" + name)
+		require.NoError(t, err, "resolve volumes of %s", name)
+		require.Len(t, vids, 1, "%s should be a single chunk", name)
+		filesByVolume[vids[0]] = append(filesByVolume[vids[0]], name)
+	}
+	var vid uint32
+	var prime, probe string
+	for candidate, names := range filesByVolume {
+		if len(names) >= 2 {
+			vid, prime, probe = candidate, names[0], names[1]
+			break
+		}
+	}
+	require.NotEmpty(t, prime, "no volume holds two of the test files: %v", filesByVolume)
+
+	holders, err := c.VolumeHolders(vid)
+	require.NoError(t, err)
+	require.Len(t, holders, 2, "001 replication should put volume %d on two servers", vid)
+	first, second := c.volumeIndexOf(holders[0]), c.volumeIndexOf(holders[1])
+	require.NotEqual(t, -1, first)
+	require.NotEqual(t, -1, second)
+
+	c.KillVolume(first)
+	_, err = c.WaitForHolders(vid, 1, 90*time.Second)
+	require.NoError(t, err, "master did not drop the dead server")
+
+	got, err := os.ReadFile(filepath.Join(c.MountDir(1), prime))
+	require.NoError(t, err, "priming read\n%s", c.tailLog("mount1"))
+	require.Equal(t, sha256.Sum256(payloads[prime]), sha256.Sum256(got))
+
+	require.NoError(t, c.StartVolume(first))
+	_, err = c.WaitForHolders(vid, 2, 90*time.Second)
+	require.NoError(t, err, "restarted server did not re-register")
+
+	c.KillVolume(second)
+	start := time.Now()
+	got, err = os.ReadFile(filepath.Join(c.MountDir(1), probe))
+	require.NoError(t, err, "probe read after the cached location died\n%s", c.tailLog("mount1"))
+	require.Equal(t, sha256.Sum256(payloads[probe]), sha256.Sum256(got))
+	t.Logf("recovered %s from the restarted server in %v", probe, time.Since(start))
+}
+
 // TestAppendWithoutChaos is the control for the chaos runs below: the same
 // append-and-tail workload with nothing being stopped or started.
 func TestAppendWithoutChaos(t *testing.T) {

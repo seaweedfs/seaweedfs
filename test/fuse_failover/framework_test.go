@@ -327,6 +327,33 @@ func (c *failoverCluster) VolumeHolders(vid uint32) ([]string, error) {
 	return holders, nil
 }
 
+// WaitForHolders polls the master until it lists exactly count servers for a
+// volume. The master only drops a dead node after three missed heartbeats, so a
+// test that depends on the cluster's view having caught up has to wait for it.
+func (c *failoverCluster) WaitForHolders(vid uint32, count int, timeout time.Duration) ([]string, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		holders, err := c.VolumeHolders(vid)
+		if err == nil && len(holders) == count {
+			return holders, nil
+		}
+		if time.Now().After(deadline) {
+			return holders, fmt.Errorf("volume %d still has %d holders (%v), want %d", vid, len(holders), holders, count)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// volumeIndexOf maps a server address back to its index, or -1.
+func (c *failoverCluster) volumeIndexOf(address string) int {
+	for i := range c.volumePorts {
+		if c.VolumeServerAddress(i) == address {
+			return i
+		}
+	}
+	return -1
+}
+
 // FileIsOn reports whether any of path's chunks live on the given volume
 // server, i.e. whether taking that server down actually costs this file a
 // replica.
