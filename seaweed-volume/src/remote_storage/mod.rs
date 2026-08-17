@@ -226,4 +226,21 @@ mod tests {
         assert_eq!(s3_compatible_endpoint(&azure), None);
         assert!(make_remote_storage_client(&azure).is_err());
     }
+
+    #[test]
+    fn gcs_credentials_have_no_ssrf_path() {
+        // The Go volume server accepts only static-key gcs credentials and puts
+        // their token endpoint behind the SSRF guard, because the SDK dials
+        // whatever url, file or executable the credentials name. This server has
+        // no gcs backend, so make_remote_storage_client rejects the type before
+        // any credentials are parsed. Anyone adding one must carry both guards
+        // over with it.
+        let gcs = RemoteConf {
+            r#type: "gcs".to_string(),
+            gcs_google_application_credentials: r#"{"type":"external_account","credential_source":{"url":"http://169.254.169.254/"}}"#.to_string(),
+            ..Default::default()
+        };
+        assert_eq!(s3_compatible_endpoint(&gcs), None);
+        assert!(make_remote_storage_client(&gcs).is_err());
+    }
 }
