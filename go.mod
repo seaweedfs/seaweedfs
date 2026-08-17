@@ -1,6 +1,6 @@
 module github.com/seaweedfs/seaweedfs
 
-go 1.25.8
+go 1.26
 
 require (
 	cloud.google.com/go v0.123.0 // indirect
@@ -12,7 +12,7 @@ require (
 	github.com/bwmarrin/snowflake v0.3.0
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/coreos/go-semver v0.3.1 // indirect
-	github.com/coreos/go-systemd/v22 v22.6.0 // indirect
+	github.com/coreos/go-systemd/v22 v22.7.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dustin/go-humanize v1.0.1
 	github.com/eapache/go-resiliency v1.6.0 // indirect
@@ -157,7 +157,7 @@ require (
 	github.com/xeipuuv/gojsonschema v1.2.0
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.5.2
 	github.com/ydb-platform/ydb-go-sdk/v3 v3.147.1
-	go.etcd.io/etcd/client/pkg/v3 v3.6.12
+	go.etcd.io/etcd/client/pkg/v3 v3.7.1
 	go.uber.org/atomic v1.11.0
 	golang.org/x/sync v0.22.0
 	golang.org/x/tools/godoc v0.1.0-deprecated
