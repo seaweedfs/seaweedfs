@@ -68,7 +68,7 @@ Table of Contents
     * [Compared to GlusterFS, Ceph](#compared-to-glusterfs-ceph)
     * [Compared to GlusterFS](#compared-to-glusterfs)
     * [Compared to Ceph](#compared-to-ceph)
-    * [Compared to Minio](#compared-to-minio)
+    * [Compared to MinIO, RustFS](#compared-to-minio-rustfs)
 * [Dev Plan](#dev-plan)
 * [Installation Guide](#installation-guide)
 * [Disk Related Topics](#disk-related-topics)
@@ -466,7 +466,8 @@ The architectures are mostly the same. SeaweedFS aims to store and read files fa
 | GlusterFS      | hashing          |                  | FUSE, NFS          |          |                           |
 | Ceph           | hashing + rules  |                  | FUSE               | Yes      |                           |
 | MooseFS        | in memory        |                  | FUSE               |       | No                          |
-| MinIO          | separate meta file for each file  |                  |         | Yes   | No                          |
+| MinIO          | separate meta file per drive for each file  |                  |         | Yes   | No                          |
+| RustFS         | separate meta file per drive for each file  |                  |         | Yes   | No                          |
 
 [Back to TOC](#table-of-contents)
 
@@ -508,24 +509,26 @@ SeaweedFS Filer uses off-the-shelf stores, such as MySql, Postgres, Sqlite, Mong
 
 [Back to TOC](#table-of-contents)
 
-### Compared to MinIO ###
+### Compared to MinIO, RustFS ###
 
-Please note, as Apr 25, 2026 MinIO ceased development. It's strongly discouraged to use that unmaintained software with multiple security bugs.
+Please note, as Apr 25, 2026 MinIO ceased development. It's strongly discouraged to use that unmaintained software with multiple security bugs. RustFS is a MinIO reimplementation in Rust, Apache 2.0 licensed and still developed, keeping MinIO's storage model down to a byte-compatible on-disk format. So the points below apply to both.
 
 MinIO followed AWS S3 closely and was ideal for testing for S3 API. It had good UI, policies, versionings, etc. SeaweedFS is trying to catch up here. 
 
-MinIO metadata were in simple files. Each file write will incur extra writes to corresponding meta file.
+The metadata are in simple files. Each file write incurs extra writes to the corresponding meta file, on every drive of the erasure set. Changing only tags or retention rewrites that meta file on all of them, so the write amplification does not shrink with object size.
 
-MinIO did not have optimization for lots of small files. The files were simply stored as is to local disks.
+There is no optimization for lots of small files. The files are simply stored as is to local disks.
 Plus the extra meta file and shards for erasure coding, it only amplifies the LOSF problem.
 
-MinIO had multiple disk IO to read one file. SeaweedFS has O(1) disk reads, even for erasure coded files.
+Multiple disk IO are needed to read one file. SeaweedFS has O(1) disk reads, even for erasure coded files.
 
-MinIO had full-time erasure coding. SeaweedFS uses replication on hot data for faster speed and optionally applies erasure coding on warm data.
+Erasure coding is full-time. SeaweedFS uses replication on hot data for faster speed and optionally applies erasure coding on warm data.
 
-MinIO did not have POSIX-like API support.
+No POSIX-like API support.
 
-MinIO had specific requirements on storage layout. It is not flexible to adjust capacity. In SeaweedFS, just start one volume server pointing to the master. That's all.
+There are specific requirements on storage layout, which makes it hard to scale out and to maintain. An erasure set must be 2 to 16 drives and must divide the drive list symmetrically, and capacity grows or shrinks a whole pool at a time. In SeaweedFS, just start one volume server pointing to the master. That's all.
+
+[Back to TOC](#table-of-contents)
 
 ## Dev Plan ##
 
