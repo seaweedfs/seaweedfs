@@ -153,3 +153,29 @@ func TestRemoveOrphanedDirectoryListMemberKeepsDirectoryWithChildren(t *testing.
 		t.Fatalf("child value key exists=%d err=%v, want it kept", exists, err)
 	}
 }
+
+func TestDeleteFolderChildrenRemovesTheListing(t *testing.T) {
+	store, dir := newTestStore(t)
+	ctx := context.Background()
+
+	insertTestEntry(t, store, dir.Child("obj"))
+
+	// The directory entry going away must not take the listing with it; nothing
+	// else records that the child is under this directory.
+	if err := store.DeleteEntry(ctx, dir); err != nil {
+		t.Fatalf("DeleteEntry %s: %v", dir, err)
+	}
+	if names := listNames(t, store, dir); len(names) != 1 || names[0] != "obj" {
+		t.Errorf("child should still be listed after the directory entry is deleted, got %v", names)
+	}
+
+	// Deleting the children takes the listing with them, rather than leaving it behind.
+	if err := store.DeleteFolderChildren(ctx, dir); err != nil {
+		t.Fatalf("DeleteFolderChildren %s: %v", dir, err)
+	}
+	if n, err := store.Client.Exists(ctx, genDirectoryListKey(string(dir))).Result(); err != nil {
+		t.Fatalf("exists %s: %v", dir, err)
+	} else if n != 0 {
+		t.Errorf("listing key should be removed with the children, still present")
+	}
+}

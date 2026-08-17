@@ -116,7 +116,8 @@ func (store *UniversalRedisStore) DeleteEntry(ctx context.Context, fullpath util
 
 func (store *UniversalRedisStore) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath) (err error) {
 
-	members, err := store.Client.SMembers(ctx, genDirectoryListKey(string(fullpath))).Result()
+	dirListKey := genDirectoryListKey(string(fullpath))
+	members, err := store.Client.SMembers(ctx, dirListKey).Result()
 	if err != nil {
 		return fmt.Errorf("delete folder %s : %v", fullpath, err)
 	}
@@ -129,6 +130,10 @@ func (store *UniversalRedisStore) DeleteFolderChildren(ctx context.Context, full
 		}
 		// not efficient, but need to remove if it is a directory
 		store.Client.Del(ctx, genDirectoryListKey(string(path)))
+	}
+
+	if _, err = store.Client.Del(ctx, dirListKey).Result(); err != nil {
+		return fmt.Errorf("delete folder %s list: %v", fullpath, err)
 	}
 
 	return nil
