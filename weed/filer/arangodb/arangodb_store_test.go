@@ -137,6 +137,25 @@ func TestListDirectoryPrefixedEntriesQuotedNames(t *testing.T) {
 	}
 }
 
+// A directory name full of AQL operators must only drop that directory's own children.
+func TestDeleteFolderChildrenAqlInjection(t *testing.T) {
+	store := newTestStore(t)
+
+	for i := 0; i < 5; i++ {
+		insertTestEntry(t, store, fmt.Sprintf("/buckets/tenant/keep%d", i))
+	}
+	injection := "x\" || true || \""
+	insertTestEntry(t, store, "/buckets/tenant/"+injection+"/child")
+
+	if err := store.DeleteFolderChildren(context.Background(), util.FullPath("/buckets/tenant/"+injection)); err != nil {
+		t.Fatalf("delete folder children: %v", err)
+	}
+
+	if got := countDocuments(t, store, "tenant"); got != 5 {
+		t.Errorf("tenant collection holds %d documents, want the 5 unrelated ones", got)
+	}
+}
+
 // startFileName is request-controlled too and must not break out of the filter.
 func TestListDirectoryEntriesQuotedStartFileName(t *testing.T) {
 	store := newTestStore(t)

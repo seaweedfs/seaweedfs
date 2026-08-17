@@ -265,21 +265,19 @@ func (store *ArangodbStore) DeleteEntry(ctx context.Context, fullpath util.FullP
 
 // this runs in log time
 func (store *ArangodbStore) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath) (err error) {
-	var query string
 	targetCollection, err := store.extractBucketCollection(ctx, fullpath)
 	if err != nil {
 		return err
 	}
-	query = query + fmt.Sprintf(`
-	for d in %s
-	filter starts_with(d.directory, "%s/")  || d.directory == "%s"
-	remove d._key in %s`,
-		"`"+targetCollection.Name()+"`",
-		strings.Join(strings.Split(string(fullpath), "/"), ","),
-		string(fullpath),
-		"`"+targetCollection.Name()+"`",
-	)
-	cur, err := store.database.Query(ctx, query, nil)
+	query := `
+	for d in @@collection
+	filter starts_with(d.directory, @dirPrefix)  || d.directory == @dir
+	remove d._key in @@collection`
+	cur, err := store.database.Query(ctx, query, map[string]interface{}{
+		"@collection": targetCollection.Name(),
+		"dirPrefix":   strings.Join(strings.Split(string(fullpath), "/"), ",") + "/",
+		"dir":         string(fullpath),
+	})
 	if err != nil {
 		return fmt.Errorf("delete %s : %v", fullpath, err)
 	}
