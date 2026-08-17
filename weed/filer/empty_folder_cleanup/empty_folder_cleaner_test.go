@@ -232,6 +232,7 @@ func TestEmptyFolderCleaner_restoreFoldersWrittenDuringDelete(t *testing.T) {
 			cacheExpiry:           DefaultCacheExpiry,
 			folderCounts:          make(map[string]*folderState),
 			bucketCleanupPolicies: make(map[string]*bucketCleanupPolicyState),
+			deleted:               make(map[string]*deletedFolder),
 			cleanupQueue:          NewCleanupQueue(1000, 10*time.Minute),
 			stopCh:                make(chan struct{}),
 		}
@@ -239,131 +240,132 @@ func TestEmptyFolderCleaner_restoreFoldersWrittenDuringDelete(t *testing.T) {
 
 	const folder = "/buckets/mybucket/folder"
 
-	t.Run("entry lands while the folder is deleted", func(t *testing.T) {
-		deleted := false
+	t.Run("a create event for the deleted folder puts it back", func(t *testing.T) {
 		var restored []string
 		mock := &mockFilerOps{
-			countFn: func(util.FullPath) (int, error) {
-				if deleted {
-					return 1, nil
-				}
-				return 0, nil
-			},
-			deleteFn:    func(util.FullPath) error { deleted = true; return nil },
+			countFn:     func(util.FullPath) (int, error) { return 0, nil },
 			ensureDirFn: func(p util.FullPath, _ DirectoryAttributes) error { restored = append(restored, string(p)); return nil },
 		}
 
 		cleaner := newCleaner(mock)
 		cleaner.executeCleanup(folder, "file.txt")
-		if !deleted {
-			t.Fatal("an empty folder should have been deleted")
-		}
+
+		// nothing has been written to it, so it is only observed
+		cleaner.processCleanupQueue()
 		if len(restored) != 0 {
-			t.Fatalf("the restore check belongs to the next pass, got %v", restored)
+			t.Fatalf("a folder nothing was written to should not be restored, got %v", restored)
+		}
+		if len(cleaner.deleted) != 1 {
+			t.Fatalf("folder should still be observed, got %d", len(cleaner.deleted))
 		}
 
+		// the write that raced the delete arrives as a create event
+		mock.countFn = func(util.FullPath) (int, error) { return 1, nil }
+		cleaner.OnCreateEvent(folder, "obj", false)
 		cleaner.processCleanupQueue()
 		if len(restored) != 1 || restored[0] != folder {
-			t.Fatalf("folder written during its delete should be restored, got %v", restored)
+			t.Fatalf("a folder written to while being deleted should be restored, got %v", restored)
+		}
+		if len(cleaner.deleted) != 0 {
+			t.Fatalf("a restored folder should stop being observed, got %d", len(cleaner.deleted))
 		}
 	})
 
-	t.Run("a failed check is retried next pass", func(t *testing.T) {
-		deleted := false
-		checks := 0
+	t.Run("a create event elsewhere is ignored", func(t *testing.T) {
 		var restored []string
 		mock := &mockFilerOps{
-			countFn: func(util.FullPath) (int, error) {
-				if !deleted {
-					return 0, nil
-				}
-				checks++
-				if checks == 1 {
-					return 0, errors.New("store unavailable")
-				}
-				return 1, nil
-			},
-			deleteFn:    func(util.FullPath) error { deleted = true; return nil },
+			countFn:     func(util.FullPath) (int, error) { return 0, nil },
 			ensureDirFn: func(p util.FullPath, _ DirectoryAttributes) error { restored = append(restored, string(p)); return nil },
 		}
 
 		cleaner := newCleaner(mock)
 		cleaner.executeCleanup(folder, "file.txt")
-
+		cleaner.OnCreateEvent("/buckets/mybucket/other", "obj", false)
 		cleaner.processCleanupQueue()
 		if len(restored) != 0 {
-			t.Fatalf("a folder whose check failed must not be restored yet, got %v", restored)
+			t.Fatalf("only the folder written to should be restored, got %v", restored)
+		}
+	})
+
+	t.Run("an entry that went away again is not restored", func(t *testing.T) {
+		var restored []string
+		mock := &mockFilerOps{
+			countFn:     func(util.FullPath) (int, error) { return 0, nil },
+			ensureDirFn: func(p util.FullPath, _ DirectoryAttributes) error { restored = append(restored, string(p)); return nil },
+		}
+
+		cleaner := newCleaner(mock)
+		cleaner.executeCleanup(folder, "file.txt")
+		cleaner.OnCreateEvent(folder, "obj", false)
+		cleaner.processCleanupQueue()
+		if len(restored) != 0 {
+			t.Fatalf("an empty folder should not be restored, got %v", restored)
+		}
+	})
+
+	t.Run("observation expires", func(t *testing.T) {
+		mock := &mockFilerOps{countFn: func(util.FullPath) (int, error) { return 0, nil }}
+
+		cleaner := newCleaner(mock)
+		cleaner.executeCleanup(folder, "file.txt")
+		cleaner.processCleanupQueue()
+		if len(cleaner.deleted) != 1 {
+			t.Fatalf("folder should still be observed inside the window, got %d", len(cleaner.deleted))
+		}
+
+		cleaner.deleted[folder].deletedAt = time.Now().Add(-DefaultObservationWindow - time.Second)
+		cleaner.processCleanupQueue()
+		if len(cleaner.deleted) != 0 {
+			t.Fatalf("folder should stop being observed once the window has passed, got %d", len(cleaner.deleted))
+		}
+	})
+
+	t.Run("a failed restore is retried", func(t *testing.T) {
+		attempts := 0
+		mock := &mockFilerOps{
+			countFn: func(util.FullPath) (int, error) { return 1, nil },
+			ensureDirFn: func(p util.FullPath, _ DirectoryAttributes) error {
+				attempts++
+				if attempts == 1 {
+					return errors.New("store unavailable")
+				}
+				return nil
+			},
+		}
+
+		cleaner := newCleaner(mock)
+		// deleted while empty, then written to
+		mock.countFn = func(util.FullPath) (int, error) { return 0, nil }
+		cleaner.executeCleanup(folder, "file.txt")
+		mock.countFn = func(util.FullPath) (int, error) { return 1, nil }
+		cleaner.OnCreateEvent(folder, "obj", false)
+
+		cleaner.processCleanupQueue()
+		if len(cleaner.deleted) != 1 {
+			t.Fatalf("a folder whose restore failed should be kept, got %d", len(cleaner.deleted))
 		}
 
 		cleaner.processCleanupQueue()
-		if len(restored) != 1 || restored[0] != folder {
-			t.Fatalf("a folder whose check failed should be retried, got %v", restored)
+		if attempts != 2 {
+			t.Fatalf("a failed restore should be retried, got %d attempts", attempts)
+		}
+		if len(cleaner.deleted) != 0 {
+			t.Fatalf("a restored folder should stop being observed, got %d", len(cleaner.deleted))
 		}
 	})
 
 	t.Run("a delete that reports failure is still observed", func(t *testing.T) {
 		// the redis stores drop the folder before its parent-list member, so a failure
 		// return is not proof that the folder survived
-		var restored []string
 		mock := &mockFilerOps{
-			countFn:     func(util.FullPath) (int, error) { return 0, nil },
-			deleteFn:    func(util.FullPath) error { return errors.New("partial delete") },
-			ensureDirFn: func(p util.FullPath, _ DirectoryAttributes) error { restored = append(restored, string(p)); return nil },
+			countFn:  func(util.FullPath) (int, error) { return 0, nil },
+			deleteFn: func(util.FullPath) error { return errors.New("partial delete") },
 		}
 
 		cleaner := newCleaner(mock)
 		cleaner.executeCleanup(folder, "file.txt")
-		if got := len(cleaner.deleted); got != 1 {
-			t.Fatalf("a failed delete should still leave the folder under observation, got %d", got)
-		}
-
-		// once an entry shows up there, it is restored like any other
-		mock.countFn = func(util.FullPath) (int, error) { return 1, nil }
-		cleaner.processCleanupQueue()
-		if len(restored) != 1 || restored[0] != folder {
-			t.Fatalf("folder should be restored after a failed delete left it gone, got %v", restored)
-		}
-	})
-
-	t.Run("an empty folder stays under observation for the window", func(t *testing.T) {
-		var restored []string
-		mock := &mockFilerOps{
-			countFn:     func(util.FullPath) (int, error) { return 0, nil },
-			ensureDirFn: func(p util.FullPath, _ DirectoryAttributes) error { restored = append(restored, string(p)); return nil },
-		}
-
-		cleaner := newCleaner(mock)
-		cleaner.executeCleanup(folder, "file.txt")
-
-		// ticks coalesce when a pass runs long, so a single check right after the
-		// delete is not a delay; the folder is kept until the window has passed
-		cleaner.processCleanupQueue()
-		if got := len(cleaner.deleted); got != 1 {
-			t.Fatalf("folder should still be observed inside the window, got %d", got)
-		}
-
-		cleaner.deleted[0].deletedAt = time.Now().Add(-DefaultRestoreCheckWindow - time.Second)
-		cleaner.processCleanupQueue()
-		if got := len(cleaner.deleted); got != 0 {
-			t.Fatalf("folder should be dropped once the window has passed, got %d", got)
-		}
-		if len(restored) != 0 {
-			t.Fatalf("a folder that stayed empty should never be restored, got %v", restored)
-		}
-	})
-
-	t.Run("folder stays empty", func(t *testing.T) {
-		var restored []string
-		mock := &mockFilerOps{
-			countFn:     func(util.FullPath) (int, error) { return 0, nil },
-			ensureDirFn: func(p util.FullPath, _ DirectoryAttributes) error { restored = append(restored, string(p)); return nil },
-		}
-
-		cleaner := newCleaner(mock)
-		cleaner.executeCleanup(folder, "file.txt")
-		cleaner.processCleanupQueue()
-		if len(restored) != 0 {
-			t.Fatalf("a folder that stayed empty should not be restored, got %v", restored)
+		if len(cleaner.deleted) != 1 {
+			t.Fatalf("a failed delete should still leave the folder observed, got %d", len(cleaner.deleted))
 		}
 	})
 }
