@@ -271,9 +271,10 @@ func (c *failoverCluster) VolumeServerAddress(i int) string {
 
 // FileVolumeIds returns the volume ids backing a file, read from the filer's
 // own entry rather than inferred, so a test can tell which servers a given
-// file actually depends on.
+// file actually depends on. Manifests are resolved first: a manifest chunk's
+// own fid names the volume holding the manifest, not the data.
 func (c *failoverCluster) FileVolumeIds(path string) ([]uint32, error) {
-	body, err := c.FilerGet(path + "?metadata=true")
+	body, err := c.FilerGet(path + "?metadata=true&resolveManifest=true")
 	if err != nil {
 		return nil, err
 	}
