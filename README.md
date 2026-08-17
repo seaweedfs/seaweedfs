@@ -69,6 +69,7 @@ Table of Contents
     * [Compared to GlusterFS](#compared-to-glusterfs)
     * [Compared to Ceph](#compared-to-ceph)
     * [Compared to Minio](#compared-to-minio)
+    * [Compared to RustFS](#compared-to-rustfs)
 * [Dev Plan](#dev-plan)
 * [Installation Guide](#installation-guide)
 * [Disk Related Topics](#disk-related-topics)
@@ -467,6 +468,7 @@ The architectures are mostly the same. SeaweedFS aims to store and read files fa
 | Ceph           | hashing + rules  |                  | FUSE               | Yes      |                           |
 | MooseFS        | in memory        |                  | FUSE               |       | No                          |
 | MinIO          | separate meta file for each file  |                  |         | Yes   | No                          |
+| RustFS         | separate meta file for each file  |                  |         | Yes   | No                          |
 
 [Back to TOC](#table-of-contents)
 
@@ -526,6 +528,22 @@ MinIO had full-time erasure coding. SeaweedFS uses replication on hot data for f
 MinIO did not have POSIX-like API support.
 
 MinIO had specific requirements on storage layout. It is not flexible to adjust capacity. In SeaweedFS, just start one volume server pointing to the master. That's all.
+
+[Back to TOC](#table-of-contents)
+
+### Compared to RustFS ###
+
+RustFS is a MinIO reimplementation in Rust. It keeps MinIO's storage model, down to a byte-compatible on-disk format, so most of the comparison above still applies. It is Apache 2.0 licensed and actively developed. As of Aug 2026 it is at 1.0.0-rc, with distributed mode and lifecycle management marked as under testing in its own README.
+
+RustFS stores each object as a directory on every drive of its erasure set, holding a metadata file plus one erasure shard per part. Reading one object fans out metadata reads across the whole set, votes on a quorum copy, then reads the data shards. Small objects are inlined into the metadata file to avoid the extra shard files, but a 12-drive set still costs 12 directories and 12 metadata files for one small object. SeaweedFS packs small file content into volume files with O(1) disk read, and keeps file metadata in a proven store of your choice.
+
+RustFS erasure codes everything on write. SeaweedFS uses replication on hot data for faster speed and optionally applies erasure coding on warm data.
+
+RustFS grows capacity a pool at a time, which means a whole symmetric group of drives. In SeaweedFS, just start one volume server pointing to the master.
+
+RustFS speaks S3, Swift, FTP, SFTP and WebDAV. It does not have POSIX-like API support.
+
+[Back to TOC](#table-of-contents)
 
 ## Dev Plan ##
 
