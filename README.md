@@ -68,8 +68,7 @@ Table of Contents
     * [Compared to GlusterFS, Ceph](#compared-to-glusterfs-ceph)
     * [Compared to GlusterFS](#compared-to-glusterfs)
     * [Compared to Ceph](#compared-to-ceph)
-    * [Compared to Minio](#compared-to-minio)
-    * [Compared to RustFS](#compared-to-rustfs)
+    * [Compared to MinIO, RustFS](#compared-to-minio-rustfs)
 * [Dev Plan](#dev-plan)
 * [Installation Guide](#installation-guide)
 * [Disk Related Topics](#disk-related-topics)
@@ -467,7 +466,7 @@ The architectures are mostly the same. SeaweedFS aims to store and read files fa
 | GlusterFS      | hashing          |                  | FUSE, NFS          |          |                           |
 | Ceph           | hashing + rules  |                  | FUSE               | Yes      |                           |
 | MooseFS        | in memory        |                  | FUSE               |       | No                          |
-| MinIO          | separate meta file for each file  |                  |         | Yes   | No                          |
+| MinIO          | separate meta file per drive for each file  |                  |         | Yes   | No                          |
 | RustFS         | separate meta file per drive for each file  |                  |         | Yes   | No                          |
 
 [Back to TOC](#table-of-contents)
@@ -510,38 +509,24 @@ SeaweedFS Filer uses off-the-shelf stores, such as MySql, Postgres, Sqlite, Mong
 
 [Back to TOC](#table-of-contents)
 
-### Compared to MinIO ###
+### Compared to MinIO, RustFS ###
 
-Please note, as Apr 25, 2026 MinIO ceased development. It's strongly discouraged to use that unmaintained software with multiple security bugs.
+Please note, as Apr 25, 2026 MinIO ceased development. It's strongly discouraged to use that unmaintained software with multiple security bugs. RustFS is a MinIO reimplementation in Rust, Apache 2.0 licensed and still developed, keeping MinIO's storage model down to a byte-compatible on-disk format. So the points below apply to both.
 
 MinIO followed AWS S3 closely and was ideal for testing for S3 API. It had good UI, policies, versionings, etc. SeaweedFS is trying to catch up here. 
 
-MinIO metadata were in simple files. Each file write will incur extra writes to corresponding meta file.
+The metadata are in simple files. Each file write incurs extra writes to the corresponding meta file, on every drive of the erasure set. Changing only tags or retention rewrites that meta file on all of them, so the write amplification does not shrink with object size.
 
-MinIO did not have optimization for lots of small files. The files were simply stored as is to local disks.
+There is no optimization for lots of small files. The files are simply stored as is to local disks.
 Plus the extra meta file and shards for erasure coding, it only amplifies the LOSF problem.
 
-MinIO had multiple disk IO to read one file. SeaweedFS has O(1) disk reads, even for erasure coded files.
+Multiple disk IO are needed to read one file. SeaweedFS has O(1) disk reads, even for erasure coded files.
 
-MinIO had full-time erasure coding. SeaweedFS uses replication on hot data for faster speed and optionally applies erasure coding on warm data.
+Erasure coding is full-time. SeaweedFS uses replication on hot data for faster speed and optionally applies erasure coding on warm data.
 
-MinIO did not have POSIX-like API support.
+No POSIX-like API support.
 
-MinIO had specific requirements on storage layout. It is not flexible to adjust capacity. In SeaweedFS, just start one volume server pointing to the master. That's all.
-
-[Back to TOC](#table-of-contents)
-
-### Compared to RustFS ###
-
-RustFS is a MinIO reimplementation in Rust. It keeps MinIO's storage model, down to a byte-compatible on-disk format, so most of the comparison above still applies. It is Apache 2.0 licensed and actively developed. As of Aug 2026 it is at 1.0.0-rc.2, with distributed mode and lifecycle management marked as under testing in its own README.
-
-RustFS stores each object as a directory on every drive of its erasure set, holding a metadata file plus one erasure shard per part. Reading one object fans out metadata reads across the whole set, votes on a quorum copy, then reads the data shards. Small objects are inlined into the metadata file to avoid the extra shard files, but a 12-drive set still costs 12 directories and 12 metadata files for one small object. SeaweedFS packs small file content into volume files with O(1) disk read, and keeps file metadata in a proven store of your choice.
-
-Every write fans out to the whole set, so the amplification does not shrink with object size. One small object costs 12 metadata writes on a 12-drive set even after inlining saved it the shard files, and later changing only its tags or retention rewrites those 12 metadata files again. RustFS also erasure codes every write on a multi-drive deployment, and falls back to no parity at all on a single drive. SeaweedFS uses replication on hot data for faster speed and optionally applies erasure coding on warm data, and a metadata change is one write to the filer store.
-
-The layout is rigid, which makes it hard to scale out and to maintain. An erasure set must be 2 to 16 drives and must divide the drive list symmetrically, and the object-to-set hash is seeded with the set count, so an existing set cannot be widened without moving data. Capacity grows a pool at a time, meaning a whole new symmetric group of drives, and removing capacity means decommissioning a pool and draining it first. In SeaweedFS, just start one volume server pointing to the master. That's all.
-
-RustFS speaks S3, FTP, FTPS and WebDAV, and can speak Swift and SFTP if you build it with those features. It does not have POSIX-like API support.
+There are specific requirements on storage layout, which makes it hard to scale out and to maintain. An erasure set must be 2 to 16 drives and must divide the drive list symmetrically, and capacity grows or shrinks a whole pool at a time. In SeaweedFS, just start one volume server pointing to the master. That's all.
 
 [Back to TOC](#table-of-contents)
 
