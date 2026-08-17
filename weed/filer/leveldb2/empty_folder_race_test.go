@@ -130,6 +130,41 @@ func TestEnsureDirectoryEntryRestoresRacingParent(t *testing.T) {
 	}
 }
 
+// TestEnsureDirectoryEntryInheritsAncestorOwnership checks that a restored
+// directory takes its ownership and permissions from the tree it belongs to,
+// rather than coming back wide open.
+func TestEnsureDirectoryEntryInheritsAncestorOwnership(t *testing.T) {
+	testFiler := filer.NewFiler(pb.ServerDiscovery{}, nil, "", "", "", "", "", 255, nil)
+	store := &LevelDB2Store{}
+	if err := store.initialize(t.TempDir(), 2); err != nil {
+		t.Fatal(err)
+	}
+	testFiler.SetStore(store)
+
+	ctx := filer.WithSuppressedMetadataEvents(context.Background())
+	parent := util.FullPath("/buckets/testbucket/data")
+	parentEntry := &filer.Entry{FullPath: parent, Attr: filer.Attr{Mode: os.ModeDir | 0700, Uid: 4242, Gid: 4343}}
+	if err := testFiler.CreateEntry(ctx, parentEntry, nil, false, false, nil, false, testFiler.MaxFilenameLength); err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+
+	dir := parent.Child("abc")
+	if err := testFiler.EnsureDirectoryEntry(ctx, dir); err != nil {
+		t.Fatalf("restore folder: %v", err)
+	}
+
+	restored, err := testFiler.FindEntry(ctx, dir)
+	if err != nil {
+		t.Fatalf("find restored folder: %v", err)
+	}
+	if restored.Uid != 4242 || restored.Gid != 4343 {
+		t.Errorf("restored folder should keep the ancestor's owner, got uid=%d gid=%d", restored.Uid, restored.Gid)
+	}
+	if restored.Mode.Perm() != 0711 {
+		t.Errorf("restored folder should derive its mode from the ancestor's 0700, got %o", restored.Mode.Perm())
+	}
+}
+
 func listNames(ctx context.Context, t *testing.T, f *filer.Filer, dir util.FullPath) []string {
 	t.Helper()
 	entries, _, err := f.ListDirectoryEntries(ctx, dir, "", false, 100, "", "", "")

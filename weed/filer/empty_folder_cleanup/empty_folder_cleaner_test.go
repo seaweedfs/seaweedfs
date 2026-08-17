@@ -2,6 +2,7 @@ package empty_folder_cleanup
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -256,6 +257,39 @@ func TestEmptyFolderCleaner_restoreFoldersWrittenDuringDelete(t *testing.T) {
 		cleaner.processCleanupQueue()
 		if len(restored) != 1 || restored[0] != folder {
 			t.Fatalf("folder written during its delete should be restored, got %v", restored)
+		}
+	})
+
+	t.Run("a failed check is retried next pass", func(t *testing.T) {
+		deleted := false
+		checks := 0
+		var restored []string
+		mock := &mockFilerOps{
+			countFn: func(util.FullPath) (int, error) {
+				if !deleted {
+					return 0, nil
+				}
+				checks++
+				if checks == 1 {
+					return 0, errors.New("store unavailable")
+				}
+				return 1, nil
+			},
+			deleteFn:    func(util.FullPath) error { deleted = true; return nil },
+			ensureDirFn: func(p util.FullPath) error { restored = append(restored, string(p)); return nil },
+		}
+
+		cleaner := newCleaner(mock)
+		cleaner.executeCleanup(folder, "file.txt")
+
+		cleaner.processCleanupQueue()
+		if len(restored) != 0 {
+			t.Fatalf("a folder whose check failed must not be restored yet, got %v", restored)
+		}
+
+		cleaner.processCleanupQueue()
+		if len(restored) != 1 || restored[0] != folder {
+			t.Fatalf("a folder whose check failed should be retried, got %v", restored)
 		}
 	})
 

@@ -376,8 +376,25 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 // EnsureDirectoryEntry recreates dirPath, and any missing ancestor, for entries
 // that outlived the directory holding them. It is a no-op when dirPath is there.
 func (f *Filer) EnsureDirectoryEntry(ctx context.Context, dirPath util.FullPath) error {
-	dirParts := strings.Split(string(dirPath), "/")
 	holder := &Entry{FullPath: dirPath, Attr: Attr{Mode: 0755}}
+
+	// Inherit from the nearest ancestor still present. The original attributes went
+	// with the deleted entry, and a fixed mode would hand back a directory more
+	// permissive, or differently owned, than the one that held these entries.
+	ancestor, _ := dirPath.DirAndName()
+	for ancestor != "" && ancestor != "/" {
+		if entry, err := f.FindEntry(ctx, util.FullPath(ancestor)); err == nil && entry != nil {
+			holder.Attr.Mode = entry.Mode.Perm()
+			holder.Attr.Uid = entry.Uid
+			holder.Attr.Gid = entry.Gid
+			holder.Attr.UserName = entry.UserName
+			holder.Attr.GroupNames = entry.GroupNames
+			break
+		}
+		ancestor, _ = util.FullPath(ancestor).DirAndName()
+	}
+
+	dirParts := strings.Split(string(dirPath), "/")
 	return f.ensureParentDirectoryEntry(ctx, holder, dirParts, len(dirParts), false)
 }
 

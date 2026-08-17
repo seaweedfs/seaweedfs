@@ -267,20 +267,42 @@ func (efc *EmptyFolderCleaner) restoreFoldersWrittenDuringDelete() {
 		glog.V(1).Infof("EmptyFolderCleaner: %d deleted folders skipped the restore check, past the %d kept per pass", dropped, DefaultMaxDeletedKept)
 	}
 
+	// A folder whose check or restore fails goes back for the next pass. Dropping it
+	// would leave its entries out of listings until some later write recreates the
+	// folder, which is exactly what this is here to avoid.
 	ctx := context.Background()
-	for _, folder := range folders {
+	var retry []string
+	for i, folder := range folders {
 		if !efc.IsEnabled() {
-			return
+			retry = append(retry, folders[i:]...)
+			break
 		}
 		count, err := efc.countItems(ctx, folder)
-		if err != nil || count == 0 {
+		if err != nil {
+			glog.V(2).Infof("EmptyFolderCleaner: cannot count %s to check for a restore: %v", folder, err)
+			retry = append(retry, folder)
+			continue
+		}
+		if count == 0 {
 			continue
 		}
 		glog.V(1).Infof("EmptyFolderCleaner: restoring %s, %d entries arrived while it was being deleted", folder, count)
 		if err := efc.filer.EnsureDirectoryEntry(ctx, util.FullPath(folder)); err != nil {
 			glog.V(2).Infof("EmptyFolderCleaner: failed to restore %s: %v", folder, err)
+			retry = append(retry, folder)
 		}
 	}
+
+	if len(retry) == 0 {
+		return
+	}
+	efc.mu.Lock()
+	efc.deleted = append(retry, efc.deleted...)
+	if over := len(efc.deleted) - DefaultMaxDeletedKept; over > 0 {
+		efc.deleted = efc.deleted[:DefaultMaxDeletedKept]
+		efc.deletedDropped += over
+	}
+	efc.mu.Unlock()
 }
 
 // executeCleanup performs the actual cleanup of an empty folder
