@@ -15,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	azureremote "github.com/seaweedfs/seaweedfs/weed/remote_storage/azure"
+	gcsremote "github.com/seaweedfs/seaweedfs/weed/remote_storage/gcs"
 	s3remote "github.com/seaweedfs/seaweedfs/weed/remote_storage/s3"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -316,6 +317,36 @@ func gcsCredentialsArePath(creds string) bool {
 	return creds != "" && !strings.HasPrefix(creds, "{")
 }
 
+// gcsStaticKeyCredentialTypes are the inline gcs credential types that carry
+// their own key material. Every other type tells the SDK to fetch the token
+// from a url, file or executable named inside the credentials, which the
+// endpoint guard never sees.
+var gcsStaticKeyCredentialTypes = map[string]struct{}{
+	"service_account": {},
+	"authorized_user": {},
+}
+
+// checkGcsCredentials rejects a caller-supplied gcs credentials value that
+// would make the SDK read from somewhere other than the credentials themselves.
+func checkGcsCredentials(creds string) error {
+	if creds == "" {
+		return nil
+	}
+	// A filesystem path is read from disk by the SDK. Accept only inline JSON
+	// on the request; the server env var still supplies a path.
+	if gcsCredentialsArePath(creds) {
+		return fmt.Errorf("gcs credentials must be inline JSON")
+	}
+	credType, _, parseErr := gcsremote.ParseInlineCredentials(creds)
+	if parseErr != nil {
+		return parseErr
+	}
+	if _, ok := gcsStaticKeyCredentialTypes[credType]; !ok {
+		return fmt.Errorf("gcs credential type %q is not accepted here", credType)
+	}
+	return nil
+}
+
 func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_server_pb.FetchAndWriteNeedleRequest) (resp *volume_server_pb.FetchAndWriteNeedleResponse, err error) {
 	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
 		return nil, err
@@ -333,11 +364,8 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 	remoteConf := req.RemoteConf
 
 	if !vs.AllowUntrustedRemoteEndpoints && remoteConf != nil {
-		// A gcs credentials value that is a filesystem path is read from disk by
-		// the SDK. Accept only inline JSON on the request; the server env var
-		// still supplies a path.
-		if gcsCredentialsArePath(remoteConf.GetGcsGoogleApplicationCredentials()) {
-			return nil, fmt.Errorf("reject remote credentials: gcs credentials must be inline JSON")
+		if credsErr := checkGcsCredentials(remoteConf.GetGcsGoogleApplicationCredentials()); credsErr != nil {
+			return nil, fmt.Errorf("reject remote credentials: %w", credsErr)
 		}
 	}
 

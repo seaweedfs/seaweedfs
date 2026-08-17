@@ -2,6 +2,7 @@ package gcs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -25,6 +26,26 @@ import (
 
 func init() {
 	remote_storage.RemoteStorageClientMakers["gcs"] = new(gcsRemoteStorageMaker)
+}
+
+// defaultTokenURL is where the SDK sends the token request when the credentials
+// leave token_uri unset.
+const defaultTokenURL = "https://oauth2.googleapis.com/token"
+
+// ParseInlineCredentials reports the credential type of an inline credentials
+// document and the token endpoint it makes the SDK dial.
+func ParseInlineCredentials(creds string) (credType string, tokenURL string, err error) {
+	var doc struct {
+		Type     string `json:"type"`
+		TokenURI string `json:"token_uri"`
+	}
+	if err := json.Unmarshal([]byte(creds), &doc); err != nil {
+		return "", "", fmt.Errorf("parse gcs credentials: %w", err)
+	}
+	if doc.TokenURI == "" {
+		return doc.Type, defaultTokenURL, nil
+	}
+	return doc.Type, doc.TokenURI, nil
 }
 
 type gcsRemoteStorageMaker struct{}
