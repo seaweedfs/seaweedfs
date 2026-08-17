@@ -299,3 +299,33 @@ func TestDeleteIfUnchangedScriptOnlyDeletesSameBytes(t *testing.T) {
 		t.Fatalf("deleted=%d err=%v, want -1 on a missing key", deleted, err)
 	}
 }
+
+func TestDeleteEntryKeepsChildListing(t *testing.T) {
+	store, dir := newTestStore(t, "")
+	ctx := context.Background()
+
+	insertTestEntry(t, store, dir.Child("obj"), 0)
+
+	// The listing is the only record that the child sits under this directory, so
+	// removing the directory entry must leave it alone. An entry that arrived after
+	// the caller judged the directory empty would otherwise become unreachable.
+	if err := store.DeleteEntry(ctx, dir); err != nil {
+		t.Fatalf("DeleteEntry %s: %v", dir, err)
+	}
+	if names := listNames(t, store, dir); len(names) != 1 || names[0] != "obj" {
+		t.Errorf("child should still be listed after the directory entry is deleted, got %v", names)
+	}
+
+	// DeleteFolderChildren owns that cleanup, and takes the listing with it
+	if err := store.DeleteFolderChildren(ctx, dir); err != nil {
+		t.Fatalf("DeleteFolderChildren %s: %v", dir, err)
+	}
+	if names := listNames(t, store, dir); len(names) != 0 {
+		t.Errorf("listing should be empty once the children are deleted, got %v", names)
+	}
+	if n, err := store.Client.Exists(ctx, store.getKey(genDirectoryListKey(string(dir)))).Result(); err != nil {
+		t.Fatalf("exists %s: %v", dir, err)
+	} else if n != 0 {
+		t.Errorf("listing key should be removed with the children, still present")
+	}
+}

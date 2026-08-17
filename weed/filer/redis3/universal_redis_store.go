@@ -95,11 +95,10 @@ func (store *UniversalRedis3Store) FindEntry(ctx context.Context, fullpath util.
 
 func (store *UniversalRedis3Store) DeleteEntry(ctx context.Context, fullpath util.FullPath) (err error) {
 
-	_, err = store.Client.Del(ctx, genDirectoryListKey(string(fullpath))).Result()
-	if err != nil {
-		return fmt.Errorf("delete dir list %s : %v", fullpath, err)
-	}
-
+	// The child listing is dropped by DeleteFolderChildren, together with the
+	// children it describes. Dropping it here would also discard an entry that
+	// arrived after the caller judged this directory empty, and nothing else
+	// records that the entry is there.
 	_, err = store.Client.Del(ctx, string(fullpath)).Result()
 	if err != nil {
 		return fmt.Errorf("delete %s : %v", fullpath, err)
@@ -118,7 +117,8 @@ func (store *UniversalRedis3Store) DeleteEntry(ctx context.Context, fullpath uti
 
 func (store *UniversalRedis3Store) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath) (err error) {
 
-	return removeChildren(ctx, store, genDirectoryListKey(string(fullpath)), func(name string) error {
+	dirListKey := genDirectoryListKey(string(fullpath))
+	if err = removeChildren(ctx, store, dirListKey, func(name string) error {
 		path := util.NewFullPath(string(fullpath), name)
 		_, err = store.Client.Del(ctx, string(path)).Result()
 		if err != nil {
@@ -127,8 +127,16 @@ func (store *UniversalRedis3Store) DeleteFolderChildren(ctx context.Context, ful
 		// not efficient, but need to remove if it is a directory
 		store.Client.Del(ctx, genDirectoryListKey(string(path)))
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
 
+	// removeChildren clears the skip list nodes but leaves the list itself behind
+	if _, err = store.Client.Del(ctx, dirListKey).Result(); err != nil {
+		return fmt.Errorf("DeleteFolderChildren %s list: %v", fullpath, err)
+	}
+
+	return nil
 }
 
 func (store *UniversalRedis3Store) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {

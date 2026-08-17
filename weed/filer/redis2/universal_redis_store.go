@@ -118,11 +118,10 @@ func (store *UniversalRedis2Store) FindEntry(ctx context.Context, fullpath util.
 
 func (store *UniversalRedis2Store) DeleteEntry(ctx context.Context, fullpath util.FullPath) (err error) {
 
-	_, err = store.Client.Del(ctx, store.getKey(genDirectoryListKey(string(fullpath)))).Result()
-	if err != nil {
-		return fmt.Errorf("delete dir list %s : %v", fullpath, err)
-	}
-
+	// The child listing is dropped by DeleteFolderChildren, together with the
+	// children it describes. Dropping it here would also discard an entry that
+	// arrived after the caller judged this directory empty, and nothing else
+	// records that the entry is there.
 	_, err = store.Client.Del(ctx, store.getKey(string(fullpath))).Result()
 	if err != nil {
 		return fmt.Errorf("delete %s : %v", fullpath, err)
@@ -148,7 +147,8 @@ func (store *UniversalRedis2Store) DeleteFolderChildren(ctx context.Context, ful
 		return nil
 	}
 
-	members, err := store.Client.ZRangeByLex(ctx, store.getKey(genDirectoryListKey(string(fullpath))), &redis.ZRangeBy{
+	dirListKey := store.getKey(genDirectoryListKey(string(fullpath)))
+	members, err := store.Client.ZRangeByLex(ctx, dirListKey, &redis.ZRangeBy{
 		Min: "-",
 		Max: "+",
 	}).Result()
@@ -164,6 +164,10 @@ func (store *UniversalRedis2Store) DeleteFolderChildren(ctx context.Context, ful
 		}
 		// not efficient, but need to remove if it is a directory
 		store.Client.Del(ctx, store.getKey(genDirectoryListKey(string(path))))
+	}
+
+	if _, err = store.Client.Del(ctx, dirListKey).Result(); err != nil {
+		return fmt.Errorf("DeleteFolderChildren %s list: %v", fullpath, err)
 	}
 
 	return nil
