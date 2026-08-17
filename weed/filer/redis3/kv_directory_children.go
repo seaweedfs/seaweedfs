@@ -70,6 +70,12 @@ func removeChild(ctx context.Context, redisStore *UniversalRedis3Store, key stri
 		return err
 	}
 	if !nameList.HasChanges() {
+		// Nothing to remove. If the list is empty anyway, its header outlived the
+		// removal of the last name - a delete that failed here before - so take it
+		// now rather than leaving the key behind for good.
+		if nameList.IsEmpty() {
+			return client.Del(ctx, key).Err()
+		}
 		return nil
 	}
 
