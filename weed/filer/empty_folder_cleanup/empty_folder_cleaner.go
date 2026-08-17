@@ -20,6 +20,7 @@ const (
 	DefaultQueueMaxSize   = 1000
 	DefaultQueueMaxAge    = 2 * time.Minute
 	DefaultProcessorSleep = 30 * time.Second // How often to check queue
+	DefaultMaxDeletedKept = 10000            // Folders remembered per pass for the restore check
 )
 
 // FilerOperations defines the filer operations needed by EmptyFolderCleaner
@@ -28,6 +29,7 @@ type FilerOperations interface {
 	DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isRecursive, ignoreRecursiveError, shouldDeleteChunks, isFromOtherCluster bool, signatures []int32, ifNotModifiedAfter int64) error
 	GetEntryAttributes(ctx context.Context, p util.FullPath) (attributes map[string][]byte, err error)
 	IsDirectoryKeyObject(ctx context.Context, p util.FullPath) (bool, error)
+	EnsureDirectoryEntry(ctx context.Context, p util.FullPath) error
 }
 
 // folderState tracks the state of a folder for empty folder cleanup
@@ -55,6 +57,11 @@ type EmptyFolderCleaner struct {
 	mu                    sync.RWMutex
 	folderCounts          map[string]*folderState              // Rough count cache
 	bucketCleanupPolicies map[string]*bucketCleanupPolicyState // bucket path -> cleanup policy cache
+
+	// Folders deleted since the last pass, checked next pass for entries that
+	// landed while they were being deleted
+	deleted        []string
+	deletedDropped int
 
 	// Cleanup queue (thread-safe, has its own lock)
 	cleanupQueue *CleanupQueue
@@ -217,6 +224,8 @@ func (efc *EmptyFolderCleaner) cleanupProcessor() {
 
 // processCleanupQueue processes items from the cleanup queue
 func (efc *EmptyFolderCleaner) processCleanupQueue() {
+	efc.restoreFoldersWrittenDuringDelete()
+
 	if efc.cleanupQueue.Len() == 0 {
 		return
 	}
@@ -239,6 +248,38 @@ func (efc *EmptyFolderCleaner) processCleanupQueue() {
 
 		// Execute cleanup for this folder
 		efc.executeCleanup(folder, triggeredBy)
+	}
+}
+
+// restoreFoldersWrittenDuringDelete puts back folders that received an entry
+// between the emptiness check and the delete, which leaves that entry with no
+// directory holding it: reachable by its own path, but absent from any listing.
+// The check deliberately runs a pass after the delete. A writer looks up the
+// parent before inserting the child, so checking straight after the delete can
+// still run ahead of the insert and see nothing.
+func (efc *EmptyFolderCleaner) restoreFoldersWrittenDuringDelete() {
+	efc.mu.Lock()
+	folders, dropped := efc.deleted, efc.deletedDropped
+	efc.deleted, efc.deletedDropped = nil, 0
+	efc.mu.Unlock()
+
+	if dropped > 0 {
+		glog.V(1).Infof("EmptyFolderCleaner: %d deleted folders skipped the restore check, past the %d kept per pass", dropped, DefaultMaxDeletedKept)
+	}
+
+	ctx := context.Background()
+	for _, folder := range folders {
+		if !efc.IsEnabled() {
+			return
+		}
+		count, err := efc.countItems(ctx, folder)
+		if err != nil || count == 0 {
+			continue
+		}
+		glog.V(1).Infof("EmptyFolderCleaner: restoring %s, %d entries arrived while it was being deleted", folder, count)
+		if err := efc.filer.EnsureDirectoryEntry(ctx, util.FullPath(folder)); err != nil {
+			glog.V(2).Infof("EmptyFolderCleaner: failed to restore %s: %v", folder, err)
+		}
 	}
 }
 
@@ -334,6 +375,11 @@ func (efc *EmptyFolderCleaner) executeCleanup(folder string, triggeredBy string)
 	// Clean up cache entry
 	efc.mu.Lock()
 	delete(efc.folderCounts, folder)
+	if len(efc.deleted) < DefaultMaxDeletedKept {
+		efc.deleted = append(efc.deleted, folder)
+	} else {
+		efc.deletedDropped++
+	}
 	efc.mu.Unlock()
 
 	// After deleting this folder, immediately try to clean the parent.
@@ -539,6 +585,7 @@ func (efc *EmptyFolderCleaner) Stop() {
 	efc.cleanupQueue.Clear()
 	efc.folderCounts = make(map[string]*folderState) // Clear cache on stop
 	efc.bucketCleanupPolicies = make(map[string]*bucketCleanupPolicyState)
+	efc.deleted, efc.deletedDropped = nil, 0
 }
 
 // GetPendingCleanupCount returns the number of pending cleanup tasks (for testing)

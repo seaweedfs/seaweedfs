@@ -16,6 +16,14 @@ type mockFilerOps struct {
 	deleteFn      func(path util.FullPath) error
 	attrsFn       func(path util.FullPath) (map[string][]byte, error)
 	isDirKeyObjFn func(path util.FullPath) (bool, error)
+	ensureDirFn   func(path util.FullPath) error
+}
+
+func (m *mockFilerOps) EnsureDirectoryEntry(_ context.Context, p util.FullPath) error {
+	if m.ensureDirFn == nil {
+		return nil
+	}
+	return m.ensureDirFn(p)
 }
 
 func (m *mockFilerOps) CountDirectoryEntries(_ context.Context, dirPath util.FullPath, _ int) (int, error) {
@@ -198,6 +206,73 @@ func TestEmptyFolderCleaner_executeCleanup_skipsMultipartUploads(t *testing.T) {
 	if len(deleted) != 1 || deleted[0] != "/buckets/mybucket/folder" {
 		t.Fatalf("normal empty folder should be deleted, got %v", deleted)
 	}
+}
+
+func TestEmptyFolderCleaner_restoreFoldersWrittenDuringDelete(t *testing.T) {
+	lockRing := lock_manager.NewLockRing(5 * time.Second)
+	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"}, 0)
+
+	newCleaner := func(mock *mockFilerOps) *EmptyFolderCleaner {
+		return &EmptyFolderCleaner{
+			filer:                 mock,
+			lockRing:              lockRing,
+			host:                  "filer1:8888",
+			bucketPath:            "/buckets",
+			enabled:               true,
+			maxCountCheck:         DefaultMaxCountCheck,
+			cacheExpiry:           DefaultCacheExpiry,
+			folderCounts:          make(map[string]*folderState),
+			bucketCleanupPolicies: make(map[string]*bucketCleanupPolicyState),
+			cleanupQueue:          NewCleanupQueue(1000, 10*time.Minute),
+			stopCh:                make(chan struct{}),
+		}
+	}
+
+	const folder = "/buckets/mybucket/folder"
+
+	t.Run("entry lands while the folder is deleted", func(t *testing.T) {
+		deleted := false
+		var restored []string
+		mock := &mockFilerOps{
+			countFn: func(util.FullPath) (int, error) {
+				if deleted {
+					return 1, nil
+				}
+				return 0, nil
+			},
+			deleteFn:    func(util.FullPath) error { deleted = true; return nil },
+			ensureDirFn: func(p util.FullPath) error { restored = append(restored, string(p)); return nil },
+		}
+
+		cleaner := newCleaner(mock)
+		cleaner.executeCleanup(folder, "file.txt")
+		if !deleted {
+			t.Fatal("an empty folder should have been deleted")
+		}
+		if len(restored) != 0 {
+			t.Fatalf("the restore check belongs to the next pass, got %v", restored)
+		}
+
+		cleaner.processCleanupQueue()
+		if len(restored) != 1 || restored[0] != folder {
+			t.Fatalf("folder written during its delete should be restored, got %v", restored)
+		}
+	})
+
+	t.Run("folder stays empty", func(t *testing.T) {
+		var restored []string
+		mock := &mockFilerOps{
+			countFn:     func(util.FullPath) (int, error) { return 0, nil },
+			ensureDirFn: func(p util.FullPath) error { restored = append(restored, string(p)); return nil },
+		}
+
+		cleaner := newCleaner(mock)
+		cleaner.executeCleanup(folder, "file.txt")
+		cleaner.processCleanupQueue()
+		if len(restored) != 0 {
+			t.Fatalf("a folder that stayed empty should not be restored, got %v", restored)
+		}
+	})
 }
 
 func Test_autoRemoveEmptyFoldersEnabled(t *testing.T) {

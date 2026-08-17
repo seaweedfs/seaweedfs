@@ -373,6 +373,14 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 	return nil
 }
 
+// EnsureDirectoryEntry recreates dirPath, and any missing ancestor, for entries
+// that outlived the directory holding them. It is a no-op when dirPath is there.
+func (f *Filer) EnsureDirectoryEntry(ctx context.Context, dirPath util.FullPath) error {
+	dirParts := strings.Split(string(dirPath), "/")
+	holder := &Entry{FullPath: dirPath, Attr: Attr{Mode: 0755}}
+	return f.ensureParentDirectoryEntry(ctx, holder, dirParts, len(dirParts), false)
+}
+
 func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry) (err error) {
 	if oldEntry != nil {
 		entry.Attr.Crtime = oldEntry.Attr.Crtime

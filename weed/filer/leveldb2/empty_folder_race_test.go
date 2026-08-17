@@ -76,3 +76,69 @@ func TestNonRecursiveFolderDeleteKeepsRacingChild(t *testing.T) {
 		t.Errorf("folder entry should still be removed, got %v", err)
 	}
 }
+
+// TestEnsureDirectoryEntryRestoresRacingParent covers the leftover of the same
+// race: the entry survives the folder delete but its directory does not, so the
+// entry drops out of listings until the directory is put back.
+func TestEnsureDirectoryEntryRestoresRacingParent(t *testing.T) {
+	testFiler := filer.NewFiler(pb.ServerDiscovery{}, nil, "", "", "", "", "", 255, nil)
+	store := &LevelDB2Store{}
+	if err := store.initialize(t.TempDir(), 2); err != nil {
+		t.Fatal(err)
+	}
+	hooked := &listHookStore{FilerStore: store}
+	testFiler.SetStore(hooked)
+
+	ctx := filer.WithSuppressedMetadataEvents(context.Background())
+	parent := util.FullPath("/buckets/testbucket/data")
+	dir := parent.Child("abc")
+	child := dir.Child("obj")
+
+	dirEntry := &filer.Entry{FullPath: dir, Attr: filer.Attr{Mode: os.ModeDir | 0755}}
+	if err := testFiler.CreateEntry(ctx, dirEntry, nil, false, false, nil, false, testFiler.MaxFilenameLength); err != nil {
+		t.Fatalf("create folder: %v", err)
+	}
+
+	hooked.hook = func() {
+		entry := &filer.Entry{FullPath: child, Attr: filer.Attr{Mode: 0640}}
+		if err := testFiler.CreateEntry(ctx, entry, nil, false, false, nil, false, testFiler.MaxFilenameLength); err != nil {
+			t.Errorf("create entry racing the folder delete: %v", err)
+		}
+	}
+
+	if err := testFiler.DeleteEntryMetaAndData(ctx, dir, false, false, false, false, nil, 0); err != nil {
+		t.Fatalf("delete empty folder: %v", err)
+	}
+
+	if names := listNames(ctx, t, testFiler, parent); len(names) != 0 {
+		t.Fatalf("folder should be gone from its parent before the restore, got %v", names)
+	}
+
+	if err := testFiler.EnsureDirectoryEntry(ctx, dir); err != nil {
+		t.Fatalf("restore folder: %v", err)
+	}
+
+	restored, err := testFiler.FindEntry(ctx, dir)
+	if err != nil {
+		t.Fatalf("find restored folder: %v", err)
+	}
+	if !restored.IsDirectory() {
+		t.Errorf("restored %s is not a directory", dir)
+	}
+	if names := listNames(ctx, t, testFiler, parent); len(names) != 1 || names[0] != "abc" {
+		t.Errorf("restored folder should be listed under its parent, got %v", names)
+	}
+}
+
+func listNames(ctx context.Context, t *testing.T, f *filer.Filer, dir util.FullPath) []string {
+	t.Helper()
+	entries, _, err := f.ListDirectoryEntries(ctx, dir, "", false, 100, "", "", "")
+	if err != nil {
+		t.Fatalf("list %s: %v", dir, err)
+	}
+	var names []string
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	return names
+}
