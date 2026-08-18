@@ -545,6 +545,16 @@ the rows read back. Note that this client version drops `check_declared` and
 `include_declared` on the wire, so `is_only_declared` reads null through it however the
 server behaves.
 
+Phase 2 is validated as far as the client allows. With `-lance.managedVersioning` on,
+`lance.write_dataset(namespace=..., table_id=..., mode="create")` reserves version 1 through
+`CreateTableVersion`, sending the staged `...manifest-{uuid}` path, its size, an ETag and
+`naming_scheme: V2` — the commit protocol exactly as specified — and the dataset reads back
+afterwards. A second commit does not work: lance 4.0.0 refuses `append` and `overwrite`
+against a namespace-backed store with "put_if_exists is not supported for namespace-backed
+stores" from its own `namespace_manifest.rs`. That is client-side, and it caps what this
+feature is worth until it lands upstream, which is another argument for the flag defaulting
+to off.
+
 One more that belongs in the Iceberg suite, not this one: a Lance dataset registered through
 the Iceberg adapter must survive a full maintenance pass. Reading the code, that test should
 fail today; it has not been run.
