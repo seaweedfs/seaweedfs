@@ -30,6 +30,10 @@ type bucketLoggingStatusResponse struct {
 	XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ BucketLoggingStatus"`
 }
 
+type notificationConfigurationResponse struct {
+	XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ NotificationConfiguration"`
+}
+
 // GetBucketPolicyStatusHandler reports whether the bucket policy grants public access.
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketPolicyStatus.html
 func (s3a *S3ApiServer) GetBucketPolicyStatusHandler(w http.ResponseWriter, r *http.Request) {
@@ -129,4 +133,38 @@ func (s3a *S3ApiServer) GetBucketLoggingHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 	writeSuccessResponseXML(w, r, bucketLoggingStatusResponse{})
+}
+
+// GetBucketNotificationConfigurationHandler returns an empty configuration; SeaweedFS
+// has no bucket event notifications, and AWS answers an unconfigured bucket the same way.
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketNotificationConfiguration.html
+func (s3a *S3ApiServer) GetBucketNotificationConfigurationHandler(w http.ResponseWriter, r *http.Request) {
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, err)
+		return
+	}
+	writeSuccessResponseXML(w, r, notificationConfigurationResponse{})
+}
+
+// GetBucketReplicationHandler reports that no replication configuration exists.
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketReplication.html
+func (s3a *S3ApiServer) GetBucketReplicationHandler(w http.ResponseWriter, r *http.Request) {
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, err)
+		return
+	}
+	s3err.WriteErrorResponse(w, r, s3err.ErrReplicationConfigurationNotFound)
+}
+
+// GetBucketWebsiteHandler reports that no website configuration exists.
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketWebsite.html
+func (s3a *S3ApiServer) GetBucketWebsiteHandler(w http.ResponseWriter, r *http.Request) {
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, err)
+		return
+	}
+	s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchWebsiteConfiguration)
 }

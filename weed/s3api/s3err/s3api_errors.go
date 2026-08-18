@@ -56,6 +56,8 @@ const (
 	ErrNoSuchBucketPolicy
 	ErrNoSuchCORSConfiguration
 	ErrNoSuchLifecycleConfiguration
+	ErrNoSuchWebsiteConfiguration
+	ErrReplicationConfigurationNotFound
 	ErrNoSuchKey
 	ErrNoSuchVersion
 	ErrNoSuchUpload
@@ -296,6 +298,16 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrNoSuchLifecycleConfiguration: {
 		Code:           "NoSuchLifecycleConfiguration",
 		Description:    "The lifecycle configuration does not exist",
+		HTTPStatusCode: http.StatusNotFound,
+	},
+	ErrNoSuchWebsiteConfiguration: {
+		Code:           "NoSuchWebsiteConfiguration",
+		Description:    "The specified bucket does not have a website configuration",
+		HTTPStatusCode: http.StatusNotFound,
+	},
+	ErrReplicationConfigurationNotFound: {
+		Code:           "ReplicationConfigurationNotFoundError",
+		Description:    "The replication configuration was not found",
 		HTTPStatusCode: http.StatusNotFound,
 	},
 	ErrNoSuchKey: {
