@@ -51,6 +51,7 @@ type S3Options struct {
 	portGrpc                  *int
 	portIceberg               *int
 	portLance                 *int
+	lanceManagedVersioning    *bool
 	icebergCredentialRole     *string
 	icebergCredentialDuration *int
 	config                    *string
@@ -97,6 +98,7 @@ func init() {
 	s3StandaloneOptions.portGrpc = cmdS3.Flag.Int("port.grpc", 0, "s3 server grpc listen port")
 	s3StandaloneOptions.portIceberg = cmdS3.Flag.Int("port.iceberg", 8181, "Iceberg REST Catalog server listen port (0 to disable)")
 	s3StandaloneOptions.portLance = cmdS3.Flag.Int("port.lance", 9101, "Lance Namespace server listen port (0 to disable); credential vending uses -iceberg.credentialRole")
+	s3StandaloneOptions.lanceManagedVersioning = cmdS3.Flag.Bool("lance.managedVersioning", false, "let the Lance namespace order commits as an external manifest store, instead of the dataset owning its versions")
 	s3StandaloneOptions.icebergCredentialRole = cmdS3.Flag.String("iceberg.credentialRole", "", "IAM role ARN the Iceberg catalog assumes to vend table-scoped credentials (empty disables vending)")
 	s3StandaloneOptions.icebergCredentialDuration = cmdS3.Flag.Int("iceberg.credentialDurationSeconds", 3600, "lifetime of credentials vended by the Iceberg catalog")
 	s3StandaloneOptions.domainName = cmdS3.Flag.String("domainName", "", "suffix of the host name in comma separated list, {bucket}.{domainName}")
@@ -610,6 +612,9 @@ func (s3opt *S3Options) startLanceServer(s3ApiServer *s3api.S3ApiServer) {
 	}
 	lanceServer.SetS3Endpoint(s3opt.deriveLanceStorageEndpoint())
 	lanceServer.SetS3Region(s3tables.DefaultRegion)
+	if s3opt.lanceManagedVersioning != nil && *s3opt.lanceManagedVersioning {
+		lanceServer.SetManagedVersioning(true)
+	}
 	lanceServer.RegisterRoutes(lanceRouter)
 
 	listenAddress := fmt.Sprintf("%s:%d", *s3opt.bindIp, *s3opt.portLance)

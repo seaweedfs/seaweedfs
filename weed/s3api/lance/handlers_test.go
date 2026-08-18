@@ -27,6 +27,7 @@ type testHarness struct {
 	router *mux.Router
 	filer  *s3tablestest.MemFiler
 	admin  *s3tables.Manager
+	server *Server
 }
 
 func newTestHarness(t *testing.T) *testHarness {
@@ -42,7 +43,7 @@ func newTestHarness(t *testing.T) *testHarness {
 	// the harness seeds them the way the shell and admin console would.
 	admin := s3tables.NewManager()
 	admin.SetTrusted(true)
-	return &testHarness{router: router, filer: filer, admin: admin}
+	return &testHarness{router: router, filer: filer, admin: admin, server: server}
 }
 
 // createBucket seeds a table bucket the Lance namespace can then be pointed at.

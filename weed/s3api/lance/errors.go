@@ -18,6 +18,7 @@ const (
 	codeNamespaceNotEmpty      = 3
 	codeTableNotFound          = 4
 	codeTableAlreadyExists     = 5
+	codeTableVersionNotFound   = 11
 	codeInvalidInput           = 13
 	codeConcurrentModification = 14
 	codePermissionDenied       = 15

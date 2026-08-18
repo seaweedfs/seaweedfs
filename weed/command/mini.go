@@ -502,6 +502,7 @@ func initMiniS3Flags() {
 	miniS3Options.portGrpc = cmdMini.Flag.Int("s3.port.grpc", 0, "s3 server grpc listen port")
 	miniS3Options.portIceberg = cmdMini.Flag.Int("s3.port.iceberg", 8181, "Iceberg REST Catalog server listen port (0 to disable)")
 	miniS3Options.portLance = cmdMini.Flag.Int("s3.port.lance", 9101, "Lance Namespace server listen port (0 to disable)")
+	miniS3Options.lanceManagedVersioning = cmdMini.Flag.Bool("s3.lance.managedVersioning", false, "let the Lance namespace order commits as an external manifest store")
 	miniS3Options.icebergCredentialRole = cmdMini.Flag.String("s3.iceberg.credentialRole", "", "IAM role ARN the Iceberg catalog assumes to vend table-scoped credentials (empty disables vending)")
 	miniS3Options.icebergCredentialDuration = cmdMini.Flag.Int("s3.iceberg.credentialDurationSeconds", 3600, "lifetime of credentials vended by the Iceberg catalog")
 	miniS3Options.domainName = cmdMini.Flag.String("s3.domainName", "", "suffix of the host name in comma separated list, {bucket}.{domainName}")
