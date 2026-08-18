@@ -20,10 +20,27 @@ import (
 const uuidPattern = `[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}`
 
 var (
-	// Allowed directories in an Iceberg table
-	icebergAllowedDirs = map[string]bool{
+	// Allowed directories in a table. The set is the union of what every
+	// supported format writes, because this runs on the S3 door where the
+	// table's format is not in hand: metadata/ and data/ for Iceberg,
+	// _versions/ and _indices/ for Lance, which also puts its fragments in
+	// data/.
+	tableAllowedDirs = map[string]bool{
 		"metadata": true,
 		"data":     true,
+	}
+
+	// A format's own bookkeeping lives in underscore-prefixed directories that
+	// the catalog does not interpret: Lance writes _versions, _transactions,
+	// _indices and _deletions, and enumerating them here would mean guessing at
+	// the next one. Iceberg writes none, so admitting them costs it nothing.
+	formatOwnedDirPattern = regexp.MustCompile(`^_[a-z][a-z0-9_]*$`)
+
+	// Marker files a Lance table keeps at its root to record that it is
+	// reserved but not yet written, or deregistered but still on storage.
+	lanceMarkerFiles = map[string]bool{
+		".lance-reserved":     true,
+		".lance-deregistered": true,
 	}
 
 	// Patterns for valid metadata files.
@@ -58,6 +75,7 @@ var (
 		regexp.MustCompile(`^[^/]+\.parquet$`), // Parquet files
 		regexp.MustCompile(`^[^/]+\.orc$`),     // ORC files
 		regexp.MustCompile(`^[^/]+\.avro$`),    // Avro files
+		regexp.MustCompile(`^[^/]+\.lance$`),   // Lance fragments
 	}
 
 	// Data file partition path pattern (e.g., year=2024/month=01/)
@@ -91,11 +109,16 @@ func (v *IcebergLayoutValidator) ValidateFilePath(relativePath string) error {
 
 	topDir := parts[0]
 
+	// A Lance table's marker files sit at its root rather than in a directory.
+	if len(parts) == 1 && lanceMarkerFiles[topDir] {
+		return nil
+	}
+
 	// Check if top-level directory is allowed
-	if !icebergAllowedDirs[topDir] {
+	if !tableAllowedDirs[topDir] && !formatOwnedDirPattern.MatchString(topDir) {
 		return &IcebergLayoutError{
 			Code:    ErrCodeInvalidIcebergLayout,
-			Message: "files must be placed in 'metadata/' or 'data/' directories",
+			Message: "files must be placed in 'metadata/', 'data/' or a format-owned '_' directory",
 		}
 	}
 
@@ -119,6 +142,28 @@ func (v *IcebergLayoutValidator) ValidateFilePath(relativePath string) error {
 		return v.validateDataFile(remainingPath)
 	}
 
+	// Everything else is a format-owned directory: the only guard is that the
+	// path stays inside the table.
+	return validateFileSegments(remainingPath)
+}
+
+// IsTableMarkerFile reports whether a name is one of the marker files a table
+// keeps at its root.
+func IsTableMarkerFile(name string) bool {
+	return lanceMarkerFiles[name]
+}
+
+// validateFileSegments rejects traversal and empty segments in a path whose
+// contents the catalog does not otherwise interpret.
+func validateFileSegments(path string) error {
+	for _, segment := range strings.Split(path, "/") {
+		if segment == "" || segment == "." || segment == ".." {
+			return &IcebergLayoutError{
+				Code:    ErrCodeInvalidIcebergLayout,
+				Message: "invalid path segment in: " + path,
+			}
+		}
+	}
 	return nil
 }
 

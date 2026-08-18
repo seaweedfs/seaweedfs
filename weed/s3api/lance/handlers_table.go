@@ -216,14 +216,14 @@ func (s *Server) handleDescribeTable(w http.ResponseWriter, r *http.Request) {
 	if len(options) > 0 {
 		resp.StorageOptions = options
 	}
-	if boolQuery(r, "with_table_uri") {
+	if wants(r, "with_table_uri", req.WithTableURI) {
 		resp.TableURI = location
 	}
-	if boolQuery(r, "check_declared") {
+	if wants(r, "check_declared", req.CheckDeclared) {
 		onlyDeclared := !hasData
 		resp.IsOnlyDeclared = &onlyDeclared
 	}
-	if boolQuery(r, "load_detailed_metadata") {
+	if wants(r, "load_detailed_metadata", req.LoadDetailedMetadata) {
 		resp.Table = name
 		resp.Namespace = ns
 	}

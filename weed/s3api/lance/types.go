@@ -74,11 +74,16 @@ type DeclareTableResponse struct {
 }
 
 type DescribeTableRequest struct {
-	ID              []string `json:"id,omitempty"`
-	Version         *int64   `json:"version,omitempty"`
-	Tag             string   `json:"tag,omitempty"`
-	Branch          string   `json:"branch,omitempty"`
-	VendCredentials *bool    `json:"vend_credentials,omitempty"`
+	ID      []string `json:"id,omitempty"`
+	Version *int64   `json:"version,omitempty"`
+	Tag     string   `json:"tag,omitempty"`
+	Branch  string   `json:"branch,omitempty"`
+	// The REST spec carries these as query parameters, but clients also put
+	// them in the body, so honour both.
+	WithTableURI         *bool `json:"with_table_uri,omitempty"`
+	LoadDetailedMetadata *bool `json:"load_detailed_metadata,omitempty"`
+	CheckDeclared        *bool `json:"check_declared,omitempty"`
+	VendCredentials      *bool `json:"vend_credentials,omitempty"`
 }
 
 type DescribeTableResponse struct {
