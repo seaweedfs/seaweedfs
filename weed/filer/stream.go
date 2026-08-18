@@ -102,26 +102,6 @@ func PrepareStreamContent(masterClient wdclient.HasLookupFileIdFunction, jwtFunc
 
 type VolumeServerJwtFunction func(fileId string) string
 
-// urlSlicesEqual checks if two URL slices contain the same URLs (order-independent)
-func urlSlicesEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	// Create a map to count occurrences in first slice
-	counts := make(map[string]int)
-	for _, url := range a {
-		counts[url]++
-	}
-	// Verify all URLs in second slice match
-	for _, url := range b {
-		if counts[url] == 0 {
-			return false
-		}
-		counts[url]--
-	}
-	return true
-}
-
 // retryFetchWithFreshLocations is the shared self-heal for the read paths: when a chunk fetch
 // fails, invalidate the cached volume locations, re-lookup, and call refetch only when the
 // resolved locations actually changed (so we never retry against the same servers). originalErr
@@ -143,7 +123,7 @@ func retryFetchWithFreshLocations(ctx context.Context, invalidator CacheInvalida
 		glog.WarningfCtx(ctx, "re-lookup for chunk %s returned no locations, skipping retry", fileId)
 		return fmt.Errorf("re-lookup chunk %s returned no locations", fileId)
 	}
-	if urlSlicesEqual(oldUrls, newUrls) {
+	if util_http.SameUrls(oldUrls, newUrls) {
 		glog.V(0).InfofCtx(ctx, "re-lookup returned same locations for chunk %s, skipping retry", fileId)
 		return originalErr
 	}

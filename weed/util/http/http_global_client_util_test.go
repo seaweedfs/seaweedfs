@@ -200,3 +200,16 @@ func TestRetriedFetchChunkDataKeepsBackoffWhenLocationsAreUnchanged(t *testing.T
 		t.Fatalf("refresh called %d times, want exactly 1", refreshed)
 	}
 }
+
+func TestSameUrlsIgnoresOrder(t *testing.T) {
+	a := []string{"http://a:8080/3,x", "http://b:8080/3,x"}
+	if !SameUrls(a, []string{a[1], a[0]}) {
+		t.Fatal("a reshuffle of the same locations should not count as fresh")
+	}
+	if SameUrls(a, []string{a[0], "http://c:8080/3,x"}) {
+		t.Fatal("a different location should count as fresh")
+	}
+	if SameUrls(a, a[:1]) {
+		t.Fatal("a shorter list should count as fresh")
+	}
+}
