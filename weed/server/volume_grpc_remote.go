@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	azureremote "github.com/seaweedfs/seaweedfs/weed/remote_storage/azure"
+	gcsremote "github.com/seaweedfs/seaweedfs/weed/remote_storage/gcs"
 	s3remote "github.com/seaweedfs/seaweedfs/weed/remote_storage/s3"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -290,9 +292,10 @@ func newGuardedHTTPClientPolicy(endpoint string, allowPrivate bool) *http.Client
 
 // guardedRemoteClient reports the caller-supplied endpoint a backend dials
 // directly and a constructor that routes through the given HTTP client, or
-// ok=false for backends that only reach a fixed provider host. The S3-SDK
-// family and azure (once AzureEndpoint is set) both honor an attacker-supplied
-// endpoint, so both must pass the SSRF deny-list and rebinding-safe dialer.
+// ok=false when nothing in the conf steers a destination. The S3-SDK family,
+// azure (once AzureEndpoint is set) and the gcs token exchange all honor a
+// caller-supplied endpoint, so each must pass the SSRF deny-list and the
+// rebinding-safe dialer.
 func guardedRemoteClient(remoteConf *remote_pb.RemoteConf) (endpoint string, makeClient func(*http.Client) (remote_storage.RemoteStorageClient, error), ok bool) {
 	if remoteConf == nil {
 		return "", nil, false
@@ -307,6 +310,15 @@ func guardedRemoteClient(remoteConf *remote_pb.RemoteConf) (endpoint string, mak
 			return azureremote.MakeWithHTTPClient(remoteConf, httpClient)
 		}, true
 	}
+	// gcs reaches a fixed object host, but the token exchange goes wherever the
+	// supplied credentials say, so guard that endpoint instead.
+	if remoteConf.Type == "gcs" && remoteConf.GcsGoogleApplicationCredentials != "" {
+		if _, tokenURL, err := gcsremote.ParseInlineCredentials(remoteConf.GcsGoogleApplicationCredentials); err == nil {
+			return tokenURL, func(httpClient *http.Client) (remote_storage.RemoteStorageClient, error) {
+				return gcsremote.MakeWithHTTPClient(remoteConf, httpClient, gcsremote.StaticKeyCredentialTypes...)
+			}, true
+		}
+	}
 	return "", nil, false
 }
 
@@ -314,6 +326,28 @@ func guardedRemoteClient(remoteConf *remote_pb.RemoteConf) (endpoint string, mak
 // path rather than inline JSON, matching the gcs client's own inline detection.
 func gcsCredentialsArePath(creds string) bool {
 	return creds != "" && !strings.HasPrefix(creds, "{")
+}
+
+// checkGcsCredentials rejects a caller-supplied gcs credentials value that
+// would make the SDK read from somewhere other than the credentials themselves,
+// so the request fails before any client is built.
+func checkGcsCredentials(creds string) error {
+	if creds == "" {
+		return nil
+	}
+	// A filesystem path is read from disk by the SDK. Accept only inline JSON
+	// on the request; the server env var still supplies a path.
+	if gcsCredentialsArePath(creds) {
+		return fmt.Errorf("gcs credentials must be inline JSON")
+	}
+	credType, _, parseErr := gcsremote.ParseInlineCredentials(creds)
+	if parseErr != nil {
+		return parseErr
+	}
+	if !slices.Contains(gcsremote.StaticKeyCredentialTypes, credType) {
+		return fmt.Errorf("gcs credential type %q is not accepted here", credType)
+	}
+	return nil
 }
 
 func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_server_pb.FetchAndWriteNeedleRequest) (resp *volume_server_pb.FetchAndWriteNeedleResponse, err error) {
@@ -332,12 +366,9 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 
 	remoteConf := req.RemoteConf
 
-	if !vs.AllowUntrustedRemoteEndpoints && remoteConf != nil {
-		// A gcs credentials value that is a filesystem path is read from disk by
-		// the SDK. Accept only inline JSON on the request; the server env var
-		// still supplies a path.
-		if gcsCredentialsArePath(remoteConf.GetGcsGoogleApplicationCredentials()) {
-			return nil, fmt.Errorf("reject remote credentials: gcs credentials must be inline JSON")
+	if !vs.AllowUntrustedRemoteEndpoints && remoteConf.GetType() == "gcs" {
+		if credsErr := checkGcsCredentials(remoteConf.GetGcsGoogleApplicationCredentials()); credsErr != nil {
+			return nil, fmt.Errorf("reject remote credentials: %w", credsErr)
 		}
 	}
 
