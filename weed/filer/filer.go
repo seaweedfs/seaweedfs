@@ -253,18 +253,28 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, existing *Entry, 
 	if oldEntry == nil {
 		f.ensureEntryInode(entry)
 
-		if !skipCreateParentDir {
-			dirParts := strings.Split(string(entry.FullPath), "/")
-			if err := f.ensureParentDirectoryEntry(ctx, entry, dirParts, len(dirParts)-1, isFromOtherCluster); err != nil {
-				return err
-			}
-		}
-
 		glog.V(4).InfofCtx(ctx, "InsertEntry %s: new entry: %v", entry.FullPath, entry.Name())
 		if err := f.Store.InsertEntry(ctx, entry); err != nil {
 			glog.ErrorfCtx(ctx, "insert entry %s: %v", entry.FullPath, err)
 			return fmt.Errorf("insert entry %s: %v", entry.FullPath, err)
 		}
+
+		// Parents go after the entry: one checked first can be taken by the
+		// empty-folder cleaner before the entry lands, and nothing would look again.
+		if !skipCreateParentDir {
+			dirParts := strings.Split(string(entry.FullPath), "/")
+			if err := f.ensureParentDirectoryEntry(ctx, entry, dirParts, len(dirParts)-1, isFromOtherCluster); err != nil {
+				// The entry stays: deleting by path would destroy a concurrent create
+				// that already succeeded through the update branch, and the update keeps
+				// the inode and crtime while mtime only survives the store to the second.
+				// It is not announced - the aggregator replicates creates into peer
+				// stores, so a failed write would land on all of them rather than on the
+				// one filer whose next write into that folder repairs it.
+				glog.ErrorfCtx(ctx, "create parent directories of %s: %v", entry.FullPath, err)
+				return err
+			}
+		}
+
 		if !entry.IsDirectory() {
 			stats.FilerObjectSizeBytesHistogram.Observe(float64(entry.Size()))
 		}
@@ -373,6 +383,10 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 	return nil
 }
 
+// restorableModeBits is everything but the type bits: ModePerm alone would drop
+// setgid, setuid and sticky, quietly changing group inheritance and delete semantics.
+const restorableModeBits = os.ModePerm | os.ModeSetuid | os.ModeSetgid | os.ModeSticky
+
 // DirectoryAttributes reads what a directory would need to be recreated as it is.
 func (f *Filer) DirectoryAttributes(ctx context.Context, dirPath util.FullPath) (attrs empty_folder_cleanup.DirectoryAttributes, err error) {
 	entry, err := f.FindEntry(ctx, dirPath)
@@ -383,9 +397,7 @@ func (f *Filer) DirectoryAttributes(ctx context.Context, dirPath util.FullPath) 
 		return attrs, filer_pb.ErrNotFound
 	}
 	return empty_folder_cleanup.DirectoryAttributes{
-		// everything but the type bits: Perm() alone would drop setgid, setuid and
-		// sticky, quietly changing group inheritance and delete semantics
-		Mode:       entry.Mode & (os.ModePerm | os.ModeSetuid | os.ModeSetgid | os.ModeSticky),
+		Mode:       entry.Mode & restorableModeBits,
 		Uid:        entry.Uid,
 		Gid:        entry.Gid,
 		UserName:   entry.UserName,
@@ -396,13 +408,27 @@ func (f *Filer) DirectoryAttributes(ctx context.Context, dirPath util.FullPath) 
 // EnsureDirectoryEntry recreates dirPath, and any missing ancestor, for entries that
 // outlived the directory holding them. dirPath comes back with the attributes it was
 // deleted with, so a restore cannot hand back a directory more permissive than the one
-// it replaces. It is a no-op when dirPath is already there.
+// it replaces - including when someone else already put it back with wider ones.
 func (f *Filer) EnsureDirectoryEntry(ctx context.Context, dirPath util.FullPath, attrs empty_folder_cleanup.DirectoryAttributes) error {
 	existing, err := f.FindEntry(ctx, dirPath)
 	if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
 		return err
 	}
 	if existing != nil {
+		// A writer recreating its own missing parent infers the mode from the entry it
+		// is inserting, so it can come back wider. Intersect rather than replace, or a
+		// mode holding a bit the saved one lacks would be granted the ones it lacks.
+		kept := existing.Mode & attrs.Mode & restorableModeBits
+		if existing.Mode&restorableModeBits == kept {
+			return nil
+		}
+		narrowed := existing.ShallowClone()
+		narrowed.Mode = existing.Mode&^restorableModeBits | kept
+		glog.V(1).InfofCtx(ctx, "restore directory %s: narrowing %v to %v", dirPath, existing.Mode, narrowed.Mode)
+		if err := f.UpdateEntry(ctx, existing, narrowed); err != nil {
+			return err
+		}
+		f.NotifyUpdateEvent(ctx, existing, narrowed, false, false, nil)
 		return nil
 	}
 

@@ -1,6 +1,6 @@
 module github.com/seaweedfs/seaweedfs
 
-go 1.25.8
+go 1.26
 
 require (
 	cloud.google.com/go v0.123.0 // indirect
@@ -12,7 +12,7 @@ require (
 	github.com/bwmarrin/snowflake v0.3.0
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/coreos/go-semver v0.3.1 // indirect
-	github.com/coreos/go-systemd/v22 v22.6.0 // indirect
+	github.com/coreos/go-systemd/v22 v22.7.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dustin/go-humanize v1.0.1
 	github.com/eapache/go-resiliency v1.6.0 // indirect
@@ -84,7 +84,7 @@ require (
 	github.com/xdg-go/scram v1.2.0
 	github.com/xdg-go/stringprep v1.0.4 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
-	go.etcd.io/etcd/client/v3 v3.6.12
+	go.etcd.io/etcd/client/v3 v3.7.1
 	go.mongodb.org/mongo-driver v1.17.9
 	go.opencensus.io v0.24.0 // indirect
 	gocloud.dev v0.46.0
@@ -157,7 +157,7 @@ require (
 	github.com/xeipuuv/gojsonschema v1.2.0
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.5.2
 	github.com/ydb-platform/ydb-go-sdk/v3 v3.147.1
-	go.etcd.io/etcd/client/pkg/v3 v3.6.12
+	go.etcd.io/etcd/client/pkg/v3 v3.7.1
 	go.uber.org/atomic v1.11.0
 	golang.org/x/sync v0.22.0
 	golang.org/x/tools/godoc v0.1.0-deprecated
@@ -388,7 +388,7 @@ require (
 	github.com/gorilla/securecookie v1.1.2 // indirect
 	github.com/gorilla/sessions v1.4.0
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0 // indirect
-	github.com/grpc-ecosystem/grpc-gateway/v2 v2.28.0 // indirect
+	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-hclog v1.6.3 // indirect
 	github.com/hashicorp/go-immutable-radix v1.3.1 // indirect
@@ -482,7 +482,7 @@ require (
 	github.com/zeebo/blake3 v0.2.4 // indirect
 	github.com/zeebo/errs v1.4.0 // indirect
 	go.etcd.io/bbolt v1.5.0 // indirect
-	go.etcd.io/etcd/api/v3 v3.6.12 // indirect
+	go.etcd.io/etcd/api/v3 v3.7.1 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/detectors/gcp v1.44.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.68.0 // indirect
