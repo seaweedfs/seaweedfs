@@ -665,6 +665,12 @@ func TestDeleteEntryMetaAndData_DisableRemoteStorageDeletionSkipsRemoteChildren(
 	// Neither the child file nor the directory should be deleted from the remote
 	require.Len(t, stub.deleteCalls, 0)
 	require.Len(t, stub.removeCalls, 0)
+
+	// Local metadata is still removed for both the child and the directory
+	_, findErr := store.FindEntry(context.Background(), childPath)
+	require.ErrorIs(t, findErr, filer_pb.ErrNotFound)
+	_, findErr = store.FindEntry(context.Background(), dirPath)
+	require.ErrorIs(t, findErr, filer_pb.ErrNotFound)
 }
 
 func TestDeleteEntryMetaAndData_RemoteOnlyFileNotUnderMountSkipsRemoteDelete(t *testing.T) {
