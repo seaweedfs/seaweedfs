@@ -1,164 +1,17 @@
 package s3tables
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"net"
 	"path"
-	"sort"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables/s3tablestest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/status"
 )
-
-// memFilerServer is an in-memory filer used to drive Manager operations
-// end-to-end without a live cluster.
-type memFilerServer struct {
-	filer_pb.UnimplementedSeaweedFilerServer
-	entries map[string]map[string]*filer_pb.Entry // dir -> name -> entry
-	client  filer_pb.SeaweedFilerClient
-	// beforeUpdate runs once, at the start of the next UpdateEntry, so a test
-	// can land a competing write in a handler's read-to-write window.
-	beforeUpdate func()
-}
-
-func newMemFilerServer() *memFilerServer {
-	return &memFilerServer{entries: make(map[string]map[string]*filer_pb.Entry)}
-}
-
-func (f *memFilerServer) getEntry(dir, name string) *filer_pb.Entry {
-	if d, ok := f.entries[dir]; ok {
-		return d[name]
-	}
-	return nil
-}
-
-func (f *memFilerServer) putEntry(dir, name string, extended map[string][]byte) {
-	if _, ok := f.entries[dir]; !ok {
-		f.entries[dir] = make(map[string]*filer_pb.Entry)
-	}
-	f.entries[dir][name] = &filer_pb.Entry{Name: name, IsDirectory: true, Extended: extended}
-}
-
-func (f *memFilerServer) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
-	if e := f.getEntry(req.Directory, req.Name); e != nil {
-		return &filer_pb.LookupDirectoryEntryResponse{Entry: e}, nil
-	}
-	// Carry the sentinel text so filer_pb.LookupEntry maps it to ErrNotFound.
-	return nil, status.Errorf(codes.NotFound, "%s: %s/%s", filer_pb.ErrNotFound.Error(), req.Directory, req.Name)
-}
-
-func (f *memFilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream grpc.ServerStreamingServer[filer_pb.ListEntriesResponse]) error {
-	d, ok := f.entries[req.Directory]
-	if !ok {
-		return nil
-	}
-	names := make([]string, 0, len(d))
-	for name := range d {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		if err := stream.Send(&filer_pb.ListEntriesResponse{Entry: d[name]}); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (f *memFilerServer) CreateEntry(_ context.Context, req *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
-	if _, ok := f.entries[req.Directory]; !ok {
-		f.entries[req.Directory] = make(map[string]*filer_pb.Entry)
-	}
-	f.entries[req.Directory][req.Entry.Name] = req.Entry
-	return &filer_pb.CreateEntryResponse{}, nil
-}
-
-func (f *memFilerServer) UpdateEntry(_ context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
-	if hook := f.beforeUpdate; hook != nil {
-		f.beforeUpdate = nil
-		hook()
-	}
-	// The real filer validates ExpectedExtended under the per-path lock; without
-	// it here a lost update would look like a success.
-	for key, expected := range req.ExpectedExtended {
-		var actual []byte
-		if existing := f.getEntry(req.Directory, req.Entry.Name); existing != nil {
-			actual = existing.Extended[key]
-		}
-		if !bytes.Equal(actual, expected) {
-			return nil, status.Errorf(codes.FailedPrecondition, "extended attribute %q changed", key)
-		}
-	}
-	if _, ok := f.entries[req.Directory]; !ok {
-		f.entries[req.Directory] = make(map[string]*filer_pb.Entry)
-	}
-	f.entries[req.Directory][req.Entry.Name] = req.Entry
-	return &filer_pb.UpdateEntryResponse{}, nil
-}
-
-func (f *memFilerServer) DeleteEntry(_ context.Context, req *filer_pb.DeleteEntryRequest) (*filer_pb.DeleteEntryResponse, error) {
-	if d, ok := f.entries[req.Directory]; ok {
-		delete(d, req.Name)
-	}
-	// Honor recursive data deletion so a regression that wipes the table directory
-	// also drops its metadata/ and data/ children (the data-loss this guards against).
-	if req.IsRecursive && req.IsDeleteData {
-		child := path.Join(req.Directory, req.Name)
-		for dir := range f.entries {
-			if dir == child || strings.HasPrefix(dir, child+"/") {
-				delete(f.entries, dir)
-			}
-		}
-	}
-	return &filer_pb.DeleteEntryResponse{}, nil
-}
-
-func (f *memFilerServer) Ping(_ context.Context, _ *filer_pb.PingRequest) (*filer_pb.PingResponse, error) {
-	now := time.Now().UnixNano()
-	return &filer_pb.PingResponse{StartTimeNs: now, RemoteTimeNs: now, StopTimeNs: now}, nil
-}
-
-func startMemFiler(t *testing.T) *memFilerServer {
-	t.Helper()
-	fs := newMemFilerServer()
-
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-
-	server := grpc.NewServer()
-	filer_pb.RegisterSeaweedFilerServer(server, fs)
-	go func() { _ = server.Serve(listener) }()
-	t.Cleanup(server.GracefulStop)
-
-	conn, err := grpc.NewClient(listener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = conn.Close() })
-
-	fs.client = filer_pb.NewSeaweedFilerClient(conn)
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		pingCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-		_, err := fs.client.Ping(pingCtx, &filer_pb.PingRequest{})
-		cancel()
-		if err == nil {
-			break
-		}
-		require.False(t, time.Now().After(deadline), "filer not ready: %v", err)
-		time.Sleep(10 * time.Millisecond)
-	}
-	return fs
-}
 
 const renameTestBucket = "renamebkt"
 
@@ -170,18 +23,18 @@ func mustBucketARN(t *testing.T) string {
 }
 
 // startRenameManager seeds a bucket/namespace/table and returns a trusted Manager.
-func startRenameManager(t *testing.T) (*memFilerServer, *Manager) {
+func startRenameManager(t *testing.T) (*s3tablestest.MemFiler, *Manager) {
 	t.Helper()
-	fs := startMemFiler(t)
+	fs := s3tablestest.Start(t)
 
 	bucketMeta, _ := json.Marshal(tableBucketMetadata{Name: renameTestBucket, OwnerAccountID: DefaultAccountID})
-	fs.putEntry(TablesPath, renameTestBucket, map[string][]byte{
+	fs.Put(TablesPath, renameTestBucket, map[string][]byte{
 		ExtendedKeyTableBucket: []byte("{}"),
 		ExtendedKeyMetadata:    bucketMeta,
 	})
 
 	nsMeta, _ := json.Marshal(namespaceMetadata{Namespace: []string{"ns"}, OwnerAccountID: DefaultAccountID})
-	fs.putEntry(GetTableBucketPath(renameTestBucket), "ns", map[string][]byte{ExtendedKeyMetadata: nsMeta})
+	fs.Put(GetTableBucketPath(renameTestBucket), "ns", map[string][]byte{ExtendedKeyMetadata: nsMeta})
 
 	tableMeta, _ := json.Marshal(tableMetadataInternal{
 		Name:             "t",
@@ -191,31 +44,31 @@ func startRenameManager(t *testing.T) (*memFilerServer, *Manager) {
 		MetadataVersion:  3,
 		MetadataLocation: "s3://" + renameTestBucket + "/ns/t/metadata/v3.metadata.json",
 	})
-	fs.putEntry(GetNamespacePath(renameTestBucket, "ns"), "t", map[string][]byte{
+	fs.Put(GetNamespacePath(renameTestBucket, "ns"), "t", map[string][]byte{
 		ExtendedKeyMetadata:        tableMeta,
 		ExtendedKeyMetadataVersion: []byte("3"),
 	})
 
 	// Physical metadata.json and data files live under the table directory.
 	tablePath := GetTablePath(renameTestBucket, "ns", "t")
-	fs.putEntry(tablePath, "metadata", nil)
-	fs.putEntry(tablePath, "data", nil)
-	fs.putEntry(path.Join(tablePath, "metadata"), "v3.metadata.json", nil)
+	fs.Put(tablePath, "metadata", nil)
+	fs.Put(tablePath, "data", nil)
+	fs.Put(path.Join(tablePath, "metadata"), "v3.metadata.json", nil)
 
 	m := NewManager()
 	m.SetTrusted(true)
 	return fs, m
 }
 
-func runRename(t *testing.T, m *Manager, fs *memFilerServer, req *RenameTableRequest) error {
+func runRename(t *testing.T, m *Manager, fs *s3tablestest.MemFiler, req *RenameTableRequest) error {
 	t.Helper()
-	return m.Execute(context.Background(), NewManagerClient(fs.client), "RenameTable", req, nil, "")
+	return m.Execute(context.Background(), NewManagerClient(fs.Client), "RenameTable", req, nil, "")
 }
 
-func runGetTable(t *testing.T, m *Manager, fs *memFilerServer, namespace, name string) (*GetTableResponse, error) {
+func runGetTable(t *testing.T, m *Manager, fs *s3tablestest.MemFiler, namespace, name string) (*GetTableResponse, error) {
 	t.Helper()
 	resp := &GetTableResponse{}
-	err := m.Execute(context.Background(), NewManagerClient(fs.client), "GetTable", &GetTableRequest{
+	err := m.Execute(context.Background(), NewManagerClient(fs.Client), "GetTable", &GetTableRequest{
 		TableBucketARN: mustBucketARN(t),
 		Namespace:      []string{namespace},
 		Name:           name,
@@ -238,12 +91,12 @@ func TestRenameTablePreservesData(t *testing.T) {
 	// The source directory and its metadata.json/data children must survive: rename
 	// is catalog-only and the destination still points at the original location.
 	srcPath := GetTablePath(renameTestBucket, "ns", "t")
-	assert.NotNil(t, fs.getEntry(srcPath, "metadata"), "source metadata dir must survive")
-	assert.NotNil(t, fs.getEntry(srcPath, "data"), "source data dir must survive")
-	assert.NotNil(t, fs.getEntry(path.Join(srcPath, "metadata"), "v3.metadata.json"), "metadata.json must survive")
+	assert.NotNil(t, fs.Get(srcPath, "metadata"), "source metadata dir must survive")
+	assert.NotNil(t, fs.Get(srcPath, "data"), "source data dir must survive")
+	assert.NotNil(t, fs.Get(path.Join(srcPath, "metadata"), "v3.metadata.json"), "metadata.json must survive")
 
 	// Source catalog xattrs are dropped so the name stops resolving.
-	src := fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "t")
+	src := fs.Get(GetNamespacePath(renameTestBucket, "ns"), "t")
 	require.NotNil(t, src, "source directory must remain to hold the data children")
 	_, hasMeta := src.Extended[ExtendedKeyMetadata]
 	assert.False(t, hasMeta, "source table-metadata xattr must be removed")
@@ -260,7 +113,7 @@ func TestRenameTablePreservesData(t *testing.T) {
 	assert.Equal(t, "t2", got.Name)
 	assert.Equal(t, "s3://"+renameTestBucket+"/ns/t/metadata/v3.metadata.json", got.MetadataLocation)
 
-	dest := fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "t2")
+	dest := fs.Get(GetNamespacePath(renameTestBucket, "ns"), "t2")
 	require.NotNil(t, dest)
 	assert.Equal(t, []byte("3"), dest.Extended[ExtendedKeyMetadataVersion])
 }
@@ -283,7 +136,7 @@ func TestRenameTableSourceMissing(t *testing.T) {
 func TestRenameTableDestExists(t *testing.T) {
 	fs, m := startRenameManager(t)
 	existing, _ := json.Marshal(tableMetadataInternal{Name: "t2", Namespace: "ns", OwnerAccountID: DefaultAccountID})
-	fs.putEntry(GetNamespacePath(renameTestBucket, "ns"), "t2", map[string][]byte{ExtendedKeyMetadata: existing})
+	fs.Put(GetNamespacePath(renameTestBucket, "ns"), "t2", map[string][]byte{ExtendedKeyMetadata: existing})
 
 	err := runRename(t, m, fs, &RenameTableRequest{
 		TableBucketARN:  mustBucketARN(t),
@@ -296,7 +149,7 @@ func TestRenameTableDestExists(t *testing.T) {
 	var s3Err *S3TablesError
 	require.ErrorAs(t, err, &s3Err)
 	assert.Equal(t, ErrCodeTableAlreadyExists, s3Err.Type)
-	assert.NotNil(t, fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "t"), "source must be untouched on conflict")
+	assert.NotNil(t, fs.Get(GetNamespacePath(renameTestBucket, "ns"), "t"), "source must be untouched on conflict")
 }
 
 func TestRenameTableDestNamespaceMissing(t *testing.T) {
@@ -312,7 +165,7 @@ func TestRenameTableDestNamespaceMissing(t *testing.T) {
 	var s3Err *S3TablesError
 	require.ErrorAs(t, err, &s3Err)
 	assert.Equal(t, ErrCodeNoSuchNamespace, s3Err.Type)
-	assert.NotNil(t, fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "t"), "source must be untouched")
+	assert.NotNil(t, fs.Get(GetNamespacePath(renameTestBucket, "ns"), "t"), "source must be untouched")
 }
 
 // A principal allowed to rename the source must still be denied when it cannot
@@ -332,16 +185,16 @@ func TestRenameTableDestNamespaceUnauthorized(t *testing.T) {
 			"Resource":  "*",
 		}},
 	})
-	srcEntry := fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "t")
+	srcEntry := fs.Get(GetNamespacePath(renameTestBucket, "ns"), "t")
 	require.NotNil(t, srcEntry)
 	srcEntry.Extended[ExtendedKeyPolicy] = srcPolicy
 
 	destNsMeta, _ := json.Marshal(namespaceMetadata{Namespace: []string{"dest"}, OwnerAccountID: DefaultAccountID})
-	fs.putEntry(GetTableBucketPath(renameTestBucket), "dest", map[string][]byte{ExtendedKeyMetadata: destNsMeta})
+	fs.Put(GetTableBucketPath(renameTestBucket), "dest", map[string][]byte{ExtendedKeyMetadata: destNsMeta})
 
 	mover := &testIdentity{Name: "mover", Account: &testIdentityAccount{Id: "mover"}}
 	ctx := s3_constants.SetIdentityInContext(context.Background(), mover)
-	err := m.Execute(ctx, NewManagerClient(fs.client), "RenameTable", &RenameTableRequest{
+	err := m.Execute(ctx, NewManagerClient(fs.Client), "RenameTable", &RenameTableRequest{
 		TableBucketARN:  mustBucketARN(t),
 		SourceNamespace: []string{"ns"},
 		SourceName:      "t",
@@ -353,8 +206,8 @@ func TestRenameTableDestNamespaceUnauthorized(t *testing.T) {
 	require.ErrorAs(t, err, &s3Err)
 	assert.Equal(t, ErrCodeAccessDenied, s3Err.Type)
 
-	assert.NotNil(t, fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "t"), "source must be untouched")
-	assert.Nil(t, fs.getEntry(GetNamespacePath(renameTestBucket, "dest"), "t2"), "destination must not be written")
+	assert.NotNil(t, fs.Get(GetNamespacePath(renameTestBucket, "ns"), "t"), "source must be untouched")
+	assert.Nil(t, fs.Get(GetNamespacePath(renameTestBucket, "dest"), "t2"), "destination must not be written")
 }
 
 func TestRenameTableInvalidName(t *testing.T) {
@@ -378,7 +231,7 @@ func TestRenameTableInvalidName(t *testing.T) {
 func TestRenameTableCarriesMaintenanceConfiguration(t *testing.T) {
 	fs, m := startRenameManager(t)
 
-	src := fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "t")
+	src := fs.Get(GetNamespacePath(renameTestBucket, "ns"), "t")
 	require.NotNil(t, src)
 	config := []byte(`{"icebergSnapshotManagement":{"status":"disabled"}}`)
 	status := []byte(`{"icebergCompaction":{"status":"Successful"}}`)
@@ -393,13 +246,13 @@ func TestRenameTableCarriesMaintenanceConfiguration(t *testing.T) {
 		DestName:        "t2",
 	}))
 
-	dest := fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "t2")
+	dest := fs.Get(GetNamespacePath(renameTestBucket, "ns"), "t2")
 	require.NotNil(t, dest)
 	assert.Equal(t, config, dest.Extended[ExtendedKeyMaintenance], "the disable must move with the table")
 	assert.Equal(t, status, dest.Extended[ExtendedKeyMaintenanceStatus])
 
 	// And must not linger on the old name, where a reused name would inherit it.
-	moved := fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "t")
+	moved := fs.Get(GetNamespacePath(renameTestBucket, "ns"), "t")
 	require.NotNil(t, moved)
 	_, hasConfig := moved.Extended[ExtendedKeyMaintenance]
 	assert.False(t, hasConfig, "source maintenance configuration must be cleared")
@@ -413,7 +266,7 @@ func TestRenameTableCarriesMaintenanceConfiguration(t *testing.T) {
 func TestRenameTableRejectsConcurrentMaintenanceWrite(t *testing.T) {
 	fs, _ := startRenameManager(t)
 
-	src := fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "t")
+	src := fs.Get(GetNamespacePath(renameTestBucket, "ns"), "t")
 	require.NotNil(t, src)
 	copied := []byte(`{"icebergCompaction":{"status":"enabled"}}`)
 	src.Extended[ExtendedKeyMaintenance] = copied
@@ -425,7 +278,7 @@ func TestRenameTableRejectsConcurrentMaintenanceWrite(t *testing.T) {
 	src.Extended[ExtendedKeyMaintenance] = landedLate
 
 	h := NewS3TablesHandler()
-	err := NewManagerClient(fs.client).WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	err := NewManagerClient(fs.Client).WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return h.removeExtendedAttributesIf(context.Background(),
 			client, GetTablePath(renameTestBucket, "ns", "t"), expected, renamedTableAttributes...)
 	})

@@ -6,12 +6,14 @@ import (
 	"path"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables/s3tablestest"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // seedView adds a view alongside the table the rename harness already creates.
-func seedView(t *testing.T, fs *memFilerServer, name string) {
+func seedView(t *testing.T, fs *s3tablestest.MemFiler, name string) {
 	t.Helper()
 
 	viewMeta, err := json.Marshal(tableMetadataInternal{
@@ -24,19 +26,19 @@ func seedView(t *testing.T, fs *memFilerServer, name string) {
 	})
 	require.NoError(t, err)
 
-	fs.putEntry(GetNamespacePath(renameTestBucket, "ns"), name, map[string][]byte{
+	fs.Put(GetNamespacePath(renameTestBucket, "ns"), name, map[string][]byte{
 		ExtendedKeyMetadata:        viewMeta,
 		ExtendedKeyMetadataVersion: []byte("1"),
 		ExtendedKeyEntryType:       []byte(EntryTypeView),
 	})
 	viewPath := GetTablePath(renameTestBucket, "ns", name)
-	fs.putEntry(viewPath, "metadata", nil)
-	fs.putEntry(path.Join(viewPath, "metadata"), "v1.metadata.json", nil)
+	fs.Put(viewPath, "metadata", nil)
+	fs.Put(path.Join(viewPath, "metadata"), "v1.metadata.json", nil)
 }
 
-func runRenameView(t *testing.T, m *Manager, fs *memFilerServer, sourceName, destName string) error {
+func runRenameView(t *testing.T, m *Manager, fs *s3tablestest.MemFiler, sourceName, destName string) error {
 	t.Helper()
-	return m.Execute(context.Background(), NewManagerClient(fs.client), "RenameView", &RenameTableRequest{
+	return m.Execute(context.Background(), NewManagerClient(fs.Client), "RenameView", &RenameTableRequest{
 		TableBucketARN:  mustBucketARN(t),
 		SourceNamespace: []string{"ns"},
 		SourceName:      sourceName,
@@ -51,7 +53,7 @@ func TestRenameViewMovesCatalogPointer(t *testing.T) {
 
 	require.NoError(t, runRenameView(t, m, fs, "v", "v2"))
 
-	dest := fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "v2")
+	dest := fs.Get(GetNamespacePath(renameTestBucket, "ns"), "v2")
 	require.NotNil(t, dest)
 	assert.Equal(t, EntryTypeView, EntryType(dest.Extended), "destination must stay a view")
 
@@ -61,11 +63,11 @@ func TestRenameViewMovesCatalogPointer(t *testing.T) {
 	assert.Equal(t, "s3://"+renameTestBucket+"/ns/v/metadata/v1.metadata.json", moved.MetadataLocation,
 		"rename is catalog-only, the metadata stays where it was written")
 
-	src := fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "v")
+	src := fs.Get(GetNamespacePath(renameTestBucket, "ns"), "v")
 	require.NotNil(t, src)
 	_, stillListed := src.Extended[ExtendedKeyMetadata]
 	assert.False(t, stillListed, "source name must stop resolving")
-	assert.NotNil(t, fs.getEntry(path.Join(GetTablePath(renameTestBucket, "ns", "v"), "metadata"), "v1.metadata.json"),
+	assert.NotNil(t, fs.Get(path.Join(GetTablePath(renameTestBucket, "ns", "v"), "metadata"), "v1.metadata.json"),
 		"the view's metadata file must survive")
 }
 
@@ -110,18 +112,18 @@ func TestRenameViewAuthorizesAgainstTheViewARN(t *testing.T) {
 	viewARN := "arn:aws:s3tables:" + DefaultRegion + ":" + DefaultAccountID + ":bucket/" + renameTestBucket + "/view/ns/v"
 	viewPolicy := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"` + principal +
 		`","Action":"s3tables:RenameView","Resource":"` + viewARN + `"}]}`
-	view := fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "v")
+	view := fs.Get(GetNamespacePath(renameTestBucket, "ns"), "v")
 	require.NotNil(t, view)
 	view.Extended[ExtendedKeyPolicy] = []byte(viewPolicy)
 
 	// Landing in the namespace needs create permission there as well.
 	namespacePolicy := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"` + principal +
 		`","Action":"s3tables:CreateView","Resource":"` + mustBucketARN(t) + `"}]}`
-	namespace := fs.getEntry(GetTableBucketPath(renameTestBucket), "ns")
+	namespace := fs.Get(GetTableBucketPath(renameTestBucket), "ns")
 	require.NotNil(t, namespace)
 	namespace.Extended[ExtendedKeyPolicy] = []byte(namespacePolicy)
 
-	err := m.Execute(context.Background(), NewManagerClient(fs.client), "RenameView", &RenameTableRequest{
+	err := m.Execute(context.Background(), NewManagerClient(fs.Client), "RenameView", &RenameTableRequest{
 		TableBucketARN:  mustBucketARN(t),
 		SourceNamespace: []string{"ns"},
 		SourceName:      "v",
@@ -130,5 +132,5 @@ func TestRenameViewAuthorizesAgainstTheViewARN(t *testing.T) {
 	}, nil, principal)
 	require.NoError(t, err)
 
-	assert.NotNil(t, fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "v2"))
+	assert.NotNil(t, fs.Get(GetNamespacePath(renameTestBucket, "ns"), "v2"))
 }
