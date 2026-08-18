@@ -67,12 +67,6 @@ type Filer struct {
 	EmptyFolderCleaner      *empty_folder_cleanup.EmptyFolderCleaner
 	EmptyFolderCleanupDelay time.Duration
 	persistedLogCache       *persistedLogCache
-
-	// DisableRemoteStorageDeletion makes entry deletions cache-only for
-	// remote-mounted paths: local metadata and cached chunks are removed, but
-	// the backing remote object is left intact. Set from
-	// filer.options.disable_remote_storage_deletion.
-	DisableRemoteStorageDeletion bool
 }
 
 func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress, filerGroup string, collection string, replication string, dataCenter string, maxFilenameLength uint32, notifyFn func()) *Filer {

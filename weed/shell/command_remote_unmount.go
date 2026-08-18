@@ -65,7 +65,8 @@ func (c *commandRemoteUnmount) Do(args []string, commandEnv *CommandEnv, writer 
 		return fmt.Errorf("directory %s is not mounted", *dir)
 	}
 
-	// store a mount configuration in filer
+	// delete the mount mapping first: the filer reloads it on the spot, so the
+	// purge below stays local instead of deleting the remote objects
 	fmt.Fprintf(writer, "deleting mount for %s ...\n", *dir)
 	if err = filer.DeleteMountMapping(commandEnv, *dir); err != nil {
 		return fmt.Errorf("delete mount mapping: %w", err)
