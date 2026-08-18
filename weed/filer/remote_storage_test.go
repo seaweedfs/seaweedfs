@@ -6,6 +6,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestFilerRemoteStorage_FindRemoteStorageClient(t *testing.T) {
@@ -67,4 +69,41 @@ func TestFilerRemoteStorage_FindMountDirectory_LongestPrefixWins(t *testing.T) {
 			assert.Equal(t, tt.wantBucket, loc.Bucket, "bucket for %s", tt.path)
 		}
 	}
+}
+
+func TestRemoteStorageMapping_SkipRemoteDeleteSurvivesMountMappingRoundTrip(t *testing.T) {
+	stored, err := proto.Marshal(&remote_pb.RemoteStorageMapping{
+		Mappings: map[string]*remote_pb.RemoteStorageLocation{
+			"/buckets/mybucket": {
+				Name:             "store",
+				Bucket:           "mybucket",
+				Path:             "/",
+				SkipRemoteDelete: true,
+			},
+			"/buckets/other": {
+				Name:   "store",
+				Bucket: "other",
+				Path:   "/",
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	mappings, err := UnmarshalRemoteStorageMappings(stored)
+	require.NoError(t, err)
+
+	conf := &remote_pb.RemoteConf{Name: "store", Type: "s3"}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	for dir, loc := range mappings.Mappings {
+		rs.mapDirectoryToRemoteStorage(util.FullPath(dir), loc)
+	}
+
+	_, skipLoc := rs.FindMountDirectory("/buckets/mybucket/file.txt")
+	require.NotNil(t, skipLoc)
+	assert.True(t, skipLoc.SkipRemoteDelete, "skipRemoteDelete should survive mount mapping serialisation")
+
+	_, plainLoc := rs.FindMountDirectory("/buckets/other/file.txt")
+	require.NotNil(t, plainLoc)
+	assert.False(t, plainLoc.SkipRemoteDelete, "mounts without the flag should keep propagating deletes")
 }

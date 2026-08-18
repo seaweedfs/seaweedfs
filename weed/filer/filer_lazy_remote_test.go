@@ -793,6 +793,78 @@ func TestDeleteEntryMetaAndData_DirectoryUnderMountDeletesRemoteDirectory(t *tes
 	require.ErrorIs(t, findErr, filer_pb.ErrNotFound)
 }
 
+func TestDeleteEntryMetaAndData_SkipRemoteDeleteRemovesMetadataOnly(t *testing.T) {
+	const storageType = "stub_lazy_skip_remote_delete"
+	stub := &stubRemoteClient{deleteErr: errors.New("remote delete must not be attempted")}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "skipdelete", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:             "skipdelete",
+		Bucket:           "mybucket",
+		Path:             "/",
+		SkipRemoteDelete: true,
+	})
+
+	store := newStubFilerStore()
+	filePath := util.FullPath("/buckets/mybucket/skipped.txt")
+	store.entries[string(filePath)] = &Entry{
+		FullPath: filePath,
+		Attr: Attr{
+			Mtime:    time.Unix(1700000000, 0),
+			Crtime:   time.Unix(1700000000, 0),
+			Mode:     0644,
+			FileSize: 42,
+		},
+		Remote: &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 42},
+	}
+	f := newTestFiler(t, store, rs)
+
+	err := f.DeleteEntryMetaAndData(context.Background(), filePath, false, false, false, false, nil, 0)
+	require.NoError(t, err)
+
+	require.Empty(t, stub.deleteCalls)
+	_, findErr := store.FindEntry(context.Background(), filePath)
+	require.ErrorIs(t, findErr, filer_pb.ErrNotFound)
+}
+
+func TestDeleteEntryMetaAndData_SkipRemoteDeleteLeavesRemoteDirectory(t *testing.T) {
+	const storageType = "stub_lazy_skip_remote_delete_dir"
+	stub := &stubRemoteClient{removeErr: errors.New("remote directory removal must not be attempted")}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "skipdeletedir", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:             "skipdeletedir",
+		Bucket:           "mybucket",
+		Path:             "/",
+		SkipRemoteDelete: true,
+	})
+
+	store := newStubFilerStore()
+	dirPath := util.FullPath("/buckets/mybucket/dir")
+	store.entries[string(dirPath)] = &Entry{
+		FullPath: dirPath,
+		Attr: Attr{
+			Mtime:  time.Unix(1700000000, 0),
+			Crtime: time.Unix(1700000000, 0),
+			Mode:   os.ModeDir | 0755,
+		},
+	}
+	f := newTestFiler(t, store, rs)
+
+	err := f.doDeleteEntryMetaAndData(context.Background(), store.entries[string(dirPath)], false, false, nil)
+	require.NoError(t, err)
+
+	require.Empty(t, stub.removeCalls)
+	_, findErr := store.FindEntry(context.Background(), dirPath)
+	require.ErrorIs(t, findErr, filer_pb.ErrNotFound)
+}
+
 func TestDeleteEntryMetaAndData_RecursiveFolderDeleteRemotesChildren(t *testing.T) {
 	const storageType = "stub_lazy_delete_folder_children"
 	stub := &stubRemoteClient{}

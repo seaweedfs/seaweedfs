@@ -126,6 +126,11 @@ func (f *Filer) maybeDeleteFromRemote(ctx context.Context, entry *Entry) (bool, 
 		return false, nil
 	}
 
+	if remoteLoc.SkipRemoteDelete {
+		glog.V(3).InfofCtx(ctx, "maybeDeleteFromRemote: mount %s skips remote delete, removing %s locally only", mountDir, entry.FullPath)
+		return false, nil
+	}
+
 	client, _, found := f.RemoteStorage.GetRemoteStorageClient(remoteLoc.Name)
 	if !found {
 		return false, fmt.Errorf("resolve remote storage client for %s: not found", entry.FullPath)

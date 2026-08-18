@@ -76,4 +76,5 @@ message RemoteStorageLocation {
   string bucket = 2;
   string path = 3;
   int32 listing_cache_ttl_seconds = 4; // 0 = disabled; >0 enables on-demand directory listing with this TTL in seconds
+  bool skip_remote_delete = 5; // true = delete filer metadata only, never propagate deletions to remote storage
 }
