@@ -142,10 +142,43 @@ func TestTableLifecycle(t *testing.T) {
 	if len(afterDrop.Tables) != 0 {
 		t.Fatalf("deregistered table still listed: %v", afterDrop.Tables)
 	}
+	// Deregistering preserves the data. The catalog entry is the dataset
+	// directory, so dropping it would take the dataset with it.
+	if h.filer.Get(s3tables.GetNamespacePath("analytics", "sales"), "orders") == nil {
+		t.Fatal("deregister deleted the dataset directory")
+	}
 
 	h.mustDo(t, http.MethodPost, "/v1/table/analytics$sales$orders/register",
 		`{"location":"s3://analytics/sales/orders"}`, http.StatusOK)
 	h.mustDo(t, http.MethodPost, "/v1/table/analytics$sales$orders/exists", `{}`, http.StatusOK)
+
+	// Dropping is the operation that does remove the data.
+	h.mustDo(t, http.MethodPost, "/v1/table/analytics$sales$orders/drop", `{}`, http.StatusOK)
+	if h.filer.Get(s3tables.GetNamespacePath("analytics", "sales"), "orders") != nil {
+		t.Fatal("drop left the dataset directory behind")
+	}
+}
+
+// Repointing a registered name at another dataset must not take the dataset it
+// used to name with it.
+func TestRegisterOverwriteKeepsTheOldDataset(t *testing.T) {
+	h := newTestHarness(t)
+	h.createBucket(t, "analytics")
+	h.mustDo(t, http.MethodPost, "/v1/namespace/analytics$sales/create", `{}`, http.StatusOK)
+	h.mustDo(t, http.MethodPost, "/v1/table/analytics$sales$orders/declare", `{}`, http.StatusOK)
+	h.mustDo(t, http.MethodPost, "/v1/table/analytics$sales$archive/declare", `{}`, http.StatusOK)
+
+	h.mustDo(t, http.MethodPost, "/v1/table/analytics$sales$orders/register",
+		`{"location":"s3://analytics/sales/archive","mode":"Overwrite"}`, http.StatusOK)
+
+	described := decode[DescribeTableResponse](t,
+		h.mustDo(t, http.MethodPost, "/v1/table/analytics$sales$orders/describe", `{}`, http.StatusOK))
+	if described.Location != "s3://analytics/sales/archive" {
+		t.Fatalf("location after repointing = %q", described.Location)
+	}
+	if h.filer.Get(s3tables.GetNamespacePath("analytics", "sales"), "orders") == nil {
+		t.Fatal("repointing deleted the dataset the name used to hold")
+	}
 }
 
 func TestNamespaceListing(t *testing.T) {

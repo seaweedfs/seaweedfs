@@ -139,6 +139,11 @@ func (s *Server) handleDeclareTable(w http.ResponseWriter, r *http.Request) {
 		// clients that read the storage prefix directly.
 		glog.V(1).Infof("lance: could not write %s for %s: %v", reservedMarker, location, err)
 	}
+	// Declaring a name that was deregistered brings it back, the same way
+	// registering it does.
+	if err := s.removeMarker(r, location, deregisteredMarker); err != nil {
+		glog.V(2).Infof("lance: could not clear %s for %s: %v", deregisteredMarker, location, err)
+	}
 
 	options, err := s.storageOptions(r, bucket, location, wants(r, "vend_credentials", req.VendCredentials))
 	if err != nil {
@@ -305,25 +310,37 @@ func (s *Server) handleRegisterTable(w http.ResponseWriter, r *http.Request) {
 
 	existing, err := s.loadLanceTable(r, bucket, ns, name)
 	switch {
-	case err == nil && mode == modeCreate:
-		writeError(w, r, http.StatusConflict, codeTableAlreadyExists, "table already exists")
+	case err != nil && !isNotFound(err):
+		writeStorageError(w, r, err)
 		return
 	case err == nil:
-		// Overwrite replaces the registration, never the data it points at.
-		if dropErr := s.dropTableEntry(r, bucket, ns, name); dropErr != nil {
-			writeStorageError(w, r, dropErr)
+		// A deregistered table is absent as far as the spec is concerned, so
+		// registering over it is a re-registration rather than a conflict.
+		deregistered, _, stateErr := s.datasetState(r, existing.location)
+		if stateErr != nil {
+			writeError(w, r, http.StatusInternalServerError, codeInternal, stateErr.Error())
 			return
 		}
-		_ = existing
-	case !isNotFound(err):
-		writeStorageError(w, r, err)
-		return
+		if !deregistered && mode == modeCreate {
+			writeError(w, r, http.StatusConflict, codeTableAlreadyExists, "table already exists")
+			return
+		}
+		if existing.location != location {
+			// Repointing the name at another dataset is an update. Dropping and
+			// recreating the entry would take the old dataset's files with it,
+			// because the entry is the directory holding them.
+			if err := s.repointTable(r, bucket, ns, name, location, existing.versionToken); err != nil {
+				writeStorageError(w, r, err)
+				return
+			}
+		}
+	default:
+		if err := s.createTable(r, bucket, ns, name, location); err != nil {
+			writeStorageError(w, r, err)
+			return
+		}
 	}
 
-	if err := s.createTable(r, bucket, ns, name, location); err != nil {
-		writeStorageError(w, r, err)
-		return
-	}
 	// Registering a deregistered dataset brings it back.
 	if err := s.removeMarker(r, location, deregisteredMarker); err != nil {
 		glog.V(2).Infof("lance: could not clear %s for %s: %v", deregisteredMarker, location, err)
@@ -364,13 +381,13 @@ func (s *Server) handleDeregisterTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The marker goes down first: if the catalog entry disappeared and the
-	// marker did not, a directory-catalog client would still see a live table.
+	// Deregistering is a state, not a deletion. Dropping the catalog entry would
+	// take the dataset with it, because the entry is the dataset directory and
+	// DeleteTable purges what it holds. The marker is what hides the table, and
+	// it is also what a directory-catalog client reads.
 	if err := s.writeMarker(r, table.location, deregisteredMarker); err != nil {
-		glog.V(1).Infof("lance: could not write %s for %s: %v", deregisteredMarker, table.location, err)
-	}
-	if err := s.dropTableEntry(r, bucket, ns, name); err != nil {
-		writeStorageError(w, r, err)
+		writeError(w, r, http.StatusInternalServerError, codeInternal,
+			"could not mark the table deregistered: "+err.Error())
 		return
 	}
 
@@ -477,7 +494,8 @@ func (s *Server) handleRenameTable(w http.ResponseWriter, r *http.Request) {
 
 // lanceTable is the catalog's record of one Lance table.
 type lanceTable struct {
-	location string
+	location     string
+	versionToken string
 }
 
 // loadLanceTable reads a table and refuses one that is not a Lance table, so a
@@ -502,7 +520,7 @@ func (s *Server) loadLanceTable(r *http.Request, bucket string, ns []string, nam
 	if location == "" {
 		location = tableLocation(bucket, resp.Namespace, resp.Name)
 	}
-	return &lanceTable{location: location}, nil
+	return &lanceTable{location: location, versionToken: resp.VersionToken}, nil
 }
 
 func (s *Server) createTable(r *http.Request, bucket string, ns []string, name, location string) error {
@@ -519,6 +537,22 @@ func (s *Server) createTable(r *http.Request, bucket string, ns []string, name, 
 	return s.execute(r, "CreateTable", req, &resp)
 }
 
+// repointTable moves an existing entry to another dataset location without
+// touching either dataset's files.
+func (s *Server) repointTable(r *http.Request, bucket string, ns []string, name, location, versionToken string) error {
+	req := &s3tables.UpdateTableRequest{
+		TableBucketARN:   bucketARN(bucket),
+		Namespace:        ns,
+		Name:             name,
+		VersionToken:     versionToken,
+		MetadataLocation: location,
+	}
+	var resp s3tables.UpdateTableResponse
+	return s.execute(r, "UpdateTable", req, &resp)
+}
+
+// dropTableEntry removes the catalog entry and the dataset under it. Only
+// DropTable wants this; deregistering and repointing must leave the files.
 func (s *Server) dropTableEntry(r *http.Request, bucket string, ns []string, name string) error {
 	req := &s3tables.DeleteTableRequest{
 		TableBucketARN: bucketARN(bucket),

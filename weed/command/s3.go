@@ -608,7 +608,7 @@ func (s3opt *S3Options) startLanceServer(s3ApiServer *s3api.S3ApiServer) {
 	if s3opt.icebergCredentialRole != nil && *s3opt.icebergCredentialRole != "" {
 		lanceServer.SetCredentialVendor(lanceCredentialVendor{s3ApiServer})
 	}
-	lanceServer.SetS3Endpoint(s3opt.deriveS3AdvertisedEndpoint())
+	lanceServer.SetS3Endpoint(s3opt.deriveLanceStorageEndpoint())
 	lanceServer.SetS3Region(s3tables.DefaultRegion)
 	lanceServer.RegisterRoutes(lanceRouter)
 
@@ -638,6 +638,39 @@ func (s3opt *S3Options) startLanceServer(s3ApiServer *s3api.S3ApiServer) {
 	if err = httpS.Serve(lanceListener); err != nil && err != http.ErrServerClosed {
 		glog.Fatalf("Lance Namespace Server Fail to serve: %v", err)
 	}
+}
+
+// deriveLanceStorageEndpoint picks the endpoint the Lance namespace puts in
+// storage_options. It falls back to the advertised -ip where the Iceberg
+// derivation gives up, because the two clients are not in the same position: a
+// Spark or Trino Iceberg client brings its own s3.endpoint and advertising the
+// wrong one hijacks it, whereas storage_options is the only place a Lance
+// client learns where the store is. Without one, object_store quietly falls
+// back to real AWS S3 and the failure reads like a credentials problem.
+func (s3opt *S3Options) deriveLanceStorageEndpoint() string {
+	if endpoint := s3opt.deriveS3AdvertisedEndpoint(); endpoint != "" {
+		return endpoint
+	}
+	host := ""
+	if s3opt.ip != nil {
+		host = *s3opt.ip
+	}
+	switch host {
+	case "", "0.0.0.0", "::", "[::]":
+		return ""
+	}
+	scheme := "http"
+	port := 0
+	if s3opt.port != nil {
+		port = *s3opt.port
+	}
+	if s3opt.tlsPrivateKey != nil && *s3opt.tlsPrivateKey != "" {
+		scheme = "https"
+		if s3opt.portHttps != nil && *s3opt.portHttps > 0 {
+			port = *s3opt.portHttps
+		}
+	}
+	return fmt.Sprintf("%s://%s", scheme, util.JoinHostPort(host, port))
 }
 
 // deriveS3AdvertisedEndpoint builds the S3 endpoint URL to advertise to
