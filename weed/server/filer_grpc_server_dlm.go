@@ -30,7 +30,7 @@ func (fs *FilerServer) DistributedLock(ctx context.Context, req *filer_pb.LockRe
 		req.Name, resp.LockOwner, resp.RenewToken, movedTo, err)
 	glog.V(4).Infof("lock %s %v %v %v, isMoved=%v %v", req.Name, req.SecondsToLock, req.RenewToken, req.Owner, req.IsMoved, movedTo)
 	if movedTo != "" && movedTo != fs.option.Host && !req.IsMoved {
-		glog.V(0).Infof("FILER LOCK: Forwarding to correct filer - from=%s to=%s", fs.option.Host, movedTo)
+		glog.V(3).Infof("FILER LOCK: Forwarding to correct filer - from=%s to=%s", fs.option.Host, movedTo)
 		err = pb.WithFilerClient(false, 0, movedTo, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			secondResp, err := client.DistributedLock(ctx, &filer_pb.LockRequest{
 				Name:          req.Name,
@@ -44,7 +44,9 @@ func (fs *FilerServer) DistributedLock(ctx context.Context, req *filer_pb.LockRe
 				resp.LockOwner = secondResp.LockOwner
 				resp.Error = secondResp.Error
 				resp.Generation = secondResp.Generation
-				glog.V(0).Infof("FILER LOCK: Forwarded lock acquired - name=%s renewToken=%s", req.Name, resp.RenewToken)
+				if forwardedLockAcquired(secondResp) {
+					glog.V(3).Infof("FILER LOCK: Forwarded lock acquired - name=%s renewToken=%s", req.Name, resp.RenewToken)
+				}
 			} else {
 				glog.V(0).Infof("FILER LOCK: Forward failed - name=%s err=%v", req.Name, err)
 			}
@@ -66,6 +68,10 @@ func (fs *FilerServer) DistributedLock(ctx context.Context, req *filer_pb.LockRe
 		req.Name, resp.RenewToken, resp.LockOwner, resp.Error, resp.LockHostMovedTo)
 
 	return resp, nil
+}
+
+func forwardedLockAcquired(resp *filer_pb.LockResponse) bool {
+	return resp != nil && resp.Error == "" && resp.RenewToken != ""
 }
 
 // Unlock is a grpc handler to handle FilerServer's UnlockRequest
