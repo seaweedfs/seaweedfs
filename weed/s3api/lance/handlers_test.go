@@ -250,6 +250,13 @@ func TestIcebergTablesAreInvisible(t *testing.T) {
 
 	h.mustDo(t, http.MethodPost, "/v1/table/analytics$sales$ledger/describe", `{}`, http.StatusNotFound)
 	h.mustDo(t, http.MethodPost, "/v1/table/analytics$sales$ledger/exists", `{}`, http.StatusNotFound)
+
+	// Declaring over the Iceberg table must not quietly succeed and hand the
+	// Lance client a directory another format owns.
+	recorder := h.mustDo(t, http.MethodPost, "/v1/table/analytics$sales$ledger/declare", `{}`, http.StatusConflict)
+	if got := decode[errorResponse](t, recorder); got.Code != codeTableAlreadyExists {
+		t.Fatalf("error code = %d, want %d", got.Code, codeTableAlreadyExists)
+	}
 }
 
 // The route and the body naming different objects is a bad request, not a silent

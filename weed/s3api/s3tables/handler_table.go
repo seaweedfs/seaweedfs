@@ -193,6 +193,14 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 			h.writeError(w, http.StatusConflict, ErrCodeTableAlreadyExists, fmt.Sprintf("a view named %s already exists", tableName))
 			return fmt.Errorf("view name conflict: %s", tableName)
 		}
+		// Creating a table that already exists is idempotent, but only for the
+		// same format. Handing a Lance client an Iceberg table's location, or the
+		// reverse, has it write one format's files into the other's directory.
+		if existingMetadata.Format != "" && existingMetadata.Format != req.Format {
+			h.writeError(w, http.StatusConflict, ErrCodeTableAlreadyExists,
+				fmt.Sprintf("a %s table named %s already exists", existingMetadata.Format, tableName))
+			return fmt.Errorf("format conflict: %s", tableName)
+		}
 		tableARN := h.generateTableARN(existingMetadata.OwnerAccountID, bucketName, namespaceName+"/"+tableName)
 		h.writeJSON(w, http.StatusOK, &CreateTableResponse{
 			TableARN:         tableARN,
