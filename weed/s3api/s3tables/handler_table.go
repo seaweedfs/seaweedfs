@@ -174,7 +174,7 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		if err != nil {
 			return err
 		}
-		if entryType(entry.Extended) == EntryTypeView {
+		if EntryType(entry.Extended) == EntryTypeView {
 			existingIsView = true
 			return nil
 		}
@@ -551,7 +551,7 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 		if err != nil {
 			return err
 		}
-		if entryType(entry.Extended) == EntryTypeView {
+		if EntryType(entry.Extended) == EntryTypeView {
 			return filer_pb.ErrNotFound
 		}
 		data, ok := entry.Extended[ExtendedKeyMetadata]
@@ -923,7 +923,7 @@ func (h *S3TablesHandler) listTablesWithClient(r *http.Request, client filer_pb.
 			}
 
 			// Views share the table layout; exclude them from table listings.
-			if entryType(entry.Entry.Extended) == EntryTypeView {
+			if EntryType(entry.Entry.Extended) == EntryTypeView {
 				continue
 			}
 
@@ -1435,7 +1435,7 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 
 	// Tables and views share the namespace directory, so a rename must not pick
 	// up the other kind under the same name.
-	if entryType(srcExtended) != kind.entryType {
+	if EntryType(srcExtended) != kind.entryType {
 		h.writeError(w, http.StatusNotFound, kind.notFoundCode, fmt.Sprintf("%s %s not found", kind.noun, srcName))
 		return fmt.Errorf("%s %s not found", kind.noun, srcName)
 	}

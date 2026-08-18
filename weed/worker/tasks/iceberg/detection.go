@@ -131,6 +131,10 @@ func (h *Handler) scanTablesForMaintenance(
 					glog.V(2).Infof("iceberg maintenance: skipping %s/%s/%s: cannot parse iceberg metadata: %v", bucketName, nsName, tblName, err)
 					continue
 				}
+				if !isIcebergTableEntry(tableEntry.Extended, state.Metadata) {
+					glog.V(2).Infof("iceberg maintenance: skipping %s/%s/%s: not an iceberg table", bucketName, nsName, tblName)
+					continue
+				}
 
 				tableMaintenance, err := parseMaintenanceConfiguration(tableEntry.Extended, path.Join(bucketName, tablePath))
 				if err != nil {

@@ -53,7 +53,7 @@ func TestRenameViewMovesCatalogPointer(t *testing.T) {
 
 	dest := fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "v2")
 	require.NotNil(t, dest)
-	assert.Equal(t, EntryTypeView, entryType(dest.Extended), "destination must stay a view")
+	assert.Equal(t, EntryTypeView, EntryType(dest.Extended), "destination must stay a view")
 
 	var moved tableMetadataInternal
 	require.NoError(t, json.Unmarshal(dest.Extended[ExtendedKeyMetadata], &moved))

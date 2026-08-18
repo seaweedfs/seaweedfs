@@ -175,10 +175,10 @@ func IsTableBucketEntry(entry *filer_pb.Entry) bool {
 	return ok
 }
 
-// entryType returns the entry-type marker for a catalog entry. Tables and views
+// EntryType returns the entry-type marker for a catalog entry. Tables and views
 // share the same on-disk layout; the marker distinguishes them. An absent marker
 // means table for back-compat.
-func entryType(extended map[string][]byte) string {
+func EntryType(extended map[string][]byte) string {
 	if extended == nil {
 		return EntryTypeTable
 	}

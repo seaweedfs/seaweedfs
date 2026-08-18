@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/apache/iceberg-go"
@@ -52,6 +53,25 @@ type tableState struct {
 	// DataPath is the bucket-relative directory holding metadata/ and data/.
 	DataPath      string
 	PlanningIndex *planningIndex
+}
+
+// tableTypeProperty is the Hive/Glue-style format marker. Catalogs that have no
+// native concept of a non-Iceberg table register one as an Iceberg table with a
+// placeholder schema and set this property instead; the Lance namespace's
+// Iceberg REST adapter writes table_type=lance.
+const tableTypeProperty = "table_type"
+
+// isIcebergTableEntry reports whether a catalog entry is an Iceberg table this
+// worker may rewrite. Views share the entry shape, and a foreign format
+// registered through the catalog shares the location but not the file layout -
+// a Lance dataset keeps its fragments under data/, where every one of them is
+// unreferenced by the Iceberg metadata and so looks like an orphan.
+func isIcebergTableEntry(extended map[string][]byte, meta table.Metadata) bool {
+	if s3tables.EntryType(extended) != s3tables.EntryTypeTable {
+		return false
+	}
+	tableType, ok := meta.Properties()[tableTypeProperty]
+	return !ok || strings.EqualFold(tableType, "iceberg")
 }
 
 func parseTableMetadataEnvelope(metadataBytes []byte, bucketName, tablePath string) (*tableState, error) {

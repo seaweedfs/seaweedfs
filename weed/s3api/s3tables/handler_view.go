@@ -93,7 +93,7 @@ func (h *S3TablesHandler) handleCreateView(w http.ResponseWriter, r *http.Reques
 		if err != nil {
 			return err
 		}
-		if entryType(entry.Extended) != EntryTypeView {
+		if EntryType(entry.Extended) != EntryTypeView {
 			existingIsTable = true
 			return nil
 		}
@@ -185,7 +185,7 @@ func (h *S3TablesHandler) handleGetView(w http.ResponseWriter, r *http.Request, 
 		if err != nil {
 			return err
 		}
-		if entryType(entry.Extended) != EntryTypeView {
+		if EntryType(entry.Extended) != EntryTypeView {
 			return filer_pb.ErrNotFound
 		}
 		data, ok := entry.Extended[ExtendedKeyMetadata]
@@ -354,7 +354,7 @@ func (h *S3TablesHandler) listViewsInNamespace(r *http.Request, client filer_pb.
 				continue
 			}
 			// Only include view entries; skip tables and untagged entries.
-			if entryType(entry.Entry.Extended) != EntryTypeView {
+			if EntryType(entry.Entry.Extended) != EntryTypeView {
 				continue
 			}
 			data, ok := entry.Entry.Extended[ExtendedKeyMetadata]
@@ -411,7 +411,7 @@ func (h *S3TablesHandler) handleUpdateView(w http.ResponseWriter, r *http.Reques
 		if err != nil {
 			return err
 		}
-		if entryType(entry.Extended) != EntryTypeView {
+		if EntryType(entry.Extended) != EntryTypeView {
 			return filer_pb.ErrNotFound
 		}
 		data, ok := entry.Extended[ExtendedKeyMetadata]
@@ -516,7 +516,7 @@ func (h *S3TablesHandler) handleDeleteView(w http.ResponseWriter, r *http.Reques
 		if err != nil {
 			return err
 		}
-		if entryType(entry.Extended) != EntryTypeView {
+		if EntryType(entry.Extended) != EntryTypeView {
 			return filer_pb.ErrNotFound
 		}
 		data, ok := entry.Extended[ExtendedKeyMetadata]
