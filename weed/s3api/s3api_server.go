@@ -923,6 +923,12 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetBucketAccelerateConfigurationHandler, ACTION_READ)), "GET")).Queries("accelerate", "")
 		// GetBucketLogging
 		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetBucketLoggingHandler, ACTION_READ)), "GET")).Queries("logging", "")
+		// GetBucketNotificationConfiguration
+		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetBucketNotificationConfigurationHandler, ACTION_READ)), "GET")).Queries("notification", "")
+		// GetBucketReplication
+		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetBucketReplicationHandler, ACTION_READ)), "GET")).Queries("replication", "")
+		// GetBucketWebsite
+		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetBucketWebsiteHandler, ACTION_READ)), "GET")).Queries("website", "")
 
 		// GetBucketVersioning
 		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetBucketVersioningHandler, ACTION_READ)), "GET")).Queries("versioning", "")
@@ -993,8 +999,14 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		// DeleteBucket
 		bucket.Methods(http.MethodDelete).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.DeleteBucketHandler, ACTION_DELETE_BUCKET)), "DELETE"))
 
-		// ListObjectsV1 (Legacy)
+		// ListObjectsV1 (Legacy). This is the catch-all GET on a bucket, so a
+		// subresource with no route of its own would be answered with a listing.
 		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.AuthWithPublicRead(func(w http.ResponseWriter, r *http.Request) {
+			if subresource, found := unroutedBucketSubresource(r); found {
+				glog.V(1).Infof("unimplemented bucket subresource ?%s", subresource)
+				s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
+				return
+			}
 			limitedHandler, _ := s3a.cb.Limit(s3a.ListObjectsV1Handler, ACTION_LIST)
 			limitedHandler(w, r)
 		}, ACTION_LIST), "LIST"))
