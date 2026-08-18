@@ -552,21 +552,29 @@ func refreshedUrls(ctx context.Context, refreshUrls RefreshUrlsFunc, current []s
 		return nil, false
 	}
 	fresh := refreshUrls()
-	if len(fresh) == 0 || sameUrls(current, fresh) {
+	if len(fresh) == 0 || SameUrls(current, fresh) {
 		return nil, false
 	}
 	glog.V(0).InfofCtx(ctx, "chunk %s failed on every known location, retrying on %d fresh ones", fileId, len(fresh))
 	return fresh, true
 }
 
-func sameUrls(a, b []string) bool {
+// SameUrls reports whether two location lists hold the same URLs, regardless of
+// order: lookups shuffle the locations they return, so comparing positionally
+// would read a reshuffle of the very same replicas as a fresh set.
+func SameUrls(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	for i := range a {
-		if a[i] != b[i] {
+	counts := make(map[string]int, len(a))
+	for _, url := range a {
+		counts[url]++
+	}
+	for _, url := range b {
+		if counts[url] == 0 {
 			return false
 		}
+		counts[url]--
 	}
 	return true
 }

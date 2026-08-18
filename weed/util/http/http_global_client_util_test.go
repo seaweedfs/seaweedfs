@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestAppendQueryParameter(t *testing.T) {
@@ -130,5 +131,85 @@ func TestDeleteProxiedReturnsInvalidRequestErrorBeforeAddingAuth(t *testing.T) {
 
 	if _, _, err := DeleteProxied("http://[::1", "jwt"); err == nil {
 		t.Fatal("expected invalid request error")
+	}
+}
+
+// TestRetriedFetchChunkDataRetriesFreshUrlsImmediately covers the case the
+// refresh hook exists for: every location the caller knew about is gone, and
+// the data is live somewhere the caller has not heard of yet. The read must
+// land on the fresh location without first sitting through the backoff ladder.
+func TestRetriedFetchChunkDataRetriesFreshUrlsImmediately(t *testing.T) {
+	payload := []byte("chunk contents")
+	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(payload)
+	}))
+	defer live.Close()
+
+	// A port nothing listens on: the address is well formed, the dial fails.
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	deadURL := dead.URL
+	dead.Close()
+
+	refreshed := 0
+	buffer := make([]byte, len(payload))
+	start := time.Now()
+	n, err := RetriedFetchChunkData(context.Background(), buffer, []string{deadURL + "/3,abc"}, nil, false, true, 0, "3,abc",
+		func() []string {
+			refreshed++
+			return []string{live.URL + "/3,abc"}
+		})
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("fetch with a refreshed location: %v", err)
+	}
+	if n != len(payload) || string(buffer[:n]) != string(payload) {
+		t.Fatalf("got %q, want %q", buffer[:n], payload)
+	}
+	if refreshed != 1 {
+		t.Fatalf("refresh called %d times, want exactly 1", refreshed)
+	}
+	// The first backoff is a full second; landing well under it is the point.
+	if elapsed > 500*time.Millisecond {
+		t.Fatalf("took %v, expected the retry to skip the backoff", elapsed)
+	}
+}
+
+// TestRetriedFetchChunkDataKeepsBackoffWhenLocationsAreUnchanged makes sure a
+// refresh that returns the same list is treated as "the locations were never
+// the problem" rather than as a reason to spin.
+func TestRetriedFetchChunkDataKeepsBackoffWhenLocationsAreUnchanged(t *testing.T) {
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	deadURL := dead.URL
+	dead.Close()
+
+	urls := []string{deadURL + "/3,abc"}
+	refreshed := 0
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	buffer := make([]byte, 4)
+	_, err := RetriedFetchChunkData(ctx, buffer, urls, nil, false, true, 0, "3,abc", func() []string {
+		refreshed++
+		return urls
+	})
+	if err == nil {
+		t.Fatal("expected the fetch to fail against a dead location")
+	}
+	if refreshed != 1 {
+		t.Fatalf("refresh called %d times, want exactly 1", refreshed)
+	}
+}
+
+func TestSameUrlsIgnoresOrder(t *testing.T) {
+	a := []string{"http://a:8080/3,x", "http://b:8080/3,x"}
+	if !SameUrls(a, []string{a[1], a[0]}) {
+		t.Fatal("a reshuffle of the same locations should not count as fresh")
+	}
+	if SameUrls(a, []string{a[0], "http://c:8080/3,x"}) {
+		t.Fatal("a different location should count as fresh")
+	}
+	if SameUrls(a, a[:1]) {
+		t.Fatal("a shorter list should count as fresh")
 	}
 }
