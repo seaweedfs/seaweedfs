@@ -2,11 +2,14 @@ package gcs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -27,6 +30,34 @@ func init() {
 	remote_storage.RemoteStorageClientMakers["gcs"] = new(gcsRemoteStorageMaker)
 }
 
+// defaultTokenURL is where the SDK sends the token request when the credentials
+// leave token_uri unset.
+const defaultTokenURL = "https://oauth2.googleapis.com/token"
+
+// StaticKeyCredentialTypes are the credential types that carry their own key
+// material. Every other type tells the SDK to fetch the token from a url, file
+// or executable named inside the credentials.
+var StaticKeyCredentialTypes = []string{
+	string(google.ServiceAccount),
+	string(google.AuthorizedUser),
+}
+
+// ParseInlineCredentials reports the credential type of an inline credentials
+// document and the token endpoint it makes the SDK dial.
+func ParseInlineCredentials(creds string) (credType string, tokenURL string, err error) {
+	var doc struct {
+		Type     string `json:"type"`
+		TokenURI string `json:"token_uri"`
+	}
+	if err := json.Unmarshal([]byte(creds), &doc); err != nil {
+		return "", "", fmt.Errorf("parse gcs credentials: %w", err)
+	}
+	if doc.TokenURI == "" {
+		return doc.Type, defaultTokenURL, nil
+	}
+	return doc.Type, doc.TokenURI, nil
+}
+
 type gcsRemoteStorageMaker struct{}
 
 func (s gcsRemoteStorageMaker) HasBucket() bool {
@@ -34,8 +65,22 @@ func (s gcsRemoteStorageMaker) HasBucket() bool {
 }
 
 func (s gcsRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
+	return MakeWithHTTPClient(conf, nil)
+}
+
+// MakeWithHTTPClient builds a gcs client whose token exchange and object reads
+// both go through the supplied *http.Client (or the SDK default when nil).
+// Callers that need to pin the dial path against DNS rebinding pass a client
+// whose transport has a guarded DialContext, mirroring the S3 backend. Callers
+// handling credentials they do not control pass the types they accept.
+func MakeWithHTTPClient(conf *remote_pb.RemoteConf, httpClient *http.Client, allowedTypes ...string) (remote_storage.RemoteStorageClient, error) {
 	client := &gcsRemoteStorageClient{
 		conf: conf,
+	}
+
+	ctx := context.Background()
+	if httpClient != nil {
+		ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
 	}
 
 	googleApplicationCredentials := conf.GcsGoogleApplicationCredentials
@@ -71,15 +116,23 @@ func (s gcsRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.
 				return nil, fmt.Errorf("failed to read credentials file %s: %w", googleApplicationCredentials, err)
 			}
 		}
-		creds, err := google.CredentialsFromJSON(context.Background(), data, storage.ScopeFullControl)
+		credType, _, parseErr := ParseInlineCredentials(string(data))
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		if len(allowedTypes) > 0 && !slices.Contains(allowedTypes, credType) {
+			return nil, fmt.Errorf("gcs credential type %q is not accepted here", credType)
+		}
+		// Declaring the type keeps the SDK from reading the document as anything
+		// else; the untyped loader is deprecated for exactly that reason.
+		creds, err := google.CredentialsFromJSONWithType(ctx, data, google.CredentialsType(credType), storage.ScopeFullControl)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse credentials: %w", err)
 		}
-		httpClient := oauth2.NewClient(context.Background(), creds.TokenSource)
-		clientOpts = append(clientOpts, option.WithHTTPClient(httpClient), option.WithoutAuthentication())
+		clientOpts = append(clientOpts, option.WithHTTPClient(oauth2.NewClient(ctx, creds.TokenSource)), option.WithoutAuthentication())
 	}
 
-	c, err := storage.NewClient(context.Background(), clientOpts...)
+	c, err := storage.NewClient(ctx, clientOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create client: %w", err)
 	}

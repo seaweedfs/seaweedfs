@@ -314,7 +314,7 @@ make dev-env
 # Build load test binary
 make build
 
-# Run tests locally (requires Go 1.21+)
+# Run tests locally (requires Go 1.26+)
 cd cmd/loadtest && go run main.go -config ../../config/loadtest.yaml
 ```
 
