@@ -1113,13 +1113,19 @@ func (fs *FilerServer) maybeSendIdleHeartbeat(req *filer_pb.SubscribeMetadataReq
 	}
 	// On the local stream the heartbeat is a delivery claim to a peer
 	// aggregator and piggybacks the flush watermark; the aggregated ring
-	// never flushes, so its heartbeats carry neither. Both claims are capped
-	// by the in-flight floor: a stamped-but-unappended event has not been
-	// streamed or persisted yet.
+	// never flushes, so its heartbeats carry neither. The claims are capped
+	// by the in-flight floor and fence later stamps above themselves, so
+	// re-checking the buffer head afterwards closes the append race: an
+	// event at or below the claim was in flight (capping it), stamped later
+	// (fenced above it), or already appended here - and then the head check
+	// proves this stream has sent it before the heartbeat.
 	heartbeat := &filer_pb.SubscribeMetadataResponse{TsNs: now}
 	if fs.filer != nil && logBuffer == fs.filer.LocalMetaLogBuffer {
 		heartbeat.TsNs = fs.filer.LocalDeliveredThroughTsNs(now)
 		heartbeat.FlushedTsNs = fs.filer.LocalFlushedThroughTsNs(now)
+		if logBuffer.LastTsNs.Load() > floorTsNs {
+			return lastHeartbeatNs
+		}
 	}
 	if err := sender.Send(heartbeat); err != nil {
 		glog.V(0).Infof("=> idle heartbeat to %s: %v", req.ClientName, err)
