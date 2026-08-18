@@ -156,7 +156,7 @@ func (s *fakeFilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateE
 }
 
 // startFakeFiler serves fake on a local port and points wfs at it.
-func startFakeFiler(t *testing.T, wfs *WFS, fake *fakeFilerServer) {
+func startFakeFiler(t *testing.T, wfs *WFS, fake filer_pb.SeaweedFilerServer) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

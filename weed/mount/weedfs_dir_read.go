@@ -53,6 +53,26 @@ func (dh *DirectoryHandle) reset() {
 	dh.entryStreamOffset = directoryStreamBaseOffset
 }
 
+// dropConsumed releases the entries the client has already walked past.
+// Offsets are indexes into the stream from entryStreamOffset, so advancing the
+// two together keeps them lined up; one entry is kept back because the next
+// batch resumes from the name immediately before the offset.
+func (dh *DirectoryHandle) dropConsumed(offset uint64) {
+	if offset < dh.entryStreamOffset {
+		return
+	}
+	trim := int(offset-dh.entryStreamOffset) - 1
+	if trim <= 0 || trim > len(dh.entryStream) {
+		return
+	}
+	copy(dh.entryStream, dh.entryStream[trim:])
+	for i := len(dh.entryStream) - trim; i < len(dh.entryStream); i++ {
+		dh.entryStream[i] = nil
+	}
+	dh.entryStream = dh.entryStream[:len(dh.entryStream)-trim]
+	dh.entryStreamOffset += uint64(trim)
+}
+
 type DirectoryHandleToInode struct {
 	sync.Mutex
 	dir2inode map[DirectoryHandleId]*DirectoryHandle
@@ -251,25 +271,17 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out DirEntrySink, isPlusMode
 
 	var lastEntryName string
 
+	// Both the cached and the direct walk page through the same stream, and a
+	// directory read through is precisely one too big to hold, so drop the
+	// consumed head before either of them appends to it.
+	dh.dropConsumed(input.Offset)
+
 	if wfs.inodeToPath.ShouldReadDirectoryDirect(dirPath) {
 		return wfs.readDirectoryDirect(input, out, dh, dirPath, processEachEntryFn)
 	}
 
 	// Read from cache first, then load next batch if needed
 	if input.Offset >= dh.entryStreamOffset {
-		// Drop what the client has walked past. Offsets are indexes into the
-		// stream from entryStreamOffset, so advancing the two together keeps
-		// them lined up; one entry is kept back because the next batch resumes
-		// from the name immediately before the offset.
-		if trim := int(input.Offset-dh.entryStreamOffset) - 1; trim > 0 && trim <= len(dh.entryStream) {
-			copy(dh.entryStream, dh.entryStream[trim:])
-			for i := len(dh.entryStream) - trim; i < len(dh.entryStream); i++ {
-				dh.entryStream[i] = nil
-			}
-			dh.entryStream = dh.entryStream[:len(dh.entryStream)-trim]
-			dh.entryStreamOffset += uint64(trim)
-		}
-
 		// Handle case: new handle with non-zero offset but empty cache
 		// This happens when NFS-Ganesha opens multiple directory handles
 		if len(dh.entryStream) == 0 && input.Offset > dh.entryStreamOffset {
