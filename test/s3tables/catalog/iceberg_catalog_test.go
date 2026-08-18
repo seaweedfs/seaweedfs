@@ -62,6 +62,7 @@ type TestEnvironment struct {
 	s3Port          int
 	s3GrpcPort      int
 	icebergPort     int
+	lancePort       int
 	masterPort      int
 	masterGrpcPort  int
 	filerPort       int
@@ -105,9 +106,9 @@ func newTestEnvironmentForMain() (*TestEnvironment, error) {
 		return nil, fmt.Errorf("create temp dir: %w", err)
 	}
 
-	// Allocate 9 unique ports atomically: s3, iceberg, s3Grpc, master, masterGrpc,
-	// filer, filerGrpc, volume, volumeGrpc
-	ports, err := testutil.AllocatePorts(9)
+	// Allocate 10 unique ports atomically: s3, iceberg, s3Grpc, master, masterGrpc,
+	// filer, filerGrpc, volume, volumeGrpc, lance
+	ports, err := testutil.AllocatePorts(10)
 	if err != nil {
 		return nil, fmt.Errorf("allocate ports: %w", err)
 	}
@@ -125,6 +126,7 @@ func newTestEnvironmentForMain() (*TestEnvironment, error) {
 		filerGrpcPort:   ports[6],
 		volumePort:      ports[7],
 		volumeGrpcPort:  ports[8],
+		lancePort:       ports[9],
 		dockerAvailable: testutil.HasDocker(),
 	}, nil
 }
@@ -155,6 +157,10 @@ func (env *TestEnvironment) startSeaweedFSForMain() error {
 		"-s3.port", fmt.Sprintf("%d", env.s3Port),
 		"-s3.port.grpc", fmt.Sprintf("%d", env.s3GrpcPort),
 		"-s3.port.iceberg", fmt.Sprintf("%d", env.icebergPort),
+		"-s3.port.lance", fmt.Sprintf("%d", env.lancePort),
+		// The Lance tests cover the external manifest store, which is off by
+		// default; the flag only affects the Lance surface.
+		"-s3.lance.managedVersioning",
 		"-ip.bind", "0.0.0.0",
 		"-dir", env.dataDir,
 	)
@@ -209,6 +215,11 @@ func (env *TestEnvironment) waitForService(url string, timeout time.Duration) bo
 // IcebergURL returns the Iceberg REST Catalog URL
 func (env *TestEnvironment) IcebergURL() string {
 	return fmt.Sprintf("http://127.0.0.1:%d", env.icebergPort)
+}
+
+// LanceURL returns the Lance Namespace server URL
+func (env *TestEnvironment) LanceURL() string {
+	return fmt.Sprintf("http://127.0.0.1:%d", env.lancePort)
 }
 
 // TestIcebergConfig tests the /v1/config endpoint
