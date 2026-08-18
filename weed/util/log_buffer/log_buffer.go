@@ -942,13 +942,11 @@ func (logBuffer *LogBuffer) GetEarliestPosition() MessagePosition {
 }
 
 // FlushedThroughTsNs reports the timestamp through which this buffer's data
-// is durably on disk: when nothing added is pending a flush, everything ever
-// added is flushed, so the buffer is flush-complete through "now" (a later
-// append is bumped monotonically past the buffer head); otherwise it is
-// complete through the last flushed window's stop time. The claim only
-// covers entries that have reached the buffer - a caller whose events are
-// timestamped before the append must bound it by its own in-flight floor
-// (see Filer.LocalFlushedThroughTsNs).
+// is durably on disk: "now" when nothing is pending a flush (a later append
+// is bumped past the head), otherwise the last flushed window's stop time.
+// Covers only entries that reached the buffer - callers stamping timestamps
+// before the append must also bound by their in-flight floor (see
+// Filer.LocalFlushedThroughTsNs).
 func (logBuffer *LogBuffer) FlushedThroughTsNs(nowNs int64) int64 {
 	flushed := logBuffer.lastFlushTsNs.Load()
 	if logBuffer.LastTsNs.Load() <= flushed {

@@ -662,7 +662,7 @@ message SubscribeMetadataResponse {
     int64 ts_ns = 3;
     repeated SubscribeMetadataResponse events = 4; // batch of additional events (backlog catch-up)
     repeated LogFileChunkRef log_file_refs = 5;    // log file chunk refs for client direct-read
-    int64 flushed_ts_ns = 6; // server's local log-buffer flush watermark: everything at or below it is on disk. Lets a peer aggregator bound disk reads to flush-complete data.
+    int64 flushed_ts_ns = 6; // local log-buffer flush watermark: everything at or below it is on disk
 }
 message ListMetadataSubscribersRequest {
     repeated string client_types = 1; // optional filter by client type, e.g. "mount"; empty = all

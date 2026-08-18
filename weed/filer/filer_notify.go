@@ -57,11 +57,8 @@ func (f *Filer) notifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry
 	}
 
 	event := f.newMetadataEvent(oldEntry, newEntry, deleteChunks, isFromOtherCluster, signatures)
-	// Clear the in-flight stamp once the event has been through logMetaEvent
-	// (deferred: it must outlive the buffer append below). Deliberately also
-	// clears when the append FAILS: the event is then dropped from the change
-	// stream entirely (logMetaEvent logs it loudly), so no watermark should
-	// keep waiting for it - see the metaLogInflight type comment.
+	// Clear the stamp after the buffer append below - deliberately also on
+	// append failure (see the metaLogInflight comment).
 	defer f.metaLogInflight.done(event.TsNs)
 	eventNotification := event.EventNotification
 
@@ -83,34 +80,24 @@ func (f *Filer) notifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry
 	return event
 }
 
-// metaLogInflight tracks metadata events that have been stamped but not yet
-// appended to the local log buffer. The stamp and the append are separated by
-// notification work that can block (external queue, sinks), and a flush
-// watermark that ignored the window would assert durability for timestamps
-// still on their way into the buffer - a peer bounding its subscribers'
-// persisted-log reads by that watermark would then advance past them.
-// Stamping happens under the same lock the reader takes, so an event either
-// shows up here or (once appended, where the buffer bumps it monotonically)
-// in the buffer's own accounting - never in neither.
+// metaLogInflight tracks events stamped but not yet appended to the local
+// log buffer - the two are separated by notification work that can block,
+// and a claim ignoring that window would assert durability or delivery for
+// timestamps still on their way in. Stamping shares the reader's lock, so an
+// event is always visible here or (bumped monotonically) in the buffer.
 //
-// An event whose append FAILS (marshal error, buffer error) also clears its
-// stamp: it is dropped from the change stream entirely (a pre-existing
-// defect of the append path, loudly logged there), so it will never arrive
-// and no watermark should wait for it - keeping the stamp would pin this
-// filer's claims forever and permanently degrade every aggregated
-// subscriber to the settled-horizon escape.
+// An event whose append fails also clears its stamp: it is dropped from the
+// change stream entirely (loudly logged there), and a watermark waiting for
+// it would pin this filer's claims forever.
 type metaLogInflight struct {
 	sync.Mutex
 	stamped     map[int64]int
 	lastStampNs int64
 }
 
-// stamp assigns the event timestamp and registers it as in flight. Stamps are
-// forced monotonic against the registry's own history, so a wall-clock step
-// backwards cannot slip a new stamp under an already-sampled floor. (The
-// claims built on these stamps still share the meta log's global assumption
-// that wall-clock time moves forward across processes; cursors, settled
-// horizons and log file names are all wall-clock based.)
+// stamp assigns the event timestamp and registers it as in flight. Stamps
+// are monotonic against the registry's own history, so a wall-clock step
+// backwards cannot slip a new stamp under an already-sampled floor.
 func (t *metaLogInflight) stamp() int64 {
 	t.Lock()
 	defer t.Unlock()
@@ -150,14 +137,11 @@ func (t *metaLogInflight) minTsNs() int64 {
 	return min
 }
 
-// LocalFlushedThroughTsNs reports the timestamp through which this filer's
-// local meta log is durably on disk: everything at or below it has been
-// appended and flushed, and nothing still in flight can land at or below it.
-// The in-flight floor is read before the buffer claim: an event stamped after
-// that read gets a timestamp past nowNs (registry-monotonic stamps; across
-// goroutines this leans on the wall clock not stepping backwards, the same
-// assumption every meta-log cursor already makes), so the claim never covers
-// it either way.
+// LocalFlushedThroughTsNs reports the timestamp through which the local meta
+// log is durably on disk: everything at or below it is appended and flushed,
+// and nothing in flight can land at or below it. The in-flight floor is read
+// before the buffer claim, so an event stamped later lands past nowNs and is
+// never covered either way.
 func (f *Filer) LocalFlushedThroughTsNs(nowNs int64) int64 {
 	inflightTsNs := f.metaLogInflight.minTsNs()
 	claim := f.LocalMetaLogBuffer.FlushedThroughTsNs(nowNs)
@@ -168,11 +152,9 @@ func (f *Filer) LocalFlushedThroughTsNs(nowNs int64) int64 {
 }
 
 // LocalDeliveredThroughTsNs caps a delivery-freshness claim (an idle
-// heartbeat's timestamp) by the oldest in-flight stamp: an event stamped but
-// not yet appended has not been sent to any subscriber, so the stream must
-// not claim delivery-completeness past it - a peer aggregator turns that
-// claim into its delivery low-watermark, and an overclaim there lets
-// aggregated subscribers advance past the event before it ever arrives.
+// heartbeat's timestamp) by the oldest in-flight stamp: a stamped-but-
+// unappended event has not been streamed to anyone, and a peer aggregator
+// turns the claim into its delivery low-watermark.
 func (f *Filer) LocalDeliveredThroughTsNs(nowNs int64) int64 {
 	claim := nowNs
 	if inflightTsNs := f.metaLogInflight.minTsNs(); inflightTsNs > 0 && inflightTsNs-1 < claim {
@@ -181,14 +163,12 @@ func (f *Filer) LocalDeliveredThroughTsNs(nowNs int64) int64 {
 	return claim
 }
 
-// StampMetaLogInflightForTest registers an in-flight stamp so tests in other
-// packages can exercise the delivery/flush claim caps. Not for production use.
+// StampMetaLogInflightForTest and DoneMetaLogInflightForTest let tests in
+// other packages exercise the claim caps. Not for production use.
 func (f *Filer) StampMetaLogInflightForTest() int64 {
 	return f.metaLogInflight.stamp()
 }
 
-// DoneMetaLogInflightForTest clears a stamp taken via
-// StampMetaLogInflightForTest.
 func (f *Filer) DoneMetaLogInflightForTest(tsNs int64) {
 	f.metaLogInflight.done(tsNs)
 }
@@ -219,8 +199,7 @@ func (f *Filer) newMetadataEvent(oldEntry, newEntry *Entry, deleteChunks, isFrom
 			IsFromOtherCluster: isFromOtherCluster,
 			Signatures:         signatures,
 		},
-		// The stamp registers the event as in flight until it lands in the
-		// local log buffer (see metaLogInflight); NotifyUpdateEvent clears it.
+		// In flight until appended to the local log buffer (see metaLogInflight).
 		TsNs: f.metaLogInflight.stamp(),
 	}
 }
