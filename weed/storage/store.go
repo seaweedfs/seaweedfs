@@ -80,7 +80,7 @@ type Store struct {
 	DeletedVolumesChan  chan *master_pb.VolumeShortInformationMessage
 	NewEcShardsChan     chan *master_pb.VolumeEcShardInformationMessage
 	DeletedEcShardsChan chan *master_pb.VolumeEcShardInformationMessage
-	isStopping          bool
+	isStopping          atomic.Bool
 	volumeReport        volumeReportState
 }
 
@@ -732,14 +732,14 @@ func (s *Store) deleteExpiredEcVolumes() (ecShards, deleted []*master_pb.VolumeE
 }
 
 func (s *Store) SetStopping() {
-	s.isStopping = true
+	s.isStopping.Store(true)
 	for _, location := range s.Locations {
 		location.SetStopping()
 	}
 }
 
 func (s *Store) IsStopping() bool {
-	return s.isStopping
+	return s.isStopping.Load()
 }
 
 func (s *Store) LoadNewVolumes() {
@@ -760,7 +760,7 @@ func (s *Store) WriteVolumeNeedle(i needle.VolumeId, n *needle.Needle, checkCook
 			err = fmt.Errorf("volume %d is read only", i)
 			return
 		}
-		_, _, isUnchanged, err = v.writeNeedle2(n, checkCookie, fsync, s.isStopping)
+		_, _, isUnchanged, err = v.writeNeedle2(n, checkCookie, fsync, s.isStopping.Load())
 		return
 	}
 	glog.V(0).Infoln("volume", i, "not found!")
