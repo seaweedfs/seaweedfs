@@ -142,7 +142,7 @@ func TestScrubVolumeData_IgnoresOffset0Tombstone(t *testing.T) {
 	}
 	defer v.Close()
 
-	if _, _, _, err := v.writeNeedle2(newRandomNeedle(1), true, false); err != nil {
+	if _, _, _, err := v.writeNeedle2(newRandomNeedle(1), true, false, false); err != nil {
 		t.Fatalf("write needle: %v", err)
 	}
 	if err := v.DataBackend.Sync(); err != nil {
@@ -197,7 +197,7 @@ func TestCheckVolumeDataIntegrityWithDeletionTombstone(t *testing.T) {
 
 	for i := 1; i <= 3; i++ {
 		n := newRandomNeedle(uint64(i))
-		if _, _, _, err := v.writeNeedle2(n, true, false); err != nil {
+		if _, _, _, err := v.writeNeedle2(n, true, false, false); err != nil {
 			t.Fatalf("write needle %d: %v", i, err)
 		}
 	}
@@ -251,7 +251,7 @@ func TestCheckVolumeDataIntegritySortedIndex(t *testing.T) {
 	// Write keys in descending order so the highest key lands at the lowest
 	// .dat offset; the last-written needle (lowest key) sits at the tail.
 	for _, id := range []uint64{30, 20, 10} {
-		if _, _, _, err := v.writeNeedle2(newRandomNeedle(id), true, false); err != nil {
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(id), true, false, false); err != nil {
 			t.Fatalf("write needle %d: %v", id, err)
 		}
 	}
@@ -291,7 +291,7 @@ func TestCheckVolumeDataIntegrityVerifiesDeletionTail(t *testing.T) {
 	defer v.Close()
 
 	for i := 1; i <= 3; i++ {
-		if _, _, _, err := v.writeNeedle2(newRandomNeedle(uint64(i)), true, false); err != nil {
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(uint64(i)), true, false, false); err != nil {
 			t.Fatalf("write needle %d: %v", i, err)
 		}
 	}
@@ -341,7 +341,7 @@ func TestVolumeLoadStaysWritableWithKeySortedIndex(t *testing.T) {
 	}
 	wanted := newRandomNeedle(10)
 	for _, n := range []*needle.Needle{newRandomNeedle(30), newRandomNeedle(20), wanted} {
-		if _, _, _, err := v.writeNeedle2(n, true, false); err != nil {
+		if _, _, _, err := v.writeNeedle2(n, true, false, false); err != nil {
 			t.Fatalf("write needle %d: %v", n.Id, err)
 		}
 	}
@@ -369,7 +369,7 @@ func TestVolumeLoadStaysWritableWithKeySortedIndex(t *testing.T) {
 	if _, err := reloaded.readNeedle(rn, nil, nil); err != nil {
 		t.Fatalf("read surviving needle after reload: %v", err)
 	}
-	if _, _, _, err := reloaded.writeNeedle2(newRandomNeedle(40), true, false); err != nil {
+	if _, _, _, err := reloaded.writeNeedle2(newRandomNeedle(40), true, false, false); err != nil {
 		t.Fatalf("write after reload should succeed: %v", err)
 	}
 }
@@ -431,7 +431,7 @@ func TestMaxNeedleEnd(t *testing.T) {
 	// A handful of healthy needles establishes a baseline .dat/.idx.
 	for i := 1; i <= 4; i++ {
 		n := newRandomNeedle(uint64(i))
-		if _, _, _, err := v.writeNeedle2(n, true, false); err != nil {
+		if _, _, _, err := v.writeNeedle2(n, true, false, false); err != nil {
 			t.Fatalf("write needle %d: %v", i, err)
 		}
 	}

@@ -93,7 +93,7 @@ func TestConsolidateVolumeIndexMovesIdxToIdxDir(t *testing.T) {
 	require.NotNil(t, mounted)
 	n := &needle.Needle{Id: types.Uint64ToNeedleId(42), Data: []byte("payload-across-relocate")}
 	n.Checksum = needle.NewCRC(n.Data)
-	_, _, _, err = mounted.writeNeedle2(n, true, false)
+	_, _, _, err = mounted.writeNeedle2(n, true, false, false)
 	require.NoError(t, err)
 
 	require.NoError(t, store.ConsolidateVolumeIndex(vid))

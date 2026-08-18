@@ -186,7 +186,7 @@ func tierUpVolumeLive(t *testing.T, dir string, vid needle.VolumeId, b *localDir
 	require.NoError(t, err)
 
 	for i := 1; i <= 5; i++ {
-		_, _, _, err := v.writeNeedle2(newRandomNeedle(uint64(i)), true, false)
+		_, _, _, err := v.writeNeedle2(newRandomNeedle(uint64(i)), true, false, false)
 		require.NoError(t, err)
 	}
 
