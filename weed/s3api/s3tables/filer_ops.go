@@ -3,6 +3,7 @@ package s3tables
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -245,6 +246,31 @@ func (h *S3TablesHandler) getExtendedAttribute(ctx context.Context, client filer
 	}
 
 	return data, nil
+}
+
+// loadNamespaceMetadata resolves a namespace to its metadata. A directory that
+// carries no namespace metadata is not a namespace, so a missing attribute
+// reports the same absence as a missing entry and every caller tests one
+// condition instead of forgetting the second.
+func (h *S3TablesHandler) loadNamespaceMetadata(ctx context.Context, filerClient FilerClient, bucketName, namespaceName string) (*namespaceMetadata, error) {
+	var metadata namespaceMetadata
+	err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		data, err := h.getExtendedAttribute(ctx, client, GetNamespacePath(bucketName, namespaceName), ExtendedKeyMetadata)
+		if err != nil {
+			if errors.Is(err, ErrAttributeNotFound) {
+				return filer_pb.ErrNotFound
+			}
+			return err
+		}
+		if err := json.Unmarshal(data, &metadata); err != nil {
+			return fmt.Errorf("failed to unmarshal namespace metadata: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &metadata, nil
 }
 
 // lookupEntry returns the filer entry at the given path.

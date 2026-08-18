@@ -65,18 +65,7 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 
 	// Check if namespace exists
 	namespacePath := GetNamespacePath(bucketName, namespaceName)
-	var namespaceMetadata namespaceMetadata
-	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata)
-		if err != nil {
-			return err
-		}
-		if err := json.Unmarshal(data, &namespaceMetadata); err != nil {
-			return fmt.Errorf("failed to unmarshal namespace metadata: %w", err)
-		}
-		return nil
-	})
-
+	namespaceMetadata, err := h.loadNamespaceMetadata(r.Context(), filerClient, bucketName, namespaceName)
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", namespaceName))
@@ -365,17 +354,7 @@ func (h *S3TablesHandler) handleRegisterTable(w http.ResponseWriter, r *http.Req
 
 	// Namespace must exist.
 	namespacePath := GetNamespacePath(bucketName, namespaceName)
-	var namespaceMetadata namespaceMetadata
-	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata)
-		if err != nil {
-			return err
-		}
-		if err := json.Unmarshal(data, &namespaceMetadata); err != nil {
-			return fmt.Errorf("failed to unmarshal namespace metadata: %w", err)
-		}
-		return nil
-	})
+	namespaceMetadata, err := h.loadNamespaceMetadata(r.Context(), filerClient, bucketName, namespaceName)
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", namespaceName))

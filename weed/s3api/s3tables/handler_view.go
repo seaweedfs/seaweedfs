@@ -52,14 +52,7 @@ func (h *S3TablesHandler) handleCreateView(w http.ResponseWriter, r *http.Reques
 
 	// Check if namespace exists
 	namespacePath := GetNamespacePath(bucketName, namespaceName)
-	var namespaceMetadata namespaceMetadata
-	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata)
-		if err != nil {
-			return err
-		}
-		return json.Unmarshal(data, &namespaceMetadata)
-	})
+	namespaceMetadata, err := h.loadNamespaceMetadata(r.Context(), filerClient, bucketName, namespaceName)
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", namespaceName))
