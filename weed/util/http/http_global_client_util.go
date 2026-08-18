@@ -544,7 +544,44 @@ func (r *CountingReader) Read(p []byte) (n int, err error) {
 	return n, err
 }
 
-func RetriedFetchChunkData(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, fileId string) (n int, err error) {
+// refreshedUrls asks for a fresh location list and reports whether it is worth
+// retrying on: a list that comes back empty, or identical to the one that just
+// failed everywhere, says the locations were never the problem.
+func refreshedUrls(ctx context.Context, refreshUrls RefreshUrlsFunc, current []string, fileId string) ([]string, bool) {
+	if refreshUrls == nil {
+		return nil, false
+	}
+	fresh := refreshUrls()
+	if len(fresh) == 0 || sameUrls(current, fresh) {
+		return nil, false
+	}
+	glog.V(0).InfofCtx(ctx, "chunk %s failed on every known location, retrying on %d fresh ones", fileId, len(fresh))
+	return fresh, true
+}
+
+func sameUrls(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// RefreshUrlsFunc supplies a fresh location list for a chunk. The retry loops
+// call it once, after every location in the list they were given has failed,
+// which is the point at which the list itself is the likely problem. Returning
+// nil or the same list leaves the caller on the original locations.
+type RefreshUrlsFunc func() []string
+
+// RetriedFetchChunkData reads a chunk, trying every location before backing off
+// and trying them again. refreshUrls may be nil; when it is not, a pass in which
+// every location failed is treated as a stale list rather than a slow cluster,
+// and the fresh list is tried immediately instead of after the next backoff.
+func RetriedFetchChunkData(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, fileId string, refreshUrls RefreshUrlsFunc) (n int, err error) {
 
 	loadJwtConfigOnce.Do(loadJwtConfig)
 	var jwt security.EncodedJwt
@@ -555,7 +592,7 @@ func RetriedFetchChunkData(ctx context.Context, buffer []byte, urlStrings []stri
 	// For unencrypted, non-gzipped full chunks, use direct buffer read
 	// This avoids the 64KB intermediate buffer and callback overhead
 	if cipherKey == nil && !isGzipped && isFullChunk {
-		return retriedFetchChunkDataDirect(ctx, buffer, urlStrings, string(jwt))
+		return retriedFetchChunkDataDirect(ctx, buffer, urlStrings, string(jwt), fileId, refreshUrls)
 	}
 
 	var shouldRetry bool
@@ -604,6 +641,11 @@ func RetriedFetchChunkData(ctx context.Context, buffer []byte, urlStrings []stri
 			}
 		}
 		if err != nil && shouldRetry {
+			if fresh, ok := refreshedUrls(ctx, refreshUrls, urlStrings, fileId); ok {
+				urlStrings, refreshUrls = fresh, nil
+				continue
+			}
+			refreshUrls = nil
 			glog.V(0).InfofCtx(ctx, "retry reading in %v", waitTime)
 			// Sleep with proper context cancellation and timer cleanup
 			timer := time.NewTimer(waitTime)
@@ -626,7 +668,7 @@ func RetriedFetchChunkData(ctx context.Context, buffer []byte, urlStrings []stri
 // retriedFetchChunkDataDirect reads chunk data directly into the buffer without
 // intermediate buffering. This reduces memory copies and improves throughput
 // for large chunk reads.
-func retriedFetchChunkDataDirect(ctx context.Context, buffer []byte, urlStrings []string, jwt string) (n int, err error) {
+func retriedFetchChunkDataDirect(ctx context.Context, buffer []byte, urlStrings []string, jwt, fileId string, refreshUrls RefreshUrlsFunc) (n int, err error) {
 	var shouldRetry bool
 
 	for waitTime := time.Second; waitTime < util.RetryWaitTime; waitTime += waitTime / 2 {
@@ -654,6 +696,11 @@ func retriedFetchChunkDataDirect(ctx context.Context, buffer []byte, urlStrings 
 		}
 
 		if err != nil && shouldRetry {
+			if fresh, ok := refreshedUrls(ctx, refreshUrls, urlStrings, fileId); ok {
+				urlStrings, refreshUrls = fresh, nil
+				continue
+			}
+			refreshUrls = nil
 			glog.V(0).InfofCtx(ctx, "retry reading in %v", waitTime)
 			timer := time.NewTimer(waitTime)
 			select {

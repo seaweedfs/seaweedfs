@@ -18,7 +18,7 @@ type CacheInvalidator interface {
 	InvalidateCache(fileId string)
 }
 
-type fetchChunkDataFnType func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, fileId string) (n int, err error)
+type fetchChunkDataFnType func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, fileId string, refreshUrls util_http.RefreshUrlsFunc) (n int, err error)
 
 type ReaderCache struct {
 	chunkCache       chunk_cache.ChunkCache
@@ -270,12 +270,31 @@ func (s *SingleChunkCacher) fetchChunkData(ctx context.Context, urlStrings []str
 	// Allocate buffer and download without holding the lock.
 	// This allows multiple downloads to proceed in parallel.
 	data := mem.Allocate(s.chunkSize)
-	_, fetchErr := s.parent.fetchChunkDataFn(ctx, data, urlStrings, s.cipherKey, s.isGzipped, true, 0, s.chunkFileId)
+	_, fetchErr := s.parent.fetchChunkDataFn(ctx, data, urlStrings, s.cipherKey, s.isGzipped, true, 0, s.chunkFileId, s.refreshUrls(ctx))
 	if fetchErr != nil {
 		mem.Free(data)
 		return nil, fetchErr
 	}
 	return data, nil
+}
+
+// refreshUrls lets the fetch loop recover inside a single read: when every
+// cached location has failed, drop the cached entry and look the chunk up
+// again, rather than spending the whole backoff ladder on locations that are
+// gone. Nil when there is nothing to invalidate against.
+func (s *SingleChunkCacher) refreshUrls(ctx context.Context) util_http.RefreshUrlsFunc {
+	if s.parent.cacheInvalidator == nil || s.parent.lookupFileIdFn == nil {
+		return nil
+	}
+	return func() []string {
+		s.parent.cacheInvalidator.InvalidateCache(s.chunkFileId)
+		urls, err := s.parent.lookupFileIdFn(ctx, s.chunkFileId)
+		if err != nil {
+			glog.V(0).InfofCtx(ctx, "re-lookup chunk %s: %v", s.chunkFileId, err)
+			return nil
+		}
+		return urls
+	}
 }
 
 func (s *SingleChunkCacher) retryFetchAfterCacheInvalidation(ctx context.Context, oldUrlStrings []string, originalErr error) ([]byte, error) {
