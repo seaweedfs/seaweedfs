@@ -20,6 +20,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -89,6 +90,7 @@ type WebDavFileSystem struct {
 	option      *WebDavOption
 	chunkCache  *chunk_cache.TieredChunkCache
 	readerCache *filer.ReaderCache
+	filerClient *wdclient.FilerClient
 	signature   int32
 }
 
@@ -140,7 +142,13 @@ func NewWebDavFileSystem(option *WebDavOption) (webdav.FileSystem, error) {
 		chunkCache: chunkCache,
 		signature:  util.RandomInt32(),
 	}
-	t.readerCache = filer.NewReaderCache(32, chunkCache, filer.LookupFn(t), nil)
+	// FilerClient rather than filer.LookupFn: its cache is bounded, which the
+	// LookupFn doc asks long-running processes to prefer, and it can invalidate
+	// a volume's locations, so a read that failed against every cached location
+	// looks the volume up again instead of retrying a server that has moved or
+	// died.
+	t.filerClient = wdclient.NewFilerClient([]pb.ServerAddress{option.Filer}, option.GrpcDialOption, "")
+	t.readerCache = filer.NewReaderCache(32, chunkCache, t.filerClient.GetLookupFileIdFunction(), t.filerClient)
 	return t, nil
 }
 
@@ -555,7 +563,7 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 		return 0, io.EOF
 	}
 	if f.visibleIntervals == nil {
-		f.visibleIntervals, _ = filer.NonOverlappingVisibleIntervals(f.ctx, filer.LookupFn(f.fs), f.entry.GetChunks(), 0, fileSize)
+		f.visibleIntervals, _ = filer.NonOverlappingVisibleIntervals(f.ctx, f.fs.filerClient.GetLookupFileIdFunction(), f.entry.GetChunks(), 0, fileSize)
 		f.reader = nil
 	}
 	if f.reader == nil {
