@@ -279,6 +279,25 @@ namespaces, so full directory-catalog fidelity was never on offer anyway. We are
 server-backed catalog; the human-readable prefix layout is worth more than partial V1
 lookalike behaviour.
 
+## The table bucket was not a neutral container
+
+This design assumed a table bucket is a place to put a table's files. It is
+not: `validateTableBucketObjectPath` runs on every S3 write into one and
+validated the path against Iceberg's layout, so a Lance client got 403 on
+`data/*.lance`, on `_versions/`, and on `_transactions/` — a directory Lance
+writes that neither the spec documentation nor this design anticipated. Nothing
+about the catalog worked end to end until that changed.
+
+The layout guard now admits the union of what the supported formats write, and
+treats any underscore-prefixed top-level directory as belonging to the format,
+checking only that the path stays inside the table. Enumerating Lance's
+internal directories by name is exactly the mistake that missed
+`_transactions`. Iceberg writes none of them, so it loses nothing.
+
+Found by pointing the real Python client at a running gateway, not by reading
+the spec. Worth remembering for the next format: the premise to check first is
+whether the storage layer will accept its files at all.
+
 ## Table lifecycle
 
 Lance has three table states, and the spec pins them to marker files:
@@ -519,6 +538,12 @@ a live gateway. Three things that suite must cover and unit tests cannot:
   directory-catalog client rooted at the namespace prefix;
 - concurrent writers do not lose a commit, which is the phase-2 acceptance test and the
   thing that justifies the external manifest store.
+
+Phase 1 is validated: `lance_namespace` 0.11.1 with `impl=rest` drives the namespace,
+`lance.write_dataset` writes to the vended location with the vended `storage_options`, and
+the rows read back. Note that this client version drops `check_declared` and
+`include_declared` on the wire, so `is_only_declared` reads null through it however the
+server behaves.
 
 One more that belongs in the Iceberg suite, not this one: a Lance dataset registered through
 the Iceberg adapter must survive a full maintenance pass. Reading the code, that test should
