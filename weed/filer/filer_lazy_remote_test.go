@@ -300,6 +300,19 @@ func registerStubMaker(t *testing.T, storageType string, client remote_storage.R
 	}
 }
 
+// putConfigEntry stores a filer entry whose content is a serialized configuration.
+func putConfigEntry(store *stubFilerStore, path string, content []byte) {
+	store.entries[path] = &Entry{
+		FullPath: util.FullPath(path),
+		Attr: Attr{
+			Mtime:  time.Unix(1700000000, 0),
+			Crtime: time.Unix(1700000000, 0),
+			Mode:   0644,
+		},
+		Content: content,
+	}
+}
+
 // --- tests ---
 
 func TestMaybeLazyFetchFromRemote_HitsRemoteAndPersists(t *testing.T) {
@@ -577,6 +590,57 @@ func TestDeleteEntryMetaAndData_IsFromOtherClusterSkipsRemoteDelete(t *testing.T
 	_, findErr := store.FindEntry(context.Background(), filePath)
 	require.ErrorIs(t, findErr, filer_pb.ErrNotFound)
 	// Remote should NOT have been called — the originating filer handles that
+	require.Len(t, stub.deleteCalls, 0)
+	require.Len(t, stub.removeCalls, 0)
+}
+
+func TestDeleteEntryMetaAndData_UnmountedDirectorySkipsRemoteDelete(t *testing.T) {
+	const storageType = "stub_lazy_unmounted"
+	stub := &stubRemoteClient{}
+	defer registerStubMaker(t, storageType, stub)()
+
+	store := newStubFilerStore()
+	confContent, err := proto.Marshal(&remote_pb.RemoteConf{Name: "cloud1", Type: storageType})
+	require.NoError(t, err)
+	putConfigEntry(store, DirectoryEtcRemote+"/cloud1"+REMOTE_STORAGE_CONF_SUFFIX, confContent)
+	mountedContent, err := proto.Marshal(&remote_pb.RemoteStorageMapping{
+		Mappings: map[string]*remote_pb.RemoteStorageLocation{
+			"/buckets/mybucket": {Name: "cloud1", Bucket: "mybucket", Path: "/"},
+		},
+	})
+	require.NoError(t, err)
+	putConfigEntry(store, DirectoryEtcRemote+"/"+REMOTE_STORAGE_MOUNT_FILE, mountedContent)
+
+	filePath := util.FullPath("/buckets/mybucket/cached.txt")
+	store.entries[string(filePath)] = &Entry{
+		FullPath: filePath,
+		Attr: Attr{
+			Mtime:    time.Unix(1700000000, 0),
+			Crtime:   time.Unix(1700000000, 0),
+			Mode:     0644,
+			FileSize: 64,
+		},
+		Remote: &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 64},
+	}
+
+	f := newTestFiler(t, store, NewFilerRemoteStorage())
+	f.LoadRemoteStorageConfAndMapping()
+	_, remoteLoc := f.RemoteStorage.FindMountDirectory(filePath)
+	require.NotNil(t, remoteLoc)
+
+	unmountedContent, err := proto.Marshal(&remote_pb.RemoteStorageMapping{})
+	require.NoError(t, err)
+	putConfigEntry(store, DirectoryEtcRemote+"/"+REMOTE_STORAGE_MOUNT_FILE, unmountedContent)
+	f.onMetadataChangeEvent(&filer_pb.SubscribeMetadataResponse{
+		Directory: DirectoryEtcRemote,
+		EventNotification: &filer_pb.EventNotification{
+			NewEntry: &filer_pb.Entry{Name: REMOTE_STORAGE_MOUNT_FILE, Content: unmountedContent},
+		},
+	})
+	_, remoteLoc = f.RemoteStorage.FindMountDirectory(filePath)
+	require.Nil(t, remoteLoc)
+
+	require.NoError(t, f.DeleteEntryMetaAndData(context.Background(), filePath, false, false, true, false, nil, 0))
 	require.Len(t, stub.deleteCalls, 0)
 	require.Len(t, stub.removeCalls, 0)
 }

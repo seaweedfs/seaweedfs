@@ -136,5 +136,11 @@ func (f *Filer) LoadRemoteStorageConfAndMapping() {
 	}
 }
 func (f *Filer) maybeReloadRemoteStorageConfigurationAndMapping(event *filer_pb.SubscribeMetadataResponse) {
-	// FIXME add reloading
+	if !filer_pb.MetadataEventTouchesDirectory(event, DirectoryEtcRemote) {
+		return
+	}
+
+	// a mount left behind after remote.unmount would still send deletes to a
+	// remote the filer no longer owns
+	f.LoadRemoteStorageConfAndMapping()
 }

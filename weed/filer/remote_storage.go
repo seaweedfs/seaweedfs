@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
@@ -22,6 +23,9 @@ const REMOTE_STORAGE_CONF_SUFFIX = ".conf"
 const REMOTE_STORAGE_MOUNT_FILE = "mount.mapping"
 
 type FilerRemoteStorage struct {
+	// guards rules and storageNameToConf, which are replaced wholesale
+	// whenever /etc/remote changes
+	mu                sync.RWMutex
 	rules             ptrie.Trie[*remote_pb.RemoteStorageLocation]
 	storageNameToConf map[string]*remote_pb.RemoteConf
 }
@@ -48,44 +52,62 @@ func (rs *FilerRemoteStorage) LoadRemoteStorageConfigurationsAndMapping(filer *F
 		return
 	}
 
+	// build into fresh containers so an unmounted directory disappears instead
+	// of lingering in the trie, which has no way to drop a key
+	rules := ptrie.New[*remote_pb.RemoteStorageLocation]()
+	storageNameToConf := make(map[string]*remote_pb.RemoteConf)
+
 	for _, entry := range entries {
 		if entry.Name() == REMOTE_STORAGE_MOUNT_FILE {
-			if err := rs.loadRemoteStorageMountMapping(entry.Content); err != nil {
+			if err := loadRemoteStorageMountMapping(rules, entry.Content); err != nil {
 				return err
 			}
 			continue
 		}
 		if !strings.HasSuffix(entry.Name(), REMOTE_STORAGE_CONF_SUFFIX) {
-			return nil
+			continue
 		}
 		conf := &remote_pb.RemoteConf{}
 		if err := proto.Unmarshal(entry.Content, conf); err != nil {
 			return fmt.Errorf("unmarshal %s/%s: %v", DirectoryEtcRemote, entry.Name(), err)
 		}
-		rs.storageNameToConf[conf.Name] = conf
+		storageNameToConf[conf.Name] = conf
 	}
+
+	rs.mu.Lock()
+	rs.rules, rs.storageNameToConf = rules, storageNameToConf
+	rs.mu.Unlock()
+
 	return nil
 }
 
-func (rs *FilerRemoteStorage) loadRemoteStorageMountMapping(data []byte) (err error) {
+func loadRemoteStorageMountMapping(rules ptrie.Trie[*remote_pb.RemoteStorageLocation], data []byte) (err error) {
 	mappings := &remote_pb.RemoteStorageMapping{}
 	if err := proto.Unmarshal(data, mappings); err != nil {
 		return fmt.Errorf("unmarshal %s/%s: %v", DirectoryEtcRemote, REMOTE_STORAGE_MOUNT_FILE, err)
 	}
 	for dir, storageLocation := range mappings.Mappings {
-		rs.mapDirectoryToRemoteStorage(util.FullPath(dir), storageLocation)
+		putDirectoryToRemoteStorage(rules, util.FullPath(dir), storageLocation)
 	}
 	return nil
 }
 
 func (rs *FilerRemoteStorage) mapDirectoryToRemoteStorage(dir util.FullPath, loc *remote_pb.RemoteStorageLocation) {
-	rs.rules.Put([]byte(dir+"/"), loc)
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	putDirectoryToRemoteStorage(rs.rules, dir, loc)
+}
+
+func putDirectoryToRemoteStorage(rules ptrie.Trie[*remote_pb.RemoteStorageLocation], dir util.FullPath, loc *remote_pb.RemoteStorageLocation) {
+	rules.Put([]byte(dir+"/"), loc)
 }
 
 // FindMountDirectory returns the mount directory and location for p. When multiple
 // mounts match (e.g. /buckets/b and /buckets/b/prefix), ptrie MatchPrefix visits
 // shorter prefixes first, so the last match is the longest prefix.
 func (rs *FilerRemoteStorage) FindMountDirectory(p util.FullPath) (mountDir util.FullPath, remoteLocation *remote_pb.RemoteStorageLocation) {
+	rs.mu.RLock()
+	defer rs.mu.RUnlock()
 	rs.rules.MatchPrefix([]byte(p), func(key []byte, value *remote_pb.RemoteStorageLocation) bool {
 		mountDir = util.FullPath(string(key[:len(key)-1]))
 		remoteLocation = value
@@ -95,22 +117,18 @@ func (rs *FilerRemoteStorage) FindMountDirectory(p util.FullPath) (mountDir util
 }
 
 func (rs *FilerRemoteStorage) FindRemoteStorageClient(p util.FullPath) (client remote_storage.RemoteStorageClient, remoteConf *remote_pb.RemoteConf, found bool) {
-	var storageLocation *remote_pb.RemoteStorageLocation
-	rs.rules.MatchPrefix([]byte(p), func(key []byte, value *remote_pb.RemoteStorageLocation) bool {
-		storageLocation = value
-		return true
-	})
-
+	_, storageLocation := rs.FindMountDirectory(p)
 	if storageLocation == nil {
-		found = false
-		return
+		return nil, nil, false
 	}
 
 	return rs.GetRemoteStorageClient(storageLocation.Name)
 }
 
 func (rs *FilerRemoteStorage) GetRemoteStorageClient(storageName string) (client remote_storage.RemoteStorageClient, remoteConf *remote_pb.RemoteConf, found bool) {
+	rs.mu.RLock()
 	remoteConf, found = rs.storageNameToConf[storageName]
+	rs.mu.RUnlock()
 	if !found {
 		return
 	}
