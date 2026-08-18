@@ -999,8 +999,14 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		// DeleteBucket
 		bucket.Methods(http.MethodDelete).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.DeleteBucketHandler, ACTION_DELETE_BUCKET)), "DELETE"))
 
-		// ListObjectsV1 (Legacy)
+		// ListObjectsV1 (Legacy). This is the catch-all GET on a bucket, so a
+		// subresource with no route of its own would be answered with a listing.
 		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.AuthWithPublicRead(func(w http.ResponseWriter, r *http.Request) {
+			if subresource, found := unroutedBucketSubresource(r); found {
+				glog.V(1).Infof("unimplemented bucket subresource ?%s", subresource)
+				s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
+				return
+			}
 			limitedHandler, _ := s3a.cb.Limit(s3a.ListObjectsV1Handler, ACTION_LIST)
 			limitedHandler(w, r)
 		}, ACTION_LIST), "LIST"))
