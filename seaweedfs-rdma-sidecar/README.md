@@ -61,7 +61,7 @@ This project implements a **high-performance RDMA (Remote Direct Memory Access) 
 
 ```bash
 # Required dependencies
-- Go 1.23+
+- Go 1.26+
 - Rust 1.70+
 - UCX libraries (for hardware RDMA)
 - Linux with RDMA-capable hardware (InfiniBand/RoCE)

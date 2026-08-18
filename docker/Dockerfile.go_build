@@ -1,6 +1,6 @@
 # Pin the builder to the host arch and cross-compile the (CGO-free) Go binary,
 # so arm64/arm/386 targets skip QEMU emulation of the whole compile.
-FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
 RUN apk add git g++ fuse
 RUN mkdir -p /go/src/github.com/seaweedfs/
 ARG BRANCH=${BRANCH:-master}

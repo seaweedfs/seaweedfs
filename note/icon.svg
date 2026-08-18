@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Ebene_2" data-name="Ebene 2" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 512 512">
+  <defs>
+    <style>
+      .cls-1 {
+        fill: url(#Unbenannter_Verlauf_20);
+      }
+
+      .cls-2 {
+        fill: url(#Unbenannter_Verlauf_32);
+      }
+
+      .cls-3 {
+        fill: url(#Unbenannter_Verlauf_42);
+      }
+
+      .cls-4 {
+        fill: #fff;
+      }
+
+      .cls-5 {
+        fill: url(#Unbenannter_Verlauf_12);
+      }
+
+      .cls-6 {
+        fill: url(#Unbenannter_Verlauf_28);
+      }
+    </style>
+    <linearGradient id="Unbenannter_Verlauf_12" data-name="Unbenannter Verlauf 12" x1="19.92" y1="19.92" x2="492.08" y2="492.08" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0282e9"/>
+      <stop offset=".48" stop-color="#0162bf"/>
+      <stop offset=".87" stop-color="#01469b"/>
+    </linearGradient>
+    <linearGradient id="Unbenannter_Verlauf_42" data-name="Unbenannter Verlauf 42" x1="180.67" y1="151.78" x2="234.43" y2="384.66" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#23b5e6"/>
+      <stop offset=".41" stop-color="#138bcf"/>
+      <stop offset=".86" stop-color="#0158b3"/>
+    </linearGradient>
+    <linearGradient id="Unbenannter_Verlauf_28" data-name="Unbenannter Verlauf 28" x1="275.58" y1="46.33" x2="275.58" y2="466.33" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#9fecf6"/>
+      <stop offset=".49" stop-color="#62dff2"/>
+      <stop offset="1" stop-color="#0a6cb7"/>
+    </linearGradient>
+    <linearGradient id="Unbenannter_Verlauf_20" data-name="Unbenannter Verlauf 20" x1="124.99" y1="226.28" x2="235.06" y2="462.33" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#c9f9fd"/>
+      <stop offset=".29" stop-color="#9fe7f6"/>
+      <stop offset=".93" stop-color="#36bbe5"/>
+      <stop offset="1" stop-color="#2ab6e3"/>
+    </linearGradient>
+    <linearGradient id="Unbenannter_Verlauf_32" data-name="Unbenannter Verlauf 32" x1="358.38" y1="251.34" x2="277.45" y2="473.69" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#43cbee"/>
+      <stop offset=".42" stop-color="#29a1d6"/>
+      <stop offset="1" stop-color="#0161b2"/>
+    </linearGradient>
+  </defs>
+  <g id="seaweedfs">
+    <rect id="background" class="cls-5" width="512" height="512" rx="68" ry="68"/>
+    <circle class="cls-4" cx="366.58" cy="152.44" r="31.33"/>
+    <circle class="cls-4" cx="386.81" cy="223.33" r="18.67"/>
+    <circle class="cls-4" cx="383.69" cy="288" r="9.22"/>
+    <path class="cls-3" d="M177.81,152.44s22.5,8.02,30.17,28.02c7.67,20,3.83,61.31,9.5,81.98s19.33,29,21,45.67-1.67,76-1.67,76c0,0-24-31.89-29.5-64s-21.53-41.06-24.6-65.72c-3.07-24.67.77-32.61,2.1-54.61s-1.84-35.72-7-47.33Z"/>
+    <path class="cls-6" d="M288.58,46.33c-14.56,7.67-42.22,35.22-42.22,79.11s23.11,54.22,23.11,94.22-38.89,48.11-38.89,95.56,21.56,66,21.56,95.56-11.11,55.56-11.11,55.56c0,0,26.97-17.72,33.33-60s-6.89-54.44,7.22-81.78,39-48.22,39-92.89-36.78-89.22-40.89-108.44-2.33-43.22,8.89-76.89Z"/>
+    <path class="cls-1" d="M120.58,228.33s31.72,14.27,41.55,36.5c9.83,22.22,3.45,40.17,17.45,61.17s51,41,56,73.33-7.67,66.33-7.67,66.33c0,0-5.67-59-30.33-73.33s-46.33-35.67-54.33-59-1.33-50.67-5.33-69c-4-18.33-7.33-23.67-17.33-36Z"/>
+    <path class="cls-2" d="M352.25,249.11c-9,5.67-18.87,17.85-21.71,31.2s2.94,19.57-7.06,41.57-22.19,25.28-30.97,49.72.21,35.36-11.33,59.56-23.92,35.17-23.92,35.17c0,0,34.77-8.17,45.69-30.94s5.08-35.22,20.53-52.61,24.67-30.89,27.25-56.72-7.33-26.22,1.53-76.94Z"/>
+  </g>
+</svg>
