@@ -581,6 +581,92 @@ func TestDeleteEntryMetaAndData_IsFromOtherClusterSkipsRemoteDelete(t *testing.T
 	require.Len(t, stub.removeCalls, 0)
 }
 
+func TestDeleteEntryMetaAndData_DisableRemoteStorageDeletionSkipsRemoteDelete(t *testing.T) {
+	const storageType = "stub_lazy_delete_disabled"
+	stub := &stubRemoteClient{}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "cachestore", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "cachestore",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	filePath := util.FullPath("/buckets/mybucket/cached.txt")
+	store.entries[string(filePath)] = &Entry{
+		FullPath: filePath,
+		Attr: Attr{
+			Mtime:    time.Unix(1700000000, 0),
+			Crtime:   time.Unix(1700000000, 0),
+			Mode:     0644,
+			FileSize: 64,
+		},
+		Remote: &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 64},
+	}
+	f := newTestFiler(t, store, rs)
+	f.DisableRemoteStorageDeletion = true
+
+	err := f.DeleteEntryMetaAndData(context.Background(), filePath, false, false, true, false, nil, 0)
+	require.NoError(t, err)
+
+	// Local metadata is removed, so a subsequent lookup (S3 GET) is no longer served
+	_, findErr := store.FindEntry(context.Background(), filePath)
+	require.ErrorIs(t, findErr, filer_pb.ErrNotFound)
+	// The remote (e.g. GCS) object must be left intact — no delete call was made
+	require.Len(t, stub.deleteCalls, 0)
+	require.Len(t, stub.removeCalls, 0)
+}
+
+func TestDeleteEntryMetaAndData_DisableRemoteStorageDeletionSkipsRemoteChildren(t *testing.T) {
+	const storageType = "stub_lazy_delete_disabled_children"
+	stub := &stubRemoteClient{}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "cachestore", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "cachestore",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	dirPath := util.FullPath("/buckets/mybucket/subdir")
+	store.entries[string(dirPath)] = &Entry{
+		FullPath: dirPath,
+		Attr: Attr{
+			Mtime:  time.Unix(1700000000, 0),
+			Crtime: time.Unix(1700000000, 0),
+			Mode:   os.ModeDir | 0755,
+		},
+	}
+	childPath := util.FullPath("/buckets/mybucket/subdir/child.txt")
+	store.entries[string(childPath)] = &Entry{
+		FullPath: childPath,
+		Attr: Attr{
+			Mtime:    time.Unix(1700000000, 0),
+			Crtime:   time.Unix(1700000000, 0),
+			Mode:     0644,
+			FileSize: 50,
+		},
+		Remote: &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 50},
+	}
+	f := newTestFiler(t, store, rs)
+	f.DisableRemoteStorageDeletion = true
+
+	err := f.DeleteEntryMetaAndData(context.Background(), dirPath, true, false, true, false, nil, 0)
+	require.NoError(t, err)
+
+	// Neither the child file nor the directory should be deleted from the remote
+	require.Len(t, stub.deleteCalls, 0)
+	require.Len(t, stub.removeCalls, 0)
+}
+
 func TestDeleteEntryMetaAndData_RemoteOnlyFileNotUnderMountSkipsRemoteDelete(t *testing.T) {
 	const storageType = "stub_lazy_delete_not_under_mount"
 	stub := &stubRemoteClient{}

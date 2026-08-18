@@ -121,6 +121,11 @@ func (f *Filer) maybeDeleteFromRemote(ctx context.Context, entry *Entry) (bool, 
 		return false, nil
 	}
 
+	if f.DisableRemoteStorageDeletion {
+		glog.V(3).InfofCtx(ctx, "maybeDeleteFromRemote: remote deletion disabled, keeping remote object for %s", entry.FullPath)
+		return false, nil
+	}
+
 	mountDir, remoteLoc := f.RemoteStorage.FindMountDirectory(entry.FullPath)
 	if remoteLoc == nil {
 		return false, nil
