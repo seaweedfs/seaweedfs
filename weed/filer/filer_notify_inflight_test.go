@@ -81,6 +81,39 @@ func TestLocalDeliveredThroughTsNsBoundsInflight(t *testing.T) {
 	f.metaLogInflight.done(ts)
 }
 
+// TestClaimFencesFutureStamps pins the claim fence: once a claim is issued, a
+// wall-clock step backwards must not let a later stamp land at or below it -
+// the peer has already advanced its watermark to the claim.
+func TestClaimFencesFutureStamps(t *testing.T) {
+	f := &Filer{
+		LocalMetaLogBuffer: log_buffer.NewLogBuffer("claim-fence-test", time.Minute, nil, nil, nil),
+	}
+	defer f.LocalMetaLogBuffer.ShutdownLogBuffer()
+
+	// Claim with a sampled clock one hour ahead: to a stamp taken at the real
+	// wall clock this is exactly a backward step after the claim was issued.
+	aheadNs := time.Now().Add(time.Hour).UnixNano()
+	if got := f.LocalDeliveredThroughTsNs(aheadNs); got != aheadNs {
+		t.Fatalf("nothing in flight: claim=%d want %d", got, aheadNs)
+	}
+	ts := f.metaLogInflight.stamp()
+	if ts <= aheadNs {
+		t.Fatalf("stamp %d not fenced above issued delivery claim %d", ts, aheadNs)
+	}
+	f.metaLogInflight.done(ts)
+
+	// The flush claim fences the same way.
+	aheadNs += int64(time.Hour)
+	if got := f.LocalFlushedThroughTsNs(aheadNs); got != aheadNs {
+		t.Fatalf("drained buffer: claim=%d want %d", got, aheadNs)
+	}
+	ts = f.metaLogInflight.stamp()
+	if ts <= aheadNs {
+		t.Fatalf("stamp %d not fenced above issued flush claim %d", ts, aheadNs)
+	}
+	f.metaLogInflight.done(ts)
+}
+
 // TestMetaLogInflightStampMonotonic pins the registry-local monotonicity: a
 // wall clock stepping backwards must not let a new stamp slip under an
 // already-sampled floor.

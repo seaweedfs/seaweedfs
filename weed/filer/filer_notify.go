@@ -93,17 +93,23 @@ type metaLogInflight struct {
 	sync.Mutex
 	stamped     map[int64]int
 	lastStampNs int64
+	lastClaimNs int64
 }
 
 // stamp assigns the event timestamp and registers it as in flight. Stamps
-// are monotonic against the registry's own history, so a wall-clock step
-// backwards cannot slip a new stamp under an already-sampled floor.
+// are monotonic against the registry's own history and every issued claim,
+// so a wall-clock step backwards cannot slip a new stamp under a floor or
+// watermark already handed out.
 func (t *metaLogInflight) stamp() int64 {
 	t.Lock()
 	defer t.Unlock()
+	floor := t.lastStampNs
+	if t.lastClaimNs > floor {
+		floor = t.lastClaimNs
+	}
 	tsNs := time.Now().UnixNano()
-	if tsNs <= t.lastStampNs {
-		tsNs = t.lastStampNs + 1
+	if tsNs <= floor {
+		tsNs = floor + 1
 	}
 	t.lastStampNs = tsNs
 	if t.stamped == nil {
@@ -137,16 +143,34 @@ func (t *metaLogInflight) minTsNs() int64 {
 	return min
 }
 
+// claimThrough caps a completeness claim by the oldest in-flight stamp and
+// fences it: later stamps always land above the returned claim, so a wall
+// clock stepping backwards cannot slide a new event under a watermark a
+// peer has already advanced to.
+func (t *metaLogInflight) claimThrough(nowNs int64) int64 {
+	t.Lock()
+	defer t.Unlock()
+	claim := nowNs
+	for tsNs := range t.stamped {
+		if tsNs-1 < claim {
+			claim = tsNs - 1
+		}
+	}
+	if claim > t.lastClaimNs {
+		t.lastClaimNs = claim
+	}
+	return claim
+}
+
 // LocalFlushedThroughTsNs reports the timestamp through which the local meta
 // log is durably on disk: everything at or below it is appended and flushed,
-// and nothing in flight can land at or below it. The in-flight floor is read
-// before the buffer claim, so an event stamped later lands past nowNs and is
-// never covered either way.
+// and nothing can land at or below it later. The registry is consulted before
+// the buffer: an event already appended is visible to the buffer claim, one
+// still in flight caps the claim, and one stamped later is fenced above it.
 func (f *Filer) LocalFlushedThroughTsNs(nowNs int64) int64 {
-	inflightTsNs := f.metaLogInflight.minTsNs()
-	claim := f.LocalMetaLogBuffer.FlushedThroughTsNs(nowNs)
-	if inflightTsNs > 0 && inflightTsNs-1 < claim {
-		claim = inflightTsNs - 1
+	claim := f.metaLogInflight.claimThrough(nowNs)
+	if buffered := f.LocalMetaLogBuffer.FlushedThroughTsNs(nowNs); buffered < claim {
+		claim = buffered
 	}
 	return claim
 }
@@ -156,11 +180,7 @@ func (f *Filer) LocalFlushedThroughTsNs(nowNs int64) int64 {
 // unappended event has not been streamed to anyone, and a peer aggregator
 // turns the claim into its delivery low-watermark.
 func (f *Filer) LocalDeliveredThroughTsNs(nowNs int64) int64 {
-	claim := nowNs
-	if inflightTsNs := f.metaLogInflight.minTsNs(); inflightTsNs > 0 && inflightTsNs-1 < claim {
-		claim = inflightTsNs - 1
-	}
-	return claim
+	return f.metaLogInflight.claimThrough(nowNs)
 }
 
 // StampMetaLogInflightForTest and DoneMetaLogInflightForTest let tests in
