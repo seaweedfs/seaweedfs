@@ -49,6 +49,18 @@ func (f *MemFiler) Put(dir, name string, extended map[string][]byte) {
 	f.entries[dir][name] = &filer_pb.Entry{Name: name, IsDirectory: true, Extended: extended}
 }
 
+// PutFile adds a file entry with an explicit modification time, which callers
+// that age entries out (orphan cleanup, expiry) need in order to see them.
+func (f *MemFiler) PutFile(dir, name string, mtime time.Time) {
+	if _, ok := f.entries[dir]; !ok {
+		f.entries[dir] = make(map[string]*filer_pb.Entry)
+	}
+	f.entries[dir][name] = &filer_pb.Entry{
+		Name:       name,
+		Attributes: &filer_pb.FuseAttributes{Mtime: mtime.Unix(), Crtime: mtime.Unix()},
+	}
+}
+
 func (f *MemFiler) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
 	if e := f.Get(req.Directory, req.Name); e != nil {
 		return &filer_pb.LookupDirectoryEntryResponse{Entry: e}, nil
