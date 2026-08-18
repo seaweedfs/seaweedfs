@@ -9,6 +9,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,6 +25,10 @@ import (
 // end-to-end without a live cluster.
 type MemFiler struct {
 	filer_pb.UnimplementedSeaweedFilerServer
+	// mu guards entries. The real filer serves concurrent RPCs, and a test that
+	// races writers against each other - the point of an exclusive create - hits
+	// this map from several goroutines at once.
+	mu      sync.RWMutex
 	entries map[string]map[string]*filer_pb.Entry // dir -> name -> entry
 	Client  filer_pb.SeaweedFilerClient
 	// BeforeUpdate runs once, at the start of the next UpdateEntry, so a test
@@ -36,6 +41,8 @@ func newMemFiler() *MemFiler {
 }
 
 func (f *MemFiler) Get(dir, name string) *filer_pb.Entry {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
 	if d, ok := f.entries[dir]; ok {
 		return d[name]
 	}
@@ -43,6 +50,8 @@ func (f *MemFiler) Get(dir, name string) *filer_pb.Entry {
 }
 
 func (f *MemFiler) Put(dir, name string, extended map[string][]byte) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if _, ok := f.entries[dir]; !ok {
 		f.entries[dir] = make(map[string]*filer_pb.Entry)
 	}
@@ -52,6 +61,8 @@ func (f *MemFiler) Put(dir, name string, extended map[string][]byte) {
 // PutFile adds a file entry with an explicit modification time, which callers
 // that age entries out (orphan cleanup, expiry) need in order to see them.
 func (f *MemFiler) PutFile(dir, name string, mtime time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if _, ok := f.entries[dir]; !ok {
 		f.entries[dir] = make(map[string]*filer_pb.Entry)
 	}
@@ -73,13 +84,17 @@ func (f *MemFiler) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupD
 // A harness that ignores them makes a paginating caller re-read the first page
 // forever, which looks like duplicated entries rather than a broken listing.
 func (f *MemFiler) ListEntries(req *filer_pb.ListEntriesRequest, stream grpc.ServerStreamingServer[filer_pb.ListEntriesResponse]) error {
+	f.mu.RLock()
 	d, ok := f.entries[req.Directory]
+	names := make([]string, 0, len(d))
+	snapshot := make(map[string]*filer_pb.Entry, len(d))
+	for name, entry := range d {
+		names = append(names, name)
+		snapshot[name] = entry
+	}
+	f.mu.RUnlock()
 	if !ok {
 		return nil
-	}
-	names := make([]string, 0, len(d))
-	for name := range d {
-		names = append(names, name)
 	}
 	sort.Strings(names)
 
@@ -96,7 +111,7 @@ func (f *MemFiler) ListEntries(req *filer_pb.ListEntriesRequest, stream grpc.Ser
 				continue
 			}
 		}
-		if err := stream.Send(&filer_pb.ListEntriesResponse{Entry: d[name]}); err != nil {
+		if err := stream.Send(&filer_pb.ListEntriesResponse{Entry: snapshot[name]}); err != nil {
 			return err
 		}
 		sent++
@@ -108,24 +123,37 @@ func (f *MemFiler) ListEntries(req *filer_pb.ListEntriesRequest, stream grpc.Ser
 }
 
 func (f *MemFiler) CreateEntry(_ context.Context, req *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if _, ok := f.entries[req.Directory]; !ok {
 		f.entries[req.Directory] = make(map[string]*filer_pb.Entry)
+	}
+	// O_EXCL is the filer's put-if-not-exists. Ignoring it here would let a test
+	// that races two writers see both of them win.
+	if _, exists := f.entries[req.Directory][req.Entry.Name]; exists && req.OExcl {
+		return &filer_pb.CreateEntryResponse{ErrorCode: filer_pb.FilerError_ENTRY_ALREADY_EXISTS}, nil
 	}
 	f.entries[req.Directory][req.Entry.Name] = req.Entry
 	return &filer_pb.CreateEntryResponse{}, nil
 }
 
 func (f *MemFiler) UpdateEntry(_ context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
+	// The hook runs before the lock is taken: its whole purpose is to land a
+	// competing write in the read-to-write window, and that write needs the lock.
 	if hook := f.BeforeUpdate; hook != nil {
 		f.BeforeUpdate = nil
 		hook()
 	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	// The real filer validates ExpectedExtended under the per-path lock; without
 	// it here a lost update would look like a success.
 	for key, expected := range req.ExpectedExtended {
 		var actual []byte
-		if existing := f.Get(req.Directory, req.Entry.Name); existing != nil {
-			actual = existing.Extended[key]
+		if d, ok := f.entries[req.Directory]; ok {
+			if existing := d[req.Entry.Name]; existing != nil {
+				actual = existing.Extended[key]
+			}
 		}
 		if !bytes.Equal(actual, expected) {
 			return nil, status.Errorf(codes.FailedPrecondition, "extended attribute %q changed", key)
@@ -139,6 +167,8 @@ func (f *MemFiler) UpdateEntry(_ context.Context, req *filer_pb.UpdateEntryReque
 }
 
 func (f *MemFiler) DeleteEntry(_ context.Context, req *filer_pb.DeleteEntryRequest) (*filer_pb.DeleteEntryResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if d, ok := f.entries[req.Directory]; ok {
 		delete(d, req.Name)
 	}
