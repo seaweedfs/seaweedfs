@@ -125,7 +125,7 @@ func (h *S3TablesHandler) handleCreateView(w http.ResponseWriter, r *http.Reques
 	metadata := &tableMetadataInternal{
 		Name:             viewName,
 		Namespace:        namespaceName,
-		Format:           "ICEBERG",
+		Format:           FormatIceberg,
 		CreatedAt:        now,
 		ModifiedAt:       now,
 		OwnerAccountID:   namespaceMetadata.OwnerAccountID,

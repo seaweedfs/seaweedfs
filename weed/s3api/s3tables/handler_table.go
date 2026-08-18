@@ -45,8 +45,8 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Validate format
-	if req.Format != "ICEBERG" {
-		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "only ICEBERG format is supported")
+	if req.Format != FormatIceberg && req.Format != FormatLance {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, fmt.Sprintf("unsupported format %q", req.Format))
 		return fmt.Errorf("invalid format")
 	}
 
@@ -468,7 +468,7 @@ func (h *S3TablesHandler) handleRegisterTable(w http.ResponseWriter, r *http.Req
 	metadata := &tableMetadataInternal{
 		Name:             tableName,
 		Namespace:        namespaceName,
-		Format:           "ICEBERG",
+		Format:           FormatIceberg,
 		CreatedAt:        now,
 		ModifiedAt:       now,
 		OwnerAccountID:   namespaceMetadata.OwnerAccountID,
@@ -945,11 +945,13 @@ func (h *S3TablesHandler) listTablesWithClient(r *http.Request, client filer_pb.
 			tableARN := h.generateTableARN(metadata.OwnerAccountID, bucketName, namespaceName+"/"+entry.Entry.Name)
 
 			tables = append(tables, TableSummary{
-				Name:       entry.Entry.Name,
-				TableARN:   tableARN,
-				Namespace:  expandNamespace(namespaceName),
-				CreatedAt:  metadata.CreatedAt,
-				ModifiedAt: metadata.ModifiedAt,
+				Name:             entry.Entry.Name,
+				TableARN:         tableARN,
+				Namespace:        expandNamespace(namespaceName),
+				Format:           metadata.Format,
+				CreatedAt:        metadata.CreatedAt,
+				ModifiedAt:       metadata.ModifiedAt,
+				MetadataLocation: metadata.MetadataLocation,
 			})
 
 			if len(tables) >= maxTables {

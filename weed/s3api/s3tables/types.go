@@ -235,9 +235,12 @@ type ListTablesRequest struct {
 }
 
 type TableSummary struct {
-	Name             string    `json:"name"`
-	TableARN         string    `json:"tableARN"`
-	Namespace        []string  `json:"namespace"`
+	Name      string   `json:"name"`
+	TableARN  string   `json:"tableARN"`
+	Namespace []string `json:"namespace"`
+	// Format lets a caller tell an Iceberg table from a catalog-only one without
+	// a GetTable per row. AWS omits it; listing a mixed catalog needs it.
+	Format           string    `json:"format,omitempty"`
 	CreatedAt        time.Time `json:"createdAt"`
 	ModifiedAt       time.Time `json:"modifiedAt"`
 	MetadataLocation string    `json:"metadataLocation,omitempty"`
@@ -560,6 +563,23 @@ type S3TablesError struct {
 
 func (e *S3TablesError) Error() string {
 	return e.Message
+}
+
+// Table formats a catalog entry may declare.
+//
+// ICEBERG tables carry metadata the catalog maintains and the maintenance
+// worker rewrites. LANCE is catalog-only: the entry records a name and the
+// dataset root in MetadataLocation, and the Lance client owns every byte under
+// it. Nothing in this package interprets a catalog-only table's files.
+const (
+	FormatIceberg = "ICEBERG"
+	FormatLance   = "LANCE"
+)
+
+// IsCatalogOnlyFormat reports whether the catalog only records where a table of
+// this format lives, without understanding its files.
+func IsCatalogOnlyFormat(format string) bool {
+	return format == FormatLance
 }
 
 // Error codes
