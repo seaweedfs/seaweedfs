@@ -253,18 +253,28 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, existing *Entry, 
 	if oldEntry == nil {
 		f.ensureEntryInode(entry)
 
-		if !skipCreateParentDir {
-			dirParts := strings.Split(string(entry.FullPath), "/")
-			if err := f.ensureParentDirectoryEntry(ctx, entry, dirParts, len(dirParts)-1, isFromOtherCluster); err != nil {
-				return err
-			}
-		}
-
 		glog.V(4).InfofCtx(ctx, "InsertEntry %s: new entry: %v", entry.FullPath, entry.Name())
 		if err := f.Store.InsertEntry(ctx, entry); err != nil {
 			glog.ErrorfCtx(ctx, "insert entry %s: %v", entry.FullPath, err)
 			return fmt.Errorf("insert entry %s: %v", entry.FullPath, err)
 		}
+
+		// Parents go after the entry: one checked first can be taken by the
+		// empty-folder cleaner before the entry lands, and nothing would look again.
+		if !skipCreateParentDir {
+			dirParts := strings.Split(string(entry.FullPath), "/")
+			if err := f.ensureParentDirectoryEntry(ctx, entry, dirParts, len(dirParts)-1, isFromOtherCluster); err != nil {
+				// The entry stays: deleting by path would destroy a concurrent create
+				// that already succeeded through the update branch, and the update keeps
+				// the inode and crtime while mtime only survives the store to the second.
+				// It is not announced - the aggregator replicates creates into peer
+				// stores, so a failed write would land on all of them rather than on the
+				// one filer whose next write into that folder repairs it.
+				glog.ErrorfCtx(ctx, "create parent directories of %s: %v", entry.FullPath, err)
+				return err
+			}
+		}
+
 		if !entry.IsDirectory() {
 			stats.FilerObjectSizeBytesHistogram.Observe(float64(entry.Size()))
 		}
