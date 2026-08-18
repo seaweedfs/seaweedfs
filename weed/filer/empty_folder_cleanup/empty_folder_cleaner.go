@@ -383,6 +383,39 @@ func (efc *EmptyFolderCleaner) restoreFoldersWrittenDuringDelete() {
 	efc.mu.Unlock()
 }
 
+// restoreIfWrittenTo puts folder back when an entry landed in it while it was being
+// deleted. True means the parent is no longer empty, so the caller must not cascade.
+func (efc *EmptyFolderCleaner) restoreIfWrittenTo(ctx context.Context, folder string, attrs DirectoryAttributes) bool {
+	count, err := efc.countItems(ctx, folder)
+	if err != nil || count > 0 {
+		// Ask for the retry here rather than leaving it to a create event that may
+		// already have gone by: this pass can be the only sight of the entry.
+		efc.mu.Lock()
+		if observed, found := efc.deleted[folder]; found {
+			observed.writtenTo = true
+		}
+		efc.mu.Unlock()
+	}
+	if err != nil {
+		glog.V(2).Infof("EmptyFolderCleaner: cannot re-check %s after deleting it: %v", folder, err)
+		return false
+	}
+	if count == 0 {
+		return false
+	}
+
+	glog.V(1).Infof("EmptyFolderCleaner: restoring %s, written to while it was being deleted", folder)
+	if err := efc.filer.EnsureDirectoryEntry(ctx, util.FullPath(folder), attrs); err != nil {
+		glog.V(2).Infof("EmptyFolderCleaner: failed to restore %s: %v", folder, err)
+		return false
+	}
+
+	efc.mu.Lock()
+	delete(efc.deleted, folder)
+	efc.mu.Unlock()
+	return true
+}
+
 // makeRoomForDeletedLocked drops the oldest of a small sample when the set is full.
 // The newest folders are the ones whose race is still live, so they must not be the
 // ones given up; sampling keeps this cheap under heavy deletion rates.
@@ -517,6 +550,12 @@ func (efc *EmptyFolderCleaner) executeCleanup(folder string, triggeredBy string)
 	efc.mu.Lock()
 	delete(efc.folderCounts, folder)
 	efc.mu.Unlock()
+
+	// The delete's own emptiness check and the entry removal are not atomic either.
+	// Paired with parents being created after the insert, whoever acts second sees it.
+	if efc.restoreIfWrittenTo(ctx, folder, attrs) {
+		return
+	}
 
 	// After deleting this folder, immediately try to clean the parent.
 	// Relying solely on cascading metadata events would re-enter the full
