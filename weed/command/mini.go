@@ -212,6 +212,9 @@ func miniStartupServices() []string {
 		if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
 			services = append(services, "Iceberg")
 		}
+		if miniS3Options.portLance != nil && *miniS3Options.portLance > 0 {
+			services = append(services, "Lance")
+		}
 	}
 	services = append(services, "Admin")
 	return services
@@ -885,6 +888,14 @@ func ensureAllPortsAvailableOnIP(bindIp string) error {
 				grpcPtr  *int
 			}{miniS3Options.portIceberg, "Iceberg", "s3.port.iceberg", nil})
 		}
+		if miniS3Options.portLance != nil && *miniS3Options.portLance > 0 {
+			portConfigs = append(portConfigs, struct {
+				port     *int
+				name     string
+				flagName string
+				grpcPtr  *int
+			}{miniS3Options.portLance, "Lance", "s3.port.lance", nil})
+		}
 	}
 	portConfigs = append(portConfigs, struct {
 		port     *int
@@ -936,9 +947,13 @@ func ensureAllPortsAvailableOnIP(bindIp string) error {
 	if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
 		icebergPortStr = fmt.Sprintf("%d", *miniS3Options.portIceberg)
 	}
-	glog.V(1).Infof("Final port configuration - Master: %d, Filer: %d, Volume: %d, S3: %d, Iceberg: %s, WebDAV: %d, Admin: %d",
+	lancePortStr := "disabled"
+	if miniS3Options.portLance != nil && *miniS3Options.portLance > 0 {
+		lancePortStr = fmt.Sprintf("%d", *miniS3Options.portLance)
+	}
+	glog.V(1).Infof("Final port configuration - Master: %d, Filer: %d, Volume: %d, S3: %d, Iceberg: %s, Lance: %s, WebDAV: %d, Admin: %d",
 		*miniMasterOptions.port, *miniFilerOptions.port, *miniOptions.v.port,
-		*miniS3Options.port, icebergPortStr, *miniWebDavOptions.port, *miniAdminOptions.port)
+		*miniS3Options.port, icebergPortStr, lancePortStr, *miniWebDavOptions.port, *miniAdminOptions.port)
 
 	// Log gRPC ports too (now finalized)
 	glog.V(1).Infof("gRPC port configuration - Master: %d, Filer: %d, Volume: %d, S3: %d, Admin: %d",
@@ -967,6 +982,9 @@ func initializeGrpcPortsOnIP(bindIp string) {
 		allocatedPorts[*miniS3Options.port] = true
 		if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
 			allocatedPorts[*miniS3Options.portIceberg] = true
+		}
+		if miniS3Options.portLance != nil && *miniS3Options.portLance > 0 {
+			allocatedPorts[*miniS3Options.portLance] = true
 		}
 	}
 
@@ -1422,9 +1440,13 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) {
 		go func() {
 			defer done()
 			defer reportMiniStopped("S3")
-			// Iceberg lives inside the S3 server; report it stopped alongside.
+			// Iceberg and Lance live inside the S3 server; report them stopped
+			// alongside it.
 			if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
 				defer reportMiniStopped("Iceberg")
+			}
+			if miniS3Options.portLance != nil && *miniS3Options.portLance > 0 {
+				defer reportMiniStopped("Lance")
 			}
 			startMiniService("S3", startS3Service, *miniS3Options.port)
 		}()
@@ -1452,6 +1474,12 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) {
 				miniProgressBoard.starting("Iceberg")
 			}
 			waitForServiceReady("Iceberg", *miniS3Options.portIceberg, bindIp)
+		}
+		if miniS3Options.portLance != nil && *miniS3Options.portLance > 0 {
+			if miniProgressBoard != nil {
+				miniProgressBoard.starting("Lance")
+			}
+			waitForServiceReady("Lance", *miniS3Options.portLance, bindIp)
 		}
 	}
 	if *miniEnableWebDAV {
@@ -1856,6 +1884,9 @@ func printWelcomeMessage() {
 		fmt.Fprintf(&sb, "    S3 Endpoint:     http://%s:%d\n", *miniIp, *miniS3Options.port)
 		if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
 			fmt.Fprintf(&sb, "    Iceberg Catalog: http://%s:%d\n", *miniIp, *miniS3Options.portIceberg)
+		}
+		if miniS3Options.portLance != nil && *miniS3Options.portLance > 0 {
+			fmt.Fprintf(&sb, "    Lance Namespace: http://%s:%d\n", *miniIp, *miniS3Options.portLance)
 		}
 	}
 	if *miniEnableAdminUI {
