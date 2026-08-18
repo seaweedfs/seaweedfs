@@ -3,6 +3,7 @@ package filer
 import (
 	"context"
 	"fmt"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -100,7 +101,7 @@ func TestReaderCacheRetryAfterCacheInvalidation(t *testing.T) {
 	}
 
 	var fetchCount int32
-	fetchFn := func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, requestedFileId string) (int, error) {
+	fetchFn := func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, requestedFileId string, _ util_http.RefreshUrlsFunc) (int, error) {
 		if requestedFileId != fileId {
 			return 0, fmt.Errorf("unexpected fetch file id %s", requestedFileId)
 		}
@@ -161,7 +162,7 @@ func TestReaderCacheRemovesFailedDownloader(t *testing.T) {
 	}
 
 	var fetchCount int32
-	fetchFn := func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, requestedFileId string) (int, error) {
+	fetchFn := func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, requestedFileId string, _ util_http.RefreshUrlsFunc) (int, error) {
 		atomic.AddInt32(&fetchCount, 1)
 		return 0, fmt.Errorf("fetch failed")
 	}
@@ -575,7 +576,7 @@ func TestReaderCacheDownloaderDedup(t *testing.T) {
 		return []string{"http://volume/" + fileId}, nil
 	}
 
-	fetchFn := func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, fileId string) (int, error) {
+	fetchFn := func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, fileId string, _ util_http.RefreshUrlsFunc) (int, error) {
 		atomic.AddInt32(&fetchCount, 1)
 		<-fetchGate
 		return copy(buffer, testData), nil
