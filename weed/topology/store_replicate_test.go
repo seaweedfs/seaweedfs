@@ -90,7 +90,9 @@ func TestReplicatedWriteForwardsFsyncToReplicas(t *testing.T) {
 	replica := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		replicaQueries <- r.URL.Query()
 		w.WriteHeader(http.StatusCreated)
-		w.Write([]byte(`{"size":1}`))
+		if _, err := w.Write([]byte(`{"size":1}`)); err != nil {
+			t.Errorf("replica write response: %v", err)
+		}
 	}))
 	defer replica.Close()
 	replicaHost := strings.TrimPrefix(replica.URL, "http://")
@@ -99,13 +101,19 @@ func TestReplicatedWriteForwardsFsyncToReplicas(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer lis.Close()
 	grpcServer := grpc.NewServer()
 	master_pb.RegisterSeaweedServer(grpcServer, &mockMasterServer{
 		locations: []*master_pb.Location{{Url: replicaHost}},
 	})
-	go grpcServer.Serve(lis)
-	defer grpcServer.Stop()
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- grpcServer.Serve(lis) }()
+	// Stop closes the listener it was handed, so there is no separate close here
+	defer func() {
+		grpcServer.Stop()
+		if err := <-serveErr; err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+			t.Errorf("mock master serve: %v", err)
+		}
+	}()
 
 	grpcPort := lis.Addr().(*net.TCPAddr).Port
 	masterFn := func(_ context.Context) pb.ServerAddress {
