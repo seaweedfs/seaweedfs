@@ -160,6 +160,16 @@ func (f *Filer) AggregateFromPeers(self pb.ServerAddress, existingNodes []*maste
 		f.Dlm.LockRing.SetSnapshot(servers, update.Version)
 	})
 
+	// Subscribe to the local filer first: its events reach the aggregated
+	// buffer only through this subscription, and the peer watermarks must
+	// account for it before any remote peer - a remotes-only watermark set
+	// would claim completeness without self. existingNodes can omit self
+	// (master registration races this bootstrap); duplicate adds are no-ops.
+	f.MetaAggregator.OnPeerUpdate(&master_pb.ClusterNodeUpdate{
+		NodeType: cluster.FilerType,
+		Address:  string(self),
+		IsAdd:    true,
+	}, startFrom)
 	for _, peerUpdate := range existingNodes {
 		f.MetaAggregator.OnPeerUpdate(peerUpdate, startFrom)
 	}
