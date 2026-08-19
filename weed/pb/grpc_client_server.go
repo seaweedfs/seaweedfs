@@ -150,11 +150,13 @@ func ServeGrpcOnLocalSocket(grpcServer *grpc.Server, grpcPort int) {
 	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
 		glog.Warningf("Failed to remove old gRPC socket %s: %v", socketPath, err)
 	}
-	listener, err := net.Listen("unix", socketPath)
+	lc := net.ListenConfig{Control: setLocalSocketBuffers}
+	listener, err := lc.Listen(context.Background(), "unix", socketPath)
 	if err != nil {
 		glog.Errorf("Failed to listen on gRPC Unix socket %s: %v", socketPath, err)
 		return
 	}
+	listener = &localSocketListener{Listener: listener}
 	glog.V(0).Infof("gRPC also listening on Unix socket %s", socketPath)
 	go func() {
 		if err := grpcServer.Serve(listener); err != nil && err != grpc.ErrServerStopped {
@@ -162,6 +164,20 @@ func ServeGrpcOnLocalSocket(grpcServer *grpc.Server, grpcPort int) {
 		}
 		os.Remove(socketPath)
 	}()
+}
+
+// localSocketListener re-applies the buffer sizes to every accepted connection.
+type localSocketListener struct {
+	net.Listener
+}
+
+func (l *localSocketListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	applyLocalSocketBuffers(c)
+	return c, nil
 }
 
 func NewGrpcServer(opts ...grpc.ServerOption) *grpc.Server {
@@ -209,7 +225,7 @@ func GrpcDial(ctx context.Context, address string, waitForReady bool, opts ...gr
 	// Route through Unix socket if one is registered for this address's port
 	if socketPath := resolveLocalGrpcSocket(address); socketPath != "" {
 		options = append(options, grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
-			var d net.Dialer
+			d := net.Dialer{Control: setLocalSocketBuffers}
 			return d.DialContext(ctx, "unix", socketPath)
 		}))
 	} else {
