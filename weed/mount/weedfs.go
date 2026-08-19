@@ -811,11 +811,23 @@ func (wfs *WFS) onEntryInvalidation(invalidation meta_cache.EntryInvalidation) {
 		listener(invalidation)
 	}
 	wfs.invalidateKernelDirListing(invalidation.Path)
-	wfs.invalidateOpenFileHandle(invalidation)
-	if invalidation.RenamedTo != "" {
-		// The kernel goes on addressing the moved inode by nodeid, whether or
-		// not anything here holds it open.
-		wfs.inodeToPath.MovePath(invalidation.Path, invalidation.RenamedTo)
+	if moved := wfs.invalidateOpenFileHandle(invalidation); !moved && invalidation.RenamedTo != "" {
+		// The kernel goes on addressing the moved inode by nodeid whether or not
+		// anything here holds it open. Exactly once per event: the move also
+		// unlinks whatever the rename replaced, which must not run twice.
+		sourceInode, replacedInode := wfs.inodeToPath.MovePath(invalidation.Path, invalidation.RenamedTo)
+		wfs.markReplacedHandleDeleted(replacedInode, sourceInode)
+	}
+}
+
+// markReplacedHandleDeleted marks the handle of a file a rename destroyed, so
+// its flush cannot resurrect the name on top of what now occupies it.
+func (wfs *WFS) markReplacedHandleDeleted(replacedInode, movedInode uint64) {
+	if replacedInode == 0 || replacedInode == movedInode {
+		return
+	}
+	if replacedFh, found := wfs.fhMap.FindFileHandle(replacedInode); found {
+		replacedFh.isDeleted = true
 	}
 }
 
@@ -849,7 +861,10 @@ func (wfs *WFS) MountRoot() util.FullPath {
 	return util.FullPath(wfs.option.FilerMountRootPath)
 }
 
-func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidation) {
+// invalidateOpenFileHandle applies one event to the handle that has the entry
+// open, reporting whether it moved the inode table for a rename; the caller
+// moves it otherwise.
+func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidation) (movedPath bool) {
 	filePath, eventEntry, eventTsNs := invalidation.Path, invalidation.Entry, invalidation.TsNs
 	inode, inodeFound := wfs.inodeToPath.GetInode(filePath)
 	if !inodeFound {
@@ -902,15 +917,9 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 		// so no flush recreates the unlinked name. Either way the entry and
 		// dirty pages stay, so the open fd still reads its buffered writes.
 		if invalidation.RenamedTo != "" {
+			movedPath = true
 			_, replacedInode := wfs.inodeToPath.MovePath(filePath, invalidation.RenamedTo)
-			// A rename over an existing file destroys that file. Mark its
-			// handle deleted so its flush cannot resurrect it on top of the
-			// renamed source now occupying the name.
-			if replacedInode != 0 && replacedInode != inode {
-				if replacedFh, found := wfs.fhMap.FindFileHandle(replacedInode); found {
-					replacedFh.isDeleted = true
-				}
-			}
+			wfs.markReplacedHandleDeleted(replacedInode, inode)
 			fh.RememberPath(invalidation.RenamedTo)
 			if _, newName := invalidation.RenamedTo.DirAndName(); newName != "" {
 				fh.UpdateEntry(func(entry *filer_pb.Entry) {
@@ -955,6 +964,7 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 	}
 	fh.baseEntry.Store(proto.Clone(candidate).(*filer_pb.Entry))
 	fh.advanceEntryVersion(candidateTsNs, 0)
+	return
 }
 
 func (wfs *WFS) LookupFn() wdclient.LookupFileIdFunctionType {
