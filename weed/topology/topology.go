@@ -613,18 +613,12 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 		}
 	}
 	// find out the delta volumes
-	var changedVolumes []storage.VolumeInfo
-	newVolumes, deletedVolumes, changedVolumes = dn.UpdateVolumes(volumeInfos)
+	newVolumes, deletedVolumes, _ = dn.UpdateVolumes(volumeInfos)
 	for _, v := range newVolumes {
 		t.RegisterVolumeLayout(v, dn)
 	}
 	for _, v := range deletedVolumes {
 		t.UnRegisterVolumeLayout(v, dn)
-	}
-	for _, v := range changedVolumes {
-		diskType := types.ToDiskType(v.DiskType)
-		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
-		vl.EnsureCorrectWritables(&v)
 	}
 	// Update effective sizes for all reported volumes (decay pending estimates).
 	// If decay brings a volume eagerly removed by RecordAssign back under the
@@ -643,9 +637,9 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 		// Without this, the volume stays visible in volume.list/admin UI yet
 		// LookupVolume returns "volume id not found".
 		if !vl.HasDataNode(v.Id, dn) {
-			if vl.RegisterVolume(&v, dn) {
-				vl.EnsureCorrectWritables(&v)
-			} else {
+			// RegisterVolume sets the oversized mark via its defer; the writable
+			// correction runs once, after UpdateVolumeSize below.
+			if !vl.RegisterVolume(&v, dn) {
 				// Dropped with its collection; re-resolve.
 				t.RegisterVolumeLayout(v, dn)
 			}
@@ -659,6 +653,7 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 		if vl.UpdateVolumeSize(v.Id, v.Size, v.CompactRevision) {
 			vl.AdjustActiveVolumeCountAfterRecovery(v.Id)
 		}
+		vl.EnsureCorrectWritables(&v)
 	}
 	return
 }
@@ -733,10 +728,10 @@ func (t *Topology) ApplyVolumeChanges(changed []*master_pb.VolumeInformationMess
 			newVolumes = append(newVolumes, vi)
 		}
 		vl.UpdateOversizedState(&vi, dn)
-		vl.EnsureCorrectWritables(&vi)
 		if vl.UpdateVolumeSize(vi.Id, vi.Size, vi.CompactRevision) {
 			vl.AdjustActiveVolumeCountAfterRecovery(vi.Id)
 		}
+		vl.EnsureCorrectWritables(&vi)
 	}
 	return newVolumes
 }

@@ -303,6 +303,14 @@ func (vl *VolumeLayout) ensureCorrectWritables(vid needle.VolumeId) {
 	isAllWritable := vl.isAllWritable(vid)
 	isOversizedVolume := vl.vid2location[vid].AnyOversized()
 	if isEnoughCopies && isAllWritable && !isOversizedVolume {
+		// A volume removed for capacity (fullSince set) must go through the
+		// heartbeat recovery path in UpdateVolumeSize, which enforces
+		// capacityRecoveryDelay. Re-adding it here would bypass the cooldown
+		// and let a just-compacted volume flip back to writable immediately.
+		if st := vl.sizeTracking[vid]; st != nil && !st.fullSince.IsZero() &&
+			time.Since(st.fullSince) < capacityRecoveryDelay {
+			return
+		}
 		vl.setVolumeWritable(vid)
 		return
 	}
