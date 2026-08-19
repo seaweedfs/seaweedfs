@@ -20,10 +20,22 @@ The admin's *HTTP* address is what an operator has; the gRPC port is derived
 from it the way the Go side does. Dialling the HTTP port fails as "frame with
 invalid size", which reads like a protocol bug rather than a wrong port.
 
+## Credentials
+
+The worker holds none. It asks the namespace to describe a table with
+`vend_credentials` and hands the `storage_options` that come back to lance. A
+gateway without STS configured vends no credentials at all, so `--access-key`
+and `--secret-key` supply a fallback; anything the namespace does vend wins over
+them.
+
 ## State
 
-The handshake, descriptor exchange and heartbeat work: admin logs the worker
-connecting and prefetches all three descriptors, so the job settings pages
-render from the Rust side. The job bodies are stubs. Doing the work means adding
-the `lance` crate and opening the dataset, which is the next step; until then
-they report failure rather than claiming success.
+`lance_compact` is implemented and tested end to end: a twelve-fragment dataset
+on SeaweedFS became one fragment with all twelve rows intact. `cargo test -p
+weed-lance-worker` runs it when `WEED_LANCE_NAMESPACE` names a live namespace
+and skips otherwise, the way the Go integration tests skip without Docker.
+
+`lance_optimize_indices` and `lance_cleanup_versions` still report failure
+rather than claiming success. The handshake, descriptor exchange and heartbeat
+work against a live admin, which logs the worker connecting and prefetches all
+three descriptors.

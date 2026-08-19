@@ -15,9 +15,12 @@ use seaweed_worker_core::JobHandler;
 
 /// Every handler this worker serves. A worker process may serve several job
 /// types, which is why WorkerHello carries a list.
-pub fn handlers(namespace_url: String) -> Vec<Arc<dyn JobHandler>> {
+pub fn handlers(
+    namespace_url: String,
+    fallback: crate::dataset::FallbackOptions,
+) -> Vec<Arc<dyn JobHandler>> {
     vec![
-        Arc::new(compact::CompactHandler::new(namespace_url.clone())),
+        Arc::new(compact::CompactHandler::new(namespace_url.clone()).with_fallback(fallback)),
         Arc::new(indices::OptimizeIndicesHandler::new(namespace_url.clone())),
         Arc::new(cleanup::CleanupVersionsHandler::new(namespace_url)),
     ]

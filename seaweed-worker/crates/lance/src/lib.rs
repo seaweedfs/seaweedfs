@@ -6,6 +6,7 @@
 //! three read and rewrite Lance files. This crate is the worker that can.
 
 pub mod catalog;
+pub mod dataset;
 pub mod jobs;
 
 pub use jobs::handlers;

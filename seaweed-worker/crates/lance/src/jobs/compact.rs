@@ -1,25 +1,48 @@
 use std::collections::HashMap;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
+use lance::dataset::optimize::{compact_files, CompactionOptions};
 use seaweed_worker_core::config_form::{form, int_or, int_value, number_field};
 use seaweed_worker_core::pb::{
-    ConfigValue, ExecuteJobRequest, JobTypeCapability, JobTypeDescriptor, RunDetectionRequest,
+    ConfigValue, DetectionComplete, DetectionProposals, ExecuteJobRequest, JobCompleted,
+    JobProgressUpdate, JobProposal, JobResult, JobTypeCapability, JobTypeDescriptor,
+    RunDetectionRequest,
 };
 use seaweed_worker_core::{DetectionSender, ExecutionSender, JobHandler};
+use tracing::warn;
+
+use crate::catalog::{parse_id, NamespaceClient};
+use crate::dataset;
 
 pub const JOB_TYPE: &str = "lance_compact";
+
+const DEFAULT_TARGET_ROWS: i64 = 1_048_576;
+const DEFAULT_MIN_FRAGMENTS: i64 = 8;
 
 /// Lance writes one fragment per write batch, so a table fed by small appends
 /// accumulates small files the same way an Iceberg table does.
 pub struct CompactHandler {
-    #[allow(dead_code)]
     namespace_url: String,
+    fallback: dataset::FallbackOptions,
 }
 
 impl CompactHandler {
     pub fn new(namespace_url: String) -> Self {
-        Self { namespace_url }
+        Self {
+            namespace_url,
+            fallback: dataset::FallbackOptions::new(),
+        }
+    }
+
+    /// Storage options to use where the namespace vends none.
+    pub fn with_fallback(mut self, fallback: dataset::FallbackOptions) -> Self {
+        self.fallback = fallback;
+        self
+    }
+
+    fn client(&self) -> NamespaceClient {
+        NamespaceClient::new(self.namespace_url.clone())
     }
 }
 
@@ -40,8 +63,11 @@ impl JobHandler for CompactHandler {
 
     fn descriptor(&self) -> JobTypeDescriptor {
         let mut defaults: HashMap<String, ConfigValue> = HashMap::new();
-        defaults.insert("target_rows_per_fragment".to_string(), int_value(1_048_576));
-        defaults.insert("min_fragments".to_string(), int_value(8));
+        defaults.insert(
+            "target_rows_per_fragment".to_string(),
+            int_value(DEFAULT_TARGET_ROWS),
+        );
+        defaults.insert("min_fragments".to_string(), int_value(DEFAULT_MIN_FRAGMENTS));
 
         JobTypeDescriptor {
             job_type: JOB_TYPE.to_string(),
@@ -75,16 +101,147 @@ impl JobHandler for CompactHandler {
         }
     }
 
-    async fn detect(&self, request: &RunDetectionRequest, _sender: &dyn DetectionSender) -> Result<()> {
-        let _min_fragments = int_or(&request.worker_config_values, "min_fragments", 8);
-        Err(anyhow!(
-            "lance compaction needs the lance crate to count fragments; not implemented yet"
-        ))
+    /// Propose a job for every table with more fragments than the operator is
+    /// willing to leave alone. Opening a dataset reads its manifest, not its
+    /// data, so this stays cheap across a catalog.
+    async fn detect(
+        &self,
+        request: &RunDetectionRequest,
+        sender: &dyn DetectionSender,
+    ) -> Result<()> {
+        let min_fragments =
+            int_or(&request.worker_config_values, "min_fragments", DEFAULT_MIN_FRAGMENTS) as usize;
+        let client = self.client();
+        let tables = client.list_all_tables().await?;
+
+        let mut proposals = Vec::new();
+        for encoded in &tables {
+            let id = parse_id(encoded);
+            let table = match dataset::open(&client, &id, &self.fallback).await {
+                Ok(table) => table,
+                Err(err) => {
+                    // A table that cannot be opened is the next run's problem,
+                    // not a reason to abandon the whole sweep.
+                    warn!("skipping {encoded}: {err:#}");
+                    continue;
+                }
+            };
+            let stats = table.stats().await?;
+            if stats.fragments < min_fragments {
+                continue;
+            }
+            let mut parameters: HashMap<String, ConfigValue> = HashMap::new();
+            parameters.insert("table_id".to_string(), string_list(&id));
+            proposals.push(JobProposal {
+                proposal_id: format!("{JOB_TYPE}:{encoded}"),
+                dedupe_key: format!("{JOB_TYPE}:{encoded}"),
+                job_type: JOB_TYPE.to_string(),
+                summary: format!("Compact {encoded} ({} fragments)", stats.fragments),
+                detail: format!(
+                    "{} fragments at version {}, above the {min_fragments} the policy allows",
+                    stats.fragments, stats.version
+                ),
+                parameters,
+                ..Default::default()
+            });
+        }
+
+        let total = proposals.len() as i32;
+        sender.send_proposals(DetectionProposals {
+            request_id: request.request_id.clone(),
+            job_type: JOB_TYPE.to_string(),
+            proposals,
+            has_more: false,
+        })?;
+        sender.send_complete(DetectionComplete {
+            request_id: request.request_id.clone(),
+            job_type: JOB_TYPE.to_string(),
+            success: true,
+            error_message: String::new(),
+            total_proposals: total,
+        })?;
+        Ok(())
     }
 
-    async fn execute(&self, _request: &ExecuteJobRequest, _sender: &dyn ExecutionSender) -> Result<()> {
-        Err(anyhow!(
-            "lance compaction needs the lance crate to rewrite fragments; not implemented yet"
-        ))
+    async fn execute(
+        &self,
+        request: &ExecuteJobRequest,
+        sender: &dyn ExecutionSender,
+    ) -> Result<()> {
+        let job = request
+            .job
+            .as_ref()
+            .ok_or_else(|| anyhow!("execute request carried no job"))?;
+        let id = table_id(&job.parameters)
+            .ok_or_else(|| anyhow!("job {} carried no table_id", job.job_id))?;
+        let target_rows = int_or(
+            &request.worker_config_values,
+            "target_rows_per_fragment",
+            DEFAULT_TARGET_ROWS,
+        ) as usize;
+
+        let client = self.client();
+        // Re-resolve rather than trusting the location detection saw: the table
+        // may have been repointed, and the vended credentials have expired.
+        let mut table = dataset::open(&client, &id, &self.fallback).await?;
+        let before = table.stats().await?;
+
+        sender.send_progress(JobProgressUpdate {
+            request_id: request.request_id.clone(),
+            job_id: job.job_id.clone(),
+            job_type: JOB_TYPE.to_string(),
+            progress_percent: 10.0,
+            stage: format!("compacting {} fragments", before.fragments),
+            ..Default::default()
+        })?;
+
+        let options = CompactionOptions {
+            target_rows_per_fragment: target_rows,
+            ..Default::default()
+        };
+        let metrics = compact_files(&mut table.dataset, options, None)
+            .await
+            .with_context(|| format!("compact {}", table.location))?;
+
+        let after = table.stats().await?;
+        let mut output: HashMap<String, ConfigValue> = HashMap::new();
+        output.insert("fragments_removed".to_string(), int_value(metrics.fragments_removed as i64));
+        output.insert("fragments_added".to_string(), int_value(metrics.fragments_added as i64));
+        output.insert("files_removed".to_string(), int_value(metrics.files_removed as i64));
+
+        sender.send_completed(JobCompleted {
+            request_id: request.request_id.clone(),
+            job_id: job.job_id.clone(),
+            job_type: JOB_TYPE.to_string(),
+            success: true,
+            result: Some(JobResult {
+                output_values: output,
+                summary: format!(
+                    "{} fragments became {}",
+                    before.fragments, after.fragments
+                ),
+                ..Default::default()
+            }),
+            ..Default::default()
+        })?;
+        Ok(())
+    }
+}
+
+fn string_list(parts: &[String]) -> ConfigValue {
+    use seaweed_worker_core::pb::{config_value::Kind, StringList};
+    ConfigValue {
+        kind: Some(Kind::StringList(StringList {
+            values: parts.to_vec(),
+        })),
+    }
+}
+
+fn table_id(parameters: &HashMap<String, ConfigValue>) -> Option<Vec<String>> {
+    use seaweed_worker_core::pb::config_value::Kind;
+    match parameters.get("table_id")?.kind.as_ref()? {
+        Kind::StringList(list) => Some(list.values.clone()),
+        Kind::StringValue(encoded) => Some(parse_id(encoded)),
+        _ => None,
     }
 }

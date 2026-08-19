@@ -27,6 +27,14 @@ struct Args {
 
     #[arg(long, default_value = "1")]
     max_concurrency: i32,
+
+    /// Storage credentials to use where the namespace vends none. A gateway
+    /// with STS configured vends its own and these are ignored.
+    #[arg(long, env = "WEED_S3_ACCESS_KEY")]
+    access_key: Option<String>,
+
+    #[arg(long, env = "WEED_S3_SECRET_KEY")]
+    secret_key: Option<String>,
 }
 
 #[tokio::main]
@@ -48,8 +56,14 @@ async fn main() -> Result<()> {
         ..Default::default()
     };
 
+    let mut fallback = weed_lance_worker::dataset::FallbackOptions::new();
+    if let (Some(access), Some(secret)) = (args.access_key, args.secret_key) {
+        fallback.insert("aws_access_key_id".to_string(), access);
+        fallback.insert("aws_secret_access_key".to_string(), secret);
+    }
+
     let mut registry = Registry::new();
-    for handler in handlers(args.namespace) {
+    for handler in handlers(args.namespace, fallback) {
         registry = registry.register(handler);
     }
 
