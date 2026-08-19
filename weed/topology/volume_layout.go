@@ -311,6 +311,13 @@ func (vl *VolumeLayout) ensureCorrectWritables(vid needle.VolumeId) {
 			time.Since(st.fullSince) < capacityRecoveryDelay {
 			return
 		}
+		// A volume whose effective size is still past the crowded threshold
+		// (marked by UpdateVolumeSize's decay pass) must not be restored here:
+		// UpdateVolumeSize refused the recovery for a reason this helper would
+		// otherwise override.
+		if _, crowded := vl.crowded[vid]; crowded {
+			return
+		}
 		vl.setVolumeWritable(vid)
 		return
 	}

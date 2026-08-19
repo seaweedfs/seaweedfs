@@ -154,3 +154,60 @@ func TestEnsureCorrectWritablesHonorsRecoveryCooldown(t *testing.T) {
 		t.Fatalf("expected volume writable after the cooldown, got %d", w)
 	}
 }
+
+// After the cooldown elapses, a volume whose effective size is still past the
+// crowded threshold must not be restored by ensureCorrectWritables: only
+// UpdateVolumeSize's recovery path -- which rejects the crowded state -- may
+// bring it back to writable.
+func TestEnsureCorrectWritablesDoesNotRestoreCrowdedVolume(t *testing.T) {
+	layout := `
+{
+  "dc1":{
+    "rack1":{
+      "server1":{
+        "volumes":[
+          {"id":1, "size":8000, "replication":"000"}
+        ],
+        "limit":10
+      }
+    }
+  }
+}
+`
+	_, vl := setupPickTest(t, layout, 10000)
+
+	// Remove the volume for capacity, as RecordAssign would. effectiveSize
+	// lands at 13000, past the limit (10000); after the decay against a
+	// reported size of 8000 it stays at 10500, still past the crowded
+	// threshold (9000).
+	if !vl.RecordAssign(1, 5000) {
+		t.Fatalf("RecordAssign should report the volume reached capacity")
+	}
+	if w, _ := vl.GetWritableVolumeCount(); w != 0 {
+		t.Fatalf("expected 0 writable after RecordAssign, got %d", w)
+	}
+
+	dn := vl.vid2location[1].list[0]
+	vi, err := dn.GetVolumesById(1)
+	if err != nil {
+		t.Fatalf("GetVolumesById: %v", err)
+	}
+
+	// Heartbeat reports a size below the limit: the oversized mark clears,
+	// but the decay only halves the pending estimate, so effectiveSize stays
+	// past the crowded threshold and UpdateVolumeSize refuses recovery.
+	vi.Size = 8000
+	vl.UpdateOversizedState(&vi, dn)
+	vl.UpdateVolumeSize(1, vi.Size, 0)
+	if vl.vid2location[1].AnyOversized() {
+		t.Fatalf("expected oversized mark cleared after the shrink report")
+	}
+
+	// After the cooldown, the volume is still crowded: ensureCorrectWritables
+	// must not override UpdateVolumeSize's refusal.
+	advanceSizeTrackingClock(vl, 1, capacityRecoveryDelay+time.Second)
+	vl.EnsureCorrectWritables(&vi)
+	if w, _ := vl.GetWritableVolumeCount(); w != 0 {
+		t.Fatalf("expected crowded volume to stay unwritable, got %d writable", w)
+	}
+}
