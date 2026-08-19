@@ -186,6 +186,7 @@ func TestVersioningPaginationOver1000Versions(t *testing.T) {
 
 			buf := make([]byte, len(expectedContent))
 			_, err = getResp.Body.Read(buf)
+			require.NoError(t, err)
 			getResp.Body.Close()
 
 			assert.Equal(t, expectedContent, string(buf), "Content mismatch for version %d", idx+1)
