@@ -26,8 +26,16 @@ pub async fn run(options: WorkerOptions, registry: Registry) -> Result<()> {
         return Err(anyhow!("no job handlers registered"));
     }
     loop {
-        if let Err(err) = serve_once(&options, &registry).await {
-            warn!("worker stream ended: {err:#}");
+        match serve_once(&options, &registry).await {
+            Err(err) => warn!("worker stream ended: {err:#}"),
+            // Admin closing a healthy stream is not an error, but reconnecting
+            // in silence hides the reason - two workers sharing an id evict
+            // each other and produce nothing but a login every few seconds.
+            Ok(()) => warn!(
+                "admin closed the stream; reconnecting in {:?}. If this repeats, check for \
+                 another worker using the id {}",
+                options.reconnect_delay, options.worker_id
+            ),
         }
         tokio::time::sleep(options.reconnect_delay).await;
     }
@@ -121,6 +129,8 @@ async fn serve_once(options: &WorkerOptions, registry: &Registry) -> Result<()> 
 }
 
 fn spawn_heartbeat(sender: StreamSender, options: WorkerOptions) -> tokio::task::JoinHandle<()> {
+    // The handle has to be the heartbeat's own, or aborting it aborts nothing
+    // and every reconnect leaves another ticker running.
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(options.heartbeat_interval);
         loop {
@@ -139,8 +149,7 @@ fn spawn_heartbeat(sender: StreamSender, options: WorkerOptions) -> tokio::task:
                 return;
             }
         }
-    });
-    tokio::spawn(async {})
+    })
 }
 
 fn spawn_detection(registry: Registry, sender: StreamSender, request: RunDetectionRequest) {
