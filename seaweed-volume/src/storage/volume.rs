@@ -1537,11 +1537,13 @@ impl Volume {
     // ---- Write ----
 
     /// Write a needle to the volume (synchronous path).
-    /// Write a needle to the volume. With `fsync` the write is only reported
-    /// successful once both the .dat record and the .idx row that indexes it
-    /// are on disk, so an ack survives a crash rather than sitting in the page
-    /// cache. Both flushes happen under the same lock as the append, so a
-    /// failed one can take its own append back off the end and nobody else's.
+    ///
+    /// With `fsync` the write is only reported successful once both the .dat
+    /// record and the .idx row that indexes it are on disk, so an ack survives a
+    /// crash rather than sitting in the page cache. The two flushes fail
+    /// differently: a failed .dat flush happens before anything is published, so
+    /// it takes its own append back off the end and nobody else's, while a
+    /// failed .idx flush cannot be undone and stops the volume taking writes.
     pub fn write_needle(
         &mut self,
         n: &mut Needle,
@@ -1573,20 +1575,40 @@ impl Volume {
         }
     }
 
-    /// Flush the .idx. Paired with flush_dat on the durable path: load() rebuilds
-    /// the map from .idx, so both files have to be down before a write is acked.
-    fn flush_idx(&self) -> io::Result<()> {
+    /// Flush the .idx, the second half of a durable write. load() rebuilds the
+    /// map from .idx, not from .dat, so the row has to be down before the write
+    /// is acked: lose it and the volume comes back with a .dat tail the
+    /// integrity check cannot account for, and loads read only.
+    ///
+    /// By the time this runs the row is published and cannot be taken back -
+    /// undoing it would mean writing to a disk that is already failing, and
+    /// would leave an .idx row pointing past a truncated .dat. So a failure
+    /// stops the volume taking writes instead: nothing more gets appended past a
+    /// record whose index may not survive, and the master routes writes
+    /// elsewhere once the volume heartbeats read only.
+    fn flush_idx(&mut self) -> Result<(), VolumeError> {
         #[cfg(test)]
         if self.fail_idx_sync_for_test {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "injected idx sync failure",
-            ));
+            let e = io::Error::new(io::ErrorKind::Other, "injected idx sync failure");
+            self.no_write_or_delete = true;
+            return Err(VolumeError::Io(e));
         }
-        match self.nm.as_ref() {
+        let synced = match self.nm.as_ref() {
             Some(nm) => nm.sync(),
             None => Ok(()),
+        };
+        if let Err(e) = synced {
+            self.check_read_write_error(Some(&e));
+            self.no_write_or_delete = true;
+            tracing::error!(
+                "volume {}: failed to flush the index after a durable write, \
+                 marking read only: {}",
+                self.id.0,
+                e
+            );
+            return Err(VolumeError::Io(e));
         }
+        Ok(())
     }
 
     fn do_write_request(
@@ -1613,13 +1635,16 @@ impl Volume {
         // Dedup check (matches Go: n.DataSize = oldNeedle.DataSize on dedup)
         if let Some(old_data_size) = self.is_file_unchanged(n) {
             n.data_size = old_data_size;
-            // Nothing to append, but an earlier write may have left this content
-            // in the page cache, and the caller is asking for it to be on disk.
+            // Nothing to append, but the write this matched may have been
+            // non-durable, and the caller is asking for the content to be on
+            // disk. Its .idx row can be sitting in the page cache too, so both
+            // files get flushed exactly as they would for a fresh append.
             if fsync {
                 self.flush_dat().map_err(|e| {
                     self.check_read_write_error(Some(&e));
                     VolumeError::Io(e)
                 })?;
+                self.flush_idx()?;
             }
             return Ok((0, Size(n.data_size as i32), true));
         }
@@ -1708,29 +1733,8 @@ impl Volume {
             }
         }
 
-        // load() rebuilds the map from .idx, not from .dat, so the row has to be
-        // down before the write is acked. Lose it and the volume comes back with
-        // a .dat tail the integrity check cannot account for, and loads read only
-        // - a worse outcome than losing the write.
         if fsync {
-            if let Err(e) = self.flush_idx() {
-                self.check_read_write_error(Some(&e));
-                // The row is published and the .dat record is down, but we cannot
-                // promise the row comes back. Taking it out again would mean
-                // undoing published state on a disk that is already failing, and
-                // would leave an .idx row pointing past a truncated .dat. Stop
-                // writing instead: nothing more gets appended past a record whose
-                // index may not survive, and the master routes writes elsewhere
-                // once the volume heartbeats read only.
-                self.no_write_or_delete = true;
-                tracing::error!(
-                    "volume {}: failed to flush the index after a durable write, \
-                     marking read only: {}",
-                    self.id.0,
-                    e
-                );
-                return Err(VolumeError::Io(e));
-            }
+            self.flush_idx()?;
         }
 
         if self.last_modified_ts_seconds < n.last_modified {
@@ -4315,6 +4319,46 @@ mod tests {
         assert_eq!(read_n.data, b"first-copy");
     }
 
+
+    /// A durable write that dedups against an earlier non-durable one still has
+    /// to flush the index. The row that earlier write left behind can be sitting
+    /// in the page cache, so acking without flushing is the same false promise
+    /// as skipping the flush on a fresh append.
+    #[test]
+    fn test_dedup_durable_write_flushes_the_index() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let mut first = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(0xaa),
+            data: b"same-content".to_vec(),
+            data_size: 12,
+            ..Needle::default()
+        };
+        v.write_needle(&mut first, true, false).unwrap();
+
+        v.fail_next_idx_sync_for_test(true);
+        let mut same = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(0xaa),
+            data: b"same-content".to_vec(),
+            data_size: 12,
+            ..Needle::default()
+        };
+        let result = v.write_needle(&mut same, true, true);
+        v.fail_next_idx_sync_for_test(false);
+
+        assert!(
+            result.is_err(),
+            "a dedup hit must not be acked without flushing the index"
+        );
+        assert!(
+            v.is_read_only(),
+            "and the failed index flush quarantines the volume, dedup or not"
+        );
+    }
 
     /// A durable write whose index flush fails leaves the .dat record down and
     /// its row published but not guaranteed to come back. The volume stops
