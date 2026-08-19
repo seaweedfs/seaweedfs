@@ -43,8 +43,16 @@ func TestProbeReadable(t *testing.T) {
 		assert.NoError(t, probeReadable(context.Background(), stubReaderAt{n: 1}, 0, time.Second))
 	})
 
-	t.Run("clean EOF counts as readable", func(t *testing.T) {
-		assert.NoError(t, probeReadable(context.Background(), stubReaderAt{err: io.EOF}, 0, time.Second))
+	t.Run("final byte with trailing EOF counts as readable", func(t *testing.T) {
+		assert.NoError(t, probeReadable(context.Background(), stubReaderAt{n: 1, err: io.EOF}, 0, time.Second))
+	})
+
+	t.Run("zero-byte EOF is unreadable", func(t *testing.T) {
+		assert.Error(t, probeReadable(context.Background(), stubReaderAt{n: 0, err: io.EOF}, 0, time.Second))
+	})
+
+	t.Run("zero-byte read without error is unreadable", func(t *testing.T) {
+		assert.ErrorIs(t, probeReadable(context.Background(), stubReaderAt{n: 0, err: nil}, 0, time.Second), io.ErrUnexpectedEOF)
 	})
 
 	t.Run("read error surfaces", func(t *testing.T) {

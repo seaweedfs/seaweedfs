@@ -1256,16 +1256,21 @@ type ctxReaderAt interface {
 // probeReadable performs a bounded single-byte read at offset to decide whether
 // the local (volume-server) copy is usable. ChunkReadAt honors the context while
 // waiting on the shared download, so a stuck volume trips the timeout and returns
-// context.DeadlineExceeded while the download continues for other readers. A
-// clean EOF (empty tail) counts as readable; any other error signals the caller
-// to fall back to the remote.
+// context.DeadlineExceeded while the download continues for other readers. The
+// copy is readable only if the byte is actually returned (a trailing io.EOF on
+// the object's final byte still counts); a zero-byte read -- whether it reports
+// io.EOF or no error -- means the offset is unreadable and the caller should fall
+// back to the remote.
 func probeReadable(ctx context.Context, reader ctxReaderAt, offset int64, timeout time.Duration) error {
 	probeCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	var b [1]byte
-	_, _, err := reader.ReadAtWithTime(probeCtx, b[:], offset)
-	if err == io.EOF {
+	n, _, err := reader.ReadAtWithTime(probeCtx, b[:], offset)
+	if n == len(b) {
 		return nil
+	}
+	if err == nil {
+		err = io.ErrUnexpectedEOF
 	}
 	return err
 }
