@@ -26,6 +26,10 @@ type pathCache struct {
 	entries   map[string]*pathCacheEntry
 	graveyard []uint64
 	lastSweep time.Time
+	// gen counts purges. A resolve holds no lock across its Lookup RPC, so a
+	// purge can run between the RPC and the insert; the insert then carries
+	// exactly the name the purge removed and has to be discarded.
+	gen uint64
 }
 
 type pathCacheEntry struct {
@@ -69,14 +73,32 @@ func (c *pathCache) lookup(key string) (inode uint64, attr fuse.Attr, ok bool) {
 	return entry.inode, entry.attr, true
 }
 
-// insert takes ownership of one lookup reference on inode.
-func (c *pathCache) insert(key string, inode uint64, attr fuse.Attr) {
+// snapshot returns the purge generation. A caller about to resolve outside
+// the lock passes it back to insert, which discards the entry if any purge ran
+// in between.
+func (c *pathCache) snapshot() uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.gen
+}
+
+// insert takes ownership of one lookup reference on inode, in every outcome:
+// an entry stale against gen goes to the graveyard instead of the map, so the
+// caller may keep using the inode for at least one sweep either way.
+func (c *pathCache) insert(key string, inode uint64, attr fuse.Attr, gen uint64) {
 	if key == "" {
 		c.forget(inode)
 		return
 	}
 	var pending []uint64
 	c.mu.Lock()
+	if gen != c.gen {
+		c.graveyard = append(c.graveyard, inode)
+		pending = c.sweepLocked()
+		c.mu.Unlock()
+		c.forgetAll(pending)
+		return
+	}
 	if existing, found := c.entries[key]; found {
 		c.graveyard = append(c.graveyard, existing.inode)
 	} else if len(c.entries) >= maxCachedPaths {
@@ -109,6 +131,9 @@ func (c *pathCache) steal(key string) (inode uint64, ok bool) {
 func (c *pathCache) purge(key string, prefix bool) {
 	var pending []uint64
 	c.mu.Lock()
+	// Unconditional: the point is as much the in-flight resolve about to
+	// insert this very name as anything the map holds now.
+	c.gen++
 	if entry, found := c.entries[key]; found {
 		c.graveyard = append(c.graveyard, entry.inode)
 		delete(c.entries, key)

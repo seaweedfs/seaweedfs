@@ -192,6 +192,10 @@ func (w *WinFS) forget(inode uint64) {
 // to hold the inode longer steals the reference from the cache.
 func (w *WinFS) walk(parts []string) (uint64, fuse.Status) {
 	inode := uint64(rootInode)
+	// Taken before the lookups: a purge racing this walk - a rename or unlink
+	// landing between a Lookup and its insert - makes what was just resolved
+	// the very thing the purge removed.
+	gen := w.paths.snapshot()
 	for i, name := range parts {
 		key := strings.Join(parts[:i+1], "/")
 		if cached, _, ok := w.paths.lookup(key); ok {
@@ -202,7 +206,7 @@ func (w *WinFS) walk(parts []string) (uint64, fuse.Status) {
 		if status := w.wfs.Lookup(never, ptr(w.caller(inode)), name, &out); status != fuse.OK {
 			return 0, status
 		}
-		w.paths.insert(key, out.NodeId, out.Attr)
+		w.paths.insert(key, out.NodeId, out.Attr, gen)
 		inode = out.NodeId
 	}
 	return inode, fuse.OK
@@ -392,7 +396,7 @@ func (w *WinFS) Mkdir(path string, mode uint32) int {
 	if status == fuse.OK {
 		w.purgeWithParent(path, false)
 		// The new directory is about to be filled; cache it, reference and all.
-		w.paths.insert(cacheKey(path), out.NodeId, out.Attr)
+		w.paths.insert(cacheKey(path), out.NodeId, out.Attr, w.paths.snapshot())
 	}
 	return toErrno(status)
 }
@@ -674,8 +678,8 @@ func (w *WinFS) Release(path string, fh uint64) int {
 		// path still names this inode: WinFsp reports the path the handle
 		// opened with, and after a delete-on-close or a rename caching it
 		// would resurrect an entry that is gone.
-		if key := cacheKey(path); attr != nil && w.stillNames(key, inode) {
-			w.paths.insert(key, inode, *attr)
+		if key, gen := cacheKey(path), w.paths.snapshot(); attr != nil && w.stillNames(key, inode) {
+			w.paths.insert(key, inode, *attr, gen)
 		} else {
 			w.forget(inode)
 		}

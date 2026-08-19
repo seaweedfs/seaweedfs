@@ -175,8 +175,13 @@ func TestRenameOverExisting(t *testing.T) {
 	if string(got) != "new" {
 		t.Fatalf("target holds %q, want the source content", got)
 	}
-	if _, err := os.Stat(src); !os.IsNotExist(err) {
-		t.Fatal("source survived the rename")
+	if fi, err := os.Stat(src); !os.IsNotExist(err) {
+		// Both a stale positive and a transient non-ENOENT error land here, and
+		// they indict different layers; a second look says whether it persists.
+		time.Sleep(200 * time.Millisecond)
+		fi2, err2 := os.Stat(src)
+		t.Fatalf("source survived the rename: stat=%v err=%v; 200ms later stat=%v err=%v",
+			describeFileInfo(fi), err, describeFileInfo(fi2), err2)
 	}
 }
 
@@ -514,4 +519,11 @@ func TestDeleteOnClose(t *testing.T) {
 	if err := closeHandle(h); err != nil {
 		t.Fatalf("close after recreate: %v", err)
 	}
+}
+
+func describeFileInfo(fi os.FileInfo) string {
+	if fi == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("{size=%d mode=%v mtime=%s}", fi.Size(), fi.Mode(), fi.ModTime().Format(time.RFC3339Nano))
 }
