@@ -253,7 +253,13 @@ templ IcebergTableDetails(data dash.IcebergTableDetailsData) {
 								}
 								if len(data.SchemaFields) == 0 {
 									<tr>
-										<td colspan="4" class="text-center text-muted">No schema available.</td>
+										if data.Format != "" && data.Format != "ICEBERG" {
+											<td colspan="4" class="text-center text-muted">
+												The catalog records where this { data.Format } table lives, not what is in it. Its schema is held in the table's own files.
+											</td>
+										} else {
+											<td colspan="4" class="text-center text-muted">No schema available.</td>
+										}
 									</tr>
 								}
 							</tbody>
@@ -351,7 +357,13 @@ templ IcebergTableDetails(data dash.IcebergTableDetailsData) {
 								}
 								if len(data.Snapshots) == 0 {
 									<tr>
-										<td colspan="4" class="text-center text-muted">No snapshots available.</td>
+										if data.Format != "" && data.Format != "ICEBERG" {
+											<td colspan="4" class="text-center text-muted">
+												A { data.Format } table keeps its own version history; the catalog does not mirror it here.
+											</td>
+										} else {
+											<td colspan="4" class="text-center text-muted">No snapshots available.</td>
+										}
 									</tr>
 								}
 							</tbody>
