@@ -1,0 +1,23 @@
+#!/bin/sh
+# Install packages, falling through to the next Ubuntu mirror when one is
+# unreachable. See docker/Dockerfile.e2e.
+set -e
+
+# Every rewrite starts from the pristine list, so a mirror that just failed does
+# not become the pattern the next rewrite has to match.
+[ -f /etc/apt/sources.list.orig ] || cp /etc/apt/sources.list /etc/apt/sources.list.orig
+
+for mirror in azure.archive.ubuntu.com archive.ubuntu.com; do
+	sed "s|http://archive\.ubuntu\.com/ubuntu|http://$mirror/ubuntu|g; s|http://security\.ubuntu\.com/ubuntu|http://$mirror/ubuntu|g" \
+		/etc/apt/sources.list.orig > /etc/apt/sources.list
+	if apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 update && \
+		DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 install -y \
+			--no-install-recommends --no-install-suggests "$@"; then
+		apt-get clean
+		rm -rf /var/lib/apt/lists/*
+		exit 0
+	fi
+	echo "apt: $mirror unreachable, trying the next mirror" >&2
+done
+
+exit 1
