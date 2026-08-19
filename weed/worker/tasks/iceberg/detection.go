@@ -3,6 +3,7 @@ package iceberg
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"path"
 	"strings"
@@ -128,7 +129,11 @@ func (h *Handler) scanTablesForMaintenance(
 				tablePath := path.Join(nsName, tblName)
 				state, err := parseTableMetadataEnvelope(metadataBytes, bucketName, tablePath)
 				if err != nil {
-					glog.V(2).Infof("iceberg maintenance: skipping %s/%s/%s: cannot parse iceberg metadata: %v", bucketName, nsName, tblName, err)
+					if errors.Is(err, errForeignFormat) {
+						glog.V(3).Infof("iceberg maintenance: skipping %s/%s/%s: %v", bucketName, nsName, tblName, err)
+					} else {
+						glog.V(2).Infof("iceberg maintenance: skipping %s/%s/%s: cannot parse iceberg metadata: %v", bucketName, nsName, tblName, err)
+					}
 					continue
 				}
 				if !isIcebergTableEntry(tableEntry.Extended, state.Metadata) {

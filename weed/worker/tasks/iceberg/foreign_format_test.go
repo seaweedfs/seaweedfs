@@ -1,6 +1,7 @@
 package iceberg
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/apache/iceberg-go"
@@ -52,5 +53,21 @@ func TestIsIcebergTableEntry(t *testing.T) {
 				t.Fatalf("isIcebergTableEntry() = %v, want %v", got, c.want)
 			}
 		})
+	}
+}
+
+// A table the namespace created as LANCE carries no Iceberg metadata at all.
+// Without reading the catalog's own format field the parse below just fails,
+// and the table gets skipped as though its metadata were damaged.
+func TestParseTableMetadataEnvelopeRejectsForeignFormats(t *testing.T) {
+	lance := []byte(`{"name":"vectors","namespace":"ml","format":"LANCE","metadataLocation":"s3://b/ml/vectors"}`)
+	if _, err := parseTableMetadataEnvelope(lance, "b", "ml/vectors"); !errors.Is(err, errForeignFormat) {
+		t.Fatalf("parse of a LANCE entry = %v, want errForeignFormat", err)
+	}
+
+	// An entry with no format recorded predates the field and is still Iceberg's.
+	legacy := []byte(`{"metadataVersion":1}`)
+	if _, err := parseTableMetadataEnvelope(legacy, "b", "ml/t"); err == nil || errors.Is(err, errForeignFormat) {
+		t.Fatalf("parse of a legacy entry = %v, want a plain parse failure", err)
 	}
 }
