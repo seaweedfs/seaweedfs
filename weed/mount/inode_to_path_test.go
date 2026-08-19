@@ -5,6 +5,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -185,5 +186,25 @@ func TestForgetOnReleaseRunsUnderLock(t *testing.T) {
 	itp.Forget(inode, 1, onRelease, nil)
 	if calls != 1 {
 		t.Fatalf("onRelease called %d times, want 1", calls)
+	}
+}
+
+// A move with no source is not a move. Deciding that inside the lock is what
+// keeps two invalidations racing on the same rename from unlinking each other's
+// work.
+func TestMovePathWithNoSourceLeavesTheTarget(t *testing.T) {
+	itp := NewInodeToPath(util.FullPath("/"), 0)
+	inode := itp.Lookup("/a/f.txt", time.Now().Unix(), false, false, 0, true)
+
+	itp.MovePath("/a/f.txt", "/a/g.txt")
+	if sourceInode, targetInode := itp.MovePath("/a/f.txt", "/a/g.txt"); sourceInode != 0 || targetInode != 0 {
+		t.Errorf("repeat move reported %d -> %d, want nothing moved", sourceInode, targetInode)
+	}
+
+	if got, status := itp.GetPath(inode); status != fuse.OK || got != "/a/g.txt" {
+		t.Errorf("inode resolves to %q (%v), want /a/g.txt", got, status)
+	}
+	if got, found := itp.GetInode("/a/g.txt"); !found || got != inode {
+		t.Errorf("/a/g.txt resolves to %d (found %v), want %d", got, found, inode)
 	}
 }
