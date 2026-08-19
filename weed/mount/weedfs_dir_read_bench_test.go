@@ -62,12 +62,6 @@ func (s *benchSink) AddEntryPlus(entry fuse.DirEntry) *fuse.EntryOut {
 
 func (s *benchSink) TakesLookupRef() bool { return s.takesRef }
 
-func inodeTableSize(i *InodeToPath) int {
-	i.RLock()
-	defer i.RUnlock()
-	return len(i.inode2path)
-}
-
 func newBenchWFS(tb testing.TB, dir util.FullPath, n int) *WFS {
 	tb.Helper()
 
@@ -227,7 +221,7 @@ func BenchmarkReadDirectory(b *testing.B) {
 			b.StopTimer()
 			// What the listing left in the inode table, over the root and the
 			// directory itself.
-			b.ReportMetric(float64(inodeTableSize(wfs.inodeToPath)), "inodes_left")
+			b.ReportMetric(float64(wfs.inodeToPath.Len()), "inodes_left")
 		})
 	}
 }

@@ -214,6 +214,12 @@ func (i *InodeToPath) GetAllPaths(inode uint64) []util.FullPath {
 	return out
 }
 
+func (i *InodeToPath) Len() int {
+	i.RLock()
+	defer i.RUnlock()
+	return len(i.inode2path)
+}
+
 func (i *InodeToPath) HasPath(path util.FullPath) bool {
 	i.RLock()
 	defer i.RUnlock()

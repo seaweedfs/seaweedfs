@@ -60,6 +60,11 @@ type Option struct {
 	DisableXAttr                bool
 	IsMacOs                     bool
 
+	// MaxInodeEntries bounds what readdirplus adds, not the table itself: only
+	// a kernel FORGET releases an entry, and LOOKUP is never refused.
+	// 0 is unlimited.
+	MaxInodeEntries int
+
 	// LogicalDiskUsage reports data sizes rather than the space they occupy,
 	// for both df and the quota. See WFS.diskSizes.
 	LogicalDiskUsage bool

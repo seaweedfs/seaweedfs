@@ -214,6 +214,13 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out DirEntrySink, isPlusMode
 	// Only a reference makes a child worth entering in the inode table: without
 	// one nothing ever arrives to take the entry back out again.
 	takesLookupRef := isPlusMode && out.TakesLookupRef()
+	// A zeroed EntryOut reads to the kernel as "no attributes for this entry":
+	// the name is still listed, but no reference is taken and none is owed back.
+	atInodeCap := takesLookupRef && wfs.option.MaxInodeEntries > 0 &&
+		wfs.inodeToPath.Len() >= wfs.option.MaxInodeEntries
+	if atInodeCap {
+		takesLookupRef = false
+	}
 
 	// index is the position in entryStream, used to calculate the offset for next readdir
 	processEachEntryFn := func(entry *filer.Entry, index int64) bool {
@@ -239,6 +246,9 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out DirEntrySink, isPlusMode
 			entryOut := out.AddEntryPlus(dirEntry)
 			if entryOut == nil {
 				return false
+			}
+			if atInodeCap {
+				return true
 			}
 			if fh, found := wfs.fhMap.FindFileHandle(inode); found {
 				glog.V(4).Infof("readdir opened file %s", childPath)
