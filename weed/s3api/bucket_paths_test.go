@@ -12,6 +12,8 @@ func TestBucketDirPreservesAbsoluteFilerPath(t *testing.T) {
 		{name: "empty root", bucketsPath: "", bucket: "bucket-a", want: "/bucket-a"},
 		{name: "filesystem root", bucketsPath: "/", bucket: "bucket-a", want: "/bucket-a"},
 		{name: "default root", bucketsPath: "/buckets", bucket: "bucket-a", want: "/buckets/bucket-a"},
+		{name: "repeated separators", bucketsPath: "//buckets//", bucket: "bucket-a", want: "/buckets/bucket-a"},
+		{name: "dot components", bucketsPath: "/data/../buckets/.", bucket: "bucket-a", want: "/buckets/bucket-a"},
 	}
 
 	for _, tt := range tests {

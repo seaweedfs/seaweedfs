@@ -2,13 +2,13 @@ package s3api
 
 import (
 	"errors"
+	"path"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 var tableBucketFileValidator = s3tables.NewTableBucketFileValidator()
@@ -46,7 +46,7 @@ func (s3a *S3ApiServer) bucketRoot(bucket string) string {
 }
 
 func (s3a *S3ApiServer) bucketDir(bucket string) string {
-	return string(util.FullPath(s3a.bucketRoot(bucket)).Child(bucket))
+	return path.Join("/", s3a.bucketRoot(bucket), bucket)
 }
 
 func (s3a *S3ApiServer) validateTableBucketObjectPath(bucket, object string) error {
