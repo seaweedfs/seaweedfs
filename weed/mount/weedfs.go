@@ -876,6 +876,27 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 	fhActiveLock := wfs.fhLockTable.AcquireLock("invalidateFunc", fh.fh, util.ExclusiveLock)
 	defer wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 
+	// A rename changes which name the inode answers to, not which version of
+	// its content the handle holds, so it is applied ahead of the version fence
+	// below - a fence that skipped it would strand the inode and the handle on
+	// a name the filer has vacated. MovePath reports whether the source was
+	// still ours to move, which is what makes a replayed rename a no-op here.
+	if invalidation.RenamedTo != "" {
+		if sourceInode, replaced := wfs.inodeToPath.MovePath(filePath, invalidation.RenamedTo); sourceInode != 0 {
+			if replaced != inode {
+				replacedInode = replaced
+			}
+			fh.RememberPath(invalidation.RenamedTo)
+			if _, newName := invalidation.RenamedTo.DirAndName(); newName != "" {
+				fh.UpdateEntry(func(entry *filer_pb.Entry) {
+					if entry != nil {
+						entry.Name = newName
+					}
+				})
+			}
+		}
+	}
+
 	// Invalidations apply asynchronously: the handle may already reflect this
 	// event or newer state, and rolling it back would never be corrected.
 	// Only skip within one clock domain — the handle's position may have been
@@ -915,19 +936,6 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 		// updating the renamed file. An actual delete instead marks the handle
 		// so no flush recreates the unlinked name. Either way the entry and
 		// dirty pages stay, so the open fd still reads its buffered writes.
-		if invalidation.RenamedTo != "" {
-			if _, replaced := wfs.inodeToPath.MovePath(filePath, invalidation.RenamedTo); replaced != inode {
-				replacedInode = replaced
-			}
-			fh.RememberPath(invalidation.RenamedTo)
-			if _, newName := invalidation.RenamedTo.DirAndName(); newName != "" {
-				fh.UpdateEntry(func(entry *filer_pb.Entry) {
-					if entry != nil {
-						entry.Name = newName
-					}
-				})
-			}
-		}
 		if invalidation.Deleted {
 			fh.isDeleted = true
 		}

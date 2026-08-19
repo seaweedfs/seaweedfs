@@ -90,3 +90,33 @@ func TestRemoteRenameReplayLeavesTheTargetAlone(t *testing.T) {
 		t.Error("the moved file's handle was marked deleted by the replay")
 	}
 }
+
+// A rename event older than the handle's version fence is still a rename. The
+// fence is about which version of the content the handle holds, and skipping
+// the move would leave both the inode and the handle on a name the filer has
+// vacated.
+func TestRenameBelowTheVersionFenceStillMoves(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+	oldPath, newPath := util.FullPath("/dir/file"), util.FullPath("/dir/renamed")
+
+	inode := wfs.inodeToPath.Lookup(oldPath, time.Now().Unix(), false, false, 0, true)
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 88},
+	}, 0, 0)
+	// The handle already reflects a later position in the same clock domain, so
+	// the fence would drop this event.
+	fh.advanceEntryVersion(5000, wfs.signature)
+
+	wfs.onEntryInvalidation(meta_cache.EntryInvalidation{
+		Path: oldPath, RenamedTo: newPath, TsNs: 1000,
+		Signatures: []int32{wfs.signature},
+	})
+
+	if got, status := wfs.inodeToPath.GetPath(inode); status != fuse.OK || got != newPath {
+		t.Errorf("inode resolves to %q (%v), want %s", got, status, newPath)
+	}
+	if dir, name := fh.savedDir, fh.savedName; util.FullPath(dir).Child(name) != newPath {
+		t.Errorf("handle remembers %s/%s, want %s", dir, name, newPath)
+	}
+}
