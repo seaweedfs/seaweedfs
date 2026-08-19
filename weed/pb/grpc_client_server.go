@@ -156,6 +156,7 @@ func ServeGrpcOnLocalSocket(grpcServer *grpc.Server, grpcPort int) {
 		glog.Errorf("Failed to listen on gRPC Unix socket %s: %v", socketPath, err)
 		return
 	}
+	listener = &localSocketListener{Listener: listener}
 	glog.V(0).Infof("gRPC also listening on Unix socket %s", socketPath)
 	go func() {
 		if err := grpcServer.Serve(listener); err != nil && err != grpc.ErrServerStopped {
@@ -163,6 +164,20 @@ func ServeGrpcOnLocalSocket(grpcServer *grpc.Server, grpcPort int) {
 		}
 		os.Remove(socketPath)
 	}()
+}
+
+// localSocketListener re-applies the buffer sizes to every accepted connection.
+type localSocketListener struct {
+	net.Listener
+}
+
+func (l *localSocketListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	applyLocalSocketBuffers(c)
+	return c, nil
 }
 
 func NewGrpcServer(opts ...grpc.ServerOption) *grpc.Server {
