@@ -3,10 +3,22 @@ package topology
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // TestDistributedOperationCancelsSiblingsOnFirstError verifies that once one
@@ -51,5 +63,111 @@ func TestDistributedOperationEmpty(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("expected nil for no locations, got %v", err)
+	}
+}
+
+type mockMasterServer struct {
+	master_pb.UnimplementedSeaweedServer
+	locations []*master_pb.Location
+}
+
+func (m *mockMasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupVolumeRequest) (*master_pb.LookupVolumeResponse, error) {
+	var vls []*master_pb.LookupVolumeResponse_VolumeIdLocation
+	for _, vid := range req.VolumeOrFileIds {
+		vls = append(vls, &master_pb.LookupVolumeResponse_VolumeIdLocation{
+			VolumeOrFileId: vid,
+			Locations:      m.locations,
+		})
+	}
+	return &master_pb.LookupVolumeResponse{VolumeIdLocations: vls}, nil
+}
+
+// TestReplicatedWriteForwardsFsyncToReplicas verifies that the fsync=true
+// request parameter is forwarded to replica volume servers in the fan-out
+// request, so a durable write means every replica has flushed to disk.
+func TestReplicatedWriteForwardsFsyncToReplicas(t *testing.T) {
+	replicaQueries := make(chan url.Values, 4)
+	replica := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		replicaQueries <- r.URL.Query()
+		w.WriteHeader(http.StatusCreated)
+		if _, err := w.Write([]byte(`{"size":1}`)); err != nil {
+			t.Errorf("replica write response: %v", err)
+		}
+	}))
+	defer replica.Close()
+	replicaHost := strings.TrimPrefix(replica.URL, "http://")
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	grpcServer := grpc.NewServer()
+	master_pb.RegisterSeaweedServer(grpcServer, &mockMasterServer{
+		locations: []*master_pb.Location{{Url: replicaHost}},
+	})
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- grpcServer.Serve(lis) }()
+	// Stop closes the listener it was handed, so there is no separate close here
+	defer func() {
+		grpcServer.Stop()
+		if err := <-serveErr; err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+			t.Errorf("mock master serve: %v", err)
+		}
+	}()
+
+	grpcPort := lis.Addr().(*net.TCPAddr).Port
+	masterFn := func(_ context.Context) pb.ServerAddress {
+		// ServerAddress.ToGrpcAddress treats "host:port" as an http address and
+		// adds 10000 to reach the grpc port, so hand it the "port.grpcPort"
+		// form to point straight at the mock listener.
+		return pb.NewServerAddressWithGrpcPort(fmt.Sprintf("127.0.0.1:%d", grpcPort), grpcPort)
+	}
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+
+	store := &storage.Store{}
+	volumeId := needle.VolumeId(1)
+
+	for _, tc := range []struct {
+		name      string
+		fsync     string
+		wantFsync bool
+	}{
+		{name: "fsync requested", fsync: "true", wantFsync: true},
+		{name: "no fsync requested", fsync: "", wantFsync: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			operation.InvalidateVolumeIdLocationCache(volumeId.String())
+
+			path := "http://127.0.0.1:8080/1,01637037d6"
+			if tc.fsync != "" {
+				path += "?fsync=" + tc.fsync
+			}
+			r := httptest.NewRequest(http.MethodPost, path, nil)
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+
+			n := &needle.Needle{
+				Id:   1,
+				Data: []byte("test data"),
+				Ttl:  needle.EMPTY_TTL,
+			}
+			if _, err := ReplicatedWrite(context.Background(), masterFn, dialOption, store, volumeId, n, r, ""); err != nil {
+				t.Fatalf("ReplicatedWrite: %v", err)
+			}
+
+			select {
+			case q := <-replicaQueries:
+				got := q.Get("fsync")
+				if tc.wantFsync && got != "true" {
+					t.Errorf("expected fsync=true in replica query, got %q (query: %v)", got, q)
+				}
+				if !tc.wantFsync && got != "" {
+					t.Errorf("expected no fsync in replica query, got %q (query: %v)", got, q)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("replica never received the fan-out request")
+			}
+		})
 	}
 }

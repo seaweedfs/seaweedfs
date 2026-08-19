@@ -29,7 +29,7 @@ func TestSearchVolumesWithDeletedNeedles(t *testing.T) {
 
 	for i := 1; i < count; i++ {
 		n := newRandomNeedle(uint64(i))
-		_, _, _, err := v.writeNeedle2(n, true, false)
+		_, _, _, err := v.writeNeedle2(n, true, false, false)
 		if err != nil {
 			t.Fatalf("write needle %d: %v", i, err)
 		}
@@ -126,7 +126,7 @@ func TestDestroyNonemptyVolumeWithOnlyEmpty(t *testing.T) {
 	path := v.DataBackend.Name()
 
 	// should return "volume not empty" error and do not delete file when Destroy non-empty volume
-	_, _, _, err = v.writeNeedle2(newRandomNeedle(1), true, false)
+	_, _, _, err = v.writeNeedle2(newRandomNeedle(1), true, false, false)
 	if err != nil {
 		t.Fatalf("write needle: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestDestroyNonemptyVolumeWithOnlyEmpty(t *testing.T) {
 	assertFileExist(t, true, path)
 
 	// should keep working after "volume not empty"
-	_, _, _, err = v.writeNeedle2(newRandomNeedle(2), true, false)
+	_, _, _, err = v.writeNeedle2(newRandomNeedle(2), true, false, false)
 	if err != nil {
 		t.Fatalf("write needle: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestDestroyNonemptyVolumeWithoutOnlyEmpty(t *testing.T) {
 	path := v.DataBackend.Name()
 
 	// should can Destroy non-empty volume without onlyEmpty
-	_, _, _, err = v.writeNeedle2(newRandomNeedle(1), true, false)
+	_, _, _, err = v.writeNeedle2(newRandomNeedle(1), true, false, false)
 	if err != nil {
 		t.Fatalf("write needle: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestWriteNeedleBlobRejectedOnReadOnlyVolume(t *testing.T) {
 		t.Fatalf("volume creation: %v", err)
 	}
 	n := newRandomNeedle(1)
-	offset, _, _, err := v.writeNeedle2(n, true, false)
+	offset, _, _, err := v.writeNeedle2(n, true, false, false)
 	if err != nil {
 		t.Fatalf("write needle: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestWriteNeedleBlobRejectsSizeMismatch(t *testing.T) {
 	location.SetVolume(7, v)
 
 	n := newRandomNeedle(1)
-	offset, _, _, err := v.writeNeedle2(n, true, false)
+	offset, _, _, err := v.writeNeedle2(n, true, false, false)
 	if err != nil {
 		t.Fatalf("write needle: %v", err)
 	}

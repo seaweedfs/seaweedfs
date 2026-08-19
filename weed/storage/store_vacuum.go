@@ -32,7 +32,7 @@ func (s *Store) CompactVolume(vid needle.VolumeId, preallocate int64, compaction
 }
 
 func (s *Store) CommitCompactVolume(vid needle.VolumeId) (bool, int64, error) {
-	if s.isStopping {
+	if s.isStopping.Load() {
 		return false, 0, fmt.Errorf("volume id %d skips compact because volume is stopping", vid)
 	}
 	if v := s.findVolume(vid); v != nil {

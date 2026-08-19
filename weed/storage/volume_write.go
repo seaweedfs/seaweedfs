@@ -156,23 +156,74 @@ func (v *Volume) asyncRequestAppend(request *needle.AsyncRequest) {
 	v.asyncRequestsChan <- request
 }
 
-func (v *Volume) syncWrite(n *needle.Needle, checkCookie bool) (offset uint64, size Size, isUnchanged bool, err error) {
+func (v *Volume) syncWrite(n *needle.Needle, checkCookie bool, fsync bool) (offset uint64, size Size, isUnchanged bool, err error) {
 	// glog.V(4).Infof("writing needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 
-	return v.doWriteRequest(n, checkCookie)
+	if !fsync {
+		return v.doWriteRequest(n, checkCookie)
+	}
+
+	end, _, statErr := v.DataBackend.GetStat()
+	if statErr != nil {
+		return 0, 0, false, fmt.Errorf("cannot read current volume position: %v", statErr)
+	}
+	priorOffset, priorSize, hasPrior := Offset{}, Size(0), false
+	if nv, found := v.nm.Get(n.Id); found {
+		priorOffset, priorSize, hasPrior = nv.Offset, nv.Size, true
+	}
+
+	offset, size, isUnchanged, err = v.doWriteRequest(n, checkCookie)
+	if err != nil {
+		return
+	}
+	if syncErr := v.DataBackend.Sync(); syncErr != nil {
+		v.checkReadWriteError(syncErr)
+		if !isUnchanged {
+			v.rollbackUnflushedWrite(n, offset, end, priorOffset, priorSize, hasPrior)
+		}
+		return 0, 0, false, syncErr
+	}
+	return
 }
 
-func (v *Volume) writeNeedle2(n *needle.Needle, checkCookie bool, fsync bool) (offset uint64, size Size, isUnchanged bool, err error) {
+// rollbackUnflushedWrite undoes an append whose fsync failed: the bytes are not
+// data we can vouch for, so they come back off the .dat and the needle map goes
+// back to what it pointed at before, rather than at an offset past the new end.
+func (v *Volume) rollbackUnflushedWrite(n *needle.Needle, offset uint64, end int64, priorOffset Offset, priorSize Size, hasPrior bool) {
+	if te := v.DataBackend.Truncate(end); te != nil {
+		glog.V(0).Infof("Failed to truncate %s back to %d with error: %v", v.DataBackend.Name(), end, te)
+	}
+	current, found := v.nm.Get(n.Id)
+	if !found || current.Offset.ToActualOffset() != int64(offset) {
+		// doWriteRequest kept an existing mapping at a higher offset
+		return
+	}
+	var err error
+	if hasPrior {
+		err = v.nm.Put(n.Id, priorOffset, priorSize)
+	} else {
+		err = v.nm.Delete(n.Id, ToOffset(int64(offset)))
+	}
+	if err != nil {
+		glog.V(0).Infof("Failed to roll back the index of needle %d in volume %d: %v", n.Id, v.Id, err)
+	}
+}
+
+// writeNeedle2 appends a needle. A durable write normally goes through the
+// async batch worker, which fsyncs once for the whole batch; while the server
+// is stopping the worker is winding down, so it is flushed inline instead. Both
+// paths only return once the .dat is on disk.
+func (v *Volume) writeNeedle2(n *needle.Needle, checkCookie bool, fsync bool, isStopping bool) (offset uint64, size Size, isUnchanged bool, err error) {
 	// glog.V(4).Infof("writing needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	if n.Ttl == needle.EMPTY_TTL && v.Ttl != needle.EMPTY_TTL {
 		n.SetHasTtl()
 		n.Ttl = v.Ttl
 	}
 
-	if !fsync {
-		return v.syncWrite(n, checkCookie)
+	if !fsync || isStopping {
+		return v.syncWrite(n, checkCookie, fsync)
 	} else {
 		asyncRequest := needle.NewAsyncRequest(n, true)
 		// using len(n.Data) here instead of n.Size before n.Size is populated in n.Append()
