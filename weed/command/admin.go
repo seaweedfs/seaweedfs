@@ -51,6 +51,7 @@ type AdminOptions struct {
 	readOnlyPassword *string
 	dataDir          *string
 	icebergPort      *int
+	lancePort        *int
 	urlPrefix        *string
 	metricsHttpPort  *int
 	metricsHttpIp    *string
@@ -74,6 +75,7 @@ func init() {
 	a.readOnlyUser = cmdAdmin.Flag.String("readOnlyUser", "", "read-only user username (optional, for view-only access)")
 	a.readOnlyPassword = cmdAdmin.Flag.String("readOnlyPassword", "", "read-only user password (optional, for view-only access; requires adminPassword to be set)")
 	a.icebergPort = cmdAdmin.Flag.Int("iceberg.port", 8181, "Iceberg REST Catalog port (0 to hide in UI)")
+	a.lancePort = cmdAdmin.Flag.Int("lance.port", 9101, "Lance Namespace port (0 to hide in UI)")
 	a.urlPrefix = cmdAdmin.Flag.String("urlPrefix", "", "URL path prefix when running behind a reverse proxy under a subdirectory (e.g. /seaweedfs)")
 	a.metricsHttpPort = cmdAdmin.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 	a.metricsHttpIp = cmdAdmin.Flag.String("metricsIp", "", "metrics listen ip. If empty, listens on all interfaces.")
@@ -314,7 +316,7 @@ func runAdmin(cmd *Command, args []string) bool {
 	}
 
 	// Start the admin server with all masters (UI enabled by default)
-	err := startAdminServer(ctx, a, true, *a.icebergPort, urlPrefix)
+	err := startAdminServer(ctx, a, true, *a.icebergPort, *a.lancePort, urlPrefix)
 	if err != nil {
 		fmt.Printf("Admin server error: %v\n", err)
 		return false
@@ -325,7 +327,7 @@ func runAdmin(cmd *Command, args []string) bool {
 }
 
 // startAdminServer starts the actual admin server
-func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, icebergPort int, urlPrefix string) error {
+func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, icebergPort, lancePort int, urlPrefix string) error {
 	// Create router
 	r := mux.NewRouter()
 	r.Use(loggingMiddleware)
@@ -388,7 +390,7 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 	r.PathPrefix("/static/").Handler(http.StripPrefix("/static/", admin.StaticHandler()))
 
 	// Create admin server (plugin is always enabled)
-	adminServer := dash.NewAdminServer(*options.master, *options.filerGroup, nil, dataDir, icebergPort)
+	adminServer := dash.NewAdminServer(*options.master, *options.filerGroup, nil, dataDir, icebergPort, lancePort)
 
 	if err := adminServer.ApplyPluginConfigFromToml(util.GetViper()); err != nil {
 		return fmt.Errorf("apply admin.toml to plugin config: %w", err)
