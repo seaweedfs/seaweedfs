@@ -50,7 +50,15 @@ type purgeRecord struct {
 const maxRecentPurges = 128
 
 func (r purgeRecord) covers(key string) bool {
-	return r.key == key || (r.prefix && strings.HasPrefix(key, r.key+"/"))
+	if r.key == key {
+		return true
+	}
+	if !r.prefix {
+		return false
+	}
+	// An empty key with prefix is the whole cache: purge clears every entry
+	// for it, so it has to cover every in-flight insert too.
+	return r.key == "" || strings.HasPrefix(key, r.key+"/")
 }
 
 // purgedSince reports whether any purge after gen covers key.

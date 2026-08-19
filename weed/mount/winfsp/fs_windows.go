@@ -32,11 +32,6 @@ const (
 	// WinFsp. Bounded so a directory with millions of children does not
 	// materialise in one slice.
 	readdirBatch = 4096
-
-	// stealAttempts bounds the resolve-then-steal loop in the open paths. A
-	// miss needs the entry to be evicted in the instant between the two calls,
-	// so a second round is already unlikely.
-	stealAttempts = 4
 )
 
 // never is a nil channel: receiving blocks forever, which is what the raw
@@ -232,24 +227,29 @@ func (w *WinFS) resolveParent(path string) (uint64, string, fuse.Status) {
 	return parent, name, fuse.OK
 }
 
-// resolveAndSteal resolves path and takes over the cache's reference on the
-// final inode, for the open paths that hold it for the life of a handle. The
-// root is handed out without a reference; it does not need one.
+// resolveAndSteal resolves path to an inode reference the caller owns, for
+// the open paths that hold it for the life of a handle: a cached entry is
+// stolen, anything else is looked up directly so the reference never passes
+// through the cache - an open must not depend on an insert surviving the
+// purges racing it. The root is handed out without a reference; it does not
+// need one.
 func (w *WinFS) resolveAndSteal(path string) (uint64, fuse.Status) {
 	key := cacheKey(path)
-	for attempt := 0; attempt < stealAttempts; attempt++ {
-		inode, status := w.resolve(path)
-		if status != fuse.OK {
-			return 0, status
-		}
-		if key == "" {
-			return inode, fuse.OK
-		}
-		if stolen, ok := w.paths.steal(key); ok {
-			return stolen, fuse.OK
-		}
+	if key == "" {
+		return rootInode, fuse.OK
 	}
-	return 0, fuse.EIO
+	if stolen, ok := w.paths.steal(key); ok {
+		return stolen, fuse.OK
+	}
+	parent, name, status := w.resolveParent(path)
+	if status != fuse.OK {
+		return 0, status
+	}
+	var out fuse.EntryOut
+	if status := w.wfs.Lookup(never, ptr(w.caller(parent)), name, &out); status != fuse.OK {
+		return 0, status
+	}
+	return out.NodeId, fuse.OK
 }
 
 func (w *WinFS) attrToStat(attr *fuse.Attr, stat *cgofuse.Stat_t) {

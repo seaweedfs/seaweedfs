@@ -253,3 +253,17 @@ func TestPathCacheDiscardedInsertRestsBeforeForget(t *testing.T) {
 		t.Fatalf("discarded insert leaked its lookup reference; forgot %v", rec.forgotten())
 	}
 }
+
+// A purge of the whole cache - the root, prefix set - covers every in-flight
+// insert, exactly as it removed every entry.
+func TestPathCacheRootPurgeCoversEveryInsert(t *testing.T) {
+	c := newPathCache(time.Minute, func(uint64) {})
+
+	gen := c.snapshot()
+	c.purge("", true)
+	c.insert("dir/src", 42, fuse.Attr{}, gen)
+
+	if _, _, ok := c.lookup("dir/src"); ok {
+		t.Fatal("root purge did not cover an in-flight insert")
+	}
+}
