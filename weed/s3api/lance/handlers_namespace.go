@@ -272,8 +272,13 @@ func (s *Server) namespaceExists(r *http.Request, bucket string, ns []string) (b
 
 func (s *Server) createNamespace(r *http.Request, bucket string, ns []string, properties map[string]string) error {
 	if len(ns) == 0 {
+		// A bucket made through this surface holds Lance tables. Saying so is
+		// what stops it from being described to a client as an Iceberg catalog.
 		var resp s3tables.CreateTableBucketResponse
-		return s.execute(r, "CreateTableBucket", &s3tables.CreateTableBucketRequest{Name: bucket}, &resp)
+		return s.execute(r, "CreateTableBucket", &s3tables.CreateTableBucketRequest{
+			Name:   bucket,
+			Format: s3tables.FormatLance,
+		}, &resp)
 	}
 	// A table bucket is a tenant resource with its own policy and lifecycle, so
 	// it is created deliberately, never as a side effect of naming a namespace

@@ -2,6 +2,7 @@ package s3tables
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -12,11 +13,17 @@ type TableBucket struct {
 	Name           string    `json:"name"`
 	OwnerAccountID string    `json:"ownerAccountId"`
 	CreatedAt      time.Time `json:"createdAt"`
+	Format         string    `json:"format,omitempty"`
 }
 
 type CreateTableBucketRequest struct {
 	Name string            `json:"name"`
 	Tags map[string]string `json:"tags,omitempty"`
+	// Format is the table format this bucket holds. A bucket is a catalog and a
+	// catalog serves one protocol, so declaring it here is what lets a caller be
+	// told where to connect. Empty means ICEBERG, which is what AWS S3 Tables
+	// serves and therefore what an SDK that has never heard of this field means.
+	Format string `json:"format,omitempty"`
 }
 
 type CreateTableBucketResponse struct {
@@ -32,6 +39,9 @@ type GetTableBucketResponse struct {
 	Name           string    `json:"name"`
 	OwnerAccountID string    `json:"ownerAccountId"`
 	CreatedAt      time.Time `json:"createdAt"`
+	// Format is empty for a bucket created before formats were declared. Such a
+	// bucket accepts any format, which is what it did when it was made.
+	Format string `json:"format,omitempty"`
 }
 
 type ListTableBucketsRequest struct {
@@ -44,6 +54,7 @@ type TableBucketSummary struct {
 	ARN       string    `json:"arn"`
 	Name      string    `json:"name"`
 	CreatedAt time.Time `json:"createdAt"`
+	Format    string    `json:"format,omitempty"`
 }
 
 type ListTableBucketsResponse struct {
@@ -580,6 +591,19 @@ const (
 // this format lives, without understanding its files.
 func IsCatalogOnlyFormat(format string) bool {
 	return format == FormatLance
+}
+
+// NormalizeFormat folds a caller's spelling onto the canonical one and reports
+// whether it names a format this catalog serves.
+func NormalizeFormat(format string) (string, bool) {
+	switch strings.ToUpper(strings.TrimSpace(format)) {
+	case FormatIceberg:
+		return FormatIceberg, true
+	case FormatLance:
+		return FormatLance, true
+	default:
+		return "", false
+	}
 }
 
 // Error codes

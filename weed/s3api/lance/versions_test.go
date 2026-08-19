@@ -5,13 +5,15 @@ import (
 	"net/http"
 	"sync"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
 func newVersionHarness(t *testing.T) *testHarness {
 	t.Helper()
 	h := newTestHarness(t)
 	h.server.SetManagedVersioning(true)
-	h.createBucket(t, "analytics")
+	h.createBucket(t, "analytics", s3tables.FormatLance)
 	h.mustDo(t, http.MethodPost, "/v1/namespace/analytics$sales/create", `{}`, http.StatusOK)
 	h.mustDo(t, http.MethodPost, "/v1/table/analytics$sales$orders/declare", `{}`, http.StatusOK)
 	return h
@@ -105,7 +107,7 @@ func TestVersionListingAndDeletion(t *testing.T) {
 // it must say so rather than half-implementing the contract.
 func TestVersionOperationsAreOffByDefault(t *testing.T) {
 	h := newTestHarness(t)
-	h.createBucket(t, "analytics")
+	h.createBucket(t, "analytics", s3tables.FormatLance)
 	h.mustDo(t, http.MethodPost, "/v1/namespace/analytics$sales/create", `{}`, http.StatusOK)
 
 	declared := decode[DeclareTableResponse](t,

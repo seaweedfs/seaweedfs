@@ -70,6 +70,14 @@ func (h *S3TablesHandler) handleCreateView(w http.ResponseWriter, r *http.Reques
 		return err
 	}
 
+	// A view is Iceberg metadata, so it belongs only in a bucket that holds
+	// Iceberg tables.
+	if bucketMetadata.Format != "" && bucketMetadata.Format != FormatIceberg {
+		message := fmt.Sprintf("table bucket %s holds %s tables and cannot hold views", bucketName, bucketMetadata.Format)
+		h.writeError(w, http.StatusConflict, ErrCodeConflict, message)
+		return fmt.Errorf("%s", message)
+	}
+
 	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
 	if !h.authorizeViewOp(r, "CreateView", accountID, namespaceMetadata.OwnerAccountID, bucketMetadata.OwnerAccountID, namespacePolicy, bucketPolicy, bucketARN, bucketName, namespaceName, viewName, bucketTags) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create view in this namespace")

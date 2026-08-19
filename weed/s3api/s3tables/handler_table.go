@@ -124,6 +124,15 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		return err
 	}
 
+	// A bucket declares the format it holds, and a table of another format would
+	// be invisible to the catalog serving it. A bucket made before the
+	// declaration existed has none, and keeps taking anything.
+	if bucketMetadata.Format != "" && bucketMetadata.Format != req.Format {
+		message := fmt.Sprintf("table bucket %s holds %s tables", bucketName, bucketMetadata.Format)
+		h.writeError(w, http.StatusConflict, ErrCodeConflict, message)
+		return fmt.Errorf("%s", message)
+	}
+
 	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
 	identityActions := getIdentityActions(r)
 	nsAllowed := CheckPermissionWithContext("CreateTable", accountID, namespaceMetadata.OwnerAccountID, namespacePolicy, bucketARN, &PolicyContext{

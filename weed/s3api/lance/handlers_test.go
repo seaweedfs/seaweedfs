@@ -47,14 +47,49 @@ func newTestHarness(t *testing.T) *testHarness {
 }
 
 // createBucket seeds a table bucket the Lance namespace can then be pointed at.
-func (h *testHarness) createBucket(t *testing.T, name string) {
+// An empty format strips the declaration afterwards, which is the only way to
+// get the shape a bucket made before formats existed has: one that still
+// accepts either format.
+func (h *testHarness) createBucket(t *testing.T, name, format string) {
 	t.Helper()
 	var resp s3tables.CreateTableBucketResponse
+	declared := format
+	if declared == "" {
+		declared = s3tables.FormatIceberg
+	}
 	err := h.admin.Execute(t.Context(), s3tables.NewManagerClient(h.filer.Client), "CreateTableBucket",
-		&s3tables.CreateTableBucketRequest{Name: name}, &resp, "")
+		&s3tables.CreateTableBucketRequest{Name: name, Format: declared}, &resp, "")
 	if err != nil {
 		t.Fatalf("create table bucket %s: %v", name, err)
 	}
+	if format == "" {
+		h.undeclareBucket(t, name)
+	}
+}
+
+// undeclareBucket removes a bucket's format from its metadata, ageing it back to
+// what the filer holds for a bucket created before the field existed.
+func (h *testHarness) undeclareBucket(t *testing.T, name string) {
+	t.Helper()
+	entry := h.filer.Get(s3tables.TablesPath, name)
+	if entry == nil {
+		t.Fatalf("table bucket %s is not in the filer", name)
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(entry.Extended[s3tables.ExtendedKeyMetadata], &metadata); err != nil {
+		t.Fatalf("read bucket metadata: %v", err)
+	}
+	delete(metadata, "format")
+	updated, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatalf("write bucket metadata: %v", err)
+	}
+	extended := map[string][]byte{}
+	for key, value := range entry.Extended {
+		extended[key] = value
+	}
+	extended[s3tables.ExtendedKeyMetadata] = updated
+	h.filer.Put(s3tables.TablesPath, name, extended)
 }
 
 func (h *testHarness) bucketARN(t *testing.T, name string) string {
@@ -104,7 +139,7 @@ func decode[T any](t *testing.T, recorder *httptest.ResponseRecorder) T {
 func TestTableLifecycle(t *testing.T) {
 	h := newTestHarness(t)
 
-	h.createBucket(t, "analytics")
+	h.createBucket(t, "analytics", s3tables.FormatLance)
 	h.mustDo(t, http.MethodPost, "/v1/namespace/analytics$sales/create", `{}`, http.StatusOK)
 
 	declared := decode[DeclareTableResponse](t,
@@ -164,7 +199,7 @@ func TestTableLifecycle(t *testing.T) {
 // used to name with it.
 func TestRegisterOverwriteKeepsTheOldDataset(t *testing.T) {
 	h := newTestHarness(t)
-	h.createBucket(t, "analytics")
+	h.createBucket(t, "analytics", s3tables.FormatLance)
 	h.mustDo(t, http.MethodPost, "/v1/namespace/analytics$sales/create", `{}`, http.StatusOK)
 	h.mustDo(t, http.MethodPost, "/v1/table/analytics$sales$orders/declare", `{}`, http.StatusOK)
 	h.mustDo(t, http.MethodPost, "/v1/table/analytics$sales$archive/declare", `{}`, http.StatusOK)
@@ -186,7 +221,7 @@ func TestRegisterOverwriteKeepsTheOldDataset(t *testing.T) {
 // client may decode differently.
 func TestListAllTablesIsNeverNull(t *testing.T) {
 	h := newTestHarness(t)
-	h.createBucket(t, "analytics")
+	h.createBucket(t, "analytics", s3tables.FormatLance)
 
 	body := h.mustDo(t, http.MethodGet, "/v1/table", "", http.StatusOK).Body.String()
 	if strings.Contains(body, `"tables":null`) {
@@ -196,7 +231,7 @@ func TestListAllTablesIsNeverNull(t *testing.T) {
 
 func TestNamespaceListing(t *testing.T) {
 	h := newTestHarness(t)
-	h.createBucket(t, "analytics")
+	h.createBucket(t, "analytics", s3tables.FormatLance)
 	h.mustDo(t, http.MethodPost, "/v1/namespace/analytics$sales/create", `{}`, http.StatusOK)
 	h.mustDo(t, http.MethodPost, "/v1/namespace/analytics$finance/create", `{}`, http.StatusOK)
 
@@ -226,7 +261,7 @@ func TestNamespaceListing(t *testing.T) {
 // exists. The spec asks for NamespaceNotFound, which keeps them consistent.
 func TestCreateNamespaceRequiresItsParent(t *testing.T) {
 	h := newTestHarness(t)
-	h.createBucket(t, "analytics")
+	h.createBucket(t, "analytics", s3tables.FormatLance)
 
 	recorder := h.mustDo(t, http.MethodPost, "/v1/namespace/analytics$missing$child/create", `{}`, http.StatusNotFound)
 	if got := decode[errorResponse](t, recorder); got.Code != codeNamespaceNotFound {
@@ -248,7 +283,7 @@ func TestCreateNamespaceRequiresItsParent(t *testing.T) {
 
 func TestCreateNamespaceModes(t *testing.T) {
 	h := newTestHarness(t)
-	h.createBucket(t, "analytics")
+	h.createBucket(t, "analytics", s3tables.FormatLance)
 	h.mustDo(t, http.MethodPost, "/v1/namespace/analytics$sales/create", `{}`, http.StatusOK)
 
 	h.mustDo(t, http.MethodPost, "/v1/namespace/analytics$sales/create", `{}`, http.StatusConflict)
@@ -263,7 +298,9 @@ func TestCreateNamespaceModes(t *testing.T) {
 // write a dataset over a table another engine owns.
 func TestIcebergTablesAreInvisible(t *testing.T) {
 	h := newTestHarness(t)
-	h.createBucket(t, "analytics")
+	// Undeclared, because a bucket that declares one format cannot hold the
+	// other - and mixing is exactly what this test needs to prove is hidden.
+	h.createBucket(t, "analytics", "")
 	h.mustDo(t, http.MethodPost, "/v1/namespace/analytics$sales/create", `{}`, http.StatusOK)
 	h.mustDo(t, http.MethodPost, "/v1/table/analytics$sales$vectors/declare", `{}`, http.StatusOK)
 
@@ -301,7 +338,7 @@ func TestIcebergTablesAreInvisible(t *testing.T) {
 // preference for one of them.
 func TestRouteAndBodyMustAgree(t *testing.T) {
 	h := newTestHarness(t)
-	h.createBucket(t, "analytics")
+	h.createBucket(t, "analytics", s3tables.FormatLance)
 	h.mustDo(t, http.MethodPost, "/v1/namespace/analytics$sales/create", `{}`, http.StatusOK)
 
 	recorder := h.mustDo(t, http.MethodPost, "/v1/table/analytics$sales$orders/declare",
