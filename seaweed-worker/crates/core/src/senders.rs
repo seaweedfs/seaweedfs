@@ -3,7 +3,7 @@ use tokio::sync::mpsc;
 
 use crate::pb::{
     worker_to_admin_message::Body, ActivityEvent, DetectionComplete, DetectionProposals,
-    JobCompleted, JobProgressUpdate, WorkerToAdminMessage,
+    JobCompleted, JobProgressUpdate, WorkerObservations, WorkerToAdminMessage,
 };
 
 /// Replies to one detection request.
@@ -11,6 +11,9 @@ pub trait DetectionSender: Send + Sync {
     fn send_proposals(&self, proposals: DetectionProposals) -> Result<()>;
     fn send_complete(&self, complete: DetectionComplete) -> Result<()>;
     fn send_activity(&self, activity: ActivityEvent) -> Result<()>;
+    /// Reports what the worker saw while deciding. Admin caches the last one
+    /// per object and serves it back for display; nothing is scheduled from it.
+    fn send_observations(&self, observations: WorkerObservations) -> Result<()>;
 }
 
 /// Replies to one execution request.
@@ -54,6 +57,10 @@ impl DetectionSender for StreamSender {
         // Activity rides inside progress and completion messages rather than
         // being a body of its own, so there is nothing to send on its own here.
         Ok(())
+    }
+
+    fn send_observations(&self, observations: WorkerObservations) -> Result<()> {
+        self.send(Body::Observations(observations))
     }
 }
 

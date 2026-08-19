@@ -223,6 +223,11 @@ templ IcebergTableDetails(data dash.IcebergTableDetailsData) {
 				<div class="card-header py-3">
 					<h6 class="m-0 font-weight-bold text-primary">
 						<i class="fas fa-list me-2"></i>Schema
+						if data.ObservedBy != "" {
+							<span class="badge bg-secondary ms-2" title={ "reported by " + data.ObservedBy }>
+								as seen { data.ObservedAt.Format("2006-01-02 15:04") }
+							</span>
+						}
 					</h6>
 				</div>
 				<div class="card-body">
@@ -255,7 +260,7 @@ templ IcebergTableDetails(data dash.IcebergTableDetailsData) {
 									<tr>
 										if data.Format != "" && data.Format != "ICEBERG" {
 											<td colspan="4" class="text-center text-muted">
-												The catalog records where this { data.Format } table lives, not what is in it. Its schema is held in the table's own files.
+												The catalog records where this { data.Format } table lives, not what is in it. Run a { data.Format } plugin worker and its schema appears here.
 											</td>
 										} else {
 											<td colspan="4" class="text-center text-muted">No schema available.</td>

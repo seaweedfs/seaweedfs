@@ -13,7 +13,7 @@ pub mod indices;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use seaweed_worker_core::pb::{config_value::Kind, ConfigValue, StringList};
+use seaweed_worker_core::pb::{config_value::Kind, ConfigValue, ObjectObservation, StringList};
 use seaweed_worker_core::JobHandler;
 
 use crate::catalog::parse_id;
@@ -43,11 +43,34 @@ pub fn handlers(
     fallback: crate::dataset::FallbackOptions,
 ) -> Vec<Arc<dyn JobHandler>> {
     vec![
-        Arc::new(compact::CompactHandler::new(namespace_url.clone()).with_fallback(fallback.clone())),
+        Arc::new(
+            compact::CompactHandler::new(namespace_url.clone()).with_fallback(fallback.clone()),
+        ),
         Arc::new(
             indices::OptimizeIndicesHandler::new(namespace_url.clone())
                 .with_fallback(fallback.clone()),
         ),
         Arc::new(cleanup::CleanupVersionsHandler::new(namespace_url).with_fallback(fallback)),
     ]
+}
+
+/// The format the catalog records for the tables this worker maintains.
+pub(crate) const FORMAT: &str = "LANCE";
+
+/// Builds the observation a detection sweep reports for one table. Detection
+/// has already opened the dataset to decide whether it needs work, so saying
+/// what it saw costs nothing, and for a format the cluster cannot read this is
+/// the only description of the table anything can produce.
+pub(crate) fn observation(
+    id: &[String],
+    format: &str,
+    attributes: HashMap<String, ConfigValue>,
+) -> ObjectObservation {
+    ObjectObservation {
+        object_id: id.to_vec(),
+        object_kind: "table".to_string(),
+        format: format.to_string(),
+        attributes,
+        observed_at: Some(std::time::SystemTime::now().into()),
+    }
 }

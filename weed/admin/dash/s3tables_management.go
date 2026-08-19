@@ -299,7 +299,73 @@ func (s *AdminServer) GetIcebergTableDetailsData(ctx context.Context, catalogNam
 	}
 
 	applyIcebergMetadata(resp.Metadata, &details)
+	s.applyWorkerObservation(&details, bucketArn, namespaceParts, resp.Name)
 	return details, nil
+}
+
+// applyWorkerObservation fills in what a plugin worker last reported about a
+// table this server cannot read itself. Only the catalog knows a Lance table
+// exists; only a worker with the format's runtime can say what is in it, so
+// without this the page has nothing to show but a location.
+//
+// The observation is cached, not live, which is why the page carries the time
+// and the worker that took it.
+func (s *AdminServer) applyWorkerObservation(details *IcebergTableDetailsData, bucketArn string, namespaceParts []string, tableName string) {
+	if len(details.SchemaFields) > 0 {
+		return
+	}
+	plugin := s.GetPlugin()
+	if plugin == nil {
+		return
+	}
+	bucketName, err := s3tables.ParseBucketNameFromARN(bucketArn)
+	if err != nil {
+		return
+	}
+	objectID := append(append([]string{bucketName}, namespaceParts...), tableName)
+	observed, ok := plugin.Observations().Get(objectID)
+	if !ok {
+		return
+	}
+
+	details.ObservedBy = observed.WorkerID
+	details.ObservedAt = observed.ObservedAt
+	details.SchemaFields = observationSchemaFields(observed.AttributeString("schema"))
+	for _, name := range []string{"rows", "fragments", "versions"} {
+		if value := observed.AttributeString(name); value != "" {
+			details.Properties = append(details.Properties, IcebergPropertyInfo{Key: name, Value: value})
+		}
+	}
+}
+
+// observationSchemaFields parses the schema a worker reported. A schema it
+// could not render is not worth failing the page over.
+func observationSchemaFields(schema string) []IcebergSchemaFieldInfo {
+	if schema == "" {
+		return nil
+	}
+	var reported []struct {
+		Name     string `json:"name"`
+		Type     string `json:"type"`
+		Nullable bool   `json:"nullable"`
+	}
+	if err := json.Unmarshal([]byte(schema), &reported); err != nil {
+		return nil
+	}
+	fields := make([]IcebergSchemaFieldInfo, 0, len(reported))
+	for i, field := range reported {
+		encoded, err := json.Marshal(field.Type)
+		if err != nil {
+			continue
+		}
+		fields = append(fields, IcebergSchemaFieldInfo{
+			ID:       i + 1,
+			Name:     field.Name,
+			Type:     encoded,
+			Required: !field.Nullable,
+		})
+	}
+	return fields
 }
 
 type icebergFullMetadata struct {

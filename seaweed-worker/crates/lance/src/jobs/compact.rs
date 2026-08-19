@@ -3,18 +3,18 @@ use std::collections::HashMap;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use lance::dataset::optimize::{compact_files, CompactionOptions};
-use seaweed_worker_core::config_form::{form, int_or, int_value, number_field};
+use seaweed_worker_core::config_form::{form, int_or, int_value, number_field, string_value};
 use seaweed_worker_core::pb::{
     ConfigValue, DetectionComplete, DetectionProposals, ExecuteJobRequest, JobCompleted,
     JobProgressUpdate, JobProposal, JobResult, JobTypeCapability, JobTypeDescriptor,
-    RunDetectionRequest,
+    RunDetectionRequest, WorkerObservations,
 };
 use seaweed_worker_core::{DetectionSender, ExecutionSender, JobHandler};
 use tracing::warn;
 
 use crate::catalog::{parse_id, NamespaceClient};
 use crate::dataset;
-use crate::jobs::{string_list, table_id};
+use crate::jobs::{observation, string_list, table_id, FORMAT};
 
 pub const JOB_TYPE: &str = "lance_compact";
 
@@ -68,7 +68,10 @@ impl JobHandler for CompactHandler {
             "target_rows_per_fragment".to_string(),
             int_value(DEFAULT_TARGET_ROWS),
         );
-        defaults.insert("min_fragments".to_string(), int_value(DEFAULT_MIN_FRAGMENTS));
+        defaults.insert(
+            "min_fragments".to_string(),
+            int_value(DEFAULT_MIN_FRAGMENTS),
+        );
 
         JobTypeDescriptor {
             job_type: JOB_TYPE.to_string(),
@@ -110,12 +113,16 @@ impl JobHandler for CompactHandler {
         request: &RunDetectionRequest,
         sender: &dyn DetectionSender,
     ) -> Result<()> {
-        let min_fragments =
-            int_or(&request.worker_config_values, "min_fragments", DEFAULT_MIN_FRAGMENTS) as usize;
+        let min_fragments = int_or(
+            &request.worker_config_values,
+            "min_fragments",
+            DEFAULT_MIN_FRAGMENTS,
+        ) as usize;
         let client = self.client();
         let tables = client.list_all_tables().await?;
 
         let mut proposals = Vec::new();
+        let mut observations = Vec::new();
         for encoded in &tables {
             let id = parse_id(encoded);
             let table = match dataset::open(&client, &id, &self.fallback).await {
@@ -134,6 +141,20 @@ impl JobHandler for CompactHandler {
                 "compaction detection: {encoded} has {} fragments, threshold {min_fragments}",
                 stats.fragments
             );
+
+            let mut attributes: HashMap<String, ConfigValue> = HashMap::new();
+            attributes.insert("fragments".to_string(), int_value(stats.fragments as i64));
+            attributes.insert("version".to_string(), int_value(stats.version as i64));
+            attributes.insert(
+                "versions".to_string(),
+                int_value(stats.total_versions as i64),
+            );
+            attributes.insert("rows".to_string(), int_value(stats.rows as i64));
+            if let Some(schema) = stats.schema.clone() {
+                attributes.insert("schema".to_string(), string_value(schema));
+            }
+            observations.push(observation(&id, FORMAT, attributes));
+
             if stats.fragments < min_fragments {
                 continue;
             }
@@ -151,6 +172,13 @@ impl JobHandler for CompactHandler {
                 parameters,
                 ..Default::default()
             });
+        }
+
+        if !observations.is_empty() {
+            sender.send_observations(WorkerObservations {
+                job_type: JOB_TYPE.to_string(),
+                observations,
+            })?;
         }
 
         let total = proposals.len() as i32;
@@ -212,9 +240,18 @@ impl JobHandler for CompactHandler {
 
         let after = table.stats().await?;
         let mut output: HashMap<String, ConfigValue> = HashMap::new();
-        output.insert("fragments_removed".to_string(), int_value(metrics.fragments_removed as i64));
-        output.insert("fragments_added".to_string(), int_value(metrics.fragments_added as i64));
-        output.insert("files_removed".to_string(), int_value(metrics.files_removed as i64));
+        output.insert(
+            "fragments_removed".to_string(),
+            int_value(metrics.fragments_removed as i64),
+        );
+        output.insert(
+            "fragments_added".to_string(),
+            int_value(metrics.fragments_added as i64),
+        );
+        output.insert(
+            "files_removed".to_string(),
+            int_value(metrics.files_removed as i64),
+        );
 
         sender.send_completed(JobCompleted {
             request_id: request.request_id.clone(),
@@ -223,10 +260,7 @@ impl JobHandler for CompactHandler {
             success: true,
             result: Some(JobResult {
                 output_values: output,
-                summary: format!(
-                    "{} fragments became {}",
-                    before.fragments, after.fragments
-                ),
+                summary: format!("{} fragments became {}", before.fragments, after.fragments),
                 ..Default::default()
             }),
             ..Default::default()

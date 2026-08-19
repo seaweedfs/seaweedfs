@@ -21,6 +21,7 @@ use weed_lance_worker::jobs::indices::OptimizeIndicesHandler;
 #[derive(Default)]
 struct Recorder {
     proposals: Mutex<Vec<JobProposal>>,
+    observations: Mutex<Vec<seaweed_worker_core::pb::ObjectObservation>>,
     completed: Mutex<Vec<JobCompleted>>,
 }
 
@@ -33,6 +34,16 @@ impl DetectionSender for Recorder {
         Ok(())
     }
     fn send_activity(&self, _activity: seaweed_worker_core::pb::ActivityEvent) -> Result<()> {
+        Ok(())
+    }
+    fn send_observations(
+        &self,
+        observations: seaweed_worker_core::pb::WorkerObservations,
+    ) -> Result<()> {
+        self.observations
+            .lock()
+            .unwrap()
+            .extend(observations.observations);
         Ok(())
     }
 }
@@ -48,7 +59,9 @@ impl ExecutionSender for Recorder {
 }
 
 fn namespace_url() -> Option<String> {
-    std::env::var("WEED_LANCE_NAMESPACE").ok().filter(|s| !s.is_empty())
+    std::env::var("WEED_LANCE_NAMESPACE")
+        .ok()
+        .filter(|s| !s.is_empty())
 }
 
 fn int_config(name: &str, value: i64) -> HashMap<String, ConfigValue> {
@@ -79,17 +92,28 @@ async fn seed_table(
     rows_each: usize,
     with_index: bool,
 ) -> Result<String> {
-    use arrow_array::{FixedSizeListArray, Float32Array, Int64Array, RecordBatch, RecordBatchIterator};
+    use arrow_array::{
+        FixedSizeListArray, Float32Array, Int64Array, RecordBatch, RecordBatchIterator,
+    };
     use arrow_schema::{DataType, Field, Schema};
     use lance::dataset::{Dataset, WriteMode, WriteParams};
     use lance::io::{ObjectStoreParams, StorageOptionsAccessor};
     use std::sync::Arc;
 
     // Declaring is the namespace's job, not the worker's, so the test asks for
-    // it directly rather than widening the client the worker uses.
+    // it directly rather than widening the client the worker uses. The bucket and
+    // namespace come first: a table cannot be declared under a parent that does
+    // not exist, and a test that assumes one is a test that only passes twice.
+    let http = reqwest::Client::new();
+    for parent in ["vec", "vec$ml"] {
+        http.post(format!("{url}/v1/namespace/{parent}/create"))
+            .json(&serde_json::json!({"mode": "EXIST_OK"}))
+            .send()
+            .await?
+            .error_for_status()?;
+    }
     let encoded = format!("vec$ml${name}");
-    reqwest::Client::new()
-        .post(format!("{url}/v1/table/{encoded}/declare"))
+    http.post(format!("{url}/v1/table/{encoded}/declare"))
         .json(&serde_json::json!({}))
         .send()
         .await?
@@ -129,7 +153,11 @@ async fn seed_table(
         )?;
         let reader = RecordBatchIterator::new(vec![Ok(batch)], schema.clone());
         let params = WriteParams {
-            mode: if i == 0 { WriteMode::Overwrite } else { WriteMode::Append },
+            mode: if i == 0 {
+                WriteMode::Overwrite
+            } else {
+                WriteMode::Append
+            },
             store_params: Some(ObjectStoreParams {
                 storage_options_accessor: Some(std::sync::Arc::new(
                     StorageOptionsAccessor::with_static_options(options.clone()),
@@ -143,10 +171,10 @@ async fn seed_table(
         // The index is built after the first batch, so everything appended
         // afterwards is a row it does not cover.
         if with_index && i == 0 {
+            use lance::index::vector::VectorIndexParams;
             use lance::index::DatasetIndexExt;
             use lance_index::vector::{ivf::IvfBuildParams, pq::PQBuildParams};
             use lance_index::IndexType;
-            use lance::index::vector::VectorIndexParams;
 
             let mut dataset = dataset;
             let params = VectorIndexParams::with_ivf_pq_params(
@@ -202,6 +230,22 @@ async fn compacts_a_fragmented_table() {
         .find(|p| p.summary.contains(encoded.as_str()))
         .expect("no proposal for the seeded table");
 
+    // Detection opened the dataset to decide, so it reports what it saw. This is
+    // the only description of a Lance table anything outside the format can give.
+    let observations = recorder.observations.lock().unwrap().clone();
+    let observed = observations
+        .iter()
+        .find(|o| o.object_id.last().map(String::as_str) == Some("compactme"))
+        .expect("detection reported no observation for the seeded table");
+    assert_eq!(observed.format, "LANCE");
+    for attribute in ["fragments", "rows", "versions", "schema"] {
+        assert!(
+            observed.attributes.contains_key(attribute),
+            "observation is missing {attribute}: {:?}",
+            observed.attributes.keys().collect::<Vec<_>>()
+        );
+    }
+
     let execute = ExecuteJobRequest {
         request_id: "execute-1".to_string(),
         job: Some(JobSpec {
@@ -220,7 +264,11 @@ async fn compacts_a_fragmented_table() {
 
     let completed = recorder.completed.lock().unwrap().clone();
     let result = completed.first().expect("no completion reported");
-    assert!(result.success, "compaction reported failure: {}", result.error_message);
+    assert!(
+        result.success,
+        "compaction reported failure: {}",
+        result.error_message
+    );
     let summary = result
         .result
         .as_ref()
@@ -257,7 +305,10 @@ async fn cleans_up_old_versions() {
         worker_config_values: int_config("min_versions_to_keep", 2),
         ..Default::default()
     };
-    handler.detect(&request, &recorder).await.expect("detection failed");
+    handler
+        .detect(&request, &recorder)
+        .await
+        .expect("detection failed");
     let proposals = recorder.proposals.lock().unwrap().clone();
     let Some(proposal) = proposals.first().cloned() else {
         eprintln!("no table has enough versions to clean up, skipping execution");
@@ -277,12 +328,22 @@ async fn cleans_up_old_versions() {
         worker_config_values: int_config("retain_hours", 0),
         ..Default::default()
     };
-    handler.execute(&execute, &recorder).await.expect("cleanup failed");
+    handler
+        .execute(&execute, &recorder)
+        .await
+        .expect("cleanup failed");
 
     let completed = recorder.completed.lock().unwrap().clone();
     let result = completed.last().expect("no completion reported");
-    assert!(result.success, "cleanup reported failure: {}", result.error_message);
-    eprintln!("cleanup result: {}", result.result.as_ref().unwrap().summary);
+    assert!(
+        result.success,
+        "cleanup reported failure: {}",
+        result.error_message
+    );
+    eprintln!(
+        "cleanup result: {}",
+        result.result.as_ref().unwrap().summary
+    );
 }
 
 /// A table with no indices has nothing to optimize, so detection proposes
@@ -302,7 +363,10 @@ async fn skips_tables_without_indices() {
         worker_config_values: int_config("max_unindexed_rows", 1),
         ..Default::default()
     };
-    handler.detect(&request, &recorder).await.expect("detection failed");
+    handler
+        .detect(&request, &recorder)
+        .await
+        .expect("detection failed");
     assert!(
         recorder.proposals.lock().unwrap().is_empty(),
         "a table with no indices must not be proposed for reindexing"
@@ -330,7 +394,10 @@ async fn reindexes_rows_an_index_does_not_cover() {
         worker_config_values: int_config("max_unindexed_rows", 100),
         ..Default::default()
     };
-    handler.detect(&request, &recorder).await.expect("detection failed");
+    handler
+        .detect(&request, &recorder)
+        .await
+        .expect("detection failed");
     let proposals = recorder.proposals.lock().unwrap().clone();
     let proposal = proposals
         .iter()
@@ -348,16 +415,32 @@ async fn reindexes_rows_an_index_does_not_cover() {
         }),
         ..Default::default()
     };
-    handler.execute(&execute, &recorder).await.expect("reindex failed");
+    handler
+        .execute(&execute, &recorder)
+        .await
+        .expect("reindex failed");
 
     let completed = recorder.completed.lock().unwrap().clone();
     let result = completed.last().expect("no completion reported");
-    assert!(result.success, "reindex reported failure: {}", result.error_message);
+    assert!(
+        result.success,
+        "reindex reported failure: {}",
+        result.error_message
+    );
     let output = &result.result.as_ref().unwrap().output_values;
-    let after = match output.get("unindexed_rows_after").and_then(|v| v.kind.as_ref()) {
+    let after = match output
+        .get("unindexed_rows_after")
+        .and_then(|v| v.kind.as_ref())
+    {
         Some(Kind::Int64Value(value)) => *value,
         other => panic!("no unindexed_rows_after in {other:?}"),
     };
-    assert_eq!(after, 0, "rows are still outside the index after optimizing");
-    eprintln!("reindex result: {}", result.result.as_ref().unwrap().summary);
+    assert_eq!(
+        after, 0,
+        "rows are still outside the index after optimizing"
+    );
+    eprintln!(
+        "reindex result: {}",
+        result.result.as_ref().unwrap().summary
+    );
 }

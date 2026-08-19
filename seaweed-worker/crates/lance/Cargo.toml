@@ -17,6 +17,7 @@ seaweed-worker-core = { path = "../core" }
 # build time this worker never spends.
 lance = { version = "10", default-features = false, features = ["aws"] }
 lance-index = "10"
+arrow-schema = "58"
 chrono = "0.4"
 futures = "0.3"
 anyhow.workspace = true

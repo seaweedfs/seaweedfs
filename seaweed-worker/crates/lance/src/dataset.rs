@@ -26,6 +26,10 @@ pub struct TableStats {
     pub fragments: usize,
     pub version: u64,
     pub total_versions: usize,
+    pub rows: usize,
+    /// The Arrow schema as JSON, which is the only description of this table
+    /// anything outside the format can produce.
+    pub schema: Option<String>,
 }
 
 /// Storage options an operator supplies for deployments that vend none.
@@ -67,6 +71,28 @@ impl OpenTable {
             fragments: self.dataset.get_fragments().len(),
             version: self.dataset.version().version,
             total_versions: versions.len(),
+            rows: self.dataset.count_rows(None).await.unwrap_or(0),
+            schema: schema_json(&self.dataset),
         })
     }
+}
+
+/// Renders the dataset's schema as JSON. Best effort: a schema that will not
+/// serialise is not a reason to fail a maintenance sweep.
+fn schema_json(dataset: &Dataset) -> Option<String> {
+    let arrow: arrow_schema::Schema = dataset.schema().into();
+    serde_json::to_string(
+        &arrow
+            .fields()
+            .iter()
+            .map(|f| {
+                serde_json::json!({
+                    "name": f.name(),
+                    "type": f.data_type().to_string(),
+                    "nullable": f.is_nullable(),
+                })
+            })
+            .collect::<Vec<_>>(),
+    )
+    .ok()
 }

@@ -96,6 +96,7 @@ type Plugin struct {
 
 	pendingExecutionMu sync.Mutex
 	pendingExecution   map[string]chan *plugin_pb.JobCompleted
+	observations       *ObservationStore
 
 	jobsMu sync.RWMutex
 	jobs   map[string]*TrackedJob
@@ -180,6 +181,7 @@ func New(options Options) (*Plugin, error) {
 		pendingSchema:             make(map[string]chan *plugin_pb.ConfigSchemaResponse),
 		pendingDetection:          make(map[string]*pendingDetectionState),
 		pendingExecution:          make(map[string]chan *plugin_pb.JobCompleted),
+		observations:              NewObservationStore(),
 		nextDetectionAt:           make(map[string]time.Time),
 		detectionInFlight:         make(map[string]bool),
 		detectorLeases:            make(map[string]string),
@@ -978,6 +980,8 @@ func (r *Plugin) handleWorkerMessage(workerID string, message *plugin_pb.WorkerT
 		r.handleJobProgressUpdate(workerID, body.JobProgressUpdate)
 	case *plugin_pb.WorkerToAdminMessage_JobCompleted:
 		r.handleJobCompleted(body.JobCompleted)
+	case *plugin_pb.WorkerToAdminMessage_Observations:
+		r.observations.Record(workerID, body.Observations)
 	case *plugin_pb.WorkerToAdminMessage_Acknowledge:
 		if !body.Acknowledge.Accepted {
 			glog.Warningf("Plugin worker %s rejected request %s: %s", workerID, body.Acknowledge.RequestId, body.Acknowledge.Message)
