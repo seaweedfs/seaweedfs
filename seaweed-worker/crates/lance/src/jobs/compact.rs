@@ -128,6 +128,12 @@ impl JobHandler for CompactHandler {
                 }
             };
             let stats = table.stats().await?;
+            // Logged because "detection proposed nothing" is otherwise
+            // indistinguishable from a table the worker could not read.
+            tracing::info!(
+                "compaction detection: {encoded} has {} fragments, threshold {min_fragments}",
+                stats.fragments
+            );
             if stats.fragments < min_fragments {
                 continue;
             }
