@@ -210,17 +210,18 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 				</div>
 			</div>
 		</div>
-		if data.IcebergPort > 0 {
+		if data.IcebergPort > 0 || data.LancePort > 0 {
 			<div class="row">
 				<div class="col-12">
 					<div class="card shadow mb-4">
 						<div class="card-header py-3">
 							<h6 class="m-0 font-weight-bold text-primary">
-								<i class="fas fa-code me-2"></i>Iceberg Client Examples
+								<i class="fas fa-code me-2"></i>Client Examples
 							</h6>
 						</div>
 						<div class="card-body">
-							<h6>DuckDB</h6>
+							if data.IcebergPort > 0 {
+								<h6><span class="badge bg-primary me-2">ICEBERG</span>DuckDB</h6>
 							<pre class="bg-light p-3 border rounded">
 								<code id="s3tables-duckdb-example">
 									{ `INSTALL iceberg;
@@ -235,7 +236,7 @@ CREATE SECRET (
 SELECT * FROM iceberg_scan('s3://my-table-bucket/my-namespace/my-table');` }
 								</code>
 							</pre>
-							<h6 class="mt-4">Python (PyIceberg)</h6>
+								<h6 class="mt-4"><span class="badge bg-primary me-2">ICEBERG</span>Python (PyIceberg)</h6>
 							<pre class="bg-light p-3 border rounded">
 								<code id="s3tables-pyiceberg-example">
 									{ `from pyiceberg.catalog import load_catalog
@@ -252,11 +253,40 @@ catalog = load_catalog(
 namespaces = catalog.list_namespaces()` }
 								</code>
 							</pre>
+							}
+							if data.LancePort > 0 {
+								<h6 class={ templ.KV("mt-4", data.IcebergPort > 0) }><span class="badge bg-success me-2">LANCE</span>Python (lance-namespace)</h6>
+								<pre class="bg-light p-3 border rounded">
+									<code id="s3tables-lance-namespace-example">
+										{ `from lance_namespace import connect
+
+ns = connect("rest", {"uri": "http://localhost:` + fmt.Sprintf("%d", data.LancePort) + `"})
+
+ns.list_namespaces(id=["my-table-bucket"])
+ns.describe_table(id=["my-table-bucket", "my-namespace", "my-table"])` }
+									</code>
+								</pre>
+								<h6 class="mt-4"><span class="badge bg-success me-2">LANCE</span>Python (pylance)</h6>
+								<pre class="bg-light p-3 border rounded">
+									<code id="s3tables-pylance-example">
+										{ `import lance
+from lance_namespace import connect
+
+ns = connect("rest", {"uri": "http://localhost:` + fmt.Sprintf("%d", data.LancePort) + `"})
+table = ns.describe_table(id=["my-table-bucket", "my-namespace", "my-table"])
+
+# The namespace vends both the location and the credentials to read it.
+dataset = lance.dataset(table.location, storage_options=table.storage_options)` }
+									</code>
+								</pre>
+							}
 							<script>
 								const s3tablesExamplesHost = window.location.hostname;
 								const s3tablesExamples = [
 									document.getElementById('s3tables-duckdb-example'),
-									document.getElementById('s3tables-pyiceberg-example')
+									document.getElementById('s3tables-pyiceberg-example'),
+									document.getElementById('s3tables-lance-namespace-example'),
+									document.getElementById('s3tables-pylance-example')
 								];
 								s3tablesExamples.forEach(example => {
 									if (!example) {

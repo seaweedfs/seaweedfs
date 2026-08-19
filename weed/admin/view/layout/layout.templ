@@ -296,17 +296,6 @@ templ Layout(view ViewContext, content templ.Component) {
                             }
                         </li>
                         <li class="nav-item">
-                            if isIcebergWorkerPage {
-                                <a class="nav-link active" href={ view.P("/plugin/lanes/iceberg") }>
-                                    <i class="fas fa-snowflake me-2"></i>Iceberg
-                                </a>
-                            } else {
-                                <a class="nav-link" href={ view.P("/plugin/lanes/iceberg") }>
-                                    <i class="fas fa-snowflake me-2"></i>Iceberg
-                                </a>
-                            }
-                        </li>
-                        <li class="nav-item">
                             if isLifecycleWorkerPage {
                                 <a class="nav-link active" href={ view.P("/plugin/lanes/lifecycle") }>
                                     <i class="fas fa-hourglass-half me-2"></i>Lifecycle
@@ -314,6 +303,17 @@ templ Layout(view ViewContext, content templ.Component) {
                             } else {
                                 <a class="nav-link" href={ view.P("/plugin/lanes/lifecycle") }>
                                     <i class="fas fa-hourglass-half me-2"></i>Lifecycle
+                                </a>
+                            }
+                        </li>
+                        <li class="nav-item">
+                            if isIcebergWorkerPage {
+                                <a class="nav-link active" href={ view.P("/plugin/lanes/iceberg") }>
+                                    <i class="fas fa-snowflake me-2"></i>Iceberg
+                                </a>
+                            } else {
+                                <a class="nav-link" href={ view.P("/plugin/lanes/iceberg") }>
+                                    <i class="fas fa-snowflake me-2"></i>Iceberg
                                 </a>
                             }
                         </li>
