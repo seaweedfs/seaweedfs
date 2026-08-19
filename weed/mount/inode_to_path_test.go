@@ -3,9 +3,28 @@ package mount
 import (
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
+
+// A mount with millions of files is mostly these, so guard the size class.
+func TestInodeEntryStaysInSizeClass(t *testing.T) {
+	if unsafe.Sizeof(uintptr(0)) != 8 {
+		t.Skip("size classes are 64-bit specific")
+	}
+	if got := unsafe.Sizeof(InodeEntry{}); got != 32 {
+		t.Errorf("sizeof(InodeEntry) = %d, want 32", got)
+	}
+}
+
+func inodeEntryWith(paths ...util.FullPath) InodeEntry {
+	var ie InodeEntry
+	for _, p := range paths {
+		ie.addPath(p)
+	}
+	return ie
+}
 
 func TestInodeEntry_removeOnePath(t *testing.T) {
 	tests := []struct {
@@ -16,10 +35,8 @@ func TestInodeEntry_removeOnePath(t *testing.T) {
 		count int
 	}{
 		{
-			name: "actual case",
-			entry: InodeEntry{
-				paths: []util.FullPath{"/pjd/nx", "/pjd/n0"},
-			},
+			name:  "actual case",
+			entry: inodeEntryWith("/pjd/nx", "/pjd/n0"),
 			p:     "/pjd/nx",
 			want:  true,
 			count: 1,
@@ -32,46 +49,36 @@ func TestInodeEntry_removeOnePath(t *testing.T) {
 			count: 0,
 		},
 		{
-			name: "single",
-			entry: InodeEntry{
-				paths: []util.FullPath{"/x"},
-			},
+			name:  "single",
+			entry: inodeEntryWith("/x"),
 			p:     "/x",
 			want:  true,
 			count: 0,
 		},
 		{
-			name: "first",
-			entry: InodeEntry{
-				paths: []util.FullPath{"/x", "/y", "/z"},
-			},
+			name:  "first",
+			entry: inodeEntryWith("/x", "/y", "/z"),
 			p:     "/x",
 			want:  true,
 			count: 2,
 		},
 		{
-			name: "middle",
-			entry: InodeEntry{
-				paths: []util.FullPath{"/x", "/y", "/z"},
-			},
+			name:  "middle",
+			entry: inodeEntryWith("/x", "/y", "/z"),
 			p:     "/y",
 			want:  true,
 			count: 2,
 		},
 		{
-			name: "last",
-			entry: InodeEntry{
-				paths: []util.FullPath{"/x", "/y", "/z"},
-			},
+			name:  "last",
+			entry: inodeEntryWith("/x", "/y", "/z"),
 			p:     "/z",
 			want:  true,
 			count: 2,
 		},
 		{
-			name: "not found",
-			entry: InodeEntry{
-				paths: []util.FullPath{"/x", "/y", "/z"},
-			},
+			name:  "not found",
+			entry: inodeEntryWith("/x", "/y", "/z"),
 			p:     "/t",
 			want:  false,
 			count: 3,
@@ -82,10 +89,11 @@ func TestInodeEntry_removeOnePath(t *testing.T) {
 			if got := tt.entry.removeOnePath(tt.p); got != tt.want {
 				t.Errorf("removeOnePath() = %v, want %v", got, tt.want)
 			}
-			if tt.count != len(tt.entry.paths) {
-				t.Errorf("removeOnePath path count = %v, want %v", len(tt.entry.paths), tt.count)
+			left := tt.entry.appendPaths(nil)
+			if tt.count != len(left) {
+				t.Errorf("removeOnePath path count = %v, want %v", len(left), tt.count)
 			}
-			for i, p := range tt.entry.paths {
+			for i, p := range left {
 				if p == tt.p {
 					t.Errorf("removeOnePath found path still exists at %v, %v", i, p)
 				}
