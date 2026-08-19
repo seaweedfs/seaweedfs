@@ -595,6 +595,26 @@ The keys are the worker's to choose, which keeps the protocol out of the busines
 what a Lance table is. A worker for any other format admin cannot parse describes itself the
 same way.
 
+## A bucket declares its format
+
+Format was recorded per table, which is enough for the storage layer and not enough for
+anything that has to answer a question about a bucket. The admin UI printed one Iceberg
+endpoint for every bucket, including the ones holding Lance datasets, where that endpoint
+serves nothing; an empty bucket had no format at all.
+
+So `CreateTableBucket` takes an optional `format`, stored with the rest of the bucket
+metadata. Empty means `ICEBERG` - what AWS S3 Tables serves, and therefore what an SDK
+that has never heard of the field means. `CreateTable` refuses another format, and
+`CreateView` refuses outright outside an Iceberg bucket, a view being Iceberg metadata.
+The Lance namespace declares `LANCE` for the buckets it creates.
+
+**Enforced rather than defaulted**, because the point of showing a format at all is the
+endpoint that follows from it, and that endpoint is only truthful if the bucket holds one
+format. **Buckets that already exist stay undeclared** and keep taking anything: nothing is
+migrated, and the UI shows "unset" as a fact about the bucket's age rather than a fault.
+That state is also the only way to hold both formats at once, which is what the
+Iceberg-REST adapter path produces.
+
 ## Sample rows are fetched, not cached
 
 The same asymmetry has a second half. Admin renders an Iceberg table's rows by
