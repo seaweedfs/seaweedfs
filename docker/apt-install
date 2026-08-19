@@ -8,7 +8,9 @@ set -e
 [ -f /etc/apt/sources.list.orig ] || cp /etc/apt/sources.list /etc/apt/sources.list.orig
 
 for mirror in azure.archive.ubuntu.com archive.ubuntu.com; do
-	sed "s|http://archive\.ubuntu\.com/ubuntu|http://$mirror/ubuntu|g; s|http://security\.ubuntu\.com/ubuntu|http://$mirror/ubuntu|g" \
+	# Any archive host, so this works whether the pristine list came from the
+	# base image (archive.ubuntu.com) or a CI runner (azure.archive.ubuntu.com).
+	sed "s|http://[a-z0-9.]*archive\.ubuntu\.com/ubuntu|http://$mirror/ubuntu|g; s|http://security\.ubuntu\.com/ubuntu|http://$mirror/ubuntu|g" \
 		/etc/apt/sources.list.orig > /etc/apt/sources.list
 	if apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 update && \
 		DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 install -y \
