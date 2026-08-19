@@ -56,7 +56,9 @@ func (s *Server) handleListAllTables(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var all []string
+	// The spec marks `tables` required, so an empty catalog answers with an
+	// empty list rather than null.
+	all := []string{}
 	for _, bucket := range buckets.TableBuckets {
 		var tables s3tables.ListTablesResponse
 		req := &s3tables.ListTablesRequest{TableBucketARN: bucketARN(bucket.Name), MaxTables: pageSize(r)}

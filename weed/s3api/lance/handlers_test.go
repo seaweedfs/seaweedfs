@@ -182,6 +182,18 @@ func TestRegisterOverwriteKeepsTheOldDataset(t *testing.T) {
 	}
 }
 
+// A required list field answers empty rather than null, which a generated
+// client may decode differently.
+func TestListAllTablesIsNeverNull(t *testing.T) {
+	h := newTestHarness(t)
+	h.createBucket(t, "analytics")
+
+	body := h.mustDo(t, http.MethodGet, "/v1/table", "", http.StatusOK).Body.String()
+	if strings.Contains(body, `"tables":null`) {
+		t.Fatalf("ListAllTables returned null for a required field: %s", body)
+	}
+}
+
 func TestNamespaceListing(t *testing.T) {
 	h := newTestHarness(t)
 	h.createBucket(t, "analytics")
