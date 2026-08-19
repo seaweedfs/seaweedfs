@@ -16,6 +16,8 @@ seaweed-worker-core = { path = "../core" }
 # Only the S3 backend: the other object stores lance enables by default are
 # build time this worker never spends.
 lance = { version = "10", default-features = false, features = ["aws"] }
+lance-index = "10"
+chrono = "0.4"
 futures = "0.3"
 anyhow.workspace = true
 async-trait.workspace = true
@@ -29,3 +31,6 @@ tracing-subscriber.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true }
+arrow-array = "58"
+arrow-schema = "58"
+lance-linalg = "10"

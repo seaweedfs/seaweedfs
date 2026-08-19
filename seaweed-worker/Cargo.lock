@@ -6412,10 +6412,15 @@ name = "weed-lance-worker"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arrow-array",
+ "arrow-schema",
  "async-trait",
+ "chrono",
  "clap",
  "futures",
  "lance",
+ "lance-index",
+ "lance-linalg",
  "reqwest 0.12.28",
  "seaweed-worker-core",
  "serde",

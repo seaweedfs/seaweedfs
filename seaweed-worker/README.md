@@ -30,12 +30,18 @@ them.
 
 ## State
 
-`lance_compact` is implemented and tested end to end: a twelve-fragment dataset
-on SeaweedFS became one fragment with all twelve rows intact. `cargo test -p
-weed-lance-worker` runs it when `WEED_LANCE_NAMESPACE` names a live namespace
-and skips otherwise, the way the Go integration tests skip without Docker.
+All three jobs are implemented and tested end to end against a live gateway:
 
-`lance_optimize_indices` and `lance_cleanup_versions` still report failure
-rather than claiming success. The handshake, descriptor exchange and heartbeat
-work against a live admin, which logs the worker connecting and prefetches all
-three descriptors.
+    compaction result: 12 fragments became 1
+    reindex result:    512 uncovered rows became 0
+    cleanup result:    removed 14 versions and 24272 bytes
+
+`cargo test -p weed-lance-worker` runs them when `WEED_LANCE_NAMESPACE` names a
+live namespace and skips otherwise, the way the Go integration tests skip
+without Docker. Each test seeds the table it needs, including building a vector
+index and then appending rows outside it, so a run does not depend on what the
+previous one left behind — the first version of these did, and quietly stopped
+testing anything once it had done its job.
+
+The handshake, descriptor exchange and heartbeat work against a live admin,
+which logs the worker connecting and prefetches all three descriptors.

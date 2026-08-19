@@ -14,6 +14,7 @@ use tracing::warn;
 
 use crate::catalog::{parse_id, NamespaceClient};
 use crate::dataset;
+use crate::jobs::{string_list, table_id};
 
 pub const JOB_TYPE: &str = "lance_compact";
 
@@ -225,23 +226,5 @@ impl JobHandler for CompactHandler {
             ..Default::default()
         })?;
         Ok(())
-    }
-}
-
-fn string_list(parts: &[String]) -> ConfigValue {
-    use seaweed_worker_core::pb::{config_value::Kind, StringList};
-    ConfigValue {
-        kind: Some(Kind::StringList(StringList {
-            values: parts.to_vec(),
-        })),
-    }
-}
-
-fn table_id(parameters: &HashMap<String, ConfigValue>) -> Option<Vec<String>> {
-    use seaweed_worker_core::pb::config_value::Kind;
-    match parameters.get("table_id")?.kind.as_ref()? {
-        Kind::StringList(list) => Some(list.values.clone()),
-        Kind::StringValue(encoded) => Some(parse_id(encoded)),
-        _ => None,
     }
 }
