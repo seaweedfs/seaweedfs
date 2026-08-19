@@ -180,7 +180,7 @@ func TestRenameOverExisting(t *testing.T) {
 		// they indict different layers; a second look says whether it persists.
 		time.Sleep(200 * time.Millisecond)
 		fi2, err2 := os.Stat(src)
-		t.Fatalf("source survived the rename: stat=%v err=%v; 200ms later stat=%v err=%v",
+		t.Fatalf("stat of the renamed-away source did not return not-exist: stat=%v err=%v; 200ms later stat=%v err=%v",
 			describeFileInfo(fi), err, describeFileInfo(fi2), err2)
 	}
 }
