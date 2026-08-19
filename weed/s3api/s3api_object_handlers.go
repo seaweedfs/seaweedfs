@@ -1037,33 +1037,11 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 				// latest-version read -- has no origin key, so it keeps the error
 				// paths below.
 				if cacheVersionId == "" || cacheVersionId == "null" {
-					if remoteReader, remoteErr := s3a.openRemoteStream(r.Context(), bucket, object, offset, size); remoteErr == nil {
-						defer remoteReader.Close()
-						s3a.setResponseHeaders(w, r, entry, totalSize)
-						w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
-						if isRangeRequest {
-							w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+size-1, totalSize))
-							w.WriteHeader(http.StatusPartialContent)
-						} else {
-							w.WriteHeader(http.StatusOK)
-						}
-						TimeToFirstByte(r.Method, t0, r)
-						cw := &countingWriter{w: w}
-						_, copyErr := io.CopyN(cw, remoteReader, size)
-						if copyErr == io.EOF {
-							// the origin returned fewer bytes than the entry's RemoteSize
-							copyErr = io.ErrUnexpectedEOF
-						}
-						if cw.written > 0 {
-							BucketTrafficSent(cw.written, r)
-						}
-						if copyErr != nil {
-							glog.V(2).Infof("streamFromVolumeServers: origin stream %s/%s ended after %d bytes: %v", bucket, object, cw.written, copyErr)
-							return newStreamErrorWithResponse(copyErr)
+					if served, streamErr := s3a.serveObjectFromRemoteMount(w, r, entry, bucket, object, offset, size, isRangeRequest, totalSize, t0); served {
+						if streamErr != nil {
+							return newStreamErrorWithResponse(streamErr)
 						}
 						return nil
-					} else {
-						glog.Warningf("streamFromVolumeServers: origin stream %s/%s: %v", bucket, object, remoteErr)
 					}
 				}
 				// Origin unreadable. A permanent cache error is final; a transient one
@@ -1119,6 +1097,15 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 		} else {
 			glog.Errorf("streamFromVolumeServers: failed to resolve chunks: %v", err)
 		}
+		if s3a.shouldFallBackToRemote(entry, totalSize, versionId) {
+			glog.V(1).Infof("streamFromVolumeServers: resolving chunks for %s/%s failed, falling back to remote mount", bucket, object)
+			if served, streamErr := s3a.serveObjectFromRemoteMount(w, r, entry, bucket, object, offset, size, isRangeRequest, totalSize, t0); served {
+				if streamErr != nil {
+					return newStreamErrorWithResponse(streamErr)
+				}
+				return nil
+			}
+		}
 		// Write S3-compliant XML error response
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return newStreamErrorWithResponse(fmt.Errorf("failed to resolve chunks: %v", err))
@@ -1141,6 +1128,31 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	chunkViews := filer.ViewFromVisibleIntervals(visibleIntervals, offset, size)
 	reader := filer.NewChunkReaderAtFromClient(ctx, s3a.readerCache, chunkViews, totalSize, filer.DefaultPrefetchCount)
 	streamPrepTime = time.Since(tStreamPrep)
+
+	// For a remote-mounted object, confirm the local (volume-server) copy is
+	// readable before committing the response. A locally-cached chunk whose
+	// volume server is down, or whose needle has been evicted and now 404s under
+	// retry-backoff, would otherwise stall and then 500 after the headers are
+	// already sent. Instead, fall back to the authoritative mounted remote. The
+	// probe is bounded so a stuck volume trips the timeout rather than blocking.
+	if s3a.shouldFallBackToRemote(entry, totalSize, versionId) {
+		if probeErr := probeReadable(ctx, reader, offset, s3a.localReadFallbackTimeout()); probeErr != nil {
+			if isCanceledStreamingError(probeErr) {
+				glog.V(3).Infof("streamFromVolumeServers: request canceled while probing %s/%s: %v", bucket, object, probeErr)
+				return probeErr
+			}
+			glog.V(1).Infof("streamFromVolumeServers: local read of %s/%s failed (%v), falling back to remote mount", bucket, object, probeErr)
+			if served, streamErr := s3a.serveObjectFromRemoteMount(w, r, entry, bucket, object, offset, size, isRangeRequest, totalSize, t0); served {
+				if streamErr != nil {
+					return newStreamErrorWithResponse(streamErr)
+				}
+				return nil
+			}
+			glog.Errorf("streamFromVolumeServers: local read of %s/%s failed and remote mount unavailable: %v", bucket, object, probeErr)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return newStreamErrorWithResponse(probeErr)
+		}
+	}
 
 	// All validation and preparation successful - NOW set headers and write status
 	tHeaderSet := time.Now()
@@ -1202,6 +1214,100 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	}
 	glog.V(4).Infof("streamFromVolumeServers: streamFn completed successfully, wrote %d bytes", cw.written)
 	return nil
+}
+
+// defaultLocalReadFallbackTimeout bounds the pre-flight local read that decides
+// whether to serve a remote-mounted object from its mounted remote instead. It
+// is short so a stuck volume server (down, or serving an evicted needle under
+// retry-backoff) falls back promptly rather than stalling the request.
+const defaultLocalReadFallbackTimeout = 2 * time.Second
+
+func (s3a *S3ApiServer) localReadFallbackTimeout() time.Duration {
+	if s3a.option.LocalReadFallbackTimeout > 0 {
+		return s3a.option.LocalReadFallbackTimeout
+	}
+	return defaultLocalReadFallbackTimeout
+}
+
+// shouldFallBackToRemote reports whether a failed local read of this object may
+// be served from its mounted remote instead. It requires the feature to be
+// enabled, an unversioned read (openRemoteStream reads only the unversioned
+// key -- a latest read that resolves to a specific version is treated as
+// versioned, matching the remote-only stream-through path), and a RemoteEntry
+// whose size matches the object so the fallback serves identical bytes under
+// the already-computed Content-Length.
+func (s3a *S3ApiServer) shouldFallBackToRemote(entry *filer_pb.Entry, totalSize int64, versionId string) bool {
+	if !s3a.option.LocalReadFallbackToRemote {
+		return false
+	}
+	if v := resolvedSourceVersionId(versionId, entry); v != "" && v != "null" {
+		return false
+	}
+	remote := entry.GetRemoteEntry()
+	return totalSize > 0 && remote != nil && remote.GetRemoteSize() == totalSize
+}
+
+// ctxReaderAt is a ReaderAt whose read honors context cancellation, satisfied by
+// filer.ChunkReadAt. It lets probeReadable bound a single-byte read.
+type ctxReaderAt interface {
+	ReadAtWithTime(ctx context.Context, p []byte, offset int64) (int, int64, error)
+}
+
+// probeReadable performs a bounded single-byte read at offset to decide whether
+// the local (volume-server) copy is usable. ChunkReadAt honors the context while
+// waiting on the shared download, so a stuck volume trips the timeout and returns
+// context.DeadlineExceeded while the download continues for other readers. A
+// clean EOF (empty tail) counts as readable; any other error signals the caller
+// to fall back to the remote.
+func probeReadable(ctx context.Context, reader ctxReaderAt, offset int64, timeout time.Duration) error {
+	probeCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	var b [1]byte
+	_, _, err := reader.ReadAtWithTime(probeCtx, b[:], offset)
+	if err == io.EOF {
+		return nil
+	}
+	return err
+}
+
+// serveObjectFromRemoteMount streams [offset, offset+size) of a remote-mounted
+// object straight from its mounted remote storage, setting S3 response headers
+// and status. It returns served=false without writing anything when the remote
+// stream cannot be opened, so the caller can fall back to its own error
+// handling. Once the body has begun writing, served is true and any returned
+// error is a mid-stream failure the caller can only propagate.
+func (s3a *S3ApiServer) serveObjectFromRemoteMount(w http.ResponseWriter, r *http.Request, entry *filer_pb.Entry, bucket, object string, offset, size int64, isRangeRequest bool, totalSize int64, t0 time.Time) (served bool, err error) {
+	remoteReader, remoteErr := s3a.openRemoteStream(r.Context(), bucket, object, offset, size)
+	if remoteErr != nil {
+		glog.Warningf("streamFromVolumeServers: origin stream %s/%s: %v", bucket, object, remoteErr)
+		return false, nil
+	}
+	defer remoteReader.Close()
+
+	s3a.setResponseHeaders(w, r, entry, totalSize)
+	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	if isRangeRequest {
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+size-1, totalSize))
+		w.WriteHeader(http.StatusPartialContent)
+	} else {
+		w.WriteHeader(http.StatusOK)
+	}
+
+	TimeToFirstByte(r.Method, t0, r)
+	cw := &countingWriter{w: w}
+	_, copyErr := io.CopyN(cw, remoteReader, size)
+	if copyErr == io.EOF {
+		// the origin returned fewer bytes than the entry's RemoteSize
+		copyErr = io.ErrUnexpectedEOF
+	}
+	if cw.written > 0 {
+		BucketTrafficSent(cw.written, r)
+	}
+	if copyErr != nil {
+		glog.V(2).Infof("streamFromVolumeServers: origin stream %s/%s ended after %d bytes: %v", bucket, object, cw.written, copyErr)
+		return true, copyErr
+	}
+	return true, nil
 }
 
 // Shared HTTP client for volume server requests (connection pooling)

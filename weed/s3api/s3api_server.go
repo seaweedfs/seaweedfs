@@ -65,10 +65,12 @@ type S3ApiServerOption struct {
 	Ip                        string // address advertised to the cluster; empty falls back to BindIp
 	BindIp                    string
 	GrpcPort                  int
-	ExternalUrl               string // external URL clients use, for signature verification behind a reverse proxy
-	DefaultFileMode           uint32 // default file permission mode for S3 uploads (e.g. 0660, 0644)
-	CacheSizeMB               int64  // in-memory chunk cache capacity in MB for the shared ReaderCache; 0 disables
-	MaxMB                     int32  // filer's -maxMB, read from the filer configuration at startup
+	ExternalUrl               string        // external URL clients use, for signature verification behind a reverse proxy
+	DefaultFileMode           uint32        // default file permission mode for S3 uploads (e.g. 0660, 0644)
+	CacheSizeMB               int64         // in-memory chunk cache capacity in MB for the shared ReaderCache; 0 disables
+	MaxMB                     int32         // filer's -maxMB, read from the filer configuration at startup
+	LocalReadFallbackToRemote bool          // on a failed local read of a remote-mounted object, serve from the mounted remote instead of erroring
+	LocalReadFallbackTimeout  time.Duration // bound on the pre-flight local read that decides whether to fall back; 0 uses a default
 }
 
 // s3ChunkCacheChunkSizeMB is the assumed chunk size (in MiB) used to convert
