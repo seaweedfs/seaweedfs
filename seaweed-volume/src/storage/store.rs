@@ -519,11 +519,13 @@ impl Store {
         vol.re_lookup_needle_data_offset(needle_id)
     }
 
-    /// Write a needle to a volume.
+    /// Write a needle to a volume. With `fsync` the volume flushes its .dat
+    /// before returning, so the caller can ack a durable write.
     pub fn write_volume_needle(
         &mut self,
         vid: VolumeId,
         n: &mut Needle,
+        fsync: bool,
     ) -> Result<(u64, Size, bool), VolumeError> {
         // Check disk space on the location containing this volume.
         // We do this before the mutable borrow to avoid borrow conflicts.
@@ -539,7 +541,7 @@ impl Store {
         }
 
         let (_, vol) = self.find_volume_mut(vid).ok_or(VolumeError::NotFound)?;
-        vol.write_needle(n, true)
+        vol.write_needle(n, true, fsync)
     }
 
     /// Delete a needle from a volume.
@@ -1385,7 +1387,9 @@ mod tests {
             data_size: 11,
             ..Needle::default()
         };
-        let (offset, _size, unchanged) = store.write_volume_needle(VolumeId(1), &mut n).unwrap();
+        let (offset, _size, unchanged) = store
+            .write_volume_needle(VolumeId(1), &mut n, false)
+            .unwrap();
         assert!(!unchanged);
         assert!(offset > 0);
 
@@ -1455,7 +1459,9 @@ mod tests {
             data_size: 10,
             ..Needle::default()
         };
-        store.write_volume_needle(VolumeId(1), &mut n).unwrap();
+        store
+            .write_volume_needle(VolumeId(1), &mut n, false)
+            .unwrap();
 
         // add_volume already placed the index in the -dir.idx directory, so
         // consolidation has nothing to move and leaves the volume readable.

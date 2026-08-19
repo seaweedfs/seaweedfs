@@ -2580,11 +2580,17 @@ pub async fn post_handler(
         n.set_has_name();
     }
 
+    // A durable write flushes before it is acked. Read it the way Go's
+    // r.FormValue does, off the decoded fields, so a percent-encoded value is
+    // honored here too. ReplicatedWrite forwards the parameter, so a replica
+    // sees it the same way the primary did.
+    let fsync = form_value("fsync").as_deref() == Some("true");
+
     let write_result = if let Some(wq) = state.write_queue.get() {
-        wq.submit(vid, n.clone()).await
+        wq.submit(vid, n.clone(), fsync).await
     } else {
         let mut store = state.store.write().unwrap();
-        store.write_volume_needle(vid, &mut n)
+        store.write_volume_needle(vid, &mut n, fsync)
     };
 
     // Replicate to remote volume servers if this volume has replicas.
@@ -3851,6 +3857,26 @@ fn parse_content_disposition_filename(value: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The upload handler reads fsync off the decoded query fields rather than
+    /// matching the raw string, because Go's r.FormValue decodes and a raw
+    /// match would silently drop a percent-encoded value.
+    #[test]
+    fn test_encoded_query_field_decodes() {
+        let raw = "fsync=%74rue";
+        assert!(
+            !raw.split('&').any(|p| p == "fsync=true"),
+            "a raw match is exactly what misses this"
+        );
+        let fields: Vec<(String, String)> = serde_urlencoded::from_str(raw).unwrap();
+        assert_eq!(
+            fields
+                .iter()
+                .find(|(k, _)| k == "fsync")
+                .map(|(_, v)| v.as_str()),
+            Some("true")
+        );
+    }
 
     #[test]
     fn test_parse_url_path_comma() {

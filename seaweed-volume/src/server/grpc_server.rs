@@ -2326,7 +2326,7 @@ impl VolumeServer for VolumeGrpcService {
             // Write needle to local volume
             let mut store = state.store.write().unwrap();
             store
-                .write_volume_needle(vid, &mut n)
+                .write_volume_needle(vid, &mut n, false)
                 .map_err(|e| Status::internal(format!("write needle: {}", e)))?;
         }
 
@@ -3987,7 +3987,7 @@ impl VolumeServer for VolumeGrpcService {
         let local_handle = tokio::task::spawn_blocking(move || {
             let mut store = state_clone.store.write().unwrap();
             store
-                .write_volume_needle(vid, &mut n_clone)
+                .write_volume_needle(vid, &mut n_clone, false)
                 .map(|_| ())
                 .map_err(|e| format!("local write needle {} size {}: {}", needle_id, size, e))
         });
@@ -5218,7 +5218,7 @@ mod tests {
                 data_size: "remote-incremental-copy".len() as u32,
                 ..Needle::default()
             };
-            volume.write_needle(&mut needle, true).unwrap();
+            volume.write_needle(&mut needle, true, false).unwrap();
             volume.sync_to_disk().unwrap();
             (
                 std::fs::read(volume.file_name(".dat")).unwrap(),
@@ -5386,7 +5386,7 @@ mod tests {
                 data_size: b"ec-generate".len() as u32,
                 ..Needle::default()
             };
-            volume.write_needle(&mut needle, true).unwrap();
+            volume.write_needle(&mut needle, true, false).unwrap();
             volume.sync_to_disk().unwrap();
         }
 
@@ -5609,7 +5609,7 @@ mod tests {
                 data: payload,
                 ..Needle::default()
             };
-            v.write_needle(&mut needle, true).unwrap();
+            v.write_needle(&mut needle, true, false).unwrap();
             v.sync_to_disk().unwrap();
         }
         let dat_path = {
