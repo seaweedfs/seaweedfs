@@ -524,19 +524,20 @@ func (i *InodeToPath) MovePath(sourcePath, targetPath util.FullPath) (sourceInod
 	i.Lock()
 	defer i.Unlock()
 	sourceInode, sourceFound := i.path2inode[sourcePath]
+	if !sourceFound {
+		// Nothing of ours to move: the source was never visited here, or a
+		// redelivery already moved it. Whatever sits at the target is not ours
+		// to take apart on the strength of an absent source, and deciding that
+		// outside this lock would race a concurrent move to the same target.
+		return 0, 0
+	}
 	targetInode, targetFound := i.path2inode[targetPath]
 	if targetFound {
 		i.removePathFromInode2Path(targetInode, targetPath)
 		delete(i.path2inode, targetPath)
 	}
-	if sourceFound {
-		delete(i.path2inode, sourcePath)
-		i.path2inode[targetPath] = sourceInode
-	} else {
-		// it is possible some source folder items has not been visited before
-		// so no need to worry about their source inodes
-		return
-	}
+	delete(i.path2inode, sourcePath)
+	i.path2inode[targetPath] = sourceInode
 	if entry, entryFound := i.inode2path[sourceInode]; entryFound {
 		entry.replacePath(sourcePath, targetPath)
 		if d := i.dirStates[sourceInode]; d != nil {
