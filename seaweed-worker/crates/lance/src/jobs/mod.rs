@@ -55,7 +55,7 @@ pub fn handlers(
 }
 
 /// The format the catalog records for the tables this worker maintains.
-pub(crate) const FORMAT: &str = "LANCE";
+pub const FORMAT: &str = "LANCE";
 
 /// Builds the observation a detection sweep reports for one table. Detection
 /// has already opened the dataset to decide whether it needs work, so saying

@@ -28,6 +28,7 @@ message WorkerToAdminMessage {
     JobProgressUpdate job_progress_update = 16;
     JobCompleted job_completed = 17;
     WorkerObservations observations = 18;
+    ObjectPreviewResponse object_preview_response = 19;
   }
 }
 
@@ -43,6 +44,7 @@ message AdminToWorkerMessage {
     ExecuteJobRequest execute_job_request = 13;
     CancelRequest cancel_request = 14;
     AdminShutdown shutdown = 15;
+    RequestObjectPreview request_object_preview = 16;
   }
 }
 
@@ -480,4 +482,34 @@ message ObjectObservation {
   // The keys are the worker's to choose.
   map<string, ConfigValue> attributes = 4;
   google.protobuf.Timestamp observed_at = 5;
+}
+
+// RequestObjectPreview asks a worker for sample rows of an object admin cannot
+// read itself. Unlike an observation this is not cached: it is fetched when
+// someone opens the page, because rows are the object's data rather than a
+// description of it, and holding a copy in admin is neither fresh nor its
+// business.
+message RequestObjectPreview {
+  repeated string object_id = 1;
+  // The format admin believes this object is, so a worker that does not own it
+  // can decline instead of guessing.
+  string format = 2;
+  int32 row_limit = 3;
+}
+
+// ObjectPreviewResponse carries the sample back, already rendered as text. The
+// worker is the only thing that knows the object's types, so it formats them;
+// admin displays what it is given.
+message ObjectPreviewResponse {
+  string request_id = 6;
+  bool success = 1;
+  string error_message = 2;
+  repeated string columns = 3;
+  repeated PreviewRow rows = 4;
+  // Rows in the object, which is not the number sampled.
+  int64 total_rows = 5;
+}
+
+message PreviewRow {
+  repeated string values = 1;
 }

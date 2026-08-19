@@ -18,6 +18,7 @@ seaweed-worker-core = { path = "../core" }
 lance = { version = "10", default-features = false, features = ["aws"] }
 lance-index = "10"
 arrow-schema = "58"
+arrow-cast = "58"
 chrono = "0.4"
 futures = "0.3"
 anyhow.workspace = true
@@ -34,4 +35,5 @@ tracing-subscriber.workspace = true
 tokio = { workspace = true }
 arrow-array = "58"
 arrow-schema = "58"
+arrow-cast = "58"
 lance-linalg = "10"

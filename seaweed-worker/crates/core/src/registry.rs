@@ -26,11 +26,33 @@ pub trait JobHandler: Send + Sync {
     ) -> Result<()>;
 }
 
+/// Sample rows of one object, already rendered as text. The worker formats
+/// them because it is the only side that knows the object's types.
+pub struct Preview {
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<String>>,
+    /// Rows in the object, which is not the number sampled.
+    pub total_rows: i64,
+}
+
+/// Reads sample rows of a format admin cannot parse itself.
+///
+/// This is deliberately not a JobHandler: a preview is answered while someone
+/// waits on a page, so it neither schedules nor reports progress.
+#[async_trait]
+pub trait PreviewProvider: Send + Sync {
+    /// The format this provider reads, matched case-insensitively against what
+    /// the catalog recorded.
+    fn format(&self) -> &str;
+    async fn preview(&self, object_id: &[String], row_limit: usize) -> Result<Preview>;
+}
+
 /// The handlers one worker process serves. A process may serve several job
 /// types, which is why WorkerHello carries a list of capabilities.
 #[derive(Default, Clone)]
 pub struct Registry {
     handlers: HashMap<String, Arc<dyn JobHandler>>,
+    previews: HashMap<String, Arc<dyn PreviewProvider>>,
 }
 
 impl Registry {
@@ -43,8 +65,18 @@ impl Registry {
         self
     }
 
+    pub fn with_preview(mut self, provider: Arc<dyn PreviewProvider>) -> Self {
+        self.previews
+            .insert(provider.format().to_ascii_uppercase(), provider);
+        self
+    }
+
     pub fn get(&self, job_type: &str) -> Option<Arc<dyn JobHandler>> {
         self.handlers.get(job_type).cloned()
+    }
+
+    pub fn preview_provider(&self, format: &str) -> Option<Arc<dyn PreviewProvider>> {
+        self.previews.get(&format.to_ascii_uppercase()).cloned()
     }
 
     pub fn capabilities(&self) -> Vec<JobTypeCapability> {

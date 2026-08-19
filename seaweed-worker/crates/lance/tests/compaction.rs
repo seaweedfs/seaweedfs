@@ -12,11 +12,12 @@ use seaweed_worker_core::pb::{
     config_value::Kind, ConfigValue, DetectionComplete, DetectionProposals, ExecuteJobRequest,
     JobCompleted, JobProgressUpdate, JobProposal, JobSpec, RunDetectionRequest,
 };
-use seaweed_worker_core::{DetectionSender, ExecutionSender, JobHandler};
+use seaweed_worker_core::{DetectionSender, ExecutionSender, JobHandler, PreviewProvider};
 use weed_lance_worker::catalog::NamespaceClient;
 use weed_lance_worker::jobs::cleanup::CleanupVersionsHandler;
 use weed_lance_worker::jobs::compact::{CompactHandler, JOB_TYPE};
 use weed_lance_worker::jobs::indices::OptimizeIndicesHandler;
+use weed_lance_worker::preview::LancePreview;
 
 #[derive(Default)]
 struct Recorder {
@@ -442,5 +443,31 @@ async fn reindexes_rows_an_index_does_not_cover() {
     eprintln!(
         "reindex result: {}",
         result.result.as_ref().unwrap().summary
+    );
+}
+
+/// The UI's whole reason for asking a worker: admin cannot read a Lance table,
+/// so the rows have to come back already rendered.
+#[tokio::test]
+async fn previews_rows_of_a_table() {
+    let Some(url) = namespace_url() else {
+        eprintln!("set WEED_LANCE_NAMESPACE to run this test");
+        return;
+    };
+    seed_table(&url, "previewme", 2, 3, false)
+        .await
+        .expect("seed a table to preview");
+
+    let provider = LancePreview::new(url, fallback());
+    let id = vec!["vec".to_string(), "ml".to_string(), "previewme".to_string()];
+    let preview = provider.preview(&id, 4).await.expect("preview the table");
+
+    assert_eq!(preview.columns, vec!["id".to_string(), "vec".to_string()]);
+    assert_eq!(preview.total_rows, 6, "total is the table, not the sample");
+    assert_eq!(preview.rows.len(), 4, "row_limit bounds the sample");
+    assert!(
+        preview.rows[0][1].starts_with('['),
+        "a vector column should render as a list, got {:?}",
+        preview.rows[0][1]
     );
 }

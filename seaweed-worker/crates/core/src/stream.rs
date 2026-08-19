@@ -11,7 +11,8 @@ use crate::pb::{
     admin_to_worker_message::Body as AdminBody,
     plugin_control_service_client::PluginControlServiceClient,
     worker_to_admin_message::Body as WorkerBody, ConfigSchemaResponse, ExecuteJobRequest,
-    JobCompleted, RunDetectionRequest, RunningWork, WorkerHeartbeat, WorkerHello,
+    JobCompleted, ObjectPreviewResponse, PreviewRow, RequestObjectPreview, RunDetectionRequest,
+    RunningWork, WorkerHeartbeat, WorkerHello,
 };
 use crate::registry::Registry;
 use crate::senders::StreamSender;
@@ -105,6 +106,14 @@ async fn serve_once(options: &WorkerOptions, registry: &Registry) -> Result<()> 
                 };
                 sender.send(WorkerBody::ConfigSchemaResponse(response))?;
             }
+            Some(AdminBody::RequestObjectPreview(request)) => {
+                spawn_preview(
+                    registry.clone(),
+                    sender.clone(),
+                    request_id.clone(),
+                    request,
+                );
+            }
             Some(AdminBody::RunDetectionRequest(request)) => {
                 spawn_detection(registry.clone(), sender.clone(), request);
             }
@@ -130,6 +139,48 @@ async fn serve_once(options: &WorkerOptions, registry: &Registry) -> Result<()> 
 
     heartbeat.abort();
     Ok(())
+}
+
+/// Answers one preview request off the stream loop. Reading rows takes as long
+/// as it takes, and the stream has heartbeats to keep up meanwhile.
+fn spawn_preview(
+    registry: Registry,
+    sender: StreamSender,
+    request_id: String,
+    request: RequestObjectPreview,
+) {
+    tokio::spawn(async move {
+        let limit = request.row_limit.max(1) as usize;
+        let response = match registry.preview_provider(&request.format) {
+            None => ObjectPreviewResponse {
+                request_id,
+                success: false,
+                error_message: format!("this worker does not read {} objects", request.format),
+                ..Default::default()
+            },
+            Some(provider) => match provider.preview(&request.object_id, limit).await {
+                Ok(preview) => ObjectPreviewResponse {
+                    request_id,
+                    success: true,
+                    error_message: String::new(),
+                    columns: preview.columns,
+                    rows: preview
+                        .rows
+                        .into_iter()
+                        .map(|values| PreviewRow { values })
+                        .collect(),
+                    total_rows: preview.total_rows,
+                },
+                Err(err) => ObjectPreviewResponse {
+                    request_id,
+                    success: false,
+                    error_message: format!("{err:#}"),
+                    ..Default::default()
+                },
+            },
+        };
+        let _ = sender.send(WorkerBody::ObjectPreviewResponse(response));
+    });
 }
 
 fn spawn_heartbeat(sender: StreamSender, options: WorkerOptions) -> tokio::task::JoinHandle<()> {

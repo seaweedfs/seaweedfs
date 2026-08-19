@@ -19,6 +19,6 @@ pub mod pb {
 }
 
 pub use config::WorkerOptions;
-pub use registry::{JobHandler, Registry};
+pub use registry::{JobHandler, Preview, PreviewProvider, Registry};
 pub use senders::{DetectionSender, ExecutionSender};
 pub use stream::run;

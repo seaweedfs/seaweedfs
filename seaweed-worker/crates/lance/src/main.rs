@@ -2,6 +2,8 @@ use std::time::Duration;
 
 use anyhow::Result;
 use clap::Parser;
+use std::sync::Arc;
+
 use seaweed_worker_core::{Registry, WorkerOptions};
 use weed_lance_worker::handlers;
 
@@ -69,7 +71,9 @@ async fn main() -> Result<()> {
         fallback.insert("aws_secret_access_key".to_string(), secret);
     }
 
-    let mut registry = Registry::new();
+    let mut registry = Registry::new().with_preview(Arc::new(
+        weed_lance_worker::preview::LancePreview::new(args.namespace.clone(), fallback.clone()),
+    ));
     for handler in handlers(args.namespace, fallback) {
         registry = registry.register(handler);
     }
