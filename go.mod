@@ -527,3 +527,19 @@ replace github.com/apache/thrift => github.com/apache/thrift v0.23.1-0.202604291
 // through rclone's internxt backend, which calls IsMnemonicValid and NewSeed.
 // cosmos/go-bip39 is a maintained, API-compatible fork.
 replace github.com/tyler-smith/go-bip39 => github.com/cosmos/go-bip39 v1.0.0
+
+// grpc-go v1.82.1 started counting registerStream/cleanupStream toward the
+// control-buffer throttle limit. Those are per-RPC bookkeeping items that emit
+// no wire traffic, so a connection carrying enough concurrent RPCs latches
+// throttling in both directions at once and deadlocks for good: both peers stop
+// reading, both loopyWriters block writing to a full socket.
+//
+// It triggers whenever the socket send buffer is too small to absorb the burst
+// loopyWriter emits for the in-flight streams, so it is about buffer size, not
+// transport: TCP forced to a 64KB buffer deadlocks, a Unix socket with a 2MB
+// buffer does not. Local gRPC rides Unix sockets, whose buffers are small and
+// fixed (208KB on Linux, 8KB on macOS), which is why weed mini wedges under
+// concurrent S3 writes; a remote filer over TCP is exposed too wherever
+// send buffers are constrained. Pin to the last unaffected release until
+// grpc/grpc-go#9330 is fixed.
+replace google.golang.org/grpc => google.golang.org/grpc v1.82.0
