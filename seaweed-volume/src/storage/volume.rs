@@ -22,7 +22,9 @@ use tracing::{error, info, warn};
 #[cfg(test)]
 use crate::storage::idx;
 use crate::storage::needle::needle::{self, get_actual_size, Needle, NeedleError};
-use crate::storage::needle_map::{CompactNeedleMap, NeedleMap, NeedleMapKind, RedbNeedleMap};
+use crate::storage::needle_map::{
+    CompactNeedleMap, NeedleMap, NeedleMapKind, NeedleValue, RedbNeedleMap,
+};
 use crate::storage::super_block::{ReplicaPlacement, SuperBlock, SUPER_BLOCK_SIZE};
 use crate::storage::types::*;
 
@@ -507,6 +509,10 @@ pub struct Volume {
     dat_file: Option<File>,
     remote_dat_file: Option<RemoteDatFile>,
     nm: Option<NeedleMap>,
+    /// Makes the next .dat flush fail, so tests can exercise the durable
+    /// write's failure path without a real disk fault.
+    #[cfg(test)]
+    fail_fsync_for_test: bool,
     needle_map_kind: NeedleMapKind,
     data_file_access_control: Arc<DataFileAccessControl>,
 
@@ -581,6 +587,8 @@ impl Volume {
             collection: collection.to_string(),
             dat_file: None,
             remote_dat_file: None,
+            #[cfg(test)]
+            fail_fsync_for_test: false,
             nm: None,
             needle_map_kind,
             data_file_access_control: Arc::new(DataFileAccessControl::default()),
@@ -619,6 +627,8 @@ impl Volume {
             collection: collection.to_string(),
             dat_file: None,
             remote_dat_file: None,
+            #[cfg(test)]
+            fail_fsync_for_test: false,
             nm: None,
             needle_map_kind: NeedleMapKind::InMemory,
             data_file_access_control: Arc::new(DataFileAccessControl::default()),
@@ -1523,23 +1533,45 @@ impl Volume {
     // ---- Write ----
 
     /// Write a needle to the volume (synchronous path).
+    /// Write a needle to the volume. With `fsync` the .dat is flushed before
+    /// returning, so an ack means the data is on disk and not just in the page
+    /// cache. The flush happens under the same lock as the append, so a failed
+    /// one can take its own append back off the end and nobody else's.
     pub fn write_needle(
         &mut self,
         n: &mut Needle,
         check_cookie: bool,
+        fsync: bool,
     ) -> Result<(u64, Size, bool), VolumeError> {
         let _guard = self.data_file_access_control.write_lock();
         if self.is_read_only() {
             return Err(VolumeError::ReadOnly);
         }
 
-        self.do_write_request(n, check_cookie)
+        self.do_write_request(n, check_cookie, fsync)
+    }
+
+    /// Flush the .dat. The index is left out on purpose: it is rebuilt from the
+    /// .dat, so a durable write only has to get the data down.
+    fn flush_dat(&self) -> io::Result<()> {
+        #[cfg(test)]
+        if self.fail_fsync_for_test {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "injected fsync failure",
+            ));
+        }
+        match self.dat_file.as_ref() {
+            Some(dat_file) => dat_file.sync_all(),
+            None => Err(io::Error::new(io::ErrorKind::Other, "dat file not open")),
+        }
     }
 
     fn do_write_request(
         &mut self,
         n: &mut Needle,
         check_cookie: bool,
+        fsync: bool,
     ) -> Result<(u64, Size, bool), VolumeError> {
         // TTL inheritance from volume (matching Go's writeNeedle2)
         {
@@ -1559,6 +1591,14 @@ impl Volume {
         // Dedup check (matches Go: n.DataSize = oldNeedle.DataSize on dedup)
         if let Some(old_data_size) = self.is_file_unchanged(n) {
             n.data_size = old_data_size;
+            // Nothing to append, but an earlier write may have left this content
+            // in the page cache, and the caller is asking for it to be on disk.
+            if fsync {
+                self.flush_dat().map_err(|e| {
+                    self.check_read_write_error(Some(&e));
+                    VolumeError::Io(e)
+                })?;
+            }
             return Ok((0, Size(n.data_size as i32), true));
         }
 
@@ -1583,6 +1623,34 @@ impl Volume {
 
         // Append to .dat file
         let (offset, _body_size, _actual_size) = self.append_needle(n)?;
+
+        // Nothing is published until the bytes are down: an index entry for an
+        // unflushed append would resolve past the end of the file after a crash,
+        // and undoing it afterwards would double-count the volume's metrics.
+        if fsync {
+            if let Err(e) = self.flush_dat() {
+                self.check_read_write_error(Some(&e));
+                let truncated = match self.dat_file.as_ref() {
+                    Some(dat_file) => dat_file.set_len(offset),
+                    None => Ok(()),
+                };
+                if let Err(te) = truncated {
+                    // The rejected record is still on the end. A later append
+                    // would bury it mid-file, where the .dat tail check cannot
+                    // see it, so stop taking writes instead.
+                    self.no_write_or_delete = true;
+                    tracing::error!(
+                        "volume {}: failed to truncate back to {} after a failed fsync, \
+                         marking read only: {}",
+                        self.id.0,
+                        offset,
+                        te
+                    );
+                }
+                return Err(VolumeError::Io(e));
+            }
+        }
+
         self.last_append_at_ns = n.append_at_ns;
 
         // Update needle map (uses n.size = full body size, matching Go's nm.Put)
@@ -1598,6 +1666,19 @@ impl Volume {
         if should_update {
             if let Some(nm) = &mut self.nm {
                 nm.put(n.id, Offset::from_actual_offset(offset as i64), n.size)?;
+            }
+        }
+
+        // load() rebuilds the map from .idx, not from .dat, so the row has to be
+        // down before the write is acked. Lose it and the volume comes back with
+        // a .dat tail the integrity check cannot account for, and loads read only
+        // - a worse outcome than losing the write.
+        if fsync {
+            if let Some(nm) = self.nm.as_ref() {
+                if let Err(e) = nm.sync() {
+                    self.check_read_write_error(Some(&e));
+                    return Err(VolumeError::Io(e));
+                }
             }
         }
 
@@ -3674,6 +3755,11 @@ impl Volume {
     }
 
     #[cfg(test)]
+    pub(crate) fn fail_next_fsync_for_test(&mut self, fail: bool) {
+        self.fail_fsync_for_test = fail;
+    }
+
+    #[cfg(test)]
     pub(crate) fn set_last_modified_ts_for_test(&mut self, ts_seconds: u64) {
         self.last_modified_ts_seconds = ts_seconds;
     }
@@ -4057,7 +4143,7 @@ mod tests {
             flags: 0,
             ..Needle::default()
         };
-        let (offset, size, unchanged) = v.write_needle(&mut n, true).unwrap();
+        let (offset, size, unchanged) = v.write_needle(&mut n, true, false).unwrap();
         assert!(!unchanged);
         assert!(offset > 0); // after superblock
         assert!(size.0 > 0);
@@ -4074,6 +4160,149 @@ mod tests {
         assert_eq!(read_n.cookie, Cookie(0x12345678));
     }
 
+    /// A durable write goes down the same path and lands the same data; the
+    /// flush is extra work, not different work.
+    #[test]
+    fn test_volume_write_needle_fsync() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let mut n = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(0x12345678),
+            data: b"durable payload".to_vec(),
+            data_size: 15,
+            flags: 0,
+            ..Needle::default()
+        };
+        let (offset, _, unchanged) = v.write_needle(&mut n, true, true).unwrap();
+        assert!(!unchanged);
+        assert!(offset > 0);
+
+        let mut read_n = Needle {
+            id: NeedleId(1),
+            ..Needle::default()
+        };
+        assert_eq!(v.read_needle(&mut read_n).unwrap(), 15);
+        assert_eq!(read_n.data, b"durable payload");
+
+        // rewriting the same content still dedups, so there is nothing to flush
+        let mut same = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(0x12345678),
+            data: b"durable payload".to_vec(),
+            data_size: 15,
+            flags: 0,
+            ..Needle::default()
+        };
+        let (_, _, unchanged) = v.write_needle(&mut same, true, true).unwrap();
+        assert!(unchanged);
+    }
+
+    /// A durable write whose flush fails must leave nothing behind: the append
+    /// comes off the .dat and the mapping it would have replaced still stands,
+    /// with the volume's own accounting untouched.
+    #[test]
+    fn test_write_needle_failed_fsync_keeps_prior_mapping() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let mut kept = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(0xaa),
+            data: b"first-copy".to_vec(),
+            data_size: 10,
+            ..Needle::default()
+        };
+        v.write_needle(&mut kept, true, true).unwrap();
+        let prior = v.nm.as_ref().unwrap().get(NeedleId(1)).unwrap();
+        let dat_len_before = std::fs::metadata(v.file_name(".dat")).unwrap().len();
+        let file_count_before = v.file_count();
+        let content_size_before = v.content_size();
+
+        v.fail_next_fsync_for_test(true);
+        let mut replacement = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(0xaa),
+            data: b"second-copy".to_vec(),
+            data_size: 11,
+            ..Needle::default()
+        };
+        v.write_needle(&mut replacement, true, true).unwrap_err();
+        v.fail_next_fsync_for_test(false);
+
+        assert_eq!(
+            std::fs::metadata(v.file_name(".dat")).unwrap().len(),
+            dat_len_before,
+            "the unflushed append should be off the .dat"
+        );
+        let now = v.nm.as_ref().unwrap().get(NeedleId(1)).unwrap();
+        assert_eq!(
+            now.offset, prior.offset,
+            "the mapping should never have moved"
+        );
+        assert_eq!(now.size, prior.size);
+        assert_eq!(
+            v.file_count(),
+            file_count_before,
+            "a rejected write must not count towards the volume"
+        );
+        assert_eq!(v.content_size(), content_size_before);
+
+        let mut read_n = Needle {
+            id: NeedleId(1),
+            ..Needle::default()
+        };
+        assert_eq!(v.read_needle(&mut read_n).unwrap(), 10);
+        assert_eq!(read_n.data, b"first-copy");
+    }
+
+    /// Same for a needle the failed write introduced: it never becomes visible,
+    /// rather than being published and then tombstoned back out.
+    #[test]
+    fn test_write_needle_failed_fsync_publishes_nothing() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let dat_len_before = std::fs::metadata(v.file_name(".dat")).unwrap().len();
+        let file_count_before = v.file_count();
+
+        v.fail_next_fsync_for_test(true);
+        let mut fresh = Needle {
+            id: NeedleId(7),
+            cookie: Cookie(0x77),
+            data: b"never-landed".to_vec(),
+            data_size: 12,
+            ..Needle::default()
+        };
+        v.write_needle(&mut fresh, true, true).unwrap_err();
+        v.fail_next_fsync_for_test(false);
+
+        assert_eq!(
+            std::fs::metadata(v.file_name(".dat")).unwrap().len(),
+            dat_len_before
+        );
+        assert!(
+            v.nm.as_ref().unwrap().get(NeedleId(7)).is_none(),
+            "a needle that never reached the disk must not be indexed at all"
+        );
+        assert_eq!(v.file_count(), file_count_before);
+        assert_eq!(
+            v.deleted_count(),
+            0,
+            "nothing was written, so nothing was deleted"
+        );
+
+        let mut read_n = Needle {
+            id: NeedleId(7),
+            ..Needle::default()
+        };
+        assert!(v.read_needle(&mut read_n).is_err());
+    }
+
     #[test]
     fn test_volume_write_dedup() {
         let tmp = TempDir::new().unwrap();
@@ -4087,7 +4316,7 @@ mod tests {
             data_size: 9,
             ..Needle::default()
         };
-        v.write_needle(&mut n, true).unwrap();
+        v.write_needle(&mut n, true, false).unwrap();
 
         // Write same needle again — should be unchanged
         let mut n2 = Needle {
@@ -4098,7 +4327,7 @@ mod tests {
             ..Needle::default()
         };
         n2.checksum = CRC::new(&n2.data);
-        let (_, _, unchanged) = v.write_needle(&mut n2, true).unwrap();
+        let (_, _, unchanged) = v.write_needle(&mut n2, true, false).unwrap();
         assert!(unchanged);
     }
 
@@ -4115,7 +4344,7 @@ mod tests {
             data_size: 9,
             ..Needle::default()
         };
-        v.write_needle(&mut n, true).unwrap();
+        v.write_needle(&mut n, true, false).unwrap();
         assert_eq!(v.file_count(), 1);
 
         let deleted_size = v
@@ -4161,7 +4390,7 @@ mod tests {
                     data_size: data.len() as u32,
                     ..Needle::default()
                 };
-                v.write_needle(&mut n, true).unwrap();
+                v.write_needle(&mut n, true, false).unwrap();
             }
             v.delete_needle(&mut Needle {
                 id: NeedleId(2),
@@ -4201,7 +4430,7 @@ mod tests {
                 data_size: data.len() as u32,
                 ..Needle::default()
             };
-            v.write_needle(&mut n, true).unwrap();
+            v.write_needle(&mut n, true, false).unwrap();
         }
         v.sync_to_disk().unwrap();
     }
@@ -4274,7 +4503,7 @@ mod tests {
                     data_size: data.len() as u32,
                     ..Needle::default()
                 };
-                v.write_needle(&mut n, true).unwrap();
+                v.write_needle(&mut n, true, false).unwrap();
             }
             v.sync_to_disk().unwrap();
         }
@@ -4309,7 +4538,7 @@ mod tests {
                 data_size: data.len() as u32,
                 ..Needle::default()
             };
-            v.write_needle(&mut n, true).unwrap();
+            v.write_needle(&mut n, true, false).unwrap();
             v.delete_needle(&mut Needle {
                 id: NeedleId(1),
                 cookie: Cookie(1),
@@ -4430,7 +4659,7 @@ mod tests {
                 data_size: body.len() as u32,
                 ..Needle::default()
             };
-            v.write_needle(&mut n, true).unwrap();
+            v.write_needle(&mut n, true, false).unwrap();
         }
         v.sync_to_disk().unwrap();
 
@@ -4460,7 +4689,7 @@ mod tests {
             data_size: data.len() as u32,
             ..Needle::default()
         };
-        v.write_needle(&mut n, true).unwrap();
+        v.write_needle(&mut n, true, false).unwrap();
         v.sync_to_disk().unwrap();
 
         // Append an offset-0 logical tombstone to the on-disk .idx.
@@ -4498,7 +4727,7 @@ mod tests {
             data_size: data.len() as u32,
             ..Needle::default()
         };
-        v.write_needle(&mut n, true).unwrap();
+        v.write_needle(&mut n, true, false).unwrap();
         v.sync_to_disk().unwrap();
         assert!(v.dat_file_size().unwrap() > SUPER_BLOCK_SIZE as u64);
 
@@ -4531,7 +4760,7 @@ mod tests {
                 data_size: data.len() as u32,
                 ..Needle::default()
             };
-            v.write_needle(&mut n, true).unwrap();
+            v.write_needle(&mut n, true, false).unwrap();
         }
         v.sync_to_disk().unwrap();
 
@@ -4559,7 +4788,7 @@ mod tests {
                 data_size: data.len() as u32,
                 ..Needle::default()
             };
-            v.write_needle(&mut n, true).unwrap();
+            v.write_needle(&mut n, true, false).unwrap();
         }
 
         assert_eq!(v.file_count(), 10);
@@ -4591,7 +4820,7 @@ mod tests {
                     data_size: data.len() as u32,
                     ..Needle::default()
                 };
-                v.write_needle(&mut n, true).unwrap();
+                v.write_needle(&mut n, true, false).unwrap();
             }
             v.sync_to_disk().unwrap();
         }
@@ -4651,7 +4880,7 @@ mod tests {
             data_size: payload.len() as u32,
             ..Needle::default()
         };
-        v.write_needle(&mut n, true).unwrap();
+        v.write_needle(&mut n, true, false).unwrap();
         v.sync_to_disk().unwrap();
 
         let data_idx = format!("{data}/7.idx");
@@ -4695,7 +4924,7 @@ mod tests {
             data_size: 1,
             ..Needle::default()
         };
-        v.write_needle(&mut n, true).unwrap();
+        v.write_needle(&mut n, true, false).unwrap();
         v.sync_to_disk().unwrap();
 
         // Data and index share a directory, so there is nothing to move.
@@ -4722,7 +4951,7 @@ mod tests {
             data_size: 8,
             ..Needle::default()
         };
-        v.write_needle(&mut n, true).unwrap();
+        v.write_needle(&mut n, true, false).unwrap();
 
         // Write with wrong cookie
         let mut n2 = Needle {
@@ -4732,7 +4961,7 @@ mod tests {
             data_size: 9,
             ..Needle::default()
         };
-        let err = v.write_needle(&mut n2, true).unwrap_err();
+        let err = v.write_needle(&mut n2, true, false).unwrap_err();
         assert!(matches!(err, VolumeError::CookieMismatch(_)));
     }
 
@@ -4752,7 +4981,7 @@ mod tests {
             ..Needle::default()
         };
         n.checksum = CRC::new(&n.data);
-        let (offset, _, _) = v.write_needle(&mut n, true).unwrap();
+        let (offset, _, _) = v.write_needle(&mut n, true, false).unwrap();
         let blob = v.read_needle_blob(offset as i64, n.size).unwrap();
 
         let dat_size_before = v.dat_file_size().unwrap();
@@ -4801,7 +5030,7 @@ mod tests {
             data_size: 5,
             ..Needle::default()
         };
-        v.write_needle(&mut first, true).unwrap();
+        v.write_needle(&mut first, true, false).unwrap();
 
         let mut second = Needle {
             id: NeedleId(20),
@@ -4810,7 +5039,7 @@ mod tests {
             data_size: 6,
             ..Needle::default()
         };
-        v.write_needle(&mut second, true).unwrap();
+        v.write_needle(&mut second, true, false).unwrap();
 
         let mut first_overwrite = Needle {
             id: NeedleId(10),
@@ -4819,7 +5048,7 @@ mod tests {
             data_size: 15,
             ..Needle::default()
         };
-        v.write_needle(&mut first_overwrite, true).unwrap();
+        v.write_needle(&mut first_overwrite, true, false).unwrap();
 
         let needles = v.read_all_needles().unwrap();
         let ids: Vec<u64> = needles.iter().map(|n| u64::from(n.id)).collect();
@@ -4856,7 +5085,7 @@ mod tests {
                 data_size: format!("data-{}", i).len() as u32,
                 ..Needle::default()
             };
-            v.write_needle(&mut n, true).unwrap();
+            v.write_needle(&mut n, true, false).unwrap();
         }
         assert_eq!(v.file_count(), 3);
 
@@ -4943,7 +5172,7 @@ mod tests {
                 data_size: format!("payload-{}", i).len() as u32,
                 ..Needle::default()
             };
-            v.write_needle(&mut n, true).unwrap();
+            v.write_needle(&mut n, true, false).unwrap();
         }
         v.sync_to_disk().unwrap();
 
@@ -5010,7 +5239,7 @@ mod tests {
                 data_size: format!("data-{}", i).len() as u32,
                 ..Needle::default()
             };
-            v.write_needle(&mut n, true).unwrap();
+            v.write_needle(&mut n, true, false).unwrap();
         }
         v.sync_to_disk().unwrap();
 
@@ -5072,7 +5301,7 @@ mod tests {
             data_size: 17,
             ..Needle::default()
         };
-        v.write_needle(&mut n1, true).unwrap();
+        v.write_needle(&mut n1, true, false).unwrap();
 
         let mut n2 = Needle {
             id: NeedleId(2),
@@ -5081,7 +5310,7 @@ mod tests {
             data_size: 18,
             ..Needle::default()
         };
-        v.write_needle(&mut n2, true).unwrap();
+        v.write_needle(&mut n2, true, false).unwrap();
 
         // Get initial revision and offset for needle 1
         let initial_rev = v.super_block.compaction_revision;
@@ -5147,7 +5376,7 @@ mod tests {
             data_size: data.len() as u32,
             ..Needle::default()
         };
-        v.write_needle(&mut n, true).unwrap();
+        v.write_needle(&mut n, true, false).unwrap();
 
         // Read stream info
         let mut read_n = Needle {
@@ -5178,7 +5407,7 @@ mod tests {
                 data_size: 6,
                 ..Needle::default()
             };
-            v.write_needle(&mut n, true).unwrap();
+            v.write_needle(&mut n, true, false).unwrap();
 
             let vif = VifVolumeInfo {
                 files: vec![VifRemoteFile {
@@ -5250,6 +5479,7 @@ mod tests {
                     ..Needle::default()
                 },
                 true,
+                false,
             )
             .unwrap_err();
         assert!(matches!(err, VolumeError::ReadOnly));
@@ -5312,7 +5542,7 @@ mod tests {
                 data_size: 7,
                 ..Needle::default()
             };
-            v.write_needle(&mut n, true).unwrap();
+            v.write_needle(&mut n, true, false).unwrap();
             v.set_read_only_persist(false, true).unwrap();
             v.sync_to_disk().unwrap();
         }
@@ -5352,7 +5582,7 @@ mod tests {
             data_size: 19,
             ..Needle::default()
         };
-        v.write_needle(&mut n, true).unwrap();
+        v.write_needle(&mut n, true, false).unwrap();
         v.sync_to_disk().unwrap();
 
         // Reload one more time — the .idx must contain the post-mark-writable
@@ -5395,7 +5625,7 @@ mod tests {
                     data_size: 7,
                     ..Needle::default()
                 };
-                v.write_needle(&mut n, true).unwrap();
+                v.write_needle(&mut n, true, false).unwrap();
             }
             v.set_read_only_persist(true, true).unwrap();
             assert!(v.no_write_can_delete);
@@ -5412,6 +5642,7 @@ mod tests {
                         ..Needle::default()
                     },
                     true,
+                    false,
                 )
                 .unwrap_err();
             assert!(matches!(err, VolumeError::ReadOnly));
@@ -5456,6 +5687,7 @@ mod tests {
                     ..Needle::default()
                 },
                 true,
+                false,
             )
             .unwrap_err();
         assert!(matches!(err, VolumeError::ReadOnly));
@@ -5484,7 +5716,7 @@ mod tests {
             data_size: 14,
             ..Needle::default()
         };
-        v.write_needle(&mut n, true).unwrap();
+        v.write_needle(&mut n, true, false).unwrap();
     }
 
     // Upgrading a volume that booted plain persisted-readonly to canDelete
@@ -5503,7 +5735,7 @@ mod tests {
                 data_size: 7,
                 ..Needle::default()
             };
-            v.write_needle(&mut n, true).unwrap();
+            v.write_needle(&mut n, true, false).unwrap();
             v.set_read_only_persist(false, true).unwrap();
             v.sync_to_disk().unwrap();
         }
@@ -5678,7 +5910,7 @@ mod tests {
                 data_size: 11,
                 ..Needle::default()
             };
-            v.write_needle(&mut n, true).unwrap();
+            v.write_needle(&mut n, true, false).unwrap();
             v.sync_to_disk().unwrap();
             std::fs::read(v.file_name(".dat")).unwrap()
         };
@@ -5789,7 +6021,7 @@ mod tests {
             data_size: 4,
             ..Needle::default()
         };
-        v.write_needle(&mut n, true).unwrap();
+        v.write_needle(&mut n, true, false).unwrap();
 
         // Write a .vif file (as EC encode would)
         let vif_path = format!("{}/1.vif", dir);
@@ -5849,7 +6081,7 @@ mod tests {
             data_size: 5,
             ..Needle::default()
         };
-        v.write_needle(&mut n, true).unwrap();
+        v.write_needle(&mut n, true, false).unwrap();
 
         // Write .vif in data dir (as EC encode would)
         let vif_path = format!("{}/1.vif", dat_dir);
@@ -5891,7 +6123,7 @@ mod tests {
             data_size: 4,
             ..Needle::default()
         };
-        v.write_needle(&mut n, true).unwrap();
+        v.write_needle(&mut n, true, false).unwrap();
 
         let vif_path = format!("{}/1.vif", dir);
         std::fs::write(&vif_path, r#"{"version":3}"#).unwrap();
@@ -5933,7 +6165,7 @@ mod tests {
                 data_size: format!("data-{}", i).len() as u32,
                 ..Needle::default()
             };
-            v.write_needle(&mut n, true).unwrap();
+            v.write_needle(&mut n, true, false).unwrap();
         }
         for id in [2u64, 5u64] {
             let mut del = Needle {
@@ -5998,7 +6230,7 @@ mod tests {
                 data_size: format!("data-{}", i).len() as u32,
                 ..Needle::default()
             };
-            v.write_needle(&mut n, true).unwrap();
+            v.write_needle(&mut n, true, false).unwrap();
         }
         v.compact_by_index(0, 0, |_| true).unwrap();
 
@@ -6034,7 +6266,7 @@ mod tests {
                 data_size: format!("data-{}", i).len() as u32,
                 ..Needle::default()
             };
-            v.write_needle(&mut n, true).unwrap();
+            v.write_needle(&mut n, true, false).unwrap();
         }
         v.sync_to_disk().unwrap();
 

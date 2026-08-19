@@ -1,9 +1,10 @@
 //! Async batched write processing for the volume server.
 //!
-//! Instead of each upload handler directly calling `write_needle` and syncing,
-//! writes are submitted to a queue. A background worker drains the queue in
-//! batches (up to 128 entries), groups them by volume ID, processes them
-//! together, and syncs once per volume for the entire batch.
+//! Instead of each upload handler directly calling `write_needle`, writes are
+//! submitted to a queue. A background worker drains the queue in batches (up to
+//! 128 entries), groups them by volume ID, and processes them together under a
+//! single store lock. Requests that asked for `fsync` are flushed by
+//! `write_needle` itself, one flush per durable write.
 
 use std::sync::Arc;
 
@@ -19,10 +20,14 @@ use super::volume_server::VolumeServerState;
 /// Result of a single write operation: (offset, size, is_unchanged).
 pub type WriteResult = Result<(u64, Size, bool), VolumeError>;
 
+/// The needles queued for one volume, each with the durability it asked for.
+type VolumeBatch = Vec<(Needle, bool, oneshot::Sender<WriteResult>)>;
+
 /// A request to write a needle, submitted to the write queue.
 pub struct WriteRequest {
     pub volume_id: VolumeId,
     pub needle: Needle,
+    pub fsync: bool,
     pub response_tx: oneshot::Sender<WriteResult>,
 }
 
@@ -54,11 +59,12 @@ impl WriteQueue {
     /// Submit a write request and wait for the result.
     ///
     /// Returns `Err` if the worker has shut down or the response channel was dropped.
-    pub async fn submit(&self, volume_id: VolumeId, needle: Needle) -> WriteResult {
+    pub async fn submit(&self, volume_id: VolumeId, needle: Needle, fsync: bool) -> WriteResult {
         let (response_tx, response_rx) = oneshot::channel();
         let request = WriteRequest {
             volume_id,
             needle,
+            fsync,
             response_tx,
         };
 
@@ -138,14 +144,14 @@ fn process_batch(state: Arc<VolumeServerState>, batch: Vec<WriteRequest>) {
     // Group requests by volume ID for efficient processing.
     // We use a Vec of (VolumeId, Vec<(Needle, Sender)>) to preserve order
     // and avoid requiring Hash on VolumeId.
-    let mut groups: Vec<(VolumeId, Vec<(Needle, oneshot::Sender<WriteResult>)>)> = Vec::new();
+    let mut groups: Vec<(VolumeId, VolumeBatch)> = Vec::new();
 
     for req in batch {
         let vid = req.volume_id;
         if let Some(group) = groups.iter_mut().find(|(v, _)| *v == vid) {
-            group.1.push((req.needle, req.response_tx));
+            group.1.push((req.needle, req.fsync, req.response_tx));
         } else {
-            groups.push((vid, vec![(req.needle, req.response_tx)]));
+            groups.push((vid, vec![(req.needle, req.fsync, req.response_tx)]));
         }
     }
 
@@ -153,8 +159,8 @@ fn process_batch(state: Arc<VolumeServerState>, batch: Vec<WriteRequest>) {
     let mut store = state.store.write().unwrap();
 
     for (vid, entries) in groups {
-        for (mut needle, response_tx) in entries {
-            let result = store.write_volume_needle(vid, &mut needle);
+        for (mut needle, fsync, response_tx) in entries {
+            let result = store.write_volume_needle(vid, &mut needle, fsync);
             // Send result back; ignore error if receiver dropped.
             let _ = response_tx.send(result);
         }
@@ -239,7 +245,7 @@ mod tests {
             ..Needle::default()
         };
 
-        let result = queue.submit(VolumeId(999), needle).await;
+        let result = queue.submit(VolumeId(999), needle, false).await;
         assert!(result.is_err());
         match result {
             Err(VolumeError::NotFound) => {} // expected
@@ -264,7 +270,7 @@ mod tests {
                     data_size: 10,
                     ..Needle::default()
                 };
-                q.submit(VolumeId(1), needle).await
+                q.submit(VolumeId(1), needle, false).await
             }));
         }
 
@@ -293,7 +299,7 @@ mod tests {
                     data_size: 4,
                     ..Needle::default()
                 };
-                q.submit(VolumeId(42), needle).await
+                q.submit(VolumeId(42), needle, false).await
             }));
         }
 
@@ -327,7 +333,7 @@ mod tests {
             data_size: 0,
             ..Needle::default()
         };
-        let result = queue2.submit(VolumeId(1), needle).await;
+        let result = queue2.submit(VolumeId(1), needle, false).await;
         assert!(result.is_err()); // NotFound is fine -- the point is it doesn't panic
     }
 }

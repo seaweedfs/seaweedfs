@@ -246,7 +246,7 @@ mod tests {
                 data: data.clone(),
                 ..Needle::default()
             };
-            v.write_needle(&mut n, true).unwrap();
+            v.write_needle(&mut n, true, false).unwrap();
             written.push(data);
         }
         written

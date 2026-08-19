@@ -400,7 +400,7 @@ mod tests {
                 data_size: data.len() as u32,
                 ..Needle::default()
             };
-            v.write_needle(&mut n, true).unwrap();
+            v.write_needle(&mut n, true, false).unwrap();
         }
         v.sync_to_disk().unwrap();
         let original_dat_size = v.dat_file_size().unwrap();
