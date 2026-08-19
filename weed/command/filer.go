@@ -160,6 +160,8 @@ func init() {
 	filerS3Options.externalUrl = cmdFiler.Flag.String("s3.externalUrl", "", "the external URL clients use to connect (e.g. https://api.example.com:9000). Used for S3 signature verification behind a reverse proxy. Falls back to S3_EXTERNAL_URL env var.")
 	filerS3Options.defaultFileMode = cmdFiler.Flag.String("s3.defaultFileMode", "", "default file mode for S3 uploaded objects, e.g. 0660, 0644, 0666")
 	filerS3Options.cacheSizeMB = cmdFiler.Flag.Int64("s3.cacheCapacityMB", 0, "in-memory chunk cache capacity in MB for S3 GETs shared across requests (0 disables)")
+	filerS3Options.localReadFallbackToRemote = cmdFiler.Flag.Bool("s3.localReadFallbackToRemote", false, "for remote-mounted buckets, if a locally-cached object cannot be read from volume servers, serve it from the mounted remote instead of returning an error")
+	filerS3Options.localReadFallbackTimeout = cmdFiler.Flag.Duration("s3.localReadFallbackTimeout", 2*time.Second, "how long to wait on the local read before falling back to the remote (requires -s3.localReadFallbackToRemote)")
 
 	// start webdav on filer
 	filerStartWebDav = cmdFiler.Flag.Bool("webdav", false, "whether to start webdav gateway")
