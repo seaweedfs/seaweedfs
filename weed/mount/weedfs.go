@@ -811,10 +811,13 @@ func (wfs *WFS) onEntryInvalidation(invalidation meta_cache.EntryInvalidation) {
 		listener(invalidation)
 	}
 	wfs.invalidateKernelDirListing(invalidation.Path)
-	if moved := wfs.invalidateOpenFileHandle(invalidation); !moved && invalidation.RenamedTo != "" {
-		// The kernel goes on addressing the moved inode by nodeid whether or not
-		// anything here holds it open. Exactly once per event: the move also
-		// unlinks whatever the rename replaced, which must not run twice.
+	// An inode with an open handle has its rename applied above, together with
+	// the handle's own path bookkeeping. This is for the rest: the kernel goes
+	// on addressing a moved inode by nodeid whether or not anything holds it
+	// open. Only a source still in the table is moved, so a redelivered rename
+	// cannot unlink what the first delivery put at the target.
+	if handled := wfs.invalidateOpenFileHandle(invalidation); !handled &&
+		invalidation.RenamedTo != "" && wfs.inodeToPath.HasPath(invalidation.Path) {
 		sourceInode, replacedInode := wfs.inodeToPath.MovePath(invalidation.Path, invalidation.RenamedTo)
 		wfs.markReplacedHandleDeleted(replacedInode, sourceInode)
 	}
@@ -862,9 +865,9 @@ func (wfs *WFS) MountRoot() util.FullPath {
 }
 
 // invalidateOpenFileHandle applies one event to the handle that has the entry
-// open, reporting whether it moved the inode table for a rename; the caller
-// moves it otherwise.
-func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidation) (movedPath bool) {
+// open, reporting whether it found one: a handle owns its inode's rename
+// bookkeeping, and the caller moves the table only for inodes without one.
+func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidation) (handled bool) {
 	filePath, eventEntry, eventTsNs := invalidation.Path, invalidation.Entry, invalidation.TsNs
 	inode, inodeFound := wfs.inodeToPath.GetInode(filePath)
 	if !inodeFound {
@@ -874,6 +877,7 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 	if !fhFound {
 		return
 	}
+	handled = true
 	fhActiveLock := wfs.fhLockTable.AcquireLock("invalidateFunc", fh.fh, util.ExclusiveLock)
 	defer wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 
@@ -917,7 +921,6 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 		// so no flush recreates the unlinked name. Either way the entry and
 		// dirty pages stay, so the open fd still reads its buffered writes.
 		if invalidation.RenamedTo != "" {
-			movedPath = true
 			_, replacedInode := wfs.inodeToPath.MovePath(filePath, invalidation.RenamedTo)
 			wfs.markReplacedHandleDeleted(replacedInode, inode)
 			fh.RememberPath(invalidation.RenamedTo)

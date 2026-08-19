@@ -63,25 +63,30 @@ func TestRemoteRenameMovesOnceWithAnOpenHandle(t *testing.T) {
 	}
 }
 
-// A rename over a file this mount has open destroys that file, even when the
-// source was never visited here. The name must stop resolving to it, and its
-// handle must not flush the old content back over what took its place.
-func TestRemoteRenameOverAnOpenHandleUnlinksTheTarget(t *testing.T) {
+// The subscription can redeliver a rename once it falls out of the dedup ring.
+// Replaying one must not unlink what the first delivery put at the target, nor
+// mark the moved file's handle deleted.
+func TestRemoteRenameReplayLeavesTheTargetAlone(t *testing.T) {
 	wfs := newInvalidateTestWFS(t)
-	source, target := util.FullPath("/dir/unvisited"), util.FullPath("/dir/target")
+	oldPath, newPath := util.FullPath("/dir/file"), util.FullPath("/dir/renamed")
 
-	targetInode := wfs.inodeToPath.Lookup(target, time.Now().Unix(), false, false, 0, true)
-	targetFh, _ := wfs.fhMap.AcquireFileHandle(wfs, targetInode, &filer_pb.Entry{
-		Name:       "target",
-		Attributes: &filer_pb.FuseAttributes{FileSize: 12},
+	inode := wfs.inodeToPath.Lookup(oldPath, time.Now().Unix(), false, false, 0, true)
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 88},
 	}, 0, 0)
 
-	wfs.onEntryInvalidation(meta_cache.EntryInvalidation{Path: source, RenamedTo: target, TsNs: 1000})
+	rename := meta_cache.EntryInvalidation{Path: oldPath, RenamedTo: newPath, TsNs: 1000}
+	wfs.onEntryInvalidation(rename)
+	wfs.onEntryInvalidation(rename)
 
-	if got, found := wfs.inodeToPath.GetInode(target); found {
-		t.Errorf("%s still resolves to %d after being renamed over", target, got)
+	if got, status := wfs.inodeToPath.GetPath(inode); status != fuse.OK || got != newPath {
+		t.Errorf("inode resolves to %q (%v), want %s", got, status, newPath)
 	}
-	if !targetFh.isDeleted {
-		t.Error("the replaced file's handle can still flush over the renamed source")
+	if got, found := wfs.inodeToPath.GetInode(newPath); !found || got != inode {
+		t.Errorf("%s resolves to %d (found %v), want %d", newPath, got, found, inode)
+	}
+	if fh.isDeleted {
+		t.Error("the moved file's handle was marked deleted by the replay")
 	}
 }
