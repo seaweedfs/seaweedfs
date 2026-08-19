@@ -812,6 +812,11 @@ func (wfs *WFS) onEntryInvalidation(invalidation meta_cache.EntryInvalidation) {
 	}
 	wfs.invalidateKernelDirListing(invalidation.Path)
 	wfs.invalidateOpenFileHandle(invalidation)
+	if invalidation.RenamedTo != "" {
+		// The kernel goes on addressing the moved inode by nodeid, whether or
+		// not anything here holds it open.
+		wfs.inodeToPath.MovePath(invalidation.Path, invalidation.RenamedTo)
+	}
 }
 
 // invalidateKernelDirListing drops the kernel's cached listing of the directory
