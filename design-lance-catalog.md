@@ -512,10 +512,35 @@ the Lance file format, for which no Go implementation exists. Return `Unsupporte
 and say so in the docs. `arrow-go/v18` is already an indirect dependency, so Arrow framing is
 not the blocker — Lance is.
 
+## Does a Lance table need maintenance?
+
+Yes, and one part of it has no Iceberg equivalent. The client exposes three jobs:
+
+- `optimize.compact_files()` — Lance writes a fragment per write batch, so a table fed by
+  small appends accumulates small files exactly the way an Iceberg table does.
+- `optimize.optimize_indices()` — **rows written after an index was built are not covered by
+  it.** A vector search against a stale index silently misses recent data. That is a
+  correctness-shaped failure, not a slow query, and it is specific to what people use Lance
+  for.
+- `cleanup_old_versions()` — every version is retained until something removes it. Lance can
+  do this itself: `optimize.enable_auto_cleanup()` sets it on the dataset, so this one need
+  not be an external job at all.
+
+None of it can run here. All three read and rewrite Lance files, which needs Lance format
+code that does not exist in Go — the same wall as the data plane. There is no useful subset
+either: deciding which fragments an old version still references means parsing Lance
+manifests. The most a Go worker could honestly do is *observe* — count fragments and
+versions per table from the filer and surface a table that needs attention in the admin UI.
+
+So the maintenance worker must not touch a Lance table, and it now declines by reading the
+format the catalog recorded rather than by failing to parse Iceberg metadata. Until a
+sidecar exists, compaction and index optimization belong to whatever job writes the data —
+Spark or Ray already have the Lance runtime loaded — and version cleanup belongs to Lance's
+own auto-cleanup.
+
 ## The sidecar question
 
-Phase 3 and any Lance maintenance worker (compaction, index build — the equivalent of
-`weed/worker/tasks/iceberg`) both need real Lance code, and Lance is a Rust crate. We already
+Phase 3 and any Lance maintenance worker both need real Lance code, and Lance is a Rust crate. We already
 build Rust in-tree for `seaweed-volume`. A `weed-lance` sidecar that links `lance` and serves
 the data-plane operations behind the same REST surface is the obvious shape, and it would
 make SeaweedFS a store you can run vector search *in* rather than a store you read vectors
