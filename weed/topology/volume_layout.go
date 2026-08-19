@@ -164,6 +164,18 @@ func (vl *VolumeLayout) rememberOversizedVolume(v *storage.VolumeInfo, dn *DataN
 	}
 }
 
+// UpdateOversizedState refreshes the per-replica oversized mark from the size
+// reported by this heartbeat. RegisterVolume sets it once at registration; the
+// delta heartbeat path (ApplyVolumeChanges) and the full heartbeat path
+// (SyncDataNodeRegistration) must keep it current, or a volume that grew past
+// the limit would keep looking writable to ensureCorrectWritables and bounce
+// between writable and unwritable on every assign.
+func (vl *VolumeLayout) UpdateOversizedState(v *storage.VolumeInfo, dn *DataNode) {
+	vl.accessLock.Lock()
+	defer vl.accessLock.Unlock()
+	vl.rememberOversizedVolume(v, dn)
+}
+
 // UpdateVolumeSize is called on every heartbeat for every reported volume.
 // It decays the pending size estimate toward the reported size and updates
 // crowded state. Replicated volumes report from multiple DataNodes; decay
