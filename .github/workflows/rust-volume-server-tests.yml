@@ -36,9 +36,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Install protobuf compiler
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -78,9 +75,6 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
-
-      - name: Install protobuf compiler
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -163,9 +157,6 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
-
-      - name: Install protobuf compiler
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
