@@ -30,6 +30,7 @@ spec:
       app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
       app.kubernetes.io/instance: {{ .Release.Name }}
       app.kubernetes.io/component: filer
+      monitoring: "true"
 {{- end }}
 {{- end }}
 {{- end }}
