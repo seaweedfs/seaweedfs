@@ -25,6 +25,7 @@ type S3TablesBucketsData struct {
 	Buckets      []S3TablesBucketSummary `json:"buckets"`
 	TotalBuckets int                     `json:"total_buckets"`
 	IcebergPort  int                     `json:"iceberg_port"`
+	LancePort    int                     `json:"lance_port"`
 	LastUpdated  time.Time               `json:"last_updated"`
 }
 
@@ -33,6 +34,9 @@ type S3TablesBucketSummary struct {
 	Name           string    `json:"name"`
 	OwnerAccountID string    `json:"ownerAccountId"`
 	CreatedAt      time.Time `json:"createdAt"`
+	// Format is empty for a bucket created before formats were declared. Such a
+	// bucket takes tables of either format, which is what it always did.
+	Format string `json:"format,omitempty"`
 }
 
 type S3TablesNamespacesData struct {
@@ -56,6 +60,7 @@ type tableBucketMetadata struct {
 	Name           string    `json:"name"`
 	CreatedAt      time.Time `json:"createdAt"`
 	OwnerAccountID string    `json:"ownerAccountId"`
+	Format         string    `json:"format,omitempty"`
 }
 
 // S3Tables manager helpers
@@ -137,6 +142,7 @@ func (s *AdminServer) GetS3TablesBucketsData(ctx context.Context) (S3TablesBucke
 				Name:           entry.Entry.Name,
 				OwnerAccountID: metadata.OwnerAccountID,
 				CreatedAt:      metadata.CreatedAt,
+				Format:         metadata.Format,
 			})
 		}
 		return nil
@@ -148,6 +154,7 @@ func (s *AdminServer) GetS3TablesBucketsData(ctx context.Context) (S3TablesBucke
 		Buckets:      buckets,
 		TotalBuckets: len(buckets),
 		IcebergPort:  s.icebergPort,
+		LancePort:    s.lancePort,
 		LastUpdated:  time.Now(),
 	}, nil
 }
@@ -648,9 +655,10 @@ func (s *AdminServer) CreateS3TablesBucket(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var req struct {
-		Name  string            `json:"name"`
-		Tags  map[string]string `json:"tags"`
-		Owner string            `json:"owner"`
+		Name   string            `json:"name"`
+		Tags   map[string]string `json:"tags"`
+		Owner  string            `json:"owner"`
+		Format string            `json:"format"`
 	}
 	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
@@ -671,7 +679,16 @@ func (s *AdminServer) CreateS3TablesBucket(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
-	createReq := &s3tables.CreateTableBucketRequest{Name: req.Name, Tags: req.Tags}
+	format := s3tables.FormatIceberg
+	if req.Format != "" {
+		normalized, ok := s3tables.NormalizeFormat(req.Format)
+		if !ok {
+			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("Unsupported format %q", req.Format))
+			return
+		}
+		format = normalized
+	}
+	createReq := &s3tables.CreateTableBucketRequest{Name: req.Name, Tags: req.Tags, Format: format}
 	var resp s3tables.CreateTableBucketResponse
 	if err := s.executeS3TablesOperation(r.Context(), "CreateTableBucket", createReq, &resp); err != nil {
 		writeS3TablesError(w, err)

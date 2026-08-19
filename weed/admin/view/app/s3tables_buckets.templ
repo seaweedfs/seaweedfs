@@ -26,40 +26,46 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 					</a>
 				</div>
 			}
+			if data.LancePort > 0 {
+				<div class="btn-group me-2">
+					<a id="s3tables-lance-rest-link" href={ templ.SafeURL(fmt.Sprintf("//localhost:%d/v1/table", data.LancePort)) } target="_blank" class="btn btn-sm btn-outline-secondary">
+						<i class="fas fa-vector-square me-1"></i>Lance Namespace API
+					</a>
+				</div>
+			}
 		</div>
 	</div>
-	<div id="s3tables-buckets-content" data-iceberg-port={ fmt.Sprintf("%d", data.IcebergPort) }>
-		if data.IcebergPort > 0 {
+	<div id="s3tables-buckets-content" data-iceberg-port={ fmt.Sprintf("%d", data.IcebergPort) } data-lance-port={ fmt.Sprintf("%d", data.LancePort) }>
+		if data.IcebergPort > 0 || data.LancePort > 0 {
 			<div class="alert alert-info mb-4">
-				<div class="d-flex align-items-center">
+				<div class="d-flex align-items-start">
 					<i class="fas fa-info-circle fa-2x me-3"></i>
 					<div>
-						<strong>Iceberg REST Catalog</strong>
-						<p id="s3tables-iceberg-info" class="mb-0 mt-1" data-iceberg-port={ fmt.Sprintf("%d", data.IcebergPort) }>
-							Each table bucket is an Iceberg catalog. Connect clients to:
-							<code><span id="s3tables-iceberg-protocol">http</span>://<span id="s3tables-iceberg-host">localhost</span>:{ fmt.Sprintf("%d", data.IcebergPort) }/v1</code>
+						<strong>Catalog endpoints</strong>
+						<p class="mb-0 mt-1">
+							Each table bucket is a catalog. Which endpoint serves it depends on the format it holds.
 						</p>
-						<script>
-							const s3tablesInfo = document.getElementById('s3tables-iceberg-info');
-							const s3tablesIcebergHost = window.location.hostname;
-							const s3tablesIcebergProtocol = window.location.protocol.slice(0, -1);
-							const s3tablesIcebergPort = s3tablesInfo ? s3tablesInfo.dataset.icebergPort : '';
-							document.getElementById('s3tables-iceberg-host').innerText = s3tablesIcebergHost;
-							const s3tablesIcebergProtocolEl = document.getElementById('s3tables-iceberg-protocol');
-							if (s3tablesIcebergProtocolEl) {
-								s3tablesIcebergProtocolEl.innerText = s3tablesIcebergProtocol;
+						<div class="mt-2">
+							if data.IcebergPort > 0 {
+								<div>
+									<span class="badge bg-primary">ICEBERG</span>
+									<code class="ms-1"><span class="s3tables-origin" data-port={ fmt.Sprintf("%d", data.IcebergPort) }>{ fmt.Sprintf("http://localhost:%d", data.IcebergPort) }</span>/v1</code>
+								</div>
 							}
-							const s3tablesRestLink = document.getElementById('s3tables-iceberg-rest-link');
-							if (s3tablesRestLink && s3tablesIcebergPort) {
-								s3tablesRestLink.href = `//${s3tablesIcebergHost}:${s3tablesIcebergPort}/v1/config`;
+							if data.LancePort > 0 {
+								<div class="mt-1">
+									<span class="badge bg-success">LANCE</span>
+									<code class="ms-1"><span class="s3tables-origin" data-port={ fmt.Sprintf("%d", data.LancePort) }>{ fmt.Sprintf("http://localhost:%d", data.LancePort) }</span></code>
+								</div>
 							}
-						</script>
+						</div>
 					</div>
 				</div>
 			</div>
-		} else {
+		}
+		if data.IcebergPort == 0 && data.LancePort == 0 {
 			<div class="alert alert-warning mb-4">
-				<i class="fas fa-exclamation-triangle me-2"></i>Iceberg REST endpoint is disabled. Start `weed s3` with `-s3.port.iceberg` to enable it.
+				<i class="fas fa-exclamation-triangle me-2"></i>No catalog endpoint is running. Start `weed s3` with `-s3.port.iceberg` or `-s3.port.lance`, and point admin at it with `-iceberg.port` or `-lance.port`.
 			</div>
 		}
 		<div class="row mb-4">
@@ -139,9 +145,10 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 								<thead>
 									<tr>
 										<th>Name</th>
+										<th>Format</th>
 										<th>Owner</th>
 										<th>ARN</th>
-										<th>Iceberg Endpoint</th>
+										<th>Catalog Endpoint</th>
 										<th>Created</th>
 										<th>Actions</th>
 									</tr>
@@ -150,9 +157,12 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 									for _, bucket := range data.Buckets {
 										<tr>
 											<td>{ bucket.Name }</td>
+											<td>
+												<span class={ formatBadgeClass(bucket.Format) } title={ formatBadgeTitle(bucket.Format) }>{ formatLabel(bucket.Format) }</span>
+											</td>
 											<td>{ bucket.OwnerAccountID }</td>
 											<td class="text-muted small">{ bucket.ARN }</td>
-											<td><code class="small">/v1/{ bucket.Name }/namespaces</code></td>
+											<td><code class="small">{ bucketCatalogPath(bucket.Format, bucket.Name) }</code></td>
 											<td>{ bucket.CreatedAt.Format("2006-01-02 15:04") }</td>
 											<td>
 												<div class="btn-group btn-group-sm" role="group">
@@ -181,7 +191,7 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 									}
 									if len(data.Buckets) == 0 {
 										<tr>
-											<td colspan="6" class="text-center text-muted py-4">
+											<td colspan="7" class="text-center text-muted py-4">
 												<i class="fas fa-table fa-3x mb-3 text-muted"></i>
 												<div>
 													<h5>No table buckets found</h5>
@@ -275,6 +285,28 @@ namespaces = catalog.list_namespaces()` }
 						<div class="mb-3">
 							<label for="s3tablesBucketName" class="form-label">Bucket Name</label>
 							<input type="text" class="form-control" id="s3tablesBucketName" name="name" placeholder="table-bucket-name" required/>
+						</div>
+						<div class="mb-3">
+							<label class="form-label">Table Format</label>
+							<div class="row g-2" id="s3tablesBucketFormatPicker">
+								<div class="col-6">
+									<input type="radio" class="btn-check" name="format" id="s3tablesBucketFormatIceberg" value="ICEBERG" checked/>
+									<label class="btn btn-outline-primary w-100 text-start p-3" for="s3tablesBucketFormatIceberg">
+										<span class="d-block fw-semibold"><i class="fas fa-snowflake me-1"></i>Iceberg</span>
+										<span class="d-block small text-muted mt-1">Served over the Iceberg REST catalog. Spark, Trino, PyIceberg, DuckDB.</span>
+									</label>
+								</div>
+								<div class="col-6">
+									<input type="radio" class="btn-check" name="format" id="s3tablesBucketFormatLance" value="LANCE"/>
+									<label class="btn btn-outline-success w-100 text-start p-3" for="s3tablesBucketFormatLance">
+										<span class="d-block fw-semibold"><i class="fas fa-vector-square me-1"></i>Lance</span>
+										<span class="d-block small text-muted mt-1">Served over the Lance Namespace API. pylance, LanceDB, Ray.</span>
+									</label>
+								</div>
+							</div>
+							<div class="form-text" id="s3tablesBucketFormatHint" data-iceberg-port={ fmt.Sprintf("%d", data.IcebergPort) } data-lance-port={ fmt.Sprintf("%d", data.LancePort) }>
+								A bucket holds one format. Tables of the other are refused.
+							</div>
 						</div>
 						<div class="mb-3">
 							<label for="s3tablesBucketOwner" class="form-label">Owner (Optional)</label>
