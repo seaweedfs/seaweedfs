@@ -3,6 +3,7 @@ package s3api
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -184,12 +185,11 @@ func TestVersioningPaginationOver1000Versions(t *testing.T) {
 			})
 			require.NoError(t, err, "Failed to get version at index %d", idx)
 
-			buf := make([]byte, len(expectedContent))
-			_, err = getResp.Body.Read(buf)
-			require.NoError(t, err)
+			body, err := io.ReadAll(getResp.Body)
 			getResp.Body.Close()
+			require.NoError(t, err, "Failed to read version at index %d", idx)
 
-			assert.Equal(t, expectedContent, string(buf), "Content mismatch for version %d", idx+1)
+			assert.Equal(t, expectedContent, string(body), "Content mismatch for version %d", idx+1)
 		}
 	})
 }
