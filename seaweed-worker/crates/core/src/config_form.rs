@@ -7,7 +7,9 @@
 
 use std::collections::HashMap;
 
-use crate::pb::{config_value::Kind, ConfigField, ConfigFieldType, ConfigForm, ConfigSection, ConfigValue};
+use crate::pb::{
+    config_value::Kind, ConfigField, ConfigFieldType, ConfigForm, ConfigSection, ConfigValue,
+};
 
 pub fn int_value(value: i64) -> ConfigValue {
     ConfigValue {
@@ -50,13 +52,7 @@ pub fn string_or(values: &HashMap<String, ConfigValue>, name: &str, fallback: &s
     }
 }
 
-pub fn number_field(
-    name: &str,
-    label: &str,
-    description: &str,
-    min: i64,
-    max: i64,
-) -> ConfigField {
+pub fn number_field(name: &str, label: &str, description: &str, min: i64, max: i64) -> ConfigField {
     ConfigField {
         name: name.to_string(),
         label: label.to_string(),

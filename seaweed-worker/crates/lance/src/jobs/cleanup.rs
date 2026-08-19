@@ -213,8 +213,14 @@ impl JobHandler for CleanupVersionsHandler {
             .with_context(|| format!("clean up versions of {}", table.location))?;
 
         let mut output: HashMap<String, ConfigValue> = HashMap::new();
-        output.insert("old_versions_removed".to_string(), int_value(stats.old_versions as i64));
-        output.insert("bytes_removed".to_string(), int_value(stats.bytes_removed as i64));
+        output.insert(
+            "old_versions_removed".to_string(),
+            int_value(stats.old_versions as i64),
+        );
+        output.insert(
+            "bytes_removed".to_string(),
+            int_value(stats.bytes_removed as i64),
+        );
         output.insert(
             "data_files_removed".to_string(),
             int_value(stats.data_files_removed as i64),

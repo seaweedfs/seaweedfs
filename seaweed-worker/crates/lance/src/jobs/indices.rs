@@ -217,7 +217,10 @@ impl JobHandler for OptimizeIndicesHandler {
 
         let after = unindexed_rows(&table).await?.unwrap_or(0);
         let mut output: HashMap<String, ConfigValue> = HashMap::new();
-        output.insert("unindexed_rows_before".to_string(), int_value(before as i64));
+        output.insert(
+            "unindexed_rows_before".to_string(),
+            int_value(before as i64),
+        );
         output.insert("unindexed_rows_after".to_string(), int_value(after as i64));
 
         sender.send_completed(JobCompleted {

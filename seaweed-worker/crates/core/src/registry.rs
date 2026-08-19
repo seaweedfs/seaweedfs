@@ -4,9 +4,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 
-use crate::pb::{
-    ExecuteJobRequest, JobTypeCapability, JobTypeDescriptor, RunDetectionRequest,
-};
+use crate::pb::{ExecuteJobRequest, JobTypeCapability, JobTypeDescriptor, RunDetectionRequest};
 use crate::senders::{DetectionSender, ExecutionSender};
 
 /// One job type, worker side. Mirrors the Go JobHandler interface in
@@ -41,8 +39,7 @@ impl Registry {
     }
 
     pub fn register(mut self, handler: Arc<dyn JobHandler>) -> Self {
-        self.handlers
-            .insert(handler.capability().job_type, handler);
+        self.handlers.insert(handler.capability().job_type, handler);
         self
     }
 

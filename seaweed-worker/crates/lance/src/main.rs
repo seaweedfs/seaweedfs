@@ -8,7 +8,10 @@ use weed_lance_worker::handlers;
 /// Mirrors `weed worker`'s flags, because this is the same contract from another
 /// language and an operator should not have to learn a second set of names.
 #[derive(Parser, Debug)]
-#[command(name = "weed-lance-worker", about = "SeaweedFS maintenance worker for Lance tables")]
+#[command(
+    name = "weed-lance-worker",
+    about = "SeaweedFS maintenance worker for Lance tables"
+)]
 struct Args {
     /// Admin server gRPC address.
     #[arg(long, default_value = "localhost:23646", env = "WEED_ADMIN")]
@@ -19,7 +22,11 @@ struct Args {
     id: String,
 
     /// Lance namespace the worker lists tables from.
-    #[arg(long, default_value = "http://localhost:9101", env = "WEED_LANCE_NAMESPACE")]
+    #[arg(
+        long,
+        default_value = "http://localhost:9101",
+        env = "WEED_LANCE_NAMESPACE"
+    )]
     namespace: String,
 
     #[arg(long, default_value = "10", env = "WEED_HEARTBEAT_SECONDS")]

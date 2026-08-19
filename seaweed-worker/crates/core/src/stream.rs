@@ -8,7 +8,8 @@ use tracing::{info, warn};
 
 use crate::config::WorkerOptions;
 use crate::pb::{
-    admin_to_worker_message::Body as AdminBody, plugin_control_service_client::PluginControlServiceClient,
+    admin_to_worker_message::Body as AdminBody,
+    plugin_control_service_client::PluginControlServiceClient,
     worker_to_admin_message::Body as WorkerBody, ConfigSchemaResponse, ExecuteJobRequest,
     JobCompleted, RunDetectionRequest, RunningWork, WorkerHeartbeat, WorkerHello,
 };
@@ -80,7 +81,10 @@ async fn serve_once(options: &WorkerOptions, registry: &Registry) -> Result<()> 
                 if !hello.accepted {
                     return Err(anyhow!("admin rejected this worker: {}", hello.message));
                 }
-                info!("connected to admin at {} ({})", options.admin_address, grpc_address);
+                info!(
+                    "connected to admin at {} ({})",
+                    options.admin_address, grpc_address
+                );
             }
             Some(AdminBody::RequestConfigSchema(request)) => {
                 let response = match registry.get(&request.job_type) {
@@ -159,13 +163,15 @@ fn spawn_detection(registry: Registry, sender: StreamSender, request: RunDetecti
         };
         if let Err(err) = handler.detect(&request, &sender).await {
             warn!("detection for {} failed: {err:#}", request.job_type);
-            let _ = sender.send(WorkerBody::DetectionComplete(crate::pb::DetectionComplete {
-                request_id: request.request_id.clone(),
-                job_type: request.job_type.clone(),
-                success: false,
-                error_message: format!("{err:#}"),
-                total_proposals: 0,
-            }));
+            let _ = sender.send(WorkerBody::DetectionComplete(
+                crate::pb::DetectionComplete {
+                    request_id: request.request_id.clone(),
+                    job_type: request.job_type.clone(),
+                    success: false,
+                    error_message: format!("{err:#}"),
+                    total_proposals: 0,
+                },
+            ));
         }
     });
 }
