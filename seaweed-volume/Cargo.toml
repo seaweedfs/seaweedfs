@@ -137,6 +137,10 @@ tempfile = "3"
 
 [build-dependencies]
 tonic-build = "0.12"
+# Ships protoc with the build so neither CI nor a developer needs a system
+# install, and so the version is pinned rather than whatever the platform's
+# package manager happens to carry.
+protoc-bin-vendored = "3"
 
 [patch.crates-io]
 reed-solomon-erasure = { path = "vendor/reed-solomon-erasure" }

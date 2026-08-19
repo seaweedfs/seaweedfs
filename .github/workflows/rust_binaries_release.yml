@@ -28,9 +28,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install protobuf compiler
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -131,9 +128,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install protobuf compiler
-        run: brew install protobuf
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -210,9 +204,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
-
-      - name: Install protobuf compiler
-        run: choco install protoc -y
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
