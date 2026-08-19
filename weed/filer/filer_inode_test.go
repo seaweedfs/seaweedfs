@@ -50,7 +50,11 @@ func TestEnsureEntryInodeSharesAcrossHardLinks(t *testing.T) {
 
 	// Every link to the same target resolves to one inode, independent of path
 	// or creation time.
-	assert.Equal(t, uint64(util.HashStringToLong(string(hardLinkId)))&uint64(math.MaxInt64), a.Attr.Inode)
+	expectedInode := uint64(util.HashStringToLong(string(hardLinkId))) & uint64(math.MaxInt64)
+	if expectedInode == 0 {
+		expectedInode = 1
+	}
+	assert.Equal(t, expectedInode, a.Attr.Inode)
 	assert.Equal(t, a.Attr.Inode, b.Attr.Inode)
 }
 
