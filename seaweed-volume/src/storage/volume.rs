@@ -22,9 +22,7 @@ use tracing::{error, info, warn};
 #[cfg(test)]
 use crate::storage::idx;
 use crate::storage::needle::needle::{self, get_actual_size, Needle, NeedleError};
-use crate::storage::needle_map::{
-    CompactNeedleMap, NeedleMap, NeedleMapKind, NeedleValue, RedbNeedleMap,
-};
+use crate::storage::needle_map::{CompactNeedleMap, NeedleMap, NeedleMapKind, RedbNeedleMap};
 use crate::storage::super_block::{ReplicaPlacement, SuperBlock, SUPER_BLOCK_SIZE};
 use crate::storage::types::*;
 
