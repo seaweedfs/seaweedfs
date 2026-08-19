@@ -278,6 +278,21 @@ func (s *Server) createNamespace(r *http.Request, bucket string, ns []string, pr
 	// A table bucket is a tenant resource with its own policy and lifecycle, so
 	// it is created deliberately, never as a side effect of naming a namespace
 	// inside it.
+	// The immediate parent has to exist too. Storage keeps a namespace's parts
+	// flattened, so creating "a.b" without "a" leaves an intermediate that
+	// listing derives from the name and describe then denies exists. The spec
+	// asks for NamespaceNotFound here, which also keeps the two consistent.
+	if len(ns) > 1 {
+		parent := ns[:len(ns)-1]
+		if exists, err := s.namespaceExists(r, bucket, parent); err != nil {
+			return err
+		} else if !exists {
+			return &s3tables.S3TablesError{
+				Type:    s3tables.ErrCodeNoSuchNamespace,
+				Message: "parent namespace " + strings.Join(parent, ".") + " does not exist",
+			}
+		}
+	}
 	if exists, err := s.namespaceExists(r, bucket, nil); err != nil {
 		return err
 	} else if !exists {

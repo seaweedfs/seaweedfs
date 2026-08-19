@@ -221,6 +221,31 @@ func TestNamespaceListing(t *testing.T) {
 	h.mustDo(t, http.MethodPost, "/v1/namespace/analytics$nope/drop", `{"mode":"Skip"}`, http.StatusNoContent)
 }
 
+// Storage flattens a namespace's parts, so creating a$b without a would leave
+// an intermediate that listing derives from the name and describe denies
+// exists. The spec asks for NamespaceNotFound, which keeps them consistent.
+func TestCreateNamespaceRequiresItsParent(t *testing.T) {
+	h := newTestHarness(t)
+	h.createBucket(t, "analytics")
+
+	recorder := h.mustDo(t, http.MethodPost, "/v1/namespace/analytics$missing$child/create", `{}`, http.StatusNotFound)
+	if got := decode[errorResponse](t, recorder); got.Code != codeNamespaceNotFound {
+		t.Fatalf("error code = %d, want %d", got.Code, codeNamespaceNotFound)
+	}
+
+	// With the parent in place the child is fine, and both are then listed and
+	// describable.
+	h.mustDo(t, http.MethodPost, "/v1/namespace/analytics$parent/create", `{}`, http.StatusOK)
+	h.mustDo(t, http.MethodPost, "/v1/namespace/analytics$parent$child/create", `{}`, http.StatusOK)
+
+	listed := decode[ListNamespacesResponse](t,
+		h.mustDo(t, http.MethodGet, "/v1/namespace/analytics/list", "", http.StatusOK))
+	for _, name := range listed.Namespaces {
+		path := "/v1/namespace/analytics$" + name
+		h.mustDo(t, http.MethodPost, path+"/exists", `{}`, http.StatusOK)
+	}
+}
+
 func TestCreateNamespaceModes(t *testing.T) {
 	h := newTestHarness(t)
 	h.createBucket(t, "analytics")
