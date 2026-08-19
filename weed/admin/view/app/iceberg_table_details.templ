@@ -27,7 +27,12 @@ templ IcebergTableDetails(data dash.IcebergTableDetailsData) {
 							{ data.NamespaceName }
 						</a>
 					</li>
-					<li class="breadcrumb-item active">{ data.TableName }</li>
+					<li class="breadcrumb-item active">
+						{ data.TableName }
+						if data.Format != "" {
+							<span class={ formatBadgeClass(data.Format), "ms-2 align-middle" } title={ formatBadgeTitle(data.Format) }>{ formatLabel(data.Format) }</span>
+						}
+					</li>
 				</ol>
 			</nav>
 		</h1>
@@ -274,110 +279,143 @@ templ IcebergTableDetails(data dash.IcebergTableDetailsData) {
 			</div>
 		</div>
 	</div>
-	<div class="row">
-		<div class="col-12 mb-4">
-			<div class="card shadow">
-				<div class="card-header py-3">
-					<h6 class="m-0 font-weight-bold text-primary">
-						<i class="fas fa-layer-group me-2"></i>Partitions
-					</h6>
-				</div>
-				<div class="card-body">
-					<div class="table-responsive">
-						<table class="table table-hover">
-							<thead>
-								<tr>
-									<th>Name</th>
-									<th>Transform</th>
-									<th>Source ID</th>
-									<th>Field ID</th>
-								</tr>
-							</thead>
-							<tbody>
-								for _, field := range data.PartitionFields {
+	if !isLanceFormat(data.Format) {
+		<div class="row">
+			<div class="col-12 mb-4">
+				<div class="card shadow">
+					<div class="card-header py-3">
+						<h6 class="m-0 font-weight-bold text-primary">
+							<i class="fas fa-layer-group me-2"></i>Partitions
+						</h6>
+					</div>
+					<div class="card-body">
+						<div class="table-responsive">
+							<table class="table table-hover">
+								<thead>
 									<tr>
-										<td>{ field.Name }</td>
-										<td>{ field.Transform }</td>
-										<td>{ fmt.Sprintf("%d", field.SourceID) }</td>
-										<td>{ fmt.Sprintf("%d", field.FieldID) }</td>
+										<th>Name</th>
+										<th>Transform</th>
+										<th>Source ID</th>
+										<th>Field ID</th>
 									</tr>
-								}
-								if len(data.PartitionFields) == 0 {
-									<tr>
-										<td colspan="4" class="text-center text-muted">No partitions defined.</td>
-									</tr>
-								}
-							</tbody>
-						</table>
+								</thead>
+								<tbody>
+									for _, field := range data.PartitionFields {
+										<tr>
+											<td>{ field.Name }</td>
+											<td>{ field.Transform }</td>
+											<td>{ fmt.Sprintf("%d", field.SourceID) }</td>
+											<td>{ fmt.Sprintf("%d", field.FieldID) }</td>
+										</tr>
+									}
+									if len(data.PartitionFields) == 0 {
+										<tr>
+											<td colspan="4" class="text-center text-muted">No partitions defined.</td>
+										</tr>
+									}
+								</tbody>
+							</table>
+						</div>
 					</div>
 				</div>
 			</div>
 		</div>
-	</div>
-	<div class="row">
-		<div class="col-12">
-			<div class="card shadow mb-4">
-				<div class="card-header py-3">
-					<h6 class="m-0 font-weight-bold text-primary">
-						<i class="fas fa-history me-2"></i>Snapshot History
-					</h6>
-				</div>
-				<div class="card-body">
-					<div class="table-responsive">
-						<table class="table table-hover">
-							<thead>
-								<tr>
-									<th>Snapshot ID</th>
-									<th>Timestamp</th>
-									<th>Operation</th>
-									<th>Manifest List</th>
-								</tr>
-							</thead>
-							<tbody>
-								for _, snapshot := range data.Snapshots {
+	}
+	if !isLanceFormat(data.Format) {
+		<div class="row">
+			<div class="col-12">
+				<div class="card shadow mb-4">
+					<div class="card-header py-3">
+						<h6 class="m-0 font-weight-bold text-primary">
+							<i class="fas fa-history me-2"></i>Snapshot History
+						</h6>
+					</div>
+					<div class="card-body">
+						<div class="table-responsive">
+							<table class="table table-hover">
+								<thead>
 									<tr>
-										<td>{ fmt.Sprintf("%d", snapshot.SnapshotID) }</td>
-										<td>
-											if snapshot.Timestamp.IsZero() {
-												<span class="text-muted">-</span>
-											} else {
-												{ snapshot.Timestamp.Format("2006-01-02 15:04") }
-											}
-										</td>
-										<td>
-											if snapshot.Operation != "" {
-												{ snapshot.Operation }
-											} else {
-												<span class="text-muted">-</span>
-											}
-										</td>
-										<td>
-											if snapshot.ManifestList != "" {
-												<code class="small">{ snapshot.ManifestList }</code>
-											} else {
-												<span class="text-muted">-</span>
-											}
-										</td>
+										<th>Snapshot ID</th>
+										<th>Timestamp</th>
+										<th>Operation</th>
+										<th>Manifest List</th>
 									</tr>
-								}
-								if len(data.Snapshots) == 0 {
-									<tr>
-										if data.Format != "" && data.Format != "ICEBERG" {
-											<td colspan="4" class="text-center text-muted">
-												A { data.Format } table keeps its own version history; the catalog does not mirror it here.
+								</thead>
+								<tbody>
+									for _, snapshot := range data.Snapshots {
+										<tr>
+											<td>{ fmt.Sprintf("%d", snapshot.SnapshotID) }</td>
+											<td>
+												if snapshot.Timestamp.IsZero() {
+													<span class="text-muted">-</span>
+												} else {
+													{ snapshot.Timestamp.Format("2006-01-02 15:04") }
+												}
 											</td>
-										} else {
-											<td colspan="4" class="text-center text-muted">No snapshots available.</td>
-										}
-									</tr>
-								}
-							</tbody>
-						</table>
+											<td>
+												if snapshot.Operation != "" {
+													{ snapshot.Operation }
+												} else {
+													<span class="text-muted">-</span>
+												}
+											</td>
+											<td>
+												if snapshot.ManifestList != "" {
+													<code class="small">{ snapshot.ManifestList }</code>
+												} else {
+													<span class="text-muted">-</span>
+												}
+											</td>
+										</tr>
+									}
+									if len(data.Snapshots) == 0 {
+										<tr>
+											if data.Format != "" && data.Format != "ICEBERG" {
+												<td colspan="4" class="text-center text-muted">
+													A { data.Format } table keeps its own version history; the catalog does not mirror it here.
+												</td>
+											} else {
+												<td colspan="4" class="text-center text-muted">No snapshots available.</td>
+											}
+										</tr>
+									}
+								</tbody>
+							</table>
+						</div>
 					</div>
 				</div>
 			</div>
 		</div>
-	</div>
+	}
+	if isLanceFormat(data.Format) {
+		<div class="row">
+			<div class="col-12 mb-4">
+				<div class="card shadow">
+					<div class="card-header py-3">
+						<h6 class="m-0 font-weight-bold text-primary">
+							<i class="fas fa-history me-2"></i>Versions
+							if data.ObservedBy != "" {
+								<span class="badge bg-secondary ms-2" title={ "reported by " + data.ObservedBy }>
+									as seen { data.ObservedAt.Format("2006-01-02 15:04") }
+								</span>
+							}
+						</h6>
+					</div>
+					<div class="card-body">
+						if len(data.Properties) > 0 {
+							<p class="text-muted mb-0">
+								A { data.Format } dataset keeps its own version history. What a worker last saw is listed under Properties above.
+							</p>
+						} else {
+							<p class="text-muted mb-0">
+								No worker has reported on this table yet, so its version history is unknown here. It lives in the dataset either way.
+							</p>
+						}
+					</div>
+				</div>
+			</div>
+		</div>
+	}
 	<div class="modal fade" id="deleteIcebergTableModal" tabindex="-1" aria-labelledby="deleteIcebergTableModalLabel" aria-hidden="true">
 		<div class="modal-dialog">
 			<div class="modal-content">
