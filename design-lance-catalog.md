@@ -526,29 +526,63 @@ Yes, and one part of it has no Iceberg equivalent. The client exposes three jobs
   do this itself: `optimize.enable_auto_cleanup()` sets it on the dataset, so this one need
   not be an external job at all.
 
-None of it can run here. All three read and rewrite Lance files, which needs Lance format
-code that does not exist in Go — the same wall as the data plane. There is no useful subset
-either: deciding which fragments an old version still references means parsing Lance
-manifests. The most a Go worker could honestly do is *observe* — count fragments and
-versions per table from the filer and surface a table that needs attention in the admin UI.
+None of it can run in the Go worker. All three read and rewrite Lance files, which needs
+Lance format code that does not exist in Go, and there is no useful subset either: deciding
+which fragments an old version still references means parsing Lance manifests.
 
-So the maintenance worker must not touch a Lance table, and it now declines by reading the
-format the catalog recorded rather than by failing to parse Iceberg metadata. Until a
-sidecar exists, compaction and index optimization belong to whatever job writes the data —
-Spark or Ray already have the Lance runtime loaded — and version cleanup belongs to Lance's
-own auto-cleanup.
+So the maintenance worker must not touch a Lance table, and it declines by reading the format
+the catalog recorded rather than by failing to parse Iceberg metadata.
+
+## The worker can be Rust, and it is not a sidecar
+
+The Go worker is not the only worker. `weed/pb/plugin.proto` defines `PluginControlService`,
+a language-agnostic gRPC stream that external maintenance workers connect on: the worker
+opens `WorkerStream`, sends `WorkerHello` with the job types it can `detect` and `execute`,
+answers `RequestConfigSchema` with a `JobTypeDescriptor`, replies to `RunDetectionRequest`
+with `JobProposal`s and to `ExecuteJobRequest` with `JobProgressUpdate`s and `JobCompleted`.
+`weed worker -admin=host:23646` is the Go reference implementation of exactly that contract,
+from outside the admin process.
+
+Nothing in it is Go-specific, and the Rust toolchain is already in the tree.
+`seaweed-volume/build.rs` compiles protos straight out of `../weed/pb/` with `tonic_build`,
+including `filer.proto`, on tonic 0.12 and prost 0.13. A Lance worker is that same build
+with `plugin.proto` added and the `lance` crate as a dependency — the real one, no FFI and
+no Python.
+
+Three job types, one per real maintenance operation:
+
+| Job type | Calls | Detected from |
+| --- | --- | --- |
+| `lance_compact` | `optimize.compact_files` | fragment count and sizes |
+| `lance_optimize_indices` | `optimize.optimize_indices` | rows an index does not cover |
+| `lance_cleanup_versions` | `cleanup_old_versions` | version count and age |
+
+What the existing machinery then supplies for free is the part worth noticing. Scheduling,
+retries, dedupe by `dedupe_key`, progress reporting, per-job concurrency limits and the
+admin settings page all come from the protocol: a worker that answers `RequestConfigSchema`
+with a descriptor gets its configuration form rendered in the admin UI without a line of Go
+or templ. A Rust worker is a first-class maintenance worker, not an appendage.
+
+The remaining wiring is small and mostly decided already. `RunDetectionRequest` carries a
+`ClusterContext` with filer and S3 addresses plus a free-form `metadata` map, which is where
+the Lance namespace URL goes; the worker lists Lance tables from the namespace, which is the
+catalog of record and already filters by format. It gets at the data by asking
+`DescribeTable` for `storage_options` with `vend_credentials`, so the worker is just another
+client of the STS path rather than a component with its own credentials. And when it commits
+a compaction it goes through `CreateTableVersion` like any other writer, which is what
+managed versioning was for.
 
 ## The sidecar question
 
-Phase 3 and any Lance maintenance worker both need real Lance code, and Lance is a Rust crate. We already
-build Rust in-tree for `seaweed-volume`. A `weed-lance` sidecar that links `lance` and serves
-the data-plane operations behind the same REST surface is the obvious shape, and it would
-make SeaweedFS a store you can run vector search *in* rather than a store you read vectors
-*out of*.
+The data plane is a different problem, and this design previously conflated the two.
+Maintenance rides the worker protocol; `QueryTable` and `InsertIntoTable` do not, because
+they are synchronous REST operations on the namespace's own surface. Serving those means a
+Rust process that answers HTTP, either behind the Go namespace as a proxy target or in front
+of it. It would make SeaweedFS a store you can run vector search *in* rather than one you
+read vectors *out of*, which is the larger prize and the reason to keep the option open.
 
-That is a much larger conversation than this design, and it should not gate phase 1. Phases
-1 and 2 are pure Go over the filer and are worth shipping on their own — they are what makes
-Spark and Ray work.
+Neither should gate phase 1. Phases 1 and 2 are pure Go over the filer and are worth
+shipping on their own — they are what makes Spark and Ray work.
 
 ## Testing
 
