@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 	"io"
 	"net/http"
 	"strings"
@@ -58,7 +59,7 @@ func filerEntryExists(t *testing.T, env *TestEnvironment, path string) bool {
 func lanceTestBucket(t *testing.T, env *TestEnvironment, prefix string) string {
 	t.Helper()
 	bucket := prefix + "-" + randomSuffix()
-	createTableBucket(t, env, bucket)
+	createTableBucket(t, env, bucket, s3tables.FormatLance)
 	return bucket
 }
 

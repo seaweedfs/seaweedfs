@@ -263,7 +263,7 @@ func TestIcebergNamespaces(t *testing.T) {
 
 	// Create the default table bucket first via S3
 	bucketName := "warehouse-ns-" + randomSuffix()
-	createTableBucket(t, env, bucketName)
+	createTableBucket(t, env, bucketName, "")
 
 	// Test GET /v1/namespaces (should return empty list initially)
 	resp, err := http.Get(env.IcebergURL() + icebergPath(bucketName, "/v1/namespaces"))
@@ -286,7 +286,7 @@ func TestStageCreateAndFinalizeFlow(t *testing.T) {
 
 	env := sharedEnv
 	bucketName := "warehouse-stage-" + randomSuffix()
-	createTableBucket(t, env, bucketName)
+	createTableBucket(t, env, bucketName, "")
 
 	namespace := "stage_ns_" + randomSuffix()
 	tableName := "orders"
@@ -380,7 +380,7 @@ func TestCommitMissingTableWithoutAssertCreate(t *testing.T) {
 
 	env := sharedEnv
 	bucketName := "warehouse-missing-" + randomSuffix()
-	createTableBucket(t, env, bucketName)
+	createTableBucket(t, env, bucketName, "")
 
 	namespace := "stage_missing_assert_ns_" + randomSuffix()
 	tableName := "missing_table"
@@ -469,11 +469,16 @@ func icebergPath(prefix, path string) string {
 // The request is AWS V4 signed for SERVICE=s3tables so the S3 Tables
 // route matcher accepts it; signing with regular SERVICE=s3 would let
 // the request fall through to the S3 CreateBucket handler.
-func createTableBucket(t *testing.T, env *TestEnvironment, bucketName string) {
+// createTableBucket makes a table bucket of the given format. An empty format
+// leaves it to the server, which means ICEBERG.
+func createTableBucket(t *testing.T, env *TestEnvironment, bucketName, format string) {
 	t.Helper()
 
 	endpoint := fmt.Sprintf("http://localhost:%d/buckets", env.s3Port)
 	reqBody := fmt.Sprintf(`{"name":"%s"}`, bucketName)
+	if format != "" {
+		reqBody = fmt.Sprintf(`{"name":"%s","format":"%s"}`, bucketName, format)
+	}
 
 	req, err := http.NewRequest(http.MethodPut, endpoint, strings.NewReader(reqBody))
 	if err != nil {

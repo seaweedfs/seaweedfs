@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,7 +30,7 @@ func TestLanceNamespaceRealClient(t *testing.T) {
 	}
 
 	bucketName := "lance-client-test-" + randomSuffix()
-	createTableBucket(t, env, bucketName)
+	createTableBucket(t, env, bucketName, s3tables.FormatLance)
 
 	testDir := filepath.Join(env.seaweedDir, "test", "s3tables", "catalog")
 
