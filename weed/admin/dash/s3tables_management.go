@@ -42,18 +42,24 @@ type S3TablesBucketSummary struct {
 type S3TablesNamespacesData struct {
 	Username        string                      `json:"username"`
 	BucketARN       string                      `json:"bucket_arn"`
+	BucketFormat    string                      `json:"bucket_format,omitempty"`
 	Namespaces      []s3tables.NamespaceSummary `json:"namespaces"`
 	TotalNamespaces int                         `json:"total_namespaces"`
 	LastUpdated     time.Time                   `json:"last_updated"`
 }
 
 type S3TablesTablesData struct {
-	Username    string                  `json:"username"`
-	BucketARN   string                  `json:"bucket_arn"`
-	Namespace   string                  `json:"namespace"`
-	Tables      []s3tables.TableSummary `json:"tables"`
-	TotalTables int                     `json:"total_tables"`
-	LastUpdated time.Time               `json:"last_updated"`
+	Username     string                  `json:"username"`
+	BucketARN    string                  `json:"bucket_arn"`
+	BucketFormat string                  `json:"bucket_format,omitempty"`
+	Namespace    string                  `json:"namespace"`
+	Tables       []s3tables.TableSummary `json:"tables"`
+	TotalTables  int                     `json:"total_tables"`
+	// ObservedRows holds what a worker last counted, by table name, for formats
+	// this server cannot read itself. A table nothing has looked at is absent
+	// rather than zero: those are different facts.
+	ObservedRows map[string]string `json:"observed_rows,omitempty"`
+	LastUpdated  time.Time         `json:"last_updated"`
 }
 
 type tableBucketMetadata struct {
@@ -159,6 +165,46 @@ func (s *AdminServer) GetS3TablesBucketsData(ctx context.Context) (S3TablesBucke
 	}, nil
 }
 
+// observedRowCounts collects what workers last reported for these tables. For a
+// format admin cannot read, this is the only row count that exists.
+func (s *AdminServer) observedRowCounts(bucketArn string, namespaceParts []string, tables []s3tables.TableSummary) map[string]string {
+	plugin := s.GetPlugin()
+	if plugin == nil || len(tables) == 0 {
+		return nil
+	}
+	bucketName, err := s3tables.ParseBucketNameFromARN(bucketArn)
+	if err != nil {
+		return nil
+	}
+	counts := make(map[string]string)
+	for _, table := range tables {
+		objectID := append(append([]string{bucketName}, namespaceParts...), table.Name)
+		if observed, ok := plugin.Observations().Get(objectID); ok {
+			if rows := observed.AttributeString("rows"); rows != "" {
+				counts[table.Name] = rows
+			}
+		}
+	}
+	if len(counts) == 0 {
+		return nil
+	}
+	return counts
+}
+
+// tableBucketFormat reports what the bucket says it holds, or "" for one made
+// before the declaration existed. A page inside a bucket asks so it can label
+// itself and constrain what can be created; failing to read it is not worth
+// failing the page over, so it degrades to undeclared.
+func (s *AdminServer) tableBucketFormat(ctx context.Context, bucketArn string) string {
+	var resp s3tables.GetTableBucketResponse
+	req := &s3tables.GetTableBucketRequest{TableBucketARN: bucketArn}
+	if err := s.executeS3TablesOperation(ctx, "GetTableBucket", req, &resp); err != nil {
+		glog.V(1).Infof("S3Tables: failed to read format of %s: %v", bucketArn, err)
+		return ""
+	}
+	return resp.Format
+}
+
 func (s *AdminServer) GetS3TablesNamespacesData(ctx context.Context, bucketArn string) (S3TablesNamespacesData, error) {
 	var resp s3tables.ListNamespacesResponse
 	req := &s3tables.ListNamespacesRequest{TableBucketARN: bucketArn, MaxNamespaces: s3TablesAdminListLimit}
@@ -167,6 +213,7 @@ func (s *AdminServer) GetS3TablesNamespacesData(ctx context.Context, bucketArn s
 	}
 	return S3TablesNamespacesData{
 		BucketARN:       bucketArn,
+		BucketFormat:    s.tableBucketFormat(ctx, bucketArn),
 		Namespaces:      resp.Namespaces,
 		TotalNamespaces: len(resp.Namespaces),
 		LastUpdated:     time.Now(),
@@ -187,13 +234,16 @@ func (s *AdminServer) GetS3TablesTablesData(ctx context.Context, bucketArn, name
 	if err := s.executeS3TablesOperation(ctx, "ListTables", req, &resp); err != nil {
 		return S3TablesTablesData{}, err
 	}
-	return S3TablesTablesData{
-		BucketARN:   bucketArn,
-		Namespace:   namespace,
-		Tables:      resp.Tables,
-		TotalTables: len(resp.Tables),
-		LastUpdated: time.Now(),
-	}, nil
+	data := S3TablesTablesData{
+		BucketARN:    bucketArn,
+		BucketFormat: s.tableBucketFormat(ctx, bucketArn),
+		Namespace:    namespace,
+		Tables:       resp.Tables,
+		TotalTables:  len(resp.Tables),
+		LastUpdated:  time.Now(),
+	}
+	data.ObservedRows = s.observedRowCounts(bucketArn, ns, resp.Tables)
+	return data, nil
 }
 
 // Iceberg Catalog data providers

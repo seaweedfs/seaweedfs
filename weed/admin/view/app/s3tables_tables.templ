@@ -12,6 +12,7 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 	<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
 		<h1 class="h2">
 			<i class="fas fa-table me-2"></i>S3 Tables
+			<span class={ formatBadgeClass(data.BucketFormat), "ms-2 align-middle" } title={ formatBadgeTitle(data.BucketFormat) }>{ formatLabel(data.BucketFormat) }</span>
 		</h1>
 		<div class="btn-toolbar mb-2 mb-md-0">
 			<div class="btn-group me-2">
@@ -93,6 +94,8 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 								<thead>
 									<tr>
 										<th>Name</th>
+										<th>Format</th>
+										<th>Rows</th>
 										<th>Table ARN</th>
 										<th>Created</th>
 										<th>Modified</th>
@@ -106,6 +109,16 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 										<tr>
 											{{ tableName := table.Name }}
 											<td>{ tableName }</td>
+											<td>
+												<span class={ formatBadgeClass(table.Format) } title={ formatBadgeTitle(table.Format) }>{ formatLabel(table.Format) }</span>
+											</td>
+											<td>
+												if rows, ok := data.ObservedRows[tableName]; ok {
+													<span title="Reported by a plugin worker">{ rows }</span>
+												} else {
+													<span class="text-muted">&mdash;</span>
+												}
+											</td>
 											<td class="text-muted small">{ table.TableARN }</td>
 											<td>{ table.CreatedAt.Format("2006-01-02 15:04") }</td>
 											<td>{ table.ModifiedAt.Format("2006-01-02 15:04") }</td>
@@ -149,7 +162,7 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 									}
 									if len(data.Tables) == 0 {
 										<tr>
-											<td colspan="7" class="text-center text-muted py-4">
+											<td colspan="9" class="text-center text-muted py-4">
 												<i class="fas fa-table fa-3x mb-3 text-muted"></i>
 												<div>
 													<h5>No tables found</h5>
@@ -186,9 +199,16 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 						</div>
 						<div class="mb-3">
 							<label for="s3tablesTableFormat" class="form-label">Format</label>
-							<select class="form-select" id="s3tablesTableFormat" name="format">
-								<option value="ICEBERG" selected>ICEBERG</option>
-							</select>
+							if data.BucketFormat != "" {
+								<input type="text" class="form-control-plaintext ps-2 border rounded bg-light" id="s3tablesTableFormat" name="format" value={ formatLabel(data.BucketFormat) } readonly/>
+								<div class="form-text">Set by the bucket, which holds one format.</div>
+							} else {
+								<select class="form-select" id="s3tablesTableFormat" name="format">
+									<option value="ICEBERG" selected>ICEBERG</option>
+									<option value="LANCE">LANCE</option>
+								</select>
+								<div class="form-text">This bucket was created before formats were declared, so either is allowed.</div>
+							}
 						</div>
 						<div class="mb-3">
 							<label for="s3tablesTableMetadata" class="form-label">Metadata JSON (optional)</label>
