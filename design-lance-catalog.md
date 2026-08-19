@@ -572,6 +572,29 @@ client of the STS path rather than a component with its own credentials. And whe
 a compaction it goes through `CreateTableVersion` like any other writer, which is what
 managed versioning was for.
 
+## The worker is also the only thing that can describe the table
+
+Admin can render an Iceberg table because it can read Iceberg metadata. It cannot read
+Lance: it knows the dataset's location and its format string, and that is the whole of it.
+The details page showed a location and two empty panels, which is an honest answer and a
+useless one.
+
+The worker already knows. Detection opens every dataset to decide whether it needs
+compacting, so at that moment it holds the schema, the row count, the fragment count and
+the version count. It just had no way to say so — every message on the stream was about
+work.
+
+So `WorkerObservations` is a body on `WorkerToAdminMessage`: a repeated `ObjectObservation`
+of `object_id`, `object_kind`, `format`, and a `ConfigValue` map the worker fills with
+whatever it can cheaply say. Admin keeps the last observation per object and serves it back
+with the time it was taken and the worker that took it. Nothing schedules from it, and it is
+not authoritative — it is a cache with its staleness on the label, which is why the page
+badges it rather than presenting it as metadata it read itself.
+
+The keys are the worker's to choose, which keeps the protocol out of the business of knowing
+what a Lance table is. A worker for any other format admin cannot parse describes itself the
+same way.
+
 ## The sidecar question
 
 The data plane is a different problem, and this design previously conflated the two.
