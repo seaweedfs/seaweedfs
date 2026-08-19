@@ -595,6 +595,23 @@ The keys are the worker's to choose, which keeps the protocol out of the busines
 what a Lance table is. A worker for any other format admin cannot parse describes itself the
 same way.
 
+## Sample rows are fetched, not cached
+
+The same asymmetry has a second half. Admin renders an Iceberg table's rows by
+reading its Parquet files directly; for Lance it has nothing to read with, so the data
+page offered a Browse Data button that led to an empty grid.
+
+`RequestObjectPreview` / `ObjectPreviewResponse` mirror the config-schema round trip
+already on the stream: admin asks, the worker scans the dataset and hands back rows it
+has already rendered as text, because it is the only side that knows the types. Admin
+picks the worker from the observation store, so the one that last described a table is
+the one asked to read it.
+
+The rows are deliberately not cached, and that is the line between the two channels. An
+observation describes an object, so a copy with a timestamp on it is useful. Rows are the
+object's contents: a copy held in admin would be stale, larger, and nobody's business.
+The page fetches on load, bounded, or says why it cannot.
+
 ## The sidecar question
 
 The data plane is a different problem, and this design previously conflated the two.
