@@ -177,7 +177,7 @@ var listObjectsQueryParams = map[string]bool{
 	"prefix": true, "delimiter": true, "marker": true, "max-keys": true,
 	"encoding-type": true, "list-type": true, "continuation-token": true,
 	"start-after": true, "fetch-owner": true, "expected-bucket-owner": true,
-	"x-id": true,
+	"allow-unordered": true, "x-id": true,
 	// SigV2 presigned URLs.
 	"AWSAccessKeyId": true, "Signature": true, "Expires": true,
 }
