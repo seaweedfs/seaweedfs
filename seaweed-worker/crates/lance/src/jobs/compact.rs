@@ -134,7 +134,16 @@ impl JobHandler for CompactHandler {
                     continue;
                 }
             };
-            let stats = table.stats().await?;
+            // One unreadable table must not end the sweep: the tables already
+            // read would lose their proposals, and admin would get no
+            // completion for this request at all.
+            let stats = match table.stats().await {
+                Ok(stats) => stats,
+                Err(err) => {
+                    warn!("skipping {encoded}: reading its stats failed: {err:#}");
+                    continue;
+                }
+            };
             // Logged because "detection proposed nothing" is otherwise
             // indistinguishable from a table the worker could not read.
             tracing::info!(

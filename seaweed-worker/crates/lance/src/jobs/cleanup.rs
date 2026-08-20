@@ -22,6 +22,16 @@ pub const JOB_TYPE: &str = "lance_cleanup_versions";
 const DEFAULT_RETAIN_HOURS: i64 = 168;
 const DEFAULT_MIN_VERSIONS: i64 = 5;
 
+// The form offers these ranges; a value arriving outside them is a config the
+// UI could not have produced, and acting on it deletes history. Duration::hours
+// also panics far outside this range.
+const MAX_RETAIN_HOURS: i64 = 8760;
+const MAX_MIN_VERSIONS: i64 = 1000;
+
+fn clamp(value: i64, low: i64, high: i64) -> i64 {
+    value.max(low).min(high)
+}
+
 /// Lance keeps every version until something removes it. Lance can also do this
 /// itself through auto-cleanup, so this job is for deployments that would rather
 /// the cluster owned the policy than each writer.
@@ -46,6 +56,23 @@ impl CleanupVersionsHandler {
     fn client(&self) -> NamespaceClient {
         NamespaceClient::new(self.namespace_url.clone())
     }
+}
+
+/// The oldest version that may be removed while still leaving `min_versions`
+/// behind, or None when the table has no more than the floor.
+async fn version_floor(table: &dataset::OpenTable, min_versions: usize) -> Result<Option<u64>> {
+    let mut versions: Vec<u64> = table
+        .dataset
+        .versions()
+        .await?
+        .iter()
+        .map(|version| version.version)
+        .collect();
+    if versions.len() <= min_versions {
+        return Ok(None);
+    }
+    versions.sort_unstable();
+    Ok(Some(versions[versions.len() - min_versions]))
 }
 
 #[async_trait]
@@ -108,10 +135,14 @@ impl JobHandler for CleanupVersionsHandler {
         request: &RunDetectionRequest,
         sender: &dyn DetectionSender,
     ) -> Result<()> {
-        let min_versions = int_or(
-            &request.worker_config_values,
-            "min_versions_to_keep",
-            DEFAULT_MIN_VERSIONS,
+        let min_versions = clamp(
+            int_or(
+                &request.worker_config_values,
+                "min_versions_to_keep",
+                DEFAULT_MIN_VERSIONS,
+            ),
+            1,
+            MAX_MIN_VERSIONS,
         ) as usize;
         let client = self.client();
         let tables = client.list_all_tables().await?;
@@ -126,7 +157,13 @@ impl JobHandler for CleanupVersionsHandler {
                     continue;
                 }
             };
-            let stats = table.stats().await?;
+            let stats = match table.stats().await {
+                Ok(stats) => stats,
+                Err(err) => {
+                    warn!("skipping {encoded}: reading its stats failed: {err:#}");
+                    continue;
+                }
+            };
             // Age is decided at execution against the retention window; a table
             // at or under the floor cannot lose a version whatever its age, so
             // proposing one would only produce a job with nothing to do.
@@ -178,15 +215,50 @@ impl JobHandler for CleanupVersionsHandler {
             .ok_or_else(|| anyhow!("execute request carried no job"))?;
         let id = table_id(&job.parameters)
             .ok_or_else(|| anyhow!("job {} carried no table_id", job.job_id))?;
-        let retain_hours = int_or(
-            &request.worker_config_values,
-            "retain_hours",
-            DEFAULT_RETAIN_HOURS,
+        let retain_hours = clamp(
+            int_or(
+                &request.worker_config_values,
+                "retain_hours",
+                DEFAULT_RETAIN_HOURS,
+            ),
+            0,
+            MAX_RETAIN_HOURS,
         );
+        let min_versions = clamp(
+            int_or(
+                &request.worker_config_values,
+                "min_versions_to_keep",
+                DEFAULT_MIN_VERSIONS,
+            ),
+            1,
+            MAX_MIN_VERSIONS,
+        ) as usize;
 
         let client = self.client();
         let table = dataset::open(&client, &id, &self.fallback).await?;
         let before = table.stats().await?;
+
+        // The floor is a promise about how much history survives, so it has to
+        // be applied here and not only when the job was proposed: by the time it
+        // runs, versions may have aged past the retention window, and age alone
+        // would take the table below what the operator asked to keep.
+        let Some(floor) = version_floor(&table, min_versions).await? else {
+            sender.send_completed(JobCompleted {
+                request_id: request.request_id.clone(),
+                job_id: job.job_id.clone(),
+                job_type: JOB_TYPE.to_string(),
+                success: true,
+                result: Some(JobResult {
+                    summary: format!(
+                        "kept all {} versions; the {min_versions} version floor leaves none to remove",
+                        before.total_versions
+                    ),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })?;
+            return Ok(());
+        };
 
         sender.send_progress(JobProgressUpdate {
             request_id: request.request_id.clone(),
@@ -199,6 +271,9 @@ impl JobHandler for CleanupVersionsHandler {
 
         let policy = CleanupPolicy {
             before_timestamp: Some(Utc::now() - Duration::hours(retain_hours)),
+            // should_clean() ANDs its clauses, so a version has to be both older
+            // than the window and below the floor to go.
+            before_version: Some(floor),
             // Files this dataset cannot account for are left alone: they may
             // belong to a writer that has not committed yet, and deleting them
             // would corrupt a commit in flight.

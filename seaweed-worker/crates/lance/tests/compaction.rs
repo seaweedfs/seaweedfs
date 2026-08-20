@@ -59,6 +59,11 @@ impl ExecutionSender for Recorder {
     }
 }
 
+/// These tests drive one live gateway and one shared catalog: `list_all_tables`
+/// sweeps everything, so a table another test is writing shows up in this test's
+/// detection. Rust runs a binary's tests concurrently, so take a lock.
+static GATEWAY: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 fn namespace_url() -> Option<String> {
     std::env::var("WEED_LANCE_NAMESPACE")
         .ok()
@@ -195,6 +200,7 @@ async fn seed_table(
 /// the proposal leaves it with fewer than it started with.
 #[tokio::test]
 async fn compacts_a_fragmented_table() {
+    let _gateway = GATEWAY.lock().await;
     let Some(url) = namespace_url() else {
         eprintln!("WEED_LANCE_NAMESPACE is unset, skipping");
         return;
@@ -293,10 +299,15 @@ fn fallback() -> weed_lance_worker::dataset::FallbackOptions {
 /// reports what it removed. The compaction test above leaves one behind.
 #[tokio::test]
 async fn cleans_up_old_versions() {
+    let _gateway = GATEWAY.lock().await;
     let Some(url) = namespace_url() else {
         eprintln!("WEED_LANCE_NAMESPACE is unset, skipping");
         return;
     };
+    let encoded = seed_table(&url, "cleanme", 6, 4, false)
+        .await
+        .expect("seed a table with versions to clean");
+
     let handler = CleanupVersionsHandler::new(url).with_fallback(fallback());
     let recorder = Recorder::default();
 
@@ -311,10 +322,11 @@ async fn cleans_up_old_versions() {
         .await
         .expect("detection failed");
     let proposals = recorder.proposals.lock().unwrap().clone();
-    let Some(proposal) = proposals.first().cloned() else {
-        eprintln!("no table has enough versions to clean up, skipping execution");
-        return;
-    };
+    let proposal = proposals
+        .iter()
+        .find(|p| p.summary.contains(encoded.as_str()))
+        .cloned()
+        .expect("no cleanup proposal for the seeded table");
 
     // Retain nothing, so every version outside the current one is fair game and
     // the job has something to report rather than a no-op.
@@ -351,10 +363,15 @@ async fn cleans_up_old_versions() {
 /// nothing rather than queueing work that would do nothing.
 #[tokio::test]
 async fn skips_tables_without_indices() {
+    let _gateway = GATEWAY.lock().await;
     let Some(url) = namespace_url() else {
         eprintln!("WEED_LANCE_NAMESPACE is unset, skipping");
         return;
     };
+    let encoded = seed_table(&url, "noindex", 2, 8, false)
+        .await
+        .expect("seed a table without an index");
+
     let handler = OptimizeIndicesHandler::new(url).with_fallback(fallback());
     let recorder = Recorder::default();
 
@@ -368,8 +385,15 @@ async fn skips_tables_without_indices() {
         .detect(&request, &recorder)
         .await
         .expect("detection failed");
+    // Judge this table only: the catalog holds every other test's tables too,
+    // and an indexed one with uncovered rows is supposed to be proposed.
     assert!(
-        recorder.proposals.lock().unwrap().is_empty(),
+        !recorder
+            .proposals
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|p| p.summary.contains(encoded.as_str())),
         "a table with no indices must not be proposed for reindexing"
     );
 }
@@ -379,6 +403,7 @@ async fn skips_tables_without_indices() {
 /// and rows outside it, which `indexed.py` in the scratchpad seeds.
 #[tokio::test]
 async fn reindexes_rows_an_index_does_not_cover() {
+    let _gateway = GATEWAY.lock().await;
     let Some(url) = namespace_url() else {
         eprintln!("WEED_LANCE_NAMESPACE is unset, skipping");
         return;
@@ -450,6 +475,7 @@ async fn reindexes_rows_an_index_does_not_cover() {
 /// so the rows have to come back already rendered.
 #[tokio::test]
 async fn previews_rows_of_a_table() {
+    let _gateway = GATEWAY.lock().await;
     let Some(url) = namespace_url() else {
         eprintln!("set WEED_LANCE_NAMESPACE to run this test");
         return;

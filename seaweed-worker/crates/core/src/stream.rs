@@ -1,7 +1,8 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Semaphore};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::transport::Channel;
 use tracing::{info, warn};
@@ -27,13 +28,24 @@ pub async fn run(options: WorkerOptions, registry: Registry) -> Result<()> {
     if registry.is_empty() {
         return Err(anyhow!("no job handlers registered"));
     }
+    if options.max_detection_concurrency < 1 || options.max_execution_concurrency < 1 {
+        return Err(anyhow!(
+            "concurrency limits must be at least 1, got detection={} execution={}",
+            options.max_detection_concurrency,
+            options.max_execution_concurrency
+        ));
+    }
+    let slots = Slots::new(&options);
     loop {
-        match serve_once(&options, &registry).await {
+        match serve_once(&options, &registry, &slots).await {
             Err(err) => warn!("worker stream ended: {err:#}"),
+            // Admin asked this worker to stop, so stop. Reconnecting here would
+            // make shutdown impossible: the worker would log back in.
+            Ok(Outcome::ShutdownRequested) => return Ok(()),
             // Admin closing a healthy stream is not an error, but reconnecting
             // in silence hides the reason - two workers sharing an id evict
             // each other and produce nothing but a login every few seconds.
-            Ok(()) => warn!(
+            Ok(Outcome::StreamClosed) => warn!(
                 "admin closed the stream; reconnecting in {:?}. If this repeats, check for \
                  another worker using the id {}",
                 options.reconnect_delay, options.worker_id
@@ -43,7 +55,47 @@ pub async fn run(options: WorkerOptions, registry: Registry) -> Result<()> {
     }
 }
 
-async fn serve_once(options: &WorkerOptions, registry: &Registry) -> Result<()> {
+/// Why a stream ended. Only one of these means "do not come back".
+enum Outcome {
+    StreamClosed,
+    ShutdownRequested,
+}
+
+/// The capacity this worker advertises in WorkerHello. Admin schedules against
+/// those numbers, so the worker has to actually hold to them - and the heartbeat
+/// has to report what is in use, or admin is scheduling blind.
+#[derive(Clone)]
+struct Slots {
+    detection: Arc<Semaphore>,
+    execution: Arc<Semaphore>,
+    detection_total: i32,
+    execution_total: i32,
+}
+
+impl Slots {
+    fn new(options: &WorkerOptions) -> Self {
+        Self {
+            detection: Arc::new(Semaphore::new(options.max_detection_concurrency as usize)),
+            execution: Arc::new(Semaphore::new(options.max_execution_concurrency as usize)),
+            detection_total: options.max_detection_concurrency,
+            execution_total: options.max_execution_concurrency,
+        }
+    }
+
+    fn detection_used(&self) -> i32 {
+        self.detection_total - self.detection.available_permits() as i32
+    }
+
+    fn execution_used(&self) -> i32 {
+        self.execution_total - self.execution.available_permits() as i32
+    }
+}
+
+async fn serve_once(
+    options: &WorkerOptions,
+    registry: &Registry,
+    slots: &Slots,
+) -> Result<Outcome> {
     // Operators give the admin's HTTP address; the gRPC port is derived, the
     // same way the Go worker does it.
     let grpc_address = crate::address::server_to_grpc_address(&options.admin_address)
@@ -73,7 +125,7 @@ async fn serve_once(options: &WorkerOptions, registry: &Registry) -> Result<()> 
         .await?
         .into_inner();
 
-    let heartbeat = spawn_heartbeat(sender.clone(), options.clone());
+    let heartbeat = spawn_heartbeat(sender.clone(), options.clone(), slots.clone());
 
     while let Some(message) = inbound.message().await? {
         let request_id = message.request_id.clone();
@@ -115,10 +167,10 @@ async fn serve_once(options: &WorkerOptions, registry: &Registry) -> Result<()> 
                 );
             }
             Some(AdminBody::RunDetectionRequest(request)) => {
-                spawn_detection(registry.clone(), sender.clone(), request);
+                spawn_detection(registry.clone(), sender.clone(), slots.clone(), request);
             }
             Some(AdminBody::ExecuteJobRequest(request)) => {
-                spawn_execution(registry.clone(), sender.clone(), request);
+                spawn_execution(registry.clone(), sender.clone(), slots.clone(), request);
             }
             Some(AdminBody::CancelRequest(request)) => {
                 // Cancellation needs a per-request handle to be honoured; until
@@ -131,14 +183,14 @@ async fn serve_once(options: &WorkerOptions, registry: &Registry) -> Result<()> 
             Some(AdminBody::Shutdown(shutdown)) => {
                 info!("admin asked this worker to stop: {}", shutdown.reason);
                 heartbeat.abort();
-                return Ok(());
+                return Ok(Outcome::ShutdownRequested);
             }
             None => {}
         }
     }
 
     heartbeat.abort();
-    Ok(())
+    Ok(Outcome::StreamClosed)
 }
 
 /// Answers one preview request off the stream loop. Reading rows takes as long
@@ -183,7 +235,11 @@ fn spawn_preview(
     });
 }
 
-fn spawn_heartbeat(sender: StreamSender, options: WorkerOptions) -> tokio::task::JoinHandle<()> {
+fn spawn_heartbeat(
+    sender: StreamSender,
+    options: WorkerOptions,
+    slots: Slots,
+) -> tokio::task::JoinHandle<()> {
     // The handle has to be the heartbeat's own, or aborting it aborts nothing
     // and every reconnect leaves another ticker running.
     tokio::spawn(async move {
@@ -193,10 +249,10 @@ fn spawn_heartbeat(sender: StreamSender, options: WorkerOptions) -> tokio::task:
             let beat = WorkerHeartbeat {
                 worker_id: options.worker_id.clone(),
                 running_work: Vec::<RunningWork>::new(),
-                detection_slots_used: 0,
-                detection_slots_total: options.max_detection_concurrency,
-                execution_slots_used: 0,
-                execution_slots_total: options.max_execution_concurrency,
+                detection_slots_used: slots.detection_used(),
+                detection_slots_total: slots.detection_total,
+                execution_slots_used: slots.execution_used(),
+                execution_slots_total: slots.execution_total,
                 queued_jobs_by_type: Default::default(),
                 metadata: Default::default(),
             };
@@ -207,11 +263,19 @@ fn spawn_heartbeat(sender: StreamSender, options: WorkerOptions) -> tokio::task:
     })
 }
 
-fn spawn_detection(registry: Registry, sender: StreamSender, request: RunDetectionRequest) {
+fn spawn_detection(
+    registry: Registry,
+    sender: StreamSender,
+    slots: Slots,
+    request: RunDetectionRequest,
+) {
     tokio::spawn(async move {
         let Some(handler) = registry.get(&request.job_type) else {
             return;
         };
+        // Held until the sweep finishes, so the worker keeps to the capacity it
+        // advertised and the heartbeat reports the truth while it works.
+        let _permit = slots.detection.acquire().await;
         if let Err(err) = handler.detect(&request, &sender).await {
             warn!("detection for {} failed: {err:#}", request.job_type);
             let _ = sender.send(WorkerBody::DetectionComplete(
@@ -227,8 +291,14 @@ fn spawn_detection(registry: Registry, sender: StreamSender, request: RunDetecti
     });
 }
 
-fn spawn_execution(registry: Registry, sender: StreamSender, request: ExecuteJobRequest) {
+fn spawn_execution(
+    registry: Registry,
+    sender: StreamSender,
+    slots: Slots,
+    request: ExecuteJobRequest,
+) {
     tokio::spawn(async move {
+        let _permit = slots.execution.acquire().await;
         let job_type = request
             .job
             .as_ref()

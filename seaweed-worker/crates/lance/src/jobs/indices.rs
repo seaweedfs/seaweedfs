@@ -142,8 +142,13 @@ impl JobHandler for OptimizeIndicesHandler {
                     continue;
                 }
             };
-            let Some(unindexed) = unindexed_rows(&table).await? else {
-                continue;
+            let unindexed = match unindexed_rows(&table).await {
+                Ok(Some(unindexed)) => unindexed,
+                Ok(None) => continue,
+                Err(err) => {
+                    warn!("skipping {encoded}: reading its index stats failed: {err:#}");
+                    continue;
+                }
             };
             if unindexed <= budget {
                 continue;

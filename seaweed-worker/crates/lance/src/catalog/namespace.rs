@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use std::time::Duration;
+
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
@@ -34,11 +36,28 @@ pub struct NamespaceClient {
     http: reqwest::Client,
 }
 
+/// A namespace call that has not answered by now is not going to. Without this
+/// a gateway that accepts the connection and then goes quiet holds a detection
+/// slot open forever, and the sweep never finishes.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
 impl NamespaceClient {
     pub fn new(base_url: impl Into<String>) -> Self {
+        let http = reqwest::Client::builder()
+            .timeout(REQUEST_TIMEOUT)
+            .connect_timeout(CONNECT_TIMEOUT)
+            .build()
+            // The builder only fails on a bad TLS backend, which would break
+            // every call anyway; a client with no timeouts is worse than a panic
+            // at startup, so keep the default only as a last resort.
+            .unwrap_or_else(|err| {
+                tracing::warn!("falling back to an untimed HTTP client: {err}");
+                reqwest::Client::new()
+            });
         Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
-            http: reqwest::Client::new(),
+            http,
         }
     }
 
