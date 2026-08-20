@@ -367,7 +367,7 @@ fn spawn_detection(
         // Held until the sweep finishes, so the worker keeps to the capacity it
         // advertised and the heartbeat reports the truth while it works.
         let _permit = slots.detection.acquire().await;
-        let metered = MeteredSender::new(&sender, metrics.clone(), &request.job_type);
+        let metered = MeteredSender::new(&sender);
         let started = Instant::now();
         let outcome = handler.detect(&request, &metered).await;
         let result = if let Err(err) = &outcome {
@@ -418,7 +418,7 @@ fn spawn_execution(
         let Some(handler) = registry.get(&job_type) else {
             return;
         };
-        let metered = MeteredSender::new(&sender, metrics.clone(), &job_type);
+        let metered = MeteredSender::new(&sender);
         let started = Instant::now();
         let outcome = handler.execute(&request, &metered).await;
         let result = if let Err(err) = &outcome {
