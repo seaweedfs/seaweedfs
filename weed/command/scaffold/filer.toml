@@ -13,6 +13,10 @@
 # recursive_delete will delete all sub folders and files, similar to "rm -Rf"
 recursive_delete = false
 #max_file_name_length = 255
+# Opt-in chunk-aligned HLS VOD support under the /hls/ path prefix: ingest a
+# single-file (EXT-X-BYTERANGE) MPEG-TS playlist, then serve a virtual playlist
+# with plain .ts segment URLs backed by whole SeaweedFS chunks.
+#hls_ts_enabled = false
 # for S3: how long to wait before deleting an empty folder.
 # increase this if using tools like Spark that create temporary directories.
 #s3.empty_folder_cleanup_delay = "2m"

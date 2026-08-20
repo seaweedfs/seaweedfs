@@ -88,6 +88,7 @@ type FilerOption struct {
 	TusSessionExpiry          time.Duration
 	S3ConfigFile              string // optional path to static S3 identity config file
 	CredentialManager         *credential.CredentialManager
+	HlsTsEnabled              bool // opt-in chunk-aligned HLS TS ingest and serving
 }
 
 type FilerServer struct {
@@ -102,6 +103,11 @@ type FilerServer struct {
 	filerGuard     *security.Guard
 	volumeGuard    *security.Guard
 	grpcDialOption grpc.DialOption
+
+	// HLS playback may intentionally be public even when regular filer reads
+	// require a JWT. Writes never use this bypass and always follow filer write
+	// JWT policy. Atomic because security.toml can be reloaded at runtime.
+	hlsTsReadJwtRequired atomic.Bool
 
 	// metrics read from the master
 	metricsAddress     string
@@ -161,6 +167,9 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	v.SetDefault("jwt.filer_signing.read.expires_after_seconds", 60)
 	readExpiresAfterSec := v.GetInt("jwt.filer_signing.read.expires_after_seconds")
 
+	v.SetDefault("jwt.filer_signing.hls.enabled", true)
+	hlsTsReadJwtRequired := v.GetBool("jwt.filer_signing.hls.enabled")
+
 	volumeSigningKey := v.GetString("jwt.signing.key")
 	v.SetDefault("jwt.signing.expires_after_seconds", 10)
 	volumeExpiresAfterSec := v.GetInt("jwt.signing.expires_after_seconds")
@@ -190,6 +199,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		entryLockTable:        util.NewLockTable[util.FullPath](),
 		posixLocks:            posixlock.NewManager(),
 	}
+	fs.hlsTsReadJwtRequired.Store(hlsTsReadJwtRequired)
 	fs.startPosixLockSweeper()
 	fs.mountPeerRegistry = filer.NewMountPeerRegistry()
 	go fs.runMountPeerRegistrySweeper()
@@ -231,6 +241,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	go fs.filer.MasterClient.KeepConnectedToMaster(context.Background())
 
 	fs.option.recursiveDelete = v.GetBool("filer.options.recursive_delete")
+	fs.option.HlsTsEnabled = v.GetBool("filer.options.hls_ts_enabled")
 	v.SetDefault("filer.options.buckets_folder", "/buckets")
 	fs.filer.DirBucketsPath = v.GetString("filer.options.buckets_folder")
 	// TODO deprecated, will be removed after 2020-12-31
@@ -354,6 +365,7 @@ func (fs *FilerServer) Reload() {
 		v.GetString("jwt.filer_signing.read.key"),
 		v.GetInt("jwt.filer_signing.read.expires_after_seconds"),
 	)
+	fs.hlsTsReadJwtRequired.Store(v.GetBool("jwt.filer_signing.hls.enabled"))
 	fs.volumeGuard.UpdateSigningKeys(
 		v.GetString("jwt.signing.key"),
 		v.GetInt("jwt.signing.expires_after_seconds"),
