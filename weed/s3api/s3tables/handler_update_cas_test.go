@@ -26,7 +26,7 @@ func TestUpdateTableRejectsLostUpdate(t *testing.T) {
 	fs, m := startRenameManager(t)
 
 	winnerLocation := "s3://" + renameTestBucket + "/ns/t/metadata/v4-winner.metadata.json"
-	fs.beforeUpdate = func() {
+	fs.BeforeUpdate = func() {
 		winner, err := json.Marshal(tableMetadataInternal{
 			Name:             "t",
 			Namespace:        "ns",
@@ -37,13 +37,13 @@ func TestUpdateTableRejectsLostUpdate(t *testing.T) {
 			VersionToken:     generateVersionToken(),
 		})
 		require.NoError(t, err)
-		entry := fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "t")
+		entry := fs.Get(GetNamespacePath(renameTestBucket, "ns"), "t")
 		require.NotNil(t, entry)
 		entry.Extended[ExtendedKeyMetadata] = winner
 	}
 
 	loserLocation := "s3://" + renameTestBucket + "/ns/t/metadata/v4-loser.metadata.json"
-	err := m.Execute(context.Background(), NewManagerClient(fs.client), "UpdateTable",
+	err := m.Execute(context.Background(), NewManagerClient(fs.Client), "UpdateTable",
 		updateTableRequest(t, loserLocation, 4), nil, "")
 
 	require.Error(t, err)
@@ -64,14 +64,14 @@ func TestUpdateTableRejectsWhenTheAuthorizingPolicyChanges(t *testing.T) {
 	fs, m := startRenameManager(t)
 
 	policy := []byte(`{"Version":"2012-10-17","Statement":[]}`)
-	fs.beforeUpdate = func() {
-		entry := fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "t")
+	fs.BeforeUpdate = func() {
+		entry := fs.Get(GetNamespacePath(renameTestBucket, "ns"), "t")
 		require.NotNil(t, entry)
 		entry.Extended[ExtendedKeyPolicy] = policy
 	}
 
 	location := "s3://" + renameTestBucket + "/ns/t/metadata/v4.metadata.json"
-	err := m.Execute(context.Background(), NewManagerClient(fs.client), "UpdateTable",
+	err := m.Execute(context.Background(), NewManagerClient(fs.Client), "UpdateTable",
 		updateTableRequest(t, location, 4), nil, "")
 
 	require.Error(t, err)
@@ -79,7 +79,7 @@ func TestUpdateTableRejectsWhenTheAuthorizingPolicyChanges(t *testing.T) {
 	require.ErrorAs(t, err, &s3Err)
 	assert.Equal(t, ErrCodeConflict, s3Err.Type)
 
-	entry := fs.getEntry(GetNamespacePath(renameTestBucket, "ns"), "t")
+	entry := fs.Get(GetNamespacePath(renameTestBucket, "ns"), "t")
 	require.NotNil(t, entry)
 	assert.Equal(t, policy, entry.Extended[ExtendedKeyPolicy], "the concurrent policy write must survive")
 }
@@ -88,7 +88,7 @@ func TestUpdateTableAppliesWithoutContention(t *testing.T) {
 	fs, m := startRenameManager(t)
 
 	location := "s3://" + renameTestBucket + "/ns/t/metadata/v4.metadata.json"
-	require.NoError(t, m.Execute(context.Background(), NewManagerClient(fs.client), "UpdateTable",
+	require.NoError(t, m.Execute(context.Background(), NewManagerClient(fs.Client), "UpdateTable",
 		updateTableRequest(t, location, 4), nil, ""))
 
 	got, err := runGetTable(t, m, fs, "ns", "t")

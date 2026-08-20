@@ -16,8 +16,8 @@ func TestEntryType(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := entryType(c.extended); got != c.want {
-				t.Fatalf("entryType() = %q, want %q", got, c.want)
+			if got := EntryType(c.extended); got != c.want {
+				t.Fatalf("EntryType() = %q, want %q", got, c.want)
 			}
 		})
 	}

@@ -34,7 +34,7 @@ func TestPyIcebergRestCatalog(t *testing.T) {
 
 	// Create the test bucket first
 	bucketName := "pyiceberg-compat-test-" + randomSuffix()
-	createTableBucket(t, env, bucketName)
+	createTableBucket(t, env, bucketName, "")
 
 	// Build the test working directory path
 	testDir := filepath.Join(env.seaweedDir, "test", "s3tables", "catalog")
@@ -93,7 +93,7 @@ func TestPyIcebergRestCatalogAuthenticated(t *testing.T) {
 
 	// Create the test bucket first (using unauthenticated request, which works with DefaultAllow)
 	bucketName := "pyiceberg-auth-test-" + randomSuffix()
-	createTableBucket(t, env, bucketName)
+	createTableBucket(t, env, bucketName, "")
 
 	// Build the test working directory path
 	testDir := filepath.Join(env.seaweedDir, "test", "s3tables", "catalog")

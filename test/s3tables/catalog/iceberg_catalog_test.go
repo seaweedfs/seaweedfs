@@ -62,6 +62,7 @@ type TestEnvironment struct {
 	s3Port          int
 	s3GrpcPort      int
 	icebergPort     int
+	lancePort       int
 	masterPort      int
 	masterGrpcPort  int
 	filerPort       int
@@ -92,7 +93,12 @@ func newTestEnvironmentForMain() (*TestEnvironment, error) {
 
 	// Check for weed binary
 	weedBinary := filepath.Join(seaweedDir, "weed", "weed")
-	if _, err := os.Stat(weedBinary); os.IsNotExist(err) {
+	if info, statErr := os.Stat(weedBinary); statErr == nil {
+		// Name the binary and its age. `make test` rebuilds first, but a plain
+		// `go test` will happily drive a weeks-old binary and report a pass for
+		// code it never ran.
+		fmt.Fprintf(os.Stderr, "using %s, built %s\n", weedBinary, info.ModTime().Format(time.RFC3339))
+	} else if os.IsNotExist(statErr) {
 		weedBinary = "weed"
 		if _, err := exec.LookPath(weedBinary); err != nil {
 			return nil, fmt.Errorf("weed binary not found")
@@ -105,9 +111,9 @@ func newTestEnvironmentForMain() (*TestEnvironment, error) {
 		return nil, fmt.Errorf("create temp dir: %w", err)
 	}
 
-	// Allocate 9 unique ports atomically: s3, iceberg, s3Grpc, master, masterGrpc,
-	// filer, filerGrpc, volume, volumeGrpc
-	ports, err := testutil.AllocatePorts(9)
+	// Allocate 10 unique ports atomically: s3, iceberg, s3Grpc, master, masterGrpc,
+	// filer, filerGrpc, volume, volumeGrpc, lance
+	ports, err := testutil.AllocatePorts(10)
 	if err != nil {
 		return nil, fmt.Errorf("allocate ports: %w", err)
 	}
@@ -125,6 +131,7 @@ func newTestEnvironmentForMain() (*TestEnvironment, error) {
 		filerGrpcPort:   ports[6],
 		volumePort:      ports[7],
 		volumeGrpcPort:  ports[8],
+		lancePort:       ports[9],
 		dockerAvailable: testutil.HasDocker(),
 	}, nil
 }
@@ -155,6 +162,7 @@ func (env *TestEnvironment) startSeaweedFSForMain() error {
 		"-s3.port", fmt.Sprintf("%d", env.s3Port),
 		"-s3.port.grpc", fmt.Sprintf("%d", env.s3GrpcPort),
 		"-s3.port.iceberg", fmt.Sprintf("%d", env.icebergPort),
+		"-s3.port.lance", fmt.Sprintf("%d", env.lancePort),
 		"-ip.bind", "0.0.0.0",
 		"-dir", env.dataDir,
 	)
@@ -211,6 +219,11 @@ func (env *TestEnvironment) IcebergURL() string {
 	return fmt.Sprintf("http://127.0.0.1:%d", env.icebergPort)
 }
 
+// LanceURL returns the Lance Namespace server URL
+func (env *TestEnvironment) LanceURL() string {
+	return fmt.Sprintf("http://127.0.0.1:%d", env.lancePort)
+}
+
 // TestIcebergConfig tests the /v1/config endpoint
 func TestIcebergConfig(t *testing.T) {
 	if testing.Short() {
@@ -252,7 +265,7 @@ func TestIcebergNamespaces(t *testing.T) {
 
 	// Create the default table bucket first via S3
 	bucketName := "warehouse-ns-" + randomSuffix()
-	createTableBucket(t, env, bucketName)
+	createTableBucket(t, env, bucketName, "")
 
 	// Test GET /v1/namespaces (should return empty list initially)
 	resp, err := http.Get(env.IcebergURL() + icebergPath(bucketName, "/v1/namespaces"))
@@ -275,7 +288,7 @@ func TestStageCreateAndFinalizeFlow(t *testing.T) {
 
 	env := sharedEnv
 	bucketName := "warehouse-stage-" + randomSuffix()
-	createTableBucket(t, env, bucketName)
+	createTableBucket(t, env, bucketName, "")
 
 	namespace := "stage_ns_" + randomSuffix()
 	tableName := "orders"
@@ -369,7 +382,7 @@ func TestCommitMissingTableWithoutAssertCreate(t *testing.T) {
 
 	env := sharedEnv
 	bucketName := "warehouse-missing-" + randomSuffix()
-	createTableBucket(t, env, bucketName)
+	createTableBucket(t, env, bucketName, "")
 
 	namespace := "stage_missing_assert_ns_" + randomSuffix()
 	tableName := "missing_table"
@@ -458,11 +471,16 @@ func icebergPath(prefix, path string) string {
 // The request is AWS V4 signed for SERVICE=s3tables so the S3 Tables
 // route matcher accepts it; signing with regular SERVICE=s3 would let
 // the request fall through to the S3 CreateBucket handler.
-func createTableBucket(t *testing.T, env *TestEnvironment, bucketName string) {
+// createTableBucket makes a table bucket of the given format. An empty format
+// leaves it to the server, which means ICEBERG.
+func createTableBucket(t *testing.T, env *TestEnvironment, bucketName, format string) {
 	t.Helper()
 
 	endpoint := fmt.Sprintf("http://localhost:%d/buckets", env.s3Port)
 	reqBody := fmt.Sprintf(`{"name":"%s"}`, bucketName)
+	if format != "" {
+		reqBody = fmt.Sprintf(`{"name":"%s","format":"%s"}`, bucketName, format)
+	}
 
 	req, err := http.NewRequest(http.MethodPut, endpoint, strings.NewReader(reqBody))
 	if err != nil {

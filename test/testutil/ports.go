@@ -38,6 +38,7 @@ var miniDefaultPorts = []int{
 	9340,  // volume.port
 	8333,  // s3.port
 	8181,  // s3.port.iceberg
+	9101,  // s3.port.lance
 	7333,  // webdav.port
 	23646, // admin.port
 }

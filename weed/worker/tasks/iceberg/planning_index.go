@@ -3,8 +3,10 @@ package iceberg
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/apache/iceberg-go"
@@ -36,6 +38,10 @@ type planningIndexRewriteManifests struct {
 }
 
 type tableMetadataEnvelope struct {
+	// Format is the catalog's own record of what the table is. A native Lance
+	// table has no Iceberg metadata at all, so without this the parse below
+	// fails and the table is skipped as if it were corrupt.
+	Format           string `json:"format"`
 	MetadataVersion  int    `json:"metadataVersion"`
 	MetadataLocation string `json:"metadataLocation,omitempty"`
 	Metadata         *struct {
@@ -54,10 +60,36 @@ type tableState struct {
 	PlanningIndex *planningIndex
 }
 
+// tableTypeProperty is the Hive/Glue-style format marker. Catalogs that have no
+// native concept of a non-Iceberg table register one as an Iceberg table with a
+// placeholder schema and set this property instead; the Lance namespace's
+// Iceberg REST adapter writes table_type=lance.
+const tableTypeProperty = "table_type"
+
+// errForeignFormat means the catalog entry belongs to a format this worker does
+// not maintain. It is a normal outcome of scanning a mixed catalog, not damage.
+var errForeignFormat = errors.New("not an iceberg table")
+
+// isIcebergTableEntry reports whether a catalog entry is an Iceberg table this
+// worker may rewrite. Views share the entry shape, and a foreign format
+// registered through the catalog shares the location but not the file layout -
+// a Lance dataset keeps its fragments under data/, where every one of them is
+// unreferenced by the Iceberg metadata and so looks like an orphan.
+func isIcebergTableEntry(extended map[string][]byte, meta table.Metadata) bool {
+	if s3tables.EntryType(extended) != s3tables.EntryTypeTable {
+		return false
+	}
+	tableType, ok := meta.Properties()[tableTypeProperty]
+	return !ok || strings.EqualFold(tableType, "iceberg")
+}
+
 func parseTableMetadataEnvelope(metadataBytes []byte, bucketName, tablePath string) (*tableState, error) {
 	var envelope tableMetadataEnvelope
 	if err := json.Unmarshal(metadataBytes, &envelope); err != nil {
 		return nil, fmt.Errorf("parse metadata xattr: %w", err)
+	}
+	if envelope.Format != "" && envelope.Format != s3tables.FormatIceberg {
+		return nil, fmt.Errorf("%w: %s", errForeignFormat, envelope.Format)
 	}
 	if envelope.Metadata == nil || len(envelope.Metadata.FullMetadata) == 0 {
 		return nil, fmt.Errorf("no fullMetadata in table xattr")

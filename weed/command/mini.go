@@ -212,6 +212,9 @@ func miniStartupServices() []string {
 		if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
 			services = append(services, "Iceberg")
 		}
+		if miniS3Options.portLance != nil && *miniS3Options.portLance > 0 {
+			services = append(services, "Lance")
+		}
 	}
 	services = append(services, "Admin")
 	return services
@@ -498,6 +501,7 @@ func initMiniS3Flags() {
 	miniS3Options.portHttps = cmdMini.Flag.Int("s3.port.https", 0, "s3 server https listen port")
 	miniS3Options.portGrpc = cmdMini.Flag.Int("s3.port.grpc", 0, "s3 server grpc listen port")
 	miniS3Options.portIceberg = cmdMini.Flag.Int("s3.port.iceberg", 8181, "Iceberg REST Catalog server listen port (0 to disable)")
+	miniS3Options.portLance = cmdMini.Flag.Int("s3.port.lance", 9101, "Lance Namespace server listen port (0 to disable)")
 	miniS3Options.icebergCredentialRole = cmdMini.Flag.String("s3.iceberg.credentialRole", "", "IAM role ARN the Iceberg catalog assumes to vend table-scoped credentials (empty disables vending)")
 	miniS3Options.icebergCredentialDuration = cmdMini.Flag.Int("s3.iceberg.credentialDurationSeconds", 3600, "lifetime of credentials vended by the Iceberg catalog")
 	miniS3Options.domainName = cmdMini.Flag.String("s3.domainName", "", "suffix of the host name in comma separated list, {bucket}.{domainName}")
@@ -884,6 +888,14 @@ func ensureAllPortsAvailableOnIP(bindIp string) error {
 				grpcPtr  *int
 			}{miniS3Options.portIceberg, "Iceberg", "s3.port.iceberg", nil})
 		}
+		if miniS3Options.portLance != nil && *miniS3Options.portLance > 0 {
+			portConfigs = append(portConfigs, struct {
+				port     *int
+				name     string
+				flagName string
+				grpcPtr  *int
+			}{miniS3Options.portLance, "Lance", "s3.port.lance", nil})
+		}
 	}
 	portConfigs = append(portConfigs, struct {
 		port     *int
@@ -935,9 +947,13 @@ func ensureAllPortsAvailableOnIP(bindIp string) error {
 	if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
 		icebergPortStr = fmt.Sprintf("%d", *miniS3Options.portIceberg)
 	}
-	glog.V(1).Infof("Final port configuration - Master: %d, Filer: %d, Volume: %d, S3: %d, Iceberg: %s, WebDAV: %d, Admin: %d",
+	lancePortStr := "disabled"
+	if miniS3Options.portLance != nil && *miniS3Options.portLance > 0 {
+		lancePortStr = fmt.Sprintf("%d", *miniS3Options.portLance)
+	}
+	glog.V(1).Infof("Final port configuration - Master: %d, Filer: %d, Volume: %d, S3: %d, Iceberg: %s, Lance: %s, WebDAV: %d, Admin: %d",
 		*miniMasterOptions.port, *miniFilerOptions.port, *miniOptions.v.port,
-		*miniS3Options.port, icebergPortStr, *miniWebDavOptions.port, *miniAdminOptions.port)
+		*miniS3Options.port, icebergPortStr, lancePortStr, *miniWebDavOptions.port, *miniAdminOptions.port)
 
 	// Log gRPC ports too (now finalized)
 	glog.V(1).Infof("gRPC port configuration - Master: %d, Filer: %d, Volume: %d, S3: %d, Admin: %d",
@@ -966,6 +982,9 @@ func initializeGrpcPortsOnIP(bindIp string) {
 		allocatedPorts[*miniS3Options.port] = true
 		if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
 			allocatedPorts[*miniS3Options.portIceberg] = true
+		}
+		if miniS3Options.portLance != nil && *miniS3Options.portLance > 0 {
+			allocatedPorts[*miniS3Options.portLance] = true
 		}
 	}
 
@@ -1421,9 +1440,13 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) {
 		go func() {
 			defer done()
 			defer reportMiniStopped("S3")
-			// Iceberg lives inside the S3 server; report it stopped alongside.
+			// Iceberg and Lance live inside the S3 server; report them stopped
+			// alongside it.
 			if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
 				defer reportMiniStopped("Iceberg")
+			}
+			if miniS3Options.portLance != nil && *miniS3Options.portLance > 0 {
+				defer reportMiniStopped("Lance")
 			}
 			startMiniService("S3", startS3Service, *miniS3Options.port)
 		}()
@@ -1451,6 +1474,12 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) {
 				miniProgressBoard.starting("Iceberg")
 			}
 			waitForServiceReady("Iceberg", *miniS3Options.portIceberg, bindIp)
+		}
+		if miniS3Options.portLance != nil && *miniS3Options.portLance > 0 {
+			if miniProgressBoard != nil {
+				miniProgressBoard.starting("Lance")
+			}
+			waitForServiceReady("Lance", *miniS3Options.portLance, bindIp)
 		}
 	}
 	if *miniEnableWebDAV {
@@ -1585,11 +1614,18 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	go func() {
 		defer done()
 		defer reportMiniStopped("Admin")
-		var icebergPort int
-		if miniS3Options.portIceberg != nil {
-			icebergPort = *miniS3Options.portIceberg
+		// Only advertise a catalog port when S3 is actually running: with -s3=false
+		// the admin UI would otherwise print an endpoint nothing is listening on.
+		var icebergPort, lancePort int
+		if miniEnableS3 != nil && *miniEnableS3 {
+			if miniS3Options.portIceberg != nil {
+				icebergPort = *miniS3Options.portIceberg
+			}
+			if miniS3Options.portLance != nil {
+				lancePort = *miniS3Options.portLance
+			}
 		}
-		if err := startAdminServer(ctx, miniAdminOptions, *miniEnableAdminUI, icebergPort, urlPrefix); err != nil {
+		if err := startAdminServer(ctx, miniAdminOptions, *miniEnableAdminUI, icebergPort, lancePort, urlPrefix); err != nil {
 			glog.Errorf("Admin server error: %v", err)
 		}
 	}()
@@ -1856,6 +1892,9 @@ func printWelcomeMessage() {
 		if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
 			fmt.Fprintf(&sb, "    Iceberg Catalog: http://%s:%d\n", *miniIp, *miniS3Options.portIceberg)
 		}
+		if miniS3Options.portLance != nil && *miniS3Options.portLance > 0 {
+			fmt.Fprintf(&sb, "    Lance Namespace: http://%s:%d\n", *miniIp, *miniS3Options.portLance)
+		}
 	}
 	if *miniEnableAdminUI {
 		fmt.Fprintf(&sb, "    Admin UI:        http://%s:%d\n", *miniIp, *miniAdminOptions.port)
@@ -1984,6 +2023,15 @@ func ensureMiniTableBuckets(bucketSpec string) error {
 		return nil
 	}
 
+	// A bucket holds one format, and the format decides which catalog serves it.
+	// Creating one in a format this mini does not serve leaves a bucket no
+	// client can reach, so take the format from the endpoint that is running.
+	format := miniTableBucketFormat()
+	if format == "" {
+		glog.Warningf("not creating table buckets %q: neither the Iceberg nor the Lance endpoint is enabled, so nothing could reach them", bucketSpec)
+		return nil
+	}
+
 	filerAddress := pb.NewServerAddress(*miniIp, *miniFilerOptions.port, *miniFilerOptions.portGrpc)
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
@@ -1992,12 +2040,12 @@ func ensureMiniTableBuckets(bucketSpec string) error {
 		mgrClient := s3tables.NewManagerClient(client)
 		for _, name := range names {
 			ctx, cancel := context.WithTimeout(miniClientsCtx(), 5*time.Second)
-			req := &s3tables.CreateTableBucketRequest{Name: name}
+			req := &s3tables.CreateTableBucketRequest{Name: name, Format: format}
 			var resp s3tables.CreateTableBucketResponse
 			err := manager.Execute(ctx, mgrClient, "CreateTableBucket", req, &resp, s3tables.DefaultAccountID)
 			cancel()
 			if err == nil {
-				glog.V(0).Infof("created table bucket %s", name)
+				glog.V(0).Infof("created %s table bucket %s", format, name)
 				continue
 			}
 			var s3Err *s3tables.S3TablesError
@@ -2009,6 +2057,22 @@ func ensureMiniTableBuckets(bucketSpec string) error {
 		}
 		return nil
 	})
+}
+
+// miniTableBucketFormat is the format a pre-created table bucket should hold:
+// Iceberg when its catalog is running, else Lance, else none because neither
+// server is up.
+func miniTableBucketFormat() string {
+	if miniEnableS3 == nil || !*miniEnableS3 {
+		return ""
+	}
+	if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
+		return s3tables.FormatIceberg
+	}
+	if miniS3Options.portLance != nil && *miniS3Options.portLance > 0 {
+		return s3tables.FormatLance
+	}
+	return ""
 }
 
 // parseBucketList splits a comma-separated bucket spec into a deduplicated list
