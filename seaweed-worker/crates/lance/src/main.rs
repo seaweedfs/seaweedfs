@@ -4,7 +4,7 @@ use anyhow::Result;
 use clap::Parser;
 use std::sync::Arc;
 
-use seaweed_worker_core::{Registry, WorkerOptions};
+use seaweed_worker_core::{Registry, TlsOptions, WorkerOptions};
 use weed_lance_worker::handlers;
 
 /// Mirrors `weed worker`'s flags, because this is the same contract from another
@@ -44,6 +44,49 @@ struct Args {
 
     #[arg(long, env = "WEED_S3_SECRET_KEY")]
     secret_key: Option<String>,
+
+    /// mTLS for the admin stream, the same certificates the Go worker reads
+    /// from the [grpc.worker] section of security.toml. All three together, or
+    /// none, in which case the stream is plaintext.
+    #[arg(long, env = "WEED_GRPC_CA")]
+    tls_ca: Option<String>,
+
+    #[arg(long, env = "WEED_GRPC_CLIENT_CERT")]
+    tls_cert: Option<String>,
+
+    #[arg(long, env = "WEED_GRPC_CLIENT_KEY")]
+    tls_key: Option<String>,
+
+    /// Name to verify admin's certificate against, when it is not the address
+    /// this worker dials.
+    #[arg(long)]
+    tls_server_name: Option<String>,
+}
+
+impl Args {
+    /// The TLS configuration, or an error when the three certificate paths do
+    /// not arrive together: a CA on its own would silently give one-way TLS,
+    /// which the cluster's mutual setup refuses anyway.
+    fn tls(&self) -> Result<Option<TlsOptions>> {
+        match (
+            self.tls_ca.clone(),
+            self.tls_cert.clone(),
+            self.tls_key.clone(),
+        ) {
+            (None, None, None) => Ok(None),
+            (Some(ca_path), Some(client_cert_path), Some(client_key_path)) => {
+                Ok(Some(TlsOptions {
+                    ca_path,
+                    client_cert_path,
+                    client_key_path,
+                    server_name: self.tls_server_name.clone(),
+                }))
+            }
+            _ => Err(anyhow::anyhow!(
+                "--tls-ca, --tls-cert and --tls-key must be given together"
+            )),
+        }
+    }
 }
 
 #[tokio::main]
@@ -56,12 +99,14 @@ async fn main() -> Result<()> {
         .init();
 
     let args = Args::parse();
+    let tls = args.tls()?;
     let options = WorkerOptions {
         admin_address: args.admin,
         worker_id: args.id,
         heartbeat_interval: Duration::from_secs(args.heartbeat_seconds),
         max_detection_concurrency: args.max_concurrency,
         max_execution_concurrency: args.max_concurrency,
+        tls,
         ..Default::default()
     };
 

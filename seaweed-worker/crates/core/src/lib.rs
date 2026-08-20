@@ -18,7 +18,7 @@ pub mod pb {
     tonic::include_proto!("plugin");
 }
 
-pub use config::WorkerOptions;
+pub use config::{TlsOptions, WorkerOptions};
 pub use registry::{JobHandler, Preview, PreviewProvider, Registry};
 pub use senders::{DetectionSender, ExecutionSender};
 pub use stream::run;

@@ -1,10 +1,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use tokio::sync::{mpsc, Semaphore};
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use tonic::transport::Channel;
+use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
 use tracing::{info, warn};
 
 use crate::config::WorkerOptions;
@@ -91,6 +91,42 @@ impl Slots {
     }
 }
 
+/// Dials admin, over mTLS when certificates are configured. Plaintext is the
+/// default and is fine over loopback; anything else carries preview rows and
+/// execution commands in the clear, and a cluster with grpc TLS on refuses the
+/// connection anyway.
+async fn connect(options: &WorkerOptions, grpc_address: &str) -> Result<Channel> {
+    let Some(tls) = options.tls.as_ref() else {
+        return Ok(Channel::from_shared(format!("http://{grpc_address}"))?
+            .connect_timeout(Duration::from_secs(10))
+            .connect()
+            .await?);
+    };
+
+    let ca = tokio::fs::read(&tls.ca_path)
+        .await
+        .with_context(|| format!("read CA certificate {}", tls.ca_path))?;
+    let cert = tokio::fs::read(&tls.client_cert_path)
+        .await
+        .with_context(|| format!("read client certificate {}", tls.client_cert_path))?;
+    let key = tokio::fs::read(&tls.client_key_path)
+        .await
+        .with_context(|| format!("read client key {}", tls.client_key_path))?;
+
+    let mut config = ClientTlsConfig::new()
+        .ca_certificate(Certificate::from_pem(ca))
+        .identity(Identity::from_pem(cert, key));
+    if let Some(server_name) = tls.server_name.as_ref() {
+        config = config.domain_name(server_name.clone());
+    }
+
+    Ok(Channel::from_shared(format!("https://{grpc_address}"))?
+        .tls_config(config)?
+        .connect_timeout(Duration::from_secs(10))
+        .connect()
+        .await?)
+}
+
 async fn serve_once(
     options: &WorkerOptions,
     registry: &Registry,
@@ -100,11 +136,7 @@ async fn serve_once(
     // same way the Go worker does it.
     let grpc_address = crate::address::server_to_grpc_address(&options.admin_address)
         .ok_or_else(|| anyhow!("cannot parse admin address {}", options.admin_address))?;
-    let endpoint = format!("http://{grpc_address}");
-    let channel = Channel::from_shared(endpoint)?
-        .connect_timeout(Duration::from_secs(10))
-        .connect()
-        .await?;
+    let channel = connect(options, &grpc_address).await?;
     let mut client = PluginControlServiceClient::new(channel);
 
     let (tx, rx) = mpsc::unbounded_channel();
