@@ -1,0 +1,15 @@
+# LanceDB client for the SeaweedFS Lance Namespace integration test.
+#
+# The Iceberg suites point Spark, Trino and ClickHouse at the catalog; this is
+# the same idea for Lance. LanceDB connects with connect_namespace("rest", ...),
+# which speaks the routes this catalog implements, so what it exercises is the
+# protocol rather than requests we wrote ourselves.
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir lancedb lance-namespace pylance pyarrow
+
+COPY lancedb_ops.py /app/
+
+CMD ["python3", "/app/lancedb_ops.py", "--help"]
