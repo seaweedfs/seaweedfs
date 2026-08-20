@@ -18,6 +18,11 @@ func TestUnroutedBucketSubresource(t *testing.T) {
 		"list-type=2&continuation-token=x",
 		"delimiter=/&encoding-type=url",
 		"x-id=ListObjectsV2",
+		// The listing handlers read allow-unordered and validate it against
+		// delimiter, so the guard has to let it through to them.
+		"allow-unordered=true",
+		"allow-unordered=true&max-keys=1000",
+		"list-type=2&allow-unordered=true",
 		"prefix=a&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=deadbeef&X-Amz-Expires=900",
 		"AWSAccessKeyId=key&Signature=sig&Expires=1700000000",
 	} {
