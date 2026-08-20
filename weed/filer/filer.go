@@ -67,6 +67,7 @@ type Filer struct {
 	EmptyFolderCleaner      *empty_folder_cleanup.EmptyFolderCleaner
 	EmptyFolderCleanupDelay time.Duration
 	persistedLogCache       *persistedLogCache
+	metaLogInflight         metaLogInflight
 }
 
 func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress, filerGroup string, collection string, replication string, dataCenter string, maxFilenameLength uint32, notifyFn func()) *Filer {
@@ -142,6 +143,9 @@ func (f *Filer) AggregateFromPeers(self pb.ServerAddress, existingNodes []*maste
 	f.EmptyFolderCleaner = empty_folder_cleanup.NewEmptyFolderCleaner(f, f.Dlm.LockRing, self, f.DirBucketsPath, f.EmptyFolderCleanupDelay)
 
 	f.MetaAggregator = NewMetaAggregator(f, self, f.GrpcDialOption)
+	// The ring starts empty while peer history sits on disk: mark the pre-startFrom
+	// range evicted so a cursor there reads disk, not the ring's earliest entry.
+	f.MetaAggregator.MetaLogBuffer.MarkEvictedThrough(startFrom.UnixNano())
 	f.MasterClient.SetOnPeerUpdateFn(func(update *master_pb.ClusterNodeUpdate, startFrom time.Time) {
 		if update.NodeType != cluster.FilerType {
 			return
@@ -159,6 +163,16 @@ func (f *Filer) AggregateFromPeers(self pb.ServerAddress, existingNodes []*maste
 		f.Dlm.LockRing.SetSnapshot(servers, update.Version)
 	})
 
+	// Subscribe to the local filer first: its events reach the aggregated
+	// buffer only through this subscription, and the peer watermarks must
+	// account for it before any remote peer - a remotes-only watermark set
+	// would claim completeness without self. existingNodes can omit self
+	// (master registration races this bootstrap); duplicate adds are no-ops.
+	f.MetaAggregator.OnPeerUpdate(&master_pb.ClusterNodeUpdate{
+		NodeType: cluster.FilerType,
+		Address:  string(self),
+		IsAdd:    true,
+	}, startFrom)
 	for _, peerUpdate := range existingNodes {
 		f.MetaAggregator.OnPeerUpdate(peerUpdate, startFrom)
 	}
