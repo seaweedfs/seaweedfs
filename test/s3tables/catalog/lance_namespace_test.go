@@ -248,14 +248,23 @@ func TestLanceCommitPreconditionAdmitsOneWriter(t *testing.T) {
 	const writers = 8
 	var wg sync.WaitGroup
 	statuses := make([]int, writers)
+	failures := make([]error, writers)
 	for i := 0; i < writers; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			statuses[i] = putS3ObjectIfAbsent(t, env, bucket, "ml/vectors/_versions/1.manifest")
+			// Not t.Fatalf: from a goroutine it ends only that goroutine, and
+			// the status stays zero, which reads as a bogus response later.
+			statuses[i], failures[i] = putIfAbsent(env, bucket, "ml/vectors/_versions/1.manifest")
 		}(i)
 	}
 	wg.Wait()
+
+	for i, err := range failures {
+		if err != nil {
+			t.Fatalf("writer %d could not reach the gateway: %v", i, err)
+		}
+	}
 
 	won, refused := 0, 0
 	for _, status := range statuses {
@@ -303,23 +312,23 @@ func TestLanceDoesNotManageVersions(t *testing.T) {
 	}
 }
 
-// putS3ObjectIfAbsent writes an object only if the key is free, the way a Lance
-// commit does, and returns the status.
-func putS3ObjectIfAbsent(t *testing.T, env *TestEnvironment, bucket, object string) int {
-	t.Helper()
+// putIfAbsent writes an object only if the key is free, the way a Lance commit
+// does. It returns an error rather than failing the test, so it is safe to call
+// from the racing goroutines.
+func putIfAbsent(env *TestEnvironment, bucket, object string) (int, error) {
 	url := fmt.Sprintf("http://127.0.0.1:%d/%s/%s", env.s3Port, bucket, object)
 	req, err := http.NewRequest(http.MethodPut, url, bytes.NewReader([]byte("manifest")))
 	if err != nil {
-		t.Fatalf("build request: %v", err)
+		return 0, err
 	}
 	req.Header.Set("If-None-Match", "*")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatalf("PUT %s: %v", object, err)
+		return 0, err
 	}
 	defer resp.Body.Close()
 	io.Copy(io.Discard, resp.Body)
-	return resp.StatusCode
+	return resp.StatusCode, nil
 }
 
 // putS3Object writes an object through the S3 gateway and returns the status.

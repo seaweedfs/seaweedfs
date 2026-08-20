@@ -61,12 +61,3 @@ func bucketCatalogPath(format, bucket string) string {
 	}
 	return fmt.Sprintf("/v1/%s/namespaces", bucket)
 }
-
-// catalogPortFor picks the port that serves a bucket. Zero means that server is
-// not running, and the page says so rather than printing a dead address.
-func catalogPortFor(format string, icebergPort, lancePort int) int {
-	if isLanceFormat(format) {
-		return lancePort
-	}
-	return icebergPort
-}

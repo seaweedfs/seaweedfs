@@ -135,6 +135,18 @@ func (s *ObservationStore) Get(objectID []string) (*Observation, bool) {
 	return observed, ok
 }
 
+// GetFormat returns the last observation of one object only when it describes
+// the format asked for. A table can be dropped and remade in another format at
+// the same path, and the stale observation would then describe something that
+// no longer exists.
+func (s *ObservationStore) GetFormat(objectID []string, format string) (*Observation, bool) {
+	observed, ok := s.Get(objectID)
+	if !ok || !strings.EqualFold(observed.Format, format) {
+		return nil, false
+	}
+	return observed, true
+}
+
 // List returns every observation, newest first.
 func (s *ObservationStore) List() []*Observation {
 	s.mu.RLock()

@@ -26,10 +26,12 @@ func (r *Plugin) RequestObjectPreview(ctx context.Context, objectID []string, fo
 	if rowLimit < 1 || rowLimit > maxPreviewRows {
 		rowLimit = maxPreviewRows
 	}
+	// Bounded above by maxPreviewRows, so this fits int32 on every platform.
+	requestedRows := int32(rowLimit)
 
-	observed, ok := r.observations.Get(objectID)
+	observed, ok := r.observations.GetFormat(objectID, format)
 	if !ok {
-		return nil, fmt.Errorf("no worker has described this object yet")
+		return nil, fmt.Errorf("no worker has described this object as %s yet", format)
 	}
 	if _, connected := r.registry.Get(observed.WorkerID); !connected {
 		return nil, fmt.Errorf("worker %s is not connected", observed.WorkerID)
@@ -57,7 +59,7 @@ func (r *Plugin) RequestObjectPreview(ctx context.Context, objectID []string, fo
 			RequestObjectPreview: &plugin_pb.RequestObjectPreview{
 				ObjectId: objectID,
 				Format:   format,
-				RowLimit: int32(rowLimit),
+				RowLimit: requestedRows,
 			},
 		},
 	}
@@ -87,9 +89,11 @@ func (r *Plugin) handleObjectPreviewResponse(response *plugin_pb.ObjectPreviewRe
 	if response == nil {
 		return
 	}
+	// Held across the send: Shutdown closes these channels under the same lock,
+	// and a send that raced it would panic on a closed channel.
 	r.pendingPreviewMu.Lock()
+	defer r.pendingPreviewMu.Unlock()
 	ch := r.pendingPreview[response.RequestId]
-	r.pendingPreviewMu.Unlock()
 	if ch == nil {
 		return
 	}

@@ -29,13 +29,21 @@ func bucketARN(bucket string) string {
 	return arn
 }
 
+// maxRequestBody bounds what one call can make the catalog hold. Every request
+// this surface takes is a small JSON envelope; the largest carries a set of
+// properties, not data.
+const maxRequestBody = 4 << 20
+
 // decodeBody reads an optional JSON request body. Every Lance operation carries
 // one, but the fields that matter are also in the route, so an empty body is
 // not an error.
 func decodeBody(r *http.Request, into interface{}) error {
-	body, err := io.ReadAll(r.Body)
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBody+1))
 	if err != nil {
 		return fmt.Errorf("read request body: %w", err)
+	}
+	if len(body) > maxRequestBody {
+		return fmt.Errorf("request body is larger than %d bytes", maxRequestBody)
 	}
 	if len(strings.TrimSpace(string(body))) == 0 {
 		return nil

@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -156,5 +157,46 @@ func TestRequestObjectPreviewNeedsAConnectedWorker(t *testing.T) {
 	_, err := pluginSvc.RequestObjectPreview(context.Background(), objectID, "LANCE", 10)
 	if err == nil || !strings.Contains(err.Error(), "not connected") {
 		t.Fatalf("error = %v, want one naming the absent worker", err)
+	}
+}
+
+// Shutdown closes every pending channel, and a reply can arrive at the same
+// moment; delivering it outside the lock panics with "send on closed channel".
+// The window is narrow enough that this test does not reliably reproduce it -
+// widening it with a Gosched between the lookup and the send does, every time -
+// so treat this as exercising the path rather than as a regression alarm.
+func TestObjectPreviewResponseRacesShutdown(t *testing.T) {
+	t.Parallel()
+	const workerID = "lance-worker-1"
+	objectID := []string{"vectors", "ml", "embeddings"}
+
+	for i := 0; i < 50; i++ {
+		pluginSvc, session := previewPlugin(t, workerID)
+		observeObject(pluginSvc, workerID, objectID)
+
+		go func() {
+			_, _ = pluginSvc.RequestObjectPreview(context.Background(), objectID, "LANCE", 10)
+		}()
+		request := <-session.outgoing
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			pluginSvc.Shutdown()
+		}()
+		go func() {
+			defer wg.Done()
+			pluginSvc.handleWorkerMessage(workerID, &plugin_pb.WorkerToAdminMessage{
+				WorkerId: workerID,
+				Body: &plugin_pb.WorkerToAdminMessage_ObjectPreviewResponse{
+					ObjectPreviewResponse: &plugin_pb.ObjectPreviewResponse{
+						RequestId: request.RequestId,
+						Success:   true,
+					},
+				},
+			})
+		}()
+		wg.Wait()
 	}
 }

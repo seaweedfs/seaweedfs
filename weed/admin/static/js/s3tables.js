@@ -143,15 +143,24 @@ function initS3TablesBuckets() {
             const isLance = chosen && chosen.value === 'LANCE';
             const port = isLance ? lancePort : icebergPort;
             const name = (document.getElementById('s3tablesBucketName').value || '').trim();
+            // The bucket name is whatever the operator is typing, so it goes in
+            // as text. Building this with innerHTML would run their input.
+            formatHint.textContent = '';
             if (!port || port === '0') {
-                formatHint.innerHTML = 'A bucket holds one format. Tables of the other are refused. ' +
-                    '<span class="text-warning">No server is running for this format.</span>';
+                formatHint.appendChild(document.createTextNode('A bucket holds one format. Tables of the other are refused. '));
+                const warning = document.createElement('span');
+                warning.className = 'text-warning';
+                warning.textContent = 'No server is running for this format.';
+                formatHint.appendChild(warning);
                 return;
             }
             const path = isLance
-                ? '/v1/namespace/' + (name || '&lt;bucket&gt;') + '/list'
-                : '/v1/' + (name || '&lt;bucket&gt;') + '/namespaces';
-            formatHint.innerHTML = 'Clients reach this bucket at <code>' + origin + ':' + port + path + '</code>';
+                ? '/v1/namespace/' + (name || '<bucket>') + '/list'
+                : '/v1/' + (name || '<bucket>') + '/namespaces';
+            formatHint.appendChild(document.createTextNode('Clients reach this bucket at '));
+            const endpoint = document.createElement('code');
+            endpoint.textContent = origin + ':' + port + path;
+            formatHint.appendChild(endpoint);
         };
         formatPicker.addEventListener('change', describeEndpoint);
         const bucketNameField = document.getElementById('s3tablesBucketName');

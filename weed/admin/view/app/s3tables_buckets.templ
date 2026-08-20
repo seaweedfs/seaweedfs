@@ -320,14 +320,22 @@ dataset = lance.dataset(table.location, storage_options=table.storage_options)` 
 							<label class="form-label">Table Format</label>
 							<div class="row g-2" id="s3tablesBucketFormatPicker">
 								<div class="col-6">
-									<input type="radio" class="btn-check" name="format" id="s3tablesBucketFormatIceberg" value="ICEBERG" checked/>
+									if data.IcebergPort > 0 {
+										<input type="radio" class="btn-check" name="format" id="s3tablesBucketFormatIceberg" value="ICEBERG" checked/>
+									} else {
+										<input type="radio" class="btn-check" name="format" id="s3tablesBucketFormatIceberg" value="ICEBERG" disabled/>
+									}
 									<label class="btn btn-outline-primary w-100 text-start p-3" for="s3tablesBucketFormatIceberg">
 										<span class="d-block fw-semibold"><i class="fas fa-snowflake me-1"></i>Iceberg</span>
 										<span class="d-block small text-muted mt-1">Served over the Iceberg REST catalog. Spark, Trino, PyIceberg, DuckDB.</span>
 									</label>
 								</div>
 								<div class="col-6">
-									<input type="radio" class="btn-check" name="format" id="s3tablesBucketFormatLance" value="LANCE"/>
+									if data.LancePort > 0 {
+										<input type="radio" class="btn-check" name="format" id="s3tablesBucketFormatLance" value="LANCE"/>
+									} else {
+										<input type="radio" class="btn-check" name="format" id="s3tablesBucketFormatLance" value="LANCE" disabled/>
+									}
 									<label class="btn btn-outline-success w-100 text-start p-3" for="s3tablesBucketFormatLance">
 										<span class="d-block fw-semibold"><i class="fas fa-vector-square me-1"></i>Lance</span>
 										<span class="d-block small text-muted mt-1">Served over the Lance Namespace API. pylance, LanceDB, Ray.</span>

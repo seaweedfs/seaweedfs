@@ -1614,13 +1614,16 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	go func() {
 		defer done()
 		defer reportMiniStopped("Admin")
-		var icebergPort int
-		if miniS3Options.portIceberg != nil {
-			icebergPort = *miniS3Options.portIceberg
-		}
-		var lancePort int
-		if miniS3Options.portLance != nil {
-			lancePort = *miniS3Options.portLance
+		// Only advertise a catalog port when S3 is actually running: with -s3=false
+		// the admin UI would otherwise print an endpoint nothing is listening on.
+		var icebergPort, lancePort int
+		if miniEnableS3 != nil && *miniEnableS3 {
+			if miniS3Options.portIceberg != nil {
+				icebergPort = *miniS3Options.portIceberg
+			}
+			if miniS3Options.portLance != nil {
+				lancePort = *miniS3Options.portLance
+			}
 		}
 		if err := startAdminServer(ctx, miniAdminOptions, *miniEnableAdminUI, icebergPort, lancePort, urlPrefix); err != nil {
 			glog.Errorf("Admin server error: %v", err)

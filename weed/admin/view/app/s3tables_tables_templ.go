@@ -440,7 +440,7 @@ func S3TablesTables(data dash.S3TablesTablesData) templ.Component {
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 43, "\" title=\"View Iceberg Details\"><i class=\"fas fa-eye\"></i></a> ")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 43, "\" title=\"View Table Details\"><i class=\"fas fa-eye\"></i></a> ")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}

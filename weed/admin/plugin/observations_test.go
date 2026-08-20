@@ -99,3 +99,28 @@ func TestObservationAttributeStringHandlesAbsence(t *testing.T) {
 		t.Fatalf("absent attribute returned %q", got)
 	}
 }
+
+// A table path can be dropped and remade in another format. The observation left
+// behind describes something that is no longer there, so a caller asking about
+// the new format must not be handed it.
+func TestObservationLookupIsScopedToFormat(t *testing.T) {
+	store := NewObservationStore()
+	objectID := []string{"bucket", "ns", "table"}
+	store.Record("worker-1", &plugin_pb.WorkerObservations{
+		Observations: []*plugin_pb.ObjectObservation{{
+			ObjectId:   objectID,
+			Format:     "LANCE",
+			ObservedAt: timestamppb.New(time.Now()),
+		}},
+	})
+
+	if _, ok := store.GetFormat(objectID, "ICEBERG"); ok {
+		t.Fatal("a LANCE observation was returned for an ICEBERG table")
+	}
+	if _, ok := store.GetFormat(objectID, "lance"); !ok {
+		t.Fatal("format matching must not depend on case")
+	}
+	if _, ok := store.GetFormat(objectID, ""); ok {
+		t.Fatal("an unknown format must not match a recorded one")
+	}
+}

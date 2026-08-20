@@ -521,15 +521,15 @@ func (s *AdminServer) applyWorkerPreview(ctx context.Context, data *IcebergDataP
 		data.Rows = append(data.Rows, cells)
 	}
 	data.TotalRecords = response.TotalRows
-	data.PreviewedBy = pluginWorkerForObject(plugin, objectID)
+	data.PreviewedBy = pluginWorkerForObject(plugin, objectID, data.Format)
 	if int64(len(data.Rows)) < response.TotalRows {
 		data.PreviewNotes = append(data.PreviewNotes, fmt.Sprintf("Showing %d of %d rows.", len(data.Rows), response.TotalRows))
 	}
 }
 
 // pluginWorkerForObject names the worker that answered, for the page to show.
-func pluginWorkerForObject(p *plugin.Plugin, objectID []string) string {
-	if observed, ok := p.Observations().Get(objectID); ok {
+func pluginWorkerForObject(p *plugin.Plugin, objectID []string, format string) string {
+	if observed, ok := p.Observations().GetFormat(objectID, format); ok {
 		return observed.WorkerID
 	}
 	return ""

@@ -179,7 +179,7 @@ func (s *AdminServer) observedRowCounts(bucketArn string, namespaceParts []strin
 	counts := make(map[string]string)
 	for _, table := range tables {
 		objectID := append(append([]string{bucketName}, namespaceParts...), table.Name)
-		if observed, ok := plugin.Observations().Get(objectID); ok {
+		if observed, ok := plugin.Observations().GetFormat(objectID, table.Format); ok {
 			if rows := observed.AttributeString("rows"); rows != "" {
 				counts[table.Name] = rows
 			}
@@ -189,6 +189,15 @@ func (s *AdminServer) observedRowCounts(bucketArn string, namespaceParts []strin
 		return nil
 	}
 	return counts
+}
+
+// catalogPortForFormat is the port serving a format, or 0 when this cluster
+// does not run that catalog.
+func (s *AdminServer) catalogPortForFormat(format string) int {
+	if strings.EqualFold(format, s3tables.FormatLance) {
+		return s.lancePort
+	}
+	return s.icebergPort
 }
 
 // tableBucketFormat reports what the bucket says it holds, or "" for one made
@@ -380,7 +389,7 @@ func (s *AdminServer) applyWorkerObservation(details *IcebergTableDetailsData, b
 		return
 	}
 	objectID := append(append([]string{bucketName}, namespaceParts...), tableName)
-	observed, ok := plugin.Observations().Get(objectID)
+	observed, ok := plugin.Observations().GetFormat(objectID, details.Format)
 	if !ok {
 		return
 	}
@@ -737,6 +746,14 @@ func (s *AdminServer) CreateS3TablesBucket(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		format = normalized
+	}
+	// A bucket of a format this cluster does not serve is a bucket no client can
+	// reach. The picker disables the option; refuse it here too, since the API
+	// is reachable without the page.
+	if port := s.catalogPortForFormat(format); port == 0 {
+		writeJSONError(w, http.StatusBadRequest,
+			fmt.Sprintf("No %s endpoint is configured, so a %s bucket would be unreachable", format, format))
+		return
 	}
 	createReq := &s3tables.CreateTableBucketRequest{Name: req.Name, Tags: req.Tags, Format: format}
 	var resp s3tables.CreateTableBucketResponse
