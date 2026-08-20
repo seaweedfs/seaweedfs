@@ -497,3 +497,110 @@ async fn previews_rows_of_a_table() {
         preview.rows[0][1]
     );
 }
+
+/// The claim that removed managed versioning is not "one writer wins the
+/// conditional PUT" - that is only the mechanism. It is that concurrent writers
+/// lose nothing: the loser sees the conflict, rebases, and commits again. Eight
+/// writers appending at once must leave all eight batches in the table.
+#[tokio::test]
+async fn concurrent_writers_keep_every_commit() {
+    let _gateway = GATEWAY.lock().await;
+    let Some(url) = namespace_url() else {
+        eprintln!("set WEED_LANCE_NAMESPACE to run this test");
+        return;
+    };
+    const WRITERS: i64 = 8;
+    const ROWS_EACH: i64 = 4;
+
+    seed_table(&url, "racers", 1, ROWS_EACH as usize, false)
+        .await
+        .expect("seed the table the writers will append to");
+
+    let client = NamespaceClient::new(url.clone());
+    let id = vec!["vec".to_string(), "ml".to_string(), "racers".to_string()];
+    let description = client.describe_table(&id).await.expect("describe");
+    let mut options = description.storage_options.clone();
+    options.extend(fallback());
+
+    let writes = (0..WRITERS).map(|writer| {
+        let location = description.location.clone();
+        let options = options.clone();
+        tokio::spawn(
+            async move { append_rows(&location, &options, writer * 1000, ROWS_EACH).await },
+        )
+    });
+    for (writer, handle) in writes.enumerate() {
+        handle
+            .await
+            .expect("writer panicked")
+            .unwrap_or_else(|err| panic!("writer {writer} failed to commit: {err:#}"));
+    }
+
+    let table = weed_lance_worker::dataset::open(&client, &id, &fallback())
+        .await
+        .expect("reopen the table");
+    let rows = table.dataset.count_rows(None).await.expect("count rows");
+    let expected = (ROWS_EACH + WRITERS * ROWS_EACH) as usize;
+    assert_eq!(
+        rows, expected,
+        "concurrent commits lost data: {rows} rows, want {expected}"
+    );
+}
+
+/// Appends one batch to an existing dataset, the way an independent writer would.
+async fn append_rows(
+    location: &str,
+    options: &HashMap<String, String>,
+    first_id: i64,
+    rows: i64,
+) -> Result<()> {
+    use arrow_array::{
+        FixedSizeListArray, Float32Array, Int64Array, RecordBatch, RecordBatchIterator,
+    };
+    use arrow_schema::{DataType, Field, Schema};
+    use lance::dataset::{Dataset, WriteMode, WriteParams};
+    use lance::io::{ObjectStoreParams, StorageOptionsAccessor};
+    use std::sync::Arc;
+
+    const DIM: i32 = 16;
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int64, false),
+        Field::new(
+            "vec",
+            DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), DIM),
+            false,
+        ),
+    ]));
+    let ids: Vec<i64> = (0..rows).map(|r| first_id + r).collect();
+    let values: Vec<f32> = ids
+        .iter()
+        .flat_map(|id| (0..DIM).map(move |d| (*id as f32) + d as f32))
+        .collect();
+    let vectors = FixedSizeListArray::new(
+        Arc::new(Field::new("item", DataType::Float32, true)),
+        DIM,
+        Arc::new(Float32Array::from(values)),
+        None,
+    );
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![Arc::new(Int64Array::from(ids)), Arc::new(vectors)],
+    )?;
+    let params = WriteParams {
+        mode: WriteMode::Append,
+        store_params: Some(ObjectStoreParams {
+            storage_options_accessor: Some(Arc::new(StorageOptionsAccessor::with_static_options(
+                options.clone(),
+            ))),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    Dataset::write(
+        RecordBatchIterator::new(vec![Ok(batch)], schema.clone()),
+        location,
+        Some(params),
+    )
+    .await?;
+    Ok(())
+}

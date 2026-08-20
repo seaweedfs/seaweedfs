@@ -667,10 +667,13 @@ the rows read back. Note that this client version drops `check_declared` and
 `include_declared` on the wire, so `is_only_declared` reads null through it however the
 server behaves.
 
-The commit path is validated where it matters: eight writers race the same manifest key
-through S3 with `If-None-Match: *` and exactly one wins. The Rust worker's tests exercise
-the other half, appending to a dataset repeatedly over the same S3 endpoint, which is the
-sequence managed versioning could not complete at all.
+The commit path is validated at both levels. The mechanism: eight writers race the same
+manifest key through S3 with `If-None-Match: *`, and exactly one wins. The property that
+actually matters, which single-winner exclusivity does not by itself establish: eight
+writers append to one dataset concurrently through lance, and afterwards every batch is
+still there — the losers saw the conflict, rebased, and committed again. That second test
+is also the sequence managed versioning could not complete at all, since its store answers
+"put_if_not_exists is not supported" to the second commit.
 
 One more that belongs in the Iceberg suite, not this one: a Lance dataset registered through
 the Iceberg adapter must survive a full maintenance pass. Reading the code, that test should

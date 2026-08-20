@@ -331,7 +331,10 @@ dataset = lance.dataset(table.location, storage_options=table.storage_options)` 
 									</label>
 								</div>
 								<div class="col-6">
-									if data.LancePort > 0 {
+									if data.LancePort > 0 && data.IcebergPort <= 0 {
+										// The only format this cluster serves, so it is the one preselected.
+										<input type="radio" class="btn-check" name="format" id="s3tablesBucketFormatLance" value="LANCE" checked/>
+									} else if data.LancePort > 0 {
 										<input type="radio" class="btn-check" name="format" id="s3tablesBucketFormatLance" value="LANCE"/>
 									} else {
 										<input type="radio" class="btn-check" name="format" id="s3tablesBucketFormatLance" value="LANCE" disabled/>
