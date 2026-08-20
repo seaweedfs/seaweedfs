@@ -311,11 +311,12 @@ func (vl *VolumeLayout) ensureCorrectWritables(vid needle.VolumeId) {
 			time.Since(st.fullSince) < capacityRecoveryDelay {
 			return
 		}
-		// A volume whose effective size is still past the crowded threshold
-		// (marked by UpdateVolumeSize's decay pass) must not be restored here:
-		// UpdateVolumeSize refused the recovery for a reason this helper would
-		// otherwise override.
-		if _, crowded := vl.crowded[vid]; crowded {
+		// A volume already at the limit must not be restored here: the next
+		// assign's RecordAssign would remove it again. Crowded is the wrong
+		// test for that -- it starts at 90%, and a crowded volume that lost a
+		// replica would never be writable again once the replica returned,
+		// since nothing writes to it and its size can no longer fall.
+		if st := vl.sizeTracking[vid]; st != nil && st.effectiveSize >= vl.volumeSizeLimit {
 			return
 		}
 		vl.setVolumeWritable(vid)

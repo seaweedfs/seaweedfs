@@ -3,6 +3,10 @@ package topology
 import (
 	"testing"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 // A volume that grew past the limit keeps bouncing between writable and
@@ -155,11 +159,10 @@ func TestEnsureCorrectWritablesHonorsRecoveryCooldown(t *testing.T) {
 	}
 }
 
-// After the cooldown elapses, a volume whose effective size is still past the
-// crowded threshold must not be restored by ensureCorrectWritables: only
-// UpdateVolumeSize's recovery path -- which rejects the crowded state -- may
-// bring it back to writable.
-func TestEnsureCorrectWritablesDoesNotRestoreCrowdedVolume(t *testing.T) {
+// After the cooldown elapses, a volume whose effective size is still at the
+// limit must not be restored by ensureCorrectWritables: the next assign would
+// remove it again.
+func TestEnsureCorrectWritablesDoesNotRestoreVolumeStillAtLimit(t *testing.T) {
 	layout := `
 {
   "dc1":{
@@ -178,8 +181,7 @@ func TestEnsureCorrectWritablesDoesNotRestoreCrowdedVolume(t *testing.T) {
 
 	// Remove the volume for capacity, as RecordAssign would. effectiveSize
 	// lands at 13000, past the limit (10000); after the decay against a
-	// reported size of 8000 it stays at 10500, still past the crowded
-	// threshold (9000).
+	// reported size of 8000 it stays at 10500, still past the limit.
 	if !vl.RecordAssign(1, 5000) {
 		t.Fatalf("RecordAssign should report the volume reached capacity")
 	}
@@ -195,7 +197,7 @@ func TestEnsureCorrectWritablesDoesNotRestoreCrowdedVolume(t *testing.T) {
 
 	// Heartbeat reports a size below the limit: the oversized mark clears,
 	// but the decay only halves the pending estimate, so effectiveSize stays
-	// past the crowded threshold and UpdateVolumeSize refuses recovery.
+	// past the limit and UpdateVolumeSize refuses recovery.
 	vi.Size = 8000
 	vl.UpdateOversizedState(&vi, dn)
 	vl.UpdateVolumeSize(1, vi.Size, 0)
@@ -203,11 +205,73 @@ func TestEnsureCorrectWritablesDoesNotRestoreCrowdedVolume(t *testing.T) {
 		t.Fatalf("expected oversized mark cleared after the shrink report")
 	}
 
-	// After the cooldown, the volume is still crowded: ensureCorrectWritables
-	// must not override UpdateVolumeSize's refusal.
+	// After the cooldown, the volume is still at the limit:
+	// ensureCorrectWritables must not override UpdateVolumeSize's refusal.
 	advanceSizeTrackingClock(vl, 1, capacityRecoveryDelay+time.Second)
 	vl.EnsureCorrectWritables(&vi)
 	if w, _ := vl.GetWritableVolumeCount(); w != 0 {
-		t.Fatalf("expected crowded volume to stay unwritable, got %d writable", w)
+		t.Fatalf("expected volume at the limit to stay unwritable, got %d writable", w)
+	}
+}
+
+// A crowded volume is not a full one: it is above the growth threshold but
+// still has room. One that drops out of writables while a replica is away must
+// come back when the replica returns -- nothing writes to a volume that is not
+// writable, so its size can never fall on its own and the lockout would be
+// permanent.
+func TestEnsureCorrectWritablesRestoresCrowdedVolumeAfterReplicaReturns(t *testing.T) {
+	layout := `
+{
+  "dc1":{
+    "rack1":{
+      "server1":{
+        "ip":"10.0.0.1",
+        "volumes":[
+          {"id":1, "size":9500, "replication":"001"}
+        ],
+        "limit":10
+      },
+      "server2":{
+        "ip":"10.0.0.2",
+        "volumes":[
+          {"id":1, "size":9500, "replication":"001"}
+        ],
+        "limit":10
+      }
+    }
+  }
+}
+`
+	topo := setupWithLimit(t, layout, 10000)
+	rp, _ := super_block.NewReplicaPlacementFromString("001")
+	vl := topo.GetVolumeLayout("", rp, needle.EMPTY_TTL, types.HardDriveType)
+
+	// 9500 is past the growth threshold (9000) but under the limit (10000).
+	vl.UpdateVolumeSize(1, 9500, 0)
+	if _, crowded := vl.crowded[1]; !crowded {
+		t.Fatalf("expected the volume to be crowded")
+	}
+	if w, _ := vl.GetWritableVolumeCount(); w != 1 {
+		t.Fatalf("a crowded volume is still writable, got %d writable", w)
+	}
+
+	dn := vl.vid2location[1].list[1]
+	vi, err := dn.GetVolumesById(1)
+	if err != nil {
+		t.Fatalf("GetVolumesById: %v", err)
+	}
+	vl.UnRegisterVolume(&vi, dn)
+	if w, _ := vl.GetWritableVolumeCount(); w != 0 {
+		t.Fatalf("expected 0 writable while a replica is missing, got %d", w)
+	}
+
+	// The replica comes back on the next heartbeat.
+	topo.RegisterVolumeLayout(vi, dn)
+	advanceSizeTrackingClock(vl, 1, 5*time.Second)
+	vl.UpdateOversizedState(&vi, dn)
+	vl.UpdateVolumeSize(1, vi.Size, 0)
+	vl.EnsureCorrectWritables(&vi)
+	if w, _ := vl.GetWritableVolumeCount(); w != 1 {
+		t.Fatalf("expected the volume writable again, got %d", w)
 	}
 }
