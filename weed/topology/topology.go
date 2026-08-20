@@ -637,11 +637,10 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 		// Without this, the volume stays visible in volume.list/admin UI yet
 		// LookupVolume returns "volume id not found".
 		if !vl.HasDataNode(v.Id, dn) {
-			// RegisterVolume sets the oversized mark via its defer; the writable
-			// correction runs once, after UpdateVolumeSize below.
-			if !vl.RegisterVolume(&v, dn) {
-				// Dropped with its collection; re-resolve.
-				t.RegisterVolumeLayout(v, dn)
+			for !vl.RegisterVolume(&v, dn) {
+				// Dropped with its collection; the next lookup creates a fresh
+				// one, which the calls below must use too.
+				vl = t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
 			}
 			// Volumes new to the disk map were registered above, so reaching
 			// here means only the lookup index had lost it. Clients were told
