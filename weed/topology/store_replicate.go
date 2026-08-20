@@ -97,6 +97,9 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 				"type": {"replicate"},
 				"ttl":  {n.Ttl.String()},
 			}
+			if fsync {
+				q.Set("fsync", "true")
+			}
 			if n.LastModified > 0 {
 				q.Set("ts", strconv.FormatUint(n.LastModified, 10))
 			}

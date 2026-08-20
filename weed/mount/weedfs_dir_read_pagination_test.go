@@ -336,3 +336,24 @@ func TestReadDirDirectTrimsConsumedEntries(t *testing.T) {
 		t.Errorf("handle held %d entries at peak, want well under the %d in the directory", peak, total)
 	}
 }
+
+// The table has to key on the sanitized name, not the stored bytes.
+func TestReadDirPlusSanitizedName(t *testing.T) {
+	dir := util.FullPath("/images")
+	const rawName = "bad\xffname.jpg"
+	wfs := newPagingWFS(t, dir, []string{"good.jpg", rawName}, 0)
+	dirInode, _ := wfs.inodeToPath.GetInode(dir)
+
+	sink := &benchSink{plus: true, takesRef: true, sinkLimit: 16}
+	if got := walkOnce(t, wfs, dirInode, sink, false); got != 4 {
+		t.Fatalf("listed %d entries, want 4 (. .. and two children)", got)
+	}
+
+	sanitized := dir.Child(util.SanitizeUTF8Name(rawName))
+	if !wfs.inodeToPath.HasPath(sanitized) {
+		t.Errorf("%s not in the inode table", sanitized)
+	}
+	if wfs.inodeToPath.HasPath(dir.Child(rawName)) {
+		t.Errorf("%s keyed on the unsanitized name", dir.Child(rawName))
+	}
+}

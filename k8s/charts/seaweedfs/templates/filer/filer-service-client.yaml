@@ -10,9 +10,6 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: filer
-{{- if .Values.filer.metricsPort }}
-    monitoring: "true"
-{{- end }}
 {{- if .Values.filer.annotations }}
   annotations:
     {{- toYaml .Values.filer.annotations | nindent 4 }}

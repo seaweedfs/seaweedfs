@@ -166,7 +166,7 @@ func TestCommitCompactDeletionTailKeepsWritable(t *testing.T) {
 	}
 
 	for i := uint64(1); i <= 5; i++ {
-		if _, _, _, err := v.writeNeedle2(newRandomNeedle(i), true, false); err != nil {
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(i), true, false, false); err != nil {
 			t.Fatalf("write %d: %v", i, err)
 		}
 	}
@@ -299,7 +299,7 @@ func TestCompactByIndex_DropsDanglingNeedle(t *testing.T) {
 	infos := make([]*needleInfo, goodNeedleCount)
 	for i := 1; i <= goodNeedleCount; i++ {
 		n := newRandomNeedle(uint64(i))
-		_, size, _, err := v.writeNeedle2(n, true, false)
+		_, size, _, err := v.writeNeedle2(n, true, false, false)
 		if err != nil {
 			t.Fatalf("write needle %d: %v", i, err)
 		}
@@ -369,7 +369,7 @@ func TestCompactByIndex_DropsDanglingNeedle(t *testing.T) {
 
 func doSomeWritesDeletes(i int, v *Volume, t *testing.T, infos []*needleInfo) {
 	n := newRandomNeedle(uint64(i))
-	_, size, _, err := v.writeNeedle2(n, true, false)
+	_, size, _, err := v.writeNeedle2(n, true, false, false)
 	if err != nil {
 		t.Fatalf("write file %d: %v", i, err)
 	}

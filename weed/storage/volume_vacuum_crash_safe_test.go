@@ -42,7 +42,7 @@ func TestReconcileRollForwardMarkerOnly(t *testing.T) {
 
 	const liveCount = 6
 	for i := uint64(1); i <= liveCount; i++ {
-		if _, _, _, err := v.writeNeedle2(newRandomNeedle(i), true, false); err != nil {
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(i), true, false, false); err != nil {
 			t.Fatalf("write %d: %v", i, err)
 		}
 	}
@@ -117,7 +117,7 @@ func TestReconcileRollForwardPartialRename(t *testing.T) {
 	}
 	const liveCount = 6
 	for i := uint64(1); i <= liveCount; i++ {
-		if _, _, _, err := v.writeNeedle2(newRandomNeedle(i), true, false); err != nil {
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(i), true, false, false); err != nil {
 			t.Fatalf("write %d: %v", i, err)
 		}
 	}
@@ -182,7 +182,7 @@ func TestReconcileRollBackNoMarker(t *testing.T) {
 		t.Fatalf("volume creation: %v", err)
 	}
 	for i := uint64(1); i <= 4; i++ {
-		if _, _, _, err := v.writeNeedle2(newRandomNeedle(i), true, false); err != nil {
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(i), true, false, false); err != nil {
 			t.Fatalf("write %d: %v", i, err)
 		}
 	}
@@ -228,7 +228,7 @@ func TestReconcileSkipsLoadedVolumeMidVacuum(t *testing.T) {
 		t.Fatalf("volume creation: %v", err)
 	}
 	for i := uint64(1); i <= 4; i++ {
-		if _, _, _, err := v.writeNeedle2(newRandomNeedle(i), true, false); err != nil {
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(i), true, false, false); err != nil {
 			t.Fatalf("write %d: %v", i, err)
 		}
 	}
@@ -270,7 +270,7 @@ func TestApplyCompactSwapMissingTempFilesPreservesLive(t *testing.T) {
 		t.Fatalf("volume creation: %v", err)
 	}
 	for i := uint64(1); i <= 3; i++ {
-		if _, _, _, err := v.writeNeedle2(newRandomNeedle(i), true, false); err != nil {
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(i), true, false, false); err != nil {
 			t.Fatalf("write %d: %v", i, err)
 		}
 	}
@@ -305,7 +305,7 @@ func TestDestroyRemovesCommitMarker(t *testing.T) {
 		t.Fatalf("volume creation: %v", err)
 	}
 	for i := uint64(1); i <= 3; i++ {
-		if _, _, _, err := v.writeNeedle2(newRandomNeedle(i), true, false); err != nil {
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(i), true, false, false); err != nil {
 			t.Fatalf("write %d: %v", i, err)
 		}
 	}

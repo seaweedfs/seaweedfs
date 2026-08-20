@@ -2,25 +2,21 @@ FROM ubuntu:22.04
 
 LABEL author="Chris Lu"
 
-# Use Azure's Ubuntu mirror — much faster than archive.ubuntu.com from GitHub-hosted runners,
-# which have been hanging long enough on Ign:/retry to trip the 10-min step timeout.
 # Note: This e2e test image intentionally runs as root for simplicity and compatibility.
 # Production images (Dockerfile.go_build) use proper user isolation with su-exec.
 # For testing purposes, running as root avoids permission complexities and dependency
 # on Alpine-specific tools like su-exec (not available in Ubuntu repos).
-RUN sed -i 's|http://archive.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g; s|http://security.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list && \
-    apt-get -o Acquire::http::Timeout=15 update && \
-    DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::http::Timeout=15 install -y \
-    --no-install-recommends \
-    --no-install-suggests \
-    curl \
-    fio \
-    fuse \
-    ca-certificates \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/* \
-    && rm -rf /tmp/* \
-    && rm -rf /var/tmp/*
+
+# apt-install prefers Azure's mirror, which archive.ubuntu.com is slow enough from
+# GitHub-hosted runners to justify, and falls through to archive.ubuntu.com when
+# Azure is unreachable - which it periodically is, and Acquire::Retries against a
+# single mirror just retries a dead host. Images built FROM this one install
+# through it for the same reason.
+COPY apt-install /usr/local/bin/apt-install
+RUN chmod +x /usr/local/bin/apt-install && \
+    apt-install curl fio fuse ca-certificates && \
+    rm -rf /tmp/* /var/tmp/*
+
 RUN mkdir -p /etc/seaweedfs /data/filerldb2
 
 COPY ./weed /usr/bin/

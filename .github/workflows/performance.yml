@@ -175,10 +175,6 @@ jobs:
         with:
           go-version-file: 'go.mod'
 
-      - name: Install protobuf compiler
-        if: matrix.impl == 'rust'
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-
       - name: Install Rust toolchain
         if: matrix.impl == 'rust'
         uses: dtolnay/rust-toolchain@stable
@@ -330,10 +326,6 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
-
-      - name: Install protobuf compiler
-        if: matrix.impl == 'rust'
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
       - name: Install Rust toolchain
         if: matrix.impl == 'rust'

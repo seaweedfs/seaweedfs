@@ -385,6 +385,46 @@ async fn write_then_read_needle() {
     assert_eq!(body, payload, "GET body should match written data");
 }
 
+// A durable upload takes the same route through the handler; the flush is not
+// observable from here, but a broken wiring would show up as a failed write.
+#[tokio::test]
+async fn write_with_fsync_then_read_needle() {
+    let (state, _tmp) = test_state();
+
+    let uri = "/1,01637037d6?fsync=true";
+    let payload = b"durable through the handler";
+
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(uri)
+                .body(Body::from(payload.to_vec()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::CREATED,
+        "a durable POST should return 201 Created"
+    );
+
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/1,01637037d6")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_bytes(response).await, payload);
+}
+
 // ============================================================================
 // 5. DELETE deletes a needle, subsequent GET returns 404
 // ============================================================================
@@ -739,6 +779,76 @@ async fn replicate_write_raw_body_is_stored() {
     assert_eq!(body_bytes(response).await, payload);
 }
 
+/// Go reads fsync through r.FormValue, which decodes the query, so a
+/// percent-encoded value has to reach the write path here too.
+#[tokio::test]
+async fn write_with_percent_encoded_fsync_is_accepted() {
+    let (state, _tmp) = test_state();
+    let payload = b"encoded durable payload";
+
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/1,01637037d6?fsync=%74rue")
+                .body(Body::from(payload.to_vec()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/1,01637037d6")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_bytes(response).await, payload);
+}
+
+/// The fan-out query a Go primary sends for a durable write: `fsync=true` rides
+/// along with `type=replicate`, and the replica has to honor it rather than ack
+/// out of the page cache.
+#[tokio::test]
+async fn replicate_write_with_fsync_is_stored() {
+    let (state, _tmp) = test_state();
+    let uri = "/1,01637037d6?fsync=true&type=replicate";
+    let payload = b"durable replica bytes";
+
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(uri)
+                .body(Body::from(payload.to_vec()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/1,01637037d6")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_bytes(response).await, payload);
+}
+
 /// Multipart `type=replicate` write (the shape the Go gateway uploader sends)
 /// is stored and reads back.
 #[tokio::test]
@@ -882,7 +992,7 @@ async fn chunk_manifest_expands_chunk_stored_on_ec_volume() {
             data_size: chunk_data.len() as u32,
             ..Needle::default()
         };
-        v.write_needle(&mut n, true).unwrap();
+        v.write_needle(&mut n, true, false).unwrap();
         v.sync_to_disk().unwrap();
         v.close();
     }
@@ -916,7 +1026,9 @@ async fn chunk_manifest_expands_chunk_stored_on_ec_volume() {
         };
         n.data_size = n.data.len() as u32;
         n.set_is_chunk_manifest();
-        store.write_volume_needle(VolumeId(1), &mut n).unwrap();
+        store
+            .write_volume_needle(VolumeId(1), &mut n, false)
+            .unwrap();
     }
 
     // GET the manifest object; expect the reconstructed chunk bytes.

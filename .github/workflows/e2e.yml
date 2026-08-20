@@ -61,13 +61,10 @@ jobs:
 
     - name: Install dependencies
       run: |
-        # Use faster mirrors and install with timeout
         sudo rm -f /etc/apt/sources.list.d/azure-cli.list /etc/apt/sources.list.d/microsoft-prod.list
-        echo "deb http://azure.archive.ubuntu.com/ubuntu/ $(lsb_release -cs) main restricted universe multiverse" | sudo tee /etc/apt/sources.list
-        echo "deb http://azure.archive.ubuntu.com/ubuntu/ $(lsb_release -cs)-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
-        
-        sudo apt-get update --fix-missing
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends fuse
+        # Same helper the e2e image installs through: the runner's own list is
+        # azure-only too, and an outage there fails this step outright.
+        sudo ./apt-install fuse
         
         # Verify FUSE installation
         echo "FUSE version: $(fusermount --version 2>&1 || echo 'fusermount not found')"

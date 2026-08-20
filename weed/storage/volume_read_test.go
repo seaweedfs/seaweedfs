@@ -59,7 +59,7 @@ func TestReadNeedMetaWithWritesAndUpdates(t *testing.T) {
 		n.Flags = 0x08
 		n.LastModified = mockLastUpdateTime
 		mockLastUpdateTime += 2000
-		offset, _, _, err := v.writeNeedle2(n, true, false)
+		offset, _, _, err := v.writeNeedle2(n, true, false, false)
 		if err != nil {
 			t.Fatalf("write needle %d: %v", i, err)
 		}
@@ -98,7 +98,7 @@ func TestReadNeedMetaWithDeletesThenWrites(t *testing.T) {
 		n.Flags = 0x08
 		n.LastModified = mockLastUpdateTime
 		mockLastUpdateTime += 2000
-		offset, _, _, err := v.writeNeedle2(n, true, false)
+		offset, _, _, err := v.writeNeedle2(n, true, false, false)
 		if err != nil {
 			t.Fatalf("write needle %d: %v", i, err)
 		}

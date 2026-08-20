@@ -4327,8 +4327,9 @@ type SubscribeMetadataResponse struct {
 	Directory         string                       `protobuf:"bytes,1,opt,name=directory,proto3" json:"directory,omitempty"`
 	EventNotification *EventNotification           `protobuf:"bytes,2,opt,name=event_notification,json=eventNotification,proto3" json:"event_notification,omitempty"`
 	TsNs              int64                        `protobuf:"varint,3,opt,name=ts_ns,json=tsNs,proto3" json:"ts_ns,omitempty"`
-	Events            []*SubscribeMetadataResponse `protobuf:"bytes,4,rep,name=events,proto3" json:"events,omitempty"`                                // batch of additional events (backlog catch-up)
-	LogFileRefs       []*LogFileChunkRef           `protobuf:"bytes,5,rep,name=log_file_refs,json=logFileRefs,proto3" json:"log_file_refs,omitempty"` // log file chunk refs for client direct-read
+	Events            []*SubscribeMetadataResponse `protobuf:"bytes,4,rep,name=events,proto3" json:"events,omitempty"`                                 // batch of additional events (backlog catch-up)
+	LogFileRefs       []*LogFileChunkRef           `protobuf:"bytes,5,rep,name=log_file_refs,json=logFileRefs,proto3" json:"log_file_refs,omitempty"`  // log file chunk refs for client direct-read
+	FlushedTsNs       int64                        `protobuf:"varint,6,opt,name=flushed_ts_ns,json=flushedTsNs,proto3" json:"flushed_ts_ns,omitempty"` // local log-buffer flush watermark: everything at or below it is on disk
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -4396,6 +4397,13 @@ func (x *SubscribeMetadataResponse) GetLogFileRefs() []*LogFileChunkRef {
 		return x.LogFileRefs
 	}
 	return nil
+}
+
+func (x *SubscribeMetadataResponse) GetFlushedTsNs() int64 {
+	if x != nil {
+		return x.FlushedTsNs
+	}
+	return 0
 }
 
 type ListMetadataSubscribersRequest struct {
@@ -7355,13 +7363,14 @@ const file_filer_proto_rawDesc = "" +
 	" \x03(\tR\vdirectories\x128\n" +
 	"\x18client_supports_batching\x18\v \x01(\bR\x16clientSupportsBatching\x12E\n" +
 	"\x1fclient_supports_metadata_chunks\x18\f \x01(\bR\x1cclientSupportsMetadataChunks\x12C\n" +
-	"\x1eclient_supports_idle_heartbeat\x18\r \x01(\bR\x1bclientSupportsIdleHeartbeat\"\x96\x02\n" +
+	"\x1eclient_supports_idle_heartbeat\x18\r \x01(\bR\x1bclientSupportsIdleHeartbeat\"\xba\x02\n" +
 	"\x19SubscribeMetadataResponse\x12\x1c\n" +
 	"\tdirectory\x18\x01 \x01(\tR\tdirectory\x12J\n" +
 	"\x12event_notification\x18\x02 \x01(\v2\x1b.filer_pb.EventNotificationR\x11eventNotification\x12\x13\n" +
 	"\x05ts_ns\x18\x03 \x01(\x03R\x04tsNs\x12;\n" +
 	"\x06events\x18\x04 \x03(\v2#.filer_pb.SubscribeMetadataResponseR\x06events\x12=\n" +
-	"\rlog_file_refs\x18\x05 \x03(\v2\x19.filer_pb.LogFileChunkRefR\vlogFileRefs\"C\n" +
+	"\rlog_file_refs\x18\x05 \x03(\v2\x19.filer_pb.LogFileChunkRefR\vlogFileRefs\x12\"\n" +
+	"\rflushed_ts_ns\x18\x06 \x01(\x03R\vflushedTsNs\"C\n" +
 	"\x1eListMetadataSubscribersRequest\x12!\n" +
 	"\fclient_types\x18\x01 \x03(\tR\vclientTypes\"a\n" +
 	"\x1fListMetadataSubscribersResponse\x12>\n" +

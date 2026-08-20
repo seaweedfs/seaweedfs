@@ -40,7 +40,7 @@ func writeTestVolume(t *testing.T, dir string, needleCount int) map[uint64]*need
 	written := make(map[uint64]*needle.Needle)
 	for i := 1; i <= needleCount; i++ {
 		n := newRandomNeedle(uint64(i))
-		if _, _, _, err := v.writeNeedle2(n, true, false); err != nil {
+		if _, _, _, err := v.writeNeedle2(n, true, false, false); err != nil {
 			v.Close()
 			t.Fatalf("write needle %d: %v", i, err)
 		}

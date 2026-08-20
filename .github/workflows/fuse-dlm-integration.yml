@@ -40,10 +40,11 @@ jobs:
         with:
           go-version-file: 'go.mod'
 
-      - name: Install FUSE dependencies
+      - name: Configure FUSE
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libfuse3-dev
+          # Nothing to install: fuse3 ships fusermount3 and is pre-installed,
+          # and go-fuse is pure Go, so the libfuse headers were never linked
+          # against.
           echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
           sudo chmod 644 /etc/fuse.conf
 
