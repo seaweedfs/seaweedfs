@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -31,16 +32,38 @@ type MetaAggregator struct {
 	MetaLogBuffer  *log_buffer.LogBuffer
 	peerChans      map[pb.ServerAddress]chan struct{}
 	peerChansLock  sync.Mutex
+	// peerWatermarks tracks, per subscribed peer (self included), the newest
+	// timestamp received on that peer's stream (event or idle heartbeat).
+	// The minimum is a delivery low-watermark: MetaLogBuffer is complete up
+	// to it, so a subscriber held at or below it cannot miss a late-merged
+	// peer event. An unsignalled peer pins it at zero.
+	peerWatermarks map[pb.ServerAddress]int64
+	// peerFlushWatermarks tracks each peer's reported flush watermark:
+	// everything at or below it is on that peer's disk. The minimum bounds
+	// persisted-log reads — beyond it a peer may still land a log file (or
+	// chunk) whose events a passed cursor would skip.
+	peerFlushWatermarks map[pb.ServerAddress]int64
+	// peerRemovedAtNs marks peers the master removed, with the removal time.
+	// A removed peer keeps participating in the low-watermarks for a grace
+	// period: removal usually means a flap (frozen or partitioned filer)
+	// whose unflushed events still exist, and de-accounting it at once would
+	// let subscribers advance past them. A re-add clears the mark; a peer
+	// gone past the grace is dropped so it cannot pin the low-watermarks.
+	peerRemovedAtNs    map[pb.ServerAddress]int64
+	peerWatermarksLock sync.Mutex
 }
 
 // MetaAggregator only aggregates data "on the fly". The logs are not re-persisted to disk.
 // The old data comes from what each LocalMetadata persisted on disk.
 func NewMetaAggregator(filer *Filer, self pb.ServerAddress, grpcDialOption grpc.DialOption) *MetaAggregator {
 	t := &MetaAggregator{
-		filer:          filer,
-		self:           self,
-		grpcDialOption: grpcDialOption,
-		peerChans:      make(map[pb.ServerAddress]chan struct{}),
+		filer:               filer,
+		self:                self,
+		grpcDialOption:      grpcDialOption,
+		peerChans:           make(map[pb.ServerAddress]chan struct{}),
+		peerWatermarks:      make(map[pb.ServerAddress]int64),
+		peerFlushWatermarks: make(map[pb.ServerAddress]int64),
+		peerRemovedAtNs:     make(map[pb.ServerAddress]int64),
 	}
 	// nil notifyFn: aggregated subscribers wake through the buffer's
 	// subscriber channels, not a cond.
@@ -61,13 +84,126 @@ func (ma *MetaAggregator) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, star
 		}
 		stopChan := make(chan struct{})
 		ma.peerChans[address] = stopChan
+		// Account for the peer before its stream signals; keep prior values
+		// on reconnect.
+		ma.initPeerWatermark(address)
 		go ma.loopSubscribeToOneFiler(ma.filer, ma.self, address, startFrom, stopChan)
 	} else {
 		if prevChan, found := ma.peerChans[address]; found {
 			close(prevChan)
 			delete(ma.peerChans, address)
 		}
+		// Only mark: dropping the watermarks at once would let subscribers
+		// advance past a flapping peer's unflushed events (see peerRemovedAtNs).
+		ma.markPeerWatermarkRemoved(address)
 	}
+}
+
+// peerWatermarkRemovalGrace is how long a removed peer keeps participating
+// in the low-watermarks. Matches the subscribe loops' settled horizon, which
+// already bounds a stale watermark's influence within it.
+const peerWatermarkRemovalGrace = 2 * LogFlushInterval
+
+// initPeerWatermark adds the peer with a zero (unknown) watermark; a re-added
+// peer keeps its prior values and stops being considered removed.
+func (ma *MetaAggregator) initPeerWatermark(peer pb.ServerAddress) {
+	ma.peerWatermarksLock.Lock()
+	defer ma.peerWatermarksLock.Unlock()
+	if _, found := ma.peerWatermarks[peer]; !found {
+		ma.peerWatermarks[peer] = 0
+	}
+	if _, found := ma.peerFlushWatermarks[peer]; !found {
+		ma.peerFlushWatermarks[peer] = 0
+	}
+	delete(ma.peerRemovedAtNs, peer)
+}
+
+func (ma *MetaAggregator) markPeerWatermarkRemoved(peer pb.ServerAddress) {
+	ma.peerWatermarksLock.Lock()
+	defer ma.peerWatermarksLock.Unlock()
+	if _, found := ma.peerWatermarks[peer]; !found {
+		return
+	}
+	// First removal time wins: duplicate removals must not refresh the grace.
+	if _, marked := ma.peerRemovedAtNs[peer]; !marked {
+		ma.peerRemovedAtNs[peer] = time.Now().UnixNano()
+	}
+}
+
+// dropExpiredRemovedPeersLocked drops peers whose removal outlived the grace.
+// Caller must hold peerWatermarksLock.
+func (ma *MetaAggregator) dropExpiredRemovedPeersLocked() {
+	if len(ma.peerRemovedAtNs) == 0 {
+		return
+	}
+	cutoff := time.Now().UnixNano() - int64(peerWatermarkRemovalGrace)
+	for peer, removedAt := range ma.peerRemovedAtNs {
+		if removedAt < cutoff {
+			delete(ma.peerRemovedAtNs, peer)
+			delete(ma.peerWatermarks, peer)
+			delete(ma.peerFlushWatermarks, peer)
+		}
+	}
+}
+
+// advancePeerWatermark records the peer as received-through tsNs. Monotonic,
+// and only for tracked peers: a dropped peer's straggler must not recreate
+// its entry and pin the low-watermark.
+func (ma *MetaAggregator) advancePeerWatermark(peer pb.ServerAddress, tsNs int64) {
+	ma.peerWatermarksLock.Lock()
+	defer ma.peerWatermarksLock.Unlock()
+	if cur, found := ma.peerWatermarks[peer]; found && tsNs > cur {
+		ma.peerWatermarks[peer] = tsNs
+	}
+}
+
+// advancePeerFlushWatermark records the peer's reported flush watermark.
+// Monotonic, and only for tracked peers (see advancePeerWatermark).
+func (ma *MetaAggregator) advancePeerFlushWatermark(peer pb.ServerAddress, tsNs int64) {
+	ma.peerWatermarksLock.Lock()
+	defer ma.peerWatermarksLock.Unlock()
+	if cur, found := ma.peerFlushWatermarks[peer]; found && tsNs > cur {
+		ma.peerFlushWatermarks[peer] = tsNs
+	}
+}
+
+// PeerLowFlushWatermarkTsNs returns the minimum reported flush watermark
+// across all current peers: every peer's events at or below this time are on
+// disk. Returns 0 when any peer has not reported yet (completeness unknown).
+func (ma *MetaAggregator) PeerLowFlushWatermarkTsNs() int64 {
+	ma.peerWatermarksLock.Lock()
+	defer ma.peerWatermarksLock.Unlock()
+	ma.dropExpiredRemovedPeersLocked()
+	if len(ma.peerFlushWatermarks) == 0 {
+		return 0
+	}
+	var low int64 = math.MaxInt64
+	for _, tsNs := range ma.peerFlushWatermarks {
+		if tsNs < low {
+			low = tsNs
+		}
+	}
+	return low
+}
+
+// PeerLowWatermarkTsNs returns the minimum received-through timestamp across
+// all current peers (self included): MetaLogBuffer is complete up to this
+// time. Returns 0 when any peer has not signalled yet (or none are tracked),
+// i.e. completeness is unknown.
+func (ma *MetaAggregator) PeerLowWatermarkTsNs() int64 {
+	ma.peerWatermarksLock.Lock()
+	defer ma.peerWatermarksLock.Unlock()
+	ma.dropExpiredRemovedPeersLocked()
+	if len(ma.peerWatermarks) == 0 {
+		return 0
+	}
+	var low int64 = math.MaxInt64
+	for _, tsNs := range ma.peerWatermarks {
+		if tsNs < low {
+			low = tsNs
+		}
+	}
+	return low
 }
 
 func (ma *MetaAggregator) HasRemotePeers() bool {
@@ -103,7 +239,7 @@ func (ma *MetaAggregator) loopSubscribeToOneFiler(f *Filer, self pb.ServerAddres
 	lastTsNs := startFrom.UnixNano()
 	for {
 		glog.V(0).Infof("loopSubscribeToOneFiler read %s start from %v %d", peer, time.Unix(0, lastTsNs), lastTsNs)
-		nextLastTsNs, err := ma.doSubscribeToOneFiler(f, self, peer, lastTsNs)
+		nextLastTsNs, err := ma.doSubscribeToOneFiler(f, self, peer, lastTsNs, stopChan)
 
 		// check stopChan to see if we should stop
 		select {
@@ -127,7 +263,7 @@ func (ma *MetaAggregator) loopSubscribeToOneFiler(f *Filer, self pb.ServerAddres
 	}
 }
 
-func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress, peer pb.ServerAddress, startFrom int64) (int64, error) {
+func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress, peer pb.ServerAddress, startFrom int64, stopChan <-chan struct{}) (int64, error) {
 
 	/*
 		Each filer reads the "filer.store.id", which is the store's signature when filer starts.
@@ -225,10 +361,23 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 		return nil
 	}
 
+	// The stream will deliver everything after lastTsNs, so the aggregated
+	// buffer is (still) complete for this peer up to that point.
+	ma.advancePeerWatermark(peer, lastTsNs)
+
 	glog.V(0).Infof("subscribing remote %s meta change: %v, clientId:%d", peer, time.Unix(0, lastTsNs), ma.filer.UniqueFilerId)
 	err = pb.WithFilerClient(true, 0, peer, ma.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
+		// Stop the stream promptly on removal; the blocking Recv below would
+		// otherwise only notice when the stream errors on its own.
+		go func() {
+			select {
+			case <-stopChan:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
 		atomic.AddInt32(&ma.filer.UniqueFilerEpoch, 1)
 		// Construct a log file reader that reads chunks via the peer filer's LookupVolume.
 		lookupFn := LookupFn(filerClient{client})
@@ -244,6 +393,8 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 			ClientEpoch:                  atomic.LoadInt32(&ma.filer.UniqueFilerEpoch),
 			ClientSupportsBatching:       true,
 			ClientSupportsMetadataChunks: true,
+			// Idle heartbeats keep a quiet peer from freezing the low-watermark.
+			ClientSupportsIdleHeartbeat: true,
 		})
 		if err != nil {
 			glog.V(0).Infof("SubscribeLocalMetadata %v: %v", peer, err)
@@ -257,6 +408,7 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 			}
 			f.onMetadataChangeEvent(event)
 			lastTsNs = event.TsNs
+			ma.advancePeerWatermark(peer, event.TsNs)
 			return nil
 		}
 
@@ -299,16 +451,30 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 					return err
 				}
 			}
-			// Process any additional batched events. Mirror the envelope's nil
-			// guard: the server can fold a freshness signal (nil EventNotification)
-			// into the batched tail, and processOne dereferences it.
+			// Batched events, with the envelope's nil guard mirrored. A nested
+			// control message still carries watermark state - dropping it
+			// would make healthy flush progress look stalled.
 			for _, batchedEvent := range resp.Events {
+				if batchedEvent.FlushedTsNs > 0 {
+					ma.advancePeerFlushWatermark(peer, batchedEvent.FlushedTsNs)
+				}
 				if batchedEvent.EventNotification == nil {
+					if batchedEvent.TsNs > 0 {
+						ma.advancePeerWatermark(peer, batchedEvent.TsNs)
+					}
 					continue
 				}
 				if err := processOne(batchedEvent); err != nil {
 					return err
 				}
+			}
+			// Idle heartbeat: advance only the watermark, not lastTsNs, so a
+			// reconnect still resumes from the last real event.
+			if resp.EventNotification == nil && len(resp.Events) == 0 && resp.TsNs > 0 {
+				ma.advancePeerWatermark(peer, resp.TsNs)
+			}
+			if resp.FlushedTsNs > 0 {
+				ma.advancePeerFlushWatermark(peer, resp.FlushedTsNs)
 			}
 		}
 	})
