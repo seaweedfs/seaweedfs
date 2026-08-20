@@ -162,14 +162,12 @@ func TestResolveGapResume(t *testing.T) {
 }
 
 // TestGapPassProvenEmptyCrossing pins the crossing that needs no memory to
-// land in: a cursor below the eviction watermark whose last empty disk pass
-// proved coverage through the watermark itself (everything at or below it was
-// flushed and inside the pass's listing) crosses to the watermark silently -
-// no park, no loss counter. This is how a subscriber gets past the aggregated
-// ring's marked pre-subscription boundary, which no rotation will ever prove.
+// land in: an empty disk pass proven through the eviction watermark crosses to
+// it silently - no park, no loss counter. This is the only exit past the
+// aggregated ring's pre-subscription mark, which no rotation ever proves.
 func TestGapPassProvenEmptyCrossing(t *testing.T) {
 	now := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC).UnixNano()
-	evicted := now - int64(time.Minute) // the ring's boundary (e.g. its startFrom mark)
+	evicted := now - int64(time.Minute) // the ring's startFrom mark
 	cursorTs := evicted - int64(2*time.Minute)
 
 	crossings := func() float64 {
@@ -215,9 +213,7 @@ func TestGapPassProvenEmptyCrossing(t *testing.T) {
 }
 
 // TestChunkRefsStopTsNs pins the chunk listing bound: the newest admitted file
-// name must sit a minute plus a flush interval below the hold, so no shipped
-// file can hold an entry past it (a file is named for its window's start
-// minute and the window spans up to a flush interval); UntilNs caps it.
+// name sits a minute plus a flush interval below the hold; UntilNs caps it.
 func TestChunkRefsStopTsNs(t *testing.T) {
 	hold := time.Date(2026, 6, 29, 12, 10, 45, 500, time.UTC).UnixNano()
 

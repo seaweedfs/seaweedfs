@@ -143,12 +143,8 @@ func (f *Filer) AggregateFromPeers(self pb.ServerAddress, existingNodes []*maste
 	f.EmptyFolderCleaner = empty_folder_cleanup.NewEmptyFolderCleaner(f, f.Dlm.LockRing, self, f.DirBucketsPath, f.EmptyFolderCleanupDelay)
 
 	f.MetaAggregator = NewMetaAggregator(f, self, f.GrpcDialOption)
-	// The ring is born empty while every peer's history sits on disk: the
-	// subscriptions below deliver only what comes after startFrom, so mark
-	// everything at or below it evicted. Without the mark a subscriber whose
-	// cursor is still in the pre-startFrom range would be served the ring's
-	// earliest entry ("nothing evicted yet"), silently skipping disk files
-	// its bounded chunk pass has not shipped.
+	// The ring starts empty while peer history sits on disk: mark the pre-startFrom
+	// range evicted so a cursor there reads disk, not the ring's earliest entry.
 	f.MetaAggregator.MetaLogBuffer.MarkEvictedThrough(startFrom.UnixNano())
 	f.MasterClient.SetOnPeerUpdateFn(func(update *master_pb.ClusterNodeUpdate, startFrom time.Time) {
 		if update.NodeType != cluster.FilerType {

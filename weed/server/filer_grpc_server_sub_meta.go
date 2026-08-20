@@ -268,16 +268,11 @@ func previousMinuteEndTsNs(tsNs int64) int64 {
 	return tsNs - tsNs%int64(time.Minute) - 1
 }
 
-// chunkRefsStopTsNs bounds a chunk pass's ref listing so no shipped file can
-// hold an entry past the hold point. Chunk-mode clients apply a shipped file
-// whole and may persist a checkpoint from its tail, so a tail past the hold
-// lets a crash resume beyond another peer's late-but-in-contract flush. A
-// file is named for its window's start minute and the window spans up to a
-// flush interval, so the newest safe file name sits a minute plus a flush
-// interval below the hold; the withheld range is covered by the memory pass
-// (ring retention far exceeds it) or by later passes as the hold advances.
-// (A frozen peer can flush one window spanning its whole freeze; that
-// residual tail is bounded by the freeze and needs a crash inside it.)
+// chunkRefsStopTsNs bounds the ref listing so no shipped file holds an entry
+// past the hold: clients apply shipped files whole and may checkpoint from a
+// tail. A file's window starts in its name's minute and spans up to a flush
+// interval, hence the double back-off; a frozen peer's freeze-spanning window
+// can still overshoot by its freeze.
 func chunkRefsStopTsNs(holdTsNs, untilNs int64) int64 {
 	stopTsNs := previousMinuteEndTsNs(holdTsNs - int64(filer.LogFlushInterval))
 	if untilNs != 0 && untilNs < stopTsNs {
@@ -526,11 +521,10 @@ func (p *gapPass) resolve(ctx context.Context, cursor *log_buffer.MessagePositio
 			*latch = nil
 			return gapProceed
 		}
-		// Memory cannot take the cursor (empty, or not proven up to earliest),
-		// but the last empty disk read proved coverage through the eviction
-		// watermark itself: the rest of the gap holds nothing, cross it
-		// without parking or counting. Matters for the ring's marked
-		// pre-subscription boundary, which no rotation will ever prove.
+		// The last empty disk read proved coverage through the eviction
+		// watermark itself: the rest of the gap holds nothing - cross without
+		// parking or counting. The ring's pre-subscription mark is never
+		// proven by rotation, so this is its only exit.
 		if p.flushed() >= evictedTsNs {
 			p.gapStall.resumed()
 			*cursor = log_buffer.NewMessagePosition(evictedTsNs, gapResumeCursorOffset)
@@ -655,12 +649,8 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	// this pass cannot see.
 	var diskPassFlushLowTsNs int64
 	var diskPassHoldTsNs int64
-	// diskPassProvenTsNs is what the last disk pass proved covered: everything
-	// at or below it was on some peer's disk (flush low-watermark) AND inside
-	// the pass's listing (a chunk pass stops at refsStopTsNs). An empty pass
-	// therefore proves the range above the cursor empty up to it - the proof
-	// the gap machinery needs to cross the ring's pre-subscription boundary
-	// without counting a loss.
+	// What the last disk pass proved covered: flushed on every peer AND inside
+	// the pass's listing, so an empty pass proves (cursor, proven] empty.
 	var diskPassProvenTsNs int64
 	diskEachLogEntryFn := guardedEachLogEntryFn(func() int64 { return diskPassHoldTsNs })
 	memEachLogEntryFn := guardedEachLogEntryFn(holdMemTsNs)
@@ -716,8 +706,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 
 		if req.ClientSupportsMetadataChunks {
 			refsStopTsNs := chunkRefsStopTsNs(diskPassHoldTsNs, req.UntilNs)
-			// Flushed or not, nothing above the listing bound is proven by
-			// this pass.
+			// Nothing above the listing bound is proven by this pass.
 			if refsStopTsNs < diskPassProvenTsNs {
 				diskPassProvenTsNs = refsStopTsNs
 			}
@@ -795,9 +784,8 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		case gapDone:
 			return nil
 		case gapContinue:
-			// A cursor move here is a give-up or proven-empty skip (original
-			// space); anchor it so a later eviction rewind cannot undo the
-			// decision.
+			// A cursor move here is a give-up or proven-empty skip (original space);
+			// anchor it so a later eviction rewind cannot undo the decision.
 			if ts := lastReadTime.Time.UnixNano(); ts != cursorBeforeResolveTsNs && ts > diskAnchorTsNs {
 				diskAnchorTsNs = ts
 			}
@@ -827,10 +815,9 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 			}
 			// Contiguous and caught up: advance the anchor to the delivery
 			// low-watermark so long live tails keep eviction rewinds short.
-			// Only once the run is connected to the ring - this wait also
-			// fires on an empty ring with the cursor still below disk files
-			// the bounded chunk pass has not shipped, and crediting delivery
-			// there would let the eventual rewind skip them.
+			// Only once the run is connected to the ring - the empty-ring
+			// wait lands here too, with disk files still unshipped below the
+			// cursor.
 			if memoryHoldsGap(lastReadTime.Time.UnixNano(), aggBuffer.GetLastEvictedOriginalTsNs()) {
 				if dl := fs.filer.MetaAggregator.PeerLowWatermarkTsNs(); dl > diskAnchorTsNs {
 					diskAnchorTsNs = dl

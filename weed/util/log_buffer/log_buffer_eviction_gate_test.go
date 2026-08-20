@@ -273,11 +273,9 @@ func TestEvictionGatedCursor(t *testing.T) {
 	}
 }
 
-// TestMarkEvictedThroughGatesYoungRing pins the young-ring gate: a merge-fed
-// ring is born empty while its sources hold history, and before its first real
-// eviction a below-window gated cursor would otherwise be served the earliest
-// retained entry - silently skipping the pre-subscription range that only disk
-// holds. MarkEvictedThrough makes that range read as evicted from the start.
+// TestMarkEvictedThroughGatesYoungRing pins the young-ring gate: with the mark
+// set, a below-window gated cursor goes to disk before the first real eviction
+// instead of being served the earliest retained entry.
 func TestMarkEvictedThroughGatesYoungRing(t *testing.T) {
 	lb := NewLogBuffer("young-ring", time.Minute, nil, nil, nil)
 	defer lb.ShutdownLogBuffer()
@@ -303,9 +301,7 @@ func TestMarkEvictedThroughGatesYoungRing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Below the mark the gated cursor goes to disk instead of being handed
-	// the earliest retained entry; the plain -2 sentinel keeps the inclusive
-	// first-read contract.
+	// Below the mark: gated goes to disk, -2 keeps serving (MQ contract).
 	if _, _, _, err := lb.ReadFromBuffer(NewMessagePosition(seed-1, EvictionGatedOffset)); err != ResumeFromDiskError {
 		t.Fatalf("gated below the mark: want ResumeFromDiskError, got %v", err)
 	}

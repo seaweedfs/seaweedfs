@@ -975,13 +975,9 @@ func (logBuffer *LogBuffer) GetLastEvictedTsNs() int64 {
 	return logBuffer.lastEvictedTsNs.Load()
 }
 
-// MarkEvictedThrough records that entries at or below tsNs are not in this
-// buffer even though nothing was rotated out. A merge-fed buffer (the
-// aggregated meta ring) is born empty while its sources hold history: without
-// the mark, a below-window cursor reads "nothing evicted yet" as "memory holds
-// everything after me" and is served the earliest retained entry, silently
-// skipping the range in between. Call before the first append; both timestamp
-// spaces coincide there, since every later entry lands above the mark.
+// MarkEvictedThrough treats entries at or below tsNs as evicted even though
+// nothing was rotated out yet: a merge-fed buffer is born empty while its
+// sources hold history it must not skip. Call before the first append.
 func (logBuffer *LogBuffer) MarkEvictedThrough(tsNs int64) {
 	if tsNs > logBuffer.lastEvictedTsNs.Load() {
 		logBuffer.lastEvictedTsNs.Store(tsNs)
