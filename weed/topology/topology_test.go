@@ -88,7 +88,7 @@ func TestHandlingVolumeServerHeartbeat(t *testing.T) {
 		for k := 1; k <= volumeCount; k++ {
 			volumeMessage := &master_pb.VolumeInformationMessage{
 				Id:               uint32(k),
-				Size:             uint64(254320),
+				Size:             uint64(30000),
 				Collection:       "",
 				FileCount:        uint64(2343),
 				DeleteCount:      uint64(345),

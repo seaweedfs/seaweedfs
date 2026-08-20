@@ -131,8 +131,6 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) bool
 		return false
 	}
 
-	defer vl.rememberOversizedVolume(v, dn)
-
 	moveLookupOwnership(v.Id, vl.getOrCreateLocationList(v.Id).Set(dn), dn)
 	if !v.ReadOnly {
 		vl.initSizeTracking(v.Id, v.Size, v.CompactRevision)
@@ -162,6 +160,23 @@ func (vl *VolumeLayout) rememberOversizedVolume(v *storage.VolumeInfo, dn *DataN
 	if location, ok := vl.vid2location[v.Id]; ok {
 		location.SetOversized(dn, vl.isOversized(v))
 	}
+}
+
+// UpdateOversizedState refreshes the per-replica oversized mark from the size
+// reported by this heartbeat, and is the only writer of that mark. The delta
+// heartbeat path (ApplyVolumeChanges) and the full heartbeat path
+// (SyncDataNodeRegistration) both call it, or a volume that grew past the
+// limit would keep looking writable to ensureCorrectWritables and bounce
+// between writable and unwritable on every assign.
+//
+// Registration deliberately does not touch the mark: the incremental path
+// registers from a short heartbeat message that carries no size, so judging
+// the volume by it would clear the mark on every arrival announcement and
+// hand an oversized volume back to the writable list.
+func (vl *VolumeLayout) UpdateOversizedState(v *storage.VolumeInfo, dn *DataNode) {
+	vl.accessLock.Lock()
+	defer vl.accessLock.Unlock()
+	vl.rememberOversizedVolume(v, dn)
 }
 
 // UpdateVolumeSize is called on every heartbeat for every reported volume.
@@ -291,6 +306,22 @@ func (vl *VolumeLayout) ensureCorrectWritables(vid needle.VolumeId) {
 	isAllWritable := vl.isAllWritable(vid)
 	isOversizedVolume := vl.vid2location[vid].AnyOversized()
 	if isEnoughCopies && isAllWritable && !isOversizedVolume {
+		// A volume removed for capacity (fullSince set) must go through the
+		// heartbeat recovery path in UpdateVolumeSize, which enforces
+		// capacityRecoveryDelay. Re-adding it here would bypass the cooldown
+		// and let a just-compacted volume flip back to writable immediately.
+		if st := vl.sizeTracking[vid]; st != nil && !st.fullSince.IsZero() &&
+			time.Since(st.fullSince) < capacityRecoveryDelay {
+			return
+		}
+		// A volume already at the limit must not be restored here: the next
+		// assign's RecordAssign would remove it again. Crowded is the wrong
+		// test for that -- it starts at 90%, and a crowded volume that lost a
+		// replica would never be writable again once the replica returned,
+		// since nothing writes to it and its size can no longer fall.
+		if st := vl.sizeTracking[vid]; st != nil && st.effectiveSize >= vl.volumeSizeLimit {
+			return
+		}
 		vl.setVolumeWritable(vid)
 		return
 	}
