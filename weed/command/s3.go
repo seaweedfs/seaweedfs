@@ -80,8 +80,6 @@ type S3Options struct {
 	externalUrl               *string
 	defaultFileMode           *string
 	cacheSizeMB               *int64
-	localReadFallbackToRemote *bool
-	localReadFallbackTimeout  *time.Duration
 	// shutdownCtx, when non-nil, tells startS3Server/startIcebergServer to
 	// gracefully shut down their HTTP/gRPC servers once the ctx is cancelled.
 	// Used by weed mini to orchestrate an ordered shutdown; nil for standalone
@@ -129,8 +127,6 @@ func init() {
 	s3StandaloneOptions.externalUrl = cmdS3.Flag.String("externalUrl", "", "the external URL clients use to connect (e.g. https://api.example.com:9000). Used for S3 signature verification behind a reverse proxy. Falls back to S3_EXTERNAL_URL env var.")
 	s3StandaloneOptions.defaultFileMode = cmdS3.Flag.String("defaultFileMode", "", "default file mode for S3 uploaded objects, e.g. 0660, 0644, 0666")
 	s3StandaloneOptions.cacheSizeMB = cmdS3.Flag.Int64("cacheCapacityMB", 0, "in-memory chunk cache capacity in MB for S3 GETs shared across requests (0 disables)")
-	s3StandaloneOptions.localReadFallbackToRemote = cmdS3.Flag.Bool("localReadFallbackToRemote", false, "for remote-mounted buckets, if a locally-cached object cannot be read from volume servers, serve it from the mounted remote instead of returning an error")
-	s3StandaloneOptions.localReadFallbackTimeout = cmdS3.Flag.Duration("localReadFallbackTimeout", 2*time.Second, "how long to wait on the local read before falling back to the remote (requires -localReadFallbackToRemote)")
 }
 
 var cmdS3 = &Command{
@@ -381,8 +377,6 @@ func (s3opt *S3Options) startS3Server() bool {
 		ExternalUrl:               s3opt.resolveExternalUrl(),
 		DefaultFileMode:           defaultFileMode,
 		CacheSizeMB:               *s3opt.cacheSizeMB,
-		LocalReadFallbackToRemote: *s3opt.localReadFallbackToRemote,
-		LocalReadFallbackTimeout:  *s3opt.localReadFallbackTimeout,
 		MaxMB:                     filerMaxMB,
 	})
 	if s3ApiServer_err != nil {

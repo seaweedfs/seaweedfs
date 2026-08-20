@@ -77,50 +77,44 @@ func TestShouldFallBackToRemote(t *testing.T) {
 			RemoteEntry: &filer_pb.RemoteEntry{RemoteSize: size},
 		}
 	}
-	server := func(enabled bool) *S3ApiServer {
-		return &S3ApiServer{option: &S3ApiServerOption{LocalReadFallbackToRemote: enabled}}
+	server := func() *S3ApiServer {
+		return &S3ApiServer{option: &S3ApiServerOption{}}
 	}
 
-	t.Run("disabled", func(t *testing.T) {
-		assert.False(t, server(false).shouldFallBackToRemote(remoteEntry(), size, ""))
+	t.Run("matching remote", func(t *testing.T) {
+		assert.True(t, server().shouldFallBackToRemote(remoteEntry(), size, ""))
 	})
 
-	t.Run("enabled with matching remote", func(t *testing.T) {
-		assert.True(t, server(true).shouldFallBackToRemote(remoteEntry(), size, ""))
-	})
-
-	t.Run("enabled treats null versionId as unversioned", func(t *testing.T) {
-		assert.True(t, server(true).shouldFallBackToRemote(remoteEntry(), size, "null"))
+	t.Run("null versionId is treated as unversioned", func(t *testing.T) {
+		assert.True(t, server().shouldFallBackToRemote(remoteEntry(), size, "null"))
 	})
 
 	t.Run("versioned read cannot use the unversioned remote key", func(t *testing.T) {
-		assert.False(t, server(true).shouldFallBackToRemote(remoteEntry(), size, "v123"))
+		assert.False(t, server().shouldFallBackToRemote(remoteEntry(), size, "v123"))
 	})
 
 	t.Run("latest read that resolves to a version cannot use the unversioned key", func(t *testing.T) {
 		versioned := remoteEntry()
 		versioned.Extended = map[string][]byte{s3_constants.ExtVersionIdKey: []byte("v9")}
-		assert.False(t, server(true).shouldFallBackToRemote(versioned, size, ""))
+		assert.False(t, server().shouldFallBackToRemote(versioned, size, ""))
 	})
 
 	t.Run("no remote entry", func(t *testing.T) {
 		local := &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{FileSize: uint64(size)}}
-		assert.False(t, server(true).shouldFallBackToRemote(local, size, ""))
+		assert.False(t, server().shouldFallBackToRemote(local, size, ""))
 	})
 
 	t.Run("size mismatch is not served as identical bytes", func(t *testing.T) {
-		assert.False(t, server(true).shouldFallBackToRemote(remoteEntry(), size+1, ""))
+		assert.False(t, server().shouldFallBackToRemote(remoteEntry(), size+1, ""))
 	})
 }
 
 // newLocalReadFallbackServer wires a real ReaderCache against the fake filer.
 // The fake filer does not implement LookupVolume, so any chunk read fails,
 // standing in for an unreachable/evicted volume server.
-func newLocalReadFallbackServer(t *testing.T, filerAddr pb.ServerAddress, enabled bool) *S3ApiServer {
+func newLocalReadFallbackServer(t *testing.T, filerAddr pb.ServerAddress) *S3ApiServer {
 	t.Helper()
 	s3a := newRemoteCacheTestServer(filerAddr)
-	s3a.option.LocalReadFallbackToRemote = enabled
-	s3a.option.LocalReadFallbackTimeout = 300 * time.Millisecond
 	fc := wdclient.NewFilerClient(s3a.option.Filers, s3a.option.GrpcDialOption, s3a.option.DataCenter)
 	s3a.filerClient = fc
 	s3a.readerCache = filer.NewReaderCache(8, (*chunk_cache.TieredChunkCache)(nil), fc.GetLookupFileIdFunction(), fc)
@@ -145,7 +139,7 @@ func TestS3CachedReadFallsBackToRemote(t *testing.T) {
 	t.Run("unreadable local copy is served from the mounted remote", func(t *testing.T) {
 		client := &fakeStreamRemoteClient{data: content}
 		remote_storage.RemoteStorageClientMakers["faketest"] = &fakeStreamRemoteMaker{client: client}
-		s3a := newLocalReadFallbackServer(t, startStreamThroughFiler(t, "faketest-cachedfail", nil), true)
+		s3a := newLocalReadFallbackServer(t, startStreamThroughFiler(t, "faketest-cachedfail", nil))
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodGet, "/mybucket/dir/obj.bin", nil)
 
@@ -161,7 +155,7 @@ func TestS3CachedReadFallsBackToRemote(t *testing.T) {
 	t.Run("range fallback serves the requested window from the remote", func(t *testing.T) {
 		client := &fakeStreamRemoteClient{data: content}
 		remote_storage.RemoteStorageClientMakers["faketest"] = &fakeStreamRemoteMaker{client: client}
-		s3a := newLocalReadFallbackServer(t, startStreamThroughFiler(t, "faketest-cachedrange", nil), true)
+		s3a := newLocalReadFallbackServer(t, startStreamThroughFiler(t, "faketest-cachedrange", nil))
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodGet, "/mybucket/dir/obj.bin", nil)
 		r.Header.Set("Range", "bytes=2-5")
@@ -175,25 +169,27 @@ func TestS3CachedReadFallsBackToRemote(t *testing.T) {
 		assert.Equal(t, int64(4), client.gotSize)
 	})
 
-	t.Run("disabled keeps the existing error and never reads the remote", func(t *testing.T) {
+	t.Run("a local-only object keeps the existing error", func(t *testing.T) {
 		client := &fakeStreamRemoteClient{data: content}
 		remote_storage.RemoteStorageClientMakers["faketest"] = &fakeStreamRemoteMaker{client: client}
-		s3a := newLocalReadFallbackServer(t, startStreamThroughFiler(t, "faketest-nofallback", nil), false)
+		s3a := newLocalReadFallbackServer(t, startStreamThroughFiler(t, "faketest-nofallback", nil))
+		local := cachedEntry(content)
+		local.RemoteEntry = nil
 		w := httptest.NewRecorder()
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		r := httptest.NewRequest(http.MethodGet, "/mybucket/dir/obj.bin", nil).WithContext(ctx)
 
-		err := s3a.streamFromVolumeServers(w, r, cachedEntry(content), "", "mybucket", "dir/obj.bin", "")
+		err := s3a.streamFromVolumeServers(w, r, local, "", "mybucket", "dir/obj.bin", "")
 
 		require.Error(t, err)
-		assert.Nil(t, client.gotLoc, "must not read from the remote when fallback is disabled")
+		assert.Nil(t, client.gotLoc, "an object that is not remote-mounted has no remote to fall back to")
 	})
 
 	t.Run("versioned read does not fall back to the unversioned remote key", func(t *testing.T) {
 		client := &fakeStreamRemoteClient{data: content}
 		remote_storage.RemoteStorageClientMakers["faketest"] = &fakeStreamRemoteMaker{client: client}
-		s3a := newLocalReadFallbackServer(t, startStreamThroughFiler(t, "faketest-cachedversioned", nil), true)
+		s3a := newLocalReadFallbackServer(t, startStreamThroughFiler(t, "faketest-cachedversioned", nil))
 		versioned := cachedEntry(content)
 		versioned.Extended = map[string][]byte{s3_constants.ExtVersionIdKey: []byte("v456")}
 		w := httptest.NewRecorder()
@@ -234,14 +230,14 @@ func (f failingWriter) Write(p []byte) (int, error) { return 0, f.err }
 func TestStreamRangeToClientFinishesFromRemote(t *testing.T) {
 	content := []byte("0123456789")
 	size := int64(len(content))
-	newServer := func(t *testing.T, name string, enabled bool) (*S3ApiServer, *fakeStreamRemoteClient) {
+	newServer := func(t *testing.T, name string) (*S3ApiServer, *fakeStreamRemoteClient) {
 		client := &fakeStreamRemoteClient{data: content}
 		remote_storage.RemoteStorageClientMakers["faketest"] = &fakeStreamRemoteMaker{client: client}
-		return newLocalReadFallbackServer(t, startStreamThroughFiler(t, name, nil), enabled), client
+		return newLocalReadFallbackServer(t, startStreamThroughFiler(t, name, nil)), client
 	}
 
 	t.Run("later chunk failure is finished from the remote", func(t *testing.T) {
-		s3a, client := newServer(t, "faketest-midstream", true)
+		s3a, client := newServer(t, "faketest-midstream")
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodGet, "/mybucket/dir/obj.bin", nil)
 		local := truncatedReaderAt{data: content, breakAt: 4, err: errors.New("volume: connection refused")}
@@ -256,7 +252,7 @@ func TestStreamRangeToClientFinishesFromRemote(t *testing.T) {
 	})
 
 	t.Run("a short local read reported as clean EOF is not served truncated", func(t *testing.T) {
-		s3a, client := newServer(t, "faketest-shortread", true)
+		s3a, client := newServer(t, "faketest-shortread")
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodGet, "/mybucket/dir/obj.bin", nil)
 		local := truncatedReaderAt{data: content, breakAt: 7, err: io.EOF}
@@ -270,7 +266,7 @@ func TestStreamRangeToClientFinishesFromRemote(t *testing.T) {
 	})
 
 	t.Run("range read resumes at the absolute offset", func(t *testing.T) {
-		s3a, client := newServer(t, "faketest-midstreamrange", true)
+		s3a, client := newServer(t, "faketest-midstreamrange")
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodGet, "/mybucket/dir/obj.bin", nil)
 		local := truncatedReaderAt{data: content, breakAt: 5, err: errors.New("volume: connection refused")}
@@ -284,21 +280,23 @@ func TestStreamRangeToClientFinishesFromRemote(t *testing.T) {
 		assert.Equal(t, int64(3), client.gotSize)
 	})
 
-	t.Run("disabled keeps the mid-stream error", func(t *testing.T) {
-		s3a, client := newServer(t, "faketest-midstreamoff", false)
+	t.Run("a local-only object keeps the mid-stream error", func(t *testing.T) {
+		s3a, client := newServer(t, "faketest-midstreamlocal")
+		local := cachedEntry(content)
+		local.RemoteEntry = nil
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodGet, "/mybucket/dir/obj.bin", nil)
 		boom := errors.New("volume: connection refused")
 
-		written, err := s3a.streamRangeToClient(w, r, truncatedReaderAt{data: content, breakAt: 4, err: boom}, cachedEntry(content), "mybucket", "dir/obj.bin", 0, size, size, "")
+		written, err := s3a.streamRangeToClient(w, r, truncatedReaderAt{data: content, breakAt: 4, err: boom}, local, "mybucket", "dir/obj.bin", 0, size, size, "")
 
 		assert.ErrorIs(t, err, boom)
 		assert.Equal(t, int64(4), written)
-		assert.Nil(t, client.gotLoc, "must not read from the remote when fallback is disabled")
+		assert.Nil(t, client.gotLoc, "an object that is not remote-mounted has no remote to fall back to")
 	})
 
 	t.Run("a failed write to the client is not refetched from the remote", func(t *testing.T) {
-		s3a, client := newServer(t, "faketest-midstreamwrite", true)
+		s3a, client := newServer(t, "faketest-midstreamwrite")
 		r := httptest.NewRequest(http.MethodGet, "/mybucket/dir/obj.bin", nil)
 		broken := errors.New("write: broken pipe")
 

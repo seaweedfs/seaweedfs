@@ -1140,7 +1140,7 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	// already sent. Instead, fall back to the authoritative mounted remote. The
 	// probe is bounded so a stuck volume trips the timeout rather than blocking.
 	if s3a.shouldFallBackToRemote(entry, totalSize, versionId) {
-		if probeErr := probeReadable(ctx, reader, offset, s3a.localReadFallbackTimeout()); probeErr != nil {
+		if probeErr := probeReadable(ctx, reader, offset, localReadProbeTimeout); probeErr != nil {
 			if isCanceledStreamingError(probeErr) {
 				glog.V(3).Infof("streamFromVolumeServers: request canceled while probing %s/%s: %v", bucket, object, probeErr)
 				return probeErr
@@ -1210,30 +1210,20 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	return nil
 }
 
-// defaultLocalReadFallbackTimeout bounds the pre-flight local read that decides
-// whether to serve a remote-mounted object from its mounted remote instead. It
-// is short so a stuck volume server (down, or serving an evicted needle under
-// retry-backoff) falls back promptly rather than stalling the request.
-const defaultLocalReadFallbackTimeout = 2 * time.Second
-
-func (s3a *S3ApiServer) localReadFallbackTimeout() time.Duration {
-	if s3a.option.LocalReadFallbackTimeout > 0 {
-		return s3a.option.LocalReadFallbackTimeout
-	}
-	return defaultLocalReadFallbackTimeout
-}
+// localReadProbeTimeout bounds the pre-flight local read that decides whether to
+// serve a remote-mounted object from its mounted remote instead. It is short so a
+// stuck volume server (down, or serving an evicted needle under retry-backoff)
+// falls back promptly rather than stalling the request.
+const localReadProbeTimeout = 2 * time.Second
 
 // shouldFallBackToRemote reports whether a failed local read of this object may
-// be served from its mounted remote instead. It requires the feature to be
-// enabled, an unversioned read (openRemoteStream reads only the unversioned
-// key -- a latest read that resolves to a specific version is treated as
-// versioned, matching the remote-only stream-through path), and a RemoteEntry
-// whose size matches the object so the fallback serves identical bytes under
-// the already-computed Content-Length.
+// be served from its mounted remote instead. It requires an unversioned read
+// (openRemoteStream reads only the unversioned key -- a latest read that
+// resolves to a specific version is treated as versioned, matching the
+// remote-only stream-through path), and a RemoteEntry whose size matches the
+// object so the fallback serves identical bytes under the already-computed
+// Content-Length.
 func (s3a *S3ApiServer) shouldFallBackToRemote(entry *filer_pb.Entry, totalSize int64, versionId string) bool {
-	if !s3a.option.LocalReadFallbackToRemote {
-		return false
-	}
 	if v := resolvedSourceVersionId(versionId, entry); v != "" && v != "null" {
 		return false
 	}
