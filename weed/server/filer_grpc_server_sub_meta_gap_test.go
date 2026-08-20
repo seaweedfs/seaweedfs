@@ -7,6 +7,7 @@ import (
 
 	dto "github.com/prometheus/client_model/go"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
@@ -210,6 +211,32 @@ func TestGapPassProvenEmptyCrossing(t *testing.T) {
 	}
 	if got := cursor.Time.UnixNano(); got != cursorTs {
 		t.Fatalf("diskAdvanced: cursor moved to %v", time.Unix(0, got))
+	}
+}
+
+// TestChunkRefsStopTsNs pins the chunk listing bound: the newest admitted file
+// name must sit a minute plus a flush interval below the hold, so no shipped
+// file can hold an entry past it (a file is named for its window's start
+// minute and the window spans up to a flush interval); UntilNs caps it.
+func TestChunkRefsStopTsNs(t *testing.T) {
+	hold := time.Date(2026, 6, 29, 12, 10, 45, 500, time.UTC).UnixNano()
+
+	stop := chunkRefsStopTsNs(hold, 0)
+	newestFileTsNs := stop - stop%int64(time.Minute)
+	if newestFileTsNs+int64(time.Minute)+int64(filer.LogFlushInterval) > hold {
+		t.Fatalf("file named %v may hold entries past the hold %v",
+			time.Unix(0, newestFileTsNs), time.Unix(0, hold))
+	}
+	want := time.Date(2026, 6, 29, 12, 8, 59, 999999999, time.UTC).UnixNano()
+	if stop != want {
+		t.Fatalf("stop = %v, want %v", time.Unix(0, stop), time.Unix(0, want))
+	}
+
+	if got := chunkRefsStopTsNs(hold, want-5); got != want-5 {
+		t.Fatalf("UntilNs cap: got %v, want %v", time.Unix(0, got), time.Unix(0, want-5))
+	}
+	if got := chunkRefsStopTsNs(hold, want+5); got != want {
+		t.Fatalf("UntilNs above the bound must not widen it: got %v", time.Unix(0, got))
 	}
 }
 

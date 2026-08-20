@@ -268,6 +268,24 @@ func previousMinuteEndTsNs(tsNs int64) int64 {
 	return tsNs - tsNs%int64(time.Minute) - 1
 }
 
+// chunkRefsStopTsNs bounds a chunk pass's ref listing so no shipped file can
+// hold an entry past the hold point. Chunk-mode clients apply a shipped file
+// whole and may persist a checkpoint from its tail, so a tail past the hold
+// lets a crash resume beyond another peer's late-but-in-contract flush. A
+// file is named for its window's start minute and the window spans up to a
+// flush interval, so the newest safe file name sits a minute plus a flush
+// interval below the hold; the withheld range is covered by the memory pass
+// (ring retention far exceeds it) or by later passes as the hold advances.
+// (A frozen peer can flush one window spanning its whole freeze; that
+// residual tail is bounded by the freeze and needs a crash inside it.)
+func chunkRefsStopTsNs(holdTsNs, untilNs int64) int64 {
+	stopTsNs := previousMinuteEndTsNs(holdTsNs - int64(filer.LogFlushInterval))
+	if untilNs != 0 && untilNs < stopTsNs {
+		stopTsNs = untilNs
+	}
+	return stopTsNs
+}
+
 // gapStallReporter makes a parked subscriber visible: a flush that never lands
 // stalls the stream for good, and filer.sync and mount followers just stop
 // advancing with no error on either side.
@@ -697,12 +715,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		diskPassProvenTsNs = diskPassFlushLowTsNs
 
 		if req.ClientSupportsMetadataChunks {
-			// Cap refs at the last minute fully covered by the hold point: a
-			// file whose window crosses it may still be missing a late flush.
-			refsStopTsNs := previousMinuteEndTsNs(diskPassHoldTsNs)
-			if req.UntilNs != 0 && req.UntilNs < refsStopTsNs {
-				refsStopTsNs = req.UntilNs
-			}
+			refsStopTsNs := chunkRefsStopTsNs(diskPassHoldTsNs, req.UntilNs)
 			// Flushed or not, nothing above the listing bound is proven by
 			// this pass.
 			if refsStopTsNs < diskPassProvenTsNs {
