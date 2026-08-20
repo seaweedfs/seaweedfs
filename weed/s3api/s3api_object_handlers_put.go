@@ -308,7 +308,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			}
 
 			ttlSec := s3a.lifecycleTTLForObjectWrite(bucket, object, r.ContentLength)
-			etag, errCode, sseMetadata := s3a.putToFiler(r, filePath, dataReader, bucket, object, 1, ttlSec, nil, false)
+			etag, errCode, sseMetadata := s3a.putToFiler(r, filePath, dataReader, bucket, object, 1, ttlSec, nil, false, "")
 
 			if errCode != s3err.ErrNone {
 				s3err.WriteErrorResponse(w, r, errCode)
@@ -402,7 +402,12 @@ func (s3a *S3ApiServer) uploadChunkSize() int32 {
 // pass 0 because their own keys aren't the user-visible object the rule
 // targets and a part write would otherwise bind a TTL clock starting
 // before CompleteMultipartUpload.
-func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader io.Reader, bucket string, object string, partNumber int, lifecycleTTLSec int32, finalize *putFinalize, uniqueWritePath bool) (etag string, code s3err.ErrorCode, sseMetadata SSEResponseMetadata) {
+//
+// storageDestination overrides the path the filer resolves filer.conf storage
+// rules against, empty meaning filePath. MPU parts stage under the bucket's
+// .uploads folder but their bytes become the object, so they pass the object's
+// path the way the x-seaweedfs-destination header used to carry it.
+func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader io.Reader, bucket string, object string, partNumber int, lifecycleTTLSec int32, finalize *putFinalize, uniqueWritePath bool, storageDestination string) (etag string, code s3err.ErrorCode, sseMetadata SSEResponseMetadata) {
 	if !s3_constants.IsValidBucketName(bucket) || (object != "" && !s3_constants.IsValidObjectKey(object)) {
 		return "", s3err.ErrInvalidRequest, SSEResponseMetadata{}
 	}
@@ -506,6 +511,11 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		collection = s3a.getCollectionName(bucket)
 	}
 
+	assignPath := filePath
+	if storageDestination != "" {
+		assignPath = storageDestination
+	}
+
 	// Create assign function for chunked upload
 	assignFunc := func(ctx context.Context, count int, expectedDataSize uint64) (*operation.VolumeAssignRequest, *operation.AssignResult, error) {
 		var assignResult *filer_pb.AssignVolumeResponse
@@ -516,7 +526,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 				Collection:       collection,
 				DiskType:         "",
 				DataCenter:       s3a.option.DataCenter,
-				Path:             filePath,
+				Path:             assignPath,
 				ExpectedDataSize: expectedDataSize,
 				TtlSec:           lifecycleTTLSec,
 			})
@@ -1382,7 +1392,7 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 			}
 			return s3err.ErrNone
 		},
-	}, false)
+	}, false, "")
 	if errCode != s3err.ErrNone {
 		glog.Errorf("putSuspendedVersioningObject: failed to upload object: %v", errCode)
 		return "", errCode, SSEResponseMetadata{}
@@ -1572,7 +1582,7 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	// directly — versioned objects sit on regular volumes and the
 	// lifecycle worker handles their expiration.
 	etag, errCode, sseMetadata = s3a.putToFiler(r, versionFilePath, body, bucket, normalizedObject, 1, 0,
-		s3a.versionedFinalize(bucket, normalizedObject, versionId, versionFileName, useInvertedFormat), true)
+		s3a.versionedFinalize(bucket, normalizedObject, versionId, versionFileName, useInvertedFormat), true, "")
 	if errCode != s3err.ErrNone {
 		glog.Errorf("putVersionedObject: failed to upload version: %v", errCode)
 		return "", "", errCode, SSEResponseMetadata{}

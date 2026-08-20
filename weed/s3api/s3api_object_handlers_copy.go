@@ -1003,7 +1003,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	}
 
 	if uploadEntryHasSSE(uploadEntry) || sourceEntryHasSSE(entry) || uploadEntryHasChecksum(uploadEntry) {
-		etag, sseMetadata, errCode := s3a.copyObjectPartViaReencryption(r, entry, startOffset, endOffset, dstBucket, uploadID, partID, uploadEntry)
+		etag, sseMetadata, errCode := s3a.copyObjectPartViaReencryption(r, entry, startOffset, endOffset, dstBucket, dstObject, uploadID, partID, uploadEntry)
 		if errCode != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, errCode)
 			return
@@ -1040,14 +1040,16 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		Extended: make(map[string][]byte),
 	}
 
-	// The copied part lives under the destination bucket's .uploads folder.
-	// Assign destination volumes against that real filer path so they land in
-	// the destination bucket's collection. r.URL.Path is the S3 request URI
-	// (e.g. /bucket/key), not a filer path, so passing it would skip the
-	// filer's bucket-to-collection mapping and route the copied bytes to the
-	// default collection.
 	uploadDir, partName := s3a.copyPartLocation(dstBucket, uploadID, partID)
-	dstPartPath := uploadDir + "/" + partName
+
+	// The copied part entry lives under the destination bucket's .uploads
+	// folder, but its bytes become the object, so assign destination volumes
+	// against the destination object's filer path: that is the path filer.conf
+	// storage rules and the bucket-to-collection mapping are written for.
+	// r.URL.Path is the S3 request URI (e.g. /bucket/key), not a filer path, so
+	// passing it would skip the mapping and route the copied bytes to the
+	// default collection.
+	dstAssignPath := s3a.toFilerPath(dstBucket, dstObject)
 
 	// Handle zero-size files or empty ranges
 	if entry.Attributes.FileSize == 0 || endOffset < startOffset {
@@ -1056,7 +1058,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		dstEntry.Chunks = nil
 	} else {
 		// Copy chunks that overlap with the range
-		dstChunks, err := s3a.copyChunksForRange(entry, startOffset, endOffset, dstPartPath)
+		dstChunks, err := s3a.copyChunksForRange(entry, startOffset, endOffset, dstAssignPath)
 		if err != nil {
 			glog.Errorf("CopyObjectPartHandler copy chunks error: %v", err)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
