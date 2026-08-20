@@ -431,8 +431,9 @@ func (fs *FilerServer) parkOnGap(ctx context.Context, req *filer_pb.SubscribeMet
 // so memory still holds the whole gap; or the flush watermark observed before
 // the read had already passed the earliest in-memory timestamp, so every event
 // in the gap would have been on disk when the read ran and the miss is
-// authoritative. The aggregated ring never flushes - peers persist their own
-// logs - so it passes flushedTsNs 0 and only the eviction proof can hold.
+// authoritative. The aggregated loop passes its peers' proven-covered
+// watermark as flushedTsNs (everything at or below it was flushed and inside
+// the pass's listing), the local loop its own flush watermark.
 func resolveGapResume(currentTsNs, currentOffset, earliestMemTsNs, flushedTsNs, lastEvictedTsNs int64) (advanceToTsNs int64, advance bool) {
 	// No in-memory data (zero time → negative UnixNano), or memory not ahead of us.
 	if earliestMemTsNs <= 0 || earliestMemTsNs <= currentTsNs {
@@ -472,7 +473,7 @@ type gapPass struct {
 	gapStall  *gapStallReporter
 	earliest  func() time.Time
 	evicted   func() int64 // gap-proof watermark; aggregated uses the received-ts space
-	flushed   func() int64 // flush watermark the last disk read observed; aggregated: 0
+	flushed   func() int64 // what the last disk read proved covered: flushed AND inside its listing
 	gapChan   <-chan struct{}
 	dataChan  <-chan struct{}
 	gapReason func(earliest time.Time, evictedTsNs int64) string
@@ -506,6 +507,17 @@ func (p *gapPass) resolve(ctx context.Context, cursor *log_buffer.MessagePositio
 			*cursor = log_buffer.NewMessagePosition(advanceToTsNs, gapResumeCursorOffset)
 			*latch = nil
 			return gapProceed
+		}
+		// Memory cannot take the cursor (empty, or not proven up to earliest),
+		// but the last empty disk read proved coverage through the eviction
+		// watermark itself: the rest of the gap holds nothing, cross it
+		// without parking or counting. Matters for the ring's marked
+		// pre-subscription boundary, which no rotation will ever prove.
+		if p.flushed() >= evictedTsNs {
+			p.gapStall.resumed()
+			*cursor = log_buffer.NewMessagePosition(evictedTsNs, gapResumeCursorOffset)
+			*latch = nil
+			return gapContinue
 		}
 		return p.park(ctx, cursor, latch, p.gapChan, p.gapReason(earliest, evictedTsNs))
 	}
@@ -625,6 +637,13 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	// this pass cannot see.
 	var diskPassFlushLowTsNs int64
 	var diskPassHoldTsNs int64
+	// diskPassProvenTsNs is what the last disk pass proved covered: everything
+	// at or below it was on some peer's disk (flush low-watermark) AND inside
+	// the pass's listing (a chunk pass stops at refsStopTsNs). An empty pass
+	// therefore proves the range above the cursor empty up to it - the proof
+	// the gap machinery needs to cross the ring's pre-subscription boundary
+	// without counting a loss.
+	var diskPassProvenTsNs int64
 	diskEachLogEntryFn := guardedEachLogEntryFn(func() int64 { return diskPassHoldTsNs })
 	memEachLogEntryFn := guardedEachLogEntryFn(holdMemTsNs)
 	// waitHeld pauses a held read until new data or the retry interval (holds
@@ -656,8 +675,8 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		gapStall: gapStall,
 		earliest: aggBuffer.GetEarliestTime,
 		evicted:  aggBuffer.GetLastEvictedOriginalTsNs,
-		flushed:  func() int64 { return 0 }, // the aggregated ring never flushes
-		gapChan:  nil,                       // nothing local signals a peer's flush; the timer paces it
+		flushed:  func() int64 { return diskPassProvenTsNs },
+		gapChan:  nil, // nothing local signals a peer's flush; the timer paces it
 		dataChan: aggNotifyChan,
 		gapReason: func(earliest time.Time, evictedTsNs int64) string {
 			return fmt.Sprintf("gap evicted through %v is not on a peer's disk yet (earliest memory %v)",
@@ -675,6 +694,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		// diskPassHoldTsNs above).
 		diskPassFlushLowTsNs = fs.filer.MetaAggregator.PeerLowFlushWatermarkTsNs()
 		diskPassHoldTsNs = resolveAggReadHoldTsNs(diskPassFlushLowTsNs, time.Now().UnixNano(), metadataGapSettledHorizon)
+		diskPassProvenTsNs = diskPassFlushLowTsNs
 
 		if req.ClientSupportsMetadataChunks {
 			// Cap refs at the last minute fully covered by the hold point: a
@@ -682,6 +702,11 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 			refsStopTsNs := previousMinuteEndTsNs(diskPassHoldTsNs)
 			if req.UntilNs != 0 && req.UntilNs < refsStopTsNs {
 				refsStopTsNs = req.UntilNs
+			}
+			// Flushed or not, nothing above the listing bound is proven by
+			// this pass.
+			if refsStopTsNs < diskPassProvenTsNs {
+				diskPassProvenTsNs = refsStopTsNs
 			}
 			if refsStopTsNs > lastReadTime.Time.UnixNano() {
 				processedTsNs, isDone, readPersistedLogErr = fs.chunkDiskPass(ctx, sender, lastReadTime, refsStopTsNs, sentRefs)
@@ -757,8 +782,9 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		case gapDone:
 			return nil
 		case gapContinue:
-			// A cursor move here is a give-up skip (original space); anchor it
-			// so a later eviction rewind cannot undo the counted decision.
+			// A cursor move here is a give-up or proven-empty skip (original
+			// space); anchor it so a later eviction rewind cannot undo the
+			// decision.
 			if ts := lastReadTime.Time.UnixNano(); ts != cursorBeforeResolveTsNs && ts > diskAnchorTsNs {
 				diskAnchorTsNs = ts
 			}
@@ -788,8 +814,14 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 			}
 			// Contiguous and caught up: advance the anchor to the delivery
 			// low-watermark so long live tails keep eviction rewinds short.
-			if dl := fs.filer.MetaAggregator.PeerLowWatermarkTsNs(); dl > diskAnchorTsNs {
-				diskAnchorTsNs = dl
+			// Only once the run is connected to the ring - this wait also
+			// fires on an empty ring with the cursor still below disk files
+			// the bounded chunk pass has not shipped, and crediting delivery
+			// there would let the eventual rewind skip them.
+			if memoryHoldsGap(lastReadTime.Time.UnixNano(), aggBuffer.GetLastEvictedOriginalTsNs()) {
+				if dl := fs.filer.MetaAggregator.PeerLowWatermarkTsNs(); dl > diskAnchorTsNs {
+					diskAnchorTsNs = dl
+				}
 			}
 			lastHeartbeatNs = fs.maybeSendIdleHeartbeat(req, sender, fs.filer.MetaAggregator.MetaLogBuffer, lastReadTime.Time.UnixNano(), lastSeenTsNs, lastHeartbeatNs)
 			return true

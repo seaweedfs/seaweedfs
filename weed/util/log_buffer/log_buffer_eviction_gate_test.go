@@ -273,6 +273,50 @@ func TestEvictionGatedCursor(t *testing.T) {
 	}
 }
 
+// TestMarkEvictedThroughGatesYoungRing pins the young-ring gate: a merge-fed
+// ring is born empty while its sources hold history, and before its first real
+// eviction a below-window gated cursor would otherwise be served the earliest
+// retained entry - silently skipping the pre-subscription range that only disk
+// holds. MarkEvictedThrough makes that range read as evicted from the start.
+func TestMarkEvictedThroughGatesYoungRing(t *testing.T) {
+	lb := NewLogBuffer("young-ring", time.Minute, nil, nil, nil)
+	defer lb.ShutdownLogBuffer()
+
+	seed := time.Now().Add(-time.Minute).UnixNano()
+	lb.MarkEvictedThrough(seed)
+	if got := lb.GetLastEvictedTsNs(); got != seed {
+		t.Fatalf("evicted through %v, want the mark %v", time.Unix(0, got), time.Unix(0, seed))
+	}
+	if got := lb.GetLastEvictedOriginalTsNs(); got != seed {
+		t.Fatalf("original watermark %v, want the mark %v", time.Unix(0, got), time.Unix(0, seed))
+	}
+	// A lower mark must not regress an established boundary.
+	lb.MarkEvictedThrough(seed - int64(time.Hour))
+	if got := lb.GetLastEvictedTsNs(); got != seed {
+		t.Fatalf("lower mark regressed the watermark to %v", time.Unix(0, got))
+	}
+
+	// One post-mark arrival: the ring's window starts well above the mark.
+	if err := lb.AddLogEntryToBuffer(&filer_pb.LogEntry{
+		TsNs: time.Now().UnixNano(), Data: []byte("x"), Key: []byte("k"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Below the mark the gated cursor goes to disk instead of being handed
+	// the earliest retained entry; the plain -2 sentinel keeps the inclusive
+	// first-read contract.
+	if _, _, _, err := lb.ReadFromBuffer(NewMessagePosition(seed-1, EvictionGatedOffset)); err != ResumeFromDiskError {
+		t.Fatalf("gated below the mark: want ResumeFromDiskError, got %v", err)
+	}
+	if buf, _, _, err := lb.ReadFromBuffer(NewMessagePosition(seed-1, -2)); err != nil || buf == nil {
+		t.Fatalf("plain sentinel below the mark: buf=%v err=%v", buf != nil, err)
+	}
+	if buf, _, _, err := lb.ReadFromBuffer(NewMessagePosition(seed, EvictionGatedOffset)); err != nil || buf == nil {
+		t.Fatalf("gated at the mark: buf=%v err=%v", buf != nil, err)
+	}
+}
+
 // TestEvictionOriginalWatermark pins the second timestamp space. The ring bumps
 // an out-of-order arrival past its head, so a bump-heavy interval (peer history
 // replay) leaves stopTimes above anything on any peer's disk; a gap gate

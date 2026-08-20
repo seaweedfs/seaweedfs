@@ -15,8 +15,8 @@ import (
 // TestResolveGapResume pins the one decision both subscribe paths share: a gap
 // the disk read found empty may be skipped only when it is provably so - the
 // ring never evicted past the cursor, or the flush watermark observed before
-// the read had already passed the earliest in-memory time. The aggregated ring
-// never flushes, so it is the flushedTsNs=0 column of this table.
+// the read had already passed the earliest in-memory time. The flushedTsNs=0
+// column models an aggregated pass whose peers have not proven anything yet.
 func TestResolveGapResume(t *testing.T) {
 	now := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC).UnixNano()
 	ago := func(d time.Duration) int64 { return now - int64(d) }
@@ -157,6 +157,59 @@ func TestResolveGapResume(t *testing.T) {
 				t.Fatalf("advanceTo = %v, want just below earliest %v", time.Unix(0, gotTo), time.Unix(0, tc.earliestMemTsNs))
 			}
 		})
+	}
+}
+
+// TestGapPassProvenEmptyCrossing pins the crossing that needs no memory to
+// land in: a cursor below the eviction watermark whose last empty disk pass
+// proved coverage through the watermark itself (everything at or below it was
+// flushed and inside the pass's listing) crosses to the watermark silently -
+// no park, no loss counter. This is how a subscriber gets past the aggregated
+// ring's marked pre-subscription boundary, which no rotation will ever prove.
+func TestGapPassProvenEmptyCrossing(t *testing.T) {
+	now := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC).UnixNano()
+	evicted := now - int64(time.Minute) // the ring's boundary (e.g. its startFrom mark)
+	cursorTs := evicted - int64(2*time.Minute)
+
+	crossings := func() float64 {
+		m := &dto.Metric{}
+		if err := stats.FilerSubscribeUnprovenGapCrossings.WithLabelValues("aggregated").Write(m); err != nil {
+			t.Fatal(err)
+		}
+		return m.GetCounter().GetValue()
+	}
+
+	proven := evicted
+	p := &gapPass{
+		gapStall: &gapStallReporter{scope: "aggregated", clientName: "c", pathPrefix: "/"},
+		earliest: func() time.Time { return time.Time{} }, // ring still empty
+		evicted:  func() int64 { return evicted },
+		flushed:  func() int64 { return proven },
+	}
+
+	cursor := log_buffer.NewMessagePosition(cursorTs, gapResumeCursorOffset)
+	latch := error(log_buffer.ResumeFromDiskError) // stale latch must not survive the move
+	start := crossings()
+	if got := p.resolve(context.Background(), &cursor, &latch, false); got != gapContinue {
+		t.Fatalf("outcome = %v, want gapContinue", got)
+	}
+	if got := cursor.Time.UnixNano(); got != evicted {
+		t.Fatalf("cursor = %v, want the proven watermark %v", time.Unix(0, got), time.Unix(0, evicted))
+	}
+	if latch != nil {
+		t.Fatalf("latch not cleared: %v", latch)
+	}
+	if got := crossings(); got != start {
+		t.Fatalf("proven crossing moved the loss counter by %v", got-start)
+	}
+
+	// diskAdvanced defers everything: the disk may hold more of the gap.
+	cursor = log_buffer.NewMessagePosition(cursorTs, gapResumeCursorOffset)
+	if got := p.resolve(context.Background(), &cursor, &latch, true); got != gapContinue {
+		t.Fatalf("diskAdvanced: outcome = %v, want gapContinue", got)
+	}
+	if got := cursor.Time.UnixNano(); got != cursorTs {
+		t.Fatalf("diskAdvanced: cursor moved to %v", time.Unix(0, got))
 	}
 }
 
