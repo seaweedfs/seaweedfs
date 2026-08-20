@@ -3,6 +3,7 @@ package mount
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 
@@ -219,7 +220,11 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out DirEntrySink, isPlusMode
 	processEachEntryFn := func(entry *filer.Entry, index int64) bool {
 		dirEntry.Name = entry.Name()
 		dirEntry.Mode = toSyscallMode(entry.Mode)
-		childPath := dirPath.Child(dirEntry.Name)
+		// Rebuild only for a sanitized name: that is the one a LOOKUP carries.
+		childPath := entry.FullPath
+		if !strings.HasSuffix(string(childPath), dirEntry.Name) {
+			childPath = dirPath.Child(dirEntry.Name)
+		}
 		var inode uint64
 		if takesLookupRef {
 			inode = wfs.inodeToPath.Lookup(childPath, entry.Crtime.Unix(), entry.IsDirectory(), len(entry.HardLinkId) > 0, entry.Inode, false)

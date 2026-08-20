@@ -941,6 +941,20 @@ func (logBuffer *LogBuffer) GetEarliestPosition() MessagePosition {
 	}
 }
 
+// FlushedThroughTsNs reports the timestamp through which this buffer's data
+// is durably on disk: "now" when nothing is pending a flush (a later append
+// is bumped past the head), otherwise the last flushed window's stop time.
+// Covers only entries that reached the buffer - callers stamping timestamps
+// before the append must also bound by their in-flight floor (see
+// Filer.LocalFlushedThroughTsNs).
+func (logBuffer *LogBuffer) FlushedThroughTsNs(nowNs int64) int64 {
+	flushed := logBuffer.lastFlushTsNs.Load()
+	if logBuffer.LastTsNs.Load() <= flushed {
+		return nowNs
+	}
+	return flushed
+}
+
 // GetLastFlushTsNs returns the latest flushed timestamp in Unix nanoseconds.
 // Returns 0 if nothing has been flushed yet.
 func (logBuffer *LogBuffer) GetLastFlushTsNs() int64 {
@@ -959,6 +973,18 @@ func (logBuffer *LogBuffer) GetLastEvictedOriginalTsNs() int64 {
 // the only emptiness proof available to a buffer that never flushes.
 func (logBuffer *LogBuffer) GetLastEvictedTsNs() int64 {
 	return logBuffer.lastEvictedTsNs.Load()
+}
+
+// MarkEvictedThrough treats entries at or below tsNs as evicted even though
+// nothing was rotated out yet: a merge-fed buffer is born empty while its
+// sources hold history it must not skip. Call before the first append.
+func (logBuffer *LogBuffer) MarkEvictedThrough(tsNs int64) {
+	if tsNs > logBuffer.lastEvictedTsNs.Load() {
+		logBuffer.lastEvictedTsNs.Store(tsNs)
+	}
+	if tsNs > logBuffer.lastEvictedOriginalTsNs.Load() {
+		logBuffer.lastEvictedOriginalTsNs.Store(tsNs)
+	}
 }
 
 func (logBuffer *LogBuffer) SetLastFlushTsNs(ts int64) {

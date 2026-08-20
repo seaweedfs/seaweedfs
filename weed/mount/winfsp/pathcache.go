@@ -22,10 +22,60 @@ type pathCache struct {
 	ttl    time.Duration
 	forget func(inode uint64)
 
-	mu        sync.Mutex
-	entries   map[string]*pathCacheEntry
-	graveyard []uint64
-	lastSweep time.Time
+	mu      sync.Mutex
+	entries map[string]*pathCacheEntry
+	// Two graveyard generations: an appended reference always survives the
+	// sweep of the call that appended it, so a caller still using the inode -
+	// a walk mid-resolution, an operation that looked it up just before - is
+	// never holding a reference the same call just returned.
+	graveyard     []uint64
+	prevGraveyard []uint64
+	lastSweep     time.Time
+	// gen counts purges. A resolve holds no lock across its Lookup RPC, so a
+	// purge can run between the RPC and the insert; the insert then carries
+	// exactly the name the purge removed and has to be discarded. The recent
+	// purges are kept by key so only a purge that covers the inserted name
+	// discards it: unrelated churn must not starve resolveAndSteal into EIO.
+	gen          uint64
+	recentPurges []purgeRecord
+}
+
+type purgeRecord struct {
+	key    string
+	prefix bool
+}
+
+// maxRecentPurges bounds the purges remembered for the covers check. A resolve
+// older than the window is discarded without one, which only costs a retry.
+const maxRecentPurges = 128
+
+func (r purgeRecord) covers(key string) bool {
+	if r.key == key {
+		return true
+	}
+	if !r.prefix {
+		return false
+	}
+	// An empty key with prefix is the whole cache: purge clears every entry
+	// for it, so it has to cover every in-flight insert too.
+	return r.key == "" || strings.HasPrefix(key, r.key+"/")
+}
+
+// purgedSince reports whether any purge after gen covers key.
+func (c *pathCache) purgedSince(gen uint64, key string) bool {
+	dropped := c.gen - gen
+	if dropped == 0 {
+		return false
+	}
+	if dropped > uint64(len(c.recentPurges)) {
+		return true
+	}
+	for _, r := range c.recentPurges[uint64(len(c.recentPurges))-dropped:] {
+		if r.covers(key) {
+			return true
+		}
+	}
+	return false
 }
 
 type pathCacheEntry struct {
@@ -69,14 +119,32 @@ func (c *pathCache) lookup(key string) (inode uint64, attr fuse.Attr, ok bool) {
 	return entry.inode, entry.attr, true
 }
 
-// insert takes ownership of one lookup reference on inode.
-func (c *pathCache) insert(key string, inode uint64, attr fuse.Attr) {
+// snapshot returns the purge generation. A caller about to resolve outside
+// the lock passes it back to insert, which discards the entry if any purge ran
+// in between.
+func (c *pathCache) snapshot() uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.gen
+}
+
+// insert takes ownership of one lookup reference on inode, in every outcome:
+// an entry a covering purge outdated goes to the graveyard instead of the map,
+// so the caller may keep using the inode for at least one sweep either way.
+func (c *pathCache) insert(key string, inode uint64, attr fuse.Attr, gen uint64) {
 	if key == "" {
 		c.forget(inode)
 		return
 	}
 	var pending []uint64
 	c.mu.Lock()
+	if c.purgedSince(gen, key) {
+		c.graveyard = append(c.graveyard, inode)
+		pending = c.sweepLocked()
+		c.mu.Unlock()
+		c.forgetAll(pending)
+		return
+	}
 	if existing, found := c.entries[key]; found {
 		c.graveyard = append(c.graveyard, existing.inode)
 	} else if len(c.entries) >= maxCachedPaths {
@@ -109,6 +177,13 @@ func (c *pathCache) steal(key string) (inode uint64, ok bool) {
 func (c *pathCache) purge(key string, prefix bool) {
 	var pending []uint64
 	c.mu.Lock()
+	// Recorded even when the map holds nothing: the point is as much the
+	// in-flight resolve about to insert this very name.
+	c.gen++
+	c.recentPurges = append(c.recentPurges, purgeRecord{key: key, prefix: prefix})
+	if len(c.recentPurges) > maxRecentPurges {
+		c.recentPurges = append(c.recentPurges[:0], c.recentPurges[len(c.recentPurges)-maxRecentPurges:]...)
+	}
 	if entry, found := c.entries[key]; found {
 		c.graveyard = append(c.graveyard, entry.inode)
 		delete(c.entries, key)
@@ -127,20 +202,24 @@ func (c *pathCache) purge(key string, prefix bool) {
 	c.forgetAll(pending)
 }
 
-// sweepLocked returns the previous graveyard for the caller to forget outside
-// the lock, and moves expired entries into the next one. Sweeps run at most
-// once per ttl, so a reference rests here for at least one full ttl.
+// sweepLocked returns the generation before last for the caller to forget
+// outside the lock, and retires the current one. Sweeps run at most once per
+// ttl and an appended reference sits out the sweep of its own call, so every
+// reference rests for at least one full ttl after its last possible use.
 func (c *pathCache) sweepLocked() []uint64 {
 	now := time.Now()
 	if now.Sub(c.lastSweep) < c.ttl {
 		return nil
 	}
 	c.lastSweep = now
-	pending := c.graveyard
+	pending := c.prevGraveyard
+	c.prevGraveyard = c.graveyard
 	c.graveyard = nil
 	for key, entry := range c.entries {
 		if now.After(entry.expires) {
-			c.graveyard = append(c.graveyard, entry.inode)
+			// Returned by the next sweep, a full ttl away: served from the map
+			// until a moment ago, so someone may still be holding it.
+			c.prevGraveyard = append(c.prevGraveyard, entry.inode)
 			delete(c.entries, key)
 		}
 	}

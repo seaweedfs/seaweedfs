@@ -32,11 +32,6 @@ const (
 	// WinFsp. Bounded so a directory with millions of children does not
 	// materialise in one slice.
 	readdirBatch = 4096
-
-	// stealAttempts bounds the resolve-then-steal loop in the open paths. A
-	// miss needs the entry to be evicted in the instant between the two calls,
-	// so a second round is already unlikely.
-	stealAttempts = 4
 )
 
 // never is a nil channel: receiving blocks forever, which is what the raw
@@ -192,6 +187,10 @@ func (w *WinFS) forget(inode uint64) {
 // to hold the inode longer steals the reference from the cache.
 func (w *WinFS) walk(parts []string) (uint64, fuse.Status) {
 	inode := uint64(rootInode)
+	// Taken before the lookups: a purge racing this walk - a rename or unlink
+	// landing between a Lookup and its insert - makes what was just resolved
+	// the very thing the purge removed.
+	gen := w.paths.snapshot()
 	for i, name := range parts {
 		key := strings.Join(parts[:i+1], "/")
 		if cached, _, ok := w.paths.lookup(key); ok {
@@ -202,7 +201,7 @@ func (w *WinFS) walk(parts []string) (uint64, fuse.Status) {
 		if status := w.wfs.Lookup(never, ptr(w.caller(inode)), name, &out); status != fuse.OK {
 			return 0, status
 		}
-		w.paths.insert(key, out.NodeId, out.Attr)
+		w.paths.insert(key, out.NodeId, out.Attr, gen)
 		inode = out.NodeId
 	}
 	return inode, fuse.OK
@@ -228,24 +227,29 @@ func (w *WinFS) resolveParent(path string) (uint64, string, fuse.Status) {
 	return parent, name, fuse.OK
 }
 
-// resolveAndSteal resolves path and takes over the cache's reference on the
-// final inode, for the open paths that hold it for the life of a handle. The
-// root is handed out without a reference; it does not need one.
+// resolveAndSteal resolves path to an inode reference the caller owns, for
+// the open paths that hold it for the life of a handle: a cached entry is
+// stolen, anything else is looked up directly so the reference never passes
+// through the cache - an open must not depend on an insert surviving the
+// purges racing it. The root is handed out without a reference; it does not
+// need one.
 func (w *WinFS) resolveAndSteal(path string) (uint64, fuse.Status) {
 	key := cacheKey(path)
-	for attempt := 0; attempt < stealAttempts; attempt++ {
-		inode, status := w.resolve(path)
-		if status != fuse.OK {
-			return 0, status
-		}
-		if key == "" {
-			return inode, fuse.OK
-		}
-		if stolen, ok := w.paths.steal(key); ok {
-			return stolen, fuse.OK
-		}
+	if key == "" {
+		return rootInode, fuse.OK
 	}
-	return 0, fuse.EIO
+	if stolen, ok := w.paths.steal(key); ok {
+		return stolen, fuse.OK
+	}
+	parent, name, status := w.resolveParent(path)
+	if status != fuse.OK {
+		return 0, status
+	}
+	var out fuse.EntryOut
+	if status := w.wfs.Lookup(never, ptr(w.caller(parent)), name, &out); status != fuse.OK {
+		return 0, status
+	}
+	return out.NodeId, fuse.OK
 }
 
 func (w *WinFS) attrToStat(attr *fuse.Attr, stat *cgofuse.Stat_t) {
@@ -392,7 +396,7 @@ func (w *WinFS) Mkdir(path string, mode uint32) int {
 	if status == fuse.OK {
 		w.purgeWithParent(path, false)
 		// The new directory is about to be filled; cache it, reference and all.
-		w.paths.insert(cacheKey(path), out.NodeId, out.Attr)
+		w.paths.insert(cacheKey(path), out.NodeId, out.Attr, w.paths.snapshot())
 	}
 	return toErrno(status)
 }
@@ -674,8 +678,8 @@ func (w *WinFS) Release(path string, fh uint64) int {
 		// path still names this inode: WinFsp reports the path the handle
 		// opened with, and after a delete-on-close or a rename caching it
 		// would resurrect an entry that is gone.
-		if key := cacheKey(path); attr != nil && w.stillNames(key, inode) {
-			w.paths.insert(key, inode, *attr)
+		if key, gen := cacheKey(path), w.paths.snapshot(); attr != nil && w.stillNames(key, inode) {
+			w.paths.insert(key, inode, *attr, gen)
 		} else {
 			w.forget(inode)
 		}
