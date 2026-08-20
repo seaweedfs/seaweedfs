@@ -20,6 +20,29 @@ The admin's *HTTP* address is what an operator has; the gRPC port is derived
 from it the way the Go side does. Dialling the HTTP port fails as "frame with
 invalid size", which reads like a protocol bug rather than a wrong port.
 
+## Metrics
+
+    cargo run -p weed-lance-worker -- --admin 127.0.0.1:23646 --metrics-port 9327
+
+Serves `/health`, `/ready` and `/metrics` on that port, the same three the Go
+worker serves under `weed worker -metricsPort`, so one scrape config covers
+workers in either language. Off by default, and bound to loopback unless
+`--metrics-ip` says otherwise, because the endpoint is unauthenticated.
+
+Names are `SeaweedFS_worker_*`, matching the Go side's convention. The pair
+worth alerting on is `objects_seen_total` and `objects_skipped_total`: a sweep
+that proposes nothing and a sweep that could read nothing look identical from
+`proposals_total` alone.
+
+    SeaweedFS_worker_connected 1
+    SeaweedFS_worker_objects_seen_total{job_type="lance_compact"} 7
+    SeaweedFS_worker_proposals_total{job_type="lance_compact"} 2
+    SeaweedFS_worker_jobs_total{job_type="lance_compact",result="ok"} 2
+    SeaweedFS_worker_lance_fragments_removed_total 25
+
+`/ready` follows the control stream: a worker whose admin has gone away is
+running but is not going to do anything.
+
 ## Credentials
 
 The worker holds none. It asks the namespace to describe a table with

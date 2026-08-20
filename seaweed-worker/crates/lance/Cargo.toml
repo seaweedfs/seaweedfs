@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 seaweed-worker-core = { path = "../core" }
+prometheus.workspace = true
 # Only the S3 backend: the other object stores lance enables by default are
 # build time this worker never spends.
 lance = { version = "10", default-features = false, features = ["aws"] }

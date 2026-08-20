@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
 use tokio::sync::{mpsc, Semaphore};
@@ -8,6 +8,7 @@ use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
 use tracing::{info, warn};
 
 use crate::config::WorkerOptions;
+use crate::metrics::Metrics;
 use crate::pb::{
     admin_to_worker_message::Body as AdminBody,
     plugin_control_service_client::PluginControlServiceClient,
@@ -16,7 +17,7 @@ use crate::pb::{
     RunningWork, WorkerHeartbeat, WorkerHello,
 };
 use crate::registry::Registry;
-use crate::senders::StreamSender;
+use crate::senders::{MeteredSender, StreamSender};
 
 /// The protocol version this worker speaks, sent in WorkerHello.
 const PROTOCOL_VERSION: &str = "1";
@@ -25,6 +26,17 @@ const PROTOCOL_VERSION: &str = "1";
 /// reconnecting on failure. The stream is the only channel: everything admin
 /// asks for and everything the worker reports flows through it.
 pub async fn run(options: WorkerOptions, registry: Registry) -> Result<()> {
+    let metrics = Metrics::new(&options.worker_id, &options.worker_version)?;
+    run_with_metrics(options, registry, metrics).await
+}
+
+/// Runs with metrics a caller has already made, so it can serve them and add
+/// collectors of its own before the stream starts.
+pub async fn run_with_metrics(
+    options: WorkerOptions,
+    registry: Registry,
+    metrics: Metrics,
+) -> Result<()> {
     if registry.is_empty() {
         return Err(anyhow!("no job handlers registered"));
     }
@@ -36,20 +48,31 @@ pub async fn run(options: WorkerOptions, registry: Registry) -> Result<()> {
         ));
     }
     let slots = Slots::new(&options);
+    metrics.set_slots("detection", 0, slots.detection_total as i64);
+    metrics.set_slots("execution", 0, slots.execution_total as i64);
     loop {
-        match serve_once(&options, &registry, &slots).await {
-            Err(err) => warn!("worker stream ended: {err:#}"),
+        match serve_once(&options, &registry, &slots, &metrics).await {
+            Err(err) => {
+                metrics.stream_ended("failed");
+                warn!("worker stream ended: {err:#}")
+            }
             // Admin asked this worker to stop, so stop. Reconnecting here would
             // make shutdown impossible: the worker would log back in.
-            Ok(Outcome::ShutdownRequested) => return Ok(()),
+            Ok(Outcome::ShutdownRequested) => {
+                metrics.stream_ended("shutdown");
+                return Ok(());
+            }
             // Admin closing a healthy stream is not an error, but reconnecting
             // in silence hides the reason - two workers sharing an id evict
             // each other and produce nothing but a login every few seconds.
-            Ok(Outcome::StreamClosed) => warn!(
-                "admin closed the stream; reconnecting in {:?}. If this repeats, check for \
-                 another worker using the id {}",
-                options.reconnect_delay, options.worker_id
-            ),
+            Ok(Outcome::StreamClosed) => {
+                metrics.stream_ended("closed");
+                warn!(
+                    "admin closed the stream; reconnecting in {:?}. If this repeats, check for \
+                     another worker using the id {}",
+                    options.reconnect_delay, options.worker_id
+                )
+            }
         }
         tokio::time::sleep(options.reconnect_delay).await;
     }
@@ -131,6 +154,7 @@ async fn serve_once(
     options: &WorkerOptions,
     registry: &Registry,
     slots: &Slots,
+    metrics: &Metrics,
 ) -> Result<Outcome> {
     // Operators give the admin's HTTP address; the gRPC port is derived, the
     // same way the Go worker does it.
@@ -157,7 +181,12 @@ async fn serve_once(
         .await?
         .into_inner();
 
-    let heartbeat = spawn_heartbeat(sender.clone(), options.clone(), slots.clone());
+    let heartbeat = spawn_heartbeat(
+        sender.clone(),
+        options.clone(),
+        slots.clone(),
+        metrics.clone(),
+    );
 
     while let Some(message) = inbound.message().await? {
         let request_id = message.request_id.clone();
@@ -166,6 +195,7 @@ async fn serve_once(
                 if !hello.accepted {
                     return Err(anyhow!("admin rejected this worker: {}", hello.message));
                 }
+                metrics.stream_connected();
                 info!(
                     "connected to admin at {} ({})",
                     options.admin_address, grpc_address
@@ -194,15 +224,28 @@ async fn serve_once(
                 spawn_preview(
                     registry.clone(),
                     sender.clone(),
+                    metrics.clone(),
                     request_id.clone(),
                     request,
                 );
             }
             Some(AdminBody::RunDetectionRequest(request)) => {
-                spawn_detection(registry.clone(), sender.clone(), slots.clone(), request);
+                spawn_detection(
+                    registry.clone(),
+                    sender.clone(),
+                    slots.clone(),
+                    metrics.clone(),
+                    request,
+                );
             }
             Some(AdminBody::ExecuteJobRequest(request)) => {
-                spawn_execution(registry.clone(), sender.clone(), slots.clone(), request);
+                spawn_execution(
+                    registry.clone(),
+                    sender.clone(),
+                    slots.clone(),
+                    metrics.clone(),
+                    request,
+                );
             }
             Some(AdminBody::CancelRequest(request)) => {
                 // Cancellation needs a per-request handle to be honoured; until
@@ -230,6 +273,7 @@ async fn serve_once(
 fn spawn_preview(
     registry: Registry,
     sender: StreamSender,
+    metrics: Metrics,
     request_id: String,
     request: RequestObjectPreview,
 ) {
@@ -263,6 +307,7 @@ fn spawn_preview(
                 },
             },
         };
+        metrics.preview_finished(if response.success { "ok" } else { "failed" });
         let _ = sender.send(WorkerBody::ObjectPreviewResponse(response));
     });
 }
@@ -271,6 +316,7 @@ fn spawn_heartbeat(
     sender: StreamSender,
     options: WorkerOptions,
     slots: Slots,
+    metrics: Metrics,
 ) -> tokio::task::JoinHandle<()> {
     // The handle has to be the heartbeat's own, or aborting it aborts nothing
     // and every reconnect leaves another ticker running.
@@ -278,6 +324,18 @@ fn spawn_heartbeat(
         let mut ticker = tokio::time::interval(options.heartbeat_interval);
         loop {
             ticker.tick().await;
+            // The heartbeat already computes this for admin; publish the same
+            // numbers so a scrape and the admin UI cannot disagree.
+            metrics.set_slots(
+                "detection",
+                slots.detection_used() as i64,
+                slots.detection_total as i64,
+            );
+            metrics.set_slots(
+                "execution",
+                slots.execution_used() as i64,
+                slots.execution_total as i64,
+            );
             let beat = WorkerHeartbeat {
                 worker_id: options.worker_id.clone(),
                 running_work: Vec::<RunningWork>::new(),
@@ -299,6 +357,7 @@ fn spawn_detection(
     registry: Registry,
     sender: StreamSender,
     slots: Slots,
+    metrics: Metrics,
     request: RunDetectionRequest,
 ) {
     tokio::spawn(async move {
@@ -308,7 +367,10 @@ fn spawn_detection(
         // Held until the sweep finishes, so the worker keeps to the capacity it
         // advertised and the heartbeat reports the truth while it works.
         let _permit = slots.detection.acquire().await;
-        if let Err(err) = handler.detect(&request, &sender).await {
+        let metered = MeteredSender::new(&sender);
+        let started = Instant::now();
+        let outcome = handler.detect(&request, &metered).await;
+        let result = if let Err(err) = &outcome {
             warn!("detection for {} failed: {err:#}", request.job_type);
             let _ = sender.send(WorkerBody::DetectionComplete(
                 crate::pb::DetectionComplete {
@@ -319,7 +381,18 @@ fn spawn_detection(
                     total_proposals: 0,
                 },
             ));
-        }
+            "failed"
+        } else if metered.reported_failure() {
+            "failed"
+        } else {
+            "ok"
+        };
+        metrics.detection_finished(
+            &request.job_type,
+            result,
+            started.elapsed().as_secs_f64(),
+            metered.proposals(),
+        );
     });
 }
 
@@ -327,6 +400,7 @@ fn spawn_execution(
     registry: Registry,
     sender: StreamSender,
     slots: Slots,
+    metrics: Metrics,
     request: ExecuteJobRequest,
 ) {
     tokio::spawn(async move {
@@ -344,17 +418,26 @@ fn spawn_execution(
         let Some(handler) = registry.get(&job_type) else {
             return;
         };
-        if let Err(err) = handler.execute(&request, &sender).await {
+        let metered = MeteredSender::new(&sender);
+        let started = Instant::now();
+        let outcome = handler.execute(&request, &metered).await;
+        let result = if let Err(err) = &outcome {
             warn!("job {job_id} failed: {err:#}");
             let _ = sender.send(WorkerBody::JobCompleted(JobCompleted {
                 request_id: request.request_id.clone(),
                 job_id,
-                job_type,
+                job_type: job_type.clone(),
                 success: false,
                 error_message: format!("{err:#}"),
                 ..Default::default()
             }));
-        }
+            "failed"
+        } else if metered.reported_failure() {
+            "failed"
+        } else {
+            "ok"
+        };
+        metrics.job_finished(&job_type, result, started.elapsed().as_secs_f64());
     });
 }
 

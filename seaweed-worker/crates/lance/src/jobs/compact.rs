@@ -35,6 +35,7 @@ const MIN_FRAGMENTS_CEILING: i64 = 4096;
 pub struct CompactHandler {
     namespace_url: String,
     fallback: dataset::FallbackOptions,
+    metrics: Option<crate::metrics::LanceMetrics>,
 }
 
 impl CompactHandler {
@@ -42,7 +43,13 @@ impl CompactHandler {
         Self {
             namespace_url,
             fallback: dataset::FallbackOptions::new(),
+            metrics: None,
         }
+    }
+
+    pub fn with_metrics(mut self, metrics: Option<crate::metrics::LanceMetrics>) -> Self {
+        self.metrics = metrics;
+        self
     }
 
     /// Storage options to use where the namespace vends none.
@@ -143,6 +150,9 @@ impl JobHandler for CompactHandler {
                 Err(err) => {
                     // A table that cannot be opened is the next run's problem,
                     // not a reason to abandon the whole sweep.
+                    if let Some(counters) = &self.metrics {
+                        counters.worker.object_skipped(JOB_TYPE, "open");
+                    }
                     warn!("skipping {encoded}: {err:#}");
                     continue;
                 }
@@ -150,9 +160,15 @@ impl JobHandler for CompactHandler {
             // One unreadable table must not end the sweep: the tables already
             // read would lose their proposals, and admin would get no
             // completion for this request at all.
+            if let Some(counters) = &self.metrics {
+                counters.worker.object_seen(JOB_TYPE);
+            }
             let stats = match table.stats().await {
                 Ok(stats) => stats,
                 Err(err) => {
+                    if let Some(counters) = &self.metrics {
+                        counters.worker.object_skipped(JOB_TYPE, "stats");
+                    }
                     warn!("skipping {encoded}: reading its stats failed: {err:#}");
                     continue;
                 }
@@ -263,6 +279,12 @@ impl JobHandler for CompactHandler {
         let metrics = compact_files(&mut table.dataset, options, None)
             .await
             .with_context(|| format!("compact {}", table.location))?;
+
+        if let Some(counters) = &self.metrics {
+            counters
+                .fragments_removed
+                .inc_by(metrics.fragments_removed as u64);
+        }
 
         let after = table.stats().await?;
         let mut output: HashMap<String, ConfigValue> = HashMap::new();

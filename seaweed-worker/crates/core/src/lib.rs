@@ -9,6 +9,7 @@
 pub mod address;
 pub mod config;
 pub mod config_form;
+pub mod metrics;
 pub mod registry;
 pub mod senders;
 pub mod stream;
@@ -19,6 +20,7 @@ pub mod pb {
 }
 
 pub use config::{TlsOptions, WorkerOptions};
+pub use metrics::Metrics;
 pub use registry::{JobHandler, Preview, PreviewProvider, Registry};
 pub use senders::{DetectionSender, ExecutionSender};
 pub use stream::run;

@@ -19,6 +19,9 @@ prost-types = "0.13"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
 tonic = { version = "0.12", features = ["tls"] }
+# Already in the tree via tonic; named here so the metrics server can use them.
+axum = "0.7"
+prometheus = { version = "0.13", default-features = false }
 tonic-build = "0.12"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

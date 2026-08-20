@@ -32,6 +32,7 @@ const MAX_MIN_VERSIONS: i64 = 1000;
 pub struct CleanupVersionsHandler {
     namespace_url: String,
     fallback: dataset::FallbackOptions,
+    metrics: Option<crate::metrics::LanceMetrics>,
 }
 
 impl CleanupVersionsHandler {
@@ -39,7 +40,13 @@ impl CleanupVersionsHandler {
         Self {
             namespace_url,
             fallback: dataset::FallbackOptions::new(),
+            metrics: None,
         }
+    }
+
+    pub fn with_metrics(mut self, metrics: Option<crate::metrics::LanceMetrics>) -> Self {
+        self.metrics = metrics;
+        self
     }
 
     pub fn with_fallback(mut self, fallback: dataset::FallbackOptions) -> Self {
@@ -147,13 +154,22 @@ impl JobHandler for CleanupVersionsHandler {
             let table = match dataset::open(&client, &id, &self.fallback).await {
                 Ok(table) => table,
                 Err(err) => {
+                    if let Some(counters) = &self.metrics {
+                        counters.worker.object_skipped(JOB_TYPE, "open");
+                    }
                     warn!("skipping {encoded}: {err:#}");
                     continue;
                 }
             };
+            if let Some(counters) = &self.metrics {
+                counters.worker.object_seen(JOB_TYPE);
+            }
             let stats = match table.stats().await {
                 Ok(stats) => stats,
                 Err(err) => {
+                    if let Some(counters) = &self.metrics {
+                        counters.worker.object_skipped(JOB_TYPE, "stats");
+                    }
                     warn!("skipping {encoded}: reading its stats failed: {err:#}");
                     continue;
                 }
@@ -280,6 +296,11 @@ impl JobHandler for CleanupVersionsHandler {
         let stats = cleanup_old_versions(&table.dataset, policy)
             .await
             .with_context(|| format!("clean up versions of {}", table.location))?;
+
+        if let Some(counters) = &self.metrics {
+            counters.versions_removed.inc_by(stats.old_versions as u64);
+            counters.bytes_reclaimed.inc_by(stats.bytes_removed as u64);
+        }
 
         let mut output: HashMap<String, ConfigValue> = HashMap::new();
         output.insert(

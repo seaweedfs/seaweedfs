@@ -35,6 +35,7 @@ const MAX_UNINDEXED_CEILING: i64 = 100_000_000;
 pub struct OptimizeIndicesHandler {
     namespace_url: String,
     fallback: dataset::FallbackOptions,
+    metrics: Option<crate::metrics::LanceMetrics>,
 }
 
 impl OptimizeIndicesHandler {
@@ -42,7 +43,13 @@ impl OptimizeIndicesHandler {
         Self {
             namespace_url,
             fallback: dataset::FallbackOptions::new(),
+            metrics: None,
         }
+    }
+
+    pub fn with_metrics(mut self, metrics: Option<crate::metrics::LanceMetrics>) -> Self {
+        self.metrics = metrics;
+        self
     }
 
     pub fn with_fallback(mut self, fallback: dataset::FallbackOptions) -> Self {
@@ -149,14 +156,23 @@ impl JobHandler for OptimizeIndicesHandler {
             let table = match dataset::open(&client, &id, &self.fallback).await {
                 Ok(table) => table,
                 Err(err) => {
+                    if let Some(counters) = &self.metrics {
+                        counters.worker.object_skipped(JOB_TYPE, "open");
+                    }
                     warn!("skipping {encoded}: {err:#}");
                     continue;
                 }
             };
+            if let Some(counters) = &self.metrics {
+                counters.worker.object_seen(JOB_TYPE);
+            }
             let unindexed = match unindexed_rows(&table).await {
                 Ok(Some(unindexed)) => unindexed,
                 Ok(None) => continue,
                 Err(err) => {
+                    if let Some(counters) = &self.metrics {
+                        counters.worker.object_skipped(JOB_TYPE, "index_stats");
+                    }
                     warn!("skipping {encoded}: reading its index stats failed: {err:#}");
                     continue;
                 }
@@ -232,6 +248,9 @@ impl JobHandler for OptimizeIndicesHandler {
             .with_context(|| format!("optimize indices of {}", table.location))?;
 
         let after = unindexed_rows(&table).await?.unwrap_or(0);
+        if let Some(counters) = &self.metrics {
+            counters.rows_indexed.inc_by(before.saturating_sub(after));
+        }
         let mut output: HashMap<String, ConfigValue> = HashMap::new();
         output.insert(
             "unindexed_rows_before".to_string(),
