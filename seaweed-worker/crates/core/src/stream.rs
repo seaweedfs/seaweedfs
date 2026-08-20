@@ -357,3 +357,52 @@ fn spawn_execution(
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn options(detection: i32, execution: i32) -> WorkerOptions {
+        WorkerOptions {
+            max_detection_concurrency: detection,
+            max_execution_concurrency: execution,
+            ..Default::default()
+        }
+    }
+
+    // The heartbeat is admin's only view of how busy this worker is; before the
+    // permits existed it reported zero however much was running.
+    #[tokio::test]
+    async fn slots_report_what_is_held() {
+        let slots = Slots::new(&options(2, 3));
+        assert_eq!(slots.detection_used(), 0);
+        assert_eq!(slots.execution_used(), 0);
+
+        let held = slots.detection.acquire().await.unwrap();
+        assert_eq!(slots.detection_used(), 1);
+        assert_eq!(slots.execution_used(), 0, "the two do not share capacity");
+
+        drop(held);
+        assert_eq!(slots.detection_used(), 0);
+    }
+
+    // A limit of one means the second request waits, rather than running anyway
+    // as it did when every request simply spawned a task.
+    #[tokio::test]
+    async fn a_full_lane_makes_the_next_request_wait() {
+        let slots = Slots::new(&options(1, 1));
+        let held = slots.execution.clone().acquire_owned().await.unwrap();
+        assert_eq!(slots.execution_used(), 1);
+
+        let waiter = tokio::spawn({
+            let execution = slots.execution.clone();
+            async move { execution.acquire_owned().await.unwrap() }
+        });
+        tokio::task::yield_now().await;
+        assert!(!waiter.is_finished(), "the second request must not start");
+
+        drop(held);
+        let _second = waiter.await.expect("the waiter should be handed the slot");
+        assert_eq!(slots.execution_used(), 1);
+    }
+}
