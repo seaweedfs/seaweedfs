@@ -1,0 +1,13 @@
+# Lance client container for Lance Namespace REST compatibility testing.
+# The point of this image is to exercise the namespace with the real client
+# rather than hand-built HTTP: every serious bug in this surface so far looked
+# fine to a request we wrote ourselves.
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir lance-namespace pylance pyarrow
+
+COPY test_lance_namespace.py /app/
+
+CMD ["python3", "/app/test_lance_namespace.py", "--help"]

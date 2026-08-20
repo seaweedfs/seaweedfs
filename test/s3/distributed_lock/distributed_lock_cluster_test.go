@@ -310,6 +310,7 @@ func (c *distributedLockCluster) startS3(index int) error {
 		"-port=" + strconv.Itoa(c.s3Ports[index]),
 		"-port.grpc=" + strconv.Itoa(c.s3GrpcPorts[index]),
 		"-port.iceberg=0",
+		"-port.lance=0",
 		"-filer=" + strings.Join(filers, ","),
 		"-config=" + c.s3Config,
 		"-iam.readOnly=false",

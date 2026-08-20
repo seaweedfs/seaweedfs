@@ -108,7 +108,8 @@ function initS3TablesBuckets() {
             const tagsInput = document.getElementById('s3tablesBucketTags').value.trim();
             const tags = parseTagsInput(tagsInput);
             if (tags === null) return;
-            const payload = { name: name, tags: tags, owner: owner };
+            const formatInput = document.querySelector('#s3tablesBucketFormatPicker input[name="format"]:checked');
+            const payload = { name: name, tags: tags, owner: owner, format: formatInput ? formatInput.value : 'ICEBERG' };
 
             try {
                 const response = await fetch(s3tBasePath('/api/s3tables/buckets'), {
@@ -128,6 +129,51 @@ function initS3TablesBuckets() {
             }
         });
     }
+
+    // The endpoint is the whole reason the format matters, so show it changing
+    // rather than making the operator work it out after the fact.
+    const formatPicker = document.getElementById('s3tablesBucketFormatPicker');
+    const formatHint = document.getElementById('s3tablesBucketFormatHint');
+    if (formatPicker && formatHint) {
+        const icebergPort = formatHint.dataset.icebergPort;
+        const lancePort = formatHint.dataset.lancePort;
+        const origin = window.location.protocol + '//' + window.location.hostname;
+        const describeEndpoint = function () {
+            const chosen = formatPicker.querySelector('input[name="format"]:checked');
+            const isLance = chosen && chosen.value === 'LANCE';
+            const port = isLance ? lancePort : icebergPort;
+            const name = (document.getElementById('s3tablesBucketName').value || '').trim();
+            // The bucket name is whatever the operator is typing, so it goes in
+            // as text. Building this with innerHTML would run their input.
+            formatHint.textContent = '';
+            if (!port || port === '0') {
+                formatHint.appendChild(document.createTextNode('A bucket holds one format. Tables of the other are refused. '));
+                const warning = document.createElement('span');
+                warning.className = 'text-warning';
+                warning.textContent = 'No server is running for this format.';
+                formatHint.appendChild(warning);
+                return;
+            }
+            const path = isLance
+                ? '/v1/namespace/' + (name || '<bucket>') + '/list'
+                : '/v1/' + (name || '<bucket>') + '/namespaces';
+            formatHint.appendChild(document.createTextNode('Clients reach this bucket at '));
+            const endpoint = document.createElement('code');
+            endpoint.textContent = origin + ':' + port + path;
+            formatHint.appendChild(endpoint);
+        };
+        formatPicker.addEventListener('change', describeEndpoint);
+        const bucketNameField = document.getElementById('s3tablesBucketName');
+        if (bucketNameField) {
+            bucketNameField.addEventListener('input', describeEndpoint);
+        }
+        describeEndpoint();
+    }
+
+    // The banner prints localhost server-side; the browser knows the real host.
+    document.querySelectorAll('.s3tables-origin').forEach(function (el) {
+        el.textContent = window.location.protocol + '//' + window.location.hostname + ':' + el.dataset.port;
+    });
 
     const policyForm = document.getElementById('s3tablesBucketPolicyForm');
     if (policyForm) {

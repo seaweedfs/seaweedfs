@@ -1,0 +1,21 @@
+[package]
+name = "seaweed-worker-core"
+version.workspace = true
+edition.workspace = true
+description = "SeaweedFS plugin.proto worker contract"
+
+[lib]
+name = "seaweed_worker_core"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+prost.workspace = true
+prost-types.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+tonic.workspace = true
+tracing.workspace = true
+
+[build-dependencies]
+tonic-build.workspace = true

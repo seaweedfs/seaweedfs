@@ -329,7 +329,7 @@ func (ts tableSetup) fileRef(elem ...string) string {
 func populateTable(t *testing.T, fs *fakeFilerServer, setup tableSetup) table.Metadata {
 	t.Helper()
 
-	meta := buildTestMetadata(t, setup.Snapshots, setup.Refs, setup.Age)
+	meta := buildTestMetadata(t, setup.Snapshots, setup.Refs, setup.Age, nil)
 	fullMetadataJSON, err := json.Marshal(meta)
 	if err != nil {
 		t.Fatalf("marshal metadata: %v", err)
