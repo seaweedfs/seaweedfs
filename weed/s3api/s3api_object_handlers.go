@@ -43,13 +43,17 @@ var zeroBuf = make([]byte, 32*1024)
 
 // countingWriter wraps an io.Writer to count bytes written
 type countingWriter struct {
-	w       io.Writer
-	written int64
+	w        io.Writer
+	written  int64
+	writeErr error
 }
 
 func (cw *countingWriter) Write(p []byte) (int, error) {
 	n, err := cw.w.Write(p)
 	cw.written += int64(n)
+	if err != nil {
+		cw.writeErr = err
+	}
 	return n, err
 }
 
@@ -1182,37 +1186,27 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	// io.CopyBuffer drains them as fast memcpys.
 	tStreamExec := time.Now()
 	glog.V(4).Infof("streamFromVolumeServers: starting chunk reader, offset=%d, size=%d", offset, size)
-	cw := &countingWriter{w: w}
-	// Cap the copy buffer to the response size so small-object GETs (common
-	// for thumbnails, config files, etc.) don't allocate a 256 KiB scratch
-	// buffer per request.
-	const maxCopyBuf = 256 * 1024
-	copyBufSize := int64(maxCopyBuf)
-	if size > 0 && size < copyBufSize {
-		copyBufSize = size
-	}
-	copyBuf := make([]byte, copyBufSize)
-	_, err = io.CopyBuffer(cw, io.NewSectionReader(reader, offset, size), copyBuf)
+	written, err := s3a.streamRangeToClient(w, r, reader, entry, bucket, object, offset, size, totalSize, versionId)
 	streamExecTime = time.Since(tStreamExec)
 	// Track traffic even on partial writes for accurate egress accounting
-	if cw.written > 0 {
-		BucketTrafficSent(cw.written, r)
+	if written > 0 {
+		BucketTrafficSent(written, r)
 	}
 	if err != nil {
 		switch {
 		case isCanceledStreamingError(err):
 			// Client disconnected mid-stream (e.g. Nginx upstream timeout, browser cancel) - expected
-			glog.V(3).Infof("streamFromVolumeServers: client disconnected after writing %d bytes: %v", cw.written, err)
+			glog.V(3).Infof("streamFromVolumeServers: client disconnected after writing %d bytes: %v", written, err)
 		case errors.Is(err, context.DeadlineExceeded):
 			// Server-side deadline exceeded - unexpected, warrants operator attention
-			glog.Warningf("streamFromVolumeServers: server-side deadline exceeded after writing %d bytes: %v", cw.written, err)
+			glog.Warningf("streamFromVolumeServers: server-side deadline exceeded after writing %d bytes: %v", written, err)
 		default:
-			glog.Errorf("streamFromVolumeServers: streamFn failed after writing %d bytes: %v", cw.written, err)
+			glog.Errorf("streamFromVolumeServers: streamFn failed after writing %d bytes: %v", written, err)
 		}
 		// Streaming error after WriteHeader was called - response already partially written
 		return newStreamErrorWithResponse(err)
 	}
-	glog.V(4).Infof("streamFromVolumeServers: streamFn completed successfully, wrote %d bytes", cw.written)
+	glog.V(4).Infof("streamFromVolumeServers: streamFn completed successfully, wrote %d bytes", written)
 	return nil
 }
 
@@ -1313,6 +1307,51 @@ func (s3a *S3ApiServer) serveObjectFromRemoteMount(w http.ResponseWriter, r *htt
 		return true, copyErr
 	}
 	return true, nil
+}
+
+// streamRangeToClient copies [offset, offset+size) of the local (volume-server)
+// copy into the already-committed response. The pre-flight probe only proved the
+// byte at offset readable, so a later chunk can still be unreadable; when the
+// object is eligible for the remote fallback, the rest of the body is finished
+// from the mounted remote -- which holds the same bytes -- rather than truncating
+// the response under its declared Content-Length.
+func (s3a *S3ApiServer) streamRangeToClient(w io.Writer, r *http.Request, reader io.ReaderAt, entry *filer_pb.Entry, bucket, object string, offset, size, totalSize int64, versionId string) (int64, error) {
+	// Cap the copy buffer to the response size so small-object GETs (common
+	// for thumbnails, config files, etc.) don't allocate a 256 KiB scratch
+	// buffer per request.
+	const maxCopyBuf = 256 * 1024
+	copyBufSize := int64(maxCopyBuf)
+	if size > 0 && size < copyBufSize {
+		copyBufSize = size
+	}
+	cw := &countingWriter{w: w}
+	_, err := io.CopyBuffer(cw, io.NewSectionReader(reader, offset, size), make([]byte, copyBufSize))
+	if err == nil && cw.written < size {
+		// a short local read surfaces as a clean EOF, which would leave the body
+		// shorter than the Content-Length already sent
+		err = io.ErrUnexpectedEOF
+	}
+	if err == nil || cw.writeErr != nil || isCanceledStreamingError(err) || !s3a.shouldFallBackToRemote(entry, totalSize, versionId) {
+		return cw.written, err
+	}
+
+	remaining := size - cw.written
+	glog.V(1).Infof("streamFromVolumeServers: local read of %s/%s failed after %d bytes (%v), finishing from the remote mount", bucket, object, cw.written, err)
+	remoteReader, remoteErr := s3a.openRemoteStream(r.Context(), bucket, object, offset+cw.written, remaining)
+	if remoteErr != nil {
+		glog.Warningf("streamFromVolumeServers: origin stream %s/%s: %v", bucket, object, remoteErr)
+		return cw.written, err
+	}
+	defer remoteReader.Close()
+	if _, copyErr := io.CopyN(cw, remoteReader, remaining); copyErr != nil {
+		if copyErr == io.EOF {
+			// the origin returned fewer bytes than the entry's RemoteSize
+			copyErr = io.ErrUnexpectedEOF
+		}
+		glog.V(2).Infof("streamFromVolumeServers: origin stream %s/%s ended after %d bytes: %v", bucket, object, cw.written, copyErr)
+		return cw.written, copyErr
+	}
+	return cw.written, nil
 }
 
 // Shared HTTP client for volume server requests (connection pooling)

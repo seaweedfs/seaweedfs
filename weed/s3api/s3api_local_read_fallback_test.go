@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -204,5 +205,107 @@ func TestS3CachedReadFallsBackToRemote(t *testing.T) {
 
 		require.Error(t, err)
 		assert.Nil(t, client.gotLoc, "a versioned read must not serve the unversioned remote object")
+	})
+}
+
+// truncatedReaderAt serves the first breakAt bytes and then fails, standing in
+// for a multi-chunk object whose later chunk's volume server is unreachable.
+type truncatedReaderAt struct {
+	data    []byte
+	breakAt int64
+	err     error
+}
+
+func (t truncatedReaderAt) ReadAt(p []byte, offset int64) (int, error) {
+	if offset >= t.breakAt {
+		return 0, t.err
+	}
+	return copy(p, t.data[offset:t.breakAt]), nil
+}
+
+// failingWriter stands in for a client that disconnected mid-response.
+type failingWriter struct{ err error }
+
+func (f failingWriter) Write(p []byte) (int, error) { return 0, f.err }
+
+// TestStreamRangeToClientFinishesFromRemote covers the window the pre-flight
+// probe cannot: the byte at the requested offset reads fine, the response is
+// committed, and only then does a later chunk turn out to be unreadable.
+func TestStreamRangeToClientFinishesFromRemote(t *testing.T) {
+	content := []byte("0123456789")
+	size := int64(len(content))
+	newServer := func(t *testing.T, name string, enabled bool) (*S3ApiServer, *fakeStreamRemoteClient) {
+		client := &fakeStreamRemoteClient{data: content}
+		remote_storage.RemoteStorageClientMakers["faketest"] = &fakeStreamRemoteMaker{client: client}
+		return newLocalReadFallbackServer(t, startStreamThroughFiler(t, name, nil), enabled), client
+	}
+
+	t.Run("later chunk failure is finished from the remote", func(t *testing.T) {
+		s3a, client := newServer(t, "faketest-midstream", true)
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/mybucket/dir/obj.bin", nil)
+		local := truncatedReaderAt{data: content, breakAt: 4, err: errors.New("volume: connection refused")}
+
+		written, err := s3a.streamRangeToClient(w, r, local, cachedEntry(content), "mybucket", "dir/obj.bin", 0, size, size, "")
+
+		require.NoError(t, err)
+		assert.Equal(t, size, written)
+		assert.Equal(t, content, w.Body.Bytes())
+		assert.Equal(t, int64(4), client.gotOffset, "the remote must resume where the local copy stopped")
+		assert.Equal(t, int64(6), client.gotSize)
+	})
+
+	t.Run("a short local read reported as clean EOF is not served truncated", func(t *testing.T) {
+		s3a, client := newServer(t, "faketest-shortread", true)
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/mybucket/dir/obj.bin", nil)
+		local := truncatedReaderAt{data: content, breakAt: 7, err: io.EOF}
+
+		written, err := s3a.streamRangeToClient(w, r, local, cachedEntry(content), "mybucket", "dir/obj.bin", 0, size, size, "")
+
+		require.NoError(t, err)
+		assert.Equal(t, size, written)
+		assert.Equal(t, content, w.Body.Bytes())
+		assert.Equal(t, int64(7), client.gotOffset)
+	})
+
+	t.Run("range read resumes at the absolute offset", func(t *testing.T) {
+		s3a, client := newServer(t, "faketest-midstreamrange", true)
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/mybucket/dir/obj.bin", nil)
+		local := truncatedReaderAt{data: content, breakAt: 5, err: errors.New("volume: connection refused")}
+
+		written, err := s3a.streamRangeToClient(w, r, local, cachedEntry(content), "mybucket", "dir/obj.bin", 2, 6, size, "")
+
+		require.NoError(t, err)
+		assert.Equal(t, int64(6), written)
+		assert.Equal(t, content[2:8], w.Body.Bytes())
+		assert.Equal(t, int64(5), client.gotOffset)
+		assert.Equal(t, int64(3), client.gotSize)
+	})
+
+	t.Run("disabled keeps the mid-stream error", func(t *testing.T) {
+		s3a, client := newServer(t, "faketest-midstreamoff", false)
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/mybucket/dir/obj.bin", nil)
+		boom := errors.New("volume: connection refused")
+
+		written, err := s3a.streamRangeToClient(w, r, truncatedReaderAt{data: content, breakAt: 4, err: boom}, cachedEntry(content), "mybucket", "dir/obj.bin", 0, size, size, "")
+
+		assert.ErrorIs(t, err, boom)
+		assert.Equal(t, int64(4), written)
+		assert.Nil(t, client.gotLoc, "must not read from the remote when fallback is disabled")
+	})
+
+	t.Run("a failed write to the client is not refetched from the remote", func(t *testing.T) {
+		s3a, client := newServer(t, "faketest-midstreamwrite", true)
+		r := httptest.NewRequest(http.MethodGet, "/mybucket/dir/obj.bin", nil)
+		broken := errors.New("write: broken pipe")
+
+		written, err := s3a.streamRangeToClient(failingWriter{err: broken}, r, bytes.NewReader(content), cachedEntry(content), "mybucket", "dir/obj.bin", 0, size, size, "")
+
+		assert.ErrorIs(t, err, broken)
+		assert.Zero(t, written)
+		assert.Nil(t, client.gotLoc, "the client is gone; refetching from the remote is wasted work")
 	})
 }
