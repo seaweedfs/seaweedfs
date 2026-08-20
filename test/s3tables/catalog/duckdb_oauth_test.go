@@ -60,7 +60,12 @@ func newOAuthTestEnv(t *testing.T) *oauthTestEnv {
 	}
 
 	weedBinary := filepath.Join(seaweedDir, "weed", "weed")
-	if info, err := os.Stat(weedBinary); err != nil || info.IsDir() {
+	if info, err := os.Stat(weedBinary); err == nil && !info.IsDir() {
+		// Say which binary and how old it is. `make test` rebuilds first, but
+		// `go test` on its own happily runs a weeks-old binary and reports a
+		// pass for code that is not being exercised.
+		t.Logf("using %s, built %s", weedBinary, info.ModTime().Format(time.RFC3339))
+	} else {
 		weedBinary = "weed"
 		if _, err := exec.LookPath(weedBinary); err != nil {
 			t.Skip("weed binary not found, skipping integration test")

@@ -93,7 +93,12 @@ func newTestEnvironmentForMain() (*TestEnvironment, error) {
 
 	// Check for weed binary
 	weedBinary := filepath.Join(seaweedDir, "weed", "weed")
-	if _, err := os.Stat(weedBinary); os.IsNotExist(err) {
+	if info, statErr := os.Stat(weedBinary); statErr == nil {
+		// Name the binary and its age. `make test` rebuilds first, but a plain
+		// `go test` will happily drive a weeks-old binary and report a pass for
+		// code it never ran.
+		fmt.Fprintf(os.Stderr, "using %s, built %s\n", weedBinary, info.ModTime().Format(time.RFC3339))
+	} else if os.IsNotExist(statErr) {
 		weedBinary = "weed"
 		if _, err := exec.LookPath(weedBinary); err != nil {
 			return nil, fmt.Errorf("weed binary not found")

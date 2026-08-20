@@ -23,11 +23,12 @@ func (r *Plugin) RequestObjectPreview(ctx context.Context, objectID []string, fo
 	if len(objectID) == 0 {
 		return nil, fmt.Errorf("preview needs an object id")
 	}
-	if rowLimit < 1 || rowLimit > maxPreviewRows {
-		rowLimit = maxPreviewRows
+	// The conversion happens only inside the bound check, so what reaches the
+	// wire cannot depend on int being wider than int32 here.
+	requestedRows := int32(maxPreviewRows)
+	if rowLimit >= 1 && rowLimit <= maxPreviewRows {
+		requestedRows = int32(rowLimit)
 	}
-	// Bounded above by maxPreviewRows, so this fits int32 on every platform.
-	requestedRows := int32(rowLimit)
 
 	observed, ok := r.observations.GetFormat(objectID, format)
 	if !ok {

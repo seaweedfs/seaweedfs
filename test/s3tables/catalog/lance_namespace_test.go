@@ -56,10 +56,13 @@ func filerEntryExists(t *testing.T, env *TestEnvironment, path string) bool {
 	return resp.StatusCode == http.StatusOK
 }
 
-func lanceTestBucket(t *testing.T, env *TestEnvironment, prefix string) string {
+// lanceTestBucket makes a uniquely named table bucket of the given format. Most
+// tests want LANCE; the one that checks what the Lance surface hides needs an
+// Iceberg bucket, because a declared bucket holds one format only.
+func lanceTestBucket(t *testing.T, env *TestEnvironment, prefix, format string) string {
 	t.Helper()
 	bucket := prefix + "-" + randomSuffix()
-	createTableBucket(t, env, bucket, s3tables.FormatLance)
+	createTableBucket(t, env, bucket, format)
 	return bucket
 }
 
@@ -68,7 +71,7 @@ func TestLanceNamespaceLifecycle(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 	env := sharedEnv
-	bucket := lanceTestBucket(t, env, "lance-ns")
+	bucket := lanceTestBucket(t, env, "lance-ns", s3tables.FormatLance)
 
 	lanceMust(t, env, http.MethodPost, "/v1/namespace/"+bucket+"$sales/create", `{}`, http.StatusOK)
 	lanceMust(t, env, http.MethodPost, "/v1/namespace/"+bucket+"$sales/exists", `{}`, http.StatusOK)
@@ -113,7 +116,7 @@ func TestLanceTableLifecyclePreservesData(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 	env := sharedEnv
-	bucket := lanceTestBucket(t, env, "lance-tbl")
+	bucket := lanceTestBucket(t, env, "lance-tbl", s3tables.FormatLance)
 	lanceMust(t, env, http.MethodPost, "/v1/namespace/"+bucket+"$ml/create", `{}`, http.StatusOK)
 
 	table := "/v1/table/" + bucket + "$ml$vectors"
@@ -165,12 +168,16 @@ func TestLanceTableLifecyclePreservesData(t *testing.T) {
 
 // A Lance client must never resolve an Iceberg table's location, or it writes a
 // dataset over a table another engine owns.
-func TestLanceRefusesIcebergTables(t *testing.T) {
+func TestLanceHidesIcebergTables(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
 	env := sharedEnv
-	bucket := lanceTestBucket(t, env, "lance-mixed")
+	// An Iceberg bucket, because a bucket that declares LANCE cannot hold an
+	// Iceberg table at all now. The invariant still matters from this side: the
+	// Lance surface can be pointed at any bucket, and must not describe or list
+	// a table whose format it does not serve.
+	bucket := lanceTestBucket(t, env, "lance-mixed", s3tables.FormatIceberg)
 	lanceMust(t, env, http.MethodPost, "/v1/namespace/"+bucket+"$mixed/create", `{}`, http.StatusOK)
 
 	createIcebergTable(t, env, bucket, "mixed", "ledger")
@@ -182,6 +189,11 @@ func TestLanceRefusesIcebergTables(t *testing.T) {
 	status, _ = lanceCall(t, env, http.MethodPost, "/v1/table/"+bucket+"$mixed$ledger/declare", `{}`)
 	if status != http.StatusConflict {
 		t.Fatalf("declaring over an iceberg table = %d, want 409", status)
+	}
+	// And a new Lance table cannot be smuggled in beside it either.
+	status, _ = lanceCall(t, env, http.MethodPost, "/v1/table/"+bucket+"$mixed$vectors/declare", `{}`)
+	if status != http.StatusConflict {
+		t.Fatalf("declaring a lance table in an iceberg bucket = %d, want 409", status)
 	}
 
 	var listed struct {
@@ -202,7 +214,7 @@ func TestLanceFilesAreAcceptedByTheS3Door(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 	env := sharedEnv
-	bucket := lanceTestBucket(t, env, "lance-layout")
+	bucket := lanceTestBucket(t, env, "lance-layout", s3tables.FormatLance)
 	lanceMust(t, env, http.MethodPost, "/v1/namespace/"+bucket+"$ml/create", `{}`, http.StatusOK)
 	lanceMust(t, env, http.MethodPost, "/v1/table/"+bucket+"$ml$vectors/declare", `{}`, http.StatusOK)
 
@@ -241,7 +253,7 @@ func TestLanceCommitPreconditionAdmitsOneWriter(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 	env := sharedEnv
-	bucket := lanceTestBucket(t, env, "lance-commit")
+	bucket := lanceTestBucket(t, env, "lance-commit", s3tables.FormatLance)
 	lanceMust(t, env, http.MethodPost, "/v1/namespace/"+bucket+"$ml/create", `{}`, http.StatusOK)
 	lanceMust(t, env, http.MethodPost, "/v1/table/"+bucket+"$ml$vectors/declare", `{}`, http.StatusOK)
 
@@ -290,7 +302,7 @@ func TestLanceDoesNotManageVersions(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 	env := sharedEnv
-	bucket := lanceTestBucket(t, env, "lance-ver")
+	bucket := lanceTestBucket(t, env, "lance-ver", s3tables.FormatLance)
 	lanceMust(t, env, http.MethodPost, "/v1/namespace/"+bucket+"$ml/create", `{}`, http.StatusOK)
 	table := "/v1/table/" + bucket + "$ml$vectors"
 
