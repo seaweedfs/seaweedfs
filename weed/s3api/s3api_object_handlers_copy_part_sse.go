@@ -364,7 +364,7 @@ func (s3a *S3ApiServer) copyObjectPartViaReencryption(
 	r *http.Request,
 	srcEntry *filer_pb.Entry,
 	startOffset, endOffset int64,
-	dstBucket, uploadID string,
+	dstBucket, dstObject, uploadID string,
 	partID int,
 	uploadEntry *filer_pb.Entry,
 ) (etag string, sseMetadata SSEResponseMetadata, errCode s3err.ErrorCode) {
@@ -399,7 +399,7 @@ func (s3a *S3ApiServer) copyObjectPartViaReencryption(
 	applyDestChecksumHeaderToCopyRequest(cloned, uploadEntry)
 
 	filePath := s3a.genPartUploadPath(dstBucket, uploadID, partID)
-	tag, code, putSSE := s3a.putToFiler(cloned, filePath, srcReader, dstBucket, "", partID, 0, nil, false)
+	tag, code, putSSE := s3a.putToFiler(cloned, filePath, srcReader, dstBucket, "", partID, 0, nil, false, s3a.toFilerPath(dstBucket, dstObject))
 	if code != s3err.ErrNone {
 		return "", SSEResponseMetadata{}, code
 	}

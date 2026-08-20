@@ -100,3 +100,37 @@ func TestIcebergLayoutValidator_AcceptsRealWorldDataFiles(t *testing.T) {
 		})
 	}
 }
+
+// A Lance dataset writes fragments into data/ and keeps its own bookkeeping in
+// underscore-prefixed directories. The validator runs on the S3 door, where the
+// table's format is not in hand, so it has to admit both formats' layouts.
+func TestValidateFilePathAcceptsLanceLayout(t *testing.T) {
+	v := NewIcebergLayoutValidator()
+	allowed := []string{
+		"data/01111110101110001101011164cadc43919eace9c608107bd9.lance",
+		"_versions/1.manifest",
+		"_versions/9223372036854775806.manifest",
+		"_transactions/0-ddb27ab7-2e5c-42c7-b4bf-265d8a3ff636.txn",
+		"_indices/85814508-ed9a-41f2-b939-2050bb7a0ed5-fts/index.idx",
+		"_deletions/_deletions-1.arrow",
+		".lance-reserved",
+		".lance-deregistered",
+	}
+	for _, path := range allowed {
+		if err := v.ValidateFilePath(path); err != nil {
+			t.Errorf("ValidateFilePath(%q) = %v, want nil", path, err)
+		}
+	}
+
+	rejected := []string{
+		"_versions/../../escape",
+		"_versions//empty",
+		"notadir/file.lance",
+		"random.txt",
+	}
+	for _, path := range rejected {
+		if err := v.ValidateFilePath(path); err == nil {
+			t.Errorf("ValidateFilePath(%q) = nil, want an error", path)
+		}
+	}
+}

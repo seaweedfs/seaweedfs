@@ -34,6 +34,11 @@ var (
 	// and logged: a dead peer makes the wait permanent, and failing the stream
 	// only moves the loop into a client that reconnects to the same wall.
 	maxGapStall = 15 * time.Minute
+
+	// metadataGapSettledHorizon is the liveness escape for the peer-watermark
+	// holds: a watermark stalled further than this stops holding reads back.
+	// Twice the flush interval so a healthy peer's flush always lands within.
+	metadataGapSettledHorizon = 2 * filer.LogFlushInterval
 )
 
 const (
@@ -95,7 +100,10 @@ func (s *pipelinedSender) sendLoop(stream metadataStreamSender) {
 		// envelope would drop its Events tail and refs inside Events would be
 		// applied as an (empty) event. Their TsNs is 0, which the batch
 		// heuristic would misread as far behind. Always send them solo.
-		shouldBatch := s.canBatch && len(msg.LogFileRefs) == 0 &&
+		// Control messages (nil EventNotification: heartbeats, flush reports)
+		// are unbatchable too - nested in an Events tail their watermark
+		// state is invisible to receivers.
+		shouldBatch := s.canBatch && len(msg.LogFileRefs) == 0 && msg.EventNotification != nil &&
 			time.Now().UnixNano()-msg.TsNs > int64(batchBehindThreshold)
 
 		if !shouldBatch {
@@ -112,7 +120,7 @@ func (s *pipelinedSender) sendLoop(stream metadataStreamSender) {
 		// go in the Events slice. Old clients ignore the Events field.
 		batch := make([]*filer_pb.SubscribeMetadataResponse, 0, maxBatchSize)
 		batch = append(batch, msg)
-		var trailingRefs *filer_pb.SubscribeMetadataResponse
+		var trailingSolo *filer_pb.SubscribeMetadataResponse
 	drain:
 		for len(batch) < maxBatchSize {
 			select {
@@ -120,9 +128,9 @@ func (s *pipelinedSender) sendLoop(stream metadataStreamSender) {
 				if !ok {
 					break drain
 				}
-				if len(next.LogFileRefs) > 0 {
+				if len(next.LogFileRefs) > 0 || next.EventNotification == nil {
 					// already consumed; send it solo right after the batch
-					trailingRefs = next
+					trailingSolo = next
 					break drain
 				}
 				batch = append(batch, next)
@@ -146,8 +154,8 @@ func (s *pipelinedSender) sendLoop(stream metadataStreamSender) {
 		if toSend.Events != nil {
 			toSend.Events = nil
 		}
-		if trailingRefs != nil {
-			if err := stream.Send(trailingRefs); err != nil {
+		if trailingSolo != nil {
+			if err := stream.Send(trailingSolo); err != nil {
 				s.reportErr(err)
 				return
 			}
@@ -192,13 +200,16 @@ func (s *pipelinedSender) Close() error {
 	}
 }
 
-// reportUnprovenAggregatedCrossing records the residual hole: a disk read that
-// crosses the eviction watermark may have advanced on one peer's log while a
-// lagging peer still holds unflushed events in the crossed range. Locally
-// undecidable (log files carry random filer ids, peers are tracked by address);
-// closing it needs each peer's flush watermark on the subscribe stream.
-func reportUnprovenAggregatedCrossing(cursorBeforeTsNs, cursorAfterTsNs, evictedTsNs int64, clientName, pathPrefix string) {
+// reportUnprovenAggregatedCrossing counts a disk read crossing the eviction
+// watermark without proof. A crossing at or below provenThroughTsNs (the
+// flush low-watermark frozen before the pass listed files) is proven and not
+// reported, so what remains is exactly what the settled-horizon escape
+// allowed past a stalled peer.
+func reportUnprovenAggregatedCrossing(cursorBeforeTsNs, cursorAfterTsNs, evictedTsNs, provenThroughTsNs int64, clientName, pathPrefix string) {
 	if evictedTsNs == 0 || cursorBeforeTsNs >= evictedTsNs || cursorAfterTsNs < evictedTsNs {
+		return
+	}
+	if provenThroughTsNs >= evictedTsNs {
 		return
 	}
 	stats.FilerSubscribeUnprovenGapCrossings.WithLabelValues("aggregated").Inc()
@@ -230,6 +241,44 @@ func memoryHoldsGap(currentTsNs, lastEvictedTsNs int64) bool {
 		return true // nothing was ever dropped from the ring
 	}
 	return currentTsNs >= lastEvictedTsNs
+}
+
+// errHeldByPeerWatermark aborts a read at an entry beyond the hold point; the
+// caller rewinds to the last delivered entry, waits, and re-reads (the
+// re-listing is what picks up a late-landing log file).
+var errHeldByPeerWatermark = errors.New("held by aggregated peer watermark")
+
+// resolveAggReadHoldTsNs bounds how far an aggregated subscriber may read: a
+// cursor that passes T before every source has provably made T visible loses
+// whatever arrives late. The hold is the peers' low-watermark (delivery for
+// memory reads, flush for persisted reads), relaxed by the settled horizon so
+// a stalled peer delays subscribers by at most the horizon.
+func resolveAggReadHoldTsNs(peerLowWatermarkTsNs, nowTsNs int64, settledHorizon time.Duration) int64 {
+	horizonTsNs := nowTsNs - int64(settledHorizon)
+	if peerLowWatermarkTsNs > horizonTsNs {
+		return peerLowWatermarkTsNs
+	}
+	return horizonTsNs
+}
+
+// previousMinuteEndTsNs returns the last nanosecond of the minute before
+// tsNs: log files are named per minute, so a ref listing bounded here cannot
+// include a file whose window crosses tsNs.
+func previousMinuteEndTsNs(tsNs int64) int64 {
+	return tsNs - tsNs%int64(time.Minute) - 1
+}
+
+// chunkRefsStopTsNs bounds the ref listing so no shipped file holds an entry
+// past the hold: clients apply shipped files whole and may checkpoint from a
+// tail. A file's window starts in its name's minute and spans up to a flush
+// interval, hence the double back-off; a frozen peer's freeze-spanning window
+// can still overshoot by its freeze.
+func chunkRefsStopTsNs(holdTsNs, untilNs int64) int64 {
+	stopTsNs := previousMinuteEndTsNs(holdTsNs - int64(filer.LogFlushInterval))
+	if untilNs != 0 && untilNs < stopTsNs {
+		stopTsNs = untilNs
+	}
+	return stopTsNs
 }
 
 // gapStallReporter makes a parked subscriber visible: a flush that never lands
@@ -395,8 +444,9 @@ func (fs *FilerServer) parkOnGap(ctx context.Context, req *filer_pb.SubscribeMet
 // so memory still holds the whole gap; or the flush watermark observed before
 // the read had already passed the earliest in-memory timestamp, so every event
 // in the gap would have been on disk when the read ran and the miss is
-// authoritative. The aggregated ring never flushes - peers persist their own
-// logs - so it passes flushedTsNs 0 and only the eviction proof can hold.
+// authoritative. The aggregated loop passes its peers' proven-covered
+// watermark as flushedTsNs (everything at or below it was flushed and inside
+// the pass's listing), the local loop its own flush watermark.
 func resolveGapResume(currentTsNs, currentOffset, earliestMemTsNs, flushedTsNs, lastEvictedTsNs int64) (advanceToTsNs int64, advance bool) {
 	// No in-memory data (zero time → negative UnixNano), or memory not ahead of us.
 	if earliestMemTsNs <= 0 || earliestMemTsNs <= currentTsNs {
@@ -436,7 +486,7 @@ type gapPass struct {
 	gapStall  *gapStallReporter
 	earliest  func() time.Time
 	evicted   func() int64 // gap-proof watermark; aggregated uses the received-ts space
-	flushed   func() int64 // flush watermark the last disk read observed; aggregated: 0
+	flushed   func() int64 // what the last disk read proved covered: flushed AND inside its listing
 	gapChan   <-chan struct{}
 	dataChan  <-chan struct{}
 	gapReason func(earliest time.Time, evictedTsNs int64) string
@@ -470,6 +520,16 @@ func (p *gapPass) resolve(ctx context.Context, cursor *log_buffer.MessagePositio
 			*cursor = log_buffer.NewMessagePosition(advanceToTsNs, gapResumeCursorOffset)
 			*latch = nil
 			return gapProceed
+		}
+		// The last empty disk read proved coverage through the eviction
+		// watermark itself: the rest of the gap holds nothing - cross without
+		// parking or counting. The ring's pre-subscription mark is never
+		// proven by rotation, so this is its only exit.
+		if p.flushed() >= evictedTsNs {
+			p.gapStall.resumed()
+			*cursor = log_buffer.NewMessagePosition(evictedTsNs, gapResumeCursorOffset)
+			*latch = nil
+			return gapContinue
 		}
 		return p.park(ctx, cursor, latch, p.gapChan, p.gapReason(earliest, evictedTsNs))
 	}
@@ -521,6 +581,17 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	lastReadTime := log_buffer.NewMessagePosition(req.SinceNs, gapResumeCursorOffset)
 	glog.V(0).Infof(" %v starts to subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
+	// diskAnchorTsNs is the newest ORIGINAL-timestamp position this stream is
+	// proven complete through. Memory reads advance the cursor in the ring's
+	// bumped (arrival) space while persisted logs keep original timestamps,
+	// so a reader that falls off the ring must resume the disk pass here, not
+	// at its bumped cursor - that would skip original-space entries memory
+	// never delivered. Disk passes advance the anchor directly; contiguous
+	// memory reads advance it to the delivery low-watermark observed before
+	// the read (per-peer streams are ordered, so everything at or below it
+	// had already arrived and been delivered).
+	diskAnchorTsNs := req.SinceNs
+
 	sender := newPipelinedSender(stream, 1024, req.ClientSupportsBatching)
 	defer sender.Close()
 
@@ -548,9 +619,55 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	var lastSeenTsNs int64
 	var lastHeartbeatNs int64
 	baseEachLogEntryFn := eachLogEntryFn(req, sender, eachEventNotificationFn, &unsyncedEvents)
-	eachLogEntryFn := func(logEntry *filer_pb.LogEntry) (bool, error) {
-		lastSeenTsNs = logEntry.TsNs
-		return baseEachLogEntryFn(logEntry)
+	// heldAtTsNs remembers the entry a read was held at (for the log line);
+	// the rewind target is the last entry actually delivered.
+	var heldAtTsNs int64
+	// Each read path holds at its own watermark: persisted logs are complete
+	// only up to every peer's flush watermark, the ring only up to every
+	// peer's delivery watermark.
+	holdMemTsNs := func() int64 {
+		return resolveAggReadHoldTsNs(fs.filer.MetaAggregator.PeerLowWatermarkTsNs(), time.Now().UnixNano(), metadataGapSettledHorizon)
+	}
+	// deliveredUpToTsNs tracks the newest position actually handed to the
+	// sender (or intentionally skipped by the gap machinery), so a held read
+	// can rewind to a position that skips nothing.
+	var deliveredUpToTsNs int64
+	guardedEachLogEntryFn := func(holdFn func() int64) log_buffer.EachLogEntryFuncType {
+		return func(logEntry *filer_pb.LogEntry) (bool, error) {
+			if logEntry.TsNs > holdFn() {
+				heldAtTsNs = logEntry.TsNs
+				return false, errHeldByPeerWatermark
+			}
+			lastSeenTsNs = logEntry.TsNs
+			deliveredUpToTsNs = logEntry.TsNs
+			return baseEachLogEntryFn(logEntry)
+		}
+	}
+	// Frozen BEFORE each pass lists the log files: per-source flushes are
+	// ts-ordered, so everything at or below the frozen value is in the
+	// listing; a live value could rise mid-pass and admit entries past files
+	// this pass cannot see.
+	var diskPassFlushLowTsNs int64
+	var diskPassHoldTsNs int64
+	// What the last disk pass proved covered: flushed on every peer AND inside
+	// the pass's listing, so an empty pass proves (cursor, proven] empty.
+	var diskPassProvenTsNs int64
+	diskEachLogEntryFn := guardedEachLogEntryFn(func() int64 { return diskPassHoldTsNs })
+	memEachLogEntryFn := guardedEachLogEntryFn(holdMemTsNs)
+	// waitHeld pauses a held read until new data or the retry interval (holds
+	// also release on heartbeats, which do not notify). False: context ended.
+	waitHeld := func() bool {
+		glog.V(3).Infof("held at %v (deliveredUpTo %v, flushLow %v, deliveryLow %v) for %v",
+			time.Unix(0, heldAtTsNs), time.Unix(0, deliveredUpToTsNs),
+			time.Unix(0, fs.filer.MetaAggregator.PeerLowFlushWatermarkTsNs()),
+			time.Unix(0, fs.filer.MetaAggregator.PeerLowWatermarkTsNs()), clientName)
+		select {
+		case <-aggNotifyChan:
+		case <-ctx.Done():
+			return false
+		case <-time.After(unflushedGapRetryInterval):
+		}
+		return true
 	}
 
 	var processedTsNs int64
@@ -566,8 +683,8 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		gapStall: gapStall,
 		earliest: aggBuffer.GetEarliestTime,
 		evicted:  aggBuffer.GetLastEvictedOriginalTsNs,
-		flushed:  func() int64 { return 0 }, // the aggregated ring never flushes
-		gapChan:  nil,                       // nothing local signals a peer's flush; the timer paces it
+		flushed:  func() int64 { return diskPassProvenTsNs },
+		gapChan:  nil, // nothing local signals a peer's flush; the timer paces it
 		dataChan: aggNotifyChan,
 		gapReason: func(earliest time.Time, evictedTsNs int64) string {
 			return fmt.Sprintf("gap evicted through %v is not on a peer's disk yet (earliest memory %v)",
@@ -581,10 +698,42 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 
 		cursorBeforeDiskTsNs := lastReadTime.Time.UnixNano()
 
+		// Observe the flush low-watermark before the pass lists files (see
+		// diskPassHoldTsNs above).
+		diskPassFlushLowTsNs = fs.filer.MetaAggregator.PeerLowFlushWatermarkTsNs()
+		diskPassHoldTsNs = resolveAggReadHoldTsNs(diskPassFlushLowTsNs, time.Now().UnixNano(), metadataGapSettledHorizon)
+		diskPassProvenTsNs = diskPassFlushLowTsNs
+
 		if req.ClientSupportsMetadataChunks {
-			processedTsNs, isDone, readPersistedLogErr = fs.chunkDiskPass(ctx, sender, lastReadTime, req.UntilNs, sentRefs)
+			refsStopTsNs := chunkRefsStopTsNs(diskPassHoldTsNs, req.UntilNs)
+			// Nothing above the listing bound is proven by this pass.
+			if refsStopTsNs < diskPassProvenTsNs {
+				diskPassProvenTsNs = refsStopTsNs
+			}
+			if refsStopTsNs > lastReadTime.Time.UnixNano() {
+				processedTsNs, isDone, readPersistedLogErr = fs.chunkDiskPass(ctx, sender, lastReadTime, refsStopTsNs, sentRefs)
+			} else {
+				processedTsNs, isDone, readPersistedLogErr = 0, false, nil
+			}
 		} else {
-			processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(ctx, lastReadTime, req.UntilNs, eachLogEntryFn)
+			processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(ctx, lastReadTime, req.UntilNs, diskEachLogEntryFn)
+		}
+		if errors.Is(readPersistedLogErr, errHeldByPeerWatermark) {
+			// Stay at the last delivered entry; the held entry is re-read (and
+			// re-checked) by the next pass.
+			if processedTsNs > 0 {
+				lastReadTime = log_buffer.NewMessagePosition(processedTsNs, gapResumeCursorOffset)
+				if processedTsNs > diskAnchorTsNs {
+					diskAnchorTsNs = processedTsNs
+				}
+			}
+			// A hold is not a gap: clear any stale ResumeFromDiskError so the
+			// next pass's disk-miss handling cannot skip past the held entry.
+			readInMemoryLogErr = nil
+			if !waitHeld() {
+				return nil
+			}
+			continue
 		}
 		if readPersistedLogErr != nil {
 			return fmt.Errorf("reading from persisted logs: %w", readPersistedLogErr)
@@ -602,32 +751,58 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		lastEvictedTsNs := fs.filer.MetaAggregator.MetaLogBuffer.GetLastEvictedOriginalTsNs()
 		if diskAdvanced {
 			gapStall.resumed()
-			reportUnprovenAggregatedCrossing(cursorBeforeDiskTsNs, processedTsNs, lastEvictedTsNs, clientName, req.PathPrefix)
+			reportUnprovenAggregatedCrossing(cursorBeforeDiskTsNs, processedTsNs, lastEvictedTsNs, diskPassFlushLowTsNs, clientName, req.PathPrefix)
 			lastReadTime = log_buffer.NewMessagePosition(processedTsNs, gapResumeCursorOffset)
+			if processedTsNs > diskAnchorTsNs {
+				diskAnchorTsNs = processedTsNs
+			}
 		} else if readInMemoryLogErr == nil {
 			// Nothing on disk and memory never spoke: scan forward for the next
 			// day that has logs.
 			nextDayTs := util.GetNextDayTsNano(lastReadTime.Time.UnixNano())
-			position := log_buffer.NewMessagePosition(nextDayTs, gapResumeCursorOffset)
-			found, err := fs.filer.HasPersistedLogFiles(position)
-			if err != nil {
-				return fmt.Errorf("checking persisted log files: %w", err)
-			}
-			if found {
-				gapStall.resumed()
-				reportUnprovenAggregatedCrossing(cursorBeforeDiskTsNs, nextDayTs, lastEvictedTsNs, clientName, req.PathPrefix)
-				lastReadTime = position
+			// The day jump delivers nothing; stay put until the hold point
+			// covers the skipped range.
+			if nextDayTs <= diskPassHoldTsNs {
+				position := log_buffer.NewMessagePosition(nextDayTs, gapResumeCursorOffset)
+				found, err := fs.filer.HasPersistedLogFiles(position)
+				if err != nil {
+					return fmt.Errorf("checking persisted log files: %w", err)
+				}
+				if found {
+					gapStall.resumed()
+					reportUnprovenAggregatedCrossing(cursorBeforeDiskTsNs, nextDayTs, lastEvictedTsNs, diskPassFlushLowTsNs, clientName, req.PathPrefix)
+					lastReadTime = position
+					if nextDayTs > diskAnchorTsNs {
+						diskAnchorTsNs = nextDayTs
+					}
+				}
 			}
 		}
 
+		cursorBeforeResolveTsNs := lastReadTime.Time.UnixNano()
 		switch gaps.resolve(ctx, &lastReadTime, &readInMemoryLogErr, diskAdvanced) {
 		case gapDone:
 			return nil
 		case gapContinue:
+			// A cursor move here is a give-up or proven-empty skip (original space);
+			// anchor it so a later eviction rewind cannot undo the decision.
+			if ts := lastReadTime.Time.UnixNano(); ts != cursorBeforeResolveTsNs && ts > diskAnchorTsNs {
+				diskAnchorTsNs = ts
+			}
 			continue
 		}
 
+		// A held rewind must not re-park below the gap machinery's
+		// intentional skips.
+		if lastReadTime.Time.UnixNano() > deliveredUpToTsNs {
+			deliveredUpToTsNs = lastReadTime.Time.UnixNano()
+		}
+
 		glog.V(4).Infof("read in memory %v aggregated subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
+
+		// Sampled before the read: a contiguous (unrefused) read delivers
+		// every event whose original timestamp is at or below this.
+		preMemDeliveryLowTsNs := fs.filer.MetaAggregator.PeerLowWatermarkTsNs()
 
 		lastReadTime, isDone, readInMemoryLogErr = fs.filer.MetaAggregator.MetaLogBuffer.LoopProcessLogData(aggReaderName, lastReadTime, req.UntilNs, func() bool {
 			select {
@@ -638,13 +813,41 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 			if !fs.hasClient(req.ClientId, req.ClientEpoch) {
 				return false
 			}
+			// Contiguous and caught up: advance the anchor to the delivery
+			// low-watermark so long live tails keep eviction rewinds short.
+			// Only once the run is connected to the ring - the empty-ring
+			// wait lands here too, with disk files still unshipped below the
+			// cursor.
+			if memoryHoldsGap(lastReadTime.Time.UnixNano(), aggBuffer.GetLastEvictedOriginalTsNs()) {
+				if dl := fs.filer.MetaAggregator.PeerLowWatermarkTsNs(); dl > diskAnchorTsNs {
+					diskAnchorTsNs = dl
+				}
+			}
 			lastHeartbeatNs = fs.maybeSendIdleHeartbeat(req, sender, fs.filer.MetaAggregator.MetaLogBuffer, lastReadTime.Time.UnixNano(), lastSeenTsNs, lastHeartbeatNs)
 			return true
-		}, eachLogEntryFn)
+		}, memEachLogEntryFn)
 		if readInMemoryLogErr != nil {
+			if errors.Is(readInMemoryLogErr, errHeldByPeerWatermark) {
+				// The read was contiguous up to the hold: credit the anchor.
+				if preMemDeliveryLowTsNs > diskAnchorTsNs {
+					diskAnchorTsNs = preMemDeliveryLowTsNs
+				}
+				// The cursor already advanced onto the held entry; rewind to
+				// the last delivered entry so nothing in between is skipped.
+				lastReadTime = log_buffer.NewMessagePosition(deliveredUpToTsNs, gapResumeCursorOffset)
+				readInMemoryLogErr = nil
+				if !waitHeld() {
+					return nil
+				}
+				continue
+			}
 			if errors.Is(readInMemoryLogErr, log_buffer.ResumeFromDiskError) {
-				// Fell behind the ring: back to the disk pass, and from there to
-				// the gap resolution above if the disk has nothing either.
+				// Fell off the ring: resume the disk pass from the anchor, not
+				// the (possibly bumped) cursor - redelivery is within the
+				// at-least-once contract, skipping is not. For an anchored
+				// cursor this is a no-op, so the gap machinery's re-arm onto
+				// the retained window stays reachable.
+				lastReadTime = log_buffer.NewMessagePosition(diskAnchorTsNs, gapResumeCursorOffset)
 				continue
 			}
 			glog.Errorf("processed to %v: %v", lastReadTime, readInMemoryLogErr)
@@ -723,6 +926,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	// written from this single goroutine, so no synchronization is needed.
 	var lastSeenTsNs int64
 	var lastHeartbeatNs int64
+	var lastFlushReportNs int64
 	baseEachLogEntryFn := eachLogEntryFn(req, sender, eachEventNotificationFn, &unsyncedEvents)
 	eachLogEntryFn := func(logEntry *filer_pb.LogEntry) (bool, error) {
 		lastSeenTsNs = logEntry.TsNs
@@ -822,6 +1026,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 				return false
 			}
 			lastHeartbeatNs = fs.maybeSendIdleHeartbeat(req, sender, fs.filer.LocalMetaLogBuffer, lastReadTime.Time.UnixNano(), lastSeenTsNs, lastHeartbeatNs)
+			lastFlushReportNs = fs.maybeSendFlushReport(req, sender, lastFlushReportNs)
 			return true
 		}, eachLogEntryFn)
 		if readInMemoryLogErr != nil {
@@ -887,6 +1092,25 @@ func eachLogEntryFn(req *filer_pb.SubscribeMetadataRequest, sender metadataStrea
 	}
 }
 
+// maybeSendFlushReport reports the local flush watermark to a subscriber that
+// opted into idle heartbeats (peer aggregators). Unlike heartbeats it is sent
+// regardless of catch-up state, and its TsNs stays zero so it never advances
+// delivery freshness.
+func (fs *FilerServer) maybeSendFlushReport(req *filer_pb.SubscribeMetadataRequest, sender metadataStreamSender, lastFlushReportNs int64) int64 {
+	if !req.ClientSupportsIdleHeartbeat || fs.filer == nil {
+		return lastFlushReportNs
+	}
+	now := time.Now().UnixNano()
+	if now-lastFlushReportNs < int64(idleHeartbeatInterval) {
+		return lastFlushReportNs
+	}
+	if err := sender.Send(&filer_pb.SubscribeMetadataResponse{FlushedTsNs: fs.filer.LocalFlushedThroughTsNs(now)}); err != nil {
+		glog.V(0).Infof("=> flush report to %s: %v", req.ClientName, err)
+		return lastFlushReportNs
+	}
+	return now
+}
+
 // maybeSendIdleHeartbeat emits an empty response carrying the current time when
 // the subscriber has consumed everything up to the buffer head. The client uses
 // it to advance freshness signals (e.g. filer.sync's sync_offset) without moving
@@ -919,7 +1143,23 @@ func (fs *FilerServer) maybeSendIdleHeartbeat(req *filer_pb.SubscribeMetadataReq
 	if now-lastHeartbeatNs < int64(idleHeartbeatInterval) {
 		return lastHeartbeatNs
 	}
-	if err := sender.Send(&filer_pb.SubscribeMetadataResponse{TsNs: now}); err != nil {
+	// On the local stream the heartbeat is a delivery claim to a peer
+	// aggregator and piggybacks the flush watermark; the aggregated ring
+	// never flushes, so its heartbeats carry neither. The claims are capped
+	// by the in-flight floor and fence later stamps above themselves, so
+	// re-checking the buffer head afterwards closes the append race: an
+	// event at or below the claim was in flight (capping it), stamped later
+	// (fenced above it), or already appended here - and then the head check
+	// proves this stream has sent it before the heartbeat.
+	heartbeat := &filer_pb.SubscribeMetadataResponse{TsNs: now}
+	if fs.filer != nil && logBuffer == fs.filer.LocalMetaLogBuffer {
+		heartbeat.TsNs = fs.filer.LocalDeliveredThroughTsNs(now)
+		heartbeat.FlushedTsNs = fs.filer.LocalFlushedThroughTsNs(now)
+		if logBuffer.LastTsNs.Load() > floorTsNs {
+			return lastHeartbeatNs
+		}
+	}
+	if err := sender.Send(heartbeat); err != nil {
 		glog.V(0).Infof("=> idle heartbeat to %s: %v", req.ClientName, err)
 		return lastHeartbeatNs
 	}

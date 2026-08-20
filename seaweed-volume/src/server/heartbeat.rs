@@ -771,6 +771,10 @@ fn collect_volume_snapshot(
     build_heartbeat_with_ec_status(config, &mut store, Vec::new(), true, false).1
 }
 
+/// The heartbeat alone, without the volume snapshot the send loop pairs it
+/// with. Only the tests want it that way; the loop calls
+/// collect_heartbeat_with_snapshot directly.
+#[cfg(test)]
 fn collect_heartbeat(
     config: &HeartbeatConfig,
     state: &Arc<VolumeServerState>,

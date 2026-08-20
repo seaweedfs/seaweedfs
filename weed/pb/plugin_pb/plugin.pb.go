@@ -453,6 +453,8 @@ type WorkerToAdminMessage struct {
 	//	*WorkerToAdminMessage_DetectionComplete
 	//	*WorkerToAdminMessage_JobProgressUpdate
 	//	*WorkerToAdminMessage_JobCompleted
+	//	*WorkerToAdminMessage_Observations
+	//	*WorkerToAdminMessage_ObjectPreviewResponse
 	Body          isWorkerToAdminMessage_Body `protobuf_oneof:"body"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -581,6 +583,24 @@ func (x *WorkerToAdminMessage) GetJobCompleted() *JobCompleted {
 	return nil
 }
 
+func (x *WorkerToAdminMessage) GetObservations() *WorkerObservations {
+	if x != nil {
+		if x, ok := x.Body.(*WorkerToAdminMessage_Observations); ok {
+			return x.Observations
+		}
+	}
+	return nil
+}
+
+func (x *WorkerToAdminMessage) GetObjectPreviewResponse() *ObjectPreviewResponse {
+	if x != nil {
+		if x, ok := x.Body.(*WorkerToAdminMessage_ObjectPreviewResponse); ok {
+			return x.ObjectPreviewResponse
+		}
+	}
+	return nil
+}
+
 type isWorkerToAdminMessage_Body interface {
 	isWorkerToAdminMessage_Body()
 }
@@ -617,6 +637,14 @@ type WorkerToAdminMessage_JobCompleted struct {
 	JobCompleted *JobCompleted `protobuf:"bytes,17,opt,name=job_completed,json=jobCompleted,proto3,oneof"`
 }
 
+type WorkerToAdminMessage_Observations struct {
+	Observations *WorkerObservations `protobuf:"bytes,18,opt,name=observations,proto3,oneof"`
+}
+
+type WorkerToAdminMessage_ObjectPreviewResponse struct {
+	ObjectPreviewResponse *ObjectPreviewResponse `protobuf:"bytes,19,opt,name=object_preview_response,json=objectPreviewResponse,proto3,oneof"`
+}
+
 func (*WorkerToAdminMessage_Hello) isWorkerToAdminMessage_Body() {}
 
 func (*WorkerToAdminMessage_Heartbeat) isWorkerToAdminMessage_Body() {}
@@ -633,6 +661,10 @@ func (*WorkerToAdminMessage_JobProgressUpdate) isWorkerToAdminMessage_Body() {}
 
 func (*WorkerToAdminMessage_JobCompleted) isWorkerToAdminMessage_Body() {}
 
+func (*WorkerToAdminMessage_Observations) isWorkerToAdminMessage_Body() {}
+
+func (*WorkerToAdminMessage_ObjectPreviewResponse) isWorkerToAdminMessage_Body() {}
+
 // AdminToWorkerMessage carries commands and lifecycle notifications from admin.
 type AdminToWorkerMessage struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
@@ -646,6 +678,7 @@ type AdminToWorkerMessage struct {
 	//	*AdminToWorkerMessage_ExecuteJobRequest
 	//	*AdminToWorkerMessage_CancelRequest
 	//	*AdminToWorkerMessage_Shutdown
+	//	*AdminToWorkerMessage_RequestObjectPreview
 	Body          isAdminToWorkerMessage_Body `protobuf_oneof:"body"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -756,6 +789,15 @@ func (x *AdminToWorkerMessage) GetShutdown() *AdminShutdown {
 	return nil
 }
 
+func (x *AdminToWorkerMessage) GetRequestObjectPreview() *RequestObjectPreview {
+	if x != nil {
+		if x, ok := x.Body.(*AdminToWorkerMessage_RequestObjectPreview); ok {
+			return x.RequestObjectPreview
+		}
+	}
+	return nil
+}
+
 type isAdminToWorkerMessage_Body interface {
 	isAdminToWorkerMessage_Body()
 }
@@ -784,6 +826,10 @@ type AdminToWorkerMessage_Shutdown struct {
 	Shutdown *AdminShutdown `protobuf:"bytes,15,opt,name=shutdown,proto3,oneof"`
 }
 
+type AdminToWorkerMessage_RequestObjectPreview struct {
+	RequestObjectPreview *RequestObjectPreview `protobuf:"bytes,16,opt,name=request_object_preview,json=requestObjectPreview,proto3,oneof"`
+}
+
 func (*AdminToWorkerMessage_Hello) isAdminToWorkerMessage_Body() {}
 
 func (*AdminToWorkerMessage_RequestConfigSchema) isAdminToWorkerMessage_Body() {}
@@ -795,6 +841,8 @@ func (*AdminToWorkerMessage_ExecuteJobRequest) isAdminToWorkerMessage_Body() {}
 func (*AdminToWorkerMessage_CancelRequest) isAdminToWorkerMessage_Body() {}
 
 func (*AdminToWorkerMessage_Shutdown) isAdminToWorkerMessage_Body() {}
+
+func (*AdminToWorkerMessage_RequestObjectPreview) isAdminToWorkerMessage_Body() {}
 
 type WorkerHello struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
@@ -3928,11 +3976,353 @@ func (x *PersistedJobTypeConfig) GetUpdatedBy() string {
 	return ""
 }
 
+// WorkerObservations reports what a worker learned about the objects it
+// inspected. A worker opens a table to decide whether it needs a job; what it
+// saw is worth keeping either way, because for a format the cluster cannot
+// read, the worker is the only thing that can describe it.
+//
+// Observations are not work. Admin caches them and serves them back, so a
+// worker that goes away leaves its last ones standing rather than blanking a
+// page.
+type WorkerObservations struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	JobType       string                 `protobuf:"bytes,1,opt,name=job_type,json=jobType,proto3" json:"job_type,omitempty"`
+	Observations  []*ObjectObservation   `protobuf:"bytes,2,rep,name=observations,proto3" json:"observations,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorkerObservations) Reset() {
+	*x = WorkerObservations{}
+	mi := &file_plugin_proto_msgTypes[39]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorkerObservations) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorkerObservations) ProtoMessage() {}
+
+func (x *WorkerObservations) ProtoReflect() protoreflect.Message {
+	mi := &file_plugin_proto_msgTypes[39]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorkerObservations.ProtoReflect.Descriptor instead.
+func (*WorkerObservations) Descriptor() ([]byte, []int) {
+	return file_plugin_proto_rawDescGZIP(), []int{39}
+}
+
+func (x *WorkerObservations) GetJobType() string {
+	if x != nil {
+		return x.JobType
+	}
+	return ""
+}
+
+func (x *WorkerObservations) GetObservations() []*ObjectObservation {
+	if x != nil {
+		return x.Observations
+	}
+	return nil
+}
+
+// ObjectObservation is one object as a worker last saw it.
+type ObjectObservation struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Identifier of the object, e.g. ["bucket", "namespace", "table"].
+	ObjectId []string `protobuf:"bytes,1,rep,name=object_id,json=objectId,proto3" json:"object_id,omitempty"`
+	// What kind of object this is, e.g. "table".
+	ObjectKind string `protobuf:"bytes,2,opt,name=object_kind,json=objectKind,proto3" json:"object_kind,omitempty"`
+	// The object's format, e.g. "LANCE", so a reader can tell whose observation
+	// this is without parsing the attributes.
+	Format string `protobuf:"bytes,3,opt,name=format,proto3" json:"format,omitempty"`
+	// Whatever the worker can cheaply say: schema, row count, fragment count.
+	// The keys are the worker's to choose.
+	Attributes    map[string]*ConfigValue `protobuf:"bytes,4,rep,name=attributes,proto3" json:"attributes,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	ObservedAt    *timestamppb.Timestamp  `protobuf:"bytes,5,opt,name=observed_at,json=observedAt,proto3" json:"observed_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ObjectObservation) Reset() {
+	*x = ObjectObservation{}
+	mi := &file_plugin_proto_msgTypes[40]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ObjectObservation) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ObjectObservation) ProtoMessage() {}
+
+func (x *ObjectObservation) ProtoReflect() protoreflect.Message {
+	mi := &file_plugin_proto_msgTypes[40]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ObjectObservation.ProtoReflect.Descriptor instead.
+func (*ObjectObservation) Descriptor() ([]byte, []int) {
+	return file_plugin_proto_rawDescGZIP(), []int{40}
+}
+
+func (x *ObjectObservation) GetObjectId() []string {
+	if x != nil {
+		return x.ObjectId
+	}
+	return nil
+}
+
+func (x *ObjectObservation) GetObjectKind() string {
+	if x != nil {
+		return x.ObjectKind
+	}
+	return ""
+}
+
+func (x *ObjectObservation) GetFormat() string {
+	if x != nil {
+		return x.Format
+	}
+	return ""
+}
+
+func (x *ObjectObservation) GetAttributes() map[string]*ConfigValue {
+	if x != nil {
+		return x.Attributes
+	}
+	return nil
+}
+
+func (x *ObjectObservation) GetObservedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ObservedAt
+	}
+	return nil
+}
+
+// RequestObjectPreview asks a worker for sample rows of an object admin cannot
+// read itself. Unlike an observation this is not cached: it is fetched when
+// someone opens the page, because rows are the object's data rather than a
+// description of it, and holding a copy in admin is neither fresh nor its
+// business.
+type RequestObjectPreview struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	ObjectId []string               `protobuf:"bytes,1,rep,name=object_id,json=objectId,proto3" json:"object_id,omitempty"`
+	// The format admin believes this object is, so a worker that does not own it
+	// can decline instead of guessing.
+	Format        string `protobuf:"bytes,2,opt,name=format,proto3" json:"format,omitempty"`
+	RowLimit      int32  `protobuf:"varint,3,opt,name=row_limit,json=rowLimit,proto3" json:"row_limit,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RequestObjectPreview) Reset() {
+	*x = RequestObjectPreview{}
+	mi := &file_plugin_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RequestObjectPreview) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RequestObjectPreview) ProtoMessage() {}
+
+func (x *RequestObjectPreview) ProtoReflect() protoreflect.Message {
+	mi := &file_plugin_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RequestObjectPreview.ProtoReflect.Descriptor instead.
+func (*RequestObjectPreview) Descriptor() ([]byte, []int) {
+	return file_plugin_proto_rawDescGZIP(), []int{41}
+}
+
+func (x *RequestObjectPreview) GetObjectId() []string {
+	if x != nil {
+		return x.ObjectId
+	}
+	return nil
+}
+
+func (x *RequestObjectPreview) GetFormat() string {
+	if x != nil {
+		return x.Format
+	}
+	return ""
+}
+
+func (x *RequestObjectPreview) GetRowLimit() int32 {
+	if x != nil {
+		return x.RowLimit
+	}
+	return 0
+}
+
+// ObjectPreviewResponse carries the sample back, already rendered as text. The
+// worker is the only thing that knows the object's types, so it formats them;
+// admin displays what it is given.
+type ObjectPreviewResponse struct {
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	RequestId    string                 `protobuf:"bytes,6,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	Success      bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	ErrorMessage string                 `protobuf:"bytes,2,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
+	Columns      []string               `protobuf:"bytes,3,rep,name=columns,proto3" json:"columns,omitempty"`
+	Rows         []*PreviewRow          `protobuf:"bytes,4,rep,name=rows,proto3" json:"rows,omitempty"`
+	// Rows in the object, which is not the number sampled.
+	TotalRows     int64 `protobuf:"varint,5,opt,name=total_rows,json=totalRows,proto3" json:"total_rows,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ObjectPreviewResponse) Reset() {
+	*x = ObjectPreviewResponse{}
+	mi := &file_plugin_proto_msgTypes[42]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ObjectPreviewResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ObjectPreviewResponse) ProtoMessage() {}
+
+func (x *ObjectPreviewResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_plugin_proto_msgTypes[42]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ObjectPreviewResponse.ProtoReflect.Descriptor instead.
+func (*ObjectPreviewResponse) Descriptor() ([]byte, []int) {
+	return file_plugin_proto_rawDescGZIP(), []int{42}
+}
+
+func (x *ObjectPreviewResponse) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *ObjectPreviewResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *ObjectPreviewResponse) GetErrorMessage() string {
+	if x != nil {
+		return x.ErrorMessage
+	}
+	return ""
+}
+
+func (x *ObjectPreviewResponse) GetColumns() []string {
+	if x != nil {
+		return x.Columns
+	}
+	return nil
+}
+
+func (x *ObjectPreviewResponse) GetRows() []*PreviewRow {
+	if x != nil {
+		return x.Rows
+	}
+	return nil
+}
+
+func (x *ObjectPreviewResponse) GetTotalRows() int64 {
+	if x != nil {
+		return x.TotalRows
+	}
+	return 0
+}
+
+type PreviewRow struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Values        []string               `protobuf:"bytes,1,rep,name=values,proto3" json:"values,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PreviewRow) Reset() {
+	*x = PreviewRow{}
+	mi := &file_plugin_proto_msgTypes[43]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PreviewRow) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PreviewRow) ProtoMessage() {}
+
+func (x *PreviewRow) ProtoReflect() protoreflect.Message {
+	mi := &file_plugin_proto_msgTypes[43]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PreviewRow.ProtoReflect.Descriptor instead.
+func (*PreviewRow) Descriptor() ([]byte, []int) {
+	return file_plugin_proto_rawDescGZIP(), []int{43}
+}
+
+func (x *PreviewRow) GetValues() []string {
+	if x != nil {
+		return x.Values
+	}
+	return nil
+}
+
 var File_plugin_proto protoreflect.FileDescriptor
 
 const file_plugin_proto_rawDesc = "" +
 	"\n" +
-	"\fplugin.proto\x12\x06plugin\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x90\x05\n" +
+	"\fplugin.proto\x12\x06plugin\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xab\x06\n" +
 	"\x14WorkerToAdminMessage\x12\x1b\n" +
 	"\tworker_id\x18\x01 \x01(\tR\bworkerId\x123\n" +
 	"\asent_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x06sentAt\x12+\n" +
@@ -3944,8 +4334,10 @@ const file_plugin_proto_rawDesc = "" +
 	"\x13detection_proposals\x18\x0e \x01(\v2\x1a.plugin.DetectionProposalsH\x00R\x12detectionProposals\x12J\n" +
 	"\x12detection_complete\x18\x0f \x01(\v2\x19.plugin.DetectionCompleteH\x00R\x11detectionComplete\x12K\n" +
 	"\x13job_progress_update\x18\x10 \x01(\v2\x19.plugin.JobProgressUpdateH\x00R\x11jobProgressUpdate\x12;\n" +
-	"\rjob_completed\x18\x11 \x01(\v2\x14.plugin.JobCompletedH\x00R\fjobCompletedB\x06\n" +
-	"\x04body\"\x86\x04\n" +
+	"\rjob_completed\x18\x11 \x01(\v2\x14.plugin.JobCompletedH\x00R\fjobCompleted\x12@\n" +
+	"\fobservations\x18\x12 \x01(\v2\x1a.plugin.WorkerObservationsH\x00R\fobservations\x12W\n" +
+	"\x17object_preview_response\x18\x13 \x01(\v2\x1d.plugin.ObjectPreviewResponseH\x00R\x15objectPreviewResponseB\x06\n" +
+	"\x04body\"\xdc\x04\n" +
 	"\x14AdminToWorkerMessage\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x123\n" +
@@ -3956,7 +4348,8 @@ const file_plugin_proto_rawDesc = "" +
 	"\x15run_detection_request\x18\f \x01(\v2\x1b.plugin.RunDetectionRequestH\x00R\x13runDetectionRequest\x12K\n" +
 	"\x13execute_job_request\x18\r \x01(\v2\x19.plugin.ExecuteJobRequestH\x00R\x11executeJobRequest\x12>\n" +
 	"\x0ecancel_request\x18\x0e \x01(\v2\x15.plugin.CancelRequestH\x00R\rcancelRequest\x123\n" +
-	"\bshutdown\x18\x0f \x01(\v2\x15.plugin.AdminShutdownH\x00R\bshutdownB\x06\n" +
+	"\bshutdown\x18\x0f \x01(\v2\x15.plugin.AdminShutdownH\x00R\bshutdown\x12T\n" +
+	"\x16request_object_preview\x18\x10 \x01(\v2\x1c.plugin.RequestObjectPreviewH\x00R\x14requestObjectPreviewB\x06\n" +
 	"\x04body\"\xff\x02\n" +
 	"\vWorkerHello\x12\x1b\n" +
 	"\tworker_id\x18\x01 \x01(\tR\bworkerId\x12,\n" +
@@ -4319,7 +4712,39 @@ const file_plugin_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\v2\x13.plugin.ConfigValueR\x05value:\x028\x01\x1aZ\n" +
 	"\x17WorkerConfigValuesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
-	"\x05value\x18\x02 \x01(\v2\x13.plugin.ConfigValueR\x05value:\x028\x01*W\n" +
+	"\x05value\x18\x02 \x01(\v2\x13.plugin.ConfigValueR\x05value:\x028\x01\"n\n" +
+	"\x12WorkerObservations\x12\x19\n" +
+	"\bjob_type\x18\x01 \x01(\tR\ajobType\x12=\n" +
+	"\fobservations\x18\x02 \x03(\v2\x19.plugin.ObjectObservationR\fobservations\"\xc5\x02\n" +
+	"\x11ObjectObservation\x12\x1b\n" +
+	"\tobject_id\x18\x01 \x03(\tR\bobjectId\x12\x1f\n" +
+	"\vobject_kind\x18\x02 \x01(\tR\n" +
+	"objectKind\x12\x16\n" +
+	"\x06format\x18\x03 \x01(\tR\x06format\x12I\n" +
+	"\n" +
+	"attributes\x18\x04 \x03(\v2).plugin.ObjectObservation.AttributesEntryR\n" +
+	"attributes\x12;\n" +
+	"\vobserved_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"observedAt\x1aR\n" +
+	"\x0fAttributesEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
+	"\x05value\x18\x02 \x01(\v2\x13.plugin.ConfigValueR\x05value:\x028\x01\"h\n" +
+	"\x14RequestObjectPreview\x12\x1b\n" +
+	"\tobject_id\x18\x01 \x03(\tR\bobjectId\x12\x16\n" +
+	"\x06format\x18\x02 \x01(\tR\x06format\x12\x1b\n" +
+	"\trow_limit\x18\x03 \x01(\x05R\browLimit\"\xd6\x01\n" +
+	"\x15ObjectPreviewResponse\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x06 \x01(\tR\trequestId\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12#\n" +
+	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\x12\x18\n" +
+	"\acolumns\x18\x03 \x03(\tR\acolumns\x12&\n" +
+	"\x04rows\x18\x04 \x03(\v2\x12.plugin.PreviewRowR\x04rows\x12\x1d\n" +
+	"\n" +
+	"total_rows\x18\x05 \x01(\x03R\ttotalRows\"$\n" +
+	"\n" +
+	"PreviewRow\x12\x16\n" +
+	"\x06values\x18\x01 \x03(\tR\x06values*W\n" +
 	"\bWorkKind\x12\x19\n" +
 	"\x15WORK_KIND_UNSPECIFIED\x10\x00\x12\x17\n" +
 	"\x13WORK_KIND_DETECTION\x10\x01\x12\x17\n" +
@@ -4388,7 +4813,7 @@ func file_plugin_proto_rawDescGZIP() []byte {
 }
 
 var file_plugin_proto_enumTypes = make([]protoimpl.EnumInfo, 7)
-var file_plugin_proto_msgTypes = make([]protoimpl.MessageInfo, 59)
+var file_plugin_proto_msgTypes = make([]protoimpl.MessageInfo, 65)
 var file_plugin_proto_goTypes = []any{
 	(WorkKind)(0),                  // 0: plugin.WorkKind
 	(JobPriority)(0),               // 1: plugin.JobPriority
@@ -4436,31 +4861,37 @@ var file_plugin_proto_goTypes = []any{
 	(*CancelRequest)(nil),          // 43: plugin.CancelRequest
 	(*AdminShutdown)(nil),          // 44: plugin.AdminShutdown
 	(*PersistedJobTypeConfig)(nil), // 45: plugin.PersistedJobTypeConfig
-	nil,                            // 46: plugin.WorkerHello.MetadataEntry
-	nil,                            // 47: plugin.WorkerHeartbeat.QueuedJobsByTypeEntry
-	nil,                            // 48: plugin.WorkerHeartbeat.MetadataEntry
-	nil,                            // 49: plugin.JobTypeDescriptor.WorkerDefaultValuesEntry
-	nil,                            // 50: plugin.ConfigForm.DefaultValuesEntry
-	nil,                            // 51: plugin.ValueMap.FieldsEntry
-	nil,                            // 52: plugin.RunDetectionRequest.AdminConfigValuesEntry
-	nil,                            // 53: plugin.RunDetectionRequest.WorkerConfigValuesEntry
-	nil,                            // 54: plugin.JobProposal.ParametersEntry
-	nil,                            // 55: plugin.JobProposal.LabelsEntry
-	nil,                            // 56: plugin.ExecuteJobRequest.AdminConfigValuesEntry
-	nil,                            // 57: plugin.ExecuteJobRequest.WorkerConfigValuesEntry
-	nil,                            // 58: plugin.JobSpec.ParametersEntry
-	nil,                            // 59: plugin.JobSpec.LabelsEntry
-	nil,                            // 60: plugin.JobProgressUpdate.MetricsEntry
-	nil,                            // 61: plugin.JobResult.OutputValuesEntry
-	nil,                            // 62: plugin.ClusterContext.MetadataEntry
-	nil,                            // 63: plugin.ActivityEvent.DetailsEntry
-	nil,                            // 64: plugin.PersistedJobTypeConfig.AdminConfigValuesEntry
-	nil,                            // 65: plugin.PersistedJobTypeConfig.WorkerConfigValuesEntry
-	(*timestamppb.Timestamp)(nil),  // 66: google.protobuf.Timestamp
-	(*durationpb.Duration)(nil),    // 67: google.protobuf.Duration
+	(*WorkerObservations)(nil),     // 46: plugin.WorkerObservations
+	(*ObjectObservation)(nil),      // 47: plugin.ObjectObservation
+	(*RequestObjectPreview)(nil),   // 48: plugin.RequestObjectPreview
+	(*ObjectPreviewResponse)(nil),  // 49: plugin.ObjectPreviewResponse
+	(*PreviewRow)(nil),             // 50: plugin.PreviewRow
+	nil,                            // 51: plugin.WorkerHello.MetadataEntry
+	nil,                            // 52: plugin.WorkerHeartbeat.QueuedJobsByTypeEntry
+	nil,                            // 53: plugin.WorkerHeartbeat.MetadataEntry
+	nil,                            // 54: plugin.JobTypeDescriptor.WorkerDefaultValuesEntry
+	nil,                            // 55: plugin.ConfigForm.DefaultValuesEntry
+	nil,                            // 56: plugin.ValueMap.FieldsEntry
+	nil,                            // 57: plugin.RunDetectionRequest.AdminConfigValuesEntry
+	nil,                            // 58: plugin.RunDetectionRequest.WorkerConfigValuesEntry
+	nil,                            // 59: plugin.JobProposal.ParametersEntry
+	nil,                            // 60: plugin.JobProposal.LabelsEntry
+	nil,                            // 61: plugin.ExecuteJobRequest.AdminConfigValuesEntry
+	nil,                            // 62: plugin.ExecuteJobRequest.WorkerConfigValuesEntry
+	nil,                            // 63: plugin.JobSpec.ParametersEntry
+	nil,                            // 64: plugin.JobSpec.LabelsEntry
+	nil,                            // 65: plugin.JobProgressUpdate.MetricsEntry
+	nil,                            // 66: plugin.JobResult.OutputValuesEntry
+	nil,                            // 67: plugin.ClusterContext.MetadataEntry
+	nil,                            // 68: plugin.ActivityEvent.DetailsEntry
+	nil,                            // 69: plugin.PersistedJobTypeConfig.AdminConfigValuesEntry
+	nil,                            // 70: plugin.PersistedJobTypeConfig.WorkerConfigValuesEntry
+	nil,                            // 71: plugin.ObjectObservation.AttributesEntry
+	(*timestamppb.Timestamp)(nil),  // 72: google.protobuf.Timestamp
+	(*durationpb.Duration)(nil),    // 73: google.protobuf.Duration
 }
 var file_plugin_proto_depIdxs = []int32{
-	66,  // 0: plugin.WorkerToAdminMessage.sent_at:type_name -> google.protobuf.Timestamp
+	72,  // 0: plugin.WorkerToAdminMessage.sent_at:type_name -> google.protobuf.Timestamp
 	9,   // 1: plugin.WorkerToAdminMessage.hello:type_name -> plugin.WorkerHello
 	11,  // 2: plugin.WorkerToAdminMessage.heartbeat:type_name -> plugin.WorkerHeartbeat
 	12,  // 3: plugin.WorkerToAdminMessage.acknowledge:type_name -> plugin.WorkerAcknowledge
@@ -4469,104 +4900,112 @@ var file_plugin_proto_depIdxs = []int32{
 	34,  // 6: plugin.WorkerToAdminMessage.detection_complete:type_name -> plugin.DetectionComplete
 	38,  // 7: plugin.WorkerToAdminMessage.job_progress_update:type_name -> plugin.JobProgressUpdate
 	39,  // 8: plugin.WorkerToAdminMessage.job_completed:type_name -> plugin.JobCompleted
-	66,  // 9: plugin.AdminToWorkerMessage.sent_at:type_name -> google.protobuf.Timestamp
-	10,  // 10: plugin.AdminToWorkerMessage.hello:type_name -> plugin.AdminHello
-	15,  // 11: plugin.AdminToWorkerMessage.request_config_schema:type_name -> plugin.RequestConfigSchema
-	32,  // 12: plugin.AdminToWorkerMessage.run_detection_request:type_name -> plugin.RunDetectionRequest
-	36,  // 13: plugin.AdminToWorkerMessage.execute_job_request:type_name -> plugin.ExecuteJobRequest
-	43,  // 14: plugin.AdminToWorkerMessage.cancel_request:type_name -> plugin.CancelRequest
-	44,  // 15: plugin.AdminToWorkerMessage.shutdown:type_name -> plugin.AdminShutdown
-	14,  // 16: plugin.WorkerHello.capabilities:type_name -> plugin.JobTypeCapability
-	46,  // 17: plugin.WorkerHello.metadata:type_name -> plugin.WorkerHello.MetadataEntry
-	13,  // 18: plugin.WorkerHeartbeat.running_work:type_name -> plugin.RunningWork
-	47,  // 19: plugin.WorkerHeartbeat.queued_jobs_by_type:type_name -> plugin.WorkerHeartbeat.QueuedJobsByTypeEntry
-	48,  // 20: plugin.WorkerHeartbeat.metadata:type_name -> plugin.WorkerHeartbeat.MetadataEntry
-	0,   // 21: plugin.RunningWork.kind:type_name -> plugin.WorkKind
-	2,   // 22: plugin.RunningWork.state:type_name -> plugin.JobState
-	17,  // 23: plugin.ConfigSchemaResponse.job_type_descriptor:type_name -> plugin.JobTypeDescriptor
-	18,  // 24: plugin.JobTypeDescriptor.admin_config_form:type_name -> plugin.ConfigForm
-	18,  // 25: plugin.JobTypeDescriptor.worker_config_form:type_name -> plugin.ConfigForm
-	30,  // 26: plugin.JobTypeDescriptor.admin_runtime_defaults:type_name -> plugin.AdminRuntimeDefaults
-	49,  // 27: plugin.JobTypeDescriptor.worker_default_values:type_name -> plugin.JobTypeDescriptor.WorkerDefaultValuesEntry
-	19,  // 28: plugin.ConfigForm.sections:type_name -> plugin.ConfigSection
-	50,  // 29: plugin.ConfigForm.default_values:type_name -> plugin.ConfigForm.DefaultValuesEntry
-	20,  // 30: plugin.ConfigSection.fields:type_name -> plugin.ConfigField
-	3,   // 31: plugin.ConfigField.field_type:type_name -> plugin.ConfigFieldType
-	4,   // 32: plugin.ConfigField.widget:type_name -> plugin.ConfigWidget
-	23,  // 33: plugin.ConfigField.min_value:type_name -> plugin.ConfigValue
-	23,  // 34: plugin.ConfigField.max_value:type_name -> plugin.ConfigValue
-	21,  // 35: plugin.ConfigField.options:type_name -> plugin.ConfigOption
-	22,  // 36: plugin.ConfigField.validation_rules:type_name -> plugin.ValidationRule
-	23,  // 37: plugin.ConfigField.visible_when_equals:type_name -> plugin.ConfigValue
-	5,   // 38: plugin.ValidationRule.type:type_name -> plugin.ValidationRuleType
-	67,  // 39: plugin.ConfigValue.duration_value:type_name -> google.protobuf.Duration
-	24,  // 40: plugin.ConfigValue.string_list:type_name -> plugin.StringList
-	25,  // 41: plugin.ConfigValue.int64_list:type_name -> plugin.Int64List
-	26,  // 42: plugin.ConfigValue.double_list:type_name -> plugin.DoubleList
-	27,  // 43: plugin.ConfigValue.bool_list:type_name -> plugin.BoolList
-	28,  // 44: plugin.ConfigValue.list_value:type_name -> plugin.ValueList
-	29,  // 45: plugin.ConfigValue.map_value:type_name -> plugin.ValueMap
-	23,  // 46: plugin.ValueList.values:type_name -> plugin.ConfigValue
-	51,  // 47: plugin.ValueMap.fields:type_name -> plugin.ValueMap.FieldsEntry
-	31,  // 48: plugin.RunDetectionRequest.admin_runtime:type_name -> plugin.AdminRuntimeConfig
-	52,  // 49: plugin.RunDetectionRequest.admin_config_values:type_name -> plugin.RunDetectionRequest.AdminConfigValuesEntry
-	53,  // 50: plugin.RunDetectionRequest.worker_config_values:type_name -> plugin.RunDetectionRequest.WorkerConfigValuesEntry
-	41,  // 51: plugin.RunDetectionRequest.cluster_context:type_name -> plugin.ClusterContext
-	66,  // 52: plugin.RunDetectionRequest.last_successful_run:type_name -> google.protobuf.Timestamp
-	35,  // 53: plugin.DetectionProposals.proposals:type_name -> plugin.JobProposal
-	1,   // 54: plugin.JobProposal.priority:type_name -> plugin.JobPriority
-	54,  // 55: plugin.JobProposal.parameters:type_name -> plugin.JobProposal.ParametersEntry
-	55,  // 56: plugin.JobProposal.labels:type_name -> plugin.JobProposal.LabelsEntry
-	66,  // 57: plugin.JobProposal.not_before:type_name -> google.protobuf.Timestamp
-	66,  // 58: plugin.JobProposal.expires_at:type_name -> google.protobuf.Timestamp
-	37,  // 59: plugin.ExecuteJobRequest.job:type_name -> plugin.JobSpec
-	31,  // 60: plugin.ExecuteJobRequest.admin_runtime:type_name -> plugin.AdminRuntimeConfig
-	56,  // 61: plugin.ExecuteJobRequest.admin_config_values:type_name -> plugin.ExecuteJobRequest.AdminConfigValuesEntry
-	57,  // 62: plugin.ExecuteJobRequest.worker_config_values:type_name -> plugin.ExecuteJobRequest.WorkerConfigValuesEntry
-	41,  // 63: plugin.ExecuteJobRequest.cluster_context:type_name -> plugin.ClusterContext
-	1,   // 64: plugin.JobSpec.priority:type_name -> plugin.JobPriority
-	58,  // 65: plugin.JobSpec.parameters:type_name -> plugin.JobSpec.ParametersEntry
-	59,  // 66: plugin.JobSpec.labels:type_name -> plugin.JobSpec.LabelsEntry
-	66,  // 67: plugin.JobSpec.created_at:type_name -> google.protobuf.Timestamp
-	66,  // 68: plugin.JobSpec.scheduled_at:type_name -> google.protobuf.Timestamp
-	2,   // 69: plugin.JobProgressUpdate.state:type_name -> plugin.JobState
-	60,  // 70: plugin.JobProgressUpdate.metrics:type_name -> plugin.JobProgressUpdate.MetricsEntry
-	42,  // 71: plugin.JobProgressUpdate.activities:type_name -> plugin.ActivityEvent
-	66,  // 72: plugin.JobProgressUpdate.updated_at:type_name -> google.protobuf.Timestamp
-	40,  // 73: plugin.JobCompleted.result:type_name -> plugin.JobResult
-	42,  // 74: plugin.JobCompleted.activities:type_name -> plugin.ActivityEvent
-	66,  // 75: plugin.JobCompleted.completed_at:type_name -> google.protobuf.Timestamp
-	61,  // 76: plugin.JobResult.output_values:type_name -> plugin.JobResult.OutputValuesEntry
-	62,  // 77: plugin.ClusterContext.metadata:type_name -> plugin.ClusterContext.MetadataEntry
-	6,   // 78: plugin.ActivityEvent.source:type_name -> plugin.ActivitySource
-	63,  // 79: plugin.ActivityEvent.details:type_name -> plugin.ActivityEvent.DetailsEntry
-	66,  // 80: plugin.ActivityEvent.created_at:type_name -> google.protobuf.Timestamp
-	0,   // 81: plugin.CancelRequest.target_kind:type_name -> plugin.WorkKind
-	64,  // 82: plugin.PersistedJobTypeConfig.admin_config_values:type_name -> plugin.PersistedJobTypeConfig.AdminConfigValuesEntry
-	65,  // 83: plugin.PersistedJobTypeConfig.worker_config_values:type_name -> plugin.PersistedJobTypeConfig.WorkerConfigValuesEntry
-	31,  // 84: plugin.PersistedJobTypeConfig.admin_runtime:type_name -> plugin.AdminRuntimeConfig
-	66,  // 85: plugin.PersistedJobTypeConfig.updated_at:type_name -> google.protobuf.Timestamp
-	23,  // 86: plugin.JobTypeDescriptor.WorkerDefaultValuesEntry.value:type_name -> plugin.ConfigValue
-	23,  // 87: plugin.ConfigForm.DefaultValuesEntry.value:type_name -> plugin.ConfigValue
-	23,  // 88: plugin.ValueMap.FieldsEntry.value:type_name -> plugin.ConfigValue
-	23,  // 89: plugin.RunDetectionRequest.AdminConfigValuesEntry.value:type_name -> plugin.ConfigValue
-	23,  // 90: plugin.RunDetectionRequest.WorkerConfigValuesEntry.value:type_name -> plugin.ConfigValue
-	23,  // 91: plugin.JobProposal.ParametersEntry.value:type_name -> plugin.ConfigValue
-	23,  // 92: plugin.ExecuteJobRequest.AdminConfigValuesEntry.value:type_name -> plugin.ConfigValue
-	23,  // 93: plugin.ExecuteJobRequest.WorkerConfigValuesEntry.value:type_name -> plugin.ConfigValue
-	23,  // 94: plugin.JobSpec.ParametersEntry.value:type_name -> plugin.ConfigValue
-	23,  // 95: plugin.JobProgressUpdate.MetricsEntry.value:type_name -> plugin.ConfigValue
-	23,  // 96: plugin.JobResult.OutputValuesEntry.value:type_name -> plugin.ConfigValue
-	23,  // 97: plugin.ActivityEvent.DetailsEntry.value:type_name -> plugin.ConfigValue
-	23,  // 98: plugin.PersistedJobTypeConfig.AdminConfigValuesEntry.value:type_name -> plugin.ConfigValue
-	23,  // 99: plugin.PersistedJobTypeConfig.WorkerConfigValuesEntry.value:type_name -> plugin.ConfigValue
-	7,   // 100: plugin.PluginControlService.WorkerStream:input_type -> plugin.WorkerToAdminMessage
-	8,   // 101: plugin.PluginControlService.WorkerStream:output_type -> plugin.AdminToWorkerMessage
-	101, // [101:102] is the sub-list for method output_type
-	100, // [100:101] is the sub-list for method input_type
-	100, // [100:100] is the sub-list for extension type_name
-	100, // [100:100] is the sub-list for extension extendee
-	0,   // [0:100] is the sub-list for field type_name
+	46,  // 9: plugin.WorkerToAdminMessage.observations:type_name -> plugin.WorkerObservations
+	49,  // 10: plugin.WorkerToAdminMessage.object_preview_response:type_name -> plugin.ObjectPreviewResponse
+	72,  // 11: plugin.AdminToWorkerMessage.sent_at:type_name -> google.protobuf.Timestamp
+	10,  // 12: plugin.AdminToWorkerMessage.hello:type_name -> plugin.AdminHello
+	15,  // 13: plugin.AdminToWorkerMessage.request_config_schema:type_name -> plugin.RequestConfigSchema
+	32,  // 14: plugin.AdminToWorkerMessage.run_detection_request:type_name -> plugin.RunDetectionRequest
+	36,  // 15: plugin.AdminToWorkerMessage.execute_job_request:type_name -> plugin.ExecuteJobRequest
+	43,  // 16: plugin.AdminToWorkerMessage.cancel_request:type_name -> plugin.CancelRequest
+	44,  // 17: plugin.AdminToWorkerMessage.shutdown:type_name -> plugin.AdminShutdown
+	48,  // 18: plugin.AdminToWorkerMessage.request_object_preview:type_name -> plugin.RequestObjectPreview
+	14,  // 19: plugin.WorkerHello.capabilities:type_name -> plugin.JobTypeCapability
+	51,  // 20: plugin.WorkerHello.metadata:type_name -> plugin.WorkerHello.MetadataEntry
+	13,  // 21: plugin.WorkerHeartbeat.running_work:type_name -> plugin.RunningWork
+	52,  // 22: plugin.WorkerHeartbeat.queued_jobs_by_type:type_name -> plugin.WorkerHeartbeat.QueuedJobsByTypeEntry
+	53,  // 23: plugin.WorkerHeartbeat.metadata:type_name -> plugin.WorkerHeartbeat.MetadataEntry
+	0,   // 24: plugin.RunningWork.kind:type_name -> plugin.WorkKind
+	2,   // 25: plugin.RunningWork.state:type_name -> plugin.JobState
+	17,  // 26: plugin.ConfigSchemaResponse.job_type_descriptor:type_name -> plugin.JobTypeDescriptor
+	18,  // 27: plugin.JobTypeDescriptor.admin_config_form:type_name -> plugin.ConfigForm
+	18,  // 28: plugin.JobTypeDescriptor.worker_config_form:type_name -> plugin.ConfigForm
+	30,  // 29: plugin.JobTypeDescriptor.admin_runtime_defaults:type_name -> plugin.AdminRuntimeDefaults
+	54,  // 30: plugin.JobTypeDescriptor.worker_default_values:type_name -> plugin.JobTypeDescriptor.WorkerDefaultValuesEntry
+	19,  // 31: plugin.ConfigForm.sections:type_name -> plugin.ConfigSection
+	55,  // 32: plugin.ConfigForm.default_values:type_name -> plugin.ConfigForm.DefaultValuesEntry
+	20,  // 33: plugin.ConfigSection.fields:type_name -> plugin.ConfigField
+	3,   // 34: plugin.ConfigField.field_type:type_name -> plugin.ConfigFieldType
+	4,   // 35: plugin.ConfigField.widget:type_name -> plugin.ConfigWidget
+	23,  // 36: plugin.ConfigField.min_value:type_name -> plugin.ConfigValue
+	23,  // 37: plugin.ConfigField.max_value:type_name -> plugin.ConfigValue
+	21,  // 38: plugin.ConfigField.options:type_name -> plugin.ConfigOption
+	22,  // 39: plugin.ConfigField.validation_rules:type_name -> plugin.ValidationRule
+	23,  // 40: plugin.ConfigField.visible_when_equals:type_name -> plugin.ConfigValue
+	5,   // 41: plugin.ValidationRule.type:type_name -> plugin.ValidationRuleType
+	73,  // 42: plugin.ConfigValue.duration_value:type_name -> google.protobuf.Duration
+	24,  // 43: plugin.ConfigValue.string_list:type_name -> plugin.StringList
+	25,  // 44: plugin.ConfigValue.int64_list:type_name -> plugin.Int64List
+	26,  // 45: plugin.ConfigValue.double_list:type_name -> plugin.DoubleList
+	27,  // 46: plugin.ConfigValue.bool_list:type_name -> plugin.BoolList
+	28,  // 47: plugin.ConfigValue.list_value:type_name -> plugin.ValueList
+	29,  // 48: plugin.ConfigValue.map_value:type_name -> plugin.ValueMap
+	23,  // 49: plugin.ValueList.values:type_name -> plugin.ConfigValue
+	56,  // 50: plugin.ValueMap.fields:type_name -> plugin.ValueMap.FieldsEntry
+	31,  // 51: plugin.RunDetectionRequest.admin_runtime:type_name -> plugin.AdminRuntimeConfig
+	57,  // 52: plugin.RunDetectionRequest.admin_config_values:type_name -> plugin.RunDetectionRequest.AdminConfigValuesEntry
+	58,  // 53: plugin.RunDetectionRequest.worker_config_values:type_name -> plugin.RunDetectionRequest.WorkerConfigValuesEntry
+	41,  // 54: plugin.RunDetectionRequest.cluster_context:type_name -> plugin.ClusterContext
+	72,  // 55: plugin.RunDetectionRequest.last_successful_run:type_name -> google.protobuf.Timestamp
+	35,  // 56: plugin.DetectionProposals.proposals:type_name -> plugin.JobProposal
+	1,   // 57: plugin.JobProposal.priority:type_name -> plugin.JobPriority
+	59,  // 58: plugin.JobProposal.parameters:type_name -> plugin.JobProposal.ParametersEntry
+	60,  // 59: plugin.JobProposal.labels:type_name -> plugin.JobProposal.LabelsEntry
+	72,  // 60: plugin.JobProposal.not_before:type_name -> google.protobuf.Timestamp
+	72,  // 61: plugin.JobProposal.expires_at:type_name -> google.protobuf.Timestamp
+	37,  // 62: plugin.ExecuteJobRequest.job:type_name -> plugin.JobSpec
+	31,  // 63: plugin.ExecuteJobRequest.admin_runtime:type_name -> plugin.AdminRuntimeConfig
+	61,  // 64: plugin.ExecuteJobRequest.admin_config_values:type_name -> plugin.ExecuteJobRequest.AdminConfigValuesEntry
+	62,  // 65: plugin.ExecuteJobRequest.worker_config_values:type_name -> plugin.ExecuteJobRequest.WorkerConfigValuesEntry
+	41,  // 66: plugin.ExecuteJobRequest.cluster_context:type_name -> plugin.ClusterContext
+	1,   // 67: plugin.JobSpec.priority:type_name -> plugin.JobPriority
+	63,  // 68: plugin.JobSpec.parameters:type_name -> plugin.JobSpec.ParametersEntry
+	64,  // 69: plugin.JobSpec.labels:type_name -> plugin.JobSpec.LabelsEntry
+	72,  // 70: plugin.JobSpec.created_at:type_name -> google.protobuf.Timestamp
+	72,  // 71: plugin.JobSpec.scheduled_at:type_name -> google.protobuf.Timestamp
+	2,   // 72: plugin.JobProgressUpdate.state:type_name -> plugin.JobState
+	65,  // 73: plugin.JobProgressUpdate.metrics:type_name -> plugin.JobProgressUpdate.MetricsEntry
+	42,  // 74: plugin.JobProgressUpdate.activities:type_name -> plugin.ActivityEvent
+	72,  // 75: plugin.JobProgressUpdate.updated_at:type_name -> google.protobuf.Timestamp
+	40,  // 76: plugin.JobCompleted.result:type_name -> plugin.JobResult
+	42,  // 77: plugin.JobCompleted.activities:type_name -> plugin.ActivityEvent
+	72,  // 78: plugin.JobCompleted.completed_at:type_name -> google.protobuf.Timestamp
+	66,  // 79: plugin.JobResult.output_values:type_name -> plugin.JobResult.OutputValuesEntry
+	67,  // 80: plugin.ClusterContext.metadata:type_name -> plugin.ClusterContext.MetadataEntry
+	6,   // 81: plugin.ActivityEvent.source:type_name -> plugin.ActivitySource
+	68,  // 82: plugin.ActivityEvent.details:type_name -> plugin.ActivityEvent.DetailsEntry
+	72,  // 83: plugin.ActivityEvent.created_at:type_name -> google.protobuf.Timestamp
+	0,   // 84: plugin.CancelRequest.target_kind:type_name -> plugin.WorkKind
+	69,  // 85: plugin.PersistedJobTypeConfig.admin_config_values:type_name -> plugin.PersistedJobTypeConfig.AdminConfigValuesEntry
+	70,  // 86: plugin.PersistedJobTypeConfig.worker_config_values:type_name -> plugin.PersistedJobTypeConfig.WorkerConfigValuesEntry
+	31,  // 87: plugin.PersistedJobTypeConfig.admin_runtime:type_name -> plugin.AdminRuntimeConfig
+	72,  // 88: plugin.PersistedJobTypeConfig.updated_at:type_name -> google.protobuf.Timestamp
+	47,  // 89: plugin.WorkerObservations.observations:type_name -> plugin.ObjectObservation
+	71,  // 90: plugin.ObjectObservation.attributes:type_name -> plugin.ObjectObservation.AttributesEntry
+	72,  // 91: plugin.ObjectObservation.observed_at:type_name -> google.protobuf.Timestamp
+	50,  // 92: plugin.ObjectPreviewResponse.rows:type_name -> plugin.PreviewRow
+	23,  // 93: plugin.JobTypeDescriptor.WorkerDefaultValuesEntry.value:type_name -> plugin.ConfigValue
+	23,  // 94: plugin.ConfigForm.DefaultValuesEntry.value:type_name -> plugin.ConfigValue
+	23,  // 95: plugin.ValueMap.FieldsEntry.value:type_name -> plugin.ConfigValue
+	23,  // 96: plugin.RunDetectionRequest.AdminConfigValuesEntry.value:type_name -> plugin.ConfigValue
+	23,  // 97: plugin.RunDetectionRequest.WorkerConfigValuesEntry.value:type_name -> plugin.ConfigValue
+	23,  // 98: plugin.JobProposal.ParametersEntry.value:type_name -> plugin.ConfigValue
+	23,  // 99: plugin.ExecuteJobRequest.AdminConfigValuesEntry.value:type_name -> plugin.ConfigValue
+	23,  // 100: plugin.ExecuteJobRequest.WorkerConfigValuesEntry.value:type_name -> plugin.ConfigValue
+	23,  // 101: plugin.JobSpec.ParametersEntry.value:type_name -> plugin.ConfigValue
+	23,  // 102: plugin.JobProgressUpdate.MetricsEntry.value:type_name -> plugin.ConfigValue
+	23,  // 103: plugin.JobResult.OutputValuesEntry.value:type_name -> plugin.ConfigValue
+	23,  // 104: plugin.ActivityEvent.DetailsEntry.value:type_name -> plugin.ConfigValue
+	23,  // 105: plugin.PersistedJobTypeConfig.AdminConfigValuesEntry.value:type_name -> plugin.ConfigValue
+	23,  // 106: plugin.PersistedJobTypeConfig.WorkerConfigValuesEntry.value:type_name -> plugin.ConfigValue
+	23,  // 107: plugin.ObjectObservation.AttributesEntry.value:type_name -> plugin.ConfigValue
+	7,   // 108: plugin.PluginControlService.WorkerStream:input_type -> plugin.WorkerToAdminMessage
+	8,   // 109: plugin.PluginControlService.WorkerStream:output_type -> plugin.AdminToWorkerMessage
+	109, // [109:110] is the sub-list for method output_type
+	108, // [108:109] is the sub-list for method input_type
+	108, // [108:108] is the sub-list for extension type_name
+	108, // [108:108] is the sub-list for extension extendee
+	0,   // [0:108] is the sub-list for field type_name
 }
 
 func init() { file_plugin_proto_init() }
@@ -4583,6 +5022,8 @@ func file_plugin_proto_init() {
 		(*WorkerToAdminMessage_DetectionComplete)(nil),
 		(*WorkerToAdminMessage_JobProgressUpdate)(nil),
 		(*WorkerToAdminMessage_JobCompleted)(nil),
+		(*WorkerToAdminMessage_Observations)(nil),
+		(*WorkerToAdminMessage_ObjectPreviewResponse)(nil),
 	}
 	file_plugin_proto_msgTypes[1].OneofWrappers = []any{
 		(*AdminToWorkerMessage_Hello)(nil),
@@ -4591,6 +5032,7 @@ func file_plugin_proto_init() {
 		(*AdminToWorkerMessage_ExecuteJobRequest)(nil),
 		(*AdminToWorkerMessage_CancelRequest)(nil),
 		(*AdminToWorkerMessage_Shutdown)(nil),
+		(*AdminToWorkerMessage_RequestObjectPreview)(nil),
 	}
 	file_plugin_proto_msgTypes[16].OneofWrappers = []any{
 		(*ConfigValue_BoolValue)(nil),
@@ -4612,7 +5054,7 @@ func file_plugin_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_plugin_proto_rawDesc), len(file_plugin_proto_rawDesc)),
 			NumEnums:      7,
-			NumMessages:   59,
+			NumMessages:   65,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

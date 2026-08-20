@@ -52,14 +52,7 @@ func (h *S3TablesHandler) handleCreateView(w http.ResponseWriter, r *http.Reques
 
 	// Check if namespace exists
 	namespacePath := GetNamespacePath(bucketName, namespaceName)
-	var namespaceMetadata namespaceMetadata
-	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata)
-		if err != nil {
-			return err
-		}
-		return json.Unmarshal(data, &namespaceMetadata)
-	})
+	namespaceMetadata, err := h.loadNamespaceMetadata(r.Context(), filerClient, bucketName, namespaceName)
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", namespaceName))
@@ -75,6 +68,14 @@ func (h *S3TablesHandler) handleCreateView(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to fetch policies: %v", err))
 		return err
+	}
+
+	// A view is Iceberg metadata, so it belongs only in a bucket that holds
+	// Iceberg tables.
+	if bucketMetadata.Format != "" && bucketMetadata.Format != FormatIceberg {
+		message := fmt.Sprintf("table bucket %s holds %s tables and cannot hold views", bucketName, bucketMetadata.Format)
+		h.writeError(w, http.StatusConflict, ErrCodeConflict, message)
+		return fmt.Errorf("%s", message)
 	}
 
 	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
@@ -93,7 +94,7 @@ func (h *S3TablesHandler) handleCreateView(w http.ResponseWriter, r *http.Reques
 		if err != nil {
 			return err
 		}
-		if entryType(entry.Extended) != EntryTypeView {
+		if EntryType(entry.Extended) != EntryTypeView {
 			existingIsTable = true
 			return nil
 		}
@@ -125,7 +126,7 @@ func (h *S3TablesHandler) handleCreateView(w http.ResponseWriter, r *http.Reques
 	metadata := &tableMetadataInternal{
 		Name:             viewName,
 		Namespace:        namespaceName,
-		Format:           "ICEBERG",
+		Format:           FormatIceberg,
 		CreatedAt:        now,
 		ModifiedAt:       now,
 		OwnerAccountID:   namespaceMetadata.OwnerAccountID,
@@ -185,7 +186,7 @@ func (h *S3TablesHandler) handleGetView(w http.ResponseWriter, r *http.Request, 
 		if err != nil {
 			return err
 		}
-		if entryType(entry.Extended) != EntryTypeView {
+		if EntryType(entry.Extended) != EntryTypeView {
 			return filer_pb.ErrNotFound
 		}
 		data, ok := entry.Extended[ExtendedKeyMetadata]
@@ -354,7 +355,7 @@ func (h *S3TablesHandler) listViewsInNamespace(r *http.Request, client filer_pb.
 				continue
 			}
 			// Only include view entries; skip tables and untagged entries.
-			if entryType(entry.Entry.Extended) != EntryTypeView {
+			if EntryType(entry.Entry.Extended) != EntryTypeView {
 				continue
 			}
 			data, ok := entry.Entry.Extended[ExtendedKeyMetadata]
@@ -411,7 +412,7 @@ func (h *S3TablesHandler) handleUpdateView(w http.ResponseWriter, r *http.Reques
 		if err != nil {
 			return err
 		}
-		if entryType(entry.Extended) != EntryTypeView {
+		if EntryType(entry.Extended) != EntryTypeView {
 			return filer_pb.ErrNotFound
 		}
 		data, ok := entry.Extended[ExtendedKeyMetadata]
@@ -516,7 +517,7 @@ func (h *S3TablesHandler) handleDeleteView(w http.ResponseWriter, r *http.Reques
 		if err != nil {
 			return err
 		}
-		if entryType(entry.Extended) != EntryTypeView {
+		if EntryType(entry.Extended) != EntryTypeView {
 			return filer_pb.ErrNotFound
 		}
 		data, ok := entry.Extended[ExtendedKeyMetadata]

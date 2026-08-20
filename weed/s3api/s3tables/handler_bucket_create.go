@@ -26,6 +26,19 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 		return err
 	}
 
+	// A bucket is a catalog, and a catalog serves one protocol. Saying which one
+	// at creation is what lets everything downstream - the endpoint the UI
+	// shows, the tables the bucket accepts - be answered without opening a table.
+	bucketFormat := FormatIceberg
+	if req.Format != "" {
+		normalized, ok := NormalizeFormat(req.Format)
+		if !ok {
+			h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, fmt.Sprintf("unsupported format %q", req.Format))
+			return fmt.Errorf("invalid format")
+		}
+		bucketFormat = normalized
+	}
+
 	principal := h.getAccountID(r)
 	identityActions := getIdentityActions(r)
 	identityPolicyNames := getIdentityPolicyNames(r)
@@ -115,6 +128,7 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 		Name:           req.Name,
 		CreatedAt:      now,
 		OwnerAccountID: principal,
+		Format:         bucketFormat,
 	}
 
 	metadataBytes, err := json.Marshal(metadata)

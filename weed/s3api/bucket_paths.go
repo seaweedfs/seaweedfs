@@ -69,6 +69,11 @@ func (s3a *S3ApiServer) validateTableBucketObjectPath(bucket, object string) err
 		return err
 	}
 	parts := strings.SplitN(cleanObject, "/", 4)
+	// A table's marker files sit at namespace/table/<marker>, one level above
+	// everything else, so they are three parts rather than four.
+	if len(parts) == 3 && s3tables.IsTableMarkerFile(parts[2]) {
+		return nil
+	}
 	if len(parts) < 4 {
 		return &s3tables.IcebergLayoutError{
 			Code:    s3tables.ErrCodeInvalidIcebergLayout,

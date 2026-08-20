@@ -45,8 +45,8 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Validate format
-	if req.Format != "ICEBERG" {
-		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "only ICEBERG format is supported")
+	if req.Format != FormatIceberg && req.Format != FormatLance {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, fmt.Sprintf("unsupported format %q", req.Format))
 		return fmt.Errorf("invalid format")
 	}
 
@@ -65,18 +65,7 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 
 	// Check if namespace exists
 	namespacePath := GetNamespacePath(bucketName, namespaceName)
-	var namespaceMetadata namespaceMetadata
-	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata)
-		if err != nil {
-			return err
-		}
-		if err := json.Unmarshal(data, &namespaceMetadata); err != nil {
-			return fmt.Errorf("failed to unmarshal namespace metadata: %w", err)
-		}
-		return nil
-	})
-
+	namespaceMetadata, err := h.loadNamespaceMetadata(r.Context(), filerClient, bucketName, namespaceName)
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", namespaceName))
@@ -135,6 +124,15 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		return err
 	}
 
+	// A bucket declares the format it holds, and a table of another format would
+	// be invisible to the catalog serving it. A bucket made before the
+	// declaration existed has none, and keeps taking anything.
+	if bucketMetadata.Format != "" && bucketMetadata.Format != req.Format {
+		message := fmt.Sprintf("table bucket %s holds %s tables", bucketName, bucketMetadata.Format)
+		h.writeError(w, http.StatusConflict, ErrCodeConflict, message)
+		return fmt.Errorf("%s", message)
+	}
+
 	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
 	identityActions := getIdentityActions(r)
 	nsAllowed := CheckPermissionWithContext("CreateTable", accountID, namespaceMetadata.OwnerAccountID, namespacePolicy, bucketARN, &PolicyContext{
@@ -174,7 +172,7 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		if err != nil {
 			return err
 		}
-		if entryType(entry.Extended) == EntryTypeView {
+		if EntryType(entry.Extended) == EntryTypeView {
 			existingIsView = true
 			return nil
 		}
@@ -192,6 +190,14 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		if existingIsView {
 			h.writeError(w, http.StatusConflict, ErrCodeTableAlreadyExists, fmt.Sprintf("a view named %s already exists", tableName))
 			return fmt.Errorf("view name conflict: %s", tableName)
+		}
+		// Creating a table that already exists is idempotent, but only for the
+		// same format. Handing a Lance client an Iceberg table's location, or the
+		// reverse, has it write one format's files into the other's directory.
+		if existingMetadata.Format != "" && existingMetadata.Format != req.Format {
+			h.writeError(w, http.StatusConflict, ErrCodeTableAlreadyExists,
+				fmt.Sprintf("a %s table named %s already exists", existingMetadata.Format, tableName))
+			return fmt.Errorf("format conflict: %s", tableName)
 		}
 		tableARN := h.generateTableARN(existingMetadata.OwnerAccountID, bucketName, namespaceName+"/"+tableName)
 		h.writeJSON(w, http.StatusOK, &CreateTableResponse{
@@ -357,17 +363,7 @@ func (h *S3TablesHandler) handleRegisterTable(w http.ResponseWriter, r *http.Req
 
 	// Namespace must exist.
 	namespacePath := GetNamespacePath(bucketName, namespaceName)
-	var namespaceMetadata namespaceMetadata
-	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata)
-		if err != nil {
-			return err
-		}
-		if err := json.Unmarshal(data, &namespaceMetadata); err != nil {
-			return fmt.Errorf("failed to unmarshal namespace metadata: %w", err)
-		}
-		return nil
-	})
+	namespaceMetadata, err := h.loadNamespaceMetadata(r.Context(), filerClient, bucketName, namespaceName)
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", namespaceName))
@@ -468,7 +464,7 @@ func (h *S3TablesHandler) handleRegisterTable(w http.ResponseWriter, r *http.Req
 	metadata := &tableMetadataInternal{
 		Name:             tableName,
 		Namespace:        namespaceName,
-		Format:           "ICEBERG",
+		Format:           FormatIceberg,
 		CreatedAt:        now,
 		ModifiedAt:       now,
 		OwnerAccountID:   namespaceMetadata.OwnerAccountID,
@@ -551,7 +547,7 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 		if err != nil {
 			return err
 		}
-		if entryType(entry.Extended) == EntryTypeView {
+		if EntryType(entry.Extended) == EntryTypeView {
 			return filer_pb.ErrNotFound
 		}
 		data, ok := entry.Extended[ExtendedKeyMetadata]
@@ -923,7 +919,7 @@ func (h *S3TablesHandler) listTablesWithClient(r *http.Request, client filer_pb.
 			}
 
 			// Views share the table layout; exclude them from table listings.
-			if entryType(entry.Entry.Extended) == EntryTypeView {
+			if EntryType(entry.Entry.Extended) == EntryTypeView {
 				continue
 			}
 
@@ -945,11 +941,13 @@ func (h *S3TablesHandler) listTablesWithClient(r *http.Request, client filer_pb.
 			tableARN := h.generateTableARN(metadata.OwnerAccountID, bucketName, namespaceName+"/"+entry.Entry.Name)
 
 			tables = append(tables, TableSummary{
-				Name:       entry.Entry.Name,
-				TableARN:   tableARN,
-				Namespace:  expandNamespace(namespaceName),
-				CreatedAt:  metadata.CreatedAt,
-				ModifiedAt: metadata.ModifiedAt,
+				Name:             entry.Entry.Name,
+				TableARN:         tableARN,
+				Namespace:        expandNamespace(namespaceName),
+				Format:           metadata.Format,
+				CreatedAt:        metadata.CreatedAt,
+				ModifiedAt:       metadata.ModifiedAt,
+				MetadataLocation: metadata.MetadataLocation,
 			})
 
 			if len(tables) >= maxTables {
@@ -1435,7 +1433,7 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 
 	// Tables and views share the namespace directory, so a rename must not pick
 	// up the other kind under the same name.
-	if entryType(srcExtended) != kind.entryType {
+	if EntryType(srcExtended) != kind.entryType {
 		h.writeError(w, http.StatusNotFound, kind.notFoundCode, fmt.Sprintf("%s %s not found", kind.noun, srcName))
 		return fmt.Errorf("%s %s not found", kind.noun, srcName)
 	}

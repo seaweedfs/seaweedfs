@@ -38,12 +38,10 @@ jobs:
       with:
         go-version-file: 'go.mod'
 
-    - name: Install FUSE and dependencies
+    - name: Configure FUSE
       run: |
-        sudo apt-get update
-        # fuse3 is pre-installed on ubuntu-22.04 runners and conflicts
-        # with the legacy fuse package, so only install the dev headers.
-        sudo apt-get install -y libfuse3-dev
+        # Nothing to install: fuse3 ships fusermount3 and is pre-installed, and
+        # go-fuse is pure Go, so the libfuse headers were never linked against.
         # Allow non-root FUSE mounts with allow_other
         echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
         sudo chmod 644 /etc/fuse.conf

@@ -3944,6 +3944,11 @@ func (m *SubscribeMetadataResponse) MarshalToSizedBufferVT(dAtA []byte) (int, er
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if m.FlushedTsNs != 0 {
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.FlushedTsNs))
+		i--
+		dAtA[i] = 0x30
+	}
 	if len(m.LogFileRefs) > 0 {
 		for iNdEx := len(m.LogFileRefs) - 1; iNdEx >= 0; iNdEx-- {
 			size, err := m.LogFileRefs[iNdEx].MarshalToSizedBufferVT(dAtA[:i])
@@ -7815,6 +7820,9 @@ func (m *SubscribeMetadataResponse) SizeVT() (n int) {
 			l = e.SizeVT()
 			n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 		}
+	}
+	if m.FlushedTsNs != 0 {
+		n += 1 + protohelpers.SizeOfVarint(uint64(m.FlushedTsNs))
 	}
 	n += len(m.unknownFields)
 	return n
@@ -19463,6 +19471,25 @@ func (m *SubscribeMetadataResponse) UnmarshalVT(dAtA []byte) error {
 				return err
 			}
 			iNdEx = postIndex
+		case 6:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field FlushedTsNs", wireType)
+			}
+			m.FlushedTsNs = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.FlushedTsNs |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])

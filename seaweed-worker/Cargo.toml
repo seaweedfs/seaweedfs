@@ -1,0 +1,24 @@
+# Rust plugin workers for SeaweedFS.
+#
+# `core` is the plugin.proto contract and nothing else; a worker crate beside it
+# supplies job handlers and a binary. Adding a worker means adding a member here,
+# not touching the protocol.
+[workspace]
+resolver = "2"
+members = ["crates/core", "crates/lance"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+
+[workspace.dependencies]
+anyhow = "1"
+async-trait = "0.1"
+prost = "0.13"
+prost-types = "0.13"
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+tonic = { version = "0.12", features = ["tls"] }
+tonic-build = "0.12"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

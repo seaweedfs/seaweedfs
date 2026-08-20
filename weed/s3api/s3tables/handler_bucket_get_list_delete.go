@@ -83,6 +83,7 @@ func (h *S3TablesHandler) handleGetTableBucket(w http.ResponseWriter, r *http.Re
 		Name:           metadata.Name,
 		OwnerAccountID: metadata.OwnerAccountID,
 		CreatedAt:      metadata.CreatedAt,
+		Format:         metadata.Format,
 	}
 
 	h.writeJSON(w, http.StatusOK, resp)
@@ -202,6 +203,7 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 					ARN:       bucketARN,
 					Name:      entry.Entry.Name,
 					CreatedAt: metadata.CreatedAt,
+					Format:    metadata.Format,
 				})
 
 				if len(buckets) >= maxBuckets {

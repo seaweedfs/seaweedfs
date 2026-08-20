@@ -169,14 +169,38 @@ func writeManagerError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "BadRequestException", err.Error())
 		return
 	}
-	// A missing table bucket means the catalog the client selected does not
-	// exist, not a server fault. The storage-layer message names the resolved
-	// bucket, which for a client that sent no warehouse at all is the default
-	// one it never asked for, so say how to select a real table bucket.
+	// Storage-layer failures are mostly the client's, not the server's. Reporting
+	// a missing namespace or a name conflict as a 500 makes the catalog look
+	// broken and gives the client nothing to act on.
 	var tableErr *s3tables.S3TablesError
-	if errors.As(err, &tableErr) && tableErr.Type == s3tables.ErrCodeNoSuchBucket {
-		writeError(w, http.StatusNotFound, "NoSuchNamespaceException",
-			fmt.Sprintf("%s: each table bucket is a separate catalog, select one with warehouse=s3://<table-bucket>/ or /v1/<table-bucket>/", tableErr.Message))
+	if errors.As(err, &tableErr) {
+		switch tableErr.Type {
+		case s3tables.ErrCodeNoSuchBucket:
+			// The storage-layer message names the resolved bucket, which for a
+			// client that sent no warehouse at all is the default one it never
+			// asked for, so say how to select a real table bucket.
+			writeError(w, http.StatusNotFound, "NoSuchNamespaceException",
+				fmt.Sprintf("%s: each table bucket is a separate catalog, select one with warehouse=s3://<table-bucket>/ or /v1/<table-bucket>/", tableErr.Message))
+		case s3tables.ErrCodeNoSuchNamespace:
+			writeError(w, http.StatusNotFound, "NoSuchNamespaceException", tableErr.Message)
+		case s3tables.ErrCodeNoSuchTable:
+			writeError(w, http.StatusNotFound, "NoSuchTableException", tableErr.Message)
+		case s3tables.ErrCodeNoSuchView:
+			writeError(w, http.StatusNotFound, "NoSuchViewException", tableErr.Message)
+		case s3tables.ErrCodeNamespaceAlreadyExists, s3tables.ErrCodeBucketAlreadyExists,
+			s3tables.ErrCodeTableAlreadyExists, s3tables.ErrCodeViewAlreadyExists:
+			writeError(w, http.StatusConflict, "AlreadyExistsException", tableErr.Message)
+		case s3tables.ErrCodeNamespaceNotEmpty, s3tables.ErrCodeBucketNotEmpty:
+			writeError(w, http.StatusConflict, "AlreadyExistsException", tableErr.Message)
+		case s3tables.ErrCodeConflict:
+			writeError(w, http.StatusConflict, "CommitFailedException", tableErr.Message)
+		case s3tables.ErrCodeAccessDenied:
+			writeError(w, http.StatusForbidden, "ForbiddenException", tableErr.Message)
+		case s3tables.ErrCodeInvalidRequest, s3tables.ErrCodeInvalidIcebergLayout:
+			writeError(w, http.StatusBadRequest, "BadRequestException", tableErr.Message)
+		default:
+			writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		}
 		return
 	}
 	writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())

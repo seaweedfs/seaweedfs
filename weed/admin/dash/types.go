@@ -778,4 +778,8 @@ type IcebergTableDetailsData struct {
 	TotalSizeBytes   int64                       `json:"total_size_bytes"`
 	HasTotalSize     bool                        `json:"has_total_size"`
 	MetadataError    string                      `json:"metadata_error,omitempty"`
+	// Set when the details came from a plugin worker rather than from metadata
+	// this server can read, so the page can say whose account it is and when.
+	ObservedBy string    `json:"observed_by,omitempty"`
+	ObservedAt time.Time `json:"observed_at,omitempty"`
 }

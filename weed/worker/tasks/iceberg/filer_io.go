@@ -147,7 +147,17 @@ func loadCurrentMetadata(ctx context.Context, client filer_pb.SeaweedFilerClient
 		return nil, fmt.Errorf("no metadata xattr on table entry %s/%s", dir, name)
 	}
 
-	return parseTableMetadataEnvelope(metadataBytes, bucketName, tablePath)
+	state, err := parseTableMetadataEnvelope(metadataBytes, bucketName, tablePath)
+	if err != nil {
+		return nil, err
+	}
+	// Refuse to rewrite an entry that only looks like an Iceberg table. Every
+	// operation here rewrites or deletes files under the table location, and a
+	// foreign format's files are unreferenced by Iceberg metadata by definition.
+	if !isIcebergTableEntry(resp.Entry.Extended, state.Metadata) {
+		return nil, fmt.Errorf("entry %s/%s is not an iceberg table", dir, name)
+	}
+	return state, nil
 }
 
 // loadFileByIcebergPath loads a file from the filer given an Iceberg-style path.
