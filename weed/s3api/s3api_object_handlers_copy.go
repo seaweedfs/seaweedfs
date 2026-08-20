@@ -329,6 +329,9 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			Mtime:    t.Unix(),
 			Crtime:   entry.Attributes.Crtime,
 			Mime:     resolveDestinationMime(r.Header, entry.Attributes.Mime, replaceMeta),
+			FileMode: s3a.resolveFileMode(r),
+			Uid:      filer_pb.OS_UID,
+			Gid:      filer_pb.OS_GID,
 		},
 		Extended: make(map[string][]byte),
 	}
@@ -1030,6 +1033,9 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 			Mtime:    t.Unix(),
 			Crtime:   t.Unix(),
 			Mime:     entry.Attributes.Mime,
+			FileMode: s3a.resolveFileMode(r),
+			Uid:      filer_pb.OS_UID,
+			Gid:      filer_pb.OS_GID,
 		},
 		Extended: make(map[string][]byte),
 	}
