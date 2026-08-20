@@ -2023,6 +2023,15 @@ func ensureMiniTableBuckets(bucketSpec string) error {
 		return nil
 	}
 
+	// A bucket holds one format, and the format decides which catalog serves it.
+	// Creating one in a format this mini does not serve leaves a bucket no
+	// client can reach, so take the format from the endpoint that is running.
+	format := miniTableBucketFormat()
+	if format == "" {
+		glog.Warningf("not creating table buckets %q: neither the Iceberg nor the Lance endpoint is enabled, so nothing could reach them", bucketSpec)
+		return nil
+	}
+
 	filerAddress := pb.NewServerAddress(*miniIp, *miniFilerOptions.port, *miniFilerOptions.portGrpc)
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
@@ -2031,12 +2040,12 @@ func ensureMiniTableBuckets(bucketSpec string) error {
 		mgrClient := s3tables.NewManagerClient(client)
 		for _, name := range names {
 			ctx, cancel := context.WithTimeout(miniClientsCtx(), 5*time.Second)
-			req := &s3tables.CreateTableBucketRequest{Name: name}
+			req := &s3tables.CreateTableBucketRequest{Name: name, Format: format}
 			var resp s3tables.CreateTableBucketResponse
 			err := manager.Execute(ctx, mgrClient, "CreateTableBucket", req, &resp, s3tables.DefaultAccountID)
 			cancel()
 			if err == nil {
-				glog.V(0).Infof("created table bucket %s", name)
+				glog.V(0).Infof("created %s table bucket %s", format, name)
 				continue
 			}
 			var s3Err *s3tables.S3TablesError
@@ -2048,6 +2057,22 @@ func ensureMiniTableBuckets(bucketSpec string) error {
 		}
 		return nil
 	})
+}
+
+// miniTableBucketFormat is the format a pre-created table bucket should hold:
+// Iceberg when its catalog is running, else Lance, else none because neither
+// server is up.
+func miniTableBucketFormat() string {
+	if miniEnableS3 == nil || !*miniEnableS3 {
+		return ""
+	}
+	if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
+		return s3tables.FormatIceberg
+	}
+	if miniS3Options.portLance != nil && *miniS3Options.portLance > 0 {
+		return s3tables.FormatLance
+	}
+	return ""
 }
 
 // parseBucketList splits a comma-separated bucket spec into a deduplicated list

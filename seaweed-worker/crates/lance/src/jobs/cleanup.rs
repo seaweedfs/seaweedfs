@@ -15,22 +15,16 @@ use tracing::warn;
 
 use crate::catalog::{parse_id, NamespaceClient};
 use crate::dataset;
-use crate::jobs::{string_list, table_id};
+use crate::jobs::{clamp, string_list, table_id};
 
 pub const JOB_TYPE: &str = "lance_cleanup_versions";
 
 const DEFAULT_RETAIN_HOURS: i64 = 168;
 const DEFAULT_MIN_VERSIONS: i64 = 5;
 
-// The form offers these ranges; a value arriving outside them is a config the
-// UI could not have produced, and acting on it deletes history. Duration::hours
-// also panics far outside this range.
+// The ranges the form offers. Duration::hours also panics far outside this one.
 const MAX_RETAIN_HOURS: i64 = 8760;
 const MAX_MIN_VERSIONS: i64 = 1000;
-
-fn clamp(value: i64, low: i64, high: i64) -> i64 {
-    value.max(low).min(high)
-}
 
 /// Lance keeps every version until something removes it. Lance can also do this
 /// itself through auto-cleanup, so this job is for deployments that would rather

@@ -15,11 +15,18 @@ use tracing::warn;
 
 use crate::catalog::{parse_id, NamespaceClient};
 use crate::dataset::{self, OpenTable};
-use crate::jobs::{string_list, table_id};
+use crate::jobs::{clamp, string_list, table_id};
 
 pub const JOB_TYPE: &str = "lance_optimize_indices";
 
 const DEFAULT_MAX_UNINDEXED_ROWS: i64 = 100_000;
+
+// Zero is a real setting - reindex as soon as any row is uncovered - so the
+// floor is what stays meaningful rather than what the form offers. The ceiling
+// is the form's, and the point of both is that this is cast to u64: a negative
+// would arrive as an enormous budget and mean "never reindex".
+const MAX_UNINDEXED_FLOOR: i64 = 0;
+const MAX_UNINDEXED_CEILING: i64 = 100_000_000;
 
 /// Rows written after an index was built are not covered by it, so a vector
 /// search quietly misses them. This is the job with no Iceberg equivalent, and
@@ -124,10 +131,14 @@ impl JobHandler for OptimizeIndicesHandler {
         request: &RunDetectionRequest,
         sender: &dyn DetectionSender,
     ) -> Result<()> {
-        let budget = int_or(
-            &request.worker_config_values,
-            "max_unindexed_rows",
-            DEFAULT_MAX_UNINDEXED_ROWS,
+        let budget = clamp(
+            int_or(
+                &request.worker_config_values,
+                "max_unindexed_rows",
+                DEFAULT_MAX_UNINDEXED_ROWS,
+            ),
+            MAX_UNINDEXED_FLOOR,
+            MAX_UNINDEXED_CEILING,
         ) as u64;
         let client = self.client();
         let tables = client.list_all_tables().await?;

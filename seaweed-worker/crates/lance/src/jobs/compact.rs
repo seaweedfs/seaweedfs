@@ -14,12 +14,21 @@ use tracing::warn;
 
 use crate::catalog::{parse_id, NamespaceClient};
 use crate::dataset;
-use crate::jobs::{observation, string_list, table_id, FORMAT};
+use crate::jobs::{clamp, observation, string_list, table_id, FORMAT};
 
 pub const JOB_TYPE: &str = "lance_compact";
 
 const DEFAULT_TARGET_ROWS: i64 = 1_048_576;
 const DEFAULT_MIN_FRAGMENTS: i64 = 8;
+
+// The ranges the descriptor's form offers. These are also the values that stay
+// meaningful: a table needs two fragments before merging them means anything,
+// and a fragment target below a thousand rows defeats the purpose of the job.
+// Both are cast to usize, where a negative would arrive as an enormous number.
+const TARGET_ROWS_FLOOR: i64 = 1024;
+const TARGET_ROWS_CEILING: i64 = 16_777_216;
+const MIN_FRAGMENTS_FLOOR: i64 = 2;
+const MIN_FRAGMENTS_CEILING: i64 = 4096;
 
 /// Lance writes one fragment per write batch, so a table fed by small appends
 /// accumulates small files the same way an Iceberg table does.
@@ -113,10 +122,14 @@ impl JobHandler for CompactHandler {
         request: &RunDetectionRequest,
         sender: &dyn DetectionSender,
     ) -> Result<()> {
-        let min_fragments = int_or(
-            &request.worker_config_values,
-            "min_fragments",
-            DEFAULT_MIN_FRAGMENTS,
+        let min_fragments = clamp(
+            int_or(
+                &request.worker_config_values,
+                "min_fragments",
+                DEFAULT_MIN_FRAGMENTS,
+            ),
+            MIN_FRAGMENTS_FLOOR,
+            MIN_FRAGMENTS_CEILING,
         ) as usize;
         let client = self.client();
         let tables = client.list_all_tables().await?;
@@ -218,10 +231,14 @@ impl JobHandler for CompactHandler {
             .ok_or_else(|| anyhow!("execute request carried no job"))?;
         let id = table_id(&job.parameters)
             .ok_or_else(|| anyhow!("job {} carried no table_id", job.job_id))?;
-        let target_rows = int_or(
-            &request.worker_config_values,
-            "target_rows_per_fragment",
-            DEFAULT_TARGET_ROWS,
+        let target_rows = clamp(
+            int_or(
+                &request.worker_config_values,
+                "target_rows_per_fragment",
+                DEFAULT_TARGET_ROWS,
+            ),
+            TARGET_ROWS_FLOOR,
+            TARGET_ROWS_CEILING,
         ) as usize;
 
         let client = self.client();

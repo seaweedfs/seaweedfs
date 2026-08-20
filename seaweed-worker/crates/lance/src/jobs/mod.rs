@@ -54,6 +54,14 @@ pub fn handlers(
     ]
 }
 
+/// Holds a configured value to the range its form offers. A value from outside
+/// it is one the UI could not have produced, and every one of these is cast to
+/// an unsigned type: a negative arrives as an enormous number, which silently
+/// turns a threshold into "never" rather than failing loudly.
+pub(crate) fn clamp(value: i64, low: i64, high: i64) -> i64 {
+    value.max(low).min(high)
+}
+
 /// The format the catalog records for the tables this worker maintains.
 pub const FORMAT: &str = "LANCE";
 
@@ -72,5 +80,25 @@ pub(crate) fn observation(
         format: format.to_string(),
         attributes,
         observed_at: Some(std::time::SystemTime::now().into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Every configured threshold is cast to an unsigned type before use. A
+    // negative one would arrive as an enormous number and quietly mean "never",
+    // which looks exactly like a worker with nothing to do.
+    #[test]
+    fn clamp_keeps_a_negative_from_wrapping() {
+        assert_eq!(clamp(-1, 2, 4096) as usize, 2);
+        assert_eq!(clamp(i64::MIN, 0, 100_000_000) as u64, 0);
+    }
+
+    #[test]
+    fn clamp_holds_the_ceiling_and_passes_the_middle() {
+        assert_eq!(clamp(i64::MAX, 0, 8760), 8760);
+        assert_eq!(clamp(168, 0, 8760), 168);
     }
 }
