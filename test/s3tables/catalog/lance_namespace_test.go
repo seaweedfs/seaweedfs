@@ -228,10 +228,55 @@ func TestLanceFilesAreAcceptedByTheS3Door(t *testing.T) {
 	}
 }
 
-// Managed versioning exists to give a commit a real put-if-not-exists. Racing
-// writers must not both believe they reserved the same version, because the
-// loser is the one that rebases.
-func TestLanceManagedVersioningReservesExactlyOnce(t *testing.T) {
+// A Lance commit is a conditional PUT of the next manifest: object_store turns
+// PutMode::Create into If-None-Match: *, and lance treats the refusal as a
+// commit conflict and rebases. So the whole safety of concurrent writers rests
+// on this store answering that precondition atomically. It does, because the
+// gateway reduces the header to a filer WriteCondition evaluated at the
+// object's owner under a per-path lock.
+//
+// This is the reason the namespace does not manage versions itself.
+func TestLanceCommitPreconditionAdmitsOneWriter(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+	env := sharedEnv
+	bucket := lanceTestBucket(t, env, "lance-commit")
+	lanceMust(t, env, http.MethodPost, "/v1/namespace/"+bucket+"$ml/create", `{}`, http.StatusOK)
+	lanceMust(t, env, http.MethodPost, "/v1/table/"+bucket+"$ml$vectors/declare", `{}`, http.StatusOK)
+
+	const writers = 8
+	var wg sync.WaitGroup
+	statuses := make([]int, writers)
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			statuses[i] = putS3ObjectIfAbsent(t, env, bucket, "ml/vectors/_versions/1.manifest")
+		}(i)
+	}
+	wg.Wait()
+
+	won, refused := 0, 0
+	for _, status := range statuses {
+		switch status {
+		case http.StatusOK:
+			won++
+		case http.StatusPreconditionFailed:
+			refused++
+		default:
+			t.Fatalf("unexpected status %d committing a manifest", status)
+		}
+	}
+	if won != 1 {
+		t.Fatalf("%d writers committed version 1; exactly one may win, %d were refused", won, refused)
+	}
+}
+
+// The namespace answers managed_versioning=false: the dataset owns its version
+// history, and a reader that never goes through this catalog still sees all of
+// it.
+func TestLanceDoesNotManageVersions(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
@@ -246,49 +291,35 @@ func TestLanceManagedVersioningReservesExactlyOnce(t *testing.T) {
 	if err := json.Unmarshal(lanceMust(t, env, http.MethodPost, table+"/declare", `{}`, http.StatusOK), &declared); err != nil {
 		t.Fatalf("decode declare: %v", err)
 	}
-	if !declared.ManagedVersioning {
-		t.Fatal("declare must advertise managed_versioning so the client routes commits here")
+	if declared.ManagedVersioning {
+		t.Fatal("managed_versioning must be false; the dataset owns its versions")
 	}
 
-	const writers = 8
-	var wg sync.WaitGroup
-	statuses := make([]int, writers)
-	for i := 0; i < writers; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			body := fmt.Sprintf(`{"version":1,"manifest_path":"_versions/1.manifest-%d","naming_scheme":"V2"}`, i)
-			statuses[i], _ = lanceCall(t, env, http.MethodPost, table+"/version/create", body)
-		}(i)
+	// The version ops answer with the spec's Unsupported code rather than a
+	// bare 404, so a client that asks learns why.
+	status, _ := lanceCall(t, env, http.MethodPost, table+"/version/list", `{}`)
+	if status != http.StatusNotImplemented {
+		t.Fatalf("version/list = %d, want 501", status)
 	}
-	wg.Wait()
+}
 
-	won := 0
-	for _, status := range statuses {
-		switch status {
-		case http.StatusOK:
-			won++
-		case http.StatusConflict:
-		default:
-			t.Fatalf("unexpected status %d reserving a version", status)
-		}
+// putS3ObjectIfAbsent writes an object only if the key is free, the way a Lance
+// commit does, and returns the status.
+func putS3ObjectIfAbsent(t *testing.T, env *TestEnvironment, bucket, object string) int {
+	t.Helper()
+	url := fmt.Sprintf("http://127.0.0.1:%d/%s/%s", env.s3Port, bucket, object)
+	req, err := http.NewRequest(http.MethodPut, url, bytes.NewReader([]byte("manifest")))
+	if err != nil {
+		t.Fatalf("build request: %v", err)
 	}
-	if won != 1 {
-		t.Fatalf("%d writers reserved version 1; exactly one may win", won)
+	req.Header.Set("If-None-Match", "*")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PUT %s: %v", object, err)
 	}
-
-	var listed struct {
-		Versions []struct {
-			Version      int64  `json:"version"`
-			ManifestPath string `json:"manifest_path"`
-		} `json:"versions"`
-	}
-	if err := json.Unmarshal(lanceMust(t, env, http.MethodPost, table+"/version/list", `{}`, http.StatusOK), &listed); err != nil {
-		t.Fatalf("decode version listing: %v", err)
-	}
-	if len(listed.Versions) != 1 || listed.Versions[0].Version != 1 {
-		t.Fatalf("version listing = %+v, want exactly version 1", listed.Versions)
-	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode
 }
 
 // putS3Object writes an object through the S3 gateway and returns the status.

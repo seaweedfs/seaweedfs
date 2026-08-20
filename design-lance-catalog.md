@@ -323,44 +323,46 @@ than re-deriving the data path from the catalog name.
 
 ## Commit safety
 
-This is the part worth building even if nobody ever points Spark at it.
+This is the part I got wrong, and the correction removed a feature rather than adding one.
 
-Lance commits a version by writing `_versions/{v}.manifest` with put-if-not-exists; exactly
-one writer is supposed to win, and the loser rebases. On SeaweedFS, `If-None-Match: *` is
-evaluated in the gateway: `PutObjectHandler` calls `checkConditionalHeaders`
-(`weed/s3api/s3api_object_handlers_put.go:100`), which resolves the entry
-(`:2254`), validates against it (`:2151`), and returns. The write that follows carries no
-precondition to the filer. It is a check-then-act: two concurrent writers of the same
-manifest key can both pass the check, and the second silently overwrites the first. A lost
-Lance commit, and the same class of bug as the Iceberg commit race fixed in #10775.
+Lance commits a version by writing `_versions/{v}.manifest` with put-if-not-exists: exactly
+one writer is supposed to win, and the loser rebases. In lance 10 that path is not optional
+and needs nothing bolted on — `commit_handler_from_url` hands every `s3://` dataset a
+`ConditionalPutCommitHandler`, which calls `put_opts` with `PutMode::Create`, which
+object_store's S3 backend sends as `If-None-Match: *`.
 
-Two independent fixes, and I would ship them as separate changes:
+I originally read our gateway as evaluating that header check-then-act, and designed around
+it. That was already out of date. `buildWriteCondition`
+(`weed/s3api/s3api_object_routed_write.go`) reduces `If-None-Match: *` to a filer
+`WriteCondition{IF_NOT_EXISTS}`, and `putToFiler` routes the create to the object's owner
+filer, which evaluates the precondition under its per-path lock; when routing is not
+available it falls back to the object write lock, which evaluates it under the lock too.
+Either way it is atomic. Sixteen concurrent writers of the same fresh key get one 200 and
+fifteen 412s, repeatedly.
 
-1. **Make conditional PUT atomic.** Carry the precondition down to the filer.
-   `CreateEntryRequest.o_excl` (`weed/pb/filer.proto:248`) is already exactly
-   put-if-not-exists, and `UpdateEntryRequest.expected_extended` (`:470`) is the CAS used by
-   the Iceberg worker. This fixes Lance and every other conditional-PUT client, and it does
-   not belong in the Lance PR. It needs a concurrency test that demonstrates the current
-   race before it claims to close it.
+So the store already has the primitive Lance needs, cluster-wide, for every conditional-PUT
+client and not just this one.
 
-2. **Offer the catalog as an external manifest store.** The Lance spec has a first-class
-   path for stores that lack the primitive: set `managed_versioning: true` in
-   `DescribeTable` and implement `CreateTableVersion`, `BatchCreateTableVersions`,
-   `DescribeTableVersion`, `ListTableVersions`, `BatchDeleteTableVersions`. The commit then
-   goes stage to `_versions/{v}.manifest-{uuid}`, reserve the version slot in the catalog,
-   finalize, update the pointer. Our reserve step is a filer `CreateEntry` with `o_excl` —
-   atomic today, no S3 changes needed. Datasets stay portable: copying the directory keeps
-   all data, the external store only orders the commits.
+### What that removed
 
-The version metadata we would store per version is small and fixed: `manifest_path`,
-`manifest_size`, `e_tag`, `naming_scheme`, plus free-form metadata. That is one filer entry
-per version under a catalog-side `_lance_versions/` directory, or an xattr map on the table
-entry — entry-per-version is better, because it makes `ListTableVersions` a directory listing
-and `BatchDeleteTableVersions` a batch delete, and it does not run into the whole-entry
-rewrite problem described in `reference_updateentry_cas_semantics`.
+An earlier draft of this design offered the catalog as an **external manifest store**:
+`managed_versioning: true` plus `CreateTableVersion` and friends, with the reserve step as a
+filer `CreateEntry` with `o_excl`. It was implemented, tested, and shipped behind a default-off
+flag — and it should not exist.
 
-`ListTableVersions` off a directory listing is also the cheapest possible answer to the
-question the Iceberg admin UI answers expensively today.
+- It solves a problem this store does not have. The spec offers that path for stores that
+  cannot order commits themselves.
+- It moves a table's version history out of the dataset and into the catalog, so a reader
+  that does not go through this namespace no longer sees the whole picture. That is a real
+  cost paid for nothing.
+- lance 10 cannot even use it past the first commit: `NamespaceManifestStore::put_if_not_exists`
+  answers "put_if_not_exists is not supported for namespace-backed stores", which is exactly
+  what a second `append` needs.
+
+The version operations now answer `Unsupported` alongside the other operations the catalog
+does not serve, and `managed_versioning` is answered `false`. The property they were
+protecting is covered instead by a test that races eight writers at the manifest key through
+S3 and asserts one wins — testing the path Lance actually takes.
 
 ## Credential vending
 
@@ -503,7 +505,8 @@ phase 1, return the fields we can derive from the filer — `version` from the h
 `{version}.manifest` — and omit `schema`/`stats` rather than fabricating them. The spec
 tolerates a partial response here; it does not tolerate a wrong one.
 
-Phase 2 adds the five version operations plus `managed_versioning`.
+Phase 2 was the five version operations plus `managed_versioning`; it was built and then
+removed, for the reasons under Commit safety.
 
 Phase 3 is the data plane: `CreateTable`, `InsertIntoTable`, `MergeInsertIntoTable`,
 `UpdateTable`, `DeleteFromTable`, `QueryTable`, `CountTableRows`, and the index and tag
@@ -664,15 +667,10 @@ the rows read back. Note that this client version drops `check_declared` and
 `include_declared` on the wire, so `is_only_declared` reads null through it however the
 server behaves.
 
-Phase 2 is validated as far as the client allows. With `-lance.managedVersioning` on,
-`lance.write_dataset(namespace=..., table_id=..., mode="create")` reserves version 1 through
-`CreateTableVersion`, sending the staged `...manifest-{uuid}` path, its size, an ETag and
-`naming_scheme: V2` — the commit protocol exactly as specified — and the dataset reads back
-afterwards. A second commit does not work: lance 4.0.0 refuses `append` and `overwrite`
-against a namespace-backed store with "put_if_exists is not supported for namespace-backed
-stores" from its own `namespace_manifest.rs`. That is client-side, and it caps what this
-feature is worth until it lands upstream, which is another argument for the flag defaulting
-to off.
+The commit path is validated where it matters: eight writers race the same manifest key
+through S3 with `If-None-Match: *` and exactly one wins. The Rust worker's tests exercise
+the other half, appending to a dataset repeatedly over the same S3 endpoint, which is the
+sequence managed versioning could not complete at all.
 
 One more that belongs in the Iceberg suite, not this one: a Lance dataset registered through
 the Iceberg adapter must survive a full maintenance pass. Reading the code, that test should
@@ -688,9 +686,6 @@ fail today; it has not been run.
 - Names: our charsets are lowercase-only and Lance identifiers are arbitrary strings. Reject
   and document, as Iceberg does, or case-fold. Rejecting is right, but see #10734 for how
   case handling bites when only one side normalizes.
-- Whether phase 2 should be the default (`managed_versioning: true` always) or opt-in per
-  table bucket. Default-on is safer given the conditional-PUT gap; opt-in is more honest
-  about the portability tradeoff.
 - Whether to land generic-format registration first. Dropping the `"ICEBERG"` check and
   letting a table carry an arbitrary format plus a location is smaller than this whole
   design, gets Delta and Parquet catalogued as a side effect, and turns `Format: "LANCE"`

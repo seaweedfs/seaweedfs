@@ -40,13 +40,12 @@ type CredentialVendor interface {
 
 // Server implements the Lance Namespace REST spec.
 type Server struct {
-	filerClient       FilerClient
-	tablesManager     *s3tables.Manager
-	authenticator     S3Authenticator
-	credentialVendor  CredentialVendor
-	s3Endpoint        string
-	s3Region          string
-	managedVersioning bool
+	filerClient      FilerClient
+	tablesManager    *s3tables.Manager
+	authenticator    S3Authenticator
+	credentialVendor CredentialVendor
+	s3Endpoint       string
+	s3Region         string
 }
 
 // NewServer creates a Lance namespace server over the given filer.
@@ -74,15 +73,6 @@ func (s *Server) SetCredentialVendor(vendor CredentialVendor) {
 // client can reach the dataset without separately discovering the S3 address.
 func (s *Server) SetS3Endpoint(endpoint string) {
 	s.s3Endpoint = endpoint
-}
-
-// SetManagedVersioning makes the namespace the external manifest store for its
-// tables: commits reserve a version here before the manifest is finalised, which
-// is a real put-if-not-exists. It is off by default because turning it on moves
-// where a table's version history lives, so a reader that does not go through
-// this namespace no longer sees the whole picture.
-func (s *Server) SetManagedVersioning(enabled bool) {
-	s.managedVersioning = enabled
 }
 
 // SetS3Region configures the region advertised in storage_options.
@@ -121,12 +111,13 @@ func (s *Server) RegisterRoutes(router *mux.Router) {
 		"create_index", "create_scalar_index", "stats", "schema_metadata/update"} {
 		router.HandleFunc("/v1/table/{id}/"+action, s.Auth(s.handleUnsupported)).Methods(http.MethodPost)
 	}
-	router.HandleFunc("/v1/table/{id}/version/create", s.Auth(s.handleCreateTableVersion)).Methods(http.MethodPost)
-	router.HandleFunc("/v1/table/{id}/version/list", s.Auth(s.handleListTableVersions)).Methods(http.MethodPost)
-	router.HandleFunc("/v1/table/{id}/version/describe", s.Auth(s.handleDescribeTableVersion)).Methods(http.MethodPost)
-	router.HandleFunc("/v1/table/{id}/version/delete", s.Auth(s.handleBatchDeleteTableVersions)).Methods(http.MethodPost)
-
+	// Version ops exist in the spec for stores that cannot order commits
+	// themselves. Ours can: a Lance commit is a put-if-not-exists, and this S3
+	// evaluates that precondition at the object's owner filer under a per-path
+	// lock, so the dataset keeps its own version history and the catalog stays
+	// out of the commit path.
 	for _, action := range []string{
+		"version/create", "version/list", "version/describe", "version/delete",
 		"index/list", "tags/list", "tags/version", "tags/create", "tags/delete", "tags/update",
 		"branches/list", "branches/create", "branches/delete"} {
 		router.HandleFunc("/v1/table/{id}/"+action, s.Auth(s.handleUnsupported)).Methods(http.MethodPost)

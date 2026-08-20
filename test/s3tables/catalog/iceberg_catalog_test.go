@@ -158,9 +158,6 @@ func (env *TestEnvironment) startSeaweedFSForMain() error {
 		"-s3.port.grpc", fmt.Sprintf("%d", env.s3GrpcPort),
 		"-s3.port.iceberg", fmt.Sprintf("%d", env.icebergPort),
 		"-s3.port.lance", fmt.Sprintf("%d", env.lancePort),
-		// The Lance tests cover the external manifest store, which is off by
-		// default; the flag only affects the Lance surface.
-		"-s3.lance.managedVersioning",
 		"-ip.bind", "0.0.0.0",
 		"-dir", env.dataDir,
 	)

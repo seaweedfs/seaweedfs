@@ -153,10 +153,9 @@ func (s *Server) handleDeclareTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, DeclareTableResponse{
-		Location:          location,
-		StorageOptions:    options,
-		Properties:        normalizeProperties(req.Properties),
-		ManagedVersioning: s.managedVersioning,
+		Location:       location,
+		StorageOptions: options,
+		Properties:     normalizeProperties(req.Properties),
 	})
 }
 
@@ -213,9 +212,8 @@ func (s *Server) handleDescribeTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := DescribeTableResponse{
-		Location:          location,
-		Properties:        map[string]string{},
-		ManagedVersioning: s.managedVersioning,
+		Location:   location,
+		Properties: map[string]string{},
 	}
 	if len(options) > 0 {
 		resp.StorageOptions = options

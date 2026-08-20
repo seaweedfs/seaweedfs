@@ -67,10 +67,12 @@ type DeclareTableRequest struct {
 }
 
 type DeclareTableResponse struct {
-	Location          string            `json:"location"`
-	StorageOptions    map[string]string `json:"storage_options,omitempty"`
-	Properties        map[string]string `json:"properties"`
-	ManagedVersioning bool              `json:"managed_versioning"`
+	Location       string            `json:"location"`
+	StorageOptions map[string]string `json:"storage_options,omitempty"`
+	Properties     map[string]string `json:"properties"`
+	// ManagedVersioning stays false: the dataset owns its version history,
+	// because this store can order commits without the catalog in the path.
+	ManagedVersioning bool `json:"managed_versioning"`
 }
 
 type DescribeTableRequest struct {
@@ -87,15 +89,17 @@ type DescribeTableRequest struct {
 }
 
 type DescribeTableResponse struct {
-	Table             string            `json:"table,omitempty"`
-	Namespace         []string          `json:"namespace,omitempty"`
-	Version           *int64            `json:"version,omitempty"`
-	Location          string            `json:"location"`
-	TableURI          string            `json:"table_uri,omitempty"`
-	StorageOptions    map[string]string `json:"storage_options,omitempty"`
-	Properties        map[string]string `json:"properties"`
-	ManagedVersioning bool              `json:"managed_versioning"`
-	IsOnlyDeclared    *bool             `json:"is_only_declared,omitempty"`
+	Table          string            `json:"table,omitempty"`
+	Namespace      []string          `json:"namespace,omitempty"`
+	Version        *int64            `json:"version,omitempty"`
+	Location       string            `json:"location"`
+	TableURI       string            `json:"table_uri,omitempty"`
+	StorageOptions map[string]string `json:"storage_options,omitempty"`
+	Properties     map[string]string `json:"properties"`
+	// ManagedVersioning stays false: the dataset owns its version history,
+	// because this store can order commits without the catalog in the path.
+	ManagedVersioning bool  `json:"managed_versioning"`
+	IsOnlyDeclared    *bool `json:"is_only_declared,omitempty"`
 }
 
 type TableExistsRequest struct {
