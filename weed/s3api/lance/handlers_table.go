@@ -152,10 +152,12 @@ func (s *Server) handleDeclareTable(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusInternalServerError, codeInternal, err.Error())
 		return
 	}
+	// Properties are not persisted for a table, so neither response carries
+	// them: null says "this catalog does not keep them", where echoing the
+	// request back or answering {} would say they were stored and are empty.
 	writeJSON(w, http.StatusOK, DeclareTableResponse{
 		Location:       location,
 		StorageOptions: options,
-		Properties:     normalizeProperties(req.Properties),
 	})
 }
 
@@ -212,8 +214,7 @@ func (s *Server) handleDescribeTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := DescribeTableResponse{
-		Location:   location,
-		Properties: map[string]string{},
+		Location: location,
 	}
 	if len(options) > 0 {
 		resp.StorageOptions = options

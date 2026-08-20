@@ -69,7 +69,9 @@ type DeclareTableRequest struct {
 type DeclareTableResponse struct {
 	Location       string            `json:"location"`
 	StorageOptions map[string]string `json:"storage_options,omitempty"`
-	Properties     map[string]string `json:"properties"`
+	// Properties are null rather than {}: the catalog does not keep a table's
+	// properties, and {} would claim it kept them and found none.
+	Properties map[string]string `json:"properties"`
 	// ManagedVersioning stays false: the dataset owns its version history,
 	// because this store can order commits without the catalog in the path.
 	ManagedVersioning bool `json:"managed_versioning"`
@@ -95,7 +97,8 @@ type DescribeTableResponse struct {
 	Location       string            `json:"location"`
 	TableURI       string            `json:"table_uri,omitempty"`
 	StorageOptions map[string]string `json:"storage_options,omitempty"`
-	Properties     map[string]string `json:"properties"`
+	// Null, not {}: this catalog does not keep a table's properties.
+	Properties map[string]string `json:"properties"`
 	// ManagedVersioning stays false: the dataset owns its version history,
 	// because this store can order commits without the catalog in the path.
 	ManagedVersioning bool  `json:"managed_versioning"`
