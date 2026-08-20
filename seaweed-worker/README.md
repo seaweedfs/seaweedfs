@@ -22,12 +22,19 @@ invalid size", which reads like a protocol bug rather than a wrong port.
 
 ## Metrics
 
-    cargo run -p weed-lance-worker -- --admin 127.0.0.1:23646 --metrics-port 9327
+    cargo run -p weed-lance-worker -- --admin 127.0.0.1:23646 --metrics-port 9328
 
 Serves `/health`, `/ready` and `/metrics` on that port, the same three the Go
 worker serves under `weed worker -metricsPort`, so one scrape config covers
 workers in either language. Off by default, and bound to loopback unless
-`--metrics-ip` says otherwise, because the endpoint is unauthenticated.
+`--metrics-ip` says otherwise, because the endpoint is unauthenticated. 9328
+continues the series the other components use (master 9324, volume 9325, filer
+9326, s3 9327); an IPv6 address works with or without brackets.
+
+Grafana: the "Plugin Workers" row of `other/metrics/grafana_seaweedfs.json`
+graphs these. Its panels filter on `$cluster`, which comes from the scrape job's
+labels, so scrape the worker the way the rest of the cluster is scraped or the
+row stays empty.
 
 Names are `SeaweedFS_worker_*`, matching the Go side's convention. The pair
 worth alerting on is `objects_seen_total` and `objects_skipped_total`: a sweep
