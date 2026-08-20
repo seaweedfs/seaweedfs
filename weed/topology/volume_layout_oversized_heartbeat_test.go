@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/sequence"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -273,5 +275,44 @@ func TestEnsureCorrectWritablesRestoresCrowdedVolumeAfterReplicaReturns(t *testi
 	vl.EnsureCorrectWritables(&vi)
 	if w, _ := vl.GetWritableVolumeCount(); w != 1 {
 		t.Fatalf("expected the volume writable again, got %d", w)
+	}
+}
+
+// An incremental heartbeat announces an arrival with a short message that
+// carries no size. Registering from it must not clear the oversized mark the
+// full heartbeat set, or the volume is handed back to the writable list until
+// the next full report.
+func TestIncrementalRegistrationKeepsOversizedMark(t *testing.T) {
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+	dc := topo.GetOrCreateDataCenter("dc1")
+	rack := dc.GetOrCreateRack("rack1")
+	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", "", map[string]uint32{"": 25})
+
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	vl := topo.GetVolumeLayout("", rp, needle.EMPTY_TTL, types.HardDriveType)
+
+	// A full heartbeat reports the volume past the 32 KB limit.
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{{
+		Id:               1,
+		Size:             uint64(64 * 1024),
+		ReplicaPlacement: uint32(0),
+		Version:          uint32(needle.GetCurrentVersion()),
+	}}, dn)
+	if w, _ := vl.GetWritableVolumeCount(); w != 0 {
+		t.Fatalf("expected the oversized volume out of writables, got %d", w)
+	}
+
+	// The same volume is announced again as an arrival.
+	topo.IncrementalSyncDataNodeRegistration([]*master_pb.VolumeShortInformationMessage{{
+		Id:               1,
+		ReplicaPlacement: uint32(0),
+		Version:          uint32(needle.GetCurrentVersion()),
+	}}, nil, dn)
+
+	if !vl.vid2location[1].AnyOversized() {
+		t.Fatalf("expected the oversized mark to survive the arrival announcement")
+	}
+	if w, _ := vl.GetWritableVolumeCount(); w != 0 {
+		t.Fatalf("expected the oversized volume to stay out of writables, got %d", w)
 	}
 }

@@ -131,8 +131,6 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) bool
 		return false
 	}
 
-	defer vl.rememberOversizedVolume(v, dn)
-
 	moveLookupOwnership(v.Id, vl.getOrCreateLocationList(v.Id).Set(dn), dn)
 	if !v.ReadOnly {
 		vl.initSizeTracking(v.Id, v.Size, v.CompactRevision)
@@ -165,11 +163,16 @@ func (vl *VolumeLayout) rememberOversizedVolume(v *storage.VolumeInfo, dn *DataN
 }
 
 // UpdateOversizedState refreshes the per-replica oversized mark from the size
-// reported by this heartbeat. RegisterVolume sets it once at registration; the
-// delta heartbeat path (ApplyVolumeChanges) and the full heartbeat path
-// (SyncDataNodeRegistration) must keep it current, or a volume that grew past
-// the limit would keep looking writable to ensureCorrectWritables and bounce
+// reported by this heartbeat, and is the only writer of that mark. The delta
+// heartbeat path (ApplyVolumeChanges) and the full heartbeat path
+// (SyncDataNodeRegistration) both call it, or a volume that grew past the
+// limit would keep looking writable to ensureCorrectWritables and bounce
 // between writable and unwritable on every assign.
+//
+// Registration deliberately does not touch the mark: the incremental path
+// registers from a short heartbeat message that carries no size, so judging
+// the volume by it would clear the mark on every arrival announcement and
+// hand an oversized volume back to the writable list.
 func (vl *VolumeLayout) UpdateOversizedState(v *storage.VolumeInfo, dn *DataNode) {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
