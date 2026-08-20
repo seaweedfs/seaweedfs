@@ -41,16 +41,24 @@ pub(crate) fn table_id(parameters: &HashMap<String, ConfigValue>) -> Option<Vec<
 pub fn handlers(
     namespace_url: String,
     fallback: crate::dataset::FallbackOptions,
+    metrics: Option<crate::metrics::LanceMetrics>,
 ) -> Vec<Arc<dyn JobHandler>> {
     vec![
         Arc::new(
-            compact::CompactHandler::new(namespace_url.clone()).with_fallback(fallback.clone()),
+            compact::CompactHandler::new(namespace_url.clone())
+                .with_fallback(fallback.clone())
+                .with_metrics(metrics.clone()),
         ),
         Arc::new(
             indices::OptimizeIndicesHandler::new(namespace_url.clone())
-                .with_fallback(fallback.clone()),
+                .with_fallback(fallback.clone())
+                .with_metrics(metrics.clone()),
         ),
-        Arc::new(cleanup::CleanupVersionsHandler::new(namespace_url).with_fallback(fallback)),
+        Arc::new(
+            cleanup::CleanupVersionsHandler::new(namespace_url)
+                .with_fallback(fallback)
+                .with_metrics(metrics),
+        ),
     ]
 }
 

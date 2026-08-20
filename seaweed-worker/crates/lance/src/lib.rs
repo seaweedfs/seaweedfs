@@ -8,6 +8,7 @@
 pub mod catalog;
 pub mod dataset;
 pub mod jobs;
+pub mod metrics;
 pub mod preview;
 
 pub use jobs::handlers;

@@ -1,11 +1,13 @@
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
-use seaweed_worker_core::{Registry, TlsOptions, WorkerOptions};
+use seaweed_worker_core::{Metrics, Registry, TlsOptions, WorkerOptions};
 use weed_lance_worker::handlers;
+use weed_lance_worker::metrics::LanceMetrics;
 
 /// Mirrors `weed worker`'s flags, because this is the same contract from another
 /// language and an operator should not have to learn a second set of names.
@@ -61,6 +63,16 @@ struct Args {
     /// this worker dials.
     #[arg(long)]
     tls_server_name: Option<String>,
+
+    /// Serve /health, /ready and /metrics on this port, the way
+    /// `weed worker -metricsPort` does. Zero, the default, serves nothing.
+    #[arg(long, default_value = "0", env = "WEED_METRICS_PORT")]
+    metrics_port: u16,
+
+    /// Address the metrics server binds. Loopback by default, since the
+    /// endpoint is unauthenticated.
+    #[arg(long, default_value = "127.0.0.1", env = "WEED_METRICS_IP")]
+    metrics_ip: String,
 }
 
 impl Args {
@@ -116,12 +128,26 @@ async fn main() -> Result<()> {
         fallback.insert("aws_secret_access_key".to_string(), secret);
     }
 
+    let metrics = Metrics::new(&options.worker_id, &options.worker_version)?;
+    let lance_metrics = LanceMetrics::new(&metrics)?;
+    if args.metrics_port > 0 {
+        let addr: SocketAddr = format!("{}:{}", args.metrics_ip, args.metrics_port)
+            .parse()
+            .with_context(|| {
+                format!(
+                    "parse the metrics address {}:{}",
+                    args.metrics_ip, args.metrics_port
+                )
+            })?;
+        seaweed_worker_core::metrics::spawn(metrics.clone(), addr);
+    }
+
     let mut registry = Registry::new().with_preview(Arc::new(
         weed_lance_worker::preview::LancePreview::new(args.namespace.clone(), fallback.clone()),
     ));
-    for handler in handlers(args.namespace, fallback) {
+    for handler in handlers(args.namespace, fallback, Some(lance_metrics)) {
         registry = registry.register(handler);
     }
 
-    seaweed_worker_core::run(options, registry).await
+    seaweed_worker_core::stream::run_with_metrics(options, registry, metrics).await
 }
