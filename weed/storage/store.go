@@ -82,6 +82,10 @@ type Store struct {
 	DeletedEcShardsChan chan *master_pb.VolumeEcShardInformationMessage
 	isStopping          atomic.Bool
 	volumeReport        volumeReportState
+	// One heartbeat at a time: the report state is marked in place as the scan
+	// runs, so two overlapping scans would each forget what the other marked
+	// and name every volume it holds as departed.
+	collectHeartbeatLock sync.Mutex
 }
 
 func (s *Store) String() (str string) {
@@ -428,13 +432,15 @@ func (s *Store) GetRack() string {
 }
 
 func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
+	s.collectHeartbeatLock.Lock()
+	defer s.collectHeartbeatLock.Unlock()
+
 	var volumeMessages []*master_pb.VolumeInformationMessage
 	// Covers every volume held, whether or not this heartbeat names it, so the
 	// master can tell whether applying what it was sent leaves it current.
 	// Volumes skipped below -- quarantined, phantom, expired -- are in neither.
 	var volumeDigest uint64
-	sendFullList, reportGeneration := s.volumeReport.begin()
-	reported := make(map[volumeReportKey]reportedVolume)
+	sendFullList, reportGeneration, reportPass := s.volumeReport.begin()
 	maxVolumeCounts := make(map[string]uint32)
 	// Per-disk effective max for DiskTag, captured alongside the per-type sum.
 	diskMaxByID := make(map[int]int32)
@@ -444,6 +450,9 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	collectionVolumeSize := make(map[string]int64)
 	collectionVolumeDeletedBytes := make(map[string]int64)
 	collectionVolumeReadOnlyCount := make(map[string]map[string]uint8)
+	// Filled once per volume and kept only by the heartbeat that carries it, so
+	// a server with nothing to say fills the same message all the way through.
+	scratchMessage := &master_pb.VolumeInformationMessage{}
 	for diskID, location := range s.Locations {
 		if location.isDiskUnavailable.Load() {
 			continue
@@ -471,7 +480,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		diskFreeBytes[string(location.DiskType)] += location.diskFreeBytes.Load()
 		location.volumesLock.RLock()
 		for _, v := range location.volumes {
-			curMaxFileKey, volumeMessage := v.ToVolumeInformationMessage()
+			curMaxFileKey, volumeMessage := v.ToVolumeInformationMessage(scratchMessage)
 			if volumeMessage == nil {
 				continue
 			}
@@ -509,20 +518,9 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 			if !v.expired(volumeMessage.Size, s.GetVolumeSizeLimit()) {
 				reportHash := reportHashOf(volumeMessage)
 				volumeDigest ^= reportHash
-				reported[volumeReportKey{diskId: volumeMessage.DiskId, volumeId: volumeMessage.Id}] = reportedVolume{
-					hash: reportHash,
-					short: &master_pb.VolumeShortInformationMessage{
-						Id:               volumeMessage.Id,
-						Collection:       volumeMessage.Collection,
-						ReplicaPlacement: volumeMessage.ReplicaPlacement,
-						Version:          volumeMessage.Version,
-						Ttl:              volumeMessage.Ttl,
-						DiskType:         volumeMessage.DiskType,
-						DiskId:           volumeMessage.DiskId,
-					},
-				}
-				if sendFullList || s.volumeReport.changed(volumeMessage, reportHash) {
+				if s.volumeReport.record(volumeMessage, reportHash, reportPass) || sendFullList {
 					volumeMessages = append(volumeMessages, volumeMessage)
+					scratchMessage = &master_pb.VolumeInformationMessage{}
 				}
 			} else {
 				if v.expiredLongEnough(MAX_TTL_VOLUME_REMOVAL_DELAY) {
@@ -618,16 +616,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		}
 	}
 
-	// A delta says nothing through silence, so volumes gone since the last
-	// report -- a deleted collection, an expired ttl -- must be named, or the
-	// master counts them until a digest mismatch buys it a full list. A full
-	// list needs no such naming: it is already the whole truth.
-	var departedVolumes []*master_pb.VolumeShortInformationMessage
-	if !sendFullList {
-		departedVolumes = s.volumeReport.departed(reported)
-	}
-
-	s.volumeReport.commit(reported, reportGeneration)
+	departedVolumes := s.volumeReport.commit(reportPass, reportGeneration, sendFullList)
 
 	// has_no_volumes says the server holds nothing, so it may only be derived
 	// from a full list. Deriving it from a changed-only heartbeat would make a

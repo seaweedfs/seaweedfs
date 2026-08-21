@@ -7,7 +7,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 )
 
-func mountTestVolume(t *testing.T, loc *DiskLocation, vid needle.VolumeId) {
+func mountTestVolume(t testing.TB, loc *DiskLocation, vid needle.VolumeId) {
 	t.Helper()
 	v, err := NewVolume(loc.Directory, loc.IdxDirectory, "", vid, NeedleMapInMemory,
 		&super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
