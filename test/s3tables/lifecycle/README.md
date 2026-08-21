@@ -1,8 +1,10 @@
 # Table Lifecycle Integration Tests
 
 One table, all the way through: created in the catalog, filled by a real client,
-maintained by the worker, read again, dropped. Once for Iceberg and once for
-Lance.
+maintained, read again, dropped. Once for Iceberg and once for Lance. The
+Iceberg half always maintains through the worker; the Lance half maintains
+through the Rust worker or through the lance library, depending on what the
+environment has - see below.
 
 ## Why this suite exists
 
