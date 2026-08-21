@@ -1249,7 +1249,7 @@ func probeReadable(ctx context.Context, reader ctxReaderAt, offset int64, timeou
 // mounted remote. served=false means nothing was written and the caller still
 // owns the error path; once served is true the response is committed.
 func (s3a *S3ApiServer) serveObjectFromRemoteMount(w http.ResponseWriter, r *http.Request, entry *filer_pb.Entry, bucket, object string, offset, size int64, isRangeRequest bool, totalSize int64, t0 time.Time) (served bool, err error) {
-	remoteReader, remoteErr := s3a.openRemoteStream(r.Context(), bucket, object, offset, size)
+	remoteReader, remoteErr := s3a.openRemoteStream(r.Context(), bucket, object, offset, size, nil)
 	if remoteErr != nil {
 		glog.Warningf("streamFromVolumeServers: origin stream %s/%s: %v", bucket, object, remoteErr)
 		return false, nil
@@ -1284,8 +1284,9 @@ func (s3a *S3ApiServer) serveObjectFromRemoteMount(w http.ResponseWriter, r *htt
 
 // streamRangeToClient copies the local copy into the already-committed response.
 // The probe only proved the byte at offset readable, so a later chunk can still
-// be gone: finish such a body from the remote instead of truncating it under the
-// Content-Length already sent.
+// be gone: finish such a body from the remote -- if it is still the generation
+// that was cached -- instead of truncating it under the Content-Length already
+// sent.
 func (s3a *S3ApiServer) streamRangeToClient(w io.Writer, r *http.Request, reader io.ReaderAt, entry *filer_pb.Entry, bucket, object string, offset, size, totalSize int64, versionId string) (int64, error) {
 	// small-object GETs shouldn't allocate a 256 KiB scratch buffer per request
 	const maxCopyBuf = 256 * 1024
@@ -1305,7 +1306,9 @@ func (s3a *S3ApiServer) streamRangeToClient(w io.Writer, r *http.Request, reader
 
 	remaining := size - cw.written
 	glog.V(1).Infof("streamFromVolumeServers: local read of %s/%s failed after %d bytes (%v), finishing from the remote mount", bucket, object, cw.written, err)
-	remoteReader, remoteErr := s3a.openRemoteStream(r.Context(), bucket, object, offset+cw.written, remaining)
+	// the bytes already sent are the cached generation, so splice on the remote
+	// only while it still is that generation
+	remoteReader, remoteErr := s3a.openRemoteStream(r.Context(), bucket, object, offset+cw.written, remaining, entry.GetRemoteEntry())
 	if remoteErr != nil {
 		glog.Warningf("streamFromVolumeServers: origin stream %s/%s: %v", bucket, object, remoteErr)
 		return cw.written, err
@@ -3256,7 +3259,9 @@ func (s3a *S3ApiServer) buildRemoteObjectPath(bucket, object string) (dir, name 
 
 // openRemoteStream opens a ranged read of a remote-only object straight from
 // its mounted origin, resolving the mount and storage conf from the filer.
-func (s3a *S3ApiServer) openRemoteStream(ctx context.Context, bucket, object string, offset, size int64) (io.ReadCloser, error) {
+// cached, when set, is the remote generation the local copy was made from: the
+// stream is refused unless the remote still matches it.
+func (s3a *S3ApiServer) openRemoteStream(ctx context.Context, bucket, object string, offset, size int64, cached *filer_pb.RemoteEntry) (io.ReadCloser, error) {
 	dir, name := s3a.buildRemoteObjectPath(bucket, object)
 
 	var storageConf *remote_pb.RemoteConf
@@ -3297,6 +3302,15 @@ func (s3a *S3ApiServer) openRemoteStream(ctx context.Context, bucket, object str
 	}
 
 	loc := filer.MapFullPathToRemoteStorageLocation(util.FullPath(localMountedDir), mountedLocation, util.FullPath(dir).Child(name))
+	if cached != nil {
+		current, statErr := client.StatFile(loc)
+		if statErr != nil {
+			return nil, statErr
+		}
+		if current.GetRemoteSize() != cached.GetRemoteSize() || current.GetRemoteETag() != cached.GetRemoteETag() || current.GetRemoteMtime() != cached.GetRemoteMtime() {
+			return nil, fmt.Errorf("remote %s/%s changed since it was cached", bucket, object)
+		}
+	}
 	return streamer.ReadFileAsStream(ctx, loc, offset, size)
 }
 

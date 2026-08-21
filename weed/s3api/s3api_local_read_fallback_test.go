@@ -275,6 +275,20 @@ func TestStreamRangeToClientFinishesFromRemote(t *testing.T) {
 		assert.Equal(t, int64(3), client.gotSize)
 	})
 
+	t.Run("a remote overwritten since caching is not spliced onto the local prefix", func(t *testing.T) {
+		s3a, client := newServer(t, "faketest-midstreamchanged")
+		client.stat = &filer_pb.RemoteEntry{RemoteSize: size, RemoteETag: "reuploaded"}
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/mybucket/dir/obj.bin", nil)
+		boom := errors.New("volume: connection refused")
+
+		written, err := s3a.streamRangeToClient(w, r, truncatedReaderAt{data: content, breakAt: 4, err: boom}, cachedEntry(content), "mybucket", "dir/obj.bin", 0, size, size, "")
+
+		require.Error(t, err)
+		assert.Equal(t, int64(4), written, "a truncated body beats one mixing two generations")
+		assert.Nil(t, client.gotLoc, "must not read a remote that no longer matches what was cached")
+	})
+
 	t.Run("a local-only object keeps the mid-stream error", func(t *testing.T) {
 		s3a, client := newServer(t, "faketest-midstreamlocal")
 		local := cachedEntry(content)
