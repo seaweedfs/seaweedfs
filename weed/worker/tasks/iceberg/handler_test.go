@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -1445,6 +1447,89 @@ func TestMergeParquetFilesWithEqualityDeletes(t *testing.T) {
 	for _, r := range outputRows {
 		if r.Name == "bob" || r.Name == "dave" {
 			t.Errorf("row %q should have been deleted", r.Name)
+		}
+	}
+}
+
+// testdata/plain-dictionary.parquet was written by DuckDB, which labels its
+// dictionary pages with the deprecated PLAIN_DICTIONARY encoding. The merge
+// writer inherits that encoding from the input schema, and encoding those
+// pages as plain int32 indices instead of RLE collapses every row of the
+// column onto one dictionary entry.
+func TestMergeParquetFilesDictionaryEncodedInput(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	content, err := os.ReadFile(filepath.Join("testdata", "plain-dictionary.parquet"))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+
+	dataDir := "/buckets/test-bucket/ns/tbl/data"
+	spec := *iceberg.UnpartitionedSpec
+	var entries []iceberg.ManifestEntry
+	for _, name := range []string{"dict1.parquet", "dict2.parquet"} {
+		fs.putEntry(dataDir, name, &filer_pb.Entry{Name: name, Content: content})
+		dfb, err := iceberg.NewDataFileBuilder(spec, iceberg.EntryContentData, "data/"+name, iceberg.ParquetFile, map[int]any{}, nil, nil, 200, int64(len(content)))
+		if err != nil {
+			t.Fatalf("build data file: %v", err)
+		}
+		snapID := int64(1)
+		entries = append(entries, iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, dfb.Build()))
+	}
+
+	merged, count, err := mergeParquetFiles(
+		context.Background(), client, "test-bucket", "ns/tbl",
+		entries, nil, nil, nil,
+	)
+	if err != nil {
+		t.Fatalf("mergeParquetFiles: %v", err)
+	}
+	if count != 400 {
+		t.Fatalf("expected 400 merged rows, got %d", count)
+	}
+
+	type dictRow struct {
+		ID   int64  `parquet:"id"`
+		Name string `parquet:"name"`
+	}
+	reader := parquet.NewReader(bytes.NewReader(merged))
+	defer reader.Close()
+	ids := map[int64]int{}
+	names := map[string]int{}
+	for {
+		var r dictRow
+		err := reader.Read(&r)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("read merged row: %v", err)
+		}
+		ids[r.ID]++
+		names[r.Name]++
+	}
+
+	sourceIDs := map[int64]int{}
+	sourceReader := parquet.NewReader(bytes.NewReader(content))
+	defer sourceReader.Close()
+	for {
+		var r dictRow
+		err := sourceReader.Read(&r)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("read fixture row: %v", err)
+		}
+		sourceIDs[r.ID]++
+	}
+
+	if len(ids) != len(sourceIDs) || len(names) != len(sourceIDs) {
+		t.Fatalf("expected %d distinct ids and names, got %d ids and %d names", len(sourceIDs), len(ids), len(names))
+	}
+	for id, n := range sourceIDs {
+		if ids[id] != 2*n {
+			t.Errorf("id %d appears %d times, expected %d", id, ids[id], 2*n)
 		}
 	}
 }
