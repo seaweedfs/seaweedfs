@@ -72,6 +72,38 @@ func TestValidateBucketLifecycleRules_ExpirationDaysAndDateMutuallyExclusive(t *
 	}
 }
 
+func TestValidateBucketLifecycleRules_DeleteMarkerWithExpirationDaysRejected(t *testing.T) {
+	// AWS forbids combining ExpiredObjectDeleteMarker with Days/Date in the
+	// same Expiration element; ruleFromCanonical would otherwise emit both
+	// on the same <Expiration>.
+	rule := minimalLifecycleRule()
+	rule.ExpiredObjectDeleteMarker = true
+	if err := validateBucketLifecycleRules([]BucketLifecycleRule{rule}); err == nil {
+		t.Fatal("expected error when expired_object_delete_marker is combined with expiration_days")
+	}
+}
+
+func TestValidateBucketLifecycleRules_DeleteMarkerWithExpirationDateRejected(t *testing.T) {
+	rule := BucketLifecycleRule{
+		Status:                    s3lifecycle.StatusEnabled,
+		ExpirationDate:            "2030-01-01",
+		ExpiredObjectDeleteMarker: true,
+	}
+	if err := validateBucketLifecycleRules([]BucketLifecycleRule{rule}); err == nil {
+		t.Fatal("expected error when expired_object_delete_marker is combined with expiration_date")
+	}
+}
+
+func TestValidateBucketLifecycleRules_DeleteMarkerAlone(t *testing.T) {
+	rule := BucketLifecycleRule{
+		Status:                    s3lifecycle.StatusEnabled,
+		ExpiredObjectDeleteMarker: true,
+	}
+	if err := validateBucketLifecycleRules([]BucketLifecycleRule{rule}); err != nil {
+		t.Fatalf("expected standalone expired_object_delete_marker to be accepted, got: %v", err)
+	}
+}
+
 func TestValidateBucketLifecycleRules_InvalidExpirationDate(t *testing.T) {
 	rule := BucketLifecycleRule{Status: s3lifecycle.StatusEnabled, ExpirationDate: "01/01/2030"}
 	if err := validateBucketLifecycleRules([]BucketLifecycleRule{rule}); err == nil {

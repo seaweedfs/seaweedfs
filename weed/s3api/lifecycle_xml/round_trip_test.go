@@ -471,3 +471,85 @@ func TestCanonicalRoundTrip_TagOrderIsStable(t *testing.T) {
 		t.Errorf("expected tags sorted alphabetically (alpha first), got: %s", firstXML)
 	}
 }
+
+func TestCanonicalRoundTrip_PrefixWithSizeBoundsUsesAnd(t *testing.T) {
+	// A size range paired with a prefix is two different attributes, which
+	// requires <And> — unlike a size range alone (see
+	// TestCanonicalRoundTrip_SizeBounds), which doesn't need one.
+	in := &s3lifecycle.Rule{
+		ID:                    "prefix-with-size",
+		Status:                s3lifecycle.StatusEnabled,
+		Prefix:                "logs/",
+		FilterSizeGreaterThan: 1024,
+		ExpirationDays:        7,
+	}
+
+	xmlBytes, err := MarshalCanonical([]*s3lifecycle.Rule{in})
+	if err != nil {
+		t.Fatalf("MarshalCanonical: %v", err)
+	}
+	if !strings.Contains(string(xmlBytes), "<And>") {
+		t.Errorf("expected prefix+size to be wrapped in <And>, got: %s", xmlBytes)
+	}
+
+	out := assertCanonicalRoundTrip(t, in)
+	if out.Prefix != "logs/" {
+		t.Errorf("expected prefix 'logs/', got %q", out.Prefix)
+	}
+	if out.FilterSizeGreaterThan != 1024 {
+		t.Errorf("expected FilterSizeGreaterThan=1024, got %d", out.FilterSizeGreaterThan)
+	}
+}
+
+func TestCanonicalRoundTrip_TagWithSizeBoundsUsesAnd(t *testing.T) {
+	in := &s3lifecycle.Rule{
+		ID:                 "tag-with-size",
+		Status:             s3lifecycle.StatusEnabled,
+		FilterTags:         map[string]string{"env": "dev"},
+		FilterSizeLessThan: 2048,
+		ExpirationDays:     7,
+	}
+
+	xmlBytes, err := MarshalCanonical([]*s3lifecycle.Rule{in})
+	if err != nil {
+		t.Fatalf("MarshalCanonical: %v", err)
+	}
+	if !strings.Contains(string(xmlBytes), "<And>") {
+		t.Errorf("expected tag+size to be wrapped in <And>, got: %s", xmlBytes)
+	}
+
+	out := assertCanonicalRoundTrip(t, in)
+	if len(out.FilterTags) != 1 || out.FilterTags["env"] != "dev" {
+		t.Errorf("expected tags {env:dev}, got %v", out.FilterTags)
+	}
+	if out.FilterSizeLessThan != 2048 {
+		t.Errorf("expected FilterSizeLessThan=2048, got %d", out.FilterSizeLessThan)
+	}
+}
+
+func TestCanonicalRoundTrip_SizeOnlyOmitsPrefixElement(t *testing.T) {
+	// A size-only filter must not stamp a spurious empty <Prefix> — nothing
+	// was requested, so nothing besides the size bounds should appear.
+	in := &s3lifecycle.Rule{
+		ID:                    "size-only-no-prefix",
+		Status:                s3lifecycle.StatusEnabled,
+		FilterSizeGreaterThan: 512,
+		ExpirationDays:        7,
+	}
+
+	xmlBytes, err := MarshalCanonical([]*s3lifecycle.Rule{in})
+	if err != nil {
+		t.Fatalf("MarshalCanonical: %v", err)
+	}
+	if strings.Contains(string(xmlBytes), "<Prefix>") {
+		t.Errorf("expected no <Prefix> element for a size-only filter, got: %s", xmlBytes)
+	}
+
+	out := assertCanonicalRoundTrip(t, in)
+	if out.Prefix != "" {
+		t.Errorf("expected empty prefix, got %q", out.Prefix)
+	}
+	if out.FilterSizeGreaterThan != 512 {
+		t.Errorf("expected FilterSizeGreaterThan=512, got %d", out.FilterSizeGreaterThan)
+	}
+}

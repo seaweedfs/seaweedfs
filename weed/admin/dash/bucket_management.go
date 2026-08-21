@@ -211,6 +211,9 @@ func validateBucketLifecycleRules(rules []BucketLifecycleRule) error {
 				return fmt.Errorf("%s: invalid expiration_date %q, expected YYYY-MM-DD", label, rule.ExpirationDate)
 			}
 		}
+		if rule.ExpiredObjectDeleteMarker && (rule.ExpirationDays > 0 || rule.ExpirationDate != "") {
+			return fmt.Errorf("%s: expired_object_delete_marker cannot be combined with expiration_days or expiration_date", label)
+		}
 
 		if rule.NoncurrentVersionExpirationDays < 0 {
 			return fmt.Errorf("%s: noncurrent_version_expiration_days must be positive", label)

@@ -757,6 +757,26 @@ templ S3Buckets(data dash.S3BucketsData) {
         return headers;
     }
 
+    // parseLifecycleResponse reads the body as text before parsing, so a
+    // non-JSON response (a proxy's HTML error page, an empty body, plain
+    // text from some middleware) surfaces the HTTP status instead of
+    // throwing a raw JSON syntax error out of response.json().
+    function parseLifecycleResponse(response) {
+        return response.text().then(text => {
+            let data = {};
+            if (text) {
+                try {
+                    data = JSON.parse(text);
+                } catch (e) {
+                    data = { error: response.statusText || ('HTTP ' + response.status) };
+                }
+            } else if (!response.ok) {
+                data = { error: response.statusText || ('HTTP ' + response.status) };
+            }
+            return { ok: response.ok, data: data };
+        });
+    }
+
     document.addEventListener('DOMContentLoaded', function() {
         // Add click handlers to pagination links
         document.querySelectorAll('.pagination-link').forEach(link => {
@@ -1139,14 +1159,14 @@ templ S3Buckets(data dash.S3BucketsData) {
                 // Drop responses that arrive after another bucket was opened
                 const requestSeq = ++lifecycleRequestSeq;
                 fetch(basePath('/api/s3/buckets/' + bucketName + '/lifecycle'))
-                    .then(response => response.json())
-                    .then(data => {
+                    .then(parseLifecycleResponse)
+                    .then(({ ok, data }) => {
                         if (requestSeq !== lifecycleRequestSeq) return;
-                        if (data.error) {
+                        if (!ok || data.error) {
                             document.getElementById('bucketLifecycleContent').innerHTML =
                                 '<div class="alert alert-danger">' +
                                 '<i class="fas fa-exclamation-triangle me-2"></i>' +
-                                'Error loading lifecycle rules: ' + data.error +
+                                'Error loading lifecycle rules: ' + (data.error || 'unknown error') +
                                 '<\/div>';
                         } else {
                             displayBucketLifecycle(data);
@@ -1176,7 +1196,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                 headers: csrfHeaders(),
                 body: JSON.stringify({ rules: lifecycleEditor.rules })
             })
-                .then(response => response.json().then(data => ({ ok: response.ok, data: data })))
+                .then(parseLifecycleResponse)
                 .then(({ ok, data }) => {
                     if (!ok || data.error) {
                         alert('Error saving lifecycle rules: ' + (data.error || 'unknown error'));
@@ -1202,7 +1222,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                 method: 'DELETE',
                 headers: csrfHeaders()
             })
-                .then(response => response.json().then(data => ({ ok: response.ok, data: data })))
+                .then(parseLifecycleResponse)
                 .then(({ ok, data }) => {
                     if (!ok || data.error) {
                         alert('Error deleting lifecycle rules: ' + (data.error || 'unknown error'));
@@ -1648,9 +1668,14 @@ function bindLifecycleEditorEvents() {
         btn.addEventListener('click', function() {
             const idx = parseInt(this.dataset.index, 10);
             lifecycleEditor.rules.splice(idx, 1);
+            // Deleting a rule shifts every later index down by one, so an
+            // open edit form must follow its rule rather than silently
+            // start targeting whatever now sits at its old index.
             if (lifecycleEditor.editingIndex === idx) {
                 lifecycleEditor.editingIndex = null;
                 lifecycleEditor.editingRule = null;
+            } else if (typeof lifecycleEditor.editingIndex === 'number' && lifecycleEditor.editingIndex > idx) {
+                lifecycleEditor.editingIndex -= 1;
             }
             renderLifecycleEditor();
         });

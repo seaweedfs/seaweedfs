@@ -150,11 +150,19 @@ func ruleFromCanonical(r *s3lifecycle.Rule) Rule {
 // matching what Filter.MarshalXML (single Prefix|Tag branch plus optional
 // size bounds) and its And branch can each express.
 func filterFromCanonical(prefix string, tags map[string]string, sizeGT, sizeLT int64) Filter {
+	hasSize := sizeGT > 0 || sizeLT > 0
+
+	// A size range (GT and/or LT together) describes one attribute — object
+	// size — so it doesn't need <And> on its own; it only forces <And> when
+	// paired with a different attribute (prefix or tag).
 	discriminants := 0
 	if prefix != "" {
 		discriminants++
 	}
 	discriminants += len(tags)
+	if hasSize {
+		discriminants++
+	}
 
 	f := Filter{set: true, ObjectSizeGreaterThan: sizeGT, ObjectSizeLessThan: sizeLT}
 
@@ -189,6 +197,10 @@ func filterFromCanonical(prefix string, tags map[string]string, sizeGT, sizeLT i
 		for k, v := range tags {
 			f.Tag = Tag{Key: k, Value: v}
 		}
+	case hasSize:
+		// Single discriminant and it's a size range: the bounds set above
+		// already cover it — no <Prefix> (not even an empty one; nothing
+		// was requested) and no <And> (nothing else to combine with).
 	default:
 		// Either a single prefix or no discriminant at all (whole-bucket
 		// filter) — both are expressed as a <Prefix> element, empty or not.
