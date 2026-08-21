@@ -1079,6 +1079,17 @@ func (s *AdminServer) SetBucketLifecycle(bucketName string, rules []BucketLifecy
 		// below, so this copy must happen first.
 		originalLifecycleXML := append([]byte(nil), lookupResp.Entry.Extended[scheduler.BucketLifecycleConfigurationXMLKey]...)
 
+		// Likewise capture the entry's mtime so the UpdateEntry below can be
+		// conditioned on nobody else (a concurrent owner/quota/lifecycle
+		// change) having written this bucket entry since this lookup —
+		// otherwise the unconditional write further down would replace the
+		// whole entry with this stale snapshot, silently discarding
+		// whatever the concurrent writer changed.
+		var originalBucketEntryMtime int64
+		if lookupResp.Entry.Attributes != nil {
+			originalBucketEntryMtime = lookupResp.Entry.Attributes.Mtime
+		}
+
 		// Migration: clear any legacy day-TTL filer.conf entries before
 		// writing the new XML below, so a failure here leaves the bucket
 		// entry untouched instead of committing the new policy alongside a
@@ -1108,6 +1119,9 @@ func (s *AdminServer) SetBucketLifecycle(bucketName string, rules []BucketLifecy
 		if _, err := client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
 			Directory: filerConfig.BucketsPath,
 			Entry:     bucketEntry,
+			Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{
+				{Kind: filer_pb.WriteCondition_IF_UNMODIFIED_SINCE, UnixTime: originalBucketEntryMtime},
+			}},
 		}); err != nil {
 			if len(removedTTLRules) > 0 && bucketLifecycleXMLUnchangedSince(client, filerConfig.BucketsPath, bucketName, originalLifecycleXML) {
 				// UpdateEntry errors can be transport-level: the write may
