@@ -1085,6 +1085,21 @@ func (s *AdminServer) SetBucketLifecycle(bucketName string, rules []BucketLifecy
 		// otherwise the unconditional write further down would replace the
 		// whole entry with this stale snapshot, silently discarding
 		// whatever the concurrent writer changed.
+		//
+		// This only catches races a second or more apart: IF_UNMODIFIED_SINCE
+		// compares at whole-second resolution (WriteCondition_Clause.UnixTime
+		// is int64 seconds, and the server evaluates it via time.Time.Unix()
+		// even though FuseAttributes carries a Mtime_ns component), so two
+		// writers landing in the same second still race. Closing that fully
+		// would need an exact-match precondition (e.g. IF_ETAG_MATCH) backed
+		// by a content hash of the entry's mutable state — but unlike
+		// filer.conf, a bucket entry has no Content to hash, and every other
+		// mutator of this same entry (SetBucketOwner, SetBucketQuota,
+		// CreateS3BucketWithObjectLock, ...) would need to compute and
+		// maintain that hash consistently too, or it would go stale the
+		// first time one of them writes without updating it. That's a
+		// broader redesign across all bucket-entry mutators, out of scope
+		// for this fix.
 		var originalBucketEntryMtime int64
 		if lookupResp.Entry.Attributes != nil {
 			originalBucketEntryMtime = lookupResp.Entry.Attributes.Mtime
