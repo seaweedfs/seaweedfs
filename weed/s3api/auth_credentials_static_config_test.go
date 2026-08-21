@@ -343,3 +343,84 @@ func writeTempIamConfig(t *testing.T, content string) string {
 	}
 	return path
 }
+
+// A static config file may hold ${VAR} in place of a key, so a deployment can
+// keep the keys in its own secret store and pass them in as environment
+// variables rather than baking them into the file.
+func TestStaticConfigExpandsEnvCredentialRefs(t *testing.T) {
+	t.Setenv("SEAWEEDFS_S3_ADMIN_ACCESS_KEY_ID", "AKIAFROMENV")
+	t.Setenv("SEAWEEDFS_S3_ADMIN_SECRET_ACCESS_KEY", "secretfromenv")
+
+	s3a := newTestS3ApiServerWithMemoryIAM(t, []*iam_pb.Identity{})
+
+	path := writeTempIamConfig(t, `{"identities":[{"name":"anvAdmin","credentials":[{"accessKey":"${SEAWEEDFS_S3_ADMIN_ACCESS_KEY_ID}","secretKey":"${SEAWEEDFS_S3_ADMIN_SECRET_ACCESS_KEY}"}],"actions":["Admin"]}]}`)
+	if err := s3a.iam.loadS3ApiConfigurationFromFile(path); err != nil {
+		t.Fatalf("failed to load identity config: %v", err)
+	}
+
+	_, cred, found := s3a.iam.lookupByAccessKey("AKIAFROMENV")
+	if !found {
+		t.Fatalf("expected the access key from the environment to be loaded")
+	}
+	if cred.SecretKey != "secretfromenv" {
+		t.Fatalf("expected the secret key from the environment, got %q", cred.SecretKey)
+	}
+	if _, _, found := s3a.iam.lookupByAccessKey("${SEAWEEDFS_S3_ADMIN_ACCESS_KEY_ID}"); found {
+		t.Fatalf("the unexpanded reference must not remain usable as an access key")
+	}
+}
+
+// An unset variable must not leave the reference behind as a literal key.
+func TestStaticConfigDropsUnresolvedEnvCredentialRefs(t *testing.T) {
+	s3a := newTestS3ApiServerWithMemoryIAM(t, []*iam_pb.Identity{})
+
+	path := writeTempIamConfig(t, `{"identities":[{"name":"anvAdmin","credentials":[{"accessKey":"${SEAWEEDFS_S3_MISSING_ACCESS_KEY_ID}","secretKey":"${SEAWEEDFS_S3_MISSING_SECRET_ACCESS_KEY}"}],"actions":["Admin"]}]}`)
+	if err := s3a.iam.loadS3ApiConfigurationFromFile(path); err != nil {
+		t.Fatalf("failed to load identity config: %v", err)
+	}
+
+	if _, _, found := s3a.iam.lookupByAccessKey("${SEAWEEDFS_S3_MISSING_ACCESS_KEY_ID}"); found {
+		t.Fatalf("a credential referencing an unset variable must be dropped")
+	}
+	if !hasIdentity(s3a.iam, "anvAdmin") {
+		t.Fatalf("expected the identity itself to still load")
+	}
+}
+
+// Keys that merely contain a dollar sign are literal, and identities coming
+// from the filer are never expanded.
+func TestEnvCredentialRefsOnlyApplyToStaticConfig(t *testing.T) {
+	t.Setenv("SEAWEEDFS_S3_DYNAMIC_SECRET_ACCESS_KEY", "secretfromenv")
+
+	s3a := newTestS3ApiServerWithMemoryIAM(t, []*iam_pb.Identity{})
+
+	if err := s3a.iam.LoadS3ApiConfigurationFromBytes([]byte(`{"identities":[{"name":"dynamic","credentials":[{"accessKey":"AKIALITERAL","secretKey":"${SEAWEEDFS_S3_DYNAMIC_SECRET_ACCESS_KEY}"}],"actions":["Admin"]}]}`)); err != nil {
+		t.Fatalf("failed to load dynamic config: %v", err)
+	}
+
+	_, cred, found := s3a.iam.lookupByAccessKey("AKIALITERAL")
+	if !found {
+		t.Fatalf("expected the dynamic identity to load")
+	}
+	if cred.SecretKey != "${SEAWEEDFS_S3_DYNAMIC_SECRET_ACCESS_KEY}" {
+		t.Fatalf("a dynamic identity must keep its secret key verbatim, got %q", cred.SecretKey)
+	}
+}
+
+// A key holding a dollar sign that is not a reference stays untouched.
+func TestStaticConfigKeepsLiteralDollarSigns(t *testing.T) {
+	s3a := newTestS3ApiServerWithMemoryIAM(t, []*iam_pb.Identity{})
+
+	path := writeTempIamConfig(t, `{"identities":[{"name":"anvAdmin","credentials":[{"accessKey":"AKIALITERAL","secretKey":"pa$$word"}],"actions":["Admin"]}]}`)
+	if err := s3a.iam.loadS3ApiConfigurationFromFile(path); err != nil {
+		t.Fatalf("failed to load identity config: %v", err)
+	}
+
+	_, cred, found := s3a.iam.lookupByAccessKey("AKIALITERAL")
+	if !found {
+		t.Fatalf("expected the identity to load")
+	}
+	if cred.SecretKey != "pa$$word" {
+		t.Fatalf("expected the literal secret key, got %q", cred.SecretKey)
+	}
+}
