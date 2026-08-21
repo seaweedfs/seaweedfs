@@ -1096,6 +1096,10 @@ jobs:
     steps:
       - name: Check out code
         uses: actions/checkout@v7
+        with:
+          # The job uploads a test log on failure; nothing here needs to push,
+          # so do not leave a token in the checkout for it to pick up.
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@v7
