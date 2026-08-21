@@ -15,6 +15,7 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -48,21 +49,32 @@ const (
 // buckets, and a bucket holds one format only.
 var shared *environment
 
+// errNoBinary is the one setup failure worth skipping over.
+var errNoBinary = errors.New("weed binary not found")
+
 func TestMain(m *testing.M) {
 	flag.Parse()
 	if testing.Short() {
 		os.Exit(m.Run())
 	}
 
+	// A checkout without a weed binary cannot run this and says so. Anything
+	// else - ports, a cluster that will not come up - is a failure, because a
+	// suite that turns its own breakage into a green run is the thing this
+	// directory exists to stop.
 	env, err := newEnvironment()
-	if err != nil {
+	if errors.Is(err, errNoBinary) {
 		fmt.Fprintf(os.Stderr, "SKIP: %v\n", err)
-		os.Exit(0)
+		os.Exit(m.Run())
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "FAIL: %v\n", err)
+		os.Exit(1)
 	}
 	if err := env.start(); err != nil {
-		fmt.Fprintf(os.Stderr, "SKIP: weed mini did not start: %v\n", err)
+		fmt.Fprintf(os.Stderr, "FAIL: weed mini did not start: %v\n", err)
 		env.cleanup()
-		os.Exit(0)
+		os.Exit(1)
 	}
 	shared = env
 
@@ -113,7 +125,7 @@ func newEnvironment() (*environment, error) {
 	} else {
 		weedBinary = "weed"
 		if _, err := exec.LookPath(weedBinary); err != nil {
-			return nil, fmt.Errorf("weed binary not found")
+			return nil, errNoBinary
 		}
 	}
 
@@ -245,7 +257,8 @@ func (env *environment) filerClient(t *testing.T) filer_pb.SeaweedFilerClient {
 func (env *environment) entryExists(t *testing.T, path string) bool {
 	t.Helper()
 
-	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d%s", env.filerPort, path))
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d%s", env.filerPort, path))
 	if err != nil {
 		t.Fatalf("filer GET %s: %v", path, err)
 	}
