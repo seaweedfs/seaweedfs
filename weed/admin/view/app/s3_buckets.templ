@@ -1532,20 +1532,24 @@ function lifecycleRuleFormHtml() {
         '<label class="form-check-label" for="lifecycleDeleteMarker">Remove expired object delete markers<\/label>' +
         '<\/div>' +
 
-        '<div class="row g-2 align-items-center mb-2">' +
-        '<div class="col-auto">' +
-        '<div class="form-check">' +
-        '<input class="form-check-input" type="checkbox" id="lifecycleNoncurrentEnabled"' + (rule.noncurrent_version_expiration_days ? ' checked' : '') + '>' +
-        '<label class="form-check-label" for="lifecycleNoncurrentEnabled">Expire noncurrent versions after<\/label>' +
-        '<\/div>' +
-        '<\/div>' +
-        '<div class="col-auto">' +
-        '<input type="number" class="form-control form-control-sm" id="lifecycleNoncurrentDays" min="1" step="1" style="width: 6rem;" value="' + (rule.noncurrent_version_expiration_days || '') + '"' + (rule.noncurrent_version_expiration_days ? '' : ' disabled') + '>' +
-        '<\/div><div class="col-auto">days, keep<\/div>' +
-        '<div class="col-auto">' +
-        '<input type="number" class="form-control form-control-sm" id="lifecycleNoncurrentKeep" min="0" step="1" style="width: 6rem;" value="' + (rule.newer_noncurrent_versions || '') + '"' + (rule.noncurrent_version_expiration_days ? '' : ' disabled') + '>' +
-        '<\/div><div class="col-auto">newest<\/div>' +
-        '<\/div>' +
+        (() => {
+            const noncurrentActive = !!(rule.noncurrent_version_expiration_days || rule.newer_noncurrent_versions);
+            return '<div class="row g-2 align-items-center mb-2">' +
+            '<div class="col-auto">' +
+            '<div class="form-check">' +
+            '<input class="form-check-input" type="checkbox" id="lifecycleNoncurrentEnabled"' + (noncurrentActive ? ' checked' : '') + '>' +
+            '<label class="form-check-label" for="lifecycleNoncurrentEnabled">Limit noncurrent versions<\/label>' +
+            '<\/div>' +
+            '<\/div>' +
+            '<div class="col-auto">after<\/div>' +
+            '<div class="col-auto">' +
+            '<input type="number" class="form-control form-control-sm" id="lifecycleNoncurrentDays" min="1" step="1" style="width: 6rem;" value="' + (rule.noncurrent_version_expiration_days || '') + '"' + (noncurrentActive ? '' : ' disabled') + '>' +
+            '<\/div><div class="col-auto">days (optional), keep<\/div>' +
+            '<div class="col-auto">' +
+            '<input type="number" class="form-control form-control-sm" id="lifecycleNoncurrentKeep" min="0" step="1" style="width: 6rem;" value="' + (rule.newer_noncurrent_versions || '') + '"' + (noncurrentActive ? '' : ' disabled') + '>' +
+            '<\/div><div class="col-auto">newest (optional)<\/div>' +
+            '<\/div>';
+        })() +
 
         '<div class="row g-2 align-items-center mb-3">' +
         '<div class="col-auto">' +
@@ -1736,8 +1740,8 @@ function readLifecycleRuleFromForm() {
     if (expireDateEnabled && !expirationDate) {
         return { rule: null, error: 'Enter a valid expiration date.' };
     }
-    if (noncurrentEnabled && noncurrentDays <= 0) {
-        return { rule: null, error: 'Enter a valid number of days for noncurrent version expiration.' };
+    if (noncurrentEnabled && noncurrentDays <= 0 && noncurrentKeep <= 0) {
+        return { rule: null, error: 'Enter a number of days and/or a newest-versions-to-keep count for noncurrent version handling.' };
     }
     if (abortEnabled && abortDays <= 0) {
         return { rule: null, error: 'Enter a valid number of days for aborting incomplete multipart uploads.' };
