@@ -125,10 +125,24 @@ def main():
     print(f"count after a second commit -> {count}")
     check(count == 4, f"after appending, {count} rows, want 4")
 
-    # 7. And the dataset is readable straight off its location, which is what
-    #    keeps the catalog optional.
+    # 7. And the dataset is readable straight off its location, with no catalog
+    #    in the path. This is the property that lets duckdb, pandas and
+    #    DataFusion read these tables, so it is read rather than asserted by
+    #    comment: the reader is given the storage options directly and never
+    #    consults spark.sql.catalog.lance.
     location = f"s3://{args.bucket}/{args.namespace}/{args.table}"
-    print(f"dataset location -> {location}")
+    direct = (
+        spark.read.format("lance")
+        .option("aws_endpoint", args.s3_endpoint)
+        .option("allow_http", "true")
+        .option("aws_access_key_id", args.access_key)
+        .option("aws_secret_access_key", args.secret_key)
+        .option("aws_region", "us-east-1")
+        .load(location)
+    )
+    direct_count = direct.count()
+    print(f"direct read of {location} -> {direct_count} rows")
+    check(direct_count == 4, f"direct read got {direct_count} rows, want 4")
 
     spark.stop()
     print("PASS")
