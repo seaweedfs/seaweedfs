@@ -169,6 +169,12 @@ func (v *Volume) syncWrite(n *needle.Needle, checkCookie bool, fsync bool) (offs
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 
+	// A caller can still hold the volume after it was closed or destroyed, which
+	// leaves both of these nil. Refuse the write rather than dereference them.
+	if v.nm == nil || v.DataBackend == nil {
+		return 0, 0, false, fmt.Errorf("volume %d is closed", v.Id)
+	}
+
 	if !fsync {
 		return v.doWriteRequest(n, checkCookie)
 	}
@@ -402,7 +408,12 @@ func (v *Volume) startWorker() chan *needle.AsyncRequest {
 				continue
 			}
 			v.dataFileAccessLock.Lock()
-			end, _, e := v.DataBackend.GetStat()
+			end, e := int64(0), error(nil)
+			if v.nm == nil || v.DataBackend == nil {
+				e = fmt.Errorf("volume %d is closed", v.Id)
+			} else {
+				end, _, e = v.DataBackend.GetStat()
+			}
 			if e != nil {
 				for i := 0; i < len(currentRequests); i++ {
 					currentRequests[i].Complete(0, 0, false,

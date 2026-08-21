@@ -43,7 +43,8 @@ func TestDurableWriteStartsTheBatchWorkerOnce(t *testing.T) {
 }
 
 // Destroy closes the channel. A write arriving after that has to fall back to
-// the inline path rather than queue onto a worker that has gone.
+// the inline path rather than queue onto a worker that has gone, and that path
+// has to fail rather than crash on what Destroy left behind.
 func TestDurableWriteAfterDestroyWritesInline(t *testing.T) {
 	dir := t.TempDir()
 	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
@@ -54,4 +55,11 @@ func TestDurableWriteAfterDestroyWritesInline(t *testing.T) {
 	require.NoError(t, v.Destroy(false, false))
 	require.Nil(t, v.asyncRequestsChan)
 	require.False(t, v.asyncRequestAppend(needle.NewAsyncRequest(newRandomNeedle(2), true)))
+
+	// The inline path it falls back to has to refuse the write, not dereference
+	// the needle map and backend Destroy left nil.
+	_, _, _, err = v.writeNeedle2(newRandomNeedle(2), true, true, false)
+	require.Error(t, err)
+	_, _, _, err = v.writeNeedle2(newRandomNeedle(3), true, false, false)
+	require.Error(t, err)
 }
