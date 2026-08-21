@@ -6,6 +6,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
 
 // The per-collection gauges are only ever set for collections the heartbeat
@@ -42,6 +43,25 @@ func TestCollectHeartbeatClearsMetricsOfDepartedCollection(t *testing.T) {
 	}
 	if n := testutil.CollectAndCount(stats.VolumeServerDiskSizeGauge); n != 0 {
 		t.Errorf("%d disk size series left after the collection left the server", n)
+	}
+}
+
+// The counts are per collection and per server, and a server holds far more
+// than 255 volumes of one collection.
+func TestCollectHeartbeatCountsPast255ReadOnlyVolumes(t *testing.T) {
+	stats.VolumeServerReadOnlyVolumeGauge.Reset()
+	t.Cleanup(stats.VolumeServerReadOnlyVolumeGauge.Reset)
+
+	store := newTestStore(t, 1)
+	const readOnlyVolumes = 300
+	for i := 1; i <= readOnlyVolumes; i++ {
+		mountTestVolume(t, store.Locations[0], needle.VolumeId(i), "pics")
+		store.findVolume(needle.VolumeId(i)).noWriteOrDelete = true
+	}
+
+	store.CollectHeartbeat()
+	if got := testutil.ToFloat64(stats.VolumeServerReadOnlyVolumeGauge.WithLabelValues("pics", stats.IsReadOnly)); got != readOnlyVolumes {
+		t.Errorf("read-only volumes of pics = %v, want %d", got, readOnlyVolumes)
 	}
 }
 

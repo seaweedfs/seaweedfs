@@ -455,7 +455,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	var maxFileKey NeedleId
 	collectionVolumeSize := make(map[string]int64)
 	collectionVolumeDeletedBytes := make(map[string]int64)
-	collectionVolumeReadOnlyCount := make(map[string]map[string]uint8)
+	collectionVolumeReadOnlyCount := make(map[string]map[string]int)
 	// Filled once per volume and kept only by the heartbeat that carries it, so
 	// a server with nothing to say fills the same message all the way through.
 	scratchMessage := &master_pb.VolumeInformationMessage{}
@@ -552,7 +552,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 			}
 
 			if _, exist := collectionVolumeReadOnlyCount[v.Collection]; !exist {
-				collectionVolumeReadOnlyCount[v.Collection] = map[string]uint8{
+				collectionVolumeReadOnlyCount[v.Collection] = map[string]int{
 					stats.IsReadOnly:       0,
 					stats.NoWriteOrDelete:  0,
 					stats.NoWriteCanDelete: 0,
