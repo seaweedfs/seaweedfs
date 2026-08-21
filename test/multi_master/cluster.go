@@ -81,7 +81,7 @@ func StartMasterCluster(t testing.TB) *MasterCluster {
 	// Wait for TopologyId to be generated and propagated. This is async
 	// after leader election, and we need it committed before tests can
 	// reliably stop/restart nodes.
-	if err := mc.WaitForTopologyId(waitTimeout); err != nil {
+	if _, err := mc.WaitForTopologyId(waitTimeout); err != nil {
 		mc.DumpLogs()
 		mc.StopAll()
 		t.Fatalf("TopologyId not generated: %v", err)
@@ -324,6 +324,24 @@ func (mc *MasterCluster) WaitForLeader(timeout time.Duration) error {
 	return fmt.Errorf("no leader elected within %v", timeout)
 }
 
+// WaitForNoLeader waits until no running master claims leadership. goraft only
+// checks whether it still has a quorum on an election-timeout ticker, and needs
+// its peers to go quiet for a full timeout first, so a master that has lost its
+// quorum can keep claiming leadership for tens of seconds. It cannot commit
+// anything in that window.
+func (mc *MasterCluster) WaitForNoLeader(timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		idx, _ := mc.FindLeader()
+		if idx < 0 {
+			return nil
+		}
+		time.Sleep(waitTick)
+	}
+	idx, addr := mc.FindLeader()
+	return fmt.Errorf("master %d at %s still claims leadership after %v", idx, addr, timeout)
+}
+
 // WaitForNewLeader waits for a leader that is different from the given address.
 func (mc *MasterCluster) WaitForNewLeader(oldLeaderAddr string, timeout time.Duration) (int, string, error) {
 	deadline := time.Now().Add(timeout)
@@ -337,18 +355,20 @@ func (mc *MasterCluster) WaitForNewLeader(oldLeaderAddr string, timeout time.Dur
 	return -1, "", fmt.Errorf("no new leader (different from %s) within %v", oldLeaderAddr, timeout)
 }
 
-// WaitForTopologyId waits until the leader reports a non-empty TopologyId.
-func (mc *MasterCluster) WaitForTopologyId(timeout time.Duration) error {
+// WaitForTopologyId waits until the leader reports a non-empty TopologyId, and
+// returns it. It is only readable once the leader has applied the raft entry
+// carrying it, which lands after the election it won.
+func (mc *MasterCluster) WaitForTopologyId(timeout time.Duration) (string, error) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if idx, _ := mc.FindLeader(); idx >= 0 {
 			if id, err := mc.GetTopologyId(idx); err == nil && id != "" {
-				return nil
+				return id, nil
 			}
 		}
 		time.Sleep(waitTick)
 	}
-	return fmt.Errorf("TopologyId not available within %v", timeout)
+	return "", fmt.Errorf("TopologyId not available within %v", timeout)
 }
 
 // WaitForNodeReady waits for node i to respond to HTTP.

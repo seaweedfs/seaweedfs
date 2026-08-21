@@ -9,7 +9,12 @@ import (
 
 const (
 	// Election timeout is 3s in our cluster config; allow generous margin.
-	leaderElectionTimeout = 20 * time.Second
+	leaderElectionTimeout = 30 * time.Second
+
+	// Losing a quorum is much slower to show than winning one. goraft only
+	// notices on an election-timeout ticker, after its peers have been quiet
+	// for a full timeout, and has been measured taking over 30s to step down.
+	leaderStepDownTimeout = 60 * time.Second
 )
 
 // TestLeaderDownAndRecoverQuickly verifies that when the leader is stopped and
@@ -149,20 +154,11 @@ func TestTwoMastersDownAndRestart(t *testing.T) {
 	mc.StopNode(down1)
 	mc.StopNode(down2)
 
-	// The surviving node alone cannot form a quorum — no leader expected.
-	// Wait long enough for any stale leadership to expire (election timeout
-	// is 3s in our config, quorum check fires every election timeout).
-	time.Sleep(5 * time.Second)
-	soloLeaderIdx, _ := mc.FindLeader()
-	if soloLeaderIdx >= 0 {
-		// It's possible the survivor briefly thinks it's leader before stepping down.
-		// Give it time to realize it lost quorum.
-		time.Sleep(5 * time.Second)
-		soloLeaderIdx, _ = mc.FindLeader()
-	}
-	if soloLeaderIdx >= 0 {
+	// The surviving node alone cannot form a quorum, so it has to give up the
+	// leadership it is still claiming.
+	if err := mc.WaitForNoLeader(leaderStepDownTimeout); err != nil {
 		mc.DumpLogs()
-		t.Fatalf("expected no leader with only 1 of 3 nodes, but node %d claims leadership", soloLeaderIdx)
+		t.Fatalf("expected no leader with only 1 of 3 nodes: %v", err)
 	}
 
 	// Restart both downed nodes.
