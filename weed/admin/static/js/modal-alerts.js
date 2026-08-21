@@ -169,6 +169,36 @@
     };
 
     /**
+     * Show a transient message that does not have to be dismissed
+     * @param {string} message - The message to display
+     * @param {string} type - Bootstrap contextual color, defaults to 'success'
+     */
+    window.showToast = function (message, type) {
+        let container = document.getElementById('globalToastContainer');
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'globalToastContainer';
+            container.className = 'toast-container position-fixed top-0 end-0 p-3';
+            // Above any modal, however deeply they are stacked.
+            container.style.zIndex = '9999';
+            document.body.appendChild(container);
+        }
+
+        const toast = document.createElement('div');
+        toast.className = 'toast align-items-center text-white bg-' + (type || 'success') + ' border-0';
+        toast.setAttribute('role', 'alert');
+        toast.innerHTML = '<div class="d-flex"><div class="toast-body">' + escapeHtml(message) + '</div>' +
+            '<button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button></div>';
+        container.appendChild(toast);
+
+        toast.addEventListener('hidden.bs.toast', function () {
+            toast.remove();
+        });
+
+        new bootstrap.Toast(toast, { delay: 3000 }).show();
+    };
+
+    /**
      * Show a confirmation dialog using Bootstrap modal
      * @param {string} message - The confirmation message
      * @param {function} onConfirm - Callback function if user confirms
@@ -289,6 +319,40 @@
         };
         return text.replace(/[&<>"']/g, function (m) { return map[m]; });
     }
+
+    // Bootstrap gives every modal and backdrop the same z-index, so a modal
+    // opened while another one is showing paints behind it and cannot be
+    // clicked. Lift each nested modal, and its backdrop, above what is already
+    // on screen.
+    const MODAL_Z_INDEX = 1055;
+    const MODAL_Z_INDEX_STEP = 20;
+
+    document.addEventListener('show.bs.modal', function (event) {
+        const depth = document.querySelectorAll('.modal.show').length;
+        if (depth === 0) {
+            return;
+        }
+
+        const zIndex = MODAL_Z_INDEX + depth * MODAL_Z_INDEX_STEP;
+        event.target.style.zIndex = zIndex;
+
+        // Bootstrap only creates the backdrop after this event returns.
+        setTimeout(function () {
+            const backdrops = document.querySelectorAll('.modal-backdrop');
+            const backdrop = backdrops[backdrops.length - 1];
+            if (backdrop) {
+                backdrop.style.zIndex = zIndex - 1;
+            }
+        }, 0);
+    });
+
+    document.addEventListener('hidden.bs.modal', function (event) {
+        event.target.style.zIndex = '';
+        // Closing any modal releases the scroll lock the others still need.
+        if (document.querySelector('.modal.show')) {
+            document.body.classList.add('modal-open');
+        }
+    });
 
     // Auto-initialize on DOMContentLoaded
     if (document.readyState === 'loading') {
