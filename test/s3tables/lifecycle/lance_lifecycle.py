@@ -54,15 +54,22 @@ def tally(dataset):
 
     The cardinalities catch a column collapsed onto one value; the digest
     catches a rewrite that keeps the values and moves them to the wrong rows.
-    Fragments come along because a compaction that merged nothing would
-    otherwise let this test pass without having tested anything.
+    Every column goes into the digest, the vectors included - compaction
+    rewrites whole fragments, so leaving a column out leaves a place for it to
+    go wrong unnoticed. Fragments come along because a compaction that merged
+    nothing would otherwise let this test pass without having tested anything.
     """
-    scanned = dataset.to_table(columns=["id", "category", "value"])
+    scanned = dataset.to_table(columns=["id", "category", "value", "vector"])
     ids = scanned.column("id").to_pylist()
     categories = scanned.column("category").to_pylist()
     values = scanned.column("value").to_pylist()
+    vectors = scanned.column("vector").to_pylist()
+    serialized = (
+        f"{i}|{c}|{v}|{w}"
+        for i, c, v, w in zip(ids, categories, values, vectors, strict=True)
+    )
     digest = hashlib.md5(
-        "\n".join(sorted(f"{i}|{c}|{v}" for i, c, v in zip(ids, categories, values))).encode()
+        "\n".join(sorted(serialized)).encode(), usedforsecurity=False
     ).hexdigest()
     return {
         "rows": scanned.num_rows,
@@ -144,8 +151,15 @@ def main():
     namespace.drop_table(ln.DropTableRequest(id=table_id))
     try:
         lance.dataset(location, storage_options=options)
-    except Exception:
-        return 0
+    except ValueError as err:
+        # pylance turns every load failure into a ValueError, so the message is
+        # the only thing separating a dataset that is gone from credentials
+        # that stopped working halfway through the test.
+        if "was not found" in str(err):
+            return 0
+        print(f"FAIL: reading the dropped dataset failed for another reason: {err}",
+              file=sys.stderr)
+        return 1
     print("FAIL: the dataset is still readable after a drop", file=sys.stderr)
     return 1
 

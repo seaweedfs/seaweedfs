@@ -21,6 +21,10 @@ const (
 	pyicebergImage = "seaweedfs-lifecycle-pyiceberg"
 	duckdbImage    = "duckdb/duckdb:latest"
 
+	// The phase that installs the extension, and so the only one whose failure
+	// can mean the image rather than the code.
+	firstPhase = "write"
+
 	// Three appends of this many rows, all inside one month so they land in
 	// one partition and compaction has something to merge. The two string
 	// columns hold few enough distinct values to be dictionary-encoded, which
@@ -205,10 +209,8 @@ ATTACH 's3://%s' AS cat (TYPE ICEBERG, ENDPOINT '%s', AUTHORIZATION_TYPE SigV4, 
 	out, err := cmd.CombinedOutput()
 	t.Logf("DuckDB %s:\n%s", phase, out)
 	if err != nil {
-		// Coverage where the image supports it, rather than a hard
-		// requirement on an extension that ships separately.
-		if isMissingDuckDBSupport(string(out)) {
-			t.Skipf("this DuckDB image cannot write Iceberg through a REST catalog: %v", err)
+		if phase == firstPhase && lacksIcebergExtension(string(out)) {
+			t.Skipf("this DuckDB image has no iceberg extension: %v", err)
 		}
 		t.Fatalf("DuckDB %s: %v", phase, err)
 	}
@@ -219,11 +221,14 @@ ATTACH 's3://%s' AS cat (TYPE ICEBERG, ENDPOINT '%s', AUTHORIZATION_TYPE SigV4, 
 }
 
 func duckdbTallySQL(namespace, table string) string {
-	// The digest covers whole rows, because counting each column on its own
-	// passes a merge that keeps every column's cardinality and hands the
-	// values to the wrong rows.
+	// The digest covers whole rows - every column, not just the two the
+	// cardinalities watch - because counting each column on its own passes a
+	// merge that keeps every column's cardinality and hands the values to the
+	// wrong rows. ts goes in as microseconds so the session's timezone cannot
+	// change how it renders between the two runs.
 	return fmt.Sprintf("SELECT 'TALLY ' || count(*) || ' ' || count(DISTINCT category) || ' ' || count(DISTINCT value)"+
-		" || ' ' || md5(string_agg(id || '|' || category || '|' || value, chr(10) ORDER BY id)) AS marker FROM cat.%s.%s;",
+		" || ' ' || md5(string_agg(id || '|' || epoch_us(ts) || '|' || category || '|' || value, chr(10) ORDER BY id)) AS marker"+
+		" FROM cat.%s.%s;",
 		namespace, table)
 }
 
@@ -251,13 +256,20 @@ func parseDuckDBTally(t *testing.T, out string) tally {
 	}
 }
 
-func isMissingDuckDBSupport(out string) bool {
+// lacksIcebergExtension reports whether DuckDB never got as far as this
+// repository's code, which is the only failure worth skipping over.
+//
+// The extension ships separately from the image, so an environment that cannot
+// fetch it has nothing to say about compaction. Everything past LOAD - a parse
+// error on the ATTACH, a refusal from the catalog, a bad read - is ours, and
+// has to fail: this is the one test covering the PLAIN_DICTIONARY encoding, and
+// a skip nobody reads is how the corruption it was written for shipped.
+func lacksIcebergExtension(out string) bool {
 	for _, marker := range []string{
 		"iceberg extension is not available",
-		"Failed to load",
+		"Failed to download extension",
+		`Extension "iceberg" not found`,
 		"Unknown extension",
-		"syntax error",
-		"not implemented",
 	} {
 		if strings.Contains(out, marker) {
 			return true

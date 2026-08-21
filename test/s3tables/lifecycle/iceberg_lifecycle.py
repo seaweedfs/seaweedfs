@@ -64,22 +64,31 @@ def tally(table):
 
     The cardinalities catch a column collapsed onto one dictionary entry; the
     digest catches everything else, including a merge that keeps the right
-    number of distinct values while handing them to the wrong rows.
+    number of distinct values while handing them to the wrong rows. Every
+    column goes into it, not just the two the cardinalities watch - compaction
+    rewrites the whole row. ts goes in as microseconds so no timezone sits
+    between the two runs.
     """
     scanned = table.scan().to_arrow()
+    categories = scanned.column("category").to_pylist()
+    values = scanned.column("value").to_pylist()
     rows = [
-        f"{i}|{c}|{v}"
-        for i, c, v in zip(
+        f"{i}|{t}|{c}|{v}"
+        for i, t, c, v in zip(
             scanned.column("id").to_pylist(),
-            scanned.column("category").to_pylist(),
-            scanned.column("value").to_pylist(),
+            scanned.column("ts").cast(pa.int64()).to_pylist(),
+            categories,
+            values,
+            strict=True,
         )
     ]
-    digest = hashlib.md5("\n".join(sorted(rows)).encode()).hexdigest()
+    digest = hashlib.md5(
+        "\n".join(sorted(rows)).encode(), usedforsecurity=False
+    ).hexdigest()
     return {
         "rows": scanned.num_rows,
-        "categories": len(set(scanned.column("category").to_pylist())),
-        "values": len(set(scanned.column("value").to_pylist())),
+        "categories": len(set(categories)),
+        "values": len(set(values)),
         "digest": digest,
     }
 
