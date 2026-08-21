@@ -609,9 +609,17 @@ func TestCacheRemoteObjectForStreamingCached(t *testing.T) {
 type fakeStreamRemoteClient struct {
 	remote_storage.RemoteStorageClient
 	data      []byte
+	stat      *filer_pb.RemoteEntry // what the remote reports now; defaults to matching data
 	gotLoc    *remote_pb.RemoteStorageLocation
 	gotOffset int64
 	gotSize   int64
+}
+
+func (c *fakeStreamRemoteClient) StatFile(loc *remote_pb.RemoteStorageLocation) (*filer_pb.RemoteEntry, error) {
+	if c.stat != nil {
+		return c.stat, nil
+	}
+	return &filer_pb.RemoteEntry{RemoteSize: int64(len(c.data))}, nil
 }
 
 func (c *fakeStreamRemoteClient) ReadFileAsStream(ctx context.Context, loc *remote_pb.RemoteStorageLocation, offset int64, size int64) (io.ReadCloser, error) {
