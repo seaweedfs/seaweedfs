@@ -15,6 +15,7 @@ import argparse
 import sys
 
 from pyspark.sql import SparkSession
+from pyspark.sql.types import ArrayType, FloatType
 
 
 def check(condition, message):
@@ -95,10 +96,21 @@ def main():
     print(f"count -> {count}")
     check(count == 3, f"read back {count} rows, want 3")
 
-    # 4. The schema survived the round trip, vector column included.
-    schema = {field.name for field in spark.table(table).schema.fields}
-    print(f"schema -> {sorted(schema)}")
-    check({"id", "title", "vector"} <= schema, f"schema lost columns: {schema}")
+    # 4. The schema survived the round trip, vector column included - the type
+    #    as well as the name, since a column that came back as ARRAY<DOUBLE> or
+    #    ARRAY<STRING> would still be called "vector".
+    fields = {field.name: field.dataType for field in spark.table(table).schema.fields}
+    print(f"schema -> {[(n, t.simpleString()) for n, t in sorted(fields.items())]}")
+    check({"id", "title", "vector"} <= set(fields), f"schema lost columns: {sorted(fields)}")
+    vector = fields["vector"]
+    check(
+        isinstance(vector, ArrayType) and isinstance(vector.elementType, FloatType),
+        f"vector came back as {vector.simpleString()}, want array<float>",
+    )
+    check(
+        fields["id"].simpleString() == "bigint",
+        f"id came back as {fields['id'].simpleString()}, want bigint",
+    )
 
     # 5. A filter, so it is not only a full scan.
     rows = spark.sql(f"SELECT id, title FROM {table} WHERE id >= 2 ORDER BY id").collect()
