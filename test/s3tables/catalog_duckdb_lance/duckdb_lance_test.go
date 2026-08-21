@@ -224,10 +224,30 @@ func (env *environment) createTableBucket(t *testing.T, bucket string) {
 	)
 	cmd.Stdin = strings.NewReader(fmt.Sprintf(
 		"s3tables.bucket -create -name %s -format LANCE -account 000000000000\nexit\n", bucket))
-	if out, err := cmd.CombinedOutput(); err != nil {
+	out, err := cmd.CombinedOutput()
+	if err != nil {
 		t.Fatalf("create table bucket %s: %v\n%s", bucket, err, out)
 	}
+	// weed shell reports a command's own failure on stdout and still exits 0, so
+	// the exit code alone would let a missing bucket through and turn a setup
+	// failure into a confusing engine failure later.
+	if !env.tableBucketExists(t, bucket) {
+		t.Fatalf("table bucket %s was not created:\n%s", bucket, out)
+	}
 	t.Logf("created LANCE table bucket %s", bucket)
+}
+
+// tableBucketExists asks the namespace, which lists table buckets at its root.
+func (env *environment) tableBucketExists(t *testing.T, bucket string) bool {
+	t.Helper()
+
+	url := fmt.Sprintf("http://%s:%d/v1/namespace/%s/exists", env.bindIP, env.lancePort, bucket)
+	resp, err := http.Post(url, "application/json", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatalf("ask the namespace whether %s exists: %v", bucket, err)
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
 }
 
 // runSpark runs the SQL driver inside the stock Spark image. The connector is
