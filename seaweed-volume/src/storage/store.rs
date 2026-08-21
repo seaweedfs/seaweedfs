@@ -4,8 +4,10 @@
 //! It coordinates volume placement, lookup, and lifecycle operations.
 //! Matches Go's storage/store.go.
 
+use std::collections::HashSet;
 use std::io;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Mutex;
 
 use crate::config::MinFreeSpace;
 use crate::pb::master_pb;
@@ -32,6 +34,12 @@ pub struct Store {
     pub data_center: String,
     pub rack: String,
     pub volume_report: crate::storage::volume_report::VolumeReportState,
+    /// Collections the last heartbeat set per-collection gauges for. Those
+    /// gauges are only ever set for collections still held here, so one whose
+    /// last volume leaves - moved away by volume.balance, say - would keep
+    /// reporting the heartbeat that saw it.
+    pub reported_collections: Mutex<HashSet<String>>,
+    pub reported_ec_collections: Mutex<HashSet<String>>,
 }
 
 impl Store {
@@ -49,6 +57,8 @@ impl Store {
             volume_report: Default::default(),
             data_center: String::new(),
             rack: String::new(),
+            reported_collections: Mutex::new(HashSet::new()),
+            reported_ec_collections: Mutex::new(HashSet::new()),
         }
     }
 

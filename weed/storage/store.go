@@ -86,6 +86,12 @@ type Store struct {
 	// runs, so two overlapping scans would each forget what the other marked
 	// and name every volume it holds as departed.
 	collectHeartbeatLock sync.Mutex
+	// Collections the last heartbeat set per-collection gauges for. Those gauges
+	// are only ever set for collections still held here, so one whose last
+	// volume leaves - moved away by volume.balance, say - would keep reporting
+	// the heartbeat that saw it. Written only from the heartbeat goroutine.
+	reportedCollections   map[string]struct{}
+	reportedEcCollections map[string]struct{}
 }
 
 func (s *Store) String() (str string) {
@@ -614,6 +620,18 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		for t, count := range types {
 			stats.VolumeServerReadOnlyVolumeGauge.WithLabelValues(col, t).Set(float64(count))
 		}
+	}
+
+	// collectionVolumeReadOnlyCount has an entry for every collection still on
+	// this server, including the ones counting zero read-only volumes.
+	for col := range s.reportedCollections {
+		if _, stillHere := collectionVolumeReadOnlyCount[col]; !stillHere {
+			stats.DeleteVolumeServerCollectionMetrics(col)
+		}
+	}
+	s.reportedCollections = make(map[string]struct{}, len(collectionVolumeReadOnlyCount))
+	for col := range collectionVolumeReadOnlyCount {
+		s.reportedCollections[col] = struct{}{}
 	}
 
 	departedVolumes := s.volumeReport.commit(reportPass, reportGeneration, sendFullList)

@@ -14,7 +14,7 @@ func benchCollectHeartbeat(b *testing.B, count int) {
 	store := newTestStore(b, 1)
 	location := store.Locations[0]
 	for i := 1; i <= count; i++ {
-		mountTestVolume(b, location, needle.VolumeId(i))
+		mountTestVolume(b, location, needle.VolumeId(i), "")
 	}
 	store.ResetVolumeReporting()
 	store.AcceptVolumeChanges()
