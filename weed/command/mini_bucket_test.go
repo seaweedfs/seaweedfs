@@ -88,3 +88,36 @@ func TestMiniServesTableFormat(t *testing.T) {
 		t.Errorf("unknown format: want unserved")
 	}
 }
+
+// The Iceberg catalog looks its default warehouse up by name, so a Lance entry
+// or a leftover :FORMAT suffix in S3_TABLE_BUCKET names a bucket it cannot find.
+func TestIcebergRoutingNames(t *testing.T) {
+	tests := []struct {
+		name string
+		in   []tableBucketEntry
+		want []string
+	}{
+		{"none", nil, nil},
+		{"iceberg only", []tableBucketEntry{{"warehouse", s3tables.FormatIceberg}}, []string{"warehouse"}},
+		{"lance is not routable", []tableBucketEntry{{"vectors", s3tables.FormatLance}}, nil},
+		{"lance first", []tableBucketEntry{{"vectors", s3tables.FormatLance}, {"warehouse", s3tables.FormatIceberg}}, []string{"warehouse"}},
+		{"order preserved", []tableBucketEntry{{"raw", s3tables.FormatIceberg}, {"vectors", s3tables.FormatLance}, {"curated", s3tables.FormatIceberg}}, []string{"raw", "curated"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := icebergRoutingNames(tt.in)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("icebergRoutingNames(%v) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// A spec arriving through S3_TABLE_BUCKET carries suffixes too, and the catalog
+// reads that same variable, so parsing and routing have to agree on the name.
+func TestIcebergRoutingNamesFromEnvSpec(t *testing.T) {
+	got := icebergRoutingNames(parseTableBucketList("vectors:LANCE,warehouse"))
+	if want := []string{"warehouse"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("routing names for env spec = %v, want %v", got, want)
+	}
+}

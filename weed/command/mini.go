@@ -1372,19 +1372,14 @@ func runMini(cmd *Command, args []string) bool {
 	if err != nil {
 		glog.Warningf("failed to ensure table buckets %q: %v", tableBucketSpec, err)
 	}
-	if os.Getenv("S3_TABLE_BUCKET") == "" {
-		// The Iceberg catalog routes unprefixed requests to the first
-		// S3_TABLE_BUCKET entry, so only buckets that came back holding
-		// Iceberg tables belong there.
-		var icebergNames []string
-		for _, bucket := range ready {
-			if bucket.format == s3tables.FormatIceberg {
-				icebergNames = append(icebergNames, bucket.name)
-			}
-		}
-		if len(icebergNames) > 0 {
-			os.Setenv("S3_TABLE_BUCKET", strings.Join(icebergNames, ","))
-		}
+	// The Iceberg catalog routes unprefixed requests to the first
+	// S3_TABLE_BUCKET entry and looks the name up as given, so rewrite the
+	// variable whichever way the spec arrived: a Lance entry or a :FORMAT
+	// suffix left in place names a bucket the catalog cannot find.
+	if names := icebergRoutingNames(ready); len(names) > 0 {
+		os.Setenv("S3_TABLE_BUCKET", strings.Join(names, ","))
+	} else {
+		os.Unsetenv("S3_TABLE_BUCKET")
 	}
 
 	// Print welcome message after all services are running
@@ -2093,6 +2088,18 @@ func ensureMiniTableBuckets(buckets []tableBucketEntry) ([]tableBucketEntry, err
 		return nil
 	})
 	return ready, err
+}
+
+// icebergRoutingNames is the bare names of the buckets holding Iceberg tables,
+// which are the only ones the Iceberg catalog can take as its default warehouse.
+func icebergRoutingNames(buckets []tableBucketEntry) []string {
+	var names []string
+	for _, bucket := range buckets {
+		if bucket.format == s3tables.FormatIceberg {
+			names = append(names, bucket.name)
+		}
+	}
+	return names
 }
 
 // existingTableBucketFormat is the format the named table bucket holds, or "" if
