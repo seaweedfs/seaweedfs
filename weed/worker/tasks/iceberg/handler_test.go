@@ -1492,44 +1492,32 @@ func TestMergeParquetFilesDictionaryEncodedInput(t *testing.T) {
 		ID   int64  `parquet:"id"`
 		Name string `parquet:"name"`
 	}
-	reader := parquet.NewReader(bytes.NewReader(merged))
-	defer reader.Close()
-	ids := map[int64]int{}
-	names := map[string]int{}
-	for {
-		var r dictRow
-		err := reader.Read(&r)
-		if err == io.EOF {
-			break
+	tally := func(data []byte, what string) map[dictRow]int {
+		counts := map[dictRow]int{}
+		reader := parquet.NewReader(bytes.NewReader(data))
+		defer reader.Close()
+		for {
+			var r dictRow
+			err := reader.Read(&r)
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				t.Fatalf("read %s row: %v", what, err)
+			}
+			counts[r]++
 		}
-		if err != nil {
-			t.Fatalf("read merged row: %v", err)
-		}
-		ids[r.ID]++
-		names[r.Name]++
+		return counts
 	}
 
-	sourceIDs := map[int64]int{}
-	sourceReader := parquet.NewReader(bytes.NewReader(content))
-	defer sourceReader.Close()
-	for {
-		var r dictRow
-		err := sourceReader.Read(&r)
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			t.Fatalf("read fixture row: %v", err)
-		}
-		sourceIDs[r.ID]++
+	source := tally(content, "fixture")
+	got := tally(merged, "merged")
+	if len(got) != len(source) {
+		t.Fatalf("expected %d distinct rows, got %d", len(source), len(got))
 	}
-
-	if len(ids) != len(sourceIDs) || len(names) != len(sourceIDs) {
-		t.Fatalf("expected %d distinct ids and names, got %d ids and %d names", len(sourceIDs), len(ids), len(names))
-	}
-	for id, n := range sourceIDs {
-		if ids[id] != 2*n {
-			t.Errorf("id %d appears %d times, expected %d", id, ids[id], 2*n)
+	for row, n := range source {
+		if got[row] != 2*n {
+			t.Errorf("row %+v appears %d times, expected %d", row, got[row], 2*n)
 		}
 	}
 }
