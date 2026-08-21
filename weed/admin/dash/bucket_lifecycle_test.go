@@ -271,9 +271,11 @@ type fakeVerifyClient struct {
 	filer_pb.SeaweedFilerClient
 	entry *filer_pb.Entry
 	err   error
+	calls int
 }
 
 func (c *fakeVerifyClient) LookupDirectoryEntry(_ context.Context, _ *filer_pb.LookupDirectoryEntryRequest, _ ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	c.calls++
 	if c.err != nil {
 		return nil, c.err
 	}
@@ -354,11 +356,64 @@ func TestBucketLifecycleXMLUnchangedSince_ClearingDidNotLand(t *testing.T) {
 // which is the double-stamp/premature-expiration this whole cleanup exists
 // to prevent.
 func TestBucketLifecycleXMLUnchangedSince_VerifyFailureAssumesChanged(t *testing.T) {
+	defer setBucketLifecycleVerifyRetryDelayForTest(t, 0)()
+
 	client := &fakeVerifyClient{err: errors.New("transient network error")}
 
 	if bucketLifecycleXMLUnchangedSince(client, "/buckets", "mybucket", []byte("<old/>")) {
 		t.Fatal("expected unchanged=false (do not restore) when verification itself fails")
 	}
+	if client.calls != bucketLifecycleVerifyRetries {
+		t.Fatalf("expected the lookup to be retried %d times on persistent failure, got %d calls", bucketLifecycleVerifyRetries, client.calls)
+	}
+}
+
+// TestBucketLifecycleXMLUnchangedSince_RetriesTransientFailure pins the fix:
+// a single transient RPC failure on the verification lookup must not, on
+// its own, decide the outcome — the lookup is retried, and a later attempt
+// that succeeds and confirms the XML is unchanged should still report true.
+func TestBucketLifecycleXMLUnchangedSince_RetriesTransientFailure(t *testing.T) {
+	defer setBucketLifecycleVerifyRetryDelayForTest(t, 0)()
+
+	original := []byte("<old/>")
+	client := &flakyThenOKVerifyClient{
+		failuresBeforeSuccess: bucketLifecycleVerifyRetries - 1,
+		entry: &filer_pb.Entry{
+			Extended: map[string][]byte{scheduler.BucketLifecycleConfigurationXMLKey: original},
+		},
+	}
+
+	if !bucketLifecycleXMLUnchangedSince(client, "/buckets", "mybucket", original) {
+		t.Fatal("expected unchanged=true once a retry succeeds and confirms the XML is unchanged")
+	}
+}
+
+// flakyThenOKVerifyClient fails LookupDirectoryEntry a fixed number of times
+// before succeeding, to exercise the retry loop in
+// bucketLifecycleXMLUnchangedSince.
+type flakyThenOKVerifyClient struct {
+	filer_pb.SeaweedFilerClient
+	failuresBeforeSuccess int
+	entry                 *filer_pb.Entry
+	calls                 int
+}
+
+func (c *flakyThenOKVerifyClient) LookupDirectoryEntry(_ context.Context, _ *filer_pb.LookupDirectoryEntryRequest, _ ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	c.calls++
+	if c.calls <= c.failuresBeforeSuccess {
+		return nil, errors.New("transient network error")
+	}
+	return &filer_pb.LookupDirectoryEntryResponse{Entry: c.entry}, nil
+}
+
+// setBucketLifecycleVerifyRetryDelayForTest zeroes the retry delay for the
+// duration of a test, restoring it afterward, so tests exercising the retry
+// loop don't pay the real wall-clock delay.
+func setBucketLifecycleVerifyRetryDelayForTest(t *testing.T, d time.Duration) func() {
+	t.Helper()
+	original := bucketLifecycleVerifyRetryDelay
+	bucketLifecycleVerifyRetryDelay = d
+	return func() { bucketLifecycleVerifyRetryDelay = original }
 }
 
 func TestBucketLifecycleXMLUnchangedSince_MissingEntryAssumesChanged(t *testing.T) {

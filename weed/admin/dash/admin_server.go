@@ -1162,11 +1162,11 @@ func (s *AdminServer) SetBucketLifecycle(bucketName string, rules []BucketLifecy
 // bucketLifecycleVerifyRetries and bucketLifecycleVerifyRetryDelay bound the
 // retry in bucketLifecycleXMLUnchangedSince: a single transient RPC failure
 // on the verification lookup shouldn't be enough, on its own, to decide
-// whether the cleared legacy TTL rules get restored.
-const (
-	bucketLifecycleVerifyRetries    = 3
-	bucketLifecycleVerifyRetryDelay = 200 * time.Millisecond
-)
+// whether the cleared legacy TTL rules get restored. The delay is a var
+// (not const) so tests can zero it out instead of paying the real delay.
+const bucketLifecycleVerifyRetries = 3
+
+var bucketLifecycleVerifyRetryDelay = 200 * time.Millisecond
 
 // bucketLifecycleXMLUnchangedSince re-reads the bucket entry to check
 // whether its lifecycle XML still matches originalLifecycleXML, the value
