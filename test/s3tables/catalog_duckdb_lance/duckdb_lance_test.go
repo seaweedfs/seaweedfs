@@ -341,9 +341,12 @@ func (env *environment) runDuckDB(t *testing.T, bucket string) {
 		"--entrypoint", "duckdb", duckDBImage,
 		"-c", fmt.Sprintf("INSTALL lance; LOAD lance; SELECT count(*) FROM '%s';", table))
 	bareOut, bareErr := bare.CombinedOutput()
-	if bareErr == nil && !strings.Contains(string(bareOut), "does not exist") {
-		t.Fatalf("a suffix-less path is now readable by the replacement scan; "+
-			"update the docs that say otherwise:\n%s", bareOut)
+	// DuckDB exits nonzero for any error, so the exit status alone does not tell
+	// "the replacement scan refused the path" from "the query never ran": require
+	// the catalog error either way.
+	if !strings.Contains(string(bareOut), "does not exist") {
+		t.Fatalf("a suffix-less path did not fail the way the docs say it does (%v); "+
+			"if the replacement scan now reads it, update them:\n%s", bareErr, bareOut)
 	}
 	t.Logf("a suffix-less path is not seen by the replacement scan, as expected")
 }
