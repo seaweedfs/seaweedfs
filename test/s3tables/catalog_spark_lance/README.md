@@ -33,7 +33,9 @@ Inside Spark:
 
 ## Configuration
 
-The connector's catalog properties, for reference:
+The connector's catalog properties. The host names below are placeholders — the
+test passes dynamically allocated `host.docker.internal` ports, and a real
+deployment uses whatever address the gateway answers on:
 
 ```
 spark.sql.catalog.lance                        org.lance.spark.LanceNamespaceSparkCatalog
