@@ -1,0 +1,15 @@
+# Seeds a Lance dataset so DuckDB has something to read. The catalog records
+# where a table lives and does not carry its data, so the writing half is
+# pylance; DuckDB then reads it over S3 with no catalog involved.
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir \
+    "lance-namespace==0.8.6" \
+    "pylance==10.0.0" \
+    "pyarrow==25.0.1"
+
+COPY seed_table.py /app/
+
+CMD ["python3", "/app/seed_table.py", "--help"]
