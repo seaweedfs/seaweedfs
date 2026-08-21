@@ -523,6 +523,18 @@ func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startF
 	if ms.Topo.HashicorpRaft == nil || ms.Topo.HashicorpRaft.State() != hashicorpRaft.Leader {
 		return
 	}
+	// A master that is merely down is still a member: -peers is what declares
+	// membership, and updatePeers reconciles the configuration against it on
+	// every leadership change. Evicting one here would shrink the quorum behind
+	// the operator's back, and a restart then races the eviction — the master
+	// gets re-admitted, the removal lands after it, and it is left out of the
+	// configuration with nobody left to vote it back in.
+	for _, peer := range ms.MasterClient.GetMasters(context.Background()) {
+		if peer.ToHttpAddress() == peerAddress.ToHttpAddress() {
+			return
+		}
+	}
+
 	peerName := raftServerID(peerAddress)
 	pb.WithMasterClient(context.Background(), false, peerAddress, ms.grpcDialOption, true, func(client master_pb.SeaweedClient) error {
 		ctx, cancel := context.WithTimeout(context.TODO(), 15*time.Second)
