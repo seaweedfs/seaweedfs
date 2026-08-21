@@ -3,6 +3,8 @@ package filer
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -336,7 +338,7 @@ func readFilerConfSnapshot(ctx context.Context, client filer_pb.SeaweedFilerClie
 		Name:      FilerConfName,
 	})
 	fc := NewFilerConf()
-	if err == filer_pb.ErrNotFound {
+	if errors.Is(err, filer_pb.ErrNotFound) {
 		return &filerConfSnapshot{fc: fc}, nil
 	}
 	if err != nil {
@@ -355,14 +357,31 @@ func readFilerConfSnapshot(ctx context.Context, client filer_pb.SeaweedFilerClie
 // filer evaluates the condition and applies the write atomically under its
 // per-path lock (see UpdateEntry/CreateEntry in filer_grpc_server.go), so a
 // concurrent writer that raced this one fails the precondition instead of
-// silently having its change overwritten. Mtime granularity is one second,
-// so two writers racing within the same second are not distinguished.
+// silently having its change overwritten.
+//
+// The update path prefers an exact content check (IF_ETAG_MATCH keyed off an
+// MD5 this function itself stamps into Attributes.Md5 on every write) over
+// mtime, since mtime only has one-second resolution and says nothing about
+// content. A filer.conf written before this code existed has no such hash
+// yet, so that one write falls back to IF_UNMODIFIED_SINCE; every write from
+// here on carries the hash, so subsequent calls use the exact check.
+//
+// That one bootstrap write is the sole remaining place a same-second race
+// isn't caught: IF_ETAG_MATCH can't help there either, because an entry with
+// no Md5 and no chunks hashes to the same fixed value regardless of its
+// actual content (see filer.ETagChunks), so it can't distinguish two
+// different same-second writes any better than mtime can. Closing that
+// requires either an exact-content condition kind the filer protocol
+// doesn't have, or unconditionally stamping Md5 on every plain
+// SaveInsideFiler write everywhere in the codebase, not just here — out of
+// scope for this fix. It self-heals after the first write either way.
 func saveFilerConfConditionally(ctx context.Context, client filer_pb.SeaweedFilerClient, snap *filerConfSnapshot) error {
 	var buf bytes.Buffer
 	if err := snap.fc.ToText(&buf); err != nil {
 		return err
 	}
 	content := buf.Bytes()
+	contentMd5 := md5.Sum(content)
 
 	if snap.entry == nil {
 		err := filer_pb.CreateEntry(ctx, client, &filer_pb.CreateEntryRequest{
@@ -375,6 +394,7 @@ func saveFilerConfConditionally(ctx context.Context, client filer_pb.SeaweedFile
 					Crtime:   time.Now().Unix(),
 					FileMode: uint32(0644),
 					FileSize: uint64(len(content)),
+					Md5:      contentMd5[:],
 				},
 				Content: content,
 			},
@@ -389,21 +409,31 @@ func saveFilerConfConditionally(ctx context.Context, client filer_pb.SeaweedFile
 	}
 
 	entry := snap.entry
-	var unmodifiedSince int64
-	if entry.Attributes != nil {
-		unmodifiedSince = entry.Attributes.Mtime
+	var condition *filer_pb.WriteCondition
+	if entry.Attributes != nil && len(entry.Attributes.Md5) > 0 {
+		condition = &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{
+			{Kind: filer_pb.WriteCondition_IF_ETAG_MATCH, Etags: []string{fmt.Sprintf("%x", entry.Attributes.Md5)}},
+		}}
 	} else {
-		entry.Attributes = &filer_pb.FuseAttributes{}
+		var unmodifiedSince int64
+		if entry.Attributes != nil {
+			unmodifiedSince = entry.Attributes.Mtime
+		} else {
+			entry.Attributes = &filer_pb.FuseAttributes{}
+		}
+		condition = &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{
+			{Kind: filer_pb.WriteCondition_IF_UNMODIFIED_SINCE, UnixTime: unmodifiedSince},
+		}}
 	}
+
 	entry.Content = content
 	entry.Attributes.Mtime = time.Now().Unix()
 	entry.Attributes.FileSize = uint64(len(content))
+	entry.Attributes.Md5 = contentMd5[:]
 	err := filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
 		Directory: DirectoryEtcSeaweedFS,
 		Entry:     entry,
-		Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{
-			{Kind: filer_pb.WriteCondition_IF_UNMODIFIED_SINCE, UnixTime: unmodifiedSince},
-		}},
+		Condition: condition,
 	})
 	if err != nil {
 		return fmt.Errorf("filer.conf changed concurrently, retry: %w", err)

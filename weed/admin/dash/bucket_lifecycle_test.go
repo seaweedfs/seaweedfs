@@ -1,10 +1,15 @@
 package dash
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/scheduler"
+	"google.golang.org/grpc"
 )
 
 func minimalLifecycleRule() BucketLifecycleRule {
@@ -257,5 +262,72 @@ func TestFromBucketLifecycleRule_InvalidExpirationDate(t *testing.T) {
 
 	if _, err := fromBucketLifecycleRule(rule); err == nil {
 		t.Fatal("expected error for a malformed expiration date")
+	}
+}
+
+// fakeVerifyClient is a minimal filer_pb.SeaweedFilerClient stand-in for
+// bucketLifecycleWriteLikelyCommitted, which only calls LookupDirectoryEntry.
+type fakeVerifyClient struct {
+	filer_pb.SeaweedFilerClient
+	entry *filer_pb.Entry
+	err   error
+}
+
+func (c *fakeVerifyClient) LookupDirectoryEntry(_ context.Context, _ *filer_pb.LookupDirectoryEntryRequest, _ ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	if c.err != nil {
+		return nil, c.err
+	}
+	return &filer_pb.LookupDirectoryEntryResponse{Entry: c.entry}, nil
+}
+
+func TestBucketLifecycleWriteLikelyCommitted_MatchingXMLConfirmsCommitted(t *testing.T) {
+	xml := []byte("<LifecycleConfiguration/>")
+	client := &fakeVerifyClient{entry: &filer_pb.Entry{
+		Extended: map[string][]byte{scheduler.BucketLifecycleConfigurationXMLKey: xml},
+	}}
+
+	if !bucketLifecycleWriteLikelyCommitted(client, "/buckets", "mybucket", xml) {
+		t.Fatal("expected committed=true when the stored XML matches what was written")
+	}
+}
+
+func TestBucketLifecycleWriteLikelyCommitted_DifferentXMLConfirmsNotCommitted(t *testing.T) {
+	client := &fakeVerifyClient{entry: &filer_pb.Entry{
+		Extended: map[string][]byte{scheduler.BucketLifecycleConfigurationXMLKey: []byte("<old/>")},
+	}}
+
+	if bucketLifecycleWriteLikelyCommitted(client, "/buckets", "mybucket", []byte("<new/>")) {
+		t.Fatal("expected committed=false when the stored XML does not match what was written")
+	}
+}
+
+func TestBucketLifecycleWriteLikelyCommitted_ClearedKeyConfirmsCommitted(t *testing.T) {
+	client := &fakeVerifyClient{entry: &filer_pb.Entry{Extended: map[string][]byte{}}}
+
+	if !bucketLifecycleWriteLikelyCommitted(client, "/buckets", "mybucket", nil) {
+		t.Fatal("expected committed=true when clearing the lifecycle config and the key is absent")
+	}
+}
+
+// TestBucketLifecycleWriteLikelyCommitted_VerifyFailureAssumesCommitted pins
+// the fix: when the verification re-read itself fails, the write's true
+// state is unknown, and assuming "committed" (so the caller skips restoring
+// the cleared legacy TTL) is the safer default — the alternative risks
+// reinstating a stale TTL alongside a lifecycle XML write that in fact
+// succeeded, which is the double-stamp/premature-expiration this whole
+// cleanup exists to prevent.
+func TestBucketLifecycleWriteLikelyCommitted_VerifyFailureAssumesCommitted(t *testing.T) {
+	client := &fakeVerifyClient{err: errors.New("transient network error")}
+
+	if !bucketLifecycleWriteLikelyCommitted(client, "/buckets", "mybucket", []byte("<new/>")) {
+		t.Fatal("expected committed=true (do not restore) when verification itself fails")
+	}
+}
+
+func TestBucketLifecycleWriteLikelyCommitted_MissingEntryAssumesCommitted(t *testing.T) {
+	client := &fakeVerifyClient{entry: nil}
+
+	if !bucketLifecycleWriteLikelyCommitted(client, "/buckets", "mybucket", []byte("<new/>")) {
+		t.Fatal("expected committed=true (do not restore) when the bucket entry is unexpectedly absent")
 	}
 }

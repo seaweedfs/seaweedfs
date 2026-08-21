@@ -1123,17 +1123,23 @@ func (s *AdminServer) SetBucketLifecycle(bucketName string, rules []BucketLifecy
 // bucketLifecycleWriteLikelyCommitted re-reads the bucket entry to check
 // whether an UpdateEntry that returned an error actually took effect
 // server-side — a transport-level error (timeout, connection reset) can
-// arrive after the write already committed. Errs on the side of "not
-// committed" (false) if the re-read itself fails, since that leaves the
-// caller free to attempt a best-effort restore rather than silently
-// accepting a possible double-stamp.
+// arrive after the write already committed. If the re-read itself fails (or
+// finds no entry), whether the write committed is genuinely unknown; this
+// errs on the side of "committed" (true, i.e. don't restore) rather than
+// "not committed", because restoring on a false negative here reinstates
+// the stale TTL alongside a lifecycle XML that in fact did take effect —
+// exactly the double-stamp/premature-expiration this cleanup exists to
+// prevent. The alternative failure mode (not restoring when the write
+// really didn't commit) only leaves the bucket without an active lifecycle
+// policy until the next successful save, which is recoverable and does not
+// destroy data.
 func bucketLifecycleWriteLikelyCommitted(client filer_pb.SeaweedFilerClient, bucketsPath, bucketName string, wantLifecycleXML []byte) bool {
 	verifyResp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
 		Directory: bucketsPath,
 		Name:      bucketName,
 	})
 	if err != nil || verifyResp.Entry == nil {
-		return false
+		return true
 	}
 	current := verifyResp.Entry.Extended[scheduler.BucketLifecycleConfigurationXMLKey]
 	if len(wantLifecycleXML) > 0 {

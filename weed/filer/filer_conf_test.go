@@ -3,7 +3,9 @@ package filer
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"errors"
+	"fmt"
 	"reflect"
 	"sync"
 	"testing"
@@ -289,13 +291,10 @@ func cloneFakeEntry(e *filer_pb.Entry) *filer_pb.Entry {
 	if e == nil {
 		return nil
 	}
-	clone := *e
-	if e.Attributes != nil {
-		attrs := *e.Attributes
-		clone.Attributes = &attrs
-	}
-	clone.Content = append([]byte(nil), e.Content...)
-	return &clone
+	// proto.Clone rather than a struct copy: filer_pb.Entry embeds
+	// protoimpl.MessageState (a sync.Mutex), which a plain `*e` copy would
+	// duplicate by value — exactly what go vet's copylocks check flags.
+	return proto.Clone(e).(*filer_pb.Entry)
 }
 
 func (c *fakeFilerConfClient) CreateEntry(_ context.Context, in *filer_pb.CreateEntryRequest, _ ...grpc.CallOption) (*filer_pb.CreateEntryResponse, error) {
@@ -336,6 +335,24 @@ func conditionHoldsLocked(cond *filer_pb.WriteCondition, current *filer_pb.Entry
 			}
 		case filer_pb.WriteCondition_IF_UNMODIFIED_SINCE:
 			if current != nil && current.Attributes != nil && current.Attributes.Mtime > clause.UnixTime {
+				return false
+			}
+		case filer_pb.WriteCondition_IF_ETAG_MATCH:
+			if current == nil {
+				return false
+			}
+			stored := ""
+			if current.Attributes != nil {
+				stored = fmt.Sprintf("%x", current.Attributes.Md5)
+			}
+			matched := false
+			for _, want := range clause.Etags {
+				if want == stored {
+					matched = true
+					break
+				}
+			}
+			if !matched {
 				return false
 			}
 		}
@@ -538,6 +555,9 @@ func bumpMtime(client *fakeFilerConfClient, unmodifiedSince int64) {
 	e.Attributes.Mtime = unmodifiedSince + 1
 }
 
+// TestSaveFilerConfConditionally_RejectsUpdateModifiedConcurrently exercises
+// the bootstrap fallback: a filer.conf entry with no Md5 yet (as if written
+// before this code existed) falls back to the mtime-based precondition.
 func TestSaveFilerConfConditionally_RejectsUpdateModifiedConcurrently(t *testing.T) {
 	client := newFakeFilerConfClient()
 	putFilerConf(t, client, &filer_pb.FilerConf_PathConf{LocationPrefix: "/buckets/a/", Collection: "a", Ttl: "7d"})
@@ -545,12 +565,56 @@ func TestSaveFilerConfConditionally_RejectsUpdateModifiedConcurrently(t *testing
 	snap, err := readFilerConfSnapshot(context.Background(), client)
 	require.NoError(t, err)
 	require.NotNil(t, snap.entry)
+	require.Empty(t, snap.entry.Attributes.Md5, "test setup should model a pre-existing filer.conf with no stamped Md5")
 
 	// Someone else writes filer.conf after our read but before our write.
 	bumpMtime(client, snap.entry.Attributes.Mtime)
 
 	err = saveFilerConfConditionally(context.Background(), client, snap)
 	assert.Error(t, err, "expected a concurrent modification to fail the conditional write")
+}
+
+// TestSaveFilerConfConditionally_ExactContentCheckRejectsConcurrentModification
+// exercises the primary path: once an entry has been written through this
+// function (so it carries a content Md5), a later write with a stale
+// snapshot is rejected by the exact IF_ETAG_MATCH check even when the
+// concurrent writer happened to leave mtime unchanged — something a
+// mtime-only precondition would have missed.
+func TestSaveFilerConfConditionally_ExactContentCheckRejectsConcurrentModification(t *testing.T) {
+	client := newFakeFilerConfClient()
+	putFilerConf(t, client, &filer_pb.FilerConf_PathConf{LocationPrefix: "/buckets/a/", Collection: "a", Ttl: "7d"})
+
+	// First write through saveFilerConfConditionally stamps Md5, moving
+	// subsequent reads onto the exact-content check.
+	snap, err := readFilerConfSnapshot(context.Background(), client)
+	require.NoError(t, err)
+	require.NoError(t, saveFilerConfConditionally(context.Background(), client, snap))
+
+	snap2, err := readFilerConfSnapshot(context.Background(), client)
+	require.NoError(t, err)
+	require.NotEmpty(t, snap2.entry.Attributes.Md5, "expected Md5 to have been stamped by the prior write")
+
+	// A concurrent writer changes the content but happens to land in the
+	// same wall-clock second, so mtime alone would not catch this.
+	concurrentFc := NewFilerConf()
+	require.NoError(t, concurrentFc.LoadFromBytes([]byte(readFilerConfText(client))))
+	require.NoError(t, concurrentFc.SetLocationConf(&filer_pb.FilerConf_PathConf{
+		LocationPrefix: "/buckets/other/", Collection: "other", Ttl: "3d",
+	}))
+	var buf bytes.Buffer
+	require.NoError(t, concurrentFc.ToText(&buf))
+	newMd5 := md5.Sum(buf.Bytes())
+	client.entries[client.key(DirectoryEtcSeaweedFS, FilerConfName)] = &filer_pb.Entry{
+		Name:    FilerConfName,
+		Content: buf.Bytes(),
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime: snap2.entry.Attributes.Mtime, // unchanged on purpose
+			Md5:   newMd5[:],
+		},
+	}
+
+	err = saveFilerConfConditionally(context.Background(), client, snap2)
+	assert.Error(t, err, "expected the exact-content check to reject a write whose baseline content hash no longer matches")
 }
 
 func TestSaveFilerConfConditionally_RejectsCreateWhenCreatedConcurrently(t *testing.T) {
