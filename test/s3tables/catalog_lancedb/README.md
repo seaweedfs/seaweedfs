@@ -35,9 +35,11 @@ Inside the container:
 | `table_names` | the catalog is browsable through LanceDB |
 | `open_table` | LanceDB resolves a table through the catalog and reads it |
 | schema check | the vector column survived the round trip |
-| `search(...)` | ANN search works on data behind SeaweedFS |
+| `create_index` | an IVF_PQ index builds, and its files land through the S3 door's layout rules |
+| `search(...)` | approximate search over that index, on data behind SeaweedFS |
 | `where("id < 5")` | so does the scan path, not only the index |
-| `create_table` | reports what the client sees for an operation this catalog does not serve |
+| `create_table` | LanceDB declares through the namespace and writes the data itself |
+| `create_table` with pushdown | either the client falls back and the table is complete, or the catalog refuses with the spec's Unsupported and leaves nothing behind |
 | direct `lance.dataset(uri)` | the catalog stays optional; the dataset opens without it |
 
 The seeding is pylance rather than LanceDB, because the namespace records where

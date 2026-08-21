@@ -74,7 +74,9 @@ def main():
     parser.add_argument("--bucket", required=True)
     parser.add_argument("--namespace", default="ml")
     parser.add_argument("--table", default="embeddings")
-    parser.add_argument("--rows", type=int, default=64)
+    # Enough rows for an IVF_PQ index to be worth building, which is the point
+    # of step 4: without one, a search is a brute-force scan.
+    parser.add_argument("--rows", type=int, default=1024)
     parser.add_argument("--access-key", default="any")
     parser.add_argument("--secret-key", default="any")
     args = parser.parse_args()
@@ -128,12 +130,36 @@ def main():
     print(f"schema -> {names}")
     check("vector" in names and "title" in names, f"schema lost columns: {names}")
 
-    # 4. A vector search, which is what the format exists for.
+    # 4. Build a vector index, then search it. Both halves matter: an index
+    #    writes files into a directory of the table the S3 door has to admit -
+    #    the layout guard has refused a Lance directory before - and without one
+    #    a search is a brute-force scan that proves nothing about the index path
+    #    the maintenance worker exists to keep in shape.
+    table.create_index(
+        metric="l2",
+        vector_column_name="vector",
+        index_type="IVF_PQ",
+        num_partitions=1,
+        num_sub_vectors=4,
+    )
+    indices = table.list_indices()
+    print(f"create_index -> {indices}")
+    check(len(indices) >= 1, "no index was created")
+
+    # Vectors are laid out so that id N sits near id N+1, so a query built from
+    # id 1 should come back with its neighbourhood. The assertion is a
+    # neighbourhood and not an exact id: an IVF_PQ index quantizes, so the
+    # nearest hit is approximate by construction - with this data it answers 0
+    # as readily as 1, and both are right.
     query = [float(1) + d for d in range(DIM)]
     hits = table.search(query).limit(3).to_list()
-    print(f"search -> {[hit['id'] for hit in hits]}")
+    ids = [hit["id"] for hit in hits]
+    print(f"search -> {ids}")
     check(len(hits) == 3, f"search returned {len(hits)} hits, want 3")
-    check(hits[0]["id"] == 1, f"nearest neighbour was id={hits[0]['id']}, want 1")
+    check(
+        all(i <= 5 for i in ids),
+        f"search returned {ids}, which is not the neighbourhood of the query",
+    )
 
     # 5. A filtered scan, so it is not only the ANN path that works.
     filtered = table.search().where("id < 5").limit(10).to_list()
@@ -168,7 +194,7 @@ def main():
         storage_options=storage,
         namespace_client_pushdown_operations=["CreateTable"],
     )
-    pushed_ok = True
+    pushed_error = None
     try:
         pushdown.create_table(
             "pushed_by_lancedb",
@@ -177,23 +203,32 @@ def main():
             storage_options=storage,
         )
     except Exception as err:  # noqa: BLE001 - the point is what the client sees
-        pushed_ok = False
-        print(f"create_table with pushdown: refused with {type(err).__name__}: {err}")
+        pushed_error = err
 
     after = list(db.table_names(namespace_path=[args.bucket, args.namespace], limit=100))
     landed = any("pushed_by_lancedb" in name for name in after)
-    print(f"create_table with pushdown: client ok={pushed_ok}, catalog has it={landed}")
-    check(
-        pushed_ok == landed,
-        f"the client and the catalog disagree: client ok={pushed_ok}, listed={landed}",
-    )
-    if landed:
+    print(f"create_table with pushdown: error={pushed_error!r}, catalog has it={landed}")
+
+    if pushed_error is None:
+        # The client fell back to declare-and-write, so the table is real and
+        # has to be readable and complete.
+        check(landed, "create_table reported success but the catalog has no table")
         rows = db.open_table(
             "pushed_by_lancedb",
             namespace_path=[args.bucket, args.namespace],
             storage_options=storage,
         ).count_rows()
         check(rows == 2, f"the pushed table holds {rows} rows, want 2")
+    else:
+        # Refused, which is what this catalog answers for a data-plane
+        # operation. It has to be that refusal and not some other failure, and
+        # it must not have left a half-made table behind.
+        message = str(pushed_error).lower()
+        check(
+            "unsupported" in message or "501" in message or "not implemented" in message,
+            f"pushdown failed for an unexpected reason: {pushed_error}",
+        )
+        check(not landed, "a refused create left a table behind in the catalog")
 
     # 8. And the dataset is still readable straight off its URI, which is what
     #    keeps the catalog optional.
