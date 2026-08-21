@@ -14,6 +14,10 @@ import (
 var (
 	ResumeError         = fmt.Errorf("resume")
 	ResumeFromDiskError = fmt.Errorf("resumeFromDisk")
+	// StopReadingError, wrapped by an eachLogDataFn's error, marks a read the
+	// callback ended on purpose - control flow, not a failure - so the loop
+	// hands it back to the caller without logging it.
+	StopReadingError = fmt.Errorf("stopReading")
 )
 
 // notificationHealthCheckInterval bounds how long an idle subscriber blocks
@@ -297,7 +301,9 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 			lastReadPosition = NewMessagePosition(logEntry.TsNs, batchIndex)
 
 			if isDone, err = eachLogDataFn(logEntry); err != nil {
-				glog.Errorf("LoopProcessLogData: %s process log entry %d key:%q ts_ns:%d offset:%d size:%d: %v", readerName, batchSize+1, logEntry.Key, logEntry.TsNs, logEntry.Offset, len(logEntry.Data), err)
+				if !errors.Is(err, StopReadingError) {
+					glog.Errorf("LoopProcessLogData: %s process log entry %d key:%q ts_ns:%d offset:%d size:%d: %v", readerName, batchSize+1, logEntry.Key, logEntry.TsNs, logEntry.Offset, len(logEntry.Data), err)
+				}
 				return
 			}
 			if isDone {
@@ -570,7 +576,9 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 
 			glog.V(4).Infof("Calling eachLogDataFn for entry at offset %d, next position will be %d", logEntry.Offset, logEntry.Offset+1)
 			if isDone, err = eachLogDataFn(logEntry, logEntry.Offset); err != nil {
-				glog.Errorf("LoopProcessLogDataWithOffset: %s process log entry %d key:%q ts_ns:%d offset:%d size:%d: %v", readerName, batchSize+1, logEntry.Key, logEntry.TsNs, logEntry.Offset, len(logEntry.Data), err)
+				if !errors.Is(err, StopReadingError) {
+					glog.Errorf("LoopProcessLogDataWithOffset: %s process log entry %d key:%q ts_ns:%d offset:%d size:%d: %v", readerName, batchSize+1, logEntry.Key, logEntry.TsNs, logEntry.Offset, len(logEntry.Data), err)
+				}
 				return
 			}
 			if isDone {

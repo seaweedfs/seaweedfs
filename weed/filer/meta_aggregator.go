@@ -49,8 +49,19 @@ type MetaAggregator struct {
 	// whose unflushed events still exist, and de-accounting it at once would
 	// let subscribers advance past them. A re-add clears the mark; a peer
 	// gone past the grace is dropped so it cannot pin the low-watermarks.
-	peerRemovedAtNs    map[pb.ServerAddress]int64
-	peerWatermarksLock sync.Mutex
+	peerRemovedAtNs map[pb.ServerAddress]int64
+	// lowWatermarkTsNs and lowFlushWatermarkTsNs are the last minima signalled
+	// on deliveryAdvanced and flushAdvanced, each closed and replaced when its
+	// own minimum rises. Held readers park on the one that bounds them:
+	// arriving data cannot release a watermark hold, only a peer reporting
+	// the progress that hold waits on. The two are kept apart because a
+	// delivery advance - one per event a peer streams - cannot release a read
+	// held at the flush watermark, and waking it costs a whole pass.
+	lowWatermarkTsNs      int64
+	lowFlushWatermarkTsNs int64
+	deliveryAdvanced      chan struct{}
+	flushAdvanced         chan struct{}
+	peerWatermarksLock    sync.Mutex
 }
 
 // MetaAggregator only aggregates data "on the fly". The logs are not re-persisted to disk.
@@ -116,6 +127,7 @@ func (ma *MetaAggregator) initPeerWatermark(peer pb.ServerAddress) {
 		ma.peerFlushWatermarks[peer] = 0
 	}
 	delete(ma.peerRemovedAtNs, peer)
+	ma.noteLowWatermarksLocked()
 }
 
 func (ma *MetaAggregator) markPeerWatermarkRemoved(peer pb.ServerAddress) {
@@ -144,6 +156,8 @@ func (ma *MetaAggregator) dropExpiredRemovedPeersLocked() {
 			delete(ma.peerFlushWatermarks, peer)
 		}
 	}
+	// Dropping the peer that pinned a minimum raises it, same as it reporting.
+	ma.noteLowWatermarksLocked()
 }
 
 // advancePeerWatermark records the peer as received-through tsNs. Monotonic,
@@ -154,6 +168,7 @@ func (ma *MetaAggregator) advancePeerWatermark(peer pb.ServerAddress, tsNs int64
 	defer ma.peerWatermarksLock.Unlock()
 	if cur, found := ma.peerWatermarks[peer]; found && tsNs > cur {
 		ma.peerWatermarks[peer] = tsNs
+		ma.noteLowWatermarksLocked()
 	}
 }
 
@@ -164,6 +179,7 @@ func (ma *MetaAggregator) advancePeerFlushWatermark(peer pb.ServerAddress, tsNs 
 	defer ma.peerWatermarksLock.Unlock()
 	if cur, found := ma.peerFlushWatermarks[peer]; found && tsNs > cur {
 		ma.peerFlushWatermarks[peer] = tsNs
+		ma.noteLowWatermarksLocked()
 	}
 }
 
@@ -174,16 +190,7 @@ func (ma *MetaAggregator) PeerLowFlushWatermarkTsNs() int64 {
 	ma.peerWatermarksLock.Lock()
 	defer ma.peerWatermarksLock.Unlock()
 	ma.dropExpiredRemovedPeersLocked()
-	if len(ma.peerFlushWatermarks) == 0 {
-		return 0
-	}
-	var low int64 = math.MaxInt64
-	for _, tsNs := range ma.peerFlushWatermarks {
-		if tsNs < low {
-			low = tsNs
-		}
-	}
-	return low
+	return lowWatermarkOf(ma.peerFlushWatermarks)
 }
 
 // PeerLowWatermarkTsNs returns the minimum received-through timestamp across
@@ -194,11 +201,67 @@ func (ma *MetaAggregator) PeerLowWatermarkTsNs() int64 {
 	ma.peerWatermarksLock.Lock()
 	defer ma.peerWatermarksLock.Unlock()
 	ma.dropExpiredRemovedPeersLocked()
-	if len(ma.peerWatermarks) == 0 {
+	return lowWatermarkOf(ma.peerWatermarks)
+}
+
+// DeliveryWatermarkAdvancedChan returns a channel closed the next time the
+// delivery low-watermark rises, which is what releases an in-memory read held
+// at it. PeerLowFlushWatermarkTsNs has FlushWatermarkAdvancedChan. Callers
+// must take the channel before reading the watermark they hold at, so a rise
+// in between wakes them instead of being missed.
+func (ma *MetaAggregator) DeliveryWatermarkAdvancedChan() <-chan struct{} {
+	ma.peerWatermarksLock.Lock()
+	defer ma.peerWatermarksLock.Unlock()
+	if ma.deliveryAdvanced == nil {
+		ma.deliveryAdvanced = make(chan struct{})
+	}
+	return ma.deliveryAdvanced
+}
+
+// FlushWatermarkAdvancedChan returns a channel closed the next time the flush
+// low-watermark rises, which is what releases a persisted-log read held at it.
+func (ma *MetaAggregator) FlushWatermarkAdvancedChan() <-chan struct{} {
+	ma.peerWatermarksLock.Lock()
+	defer ma.peerWatermarksLock.Unlock()
+	if ma.flushAdvanced == nil {
+		ma.flushAdvanced = make(chan struct{})
+	}
+	return ma.flushAdvanced
+}
+
+// noteLowWatermarksLocked recomputes both minima and wakes the readers parked
+// on each one that rose. Caller must hold peerWatermarksLock.
+func (ma *MetaAggregator) noteLowWatermarksLocked() {
+	low, flushLow := lowWatermarkOf(ma.peerWatermarks), lowWatermarkOf(ma.peerFlushWatermarks)
+	// Falls are recorded too (a joining peer sits at 0 until it signals), so
+	// the climb back out of one is seen as a rise.
+	if low > ma.lowWatermarkTsNs {
+		ma.deliveryAdvanced = closeWatermarkChan(ma.deliveryAdvanced)
+	}
+	if flushLow > ma.lowFlushWatermarkTsNs {
+		ma.flushAdvanced = closeWatermarkChan(ma.flushAdvanced)
+	}
+	ma.lowWatermarkTsNs, ma.lowFlushWatermarkTsNs = low, flushLow
+}
+
+// closeWatermarkChan wakes everyone parked on ch and clears it, so the next
+// caller parks on a fresh one.
+func closeWatermarkChan(ch chan struct{}) chan struct{} {
+	if ch != nil {
+		close(ch)
+	}
+	return nil
+}
+
+// lowWatermarkOf returns the minimum across the tracked peers, or 0 when none
+// are tracked: a peer that has not signalled sits at 0 and pins the minimum
+// there, which is what makes completeness unknown.
+func lowWatermarkOf(watermarks map[pb.ServerAddress]int64) int64 {
+	if len(watermarks) == 0 {
 		return 0
 	}
 	var low int64 = math.MaxInt64
-	for _, tsNs := range ma.peerWatermarks {
+	for _, tsNs := range watermarks {
 		if tsNs < low {
 			low = tsNs
 		}
