@@ -288,6 +288,15 @@ func (c *ChunkReadAt) doReadAt(ctx context.Context, p []byte, offset int64) (n i
 		}
 
 		if err != nil {
+			// a failed chunk leaves its window untouched while the tasks after it
+			// may well have filled theirs, so only the prefix up to the hole is
+			// data the caller may use
+			for _, task := range tasks {
+				if int64(task.bytesRead) != task.bufferEnd-task.bufferStart {
+					n = int(task.bufferStart) + task.bytesRead
+					break
+				}
+			}
 			return n, ts, err
 		}
 	}
