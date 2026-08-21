@@ -216,9 +216,10 @@ func (ms *MasterServer) healthzHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (ms *MasterServer) readyzHandler(w http.ResponseWriter, r *http.Request) {
-	// Readiness: check we can serve traffic.
-	leader, err := ms.Topo.Leader()
-	if err != nil {
+	// Readiness: check we can serve traffic. Answer from what raft knows now
+	// rather than waiting out an election, so the probe's own timeout decides.
+	leader, err := ms.Topo.MaybeLeader()
+	if err != nil || leader == "" {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}

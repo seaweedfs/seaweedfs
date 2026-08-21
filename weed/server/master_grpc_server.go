@@ -139,10 +139,12 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		}
 
 		if !ms.Topo.IsLeader() {
-			// tell the volume servers about the leader
-			newLeader, err := ms.Topo.Leader()
-			if err != nil {
-				glog.Warningf("SendHeartbeat find leader: %v", err)
+			// tell the volume servers about the leader we know of right now, so
+			// that a follower without one hands the heartbeat back immediately
+			// instead of holding it through an election
+			newLeader, err := ms.Topo.MaybeLeader()
+			if err != nil || newLeader == "" {
+				glog.V(1).Infof("SendHeartbeat find leader: %v", err)
 				return raft.NotLeaderError
 			}
 			if err := stream.Send(&master_pb.HeartbeatResponse{
@@ -539,9 +541,12 @@ func (ms *MasterServer) broadcastVolumeLocationsToClients(locations []*master_pb
 }
 
 func (ms *MasterServer) informNewLeader(stream master_pb.Seaweed_KeepConnectedServer) error {
-	leader, err := ms.Topo.Leader()
-	if err != nil {
-		glog.Errorf("topo leader: %v", err)
+	// Answer from what raft knows now. Waiting out an election here pins the
+	// client to a master that cannot serve it, right when it should be moving
+	// on to the next peer to find the one that can.
+	leader, err := ms.Topo.MaybeLeader()
+	if err != nil || leader == "" {
+		glog.V(1).Infof("topo leader: %v", err)
 		return raft.NotLeaderError
 	}
 	if err := stream.Send(&master_pb.KeepConnectedResponse{
@@ -606,7 +611,7 @@ func findClientAddress(ctx context.Context, grpcPort uint32) string {
 func (ms *MasterServer) GetMasterConfiguration(ctx context.Context, req *master_pb.GetMasterConfigurationRequest) (*master_pb.GetMasterConfigurationResponse, error) {
 
 	// tell the volume servers about the leader
-	leader, _ := ms.Topo.Leader()
+	leader, _ := ms.Topo.MaybeLeader()
 
 	// MIGRATION: expose maintenance scripts for admin server seeding. Remove after March 2027.
 	v := util.GetViper()
