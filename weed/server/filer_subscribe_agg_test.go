@@ -13,12 +13,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"google.golang.org/grpc/peer"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
 const (
@@ -114,6 +116,16 @@ func (h *subscribeHarness) writeFor(ma *filer.MetaAggregator, d time.Duration, r
 	}
 }
 
+// heldReads reads back the hold counter the loop keeps in place of the log
+// line, which is also how an operator sees a held subscriber now.
+func heldReads() int {
+	var total int
+	for _, scope := range []string{"memory", "disk"} {
+		total += int(testutil.ToFloat64(stats.FilerSubscribeWatermarkHolds.WithLabelValues(scope)))
+	}
+	return total
+}
+
 // TestSubscribeLoop_AggregatedHoldIsQuiet: every held read used to log an
 // ERROR, so a busy cluster wrote one line per arriving event.
 func TestSubscribeLoop_AggregatedHoldIsQuiet(t *testing.T) {
@@ -131,4 +143,48 @@ func TestSubscribeLoop_AggregatedHoldIsQuiet(t *testing.T) {
 	if got := eventTimestamps(r.stream.snapshot()); len(got) > 0 {
 		t.Fatalf("delivered %d events past the peers' watermark", len(got))
 	}
+}
+
+// TestSubscribeLoop_AggregatedHoldIsPaced is the other half: a held read used
+// to wait on the buffer's data channel, which the very next write signalled,
+// so the loop re-ran a whole pass - a log file listing in it - per event.
+// Arriving data cannot release a hold; only peer progress can.
+func TestSubscribeLoop_AggregatedHoldIsPaced(t *testing.T) {
+	h := newSubscribeHarness(t)
+	// Long enough that a hold paced by the retry interval alone is far below
+	// one hold per write, short enough to keep the test quick.
+	prevRetry := unflushedGapRetryInterval
+	unflushedGapRetryInterval = 200 * time.Millisecond
+	t.Cleanup(func() { unflushedGapRetryInterval = prevRetry })
+	ma, _, _ := h.heldSubscriber()
+
+	holdsBefore := heldReads()
+	written, elapsed := h.writeFor(ma, time.Second, false)
+	holds := heldReads() - holdsBefore
+
+	t.Logf("%d writes over %v produced %d holds", len(written), elapsed, holds)
+	// The watermarks never moved, so the retry interval alone paces the holds.
+	if maxHolds := int(elapsed/unflushedGapRetryInterval) + 2; holds > maxHolds {
+		t.Fatalf("held %d times in %v, want at most %d: a hold must wait for peer progress, not for the next write",
+			holds, elapsed, maxHolds)
+	}
+}
+
+// TestSubscribeLoop_AggregatedHoldReleasesOnPeerProgress pins what pacing the
+// hold may not cost: once the peers report through the held entry it must be
+// delivered, without waiting out the retry interval.
+func TestSubscribeLoop_AggregatedHoldReleasesOnPeerProgress(t *testing.T) {
+	h := newSubscribeHarness(t)
+	// Far longer than this test runs: only the watermark signal can deliver.
+	prevRetry := unflushedGapRetryInterval
+	unflushedGapRetryInterval = 30 * time.Second
+	t.Cleanup(func() { unflushedGapRetryInterval = prevRetry })
+	ma, r, _ := h.heldSubscriber()
+
+	ts := time.Now().UnixNano()
+	h.appendAggregated(ts)
+	assertNoEventsFor(t, r, 200*time.Millisecond)
+
+	reportPeers(ma, ts)
+	waitForEvents(t, r, []int64{ts}, 3*time.Second)
 }

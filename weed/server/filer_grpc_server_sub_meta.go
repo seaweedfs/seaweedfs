@@ -655,15 +655,22 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	var diskPassProvenTsNs int64
 	diskEachLogEntryFn := guardedEachLogEntryFn(func() int64 { return diskPassHoldTsNs })
 	memEachLogEntryFn := guardedEachLogEntryFn(holdMemTsNs)
-	// waitHeld pauses a held read until new data or the retry interval (holds
-	// also release on heartbeats, which do not notify). False: context ended.
-	waitHeld := func() bool {
+	// waitHeld pauses a held read until a peer reports further progress, or
+	// the retry interval elapses (a peer dropped past its grace, or a log file
+	// landing that no watermark covers). Arriving data is deliberately not a
+	// wake-up: on a cluster that keeps writing there is always an entry past
+	// the hold, so waking on it spins the loop without ever releasing the
+	// hold. watermarkChan was taken before the pass read the watermarks, so a
+	// rise in between wakes us here instead of being missed. False: context
+	// ended.
+	waitHeld := func(scope string, watermarkChan <-chan struct{}) bool {
+		stats.FilerSubscribeWatermarkHolds.WithLabelValues(scope).Inc()
 		glog.V(3).Infof("held at %v (deliveredUpTo %v, flushLow %v, deliveryLow %v) for %v",
 			time.Unix(0, heldAtTsNs), time.Unix(0, deliveredUpToTsNs),
 			time.Unix(0, fs.filer.MetaAggregator.PeerLowFlushWatermarkTsNs()),
 			time.Unix(0, fs.filer.MetaAggregator.PeerLowWatermarkTsNs()), clientName)
 		select {
-		case <-aggNotifyChan:
+		case <-watermarkChan:
 		case <-ctx.Done():
 			return false
 		case <-time.After(unflushedGapRetryInterval):
@@ -697,6 +704,9 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 
 		glog.V(4).Infof("read on disk %v aggregated subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
+		// Taken before either read samples a watermark, so a rise mid-pass
+		// cannot land between the sample and the park below.
+		watermarkChan := fs.filer.MetaAggregator.WatermarkAdvancedChan()
 		cursorBeforeDiskTsNs := lastReadTime.Time.UnixNano()
 
 		// Observe the flush low-watermark before the pass lists files (see
@@ -731,7 +741,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 			// A hold is not a gap: clear any stale ResumeFromDiskError so the
 			// next pass's disk-miss handling cannot skip past the held entry.
 			readInMemoryLogErr = nil
-			if !waitHeld() {
+			if !waitHeld("disk", watermarkChan) {
 				return nil
 			}
 			continue
@@ -837,7 +847,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 				// the last delivered entry so nothing in between is skipped.
 				lastReadTime = log_buffer.NewMessagePosition(deliveredUpToTsNs, gapResumeCursorOffset)
 				readInMemoryLogErr = nil
-				if !waitHeld() {
+				if !waitHeld("memory", watermarkChan) {
 					return nil
 				}
 				continue

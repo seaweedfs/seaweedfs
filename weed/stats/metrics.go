@@ -242,6 +242,14 @@ var (
 			Help:      "Times a metadata subscriber moved past a log range without proof it was persisted: scope=aggregated means a peer may not have flushed it, scope=local means this filer's own log flush was wedged past the give-up bound.",
 		}, []string{"scope"})
 
+	FilerSubscribeWatermarkHolds = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemFiler,
+			Name:      "subscribe_watermark_holds",
+			Help:      "Times an aggregated metadata read stopped at an entry newer than the peers' low-watermark and waited for a peer to report further progress: scope=memory held at the delivery watermark, scope=disk at the flush watermark.",
+		}, []string{"scope"})
+
 	FilerSubscribeGapStalledGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
@@ -907,6 +915,7 @@ func init() {
 	Gather.MustRegister(FilerServerLastSendTsOfSubscribeGauge)
 	Gather.MustRegister(FilerSubscribeGapStalledGauge)
 	Gather.MustRegister(FilerSubscribeUnprovenGapCrossings)
+	Gather.MustRegister(FilerSubscribeWatermarkHolds)
 	Gather.MustRegister(FilerMetaAggregatorReplayFailures)
 	Gather.MustRegister(FilerObjectSizeBytesHistogram)
 	Gather.MustRegister(collectors.NewGoCollector())
