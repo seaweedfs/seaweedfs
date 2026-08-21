@@ -218,9 +218,6 @@ func validateBucketLifecycleRules(rules []BucketLifecycleRule) error {
 		if rule.NewerNoncurrentVersions < 0 {
 			return fmt.Errorf("%s: newer_noncurrent_versions must be positive", label)
 		}
-		if rule.NewerNoncurrentVersions > 0 && rule.NoncurrentVersionExpirationDays == 0 {
-			return fmt.Errorf("%s: newer_noncurrent_versions requires noncurrent_version_expiration_days to be set", label)
-		}
 		if rule.AbortMultipartDays < 0 {
 			return fmt.Errorf("%s: abort_multipart_days must be positive", label)
 		}
@@ -242,7 +239,7 @@ func validateBucketLifecycleRules(rules []BucketLifecycleRule) error {
 		}
 
 		hasAction := rule.ExpirationDays > 0 || rule.ExpirationDate != "" || rule.ExpiredObjectDeleteMarker ||
-			rule.NoncurrentVersionExpirationDays > 0 || rule.AbortMultipartDays > 0
+			rule.NoncurrentVersionExpirationDays > 0 || rule.NewerNoncurrentVersions > 0 || rule.AbortMultipartDays > 0
 		if !hasAction {
 			return fmt.Errorf("%s: must specify at least one action (expiration, noncurrent version expiration, or abort incomplete multipart upload)", label)
 		}

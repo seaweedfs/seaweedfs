@@ -1070,6 +1070,16 @@ func (s *AdminServer) SetBucketLifecycle(bucketName string, rules []BucketLifecy
 			return fmt.Errorf("bucket not found: %w", err)
 		}
 
+		// Migration: clear any legacy day-TTL filer.conf entries before
+		// writing the new XML below, so a failure here leaves the bucket
+		// entry untouched instead of committing the new policy alongside a
+		// stale TTL rule the endpoint then reports as failed. See
+		// PutBucketLifecycleConfigurationHandler for the S3 API's
+		// equivalent step and ordering.
+		if _, err := filer.ClearBucketLifecycleDayTTLs(context.Background(), client, filerConfig.BucketsPath, bucketName, collection); err != nil {
+			return fmt.Errorf("failed to clear legacy lifecycle TTLs: %w", err)
+		}
+
 		bucketEntry := lookupResp.Entry
 		if bucketEntry.Extended == nil {
 			bucketEntry.Extended = make(map[string][]byte)
@@ -1087,14 +1097,6 @@ func (s *AdminServer) SetBucketLifecycle(bucketName string, rules []BucketLifecy
 			Entry:     bucketEntry,
 		}); err != nil {
 			return fmt.Errorf("failed to update bucket lifecycle: %w", err)
-		}
-
-		// Migration: clear any legacy day-TTL filer.conf entries so they
-		// don't double-stamp expiration alongside the XML just saved. See
-		// PutBucketLifecycleConfigurationHandler for the S3 API's
-		// equivalent step.
-		if _, err := filer.ClearBucketLifecycleDayTTLs(context.Background(), client, filerConfig.BucketsPath, bucketName, collection); err != nil {
-			return fmt.Errorf("failed to clear legacy lifecycle TTLs: %w", err)
 		}
 
 		return nil

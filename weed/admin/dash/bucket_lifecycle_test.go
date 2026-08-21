@@ -87,13 +87,18 @@ func TestValidateBucketLifecycleRules_NegativeExpirationDays(t *testing.T) {
 	}
 }
 
-func TestValidateBucketLifecycleRules_NewerNoncurrentVersionsRequiresExpiration(t *testing.T) {
+// TestValidateBucketLifecycleRules_StandaloneNewerNoncurrentVersions guards
+// against re-adding a NoncurrentVersionExpirationDays requirement:
+// s3lifecycle.RuleActionKinds recognizes a standalone NewerNoncurrentVersions
+// (no days) as ActionKindNewerNoncurrent, a valid count-only retention rule
+// the S3 API already accepts and stores.
+func TestValidateBucketLifecycleRules_StandaloneNewerNoncurrentVersions(t *testing.T) {
 	rule := BucketLifecycleRule{
 		Status:                  s3lifecycle.StatusEnabled,
 		NewerNoncurrentVersions: 2,
 	}
-	if err := validateBucketLifecycleRules([]BucketLifecycleRule{rule}); err == nil {
-		t.Fatal("expected error when newer_noncurrent_versions is set without noncurrent_version_expiration_days")
+	if err := validateBucketLifecycleRules([]BucketLifecycleRule{rule}); err != nil {
+		t.Fatalf("expected standalone newer_noncurrent_versions to be accepted, got: %v", err)
 	}
 }
 

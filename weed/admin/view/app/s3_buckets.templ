@@ -1167,6 +1167,9 @@ templ S3Buckets(data dash.S3BucketsData) {
         // Save the whole working rule set back to the bucket.
         document.getElementById('lifecycleSaveAllBtn').addEventListener('click', function() {
             if (!lifecycleEditor.bucket) return;
+            // Fold in any rule the user is still editing so Save doesn't
+            // silently discard it; abort if that form isn't valid yet.
+            if (!commitOpenLifecycleRuleForm()) return;
 
             fetch(basePath('/api/s3/buckets/' + lifecycleEditor.bucket + '/lifecycle'), {
                 method: 'PUT',
@@ -1412,6 +1415,10 @@ function describeLifecycleActions(rule) {
             action += ', keep ' + rule.newer_noncurrent_versions + ' newest';
         }
         actions.push(action);
+    } else if (rule.newer_noncurrent_versions) {
+        // Standalone (no expiration_days): the engine still recognizes this
+        // as an action that expires noncurrent versions beyond the N newest.
+        actions.push('Keep ' + rule.newer_noncurrent_versions + ' newest noncurrent versions');
     }
     if (rule.abort_multipart_days) {
         actions.push('Abort incomplete multipart uploads after ' + formatDays(rule.abort_multipart_days));
@@ -1689,7 +1696,10 @@ function bindLifecycleEditorEvents() {
     }
 }
 
-function saveLifecycleRuleFromForm() {
+// readLifecycleRuleFromForm builds and validates a rule from the currently
+// open edit form's DOM inputs. Returns { rule: null, error: '...' } when the
+// form doesn't hold a valid rule, without mutating any state.
+function readLifecycleRuleFromForm() {
     const id = document.getElementById('lifecycleRuleId').value.trim();
     const status = document.querySelector('input[name="lifecycleRuleStatus"]:checked').value;
     const prefix = document.getElementById('lifecycleRulePrefix').value.trim();
@@ -1721,44 +1731,49 @@ function saveLifecycleRuleFromForm() {
     const abortDays = abortEnabled ? (parseInt(document.getElementById('lifecycleAbortMPUDays').value, 10) || 0) : 0;
 
     if (expireDaysEnabled && expirationDays <= 0) {
-        alert('Enter a valid number of days for expiration.');
-        return;
+        return { rule: null, error: 'Enter a valid number of days for expiration.' };
     }
     if (expireDateEnabled && !expirationDate) {
-        alert('Enter a valid expiration date.');
-        return;
+        return { rule: null, error: 'Enter a valid expiration date.' };
     }
     if (noncurrentEnabled && noncurrentDays <= 0) {
-        alert('Enter a valid number of days for noncurrent version expiration.');
-        return;
+        return { rule: null, error: 'Enter a valid number of days for noncurrent version expiration.' };
     }
     if (abortEnabled && abortDays <= 0) {
-        alert('Enter a valid number of days for aborting incomplete multipart uploads.');
-        return;
+        return { rule: null, error: 'Enter a valid number of days for aborting incomplete multipart uploads.' };
     }
     if (!expireDaysEnabled && !expireDateEnabled && !deleteMarker && !noncurrentEnabled && !abortEnabled) {
-        alert('Select at least one action for this rule.');
-        return;
+        return { rule: null, error: 'Select at least one action for this rule.' };
     }
     if (sizeGT > 0 && sizeLT > 0 && sizeGT >= sizeLT) {
-        alert('"Size greater than" must be less than "size less than".');
-        return;
+        return { rule: null, error: '"Size greater than" must be less than "size less than".' };
     }
 
-    const rule = {
-        id: id,
-        status: status,
-        prefix: prefix,
-        tags: tags,
-        size_greater_than: sizeGT > 0 ? sizeGT : null,
-        size_less_than: sizeLT > 0 ? sizeLT : null,
-        expiration_days: expirationDays > 0 ? expirationDays : null,
-        expiration_date: expirationDate || '',
-        expired_object_delete_marker: deleteMarker,
-        noncurrent_version_expiration_days: noncurrentDays > 0 ? noncurrentDays : null,
-        newer_noncurrent_versions: noncurrentKeep > 0 ? noncurrentKeep : null,
-        abort_multipart_days: abortDays > 0 ? abortDays : null,
+    return {
+        rule: {
+            id: id,
+            status: status,
+            prefix: prefix,
+            tags: tags,
+            size_greater_than: sizeGT > 0 ? sizeGT : null,
+            size_less_than: sizeLT > 0 ? sizeLT : null,
+            expiration_days: expirationDays > 0 ? expirationDays : null,
+            expiration_date: expirationDate || '',
+            expired_object_delete_marker: deleteMarker,
+            noncurrent_version_expiration_days: noncurrentDays > 0 ? noncurrentDays : null,
+            newer_noncurrent_versions: noncurrentKeep > 0 ? noncurrentKeep : null,
+            abort_multipart_days: abortDays > 0 ? abortDays : null,
+        },
+        error: null,
     };
+}
+
+function saveLifecycleRuleFromForm() {
+    const { rule, error } = readLifecycleRuleFromForm();
+    if (error) {
+        alert(error);
+        return;
+    }
 
     if (lifecycleEditor.editingIndex === 'new') {
         lifecycleEditor.rules.push(rule);
@@ -1768,6 +1783,33 @@ function saveLifecycleRuleFromForm() {
     lifecycleEditor.editingIndex = null;
     lifecycleEditor.editingRule = null;
     renderLifecycleEditor();
+}
+
+// commitOpenLifecycleRuleForm folds an in-progress add/edit form into
+// lifecycleEditor.rules before the whole rule set is sent to the server, so
+// clicking the modal's "Save" without first clicking "Save rule" doesn't
+// silently drop the open edit. Returns false (and leaves the form open) when
+// the open form doesn't hold a valid rule, so the caller can abort the save.
+function commitOpenLifecycleRuleForm() {
+    if (lifecycleEditor.editingIndex === null) {
+        return true;
+    }
+
+    const { rule, error } = readLifecycleRuleFromForm();
+    if (error) {
+        alert(error);
+        return false;
+    }
+
+    if (lifecycleEditor.editingIndex === 'new') {
+        lifecycleEditor.rules.push(rule);
+    } else {
+        lifecycleEditor.rules[lifecycleEditor.editingIndex] = rule;
+    }
+    lifecycleEditor.editingIndex = null;
+    lifecycleEditor.editingRule = null;
+    renderLifecycleEditor();
+    return true;
 }
 
     function goToPage(page) {
