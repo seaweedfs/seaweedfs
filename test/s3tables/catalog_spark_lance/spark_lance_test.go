@@ -254,16 +254,23 @@ func (env *environment) runSpark(t *testing.T, bucket string) {
 	ctx, cancel := context.WithTimeout(context.Background(), clientTimeout)
 	defer cancel()
 
-	script, err := filepath.Abs("spark_lance_ops.py")
-	if err != nil {
-		t.Fatalf("resolve the driver script: %v", err)
+	script, absErr := filepath.Abs("spark_lance_ops.py")
+	if absErr != nil {
+		t.Fatalf("resolve the driver script: %v", absErr)
 	}
 
 	// Ivy needs somewhere writable, and the Spark image runs as a user without a
 	// home directory it can write to. Kept outside the run's data directory so
-	// the connector bundle is downloaded once rather than on every run.
-	ivyDir := filepath.Join(os.TempDir(), "seaweedfs-lance-spark-ivy")
-	if err := os.MkdirAll(ivyDir, 0o777); err != nil {
+	// the 287MB connector bundle is downloaded once rather than on every run,
+	// and under the user's own cache rather than a shared temp path: this is
+	// mounted into a container running as root, so another local user must not
+	// be able to pre-create it and choose what Spark loads.
+	cacheRoot, err := os.UserCacheDir()
+	if err != nil {
+		cacheRoot = env.dataDir
+	}
+	ivyDir := filepath.Join(cacheRoot, "seaweedfs-lance-spark-ivy")
+	if err := os.MkdirAll(ivyDir, 0o755); err != nil {
 		t.Fatalf("create the ivy directory: %v", err)
 	}
 
