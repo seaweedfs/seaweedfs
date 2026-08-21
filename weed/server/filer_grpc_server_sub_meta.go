@@ -245,8 +245,9 @@ func memoryHoldsGap(currentTsNs, lastEvictedTsNs int64) bool {
 
 // errHeldByPeerWatermark aborts a read at an entry beyond the hold point; the
 // caller rewinds to the last delivered entry, waits, and re-reads (the
-// re-listing is what picks up a late-landing log file).
-var errHeldByPeerWatermark = errors.New("held by aggregated peer watermark")
+// re-listing is what picks up a late-landing log file). Holding is the normal
+// state on a cluster that keeps writing, hence the quiet stop.
+var errHeldByPeerWatermark = fmt.Errorf("held by aggregated peer watermark: %w", log_buffer.StopReadingError)
 
 // resolveAggReadHoldTsNs bounds how far an aggregated subscriber may read: a
 // cursor that passes T before every source has provably made T visible loses
