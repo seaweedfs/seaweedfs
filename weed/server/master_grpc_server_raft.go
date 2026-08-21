@@ -6,6 +6,7 @@ import (
 	"net"
 
 	"github.com/hashicorp/raft"
+	goraft "github.com/seaweedfs/raft"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
@@ -96,6 +97,62 @@ func (ms *MasterServer) RaftListClusterServers(ctx context.Context, req *master_
 	return resp, nil
 }
 
+// raftAddServer admits a master into the quorum. A master that starts with no
+// raft state cannot elect on its own, so the leader has to pull it in; this is
+// the one place that knows how to do that for either raft implementation.
+// goraft has no non-voting members, so an admitted peer always votes there.
+func (ms *MasterServer) raftAddServer(id string, grpcAddress string, voter bool) error {
+	ms.Topo.RaftServerAccessLock.RLock()
+	defer ms.Topo.RaftServerAccessLock.RUnlock()
+
+	if ms.Topo.HashicorpRaft != nil {
+		if ms.Topo.HashicorpRaft.State() != raft.Leader {
+			return fmt.Errorf("raft add server %s failed: %s is no current leader", id, ms.Topo.HashicorpRaft.String())
+		}
+		var idxFuture raft.IndexFuture
+		if voter {
+			idxFuture = ms.Topo.HashicorpRaft.AddVoter(raft.ServerID(id), raft.ServerAddress(grpcAddress), 0, 0)
+		} else {
+			idxFuture = ms.Topo.HashicorpRaft.AddNonvoter(raft.ServerID(id), raft.ServerAddress(grpcAddress), 0, 0)
+		}
+		return idxFuture.Error()
+	}
+
+	if ms.Topo.RaftServer == nil {
+		return nil
+	}
+	if ms.Topo.RaftServer.State() != goraft.Leader {
+		return fmt.Errorf("raft add server %s failed: %s is no current leader", id, ms.Topo.RaftServer.Name())
+	}
+	_, err := ms.Topo.RaftServer.Do(&goraft.DefaultJoinCommand{
+		Name:             id,
+		ConnectionString: grpcAddress,
+	})
+	return err
+}
+
+// raftRemoveServer drops a master from the quorum.
+func (ms *MasterServer) raftRemoveServer(id string) error {
+	ms.Topo.RaftServerAccessLock.RLock()
+	defer ms.Topo.RaftServerAccessLock.RUnlock()
+
+	if ms.Topo.HashicorpRaft != nil {
+		if ms.Topo.HashicorpRaft.State() != raft.Leader {
+			return fmt.Errorf("raft remove server %s failed: %s is no current leader", id, ms.Topo.HashicorpRaft.String())
+		}
+		return ms.Topo.HashicorpRaft.RemoveServer(raft.ServerID(id), 0, 0).Error()
+	}
+
+	if ms.Topo.RaftServer == nil {
+		return nil
+	}
+	if ms.Topo.RaftServer.State() != goraft.Leader {
+		return fmt.Errorf("raft remove server %s failed: %s is no current leader", id, ms.Topo.RaftServer.Name())
+	}
+	_, err := ms.Topo.RaftServer.Do(&goraft.DefaultLeaveCommand{Name: id})
+	return err
+}
+
 func (ms *MasterServer) RaftAddServer(ctx context.Context, req *master_pb.RaftAddServerRequest) (*master_pb.RaftAddServerResponse, error) {
 	resp := &master_pb.RaftAddServerResponse{}
 
@@ -103,25 +160,7 @@ func (ms *MasterServer) RaftAddServer(ctx context.Context, req *master_pb.RaftAd
 		return resp, err
 	}
 
-	ms.Topo.RaftServerAccessLock.RLock()
-	defer ms.Topo.RaftServerAccessLock.RUnlock()
-
-	if ms.Topo.HashicorpRaft == nil {
-		return resp, nil
-	}
-
-	if ms.Topo.HashicorpRaft.State() != raft.Leader {
-		return nil, fmt.Errorf("raft add server %s failed: %s is no current leader", req.Id, ms.Topo.HashicorpRaft.String())
-	}
-
-	var idxFuture raft.IndexFuture
-	if req.Voter {
-		idxFuture = ms.Topo.HashicorpRaft.AddVoter(raft.ServerID(req.Id), raft.ServerAddress(req.Address), 0, 0)
-	} else {
-		idxFuture = ms.Topo.HashicorpRaft.AddNonvoter(raft.ServerID(req.Id), raft.ServerAddress(req.Address), 0, 0)
-	}
-
-	if err := idxFuture.Error(); err != nil {
+	if err := ms.raftAddServer(req.Id, req.Address, req.Voter); err != nil {
 		return nil, err
 	}
 	return resp, nil
@@ -134,17 +173,6 @@ func (ms *MasterServer) RaftRemoveServer(ctx context.Context, req *master_pb.Raf
 		return resp, err
 	}
 
-	ms.Topo.RaftServerAccessLock.RLock()
-	defer ms.Topo.RaftServerAccessLock.RUnlock()
-
-	if ms.Topo.HashicorpRaft == nil {
-		return resp, nil
-	}
-
-	if ms.Topo.HashicorpRaft.State() != raft.Leader {
-		return nil, fmt.Errorf("raft remove server %s failed: %s is no current leader", req.Id, ms.Topo.HashicorpRaft.String())
-	}
-
 	if !req.Force {
 		ms.clientChansLock.RLock()
 		_, ok := ms.clientChans[fmt.Sprintf("%s@%s", cluster.MasterType, req.Id)]
@@ -154,8 +182,7 @@ func (ms *MasterServer) RaftRemoveServer(ctx context.Context, req *master_pb.Raf
 		}
 	}
 
-	idxFuture := ms.Topo.HashicorpRaft.RemoveServer(raft.ServerID(req.Id), 0, 0)
-	if err := idxFuture.Error(); err != nil {
+	if err := ms.raftRemoveServer(req.Id); err != nil {
 		return nil, err
 	}
 	return resp, nil

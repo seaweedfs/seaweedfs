@@ -33,6 +33,9 @@ type masterNode struct {
 	cmd      *exec.Cmd
 	logFile  string
 	stopped  bool
+	// peersStr overrides the cluster-wide peer list for this node, so a test
+	// can start a master that only knows about a subset of the cluster.
+	peersStr string
 }
 
 // MasterCluster manages a 3-node master raft cluster for integration tests.
@@ -48,6 +51,9 @@ type MasterCluster struct {
 
 	// peers string shared by all nodes, e.g. "127.0.0.1:9333,127.0.0.1:9334,127.0.0.1:9335"
 	peersStr string
+
+	// raftHashicorp starts the masters with -raftHashicorp
+	raftHashicorp bool
 }
 
 // clusterStatus is the JSON returned by /cluster/status.
@@ -59,6 +65,35 @@ type clusterStatus struct {
 
 // StartMasterCluster boots a 3-node master raft cluster and waits for a leader.
 func StartMasterCluster(t testing.TB) *MasterCluster {
+	t.Helper()
+
+	mc := NewMasterCluster(t, false)
+	for i := range 3 {
+		mc.StartNode(i)
+	}
+
+	if err := mc.WaitForLeader(waitTimeout); err != nil {
+		mc.DumpLogs()
+		mc.StopAll()
+		t.Fatalf("cluster did not elect a leader: %v", err)
+	}
+
+	// Wait for TopologyId to be generated and propagated. This is async
+	// after leader election, and we need it committed before tests can
+	// reliably stop/restart nodes.
+	if _, err := mc.WaitForTopologyId(waitTimeout); err != nil {
+		mc.DumpLogs()
+		mc.StopAll()
+		t.Fatalf("TopologyId not generated: %v", err)
+	}
+
+	return mc
+}
+
+// NewMasterCluster allocates ports and data directories for a 3-node master
+// cluster without starting anything, so a test can choose what each node comes
+// up with.
+func NewMasterCluster(t testing.TB, raftHashicorp bool) *MasterCluster {
 	t.Helper()
 
 	weedBinary, err := findOrBuildWeedBinary()
@@ -94,38 +129,28 @@ func StartMasterCluster(t testing.TB) *MasterCluster {
 	}
 
 	mc := &MasterCluster{
-		t:          t,
-		weedBinary: weedBinary,
-		baseDir:    baseDir,
-		logsDir:    logsDir,
-		keepLogs:   keepLogs,
-		nodes:      nodes,
-		peersStr:   strings.Join(peerParts, ","),
-	}
-
-	for i := range 3 {
-		mc.StartNode(i)
-	}
-
-	if err := mc.WaitForLeader(waitTimeout); err != nil {
-		mc.DumpLogs()
-		mc.StopAll()
-		t.Fatalf("cluster did not elect a leader: %v", err)
-	}
-
-	// Wait for TopologyId to be generated and propagated. This is async
-	// after leader election, and we need it committed before tests can
-	// reliably stop/restart nodes.
-	if err := mc.WaitForTopologyId(waitTimeout); err != nil {
-		mc.DumpLogs()
-		mc.StopAll()
-		t.Fatalf("TopologyId not generated: %v", err)
+		t:             t,
+		weedBinary:    weedBinary,
+		baseDir:       baseDir,
+		logsDir:       logsDir,
+		keepLogs:      keepLogs,
+		nodes:         nodes,
+		peersStr:      strings.Join(peerParts, ","),
+		raftHashicorp: raftHashicorp,
 	}
 
 	t.Cleanup(func() {
 		mc.StopAll()
 	})
 	return mc
+}
+
+// SetNodePeers narrows the peer list node i starts with, mirroring a
+// StatefulSet whose replica count changed under a running master.
+func (mc *MasterCluster) SetNodePeers(i int, peers string) {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+	mc.nodes[i].peersStr = peers
 }
 
 // StartNode starts the master process at the given index (0–2).
@@ -144,16 +169,23 @@ func (mc *MasterCluster) StartNode(i int) {
 		mc.t.Fatalf("create log for node %d: %v", i, err)
 	}
 
+	peersStr := n.peersStr
+	if peersStr == "" {
+		peersStr = mc.peersStr
+	}
 	args := []string{
 		"master",
 		"-ip=127.0.0.1",
 		"-port=" + strconv.Itoa(n.port),
 		"-port.grpc=" + strconv.Itoa(n.grpcPort),
 		"-mdir=" + n.dataDir,
-		"-peers=" + mc.peersStr,
+		"-peers=" + peersStr,
 		"-electionTimeout=3s",
 		"-volumeSizeLimitMB=32",
 		"-defaultReplication=000",
+	}
+	if mc.raftHashicorp {
+		args = append(args, "-raftHashicorp")
 	}
 
 	n.cmd = exec.Command(mc.weedBinary, args...)
@@ -292,6 +324,24 @@ func (mc *MasterCluster) WaitForLeader(timeout time.Duration) error {
 	return fmt.Errorf("no leader elected within %v", timeout)
 }
 
+// WaitForNoLeader waits until no running master claims leadership. goraft only
+// checks whether it still has a quorum on an election-timeout ticker, and needs
+// its peers to go quiet for a full timeout first, so a master that has lost its
+// quorum can keep claiming leadership for tens of seconds. It cannot commit
+// anything in that window.
+func (mc *MasterCluster) WaitForNoLeader(timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		idx, _ := mc.FindLeader()
+		if idx < 0 {
+			return nil
+		}
+		time.Sleep(waitTick)
+	}
+	idx, addr := mc.FindLeader()
+	return fmt.Errorf("master %d at %s still claims leadership after %v", idx, addr, timeout)
+}
+
 // WaitForNewLeader waits for a leader that is different from the given address.
 func (mc *MasterCluster) WaitForNewLeader(oldLeaderAddr string, timeout time.Duration) (int, string, error) {
 	deadline := time.Now().Add(timeout)
@@ -305,18 +355,20 @@ func (mc *MasterCluster) WaitForNewLeader(oldLeaderAddr string, timeout time.Dur
 	return -1, "", fmt.Errorf("no new leader (different from %s) within %v", oldLeaderAddr, timeout)
 }
 
-// WaitForTopologyId waits until the leader reports a non-empty TopologyId.
-func (mc *MasterCluster) WaitForTopologyId(timeout time.Duration) error {
+// WaitForTopologyId waits until the leader reports a non-empty TopologyId, and
+// returns it. It is only readable once the leader has applied the raft entry
+// carrying it, which lands after the election it won.
+func (mc *MasterCluster) WaitForTopologyId(timeout time.Duration) (string, error) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if idx, _ := mc.FindLeader(); idx >= 0 {
 			if id, err := mc.GetTopologyId(idx); err == nil && id != "" {
-				return nil
+				return id, nil
 			}
 		}
 		time.Sleep(waitTick)
 	}
-	return fmt.Errorf("TopologyId not available within %v", timeout)
+	return "", fmt.Errorf("TopologyId not available within %v", timeout)
 }
 
 // WaitForNodeReady waits for node i to respond to HTTP.
