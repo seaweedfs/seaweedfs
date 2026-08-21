@@ -289,7 +289,7 @@ func TestRemoteTier_LiveTierUpload_StillReportsToMaster(t *testing.T) {
 	require.True(t, v.HasRemoteFile(), "a tier-uploaded volume is in remote mode even before any reload")
 	require.False(t, util.FileExists(v.FileName(".dat")), "tier-up should have removed the local .dat")
 
-	_, msg := v.ToVolumeInformationMessage()
+	_, msg := v.ToVolumeInformationMessage(nil)
 	require.NotNil(t, msg, "tier-uploaded volume must still report to master")
 	require.NotEmpty(t, msg.RemoteStorageName, "reported volume must carry its remote backend name")
 }

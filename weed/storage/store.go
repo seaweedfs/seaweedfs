@@ -450,6 +450,9 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	collectionVolumeSize := make(map[string]int64)
 	collectionVolumeDeletedBytes := make(map[string]int64)
 	collectionVolumeReadOnlyCount := make(map[string]map[string]uint8)
+	// Filled once per volume and kept only by the heartbeat that carries it, so
+	// a server with nothing to say fills the same message all the way through.
+	scratchMessage := &master_pb.VolumeInformationMessage{}
 	for diskID, location := range s.Locations {
 		if location.isDiskUnavailable.Load() {
 			continue
@@ -477,7 +480,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		diskFreeBytes[string(location.DiskType)] += location.diskFreeBytes.Load()
 		location.volumesLock.RLock()
 		for _, v := range location.volumes {
-			curMaxFileKey, volumeMessage := v.ToVolumeInformationMessage()
+			curMaxFileKey, volumeMessage := v.ToVolumeInformationMessage(scratchMessage)
 			if volumeMessage == nil {
 				continue
 			}
@@ -517,6 +520,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 				volumeDigest ^= reportHash
 				if s.volumeReport.record(volumeMessage, reportHash, reportPass) || sendFullList {
 					volumeMessages = append(volumeMessages, volumeMessage)
+					scratchMessage = &master_pb.VolumeInformationMessage{}
 				}
 			} else {
 				if v.expiredLongEnough(MAX_TTL_VOLUME_REMOVAL_DELAY) {
