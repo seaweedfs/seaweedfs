@@ -394,7 +394,7 @@ var (
 	miniS3AllowDeleteBucketNotEmpty = cmdMini.Flag.Bool("s3.allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
 	miniS3AutoCreateBucket          = cmdMini.Flag.Bool("s3.autoCreateBucket", true, "create the bucket on upload if it does not exist, for admin identities only")
 	miniBucket                      = cmdMini.Flag.String("bucket", "", "comma-separated S3 bucket names to create on startup if they do not already exist; leave empty to skip. Falls back to S3_BUCKET env var.")
-	miniTableBucket                 = cmdMini.Flag.String("tableBucket", "", "comma-separated S3 Tables bucket names to create on startup if they do not already exist; leave empty to skip. Falls back to S3_TABLE_BUCKET env var.")
+	miniTableBucket                 = cmdMini.Flag.String("tableBucket", "", "comma-separated S3 Tables buckets to create on startup if they do not already exist, each name[:FORMAT] with FORMAT one of ICEBERG (default) or LANCE, e.g. warehouse,vectors:LANCE; leave empty to skip. Falls back to S3_TABLE_BUCKET env var.")
 )
 
 // getBindIp determines the bind IP address based on miniIp and miniBindIp flags
@@ -1367,12 +1367,22 @@ func runMini(cmd *Command, args []string) bool {
 	tableBucketSpec := *miniTableBucket
 	if tableBucketSpec == "" {
 		tableBucketSpec = os.Getenv("S3_TABLE_BUCKET")
-	} else if os.Getenv("S3_TABLE_BUCKET") == "" {
-		// The catalog routes unprefixed requests to the first S3_TABLE_BUCKET
-		// entry; let the -tableBucket flag mean the same thing.
-		os.Setenv("S3_TABLE_BUCKET", tableBucketSpec)
 	}
-	if err := ensureMiniTableBuckets(tableBucketSpec); err != nil {
+	tableBuckets := parseTableBucketList(tableBucketSpec)
+	if os.Getenv("S3_TABLE_BUCKET") == "" {
+		// The Iceberg catalog routes unprefixed requests to the first
+		// S3_TABLE_BUCKET entry, so only Iceberg names belong there.
+		var icebergNames []string
+		for _, bucket := range tableBuckets {
+			if bucket.format == s3tables.FormatIceberg {
+				icebergNames = append(icebergNames, bucket.name)
+			}
+		}
+		if len(icebergNames) > 0 {
+			os.Setenv("S3_TABLE_BUCKET", strings.Join(icebergNames, ","))
+		}
+	}
+	if err := ensureMiniTableBuckets(tableBuckets); err != nil {
 		glog.Warningf("failed to ensure table buckets %q: %v", tableBucketSpec, err)
 	}
 
@@ -2012,23 +2022,35 @@ func ensureMiniBuckets(bucketSpec string) error {
 	})
 }
 
+// tableBucketEntry is one -tableBucket entry: a bucket name and the table
+// format that bucket will hold.
+type tableBucketEntry struct {
+	name   string
+	format string
+}
+
 // ensureMiniTableBuckets creates each named S3 Tables bucket on the embedded
-// filer if it does not already exist. bucketSpec is comma-separated; whitespace
-// is trimmed and duplicates are dropped. Per-bucket failures are logged so one
+// filer if it does not already exist. Per-bucket failures are logged so one
 // bad name does not block the rest. Buckets are owned by s3tables.DefaultAccountID
 // since mini does not yet model multi-account ownership.
-func ensureMiniTableBuckets(bucketSpec string) error {
-	names := parseBucketList(bucketSpec)
-	if len(names) == 0 {
-		return nil
+func ensureMiniTableBuckets(buckets []tableBucketEntry) error {
+	// A bucket holds one format, and the format decides which catalog serves
+	// it, so one created in a format this mini does not serve is a bucket no
+	// client can reach.
+	var servable []tableBucketEntry
+	for _, bucket := range buckets {
+		if !miniServesTableFormat(bucket.format) {
+			// An unsuffixed name means Iceberg, so on a Lance-only mini say how to ask.
+			hint := ""
+			if bucket.format == s3tables.FormatIceberg && miniServesTableFormat(s3tables.FormatLance) {
+				hint = fmt.Sprintf("; name it %s:%s for the Lance namespace", bucket.name, s3tables.FormatLance)
+			}
+			glog.Warningf("not creating table bucket %s: no %s endpoint is enabled, so nothing could reach it%s", bucket.name, bucket.format, hint)
+			continue
+		}
+		servable = append(servable, bucket)
 	}
-
-	// A bucket holds one format, and the format decides which catalog serves it.
-	// Creating one in a format this mini does not serve leaves a bucket no
-	// client can reach, so take the format from the endpoint that is running.
-	format := miniTableBucketFormat()
-	if format == "" {
-		glog.Warningf("not creating table buckets %q: neither the Iceberg nor the Lance endpoint is enabled, so nothing could reach them", bucketSpec)
+	if len(servable) == 0 {
 		return nil
 	}
 
@@ -2038,41 +2060,71 @@ func ensureMiniTableBuckets(bucketSpec string) error {
 	return pb.WithGrpcFilerClient(false, 0, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		manager := s3tables.NewManager()
 		mgrClient := s3tables.NewManagerClient(client)
-		for _, name := range names {
+		for _, bucket := range servable {
 			ctx, cancel := context.WithTimeout(miniClientsCtx(), 5*time.Second)
-			req := &s3tables.CreateTableBucketRequest{Name: name, Format: format}
+			req := &s3tables.CreateTableBucketRequest{Name: bucket.name, Format: bucket.format}
 			var resp s3tables.CreateTableBucketResponse
 			err := manager.Execute(ctx, mgrClient, "CreateTableBucket", req, &resp, s3tables.DefaultAccountID)
 			cancel()
 			if err == nil {
-				glog.V(0).Infof("created %s table bucket %s", format, name)
+				glog.V(0).Infof("created %s table bucket %s", bucket.format, bucket.name)
 				continue
 			}
 			var s3Err *s3tables.S3TablesError
 			if errors.As(err, &s3Err) && s3Err.Type == s3tables.ErrCodeBucketAlreadyExists {
-				glog.V(0).Infof("table bucket %s already exists", name)
+				glog.V(0).Infof("table bucket %s already exists", bucket.name)
 				continue
 			}
-			glog.Warningf("create table bucket %s: %v", name, err)
+			glog.Warningf("create table bucket %s: %v", bucket.name, err)
 		}
 		return nil
 	})
 }
 
-// miniTableBucketFormat is the format a pre-created table bucket should hold:
-// Iceberg when its catalog is running, else Lance, else none because neither
-// server is up.
-func miniTableBucketFormat() string {
+// miniServesTableFormat reports whether the endpoint that serves format is
+// running here: the Iceberg catalog for ICEBERG, the Lance namespace for LANCE.
+func miniServesTableFormat(format string) bool {
 	if miniEnableS3 == nil || !*miniEnableS3 {
-		return ""
+		return false
 	}
-	if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
-		return s3tables.FormatIceberg
+	switch format {
+	case s3tables.FormatIceberg:
+		return miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0
+	case s3tables.FormatLance:
+		return miniS3Options.portLance != nil && *miniS3Options.portLance > 0
 	}
-	if miniS3Options.portLance != nil && *miniS3Options.portLance > 0 {
-		return s3tables.FormatLance
+	return false
+}
+
+// parseTableBucketList splits a comma-separated table bucket spec into
+// deduplicated name[:FORMAT] entries, in the order given. The format is stated
+// rather than read off whichever catalog happens to be listening, so one spec
+// means one thing on every mini.
+func parseTableBucketList(spec string) []tableBucketEntry {
+	if spec == "" {
+		return nil
 	}
-	return ""
+	seen := make(map[string]bool)
+	var buckets []tableBucketEntry
+	for _, raw := range strings.Split(spec, ",") {
+		name, rawFormat, _ := strings.Cut(raw, ":")
+		name = strings.TrimSpace(name)
+		if name == "" || seen[name] {
+			continue
+		}
+		format := s3tables.FormatIceberg
+		if rawFormat = strings.TrimSpace(rawFormat); rawFormat != "" {
+			normalized, ok := s3tables.NormalizeFormat(rawFormat)
+			if !ok {
+				glog.Warningf("not creating table bucket %s: unsupported format %q", name, rawFormat)
+				continue
+			}
+			format = normalized
+		}
+		seen[name] = true
+		buckets = append(buckets, tableBucketEntry{name: name, format: format})
+	}
+	return buckets
 }
 
 // parseBucketList splits a comma-separated bucket spec into a deduplicated list
