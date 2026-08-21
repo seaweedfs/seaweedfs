@@ -1368,12 +1368,16 @@ func runMini(cmd *Command, args []string) bool {
 	if tableBucketSpec == "" {
 		tableBucketSpec = os.Getenv("S3_TABLE_BUCKET")
 	}
-	tableBuckets := parseTableBucketList(tableBucketSpec)
+	ready, err := ensureMiniTableBuckets(parseTableBucketList(tableBucketSpec))
+	if err != nil {
+		glog.Warningf("failed to ensure table buckets %q: %v", tableBucketSpec, err)
+	}
 	if os.Getenv("S3_TABLE_BUCKET") == "" {
 		// The Iceberg catalog routes unprefixed requests to the first
-		// S3_TABLE_BUCKET entry, so only Iceberg names belong there.
+		// S3_TABLE_BUCKET entry, so only buckets that came back holding
+		// Iceberg tables belong there.
 		var icebergNames []string
-		for _, bucket := range tableBuckets {
+		for _, bucket := range ready {
 			if bucket.format == s3tables.FormatIceberg {
 				icebergNames = append(icebergNames, bucket.name)
 			}
@@ -1381,9 +1385,6 @@ func runMini(cmd *Command, args []string) bool {
 		if len(icebergNames) > 0 {
 			os.Setenv("S3_TABLE_BUCKET", strings.Join(icebergNames, ","))
 		}
-	}
-	if err := ensureMiniTableBuckets(tableBuckets); err != nil {
-		glog.Warningf("failed to ensure table buckets %q: %v", tableBucketSpec, err)
 	}
 
 	// Print welcome message after all services are running
@@ -2030,10 +2031,11 @@ type tableBucketEntry struct {
 }
 
 // ensureMiniTableBuckets creates each named S3 Tables bucket on the embedded
-// filer if it does not already exist. Per-bucket failures are logged so one
-// bad name does not block the rest. Buckets are owned by s3tables.DefaultAccountID
+// filer if it does not already exist, and returns the ones that now hold the
+// format that was asked for. Per-bucket failures are logged so one bad name
+// does not block the rest. Buckets are owned by s3tables.DefaultAccountID
 // since mini does not yet model multi-account ownership.
-func ensureMiniTableBuckets(buckets []tableBucketEntry) error {
+func ensureMiniTableBuckets(buckets []tableBucketEntry) ([]tableBucketEntry, error) {
 	// A bucket holds one format, and the format decides which catalog serves
 	// it, so one created in a format this mini does not serve is a bucket no
 	// client can reach.
@@ -2051,13 +2053,14 @@ func ensureMiniTableBuckets(buckets []tableBucketEntry) error {
 		servable = append(servable, bucket)
 	}
 	if len(servable) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	filerAddress := pb.NewServerAddress(*miniIp, *miniFilerOptions.port, *miniFilerOptions.portGrpc)
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
-	return pb.WithGrpcFilerClient(false, 0, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	var ready []tableBucketEntry
+	err := pb.WithGrpcFilerClient(false, 0, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		manager := s3tables.NewManager()
 		mgrClient := s3tables.NewManagerClient(client)
 		for _, bucket := range servable {
@@ -2068,17 +2071,45 @@ func ensureMiniTableBuckets(buckets []tableBucketEntry) error {
 			cancel()
 			if err == nil {
 				glog.V(0).Infof("created %s table bucket %s", bucket.format, bucket.name)
+				ready = append(ready, bucket)
 				continue
 			}
 			var s3Err *s3tables.S3TablesError
 			if errors.As(err, &s3Err) && s3Err.Type == s3tables.ErrCodeBucketAlreadyExists {
+				// The name being taken says nothing about the format holding
+				// it, and the catalogs refuse tables of the other one, so a
+				// silent reuse only fails later at the client.
+				existing := existingTableBucketFormat(manager, mgrClient, bucket.name)
+				if existing != "" && existing != bucket.format {
+					glog.Warningf("table bucket %s already exists holding %s tables, not %s; leaving it alone", bucket.name, existing, bucket.format)
+					continue
+				}
 				glog.V(0).Infof("table bucket %s already exists", bucket.name)
+				ready = append(ready, bucket)
 				continue
 			}
 			glog.Warningf("create table bucket %s: %v", bucket.name, err)
 		}
 		return nil
 	})
+	return ready, err
+}
+
+// existingTableBucketFormat is the format the named table bucket holds, or "" if
+// it cannot be read or predates declared formats, which accepts either.
+func existingTableBucketFormat(manager *s3tables.Manager, client *s3tables.ManagerClient, name string) string {
+	arn, err := s3tables.BuildBucketARN(s3tables.DefaultRegion, s3tables.DefaultAccountID, name)
+	if err != nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(miniClientsCtx(), 5*time.Second)
+	defer cancel()
+	var resp s3tables.GetTableBucketResponse
+	if err := manager.Execute(ctx, client, "GetTableBucket", &s3tables.GetTableBucketRequest{TableBucketARN: arn}, &resp, s3tables.DefaultAccountID); err != nil {
+		glog.V(1).Infof("read format of table bucket %s: %v", name, err)
+		return ""
+	}
+	return resp.Format
 }
 
 // miniServesTableFormat reports whether the endpoint that serves format is
