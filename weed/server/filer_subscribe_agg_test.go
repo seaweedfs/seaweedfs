@@ -238,3 +238,29 @@ func TestSubscribeLoop_AggregatedHoldCoalescesPeerProgress(t *testing.T) {
 	// Coalescing may not lose anything the peers reported through.
 	waitForEventsAtLeastOnce(t, r, written, 3*time.Second)
 }
+
+// TestPeerDeliveryClaimPacing pins what a filer with peers owes them: the idle
+// heartbeat on its local stream is a delivery claim every aggregated
+// subscriber in the cluster holds at, so it refreshes at the claim interval,
+// not at the keepalive interval that used to park them ~5s behind live writes.
+func TestPeerDeliveryClaimPacing(t *testing.T) {
+	h := newSubscribeHarness(t)
+	req := &filer_pb.SubscribeMetadataRequest{ClientSupportsIdleHeartbeat: true}
+	lb := h.f.LocalMetaLogBuffer
+	// Claimed a second ago: stale for a delivery claim, fresh for a keepalive.
+	claimedAtNs := time.Now().Add(-time.Second).UnixNano()
+
+	s := &collectingStream{}
+	if got := h.fs.maybeSendIdleHeartbeat(req, s, lb, 0, 0, claimedAtNs); got != claimedAtNs || len(s.messages) != 0 {
+		t.Fatalf("standalone filer sent %d heartbeats early", len(s.messages))
+	}
+
+	h.startAggregator()
+	s = &collectingStream{}
+	if got := h.fs.maybeSendIdleHeartbeat(req, s, lb, 0, 0, claimedAtNs); got == claimedAtNs || len(s.messages) != 1 {
+		t.Fatalf("filer with peers sent %d delivery claims, want 1", len(s.messages))
+	}
+	if s.messages[0].TsNs <= claimedAtNs {
+		t.Fatalf("claim ts %d did not advance past %d", s.messages[0].TsNs, claimedAtNs)
+	}
+}

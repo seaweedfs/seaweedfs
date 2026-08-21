@@ -51,11 +51,19 @@ const (
 	// from looking stuck during read-only periods on the source.
 	idleHeartbeatInterval = 5 * time.Second
 
+	// peerDeliveryClaimInterval paces that heartbeat on the local stream of a
+	// filer with peers, where it is not a keepalive but a delivery claim: the
+	// peer aggregator turns it into its delivery low-watermark, and every
+	// aggregated subscriber in the cluster holds at the minimum across peers.
+	// So this, not idleHeartbeatInterval, is how far behind live writes a
+	// quiet filer leaves them. Rounded up to the reader's own poll interval.
+	peerDeliveryClaimInterval = 200 * time.Millisecond
+
 	// heldWakeFloor coalesces hold releases. Peers advance their watermarks
 	// per event they stream, and each release costs a whole pass - a log file
 	// listing included - so releasing on every advance turns a busy cluster
 	// into a listing storm. It is added to delivery latency, so it stays well
-	// under the watermark freshness that already bounds it.
+	// under the claim interval that already bounds it.
 	heldWakeFloor = 20 * time.Millisecond
 )
 
@@ -1162,8 +1170,13 @@ func (fs *FilerServer) maybeSendIdleHeartbeat(req *filer_pb.SubscribeMetadataReq
 		// the buffer holds data the subscriber has not reached yet
 		return lastHeartbeatNs
 	}
+	isLocalStream := fs.filer != nil && logBuffer == fs.filer.LocalMetaLogBuffer
+	interval := idleHeartbeatInterval
+	if isLocalStream && fs.filer.MetaAggregator != nil && fs.filer.MetaAggregator.HasRemotePeers() {
+		interval = peerDeliveryClaimInterval
+	}
 	now := time.Now().UnixNano()
-	if now-lastHeartbeatNs < int64(idleHeartbeatInterval) {
+	if now-lastHeartbeatNs < int64(interval) {
 		return lastHeartbeatNs
 	}
 	// On the local stream the heartbeat is a delivery claim to a peer
@@ -1175,7 +1188,7 @@ func (fs *FilerServer) maybeSendIdleHeartbeat(req *filer_pb.SubscribeMetadataReq
 	// (fenced above it), or already appended here - and then the head check
 	// proves this stream has sent it before the heartbeat.
 	heartbeat := &filer_pb.SubscribeMetadataResponse{TsNs: now}
-	if fs.filer != nil && logBuffer == fs.filer.LocalMetaLogBuffer {
+	if isLocalStream {
 		heartbeat.TsNs = fs.filer.LocalDeliveredThroughTsNs(now)
 		heartbeat.FlushedTsNs = fs.filer.LocalFlushedThroughTsNs(now)
 		if logBuffer.LastTsNs.Load() > floorTsNs {
