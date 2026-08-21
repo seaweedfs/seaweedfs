@@ -26,8 +26,9 @@ CREATE SECRET seaweedfs (
 --    valid Lance dataset directory, which is what makes this possible.
 SELECT 'scan_rows=' || count(*) FROM __lance_scan('__TABLE__');
 
--- 2. Its schema survived, vector column included.
-SELECT 'scan_columns=' || string_agg(column_name, ',')
+-- 2. Its schema survived, vector column included. Ordered, because string_agg
+--    over an unordered relation is free to return the names in any order.
+SELECT 'scan_columns=' || string_agg(column_name, ',' ORDER BY column_name)
 FROM (DESCRIBE SELECT * FROM __lance_scan('__TABLE__'));
 
 -- 3. A filter, so it is not only a full scan.
@@ -35,7 +36,7 @@ SELECT 'filtered_rows=' || count(*) FROM __lance_scan('__TABLE__') WHERE id < 5;
 
 -- 4. Vector search, which is what the format is for. No index is built here, so
 --    this is a brute-force search; the ids nearest the query are what matters.
-SELECT 'nearest=' || string_agg(id::VARCHAR, ',')
+SELECT 'nearest=' || string_agg(id::VARCHAR, ',' ORDER BY _distance ASC, id ASC)
 FROM lance_vector_search('__TABLE__', 'vector',
                          [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], k := 3);
 
