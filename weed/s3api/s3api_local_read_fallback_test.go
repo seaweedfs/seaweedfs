@@ -21,7 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// stubReaderAt returns a fixed result, standing in for ChunkReadAt in probe unit tests.
+// stubReaderAt stands in for ChunkReadAt in probe unit tests.
 type stubReaderAt struct {
 	n   int
 	err error
@@ -109,9 +109,8 @@ func TestShouldFallBackToRemote(t *testing.T) {
 	})
 }
 
-// newLocalReadFallbackServer wires a real ReaderCache against the fake filer.
-// The fake filer does not implement LookupVolume, so any chunk read fails,
-// standing in for an unreachable/evicted volume server.
+// The fake filer does not implement LookupVolume, so every chunk read through
+// this ReaderCache fails, standing in for an unreachable volume server.
 func newLocalReadFallbackServer(t *testing.T, filerAddr pb.ServerAddress) *S3ApiServer {
 	t.Helper()
 	s3a := newRemoteCacheTestServer(filerAddr)
@@ -121,9 +120,7 @@ func newLocalReadFallbackServer(t *testing.T, filerAddr pb.ServerAddress) *S3Api
 	return s3a
 }
 
-// cachedEntry has local chunks (pointing at a volume that will fail to resolve)
-// plus a RemoteEntry mirroring its size — the shape of a remote-mounted object
-// whose cached copy is present in metadata but unreadable from volume servers.
+// a remote-mounted object whose cached copy is in the metadata but unreadable
 func cachedEntry(content []byte) *filer_pb.Entry {
 	return &filer_pb.Entry{
 		Name:        "obj.bin",
@@ -204,8 +201,7 @@ func TestS3CachedReadFallsBackToRemote(t *testing.T) {
 	})
 }
 
-// truncatedReaderAt serves the first breakAt bytes and then fails, standing in
-// for a multi-chunk object whose later chunk's volume server is unreachable.
+// a multi-chunk object whose later chunk's volume server is unreachable
 type truncatedReaderAt struct {
 	data    []byte
 	breakAt int64
@@ -219,14 +215,13 @@ func (t truncatedReaderAt) ReadAt(p []byte, offset int64) (int, error) {
 	return copy(p, t.data[offset:t.breakAt]), nil
 }
 
-// failingWriter stands in for a client that disconnected mid-response.
+// a client that disconnected mid-response
 type failingWriter struct{ err error }
 
 func (f failingWriter) Write(p []byte) (int, error) { return 0, f.err }
 
-// TestStreamRangeToClientFinishesFromRemote covers the window the pre-flight
-// probe cannot: the byte at the requested offset reads fine, the response is
-// committed, and only then does a later chunk turn out to be unreadable.
+// the window the probe cannot cover: the byte at offset reads fine, the response
+// is committed, and only then does a later chunk turn out to be unreadable
 func TestStreamRangeToClientFinishesFromRemote(t *testing.T) {
 	content := []byte("0123456789")
 	size := int64(len(content))

@@ -1133,12 +1133,9 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	reader := filer.NewChunkReaderAtFromClient(ctx, s3a.readerCache, chunkViews, totalSize, filer.DefaultPrefetchCount)
 	streamPrepTime = time.Since(tStreamPrep)
 
-	// For a remote-mounted object, confirm the local (volume-server) copy is
-	// readable before committing the response. A locally-cached chunk whose
-	// volume server is down, or whose needle has been evicted and now 404s under
-	// retry-backoff, would otherwise stall and then 500 after the headers are
-	// already sent. Instead, fall back to the authoritative mounted remote. The
-	// probe is bounded so a stuck volume trips the timeout rather than blocking.
+	// A cached chunk whose volume server is down, or whose needle was evicted and
+	// now 404s under retry-backoff, would stall and then 500 after the headers are
+	// already sent -- serve the authoritative remote instead.
 	if s3a.shouldFallBackToRemote(entry, totalSize, versionId) {
 		if probeErr := probeReadable(ctx, reader, offset, localReadProbeTimeout); probeErr != nil {
 			if isCanceledStreamingError(probeErr) {
@@ -1210,19 +1207,14 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	return nil
 }
 
-// localReadProbeTimeout bounds the pre-flight local read that decides whether to
-// serve a remote-mounted object from its mounted remote instead. It is short so a
-// stuck volume server (down, or serving an evicted needle under retry-backoff)
-// falls back promptly rather than stalling the request.
+// short, so a down volume server or an evicted needle under retry-backoff falls
+// back promptly instead of stalling the request
 const localReadProbeTimeout = 2 * time.Second
 
-// shouldFallBackToRemote reports whether a failed local read of this object may
-// be served from its mounted remote instead. It requires an unversioned read
-// (openRemoteStream reads only the unversioned key -- a latest read that
-// resolves to a specific version is treated as versioned, matching the
-// remote-only stream-through path), and a RemoteEntry whose size matches the
-// object so the fallback serves identical bytes under the already-computed
-// Content-Length.
+// shouldFallBackToRemote reports whether a failed local read may be served from
+// the mounted remote instead: openRemoteStream only reads the unversioned key,
+// and the sizes must match for the bytes to be identical under the
+// already-computed Content-Length.
 func (s3a *S3ApiServer) shouldFallBackToRemote(entry *filer_pb.Entry, totalSize int64, versionId string) bool {
 	if v := resolvedSourceVersionId(versionId, entry); v != "" && v != "null" {
 		return false
@@ -1231,20 +1223,14 @@ func (s3a *S3ApiServer) shouldFallBackToRemote(entry *filer_pb.Entry, totalSize 
 	return totalSize > 0 && remote != nil && remote.GetRemoteSize() == totalSize
 }
 
-// ctxReaderAt is a ReaderAt whose read honors context cancellation, satisfied by
-// filer.ChunkReadAt. It lets probeReadable bound a single-byte read.
+// the context-honoring read of filer.ChunkReadAt, so probeReadable can bound it
 type ctxReaderAt interface {
 	ReadAtWithTime(ctx context.Context, p []byte, offset int64) (int, int64, error)
 }
 
-// probeReadable performs a bounded single-byte read at offset to decide whether
-// the local (volume-server) copy is usable. ChunkReadAt honors the context while
-// waiting on the shared download, so a stuck volume trips the timeout and returns
-// context.DeadlineExceeded while the download continues for other readers. The
-// copy is readable only if the byte is actually returned (a trailing io.EOF on
-// the object's final byte still counts); a zero-byte read -- whether it reports
-// io.EOF or no error -- means the offset is unreadable and the caller should fall
-// back to the remote.
+// probeReadable decides whether the local copy is usable by reading one byte at
+// offset. Only a returned byte counts -- a zero-byte read, EOF or not, would
+// otherwise wave through a stream that then truncates.
 func probeReadable(ctx context.Context, reader ctxReaderAt, offset int64, timeout time.Duration) error {
 	probeCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -1259,12 +1245,9 @@ func probeReadable(ctx context.Context, reader ctxReaderAt, offset int64, timeou
 	return err
 }
 
-// serveObjectFromRemoteMount streams [offset, offset+size) of a remote-mounted
-// object straight from its mounted remote storage, setting S3 response headers
-// and status. It returns served=false without writing anything when the remote
-// stream cannot be opened, so the caller can fall back to its own error
-// handling. Once the body has begun writing, served is true and any returned
-// error is a mid-stream failure the caller can only propagate.
+// serveObjectFromRemoteMount serves [offset, offset+size) straight from the
+// mounted remote. served=false means nothing was written and the caller still
+// owns the error path; once served is true the response is committed.
 func (s3a *S3ApiServer) serveObjectFromRemoteMount(w http.ResponseWriter, r *http.Request, entry *filer_pb.Entry, bucket, object string, offset, size int64, isRangeRequest bool, totalSize int64, t0 time.Time) (served bool, err error) {
 	remoteReader, remoteErr := s3a.openRemoteStream(r.Context(), bucket, object, offset, size)
 	if remoteErr != nil {
@@ -1299,16 +1282,12 @@ func (s3a *S3ApiServer) serveObjectFromRemoteMount(w http.ResponseWriter, r *htt
 	return true, nil
 }
 
-// streamRangeToClient copies [offset, offset+size) of the local (volume-server)
-// copy into the already-committed response. The pre-flight probe only proved the
-// byte at offset readable, so a later chunk can still be unreadable; when the
-// object is eligible for the remote fallback, the rest of the body is finished
-// from the mounted remote -- which holds the same bytes -- rather than truncating
-// the response under its declared Content-Length.
+// streamRangeToClient copies the local copy into the already-committed response.
+// The probe only proved the byte at offset readable, so a later chunk can still
+// be gone: finish such a body from the remote instead of truncating it under the
+// Content-Length already sent.
 func (s3a *S3ApiServer) streamRangeToClient(w io.Writer, r *http.Request, reader io.ReaderAt, entry *filer_pb.Entry, bucket, object string, offset, size, totalSize int64, versionId string) (int64, error) {
-	// Cap the copy buffer to the response size so small-object GETs (common
-	// for thumbnails, config files, etc.) don't allocate a 256 KiB scratch
-	// buffer per request.
+	// small-object GETs shouldn't allocate a 256 KiB scratch buffer per request
 	const maxCopyBuf = 256 * 1024
 	copyBufSize := int64(maxCopyBuf)
 	if size > 0 && size < copyBufSize {
@@ -1317,8 +1296,7 @@ func (s3a *S3ApiServer) streamRangeToClient(w io.Writer, r *http.Request, reader
 	cw := &countingWriter{w: w}
 	_, err := io.CopyBuffer(cw, io.NewSectionReader(reader, offset, size), make([]byte, copyBufSize))
 	if err == nil && cw.written < size {
-		// a short local read surfaces as a clean EOF, which would leave the body
-		// shorter than the Content-Length already sent
+		// a short local read surfaces as a clean EOF
 		err = io.ErrUnexpectedEOF
 	}
 	if err == nil || cw.writeErr != nil || isCanceledStreamingError(err) || !s3a.shouldFallBackToRemote(entry, totalSize, versionId) {
@@ -1335,7 +1313,6 @@ func (s3a *S3ApiServer) streamRangeToClient(w io.Writer, r *http.Request, reader
 	defer remoteReader.Close()
 	if _, copyErr := io.CopyN(cw, remoteReader, remaining); copyErr != nil {
 		if copyErr == io.EOF {
-			// the origin returned fewer bytes than the entry's RemoteSize
 			copyErr = io.ErrUnexpectedEOF
 		}
 		glog.V(2).Infof("streamFromVolumeServers: origin stream %s/%s ended after %d bytes: %v", bucket, object, cw.written, copyErr)
