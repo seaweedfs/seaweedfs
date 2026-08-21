@@ -1,6 +1,7 @@
 package dash
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -1070,24 +1071,16 @@ func (s *AdminServer) SetBucketLifecycle(bucketName string, rules []BucketLifecy
 			return fmt.Errorf("bucket not found: %w", err)
 		}
 
-		// Snapshot filer.conf before the legacy-TTL cleanup below mutates it.
-		// The cleanup and the bucket entry update are two independent RPCs
-		// with no shared transaction, so if the entry update fails after the
-		// cleanup succeeded, restoring this snapshot is what keeps the
-		// bucket from losing its previous TTL-based expiration while also
-		// not getting the newly requested lifecycle XML.
-		originalFilerConf, err := filer.ReadInsideFiler(context.Background(), client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName)
-		if err != nil && err != filer_pb.ErrNotFound {
-			return fmt.Errorf("read filer.conf: %w", err)
-		}
-
 		// Migration: clear any legacy day-TTL filer.conf entries before
 		// writing the new XML below, so a failure here leaves the bucket
 		// entry untouched instead of committing the new policy alongside a
 		// stale TTL rule the endpoint then reports as failed. See
 		// PutBucketLifecycleConfigurationHandler for the S3 API's
-		// equivalent step and ordering.
-		clearedLegacyTTLs, err := filer.ClearBucketLifecycleDayTTLs(context.Background(), client, filerConfig.BucketsPath, bucketName, collection)
+		// equivalent step and ordering. removedTTLRules lets a failure
+		// below restore exactly what this call removed, instead of
+		// overwriting the whole file with a stale snapshot that could
+		// clobber unrelated concurrent edits.
+		removedTTLRules, err := filer.ClearBucketLifecycleDayTTLs(context.Background(), client, filerConfig.BucketsPath, bucketName, collection)
 		if err != nil {
 			return fmt.Errorf("failed to clear legacy lifecycle TTLs: %w", err)
 		}
@@ -1108,8 +1101,15 @@ func (s *AdminServer) SetBucketLifecycle(bucketName string, rules []BucketLifecy
 			Directory: filerConfig.BucketsPath,
 			Entry:     bucketEntry,
 		}); err != nil {
-			if clearedLegacyTTLs {
-				if restoreErr := filer.SaveInsideFiler(context.Background(), client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, originalFilerConf); restoreErr != nil {
+			if len(removedTTLRules) > 0 && !bucketLifecycleWriteLikelyCommitted(client, filerConfig.BucketsPath, bucketName, lifecycleXML) {
+				// UpdateEntry errors can be transport-level: the write may
+				// have actually landed despite the error. Restoring
+				// unconditionally on every error would risk reintroducing
+				// the stale TTL alongside an XML write that in fact
+				// succeeded — exactly the double-stamp this cleanup exists
+				// to prevent. Only restore once the bucket entry confirms
+				// the new XML did NOT take effect.
+				if restoreErr := filer.RestoreFilerConfLocationRules(context.Background(), client, removedTTLRules); restoreErr != nil {
 					return fmt.Errorf("failed to update bucket lifecycle: %w (additionally failed to restore legacy TTL rules cleared during the same operation: %v)", err, restoreErr)
 				}
 			}
@@ -1118,6 +1118,28 @@ func (s *AdminServer) SetBucketLifecycle(bucketName string, rules []BucketLifecy
 
 		return nil
 	})
+}
+
+// bucketLifecycleWriteLikelyCommitted re-reads the bucket entry to check
+// whether an UpdateEntry that returned an error actually took effect
+// server-side — a transport-level error (timeout, connection reset) can
+// arrive after the write already committed. Errs on the side of "not
+// committed" (false) if the re-read itself fails, since that leaves the
+// caller free to attempt a best-effort restore rather than silently
+// accepting a possible double-stamp.
+func bucketLifecycleWriteLikelyCommitted(client filer_pb.SeaweedFilerClient, bucketsPath, bucketName string, wantLifecycleXML []byte) bool {
+	verifyResp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+		Directory: bucketsPath,
+		Name:      bucketName,
+	})
+	if err != nil || verifyResp.Entry == nil {
+		return false
+	}
+	current := verifyResp.Entry.Extended[scheduler.BucketLifecycleConfigurationXMLKey]
+	if len(wantLifecycleXML) > 0 {
+		return bytes.Equal(current, wantLifecycleXML)
+	}
+	return len(current) == 0
 }
 
 // CreateS3Bucket creates a new S3 bucket

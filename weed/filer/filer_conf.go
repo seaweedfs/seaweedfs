@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
@@ -320,45 +321,161 @@ func ClearBucketReadOnly(ctx context.Context, client filer_pb.SeaweedFilerClient
 	return true, nil
 }
 
+// filerConfSnapshot is a read of filer.conf plus enough of the entry (or its
+// absence) to make a follow-up write conditional via
+// saveFilerConfConditionally, instead of blindly overwriting whatever is
+// there by the time the write happens.
+type filerConfSnapshot struct {
+	fc    *FilerConf
+	entry *filer_pb.Entry // nil if filer.conf did not exist at read time
+}
+
+func readFilerConfSnapshot(ctx context.Context, client filer_pb.SeaweedFilerClient) (*filerConfSnapshot, error) {
+	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
+		Directory: DirectoryEtcSeaweedFS,
+		Name:      FilerConfName,
+	})
+	fc := NewFilerConf()
+	if err == filer_pb.ErrNotFound {
+		return &filerConfSnapshot{fc: fc}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read %s/%s: %v", DirectoryEtcSeaweedFS, FilerConfName, err)
+	}
+	if len(resp.Entry.Content) > 0 {
+		if err := fc.LoadFromBytes(resp.Entry.Content); err != nil {
+			return nil, fmt.Errorf("parse %s/%s: %v", DirectoryEtcSeaweedFS, FilerConfName, err)
+		}
+	}
+	return &filerConfSnapshot{fc: fc, entry: resp.Entry}, nil
+}
+
+// saveFilerConfConditionally writes snap.fc back to filer.conf, conditioned
+// on nothing having created or modified the file since snap was read. The
+// filer evaluates the condition and applies the write atomically under its
+// per-path lock (see UpdateEntry/CreateEntry in filer_grpc_server.go), so a
+// concurrent writer that raced this one fails the precondition instead of
+// silently having its change overwritten. Mtime granularity is one second,
+// so two writers racing within the same second are not distinguished.
+func saveFilerConfConditionally(ctx context.Context, client filer_pb.SeaweedFilerClient, snap *filerConfSnapshot) error {
+	var buf bytes.Buffer
+	if err := snap.fc.ToText(&buf); err != nil {
+		return err
+	}
+	content := buf.Bytes()
+
+	if snap.entry == nil {
+		err := filer_pb.CreateEntry(ctx, client, &filer_pb.CreateEntryRequest{
+			Directory: DirectoryEtcSeaweedFS,
+			Entry: &filer_pb.Entry{
+				Name:        FilerConfName,
+				IsDirectory: false,
+				Attributes: &filer_pb.FuseAttributes{
+					Mtime:    time.Now().Unix(),
+					Crtime:   time.Now().Unix(),
+					FileMode: uint32(0644),
+					FileSize: uint64(len(content)),
+				},
+				Content: content,
+			},
+			Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{
+				{Kind: filer_pb.WriteCondition_IF_NOT_EXISTS},
+			}},
+		})
+		if err != nil {
+			return fmt.Errorf("filer.conf was created concurrently, retry: %w", err)
+		}
+		return nil
+	}
+
+	entry := snap.entry
+	var unmodifiedSince int64
+	if entry.Attributes != nil {
+		unmodifiedSince = entry.Attributes.Mtime
+	} else {
+		entry.Attributes = &filer_pb.FuseAttributes{}
+	}
+	entry.Content = content
+	entry.Attributes.Mtime = time.Now().Unix()
+	entry.Attributes.FileSize = uint64(len(content))
+	err := filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
+		Directory: DirectoryEtcSeaweedFS,
+		Entry:     entry,
+		Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{
+			{Kind: filer_pb.WriteCondition_IF_UNMODIFIED_SINCE, UnixTime: unmodifiedSince},
+		}},
+	})
+	if err != nil {
+		return fmt.Errorf("filer.conf changed concurrently, retry: %w", err)
+	}
+	return nil
+}
+
 // ClearBucketLifecycleDayTTLs removes any day-TTL filer.conf rules a legacy
 // PutBucketLifecycleConfiguration handler installed under the bucket's path.
 // Per-write TTL is now driven by the LifecycleTTLResolver built off the
 // stored lifecycle XML, so a lingering day-TTL rule would double-stamp
 // expiration (volume server expires under the old rule) or contradict a
-// newly saved XML. Reports whether anything changed.
-func ClearBucketLifecycleDayTTLs(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketsPath, bucketName, collection string) (changed bool, err error) {
-	data, err := ReadInsideFiler(ctx, client, DirectoryEtcSeaweedFS, FilerConfName)
-	if err == filer_pb.ErrNotFound || (err == nil && len(data) == 0) {
-		return false, nil
-	}
+// newly saved XML. Returns the rules that were removed (nil if none), so a
+// caller that needs to undo this can re-add exactly those rules with
+// RestoreFilerConfLocationRules instead of overwriting the whole file with a
+// stale snapshot that would clobber unrelated concurrent edits. The write
+// itself is conditioned on filer.conf being unchanged since it was read here
+// (see saveFilerConfConditionally), so a concurrent writer causes this call
+// to fail rather than silently lose one side's change.
+func ClearBucketLifecycleDayTTLs(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketsPath, bucketName, collection string) (removed []*filer_pb.FilerConf_PathConf, err error) {
+	snap, err := readFilerConfSnapshot(ctx, client)
 	if err != nil {
-		return false, fmt.Errorf("read %s/%s: %v", DirectoryEtcSeaweedFS, FilerConfName, err)
+		return nil, err
 	}
-	fc := NewFilerConf()
-	if err = fc.LoadFromBytes(data); err != nil {
-		return false, fmt.Errorf("parse %s/%s: %v", DirectoryEtcSeaweedFS, FilerConfName, err)
+	if snap.entry == nil {
+		return nil, nil
 	}
 
 	bucketPrefix := fmt.Sprintf("%s/%s/", bucketsPath, bucketName)
-	for prefix, ttl := range fc.GetCollectionTtls(collection) {
+	for prefix, ttl := range snap.fc.GetCollectionTtls(collection) {
 		if !strings.HasPrefix(prefix, bucketPrefix) || !strings.HasSuffix(ttl, "d") {
 			continue
 		}
-		fc.DeleteLocationConf(prefix)
-		changed = true
+		if locConf, found := snap.fc.GetLocationConf(prefix); found {
+			removed = append(removed, ClonePathConf(locConf))
+		}
+		snap.fc.DeleteLocationConf(prefix)
 	}
-	if !changed {
-		return false, nil
+	if len(removed) == 0 {
+		return nil, nil
 	}
 
-	var buf bytes.Buffer
-	if err = fc.ToText(&buf); err != nil {
-		return false, err
+	if err := saveFilerConfConditionally(ctx, client, snap); err != nil {
+		return nil, err
 	}
-	if err = SaveInsideFiler(ctx, client, DirectoryEtcSeaweedFS, FilerConfName, buf.Bytes()); err != nil {
-		return false, err
+	return removed, nil
+}
+
+// RestoreFilerConfLocationRules re-adds the given location rules into the
+// current filer.conf, re-reading it fresh (and writing back conditionally,
+// see saveFilerConfConditionally) so unrelated concurrent edits made since
+// the rules were removed aren't clobbered by restoring a stale snapshot.
+// Used to undo a ClearBucketLifecycleDayTTLs cleanup when the write it was
+// guarding against double-stamped expiration for turns out not to have
+// taken effect. No-op if rules is empty.
+func RestoreFilerConfLocationRules(ctx context.Context, client filer_pb.SeaweedFilerClient, rules []*filer_pb.FilerConf_PathConf) error {
+	if len(rules) == 0 {
+		return nil
 	}
-	return true, nil
+
+	snap, err := readFilerConfSnapshot(ctx, client)
+	if err != nil {
+		return err
+	}
+
+	for _, rule := range rules {
+		if err := snap.fc.SetLocationConf(rule); err != nil {
+			return err
+		}
+	}
+
+	return saveFilerConfConditionally(ctx, client, snap)
 }
 
 func (fc *FilerConf) GetCollectionTtls(collection string) (ttls map[string]string) {

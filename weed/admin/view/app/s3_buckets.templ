@@ -1649,6 +1649,9 @@ function bindLifecycleEditorEvents() {
     const addBtn = document.getElementById('lifecycleAddRuleBtn');
     if (addBtn) {
         addBtn.addEventListener('click', function() {
+            // Fold in any rule already being edited before switching forms,
+            // so an invalid in-progress draft isn't silently discarded.
+            if (!commitOpenLifecycleRuleForm()) return;
             lifecycleEditor.editingIndex = 'new';
             lifecycleEditor.editingRule = blankLifecycleRule();
             renderLifecycleEditor();
@@ -1658,6 +1661,10 @@ function bindLifecycleEditorEvents() {
     document.querySelectorAll('.lifecycle-edit-rule-btn').forEach(btn => {
         btn.addEventListener('click', function() {
             const idx = parseInt(this.dataset.index, 10);
+            // Same as above: committing never shifts indices (it either
+            // pushes a new rule at the end or replaces one in place), so
+            // idx captured above is still valid after this call.
+            if (!commitOpenLifecycleRuleForm()) return;
             lifecycleEditor.editingIndex = idx;
             lifecycleEditor.editingRule = cloneLifecycleRule(lifecycleEditor.rules[idx]);
             renderLifecycleEditor();
