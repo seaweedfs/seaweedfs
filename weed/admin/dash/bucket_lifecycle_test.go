@@ -266,7 +266,7 @@ func TestFromBucketLifecycleRule_InvalidExpirationDate(t *testing.T) {
 }
 
 // fakeVerifyClient is a minimal filer_pb.SeaweedFilerClient stand-in for
-// bucketLifecycleWriteLikelyCommitted, which only calls LookupDirectoryEntry.
+// bucketLifecycleXMLUnchangedSince, which only calls LookupDirectoryEntry.
 type fakeVerifyClient struct {
 	filer_pb.SeaweedFilerClient
 	entry *filer_pb.Entry
@@ -280,54 +280,91 @@ func (c *fakeVerifyClient) LookupDirectoryEntry(_ context.Context, _ *filer_pb.L
 	return &filer_pb.LookupDirectoryEntryResponse{Entry: c.entry}, nil
 }
 
-func TestBucketLifecycleWriteLikelyCommitted_MatchingXMLConfirmsCommitted(t *testing.T) {
-	xml := []byte("<LifecycleConfiguration/>")
+func TestBucketLifecycleXMLUnchangedSince_MatchesOriginal(t *testing.T) {
+	original := []byte("<old/>")
 	client := &fakeVerifyClient{entry: &filer_pb.Entry{
-		Extended: map[string][]byte{scheduler.BucketLifecycleConfigurationXMLKey: xml},
+		Extended: map[string][]byte{scheduler.BucketLifecycleConfigurationXMLKey: original},
 	}}
 
-	if !bucketLifecycleWriteLikelyCommitted(client, "/buckets", "mybucket", xml) {
-		t.Fatal("expected committed=true when the stored XML matches what was written")
+	if !bucketLifecycleXMLUnchangedSince(client, "/buckets", "mybucket", original) {
+		t.Fatal("expected unchanged=true when the stored XML still matches the pre-operation snapshot")
 	}
 }
 
-func TestBucketLifecycleWriteLikelyCommitted_DifferentXMLConfirmsNotCommitted(t *testing.T) {
+func TestBucketLifecycleXMLUnchangedSince_OwnWriteLanded(t *testing.T) {
+	// Our own intended write landed despite the reported error: the stored
+	// XML now differs from the original snapshot, so it must not be treated
+	// as "unchanged" (restoring the TTL would double-stamp our own new policy).
 	client := &fakeVerifyClient{entry: &filer_pb.Entry{
-		Extended: map[string][]byte{scheduler.BucketLifecycleConfigurationXMLKey: []byte("<old/>")},
+		Extended: map[string][]byte{scheduler.BucketLifecycleConfigurationXMLKey: []byte("<new/>")},
 	}}
 
-	if bucketLifecycleWriteLikelyCommitted(client, "/buckets", "mybucket", []byte("<new/>")) {
-		t.Fatal("expected committed=false when the stored XML does not match what was written")
+	if bucketLifecycleXMLUnchangedSince(client, "/buckets", "mybucket", []byte("<old/>")) {
+		t.Fatal("expected unchanged=false when the stored XML differs from the original snapshot")
 	}
 }
 
-func TestBucketLifecycleWriteLikelyCommitted_ClearedKeyConfirmsCommitted(t *testing.T) {
+// TestBucketLifecycleXMLUnchangedSince_UnrelatedConcurrentWriteLanded pins
+// the fix: an unrelated, independent request committing its own (different
+// from both the original and this request's intended) XML in the window
+// between this request's failed UpdateEntry and its verification read must
+// also be treated as "changed" — not just the two cases of "reverted to
+// original" vs "our own write landed". Comparing only against this
+// request's intended XML would have wrongly concluded "not committed" here
+// and restored the legacy TTL alongside the concurrent writer's now-active
+// policy.
+func TestBucketLifecycleXMLUnchangedSince_UnrelatedConcurrentWriteLanded(t *testing.T) {
+	client := &fakeVerifyClient{entry: &filer_pb.Entry{
+		Extended: map[string][]byte{scheduler.BucketLifecycleConfigurationXMLKey: []byte("<from-another-request/>")},
+	}}
+
+	if bucketLifecycleXMLUnchangedSince(client, "/buckets", "mybucket", []byte("<old/>")) {
+		t.Fatal("expected unchanged=false when an unrelated concurrent write landed")
+	}
+}
+
+func TestBucketLifecycleXMLUnchangedSince_ClearingOwnWriteLanded(t *testing.T) {
+	// The original had an active policy; our clear-lifecycle write landed,
+	// so the key is now absent. That must count as "changed".
 	client := &fakeVerifyClient{entry: &filer_pb.Entry{Extended: map[string][]byte{}}}
 
-	if !bucketLifecycleWriteLikelyCommitted(client, "/buckets", "mybucket", nil) {
-		t.Fatal("expected committed=true when clearing the lifecycle config and the key is absent")
+	if bucketLifecycleXMLUnchangedSince(client, "/buckets", "mybucket", []byte("<old/>")) {
+		t.Fatal("expected unchanged=false when the original XML is no longer present")
 	}
 }
 
-// TestBucketLifecycleWriteLikelyCommitted_VerifyFailureAssumesCommitted pins
-// the fix: when the verification re-read itself fails, the write's true
-// state is unknown, and assuming "committed" (so the caller skips restoring
-// the cleared legacy TTL) is the safer default — the alternative risks
-// reinstating a stale TTL alongside a lifecycle XML write that in fact
-// succeeded, which is the double-stamp/premature-expiration this whole
-// cleanup exists to prevent.
-func TestBucketLifecycleWriteLikelyCommitted_VerifyFailureAssumesCommitted(t *testing.T) {
+func TestBucketLifecycleXMLUnchangedSince_ClearingDidNotLand(t *testing.T) {
+	// Our clear-lifecycle write did not take effect: the original XML is
+	// still there, unchanged, so it's safe to restore the cleared TTL rules.
+	original := []byte("<old/>")
+	client := &fakeVerifyClient{entry: &filer_pb.Entry{
+		Extended: map[string][]byte{scheduler.BucketLifecycleConfigurationXMLKey: original},
+	}}
+
+	if !bucketLifecycleXMLUnchangedSince(client, "/buckets", "mybucket", original) {
+		t.Fatal("expected unchanged=true when the original XML is still present")
+	}
+}
+
+// TestBucketLifecycleXMLUnchangedSince_VerifyFailureAssumesChanged pins the
+// conservative default: when the verification re-read itself fails, the
+// true state is unknown, and assuming "changed" (so the caller skips
+// restoring the cleared legacy TTL) is the safer default — the alternative
+// risks reinstating a stale TTL alongside a policy that in fact took effect,
+// which is the double-stamp/premature-expiration this whole cleanup exists
+// to prevent.
+func TestBucketLifecycleXMLUnchangedSince_VerifyFailureAssumesChanged(t *testing.T) {
 	client := &fakeVerifyClient{err: errors.New("transient network error")}
 
-	if !bucketLifecycleWriteLikelyCommitted(client, "/buckets", "mybucket", []byte("<new/>")) {
-		t.Fatal("expected committed=true (do not restore) when verification itself fails")
+	if bucketLifecycleXMLUnchangedSince(client, "/buckets", "mybucket", []byte("<old/>")) {
+		t.Fatal("expected unchanged=false (do not restore) when verification itself fails")
 	}
 }
 
-func TestBucketLifecycleWriteLikelyCommitted_MissingEntryAssumesCommitted(t *testing.T) {
+func TestBucketLifecycleXMLUnchangedSince_MissingEntryAssumesChanged(t *testing.T) {
 	client := &fakeVerifyClient{entry: nil}
 
-	if !bucketLifecycleWriteLikelyCommitted(client, "/buckets", "mybucket", []byte("<new/>")) {
-		t.Fatal("expected committed=true (do not restore) when the bucket entry is unexpectedly absent")
+	if bucketLifecycleXMLUnchangedSince(client, "/buckets", "mybucket", []byte("<old/>")) {
+		t.Fatal("expected unchanged=false (do not restore) when the bucket entry is unexpectedly absent")
 	}
 }

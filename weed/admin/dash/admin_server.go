@@ -1071,6 +1071,14 @@ func (s *AdminServer) SetBucketLifecycle(bucketName string, rules []BucketLifecy
 			return fmt.Errorf("bucket not found: %w", err)
 		}
 
+		// Snapshot the XML as it was before this operation touches anything,
+		// so a failure below can tell "nothing landed" (safe to restore the
+		// TTL rules cleared next) apart from "something landed" — whether
+		// that's this write's own content or a completely unrelated
+		// concurrent writer's. bucketEntry.Extended is mutated in place
+		// below, so this copy must happen first.
+		originalLifecycleXML := append([]byte(nil), lookupResp.Entry.Extended[scheduler.BucketLifecycleConfigurationXMLKey]...)
+
 		// Migration: clear any legacy day-TTL filer.conf entries before
 		// writing the new XML below, so a failure here leaves the bucket
 		// entry untouched instead of committing the new policy alongside a
@@ -1101,14 +1109,16 @@ func (s *AdminServer) SetBucketLifecycle(bucketName string, rules []BucketLifecy
 			Directory: filerConfig.BucketsPath,
 			Entry:     bucketEntry,
 		}); err != nil {
-			if len(removedTTLRules) > 0 && !bucketLifecycleWriteLikelyCommitted(client, filerConfig.BucketsPath, bucketName, lifecycleXML) {
+			if len(removedTTLRules) > 0 && bucketLifecycleXMLUnchangedSince(client, filerConfig.BucketsPath, bucketName, originalLifecycleXML) {
 				// UpdateEntry errors can be transport-level: the write may
-				// have actually landed despite the error. Restoring
-				// unconditionally on every error would risk reintroducing
-				// the stale TTL alongside an XML write that in fact
-				// succeeded — exactly the double-stamp this cleanup exists
-				// to prevent. Only restore once the bucket entry confirms
-				// the new XML did NOT take effect.
+				// have actually landed despite the error, or a completely
+				// unrelated concurrent request may have written its own XML
+				// in the meantime. Either way, once the bucket's lifecycle
+				// XML no longer matches what it was before this operation
+				// started, whatever is now in effect already assumes the
+				// legacy TTL rules are gone — restoring them would
+				// double-stamp expiration under a superseded policy. Only
+				// restore once the bucket entry confirms nothing changed.
 				if restoreErr := filer.RestoreFilerConfLocationRules(context.Background(), client, removedTTLRules); restoreErr != nil {
 					return fmt.Errorf("failed to update bucket lifecycle: %w (additionally failed to restore legacy TTL rules cleared during the same operation: %v)", err, restoreErr)
 				}
@@ -1120,32 +1130,31 @@ func (s *AdminServer) SetBucketLifecycle(bucketName string, rules []BucketLifecy
 	})
 }
 
-// bucketLifecycleWriteLikelyCommitted re-reads the bucket entry to check
-// whether an UpdateEntry that returned an error actually took effect
-// server-side — a transport-level error (timeout, connection reset) can
-// arrive after the write already committed. If the re-read itself fails (or
-// finds no entry), whether the write committed is genuinely unknown; this
-// errs on the side of "committed" (true, i.e. don't restore) rather than
-// "not committed", because restoring on a false negative here reinstates
-// the stale TTL alongside a lifecycle XML that in fact did take effect —
-// exactly the double-stamp/premature-expiration this cleanup exists to
-// prevent. The alternative failure mode (not restoring when the write
-// really didn't commit) only leaves the bucket without an active lifecycle
-// policy until the next successful save, which is recoverable and does not
-// destroy data.
-func bucketLifecycleWriteLikelyCommitted(client filer_pb.SeaweedFilerClient, bucketsPath, bucketName string, wantLifecycleXML []byte) bool {
+// bucketLifecycleXMLUnchangedSince re-reads the bucket entry to check
+// whether its lifecycle XML still matches originalLifecycleXML, the value
+// captured before this operation's own clear-TTL-then-update attempt. This
+// is what makes it safe to restore the TTL rules that attempt removed:
+// unchanged means neither this request's write nor any other concurrent
+// writer's landed, so the legacy TTL is still the active policy. If the XML
+// has changed to anything else — this write's own new content, or an
+// unrelated concurrent writer's — some policy is now in effect that already
+// assumes the legacy TTL is gone, and restoring it would double-stamp
+// expiration under whichever policy actually committed. Errs toward
+// "changed" (false, i.e. don't restore) if the verification read itself
+// fails, since that leaves the true state unknown and restoring on a false
+// negative risks the same double-stamp; not restoring in that case only
+// leaves the bucket without an active lifecycle policy until the next
+// successful save, which is recoverable and does not destroy data.
+func bucketLifecycleXMLUnchangedSince(client filer_pb.SeaweedFilerClient, bucketsPath, bucketName string, originalLifecycleXML []byte) bool {
 	verifyResp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
 		Directory: bucketsPath,
 		Name:      bucketName,
 	})
 	if err != nil || verifyResp.Entry == nil {
-		return true
+		return false
 	}
 	current := verifyResp.Entry.Extended[scheduler.BucketLifecycleConfigurationXMLKey]
-	if len(wantLifecycleXML) > 0 {
-		return bytes.Equal(current, wantLifecycleXML)
-	}
-	return len(current) == 0
+	return bytes.Equal(current, originalLifecycleXML)
 }
 
 // CreateS3Bucket creates a new S3 bucket

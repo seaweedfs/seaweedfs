@@ -403,7 +403,7 @@ func saveFilerConfConditionally(ctx context.Context, client filer_pb.SeaweedFile
 			}},
 		})
 		if err != nil {
-			return fmt.Errorf("filer.conf was created concurrently, retry: %w", err)
+			return fmt.Errorf("create %s/%s: %w", DirectoryEtcSeaweedFS, FilerConfName, err)
 		}
 		return nil
 	}
@@ -436,7 +436,7 @@ func saveFilerConfConditionally(ctx context.Context, client filer_pb.SeaweedFile
 		Condition: condition,
 	})
 	if err != nil {
-		return fmt.Errorf("filer.conf changed concurrently, retry: %w", err)
+		return fmt.Errorf("update %s/%s: %w", DirectoryEtcSeaweedFS, FilerConfName, err)
 	}
 	return nil
 }
