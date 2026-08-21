@@ -6,6 +6,7 @@ on:
       - 'weed/s3api/**'
       - 'weed/filer/**'
       - 'weed/server/**'
+      - 'weed/worker/tasks/iceberg/**'
       - 'test/s3tables/**'
       - 'go.mod'
       - 'go.sum'
@@ -942,6 +943,74 @@ jobs:
         with:
           name: lancedb-namespace-test-logs
           path: test/s3tables/catalog_lancedb/test-output.log
+          retention-days: 3
+
+  table-lifecycle-tests:
+    name: Table Lifecycle Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+
+      - name: Pre-pull images
+        run: |
+          pull() { for i in 1 2 3; do docker pull "$1" && return 0; sleep 15; done; return 1; }
+          pull python:3.11-slim
+          pull duckdb/duckdb:latest
+
+      - name: Run go mod tidy
+        run: go mod tidy
+
+      - name: Build SeaweedFS
+        run: |
+          cd weed && go build -buildvcs=false .
+
+      - name: Run Table Lifecycle Integration Tests
+        timeout-minutes: 35
+        working-directory: test/s3tables/lifecycle
+        env:
+          # The Rust worker's own tests cover its handlers; a cold build of the
+          # lance crate costs more here than the layer it would be checking.
+          WEED_LANCE_MAINTENANCE: library
+        run: |
+          set -x
+          set -o pipefail
+          go test -v -timeout 30m . 2>&1 | tee test-output.log || {
+            echo "Table lifecycle integration tests failed"
+            exit 1
+          }
+
+      - name: Show test output on failure
+        if: failure()
+        working-directory: test/s3tables/lifecycle
+        run: |
+          echo "=== Test Output ==="
+          if [ -f test-output.log ]; then
+            tail -200 test-output.log
+          fi
+
+          echo "=== Process information ==="
+          ps aux | grep -E "(weed|test|docker)" || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: table-lifecycle-test-logs
+          path: test/s3tables/lifecycle/test-output.log
           retention-days: 3
 
   s3-tables-build-verification:
