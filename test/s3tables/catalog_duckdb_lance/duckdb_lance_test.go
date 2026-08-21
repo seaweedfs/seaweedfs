@@ -371,8 +371,13 @@ func (env *environment) runDuckDB(t *testing.T, bucket string) {
 	t.Logf("a suffix-less path is not seen by the replacement scan, as expected")
 }
 
+// hasDocker reports whether a Docker daemon answers. Bounded, because an
+// unhealthy daemon makes `docker version` hang, and this runs before the test
+// has a timeout of its own: better to skip than to eat the whole budget.
 func hasDocker() bool {
-	return exec.Command("docker", "version").Run() == nil
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, "docker", "version").Run() == nil
 }
 
 func randomSuffix() string {
