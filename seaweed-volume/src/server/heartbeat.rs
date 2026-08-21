@@ -842,8 +842,7 @@ fn build_heartbeat_with_ec_status(
     // master can tell whether applying what it was sent leaves it current.
     // Volumes skipped below -- quarantined, phantom, expired -- are in neither.
     let mut volume_digest: u64 = 0;
-    let (send_full_list, report_generation) = store.volume_report.begin();
-    let mut reported_hashes: HashMap<VolumeReportKey, u64> = HashMap::new();
+    let (send_full_list, report_generation, report_pass) = store.volume_report.begin();
     let mut changed_volumes = Vec::new();
     let mut max_file_key = NeedleId(0);
     let mut max_volume_counts: HashMap<String, u32> = HashMap::new();
@@ -941,8 +940,14 @@ fn build_heartbeat_with_ec_status(
                 let hash = report_hash(&volume_message);
                 volume_digest ^= hash;
                 let key: VolumeReportKey = (volume_message.disk_id, volume_message.id);
-                reported_hashes.insert(key, hash);
-                if send_full_list || store.volume_report.changed(key, hash) {
+                // A snapshot must leave the reporting state as it found it, so
+                // it asks rather than marks.
+                let is_news = if commit_report {
+                    store.volume_report.record(key, hash, report_pass)
+                } else {
+                    store.volume_report.changed(key, hash)
+                };
+                if send_full_list || is_news {
                     changed_volumes.push(volume_message.clone());
                 }
                 volumes.push(volume_message);
@@ -1009,7 +1014,7 @@ fn build_heartbeat_with_ec_status(
     // Only when this heartbeat is going to be sent: marking volumes reported
     // and then discarding the message would leave the master never told.
     if commit_report {
-        store.volume_report.commit(reported_hashes, report_generation);
+        store.volume_report.commit(report_pass, report_generation);
     }
 
     // has_no_volumes says the server holds nothing, so it may only be derived
@@ -1428,10 +1433,10 @@ mod tests {
         store.volume_report.accept_deltas();
         build_heartbeat(&test_config(), &mut store);
 
-        let (full, generation) = store.volume_report.begin();
+        let (full, generation, pass) = store.volume_report.begin();
         assert!(!full);
         store.volume_report.request_full_list();
-        store.volume_report.commit(HashMap::new(), generation);
+        store.volume_report.commit(pass, generation);
 
         let heartbeat = build_heartbeat(&test_config(), &mut store);
         assert_eq!(heartbeat.volumes.len(), 2);
