@@ -1014,13 +1014,24 @@ s3:
   # Optionally provide explicit credentials for the S3 gateway.
   # When set, these are used in the generated s3 secret instead of
   # auto-generating random credentials.
+  # An identity may instead name an existing Secret to read its keys from. The
+  # generated config then references the keys through environment variables, so
+  # nothing is looked up at render time and a dry run renders what an install
+  # applies. Note the COSI driver parses the config itself and does not resolve
+  # those references.
   # credentials:
   #   admin:
   #     accessKey: ""
   #     secretKey: ""
+  #     existingSecret: ""
+  #     accessKeyKey: admin_access_key_id
+  #     secretKeyKey: admin_secret_access_key
   #   read:
   #     accessKey: ""
   #     secretKey: ""
+  #     existingSecret: ""
+  #     accessKeyKey: read_access_key_id
+  #     secretKeyKey: read_secret_access_key
   auditLogConfig: {}
   # You may specify buckets to be created during the install or upgrade process.
   # Buckets may be exposed publicly by setting `anonymousRead` to `true`

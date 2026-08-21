@@ -58,6 +58,18 @@ jobs:
           grep -q "kind: Deployment" /tmp/s3.yaml && grep -q "seaweedfs-s3" /tmp/s3.yaml
           echo "S3 deployment renders correctly"
           
+          echo "=== Testing S3 credentials from an existing secret ==="
+          helm template test $CHART_DIR \
+            --set s3.enabled=true --set s3.enableAuth=true \
+            --set s3.credentials.admin.existingSecret=minio-root \
+            --set s3.credentials.admin.accessKeyKey=root-user \
+            --set s3.credentials.admin.secretKeyKey=root-password \
+            > /tmp/s3-existing-credentials.yaml
+          grep -q 'accessKey":"${SEAWEEDFS_S3_ADMIN_ACCESS_KEY_ID}' /tmp/s3-existing-credentials.yaml
+          grep -q 'key: "root-password"' /tmp/s3-existing-credentials.yaml
+          ! grep -q "admin_access_key_id:" /tmp/s3-existing-credentials.yaml
+          echo "S3 credentials reference the existing secret"
+
           echo "=== Testing with all-in-one mode ==="
           helm template test $CHART_DIR --set allInOne.enabled=true > /tmp/allinone.yaml
           grep -q "seaweedfs-all-in-one" /tmp/allinone.yaml
