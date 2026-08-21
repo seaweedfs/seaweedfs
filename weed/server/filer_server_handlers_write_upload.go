@@ -29,6 +29,18 @@ var bufPool = sync.Pool{
 	},
 }
 
+// ChunkBoundaries decides where the upload loop may cut a storage chunk.
+type ChunkBoundaries interface {
+	// NextChunkSize returns the size of the chunk starting at the absolute
+	// file offset (startOffset included), or 0 when no further chunks are
+	// expected. Returned sizes are bounded: they size in-memory buffers.
+	NextChunkSize(offset int64) int64
+}
+
+type fixedChunkSize int64
+
+func (c fixedChunkSize) NextChunkSize(int64) int64 { return int64(c) }
+
 func (fs *FilerServer) uploadRequestToChunks(ctx context.Context, w http.ResponseWriter, r *http.Request, reader io.Reader, chunkSize int32, fileName, contentType string, contentLength int64, so *operation.StorageOption) (fileChunks []*filer_pb.FileChunk, md5Hash hash.Hash, chunkOffset int64, uploadErr error, smallContent []byte) {
 	query := r.URL.Query()
 
@@ -51,7 +63,15 @@ func (fs *FilerServer) uploadRequestToChunks(ctx context.Context, w http.Respons
 }
 
 func (fs *FilerServer) uploadReaderToChunks(ctx context.Context, r *http.Request, reader io.Reader, startOffset int64, chunkSize int32, fileName, contentType string, isAppend bool, so *operation.StorageOption) (fileChunks []*filer_pb.FileChunk, md5Hash hash.Hash, chunkOffset int64, uploadErr error, smallContent []byte) {
+	return fs.uploadReaderToBoundedChunks(ctx, r, reader, startOffset, fixedChunkSize(chunkSize), fileName, contentType, isAppend, so)
+}
 
+// uploadReaderToBoundedChunks cuts chunks where boundaries allows instead of
+// at a fixed size. The small-content optimization only applies to fixed-size
+// chunking: it must stay off when chunk boundaries carry meaning.
+func (fs *FilerServer) uploadReaderToBoundedChunks(ctx context.Context, r *http.Request, reader io.Reader, startOffset int64, boundaries ChunkBoundaries, fileName, contentType string, isAppend bool, so *operation.StorageOption) (fileChunks []*filer_pb.FileChunk, md5Hash hash.Hash, chunkOffset int64, uploadErr error, smallContent []byte) {
+
+	_, allowInline := boundaries.(fixedChunkSize)
 	md5Hash = md5.New()
 	chunkOffset = startOffset
 	var partReader = io.NopCloser(io.TeeReader(reader, md5Hash))
@@ -62,6 +82,11 @@ func (fs *FilerServer) uploadReaderToChunks(ctx context.Context, r *http.Request
 	var fileChunksLock sync.Mutex
 	var uploadErrLock sync.Mutex
 	for {
+
+		wantSize := boundaries.NextChunkSize(chunkOffset)
+		if wantSize <= 0 {
+			break
+		}
 
 		// need to throttle used byte buffer
 		bytesBufferLimitChan <- struct{}{}
@@ -78,7 +103,7 @@ func (fs *FilerServer) uploadReaderToChunks(ctx context.Context, r *http.Request
 
 		bytesBuffer := bufPool.Get().(*bytes.Buffer)
 
-		limitedReader := io.LimitReader(partReader, int64(chunkSize))
+		limitedReader := io.LimitReader(partReader, wantSize)
 
 		bytesBuffer.Reset()
 
@@ -97,7 +122,7 @@ func (fs *FilerServer) uploadReaderToChunks(ctx context.Context, r *http.Request
 			}
 			break
 		}
-		if chunkOffset == 0 && !isAppend {
+		if chunkOffset == 0 && !isAppend && allowInline {
 			if dataSize < fs.option.SaveToFilerLimit {
 				chunkOffset += dataSize
 				smallContent = make([]byte, dataSize)
@@ -141,7 +166,7 @@ func (fs *FilerServer) uploadReaderToChunks(ctx context.Context, r *http.Request
 		chunkOffset = chunkOffset + dataSize
 
 		// if last chunk was not at full chunk size, but already exhausted the reader
-		if dataSize < int64(chunkSize) {
+		if dataSize < wantSize {
 			break
 		}
 	}

@@ -236,7 +236,10 @@ func doMaybeManifestize(saveFunc SaveDataAsChunkFunctionType, inputChunks []*fil
 	for i := 0; i+mergeFactor <= len(dataChunks); i += mergeFactor {
 		chunk, err := mergefn(saveFunc, dataChunks[i:i+mergeFactor])
 		if err != nil {
-			return dataChunks, err
+			// Return the manifests already written plus the chunks not yet
+			// wrapped: a complete, deletable representation of every byte, so
+			// callers can clean up or keep a usable chunk list.
+			return append(chunks, dataChunks[i:]...), err
 		}
 		chunks = append(chunks, chunk)
 		remaining -= mergeFactor

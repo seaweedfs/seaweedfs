@@ -77,6 +77,38 @@ func TestDoMaybeManifestize(t *testing.T) {
 		actual, _ := doMaybeManifestize(nil, mtest.inputs, 2, mockMerge)
 		assertEqualChunks(t, mtest.expected, actual)
 	}
+}
+
+// A mid-run merge failure must still return every chunk that exists: the
+// manifests already written plus the chunks not yet wrapped, so callers can
+// delete or keep a complete set.
+func TestDoMaybeManifestizePartialFailure(t *testing.T) {
+	inputs := []*filer_pb.FileChunk{
+		{FileId: "0", IsChunkManifest: true},
+		{FileId: "1", IsChunkManifest: false},
+		{FileId: "2", IsChunkManifest: false},
+		{FileId: "3", IsChunkManifest: false},
+		{FileId: "4", IsChunkManifest: false},
+	}
+	calls := 0
+	failingMerge := func(saveFunc SaveDataAsChunkFunctionType, dataChunks []*filer_pb.FileChunk) (*filer_pb.FileChunk, error) {
+		calls++
+		if calls > 1 {
+			return nil, fmt.Errorf("merge failed")
+		}
+		return mockMerge(saveFunc, dataChunks)
+	}
+	actual, err := doMaybeManifestize(nil, inputs, 2, failingMerge)
+	if err == nil {
+		t.Fatalf("doMaybeManifestize() expected an error")
+	}
+	expected := []*filer_pb.FileChunk{
+		{FileId: "0", IsChunkManifest: true},
+		{FileId: "12", IsChunkManifest: true},
+		{FileId: "3", IsChunkManifest: false},
+		{FileId: "4", IsChunkManifest: false},
+	}
+	assertEqualChunks(t, expected, actual)
 
 }
 
