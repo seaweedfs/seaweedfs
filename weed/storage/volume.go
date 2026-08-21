@@ -37,9 +37,17 @@ type Volume struct {
 
 	super_block.SuperBlock
 
-	dataFileAccessLock    sync.RWMutex
-	superBlockAccessLock  sync.Mutex
-	asyncRequestsChan     chan *needle.AsyncRequest
+	dataFileAccessLock   sync.RWMutex
+	superBlockAccessLock sync.Mutex
+
+	// The batch worker exists only once the volume takes a durable write. Most
+	// never do -- read-only, remote-tiered, or written without fsync -- and a
+	// parked worker costs its goroutine stack plus a 128-slot channel, which a
+	// server holding millions of volumes cannot pay for all of them.
+	asyncWorkerLock   sync.Mutex
+	asyncRequestsChan chan *needle.AsyncRequest
+	asyncWorkerClosed bool
+
 	lastModifiedTsSeconds uint64 // unix time in seconds
 	lastAppendAtNs        uint64 // unix time in nanoseconds
 
@@ -130,13 +138,11 @@ func (v *Volume) getIoErrorState() (error, int32, bool) {
 
 func NewVolume(dirname string, dirIdx string, collection string, id needle.VolumeId, needleMapKind NeedleMapKind, replicaPlacement *super_block.ReplicaPlacement, ttl *needle.TTL, preallocate int64, ver needle.Version, memoryMapMaxSizeMb uint32, ldbTimeout int64) (v *Volume, e error) {
 	// if replicaPlacement is nil, the superblock will be loaded from disk
-	v = &Volume{dir: dirname, dirIdx: dirIdx, Collection: collection, Id: id, MemoryMapMaxSizeMb: memoryMapMaxSizeMb,
-		asyncRequestsChan: make(chan *needle.AsyncRequest, 128)}
+	v = &Volume{dir: dirname, dirIdx: dirIdx, Collection: collection, Id: id, MemoryMapMaxSizeMb: memoryMapMaxSizeMb}
 	v.SuperBlock = super_block.SuperBlock{ReplicaPlacement: replicaPlacement, Ttl: ttl}
 	v.needleMapKind = needleMapKind
 	v.ldbTimeout = ldbTimeout
 	e = v.load(true, true, needleMapKind, preallocate, ver)
-	v.startWorker()
 	return
 }
 
