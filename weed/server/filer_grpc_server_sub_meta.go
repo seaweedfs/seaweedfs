@@ -50,6 +50,13 @@ const (
 	// newer. It keeps freshness signals such as filer.sync's sync_offset metric
 	// from looking stuck during read-only periods on the source.
 	idleHeartbeatInterval = 5 * time.Second
+
+	// heldWakeFloor coalesces hold releases. Peers advance their watermarks
+	// per event they stream, and each release costs a whole pass - a log file
+	// listing included - so releasing on every advance turns a busy cluster
+	// into a listing storm. It is added to delivery latency, so it stays well
+	// under the watermark freshness that already bounds it.
+	heldWakeFloor = 20 * time.Millisecond
 )
 
 // metadataStreamSender is satisfied by both gRPC stream types and pipelinedSender.
@@ -669,6 +676,11 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 			time.Unix(0, heldAtTsNs), time.Unix(0, deliveredUpToTsNs),
 			time.Unix(0, fs.filer.MetaAggregator.PeerLowFlushWatermarkTsNs()),
 			time.Unix(0, fs.filer.MetaAggregator.PeerLowWatermarkTsNs()), clientName)
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(heldWakeFloor):
+		}
 		select {
 		case <-watermarkChan:
 		case <-ctx.Done():

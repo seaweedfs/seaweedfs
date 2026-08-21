@@ -126,6 +126,36 @@ func heldReads() int {
 	return total
 }
 
+// waitForEventsAtLeastOnce asserts every want arrives, in order. The cursor a
+// hold rewinds to is inclusive of the last delivered entry, so each cycle
+// repeats it - at-least-once, which is the contract; a skip is not.
+func waitForEventsAtLeastOnce(t *testing.T, r *runningSubscribe, want []int64, timeout time.Duration) {
+	t.Helper()
+	last := want[len(want)-1]
+	deadline := time.Now().Add(timeout)
+	var got []int64
+	for time.Now().Before(deadline) {
+		got = eventTimestamps(r.stream.snapshot())
+		if len(got) > 0 && got[len(got)-1] >= last {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	seen := make(map[int64]bool, len(got))
+	var prev int64
+	for _, ts := range got {
+		if ts < prev {
+			t.Fatalf("delivered %v after %v: out of order", time.Unix(0, ts), time.Unix(0, prev))
+		}
+		prev, seen[ts] = ts, true
+	}
+	for i, ts := range want {
+		if !seen[ts] {
+			t.Fatalf("event %d of %d (%v) never delivered", i+1, len(want), time.Unix(0, ts))
+		}
+	}
+}
+
 // TestSubscribeLoop_AggregatedHoldIsQuiet: every held read used to log an
 // ERROR, so a busy cluster wrote one line per arriving event.
 func TestSubscribeLoop_AggregatedHoldIsQuiet(t *testing.T) {
@@ -187,4 +217,24 @@ func TestSubscribeLoop_AggregatedHoldReleasesOnPeerProgress(t *testing.T) {
 
 	reportPeers(ma, ts)
 	waitForEvents(t, r, []int64{ts}, 3*time.Second)
+}
+
+// TestSubscribeLoop_AggregatedHoldCoalescesPeerProgress covers the rest of the
+// cost: peers advance their watermark on every event they stream, so releasing
+// a hold per advance is the same pass-per-event storm as releasing per write,
+// just without the log lines.
+func TestSubscribeLoop_AggregatedHoldCoalescesPeerProgress(t *testing.T) {
+	h := newSubscribeHarness(t)
+	ma, r, _ := h.heldSubscriber()
+
+	holdsBefore := heldReads()
+	written, elapsed := h.writeFor(ma, time.Second, true)
+	holds := heldReads() - holdsBefore
+
+	t.Logf("%d writes over %v produced %d holds", len(written), elapsed, holds)
+	if maxHolds := int(elapsed/heldWakeFloor) + 2; holds > maxHolds {
+		t.Fatalf("held %d times in %v, want at most %d: releases must coalesce", holds, elapsed, maxHolds)
+	}
+	// Coalescing may not lose anything the peers reported through.
+	waitForEventsAtLeastOnce(t, r, written, 3*time.Second)
 }
