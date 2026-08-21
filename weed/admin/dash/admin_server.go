@@ -1159,6 +1159,15 @@ func (s *AdminServer) SetBucketLifecycle(bucketName string, rules []BucketLifecy
 	})
 }
 
+// bucketLifecycleVerifyRetries and bucketLifecycleVerifyRetryDelay bound the
+// retry in bucketLifecycleXMLUnchangedSince: a single transient RPC failure
+// on the verification lookup shouldn't be enough, on its own, to decide
+// whether the cleared legacy TTL rules get restored.
+const (
+	bucketLifecycleVerifyRetries    = 3
+	bucketLifecycleVerifyRetryDelay = 200 * time.Millisecond
+)
+
 // bucketLifecycleXMLUnchangedSince re-reads the bucket entry to check
 // whether its lifecycle XML still matches originalLifecycleXML, the value
 // captured before this operation's own clear-TTL-then-update attempt. This
@@ -1168,17 +1177,29 @@ func (s *AdminServer) SetBucketLifecycle(bucketName string, rules []BucketLifecy
 // has changed to anything else — this write's own new content, or an
 // unrelated concurrent writer's — some policy is now in effect that already
 // assumes the legacy TTL is gone, and restoring it would double-stamp
-// expiration under whichever policy actually committed. Errs toward
-// "changed" (false, i.e. don't restore) if the verification read itself
-// fails, since that leaves the true state unknown and restoring on a false
-// negative risks the same double-stamp; not restoring in that case only
-// leaves the bucket without an active lifecycle policy until the next
-// successful save, which is recoverable and does not destroy data.
+// expiration under whichever policy actually committed. The lookup retries
+// a few times on error before giving up, so one transient RPC failure
+// doesn't by itself decide the outcome. Errs toward "changed" (false, i.e.
+// don't restore) if verification still fails after those retries, since
+// that leaves the true state unknown and restoring on a false negative
+// risks the same double-stamp; not restoring in that case only leaves the
+// bucket without an active lifecycle policy until the next successful
+// save, which is recoverable and does not destroy data.
 func bucketLifecycleXMLUnchangedSince(client filer_pb.SeaweedFilerClient, bucketsPath, bucketName string, originalLifecycleXML []byte) bool {
-	verifyResp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
-		Directory: bucketsPath,
-		Name:      bucketName,
-	})
+	var verifyResp *filer_pb.LookupDirectoryEntryResponse
+	var err error
+	for attempt := 0; attempt < bucketLifecycleVerifyRetries; attempt++ {
+		verifyResp, err = client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+			Directory: bucketsPath,
+			Name:      bucketName,
+		})
+		if err == nil {
+			break
+		}
+		if attempt < bucketLifecycleVerifyRetries-1 {
+			time.Sleep(bucketLifecycleVerifyRetryDelay)
+		}
+	}
 	if err != nil || verifyResp.Entry == nil {
 		return false
 	}

@@ -538,6 +538,51 @@ func TestRestoreFilerConfLocationRules_PreservesUnrelatedConcurrentEdits(t *test
 	assert.True(t, found, "concurrent unrelated edit must survive the restore")
 }
 
+// TestRestoreFilerConfLocationRules_DoesNotClobberSamePrefixConcurrentWrite
+// pins the fix for the case the above test doesn't cover: a concurrent
+// writer installing a *different* rule at the exact same LocationPrefix the
+// restore is about to re-add. The outer CAS in saveFilerConfConditionally
+// only guards against changes between this call's own read and its write —
+// it can't see that the restore loop itself would otherwise blindly
+// overwrite a value it just read a moment earlier. Restoring must skip a
+// prefix that's no longer empty, leaving the concurrent writer's rule alone.
+func TestRestoreFilerConfLocationRules_DoesNotClobberSamePrefixConcurrentWrite(t *testing.T) {
+	client := newFakeFilerConfClient()
+	putFilerConf(t, client, &filer_pb.FilerConf_PathConf{
+		LocationPrefix: "/buckets/mybucket/",
+		Collection:     "mybucket",
+		Ttl:            "7d",
+	})
+
+	removed, err := ClearBucketLifecycleDayTTLs(context.Background(), client, "/buckets", "mybucket", "mybucket")
+	require.NoError(t, err)
+	require.Len(t, removed, 1)
+
+	// Another writer installs a different rule at the exact same prefix
+	// before the restore call reads filer.conf.
+	concurrentFc := NewFilerConf()
+	require.NoError(t, concurrentFc.LoadFromBytes([]byte(readFilerConfText(client))))
+	require.NoError(t, concurrentFc.SetLocationConf(&filer_pb.FilerConf_PathConf{
+		LocationPrefix: "/buckets/mybucket/", Collection: "mybucket", Ttl: "30d", ReadOnly: true,
+	}))
+	var buf bytes.Buffer
+	require.NoError(t, concurrentFc.ToText(&buf))
+	client.entries[client.key(DirectoryEtcSeaweedFS, FilerConfName)] = &filer_pb.Entry{
+		Name:       FilerConfName,
+		Content:    buf.Bytes(),
+		Attributes: &filer_pb.FuseAttributes{},
+	}
+
+	require.NoError(t, RestoreFilerConfLocationRules(context.Background(), client, removed))
+
+	reloaded := NewFilerConf()
+	require.NoError(t, reloaded.LoadFromBytes([]byte(readFilerConfText(client))))
+	rule, found := reloaded.GetLocationConf("/buckets/mybucket/")
+	require.True(t, found)
+	assert.Equal(t, "30d", rule.Ttl, "the concurrent writer's rule must survive, not the stale restored one")
+	assert.True(t, rule.ReadOnly, "the concurrent writer's rule must survive, not the stale restored one")
+}
+
 // bumpMtime simulates a concurrent writer modifying filer.conf after it was
 // read: it advances the stored entry's Mtime past unmodifiedSince so a
 // pending IF_UNMODIFIED_SINCE condition built from that earlier read no

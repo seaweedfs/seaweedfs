@@ -489,6 +489,14 @@ func ClearBucketLifecycleDayTTLs(ctx context.Context, client filer_pb.SeaweedFil
 // Used to undo a ClearBucketLifecycleDayTTLs cleanup when the write it was
 // guarding against double-stamped expiration for turns out not to have
 // taken effect. No-op if rules is empty.
+//
+// A rule is only re-added if its LocationPrefix is currently absent: the
+// fresh read above guards against changes made between it and the write
+// below, but not against this loop itself blindly overwriting something
+// that reappeared at the same prefix in between the original removal and
+// this call — e.g. another writer installing an unrelated rule at that
+// exact path. Skipping an occupied prefix leaves that concurrent writer's
+// rule alone instead of silently replacing it with the stale snapshot.
 func RestoreFilerConfLocationRules(ctx context.Context, client filer_pb.SeaweedFilerClient, rules []*filer_pb.FilerConf_PathConf) error {
 	if len(rules) == 0 {
 		return nil
@@ -500,6 +508,9 @@ func RestoreFilerConfLocationRules(ctx context.Context, client filer_pb.SeaweedF
 	}
 
 	for _, rule := range rules {
+		if _, found := snap.fc.GetLocationConf(rule.LocationPrefix); found {
+			continue
+		}
 		if err := snap.fc.SetLocationConf(rule); err != nil {
 			return err
 		}
