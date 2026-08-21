@@ -3,6 +3,7 @@ package lifecycle_xml
 import (
 	"bytes"
 	"encoding/xml"
+	"sort"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 )
@@ -79,6 +80,122 @@ func ruleToCanonical(r *Rule) *s3lifecycle.Rule {
 	}
 
 	return out
+}
+
+// CanonicalToLifecycle is the inverse of LifecycleToCanonical: it builds a
+// marshalable Lifecycle from the engine's flat Rule shape. Only the fields
+// s3lifecycle.Rule can represent are populated — there is no way back to
+// Transition / NoncurrentVersionTransition, which the canonical form never
+// carries.
+func CanonicalToLifecycle(rules []*s3lifecycle.Rule) *Lifecycle {
+	lc := &Lifecycle{
+		Rules: make([]Rule, 0, len(rules)),
+	}
+	for _, r := range rules {
+		lc.Rules = append(lc.Rules, ruleFromCanonical(r))
+	}
+	return lc
+}
+
+// MarshalCanonical serializes the canonical rules straight to a
+// BucketLifecycleConfiguration XML document, mirroring ParseCanonical.
+func MarshalCanonical(rules []*s3lifecycle.Rule) ([]byte, error) {
+	out, err := xml.Marshal(CanonicalToLifecycle(rules))
+	if err != nil {
+		return nil, err
+	}
+	return append([]byte(xml.Header), out...), nil
+}
+
+func ruleFromCanonical(r *s3lifecycle.Rule) Rule {
+	out := Rule{
+		ID:     r.ID,
+		Status: RuleStatus(r.Status),
+		Filter: filterFromCanonical(r.Prefix, r.FilterTags, r.FilterSizeGreaterThan, r.FilterSizeLessThan),
+	}
+
+	if r.ExpirationDays > 0 || !r.ExpirationDate.IsZero() || r.ExpiredObjectDeleteMarker {
+		out.Expiration = Expiration{
+			set:  true,
+			Days: r.ExpirationDays,
+		}
+		if !r.ExpirationDate.IsZero() {
+			out.Expiration.Date = ExpirationDate{Time: r.ExpirationDate}
+		}
+		if r.ExpiredObjectDeleteMarker {
+			out.Expiration.DeleteMarker = ExpireDeleteMarker{val: true, set: true}
+		}
+	}
+
+	if r.NoncurrentVersionExpirationDays > 0 || r.NewerNoncurrentVersions > 0 {
+		out.NoncurrentVersionExpiration = NoncurrentVersionExpiration{
+			set:                     true,
+			NoncurrentDays:          r.NoncurrentVersionExpirationDays,
+			NewerNoncurrentVersions: r.NewerNoncurrentVersions,
+		}
+	}
+
+	if r.AbortMPUDaysAfterInitiation > 0 {
+		out.AbortIncompleteMultipartUpload = AbortIncompleteMultipartUpload{
+			set:                 true,
+			DaysAfterInitiation: r.AbortMPUDaysAfterInitiation,
+		}
+	}
+
+	return out
+}
+
+// filterFromCanonical is the inverse of flattenFilter: it picks the
+// narrowest Filter shape that represents the given prefix/tags/size bounds,
+// matching what Filter.MarshalXML (single Prefix|Tag branch plus optional
+// size bounds) and its And branch can each express.
+func filterFromCanonical(prefix string, tags map[string]string, sizeGT, sizeLT int64) Filter {
+	discriminants := 0
+	if prefix != "" {
+		discriminants++
+	}
+	discriminants += len(tags)
+
+	f := Filter{set: true, ObjectSizeGreaterThan: sizeGT, ObjectSizeLessThan: sizeLT}
+
+	switch {
+	case discriminants > 1:
+		f.andSet = true
+		f.And = And{
+			ObjectSizeGreaterThan: sizeGT,
+			ObjectSizeLessThan:    sizeLT,
+		}
+		if prefix != "" {
+			f.And.Prefix = NewPrefix(prefix)
+		}
+		if len(tags) > 0 {
+			keys := make([]string, 0, len(tags))
+			for k := range tags {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			f.And.Tags = make([]Tag, 0, len(keys))
+			for _, k := range keys {
+				f.And.Tags = append(f.And.Tags, Tag{Key: k, Value: tags[k]})
+			}
+		}
+		// The And branch carries its own size bounds; the enclosing
+		// Filter only emits them on the non-And path (see
+		// Filter.MarshalXML), so clear them here to avoid duplication.
+		f.ObjectSizeGreaterThan = 0
+		f.ObjectSizeLessThan = 0
+	case len(tags) == 1:
+		f.tagSet = true
+		for k, v := range tags {
+			f.Tag = Tag{Key: k, Value: v}
+		}
+	default:
+		// Either a single prefix or no discriminant at all (whole-bucket
+		// filter) — both are expressed as a <Prefix> element, empty or not.
+		f.Prefix = NewPrefix(prefix)
+	}
+
+	return f
 }
 
 func flattenFilter(f *Filter) (prefix string, tags map[string]string, sizeGT, sizeLT int64) {

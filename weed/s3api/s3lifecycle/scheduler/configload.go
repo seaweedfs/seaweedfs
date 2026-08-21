@@ -13,6 +13,12 @@ import (
 
 const BucketLifecycleConfigurationXMLKey = "s3-bucket-lifecycle-configuration-xml"
 
+// BucketLifecycleTransitionMinimumObjectSizeKey mirrors the S3 API's
+// unexported bucketLifecycleTransitionMinimumObjectSizeKey so callers
+// outside weed/s3api (e.g. the admin dashboard) can clear it alongside the
+// XML key above without duplicating the literal.
+const BucketLifecycleTransitionMinimumObjectSizeKey = "s3-bucket-lifecycle-transition-default-minimum-object-size"
+
 // ParseError is returned alongside successfully-loaded inputs so callers can
 // surface malformed bucket configs rather than silently dropping them.
 type ParseError struct {

@@ -13,7 +13,18 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 )
+
+// MaxBucketLifecycleRules mirrors AWS S3's limit of 1000 lifecycle rules per bucket.
+const MaxBucketLifecycleRules = 1000
+
+// MaxBucketLifecycleRuleIDLength mirrors the S3 API's limit on a lifecycle rule's <ID>.
+const MaxBucketLifecycleRuleIDLength = 255
+
+// MaxBucketLifecycleConfigurationSize mirrors the S3 API's
+// maxBucketLifecycleConfigurationSize cap on the serialized XML.
+const MaxBucketLifecycleConfigurationSize = 1 << 20
 
 // MaxOwnerNameLength is the maximum allowed length for bucket owner identity names.
 // This is a reasonable limit to prevent abuse; AWS IAM user names are limited to 64 chars,
@@ -100,6 +111,144 @@ func (s *AdminServer) ShowBucketLifecycle(w http.ResponseWriter, r *http.Request
 	}
 
 	writeJSON(w, http.StatusOK, lifecycle)
+}
+
+// UpdateBucketLifecycle replaces the entire lifecycle configuration for a bucket.
+func (s *AdminServer) UpdateBucketLifecycle(w http.ResponseWriter, r *http.Request) {
+	if !requireSessionCSRFToken(w, r) {
+		return
+	}
+
+	bucketName := mux.Vars(r)["bucket"]
+	if bucketName == "" {
+		writeJSONError(w, http.StatusBadRequest, "Bucket name is required")
+		return
+	}
+
+	var req struct {
+		Rules []BucketLifecycleRule `json:"rules"`
+	}
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
+		return
+	}
+
+	if err := validateBucketLifecycleRules(req.Rules); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if err := s.SetBucketLifecycle(bucketName, req.Rules); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to update bucket lifecycle: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message": "Bucket lifecycle updated successfully",
+		"bucket":  bucketName,
+	})
+}
+
+// DeleteBucketLifecycle clears the entire lifecycle configuration for a bucket.
+func (s *AdminServer) DeleteBucketLifecycle(w http.ResponseWriter, r *http.Request) {
+	if !requireSessionCSRFToken(w, r) {
+		return
+	}
+
+	bucketName := mux.Vars(r)["bucket"]
+	if bucketName == "" {
+		writeJSONError(w, http.StatusBadRequest, "Bucket name is required")
+		return
+	}
+
+	if err := s.SetBucketLifecycle(bucketName, nil); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to delete bucket lifecycle: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message": "Bucket lifecycle deleted successfully",
+		"bucket":  bucketName,
+	})
+}
+
+// validateBucketLifecycleRules rejects a rule set before any write is
+// attempted, so a malformed PUT can't half-apply. Mirrors the constraints
+// AWS enforces on PutBucketLifecycleConfiguration plus the local rule cap.
+func validateBucketLifecycleRules(rules []BucketLifecycleRule) error {
+	if len(rules) > MaxBucketLifecycleRules {
+		return fmt.Errorf("a bucket may have at most %d lifecycle rules, got %d", MaxBucketLifecycleRules, len(rules))
+	}
+
+	seenIDs := make(map[string]bool, len(rules))
+	for i, rule := range rules {
+		label := fmt.Sprintf("rule %d", i+1)
+		if rule.ID != "" {
+			label = fmt.Sprintf("rule %q", rule.ID)
+			if len(rule.ID) > MaxBucketLifecycleRuleIDLength {
+				return fmt.Errorf("%s: ID must be %d characters or less", label, MaxBucketLifecycleRuleIDLength)
+			}
+			if seenIDs[rule.ID] {
+				return fmt.Errorf("duplicate rule ID %q", rule.ID)
+			}
+			seenIDs[rule.ID] = true
+		}
+
+		switch rule.Status {
+		case s3lifecycle.StatusEnabled, s3lifecycle.StatusDisabled:
+		default:
+			return fmt.Errorf("%s: status must be %q or %q, got %q", label, s3lifecycle.StatusEnabled, s3lifecycle.StatusDisabled, rule.Status)
+		}
+
+		if rule.ExpirationDays > 0 && rule.ExpirationDate != "" {
+			return fmt.Errorf("%s: expiration_days and expiration_date are mutually exclusive", label)
+		}
+		if rule.ExpirationDays < 0 {
+			return fmt.Errorf("%s: expiration_days must be positive", label)
+		}
+		if rule.ExpirationDate != "" {
+			if _, err := time.Parse(time.DateOnly, rule.ExpirationDate); err != nil {
+				return fmt.Errorf("%s: invalid expiration_date %q, expected YYYY-MM-DD", label, rule.ExpirationDate)
+			}
+		}
+
+		if rule.NoncurrentVersionExpirationDays < 0 {
+			return fmt.Errorf("%s: noncurrent_version_expiration_days must be positive", label)
+		}
+		if rule.NewerNoncurrentVersions < 0 {
+			return fmt.Errorf("%s: newer_noncurrent_versions must be positive", label)
+		}
+		if rule.NewerNoncurrentVersions > 0 && rule.NoncurrentVersionExpirationDays == 0 {
+			return fmt.Errorf("%s: newer_noncurrent_versions requires noncurrent_version_expiration_days to be set", label)
+		}
+		if rule.AbortMultipartDays < 0 {
+			return fmt.Errorf("%s: abort_multipart_days must be positive", label)
+		}
+
+		if rule.SizeGreaterThan < 0 || rule.SizeLessThan < 0 {
+			return fmt.Errorf("%s: size_greater_than and size_less_than must be positive", label)
+		}
+		if rule.SizeGreaterThan > 0 && rule.SizeLessThan > 0 && rule.SizeGreaterThan >= rule.SizeLessThan {
+			return fmt.Errorf("%s: size_greater_than must be less than size_less_than", label)
+		}
+
+		for k, v := range rule.Tags {
+			if strings.TrimSpace(k) == "" {
+				return fmt.Errorf("%s: tag keys must not be empty", label)
+			}
+			if strings.TrimSpace(v) == "" {
+				return fmt.Errorf("%s: tag value for key %q must not be empty", label, k)
+			}
+		}
+
+		hasAction := rule.ExpirationDays > 0 || rule.ExpirationDate != "" || rule.ExpiredObjectDeleteMarker ||
+			rule.NoncurrentVersionExpirationDays > 0 || rule.AbortMultipartDays > 0
+		if !hasAction {
+			return fmt.Errorf("%s: must specify at least one action (expiration, noncurrent version expiration, or abort incomplete multipart upload)", label)
+		}
+	}
+
+	return nil
 }
 
 // CreateBucket creates a new S3 bucket

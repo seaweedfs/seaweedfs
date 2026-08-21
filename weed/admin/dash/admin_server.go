@@ -1001,6 +1001,106 @@ func toBucketLifecycleRule(rule *s3lifecycle.Rule) BucketLifecycleRule {
 	return out
 }
 
+// fromBucketLifecycleRule is the inverse of toBucketLifecycleRule, turning a
+// rule edited in the admin UI back into the engine's canonical shape.
+func fromBucketLifecycleRule(rule BucketLifecycleRule) (*s3lifecycle.Rule, error) {
+	out := &s3lifecycle.Rule{
+		ID:                              rule.ID,
+		Status:                          rule.Status,
+		Prefix:                          rule.Prefix,
+		FilterTags:                      rule.Tags,
+		FilterSizeGreaterThan:           rule.SizeGreaterThan,
+		FilterSizeLessThan:              rule.SizeLessThan,
+		ExpirationDays:                  rule.ExpirationDays,
+		ExpiredObjectDeleteMarker:       rule.ExpiredObjectDeleteMarker,
+		NoncurrentVersionExpirationDays: rule.NoncurrentVersionExpirationDays,
+		NewerNoncurrentVersions:         rule.NewerNoncurrentVersions,
+		AbortMPUDaysAfterInitiation:     rule.AbortMultipartDays,
+	}
+	if rule.ExpirationDate != "" {
+		date, err := time.Parse(time.DateOnly, rule.ExpirationDate)
+		if err != nil {
+			return nil, fmt.Errorf("invalid expiration date %q: %w", rule.ExpirationDate, err)
+		}
+		out.ExpirationDate = date
+	}
+	return out, nil
+}
+
+// SetBucketLifecycle replaces the lifecycle configuration stored on a
+// bucket's filer entry. An empty rule list clears the configuration
+// entirely, mirroring clearStoredBucketLifecycleConfiguration on the S3 API
+// side. Callers must validate rules before calling this (see
+// validateBucketLifecycleRules) — this only rejects what marshaling itself
+// rejects.
+func (s *AdminServer) SetBucketLifecycle(bucketName string, rules []BucketLifecycleRule) error {
+	canonicalRules := make([]*s3lifecycle.Rule, 0, len(rules))
+	for _, rule := range rules {
+		canonicalRule, err := fromBucketLifecycleRule(rule)
+		if err != nil {
+			return err
+		}
+		canonicalRules = append(canonicalRules, canonicalRule)
+	}
+
+	var lifecycleXML []byte
+	if len(canonicalRules) > 0 {
+		var err error
+		lifecycleXML, err = lifecycle_xml.MarshalCanonical(canonicalRules)
+		if err != nil {
+			return fmt.Errorf("marshal lifecycle configuration: %w", err)
+		}
+		if len(lifecycleXML) > MaxBucketLifecycleConfigurationSize {
+			return fmt.Errorf("lifecycle configuration is %d bytes, which exceeds the %d byte limit", len(lifecycleXML), MaxBucketLifecycleConfigurationSize)
+		}
+	}
+
+	filerConfig, err := s.getFilerConfig()
+	if err != nil {
+		return fmt.Errorf("get filer configuration: %w", err)
+	}
+	collection := getCollectionName(filerConfig.FilerGroup, bucketName)
+
+	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		lookupResp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+			Directory: filerConfig.BucketsPath,
+			Name:      bucketName,
+		})
+		if err != nil {
+			return fmt.Errorf("bucket not found: %w", err)
+		}
+
+		bucketEntry := lookupResp.Entry
+		if bucketEntry.Extended == nil {
+			bucketEntry.Extended = make(map[string][]byte)
+		}
+
+		if len(lifecycleXML) > 0 {
+			bucketEntry.Extended[scheduler.BucketLifecycleConfigurationXMLKey] = lifecycleXML
+		} else {
+			delete(bucketEntry.Extended, scheduler.BucketLifecycleConfigurationXMLKey)
+			delete(bucketEntry.Extended, scheduler.BucketLifecycleTransitionMinimumObjectSizeKey)
+		}
+
+		if _, err := client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
+			Directory: filerConfig.BucketsPath,
+			Entry:     bucketEntry,
+		}); err != nil {
+			return fmt.Errorf("failed to update bucket lifecycle: %w", err)
+		}
+
+		// Migration: clear any legacy day-TTL filer.conf entries so they
+		// don't double-stamp expiration alongside the XML just saved. See
+		// PutBucketLifecycleConfigurationHandler for the S3 API's
+		// equivalent step.
+		if _, err := filer.ClearBucketLifecycleDayTTLs(context.Background(), client, filerConfig.BucketsPath, bucketName, collection); err != nil {
+			return fmt.Errorf("failed to clear legacy lifecycle TTLs: %w", err)
+		}
+
+		return nil
+	})
+}
+
 // CreateS3Bucket creates a new S3 bucket
 func (s *AdminServer) CreateS3Bucket(bucketName string) error {
 	return s.CreateS3BucketWithQuota(bucketName, 0, false)

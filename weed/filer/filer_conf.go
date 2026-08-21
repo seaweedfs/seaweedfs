@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
@@ -309,6 +310,47 @@ func ClearBucketReadOnly(ctx context.Context, client filer_pb.SeaweedFilerClient
 	if !fc.ClearReadOnly(bucketsPath + "/" + bucketName + "/") {
 		return false, nil
 	}
+	var buf bytes.Buffer
+	if err = fc.ToText(&buf); err != nil {
+		return false, err
+	}
+	if err = SaveInsideFiler(ctx, client, DirectoryEtcSeaweedFS, FilerConfName, buf.Bytes()); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// ClearBucketLifecycleDayTTLs removes any day-TTL filer.conf rules a legacy
+// PutBucketLifecycleConfiguration handler installed under the bucket's path.
+// Per-write TTL is now driven by the LifecycleTTLResolver built off the
+// stored lifecycle XML, so a lingering day-TTL rule would double-stamp
+// expiration (volume server expires under the old rule) or contradict a
+// newly saved XML. Reports whether anything changed.
+func ClearBucketLifecycleDayTTLs(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketsPath, bucketName, collection string) (changed bool, err error) {
+	data, err := ReadInsideFiler(ctx, client, DirectoryEtcSeaweedFS, FilerConfName)
+	if err == filer_pb.ErrNotFound || (err == nil && len(data) == 0) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read %s/%s: %v", DirectoryEtcSeaweedFS, FilerConfName, err)
+	}
+	fc := NewFilerConf()
+	if err = fc.LoadFromBytes(data); err != nil {
+		return false, fmt.Errorf("parse %s/%s: %v", DirectoryEtcSeaweedFS, FilerConfName, err)
+	}
+
+	bucketPrefix := fmt.Sprintf("%s/%s/", bucketsPath, bucketName)
+	for prefix, ttl := range fc.GetCollectionTtls(collection) {
+		if !strings.HasPrefix(prefix, bucketPrefix) || !strings.HasSuffix(ttl, "d") {
+			continue
+		}
+		fc.DeleteLocationConf(prefix)
+		changed = true
+	}
+	if !changed {
+		return false, nil
+	}
+
 	var buf bytes.Buffer
 	if err = fc.ToText(&buf); err != nil {
 		return false, err

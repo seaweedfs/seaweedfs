@@ -1132,36 +1132,13 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 	// (volume server expires under the old rule) or contradict the new
 	// XML after a rule change. The add path is gone — this loop only
 	// shrinks the conf, never grows it.
-	fc, err := filer.ReadFilerConfFromFilers(s3a.option.Filers, s3a.option.GrpcDialOption, nil)
-	if err != nil {
-		glog.Errorf("PutBucketLifecycleConfigurationHandler read filer config: %s", err)
+	if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		_, err := filer.ClearBucketLifecycleDayTTLs(context.Background(), client, s3a.option.BucketsPath, bucket, s3a.getCollectionName(bucket))
+		return err
+	}); err != nil {
+		glog.Errorf("PutBucketLifecycleConfigurationHandler clear legacy day-TTLs: %s", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
-	}
-	collectionTtls := fc.GetCollectionTtls(s3a.getCollectionName(bucket))
-	changed := false
-	bucketPrefix := fmt.Sprintf("%s/%s/", s3a.option.BucketsPath, bucket)
-	for prefix, ttl := range collectionTtls {
-		if !strings.HasPrefix(prefix, bucketPrefix) || !strings.HasSuffix(ttl, "d") {
-			continue
-		}
-		fc.DeleteLocationConf(prefix)
-		changed = true
-	}
-
-	if changed {
-		var buf bytes.Buffer
-		if err := fc.ToText(&buf); err != nil {
-			glog.Errorf("PutBucketLifecycleConfigurationHandler save config to text: %s", err)
-			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-		}
-		if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			return filer.SaveInsideFiler(context.Background(), client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, buf.Bytes())
-		}); err != nil {
-			glog.Errorf("PutBucketLifecycleConfigurationHandler save config inside filer: %s", err)
-			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-			return
-		}
 	}
 
 	if errCode := s3a.storeBucketLifecycleConfiguration(bucket, lifecycleXML, r.Header.Get(bucketLifecycleTransitionMinimumObjectSizeHeader)); errCode != s3err.ErrNone {
