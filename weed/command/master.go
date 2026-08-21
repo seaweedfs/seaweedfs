@@ -234,15 +234,17 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		if raftServer == nil {
 			glog.Fatalf("please verify %s is writable, see https://github.com/seaweedfs/seaweedfs/issues/717: %s", *masterOption.metaFolder, err)
 		}
-		// For single-master mode with a fresh log, initialize cluster immediately.
-		// When resuming with existing state, the server is already a member and
-		// will self-elect via fastResume — sending another JoinCommand would block
-		// because goraft's setCommitIndex returns early on JoinCommand entries,
-		// preventing the new entry's event from being notified when old uncommitted
-		// JoinCommands exist in the log.
-		if isSingleMaster && !raftServer.HasExistingState() {
-			glog.V(0).Infof("Single-master mode: initializing cluster immediately")
-			raftServer.DoJoinCommand()
+	}
+	// For single-master mode with a fresh log, initialize cluster immediately.
+	// When resuming with existing state, the server is already a member and
+	// will self-elect via fastResume — sending another JoinCommand would block
+	// because goraft's setCommitIndex returns early on JoinCommand entries,
+	// preventing the new entry's event from being notified when old uncommitted
+	// JoinCommands exist in the log.
+	if isSingleMaster && !raftServer.HasExistingState() {
+		glog.V(0).Infof("Single-master mode: initializing cluster immediately")
+		if err := raftServer.Bootstrap(); err != nil {
+			glog.Errorf("fail to bootstrap the cluster: %v", err)
 		}
 	}
 	ms.SetRaftServer(raftServer)
@@ -272,8 +274,13 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	go grpcS.Serve(grpcL)
 	pb.ServeGrpcOnLocalSocket(grpcS, grpcPort)
 
-	// For multi-master mode with non-Hashicorp raft, wait and check if we should join
-	if !*masterOption.raftHashicorp && !isSingleMaster {
+	// A master that starts with no raft state cannot elect on its own — neither
+	// raft implementation lets a server outside the configuration campaign — so
+	// it has to be pulled in by a leader. Keep asking the peers who the leader is
+	// until we are in: the leader admits us once our master client registers, and
+	// only when nobody has one does the first peer mint a new cluster. Restarting
+	// a master alone, or scaling the peer list up, both land here.
+	if !isSingleMaster {
 		go func() {
 			// Stagger bootstrap by peer index so masters don't all check
 			// simultaneously. Peer 0 waits ~1.5s, peer 1 ~3s, etc.
@@ -282,22 +289,24 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 			glog.V(0).Infof("bootstrap check in %v (peer index %d of %d)", delay, idx, len(peers))
 			time.Sleep(delay)
 
-			ms.Topo.RaftServerAccessLock.RLock()
-			isEmptyMaster := ms.Topo.RaftServer.Leader() == "" && ms.Topo.RaftServer.IsLogEmpty()
-			isFirst := idx == 0
-			if isEmptyMaster && isFirst {
-				existingLeader := ms.MasterClient.FindLeaderFromOtherPeers(myMasterAddress)
-				if existingLeader == "" {
-					raftServer.DoJoinCommand()
-				} else {
-					glog.V(0).Infof("skip bootstrap: existing leader %s found from peers", existingLeader)
+			for {
+				if raftServer.HasExistingState() {
+					return
 				}
-			} else if !isEmptyMaster {
-				glog.V(0).Infof("skip bootstrap: leader=%q logEmpty=%v", ms.Topo.RaftServer.Leader(), ms.Topo.RaftServer.IsLogEmpty())
-			} else {
-				glog.V(0).Infof("skip bootstrap: %v is not the first master in peers (index %d)", myMasterAddress, idx)
+				if leader, err := ms.Topo.MaybeLeader(); err == nil && leader != "" {
+					return
+				}
+				if existingLeader := ms.MasterClient.FindLeaderFromOtherPeers(myMasterAddress); existingLeader != "" {
+					glog.V(0).Infof("waiting to be admitted by existing leader %s", existingLeader)
+				} else if idx == 0 {
+					if err := raftServer.Bootstrap(); err != nil {
+						glog.Errorf("fail to bootstrap the cluster: %v", err)
+					}
+				} else {
+					glog.V(0).Infof("skip bootstrap: %v is not the first master in peers (index %d)", myMasterAddress, idx)
+				}
+				time.Sleep(raftJoinCheckDelay)
 			}
-			ms.Topo.RaftServerAccessLock.RUnlock()
 		}()
 	}
 

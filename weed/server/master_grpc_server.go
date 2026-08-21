@@ -403,6 +403,13 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 	if req.ClientType == cluster.FilerType {
 		ms.LockRingManager.AddServer(cluster.FilerGroupName(req.FilerGroup), peerAddress)
 	}
+	if req.ClientType == cluster.MasterType {
+		// Only the leader gets this far, and a master that starts with no raft
+		// state cannot campaign its way in, so this registration is where it
+		// joins the quorum. The broadcast below is not enough: it only reaches
+		// masters already connected to us.
+		ms.AdmitRaftPeer(peerAddress)
+	}
 
 	defer func() {
 		for _, update := range ms.Cluster.RemoveClusterNode(req.FilerGroup, req.ClientType, peerAddress) {
