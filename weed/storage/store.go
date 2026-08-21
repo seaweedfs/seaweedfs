@@ -559,16 +559,18 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 					stats.IsDiskSpaceLow:   0,
 				}
 			}
-			if !shouldDeleteVolume && v.IsReadOnly() {
-				collectionVolumeReadOnlyCount[v.Collection][stats.IsReadOnly] += 1
-				if v.noWriteOrDelete {
-					collectionVolumeReadOnlyCount[v.Collection][stats.NoWriteOrDelete] += 1
+			readOnly, noWriteOrDelete, noWriteCanDelete, diskSpaceLow := v.ReadOnlyReasons()
+			if !shouldDeleteVolume && readOnly {
+				counts := collectionVolumeReadOnlyCount[v.Collection]
+				counts[stats.IsReadOnly] += 1
+				if noWriteOrDelete {
+					counts[stats.NoWriteOrDelete] += 1
 				}
-				if v.noWriteCanDelete {
-					collectionVolumeReadOnlyCount[v.Collection][stats.NoWriteCanDelete] += 1
+				if noWriteCanDelete {
+					counts[stats.NoWriteCanDelete] += 1
 				}
-				if v.location.isDiskSpaceLow.Load() {
-					collectionVolumeReadOnlyCount[v.Collection][stats.IsDiskSpaceLow] += 1
+				if diskSpaceLow {
+					counts[stats.IsDiskSpaceLow] += 1
 				}
 			}
 		}
