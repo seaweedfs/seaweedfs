@@ -634,7 +634,7 @@ function formatDate(date) {
 function adminCopyToClipboard(text) {
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).then(() => {
-            showAlert('Copied to clipboard!', 'success');
+            showToast('Copied to clipboard!');
         }).catch(err => {
             console.error('Failed to copy text: ', err);
             fallbackCopyText(text);
@@ -660,7 +660,7 @@ function fallbackCopyText(text) {
     try {
         const successful = document.execCommand('copy');
         if (successful) {
-            showAlert('Copied to clipboard!', 'success');
+            showToast('Copied to clipboard!');
         } else {
             showAlert('Failed to copy to clipboard', 'danger');
         }
@@ -2265,11 +2265,11 @@ function copyFromInput(inputId) {
         try {
             const successful = document.execCommand('copy');
             if (successful) {
-                showAlert('Copied to clipboard!', 'success');
+                showToast('Copied to clipboard!');
             } else {
                 // Try modern clipboard API as fallback
                 navigator.clipboard.writeText(input.value).then(() => {
-                    showAlert('Copied to clipboard!', 'success');
+                    showToast('Copied to clipboard!');
                 }).catch(() => {
                     showAlert('Failed to copy', 'danger');
                 });
@@ -2277,7 +2277,7 @@ function copyFromInput(inputId) {
         } catch (err) {
             // Try modern clipboard API as fallback
             navigator.clipboard.writeText(input.value).then(() => {
-                showAlert('Copied to clipboard!', 'success');
+                showToast('Copied to clipboard!');
             }).catch(() => {
                 showAlert('Failed to copy', 'danger');
             });

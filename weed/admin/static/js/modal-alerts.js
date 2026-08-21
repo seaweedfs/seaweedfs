@@ -169,6 +169,36 @@
     };
 
     /**
+     * Show a transient message that does not have to be dismissed
+     * @param {string} message - The message to display
+     * @param {string} type - Bootstrap contextual color, defaults to 'success'
+     */
+    window.showToast = function (message, type) {
+        let container = document.getElementById('globalToastContainer');
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'globalToastContainer';
+            container.className = 'toast-container position-fixed top-0 end-0 p-3';
+            // Above any modal, however deeply they are stacked.
+            container.style.zIndex = '9999';
+            document.body.appendChild(container);
+        }
+
+        const toast = document.createElement('div');
+        toast.className = 'toast align-items-center text-white bg-' + (type || 'success') + ' border-0';
+        toast.setAttribute('role', 'alert');
+        toast.innerHTML = '<div class="d-flex"><div class="toast-body">' + escapeHtml(message) + '</div>' +
+            '<button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button></div>';
+        container.appendChild(toast);
+
+        toast.addEventListener('hidden.bs.toast', function () {
+            toast.remove();
+        });
+
+        new bootstrap.Toast(toast, { delay: 3000 }).show();
+    };
+
+    /**
      * Show a confirmation dialog using Bootstrap modal
      * @param {string} message - The confirmation message
      * @param {function} onConfirm - Callback function if user confirms
