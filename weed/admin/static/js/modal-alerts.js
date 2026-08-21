@@ -290,6 +290,40 @@
         return text.replace(/[&<>"']/g, function (m) { return map[m]; });
     }
 
+    // Bootstrap gives every modal and backdrop the same z-index, so a modal
+    // opened while another one is showing paints behind it and cannot be
+    // clicked. Lift each nested modal, and its backdrop, above what is already
+    // on screen.
+    const MODAL_Z_INDEX = 1055;
+    const MODAL_Z_INDEX_STEP = 20;
+
+    document.addEventListener('show.bs.modal', function (event) {
+        const depth = document.querySelectorAll('.modal.show').length;
+        if (depth === 0) {
+            return;
+        }
+
+        const zIndex = MODAL_Z_INDEX + depth * MODAL_Z_INDEX_STEP;
+        event.target.style.zIndex = zIndex;
+
+        // Bootstrap only creates the backdrop after this event returns.
+        setTimeout(function () {
+            const backdrops = document.querySelectorAll('.modal-backdrop');
+            const backdrop = backdrops[backdrops.length - 1];
+            if (backdrop) {
+                backdrop.style.zIndex = zIndex - 1;
+            }
+        }, 0);
+    });
+
+    document.addEventListener('hidden.bs.modal', function (event) {
+        event.target.style.zIndex = '';
+        // Closing any modal releases the scroll lock the others still need.
+        if (document.querySelector('.modal.show')) {
+            document.body.classList.add('modal-open');
+        }
+    });
+
     // Auto-initialize on DOMContentLoaded
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', ensureModalsExist);
