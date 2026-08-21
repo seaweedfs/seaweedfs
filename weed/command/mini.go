@@ -2071,16 +2071,21 @@ func ensureMiniTableBuckets(buckets []tableBucketEntry) ([]tableBucketEntry, err
 			}
 			var s3Err *s3tables.S3TablesError
 			if errors.As(err, &s3Err) && s3Err.Type == s3tables.ErrCodeBucketAlreadyExists {
-				// The name being taken says nothing about the format holding
-				// it, and the catalogs refuse tables of the other one, so a
-				// silent reuse only fails later at the client.
-				existing := existingTableBucketFormat(manager, mgrClient, bucket.name)
-				if existing != "" && existing != bucket.format {
+				// The name being taken says nothing about what holds it: it
+				// may be the other format, or an ordinary S3 bucket, which
+				// answers the same conflict. Only reuse what reads back as
+				// the format asked for, since the rest fails later at the
+				// client instead of here.
+				existing, readErr := existingTableBucketFormat(manager, mgrClient, bucket.name)
+				switch {
+				case readErr != nil:
+					glog.Warningf("%s already exists but does not read back as a table bucket: %v; leaving it alone", bucket.name, readErr)
+				case existing != "" && existing != bucket.format:
 					glog.Warningf("table bucket %s already exists holding %s tables, not %s; leaving it alone", bucket.name, existing, bucket.format)
-					continue
+				default:
+					glog.V(0).Infof("table bucket %s already exists", bucket.name)
+					ready = append(ready, bucket)
 				}
-				glog.V(0).Infof("table bucket %s already exists", bucket.name)
-				ready = append(ready, bucket)
 				continue
 			}
 			glog.Warningf("create table bucket %s: %v", bucket.name, err)
@@ -2102,21 +2107,22 @@ func icebergRoutingNames(buckets []tableBucketEntry) []string {
 	return names
 }
 
-// existingTableBucketFormat is the format the named table bucket holds, or "" if
-// it cannot be read or predates declared formats, which accepts either.
-func existingTableBucketFormat(manager *s3tables.Manager, client *s3tables.ManagerClient, name string) string {
+// existingTableBucketFormat is the format the named table bucket holds. An empty
+// format with no error is a bucket predating declared formats, which accepts
+// either; an error means nothing was confirmed, an ordinary S3 bucket wearing
+// the name included.
+func existingTableBucketFormat(manager *s3tables.Manager, client *s3tables.ManagerClient, name string) (string, error) {
 	arn, err := s3tables.BuildBucketARN(s3tables.DefaultRegion, s3tables.DefaultAccountID, name)
 	if err != nil {
-		return ""
+		return "", err
 	}
 	ctx, cancel := context.WithTimeout(miniClientsCtx(), 5*time.Second)
 	defer cancel()
 	var resp s3tables.GetTableBucketResponse
 	if err := manager.Execute(ctx, client, "GetTableBucket", &s3tables.GetTableBucketRequest{TableBucketARN: arn}, &resp, s3tables.DefaultAccountID); err != nil {
-		glog.V(1).Infof("read format of table bucket %s: %v", name, err)
-		return ""
+		return "", err
 	}
-	return resp.Format
+	return resp.Format, nil
 }
 
 // miniServesTableFormat reports whether the endpoint that serves format is
