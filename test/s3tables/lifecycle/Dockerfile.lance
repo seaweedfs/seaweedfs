@@ -1,0 +1,17 @@
+# Lance client for the Lance half of the lifecycle test.
+#
+# Pinned to the versions this suite was verified against, the way
+# catalog_lancedb pins its client: an unrelated upstream release should not be
+# able to change what an old commit reproduces.
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir \
+    "lance-namespace==0.8.6" \
+    "pylance==10.0.0" \
+    "pyarrow==25.0.1"
+
+COPY lance_lifecycle.py /app/
+
+CMD ["python3", "/app/lance_lifecycle.py", "--help"]
