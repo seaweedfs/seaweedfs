@@ -15,7 +15,7 @@ import (
 )
 
 // newTestStore creates a test store with the specified number of directories
-func newTestStore(t *testing.T, numDirs int) *Store {
+func newTestStore(t testing.TB, numDirs int) *Store {
 	tempDir := t.TempDir()
 
 	var dirs []string
