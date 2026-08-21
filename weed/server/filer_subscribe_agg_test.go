@@ -42,8 +42,14 @@ func (h *subscribeHarness) startAggregator() *filer.MetaAggregator {
 
 // reportPeers stands in for both peers' streams reporting through tsNs.
 func reportPeers(ma *filer.MetaAggregator, tsNs int64) {
-	ma.ReportPeerWatermarksForTesting(testSelfAddress, tsNs, tsNs)
-	ma.ReportPeerWatermarksForTesting(testPeerAddress, tsNs, tsNs)
+	reportPeersAt(ma, tsNs, tsNs)
+}
+
+// reportPeersAt is reportPeers with the two watermarks apart: a peer streams
+// an event well before it flushes it, so they advance independently.
+func reportPeersAt(ma *filer.MetaAggregator, deliveredTsNs, flushedTsNs int64) {
+	ma.ReportPeerWatermarksForTesting(testSelfAddress, deliveredTsNs, flushedTsNs)
+	ma.ReportPeerWatermarksForTesting(testPeerAddress, deliveredTsNs, flushedTsNs)
 }
 
 func (h *subscribeHarness) appendAggregated(tsNs int64) {
@@ -118,9 +124,12 @@ func (h *subscribeHarness) writeFor(ma *filer.MetaAggregator, d time.Duration, r
 
 // heldReads reads back the hold counter the loop keeps in place of the log
 // line, which is also how an operator sees a held subscriber now.
-func heldReads() int {
+func heldReads(scopes ...string) int {
+	if len(scopes) == 0 {
+		scopes = []string{"memory", "disk"}
+	}
 	var total int
-	for _, scope := range []string{"memory", "disk"} {
+	for _, scope := range scopes {
 		total += int(testutil.ToFloat64(stats.FilerSubscribeWatermarkHolds.WithLabelValues(scope)))
 	}
 	return total
@@ -263,4 +272,47 @@ func TestPeerDeliveryClaimPacing(t *testing.T) {
 	if s.messages[0].TsNs <= claimedAtNs {
 		t.Fatalf("claim ts %d did not advance past %d", s.messages[0].TsNs, claimedAtNs)
 	}
+}
+
+// TestSubscribeLoop_AggregatedDiskHoldIgnoresDeliveryProgress pins that each
+// hold parks on its own watermark. A persisted-log read is held by what the
+// peers have FLUSHED, and peers advance their DELIVERY watermark on every
+// event they stream, so waking it on delivery progress would re-list a day of
+// log files per event and re-park on the same entry.
+func TestSubscribeLoop_AggregatedDiskHoldIgnoresDeliveryProgress(t *testing.T) {
+	h := newSubscribeHarness(t)
+	prevRetry := unflushedGapRetryInterval
+	unflushedGapRetryInterval = 500 * time.Millisecond
+	t.Cleanup(func() { unflushedGapRetryInterval = prevRetry })
+
+	// Recent enough that the settled horizon does not take the hold over.
+	onDisk := time.Now().Add(-30 * time.Second).UnixNano()
+	h.append(onDisk)
+	h.f.LocalMetaLogBuffer.ForceFlush()
+	waitForFlushedFiles(t, h, onDisk)
+
+	ma := h.startAggregator()
+	// Flushed below the entry on disk, delivered well past it: only the disk
+	// pass is held.
+	reportPeersAt(ma, time.Now().UnixNano(), onDisk-int64(time.Second))
+	r := h.subscribeAggregated(onDisk - int64(5*time.Second))
+	assertNoEventsFor(t, r, 200*time.Millisecond)
+
+	holdsBefore := heldReads("disk")
+	start := time.Now()
+	for deadline := start.Add(time.Second); time.Now().Before(deadline); {
+		reportPeersAt(ma, time.Now().UnixNano(), 0)
+		time.Sleep(2 * time.Millisecond)
+	}
+	holds, elapsed := heldReads("disk")-holdsBefore, time.Since(start)
+
+	t.Logf("%v of delivery-only progress produced %d disk holds", elapsed, holds)
+	if maxHolds := int(elapsed/unflushedGapRetryInterval) + 2; holds > maxHolds {
+		t.Fatalf("held on disk %d times in %v, want at most %d: delivery progress cannot release a flush hold",
+			holds, elapsed, maxHolds)
+	}
+
+	// The flush watermark reaching the entry is what delivers it.
+	reportPeersAt(ma, 0, onDisk)
+	waitForEvents(t, r, []int64{onDisk}, 3*time.Second)
 }

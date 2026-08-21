@@ -147,3 +147,67 @@ func TestPeerFlushWatermarkBookkeeping(t *testing.T) {
 	}
 	_ = a
 }
+
+// closed reports whether ch has been signalled, without blocking.
+func closed(ch <-chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
+}
+
+// TestWatermarkAdvancedChansAreScoped pins what each wake channel promises. A
+// held read re-runs a whole pass - a persisted-log listing in it - so waking
+// one whose bound did not move is pure waste, and peers advance their delivery
+// watermark on every event they stream.
+func TestWatermarkAdvancedChansAreScoped(t *testing.T) {
+	ma := newTestAggregator()
+	a, b := pb.ServerAddress("filer-a:8888"), pb.ServerAddress("filer-b:8888")
+	ma.initPeerWatermark(a)
+	ma.initPeerWatermark(b)
+
+	delivery, flush := ma.DeliveryWatermarkAdvancedChan(), ma.FlushWatermarkAdvancedChan()
+
+	// One peer alone does not move either minimum: the other still pins both.
+	ma.advancePeerWatermark(a, 100)
+	ma.advancePeerFlushWatermark(a, 100)
+	if closed(delivery) || closed(flush) {
+		t.Fatalf("a single peer moved a minimum: delivery=%v flush=%v", closed(delivery), closed(flush))
+	}
+
+	// Delivery progress on every peer wakes the in-memory holds only.
+	ma.advancePeerWatermark(b, 50)
+	if !closed(delivery) {
+		t.Fatal("delivery low-watermark rose without waking the in-memory holds")
+	}
+	if closed(flush) {
+		t.Fatal("delivery progress woke the persisted-log holds, which it cannot release")
+	}
+
+	// And flush progress the persisted-log holds only.
+	delivery = ma.DeliveryWatermarkAdvancedChan()
+	ma.advancePeerFlushWatermark(b, 50)
+	if !closed(flush) {
+		t.Fatal("flush low-watermark rose without waking the persisted-log holds")
+	}
+	if closed(delivery) {
+		t.Fatal("flush progress woke the in-memory holds, which it cannot release")
+	}
+
+	// A fresh channel is handed out after each signal, so the next park is on
+	// the next rise rather than on one already consumed.
+	flush = ma.FlushWatermarkAdvancedChan()
+	if closed(flush) {
+		t.Fatal("re-handed a signalled channel")
+	}
+	ma.advancePeerFlushWatermark(a, 200)
+	if closed(flush) {
+		t.Fatal("one peer above the minimum signalled a rise")
+	}
+	ma.advancePeerFlushWatermark(b, 200)
+	if !closed(flush) {
+		t.Fatal("the trailing peer catching up did not signal a rise")
+	}
+}

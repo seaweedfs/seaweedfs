@@ -675,9 +675,10 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	// landing that no watermark covers). Arriving data is deliberately not a
 	// wake-up: on a cluster that keeps writing there is always an entry past
 	// the hold, so waking on it spins the loop without ever releasing the
-	// hold. watermarkChan was taken before the pass read the watermarks, so a
-	// rise in between wakes us here instead of being missed. False: context
-	// ended.
+	// hold. The channel is the one for this read's own watermark - a delivery
+	// advance cannot release a flush-held read - and was taken before the pass
+	// sampled it, so a rise in between wakes us here instead of being missed.
+	// False: context ended.
 	waitHeld := func(scope string, watermarkChan <-chan struct{}) bool {
 		stats.FilerSubscribeWatermarkHolds.WithLabelValues(scope).Inc()
 		glog.V(3).Infof("held at %v (deliveredUpTo %v, flushLow %v, deliveryLow %v) for %v",
@@ -724,9 +725,10 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 
 		glog.V(4).Infof("read on disk %v aggregated subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
-		// Taken before either read samples a watermark, so a rise mid-pass
+		// Taken before either read samples its watermark, so a rise mid-pass
 		// cannot land between the sample and the park below.
-		watermarkChan := fs.filer.MetaAggregator.WatermarkAdvancedChan()
+		flushChan := fs.filer.MetaAggregator.FlushWatermarkAdvancedChan()
+		deliveryChan := fs.filer.MetaAggregator.DeliveryWatermarkAdvancedChan()
 		cursorBeforeDiskTsNs := lastReadTime.Time.UnixNano()
 
 		// Observe the flush low-watermark before the pass lists files (see
@@ -761,7 +763,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 			// A hold is not a gap: clear any stale ResumeFromDiskError so the
 			// next pass's disk-miss handling cannot skip past the held entry.
 			readInMemoryLogErr = nil
-			if !waitHeld("disk", watermarkChan) {
+			if !waitHeld("disk", flushChan) {
 				return nil
 			}
 			continue
@@ -867,7 +869,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 				// the last delivered entry so nothing in between is skipped.
 				lastReadTime = log_buffer.NewMessagePosition(deliveredUpToTsNs, gapResumeCursorOffset)
 				readInMemoryLogErr = nil
-				if !waitHeld("memory", watermarkChan) {
+				if !waitHeld("memory", deliveryChan) {
 					return nil
 				}
 				continue

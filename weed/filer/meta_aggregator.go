@@ -51,12 +51,16 @@ type MetaAggregator struct {
 	// gone past the grace is dropped so it cannot pin the low-watermarks.
 	peerRemovedAtNs map[pb.ServerAddress]int64
 	// lowWatermarkTsNs and lowFlushWatermarkTsNs are the last minima signalled
-	// on watermarkAdvanced, which is closed and replaced whenever one of them
-	// rises. Held readers park on it: arriving data cannot release a watermark
-	// hold, only a peer reporting further progress can.
+	// on deliveryAdvanced and flushAdvanced, each closed and replaced when its
+	// own minimum rises. Held readers park on the one that bounds them:
+	// arriving data cannot release a watermark hold, only a peer reporting
+	// the progress that hold waits on. The two are kept apart because a
+	// delivery advance - one per event a peer streams - cannot release a read
+	// held at the flush watermark, and waking it costs a whole pass.
 	lowWatermarkTsNs      int64
 	lowFlushWatermarkTsNs int64
-	watermarkAdvanced     chan struct{}
+	deliveryAdvanced      chan struct{}
+	flushAdvanced         chan struct{}
 	peerWatermarksLock    sync.Mutex
 }
 
@@ -200,30 +204,53 @@ func (ma *MetaAggregator) PeerLowWatermarkTsNs() int64 {
 	return lowWatermarkOf(ma.peerWatermarks)
 }
 
-// WatermarkAdvancedChan returns a channel closed the next time a low-watermark
-// rises. Callers must take it before reading the watermarks they hold at, so a
-// rise in between wakes them instead of being missed.
-func (ma *MetaAggregator) WatermarkAdvancedChan() <-chan struct{} {
+// DeliveryWatermarkAdvancedChan returns a channel closed the next time the
+// delivery low-watermark rises, which is what releases an in-memory read held
+// at it. PeerLowFlushWatermarkTsNs has FlushWatermarkAdvancedChan. Callers
+// must take the channel before reading the watermark they hold at, so a rise
+// in between wakes them instead of being missed.
+func (ma *MetaAggregator) DeliveryWatermarkAdvancedChan() <-chan struct{} {
 	ma.peerWatermarksLock.Lock()
 	defer ma.peerWatermarksLock.Unlock()
-	if ma.watermarkAdvanced == nil {
-		ma.watermarkAdvanced = make(chan struct{})
+	if ma.deliveryAdvanced == nil {
+		ma.deliveryAdvanced = make(chan struct{})
 	}
-	return ma.watermarkAdvanced
+	return ma.deliveryAdvanced
 }
 
-// noteLowWatermarksLocked recomputes both minima and wakes everyone parked on
-// them if either rose. Caller must hold peerWatermarksLock.
+// FlushWatermarkAdvancedChan returns a channel closed the next time the flush
+// low-watermark rises, which is what releases a persisted-log read held at it.
+func (ma *MetaAggregator) FlushWatermarkAdvancedChan() <-chan struct{} {
+	ma.peerWatermarksLock.Lock()
+	defer ma.peerWatermarksLock.Unlock()
+	if ma.flushAdvanced == nil {
+		ma.flushAdvanced = make(chan struct{})
+	}
+	return ma.flushAdvanced
+}
+
+// noteLowWatermarksLocked recomputes both minima and wakes the readers parked
+// on each one that rose. Caller must hold peerWatermarksLock.
 func (ma *MetaAggregator) noteLowWatermarksLocked() {
 	low, flushLow := lowWatermarkOf(ma.peerWatermarks), lowWatermarkOf(ma.peerFlushWatermarks)
-	rose := low > ma.lowWatermarkTsNs || flushLow > ma.lowFlushWatermarkTsNs
-	// Also record a fall (a joining peer sits at 0 until it signals), so the
-	// climb back out of it is seen as a rise.
-	ma.lowWatermarkTsNs, ma.lowFlushWatermarkTsNs = low, flushLow
-	if rose && ma.watermarkAdvanced != nil {
-		close(ma.watermarkAdvanced)
-		ma.watermarkAdvanced = nil
+	// Falls are recorded too (a joining peer sits at 0 until it signals), so
+	// the climb back out of one is seen as a rise.
+	if low > ma.lowWatermarkTsNs {
+		ma.deliveryAdvanced = closeWatermarkChan(ma.deliveryAdvanced)
 	}
+	if flushLow > ma.lowFlushWatermarkTsNs {
+		ma.flushAdvanced = closeWatermarkChan(ma.flushAdvanced)
+	}
+	ma.lowWatermarkTsNs, ma.lowFlushWatermarkTsNs = low, flushLow
+}
+
+// closeWatermarkChan wakes everyone parked on ch and clears it, so the next
+// caller parks on a fresh one.
+func closeWatermarkChan(ch chan struct{}) chan struct{} {
+	if ch != nil {
+		close(ch)
+	}
+	return nil
 }
 
 // lowWatermarkOf returns the minimum across the tracked peers, or 0 when none
