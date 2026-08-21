@@ -85,7 +85,7 @@ func (v *Volume) Destroy(onlyEmpty bool, keepRemoteData bool) (err error) {
 		err = fmt.Errorf("volume %d is compacting", v.Id)
 		return
 	}
-	close(v.asyncRequestsChan)
+	v.stopWorker()
 	if !keepRemoteData {
 		storageName, storageKey := v.RemoteStorageNameKey()
 		if v.HasRemoteFile() && storageName != "" && storageKey != "" {
@@ -152,14 +152,28 @@ func removeVolumeFiles(filename string, keepVif bool) {
 	deleteAndLog("note")
 }
 
-func (v *Volume) asyncRequestAppend(request *needle.AsyncRequest) {
-	v.asyncRequestsChan <- request
+// asyncRequestAppend queues a request for the batch worker, starting it on the
+// first one. It reports false for a destroyed volume, so the caller writes
+// inline rather than wait on a worker that will never answer.
+func (v *Volume) asyncRequestAppend(request *needle.AsyncRequest) bool {
+	requests := v.startWorker()
+	if requests == nil {
+		return false
+	}
+	requests <- request
+	return true
 }
 
 func (v *Volume) syncWrite(n *needle.Needle, checkCookie bool, fsync bool) (offset uint64, size Size, isUnchanged bool, err error) {
 	// glog.V(4).Infof("writing needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
+
+	// A caller can still hold the volume after it was closed or destroyed, which
+	// leaves both of these nil. Refuse the write rather than dereference them.
+	if v.nm == nil || v.DataBackend == nil {
+		return 0, 0, false, fmt.Errorf("volume %d is closed", v.Id)
+	}
 
 	if !fsync {
 		return v.doWriteRequest(n, checkCookie)
@@ -229,7 +243,9 @@ func (v *Volume) writeNeedle2(n *needle.Needle, checkCookie bool, fsync bool, is
 		// using len(n.Data) here instead of n.Size before n.Size is populated in n.Append()
 		asyncRequest.ActualSize = needle.GetActualSize(Size(len(n.Data)), v.Version())
 
-		v.asyncRequestAppend(asyncRequest)
+		if !v.asyncRequestAppend(asyncRequest) {
+			return v.syncWrite(n, checkCookie, fsync)
+		}
 		offset, _, isUnchanged, err = asyncRequest.WaitComplete()
 
 		return
@@ -311,7 +327,9 @@ func (v *Volume) deleteNeedle2(n *needle.Needle) (Size, error) {
 		asyncRequest := needle.NewAsyncRequest(n, false)
 		asyncRequest.ActualSize = needle.GetActualSize(0, v.Version())
 
-		v.asyncRequestAppend(asyncRequest)
+		if !v.asyncRequestAppend(asyncRequest) {
+			return v.syncDelete(n)
+		}
 		_, size, _, err := asyncRequest.WaitComplete()
 
 		return Size(size), err
@@ -344,7 +362,19 @@ func (v *Volume) doDeleteRequest(n *needle.Needle) (Size, error) {
 	return 0, nil
 }
 
-func (v *Volume) startWorker() {
+// startWorker returns the volume's batch-write channel, creating it and its
+// goroutine on first use, and nil once stopWorker has run.
+func (v *Volume) startWorker() chan *needle.AsyncRequest {
+	v.asyncWorkerLock.Lock()
+	defer v.asyncWorkerLock.Unlock()
+	if v.asyncWorkerClosed {
+		return nil
+	}
+	if v.asyncRequestsChan != nil {
+		return v.asyncRequestsChan
+	}
+	requests := make(chan *needle.AsyncRequest, 128)
+	v.asyncRequestsChan = requests
 	go func() {
 		chanClosed := false
 		for {
@@ -355,7 +385,7 @@ func (v *Volume) startWorker() {
 			currentRequests := make([]*needle.AsyncRequest, 0, 128)
 			currentBytesToWrite := int64(0)
 			for {
-				request, ok := <-v.asyncRequestsChan
+				request, ok := <-requests
 				// volume may be closed
 				if !ok {
 					chanClosed = true
@@ -370,7 +400,7 @@ func (v *Volume) startWorker() {
 				currentBytesToWrite += request.ActualSize
 				// submit at most 4M bytes or 128 requests at one time to decrease request delay.
 				// it also need to break if there is no data in channel to avoid io hang.
-				if currentBytesToWrite >= 4*1024*1024 || len(currentRequests) >= 128 || len(v.asyncRequestsChan) == 0 {
+				if currentBytesToWrite >= 4*1024*1024 || len(currentRequests) >= 128 || len(requests) == 0 {
 					break
 				}
 			}
@@ -378,7 +408,12 @@ func (v *Volume) startWorker() {
 				continue
 			}
 			v.dataFileAccessLock.Lock()
-			end, _, e := v.DataBackend.GetStat()
+			end, e := int64(0), error(nil)
+			if v.nm == nil || v.DataBackend == nil {
+				e = fmt.Errorf("volume %d is closed", v.Id)
+			} else {
+				end, _, e = v.DataBackend.GetStat()
+			}
 			if e != nil {
 				for i := 0; i < len(currentRequests); i++ {
 					currentRequests[i].Complete(0, 0, false,
@@ -417,6 +452,22 @@ func (v *Volume) startWorker() {
 			v.dataFileAccessLock.Unlock()
 		}
 	}()
+	return requests
+}
+
+// stopWorker closes the batch-write channel so the worker drains what is queued
+// and exits. It stays closed: a destroyed volume takes no more writes.
+func (v *Volume) stopWorker() {
+	v.asyncWorkerLock.Lock()
+	defer v.asyncWorkerLock.Unlock()
+	if v.asyncWorkerClosed {
+		return
+	}
+	v.asyncWorkerClosed = true
+	if v.asyncRequestsChan != nil {
+		close(v.asyncRequestsChan)
+		v.asyncRequestsChan = nil
+	}
 }
 
 func (v *Volume) WriteNeedleBlob(needleId NeedleId, needleBlob []byte, size Size) error {

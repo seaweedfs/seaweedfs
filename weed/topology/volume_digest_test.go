@@ -464,7 +464,7 @@ func TestMasterDigestMatchesWhatAVolumeServerReports(t *testing.T) {
 	var serverDigest uint64
 	for _, vid := range []needle.VolumeId{1, 2, 3} {
 		v, _ := loc.FindVolume(vid)
-		_, m := v.ToVolumeInformationMessage()
+		_, m := v.ToVolumeInformationMessage(nil)
 		if m == nil {
 			t.Fatalf("volume %d reported nothing", vid)
 		}
