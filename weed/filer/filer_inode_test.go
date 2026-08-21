@@ -2,6 +2,7 @@ package filer
 
 import (
 	"context"
+	"math"
 	"os"
 	"testing"
 	"time"
@@ -49,8 +50,26 @@ func TestEnsureEntryInodeSharesAcrossHardLinks(t *testing.T) {
 
 	// Every link to the same target resolves to one inode, independent of path
 	// or creation time.
-	assert.Equal(t, uint64(util.HashStringToLong(string(hardLinkId))), a.Attr.Inode)
+	expectedInode := uint64(util.HashStringToLong(string(hardLinkId))) & uint64(math.MaxInt64)
+	if expectedInode == 0 {
+		expectedInode = 1
+	}
+	assert.Equal(t, expectedInode, a.Attr.Inode)
 	assert.Equal(t, a.Attr.Inode, b.Attr.Inode)
+}
+
+func TestEnsureEntryInodeFitsSignedLong(t *testing.T) {
+	f := &Filer{}
+	entries := []*Entry{
+		{FullPath: util.FullPath("/topics/.system/log/2026-08-18/07-24.741c9e0e"), Attr: Attr{Crtime: time.Unix(1787038150, 0)}},
+		{FullPath: util.FullPath("/hard-link"), Attr: Attr{Crtime: time.Unix(1787038150, 0)}, HardLinkId: HardLinkId{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}},
+	}
+
+	for _, entry := range entries {
+		f.ensureEntryInode(entry)
+		require.NotZero(t, entry.Attr.Inode)
+		require.LessOrEqual(t, entry.Attr.Inode, uint64(math.MaxInt64))
+	}
 }
 
 func newTestFilerWithStubStore() (*Filer, *stubFilerStore) {
