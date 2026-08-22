@@ -53,8 +53,11 @@ type FileBrowserData struct {
 	CurrentLastFileName string `json:"current_last_file_name"` // Cursor from current request (for page size changes)
 }
 
-// GetFileBrowser retrieves file browser data for a given path with cursor-based pagination
-func (s *AdminServer) GetFileBrowser(dir string, lastFileName string, pageSize int) (*FileBrowserData, error) {
+// GetFileBrowser retrieves file browser data for a given path with cursor-based
+// pagination. A non-empty prefix limits the listing to entries whose name starts
+// with it, so callers that only want part of a large directory don't have to page
+// through all of it.
+func (s *AdminServer) GetFileBrowser(dir string, prefix string, lastFileName string, pageSize int) (*FileBrowserData, error) {
 	if dir == "" {
 		dir = "/"
 	}
@@ -76,7 +79,7 @@ func (s *AdminServer) GetFileBrowser(dir string, lastFileName string, pageSize i
 		// Fetch entries starting from the cursor (lastFileName)
 		stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
 			Directory:          dir,
-			Prefix:             "",
+			Prefix:             prefix,
 			Limit:              uint32(fetchLimit),
 			StartFromFileName:  lastFileName,
 			InclusiveStartFrom: false, // Don't include the cursor file itself
