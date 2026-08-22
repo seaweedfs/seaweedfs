@@ -682,6 +682,9 @@ var credentialEnvRef = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 // config file, so a deployment can keep the keys in its own secret store and
 // hand them to the process as environment variables. A credential still holding
 // an unresolved reference is dropped instead of becoming a literal key.
+//
+// A variable that is set but empty counts as unresolved: a secret store handing
+// over a blank value must not leave an access key signed by an empty secret.
 func expandCredentialEnvRefs(config *iam_pb.S3ApiConfiguration) {
 	for _, ident := range config.Identities {
 		kept := ident.Credentials[:0]
@@ -699,6 +702,8 @@ func expandCredentialEnvRefs(config *iam_pb.S3ApiConfiguration) {
 	}
 }
 
+// expandEnvRefs reports false when any reference names a variable that is unset
+// or empty, leaving the reference in place for the caller to reject.
 func expandEnvRefs(value string) (string, bool) {
 	if !strings.Contains(value, "${") {
 		return value, true
@@ -706,7 +711,7 @@ func expandEnvRefs(value string) (string, bool) {
 	resolved := true
 	expanded := credentialEnvRef.ReplaceAllStringFunc(value, func(ref string) string {
 		env, found := os.LookupEnv(ref[2 : len(ref)-1])
-		if !found {
+		if !found || env == "" {
 			resolved = false
 			return ref
 		}

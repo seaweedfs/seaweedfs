@@ -424,3 +424,21 @@ func TestStaticConfigKeepsLiteralDollarSigns(t *testing.T) {
 		t.Fatalf("expected the literal secret key, got %q", cred.SecretKey)
 	}
 }
+
+// A secret store handing over a blank value must not leave an access key that
+// any signature matches.
+func TestStaticConfigDropsEmptyEnvCredentialRefs(t *testing.T) {
+	t.Setenv("SEAWEEDFS_S3_ADMIN_ACCESS_KEY_ID", "AKIAFROMENV")
+	t.Setenv("SEAWEEDFS_S3_ADMIN_SECRET_ACCESS_KEY", "")
+
+	s3a := newTestS3ApiServerWithMemoryIAM(t, []*iam_pb.Identity{})
+
+	path := writeTempIamConfig(t, `{"identities":[{"name":"anvAdmin","credentials":[{"accessKey":"${SEAWEEDFS_S3_ADMIN_ACCESS_KEY_ID}","secretKey":"${SEAWEEDFS_S3_ADMIN_SECRET_ACCESS_KEY}"}],"actions":["Admin"]}]}`)
+	if err := s3a.iam.loadS3ApiConfigurationFromFile(path); err != nil {
+		t.Fatalf("failed to load identity config: %v", err)
+	}
+
+	if _, _, found := s3a.iam.lookupByAccessKey("AKIAFROMENV"); found {
+		t.Fatalf("a credential whose secret key resolves to empty must be dropped")
+	}
+}
