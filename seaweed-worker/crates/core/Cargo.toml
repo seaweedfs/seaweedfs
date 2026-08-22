@@ -21,3 +21,7 @@ tracing.workspace = true
 
 [build-dependencies]
 tonic-build.workspace = true
+# Ships protoc with the build so neither CI nor a developer needs a system
+# install, and so the version is pinned rather than whatever the platform's
+# package manager happens to carry. The same crate seaweed-volume uses.
+protoc-bin-vendored = "3"
