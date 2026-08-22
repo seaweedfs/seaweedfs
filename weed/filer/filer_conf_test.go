@@ -3,7 +3,6 @@ package filer
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
 	"errors"
 	"fmt"
 	"reflect"
@@ -639,8 +638,9 @@ func TestSaveFilerConfConditionally_ExactContentCheckRejectsConcurrentModificati
 	require.NoError(t, err)
 	require.NotEmpty(t, snap2.entry.Attributes.Md5, "expected Md5 to have been stamped by the prior write")
 
-	// A concurrent writer changes the content but happens to land in the
-	// same wall-clock second, so mtime alone would not catch this.
+	// A concurrent writer goes through SaveInsideFiler, the path every
+	// other filer.conf writer uses. It lands in the same wall-clock second,
+	// so only the content hash can catch it.
 	concurrentFc := NewFilerConf()
 	require.NoError(t, concurrentFc.LoadFromBytes([]byte(readFilerConfText(client))))
 	require.NoError(t, concurrentFc.SetLocationConf(&filer_pb.FilerConf_PathConf{
@@ -648,18 +648,12 @@ func TestSaveFilerConfConditionally_ExactContentCheckRejectsConcurrentModificati
 	}))
 	var buf bytes.Buffer
 	require.NoError(t, concurrentFc.ToText(&buf))
-	newMd5 := md5.Sum(buf.Bytes())
-	client.entries[client.key(DirectoryEtcSeaweedFS, FilerConfName)] = &filer_pb.Entry{
-		Name:    FilerConfName,
-		Content: buf.Bytes(),
-		Attributes: &filer_pb.FuseAttributes{
-			Mtime: snap2.entry.Attributes.Mtime, // unchanged on purpose
-			Md5:   newMd5[:],
-		},
-	}
+	require.NoError(t, SaveInsideFiler(context.Background(), client, DirectoryEtcSeaweedFS, FilerConfName, buf.Bytes()))
+	client.entries[client.key(DirectoryEtcSeaweedFS, FilerConfName)].Attributes.Mtime = snap2.entry.Attributes.Mtime
 
 	err = saveFilerConfConditionally(context.Background(), client, snap2)
 	assert.Error(t, err, "expected the exact-content check to reject a write whose baseline content hash no longer matches")
+	assert.Contains(t, readFilerConfText(client), "/buckets/other/", "the concurrent writer's content must survive")
 }
 
 func TestSaveFilerConfConditionally_RejectsCreateWhenCreatedConcurrently(t *testing.T) {
