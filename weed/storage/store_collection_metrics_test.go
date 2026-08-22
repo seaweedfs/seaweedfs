@@ -2,11 +2,13 @@ package storage
 
 import (
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 )
 
 // The per-collection gauges are only ever set for collections the heartbeat
@@ -43,6 +45,49 @@ func TestCollectHeartbeatClearsMetricsOfDepartedCollection(t *testing.T) {
 	}
 	if n := testutil.CollectAndCount(stats.VolumeServerDiskSizeGauge); n != 0 {
 		t.Errorf("%d disk size series left after the collection left the server", n)
+	}
+}
+
+// A volume being deleted for expiry is already gone as far as the gauges are
+// concerned, so the heartbeat that drops the collection's last one has to take
+// its series along rather than leave them standing for another pass.
+func TestCollectHeartbeatClearsMetricsWhenTheLastVolumeExpires(t *testing.T) {
+	stats.VolumeServerReadOnlyVolumeGauge.Reset()
+	stats.VolumeServerDiskSizeGauge.Reset()
+	t.Cleanup(stats.VolumeServerReadOnlyVolumeGauge.Reset)
+	t.Cleanup(stats.VolumeServerDiskSizeGauge.Reset)
+
+	store := newTestStore(t, 1)
+	store.SetVolumeSizeLimit(30 << 30)
+	location := store.Locations[0]
+	v, err := NewVolume(location.Directory, location.IdxDirectory, "pics", 1, NeedleMapInMemory,
+		&super_block.ReplicaPlacement{}, &needle.TTL{Count: 1, Unit: needle.Minute}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	location.SetVolume(1, v)
+	if _, _, _, err := v.writeNeedle2(newRandomNeedle(1), true, false, false); err != nil {
+		t.Fatalf("write needle: %v", err)
+	}
+	// The needle carries no append time, which would date the volume to the epoch.
+	v.lastModifiedTsSeconds = uint64(time.Now().Unix())
+
+	store.CollectHeartbeat()
+	if got := testutil.ToFloat64(stats.VolumeServerDiskSizeGauge.WithLabelValues("pics", "normal")); got == 0 {
+		t.Fatal("disk size of pics = 0, want the written needle")
+	}
+
+	v.lastModifiedTsSeconds = uint64(time.Now().Add(-time.Hour).Unix())
+	store.CollectHeartbeat()
+
+	if store.findVolume(1) != nil {
+		t.Fatal("the expired volume outlived the heartbeat")
+	}
+	if n := testutil.CollectAndCount(stats.VolumeServerReadOnlyVolumeGauge); n != 0 {
+		t.Errorf("%d read-only series left after the last volume expired", n)
+	}
+	if n := testutil.CollectAndCount(stats.VolumeServerDiskSizeGauge); n != 0 {
+		t.Errorf("%d disk size series left after the last volume expired", n)
 	}
 }
 

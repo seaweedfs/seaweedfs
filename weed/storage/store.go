@@ -551,26 +551,30 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 				}
 			}
 
-			if _, exist := collectionVolumeReadOnlyCount[v.Collection]; !exist {
-				collectionVolumeReadOnlyCount[v.Collection] = map[string]int{
-					stats.IsReadOnly:       0,
-					stats.NoWriteOrDelete:  0,
-					stats.NoWriteCanDelete: 0,
-					stats.IsDiskSpaceLow:   0,
+			// An entry here is what says the collection is still on this
+			// server, so a volume on its way out must not make one.
+			if !shouldDeleteVolume {
+				counts, exist := collectionVolumeReadOnlyCount[v.Collection]
+				if !exist {
+					counts = map[string]int{
+						stats.IsReadOnly:       0,
+						stats.NoWriteOrDelete:  0,
+						stats.NoWriteCanDelete: 0,
+						stats.IsDiskSpaceLow:   0,
+					}
+					collectionVolumeReadOnlyCount[v.Collection] = counts
 				}
-			}
-			readOnly, noWriteOrDelete, noWriteCanDelete, diskSpaceLow := v.ReadOnlyReasons()
-			if !shouldDeleteVolume && readOnly {
-				counts := collectionVolumeReadOnlyCount[v.Collection]
-				counts[stats.IsReadOnly] += 1
-				if noWriteOrDelete {
-					counts[stats.NoWriteOrDelete] += 1
-				}
-				if noWriteCanDelete {
-					counts[stats.NoWriteCanDelete] += 1
-				}
-				if diskSpaceLow {
-					counts[stats.IsDiskSpaceLow] += 1
+				if readOnly, noWriteOrDelete, noWriteCanDelete, diskSpaceLow := v.ReadOnlyReasons(); readOnly {
+					counts[stats.IsReadOnly] += 1
+					if noWriteOrDelete {
+						counts[stats.NoWriteOrDelete] += 1
+					}
+					if noWriteCanDelete {
+						counts[stats.NoWriteCanDelete] += 1
+					}
+					if diskSpaceLow {
+						counts[stats.IsDiskSpaceLow] += 1
+					}
 				}
 			}
 		}
@@ -624,8 +628,9 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		}
 	}
 
-	// collectionVolumeReadOnlyCount has an entry for every collection still on
-	// this server, including the ones counting zero read-only volumes.
+	// collectionVolumeReadOnlyCount has an entry for every collection that kept
+	// a volume through this pass, including the ones counting zero read-only
+	// volumes.
 	for col := range s.reportedCollections {
 		if _, stillHere := collectionVolumeReadOnlyCount[col]; !stillHere {
 			stats.DeleteVolumeServerCollectionMetrics(col)

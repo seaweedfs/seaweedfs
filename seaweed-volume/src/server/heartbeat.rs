@@ -963,17 +963,21 @@ fn build_heartbeat_with_ec_status(
                 entry.1 += vol.deleted_size();
             }
 
-            let read_only = ro_counts.entry(vol.collection.clone()).or_default();
-            if !should_delete_volume && vol.is_read_only() {
-                read_only.is_read_only += 1;
-                if vol.is_no_write_or_delete() {
-                    read_only.no_write_or_delete += 1;
-                }
-                if vol.is_no_write_can_delete() {
-                    read_only.no_write_can_delete += 1;
-                }
-                if loc.is_disk_space_low.load(Ordering::Relaxed) {
-                    read_only.is_disk_space_low += 1;
+            // An entry here is what says the collection is still on this
+            // server, so a volume on its way out must not make one.
+            if !should_delete_volume {
+                let read_only = ro_counts.entry(vol.collection.clone()).or_default();
+                if vol.is_read_only() {
+                    read_only.is_read_only += 1;
+                    if vol.is_no_write_or_delete() {
+                        read_only.no_write_or_delete += 1;
+                    }
+                    if vol.is_no_write_can_delete() {
+                        read_only.no_write_can_delete += 1;
+                    }
+                    if loc.is_disk_space_low.load(Ordering::Relaxed) {
+                        read_only.is_disk_space_low += 1;
+                    }
                 }
             }
 
@@ -1007,8 +1011,8 @@ fn build_heartbeat_with_ec_status(
             .with_label_values(&[col, crate::metrics::READ_ONLY_LABEL_IS_DISK_SPACE_LOW])
             .set(counts.is_disk_space_low as f64);
     }
-    // ro_counts has an entry for every collection still on this server,
-    // including the ones counting zero read-only volumes.
+    // ro_counts has an entry for every collection that kept a volume through
+    // this pass, including the ones counting zero read-only volumes.
     {
         let mut reported = store.reported_collections.lock().unwrap();
         for col in reported.iter() {
