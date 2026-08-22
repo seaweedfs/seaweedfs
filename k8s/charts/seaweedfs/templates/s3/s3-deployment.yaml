@@ -94,6 +94,9 @@ spec:
                   fieldPath: metadata.namespace
             - name: SEAWEEDFS_FULLNAME
               value: "{{ include "seaweedfs.fullname" . }}"
+            {{- if .Values.s3.enableAuth }}
+            {{- include "seaweedfs.s3.credentialEnv" . | nindent 12 }}
+            {{- end }}
             {{- $mergedExtraEnvironmentVars := dict }}
             {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global.seaweedfs "component" .Values.s3 "target" $mergedExtraEnvironmentVars) }}
             {{- range $key := keys $mergedExtraEnvironmentVars | sortAlpha }}

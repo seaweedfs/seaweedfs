@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -661,6 +662,10 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromBytes(content []b
 		s3ApiConfiguration.Groups = nil
 	}
 
+	if fromStaticFile {
+		expandCredentialEnvRefs(s3ApiConfiguration)
+	}
+
 	if err := filer.CheckDuplicateAccessKey(s3ApiConfiguration); err != nil {
 		return nil, err
 	}
@@ -669,6 +674,56 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromBytes(content []b
 		return nil, err
 	}
 	return s3ApiConfiguration, nil
+}
+
+var credentialEnvRef = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
+
+// expandCredentialEnvRefs resolves ${VAR} references in the keys of a static
+// config file, so a deployment can keep the keys in its own secret store and
+// hand them to the process as environment variables. A credential still holding
+// an unresolved reference is dropped instead of becoming a literal key.
+//
+// A variable that is set but empty counts as unresolved: a secret store handing
+// over a blank value must not leave an access key signed by an empty secret.
+func expandCredentialEnvRefs(config *iam_pb.S3ApiConfiguration) {
+	for _, ident := range config.Identities {
+		kept := ident.Credentials[:0]
+		for _, cred := range ident.Credentials {
+			accessKey, accessResolved := expandEnvRefs(cred.AccessKey)
+			secretKey, secretResolved := expandEnvRefs(cred.SecretKey)
+			if !accessResolved || !secretResolved {
+				glog.Warningf("identity %s: dropping credential %s, it references an unset environment variable", ident.Name, cred.AccessKey)
+				continue
+			}
+			cred.AccessKey, cred.SecretKey = accessKey, secretKey
+			kept = append(kept, cred)
+		}
+		ident.Credentials = kept
+	}
+}
+
+// expandEnvRefs reports false when any reference is malformed or names a
+// variable that is unset or empty, leaving the reference in place for the
+// caller to reject.
+func expandEnvRefs(value string) (string, bool) {
+	if !strings.Contains(value, "${") {
+		return value, true
+	}
+	// Every ${ has to open a well-formed reference. A typo like ${MY-VAR} matches
+	// nothing, so it would otherwise survive substitution as a literal key.
+	if strings.Count(value, "${") != len(credentialEnvRef.FindAllString(value, -1)) {
+		return value, false
+	}
+	resolved := true
+	expanded := credentialEnvRef.ReplaceAllStringFunc(value, func(ref string) string {
+		env, found := os.LookupEnv(ref[2 : len(ref)-1])
+		if !found || env == "" {
+			resolved = false
+			return ref
+		}
+		return env
+	})
+	return expanded, resolved
 }
 
 func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3ApiConfiguration) error {

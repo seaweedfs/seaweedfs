@@ -118,6 +118,9 @@ spec:
                   optional: true
             - name: SEAWEEDFS_FULLNAME
               value: "{{ include "seaweedfs.fullname" . }}"
+            {{- if and .Values.filer.s3.enabled .Values.filer.s3.enableAuth }}
+            {{- include "seaweedfs.s3.credentialEnv" . | nindent 12 }}
+            {{- end }}
             {{- $mergedExtraEnvironmentVars := dict }}
             {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global.seaweedfs "component" .Values.filer "target" $mergedExtraEnvironmentVars) }}
             {{- range $key := keys $mergedExtraEnvironmentVars | sortAlpha }}
