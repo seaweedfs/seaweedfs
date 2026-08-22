@@ -36,18 +36,18 @@ on:
         type: boolean
         default: false
 
-permissions:
-  contents: write
-
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     outputs:
       app_version: ${{ steps.compute.outputs.app_version }}
       sha: ${{ steps.tag.outputs.sha }}
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: master
           fetch-depth: 0
           token: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
 
@@ -178,6 +178,7 @@ jobs:
     needs: release
     if: ${{ inputs.downstream && !inputs.dry_run }}
     runs-on: ubuntu-latest
+    permissions: {}
     strategy:
       fail-fast: false
       matrix:
@@ -193,6 +194,7 @@ jobs:
           REPO: ${{ matrix.repo }}
           WORKFLOW: ${{ matrix.workflow }}
           SHA: ${{ needs.release.outputs.sha }}
+          MODULE: github.com/seaweedfs/seaweedfs
         run: |
           set -euo pipefail
           if [ -z "${GH_TOKEN}" ]; then
@@ -200,22 +202,36 @@ jobs:
             exit 1
           fi
 
-          # Have the module proxy fetch the release commit, so the `go get -u` in
-          # the dispatched workflow resolves to it rather than to a cached tip.
-          curl -sf "https://proxy.golang.org/github.com/seaweedfs/seaweedfs/@v/${SHA}.info" || true
+          # The dispatched workflow pins seaweedfs with `go get -u ...@latest`, so
+          # wait until the proxy serves the release commit as the tip. Asking for
+          # the commit by name is what makes the proxy fetch it.
+          for _ in $(seq 30); do
+            curl -sf "https://proxy.golang.org/${MODULE}/@v/${SHA}.info" >/dev/null || true
+            TIP=$(curl -sf "https://proxy.golang.org/${MODULE}/@latest" | jq -r '.Origin.Hash // ""' || true)
+            [ "$TIP" = "$SHA" ] && break
+            sleep 10
+          done
+          if [ "$TIP" != "$SHA" ]; then
+            echo "::error::the module proxy still serves ${TIP} as the tip, so ${REPO} would pin a pre-release commit. Run ${WORKFLOW} there once it catches up."
+            exit 1
+          fi
 
-          BEFORE=$(gh run list -R "$REPO" --workflow "$WORKFLOW" --limit 1 --json databaseId --jq '.[0].databaseId // 0')
+          runs() { gh api "repos/${REPO}/actions/workflows/${WORKFLOW}/runs?per_page=50" --jq '[.workflow_runs[].id]'; }
+
+          BEFORE=$(runs)
           gh workflow run -R "$REPO" "$WORKFLOW" --ref master -f bump=patch -f update_seaweedfs=true
 
           for _ in $(seq 24); do
             sleep 5
-            RUN=$(gh run list -R "$REPO" --workflow "$WORKFLOW" --limit 1 --json databaseId --jq '.[0].databaseId // 0')
-            [ "$RUN" != "$BEFORE" ] && break
+            NEW=$(runs | jq -c --argjson before "$BEFORE" '. - $before')
+            [ "$(jq length <<<"$NEW")" -gt 0 ] && break
           done
-          if [ "$RUN" = "$BEFORE" ]; then
-            echo "::error::${REPO} did not start a run for ${WORKFLOW}"
-            exit 1
-          fi
+          case "$(jq length <<<"$NEW")" in
+            0) echo "::error::${REPO} did not start a run for ${WORKFLOW}"; exit 1 ;;
+            1) ;;
+            *) echo "::error::${REPO} started more than one run of ${WORKFLOW}; cannot tell which one is ours: ${NEW}"; exit 1 ;;
+          esac
+          RUN=$(jq -r '.[0]' <<<"$NEW")
 
           echo "watching https://github.com/${REPO}/actions/runs/${RUN}"
           gh run watch "$RUN" -R "$REPO" --exit-status
