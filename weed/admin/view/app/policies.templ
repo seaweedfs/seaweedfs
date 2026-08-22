@@ -461,12 +461,14 @@ templ Policies(data dash.PoliciesData) {
     }
 
     // Returns the flattened list of values if `value` is a policy Principal /
-    // NotPrincipal expressed as a single-key {"AWS": "..."} or
-    // {"AWS": ["...", ...]} object - the only form this editor's simple text
-    // field models. Returns null for anything else (bare string/array, a
+    // NotPrincipal expressed as one of the two forms this editor's simple
+    // text field models: the bare wildcard "*" (standard AWS shorthand for
+    // "everyone"), or a single-key {"AWS": "..."} / {"AWS": ["...", ...]}
+    // object. Returns null for anything else (any other bare string/array, a
     // different type key, or multiple type keys at once), which the caller
     // then leaves untouched in "extras".
     function parseSimpleAwsPrincipal(value) {
+        if (value === '*') return ['*'];
         if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
         const keys = Object.keys(value);
         if (keys.length !== 1 || keys[0] !== 'AWS') return null;
@@ -530,13 +532,17 @@ templ Policies(data dash.PoliciesData) {
             }
             const principalValues = (s.principalValues || []).map(function(p) { return (p || '').trim(); }).filter(Boolean);
             if (principalValues.length) {
-                // Same exclusivity rule as Resource/NotResource, and always
-                // written as the standard {"AWS": ...} form (v1 only models
-                // AWS principals). Structured values always win over
-                // whatever "extras" held for these keys.
+                // Same exclusivity rule as Resource/NotResource. Structured
+                // values always win over whatever "extras" held for these
+                // keys. A lone "*" is written as the bare wildcard (standard
+                // AWS shorthand for "everyone"); anything else is wrapped in
+                // the standard {"AWS": ...} form (v1 only models AWS
+                // principals).
                 delete stmt.Principal;
                 delete stmt.NotPrincipal;
-                const wrappedPrincipal = { AWS: principalValues.length === 1 ? principalValues[0] : principalValues };
+                const wrappedPrincipal = (principalValues.length === 1 && principalValues[0] === '*')
+                    ? '*'
+                    : { AWS: principalValues.length === 1 ? principalValues[0] : principalValues };
                 if (s.principalMode === 'NotPrincipal') {
                     stmt.NotPrincipal = wrappedPrincipal;
                 } else {
@@ -622,7 +628,7 @@ templ Policies(data dash.PoliciesData) {
                 '<option value="NotPrincipal"' + (stmt.principalMode === 'NotPrincipal' ? ' selected' : '') + '>NotPrincipal</option>' +
                 '</select>' +
                 '</label>' +
-                '<div class="form-text mt-0 mb-1">Principal / NotPrincipal (AWS account or user ARN). Only the AWS type is supported here; other forms stay editable via Advanced fields.</div>' +
+                '<div class="form-text mt-0 mb-1">Principal / NotPrincipal (AWS account/user ARN, or "*" for everyone). Only the AWS type and "*" are supported here; other forms stay editable via Advanced fields.</div>' +
                 (stmt.hasComplexPrincipal ? '<div class="form-text text-warning mt-0 mb-1"><i class="fas fa-triangle-exclamation me-1"></i>This statement\'s Principal/NotPrincipal uses a form not supported by this field &mdash; see Advanced fields below.</div>' : '') +
                 '<div class="policy-principal-rows" data-which="' + which + '" data-index="' + idx + '">' + principalRows + '</div>' +
                 '<button type="button" class="btn btn-sm btn-outline-secondary policy-add-list-item-btn" data-which="' + which + '" data-index="' + idx + '" data-field="principal"><i class="fas fa-plus me-1"></i>Add principal</button>' +
