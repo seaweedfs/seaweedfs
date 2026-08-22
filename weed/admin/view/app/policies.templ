@@ -1146,27 +1146,31 @@ templ Policies(data dash.PoliciesData) {
             document: policyDocument
         };
 
-        fetch(basePath('/api/object-store/policies'), {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(requestData)
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                showAlert('Policy created successfully!', 'success');
-                const modal = bootstrap.Modal.getInstance(document.getElementById('createPolicyModal'));
-                if (modal) modal.hide();
-                location.reload(); // Refresh the page to show the new policy
-            } else {
-                showAlert('Error creating policy: ' + (data.error || 'Unknown error'), 'error');
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            showAlert('Error creating policy: ' + error.message, 'error');
+        validatePolicyJSON(policyDocumentText, true).then(valid => {
+            if (!valid) return;
+
+            fetch(basePath('/api/object-store/policies'), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(requestData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showAlert('Policy created successfully!', 'success');
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('createPolicyModal'));
+                    if (modal) modal.hide();
+                    location.reload(); // Refresh the page to show the new policy
+                } else {
+                    showAlert('Error creating policy: ' + (data.error || 'Unknown error'), 'error');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                showAlert('Error creating policy: ' + error.message, 'error');
+            });
         });
     }
 
@@ -1363,27 +1367,31 @@ templ Policies(data dash.PoliciesData) {
             document: policyDocument
         };
 
-        fetch(basePath('/api/object-store/policies/' + encodeURIComponent(policyName)), {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(requestData)
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                showAlert('Policy updated successfully!', 'success');
-                const modal = bootstrap.Modal.getInstance(document.getElementById('editPolicyModal'));
-                if (modal) modal.hide();
-                location.reload(); // Refresh the page to show the updated policy
-            } else {
-                showAlert('Error updating policy: ' + (data.error || 'Unknown error'), 'error');
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            showAlert('Error updating policy: ' + error.message, 'error');
+        validatePolicyJSON(policyDocumentText, true).then(valid => {
+            if (!valid) return;
+
+            fetch(basePath('/api/object-store/policies/' + encodeURIComponent(policyName)), {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(requestData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showAlert('Policy updated successfully!', 'success');
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('editPolicyModal'));
+                    if (modal) modal.hide();
+                    location.reload(); // Refresh the page to show the updated policy
+                } else {
+                    showAlert('Error updating policy: ' + (data.error || 'Unknown error'), 'error');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                showAlert('Error updating policy: ' + error.message, 'error');
+            });
         });
     }
 
@@ -1393,10 +1401,14 @@ templ Policies(data dash.PoliciesData) {
         validatePolicyJSON(policyText);
     }
 
-    function validatePolicyJSON(policyText) {
+    // Runs a policy document past the server's validator. Resolves to true
+    // when it passes, and to false after alerting the user when it doesn't.
+    // `quiet` suppresses the success alert for callers that go on to report
+    // an outcome of their own.
+    function validatePolicyJSON(policyText, quiet) {
         if (!policyText) {
             showAlert('Please enter a policy document first', 'warning');
-            return;
+            return Promise.resolve(false);
         }
 
         let policyDocument;
@@ -1404,10 +1416,10 @@ templ Policies(data dash.PoliciesData) {
             policyDocument = JSON.parse(policyText);
         } catch (e) {
             showAlert('Invalid JSON: ' + e.message, 'error');
-            return;
+            return Promise.resolve(false);
         }
 
-        fetch(basePath('/api/object-store/policies/validate'), {
+        return fetch(basePath('/api/object-store/policies/validate'), {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -1417,14 +1429,18 @@ templ Policies(data dash.PoliciesData) {
         .then(response => response.json().then(data => ({ ok: response.ok, data })))
         .then(({ ok, data }) => {
             if (ok && data.valid) {
-                showAlert(data.message || 'Policy document is valid!', 'success');
-            } else {
-                showAlert('Invalid policy: ' + (data.error || 'unknown error'), 'error');
+                if (!quiet) {
+                    showAlert(data.message || 'Policy document is valid!', 'success');
+                }
+                return true;
             }
+            showAlert('Invalid policy: ' + (data.error || 'unknown error'), 'error');
+            return false;
         })
         .catch(error => {
             console.error('Error:', error);
             showAlert('Error validating policy: ' + error.message, 'error');
+            return false;
         });
     }
 
