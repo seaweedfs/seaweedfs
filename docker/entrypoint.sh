@@ -97,7 +97,7 @@ case "$1" in
   	  echo "Use 'worker' for the Go maintenance worker instead." >&2
   	  exit 1
   	fi
-  	exec /usr/bin/weed-worker $@
+  	exec /usr/bin/weed-worker "$@"
 	;;
 
   'server')
