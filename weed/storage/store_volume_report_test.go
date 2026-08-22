@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -11,7 +12,7 @@ func reportingStore(t *testing.T, vids ...needle.VolumeId) *Store {
 	t.Helper()
 	store := newTestStore(t, 1)
 	for _, vid := range vids {
-		mountTestVolume(t, store.Locations[0], vid)
+		mountTestVolume(t, store.Locations[0], vid, "")
 	}
 	return store
 }
@@ -72,7 +73,7 @@ func TestHeartbeatReportsOnlyWhatChanged(t *testing.T) {
 	store.AcceptVolumeChanges()
 	store.CollectHeartbeat()
 
-	mountTestVolume(t, store.Locations[0], 3)
+	mountTestVolume(t, store.Locations[0], 3, "")
 	heartbeat := store.CollectHeartbeat()
 
 	if len(heartbeat.Volumes) != 0 {
@@ -128,7 +129,7 @@ func TestRemountedVolumeIsReportedAgain(t *testing.T) {
 	store.Locations[0].UnloadVolume(needle.VolumeId(1))
 	store.CollectHeartbeat()
 
-	mountTestVolume(t, store.Locations[0], 1)
+	mountTestVolume(t, store.Locations[0], 1, "")
 	heartbeat := store.CollectHeartbeat()
 	if len(heartbeat.ChangedVolumes) != 1 {
 		t.Errorf("a remounted volume was not reported: %v", heartbeat.ChangedVolumes)
@@ -143,12 +144,12 @@ func TestFullListRequestDuringCollectionSurvives(t *testing.T) {
 	store.AcceptVolumeChanges()
 	store.CollectHeartbeat()
 
-	full, generation := store.volumeReport.begin()
+	full, generation, pass := store.volumeReport.begin()
 	if full {
 		t.Fatal("expected to be past the first full list")
 	}
 	store.RequestFullVolumeList()
-	store.volumeReport.commit(map[volumeReportKey]reportedVolume{}, generation)
+	store.volumeReport.commit(pass, generation, full)
 
 	if heartbeat := store.CollectHeartbeat(); len(heartbeat.Volumes) != 2 {
 		t.Errorf("a resend request made during collection was lost: %d volumes sent", len(heartbeat.Volumes))
@@ -200,7 +201,7 @@ func TestFullListCarriesNoDepartures(t *testing.T) {
 // the master unregister a volume the same heartbeat re-adds.
 func TestMovedVolumeIsNotADeparture(t *testing.T) {
 	store := newTestStore(t, 2)
-	mountTestVolume(t, store.Locations[0], 1)
+	mountTestVolume(t, store.Locations[0], 1, "")
 	store.ResetVolumeReporting()
 	store.AcceptVolumeChanges()
 	store.CollectHeartbeat()
@@ -221,5 +222,55 @@ func TestMovedVolumeIsNotADeparture(t *testing.T) {
 	}
 	if len(heartbeat.ChangedVolumes) != 1 || heartbeat.ChangedVolumes[0].Id != 1 {
 		t.Errorf("the moved volume was not reported as changed: %v", heartbeat.ChangedVolumes)
+	}
+}
+
+// The entry held for a volume is updated in place rather than rebuilt, so a
+// change to what would name it as departed has to reach the entry too.
+func TestDepartureNamesTheVolumeAsItIsNow(t *testing.T) {
+	store := reportingStore(t, 1)
+	store.ResetVolumeReporting()
+	store.AcceptVolumeChanges()
+	store.CollectHeartbeat()
+
+	v, _ := store.Locations[0].FindVolume(needle.VolumeId(1))
+	v.SuperBlock.ReplicaPlacement = &super_block.ReplicaPlacement{SameRackCount: 1}
+	store.CollectHeartbeat()
+
+	store.Locations[0].UnloadVolume(needle.VolumeId(1))
+	heartbeat := store.CollectHeartbeat()
+	if len(heartbeat.DeletedVolumes) != 1 {
+		t.Fatalf("expected volume 1 to be named as departed, got %v", heartbeat.DeletedVolumes)
+	}
+	if got := heartbeat.DeletedVolumes[0].ReplicaPlacement; got != uint32(v.ReplicaPlacement.Byte()) {
+		t.Errorf("departure named replica placement %d, want %d", got, v.ReplicaPlacement.Byte())
+	}
+}
+
+// The ticker sends one heartbeat while the response goroutine sends another, so
+// two scans can overlap. Each marks the report state in place, so an
+// unserialized pair would forget what the other marked and tell the master
+// every volume it holds had departed.
+func TestOverlappingHeartbeatsNameNoDepartures(t *testing.T) {
+	store := reportingStore(t, 1, 2, 3, 4)
+	store.ResetVolumeReporting()
+	store.AcceptVolumeChanges()
+	store.CollectHeartbeat()
+
+	var wg sync.WaitGroup
+	departed := make([]int, 8)
+	for i := range departed {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			departed[i] = len(store.CollectHeartbeat().DeletedVolumes)
+		}(i)
+	}
+	wg.Wait()
+
+	for i, count := range departed {
+		if count != 0 {
+			t.Fatalf("overlapping heartbeat %d named %d volumes as departed while all were held", i, count)
+		}
 	}
 }

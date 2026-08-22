@@ -50,6 +50,21 @@ const (
 	// newer. It keeps freshness signals such as filer.sync's sync_offset metric
 	// from looking stuck during read-only periods on the source.
 	idleHeartbeatInterval = 5 * time.Second
+
+	// peerDeliveryClaimInterval paces that heartbeat on the local stream of a
+	// filer with peers, where it is not a keepalive but a delivery claim: the
+	// peer aggregator turns it into its delivery low-watermark, and every
+	// aggregated subscriber in the cluster holds at the minimum across peers.
+	// So this, not idleHeartbeatInterval, is how far behind live writes a
+	// quiet filer leaves them. Rounded up to the reader's own poll interval.
+	peerDeliveryClaimInterval = 200 * time.Millisecond
+
+	// heldWakeFloor coalesces hold releases. Peers advance their watermarks
+	// per event they stream, and each release costs a whole pass - a log file
+	// listing included - so releasing on every advance turns a busy cluster
+	// into a listing storm. It is added to delivery latency, so it stays well
+	// under the claim interval that already bounds it.
+	heldWakeFloor = 20 * time.Millisecond
 )
 
 // metadataStreamSender is satisfied by both gRPC stream types and pipelinedSender.
@@ -245,8 +260,9 @@ func memoryHoldsGap(currentTsNs, lastEvictedTsNs int64) bool {
 
 // errHeldByPeerWatermark aborts a read at an entry beyond the hold point; the
 // caller rewinds to the last delivered entry, waits, and re-reads (the
-// re-listing is what picks up a late-landing log file).
-var errHeldByPeerWatermark = errors.New("held by aggregated peer watermark")
+// re-listing is what picks up a late-landing log file). Holding is the normal
+// state on a cluster that keeps writing, hence the quiet stop.
+var errHeldByPeerWatermark = fmt.Errorf("held by aggregated peer watermark: %w", log_buffer.StopReadingError)
 
 // resolveAggReadHoldTsNs bounds how far an aggregated subscriber may read: a
 // cursor that passes T before every source has provably made T visible loses
@@ -654,15 +670,28 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	var diskPassProvenTsNs int64
 	diskEachLogEntryFn := guardedEachLogEntryFn(func() int64 { return diskPassHoldTsNs })
 	memEachLogEntryFn := guardedEachLogEntryFn(holdMemTsNs)
-	// waitHeld pauses a held read until new data or the retry interval (holds
-	// also release on heartbeats, which do not notify). False: context ended.
-	waitHeld := func() bool {
+	// waitHeld pauses a held read until a peer reports further progress, or
+	// the retry interval elapses (a peer dropped past its grace, or a log file
+	// landing that no watermark covers). Arriving data is deliberately not a
+	// wake-up: on a cluster that keeps writing there is always an entry past
+	// the hold, so waking on it spins the loop without ever releasing the
+	// hold. The channel is the one for this read's own watermark - a delivery
+	// advance cannot release a flush-held read - and was taken before the pass
+	// sampled it, so a rise in between wakes us here instead of being missed.
+	// False: context ended.
+	waitHeld := func(scope string, watermarkChan <-chan struct{}) bool {
+		stats.FilerSubscribeWatermarkHolds.WithLabelValues(scope).Inc()
 		glog.V(3).Infof("held at %v (deliveredUpTo %v, flushLow %v, deliveryLow %v) for %v",
 			time.Unix(0, heldAtTsNs), time.Unix(0, deliveredUpToTsNs),
 			time.Unix(0, fs.filer.MetaAggregator.PeerLowFlushWatermarkTsNs()),
 			time.Unix(0, fs.filer.MetaAggregator.PeerLowWatermarkTsNs()), clientName)
 		select {
-		case <-aggNotifyChan:
+		case <-ctx.Done():
+			return false
+		case <-time.After(heldWakeFloor):
+		}
+		select {
+		case <-watermarkChan:
 		case <-ctx.Done():
 			return false
 		case <-time.After(unflushedGapRetryInterval):
@@ -696,6 +725,10 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 
 		glog.V(4).Infof("read on disk %v aggregated subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
+		// Taken before either read samples its watermark, so a rise mid-pass
+		// cannot land between the sample and the park below.
+		flushChan := fs.filer.MetaAggregator.FlushWatermarkAdvancedChan()
+		deliveryChan := fs.filer.MetaAggregator.DeliveryWatermarkAdvancedChan()
 		cursorBeforeDiskTsNs := lastReadTime.Time.UnixNano()
 
 		// Observe the flush low-watermark before the pass lists files (see
@@ -730,7 +763,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 			// A hold is not a gap: clear any stale ResumeFromDiskError so the
 			// next pass's disk-miss handling cannot skip past the held entry.
 			readInMemoryLogErr = nil
-			if !waitHeld() {
+			if !waitHeld("disk", flushChan) {
 				return nil
 			}
 			continue
@@ -836,7 +869,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 				// the last delivered entry so nothing in between is skipped.
 				lastReadTime = log_buffer.NewMessagePosition(deliveredUpToTsNs, gapResumeCursorOffset)
 				readInMemoryLogErr = nil
-				if !waitHeld() {
+				if !waitHeld("memory", deliveryChan) {
 					return nil
 				}
 				continue
@@ -1139,8 +1172,13 @@ func (fs *FilerServer) maybeSendIdleHeartbeat(req *filer_pb.SubscribeMetadataReq
 		// the buffer holds data the subscriber has not reached yet
 		return lastHeartbeatNs
 	}
+	isLocalStream := fs.filer != nil && logBuffer == fs.filer.LocalMetaLogBuffer
+	interval := idleHeartbeatInterval
+	if isLocalStream && fs.filer.MetaAggregator != nil && fs.filer.MetaAggregator.HasRemotePeers() {
+		interval = peerDeliveryClaimInterval
+	}
 	now := time.Now().UnixNano()
-	if now-lastHeartbeatNs < int64(idleHeartbeatInterval) {
+	if now-lastHeartbeatNs < int64(interval) {
 		return lastHeartbeatNs
 	}
 	// On the local stream the heartbeat is a delivery claim to a peer
@@ -1152,7 +1190,7 @@ func (fs *FilerServer) maybeSendIdleHeartbeat(req *filer_pb.SubscribeMetadataReq
 	// (fenced above it), or already appended here - and then the head check
 	// proves this stream has sent it before the heartbeat.
 	heartbeat := &filer_pb.SubscribeMetadataResponse{TsNs: now}
-	if fs.filer != nil && logBuffer == fs.filer.LocalMetaLogBuffer {
+	if isLocalStream {
 		heartbeat.TsNs = fs.filer.LocalDeliveredThroughTsNs(now)
 		heartbeat.FlushedTsNs = fs.filer.LocalFlushedThroughTsNs(now)
 		if logBuffer.LastTsNs.Load() > floorTsNs {

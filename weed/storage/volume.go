@@ -37,9 +37,17 @@ type Volume struct {
 
 	super_block.SuperBlock
 
-	dataFileAccessLock    sync.RWMutex
-	superBlockAccessLock  sync.Mutex
-	asyncRequestsChan     chan *needle.AsyncRequest
+	dataFileAccessLock   sync.RWMutex
+	superBlockAccessLock sync.Mutex
+
+	// The batch worker exists only once the volume takes a durable write. Most
+	// never do -- read-only, remote-tiered, or written without fsync -- and a
+	// parked worker costs its goroutine stack plus a 128-slot channel, which a
+	// server holding millions of volumes cannot pay for all of them.
+	asyncWorkerLock   sync.Mutex
+	asyncRequestsChan chan *needle.AsyncRequest
+	asyncWorkerClosed bool
+
 	lastModifiedTsSeconds uint64 // unix time in seconds
 	lastAppendAtNs        uint64 // unix time in nanoseconds
 
@@ -130,13 +138,11 @@ func (v *Volume) getIoErrorState() (error, int32, bool) {
 
 func NewVolume(dirname string, dirIdx string, collection string, id needle.VolumeId, needleMapKind NeedleMapKind, replicaPlacement *super_block.ReplicaPlacement, ttl *needle.TTL, preallocate int64, ver needle.Version, memoryMapMaxSizeMb uint32, ldbTimeout int64) (v *Volume, e error) {
 	// if replicaPlacement is nil, the superblock will be loaded from disk
-	v = &Volume{dir: dirname, dirIdx: dirIdx, Collection: collection, Id: id, MemoryMapMaxSizeMb: memoryMapMaxSizeMb,
-		asyncRequestsChan: make(chan *needle.AsyncRequest, 128)}
+	v = &Volume{dir: dirname, dirIdx: dirIdx, Collection: collection, Id: id, MemoryMapMaxSizeMb: memoryMapMaxSizeMb}
 	v.SuperBlock = super_block.SuperBlock{ReplicaPlacement: replicaPlacement, Ttl: ttl}
 	v.needleMapKind = needleMapKind
 	v.ldbTimeout = ldbTimeout
 	e = v.load(true, true, needleMapKind, preallocate, ver)
-	v.startWorker()
 	return
 }
 
@@ -455,7 +461,6 @@ func (v *Volume) expiredLongEnough(maxDelayMinutes uint32) bool {
 func (v *Volume) collectStatus() (maxFileKey types.NeedleId, datFileSize int64, modTime time.Time, fileCount, deletedCount, deletedSize uint64, ok bool) {
 	v.dataFileAccessLock.RLock()
 	defer v.dataFileAccessLock.RUnlock()
-	glog.V(4).Infof("collectStatus volume %d", v.Id)
 
 	if v.nm == nil || v.DataBackend == nil {
 		return
@@ -472,7 +477,10 @@ func (v *Volume) collectStatus() (maxFileKey types.NeedleId, datFileSize int64, 
 	return
 }
 
-func (v *Volume) ToVolumeInformationMessage() (types.NeedleId, *master_pb.VolumeInformationMessage) {
+// ToVolumeInformationMessage fills into with what the master is told about this
+// volume, allocating a message when into is nil. A heartbeat that keeps only
+// the volumes it reports fills the same message for all the rest.
+func (v *Volume) ToVolumeInformationMessage(into *master_pb.VolumeInformationMessage) (types.NeedleId, *master_pb.VolumeInformationMessage) {
 
 	maxFileKey, volumeSize, modTime, fileCount, deletedCount, deletedSize, ok := v.collectStatus()
 
@@ -498,23 +506,24 @@ func (v *Volume) ToVolumeInformationMessage() (types.NeedleId, *master_pb.Volume
 		}
 	}
 
-	volumeInfo := &master_pb.VolumeInformationMessage{
-		Id:               uint32(v.Id),
-		Size:             uint64(volumeSize),
-		Collection:       v.Collection,
-		FileCount:        fileCount,
-		DeleteCount:      deletedCount,
-		DeletedByteCount: deletedSize,
-		ReadOnly:         v.IsReadOnly(),
-		ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
-		Version:          uint32(v.Version()),
-		Ttl:              v.Ttl.ToUint32(),
-		CompactRevision:  uint32(v.SuperBlock.CompactionRevision),
-		ModifiedAtSecond: modTime.Unix(),
-		DiskType:         string(v.location.DiskType),
-		DiskId:           v.diskId,
+	volumeInfo := into
+	if volumeInfo == nil {
+		volumeInfo = &master_pb.VolumeInformationMessage{}
 	}
-
+	volumeInfo.Id = uint32(v.Id)
+	volumeInfo.Size = uint64(volumeSize)
+	volumeInfo.Collection = v.Collection
+	volumeInfo.FileCount = fileCount
+	volumeInfo.DeleteCount = deletedCount
+	volumeInfo.DeletedByteCount = deletedSize
+	volumeInfo.ReadOnly = v.IsReadOnly()
+	volumeInfo.ReplicaPlacement = uint32(v.ReplicaPlacement.Byte())
+	volumeInfo.Version = uint32(v.Version())
+	volumeInfo.Ttl = v.Ttl.ToUint32()
+	volumeInfo.CompactRevision = uint32(v.SuperBlock.CompactionRevision)
+	volumeInfo.ModifiedAtSecond = modTime.Unix()
+	volumeInfo.DiskType = string(v.location.DiskType)
+	volumeInfo.DiskId = v.diskId
 	volumeInfo.RemoteStorageName, volumeInfo.RemoteStorageKey = v.RemoteStorageNameKey()
 
 	return maxFileKey, volumeInfo
@@ -531,9 +540,20 @@ func (v *Volume) RemoteStorageNameKey() (storageName, storageKey string) {
 }
 
 func (v *Volume) IsReadOnly() bool {
+	readOnly, _, _, _ := v.ReadOnlyReasons()
+	return readOnly
+}
+
+// ReadOnlyReasons reports whether the volume refuses writes and why, reading the
+// flags once so the reasons cannot disagree with the verdict.
+func (v *Volume) ReadOnlyReasons() (readOnly, noWriteOrDelete, noWriteCanDelete, diskSpaceLow bool) {
 	v.noWriteLock.RLock()
-	defer v.noWriteLock.RUnlock()
-	return v.noWriteOrDelete || v.noWriteCanDelete || v.location.isDiskSpaceLow.Load()
+	noWriteOrDelete, noWriteCanDelete = v.noWriteOrDelete, v.noWriteCanDelete
+	v.noWriteLock.RUnlock()
+	// The location is attached when the volume joins a disk location, which is
+	// after NewVolume hands it back.
+	diskSpaceLow = v.location != nil && v.location.isDiskSpaceLow.Load()
+	return noWriteOrDelete || noWriteCanDelete || diskSpaceLow, noWriteOrDelete, noWriteCanDelete, diskSpaceLow
 }
 
 func (v *Volume) PersistReadOnly(readOnly bool, canDelete bool) {

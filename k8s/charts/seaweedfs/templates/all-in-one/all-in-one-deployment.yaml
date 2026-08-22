@@ -84,6 +84,9 @@ spec:
           imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
           env:
             {{- include "seaweedfs.licenseEnv" . | nindent 12 }}
+            {{- if and .Values.allInOne.s3.enabled (or .Values.allInOne.s3.enableAuth .Values.s3.enableAuth .Values.filer.s3.enableAuth) }}
+            {{- include "seaweedfs.s3.credentialEnv" . | nindent 12 }}
+            {{- end }}
             {{- /* Determine default cluster alias and the corresponding env var keys to avoid conflicts */}}
             {{- $mergedExtraEnvironmentVars := dict }}
             {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global.seaweedfs "component" .Values.allInOne "target" $mergedExtraEnvironmentVars) }}

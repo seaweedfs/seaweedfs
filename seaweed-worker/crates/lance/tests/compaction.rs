@@ -5,81 +5,25 @@
 //! nothing to learn from it against a fake.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
 
 use anyhow::Result;
 use seaweed_worker_core::pb::{
-    config_value::Kind, ConfigValue, DetectionComplete, DetectionProposals, ExecuteJobRequest,
-    JobCompleted, JobProgressUpdate, JobProposal, JobSpec, RunDetectionRequest,
+    config_value::Kind, ExecuteJobRequest, JobSpec, RunDetectionRequest,
 };
-use seaweed_worker_core::{DetectionSender, ExecutionSender, JobHandler, PreviewProvider};
+use seaweed_worker_core::{JobHandler, PreviewProvider};
 use weed_lance_worker::catalog::NamespaceClient;
 use weed_lance_worker::jobs::cleanup::CleanupVersionsHandler;
 use weed_lance_worker::jobs::compact::{CompactHandler, JOB_TYPE};
 use weed_lance_worker::jobs::indices::OptimizeIndicesHandler;
 use weed_lance_worker::preview::LancePreview;
 
-#[derive(Default)]
-struct Recorder {
-    proposals: Mutex<Vec<JobProposal>>,
-    observations: Mutex<Vec<seaweed_worker_core::pb::ObjectObservation>>,
-    completed: Mutex<Vec<JobCompleted>>,
-}
-
-impl DetectionSender for Recorder {
-    fn send_proposals(&self, proposals: DetectionProposals) -> Result<()> {
-        self.proposals.lock().unwrap().extend(proposals.proposals);
-        Ok(())
-    }
-    fn send_complete(&self, _complete: DetectionComplete) -> Result<()> {
-        Ok(())
-    }
-    fn send_activity(&self, _activity: seaweed_worker_core::pb::ActivityEvent) -> Result<()> {
-        Ok(())
-    }
-    fn send_observations(
-        &self,
-        observations: seaweed_worker_core::pb::WorkerObservations,
-    ) -> Result<()> {
-        self.observations
-            .lock()
-            .unwrap()
-            .extend(observations.observations);
-        Ok(())
-    }
-}
-
-impl ExecutionSender for Recorder {
-    fn send_progress(&self, _progress: JobProgressUpdate) -> Result<()> {
-        Ok(())
-    }
-    fn send_completed(&self, completed: JobCompleted) -> Result<()> {
-        self.completed.lock().unwrap().push(completed);
-        Ok(())
-    }
-}
+mod common;
+use common::{fallback, int_config, namespace_url, Recorder};
 
 /// These tests drive one live gateway and one shared catalog: `list_all_tables`
 /// sweeps everything, so a table another test is writing shows up in this test's
 /// detection. Rust runs a binary's tests concurrently, so take a lock.
 static GATEWAY: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
-fn namespace_url() -> Option<String> {
-    std::env::var("WEED_LANCE_NAMESPACE")
-        .ok()
-        .filter(|s| !s.is_empty())
-}
-
-fn int_config(name: &str, value: i64) -> HashMap<String, ConfigValue> {
-    let mut values = HashMap::new();
-    values.insert(
-        name.to_string(),
-        ConfigValue {
-            kind: Some(Kind::Int64Value(value)),
-        },
-    );
-    values
-}
 
 /// Declares a table through the namespace and writes `fragments` one-row
 /// appends into it, so a test brings its own state instead of depending on
@@ -205,15 +149,12 @@ async fn compacts_a_fragmented_table() {
         eprintln!("WEED_LANCE_NAMESPACE is unset, skipping");
         return;
     };
-    let mut fallback = weed_lance_worker::dataset::FallbackOptions::new();
-    fallback.insert("aws_access_key_id".to_string(), "any".to_string());
-    fallback.insert("aws_secret_access_key".to_string(), "any".to_string());
     // Seeded here rather than by a script, so the test is repeatable: a previous
     // run compacts the table it depended on.
     let encoded = seed_fragmented_table(&url, "compactme", 12)
         .await
         .expect("seed a fragmented table");
-    let handler = CompactHandler::new(url).with_fallback(fallback);
+    let handler = CompactHandler::new(url).with_fallback(fallback());
     let recorder = Recorder::default();
 
     let request = RunDetectionRequest {
@@ -286,13 +227,6 @@ async fn compacts_a_fragmented_table() {
         "completion carried no fragment counts: {summary}"
     );
     eprintln!("compaction result: {summary}");
-}
-
-fn fallback() -> weed_lance_worker::dataset::FallbackOptions {
-    let mut options = weed_lance_worker::dataset::FallbackOptions::new();
-    options.insert("aws_access_key_id".to_string(), "any".to_string());
-    options.insert("aws_secret_access_key".to_string(), "any".to_string());
-    options
 }
 
 /// A table with more versions than the floor is proposed, and running the job

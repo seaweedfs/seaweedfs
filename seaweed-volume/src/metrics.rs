@@ -330,6 +330,16 @@ pub fn delete_collection_metrics(collection: &str) {
     delete_partial_match_collection(&DISK_SIZE_GAUGE, collection);
 }
 
+/// Drop a collection's volume server series once its last volume leaves this
+/// server. These gauges are only ever set for collections still present, so the
+/// values from the heartbeat that saw the last volume would otherwise stand
+/// until the process restarts.
+pub fn delete_volume_server_collection_metrics(collection: &str) {
+    let _ = DISK_SIZE_GAUGE.remove_label_values(&[collection, DISK_SIZE_LABEL_NORMAL]);
+    let _ = DISK_SIZE_GAUGE.remove_label_values(&[collection, DISK_SIZE_LABEL_DELETED_BYTES]);
+    delete_partial_match_collection(&READ_ONLY_VOLUME_GAUGE, collection);
+}
+
 /// Remove all metric entries from a GaugeVec where the "collection" label matches.
 /// This emulates Go's `DeletePartialMatch(prometheus.Labels{"collection": collection})`.
 fn delete_partial_match_collection(gauge: &GaugeVec, collection: &str) {

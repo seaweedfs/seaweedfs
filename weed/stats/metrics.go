@@ -242,6 +242,14 @@ var (
 			Help:      "Times a metadata subscriber moved past a log range without proof it was persisted: scope=aggregated means a peer may not have flushed it, scope=local means this filer's own log flush was wedged past the give-up bound.",
 		}, []string{"scope"})
 
+	FilerSubscribeWatermarkHolds = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemFiler,
+			Name:      "subscribe_watermark_holds",
+			Help:      "Times an aggregated metadata read stopped at an entry newer than the peers' low-watermark and waited for a peer to report further progress: scope=memory held at the delivery watermark, scope=disk at the flush watermark.",
+		}, []string{"scope"})
+
 	FilerSubscribeGapStalledGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
@@ -907,6 +915,7 @@ func init() {
 	Gather.MustRegister(FilerServerLastSendTsOfSubscribeGauge)
 	Gather.MustRegister(FilerSubscribeGapStalledGauge)
 	Gather.MustRegister(FilerSubscribeUnprovenGapCrossings)
+	Gather.MustRegister(FilerSubscribeWatermarkHolds)
 	Gather.MustRegister(FilerMetaAggregatorReplayFailures)
 	Gather.MustRegister(FilerObjectSizeBytesHistogram)
 	Gather.MustRegister(collectors.NewGoCollector())
@@ -1090,6 +1099,16 @@ func DeleteCollectionMetrics(collection string) {
 	c += VolumeServerReadOnlyVolumeGauge.DeletePartialMatch(labels)
 
 	glog.V(0).Infof("delete collection metrics, %s: %d", collection, c)
+}
+
+// DeleteVolumeServerCollectionMetrics drops a collection's volume server series
+// once its last volume leaves this server. These gauges are only ever set for
+// collections still present, so the values from the heartbeat that saw the last
+// volume would otherwise stand until the process restarts.
+func DeleteVolumeServerCollectionMetrics(collection string) {
+	VolumeServerDiskSizeGauge.DeleteLabelValues(collection, "normal")
+	VolumeServerDiskSizeGauge.DeleteLabelValues(collection, "deleted_bytes")
+	VolumeServerReadOnlyVolumeGauge.DeletePartialMatch(prometheus.Labels{"collection": collection})
 }
 
 func bucketMetricTTLControl() {

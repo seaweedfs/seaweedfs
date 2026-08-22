@@ -1,4 +1,17 @@
-name: "release: bump version"
+name: "release: bump version and cut the release"
+
+# One entry point for a SeaweedFS release:
+#   1. bump MAJOR/MINOR in constants.go and the Helm Chart.yaml, commit to master
+#   2. push the <appVersion> tag, which fans out to the workflows that trigger on
+#      `push: tags` (binaries_release*, container_release_unified, helm_manual_release)
+#   3. create the GitHub release, with GitHub's generated notes
+#   4. dispatch "Prepare release" in seaweedfs-csi-driver and seaweedfs-operator,
+#      which pick up the new master through `go get -u`, and wait for both
+#
+# Events raised by the default GITHUB_TOKEN do not start other workflows, and it
+# cannot reach the other two repositories at all. Add a repo secret RELEASE_PAT
+# with `contents: write` here and `actions: write` on the csi-driver and operator
+# repos. Without it the tag is still pushed, but nothing downstream of it runs.
 
 on:
   workflow_dispatch:
@@ -14,15 +27,37 @@ on:
         description: "Explicit MAJOR.MINOR to set, e.g. 4.36 (overrides 'bump')"
         type: string
         required: false
-
-permissions:
-  contents: write
+      downstream:
+        description: "Also release the CSI driver and the operator"
+        type: boolean
+        default: true
+      dry_run:
+        description: "Show the version bump, but change nothing"
+        type: boolean
+        default: false
 
 jobs:
-  bump-version:
+  release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      app_version: ${{ steps.compute.outputs.app_version }}
+      sha: ${{ steps.tag.outputs.sha }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: master
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Check the release token
+        env:
+          HAS_PAT: ${{ secrets.RELEASE_PAT != '' }}
+        run: |
+          if [ "$HAS_PAT" != "true" ]; then
+            echo "::warning::RELEASE_PAT is not set. The tag will be pushed with GITHUB_TOKEN, so the binary, container and helm workflows will not start on their own."
+          fi
 
       - name: Compute new version
         id: compute
@@ -99,17 +134,103 @@ jobs:
           sed -i -E "s/^version:.*/version: ${CHART_VERSION}/" "$CHART"
           cat "$CHART"
 
-      - name: Commit and push
+      - name: Commit, and push the tag
+        id: tag
         env:
-          APP_VERSION: ${{ steps.compute.outputs.app_version }}
+          TAG: ${{ steps.compute.outputs.app_version }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
-          if git diff --quiet; then
-            echo "No version change to commit."
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "::error::Tag ${TAG} already exists."
+            exit 1
+          fi
+          if [ "$DRY_RUN" = "true" ]; then
+            git --no-pager diff --stat
+            echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add weed/util/version/constants.go k8s/charts/seaweedfs/Chart.yaml
-          git commit -m "${APP_VERSION}"
-          git push
+          if git diff --quiet; then
+            echo "::warning::Version files are already at ${TAG}; tagging the current HEAD."
+          else
+            git add weed/util/version/constants.go k8s/charts/seaweedfs/Chart.yaml
+            git commit -m "${TAG}"
+            git push
+          fi
+
+          # Push the tag with git so the `push: tags` triggers fire. Creating the
+          # tag through the release API alone would only emit a `create` event.
+          git tag "$TAG"
+          git push origin "$TAG"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Create the release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.compute.outputs.app_version }}
+        run: gh release create "$TAG" --title "$TAG" --generate-notes --verify-tag
+
+  downstream:
+    needs: release
+    if: ${{ inputs.downstream && !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    permissions: {}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - repo: seaweedfs/seaweedfs-csi-driver
+            workflow: prepare_release.yaml
+          - repo: seaweedfs/seaweedfs-operator
+            workflow: prepare_release.yml
+    steps:
+      - name: Release ${{ matrix.repo }}
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          REPO: ${{ matrix.repo }}
+          WORKFLOW: ${{ matrix.workflow }}
+          SHA: ${{ needs.release.outputs.sha }}
+          MODULE: github.com/seaweedfs/seaweedfs
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "::error::RELEASE_PAT with actions:write on ${REPO} is required to release it"
+            exit 1
+          fi
+
+          # The dispatched workflow pins seaweedfs with `go get -u ...@latest`, so
+          # wait until the proxy serves the release commit as the tip. Asking for
+          # the commit by name is what makes the proxy fetch it.
+          for _ in $(seq 30); do
+            curl -sf "https://proxy.golang.org/${MODULE}/@v/${SHA}.info" >/dev/null || true
+            TIP=$(curl -sf "https://proxy.golang.org/${MODULE}/@latest" | jq -r '.Origin.Hash // ""' || true)
+            [ "$TIP" = "$SHA" ] && break
+            sleep 10
+          done
+          if [ "$TIP" != "$SHA" ]; then
+            echo "::error::the module proxy still serves ${TIP} as the tip, so ${REPO} would pin a pre-release commit. Run ${WORKFLOW} there once it catches up."
+            exit 1
+          fi
+
+          # Wait on the release the dispatched workflow publishes, not on the run
+          # that publishes it: a dispatch cannot be told apart from a concurrent
+          # one through the API, and the release is what we are here for.
+          released() { gh api "repos/${REPO}/releases?per_page=30" --jq '[.[].tag_name]'; }
+
+          BEFORE=$(released)
+          gh workflow run -R "$REPO" "$WORKFLOW" --ref master -f bump=patch -f update_seaweedfs=true
+
+          for _ in $(seq 80); do
+            sleep 15
+            NEW=$(released | jq -c --argjson before "$BEFORE" '. - $before')
+            [ "$(jq length <<<"$NEW")" -gt 0 ] && break
+          done
+          if [ "$(jq length <<<"$NEW")" -eq 0 ]; then
+            echo "::error::${REPO} published no release within 20 minutes; see https://github.com/${REPO}/actions/workflows/${WORKFLOW}"
+            exit 1
+          fi
+          echo "${REPO} released $(jq -r 'join(", ")' <<<"$NEW")"

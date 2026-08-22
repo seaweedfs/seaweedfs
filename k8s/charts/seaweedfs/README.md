@@ -289,6 +289,32 @@ stringData:
   seaweedfs_s3_config: '{"identities":[{"name":"anvAdmin","credentials":[{"accessKey":"snu8yoP6QAlY0ne4","secretKey":"PNzBcmeLNEdR0oviwm04NQAicOrDH1Km"}],"actions":["Admin","Read","Write"]},{"name":"anvReadOnly","credentials":[{"accessKey":"SCigFee6c5lbi04A","secretKey":"kgFhbT38R8WUYVtiFQ1OiSVOrYr3NKku"}],"actions":["Read"]}]}'
 ```
 
+#### Source S3 credentials from an existing Secret
+
+To keep the keys out of `values.yaml` while still letting the chart generate the
+identities file, point an identity at an existing Secret:
+
+```yaml
+s3:
+  enabled: true
+  enableAuth: true
+  credentials:
+    admin:
+      existingSecret: minio-root
+      accessKeyKey: root-user
+      secretKeyKey: root-password
+```
+
+`accessKeyKey` and `secretKeyKey` default to the chart's own key names
+(`admin_access_key_id`, `admin_secret_access_key`, and the `read_` pair). The
+generated `seaweedfs_s3_config` references the keys as `${SEAWEEDFS_S3_ADMIN_ACCESS_KEY_ID}`
+and the gateway resolves them from the environment, which the chart wires up
+from the Secret. Nothing is read from the cluster at render time, so
+`helm template`, `--dry-run` and an Argo CD diff all render what an install
+applies. Rotating a key in the Secret takes effect on the next pod restart, as
+with any other environment variable. The COSI driver parses the config itself
+and does not resolve these references.
+
 ## Admin Component
 
 The admin component provides a modern web-based administration interface for managing SeaweedFS clusters. It includes:

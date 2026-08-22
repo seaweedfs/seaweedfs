@@ -109,6 +109,7 @@ func startFailoverCluster(t testing.TB, numVolumes, numMounts int) *failoverClus
 		require.NoError(t, c.waitForMount(mp, 30*time.Second),
 			"mount %d not ready\n%s", i, c.tailLog(fmt.Sprintf("mount%d", i)))
 	}
+	require.NoError(t, c.WaitForVolumeServers(60*time.Second))
 	return c
 }
 
@@ -342,6 +343,62 @@ func (c *failoverCluster) WaitForHolders(vid uint32, count int, timeout time.Dur
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
+}
+
+// WaitForVolumeServers blocks until the master's topology lists every volume
+// server. A volume server accepts connections well before the master knows it
+// exists: a lone master only elects itself once its bootstrap check expires,
+// and heartbeats sent before that are refused and retried with backoff, so
+// registration lands seconds after the process is up. Until it does the
+// topology has no data node at all, an assign fails with "no free volumes
+// left", and the mount reports that as ENOSPC instead of retrying.
+func (c *failoverCluster) WaitForVolumeServers(timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		registered := c.registeredVolumeServers()
+		var missing []string
+		for i := range c.volumePorts {
+			if address := c.VolumeServerAddress(i); !registered[address] {
+				missing = append(missing, address)
+			}
+		}
+		if len(missing) == 0 {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("volume servers %v not registered with the master within %v\n%s",
+				missing, timeout, c.MasterGet("/dir/status?pretty=y"))
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+// registeredVolumeServers is the set of volume server addresses the master
+// currently holds in its topology.
+func (c *failoverCluster) registeredVolumeServers() map[string]bool {
+	var status struct {
+		Topology struct {
+			DataCenters []struct {
+				Racks []struct {
+					DataNodes []struct {
+						Url string `json:"Url"`
+					} `json:"DataNodes"`
+				} `json:"Racks"`
+			} `json:"DataCenters"`
+		} `json:"Topology"`
+	}
+	if err := json.Unmarshal([]byte(c.MasterGet("/dir/status")), &status); err != nil {
+		return nil
+	}
+	registered := make(map[string]bool)
+	for _, dc := range status.Topology.DataCenters {
+		for _, rack := range dc.Racks {
+			for _, dn := range rack.DataNodes {
+				registered[dn.Url] = true
+			}
+		}
+	}
+	return registered
 }
 
 // volumeIndexOf maps a server address back to its index, or -1.

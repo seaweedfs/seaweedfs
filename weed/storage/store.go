@@ -82,6 +82,16 @@ type Store struct {
 	DeletedEcShardsChan chan *master_pb.VolumeEcShardInformationMessage
 	isStopping          atomic.Bool
 	volumeReport        volumeReportState
+	// One heartbeat at a time: the report state is marked in place as the scan
+	// runs, so two overlapping scans would each forget what the other marked
+	// and name every volume it holds as departed.
+	collectHeartbeatLock sync.Mutex
+	// Collections the last heartbeat set per-collection gauges for. Those gauges
+	// are only ever set for collections still held here, so one whose last
+	// volume leaves - moved away by volume.balance, say - would keep reporting
+	// the heartbeat that saw it. Written only from the heartbeat goroutine.
+	reportedCollections   map[string]struct{}
+	reportedEcCollections map[string]struct{}
 }
 
 func (s *Store) String() (str string) {
@@ -428,13 +438,15 @@ func (s *Store) GetRack() string {
 }
 
 func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
+	s.collectHeartbeatLock.Lock()
+	defer s.collectHeartbeatLock.Unlock()
+
 	var volumeMessages []*master_pb.VolumeInformationMessage
 	// Covers every volume held, whether or not this heartbeat names it, so the
 	// master can tell whether applying what it was sent leaves it current.
 	// Volumes skipped below -- quarantined, phantom, expired -- are in neither.
 	var volumeDigest uint64
-	sendFullList, reportGeneration := s.volumeReport.begin()
-	reported := make(map[volumeReportKey]reportedVolume)
+	sendFullList, reportGeneration, reportPass := s.volumeReport.begin()
 	maxVolumeCounts := make(map[string]uint32)
 	// Per-disk effective max for DiskTag, captured alongside the per-type sum.
 	diskMaxByID := make(map[int]int32)
@@ -443,7 +455,10 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	var maxFileKey NeedleId
 	collectionVolumeSize := make(map[string]int64)
 	collectionVolumeDeletedBytes := make(map[string]int64)
-	collectionVolumeReadOnlyCount := make(map[string]map[string]uint8)
+	collectionVolumeReadOnlyCount := make(map[string]map[string]int)
+	// Filled once per volume and kept only by the heartbeat that carries it, so
+	// a server with nothing to say fills the same message all the way through.
+	scratchMessage := &master_pb.VolumeInformationMessage{}
 	for diskID, location := range s.Locations {
 		if location.isDiskUnavailable.Load() {
 			continue
@@ -471,7 +486,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		diskFreeBytes[string(location.DiskType)] += location.diskFreeBytes.Load()
 		location.volumesLock.RLock()
 		for _, v := range location.volumes {
-			curMaxFileKey, volumeMessage := v.ToVolumeInformationMessage()
+			curMaxFileKey, volumeMessage := v.ToVolumeInformationMessage(scratchMessage)
 			if volumeMessage == nil {
 				continue
 			}
@@ -509,20 +524,9 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 			if !v.expired(volumeMessage.Size, s.GetVolumeSizeLimit()) {
 				reportHash := reportHashOf(volumeMessage)
 				volumeDigest ^= reportHash
-				reported[volumeReportKey{diskId: volumeMessage.DiskId, volumeId: volumeMessage.Id}] = reportedVolume{
-					hash: reportHash,
-					short: &master_pb.VolumeShortInformationMessage{
-						Id:               volumeMessage.Id,
-						Collection:       volumeMessage.Collection,
-						ReplicaPlacement: volumeMessage.ReplicaPlacement,
-						Version:          volumeMessage.Version,
-						Ttl:              volumeMessage.Ttl,
-						DiskType:         volumeMessage.DiskType,
-						DiskId:           volumeMessage.DiskId,
-					},
-				}
-				if sendFullList || s.volumeReport.changed(volumeMessage, reportHash) {
+				if s.volumeReport.record(volumeMessage, reportHash, reportPass) || sendFullList {
 					volumeMessages = append(volumeMessages, volumeMessage)
+					scratchMessage = &master_pb.VolumeInformationMessage{}
 				}
 			} else {
 				if v.expiredLongEnough(MAX_TTL_VOLUME_REMOVAL_DELAY) {
@@ -533,38 +537,35 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 				}
 			}
 
-			if _, exist := collectionVolumeSize[v.Collection]; !exist {
-				collectionVolumeSize[v.Collection] = 0
-				collectionVolumeDeletedBytes[v.Collection] = 0
-			}
+			// The totals are rebuilt from scratch every heartbeat, so a volume
+			// on its way out is simply not added. Subtracting it took the
+			// surviving volumes' sizes down with it, and an entry here is also
+			// what says the collection is still on this server.
 			if !shouldDeleteVolume {
 				collectionVolumeSize[v.Collection] += int64(volumeMessage.Size)
 				collectionVolumeDeletedBytes[v.Collection] += int64(volumeMessage.DeletedByteCount)
-			} else {
-				collectionVolumeSize[v.Collection] -= int64(volumeMessage.Size)
-				if collectionVolumeSize[v.Collection] <= 0 {
-					delete(collectionVolumeSize, v.Collection)
-				}
-			}
 
-			if _, exist := collectionVolumeReadOnlyCount[v.Collection]; !exist {
-				collectionVolumeReadOnlyCount[v.Collection] = map[string]uint8{
-					stats.IsReadOnly:       0,
-					stats.NoWriteOrDelete:  0,
-					stats.NoWriteCanDelete: 0,
-					stats.IsDiskSpaceLow:   0,
+				counts, exist := collectionVolumeReadOnlyCount[v.Collection]
+				if !exist {
+					counts = map[string]int{
+						stats.IsReadOnly:       0,
+						stats.NoWriteOrDelete:  0,
+						stats.NoWriteCanDelete: 0,
+						stats.IsDiskSpaceLow:   0,
+					}
+					collectionVolumeReadOnlyCount[v.Collection] = counts
 				}
-			}
-			if !shouldDeleteVolume && v.IsReadOnly() {
-				collectionVolumeReadOnlyCount[v.Collection][stats.IsReadOnly] += 1
-				if v.noWriteOrDelete {
-					collectionVolumeReadOnlyCount[v.Collection][stats.NoWriteOrDelete] += 1
-				}
-				if v.noWriteCanDelete {
-					collectionVolumeReadOnlyCount[v.Collection][stats.NoWriteCanDelete] += 1
-				}
-				if v.location.isDiskSpaceLow.Load() {
-					collectionVolumeReadOnlyCount[v.Collection][stats.IsDiskSpaceLow] += 1
+				if readOnly, noWriteOrDelete, noWriteCanDelete, diskSpaceLow := v.ReadOnlyReasons(); readOnly {
+					counts[stats.IsReadOnly] += 1
+					if noWriteOrDelete {
+						counts[stats.NoWriteOrDelete] += 1
+					}
+					if noWriteCanDelete {
+						counts[stats.NoWriteCanDelete] += 1
+					}
+					if diskSpaceLow {
+						counts[stats.IsDiskSpaceLow] += 1
+					}
 				}
 			}
 		}
@@ -618,16 +619,20 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		}
 	}
 
-	// A delta says nothing through silence, so volumes gone since the last
-	// report -- a deleted collection, an expired ttl -- must be named, or the
-	// master counts them until a digest mismatch buys it a full list. A full
-	// list needs no such naming: it is already the whole truth.
-	var departedVolumes []*master_pb.VolumeShortInformationMessage
-	if !sendFullList {
-		departedVolumes = s.volumeReport.departed(reported)
+	// collectionVolumeReadOnlyCount has an entry for every collection that kept
+	// a volume through this pass, including the ones counting zero read-only
+	// volumes.
+	for col := range s.reportedCollections {
+		if _, stillHere := collectionVolumeReadOnlyCount[col]; !stillHere {
+			stats.DeleteVolumeServerCollectionMetrics(col)
+		}
+	}
+	s.reportedCollections = make(map[string]struct{}, len(collectionVolumeReadOnlyCount))
+	for col := range collectionVolumeReadOnlyCount {
+		s.reportedCollections[col] = struct{}{}
 	}
 
-	s.volumeReport.commit(reported, reportGeneration)
+	departedVolumes := s.volumeReport.commit(reportPass, reportGeneration, sendFullList)
 
 	// has_no_volumes says the server holds nothing, so it may only be derived
 	// from a full list. Deriving it from a changed-only heartbeat would make a
