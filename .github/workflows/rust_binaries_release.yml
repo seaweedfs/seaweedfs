@@ -131,6 +131,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The upload step is handed a token explicitly; a cargo build script
+          # should not find another one sitting in the checkout's git config.
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
