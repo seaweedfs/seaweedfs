@@ -810,6 +810,9 @@ func (h *FileBrowserHandlers) ListFolders(w http.ResponseWriter, r *http.Request
 		for _, entry := range browserData.Entries {
 			if entry.IsDirectory {
 				folders = append(folders, entry.Name)
+				if len(folders) >= maxListFoldersEntries {
+					break
+				}
 			}
 		}
 		if len(browserData.Entries) == 0 || !browserData.HasNextPage || len(folders) >= maxListFoldersEntries {

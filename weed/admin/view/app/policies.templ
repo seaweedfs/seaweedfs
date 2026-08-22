@@ -398,7 +398,7 @@ templ Policies(data dash.PoliciesData) {
             if (s.extras && s.extras.trim()) {
                 try {
                     const parsed = JSON.parse(s.extras);
-                    if (parsed && typeof parsed === 'object') {
+                    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
                         stmt = parsed;
                     }
                 } catch (e) {
@@ -659,9 +659,17 @@ templ Policies(data dash.PoliciesData) {
     function loadPolicyFolderNames(dirPath) {
         if (!policyFolderListCache.has(dirPath)) {
             policyFolderListCache.set(dirPath, fetch(basePath('/api/files/list-folders?path=' + encodeURIComponent(dirPath)))
-                .then(function(r) { return r.ok ? r.json() : { folders: [] }; })
+                .then(function(r) {
+                    if (!r.ok) throw new Error('list-folders request failed with status ' + r.status);
+                    return r.json();
+                })
                 .then(function(data) { return data.folders || []; })
-                .catch(function() { return []; }));
+                .catch(function() {
+                    // Don't let a transient failure permanently poison the
+                    // cache for this directory; let the next call retry.
+                    policyFolderListCache.delete(dirPath);
+                    return [];
+                }));
         }
         return policyFolderListCache.get(dirPath);
     }
@@ -879,26 +887,30 @@ templ Policies(data dash.PoliciesData) {
     function displayPolicyDetails(policy) {
         const content = document.getElementById('viewPolicyContent');
 
+        function escapedJoin(list) {
+            return (list || []).map(function(v) { return escapeHtml(String(v)); }).join(', ');
+        }
+
         let statementsHtml = '';
         if (policy.document && policy.document.Statement) {
             statementsHtml = policy.document.Statement.map((stmt, index) => `
                 <div class="card mb-2">
                     <div class="card-header py-2">
-                        <h6 class="mb-0">Statement ${index + 1}${stmt.Sid ? ' &mdash; ' + stmt.Sid : ''}</h6>
+                        <h6 class="mb-0">Statement ${index + 1}${stmt.Sid ? ' &mdash; ' + escapeHtml(stmt.Sid) : ''}</h6>
                     </div>
                     <div class="card-body py-2">
                         <div class="row">
                             <div class="col-md-6">
                                 <strong>Effect:</strong>
-                                <span class="badge ${stmt.Effect === 'Allow' ? 'bg-success' : 'bg-danger'}">${stmt.Effect}</span>
+                                <span class="badge ${stmt.Effect === 'Allow' ? 'bg-success' : 'bg-danger'}">${escapeHtml(stmt.Effect || '')}</span>
                             </div>
                             <div class="col-md-6">
-                                <strong>Actions:</strong> ${Array.isArray(stmt.Action) ? stmt.Action.join(', ') : (stmt.Action || '')}
+                                <strong>Actions:</strong> ${Array.isArray(stmt.Action) ? escapedJoin(stmt.Action) : escapeHtml(stmt.Action || '')}
                             </div>
                         </div>
                         <div class="row mt-2">
                             <div class="col-12">
-                                <strong>Resources:</strong> ${Array.isArray(stmt.Resource) ? stmt.Resource.join(', ') : (stmt.Resource || (stmt.NotResource ? '(NotResource used instead)' : ''))}
+                                <strong>Resources:</strong> ${Array.isArray(stmt.Resource) ? escapedJoin(stmt.Resource) : escapeHtml(stmt.Resource || (stmt.NotResource ? '(NotResource used instead)' : ''))}
                             </div>
                         </div>
                     </div>
@@ -909,10 +921,10 @@ templ Policies(data dash.PoliciesData) {
         content.innerHTML = `
             <div class="row mb-3">
                 <div class="col-md-6">
-                    <strong>Policy Name:</strong> ${policy.name || 'Unknown'}
+                    <strong>Policy Name:</strong> ${escapeHtml(policy.name || 'Unknown')}
                 </div>
                 <div class="col-md-6">
-                    <strong>Version:</strong> <span class="badge bg-info">${policy.document?.Version || 'Unknown'}</span>
+                    <strong>Version:</strong> <span class="badge bg-info">${escapeHtml(policy.document?.Version || 'Unknown')}</span>
                 </div>
             </div>
 
@@ -925,7 +937,7 @@ templ Policies(data dash.PoliciesData) {
 
             <div class="mb-3">
                 <strong>Raw Policy Document:</strong>
-                <pre class="bg-light p-3 border rounded mt-2"><code>${JSON.stringify(policy.document, null, 2)}</code></pre>
+                <pre class="bg-light p-3 border rounded mt-2"><code>${escapeHtml(JSON.stringify(policy.document, null, 2))}</code></pre>
             </div>
         `;
     }
