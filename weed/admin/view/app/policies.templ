@@ -914,7 +914,13 @@ templ Policies(data dash.PoliciesData) {
             policyBucketArnsPromise = fetch(basePath('/api/s3/buckets'))
                 .then(function(r) { return r.ok ? r.json() : { buckets: [] }; })
                 .then(function(data) {
-                    return (data.buckets || []).map(function(b) { return POLICY_RESOURCE_ARN_PREFIX + b.name; });
+                    // Offer both the bucket itself and "every object in it",
+                    // since the latter is what most Resource entries actually need.
+                    return (data.buckets || []).reduce(function(acc, b) {
+                        const arn = POLICY_RESOURCE_ARN_PREFIX + b.name;
+                        acc.push(arn, arn + '/*');
+                        return acc;
+                    }, []);
                 })
                 .catch(function() { return []; });
         }
