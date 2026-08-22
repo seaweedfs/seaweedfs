@@ -347,7 +347,7 @@ templ Policies(data dash.PoliciesData) {
         edit: { version: '2012-10-17', statements: [], otherFields: {} }
     };
 
-    const POLICY_STATEMENT_KNOWN_KEYS = ['Sid', 'Effect', 'Action', 'Resource'];
+    const POLICY_STATEMENT_KNOWN_KEYS = ['Sid', 'Effect', 'Action', 'Resource', 'NotResource'];
 
     function policyTextareaId(which) {
         return which === 'create' ? 'policyDocument' : 'editPolicyDocument';
@@ -394,6 +394,15 @@ templ Policies(data dash.PoliciesData) {
                 throw new Error('Statement ' + (idx + 1) + ': Effect must be exactly "Allow" or "Deny" (got ' +
                     JSON.stringify(stmt.Effect === undefined ? null : stmt.Effect) + ')');
             }
+            const hasResource = Object.prototype.hasOwnProperty.call(stmt, 'Resource');
+            const hasNotResource = Object.prototype.hasOwnProperty.call(stmt, 'NotResource');
+            if (hasResource && hasNotResource) {
+                // The two are mutually exclusive; a document with both isn't
+                // representable by the mode dropdown, so ask the user to fix
+                // it in the JSON tab rather than silently picking one.
+                throw new Error('Statement ' + (idx + 1) + ': cannot specify both Resource and NotResource');
+            }
+            const resourceMode = hasNotResource ? 'NotResource' : 'Resource';
             const extras = {};
             Object.keys(stmt).forEach(function(key) {
                 if (POLICY_STATEMENT_KNOWN_KEYS.indexOf(key) === -1) {
@@ -404,7 +413,8 @@ templ Policies(data dash.PoliciesData) {
                 sid: stmt.Sid || '',
                 effect: stmt.Effect,
                 actions: normalizeToStringArray(stmt.Action),
-                resources: normalizeToStringArray(stmt.Resource),
+                resourceMode: resourceMode,
+                resources: normalizeToStringArray(hasNotResource ? stmt.NotResource : stmt.Resource),
                 extras: Object.keys(extras).length ? JSON.stringify(extras, null, 2) : ''
             });
         });
@@ -412,12 +422,12 @@ templ Policies(data dash.PoliciesData) {
     }
 
     // Converts editor state back into a policy document. Structured fields
-    // (Sid/Effect/Action/Resource) always take precedence over whatever is in
-    // "extras" in case of a conflicting key.
+    // (Sid/Effect/Action/Resource-or-NotResource) always take precedence over
+    // whatever is in "extras" in case of a conflicting key.
     //
     // Throws if a statement's "advanced fields" box holds malformed or
     // non-object JSON, instead of silently dropping it: those fields can
-    // carry Principal/NotResource/Condition, so silently continuing with an
+    // carry Principal/NotPrincipal/Condition, so silently continuing with an
     // empty object would change the policy's authorization behavior without
     // the user noticing.
     function policyEditorStateToDoc(state) {
@@ -453,14 +463,18 @@ templ Policies(data dash.PoliciesData) {
             }
             const resources = (s.resources || []).map(function(r) { return (r || '').trim(); }).filter(Boolean);
             if (resources.length) {
-                stmt.Resource = resources.length === 1 ? resources[0] : resources;
-                // Resource and NotResource are mutually exclusive; a
-                // NotResource surviving in "extras" from before the user
-                // switched to using the structured Resource field must not
-                // be saved alongside it.
-                delete stmt.NotResource;
+                // Resource and NotResource are mutually exclusive; only the
+                // key matching the selected mode is ever written.
+                if (s.resourceMode === 'NotResource') {
+                    stmt.NotResource = resources.length === 1 ? resources[0] : resources;
+                    delete stmt.Resource;
+                } else {
+                    stmt.Resource = resources.length === 1 ? resources[0] : resources;
+                    delete stmt.NotResource;
+                }
             } else {
                 delete stmt.Resource;
+                delete stmt.NotResource;
             }
             doc.Statement.push(stmt);
         });
@@ -516,12 +530,18 @@ templ Policies(data dash.PoliciesData) {
                 '<button type="button" class="btn btn-sm btn-outline-secondary policy-add-list-item-btn" data-which="' + which + '" data-index="' + idx + '" data-field="action"><i class="fas fa-plus me-1"></i>Add action</button>' +
                 '</div>' +
                 '<div class="mb-2">' +
-                '<label class="form-label">Resources</label>' +
+                '<label class="form-label me-2 mb-0">' +
+                '<select class="form-select form-select-sm d-inline-block w-auto policy-stmt-resource-mode" data-which="' + which + '" data-index="' + idx + '">' +
+                '<option value="Resource"' + (stmt.resourceMode !== 'NotResource' ? ' selected' : '') + '>Resource</option>' +
+                '<option value="NotResource"' + (stmt.resourceMode === 'NotResource' ? ' selected' : '') + '>NotResource</option>' +
+                '</select>' +
+                '</label>' +
+                '<div class="form-text mt-0 mb-1">NotResource: the statement applies to every resource except the ones listed.</div>' +
                 '<div class="policy-resource-rows" data-which="' + which + '" data-index="' + idx + '">' + resourceRows + '</div>' +
                 '<button type="button" class="btn btn-sm btn-outline-secondary policy-add-list-item-btn" data-which="' + which + '" data-index="' + idx + '" data-field="resource"><i class="fas fa-plus me-1"></i>Add resource</button>' +
                 '</div>' +
                 '<details' + (stmt.extras ? ' open' : '') + '>' +
-                '<summary class="text-muted">Advanced fields (Principal, NotPrincipal, NotResource, Condition, raw JSON)</summary>' +
+                '<summary class="text-muted">Advanced fields (Principal, NotPrincipal, Condition, raw JSON)</summary>' +
                 '<textarea class="form-control form-control-sm mt-2 policy-stmt-extras" data-which="' + which + '" data-index="' + idx + '" rows="4" placeholder="{}">' + escapeHtml(stmt.extras) + '</textarea>' +
                 '</details>' +
                 '</div>' +
@@ -557,6 +577,10 @@ templ Policies(data dash.PoliciesData) {
         document.querySelectorAll('.policy-stmt-extras[data-which="' + which + '"]').forEach(function(el) {
             const idx = parseInt(el.getAttribute('data-index'), 10);
             if (state.statements[idx]) state.statements[idx].extras = el.value;
+        });
+        document.querySelectorAll('.policy-stmt-resource-mode[data-which="' + which + '"]').forEach(function(el) {
+            const idx = parseInt(el.getAttribute('data-index'), 10);
+            if (state.statements[idx]) state.statements[idx].resourceMode = el.value;
         });
         document.querySelectorAll('.policy-list-item[data-which="' + which + '"]').forEach(function(el) {
             const idx = parseInt(el.getAttribute('data-index'), 10);
@@ -609,7 +633,7 @@ templ Policies(data dash.PoliciesData) {
 
     function addPolicyStatement(which) {
         commitPolicyEditorForm(which);
-        policyEditors[which].statements.push({ sid: '', effect: 'Allow', actions: [], resources: [], extras: '' });
+        policyEditors[which].statements.push({ sid: '', effect: 'Allow', actions: [], resourceMode: 'Resource', resources: [], extras: '' });
         renderPolicyEditor(which);
     }
 
@@ -1002,7 +1026,9 @@ templ Policies(data dash.PoliciesData) {
                         </div>
                         <div class="row mt-2">
                             <div class="col-12">
-                                <strong>Resources:</strong> ${Array.isArray(stmt.Resource) ? escapedJoin(stmt.Resource) : escapeHtml(stmt.Resource || (stmt.NotResource ? '(NotResource used instead)' : ''))}
+                                ${stmt.NotResource
+                                    ? '<strong>NotResource (excluded):</strong> ' + (Array.isArray(stmt.NotResource) ? escapedJoin(stmt.NotResource) : escapeHtml(stmt.NotResource))
+                                    : '<strong>Resource:</strong> ' + (Array.isArray(stmt.Resource) ? escapedJoin(stmt.Resource) : escapeHtml(stmt.Resource || ''))}
                             </div>
                         </div>
                     </div>
