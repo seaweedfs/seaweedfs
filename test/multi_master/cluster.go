@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -36,6 +37,9 @@ type masterNode struct {
 	// peersStr overrides the cluster-wide peer list for this node, so a test
 	// can start a master that only knows about a subset of the cluster.
 	peersStr string
+	// raftBootstrap starts the master with -raftBootstrap, the way the helm
+	// chart renders master.raftBootstrap on every master, every restart.
+	raftBootstrap bool
 }
 
 // MasterCluster manages a 3-node master raft cluster for integration tests.
@@ -153,6 +157,13 @@ func (mc *MasterCluster) SetNodePeers(i int, peers string) {
 	mc.nodes[i].peersStr = peers
 }
 
+// SetRaftBootstrap makes node i start with -raftBootstrap.
+func (mc *MasterCluster) SetRaftBootstrap(i int) {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+	mc.nodes[i].raftBootstrap = true
+}
+
 // StartNode starts the master process at the given index (0–2).
 func (mc *MasterCluster) StartNode(i int) {
 	mc.t.Helper()
@@ -186,6 +197,9 @@ func (mc *MasterCluster) StartNode(i int) {
 	}
 	if mc.raftHashicorp {
 		args = append(args, "-raftHashicorp")
+	}
+	if n.raftBootstrap {
+		args = append(args, "-raftBootstrap")
 	}
 
 	n.cmd = exec.Command(mc.weedBinary, args...)
@@ -384,6 +398,57 @@ func (mc *MasterCluster) WaitForNodeReady(i int, timeout time.Duration) error {
 		time.Sleep(waitTick)
 	}
 	return fmt.Errorf("node %d not ready within %v", i, timeout)
+}
+
+// LogContains reports whether node i's log holds the given text.
+func (mc *MasterCluster) LogContains(i int, text string) bool {
+	b, err := os.ReadFile(mc.nodes[i].logFile)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(b), text)
+}
+
+// topologyIdLine matches every line a master logs when it learns a TopologyId,
+// whichever raft implementation applied it.
+var topologyIdLine = regexp.MustCompile(`TopologyId[^:]*: ([0-9a-f-]{36})`)
+
+// NodeTopologyIds returns the TopologyIds node i has logged. /dir/status is
+// proxied to the leader, so a master's own view of the cluster identity is only
+// visible in its log, and that is where a fork shows up.
+func (mc *MasterCluster) NodeTopologyIds(i int) []string {
+	b, err := os.ReadFile(mc.nodes[i].logFile)
+	if err != nil {
+		return nil
+	}
+	var ids []string
+	for _, m := range topologyIdLine.FindAllStringSubmatch(string(b), -1) {
+		ids = append(ids, m[1])
+	}
+	return ids
+}
+
+// WaitForNodeTopologyIds waits until every master has logged a TopologyId and
+// returns what each one saw.
+func (mc *MasterCluster) WaitForNodeTopologyIds(timeout time.Duration) ([3][]string, error) {
+	var ids [3][]string
+	deadline := time.Now().Add(timeout)
+	for {
+		missing := -1
+		for i := range 3 {
+			ids[i] = mc.NodeTopologyIds(i)
+			if len(ids[i]) == 0 {
+				missing = i
+			}
+		}
+		if missing < 0 {
+			return ids, nil
+		}
+		if !time.Now().Before(deadline) {
+			return ids, fmt.Errorf("master %d logged no TopologyId within %v", missing, timeout)
+		}
+		time.Sleep(waitTick)
+	}
 }
 
 // DumpLogs prints the tail of all master logs.
