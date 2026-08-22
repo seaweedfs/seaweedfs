@@ -49,6 +49,11 @@ jobs:
           # Disable glibc fortify source — its __memcpy_chk etc. symbols don't exist in musl
           echo "CFLAGS_aarch64_unknown_linux_musl=-U_FORTIFY_SOURCE" >> "$GITHUB_ENV"
 
+      # lance's build scripts compile their own protos, and unlike seaweed-volume
+      # they do not vendor a protoc to do it with.
+      - name: Install protoc
+        run: sudo apt-get install -y protobuf-compiler
+
       - name: Cache cargo registry and target
         uses: actions/cache@v6
         with:

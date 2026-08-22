@@ -36,6 +36,11 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      # lance's build scripts compile their own protos, and unlike seaweed-volume
+      # they do not vendor a protoc to do it with.
+      - name: Install protoc
+        run: sudo apt-get install -y protobuf-compiler
+
       # cargo tracks its own inputs but not the runner's C toolchain, so a cached
       # target/ can carry C objects built against a different glibc than we link against.
       - name: Fingerprint build toolchain
