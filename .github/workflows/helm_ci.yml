@@ -94,6 +94,16 @@ jobs:
           helm template test $CHART_DIR --set allInOne.enabled=true > /tmp/allinone.yaml
           grep -q "seaweedfs-all-in-one" /tmp/allinone.yaml
           echo "All-in-one deployment renders correctly"
+
+          echo "=== Testing the all-in-one s3 secret is created by every flag that mounts it ==="
+          for auth in allInOne.s3.enableAuth s3.enableAuth filer.s3.enableAuth; do
+            helm template test $CHART_DIR \
+              --set allInOne.enabled=true --set allInOne.s3.enabled=true --set "$auth=true" \
+              > /tmp/allinone-s3-auth.yaml
+            grep -q "secretName: test-seaweedfs-s3-secret" /tmp/allinone-s3-auth.yaml
+            grep -q "name: test-seaweedfs-s3-secret" /tmp/allinone-s3-auth.yaml
+            echo "All-in-one s3 secret renders for $auth"
+          done
           
           echo "=== Testing with security enabled ==="
           helm template test $CHART_DIR --set global.seaweedfs.enableSecurity=true > /tmp/security.yaml
