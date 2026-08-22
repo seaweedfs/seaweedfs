@@ -778,3 +778,48 @@ func min(a, b int64) int64 {
 	}
 	return b
 }
+
+// maxListFoldersEntries caps how many subfolder names ListFolders will
+// collect for a single request, so a directory with an unusually large
+// number of children can't turn one autocomplete keystroke into an
+// unbounded, slow full-directory walk.
+const maxListFoldersEntries = 2000
+
+// ListFolders returns, as JSON, the names of the subdirectories directly
+// under the given path. It exists to back progressive autocomplete (e.g. the
+// policy editor's Resource ARN field building up "bucket/folder/subfolder"
+// one path segment at a time) rather than to be a general directory listing
+// API, so it's restricted to paths under /buckets.
+func (h *FileBrowserHandlers) ListFolders(w http.ResponseWriter, r *http.Request) {
+	dirPath := defaultQuery(r.URL.Query().Get("path"), "/buckets")
+	dirPath = util.CleanWindowsPath(dirPath)
+
+	if dirPath != "/buckets" && !strings.HasPrefix(dirPath, "/buckets/") {
+		writeJSONError(w, http.StatusBadRequest, "path must be under /buckets")
+		return
+	}
+
+	folders := []string{}
+	lastFileName := ""
+	for {
+		browserData, err := h.adminServer.GetFileBrowser(dirPath, lastFileName, 200)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "Failed to list directory: "+err.Error())
+			return
+		}
+		for _, entry := range browserData.Entries {
+			if entry.IsDirectory {
+				folders = append(folders, entry.Name)
+				if len(folders) >= maxListFoldersEntries {
+					break
+				}
+			}
+		}
+		if len(browserData.Entries) == 0 || !browserData.HasNextPage || len(folders) >= maxListFoldersEntries {
+			break
+		}
+		lastFileName = browserData.Entries[len(browserData.Entries)-1].Name
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"folders": folders})
+}

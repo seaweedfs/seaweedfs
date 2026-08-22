@@ -84,3 +84,64 @@ const (
 	// Wildcard for all S3 actions
 	S3_ACTION_ALL = "s3:*"
 )
+
+// S3 Tables action strings for policy evaluation.
+// Source of truth for the operation names: the dispatch switch in
+// weed/s3api/s3tables/handler.go. Keep this list in sync with that switch
+// when operations are added, renamed, or removed.
+const (
+	// Table bucket operations
+	S3TABLES_ACTION_CREATE_TABLE_BUCKET = "s3tables:CreateTableBucket"
+	S3TABLES_ACTION_GET_TABLE_BUCKET    = "s3tables:GetTableBucket"
+	S3TABLES_ACTION_LIST_TABLE_BUCKETS  = "s3tables:ListTableBuckets"
+	S3TABLES_ACTION_DELETE_TABLE_BUCKET = "s3tables:DeleteTableBucket"
+
+	// Table bucket policy operations
+	S3TABLES_ACTION_PUT_TABLE_BUCKET_POLICY    = "s3tables:PutTableBucketPolicy"
+	S3TABLES_ACTION_GET_TABLE_BUCKET_POLICY    = "s3tables:GetTableBucketPolicy"
+	S3TABLES_ACTION_DELETE_TABLE_BUCKET_POLICY = "s3tables:DeleteTableBucketPolicy"
+
+	// Namespace operations
+	S3TABLES_ACTION_CREATE_NAMESPACE = "s3tables:CreateNamespace"
+	S3TABLES_ACTION_GET_NAMESPACE    = "s3tables:GetNamespace"
+	S3TABLES_ACTION_UPDATE_NAMESPACE = "s3tables:UpdateNamespace"
+	S3TABLES_ACTION_LIST_NAMESPACES  = "s3tables:ListNamespaces"
+	S3TABLES_ACTION_DELETE_NAMESPACE = "s3tables:DeleteNamespace"
+
+	// Table operations
+	S3TABLES_ACTION_CREATE_TABLE   = "s3tables:CreateTable"
+	S3TABLES_ACTION_REGISTER_TABLE = "s3tables:RegisterTable"
+	S3TABLES_ACTION_GET_TABLE      = "s3tables:GetTable"
+	S3TABLES_ACTION_LIST_TABLES    = "s3tables:ListTables"
+	S3TABLES_ACTION_UPDATE_TABLE   = "s3tables:UpdateTable"
+	S3TABLES_ACTION_DELETE_TABLE   = "s3tables:DeleteTable"
+	S3TABLES_ACTION_RENAME_TABLE   = "s3tables:RenameTable"
+
+	// View operations
+	S3TABLES_ACTION_CREATE_VIEW = "s3tables:CreateView"
+	S3TABLES_ACTION_GET_VIEW    = "s3tables:GetView"
+	S3TABLES_ACTION_LIST_VIEWS  = "s3tables:ListViews"
+	S3TABLES_ACTION_UPDATE_VIEW = "s3tables:UpdateView"
+	S3TABLES_ACTION_DELETE_VIEW = "s3tables:DeleteView"
+	S3TABLES_ACTION_RENAME_VIEW = "s3tables:RenameView"
+
+	// Table policy operations
+	S3TABLES_ACTION_PUT_TABLE_POLICY    = "s3tables:PutTablePolicy"
+	S3TABLES_ACTION_GET_TABLE_POLICY    = "s3tables:GetTablePolicy"
+	S3TABLES_ACTION_DELETE_TABLE_POLICY = "s3tables:DeleteTablePolicy"
+
+	// Maintenance configuration operations
+	S3TABLES_ACTION_PUT_TABLE_BUCKET_MAINTENANCE_CONFIGURATION = "s3tables:PutTableBucketMaintenanceConfiguration"
+	S3TABLES_ACTION_GET_TABLE_BUCKET_MAINTENANCE_CONFIGURATION = "s3tables:GetTableBucketMaintenanceConfiguration"
+	S3TABLES_ACTION_PUT_TABLE_MAINTENANCE_CONFIGURATION        = "s3tables:PutTableMaintenanceConfiguration"
+	S3TABLES_ACTION_GET_TABLE_MAINTENANCE_CONFIGURATION        = "s3tables:GetTableMaintenanceConfiguration"
+	S3TABLES_ACTION_GET_TABLE_MAINTENANCE_JOB_STATUS           = "s3tables:GetTableMaintenanceJobStatus"
+
+	// Tagging operations
+	S3TABLES_ACTION_TAG_RESOURCE           = "s3tables:TagResource"
+	S3TABLES_ACTION_LIST_TAGS_FOR_RESOURCE = "s3tables:ListTagsForResource"
+	S3TABLES_ACTION_UNTAG_RESOURCE         = "s3tables:UntagResource"
+
+	// Wildcard for all S3 Tables actions
+	S3TABLES_ACTION_ALL = "s3tables:*"
+)

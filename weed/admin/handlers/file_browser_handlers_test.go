@@ -1,7 +1,11 @@
 package handlers
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 )
 
 func TestValidateAndCleanFilePath_AllowsControlChars(t *testing.T) {
@@ -39,6 +43,22 @@ func TestValidateAndCleanFilePath_RejectsEmpty(t *testing.T) {
 	h := &FileBrowserHandlers{}
 	if _, err := h.validateAndCleanFilePath(""); err == nil {
 		t.Errorf("expected empty path rejection")
+	}
+}
+
+func TestListFolders_RejectsPathOutsideBuckets(t *testing.T) {
+	h := &FileBrowserHandlers{adminServer: &dash.AdminServer{}}
+
+	cases := []string{"/etc/seaweedfs", "/", "/notbuckets/foo", "/buckets-not-really/foo"}
+	for _, path := range cases {
+		req := httptest.NewRequest(http.MethodGet, "/api/files/list-folders?path="+path, nil)
+		w := httptest.NewRecorder()
+
+		h.ListFolders(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("path %q: expected 400, got %d (body: %s)", path, w.Code, w.Body.String())
+		}
 	}
 }
 
