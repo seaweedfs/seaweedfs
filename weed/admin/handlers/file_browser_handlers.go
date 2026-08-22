@@ -66,7 +66,7 @@ func (h *FileBrowserHandlers) ShowFileBrowser(w http.ResponseWriter, r *http.Req
 	}
 
 	// Get file browser data with cursor-based pagination
-	browserData, err := h.adminServer.GetFileBrowser(path, lastFileName, pageSize)
+	browserData, err := h.adminServer.GetFileBrowser(path, "", lastFileName, pageSize)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "Failed to get file browser data: "+err.Error())
 		return
@@ -785,11 +785,19 @@ func min(a, b int64) int64 {
 // unbounded, slow full-directory walk.
 const maxListFoldersEntries = 2000
 
+// maxListFoldersScanned caps how many entries ListFolders will page through
+// looking for those subfolders. The folder cap alone doesn't bound the work:
+// a bucket holding nothing but flat object keys has no subfolders to count,
+// so the walk runs to the end of the directory - a million keys is a million
+// entries read, 200 per round trip, behind a single keystroke.
+const maxListFoldersScanned = 10000
+
 // ListFolders returns, as JSON, the names of the subdirectories directly
 // under the given path. It exists to back progressive autocomplete (e.g. the
 // policy editor's Resource ARN field building up "bucket/folder/subfolder"
 // one path segment at a time) rather than to be a general directory listing
-// API, so it's restricted to paths under /buckets.
+// API, so it's restricted to paths under /buckets. The optional prefix is the
+// segment the caller is still typing, and narrows the listing to it.
 func (h *FileBrowserHandlers) ListFolders(w http.ResponseWriter, r *http.Request) {
 	dirPath := defaultQuery(r.URL.Query().Get("path"), "/buckets")
 	dirPath = util.CleanWindowsPath(dirPath)
@@ -799,14 +807,18 @@ func (h *FileBrowserHandlers) ListFolders(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	prefix := r.URL.Query().Get("prefix")
+
 	folders := []string{}
 	lastFileName := ""
+	scanned := 0
 	for {
-		browserData, err := h.adminServer.GetFileBrowser(dirPath, lastFileName, 200)
+		browserData, err := h.adminServer.GetFileBrowser(dirPath, prefix, lastFileName, 200)
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "Failed to list directory: "+err.Error())
 			return
 		}
+		scanned += len(browserData.Entries)
 		for _, entry := range browserData.Entries {
 			if entry.IsDirectory {
 				folders = append(folders, entry.Name)
@@ -815,7 +827,8 @@ func (h *FileBrowserHandlers) ListFolders(w http.ResponseWriter, r *http.Request
 				}
 			}
 		}
-		if len(browserData.Entries) == 0 || !browserData.HasNextPage || len(folders) >= maxListFoldersEntries {
+		if len(browserData.Entries) == 0 || !browserData.HasNextPage ||
+			len(folders) >= maxListFoldersEntries || scanned >= maxListFoldersScanned {
 			break
 		}
 		lastFileName = browserData.Entries[len(browserData.Entries)-1].Name

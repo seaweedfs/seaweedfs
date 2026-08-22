@@ -953,9 +953,14 @@ templ Policies(data dash.PoliciesData) {
         return policyBucketArnsPromise;
     }
 
-    function loadPolicyFolderNames(dirPath) {
-        if (!policyFolderListCache.has(dirPath)) {
-            policyFolderListCache.set(dirPath, fetch(basePath('/api/files/list-folders?path=' + encodeURIComponent(dirPath)))
+    function loadPolicyFolderNames(dirPath, prefix) {
+        // Send the segment still being typed as a prefix so the filer does the
+        // filtering: without it the server pages through every entry in the
+        // directory, which on a bucket of flat object keys is the whole bucket.
+        const key = dirPath + '\n' + prefix;
+        if (!policyFolderListCache.has(key)) {
+            policyFolderListCache.set(key, fetch(basePath('/api/files/list-folders?path=' + encodeURIComponent(dirPath) +
+                    '&prefix=' + encodeURIComponent(prefix)))
                 .then(function(r) {
                     if (!r.ok) throw new Error('list-folders request failed with status ' + r.status);
                     return r.json();
@@ -964,11 +969,11 @@ templ Policies(data dash.PoliciesData) {
                 .catch(function() {
                     // Don't let a transient failure permanently poison the
                     // cache for this directory; let the next call retry.
-                    policyFolderListCache.delete(dirPath);
+                    policyFolderListCache.delete(key);
                     return [];
                 }));
         }
-        return policyFolderListCache.get(dirPath);
+        return policyFolderListCache.get(key);
     }
 
     // Figures out what stage of the ARN the user is currently typing:
@@ -991,6 +996,9 @@ templ Policies(data dash.PoliciesData) {
         return {
             stage: 'folder',
             dirPath: '/buckets/' + bucket + suffix,
+            // The trailing, still-incomplete segment. The datalist narrows on
+            // it too, but sending it keeps the server's listing bounded.
+            prefix: segments[segments.length - 1],
             arnPrefix: POLICY_RESOURCE_ARN_PREFIX + bucket + suffix
         };
     }
@@ -1013,7 +1021,7 @@ templ Policies(data dash.PoliciesData) {
             return;
         }
 
-        loadPolicyFolderNames(state.dirPath).then(function(folders) {
+        loadPolicyFolderNames(state.dirPath, state.prefix).then(function(folders) {
             const options = [state.arnPrefix + '/*'];
             folders.forEach(function(name) {
                 options.push(state.arnPrefix + '/' + name);
