@@ -370,9 +370,9 @@ templ Policies(data dash.PoliciesData) {
     // Top-level keys the editor doesn't model (e.g. Id) are kept verbatim in
     // state.otherFields and merged back on serialization, so a round-trip
     // through the Editor tab doesn't rewrite text the user typed in the JSON
-    // tab. Note the admin API's PolicyDocument only carries Version and
-    // Statement, so such fields are still dropped once a policy is saved --
-    // this only keeps the two tabs faithful to each other in-session.
+    // tab. The admin API's PolicyDocument only carries Version and Statement,
+    // so such fields are still dropped by the server on save; see
+    // confirmPolicyFieldDiscard, which warns the user before that happens.
     function policyDocToEditorState(doc) {
         const state = { version: (doc && doc.Version) || '2012-10-17', statements: [], otherFields: {} };
         if (doc && typeof doc === 'object' && !Array.isArray(doc)) {
@@ -621,6 +621,19 @@ templ Policies(data dash.PoliciesData) {
         }
     }
 
+    // The admin API's policy document carries only Version and Statement, so
+    // any other top-level key (e.g. Id) is discarded server-side on save even
+    // though the editor round-trips it between tabs. Warn before that happens
+    // rather than letting the field vanish silently. Returns false if the
+    // user cancels.
+    function confirmPolicyFieldDiscard(which) {
+        const otherFields = Object.keys((policyEditors[which] || {}).otherFields || {});
+        if (otherFields.length === 0) return true;
+        return confirm(
+            'The following top-level field(s) are not supported and will be dropped when this policy is saved: ' +
+            otherFields.join(', ') + '.\n\nSave anyway?');
+    }
+
     function setupPolicyEditor(which) {
         document.getElementById(which + 'PolicyAddStatementBtn').addEventListener('click', function() {
             addPolicyStatement(which);
@@ -858,6 +871,7 @@ templ Policies(data dash.PoliciesData) {
 
     function createPolicy() {
         if (!commitPolicyActiveTab('create')) return;
+        if (!confirmPolicyFieldDiscard('create')) return;
 
         const policyName = document.getElementById('policyName').value;
         const policyDocumentText = document.getElementById('policyDocument').value;
@@ -1037,6 +1051,7 @@ templ Policies(data dash.PoliciesData) {
 
     function updatePolicy() {
         if (!commitPolicyActiveTab('edit')) return;
+        if (!confirmPolicyFieldDiscard('edit')) return;
 
         const policyName = document.getElementById('editPolicyName').value;
         const policyDocumentText = document.getElementById('editPolicyDocument').value;
