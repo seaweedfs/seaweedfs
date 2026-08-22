@@ -153,6 +153,16 @@ func (s *Store) CollectErasureCodingHeartbeat() *master_pb.Heartbeat {
 		stats.VolumeServerDiskSizeGauge.WithLabelValues(col, "ec").Set(float64(size))
 	}
 
+	for col := range s.reportedEcCollections {
+		if _, stillHere := collectionEcShardSize[col]; !stillHere {
+			stats.VolumeServerDiskSizeGauge.DeleteLabelValues(col, "ec")
+		}
+	}
+	s.reportedEcCollections = make(map[string]struct{}, len(collectionEcShardSize))
+	for col := range collectionEcShardSize {
+		s.reportedEcCollections[col] = struct{}{}
+	}
+
 	return &master_pb.Heartbeat{
 		EcShards:      ecShardMessages,
 		HasNoEcShards: len(ecShardMessages) == 0,

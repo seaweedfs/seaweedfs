@@ -86,6 +86,12 @@ type Store struct {
 	// runs, so two overlapping scans would each forget what the other marked
 	// and name every volume it holds as departed.
 	collectHeartbeatLock sync.Mutex
+	// Collections the last heartbeat set per-collection gauges for. Those gauges
+	// are only ever set for collections still held here, so one whose last
+	// volume leaves - moved away by volume.balance, say - would keep reporting
+	// the heartbeat that saw it. Written only from the heartbeat goroutine.
+	reportedCollections   map[string]struct{}
+	reportedEcCollections map[string]struct{}
 }
 
 func (s *Store) String() (str string) {
@@ -449,7 +455,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	var maxFileKey NeedleId
 	collectionVolumeSize := make(map[string]int64)
 	collectionVolumeDeletedBytes := make(map[string]int64)
-	collectionVolumeReadOnlyCount := make(map[string]map[string]uint8)
+	collectionVolumeReadOnlyCount := make(map[string]map[string]int)
 	// Filled once per volume and kept only by the heartbeat that carries it, so
 	// a server with nothing to say fills the same message all the way through.
 	scratchMessage := &master_pb.VolumeInformationMessage{}
@@ -531,38 +537,35 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 				}
 			}
 
-			if _, exist := collectionVolumeSize[v.Collection]; !exist {
-				collectionVolumeSize[v.Collection] = 0
-				collectionVolumeDeletedBytes[v.Collection] = 0
-			}
+			// The totals are rebuilt from scratch every heartbeat, so a volume
+			// on its way out is simply not added. Subtracting it took the
+			// surviving volumes' sizes down with it, and an entry here is also
+			// what says the collection is still on this server.
 			if !shouldDeleteVolume {
 				collectionVolumeSize[v.Collection] += int64(volumeMessage.Size)
 				collectionVolumeDeletedBytes[v.Collection] += int64(volumeMessage.DeletedByteCount)
-			} else {
-				collectionVolumeSize[v.Collection] -= int64(volumeMessage.Size)
-				if collectionVolumeSize[v.Collection] <= 0 {
-					delete(collectionVolumeSize, v.Collection)
-				}
-			}
 
-			if _, exist := collectionVolumeReadOnlyCount[v.Collection]; !exist {
-				collectionVolumeReadOnlyCount[v.Collection] = map[string]uint8{
-					stats.IsReadOnly:       0,
-					stats.NoWriteOrDelete:  0,
-					stats.NoWriteCanDelete: 0,
-					stats.IsDiskSpaceLow:   0,
+				counts, exist := collectionVolumeReadOnlyCount[v.Collection]
+				if !exist {
+					counts = map[string]int{
+						stats.IsReadOnly:       0,
+						stats.NoWriteOrDelete:  0,
+						stats.NoWriteCanDelete: 0,
+						stats.IsDiskSpaceLow:   0,
+					}
+					collectionVolumeReadOnlyCount[v.Collection] = counts
 				}
-			}
-			if !shouldDeleteVolume && v.IsReadOnly() {
-				collectionVolumeReadOnlyCount[v.Collection][stats.IsReadOnly] += 1
-				if v.noWriteOrDelete {
-					collectionVolumeReadOnlyCount[v.Collection][stats.NoWriteOrDelete] += 1
-				}
-				if v.noWriteCanDelete {
-					collectionVolumeReadOnlyCount[v.Collection][stats.NoWriteCanDelete] += 1
-				}
-				if v.location.isDiskSpaceLow.Load() {
-					collectionVolumeReadOnlyCount[v.Collection][stats.IsDiskSpaceLow] += 1
+				if readOnly, noWriteOrDelete, noWriteCanDelete, diskSpaceLow := v.ReadOnlyReasons(); readOnly {
+					counts[stats.IsReadOnly] += 1
+					if noWriteOrDelete {
+						counts[stats.NoWriteOrDelete] += 1
+					}
+					if noWriteCanDelete {
+						counts[stats.NoWriteCanDelete] += 1
+					}
+					if diskSpaceLow {
+						counts[stats.IsDiskSpaceLow] += 1
+					}
 				}
 			}
 		}
@@ -614,6 +617,19 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		for t, count := range types {
 			stats.VolumeServerReadOnlyVolumeGauge.WithLabelValues(col, t).Set(float64(count))
 		}
+	}
+
+	// collectionVolumeReadOnlyCount has an entry for every collection that kept
+	// a volume through this pass, including the ones counting zero read-only
+	// volumes.
+	for col := range s.reportedCollections {
+		if _, stillHere := collectionVolumeReadOnlyCount[col]; !stillHere {
+			stats.DeleteVolumeServerCollectionMetrics(col)
+		}
+	}
+	s.reportedCollections = make(map[string]struct{}, len(collectionVolumeReadOnlyCount))
+	for col := range collectionVolumeReadOnlyCount {
+		s.reportedCollections[col] = struct{}{}
 	}
 
 	departedVolumes := s.volumeReport.commit(reportPass, reportGeneration, sendFullList)

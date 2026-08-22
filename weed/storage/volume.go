@@ -540,9 +540,20 @@ func (v *Volume) RemoteStorageNameKey() (storageName, storageKey string) {
 }
 
 func (v *Volume) IsReadOnly() bool {
+	readOnly, _, _, _ := v.ReadOnlyReasons()
+	return readOnly
+}
+
+// ReadOnlyReasons reports whether the volume refuses writes and why, reading the
+// flags once so the reasons cannot disagree with the verdict.
+func (v *Volume) ReadOnlyReasons() (readOnly, noWriteOrDelete, noWriteCanDelete, diskSpaceLow bool) {
 	v.noWriteLock.RLock()
-	defer v.noWriteLock.RUnlock()
-	return v.noWriteOrDelete || v.noWriteCanDelete || v.location.isDiskSpaceLow.Load()
+	noWriteOrDelete, noWriteCanDelete = v.noWriteOrDelete, v.noWriteCanDelete
+	v.noWriteLock.RUnlock()
+	// The location is attached when the volume joins a disk location, which is
+	// after NewVolume hands it back.
+	diskSpaceLow = v.location != nil && v.location.isDiskSpaceLow.Load()
+	return noWriteOrDelete || noWriteCanDelete || diskSpaceLow, noWriteOrDelete, noWriteCanDelete, diskSpaceLow
 }
 
 func (v *Volume) PersistReadOnly(readOnly bool, canDelete bool) {

@@ -1101,6 +1101,16 @@ func DeleteCollectionMetrics(collection string) {
 	glog.V(0).Infof("delete collection metrics, %s: %d", collection, c)
 }
 
+// DeleteVolumeServerCollectionMetrics drops a collection's volume server series
+// once its last volume leaves this server. These gauges are only ever set for
+// collections still present, so the values from the heartbeat that saw the last
+// volume would otherwise stand until the process restarts.
+func DeleteVolumeServerCollectionMetrics(collection string) {
+	VolumeServerDiskSizeGauge.DeleteLabelValues(collection, "normal")
+	VolumeServerDiskSizeGauge.DeleteLabelValues(collection, "deleted_bytes")
+	VolumeServerReadOnlyVolumeGauge.DeletePartialMatch(prometheus.Labels{"collection": collection})
+}
+
 func bucketMetricTTLControl() {
 	ttlNs := bucketAtiveTTL.Nanoseconds()
 	for {

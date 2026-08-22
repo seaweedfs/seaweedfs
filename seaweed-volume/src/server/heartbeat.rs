@@ -956,24 +956,30 @@ fn build_heartbeat_with_ec_status(
                 should_delete_volume = true;
             }
 
-            // Track disk size by collection
-            let entry = disk_sizes.entry(vol.collection.clone()).or_insert((0, 0));
+            // Track disk size by collection. A volume on its way out is left
+            // out: an entry here is also what says the collection is still on
+            // this server.
             if !should_delete_volume {
+                let entry = disk_sizes.entry(vol.collection.clone()).or_insert((0, 0));
                 entry.0 += volume_size;
                 entry.1 += vol.deleted_size();
             }
 
-            let read_only = ro_counts.entry(vol.collection.clone()).or_default();
-            if !should_delete_volume && vol.is_read_only() {
-                read_only.is_read_only += 1;
-                if vol.is_no_write_or_delete() {
-                    read_only.no_write_or_delete += 1;
-                }
-                if vol.is_no_write_can_delete() {
-                    read_only.no_write_can_delete += 1;
-                }
-                if loc.is_disk_space_low.load(Ordering::Relaxed) {
-                    read_only.is_disk_space_low += 1;
+            // An entry here is what says the collection is still on this
+            // server, so a volume on its way out must not make one.
+            if !should_delete_volume {
+                let read_only = ro_counts.entry(vol.collection.clone()).or_default();
+                if vol.is_read_only() {
+                    read_only.is_read_only += 1;
+                    if vol.is_no_write_or_delete() {
+                        read_only.no_write_or_delete += 1;
+                    }
+                    if vol.is_no_write_can_delete() {
+                        read_only.no_write_can_delete += 1;
+                    }
+                    if loc.is_disk_space_low.load(Ordering::Relaxed) {
+                        read_only.is_disk_space_low += 1;
+                    }
                 }
             }
 
@@ -1006,6 +1012,17 @@ fn build_heartbeat_with_ec_status(
         crate::metrics::READ_ONLY_VOLUME_GAUGE
             .with_label_values(&[col, crate::metrics::READ_ONLY_LABEL_IS_DISK_SPACE_LOW])
             .set(counts.is_disk_space_low as f64);
+    }
+    // ro_counts has an entry for every collection that kept a volume through
+    // this pass, including the ones counting zero read-only volumes.
+    {
+        let mut reported = store.reported_collections.lock().unwrap();
+        for col in reported.iter() {
+            if !ro_counts.contains_key(col) {
+                crate::metrics::delete_volume_server_collection_metrics(col);
+            }
+        }
+        *reported = ro_counts.keys().cloned().collect();
     }
     // Update max volumes gauge
     let total_max: i64 = max_volume_counts.values().map(|v| *v as i64).sum();
@@ -1082,6 +1099,14 @@ fn collect_live_ec_shards(
                 .with_label_values(&[col, crate::metrics::DISK_SIZE_LABEL_EC])
                 .set(*size as f64);
         }
+        let mut reported = store.reported_ec_collections.lock().unwrap();
+        for col in reported.iter() {
+            if !ec_sizes.contains_key(col) {
+                let _ = crate::metrics::DISK_SIZE_GAUGE
+                    .remove_label_values(&[col, crate::metrics::DISK_SIZE_LABEL_EC]);
+            }
+        }
+        *reported = ec_sizes.keys().cloned().collect();
     }
 
     ec_shards
@@ -1598,6 +1623,82 @@ mod tests {
                 .with_label_values(&[collection, DISK_SIZE_LABEL_DELETED_BYTES])
                 .get(),
             0.0
+        );
+    }
+
+    fn collection_series(gauge: &prometheus::GaugeVec, collection: &str) -> usize {
+        use prometheus::core::Collector;
+        gauge
+            .collect()
+            .iter()
+            .flat_map(|family| family.get_metric().to_vec())
+            .filter(|metric| {
+                metric
+                    .get_label()
+                    .iter()
+                    .any(|label| label.get_name() == "collection" && label.get_value() == collection)
+            })
+            .count()
+    }
+
+    // The per-collection gauges are only ever set for collections the heartbeat
+    // still finds on this server. A volume.balance that moves a collection's
+    // last volume off a server used to leave its read-only count - marked
+    // read-only for the move, moments before it went - standing on that server
+    // until a restart, with nothing in volume.list to match it.
+    #[test]
+    fn test_build_heartbeat_clears_metrics_of_departed_collection() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+        let collection = "heartbeat_departed_case";
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                8,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+        store
+            .add_volume(
+                VolumeId(21),
+                collection,
+                None,
+                None,
+                0,
+                DiskType::HardDrive,
+                Version::current(),
+            )
+            .unwrap();
+        {
+            let (_, volume) = store.find_volume_mut(VolumeId(21)).unwrap();
+            volume.set_read_only().unwrap();
+        }
+
+        build_heartbeat(&test_config(), &mut store);
+        assert_eq!(
+            READ_ONLY_VOLUME_GAUGE
+                .with_label_values(&[collection, READ_ONLY_LABEL_IS_READ_ONLY])
+                .get(),
+            1.0
+        );
+
+        assert!(store.unmount_volume(VolumeId(21)));
+        build_heartbeat(&test_config(), &mut store);
+
+        assert_eq!(
+            collection_series(&READ_ONLY_VOLUME_GAUGE, collection),
+            0,
+            "read-only series left after the collection left the server"
+        );
+        assert_eq!(
+            collection_series(&DISK_SIZE_GAUGE, collection),
+            0,
+            "disk size series left after the collection left the server"
         );
     }
 

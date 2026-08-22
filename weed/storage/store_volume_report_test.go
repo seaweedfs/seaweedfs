@@ -12,7 +12,7 @@ func reportingStore(t *testing.T, vids ...needle.VolumeId) *Store {
 	t.Helper()
 	store := newTestStore(t, 1)
 	for _, vid := range vids {
-		mountTestVolume(t, store.Locations[0], vid)
+		mountTestVolume(t, store.Locations[0], vid, "")
 	}
 	return store
 }
@@ -73,7 +73,7 @@ func TestHeartbeatReportsOnlyWhatChanged(t *testing.T) {
 	store.AcceptVolumeChanges()
 	store.CollectHeartbeat()
 
-	mountTestVolume(t, store.Locations[0], 3)
+	mountTestVolume(t, store.Locations[0], 3, "")
 	heartbeat := store.CollectHeartbeat()
 
 	if len(heartbeat.Volumes) != 0 {
@@ -129,7 +129,7 @@ func TestRemountedVolumeIsReportedAgain(t *testing.T) {
 	store.Locations[0].UnloadVolume(needle.VolumeId(1))
 	store.CollectHeartbeat()
 
-	mountTestVolume(t, store.Locations[0], 1)
+	mountTestVolume(t, store.Locations[0], 1, "")
 	heartbeat := store.CollectHeartbeat()
 	if len(heartbeat.ChangedVolumes) != 1 {
 		t.Errorf("a remounted volume was not reported: %v", heartbeat.ChangedVolumes)
@@ -201,7 +201,7 @@ func TestFullListCarriesNoDepartures(t *testing.T) {
 // the master unregister a volume the same heartbeat re-adds.
 func TestMovedVolumeIsNotADeparture(t *testing.T) {
 	store := newTestStore(t, 2)
-	mountTestVolume(t, store.Locations[0], 1)
+	mountTestVolume(t, store.Locations[0], 1, "")
 	store.ResetVolumeReporting()
 	store.AcceptVolumeChanges()
 	store.CollectHeartbeat()
