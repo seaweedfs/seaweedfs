@@ -3,10 +3,10 @@ name: "helm: lint and test charts"
 on:
   push:
     branches: [ master ]
-    paths: ['k8s/**']
+    paths: ['k8s/**', '.github/workflows/helm_ci.yml']
   pull_request:
     branches: [ master ]
-    paths: ['k8s/**']
+    paths: ['k8s/**', '.github/workflows/helm_ci.yml']
 
 permissions:
   contents: read
@@ -1549,11 +1549,37 @@ jobs:
 
           echo "All template rendering tests passed!"
 
+      - name: Resolve an image tag that is published
+        run: |
+          set -e
+          # A release bumps appVersion on master ~40 minutes before the container
+          # build publishes that tag, and this workflow runs on the bump commit.
+          # Install the last released image for the length of that window instead
+          # of failing on ImagePullBackOff.
+          IMAGE=$(helm template test k8s/charts/seaweedfs \
+            -s templates/master/master-statefulset.yaml | awk '$1 == "image:" {print $2; exit}')
+          REPO=${IMAGE%:*}
+          TAG=${IMAGE##*:}
+          # Anything but a published tag installs latest, which between releases
+          # is the same digest as the chart's own appVersion, so a registry blip
+          # costs nothing while failing the job on one would cost a red build.
+          STATUS=$(curl -sSL --connect-timeout 5 --max-time 15 -o /dev/null \
+            -w '%{http_code}' "https://hub.docker.com/v2/repositories/$REPO/tags/$TAG" || true)
+          if [ "$STATUS" = 200 ]; then
+            echo "installing $IMAGE"
+          else
+            echo "$IMAGE is unavailable (HTTP ${STATUS:-none}), installing $REPO:latest"
+            TAG=latest
+          fi
+          echo "IMAGE_TAG=$TAG" >> $GITHUB_ENV
+
       - name: Create kind cluster
         uses: helm/kind-action@v1.14.0
 
       - name: Run chart-testing (install)
-        run: ct install --target-branch ${{ github.event.repository.default_branch }} --all --chart-dirs k8s/charts
+        run: |
+          ct install --target-branch ${{ github.event.repository.default_branch }} --all --chart-dirs k8s/charts \
+            --helm-extra-set-args "--set=image.tag=$IMAGE_TAG"
 
       - name: Verify SFTP host key secret lifecycle
         run: |
@@ -1561,7 +1587,7 @@ jobs:
           CHART_DIR="k8s/charts/seaweedfs"
           NS="sftp-hostkey"
           SECRET="hk-seaweedfs-sftp-ssh-secret"
-          SFTP_ARGS="--set sftp.enabled=true --set master.enabled=false --set volume.enabled=false --set filer.enabled=false"
+          SFTP_ARGS="--set image.tag=$IMAGE_TAG --set sftp.enabled=true --set master.enabled=false --set volume.enabled=false --set filer.enabled=false"
           kubectl create namespace "$NS"
 
           echo "=== install generates a host key, upgrade keeps it ==="
@@ -1638,6 +1664,7 @@ jobs:
           # release if the hook Job does not finish, so a clean install is the
           # assertion.
           helm install np $CHART_DIR -n "$NS" --wait --timeout 8m \
+            --set image.tag=$IMAGE_TAG \
             --set s3.enabled=true \
             --set s3.createBuckets[0].name=testbucket \
             --set networkPolicy.enabled=true \
