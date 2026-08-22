@@ -2,6 +2,7 @@ package dash
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -135,7 +136,7 @@ func (s *AdminServer) UpdateBucketLifecycle(w http.ResponseWriter, r *http.Reque
 	}
 
 	if err := s.SetBucketLifecycle(bucketName, req.Rules); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "Failed to update bucket lifecycle: "+err.Error())
+		writeJSONError(w, bucketLifecycleErrorStatus(err), "Failed to update bucket lifecycle: "+err.Error())
 		return
 	}
 
@@ -158,7 +159,7 @@ func (s *AdminServer) DeleteBucketLifecycle(w http.ResponseWriter, r *http.Reque
 	}
 
 	if err := s.SetBucketLifecycle(bucketName, nil); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "Failed to delete bucket lifecycle: "+err.Error())
+		writeJSONError(w, bucketLifecycleErrorStatus(err), "Failed to delete bucket lifecycle: "+err.Error())
 		return
 	}
 
@@ -166,6 +167,15 @@ func (s *AdminServer) DeleteBucketLifecycle(w http.ResponseWriter, r *http.Reque
 		"message": "Bucket lifecycle deleted successfully",
 		"bucket":  bucketName,
 	})
+}
+
+// bucketLifecycleErrorStatus keeps a request for a bucket that does not exist
+// out of the 5xx bucket, where a client would retry it.
+func bucketLifecycleErrorStatus(err error) int {
+	if errors.Is(err, ErrBucketNotFound) {
+		return http.StatusNotFound
+	}
+	return http.StatusInternalServerError
 }
 
 // validateBucketLifecycleRules rejects a rule set before any write is

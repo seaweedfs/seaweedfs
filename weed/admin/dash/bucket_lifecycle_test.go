@@ -1,6 +1,9 @@
 package dash
 
 import (
+	"errors"
+	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -334,5 +337,14 @@ func TestSetBucketLifecycle_RejectsOversizedConfiguration(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("expected a size-limit error, got: %v", err)
+	}
+}
+
+func TestBucketLifecycleErrorStatus(t *testing.T) {
+	if got := bucketLifecycleErrorStatus(fmt.Errorf("%w: mybucket", ErrBucketNotFound)); got != http.StatusNotFound {
+		t.Fatalf("expected a missing bucket to map to 404, got %d", got)
+	}
+	if got := bucketLifecycleErrorStatus(errors.New("filer unreachable")); got != http.StatusInternalServerError {
+		t.Fatalf("expected an unrelated failure to stay 500, got %d", got)
 	}
 }
