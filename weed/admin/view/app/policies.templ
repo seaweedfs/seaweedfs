@@ -660,7 +660,7 @@ templ Policies(data dash.PoliciesData) {
                 '<option value="NotResource"' + (stmt.resourceMode === 'NotResource' ? ' selected' : '') + '>NotResource</option>' +
                 '</select>' +
                 '</legend>' +
-                '<div class="form-text mt-0 mb-1">NotResource: the statement applies to every resource except the ones listed.</div>' +
+                (stmt.resourceMode === 'NotResource' ? '<div class="form-text mt-0 mb-1">The statement applies to every resource except the ones listed.</div>' : '') +
                 '<div class="policy-resource-rows" data-which="' + which + '" data-index="' + idx + '">' + resourceRows + '</div>' +
                 '<button type="button" class="btn btn-sm btn-outline-secondary policy-add-list-item-btn" data-which="' + which + '" data-index="' + idx + '" data-field="resource"><i class="fas fa-plus me-1"></i>Add resource</button>' +
                 '</fieldset>' +
@@ -863,6 +863,13 @@ templ Policies(data dash.PoliciesData) {
         });
 
         const body = document.getElementById(policyEditorBodyId(which));
+        body.addEventListener('change', function(event) {
+            if (event.target.classList.contains('policy-stmt-resource-mode')) {
+                // Redraw so the NotResource hint follows the selected mode.
+                commitPolicyEditorForm(which);
+                renderPolicyEditor(which);
+            }
+        });
         body.addEventListener('click', function(event) {
             const removeStmtBtn = event.target.closest('.policy-remove-statement-btn');
             if (removeStmtBtn) {
