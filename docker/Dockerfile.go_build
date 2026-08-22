@@ -29,6 +29,7 @@ FROM alpine:3.23 as rust_builder
 ARG TARGETARCH
 ARG TAGS
 COPY weed-volume-prebuilt/ /prebuilt/
+COPY weed-worker-prebuilt/ /prebuilt-worker/
 COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/seaweed-volume /build/seaweed-volume
 COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/weed /build/weed
 WORKDIR /build/seaweed-volume
@@ -47,16 +48,30 @@ RUN if [ -f "/prebuilt/weed-volume-${TARGETARCH}" ]; then \
       echo "Skipping Rust build for $TARGETARCH (unsupported)" && \
       touch /weed-volume; \
     fi
+# The Rust maintenance worker is taken pre-built or not at all: the lance jobs
+# it carries pull in arrow and datafusion, a far larger dependency tree than
+# the image build can carry, so an architecture CI did not build for gets the
+# same empty placeholder the entrypoint refuses to exec.
+RUN if [ -f "/prebuilt-worker/weed-worker-${TARGETARCH}" ]; then \
+      echo "Using pre-built Rust worker for ${TARGETARCH}" && \
+      cp "/prebuilt-worker/weed-worker-${TARGETARCH}" /weed-worker; \
+    else \
+      echo "No pre-built Rust worker for ${TARGETARCH}" && \
+      touch /weed-worker; \
+    fi
+
 # Pre-built binaries arrive via GitHub Actions artifacts, which drop the
 # executable bit, so the copied file is 0644 and exec fails with "Permission
-# denied". Restore it (no-op for the empty placeholder, which stays size 0).
-RUN chmod 0755 /weed-volume
+# denied". Restore it (no-op for the empty placeholders, which stay size 0).
+RUN chmod 0755 /weed-volume /weed-worker
 
 FROM alpine AS final
 LABEL author="Chris Lu"
 COPY --from=builder /go/bin/weed /usr/bin/
 # Copy Rust volume server binary (real binary on amd64/arm64, empty placeholder on other platforms)
 COPY --from=rust_builder /weed-volume /usr/bin/weed-volume
+# Same for the Rust maintenance worker, which serves Lance table buckets
+COPY --from=rust_builder /weed-worker /usr/bin/weed-worker
 RUN mkdir -p /etc/seaweedfs
 COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/docker/filer.toml /etc/seaweedfs/filer.toml
 COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/docker/entrypoint.sh /entrypoint.sh
