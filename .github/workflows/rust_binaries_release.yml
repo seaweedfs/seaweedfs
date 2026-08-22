@@ -1,4 +1,4 @@
-name: "rust: build versioned volume server binaries"
+name: "rust: build versioned binaries"
 
 on:
   push:
@@ -112,6 +112,92 @@ jobs:
             weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz.md5
             weed-volume_${{ matrix.asset_suffix }}.tar.gz
             weed-volume_${{ matrix.asset_suffix }}.tar.gz.md5
+
+  # The Rust maintenance worker: Linux only, because it runs beside the cluster
+  # it maintains rather than on a laptop, and its dependency tree (lance, arrow,
+  # datafusion) makes every extra target an expensive build.
+  build-rust-worker-linux:
+    permissions:
+      contents: write
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            asset_suffix: linux_amd64
+          - target: aarch64-unknown-linux-gnu
+            asset_suffix: linux_arm64
+            cross: true
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The upload step is handed a token explicitly; a cargo build script
+          # should not find another one sitting in the checkout's git config.
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools
+        if: matrix.cross
+        run: |
+          sudo dpkg --add-architecture arm64
+          sudo sed -i 's/^deb /deb [arch=amd64] /' /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ jammy main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/arm64.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ jammy-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64.list
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+
+      # lance's build scripts compile their own protos, and unlike seaweed-volume
+      # they do not vendor a protoc to do it with.
+      - name: Install protoc
+        run: sudo apt-get install -y protobuf-compiler
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            seaweed-worker/target/${{ matrix.target }}/release
+          key: rust-worker-release-${{ matrix.target }}-${{ hashFiles('seaweed-worker/Cargo.lock') }}
+          restore-keys: |
+            rust-worker-release-${{ matrix.target }}-
+
+      - name: Build the Rust maintenance worker
+        run: |
+          cd seaweed-worker
+          cargo build --release -p weed-lance-worker --target ${{ matrix.target }}
+
+      - name: Package binary
+        run: |
+          cp seaweed-worker/target/${{ matrix.target }}/release/weed-worker weed-worker
+          tar czf weed-worker_${{ matrix.asset_suffix }}.tar.gz weed-worker
+          rm weed-worker
+          md5sum weed-worker_${{ matrix.asset_suffix }}.tar.gz > weed-worker_${{ matrix.asset_suffix }}.tar.gz.md5
+
+      - name: Upload release assets
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            weed-worker_${{ matrix.asset_suffix }}.tar.gz
+            weed-worker_${{ matrix.asset_suffix }}.tar.gz.md5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: rust-worker-${{ matrix.asset_suffix }}
+          path: |
+            weed-worker_${{ matrix.asset_suffix }}.tar.gz
+            weed-worker_${{ matrix.asset_suffix }}.tar.gz.md5
 
   build-rust-volume-darwin:
     permissions:

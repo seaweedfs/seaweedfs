@@ -90,6 +90,16 @@ case "$1" in
   	exec /usr/bin/weed-volume $ARGS $@
 	;;
 
+  'worker-rust')
+  	shift
+  	if [ ! -s /usr/bin/weed-worker ]; then
+  	  echo "Error: Rust maintenance worker is not available on this platform ($(uname -m))." >&2
+  	  echo "Use 'worker' for the Go maintenance worker instead." >&2
+  	  exit 1
+  	fi
+  	exec /usr/bin/weed-worker "$@"
+	;;
+
   'server')
   	ARGS="-dir=/data -volume.max=0 -master.volumeSizeLimitMB=1024"
   	if isArgPassed "-volume.max" "$@"; then

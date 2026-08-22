@@ -13,8 +13,8 @@ use weed_lance_worker::metrics::LanceMetrics;
 /// language and an operator should not have to learn a second set of names.
 #[derive(Parser, Debug)]
 #[command(
-    name = "weed-lance-worker",
-    about = "SeaweedFS maintenance worker for Lance tables"
+    name = "weed-worker",
+    about = "SeaweedFS maintenance worker"
 )]
 struct Args {
     /// Admin server gRPC address.

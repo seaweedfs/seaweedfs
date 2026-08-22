@@ -1,0 +1,72 @@
+name: "Rust Plugin Worker Tests"
+
+on:
+  pull_request:
+    branches: [ master ]
+    paths:
+      - 'seaweed-worker/**'
+      - 'weed/pb/plugin.proto'
+      - '.github/workflows/rust-worker-tests.yml'
+  push:
+    branches: [ master, main ]
+    paths:
+      - 'seaweed-worker/**'
+      - 'weed/pb/plugin.proto'
+      - '.github/workflows/rust-worker-tests.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  rust-worker-build:
+    name: Rust Plugin Worker Build and Unit Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # lance's build scripts compile their own protos, and unlike seaweed-volume
+      # they do not vendor a protoc to do it with.
+      - name: Install protoc
+        run: sudo apt-get install -y protobuf-compiler
+
+      # cargo tracks its own inputs but not the runner's C toolchain, so a cached
+      # target/ can carry C objects built against a different glibc than we link against.
+      - name: Fingerprint build toolchain
+        id: toolchain
+        run: echo "fingerprint=$(getconf GNU_LIBC_VERSION | tr ' ' '-')-rustc-$(rustc -V | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            seaweed-worker/target/release
+          key: rust-worker-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('seaweed-worker/Cargo.lock') }}
+          restore-keys: |
+            rust-worker-${{ steps.toolchain.outputs.fingerprint }}-
+
+      # The release profile is what ships, and it is where the release and the
+      # container builds would otherwise discover a break for the first time.
+      - name: Build the plugin workers
+        run: cd seaweed-worker && cargo build --release
+
+      # The tests that need a live gateway skip themselves without one, the way
+      # the Go integration tests skip without Docker; the lifecycle suite in
+      # test/s3tables/lifecycle is what runs them against a real cluster.
+      # Release, so this reuses the build above rather than compiling lance,
+      # arrow and datafusion a second time in another profile.
+      - name: Run unit tests
+        run: cd seaweed-worker && cargo test --release --workspace

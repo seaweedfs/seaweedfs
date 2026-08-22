@@ -7,8 +7,11 @@ description = "SeaweedFS maintenance worker for Lance tables"
 [lib]
 name = "weed_lance_worker"
 
+# The binary is not named for lance: it is the Rust side of `weed worker`, and
+# the job families it registers will outgrow this crate. When a second one
+# arrives the bin target moves to a crate of its own under the same name.
 [[bin]]
-name = "weed-lance-worker"
+name = "weed-worker"
 path = "src/main.rs"
 
 [dependencies]
