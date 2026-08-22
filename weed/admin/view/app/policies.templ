@@ -391,21 +391,27 @@ templ Policies(data dash.PoliciesData) {
     // Converts editor state back into a policy document. Structured fields
     // (Sid/Effect/Action/Resource) always take precedence over whatever is in
     // "extras" in case of a conflicting key.
+    //
+    // Throws if a statement's "advanced fields" box holds malformed or
+    // non-object JSON, instead of silently dropping it: those fields can
+    // carry Principal/NotResource/Condition, so silently continuing with an
+    // empty object would change the policy's authorization behavior without
+    // the user noticing.
     function policyEditorStateToDoc(state) {
         const doc = { Version: state.version || '2012-10-17', Statement: [] };
-        (state.statements || []).forEach(function(s) {
+        (state.statements || []).forEach(function(s, idx) {
             let stmt = {};
             if (s.extras && s.extras.trim()) {
+                let parsed;
                 try {
-                    const parsed = JSON.parse(s.extras);
-                    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-                        stmt = parsed;
-                    }
+                    parsed = JSON.parse(s.extras);
                 } catch (e) {
-                    // Invalid JSON in the advanced-fields box; drop it rather
-                    // than let it corrupt the statement. The user still sees
-                    // their raw text in the editor, so nothing is silently lost.
+                    throw new Error('Statement ' + (idx + 1) + ': advanced fields contain invalid JSON (' + e.message + ')');
                 }
+                if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                    throw new Error('Statement ' + (idx + 1) + ': advanced fields must be a JSON object');
+                }
+                stmt = parsed;
             }
             if (s.sid) {
                 stmt.Sid = s.sid;
@@ -568,6 +574,34 @@ templ Policies(data dash.PoliciesData) {
         renderPolicyEditor(which);
     }
 
+    // True while the JSON tab (rather than the Editor tab) is the one
+    // currently shown for `which`.
+    function isPolicyJsonTabActive(which) {
+        const jsonTabBtn = document.getElementById(which + 'PolicyJsonTabBtn');
+        return !!(jsonTabBtn && jsonTabBtn.classList.contains('active'));
+    }
+
+    // Commits whichever tab is currently visible into the other side, so a
+    // save/validate action always uses what the user is actually looking at
+    // instead of silently overwriting it with stale state from the tab
+    // they're not on. Returns false (after alerting the user) if that isn't
+    // possible - e.g. invalid JSON on either side - so the caller can abort.
+    function commitPolicyActiveTab(which) {
+        if (isPolicyJsonTabActive(which)) {
+            // The JSON tab is the source of truth right now; parse it back
+            // into the structured editor to keep both in sync, but leave the
+            // textarea's own text untouched.
+            return commitPolicyTextareaToEditor(which);
+        }
+        try {
+            commitPolicyEditorToTextarea(which);
+            return true;
+        } catch (e) {
+            showAlert(e.message, 'error');
+            return false;
+        }
+    }
+
     function setupPolicyEditor(which) {
         document.getElementById(which + 'PolicyAddStatementBtn').addEventListener('click', function() {
             addPolicyStatement(which);
@@ -576,8 +610,13 @@ templ Policies(data dash.PoliciesData) {
         const editorTabBtn = document.getElementById(which + 'PolicyEditorTabBtn');
         const jsonTabBtn = document.getElementById(which + 'PolicyJsonTabBtn');
 
-        jsonTabBtn.addEventListener('show.bs.tab', function() {
-            commitPolicyEditorToTextarea(which);
+        jsonTabBtn.addEventListener('show.bs.tab', function(event) {
+            try {
+                commitPolicyEditorToTextarea(which);
+            } catch (e) {
+                showAlert(e.message, 'error');
+                event.preventDefault();
+            }
         });
         editorTabBtn.addEventListener('show.bs.tab', function(event) {
             if (!commitPolicyTextareaToEditor(which)) {
@@ -799,7 +838,7 @@ templ Policies(data dash.PoliciesData) {
     });
 
     function createPolicy() {
-        commitPolicyEditorToTextarea('create');
+        if (!commitPolicyActiveTab('create')) return;
 
         const policyName = document.getElementById('policyName').value;
         const policyDocumentText = document.getElementById('policyDocument').value;
@@ -978,7 +1017,7 @@ templ Policies(data dash.PoliciesData) {
     }
 
     function updatePolicy() {
-        commitPolicyEditorToTextarea('edit');
+        if (!commitPolicyActiveTab('edit')) return;
 
         const policyName = document.getElementById('editPolicyName').value;
         const policyDocumentText = document.getElementById('editPolicyDocument').value;
@@ -1025,7 +1064,7 @@ templ Policies(data dash.PoliciesData) {
     }
 
     function validatePolicyDocument(which) {
-        commitPolicyEditorToTextarea(which);
+        if (!commitPolicyActiveTab(which)) return;
         const policyText = document.getElementById(policyTextareaId(which)).value;
         validatePolicyJSON(policyText);
     }
