@@ -59,16 +59,36 @@ jobs:
           echo "S3 deployment renders correctly"
           
           echo "=== Testing S3 credentials from an existing secret ==="
-          helm template test $CHART_DIR \
-            --set s3.enabled=true --set s3.enableAuth=true \
-            --set s3.credentials.admin.existingSecret=minio-root \
-            --set s3.credentials.admin.accessKeyKey=root-user \
-            --set s3.credentials.admin.secretKeyKey=root-password \
-            > /tmp/s3-existing-credentials.yaml
-          grep -q 'accessKey":"${SEAWEEDFS_S3_ADMIN_ACCESS_KEY_ID}' /tmp/s3-existing-credentials.yaml
-          grep -q 'key: "root-password"' /tmp/s3-existing-credentials.yaml
-          ! grep -q "admin_access_key_id:" /tmp/s3-existing-credentials.yaml
-          echo "S3 credentials reference the existing secret"
+          credential_args=(
+            --set s3.credentials.admin.existingSecret=minio-root
+            --set s3.credentials.admin.accessKeyKey=root-user
+            --set s3.credentials.admin.secretKeyKey=root-password
+            --set s3.credentials.read.existingSecret=minio-root
+          )
+          for workload in \
+            "s3.enabled=true,s3.enableAuth=true" \
+            "filer.s3.enabled=true,filer.s3.enableAuth=true" \
+            "allInOne.enabled=true,allInOne.s3.enabled=true,allInOne.s3.enableAuth=true"
+          do
+            helm template test $CHART_DIR --set "$workload" "${credential_args[@]}" > /tmp/s3-existing-credentials.yaml
+            # The identities file names the variables, and each is bound to the key it was pointed at.
+            grep -q 'accessKey":"${SEAWEEDFS_S3_ADMIN_ACCESS_KEY_ID}' /tmp/s3-existing-credentials.yaml
+            grep -q 'secretKey":"${SEAWEEDFS_S3_ADMIN_SECRET_ACCESS_KEY}' /tmp/s3-existing-credentials.yaml
+            grep -q 'accessKey":"${SEAWEEDFS_S3_READ_ACCESS_KEY_ID}' /tmp/s3-existing-credentials.yaml
+            for pair in \
+              "SEAWEEDFS_S3_ADMIN_ACCESS_KEY_ID root-user" \
+              "SEAWEEDFS_S3_ADMIN_SECRET_ACCESS_KEY root-password" \
+              "SEAWEEDFS_S3_READ_ACCESS_KEY_ID read_access_key_id" \
+              "SEAWEEDFS_S3_READ_SECRET_ACCESS_KEY read_secret_access_key"
+            do
+              set -- $pair
+              grep -A 4 -- "- name: $1\$" /tmp/s3-existing-credentials.yaml | grep -q "name: \"minio-root\""
+              grep -A 4 -- "- name: $1\$" /tmp/s3-existing-credentials.yaml | grep -q "key: \"$2\""
+            done
+            # The keys stay in the user's secret rather than being copied into the chart's.
+            ! grep -qE "^  (admin|read)_(access_key_id|secret_access_key):" /tmp/s3-existing-credentials.yaml
+            echo "S3 credentials reference the existing secret for $workload"
+          done
 
           echo "=== Testing with all-in-one mode ==="
           helm template test $CHART_DIR --set allInOne.enabled=true > /tmp/allinone.yaml
