@@ -17,8 +17,8 @@ import (
 
 // objectWriteRouteKeyPrefix namespaces an object's full path into the ring key
 // used to resolve and forward its writes. Shared by every routed builder so the
-// gateway and filer hash the same key.
-const objectWriteRouteKeyPrefix = "s3.object.write:"
+// gateway, the admin dashboard and the filer hash the same key.
+const objectWriteRouteKeyPrefix = s3_constants.ObjectWriteRouteKeyPrefix
 
 // objectRouteKey is the ring key the gateway hashes to resolve an object's owner
 // filer. It is also sent as route_key on each routed transaction, so a non-owner
