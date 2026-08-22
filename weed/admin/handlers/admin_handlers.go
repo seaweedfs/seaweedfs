@@ -253,6 +253,7 @@ func (h *AdminHandlers) registerAPIRoutes(api *mux.Router, enforceWrite bool) {
 	filesApi.HandleFunc("/view", h.fileBrowserHandlers.ViewFile).Methods(http.MethodGet)
 	filesApi.HandleFunc("/properties", h.fileBrowserHandlers.GetFileProperties).Methods(http.MethodGet)
 	filesApi.HandleFunc("/metadata", h.fileBrowserHandlers.ExportMetadata).Methods(http.MethodGet)
+	filesApi.HandleFunc("/list-folders", h.fileBrowserHandlers.ListFolders).Methods(http.MethodGet)
 
 	volumeApi := api.PathPrefix("/volumes").Subrouter()
 	volumeApi.HandleFunc("/export", h.clusterHandlers.ExportClusterVolumes).Methods(http.MethodGet)
