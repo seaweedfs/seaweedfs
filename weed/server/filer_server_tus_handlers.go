@@ -691,10 +691,7 @@ func (fs *FilerServer) tusWriteData(ctx context.Context, session *TusSession, of
 		}
 
 		if saveErr := fs.saveTusChunk(ctx, session.ID, chunk); saveErr != nil {
-			// Cleanup this chunk on failure
-			fs.filer.DeleteChunks(ctx, util.FullPath(session.TargetPath), []*filer_pb.FileChunk{
-				{FileId: fileId},
-			})
+			fs.deleteTusChunk(ctx, session, chunk)
 			uploadErr = fmt.Errorf("update session: %w", saveErr)
 			break
 		}
