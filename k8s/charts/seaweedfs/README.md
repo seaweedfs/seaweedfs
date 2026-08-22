@@ -22,8 +22,8 @@ helm install --values=values.yaml seaweedfs seaweedfs/seaweedfs
 ## Info:
 * master/filer/volume are stateful sets with anti-affinity on the hostname,
 so your deployment will be spread/HA.
-* chart is using memsql(mysql) as the filer backend to enable HA (multiple filer instances) and backup/HA memsql can provide.
-* mysql user/password are created in a k8s secret (default: `<release>-seaweedfs-db-secret`) and injected to the filer with ENV.
+* leveldb2 is the default filer backend; a mysql-compatible database (memsql, ...) enables HA (multiple filer instances) and the backup/HA it can provide.
+* with `filer.extraEnvironmentVars.WEED_MYSQL_ENABLED` set to `"true"`, mysql user/password are created in a k8s secret (default: `<release>-seaweedfs-db-secret`) and injected to the filer with ENV. On any other store neither the secret nor the `WEED_MYSQL_*` env, plain or secret-backed, is rendered.
 * cert config exists and can be enabled, but not been tested, requires cert-manager to be installed.
 
 ## Prerequisites

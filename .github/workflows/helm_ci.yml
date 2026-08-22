@@ -482,6 +482,41 @@ jobs:
             --set filer.s3.enableAuth=true > /tmp/filer-s3.yaml
           echo "Filer S3 gateway renders correctly"
           
+          echo "=== Testing the mysql filer store gates its secret and env ==="
+          helm template test $CHART_DIR \
+            --set-string filer.extraEnvironmentVars.WEED_MONGODB_ENABLED=true \
+            --set-string filer.extraEnvironmentVars.WEED_LEVELDB2_ENABLED=false > /tmp/filer-mongodb.yaml
+          ! grep -q "db-secret" /tmp/filer-mongodb.yaml
+          ! grep -q "WEED_MYSQL" /tmp/filer-mongodb.yaml
+          grep -q "name: WEED_MONGODB_ENABLED" /tmp/filer-mongodb.yaml
+          helm template test $CHART_DIR \
+            --set-string filer.extraEnvironmentVars.WEED_MYSQL_ENABLED=true > /tmp/filer-mysql.yaml
+          grep -q "name: test-seaweedfs-db-secret" /tmp/filer-mysql.yaml
+          grep -q "name: WEED_MYSQL_USERNAME" /tmp/filer-mysql.yaml
+          grep -q "name: WEED_MYSQL_PASSWORD" /tmp/filer-mysql.yaml
+          grep -q "name: WEED_MYSQL_HOSTNAME" /tmp/filer-mysql.yaml
+          # Secret-backed keys follow the same rule as the plain ones.
+          helm template test $CHART_DIR \
+            --set filer.secretExtraEnvironmentVars.WEED_MYSQL_PASSWORD.secretKeyRef.name=db \
+            --set filer.secretExtraEnvironmentVars.WEED_MYSQL_PASSWORD.secretKeyRef.key=password > /tmp/filer-mysql-off-secret.yaml
+          ! grep -q "WEED_MYSQL" /tmp/filer-mysql-off-secret.yaml
+          helm template test $CHART_DIR \
+            --set-string filer.extraEnvironmentVars.WEED_MYSQL_ENABLED=true \
+            --set filer.secretExtraEnvironmentVars.WEED_MYSQL_PASSWORD.secretKeyRef.name=db \
+            --set filer.secretExtraEnvironmentVars.WEED_MYSQL_PASSWORD.secretKeyRef.key=password > /tmp/filer-mysql-on-secret.yaml
+          grep -A 4 -- "- name: WEED_MYSQL_PASSWORD$" /tmp/filer-mysql-on-secret.yaml | grep -q "name: db"
+          # A flag the chart cannot read counts as selected, not as off.
+          helm template test $CHART_DIR \
+            --set filer.secretExtraEnvironmentVars.WEED_MYSQL_ENABLED.secretKeyRef.name=store \
+            --set filer.secretExtraEnvironmentVars.WEED_MYSQL_ENABLED.secretKeyRef.key=enabled > /tmp/filer-mysql-secret.yaml
+          grep -q "name: test-seaweedfs-db-secret" /tmp/filer-mysql-secret.yaml
+          grep -q "name: WEED_MYSQL_HOSTNAME" /tmp/filer-mysql-secret.yaml
+          helm template test $CHART_DIR \
+            --set-string filer.extraEnvironmentVars.WEED_MYSQL2_HOSTNAME=other > /tmp/filer-mysql2.yaml
+          grep -q "name: WEED_MYSQL2_HOSTNAME" /tmp/filer-mysql2.yaml
+          ! grep -q "WEED_MYSQL_" /tmp/filer-mysql2.yaml
+          echo "The mysql secret and env follow the selected filer store"
+
           echo "=== Testing SFTP enabled ==="
           helm template test $CHART_DIR --set sftp.enabled=true > /tmp/sftp.yaml
           grep -q "seaweedfs-sftp" /tmp/sftp.yaml

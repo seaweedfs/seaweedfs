@@ -76,6 +76,18 @@ Inject extra environment vars in the format key:value, if populated
 {{- end }}
 {{- end -}}
 
+{{/* Whether the mysql filer store is selected; a flag the chart cannot read counts as selected. */}}
+{{- define "seaweedfs.filer.mysqlEnabled" -}}
+{{- $merged := dict -}}
+{{- $_ := include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global.seaweedfs "component" .Values.filer "target" $merged) -}}
+{{- $enabled := index $merged "WEED_MYSQL_ENABLED" -}}
+{{- if or (kindIs "map" $enabled) (hasKey (.Values.filer.secretExtraEnvironmentVars | default dict) "WEED_MYSQL_ENABLED") -}}
+true
+{{- else if and $enabled (eq (lower (toString $enabled)) "true") -}}
+true
+{{- end -}}
+{{- end -}}
+
 {{/* Return the proper filer image */}}
 {{- define "seaweedfs.filer.image" -}}
 {{- if .Values.filer.imageOverride -}}

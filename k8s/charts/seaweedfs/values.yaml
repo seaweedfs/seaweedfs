@@ -897,6 +897,7 @@ filer:
 
   # extraEnvVars is a list of extra environment variables to set with the stateful set.
   extraEnvironmentVars:
+    # the WEED_MYSQL_* keys and the db credential secret only render while this is "true"
     WEED_MYSQL_ENABLED: "false"
     WEED_MYSQL_HOSTNAME: "mysql-db-host"
     WEED_MYSQL_PORT: "3306"
