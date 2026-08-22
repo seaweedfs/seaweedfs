@@ -6,6 +6,7 @@ on:
     paths:
       - 'weed/**'
       - 'seaweed-volume/**'
+      - 'seaweed-worker/**'
       - 'docker/**'
       - 'go.mod'
       - 'go.sum'
@@ -16,7 +17,7 @@ permissions:
 
 jobs:
 
-  # ── Pre-build Rust volume server binaries natively ──────────────────
+  # ── Pre-build the Rust binaries natively ────────────────────────────
   build-rust-binaries:
     runs-on: ubuntu-22.04
     strategy:
@@ -55,7 +56,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             seaweed-volume/target
-          key: rust-docker-dev-${{ matrix.target }}-${{ hashFiles('seaweed-volume/Cargo.lock') }}
+            seaweed-worker/target/${{ matrix.target }}/release
+          key: rust-docker-dev-${{ matrix.target }}-${{ hashFiles('seaweed-volume/Cargo.lock', 'seaweed-worker/Cargo.lock') }}
           restore-keys: |
             rust-docker-dev-${{ matrix.target }}-
 
@@ -67,11 +69,19 @@ jobs:
           cargo build --release --target ${{ matrix.target }} --no-default-features
           cp target/${{ matrix.target }}/release/weed-volume ../weed-volume-normal-${{ matrix.arch }}
 
+      - name: Build the Rust maintenance worker
+        run: |
+          cd seaweed-worker
+          cargo build --release -p weed-lance-worker --target ${{ matrix.target }}
+          cp target/${{ matrix.target }}/release/weed-worker ../weed-worker-${{ matrix.arch }}
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: rust-volume-${{ matrix.arch }}
-          path: weed-volume-normal-${{ matrix.arch }}
+          name: rust-bins-${{ matrix.arch }}
+          path: |
+            weed-volume-normal-${{ matrix.arch }}
+            weed-worker-${{ matrix.arch }}
 
   build-dev-containers:
     needs: [build-rust-binaries]
@@ -84,7 +94,7 @@ jobs:
       - name: Download pre-built Rust binaries
         uses: actions/download-artifact@v8
         with:
-          pattern: rust-volume-*
+          pattern: rust-bins-*
           merge-multiple: true
           path: ./rust-bins
 
@@ -98,7 +108,16 @@ jobs:
               echo "Placed pre-built Rust binary for ${arch}"
             fi
           done
+          mkdir -p docker/weed-worker-prebuilt
+          for arch in amd64 arm64; do
+            src="./rust-bins/weed-worker-${arch}"
+            if [ -f "$src" ]; then
+              cp "$src" "docker/weed-worker-prebuilt/weed-worker-${arch}"
+              echo "Placed pre-built Rust worker for ${arch}"
+            fi
+          done
           ls -la docker/weed-volume-prebuilt/
+          ls -la docker/weed-worker-prebuilt/
 
       - name: Docker meta
         id: docker_meta
