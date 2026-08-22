@@ -96,20 +96,31 @@ func TestCollectHeartbeatSizesOnlySurvivingVolumes(t *testing.T) {
 	store := newTestStore(t, 2)
 	store.SetVolumeSizeLimit(30 << 30)
 	// One volume per location, so the surviving one is always scanned first.
-	fillTestVolume(t, mountTestVolume(t, store.Locations[0], 1, "pics"))
+	surviving := mountTestVolume(t, store.Locations[0], 1, "pics")
+	fillTestVolume(t, surviving)
 	expiring := mountTestVolume(t, store.Locations[1], 2, "pics")
 	expiring.Ttl = &needle.TTL{Count: 1, Unit: needle.Minute}
 	fillTestVolume(t, expiring)
-
-	heartbeat := store.CollectHeartbeat()
-	var survivingSize uint64
-	for _, m := range heartbeat.Volumes {
-		if m.Id == 1 {
-			survivingSize = m.Size
+	// Both volumes carry deleted bytes, which are totalled the same way.
+	for _, v := range []*Volume{surviving, expiring} {
+		n := newRandomNeedle(uint64(v.Id) + 100)
+		if _, _, _, err := v.writeNeedle2(n, true, false, false); err != nil {
+			t.Fatalf("write needle: %v", err)
+		}
+		if _, err := v.deleteNeedle2(n); err != nil {
+			t.Fatalf("delete needle: %v", err)
 		}
 	}
-	if survivingSize == 0 {
-		t.Fatal("the surviving volume reported no size")
+
+	heartbeat := store.CollectHeartbeat()
+	var survivingSize, survivingDeleted uint64
+	for _, m := range heartbeat.Volumes {
+		if m.Id == 1 {
+			survivingSize, survivingDeleted = m.Size, m.DeletedByteCount
+		}
+	}
+	if survivingSize == 0 || survivingDeleted == 0 {
+		t.Fatalf("the surviving volume reported size %d and %d deleted bytes, want both", survivingSize, survivingDeleted)
 	}
 
 	expiring.lastModifiedTsSeconds = uint64(time.Now().Add(-time.Hour).Unix())
@@ -120,6 +131,9 @@ func TestCollectHeartbeatSizesOnlySurvivingVolumes(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(stats.VolumeServerDiskSizeGauge.WithLabelValues("pics", "normal")); got != float64(survivingSize) {
 		t.Errorf("disk size of pics = %v, want %d, the volume still here", got, survivingSize)
+	}
+	if got := testutil.ToFloat64(stats.VolumeServerDiskSizeGauge.WithLabelValues("pics", "deleted_bytes")); got != float64(survivingDeleted) {
+		t.Errorf("deleted bytes of pics = %v, want %d, the volume still here", got, survivingDeleted)
 	}
 }
 
