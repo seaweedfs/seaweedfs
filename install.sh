@@ -268,6 +268,12 @@ install_component() {
             error "Unknown component: ${component}. Use: weed, volume-rust, worker-rust, all"
             ;;
     esac
+
+    # The trap is per-process, so a later component's would replace this one and
+    # leave the earlier extraction behind. Clean up here and hand the trap back;
+    # the error paths above exit, which still fires it.
+    rm -rf "$tmpdir"
+    trap - EXIT
 }
 
 # Copy binary to install dir, using sudo if needed
