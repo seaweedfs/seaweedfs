@@ -97,6 +97,16 @@ func TestValidatePolicy(t *testing.T) {
 			},
 			wantStatus: http.StatusBadRequest,
 		},
+		{
+			name: "both Resource and NotResource",
+			document: map[string]interface{}{
+				"Version": "2012-10-17",
+				"Statement": []map[string]interface{}{
+					{"Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::my-bucket/*", "NotResource": "arn:aws:s3:::secret-bucket/*"},
+				},
+			},
+			wantStatus: http.StatusBadRequest,
+		},
 	}
 
 	for _, tt := range tests {

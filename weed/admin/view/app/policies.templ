@@ -385,8 +385,15 @@ templ Policies(data dash.PoliciesData) {
         const rawStatements = doc && doc.Statement
             ? (Array.isArray(doc.Statement) ? doc.Statement : [doc.Statement])
             : [];
-        rawStatements.forEach(function(stmt) {
+        rawStatements.forEach(function(stmt, idx) {
             stmt = stmt || {};
+            if (stmt.Effect !== 'Allow' && stmt.Effect !== 'Deny') {
+                // Defaulting a missing/malformed Effect to "Allow" would
+                // silently turn e.g. a typo'd "deny" into a permissive
+                // statement. Reject instead of guessing.
+                throw new Error('Statement ' + (idx + 1) + ': Effect must be exactly "Allow" or "Deny" (got ' +
+                    JSON.stringify(stmt.Effect === undefined ? null : stmt.Effect) + ')');
+            }
             const extras = {};
             Object.keys(stmt).forEach(function(key) {
                 if (POLICY_STATEMENT_KNOWN_KEYS.indexOf(key) === -1) {
@@ -395,7 +402,7 @@ templ Policies(data dash.PoliciesData) {
             });
             state.statements.push({
                 sid: stmt.Sid || '',
-                effect: stmt.Effect === 'Deny' ? 'Deny' : 'Allow',
+                effect: stmt.Effect,
                 actions: normalizeToStringArray(stmt.Action),
                 resources: normalizeToStringArray(stmt.Resource),
                 extras: Object.keys(extras).length ? JSON.stringify(extras, null, 2) : ''
@@ -447,6 +454,11 @@ templ Policies(data dash.PoliciesData) {
             const resources = (s.resources || []).map(function(r) { return (r || '').trim(); }).filter(Boolean);
             if (resources.length) {
                 stmt.Resource = resources.length === 1 ? resources[0] : resources;
+                // Resource and NotResource are mutually exclusive; a
+                // NotResource surviving in "extras" from before the user
+                // switched to using the structured Resource field must not
+                // be saved alongside it.
+                delete stmt.NotResource;
             } else {
                 delete stmt.Resource;
             }
@@ -566,8 +578,9 @@ templ Policies(data dash.PoliciesData) {
     }
 
     // Parses the JSON textarea into policyEditors[which] and re-renders the
-    // editor. Returns false (and shows an alert) if the JSON is invalid,
-    // leaving the JSON tab as the active one so the user can fix it.
+    // editor. Returns false (and shows an alert) if the JSON is invalid or a
+    // statement's Effect isn't exactly "Allow"/"Deny", leaving the JSON tab
+    // as the active one so the user can fix it.
     function commitPolicyTextareaToEditor(which) {
         const text = document.getElementById(policyTextareaId(which)).value;
         if (!text || !text.trim()) {
@@ -582,7 +595,14 @@ templ Policies(data dash.PoliciesData) {
             showAlert('Invalid JSON in policy document: ' + e.message, 'error');
             return false;
         }
-        policyEditors[which] = policyDocToEditorState(doc);
+        let newState;
+        try {
+            newState = policyDocToEditorState(doc);
+        } catch (e) {
+            showAlert(e.message, 'error');
+            return false;
+        }
+        policyEditors[which] = newState;
         renderPolicyEditor(which);
         return true;
     }

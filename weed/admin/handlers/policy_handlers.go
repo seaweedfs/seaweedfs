@@ -225,6 +225,11 @@ func (h *PolicyHandlers) ValidatePolicy(w http.ResponseWriter, r *http.Request) 
 			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("Statement %d: Resource or NotResource is required", i+1))
 			return
 		}
+
+		if len(statement.Resource.Strings()) > 0 && len(statement.NotResource.Strings()) > 0 {
+			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("Statement %d: cannot specify both Resource and NotResource", i+1))
+			return
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
