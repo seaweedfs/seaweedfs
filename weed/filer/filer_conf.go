@@ -3,8 +3,12 @@ package filer
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
+	"errors"
 	"fmt"
 	"io"
+	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
@@ -317,6 +321,173 @@ func ClearBucketReadOnly(ctx context.Context, client filer_pb.SeaweedFilerClient
 		return false, err
 	}
 	return true, nil
+}
+
+// filerConfSnapshot is a read of filer.conf plus enough of the entry (or its
+// absence) to make a follow-up write conditional via
+// saveFilerConfConditionally, instead of blindly overwriting whatever is
+// there by the time the write happens.
+type filerConfSnapshot struct {
+	fc    *FilerConf
+	entry *filer_pb.Entry // nil if filer.conf did not exist at read time
+}
+
+func readFilerConfSnapshot(ctx context.Context, client filer_pb.SeaweedFilerClient) (*filerConfSnapshot, error) {
+	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
+		Directory: DirectoryEtcSeaweedFS,
+		Name:      FilerConfName,
+	})
+	fc := NewFilerConf()
+	if errors.Is(err, filer_pb.ErrNotFound) {
+		return &filerConfSnapshot{fc: fc}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read %s/%s: %v", DirectoryEtcSeaweedFS, FilerConfName, err)
+	}
+	if len(resp.Entry.Content) > 0 {
+		if err := fc.LoadFromBytes(resp.Entry.Content); err != nil {
+			return nil, fmt.Errorf("parse %s/%s: %v", DirectoryEtcSeaweedFS, FilerConfName, err)
+		}
+	}
+	return &filerConfSnapshot{fc: fc, entry: resp.Entry}, nil
+}
+
+// saveFilerConfConditionally writes snap.fc back to filer.conf, conditioned
+// on nothing having created or modified the file since snap was read. The
+// filer evaluates the condition under its per-path lock, so a racing writer
+// fails the precondition instead of silently losing its change.
+//
+// The condition is an exact content check (IF_ETAG_MATCH against the MD5
+// every writer stamps, see SaveInsideFiler), which mtime's one-second
+// resolution cannot match. A filer.conf written before that stamp existed
+// carries no hash, so that one write falls back to IF_UNMODIFIED_SINCE and
+// self-heals from the next write on.
+func saveFilerConfConditionally(ctx context.Context, client filer_pb.SeaweedFilerClient, snap *filerConfSnapshot) error {
+	var buf bytes.Buffer
+	if err := snap.fc.ToText(&buf); err != nil {
+		return err
+	}
+	content := buf.Bytes()
+	contentMd5 := md5.Sum(content)
+
+	if snap.entry == nil {
+		err := filer_pb.CreateEntry(ctx, client, &filer_pb.CreateEntryRequest{
+			Directory: DirectoryEtcSeaweedFS,
+			Entry: &filer_pb.Entry{
+				Name:        FilerConfName,
+				IsDirectory: false,
+				Attributes: &filer_pb.FuseAttributes{
+					Mtime:    time.Now().Unix(),
+					Crtime:   time.Now().Unix(),
+					FileMode: uint32(0644),
+					FileSize: uint64(len(content)),
+					Md5:      contentMd5[:],
+				},
+				Content: content,
+			},
+			Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{
+				{Kind: filer_pb.WriteCondition_IF_NOT_EXISTS},
+			}},
+		})
+		if err != nil {
+			return fmt.Errorf("create %s/%s: %w", DirectoryEtcSeaweedFS, FilerConfName, err)
+		}
+		return nil
+	}
+
+	entry := snap.entry
+	var condition *filer_pb.WriteCondition
+	if entry.Attributes != nil && len(entry.Attributes.Md5) > 0 {
+		condition = &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{
+			{Kind: filer_pb.WriteCondition_IF_ETAG_MATCH, Etags: []string{fmt.Sprintf("%x", entry.Attributes.Md5)}},
+		}}
+	} else {
+		var unmodifiedSince int64
+		if entry.Attributes != nil {
+			unmodifiedSince = entry.Attributes.Mtime
+		} else {
+			entry.Attributes = &filer_pb.FuseAttributes{}
+		}
+		condition = &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{
+			{Kind: filer_pb.WriteCondition_IF_UNMODIFIED_SINCE, UnixTime: unmodifiedSince},
+		}}
+	}
+
+	entry.Content = content
+	entry.Attributes.Mtime = time.Now().Unix()
+	entry.Attributes.FileSize = uint64(len(content))
+	entry.Attributes.Md5 = contentMd5[:]
+	err := filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
+		Directory: DirectoryEtcSeaweedFS,
+		Entry:     entry,
+		Condition: condition,
+	})
+	if err != nil {
+		return fmt.Errorf("update %s/%s: %w", DirectoryEtcSeaweedFS, FilerConfName, err)
+	}
+	return nil
+}
+
+// ClearBucketLifecycleDayTTLs removes any day-TTL filer.conf rules a legacy
+// PutBucketLifecycleConfiguration handler installed under the bucket's path.
+// Per-write TTL is now driven by the LifecycleTTLResolver built off the
+// stored lifecycle XML, so a lingering day-TTL rule would double-stamp
+// expiration (volume server expires under the old rule) or contradict a
+// newly saved XML. The write is conditioned on filer.conf being unchanged
+// since it was read here, so a concurrent writer fails this call rather than
+// silently losing one side's change.
+func ClearBucketLifecycleDayTTLs(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketsPath, bucketName, collection string) error {
+	snap, err := readFilerConfSnapshot(ctx, client)
+	if err != nil {
+		return err
+	}
+	if snap.entry == nil {
+		return nil
+	}
+
+	changed := false
+	bucketPrefix := fmt.Sprintf("%s/%s/", bucketsPath, bucketName)
+	for prefix, ttl := range snap.fc.GetCollectionTtls(collection) {
+		if !strings.HasPrefix(prefix, bucketPrefix) || !strings.HasSuffix(ttl, "d") {
+			continue
+		}
+		locConf, found := snap.fc.GetLocationConf(prefix)
+		if !found {
+			continue
+		}
+		// Logged either way: this is a one-way migration, and the prefix and
+		// TTL are all an operator needs to put a rule back by hand.
+		if isLifecycleOwnedPathConf(locConf) {
+			glog.V(0).Infof("lifecycle migration: dropping legacy day-TTL rule %s ttl=%s", prefix, ttl)
+			snap.fc.DeleteLocationConf(prefix)
+		} else {
+			glog.V(0).Infof("lifecycle migration: clearing legacy day-TTL %s on operator rule %s", ttl, prefix)
+			updated := ClonePathConf(locConf)
+			updated.Ttl = ""
+			if err := snap.fc.SetLocationConf(updated); err != nil {
+				return err
+			}
+		}
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+
+	return saveFilerConfConditionally(ctx, client, snap)
+}
+
+// isLifecycleOwnedPathConf reports whether a rule looks like one the removed
+// PutBucketLifecycleConfiguration add path created, which set only the
+// routing and TTL fields. That path merged onto whatever already sat at the
+// prefix, so anything else here - a disk type, WORM settings, a read-only
+// flag, a placement pin - is an operator's, and deleting the whole rule to
+// retire its TTL would take their configuration with it.
+func isLifecycleOwnedPathConf(c *filer_pb.FilerConf_PathConf) bool {
+	return c.GetDiskType() == "" && !c.GetFsync() && !c.GetReadOnly() &&
+		c.GetDataCenter() == "" && c.GetRack() == "" && c.GetDataNode() == "" &&
+		c.GetMaxFileNameLength() == 0 && !c.GetDisableChunkDeletion() &&
+		c.Worm == nil && c.GetWormGracePeriodSeconds() == 0 && c.GetWormRetentionTimeSeconds() == 0
 }
 
 func (fc *FilerConf) GetCollectionTtls(collection string) (ttls map[string]string) {

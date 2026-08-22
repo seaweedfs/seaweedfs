@@ -11,7 +11,18 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
 )
 
-const BucketLifecycleConfigurationXMLKey = "s3-bucket-lifecycle-configuration-xml"
+// The bucket lifecycle configuration lives here rather than in weed/s3api so
+// callers outside the gateway (the admin dashboard, the scheduler itself) and
+// the gateway share one definition of the extended-attribute keys and the
+// size cap. weed/s3api aliases these; nothing redeclares the values.
+const (
+	BucketLifecycleConfigurationXMLKey            = "s3-bucket-lifecycle-configuration-xml"
+	BucketLifecycleTransitionMinimumObjectSizeKey = "s3-bucket-lifecycle-transition-default-minimum-object-size"
+
+	// MaxBucketLifecycleConfigurationSize caps the serialized XML, mirroring
+	// the S3 API's limit.
+	MaxBucketLifecycleConfigurationSize = 1 << 20
+)
 
 // ParseError is returned alongside successfully-loaded inputs so callers can
 // surface malformed bucket configs rather than silently dropping them.

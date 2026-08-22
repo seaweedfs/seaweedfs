@@ -637,7 +637,7 @@ templ S3Buckets(data dash.S3BucketsData) {
 
     <!-- Bucket Lifecycle Modal -->
     <div class="modal fade" id="bucketLifecycleModal" tabindex="-1" aria-labelledby="bucketLifecycleModalLabel" aria-hidden="true">
-        <div class="modal-dialog modal-lg">
+        <div class="modal-dialog modal-xl">
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title" id="bucketLifecycleModalLabel">
@@ -649,7 +649,13 @@ templ S3Buckets(data dash.S3BucketsData) {
                     <div id="bucketLifecycleContent"></div>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-outline-danger me-auto" id="lifecycleDeleteAllBtn">
+                        <i class="fas fa-trash me-1"></i>Delete all rules
+                    </button>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="lifecycleSaveAllBtn">
+                        <i class="fas fa-save me-1"></i>Save
+                    </button>
                 </div>
             </div>
         </div>
@@ -711,6 +717,69 @@ templ S3Buckets(data dash.S3BucketsData) {
     let lifecycleModalInstance = null;
     let lifecycleRequestSeq = 0;
     let cachedUsers = null;
+
+    // Working copy of the lifecycle rules currently shown in the modal.
+    // Edits (add/edit/delete rule) only mutate this local state; nothing is
+    // sent to the server until "Save" or "Delete all rules" is clicked.
+    let lifecycleEditor = { bucket: null, rules: [], editingIndex: null, editingRule: null, rawXml: '', hasTransition: false };
+
+    function escapeHtml(v) {
+        return String(v ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    // Shadows admin.js's formatBytes for this page, so it keeps that
+    // signature and unit list; the extra guard is for a size the API left
+    // out, which the shared one renders as "NaN undefined".
+    function formatBytes(bytes, decimals = 2) {
+        if (!bytes) return '0 Bytes';
+        const k = 1024;
+        const dm = decimals < 0 ? 0 : decimals;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+    }
+
+    function formatDays(n) {
+        return n + (n === 1 ? ' day' : ' days');
+    }
+
+    // csrfHeaders reads the token the layout stamps into every page
+    // (<meta name="csrf-token">) so mutating lifecycle requests pass it the
+    // same way the newer admin pages (e.g. s3tables) do.
+    function csrfHeaders() {
+        const meta = document.querySelector('meta[name="csrf-token"]');
+        const token = meta ? (meta.getAttribute('content') || '') : '';
+        const headers = { 'Content-Type': 'application/json' };
+        if (token) {
+            headers['X-CSRF-Token'] = token;
+        }
+        return headers;
+    }
+
+    // parseLifecycleResponse reads the body as text before parsing, so a
+    // non-JSON response (a proxy's HTML error page, an empty body, plain
+    // text from some middleware) surfaces the HTTP status instead of
+    // throwing a raw JSON syntax error out of response.json().
+    function parseLifecycleResponse(response) {
+        return response.text().then(text => {
+            let data = {};
+            if (text) {
+                try {
+                    data = JSON.parse(text);
+                } catch (e) {
+                    data = { error: response.statusText || ('HTTP ' + response.status) };
+                }
+            } else if (!response.ok) {
+                data = { error: response.statusText || ('HTTP ' + response.status) };
+            }
+            return { ok: response.ok, data: data };
+        });
+    }
 
     document.addEventListener('DOMContentLoaded', function() {
         // Add click handlers to pagination links
@@ -1074,6 +1143,10 @@ templ S3Buckets(data dash.S3BucketsData) {
             button.addEventListener('click', function() {
                 const bucketName = this.dataset.bucketName;
 
+                // Reset the working copy until the GET below repopulates it,
+                // so Save/Delete-all can't act on the previous bucket's rules.
+                lifecycleEditor = { bucket: null, rules: [], editingIndex: null, editingRule: null, rawXml: '', hasTransition: false };
+
                 document.getElementById('bucketLifecycleModalLabel').innerHTML =
                     '<i class="fas fa-recycle me-2"></i>Lifecycle - ' + bucketName;
 
@@ -1090,14 +1163,14 @@ templ S3Buckets(data dash.S3BucketsData) {
                 // Drop responses that arrive after another bucket was opened
                 const requestSeq = ++lifecycleRequestSeq;
                 fetch(basePath('/api/s3/buckets/' + bucketName + '/lifecycle'))
-                    .then(response => response.json())
-                    .then(data => {
+                    .then(parseLifecycleResponse)
+                    .then(({ ok, data }) => {
                         if (requestSeq !== lifecycleRequestSeq) return;
-                        if (data.error) {
+                        if (!ok || data.error) {
                             document.getElementById('bucketLifecycleContent').innerHTML =
                                 '<div class="alert alert-danger">' +
                                 '<i class="fas fa-exclamation-triangle me-2"></i>' +
-                                'Error loading lifecycle rules: ' + data.error +
+                                'Error loading lifecycle rules: ' + (data.error || 'unknown error') +
                                 '<\/div>';
                         } else {
                             displayBucketLifecycle(data);
@@ -1113,6 +1186,67 @@ templ S3Buckets(data dash.S3BucketsData) {
                             '<\/div>';
                     });
             });
+        });
+
+        // Save the whole working rule set back to the bucket.
+        document.getElementById('lifecycleSaveAllBtn').addEventListener('click', function() {
+            if (!lifecycleEditor.bucket) return;
+            // Fold in any rule the user is still editing so Save doesn't
+            // silently discard it; abort if that form isn't valid yet.
+            if (!commitOpenLifecycleRuleForm()) return;
+            // An empty list clears the configuration, same as Delete all rules,
+            // so it gets the same prompt.
+            if (lifecycleEditor.rules.length === 0 &&
+                !confirm('No rules left: saving removes the lifecycle configuration for ' + lifecycleEditor.bucket + '. This cannot be undone.')) {
+                return;
+            }
+
+            fetch(basePath('/api/s3/buckets/' + lifecycleEditor.bucket + '/lifecycle'), {
+                method: 'PUT',
+                headers: csrfHeaders(),
+                body: JSON.stringify({ rules: lifecycleEditor.rules })
+            })
+                .then(parseLifecycleResponse)
+                .then(({ ok, data }) => {
+                    if (!ok || data.error) {
+                        alert('Error saving lifecycle rules: ' + (data.error || 'unknown error'));
+                        return;
+                    }
+                    if (lifecycleModalInstance) {
+                        lifecycleModalInstance.hide();
+                    }
+                    setTimeout(() => location.reload(), 500);
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Error saving lifecycle rules: ' + error.message);
+                });
+        });
+
+        // Clear the lifecycle configuration entirely.
+        document.getElementById('lifecycleDeleteAllBtn').addEventListener('click', function() {
+            if (!lifecycleEditor.bucket) return;
+            if (!confirm('Delete all lifecycle rules for ' + lifecycleEditor.bucket + '? This cannot be undone.')) return;
+
+            fetch(basePath('/api/s3/buckets/' + lifecycleEditor.bucket + '/lifecycle'), {
+                method: 'DELETE',
+                headers: csrfHeaders()
+            })
+                .then(parseLifecycleResponse)
+                .then(({ ok, data }) => {
+                    if (!ok || data.error) {
+                        alert('Error deleting lifecycle rules: ' + (data.error || 'unknown error'));
+                        return;
+                    }
+                    if (lifecycleModalInstance) {
+                        lifecycleModalInstance.hide();
+                    }
+                    setTimeout(() => location.reload(), 500);
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Error deleting lifecycle rules: ' + error.message);
+                });
         });
     });
 
@@ -1144,23 +1278,6 @@ templ S3Buckets(data dash.S3BucketsData) {
 
 function displayBucketDetails(data) {
     const bucket = data.bucket;
-
-    function escapeHtml(v) {
-        return String(v ?? '')
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
-
-    function formatBytes(bytes) {
-        if (bytes === 0) return '0 Bytes';
-        const k = 1024;
-        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-    }
 
     function formatDate(dateString) {
         const date = new Date(dateString);
@@ -1232,112 +1349,518 @@ function displayBucketDetails(data) {
     document.getElementById('bucketDetailsContent').innerHTML = rows.join('');
 }
 
+// displayBucketLifecycle loads the GET response into the local working copy
+// and renders the editor. Nothing is sent back to the server until Save or
+// Delete all rules is clicked.
 function displayBucketLifecycle(data) {
-    function escapeHtml(v) {
-        return String(v ?? '')
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
+    lifecycleEditor.bucket = data.bucket || lifecycleEditor.bucket;
+    lifecycleEditor.rules = (data.rules || []).map(cloneLifecycleRule);
+    lifecycleEditor.editingIndex = null;
+    lifecycleEditor.editingRule = null;
+    lifecycleEditor.rawXml = data.xml || '';
+    // SeaweedFS doesn't support Transition rules (PutBucketLifecycleConfiguration
+    // rejects them for Enabled rules), and the canonical rule shape the admin
+    // edits has no field for one, so a Transition set by another client would
+    // silently disappear on the next Save. Warn instead.
+    // Matches <Transition> and <NoncurrentVersionTransition> however they are
+    // spelled: with attributes, self-closed, or namespace-prefixed.
+    lifecycleEditor.hasTransition = /<(\w+:)?(NoncurrentVersion)?Transition[\s>\/]/.test(data.xml || '');
+    renderLifecycleEditor();
+}
+
+// normalizeLifecycleStatus maps a stored status onto the two the editor can
+// show. The S3 API stores <Status> unvalidated, and the engine runs a rule
+// only on an exact "Enabled", so everything else is Disabled - collapsing it
+// here keeps an odd spelling from leaving both radios unchecked, which would
+// throw out of readLifecycleRuleFromForm and make the modal look dead.
+function normalizeLifecycleStatus(status) {
+    return status === 'Enabled' ? 'Enabled' : 'Disabled';
+}
+
+function cloneLifecycleRule(r) {
+    return {
+        id: r.id || '',
+        status: normalizeLifecycleStatus(r.status),
+        prefix: r.prefix || '',
+        tags: Object.assign({}, r.tags || {}),
+        size_greater_than: r.size_greater_than || null,
+        size_less_than: r.size_less_than || null,
+        expiration_days: r.expiration_days || null,
+        expiration_date: r.expiration_date || '',
+        expired_object_delete_marker: !!r.expired_object_delete_marker,
+        noncurrent_version_expiration_days: r.noncurrent_version_expiration_days || null,
+        newer_noncurrent_versions: r.newer_noncurrent_versions || null,
+        abort_multipart_days: r.abort_multipart_days || null,
+    };
+}
+
+function blankLifecycleRule() {
+    return {
+        id: '', status: 'Enabled', prefix: '', tags: {},
+        size_greater_than: null, size_less_than: null,
+        expiration_days: null, expiration_date: '',
+        expired_object_delete_marker: false,
+        noncurrent_version_expiration_days: null, newer_noncurrent_versions: null,
+        abort_multipart_days: null,
+    };
+}
+
+function describeLifecycleScope(rule) {
+    const parts = [];
+    if (rule.prefix) {
+        parts.push('<code>' + escapeHtml(rule.prefix) + '<\/code>');
+    }
+    Object.entries(rule.tags || {}).forEach(([k, v]) => {
+        parts.push('<span class="badge bg-light text-dark border">' + escapeHtml(k) + '=' + escapeHtml(v) + '<\/span>');
+    });
+    if (rule.size_greater_than) {
+        parts.push('size &gt; ' + formatBytes(rule.size_greater_than));
+    }
+    if (rule.size_less_than) {
+        parts.push('size &lt; ' + formatBytes(rule.size_less_than));
+    }
+    return parts.length ? parts.join(' ') : '<span class="text-muted">Whole bucket<\/span>';
+}
+
+function describeLifecycleActions(rule) {
+    const actions = [];
+    if (rule.expiration_days) {
+        actions.push('Expire after ' + formatDays(rule.expiration_days));
+    }
+    if (rule.expiration_date) {
+        actions.push('Expire on ' + escapeHtml(rule.expiration_date));
+    }
+    if (rule.expired_object_delete_marker) {
+        actions.push('Remove expired object delete markers');
+    }
+    if (rule.noncurrent_version_expiration_days) {
+        let action = 'Expire noncurrent versions after ' + formatDays(rule.noncurrent_version_expiration_days);
+        if (rule.newer_noncurrent_versions) {
+            action += ', keep ' + rule.newer_noncurrent_versions + ' newest';
+        }
+        actions.push(action);
+    } else if (rule.newer_noncurrent_versions) {
+        // Standalone (no expiration_days): the engine still recognizes this
+        // as an action that expires noncurrent versions beyond the N newest.
+        actions.push('Keep ' + rule.newer_noncurrent_versions + ' newest noncurrent versions');
+    }
+    if (rule.abort_multipart_days) {
+        actions.push('Abort incomplete multipart uploads after ' + formatDays(rule.abort_multipart_days));
+    }
+    if (actions.length === 0) {
+        return '<span class="text-muted">None<\/span>';
+    }
+    return actions.join('<br>');
+}
+
+function lifecycleRuleRowHtml(rule, idx) {
+    const statusHtml = rule.status === 'Enabled'
+        ? '<span class="badge bg-success">Enabled<\/span>'
+        : '<span class="badge bg-secondary">' + escapeHtml(rule.status) + '<\/span>';
+    return '<tr>' +
+        '<td>' + (rule.id ? escapeHtml(rule.id) : '<span class="text-muted">unnamed<\/span>') + '<\/td>' +
+        '<td>' + statusHtml + '<\/td>' +
+        '<td>' + describeLifecycleScope(rule) + '<\/td>' +
+        '<td>' + describeLifecycleActions(rule) + '<\/td>' +
+        '<td class="text-end text-nowrap">' +
+        '<button type="button" class="btn btn-sm btn-outline-secondary lifecycle-edit-rule-btn" data-index="' + idx + '" title="Edit rule"><i class="fas fa-pen"><\/i><\/button> ' +
+        '<button type="button" class="btn btn-sm btn-outline-danger lifecycle-delete-rule-btn" data-index="' + idx + '" title="Delete rule"><i class="fas fa-trash"><\/i><\/button>' +
+        '<\/td>' +
+        '<\/tr>';
+}
+
+function lifecycleRuleFormHtml() {
+    const rule = lifecycleEditor.editingRule;
+    const tagRowHtml = (k, v) =>
+        '<div class="input-group input-group-sm mb-1 lifecycle-tag-row">' +
+        '<input type="text" class="form-control lifecycle-tag-key" placeholder="Key" value="' + escapeHtml(k) + '">' +
+        '<input type="text" class="form-control lifecycle-tag-value" placeholder="Value" value="' + escapeHtml(v) + '">' +
+        '<button type="button" class="btn btn-outline-danger lifecycle-remove-tag-btn"><i class="fas fa-times"><\/i><\/button>' +
+        '<\/div>';
+    const tagRows = Object.entries(rule.tags || {}).map(([k, v]) => tagRowHtml(k, v)).join('');
+
+    return '' +
+        '<div class="card mb-3" id="lifecycleRuleForm">' +
+        '<div class="card-body">' +
+        '<h6 class="card-title">' + (lifecycleEditor.editingIndex === 'new' ? 'Add rule' : 'Edit rule') + '<\/h6>' +
+
+        '<div class="row g-2 mb-2">' +
+        '<div class="col-md-6">' +
+        '<label class="form-label small">ID (optional)<\/label>' +
+        '<input type="text" class="form-control form-control-sm" id="lifecycleRuleId" value="' + escapeHtml(rule.id) + '">' +
+        '<\/div>' +
+        '<div class="col-md-6">' +
+        '<label class="form-label small d-block">Status<\/label>' +
+        '<div class="form-check form-check-inline">' +
+        '<input class="form-check-input" type="radio" name="lifecycleRuleStatus" id="lifecycleStatusEnabled" value="Enabled"' + (rule.status === 'Enabled' ? ' checked' : '') + '>' +
+        '<label class="form-check-label" for="lifecycleStatusEnabled">Enabled<\/label>' +
+        '<\/div>' +
+        '<div class="form-check form-check-inline">' +
+        '<input class="form-check-input" type="radio" name="lifecycleRuleStatus" id="lifecycleStatusDisabled" value="Disabled"' + (rule.status === 'Disabled' ? ' checked' : '') + '>' +
+        '<label class="form-check-label" for="lifecycleStatusDisabled">Disabled<\/label>' +
+        '<\/div>' +
+        '<\/div>' +
+        '<\/div>' +
+
+        '<div class="mb-2">' +
+        '<label class="form-label small">Prefix<\/label>' +
+        '<input type="text" class="form-control form-control-sm" id="lifecycleRulePrefix" placeholder="logs/" value="' + escapeHtml(rule.prefix) + '">' +
+        '<\/div>' +
+
+        '<div class="mb-2">' +
+        '<label class="form-label small d-block">Tags<\/label>' +
+        '<div id="lifecycleTagRows">' + tagRows + '<\/div>' +
+        '<button type="button" class="btn btn-sm btn-outline-secondary" id="lifecycleAddTagBtn"><i class="fas fa-plus me-1"><\/i>Add tag<\/button>' +
+        '<\/div>' +
+
+        '<div class="row g-2 mb-3">' +
+        '<div class="col-md-6">' +
+        '<label class="form-label small">Size greater than (bytes)<\/label>' +
+        '<input type="number" class="form-control form-control-sm" id="lifecycleRuleSizeGT" min="0" step="1" value="' + (rule.size_greater_than || '') + '">' +
+        '<\/div>' +
+        '<div class="col-md-6">' +
+        '<label class="form-label small">Size less than (bytes)<\/label>' +
+        '<input type="number" class="form-control form-control-sm" id="lifecycleRuleSizeLT" min="0" step="1" value="' + (rule.size_less_than || '') + '">' +
+        '<\/div>' +
+        '<\/div>' +
+
+        '<hr>' +
+        '<h6 class="small text-muted text-uppercase">Actions<\/h6>' +
+
+        '<div class="row g-2 align-items-center mb-2">' +
+        '<div class="col-auto">' +
+        '<div class="form-check">' +
+        '<input class="form-check-input" type="checkbox" id="lifecycleExpireDaysEnabled"' + (rule.expiration_days ? ' checked' : '') + '>' +
+        '<label class="form-check-label" for="lifecycleExpireDaysEnabled">Expire after<\/label>' +
+        '<\/div>' +
+        '<\/div>' +
+        '<div class="col-auto">' +
+        '<input type="number" class="form-control form-control-sm" id="lifecycleExpireDays" min="1" step="1" style="width: 6rem;" value="' + (rule.expiration_days || '') + '"' + (rule.expiration_days ? '' : ' disabled') + '>' +
+        '<\/div><div class="col-auto">days<\/div>' +
+        '<\/div>' +
+
+        '<div class="row g-2 align-items-center mb-2">' +
+        '<div class="col-auto">' +
+        '<div class="form-check">' +
+        '<input class="form-check-input" type="checkbox" id="lifecycleExpireDateEnabled"' + (rule.expiration_date ? ' checked' : '') + '>' +
+        '<label class="form-check-label" for="lifecycleExpireDateEnabled">Expire on date<\/label>' +
+        '<\/div>' +
+        '<\/div>' +
+        '<div class="col-auto">' +
+        '<input type="date" class="form-control form-control-sm" id="lifecycleExpireDate" value="' + escapeHtml(rule.expiration_date) + '"' + (rule.expiration_date ? '' : ' disabled') + '>' +
+        '<\/div>' +
+        '<\/div>' +
+
+        '<div class="form-check mb-2">' +
+        '<input class="form-check-input" type="checkbox" id="lifecycleDeleteMarker"' + (rule.expired_object_delete_marker ? ' checked' : '') + '>' +
+        '<label class="form-check-label" for="lifecycleDeleteMarker">Remove expired object delete markers<\/label>' +
+        '<\/div>' +
+
+        (() => {
+            const noncurrentActive = !!(rule.noncurrent_version_expiration_days || rule.newer_noncurrent_versions);
+            return '<div class="row g-2 align-items-center mb-2">' +
+            '<div class="col-auto">' +
+            '<div class="form-check">' +
+            '<input class="form-check-input" type="checkbox" id="lifecycleNoncurrentEnabled"' + (noncurrentActive ? ' checked' : '') + '>' +
+            '<label class="form-check-label" for="lifecycleNoncurrentEnabled">Limit noncurrent versions<\/label>' +
+            '<\/div>' +
+            '<\/div>' +
+            '<div class="col-auto">after<\/div>' +
+            '<div class="col-auto">' +
+            '<input type="number" class="form-control form-control-sm" id="lifecycleNoncurrentDays" min="1" step="1" style="width: 6rem;" value="' + (rule.noncurrent_version_expiration_days || '') + '"' + (noncurrentActive ? '' : ' disabled') + '>' +
+            '<\/div><div class="col-auto">days (optional), keep<\/div>' +
+            '<div class="col-auto">' +
+            '<input type="number" class="form-control form-control-sm" id="lifecycleNoncurrentKeep" min="0" step="1" style="width: 6rem;" value="' + (rule.newer_noncurrent_versions || '') + '"' + (noncurrentActive ? '' : ' disabled') + '>' +
+            '<\/div><div class="col-auto">newest (optional)<\/div>' +
+            '<\/div>';
+        })() +
+
+        '<div class="row g-2 align-items-center mb-3">' +
+        '<div class="col-auto">' +
+        '<div class="form-check">' +
+        '<input class="form-check-input" type="checkbox" id="lifecycleAbortMPUEnabled"' + (rule.abort_multipart_days ? ' checked' : '') + '>' +
+        '<label class="form-check-label" for="lifecycleAbortMPUEnabled">Abort incomplete multipart uploads after<\/label>' +
+        '<\/div>' +
+        '<\/div>' +
+        '<div class="col-auto">' +
+        '<input type="number" class="form-control form-control-sm" id="lifecycleAbortMPUDays" min="1" step="1" style="width: 6rem;" value="' + (rule.abort_multipart_days || '') + '"' + (rule.abort_multipart_days ? '' : ' disabled') + '>' +
+        '<\/div><div class="col-auto">days<\/div>' +
+        '<\/div>' +
+
+        '<div class="text-end">' +
+        '<button type="button" class="btn btn-sm btn-secondary" id="lifecycleCancelRuleBtn">Cancel<\/button> ' +
+        '<button type="button" class="btn btn-sm btn-primary" id="lifecycleSaveRuleBtn">Save rule<\/button>' +
+        '<\/div>' +
+        '<\/div>' +
+        '<\/div>';
+}
+
+function renderLifecycleEditor() {
+    const container = document.getElementById('bucketLifecycleContent');
+    const rowsHtml = lifecycleEditor.rules.map(lifecycleRuleRowHtml).join('') ||
+        '<tr><td colspan="5" class="text-center text-muted py-3">No lifecycle rules<\/td><\/tr>';
+
+    let html = '';
+    if (lifecycleEditor.hasTransition) {
+        html += '<div class="alert alert-warning small">' +
+            '<i class="fas fa-triangle-exclamation me-1"><\/i>' +
+            'This bucket has a Transition rule set outside the admin (SeaweedFS does not support storage class transitions). Saving from here will drop it.' +
+            '<\/div>';
     }
 
-    function formatBytes(bytes) {
-        if (bytes === 0) return '0 Bytes';
-        const k = 1024;
-        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    html += '<div class="table-responsive mb-3">' +
+        '<table class="table table-sm align-middle">' +
+        '<thead><tr><th>Rule<\/th><th>Status<\/th><th>Scope<\/th><th>Actions<\/th><th><\/th><\/tr><\/thead>' +
+        '<tbody>' + rowsHtml + '<\/tbody>' +
+        '<\/table>' +
+        '<\/div>' +
+        '<button type="button" class="btn btn-sm btn-outline-primary mb-3" id="lifecycleAddRuleBtn">' +
+        '<i class="fas fa-plus me-1"><\/i>Add rule' +
+        '<\/button>';
+
+    if (lifecycleEditor.editingIndex !== null) {
+        html += lifecycleRuleFormHtml();
     }
 
-    function days(n) {
-        return n + (n === 1 ? ' day' : ' days');
+    if (lifecycleEditor.rawXml) {
+        html += '<details class="mt-2">' +
+            '<summary class="text-muted small">Raw XML (as currently stored)<\/summary>' +
+            '<pre class="bg-light border rounded p-2 mt-2 small mb-0">' + escapeHtml(lifecycleEditor.rawXml) + '<\/pre>' +
+            '<\/details>';
     }
 
-    const rules = data.rules || [];
-    if (rules.length === 0) {
-        document.getElementById('bucketLifecycleContent').innerHTML =
-            '<div class="text-center text-muted py-4">No lifecycle configuration<\/div>';
+    container.innerHTML = html;
+    bindLifecycleEditorEvents();
+}
+
+function bindLifecycleToggle(checkboxId, fieldId, mutuallyExclusiveId) {
+    const checkbox = document.getElementById(checkboxId);
+    const field = document.getElementById(fieldId);
+    if (!checkbox || !field) return;
+    checkbox.addEventListener('change', function() {
+        field.disabled = !this.checked;
+        if (this.checked && mutuallyExclusiveId) {
+            const other = document.getElementById(mutuallyExclusiveId);
+            if (other && other.checked) {
+                other.checked = false;
+                other.dispatchEvent(new Event('change'));
+            }
+        }
+    });
+}
+
+function bindLifecycleEditorEvents() {
+    const addBtn = document.getElementById('lifecycleAddRuleBtn');
+    if (addBtn) {
+        addBtn.addEventListener('click', function() {
+            // Fold in any rule already being edited before switching forms,
+            // so an invalid in-progress draft isn't silently discarded.
+            if (!commitOpenLifecycleRuleForm()) return;
+            lifecycleEditor.editingIndex = 'new';
+            lifecycleEditor.editingRule = blankLifecycleRule();
+            renderLifecycleEditor();
+        });
+    }
+
+    document.querySelectorAll('.lifecycle-edit-rule-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const idx = parseInt(this.dataset.index, 10);
+            // Same as above: committing never shifts indices (it either
+            // pushes a new rule at the end or replaces one in place), so
+            // idx captured above is still valid after this call.
+            if (!commitOpenLifecycleRuleForm()) return;
+            lifecycleEditor.editingIndex = idx;
+            lifecycleEditor.editingRule = cloneLifecycleRule(lifecycleEditor.rules[idx]);
+            renderLifecycleEditor();
+        });
+    });
+
+    document.querySelectorAll('.lifecycle-delete-rule-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const idx = parseInt(this.dataset.index, 10);
+            // Fold in an open form first, like every other transition does:
+            // re-rendering after the splice would otherwise redraw it from the
+            // snapshot taken when editing began and lose what was typed.
+            if (lifecycleEditor.editingIndex !== null && lifecycleEditor.editingIndex !== idx) {
+                if (!commitOpenLifecycleRuleForm()) return;
+            }
+            lifecycleEditor.rules.splice(idx, 1);
+            // Deleting a rule shifts every later index down by one, so an
+            // open edit form must follow its rule rather than silently
+            // start targeting whatever now sits at its old index.
+            if (lifecycleEditor.editingIndex === idx) {
+                lifecycleEditor.editingIndex = null;
+                lifecycleEditor.editingRule = null;
+            } else if (typeof lifecycleEditor.editingIndex === 'number' && lifecycleEditor.editingIndex > idx) {
+                lifecycleEditor.editingIndex -= 1;
+            }
+            renderLifecycleEditor();
+        });
+    });
+
+    const cancelBtn = document.getElementById('lifecycleCancelRuleBtn');
+    if (cancelBtn) {
+        cancelBtn.addEventListener('click', function() {
+            lifecycleEditor.editingIndex = null;
+            lifecycleEditor.editingRule = null;
+            renderLifecycleEditor();
+        });
+    }
+
+    const addTagBtn = document.getElementById('lifecycleAddTagBtn');
+    if (addTagBtn) {
+        addTagBtn.addEventListener('click', function() {
+            const rows = document.getElementById('lifecycleTagRows');
+            const row = document.createElement('div');
+            row.className = 'input-group input-group-sm mb-1 lifecycle-tag-row';
+            row.innerHTML =
+                '<input type="text" class="form-control lifecycle-tag-key" placeholder="Key">' +
+                '<input type="text" class="form-control lifecycle-tag-value" placeholder="Value">' +
+                '<button type="button" class="btn btn-outline-danger lifecycle-remove-tag-btn"><i class="fas fa-times"><\/i><\/button>';
+            rows.appendChild(row);
+            row.querySelector('.lifecycle-remove-tag-btn').addEventListener('click', function() {
+                row.remove();
+            });
+        });
+    }
+
+    document.querySelectorAll('.lifecycle-remove-tag-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            this.closest('.lifecycle-tag-row').remove();
+        });
+    });
+
+    bindLifecycleToggle('lifecycleExpireDaysEnabled', 'lifecycleExpireDays', 'lifecycleExpireDateEnabled');
+    bindLifecycleToggle('lifecycleExpireDateEnabled', 'lifecycleExpireDate', 'lifecycleExpireDaysEnabled');
+    bindLifecycleToggle('lifecycleNoncurrentEnabled', 'lifecycleNoncurrentDays');
+    bindLifecycleToggle('lifecycleNoncurrentEnabled', 'lifecycleNoncurrentKeep');
+    bindLifecycleToggle('lifecycleAbortMPUEnabled', 'lifecycleAbortMPUDays');
+
+    const saveRuleBtn = document.getElementById('lifecycleSaveRuleBtn');
+    if (saveRuleBtn) {
+        saveRuleBtn.addEventListener('click', saveLifecycleRuleFromForm);
+    }
+}
+
+// readLifecycleRuleFromForm builds and validates a rule from the currently
+// open edit form's DOM inputs. Returns { rule: null, error: '...' } when the
+// form doesn't hold a valid rule, without mutating any state.
+function readLifecycleRuleFromForm() {
+    const id = document.getElementById('lifecycleRuleId').value.trim();
+    const status = document.querySelector('input[name="lifecycleRuleStatus"]:checked').value;
+    const prefix = document.getElementById('lifecycleRulePrefix').value.trim();
+
+    const tags = {};
+    document.querySelectorAll('#lifecycleTagRows .lifecycle-tag-row').forEach(row => {
+        const key = row.querySelector('.lifecycle-tag-key').value.trim();
+        const value = row.querySelector('.lifecycle-tag-value').value.trim();
+        if (key) {
+            tags[key] = value;
+        }
+    });
+
+    const sizeGT = parseInt(document.getElementById('lifecycleRuleSizeGT').value, 10) || 0;
+    const sizeLT = parseInt(document.getElementById('lifecycleRuleSizeLT').value, 10) || 0;
+
+    const expireDaysEnabled = document.getElementById('lifecycleExpireDaysEnabled').checked;
+    const expireDateEnabled = document.getElementById('lifecycleExpireDateEnabled').checked;
+    const expirationDays = expireDaysEnabled ? (parseInt(document.getElementById('lifecycleExpireDays').value, 10) || 0) : 0;
+    const expirationDate = expireDateEnabled ? document.getElementById('lifecycleExpireDate').value : '';
+
+    const deleteMarker = document.getElementById('lifecycleDeleteMarker').checked;
+
+    const noncurrentEnabled = document.getElementById('lifecycleNoncurrentEnabled').checked;
+    const noncurrentDays = noncurrentEnabled ? (parseInt(document.getElementById('lifecycleNoncurrentDays').value, 10) || 0) : 0;
+    const noncurrentKeep = noncurrentEnabled ? (parseInt(document.getElementById('lifecycleNoncurrentKeep').value, 10) || 0) : 0;
+
+    const abortEnabled = document.getElementById('lifecycleAbortMPUEnabled').checked;
+    const abortDays = abortEnabled ? (parseInt(document.getElementById('lifecycleAbortMPUDays').value, 10) || 0) : 0;
+
+    if (expireDaysEnabled && expirationDays <= 0) {
+        return { rule: null, error: 'Enter a valid number of days for expiration.' };
+    }
+    if (expireDateEnabled && !expirationDate) {
+        return { rule: null, error: 'Enter a valid expiration date.' };
+    }
+    if (noncurrentEnabled && noncurrentDays <= 0 && noncurrentKeep <= 0) {
+        return { rule: null, error: 'Enter a number of days and/or a newest-versions-to-keep count for noncurrent version handling.' };
+    }
+    if (abortEnabled && abortDays <= 0) {
+        return { rule: null, error: 'Enter a valid number of days for aborting incomplete multipart uploads.' };
+    }
+    if (!expireDaysEnabled && !expireDateEnabled && !deleteMarker && !noncurrentEnabled && !abortEnabled) {
+        return { rule: null, error: 'Select at least one action for this rule.' };
+    }
+    // The server rejects this combination too; catching it here names the two
+    // fields instead of surfacing a 400 after the whole set is submitted.
+    if (deleteMarker && (expireDaysEnabled || expireDateEnabled)) {
+        return { rule: null, error: 'Removing expired object delete markers cannot be combined with an expiration.' };
+    }
+    if (sizeGT > 0 && sizeLT > 0 && sizeGT >= sizeLT) {
+        return { rule: null, error: '"Size greater than" must be less than "size less than".' };
+    }
+
+    return {
+        rule: {
+            id: id,
+            status: status,
+            prefix: prefix,
+            tags: tags,
+            size_greater_than: sizeGT > 0 ? sizeGT : null,
+            size_less_than: sizeLT > 0 ? sizeLT : null,
+            expiration_days: expirationDays > 0 ? expirationDays : null,
+            expiration_date: expirationDate || '',
+            expired_object_delete_marker: deleteMarker,
+            noncurrent_version_expiration_days: noncurrentDays > 0 ? noncurrentDays : null,
+            newer_noncurrent_versions: noncurrentKeep > 0 ? noncurrentKeep : null,
+            abort_multipart_days: abortDays > 0 ? abortDays : null,
+        },
+        error: null,
+    };
+}
+
+function saveLifecycleRuleFromForm() {
+    const { rule, error } = readLifecycleRuleFromForm();
+    if (error) {
+        alert(error);
         return;
     }
 
-    function describeScope(rule) {
-        const parts = [];
-        if (rule.prefix) {
-            parts.push('<code>' + escapeHtml(rule.prefix) + '<\/code>');
-        }
-        Object.entries(rule.tags || {}).forEach(([k, v]) => {
-            parts.push('<span class="badge bg-light text-dark border">' + escapeHtml(k) + '=' + escapeHtml(v) + '<\/span>');
-        });
-        if (rule.size_greater_than) {
-            parts.push('size &gt; ' + formatBytes(rule.size_greater_than));
-        }
-        if (rule.size_less_than) {
-            parts.push('size &lt; ' + formatBytes(rule.size_less_than));
-        }
-        return parts.length ? parts.join(' ') : '<span class="text-muted">Whole bucket<\/span>';
+    if (lifecycleEditor.editingIndex === 'new') {
+        lifecycleEditor.rules.push(rule);
+    } else {
+        lifecycleEditor.rules[lifecycleEditor.editingIndex] = rule;
+    }
+    lifecycleEditor.editingIndex = null;
+    lifecycleEditor.editingRule = null;
+    renderLifecycleEditor();
+}
+
+// commitOpenLifecycleRuleForm folds an in-progress add/edit form into
+// lifecycleEditor.rules before the whole rule set is sent to the server, so
+// clicking the modal's "Save" without first clicking "Save rule" doesn't
+// silently drop the open edit. Returns false (and leaves the form open) when
+// the open form doesn't hold a valid rule, so the caller can abort the save.
+function commitOpenLifecycleRuleForm() {
+    if (lifecycleEditor.editingIndex === null) {
+        return true;
     }
 
-    function describeActions(rule) {
-        const actions = [];
-        if (rule.expiration_days) {
-            actions.push('Expire after ' + days(rule.expiration_days));
-        }
-        if (rule.expiration_date) {
-            actions.push('Expire on ' + escapeHtml(rule.expiration_date));
-        }
-        if (rule.expired_object_delete_marker) {
-            actions.push('Remove expired object delete markers');
-        }
-        if (rule.noncurrent_version_expiration_days) {
-            let action = 'Expire noncurrent versions after ' + days(rule.noncurrent_version_expiration_days);
-            if (rule.newer_noncurrent_versions) {
-                action += ', keep ' + rule.newer_noncurrent_versions + ' newest';
-            }
-            actions.push(action);
-        }
-        if (rule.abort_multipart_days) {
-            actions.push('Abort incomplete multipart uploads after ' + days(rule.abort_multipart_days));
-        }
-        if (actions.length === 0) {
-            return '<span class="text-muted">None<\/span>';
-        }
-        return actions.join('<br>');
+    const { rule, error } = readLifecycleRuleFromForm();
+    if (error) {
+        alert(error);
+        return false;
     }
 
-    const rows = [
-        '<div class="table-responsive">',
-        '<table class="table table-sm">',
-        '<thead><tr><th>Rule<\/th><th>Status<\/th><th>Scope<\/th><th>Actions<\/th><\/tr><\/thead>',
-        '<tbody>'
-    ];
-
-    rules.forEach(rule => {
-        const statusHtml = rule.status === 'Enabled'
-            ? '<span class="badge bg-success">Enabled<\/span>'
-            : '<span class="badge bg-secondary">' + escapeHtml(rule.status) + '<\/span>';
-        rows.push(
-            '<tr>' +
-            '<td>' + (rule.id ? escapeHtml(rule.id) : '<span class="text-muted">unnamed<\/span>') + '<\/td>' +
-            '<td>' + statusHtml + '<\/td>' +
-            '<td>' + describeScope(rule) + '<\/td>' +
-            '<td>' + describeActions(rule) + '<\/td>' +
-            '<\/tr>'
-        );
-    });
-
-    rows.push('<\/tbody>', '<\/table>', '<\/div>');
-
-    if (data.xml) {
-        rows.push(
-            '<details class="mt-2">',
-            '<summary class="text-muted small">Raw XML<\/summary>',
-            '<pre class="bg-light border rounded p-2 mt-2 small mb-0">' + escapeHtml(data.xml) + '<\/pre>',
-            '<\/details>'
-        );
+    if (lifecycleEditor.editingIndex === 'new') {
+        lifecycleEditor.rules.push(rule);
+    } else {
+        lifecycleEditor.rules[lifecycleEditor.editingIndex] = rule;
     }
-
-    document.getElementById('bucketLifecycleContent').innerHTML = rows.join('');
+    lifecycleEditor.editingIndex = null;
+    lifecycleEditor.editingRule = null;
+    renderLifecycleEditor();
+    return true;
 }
 
     function goToPage(page) {
@@ -1378,14 +1901,6 @@ function displayBucketLifecycle(data) {
                 return '"' + str.replace(/"/g, '""') + '"';
             }
             return '"' + str + '"';
-        }
-
-        function formatBytes(bytes) {
-            if (bytes === 0) return '0 Bytes';
-            const k = 1024;
-            const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-            const i = Math.floor(Math.log(bytes) / Math.log(k));
-            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
         }
 
         // Fetch all buckets from the API (not just the current page)

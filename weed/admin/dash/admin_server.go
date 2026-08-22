@@ -1001,6 +1001,133 @@ func toBucketLifecycleRule(rule *s3lifecycle.Rule) BucketLifecycleRule {
 	return out
 }
 
+// fromBucketLifecycleRule is the inverse of toBucketLifecycleRule, turning a
+// rule edited in the admin UI back into the engine's canonical shape.
+func fromBucketLifecycleRule(rule BucketLifecycleRule) (*s3lifecycle.Rule, error) {
+	out := &s3lifecycle.Rule{
+		ID:                              rule.ID,
+		Status:                          rule.Status,
+		Prefix:                          rule.Prefix,
+		FilterTags:                      rule.Tags,
+		FilterSizeGreaterThan:           rule.SizeGreaterThan,
+		FilterSizeLessThan:              rule.SizeLessThan,
+		ExpirationDays:                  rule.ExpirationDays,
+		ExpiredObjectDeleteMarker:       rule.ExpiredObjectDeleteMarker,
+		NoncurrentVersionExpirationDays: rule.NoncurrentVersionExpirationDays,
+		NewerNoncurrentVersions:         rule.NewerNoncurrentVersions,
+		AbortMPUDaysAfterInitiation:     rule.AbortMultipartDays,
+	}
+	if rule.ExpirationDate != "" {
+		date, err := time.Parse(time.DateOnly, rule.ExpirationDate)
+		if err != nil {
+			return nil, fmt.Errorf("invalid expiration date %q: %w", rule.ExpirationDate, err)
+		}
+		out.ExpirationDate = date
+	}
+	return out, nil
+}
+
+// ErrBucketNotFound reports that the named bucket has no filer entry, so a
+// handler can answer 404 rather than 500.
+var ErrBucketNotFound = errors.New("bucket not found")
+
+// SetBucketLifecycle replaces the lifecycle configuration stored on a
+// bucket's filer entry. An empty rule list clears the configuration
+// entirely, mirroring clearStoredBucketLifecycleConfiguration on the S3 API
+// side. Callers must validate rules before calling this (see
+// validateBucketLifecycleRules) — this only rejects what marshaling itself
+// rejects.
+func (s *AdminServer) SetBucketLifecycle(bucketName string, rules []BucketLifecycleRule) error {
+	canonicalRules := make([]*s3lifecycle.Rule, 0, len(rules))
+	for _, rule := range rules {
+		canonicalRule, err := fromBucketLifecycleRule(rule)
+		if err != nil {
+			return err
+		}
+		canonicalRules = append(canonicalRules, canonicalRule)
+	}
+
+	var lifecycleXML []byte
+	if len(canonicalRules) > 0 {
+		var err error
+		lifecycleXML, err = lifecycle_xml.MarshalCanonical(canonicalRules)
+		if err != nil {
+			return fmt.Errorf("marshal lifecycle configuration: %w", err)
+		}
+		if len(lifecycleXML) > scheduler.MaxBucketLifecycleConfigurationSize {
+			return fmt.Errorf("lifecycle configuration is %d bytes, which exceeds the %d byte limit", len(lifecycleXML), scheduler.MaxBucketLifecycleConfigurationSize)
+		}
+	}
+
+	filerConfig, err := s.getFilerConfig()
+	if err != nil {
+		return fmt.Errorf("get filer configuration: %w", err)
+	}
+	collection := getCollectionName(filerConfig.FilerGroup, bucketName)
+
+	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		// PATCH_EXTENDED is a no-op on a missing entry, so the existence
+		// check has to happen here rather than fall out of the write.
+		if _, err := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
+			Directory: filerConfig.BucketsPath,
+			Name:      bucketName,
+		}); err != nil {
+			if errors.Is(err, filer_pb.ErrNotFound) {
+				return fmt.Errorf("%w: %s", ErrBucketNotFound, bucketName)
+			}
+			return fmt.Errorf("look up bucket %s: %w", bucketName, err)
+		}
+
+		// Migration: clear any legacy day-TTL filer.conf entries before
+		// writing the new XML, so a failure here leaves the bucket entry
+		// untouched instead of committing the new policy alongside a stale
+		// TTL rule. Same step and ordering as
+		// PutBucketLifecycleConfigurationHandler.
+		if err := filer.ClearBucketLifecycleDayTTLs(context.Background(), client, filerConfig.BucketsPath, bucketName, collection); err != nil {
+			return fmt.Errorf("failed to clear legacy lifecycle TTLs: %w", err)
+		}
+
+		bucketPath := filerConfig.BucketsPath + "/" + bucketName
+		resp, err := client.ObjectTransaction(context.Background(), &filer_pb.ObjectTransactionRequest{
+			LockKey:   bucketPath,
+			RouteKey:  s3_constants.ObjectWriteRouteKeyPrefix + bucketPath,
+			Mutations: []*filer_pb.ObjectMutation{bucketLifecycleMutation(filerConfig.BucketsPath, bucketName, lifecycleXML)},
+		})
+		if err != nil {
+			return fmt.Errorf("failed to update bucket lifecycle: %w", err)
+		}
+		if resp.Error != "" {
+			return fmt.Errorf("failed to update bucket lifecycle: %s", resp.Error)
+		}
+		return nil
+	})
+}
+
+// bucketLifecycleMutation patches the two lifecycle keys rather than writing
+// the whole entry back: the filer re-reads and merges under the bucket path
+// lock, so a concurrent owner/quota/versioning change is preserved instead of
+// being reverted by a stale snapshot. Same mutation the S3 gateway uses for
+// these keys (see patchBucketEntry in s3api_bucket_config.go). Empty XML
+// clears the configuration, transition minimum size included.
+func bucketLifecycleMutation(bucketsPath, bucketName string, lifecycleXML []byte) *filer_pb.ObjectMutation {
+	mutation := &filer_pb.ObjectMutation{
+		Type:      filer_pb.ObjectMutation_PATCH_EXTENDED,
+		Directory: bucketsPath,
+		Name:      bucketName,
+	}
+	if len(lifecycleXML) > 0 {
+		mutation.SetExtended = map[string][]byte{
+			scheduler.BucketLifecycleConfigurationXMLKey: lifecycleXML,
+		}
+		return mutation
+	}
+	mutation.DeleteExtended = []string{
+		scheduler.BucketLifecycleConfigurationXMLKey,
+		scheduler.BucketLifecycleTransitionMinimumObjectSizeKey,
+	}
+	return mutation
+}
+
 // CreateS3Bucket creates a new S3 bucket
 func (s *AdminServer) CreateS3Bucket(bucketName string) error {
 	return s.CreateS3BucketWithQuota(bucketName, 0, false)

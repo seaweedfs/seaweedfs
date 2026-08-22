@@ -3,6 +3,7 @@ package filer
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -41,12 +42,19 @@ func ReadInsideFiler(ctx context.Context, filerClient filer_pb.SeaweedFilerClien
 	return
 }
 
+// SaveInsideFiler writes content into the entry's inline Content. The content
+// MD5 is stamped on every write so the entry's ETag always describes what is
+// actually stored: conditional writers key IF_ETAG_MATCH off it, and a hash
+// left behind by an earlier write would make that condition pass against
+// content that has since changed.
 func SaveInsideFiler(ctx context.Context, client filer_pb.SeaweedFilerClient, dir, name string, content []byte) error {
 
 	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
 		Directory: dir,
 		Name:      name,
 	})
+
+	contentMd5 := md5.Sum(content)
 
 	if err == filer_pb.ErrNotFound {
 		err = filer_pb.CreateEntry(ctx, client, &filer_pb.CreateEntryRequest{
@@ -59,6 +67,7 @@ func SaveInsideFiler(ctx context.Context, client filer_pb.SeaweedFilerClient, di
 					Crtime:   time.Now().Unix(),
 					FileMode: uint32(0644),
 					FileSize: uint64(len(content)),
+					Md5:      contentMd5[:],
 				},
 				Content: content,
 			},
@@ -69,6 +78,7 @@ func SaveInsideFiler(ctx context.Context, client filer_pb.SeaweedFilerClient, di
 		entry.Content = content
 		entry.Attributes.Mtime = time.Now().Unix()
 		entry.Attributes.FileSize = uint64(len(content))
+		entry.Attributes.Md5 = contentMd5[:]
 		err = filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
 			Directory: dir,
 			Entry:     entry,
