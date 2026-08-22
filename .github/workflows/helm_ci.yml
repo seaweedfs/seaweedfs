@@ -1560,10 +1560,15 @@ jobs:
             -s templates/master/master-statefulset.yaml | awk '$1 == "image:" {print $2; exit}')
           REPO=${IMAGE%:*}
           TAG=${IMAGE##*:}
-          if curl -sfL -o /dev/null "https://hub.docker.com/v2/repositories/$REPO/tags/$TAG"; then
+          # Anything but a published tag installs latest, which between releases
+          # is the same digest as the chart's own appVersion, so a registry blip
+          # costs nothing while failing the job on one would cost a red build.
+          STATUS=$(curl -sSL --connect-timeout 5 --max-time 15 -o /dev/null \
+            -w '%{http_code}' "https://hub.docker.com/v2/repositories/$REPO/tags/$TAG" || true)
+          if [ "$STATUS" = 200 ]; then
             echo "installing $IMAGE"
           else
-            echo "$IMAGE is not published yet, installing $REPO:latest"
+            echo "$IMAGE is unavailable (HTTP ${STATUS:-none}), installing $REPO:latest"
             TAG=latest
           fi
           echo "IMAGE_TAG=$TAG" >> $GITHUB_ENV
