@@ -190,7 +190,9 @@ func TestReadWithVolumeServerDown(t *testing.T) {
 		t.Logf("read %s (held by volume%d) with volume%d down in %v", name, victim, victim, elapsed)
 
 		require.NoError(t, c.StartVolume(victim))
-		time.Sleep(3 * time.Second) // let the master see the heartbeat again
+		// The next iteration picks its victim from the master's placement view,
+		// so wait for the restarted server to be in it again.
+		require.NoError(t, c.WaitForVolumeServers(60*time.Second))
 	}
 }
 
