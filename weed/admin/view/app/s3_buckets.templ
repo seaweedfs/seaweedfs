@@ -732,12 +732,16 @@ templ S3Buckets(data dash.S3BucketsData) {
             .replace(/'/g, '&#39;');
     }
 
-    function formatBytes(bytes) {
+    // Shadows admin.js's formatBytes for this page, so it keeps that
+    // signature and unit list; the extra guard is for a size the API left
+    // out, which the shared one renders as "NaN undefined".
+    function formatBytes(bytes, decimals = 2) {
         if (!bytes) return '0 Bytes';
         const k = 1024;
-        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+        const dm = decimals < 0 ? 0 : decimals;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB'];
         const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
     }
 
     function formatDays(n) {
@@ -1190,6 +1194,12 @@ templ S3Buckets(data dash.S3BucketsData) {
             // Fold in any rule the user is still editing so Save doesn't
             // silently discard it; abort if that form isn't valid yet.
             if (!commitOpenLifecycleRuleForm()) return;
+            // An empty list clears the configuration, same as Delete all rules,
+            // so it gets the same prompt.
+            if (lifecycleEditor.rules.length === 0 &&
+                !confirm('No rules left: saving removes the lifecycle configuration for ' + lifecycleEditor.bucket + '. This cannot be undone.')) {
+                return;
+            }
 
             fetch(basePath('/api/s3/buckets/' + lifecycleEditor.bucket + '/lifecycle'), {
                 method: 'PUT',
@@ -1268,23 +1278,6 @@ templ S3Buckets(data dash.S3BucketsData) {
 
 function displayBucketDetails(data) {
     const bucket = data.bucket;
-
-    function escapeHtml(v) {
-        return String(v ?? '')
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
-
-    function formatBytes(bytes) {
-        if (bytes === 0) return '0 Bytes';
-        const k = 1024;
-        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-    }
 
     function formatDate(dateString) {
         const date = new Date(dateString);
@@ -1369,14 +1362,25 @@ function displayBucketLifecycle(data) {
     // rejects them for Enabled rules), and the canonical rule shape the admin
     // edits has no field for one, so a Transition set by another client would
     // silently disappear on the next Save. Warn instead.
-    lifecycleEditor.hasTransition = /<Transition>|<NoncurrentVersionTransition>/.test(data.xml || '');
+    // Matches <Transition> and <NoncurrentVersionTransition> however they are
+    // spelled: with attributes, self-closed, or namespace-prefixed.
+    lifecycleEditor.hasTransition = /<(\w+:)?(NoncurrentVersion)?Transition[\s>\/]/.test(data.xml || '');
     renderLifecycleEditor();
+}
+
+// normalizeLifecycleStatus maps a stored status onto the two the editor can
+// show. The S3 API stores <Status> unvalidated, and the engine runs a rule
+// only on an exact "Enabled", so everything else is Disabled - collapsing it
+// here keeps an odd spelling from leaving both radios unchecked, which would
+// throw out of readLifecycleRuleFromForm and make the modal look dead.
+function normalizeLifecycleStatus(status) {
+    return status === 'Enabled' ? 'Enabled' : 'Disabled';
 }
 
 function cloneLifecycleRule(r) {
     return {
         id: r.id || '',
-        status: r.status || 'Enabled',
+        status: normalizeLifecycleStatus(r.status),
         prefix: r.prefix || '',
         tags: Object.assign({}, r.tags || {}),
         size_greater_than: r.size_greater_than || null,
@@ -1674,6 +1678,12 @@ function bindLifecycleEditorEvents() {
     document.querySelectorAll('.lifecycle-delete-rule-btn').forEach(btn => {
         btn.addEventListener('click', function() {
             const idx = parseInt(this.dataset.index, 10);
+            // Fold in an open form first, like every other transition does:
+            // re-rendering after the splice would otherwise redraw it from the
+            // snapshot taken when editing began and lose what was typed.
+            if (lifecycleEditor.editingIndex !== null && lifecycleEditor.editingIndex !== idx) {
+                if (!commitOpenLifecycleRuleForm()) return;
+            }
             lifecycleEditor.rules.splice(idx, 1);
             // Deleting a rule shifts every later index down by one, so an
             // open edit form must follow its rule rather than silently
@@ -1781,6 +1791,11 @@ function readLifecycleRuleFromForm() {
     if (!expireDaysEnabled && !expireDateEnabled && !deleteMarker && !noncurrentEnabled && !abortEnabled) {
         return { rule: null, error: 'Select at least one action for this rule.' };
     }
+    // The server rejects this combination too; catching it here names the two
+    // fields instead of surfacing a 400 after the whole set is submitted.
+    if (deleteMarker && (expireDaysEnabled || expireDateEnabled)) {
+        return { rule: null, error: 'Removing expired object delete markers cannot be combined with an expiration.' };
+    }
     if (sizeGT > 0 && sizeLT > 0 && sizeGT >= sizeLT) {
         return { rule: null, error: '"Size greater than" must be less than "size less than".' };
     }
@@ -1886,14 +1901,6 @@ function commitOpenLifecycleRuleForm() {
                 return '"' + str.replace(/"/g, '""') + '"';
             }
             return '"' + str + '"';
-        }
-
-        function formatBytes(bytes) {
-            if (bytes === 0) return '0 Bytes';
-            const k = 1024;
-            const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-            const i = Math.floor(Math.log(bytes) / Math.log(k));
-            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
         }
 
         // Fetch all buckets from the API (not just the current page)
