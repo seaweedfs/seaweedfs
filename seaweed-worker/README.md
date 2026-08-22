@@ -12,6 +12,18 @@ one.
 `core` knows nothing about any job. A second worker is a new crate beside
 `lance` that depends on it, not a fork of the protocol.
 
+## Building
+
+`core` compiles `plugin.proto` with the protoc that protoc-bin-vendored ships,
+the way seaweed-volume does, so it needs no system install. The lance crates
+compile protos of their own and look for a protoc on PATH or in `PROTOC`, and
+they honour the same vendored one:
+
+    PROTOC=$(find ~/.cargo/registry/src -path '*protoc-bin-vendored-*/bin/protoc' | head -1) \
+      cargo build --release
+
+which is what CI does. A protoc from the platform's package manager works too.
+
 ## Running
 
     cargo run -p weed-lance-worker -- --admin 127.0.0.1:23646
