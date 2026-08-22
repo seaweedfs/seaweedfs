@@ -380,6 +380,11 @@ templ Policies(data dash.PoliciesData) {
 
     const POLICY_STATEMENT_KNOWN_KEYS = ['Sid', 'Effect', 'Action', 'Resource', 'NotResource'];
 
+    // Shown for a policy that parsed as JSON but that the structured editor
+    // can't represent, so its editor state carries { unparsed: true } and the
+    // document only ever lives in the JSON tab.
+    const POLICY_JSON_TAB_ONLY_MESSAGE = 'This policy can only be edited on the JSON tab.';
+
     // Maps a policy-list-item's data-field attribute to the editor-state
     // array it belongs to.
     const POLICY_LIST_FIELD_TO_STATE_KEY = { action: 'actions', resource: 'resources', principal: 'principalValues' };
@@ -597,6 +602,11 @@ templ Policies(data dash.PoliciesData) {
         if (!container) return;
         const state = policyEditors[which];
 
+        if (state.unparsed) {
+            container.innerHTML = '<p class="text-muted">This policy uses a form the structured editor cannot show. Edit it on the JSON tab.</p>';
+            return;
+        }
+
         if (state.statements.length === 0) {
             container.innerHTML = '<p class="text-muted">No statements yet. Click "Add statement" to create one.</p>';
             return;
@@ -761,6 +771,10 @@ templ Policies(data dash.PoliciesData) {
     }
 
     function addPolicyStatement(which) {
+        if (policyEditors[which].unparsed) {
+            showAlert(POLICY_JSON_TAB_ONLY_MESSAGE, 'error');
+            return;
+        }
         commitPolicyEditorForm(which);
         policyEditors[which].statements.push({
             sid: '', effect: 'Allow', actions: [],
@@ -789,6 +803,12 @@ templ Policies(data dash.PoliciesData) {
             // into the structured editor to keep both in sync, but leave the
             // textarea's own text untouched.
             return commitPolicyTextareaToEditor(which);
+        }
+        if (policyEditors[which] && policyEditors[which].unparsed) {
+            // The editor never held this document, so serializing it would
+            // write an empty policy over whatever is in the JSON tab.
+            showAlert(POLICY_JSON_TAB_ONLY_MESSAGE, 'error');
+            return false;
         }
         try {
             commitPolicyEditorToTextarea(which);
@@ -821,6 +841,12 @@ templ Policies(data dash.PoliciesData) {
         const jsonTabBtn = document.getElementById(which + 'PolicyJsonTabBtn');
 
         jsonTabBtn.addEventListener('show.bs.tab', function(event) {
+            if (policyEditors[which].unparsed) {
+                // The editor never held this document; serializing its empty
+                // placeholder state would overwrite the textarea we are about
+                // to show, which is the only copy of it.
+                return;
+            }
             try {
                 commitPolicyEditorToTextarea(which);
             } catch (e) {
@@ -1287,7 +1313,20 @@ templ Policies(data dash.PoliciesData) {
         .then(policy => {
             currentPolicy = policy;
             document.getElementById('editPolicyDocument').value = JSON.stringify(policy.document, null, 2);
-            policyEditors.edit = policyDocToEditorState(policy.document);
+            let state;
+            try {
+                state = policyDocToEditorState(policy.document);
+            } catch (e) {
+                // Valid JSON the structured editor can't model. The JSON tab
+                // exists for exactly this, so hand the document over to it
+                // rather than closing the modal on the only view of it.
+                policyEditors.edit = { version: '2012-10-17', statements: [], otherFields: {}, unparsed: true };
+                renderPolicyEditor('edit');
+                showAlert(e.message + '. ' + POLICY_JSON_TAB_ONLY_MESSAGE, 'error');
+                bootstrap.Tab.getOrCreateInstance(document.getElementById('editPolicyJsonTabBtn')).show();
+                return;
+            }
+            policyEditors.edit = state;
             renderPolicyEditor('edit');
             const editorTab = bootstrap.Tab.getOrCreateInstance(document.getElementById('editPolicyEditorTabBtn'));
             editorTab.show();
