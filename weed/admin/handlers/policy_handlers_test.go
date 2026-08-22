@@ -107,6 +107,26 @@ func TestValidatePolicy(t *testing.T) {
 			},
 			wantStatus: http.StatusBadRequest,
 		},
+		{
+			name: "empty Resource alongside non-empty NotResource is still a conflict",
+			document: map[string]interface{}{
+				"Version": "2012-10-17",
+				"Statement": []map[string]interface{}{
+					{"Effect": "Allow", "Action": "s3:GetObject", "Resource": []string{}, "NotResource": "arn:aws:s3:::secret-bucket/*"},
+				},
+			},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "both Principal and NotPrincipal",
+			document: map[string]interface{}{
+				"Version": "2012-10-17",
+				"Statement": []map[string]interface{}{
+					{"Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::my-bucket/*", "Principal": "*", "NotPrincipal": "arn:aws:iam::123456789012:user/bob"},
+				},
+			},
+			wantStatus: http.StatusBadRequest,
+		},
 	}
 
 	for _, tt := range tests {

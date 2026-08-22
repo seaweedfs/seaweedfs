@@ -374,8 +374,14 @@ templ Policies(data dash.PoliciesData) {
     // so such fields are still dropped by the server on save; see
     // confirmPolicyFieldDiscard, which warns the user before that happens.
     function policyDocToEditorState(doc) {
-        const state = { version: (doc && doc.Version) || '2012-10-17', statements: [], otherFields: {} };
-        if (doc && typeof doc === 'object' && !Array.isArray(doc)) {
+        if (doc === null || typeof doc !== 'object') {
+            // null or a bare scalar (string/number/boolean) can't represent a
+            // policy document; treating it as "zero statements" would hide
+            // from the user that their input wasn't actually a document.
+            throw new Error('Policy document must be a JSON object (got ' + JSON.stringify(doc) + ')');
+        }
+        const state = { version: doc.Version || '2012-10-17', statements: [], otherFields: {} };
+        if (!Array.isArray(doc)) {
             Object.keys(doc).forEach(function(key) {
                 if (POLICY_DOCUMENT_KNOWN_KEYS.indexOf(key) === -1) {
                     state.otherFields[key] = doc[key];

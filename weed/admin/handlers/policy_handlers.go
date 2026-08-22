@@ -226,8 +226,13 @@ func (h *PolicyHandlers) ValidatePolicy(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 
-		if len(statement.Resource.Strings()) > 0 && len(statement.NotResource.Strings()) > 0 {
+		if statement.Resource != nil && statement.NotResource != nil {
 			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("Statement %d: cannot specify both Resource and NotResource", i+1))
+			return
+		}
+
+		if statement.Principal != nil && statement.NotPrincipal != nil {
+			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("Statement %d: cannot specify both Principal and NotPrincipal", i+1))
 			return
 		}
 	}
