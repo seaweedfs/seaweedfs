@@ -632,7 +632,6 @@ func (fs *FilerServer) tusWriteData(ctx context.Context, session *TusSession, of
 	// Upload in streaming chunks to avoid buffering entire content in memory
 	var totalWritten int64
 	var uploadErr error
-	var uploadedChunks []*TusChunkInfo
 
 	// Create one uploader for all sub-chunks to reuse HTTP client connections
 	uploader, uploaderErr := operation.NewUploader()
@@ -692,34 +691,19 @@ func (fs *FilerServer) tusWriteData(ctx context.Context, session *TusSession, of
 		}
 
 		if saveErr := fs.saveTusChunk(ctx, session.ID, chunk); saveErr != nil {
-			// Cleanup this chunk on failure
-			fs.filer.DeleteChunks(ctx, util.FullPath(session.TargetPath), []*filer_pb.FileChunk{
-				{FileId: fileId},
-			})
+			fs.deleteTusChunk(ctx, session, chunk)
 			uploadErr = fmt.Errorf("update session: %w", saveErr)
 			break
 		}
-
-		uploadedChunks = append(uploadedChunks, chunk)
 
 		totalWritten += int64(uploadResult.Size)
 		currentOffset += int64(uploadResult.Size)
 		stats.FilerHandlerCounter.WithLabelValues("tusUploadChunk").Inc()
 	}
 
-	if uploadErr != nil {
-		// Cleanup all uploaded chunks on error
-		if len(uploadedChunks) > 0 {
-			var chunksToDelete []*filer_pb.FileChunk
-			for _, c := range uploadedChunks {
-				chunksToDelete = append(chunksToDelete, &filer_pb.FileChunk{FileId: c.FileId})
-			}
-			fs.filer.DeleteChunks(ctx, util.FullPath(session.TargetPath), chunksToDelete)
-		}
-		return 0, uploadErr
-	}
-
-	return totalWritten, nil
+	// Sub-chunks already recorded stay: the session offset a resuming client
+	// reads back covers them, and the completed entry is assembled from them.
+	return totalWritten, uploadErr
 }
 
 // parseTusMetadata parses the Upload-Metadata header
