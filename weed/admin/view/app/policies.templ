@@ -349,6 +349,10 @@ templ Policies(data dash.PoliciesData) {
 
     const POLICY_STATEMENT_KNOWN_KEYS = ['Sid', 'Effect', 'Action', 'Resource', 'NotResource'];
 
+    // Maps a policy-list-item's data-field attribute to the editor-state
+    // array it belongs to.
+    const POLICY_LIST_FIELD_TO_STATE_KEY = { action: 'actions', resource: 'resources', principal: 'principalValues' };
+
     function policyTextareaId(which) {
         return which === 'create' ? 'policyDocument' : 'editPolicyDocument';
     }
@@ -409,11 +413,37 @@ templ Policies(data dash.PoliciesData) {
                 throw new Error('Statement ' + (idx + 1) + ': cannot specify both Resource and NotResource');
             }
             const resourceMode = hasNotResource ? 'NotResource' : 'Resource';
+
+            const hasPrincipal = Object.prototype.hasOwnProperty.call(stmt, 'Principal');
+            const hasNotPrincipal = Object.prototype.hasOwnProperty.call(stmt, 'NotPrincipal');
+            if (hasPrincipal && hasNotPrincipal) {
+                throw new Error('Statement ' + (idx + 1) + ': cannot specify both Principal and NotPrincipal');
+            }
+            let principalMode = 'Principal';
+            let principalValues = [];
+            let principalManaged = false;
+            let hasComplexPrincipal = false;
+            if (hasPrincipal || hasNotPrincipal) {
+                const principalKey = hasNotPrincipal ? 'NotPrincipal' : 'Principal';
+                const parsedValues = parseSimpleAwsPrincipal(stmt[principalKey]);
+                if (parsedValues) {
+                    principalMode = principalKey;
+                    principalValues = parsedValues;
+                    principalManaged = true;
+                } else {
+                    // Bare string/array, a type other than AWS, or multiple
+                    // types at once - this v1 editor only models a single
+                    // {"AWS": ...} form. Leave it in extras rather than
+                    // guessing or discarding it.
+                    hasComplexPrincipal = true;
+                }
+            }
+
             const extras = {};
             Object.keys(stmt).forEach(function(key) {
-                if (POLICY_STATEMENT_KNOWN_KEYS.indexOf(key) === -1) {
-                    extras[key] = stmt[key];
-                }
+                if (POLICY_STATEMENT_KNOWN_KEYS.indexOf(key) !== -1) return;
+                if (principalManaged && (key === 'Principal' || key === 'NotPrincipal')) return;
+                extras[key] = stmt[key];
             });
             state.statements.push({
                 sid: stmt.Sid || '',
@@ -421,10 +451,26 @@ templ Policies(data dash.PoliciesData) {
                 actions: normalizeToStringArray(stmt.Action),
                 resourceMode: resourceMode,
                 resources: normalizeToStringArray(hasNotResource ? stmt.NotResource : stmt.Resource),
+                principalMode: principalMode,
+                principalValues: principalValues,
+                hasComplexPrincipal: hasComplexPrincipal,
                 extras: Object.keys(extras).length ? JSON.stringify(extras, null, 2) : ''
             });
         });
         return state;
+    }
+
+    // Returns the flattened list of values if `value` is a policy Principal /
+    // NotPrincipal expressed as a single-key {"AWS": "..."} or
+    // {"AWS": ["...", ...]} object - the only form this editor's simple text
+    // field models. Returns null for anything else (bare string/array, a
+    // different type key, or multiple type keys at once), which the caller
+    // then leaves untouched in "extras".
+    function parseSimpleAwsPrincipal(value) {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+        const keys = Object.keys(value);
+        if (keys.length !== 1 || keys[0] !== 'AWS') return null;
+        return normalizeToStringArray(value.AWS);
     }
 
     // Converts editor state back into a policy document. Structured fields
@@ -482,6 +528,26 @@ templ Policies(data dash.PoliciesData) {
                 delete stmt.Resource;
                 delete stmt.NotResource;
             }
+            const principalValues = (s.principalValues || []).map(function(p) { return (p || '').trim(); }).filter(Boolean);
+            if (principalValues.length) {
+                // Same exclusivity rule as Resource/NotResource, and always
+                // written as the standard {"AWS": ...} form (v1 only models
+                // AWS principals). Structured values always win over
+                // whatever "extras" held for these keys.
+                delete stmt.Principal;
+                delete stmt.NotPrincipal;
+                const wrappedPrincipal = { AWS: principalValues.length === 1 ? principalValues[0] : principalValues };
+                if (s.principalMode === 'NotPrincipal') {
+                    stmt.NotPrincipal = wrappedPrincipal;
+                } else {
+                    stmt.Principal = wrappedPrincipal;
+                }
+            }
+            // If principalValues is empty, leave stmt.Principal/NotPrincipal
+            // untouched: it may hold a complex form preserved verbatim from
+            // "extras" (see parseSimpleAwsPrincipal) that the user never
+            // touched via this field, and clearing it here would silently
+            // discard it.
             doc.Statement.push(stmt);
         });
         return doc;
@@ -506,6 +572,9 @@ templ Policies(data dash.PoliciesData) {
             }).join('');
             const resourceRows = stmt.resources.map(function(resource, resourceIdx) {
                 return policyListRowHtml(which, idx, 'resource', resourceIdx, resource);
+            }).join('');
+            const principalRows = stmt.principalValues.map(function(principal, principalIdx) {
+                return policyListRowHtml(which, idx, 'principal', principalIdx, principal);
             }).join('');
 
             html +=
@@ -545,6 +614,18 @@ templ Policies(data dash.PoliciesData) {
                 '<div class="form-text mt-0 mb-1">NotResource: the statement applies to every resource except the ones listed.</div>' +
                 '<div class="policy-resource-rows" data-which="' + which + '" data-index="' + idx + '">' + resourceRows + '</div>' +
                 '<button type="button" class="btn btn-sm btn-outline-secondary policy-add-list-item-btn" data-which="' + which + '" data-index="' + idx + '" data-field="resource"><i class="fas fa-plus me-1"></i>Add resource</button>' +
+                '</div>' +
+                '<div class="mb-2">' +
+                '<label class="form-label me-2 mb-0">' +
+                '<select class="form-select form-select-sm d-inline-block w-auto policy-stmt-principal-mode" data-which="' + which + '" data-index="' + idx + '">' +
+                '<option value="Principal"' + (stmt.principalMode !== 'NotPrincipal' ? ' selected' : '') + '>Principal</option>' +
+                '<option value="NotPrincipal"' + (stmt.principalMode === 'NotPrincipal' ? ' selected' : '') + '>NotPrincipal</option>' +
+                '</select>' +
+                '</label>' +
+                '<div class="form-text mt-0 mb-1">Principal / NotPrincipal (AWS account or user ARN). Only the AWS type is supported here; other forms stay editable via Advanced fields.</div>' +
+                (stmt.hasComplexPrincipal ? '<div class="form-text text-warning mt-0 mb-1"><i class="fas fa-triangle-exclamation me-1"></i>This statement\'s Principal/NotPrincipal uses a form not supported by this field &mdash; see Advanced fields below.</div>' : '') +
+                '<div class="policy-principal-rows" data-which="' + which + '" data-index="' + idx + '">' + principalRows + '</div>' +
+                '<button type="button" class="btn btn-sm btn-outline-secondary policy-add-list-item-btn" data-which="' + which + '" data-index="' + idx + '" data-field="principal"><i class="fas fa-plus me-1"></i>Add principal</button>' +
                 '</div>' +
                 '<details' + (stmt.extras ? ' open' : '') + '>' +
                 '<summary class="text-muted">Advanced fields (Principal, NotPrincipal, Condition, raw JSON)</summary>' +
@@ -588,10 +669,14 @@ templ Policies(data dash.PoliciesData) {
             const idx = parseInt(el.getAttribute('data-index'), 10);
             if (state.statements[idx]) state.statements[idx].resourceMode = el.value;
         });
+        document.querySelectorAll('.policy-stmt-principal-mode[data-which="' + which + '"]').forEach(function(el) {
+            const idx = parseInt(el.getAttribute('data-index'), 10);
+            if (state.statements[idx]) state.statements[idx].principalMode = el.value;
+        });
         document.querySelectorAll('.policy-list-item[data-which="' + which + '"]').forEach(function(el) {
             const idx = parseInt(el.getAttribute('data-index'), 10);
             const itemIdx = parseInt(el.getAttribute('data-item-index'), 10);
-            const field = el.getAttribute('data-field') === 'action' ? 'actions' : 'resources';
+            const field = POLICY_LIST_FIELD_TO_STATE_KEY[el.getAttribute('data-field')] || 'resources';
             if (state.statements[idx] && state.statements[idx][field]) {
                 state.statements[idx][field][itemIdx] = el.value;
             }
@@ -639,7 +724,12 @@ templ Policies(data dash.PoliciesData) {
 
     function addPolicyStatement(which) {
         commitPolicyEditorForm(which);
-        policyEditors[which].statements.push({ sid: '', effect: 'Allow', actions: [], resourceMode: 'Resource', resources: [], extras: '' });
+        policyEditors[which].statements.push({
+            sid: '', effect: 'Allow', actions: [],
+            resourceMode: 'Resource', resources: [],
+            principalMode: 'Principal', principalValues: [], hasComplexPrincipal: false,
+            extras: ''
+        });
         renderPolicyEditor(which);
     }
 
@@ -720,7 +810,7 @@ templ Policies(data dash.PoliciesData) {
             if (addItemBtn) {
                 commitPolicyEditorForm(which);
                 const idx = parseInt(addItemBtn.getAttribute('data-index'), 10);
-                const field = addItemBtn.getAttribute('data-field') === 'action' ? 'actions' : 'resources';
+                const field = POLICY_LIST_FIELD_TO_STATE_KEY[addItemBtn.getAttribute('data-field')] || 'resources';
                 policyEditors[which].statements[idx][field].push('');
                 renderPolicyEditor(which);
                 return;
@@ -730,7 +820,7 @@ templ Policies(data dash.PoliciesData) {
                 commitPolicyEditorForm(which);
                 const idx = parseInt(removeItemBtn.getAttribute('data-index'), 10);
                 const itemIdx = parseInt(removeItemBtn.getAttribute('data-item-index'), 10);
-                const field = removeItemBtn.getAttribute('data-field') === 'action' ? 'actions' : 'resources';
+                const field = POLICY_LIST_FIELD_TO_STATE_KEY[removeItemBtn.getAttribute('data-field')] || 'resources';
                 policyEditors[which].statements[idx][field].splice(itemIdx, 1);
                 renderPolicyEditor(which);
             }
@@ -1013,6 +1103,22 @@ templ Policies(data dash.PoliciesData) {
             return (list || []).map(function(v) { return escapeHtml(String(v)); }).join(', ');
         }
 
+        // Summarizes a Principal/NotPrincipal value for read-only display,
+        // regardless of shape (bare string/array, or a {"Type": ...} object -
+        // possibly with several type keys), since the View modal must stay
+        // correct even for forms the structured editor doesn't model.
+        function principalSummary(value) {
+            if (value === undefined || value === null) return '';
+            if (Array.isArray(value)) return escapedJoin(value);
+            if (typeof value === 'object') {
+                return Object.keys(value).map(function(key) {
+                    const v = value[key];
+                    return escapeHtml(key) + ': ' + (Array.isArray(v) ? escapedJoin(v) : escapeHtml(String(v)));
+                }).join('; ');
+            }
+            return escapeHtml(String(value));
+        }
+
         let statementsHtml = '';
         if (policy.document && policy.document.Statement) {
             statementsHtml = policy.document.Statement.map((stmt, index) => `
@@ -1037,6 +1143,13 @@ templ Policies(data dash.PoliciesData) {
                                     : '<strong>Resource:</strong> ' + (Array.isArray(stmt.Resource) ? escapedJoin(stmt.Resource) : escapeHtml(stmt.Resource || ''))}
                             </div>
                         </div>
+                        ${(stmt.Principal || stmt.NotPrincipal)
+                            ? '<div class="row mt-2"><div class="col-12">' +
+                                (stmt.NotPrincipal
+                                    ? '<strong>NotPrincipal (excluded):</strong> ' + principalSummary(stmt.NotPrincipal)
+                                    : '<strong>Principal:</strong> ' + principalSummary(stmt.Principal)) +
+                                '</div></div>'
+                            : ''}
                     </div>
                 </div>
             `).join('');
