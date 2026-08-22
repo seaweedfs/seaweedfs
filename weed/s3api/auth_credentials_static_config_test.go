@@ -442,3 +442,46 @@ func TestStaticConfigDropsEmptyEnvCredentialRefs(t *testing.T) {
 		t.Fatalf("a credential whose secret key resolves to empty must be dropped")
 	}
 }
+
+// A reference the substitution cannot match, such as a typo in the variable
+// name, must not survive as a literal key.
+func TestStaticConfigDropsMalformedEnvCredentialRefs(t *testing.T) {
+	for _, malformed := range []string{"${MY-VAR}", "${1VAR}", "${}", "${UNTERMINATED", "${A}${B"} {
+		t.Run(malformed, func(t *testing.T) {
+			t.Setenv("SEAWEEDFS_S3_ADMIN_SECRET_ACCESS_KEY", "secretfromenv")
+			t.Setenv("A", "a")
+
+			s3a := newTestS3ApiServerWithMemoryIAM(t, []*iam_pb.Identity{})
+
+			path := writeTempIamConfig(t, fmt.Sprintf(`{"identities":[{"name":"anvAdmin","credentials":[{"accessKey":%q,"secretKey":"${SEAWEEDFS_S3_ADMIN_SECRET_ACCESS_KEY}"}],"actions":["Admin"]}]}`, malformed))
+			if err := s3a.iam.loadS3ApiConfigurationFromFile(path); err != nil {
+				t.Fatalf("failed to load identity config: %v", err)
+			}
+
+			if _, _, found := s3a.iam.lookupByAccessKey(malformed); found {
+				t.Fatalf("%s must not become a usable access key", malformed)
+			}
+		})
+	}
+}
+
+// A resolved value that happens to contain ${ is still the key the operator set.
+func TestStaticConfigKeepsBracesComingFromTheEnvironment(t *testing.T) {
+	t.Setenv("SEAWEEDFS_S3_ADMIN_ACCESS_KEY_ID", "AKIAFROMENV")
+	t.Setenv("SEAWEEDFS_S3_ADMIN_SECRET_ACCESS_KEY", "pa${ss}word")
+
+	s3a := newTestS3ApiServerWithMemoryIAM(t, []*iam_pb.Identity{})
+
+	path := writeTempIamConfig(t, `{"identities":[{"name":"anvAdmin","credentials":[{"accessKey":"${SEAWEEDFS_S3_ADMIN_ACCESS_KEY_ID}","secretKey":"${SEAWEEDFS_S3_ADMIN_SECRET_ACCESS_KEY}"}],"actions":["Admin"]}]}`)
+	if err := s3a.iam.loadS3ApiConfigurationFromFile(path); err != nil {
+		t.Fatalf("failed to load identity config: %v", err)
+	}
+
+	_, cred, found := s3a.iam.lookupByAccessKey("AKIAFROMENV")
+	if !found {
+		t.Fatalf("expected the identity to load")
+	}
+	if cred.SecretKey != "pa${ss}word" {
+		t.Fatalf("expected the secret key from the environment verbatim, got %q", cred.SecretKey)
+	}
+}

@@ -702,11 +702,17 @@ func expandCredentialEnvRefs(config *iam_pb.S3ApiConfiguration) {
 	}
 }
 
-// expandEnvRefs reports false when any reference names a variable that is unset
-// or empty, leaving the reference in place for the caller to reject.
+// expandEnvRefs reports false when any reference is malformed or names a
+// variable that is unset or empty, leaving the reference in place for the
+// caller to reject.
 func expandEnvRefs(value string) (string, bool) {
 	if !strings.Contains(value, "${") {
 		return value, true
+	}
+	// Every ${ has to open a well-formed reference. A typo like ${MY-VAR} matches
+	// nothing, so it would otherwise survive substitution as a literal key.
+	if strings.Count(value, "${") != len(credentialEnvRef.FindAllString(value, -1)) {
+		return value, false
 	}
 	resolved := true
 	expanded := credentialEnvRef.ReplaceAllStringFunc(value, func(ref string) string {
