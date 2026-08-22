@@ -399,8 +399,10 @@ templ Policies(data dash.PoliciesData) {
 
     function normalizeToStringArray(value) {
         if (value === undefined || value === null) return [];
-        if (Array.isArray(value)) return value.slice();
-        return [value];
+        // Coerce: these feed escapeHtml, which calls text.replace, and a
+        // policy is free to carry a number or a boolean here.
+        if (Array.isArray(value)) return value.map(String);
+        return [String(value)];
     }
 
     const POLICY_DOCUMENT_KNOWN_KEYS = ['Version', 'Statement'];
@@ -482,7 +484,7 @@ templ Policies(data dash.PoliciesData) {
                 extras[key] = stmt[key];
             });
             state.statements.push({
-                sid: stmt.Sid || '',
+                sid: String(stmt.Sid || ''),
                 effect: stmt.Effect,
                 actions: normalizeToStringArray(stmt.Action),
                 resourceMode: resourceMode,
@@ -1223,8 +1225,11 @@ templ Policies(data dash.PoliciesData) {
     function displayPolicyDetails(policy) {
         const content = document.getElementById('viewPolicyContent');
 
+        // Escapes a policy value for display, whether it's carried as a
+        // single value or a list, and whatever type it turns out to be.
         function escapedJoin(list) {
-            return (list || []).map(function(v) { return escapeHtml(String(v)); }).join(', ');
+            if (list === undefined || list === null) return '';
+            return (Array.isArray(list) ? list : [list]).map(function(v) { return escapeHtml(String(v)); }).join(', ');
         }
 
         // Summarizes a Principal/NotPrincipal value for read-only display,
@@ -1237,7 +1242,7 @@ templ Policies(data dash.PoliciesData) {
             if (typeof value === 'object') {
                 return Object.keys(value).map(function(key) {
                     const v = value[key];
-                    return escapeHtml(key) + ': ' + (Array.isArray(v) ? escapedJoin(v) : escapeHtml(String(v)));
+                    return escapeHtml(key) + ': ' + escapedJoin(v);
                 }).join('; ');
             }
             return escapeHtml(String(value));
@@ -1254,17 +1259,17 @@ templ Policies(data dash.PoliciesData) {
                         <div class="row">
                             <div class="col-md-6">
                                 <strong>Effect:</strong>
-                                <span class="badge ${stmt.Effect === 'Allow' ? 'bg-success' : 'bg-danger'}">${escapeHtml(stmt.Effect || '')}</span>
+                                <span class="badge ${stmt.Effect === 'Allow' ? 'bg-success' : 'bg-danger'}">${escapedJoin(stmt.Effect)}</span>
                             </div>
                             <div class="col-md-6">
-                                <strong>Actions:</strong> ${Array.isArray(stmt.Action) ? escapedJoin(stmt.Action) : escapeHtml(stmt.Action || '')}
+                                <strong>Actions:</strong> ${escapedJoin(stmt.Action)}
                             </div>
                         </div>
                         <div class="row mt-2">
                             <div class="col-12">
                                 ${stmt.NotResource
-                                    ? '<strong>NotResource (excluded):</strong> ' + (Array.isArray(stmt.NotResource) ? escapedJoin(stmt.NotResource) : escapeHtml(stmt.NotResource))
-                                    : '<strong>Resource:</strong> ' + (Array.isArray(stmt.Resource) ? escapedJoin(stmt.Resource) : escapeHtml(stmt.Resource || ''))}
+                                    ? '<strong>NotResource (excluded):</strong> ' + escapedJoin(stmt.NotResource)
+                                    : '<strong>Resource:</strong> ' + escapedJoin(stmt.Resource)}
                             </div>
                         </div>
                         ${(stmt.Principal || stmt.NotPrincipal)
@@ -1282,10 +1287,10 @@ templ Policies(data dash.PoliciesData) {
         content.innerHTML = `
             <div class="row mb-3">
                 <div class="col-md-6">
-                    <strong>Policy Name:</strong> ${escapeHtml(policy.name || 'Unknown')}
+                    <strong>Policy Name:</strong> ${escapedJoin(policy.name || 'Unknown')}
                 </div>
                 <div class="col-md-6">
-                    <strong>Version:</strong> <span class="badge bg-info">${escapeHtml(policy.document?.Version || 'Unknown')}</span>
+                    <strong>Version:</strong> <span class="badge bg-info">${escapedJoin(policy.document?.Version || 'Unknown')}</span>
                 </div>
             </div>
 
