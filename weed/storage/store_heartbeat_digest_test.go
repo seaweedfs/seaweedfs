@@ -7,7 +7,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 )
 
-func mountTestVolume(t testing.TB, loc *DiskLocation, vid needle.VolumeId, collection string) {
+func mountTestVolume(t testing.TB, loc *DiskLocation, vid needle.VolumeId, collection string) *Volume {
 	t.Helper()
 	v, err := NewVolume(loc.Directory, loc.IdxDirectory, collection, vid, NeedleMapInMemory,
 		&super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
@@ -15,6 +15,7 @@ func mountTestVolume(t testing.TB, loc *DiskLocation, vid needle.VolumeId, colle
 		t.Fatal(err)
 	}
 	loc.SetVolume(vid, v)
+	return v
 }
 
 // The digest has to cover exactly the volumes the heartbeat carries. A volume

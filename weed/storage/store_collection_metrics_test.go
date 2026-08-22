@@ -8,8 +8,18 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
-	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 )
+
+// fillTestVolume writes one needle and dates the volume now. A volume with no
+// content never expires, and the needle carries no append time of its own,
+// which would leave the volume dated to the epoch.
+func fillTestVolume(t *testing.T, v *Volume) {
+	t.Helper()
+	if _, _, _, err := v.writeNeedle2(newRandomNeedle(uint64(v.Id)), true, false, false); err != nil {
+		t.Fatalf("write needle: %v", err)
+	}
+	v.lastModifiedTsSeconds = uint64(time.Now().Unix())
+}
 
 // The per-collection gauges are only ever set for collections the heartbeat
 // still finds on this server. A volume.balance that moves a collection's last
@@ -23,12 +33,7 @@ func TestCollectHeartbeatClearsMetricsOfDepartedCollection(t *testing.T) {
 	t.Cleanup(stats.VolumeServerDiskSizeGauge.Reset)
 
 	store := newTestStore(t, 1)
-	mountTestVolume(t, store.Locations[0], 1, "pics")
-	v := store.findVolume(1)
-	if v == nil {
-		t.Fatal("volume 1 not mounted")
-	}
-	v.noWriteOrDelete = true
+	mountTestVolume(t, store.Locations[0], 1, "pics").noWriteOrDelete = true
 
 	store.CollectHeartbeat()
 	if got := testutil.ToFloat64(stats.VolumeServerReadOnlyVolumeGauge.WithLabelValues("pics", stats.IsReadOnly)); got != 1 {
@@ -59,18 +64,9 @@ func TestCollectHeartbeatClearsMetricsWhenTheLastVolumeExpires(t *testing.T) {
 
 	store := newTestStore(t, 1)
 	store.SetVolumeSizeLimit(30 << 30)
-	location := store.Locations[0]
-	v, err := NewVolume(location.Directory, location.IdxDirectory, "pics", 1, NeedleMapInMemory,
-		&super_block.ReplicaPlacement{}, &needle.TTL{Count: 1, Unit: needle.Minute}, 0, needle.GetCurrentVersion(), 0, 0)
-	if err != nil {
-		t.Fatalf("volume creation: %v", err)
-	}
-	location.SetVolume(1, v)
-	if _, _, _, err := v.writeNeedle2(newRandomNeedle(1), true, false, false); err != nil {
-		t.Fatalf("write needle: %v", err)
-	}
-	// The needle carries no append time, which would date the volume to the epoch.
-	v.lastModifiedTsSeconds = uint64(time.Now().Unix())
+	v := mountTestVolume(t, store.Locations[0], 1, "pics")
+	v.Ttl = &needle.TTL{Count: 1, Unit: needle.Minute}
+	fillTestVolume(t, v)
 
 	store.CollectHeartbeat()
 	if got := testutil.ToFloat64(stats.VolumeServerDiskSizeGauge.WithLabelValues("pics", "normal")); got == 0 {
@@ -88,6 +84,42 @@ func TestCollectHeartbeatClearsMetricsWhenTheLastVolumeExpires(t *testing.T) {
 	}
 	if n := testutil.CollectAndCount(stats.VolumeServerDiskSizeGauge); n != 0 {
 		t.Errorf("%d disk size series left after the last volume expired", n)
+	}
+}
+
+// A collection that loses one volume to expiry and keeps another must report
+// what is left, not what is left minus what went.
+func TestCollectHeartbeatSizesOnlySurvivingVolumes(t *testing.T) {
+	stats.VolumeServerDiskSizeGauge.Reset()
+	t.Cleanup(stats.VolumeServerDiskSizeGauge.Reset)
+
+	store := newTestStore(t, 2)
+	store.SetVolumeSizeLimit(30 << 30)
+	// One volume per location, so the surviving one is always scanned first.
+	fillTestVolume(t, mountTestVolume(t, store.Locations[0], 1, "pics"))
+	expiring := mountTestVolume(t, store.Locations[1], 2, "pics")
+	expiring.Ttl = &needle.TTL{Count: 1, Unit: needle.Minute}
+	fillTestVolume(t, expiring)
+
+	heartbeat := store.CollectHeartbeat()
+	var survivingSize uint64
+	for _, m := range heartbeat.Volumes {
+		if m.Id == 1 {
+			survivingSize = m.Size
+		}
+	}
+	if survivingSize == 0 {
+		t.Fatal("the surviving volume reported no size")
+	}
+
+	expiring.lastModifiedTsSeconds = uint64(time.Now().Add(-time.Hour).Unix())
+	store.CollectHeartbeat()
+
+	if store.findVolume(1) == nil {
+		t.Fatal("the volume without a ttl was deleted")
+	}
+	if got := testutil.ToFloat64(stats.VolumeServerDiskSizeGauge.WithLabelValues("pics", "normal")); got != float64(survivingSize) {
+		t.Errorf("disk size of pics = %v, want %d, the volume still here", got, survivingSize)
 	}
 }
 

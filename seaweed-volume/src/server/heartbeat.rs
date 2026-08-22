@@ -956,9 +956,11 @@ fn build_heartbeat_with_ec_status(
                 should_delete_volume = true;
             }
 
-            // Track disk size by collection
-            let entry = disk_sizes.entry(vol.collection.clone()).or_insert((0, 0));
+            // Track disk size by collection. A volume on its way out is left
+            // out: an entry here is also what says the collection is still on
+            // this server.
             if !should_delete_volume {
+                let entry = disk_sizes.entry(vol.collection.clone()).or_insert((0, 0));
                 entry.0 += volume_size;
                 entry.1 += vol.deleted_size();
             }

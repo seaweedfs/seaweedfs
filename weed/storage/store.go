@@ -537,23 +537,14 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 				}
 			}
 
-			if _, exist := collectionVolumeSize[v.Collection]; !exist {
-				collectionVolumeSize[v.Collection] = 0
-				collectionVolumeDeletedBytes[v.Collection] = 0
-			}
+			// The totals are rebuilt from scratch every heartbeat, so a volume
+			// on its way out is simply not added. Subtracting it took the
+			// surviving volumes' sizes down with it, and an entry here is also
+			// what says the collection is still on this server.
 			if !shouldDeleteVolume {
 				collectionVolumeSize[v.Collection] += int64(volumeMessage.Size)
 				collectionVolumeDeletedBytes[v.Collection] += int64(volumeMessage.DeletedByteCount)
-			} else {
-				collectionVolumeSize[v.Collection] -= int64(volumeMessage.Size)
-				if collectionVolumeSize[v.Collection] <= 0 {
-					delete(collectionVolumeSize, v.Collection)
-				}
-			}
 
-			// An entry here is what says the collection is still on this
-			// server, so a volume on its way out must not make one.
-			if !shouldDeleteVolume {
 				counts, exist := collectionVolumeReadOnlyCount[v.Collection]
 				if !exist {
 					counts = map[string]int{
