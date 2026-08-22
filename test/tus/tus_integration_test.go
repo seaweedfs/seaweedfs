@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -901,4 +902,97 @@ func TestTusResumeAfterInterruption(t *testing.T) {
 	body, err := io.ReadAll(getResp.Body)
 	require.NoError(t, err)
 	assert.Equal(t, testData, body, "Resumed upload should produce complete file")
+}
+
+// TestTusAbortedPatchKeepsStoredChunks checks that a PATCH cut off mid-body
+// leaves the sub-chunks it already stored in place. The filer splits a PATCH
+// into 4MB sub-chunks and records each one as it lands; the offset a resuming
+// client reads back covers them, so their data has to survive the failure.
+func TestTusAbortedPatchKeepsStoredChunks(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+
+	cluster, err := startTestCluster(t, ctx)
+	require.NoError(t, err)
+	defer func() {
+		cluster.Stop()
+		os.RemoveAll(cluster.dataDir)
+	}()
+
+	const subChunkSize = 4 * 1024 * 1024
+	testData := make([]byte, 3*subChunkSize)
+	for i := range testData {
+		testData[i] = byte(i % 251)
+	}
+	targetPath := "/aborted/interrupted.bin"
+	client := &http.Client{}
+
+	createReq, err := http.NewRequest(http.MethodPost, cluster.TusURL()+targetPath, nil)
+	require.NoError(t, err)
+	createReq.Header.Set("Tus-Resumable", TusVersion)
+	createReq.Header.Set("Upload-Length", strconv.Itoa(len(testData)))
+
+	createResp, err := client.Do(createReq)
+	require.NoError(t, err)
+	createResp.Body.Close()
+	require.Equal(t, http.StatusCreated, createResp.StatusCode)
+	uploadLocation := createResp.Header.Get("Location")
+
+	// Promise the whole body, then reset the connection while a later
+	// sub-chunk is still being read.
+	conn, err := net.Dial("tcp", "127.0.0.1:"+testFilerPort)
+	require.NoError(t, err)
+	_, err = fmt.Fprintf(conn, "PATCH %s HTTP/1.1\r\nHost: 127.0.0.1:%s\r\nTus-Resumable: %s\r\nContent-Type: application/offset+octet-stream\r\nUpload-Offset: 0\r\nContent-Length: %d\r\n\r\n",
+		uploadLocation, testFilerPort, TusVersion, len(testData))
+	require.NoError(t, err)
+	_, err = conn.Write(testData[:subChunkSize+1024*1024])
+	require.NoError(t, err)
+	time.Sleep(3 * time.Second)
+	require.NoError(t, conn.(*net.TCPConn).SetLinger(0))
+	require.NoError(t, conn.Close())
+	t.Log("PATCH connection reset mid-body")
+
+	time.Sleep(5 * time.Second)
+
+	headReq, err := http.NewRequest(http.MethodHead, cluster.FullURL(uploadLocation), nil)
+	require.NoError(t, err)
+	headReq.Header.Set("Tus-Resumable", TusVersion)
+
+	headResp, err := client.Do(headReq)
+	require.NoError(t, err)
+	headResp.Body.Close()
+	require.Equal(t, http.StatusOK, headResp.StatusCode)
+	currentOffset, err := strconv.Atoi(headResp.Header.Get("Upload-Offset"))
+	require.NoError(t, err)
+	require.Equal(t, subChunkSize, currentOffset, "the sub-chunk stored before the reset should count towards the offset")
+
+	patchReq, err := http.NewRequest(http.MethodPatch, cluster.FullURL(uploadLocation), bytes.NewReader(testData[currentOffset:]))
+	require.NoError(t, err)
+	patchReq.Header.Set("Tus-Resumable", TusVersion)
+	patchReq.Header.Set("Upload-Offset", strconv.Itoa(currentOffset))
+	patchReq.Header.Set("Content-Type", "application/offset+octet-stream")
+
+	patchResp, err := client.Do(patchReq)
+	require.NoError(t, err)
+	patchResp.Body.Close()
+	require.Equal(t, http.StatusNoContent, patchResp.StatusCode)
+
+	// A vacuum reclaims whatever the filer deleted, so the file survives this
+	// only if the chunks the session kept are still stored.
+	vacuumResp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%s/vol/vacuum?garbageThreshold=0.001", testMasterPort))
+	require.NoError(t, err)
+	vacuumResp.Body.Close()
+	require.Equal(t, http.StatusOK, vacuumResp.StatusCode)
+
+	getResp, err := client.Get(cluster.FilerURL() + targetPath)
+	require.NoError(t, err)
+	defer getResp.Body.Close()
+	require.Equal(t, http.StatusOK, getResp.StatusCode)
+	body, err := io.ReadAll(getResp.Body)
+	require.NoError(t, err)
+	assert.Equal(t, testData, body, "the resumed upload should read back whole")
 }

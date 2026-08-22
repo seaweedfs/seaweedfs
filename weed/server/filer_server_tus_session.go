@@ -417,6 +417,18 @@ func (fs *FilerServer) saveTusChunk(ctx context.Context, uploadID string, chunk 
 	return nil
 }
 
+// deleteTusChunk drops a chunk's record before freeing its data, so a save that
+// failed after the record landed cannot leave the session pointing at a needle
+// that is about to be deleted. Data outliving a lost record only leaks.
+func (fs *FilerServer) deleteTusChunk(ctx context.Context, session *TusSession, chunk *TusChunkInfo) {
+	chunkPath := util.FullPath(fs.tusChunkPath(session.ID, chunk.Offset, chunk.Size, chunk.FileId))
+	if err := fs.filer.DeleteEntryMetaAndData(ctx, chunkPath, false, false, false, false, nil, 0); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		glog.Errorf("TUS chunk %s record kept, its data leaks: %v", chunkPath, err)
+		return
+	}
+	fs.filer.DeleteChunks(ctx, util.FullPath(session.TargetPath), []*filer_pb.FileChunk{{FileId: chunk.FileId}})
+}
+
 // deleteTusSession removes a TUS upload session and all its data
 func (fs *FilerServer) deleteTusSession(ctx context.Context, uploadID string) error {
 	sessionPath := util.FullPath(fs.tusSessionPath(uploadID))
