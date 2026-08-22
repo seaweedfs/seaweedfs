@@ -51,6 +51,17 @@ func (h *PolicyHandlers) GetPolicies(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"policies": policies})
 }
 
+// GetPrincipalSuggestions returns candidate ARNs (existing users and IAM
+// roles) for the policy editor's Principal/NotPrincipal autocomplete.
+func (h *PolicyHandlers) GetPrincipalSuggestions(w http.ResponseWriter, r *http.Request) {
+	suggestions, err := h.adminServer.GetPrincipalSuggestions(r.Context())
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to get principal suggestions: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"principals": suggestions})
+}
+
 // CreatePolicy handles policy creation
 func (h *PolicyHandlers) CreatePolicy(w http.ResponseWriter, r *http.Request) {
 	var req dash.CreatePolicyRequest

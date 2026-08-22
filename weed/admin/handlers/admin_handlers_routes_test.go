@@ -88,6 +88,14 @@ func TestSetupRoutes_RegistersPolicyAPI_WithAuth(t *testing.T) {
 	assertHasRoute(t, router, http.MethodPost, "/api/object-store/policies/validate")
 }
 
+func TestSetupRoutes_RegistersPrincipalsAPI_NoAuth(t *testing.T) {
+	router := mux.NewRouter()
+
+	newRouteTestAdminHandlers().SetupRoutes(router, false, "", "", "", "", true)
+
+	assertHasRoute(t, router, http.MethodGet, "/api/principals")
+}
+
 func TestSetupRoutes_RegistersFilesListFoldersAPI_NoAuth(t *testing.T) {
 	router := mux.NewRouter()
 

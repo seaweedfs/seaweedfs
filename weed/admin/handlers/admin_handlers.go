@@ -224,6 +224,10 @@ func (h *AdminHandlers) registerAPIRoutes(api *mux.Router, enforceWrite bool) {
 	policyApi.Handle("/{name}", wrapWrite(h.policyHandlers.DeletePolicy)).Methods(http.MethodDelete)
 	policyApi.HandleFunc("/validate", h.policyHandlers.ValidatePolicy).Methods(http.MethodPost)
 
+	// Registered at the API root, not under policyApi: policyApi's "/{name}"
+	// GET route would shadow any single-segment GET route registered after it.
+	api.HandleFunc("/principals", h.policyHandlers.GetPrincipalSuggestions).Methods(http.MethodGet)
+
 	s3TablesApi := api.PathPrefix("/s3tables").Subrouter()
 	s3TablesApi.HandleFunc("/buckets", h.adminServer.ListS3TablesBucketsAPI).Methods(http.MethodGet)
 	s3TablesApi.Handle("/buckets", wrapWrite(h.adminServer.CreateS3TablesBucket)).Methods(http.MethodPost)

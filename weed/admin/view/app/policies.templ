@@ -184,6 +184,11 @@ templ Policies(data dash.PoliciesData) {
          updatePolicyResourceSuggestions() below. -->
     <datalist id="policyResourceSuggestions"></datalist>
 
+    <!-- Populated dynamically as the user types/focuses a Principal field:
+         existing users and IAM roles, fetched once from /api/principals. See
+         updatePolicyPrincipalSuggestions() below. -->
+    <datalist id="policyPrincipalSuggestions"></datalist>
+
     <!-- Create Policy Modal -->
     <div class="modal fade" id="createPolicyModal" tabindex="-1" aria-labelledby="createPolicyModalLabel" aria-hidden="true">
         <div class="modal-dialog modal-xl">
@@ -647,6 +652,7 @@ templ Policies(data dash.PoliciesData) {
         let listAttr = '';
         if (field === 'action') listAttr = ' list="policyActionSuggestions"';
         else if (field === 'resource') listAttr = ' list="policyResourceSuggestions"';
+        else if (field === 'principal') listAttr = ' list="policyPrincipalSuggestions"';
         return '<div class="input-group input-group-sm mb-1">' +
             '<input type="text" class="form-control policy-list-item" ' + listAttr + ' data-which="' + which + '" data-index="' + stmtIdx + '" data-field="' + field + '" data-item-index="' + itemIdx + '" value="' + escapeHtml(value) + '">' +
             '<button type="button" class="btn btn-outline-danger policy-remove-list-item-btn" data-which="' + which + '" data-index="' + stmtIdx + '" data-field="' + field + '" data-item-index="' + itemIdx + '"><i class="fas fa-times"></i></button>' +
@@ -847,6 +853,22 @@ templ Policies(data dash.PoliciesData) {
                 updatePolicyResourceSuggestions(target);
             }
         });
+
+        // Same idea for the shared Principal datalist: a flat, one-time
+        // fetch (see loadPolicyPrincipalSuggestions), no per-segment logic
+        // needed since users/roles aren't hierarchical like bucket paths.
+        body.addEventListener('input', function(event) {
+            const target = event.target;
+            if (target.classList.contains('policy-list-item') && target.getAttribute('data-field') === 'principal') {
+                updatePolicyPrincipalSuggestions();
+            }
+        });
+        body.addEventListener('focusin', function(event) {
+            const target = event.target;
+            if (target.classList.contains('policy-list-item') && target.getAttribute('data-field') === 'principal') {
+                updatePolicyPrincipalSuggestions();
+            }
+        });
     }
 
     // ------------------------------------------------------------------
@@ -939,6 +961,32 @@ templ Policies(data dash.PoliciesData) {
                 options.push(state.arnPrefix + '/' + name);
             });
             renderPolicyDatalistOptions(datalist, options);
+        });
+    }
+
+    // ------------------------------------------------------------------
+    // Principal autocomplete: a flat list of existing users and IAM roles,
+    // fetched once from /api/principals and cached for the life of the page
+    // (unlike Resource ARNs, users/roles have no hierarchy to drill into).
+    // ------------------------------------------------------------------
+
+    let policyPrincipalSuggestionsPromise = null;
+
+    function loadPolicyPrincipalSuggestions() {
+        if (!policyPrincipalSuggestionsPromise) {
+            policyPrincipalSuggestionsPromise = fetch(basePath('/api/principals'))
+                .then(function(r) { return r.ok ? r.json() : { principals: [] }; })
+                .then(function(data) { return ['*'].concat(data.principals || []); })
+                .catch(function() { return ['*']; });
+        }
+        return policyPrincipalSuggestionsPromise;
+    }
+
+    function updatePolicyPrincipalSuggestions() {
+        const datalist = document.getElementById('policyPrincipalSuggestions');
+        if (!datalist) return;
+        loadPolicyPrincipalSuggestions().then(function(principals) {
+            renderPolicyDatalistOptions(datalist, principals);
         });
     }
 
