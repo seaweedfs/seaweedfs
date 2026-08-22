@@ -97,10 +97,20 @@ func CanonicalToLifecycle(rules []*s3lifecycle.Rule) *Lifecycle {
 	return lc
 }
 
+// s3XMLNamespace is the namespace every S3 client stamps on a lifecycle
+// document it PUTs. GetBucketLifecycleConfiguration replays the stored bytes
+// verbatim, so a document written here has to carry it too or it would come
+// back stripped of a namespace the client-written ones have.
+const s3XMLNamespace = "http://s3.amazonaws.com/doc/2006-03-01/"
+
 // MarshalCanonical serializes the canonical rules straight to a
 // BucketLifecycleConfiguration XML document, mirroring ParseCanonical.
 func MarshalCanonical(rules []*s3lifecycle.Rule) ([]byte, error) {
-	out, err := xml.Marshal(CanonicalToLifecycle(rules))
+	lc := CanonicalToLifecycle(rules)
+	out, err := xml.Marshal(struct {
+		Lifecycle
+		XMLNS string `xml:"xmlns,attr"`
+	}{Lifecycle: *lc, XMLNS: s3XMLNamespace})
 	if err != nil {
 		return nil, err
 	}
@@ -152,15 +162,17 @@ func ruleFromCanonical(r *s3lifecycle.Rule) Rule {
 func filterFromCanonical(prefix string, tags map[string]string, sizeGT, sizeLT int64) Filter {
 	hasSize := sizeGT > 0 || sizeLT > 0
 
-	// A size range (GT and/or LT together) describes one attribute — object
-	// size — so it doesn't need <And> on its own; it only forces <And> when
-	// paired with a different attribute (prefix or tag).
+	// <Filter> holds exactly one predicate; anything more goes under <And>,
+	// two size bounds included, which is the form AWS documents for a range.
 	discriminants := 0
 	if prefix != "" {
 		discriminants++
 	}
 	discriminants += len(tags)
-	if hasSize {
+	if sizeGT > 0 {
+		discriminants++
+	}
+	if sizeLT > 0 {
 		discriminants++
 	}
 

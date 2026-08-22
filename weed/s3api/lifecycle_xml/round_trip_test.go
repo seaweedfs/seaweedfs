@@ -553,3 +553,47 @@ func TestCanonicalRoundTrip_SizeOnlyOmitsPrefixElement(t *testing.T) {
 		t.Errorf("expected FilterSizeGreaterThan=512, got %d", out.FilterSizeGreaterThan)
 	}
 }
+
+func TestCanonicalRoundTrip_SizeRangeUsesAnd(t *testing.T) {
+	// <Filter> holds one predicate; a range is two, so it belongs under <And>,
+	// which is the form AWS documents.
+	in := &s3lifecycle.Rule{
+		ID:                    "size-range",
+		Status:                s3lifecycle.StatusEnabled,
+		FilterSizeGreaterThan: 512,
+		FilterSizeLessThan:    1048576,
+		ExpirationDays:        30,
+	}
+
+	xmlBytes, err := MarshalCanonical([]*s3lifecycle.Rule{in})
+	if err != nil {
+		t.Fatalf("MarshalCanonical: %v", err)
+	}
+	if !strings.Contains(string(xmlBytes), "<And><ObjectSizeGreaterThan>512</ObjectSizeGreaterThan><ObjectSizeLessThan>1048576</ObjectSizeLessThan></And>") {
+		t.Errorf("expected both size bounds under <And>, got: %s", xmlBytes)
+	}
+
+	out := assertCanonicalRoundTrip(t, in)
+	if out.FilterSizeGreaterThan != 512 || out.FilterSizeLessThan != 1048576 {
+		t.Errorf("expected the size range to survive the round trip, got %+v", out)
+	}
+}
+
+func TestMarshalCanonical_CarriesTheS3Namespace(t *testing.T) {
+	// GetBucketLifecycleConfiguration replays these bytes verbatim, so a
+	// document written here has to look like one a client PUT.
+	xmlBytes, err := MarshalCanonical([]*s3lifecycle.Rule{{
+		ID:             "ns",
+		Status:         s3lifecycle.StatusEnabled,
+		ExpirationDays: 1,
+	}})
+	if err != nil {
+		t.Fatalf("MarshalCanonical: %v", err)
+	}
+	if !strings.Contains(string(xmlBytes), `<LifecycleConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">`) {
+		t.Errorf("expected the S3 namespace on the root element, got: %s", xmlBytes)
+	}
+	if _, err := ParseCanonical(xmlBytes); err != nil {
+		t.Errorf("the namespaced document must still parse: %v", err)
+	}
+}
