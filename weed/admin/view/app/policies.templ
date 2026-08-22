@@ -343,8 +343,8 @@ templ Policies(data dash.PoliciesData) {
     // editor doesn't expose (Principal, NotPrincipal, NotResource, Condition,
     // or any future/unknown key), so they round-trip untouched.
     let policyEditors = {
-        create: { version: '2012-10-17', statements: [] },
-        edit: { version: '2012-10-17', statements: [] }
+        create: { version: '2012-10-17', statements: [], otherFields: {} },
+        edit: { version: '2012-10-17', statements: [], otherFields: {} }
     };
 
     const POLICY_STATEMENT_KNOWN_KEYS = ['Sid', 'Effect', 'Action', 'Resource'];
@@ -363,9 +363,25 @@ templ Policies(data dash.PoliciesData) {
         return [value];
     }
 
+    const POLICY_DOCUMENT_KNOWN_KEYS = ['Version', 'Statement'];
+
     // Converts a policy document (as parsed from JSON) into editor state.
+    //
+    // Top-level keys the editor doesn't model (e.g. Id) are kept verbatim in
+    // state.otherFields and merged back on serialization, so a round-trip
+    // through the Editor tab doesn't rewrite text the user typed in the JSON
+    // tab. Note the admin API's PolicyDocument only carries Version and
+    // Statement, so such fields are still dropped once a policy is saved --
+    // this only keeps the two tabs faithful to each other in-session.
     function policyDocToEditorState(doc) {
-        const state = { version: (doc && doc.Version) || '2012-10-17', statements: [] };
+        const state = { version: (doc && doc.Version) || '2012-10-17', statements: [], otherFields: {} };
+        if (doc && typeof doc === 'object' && !Array.isArray(doc)) {
+            Object.keys(doc).forEach(function(key) {
+                if (POLICY_DOCUMENT_KNOWN_KEYS.indexOf(key) === -1) {
+                    state.otherFields[key] = doc[key];
+                }
+            });
+        }
         const rawStatements = doc && doc.Statement
             ? (Array.isArray(doc.Statement) ? doc.Statement : [doc.Statement])
             : [];
@@ -398,7 +414,10 @@ templ Policies(data dash.PoliciesData) {
     // empty object would change the policy's authorization behavior without
     // the user noticing.
     function policyEditorStateToDoc(state) {
-        const doc = { Version: state.version || '2012-10-17', Statement: [] };
+        // Unmanaged top-level keys first, so Version/Statement below always win.
+        const doc = Object.assign({}, state.otherFields || {});
+        doc.Version = state.version || '2012-10-17';
+        doc.Statement = [];
         (state.statements || []).forEach(function(s, idx) {
             let stmt = {};
             if (s.extras && s.extras.trim()) {
@@ -552,7 +571,7 @@ templ Policies(data dash.PoliciesData) {
     function commitPolicyTextareaToEditor(which) {
         const text = document.getElementById(policyTextareaId(which)).value;
         if (!text || !text.trim()) {
-            policyEditors[which] = { version: '2012-10-17', statements: [] };
+            policyEditors[which] = { version: '2012-10-17', statements: [], otherFields: {} };
             renderPolicyEditor(which);
             return true;
         }
@@ -830,7 +849,7 @@ templ Policies(data dash.PoliciesData) {
         // state from a previous (possibly cancelled) create doesn't leak in.
         document.getElementById('createPolicyModal').addEventListener('show.bs.modal', function() {
             document.getElementById('createPolicyForm').reset();
-            policyEditors.create = { version: '2012-10-17', statements: [] };
+            policyEditors.create = { version: '2012-10-17', statements: [], otherFields: {} };
             renderPolicyEditor('create');
             const editorTab = bootstrap.Tab.getOrCreateInstance(document.getElementById('createPolicyEditorTabBtn'));
             editorTab.show();
@@ -989,7 +1008,7 @@ templ Policies(data dash.PoliciesData) {
         // Set policy name
         document.getElementById('editPolicyName').value = policyName;
         document.getElementById('editPolicyDocument').value = 'Loading...';
-        policyEditors.edit = { version: '2012-10-17', statements: [] };
+        policyEditors.edit = { version: '2012-10-17', statements: [], otherFields: {} };
         renderPolicyEditor('edit');
 
         // Fetch policy data
