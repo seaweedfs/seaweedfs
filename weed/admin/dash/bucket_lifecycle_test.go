@@ -1,15 +1,13 @@
 package dash
 
 import (
-	"context"
-	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/scheduler"
-	"google.golang.org/grpc"
 )
 
 func minimalLifecycleRule() BucketLifecycleRule {
@@ -265,161 +263,76 @@ func TestFromBucketLifecycleRule_InvalidExpirationDate(t *testing.T) {
 	}
 }
 
-// fakeVerifyClient is a minimal filer_pb.SeaweedFilerClient stand-in for
-// bucketLifecycleXMLUnchangedSince, which only calls LookupDirectoryEntry.
-type fakeVerifyClient struct {
-	filer_pb.SeaweedFilerClient
-	entry *filer_pb.Entry
-	err   error
-	calls int
-}
+func TestBucketLifecycleMutation_SetsXML(t *testing.T) {
+	m := bucketLifecycleMutation("/buckets", "mybucket", []byte("<LifecycleConfiguration/>"))
 
-func (c *fakeVerifyClient) LookupDirectoryEntry(_ context.Context, _ *filer_pb.LookupDirectoryEntryRequest, _ ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
-	c.calls++
-	if c.err != nil {
-		return nil, c.err
+	if m.Type != filer_pb.ObjectMutation_PATCH_EXTENDED {
+		t.Fatalf("expected a PATCH_EXTENDED mutation, got %v", m.Type)
 	}
-	return &filer_pb.LookupDirectoryEntryResponse{Entry: c.entry}, nil
-}
-
-func TestBucketLifecycleXMLUnchangedSince_MatchesOriginal(t *testing.T) {
-	original := []byte("<old/>")
-	client := &fakeVerifyClient{entry: &filer_pb.Entry{
-		Extended: map[string][]byte{scheduler.BucketLifecycleConfigurationXMLKey: original},
-	}}
-
-	if !bucketLifecycleXMLUnchangedSince(client, "/buckets", "mybucket", original) {
-		t.Fatal("expected unchanged=true when the stored XML still matches the pre-operation snapshot")
+	if m.Directory != "/buckets" || m.Name != "mybucket" {
+		t.Fatalf("expected the mutation to target /buckets/mybucket, got %s/%s", m.Directory, m.Name)
+	}
+	if got := string(m.SetExtended[scheduler.BucketLifecycleConfigurationXMLKey]); got != "<LifecycleConfiguration/>" {
+		t.Fatalf("expected the XML key to carry the marshaled config, got %q", got)
+	}
+	if len(m.DeleteExtended) != 0 {
+		t.Fatalf("expected no key deletions when saving rules, got %v", m.DeleteExtended)
 	}
 }
 
-func TestBucketLifecycleXMLUnchangedSince_OwnWriteLanded(t *testing.T) {
-	// Our own intended write landed despite the reported error: the stored
-	// XML now differs from the original snapshot, so it must not be treated
-	// as "unchanged" (restoring the TTL would double-stamp our own new policy).
-	client := &fakeVerifyClient{entry: &filer_pb.Entry{
-		Extended: map[string][]byte{scheduler.BucketLifecycleConfigurationXMLKey: []byte("<new/>")},
-	}}
+func TestBucketLifecycleMutation_ClearsBothKeys(t *testing.T) {
+	m := bucketLifecycleMutation("/buckets", "mybucket", nil)
 
-	if bucketLifecycleXMLUnchangedSince(client, "/buckets", "mybucket", []byte("<old/>")) {
-		t.Fatal("expected unchanged=false when the stored XML differs from the original snapshot")
+	if len(m.SetExtended) != 0 {
+		t.Fatalf("expected no key writes when clearing, got %v", m.SetExtended)
+	}
+	want := map[string]bool{
+		scheduler.BucketLifecycleConfigurationXMLKey:            true,
+		scheduler.BucketLifecycleTransitionMinimumObjectSizeKey: true,
+	}
+	if len(m.DeleteExtended) != len(want) {
+		t.Fatalf("expected both lifecycle keys to be cleared, got %v", m.DeleteExtended)
+	}
+	for _, k := range m.DeleteExtended {
+		if !want[k] {
+			t.Fatalf("unexpected key cleared: %s", k)
+		}
 	}
 }
 
-// TestBucketLifecycleXMLUnchangedSince_UnrelatedConcurrentWriteLanded pins
-// the fix: an unrelated, independent request committing its own (different
-// from both the original and this request's intended) XML in the window
-// between this request's failed UpdateEntry and its verification read must
-// also be treated as "changed" — not just the two cases of "reverted to
-// original" vs "our own write landed". Comparing only against this
-// request's intended XML would have wrongly concluded "not committed" here
-// and restored the legacy TTL alongside the concurrent writer's now-active
-// policy.
-func TestBucketLifecycleXMLUnchangedSince_UnrelatedConcurrentWriteLanded(t *testing.T) {
-	client := &fakeVerifyClient{entry: &filer_pb.Entry{
-		Extended: map[string][]byte{scheduler.BucketLifecycleConfigurationXMLKey: []byte("<from-another-request/>")},
-	}}
-
-	if bucketLifecycleXMLUnchangedSince(client, "/buckets", "mybucket", []byte("<old/>")) {
-		t.Fatal("expected unchanged=false when an unrelated concurrent write landed")
+// A whole-entry write would have carried the rest of the bucket entry with it;
+// the patch must name only the keys it owns, so a concurrent owner or quota
+// change survives.
+func TestBucketLifecycleMutation_TouchesOnlyLifecycleKeys(t *testing.T) {
+	for _, m := range []*filer_pb.ObjectMutation{
+		bucketLifecycleMutation("/buckets", "mybucket", []byte("<LifecycleConfiguration/>")),
+		bucketLifecycleMutation("/buckets", "mybucket", nil),
+	} {
+		if m.Entry != nil {
+			t.Fatal("expected the mutation to carry no entry snapshot")
+		}
+		if m.SetContent {
+			t.Fatal("expected the mutation to leave entry content alone")
+		}
+		for k := range m.SetExtended {
+			if k != scheduler.BucketLifecycleConfigurationXMLKey {
+				t.Fatalf("unexpected key written: %s", k)
+			}
+		}
 	}
 }
 
-func TestBucketLifecycleXMLUnchangedSince_ClearingOwnWriteLanded(t *testing.T) {
-	// The original had an active policy; our clear-lifecycle write landed,
-	// so the key is now absent. That must count as "changed".
-	client := &fakeVerifyClient{entry: &filer_pb.Entry{Extended: map[string][]byte{}}}
+func TestSetBucketLifecycle_RejectsOversizedConfiguration(t *testing.T) {
+	// A single rule ID long enough to blow the cap: this must fail before any
+	// filer call, which is what makes it testable without one.
+	rule := minimalLifecycleRule()
+	rule.ID = strings.Repeat("x", scheduler.MaxBucketLifecycleConfigurationSize+1)
 
-	if bucketLifecycleXMLUnchangedSince(client, "/buckets", "mybucket", []byte("<old/>")) {
-		t.Fatal("expected unchanged=false when the original XML is no longer present")
+	err := (&AdminServer{}).SetBucketLifecycle("mybucket", []BucketLifecycleRule{rule})
+	if err == nil {
+		t.Fatal("expected an oversized lifecycle configuration to be rejected")
 	}
-}
-
-func TestBucketLifecycleXMLUnchangedSince_ClearingDidNotLand(t *testing.T) {
-	// Our clear-lifecycle write did not take effect: the original XML is
-	// still there, unchanged, so it's safe to restore the cleared TTL rules.
-	original := []byte("<old/>")
-	client := &fakeVerifyClient{entry: &filer_pb.Entry{
-		Extended: map[string][]byte{scheduler.BucketLifecycleConfigurationXMLKey: original},
-	}}
-
-	if !bucketLifecycleXMLUnchangedSince(client, "/buckets", "mybucket", original) {
-		t.Fatal("expected unchanged=true when the original XML is still present")
-	}
-}
-
-// TestBucketLifecycleXMLUnchangedSince_VerifyFailureAssumesChanged pins the
-// conservative default: when the verification re-read itself fails, the
-// true state is unknown, and assuming "changed" (so the caller skips
-// restoring the cleared legacy TTL) is the safer default — the alternative
-// risks reinstating a stale TTL alongside a policy that in fact took effect,
-// which is the double-stamp/premature-expiration this whole cleanup exists
-// to prevent.
-func TestBucketLifecycleXMLUnchangedSince_VerifyFailureAssumesChanged(t *testing.T) {
-	defer setBucketLifecycleVerifyRetryDelayForTest(t, 0)()
-
-	client := &fakeVerifyClient{err: errors.New("transient network error")}
-
-	if bucketLifecycleXMLUnchangedSince(client, "/buckets", "mybucket", []byte("<old/>")) {
-		t.Fatal("expected unchanged=false (do not restore) when verification itself fails")
-	}
-	if client.calls != bucketLifecycleVerifyRetries {
-		t.Fatalf("expected the lookup to be retried %d times on persistent failure, got %d calls", bucketLifecycleVerifyRetries, client.calls)
-	}
-}
-
-// TestBucketLifecycleXMLUnchangedSince_RetriesTransientFailure pins the fix:
-// a single transient RPC failure on the verification lookup must not, on
-// its own, decide the outcome — the lookup is retried, and a later attempt
-// that succeeds and confirms the XML is unchanged should still report true.
-func TestBucketLifecycleXMLUnchangedSince_RetriesTransientFailure(t *testing.T) {
-	defer setBucketLifecycleVerifyRetryDelayForTest(t, 0)()
-
-	original := []byte("<old/>")
-	client := &flakyThenOKVerifyClient{
-		failuresBeforeSuccess: bucketLifecycleVerifyRetries - 1,
-		entry: &filer_pb.Entry{
-			Extended: map[string][]byte{scheduler.BucketLifecycleConfigurationXMLKey: original},
-		},
-	}
-
-	if !bucketLifecycleXMLUnchangedSince(client, "/buckets", "mybucket", original) {
-		t.Fatal("expected unchanged=true once a retry succeeds and confirms the XML is unchanged")
-	}
-}
-
-// flakyThenOKVerifyClient fails LookupDirectoryEntry a fixed number of times
-// before succeeding, to exercise the retry loop in
-// bucketLifecycleXMLUnchangedSince.
-type flakyThenOKVerifyClient struct {
-	filer_pb.SeaweedFilerClient
-	failuresBeforeSuccess int
-	entry                 *filer_pb.Entry
-	calls                 int
-}
-
-func (c *flakyThenOKVerifyClient) LookupDirectoryEntry(_ context.Context, _ *filer_pb.LookupDirectoryEntryRequest, _ ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
-	c.calls++
-	if c.calls <= c.failuresBeforeSuccess {
-		return nil, errors.New("transient network error")
-	}
-	return &filer_pb.LookupDirectoryEntryResponse{Entry: c.entry}, nil
-}
-
-// setBucketLifecycleVerifyRetryDelayForTest zeroes the retry delay for the
-// duration of a test, restoring it afterward, so tests exercising the retry
-// loop don't pay the real wall-clock delay.
-func setBucketLifecycleVerifyRetryDelayForTest(t *testing.T, d time.Duration) func() {
-	t.Helper()
-	original := bucketLifecycleVerifyRetryDelay
-	bucketLifecycleVerifyRetryDelay = d
-	return func() { bucketLifecycleVerifyRetryDelay = original }
-}
-
-func TestBucketLifecycleXMLUnchangedSince_MissingEntryAssumesChanged(t *testing.T) {
-	client := &fakeVerifyClient{entry: nil}
-
-	if bucketLifecycleXMLUnchangedSince(client, "/buckets", "mybucket", []byte("<old/>")) {
-		t.Fatal("expected unchanged=false (do not restore) when the bucket entry is unexpectedly absent")
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("expected a size-limit error, got: %v", err)
 	}
 }

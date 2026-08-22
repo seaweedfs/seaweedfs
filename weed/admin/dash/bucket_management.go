@@ -22,10 +22,6 @@ const MaxBucketLifecycleRules = 1000
 // MaxBucketLifecycleRuleIDLength mirrors the S3 API's limit on a lifecycle rule's <ID>.
 const MaxBucketLifecycleRuleIDLength = 255
 
-// MaxBucketLifecycleConfigurationSize mirrors the S3 API's
-// maxBucketLifecycleConfigurationSize cap on the serialized XML.
-const MaxBucketLifecycleConfigurationSize = 1 << 20
-
 // MaxOwnerNameLength is the maximum allowed length for bucket owner identity names.
 // This is a reasonable limit to prevent abuse; AWS IAM user names are limited to 64 chars,
 // but we use 256 to allow for more complex identity formats (e.g., email addresses).

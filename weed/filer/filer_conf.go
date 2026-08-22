@@ -354,27 +354,14 @@ func readFilerConfSnapshot(ctx context.Context, client filer_pb.SeaweedFilerClie
 
 // saveFilerConfConditionally writes snap.fc back to filer.conf, conditioned
 // on nothing having created or modified the file since snap was read. The
-// filer evaluates the condition and applies the write atomically under its
-// per-path lock (see UpdateEntry/CreateEntry in filer_grpc_server.go), so a
-// concurrent writer that raced this one fails the precondition instead of
-// silently having its change overwritten.
+// filer evaluates the condition under its per-path lock, so a racing writer
+// fails the precondition instead of silently losing its change.
 //
-// The update path prefers an exact content check (IF_ETAG_MATCH keyed off an
-// MD5 this function itself stamps into Attributes.Md5 on every write) over
-// mtime, since mtime only has one-second resolution and says nothing about
-// content. A filer.conf written before this code existed has no such hash
-// yet, so that one write falls back to IF_UNMODIFIED_SINCE; every write from
-// here on carries the hash, so subsequent calls use the exact check.
-//
-// That one bootstrap write is the sole remaining place a same-second race
-// isn't caught: IF_ETAG_MATCH can't help there either, because an entry with
-// no Md5 and no chunks hashes to the same fixed value regardless of its
-// actual content (see filer.ETagChunks), so it can't distinguish two
-// different same-second writes any better than mtime can. Closing that
-// requires either an exact-content condition kind the filer protocol
-// doesn't have, or unconditionally stamping Md5 on every plain
-// SaveInsideFiler write everywhere in the codebase, not just here — out of
-// scope for this fix. It self-heals after the first write either way.
+// The condition is an exact content check (IF_ETAG_MATCH against the MD5
+// every writer stamps, see SaveInsideFiler), which mtime's one-second
+// resolution cannot match. A filer.conf written before that stamp existed
+// carries no hash, so that one write falls back to IF_UNMODIFIED_SINCE and
+// self-heals from the next write on.
 func saveFilerConfConditionally(ctx context.Context, client filer_pb.SeaweedFilerClient, snap *filerConfSnapshot) error {
 	var buf bytes.Buffer
 	if err := snap.fc.ToText(&buf); err != nil {
@@ -446,74 +433,32 @@ func saveFilerConfConditionally(ctx context.Context, client filer_pb.SeaweedFile
 // Per-write TTL is now driven by the LifecycleTTLResolver built off the
 // stored lifecycle XML, so a lingering day-TTL rule would double-stamp
 // expiration (volume server expires under the old rule) or contradict a
-// newly saved XML. Returns the rules that were removed (nil if none), so a
-// caller that needs to undo this can re-add exactly those rules with
-// RestoreFilerConfLocationRules instead of overwriting the whole file with a
-// stale snapshot that would clobber unrelated concurrent edits. The write
-// itself is conditioned on filer.conf being unchanged since it was read here
-// (see saveFilerConfConditionally), so a concurrent writer causes this call
-// to fail rather than silently lose one side's change.
-func ClearBucketLifecycleDayTTLs(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketsPath, bucketName, collection string) (removed []*filer_pb.FilerConf_PathConf, err error) {
+// newly saved XML. The write is conditioned on filer.conf being unchanged
+// since it was read here, so a concurrent writer fails this call rather than
+// silently losing one side's change.
+func ClearBucketLifecycleDayTTLs(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketsPath, bucketName, collection string) error {
 	snap, err := readFilerConfSnapshot(ctx, client)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if snap.entry == nil {
-		return nil, nil
+		return nil
 	}
 
+	changed := false
 	bucketPrefix := fmt.Sprintf("%s/%s/", bucketsPath, bucketName)
 	for prefix, ttl := range snap.fc.GetCollectionTtls(collection) {
 		if !strings.HasPrefix(prefix, bucketPrefix) || !strings.HasSuffix(ttl, "d") {
 			continue
 		}
-		if locConf, found := snap.fc.GetLocationConf(prefix); found {
-			removed = append(removed, ClonePathConf(locConf))
-		}
+		// Logged rather than returned: this is a one-way migration, and the
+		// prefix and TTL are all an operator needs to put a rule back by hand.
+		glog.V(0).Infof("lifecycle migration: dropping legacy day-TTL rule %s ttl=%s", prefix, ttl)
 		snap.fc.DeleteLocationConf(prefix)
+		changed = true
 	}
-	if len(removed) == 0 {
-		return nil, nil
-	}
-
-	if err := saveFilerConfConditionally(ctx, client, snap); err != nil {
-		return nil, err
-	}
-	return removed, nil
-}
-
-// RestoreFilerConfLocationRules re-adds the given location rules into the
-// current filer.conf, re-reading it fresh (and writing back conditionally,
-// see saveFilerConfConditionally) so unrelated concurrent edits made since
-// the rules were removed aren't clobbered by restoring a stale snapshot.
-// Used to undo a ClearBucketLifecycleDayTTLs cleanup when the write it was
-// guarding against double-stamped expiration for turns out not to have
-// taken effect. No-op if rules is empty.
-//
-// A rule is only re-added if its LocationPrefix is currently absent: the
-// fresh read above guards against changes made between it and the write
-// below, but not against this loop itself blindly overwriting something
-// that reappeared at the same prefix in between the original removal and
-// this call — e.g. another writer installing an unrelated rule at that
-// exact path. Skipping an occupied prefix leaves that concurrent writer's
-// rule alone instead of silently replacing it with the stale snapshot.
-func RestoreFilerConfLocationRules(ctx context.Context, client filer_pb.SeaweedFilerClient, rules []*filer_pb.FilerConf_PathConf) error {
-	if len(rules) == 0 {
+	if !changed {
 		return nil
-	}
-
-	snap, err := readFilerConfSnapshot(ctx, client)
-	if err != nil {
-		return err
-	}
-
-	for _, rule := range rules {
-		if _, found := snap.fc.GetLocationConf(rule.LocationPrefix); found {
-			continue
-		}
-		if err := snap.fc.SetLocationConf(rule); err != nil {
-			return err
-		}
 	}
 
 	return saveFilerConfConditionally(ctx, client, snap)

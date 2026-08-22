@@ -1133,8 +1133,7 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 	// XML after a rule change. The add path is gone — this loop only
 	// shrinks the conf, never grows it.
 	if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		_, err := filer.ClearBucketLifecycleDayTTLs(context.Background(), client, s3a.option.BucketsPath, bucket, s3a.getCollectionName(bucket))
-		return err
+		return filer.ClearBucketLifecycleDayTTLs(context.Background(), client, s3a.option.BucketsPath, bucket, s3a.getCollectionName(bucket))
 	}); err != nil {
 		glog.Errorf("PutBucketLifecycleConfigurationHandler clear legacy day-TTLs: %s", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)

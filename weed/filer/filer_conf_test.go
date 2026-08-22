@@ -388,9 +388,7 @@ func readFilerConfText(client *fakeFilerConfClient) string {
 func TestClearBucketLifecycleDayTTLs_NoFilerConf(t *testing.T) {
 	client := newFakeFilerConfClient()
 
-	removed, err := ClearBucketLifecycleDayTTLs(context.Background(), client, "/buckets", "mybucket", "mybucket")
-	require.NoError(t, err)
-	assert.Empty(t, removed)
+	require.NoError(t, ClearBucketLifecycleDayTTLs(context.Background(), client, "/buckets", "mybucket", "mybucket"))
 	assert.Empty(t, readFilerConfText(client))
 }
 
@@ -402,9 +400,7 @@ func TestClearBucketLifecycleDayTTLs_NoMatchingRule(t *testing.T) {
 		Ttl:            "7d",
 	})
 
-	removed, err := ClearBucketLifecycleDayTTLs(context.Background(), client, "/buckets", "mybucket", "mybucket")
-	require.NoError(t, err)
-	assert.Empty(t, removed)
+	require.NoError(t, ClearBucketLifecycleDayTTLs(context.Background(), client, "/buckets", "mybucket", "mybucket"))
 	assert.Contains(t, readFilerConfText(client), "other")
 }
 
@@ -416,11 +412,7 @@ func TestClearBucketLifecycleDayTTLs_RemovesDayTTLUnderBucket(t *testing.T) {
 		Ttl:            "7d",
 	})
 
-	removed, err := ClearBucketLifecycleDayTTLs(context.Background(), client, "/buckets", "mybucket", "mybucket")
-	require.NoError(t, err)
-	require.Len(t, removed, 1)
-	assert.Equal(t, "/buckets/mybucket/", removed[0].LocationPrefix)
-	assert.Equal(t, "7d", removed[0].Ttl)
+	require.NoError(t, ClearBucketLifecycleDayTTLs(context.Background(), client, "/buckets", "mybucket", "mybucket"))
 
 	reloaded := NewFilerConf()
 	require.NoError(t, reloaded.LoadFromBytes([]byte(readFilerConfText(client))))
@@ -436,9 +428,7 @@ func TestClearBucketLifecycleDayTTLs_KeepsNonDayTTL(t *testing.T) {
 		Ttl:            "7m", // minutes, not days: not a legacy lifecycle TTL rule
 	})
 
-	removed, err := ClearBucketLifecycleDayTTLs(context.Background(), client, "/buckets", "mybucket", "mybucket")
-	require.NoError(t, err)
-	assert.Empty(t, removed)
+	require.NoError(t, ClearBucketLifecycleDayTTLs(context.Background(), client, "/buckets", "mybucket", "mybucket"))
 
 	reloaded := NewFilerConf()
 	require.NoError(t, reloaded.LoadFromBytes([]byte(readFilerConfText(client))))
@@ -457,135 +447,20 @@ func TestClearBucketLifecycleDayTTLs_KeepsOtherBucketsAndCollections(t *testing.
 		&filer_pb.FilerConf_PathConf{LocationPrefix: "/buckets/mybucket/nested/", Collection: "group_mybucket", Ttl: "7d"},
 	)
 
-	removed, err := ClearBucketLifecycleDayTTLs(context.Background(), client, "/buckets", "mybucket", "mybucket")
-	require.NoError(t, err)
-	require.Len(t, removed, 1)
-	assert.Equal(t, "/buckets/mybucket/", removed[0].LocationPrefix)
+	require.NoError(t, ClearBucketLifecycleDayTTLs(context.Background(), client, "/buckets", "mybucket", "mybucket"))
+
+	reloaded := NewFilerConf()
+	require.NoError(t, reloaded.LoadFromBytes([]byte(readFilerConfText(client))))
+	_, found := reloaded.GetLocationConf("/buckets/mybucket/")
+	assert.False(t, found, "the target bucket's day-TTL rule should be gone")
 
 	text := readFilerConfText(client)
 	assert.Contains(t, text, "other")
 	assert.Contains(t, text, "group_mybucket")
 }
 
-func TestRestoreFilerConfLocationRules_NoOpWhenEmpty(t *testing.T) {
-	client := newFakeFilerConfClient()
-
-	require.NoError(t, RestoreFilerConfLocationRules(context.Background(), client, nil))
-	assert.Empty(t, readFilerConfText(client))
-}
-
-func TestRestoreFilerConfLocationRules_ReAddsRemovedRule(t *testing.T) {
-	client := newFakeFilerConfClient()
-	putFilerConf(t, client, &filer_pb.FilerConf_PathConf{
-		LocationPrefix: "/buckets/mybucket/",
-		Collection:     "mybucket",
-		Ttl:            "7d",
-	})
-
-	removed, err := ClearBucketLifecycleDayTTLs(context.Background(), client, "/buckets", "mybucket", "mybucket")
-	require.NoError(t, err)
-	require.Len(t, removed, 1)
-
-	require.NoError(t, RestoreFilerConfLocationRules(context.Background(), client, removed))
-
-	reloaded := NewFilerConf()
-	require.NoError(t, reloaded.LoadFromBytes([]byte(readFilerConfText(client))))
-	rule, found := reloaded.GetLocationConf("/buckets/mybucket/")
-	require.True(t, found, "restored rule should be present again")
-	assert.Equal(t, "7d", rule.Ttl)
-	assert.Equal(t, "mybucket", rule.Collection)
-}
-
-func TestRestoreFilerConfLocationRules_PreservesUnrelatedConcurrentEdits(t *testing.T) {
-	// Simulates another writer adding an unrelated rule between the cleanup
-	// and the restore: the restore must not clobber it, since it re-reads
-	// filer.conf fresh rather than overwriting from a stale snapshot.
-	client := newFakeFilerConfClient()
-	putFilerConf(t, client, &filer_pb.FilerConf_PathConf{
-		LocationPrefix: "/buckets/mybucket/",
-		Collection:     "mybucket",
-		Ttl:            "7d",
-	})
-
-	removed, err := ClearBucketLifecycleDayTTLs(context.Background(), client, "/buckets", "mybucket", "mybucket")
-	require.NoError(t, err)
-	require.Len(t, removed, 1)
-
-	// Concurrent, unrelated edit lands after the cleanup.
-	concurrentFc := NewFilerConf()
-	require.NoError(t, concurrentFc.LoadFromBytes([]byte(readFilerConfText(client))))
-	require.NoError(t, concurrentFc.SetLocationConf(&filer_pb.FilerConf_PathConf{
-		LocationPrefix: "/buckets/unrelated/",
-		Collection:     "unrelated",
-		Ttl:            "3d",
-	}))
-	var buf bytes.Buffer
-	require.NoError(t, concurrentFc.ToText(&buf))
-	client.entries[client.key(DirectoryEtcSeaweedFS, FilerConfName)] = &filer_pb.Entry{
-		Name:       FilerConfName,
-		Content:    buf.Bytes(),
-		Attributes: &filer_pb.FuseAttributes{},
-	}
-
-	require.NoError(t, RestoreFilerConfLocationRules(context.Background(), client, removed))
-
-	reloaded := NewFilerConf()
-	require.NoError(t, reloaded.LoadFromBytes([]byte(readFilerConfText(client))))
-	_, found := reloaded.GetLocationConf("/buckets/mybucket/")
-	assert.True(t, found, "restored rule should be present")
-	_, found = reloaded.GetLocationConf("/buckets/unrelated/")
-	assert.True(t, found, "concurrent unrelated edit must survive the restore")
-}
-
-// TestRestoreFilerConfLocationRules_DoesNotClobberSamePrefixConcurrentWrite
-// pins the fix for the case the above test doesn't cover: a concurrent
-// writer installing a *different* rule at the exact same LocationPrefix the
-// restore is about to re-add. The outer CAS in saveFilerConfConditionally
-// only guards against changes between this call's own read and its write —
-// it can't see that the restore loop itself would otherwise blindly
-// overwrite a value it just read a moment earlier. Restoring must skip a
-// prefix that's no longer empty, leaving the concurrent writer's rule alone.
-func TestRestoreFilerConfLocationRules_DoesNotClobberSamePrefixConcurrentWrite(t *testing.T) {
-	client := newFakeFilerConfClient()
-	putFilerConf(t, client, &filer_pb.FilerConf_PathConf{
-		LocationPrefix: "/buckets/mybucket/",
-		Collection:     "mybucket",
-		Ttl:            "7d",
-	})
-
-	removed, err := ClearBucketLifecycleDayTTLs(context.Background(), client, "/buckets", "mybucket", "mybucket")
-	require.NoError(t, err)
-	require.Len(t, removed, 1)
-
-	// Another writer installs a different rule at the exact same prefix
-	// before the restore call reads filer.conf.
-	concurrentFc := NewFilerConf()
-	require.NoError(t, concurrentFc.LoadFromBytes([]byte(readFilerConfText(client))))
-	require.NoError(t, concurrentFc.SetLocationConf(&filer_pb.FilerConf_PathConf{
-		LocationPrefix: "/buckets/mybucket/", Collection: "mybucket", Ttl: "30d", ReadOnly: true,
-	}))
-	var buf bytes.Buffer
-	require.NoError(t, concurrentFc.ToText(&buf))
-	client.entries[client.key(DirectoryEtcSeaweedFS, FilerConfName)] = &filer_pb.Entry{
-		Name:       FilerConfName,
-		Content:    buf.Bytes(),
-		Attributes: &filer_pb.FuseAttributes{},
-	}
-
-	require.NoError(t, RestoreFilerConfLocationRules(context.Background(), client, removed))
-
-	reloaded := NewFilerConf()
-	require.NoError(t, reloaded.LoadFromBytes([]byte(readFilerConfText(client))))
-	rule, found := reloaded.GetLocationConf("/buckets/mybucket/")
-	require.True(t, found)
-	assert.Equal(t, "30d", rule.Ttl, "the concurrent writer's rule must survive, not the stale restored one")
-	assert.True(t, rule.ReadOnly, "the concurrent writer's rule must survive, not the stale restored one")
-}
-
-// bumpMtime simulates a concurrent writer modifying filer.conf after it was
-// read: it advances the stored entry's Mtime past unmodifiedSince so a
-// pending IF_UNMODIFIED_SINCE condition built from that earlier read no
-// longer holds.
+// bumpMtime models a writer that landed after unmodifiedSince, so an
+// IF_UNMODIFIED_SINCE precondition built on that timestamp no longer holds.
 func bumpMtime(client *fakeFilerConfClient, unmodifiedSince int64) {
 	client.mu.Lock()
 	defer client.mu.Unlock()
@@ -599,9 +474,6 @@ func bumpMtime(client *fakeFilerConfClient, unmodifiedSince int64) {
 	e.Attributes.Mtime = unmodifiedSince + 1
 }
 
-// TestSaveFilerConfConditionally_RejectsUpdateModifiedConcurrently exercises
-// the bootstrap fallback: a filer.conf entry with no Md5 yet (as if written
-// before this code existed) falls back to the mtime-based precondition.
 func TestSaveFilerConfConditionally_RejectsUpdateModifiedConcurrently(t *testing.T) {
 	client := newFakeFilerConfClient()
 	putFilerConf(t, client, &filer_pb.FilerConf_PathConf{LocationPrefix: "/buckets/a/", Collection: "a", Ttl: "7d"})

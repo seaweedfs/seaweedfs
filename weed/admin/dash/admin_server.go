@@ -1,7 +1,6 @@
 package dash
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -1028,6 +1027,10 @@ func fromBucketLifecycleRule(rule BucketLifecycleRule) (*s3lifecycle.Rule, error
 	return out, nil
 }
 
+// ErrBucketNotFound reports that the named bucket has no filer entry, so a
+// handler can answer 404 rather than 500.
+var ErrBucketNotFound = errors.New("bucket not found")
+
 // SetBucketLifecycle replaces the lifecycle configuration stored on a
 // bucket's filer entry. An empty rule list clears the configuration
 // entirely, mirroring clearStoredBucketLifecycleConfiguration on the S3 API
@@ -1051,8 +1054,8 @@ func (s *AdminServer) SetBucketLifecycle(bucketName string, rules []BucketLifecy
 		if err != nil {
 			return fmt.Errorf("marshal lifecycle configuration: %w", err)
 		}
-		if len(lifecycleXML) > MaxBucketLifecycleConfigurationSize {
-			return fmt.Errorf("lifecycle configuration is %d bytes, which exceeds the %d byte limit", len(lifecycleXML), MaxBucketLifecycleConfigurationSize)
+		if len(lifecycleXML) > scheduler.MaxBucketLifecycleConfigurationSize {
+			return fmt.Errorf("lifecycle configuration is %d bytes, which exceeds the %d byte limit", len(lifecycleXML), scheduler.MaxBucketLifecycleConfigurationSize)
 		}
 	}
 
@@ -1063,148 +1066,66 @@ func (s *AdminServer) SetBucketLifecycle(bucketName string, rules []BucketLifecy
 	collection := getCollectionName(filerConfig.FilerGroup, bucketName)
 
 	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		lookupResp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+		// PATCH_EXTENDED is a no-op on a missing entry, so the existence
+		// check has to happen here rather than fall out of the write.
+		if _, err := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: filerConfig.BucketsPath,
 			Name:      bucketName,
-		})
-		if err != nil {
-			return fmt.Errorf("bucket not found: %w", err)
-		}
-
-		// Snapshot the XML as it was before this operation touches anything,
-		// so a failure below can tell "nothing landed" (safe to restore the
-		// TTL rules cleared next) apart from "something landed" — whether
-		// that's this write's own content or a completely unrelated
-		// concurrent writer's. bucketEntry.Extended is mutated in place
-		// below, so this copy must happen first.
-		originalLifecycleXML := append([]byte(nil), lookupResp.Entry.Extended[scheduler.BucketLifecycleConfigurationXMLKey]...)
-
-		// Likewise capture the entry's mtime so the UpdateEntry below can be
-		// conditioned on nobody else (a concurrent owner/quota/lifecycle
-		// change) having written this bucket entry since this lookup —
-		// otherwise the unconditional write further down would replace the
-		// whole entry with this stale snapshot, silently discarding
-		// whatever the concurrent writer changed.
-		//
-		// This only catches races a second or more apart: IF_UNMODIFIED_SINCE
-		// compares at whole-second resolution (WriteCondition_Clause.UnixTime
-		// is int64 seconds, and the server evaluates it via time.Time.Unix()
-		// even though FuseAttributes carries a Mtime_ns component), so two
-		// writers landing in the same second still race. Closing that fully
-		// would need an exact-match precondition (e.g. IF_ETAG_MATCH) backed
-		// by a content hash of the entry's mutable state — but unlike
-		// filer.conf, a bucket entry has no Content to hash, and every other
-		// mutator of this same entry (SetBucketOwner, SetBucketQuota,
-		// CreateS3BucketWithObjectLock, ...) would need to compute and
-		// maintain that hash consistently too, or it would go stale the
-		// first time one of them writes without updating it. That's a
-		// broader redesign across all bucket-entry mutators, out of scope
-		// for this fix.
-		var originalBucketEntryMtime int64
-		if lookupResp.Entry.Attributes != nil {
-			originalBucketEntryMtime = lookupResp.Entry.Attributes.Mtime
+		}); err != nil {
+			if errors.Is(err, filer_pb.ErrNotFound) {
+				return fmt.Errorf("%w: %s", ErrBucketNotFound, bucketName)
+			}
+			return fmt.Errorf("look up bucket %s: %w", bucketName, err)
 		}
 
 		// Migration: clear any legacy day-TTL filer.conf entries before
-		// writing the new XML below, so a failure here leaves the bucket
-		// entry untouched instead of committing the new policy alongside a
-		// stale TTL rule the endpoint then reports as failed. See
-		// PutBucketLifecycleConfigurationHandler for the S3 API's
-		// equivalent step and ordering. removedTTLRules lets a failure
-		// below restore exactly what this call removed, instead of
-		// overwriting the whole file with a stale snapshot that could
-		// clobber unrelated concurrent edits.
-		removedTTLRules, err := filer.ClearBucketLifecycleDayTTLs(context.Background(), client, filerConfig.BucketsPath, bucketName, collection)
-		if err != nil {
+		// writing the new XML, so a failure here leaves the bucket entry
+		// untouched instead of committing the new policy alongside a stale
+		// TTL rule. Same step and ordering as
+		// PutBucketLifecycleConfigurationHandler.
+		if err := filer.ClearBucketLifecycleDayTTLs(context.Background(), client, filerConfig.BucketsPath, bucketName, collection); err != nil {
 			return fmt.Errorf("failed to clear legacy lifecycle TTLs: %w", err)
 		}
 
-		bucketEntry := lookupResp.Entry
-		if bucketEntry.Extended == nil {
-			bucketEntry.Extended = make(map[string][]byte)
-		}
-
-		if len(lifecycleXML) > 0 {
-			bucketEntry.Extended[scheduler.BucketLifecycleConfigurationXMLKey] = lifecycleXML
-		} else {
-			delete(bucketEntry.Extended, scheduler.BucketLifecycleConfigurationXMLKey)
-			delete(bucketEntry.Extended, scheduler.BucketLifecycleTransitionMinimumObjectSizeKey)
-		}
-
-		if _, err := client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
-			Directory: filerConfig.BucketsPath,
-			Entry:     bucketEntry,
-			Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{
-				{Kind: filer_pb.WriteCondition_IF_UNMODIFIED_SINCE, UnixTime: originalBucketEntryMtime},
-			}},
-		}); err != nil {
-			if len(removedTTLRules) > 0 && bucketLifecycleXMLUnchangedSince(client, filerConfig.BucketsPath, bucketName, originalLifecycleXML) {
-				// UpdateEntry errors can be transport-level: the write may
-				// have actually landed despite the error, or a completely
-				// unrelated concurrent request may have written its own XML
-				// in the meantime. Either way, once the bucket's lifecycle
-				// XML no longer matches what it was before this operation
-				// started, whatever is now in effect already assumes the
-				// legacy TTL rules are gone — restoring them would
-				// double-stamp expiration under a superseded policy. Only
-				// restore once the bucket entry confirms nothing changed.
-				if restoreErr := filer.RestoreFilerConfLocationRules(context.Background(), client, removedTTLRules); restoreErr != nil {
-					return fmt.Errorf("failed to update bucket lifecycle: %w (additionally failed to restore legacy TTL rules cleared during the same operation: %v)", err, restoreErr)
-				}
-			}
+		bucketPath := filerConfig.BucketsPath + "/" + bucketName
+		resp, err := client.ObjectTransaction(context.Background(), &filer_pb.ObjectTransactionRequest{
+			LockKey:   bucketPath,
+			RouteKey:  s3_constants.ObjectWriteRouteKeyPrefix + bucketPath,
+			Mutations: []*filer_pb.ObjectMutation{bucketLifecycleMutation(filerConfig.BucketsPath, bucketName, lifecycleXML)},
+		})
+		if err != nil {
 			return fmt.Errorf("failed to update bucket lifecycle: %w", err)
 		}
-
+		if resp.Error != "" {
+			return fmt.Errorf("failed to update bucket lifecycle: %s", resp.Error)
+		}
 		return nil
 	})
 }
 
-// bucketLifecycleVerifyRetries and bucketLifecycleVerifyRetryDelay bound the
-// retry in bucketLifecycleXMLUnchangedSince: a single transient RPC failure
-// on the verification lookup shouldn't be enough, on its own, to decide
-// whether the cleared legacy TTL rules get restored. The delay is a var
-// (not const) so tests can zero it out instead of paying the real delay.
-const bucketLifecycleVerifyRetries = 3
-
-var bucketLifecycleVerifyRetryDelay = 200 * time.Millisecond
-
-// bucketLifecycleXMLUnchangedSince re-reads the bucket entry to check
-// whether its lifecycle XML still matches originalLifecycleXML, the value
-// captured before this operation's own clear-TTL-then-update attempt. This
-// is what makes it safe to restore the TTL rules that attempt removed:
-// unchanged means neither this request's write nor any other concurrent
-// writer's landed, so the legacy TTL is still the active policy. If the XML
-// has changed to anything else — this write's own new content, or an
-// unrelated concurrent writer's — some policy is now in effect that already
-// assumes the legacy TTL is gone, and restoring it would double-stamp
-// expiration under whichever policy actually committed. The lookup retries
-// a few times on error before giving up, so one transient RPC failure
-// doesn't by itself decide the outcome. Errs toward "changed" (false, i.e.
-// don't restore) if verification still fails after those retries, since
-// that leaves the true state unknown and restoring on a false negative
-// risks the same double-stamp; not restoring in that case only leaves the
-// bucket without an active lifecycle policy until the next successful
-// save, which is recoverable and does not destroy data.
-func bucketLifecycleXMLUnchangedSince(client filer_pb.SeaweedFilerClient, bucketsPath, bucketName string, originalLifecycleXML []byte) bool {
-	var verifyResp *filer_pb.LookupDirectoryEntryResponse
-	var err error
-	for attempt := 0; attempt < bucketLifecycleVerifyRetries; attempt++ {
-		verifyResp, err = client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
-			Directory: bucketsPath,
-			Name:      bucketName,
-		})
-		if err == nil {
-			break
-		}
-		if attempt < bucketLifecycleVerifyRetries-1 {
-			time.Sleep(bucketLifecycleVerifyRetryDelay)
-		}
+// bucketLifecycleMutation patches the two lifecycle keys rather than writing
+// the whole entry back: the filer re-reads and merges under the bucket path
+// lock, so a concurrent owner/quota/versioning change is preserved instead of
+// being reverted by a stale snapshot. Same mutation the S3 gateway uses for
+// these keys (see patchBucketEntry in s3api_bucket_config.go). Empty XML
+// clears the configuration, transition minimum size included.
+func bucketLifecycleMutation(bucketsPath, bucketName string, lifecycleXML []byte) *filer_pb.ObjectMutation {
+	mutation := &filer_pb.ObjectMutation{
+		Type:      filer_pb.ObjectMutation_PATCH_EXTENDED,
+		Directory: bucketsPath,
+		Name:      bucketName,
 	}
-	if err != nil || verifyResp.Entry == nil {
-		return false
+	if len(lifecycleXML) > 0 {
+		mutation.SetExtended = map[string][]byte{
+			scheduler.BucketLifecycleConfigurationXMLKey: lifecycleXML,
+		}
+		return mutation
 	}
-	current := verifyResp.Entry.Extended[scheduler.BucketLifecycleConfigurationXMLKey]
-	return bytes.Equal(current, originalLifecycleXML)
+	mutation.DeleteExtended = []string{
+		scheduler.BucketLifecycleConfigurationXMLKey,
+		scheduler.BucketLifecycleTransitionMinimumObjectSizeKey,
+	}
+	return mutation
 }
 
 // CreateS3Bucket creates a new S3 bucket
