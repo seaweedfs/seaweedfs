@@ -436,6 +436,53 @@ func TestClearBucketLifecycleDayTTLs_KeepsNonDayTTL(t *testing.T) {
 	assert.True(t, found, "non-day TTL rule should be left alone")
 }
 
+func TestClearBucketLifecycleDayTTLs_KeepsOperatorSettingsAndClearsOnlyTheTTL(t *testing.T) {
+	// The removed add path merged its TTL onto whatever already sat at the
+	// prefix, so a rule carrying operator settings must survive with only its
+	// TTL retired - deleting it outright would drop the disk type and the
+	// read-only flag with it.
+	client := newFakeFilerConfClient()
+	putFilerConf(t, client, &filer_pb.FilerConf_PathConf{
+		LocationPrefix: "/buckets/mybucket/logs/",
+		Collection:     "mybucket",
+		Ttl:            "30d",
+		DiskType:       "hdd",
+		ReadOnly:       true,
+	})
+
+	require.NoError(t, ClearBucketLifecycleDayTTLs(context.Background(), client, "/buckets", "mybucket", "mybucket"))
+
+	reloaded := NewFilerConf()
+	require.NoError(t, reloaded.LoadFromBytes([]byte(readFilerConfText(client))))
+	rule, found := reloaded.GetLocationConf("/buckets/mybucket/logs/")
+	require.True(t, found, "a rule carrying operator settings must not be deleted")
+	assert.Equal(t, "", rule.Ttl, "the legacy day TTL should be gone")
+	assert.Equal(t, "hdd", rule.DiskType, "the operator's disk type must survive")
+	assert.True(t, rule.ReadOnly, "the operator's read-only flag must survive")
+}
+
+func TestClearBucketLifecycleDayTTLs_KeepsWormSettings(t *testing.T) {
+	worm := true
+	client := newFakeFilerConfClient()
+	putFilerConf(t, client, &filer_pb.FilerConf_PathConf{
+		LocationPrefix:           "/buckets/mybucket/locked/",
+		Collection:               "mybucket",
+		Ttl:                      "7d",
+		Worm:                     &worm,
+		WormRetentionTimeSeconds: 3600,
+	})
+
+	require.NoError(t, ClearBucketLifecycleDayTTLs(context.Background(), client, "/buckets", "mybucket", "mybucket"))
+
+	reloaded := NewFilerConf()
+	require.NoError(t, reloaded.LoadFromBytes([]byte(readFilerConfText(client))))
+	rule, found := reloaded.GetLocationConf("/buckets/mybucket/locked/")
+	require.True(t, found, "a WORM rule must not be deleted to retire a TTL")
+	assert.Equal(t, "", rule.Ttl)
+	assert.True(t, rule.GetWorm())
+	assert.Equal(t, uint64(3600), rule.WormRetentionTimeSeconds)
+}
+
 func TestClearBucketLifecycleDayTTLs_KeepsOtherBucketsAndCollections(t *testing.T) {
 	client := newFakeFilerConfClient()
 	putFilerConf(t, client,

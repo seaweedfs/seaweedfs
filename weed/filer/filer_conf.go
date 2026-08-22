@@ -451,10 +451,23 @@ func ClearBucketLifecycleDayTTLs(ctx context.Context, client filer_pb.SeaweedFil
 		if !strings.HasPrefix(prefix, bucketPrefix) || !strings.HasSuffix(ttl, "d") {
 			continue
 		}
-		// Logged rather than returned: this is a one-way migration, and the
-		// prefix and TTL are all an operator needs to put a rule back by hand.
-		glog.V(0).Infof("lifecycle migration: dropping legacy day-TTL rule %s ttl=%s", prefix, ttl)
-		snap.fc.DeleteLocationConf(prefix)
+		locConf, found := snap.fc.GetLocationConf(prefix)
+		if !found {
+			continue
+		}
+		// Logged either way: this is a one-way migration, and the prefix and
+		// TTL are all an operator needs to put a rule back by hand.
+		if isLifecycleOwnedPathConf(locConf) {
+			glog.V(0).Infof("lifecycle migration: dropping legacy day-TTL rule %s ttl=%s", prefix, ttl)
+			snap.fc.DeleteLocationConf(prefix)
+		} else {
+			glog.V(0).Infof("lifecycle migration: clearing legacy day-TTL %s on operator rule %s", ttl, prefix)
+			updated := ClonePathConf(locConf)
+			updated.Ttl = ""
+			if err := snap.fc.SetLocationConf(updated); err != nil {
+				return err
+			}
+		}
 		changed = true
 	}
 	if !changed {
@@ -462,6 +475,19 @@ func ClearBucketLifecycleDayTTLs(ctx context.Context, client filer_pb.SeaweedFil
 	}
 
 	return saveFilerConfConditionally(ctx, client, snap)
+}
+
+// isLifecycleOwnedPathConf reports whether a rule looks like one the removed
+// PutBucketLifecycleConfiguration add path created, which set only the
+// routing and TTL fields. That path merged onto whatever already sat at the
+// prefix, so anything else here - a disk type, WORM settings, a read-only
+// flag, a placement pin - is an operator's, and deleting the whole rule to
+// retire its TTL would take their configuration with it.
+func isLifecycleOwnedPathConf(c *filer_pb.FilerConf_PathConf) bool {
+	return c.GetDiskType() == "" && !c.GetFsync() && !c.GetReadOnly() &&
+		c.GetDataCenter() == "" && c.GetRack() == "" && c.GetDataNode() == "" &&
+		c.GetMaxFileNameLength() == 0 && !c.GetDisableChunkDeletion() &&
+		c.Worm == nil && c.GetWormGracePeriodSeconds() == 0 && c.GetWormRetentionTimeSeconds() == 0
 }
 
 func (fc *FilerConf) GetCollectionTtls(collection string) (ttls map[string]string) {
