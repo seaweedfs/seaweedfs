@@ -9,7 +9,7 @@
 #   curl -fsSL ... | bash -s -- --version 4.34 --dir /usr/local/bin
 #
 # Options:
-#   --component COMP   Which binary to install: weed, volume-rust, all (default: weed)
+#   --component COMP   Which binary to install: weed, volume-rust, worker-rust, all (default: weed)
 #   --version VER      Release version tag (default: latest)
 #   --large-disk       Use large disk variant (5-byte offset, 8TB max volume)
 #   --dir DIR          Installation directory (default: /usr/local/bin)
@@ -22,6 +22,7 @@ COMPONENT="weed"
 VERSION=""
 LARGE_DISK=false
 INSTALL_DIR="/usr/local/bin"
+WORKER_INSTALLED=false
 
 # Colors (if terminal supports them)
 if [ -t 1 ]; then
@@ -128,6 +129,33 @@ rust_asset_name() {
     fi
 }
 
+# Does a release carry this asset? Answers 0 for yes and 1 for a 404, and stops
+# the installer on anything else: a rate limit or a network blip must not read
+# as "this release predates the binary" and quietly skip it.
+asset_exists() {
+    local url="$1" code=""
+    if command -v curl &>/dev/null; then
+        code="$(curl -sL -o /dev/null -I -w '%{http_code}' "$url" || true)"
+    elif command -v wget &>/dev/null; then
+        # --spider's exit status folds 404 in with every other server error, so
+        # read the status line itself; -S prints one per redirect hop.
+        code="$(wget -S --spider -q -O /dev/null "$url" 2>&1 | awk '/^ *HTTP\// {c=$2} END {print c}')"
+    fi
+
+    case "$code" in
+        200) return 0 ;;
+        404) return 1 ;;
+        *)   error "Could not check ${url} (HTTP ${code:-none}). Retry, or install components one at a time." ;;
+    esac
+}
+
+# Build Rust maintenance worker asset name. No large-disk variant: the worker
+# maintains tables through the namespace and never opens a volume file.
+worker_asset_name() {
+    local os="$1" arch="$2"
+    echo "weed-worker_${os}_${arch}.tar.gz"
+}
+
 # Install a single component
 install_component() {
     local component="$1" os="$2" arch="$3"
@@ -204,10 +232,48 @@ install_component() {
             ok "Installed weed-volume to ${INSTALL_DIR}/${dest_name}"
             ;;
 
+        worker-rust)
+            # Published for linux only: the worker runs beside the cluster it
+            # maintains, and its dependency tree makes every extra target an
+            # expensive build.
+            case "$os" in
+                linux) ;;
+                *) error "Rust maintenance worker is not available for ${os}. Supported: linux" ;;
+            esac
+            case "$arch" in
+                amd64|arm64) ;;
+                *) error "Rust maintenance worker is not available for ${arch}. Supported: amd64, arm64" ;;
+            esac
+
+            asset_name="$(worker_asset_name "$os" "$arch")"
+            download_url="https://github.com/${REPO}/releases/download/${VERSION}/${asset_name}"
+            download "$download_url" "${tmpdir}/${asset_name}"
+
+            info "Extracting ${asset_name}..."
+            tar xzf "${tmpdir}/${asset_name}" -C "$tmpdir"
+
+            local worker_bin
+            worker_bin="$(find "$tmpdir" -name 'weed-worker' -type f | head -1)"
+            if [ -z "$worker_bin" ]; then
+                error "Could not find weed-worker binary in archive"
+            fi
+
+            chmod +x "$worker_bin"
+            install_binary "$worker_bin" "weed-worker"
+            WORKER_INSTALLED=true
+            ok "Installed weed-worker to ${INSTALL_DIR}/weed-worker"
+            ;;
+
         *)
-            error "Unknown component: ${component}. Use: weed, volume-rust, all"
+            error "Unknown component: ${component}. Use: weed, volume-rust, worker-rust, all"
             ;;
     esac
+
+    # The trap is per-process, so a later component's would replace this one and
+    # leave the earlier extraction behind. Clean up here and hand the trap back;
+    # the error paths above exit, which still fires it.
+    rm -rf "$tmpdir"
+    trap - EXIT
 }
 
 # Copy binary to install dir, using sudo if needed
@@ -251,6 +317,16 @@ main() {
         all)
             install_component "weed" "$os" "$arch"
             install_component "volume-rust" "$os" "$arch"
+            # The worker is published for linux amd64/arm64 only, and only by
+            # releases new enough to carry it; skip either case rather than fail
+            # an install that has already put two binaries in place.
+            if [ "$os" != "linux" ] || { [ "$arch" != "amd64" ] && [ "$arch" != "arm64" ]; }; then
+                warn "Skipping the Rust maintenance worker: no build for ${os}/${arch}"
+            elif ! asset_exists "https://github.com/${REPO}/releases/download/${VERSION}/$(worker_asset_name "$os" "$arch")"; then
+                warn "Skipping the Rust maintenance worker: ${VERSION} does not carry one"
+            else
+                install_component "worker-rust" "$os" "$arch"
+            fi
             ;;
         *)
             install_component "$COMPONENT" "$os" "$arch"
@@ -265,11 +341,17 @@ main() {
     if [ "$COMPONENT" = "volume-rust" ] || [ "$COMPONENT" = "all" ]; then
         info "  weed-volume:  ${INSTALL_DIR}/weed-volume"
     fi
+    if [ "$WORKER_INSTALLED" = true ]; then
+        info "  weed-worker:     ${INSTALL_DIR}/weed-worker"
+    fi
     echo ""
     info "Quick start:"
     info "  weed master                          # Start master server"
     info "  weed volume -mserver=localhost:9333   # Start Go volume server"
     info "  weed-volume -mserver localhost:9333 # Start Rust volume server"
+    if [ "$WORKER_INSTALLED" = true ]; then
+        info "  weed-worker --admin localhost:23646  # Start the Rust maintenance worker"
+    fi
 }
 
 main
