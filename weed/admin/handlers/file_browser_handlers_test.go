@@ -49,7 +49,8 @@ func TestValidateAndCleanFilePath_RejectsEmpty(t *testing.T) {
 func TestListFolders_RejectsPathOutsideBuckets(t *testing.T) {
 	h := &FileBrowserHandlers{adminServer: &dash.AdminServer{}}
 
-	cases := []string{"/etc/seaweedfs", "/", "/notbuckets/foo", "/buckets-not-really/foo"}
+	cases := []string{"/etc/seaweedfs", "/", "/notbuckets/foo", "/buckets-not-really/foo",
+		"/buckets/../etc", "/buckets/..", "/buckets/foo/../../etc", `/buckets\..\etc`}
 	for _, path := range cases {
 		req := httptest.NewRequest(http.MethodGet, "/api/files/list-folders?path="+path, nil)
 		w := httptest.NewRecorder()

@@ -800,7 +800,9 @@ const maxListFoldersScanned = 10000
 // segment the caller is still typing, and narrows the listing to it.
 func (h *FileBrowserHandlers) ListFolders(w http.ResponseWriter, r *http.Request) {
 	dirPath := defaultQuery(r.URL.Query().Get("path"), "/buckets")
-	dirPath = util.CleanWindowsPath(dirPath)
+	// Clean before the scope check: CleanWindowsPath only rewrites backslashes,
+	// so "/buckets/../etc" would otherwise satisfy the prefix test below.
+	dirPath = path.Clean(util.CleanWindowsPath(dirPath))
 
 	if dirPath != "/buckets" && !strings.HasPrefix(dirPath, "/buckets/") {
 		writeJSONError(w, http.StatusBadRequest, "path must be under /buckets")
