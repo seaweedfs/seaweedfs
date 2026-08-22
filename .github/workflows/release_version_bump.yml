@@ -216,22 +216,21 @@ jobs:
             exit 1
           fi
 
-          runs() { gh api "repos/${REPO}/actions/workflows/${WORKFLOW}/runs?per_page=50" --jq '[.workflow_runs[].id]'; }
+          # Wait on the release the dispatched workflow publishes, not on the run
+          # that publishes it: a dispatch cannot be told apart from a concurrent
+          # one through the API, and the release is what we are here for.
+          released() { gh api "repos/${REPO}/releases?per_page=30" --jq '[.[].tag_name]'; }
 
-          BEFORE=$(runs)
+          BEFORE=$(released)
           gh workflow run -R "$REPO" "$WORKFLOW" --ref master -f bump=patch -f update_seaweedfs=true
 
-          for _ in $(seq 24); do
-            sleep 5
-            NEW=$(runs | jq -c --argjson before "$BEFORE" '. - $before')
+          for _ in $(seq 80); do
+            sleep 15
+            NEW=$(released | jq -c --argjson before "$BEFORE" '. - $before')
             [ "$(jq length <<<"$NEW")" -gt 0 ] && break
           done
-          case "$(jq length <<<"$NEW")" in
-            0) echo "::error::${REPO} did not start a run for ${WORKFLOW}"; exit 1 ;;
-            1) ;;
-            *) echo "::error::${REPO} started more than one run of ${WORKFLOW}; cannot tell which one is ours: ${NEW}"; exit 1 ;;
-          esac
-          RUN=$(jq -r '.[0]' <<<"$NEW")
-
-          echo "watching https://github.com/${REPO}/actions/runs/${RUN}"
-          gh run watch "$RUN" -R "$REPO" --exit-status
+          if [ "$(jq length <<<"$NEW")" -eq 0 ]; then
+            echo "::error::${REPO} published no release within 20 minutes; see https://github.com/${REPO}/actions/workflows/${WORKFLOW}"
+            exit 1
+          fi
+          echo "${REPO} released $(jq -r 'join(", ")' <<<"$NEW")"
