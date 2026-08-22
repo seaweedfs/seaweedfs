@@ -92,6 +92,7 @@ spec:
           image: {{ template "seaweedfs.filer.image" . }}
           imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
           env:
+            {{- $mysqlEnabled := include "seaweedfs.filer.mysqlEnabled" . }}
             - name: POD_IP
               valueFrom:
                 fieldRef:
@@ -104,6 +105,7 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            {{- if $mysqlEnabled }}
             - name: WEED_MYSQL_USERNAME
               valueFrom:
                 secretKeyRef:
@@ -116,6 +118,7 @@ spec:
                   name: {{ include "seaweedfs.fullname" . }}-db-secret
                   key: password
                   optional: true
+            {{- end }}
             - name: SEAWEEDFS_FULLNAME
               value: "{{ include "seaweedfs.fullname" . }}"
             {{- if and .Values.filer.s3.enabled .Values.filer.s3.enableAuth }}
@@ -123,6 +126,13 @@ spec:
             {{- end }}
             {{- $mergedExtraEnvironmentVars := dict }}
             {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global.seaweedfs "component" .Values.filer "target" $mergedExtraEnvironmentVars) }}
+            {{- if not $mysqlEnabled }}
+            {{- range $key := keys $mergedExtraEnvironmentVars }}
+            {{- if hasPrefix "WEED_MYSQL_" $key }}
+            {{- $_ := unset $mergedExtraEnvironmentVars $key }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
             {{- range $key := keys $mergedExtraEnvironmentVars | sortAlpha }}
             {{- $value := index $mergedExtraEnvironmentVars $key }}
             - name: {{ $key }}
@@ -135,8 +145,10 @@ spec:
             {{- end }}
             {{- if .Values.filer.secretExtraEnvironmentVars }}
             {{- range $key, $value := .Values.filer.secretExtraEnvironmentVars }}
+            {{- if or $mysqlEnabled (not (hasPrefix "WEED_MYSQL_" $key)) }}
             - name: {{ $key }}
               valueFrom: {{ toYaml $value | nindent 16 }}
+            {{- end }}
             {{- end }}
             {{- end }}
           command:
