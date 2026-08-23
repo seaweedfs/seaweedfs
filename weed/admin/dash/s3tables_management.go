@@ -1043,8 +1043,11 @@ func (s *AdminServer) GetS3TablesBucketPolicy(w http.ResponseWriter, r *http.Req
 	getReq := &s3tables.GetTableBucketPolicyRequest{TableBucketARN: bucketArn}
 	var resp s3tables.GetTableBucketPolicyResponse
 	if err := s.executeS3TablesOperation(r.Context(), "GetTableBucketPolicy", getReq, &resp); err != nil {
-		writeS3TablesError(w, err)
-		return
+		// No policy is a normal state for the UI (empty editor), not an error.
+		if !isS3TablesNoSuchPolicy(err) {
+			writeS3TablesError(w, err)
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"policy": resp.ResourcePolicy})
 }
@@ -1111,8 +1114,10 @@ func (s *AdminServer) GetS3TablesTablePolicy(w http.ResponseWriter, r *http.Requ
 	getReq := &s3tables.GetTablePolicyRequest{TableBucketARN: bucketArn, Namespace: namespaceParts, Name: name}
 	var resp s3tables.GetTablePolicyResponse
 	if err := s.executeS3TablesOperation(r.Context(), "GetTablePolicy", getReq, &resp); err != nil {
-		writeS3TablesError(w, err)
-		return
+		if !isS3TablesNoSuchPolicy(err) {
+			writeS3TablesError(w, err)
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"policy": resp.ResourcePolicy})
 }
@@ -1223,6 +1228,11 @@ func parseS3TablesErrorMessage(err error) string {
 
 func writeS3TablesError(w http.ResponseWriter, err error) {
 	writeJSONError(w, s3TablesErrorStatus(err), parseS3TablesErrorMessage(err))
+}
+
+func isS3TablesNoSuchPolicy(err error) bool {
+	var s3Err *s3tables.S3TablesError
+	return errors.As(err, &s3Err) && s3Err.Type == s3tables.ErrCodeNoSuchPolicy
 }
 
 func s3TablesErrorStatus(err error) int {
