@@ -278,11 +278,16 @@ func NewAdminServer(masters string, filerGroup string, templateFS http.FileSyste
 		glog.V(1).Infof("No data directory configured, maintenance system will run in memory-only mode (enabled: %v)", maintenanceConfig.Enabled)
 	}
 
+	// Load saved task configurations from persistence. This has to run before the maintenance
+	// manager is created: creating it applies the maintenance policy to the registered
+	// detectors and schedulers, while this call replaces each task's whole config object, so
+	// running it afterwards would discard what the policy just applied. Both read the same
+	// persisted task config files, so the policy ends up as the last writer and stays
+	// authoritative for the task types it covers.
+	server.loadTaskConfigurationsFromPersistence()
+
 	// Always initialize maintenance manager
 	server.InitMaintenanceManager(maintenanceConfig)
-
-	// Load saved task configurations from persistence
-	server.loadTaskConfigurationsFromPersistence()
 
 	// Start maintenance manager if enabled
 	if maintenanceConfig.Enabled {
@@ -1839,7 +1844,16 @@ func (s *AdminServer) ListPluginSchedulerStates() ([]adminplugin.SchedulerJobTyp
 
 // InitMaintenanceManager initializes the maintenance manager
 func (s *AdminServer) InitMaintenanceManager(config *maintenance.MaintenanceConfig) {
-	s.maintenanceManager = maintenance.NewMaintenanceManager(s, config)
+	// Hand the real config store to the manager so that, if it has to build the maintenance policy
+	// itself, it reads the persisted task configs instead of compiled-in defaults. Only pass it when
+	// a data directory is actually configured: an unconfigured store has nothing to read, and a typed
+	// nil pointer would satisfy the loaders' type assertion and then panic on use.
+	var configPersistence interface{}
+	if s.configPersistence != nil && s.configPersistence.IsConfigured() {
+		configPersistence = s.configPersistence
+	}
+
+	s.maintenanceManager = maintenance.NewMaintenanceManager(s, config, configPersistence)
 
 	// Set up task persistence if config persistence is available
 	if s.configPersistence != nil {

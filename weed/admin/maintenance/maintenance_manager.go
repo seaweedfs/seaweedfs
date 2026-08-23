@@ -10,12 +10,29 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/ec_balance"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
+	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
-// buildPolicyFromTaskConfigs loads task configurations from separate files and builds a MaintenancePolicy
-func buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
+// BuildPolicyFromTaskConfigs loads each registered task's configuration and builds the
+// MaintenancePolicy the maintenance system runs on.
+//
+// Every entry is produced by the task's own ToTaskPolicy(), so a policy entry always carries
+// exactly what that task's config holds. Hand-copying the fields here instead made this a
+// second, silently diverging definition of every task's policy: it dropped the erasure
+// coding preferred tags and replica placement and the balance IO rate limit outright.
+//
+// Every task registered through base.RegisterTask needs an entry, because a task type the
+// policy does not list has no enabled flag and no concurrency limit of its own -
+// IsTaskEnabled reports false for a missing entry.
+//
+// configPersistence is duck-typed as interface{} because weed/admin/dash already imports this
+// package, so importing *dash.ConfigPersistence back here would create an import cycle. It must be
+// a value implementing the LoadXTaskPolicy() accessors the task loaders assert on; passing nil (or
+// anything else) makes every task fall back to its compiled-in defaults.
+func BuildPolicyFromTaskConfigs(configPersistence interface{}) *worker_pb.MaintenancePolicy {
 	policy := &worker_pb.MaintenancePolicy{
 		GlobalMaxConcurrent:          4,
 		DefaultRepeatIntervalSeconds: 6 * 3600,  // 6 hours in seconds
@@ -23,54 +40,20 @@ func buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
 		TaskPolicies:                 make(map[string]*worker_pb.TaskPolicy),
 	}
 
-	// Load vacuum task configuration
-	if vacuumConfig := vacuum.LoadConfigFromPersistence(nil); vacuumConfig != nil {
-		policy.TaskPolicies["vacuum"] = &worker_pb.TaskPolicy{
-			Enabled:               vacuumConfig.Enabled,
-			MaxConcurrent:         int32(vacuumConfig.MaxConcurrent),
-			RepeatIntervalSeconds: int32(vacuumConfig.ScanIntervalSeconds),
-			CheckIntervalSeconds:  int32(vacuumConfig.ScanIntervalSeconds),
-			TaskConfig: &worker_pb.TaskPolicy_VacuumConfig{
-				VacuumConfig: &worker_pb.VacuumTaskConfig{
-					GarbageThreshold:  float64(vacuumConfig.GarbageThreshold),
-					MinVolumeAgeHours: int32((vacuumConfig.MinVolumeAgeSeconds + 3599) / 3600), // round up so sub-hour values don't become 0
-				},
-			},
-		}
+	if vacuumConfig := vacuum.LoadConfigFromPersistence(configPersistence); vacuumConfig != nil {
+		policy.TaskPolicies[string(types.TaskTypeVacuum)] = vacuumConfig.ToTaskPolicy()
 	}
 
-	// Load erasure coding task configuration
-	if ecConfig := erasure_coding.LoadConfigFromPersistence(nil); ecConfig != nil {
-		policy.TaskPolicies["erasure_coding"] = &worker_pb.TaskPolicy{
-			Enabled:               ecConfig.Enabled,
-			MaxConcurrent:         int32(ecConfig.MaxConcurrent),
-			RepeatIntervalSeconds: int32(ecConfig.ScanIntervalSeconds),
-			CheckIntervalSeconds:  int32(ecConfig.ScanIntervalSeconds),
-			TaskConfig: &worker_pb.TaskPolicy_ErasureCodingConfig{
-				ErasureCodingConfig: &worker_pb.ErasureCodingTaskConfig{
-					FullnessRatio:    float64(ecConfig.FullnessRatio),
-					QuietForSeconds:  int32(ecConfig.QuietForSeconds),
-					MinVolumeSizeMb:  int32(ecConfig.MinSizeMB),
-					CollectionFilter: ecConfig.CollectionFilter,
-				},
-			},
-		}
+	if ecConfig := erasure_coding.LoadConfigFromPersistence(configPersistence); ecConfig != nil {
+		policy.TaskPolicies[string(types.TaskTypeErasureCoding)] = ecConfig.ToTaskPolicy()
 	}
 
-	// Load balance task configuration
-	if balanceConfig := balance.LoadConfigFromPersistence(nil); balanceConfig != nil {
-		policy.TaskPolicies["balance"] = &worker_pb.TaskPolicy{
-			Enabled:               balanceConfig.Enabled,
-			MaxConcurrent:         int32(balanceConfig.MaxConcurrent),
-			RepeatIntervalSeconds: int32(balanceConfig.ScanIntervalSeconds),
-			CheckIntervalSeconds:  int32(balanceConfig.ScanIntervalSeconds),
-			TaskConfig: &worker_pb.TaskPolicy_BalanceConfig{
-				BalanceConfig: &worker_pb.BalanceTaskConfig{
-					ImbalanceThreshold: float64(balanceConfig.ImbalanceThreshold),
-					MinServerCount:     int32(balanceConfig.MinServerCount),
-				},
-			},
-		}
+	if balanceConfig := balance.LoadConfigFromPersistence(configPersistence); balanceConfig != nil {
+		policy.TaskPolicies[string(types.TaskTypeBalance)] = balanceConfig.ToTaskPolicy()
+	}
+
+	if ecBalanceConfig := ec_balance.LoadConfigFromPersistence(configPersistence); ecBalanceConfig != nil {
+		policy.TaskPolicies[string(types.TaskTypeECBalance)] = ecBalanceConfig.ToTaskPolicy()
 	}
 
 	glog.V(1).Infof("Built maintenance policy from separate task configs - %d task policies loaded", len(policy.TaskPolicies))
@@ -94,8 +77,12 @@ type MaintenanceManager struct {
 	scanInProgress bool
 }
 
-// NewMaintenanceManager creates a new maintenance manager
-func NewMaintenanceManager(adminClient AdminClient, config *MaintenanceConfig) *MaintenanceManager {
+// NewMaintenanceManager creates a new maintenance manager.
+//
+// configPersistence is the config store to read persisted task configs from when the policy has to
+// be built here. See BuildPolicyFromTaskConfigs for why it is duck-typed; pass nil when no config
+// store is available.
+func NewMaintenanceManager(adminClient AdminClient, config *MaintenanceConfig, configPersistence interface{}) *MaintenanceManager {
 	if config == nil {
 		config = DefaultMaintenanceConfig()
 	}
@@ -104,7 +91,7 @@ func NewMaintenanceManager(adminClient AdminClient, config *MaintenanceConfig) *
 	policy := config.Policy
 	if policy == nil {
 		// Fallback: build policy from separate task configuration files if not already populated
-		policy = buildPolicyFromTaskConfigs()
+		policy = BuildPolicyFromTaskConfigs(configPersistence)
 	}
 
 	queue := NewMaintenanceQueue(policy)
@@ -132,7 +119,9 @@ func (mm *MaintenanceManager) Start() error {
 		return fmt.Errorf("invalid maintenance configuration: %w", err)
 	}
 
+	mm.mutex.Lock()
 	mm.running = true
+	mm.mutex.Unlock()
 
 	// Start background processes
 	go mm.scanLoop()
@@ -178,30 +167,54 @@ func (mm *MaintenanceManager) validateConfig() error {
 	return nil
 }
 
-// IsRunning returns whether the maintenance manager is currently running
+// IsRunning returns whether the maintenance manager is currently running.
+// running is guarded by mm.mutex because the background loops read it on every
+// iteration while Start and Stop are called from the admin server's goroutines.
 func (mm *MaintenanceManager) IsRunning() bool {
+	mm.mutex.RLock()
+	defer mm.mutex.RUnlock()
 	return mm.running
 }
 
-// Stop terminates the maintenance manager
+// Stop terminates the maintenance manager. It is a no-op when the manager is not
+// running, so a second call cannot close the already closed stop channel.
 func (mm *MaintenanceManager) Stop() {
+	mm.mutex.Lock()
+	if !mm.running {
+		mm.mutex.Unlock()
+		return
+	}
 	mm.running = false
 	close(mm.stopChan)
+	mm.mutex.Unlock()
+
 	glog.Infof("Maintenance manager stopped")
 }
 
 // scanLoop periodically scans for maintenance tasks with adaptive timing
 func (mm *MaintenanceManager) scanLoop() {
 	scanInterval := time.Duration(mm.config.ScanIntervalSeconds) * time.Second
-	ticker := time.NewTicker(scanInterval)
-	defer ticker.Stop()
 
-	for mm.running {
+	// activeInterval is the interval the ticker is actually running at right now. It has
+	// to be tracked separately from the configured scanInterval, because the error backoff
+	// replaces the ticker with a much shorter one. Comparing the target against the
+	// configured interval instead never restores the normal cadence: once the errors stop,
+	// getScanInterval returns scanInterval again, the comparison comes out false, and the
+	// ticker is left at the backoff delay. A single transient scan failure therefore pinned
+	// the scanner to one scan per second forever - see issue #10874, where that produced a
+	// ~658 KB/s log flood and 193k orphaned task files.
+	activeInterval := scanInterval
+	ticker := time.NewTicker(activeInterval)
+	// Wrapped in a closure so the replacement ticker is stopped, not the one that happened
+	// to be current when the defer was registered.
+	defer func() { ticker.Stop() }()
+
+	for mm.IsRunning() {
 		select {
 		case <-mm.stopChan:
 			return
 		case <-ticker.C:
-			glog.V(1).Infof("Performing maintenance scan every %v", scanInterval)
+			glog.V(1).Infof("Performing maintenance scan every %v", activeInterval)
 
 			// Use the same synchronization as TriggerScan to prevent concurrent scans
 			if err := mm.triggerScanInternal(false); err != nil {
@@ -211,10 +224,13 @@ func (mm *MaintenanceManager) scanLoop() {
 			// Adjust ticker interval based on error state (read error state safely)
 			currentInterval := mm.getScanInterval(scanInterval)
 
-			// Reset ticker with new interval if needed
-			if currentInterval != scanInterval {
+			// Reset ticker whenever the target differs from what the ticker is running at,
+			// which covers both entering the backoff and returning to the normal cadence.
+			if currentInterval != activeInterval {
 				ticker.Stop()
 				ticker = time.NewTicker(currentInterval)
+				glog.V(1).Infof("Maintenance scan cadence changed from %v to %v", activeInterval, currentInterval)
+				activeInterval = currentInterval
 			}
 		}
 	}
@@ -246,7 +262,7 @@ func (mm *MaintenanceManager) cleanupLoop() {
 	ticker := time.NewTicker(cleanupInterval)
 	defer ticker.Stop()
 
-	for mm.running {
+	for mm.IsRunning() {
 		select {
 		case <-mm.stopChan:
 			return
@@ -263,7 +279,7 @@ func (mm *MaintenanceManager) topologyStatusLoop() {
 	ticker := time.NewTicker(statusInterval)
 	defer ticker.Stop()
 
-	for mm.running {
+	for mm.IsRunning() {
 		select {
 		case <-mm.stopChan:
 			return
@@ -532,12 +548,15 @@ func (mm *MaintenanceManager) TriggerScan() error {
 
 // triggerScanInternal handles both manual and automatic scan triggers
 func (mm *MaintenanceManager) triggerScanInternal(isManual bool) error {
+	// running and scanInProgress are checked under one lock so a Stop that lands
+	// between the two checks cannot leave a scan running after shutdown.
+	mm.mutex.Lock()
 	if !mm.running {
+		mm.mutex.Unlock()
 		return fmt.Errorf("maintenance manager is not running")
 	}
 
 	// Prevent multiple concurrent scans
-	mm.mutex.Lock()
 	if mm.scanInProgress {
 		mm.mutex.Unlock()
 		if isManual {
@@ -567,6 +586,14 @@ func (mm *MaintenanceManager) UpdateConfig(config *MaintenanceConfig) error {
 	// Propagate global policy changes to individual task configuration files
 	if config.Policy != nil {
 		mm.saveTaskConfigsFromPolicy(config.Policy)
+	}
+
+	// The integration holds its own reference to the policy and is what pushes the
+	// enabled flag and the concurrency limit into the registered detectors and
+	// schedulers. Without this the queue and the scanner saw the new policy while the
+	// detectors kept scanning under the old one until the next restart.
+	if mm.scanner != nil && mm.scanner.integration != nil {
+		mm.scanner.integration.SetPolicy(config.Policy)
 	}
 
 	glog.V(1).Infof("Maintenance configuration updated")

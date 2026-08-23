@@ -14,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/ec_balance"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -29,6 +30,7 @@ const (
 	VacuumTaskConfigFile      = "task_vacuum.pb"
 	ECTaskConfigFile          = "task_erasure_coding.pb"
 	BalanceTaskConfigFile     = "task_balance.pb"
+	EcBalanceTaskConfigFile   = "task_ec_balance.pb"
 	ReplicationTaskConfigFile = "task_replication.pb"
 
 	// JSON reference files
@@ -36,6 +38,7 @@ const (
 	VacuumTaskConfigJSONFile      = "task_vacuum.json"
 	ECTaskConfigJSONFile          = "task_erasure_coding.json"
 	BalanceTaskConfigJSONFile     = "task_balance.json"
+	EcBalanceTaskConfigJSONFile   = "task_ec_balance.json"
 	ReplicationTaskConfigJSONFile = "task_replication.json"
 
 	// Task persistence subdirectories and settings
@@ -53,6 +56,7 @@ type (
 	VacuumTaskConfig        = worker_pb.VacuumTaskConfig
 	ErasureCodingTaskConfig = worker_pb.ErasureCodingTaskConfig
 	BalanceTaskConfig       = worker_pb.BalanceTaskConfig
+	EcBalanceTaskConfig     = worker_pb.EcBalanceTaskConfig
 	ReplicationTaskConfig   = worker_pb.ReplicationTaskConfig
 )
 
@@ -156,7 +160,7 @@ func (cp *ConfigPersistence) LoadMaintenanceConfig() (*MaintenanceConfig, error)
 		var config MaintenanceConfig
 		if err := proto.Unmarshal(configData, &config); err == nil {
 			// Always populate policy from separate task configuration files
-			config.Policy = buildPolicyFromTaskConfigs()
+			config.Policy = cp.buildPolicyFromTaskConfigs()
 			return &config, nil
 		}
 	}
@@ -268,6 +272,28 @@ func (cp *ConfigPersistence) RestoreConfig(filename, backupName string) error {
 	return nil
 }
 
+// Default task policies. These derive from each task's own NewDefaultConfig() so that a
+// task type has exactly one definition of its defaults. They used to be hand-written copies
+// here, and had drifted from the values the tasks themselves and the admin UI schema use:
+// vacuum scanned every 24h instead of 2h, balance every 6h instead of 30m with a 0.1 instead
+// of 0.2 imbalance threshold, and erasure coding every 168h instead of 1h with a 0.90 instead
+// of 0.95 fullness ratio and a 1024MB instead of 30MB minimum volume size.
+func defaultVacuumTaskPolicy() *worker_pb.TaskPolicy {
+	return vacuum.NewDefaultConfig().ToTaskPolicy()
+}
+
+func defaultErasureCodingTaskPolicy() *worker_pb.TaskPolicy {
+	return erasure_coding.NewDefaultConfig().ToTaskPolicy()
+}
+
+func defaultBalanceTaskPolicy() *worker_pb.TaskPolicy {
+	return balance.NewDefaultConfig().ToTaskPolicy()
+}
+
+func defaultEcBalanceTaskPolicy() *worker_pb.TaskPolicy {
+	return ec_balance.NewDefaultConfig().ToTaskPolicy()
+}
+
 // SaveVacuumTaskConfig saves vacuum task configuration to protobuf file
 func (cp *ConfigPersistence) SaveVacuumTaskConfig(config *VacuumTaskConfig) error {
 	return cp.saveTaskConfig(VacuumTaskConfigFile, config)
@@ -288,28 +314,14 @@ func (cp *ConfigPersistence) LoadVacuumTaskConfig() (*VacuumTaskConfig, error) {
 	}
 
 	// Return default config if no valid config found
-	return &VacuumTaskConfig{
-		GarbageThreshold:  0.3,
-		MinVolumeAgeHours: 24,
-	}, nil
+	return defaultVacuumTaskPolicy().GetVacuumConfig(), nil
 }
 
 // LoadVacuumTaskPolicy loads complete vacuum task policy from protobuf file
 func (cp *ConfigPersistence) LoadVacuumTaskPolicy() (*worker_pb.TaskPolicy, error) {
 	if cp.dataDir == "" {
 		// Return default policy if no data directory
-		return &worker_pb.TaskPolicy{
-			Enabled:               true,
-			MaxConcurrent:         2,
-			RepeatIntervalSeconds: 24 * 3600, // 24 hours in seconds
-			CheckIntervalSeconds:  6 * 3600,  // 6 hours in seconds
-			TaskConfig: &worker_pb.TaskPolicy_VacuumConfig{
-				VacuumConfig: &worker_pb.VacuumTaskConfig{
-					GarbageThreshold:  0.3,
-					MinVolumeAgeHours: 24,
-				},
-			},
-		}, nil
+		return defaultVacuumTaskPolicy(), nil
 	}
 
 	confDir := filepath.Join(cp.dataDir, ConfigSubdir)
@@ -318,18 +330,7 @@ func (cp *ConfigPersistence) LoadVacuumTaskPolicy() (*worker_pb.TaskPolicy, erro
 	// Check if file exists
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		// Return default policy if file doesn't exist
-		return &worker_pb.TaskPolicy{
-			Enabled:               true,
-			MaxConcurrent:         2,
-			RepeatIntervalSeconds: 24 * 3600, // 24 hours in seconds
-			CheckIntervalSeconds:  6 * 3600,  // 6 hours in seconds
-			TaskConfig: &worker_pb.TaskPolicy_VacuumConfig{
-				VacuumConfig: &worker_pb.VacuumTaskConfig{
-					GarbageThreshold:  0.3,
-					MinVolumeAgeHours: 24,
-				},
-			},
-		}, nil
+		return defaultVacuumTaskPolicy(), nil
 	}
 
 	// Read file
@@ -371,32 +372,14 @@ func (cp *ConfigPersistence) LoadErasureCodingTaskConfig() (*ErasureCodingTaskCo
 	}
 
 	// Return default config if no valid config found
-	return &ErasureCodingTaskConfig{
-		FullnessRatio:    0.9,
-		QuietForSeconds:  3600,
-		MinVolumeSizeMb:  1024,
-		CollectionFilter: "",
-	}, nil
+	return defaultErasureCodingTaskPolicy().GetErasureCodingConfig(), nil
 }
 
 // LoadErasureCodingTaskPolicy loads complete EC task policy from protobuf file
 func (cp *ConfigPersistence) LoadErasureCodingTaskPolicy() (*worker_pb.TaskPolicy, error) {
 	if cp.dataDir == "" {
 		// Return default policy if no data directory
-		return &worker_pb.TaskPolicy{
-			Enabled:               true,
-			MaxConcurrent:         1,
-			RepeatIntervalSeconds: 168 * 3600, // 1 week in seconds
-			CheckIntervalSeconds:  24 * 3600,  // 24 hours in seconds
-			TaskConfig: &worker_pb.TaskPolicy_ErasureCodingConfig{
-				ErasureCodingConfig: &worker_pb.ErasureCodingTaskConfig{
-					FullnessRatio:    0.9,
-					QuietForSeconds:  3600,
-					MinVolumeSizeMb:  1024,
-					CollectionFilter: "",
-				},
-			},
-		}, nil
+		return defaultErasureCodingTaskPolicy(), nil
 	}
 
 	confDir := filepath.Join(cp.dataDir, ConfigSubdir)
@@ -405,20 +388,7 @@ func (cp *ConfigPersistence) LoadErasureCodingTaskPolicy() (*worker_pb.TaskPolic
 	// Check if file exists
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		// Return default policy if file doesn't exist
-		return &worker_pb.TaskPolicy{
-			Enabled:               true,
-			MaxConcurrent:         1,
-			RepeatIntervalSeconds: 168 * 3600, // 1 week in seconds
-			CheckIntervalSeconds:  24 * 3600,  // 24 hours in seconds
-			TaskConfig: &worker_pb.TaskPolicy_ErasureCodingConfig{
-				ErasureCodingConfig: &worker_pb.ErasureCodingTaskConfig{
-					FullnessRatio:    0.9,
-					QuietForSeconds:  3600,
-					MinVolumeSizeMb:  1024,
-					CollectionFilter: "",
-				},
-			},
-		}, nil
+		return defaultErasureCodingTaskPolicy(), nil
 	}
 
 	// Read file
@@ -460,28 +430,14 @@ func (cp *ConfigPersistence) LoadBalanceTaskConfig() (*BalanceTaskConfig, error)
 	}
 
 	// Return default config if no valid config found
-	return &BalanceTaskConfig{
-		ImbalanceThreshold: 0.1,
-		MinServerCount:     2,
-	}, nil
+	return defaultBalanceTaskPolicy().GetBalanceConfig(), nil
 }
 
 // LoadBalanceTaskPolicy loads complete balance task policy from protobuf file
 func (cp *ConfigPersistence) LoadBalanceTaskPolicy() (*worker_pb.TaskPolicy, error) {
 	if cp.dataDir == "" {
 		// Return default policy if no data directory
-		return &worker_pb.TaskPolicy{
-			Enabled:               true,
-			MaxConcurrent:         1,
-			RepeatIntervalSeconds: 6 * 3600,  // 6 hours in seconds
-			CheckIntervalSeconds:  12 * 3600, // 12 hours in seconds
-			TaskConfig: &worker_pb.TaskPolicy_BalanceConfig{
-				BalanceConfig: &worker_pb.BalanceTaskConfig{
-					ImbalanceThreshold: 0.1,
-					MinServerCount:     2,
-				},
-			},
-		}, nil
+		return defaultBalanceTaskPolicy(), nil
 	}
 
 	confDir := filepath.Join(cp.dataDir, ConfigSubdir)
@@ -490,18 +446,7 @@ func (cp *ConfigPersistence) LoadBalanceTaskPolicy() (*worker_pb.TaskPolicy, err
 	// Check if file exists
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		// Return default policy if file doesn't exist
-		return &worker_pb.TaskPolicy{
-			Enabled:               true,
-			MaxConcurrent:         1,
-			RepeatIntervalSeconds: 6 * 3600,  // 6 hours in seconds
-			CheckIntervalSeconds:  12 * 3600, // 12 hours in seconds
-			TaskConfig: &worker_pb.TaskPolicy_BalanceConfig{
-				BalanceConfig: &worker_pb.BalanceTaskConfig{
-					ImbalanceThreshold: 0.1,
-					MinServerCount:     2,
-				},
-			},
-		}, nil
+		return defaultBalanceTaskPolicy(), nil
 	}
 
 	// Read file
@@ -521,6 +466,60 @@ func (cp *ConfigPersistence) LoadBalanceTaskPolicy() (*worker_pb.TaskPolicy, err
 	}
 
 	return nil, fmt.Errorf("failed to unmarshal balance task configuration")
+}
+
+// SaveEcBalanceTaskPolicy saves complete EC balance task policy to protobuf file
+func (cp *ConfigPersistence) SaveEcBalanceTaskPolicy(policy *worker_pb.TaskPolicy) error {
+	return cp.saveTaskConfig(EcBalanceTaskConfigFile, policy)
+}
+
+// LoadEcBalanceTaskConfig loads EC balance task configuration from protobuf file
+func (cp *ConfigPersistence) LoadEcBalanceTaskConfig() (*EcBalanceTaskConfig, error) {
+	if taskPolicy, err := cp.LoadEcBalanceTaskPolicy(); err == nil && taskPolicy != nil {
+		if ecBalanceConfig := taskPolicy.GetEcBalanceConfig(); ecBalanceConfig != nil {
+			return ecBalanceConfig, nil
+		}
+	}
+
+	// Return default config if no valid config found
+	return defaultEcBalanceTaskPolicy().GetEcBalanceConfig(), nil
+}
+
+// LoadEcBalanceTaskPolicy loads complete EC balance task policy from protobuf file.
+// ec_balance is registered like the other maintenance tasks and ec_balance.LoadConfigFromPersistence
+// asserts on this accessor, so without it the task could never be configured at all.
+func (cp *ConfigPersistence) LoadEcBalanceTaskPolicy() (*worker_pb.TaskPolicy, error) {
+	if cp.dataDir == "" {
+		// Return default policy if no data directory
+		return defaultEcBalanceTaskPolicy(), nil
+	}
+
+	confDir := filepath.Join(cp.dataDir, ConfigSubdir)
+	configPath := filepath.Join(confDir, EcBalanceTaskConfigFile)
+
+	// Check if file exists
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		// Return default policy if file doesn't exist
+		return defaultEcBalanceTaskPolicy(), nil
+	}
+
+	// Read file
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read EC balance task config file: %w", err)
+	}
+
+	// Try to unmarshal as TaskPolicy
+	var policy worker_pb.TaskPolicy
+	if err := proto.Unmarshal(configData, &policy); err == nil {
+		// Validate that it's actually a TaskPolicy with EC balance config
+		if policy.GetEcBalanceConfig() != nil {
+			glog.V(1).Infof("Loaded EC balance task policy from %s", configPath)
+			return &policy, nil
+		}
+	}
+
+	return nil, fmt.Errorf("failed to unmarshal EC balance task configuration")
 }
 
 // SaveReplicationTaskConfig saves replication task configuration to protobuf file
@@ -632,6 +631,8 @@ func (cp *ConfigPersistence) SaveTaskPolicy(taskType string, policy *worker_pb.T
 		return cp.SaveErasureCodingTaskPolicy(policy)
 	case "balance":
 		return cp.SaveBalanceTaskPolicy(policy)
+	case "ec_balance":
+		return cp.SaveEcBalanceTaskPolicy(policy)
 	case "replication":
 		return cp.SaveReplicationTaskPolicy(policy)
 	}
@@ -687,67 +688,13 @@ func (cp *ConfigPersistence) GetConfigInfo() map[string]interface{} {
 	return info
 }
 
-// buildPolicyFromTaskConfigs loads task configurations from separate files and builds a MaintenancePolicy
-func buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
-	policy := &worker_pb.MaintenancePolicy{
-		GlobalMaxConcurrent:          4,
-		DefaultRepeatIntervalSeconds: 6 * 3600,  // 6 hours in seconds
-		DefaultCheckIntervalSeconds:  12 * 3600, // 12 hours in seconds
-		TaskPolicies:                 make(map[string]*worker_pb.TaskPolicy),
-	}
-
-	// Load vacuum task configuration
-	if vacuumConfig := vacuum.LoadConfigFromPersistence(nil); vacuumConfig != nil {
-		policy.TaskPolicies["vacuum"] = &worker_pb.TaskPolicy{
-			Enabled:               vacuumConfig.Enabled,
-			MaxConcurrent:         int32(vacuumConfig.MaxConcurrent),
-			RepeatIntervalSeconds: int32(vacuumConfig.ScanIntervalSeconds),
-			CheckIntervalSeconds:  int32(vacuumConfig.ScanIntervalSeconds),
-			TaskConfig: &worker_pb.TaskPolicy_VacuumConfig{
-				VacuumConfig: &worker_pb.VacuumTaskConfig{
-					GarbageThreshold:  float64(vacuumConfig.GarbageThreshold),
-					MinVolumeAgeHours: int32((vacuumConfig.MinVolumeAgeSeconds + 3599) / 3600), // round up so sub-hour values don't become 0
-				},
-			},
-		}
-	}
-
-	// Load erasure coding task configuration
-	if ecConfig := erasure_coding.LoadConfigFromPersistence(nil); ecConfig != nil {
-		policy.TaskPolicies["erasure_coding"] = &worker_pb.TaskPolicy{
-			Enabled:               ecConfig.Enabled,
-			MaxConcurrent:         int32(ecConfig.MaxConcurrent),
-			RepeatIntervalSeconds: int32(ecConfig.ScanIntervalSeconds),
-			CheckIntervalSeconds:  int32(ecConfig.ScanIntervalSeconds),
-			TaskConfig: &worker_pb.TaskPolicy_ErasureCodingConfig{
-				ErasureCodingConfig: &worker_pb.ErasureCodingTaskConfig{
-					FullnessRatio:    float64(ecConfig.FullnessRatio),
-					QuietForSeconds:  int32(ecConfig.QuietForSeconds),
-					MinVolumeSizeMb:  int32(ecConfig.MinSizeMB),
-					CollectionFilter: ecConfig.CollectionFilter,
-				},
-			},
-		}
-	}
-
-	// Load balance task configuration
-	if balanceConfig := balance.LoadConfigFromPersistence(nil); balanceConfig != nil {
-		policy.TaskPolicies["balance"] = &worker_pb.TaskPolicy{
-			Enabled:               balanceConfig.Enabled,
-			MaxConcurrent:         int32(balanceConfig.MaxConcurrent),
-			RepeatIntervalSeconds: int32(balanceConfig.ScanIntervalSeconds),
-			CheckIntervalSeconds:  int32(balanceConfig.ScanIntervalSeconds),
-			TaskConfig: &worker_pb.TaskPolicy_BalanceConfig{
-				BalanceConfig: &worker_pb.BalanceTaskConfig{
-					ImbalanceThreshold: float64(balanceConfig.ImbalanceThreshold),
-					MinServerCount:     int32(balanceConfig.MinServerCount),
-				},
-			},
-		}
-	}
-
-	glog.V(1).Infof("Built maintenance policy from separate task configs - %d task policies loaded", len(policy.TaskPolicies))
-	return policy
+// buildPolicyFromTaskConfigs builds the maintenance policy from the persisted task configs.
+//
+// The body lives in weed/admin/maintenance because the maintenance manager needs the same
+// policy when it has to build one itself, and this package already imports that one. Keeping
+// a second copy here is what let the two drift apart in the first place.
+func (cp *ConfigPersistence) buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
+	return maintenance.BuildPolicyFromTaskConfigs(cp)
 }
 
 // SaveTaskDetail saves detailed task information to disk
