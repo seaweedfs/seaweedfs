@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -42,6 +43,52 @@ func (s3a *S3ApiServer) list(parentDirectoryPath, prefix, startFrom string, incl
 	}
 
 	return
+
+}
+
+// Bounds for replaying a listing that failed with a transient error. A listing
+// is a read with no side effects and each attempt opens a new stream and
+// collects into a fresh slice, so replaying it can neither duplicate nor drop
+// entries. The bound keeps a filer that is genuinely down from stalling the S3
+// request: at most two extra attempts and 300ms of added wait.
+const (
+	listRetryAttempts       = 3
+	listRetryInitialBackoff = 100 * time.Millisecond
+)
+
+// isRetryableListError reports whether a failed listing is worth replaying. A
+// not-found answer is authoritative and every other non-transient error is a
+// real failure, so both must reach the caller unchanged: the point is to
+// survive a blip, not to hide a broken store.
+func isRetryableListError(err error) bool {
+	if err == nil || isFilerNotFound(err) {
+		return false
+	}
+	if status.Code(err) == codes.Unavailable {
+		return true
+	}
+	// DoSeaweedListWithSnapshot wraps a failed ListEntries call with %v, which
+	// drops the gRPC status from the error chain, so for that path the message
+	// is all that is left to classify on.
+	return util.IsTransientError(err)
+}
+
+// listWithRetry replays doList while the filer answers with a transient error.
+// Both failure points reported for multipart listing, the ListEntries call
+// itself and the stream.Recv that follows it, surface as a plain error out of
+// filer_pb.List, so a single retry point above it covers both.
+func listWithRetry(parentDirectoryPath string, doList func() (entries []*filer_pb.Entry, isLast bool, err error)) (entries []*filer_pb.Entry, isLast bool, err error) {
+
+	backoff := listRetryInitialBackoff
+	for attempt := 1; ; attempt++ {
+		entries, isLast, err = doList()
+		if err == nil || attempt >= listRetryAttempts || !isRetryableListError(err) {
+			return entries, isLast, err
+		}
+		glog.V(1).Infof("list %s attempt %d/%d hit a transient error, retrying in %v: %v", parentDirectoryPath, attempt, listRetryAttempts, backoff, err)
+		time.Sleep(backoff)
+		backoff *= 2
+	}
 
 }
 
