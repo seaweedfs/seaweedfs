@@ -198,36 +198,11 @@ function initS3TablesBuckets() {
 
     const policyForm = document.getElementById('s3tablesBucketPolicyForm');
     if (policyForm) {
-        policyForm.addEventListener('submit', async function (e) {
-            e.preventDefault();
-            if (!s3tablesBucketPolicyLoaded) {
-                alert('The current policy has not finished loading. Close and reopen this dialog before saving.');
-                return;
-            }
-            if (!commitPolicyActiveTab('s3tablesBucket')) return;
-            const bucketArn = document.getElementById('s3tablesBucketPolicyArn').value;
-            const policy = document.getElementById('s3tablesBucketPolicyText').value.trim();
-            if (!policy) {
-                alert('Policy JSON is required');
-                return;
-            }
-            try {
-                const response = await fetch(s3tBasePath('/api/s3tables/bucket-policy'), {
-                    method: 'PUT',
-                    headers: s3tWriteHeaders({ 'Content-Type': 'application/json' }),
-                    body: JSON.stringify({ bucket_arn: bucketArn, policy: policy })
-                });
-                const data = await response.json();
-                if (!response.ok) {
-                    alert(data.error || 'Failed to update policy');
-                    return;
-                }
-                alert('Policy updated');
-                s3tablesBucketPolicyModal.hide();
-            } catch (error) {
-                alert('Failed to update policy: ' + error.message);
-            }
-        });
+        // Saves go through the Save button only; implicit form submission
+        // (Enter in a single-line editor input) must never PUT half-built
+        // state, which the backend would store verbatim.
+        policyForm.addEventListener('submit', function (e) { e.preventDefault(); });
+        document.getElementById('s3tablesBucketPolicySaveBtn').addEventListener('click', saveS3TablesBucketPolicy);
     }
 
     const tagsForm = document.getElementById('s3tablesTagsForm');
@@ -342,35 +317,9 @@ function initS3TablesTables() {
 
     const policyForm = document.getElementById('s3tablesTablePolicyForm');
     if (policyForm) {
-        policyForm.addEventListener('submit', async function (e) {
-            e.preventDefault();
-            if (!s3tablesTablePolicyLoaded) {
-                alert('The current policy has not finished loading. Close and reopen this dialog before saving.');
-                return;
-            }
-            if (!commitPolicyActiveTab('s3tablesTable')) return;
-            const policy = document.getElementById('s3tablesTablePolicyText').value.trim();
-            if (!policy) {
-                alert('Policy JSON is required');
-                return;
-            }
-            try {
-                const response = await fetch(s3tBasePath('/api/s3tables/table-policy'), {
-                    method: 'PUT',
-                    headers: s3tWriteHeaders({ 'Content-Type': 'application/json' }),
-                    body: JSON.stringify({ bucket_arn: dataBucketArn, namespace: dataNamespace, name: document.getElementById('s3tablesTablePolicyName').value, policy: policy })
-                });
-                const data = await response.json();
-                if (!response.ok) {
-                    alert(data.error || 'Failed to update policy');
-                    return;
-                }
-                alert('Policy updated');
-                s3tablesTablePolicyModal.hide();
-            } catch (error) {
-                alert('Failed to update policy: ' + error.message);
-            }
-        });
+        // Same Enter-must-not-submit rule as the bucket policy form.
+        policyForm.addEventListener('submit', function (e) { e.preventDefault(); });
+        document.getElementById('s3tablesTablePolicySaveBtn').addEventListener('click', saveS3TablesTablePolicy);
     }
 
     const tagsForm = document.getElementById('s3tablesTagsForm');
@@ -676,6 +625,70 @@ async function loadS3TablesBucketPolicy(bucketArn) {
     if (requestSeq !== s3tablesBucketPolicyRequestSeq) return;
     s3tablesBucketPolicyLoaded = true;
     loadPolicyTextareaIntoEditor('s3tablesBucket');
+}
+
+async function saveS3TablesBucketPolicy() {
+    if (!s3tablesBucketPolicyLoaded) {
+        alert('The current policy has not finished loading. Close and reopen this dialog before saving.');
+        return;
+    }
+    if (!commitPolicyActiveTab('s3tablesBucket')) return;
+    const bucketArn = document.getElementById('s3tablesBucketPolicyArn').value;
+    const policy = document.getElementById('s3tablesBucketPolicyText').value.trim();
+    if (!policy) {
+        alert('Policy JSON is required');
+        return;
+    }
+    try {
+        const response = await fetch(s3tBasePath('/api/s3tables/bucket-policy'), {
+            method: 'PUT',
+            headers: s3tWriteHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ bucket_arn: bucketArn, policy: policy })
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            alert(data.error || 'Failed to update policy');
+            return;
+        }
+        alert('Policy updated');
+        s3tablesBucketPolicyModal.hide();
+    } catch (error) {
+        alert('Failed to update policy: ' + error.message);
+    }
+}
+
+async function saveS3TablesTablePolicy() {
+    if (!s3tablesTablePolicyLoaded) {
+        alert('The current policy has not finished loading. Close and reopen this dialog before saving.');
+        return;
+    }
+    if (!commitPolicyActiveTab('s3tablesTable')) return;
+    const policy = document.getElementById('s3tablesTablePolicyText').value.trim();
+    if (!policy) {
+        alert('Policy JSON is required');
+        return;
+    }
+    try {
+        const response = await fetch(s3tBasePath('/api/s3tables/table-policy'), {
+            method: 'PUT',
+            headers: s3tWriteHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({
+                bucket_arn: document.getElementById('s3tablesTablePolicyBucketArn').value,
+                namespace: document.getElementById('s3tablesTablePolicyNamespace').value,
+                name: document.getElementById('s3tablesTablePolicyName').value,
+                policy: policy
+            })
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            alert(data.error || 'Failed to update policy');
+            return;
+        }
+        alert('Policy updated');
+        s3tablesTablePolicyModal.hide();
+    } catch (error) {
+        alert('Failed to update policy: ' + error.message);
+    }
 }
 
 async function deleteS3TablesBucketPolicy() {

@@ -449,10 +449,13 @@ dataset = lance.dataset(table.location, storage_options=table.storage_options)` 
 					</div>
 					<div class="modal-footer">
 						<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-						<button type="button" class="btn btn-outline-danger" onclick="deleteS3TablesBucketPolicy()">
+						<button type="button" class="btn btn-outline-danger" id="s3tablesBucketPolicyDeleteBtn" onclick="deleteS3TablesBucketPolicy()">
 							<i class="fas fa-trash me-1"></i>Delete Policy
 						</button>
-						<button type="submit" class="btn btn-primary">
+						<!-- type="button": a submit button would make Enter in any
+						     single-line editor input implicitly submit a half-built
+						     policy, which the backend stores verbatim. -->
+						<button type="button" class="btn btn-primary" id="s3tablesBucketPolicySaveBtn">
 							<i class="fas fa-save me-1"></i>Save Policy
 						</button>
 					</div>
