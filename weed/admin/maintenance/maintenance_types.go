@@ -194,6 +194,13 @@ type MaintenanceWorker struct {
 	CurrentLoad   int                   `json:"current_load"`
 }
 
+// WorkerSlots is a point-in-time snapshot of one worker's task slot usage,
+// taken under the queue lock so callers never read live worker fields.
+type WorkerSlots struct {
+	Used int `json:"used"`
+	Max  int `json:"max"`
+}
+
 // MaintenanceQueue manages the task queue and worker coordination
 type MaintenanceQueue struct {
 	tasks        map[string]*MaintenanceTask
