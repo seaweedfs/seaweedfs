@@ -764,6 +764,7 @@ async function deleteS3TablesBucketPolicy() {
         alert('The current policy has not finished loading. Close and reopen this dialog before deleting.');
         return;
     }
+    if (!confirm('Delete this table bucket policy? This cannot be undone.')) return;
     setS3TablesBucketPolicyMutationInFlight(true);
     try {
         const response = await fetch(s3tBasePath(`/api/s3tables/bucket-policy?bucket=${encodeURIComponent(bucketArn)}`), { method: 'DELETE', headers: s3tWriteHeaders() });
@@ -908,6 +909,7 @@ async function deleteS3TablesTablePolicy() {
         namespace: document.getElementById('s3tablesTablePolicyNamespace').value,
         name: document.getElementById('s3tablesTablePolicyName').value
     });
+    if (!confirm('Delete the policy for table ' + document.getElementById('s3tablesTablePolicyName').value + '? This cannot be undone.')) return;
     setS3TablesTablePolicyMutationInFlight(true);
     try {
         const response = await fetch(s3tBasePath(`/api/s3tables/table-policy?${query.toString()}`), { method: 'DELETE', headers: s3tWriteHeaders() });
