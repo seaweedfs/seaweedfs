@@ -141,7 +141,9 @@ func (mm *MaintenanceManager) Start() error {
 		return fmt.Errorf("invalid maintenance configuration: %w", err)
 	}
 
+	mm.mutex.Lock()
 	mm.running = true
+	mm.mutex.Unlock()
 
 	// Start background processes
 	go mm.scanLoop()
@@ -187,30 +189,54 @@ func (mm *MaintenanceManager) validateConfig() error {
 	return nil
 }
 
-// IsRunning returns whether the maintenance manager is currently running
+// IsRunning returns whether the maintenance manager is currently running.
+// running is guarded by mm.mutex because the background loops read it on every
+// iteration while Start and Stop are called from the admin server's goroutines.
 func (mm *MaintenanceManager) IsRunning() bool {
+	mm.mutex.RLock()
+	defer mm.mutex.RUnlock()
 	return mm.running
 }
 
-// Stop terminates the maintenance manager
+// Stop terminates the maintenance manager. It is a no-op when the manager is not
+// running, so a second call cannot close the already closed stop channel.
 func (mm *MaintenanceManager) Stop() {
+	mm.mutex.Lock()
+	if !mm.running {
+		mm.mutex.Unlock()
+		return
+	}
 	mm.running = false
 	close(mm.stopChan)
+	mm.mutex.Unlock()
+
 	glog.Infof("Maintenance manager stopped")
 }
 
 // scanLoop periodically scans for maintenance tasks with adaptive timing
 func (mm *MaintenanceManager) scanLoop() {
 	scanInterval := time.Duration(mm.config.ScanIntervalSeconds) * time.Second
-	ticker := time.NewTicker(scanInterval)
-	defer ticker.Stop()
 
-	for mm.running {
+	// activeInterval is the interval the ticker is actually running at right now. It has
+	// to be tracked separately from the configured scanInterval, because the error backoff
+	// replaces the ticker with a much shorter one. Comparing the target against the
+	// configured interval instead never restores the normal cadence: once the errors stop,
+	// getScanInterval returns scanInterval again, the comparison comes out false, and the
+	// ticker is left at the backoff delay. A single transient scan failure therefore pinned
+	// the scanner to one scan per second forever - see issue #10874, where that produced a
+	// ~658 KB/s log flood and 193k orphaned task files.
+	activeInterval := scanInterval
+	ticker := time.NewTicker(activeInterval)
+	// Wrapped in a closure so the replacement ticker is stopped, not the one that happened
+	// to be current when the defer was registered.
+	defer func() { ticker.Stop() }()
+
+	for mm.IsRunning() {
 		select {
 		case <-mm.stopChan:
 			return
 		case <-ticker.C:
-			glog.V(1).Infof("Performing maintenance scan every %v", scanInterval)
+			glog.V(1).Infof("Performing maintenance scan every %v", activeInterval)
 
 			// Use the same synchronization as TriggerScan to prevent concurrent scans
 			if err := mm.triggerScanInternal(false); err != nil {
@@ -220,10 +246,13 @@ func (mm *MaintenanceManager) scanLoop() {
 			// Adjust ticker interval based on error state (read error state safely)
 			currentInterval := mm.getScanInterval(scanInterval)
 
-			// Reset ticker with new interval if needed
-			if currentInterval != scanInterval {
+			// Reset ticker whenever the target differs from what the ticker is running at,
+			// which covers both entering the backoff and returning to the normal cadence.
+			if currentInterval != activeInterval {
 				ticker.Stop()
 				ticker = time.NewTicker(currentInterval)
+				glog.V(1).Infof("Maintenance scan cadence changed from %v to %v", activeInterval, currentInterval)
+				activeInterval = currentInterval
 			}
 		}
 	}
@@ -255,7 +284,7 @@ func (mm *MaintenanceManager) cleanupLoop() {
 	ticker := time.NewTicker(cleanupInterval)
 	defer ticker.Stop()
 
-	for mm.running {
+	for mm.IsRunning() {
 		select {
 		case <-mm.stopChan:
 			return
@@ -272,7 +301,7 @@ func (mm *MaintenanceManager) topologyStatusLoop() {
 	ticker := time.NewTicker(statusInterval)
 	defer ticker.Stop()
 
-	for mm.running {
+	for mm.IsRunning() {
 		select {
 		case <-mm.stopChan:
 			return
@@ -541,12 +570,15 @@ func (mm *MaintenanceManager) TriggerScan() error {
 
 // triggerScanInternal handles both manual and automatic scan triggers
 func (mm *MaintenanceManager) triggerScanInternal(isManual bool) error {
+	// running and scanInProgress are checked under one lock so a Stop that lands
+	// between the two checks cannot leave a scan running after shutdown.
+	mm.mutex.Lock()
 	if !mm.running {
+		mm.mutex.Unlock()
 		return fmt.Errorf("maintenance manager is not running")
 	}
 
 	// Prevent multiple concurrent scans
-	mm.mutex.Lock()
 	if mm.scanInProgress {
 		mm.mutex.Unlock()
 		if isManual {
