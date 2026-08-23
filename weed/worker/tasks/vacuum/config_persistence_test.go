@@ -18,8 +18,8 @@ func (s *stubVacuumStore) LoadVacuumTaskPolicy() (*worker_pb.TaskPolicy, error) 
 
 // wrongShapedStore is what the maintenance manager used to be handed: a non-nil value that
 // does not satisfy the accessor the loader asserts on. It has to keep falling back to the
-// defaults, but no longer silently - the reporter of issue #10874 had to read the source to
-// find out why their disabled task kept running.
+// defaults, but no longer silently: a fallback the operator cannot see reads as a disabled task
+// that keeps running.
 type wrongShapedStore struct{}
 
 func (wrongShapedStore) SomethingElse() {}

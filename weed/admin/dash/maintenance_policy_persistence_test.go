@@ -7,8 +7,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 )
 
-// TestLoadMaintenanceConfigHonoursPersistedTaskConfigs guards against the regression in
-// https://github.com/seaweedfs/seaweedfs/issues/10874: buildPolicyFromTaskConfigs used to call
+// TestLoadMaintenanceConfigHonoursPersistedTaskConfigs guards against a regression: buildPolicyFromTaskConfigs used to call
 // LoadConfigFromPersistence(nil), which can never satisfy the loaders' type assertion, so every
 // task silently fell back to its compiled-in defaults (Enabled: true) and a task disabled in the
 // admin UI kept being scheduled.

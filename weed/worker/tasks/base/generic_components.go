@@ -49,7 +49,7 @@ func (d *GenericDetector) IsEnabled() bool {
 // MaintenanceIntegration.configureDetectorFromPolicy). Every registered task is
 // backed by this generic detector, so without this method that assertion failed
 // for every task and the policy never reached the flag that
-// ScanWithTaskDetectors actually gates on. See issue #10874.
+// ScanWithTaskDetectors actually gates on.
 func (d *GenericDetector) SetEnabled(enabled bool) {
 	d.taskDef.Config.SetEnabled(enabled)
 }
@@ -143,7 +143,7 @@ func (s *GenericScheduler) IsEnabled() bool {
 // SetEnabled turns scheduling for this task type on or off. Detector and scheduler
 // share one TaskDefinition, so this is the same flag GenericDetector.SetEnabled sets;
 // both setters exist because the maintenance integration configures the two
-// independently. See GenericDetector.SetEnabled and issue #10874.
+// independently. See GenericDetector.SetEnabled.
 func (s *GenericScheduler) SetEnabled(enabled bool) {
 	s.taskDef.Config.SetEnabled(enabled)
 }

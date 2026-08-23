@@ -38,7 +38,7 @@ func snapshotDetectorState(t *testing.T) {
 	})
 }
 
-// TestPolicyReachesRegisteredDetectors is the regression test for the half of issue #10874
+// TestPolicyReachesRegisteredDetectors is the regression test for the half of the scan-flood bug
 // that a corrected policy alone did not fix: MaintenanceIntegration pushes the policy into
 // detectors and schedulers through interface{ SetEnabled(bool) } and
 // interface{ SetMaxConcurrent(int) } type assertions, but every task is backed by

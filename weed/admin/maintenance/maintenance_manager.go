@@ -201,8 +201,7 @@ func (mm *MaintenanceManager) scanLoop() {
 	// configured interval instead never restores the normal cadence: once the errors stop,
 	// getScanInterval returns scanInterval again, the comparison comes out false, and the
 	// ticker is left at the backoff delay. A single transient scan failure therefore pinned
-	// the scanner to one scan per second forever - see issue #10874, where that produced a
-	// ~658 KB/s log flood and 193k orphaned task files.
+	// the scanner to one scan per second forever.
 	activeInterval := scanInterval
 	ticker := time.NewTicker(activeInterval)
 	// Wrapped in a closure so the replacement ticker is stopped, not the one that happened
