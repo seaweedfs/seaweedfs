@@ -418,7 +418,7 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 		if req.ClientType == cluster.FilerType {
 			ms.LockRingManager.RemoveServer(cluster.FilerGroupName(req.FilerGroup), peerAddress)
 		}
-		ms.deleteClient(clientName)
+		ms.deleteClient(clientName, messageChan)
 	}()
 
 	// Send volume locations to the client
@@ -481,7 +481,12 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 	defer ticker.Stop()
 	for {
 		select {
-		case message := <-messageChan:
+		case message, ok := <-messageChan:
+			if !ok {
+				// a closed channel receives nil forever; without this check the
+				// loop would flood the client with empty messages at wire speed
+				return nil
+			}
 			if err := stream.Send(message); err != nil {
 				// The error, not the message: it carries every volume id on a
 				// newly connected node, and formatting a proto that size to
@@ -582,14 +587,18 @@ func (ms *MasterServer) addClient(filerGroup, clientType string, clientAddress p
 	return
 }
 
-func (ms *MasterServer) deleteClient(clientName string) {
+func (ms *MasterServer) deleteClient(clientName string, messageChan chan *master_pb.KeepConnectedResponse) {
 	glog.V(0).Infof("- client %v", clientName)
 	ms.clientChansLock.Lock()
-	// close message chan, so that the KeepConnected go routine can exit
-	if clientChan, ok := ms.clientChans[clientName]; ok {
-		close(clientChan)
+	// a client that reconnects before the old handler exits re-registers the
+	// same name, so the map may already hold the new stream's channel: close
+	// only our own, and leave the entry alone unless it is still ours
+	if ms.clientChans[clientName] == messageChan {
 		delete(ms.clientChans, clientName)
 	}
+	// safe under the write lock: broadcasters send while holding the read
+	// lock and only to channels found in the map
+	close(messageChan)
 	ms.clientChansLock.Unlock()
 }
 
