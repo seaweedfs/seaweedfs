@@ -130,6 +130,9 @@ func (s *Server) handleDeclareTable(w http.ResponseWriter, r *http.Request) {
 	location := strings.TrimSuffix(req.Location, "/")
 	if location == "" {
 		location = tableLocation(bucket, ns, name)
+	} else if err := confineLocation(bucket, location); err != nil {
+		writeError(w, r, http.StatusBadRequest, codeInvalidInput, err.Error())
+		return
 	}
 
 	if err := s.createTable(r, bucket, ns, name, location); err != nil {
@@ -302,6 +305,10 @@ func (s *Server) handleRegisterTable(w http.ResponseWriter, r *http.Request) {
 	location := strings.TrimSuffix(req.Location, "/")
 	if location == "" {
 		writeError(w, r, http.StatusBadRequest, codeInvalidInput, "location is required")
+		return
+	}
+	if err := confineLocation(bucket, location); err != nil {
+		writeError(w, r, http.StatusBadRequest, codeInvalidInput, err.Error())
 		return
 	}
 
