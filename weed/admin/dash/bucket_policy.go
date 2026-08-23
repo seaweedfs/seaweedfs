@@ -91,6 +91,20 @@ func (s *AdminServer) SetBucketPolicy(bucketName string, doc *policy_engine.Poli
 		return fmt.Errorf("%w: bucket policy is %d bytes, which exceeds the %d byte limit", ErrInvalidBucketPolicy, len(policyJSON), policy_engine.MaxBucketPolicySize)
 	}
 
+	return s.writeBucketPolicy(bucketName, policyJSON)
+}
+
+// DeleteBucketPolicy clears the bucket policy stored on a bucket's filer
+// entry. Deleting a policy that doesn't exist is a success, matching
+// DeleteBucketLifecycle's idempotent behavior. This cannot go through
+// SetBucketPolicy: validation there rejects a nil document.
+func (s *AdminServer) DeleteBucketPolicy(bucketName string) error {
+	return s.writeBucketPolicy(bucketName, nil)
+}
+
+// writeBucketPolicy patches the policy key on the bucket's filer entry; a
+// nil policyJSON clears it.
+func (s *AdminServer) writeBucketPolicy(bucketName string, policyJSON []byte) error {
 	filerConfig, err := s.getFilerConfig()
 	if err != nil {
 		return fmt.Errorf("get filer configuration: %w", err)
@@ -116,46 +130,10 @@ func (s *AdminServer) SetBucketPolicy(bucketName string, doc *policy_engine.Poli
 			Mutations: []*filer_pb.ObjectMutation{bucketPolicyMutation(filerConfig.BucketsPath, bucketName, policyJSON)},
 		})
 		if err != nil {
-			return fmt.Errorf("failed to update bucket policy: %w", err)
+			return fmt.Errorf("write bucket policy: %w", err)
 		}
 		if resp.Error != "" {
-			return fmt.Errorf("failed to update bucket policy: %s", resp.Error)
-		}
-		return nil
-	})
-}
-
-// DeleteBucketPolicy clears the bucket policy stored on a bucket's filer
-// entry. Deleting a policy that doesn't exist is a success, matching
-// DeleteBucketLifecycle's idempotent behavior.
-func (s *AdminServer) DeleteBucketPolicy(bucketName string) error {
-	filerConfig, err := s.getFilerConfig()
-	if err != nil {
-		return fmt.Errorf("get filer configuration: %w", err)
-	}
-
-	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		if _, err := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
-			Directory: filerConfig.BucketsPath,
-			Name:      bucketName,
-		}); err != nil {
-			if errors.Is(err, filer_pb.ErrNotFound) {
-				return fmt.Errorf("%w: %s", ErrBucketNotFound, bucketName)
-			}
-			return fmt.Errorf("look up bucket %s: %w", bucketName, err)
-		}
-
-		bucketPath := filerConfig.BucketsPath + "/" + bucketName
-		resp, err := client.ObjectTransaction(context.Background(), &filer_pb.ObjectTransactionRequest{
-			LockKey:   bucketPath,
-			RouteKey:  s3_constants.ObjectWriteRouteKeyPrefix + bucketPath,
-			Mutations: []*filer_pb.ObjectMutation{bucketPolicyMutation(filerConfig.BucketsPath, bucketName, nil)},
-		})
-		if err != nil {
-			return fmt.Errorf("failed to delete bucket policy: %w", err)
-		}
-		if resp.Error != "" {
-			return fmt.Errorf("failed to delete bucket policy: %s", resp.Error)
+			return fmt.Errorf("write bucket policy: %s", resp.Error)
 		}
 		return nil
 	})
