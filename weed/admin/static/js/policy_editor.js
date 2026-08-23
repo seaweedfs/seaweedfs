@@ -581,7 +581,27 @@ function policyEditorConfig(which) {
             // The JSON tab is the source of truth right now; parse it back
             // into the structured editor to keep both in sync, but leave the
             // textarea's own text untouched.
-            return commitPolicyTextareaToEditor(which);
+            const text = document.getElementById(policyTextareaId(which)).value;
+            if (!text || !text.trim()) {
+                return commitPolicyTextareaToEditor(which);
+            }
+            let doc;
+            try {
+                doc = JSON.parse(text);
+            } catch (e) {
+                showAlert('Invalid JSON in policy document: ' + e.message, 'error');
+                return false;
+            }
+            try {
+                policyEditors[which] = policyDocToEditorState(doc);
+            } catch (e) {
+                // Valid JSON the structured editor can't model is still
+                // saveable from here - exactly the documents the load path
+                // shunts to this tab. It just stays JSON-tab-only.
+                policyEditors[which] = { version: '2012-10-17', statements: [], otherFields: {}, unparsed: true };
+            }
+            renderPolicyEditor(which);
+            return true;
         }
         if (policyEditorState(which).unparsed) {
             // The editor never held this document, so serializing it would
