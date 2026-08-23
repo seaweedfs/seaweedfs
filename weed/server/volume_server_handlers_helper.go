@@ -27,7 +27,11 @@ func (r httpRange) mimeHeader(contentType string, size int64) textproto.MIMEHead
 	}
 }
 
-// parseRange parses a Range header string as per RFC 2616.
+// errNoOverlap is returned by parseRange if first-byte-pos of
+// all of the byte-range-spec values is greater than the content size.
+var errNoOverlap = errors.New("invalid range: failed to overlap")
+
+// parseRange parses a Range header string as per RFC 7233.
 func parseRange(s string, size int64) ([]httpRange, error) {
 	if s == "" {
 		return nil, nil // header not present
@@ -37,6 +41,7 @@ func parseRange(s string, size int64) ([]httpRange, error) {
 		return nil, errors.New("invalid range")
 	}
 	var ranges []httpRange
+	noOverlap := false
 	for _, ra := range strings.Split(s[len(b):], ",") {
 		ra = strings.TrimSpace(ra)
 		if ra == "" {
@@ -62,8 +67,14 @@ func parseRange(s string, size int64) ([]httpRange, error) {
 			r.length = size - r.start
 		} else {
 			i, err := strconv.ParseInt(start, 10, 64)
-			if err != nil || i >= size || i < 0 {
+			if err != nil || i < 0 {
 				return nil, errors.New("invalid range")
+			}
+			if i >= size {
+				// If the range begins after the size of the content,
+				// then it does not overlap.
+				noOverlap = true
+				continue
 			}
 			r.start = i
 			if end == "" {
@@ -81,6 +92,10 @@ func parseRange(s string, size int64) ([]httpRange, error) {
 			}
 		}
 		ranges = append(ranges, r)
+	}
+	if noOverlap && len(ranges) == 0 {
+		// The specified ranges did not overlap with the content.
+		return nil, errNoOverlap
 	}
 	return ranges, nil
 }

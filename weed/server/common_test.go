@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 )
 
 func TestParseURL(t *testing.T) {
@@ -111,4 +113,45 @@ func (c *countingReadCloser) Read(p []byte) (int, error) {
 
 func (c *countingReadCloser) Close() error {
 	return nil
+}
+
+func TestProcessRangeRequestRanges(t *testing.T) {
+	data := []byte("0123456789")
+	serve := func(rangeHeader string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodGet, "/test.txt", nil)
+		r.Header.Set("Range", rangeHeader)
+		w := httptest.NewRecorder()
+		ProcessRangeRequest(r, w, int64(len(data)), "text/plain", func(offset int64, size int64) (filer.DoStreamContent, error) {
+			return func(writer io.Writer) error {
+				_, err := writer.Write(data[offset : offset+size])
+				return err
+			}, nil
+		})
+		return w
+	}
+
+	tests := []struct {
+		rangeHeader string
+		wantCode    int
+		wantRange   string
+		wantBody    string
+	}{
+		{"bytes=0-1", http.StatusPartialContent, "bytes 0-1/10", "01"},
+		{"bytes=5-100", http.StatusPartialContent, "bytes 5-9/10", "56789"},
+		{"bytes=10-", http.StatusRequestedRangeNotSatisfiable, "bytes */10", ""},
+		{"bytes=100-", http.StatusRequestedRangeNotSatisfiable, "bytes */10", ""},
+		{"bytes=10-,0-1", http.StatusPartialContent, "bytes 0-1/10", "01"},
+	}
+	for _, tt := range tests {
+		w := serve(tt.rangeHeader)
+		if w.Code != tt.wantCode {
+			t.Errorf("%s: status %d, want %d", tt.rangeHeader, w.Code, tt.wantCode)
+		}
+		if got := w.Header().Get("Content-Range"); got != tt.wantRange {
+			t.Errorf("%s: Content-Range %q, want %q", tt.rangeHeader, got, tt.wantRange)
+		}
+		if tt.wantBody != "" && w.Body.String() != tt.wantBody {
+			t.Errorf("%s: body %q, want %q", tt.rangeHeader, w.Body.String(), tt.wantBody)
+		}
+	}
 }
