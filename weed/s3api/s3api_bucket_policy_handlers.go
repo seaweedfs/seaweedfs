@@ -75,13 +75,18 @@ func (s3a *S3ApiServer) PutBucketPolicyHandler(w http.ResponseWriter, r *http.Re
 	glog.V(3).Infof("PutBucketPolicyHandler: bucket=%s", bucket)
 
 	// Read policy document from request body
-	body, err := io.ReadAll(r.Body)
+	body, err := io.ReadAll(io.LimitReader(r.Body, policy_engine.MaxBucketPolicySize+1))
 	if err != nil {
 		glog.Errorf("Failed to read bucket policy request body: %v", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPolicyDocument)
 		return
 	}
 	defer r.Body.Close()
+
+	if len(body) > policy_engine.MaxBucketPolicySize {
+		s3err.WriteErrorResponse(w, r, s3err.ErrPolicyTooLarge)
+		return
+	}
 
 	// Parse and validate policy document
 	var policyDoc policy_engine.PolicyDocument

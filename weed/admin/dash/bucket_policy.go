@@ -12,12 +12,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
-// MaxBucketPolicySize mirrors AWS S3's 20 KB bucket-policy limit. This is an
-// admin-side cap the S3 gateway does not itself enforce; it can only reject
-// a policy the gateway would have accepted, never disagree about one
-// already stored, so it cannot desync admin and S3 behavior.
-const MaxBucketPolicySize = 20 * 1024
-
 // ErrInvalidBucketPolicy wraps a validation failure from SetBucketPolicy so
 // callers (the HTTP handler) can map it to 400 instead of 500 without
 // resorting to matching on the error string.
@@ -100,8 +94,8 @@ func (s *AdminServer) SetBucketPolicy(bucketName string, doc *policy_engine.Poli
 	if err != nil {
 		return fmt.Errorf("marshal policy document: %w", err)
 	}
-	if len(policyJSON) > MaxBucketPolicySize {
-		return fmt.Errorf("%w: bucket policy is %d bytes, which exceeds the %d byte limit", ErrInvalidBucketPolicy, len(policyJSON), MaxBucketPolicySize)
+	if len(policyJSON) > policy_engine.MaxBucketPolicySize {
+		return fmt.Errorf("%w: bucket policy is %d bytes, which exceeds the %d byte limit", ErrInvalidBucketPolicy, len(policyJSON), policy_engine.MaxBucketPolicySize)
 	}
 
 	filerConfig, err := s.getFilerConfig()

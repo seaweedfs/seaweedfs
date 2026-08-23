@@ -128,7 +128,7 @@ func TestSetBucketPolicy_RejectsOversized(t *testing.T) {
 	// A resource list long enough to blow the cap: this must fail before
 	// any filer call, which is what makes it testable without one.
 	doc := validBucketPolicyDoc("mybucket")
-	doc.Statement[0].Sid = strings.Repeat("x", MaxBucketPolicySize+1)
+	doc.Statement[0].Sid = strings.Repeat("x", policy_engine.MaxBucketPolicySize+1)
 
 	err := (&AdminServer{}).SetBucketPolicy("mybucket", doc)
 	if err == nil {

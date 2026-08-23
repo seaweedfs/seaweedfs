@@ -5,6 +5,11 @@ import (
 	"strings"
 )
 
+// MaxBucketPolicySize mirrors AWS S3's 20 KB bucket-policy limit, enforced
+// by both writers (the S3 gateway's PutBucketPolicy and the admin UI) so
+// neither surface can store a document the other refuses to manage.
+const MaxBucketPolicySize = 20 * 1024
+
 // ValidateBucketPolicy performs bucket-specific policy validation, on top of
 // the generic structural checks in ValidatePolicy. It enforces the rules
 // that make a policy document valid as an S3 *bucket* policy specifically:
