@@ -24,16 +24,20 @@ const MaxBucketPolicySize = 20 * 1024
 var ErrInvalidBucketPolicy = errors.New("invalid bucket policy")
 
 // GetBucketPolicy returns the policy document stored on a bucket's filer
-// entry, or (nil, nil) if the bucket has no policy — that is not an error,
-// it just means the caller (e.g. the admin UI) should show an empty editor
-// instead of special-casing a 404.
-func (s *AdminServer) GetBucketPolicy(bucketName string) (*policy_engine.PolicyDocument, error) {
+// entry, or (nil, nil, nil) if the bucket has no policy — that is not an
+// error, it just means the caller (e.g. the admin UI) should show an empty
+// editor instead of special-casing a 404. Stored bytes the current decoder
+// rejects come back as (nil, raw, nil): a 500 here would leave the UI
+// unable to show, fix, or even delete the one policy an operator most
+// needs to remove — and DeleteBucketPolicy never reads the document.
+func (s *AdminServer) GetBucketPolicy(bucketName string) (*policy_engine.PolicyDocument, []byte, error) {
 	filerConfig, err := s.getFilerConfig()
 	if err != nil {
-		return nil, fmt.Errorf("get filer configuration: %w", err)
+		return nil, nil, fmt.Errorf("get filer configuration: %w", err)
 	}
 
 	var doc *policy_engine.PolicyDocument
+	var raw []byte
 	err = s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: filerConfig.BucketsPath,
@@ -50,19 +54,19 @@ func (s *AdminServer) GetBucketPolicy(bucketName string) (*policy_engine.PolicyD
 		if len(policyJSON) == 0 {
 			return nil
 		}
+		raw = policyJSON
 
 		var parsed policy_engine.PolicyDocument
-		if err := json.Unmarshal(policyJSON, &parsed); err != nil {
-			return fmt.Errorf("parse stored bucket policy: %w", err)
+		if err := json.Unmarshal(policyJSON, &parsed); err == nil {
+			doc = &parsed
 		}
-		doc = &parsed
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return doc, nil
+	return doc, raw, nil
 }
 
 // SetBucketPolicy validates and stores a bucket policy, applying the exact

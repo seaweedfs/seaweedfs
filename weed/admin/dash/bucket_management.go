@@ -267,16 +267,22 @@ func (s *AdminServer) ShowBucketPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	policy, err := s.GetBucketPolicy(bucketName)
+	policy, raw, err := s.GetBucketPolicy(bucketName)
 	if err != nil {
 		writeJSONError(w, bucketPolicyErrorStatus(err), "Failed to get bucket policy: "+err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	resp := map[string]interface{}{
 		"bucket": bucketName,
 		"policy": policy,
-	})
+	}
+	if policy == nil && len(raw) > 0 {
+		// Stored bytes the decoder rejects: hand them to the JSON tab so
+		// the operator can fix or delete the document.
+		resp["policy_text"] = string(raw)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // UpdateBucketPolicy replaces the bucket policy for a bucket.

@@ -1422,8 +1422,11 @@ templ S3Buckets(data dash.S3BucketsData) {
                             return;
                         }
                         document.getElementById('bucketPolicyEditorWrapper').style.display = '';
+                        // policy_text carries stored bytes the server-side
+                        // decoder rejects; the JSON tab shows them so they
+                        // can be fixed or deleted.
                         document.getElementById('bucketPolicyDocument').value =
-                            data.policy ? JSON.stringify(data.policy, null, 2) : '';
+                            data.policy ? JSON.stringify(data.policy, null, 2) : (data.policy_text || '');
                         bucketPolicyLoaded = true;
                         loadPolicyTextareaIntoEditor('bucket');
                     })
