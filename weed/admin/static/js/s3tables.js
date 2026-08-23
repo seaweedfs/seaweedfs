@@ -635,8 +635,8 @@ async function saveS3TablesBucketPolicy() {
     if (!commitPolicyActiveTab('s3tablesBucket')) return;
     const bucketArn = document.getElementById('s3tablesBucketPolicyArn').value;
     const policy = document.getElementById('s3tablesBucketPolicyText').value.trim();
-    if (!policy) {
-        alert('Policy JSON is required');
+    if (!policy || !policyTextHasStatements(policy)) {
+        alert('Add at least one statement, or use Delete Policy to remove the policy.');
         return;
     }
     try {
@@ -664,8 +664,8 @@ async function saveS3TablesTablePolicy() {
     }
     if (!commitPolicyActiveTab('s3tablesTable')) return;
     const policy = document.getElementById('s3tablesTablePolicyText').value.trim();
-    if (!policy) {
-        alert('Policy JSON is required');
+    if (!policy || !policyTextHasStatements(policy)) {
+        alert('Add at least one statement, or use Delete Policy to remove the policy.');
         return;
     }
     try {

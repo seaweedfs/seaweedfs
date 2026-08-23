@@ -1454,8 +1454,8 @@ templ S3Buckets(data dash.S3BucketsData) {
             if (!commitPolicyActiveTab('bucket')) return;
 
             const raw = document.getElementById('bucketPolicyDocument').value.trim();
-            if (!raw) {
-                alert('Enter a policy document, or use Delete to remove the bucket policy.');
+            if (!raw || !policyTextHasStatements(raw)) {
+                alert('Add at least one statement, or use Delete to remove the bucket policy.');
                 return;
             }
 

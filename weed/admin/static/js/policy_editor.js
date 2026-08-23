@@ -120,6 +120,20 @@ function policyEditorConfig(which) {
         return cfg.allowNegation && !cfg.requirePrincipal;
     }
 
+    // True when the serialized policy carries at least one statement. Guards
+    // Save in the consumers: an empty editor commits as {"Statement":[]},
+    // which is never what a user wants stored - on backends with no
+    // server-side validation (s3tables) it evaluates default-deny for every
+    // non-owner while the UI still shows "Not configured".
+    function policyTextHasStatements(text) {
+        try {
+            const stmts = (JSON.parse(text) || {}).Statement;
+            return Array.isArray(stmts) ? stmts.length > 0 : !!stmts;
+        } catch (e) {
+            return true;
+        }
+    }
+
     function policyEditorBodyId(which) {
         return policyEditorConfig(which).editorBodyId;
     }
