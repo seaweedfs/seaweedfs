@@ -1589,11 +1589,14 @@ async fn get_or_head_handler_inner(
 }
 
 /// Handle HTTP Range requests. Returns 206 Partial Content or 416 Range Not Satisfiable.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct HttpRange {
     start: i64,
     length: i64,
 }
+
+// Returned when the first-byte-pos of every byte-range-spec is at or past the content size.
+const RANGE_NO_OVERLAP: &str = "invalid range: failed to overlap";
 
 fn parse_range_header(s: &str, size: i64) -> Result<Vec<HttpRange>, &'static str> {
     if s.is_empty() {
@@ -1604,6 +1607,7 @@ fn parse_range_header(s: &str, size: i64) -> Result<Vec<HttpRange>, &'static str
         return Err("invalid range");
     }
     let mut ranges = Vec::new();
+    let mut no_overlap = false;
     for part in s[PREFIX.len()..].split(',') {
         let part = part.trim();
         if part.is_empty() {
@@ -1627,8 +1631,12 @@ fn parse_range_header(s: &str, size: i64) -> Result<Vec<HttpRange>, &'static str
             r.length = size - r.start;
         } else {
             let i = start_str.parse::<i64>().map_err(|_| "invalid range")?;
-            if i > size || i < 0 {
+            if i < 0 {
                 return Err("invalid range");
+            }
+            if i >= size {
+                no_overlap = true;
+                continue;
             }
             r.start = i;
             if end_str.is_empty() {
@@ -1645,6 +1653,9 @@ fn parse_range_header(s: &str, size: i64) -> Result<Vec<HttpRange>, &'static str
             }
         }
         ranges.push(r);
+    }
+    if no_overlap && ranges.is_empty() {
+        return Err(RANGE_NO_OVERLAP);
     }
     Ok(ranges)
 }
@@ -1679,7 +1690,15 @@ fn handle_range_request(
     let total = data.len() as i64;
     let ranges = match parse_range_header(range_str, total) {
         Ok(r) => r,
-        Err(msg) => return range_error_response(headers, msg),
+        Err(msg) => {
+            if msg == RANGE_NO_OVERLAP {
+                headers.insert(
+                    "Content-Range",
+                    format!("bytes */{}", total).parse().unwrap(),
+                );
+            }
+            return range_error_response(headers, msg);
+        }
     };
 
     // Go's ProcessRangeRequest returns nil (empty body) for empty or oversized ranges
@@ -1762,7 +1781,15 @@ fn handle_range_request_from_source(
     let total = info.data_size as i64;
     let ranges = match parse_range_header(range_str, total) {
         Ok(r) => r,
-        Err(msg) => return range_error_response(headers, msg),
+        Err(msg) => {
+            if msg == RANGE_NO_OVERLAP {
+                headers.insert(
+                    "Content-Range",
+                    format!("bytes */{}", total).parse().unwrap(),
+                );
+            }
+            return range_error_response(headers, msg);
+        }
     };
 
     if ranges.is_empty() {
@@ -3910,6 +3937,25 @@ mod tests {
     fn test_parse_url_path_invalid() {
         assert!(parse_url_path("/invalid").is_none());
         assert!(parse_url_path("").is_none());
+    }
+
+    #[test]
+    fn test_parse_range_header_no_overlap() {
+        assert_eq!(
+            parse_range_header("bytes=10-", 10).unwrap_err(),
+            RANGE_NO_OVERLAP
+        );
+        assert_eq!(
+            parse_range_header("bytes=100-", 10).unwrap_err(),
+            RANGE_NO_OVERLAP
+        );
+        // 416 only when every range fails to overlap
+        let ranges = parse_range_header("bytes=10-,0-1", 10).unwrap();
+        assert_eq!(ranges.len(), 1);
+        assert_eq!((ranges[0].start, ranges[0].length), (0, 2));
+        // an end past the size is clamped, still satisfiable
+        let ranges = parse_range_header("bytes=5-100", 10).unwrap();
+        assert_eq!((ranges[0].start, ranges[0].length), (5, 5));
     }
 
     #[test]
