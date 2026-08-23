@@ -53,7 +53,7 @@ func newPrometheusStorage(reg prometheus.Registerer) *PrometheusStorage {
 		}),
 		confirmedClusters: promauto.NewGauge(prometheus.GaugeOpts{
 			Name: "seaweedfs_telemetry_confirmed_clusters",
-			Help: "Active clusters seen on at least 2 distinct days (last 7 days)",
+			Help: "Active clusters seen on at least 7 distinct days (last 7 days)",
 		}),
 		volumeServerCount: promauto.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "seaweedfs_telemetry_volume_servers",
@@ -220,9 +220,9 @@ func (s *PrometheusStorage) updateStats() {
 			activeInstances++
 			versionsAll[instance.TelemetryData.Version]++
 			osAll[instance.TelemetryData.Os]++
-			// A cluster is confirmed once seen on >=2 distinct UTC days
-			// (histories hold one sample per day), so one-shot reports
-			// can't skew the distributions below.
+			// A cluster is confirmed once seen on confirmDays distinct UTC
+			// days (histories hold one sample per day), so short-lived
+			// clusters can't skew the distributions below.
 			if len(s.histories[instance.TelemetryData.TopologyId]) >= confirmDays {
 				confirmedInstances++
 				versionsConfirmed[instance.TelemetryData.Version]++
@@ -231,7 +231,7 @@ func (s *PrometheusStorage) updateStats() {
 		}
 	}
 
-	// Before any cluster has two days of history (fresh server with no
+	// Before any cluster has a week of history (fresh server with no
 	// prior state), fall back to all active clusters so the dashboard
 	// distributions aren't empty.
 	versions, osDistribution := versionsConfirmed, osConfirmed

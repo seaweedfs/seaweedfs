@@ -25,11 +25,13 @@ func TestClusterSizeSeries(t *testing.T) {
 	// Reported every day of the window.
 	seedSamples(s, "daily", HistorySample{TotalDiskBytes: 300, VolumeServerCount: 3},
 		-9, -8, -7, -6, -5, -4, -3, -2, -1, 0)
-	// Reported two days ago and not since: still active, so its size is held
-	// to the right edge instead of dropping out of the stack.
-	seedSamples(s, "lagging", HistorySample{TotalDiskBytes: 200, VolumeServerCount: 2}, -3, -2)
+	// Stopped reporting two days ago: still active, so its size is held to
+	// the right edge instead of dropping out of the stack.
+	seedSamples(s, "lagging", HistorySample{TotalDiskBytes: 200, VolumeServerCount: 2},
+		-8, -7, -6, -5, -4, -3, -2)
 	// Stopped reporting past the active window: its own days only.
-	seedSamples(s, "gone", HistorySample{TotalDiskBytes: 900, VolumeServerCount: 9}, -9, -8)
+	seedSamples(s, "gone", HistorySample{TotalDiskBytes: 900, VolumeServerCount: 9},
+		-14, -13, -12, -11, -10, -9, -8)
 	// One day of history only: unconfirmed, so it stays out of the stack.
 	seedSamples(s, "oneshot", HistorySample{TotalDiskBytes: 400, VolumeServerCount: 4}, -1)
 
@@ -48,7 +50,7 @@ func TestClusterSizeSeries(t *testing.T) {
 	if got := byId["daily"].Disk; !equal(got, []uint64{300, 300, 300, 300, 300, 300, 300, 300, 300, 300}) {
 		t.Errorf("daily = %v, want 300 every day", got)
 	}
-	if got := byId["lagging"].Disk; !equal(got, []uint64{0, 0, 0, 0, 0, 0, 200, 200, 200, 200}) {
+	if got := byId["lagging"].Disk; !equal(got, []uint64{0, 200, 200, 200, 200, 200, 200, 200, 200, 200}) {
 		t.Errorf("lagging = %v, want its size carried to the right edge", got)
 	}
 	if got := byId["gone"].Disk; !equal(got, []uint64{900, 900, 0, 0, 0, 0, 0, 0, 0, 0}) {
@@ -62,7 +64,7 @@ func TestClusterSizeSeries(t *testing.T) {
 	if got := byId["daily"].Servers; !equal(got, []uint64{3, 3, 3, 3, 3, 3, 3, 3, 3, 3}) {
 		t.Errorf("daily servers = %v, want 3 every day", got)
 	}
-	if got := byId["lagging"].Servers; !equal(got, []uint64{0, 0, 0, 0, 0, 0, 2, 2, 2, 2}) {
+	if got := byId["lagging"].Servers; !equal(got, []uint64{0, 2, 2, 2, 2, 2, 2, 2, 2, 2}) {
 		t.Errorf("lagging servers = %v, want carried to the right edge", got)
 	}
 	if got := byId["gone"].Servers; !equal(got, []uint64{9, 9, 0, 0, 0, 0, 0, 0, 0, 0}) {
@@ -89,10 +91,10 @@ func TestClusterSizeSeries(t *testing.T) {
 	if series.Other == nil || series.Other.Count != 2 {
 		t.Fatalf("other = %+v, want 2 clusters", series.Other)
 	}
-	if !equal(series.Other.Disk, []uint64{900, 900, 0, 0, 0, 0, 200, 200, 200, 200}) {
+	if !equal(series.Other.Disk, []uint64{900, 1100, 200, 200, 200, 200, 200, 200, 200, 200}) {
 		t.Errorf("other = %v, want lagging+gone summed per day", series.Other.Disk)
 	}
-	if !equal(series.Other.Servers, []uint64{9, 9, 0, 0, 0, 0, 2, 2, 2, 2}) {
+	if !equal(series.Other.Servers, []uint64{9, 11, 2, 2, 2, 2, 2, 2, 2, 2}) {
 		t.Errorf("other servers = %v, want lagging+gone summed per day", series.Other.Servers)
 	}
 	if series.ClusterCount != 3 || series.TotalDisk != 500 || series.TotalServers != 5 {

@@ -129,7 +129,7 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
                 </div>
                 <div class="stat-card">
                     <div class="stat-value" id="confirmedInstances">-</div>
-                    <div class="stat-label">Confirmed Clusters (2+ days)</div>
+                    <div class="stat-label">Confirmed Clusters (7+ days)</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-value" id="totalVersions">-</div>
