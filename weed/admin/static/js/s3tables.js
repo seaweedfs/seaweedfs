@@ -23,6 +23,15 @@ let icebergTableDeleteModal = null;
 let s3tablesBucketPolicyLoaded = false;
 let s3tablesTablePolicyLoaded = false;
 
+// Bumped on every bucket/table policy load; a response only gets applied if
+// its captured sequence number still matches. Without this, opening one
+// resource's policy dialog and then another's before the first GET resolves
+// lets the late response overwrite the second resource's textarea/editor
+// state and mark it loaded, so a subsequent Save would push the first
+// resource's policy onto the second resource.
+let s3tablesBucketPolicyRequestSeq = 0;
+let s3tablesTablePolicyRequestSeq = 0;
+
 function getCSRFToken() {
     const tokenMeta = document.querySelector('meta[name="csrf-token"]');
     if (!tokenMeta) {
@@ -611,9 +620,12 @@ async function deleteS3TablesBucket() {
 }
 
 async function loadS3TablesBucketPolicy(bucketArn) {
+    const requestSeq = ++s3tablesBucketPolicyRequestSeq;
     document.getElementById('s3tablesBucketPolicyText').value = '';
     s3tablesBucketPolicyLoaded = false;
     if (bucketArn) {
+        let policyText = '';
+        let loadError = null;
         try {
             const response = await fetch(s3tBasePath(`/api/s3tables/bucket-policy?bucket=${encodeURIComponent(bucketArn)}`));
             const data = await response.json();
@@ -621,14 +633,23 @@ async function loadS3TablesBucketPolicy(bucketArn) {
                 throw new Error(data.error || ('HTTP ' + response.status));
             }
             if (data.policy) {
-                document.getElementById('s3tablesBucketPolicyText').value = data.policy;
+                policyText = data.policy;
             }
         } catch (error) {
-            console.error('Failed to load bucket policy', error);
-            alert('Failed to load bucket policy: ' + error.message + '. Close and reopen this dialog to try again.');
+            loadError = error;
+        }
+        // A newer load (a different bucket, or this one reopened) has since
+        // superseded this response - don't let it touch the shared textarea,
+        // the editor state, or the loaded flag.
+        if (requestSeq !== s3tablesBucketPolicyRequestSeq) return;
+        if (loadError) {
+            console.error('Failed to load bucket policy', loadError);
+            alert('Failed to load bucket policy: ' + loadError.message + '. Close and reopen this dialog to try again.');
             return;
         }
+        document.getElementById('s3tablesBucketPolicyText').value = policyText;
     }
+    if (requestSeq !== s3tablesBucketPolicyRequestSeq) return;
     s3tablesBucketPolicyLoaded = true;
     loadPolicyTextareaIntoEditor('s3tablesBucket');
 }
@@ -717,10 +738,13 @@ async function deleteIcebergTable() {
 }
 
 async function loadS3TablesTablePolicy(bucketArn, namespace, name) {
+    const requestSeq = ++s3tablesTablePolicyRequestSeq;
     document.getElementById('s3tablesTablePolicyText').value = '';
     s3tablesTablePolicyLoaded = false;
     if (bucketArn && namespace && name) {
         const query = new URLSearchParams({ bucket: bucketArn, namespace: namespace, name: name });
+        let policyText = '';
+        let loadError = null;
         try {
             const response = await fetch(s3tBasePath(`/api/s3tables/table-policy?${query.toString()}`));
             const data = await response.json();
@@ -728,14 +752,23 @@ async function loadS3TablesTablePolicy(bucketArn, namespace, name) {
                 throw new Error(data.error || ('HTTP ' + response.status));
             }
             if (data.policy) {
-                document.getElementById('s3tablesTablePolicyText').value = data.policy;
+                policyText = data.policy;
             }
         } catch (error) {
-            console.error('Failed to load table policy', error);
-            alert('Failed to load table policy: ' + error.message + '. Close and reopen this dialog to try again.');
+            loadError = error;
+        }
+        // A newer load (a different table, or this one reopened) has since
+        // superseded this response - don't let it touch the shared textarea,
+        // the editor state, or the loaded flag.
+        if (requestSeq !== s3tablesTablePolicyRequestSeq) return;
+        if (loadError) {
+            console.error('Failed to load table policy', loadError);
+            alert('Failed to load table policy: ' + loadError.message + '. Close and reopen this dialog to try again.');
             return;
         }
+        document.getElementById('s3tablesTablePolicyText').value = policyText;
     }
+    if (requestSeq !== s3tablesTablePolicyRequestSeq) return;
     s3tablesTablePolicyLoaded = true;
     loadPolicyTextareaIntoEditor('s3tablesTable');
 }
