@@ -177,3 +177,33 @@ func policyWithAllTasks(t *testing.T, enabled bool) *MaintenancePolicy {
 	}
 	return policy
 }
+
+// TestPolicyHelpersTolerateNilPolicy pins the nil handling in the exported policy helpers.
+// MaintenanceConfig.Policy is nil until something builds one, and UpdateConfig accepts a
+// config that has none, so these are reachable with a nil policy - GetTaskPolicy used to
+// dereference it and take the admin process down.
+func TestPolicyHelpersTolerateNilPolicy(t *testing.T) {
+	const taskType = MaintenanceTaskType("balance")
+
+	if got := GetTaskPolicy(nil, taskType); got != nil {
+		t.Errorf("GetTaskPolicy(nil) = %v, want nil", got)
+	}
+	if IsTaskEnabled(nil, taskType) {
+		t.Error("IsTaskEnabled(nil) = true, want false")
+	}
+	if got := GetMaxConcurrent(nil, taskType); got != 1 {
+		t.Errorf("GetMaxConcurrent(nil) = %d, want the safe default 1", got)
+	}
+	if got := GetRepeatInterval(nil, taskType); got != 0 {
+		t.Errorf("GetRepeatInterval(nil) = %d, want 0 so callers fall back to their own default", got)
+	}
+
+	// A policy that exists but lists nothing must behave the same way.
+	empty := &MaintenancePolicy{}
+	if got := GetTaskPolicy(empty, taskType); got != nil {
+		t.Errorf("GetTaskPolicy(empty) = %v, want nil", got)
+	}
+	if IsTaskEnabled(empty, taskType) {
+		t.Error("IsTaskEnabled(empty) = true, want false")
+	}
+}
