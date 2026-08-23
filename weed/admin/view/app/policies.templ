@@ -355,6 +355,16 @@ templ Policies(data dash.PoliciesData) {
 
     // Event listeners for policy actions
     document.addEventListener('DOMContentLoaded', function() {
+        // Register the two editor instances used on this page. Config
+        // overrides here preserve the pre-extraction ids exactly, so this
+        // page's markup did not need to change. This has to run after
+        // DOMContentLoaded (not at the top of this script) because
+        // policy_editor.js - which defines registerPolicyEditor - is
+        // loaded by layout.templ's script bundle at the end of <body>,
+        // i.e. after this page's own content (including this inline
+        // script) has already been parsed and run.
+        registerPolicyEditor('create', { textareaId: 'policyDocument' });
+        registerPolicyEditor('edit', { textareaId: 'editPolicyDocument' });
         setupPolicyEditor('create');
         setupPolicyEditor('edit');
 

@@ -395,8 +395,10 @@ dataset = lance.dataset(table.location, storage_options=table.storage_options)` 
 			</div>
 		</div>
 	</div>
+	@PolicyDatalists()
+
 	<div class="modal fade" id="s3tablesBucketPolicyModal" tabindex="-1" aria-labelledby="s3tablesBucketPolicyModalLabel" aria-hidden="true">
-		<div class="modal-dialog modal-lg">
+		<div class="modal-dialog modal-xl">
 			<div class="modal-content">
 				<div class="modal-header">
 					<h5 class="modal-title" id="s3tablesBucketPolicyModalLabel">
@@ -407,9 +409,24 @@ dataset = lance.dataset(table.location, storage_options=table.storage_options)` 
 				<form id="s3tablesBucketPolicyForm">
 					<div class="modal-body">
 						<input type="hidden" id="s3tablesBucketPolicyArn" name="bucket_arn"/>
-						<div class="mb-3">
-							<label for="s3tablesBucketPolicyText" class="form-label">Policy JSON</label>
-							<textarea class="form-control" id="s3tablesBucketPolicyText" name="policy" rows="12" placeholder="{ }"></textarea>
+						<ul class="nav nav-tabs" role="tablist">
+							<li class="nav-item" role="presentation">
+								<button class="nav-link active" id="s3tablesBucketPolicyEditorTabBtn" type="button" data-bs-toggle="tab" data-bs-target="#s3tablesBucketPolicyEditorTab">Editor</button>
+							</li>
+							<li class="nav-item" role="presentation">
+								<button class="nav-link" id="s3tablesBucketPolicyJsonTabBtn" type="button" data-bs-toggle="tab" data-bs-target="#s3tablesBucketPolicyJsonTab">JSON</button>
+							</li>
+						</ul>
+						<div class="tab-content border border-top-0 rounded-bottom p-3 mb-3">
+							<div class="tab-pane fade show active" id="s3tablesBucketPolicyEditorTab">
+								<div id="s3tablesBucketPolicyEditorBody"></div>
+								<button type="button" class="btn btn-sm btn-outline-secondary" id="s3tablesBucketPolicyAddStatementBtn">
+									<i class="fas fa-plus me-1"></i>Add statement
+								</button>
+							</div>
+							<div class="tab-pane fade" id="s3tablesBucketPolicyJsonTab">
+								<textarea class="form-control" id="s3tablesBucketPolicyText" name="policy" rows="12" placeholder="{ }"></textarea>
+							</div>
 						</div>
 						<div class="form-text">
 							Provide a policy JSON; use Delete Policy to remove the policy.

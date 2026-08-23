@@ -468,6 +468,58 @@ function policyEditorConfig(which) {
         return true;
     }
 
+    function activatePolicyTab(idKey, which) {
+        const btn = document.getElementById(policyEditorConfig(which)[idKey]);
+        if (btn) bootstrap.Tab.getOrCreateInstance(btn).show();
+    }
+
+    // Populates the editor for `which` from whatever is currently in its
+    // JSON textarea (typically right after a GET fills the textarea) and
+    // switches to whichever tab can actually show the result.
+    //
+    // Unlike commitPolicyTextareaToEditor - which assumes a tab is already
+    // showing and leaves it in place on failure so a Save can't silently
+    // clobber it - this function has no "current tab" to defer to: it is
+    // the thing that establishes one. So on a document the structured
+    // editor can't represent (invalid JSON, or valid JSON
+    // policyDocToEditorState rejects), it marks the state `unparsed` and
+    // switches to the JSON tab instead of leaving the Editor tab showing
+    // empty/stale state that a careless Save would serialize over the
+    // real document. Mirrors editPolicy's fallback in policies.templ.
+    function loadPolicyTextareaIntoEditor(which) {
+        const text = document.getElementById(policyTextareaId(which)).value;
+        if (!text || !text.trim()) {
+            policyEditors[which] = { version: '2012-10-17', statements: [], otherFields: {} };
+            renderPolicyEditor(which);
+            activatePolicyTab('editorTabBtnId', which);
+            return true;
+        }
+        let doc;
+        try {
+            doc = JSON.parse(text);
+        } catch (e) {
+            policyEditors[which] = { version: '2012-10-17', statements: [], otherFields: {}, unparsed: true };
+            renderPolicyEditor(which);
+            showAlert('Invalid JSON in stored policy: ' + e.message + '. ' + POLICY_JSON_TAB_ONLY_MESSAGE, 'error');
+            activatePolicyTab('jsonTabBtnId', which);
+            return false;
+        }
+        let state;
+        try {
+            state = policyDocToEditorState(doc);
+        } catch (e) {
+            policyEditors[which] = { version: '2012-10-17', statements: [], otherFields: {}, unparsed: true };
+            renderPolicyEditor(which);
+            showAlert(e.message + '. ' + POLICY_JSON_TAB_ONLY_MESSAGE, 'error');
+            activatePolicyTab('jsonTabBtnId', which);
+            return false;
+        }
+        policyEditors[which] = state;
+        renderPolicyEditor(which);
+        activatePolicyTab('editorTabBtnId', which);
+        return true;
+    }
+
     function addPolicyStatement(which) {
         if (policyEditors[which].unparsed) {
             showAlert(POLICY_JSON_TAB_ONLY_MESSAGE, 'error');

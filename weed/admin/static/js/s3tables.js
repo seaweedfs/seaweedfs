@@ -40,6 +40,15 @@ function initS3TablesBuckets() {
     s3tablesBucketPolicyModal = new bootstrap.Modal(document.getElementById('s3tablesBucketPolicyModal'));
     s3tablesTagsModal = new bootstrap.Modal(document.getElementById('s3tablesTagsModal'));
 
+    // Shared visual policy editor (weed/admin/static/js/policy_editor.js),
+    // reused here from the bucket policy admin page. Table bucket policies
+    // aren't validated against policy_engine.PolicyDocument server-side
+    // (see s3tables/permissions.go's separate PolicyDocument type), so no
+    // requirePrincipal/bucket config is set - the editor just gives a
+    // structured view over the same JSON the JSON tab holds.
+    registerPolicyEditor('s3tablesBucket', { textareaId: 's3tablesBucketPolicyText' });
+    setupPolicyEditor('s3tablesBucket');
+
     const ownerSelect = document.getElementById('s3tablesBucketOwner');
     if (ownerSelect) {
         document.getElementById('createS3TablesBucketModal').addEventListener('show.bs.modal', async function () {
@@ -179,6 +188,7 @@ function initS3TablesBuckets() {
     if (policyForm) {
         policyForm.addEventListener('submit', async function (e) {
             e.preventDefault();
+            if (!commitPolicyActiveTab('s3tablesBucket')) return;
             const bucketArn = document.getElementById('s3tablesBucketPolicyArn').value;
             const policy = document.getElementById('s3tablesBucketPolicyText').value.trim();
             if (!policy) {
@@ -226,6 +236,9 @@ function initS3TablesTables() {
     s3tablesTableDeleteModal = new bootstrap.Modal(document.getElementById('deleteS3TablesTableModal'));
     s3tablesTablePolicyModal = new bootstrap.Modal(document.getElementById('s3tablesTablePolicyModal'));
     s3tablesTagsModal = new bootstrap.Modal(document.getElementById('s3tablesTagsModal'));
+
+    registerPolicyEditor('s3tablesTable', { textareaId: 's3tablesTablePolicyText' });
+    setupPolicyEditor('s3tablesTable');
 
     const dataContainer = document.getElementById('s3tables-tables-content');
     const dataBucketArn = dataContainer.dataset.bucketArn || '';
@@ -314,6 +327,7 @@ function initS3TablesTables() {
     if (policyForm) {
         policyForm.addEventListener('submit', async function (e) {
             e.preventDefault();
+            if (!commitPolicyActiveTab('s3tablesTable')) return;
             const policy = document.getElementById('s3tablesTablePolicyText').value.trim();
             if (!policy) {
                 alert('Policy JSON is required');
@@ -582,16 +596,18 @@ async function deleteS3TablesBucket() {
 
 async function loadS3TablesBucketPolicy(bucketArn) {
     document.getElementById('s3tablesBucketPolicyText').value = '';
-    if (!bucketArn) return;
-    try {
-        const response = await fetch(s3tBasePath(`/api/s3tables/bucket-policy?bucket=${encodeURIComponent(bucketArn)}`));
-        const data = await response.json();
-        if (response.ok && data.policy) {
-            document.getElementById('s3tablesBucketPolicyText').value = data.policy;
+    if (bucketArn) {
+        try {
+            const response = await fetch(s3tBasePath(`/api/s3tables/bucket-policy?bucket=${encodeURIComponent(bucketArn)}`));
+            const data = await response.json();
+            if (response.ok && data.policy) {
+                document.getElementById('s3tablesBucketPolicyText').value = data.policy;
+            }
+        } catch (error) {
+            console.error('Failed to load bucket policy', error);
         }
-    } catch (error) {
-        console.error('Failed to load bucket policy', error);
     }
+    loadPolicyTextareaIntoEditor('s3tablesBucket');
 }
 
 async function deleteS3TablesBucketPolicy() {
@@ -606,6 +622,7 @@ async function deleteS3TablesBucketPolicy() {
         }
         alert('Policy deleted');
         document.getElementById('s3tablesBucketPolicyText').value = '';
+        commitPolicyTextareaToEditor('s3tablesBucket');
     } catch (error) {
         alert('Failed to delete policy: ' + error.message);
     }
@@ -678,17 +695,19 @@ async function deleteIcebergTable() {
 
 async function loadS3TablesTablePolicy(bucketArn, namespace, name) {
     document.getElementById('s3tablesTablePolicyText').value = '';
-    if (!bucketArn || !namespace || !name) return;
-    const query = new URLSearchParams({ bucket: bucketArn, namespace: namespace, name: name });
-    try {
-        const response = await fetch(s3tBasePath(`/api/s3tables/table-policy?${query.toString()}`));
-        const data = await response.json();
-        if (response.ok && data.policy) {
-            document.getElementById('s3tablesTablePolicyText').value = data.policy;
+    if (bucketArn && namespace && name) {
+        const query = new URLSearchParams({ bucket: bucketArn, namespace: namespace, name: name });
+        try {
+            const response = await fetch(s3tBasePath(`/api/s3tables/table-policy?${query.toString()}`));
+            const data = await response.json();
+            if (response.ok && data.policy) {
+                document.getElementById('s3tablesTablePolicyText').value = data.policy;
+            }
+        } catch (error) {
+            console.error('Failed to load table policy', error);
         }
-    } catch (error) {
-        console.error('Failed to load table policy', error);
     }
+    loadPolicyTextareaIntoEditor('s3tablesTable');
 }
 
 async function deleteS3TablesTablePolicy() {
@@ -705,6 +724,7 @@ async function deleteS3TablesTablePolicy() {
         }
         alert('Policy deleted');
         document.getElementById('s3tablesTablePolicyText').value = '';
+        commitPolicyTextareaToEditor('s3tablesTable');
     } catch (error) {
         alert('Failed to delete policy: ' + error.message);
     }

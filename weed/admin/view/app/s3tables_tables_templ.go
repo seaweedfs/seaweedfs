@@ -53,7 +53,7 @@ func S3TablesTables(data dash.S3TablesTablesData) templ.Component {
 		var templ_7745c5c3_Var3 string
 		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.ResolveAttributeValue(templ.CSSClasses(templ_7745c5c3_Var2).String())
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_tables.templ`, Line: 1, Col: 0}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/s3tables_tables.templ`, Line: 1, Col: 0}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var3)
 		if templ_7745c5c3_Err != nil {
@@ -66,7 +66,7 @@ func S3TablesTables(data dash.S3TablesTablesData) templ.Component {
 		var templ_7745c5c3_Var4 string
 		templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.ResolveAttributeValue(formatBadgeTitle(data.BucketFormat))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_tables.templ`, Line: 15, Col: 119}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/s3tables_tables.templ`, Line: 15, Col: 119}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var4)
 		if templ_7745c5c3_Err != nil {
@@ -79,7 +79,7 @@ func S3TablesTables(data dash.S3TablesTablesData) templ.Component {
 		var templ_7745c5c3_Var5 string
 		templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(formatLabel(data.BucketFormat))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_tables.templ`, Line: 15, Col: 154}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/s3tables_tables.templ`, Line: 15, Col: 154}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 		if templ_7745c5c3_Err != nil {
@@ -98,7 +98,7 @@ func S3TablesTables(data dash.S3TablesTablesData) templ.Component {
 			var templ_7745c5c3_Var6 templ.SafeURL
 			templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinURLErrs(dash.PUrl(ctx, fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces", url.PathEscape(bucketName))))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_tables.templ`, Line: 28, Col: 116}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/s3tables_tables.templ`, Line: 28, Col: 116}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 			if templ_7745c5c3_Err != nil {
@@ -121,7 +121,7 @@ func S3TablesTables(data dash.S3TablesTablesData) templ.Component {
 		var templ_7745c5c3_Var7 string
 		templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(data.BucketARN)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_tables.templ`, Line: 36, Col: 60}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/s3tables_tables.templ`, Line: 36, Col: 60}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 		if templ_7745c5c3_Err != nil {
@@ -134,7 +134,7 @@ func S3TablesTables(data dash.S3TablesTablesData) templ.Component {
 		var templ_7745c5c3_Var8 string
 		templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(data.Namespace)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_tables.templ`, Line: 37, Col: 59}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/s3tables_tables.templ`, Line: 37, Col: 59}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 		if templ_7745c5c3_Err != nil {
@@ -157,7 +157,7 @@ func S3TablesTables(data dash.S3TablesTablesData) templ.Component {
 		var templ_7745c5c3_Var9 string
 		templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.ResolveAttributeValue(data.BucketARN)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_tables.templ`, Line: 42, Col: 67}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/s3tables_tables.templ`, Line: 42, Col: 67}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var9)
 		if templ_7745c5c3_Err != nil {
@@ -170,7 +170,7 @@ func S3TablesTables(data dash.S3TablesTablesData) templ.Component {
 		var templ_7745c5c3_Var10 string
 		templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.ResolveAttributeValue(data.Namespace)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_tables.templ`, Line: 42, Col: 101}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/s3tables_tables.templ`, Line: 42, Col: 101}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var10)
 		if templ_7745c5c3_Err != nil {
@@ -183,7 +183,7 @@ func S3TablesTables(data dash.S3TablesTablesData) templ.Component {
 		var templ_7745c5c3_Var11 string
 		templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalTables))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_tables.templ`, Line: 53, Col: 46}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/s3tables_tables.templ`, Line: 53, Col: 46}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 		if templ_7745c5c3_Err != nil {
@@ -196,7 +196,7 @@ func S3TablesTables(data dash.S3TablesTablesData) templ.Component {
 		var templ_7745c5c3_Var12 string
 		templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(data.LastUpdated.Format("15:04"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_tables.templ`, Line: 72, Col: 43}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/s3tables_tables.templ`, Line: 72, Col: 43}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 		if templ_7745c5c3_Err != nil {
@@ -219,7 +219,7 @@ func S3TablesTables(data dash.S3TablesTablesData) templ.Component {
 			var templ_7745c5c3_Var13 string
 			templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(tableName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_tables.templ`, Line: 111, Col: 26}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/s3tables_tables.templ`, Line: 111, Col: 26}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
 			if templ_7745c5c3_Err != nil {
@@ -241,7 +241,7 @@ func S3TablesTables(data dash.S3TablesTablesData) templ.Component {
 			var templ_7745c5c3_Var15 string
 			templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.ResolveAttributeValue(templ.CSSClasses(templ_7745c5c3_Var14).String())
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_tables.templ`, Line: 1, Col: 0}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/s3tables_tables.templ`, Line: 1, Col: 0}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var15)
 			if templ_7745c5c3_Err != nil {
@@ -254,7 +254,7 @@ func S3TablesTables(data dash.S3TablesTablesData) templ.Component {
 			var templ_7745c5c3_Var16 string
 			templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.ResolveAttributeValue(formatBadgeTitle(table.Format))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_tables.templ`, Line: 113, Col: 97}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/s3tables_tables.templ`, Line: 113, Col: 97}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var16)
 			if templ_7745c5c3_Err != nil {
@@ -267,7 +267,7 @@ func S3TablesTables(data dash.S3TablesTablesData) templ.Component {
 			var templ_7745c5c3_Var17 string
 			templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(formatLabel(table.Format))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_tables.templ`, Line: 113, Col: 127}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/s3tables_tables.templ`, Line: 113, Col: 127}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 			if templ_7745c5c3_Err != nil {
@@ -285,7 +285,7 @@ func S3TablesTables(data dash.S3TablesTablesData) templ.Component {
 				var templ_7745c5c3_Var18 string
 				templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(rows)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_tables.templ`, Line: 117, Col: 61}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/s3tables_tables.templ`, Line: 117, Col: 61}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
 				if templ_7745c5c3_Err != nil {
@@ -308,7 +308,7 @@ func S3TablesTables(data dash.S3TablesTablesData) templ.Component {
 			var templ_7745c5c3_Var19 string
 			templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(table.TableARN)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_tables.templ`, Line: 122, Col: 56}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/s3tables_tables.templ`, Line: 122, Col: 56}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 			if templ_7745c5c3_Err != nil {
@@ -321,7 +321,7 @@ func S3TablesTables(data dash.S3TablesTablesData) templ.Component {
 			var templ_7745c5c3_Var20 string
 			templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(table.CreatedAt.Format("2006-01-02 15:04"))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_tables.templ`, Line: 123, Col: 59}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/s3tables_tables.templ`, Line: 123, Col: 59}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
 			if templ_7745c5c3_Err != nil {
@@ -334,7 +334,7 @@ func S3TablesTables(data dash.S3TablesTablesData) templ.Component {
 			var templ_7745c5c3_Var21 string
 			templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(table.ModifiedAt.Format("2006-01-02 15:04"))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_tables.templ`, Line: 124, Col: 60}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/s3tables_tables.templ`, Line: 124, Col: 60}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
 			if templ_7745c5c3_Err != nil {
@@ -352,7 +352,7 @@ func S3TablesTables(data dash.S3TablesTablesData) templ.Component {
 				var templ_7745c5c3_Var22 string
 				templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinStringErrs(bucketName)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_tables.templ`, Line: 127, Col: 50}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/s3tables_tables.templ`, Line: 127, Col: 50}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var22))
 				if templ_7745c5c3_Err != nil {
@@ -365,7 +365,7 @@ func S3TablesTables(data dash.S3TablesTablesData) templ.Component {
 				var templ_7745c5c3_Var23 string
 				templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(data.Namespace)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_tables.templ`, Line: 127, Col: 69}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/s3tables_tables.templ`, Line: 127, Col: 69}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
 				if templ_7745c5c3_Err != nil {
@@ -378,7 +378,7 @@ func S3TablesTables(data dash.S3TablesTablesData) templ.Component {
 				var templ_7745c5c3_Var24 string
 				templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.JoinStringErrs(tableName)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_tables.templ`, Line: 127, Col: 83}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/s3tables_tables.templ`, Line: 127, Col: 83}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var24))
 				if templ_7745c5c3_Err != nil {
@@ -406,7 +406,7 @@ func S3TablesTables(data dash.S3TablesTablesData) templ.Component {
 				var templ_7745c5c3_Var25 string
 				templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(table.MetadataLocation)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_tables.templ`, Line: 134, Col: 68}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/s3tables_tables.templ`, Line: 134, Col: 68}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var25))
 				if templ_7745c5c3_Err != nil {
@@ -434,7 +434,7 @@ func S3TablesTables(data dash.S3TablesTablesData) templ.Component {
 				var templ_7745c5c3_Var26 templ.SafeURL
 				templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.JoinURLErrs(dash.PUrl(ctx, fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces/%s/tables/%s", url.PathEscape(bucketName), url.PathEscape(data.Namespace), url.PathEscape(tableName))))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_tables.templ`, Line: 142, Col: 238}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/s3tables_tables.templ`, Line: 142, Col: 238}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var26))
 				if templ_7745c5c3_Err != nil {
@@ -457,7 +457,7 @@ func S3TablesTables(data dash.S3TablesTablesData) templ.Component {
 			var templ_7745c5c3_Var27 string
 			templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.ResolveAttributeValue(table.TableARN)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_tables.templ`, Line: 150, Col: 126}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/s3tables_tables.templ`, Line: 150, Col: 126}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var27)
 			if templ_7745c5c3_Err != nil {
@@ -470,7 +470,7 @@ func S3TablesTables(data dash.S3TablesTablesData) templ.Component {
 			var templ_7745c5c3_Var28 string
 			templ_7745c5c3_Var28, templ_7745c5c3_Err = templ.ResolveAttributeValue(table.TableARN)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_tables.templ`, Line: 153, Col: 128}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/s3tables_tables.templ`, Line: 153, Col: 128}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var28)
 			if templ_7745c5c3_Err != nil {
@@ -483,7 +483,7 @@ func S3TablesTables(data dash.S3TablesTablesData) templ.Component {
 			var templ_7745c5c3_Var29 string
 			templ_7745c5c3_Var29, templ_7745c5c3_Err = templ.ResolveAttributeValue(tableName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_tables.templ`, Line: 153, Col: 158}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/s3tables_tables.templ`, Line: 153, Col: 158}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var29)
 			if templ_7745c5c3_Err != nil {
@@ -496,7 +496,7 @@ func S3TablesTables(data dash.S3TablesTablesData) templ.Component {
 			var templ_7745c5c3_Var30 string
 			templ_7745c5c3_Var30, templ_7745c5c3_Err = templ.ResolveAttributeValue(tableName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_tables.templ`, Line: 156, Col: 126}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/s3tables_tables.templ`, Line: 156, Col: 126}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var30)
 			if templ_7745c5c3_Err != nil {
@@ -525,7 +525,7 @@ func S3TablesTables(data dash.S3TablesTablesData) templ.Component {
 			var templ_7745c5c3_Var31 string
 			templ_7745c5c3_Var31, templ_7745c5c3_Err = templ.ResolveAttributeValue(formatLabel(data.BucketFormat))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_tables.templ`, Line: 203, Col: 164}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/s3tables_tables.templ`, Line: 203, Col: 164}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var31)
 			if templ_7745c5c3_Err != nil {
@@ -541,7 +541,15 @@ func S3TablesTables(data dash.S3TablesTablesData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 55, "</div><div class=\"mb-3\"><label for=\"s3tablesTableMetadata\" class=\"form-label\">Metadata JSON (optional)</label> <textarea class=\"form-control\" id=\"s3tablesTableMetadata\" name=\"metadata\" rows=\"6\" placeholder=\"{ }\"></textarea></div><div class=\"mb-3\"><label for=\"s3tablesTableTags\" class=\"form-label\">Tags</label> <input type=\"text\" class=\"form-control\" id=\"s3tablesTableTags\" name=\"tags\" placeholder=\"key1=value1,key2=value2\"></div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"submit\" class=\"btn btn-primary\"><i class=\"fas fa-plus me-1\"></i>Create</button></div></form></div></div></div><div class=\"modal fade\" id=\"deleteS3TablesTableModal\" tabindex=\"-1\" aria-labelledby=\"deleteS3TablesTableModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"deleteS3TablesTableModalLabel\"><i class=\"fas fa-exclamation-triangle me-2 text-warning\"></i>Delete Table</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\"><p>Are you sure you want to delete the table <strong id=\"deleteS3TablesTableName\"></strong>?</p><div class=\"mb-3\"><label for=\"deleteS3TablesTableVersion\" class=\"form-label\">Version Token (optional)</label> <input type=\"text\" class=\"form-control\" id=\"deleteS3TablesTableVersion\" placeholder=\"Version token\"></div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"button\" class=\"btn btn-danger\" onclick=\"deleteS3TablesTable()\"><i class=\"fas fa-trash me-1\"></i>Delete</button></div></div></div></div><div class=\"modal fade\" id=\"s3tablesTablePolicyModal\" tabindex=\"-1\" aria-labelledby=\"s3tablesTablePolicyModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog modal-lg\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"s3tablesTablePolicyModalLabel\"><i class=\"fas fa-shield-alt me-2\"></i>Table Policy</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><form id=\"s3tablesTablePolicyForm\"><div class=\"modal-body\"><input type=\"hidden\" id=\"s3tablesTablePolicyBucketArn\" name=\"bucket_arn\"> <input type=\"hidden\" id=\"s3tablesTablePolicyNamespace\" name=\"namespace\"> <input type=\"hidden\" id=\"s3tablesTablePolicyName\" name=\"name\"><div class=\"mb-3\"><label for=\"s3tablesTablePolicyText\" class=\"form-label\">Policy JSON</label> <textarea class=\"form-control\" id=\"s3tablesTablePolicyText\" name=\"policy\" rows=\"12\" placeholder=\"{ }\"></textarea></div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Close</button> <button type=\"button\" class=\"btn btn-outline-danger\" onclick=\"deleteS3TablesTablePolicy()\"><i class=\"fas fa-trash me-1\"></i>Delete Policy</button> <button type=\"submit\" class=\"btn btn-primary\"><i class=\"fas fa-save me-1\"></i>Save Policy</button></div></form></div></div></div><div class=\"modal fade\" id=\"s3tablesTagsModal\" tabindex=\"-1\" aria-labelledby=\"s3tablesTagsModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog modal-lg\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"s3tablesTagsModalLabel\"><i class=\"fas fa-tags me-2\"></i>Resource Tags</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><form id=\"s3tablesTagsForm\"><div class=\"modal-body\"><input type=\"hidden\" id=\"s3tablesTagsResourceArn\" name=\"resource_arn\"><div class=\"mb-3\"><label class=\"form-label\">Existing Tags</label><pre class=\"bg-light p-3 border rounded\" id=\"s3tablesTagsList\">Loading...</pre></div><div class=\"mb-3\"><label for=\"s3tablesTagsInput\" class=\"form-label\">Add or Update Tags</label> <input type=\"text\" class=\"form-control\" id=\"s3tablesTagsInput\" placeholder=\"key1=value1,key2=value2\"></div><div class=\"mb-3\"><label for=\"s3tablesTagsDeleteInput\" class=\"form-label\">Remove Tag Keys</label> <input type=\"text\" class=\"form-control\" id=\"s3tablesTagsDeleteInput\" placeholder=\"key1,key2\"></div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Close</button> <button type=\"button\" class=\"btn btn-outline-danger\" onclick=\"deleteS3TablesTags()\"><i class=\"fas fa-trash me-1\"></i>Remove Tags</button> <button type=\"submit\" class=\"btn btn-primary\"><i class=\"fas fa-save me-1\"></i>Update Tags</button></div></form></div></div></div><script>\n\t\tdocument.addEventListener('DOMContentLoaded', function() {\n\t\t\tinitS3TablesTables();\n\t\t});\n\t</script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 55, "</div><div class=\"mb-3\"><label for=\"s3tablesTableMetadata\" class=\"form-label\">Metadata JSON (optional)</label> <textarea class=\"form-control\" id=\"s3tablesTableMetadata\" name=\"metadata\" rows=\"6\" placeholder=\"{ }\"></textarea></div><div class=\"mb-3\"><label for=\"s3tablesTableTags\" class=\"form-label\">Tags</label> <input type=\"text\" class=\"form-control\" id=\"s3tablesTableTags\" name=\"tags\" placeholder=\"key1=value1,key2=value2\"></div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"submit\" class=\"btn btn-primary\"><i class=\"fas fa-plus me-1\"></i>Create</button></div></form></div></div></div><div class=\"modal fade\" id=\"deleteS3TablesTableModal\" tabindex=\"-1\" aria-labelledby=\"deleteS3TablesTableModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"deleteS3TablesTableModalLabel\"><i class=\"fas fa-exclamation-triangle me-2 text-warning\"></i>Delete Table</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\"><p>Are you sure you want to delete the table <strong id=\"deleteS3TablesTableName\"></strong>?</p><div class=\"mb-3\"><label for=\"deleteS3TablesTableVersion\" class=\"form-label\">Version Token (optional)</label> <input type=\"text\" class=\"form-control\" id=\"deleteS3TablesTableVersion\" placeholder=\"Version token\"></div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"button\" class=\"btn btn-danger\" onclick=\"deleteS3TablesTable()\"><i class=\"fas fa-trash me-1\"></i>Delete</button></div></div></div></div>")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = PolicyDatalists().Render(ctx, templ_7745c5c3_Buffer)
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 56, "<div class=\"modal fade\" id=\"s3tablesTablePolicyModal\" tabindex=\"-1\" aria-labelledby=\"s3tablesTablePolicyModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog modal-xl\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"s3tablesTablePolicyModalLabel\"><i class=\"fas fa-shield-alt me-2\"></i>Table Policy</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><form id=\"s3tablesTablePolicyForm\"><div class=\"modal-body\"><input type=\"hidden\" id=\"s3tablesTablePolicyBucketArn\" name=\"bucket_arn\"> <input type=\"hidden\" id=\"s3tablesTablePolicyNamespace\" name=\"namespace\"> <input type=\"hidden\" id=\"s3tablesTablePolicyName\" name=\"name\"><ul class=\"nav nav-tabs\" role=\"tablist\"><li class=\"nav-item\" role=\"presentation\"><button class=\"nav-link active\" id=\"s3tablesTablePolicyEditorTabBtn\" type=\"button\" data-bs-toggle=\"tab\" data-bs-target=\"#s3tablesTablePolicyEditorTab\">Editor</button></li><li class=\"nav-item\" role=\"presentation\"><button class=\"nav-link\" id=\"s3tablesTablePolicyJsonTabBtn\" type=\"button\" data-bs-toggle=\"tab\" data-bs-target=\"#s3tablesTablePolicyJsonTab\">JSON</button></li></ul><div class=\"tab-content border border-top-0 rounded-bottom p-3 mb-3\"><div class=\"tab-pane fade show active\" id=\"s3tablesTablePolicyEditorTab\"><div id=\"s3tablesTablePolicyEditorBody\"></div><button type=\"button\" class=\"btn btn-sm btn-outline-secondary\" id=\"s3tablesTablePolicyAddStatementBtn\"><i class=\"fas fa-plus me-1\"></i>Add statement</button></div><div class=\"tab-pane fade\" id=\"s3tablesTablePolicyJsonTab\"><textarea class=\"form-control\" id=\"s3tablesTablePolicyText\" name=\"policy\" rows=\"12\" placeholder=\"{ }\"></textarea></div></div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Close</button> <button type=\"button\" class=\"btn btn-outline-danger\" onclick=\"deleteS3TablesTablePolicy()\"><i class=\"fas fa-trash me-1\"></i>Delete Policy</button> <button type=\"submit\" class=\"btn btn-primary\"><i class=\"fas fa-save me-1\"></i>Save Policy</button></div></form></div></div></div><div class=\"modal fade\" id=\"s3tablesTagsModal\" tabindex=\"-1\" aria-labelledby=\"s3tablesTagsModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog modal-lg\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"s3tablesTagsModalLabel\"><i class=\"fas fa-tags me-2\"></i>Resource Tags</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><form id=\"s3tablesTagsForm\"><div class=\"modal-body\"><input type=\"hidden\" id=\"s3tablesTagsResourceArn\" name=\"resource_arn\"><div class=\"mb-3\"><label class=\"form-label\">Existing Tags</label><pre class=\"bg-light p-3 border rounded\" id=\"s3tablesTagsList\">Loading...</pre></div><div class=\"mb-3\"><label for=\"s3tablesTagsInput\" class=\"form-label\">Add or Update Tags</label> <input type=\"text\" class=\"form-control\" id=\"s3tablesTagsInput\" placeholder=\"key1=value1,key2=value2\"></div><div class=\"mb-3\"><label for=\"s3tablesTagsDeleteInput\" class=\"form-label\">Remove Tag Keys</label> <input type=\"text\" class=\"form-control\" id=\"s3tablesTagsDeleteInput\" placeholder=\"key1,key2\"></div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Close</button> <button type=\"button\" class=\"btn btn-outline-danger\" onclick=\"deleteS3TablesTags()\"><i class=\"fas fa-trash me-1\"></i>Remove Tags</button> <button type=\"submit\" class=\"btn btn-primary\"><i class=\"fas fa-save me-1\"></i>Update Tags</button></div></form></div></div></div><script>\n\t\tdocument.addEventListener('DOMContentLoaded', function() {\n\t\t\tinitS3TablesTables();\n\t\t});\n\t</script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

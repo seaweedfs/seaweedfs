@@ -1395,11 +1395,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                         document.getElementById('bucketPolicyEditorWrapper').style.display = '';
                         document.getElementById('bucketPolicyDocument').value =
                             data.policy ? JSON.stringify(data.policy, null, 2) : '';
-                        commitPolicyTextareaToEditor('bucketPolicy');
-                        const editorTabBtn = document.getElementById('bucketPolicyEditorTabBtn');
-                        if (editorTabBtn) {
-                            bootstrap.Tab.getOrCreateInstance(editorTabBtn).show();
-                        }
+                        loadPolicyTextareaIntoEditor('bucket');
                     })
                     .catch(error => {
                         if (requestSeq !== policyRequestSeq) return;
