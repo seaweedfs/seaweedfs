@@ -241,12 +241,25 @@ func LoadConfigFromPersistence(configPersistence interface{}) *Config {
 	if persistence, ok := configPersistence.(interface {
 		LoadEcBalanceTaskPolicy() (*worker_pb.TaskPolicy, error)
 	}); ok {
-		if policy, err := persistence.LoadEcBalanceTaskPolicy(); err == nil && policy != nil {
-			if err := cfg.FromTaskPolicy(policy); err == nil {
+		policy, err := persistence.LoadEcBalanceTaskPolicy()
+		switch {
+		case err != nil:
+			glog.Warningf("Could not read the persisted EC balance configuration, falling back to defaults: %v", err)
+		case policy == nil:
+			glog.V(1).Infof("No EC balance configuration persisted yet, using defaults")
+		default:
+			if err := cfg.FromTaskPolicy(policy); err != nil {
+				glog.Warningf("Could not apply the persisted EC balance configuration, falling back to defaults: %v", err)
+			} else {
 				glog.V(1).Infof("Loaded EC balance configuration from persistence")
 				return cfg
 			}
 		}
+	} else if configPersistence != nil {
+		// A store was handed in but does not expose the accessor, so the persisted
+		// settings are silently ignored - always a wiring bug, never a normal state.
+		glog.Warningf("%T cannot provide the persisted EC balance configuration: it has no LoadEcBalanceTaskPolicy() method, "+
+			"so the compiled-in defaults are used and any saved EC balance settings are ignored", configPersistence)
 	}
 
 	glog.V(1).Infof("Using default EC balance configuration")

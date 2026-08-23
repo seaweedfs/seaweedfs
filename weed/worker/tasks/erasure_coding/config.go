@@ -229,12 +229,25 @@ func LoadConfigFromPersistence(configPersistence interface{}) *Config {
 	if persistence, ok := configPersistence.(interface {
 		LoadErasureCodingTaskPolicy() (*worker_pb.TaskPolicy, error)
 	}); ok {
-		if policy, err := persistence.LoadErasureCodingTaskPolicy(); err == nil && policy != nil {
-			if err := config.FromTaskPolicy(policy); err == nil {
+		policy, err := persistence.LoadErasureCodingTaskPolicy()
+		switch {
+		case err != nil:
+			glog.Warningf("Could not read the persisted erasure coding configuration, falling back to defaults: %v", err)
+		case policy == nil:
+			glog.V(1).Infof("No erasure coding configuration persisted yet, using defaults")
+		default:
+			if err := config.FromTaskPolicy(policy); err != nil {
+				glog.Warningf("Could not apply the persisted erasure coding configuration, falling back to defaults: %v", err)
+			} else {
 				glog.V(1).Infof("Loaded erasure coding configuration from persistence")
 				return config
 			}
 		}
+	} else if configPersistence != nil {
+		// A store was handed in but does not expose the accessor, so the persisted
+		// settings are silently ignored - always a wiring bug, never a normal state.
+		glog.Warningf("%T cannot provide the persisted erasure coding configuration: it has no LoadErasureCodingTaskPolicy() method, "+
+			"so the compiled-in defaults are used and any saved erasure coding settings are ignored", configPersistence)
 	}
 
 	glog.V(1).Infof("Using default erasure coding configuration")
