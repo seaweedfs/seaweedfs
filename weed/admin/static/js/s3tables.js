@@ -623,6 +623,10 @@ async function loadS3TablesBucketPolicy(bucketArn) {
     const requestSeq = ++s3tablesBucketPolicyRequestSeq;
     document.getElementById('s3tablesBucketPolicyText').value = '';
     s3tablesBucketPolicyLoaded = false;
+    // Reset the structured editor immediately too, so a still-open Editor
+    // tab doesn't keep showing the previously loaded resource's statements
+    // while this fetch is in flight.
+    loadPolicyTextareaIntoEditor('s3tablesBucket');
     if (bucketArn) {
         let policyText = '';
         let loadError = null;
@@ -657,6 +661,10 @@ async function loadS3TablesBucketPolicy(bucketArn) {
 async function deleteS3TablesBucketPolicy() {
     const bucketArn = document.getElementById('s3tablesBucketPolicyArn').value;
     if (!bucketArn) return;
+    if (!s3tablesBucketPolicyLoaded) {
+        alert('The current policy has not finished loading. Close and reopen this dialog before deleting.');
+        return;
+    }
     try {
         const response = await fetch(s3tBasePath(`/api/s3tables/bucket-policy?bucket=${encodeURIComponent(bucketArn)}`), { method: 'DELETE', headers: s3tWriteHeaders() });
         const data = await response.json();
@@ -741,6 +749,10 @@ async function loadS3TablesTablePolicy(bucketArn, namespace, name) {
     const requestSeq = ++s3tablesTablePolicyRequestSeq;
     document.getElementById('s3tablesTablePolicyText').value = '';
     s3tablesTablePolicyLoaded = false;
+    // Reset the structured editor immediately too, so a still-open Editor
+    // tab doesn't keep showing the previously loaded resource's statements
+    // while this fetch is in flight.
+    loadPolicyTextareaIntoEditor('s3tablesTable');
     if (bucketArn && namespace && name) {
         const query = new URLSearchParams({ bucket: bucketArn, namespace: namespace, name: name });
         let policyText = '';
@@ -774,6 +786,10 @@ async function loadS3TablesTablePolicy(bucketArn, namespace, name) {
 }
 
 async function deleteS3TablesTablePolicy() {
+    if (!s3tablesTablePolicyLoaded) {
+        alert('The current policy has not finished loading. Close and reopen this dialog before deleting.');
+        return;
+    }
     const dataContainer = document.getElementById('s3tables-tables-content');
     const dataBucketArn = dataContainer.dataset.bucketArn || '';
     const dataNamespace = dataContainer.dataset.namespace || '';

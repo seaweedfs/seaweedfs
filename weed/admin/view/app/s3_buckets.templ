@@ -710,20 +710,20 @@ templ S3Buckets(data dash.S3BucketsData) {
                         </p>
                         <ul class="nav nav-tabs" role="tablist">
                             <li class="nav-item" role="presentation">
-                                <button class="nav-link active" id="bucketPolicyEditorTabBtn" type="button" data-bs-toggle="tab" data-bs-target="#bucketPolicyEditorTab">Editor</button>
+                                <button class="nav-link active" id="bucketPolicyEditorTabBtn" type="button" data-bs-toggle="tab" data-bs-target="#bucketPolicyEditorTab" role="tab" aria-controls="bucketPolicyEditorTab" aria-selected="true">Editor</button>
                             </li>
                             <li class="nav-item" role="presentation">
-                                <button class="nav-link" id="bucketPolicyJsonTabBtn" type="button" data-bs-toggle="tab" data-bs-target="#bucketPolicyJsonTab">JSON</button>
+                                <button class="nav-link" id="bucketPolicyJsonTabBtn" type="button" data-bs-toggle="tab" data-bs-target="#bucketPolicyJsonTab" role="tab" aria-controls="bucketPolicyJsonTab" aria-selected="false">JSON</button>
                             </li>
                         </ul>
                         <div class="tab-content border border-top-0 rounded-bottom p-3 mb-3">
-                            <div class="tab-pane fade show active" id="bucketPolicyEditorTab">
+                            <div class="tab-pane fade show active" id="bucketPolicyEditorTab" role="tabpanel" aria-labelledby="bucketPolicyEditorTabBtn">
                                 <div id="bucketPolicyEditorBody"></div>
                                 <button type="button" class="btn btn-sm btn-outline-secondary" id="bucketPolicyAddStatementBtn">
                                     <i class="fas fa-plus me-1"></i>Add statement
                                 </button>
                             </div>
-                            <div class="tab-pane fade" id="bucketPolicyJsonTab">
+                            <div class="tab-pane fade" id="bucketPolicyJsonTab" role="tabpanel" aria-labelledby="bucketPolicyJsonTabBtn">
                                 <textarea class="form-control" id="bucketPolicyDocument" rows="15"
                                           style="font-family: monospace;" spellcheck="false"
                                           placeholder='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::bucket-name/*"}]}'></textarea>
@@ -816,6 +816,19 @@ templ S3Buckets(data dash.S3BucketsData) {
     // statements, or a freshly-initialized empty state - onto
     // policyEditorBucket before its own policy ever loaded.
     let bucketPolicyLoaded = false;
+    // True while a Save (PUT) or Delete (DELETE) request for the bucket
+    // policy is in flight, so a double-click - or Save and Delete fired in
+    // quick succession - can't send two overlapping mutations for the same
+    // bucket. Cleared on failure so the user can retry; left set on success,
+    // since the modal hides and the page reloads shortly after anyway.
+    let bucketPolicyMutationInFlight = false;
+
+    function setBucketPolicyMutationInFlight(inFlight) {
+        bucketPolicyMutationInFlight = inFlight;
+        document.getElementById('bucketPolicySaveBtn').disabled = inFlight;
+        document.getElementById('bucketPolicyDeleteBtn').disabled = inFlight;
+    }
+
     let cachedUsers = null;
 
     // Working copy of the lifecycle rules currently shown in the modal.
@@ -1374,6 +1387,10 @@ templ S3Buckets(data dash.S3BucketsData) {
                 const bucketName = this.dataset.bucketName;
                 policyEditorBucket = bucketName;
                 bucketPolicyLoaded = false;
+                // In case the dialog was previously closed while a Save/Delete
+                // for a different bucket was still in flight, don't leave
+                // these buttons stuck disabled for this one.
+                setBucketPolicyMutationInFlight(false);
                 registerPolicyEditor('bucket', { requirePrincipal: true, bucket: bucketName });
                 if (!bucketPolicyEditorSetUp) {
                     setupPolicyEditor('bucket');
@@ -1421,6 +1438,7 @@ templ S3Buckets(data dash.S3BucketsData) {
         // Save the policy document currently shown (whichever tab is active).
         document.getElementById('bucketPolicySaveBtn').addEventListener('click', function() {
             if (!policyEditorBucket) return;
+            if (bucketPolicyMutationInFlight) return;
             if (!bucketPolicyLoaded) {
                 alert('The current policy has not finished loading. Close and reopen this dialog before saving.');
                 return;
@@ -1451,6 +1469,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                 return;
             }
 
+            setBucketPolicyMutationInFlight(true);
             fetch(basePath('/api/s3/buckets/' + policyEditorBucket + '/policy'), {
                 method: 'PUT',
                 headers: csrfHeaders(),
@@ -1459,6 +1478,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                 .then(parseLifecycleResponse)
                 .then(({ ok, data }) => {
                     if (!ok || data.error) {
+                        setBucketPolicyMutationInFlight(false);
                         alert('Error saving bucket policy: ' + (data.error || 'unknown error'));
                         return;
                     }
@@ -1468,6 +1488,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                     setTimeout(() => location.reload(), 500);
                 })
                 .catch(error => {
+                    setBucketPolicyMutationInFlight(false);
                     console.error('Error:', error);
                     alert('Error saving bucket policy: ' + error.message);
                 });
@@ -1476,8 +1497,10 @@ templ S3Buckets(data dash.S3BucketsData) {
         // Clear the bucket policy entirely.
         document.getElementById('bucketPolicyDeleteBtn').addEventListener('click', function() {
             if (!policyEditorBucket) return;
+            if (bucketPolicyMutationInFlight) return;
             if (!confirm('Delete the bucket policy for ' + policyEditorBucket + '? This cannot be undone.')) return;
 
+            setBucketPolicyMutationInFlight(true);
             fetch(basePath('/api/s3/buckets/' + policyEditorBucket + '/policy'), {
                 method: 'DELETE',
                 headers: csrfHeaders()
@@ -1485,6 +1508,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                 .then(parseLifecycleResponse)
                 .then(({ ok, data }) => {
                     if (!ok || data.error) {
+                        setBucketPolicyMutationInFlight(false);
                         alert('Error deleting bucket policy: ' + (data.error || 'unknown error'));
                         return;
                     }
@@ -1494,6 +1518,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                     setTimeout(() => location.reload(), 500);
                 })
                 .catch(error => {
+                    setBucketPolicyMutationInFlight(false);
                     console.error('Error:', error);
                     alert('Error deleting bucket policy: ' + error.message);
                 });
