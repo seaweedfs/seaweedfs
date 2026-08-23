@@ -44,13 +44,18 @@ func TestConfirmedClusters(t *testing.T) {
 		t.Fatalf("fallback distribution missing active cluster: %v", v)
 	}
 
-	// Give cluster A a sample from yesterday: now seen on 2 distinct days.
+	// Give cluster A samples from the six previous days: now seen on 7
+	// distinct days.
 	s.mu.Lock()
 	id := "aaaaaaaa-0000-0000-0000-000000000001"
-	s.histories[id] = append([]HistorySample{{
-		Ts:             time.Now().AddDate(0, 0, -1).Unix(),
-		TotalDiskBytes: 50,
-	}}, s.histories[id]...)
+	var older []HistorySample
+	for offset := -6; offset < 0; offset++ {
+		older = append(older, HistorySample{
+			Ts:             time.Now().AddDate(0, 0, offset).Unix(),
+			TotalDiskBytes: 50,
+		})
+	}
+	s.histories[id] = append(older, s.histories[id]...)
 	s.mu.Unlock()
 
 	// A one-shot cluster B arrives (like an injected report): it counts as
@@ -60,7 +65,7 @@ func TestConfirmedClusters(t *testing.T) {
 	}
 	stats = statsOf(t, s)
 	if stats["active_instances"] != 2 || stats["confirmed_instances"] != 1 {
-		t.Fatalf("day two: active=%v confirmed=%v, want 2/1", stats["active_instances"], stats["confirmed_instances"])
+		t.Fatalf("day seven: active=%v confirmed=%v, want 2/1", stats["active_instances"], stats["confirmed_instances"])
 	}
 	v := stats["versions"].(map[string]int)
 	if v["4.40"] != 1 {
