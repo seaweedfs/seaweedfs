@@ -57,6 +57,15 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
             color: #666;
             margin-top: 5px;
         }
+        .stat-label select {
+            border: none;
+            background: none;
+            color: inherit;
+            font: inherit;
+            padding: 0;
+            cursor: pointer;
+            text-decoration: underline dotted;
+        }
         .chart-container {
             background: white;
             padding: 20px;
@@ -129,7 +138,14 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
                 </div>
                 <div class="stat-card">
                     <div class="stat-value" id="confirmedInstances">-</div>
-                    <div class="stat-label">Confirmed Clusters (7+ days)</div>
+                    <div class="stat-label">Confirmed Clusters
+                        (<select id="confirmDays" onchange="updateConfirmed()">
+                            <option value="1">1+</option>
+                            <option value="3">3+</option>
+                            <option value="7" selected>7+</option>
+                            <option value="14">14+</option>
+                            <option value="30">30+</option>
+                        </select> days)</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-value" id="totalVersions">-</div>
@@ -229,12 +245,24 @@ func (h *Handler) ServeIndex(w http.ResponseWriter, r *http.Request) {
             }
         }
 
+        let latestStats = {};
+
         function updateStats(stats) {
+            latestStats = stats;
             document.getElementById('totalInstances').textContent = stats.total_instances || 0;
             document.getElementById('activeInstances').textContent = stats.active_instances || 0;
-            document.getElementById('confirmedInstances').textContent = stats.confirmed_instances || 0;
+            updateConfirmed();
             document.getElementById('totalVersions').textContent = Object.keys(stats.versions || {}).length;
             document.getElementById('totalOS').textContent = Object.keys(stats.os_distribution || {}).length;
+        }
+
+        // Servers from before confirmed_by_days fall back to the fixed
+        // 7-day count.
+        function updateConfirmed() {
+            const days = document.getElementById('confirmDays').value;
+            const byDays = latestStats.confirmed_by_days || {};
+            const count = byDays[days] !== undefined ? byDays[days] : latestStats.confirmed_instances;
+            document.getElementById('confirmedInstances').textContent = count || 0;
         }
 
         function updateCharts(stats) {
