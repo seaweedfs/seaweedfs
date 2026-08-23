@@ -126,6 +126,13 @@ func (s *MaintenanceIntegration) registerAllTasks() {
 // applies it immediately. Without this the integration kept the policy it was built with,
 // so a policy updated at runtime reached the queue but never the detectors that decide
 // which task types are scanned for.
+//
+// Not safe to call concurrently with a running scan. ConfigureTasksFromPolicy writes
+// TaskDefinition.Config and TaskDefinition.MaxConcurrent, which ScanWithTaskDetectors reads
+// through detector.IsEnabled(); nothing synchronises the two. Today every caller runs during
+// admin server startup, before the scan loop exists. Anything that wires this to an HTTP
+// handler has to add that synchronisation first - the same applies to
+// tasks.ConfigUpdateRegistry.UpdateAllConfigs, which replaces TaskDefinition.Config outright.
 func (s *MaintenanceIntegration) SetPolicy(policy *MaintenancePolicy) {
 	s.maintenancePolicy = policy
 	s.ConfigureTasksFromPolicy()
