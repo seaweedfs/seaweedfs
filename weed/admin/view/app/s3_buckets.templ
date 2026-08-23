@@ -683,6 +683,8 @@ templ S3Buckets(data dash.S3BucketsData) {
         </div>
     </div>
 
+    @PolicyDatalists()
+
     <!-- Bucket Policy Modal -->
     <div class="modal fade" id="bucketPolicyModal" tabindex="-1" aria-labelledby="bucketPolicyModalLabel" aria-hidden="true">
         <div class="modal-dialog modal-xl">
@@ -703,12 +705,36 @@ templ S3Buckets(data dash.S3BucketsData) {
                     <div id="bucketPolicyError" class="alert alert-danger" style="display: none;"></div>
                     <div id="bucketPolicyEditorWrapper" style="display: none;">
                         <p class="text-muted small">
-                            Enter a bucket policy document (JSON). Leave empty and click Delete to remove the policy.
                             Every statement must specify a Principal, and every Resource must refer to this bucket.
+                            Leave the document empty and click Delete to remove the policy.
                         </p>
-                        <textarea id="bucketPolicyDocument" class="form-control" rows="18"
-                                  style="font-family: monospace;" spellcheck="false"
-                                  placeholder='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::bucket-name/*"}]}'></textarea>
+                        <ul class="nav nav-tabs" role="tablist">
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link active" id="bucketPolicyEditorTabBtn" type="button" data-bs-toggle="tab" data-bs-target="#bucketPolicyEditorTab">Editor</button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="bucketPolicyJsonTabBtn" type="button" data-bs-toggle="tab" data-bs-target="#bucketPolicyJsonTab">JSON</button>
+                            </li>
+                        </ul>
+                        <div class="tab-content border border-top-0 rounded-bottom p-3 mb-3">
+                            <div class="tab-pane fade show active" id="bucketPolicyEditorTab">
+                                <div id="bucketPolicyEditorBody"></div>
+                                <button type="button" class="btn btn-sm btn-outline-secondary" id="bucketPolicyAddStatementBtn">
+                                    <i class="fas fa-plus me-1"></i>Add statement
+                                </button>
+                            </div>
+                            <div class="tab-pane fade" id="bucketPolicyJsonTab">
+                                <textarea class="form-control" id="bucketPolicyDocument" rows="15"
+                                          style="font-family: monospace;" spellcheck="false"
+                                          placeholder='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::bucket-name/*"}]}'></textarea>
+                                <div class="form-text">Enter the bucket policy document as JSON</div>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <button type="button" class="btn btn-outline-info btn-sm" id="bucketPolicyInsertSampleBtn">
+                                <i class="fas fa-file-alt me-1"></i>Use Sample Policy
+                            </button>
+                        </div>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -1316,18 +1342,40 @@ templ S3Buckets(data dash.S3BucketsData) {
                 });
         });
 
-        // Policy buttons: column badge and action button
+        // Policy buttons: column badge and action button. The visual editor
+        // (weed/admin/static/js/policy_editor.js) is set up once per page
+        // load; registerPolicyEditor is re-called on every open so the
+        // resource-ARN autocomplete and default Principal stay pinned to
+        // whichever bucket is currently open.
+        let bucketPolicyEditorSetUp = false;
+        document.getElementById('bucketPolicyInsertSampleBtn').addEventListener('click', function() {
+            if (!policyEditorBucket) return;
+            insertSamplePolicy('bucket', {
+                Version: '2012-10-17',
+                Statement: [{
+                    Effect: 'Allow',
+                    Principal: '*',
+                    Action: ['s3:GetObject'],
+                    Resource: ['arn:aws:s3:::' + policyEditorBucket + '/*']
+                }]
+            });
+        });
+
         document.querySelectorAll('.policy-btn').forEach(button => {
             button.addEventListener('click', function() {
                 const bucketName = this.dataset.bucketName;
                 policyEditorBucket = bucketName;
+                registerPolicyEditor('bucket', { requirePrincipal: true, bucket: bucketName });
+                if (!bucketPolicyEditorSetUp) {
+                    setupPolicyEditor('bucket');
+                    bucketPolicyEditorSetUp = true;
+                }
 
                 document.getElementById('bucketPolicyModalLabel').innerHTML =
                     '<i class="fas fa-file-shield me-2"></i>Bucket Policy - ' + escapeHtml(bucketName);
                 document.getElementById('bucketPolicyLoading').style.display = '';
                 document.getElementById('bucketPolicyError').style.display = 'none';
                 document.getElementById('bucketPolicyEditorWrapper').style.display = 'none';
-                document.getElementById('bucketPolicyDocument').value = '';
 
                 policyModalInstance.show();
 
@@ -1347,6 +1395,11 @@ templ S3Buckets(data dash.S3BucketsData) {
                         document.getElementById('bucketPolicyEditorWrapper').style.display = '';
                         document.getElementById('bucketPolicyDocument').value =
                             data.policy ? JSON.stringify(data.policy, null, 2) : '';
+                        commitPolicyTextareaToEditor('bucketPolicy');
+                        const editorTabBtn = document.getElementById('bucketPolicyEditorTabBtn');
+                        if (editorTabBtn) {
+                            bootstrap.Tab.getOrCreateInstance(editorTabBtn).show();
+                        }
                     })
                     .catch(error => {
                         if (requestSeq !== policyRequestSeq) return;
@@ -1359,7 +1412,7 @@ templ S3Buckets(data dash.S3BucketsData) {
             });
         });
 
-        // Save the policy document currently in the textarea.
+        // Save the policy document currently shown (whichever tab is active).
         document.getElementById('bucketPolicySaveBtn').addEventListener('click', function() {
             if (!policyEditorBucket) return;
 
@@ -1368,11 +1421,18 @@ templ S3Buckets(data dash.S3BucketsData) {
                 alert('Enter a policy document, or use Delete to remove the bucket policy.');
                 return;
             }
+            if (!commitPolicyActiveTab('bucket')) return;
+
             let policy;
             try {
-                policy = JSON.parse(raw);
+                policy = JSON.parse(document.getElementById('bucketPolicyDocument').value);
             } catch (e) {
                 alert('Invalid JSON: ' + e.message);
+                return;
+            }
+            const validationError = validatePolicyEditorDoc('bucket', policy);
+            if (validationError) {
+                alert(validationError);
                 return;
             }
 
