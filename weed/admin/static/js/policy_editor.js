@@ -110,10 +110,18 @@ function policyEditorConfig(which) {
 
     function normalizeToStringArray(value) {
         if (value === undefined || value === null) return [];
-        // Coerce: these feed escapeHtml, which calls text.replace, and a
-        // policy is free to carry a number or a boolean here.
-        if (Array.isArray(value)) return value.map(String);
-        return [String(value)];
+        const values = Array.isArray(value) ? value : [value];
+        return values.map(function(v) {
+            if (v !== null && typeof v === 'object') {
+                // String(v) would render '[object Object]' (or comma-join a
+                // nested array) and a later save would persist that coercion;
+                // send the document to the JSON tab instead.
+                throw new Error('Policy list entries must be strings (got ' + JSON.stringify(v) + ')');
+            }
+            // Coerce scalars: these feed escapeHtml, which calls text.replace,
+            // and a policy is free to carry a number or a boolean here.
+            return String(v);
+        });
     }
 
     const POLICY_DOCUMENT_KNOWN_KEYS = ['Version', 'Statement'];
@@ -127,20 +135,19 @@ function policyEditorConfig(which) {
     // so such fields are still dropped by the server on save; see
     // confirmPolicyFieldDiscard, which warns the user before that happens.
     function policyDocToEditorState(doc) {
-        if (doc === null || typeof doc !== 'object') {
-            // null or a bare scalar (string/number/boolean) can't represent a
+        if (doc === null || typeof doc !== 'object' || Array.isArray(doc)) {
+            // null, a bare scalar, or an array (typeof [] is 'object', and a
+            // pasted statement array is a common mistake) can't represent a
             // policy document; treating it as "zero statements" would hide
             // from the user that their input wasn't actually a document.
             throw new Error('Policy document must be a JSON object (got ' + JSON.stringify(doc) + ')');
         }
         const state = { version: doc.Version || '2012-10-17', statements: [], otherFields: {} };
-        if (!Array.isArray(doc)) {
-            Object.keys(doc).forEach(function(key) {
-                if (POLICY_DOCUMENT_KNOWN_KEYS.indexOf(key) === -1) {
-                    state.otherFields[key] = doc[key];
-                }
-            });
-        }
+        Object.keys(doc).forEach(function(key) {
+            if (POLICY_DOCUMENT_KNOWN_KEYS.indexOf(key) === -1) {
+                state.otherFields[key] = doc[key];
+            }
+        });
         const rawStatements = doc && doc.Statement
             ? (Array.isArray(doc.Statement) ? doc.Statement : [doc.Statement])
             : [];
@@ -221,7 +228,12 @@ function policyEditorConfig(which) {
         if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
         const keys = Object.keys(value);
         if (keys.length !== 1 || keys[0] !== 'AWS') return null;
-        return normalizeToStringArray(value.AWS);
+        try {
+            return normalizeToStringArray(value.AWS);
+        } catch (e) {
+            // Non-string entries: not the simple form; fall back to extras.
+            return null;
+        }
     }
 
     // Converts editor state back into a policy document. Structured fields
