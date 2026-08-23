@@ -352,6 +352,11 @@ templ Policies(data dash.PoliciesData) {
     <script>
     // Current policy being viewed/edited
     let currentPolicy = null;
+    // Drop edit-modal GET responses superseded by a later editPolicy call,
+    // so a stalled load for one policy can't populate the editor while the
+    // name field already says another. Same pattern as the bucket and
+    // S3 Tables policy dialogs.
+    let editPolicyRequestSeq = 0;
 
     // Event listeners for policy actions
     document.addEventListener('DOMContentLoaded', function() {
@@ -600,7 +605,9 @@ templ Policies(data dash.PoliciesData) {
         policyEditors.edit = { version: '2012-10-17', statements: [], otherFields: {} };
         renderPolicyEditor('edit');
 
-        // Fetch policy data
+        // Fetch policy data; drop the response if another editPolicy call
+        // superseded this one meanwhile.
+        const requestSeq = ++editPolicyRequestSeq;
         fetch(basePath('/api/object-store/policies/' + encodeURIComponent(policyName)))
         .then(response => {
             if (!response.ok) {
@@ -609,6 +616,7 @@ templ Policies(data dash.PoliciesData) {
             return response.json();
         })
         .then(policy => {
+            if (requestSeq !== editPolicyRequestSeq) return;
             currentPolicy = policy;
             document.getElementById('editPolicyDocument').value = JSON.stringify(policy.document, null, 2);
             let state;
@@ -630,6 +638,7 @@ templ Policies(data dash.PoliciesData) {
             editorTab.show();
         })
         .catch(error => {
+            if (requestSeq !== editPolicyRequestSeq) return;
             console.error('Error:', error);
             showAlert('Error loading policy for editing: ' + error.message, 'error');
             const editModal = bootstrap.Modal.getInstance(document.getElementById('editPolicyModal'));
