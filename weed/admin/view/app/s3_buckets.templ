@@ -1474,6 +1474,11 @@ templ S3Buckets(data dash.S3BucketsData) {
                 alert(validationError);
                 return;
             }
+            // The admin API decodes only Version and Statement, so warn
+            // before other top-level fields are silently dropped - the IAM
+            // policies page already does. (The S3 Tables dialogs don't:
+            // their backend stores the document verbatim.)
+            if (!confirmPolicyFieldDiscard('bucket')) return;
 
             // Captured now: if the dialog moves on to a different bucket
             // before this PUT resolves, the completion below must not hide
