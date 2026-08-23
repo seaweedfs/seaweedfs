@@ -467,8 +467,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		effectiveMaxCount := location.MaxVolumeCount
 		if location.isDiskSpaceLow.Load() {
 			usedSlots := int32(location.LocalVolumesLen())
-			ecShardCount := location.EcShardCount()
-			usedSlots += int32((ecShardCount + erasure_coding.DataShardsCount - 1) / erasure_coding.DataShardsCount)
+			usedSlots += int32(erasure_coding.VolumeSlots(int64(location.EcShardCount())))
 			effectiveMaxCount = usedSlots
 		}
 		if effectiveMaxCount < 0 {

@@ -50,12 +50,6 @@ type Disk struct {
 // from lingering forever.
 const volumeRemovalGracePeriod = 10 * time.Second
 
-// ecShardSlots returns the number of volume slots consumed by the given
-// number of EC shards, rounded up to whole-volume equivalents.
-func ecShardSlots(ecShardCount int64) int64 {
-	return (ecShardCount + erasure_coding.DataShardsCount - 1) / erasure_coding.DataShardsCount
-}
-
 func NewDisk(diskType string) *Disk {
 	s := &Disk{}
 	s.id = NodeId(diskType)
@@ -106,7 +100,7 @@ func (d *DiskUsages) ToDiskInfo() map[string]*master_pb.DiskInfo {
 		m := &master_pb.DiskInfo{
 			VolumeCount:       usage.volumeCount,
 			MaxVolumeCount:    usage.maxVolumeCount,
-			FreeVolumeCount:   usage.maxVolumeCount - (usage.volumeCount - usage.remoteVolumeCount) - ecShardSlots(usage.ecShardCount),
+			FreeVolumeCount:   usage.maxVolumeCount - (usage.volumeCount - usage.remoteVolumeCount) - erasure_coding.VolumeSlots(usage.ecShardCount),
 			ActiveVolumeCount: usage.activeVolumeCount,
 			RemoteVolumeCount: usage.remoteVolumeCount,
 			DiskTotalBytes:    uint64(max(0, usage.diskTotalBytes)),
@@ -174,7 +168,7 @@ func (a *DiskUsageCounts) snapshot() DiskUsageCounts {
 
 func (a *DiskUsageCounts) FreeSpace() int64 {
 	u := a.snapshot()
-	return u.maxVolumeCount + u.remoteVolumeCount - u.volumeCount - ecShardSlots(u.ecShardCount)
+	return u.maxVolumeCount + u.remoteVolumeCount - u.volumeCount - erasure_coding.VolumeSlots(u.ecShardCount)
 }
 
 func (du *DiskUsages) getOrCreateDisk(diskType types.DiskType) *DiskUsageCounts {
@@ -452,7 +446,7 @@ func (d *Disk) ToDiskInfo(filter VolumeFilter) *master_pb.DiskInfo {
 		Type:              string(d.Id()),
 		VolumeCount:       diskUsage.volumeCount,
 		MaxVolumeCount:    diskUsage.maxVolumeCount,
-		FreeVolumeCount:   diskUsage.maxVolumeCount - (diskUsage.volumeCount - diskUsage.remoteVolumeCount) - ecShardSlots(diskUsage.ecShardCount),
+		FreeVolumeCount:   diskUsage.maxVolumeCount - (diskUsage.volumeCount - diskUsage.remoteVolumeCount) - erasure_coding.VolumeSlots(diskUsage.ecShardCount),
 		ActiveVolumeCount: diskUsage.activeVolumeCount,
 		RemoteVolumeCount: diskUsage.remoteVolumeCount,
 		DiskId:            diskId,

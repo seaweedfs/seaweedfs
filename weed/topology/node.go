@@ -11,6 +11,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
@@ -308,7 +309,7 @@ func (n *NodeImpl) getOrCreateDisk(diskType types.DiskType) *DiskUsageCounts {
 func (n *NodeImpl) AvailableSpaceFor(option *VolumeGrowOption) int64 {
 	t := n.getOrCreateDisk(option.DiskType)
 	freeVolumeSlotCount := atomic.LoadInt64(&t.maxVolumeCount) + atomic.LoadInt64(&t.remoteVolumeCount) - atomic.LoadInt64(&t.volumeCount)
-	freeVolumeSlotCount -= ecShardSlots(atomic.LoadInt64(&t.ecShardCount))
+	freeVolumeSlotCount -= erasure_coding.VolumeSlots(atomic.LoadInt64(&t.ecShardCount))
 	return freeVolumeSlotCount
 }
 
