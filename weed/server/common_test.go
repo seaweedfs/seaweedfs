@@ -117,17 +117,17 @@ func (c *countingReadCloser) Close() error {
 
 func TestProcessRangeRequestRanges(t *testing.T) {
 	data := []byte("0123456789")
-	serve := func(rangeHeader string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest(http.MethodGet, "/test.txt", nil)
+	serve := func(rangeHeader string) (*httptest.ResponseRecorder, error) {
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/test.txt", nil)
 		r.Header.Set("Range", rangeHeader)
 		w := httptest.NewRecorder()
-		ProcessRangeRequest(r, w, int64(len(data)), "text/plain", func(offset int64, size int64) (filer.DoStreamContent, error) {
+		err := ProcessRangeRequest(r, w, int64(len(data)), "text/plain", func(offset int64, size int64) (filer.DoStreamContent, error) {
 			return func(writer io.Writer) error {
 				_, err := writer.Write(data[offset : offset+size])
 				return err
 			}, nil
 		})
-		return w
+		return w, err
 	}
 
 	tests := []struct {
@@ -143,7 +143,10 @@ func TestProcessRangeRequestRanges(t *testing.T) {
 		{"bytes=10-,0-1", http.StatusPartialContent, "bytes 0-1/10", "01"},
 	}
 	for _, tt := range tests {
-		w := serve(tt.rangeHeader)
+		w, err := serve(tt.rangeHeader)
+		if wantErr := tt.wantCode == http.StatusRequestedRangeNotSatisfiable; (err != nil) != wantErr {
+			t.Errorf("%s: error = %v, want an error only for 416", tt.rangeHeader, err)
+		}
 		if w.Code != tt.wantCode {
 			t.Errorf("%s: status %d, want %d", tt.rangeHeader, w.Code, tt.wantCode)
 		}

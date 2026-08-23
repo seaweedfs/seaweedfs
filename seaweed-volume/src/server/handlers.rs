@@ -1595,7 +1595,7 @@ struct HttpRange {
     length: i64,
 }
 
-// Returned when the first-byte-pos of every byte-range-spec is past the content size.
+// Returned when the first-byte-pos of every byte-range-spec is at or past the content size.
 const RANGE_NO_OVERLAP: &str = "invalid range: failed to overlap";
 
 fn parse_range_header(s: &str, size: i64) -> Result<Vec<HttpRange>, &'static str> {
