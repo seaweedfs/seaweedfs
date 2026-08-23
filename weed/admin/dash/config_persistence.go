@@ -156,7 +156,7 @@ func (cp *ConfigPersistence) LoadMaintenanceConfig() (*MaintenanceConfig, error)
 		var config MaintenanceConfig
 		if err := proto.Unmarshal(configData, &config); err == nil {
 			// Always populate policy from separate task configuration files
-			config.Policy = buildPolicyFromTaskConfigs()
+			config.Policy = cp.buildPolicyFromTaskConfigs()
 			return &config, nil
 		}
 	}
@@ -687,8 +687,10 @@ func (cp *ConfigPersistence) GetConfigInfo() map[string]interface{} {
 	return info
 }
 
-// buildPolicyFromTaskConfigs loads task configurations from separate files and builds a MaintenancePolicy
-func buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
+// buildPolicyFromTaskConfigs loads task configurations from separate files and builds a MaintenancePolicy.
+// cp is passed to each task loader so the persisted configs are actually honoured; the loaders fall
+// back to compiled-in defaults for anything that has never been saved.
+func (cp *ConfigPersistence) buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
 	policy := &worker_pb.MaintenancePolicy{
 		GlobalMaxConcurrent:          4,
 		DefaultRepeatIntervalSeconds: 6 * 3600,  // 6 hours in seconds
@@ -697,7 +699,7 @@ func buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
 	}
 
 	// Load vacuum task configuration
-	if vacuumConfig := vacuum.LoadConfigFromPersistence(nil); vacuumConfig != nil {
+	if vacuumConfig := vacuum.LoadConfigFromPersistence(cp); vacuumConfig != nil {
 		policy.TaskPolicies["vacuum"] = &worker_pb.TaskPolicy{
 			Enabled:               vacuumConfig.Enabled,
 			MaxConcurrent:         int32(vacuumConfig.MaxConcurrent),
@@ -713,7 +715,7 @@ func buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
 	}
 
 	// Load erasure coding task configuration
-	if ecConfig := erasure_coding.LoadConfigFromPersistence(nil); ecConfig != nil {
+	if ecConfig := erasure_coding.LoadConfigFromPersistence(cp); ecConfig != nil {
 		policy.TaskPolicies["erasure_coding"] = &worker_pb.TaskPolicy{
 			Enabled:               ecConfig.Enabled,
 			MaxConcurrent:         int32(ecConfig.MaxConcurrent),
@@ -731,7 +733,7 @@ func buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
 	}
 
 	// Load balance task configuration
-	if balanceConfig := balance.LoadConfigFromPersistence(nil); balanceConfig != nil {
+	if balanceConfig := balance.LoadConfigFromPersistence(cp); balanceConfig != nil {
 		policy.TaskPolicies["balance"] = &worker_pb.TaskPolicy{
 			Enabled:               balanceConfig.Enabled,
 			MaxConcurrent:         int32(balanceConfig.MaxConcurrent),

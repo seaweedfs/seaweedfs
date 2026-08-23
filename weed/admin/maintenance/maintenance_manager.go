@@ -14,8 +14,13 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 )
 
-// buildPolicyFromTaskConfigs loads task configurations from separate files and builds a MaintenancePolicy
-func buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
+// buildPolicyFromTaskConfigs loads task configurations from separate files and builds a MaintenancePolicy.
+//
+// configPersistence is duck-typed as interface{} because weed/admin/dash already imports this
+// package, so importing *dash.ConfigPersistence back here would create an import cycle. It must be
+// a value implementing the LoadXTaskPolicy() accessors the task loaders assert on; passing nil (or
+// anything else) makes every task fall back to its compiled-in defaults.
+func buildPolicyFromTaskConfigs(configPersistence interface{}) *worker_pb.MaintenancePolicy {
 	policy := &worker_pb.MaintenancePolicy{
 		GlobalMaxConcurrent:          4,
 		DefaultRepeatIntervalSeconds: 6 * 3600,  // 6 hours in seconds
@@ -24,7 +29,7 @@ func buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
 	}
 
 	// Load vacuum task configuration
-	if vacuumConfig := vacuum.LoadConfigFromPersistence(nil); vacuumConfig != nil {
+	if vacuumConfig := vacuum.LoadConfigFromPersistence(configPersistence); vacuumConfig != nil {
 		policy.TaskPolicies["vacuum"] = &worker_pb.TaskPolicy{
 			Enabled:               vacuumConfig.Enabled,
 			MaxConcurrent:         int32(vacuumConfig.MaxConcurrent),
@@ -40,7 +45,7 @@ func buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
 	}
 
 	// Load erasure coding task configuration
-	if ecConfig := erasure_coding.LoadConfigFromPersistence(nil); ecConfig != nil {
+	if ecConfig := erasure_coding.LoadConfigFromPersistence(configPersistence); ecConfig != nil {
 		policy.TaskPolicies["erasure_coding"] = &worker_pb.TaskPolicy{
 			Enabled:               ecConfig.Enabled,
 			MaxConcurrent:         int32(ecConfig.MaxConcurrent),
@@ -58,7 +63,7 @@ func buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
 	}
 
 	// Load balance task configuration
-	if balanceConfig := balance.LoadConfigFromPersistence(nil); balanceConfig != nil {
+	if balanceConfig := balance.LoadConfigFromPersistence(configPersistence); balanceConfig != nil {
 		policy.TaskPolicies["balance"] = &worker_pb.TaskPolicy{
 			Enabled:               balanceConfig.Enabled,
 			MaxConcurrent:         int32(balanceConfig.MaxConcurrent),
@@ -94,8 +99,12 @@ type MaintenanceManager struct {
 	scanInProgress bool
 }
 
-// NewMaintenanceManager creates a new maintenance manager
-func NewMaintenanceManager(adminClient AdminClient, config *MaintenanceConfig) *MaintenanceManager {
+// NewMaintenanceManager creates a new maintenance manager.
+//
+// configPersistence is the config store to read persisted task configs from when the policy has to
+// be built here. See buildPolicyFromTaskConfigs for why it is duck-typed; pass nil when no config
+// store is available.
+func NewMaintenanceManager(adminClient AdminClient, config *MaintenanceConfig, configPersistence interface{}) *MaintenanceManager {
 	if config == nil {
 		config = DefaultMaintenanceConfig()
 	}
@@ -104,7 +113,7 @@ func NewMaintenanceManager(adminClient AdminClient, config *MaintenanceConfig) *
 	policy := config.Policy
 	if policy == nil {
 		// Fallback: build policy from separate task configuration files if not already populated
-		policy = buildPolicyFromTaskConfigs()
+		policy = buildPolicyFromTaskConfigs(configPersistence)
 	}
 
 	queue := NewMaintenanceQueue(policy)
