@@ -1037,13 +1037,7 @@ func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput
 		IsTruncated:  aws.Bool(false),
 	}
 
-	// A blip on the way to the filer, either on the ListEntries call or on the
-	// stream receives that follow it, used to fail the whole listing; replay it
-	// a bounded number of times before giving up.
-	uploadsFolder := s3a.genUploadsFolder(*input.Bucket)
-	entries, _, err := listWithRetry(uploadsFolder, func() ([]*filer_pb.Entry, bool, error) {
-		return s3a.list(uploadsFolder, "", *input.UploadIdMarker, false, math.MaxInt32)
-	})
+	entries, _, err := s3a.list(s3a.genUploadsFolder(*input.Bucket), "", *input.UploadIdMarker, false, math.MaxInt32)
 	if err != nil {
 		// A missing .uploads folder normally lists as empty with no error; a
 		// store that reports it as not-found still means an empty list.
@@ -1110,10 +1104,7 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 		StorageClass:     aws.String("STANDARD"),
 	}
 
-	partsFolder := s3a.genUploadsFolder(*input.Bucket) + "/" + *input.UploadId
-	entries, isLast, err := listWithRetry(partsFolder, func() ([]*filer_pb.Entry, bool, error) {
-		return s3a.list(partsFolder, "", fmt.Sprintf("%04d%s", *input.PartNumberMarker, multipartExt), false, uint32(*input.MaxParts))
-	})
+	entries, isLast, err := s3a.list(s3a.genUploadsFolder(*input.Bucket)+"/"+*input.UploadId, "", fmt.Sprintf("%04d%s", *input.PartNumberMarker, multipartExt), false, uint32(*input.MaxParts))
 	if err != nil {
 		// A store that reports the missing upload directory as not-found means
 		// the upload is gone (completed or aborted), not a store error.
