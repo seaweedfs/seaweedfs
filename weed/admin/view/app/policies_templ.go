@@ -193,7 +193,7 @@ func Policies(data dash.PoliciesData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "</tbody></table></div></div></div></div></div></div><style>\n    /* Groups a statement's Sid/Effect and its Action/Resource/Principal\n       sections in the structured policy editor. Plain <fieldset>/<legend>\n       render fine natively, but Bootstrap's form reset stretches <legend> to\n       the fieldset's full width (float: left; width: 100%), which loses the\n       usual \"notch in the border\" look and makes the label bar as wide as\n       the card. Undo just that here so the legend hugs its content instead.\n    */\n    .policy-stmt-fieldset {\n        border: 1px solid var(--bs-border-color, #dee2e6);\n        border-radius: 0.375rem;\n        padding: 0 0.75rem 0.75rem;\n        margin: 0.75rem 0 0;\n    }\n    .policy-stmt-legend {\n        float: none;\n        width: auto;\n        max-width: 100%;\n        padding: 0 0.5rem;\n        margin: 0 0 0.25rem;\n        font-size: 0.8125rem;\n        font-weight: 600;\n        color: var(--bs-secondary-color, #6c757d);\n    }\n    </style>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "</tbody></table></div></div></div></div></div></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

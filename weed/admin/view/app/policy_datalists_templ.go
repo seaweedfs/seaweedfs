@@ -8,14 +8,14 @@ package app
 import "github.com/a-h/templ"
 import templruntime "github.com/a-h/templ/runtime"
 
-// PolicyDatalists renders the three <datalist> elements the shared visual
-// policy editor (weed/admin/static/js/policy_editor.js) attaches its
-// action/resource/principal <input list="..."> suggestions to. Any page
-// embedding that editor must render this once; its ids
-// (policyActionSuggestions, policyResourceSuggestions,
-// policyPrincipalSuggestions) are the registerPolicyEditor defaults, so a
-// page only needs to override them if it renders more than one instance of
-// this component.
+// PolicyDatalists renders the <datalist> elements the shared visual policy
+// editor (weed/admin/static/js/policy_editor.js) attaches its
+// action/resource/principal <input list="..."> suggestions to, plus the
+// styles the editor's generated markup depends on. Any page embedding that
+// editor must render this once; the ids (policyActionSuggestions,
+// policyResourceSuggestions, policyPrincipalSuggestions) are the
+// registerPolicyEditor defaults, so a page only needs to override them if
+// it renders more than one instance of this component.
 func PolicyDatalists() templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
@@ -37,7 +37,7 @@ func PolicyDatalists() templ.Component {
 			templ_7745c5c3_Var1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<!-- Datalist of suggested action names, shared by every policy editor on this page --><datalist id=\"policyActionSuggestions\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<style>\n\t/* Groups a statement's Sid/Effect and its Action/Resource/Principal\n\t   sections in the structured policy editor. Plain <fieldset>/<legend>\n\t   render fine natively, but Bootstrap's form reset stretches <legend> to\n\t   the fieldset's full width (float: left; width: 100%), which loses the\n\t   usual \"notch in the border\" look and makes the label bar as wide as\n\t   the card. Undo just that here so the legend hugs its content instead.\n\t*/\n\t.policy-stmt-fieldset {\n\t\tborder: 1px solid var(--bs-border-color, #dee2e6);\n\t\tborder-radius: 0.375rem;\n\t\tpadding: 0 0.75rem 0.75rem;\n\t\tmargin: 0.75rem 0 0;\n\t}\n\t.policy-stmt-legend {\n\t\tfloat: none;\n\t\twidth: auto;\n\t\tmax-width: 100%;\n\t\tpadding: 0 0.5rem;\n\t\tmargin: 0 0 0.25rem;\n\t\tfont-size: 0.8125rem;\n\t\tfont-weight: 600;\n\t\tcolor: var(--bs-secondary-color, #6c757d);\n\t}\n\t</style><!-- Datalist of suggested action names, shared by every policy editor on this page --><datalist id=\"policyActionSuggestions\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -49,7 +49,7 @@ func PolicyDatalists() templ.Component {
 			var templ_7745c5c3_Var2 string
 			templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.ResolveAttributeValue(action)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/policy_datalists.templ`, Line: 15, Col: 25}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/policy_datalists.templ`, Line: 41, Col: 25}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var2)
 			if templ_7745c5c3_Err != nil {
@@ -72,7 +72,7 @@ func PolicyDatalists() templ.Component {
 			var templ_7745c5c3_Var3 string
 			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.ResolveAttributeValue(action)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/policy_datalists.templ`, Line: 23, Col: 25}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/policy_datalists.templ`, Line: 49, Col: 25}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var3)
 			if templ_7745c5c3_Err != nil {
