@@ -3,12 +3,14 @@
 package fuse_p2p
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -16,7 +18,10 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/test/testutil"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // p2pTestCluster manages a minimal SeaweedFS cluster exercising the peer
@@ -100,6 +105,8 @@ func startP2PTestCluster(t testing.TB, numMounts int) *p2pTestCluster {
 	require.NoError(t, c.startVolume(configDir))
 	require.NoError(t, c.waitForTCP(c.volumeCmd, "volume",
 		fmt.Sprintf("127.0.0.1:%d", c.volumePort), 30*time.Second))
+	require.NoError(t, c.waitForVolumeRegistered(30*time.Second),
+		"volume server registration\n%s", c.tailLog("master"))
 
 	require.NoError(t, c.startFiler(configDir))
 	require.NoError(t, c.waitForTCP(c.filerCmd, "filer",
@@ -272,7 +279,10 @@ func (c *p2pTestCluster) tailLogFull(name string) string {
 }
 
 func (c *p2pTestCluster) copyLogsForCI() {
-	ciLogDir := "/tmp/seaweedfs-fuse-p2p-logs"
+	// One subdirectory per test: a flat layout lets every teardown overwrite
+	// the previous test's logs, so the CI artifact only ever shows the last
+	// cluster, never the failing one.
+	ciLogDir := filepath.Join("/tmp/seaweedfs-fuse-p2p-logs", strings.ReplaceAll(c.t.Name(), "/", "_"))
 	os.MkdirAll(ciLogDir, 0755)
 	logsDir := filepath.Join(c.baseDir, "logs")
 	entries, err := os.ReadDir(logsDir)
@@ -286,6 +296,44 @@ func (c *p2pTestCluster) copyLogsForCI() {
 		}
 		os.WriteFile(filepath.Join(ciLogDir, e.Name()), data, 0644)
 	}
+}
+
+// waitForVolumeRegistered waits until the volume server shows up in the master
+// topology with its slots reported. An open volume port only means the process
+// is listening: until the master has elected itself and accepted a heartbeat,
+// an assign fails and the first write on a fresh mount surfaces it as ENOSPC.
+func (c *p2pTestCluster) waitForVolumeRegistered(timeout time.Duration) error {
+	addr := fmt.Sprintf("127.0.0.1:%d", c.masterGrpcPort)
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	client := master_pb.NewSeaweedClient(conn)
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		resp, err := client.VolumeList(ctx, &master_pb.VolumeListRequest{})
+		cancel()
+		if err == nil && resp.TopologyInfo != nil {
+			var slots int64
+			for _, dc := range resp.TopologyInfo.DataCenterInfos {
+				for _, rack := range dc.RackInfos {
+					for _, dn := range rack.DataNodeInfos {
+						for _, disk := range dn.DiskInfos {
+							slots += disk.MaxVolumeCount
+						}
+					}
+				}
+			}
+			if slots > 0 {
+				return nil
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return fmt.Errorf("volume server not registered with the master within %v", timeout)
 }
 
 // waitForTCP polls addr until it accepts a connection, OR the supplied
