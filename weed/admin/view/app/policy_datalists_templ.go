@@ -60,7 +60,30 @@ func PolicyDatalists() templ.Component {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "</datalist><!-- Populated dynamically as the user types in a Resource field: bucket\n\t     names first, then subfolders one path segment at a time. See\n\t     updatePolicyResourceSuggestions() in policy_editor.js. --><datalist id=\"policyResourceSuggestions\"></datalist><!-- Populated dynamically as the user types/focuses a Principal field:\n\t     existing users and IAM roles, fetched once from /api/principals. See\n\t     updatePolicyPrincipalSuggestions() in policy_editor.js. --><datalist id=\"policyPrincipalSuggestions\"></datalist>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "</datalist><!-- The s3tables: subset, for editors over the S3 Tables policy engine\n\t     (registered with actionDatalistId: 's3tablesPolicyActionSuggestions') --><datalist id=\"s3tablesPolicyActionSuggestions\">")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		for _, action := range S3TablesPolicyActionSuggestions {
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "<option value=\"")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var3 string
+			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.ResolveAttributeValue(action)
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/policy_datalists.templ`, Line: 23, Col: 25}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var3)
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "\"></option>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "</datalist><!-- Populated dynamically as the user types in a Resource field: bucket\n\t     names first, then subfolders one path segment at a time. See\n\t     updatePolicyResourceSuggestions() in policy_editor.js. --><datalist id=\"policyResourceSuggestions\"></datalist><!-- Populated dynamically as the user types/focuses a Principal field:\n\t     existing users and IAM roles, fetched once from /api/principals. See\n\t     updatePolicyPrincipalSuggestions() in policy_editor.js. --><datalist id=\"policyPrincipalSuggestions\"></datalist>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

@@ -613,7 +613,7 @@ templ Policies(data dash.PoliciesData) {
             document.getElementById('editPolicyDocument').value = JSON.stringify(policy.document, null, 2);
             let state;
             try {
-                state = policyDocToEditorState(policy.document);
+                state = policyDocToEditorState('edit', policy.document);
             } catch (e) {
                 // Valid JSON the structured editor can't model. The JSON tab
                 // exists for exactly this, so hand the document over to it

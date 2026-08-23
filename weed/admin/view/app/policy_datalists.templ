@@ -16,6 +16,14 @@ templ PolicyDatalists() {
 		}
 	</datalist>
 
+	<!-- The s3tables: subset, for editors over the S3 Tables policy engine
+	     (registered with actionDatalistId: 's3tablesPolicyActionSuggestions') -->
+	<datalist id="s3tablesPolicyActionSuggestions">
+		for _, action := range S3TablesPolicyActionSuggestions {
+			<option value={ action }></option>
+		}
+	</datalist>
+
 	<!-- Populated dynamically as the user types in a Resource field: bucket
 	     names first, then subfolders one path segment at a time. See
 	     updatePolicyResourceSuggestions() in policy_editor.js. -->

@@ -35,15 +35,24 @@ const POLICY_EDITOR_CONFIG = {};
 //   resourceDatalistId  - id of the shared resource-suggestions <datalist>. Default: 'policyResourceSuggestions'.
 //   principalDatalistId - id of the shared principal-suggestions <datalist>. Default: 'policyPrincipalSuggestions'.
 //   requirePrincipal    - if true, a new statement seeds Principal with '*'
-//                         instead of leaving it empty. Bucket policies
-//                         require a Principal per statement; IAM policies
-//                         don't. The server remains the source of truth for
-//                         this rule either way - see
-//                         policy_engine.ValidateBucketPolicy.
+//                         instead of leaving it empty, and the NotPrincipal
+//                         mode is not offered (the bucket policy backend
+//                         rejects statements without a Principal). The
+//                         server remains the source of truth for this rule
+//                         either way - see policy_engine.ValidateBucketPolicy.
+//   allowNegation       - if false, the NotResource/NotPrincipal mode
+//                         dropdowns are not offered and a loaded document
+//                         using them falls back to the JSON tab. For
+//                         backends whose evaluator has no Not* fields
+//                         (s3tables silently drops them, turning e.g.
+//                         Allow+NotResource into allow-everything).
 //   bucket              - if set, the Resource autocomplete only offers
 //                         this bucket's ARN and ARN/*, instead of fetching
 //                         every bucket, and a new statement's Resource is
 //                         seeded with arn:aws:s3:::<bucket>/*.
+//   resourceSuggestions - if set, the Resource autocomplete offers exactly
+//                         these values and never fetches bucket/folder
+//                         names. For non-S3 ARN dialects (s3tables).
 function registerPolicyEditor(which, config) {
     POLICY_EDITOR_CONFIG[which] = Object.assign({
         textareaId: which + 'PolicyDocument',
@@ -55,7 +64,9 @@ function registerPolicyEditor(which, config) {
         resourceDatalistId: 'policyResourceSuggestions',
         principalDatalistId: 'policyPrincipalSuggestions',
         requirePrincipal: false,
-        bucket: null
+        allowNegation: true,
+        bucket: null,
+        resourceSuggestions: null
     }, config || {});
 }
 
@@ -104,6 +115,11 @@ function policyEditorConfig(which) {
         return policyEditorConfig(which).textareaId;
     }
 
+    function policyEditorOffersNotPrincipal(which) {
+        const cfg = policyEditorConfig(which);
+        return cfg.allowNegation && !cfg.requirePrincipal;
+    }
+
     function policyEditorBodyId(which) {
         return policyEditorConfig(which).editorBodyId;
     }
@@ -134,7 +150,8 @@ function policyEditorConfig(which) {
     // tab. The admin API's PolicyDocument only carries Version and Statement,
     // so such fields are still dropped by the server on save; see
     // confirmPolicyFieldDiscard, which warns the user before that happens.
-    function policyDocToEditorState(doc) {
+    function policyDocToEditorState(which, doc) {
+        const cfg = policyEditorConfig(which);
         if (doc === null || typeof doc !== 'object' || Array.isArray(doc)) {
             // null, a bare scalar, or an array (typeof [] is 'object', and a
             // pasted statement array is a common mistake) can't represent a
@@ -168,12 +185,18 @@ function policyEditorConfig(which) {
                 // it in the JSON tab rather than silently picking one.
                 throw new Error('Statement ' + (idx + 1) + ': cannot specify both Resource and NotResource');
             }
+            if (hasNotResource && !cfg.allowNegation) {
+                throw new Error('Statement ' + (idx + 1) + ': NotResource is not supported for this policy type');
+            }
             const resourceMode = hasNotResource ? 'NotResource' : 'Resource';
 
             const hasPrincipal = Object.prototype.hasOwnProperty.call(stmt, 'Principal');
             const hasNotPrincipal = Object.prototype.hasOwnProperty.call(stmt, 'NotPrincipal');
             if (hasPrincipal && hasNotPrincipal) {
                 throw new Error('Statement ' + (idx + 1) + ': cannot specify both Principal and NotPrincipal');
+            }
+            if (hasNotPrincipal && (!cfg.allowNegation || cfg.requirePrincipal)) {
+                throw new Error('Statement ' + (idx + 1) + ': NotPrincipal is not supported for this policy type');
             }
             let principalMode = 'Principal';
             let principalValues = [];
@@ -377,24 +400,28 @@ function policyEditorConfig(which) {
                 '<button type="button" class="btn btn-sm btn-outline-secondary policy-add-list-item-btn" data-which="' + which + '" data-index="' + idx + '" data-field="action"><i class="fas fa-plus me-1"></i>Add action</button>' +
                 '</fieldset>' +
                 '<fieldset class="policy-stmt-fieldset">' +
-                '<legend class="policy-stmt-legend">' +
-                '<select class="form-select form-select-sm d-inline-block w-auto policy-stmt-resource-mode" data-which="' + which + '" data-index="' + idx + '">' +
-                '<option value="Resource"' + (stmt.resourceMode !== 'NotResource' ? ' selected' : '') + '>Resource</option>' +
-                '<option value="NotResource"' + (stmt.resourceMode === 'NotResource' ? ' selected' : '') + '>NotResource</option>' +
-                '</select>' +
+                '<legend class="policy-stmt-legend' + (policyEditorConfig(which).allowNegation ? '' : ' border rounded') + '">' +
+                (policyEditorConfig(which).allowNegation
+                    ? '<select class="form-select form-select-sm d-inline-block w-auto policy-stmt-resource-mode" data-which="' + which + '" data-index="' + idx + '">' +
+                      '<option value="Resource"' + (stmt.resourceMode !== 'NotResource' ? ' selected' : '') + '>Resource</option>' +
+                      '<option value="NotResource"' + (stmt.resourceMode === 'NotResource' ? ' selected' : '') + '>NotResource</option>' +
+                      '</select>'
+                    : 'Resource') +
                 '</legend>' +
                 (stmt.resourceMode === 'NotResource' ? '<div class="form-text mt-0 mb-1">The statement applies to every resource except the ones listed.</div>' : '') +
                 '<div class="policy-resource-rows" data-which="' + which + '" data-index="' + idx + '">' + resourceRows + '</div>' +
                 '<button type="button" class="btn btn-sm btn-outline-secondary policy-add-list-item-btn" data-which="' + which + '" data-index="' + idx + '" data-field="resource"><i class="fas fa-plus me-1"></i>Add resource</button>' +
                 '</fieldset>' +
                 '<fieldset class="policy-stmt-fieldset">' +
-                '<legend class="policy-stmt-legend">' +
-                '<select class="form-select form-select-sm d-inline-block w-auto policy-stmt-principal-mode" data-which="' + which + '" data-index="' + idx + '">' +
-                '<option value="Principal"' + (stmt.principalMode !== 'NotPrincipal' ? ' selected' : '') + '>Principal</option>' +
-                '<option value="NotPrincipal"' + (stmt.principalMode === 'NotPrincipal' ? ' selected' : '') + '>NotPrincipal</option>' +
-                '</select>' +
+                '<legend class="policy-stmt-legend' + (policyEditorOffersNotPrincipal(which) ? '' : ' border rounded') + '">' +
+                (policyEditorOffersNotPrincipal(which)
+                    ? '<select class="form-select form-select-sm d-inline-block w-auto policy-stmt-principal-mode" data-which="' + which + '" data-index="' + idx + '">' +
+                      '<option value="Principal"' + (stmt.principalMode !== 'NotPrincipal' ? ' selected' : '') + '>Principal</option>' +
+                      '<option value="NotPrincipal"' + (stmt.principalMode === 'NotPrincipal' ? ' selected' : '') + '>NotPrincipal</option>' +
+                      '</select>'
+                    : 'Principal') +
                 '</legend>' +
-                '<div class="form-text mt-0 mb-1">Principal / NotPrincipal (AWS account/user ARN, or "*" for everyone). Only the AWS type and "*" are supported here; other forms stay editable via Advanced fields.</div>' +
+                '<div class="form-text mt-0 mb-1">' + (policyEditorOffersNotPrincipal(which) ? 'Principal / NotPrincipal' : 'Principal') + ' (AWS account/user ARN, or "*" for everyone). Only the AWS type and "*" are supported here; other forms stay editable via Advanced fields.</div>' +
                 (stmt.hasComplexPrincipal ? '<div class="form-text text-warning mt-0 mb-1"><i class="fas fa-triangle-exclamation me-1"></i>This statement\'s Principal/NotPrincipal uses a form not supported by this field &mdash; see Advanced fields below.</div>' : '') +
                 '<div class="policy-principal-rows" data-which="' + which + '" data-index="' + idx + '">' + principalRows + '</div>' +
                 '<button type="button" class="btn btn-sm btn-outline-secondary policy-add-list-item-btn" data-which="' + which + '" data-index="' + idx + '" data-field="principal"><i class="fas fa-plus me-1"></i>Add principal</button>' +
@@ -486,7 +513,7 @@ function policyEditorConfig(which) {
         }
         let newState;
         try {
-            newState = policyDocToEditorState(doc);
+            newState = policyDocToEditorState(which, doc);
         } catch (e) {
             showAlert(e.message, 'error');
             return false;
@@ -534,7 +561,7 @@ function policyEditorConfig(which) {
         }
         let state;
         try {
-            state = policyDocToEditorState(doc);
+            state = policyDocToEditorState(which, doc);
         } catch (e) {
             policyEditors[which] = { version: '2012-10-17', statements: [], otherFields: {}, unparsed: true };
             renderPolicyEditor(which);
@@ -593,7 +620,7 @@ function policyEditorConfig(which) {
                 return false;
             }
             try {
-                policyEditors[which] = policyDocToEditorState(doc);
+                policyEditors[which] = policyDocToEditorState(which, doc);
             } catch (e) {
                 // Valid JSON the structured editor can't model is still
                 // saveable from here - exactly the documents the load path
@@ -641,8 +668,11 @@ function policyEditorConfig(which) {
         const statements = (doc && doc.Statement) || [];
         for (let i = 0; i < statements.length; i++) {
             const stmt = statements[i] || {};
-            if (stmt.Principal === undefined && stmt.NotPrincipal === undefined) {
-                return 'Statement ' + (i + 1) + ': a Principal (or NotPrincipal) is required.';
+            // Principal specifically: the server rule this front-runs
+            // (policy_engine.ValidateBucketPolicy) rejects NotPrincipal-only
+            // statements too.
+            if (stmt.Principal === undefined) {
+                return 'Statement ' + (i + 1) + ': a Principal is required.';
             }
         }
         return null;
@@ -837,6 +867,10 @@ function policyEditorConfig(which) {
         const cfg = policyEditorConfig(which);
         const datalist = document.getElementById(cfg.resourceDatalistId);
         if (!datalist) return;
+        if (cfg.resourceSuggestions) {
+            renderPolicyDatalistOptions(datalist, cfg.resourceSuggestions);
+            return;
+        }
         const state = policyResourcePathState(inputEl.value);
 
         if (state.stage === 'bucket') {
@@ -912,7 +946,7 @@ function policyEditorConfig(which) {
 
     function insertSamplePolicy(which, sampleDoc) {
         const doc = sampleDoc || POLICY_SAMPLE_DOCUMENT;
-        policyEditors[which] = policyDocToEditorState(doc);
+        policyEditors[which] = policyDocToEditorState(which, doc);
         renderPolicyEditor(which);
         document.getElementById(policyTextareaId(which)).value = JSON.stringify(doc, null, 2);
     }

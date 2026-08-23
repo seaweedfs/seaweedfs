@@ -57,13 +57,7 @@ function initS3TablesBuckets() {
     s3tablesBucketPolicyModal = new bootstrap.Modal(document.getElementById('s3tablesBucketPolicyModal'));
     s3tablesTagsModal = new bootstrap.Modal(document.getElementById('s3tablesTagsModal'));
 
-    // Shared visual policy editor (weed/admin/static/js/policy_editor.js),
-    // reused here from the bucket policy admin page. Table bucket policies
-    // aren't validated against policy_engine.PolicyDocument server-side
-    // (see s3tables/permissions.go's separate PolicyDocument type), so no
-    // requirePrincipal/bucket config is set - the editor just gives a
-    // structured view over the same JSON the JSON tab holds.
-    registerPolicyEditor('s3tablesBucket', { textareaId: 's3tablesBucketPolicyText' });
+    registerS3TablesBucketPolicyEditor('');
     setupPolicyEditor('s3tablesBucket');
 
     const ownerSelect = document.getElementById('s3tablesBucketOwner');
@@ -107,6 +101,7 @@ function initS3TablesBuckets() {
         button.addEventListener('click', function () {
             const bucketArn = this.dataset.bucketArn || '';
             document.getElementById('s3tablesBucketPolicyArn').value = bucketArn;
+            registerS3TablesBucketPolicyEditor(bucketArn);
             loadS3TablesBucketPolicy(bucketArn);
             s3tablesBucketPolicyModal.show();
         });
@@ -258,7 +253,7 @@ function initS3TablesTables() {
     s3tablesTablePolicyModal = new bootstrap.Modal(document.getElementById('s3tablesTablePolicyModal'));
     s3tablesTagsModal = new bootstrap.Modal(document.getElementById('s3tablesTagsModal'));
 
-    registerPolicyEditor('s3tablesTable', { textareaId: 's3tablesTablePolicyText' });
+    registerS3TablesTablePolicyEditor('', '', '');
     setupPolicyEditor('s3tablesTable');
 
     const dataContainer = document.getElementById('s3tables-tables-content');
@@ -278,6 +273,7 @@ function initS3TablesTables() {
             document.getElementById('s3tablesTablePolicyBucketArn').value = dataBucketArn;
             document.getElementById('s3tablesTablePolicyNamespace').value = dataNamespace;
             document.getElementById('s3tablesTablePolicyName').value = this.dataset.tableName || '';
+            registerS3TablesTablePolicyEditor(dataBucketArn, dataNamespace, this.dataset.tableName || '');
             loadS3TablesTablePolicy(dataBucketArn, dataNamespace, this.dataset.tableName || '');
             s3tablesTablePolicyModal.show();
         });
@@ -617,6 +613,30 @@ async function deleteS3TablesBucket() {
     } catch (error) {
         alert('Failed to delete bucket: ' + error.message);
     }
+}
+
+// Shared visual policy editor (weed/admin/static/js/policy_editor.js),
+// configured for the S3 Tables policy engine: only s3tables: action
+// suggestions, resource suggestions pinned to the open resource's ARN, and
+// no NotResource/NotPrincipal modes - the s3tables evaluator has no such
+// fields and would silently drop them (see s3tables/permissions.go).
+// Re-registered on every dialog open so the suggestions track the resource.
+function registerS3TablesBucketPolicyEditor(bucketArn) {
+    registerPolicyEditor('s3tablesBucket', {
+        textareaId: 's3tablesBucketPolicyText',
+        actionDatalistId: 's3tablesPolicyActionSuggestions',
+        allowNegation: false,
+        resourceSuggestions: bucketArn ? [bucketArn, bucketArn + '/table/*'] : null
+    });
+}
+
+function registerS3TablesTablePolicyEditor(bucketArn, namespace, name) {
+    registerPolicyEditor('s3tablesTable', {
+        textareaId: 's3tablesTablePolicyText',
+        actionDatalistId: 's3tablesPolicyActionSuggestions',
+        allowNegation: false,
+        resourceSuggestions: bucketArn && namespace && name ? [bucketArn + '/table/' + namespace + '/' + name] : null
+    });
 }
 
 async function loadS3TablesBucketPolicy(bucketArn) {
