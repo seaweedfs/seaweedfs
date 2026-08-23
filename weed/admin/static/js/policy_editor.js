@@ -596,9 +596,13 @@ function policyEditorConfig(which) {
         }
         const cfg = policyEditorConfig(which);
         commitPolicyEditorForm(which);
+        // Seed Resource with the broadest pinned suggestion, mirroring the
+        // arn:aws:s3::: seeding cfg.bucket gets.
+        const seededResources = cfg.bucket ? ['arn:aws:s3:::' + cfg.bucket + '/*']
+            : (cfg.resourceSuggestions ? [cfg.resourceSuggestions[cfg.resourceSuggestions.length - 1]] : []);
         policyEditorState(which).statements.push({
             sid: '', effect: 'Allow', actions: [],
-            resourceMode: 'Resource', resources: cfg.bucket ? ['arn:aws:s3:::' + cfg.bucket + '/*'] : [],
+            resourceMode: 'Resource', resources: seededResources,
             principalMode: 'Principal', principalValues: cfg.requirePrincipal ? ['*'] : [], hasComplexPrincipal: false,
             extras: ''
         });
