@@ -1410,7 +1410,7 @@ templ S3Buckets(data dash.S3BucketsData) {
 
                 // Drop responses that arrive after another bucket was opened
                 const requestSeq = ++policyRequestSeq;
-                fetch(basePath('/api/s3/buckets/' + bucketName + '/policy'))
+                fetch(basePath('/api/s3/buckets/' + encodeURIComponent(bucketName) + '/policy'))
                     .then(parseLifecycleResponse)
                     .then(({ ok, data }) => {
                         if (requestSeq !== policyRequestSeq) return;
@@ -1480,7 +1480,7 @@ templ S3Buckets(data dash.S3BucketsData) {
             // or reload over whatever that other bucket is now showing.
             const targetBucket = policyEditorBucket;
             setBucketPolicyMutationInFlight(true);
-            fetch(basePath('/api/s3/buckets/' + targetBucket + '/policy'), {
+            fetch(basePath('/api/s3/buckets/' + encodeURIComponent(targetBucket) + '/policy'), {
                 method: 'PUT',
                 headers: csrfHeaders(),
                 body: JSON.stringify({ policy: policy })
@@ -1527,7 +1527,7 @@ templ S3Buckets(data dash.S3BucketsData) {
             // hide or reload over whatever that other bucket is now showing.
             const targetBucket = policyEditorBucket;
             setBucketPolicyMutationInFlight(true);
-            fetch(basePath('/api/s3/buckets/' + targetBucket + '/policy'), {
+            fetch(basePath('/api/s3/buckets/' + encodeURIComponent(targetBucket) + '/policy'), {
                 method: 'DELETE',
                 headers: csrfHeaders()
             })
