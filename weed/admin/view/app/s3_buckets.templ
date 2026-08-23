@@ -1412,12 +1412,17 @@ templ S3Buckets(data dash.S3BucketsData) {
         document.getElementById('bucketPolicySaveBtn').addEventListener('click', function() {
             if (!policyEditorBucket) return;
 
+            // Commit first: if the Editor tab is active, the textarea still
+            // holds whatever was there at load time until this runs, so a
+            // policy entered purely through the structured form (no tab
+            // switch) would otherwise read back as empty here.
+            if (!commitPolicyActiveTab('bucket')) return;
+
             const raw = document.getElementById('bucketPolicyDocument').value.trim();
             if (!raw) {
                 alert('Enter a policy document, or use Delete to remove the bucket policy.');
                 return;
             }
-            if (!commitPolicyActiveTab('bucket')) return;
 
             let policy;
             try {

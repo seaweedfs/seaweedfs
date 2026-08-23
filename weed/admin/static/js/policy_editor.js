@@ -73,6 +73,22 @@ function policyEditorConfig(which) {
         edit: { version: '2012-10-17', statements: [], otherFields: {} }
     };
 
+    // Lazily initializes and returns policyEditors[which]. 'create'/'edit'
+    // are pre-populated above, but a page with its own `which` (e.g. the
+    // bucket policy modal) doesn't populate one until its first successful
+    // load - and that load is asynchronous, so the Editor/JSON tabs and
+    // Add-statement button can be reachable before it resolves (nothing in
+    // this file enforces that a page hide them meanwhile). Route reads
+    // through this instead of policyEditors[which] directly wherever that
+    // race is possible, so a click in that window gets a valid empty state
+    // instead of a TypeError on undefined.
+    function policyEditorState(which) {
+        if (!policyEditors[which]) {
+            policyEditors[which] = { version: '2012-10-17', statements: [], otherFields: {} };
+        }
+        return policyEditors[which];
+    }
+
     const POLICY_STATEMENT_KNOWN_KEYS = ['Sid', 'Effect', 'Action', 'Resource', 'NotResource'];
 
     // Shown for a policy that parsed as JSON but that the structured editor
@@ -297,7 +313,7 @@ function policyEditorConfig(which) {
     function renderPolicyEditor(which) {
         const container = document.getElementById(policyEditorBodyId(which));
         if (!container) return;
-        const state = policyEditors[which];
+        const state = policyEditorState(which);
 
         if (state.unparsed) {
             container.innerHTML = '<p class="text-muted">This policy uses a form the structured editor cannot show. Edit it on the JSON tab.</p>';
@@ -521,13 +537,13 @@ function policyEditorConfig(which) {
     }
 
     function addPolicyStatement(which) {
-        if (policyEditors[which].unparsed) {
+        if (policyEditorState(which).unparsed) {
             showAlert(POLICY_JSON_TAB_ONLY_MESSAGE, 'error');
             return;
         }
         const cfg = policyEditorConfig(which);
         commitPolicyEditorForm(which);
-        policyEditors[which].statements.push({
+        policyEditorState(which).statements.push({
             sid: '', effect: 'Allow', actions: [],
             resourceMode: 'Resource', resources: cfg.bucket ? ['arn:aws:s3:::' + cfg.bucket + '/*'] : [],
             principalMode: 'Principal', principalValues: cfg.requirePrincipal ? ['*'] : [], hasComplexPrincipal: false,
@@ -555,7 +571,7 @@ function policyEditorConfig(which) {
             // textarea's own text untouched.
             return commitPolicyTextareaToEditor(which);
         }
-        if (policyEditors[which] && policyEditors[which].unparsed) {
+        if (policyEditorState(which).unparsed) {
             // The editor never held this document, so serializing it would
             // write an empty policy over whatever is in the JSON tab.
             showAlert(POLICY_JSON_TAB_ONLY_MESSAGE, 'error');
@@ -610,7 +626,7 @@ function policyEditorConfig(which) {
         const jsonTabBtn = document.getElementById(cfg.jsonTabBtnId);
 
         jsonTabBtn.addEventListener('show.bs.tab', function(event) {
-            if (policyEditors[which].unparsed) {
+            if (policyEditorState(which).unparsed) {
                 // The editor never held this document; serializing its empty
                 // placeholder state would overwrite the textarea we are about
                 // to show, which is the only copy of it.
