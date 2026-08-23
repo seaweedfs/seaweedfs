@@ -19,7 +19,7 @@
 // Per-`which` editor configuration. See registerPolicyEditor.
 const POLICY_EDITOR_CONFIG = {};
 
-// registerPolicyEditor declares (or re-declares) the configuration for one
+// registerPolicyEditor declares (or redeclares) the configuration for one
 // editor instance. Call before setupPolicyEditor(which), and again any
 // time a config value (e.g. `bucket`) needs to change for an
 // already-set-up instance (setupPolicyEditor only needs to run once per
