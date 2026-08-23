@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -261,7 +262,10 @@ func (c *dlmTestCluster) tailLog(name string) string {
 }
 
 func (c *dlmTestCluster) copyLogsForCI() {
-	ciLogDir := "/tmp/seaweedfs-fuse-dlm-logs"
+	// One subdirectory per test: a flat layout lets every teardown overwrite
+	// the previous test's logs, so the CI artifact only ever shows the last
+	// cluster, never the failing one.
+	ciLogDir := filepath.Join("/tmp/seaweedfs-fuse-dlm-logs", strings.ReplaceAll(c.t.Name(), "/", "_"))
 	os.MkdirAll(ciLogDir, 0755)
 	logsDir := filepath.Join(c.baseDir, "logs")
 	entries, err := os.ReadDir(logsDir)
