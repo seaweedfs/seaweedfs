@@ -475,3 +475,58 @@ func TestEcShardSummaryNamesTheShardIds(t *testing.T) {
 		"node2:8080=2 shards [1 2]",
 	}, ecShardSummaryByNode(byNode))
 }
+
+// A retried ec.encode clears the leftover shards of an interrupted run before
+// the source health check, but the topology snapshot predates that sweep: the
+// leftovers still depress FreeVolumeCount on the source disk. The counts must
+// refund those slots, or the retry refuses the very volume it just cleaned up
+// after. Numbers mirror the interruption-matrix failure: 8 slots, 4 volumes,
+// 8 shards of other EC volumes, plus 14 leftover shards of volume 3, so the
+// master charges ceil(22/10)=3 slots and reports free=1.
+func TestCollectSourceFreeVolumeCountsRefundsClearedShards(t *testing.T) {
+	newTopo := func() *master_pb.TopologyInfo {
+		return &master_pb.TopologyInfo{
+			DataCenterInfos: []*master_pb.DataCenterInfo{{
+				Id: "dc1",
+				RackInfos: []*master_pb.RackInfo{{
+					Id: "rack0",
+					DataNodeInfos: []*master_pb.DataNodeInfo{{
+						Id:      "127.0.0.1:8110",
+						Address: "127.0.0.1:8110",
+						DiskInfos: map[string]*master_pb.DiskInfo{
+							"hdd": {
+								Type:            "hdd",
+								MaxVolumeCount:  8,
+								VolumeCount:     4,
+								FreeVolumeCount: 1,
+								VolumeInfos: []*master_pb.VolumeInformationMessage{
+									{Id: 3}, {Id: 6},
+								},
+								EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{
+									{Id: 1, EcIndexBits: 0b00000010001, DiskId: 0}, // shards 0,4
+									{Id: 1, EcIndexBits: 0b10000000100, DiskId: 1}, // shards 2,10
+									{Id: 2, EcIndexBits: 0b00000010001, DiskId: 0},
+									{Id: 2, EcIndexBits: 0b10000000100, DiskId: 1},
+									{Id: 3, EcIndexBits: 0b11111111111111, DiskId: 0}, // interrupted run's leftovers
+								},
+							},
+						},
+					}},
+				}},
+			}},
+		}
+	}
+
+	counts := collectSourceFreeVolumeCounts(newTopo(), []needle.VolumeId{3}, nil)
+	assert.Equal(t, 3, counts["3-127.0.0.1:8110"],
+		"the cleared leftovers' ceil(22/10)-ceil(8/10)=2 slots must be refunded")
+
+	counts = collectSourceFreeVolumeCounts(newTopo(), []needle.VolumeId{6}, nil)
+	assert.Equal(t, 1, counts["6-127.0.0.1:8110"],
+		"no refund when the encoded volume has no leftover shards")
+
+	skipped := map[pb.ServerAddress]struct{}{"127.0.0.1:8110": {}}
+	counts = collectSourceFreeVolumeCounts(newTopo(), []needle.VolumeId{3}, skipped)
+	assert.Equal(t, 1, counts["3-127.0.0.1:8110"],
+		"no refund on a node the sweep skipped as unreachable")
+}
