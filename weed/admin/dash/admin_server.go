@@ -471,8 +471,20 @@ func mergeWorkerFleetTotals(legacySlots map[string]maintenance.WorkerSlots, plug
 		}
 		workers++
 		if heartbeat := session.Heartbeat; heartbeat != nil {
-			usedSlots += int(heartbeat.DetectionSlotsUsed) + int(heartbeat.ExecutionSlotsUsed)
-			maxSlots += int(heartbeat.DetectionSlotsTotal) + int(heartbeat.ExecutionSlotsTotal)
+			used := int(heartbeat.DetectionSlotsUsed) + int(heartbeat.ExecutionSlotsUsed)
+			max := int(heartbeat.DetectionSlotsTotal) + int(heartbeat.ExecutionSlotsTotal)
+			// A worker's self-reported slots are untrusted input; a stale or
+			// misbehaving one should not be able to drive the aggregate gauge
+			// negative, matching the same defensiveness as registry.go's own
+			// slot arithmetic.
+			if used < 0 {
+				used = 0
+			}
+			if max < 0 {
+				max = 0
+			}
+			usedSlots += used
+			maxSlots += max
 		}
 	}
 	return
