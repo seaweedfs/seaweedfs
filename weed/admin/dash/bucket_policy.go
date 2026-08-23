@@ -70,18 +70,11 @@ func (s *AdminServer) GetBucketPolicy(bucketName string) (*policy_engine.PolicyD
 //
 // Propagation to every S3 gateway is automatic: writing the
 // s3-bucket-policy extended attribute drives the filer metadata log, which
-// each gateway's onBucketMetadataChange subscription already watches to
-// rebuild its bucket policy cache. No separate notify step is needed here.
-//
-// Note: PutBucketPolicyHandler on the S3 gateway also mirrors the policy
-// into the IAM policy store under "bucket-policy:<bucket>"
-// (iam_manager.go's UpdateBucketPolicy), but its delete counterpart
-// (removeBucketPolicyFromIAM) is an unimplemented TODO — so that mirror is
-// already unreliable after any S3-side DeleteBucketPolicy. The admin write
-// path deliberately does not replicate it: doing so would only deepen an
-// existing inconsistency, and admin has no handle on the S3 gateway's
-// iamManager anyway. See the TODO in
-// weed/s3api/s3api_bucket_policy_handlers.go for the follow-up.
+// each gateway's onBucketMetadataChange subscription watches to rebuild its
+// bucket policy cache and to maintain the advanced-IAM
+// "bucket-policy:<bucket>" mirror (mirrorBucketPolicyToIAM in
+// weed/s3api/s3api_bucket_policy_handlers.go). No separate notify step is
+// needed here.
 func (s *AdminServer) SetBucketPolicy(bucketName string, doc *policy_engine.PolicyDocument) error {
 	if err := policy_engine.ValidatePolicy(doc); err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidBucketPolicy, err)

@@ -865,6 +865,20 @@ func (m *IAMManager) UpdateBucketPolicy(ctx context.Context, bucketName string, 
 	return m.policyEngine.AddPolicy(m.getFilerAddress(), policyName, &policyDoc)
 }
 
+// RemoveBucketPolicy deletes the stored policy for a bucket. Removing a
+// policy that was never stored is a success.
+func (m *IAMManager) RemoveBucketPolicy(ctx context.Context, bucketName string) error {
+	if !m.initialized {
+		return fmt.Errorf("IAM manager not initialized")
+	}
+
+	if bucketName == "" {
+		return fmt.Errorf("bucket name cannot be empty")
+	}
+
+	return m.policyEngine.DeletePolicy(ctx, m.getFilerAddress(), "bucket-policy:"+bucketName)
+}
+
 // AssumeRoleWithWebIdentity assumes a role using web identity (OIDC)
 func (m *IAMManager) AssumeRoleWithWebIdentity(ctx context.Context, request *sts.AssumeRoleWithWebIdentityRequest) (*sts.AssumeRoleResponse, error) {
 	if !m.initialized {

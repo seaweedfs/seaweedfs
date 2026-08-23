@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -304,35 +306,80 @@ func (s3a *S3ApiServer) deleteBucketPolicy(bucket string) error {
 
 // updateBucketPolicyInIAM updates the IAM system with the new bucket policy
 func (s3a *S3ApiServer) updateBucketPolicyInIAM(bucket string, policyDoc *policy_engine.PolicyDocument) error {
-	// Update IAM integration with new bucket policy
-	if s3a.iam.iamIntegration != nil {
-		// Type assert to access the concrete implementation which has access to iamManager
-		if s3Integration, ok := s3a.iam.iamIntegration.(*S3IAMIntegration); ok {
-			if s3Integration.iamManager != nil {
-				glog.V(2).Infof("Updated bucket policy for %s in IAM system", bucket)
-
-				policyJSON, err := json.Marshal(policyDoc)
-				if err != nil {
-					return fmt.Errorf("failed to marshal policy: %w", err)
-				}
-
-				return s3Integration.iamManager.UpdateBucketPolicy(context.Background(), bucket, policyJSON)
-			}
-		}
+	iamManager := s3a.bucketPolicyIAMManager()
+	if iamManager == nil {
+		return nil
 	}
 
-	return nil
+	policyJSON, err := json.Marshal(policyDoc)
+	if err != nil {
+		return fmt.Errorf("failed to marshal policy: %w", err)
+	}
+
+	glog.V(2).Infof("Updated bucket policy for %s in IAM system", bucket)
+	return iamManager.UpdateBucketPolicy(context.Background(), bucket, policyJSON)
 }
 
 // removeBucketPolicyFromIAM removes the bucket policy from the IAM system
 func (s3a *S3ApiServer) removeBucketPolicyFromIAM(bucket string) error {
-	// This would remove the bucket policy from our advanced IAM system
+	iamManager := s3a.bucketPolicyIAMManager()
+	if iamManager == nil {
+		return nil
+	}
+
 	glog.V(2).Infof("Removed bucket policy for %s from IAM system", bucket)
+	return iamManager.RemoveBucketPolicy(context.Background(), bucket)
+}
 
-	// TODO: Integrate with IAM manager to remove resource-based policies
-	// s3a.iam.iamIntegration.iamManager.RemoveBucketPolicy(bucket)
-
+// bucketPolicyIAMManager returns the advanced-IAM manager the
+// "bucket-policy:<bucket>" mirror lives in, or nil when the integration is
+// not enabled.
+func (s3a *S3ApiServer) bucketPolicyIAMManager() *integration.IAMManager {
+	if s3a.iam == nil || s3a.iam.iamIntegration == nil {
+		return nil
+	}
+	if s3Integration, ok := s3a.iam.iamIntegration.(*S3IAMIntegration); ok {
+		return s3Integration.iamManager
+	}
 	return nil
+}
+
+// mirrorBucketPolicyToIAM keeps the "bucket-policy:<bucket>" IAM mirror in
+// sync with the policy stored on a bucket's filer entry. Driven from the
+// metadata subscription so it covers every writer - this gateway's own
+// PutBucketPolicy, another gateway's, the admin UI, and bucket deletion -
+// where the handlers' direct calls only ever covered the first.
+func (s3a *S3ApiServer) mirrorBucketPolicyToIAM(oldEntry, newEntry *filer_pb.Entry) {
+	if s3a.bucketPolicyIAMManager() == nil {
+		return
+	}
+	var bucket string
+	var oldPolicy, newPolicy []byte
+	if oldEntry != nil {
+		bucket = oldEntry.Name
+		oldPolicy = oldEntry.Extended[BUCKET_POLICY_METADATA_KEY]
+	}
+	if newEntry != nil {
+		bucket = newEntry.Name
+		newPolicy = newEntry.Extended[BUCKET_POLICY_METADATA_KEY]
+	}
+	if bucket == "" || bytes.Equal(oldPolicy, newPolicy) {
+		return
+	}
+	if len(newPolicy) == 0 {
+		if err := s3a.removeBucketPolicyFromIAM(bucket); err != nil {
+			glog.Warningf("remove bucket policy for %s from IAM: %v", bucket, err)
+		}
+		return
+	}
+	var policyDoc policy_engine.PolicyDocument
+	if err := json.Unmarshal(newPolicy, &policyDoc); err != nil {
+		glog.Warningf("mirror bucket policy for %s to IAM: parse: %v", bucket, err)
+		return
+	}
+	if err := s3a.updateBucketPolicyInIAM(bucket, &policyDoc); err != nil {
+		glog.Warningf("mirror bucket policy for %s to IAM: %v", bucket, err)
+	}
 }
 
 // GetPublicAccessBlockHandler Retrieves the PublicAccessBlock configuration for an S3 bucket
