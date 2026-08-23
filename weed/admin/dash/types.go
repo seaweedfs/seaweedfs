@@ -98,6 +98,12 @@ type S3Bucket struct {
 
 	LifecycleRuleCount    int `json:"lifecycle_rule_count"`
 	LifecycleEnabledCount int `json:"lifecycle_enabled_count"`
+
+	// PolicyStatementCount is the number of statements in the bucket policy,
+	// or 0 if the bucket has none. A policy document can't have zero
+	// statements (see policy_engine.ValidatePolicy), so >0 is a faithful
+	// "has a policy" flag.
+	PolicyStatementCount int `json:"policy_statement_count"`
 }
 
 type S3Object struct {

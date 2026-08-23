@@ -151,6 +151,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                         <th>Versioning</th>
                                         <th>Object Lock</th>
                                         <th>Lifecycle</th>
+                                        <th>Policy</th>
                                         <th>Actions</th>
                                     </tr>
                                 </thead>
@@ -256,6 +257,21 @@ templ S3Buckets(data dash.S3BucketsData) {
                                                 }
                                             </td>
                                             <td>
+                                                if bucket.PolicyStatementCount > 0 {
+                                                    <button type="button" class="badge bg-primary border-0 policy-btn"
+                                                            data-bucket-name={bucket.Name}
+                                                            title="View Bucket Policy">
+                                                        if bucket.PolicyStatementCount == 1 {
+                                                            1 statement
+                                                        } else {
+                                                            {fmt.Sprintf("%d statements", bucket.PolicyStatementCount)}
+                                                        }
+                                                    </button>
+                                                } else {
+                                                    <span class="text-muted">Not configured</span>
+                                                }
+                                            </td>
+                                            <td>
                                                 <div class="btn-group btn-group-sm" role="group">
                                                     <a href={dash.PUrl(ctx, fmt.Sprintf("/files?path=/buckets/%s", bucket.Name))}
                                                        class="btn btn-outline-success btn-sm"
@@ -274,7 +290,13 @@ templ S3Buckets(data dash.S3BucketsData) {
                                                             title="Lifecycle Rules">
                                                         <i class="fas fa-recycle"></i>
                                                     </button>
-                                                    <button type="button" 
+                                                    <button type="button"
+                                                            class="btn btn-outline-info btn-sm policy-btn"
+                                                            data-bucket-name={bucket.Name}
+                                                            title="Bucket Policy">
+                                                        <i class="fas fa-shield-alt"></i>
+                                                    </button>
+                                                    <button type="button"
                                                             class="btn btn-outline-info btn-sm owner-btn"
                                                             data-bucket-name={bucket.Name}
                                                             data-current-owner={bucket.Owner}
@@ -301,7 +323,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                     }
                                     if len(data.Buckets) == 0 {
                                         <tr>
-                                            <td colspan="10" class="text-center text-muted py-4">
+                                            <td colspan="11" class="text-center text-muted py-4">
                                                 <i class="fas fa-cube fa-3x mb-3 text-muted"></i>
                                                 <div>
                                                     					<h5>No Object Store buckets found</h5>
@@ -661,6 +683,47 @@ templ S3Buckets(data dash.S3BucketsData) {
         </div>
     </div>
 
+    <!-- Bucket Policy Modal -->
+    <div class="modal fade" id="bucketPolicyModal" tabindex="-1" aria-labelledby="bucketPolicyModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="bucketPolicyModalLabel">
+                        <i class="fas fa-file-shield me-2"></i>Bucket Policy
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="bucketPolicyLoading" class="text-center py-4">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <div class="mt-2">Loading bucket policy...</div>
+                    </div>
+                    <div id="bucketPolicyError" class="alert alert-danger" style="display: none;"></div>
+                    <div id="bucketPolicyEditorWrapper" style="display: none;">
+                        <p class="text-muted small">
+                            Enter a bucket policy document (JSON). Leave empty and click Delete to remove the policy.
+                            Every statement must specify a Principal, and every Resource must refer to this bucket.
+                        </p>
+                        <textarea id="bucketPolicyDocument" class="form-control" rows="18"
+                                  style="font-family: monospace;" spellcheck="false"
+                                  placeholder='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::bucket-name/*"}]}'></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-danger me-auto" id="bucketPolicyDeleteBtn">
+                        <i class="fas fa-trash me-1"></i>Delete
+                    </button>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="bucketPolicySaveBtn">
+                        <i class="fas fa-save me-1"></i>Save
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Manage Owner Modal -->
     <div class="modal fade" id="manageOwnerModal" tabindex="-1" aria-labelledby="manageOwnerModalLabel" aria-hidden="true">
         <div class="modal-dialog">
@@ -716,6 +779,9 @@ templ S3Buckets(data dash.S3BucketsData) {
     let detailsModalInstance = null;
     let lifecycleModalInstance = null;
     let lifecycleRequestSeq = 0;
+    let policyModalInstance = null;
+    let policyRequestSeq = 0;
+    let policyEditorBucket = null;
     let cachedUsers = null;
 
     // Working copy of the lifecycle rules currently shown in the modal.
@@ -797,6 +863,7 @@ templ S3Buckets(data dash.S3BucketsData) {
         ownerModalInstance = new bootstrap.Modal(document.getElementById('manageOwnerModal'));
         detailsModalInstance = new bootstrap.Modal(document.getElementById('bucketDetailsModal'));
         lifecycleModalInstance = new bootstrap.Modal(document.getElementById('bucketLifecycleModal'));
+        policyModalInstance = new bootstrap.Modal(document.getElementById('bucketPolicyModal'));
 
         const quotaCheckbox = document.getElementById('enableQuota');
         const quotaSettings = document.getElementById('quotaSettings');
@@ -1248,6 +1315,114 @@ templ S3Buckets(data dash.S3BucketsData) {
                     alert('Error deleting lifecycle rules: ' + error.message);
                 });
         });
+
+        // Policy buttons: column badge and action button
+        document.querySelectorAll('.policy-btn').forEach(button => {
+            button.addEventListener('click', function() {
+                const bucketName = this.dataset.bucketName;
+                policyEditorBucket = bucketName;
+
+                document.getElementById('bucketPolicyModalLabel').innerHTML =
+                    '<i class="fas fa-file-shield me-2"></i>Bucket Policy - ' + escapeHtml(bucketName);
+                document.getElementById('bucketPolicyLoading').style.display = '';
+                document.getElementById('bucketPolicyError').style.display = 'none';
+                document.getElementById('bucketPolicyEditorWrapper').style.display = 'none';
+                document.getElementById('bucketPolicyDocument').value = '';
+
+                policyModalInstance.show();
+
+                // Drop responses that arrive after another bucket was opened
+                const requestSeq = ++policyRequestSeq;
+                fetch(basePath('/api/s3/buckets/' + bucketName + '/policy'))
+                    .then(parseLifecycleResponse)
+                    .then(({ ok, data }) => {
+                        if (requestSeq !== policyRequestSeq) return;
+                        document.getElementById('bucketPolicyLoading').style.display = 'none';
+                        if (!ok || data.error) {
+                            document.getElementById('bucketPolicyError').textContent =
+                                'Error loading bucket policy: ' + (data.error || 'unknown error');
+                            document.getElementById('bucketPolicyError').style.display = '';
+                            return;
+                        }
+                        document.getElementById('bucketPolicyEditorWrapper').style.display = '';
+                        document.getElementById('bucketPolicyDocument').value =
+                            data.policy ? JSON.stringify(data.policy, null, 2) : '';
+                    })
+                    .catch(error => {
+                        if (requestSeq !== policyRequestSeq) return;
+                        console.error('Error fetching bucket policy:', error);
+                        document.getElementById('bucketPolicyLoading').style.display = 'none';
+                        document.getElementById('bucketPolicyError').textContent =
+                            'Error loading bucket policy: ' + error.message;
+                        document.getElementById('bucketPolicyError').style.display = '';
+                    });
+            });
+        });
+
+        // Save the policy document currently in the textarea.
+        document.getElementById('bucketPolicySaveBtn').addEventListener('click', function() {
+            if (!policyEditorBucket) return;
+
+            const raw = document.getElementById('bucketPolicyDocument').value.trim();
+            if (!raw) {
+                alert('Enter a policy document, or use Delete to remove the bucket policy.');
+                return;
+            }
+            let policy;
+            try {
+                policy = JSON.parse(raw);
+            } catch (e) {
+                alert('Invalid JSON: ' + e.message);
+                return;
+            }
+
+            fetch(basePath('/api/s3/buckets/' + policyEditorBucket + '/policy'), {
+                method: 'PUT',
+                headers: csrfHeaders(),
+                body: JSON.stringify({ policy: policy })
+            })
+                .then(parseLifecycleResponse)
+                .then(({ ok, data }) => {
+                    if (!ok || data.error) {
+                        alert('Error saving bucket policy: ' + (data.error || 'unknown error'));
+                        return;
+                    }
+                    if (policyModalInstance) {
+                        policyModalInstance.hide();
+                    }
+                    setTimeout(() => location.reload(), 500);
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Error saving bucket policy: ' + error.message);
+                });
+        });
+
+        // Clear the bucket policy entirely.
+        document.getElementById('bucketPolicyDeleteBtn').addEventListener('click', function() {
+            if (!policyEditorBucket) return;
+            if (!confirm('Delete the bucket policy for ' + policyEditorBucket + '? This cannot be undone.')) return;
+
+            fetch(basePath('/api/s3/buckets/' + policyEditorBucket + '/policy'), {
+                method: 'DELETE',
+                headers: csrfHeaders()
+            })
+                .then(parseLifecycleResponse)
+                .then(({ ok, data }) => {
+                    if (!ok || data.error) {
+                        alert('Error deleting bucket policy: ' + (data.error || 'unknown error'));
+                        return;
+                    }
+                    if (policyModalInstance) {
+                        policyModalInstance.hide();
+                    }
+                    setTimeout(() => location.reload(), 500);
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Error deleting bucket policy: ' + error.message);
+                });
+        });
     });
 
     function deleteBucket() {
@@ -1321,6 +1496,12 @@ function displayBucketDetails(data) {
         objectLockHtml = '<span class="badge bg-warning"><i class="fas fa-lock me-1"></i>Enabled</span>' + details;
     }
 
+    let policyHtml = '<span class="text-muted">Not configured</span>';
+    if (bucket.policy_statement_count > 0) {
+        const label = bucket.policy_statement_count === 1 ? '1 statement' : bucket.policy_statement_count + ' statements';
+        policyHtml = '<span class="badge bg-primary">' + label + '<\/span>';
+    }
+
     const rows = [
         '<div class="row">',
         '<div class="col-md-6">',
@@ -1341,6 +1522,7 @@ function displayBucketDetails(data) {
         '<tr><td><strong>Quota:</strong></td><td>' + quotaHtml + '<\/td><\/tr>',
         '<tr><td><strong>Versioning:</strong></td><td>' + versioningHtml + '<\/td><\/tr>',
         '<tr><td><strong>Object Lock:</strong></td><td>' + objectLockHtml + '<\/td><\/tr>',
+        '<tr><td><strong>Policy:</strong></td><td>' + policyHtml + '<\/td><\/tr>',
         '<\/table>',
         '<\/div>',
         '<\/div>'

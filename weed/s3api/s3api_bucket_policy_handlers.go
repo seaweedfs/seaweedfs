@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -16,7 +15,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
-// Bucket policy metadata key for storing policies in filer
+// Bucket policy metadata key for storing policies in filer.
+// Also consumed directly by weed/admin/dash for the admin UI's bucket
+// policy management, so keep it exported and don't change its value
+// without updating that package too.
 const BUCKET_POLICY_METADATA_KEY = "s3-bucket-policy"
 
 // Sentinel errors for bucket policy operations
@@ -97,7 +99,7 @@ func (s3a *S3ApiServer) PutBucketPolicyHandler(w http.ResponseWriter, r *http.Re
 	}
 
 	// Additional bucket policy specific validation
-	if err := s3a.validateBucketPolicy(&policyDoc, bucket); err != nil {
+	if err := policy_engine.ValidateBucketPolicy(&policyDoc, bucket); err != nil {
 		glog.Errorf("Bucket policy validation failed: %v", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPolicyDocument)
 		return
@@ -291,78 +293,6 @@ func (s3a *S3ApiServer) deleteBucketPolicy(bucket string) error {
 
 		return err
 	})
-}
-
-// validateBucketPolicy performs bucket-specific policy validation
-func (s3a *S3ApiServer) validateBucketPolicy(policyDoc *policy_engine.PolicyDocument, bucket string) error {
-	if policyDoc.Version != "2012-10-17" {
-		return fmt.Errorf("unsupported policy version: %s (must be 2012-10-17)", policyDoc.Version)
-	}
-
-	if len(policyDoc.Statement) == 0 {
-		return fmt.Errorf("policy document must contain at least one statement")
-	}
-
-	for i, statement := range policyDoc.Statement {
-		// Bucket policies must have Principal
-		if statement.Principal == nil {
-			return fmt.Errorf("statement %d: bucket policies must specify a Principal", i)
-		}
-
-		// Validate resources refer to this bucket
-		for _, resource := range statement.Resource.Strings() {
-			if !s3a.validateResourceForBucket(resource, bucket) {
-				return fmt.Errorf("statement %d: resource %s does not match bucket %s", i, resource, bucket)
-			}
-		}
-
-		// Validate NotResources refer to this bucket
-		if statement.NotResource != nil {
-			for _, notResource := range statement.NotResource.Strings() {
-				if !s3a.validateResourceForBucket(notResource, bucket) {
-					return fmt.Errorf("statement %d: NotResource %s does not match bucket %s", i, notResource, bucket)
-				}
-			}
-		}
-
-		// Validate actions are S3 actions
-		for _, action := range statement.Action.Strings() {
-			if !strings.HasPrefix(action, "s3:") {
-				return fmt.Errorf("statement %d: bucket policies only support S3 actions, got %s", i, action)
-			}
-		}
-	}
-
-	return nil
-}
-
-// validateResourceForBucket checks if a resource ARN is valid for the given bucket
-func (s3a *S3ApiServer) validateResourceForBucket(resource, bucket string) bool {
-	// Accepted formats for S3 bucket policies:
-	// AWS-style ARNs (standard):
-	//   arn:aws:s3:::bucket-name
-	//   arn:aws:s3:::bucket-name/*
-	//   arn:aws:s3:::bucket-name/path/to/object
-	// Simplified formats (for convenience):
-	//   bucket-name
-	//   bucket-name/*
-	//   bucket-name/path/to/object
-
-	var resourcePath string
-	const awsPrefix = "arn:aws:s3:::"
-
-	// Strip the optional ARN prefix to get the resource path
-	if path, ok := strings.CutPrefix(resource, awsPrefix); ok {
-		resourcePath = path
-	} else {
-		resourcePath = resource
-	}
-
-	// After stripping the optional ARN prefix, the resource path must
-	// either match the bucket name exactly, or be a path within the bucket.
-	return resourcePath == bucket ||
-		resourcePath == bucket+"/*" ||
-		strings.HasPrefix(resourcePath, bucket+"/")
 }
 
 // IAM integration functions

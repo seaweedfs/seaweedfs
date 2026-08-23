@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 )
@@ -255,6 +256,100 @@ func validateBucketLifecycleRules(rules []BucketLifecycleRule) error {
 	}
 
 	return nil
+}
+
+// ShowBucketPolicy returns the policy document for a specific bucket, or
+// {"bucket": ..., "policy": null} if the bucket has none.
+func (s *AdminServer) ShowBucketPolicy(w http.ResponseWriter, r *http.Request) {
+	bucketName := mux.Vars(r)["bucket"]
+	if bucketName == "" {
+		writeJSONError(w, http.StatusBadRequest, "Bucket name is required")
+		return
+	}
+
+	policy, err := s.GetBucketPolicy(bucketName)
+	if err != nil {
+		writeJSONError(w, bucketPolicyErrorStatus(err), "Failed to get bucket policy: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"bucket": bucketName,
+		"policy": policy,
+	})
+}
+
+// UpdateBucketPolicy replaces the bucket policy for a bucket.
+func (s *AdminServer) UpdateBucketPolicy(w http.ResponseWriter, r *http.Request) {
+	if !requireSessionCSRFToken(w, r) {
+		return
+	}
+
+	bucketName := mux.Vars(r)["bucket"]
+	if bucketName == "" {
+		writeJSONError(w, http.StatusBadRequest, "Bucket name is required")
+		return
+	}
+
+	var req struct {
+		Policy *policy_engine.PolicyDocument `json:"policy"`
+	}
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
+		return
+	}
+	if req.Policy == nil {
+		writeJSONError(w, http.StatusBadRequest, "policy is required; use DELETE to clear a bucket policy")
+		return
+	}
+
+	if err := s.SetBucketPolicy(bucketName, req.Policy); err != nil {
+		writeJSONError(w, bucketPolicyErrorStatus(err), "Failed to update bucket policy: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message": "Bucket policy updated successfully",
+		"bucket":  bucketName,
+	})
+}
+
+// RemoveBucketPolicy clears the bucket policy for a bucket. Named
+// "Remove", not "Delete", because (*AdminServer).DeleteBucketPolicy is the
+// data-layer method this handler calls.
+func (s *AdminServer) RemoveBucketPolicy(w http.ResponseWriter, r *http.Request) {
+	if !requireSessionCSRFToken(w, r) {
+		return
+	}
+
+	bucketName := mux.Vars(r)["bucket"]
+	if bucketName == "" {
+		writeJSONError(w, http.StatusBadRequest, "Bucket name is required")
+		return
+	}
+
+	if err := s.DeleteBucketPolicy(bucketName); err != nil {
+		writeJSONError(w, bucketPolicyErrorStatus(err), "Failed to delete bucket policy: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message": "Bucket policy deleted successfully",
+		"bucket":  bucketName,
+	})
+}
+
+// bucketPolicyErrorStatus keeps a request for a bucket that does not exist,
+// or an invalid policy document, out of the 5xx bucket where a client
+// would retry it. Mirrors bucketLifecycleErrorStatus.
+func bucketPolicyErrorStatus(err error) int {
+	if errors.Is(err, ErrBucketNotFound) {
+		return http.StatusNotFound
+	}
+	if errors.Is(err, ErrInvalidBucketPolicy) {
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
 }
 
 // CreateBucket creates a new S3 bucket
