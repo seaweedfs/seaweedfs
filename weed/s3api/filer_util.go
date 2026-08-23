@@ -30,19 +30,56 @@ func (s3a *S3ApiServer) mkFile(parentDirectoryPath string, fileName string, chun
 
 func (s3a *S3ApiServer) list(parentDirectoryPath, prefix, startFrom string, inclusive bool, limit uint32) (entries []*filer_pb.Entry, isLast bool, err error) {
 
-	err = filer_pb.List(context.Background(), s3a, parentDirectoryPath, prefix, func(entry *filer_pb.Entry, isLastEntry bool) error {
-		entries = append(entries, entry)
-		if isLastEntry {
+	return listWithRetry(parentDirectoryPath, func() (entries []*filer_pb.Entry, isLast bool, err error) {
+		err = filer_pb.List(context.Background(), s3a, parentDirectoryPath, prefix, func(entry *filer_pb.Entry, isLastEntry bool) error {
+			entries = append(entries, entry)
+			if isLastEntry {
+				isLast = true
+			}
+			return nil
+		}, startFrom, inclusive, limit)
+
+		if len(entries) == 0 {
 			isLast = true
 		}
-		return nil
-	}, startFrom, inclusive, limit)
 
-	if len(entries) == 0 {
-		isLast = true
+		return
+	})
+
+}
+
+// A listing has no side effects and collects into a fresh slice per attempt, so
+// a replay can neither duplicate nor drop entries; the bound caps a filer that
+// is genuinely down at two extra attempts and 300ms of added wait.
+const (
+	listRetryAttempts       = 3
+	listRetryInitialBackoff = 100 * time.Millisecond
+)
+
+// isRetryableListError classifies by message via util.IsTransientError because
+// DoSeaweedListWithSnapshot wraps a failed ListEntries call with %v, dropping
+// the gRPC status from the chain. Not-found is authoritative and must reach the
+// caller unchanged.
+func isRetryableListError(err error) bool {
+	return err != nil && !isFilerNotFound(err) && util.IsTransientError(err)
+}
+
+// listWithRetry replays doList while the filer answers with a transient error.
+// Both failure points, the ListEntries call itself and the stream.Recv that
+// follows it, surface as a plain error out of filer_pb.List, so a single retry
+// point above it covers both.
+func listWithRetry(parentDirectoryPath string, doList func() (entries []*filer_pb.Entry, isLast bool, err error)) (entries []*filer_pb.Entry, isLast bool, err error) {
+
+	backoff := listRetryInitialBackoff
+	for attempt := 1; ; attempt++ {
+		entries, isLast, err = doList()
+		if err == nil || attempt >= listRetryAttempts || !isRetryableListError(err) {
+			return entries, isLast, err
+		}
+		glog.V(1).Infof("list %s attempt %d/%d hit a transient error, retrying in %v: %v", parentDirectoryPath, attempt, listRetryAttempts, backoff, err)
+		time.Sleep(backoff)
+		backoff *= 2
 	}
-
-	return
 
 }
 
