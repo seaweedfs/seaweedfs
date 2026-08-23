@@ -30,53 +30,44 @@ func (s3a *S3ApiServer) mkFile(parentDirectoryPath string, fileName string, chun
 
 func (s3a *S3ApiServer) list(parentDirectoryPath, prefix, startFrom string, inclusive bool, limit uint32) (entries []*filer_pb.Entry, isLast bool, err error) {
 
-	err = filer_pb.List(context.Background(), s3a, parentDirectoryPath, prefix, func(entry *filer_pb.Entry, isLastEntry bool) error {
-		entries = append(entries, entry)
-		if isLastEntry {
+	return listWithRetry(parentDirectoryPath, func() (entries []*filer_pb.Entry, isLast bool, err error) {
+		err = filer_pb.List(context.Background(), s3a, parentDirectoryPath, prefix, func(entry *filer_pb.Entry, isLastEntry bool) error {
+			entries = append(entries, entry)
+			if isLastEntry {
+				isLast = true
+			}
+			return nil
+		}, startFrom, inclusive, limit)
+
+		if len(entries) == 0 {
 			isLast = true
 		}
-		return nil
-	}, startFrom, inclusive, limit)
 
-	if len(entries) == 0 {
-		isLast = true
-	}
-
-	return
+		return
+	})
 
 }
 
-// Bounds for replaying a listing that failed with a transient error. A listing
-// is a read with no side effects and each attempt opens a new stream and
-// collects into a fresh slice, so replaying it can neither duplicate nor drop
-// entries. The bound keeps a filer that is genuinely down from stalling the S3
-// request: at most two extra attempts and 300ms of added wait.
+// A listing has no side effects and collects into a fresh slice per attempt, so
+// a replay can neither duplicate nor drop entries; the bound caps a filer that
+// is genuinely down at two extra attempts and 300ms of added wait.
 const (
 	listRetryAttempts       = 3
 	listRetryInitialBackoff = 100 * time.Millisecond
 )
 
-// isRetryableListError reports whether a failed listing is worth replaying. A
-// not-found answer is authoritative and every other non-transient error is a
-// real failure, so both must reach the caller unchanged: the point is to
-// survive a blip, not to hide a broken store.
+// isRetryableListError classifies by message via util.IsTransientError because
+// DoSeaweedListWithSnapshot wraps a failed ListEntries call with %v, dropping
+// the gRPC status from the chain. Not-found is authoritative and must reach the
+// caller unchanged.
 func isRetryableListError(err error) bool {
-	if err == nil || isFilerNotFound(err) {
-		return false
-	}
-	if status.Code(err) == codes.Unavailable {
-		return true
-	}
-	// DoSeaweedListWithSnapshot wraps a failed ListEntries call with %v, which
-	// drops the gRPC status from the error chain, so for that path the message
-	// is all that is left to classify on.
-	return util.IsTransientError(err)
+	return err != nil && !isFilerNotFound(err) && util.IsTransientError(err)
 }
 
 // listWithRetry replays doList while the filer answers with a transient error.
-// Both failure points reported for multipart listing, the ListEntries call
-// itself and the stream.Recv that follows it, surface as a plain error out of
-// filer_pb.List, so a single retry point above it covers both.
+// Both failure points, the ListEntries call itself and the stream.Recv that
+// follows it, surface as a plain error out of filer_pb.List, so a single retry
+// point above it covers both.
 func listWithRetry(parentDirectoryPath string, doList func() (entries []*filer_pb.Entry, isLast bool, err error)) (entries []*filer_pb.Entry, isLast bool, err error) {
 
 	backoff := listRetryInitialBackoff
