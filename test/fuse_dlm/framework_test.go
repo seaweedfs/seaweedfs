@@ -90,6 +90,8 @@ func startDLMTestCluster(t testing.TB) *dlmTestCluster {
 	require.NoError(t, c.startVolume(configDir))
 	require.NoError(t, c.waitForTCP(fmt.Sprintf("127.0.0.1:%d", c.volumePort), 30*time.Second),
 		"volume not ready\n%s", c.tailLog("volume"))
+	require.NoError(t, c.waitForVolumeRegistered(30*time.Second),
+		"volume server registration\n%s", c.tailLog("master"))
 
 	// Start 2 filers
 	for i := 0; i < 2; i++ {
@@ -346,6 +348,44 @@ func (c *dlmTestCluster) waitForFilerCount(expected int, timeout time.Duration) 
 		time.Sleep(200 * time.Millisecond)
 	}
 	return fmt.Errorf("timed out waiting for %d filers in group %q", expected, filerGroup)
+}
+
+// waitForVolumeRegistered waits until the volume server shows up in the master
+// topology with its slots reported. An open volume port only means the process
+// is listening: until the master has elected itself and accepted a heartbeat,
+// an assign fails and the first write on a fresh mount surfaces it as ENOSPC.
+func (c *dlmTestCluster) waitForVolumeRegistered(timeout time.Duration) error {
+	addr := fmt.Sprintf("127.0.0.1:%d", c.masterGrpcPort)
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	client := master_pb.NewSeaweedClient(conn)
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		resp, err := client.VolumeList(ctx, &master_pb.VolumeListRequest{})
+		cancel()
+		if err == nil && resp.TopologyInfo != nil {
+			var slots int64
+			for _, dc := range resp.TopologyInfo.DataCenterInfos {
+				for _, rack := range dc.RackInfos {
+					for _, dn := range rack.DataNodeInfos {
+						for _, disk := range dn.DiskInfos {
+							slots += disk.MaxVolumeCount
+						}
+					}
+				}
+			}
+			if slots > 0 {
+				return nil
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return fmt.Errorf("volume server not registered with the master within %v", timeout)
 }
 
 // waitForLockRingConverged verifies that both filers have a consistent view of
