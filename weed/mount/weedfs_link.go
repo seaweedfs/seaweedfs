@@ -46,6 +46,17 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	}
 	oldParentPath, _ := oldEntryPath.DirAndName()
 
+	// The new link has to be reported with the node id the kernel already holds
+	// for the source, which is what makes the two names share one file.
+	// oldEntry.Attributes.Inode is not a substitute. It is a mount-runtime
+	// number that only entries created through a mount carry: entries written
+	// by the S3 API, WebDAV or a direct filer call persist inode 0, and the
+	// kernel rejects a LINK reply with NodeId 0 as EIO (invalid_nodeid). It is
+	// also the wrong key for inodeToPath, which is keyed by the numbers handed
+	// to the kernel rather than by the persisted attribute; Lookup's collision
+	// probe can move the two apart even for an entry that does carry one.
+	sourceInode := in.Oldnodeid
+
 	oldEntry, _, status := wfs.maybeLoadEntry(oldEntryPath)
 	if status != fuse.OK {
 		return status
@@ -176,16 +187,16 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 		return fuse.EIO
 	}
 
-	wfs.inodeToPath.AddPath(oldEntry.Attributes.Inode, newEntryPath)
+	wfs.inodeToPath.AddPath(sourceInode, newEntryPath)
 
 	// Propagate the new HardLinkCounter to sibling cache entries and
 	// invalidate the kernel's inode attr cache. Without this, `stat` on any
 	// existing sibling link (other than the source we just wrote) returns
 	// the old nlink from the local metacache — pjdfstest link/00.t catches
 	// this after `link n1 n2` when it stats n0.
-	wfs.syncHardLinkSiblings(oldEntry.Attributes.Inode, oldEntry, oldEntryPath, newEntryPath)
+	wfs.syncHardLinkSiblings(sourceInode, oldEntry, oldEntryPath, newEntryPath)
 
-	wfs.outputPbEntry(out, oldEntry.Attributes.Inode, request.Entry)
+	wfs.outputPbEntry(out, sourceInode, request.Entry)
 
 	return fuse.OK
 }
