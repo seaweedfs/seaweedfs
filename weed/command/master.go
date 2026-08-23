@@ -104,7 +104,7 @@ func init() {
 	m.heartbeatInterval = cmdMaster.Flag.Duration("heartbeatInterval", 300*time.Millisecond, "heartbeat interval of master servers, and will be randomly multiplied by [1, 1.25)")
 	m.electionTimeout = cmdMaster.Flag.Duration("electionTimeout", 10*time.Second, "election timeout of master servers")
 	m.raftHashicorp = cmdMaster.Flag.Bool("raftHashicorp", false, "use hashicorp raft")
-	m.raftBootstrap = cmdMaster.Flag.Bool("raftBootstrap", false, "Whether to bootstrap the Raft cluster")
+	m.raftBootstrap = cmdMaster.Flag.Bool("raftBootstrap", false, "deprecated and ignored: the first master in -peers mints the Raft cluster on its own once it sees no leader anywhere")
 	m.telemetryUrl = cmdMaster.Flag.String("telemetry.url", "https://telemetry.seaweedfs.com/api/collect", "telemetry server URL to send usage statistics")
 	m.telemetryEnabled = cmdMaster.Flag.Bool("telemetry", true, "report anonymous cluster statistics to telemetry.url, use -telemetry=false to opt out")
 	m.debug = cmdMaster.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
@@ -211,6 +211,10 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 
 	isSingleMaster := isSingleMasterMode(*masterOption.peers)
 
+	if *masterOption.raftBootstrap {
+		glog.V(0).Infof("-raftBootstrap is ignored: masters mint a cluster on their own when no peer has a leader, and never over existing raft state")
+	}
+
 	raftServerOption := &weed_server.RaftServerOption{
 		GrpcDialOption:    security.LoadClientTLS(util.GetViper(), "grpc.master"),
 		Peers:             masterPeers,
@@ -221,7 +225,6 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		SingleMaster:      isSingleMaster,
 		HeartbeatInterval: *masterOption.heartbeatInterval,
 		ElectionTimeout:   *masterOption.electionTimeout,
-		RaftBootstrap:     *masterOption.raftBootstrap,
 	}
 	var raftServer *weed_server.RaftServer
 	var err error
@@ -278,8 +281,10 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	// raft implementation lets a server outside the configuration campaign — so
 	// it has to be pulled in by a leader. Keep asking the peers who the leader is
 	// until we are in: the leader admits us once our master client registers, and
-	// only when nobody has one does the first peer mint a new cluster. Restarting
-	// a master alone, or scaling the peer list up, both land here.
+	// only when nobody has one does the first peer mint a new cluster. Keeping
+	// that one peer the sole authority is what stops a partition from minting
+	// two clusters. Restarting a master alone, or scaling the peer list up,
+	// both land here.
 	if !isSingleMaster {
 		go func() {
 			// Stagger bootstrap by peer index so masters don't all check

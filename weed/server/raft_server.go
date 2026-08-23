@@ -35,7 +35,6 @@ type RaftServerOption struct {
 	SingleMaster      bool
 	HeartbeatInterval time.Duration
 	ElectionTimeout   time.Duration
-	RaftBootstrap     bool
 }
 
 type RaftServer struct {
@@ -306,7 +305,8 @@ func (s *RaftServer) HasExistingState() bool {
 // Bootstrap mints a new raft cluster out of the configured peers. Only call it
 // when no leader exists anywhere: a master that starts with no raft state and
 // finds a leader must be admitted by that leader instead, or the two clusters
-// never merge.
+// never merge. Committed state is never bootstrapped over — hashicorp refuses,
+// and goraft callers reach here only past HasExistingState.
 func (s *RaftServer) Bootstrap() error {
 	glog.V(0).Infoln("Initializing new cluster")
 

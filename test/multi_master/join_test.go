@@ -151,3 +151,62 @@ func peerCountExcludingSelf(peers []string, self string) int {
 	}
 	return count
 }
+
+// TestRaftBootstrapKeepsExistingCluster covers a master restarting under
+// -raftBootstrap, the way the helm chart renders it on every master on every
+// roll. Bootstrapping is genesis: seeding a second cluster over committed raft
+// state mints a rival TopologyId, and the split-brain guard then Fatals every
+// master that still holds the first one.
+func TestRaftBootstrapKeepsExistingCluster(t *testing.T) {
+	for _, impl := range raftImplementations {
+		t.Run(impl.name, func(t *testing.T) {
+			mc := NewMasterCluster(t, impl.raftHashicorp)
+			for i := range 3 {
+				mc.SetRaftBootstrap(i)
+				mc.StartNode(i)
+			}
+			before, err := mc.WaitForTopologyId(waitTimeout)
+			if err != nil {
+				mc.DumpLogs()
+				t.Fatalf("cluster did not mint a TopologyId: %v", err)
+			}
+
+			for i := range 3 {
+				mc.StopNode(i)
+			}
+			for i := range 3 {
+				mc.StartNode(i)
+			}
+
+			after, err := mc.WaitForTopologyId(waitTimeout)
+			if err != nil {
+				mc.DumpLogs()
+				t.Fatalf("cluster did not come back after a restart: %v", err)
+			}
+			if after != before {
+				mc.DumpLogs()
+				t.Fatalf("-raftBootstrap re-seeded the cluster: TopologyId %s became %s", before, after)
+			}
+
+			// The leader answers for the whole cluster, so a follower that
+			// forked is only visible in its own log.
+			seen, err := mc.WaitForNodeTopologyIds(waitTimeout)
+			if err != nil {
+				mc.DumpLogs()
+				t.Fatal(err)
+			}
+			for i, ids := range seen {
+				for _, id := range ids {
+					if id != before {
+						mc.DumpLogs()
+						t.Fatalf("master %d saw TopologyId %s, want %s", i, id, before)
+					}
+				}
+				if mc.LogContains(i, "Split-brain detected") {
+					mc.DumpLogs()
+					t.Fatalf("master %d hit the split-brain guard", i)
+				}
+			}
+		})
+	}
+}
