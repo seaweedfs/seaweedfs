@@ -42,6 +42,18 @@ func (d *GenericDetector) IsEnabled() bool {
 	return d.taskDef.Config.IsEnabled()
 }
 
+// SetEnabled turns detection for this task type on or off.
+//
+// The admin maintenance policy is applied to detectors through an
+// interface{ SetEnabled(bool) } type assertion (see
+// MaintenanceIntegration.configureDetectorFromPolicy). Every registered task is
+// backed by this generic detector, so without this method that assertion failed
+// for every task and the policy never reached the flag that
+// ScanWithTaskDetectors actually gates on. See issue #10874.
+func (d *GenericDetector) SetEnabled(enabled bool) {
+	d.taskDef.Config.SetEnabled(enabled)
+}
+
 // GenericScheduler implements TaskScheduler using function-based logic
 type GenericScheduler struct {
 	taskDef *TaskDefinition
@@ -126,4 +138,23 @@ func (s *GenericScheduler) GetDefaultRepeatInterval() time.Duration {
 // IsEnabled returns whether this scheduler is enabled
 func (s *GenericScheduler) IsEnabled() bool {
 	return s.taskDef.Config.IsEnabled()
+}
+
+// SetEnabled turns scheduling for this task type on or off. Detector and scheduler
+// share one TaskDefinition, so this is the same flag GenericDetector.SetEnabled sets;
+// both setters exist because the maintenance integration configures the two
+// independently. See GenericDetector.SetEnabled and issue #10874.
+func (s *GenericScheduler) SetEnabled(enabled bool) {
+	s.taskDef.Config.SetEnabled(enabled)
+}
+
+// SetMaxConcurrent applies the policy's concurrency limit for this task type. It is
+// the value GetMaxConcurrent returns, which the maintenance queue uses to decide
+// whether another task of this type may start. Non-positive limits are ignored
+// rather than turning into the implicit default of 1.
+func (s *GenericScheduler) SetMaxConcurrent(maxConcurrent int) {
+	if maxConcurrent <= 0 {
+		return
+	}
+	s.taskDef.MaxConcurrent = maxConcurrent
 }

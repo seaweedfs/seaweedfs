@@ -11,9 +11,10 @@ import (
 // import: weed/admin/dash already imports weed/admin/maintenance, so the dependency only runs one
 // way and the persistence argument has to stay duck-typed.
 type stubConfigPersistence struct {
-	vacuum  *worker_pb.TaskPolicy
-	ec      *worker_pb.TaskPolicy
-	balance *worker_pb.TaskPolicy
+	vacuum    *worker_pb.TaskPolicy
+	ec        *worker_pb.TaskPolicy
+	balance   *worker_pb.TaskPolicy
+	ecBalance *worker_pb.TaskPolicy
 }
 
 func (s *stubConfigPersistence) LoadVacuumTaskPolicy() (*worker_pb.TaskPolicy, error) {
@@ -26,6 +27,10 @@ func (s *stubConfigPersistence) LoadErasureCodingTaskPolicy() (*worker_pb.TaskPo
 
 func (s *stubConfigPersistence) LoadBalanceTaskPolicy() (*worker_pb.TaskPolicy, error) {
 	return s.balance, nil
+}
+
+func (s *stubConfigPersistence) LoadEcBalanceTaskPolicy() (*worker_pb.TaskPolicy, error) {
+	return s.ecBalance, nil
 }
 
 func disabledStub() *stubConfigPersistence {
@@ -54,6 +59,14 @@ func disabledStub() *stubConfigPersistence {
 				BalanceConfig: &worker_pb.BalanceTaskConfig{ImbalanceThreshold: 0.2, MinServerCount: 7},
 			},
 		},
+		ecBalance: &worker_pb.TaskPolicy{
+			Enabled:               false,
+			MaxConcurrent:         1,
+			RepeatIntervalSeconds: 60 * 60,
+			TaskConfig: &worker_pb.TaskPolicy_EcBalanceConfig{
+				EcBalanceConfig: &worker_pb.EcBalanceTaskConfig{ImbalanceThreshold: 0.2, MinServerCount: 5},
+			},
+		},
 	}
 }
 
@@ -61,9 +74,9 @@ func disabledStub() *stubConfigPersistence {
 // https://github.com/seaweedfs/seaweedfs/issues/10874: the persistence argument used to be a
 // literal nil, which no type assertion can satisfy, so a task disabled on disk came back enabled.
 func TestBuildPolicyFromTaskConfigsUsesPersistence(t *testing.T) {
-	policy := buildPolicyFromTaskConfigs(disabledStub())
+	policy := BuildPolicyFromTaskConfigs(disabledStub())
 
-	for _, taskType := range []string{"vacuum", "erasure_coding", "balance"} {
+	for _, taskType := range []string{"vacuum", "erasure_coding", "balance", "ec_balance"} {
 		taskPolicy := policy.TaskPolicies[taskType]
 		if taskPolicy == nil {
 			t.Fatalf("no %s task policy built", taskType)
@@ -81,9 +94,9 @@ func TestBuildPolicyFromTaskConfigsUsesPersistence(t *testing.T) {
 // TestBuildPolicyFromTaskConfigsWithoutPersistence keeps the documented fallback: with no config
 // store there is nothing to read, so the compiled-in defaults apply.
 func TestBuildPolicyFromTaskConfigsWithoutPersistence(t *testing.T) {
-	policy := buildPolicyFromTaskConfigs(nil)
+	policy := BuildPolicyFromTaskConfigs(nil)
 
-	for _, taskType := range []string{"vacuum", "erasure_coding", "balance"} {
+	for _, taskType := range []string{"vacuum", "erasure_coding", "balance", "ec_balance"} {
 		taskPolicy := policy.TaskPolicies[taskType]
 		if taskPolicy == nil {
 			t.Fatalf("no %s task policy built", taskType)

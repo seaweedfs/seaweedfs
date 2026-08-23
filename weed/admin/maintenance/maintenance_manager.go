@@ -10,17 +10,29 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/ec_balance"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
+	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
-// buildPolicyFromTaskConfigs loads task configurations from separate files and builds a MaintenancePolicy.
+// BuildPolicyFromTaskConfigs loads each registered task's configuration and builds the
+// MaintenancePolicy the maintenance system runs on.
+//
+// Every entry is produced by the task's own ToTaskPolicy(), so a policy entry always carries
+// exactly what that task's config holds. Hand-copying the fields here instead made this a
+// second, silently diverging definition of every task's policy: it dropped the erasure
+// coding preferred tags and replica placement and the balance IO rate limit outright.
+//
+// Every task registered through base.RegisterTask needs an entry, because a task type the
+// policy does not list has no enabled flag and no concurrency limit of its own -
+// IsTaskEnabled reports false for a missing entry.
 //
 // configPersistence is duck-typed as interface{} because weed/admin/dash already imports this
 // package, so importing *dash.ConfigPersistence back here would create an import cycle. It must be
 // a value implementing the LoadXTaskPolicy() accessors the task loaders assert on; passing nil (or
 // anything else) makes every task fall back to its compiled-in defaults.
-func buildPolicyFromTaskConfigs(configPersistence interface{}) *worker_pb.MaintenancePolicy {
+func BuildPolicyFromTaskConfigs(configPersistence interface{}) *worker_pb.MaintenancePolicy {
 	policy := &worker_pb.MaintenancePolicy{
 		GlobalMaxConcurrent:          4,
 		DefaultRepeatIntervalSeconds: 6 * 3600,  // 6 hours in seconds
@@ -28,54 +40,20 @@ func buildPolicyFromTaskConfigs(configPersistence interface{}) *worker_pb.Mainte
 		TaskPolicies:                 make(map[string]*worker_pb.TaskPolicy),
 	}
 
-	// Load vacuum task configuration
 	if vacuumConfig := vacuum.LoadConfigFromPersistence(configPersistence); vacuumConfig != nil {
-		policy.TaskPolicies["vacuum"] = &worker_pb.TaskPolicy{
-			Enabled:               vacuumConfig.Enabled,
-			MaxConcurrent:         int32(vacuumConfig.MaxConcurrent),
-			RepeatIntervalSeconds: int32(vacuumConfig.ScanIntervalSeconds),
-			CheckIntervalSeconds:  int32(vacuumConfig.ScanIntervalSeconds),
-			TaskConfig: &worker_pb.TaskPolicy_VacuumConfig{
-				VacuumConfig: &worker_pb.VacuumTaskConfig{
-					GarbageThreshold:  float64(vacuumConfig.GarbageThreshold),
-					MinVolumeAgeHours: int32((vacuumConfig.MinVolumeAgeSeconds + 3599) / 3600), // round up so sub-hour values don't become 0
-				},
-			},
-		}
+		policy.TaskPolicies[string(types.TaskTypeVacuum)] = vacuumConfig.ToTaskPolicy()
 	}
 
-	// Load erasure coding task configuration
 	if ecConfig := erasure_coding.LoadConfigFromPersistence(configPersistence); ecConfig != nil {
-		policy.TaskPolicies["erasure_coding"] = &worker_pb.TaskPolicy{
-			Enabled:               ecConfig.Enabled,
-			MaxConcurrent:         int32(ecConfig.MaxConcurrent),
-			RepeatIntervalSeconds: int32(ecConfig.ScanIntervalSeconds),
-			CheckIntervalSeconds:  int32(ecConfig.ScanIntervalSeconds),
-			TaskConfig: &worker_pb.TaskPolicy_ErasureCodingConfig{
-				ErasureCodingConfig: &worker_pb.ErasureCodingTaskConfig{
-					FullnessRatio:    float64(ecConfig.FullnessRatio),
-					QuietForSeconds:  int32(ecConfig.QuietForSeconds),
-					MinVolumeSizeMb:  int32(ecConfig.MinSizeMB),
-					CollectionFilter: ecConfig.CollectionFilter,
-				},
-			},
-		}
+		policy.TaskPolicies[string(types.TaskTypeErasureCoding)] = ecConfig.ToTaskPolicy()
 	}
 
-	// Load balance task configuration
 	if balanceConfig := balance.LoadConfigFromPersistence(configPersistence); balanceConfig != nil {
-		policy.TaskPolicies["balance"] = &worker_pb.TaskPolicy{
-			Enabled:               balanceConfig.Enabled,
-			MaxConcurrent:         int32(balanceConfig.MaxConcurrent),
-			RepeatIntervalSeconds: int32(balanceConfig.ScanIntervalSeconds),
-			CheckIntervalSeconds:  int32(balanceConfig.ScanIntervalSeconds),
-			TaskConfig: &worker_pb.TaskPolicy_BalanceConfig{
-				BalanceConfig: &worker_pb.BalanceTaskConfig{
-					ImbalanceThreshold: float64(balanceConfig.ImbalanceThreshold),
-					MinServerCount:     int32(balanceConfig.MinServerCount),
-				},
-			},
-		}
+		policy.TaskPolicies[string(types.TaskTypeBalance)] = balanceConfig.ToTaskPolicy()
+	}
+
+	if ecBalanceConfig := ec_balance.LoadConfigFromPersistence(configPersistence); ecBalanceConfig != nil {
+		policy.TaskPolicies[string(types.TaskTypeECBalance)] = ecBalanceConfig.ToTaskPolicy()
 	}
 
 	glog.V(1).Infof("Built maintenance policy from separate task configs - %d task policies loaded", len(policy.TaskPolicies))
@@ -102,7 +80,7 @@ type MaintenanceManager struct {
 // NewMaintenanceManager creates a new maintenance manager.
 //
 // configPersistence is the config store to read persisted task configs from when the policy has to
-// be built here. See buildPolicyFromTaskConfigs for why it is duck-typed; pass nil when no config
+// be built here. See BuildPolicyFromTaskConfigs for why it is duck-typed; pass nil when no config
 // store is available.
 func NewMaintenanceManager(adminClient AdminClient, config *MaintenanceConfig, configPersistence interface{}) *MaintenanceManager {
 	if config == nil {
@@ -113,7 +91,7 @@ func NewMaintenanceManager(adminClient AdminClient, config *MaintenanceConfig, c
 	policy := config.Policy
 	if policy == nil {
 		// Fallback: build policy from separate task configuration files if not already populated
-		policy = buildPolicyFromTaskConfigs(configPersistence)
+		policy = BuildPolicyFromTaskConfigs(configPersistence)
 	}
 
 	queue := NewMaintenanceQueue(policy)
@@ -608,6 +586,14 @@ func (mm *MaintenanceManager) UpdateConfig(config *MaintenanceConfig) error {
 	// Propagate global policy changes to individual task configuration files
 	if config.Policy != nil {
 		mm.saveTaskConfigsFromPolicy(config.Policy)
+	}
+
+	// The integration holds its own reference to the policy and is what pushes the
+	// enabled flag and the concurrency limit into the registered detectors and
+	// schedulers. Without this the queue and the scanner saw the new policy while the
+	// detectors kept scanning under the old one until the next restart.
+	if mm.scanner != nil && mm.scanner.integration != nil {
+		mm.scanner.integration.SetPolicy(config.Policy)
 	}
 
 	glog.V(1).Infof("Maintenance configuration updated")
