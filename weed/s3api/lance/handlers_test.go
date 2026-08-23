@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -345,6 +346,63 @@ func TestRouteAndBodyMustAgree(t *testing.T) {
 		`{"id":["analytics","sales","other"]}`, http.StatusBadRequest)
 	if got := decode[errorResponse](t, recorder); got.Code != codeInvalidInput {
 		t.Fatalf("error code = %d, want %d", got.Code, codeInvalidInput)
+	}
+}
+
+// A client-supplied location must resolve inside its own bucket. Without this,
+// a "../"-laden or cross-bucket location escapes when the marker path is joined
+// under /buckets, letting the request reach another tenant's namespace, or
+// outside /buckets entirely, and auto-create the parent directories on the way.
+func TestLocationOutsideBucketIsRejected(t *testing.T) {
+	cases := []struct {
+		name     string
+		location string
+	}{
+		{"another bucket", "s3://victim/secret"},
+		{"traversal into another bucket", "s3://analytics/../victim/secret"},
+		{"traversal above the buckets root", "s3://analytics/../../etc/cron.d"},
+		{"not an s3 uri", "../../etc/cron.d"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := s3tables.TableDataDirFromMetadataLocation(tc.location)
+			body := `{"location":"` + tc.location + `"}`
+
+			// declare writes .lance-reserved at the location: rejection must leave
+			// nothing behind at the escaped directory.
+			t.Run("declare", func(t *testing.T) {
+				h := newTestHarness(t)
+				h.createBucket(t, "analytics", s3tables.FormatLance)
+				h.mustDo(t, http.MethodPost, "/v1/namespace/analytics$sales/create", `{}`, http.StatusOK)
+
+				recorder := h.mustDo(t, http.MethodPost, "/v1/table/analytics$sales$orders/declare", body, http.StatusBadRequest)
+				if got := decode[errorResponse](t, recorder); got.Code != codeInvalidInput {
+					t.Fatalf("error code = %d, want %d", got.Code, codeInvalidInput)
+				}
+				if dir != "" && h.filer.Get(dir, reservedMarker) != nil {
+					t.Fatalf("declare wrote %s into %s despite rejection", reservedMarker, dir)
+				}
+			})
+
+			// register removes .lance-deregistered at the location: rejection must
+			// leave a victim's marker in place rather than un-hiding their table.
+			t.Run("register", func(t *testing.T) {
+				h := newTestHarness(t)
+				h.createBucket(t, "analytics", s3tables.FormatLance)
+				h.mustDo(t, http.MethodPost, "/v1/namespace/analytics$sales/create", `{}`, http.StatusOK)
+				if dir != "" {
+					h.filer.PutFile(dir, deregisteredMarker, time.Unix(1, 0))
+				}
+
+				recorder := h.mustDo(t, http.MethodPost, "/v1/table/analytics$sales$orders/register", body, http.StatusBadRequest)
+				if got := decode[errorResponse](t, recorder); got.Code != codeInvalidInput {
+					t.Fatalf("error code = %d, want %d", got.Code, codeInvalidInput)
+				}
+				if dir != "" && h.filer.Get(dir, deregisteredMarker) == nil {
+					t.Fatalf("register removed %s from %s despite rejection", deregisteredMarker, dir)
+				}
+			})
+		})
 	}
 }
 

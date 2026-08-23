@@ -107,6 +107,31 @@ func tableLocation(bucket string, ns []string, name string) string {
 	return fmt.Sprintf("s3://%s/%s/%s", bucket, strings.Join(ns, "."), name)
 }
 
+// confineLocation rejects a client-supplied table location that does not resolve
+// inside the caller's own bucket, the way the Iceberg gateway confines the same
+// field. The location feeds TableDataDirFromMetadataLocation, which joins it
+// under /buckets and collapses any "../" segments; an unconfined location lets a
+// marker write escape into another tenant's namespace.
+func confineLocation(bucket, location string) error {
+	rest, ok := strings.CutPrefix(location, "s3://")
+	if !ok {
+		return fmt.Errorf("location must be an s3:// URI")
+	}
+	name, keys, _ := strings.Cut(rest, "/")
+	if name != bucket {
+		return fmt.Errorf("location must be within bucket %s", bucket)
+	}
+	for _, segment := range strings.Split(keys, "/") {
+		switch {
+		case segment == "." || segment == "..":
+			return fmt.Errorf("location must not contain a path traversal segment")
+		case strings.ContainsAny(segment, "\\\x00"):
+			return fmt.Errorf("location contains an invalid character")
+		}
+	}
+	return nil
+}
+
 // storageOptions builds the object_store settings a Lance client needs to reach
 // the dataset. The key names are the aws_-prefixed forms Lance clients pass
 // through to object_store.
