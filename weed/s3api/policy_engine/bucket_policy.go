@@ -11,23 +11,16 @@ import (
 const MaxBucketPolicySize = 20 * 1024
 
 // ValidateBucketPolicy performs bucket-specific policy validation, on top of
-// the generic structural checks in ValidatePolicy. It enforces the rules
-// that make a policy document valid as an S3 *bucket* policy specifically:
-// every statement must name a Principal, and every Resource/NotResource/Action
-// must scope to the given bucket.
+// the generic structural checks in ValidatePolicy - callers run that first,
+// so the version and non-empty-statement rules are not re-checked here. It
+// enforces the rules that make a policy document valid as an S3 *bucket*
+// policy specifically: every statement must name a Principal, and every
+// Resource/NotResource/Action must scope to the given bucket.
 //
 // This is shared between the S3 gateway's PutBucketPolicy handler
 // (weed/s3api/s3api_bucket_policy_handlers.go) and the admin UI
 // (weed/admin/dash) so both enforce identical rules.
 func ValidateBucketPolicy(policyDoc *PolicyDocument, bucket string) error {
-	if policyDoc.Version != PolicyVersion2012_10_17 {
-		return fmt.Errorf("unsupported policy version: %s (must be %s)", policyDoc.Version, PolicyVersion2012_10_17)
-	}
-
-	if len(policyDoc.Statement) == 0 {
-		return fmt.Errorf("policy document must contain at least one statement")
-	}
-
 	for i, statement := range policyDoc.Statement {
 		// Bucket policies must have Principal
 		if statement.Principal == nil {
