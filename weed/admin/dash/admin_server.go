@@ -432,7 +432,72 @@ func (s *AdminServer) publishMaintenanceMetrics(ctx context.Context) {
 	}
 }
 
+// workerFleetTotals aggregates connected workers and their task slots across
+// BOTH worker registries the admin server keeps: the legacy maintenance-worker
+// registry (workers that register over the worker gRPC stream) and the plugin
+// worker registry (workers started as `weed worker`). Reading only the legacy
+// one reported zero workers on clusters that run the admin and the workers as
+// separate components, where no legacy worker ever registers.
+//
+// A worker can appear in both registries: `weed mini` starts both runtimes from
+// one working directory, so they share the persisted worker ID. Merging by ID
+// keeps such a worker counted once, and its slots are taken from the legacy
+// registry, which is where they were accounted for before.
+func (s *AdminServer) workerFleetTotals() (workers, usedSlots, maxSlots int) {
+	var legacySlots map[string]maintenance.WorkerSlots
+	if s.maintenanceManager != nil {
+		legacySlots = s.maintenanceManager.GetWorkerSlots()
+	}
+	return mergeWorkerFleetTotals(legacySlots, s.GetPluginWorkers())
+}
+
+// mergeWorkerFleetTotals unions the legacy and plugin worker registries by
+// worker ID. Plugin workers report their slots in the heartbeat, so one that
+// has connected but not yet sent a heartbeat adds to the worker count with zero
+// slots until its first heartbeat lands.
+func mergeWorkerFleetTotals(legacySlots map[string]maintenance.WorkerSlots, pluginWorkers []*adminplugin.WorkerSession) (workers, usedSlots, maxSlots int) {
+	for _, slots := range legacySlots {
+		workers++
+		usedSlots += slots.Used
+		maxSlots += slots.Max
+	}
+
+	for _, session := range pluginWorkers {
+		if session == nil {
+			continue
+		}
+		if _, counted := legacySlots[session.WorkerID]; counted {
+			continue
+		}
+		workers++
+		if heartbeat := session.Heartbeat; heartbeat != nil {
+			used := int(heartbeat.DetectionSlotsUsed) + int(heartbeat.ExecutionSlotsUsed)
+			max := int(heartbeat.DetectionSlotsTotal) + int(heartbeat.ExecutionSlotsTotal)
+			// A worker's self-reported slots are untrusted input; a stale or
+			// misbehaving one should not be able to drive the aggregate gauge
+			// negative, matching the same defensiveness as registry.go's own
+			// slot arithmetic.
+			if used < 0 {
+				used = 0
+			}
+			if max < 0 {
+				max = 0
+			}
+			usedSlots += used
+			maxSlots += max
+		}
+	}
+	return
+}
+
 func (s *AdminServer) collectMaintenanceMetrics() {
+	// Published before the maintenanceManager guard below: plugin workers are
+	// tracked independently of the maintenance manager.
+	workers, usedSlots, maxSlots := s.workerFleetTotals()
+	stats_collect.AdminWorkersConnected.Set(float64(workers))
+	stats_collect.AdminWorkerSlots.WithLabelValues("used").Set(float64(usedSlots))
+	stats_collect.AdminWorkerSlots.WithLabelValues("max").Set(float64(maxSlots))
+
 	if s.maintenanceManager == nil {
 		return
 	}
@@ -456,11 +521,6 @@ func (s *AdminServer) collectMaintenanceMetrics() {
 	} else {
 		stats_collect.AdminMaintenanceNextScanTimestampSeconds.Set(0)
 	}
-
-	workers, usedSlots, maxSlots := s.maintenanceManager.GetWorkerSlotTotals()
-	stats_collect.AdminWorkersConnected.Set(float64(workers))
-	stats_collect.AdminWorkerSlots.WithLabelValues("used").Set(float64(usedSlots))
-	stats_collect.AdminWorkerSlots.WithLabelValues("max").Set(float64(maxSlots))
 }
 
 // loadTaskConfigurationsFromPersistence loads saved task configurations from protobuf files

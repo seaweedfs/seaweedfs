@@ -884,18 +884,19 @@ func (mq *MaintenanceQueue) GetWorkers() []*MaintenanceWorker {
 	return workers
 }
 
-// GetWorkerSlotTotals aggregates worker count and used/max task slots under the
-// lock, so callers don't read live worker fields that task updates mutate.
-func (mq *MaintenanceQueue) GetWorkerSlotTotals() (workers, used, max int) {
+// GetWorkerSlots returns used/max task slots per worker ID, snapshotted under
+// the lock so callers don't read live worker fields that task updates mutate.
+// Keyed by ID so callers can merge this registry with the plugin worker
+// registry without counting a worker that appears in both twice.
+func (mq *MaintenanceQueue) GetWorkerSlots() map[string]WorkerSlots {
 	mq.mutex.RLock()
 	defer mq.mutex.RUnlock()
 
-	for _, worker := range mq.workers {
-		workers++
-		used += worker.CurrentLoad
-		max += worker.MaxConcurrent
+	slots := make(map[string]WorkerSlots, len(mq.workers))
+	for id, worker := range mq.workers {
+		slots[id] = WorkerSlots{Used: worker.CurrentLoad, Max: worker.MaxConcurrent}
 	}
-	return
+	return slots
 }
 
 // generateTaskID generates a unique ID for tasks
