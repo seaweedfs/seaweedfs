@@ -1387,10 +1387,13 @@ templ S3Buckets(data dash.S3BucketsData) {
                 const bucketName = this.dataset.bucketName;
                 policyEditorBucket = bucketName;
                 bucketPolicyLoaded = false;
-                // In case the dialog was previously closed while a Save/Delete
-                // for a different bucket was still in flight, don't leave
-                // these buttons stuck disabled for this one.
-                setBucketPolicyMutationInFlight(false);
+                // Deliberately not resetting bucketPolicyMutationInFlight
+                // here: if a Save/Delete for a previously open bucket is
+                // still in flight, Save/Delete for this bucket must stay
+                // blocked until that request settles (its own completion
+                // handler releases the flag once done, whether or not it's
+                // still the active bucket by then) - otherwise this bucket's
+                // mutation could race the abandoned one.
                 registerPolicyEditor('bucket', { requirePrincipal: true, bucket: bucketName });
                 if (!bucketPolicyEditorSetUp) {
                     setupPolicyEditor('bucket');
@@ -1469,19 +1472,29 @@ templ S3Buckets(data dash.S3BucketsData) {
                 return;
             }
 
+            // Captured now: if the dialog moves on to a different bucket
+            // before this PUT resolves, the completion below must not hide
+            // or reload over whatever that other bucket is now showing.
+            const targetBucket = policyEditorBucket;
             setBucketPolicyMutationInFlight(true);
-            fetch(basePath('/api/s3/buckets/' + policyEditorBucket + '/policy'), {
+            fetch(basePath('/api/s3/buckets/' + targetBucket + '/policy'), {
                 method: 'PUT',
                 headers: csrfHeaders(),
                 body: JSON.stringify({ policy: policy })
             })
                 .then(parseLifecycleResponse)
                 .then(({ ok, data }) => {
+                    setBucketPolicyMutationInFlight(false);
+                    const stillCurrent = targetBucket === policyEditorBucket;
                     if (!ok || data.error) {
-                        setBucketPolicyMutationInFlight(false);
-                        alert('Error saving bucket policy: ' + (data.error || 'unknown error'));
+                        if (stillCurrent) {
+                            alert('Error saving bucket policy: ' + (data.error || 'unknown error'));
+                        } else {
+                            console.error('Error saving policy for ' + targetBucket + ' (no longer the open bucket): ' + (data.error || 'unknown error'));
+                        }
                         return;
                     }
+                    if (!stillCurrent) return;
                     if (policyModalInstance) {
                         policyModalInstance.hide();
                     }
@@ -1490,7 +1503,9 @@ templ S3Buckets(data dash.S3BucketsData) {
                 .catch(error => {
                     setBucketPolicyMutationInFlight(false);
                     console.error('Error:', error);
-                    alert('Error saving bucket policy: ' + error.message);
+                    if (targetBucket === policyEditorBucket) {
+                        alert('Error saving bucket policy: ' + error.message);
+                    }
                 });
         });
 
@@ -1498,20 +1513,34 @@ templ S3Buckets(data dash.S3BucketsData) {
         document.getElementById('bucketPolicyDeleteBtn').addEventListener('click', function() {
             if (!policyEditorBucket) return;
             if (bucketPolicyMutationInFlight) return;
+            if (!bucketPolicyLoaded) {
+                alert('The current policy has not finished loading. Close and reopen this dialog before deleting.');
+                return;
+            }
             if (!confirm('Delete the bucket policy for ' + policyEditorBucket + '? This cannot be undone.')) return;
 
+            // Captured now: if the dialog moves on to a different bucket
+            // before this DELETE resolves, the completion below must not
+            // hide or reload over whatever that other bucket is now showing.
+            const targetBucket = policyEditorBucket;
             setBucketPolicyMutationInFlight(true);
-            fetch(basePath('/api/s3/buckets/' + policyEditorBucket + '/policy'), {
+            fetch(basePath('/api/s3/buckets/' + targetBucket + '/policy'), {
                 method: 'DELETE',
                 headers: csrfHeaders()
             })
                 .then(parseLifecycleResponse)
                 .then(({ ok, data }) => {
+                    setBucketPolicyMutationInFlight(false);
+                    const stillCurrent = targetBucket === policyEditorBucket;
                     if (!ok || data.error) {
-                        setBucketPolicyMutationInFlight(false);
-                        alert('Error deleting bucket policy: ' + (data.error || 'unknown error'));
+                        if (stillCurrent) {
+                            alert('Error deleting bucket policy: ' + (data.error || 'unknown error'));
+                        } else {
+                            console.error('Error deleting policy for ' + targetBucket + ' (no longer the open bucket): ' + (data.error || 'unknown error'));
+                        }
                         return;
                     }
+                    if (!stillCurrent) return;
                     if (policyModalInstance) {
                         policyModalInstance.hide();
                     }
@@ -1520,7 +1549,9 @@ templ S3Buckets(data dash.S3BucketsData) {
                 .catch(error => {
                     setBucketPolicyMutationInFlight(false);
                     console.error('Error:', error);
-                    alert('Error deleting bucket policy: ' + error.message);
+                    if (targetBucket === policyEditorBucket) {
+                        alert('Error deleting bucket policy: ' + error.message);
+                    }
                 });
         });
     });
