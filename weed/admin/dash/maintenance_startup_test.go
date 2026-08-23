@@ -25,7 +25,7 @@ func restoreGlobalTaskState(t *testing.T) {
 // data directory that has a disabled balance task saved in it, and checks the end state that
 // actually matters: the balance detector reports disabled, so ScanWithTaskDetectors skips it.
 //
-// This is the whole of issue #10874 in one test. The reporter disabled balance, and the
+// This is the whole reported bug in one test. The reporter disabled balance, and the
 // scanner kept detecting balance tasks, cancelling them and re-detecting them. Two separate
 // defects had to line up for the disabled flag to survive to here: the policy had to be built
 // from the persisted configs rather than from a nil store, and the policy had to reach

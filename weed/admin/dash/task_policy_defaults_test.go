@@ -129,9 +129,15 @@ func TestEcBalanceTaskPolicyRoundTrip(t *testing.T) {
 		t.Errorf("ec_balance collection filter = %q, want the persisted %q", loaded.CollectionFilter, "pictures")
 	}
 
-	// The generic dispatcher the maintenance manager uses has to know the type too.
-	if err := cp.SaveTaskPolicy("ec_balance", saved.ToTaskPolicy()); err != nil {
-		t.Errorf("SaveTaskPolicy(ec_balance): %v", err)
+	// The generic dispatcher the maintenance manager uses has to know the type too, and
+	// has to write the same file the dedicated loader reads.
+	dispatched := NewConfigPersistence(t.TempDir())
+	if err := dispatched.SaveTaskPolicy("ec_balance", saved.ToTaskPolicy()); err != nil {
+		t.Fatalf("SaveTaskPolicy(ec_balance): %v", err)
+	}
+	roundTripped := ec_balance.LoadConfigFromPersistence(dispatched)
+	if roundTripped == nil || roundTripped.MinServerCount != 9 {
+		t.Errorf("SaveTaskPolicy(ec_balance) did not round-trip through the ec_balance store: %+v", roundTripped)
 	}
 }
 
@@ -164,8 +170,8 @@ func TestBuildPolicyKeepsTaskSpecificFields(t *testing.T) {
 	if got := ecPolicy.GetReplicaPlacement(); got != "020" {
 		t.Errorf("erasure coding replica placement = %q, want the persisted %q", got, "020")
 	}
-	if got := ecPolicy.GetPreferredTags(); len(got) != 2 {
-		t.Errorf("erasure coding preferred tags = %v, want the persisted 2 entries", got)
+	if got := ecPolicy.GetPreferredTags(); len(got) != 2 || got[0] != "ssd" || got[1] != "archive" {
+		t.Errorf("erasure coding preferred tags = %v, want the persisted [ssd archive]", got)
 	}
 
 	balancePolicy := policy.TaskPolicies["balance"].GetBalanceConfig()

@@ -39,8 +39,7 @@ func (c *scanCadenceClient) callCount() int {
 	return c.calls
 }
 
-// TestScanLoopRestoresIntervalAfterBackoff is the regression test for the scan flood in
-// https://github.com/seaweedfs/seaweedfs/issues/10874. The loop shortens its ticker to the
+// TestScanLoopRestoresIntervalAfterBackoff is the regression test for the scan flood. The loop shortens its ticker to the
 // error backoff delay after a failed scan. It used to compare the target interval against
 // the *configured* scan interval rather than against the interval the ticker was actually
 // running at, so once the errors stopped the comparison came out false and the ticker was
@@ -104,15 +103,16 @@ func TestScanLoopRestoresIntervalAfterBackoff(t *testing.T) {
 	// Observe a window that a 1s cadence would fill with scans and a 3s cadence would not.
 	const window = 5 * time.Second
 	time.Sleep(window)
-	scansInWindow := client.callCount() - before
+	callsInWindow := client.callCount() - before
 
-	// 3s cadence: at most 2 scans in 5s. 1s cadence: about 5.
-	if scansInWindow > 2 {
-		t.Errorf("scan loop ran %d scans in %v after recovering from a failed scan; "+
+	// One scan makes two master-client calls. 3s cadence: at most 2 scans (4 calls) in 5s,
+	// even if a stall shifts the window. 1s cadence: about 5 scans (10 calls).
+	if callsInWindow > 4 {
+		t.Errorf("scan loop made %d master-client calls in %v after recovering from a failed scan; "+
 			"the ticker was left at the %v backoff instead of returning to the configured %v",
-			scansInWindow, window, time.Second, baseInterval)
+			callsInWindow, window, time.Second, baseInterval)
 	}
-	if scansInWindow == 0 {
+	if callsInWindow == 0 {
 		t.Errorf("scan loop ran no scans in %v, expected the %v cadence to fire at least once", window, baseInterval)
 	}
 }

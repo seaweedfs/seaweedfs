@@ -70,8 +70,7 @@ func disabledStub() *stubConfigPersistence {
 	}
 }
 
-// TestBuildPolicyFromTaskConfigsUsesPersistence covers the bug reported in
-// https://github.com/seaweedfs/seaweedfs/issues/10874: the persistence argument used to be a
+// TestBuildPolicyFromTaskConfigsUsesPersistence covers a reported bug: the persistence argument used to be a
 // literal nil, which no type assertion can satisfy, so a task disabled on disk came back enabled.
 func TestBuildPolicyFromTaskConfigsUsesPersistence(t *testing.T) {
 	policy := BuildPolicyFromTaskConfigs(disabledStub())
