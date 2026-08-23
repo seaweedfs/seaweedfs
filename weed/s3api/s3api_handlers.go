@@ -40,6 +40,10 @@ func (s3a *S3ApiServer) WithFilerClient(streamingMode bool, fn func(filer_pb.Sea
 // caller route to a key's ring owner for read-after-write; it may be a filer outside
 // the static list (the bookkeeping no-ops for untracked addresses). A failover
 // updates the current filer; a preferred read does not, as its owner is per-key.
+// Failover replays fn from scratch, so it stops once any response has reached
+// fn: a replay after that could silently duplicate state fn accumulated (a
+// listing that failed mid-stream, say), so the error surfaces instead and the
+// caller decides whether a clean-slate retry is safe.
 func (s3a *S3ApiServer) withFilerClientFailover(preferred pb.ServerAddress, streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 	currentFiler := s3a.filerClient.GetCurrentFiler()
 
@@ -82,8 +86,9 @@ func (s3a *S3ApiServer) withFilerClientFailover(preferred pb.ServerAddress, stre
 
 	var lastErr error
 	for _, filer := range ordered {
+		received := false
 		err := pb.WithGrpcClient(context.Background(), streamingMode, s3a.randomClientId, func(grpcConnection *grpc.ClientConn) error {
-			return fn(filer_pb.NewSeaweedFilerClient(grpcConnection))
+			return fn(filer_pb.NewSeaweedFilerClient(receiveTrackingConn{ClientConnInterface: grpcConnection, received: &received}))
 		}, filer.ToGrpcAddress(), false, s3a.option.GrpcDialOption)
 
 		if err == nil {
@@ -105,6 +110,11 @@ func (s3a *S3ApiServer) withFilerClientFailover(preferred pb.ServerAddress, stre
 			s3a.markOwnerUnreachable(filer)
 		}
 		glog.V(2).Infof("WithFilerClient: filer %s failed: %v", filer, err)
+		// fn consumed part of a response; a replay would stack a second copy
+		// onto whatever it accumulated, so surface the error unwrapped.
+		if received {
+			return err
+		}
 		lastErr = err
 	}
 
@@ -112,6 +122,43 @@ func (s3a *S3ApiServer) withFilerClientFailover(preferred pb.ServerAddress, stre
 		lastErr = fmt.Errorf("no filer available")
 	}
 	return fmt.Errorf("all filers failed, last error: %w", lastErr)
+}
+
+// receiveTrackingConn flags *received once a unary reply or a streamed message
+// has been handed to the callback, the point past which a failover replay is
+// no longer transparent.
+type receiveTrackingConn struct {
+	grpc.ClientConnInterface
+	received *bool
+}
+
+func (c receiveTrackingConn) Invoke(ctx context.Context, method string, args, reply any, opts ...grpc.CallOption) error {
+	err := c.ClientConnInterface.Invoke(ctx, method, args, reply, opts...)
+	if err == nil {
+		*c.received = true
+	}
+	return err
+}
+
+func (c receiveTrackingConn) NewStream(ctx context.Context, desc *grpc.StreamDesc, method string, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+	stream, err := c.ClientConnInterface.NewStream(ctx, desc, method, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return receiveTrackingStream{ClientStream: stream, received: c.received}, nil
+}
+
+type receiveTrackingStream struct {
+	grpc.ClientStream
+	received *bool
+}
+
+func (s receiveTrackingStream) RecvMsg(m any) error {
+	err := s.ClientStream.RecvMsg(m)
+	if err == nil {
+		*s.received = true
+	}
+	return err
 }
 
 func (s3a *S3ApiServer) AdjustedUrl(location *filer_pb.Location) string {

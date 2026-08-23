@@ -262,9 +262,9 @@ func (f *fakeTxnFiler) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 	return &filer_pb.ObjectTransactionResponse{}, nil
 }
 
-// startFakeTxnFiler serves impl on a random localhost port and returns the S3-style
+// startFakeFiler serves impl on a random localhost port and returns the S3-style
 // filer address whose ToGrpcAddress resolves back to that port.
-func startFakeTxnFiler(t *testing.T, impl *fakeTxnFiler) pb.ServerAddress {
+func startFakeFiler(t *testing.T, impl filer_pb.SeaweedFilerServer) pb.ServerAddress {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -296,7 +296,7 @@ func closedFilerAddress(t *testing.T) pb.ServerAddress {
 // so an object write survives a filer pod IP change without an S3 gateway restart.
 func TestObjectTxnFailsOverStaleOwner(t *testing.T) {
 	live := &fakeTxnFiler{}
-	liveAddr := startFakeTxnFiler(t, live)
+	liveAddr := startFakeFiler(t, live)
 	deadOwner := closedFilerAddress(t)
 
 	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
