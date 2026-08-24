@@ -38,6 +38,9 @@ type AssignResult struct {
 	Error     string              `json:"error,omitempty"`
 	Auth      security.EncodedJwt `json:"auth,omitempty"`
 	Replicas  []Location          `json:"replicas,omitempty"`
+	// Fsync carries the storage rule's fsync decision for the assigned path,
+	// so the upload request to the volume server can set ?fsync=true.
+	Fsync bool `json:"fsync,omitempty"`
 }
 
 func Assign(ctx context.Context, masterFn GetMasterFn, grpcDialOption grpc.DialOption, primaryRequest *VolumeAssignRequest, alternativeRequests ...*VolumeAssignRequest) (*AssignResult, error) {

@@ -336,6 +336,7 @@ func uploadFilerChunks(ctx context.Context, client filer_pb.SeaweedFilerClient, 
 			PublicUrl: resp.Location.PublicUrl,
 			Count:     uint64(count),
 			Auth:      security.EncodedJwt(resp.Auth),
+			Fsync:     resp.Fsync,
 		}, nil
 	}
 

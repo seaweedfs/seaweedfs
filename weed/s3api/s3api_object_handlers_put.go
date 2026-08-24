@@ -550,6 +550,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			PublicUrl: assignResult.Location.PublicUrl,
 			Count:     uint64(count),
 			Auth:      security.EncodedJwt(assignResult.Auth),
+			Fsync:     assignResult.Fsync,
 		}
 		for _, replica := range assignResult.Replicas {
 			result.Replicas = append(result.Replicas, operation.Location{
