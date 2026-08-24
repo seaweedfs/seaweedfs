@@ -627,40 +627,73 @@ function policyEditorConfig(which) {
             // into the structured editor to keep both in sync, but leave the
             // textarea's own text untouched.
             const text = document.getElementById(policyTextareaId(which)).value;
-            if (!text || !text.trim()) {
-                return commitPolicyTextareaToEditor(which);
+            if (text && text.trim()) {
+                let doc;
+                try {
+                    doc = JSON.parse(text);
+                } catch (e) {
+                    showAlert('Invalid JSON in policy document: ' + e.message, 'error');
+                    return false;
+                }
+                try {
+                    policyEditors[which] = policyDocToEditorState(which, doc);
+                } catch (e) {
+                    // Valid JSON the structured editor can't model is still
+                    // saveable from here - exactly the documents the load path
+                    // shunts to this tab. It just stays JSON-tab-only.
+                    policyEditors[which] = { version: '2012-10-17', statements: [], otherFields: {}, unparsed: true };
+                }
+                renderPolicyEditor(which);
+            } else if (!commitPolicyTextareaToEditor(which)) {
+                return false;
             }
-            let doc;
-            try {
-                doc = JSON.parse(text);
-            } catch (e) {
-                showAlert('Invalid JSON in policy document: ' + e.message, 'error');
+        } else {
+            if (policyEditorState(which).unparsed) {
+                // The editor never held this document, so serializing it would
+                // write an empty policy over whatever is in the JSON tab.
+                showAlert(POLICY_JSON_TAB_ONLY_MESSAGE, 'error');
                 return false;
             }
             try {
-                policyEditors[which] = policyDocToEditorState(which, doc);
+                commitPolicyEditorToTextarea(which);
             } catch (e) {
-                // Valid JSON the structured editor can't model is still
-                // saveable from here - exactly the documents the load path
-                // shunts to this tab. It just stays JSON-tab-only.
-                policyEditors[which] = { version: '2012-10-17', statements: [], otherFields: {}, unparsed: true };
+                showAlert(e.message, 'error');
+                return false;
             }
-            renderPolicyEditor(which);
-            return true;
         }
-        if (policyEditorState(which).unparsed) {
-            // The editor never held this document, so serializing it would
-            // write an empty policy over whatever is in the JSON tab.
-            showAlert(POLICY_JSON_TAB_ONLY_MESSAGE, 'error');
+        // Final gate over what would actually be saved. The mode dropdowns
+        // being hidden is not enough: the JSON tab and a statement's
+        // Advanced-fields box can both carry Not* keys, and where negation
+        // is disallowed the backend's evaluator silently drops them -
+        // Allow+NotResource would come back as allow-everything.
+        const negationError = policyTextDisallowedNegationError(which);
+        if (negationError) {
+            showAlert(negationError, 'error');
             return false;
         }
+        return true;
+    }
+
+    // Returns an error message if the JSON textarea for `which` holds a
+    // statement using NotResource/NotPrincipal while the instance disallows
+    // negation, or null. Unparseable/empty text is left to other checks.
+    function policyTextDisallowedNegationError(which) {
+        if (policyEditorConfig(which).allowNegation) return null;
+        let doc;
         try {
-            commitPolicyEditorToTextarea(which);
-            return true;
+            doc = JSON.parse(document.getElementById(policyTextareaId(which)).value);
         } catch (e) {
-            showAlert(e.message, 'error');
-            return false;
+            return null;
         }
+        const stmts = doc && doc.Statement ? (Array.isArray(doc.Statement) ? doc.Statement : [doc.Statement]) : [];
+        for (let i = 0; i < stmts.length; i++) {
+            const stmt = stmts[i] || {};
+            if (Object.prototype.hasOwnProperty.call(stmt, 'NotResource') ||
+                Object.prototype.hasOwnProperty.call(stmt, 'NotPrincipal')) {
+                return 'Statement ' + (i + 1) + ': NotResource/NotPrincipal are not supported for this policy type and would be silently ignored. Remove them before saving.';
+            }
+        }
+        return null;
     }
 
     // The admin API's policy document carries only Version and Statement, so
