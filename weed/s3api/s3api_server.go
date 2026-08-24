@@ -358,6 +358,15 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	// policy conditions on s3:x-amz-server-side-encryption evaluate correctly.
 	policyEngine.MultipartSSELookup = s3ApiServer.getMultipartSSEAlgorithm
 
+	// Advanced-IAM authorization evaluates the bucket-policy:<bucket> mirror
+	// before any handler runs, so the auth path has to be what triggers the
+	// lazy bucket load (and with it the mirror backfill): a grant carried
+	// only by a not-yet-mirrored policy would otherwise deny forever, and
+	// the denied request never reaches the handlers that load the bucket.
+	iam.primeBucketForIAM = func(bucket string) {
+		s3ApiServer.getBucketConfig(bucket)
+	}
+
 	// Initialize advanced IAM system if config is provided or explicitly enabled
 	if option.IamConfig != "" || option.EnableIam {
 		configSource := "defaults"
