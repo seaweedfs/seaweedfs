@@ -224,6 +224,55 @@ func volumeLocations(env *Env, volumeIds []needle.VolumeId) (map[needle.VolumeId
 	return res, nil
 }
 
+// collectSourceFreeVolumeCounts maps "volumeId-serverAddress" to the free
+// volume slots on the disk holding that volume, for the source health check.
+// Key by dn.Address so it matches wdclient.Location.Url: in deployments where
+// dn.Id is a short name (e.g. a Kubernetes StatefulSet pod name) while
+// dn.Address is a FQDN:port, keying by dn.Id would never match the location
+// Url during the lookup.
+//
+// The topology snapshot predates clearPreexistingEcShards, so shards of the
+// very volumes being encoded (leftovers of an interrupted run the sweep just
+// removed) may still be charged against a disk's FreeVolumeCount. Refund their
+// slots, or a retried encode fails the health check on capacity the sweep
+// already freed. A node the sweep skipped as unreachable keeps its charge: its
+// leftovers are still there.
+func collectSourceFreeVolumeCounts(topologyInfo *master_pb.TopologyInfo, volumeIds []needle.VolumeId, sweepSkippedNodes map[pb.ServerAddress]struct{}) map[string]int {
+	encoding := make(map[uint32]bool, len(volumeIds))
+	for _, vid := range volumeIds {
+		encoding[uint32(vid)] = true
+	}
+	freeVolumeCountMap := make(map[string]int) // key: volumeId-serverAddress
+	EachDataNode(topologyInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
+		addr := dn.Address
+		if addr == "" {
+			addr = dn.Id // older nodes use ip:port as id
+		}
+		_, skipped := sweepSkippedNodes[pb.NewServerAddressFromDataNode(dn)]
+		for _, diskInfo := range dn.DiskInfos {
+			free := diskInfo.FreeVolumeCount
+			if !skipped {
+				var total, cleared int64
+				for _, ecInfo := range diskInfo.EcShardInfos {
+					n := int64(erasure_coding.GetShardCount(ecInfo))
+					total += n
+					if encoding[ecInfo.Id] {
+						cleared += n
+					}
+				}
+				if cleared > 0 {
+					free += erasure_coding.VolumeSlots(total) - erasure_coding.VolumeSlots(total-cleared)
+				}
+			}
+			for _, v := range diskInfo.VolumeInfos {
+				key := fmt.Sprintf("%d-%s", v.Id, addr)
+				freeVolumeCountMap[key] = int(free)
+			}
+		}
+	})
+	return freeVolumeCountMap
+}
+
 func doEcEncode(env *Env, writer io.Writer, volumeIdToCollection map[needle.VolumeId]string, volumeIds []needle.VolumeId, maxParallelization int, topologyInfo *master_pb.TopologyInfo) (skippedNodes map[pb.ServerAddress]struct{}, err error) {
 	if !env.isLocked() {
 		return nil, fmt.Errorf("lock is lost")
@@ -243,24 +292,7 @@ func doEcEncode(env *Env, writer io.Writer, volumeIdToCollection map[needle.Volu
 		return nil, fmt.Errorf("clear pre-existing ec shards before encoding: %w", err)
 	}
 
-	// Build a map of (volumeId, serverAddress) -> freeVolumeCount.
-	// Key by dn.Address so it matches wdclient.Location.Url. In deployments
-	// where dn.Id is a short name (e.g. Kubernetes StatefulSet pod name)
-	// while dn.Address is a FQDN:port, keying by dn.Id would never match the
-	// location Url during the health-check lookup below.
-	freeVolumeCountMap := make(map[string]int) // key: volumeId-serverAddress
-	EachDataNode(topologyInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
-		addr := dn.Address
-		if addr == "" {
-			addr = dn.Id // older nodes use ip:port as id
-		}
-		for _, diskInfo := range dn.DiskInfos {
-			for _, v := range diskInfo.VolumeInfos {
-				key := fmt.Sprintf("%d-%s", v.Id, addr)
-				freeVolumeCountMap[key] = int(diskInfo.FreeVolumeCount)
-			}
-		}
-	})
+	freeVolumeCountMap := collectSourceFreeVolumeCounts(topologyInfo, volumeIds, skippedNodes)
 
 	// Filter replicas by free capacity BEFORE marking volumes readonly so that
 	// a failed health check does not strand volumes in readonly state.
