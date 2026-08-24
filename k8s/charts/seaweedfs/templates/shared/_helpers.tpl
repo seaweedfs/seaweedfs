@@ -548,3 +548,23 @@ true
 {{- and (eq .value "PreferClose") (semverCompare ">=1.35-0" .Capabilities.KubeVersion.GitVersion) | ternary "PreferSameZone" .value -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Render LoadBalancer-specific service fields (loadBalancerClass, loadBalancerIP,
+loadBalancerSourceRanges), only when the service type is LoadBalancer.
+Usage: {{ include "seaweedfs.service.loadBalancerFields" .Values.s3.service }}
+*/}}
+{{- define "seaweedfs.service.loadBalancerFields" -}}
+{{- if eq (.type | default "ClusterIP") "LoadBalancer" }}
+{{- with .loadBalancerClass }}
+  loadBalancerClass: {{ . }}
+{{- end }}
+{{- with .loadBalancerIP }}
+  loadBalancerIP: {{ . }}
+{{- end }}
+{{- with .loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- toYaml . | nindent 4 }}
+{{- end }}
+{{- end }}
+{{- end -}}

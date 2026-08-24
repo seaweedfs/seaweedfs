@@ -21,6 +21,7 @@ spec:
   {{- $nodePorts = .Values.admin.service.nodePorts | default dict }}
   {{- end }}
   type: {{ $serviceType }}
+  {{- include "seaweedfs.service.loadBalancerFields" .Values.admin.service }}
   ports:
   - name: "http"
     port: {{ .Values.admin.port }}
