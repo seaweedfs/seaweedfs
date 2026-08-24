@@ -876,7 +876,14 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 				Entry:     entry,
 			}
 			glog.V(3).Infof("putToFiler: Calling CreateEntry for %s", filePath)
-			if err := filer_pb.CreateEntry(context.Background(), client, req); err != nil {
+			err := filer_pb.CreateEntry(context.Background(), client, req)
+			if errors.Is(err, filer_pb.ErrExistingIsDirectory) && !isReservedDirectoryName(entry.Name) {
+				// Other keys are nested under this one. S3 keys are flat, so the key is
+				// stored on the directory they live under rather than refused.
+				entry.MarkPrefixObject()
+				err = filer_pb.CreateEntry(context.Background(), client, req)
+			}
+			if err != nil {
 				glog.Errorf("putToFiler: CreateEntry returned error: %v", err)
 				return err
 			}
@@ -1190,6 +1197,14 @@ func (s3a *S3ApiServer) setSSEResponseHeaders(w http.ResponseWriter, r *http.Req
 	if sseMetadata.ChecksumHeaderName != "" && sseMetadata.ChecksumValue != "" {
 		w.Header().Set(sseMetadata.ChecksumHeaderName, sseMetadata.ChecksumValue)
 	}
+}
+
+// isReservedDirectoryName reports whether a directory standing at an object's path is
+// one SeaweedFS keeps its own state in - a multipart staging folder, or a key's version
+// history - rather than a prefix the key can be stored on. Writing the object onto it
+// would replace that state with the object's own.
+func isReservedDirectoryName(name string) bool {
+	return name == s3_constants.MultipartUploadsFolder || strings.HasSuffix(name, s3_constants.VersionsFolder)
 }
 
 func filerErrorToS3Error(err error) s3err.ErrorCode {

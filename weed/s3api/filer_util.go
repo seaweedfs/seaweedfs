@@ -24,7 +24,18 @@ func (s3a *S3ApiServer) mkdir(parentDirectoryPath string, dirName string, fn fun
 
 func (s3a *S3ApiServer) mkFile(parentDirectoryPath string, fileName string, chunks []*filer_pb.FileChunk, fn func(entry *filer_pb.Entry)) error {
 
-	return filer_pb.MkFile(context.Background(), s3a, parentDirectoryPath, fileName, chunks, fn)
+	err := filer_pb.MkFile(context.Background(), s3a, parentDirectoryPath, fileName, chunks, fn)
+	if errors.Is(err, filer_pb.ErrExistingIsDirectory) && !isReservedDirectoryName(fileName) {
+		// Other keys are nested under this one, so the object goes onto the directory
+		// they live in - the same place a PutObject of this key writes it.
+		err = filer_pb.MkFile(context.Background(), s3a, parentDirectoryPath, fileName, chunks, func(entry *filer_pb.Entry) {
+			if fn != nil {
+				fn(entry)
+			}
+			entry.MarkPrefixObject()
+		})
+	}
+	return err
 
 }
 
@@ -187,6 +198,10 @@ func clearDirectoryMarkerMetadata(entry *filer_pb.Entry) {
 	filtered := make(map[string][]byte)
 	for k, v := range entry.Extended {
 		lowerKey := strings.ToLower(k)
+		if lowerKey == s3_constants.SeaweedFSPrefixObject {
+			// The path is a plain directory again, not a key of its own.
+			continue
+		}
 		if strings.HasPrefix(lowerKey, "xattr-") || strings.HasPrefix(lowerKey, s3_constants.SeaweedFSInternalPrefix) {
 			filtered[k] = v
 		}

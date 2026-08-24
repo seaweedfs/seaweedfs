@@ -22,6 +22,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	s3_constants "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -856,6 +857,13 @@ func (vc *versionCollector) collectVersions(currentPath, relativePath string) er
 							vc.commonPrefixes[commonPrefix] = true
 						}
 
+						// The prefix rolled up here belongs to the keys nested under this
+						// entry. A prefix object is also a key of its own, and that key
+						// carries no trailing slash, so it does not roll up with them.
+						if entry.IsPrefixObject() {
+							vc.processPrefixObject(currentPath, entryPath, entry)
+						}
+
 						// Skip further processing (recursion or addition) for this entry
 						// because it has been rolled up into the CommonPrefix
 						continue
@@ -879,13 +887,31 @@ func (vc *versionCollector) collectVersions(currentPath, relativePath string) er
 	return nil
 }
 
+// processPrefixObject emits the null version of a key that other keys are nested
+// under. The key carries no trailing slash, so it is a null object like any other and
+// needs the same reconciliation against a .versions sibling - but the directory it is
+// stored on is walked as an ancestor of the requested prefix, which its own key does
+// not have to match.
+func (vc *versionCollector) processPrefixObject(currentPath, entryPath string, entry *filer_pb.Entry) {
+	if !strings.HasPrefix(entryPath, vc.prefix) {
+		return
+	}
+	if vc.delimiter != "" && strings.Contains(entryPath[len(vc.prefix):], vc.delimiter) {
+		// The key folds into the same CommonPrefix its nested keys do.
+		return
+	}
+	vc.processRegularFile(currentPath, entryPath, entry)
+}
+
 // processDirectory handles directory entries
 func (vc *versionCollector) processDirectory(currentPath, entryPath string, entry *filer_pb.Entry) error {
 	// Handle explicit S3 directory object. Match ListObjectsV2's
 	// IsDirectoryKeyObject (any non-empty mime), not just FolderMimeType:
 	// an SDK PutObject of "dir/" carries a default Content-Type, so the two
 	// listings must agree on what counts as a directory key.
-	if entry.IsDirectoryKeyObject() {
+	if entry.IsPrefixObject() {
+		vc.processPrefixObject(currentPath, entryPath, entry)
+	} else if entry.IsDirectoryKeyObject() {
 		vc.processExplicitDirectory(entryPath, entry)
 	}
 
@@ -1113,8 +1139,11 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(ctx context.Context, bucket,
 			return nil
 		}
 
-		// Delete the regular file
-		deleteErr := s3a.rmObject(bucketDir, normalizedObject, !metadataOnly, false)
+		// Delete the regular file. rmObject takes a parent and a name, and the demote
+		// it falls back to for an entry other keys are nested under writes the entry
+		// back under that parent - so a key with a slash in it has to be split first.
+		dir, name := util.NewFullPath(bucketDir, normalizedObject).DirAndName()
+		deleteErr := s3a.rmObject(dir, name, !metadataOnly, false)
 		if deleteErr != nil {
 			// Check if file was already deleted by another process
 			if _, checkErr := s3a.getEntry(bucketDir, normalizedObject); checkErr != nil {
