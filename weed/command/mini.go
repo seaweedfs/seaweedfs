@@ -1588,7 +1588,7 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	// Mini knows its own S3 address, so the file browser can offer object
 	// URLs without any configuration.
 	if *miniEnableS3 && util.GetViper().GetString("s3.public_endpoint") == "" {
-		util.GetViper().Set("s3.public_endpoint", fmt.Sprintf("http://%s:%d", *miniIp, *miniS3Options.port))
+		util.GetViper().Set("s3.public_endpoint", "http://"+util.JoinHostPort(*miniIp, *miniS3Options.port))
 	}
 
 	// Resolve admin credentials from security.toml [admin] / WEED_ADMIN_* env
