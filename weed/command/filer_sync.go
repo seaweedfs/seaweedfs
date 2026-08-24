@@ -74,6 +74,7 @@ type syncState struct {
 	grpcDialOption       grpc.DialOption
 	targetFiler          pb.ServerAddress
 	sourcePath           string
+	targetPath           string
 	sourceFilerSignature int32
 }
 
@@ -217,7 +218,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 			if offsetTsNs == 0 {
 				return
 			}
-			if err := setOffset(state.grpcDialOption, state.targetFiler, getSignaturePrefixByPath(state.sourcePath), state.sourceFilerSignature, offsetTsNs); err != nil {
+			if err := setOffset(state.grpcDialOption, state.targetFiler, getSignaturePrefixByPath(state.sourcePath, state.targetPath), state.sourceFilerSignature, offsetTsNs); err != nil {
 				glog.Errorf("failed to save checkpoint for %s on shutdown: %v", name, err)
 			} else {
 				glog.V(0).Infof("saved checkpoint for %s on shutdown: %v", name, time.Unix(0, offsetTsNs))
@@ -231,7 +232,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 	go func() {
 		// a->b
 		// set synchronization start timestamp to offset
-		initOffsetError := initOffsetFromTsMs(grpcDialOptionB, filerB, aFilerSignature, *syncOptions.aFromTsMs, getSignaturePrefixByPath(*syncOptions.aPath))
+		initOffsetError := initOffsetFromTsMs(grpcDialOptionB, filerB, aFilerSignature, *syncOptions.aFromTsMs, getSignaturePrefixByPath(*syncOptions.aPath, *syncOptions.bPath))
 		if initOffsetError != nil {
 			glog.Errorf("init offset from timestamp %d error from %s to %s: %v", *syncOptions.aFromTsMs, *syncOptions.filerA, *syncOptions.filerB, initOffsetError)
 			os.Exit(2)
@@ -273,7 +274,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 	if !*syncOptions.isActivePassive {
 		// b->a
 		// set synchronization start timestamp to offset
-		initOffsetError := initOffsetFromTsMs(grpcDialOptionA, filerA, bFilerSignature, *syncOptions.bFromTsMs, getSignaturePrefixByPath(*syncOptions.bPath))
+		initOffsetError := initOffsetFromTsMs(grpcDialOptionA, filerA, bFilerSignature, *syncOptions.bFromTsMs, getSignaturePrefixByPath(*syncOptions.bPath, *syncOptions.aPath))
 		if initOffsetError != nil {
 			glog.Errorf("init offset from timestamp %d error from %s to %s: %v", *syncOptions.bFromTsMs, *syncOptions.filerB, *syncOptions.filerA, initOffsetError)
 			os.Exit(2)
@@ -339,7 +340,10 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, sourceGrpcDi
 
 	// if first time, start from now
 	// if has previously synced, resume from that point of time
-	sourceFilerOffsetTsNs, err := getOffset(targetGrpcDialOption, targetFiler, getSignaturePrefixByPath(sourcePath), sourceFilerSignature)
+	// the historical key ignored the target path; falling back to it lets a
+	// sync that predates target-scoped keys survive the upgrade
+	signaturePrefix := getSignaturePrefixByPath(sourcePath, targetPath)
+	sourceFilerOffsetTsNs, err := getOffsetWithFallback(targetGrpcDialOption, targetFiler, signaturePrefix, sourceFilerSignature, getSignaturePrefixByPath(sourcePath, "/"), sourceFilerSignature)
 	if err != nil {
 		return err
 	}
@@ -387,6 +391,7 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, sourceGrpcDi
 			grpcDialOption:       targetGrpcDialOption,
 			targetFiler:          targetFiler,
 			sourcePath:           sourcePath,
+			targetPath:           targetPath,
 			sourceFilerSignature: sourceFilerSignature,
 		})
 	}
@@ -420,7 +425,7 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, sourceGrpcDi
 		lastProgressedTsNs = offsetTsNs
 		// collect synchronous offset
 		statsCollect.FilerSyncOffsetGauge.WithLabelValues(sourceFiler.String(), targetFiler.String(), clientName, sourcePath).Set(float64(offsetTsNs))
-		return setOffset(targetGrpcDialOption, targetFiler, getSignaturePrefixByPath(sourcePath), sourceFilerSignature, offsetTsNs)
+		return setOffset(targetGrpcDialOption, targetFiler, signaturePrefix, sourceFilerSignature, offsetTsNs)
 	})
 
 	prefix := sourcePath
@@ -452,14 +457,20 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, sourceGrpcDi
 
 }
 
-// When each business is distinguished according to path, and offsets need to be maintained separately.
-func getSignaturePrefixByPath(path string) string {
-	// compatible historical version
-	if path == "/" {
-		return SyncKeyPrefix
-	} else {
-		return SyncKeyPrefix + path
+// Offsets are kept per (source path, target path): two syncs from the same
+// source to different directories on the same target filer see the same events
+// but progress independently, so a shared key would let one push the other
+// past events it never processed. "/" contributes nothing on either side,
+// keeping the historical key form so existing deployments resume unchanged.
+func getSignaturePrefixByPath(sourcePath, targetPath string) string {
+	prefix := SyncKeyPrefix
+	if sourcePath != "/" {
+		prefix += sourcePath
 	}
+	if targetPath != "/" {
+		prefix += "=>" + targetPath
+	}
+	return prefix
 }
 
 func getOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signaturePrefix string, signature int32) (lastOffsetTsNs int64, readErr error) {
