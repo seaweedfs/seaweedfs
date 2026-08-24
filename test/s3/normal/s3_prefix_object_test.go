@@ -374,6 +374,25 @@ func TestS3PrefixObjectKeys(t *testing.T) {
 		read(t, bucket, "collision/foo/bar", nested)
 	})
 
+	// Copying onto such a key is refused rather than supported - that is the other
+	// half of the collision, and its own issue - but the refusal has to be the same
+	// deterministic one a PutObject gets, not a 500 the SDK retries.
+	t.Run("CopyOntoPrefixObject", func(t *testing.T) {
+		bucket := createTestBucket(t, cluster, "test-prefix-copy-")
+		put(t, bucket, "collision/foo/bar", nested)
+		put(t, bucket, "source", body)
+
+		_, err := cluster.s3Client.CopyObject(&s3.CopyObjectInput{
+			Bucket:     aws.String(bucket),
+			Key:        aws.String("collision/foo"),
+			CopySource: aws.String(bucket + "/source"),
+		})
+		var refused awserr.RequestFailure
+		require.ErrorAs(t, err, &refused)
+		assert.Equal(t, http.StatusConflict, refused.StatusCode())
+		assert.Equal(t, "ExistingObjectIsDirectory", refused.Code())
+	})
+
 	// A directory SeaweedFS keeps its own state in is not a prefix a key can be
 	// stored on: the object would replace that state with its own.
 	t.Run("ReservedDirectory", func(t *testing.T) {
