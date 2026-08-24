@@ -1,0 +1,28 @@
+package app
+
+// PolicyDatalists renders the three <datalist> elements the shared visual
+// policy editor (weed/admin/static/js/policy_editor.js) attaches its
+// action/resource/principal <input list="..."> suggestions to. Any page
+// embedding that editor must render this once; its ids
+// (policyActionSuggestions, policyResourceSuggestions,
+// policyPrincipalSuggestions) are the registerPolicyEditor defaults, so a
+// page only needs to override them if it renders more than one instance of
+// this component.
+templ PolicyDatalists() {
+	<!-- Datalist of suggested action names, shared by every policy editor on this page -->
+	<datalist id="policyActionSuggestions">
+		for _, action := range PolicyActionSuggestions {
+			<option value={ action }></option>
+		}
+	</datalist>
+
+	<!-- Populated dynamically as the user types in a Resource field: bucket
+	     names first, then subfolders one path segment at a time. See
+	     updatePolicyResourceSuggestions() in policy_editor.js. -->
+	<datalist id="policyResourceSuggestions"></datalist>
+
+	<!-- Populated dynamically as the user types/focuses a Principal field:
+	     existing users and IAM roles, fetched once from /api/principals. See
+	     updatePolicyPrincipalSuggestions() in policy_editor.js. -->
+	<datalist id="policyPrincipalSuggestions"></datalist>
+}

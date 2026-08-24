@@ -150,6 +150,7 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 										<th>ARN</th>
 										<th>Catalog Endpoint</th>
 										<th>Created</th>
+										<th>Policy</th>
 										<th>Actions</th>
 									</tr>
 								</thead>
@@ -164,6 +165,20 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 											<td class="text-muted small">{ bucket.ARN }</td>
 											<td><code class="small">{ bucketCatalogPath(bucket.Format, bucket.Name) }</code></td>
 											<td>{ bucket.CreatedAt.Format("2006-01-02 15:04") }</td>
+											<td>
+												if bucket.PolicyStatementCount > 0 {
+													<button type="button" class="badge bg-primary border-0 s3tables-bucket-policy-btn"
+															data-bucket-arn={ bucket.ARN } title="View Bucket Policy">
+														if bucket.PolicyStatementCount == 1 {
+															1 statement
+														} else {
+															{ fmt.Sprintf("%d statements", bucket.PolicyStatementCount) }
+														}
+													</button>
+												} else {
+													<span class="text-muted">Not configured</span>
+												}
+											</td>
 											<td>
 												<div class="btn-group btn-group-sm" role="group">
 													{{ bucketName, parseErr := s3tables.ParseBucketNameFromARN(bucket.ARN) }}
@@ -191,7 +206,7 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 									}
 									if len(data.Buckets) == 0 {
 										<tr>
-											<td colspan="7" class="text-center text-muted py-4">
+											<td colspan="8" class="text-center text-muted py-4">
 												<i class="fas fa-table fa-3x mb-3 text-muted"></i>
 												<div>
 													<h5>No table buckets found</h5>
@@ -395,8 +410,10 @@ dataset = lance.dataset(table.location, storage_options=table.storage_options)` 
 			</div>
 		</div>
 	</div>
+	@PolicyDatalists()
+
 	<div class="modal fade" id="s3tablesBucketPolicyModal" tabindex="-1" aria-labelledby="s3tablesBucketPolicyModalLabel" aria-hidden="true">
-		<div class="modal-dialog modal-lg">
+		<div class="modal-dialog modal-xl">
 			<div class="modal-content">
 				<div class="modal-header">
 					<h5 class="modal-title" id="s3tablesBucketPolicyModalLabel">
@@ -407,9 +424,24 @@ dataset = lance.dataset(table.location, storage_options=table.storage_options)` 
 				<form id="s3tablesBucketPolicyForm">
 					<div class="modal-body">
 						<input type="hidden" id="s3tablesBucketPolicyArn" name="bucket_arn"/>
-						<div class="mb-3">
-							<label for="s3tablesBucketPolicyText" class="form-label">Policy JSON</label>
-							<textarea class="form-control" id="s3tablesBucketPolicyText" name="policy" rows="12" placeholder="{ }"></textarea>
+						<ul class="nav nav-tabs" role="tablist">
+							<li class="nav-item" role="presentation">
+								<button class="nav-link active" id="s3tablesBucketPolicyEditorTabBtn" type="button" data-bs-toggle="tab" data-bs-target="#s3tablesBucketPolicyEditorTab" role="tab" aria-controls="s3tablesBucketPolicyEditorTab" aria-selected="true">Editor</button>
+							</li>
+							<li class="nav-item" role="presentation">
+								<button class="nav-link" id="s3tablesBucketPolicyJsonTabBtn" type="button" data-bs-toggle="tab" data-bs-target="#s3tablesBucketPolicyJsonTab" role="tab" aria-controls="s3tablesBucketPolicyJsonTab" aria-selected="false">JSON</button>
+							</li>
+						</ul>
+						<div class="tab-content border border-top-0 rounded-bottom p-3 mb-3">
+							<div class="tab-pane fade show active" id="s3tablesBucketPolicyEditorTab" role="tabpanel" aria-labelledby="s3tablesBucketPolicyEditorTabBtn">
+								<div id="s3tablesBucketPolicyEditorBody"></div>
+								<button type="button" class="btn btn-sm btn-outline-secondary" id="s3tablesBucketPolicyAddStatementBtn">
+									<i class="fas fa-plus me-1"></i>Add statement
+								</button>
+							</div>
+							<div class="tab-pane fade" id="s3tablesBucketPolicyJsonTab" role="tabpanel" aria-labelledby="s3tablesBucketPolicyJsonTabBtn">
+								<textarea class="form-control" id="s3tablesBucketPolicyText" name="policy" rows="12" placeholder="{ }"></textarea>
+							</div>
 						</div>
 						<div class="form-text">
 							Provide a policy JSON; use Delete Policy to remove the policy.

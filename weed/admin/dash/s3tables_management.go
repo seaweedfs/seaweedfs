@@ -37,6 +37,12 @@ type S3TablesBucketSummary struct {
 	// Format is empty for a bucket created before formats were declared. Such a
 	// bucket takes tables of either format, which is what it always did.
 	Format string `json:"format,omitempty"`
+	// PolicyStatementCount is the number of statements in the table bucket's
+	// resource policy, or 0 if it has none. Unrelated to the S3 bucket
+	// policy mechanism (policy_engine.PolicyDocument / s3-bucket-policy):
+	// S3 Tables stores its own s3tables.PolicyDocument under the
+	// s3tables.policy extended attribute.
+	PolicyStatementCount int `json:"policy_statement_count"`
 }
 
 type S3TablesNamespacesData struct {
@@ -144,11 +150,12 @@ func (s *AdminServer) GetS3TablesBucketsData(ctx context.Context) (S3TablesBucke
 				continue
 			}
 			buckets = append(buckets, S3TablesBucketSummary{
-				ARN:            arn,
-				Name:           entry.Entry.Name,
-				OwnerAccountID: metadata.OwnerAccountID,
-				CreatedAt:      metadata.CreatedAt,
-				Format:         metadata.Format,
+				ARN:                  arn,
+				Name:                 entry.Entry.Name,
+				OwnerAccountID:       metadata.OwnerAccountID,
+				CreatedAt:            metadata.CreatedAt,
+				Format:               metadata.Format,
+				PolicyStatementCount: extractS3TablesPolicyStatementCountFromEntry(entry.Entry),
 			})
 		}
 		return nil
@@ -163,6 +170,23 @@ func (s *AdminServer) GetS3TablesBucketsData(ctx context.Context) (S3TablesBucke
 		LancePort:    s.lancePort,
 		LastUpdated:  time.Now(),
 	}, nil
+}
+
+// extractS3TablesPolicyStatementCountFromEntry returns the number of
+// statements in the table bucket's resource policy, or 0 if it has none or
+// the stored JSON can't be parsed. Forgiving on parse failure, matching
+// extractPolicyStatementCountFromEntry (the S3 bucket policy equivalent in
+// admin_server.go, which is a different, unrelated policy mechanism).
+func extractS3TablesPolicyStatementCountFromEntry(entry *filer_pb.Entry) int {
+	policyJSON := entry.Extended[s3tables.ExtendedKeyPolicy]
+	if len(policyJSON) == 0 {
+		return 0
+	}
+	var doc s3tables.PolicyDocument
+	if err := json.Unmarshal(policyJSON, &doc); err != nil {
+		return 0
+	}
+	return len(doc.Statement)
 }
 
 // observedRowCounts collects what workers last reported for these tables. For a

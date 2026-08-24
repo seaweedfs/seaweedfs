@@ -2,6 +2,7 @@ package dash
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -34,6 +35,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/lifecycle_xml"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/scheduler"
@@ -888,6 +890,7 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 					Owner:                 owner,
 					LifecycleRuleCount:    lifecycleRuleCount,
 					LifecycleEnabledCount: lifecycleEnabledCount,
+					PolicyStatementCount:  extractPolicyStatementCountFromEntry(resp.Entry),
 				}
 				buckets = append(buckets, bucket)
 			}
@@ -993,6 +996,7 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 		details.Bucket.ObjectLockDuration = objectLockDuration
 		details.Bucket.Owner = owner
 		details.Bucket.LifecycleRuleCount, details.Bucket.LifecycleEnabledCount = extractLifecycleCountsFromEntry(bucketResp.Entry)
+		details.Bucket.PolicyStatementCount = extractPolicyStatementCountFromEntry(bucketResp.Entry)
 
 		return nil
 	})
@@ -2104,6 +2108,21 @@ func extractLifecycleCountsFromEntry(entry *filer_pb.Entry) (ruleCount, enabledC
 		}
 	}
 	return
+}
+
+// extractPolicyStatementCountFromEntry returns the number of statements in
+// the bucket's policy, or 0 if it has none or the stored JSON can't be
+// parsed. Forgiving on parse failure, same as extractLifecycleCountsFromEntry.
+func extractPolicyStatementCountFromEntry(entry *filer_pb.Entry) int {
+	policyJSON := entry.Extended[s3api.BUCKET_POLICY_METADATA_KEY]
+	if len(policyJSON) == 0 {
+		return 0
+	}
+	var doc policy_engine.PolicyDocument
+	if err := json.Unmarshal(policyJSON, &doc); err != nil {
+		return 0
+	}
+	return len(doc.Statement)
 }
 
 // GetConfigPersistence returns the config persistence manager
