@@ -393,6 +393,10 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 		// the original object data remains accessible.
 		glog.V(2).InfofCtx(ctx, "promoting %s from file to directory for %s", dirPath, entry.FullPath)
 		dirEntry.Attr.Mode |= os.ModeDir | 0111
+		// Expiring the entry now deletes the directory row and strands the keys under
+		// it, so the prefix object gives up its lazy TTL. The lifecycle worker still
+		// expires it, through the delete that leaves the directory behind.
+		dirEntry.Attr.TtlSec = 0
 		// An empty object leaves no chunks, content or mime behind, so without the
 		// mark the promotion would hide it.
 		if dirEntry.Extended == nil {
@@ -536,7 +540,9 @@ func (f *Filer) FindEntry(ctx context.Context, p util.FullPath) (entry *Entry, e
 		return Root, nil
 	}
 	entry, err = f.Store.FindEntry(ctx, p)
-	if entry != nil && entry.TtlSec > 0 {
+	// A directory is deleted here one row at a time, which would strand whatever is
+	// under it, so a TTL an older build left on one is not acted on.
+	if entry != nil && entry.TtlSec > 0 && !entry.IsDirectory() {
 		if entry.IsExpireS3Enabled() {
 			if entry.GetS3ExpireTime().Before(time.Now()) && !entry.IsS3Versioning() {
 				if delErr := f.doDeleteEntryMetaAndData(ctx, entry, true, false, nil); delErr != nil {
@@ -575,7 +581,7 @@ func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, sta
 			glog.Errorf("Context is done.")
 			return false, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
-			if entry.TtlSec > 0 {
+			if entry.TtlSec > 0 && !entry.IsDirectory() {
 				if entry.IsExpireS3Enabled() {
 					if entry.GetS3ExpireTime().Before(time.Now()) && !entry.IsS3Versioning() {
 						// Collect for deletion after iteration completes to avoid DB deadlock
