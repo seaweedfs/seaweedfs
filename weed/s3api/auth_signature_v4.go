@@ -757,12 +757,12 @@ func parseSignedHeaderList(signedHeadersValue string) ([]string, s3err.ErrorCode
 	return signedHeaders, s3err.ErrNone
 }
 
-func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(formValues http.Header) s3err.ErrorCode {
+func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(formValues http.Header) (*Identity, s3err.ErrorCode) {
 
 	// Parse credential tag.
 	credHeader, err := parseCredentialHeader("Credential=" + formValues.Get("X-Amz-Credential"))
 	if err != s3err.ErrNone {
-		return err
+		return nil, err
 	}
 
 	identity, cred, found := iam.lookupByAccessKey(credHeader.accessKey)
@@ -775,19 +775,19 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(formValues http.
 		glog.Warningf("InvalidAccessKeyId (POST policy): attempted key '%s' not found. Available keys: %d, Auth enabled: %v",
 			credHeader.accessKey, availableKeyCount, iam.isAuthEnabled)
 
-		return s3err.ErrInvalidAccessKeyID
+		return nil, s3err.ErrInvalidAccessKeyID
 	}
 
 	// Check service account expiration
 	if cred.isCredentialExpired() {
 		glog.V(2).Infof("Service account credential %s has expired (expiration: %d, now: %d)",
 			credHeader.accessKey, cred.Expiration, time.Now().Unix())
-		return s3err.ErrAccessDenied
+		return nil, s3err.ErrAccessDenied
 	}
 
 	bucket := formValues.Get("bucket")
 	if !identity.CanDo(s3_constants.ACTION_WRITE, bucket, "") {
-		return s3err.ErrAccessDenied
+		return nil, s3err.ErrAccessDenied
 	}
 
 	// Get signing key.
@@ -798,9 +798,9 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(formValues http.
 
 	// Verify signature.
 	if !compareSignatureV4(newSignature, formValues.Get("X-Amz-Signature")) {
-		return s3err.ErrSignatureDoesNotMatch
+		return nil, s3err.ErrSignatureDoesNotMatch
 	}
-	return s3err.ErrNone
+	return identity, s3err.ErrNone
 }
 
 // sigV4PayloadHashHeader is x-amz-content-sha256. It participates in the
