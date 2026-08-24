@@ -323,19 +323,52 @@ func (s3a *S3ApiServer) updateBucketPolicyInIAM(bucket string, policyDoc *policy
 // ensureBucketPolicyInIAM backfills the IAM mirror for a policy the
 // subscription never saw change (one that predates the IAM integration).
 // Called from the lazy bucket-config load; a present mirror is left alone.
-func (s3a *S3ApiServer) ensureBucketPolicyInIAM(bucket string, policyDoc *policy_engine.PolicyDocument) {
+func (s3a *S3ApiServer) ensureBucketPolicyInIAM(bucket string, policyJSON []byte) {
 	iamManager := s3a.bucketPolicyIAMManager()
 	if iamManager == nil {
 		return
 	}
 
-	policyJSON, err := json.Marshal(policyDoc)
+	wrote, err := iamManager.EnsureBucketPolicy(context.Background(), bucket, policyJSON)
 	if err != nil {
-		glog.Warningf("backfill bucket policy for %s into IAM: marshal: %v", bucket, err)
+		glog.Warningf("backfill bucket policy for %s into IAM: %v", bucket, err)
+		return
+	}
+	if !wrote {
 		return
 	}
 
-	if err := iamManager.EnsureBucketPolicy(context.Background(), bucket, policyJSON); err != nil {
+	// The check-then-write above can race a concurrent policy change or
+	// delete: the event-driven mirror may have landed in between, and this
+	// write would then have re-stored bytes that are already stale - with
+	// no later event to heal it. Reconcile against a fresh entry read,
+	// which is authoritative; anything changing after this read fires its
+	// own event, and the mirror for it finds this write already present.
+	entry, err := s3a.getBucketEntry(bucket)
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			if err := s3a.removeBucketPolicyFromIAM(bucket); err != nil {
+				glog.Warningf("remove bucket policy for %s from IAM: %v", bucket, err)
+			}
+		}
+		return
+	}
+	current := entry.Extended[BUCKET_POLICY_METADATA_KEY]
+	if bytes.Equal(current, policyJSON) {
+		return
+	}
+	if len(current) == 0 {
+		if err := s3a.removeBucketPolicyFromIAM(bucket); err != nil {
+			glog.Warningf("remove bucket policy for %s from IAM: %v", bucket, err)
+		}
+		return
+	}
+	var policyDoc policy_engine.PolicyDocument
+	if err := json.Unmarshal(current, &policyDoc); err != nil {
+		glog.Warningf("backfill bucket policy for %s into IAM: parse: %v", bucket, err)
+		return
+	}
+	if err := s3a.updateBucketPolicyInIAM(bucket, &policyDoc); err != nil {
 		glog.Warningf("backfill bucket policy for %s into IAM: %v", bucket, err)
 	}
 }
