@@ -859,6 +859,7 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 		Auth:        string(assignResult.Auth),
 		Collection:  so.Collection,
 		Replication: so.Replication,
+		Fsync:       so.Fsync,
 	}
 	// Forward the replica holders so a client can write all copies directly.
 	for _, replica := range assignResult.Replicas {

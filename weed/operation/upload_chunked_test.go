@@ -280,7 +280,7 @@ func TestUploadChunkToHoldersRollsBackOnPartialFailure(t *testing.T) {
 	defer bad.Close()
 
 	hosts := []string{strings.TrimPrefix(good.URL, "http://"), strings.TrimPrefix(bad.URL, "http://")}
-	_, err := uploadChunkToHolders(context.Background(), hosts, fid, []byte("hello world"), "", "", &ChunkedUploadOption{})
+	_, err := uploadChunkToHolders(context.Background(), hosts, fid, []byte("hello world"), "", "", false, &ChunkedUploadOption{})
 
 	if err == nil {
 		t.Fatal("expected error from a partial fan-out")
@@ -637,5 +637,45 @@ func TestUploadReaderInChunksDoesNotMultiplyRelayAttempts(t *testing.T) {
 	// committed anyone else's to find, and no chunk will ever name that fid.
 	if got := atomic.LoadInt32(&deletes); got != 3 {
 		t.Errorf("expected every abandoned fid to be rolled back, got %d deletes", got)
+	}
+}
+
+// TestUploadReaderInChunksAppendsFsyncWhenAssigned verifies that a chunk
+// assignment carrying the storage rule's fsync decision lands as ?fsync=true
+// on the volume server upload URL.
+func TestUploadReaderInChunksAppendsFsyncWhenAssigned(t *testing.T) {
+	testData := []byte("data needing fsync")
+	reader := bytes.NewReader(testData)
+
+	assignFunc := func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error) {
+		return nil, &AssignResult{
+			Fid:       "test-fid,1234",
+			Url:       "http://test-volume:8080",
+			PublicUrl: "http://test-volume:8080",
+			Count:     1,
+			Fsync:     true,
+		}, nil
+	}
+
+	var gotUploadUrl string
+	uploadFunc := func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) {
+		gotUploadUrl = option.UploadUrl
+		return &UploadResult{
+			Size:       uint32(len(data)),
+			ContentMd5: "mock-md5-hash",
+		}, nil
+	}
+
+	if _, err := UploadReaderInChunks(context.Background(), reader, &ChunkedUploadOption{
+		ChunkSize:       8 * 1024,
+		SmallFileLimit:  256,
+		SaveSmallInline: false,
+		AssignFunc:      assignFunc,
+		UploadFunc:      uploadFunc,
+	}); err != nil {
+		t.Fatalf("Expected successful upload, got error: %v", err)
+	}
+	if !strings.Contains(gotUploadUrl, "?fsync=true") {
+		t.Errorf("Expected the upload URL to carry ?fsync=true when the assignment says fsync, got %q", gotUploadUrl)
 	}
 }

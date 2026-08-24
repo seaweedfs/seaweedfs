@@ -145,6 +145,7 @@ func (h *FileBrowserHandlers) uploadFileGrpc(ctx context.Context, filePath strin
 			PublicUrl: assignResp.Location.PublicUrl,
 			Count:     uint64(count),
 			Auth:      security.EncodedJwt(assignResp.Auth),
+			Fsync:     assignResp.Fsync,
 		}, nil
 	}
 

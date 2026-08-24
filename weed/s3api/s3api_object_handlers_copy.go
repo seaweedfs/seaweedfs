@@ -1706,6 +1706,9 @@ const multipartFramingOverhead = 1024
 // buffer is GC'd as soon as the upload returns.
 func newChunkUploadOption(chunkData []byte, assignResult *filer_pb.AssignVolumeResponse, isCompressed bool) *operation.UploadOption {
 	dstUrl := fmt.Sprintf("http://%s/%s", assignResult.Location.Url, assignResult.FileId)
+	if assignResult.Fsync {
+		dstUrl += "?fsync=true"
+	}
 	return &operation.UploadOption{
 		UploadUrl:         dstUrl,
 		Cipher:            false, // Data is already encrypted if source had CipherKey; don't re-encrypt
