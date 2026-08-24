@@ -631,6 +631,12 @@ func (h *FileBrowserHandlers) GetFileProperties(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	if isDir, _ := properties["is_directory"].(bool); !isDir {
+		if objectURL := h.adminServer.GetS3ObjectURL(filePath); objectURL != "" {
+			properties["object_url"] = objectURL
+		}
+	}
+
 	writeJSON(w, http.StatusOK, properties)
 }
 

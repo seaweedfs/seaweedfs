@@ -2,6 +2,7 @@ package dash
 
 import (
 	"context"
+	"net/url"
 	"path"
 	"strings"
 	"time"
@@ -46,6 +47,7 @@ type FileBrowserData struct {
 	BucketName        string    `json:"bucket_name"`
 	IsTableBucketPath bool      `json:"is_table_bucket_path"`
 	TableBucketName   string    `json:"table_bucket_name"`
+	S3Endpoint        string    `json:"s3_endpoint,omitempty"`
 	// Pagination fields
 	PageSize            int    `json:"page_size"`
 	HasNextPage         bool   `json:"has_next_page"`
@@ -213,6 +215,11 @@ func (s *AdminServer) GetFileBrowser(dir string, prefix string, lastFileName str
 		}
 	}
 
+	s3Endpoint := ""
+	if isBucketPath && bucketName != "" && !isTableBucketPath {
+		s3Endpoint = s.GetS3Endpoint()
+	}
+
 	return &FileBrowserData{
 		CurrentPath: dir,
 		ParentPath:  parentPath,
@@ -224,6 +231,7 @@ func (s *AdminServer) GetFileBrowser(dir string, prefix string, lastFileName str
 		BucketName:        bucketName,
 		IsTableBucketPath: isTableBucketPath,
 		TableBucketName:   tableBucketName,
+		S3Endpoint:        s3Endpoint,
 		// Pagination metadata
 		PageSize:            pageSize,
 		HasNextPage:         hasNextPage,
@@ -271,4 +279,52 @@ func (s *AdminServer) generateBreadcrumbs(dir string) []BreadcrumbItem {
 	}
 
 	return breadcrumbs
+}
+
+// S3ObjectURL builds the path-style S3 URL for a filer path under /buckets/,
+// percent-encoding each path segment. Returns "" for other paths.
+func S3ObjectURL(endpoint, fullPath string) string {
+	rel, ok := strings.CutPrefix(fullPath, "/buckets/")
+	if !ok || rel == "" || endpoint == "" {
+		return ""
+	}
+	segments := strings.Split(rel, "/")
+	for i, segment := range segments {
+		segments[i] = url.PathEscape(segment)
+	}
+	return strings.TrimRight(endpoint, "/") + "/" + strings.Join(segments, "/")
+}
+
+// GetS3ObjectURL returns the S3 URL an object under a regular bucket is served
+// at, or "" when the path is not a bucket object, the bucket is an S3 Tables
+// bucket, or no S3 endpoint is known.
+func (s *AdminServer) GetS3ObjectURL(fullPath string) string {
+	rel, ok := strings.CutPrefix(fullPath, "/buckets/")
+	if !ok {
+		return ""
+	}
+	bucketName, key, found := strings.Cut(rel, "/")
+	if !found || key == "" {
+		return ""
+	}
+	endpoint := s.GetS3Endpoint()
+	if endpoint == "" {
+		return ""
+	}
+	if err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
+			Directory: "/buckets",
+			Name:      bucketName,
+		})
+		if err != nil {
+			return err
+		}
+		if s3tables.IsTableBucketEntry(resp.Entry) {
+			endpoint = ""
+		}
+		return nil
+	}); err != nil {
+		glog.V(1).Infof("object url bucket lookup failed for %s: %v", bucketName, err)
+	}
+	return S3ObjectURL(endpoint, fullPath)
 }

@@ -160,6 +160,10 @@ type AdminServer struct {
 	s3TablesManager *s3tables.Manager
 	icebergPort     int
 	lancePort       int
+
+	// s3PublicEndpoint is the client-facing S3 address from admin.toml
+	// (s3.public_endpoint); discovered S3 servers are the fallback.
+	s3PublicEndpoint string
 }
 
 // Type definitions moved to types.go
@@ -201,6 +205,7 @@ func NewAdminServer(masters string, filerGroup string, templateFS http.FileSyste
 		s3TablesManager:               newS3TablesManager(),
 		icebergPort:                   icebergPort,
 		lancePort:                     lancePort,
+		s3PublicEndpoint:              strings.TrimRight(util.GetViper().GetString("s3.public_endpoint"), "/"),
 		pluginLock:                    lockManager,
 		adminPresenceLock:             presenceLock,
 		bgCancel:                      bgCancel,
@@ -1547,6 +1552,13 @@ func (s *AdminServer) GetClusterS3Servers() (*ClusterS3ServersData, error) {
 	}, nil
 }
 
+// GetS3Endpoint returns the configured address clients reach the S3 gateway
+// at, or "". S3 servers register only their gRPC address with the master, so
+// the client-facing address cannot be discovered and must be configured.
+func (s *AdminServer) GetS3Endpoint() string {
+	return s.s3PublicEndpoint
+}
+
 // GetAllFilers method moved to client_management.go
 
 // GetVolumeDetails method moved to volume_management.go
@@ -1573,6 +1585,7 @@ func (as *AdminServer) GetConfigInfo(w http.ResponseWriter, r *http.Request) {
 	configInfo["master_address"] = string(currentMaster)
 	configInfo["cache_expiration"] = as.cacheExpiration.String()
 	configInfo["filer_cache_expiration"] = as.filerCacheExpiration.String()
+	configInfo["s3_public_endpoint"] = as.s3PublicEndpoint
 
 	// Add maintenance system info
 	if as.maintenanceManager != nil {
