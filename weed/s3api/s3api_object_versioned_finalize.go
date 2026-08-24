@@ -156,8 +156,10 @@ func (s3a *S3ApiServer) routedDeleteSpecificVersion(owner pb.ServerAddress, buck
 // routedDeleteNullVersion deletes the null version (the regular object entry, not
 // a .versions file) off the distributed lock. There is no pointer to recompute;
 // the WORM guards, when present, gate the delete on the object entry itself
-// (condition defaults to lock_key).
-func (s3a *S3ApiServer) routedDeleteNullVersion(owner pb.ServerAddress, bucket, object string, worm, bypass bool) s3err.ErrorCode {
+// (condition defaults to lock_key). The second return reports whether the delete
+// was settled here: the raw delete cannot remove an entry other keys are nested
+// under, which the lock path handles by stripping the object off it instead.
+func (s3a *S3ApiServer) routedDeleteNullVersion(owner pb.ServerAddress, bucket, object string, worm, bypass bool) (s3err.ErrorCode, bool) {
 	fullpath := util.NewFullPath(s3a.bucketDir(bucket), object)
 	dir, name := fullpath.DirAndName()
 	resp, err := s3a.objectTxnOnFiler(owner, &filer_pb.ObjectTransactionRequest{
@@ -170,15 +172,15 @@ func (s3a *S3ApiServer) routedDeleteNullVersion(owner pb.ServerAddress, bucket, 
 	})
 	switch {
 	case err != nil:
-		glog.Errorf("routedDeleteNullVersion: %s/%s on %s: %v", bucket, object, owner, err)
-		return s3err.ErrInternalError
+		glog.Warningf("routedDeleteNullVersion: %s/%s on %s, falling back to lock: %v", bucket, object, owner, err)
+		return s3err.ErrNone, false
 	case resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED:
-		return s3err.ErrAccessDenied
+		return s3err.ErrAccessDenied, true
 	case resp.Error != "":
-		glog.Errorf("routedDeleteNullVersion: %s/%s: %s", bucket, object, resp.Error)
-		return s3err.ErrInternalError
+		glog.Warningf("routedDeleteNullVersion: %s/%s returned %q, falling back to lock", bucket, object, resp.Error)
+		return s3err.ErrNone, false
 	default:
-		return s3err.ErrNone
+		return s3err.ErrNone, true
 	}
 }
 

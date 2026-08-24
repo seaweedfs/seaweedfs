@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -192,6 +193,96 @@ func TestS3PrefixObjectKeys(t *testing.T) {
 			require.Nil(t, token, "maxKeys=%d did not finish", maxKeys)
 			assert.Equal(t, []string{"foo", "foobar", "other", "zed"}, keys, "maxKeys=%d", maxKeys)
 			assert.Equal(t, []string{"foo/", "zed/"}, prefixes, "maxKeys=%d", maxKeys)
+		}
+	})
+
+	// Versioning reaches a prefix object from two directions: a suspended bucket
+	// writes the null version at the key's own path, and a bucket versioned later
+	// finds one already sitting there. Both leave a key that is a directory with
+	// version history beside it.
+	t.Run("Versioned", func(t *testing.T) {
+		setVersioning := func(t *testing.T, bucket, status string) {
+			t.Helper()
+			_, err := cluster.s3Client.PutBucketVersioning(&s3.PutBucketVersioningInput{
+				Bucket:                  aws.String(bucket),
+				VersioningConfiguration: &s3.VersioningConfiguration{Status: aws.String(status)},
+			})
+			require.NoError(t, err)
+		}
+
+		// Both write orders, in a bucket that is versioned and in one where versioning
+		// was suspended - the suspended one is the case that writes at the key's path.
+		for _, state := range []string{"Enabled", "Suspended"} {
+			bucket := createTestBucket(t, cluster, "test-prefix-"+strings.ToLower(state)+"-")
+			setVersioning(t, bucket, "Enabled")
+			if state == "Suspended" {
+				setVersioning(t, bucket, "Suspended")
+			}
+			put(t, bucket, "child/foo/bar", nested)
+			put(t, bucket, "child/foo", body)
+			put(t, bucket, "prefix/foo", body)
+			put(t, bucket, "prefix/foo/bar", nested)
+
+			assert.Equal(t, []string{"child/foo", "child/foo/bar", "prefix/foo", "prefix/foo/bar"},
+				listKeys(t, bucket), state)
+			for _, key := range []string{"child/foo", "prefix/foo"} {
+				read(t, bucket, key, body)
+			}
+			for _, key := range []string{"child/foo/bar", "prefix/foo/bar"} {
+				read(t, bucket, key, nested)
+			}
+		}
+
+		// A prefix object written before versioning is the key's null version. Removing
+		// that version by id must not take the keys nested under it with it.
+		bucket := createTestBucket(t, cluster, "test-prefix-nullversion-")
+		put(t, bucket, "collision/foo/bar", nested)
+		put(t, bucket, "collision/foo", body)
+		setVersioning(t, bucket, "Enabled")
+		newer := []byte("written after versioning was enabled")
+		versioned, err := cluster.s3Client.PutObject(&s3.PutObjectInput{
+			Bucket: aws.String(bucket),
+			Key:    aws.String("collision/foo"),
+			Body:   bytes.NewReader(newer),
+		})
+		require.NoError(t, err)
+
+		for _, v := range []struct {
+			id   string
+			want []byte
+		}{{"null", body}, {aws.StringValue(versioned.VersionId), newer}} {
+			got, err := cluster.s3Client.GetObject(&s3.GetObjectInput{
+				Bucket:    aws.String(bucket),
+				Key:       aws.String("collision/foo"),
+				VersionId: aws.String(v.id),
+			})
+			require.NoError(t, err, "get version %s", v.id)
+			body, err := io.ReadAll(got.Body)
+			require.NoError(t, err)
+			got.Body.Close()
+			assert.Equal(t, v.want, body, "get version %s", v.id)
+		}
+
+		_, err = cluster.s3Client.DeleteObject(&s3.DeleteObjectInput{
+			Bucket:    aws.String(bucket),
+			Key:       aws.String("collision/foo"),
+			VersionId: aws.String("null"),
+		})
+		require.NoError(t, err, "the null version sits on a directory other keys live in")
+
+		read(t, bucket, "collision/foo", newer)
+		read(t, bucket, "collision/foo/bar", nested)
+		remaining, err := cluster.s3Client.ListObjectVersions(&s3.ListObjectVersionsInput{
+			Bucket: aws.String(bucket),
+			Prefix: aws.String("collision/foo"),
+		})
+		require.NoError(t, err)
+		for _, v := range remaining.Versions {
+			if aws.StringValue(v.Key) != "collision/foo" {
+				// collision/foo/bar predates versioning too, and keeps its null version.
+				continue
+			}
+			assert.NotEqual(t, "null", aws.StringValue(v.VersionId), "the null version was deleted")
 		}
 	})
 

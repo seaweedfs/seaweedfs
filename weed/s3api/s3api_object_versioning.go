@@ -22,6 +22,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	s3_constants "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -1138,8 +1139,11 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(ctx context.Context, bucket,
 			return nil
 		}
 
-		// Delete the regular file
-		deleteErr := s3a.rmObject(bucketDir, normalizedObject, !metadataOnly, false)
+		// Delete the regular file. rmObject takes a parent and a name, and the demote
+		// it falls back to for an entry other keys are nested under writes the entry
+		// back under that parent - so a key with a slash in it has to be split first.
+		dir, name := util.NewFullPath(bucketDir, normalizedObject).DirAndName()
+		deleteErr := s3a.rmObject(dir, name, !metadataOnly, false)
 		if deleteErr != nil {
 			// Check if file was already deleted by another process
 			if _, checkErr := s3a.getEntry(bucketDir, normalizedObject); checkErr != nil {
