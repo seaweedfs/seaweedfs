@@ -7,9 +7,12 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
+	v1credentials "github.com/aws/aws-sdk-go/aws/credentials"
+	v1signer "github.com/aws/aws-sdk-go/aws/signer/v4"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -374,23 +377,81 @@ func TestS3PrefixObjectKeys(t *testing.T) {
 		read(t, bucket, "collision/foo/bar", nested)
 	})
 
-	// Copying onto such a key is refused rather than supported - that is the other
-	// half of the collision, and its own issue - but the refusal has to be the same
-	// deterministic one a PutObject gets, not a 500 the SDK retries.
-	t.Run("CopyOntoPrefixObject", func(t *testing.T) {
+	// A key that other keys are nested under is a copy source and a copy destination
+	// like any other. The keys nested under either end are not part of the copy.
+	t.Run("Copy", func(t *testing.T) {
 		bucket := createTestBucket(t, cluster, "test-prefix-copy-")
-		put(t, bucket, "collision/foo/bar", nested)
-		put(t, bucket, "source", body)
+		copyObject := func(t *testing.T, src, dst string) {
+			t.Helper()
+			_, err := cluster.s3Client.CopyObject(&s3.CopyObjectInput{
+				Bucket:     aws.String(bucket),
+				Key:        aws.String(dst),
+				CopySource: aws.String(bucket + "/" + src),
+			})
+			require.NoError(t, err, "copy %s to %s", src, dst)
+		}
 
-		_, err := cluster.s3Client.CopyObject(&s3.CopyObjectInput{
-			Bucket:     aws.String(bucket),
-			Key:        aws.String("collision/foo"),
-			CopySource: aws.String(bucket + "/source"),
-		})
-		var refused awserr.RequestFailure
-		require.ErrorAs(t, err, &refused)
-		assert.Equal(t, http.StatusConflict, refused.StatusCode())
-		assert.Equal(t, "ExistingObjectIsDirectory", refused.Code())
+		put(t, bucket, "collision/foo", body)
+		put(t, bucket, "collision/foo/bar", nested)
+
+		// Out of a prefix object, into a key of its own.
+		copyObject(t, "collision/foo", "plain")
+		read(t, bucket, "plain", body)
+		read(t, bucket, "collision/foo", body)
+		read(t, bucket, "collision/foo/bar", nested)
+
+		// Into a key that other keys are nested under.
+		put(t, bucket, "target/child", nested)
+		copyObject(t, "plain", "target")
+		read(t, bucket, "target", body)
+		read(t, bucket, "target/child", nested)
+
+		// And between two of them.
+		put(t, bucket, "other", []byte("copied between prefix keys"))
+		copyObject(t, "other", "collision/foo")
+		read(t, bucket, "collision/foo", []byte("copied between prefix keys"))
+		read(t, bucket, "collision/foo/bar", nested)
+
+		assert.Equal(t, []string{"collision/foo", "collision/foo/bar", "other", "plain", "target", "target/child"},
+			listKeys(t, bucket))
+	})
+
+	// Rename moves the object off the key without moving the keys nested under it,
+	// which is not what the filer's atomic rename of a directory would do.
+	t.Run("Rename", func(t *testing.T) {
+		bucket := createTestBucket(t, cluster, "test-prefix-rename-")
+		renameObject := func(t *testing.T, src, dst string) {
+			t.Helper()
+			req, _ := http.NewRequest(http.MethodPut, cluster.s3Endpoint+"/"+bucket+"/"+dst+"?renameObject=", nil)
+			req.Header.Set("x-amz-rename-source", "/"+bucket+"/"+src)
+			signer := v1signer.NewSigner(v1credentials.NewStaticCredentials(testAccessKey, testSecretKey, ""))
+			_, err := signer.Sign(req, nil, "s3", testRegion, time.Now())
+			require.NoError(t, err)
+
+			resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
+			require.NoError(t, err, "rename %s to %s", src, dst)
+			defer resp.Body.Close()
+			io.Copy(io.Discard, resp.Body)
+			require.Equal(t, http.StatusOK, resp.StatusCode, "rename %s to %s", src, dst)
+		}
+
+		put(t, bucket, "collision/foo", body)
+		put(t, bucket, "collision/foo/bar", nested)
+
+		// Off a prefix object: the key goes, the keys under it stay.
+		renameObject(t, "collision/foo", "moved")
+		read(t, bucket, "moved", body)
+		read(t, bucket, "collision/foo/bar", nested)
+		gone(t, bucket, "collision/foo")
+
+		// Onto a key other keys are nested under.
+		put(t, bucket, "target/child", nested)
+		renameObject(t, "moved", "target")
+		read(t, bucket, "target", body)
+		read(t, bucket, "target/child", nested)
+		gone(t, bucket, "moved")
+
+		assert.Equal(t, []string{"collision/foo/bar", "target", "target/child"}, listKeys(t, bucket))
 	})
 
 	// A directory SeaweedFS keeps its own state in is not a prefix a key can be

@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"reflect"
 	"strconv"
 	"strings"
@@ -67,6 +68,23 @@ func isValidDirective(value string) bool {
 // hasPrefixFold reports whether s starts with prefix, ignoring case.
 func hasPrefixFold(s, prefix string) bool {
 	return len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix)
+}
+
+// prefixObjectSource presents the object stored on a key that other keys are nested
+// under as the plain object that key names. The entry itself stays a directory - it
+// is where those keys live - so a caller that copies or moves the object works off
+// this view and leaves the directory, and everything under it, alone.
+func prefixObjectSource(entry *filer_pb.Entry) *filer_pb.Entry {
+	if entry == nil || !entry.IsPrefixObject() {
+		return entry
+	}
+	flattened := proto.Clone(entry).(*filer_pb.Entry)
+	flattened.IsDirectory = false
+	if flattened.Attributes != nil {
+		flattened.Attributes.FileMode &^= uint32(os.ModeDir)
+	}
+	delete(flattened.Extended, s3_constants.SeaweedFSPrefixObject)
+	return flattened
 }
 
 // classifyCopySourceError maps a copy-source lookup to an S3 error: a missing
@@ -180,6 +198,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	entry, err := s3a.resolveCopySourceEntry(srcBucket, srcObject, srcVersionId, srcVersioningState)
+	entry = prefixObjectSource(entry)
 	if errCode := classifyCopySourceError(entry, err); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
@@ -250,6 +269,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		routeInPlace := owner != "" && !mimeChanged
 		selfCopyBody := func() s3err.ErrorCode {
 			currentEntry, currentErr := s3a.resolveCopySourceEntry(srcBucket, srcObject, srcVersionId, srcVersioningState)
+			currentEntry = prefixObjectSource(currentEntry)
 			if errCode := classifyCopySourceError(currentEntry, currentErr); errCode != s3err.ErrNone {
 				return errCode
 			}

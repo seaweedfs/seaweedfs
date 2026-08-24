@@ -32,7 +32,7 @@ func (entry *Entry) IsDirectoryKeyObject() bool {
 // IsPrefixObject reports whether the directory entry also holds the object named by its
 // path without a trailing slash, which an empty object leaves no other trace of.
 func (entry *Entry) IsPrefixObject() bool {
-	if !entry.IsDirectory {
+	if entry == nil || !entry.IsDirectory {
 		return false
 	}
 	_, marked := entry.Extended[s3_constants.SeaweedFSPrefixObject]

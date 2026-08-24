@@ -24,7 +24,18 @@ func (s3a *S3ApiServer) mkdir(parentDirectoryPath string, dirName string, fn fun
 
 func (s3a *S3ApiServer) mkFile(parentDirectoryPath string, fileName string, chunks []*filer_pb.FileChunk, fn func(entry *filer_pb.Entry)) error {
 
-	return filer_pb.MkFile(context.Background(), s3a, parentDirectoryPath, fileName, chunks, fn)
+	err := filer_pb.MkFile(context.Background(), s3a, parentDirectoryPath, fileName, chunks, fn)
+	if errors.Is(err, filer_pb.ErrExistingIsDirectory) && !isReservedDirectoryName(fileName) {
+		// Other keys are nested under this one, so the object goes onto the directory
+		// they live in - the same place a PutObject of this key writes it.
+		err = filer_pb.MkFile(context.Background(), s3a, parentDirectoryPath, fileName, chunks, func(entry *filer_pb.Entry) {
+			if fn != nil {
+				fn(entry)
+			}
+			entry.MarkPrefixObject()
+		})
+	}
+	return err
 
 }
 
