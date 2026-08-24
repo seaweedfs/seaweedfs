@@ -1630,6 +1630,9 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	if miniProgressBoard != nil {
 		miniProgressBoard.starting("Admin")
 	}
+	// Snapshot the options, and with them the reserved listener, so a later
+	// in-process run cannot swap either out from under this goroutine.
+	adminOptions := miniAdminOptions
 	done := trackMiniClient()
 	go func() {
 		defer done()
@@ -1645,13 +1648,13 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 				lancePort = *miniS3Options.portLance
 			}
 		}
-		if err := startAdminServer(ctx, miniAdminOptions, *miniEnableAdminUI, icebergPort, lancePort, urlPrefix); err != nil {
+		if err := startAdminServer(ctx, adminOptions, *miniEnableAdminUI, icebergPort, lancePort, urlPrefix); err != nil {
 			glog.Errorf("Admin server error: %v", err)
 		}
 		// A no-op once the admin took it over and shut it down; it matters when
 		// startAdminServer bailed out before that.
-		if miniAdminOptions.workerGrpcListener != nil {
-			miniAdminOptions.workerGrpcListener.Close()
+		if adminOptions.workerGrpcListener != nil {
+			adminOptions.workerGrpcListener.Close()
 		}
 	}()
 
