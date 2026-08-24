@@ -856,6 +856,13 @@ func (vc *versionCollector) collectVersions(currentPath, relativePath string) er
 							vc.commonPrefixes[commonPrefix] = true
 						}
 
+						// The prefix rolled up here belongs to the keys nested under this
+						// entry. A prefix object is also a key of its own, and that key
+						// carries no trailing slash, so it does not roll up with them.
+						if entry.IsPrefixObject() {
+							vc.processPrefixObject(currentPath, entryPath, entry)
+						}
+
 						// Skip further processing (recursion or addition) for this entry
 						// because it has been rolled up into the CommonPrefix
 						continue
@@ -879,13 +886,31 @@ func (vc *versionCollector) collectVersions(currentPath, relativePath string) er
 	return nil
 }
 
+// processPrefixObject emits the null version of a key that other keys are nested
+// under. The key carries no trailing slash, so it is a null object like any other and
+// needs the same reconciliation against a .versions sibling - but the directory it is
+// stored on is walked as an ancestor of the requested prefix, which its own key does
+// not have to match.
+func (vc *versionCollector) processPrefixObject(currentPath, entryPath string, entry *filer_pb.Entry) {
+	if !strings.HasPrefix(entryPath, vc.prefix) {
+		return
+	}
+	if vc.delimiter != "" && strings.Contains(entryPath[len(vc.prefix):], vc.delimiter) {
+		// The key folds into the same CommonPrefix its nested keys do.
+		return
+	}
+	vc.processRegularFile(currentPath, entryPath, entry)
+}
+
 // processDirectory handles directory entries
 func (vc *versionCollector) processDirectory(currentPath, entryPath string, entry *filer_pb.Entry) error {
 	// Handle explicit S3 directory object. Match ListObjectsV2's
 	// IsDirectoryKeyObject (any non-empty mime), not just FolderMimeType:
 	// an SDK PutObject of "dir/" carries a default Content-Type, so the two
 	// listings must agree on what counts as a directory key.
-	if entry.IsDirectoryKeyObject() {
+	if entry.IsPrefixObject() {
+		vc.processPrefixObject(currentPath, entryPath, entry)
+	} else if entry.IsDirectoryKeyObject() {
 		vc.processExplicitDirectory(entryPath, entry)
 	}
 

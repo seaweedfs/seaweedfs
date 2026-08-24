@@ -187,6 +187,10 @@ func clearDirectoryMarkerMetadata(entry *filer_pb.Entry) {
 	filtered := make(map[string][]byte)
 	for k, v := range entry.Extended {
 		lowerKey := strings.ToLower(k)
+		if lowerKey == s3_constants.SeaweedFSPrefixObject {
+			// The path is a plain directory again, not a key of its own.
+			continue
+		}
 		if strings.HasPrefix(lowerKey, "xattr-") || strings.HasPrefix(lowerKey, s3_constants.SeaweedFSInternalPrefix) {
 			filtered[k] = v
 		}

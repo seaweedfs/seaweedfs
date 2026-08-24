@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
@@ -299,7 +300,11 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, existing *Entry, 
 		}
 		glog.V(4).InfofCtx(ctx, "UpdateEntry %s: old entry: %v", entry.FullPath, oldEntry.Name())
 		if err := f.UpdateEntry(ctx, oldEntry, entry); err != nil {
-			glog.ErrorfCtx(ctx, "update entry %s: %v", entry.FullPath, err)
+			if errors.Is(err, filer_pb.ErrExistingIsDirectory) || errors.Is(err, filer_pb.ErrExistingIsFile) {
+				glog.V(2).InfofCtx(ctx, "update entry %s: %v", entry.FullPath, err)
+			} else {
+				glog.ErrorfCtx(ctx, "update entry %s: %v", entry.FullPath, err)
+			}
 			return fmt.Errorf("update entry %s: %w", entry.FullPath, err)
 		}
 	}
@@ -388,6 +393,12 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 		// the original object data remains accessible.
 		glog.V(2).InfofCtx(ctx, "promoting %s from file to directory for %s", dirPath, entry.FullPath)
 		dirEntry.Attr.Mode |= os.ModeDir | 0111
+		// An empty object leaves no chunks, content or mime behind, so without the
+		// mark the promotion would hide it.
+		if dirEntry.Extended == nil {
+			dirEntry.Extended = make(map[string][]byte)
+		}
+		dirEntry.Extended[s3_constants.SeaweedFSPrefixObject] = []byte("true")
 		if updateErr := f.Store.UpdateEntry(ctx, dirEntry); updateErr != nil {
 			return fmt.Errorf("promote %s to directory: %v", dirPath, updateErr)
 		}
@@ -481,12 +492,15 @@ func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry) (err er
 		} else {
 			f.ensureEntryInode(entry)
 		}
+		// A type conflict is reported through the sentinel, and callers act on it -
+		// an S3 write of a key other keys are nested under retries as a prefix object -
+		// so it is the caller's outcome that decides whether anything went wrong.
 		if oldEntry.IsDirectory() && !entry.IsDirectory() {
-			glog.ErrorfCtx(ctx, "existing %s is a directory", oldEntry.FullPath)
+			glog.V(2).InfofCtx(ctx, "existing %s is a directory", oldEntry.FullPath)
 			return fmt.Errorf("%s: %w", oldEntry.FullPath, filer_pb.ErrExistingIsDirectory)
 		}
 		if !oldEntry.IsDirectory() && entry.IsDirectory() {
-			glog.ErrorfCtx(ctx, "existing %s is a file", oldEntry.FullPath)
+			glog.V(2).InfofCtx(ctx, "existing %s is a file", oldEntry.FullPath)
 			return fmt.Errorf("%s: %w", oldEntry.FullPath, filer_pb.ErrExistingIsFile)
 		}
 	}
@@ -722,5 +736,6 @@ func (f *Filer) IsDirectoryKeyObject(ctx context.Context, p util.FullPath) (bool
 		return false, nil
 	}
 	// Mirror filer_pb.Entry.IsDirectoryKeyObject so the cleaner keeps a promoted file's data.
-	return entry.IsDirectory() && (entry.Mime != "" || len(entry.GetChunks()) > 0 || len(entry.Content) > 0 || entry.IsInRemoteOnly()), nil
+	_, isPrefixObject := entry.Extended[s3_constants.SeaweedFSPrefixObject]
+	return entry.IsDirectory() && (entry.Mime != "" || len(entry.GetChunks()) > 0 || len(entry.Content) > 0 || entry.IsInRemoteOnly() || isPrefixObject), nil
 }

@@ -96,6 +96,36 @@ func TestDeleteObjectEntryDemotesNonEmptyDirectoryMarker(t *testing.T) {
 	}, updated.Extended)
 }
 
+// A prefix object is demoted the same way, and the mark has to go with the data:
+// the path is a plain directory again, and no longer a key of its own.
+func TestDeleteObjectEntryDemotesPrefixObject(t *testing.T) {
+	client := &deleteObjectEntryTestClient{
+		deleteResp: &filer_pb.DeleteEntryResponse{
+			Error: filer.MsgFailDelNonEmptyFolder + ": /buckets/test/photos",
+		},
+		lookupResp: &filer_pb.LookupDirectoryEntryResponse{
+			Entry: &filer_pb.Entry{
+				Name:        "photos",
+				IsDirectory: true,
+				Attributes:  &filer_pb.FuseAttributes{},
+				Extended: map[string][]byte{
+					s3_constants.SeaweedFSPrefixObject: []byte("true"),
+					s3_constants.ExtETagKey:            []byte("etag"),
+				},
+			},
+		},
+	}
+
+	require.NoError(t, deleteObjectEntry(client, "/buckets/test", "photos", true, false))
+	require.NotNil(t, client.updateReq)
+
+	updated := client.updateReq.Entry
+	require.NotNil(t, updated)
+	assert.False(t, updated.IsPrefixObject())
+	assert.False(t, updated.IsDirectoryKeyObject())
+	assert.Empty(t, updated.Extended)
+}
+
 func TestDeleteObjectEntryTreatsImplicitDirectoryAsSuccessfulNoop(t *testing.T) {
 	client := &deleteObjectEntryTestClient{
 		deleteResp: &filer_pb.DeleteEntryResponse{

@@ -364,7 +364,7 @@ func (s3a *S3ApiServer) hasChildren(ctx context.Context, bucket, prefix string) 
 // Such a path is not an S3 object: GET/HEAD answer 404 like AWS does for a prefix, and
 // Hadoop-style clients then discover the directory through their LIST fallback.
 func isBareDirectory(entry *filer_pb.Entry) bool {
-	return entry != nil && entry.IsDirectory && filer.FileSize(entry) == 0
+	return entry != nil && entry.IsDirectory && filer.FileSize(entry) == 0 && !entry.IsPrefixObject()
 }
 
 // checkDirectoryObject checks if the object is a directory object (ends with "/") and if it exists
