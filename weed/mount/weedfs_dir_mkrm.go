@@ -2,6 +2,7 @@ package mount
 
 import (
 	"context"
+	"errors"
 	"os"
 	"syscall"
 	"time"
@@ -74,6 +75,12 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 		Entry:                    newEntry,
 		Signatures:               []int32{wfs.signature},
 		SkipCheckParentDirectory: true,
+		// mkdir(2) is exclusive by contract: creating an existing path must
+		// fail with EEXIST. Without OExcl the filer treats a concurrent
+		// duplicate as an update and reports success to both callers; the
+		// kernel's pre-mkdir lookup only catches the duplicate when the
+		// winner's create is already visible, which a cross-node race defeats.
+		OExcl: true,
 	}
 
 	glog.V(1).Infof("mkdir: %v", request)
@@ -98,6 +105,14 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 
 	if err != nil {
 		wfs.mapPbIdFromFilerToLocal(newEntry)
+		if errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
+			// Lost a create race: the path exists on the filer but not yet in
+			// this mount's cache. Drop the parent's children cache so the next
+			// lookup fetches the winner's entry instead of waiting for the
+			// metadata subscription to deliver it.
+			wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
+			return fuse.Status(syscall.EEXIST)
+		}
 		return fuse.EIO
 	}
 
