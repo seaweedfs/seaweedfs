@@ -190,6 +190,7 @@ func (s *AdminServer) GetFileBrowser(dir string, prefix string, lastFileName str
 	bucketName := ""
 	isTableBucketPath := false
 	tableBucketName := ""
+	isRegularBucket := false
 	if strings.HasPrefix(dir, "/buckets/") {
 		isBucketPath = true
 		pathParts := strings.Split(strings.Trim(dir, "/"), "/")
@@ -207,6 +208,8 @@ func (s *AdminServer) GetFileBrowser(dir string, prefix string, lastFileName str
 				if s3tables.IsTableBucketEntry(resp.Entry) {
 					isTableBucketPath = true
 					tableBucketName = bucketName
+				} else {
+					isRegularBucket = true
 				}
 				return nil
 			}); err != nil {
@@ -216,7 +219,7 @@ func (s *AdminServer) GetFileBrowser(dir string, prefix string, lastFileName str
 	}
 
 	s3Endpoint := ""
-	if isBucketPath && bucketName != "" && !isTableBucketPath {
+	if isRegularBucket {
 		s3Endpoint = s.GetS3Endpoint()
 	}
 
@@ -325,6 +328,7 @@ func (s *AdminServer) GetS3ObjectURL(fullPath string) string {
 		return nil
 	}); err != nil {
 		glog.V(1).Infof("object url bucket lookup failed for %s: %v", bucketName, err)
+		return ""
 	}
 	return S3ObjectURL(endpoint, fullPath)
 }
