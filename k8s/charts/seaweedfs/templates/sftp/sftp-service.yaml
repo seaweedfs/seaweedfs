@@ -21,6 +21,7 @@ spec:
   {{- $nodePorts = .Values.sftp.service.nodePorts | default dict }}
   {{- end }}
   type: {{ $serviceType }}
+  {{- include "seaweedfs.service.loadBalancerFields" .Values.sftp.service }}
   internalTrafficPolicy: {{ .Values.sftp.internalTrafficPolicy | default "Cluster" }}
   ports:
   - name: "swfs-sftp"

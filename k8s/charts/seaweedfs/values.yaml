@@ -1184,6 +1184,10 @@ s3:
   # Service settings
   service:
     type: ClusterIP
+    # used only when type is LoadBalancer
+    loadBalancerClass: ""
+    loadBalancerIP: ""
+    loadBalancerSourceRanges: []
     # fixed nodePorts, used only when type is NodePort or LoadBalancer
     nodePorts:
       http: null
@@ -1288,6 +1292,10 @@ sftp:
   # Service settings
   service:
     type: ClusterIP
+    # used only when type is LoadBalancer
+    loadBalancerClass: ""
+    loadBalancerIP: ""
+    loadBalancerSourceRanges: []
     # fixed nodePorts, used only when type is NodePort or LoadBalancer
     nodePorts:
       sftp: null
@@ -1430,6 +1438,10 @@ admin:
   service:
     type: ClusterIP
     annotations: {}
+    # used only when type is LoadBalancer
+    loadBalancerClass: ""
+    loadBalancerIP: ""
+    loadBalancerSourceRanges: []
     # fixed nodePorts, used only when type is NodePort or LoadBalancer
     nodePorts:
       http: null
@@ -1654,6 +1666,10 @@ allInOne:
     annotations: {}  # Annotations for the service
     type: ClusterIP  # Service type (ClusterIP, NodePort, LoadBalancer)
     internalTrafficPolicy: Cluster  # Internal traffic policy
+    # used only when type is LoadBalancer
+    loadBalancerClass: ""
+    loadBalancerIP: ""
+    loadBalancerSourceRanges: []
     # fixed nodePorts, used only when type is NodePort or LoadBalancer
     nodePorts:
       master: null
