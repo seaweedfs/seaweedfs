@@ -946,7 +946,10 @@ func ensureAllPortsAvailableOnIP(bindIp string) error {
 	// waits for all of them first. The admin gRPC port sits inside the Linux
 	// ephemeral range, so during that gap one of the cluster's own outgoing
 	// connections can take it and the admin then dies on bind. Hold a listener
-	// from here and hand it to the admin instead of re-binding later.
+	// from here and hand it to the admin instead of re-binding later. Clear
+	// first: an in-process rerun would otherwise inherit the closed listener
+	// of the previous run and only find out inside Serve.
+	miniAdminOptions.workerGrpcListener = nil
 	if listener, err := net.Listen("tcp", fmt.Sprintf(":%d", *miniAdminOptions.grpcPort)); err != nil {
 		glog.Warningf("Could not reserve Admin gRPC port %d: %v", *miniAdminOptions.grpcPort, err)
 	} else {
