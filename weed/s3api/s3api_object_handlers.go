@@ -67,11 +67,17 @@ type commitOnFirstWrite struct {
 }
 
 func (c *commitOnFirstWrite) Write(p []byte) (int, error) {
+	c.Commit()
+	return c.w.Write(p)
+}
+
+// Commit commits the response if the first body write has not already done so;
+// a zero-length body never writes, so a successful stream must end with this.
+func (c *commitOnFirstWrite) Commit() {
 	if !c.committed {
 		c.committed = true
 		c.commit()
 	}
-	return c.w.Write(p)
 }
 
 // adjustRangeForPart adjusts a client's Range header to absolute offsets within a part.
@@ -1227,11 +1233,7 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 		// Streaming error after WriteHeader was called - response already partially written
 		return newStreamErrorWithResponse(err)
 	}
-	if !body.committed {
-		// a zero-length body never writes, so commit the empty response here
-		body.committed = true
-		body.commit()
-	}
+	body.Commit()
 	glog.V(4).Infof("streamFromVolumeServers: streamFn completed successfully, wrote %d bytes", written)
 	return nil
 }
@@ -1466,28 +1468,26 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 	}
 	keyValidateTime = time.Since(tKeyValidate)
 
-	// Set response headers
-	// IMPORTANT: Set ALL headers BEFORE calling WriteHeader (headers are ignored after WriteHeader)
-	tHeaderSet := time.Now()
-	s3a.setResponseHeaders(w, r, entry, totalSize)
-	s3a.addSSEResponseHeadersFromEntry(w, r, entry, sseType)
-
-	// Override/add range-specific headers if this is a range request
-	if isRangeRequest {
-		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+size-1, totalSize))
-		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
-	}
-	headerSetTime = time.Since(tHeaderSet)
-
-	// Now write status code (headers are all set)
-	if isRangeRequest {
-		w.WriteHeader(http.StatusPartialContent)
-	} else {
-		w.WriteHeader(http.StatusOK)
-	}
-
-	// Track time to first byte metric
-	TimeToFirstByte(r.Method, t0, r)
+	// Headers and status are committed on the first body write, once the first
+	// fetch and decryption step has succeeded -- the same deferral as
+	// streamFromVolumeServers, so a missing needle or broken decrypt setup
+	// surfaces as a clean 5xx instead of a 200 with a broken body.
+	body := &commitOnFirstWrite{w: w, commit: func() {
+		tHeaderSet := time.Now()
+		s3a.setResponseHeaders(w, r, entry, totalSize)
+		s3a.addSSEResponseHeadersFromEntry(w, r, entry, sseType)
+		if isRangeRequest {
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+size-1, totalSize))
+			w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+		}
+		headerSetTime = time.Since(tHeaderSet)
+		if isRangeRequest {
+			w.WriteHeader(http.StatusPartialContent)
+		} else {
+			w.WriteHeader(http.StatusOK)
+		}
+		TimeToFirstByte(r.Method, t0, r)
+	}}
 
 	// Full Range Optimization: Use ViewFromChunks to only fetch/decrypt needed chunks
 	tDecryptSetup := time.Now()
@@ -1496,7 +1496,7 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 	if isRangeRequest {
 		glog.V(2).Infof("Using range-aware SSE decryption for offset=%d size=%d", offset, size)
 		streamFetchTime = 0 // No full stream fetch in range-aware path
-		written, err := s3a.streamDecryptedRangeFromChunks(r.Context(), w, entry, offset, size, sseType, decryptionKey)
+		written, err := s3a.streamDecryptedRangeFromChunks(r.Context(), body, entry, offset, size, sseType, decryptionKey)
 		decryptSetupTime = time.Since(tDecryptSetup)
 		copyTime = decryptSetupTime // Streaming is included in decrypt setup for range-aware path
 		// Track traffic even on partial writes for accurate egress accounting
@@ -1504,9 +1504,13 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 			BucketTrafficSent(written, r)
 		}
 		if err != nil {
-			// Error after WriteHeader - response already written
+			if !body.committed {
+				// nothing written yet -- the caller writes the S3 error response
+				return err
+			}
 			return newStreamErrorWithResponse(err)
 		}
+		body.Commit()
 		return nil
 	}
 
@@ -1541,15 +1545,13 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 			encryptedReader, streamErr := s3a.getEncryptedStreamFromVolumes(r.Context(), entry)
 			streamFetchTime = time.Since(tStreamFetch)
 			if streamErr != nil {
-				// Error after WriteHeader - response already written
-				return newStreamErrorWithResponse(streamErr)
+				return streamErr
 			}
 			defer encryptedReader.Close()
 
 			iv := entry.Extended[s3_constants.SeaweedFSSSEIV]
 			if len(iv) == 0 {
-				// Error after WriteHeader - response already written
-				return newStreamErrorWithResponse(fmt.Errorf("SSE-C IV not found in entry metadata"))
+				return fmt.Errorf("SSE-C IV not found in entry metadata")
 			}
 			glog.V(2).Infof("SSE-C decryption: IV length=%d, KeyMD5=%s", len(iv), customerKey.KeyMD5)
 			decryptedReader, err = CreateSSECDecryptedReader(encryptedReader, customerKey, iv)
@@ -1579,8 +1581,7 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 			encryptedReader, streamErr := s3a.getEncryptedStreamFromVolumes(r.Context(), entry)
 			streamFetchTime = time.Since(tStreamFetch)
 			if streamErr != nil {
-				// Error after WriteHeader - response already written
-				return newStreamErrorWithResponse(streamErr)
+				return streamErr
 			}
 			defer encryptedReader.Close()
 
@@ -1612,16 +1613,14 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 			encryptedReader, streamErr := s3a.getEncryptedStreamFromVolumes(r.Context(), entry)
 			streamFetchTime = time.Since(tStreamFetch)
 			if streamErr != nil {
-				// Error after WriteHeader - response already written
-				return newStreamErrorWithResponse(streamErr)
+				return streamErr
 			}
 			defer encryptedReader.Close()
 
 			keyManager := GetSSES3KeyManager()
 			iv, ivErr := GetSSES3IV(entry, sseS3Key, keyManager)
 			if ivErr != nil {
-				// Error after WriteHeader - response already written
-				return newStreamErrorWithResponse(fmt.Errorf("failed to get SSE-S3 IV: %w", ivErr))
+				return fmt.Errorf("failed to get SSE-S3 IV: %w", ivErr)
 			}
 			glog.V(2).Infof("SSE-S3 decryption: KeyID=%s, IV length=%d", sseS3Key.KeyID, len(iv))
 			decryptedReader, err = CreateSSES3DecryptedReader(encryptedReader, sseS3Key, iv)
@@ -1631,8 +1630,7 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 
 	if err != nil {
 		glog.Errorf("SSE decryption error (%s): %v", sseType, err)
-		// Error after WriteHeader - response already written
-		return newStreamErrorWithResponse(fmt.Errorf("failed to create decrypted reader: %w", err))
+		return fmt.Errorf("failed to create decrypted reader: %w", err)
 	}
 
 	// Close the decrypted reader to avoid leaking HTTP bodies
@@ -1647,7 +1645,7 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 	// Stream full decrypted object to client
 	tCopy := time.Now()
 	buf := make([]byte, 128*1024)
-	copied, copyErr := io.CopyBuffer(w, decryptedReader, buf)
+	copied, copyErr := io.CopyBuffer(body, decryptedReader, buf)
 	copyTime = time.Since(tCopy)
 	// Track traffic even on partial writes for accurate egress accounting
 	if copied > 0 {
@@ -1655,9 +1653,13 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 	}
 	if copyErr != nil {
 		glog.Errorf("Failed to copy full object: copied %d bytes: %v", copied, copyErr)
-		// Error after WriteHeader - response already written
+		if !body.committed {
+			// nothing written yet -- the caller writes the S3 error response
+			return copyErr
+		}
 		return newStreamErrorWithResponse(copyErr)
 	}
+	body.Commit()
 	glog.V(3).Infof("Full object request: copied %d bytes", copied)
 	return nil
 }
