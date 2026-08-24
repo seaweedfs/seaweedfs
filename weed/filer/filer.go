@@ -300,7 +300,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, existing *Entry, 
 		glog.V(4).InfofCtx(ctx, "UpdateEntry %s: old entry: %v", entry.FullPath, oldEntry.Name())
 		if err := f.UpdateEntry(ctx, oldEntry, entry); err != nil {
 			glog.ErrorfCtx(ctx, "update entry %s: %v", entry.FullPath, err)
-			return fmt.Errorf("update entry %s: %v", entry.FullPath, err)
+			return fmt.Errorf("update entry %s: %w", entry.FullPath, err)
 		}
 	}
 
