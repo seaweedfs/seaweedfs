@@ -31,7 +31,7 @@ func TestReadEcShardNeedleSpanningBlocks(t *testing.T) {
 	n := new(needle.Needle)
 	n.Id = types.Uint64ToNeedleId(42)
 	n.Data = make([]byte, 3*erasure_coding.ErasureCodingSmallBlockSize+1234)
-	rand.Read(n.Data)
+	rand.New(rand.NewSource(42)).Read(n.Data)
 	n.Checksum = needle.NewCRC(n.Data)
 	if _, _, _, err := v.writeNeedle2(n, true, false, false); err != nil {
 		t.Fatalf("write needle: %v", err)
