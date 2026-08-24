@@ -21,7 +21,7 @@ func (store *TarantoolStore) KvPut(ctx context.Context, key []byte, value []byte
 
 	var operations = []crud.Operation{
 		{
-			Operator: crud.Insert,
+			Operator: crud.Assign,
 			Field:    "value",
 			Value:    string(value),
 		},
@@ -29,7 +29,8 @@ func (store *TarantoolStore) KvPut(ctx context.Context, key []byte, value []byte
 
 	req := crud.NewUpsertRequest(tarantoolKVSpaceName).
 		Tuple([]interface{}{string(key), nil, string(value)}).
-		Operations(operations)
+		Operations(operations).
+		Context(ctx)
 
 	ret := crud.Result{}
 	if err := store.pool.Do(req, pool.ModeRW).GetTyped(&ret); err != nil {
@@ -50,7 +51,8 @@ func (store *TarantoolStore) KvGet(ctx context.Context, key []byte) (value []byt
 
 	req := crud.NewGetRequest(tarantoolKVSpaceName).
 		Key([]interface{}{string(key)}).
-		Opts(getOpts)
+		Opts(getOpts).
+		Context(ctx)
 
 	resp := crud.Result{}
 
@@ -85,7 +87,8 @@ func (store *TarantoolStore) KvDelete(ctx context.Context, key []byte) (err erro
 
 	req := crud.NewDeleteRequest(tarantoolKVSpaceName).
 		Key([]interface{}{string(key)}).
-		Opts(delOpts)
+		Opts(delOpts).
+		Context(ctx)
 
 	if _, err := store.pool.Do(req, pool.ModeRW).Get(); err != nil {
 		return fmt.Errorf("kv delete: %w", err)
