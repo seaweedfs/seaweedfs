@@ -26,6 +26,9 @@ pub struct EcVolume {
     pub dat_file_size: i64,
     pub data_shards: u32,
     pub parity_shards: u32,
+    /// Uniform block layout: each shard is one contiguous block of this many
+    /// bytes. 0 = legacy 1GiB/1MiB two-tier layout. Loaded from .vif.
+    pub block_size: i64,
     ecx_file: Option<File>,
     ecx_file_size: i64,
     ecj_file: Option<File>,
@@ -94,17 +97,19 @@ fn locate_vif_path(dir: &str, dir_idx: &str, collection: &str, volume_id: Volume
     data_vif
 }
 
-/// Read EC data/parity shard counts from `.vif`, defaulting to the
-/// build's standard ratio when no `.vif` is present or is malformed.
+/// Read the EC data/parity shard counts and shard block size from `.vif`,
+/// defaulting to the build's standard ratio and the legacy block layout when
+/// no `.vif` is present or is malformed.
 /// Looks at the data dir first, then the idx dir — see [`locate_vif_path`].
 pub fn read_ec_shard_config(
     dir: &str,
     dir_idx: &str,
     collection: &str,
     volume_id: VolumeId,
-) -> (u32, u32) {
+) -> (u32, u32, i64) {
     let mut data_shards = crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT as u32;
     let mut parity_shards = crate::storage::erasure_coding::ec_shard::PARITY_SHARDS_COUNT as u32;
+    let mut block_size = 0i64;
     let vif_path = locate_vif_path(dir, dir_idx, collection, volume_id);
     if let Ok(vif_content) = std::fs::read_to_string(&vif_path) {
         if let Ok(vif_info) =
@@ -117,11 +122,12 @@ pub fn read_ec_shard_config(
                 {
                     data_shards = ec.data_shards;
                     parity_shards = ec.parity_shards;
+                    block_size = ec.block_size;
                 }
             }
         }
     }
-    (data_shards, parity_shards)
+    (data_shards, parity_shards, block_size)
 }
 
 impl EcVolume {
@@ -132,7 +138,8 @@ impl EcVolume {
         collection: &str,
         volume_id: VolumeId,
     ) -> io::Result<Self> {
-        let (data_shards, parity_shards) = read_ec_shard_config(dir, dir_idx, collection, volume_id);
+        let (data_shards, parity_shards, block_size) =
+            read_ec_shard_config(dir, dir_idx, collection, volume_id);
 
         let total_shards = (data_shards + parity_shards) as usize;
         let mut shards = Vec::with_capacity(total_shards);
@@ -187,6 +194,7 @@ impl EcVolume {
             dat_file_size: vif_dat_file_size,
             data_shards,
             parity_shards,
+            block_size,
             ecx_file: None,
             ecx_file_size: 0,
             ecj_file: None,
@@ -757,6 +765,26 @@ impl EcVolume {
         Ok(None)
     }
 
+    /// Large-block length of this volume's shard layout (the uniform block
+    /// size when set, the legacy 1GiB otherwise). Mirrors Go's
+    /// ECContext.LargeBlockSize.
+    pub fn large_block_size(&self) -> i64 {
+        if self.block_size > 0 {
+            self.block_size
+        } else {
+            ERASURE_CODING_LARGE_BLOCK_SIZE as i64
+        }
+    }
+
+    /// Small-block length of this volume's shard layout.
+    pub fn small_block_size(&self) -> i64 {
+        if self.block_size > 0 {
+            self.block_size
+        } else {
+            ERASURE_CODING_SMALL_BLOCK_SIZE as i64
+        }
+    }
+
     /// Locate the EC shard intervals needed to read a needle.
     /// Locate the EC shard intervals covering a needle at `actual_offset` whose
     /// index size is `size`. Mirrors Go's EcVolume.LocateEcShardNeedleInterval.
@@ -775,7 +803,27 @@ impl EcVolume {
         };
         // locate_data wants the on-disk size (header+body+checksum+timestamp+padding).
         let actual = get_actual_size(size, self.version);
-        ec_locate::locate_data(actual_offset, Size(actual as i32), shard_size, self.data_shards)
+        ec_locate::locate_data(
+            actual_offset,
+            Size(actual as i32),
+            shard_size,
+            self.data_shards,
+            self.large_block_size(),
+            self.small_block_size(),
+        )
+    }
+
+    /// Resolve an interval against this volume's shard block layout. Mirrors
+    /// Go's EcVolume.IntervalToShardIdAndOffset.
+    pub fn interval_to_shard_id_and_offset(
+        &self,
+        interval: &ec_locate::Interval,
+    ) -> (ShardId, i64) {
+        interval.to_shard_id_and_offset(
+            self.data_shards,
+            self.large_block_size(),
+            self.small_block_size(),
+        )
     }
 
     pub fn locate_needle(
@@ -821,7 +869,7 @@ impl EcVolume {
         let mut bytes = Vec::with_capacity(actual_size);
 
         for interval in &intervals {
-            let (shard_id, shard_offset) = interval.to_shard_id_and_offset(self.data_shards);
+            let (shard_id, shard_offset) = self.interval_to_shard_id_and_offset(interval);
             let shard = self
                 .shards
                 .get(shard_id as usize)
@@ -981,7 +1029,7 @@ impl EcVolume {
             // A needle is verifiable locally only if every shard it spans is local;
             // when any is remote, skip the reassembly buffer entirely.
             let has_remote_chunks = locations.iter().any(|iv| {
-                let (sid, _) = iv.to_shard_id_and_offset(self.data_shards);
+                let (sid, _) = self.interval_to_shard_id_and_offset(iv);
                 self.shards.get(sid as usize).and_then(|s| s.as_ref()).is_none()
             });
             let mut read: i64 = 0;
@@ -993,7 +1041,7 @@ impl EcVolume {
             let mut local_shard_ids: Vec<ShardId> = Vec::new();
 
             for (i, iv) in locations.iter().enumerate() {
-                let (sid, soffset) = iv.to_shard_id_and_offset(self.data_shards);
+                let (sid, soffset) = self.interval_to_shard_id_and_offset(iv);
                 let ssize = iv.size;
                 let shard = match self.shards.get(sid as usize).and_then(|s| s.as_ref()) {
                     Some(s) => s,
@@ -1963,5 +2011,150 @@ mod tests {
             !errs.is_empty(),
             "a non-zero size mismatch is genuine corruption and must be reported"
         );
+    }
+}
+
+#[cfg(test)]
+mod uniform_layout_tests {
+    use super::*;
+    use crate::storage::needle_map::NeedleMapKind;
+    use crate::storage::volume::{VifEcShardConfig, VifVolumeInfo, Volume};
+    use tempfile::TempDir;
+
+    // Write ~26MB of needles so the uniform block size (3MB) diverges from the
+    // legacy layout, encode, and verify EcVolume reads every needle back
+    // through the .vif-recorded geometry. A legacy-encoded fixture (no .vif
+    // block size) must keep reading through the legacy interpretation.
+    #[test]
+    fn test_read_needles_uniform_and_legacy_layouts() {
+        for legacy in [false, true] {
+            let tmp = TempDir::new().unwrap();
+            let dir = tmp.path().to_str().unwrap();
+            let vid = VolumeId(8);
+
+            let mut v = Volume::new(
+                dir,
+                dir,
+                "",
+                vid,
+                NeedleMapKind::InMemory,
+                None,
+                None,
+                0,
+                Version::current(),
+            )
+            .unwrap();
+            let mut expected: Vec<(NeedleId, Vec<u8>)> = Vec::new();
+            for i in 1u64..=11 {
+                let size = if i <= 5 { 4 << 20 } else { 1 << 20 };
+                let data: Vec<u8> = (0..size)
+                    .map(|b| ((b as u64).wrapping_mul(2654435761).wrapping_add(i) >> 8) as u8)
+                    .collect();
+                let mut n = Needle {
+                    id: NeedleId(i),
+                    cookie: Cookie(i as u32),
+                    data: data.clone(),
+                    data_size: data.len() as u32,
+                    ..Needle::default()
+                };
+                v.write_needle(&mut n, true, false).unwrap();
+                expected.push((NeedleId(i), data));
+            }
+            v.sync_to_disk().unwrap();
+            let dat_size = v.dat_file_size().unwrap() as i64;
+            v.close();
+
+            let block_size = if legacy {
+                // Legacy fixture: two-tier encode plus a .vif without a block
+                // size, the state every pre-upgrade EC volume is in.
+                use crate::storage::erasure_coding::ec_bitrot::{
+                    ShardChecksumBuilder, DEFAULT_BITROT_BLOCK_SIZE,
+                };
+                use reed_solomon_erasure::galois_8::ReedSolomon;
+                let base = crate::storage::volume::volume_file_name(dir, "", vid);
+                crate::storage::erasure_coding::ec_encoder::write_sorted_ecx_from_idx(
+                    &format!("{}.idx", base),
+                    &format!("{}.ecx", base),
+                )
+                .unwrap();
+                let dat_file = std::fs::File::open(format!("{}.dat", base)).unwrap();
+                let rs = ReedSolomon::new(10, 4).unwrap();
+                let mut shards: Vec<EcVolumeShard> = (0..14u8)
+                    .map(|i| EcVolumeShard::new(dir, "", vid, i))
+                    .collect();
+                for shard in &mut shards {
+                    shard.create().unwrap();
+                }
+                let mut builders: Vec<ShardChecksumBuilder> = (0..14)
+                    .map(|_| ShardChecksumBuilder::new(DEFAULT_BITROT_BLOCK_SIZE as i64))
+                    .collect();
+                crate::storage::erasure_coding::ec_encoder::encode_dat_file(
+                    &dat_file,
+                    dat_size,
+                    &rs,
+                    &mut shards,
+                    &mut builders,
+                    10,
+                    4,
+                    256 * 1024,
+                    ERASURE_CODING_LARGE_BLOCK_SIZE,
+                    ERASURE_CODING_SMALL_BLOCK_SIZE,
+                )
+                .unwrap();
+                for shard in &mut shards {
+                    shard.close();
+                }
+                0
+            } else {
+                let bs = crate::storage::erasure_coding::ec_encoder::write_ec_files(
+                    dir, dir, "", vid, 10, 4,
+                )
+                .unwrap();
+                assert!(
+                    bs > ERASURE_CODING_SMALL_BLOCK_SIZE as i64,
+                    "block size {} does not diverge from the legacy layout",
+                    bs
+                );
+                bs
+            };
+
+            let base = crate::storage::volume::volume_file_name(dir, "", vid);
+            let vif = VifVolumeInfo {
+                version: Version::current().0 as u32,
+                dat_file_size: dat_size,
+                ec_shard_config: Some(VifEcShardConfig {
+                    data_shards: 10,
+                    parity_shards: 4,
+                    block_size,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            std::fs::write(
+                format!("{}.vif", base),
+                serde_json::to_string_pretty(&vif).unwrap(),
+            )
+            .unwrap();
+            std::fs::remove_file(format!("{}.dat", base)).unwrap();
+            std::fs::remove_file(format!("{}.idx", base)).unwrap();
+
+            let mut vol = EcVolume::new(dir, dir, "", vid).unwrap();
+            assert_eq!(vol.block_size, block_size, "block size not loaded from .vif");
+            for i in 0..10u8 {
+                vol.add_shard(EcVolumeShard::new(dir, "", vid, i)).unwrap();
+            }
+
+            for (id, data) in &expected {
+                let n = vol
+                    .read_ec_shard_needle(*id)
+                    .unwrap()
+                    .unwrap_or_else(|| panic!("needle {} not found (legacy={})", id.0, legacy));
+                assert_eq!(
+                    n.data, *data,
+                    "needle {} data mismatch (legacy={})",
+                    id.0, legacy
+                );
+            }
+        }
     }
 }

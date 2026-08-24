@@ -330,6 +330,7 @@ func doFixEcxFromShards(basePath, baseFileName, collection string, volumeId int6
 	dataShards := erasure_coding.DataShardsCount
 	parityShards := erasure_coding.ParityShardsCount
 	var datFileSize int64
+	blockSize := int64(-1) // the shard block layout; 0 legacy, >0 uniform, <0 unknown
 	if vifExists {
 		// MaybeLoadVolumeInfo returns a non-nil error when the .vif exists but
 		// cannot be read or unmarshalled; fail loudly rather than silently
@@ -343,6 +344,19 @@ func doFixEcxFromShards(basePath, baseFileName, collection string, volumeId int6
 				parityShards = int(cfg.GetParityShards())
 			}
 			datFileSize = vi.GetDatFileSize()
+			blockSize = vi.GetEcShardConfig().GetBlockSize()
+		}
+	}
+	// The bitrot sidecar records the same EC config at encode time; use it when
+	// the .vif is gone. A uniform-layout volume cannot be de-striped correctly
+	// without its block size.
+	if blockSize < 0 {
+		if prot, serr := erasure_coding.LoadBitrotSidecar(erasure_coding.BitrotSidecarPath(base, 0)); serr == nil {
+			if cfg := prot.GetEcShardConfig(); cfg.GetDataShards() > 0 {
+				dataShards = int(cfg.GetDataShards())
+				parityShards = int(cfg.GetParityShards())
+				blockSize = cfg.GetBlockSize()
+			}
 		}
 	}
 	if *fixEcDataShards > 0 {
@@ -381,6 +395,9 @@ func doFixEcxFromShards(basePath, baseFileName, collection string, volumeId int6
 	}
 	if !dataComplete {
 		ctx := &erasure_coding.ECContext{DataShards: dataShards, ParityShards: parityShards}
+		if blockSize > 0 {
+			ctx.BlockSize = blockSize
+		}
 		glog.Infof("volume %d: %d/%d shards present; reconstructing missing shards (%s) before index rebuild", volumeId, presentCount, dataShards+parityShards, ctx.String())
 		if _, err := erasure_coding.RebuildEcFiles(base, ctx, *fixEcUnsafeIgnoreSidecar); err != nil {
 			fail(fmt.Errorf("volume %d: reconstruct missing shards from %d survivors: %w", volumeId, presentCount, err))
@@ -407,21 +424,74 @@ func doFixEcxFromShards(basePath, baseFileName, collection string, volumeId int6
 		glog.V(0).Infof("volume %d: no .dat size in .vif; reconstructing padded .dat (%d bytes) from %d data shards", volumeId, reconstructSize, dataShards)
 	}
 
-	// De-stripe the data shards into a temporary .dat next to the shards.
+	// De-stripe the data shards into a temporary .dat next to the shards and
+	// scan it into a fresh .ecx. With the layout unknown, de-stripe under both
+	// candidate layouts and keep the one whose needle chain scans furthest.
+	type layoutCandidate struct {
+		name         string
+		large, small int64
+	}
+	var candidates []layoutCandidate
+	switch {
+	case blockSize > 0:
+		candidates = []layoutCandidate{{"uniform", blockSize, blockSize}}
+	case blockSize == 0:
+		candidates = []layoutCandidate{{"legacy", erasure_coding.ErasureCodingLargeBlockSize, erasure_coding.ErasureCodingSmallBlockSize}}
+	default:
+		glog.Infof("volume %d: no .vif or .ecsum records the shard block layout; trying both", volumeId)
+		candidates = []layoutCandidate{
+			{"legacy", erasure_coding.ErasureCodingLargeBlockSize, erasure_coding.ErasureCodingSmallBlockSize},
+			{"uniform", shardSize, shardSize},
+		}
+	}
+
 	tmpBase := base + ".ecxrecover"
 	tmpDat := tmpBase + ".dat"
-	if err := erasure_coding.WriteDatFile(tmpBase, reconstructSize, reconstructSize, shardFileNames); err != nil {
-		os.Remove(tmpDat)
-		fail(fmt.Errorf("volume %d: reconstruct .dat from data shards: %w", volumeId, err))
+	defer os.Remove(tmpDat)
+	bestIdx := -1
+	var realDatSize, bestNeedles int64
+	var version needle.Version
+	var candErr error
+	for i, cand := range candidates {
+		if err := erasure_coding.WriteDatFile(tmpBase, reconstructSize, reconstructSize, shardFileNames, cand.large, cand.small); err != nil {
+			candErr = fmt.Errorf("volume %d: reconstruct .dat (%s layout): %w", volumeId, cand.name, err)
+			continue
+		}
+		size, needles, ver, err := writeEcxFromDat(tmpDat, ecxName+"."+cand.name)
+		if err != nil {
+			os.Remove(ecxName + "." + cand.name)
+			candErr = fmt.Errorf("volume %d: build .ecx from reconstructed .dat (%s layout): %w", volumeId, cand.name, err)
+			continue
+		}
+		// The wrong layout de-stripes to garbage past the first block
+		// boundary, so the layout that indexes more valid needles wins.
+		if bestIdx < 0 || needles > bestNeedles {
+			bestIdx = i
+			bestNeedles = needles
+			realDatSize = size
+			version = ver
+		}
+	}
+	if bestIdx < 0 {
+		fail(candErr)
 		return
 	}
-	defer os.Remove(tmpDat)
-
-	realDatSize, version, err := writeEcxFromDat(tmpDat, ecxName)
-	if err != nil {
-		os.Remove(ecxName)
-		fail(fmt.Errorf("volume %d: build .ecx from reconstructed .dat: %w", volumeId, err))
+	for i := range candidates {
+		if i != bestIdx {
+			os.Remove(ecxName + "." + candidates[i].name)
+		}
+	}
+	if err := os.Rename(ecxName+"."+candidates[bestIdx].name, ecxName); err != nil {
+		fail(fmt.Errorf("volume %d: publish %s: %w", volumeId, ecxName, err))
 		return
+	}
+	if blockSize < 0 {
+		if candidates[bestIdx].name == "uniform" {
+			blockSize = shardSize
+		} else {
+			blockSize = 0
+		}
+		glog.Infof("volume %d: %s layout indexes %d needles over %d bytes; keeping it", volumeId, candidates[bestIdx].name, bestNeedles, realDatSize)
 	}
 	glog.Infof("volume %d: wrote %s from %d data shards", volumeId, ecxName, dataShards)
 
@@ -438,6 +508,7 @@ func doFixEcxFromShards(basePath, baseFileName, collection string, volumeId int6
 			EcShardConfig: &volume_server_pb.EcShardConfig{
 				DataShards:   uint32(dataShards),
 				ParityShards: uint32(parityShards),
+				BlockSize:    blockSize,
 			},
 		}
 		if err := volume_info.SaveVolumeInfo(vifName, volumeInfo); err != nil {
@@ -451,25 +522,26 @@ func doFixEcxFromShards(basePath, baseFileName, collection string, volumeId int6
 // writeEcxFromDat scans a (reconstructed) .dat and writes an ascending-sorted
 // .ecx containing only live needles — the same on-disk shape
 // WriteSortedFileFromIdx produces when an EC volume is first encoded. It returns
-// the physical .dat size (the offset where the EC zero padding begins) and the
-// volume version read from the superblock.
-func writeEcxFromDat(datPath, ecxPath string) (datFileSize int64, version needle.Version, err error) {
+// the physical .dat size (the offset where the EC zero padding begins), the
+// number of live needles indexed, and the volume version read from the
+// superblock.
+func writeEcxFromDat(datPath, ecxPath string) (datFileSize int64, liveNeedles int64, version needle.Version, err error) {
 	f, err := os.OpenFile(datPath, os.O_RDONLY, 0644)
 	if err != nil {
-		return 0, 0, fmt.Errorf("open %s: %w", datPath, err)
+		return 0, 0, 0, fmt.Errorf("open %s: %w", datPath, err)
 	}
 	datBackend := backend.NewDiskFile(f)
 	defer datBackend.Close()
 
 	superBlock, err := super_block.ReadSuperBlock(datBackend)
 	if err != nil {
-		return 0, 0, fmt.Errorf("read superblock: %w", err)
+		return 0, 0, 0, fmt.Errorf("read superblock: %w", err)
 	}
 	version = superBlock.Version
 
 	fileSize, _, err := datBackend.GetStat()
 	if err != nil {
-		return 0, version, fmt.Errorf("stat %s: %w", datPath, err)
+		return 0, 0, version, fmt.Errorf("stat %s: %w", datPath, err)
 	}
 
 	nm := needle_map.NewMemDb()
@@ -482,7 +554,7 @@ func writeEcxFromDat(datPath, ecxPath string) (datFileSize int64, version needle
 			if readErr == io.EOF {
 				break
 			}
-			return 0, version, fmt.Errorf("read needle header at offset %d: %w", offset, readErr)
+			return 0, 0, version, fmt.Errorf("read needle header at offset %d: %w", offset, readErr)
 		}
 		// EC encoding zero-pads the tail of the last block row. An all-zero
 		// header marks the start of that padding, i.e. the end of real needles.
@@ -491,13 +563,13 @@ func writeEcxFromDat(datPath, ecxPath string) (datFileSize int64, version needle
 		}
 		if n.Size.IsValid() {
 			if pe := nm.Set(n.Id, types.ToOffset(offset), n.Size); pe != nil {
-				return 0, version, fmt.Errorf("set needle %d: %w", n.Id, pe)
+				return 0, 0, version, fmt.Errorf("set needle %d: %w", n.Id, pe)
 			}
 		} else {
 			// Deleted/invalid: drop it so the .ecx carries only live entries,
 			// matching the encode-time WriteSortedFileFromIdx behavior.
 			if pe := nm.Delete(n.Id); pe != nil {
-				return 0, version, fmt.Errorf("delete needle %d: %w", n.Id, pe)
+				return 0, 0, version, fmt.Errorf("delete needle %d: %w", n.Id, pe)
 			}
 		}
 		offset += types.NeedleHeaderSize + rest
@@ -506,16 +578,17 @@ func writeEcxFromDat(datPath, ecxPath string) (datFileSize int64, version needle
 
 	ecxFile, err := os.OpenFile(ecxPath, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		return 0, version, fmt.Errorf("open %s: %w", ecxPath, err)
+		return 0, 0, version, fmt.Errorf("open %s: %w", ecxPath, err)
 	}
 	defer ecxFile.Close()
 
 	if err := nm.AscendingVisit(func(value needle_map.NeedleValue) error {
+		liveNeedles++
 		_, writeErr := ecxFile.Write(value.ToBytes())
 		return writeErr
 	}); err != nil {
-		return 0, version, fmt.Errorf("write %s: %w", ecxPath, err)
+		return 0, 0, version, fmt.Errorf("write %s: %w", ecxPath, err)
 	}
 
-	return datFileSize, version, nil
+	return datFileSize, liveNeedles, version, nil
 }

@@ -62,12 +62,34 @@ func WriteSortedFileFromIdx(baseFileName string, ext string) (e error) {
 // BackgroundECContext for the default ratio, or an explicit ctx for a configured
 // (e.g. custom-ratio) layout. It returns the bitrot protection (per-shard block
 // CRC32C) computed during the single encode pass; the caller persists it as a
-// <base>.ecsum sidecar.
+// <base>.ecsum sidecar, and persists ctx.BlockSize (set here) to the .vif so
+// readers resolve the shard block layout.
 func WriteEcFiles(baseFileName string, ctx *ECContext) (*volume_server_pb.EcBitrotProtection, error) {
 	if ctx == nil || ctx.Total() == 0 {
 		ctx = NewDefaultECContext("", 0)
 	}
-	return generateEcFiles(baseFileName, 256*1024, ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, ctx)
+	// Always encode with the uniform block layout, sized for this .dat. The
+	// computed size is left on ctx so the caller can persist it to .vif.
+	fi, err := os.Stat(baseFileName + ".dat")
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat dat file: %w", err)
+	}
+	ctx.BlockSize = UniformBlockSize(fi.Size(), ctx.DataShards)
+	return generateEcFiles(baseFileName, 256*1024, ctx.BlockSize, ctx.BlockSize, ctx)
+}
+
+// UniformBlockSize returns the per-shard block size of the uniform layout for
+// a .dat of the given size: ceil(datFileSize/dataShards) rounded up to a whole
+// small block. For every input this equals the legacy layout's padded shard
+// size, so only the byte placement differs between the two layouts, never the
+// shard length.
+func UniformBlockSize(datFileSize int64, dataShards int) int64 {
+	perShard := (datFileSize + int64(dataShards) - 1) / int64(dataShards)
+	blocks := (perShard + ErasureCodingSmallBlockSize - 1) / ErasureCodingSmallBlockSize
+	if blocks < 1 {
+		blocks = 1
+	}
+	return blocks * ErasureCodingSmallBlockSize
 }
 
 // RebuildEcFiles rebuilds missing EC shard files. Pass BackgroundECContext to
@@ -98,6 +120,7 @@ func RebuildEcFiles(baseFileName string, ctx *ECContext, unsafeIgnoreSidecar boo
 				ctx = &ECContext{
 					DataShards:   ds,
 					ParityShards: ps,
+					BlockSize:    volumeInfo.EcShardConfig.GetBlockSize(),
 				}
 				glog.V(0).Infof("Rebuilding EC files for %s with config from .vif: %s", baseFileName, ctx.String())
 			} else {
@@ -383,7 +406,8 @@ func loadRebuildSidecar(baseFileName string, ctx *ECContext, additionalDirs []st
 	}
 	if prot.EcShardConfig == nil ||
 		int(prot.EcShardConfig.DataShards) != ctx.DataShards ||
-		int(prot.EcShardConfig.ParityShards) != ctx.ParityShards {
+		int(prot.EcShardConfig.ParityShards) != ctx.ParityShards ||
+		prot.EcShardConfig.BlockSize != ctx.BlockSize {
 		return nil, BitrotOff
 	}
 	if err := ValidateBitrotManifest(prot, ctx.DataShards, ctx.ParityShards); err != nil {

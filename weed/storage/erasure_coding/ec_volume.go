@@ -190,6 +190,7 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 					VolumeId:     vid,
 					DataShards:   ds,
 					ParityShards: ps,
+					BlockSize:    volumeInfo.EcShardConfig.GetBlockSize(),
 				}
 				glog.V(1).Infof("Loaded EC config from VolumeInfo for volume %d: %s", vid, ev.ECContext.String())
 			}
@@ -524,9 +525,15 @@ func (ev *EcVolume) LocateEcShardNeedleInterval(version needle.Version, offset i
 		shardSize = shard.ecdFileSize - 1
 	}
 	// calculate the locations in the ec shards
-	intervals = LocateData(ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, shardSize, offset, types.Size(needle.GetActualSize(size, version)))
+	intervals = LocateData(ev.ECContext.LargeBlockSize(), ev.ECContext.SmallBlockSize(), shardSize, offset, types.Size(needle.GetActualSize(size, version)))
 
 	return
+}
+
+// IntervalToShardIdAndOffset resolves an interval against this volume's shard
+// block layout.
+func (ev *EcVolume) IntervalToShardIdAndOffset(interval Interval) (ShardId, int64) {
+	return interval.ToShardIdAndOffset(ev.ECContext.LargeBlockSize(), ev.ECContext.SmallBlockSize())
 }
 
 func (ev *EcVolume) FindNeedleFromEcx(needleId types.NeedleId) (offset types.Offset, size types.Size, err error) {

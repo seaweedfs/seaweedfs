@@ -530,7 +530,7 @@ fn read_local_intervals(
 ) -> Vec<IntervalResult> {
     let mut interval_results = Vec::with_capacity(intervals.len());
     for interval in intervals {
-        let (shard_id, shard_offset) = interval.to_shard_id_and_offset(ecv.data_shards);
+        let (shard_id, shard_offset) = ecv.interval_to_shard_id_and_offset(interval);
         let buf_size = interval.size as usize;
         let local = ecv.shards.get(shard_id as usize).and_then(|s| s.as_ref());
         match local {

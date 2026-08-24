@@ -41,14 +41,14 @@ func (s *Store) ScrubEcVolume(vid needle.VolumeId, forceDeletedNeedlesCheck bool
 
 		shardIds := make([]erasure_coding.ShardId, len(intervals))
 		for i, iv := range intervals {
-			sid, _ := s.IntervalToShardIdAndOffset(iv)
+			sid, _ := ecv.IntervalToShardIdAndOffset(iv)
 			shardIds[i] = sid
 		}
 		slices.Sort(shardIds)
 
 		for i, iv := range intervals {
 			chunk := make([]byte, iv.Size)
-			shardId, offset := s.IntervalToShardIdAndOffset(iv)
+			shardId, offset := ecv.IntervalToShardIdAndOffset(iv)
 
 			// try a local shard read first...
 			if err := s.readLocalEcShardInterval(ecv, shardId, chunk, offset); err == nil {

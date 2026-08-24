@@ -5142,6 +5142,7 @@ type EcShardConfig struct {
 	DataShards    uint32                 `protobuf:"varint,1,opt,name=data_shards,json=dataShards,proto3" json:"data_shards,omitempty"`       // Number of data shards (e.g., 10)
 	ParityShards  uint32                 `protobuf:"varint,2,opt,name=parity_shards,json=parityShards,proto3" json:"parity_shards,omitempty"` // Number of parity shards (e.g., 4)
 	EncodeTsNs    int64                  `protobuf:"varint,3,opt,name=encode_ts_ns,json=encodeTsNs,proto3" json:"encode_ts_ns,omitempty"`     // encode time (unix nanos); a read served from a shard of a different encode run is rejected
+	BlockSize     int64                  `protobuf:"varint,4,opt,name=block_size,json=blockSize,proto3" json:"block_size,omitempty"`          // uniform block layout: each shard is a single contiguous block of this many bytes; 0 = legacy 1GiB/1MiB two-tier layout
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5193,6 +5194,13 @@ func (x *EcShardConfig) GetParityShards() uint32 {
 func (x *EcShardConfig) GetEncodeTsNs() int64 {
 	if x != nil {
 		return x.EncodeTsNs
+	}
+	return 0
+}
+
+func (x *EcShardConfig) GetBlockSize() int64 {
+	if x != nil {
+		return x.BlockSize
 	}
 	return 0
 }
@@ -7580,13 +7588,15 @@ const file_volume_server_proto_rawDesc = "" +
 	"\rexpire_at_sec\x18\x06 \x01(\x04R\vexpireAtSec\x12\x1b\n" +
 	"\tread_only\x18\a \x01(\bR\breadOnly\x12G\n" +
 	"\x0fec_shard_config\x18\b \x01(\v2\x1f.volume_server_pb.EcShardConfigR\recShardConfig\x12/\n" +
-	"\x14read_only_can_delete\x18\t \x01(\bR\x11readOnlyCanDelete\"w\n" +
+	"\x14read_only_can_delete\x18\t \x01(\bR\x11readOnlyCanDelete\"\x96\x01\n" +
 	"\rEcShardConfig\x12\x1f\n" +
 	"\vdata_shards\x18\x01 \x01(\rR\n" +
 	"dataShards\x12#\n" +
 	"\rparity_shards\x18\x02 \x01(\rR\fparityShards\x12 \n" +
 	"\fencode_ts_ns\x18\x03 \x01(\x03R\n" +
-	"encodeTsNs\"\xbc\x02\n" +
+	"encodeTsNs\x12\x1d\n" +
+	"\n" +
+	"block_size\x18\x04 \x01(\x03R\tblockSize\"\xbc\x02\n" +
 	"\x12EcBitrotProtection\x12A\n" +
 	"\talgorithm\x18\x01 \x01(\x0e2#.volume_server_pb.ChecksumAlgorithmR\talgorithm\x12\x1d\n" +
 	"\n" +

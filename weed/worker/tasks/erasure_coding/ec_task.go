@@ -662,6 +662,7 @@ func (t *ErasureCodingTask) generateEcShardsLocally(localFiles map[string]string
 	if ecBitrot != nil && ecBitrot.EcShardConfig != nil {
 		ecShardConfig.DataShards = ecBitrot.EcShardConfig.DataShards
 		ecShardConfig.ParityShards = ecBitrot.EcShardConfig.ParityShards
+		ecShardConfig.BlockSize = ecBitrot.EcShardConfig.BlockSize
 	}
 	volumeInfo := &volume_server_pb.VolumeInfo{
 		Version:       uint32(needle.GetCurrentVersion()),

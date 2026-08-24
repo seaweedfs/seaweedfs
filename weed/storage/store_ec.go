@@ -432,10 +432,6 @@ func (s *Store) ReadEcShardNeedle(vid needle.VolumeId, n *needle.Needle, onReadS
 	return 0, fmt.Errorf("ec shard %d not found", vid)
 }
 
-func (s *Store) IntervalToShardIdAndOffset(iv erasure_coding.Interval) (erasure_coding.ShardId, int64) {
-	return iv.ToShardIdAndOffset(erasure_coding.ErasureCodingLargeBlockSize, erasure_coding.ErasureCodingSmallBlockSize)
-}
-
 // ecIntervalReadConcurrency bounds the fan-out of a single needle read. Blocks
 // that follow each other in the .dat live on different shards, so a needle
 // spanning several of them costs one round trip per block when read in sequence.
@@ -494,7 +490,7 @@ func (s *Store) readEcShardIntervals(needleId types.NeedleId, ecVolume *erasure_
 
 // readOneEcShardInterval fills data, which must be interval.Size long.
 func (s *Store) readOneEcShardInterval(needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, interval erasure_coding.Interval, data []byte) (is_deleted bool, err error) {
-	shardId, actualOffset := s.IntervalToShardIdAndOffset(interval)
+	shardId, actualOffset := ecVolume.IntervalToShardIdAndOffset(interval)
 
 	// try local read
 	err = s.readLocalEcShardInterval(ecVolume, shardId, data, actualOffset)

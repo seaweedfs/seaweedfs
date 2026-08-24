@@ -165,6 +165,7 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 		DataShards:   uint32(ecCtx.DataShards),
 		ParityShards: uint32(ecCtx.ParityShards),
 		EncodeTsNs:   time.Now().UnixNano(),
+		BlockSize:    ecCtx.BlockSize,
 	}
 	glog.V(1).Infof("Saving EC config to .vif for volume %d: %d+%d (total: %d)",
 		req.VolumeId, ecCtx.DataShards, ecCtx.ParityShards, ecCtx.Total())
@@ -1003,7 +1004,7 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 	// boundary, so the layout must not be derived from datFileSize. WriteDatFile
 	// infers the layout from the shard size when .vif does not record it.
 	// write .dat file from .ec00 ~ .ec09 files
-	if err := erasure_coding.WriteDatFile(dataBaseFileName, datFileSize, v.DatFileSize(), shardFileNames); err != nil {
+	if err := erasure_coding.WriteDatFile(dataBaseFileName, datFileSize, v.DatFileSize(), shardFileNames, v.ECContext.LargeBlockSize(), v.ECContext.SmallBlockSize()); err != nil {
 		return nil, fmt.Errorf("WriteDatFile %s: %v", dataBaseFileName, err)
 	}
 

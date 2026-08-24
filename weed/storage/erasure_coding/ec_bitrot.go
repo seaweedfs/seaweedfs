@@ -195,6 +195,7 @@ func buildProtectionFromBuilders(ctx *ECContext, builders []*shardChecksumBuilde
 		EcShardConfig: &volume_server_pb.EcShardConfig{
 			DataShards:   uint32(ctx.DataShards),
 			ParityShards: uint32(ctx.ParityShards),
+			BlockSize:    ctx.BlockSize,
 		},
 		Shards:     shards,
 		EncodeUuid: NewEncodeUUID(),
@@ -431,6 +432,7 @@ func ComputeProtectionFromShards(baseFileName string, ctx *ECContext, generation
 		EcShardConfig: &volume_server_pb.EcShardConfig{
 			DataShards:   uint32(ctx.DataShards),
 			ParityShards: uint32(ctx.ParityShards),
+			BlockSize:    ctx.BlockSize,
 		},
 		Shards:     shards,
 		EncodeUuid: NewEncodeUUID(),
@@ -509,7 +511,8 @@ func (ev *EcVolume) loadBitrotForGeneration(generation uint32) {
 	}
 	if prot.EcShardConfig == nil ||
 		int(prot.EcShardConfig.DataShards) != ev.ECContext.DataShards ||
-		int(prot.EcShardConfig.ParityShards) != ev.ECContext.ParityShards {
+		int(prot.EcShardConfig.ParityShards) != ev.ECContext.ParityShards ||
+		prot.EcShardConfig.BlockSize != ev.ECContext.BlockSize {
 		return
 	}
 	if err := ValidateBitrotManifest(prot, ev.ECContext.DataShards, ev.ECContext.ParityShards); err != nil {

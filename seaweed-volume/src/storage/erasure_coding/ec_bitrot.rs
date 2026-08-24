@@ -539,11 +539,12 @@ fn read_full_at(f: &File, buf: &mut [u8], offset: u64) -> io::Result<()> {
 
 /// Builds the `EcShardConfig` proto for the given layout. The bitrot sidecar
 /// carries its own top-level encode_uuid, so the nested config leaves it empty.
-pub fn ec_shard_config(data_shards: u32, parity_shards: u32) -> EcShardConfig {
+pub fn ec_shard_config(data_shards: u32, parity_shards: u32, block_size: i64) -> EcShardConfig {
     EcShardConfig {
         data_shards,
         parity_shards,
         encode_ts_ns: 0,
+        block_size,
     }
 }
 
@@ -567,6 +568,7 @@ mod tests {
                 data_shards: 10,
                 parity_shards: 4,
                 encode_ts_ns: 0,
+                block_size: 0,
             }),
             shards: vec![
                 EcShardChecksums {
@@ -712,7 +714,7 @@ mod tests {
             algorithm: ChecksumAlgorithm::ChecksumCrc32c as i32,
             block_size: DEFAULT_BITROT_BLOCK_SIZE as u32,
             generation: 0,
-            ec_shard_config: Some(ec_shard_config(10, 4)),
+            ec_shard_config: Some(ec_shard_config(10, 4, 0)),
             shards: vec![EcShardChecksums {
                 shard_id: 0,
                 covered_size: covered,
@@ -750,7 +752,7 @@ mod tests {
             algorithm: ChecksumAlgorithm::ChecksumCrc32c as i32,
             block_size: DEFAULT_BITROT_BLOCK_SIZE as u32,
             generation: 0,
-            ec_shard_config: Some(ec_shard_config(10, 4)),
+            ec_shard_config: Some(ec_shard_config(10, 4, 0)),
             shards: vec![EcShardChecksums {
                 shard_id: 0,
                 covered_size: 5,
@@ -794,7 +796,7 @@ mod tests {
             algorithm: ChecksumAlgorithm::ChecksumCrc32c as i32,
             block_size: DEFAULT_BITROT_BLOCK_SIZE as u32,
             generation: 0,
-            ec_shard_config: Some(ec_shard_config(10, 4)),
+            ec_shard_config: Some(ec_shard_config(10, 4, 0)),
             shards,
             encode_uuid: vec![0u8; 16],
         }

@@ -2382,13 +2382,15 @@ impl VolumeServer for VolumeGrpcService {
             )
         };
 
-        // Check existing .vif for EC shard config (matching Go's MaybeLoadVolumeInfo)
-        let (data_shards, parity_shards) =
+        // Check existing .vif for EC shard config (matching Go's MaybeLoadVolumeInfo).
+        // The block size is recomputed by the encode for the current .dat, so
+        // only the ratio is carried over from a prior config.
+        let (data_shards, parity_shards, _) =
             crate::storage::erasure_coding::ec_volume::read_ec_shard_config(
                 &dir, &idx_dir, collection, vid,
             );
 
-        if let Err(e) = crate::storage::erasure_coding::ec_encoder::write_ec_files(
+        let block_size = match crate::storage::erasure_coding::ec_encoder::write_ec_files(
             &dir,
             &idx_dir,
             collection,
@@ -2396,16 +2398,19 @@ impl VolumeServer for VolumeGrpcService {
             data_shards as usize,
             parity_shards as usize,
         ) {
-            // Cleanup partially-created .ecNN and .ecx files on failure (matching Go defer)
-            let base = crate::storage::volume::volume_file_name(&dir, collection, vid);
-            let total_shards = data_shards + parity_shards;
-            for i in 0..total_shards {
-                let shard_path = format!("{}.ec{:02}", base, i);
-                let _ = std::fs::remove_file(&shard_path);
+            Ok(block_size) => block_size,
+            Err(e) => {
+                // Cleanup partially-created .ecNN and .ecx files on failure (matching Go defer)
+                let base = crate::storage::volume::volume_file_name(&dir, collection, vid);
+                let total_shards = data_shards + parity_shards;
+                for i in 0..total_shards {
+                    let shard_path = format!("{}.ec{:02}", base, i);
+                    let _ = std::fs::remove_file(&shard_path);
+                }
+                let _ = std::fs::remove_file(format!("{}.ecx", base));
+                return Err(Status::internal(e.to_string()));
             }
-            let _ = std::fs::remove_file(format!("{}.ecx", base));
-            return Err(Status::internal(e.to_string()));
-        }
+        };
 
         // Write .vif file with EC shard metadata
         {
@@ -2424,6 +2429,7 @@ impl VolumeServer for VolumeGrpcService {
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
                         .as_nanos() as i64,
+                    block_size,
                 }),
                 ..Default::default()
             };
@@ -2544,7 +2550,7 @@ impl VolumeServer for VolumeGrpcService {
         let rebuild_idx_dir = loc_infos[rebuild_loc_idx].idx_dir.clone();
 
         // Determine data/parity shard config from rebuild dir
-        let (data_shards, parity_shards) =
+        let (data_shards, parity_shards, _) =
             crate::storage::erasure_coding::ec_volume::read_ec_shard_config(
                 &rebuild_dir,
                 &rebuild_idx_dir,
@@ -3348,6 +3354,8 @@ impl VolumeServer for VolumeGrpcService {
         let ecx_dir = ec_vol.ecx_actual_dir().to_string();
         let collection = ec_vol.collection.clone();
         let vif_dat_file_size = ec_vol.dat_file_size;
+        let (large_block_size, small_block_size) =
+            (ec_vol.large_block_size(), ec_vol.small_block_size());
         // shard_dirs[i] is guaranteed Some for i in 0..data_shards by
         // the check above; collect concrete dirs for the decoder.
         let per_shard_dirs: Vec<String> = shard_dirs[..data_shards]
@@ -3381,6 +3389,8 @@ impl VolumeServer for VolumeGrpcService {
             vif_dat_file_size,
             data_shards,
             &per_shard_dirs,
+            large_block_size as usize,
+            small_block_size as usize,
         )
         .map_err(|e| Status::internal(format!("WriteDatFile: {}", e)))?;
 

@@ -13,11 +13,33 @@ type ECContext struct {
 	ParityShards int
 	Collection   string
 	VolumeId     needle.VolumeId
+	// BlockSize > 0 selects the uniform block layout: every shard is a single
+	// contiguous block of this many bytes, so consecutive .dat ranges stay on
+	// one shard instead of striping across all of them at 1MiB granularity.
+	// 0 is the legacy two-tier 1GiB/1MiB layout.
+	BlockSize int64
 }
 
 // Total returns the total number of shards (data + parity)
 func (ctx *ECContext) Total() int {
 	return ctx.DataShards + ctx.ParityShards
+}
+
+// LargeBlockSize returns the large-block length of this context's shard
+// layout; nil-safe so callers can pass an unset context for the legacy layout.
+func (ctx *ECContext) LargeBlockSize() int64 {
+	if ctx != nil && ctx.BlockSize > 0 {
+		return ctx.BlockSize
+	}
+	return ErasureCodingLargeBlockSize
+}
+
+// SmallBlockSize returns the small-block length of this context's shard layout.
+func (ctx *ECContext) SmallBlockSize() int64 {
+	if ctx != nil && ctx.BlockSize > 0 {
+		return ctx.BlockSize
+	}
+	return ErasureCodingSmallBlockSize
 }
 
 // NewDefaultECContext creates a context with default 10+4 shard configuration

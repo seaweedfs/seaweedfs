@@ -233,8 +233,10 @@ func iterateEcjFile(baseFileName string, processNeedleFn func(key types.NeedleId
 // large-block row boundary, and deriving the layout from the shrunk extent
 // would read the shards in the wrong block order. Pass zero when the .vif does
 // not record the encode-time size to infer the layout from the shard size.
-func WriteDatFile(baseFileName string, datFileSize int64, encodedDatFileSize int64, shardFileNames []string) error {
-	return writeDatFile(baseFileName, datFileSize, encodedDatFileSize, shardFileNames, ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize)
+// largeBlockSize/smallBlockSize are the volume's shard block layout, e.g.
+// ctx.LargeBlockSize()/ctx.SmallBlockSize() from its .vif EC config.
+func WriteDatFile(baseFileName string, datFileSize int64, encodedDatFileSize int64, shardFileNames []string, largeBlockSize int64, smallBlockSize int64) error {
+	return writeDatFile(baseFileName, datFileSize, encodedDatFileSize, shardFileNames, largeBlockSize, smallBlockSize)
 }
 
 func writeDatFile(baseFileName string, datFileSize int64, encodedDatFileSize int64, shardFileNames []string, largeBlockSize int64, smallBlockSize int64) error {

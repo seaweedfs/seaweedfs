@@ -238,7 +238,7 @@ func (ecv *EcVolume) ScrubLocal() (int64, []*volume_server_pb.EcShardInfo, []err
 		localShardIds := []ShardId{}
 
 		for i, iv := range locations {
-			sid, soffset := iv.ToShardIdAndOffset(ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize)
+			sid, soffset := ecv.IntervalToShardIdAndOffset(iv)
 			ssize := int64(iv.Size.Raw())
 			shard, found := ecv.FindEcVolumeShard(sid)
 

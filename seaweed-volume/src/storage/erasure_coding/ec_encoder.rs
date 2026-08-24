@@ -25,6 +25,10 @@ use crate::storage::volume::volume_file_name;
 ///
 /// Creates .ec00-.ec13 files in the same directory.
 /// Also creates a sorted .ecx index from the .idx file.
+///
+/// Always encodes with the uniform block layout, sized for this .dat, and
+/// returns the block size so the caller can persist it to .vif. Mirrors Go's
+/// WriteEcFiles.
 pub fn write_ec_files(
     dir: &str,
     idx_dir: &str,
@@ -32,7 +36,7 @@ pub fn write_ec_files(
     volume_id: VolumeId,
     data_shards: usize,
     parity_shards: usize,
-) -> io::Result<()> {
+) -> io::Result<i64> {
     let base = volume_file_name(dir, collection, volume_id);
     let dat_path = format!("{}.dat", base);
     let idx_base = volume_file_name(idx_dir, collection, volume_id);
@@ -66,7 +70,7 @@ pub fn write_ec_files(
         .map(|_| ShardChecksumBuilder::new(DEFAULT_BITROT_BLOCK_SIZE as i64))
         .collect();
 
-    // Encode in large blocks, then small blocks
+    let block_size = uniform_block_size(dat_size, data_shards);
     encode_dat_file(
         &dat_file,
         dat_size,
@@ -75,8 +79,9 @@ pub fn write_ec_files(
         &mut builders,
         data_shards,
         parity_shards,
-        ERASURE_CODING_LARGE_BLOCK_SIZE,
-        ERASURE_CODING_SMALL_BLOCK_SIZE,
+        ENCODE_BUFFER_SIZE,
+        block_size as usize,
+        block_size as usize,
     )?;
 
     // Close all shards
@@ -103,6 +108,7 @@ pub fn write_ec_files(
         ec_shard_config: Some(ec_bitrot::ec_shard_config(
             data_shards as u32,
             parity_shards as u32,
+            block_size,
         )),
         shards: shard_checksums,
         encode_uuid: ec_bitrot::new_encode_uuid(),
@@ -120,7 +126,19 @@ pub fn write_ec_files(
         );
     }
 
-    Ok(())
+    Ok(block_size)
+}
+
+/// uniform_block_size returns the per-shard block size of the uniform layout
+/// for a .dat of the given size: ceil(dat_file_size/data_shards) rounded up to
+/// a whole small block. For every input this equals the legacy layout's padded
+/// shard size, so only the byte placement differs between the two layouts,
+/// never the shard length. Mirrors Go's UniformBlockSize.
+pub fn uniform_block_size(dat_file_size: i64, data_shards: usize) -> i64 {
+    let small = ERASURE_CODING_SMALL_BLOCK_SIZE as i64;
+    let per_shard = (dat_file_size + data_shards as i64 - 1) / data_shards as i64;
+    let blocks = ((per_shard + small - 1) / small).max(1);
+    blocks * small
 }
 
 /// Rebuild missing EC shard files from existing shards using Reed-Solomon reconstruct.
@@ -370,7 +388,7 @@ pub fn verify_ec_shards(
 }
 
 /// Write sorted .ecx index from .idx file.
-fn write_sorted_ecx_from_idx(idx_path: &str, ecx_path: &str) -> io::Result<()> {
+pub(crate) fn write_sorted_ecx_from_idx(idx_path: &str, ecx_path: &str) -> io::Result<()> {
     if !std::path::Path::new(idx_path).exists() {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
@@ -579,11 +597,19 @@ fn read_from_data_shards(
     Ok(())
 }
 
+/// Buffer size for one encode sub-batch per shard, mirroring Go's 256KB
+/// bufferSize in WriteEcFiles. A block is processed in block_size/buffer_size
+/// sub-batches, so memory stays at total_shards * 256KB no matter how large
+/// the uniform block is.
+const ENCODE_BUFFER_SIZE: usize = 256 * 1024;
+
 /// Encode the .dat file data into shard files.
 ///
 /// Uses a two-phase approach matching Go's ec_encoder.go:
-/// 1. Process as many large blocks (1GB) as possible
-/// 2. Process remaining data with small blocks (1MB)
+/// 1. Process as many large blocks as possible
+/// 2. Process remaining data with small blocks
+///
+/// `buffer_size` must divide both block sizes.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_dat_file(
     dat_file: &File,
@@ -593,44 +619,50 @@ pub(crate) fn encode_dat_file(
     builders: &mut [ShardChecksumBuilder],
     data_shards: usize,
     parity_shards: usize,
+    buffer_size: usize,
     large_block_size: usize,
     small_block_size: usize,
 ) -> io::Result<()> {
+    let total_shards = data_shards + parity_shards;
+    let mut buffers: Vec<Vec<u8>> = (0..total_shards)
+        .map(|_| vec![0u8; buffer_size])
+        .collect();
+
     let mut remaining = dat_size;
     let mut offset: u64 = 0;
 
-    // Phase 1: Process large blocks (1GB each) while enough data remains
+    // Phase 1: process whole large-block rows while enough data remains
     let large_row_size = large_block_size * data_shards;
 
     while remaining >= large_row_size as i64 {
-        encode_one_batch(
+        encode_data(
             dat_file,
             offset,
             large_block_size,
             rs,
+            &mut buffers,
             shards,
             builders,
             data_shards,
-            parity_shards,
         )?;
         offset += large_row_size as u64;
         remaining -= large_row_size as i64;
     }
 
-    // Phase 2: Process remaining data with small blocks (1MB each)
+    // Phase 2: process remaining data with small blocks
     let small_row_size = small_block_size * data_shards;
 
     while remaining > 0 {
         let to_process = remaining.min(small_row_size as i64);
-        encode_one_batch(
+        encode_data(
             dat_file,
             offset,
             small_block_size,
             rs,
+            &mut buffers,
             shards,
             builders,
             data_shards,
-            parity_shards,
         )?;
         offset += to_process as u64;
         remaining -= to_process;
@@ -639,61 +671,71 @@ pub(crate) fn encode_dat_file(
     Ok(())
 }
 
-/// Encode one batch (row) of data.
+/// Encode one row of blocks, streaming it in ENCODE_BUFFER_SIZE sub-batches so
+/// arbitrarily large blocks never require block-sized allocations. Mirrors
+/// Go's encodeData.
+#[allow(clippy::too_many_arguments)]
+fn encode_data(
+    dat_file: &File,
+    row_offset: u64,
+    block_size: usize,
+    rs: &ReedSolomon,
+    buffers: &mut [Vec<u8>],
+    shards: &mut [EcVolumeShard],
+    builders: &mut [ShardChecksumBuilder],
+    data_shards: usize,
+) -> io::Result<()> {
+    let buffer_size = buffers[0].len();
+    if block_size % buffer_size != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "unexpected block size {} buffer size {}",
+                block_size, buffer_size
+            ),
+        ));
+    }
+    let batch_count = block_size / buffer_size;
+    for b in 0..batch_count {
+        encode_one_batch(
+            dat_file,
+            row_offset + (b * buffer_size) as u64,
+            block_size,
+            rs,
+            buffers,
+            shards,
+            builders,
+            data_shards,
+        )?;
+    }
+    Ok(())
+}
+
+/// Encode one sub-batch: the same buffer-sized slice of every shard's block in
+/// this row. Mirrors Go's encodeDataOneBatch.
+#[allow(clippy::too_many_arguments)]
 fn encode_one_batch(
     dat_file: &File,
     offset: u64,
     block_size: usize,
     rs: &ReedSolomon,
+    buffers: &mut [Vec<u8>],
     shards: &mut [EcVolumeShard],
     builders: &mut [ShardChecksumBuilder],
     data_shards: usize,
-    parity_shards: usize,
 ) -> io::Result<()> {
-    let total_shards = data_shards + parity_shards;
-    // Each batch allocates block_size * total_shards bytes.
-    // With large blocks (1 GiB) this is 14 GiB -- guard against OOM.
-    let total_alloc = block_size.checked_mul(total_shards).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "block_size * shard count overflows usize",
-        )
-    })?;
-    // Large-block encoding uses 1 GiB * 14 shards = 14 GiB; allow up to 16 GiB.
-    const MAX_BATCH_ALLOC: usize = 16 * 1024 * 1024 * 1024; // 16 GiB safety limit
-    if total_alloc > MAX_BATCH_ALLOC {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!(
-                "batch allocation too large ({} bytes, limit {} bytes); block_size={} shards={}",
-                total_alloc, MAX_BATCH_ALLOC, block_size, total_shards,
-            ),
-        ));
-    }
-
-    // Allocate buffers for all shards
-    let mut buffers: Vec<Vec<u8>> = (0..total_shards).map(|_| vec![0u8; block_size]).collect();
-
-    // Read data shards from .dat file
+    // Read data shards from the .dat file, zero-filling past EOF — the buffers
+    // are reused across batches, so the tail must be cleared explicitly.
     for i in 0..data_shards {
         let read_offset = offset + (i * block_size) as u64;
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::FileExt;
-            dat_file.read_at(&mut buffers[i], read_offset)?;
-        }
-
-        #[cfg(not(unix))]
-        {
-            let mut f = dat_file.try_clone()?;
-            f.seek(SeekFrom::Start(read_offset))?;
-            f.read(&mut buffers[i])?;
+        let n = read_at_most(dat_file, &mut buffers[i], read_offset)?;
+        for b in buffers[i][n..].iter_mut() {
+            *b = 0;
         }
     }
 
     // Encode parity shards
-    rs.encode(&mut buffers).map_err(|e| {
+    rs.encode(&mut *buffers).map_err(|e| {
         io::Error::new(
             io::ErrorKind::Other,
             format!("reed-solomon encode: {:?}", e),
@@ -708,6 +750,29 @@ fn encode_one_batch(
     }
 
     Ok(())
+}
+
+/// Read into `buf` at `offset` until it is full or EOF; returns bytes read.
+fn read_at_most(dat_file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
+    let mut n = 0;
+    while n < buf.len() {
+        #[cfg(unix)]
+        let r = {
+            use std::os::unix::fs::FileExt;
+            dat_file.read_at(&mut buf[n..], offset + n as u64)?
+        };
+        #[cfg(not(unix))]
+        let r = {
+            let mut f = dat_file.try_clone()?;
+            f.seek(SeekFrom::Start(offset + n as u64))?;
+            f.read(&mut buf[n..])?
+        };
+        if r == 0 {
+            break;
+        }
+        n += r;
+    }
+    Ok(n)
 }
 
 #[cfg(test)]
