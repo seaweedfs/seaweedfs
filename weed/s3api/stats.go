@@ -38,7 +38,8 @@ func track(f http.HandlerFunc, action string) http.HandlerFunc {
 			if requester == "" {
 				requester = "-"
 			}
-			glog.Infof("%s %s %s %d %s", requester, r.Method, r.URL.Path, recorder.Status, elapsed)
+			// %q keeps requester- and key-supplied bytes (e.g. newlines) on one line
+			glog.Infof("%q %s %q %d %s", requester, r.Method, r.URL.Path, recorder.Status, elapsed)
 		}
 		if recorder.Status == http.StatusForbidden {
 			bucket = ""
