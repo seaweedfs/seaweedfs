@@ -84,7 +84,7 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 	}
 
 	glog.V(1).Infof("mkdir: %v", request)
-	resp, err := wfs.streamCreateEntry(context.Background(), request)
+	resp, err := wfs.exclusiveCreateEntry(context.Background(), request, entryFullPath)
 	if err != nil {
 		glog.V(0).Infof("mkdir %s: %v", entryFullPath, err)
 	} else {

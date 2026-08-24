@@ -236,9 +236,15 @@ func (m *streamMutateMux) doUnary(ctx context.Context, req *filer_pb.StreamMutat
 			return nil, fmt.Errorf("%w: stream closed", ErrStreamTransport)
 		}
 		if resp.Error != "" {
-			return nil, &streamMutateError{
-				msg:   resp.Error,
-				errno: syscall.Errno(resp.Errno),
+			// A failed create still carries a structured error code in the
+			// nested CreateEntryResponse; hand the response to CreateEntry so
+			// the sentinel (e.g. entry-already-exists → EEXIST) survives
+			// instead of collapsing into the top-level generic errno.
+			if _, isCreate := resp.Response.(*filer_pb.StreamMutateEntryResponse_CreateResponse); !isCreate {
+				return nil, &streamMutateError{
+					msg:   resp.Error,
+					errno: syscall.Errno(resp.Errno),
+				}
 			}
 		}
 		return resp, nil
