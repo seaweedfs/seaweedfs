@@ -57,6 +57,23 @@ func (cw *countingWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// commitOnFirstWrite defers the status line until the first body write, so the
+// first read from the volume servers must succeed before the 200 is committed
+// and a missing needle still gets a clean 5xx instead of a broken 200 body.
+type commitOnFirstWrite struct {
+	w         io.Writer
+	commit    func()
+	committed bool
+}
+
+func (c *commitOnFirstWrite) Write(p []byte) (int, error) {
+	if !c.committed {
+		c.committed = true
+		c.commit()
+	}
+	return c.w.Write(p)
+}
+
 // adjustRangeForPart adjusts a client's Range header to absolute offsets within a part.
 // Parameters:
 //   - partStartOffset: the absolute start offset of the part in the object
@@ -1155,41 +1172,48 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 		}
 	}
 
-	// All validation and preparation successful - NOW set headers and write status
-	tHeaderSet := time.Now()
-	s3a.setResponseHeaders(w, r, entry, totalSize)
-
-	// Override/add range-specific headers if this is a range request
-	if isRangeRequest {
-		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+size-1, totalSize))
+	// Headers and status are committed on the first body write, once the first
+	// read from the volume servers has succeeded. The client sees the same wire
+	// timing either way -- the status line sits in the server's write buffer
+	// until body bytes arrive -- but a first read that fails now surfaces as a
+	// clean 5xx instead of a 200 with a broken body.
+	body := &commitOnFirstWrite{w: w, commit: func() {
+		tHeaderSet := time.Now()
+		s3a.setResponseHeaders(w, r, entry, totalSize)
+		if isRangeRequest {
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+size-1, totalSize))
+		}
 		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
-	} else {
-		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
-	}
-	headerSetTime = time.Since(tHeaderSet)
-
-	// Now write status code (headers are all set, stream is ready)
-	if isRangeRequest {
-		w.WriteHeader(http.StatusPartialContent)
-	} else {
-		w.WriteHeader(http.StatusOK)
-	}
-
-	// Track time to first byte metric
-	TimeToFirstByte(r.Method, t0, r)
+		headerSetTime = time.Since(tHeaderSet)
+		if isRangeRequest {
+			w.WriteHeader(http.StatusPartialContent)
+		} else {
+			w.WriteHeader(http.StatusOK)
+		}
+		TimeToFirstByte(r.Method, t0, r)
+	}}
 
 	// Stream directly to response with counting wrapper.
 	// ChunkReadAt's ReadAt is backed by in-memory prefetched chunk buffers, so
 	// io.CopyBuffer drains them as fast memcpys.
 	tStreamExec := time.Now()
 	glog.V(4).Infof("streamFromVolumeServers: starting chunk reader, offset=%d, size=%d", offset, size)
-	written, err := s3a.streamRangeToClient(w, r, reader, entry, bucket, object, offset, size, totalSize, versionId)
+	written, err := s3a.streamRangeToClient(body, r, reader, entry, bucket, object, offset, size, totalSize, versionId)
 	streamExecTime = time.Since(tStreamExec)
 	// Track traffic even on partial writes for accurate egress accounting
 	if written > 0 {
 		BucketTrafficSent(written, r)
 	}
 	if err != nil {
+		if !body.committed {
+			if isCanceledStreamingError(err) {
+				glog.V(3).Infof("streamFromVolumeServers: request canceled before first byte of %s/%s: %v", bucket, object, err)
+				return err
+			}
+			glog.Errorf("streamFromVolumeServers: first read of %s/%s failed: %v", bucket, object, err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return newStreamErrorWithResponse(err)
+		}
 		switch {
 		case isCanceledStreamingError(err):
 			// Client disconnected mid-stream (e.g. Nginx upstream timeout, browser cancel) - expected
@@ -1202,6 +1226,11 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 		}
 		// Streaming error after WriteHeader was called - response already partially written
 		return newStreamErrorWithResponse(err)
+	}
+	if !body.committed {
+		// a zero-length body never writes, so commit the empty response here
+		body.committed = true
+		body.commit()
 	}
 	glog.V(4).Infof("streamFromVolumeServers: streamFn completed successfully, wrote %d bytes", written)
 	return nil
