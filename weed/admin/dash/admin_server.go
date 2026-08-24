@@ -1569,8 +1569,9 @@ func normalizeS3PublicEndpoint(endpoint string) string {
 		return ""
 	}
 	u, err := url.Parse(endpoint)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		glog.Warningf("ignoring s3.public_endpoint %q: expecting an http:// or https:// URL with a host", endpoint)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||
+		u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		glog.Warningf("ignoring s3.public_endpoint %q: expecting an http:// or https:// URL with a host and no query or fragment", endpoint)
 		return ""
 	}
 	return endpoint

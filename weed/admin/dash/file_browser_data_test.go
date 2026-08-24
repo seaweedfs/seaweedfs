@@ -165,11 +165,15 @@ func TestNormalizeS3PublicEndpoint(t *testing.T) {
 		{"https://s3.example.com", "https://s3.example.com"},
 		{"http://10.0.0.1:8333/", "http://10.0.0.1:8333"},
 		{"http://[::1]:8333", "http://[::1]:8333"},
+		{"https://proxy.example.com/s3", "https://proxy.example.com/s3"},
 		{"", ""},
 		{"/", ""},
 		{"s3.example.com", ""},
 		{"ftp://s3.example.com", ""},
 		{"https://", ""},
+		{"https://s3.example.com?x=1", ""},
+		{"https://s3.example.com/?", ""},
+		{"https://s3.example.com#frag", ""},
 	}
 
 	for _, tt := range tests {
