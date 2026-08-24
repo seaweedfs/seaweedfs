@@ -177,8 +177,9 @@ var cmdAdmin = &Command{
     - Example: weed admin -metricsPort=9327 -master="localhost:9333"
 
   Maintenance Configuration:
-    - An optional admin.toml declares maintenance task settings
-      ([maintenance.vacuum], [maintenance.balance], [maintenance.erasure_coding])
+    - An optional admin.toml declares maintenance settings ([maintenance]
+      to toggle the whole system, plus per-task [maintenance.vacuum],
+      [maintenance.balance], [maintenance.erasure_coding])
     - Settings in admin.toml are applied at every startup, overriding values
       saved from the admin UI, so they can be managed declaratively
     - Requires -dataDir; values can also be set via WEED_* environment

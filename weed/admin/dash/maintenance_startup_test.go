@@ -95,6 +95,41 @@ func TestDisabledTaskIsNotScannedAfterStartup(t *testing.T) {
 	}
 }
 
+// TestLoadMaintenanceConfigKeepsPersistedEnabledFalse covers the top of issue-shaped startup:
+// an operator persisted enabled=false, and the load path used to lose it twice over — once to
+// ApplyDefaultsToProtobuf treating the bool zero value as unset, and once to an explicit
+// force-enable "migration" block. The persisted flag must come back as saved, while fields the
+// old file never carried still pick up their schema defaults.
+func TestLoadMaintenanceConfigKeepsPersistedEnabledFalse(t *testing.T) {
+	dir := t.TempDir()
+	cp := NewConfigPersistence(dir)
+
+	// An old-style file that only knows about the enabled flag: everything else zero.
+	if err := cp.SaveMaintenanceConfig(&MaintenanceConfig{Enabled: false}); err != nil {
+		t.Fatalf("save maintenance config: %v", err)
+	}
+
+	loaded, err := cp.LoadMaintenanceConfig()
+	if err != nil {
+		t.Fatalf("load maintenance config: %v", err)
+	}
+	if loaded.Enabled {
+		t.Error("persisted enabled=false came back true; the maintenance system cannot be disabled")
+	}
+	if loaded.ScanIntervalSeconds != 30*60 {
+		t.Errorf("scan interval = %d, want schema default 1800 filled in", loaded.ScanIntervalSeconds)
+	}
+
+	// And with no file at all, the default is enabled.
+	fresh, err := NewConfigPersistence(t.TempDir()).LoadMaintenanceConfig()
+	if err != nil {
+		t.Fatalf("load maintenance config: %v", err)
+	}
+	if !fresh.Enabled {
+		t.Error("maintenance not enabled by default when nothing is persisted")
+	}
+}
+
 // TestPolicyMirrorsWhatTheDetectorsReport checks that the maintenance policy the queue and
 // the scanner run on agrees with the detectors. A disagreement means one of the two paths
 // into the task configs has gone stale again.

@@ -90,6 +90,36 @@ preferred_tags = "Fast, ssd"
 	}
 }
 
+func TestApplyMaintenanceConfigFromTomlEnabledToggle(t *testing.T) {
+	dir := t.TempDir()
+	cp := NewConfigPersistence(dir)
+
+	if err := cp.ApplyMaintenanceConfigFromToml(tomlConfig(t, "[maintenance]\nenabled = false\n")); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	conf, err := cp.LoadMaintenanceConfig()
+	if err != nil {
+		t.Fatalf("load maintenance config: %v", err)
+	}
+	if conf.Enabled {
+		t.Errorf("maintenance still enabled after [maintenance] enabled = false")
+	}
+	if conf.ScanIntervalSeconds != 30*60 {
+		t.Errorf("scan interval = %d, want default 1800 kept alongside the toggle", conf.ScanIntervalSeconds)
+	}
+
+	if err := cp.ApplyMaintenanceConfigFromToml(tomlConfig(t, "[maintenance]\nenabled = true\n")); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	conf, err = cp.LoadMaintenanceConfig()
+	if err != nil {
+		t.Fatalf("load maintenance config: %v", err)
+	}
+	if !conf.Enabled {
+		t.Errorf("maintenance still disabled after [maintenance] enabled = true")
+	}
+}
+
 func TestApplyMaintenanceConfigFromTomlNoKeys(t *testing.T) {
 	dir := t.TempDir()
 	cp := NewConfigPersistence(dir)

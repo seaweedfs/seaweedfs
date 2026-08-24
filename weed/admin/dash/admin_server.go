@@ -261,19 +261,6 @@ func NewAdminServer(masters string, filerGroup string, templateFS http.FileSyste
 			maintenanceConfig = maintenance.DefaultMaintenanceConfig()
 		}
 
-		// Apply new defaults to handle schema changes (like enabling by default)
-		schema := maintenance.GetMaintenanceConfigSchema()
-		if err := schema.ApplyDefaultsToProtobuf(maintenanceConfig); err != nil {
-			glog.Warningf("Failed to apply schema defaults to loaded config: %v", err)
-		}
-
-		// Force enable maintenance system for new default behavior
-		// This handles the case where old configs had Enabled=false as default
-		if !maintenanceConfig.Enabled {
-			glog.V(1).Infof("Enabling maintenance system (new default behavior)")
-			maintenanceConfig.Enabled = true
-		}
-
 		glog.V(1).Infof("Maintenance system initialized with persistent configuration (enabled: %v)", maintenanceConfig.Enabled)
 	} else {
 		maintenanceConfig = maintenance.DefaultMaintenanceConfig()
@@ -300,6 +287,8 @@ func NewAdminServer(masters string, filerGroup string, templateFS http.FileSyste
 				glog.Errorf("Failed to start maintenance manager: %v", err)
 			}
 		}()
+	} else {
+		glog.V(0).Infof("Maintenance system is disabled by configuration, not starting the maintenance manager")
 	}
 
 	pluginOpts := adminplugin.Options{

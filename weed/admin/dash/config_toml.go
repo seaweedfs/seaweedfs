@@ -30,6 +30,20 @@ type TomlConfig interface {
 // directory loss and override admin UI edits on restart. Absent keys keep
 // their persisted values.
 func (cp *ConfigPersistence) ApplyMaintenanceConfigFromToml(v TomlConfig) error {
+	var maintenanceConf *MaintenanceConfig
+	maintenanceChanged := false
+	if k := "maintenance.enabled"; v.IsSet(k) {
+		conf, err := cp.LoadMaintenanceConfig()
+		if err != nil {
+			return fmt.Errorf("load maintenance config: %w", err)
+		}
+		conf.Enabled = v.GetBool(k)
+		// the policy lives in the per-task config files; don't snapshot it here
+		conf.Policy = nil
+		maintenanceConf = conf
+		maintenanceChanged = true
+	}
+
 	vacuumConf := vacuum.LoadConfigFromPersistence(cp)
 	vacuumChanged := applyBaseConfigFromToml(v, "maintenance.vacuum.", &vacuumConf.BaseConfig)
 	if k := "maintenance.vacuum.garbage_threshold"; v.IsSet(k) {
@@ -84,13 +98,19 @@ func (cp *ConfigPersistence) ApplyMaintenanceConfigFromToml(v TomlConfig) error 
 		ecChanged = true
 	}
 
-	if !vacuumChanged && !balanceChanged && !ecChanged {
+	if !maintenanceChanged && !vacuumChanged && !balanceChanged && !ecChanged {
 		return nil
 	}
 	if !cp.IsConfigured() {
 		return fmt.Errorf("admin.toml maintenance settings require -dataDir to persist")
 	}
 
+	if maintenanceChanged {
+		if err := cp.SaveMaintenanceConfig(maintenanceConf); err != nil {
+			return fmt.Errorf("save maintenance config: %w", err)
+		}
+		glog.V(0).Infof("Applied [maintenance] settings from admin.toml (enabled: %v)", maintenanceConf.Enabled)
+	}
 	if vacuumChanged {
 		if err := cp.SaveVacuumTaskPolicy(vacuumConf.ToTaskPolicy()); err != nil {
 			return fmt.Errorf("save vacuum task config: %w", err)
