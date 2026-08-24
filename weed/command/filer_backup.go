@@ -271,8 +271,11 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 // silently skip each other's changes. Writes go only to the new key; the
 // historical key is read once when the new key has no value yet, so an
 // existing backup resumes where it left off after an upgrade.
+//
+// NUL joins the fields because it cannot occur in a path or a configuration
+// value, so distinct field tuples cannot concatenate to the same hash input.
 func backupCheckpointIds(sourcePath string, dataSink sink.ReplicationSink) (sinkId, legacySinkId int32) {
-	sinkId = int32(util.HashStringToLong(sourcePath + "=>" + dataSink.GetName() + "|" + dataSink.GetDestinationIdentity()))
+	sinkId = int32(util.HashStringToLong(sourcePath + "\x00" + dataSink.GetName() + "\x00" + dataSink.GetDestinationIdentity()))
 	legacySinkId = int32(util.HashStringToLong(dataSink.GetName() + dataSink.GetSinkToDirectory()))
 	return
 }

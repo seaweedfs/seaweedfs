@@ -323,6 +323,16 @@ func TestBackupCheckpointIds_LegacyFormulaUnchanged(t *testing.T) {
 	}
 }
 
+// The NUL joins keep the hash input injective: field values spelling out
+// other fields' content must not concatenate to the same input.
+func TestBackupCheckpointIds_NoAliasing(t *testing.T) {
+	idA, _ := backupCheckpointIds("/src", &stubSink{name: "s3", dir: "/", destination: "/d=>s3|/other"})
+	idB, _ := backupCheckpointIds("/src=>s3|/d", &stubSink{name: "s3", dir: "/", destination: "/other"})
+	if idA == idB {
+		t.Errorf("field content spelling a separator aliases checkpoint id %d", idA)
+	}
+}
+
 // Restarting the same configuration must derive the same key, or every
 // restart would orphan its checkpoint.
 func TestBackupCheckpointIds_Stable(t *testing.T) {

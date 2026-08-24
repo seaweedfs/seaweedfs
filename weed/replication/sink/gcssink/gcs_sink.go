@@ -40,7 +40,7 @@ func (g *GcsSink) GetSinkToDirectory() string {
 }
 
 func (g *GcsSink) GetDestinationIdentity() string {
-	return g.bucket + "|" + g.dir
+	return g.bucket + "\x00" + g.dir
 }
 
 func (g *GcsSink) IsIncremental() bool {

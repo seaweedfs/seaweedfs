@@ -35,7 +35,7 @@ func (g *B2Sink) GetSinkToDirectory() string {
 }
 
 func (g *B2Sink) GetDestinationIdentity() string {
-	return g.bucket + "|" + g.dir
+	return g.bucket + "\x00" + g.dir
 }
 
 func (g *B2Sink) IsIncremental() bool {

@@ -45,7 +45,7 @@ func (g *AzureSink) GetSinkToDirectory() string {
 }
 
 func (g *AzureSink) GetDestinationIdentity() string {
-	return g.accountName + "|" + g.endpoint + "|" + g.container + "|" + g.dir
+	return g.accountName + "\x00" + g.endpoint + "\x00" + g.container + "\x00" + g.dir
 }
 
 func (g *AzureSink) IsIncremental() bool {

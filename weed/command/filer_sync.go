@@ -468,7 +468,9 @@ func getSignaturePrefixByPath(sourcePath, targetPath string) string {
 		prefix += sourcePath
 	}
 	if targetPath != "/" {
-		prefix += "=>" + targetPath
+		// NUL cannot occur in a path, so the combined key can alias neither a
+		// source-only key nor another (source, target) pair
+		prefix += "\x00" + targetPath
 	}
 	return prefix
 }

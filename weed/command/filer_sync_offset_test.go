@@ -13,13 +13,21 @@ func TestGetSignaturePrefixByPath_KeyForms(t *testing.T) {
 		{"/", "/", "sync."},
 		{"/data", "/", "sync./data"},
 		// the target path participates once it deviates from "/"
-		{"/", "/backup-a", "sync.=>/backup-a"},
-		{"/data", "/backup-a", "sync./data=>/backup-a"},
+		{"/", "/backup-a", "sync.\x00/backup-a"},
+		{"/data", "/backup-a", "sync./data\x00/backup-a"},
 	}
 	for _, tc := range cases {
 		if got := getSignaturePrefixByPath(tc.sourcePath, tc.targetPath); got != tc.want {
 			t.Errorf("getSignaturePrefixByPath(%q, %q) = %q, want %q", tc.sourcePath, tc.targetPath, got, tc.want)
 		}
+	}
+}
+
+// The NUL separator keeps the key injective: a source directory whose name
+// spells out a separator must not alias a different (source, target) pair.
+func TestGetSignaturePrefixByPath_NoAliasing(t *testing.T) {
+	if a, b := getSignaturePrefixByPath("/archive=>/backup", "/"), getSignaturePrefixByPath("/archive", "/backup"); a == b {
+		t.Errorf("source path spelling a separator aliases key %q", a)
 	}
 }
 
