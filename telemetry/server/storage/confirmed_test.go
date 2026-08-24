@@ -74,4 +74,14 @@ func TestConfirmedClusters(t *testing.T) {
 	if _, ok := v["9.99"]; ok {
 		t.Errorf("one-shot cluster polluted the distribution: %v", v)
 	}
+
+	// Cluster A meets the 1/3/7-day thresholds, B only the 1-day one, and
+	// unmet thresholds are present as zero so the dashboard can show them.
+	byDays := stats["confirmed_by_days"].(map[int]int)
+	want := map[int]int{1: 2, 3: 1, 7: 1, 14: 0, 30: 0}
+	for threshold, expected := range want {
+		if got, ok := byDays[threshold]; !ok || got != expected {
+			t.Errorf("confirmed_by_days[%d] = %v (present=%v), want %d", threshold, got, ok, expected)
+		}
+	}
 }

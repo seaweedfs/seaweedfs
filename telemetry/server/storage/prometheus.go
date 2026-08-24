@@ -207,6 +207,10 @@ func (s *PrometheusStorage) updateStats() {
 	totalInstances := 0
 	activeInstances := 0
 	confirmedInstances := 0
+	confirmedByDays := make(map[int]int, len(confirmThresholds))
+	for _, threshold := range confirmThresholds {
+		confirmedByDays[threshold] = 0
+	}
 	versionsAll := make(map[string]int)
 	osAll := make(map[string]int)
 	versionsConfirmed := make(map[string]int)
@@ -223,7 +227,13 @@ func (s *PrometheusStorage) updateStats() {
 			// A cluster is confirmed once seen on confirmDays distinct UTC
 			// days (histories hold one sample per day), so short-lived
 			// clusters can't skew the distributions below.
-			if len(s.histories[instance.TelemetryData.TopologyId]) >= confirmDays {
+			daysSeen := len(s.histories[instance.TelemetryData.TopologyId])
+			for _, threshold := range confirmThresholds {
+				if daysSeen >= threshold {
+					confirmedByDays[threshold]++
+				}
+			}
+			if daysSeen >= confirmDays {
 				confirmedInstances++
 				versionsConfirmed[instance.TelemetryData.Version]++
 				osConfirmed[instance.TelemetryData.Os]++
@@ -249,6 +259,7 @@ func (s *PrometheusStorage) updateStats() {
 		"total_instances":     totalInstances,
 		"active_instances":    activeInstances,
 		"confirmed_instances": confirmedInstances,
+		"confirmed_by_days":   confirmedByDays,
 		"versions":            versions,
 		"os_distribution":     osDistribution,
 	}

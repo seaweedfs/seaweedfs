@@ -10,6 +10,10 @@ import (
 // on before it counts as confirmed in the aggregated stats.
 const confirmDays = 7
 
+// confirmThresholds are the confirmation windows the dashboard lets the
+// viewer pick between; confirmDays is the one everything else is built on.
+var confirmThresholds = []int{1, 3, 7, 14, 30}
+
 // activeDays is how recently a cluster must have reported to count as active.
 const activeDays = 7
 
