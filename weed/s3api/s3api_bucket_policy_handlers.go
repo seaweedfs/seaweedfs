@@ -320,6 +320,26 @@ func (s3a *S3ApiServer) updateBucketPolicyInIAM(bucket string, policyDoc *policy
 	return iamManager.UpdateBucketPolicy(context.Background(), bucket, policyJSON)
 }
 
+// ensureBucketPolicyInIAM backfills the IAM mirror for a policy the
+// subscription never saw change (one that predates the IAM integration).
+// Called from the lazy bucket-config load; a present mirror is left alone.
+func (s3a *S3ApiServer) ensureBucketPolicyInIAM(bucket string, policyDoc *policy_engine.PolicyDocument) {
+	iamManager := s3a.bucketPolicyIAMManager()
+	if iamManager == nil {
+		return
+	}
+
+	policyJSON, err := json.Marshal(policyDoc)
+	if err != nil {
+		glog.Warningf("backfill bucket policy for %s into IAM: marshal: %v", bucket, err)
+		return
+	}
+
+	if err := iamManager.EnsureBucketPolicy(context.Background(), bucket, policyJSON); err != nil {
+		glog.Warningf("backfill bucket policy for %s into IAM: %v", bucket, err)
+	}
+}
+
 // removeBucketPolicyFromIAM removes the bucket policy from the IAM system
 func (s3a *S3ApiServer) removeBucketPolicyFromIAM(bucket string) error {
 	iamManager := s3a.bucketPolicyIAMManager()

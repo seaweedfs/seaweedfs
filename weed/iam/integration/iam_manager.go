@@ -865,6 +865,26 @@ func (m *IAMManager) UpdateBucketPolicy(ctx context.Context, bucketName string, 
 	return m.policyEngine.AddPolicy(m.getFilerAddress(), policyName, &policyDoc)
 }
 
+// EnsureBucketPolicy stores the policy for a bucket only when no mirror is
+// stored yet, backfilling policies that predate the IAM integration (the
+// metadata subscription only sees changes). A present mirror is left alone,
+// so repeat calls cost one cached read.
+func (m *IAMManager) EnsureBucketPolicy(ctx context.Context, bucketName string, policyJSON []byte) error {
+	if !m.initialized {
+		return fmt.Errorf("IAM manager not initialized")
+	}
+
+	if bucketName == "" {
+		return fmt.Errorf("bucket name cannot be empty")
+	}
+
+	if existing, err := m.policyEngine.GetPolicy(ctx, m.getFilerAddress(), "bucket-policy:"+bucketName); err == nil && existing != nil {
+		return nil
+	}
+
+	return m.UpdateBucketPolicy(ctx, bucketName, policyJSON)
+}
+
 // RemoveBucketPolicy deletes the stored policy for a bucket. Removing a
 // policy that was never stored is a success.
 func (m *IAMManager) RemoveBucketPolicy(ctx context.Context, bucketName string) error {
