@@ -217,7 +217,7 @@ func TestDecodeAtomicPublish(t *testing.T) {
 	// final .dat nor a partial .dat.tmp behind.
 	datBase := filepath.Join(dir, "bar_2")
 	missingShards := []string{filepath.Join(dir, "does_not_exist.ec00")}
-	if err := erasure_coding.WriteDatFile(datBase, 100, missingShards); err == nil {
+	if err := erasure_coding.WriteDatFile(datBase, 100, 100, missingShards); err == nil {
 		t.Fatalf("expected WriteDatFile to fail on missing shard")
 	}
 	if _, err := os.Stat(datBase + ".dat"); !os.IsNotExist(err) {

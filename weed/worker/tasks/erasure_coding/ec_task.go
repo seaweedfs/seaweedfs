@@ -647,6 +647,14 @@ func (t *ErasureCodingTask) generateEcShardsLocally(localFiles map[string]string
 		Version:       uint32(needle.GetCurrentVersion()),
 		EcShardConfig: ecShardConfig,
 	}
+	// The decoder resolves the shard block layout from the encode-time .dat
+	// size; without it, decoding falls back to inferring the layout from the
+	// shard size, which is ambiguous when that is a large-block multiple.
+	if info, err := os.Stat(datFile); err == nil {
+		volumeInfo.DatFileSize = info.Size()
+	} else {
+		glog.Warningf("stat %s for .vif dat file size: %v", datFile, err)
+	}
 	if err := volume_info.SaveVolumeInfo(vifFile, volumeInfo); err != nil {
 		glog.Warningf("Failed to create .vif file: %v", err)
 	} else {

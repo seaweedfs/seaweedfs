@@ -3152,6 +3152,7 @@ impl VolumeServer for VolumeGrpcService {
         let dat_dir = ec_vol.dir.clone();
         let ecx_dir = ec_vol.ecx_actual_dir().to_string();
         let collection = ec_vol.collection.clone();
+        let vif_dat_file_size = ec_vol.dat_file_size;
         // shard_dirs[i] is guaranteed Some for i in 0..data_shards by
         // the check above; collect concrete dirs for the decoder.
         let per_shard_dirs: Vec<String> = shard_dirs[..data_shards]
@@ -3171,12 +3172,18 @@ impl VolumeServer for VolumeGrpcService {
             )
             .map_err(|e| Status::internal(format!("FindDatFileSize: {}", e)))?;
 
+        // The shard block layout was fixed by the .dat size at encode time
+        // (recorded in .vif); deletions can shrink the live extent below a
+        // large-block row boundary, so the layout must not be derived from
+        // dat_file_size. The decoder infers the layout from the shard size
+        // when .vif does not record it.
         // Write .dat file using block-interleaved reading from shards.
         crate::storage::erasure_coding::ec_decoder::write_dat_file_from_shards_with_dirs(
             &dat_dir,
             &collection,
             vid,
             dat_file_size,
+            vif_dat_file_size,
             data_shards,
             &per_shard_dirs,
         )

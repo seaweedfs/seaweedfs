@@ -75,6 +75,8 @@ pub fn write_ec_files(
         &mut builders,
         data_shards,
         parity_shards,
+        ERASURE_CODING_LARGE_BLOCK_SIZE,
+        ERASURE_CODING_SMALL_BLOCK_SIZE,
     )?;
 
     // Close all shards
@@ -582,7 +584,8 @@ fn read_from_data_shards(
 /// Uses a two-phase approach matching Go's ec_encoder.go:
 /// 1. Process as many large blocks (1GB) as possible
 /// 2. Process remaining data with small blocks (1MB)
-fn encode_dat_file(
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_dat_file(
     dat_file: &File,
     dat_size: i64,
     rs: &ReedSolomon,
@@ -590,12 +593,13 @@ fn encode_dat_file(
     builders: &mut [ShardChecksumBuilder],
     data_shards: usize,
     parity_shards: usize,
+    large_block_size: usize,
+    small_block_size: usize,
 ) -> io::Result<()> {
     let mut remaining = dat_size;
     let mut offset: u64 = 0;
 
     // Phase 1: Process large blocks (1GB each) while enough data remains
-    let large_block_size = ERASURE_CODING_LARGE_BLOCK_SIZE;
     let large_row_size = large_block_size * data_shards;
 
     while remaining >= large_row_size as i64 {
@@ -614,7 +618,6 @@ fn encode_dat_file(
     }
 
     // Phase 2: Process remaining data with small blocks (1MB each)
-    let small_block_size = ERASURE_CODING_SMALL_BLOCK_SIZE;
     let small_row_size = small_block_size * data_shards;
 
     while remaining > 0 {
