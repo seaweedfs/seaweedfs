@@ -53,6 +53,10 @@ func (s3sink *S3Sink) GetSinkToDirectory() string {
 	return s3sink.dir
 }
 
+func (s3sink *S3Sink) GetDestinationIdentity() string {
+	return s3sink.endpoint + "|" + s3sink.bucket + "|" + s3sink.dir
+}
+
 func (s3sink *S3Sink) IsIncremental() bool {
 	return s3sink.isIncremental
 }

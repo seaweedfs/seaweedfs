@@ -489,6 +489,20 @@ func getOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signature
 
 }
 
+// getOffsetWithFallback reads the offset under the current key, falling back
+// to the historical key when the current one has no value yet, so streams
+// created before a checkpoint key-scheme change resume where they left off
+// instead of replaying from zero. Writes must go only to the current key:
+// keeping the historical key warm would re-create the very sharing between
+// streams that a key-scheme change separates.
+func getOffsetWithFallback(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signaturePrefix string, signature int32, legacySignaturePrefix string, legacySignature int32) (int64, error) {
+	lastOffsetTsNs, err := getOffset(grpcDialOption, filer, signaturePrefix, signature)
+	if err == nil && lastOffsetTsNs == 0 {
+		lastOffsetTsNs, err = getOffset(grpcDialOption, filer, legacySignaturePrefix, legacySignature)
+	}
+	return lastOffsetTsNs, err
+}
+
 func setOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signaturePrefix string, signature int32, offsetTsNs int64) error {
 	return pb.WithFilerClient(false, signature, filer, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 

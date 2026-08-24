@@ -39,6 +39,10 @@ func (g *GcsSink) GetSinkToDirectory() string {
 	return g.dir
 }
 
+func (g *GcsSink) GetDestinationIdentity() string {
+	return g.bucket + "|" + g.dir
+}
+
 func (g *GcsSink) IsIncremental() bool {
 	return g.isIncremental
 }
