@@ -33,6 +33,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures::future::join_all;
+use futures::stream::{self, StreamExt};
 use reed_solomon_erasure::galois_8::ReedSolomon;
 use tonic::Request;
 
@@ -48,6 +49,10 @@ use crate::storage::needle::needle::{get_actual_size, Needle, NeedleError};
 use crate::storage::store_ec_reconcile::EcVolumeMissingIndex;
 use crate::storage::types::*;
 use crate::storage::volume::volume_file_name;
+
+/// Bounds the fan-out of a single needle read. Mirrors Go's
+/// `ecIntervalReadConcurrency`.
+const INTERVAL_READ_CONCURRENCY: usize = 8;
 
 /// One interval's data after Phase A.
 enum IntervalResult {
@@ -90,7 +95,7 @@ pub async fn read_ec_shard_needle_distributed(
     // intervals, and read any locally-mounted shard intervals. We must
     // not `.await` while holding this guard (std::sync::RwLockReadGuard
     // is !Send).
-    let snapshot = match snapshot_under_lock(state, vid, needle_id)? {
+    let mut snapshot = match snapshot_under_lock(state, vid, needle_id)? {
         Some(s) => s,
         None => return Ok(None),
     };
@@ -138,39 +143,56 @@ pub async fn read_ec_shard_needle_distributed(
         }
     }
 
-    // Phase C — fetch missing intervals, reconstructing when the
-    // direct peer read fails.
-    let mut assembled: Vec<Vec<u8>> = Vec::with_capacity(snapshot.intervals.len());
-    for res in snapshot.intervals {
-        match res {
-            IntervalResult::Local(buf) => assembled.push(buf),
-            IntervalResult::NeedRemote {
-                shard_id,
-                shard_offset,
-                size,
-            } => {
-                let (buf, is_deleted) = fetch_one_interval(
-                    state,
-                    vid,
-                    needle_id,
+    // Phase C — fetch missing intervals, reconstructing when the direct peer
+    // read fails. Blocks that follow each other in the .dat live on different
+    // shards, so a needle spanning several of them costs one round trip per
+    // block when fetched in sequence; `buffered` keeps the order while letting
+    // INTERVAL_READ_CONCURRENCY of them fly at once.
+    let data_shards = snapshot.data_shards as usize;
+    let parity_shards = snapshot.parity_shards as usize;
+    let encode_ts_ns = snapshot.encode_ts_ns;
+    let intervals = std::mem::take(&mut snapshot.intervals);
+    let fetched: Vec<io::Result<(Vec<u8>, bool)>> = stream::iter(intervals.into_iter().map(|res| {
+        let shard_locations = &shard_locations;
+        async move {
+            match res {
+                IntervalResult::Local(buf) => Ok((buf, false)),
+                IntervalResult::NeedRemote {
                     shard_id,
                     shard_offset,
                     size,
-                    &shard_locations,
-                    snapshot.data_shards as usize,
-                    snapshot.parity_shards as usize,
-                    snapshot.encode_ts_ns,
-                )
-                .await?;
-                // A peer reports the needle deleted (a cross-server window where the
-                // local index still shows it live): treat as not-found rather than
-                // serving zeros, mirroring Go's ErrorDeleted.
-                if is_deleted {
-                    return Ok(None);
+                } => {
+                    fetch_one_interval(
+                        state,
+                        vid,
+                        needle_id,
+                        shard_id,
+                        shard_offset,
+                        size,
+                        shard_locations,
+                        data_shards,
+                        parity_shards,
+                        encode_ts_ns,
+                    )
+                    .await
                 }
-                assembled.push(buf);
             }
         }
+    }))
+    .buffered(INTERVAL_READ_CONCURRENCY)
+    .collect()
+    .await;
+
+    let mut assembled: Vec<Vec<u8>> = Vec::with_capacity(fetched.len());
+    for res in fetched {
+        let (buf, is_deleted) = res?;
+        // A peer reports the needle deleted (a cross-server window where the
+        // local index still shows it live): treat as not-found rather than
+        // serving zeros, mirroring Go's ErrorDeleted.
+        if is_deleted {
+            return Ok(None);
+        }
+        assembled.push(buf);
     }
 
     // Phase D — assemble and parse the Needle. Mirrors the tail of

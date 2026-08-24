@@ -436,31 +436,65 @@ func (s *Store) IntervalToShardIdAndOffset(iv erasure_coding.Interval) (erasure_
 	return iv.ToShardIdAndOffset(erasure_coding.ErasureCodingLargeBlockSize, erasure_coding.ErasureCodingSmallBlockSize)
 }
 
+// ecIntervalReadConcurrency bounds the fan-out of a single needle read. Blocks
+// that follow each other in the .dat live on different shards, so a needle
+// spanning several of them costs one round trip per block when read in sequence.
+const ecIntervalReadConcurrency = 8
+
 func (s *Store) readEcShardIntervals(needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, intervals []erasure_coding.Interval) (data []byte, is_deleted bool, err error) {
 	if err = s.cachedLookupEcShardLocations(ecVolume); err != nil {
 		return nil, false, fmt.Errorf("failed to locate shard via master grpc %s: %v", s.MasterAddress, err)
 	}
 
-	for i, interval := range intervals {
-		if d, isDeleted, e := s.readOneEcShardInterval(needleId, ecVolume, interval); e != nil {
-			return nil, isDeleted, e
-		} else {
-			if isDeleted {
-				is_deleted = true
-			}
-			if i == 0 {
-				data = d
-			} else {
-				data = append(data, d...)
+	var totalSize int
+	for _, interval := range intervals {
+		totalSize += int(interval.Size)
+	}
+	data = make([]byte, totalSize)
+
+	if len(intervals) <= 1 {
+		for _, interval := range intervals {
+			if is_deleted, err = s.readOneEcShardInterval(needleId, ecVolume, interval, data); err != nil {
+				return nil, is_deleted, err
 			}
 		}
+		return data, is_deleted, nil
 	}
-	return
+
+	errs := make([]error, len(intervals))
+	var deleted atomic.Bool
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, ecIntervalReadConcurrency)
+	var pos int
+	for i, interval := range intervals {
+		buf := data[pos : pos+int(interval.Size)]
+		pos += int(interval.Size)
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			isDeleted, e := s.readOneEcShardInterval(needleId, ecVolume, interval, buf)
+			if isDeleted {
+				deleted.Store(true)
+			}
+			errs[i] = e
+		}()
+	}
+	wg.Wait()
+
+	is_deleted = deleted.Load()
+	for _, e := range errs {
+		if e != nil {
+			return nil, is_deleted, e
+		}
+	}
+	return data, is_deleted, nil
 }
 
-func (s *Store) readOneEcShardInterval(needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, interval erasure_coding.Interval) (data []byte, is_deleted bool, err error) {
+// readOneEcShardInterval fills data, which must be interval.Size long.
+func (s *Store) readOneEcShardInterval(needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, interval erasure_coding.Interval, data []byte) (is_deleted bool, err error) {
 	shardId, actualOffset := s.IntervalToShardIdAndOffset(interval)
-	data = make([]byte, interval.Size)
 
 	// try local read
 	err = s.readLocalEcShardInterval(ecVolume, shardId, data, actualOffset)
