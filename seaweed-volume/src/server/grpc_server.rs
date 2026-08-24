@@ -2550,7 +2550,7 @@ impl VolumeServer for VolumeGrpcService {
         let rebuild_idx_dir = loc_infos[rebuild_loc_idx].idx_dir.clone();
 
         // Determine data/parity shard config from rebuild dir
-        let (data_shards, parity_shards, _) =
+        let (data_shards, parity_shards, block_size) =
             crate::storage::erasure_coding::ec_volume::read_ec_shard_config(
                 &rebuild_dir,
                 &rebuild_idx_dir,
@@ -2634,6 +2634,7 @@ impl VolumeServer for VolumeGrpcService {
             collection,
             vid,
             data_shards as usize,
+            block_size,
             &ecx_dir_refs,
         )
         .map_err(|e| Status::internal(format!("RebuildEcxFile: {}", e)))?;

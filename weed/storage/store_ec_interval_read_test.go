@@ -94,7 +94,7 @@ func randomNeedleOfSize(id uint64, size int) *needle.Needle {
 	n := new(needle.Needle)
 	n.Id = types.Uint64ToNeedleId(id)
 	n.Data = make([]byte, size)
-	rand.Read(n.Data)
+	rand.New(rand.NewSource(int64(id))).Read(n.Data)
 	n.Checksum = needle.NewCRC(n.Data)
 	return n
 }

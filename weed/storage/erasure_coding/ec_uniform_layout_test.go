@@ -57,7 +57,7 @@ func TestUniformBlockSizeMatchesLegacyShardSize(t *testing.T) {
 func encodeLayoutFixture(t *testing.T, baseFileName string, datSize int64, large, small int64, ctx *ECContext) []byte {
 	t.Helper()
 	data := make([]byte, datSize)
-	rand.Read(data)
+	rand.New(rand.NewSource(datSize)).Read(data)
 	if err := os.WriteFile(baseFileName+".dat", data, 0o644); err != nil {
 		t.Fatalf("write .dat: %v", err)
 	}
