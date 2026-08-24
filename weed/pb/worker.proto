@@ -324,7 +324,10 @@ message TaskLogEntry {
 
 // MaintenanceConfig holds configuration for the maintenance system
 message MaintenanceConfig {
-  bool enabled = 1;
+  // optional so a file that predates presence tracking (where an operator's
+  // explicit false and the field's absence are indistinguishable on the wire)
+  // can be told apart from one that explicitly persists the toggle
+  optional bool enabled = 1;
   int32 scan_interval_seconds = 2;    // How often to scan for maintenance needs
   int32 worker_timeout_seconds = 3;   // Worker heartbeat timeout
   int32 task_timeout_seconds = 4;     // Individual task timeout

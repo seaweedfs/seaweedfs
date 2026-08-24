@@ -159,14 +159,17 @@ func (cp *ConfigPersistence) LoadMaintenanceConfig() (*MaintenanceConfig, error)
 	if configData, err := os.ReadFile(configPath); err == nil {
 		var config MaintenanceConfig
 		if err := proto.Unmarshal(configData, &config); err == nil {
-			// Fill in fields added to the schema after this file was written, but keep
-			// the persisted enabled flag: false is the bool zero value, so the schema
-			// default of true would silently flip an operator's explicit "disabled".
-			enabled := config.Enabled
+			// Fill in fields added to the schema after this file was written. The
+			// enabled flag tracks presence, so an explicitly persisted false survives
+			// this, while a file from before presence tracking (where an operator's
+			// explicit false and the field's absence look the same on the wire) keeps
+			// the enabled default rather than silently switching maintenance off.
 			if err := maintenance.GetMaintenanceConfigSchema().ApplyDefaultsToProtobuf(&config); err != nil {
 				glog.Warningf("Failed to apply schema defaults to loaded maintenance config: %v", err)
 			}
-			config.Enabled = enabled
+			if config.Enabled == nil {
+				config.Enabled = proto.Bool(true)
+			}
 			// Always populate policy from separate task configuration files
 			config.Policy = cp.buildPolicyFromTaskConfigs()
 			return &config, nil

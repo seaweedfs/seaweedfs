@@ -8,6 +8,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
+	"google.golang.org/protobuf/proto"
 )
 
 // The task definitions these tests configure are process-global, so put them back the way a
@@ -104,8 +105,8 @@ func TestLoadMaintenanceConfigKeepsPersistedEnabledFalse(t *testing.T) {
 	dir := t.TempDir()
 	cp := NewConfigPersistence(dir)
 
-	// An old-style file that only knows about the enabled flag: everything else zero.
-	if err := cp.SaveMaintenanceConfig(&MaintenanceConfig{Enabled: false}); err != nil {
+	// A file that only knows about the enabled flag: everything else zero.
+	if err := cp.SaveMaintenanceConfig(&MaintenanceConfig{Enabled: proto.Bool(false)}); err != nil {
 		t.Fatalf("save maintenance config: %v", err)
 	}
 
@@ -113,7 +114,7 @@ func TestLoadMaintenanceConfigKeepsPersistedEnabledFalse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load maintenance config: %v", err)
 	}
-	if loaded.Enabled {
+	if loaded.GetEnabled() {
 		t.Error("persisted enabled=false came back true; the maintenance system cannot be disabled")
 	}
 	if loaded.ScanIntervalSeconds != 30*60 {
@@ -125,8 +126,36 @@ func TestLoadMaintenanceConfigKeepsPersistedEnabledFalse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load maintenance config: %v", err)
 	}
-	if !fresh.Enabled {
+	if !fresh.GetEnabled() {
 		t.Error("maintenance not enabled by default when nothing is persisted")
+	}
+}
+
+// TestLoadMaintenanceConfigTreatsLegacyAbsentEnabledAsOn: a maintenance.pb written before
+// enabled tracked presence carries no enabled field on the wire whether the old default left
+// it false or an operator unchecked it — the two are indistinguishable. Such files must keep
+// the enabled default rather than silently switching maintenance off on upgrade; only a file
+// that explicitly persists the toggle may disable it.
+func TestLoadMaintenanceConfigTreatsLegacyAbsentEnabledAsOn(t *testing.T) {
+	dir := t.TempDir()
+	cp := NewConfigPersistence(dir)
+
+	// What an old writer produced for enabled=false plus a tuned scan interval: the bool is
+	// simply absent from the wire.
+	if err := cp.SaveMaintenanceConfig(&MaintenanceConfig{ScanIntervalSeconds: 15 * 60}); err != nil {
+		t.Fatalf("save maintenance config: %v", err)
+	}
+
+	loaded, err := cp.LoadMaintenanceConfig()
+	if err != nil {
+		t.Fatalf("load maintenance config: %v", err)
+	}
+	if !loaded.GetEnabled() {
+		t.Error("legacy config without an enabled field loads as disabled; " +
+			"upgrading would silently switch the maintenance system off")
+	}
+	if loaded.ScanIntervalSeconds != 15*60 {
+		t.Errorf("scan interval = %d, want persisted 900 kept", loaded.ScanIntervalSeconds)
 	}
 }
 

@@ -101,7 +101,7 @@ func TestApplyMaintenanceConfigFromTomlEnabledToggle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load maintenance config: %v", err)
 	}
-	if conf.Enabled {
+	if conf.GetEnabled() {
 		t.Errorf("maintenance still enabled after [maintenance] enabled = false")
 	}
 	if conf.ScanIntervalSeconds != 30*60 {
@@ -115,7 +115,7 @@ func TestApplyMaintenanceConfigFromTomlEnabledToggle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load maintenance config: %v", err)
 	}
-	if !conf.Enabled {
+	if !conf.GetEnabled() {
 		t.Errorf("maintenance still disabled after [maintenance] enabled = true")
 	}
 }

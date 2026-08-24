@@ -261,10 +261,10 @@ func NewAdminServer(masters string, filerGroup string, templateFS http.FileSyste
 			maintenanceConfig = maintenance.DefaultMaintenanceConfig()
 		}
 
-		glog.V(1).Infof("Maintenance system initialized with persistent configuration (enabled: %v)", maintenanceConfig.Enabled)
+		glog.V(1).Infof("Maintenance system initialized with persistent configuration (enabled: %v)", maintenanceConfig.GetEnabled())
 	} else {
 		maintenanceConfig = maintenance.DefaultMaintenanceConfig()
-		glog.V(1).Infof("No data directory configured, maintenance system will run in memory-only mode (enabled: %v)", maintenanceConfig.Enabled)
+		glog.V(1).Infof("No data directory configured, maintenance system will run in memory-only mode (enabled: %v)", maintenanceConfig.GetEnabled())
 	}
 
 	// Load saved task configurations from persistence. This has to run before the maintenance
@@ -279,7 +279,7 @@ func NewAdminServer(masters string, filerGroup string, templateFS http.FileSyste
 	server.InitMaintenanceManager(maintenanceConfig)
 
 	// Start maintenance manager if enabled
-	if maintenanceConfig.Enabled {
+	if maintenanceConfig.GetEnabled() {
 		go func() {
 			// Give master client a bit of time to connect before starting scans
 			time.Sleep(2 * time.Second)
@@ -1861,7 +1861,7 @@ func (s *AdminServer) InitMaintenanceManager(config *maintenance.MaintenanceConf
 		}
 	}
 
-	glog.V(1).Infof("Maintenance manager initialized (enabled: %v)", config.Enabled)
+	glog.V(1).Infof("Maintenance manager initialized (enabled: %v)", config.GetEnabled())
 }
 
 // GetMaintenanceManager returns the maintenance manager

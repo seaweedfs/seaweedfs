@@ -2566,16 +2566,19 @@ func (x *TaskLogEntry) GetStatus() string {
 
 // MaintenanceConfig holds configuration for the maintenance system
 type MaintenanceConfig struct {
-	state                  protoimpl.MessageState `protogen:"open.v1"`
-	Enabled                bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
-	ScanIntervalSeconds    int32                  `protobuf:"varint,2,opt,name=scan_interval_seconds,json=scanIntervalSeconds,proto3" json:"scan_interval_seconds,omitempty"`          // How often to scan for maintenance needs
-	WorkerTimeoutSeconds   int32                  `protobuf:"varint,3,opt,name=worker_timeout_seconds,json=workerTimeoutSeconds,proto3" json:"worker_timeout_seconds,omitempty"`       // Worker heartbeat timeout
-	TaskTimeoutSeconds     int32                  `protobuf:"varint,4,opt,name=task_timeout_seconds,json=taskTimeoutSeconds,proto3" json:"task_timeout_seconds,omitempty"`             // Individual task timeout
-	RetryDelaySeconds      int32                  `protobuf:"varint,5,opt,name=retry_delay_seconds,json=retryDelaySeconds,proto3" json:"retry_delay_seconds,omitempty"`                // Delay between retries
-	MaxRetries             int32                  `protobuf:"varint,6,opt,name=max_retries,json=maxRetries,proto3" json:"max_retries,omitempty"`                                       // Default max retries for tasks
-	CleanupIntervalSeconds int32                  `protobuf:"varint,7,opt,name=cleanup_interval_seconds,json=cleanupIntervalSeconds,proto3" json:"cleanup_interval_seconds,omitempty"` // How often to clean up old tasks
-	TaskRetentionSeconds   int32                  `protobuf:"varint,8,opt,name=task_retention_seconds,json=taskRetentionSeconds,proto3" json:"task_retention_seconds,omitempty"`       // How long to keep completed/failed tasks
-	Policy                 *MaintenancePolicy     `protobuf:"bytes,9,opt,name=policy,proto3" json:"policy,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// optional so a file that predates presence tracking (where an operator's
+	// explicit false and the field's absence are indistinguishable on the wire)
+	// can be told apart from one that explicitly persists the toggle
+	Enabled                *bool              `protobuf:"varint,1,opt,name=enabled,proto3,oneof" json:"enabled,omitempty"`
+	ScanIntervalSeconds    int32              `protobuf:"varint,2,opt,name=scan_interval_seconds,json=scanIntervalSeconds,proto3" json:"scan_interval_seconds,omitempty"`          // How often to scan for maintenance needs
+	WorkerTimeoutSeconds   int32              `protobuf:"varint,3,opt,name=worker_timeout_seconds,json=workerTimeoutSeconds,proto3" json:"worker_timeout_seconds,omitempty"`       // Worker heartbeat timeout
+	TaskTimeoutSeconds     int32              `protobuf:"varint,4,opt,name=task_timeout_seconds,json=taskTimeoutSeconds,proto3" json:"task_timeout_seconds,omitempty"`             // Individual task timeout
+	RetryDelaySeconds      int32              `protobuf:"varint,5,opt,name=retry_delay_seconds,json=retryDelaySeconds,proto3" json:"retry_delay_seconds,omitempty"`                // Delay between retries
+	MaxRetries             int32              `protobuf:"varint,6,opt,name=max_retries,json=maxRetries,proto3" json:"max_retries,omitempty"`                                       // Default max retries for tasks
+	CleanupIntervalSeconds int32              `protobuf:"varint,7,opt,name=cleanup_interval_seconds,json=cleanupIntervalSeconds,proto3" json:"cleanup_interval_seconds,omitempty"` // How often to clean up old tasks
+	TaskRetentionSeconds   int32              `protobuf:"varint,8,opt,name=task_retention_seconds,json=taskRetentionSeconds,proto3" json:"task_retention_seconds,omitempty"`       // How long to keep completed/failed tasks
+	Policy                 *MaintenancePolicy `protobuf:"bytes,9,opt,name=policy,proto3" json:"policy,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }
@@ -2611,8 +2614,8 @@ func (*MaintenanceConfig) Descriptor() ([]byte, []int) {
 }
 
 func (x *MaintenanceConfig) GetEnabled() bool {
-	if x != nil {
-		return x.Enabled
+	if x != nil && x.Enabled != nil {
+		return *x.Enabled
 	}
 	return false
 }
@@ -4245,9 +4248,9 @@ const file_worker_proto_rawDesc = "" +
 	"\x06status\x18\x06 \x01(\tR\x06status\x1a9\n" +
 	"\vFieldsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xc0\x03\n" +
-	"\x11MaintenanceConfig\x12\x18\n" +
-	"\aenabled\x18\x01 \x01(\bR\aenabled\x122\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xd1\x03\n" +
+	"\x11MaintenanceConfig\x12\x1d\n" +
+	"\aenabled\x18\x01 \x01(\bH\x00R\aenabled\x88\x01\x01\x122\n" +
 	"\x15scan_interval_seconds\x18\x02 \x01(\x05R\x13scanIntervalSeconds\x124\n" +
 	"\x16worker_timeout_seconds\x18\x03 \x01(\x05R\x14workerTimeoutSeconds\x120\n" +
 	"\x14task_timeout_seconds\x18\x04 \x01(\x05R\x12taskTimeoutSeconds\x12.\n" +
@@ -4256,7 +4259,9 @@ const file_worker_proto_rawDesc = "" +
 	"maxRetries\x128\n" +
 	"\x18cleanup_interval_seconds\x18\a \x01(\x05R\x16cleanupIntervalSeconds\x124\n" +
 	"\x16task_retention_seconds\x18\b \x01(\x05R\x14taskRetentionSeconds\x124\n" +
-	"\x06policy\x18\t \x01(\v2\x1c.worker_pb.MaintenancePolicyR\x06policy\"\x80\x03\n" +
+	"\x06policy\x18\t \x01(\v2\x1c.worker_pb.MaintenancePolicyR\x06policyB\n" +
+	"\n" +
+	"\b_enabled\"\x80\x03\n" +
 	"\x11MaintenancePolicy\x12S\n" +
 	"\rtask_policies\x18\x01 \x03(\v2..worker_pb.MaintenancePolicy.TaskPoliciesEntryR\ftaskPolicies\x122\n" +
 	"\x15global_max_concurrent\x18\x02 \x01(\x05R\x13globalMaxConcurrent\x12E\n" +
@@ -4554,6 +4559,7 @@ func file_worker_proto_init() {
 		(*TaskParams_EcBalanceParams)(nil),
 		(*TaskParams_S3LifecycleParams)(nil),
 	}
+	file_worker_proto_msgTypes[27].OneofWrappers = []any{}
 	file_worker_proto_msgTypes[29].OneofWrappers = []any{
 		(*TaskPolicy_VacuumConfig)(nil),
 		(*TaskPolicy_ErasureCodingConfig)(nil),

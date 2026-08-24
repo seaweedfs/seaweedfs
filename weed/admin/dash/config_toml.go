@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -37,7 +38,7 @@ func (cp *ConfigPersistence) ApplyMaintenanceConfigFromToml(v TomlConfig) error 
 		if err != nil {
 			return fmt.Errorf("load maintenance config: %w", err)
 		}
-		conf.Enabled = v.GetBool(k)
+		conf.Enabled = proto.Bool(v.GetBool(k))
 		// the policy lives in the per-task config files; don't snapshot it here
 		conf.Policy = nil
 		maintenanceConf = conf
@@ -109,7 +110,7 @@ func (cp *ConfigPersistence) ApplyMaintenanceConfigFromToml(v TomlConfig) error 
 		if err := cp.SaveMaintenanceConfig(maintenanceConf); err != nil {
 			return fmt.Errorf("save maintenance config: %w", err)
 		}
-		glog.V(0).Infof("Applied [maintenance] settings from admin.toml (enabled: %v)", maintenanceConf.Enabled)
+		glog.V(0).Infof("Applied [maintenance] settings from admin.toml (enabled: %v)", maintenanceConf.GetEnabled())
 	}
 	if vacuumChanged {
 		if err := cp.SaveVacuumTaskPolicy(vacuumConf.ToTaskPolicy()); err != nil {
