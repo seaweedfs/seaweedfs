@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -205,7 +206,7 @@ func NewAdminServer(masters string, filerGroup string, templateFS http.FileSyste
 		s3TablesManager:               newS3TablesManager(),
 		icebergPort:                   icebergPort,
 		lancePort:                     lancePort,
-		s3PublicEndpoint:              strings.TrimRight(util.GetViper().GetString("s3.public_endpoint"), "/"),
+		s3PublicEndpoint:              normalizeS3PublicEndpoint(util.GetViper().GetString("s3.public_endpoint")),
 		pluginLock:                    lockManager,
 		adminPresenceLock:             presenceLock,
 		bgCancel:                      bgCancel,
@@ -1557,6 +1558,22 @@ func (s *AdminServer) GetClusterS3Servers() (*ClusterS3ServersData, error) {
 // the client-facing address cannot be discovered and must be configured.
 func (s *AdminServer) GetS3Endpoint() string {
 	return s.s3PublicEndpoint
+}
+
+// normalizeS3PublicEndpoint trims a trailing slash and drops, with a warning,
+// a value that is not an absolute http or https URL, so the file browser hides
+// its URL actions instead of copying broken links.
+func normalizeS3PublicEndpoint(endpoint string) string {
+	endpoint = strings.TrimRight(endpoint, "/")
+	if endpoint == "" {
+		return ""
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		glog.Warningf("ignoring s3.public_endpoint %q: expecting an http:// or https:// URL with a host", endpoint)
+		return ""
+	}
+	return endpoint
 }
 
 // GetAllFilers method moved to client_management.go

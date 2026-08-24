@@ -155,6 +155,30 @@ func TestS3ObjectURL(t *testing.T) {
 	}
 }
 
+// TestNormalizeS3PublicEndpoint verifies unusable configured endpoints are
+// dropped rather than producing broken links
+func TestNormalizeS3PublicEndpoint(t *testing.T) {
+	tests := []struct {
+		endpoint string
+		expected string
+	}{
+		{"https://s3.example.com", "https://s3.example.com"},
+		{"http://10.0.0.1:8333/", "http://10.0.0.1:8333"},
+		{"http://[::1]:8333", "http://[::1]:8333"},
+		{"", ""},
+		{"/", ""},
+		{"s3.example.com", ""},
+		{"ftp://s3.example.com", ""},
+		{"https://", ""},
+	}
+
+	for _, tt := range tests {
+		if got := normalizeS3PublicEndpoint(tt.endpoint); got != tt.expected {
+			t.Errorf("normalizeS3PublicEndpoint(%q) = %q, expected %q", tt.endpoint, got, tt.expected)
+		}
+	}
+}
+
 // TestPathHandlingWithForwardSlashes verifies that the production code
 // correctly handles paths with forward slashes (not OS-specific backslashes)
 func TestPathHandlingWithForwardSlashes(t *testing.T) {
