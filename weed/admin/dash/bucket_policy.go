@@ -12,28 +12,26 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
-// MaxBucketPolicySize mirrors AWS S3's 20 KB bucket-policy limit. This is an
-// admin-side cap the S3 gateway does not itself enforce; it can only reject
-// a policy the gateway would have accepted, never disagree about one
-// already stored, so it cannot desync admin and S3 behavior.
-const MaxBucketPolicySize = 20 * 1024
-
 // ErrInvalidBucketPolicy wraps a validation failure from SetBucketPolicy so
 // callers (the HTTP handler) can map it to 400 instead of 500 without
 // resorting to matching on the error string.
 var ErrInvalidBucketPolicy = errors.New("invalid bucket policy")
 
 // GetBucketPolicy returns the policy document stored on a bucket's filer
-// entry, or (nil, nil) if the bucket has no policy — that is not an error,
-// it just means the caller (e.g. the admin UI) should show an empty editor
-// instead of special-casing a 404.
-func (s *AdminServer) GetBucketPolicy(bucketName string) (*policy_engine.PolicyDocument, error) {
+// entry, or (nil, nil, nil) if the bucket has no policy — that is not an
+// error, it just means the caller (e.g. the admin UI) should show an empty
+// editor instead of special-casing a 404. Stored bytes the current decoder
+// rejects come back as (nil, raw, nil): a 500 here would leave the UI
+// unable to show, fix, or even delete the one policy an operator most
+// needs to remove — and DeleteBucketPolicy never reads the document.
+func (s *AdminServer) GetBucketPolicy(bucketName string) (*policy_engine.PolicyDocument, []byte, error) {
 	filerConfig, err := s.getFilerConfig()
 	if err != nil {
-		return nil, fmt.Errorf("get filer configuration: %w", err)
+		return nil, nil, fmt.Errorf("get filer configuration: %w", err)
 	}
 
 	var doc *policy_engine.PolicyDocument
+	var raw []byte
 	err = s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: filerConfig.BucketsPath,
@@ -50,19 +48,19 @@ func (s *AdminServer) GetBucketPolicy(bucketName string) (*policy_engine.PolicyD
 		if len(policyJSON) == 0 {
 			return nil
 		}
+		raw = policyJSON
 
 		var parsed policy_engine.PolicyDocument
-		if err := json.Unmarshal(policyJSON, &parsed); err != nil {
-			return fmt.Errorf("parse stored bucket policy: %w", err)
+		if err := json.Unmarshal(policyJSON, &parsed); err == nil {
+			doc = &parsed
 		}
-		doc = &parsed
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return doc, nil
+	return doc, raw, nil
 }
 
 // SetBucketPolicy validates and stores a bucket policy, applying the exact
@@ -72,18 +70,11 @@ func (s *AdminServer) GetBucketPolicy(bucketName string) (*policy_engine.PolicyD
 //
 // Propagation to every S3 gateway is automatic: writing the
 // s3-bucket-policy extended attribute drives the filer metadata log, which
-// each gateway's onBucketMetadataChange subscription already watches to
-// rebuild its bucket policy cache. No separate notify step is needed here.
-//
-// Note: PutBucketPolicyHandler on the S3 gateway also mirrors the policy
-// into the IAM policy store under "bucket-policy:<bucket>"
-// (iam_manager.go's UpdateBucketPolicy), but its delete counterpart
-// (removeBucketPolicyFromIAM) is an unimplemented TODO — so that mirror is
-// already unreliable after any S3-side DeleteBucketPolicy. The admin write
-// path deliberately does not replicate it: doing so would only deepen an
-// existing inconsistency, and admin has no handle on the S3 gateway's
-// iamManager anyway. See the TODO in
-// weed/s3api/s3api_bucket_policy_handlers.go for the follow-up.
+// each gateway's onBucketMetadataChange subscription watches to rebuild its
+// bucket policy cache and to maintain the advanced-IAM
+// "bucket-policy:<bucket>" mirror (mirrorBucketPolicyToIAM in
+// weed/s3api/s3api_bucket_policy_handlers.go). No separate notify step is
+// needed here.
 func (s *AdminServer) SetBucketPolicy(bucketName string, doc *policy_engine.PolicyDocument) error {
 	if err := policy_engine.ValidatePolicy(doc); err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidBucketPolicy, err)
@@ -96,10 +87,24 @@ func (s *AdminServer) SetBucketPolicy(bucketName string, doc *policy_engine.Poli
 	if err != nil {
 		return fmt.Errorf("marshal policy document: %w", err)
 	}
-	if len(policyJSON) > MaxBucketPolicySize {
-		return fmt.Errorf("%w: bucket policy is %d bytes, which exceeds the %d byte limit", ErrInvalidBucketPolicy, len(policyJSON), MaxBucketPolicySize)
+	if len(policyJSON) > policy_engine.MaxBucketPolicySize {
+		return fmt.Errorf("%w: bucket policy is %d bytes, which exceeds the %d byte limit", ErrInvalidBucketPolicy, len(policyJSON), policy_engine.MaxBucketPolicySize)
 	}
 
+	return s.writeBucketPolicy(bucketName, policyJSON)
+}
+
+// DeleteBucketPolicy clears the bucket policy stored on a bucket's filer
+// entry. Deleting a policy that doesn't exist is a success, matching
+// DeleteBucketLifecycle's idempotent behavior. This cannot go through
+// SetBucketPolicy: validation there rejects a nil document.
+func (s *AdminServer) DeleteBucketPolicy(bucketName string) error {
+	return s.writeBucketPolicy(bucketName, nil)
+}
+
+// writeBucketPolicy patches the policy key on the bucket's filer entry; a
+// nil policyJSON clears it.
+func (s *AdminServer) writeBucketPolicy(bucketName string, policyJSON []byte) error {
 	filerConfig, err := s.getFilerConfig()
 	if err != nil {
 		return fmt.Errorf("get filer configuration: %w", err)
@@ -125,46 +130,10 @@ func (s *AdminServer) SetBucketPolicy(bucketName string, doc *policy_engine.Poli
 			Mutations: []*filer_pb.ObjectMutation{bucketPolicyMutation(filerConfig.BucketsPath, bucketName, policyJSON)},
 		})
 		if err != nil {
-			return fmt.Errorf("failed to update bucket policy: %w", err)
+			return fmt.Errorf("write bucket policy: %w", err)
 		}
 		if resp.Error != "" {
-			return fmt.Errorf("failed to update bucket policy: %s", resp.Error)
-		}
-		return nil
-	})
-}
-
-// DeleteBucketPolicy clears the bucket policy stored on a bucket's filer
-// entry. Deleting a policy that doesn't exist is a success, matching
-// DeleteBucketLifecycle's idempotent behavior.
-func (s *AdminServer) DeleteBucketPolicy(bucketName string) error {
-	filerConfig, err := s.getFilerConfig()
-	if err != nil {
-		return fmt.Errorf("get filer configuration: %w", err)
-	}
-
-	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		if _, err := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
-			Directory: filerConfig.BucketsPath,
-			Name:      bucketName,
-		}); err != nil {
-			if errors.Is(err, filer_pb.ErrNotFound) {
-				return fmt.Errorf("%w: %s", ErrBucketNotFound, bucketName)
-			}
-			return fmt.Errorf("look up bucket %s: %w", bucketName, err)
-		}
-
-		bucketPath := filerConfig.BucketsPath + "/" + bucketName
-		resp, err := client.ObjectTransaction(context.Background(), &filer_pb.ObjectTransactionRequest{
-			LockKey:   bucketPath,
-			RouteKey:  s3_constants.ObjectWriteRouteKeyPrefix + bucketPath,
-			Mutations: []*filer_pb.ObjectMutation{bucketPolicyMutation(filerConfig.BucketsPath, bucketName, nil)},
-		})
-		if err != nil {
-			return fmt.Errorf("failed to delete bucket policy: %w", err)
-		}
-		if resp.Error != "" {
-			return fmt.Errorf("failed to delete bucket policy: %s", resp.Error)
+			return fmt.Errorf("write bucket policy: %s", resp.Error)
 		}
 		return nil
 	})

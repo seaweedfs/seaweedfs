@@ -76,6 +76,11 @@ type IdentityAccessManagement struct {
 	// Bucket policy engine for evaluating bucket policies
 	policyEngine *BucketPolicyEngine
 
+	// primeBucketForIAM loads a bucket's config (and with it the advanced-IAM
+	// bucket-policy mirror backfill) before an IAM authorization that will
+	// evaluate that mirror. Set by NewS3ApiServer; nil in tests.
+	primeBucketForIAM func(bucket string)
+
 	// Cached policy engine for IAM policy fallback evaluation.
 	// Keyed by policy name, kept in sync by PutPolicy/DeletePolicy.
 	iamPolicyEngine *policy_engine.PolicyEngine
@@ -2864,6 +2869,13 @@ func (iam *IdentityAccessManagement) AuthorizeObjectDelete(r *http.Request, iden
 // authorizeWithIAM authorizes requests using the IAM integration policy engine
 func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity *Identity, action Action, bucket string, object string) s3err.ErrorCode {
 	ctx := r.Context()
+
+	// The evaluation below consults the bucket-policy:<bucket> mirror, so the
+	// bucket's lazy load (which backfills that mirror) must happen first -
+	// nothing earlier on a denied request's path would ever trigger it.
+	if iam.primeBucketForIAM != nil && bucket != "" {
+		iam.primeBucketForIAM(bucket)
+	}
 
 	// Get session info from request headers
 	// First check for JWT-based authentication headers (SeaweedFSSessionTokenHeader)

@@ -1410,7 +1410,7 @@ templ S3Buckets(data dash.S3BucketsData) {
 
                 // Drop responses that arrive after another bucket was opened
                 const requestSeq = ++policyRequestSeq;
-                fetch(basePath('/api/s3/buckets/' + bucketName + '/policy'))
+                fetch(basePath('/api/s3/buckets/' + encodeURIComponent(bucketName) + '/policy'))
                     .then(parseLifecycleResponse)
                     .then(({ ok, data }) => {
                         if (requestSeq !== policyRequestSeq) return;
@@ -1422,8 +1422,11 @@ templ S3Buckets(data dash.S3BucketsData) {
                             return;
                         }
                         document.getElementById('bucketPolicyEditorWrapper').style.display = '';
+                        // policy_text carries stored bytes the server-side
+                        // decoder rejects; the JSON tab shows them so they
+                        // can be fixed or deleted.
                         document.getElementById('bucketPolicyDocument').value =
-                            data.policy ? JSON.stringify(data.policy, null, 2) : '';
+                            data.policy ? JSON.stringify(data.policy, null, 2) : (data.policy_text || '');
                         bucketPolicyLoaded = true;
                         loadPolicyTextareaIntoEditor('bucket');
                     })
@@ -1454,8 +1457,8 @@ templ S3Buckets(data dash.S3BucketsData) {
             if (!commitPolicyActiveTab('bucket')) return;
 
             const raw = document.getElementById('bucketPolicyDocument').value.trim();
-            if (!raw) {
-                alert('Enter a policy document, or use Delete to remove the bucket policy.');
+            if (!raw || !policyTextHasStatements(raw)) {
+                alert('Add at least one statement, or use Delete to remove the bucket policy.');
                 return;
             }
 
@@ -1471,13 +1474,18 @@ templ S3Buckets(data dash.S3BucketsData) {
                 alert(validationError);
                 return;
             }
+            // The admin API decodes only Version and Statement, so warn
+            // before other top-level fields are silently dropped - the IAM
+            // policies page already does. (The S3 Tables dialogs don't:
+            // their backend stores the document verbatim.)
+            if (!confirmPolicyFieldDiscard('bucket')) return;
 
             // Captured now: if the dialog moves on to a different bucket
             // before this PUT resolves, the completion below must not hide
             // or reload over whatever that other bucket is now showing.
             const targetBucket = policyEditorBucket;
             setBucketPolicyMutationInFlight(true);
-            fetch(basePath('/api/s3/buckets/' + targetBucket + '/policy'), {
+            fetch(basePath('/api/s3/buckets/' + encodeURIComponent(targetBucket) + '/policy'), {
                 method: 'PUT',
                 headers: csrfHeaders(),
                 body: JSON.stringify({ policy: policy })
@@ -1524,7 +1532,7 @@ templ S3Buckets(data dash.S3BucketsData) {
             // hide or reload over whatever that other bucket is now showing.
             const targetBucket = policyEditorBucket;
             setBucketPolicyMutationInFlight(true);
-            fetch(basePath('/api/s3/buckets/' + targetBucket + '/policy'), {
+            fetch(basePath('/api/s3/buckets/' + encodeURIComponent(targetBucket) + '/policy'), {
                 method: 'DELETE',
                 headers: csrfHeaders()
             })

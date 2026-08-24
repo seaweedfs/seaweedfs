@@ -1,6 +1,10 @@
 package app
 
-import "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+import (
+	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+)
 
 // PolicyActionSuggestions feeds the <datalist> used by the structured policy
 // editor's Action inputs. This is an input-assistance aid, NOT a validation
@@ -8,6 +12,18 @@ import "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 // actions are not restricted to this set (custom/future actions, wildcards
 // like "s3:Get*", etc.).
 var PolicyActionSuggestions = buildPolicyActionSuggestions()
+
+// S3TablesPolicyActionSuggestions is the s3tables: subset, for the S3 Tables
+// policy editors whose evaluator only matches s3tables actions.
+var S3TablesPolicyActionSuggestions = func() []string {
+	var out []string
+	for _, a := range PolicyActionSuggestions {
+		if strings.HasPrefix(a, "s3tables:") {
+			out = append(out, a)
+		}
+	}
+	return out
+}()
 
 func buildPolicyActionSuggestions() []string {
 	return []string{

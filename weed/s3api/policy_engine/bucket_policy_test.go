@@ -54,15 +54,17 @@ func TestValidateBucketPolicy(t *testing.T) {
 	})
 
 	t.Run("bad version", func(t *testing.T) {
+		// Version and non-empty-statement rules live in ValidatePolicy,
+		// which callers run first.
 		doc := &PolicyDocument{Version: "2008-10-17", Statement: []PolicyStatement{validStatement()}}
-		if err := ValidateBucketPolicy(doc, bucket); err == nil {
+		if err := ValidatePolicy(doc); err == nil {
 			t.Error("expected error for bad version")
 		}
 	})
 
 	t.Run("zero statements", func(t *testing.T) {
 		doc := &PolicyDocument{Version: PolicyVersion2012_10_17, Statement: []PolicyStatement{}}
-		if err := ValidateBucketPolicy(doc, bucket); err == nil {
+		if err := ValidatePolicy(doc); err == nil {
 			t.Error("expected error for zero statements")
 		}
 	})

@@ -95,6 +95,7 @@ const (
 	ErrMalformedCredentialDate
 	ErrMalformedPolicy
 	ErrInvalidPolicyDocument
+	ErrPolicyTooLarge
 	ErrMissingSignHeadersTag
 	ErrMissingSignTag
 	ErrUnsignedHeaders
@@ -387,6 +388,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrMalformedPolicy: {
 		Code:           "MalformedPolicy",
 		Description:    "Policy has invalid resource.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrPolicyTooLarge: {
+		Code:           "PolicyTooLarge",
+		Description:    "Policy exceeds the maximum allowed document size.",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 	ErrInvalidPolicyDocument: {

@@ -357,6 +357,20 @@ func (e *PolicyEngine) AddPolicy(filerAddress string, name string, policy *Polic
 	return e.store.StorePolicy(context.Background(), filerAddress, name, policy)
 }
 
+// GetPolicy returns a stored policy document, or an error when it does not
+// exist in the configured store.
+func (e *PolicyEngine) GetPolicy(ctx context.Context, filerAddress string, name string) (*PolicyDocument, error) {
+	if !e.initialized {
+		return nil, fmt.Errorf("policy engine not initialized")
+	}
+
+	if name == "" {
+		return nil, fmt.Errorf("policy name cannot be empty")
+	}
+
+	return e.store.GetPolicy(ctx, filerAddress, name)
+}
+
 // DeletePolicy removes a policy from the configured store.
 func (e *PolicyEngine) DeletePolicy(ctx context.Context, filerAddress string, name string) error {
 	if !e.initialized {

@@ -1,17 +1,51 @@
 package app
 
-// PolicyDatalists renders the three <datalist> elements the shared visual
-// policy editor (weed/admin/static/js/policy_editor.js) attaches its
-// action/resource/principal <input list="..."> suggestions to. Any page
-// embedding that editor must render this once; its ids
-// (policyActionSuggestions, policyResourceSuggestions,
-// policyPrincipalSuggestions) are the registerPolicyEditor defaults, so a
-// page only needs to override them if it renders more than one instance of
-// this component.
+// PolicyDatalists renders the <datalist> elements the shared visual policy
+// editor (weed/admin/static/js/policy_editor.js) attaches its
+// action/resource/principal <input list="..."> suggestions to, plus the
+// styles the editor's generated markup depends on. Any page embedding that
+// editor must render this once; the ids (policyActionSuggestions,
+// policyResourceSuggestions, policyPrincipalSuggestions) are the
+// registerPolicyEditor defaults, so a page only needs to override them if
+// it renders more than one instance of this component.
 templ PolicyDatalists() {
+	<style>
+	/* Groups a statement's Sid/Effect and its Action/Resource/Principal
+	   sections in the structured policy editor. Plain <fieldset>/<legend>
+	   render fine natively, but Bootstrap's form reset stretches <legend> to
+	   the fieldset's full width (float: left; width: 100%), which loses the
+	   usual "notch in the border" look and makes the label bar as wide as
+	   the card. Undo just that here so the legend hugs its content instead.
+	*/
+	.policy-stmt-fieldset {
+		border: 1px solid var(--bs-border-color, #dee2e6);
+		border-radius: 0.375rem;
+		padding: 0 0.75rem 0.75rem;
+		margin: 0.75rem 0 0;
+	}
+	.policy-stmt-legend {
+		float: none;
+		width: auto;
+		max-width: 100%;
+		padding: 0 0.5rem;
+		margin: 0 0 0.25rem;
+		font-size: 0.8125rem;
+		font-weight: 600;
+		color: var(--bs-secondary-color, #6c757d);
+	}
+	</style>
+
 	<!-- Datalist of suggested action names, shared by every policy editor on this page -->
 	<datalist id="policyActionSuggestions">
 		for _, action := range PolicyActionSuggestions {
+			<option value={ action }></option>
+		}
+	</datalist>
+
+	<!-- The s3tables: subset, for editors over the S3 Tables policy engine
+	     (registered with actionDatalistId: 's3tablesPolicyActionSuggestions') -->
+	<datalist id="s3tablesPolicyActionSuggestions">
+		for _, action := range S3TablesPolicyActionSuggestions {
 			<option value={ action }></option>
 		}
 	</datalist>
