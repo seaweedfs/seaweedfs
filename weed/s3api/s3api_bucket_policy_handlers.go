@@ -347,39 +347,61 @@ func (s3a *S3ApiServer) bucketPolicyIAMManager() *integration.IAMManager {
 // mirrorBucketPolicyToIAM keeps the "bucket-policy:<bucket>" IAM mirror in
 // sync with the policy stored on a bucket's filer entry. Driven from the
 // metadata subscription so it covers every writer - this gateway's own
-// PutBucketPolicy, another gateway's, the admin UI, and bucket deletion -
-// where the handlers' direct calls only ever covered the first.
+// PutBucketPolicy, another gateway's, the admin UI, bucket deletion, and
+// rename - where the handlers' direct calls only ever covered the first.
 func (s3a *S3ApiServer) mirrorBucketPolicyToIAM(oldEntry, newEntry *filer_pb.Entry) {
 	if s3a.bucketPolicyIAMManager() == nil {
 		return
 	}
-	var bucket string
-	var oldPolicy, newPolicy []byte
-	if oldEntry != nil {
-		bucket = oldEntry.Name
-		oldPolicy = oldEntry.Extended[BUCKET_POLICY_METADATA_KEY]
-	}
-	if newEntry != nil {
-		bucket = newEntry.Name
-		newPolicy = newEntry.Extended[BUCKET_POLICY_METADATA_KEY]
-	}
-	if bucket == "" || bytes.Equal(oldPolicy, newPolicy) {
-		return
-	}
-	if len(newPolicy) == 0 {
-		if err := s3a.removeBucketPolicyFromIAM(bucket); err != nil {
-			glog.Warningf("remove bucket policy for %s from IAM: %v", bucket, err)
+	removeName, updateName, updatePolicy := bucketPolicyMirrorOps(oldEntry, newEntry)
+	if removeName != "" {
+		if err := s3a.removeBucketPolicyFromIAM(removeName); err != nil {
+			glog.Warningf("remove bucket policy for %s from IAM: %v", removeName, err)
 		}
+	}
+	if updateName == "" {
 		return
 	}
 	var policyDoc policy_engine.PolicyDocument
-	if err := json.Unmarshal(newPolicy, &policyDoc); err != nil {
-		glog.Warningf("mirror bucket policy for %s to IAM: parse: %v", bucket, err)
+	if err := json.Unmarshal(updatePolicy, &policyDoc); err != nil {
+		glog.Warningf("mirror bucket policy for %s to IAM: parse: %v", updateName, err)
 		return
 	}
-	if err := s3a.updateBucketPolicyInIAM(bucket, &policyDoc); err != nil {
-		glog.Warningf("mirror bucket policy for %s to IAM: %v", bucket, err)
+	if err := s3a.updateBucketPolicyInIAM(updateName, &policyDoc); err != nil {
+		glog.Warningf("mirror bucket policy for %s to IAM: %v", updateName, err)
 	}
+}
+
+// bucketPolicyMirrorOps computes what a bucket entry change means for the
+// IAM mirror: a name whose mirror must be removed, and a (name, policy) to
+// write. A rename delivers both entries under different names in one event,
+// and the old name's mirror has to move even when the policy bytes are
+// unchanged - equality only short-circuits same-name updates.
+func bucketPolicyMirrorOps(oldEntry, newEntry *filer_pb.Entry) (removeName, updateName string, updatePolicy []byte) {
+	var oldName, newName string
+	var oldPolicy, newPolicy []byte
+	if oldEntry != nil {
+		oldName = oldEntry.Name
+		oldPolicy = oldEntry.Extended[BUCKET_POLICY_METADATA_KEY]
+	}
+	if newEntry != nil {
+		newName = newEntry.Name
+		newPolicy = newEntry.Extended[BUCKET_POLICY_METADATA_KEY]
+	}
+	if oldName != "" && oldName != newName && len(oldPolicy) > 0 {
+		removeName = oldName
+		oldPolicy = nil
+	}
+	if newName == "" || bytes.Equal(oldPolicy, newPolicy) {
+		return
+	}
+	if len(newPolicy) == 0 {
+		removeName = newName
+		return
+	}
+	updateName = newName
+	updatePolicy = newPolicy
+	return
 }
 
 // GetPublicAccessBlockHandler Retrieves the PublicAccessBlock configuration for an S3 bucket
