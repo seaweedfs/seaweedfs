@@ -64,7 +64,7 @@ require (
 	github.com/prometheus/procfs v0.21.1
 	github.com/rcrowley/go-metrics v0.0.0-20201227073835-cf1acfcdf475 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/seaweedfs/goexif v1.0.3
+	github.com/seaweedfs/goexif v2.0.0+incompatible
 	github.com/seaweedfs/raft v1.2.0
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
@@ -260,6 +260,7 @@ require (
 	github.com/rclone/Proton-API-Bridge v1.0.4 // indirect
 	github.com/rclone/go-proton-api v1.0.3 // indirect
 	github.com/rogpeppe/go-internal v1.15.0 // indirect
+	github.com/rwcarlsen/goexif v0.0.0-20190401172101-9e8deecbddbd // indirect
 	github.com/ryanuber/go-glob v1.0.0 // indirect
 	github.com/sasha-s/go-deadlock v0.3.1 // indirect
 	github.com/smarty/assertions v1.15.0 // indirect
