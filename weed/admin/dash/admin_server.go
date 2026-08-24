@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
@@ -1589,13 +1590,13 @@ func (as *AdminServer) GetConfigInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 // StartWorkerGrpcServer starts the worker gRPC server
-func (s *AdminServer) StartWorkerGrpcServer(grpcPort int) error {
+func (s *AdminServer) StartWorkerGrpcServer(grpcPort int, listener net.Listener) error {
 	if s.workerGrpcServer != nil {
 		return fmt.Errorf("worker gRPC server is already running")
 	}
 
 	s.workerGrpcServer = NewWorkerGrpcServer(s)
-	return s.workerGrpcServer.StartWithTLS(grpcPort)
+	return s.workerGrpcServer.StartWithTLS(grpcPort, listener)
 }
 
 // StopWorkerGrpcServer stops the worker gRPC server

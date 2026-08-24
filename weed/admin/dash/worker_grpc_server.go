@@ -83,16 +83,19 @@ func NewWorkerGrpcServer(adminServer *AdminServer) *WorkerGrpcServer {
 	}
 }
 
-// StartWithTLS starts the gRPC server on the specified port with optional TLS
-func (s *WorkerGrpcServer) StartWithTLS(port int) error {
+// StartWithTLS starts the gRPC server on the specified port with optional TLS.
+// A caller that already holds the port passes its listener instead.
+func (s *WorkerGrpcServer) StartWithTLS(port int, listener net.Listener) error {
 	if s.running {
 		return fmt.Errorf("worker gRPC server is already running")
 	}
 
-	// Create listener
-	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
-	if err != nil {
-		return fmt.Errorf("failed to listen on port %d: %v", port, err)
+	if listener == nil {
+		var err error
+		listener, err = net.Listen("tcp", fmt.Sprintf(":%d", port))
+		if err != nil {
+			return fmt.Errorf("failed to listen on port %d: %v", port, err)
+		}
 	}
 
 	// Create gRPC server with optional TLS

@@ -59,6 +59,11 @@ type AdminOptions struct {
 	debugPort        *int
 	cpuProfile       *string
 	memProfile       *string
+
+	// workerGrpcListener, when set, is a listener already bound to grpcPort by
+	// the caller. `weed mini` reserves the port this way because the admin
+	// binds it only after every other service is up.
+	workerGrpcListener net.Listener
 }
 
 func init() {
@@ -406,7 +411,7 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 	}
 
 	// Start worker gRPC server for worker connections
-	err = adminServer.StartWorkerGrpcServer(*options.grpcPort)
+	err = adminServer.StartWorkerGrpcServer(*options.grpcPort, options.workerGrpcListener)
 	if err != nil {
 		return fmt.Errorf("failed to start worker gRPC server: %w", err)
 	}

@@ -942,6 +942,17 @@ func ensureAllPortsAvailableOnIP(bindIp string) error {
 	// All gRPC port handling (calculation, validation, and assignment) is performed exclusively in initializeGrpcPortsOnIP
 	initializeGrpcPortsOnIP(bindIp)
 
+	// Every other service binds within a moment of this check, but the admin
+	// waits for all of them first. The admin gRPC port sits inside the Linux
+	// ephemeral range, so during that gap one of the cluster's own outgoing
+	// connections can take it and the admin then dies on bind. Hold a listener
+	// from here and hand it to the admin instead of re-binding later.
+	if listener, err := net.Listen("tcp", fmt.Sprintf(":%d", *miniAdminOptions.grpcPort)); err != nil {
+		glog.Warningf("Could not reserve Admin gRPC port %d: %v", *miniAdminOptions.grpcPort, err)
+	} else {
+		miniAdminOptions.workerGrpcListener = listener
+	}
+
 	// Log the final port configuration
 	icebergPortStr := "disabled"
 	if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
@@ -1633,6 +1644,11 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 		}
 		if err := startAdminServer(ctx, miniAdminOptions, *miniEnableAdminUI, icebergPort, lancePort, urlPrefix); err != nil {
 			glog.Errorf("Admin server error: %v", err)
+		}
+		// A no-op once the admin took it over and shut it down; it matters when
+		// startAdminServer bailed out before that.
+		if miniAdminOptions.workerGrpcListener != nil {
+			miniAdminOptions.workerGrpcListener.Close()
 		}
 	}()
 
