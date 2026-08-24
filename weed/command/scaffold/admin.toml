@@ -11,6 +11,10 @@
 # Each value can also be set via environment variable, e.g.
 #    export WEED_MAINTENANCE_VACUUM_GARBAGE_THRESHOLD=0.3
 
+[maintenance]
+# toggle the entire maintenance system (task detection and execution)
+# enabled = true
+
 [maintenance.vacuum]
 # enabled = true
 # vacuum volumes with more deleted content than this ratio

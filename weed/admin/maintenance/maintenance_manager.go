@@ -109,7 +109,7 @@ func NewMaintenanceManager(adminClient AdminClient, config *MaintenanceConfig, c
 
 // Start begins the maintenance manager
 func (mm *MaintenanceManager) Start() error {
-	if !mm.config.Enabled {
+	if !mm.config.GetEnabled() {
 		glog.V(1).Infof("Maintenance system is disabled")
 		return nil
 	}
