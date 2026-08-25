@@ -139,22 +139,42 @@ pub fn read_ec_shard_config(
     collection: &str,
     volume_id: VolumeId,
 ) -> io::Result<(u32, u32, i64)> {
-    let mut data_shards = crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT as u32;
-    let mut parity_shards = crate::storage::erasure_coding::ec_shard::PARITY_SHARDS_COUNT as u32;
-    let mut block_size = 0i64;
-    if let Some(vif_info) = load_vif_info(dir, dir_idx, collection, volume_id)? {
-        if let Some(ec) = vif_info.ec_shard_config {
-            if ec.data_shards > 0
-                && ec.parity_shards > 0
-                && (ec.data_shards + ec.parity_shards) <= MAX_SHARD_COUNT as u32
-            {
-                data_shards = ec.data_shards;
-                parity_shards = ec.parity_shards;
-                block_size = ec.block_size;
+    let vif = load_vif_info(dir, dir_idx, collection, volume_id)?;
+    Ok(ec_shard_config_from(vif.as_ref(), dir, collection, volume_id))
+}
+
+/// Resolve (data_shards, parity_shards, block_size) from an already-loaded
+/// `.vif`. With no vif — or one carrying no EC config — the bitrot sidecar
+/// records the same config at encode time and answers the layout question the
+/// vif cannot: defaulting a uniform-layout volume to the legacy block sizes
+/// maps every read to the wrong shard offset. `weed fix -ecx` reads the
+/// sidecar for the same reason. Absent both, the build's standard ratio and
+/// the legacy layout.
+pub fn ec_shard_config_from(
+    vif: Option<&crate::storage::volume::VifVolumeInfo>,
+    dir: &str,
+    collection: &str,
+    volume_id: VolumeId,
+) -> (u32, u32, i64) {
+    let default_ds = crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT as u32;
+    let default_ps = crate::storage::erasure_coding::ec_shard::PARITY_SHARDS_COUNT as u32;
+    let usable = |ds: u32, ps: u32| ds > 0 && ps > 0 && (ds + ps) <= MAX_SHARD_COUNT as u32;
+
+    if let Some(ec) = vif.and_then(|v| v.ec_shard_config.as_ref()) {
+        if usable(ec.data_shards, ec.parity_shards) {
+            return (ec.data_shards, ec.parity_shards, ec.block_size);
+        }
+    }
+    let base = crate::storage::volume::volume_file_name(dir, collection, volume_id);
+    let path = crate::storage::erasure_coding::ec_bitrot::bitrot_sidecar_path(&base, 0);
+    if let Ok(prot) = crate::storage::erasure_coding::ec_bitrot::load_bitrot_sidecar(&path) {
+        if let Some(ec) = prot.ec_shard_config.as_ref() {
+            if usable(ec.data_shards, ec.parity_shards) {
+                return (ec.data_shards, ec.parity_shards, ec.block_size);
             }
         }
     }
-    Ok((data_shards, parity_shards, block_size))
+    (default_ds, default_ps, 0)
 }
 
 impl EcVolume {
@@ -165,8 +185,11 @@ impl EcVolume {
         collection: &str,
         volume_id: VolumeId,
     ) -> io::Result<Self> {
+        // One load of the volume's `.vif`, used for both the shard config and
+        // the version / dat-size fields below.
+        let vif = load_vif_info(dir, dir_idx, collection, volume_id)?;
         let (data_shards, parity_shards, block_size) =
-            read_ec_shard_config(dir, dir_idx, collection, volume_id)?;
+            ec_shard_config_from(vif.as_ref(), dir, collection, volume_id);
 
         let total_shards = (data_shards + parity_shards) as usize;
         let mut shards = Vec::with_capacity(total_shards);
@@ -183,10 +206,9 @@ impl EcVolume {
         // `store_ec_reconcile.rs` to verify a sibling-disk .dat is
         // plausibly the encoding source (#9478).
         let (expire_at_sec, vif_version, vif_dat_file_size, encode_ts_ns) =
-            // Absent everywhere = legacy defaults; present-but-unreadable
-            // or malformed fails the mount (load_vif_info above already
-            // vetted the same file for the shard config).
-            match load_vif_info(dir, dir_idx, collection, volume_id)? {
+            // Absent everywhere = legacy defaults; a present-but-unreadable or
+            // malformed vif already failed the mount in load_vif_info above.
+            match vif.as_ref() {
                 Some(vif_info) => {
                     let ver = if vif_info.version > 0 {
                         Version(vif_info.version as u8)

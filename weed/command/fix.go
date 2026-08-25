@@ -327,6 +327,11 @@ func doFixEcxFromShards(basePath, baseFileName, collection string, volumeId int6
 	// Priority: explicit flags > existing .vif > defaults (10+4).
 	vifName := base + ".vif"
 	vifExists := util.FileExists(vifName)
+	// Whether the on-disk .vif actually answers the layout question. An empty
+	// stub (MaybeLoadVolumeInfo reads it as absent) or one with no EC config
+	// exists but tells us nothing, and the recovered layout must still be
+	// written back over it.
+	vifUsable := false
 	dataShards := erasure_coding.DataShardsCount
 	parityShards := erasure_coding.ParityShardsCount
 	var datFileSize int64
@@ -342,9 +347,14 @@ func doFixEcxFromShards(basePath, baseFileName, collection string, volumeId int6
 			if cfg := vi.GetEcShardConfig(); cfg != nil && cfg.GetDataShards() > 0 {
 				dataShards = int(cfg.GetDataShards())
 				parityShards = int(cfg.GetParityShards())
+				// Only an EC config answers the layout question. Reading 0 off a
+				// vif with no config would assert "legacy" and suppress both the
+				// .ecsum fallback and the dual-layout scan below; leave the
+				// sentinel at -1 (unknown) instead.
+				blockSize = cfg.GetBlockSize()
+				vifUsable = true
 			}
 			datFileSize = vi.GetDatFileSize()
-			blockSize = vi.GetEcShardConfig().GetBlockSize()
 		}
 	}
 	// The bitrot sidecar records the same EC config at encode time; use it when
@@ -465,7 +475,10 @@ func doFixEcxFromShards(basePath, baseFileName, collection string, volumeId int6
 		}
 		// The wrong layout de-stripes to garbage past the first block
 		// boundary, so the layout that indexes more valid needles wins.
-		if bestIdx < 0 || needles > bestNeedles {
+		// On a tie — garbage bytes do sometimes parse as plausible sizes — the
+		// layout whose needle chain reached further into the .dat wins, which is
+		// the distance the scan actually validated.
+		if bestIdx < 0 || needles > bestNeedles || (needles == bestNeedles && size > realDatSize) {
 			bestIdx = i
 			bestNeedles = needles
 			realDatSize = size
@@ -495,9 +508,11 @@ func doFixEcxFromShards(basePath, baseFileName, collection string, volumeId int6
 	}
 	glog.Infof("volume %d: wrote %s from %d data shards", volumeId, ecxName, dataShards)
 
-	// Regenerate the .vif when missing so the volume can mount and future
-	// rebuilds know the EC ratio and original .dat size.
-	if !vifExists {
+	// Regenerate the .vif when it is missing OR unusable (an empty stub, or one
+	// with no EC config): the layout just recovered by the dual scan is the only
+	// record of it, and leaving the stub in place would mount the volume as
+	// legacy on the next start and serve the wrong offsets.
+	if !vifUsable {
 		size := datFileSize
 		if size <= 0 {
 			size = realDatSize

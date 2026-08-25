@@ -2556,6 +2556,18 @@ impl VolumeServer for VolumeGrpcService {
         let rebuild_idx_dir = loc_infos[rebuild_loc_idx].idx_dir.clone();
 
         // Determine data/parity shard config from rebuild dir
+        // The encode-time .dat size resolves the row count the ecx rebuild
+        // de-stripes with; 0 leaves it to infer from the padded shard extent.
+        let dat_file_size = crate::storage::erasure_coding::ec_volume::load_vif_info(
+            &rebuild_dir,
+            &rebuild_idx_dir,
+            collection,
+            vid,
+        )
+        .ok()
+        .flatten()
+        .map(|v| v.dat_file_size)
+        .unwrap_or(0);
         let (data_shards, parity_shards, block_size) =
             crate::storage::erasure_coding::ec_volume::read_ec_shard_config(
                 &rebuild_dir,
@@ -2647,6 +2659,7 @@ impl VolumeServer for VolumeGrpcService {
             vid,
             data_shards as usize,
             block_size,
+            dat_file_size,
             &ecx_dir_refs,
         )
         .map_err(|e| Status::internal(format!("RebuildEcxFile: {}", e)))?;

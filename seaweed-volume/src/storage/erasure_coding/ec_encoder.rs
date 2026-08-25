@@ -440,6 +440,7 @@ pub fn rebuild_ecx_file(
     volume_id: VolumeId,
     data_shards: usize,
     block_size: i64,
+    dat_file_size: i64,
     additional_dirs: &[&str],
 ) -> io::Result<()> {
     use crate::storage::needle::needle::get_actual_size;
@@ -494,7 +495,18 @@ pub fn rebuild_ecx_file(
             ERASURE_CODING_SMALL_BLOCK_SIZE as i64,
         )
     };
-    let locate_shard_size = (shard_size as i64 - 1).max(0);
+    // The row count the de-stripe walks with. The encode-time .dat size is the
+    // authority — the same value the read path divides by data_shards — and the
+    // padded extent is only a fallback: under the legacy layout a shard that is
+    // an exact large-block multiple reads as one row too many, which
+    // re-interprets its last large row as small blocks and scrambles the
+    // recovered offsets. Subtracting one keeps that fallback on the safe side of
+    // the boundary, exactly as the read path's own fallback does.
+    let locate_shard_size = if dat_file_size > 0 {
+        dat_file_size / data_shards as i64
+    } else {
+        (shard_size as i64 - 1).max(0)
+    };
 
     // Read version from superblock (first byte of logical data)
     let mut sb_buf = [0u8; SUPER_BLOCK_SIZE];
@@ -1144,7 +1156,7 @@ mod tests {
 
         // Without additional_dirs, rebuild must fail: shards 1, 3, 6 are not
         // in primary and the full logical .dat content can't be reconstructed.
-        let res = rebuild_ecx_file(&primary, "", VolumeId(1), 10, 0, &[]);
+        let res = rebuild_ecx_file(&primary, "", VolumeId(1), 10, 0, 0, &[]);
         assert!(
             res.is_err(),
             "ecx rebuild without additional_dirs must fail when data shards are on another disk"
@@ -1155,7 +1167,7 @@ mod tests {
         );
 
         // With additional_dirs pointing at the secondary, the rebuild must succeed.
-        rebuild_ecx_file(&primary, "", VolumeId(1), 10, 0, &[secondary.as_str()]).unwrap();
+        rebuild_ecx_file(&primary, "", VolumeId(1), 10, 0, 0, &[secondary.as_str()]).unwrap();
 
         assert!(
             std::path::Path::new(&ecx_path).exists(),
@@ -1213,7 +1225,7 @@ mod tests {
         let canonical = std::fs::read(&ecx_path).unwrap();
         std::fs::remove_file(&ecx_path).unwrap();
 
-        rebuild_ecx_file(&dir, "", VolumeId(2), 10, block_size, &[]).unwrap();
+        rebuild_ecx_file(&dir, "", VolumeId(2), 10, block_size, 0, &[]).unwrap();
         let rebuilt = std::fs::read(&ecx_path).unwrap();
         assert_eq!(canonical, rebuilt, "rebuilt .ecx must match the encode-time .ecx");
     }
@@ -1271,7 +1283,7 @@ mod tests {
             .unwrap();
         drop(f);
 
-        let res = rebuild_ecx_file(&dir, "", VolumeId(3), 10, block_size, &[]);
+        let res = rebuild_ecx_file(&dir, "", VolumeId(3), 10, block_size, 0, &[]);
         assert!(res.is_err(), "rebuild over a truncated shard must fail");
         assert!(
             !std::path::Path::new(&ecx_path).exists(),

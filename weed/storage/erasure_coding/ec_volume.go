@@ -212,8 +212,29 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 		// mistake for an authoritative config. Mount with in-memory defaults and
 		// leave the real .vif to the encoder or a recovery tool (the Rust volume
 		// server already behaves this way).
-		glog.Warningf("vif file not found, using defaults, volumeId:%d, filename:%s", vid, vifFileName)
+		//
+		// The bitrot sidecar records the same EC config at encode time, so when
+		// it is present it answers the layout question the missing .vif cannot:
+		// defaulting a uniform-layout volume to the legacy block sizes maps
+		// every read to the wrong shard offset. `weed fix -ecx` reads the
+		// sidecar for the same reason.
 		ev.ECContext = NewDefaultECContext(collection, vid)
+		if prot, serr := LoadBitrotSidecar(BitrotSidecarPath(dataBaseFileName, 0)); serr == nil {
+			if cfg := prot.GetEcShardConfig(); cfg.GetDataShards() > 0 &&
+				int(cfg.GetDataShards()+cfg.GetParityShards()) <= MaxShardCount {
+				ev.ECContext = &ECContext{
+					Collection:   collection,
+					VolumeId:     vid,
+					DataShards:   int(cfg.GetDataShards()),
+					ParityShards: int(cfg.GetParityShards()),
+					BlockSize:    cfg.GetBlockSize(),
+				}
+				ev.EncodeTsNs = cfg.GetEncodeTsNs()
+				glog.V(0).Infof("ec volume %d: .vif missing; took EC config from the bitrot sidecar: %s",
+					vid, ev.ECContext.String())
+			}
+		}
+		glog.Warningf("vif file not found, using defaults, volumeId:%d, filename:%s", vid, vifFileName)
 	}
 
 	ev.ShardLocations = make(map[ShardId][]pb.ServerAddress)
