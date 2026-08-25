@@ -18,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -111,7 +112,12 @@ func TestFetchEcIndexFromPeers_CopiesIndexOverGrpc(t *testing.T) {
 	if err := os.WriteFile(srcBase+".ecj", []byte("journal"), 0o644); err != nil {
 		t.Fatalf("write source .ecj: %v", err)
 	}
-	if err := os.WriteFile(srcBase+".vif", []byte("volinfo"), 0o644); err != nil {
+	// A real .vif: the receiver MOUNTS the volume from the copied files, and a
+	// mount refuses a .vif it cannot parse rather than guessing the layout.
+	if err := volume_info.SaveVolumeInfo(srcBase+".vif", &volume_server_pb.VolumeInfo{
+		Version:       uint32(needle.Version3),
+		EcShardConfig: &volume_server_pb.EcShardConfig{DataShards: 10, ParityShards: 4},
+	}); err != nil {
 		t.Fatalf("write source .vif: %v", err)
 	}
 
@@ -223,7 +229,12 @@ func TestVolumeEcShardsMount_RecoverMissingIndex(t *testing.T) {
 	if err := os.WriteFile(srcBase+".ecj", nil, 0o644); err != nil {
 		t.Fatalf("write source .ecj: %v", err)
 	}
-	if err := os.WriteFile(srcBase+".vif", []byte("volinfo"), 0o644); err != nil {
+	// A real .vif: the receiver MOUNTS the volume from the copied files, and a
+	// mount refuses a .vif it cannot parse rather than guessing the layout.
+	if err := volume_info.SaveVolumeInfo(srcBase+".vif", &volume_server_pb.VolumeInfo{
+		Version:       uint32(needle.Version3),
+		EcShardConfig: &volume_server_pb.EcShardConfig{DataShards: 10, ParityShards: 4},
+	}); err != nil {
 		t.Fatalf("write source .vif: %v", err)
 	}
 	srcGrpcPort := serveGrpc(t, func(s *grpc.Server) {
