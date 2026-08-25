@@ -12,11 +12,9 @@ import (
 	"path"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
@@ -87,6 +85,18 @@ func (fs *FilerServer) tusHandler(w http.ResponseWriter, r *http.Request) {
 			writeJsonError(w, r, http.StatusUnauthorized, errors.New("wrong jwt"))
 			return
 		}
+		// One mutating request per session at a time, like tusd: a PATCH retried
+		// while its predecessor is still storing a sub-chunk would otherwise
+		// record the same range twice, and a DELETE would race the writer. The
+		// chunk state is loaded under this claim so the offset check sees every
+		// record the previous request left behind. 423 tells the client to retry.
+		if r.Method != http.MethodHead {
+			if !fs.lockTusUpload(uploadID) {
+				http.Error(w, "Upload is locked by another request", http.StatusLocked)
+				return
+			}
+			defer fs.unlockTusUpload(uploadID)
+		}
 		if err := fs.loadTusSessionChunks(ctx, session); err != nil {
 			glog.Errorf("Failed to load TUS session %s chunks: %v", uploadID, err)
 			writeTusSessionNotFound(w, r.Method)
@@ -117,6 +127,17 @@ func (fs *FilerServer) tusHandler(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+// lockTusUpload claims a session for one mutating request; it reports false
+// while another request holds the claim.
+func (fs *FilerServer) lockTusUpload(uploadID string) bool {
+	_, loaded := fs.tusActiveUploads.LoadOrStore(uploadID, struct{}{})
+	return !loaded
+}
+
+func (fs *FilerServer) unlockTusUpload(uploadID string) {
+	fs.tusActiveUploads.Delete(uploadID)
 }
 
 // writeTusSessionNotFound answers a request whose session cannot be resolved.
@@ -253,7 +274,7 @@ func (fs *FilerServer) tusCreateHandler(w http.ResponseWriter, r *http.Request, 
 		}
 		if r.ContentLength > 0 {
 			// Upload data in the creation request
-			bytesWritten, uploadErr := fs.tusWriteData(ctx, session, 0, r.Body, r.ContentLength)
+			bytesWritten, uploadErr := fs.tusWriteData(ctx, r, session, 0, r.Body, r.ContentLength)
 			if uploadErr != nil {
 				// Cleanup session on failure
 				fs.deleteTusSession(ctx, uploadID)
@@ -522,7 +543,7 @@ func (fs *FilerServer) tusPatchHandler(w http.ResponseWriter, r *http.Request, s
 	}
 
 	// Write data
-	bytesWritten, err := fs.tusWriteData(ctx, session, uploadOffset, r.Body, r.ContentLength)
+	bytesWritten, err := fs.tusWriteData(ctx, r, session, uploadOffset, r.Body, r.ContentLength)
 	if err != nil {
 		if errors.Is(err, ErrContentTooLarge) {
 			http.Error(w, "Content-Length exceeds remaining upload size", http.StatusRequestEntityTooLarge)
@@ -580,7 +601,7 @@ var ErrContentTooLarge = fmt.Errorf("content length exceeds remaining upload siz
 
 // tusWriteData uploads data to volume servers in streaming chunks and updates session
 // It reads data in fixed-size sub-chunks to avoid buffering large TUS chunks entirely in memory
-func (fs *FilerServer) tusWriteData(ctx context.Context, session *TusSession, offset int64, reader io.Reader, contentLength int64) (int64, error) {
+func (fs *FilerServer) tusWriteData(ctx context.Context, r *http.Request, session *TusSession, offset int64, reader io.Reader, contentLength int64) (int64, error) {
 	if contentLength == 0 {
 		return 0, nil
 	}
@@ -633,12 +654,6 @@ func (fs *FilerServer) tusWriteData(ctx context.Context, session *TusSession, of
 	var totalWritten int64
 	var uploadErr error
 
-	// Create one uploader for all sub-chunks to reuse HTTP client connections
-	uploader, uploaderErr := operation.NewUploader()
-	if uploaderErr != nil {
-		return 0, fmt.Errorf("create uploader: %w", uploaderErr)
-	}
-
 	chunkBuf := make([]byte, tusChunkSize)
 	currentOffset := offset
 
@@ -658,36 +673,26 @@ func (fs *FilerServer) tusWriteData(ctx context.Context, session *TusSession, of
 			break
 		}
 
-		chunkData := chunkBuf[:n]
-
-		// Assign file ID from master for this sub-chunk
-		fileId, urlLocation, auth, assignErr := fs.assignNewFileInfo(ctx, so, uint64(n))
-		if assignErr != nil {
-			uploadErr = fmt.Errorf("assign volume: %w", assignErr)
+		// Store the sub-chunk through the regular write path's chunk writer,
+		// which assigns a fresh file id per attempt; a failed attempt's needle
+		// is returned so it can be freed instead of lingering unreferenced.
+		chunks, chunkErr := fs.dataToChunkWithSSE(ctx, r, "", mimeType, chunkBuf[:n], currentOffset, so)
+		if chunkErr != nil {
+			fs.filer.DeleteUncommittedChunks(ctx, chunks)
+			uploadErr = fmt.Errorf("upload data: %w", chunkErr)
 			break
 		}
-
-		// Upload to volume server using BytesReader (avoids double buffering in uploader)
-		uploadResult, uploadResultErr, _ := uploader.Upload(ctx, util.NewBytesReader(chunkData), &operation.UploadOption{
-			UploadUrl:         urlLocation,
-			Filename:          "",
-			Cipher:            fs.option.Cipher,
-			IsInputCompressed: false,
-			MimeType:          mimeType,
-			PairMap:           nil,
-			Jwt:               auth,
-		})
-		if uploadResultErr != nil {
-			uploadErr = fmt.Errorf("upload data: %w", uploadResultErr)
+		if len(chunks) == 0 {
+			uploadErr = fmt.Errorf("no chunk stored at offset %d", currentOffset)
 			break
 		}
+		stored := chunks[0]
 
-		// Create chunk info and save it
 		chunk := &TusChunkInfo{
-			Offset:   currentOffset,
-			Size:     int64(uploadResult.Size),
-			FileId:   fileId,
-			UploadAt: time.Now().UnixNano(),
+			Offset:   stored.Offset,
+			Size:     int64(stored.Size),
+			FileId:   stored.FileId,
+			UploadAt: stored.ModifiedTsNs,
 		}
 
 		if saveErr := fs.saveTusChunk(ctx, session.ID, chunk); saveErr != nil {
@@ -696,8 +701,8 @@ func (fs *FilerServer) tusWriteData(ctx context.Context, session *TusSession, of
 			break
 		}
 
-		totalWritten += int64(uploadResult.Size)
-		currentOffset += int64(uploadResult.Size)
+		totalWritten += chunk.Size
+		currentOffset += chunk.Size
 		stats.FilerHandlerCounter.WithLabelValues("tusUploadChunk").Inc()
 	}
 

@@ -214,7 +214,7 @@ uploadLoop:
 				// this fid whether we retry or give up here, and an unreferenced
 				// needle is not garbage vacuum can find, so drop it either way.
 				deleteChunkFromHolders(chunkHolders(assignResult), assignResult.Fid, jwt)
-				if attempt == chunkAssignAttempts || !shouldReassignUpload(uploadResultErr) || objectFailed() {
+				if attempt == chunkAssignAttempts || !ShouldReassignUpload(uploadResultErr) || objectFailed() {
 					break
 				}
 				glog.V(2).Infof("re-assigning chunk at offset %d after attempt %d/%d: %v", offset, attempt, chunkAssignAttempts, uploadResultErr)
@@ -400,7 +400,7 @@ func uploadChunkToHolders(ctx context.Context, hosts []string, fid string, data 
 			if firstErr == nil {
 				firstErr = o.err
 				cancel()
-			} else if !shouldReassignUpload(firstErr) && shouldReassignUpload(o.err) {
+			} else if !ShouldReassignUpload(firstErr) && ShouldReassignUpload(o.err) {
 				firstErr = o.err
 			}
 		} else {
