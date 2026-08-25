@@ -1,6 +1,7 @@
 package tus
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -995,4 +996,108 @@ func TestTusAbortedPatchKeepsStoredChunks(t *testing.T) {
 	body, err := io.ReadAll(getResp.Body)
 	require.NoError(t, err)
 	assert.Equal(t, testData, body, "the resumed upload should read back whole")
+}
+
+// TestTusConcurrentPatchRefused checks that a PATCH sent while another PATCH
+// on the same session is still consuming its body is refused with 423 Locked.
+// Before the per-session claim, both were accepted at the same offset, recorded
+// the range twice, and completion failed on the duplicate while HEAD reported
+// the upload fully received - the file was never created and every stored byte
+// became garbage when the session expired.
+func TestTusConcurrentPatchRefused(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+
+	cluster, err := startTestCluster(t, ctx)
+	require.NoError(t, err)
+	defer func() {
+		cluster.Stop()
+		os.RemoveAll(cluster.dataDir)
+	}()
+
+	const subChunkSize = 4 * 1024 * 1024
+	testData := make([]byte, 3*subChunkSize)
+	for i := range testData {
+		testData[i] = byte(i % 251)
+	}
+	targetPath := "/raced/video.bin"
+	client := &http.Client{}
+
+	createReq, err := http.NewRequest(http.MethodPost, cluster.TusURL()+targetPath, nil)
+	require.NoError(t, err)
+	createReq.Header.Set("Tus-Resumable", TusVersion)
+	createReq.Header.Set("Upload-Length", strconv.Itoa(len(testData)))
+
+	createResp, err := client.Do(createReq)
+	require.NoError(t, err)
+	createResp.Body.Close()
+	require.Equal(t, http.StatusCreated, createResp.StatusCode)
+	uploadLocation := createResp.Header.Get("Location")
+
+	// PATCH A promises one sub-chunk and stalls mid-body, holding the session.
+	conn, err := net.Dial("tcp", "127.0.0.1:"+testFilerPort)
+	require.NoError(t, err)
+	defer conn.Close()
+	_, err = fmt.Fprintf(conn, "PATCH %s HTTP/1.1\r\nHost: 127.0.0.1:%s\r\nTus-Resumable: %s\r\nContent-Type: application/offset+octet-stream\r\nUpload-Offset: 0\r\nContent-Length: %d\r\n\r\n",
+		uploadLocation, testFilerPort, TusVersion, subChunkSize)
+	require.NoError(t, err)
+	_, err = conn.Write(testData[:1024*1024])
+	require.NoError(t, err)
+	time.Sleep(2 * time.Second)
+
+	// PATCH B is the client's retry of the same range while A is in flight.
+	retryReq, err := http.NewRequest(http.MethodPatch, cluster.FullURL(uploadLocation), bytes.NewReader(testData[:subChunkSize]))
+	require.NoError(t, err)
+	retryReq.Header.Set("Tus-Resumable", TusVersion)
+	retryReq.Header.Set("Upload-Offset", "0")
+	retryReq.Header.Set("Content-Type", "application/offset+octet-stream")
+
+	retryResp, err := client.Do(retryReq)
+	require.NoError(t, err)
+	retryResp.Body.Close()
+	require.Equal(t, http.StatusLocked, retryResp.StatusCode, "a concurrent PATCH must be refused, not recorded twice")
+
+	// Finish PATCH A and read its response.
+	_, err = conn.Write(testData[1024*1024 : subChunkSize])
+	require.NoError(t, err)
+	respReader := bufio.NewReader(conn)
+	respA, err := http.ReadResponse(respReader, nil)
+	require.NoError(t, err)
+	respA.Body.Close()
+	require.Equal(t, http.StatusNoContent, respA.StatusCode)
+
+	headReq, err := http.NewRequest(http.MethodHead, cluster.FullURL(uploadLocation), nil)
+	require.NoError(t, err)
+	headReq.Header.Set("Tus-Resumable", TusVersion)
+
+	headResp, err := client.Do(headReq)
+	require.NoError(t, err)
+	headResp.Body.Close()
+	require.Equal(t, http.StatusOK, headResp.StatusCode)
+	currentOffset, err := strconv.Atoi(headResp.Header.Get("Upload-Offset"))
+	require.NoError(t, err)
+	require.Equal(t, subChunkSize, currentOffset, "only PATCH A's sub-chunk should be recorded")
+
+	patchReq, err := http.NewRequest(http.MethodPatch, cluster.FullURL(uploadLocation), bytes.NewReader(testData[currentOffset:]))
+	require.NoError(t, err)
+	patchReq.Header.Set("Tus-Resumable", TusVersion)
+	patchReq.Header.Set("Upload-Offset", strconv.Itoa(currentOffset))
+	patchReq.Header.Set("Content-Type", "application/offset+octet-stream")
+
+	patchResp, err := client.Do(patchReq)
+	require.NoError(t, err)
+	patchResp.Body.Close()
+	require.Equal(t, http.StatusNoContent, patchResp.StatusCode)
+
+	getResp, err := client.Get(cluster.FilerURL() + targetPath)
+	require.NoError(t, err)
+	defer getResp.Body.Close()
+	require.Equal(t, http.StatusOK, getResp.StatusCode)
+	body, err := io.ReadAll(getResp.Body)
+	require.NoError(t, err)
+	assert.Equal(t, testData, body, "the raced upload should complete with intact content")
 }
