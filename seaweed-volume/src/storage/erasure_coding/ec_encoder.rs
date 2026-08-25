@@ -515,9 +515,15 @@ pub fn rebuild_ecx_file(
     let mut entries: Vec<(NeedleId, Offset, Size)> = Vec::new();
 
     while offset + header_size as i64 <= total_data_size {
-        // Read needle header (cookie + needle_id + size = 16 bytes)
+        // Read needle header (cookie + needle_id + size = 16 bytes).
+        // A read failure is NOT the end of the data — every offset in
+        // range maps into the shards, so an error means a truncated or
+        // unreadable shard. Publishing the entries collected so far as
+        // a successful .ecx would hand out a silently incomplete
+        // recovery index; propagate instead. (The scan still ends
+        // normally on the zero-cookie tail below.)
         let mut header_buf = [0u8; NEEDLE_HEADER_SIZE];
-        if read_from_data_shards(
+        if let Err(e) = read_from_data_shards(
             &shards,
             &mut header_buf,
             offset as u64,
@@ -525,10 +531,14 @@ pub fn rebuild_ecx_file(
             locate_shard_size,
             large_block,
             small_block,
-        )
-        .is_err()
-        {
-            break;
+        ) {
+            for s in &mut shards {
+                s.close();
+            }
+            return Err(io::Error::new(
+                e.kind(),
+                format!("scan needle header at offset {}: {}", offset, e),
+            ));
         }
 
         let cookie = Cookie::from_bytes(&header_buf[..COOKIE_SIZE]);
@@ -615,7 +625,26 @@ fn read_from_data_shards(
         }
         let to_read = interval.size as usize;
         let dest = &mut buf[bytes_read..bytes_read + to_read];
-        shards[shard_id as usize].read_at(dest, shard_offset as u64)?;
+        // Exact-read semantics: read_at may legally return fewer bytes
+        // than requested, and treating a short read as complete leaves
+        // the tail of `dest` as whatever the buffer held before. Loop
+        // until filled; zero bytes inside the mapped range means the
+        // shard is truncated — an error, not an end.
+        let mut filled = 0usize;
+        while filled < to_read {
+            let n = shards[shard_id as usize]
+                .read_at(&mut dest[filled..], shard_offset as u64 + filled as u64)?;
+            if n == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    format!(
+                        "short read from data shard {}: {} of {} bytes at offset {}",
+                        shard_id, filled, to_read, shard_offset
+                    ),
+                ));
+            }
+            filled += n;
+        }
         bytes_read += to_read;
     }
     if bytes_read != buf.len() {
@@ -1187,6 +1216,67 @@ mod tests {
         rebuild_ecx_file(&dir, "", VolumeId(2), 10, block_size, &[]).unwrap();
         let rebuilt = std::fs::read(&ecx_path).unwrap();
         assert_eq!(canonical, rebuilt, "rebuilt .ecx must match the encode-time .ecx");
+    }
+
+    // A truncated data shard must FAIL the .ecx rebuild, not publish the
+    // entries scanned so far as a successful (silently incomplete) index.
+    #[test]
+    fn test_rebuild_ecx_file_fails_on_truncated_shard() {
+        use crate::storage::needle_map::NeedleMapKind;
+        use crate::storage::volume::Volume;
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap().to_string();
+        let mut v = Volume::new(
+            &dir,
+            &dir,
+            "",
+            VolumeId(3),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        for i in 1u64..=12 {
+            let data: Vec<u8> = (0..2 << 20)
+                .map(|b| ((b as u64).wrapping_mul(2654435761).wrapping_add(i) >> 8) as u8)
+                .collect();
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                data: data.clone(),
+                data_size: data.len() as u32,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+        }
+        v.sync_to_disk().unwrap();
+        v.close();
+        let block_size = write_ec_files(&dir, &dir, "", VolumeId(3), 10, 4).unwrap();
+
+        let ecx_path = format!("{}/3.ecx", dir);
+        std::fs::remove_file(&ecx_path).unwrap();
+
+        // Truncate shard 0 to just the superblock: the scan's very first
+        // needle-header read (offset SUPER_BLOCK_SIZE, shard 0 under the
+        // uniform layout) lands in the missing region. The pre-fix code
+        // broke the scan there and published an EMPTY .ecx as success.
+        let shard_path = format!("{}/3.ec00", dir);
+        let f = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&shard_path)
+            .unwrap();
+        f.set_len(crate::storage::super_block::SUPER_BLOCK_SIZE as u64)
+            .unwrap();
+        drop(f);
+
+        let res = rebuild_ecx_file(&dir, "", VolumeId(3), 10, block_size, &[]);
+        assert!(res.is_err(), "rebuild over a truncated shard must fail");
+        assert!(
+            !std::path::Path::new(&ecx_path).exists(),
+            "a failed rebuild must not leave a partial .ecx behind"
+        );
     }
 
     #[test]
