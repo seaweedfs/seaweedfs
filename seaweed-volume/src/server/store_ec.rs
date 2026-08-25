@@ -54,6 +54,14 @@ use crate::storage::volume::volume_file_name;
 /// `ecIntervalReadConcurrency`.
 const INTERVAL_READ_CONCURRENCY: usize = 8;
 
+/// Bounds the reconstruct reads ONE needle may have in flight across all of
+/// its intervals. A degraded interval fans out to every reachable shard
+/// location, each with a buffer the size of the interval, so without a shared
+/// budget a needle spanning 8 blocks multiplies that by
+/// INTERVAL_READ_CONCURRENCY. Mirrors Go's `ecRecoveryConcurrency`.
+const RECOVERY_READ_CONCURRENCY: usize =
+    crate::storage::erasure_coding::MAX_SHARD_COUNT as usize;
+
 /// One interval's data after Phase A.
 enum IntervalResult {
     /// Already read from a locally-mounted shard.
@@ -152,8 +160,10 @@ pub async fn read_ec_shard_needle_distributed(
     let parity_shards = snapshot.parity_shards as usize;
     let encode_ts_ns = snapshot.encode_ts_ns;
     let intervals = std::mem::take(&mut snapshot.intervals);
+    let recovery_budget = Arc::new(tokio::sync::Semaphore::new(RECOVERY_READ_CONCURRENCY));
     let fetched: Vec<io::Result<(Vec<u8>, bool)>> = stream::iter(intervals.into_iter().map(|res| {
         let shard_locations = &shard_locations;
+        let recovery_budget = recovery_budget.clone();
         async move {
             match res {
                 IntervalResult::Local(buf) => Ok((buf, false)),
@@ -173,6 +183,7 @@ pub async fn read_ec_shard_needle_distributed(
                         data_shards,
                         parity_shards,
                         encode_ts_ns,
+                        &recovery_budget,
                     )
                     .await
                 }
@@ -720,6 +731,7 @@ async fn fetch_one_interval(
     data_shards: usize,
     parity_shards: usize,
     expected_encode_ts_ns: i64,
+    recovery_budget: &Arc<tokio::sync::Semaphore>,
 ) -> io::Result<(Vec<u8>, bool)> {
     // Direct peer read against the cached locations for this shard.
     if let Some(sources) = shard_locations.get(&shard_id) {
@@ -765,6 +777,7 @@ async fn fetch_one_interval(
         data_shards,
         parity_shards,
         expected_encode_ts_ns,
+        recovery_budget,
     )
     .await?;
     Ok((buf, false))
@@ -927,6 +940,7 @@ async fn recover_one_remote_ec_shard_interval(
     data_shards: usize,
     parity_shards: usize,
     expected_encode_ts_ns: i64,
+    recovery_budget: &Arc<tokio::sync::Semaphore>,
 ) -> io::Result<Vec<u8>> {
     let total_shards = data_shards + parity_shards;
     let rs = ReedSolomon::new(data_shards, parity_shards).map_err(|e| {
@@ -978,7 +992,12 @@ async fn recover_one_remote_ec_shard_interval(
         let sid = *sid;
         let locs = locs.clone();
         let state = state.clone();
+        let budget = recovery_budget.clone();
         tasks.push(async move {
+            // Hold the permit for the read AND the buffer it produces: the
+            // budget caps how much a single needle's recovery allocates at
+            // once, not just how many requests are in flight.
+            let _permit = budget.acquire().await;
             let res = read_remote_ec_shard_interval(
                 &state,
                 &locs,

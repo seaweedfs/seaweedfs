@@ -437,6 +437,15 @@ func (s *Store) ReadEcShardNeedle(vid needle.VolumeId, n *needle.Needle, onReadS
 // spanning several of them costs one round trip per block when read in sequence.
 const ecIntervalReadConcurrency = 8
 
+// ecRecoveryConcurrency bounds the reconstruct reads ONE needle may have in
+// flight across all of its intervals. A degraded interval fans out to every
+// shard location it can reach (up to MaxShardCount), each with a buffer the
+// size of the interval, so without a shared budget a needle spanning 8 blocks
+// multiplies that by ecIntervalReadConcurrency. The cap keeps a single read's
+// peak at roughly one interval's worth of recovery — what it was before the
+// intervals were read in parallel — while leaving separate reads independent.
+const ecRecoveryConcurrency = erasure_coding.MaxShardCount
+
 func (s *Store) readEcShardIntervals(needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, intervals []erasure_coding.Interval) (data []byte, is_deleted bool, err error) {
 	if err = s.cachedLookupEcShardLocations(ecVolume); err != nil {
 		return nil, false, fmt.Errorf("failed to locate shard via master grpc %s: %v", s.MasterAddress, err)
@@ -450,7 +459,7 @@ func (s *Store) readEcShardIntervals(needleId types.NeedleId, ecVolume *erasure_
 
 	if len(intervals) <= 1 {
 		for _, interval := range intervals {
-			if is_deleted, err = s.readOneEcShardInterval(needleId, ecVolume, interval, data); err != nil {
+			if is_deleted, err = s.readOneEcShardInterval(needleId, ecVolume, interval, data, nil); err != nil {
 				return nil, is_deleted, err
 			}
 		}
@@ -461,6 +470,7 @@ func (s *Store) readEcShardIntervals(needleId types.NeedleId, ecVolume *erasure_
 	var deleted atomic.Bool
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, ecIntervalReadConcurrency)
+	recoverySem := make(chan struct{}, ecRecoveryConcurrency)
 	var pos int
 	for i, interval := range intervals {
 		buf := data[pos : pos+int(interval.Size)]
@@ -470,7 +480,7 @@ func (s *Store) readEcShardIntervals(needleId types.NeedleId, ecVolume *erasure_
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			isDeleted, e := s.readOneEcShardInterval(needleId, ecVolume, interval, buf)
+			isDeleted, e := s.readOneEcShardInterval(needleId, ecVolume, interval, buf, recoverySem)
 			if isDeleted {
 				deleted.Store(true)
 			}
@@ -489,7 +499,9 @@ func (s *Store) readEcShardIntervals(needleId types.NeedleId, ecVolume *erasure_
 }
 
 // readOneEcShardInterval fills data, which must be interval.Size long.
-func (s *Store) readOneEcShardInterval(needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, interval erasure_coding.Interval, data []byte) (is_deleted bool, err error) {
+// recoverySem, when non-nil, is the reconstruct budget this read shares with
+// the other intervals of the same needle.
+func (s *Store) readOneEcShardInterval(needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, interval erasure_coding.Interval, data []byte, recoverySem chan struct{}) (is_deleted bool, err error) {
 	shardId, actualOffset := ecVolume.IntervalToShardIdAndOffset(interval)
 
 	// try local read
@@ -518,7 +530,7 @@ func (s *Store) readOneEcShardInterval(needleId types.NeedleId, ecVolume *erasur
 	}
 
 	// try reading by recovering from other shards
-	_, is_deleted, err = s.recoverOneRemoteEcShardInterval(needleId, ecVolume, shardId, data, actualOffset)
+	_, is_deleted, err = s.recoverOneRemoteEcShardInterval(needleId, ecVolume, shardId, data, actualOffset, recoverySem)
 	if err == nil {
 		return
 	}
@@ -693,7 +705,7 @@ func (s *Store) doReadRemoteEcShardInterval(sourceDataNode pb.ServerAddress, nee
 	return
 }
 
-func (s *Store) recoverOneRemoteEcShardInterval(needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, shardIdToRecover erasure_coding.ShardId, buf []byte, offset int64) (n int, is_deleted bool, err error) {
+func (s *Store) recoverOneRemoteEcShardInterval(needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, shardIdToRecover erasure_coding.ShardId, buf []byte, offset int64, recoverySem chan struct{}) (n int, is_deleted bool, err error) {
 	glog.V(3).Infof("recover ec shard %d.%d from other locations", ecVolume.VolumeId, shardIdToRecover)
 
 	// Reconstruct with the volume's OWN EC ratio (loaded from its .vif), not the
@@ -733,6 +745,13 @@ func (s *Store) recoverOneRemoteEcShardInterval(needleId types.NeedleId, ecVolum
 		wg.Add(1)
 		go func(shardId erasure_coding.ShardId, locations []pb.ServerAddress) {
 			defer wg.Done()
+			// Hold a slot for the buffer's whole lifetime, not just the read:
+			// the point of the budget is to cap how much a single needle's
+			// recovery allocates at once.
+			if recoverySem != nil {
+				recoverySem <- struct{}{}
+				defer func() { <-recoverySem }()
+			}
 			data := make([]byte, len(buf))
 			nRead, isDeleted, readErr := s.readRemoteEcShardInterval(locations, needleId, ecVolume.VolumeId, shardId, data, offset, ecVolume.EncodeTsNs)
 			if readErr != nil {
