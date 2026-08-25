@@ -506,14 +506,14 @@ func (fs *FilerServer) completeTusUpload(ctx context.Context, session *TusSessio
 	// ModifiedTsNs, and the raced copies carry identical bytes), while a fully
 	// covered duplicate is freed once the entry lands.
 	var fileChunks []*filer_pb.FileChunk
-	var duplicateChunks []*TusChunkInfo
+	var duplicateChunks []*filer_pb.FileChunk
 	covered := int64(0)
 	for _, chunk := range session.Chunks {
 		if chunk.Offset > covered {
 			return fmt.Errorf("chunk gap detected: covered up to %d, next chunk at %d", covered, chunk.Offset)
 		}
 		if chunk.Offset+chunk.Size <= covered {
-			duplicateChunks = append(duplicateChunks, chunk)
+			duplicateChunks = append(duplicateChunks, &filer_pb.FileChunk{FileId: chunk.FileId})
 			continue
 		}
 		covered = chunk.Offset + chunk.Size
@@ -592,9 +592,23 @@ func (fs *FilerServer) completeTusUpload(ctx context.Context, session *TusSessio
 		return fmt.Errorf("create final file entry: %w", err)
 	}
 
-	// The entry references only the kept records; free the duplicates
-	for _, chunk := range duplicateChunks {
-		fs.deleteTusChunk(ctx, session, chunk)
+	// Free the duplicates' data; their records go with the session directory
+	// below. A file id the entry still references is never freed: coverage is
+	// computed from ranges, so a malformed record could name one.
+	if len(duplicateChunks) > 0 {
+		referenced := make(map[string]bool, len(fileChunks))
+		for _, chunk := range fileChunks {
+			referenced[chunk.FileId] = true
+		}
+		var chunksToDelete []*filer_pb.FileChunk
+		for _, chunk := range duplicateChunks {
+			if !referenced[chunk.FileId] {
+				chunksToDelete = append(chunksToDelete, chunk)
+			}
+		}
+		if len(chunksToDelete) > 0 {
+			fs.filer.DeleteChunks(ctx, targetPath, chunksToDelete)
+		}
 	}
 
 	// Delete the session (but keep the chunks since they're now part of the final file)

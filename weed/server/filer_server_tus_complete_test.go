@@ -32,6 +32,12 @@ func TestFilerServer_completeTusUpload_OverlappingRecords(t *testing.T) {
 			chunks:     [][3]int64{{0, 8, 0}, {6, 6, 2}},
 			wantChunks: [][2]int64{{0, 8}, {6, 6}},
 		},
+		{
+			// a covered record naming a file id the entry keeps must not free it
+			name:       "duplicate sharing a kept file id",
+			chunks:     [][3]int64{{0, 8, 0}, {0, 4, 0}, {8, 4, 1}},
+			wantChunks: [][2]int64{{0, 8}, {8, 4}},
+		},
 	}
 
 	fids := []string{fidA, fidB, fidDup}
@@ -68,6 +74,18 @@ func TestFilerServer_completeTusUpload_OverlappingRecords(t *testing.T) {
 			for i, want := range tt.wantChunks {
 				if chunks[i].Offset != want[0] || int64(chunks[i].Size) != want[1] {
 					t.Errorf("chunk[%d] = @%d+%d, want @%d+%d", i, chunks[i].Offset, chunks[i].Size, want[0], want[1])
+				}
+			}
+
+			var freed []string
+			fs.filer.FileIdDeletionQueue.Consume(func(fileIds []string) {
+				freed = append(freed, fileIds...)
+			})
+			for _, chunk := range chunks {
+				for _, fileId := range freed {
+					if fileId == chunk.FileId {
+						t.Errorf("file id %s is referenced by the entry but was freed", fileId)
+					}
 				}
 			}
 			if _, err := store.FindEntry(context.Background(), util.FullPath(fs.tusSessionInfoPath(tusTestUploadID))); err == nil {
