@@ -490,40 +490,49 @@ func (fs *FilerServer) completeTusUpload(ctx context.Context, session *TusSessio
 	pathLock := fs.entryLockTable.AcquireLock("tusComplete", sessionPath, util.ExclusiveLock)
 	defer fs.entryLockTable.ReleaseLock(sessionPath, pathLock)
 
-	// Sort chunks by offset to ensure correct order
+	// Sort by offset, widest record first among equals, so a duplicate sorts
+	// behind the record that covers it
 	sort.Slice(session.Chunks, func(i, j int) bool {
-		return session.Chunks[i].Offset < session.Chunks[j].Offset
+		if session.Chunks[i].Offset != session.Chunks[j].Offset {
+			return session.Chunks[i].Offset < session.Chunks[j].Offset
+		}
+		return session.Chunks[i].Size > session.Chunks[j].Size
 	})
 
-	// Validate chunks are contiguous with no gaps or overlaps
-	expectedOffset := int64(0)
-	for _, chunk := range session.Chunks {
-		if chunk.Offset != expectedOffset {
-			return fmt.Errorf("chunk gap or overlap detected: expected offset %d, got %d", expectedOffset, chunk.Offset)
-		}
-		expectedOffset = chunk.Offset + chunk.Size
-	}
-	if expectedOffset != session.Size {
-		return fmt.Errorf("chunks do not cover full file: chunks end at %d, expected %d", expectedOffset, session.Size)
-	}
-
-	// Assemble file chunks in order
+	// A PATCH retried while its predecessor was still storing a sub-chunk can
+	// record one range twice. The records must cover the full size with no gap,
+	// the same watermark HEAD reports the offset from; a record extending
+	// coverage joins the entry (the read path resolves a partial overlap by
+	// ModifiedTsNs, and the raced copies carry identical bytes), while a fully
+	// covered duplicate is freed once the entry lands.
 	var fileChunks []*filer_pb.FileChunk
-
+	var duplicateChunks []*TusChunkInfo
+	covered := int64(0)
 	for _, chunk := range session.Chunks {
+		if chunk.Offset > covered {
+			return fmt.Errorf("chunk gap detected: covered up to %d, next chunk at %d", covered, chunk.Offset)
+		}
+		if chunk.Offset+chunk.Size <= covered {
+			duplicateChunks = append(duplicateChunks, chunk)
+			continue
+		}
+		covered = chunk.Offset + chunk.Size
+
 		fid, fidErr := filer_pb.ToFileIdObject(chunk.FileId)
 		if fidErr != nil {
 			return fmt.Errorf("invalid file ID %s at offset %d: %w", chunk.FileId, chunk.Offset, fidErr)
 		}
 
-		fileChunk := &filer_pb.FileChunk{
+		fileChunks = append(fileChunks, &filer_pb.FileChunk{
 			FileId:       chunk.FileId,
 			Offset:       chunk.Offset,
 			Size:         uint64(chunk.Size),
 			ModifiedTsNs: chunk.UploadAt,
 			Fid:          fid,
-		}
-		fileChunks = append(fileChunks, fileChunk)
+		})
+	}
+	if covered != session.Size {
+		return fmt.Errorf("chunks do not cover full file: chunks end at %d, expected %d", covered, session.Size)
 	}
 
 	// Determine content type from metadata
@@ -581,6 +590,11 @@ func (fs *FilerServer) completeTusUpload(ctx context.Context, session *TusSessio
 	// Ensure parent directory exists
 	if err := fs.filer.CreateEntry(ctx, entry, nil, false, false, nil, false, fs.filer.MaxFilenameLength); err != nil {
 		return fmt.Errorf("create final file entry: %w", err)
+	}
+
+	// The entry references only the kept records; free the duplicates
+	for _, chunk := range duplicateChunks {
+		fs.deleteTusChunk(ctx, session, chunk)
 	}
 
 	// Delete the session (but keep the chunks since they're now part of the final file)
