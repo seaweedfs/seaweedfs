@@ -1585,6 +1585,14 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	// Set admin options
 	*miniAdminOptions.master = masterAddr
 
+	// Mini knows its own S3 address, so the file browser can offer object
+	// URLs without any configuration. Assigned unconditionally so a value
+	// from a prior in-process run cannot outlive its S3 server.
+	miniAdminOptions.defaultS3PublicEndpoint = ""
+	if *miniEnableS3 {
+		miniAdminOptions.defaultS3PublicEndpoint = "http://" + util.JoinHostPort(*miniIp, *miniS3Options.port)
+	}
+
 	// Resolve admin credentials from security.toml [admin] / WEED_ADMIN_* env
 	// vars, matching the standalone `weed admin` command.
 	applyMiniAdminCredentialFallback(&miniAdminOptions)

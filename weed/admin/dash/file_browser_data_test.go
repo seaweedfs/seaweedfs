@@ -93,6 +93,98 @@ func TestGenerateBreadcrumbs(t *testing.T) {
 	}
 }
 
+// TestS3ObjectURL verifies path-style S3 URL construction with per-segment
+// percent-encoding
+func TestS3ObjectURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		endpoint string
+		fullPath string
+		expected string
+	}{
+		{
+			name:     "simple object",
+			endpoint: "https://s3.example.com",
+			fullPath: "/buckets/public-images/homarr/example.png",
+			expected: "https://s3.example.com/public-images/homarr/example.png",
+		},
+		{
+			name:     "space hash and question mark in key",
+			endpoint: "https://s3.example.com",
+			fullPath: "/buckets/b/a b#c?d.txt",
+			expected: "https://s3.example.com/b/a%20b%23c%3Fd.txt",
+		},
+		{
+			name:     "non-ascii key",
+			endpoint: "https://s3.example.com",
+			fullPath: "/buckets/b/图片.png",
+			expected: "https://s3.example.com/b/%E5%9B%BE%E7%89%87.png",
+		},
+		{
+			name:     "percent in key",
+			endpoint: "https://s3.example.com",
+			fullPath: "/buckets/b/100%.txt",
+			expected: "https://s3.example.com/b/100%25.txt",
+		},
+		{
+			name:     "trailing slash on endpoint",
+			endpoint: "https://s3.example.com/",
+			fullPath: "/buckets/b/k",
+			expected: "https://s3.example.com/b/k",
+		},
+		{
+			name:     "not a bucket path",
+			endpoint: "https://s3.example.com",
+			fullPath: "/topics/t/k",
+			expected: "",
+		},
+		{
+			name:     "empty endpoint",
+			endpoint: "",
+			fullPath: "/buckets/b/k",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := S3ObjectURL(tt.endpoint, tt.fullPath); got != tt.expected {
+				t.Errorf("S3ObjectURL(%q, %q) = %q, expected %q", tt.endpoint, tt.fullPath, got, tt.expected)
+			}
+		})
+	}
+}
+
+// TestNormalizeS3PublicEndpoint verifies unusable configured endpoints are
+// dropped rather than producing broken links
+func TestNormalizeS3PublicEndpoint(t *testing.T) {
+	tests := []struct {
+		endpoint string
+		expected string
+	}{
+		{"https://s3.example.com", "https://s3.example.com"},
+		{"http://10.0.0.1:8333/", "http://10.0.0.1:8333"},
+		{"http://[::1]:8333", "http://[::1]:8333"},
+		{"https://proxy.example.com/s3", "https://proxy.example.com/s3"},
+		{"", ""},
+		{"/", ""},
+		{"s3.example.com", ""},
+		{"ftp://s3.example.com", ""},
+		{"https://", ""},
+		{"https://s3.example.com?x=1", ""},
+		{"https://s3.example.com/?", ""},
+		{"https://s3.example.com#frag", ""},
+		{"https://s3.example.com/#", ""},
+		{"http://user:pass@s3.example.com", ""},
+	}
+
+	for _, tt := range tests {
+		if got := normalizeS3PublicEndpoint(tt.endpoint); got != tt.expected {
+			t.Errorf("normalizeS3PublicEndpoint(%q) = %q, expected %q", tt.endpoint, got, tt.expected)
+		}
+	}
+}
+
 // TestPathHandlingWithForwardSlashes verifies that the production code
 // correctly handles paths with forward slashes (not OS-specific backslashes)
 func TestPathHandlingWithForwardSlashes(t *testing.T) {
