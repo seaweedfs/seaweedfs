@@ -26,6 +26,8 @@ func TestCompileCollectionMatcher(t *testing.T) {
 		{filter: "my.bucket,videos", matches: []string{"my.bucket", "videos"}, misses: []string{"my-bucket"}},
 		// A name made of regex syntax is still reachable by its own spelling.
 		{filter: "logs(2024)", matches: []string{"logs(2024)", "logs2024"}, misses: []string{"logs"}},
+		// Escaping reaches a name whose regex syntax does not parse on its own.
+		{filter: `logs\(2024`, matches: []string{"logs(2024"}, misses: []string{"logs2024", "logs"}},
 		// A comma inside a character class or a repetition count is not a separator.
 		{filter: "bucket[0-9]{1,3}", matches: []string{"bucket1", "bucket123"}, misses: []string{"bucket", "bucketx", "bucket1234"}},
 		{filter: "[a,b]", matches: []string{"a", "b", ","}, misses: []string{"ab", "c"}},
