@@ -21,6 +21,13 @@ func TestCompileCollectionMatcher(t *testing.T) {
 		{filter: "photos|videos", matches: []string{"photos", "videos"}, misses: []string{"photos-backup"}},
 		{filter: "^photos", matches: []string{"photos", "photos-backup"}, misses: []string{"videos"}},
 		{filter: "photos-.*,videos", matches: []string{"photos-backup", "videos"}, misses: []string{"photos"}},
+		// A dot is part of a collection name unless it is quantified.
+		{filter: "my.bucket", matches: []string{"my.bucket"}, misses: []string{"my-bucket", "myxbucket"}},
+		{filter: "my.bucket,videos", matches: []string{"my.bucket", "videos"}, misses: []string{"my-bucket"}},
+		// A comma inside a character class or a repetition count is not a separator.
+		{filter: "bucket[0-9]{1,3}", matches: []string{"bucket1", "bucket123"}, misses: []string{"bucket", "bucketx", "bucket1234"}},
+		{filter: "[a,b]", matches: []string{"a", "b", ","}, misses: []string{"ab", "c"}},
+		{filter: "bucket[0-9]{1,3},videos", matches: []string{"bucket7", "videos"}, misses: []string{"bucketx"}},
 		{filter: CollectionDefault, matches: []string{""}, misses: []string{"photos"}},
 		{filter: "photos," + CollectionDefault, matches: []string{"photos", ""}, misses: []string{"videos"}},
 	}

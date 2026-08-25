@@ -24,7 +24,10 @@ const (
 )
 
 // regexMetaCharacters mark a filter entry as a regex; "*" and "?" stay wildcards.
-const regexMetaCharacters = `.^$+()[]{}|\`
+// "." is not one of them: a collection named "my.bucket" is a name, not a
+// pattern that would also match "my-bucket". A "." only counts as regex syntax
+// when it is quantified, as in "bucket.*".
+const regexMetaCharacters = `^$+()[]{}|\`
 
 // CollectionMatcher matches a volume collection against a collection_filter value.
 type CollectionMatcher struct {
@@ -49,7 +52,7 @@ func CompileCollectionMatcher(filter string) (*CollectionMatcher, error) {
 	}
 
 	matcher := &CollectionMatcher{filter: trimmed}
-	for _, entry := range strings.Split(trimmed, ",") {
+	for _, entry := range splitCollectionEntries(trimmed) {
 		entry = strings.TrimSpace(entry)
 		if entry == "" {
 			continue
@@ -58,7 +61,7 @@ func CompileCollectionMatcher(filter string) (*CollectionMatcher, error) {
 			matcher.matchEmpty = true
 			continue
 		}
-		if !strings.ContainsAny(entry, regexMetaCharacters) {
+		if !isRegexEntry(entry) {
 			matcher.wildcards = append(matcher.wildcards, entry)
 			continue
 		}
@@ -77,6 +80,49 @@ func CompileCollectionMatcher(filter string) (*CollectionMatcher, error) {
 		return nil, nil
 	}
 	return matcher, nil
+}
+
+// splitCollectionEntries splits a filter on the commas that separate entries,
+// leaving alone the ones inside a regex character class or repetition count, so
+// "bucket[0-9]{1,3}" stays one entry.
+func splitCollectionEntries(filter string) []string {
+	entries := make([]string, 0, 4)
+	inClass, inRepeat := false, false
+	start := 0
+	for i := 0; i < len(filter); i++ {
+		switch filter[i] {
+		case '\\':
+			i++
+		case '[':
+			inClass = true
+		case ']':
+			inClass = false
+		case '{':
+			inRepeat = !inClass
+		case '}':
+			inRepeat = false
+		case ',':
+			if !inClass && !inRepeat {
+				entries = append(entries, filter[start:i])
+				start = i + 1
+			}
+		}
+	}
+	return append(entries, filter[start:])
+}
+
+// isRegexEntry reports whether an entry carries regex syntax rather than being a
+// plain collection name with optional "*" and "?" wildcards.
+func isRegexEntry(entry string) bool {
+	if strings.ContainsAny(entry, regexMetaCharacters) {
+		return true
+	}
+	for i := 0; i+1 < len(entry); i++ {
+		if entry[i] == '.' && (entry[i+1] == '*' || entry[i+1] == '?') {
+			return true
+		}
+	}
+	return false
 }
 
 // Matches reports whether a collection passes the filter. A nil matcher accepts everything.
