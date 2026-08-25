@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"testing"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -77,6 +78,22 @@ func TestShouldInvalidateConnection_NonCancellableContextIsNoEvidence(t *testing
 			if shouldInvalidateConnection(ctx, err) {
 				t.Fatalf("%v must not invalidate the shared connection on a non-cancellable context", code)
 			}
+		}
+	}
+}
+
+// TestShouldInvalidateConnection_ClientConnClosingIsNotStale ensures a caller
+// whose RPC was rejected because this process is already closing the shared
+// ClientConn does not close it again. gRPC raises ErrClientConnClosing locally,
+// so it is only ever the footprint of another goroutine's teardown - reading it
+// as a stale-channel signal lets one teardown re-arm itself across the herd of
+// callers it just cancelled.
+func TestShouldInvalidateConnection_ClientConnClosingIsNotStale(t *testing.T) {
+	live, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	for _, err := range []error{grpc.ErrClientConnClosing, fmt.Errorf("assign volume: %w", grpc.ErrClientConnClosing)} {
+		if shouldInvalidateConnection(live, err) {
+			t.Fatalf("%v must not invalidate the shared connection", err)
 		}
 	}
 }

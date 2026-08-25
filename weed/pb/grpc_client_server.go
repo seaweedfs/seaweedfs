@@ -401,6 +401,13 @@ func shouldInvalidateConnection(ctx context.Context, err error) bool {
 		return false
 	}
 
+	// gRPC raises this locally, before the RPC reaches the wire, when this
+	// process already closed the ClientConn. The caller is a bystander of
+	// someone else's teardown, and knows nothing about the peer.
+	if errors.Is(err, grpc.ErrClientConnClosing) {
+		return false
+	}
+
 	// Check gRPC status codes first (more reliable)
 	if s, ok := status.FromError(err); ok {
 		code := s.Code()
