@@ -1006,9 +1006,8 @@ s3:
   # Iceberg catalog REST port (Apache Iceberg REST Catalog API)
   # Set to a port number to enable, or 0/null to disable
   icebergPort: null
-  # Lance Namespace REST port (Lance Namespace API), on by default like
-  # standalone `weed s3`. Set to 0 to disable; that also drops the worker's
-  # Lance maintenance container.
+  # Lance Namespace port; weed serves 9101 by default, 0 disables it
+  # (and, unless worker.namespaceUrl points elsewhere, the worker's Lance container)
   lancePort: 9101
   loggingOverrideLevel: null
   # enable user & permission to s3 (need to inject to all services)
@@ -1474,18 +1473,10 @@ worker:
   metricsPort: 9327
   metricsIp: ""  # If empty, defaults to 0.0.0.0
 
-  # The Lance maintenance worker (/usr/bin/weed-worker, Rust) runs as a
-  # second container beside `weed worker` whenever its namespace is
-  # reachable: namespaceUrl set, or s3 enabled with a nonzero s3.lancePort.
-  # It runs alongside rather than instead, because the job families are
-  # disjoint: the Go worker serves vacuum, balance, EC and
-  # iceberg_maintenance; only the Rust worker serves lance_compact,
-  # lance_optimize_indices and lance_cleanup_versions. The binary ships for
-  # amd64 and arm64; on an armv7/386-only cluster set s3.lancePort: 0, or
-  # the container exits at startup naming the platform.
+  # The lance_* jobs run in their own container, /usr/bin/weed-worker.
+  # amd64/arm64 only; pin mixed clusters with worker.affinity/nodeSelector.
 
-  # Lance namespace URL override. When empty, derived from this release's
-  # S3 service and s3.lancePort.
+  # Lance namespace URL override; empty derives it from s3.lancePort.
   namespaceUrl: ""
 
   # Metrics port for the Lance worker container; the Go worker keeps metricsPort
