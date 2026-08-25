@@ -2388,7 +2388,13 @@ impl VolumeServer for VolumeGrpcService {
         let (data_shards, parity_shards, _) =
             crate::storage::erasure_coding::ec_volume::read_ec_shard_config(
                 &dir, &idx_dir, collection, vid,
-            );
+            )
+            .map_err(|e| {
+                tonic::Status::internal(format!(
+                    "read ec shard config for volume {}: {}",
+                    vid.0, e
+                ))
+            })?;
 
         let block_size = match crate::storage::erasure_coding::ec_encoder::write_ec_files(
             &dir,
@@ -2556,7 +2562,13 @@ impl VolumeServer for VolumeGrpcService {
                 &rebuild_idx_dir,
                 collection,
                 vid,
-            );
+            )
+            .map_err(|e| {
+                tonic::Status::internal(format!(
+                    "read ec shard config for volume {}: {}",
+                    vid.0, e
+                ))
+            })?;
         let total_shards = data_shards + parity_shards;
 
         // Check which shards are missing (check rebuild dir and all other dirs)

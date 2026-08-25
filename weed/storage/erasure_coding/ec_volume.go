@@ -169,7 +169,15 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 		}
 	}
 	ev.Version = needle.Version3
-	if volumeInfo, _, found, _ := volume_info.MaybeLoadVolumeInfo(vifFileName); found {
+	// A present-but-unreadable or malformed .vif FAILS the mount: every new
+	// encode records a positive uniform block size there, and defaulting to
+	// the legacy layout would serve those shards with the wrong offset math.
+	// Absent stays legal — legacy volumes predate the sidecar.
+	volumeInfo, _, found, vifErr := volume_info.MaybeLoadVolumeInfo(vifFileName)
+	if vifErr != nil {
+		return nil, fmt.Errorf("ec volume %d: load %s: %w", vid, vifFileName, vifErr)
+	}
+	if found {
 		ev.Version = needle.Version(volumeInfo.Version)
 		ev.datFileSize = volumeInfo.DatFileSize
 		ev.ExpireAtSec = volumeInfo.ExpireAtSec

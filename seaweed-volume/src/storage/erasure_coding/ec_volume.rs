@@ -97,37 +97,64 @@ fn locate_vif_path(dir: &str, dir_idx: &str, collection: &str, volume_id: Volume
     data_vif
 }
 
+/// Load the volume's `.vif` (data dir first, then idx dir, then the active
+/// generation's versioned sidecar — see [`locate_vif_path`]). Absent
+/// everywhere is legal — legacy volumes predate the sidecar — and returns
+/// `None`; so does a zero-byte stub (an ec.decode copy from a source
+/// without one), mirroring Go's MaybeLoadVolumeInfo. A
+/// present-but-unreadable or malformed `.vif` is an ERROR: silently
+/// defaulting would mount a uniform-layout volume with legacy offset math
+/// and serve wrong bytes with a straight face.
+pub fn load_vif_info(
+    dir: &str,
+    dir_idx: &str,
+    collection: &str,
+    volume_id: VolumeId,
+) -> io::Result<Option<crate::storage::volume::VifVolumeInfo>> {
+    let vif_path = locate_vif_path(dir, dir_idx, collection, volume_id);
+    match std::fs::read_to_string(&vif_path) {
+        Ok(content) if content.trim().is_empty() => Ok(None),
+        Ok(content) => serde_json::from_str(&content).map(Some).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("parse {}: {}", vif_path, e),
+            )
+        }),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(io::Error::new(
+            e.kind(),
+            format!("read {}: {}", vif_path, e),
+        )),
+    }
+}
+
 /// Read the EC data/parity shard counts and shard block size from `.vif`,
 /// defaulting to the build's standard ratio and the legacy block layout when
-/// no `.vif` is present or is malformed.
+/// no `.vif` is present. A present-but-unreadable or malformed `.vif`
+/// fails instead of defaulting (see [`load_vif_info`]).
 /// Looks at the data dir first, then the idx dir — see [`locate_vif_path`].
 pub fn read_ec_shard_config(
     dir: &str,
     dir_idx: &str,
     collection: &str,
     volume_id: VolumeId,
-) -> (u32, u32, i64) {
+) -> io::Result<(u32, u32, i64)> {
     let mut data_shards = crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT as u32;
     let mut parity_shards = crate::storage::erasure_coding::ec_shard::PARITY_SHARDS_COUNT as u32;
     let mut block_size = 0i64;
-    let vif_path = locate_vif_path(dir, dir_idx, collection, volume_id);
-    if let Ok(vif_content) = std::fs::read_to_string(&vif_path) {
-        if let Ok(vif_info) =
-            serde_json::from_str::<crate::storage::volume::VifVolumeInfo>(&vif_content)
-        {
-            if let Some(ec) = vif_info.ec_shard_config {
-                if ec.data_shards > 0
-                    && ec.parity_shards > 0
-                    && (ec.data_shards + ec.parity_shards) <= MAX_SHARD_COUNT as u32
-                {
-                    data_shards = ec.data_shards;
-                    parity_shards = ec.parity_shards;
-                    block_size = ec.block_size;
-                }
+    if let Some(vif_info) = load_vif_info(dir, dir_idx, collection, volume_id)? {
+        if let Some(ec) = vif_info.ec_shard_config {
+            if ec.data_shards > 0
+                && ec.parity_shards > 0
+                && (ec.data_shards + ec.parity_shards) <= MAX_SHARD_COUNT as u32
+            {
+                data_shards = ec.data_shards;
+                parity_shards = ec.parity_shards;
+                block_size = ec.block_size;
             }
         }
     }
-    (data_shards, parity_shards, block_size)
+    Ok((data_shards, parity_shards, block_size))
 }
 
 impl EcVolume {
@@ -139,7 +166,7 @@ impl EcVolume {
         volume_id: VolumeId,
     ) -> io::Result<Self> {
         let (data_shards, parity_shards, block_size) =
-            read_ec_shard_config(dir, dir_idx, collection, volume_id);
+            read_ec_shard_config(dir, dir_idx, collection, volume_id)?;
 
         let total_shards = (data_shards + parity_shards) as usize;
         let mut shards = Vec::with_capacity(total_shards);
@@ -155,12 +182,12 @@ impl EcVolume {
         // for shard-size math and by the Store-level prune in
         // `store_ec_reconcile.rs` to verify a sibling-disk .dat is
         // plausibly the encoding source (#9478).
-        let (expire_at_sec, vif_version, vif_dat_file_size, encode_ts_ns) = {
-            let vif_path = locate_vif_path(dir, dir_idx, collection, volume_id);
-            if let Ok(vif_content) = std::fs::read_to_string(&vif_path) {
-                if let Ok(vif_info) =
-                    serde_json::from_str::<crate::storage::volume::VifVolumeInfo>(&vif_content)
-                {
+        let (expire_at_sec, vif_version, vif_dat_file_size, encode_ts_ns) =
+            // Absent everywhere = legacy defaults; present-but-unreadable
+            // or malformed fails the mount (load_vif_info above already
+            // vetted the same file for the shard config).
+            match load_vif_info(dir, dir_idx, collection, volume_id)? {
+                Some(vif_info) => {
                     let ver = if vif_info.version > 0 {
                         Version(vif_info.version as u8)
                     } else {
@@ -176,13 +203,9 @@ impl EcVolume {
                         vif_info.dat_file_size,
                         cfg_encode_ts_ns,
                     )
-                } else {
-                    (0, Version::current(), 0, 0)
                 }
-            } else {
-                (0, Version::current(), 0, 0)
-            }
-        };
+                None => (0, Version::current(), 0, 0),
+            };
 
         let mut vol = EcVolume {
             volume_id,
@@ -2156,5 +2179,30 @@ mod uniform_layout_tests {
                 );
             }
         }
+    }
+
+    // A present-but-malformed .vif must FAIL the mount: every new encode
+    // records a positive uniform block size there, and silently defaulting
+    // to the legacy layout would serve those shards with the wrong offset
+    // math. Absence stays legal — legacy volumes predate the sidecar.
+    #[test]
+    fn new_fails_on_malformed_vif() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let base = crate::storage::volume::volume_file_name(dir, "", VolumeId(1));
+        std::fs::write(format!("{}.ecx", base), b"").unwrap();
+        std::fs::write(format!("{}.vif", base), b"not json").unwrap();
+        let res = EcVolume::new(dir, dir, "", VolumeId(1));
+        assert!(res.is_err(), "mount over a malformed .vif must fail");
+    }
+
+    #[test]
+    fn new_absent_vif_mounts_with_defaults() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let base = crate::storage::volume::volume_file_name(dir, "", VolumeId(1));
+        std::fs::write(format!("{}.ecx", base), b"").unwrap();
+        let ev = EcVolume::new(dir, dir, "", VolumeId(1)).unwrap();
+        assert_eq!(ev.block_size, 0, "legacy mount must use the legacy layout");
     }
 }
