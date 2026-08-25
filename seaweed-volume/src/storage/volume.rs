@@ -2567,14 +2567,23 @@ impl Volume {
             self.no_write_can_delete = false;
         }
 
-        // Put the flags back if the rebuild fails, so the caller can roll the
-        // mark back cleanly.
-        if let Err(e) = self.reopen_idx_for_write() {
+        // Everything below keys off the flags above, so it runs with the volume
+        // already marked writable. Any failure has to put them back: a volume
+        // advertising writable whose needle map cannot reach .idx acknowledges
+        // writes that are gone after a restart.
+        if let Err(e) = self.publish_writable() {
             self.no_write_or_delete = was_no_write_or_delete;
             self.no_write_can_delete = was_no_write_can_delete;
             return Err(e);
         }
+        Ok(())
+    }
 
+    /// The steps that must all succeed before a volume can be left marked
+    /// writable: swap out the read-only map, attach the .idx writer, persist the
+    /// mark. Split out so set_writable has one rollback point rather than three.
+    fn publish_writable(&mut self) -> Result<(), VolumeError> {
+        self.reopen_idx_for_write()?;
         self.attach_idx_writer_if_missing()?;
         self.save_vif()
     }
@@ -5957,6 +5966,79 @@ mod tests {
         };
         v.read_needle(&mut probe).unwrap();
         assert_eq!(probe.data, b"still-readable");
+    }
+
+    // set_writable clears the read-only flags before it can know the .idx writer
+    // will attach. If attaching fails the flags have to go back: a volume that
+    // advertises writable while its map has no writer takes puts into memory and
+    // loses them at the next restart.
+    #[test]
+    #[cfg(unix)]
+    fn test_set_writable_rolls_back_when_the_idx_writer_cannot_attach() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // root ignores the directory mode, so there is nothing to simulate.
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap().to_string();
+        {
+            let mut v = make_test_volume(&dir);
+            let mut n = Needle {
+                id: NeedleId(1),
+                cookie: Cookie(0x1234),
+                data: b"before".to_vec(),
+                data_size: 6,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+            v.set_read_only_persist(false, true).unwrap();
+            v.sync_to_disk().unwrap();
+        }
+
+        // A read-only mount, both halves of it: nothing new can be created in the
+        // directory, so .sdx generation fails and the index falls back to memory,
+        // and the .idx itself cannot be opened for write, so no writer attaches.
+        let set_mode = |path: &std::path::Path, mode: u32| {
+            let mut perms = std::fs::metadata(path).unwrap().permissions();
+            perms.set_mode(mode);
+            std::fs::set_permissions(path, perms).unwrap();
+        };
+        let idx_path = tmp.path().join("1.idx");
+        set_mode(&idx_path, 0o444);
+        set_mode(tmp.path(), 0o555);
+
+        let loaded = Volume::new(
+            &dir,
+            &dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        );
+        let marked = loaded.map(|mut v| {
+            let r = v.set_writable();
+            (v.no_write_or_delete, v.is_read_only(), v.nm.as_ref().unwrap().has_idx_writer(), r)
+        });
+        // Restore before any assertion, so cleanup works.
+        set_mode(tmp.path(), 0o755);
+        set_mode(&idx_path, 0o644);
+
+        let (no_write_or_delete, read_only, has_writer, result) = marked.unwrap();
+        assert!(
+            result.is_err(),
+            "set_writable cannot succeed without an .idx writer"
+        );
+        assert!(!has_writer, "the writer is what failed to attach");
+        assert!(
+            no_write_or_delete && read_only,
+            "a failed mark must leave the volume read-only, not writable with an index it cannot append to"
+        );
     }
 
     // Issue #10937: a volume server holding hundreds of thousands of cloud-tiered

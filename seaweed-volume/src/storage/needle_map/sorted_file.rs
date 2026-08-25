@@ -45,18 +45,33 @@ pub struct SortedFileNeedleMap {
 impl SortedFileNeedleMap {
     /// Open the sorted map for the volume whose index files share
     /// `index_base_file_name` (the path with no extension), regenerating `.sdx`
-    /// when it is older than `.idx`.
+    /// when it is older than `.idx` or torn.
     pub fn open(index_base_file_name: &str, version: Version) -> io::Result<Self> {
         let index_file_name = format!("{index_base_file_name}.idx");
         let db_file_name = format!("{index_base_file_name}.sdx");
 
-        if !is_sorted_file_fresh(&db_file_name, &index_file_name) {
+        if !is_sorted_file_fresh(&db_file_name, &index_file_name)
+            || !holds_whole_entries(&db_file_name)
+        {
             tracing::info!(sdx = %db_file_name, idx = %index_file_name, "generating sorted index");
             write_sorted_file_from_idx(&index_file_name, &db_file_name, version)?;
         }
 
-        let db_file_size = std::fs::metadata(&db_file_name)?.len() as i64;
+        let db_file_size = std::fs::metadata(&db_file_name)?.len();
+        if db_file_size % NEEDLE_MAP_ENTRY_SIZE as u64 != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "{db_file_name} is {db_file_size} bytes, not whole {NEEDLE_MAP_ENTRY_SIZE}-byte entries"
+                ),
+            ));
+        }
+        let db_file_size = db_file_size as i64;
         let index_file_size = std::fs::metadata(&index_file_name)?.len();
+        // Start appends at the last whole entry. A torn tail is overwritten by
+        // the next tombstone rather than leaving every later row misaligned; the
+        // metric walk below ignores it for the same reason.
+        let index_file_size = index_file_size - index_file_size % NEEDLE_MAP_ENTRY_SIZE as u64;
 
         let metric = index_metric(&index_file_name, &db_file_name, version)?;
 
@@ -278,6 +293,17 @@ impl Drop for SortedFileNeedleMap {
     fn drop(&mut self) {
         self.close();
     }
+}
+
+/// Whether a sorted index is a whole number of entries. A torn one is treated
+/// like a stale one and rebuilt: truncation bumps the mtime, so the staleness
+/// check alone would trust it, and flooring the entry count would silently hide
+/// the last needle — which a later compaction would then drop for good. Go
+/// writes `.sdx` in place, so a crash mid-generation can leave one behind.
+fn holds_whole_entries(db_file_name: &str) -> bool {
+    std::fs::metadata(db_file_name)
+        .map(|m| m.len() % NEEDLE_MAP_ENTRY_SIZE as u64 == 0)
+        .unwrap_or(false)
 }
 
 /// `.sdx` is stale when it is not newer than `.idx`; writes always land in
@@ -589,6 +615,86 @@ mod tests {
             .unwrap()
             .is_none());
         assert!(!m.get(NeedleId(1)).unwrap().size.is_deleted());
+    }
+
+    #[test]
+    fn a_torn_idx_tail_does_not_misalign_appends() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = base(&dir);
+        let idx_path = format!("{base}.idx");
+        write_idx(&idx_path, &[(1, 8, 100), (2, 16, 200)]);
+        // A short write left half a record behind. Seeding the append offset
+        // from the raw file length would put every later row off by five bytes.
+        {
+            use std::io::Write as _;
+            let mut f = OpenOptions::new().append(true).open(&idx_path).unwrap();
+            f.write_all(&[0xab; 5]).unwrap();
+        }
+
+        let m = SortedFileNeedleMap::open(&base, version()).unwrap();
+        assert_eq!(m.index_file_size(), 2 * NEEDLE_MAP_ENTRY_SIZE as u64);
+        m.delete(NeedleId(1), Offset::from_actual_offset(8))
+            .unwrap();
+
+        let mut rows = Vec::new();
+        let mut f = File::open(&idx_path).unwrap();
+        idx::walk_index_file(&mut f, 0, |key, _, size| {
+            rows.push((key, size));
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(
+            std::fs::metadata(&idx_path).unwrap().len(),
+            3 * NEEDLE_MAP_ENTRY_SIZE as u64,
+            "the tombstone should have overwritten the torn tail"
+        );
+        assert_eq!(rows[0], (NeedleId(1), Size(100)));
+        assert_eq!(rows[1], (NeedleId(2), Size(200)));
+        assert_eq!(rows[2], (NeedleId(1), TOMBSTONE_FILE_SIZE));
+    }
+
+    #[test]
+    fn torn_sdx_is_regenerated() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = base(&dir);
+        write_idx(
+            &format!("{base}.idx"),
+            &[(1, 8, 100), (2, 16, 200), (3, 24, 300)],
+        );
+
+        // Build a good .sdx, then lop off part of its last record. Truncation
+        // bumps the mtime, so the staleness check sees a *fresher* file than the
+        // .idx — without the whole-entry check the map would trust it and needle
+        // 3 would disappear.
+        drop(SortedFileNeedleMap::open(&base, version()).unwrap());
+        let good = std::fs::metadata(format!("{base}.sdx")).unwrap().len();
+        assert_eq!(good, 3 * NEEDLE_MAP_ENTRY_SIZE as u64);
+        let sdx = OpenOptions::new()
+            .write(true)
+            .open(format!("{base}.sdx"))
+            .unwrap();
+        sdx.set_len(good - 5).unwrap();
+        drop(sdx);
+        pooled_index_files().discard(&format!("{base}.sdx"));
+        assert!(
+            std::fs::metadata(format!("{base}.sdx"))
+                .unwrap()
+                .modified()
+                .unwrap()
+                > std::fs::metadata(format!("{base}.idx"))
+                    .unwrap()
+                    .modified()
+                    .unwrap(),
+            "the torn file must look fresh, or the test proves nothing"
+        );
+
+        let m = SortedFileNeedleMap::open(&base, version()).unwrap();
+        assert_eq!(
+            std::fs::metadata(format!("{base}.sdx")).unwrap().len(),
+            good
+        );
+        assert_eq!(m.get(NeedleId(3)).unwrap().size, Size(300));
+        assert_eq!(m.iter_entries().unwrap().len(), 3);
     }
 
     #[test]
