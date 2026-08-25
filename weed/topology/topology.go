@@ -659,7 +659,7 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 			newVolumes = append(newVolumes, v)
 		}
 		vl.UpdateOversizedState(&v, dn)
-		if vl.UpdateVolumeSize(v.Id, v.Size, v.CompactRevision) {
+		if vl.UpdateVolumeSize(v.Id, v.Size, v.CompactRevision, true) {
 			vl.AdjustActiveVolumeCountAfterRecovery(v.Id)
 		}
 		vl.EnsureCorrectWritables(&v)
@@ -737,7 +737,7 @@ func (t *Topology) ApplyVolumeChanges(changed []*master_pb.VolumeInformationMess
 			newVolumes = append(newVolumes, vi)
 		}
 		vl.UpdateOversizedState(&vi, dn)
-		if vl.UpdateVolumeSize(vi.Id, vi.Size, vi.CompactRevision) {
+		if vl.UpdateVolumeSize(vi.Id, vi.Size, vi.CompactRevision, true) {
 			vl.AdjustActiveVolumeCountAfterRecovery(vi.Id)
 		}
 		vl.EnsureCorrectWritables(&vi)

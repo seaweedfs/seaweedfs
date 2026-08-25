@@ -46,13 +46,13 @@ func TestSetVolumeCapacityFullStampsFullSinceAndRecovers(t *testing.T) {
 
 	// No recovery before capacityRecoveryDelay.
 	advanceSizeTrackingClock(vl, 1, 3*time.Second)
-	if vl.UpdateVolumeSize(1, 4000, 0) {
+	if vl.UpdateVolumeSize(1, 4000, 0, true) {
 		t.Fatalf("recovery should not fire before capacityRecoveryDelay")
 	}
 
 	// After the delay, a smaller size restores it.
 	advanceSizeTrackingClock(vl, 1, capacityRecoveryDelay)
-	if !vl.UpdateVolumeSize(1, 4000, 0) {
+	if !vl.UpdateVolumeSize(1, 4000, 0, true) {
 		t.Fatalf("expected volume to recover to writable after shrinking")
 	}
 	vl.AdjustActiveVolumeCountAfterRecovery(1)
@@ -109,7 +109,7 @@ func TestSetVolumeAvailableRestoresActiveCountForCapacityFullVolume(t *testing.T
 	}
 
 	advanceSizeTrackingClock(vl, 1, capacityRecoveryDelay+time.Second)
-	if vl.UpdateVolumeSize(1, 4000, 0) {
+	if vl.UpdateVolumeSize(1, 4000, 0, true) {
 		t.Fatalf("heartbeat recovery should not fire after SetVolumeAvailable already restored the volume")
 	}
 	if got := topo.diskUsages.usages[types.HardDriveType].activeVolumeCount; got != initialActive {
@@ -161,5 +161,41 @@ func TestDecayQuietVolumeSizesRecoversPhantomFullVolume(t *testing.T) {
 	}
 	if !vl.sizeTracking[1].fullSince.IsZero() {
 		t.Fatalf("expected fullSince cleared after recovery")
+	}
+}
+
+// The decay must not consume the replica-dedup window: a real report landing
+// right behind it carries a size no volume server will send again, since only
+// a volume whose content changed is reported at all.
+func TestDecayQuietVolumeSizesKeepsTheNextHeartbeat(t *testing.T) {
+	layout := `
+{
+  "dc1":{
+    "rack1":{
+      "server1":{
+        "volumes":[
+          {"id":1, "size":4000, "replication":"000"}
+        ],
+        "limit":10
+      }
+    }
+  }
+}
+`
+	topo, vl := setupPickTest(t, layout, 10000)
+
+	vl.RecordAssign(1, 2000)
+	advanceSizeTrackingClock(vl, 1, 30*time.Second)
+	topo.DecayQuietVolumeSizes()
+
+	vl.UpdateVolumeSize(1, 6000, 7, true)
+
+	vl.accessLock.RLock()
+	defer vl.accessLock.RUnlock()
+	if got := vl.sizeTracking[1].reportedSize; got != 6000 {
+		t.Errorf("the heartbeat after a decay left reportedSize at %d, want the reported 6000", got)
+	}
+	if got := vl.sizeTracking[1].compactRevision; got != 7 {
+		t.Errorf("the heartbeat after a decay left compactRevision at %d, want the reported 7", got)
 	}
 }

@@ -502,7 +502,7 @@ func TestUpdateVolumeSizeRecoversEagerlyRemovedVolume(t *testing.T) {
 	// *not* re-add the volume (even though effectiveSize would now be
 	// under the threshold).
 	advanceSizeTrackingClock(vl, 1, 3*time.Second) // past the 2s dedup window, but before 30s delay
-	if vl.UpdateVolumeSize(1, 4000, 0) {
+	if vl.UpdateVolumeSize(1, 4000, 0, true) {
 		t.Fatalf("recovery should not fire before capacityRecoveryDelay")
 	}
 	w, _ = vl.GetWritableVolumeCount()
@@ -514,7 +514,7 @@ func TestUpdateVolumeSizeRecoversEagerlyRemovedVolume(t *testing.T) {
 	// effectiveSize drops below the crowded threshold (9000).
 	for i := 0; i < 6; i++ {
 		advanceSizeTrackingClock(vl, 1, 10*time.Second)
-		recovered := vl.UpdateVolumeSize(1, 4000, 0)
+		recovered := vl.UpdateVolumeSize(1, 4000, 0, true)
 		if recovered {
 			vl.AdjustActiveVolumeCountAfterRecovery(1)
 			break
@@ -532,7 +532,7 @@ func TestUpdateVolumeSizeRecoversEagerlyRemovedVolume(t *testing.T) {
 	// fullSince should have been cleared so a subsequent heartbeat doesn't
 	// try to recover again.
 	advanceSizeTrackingClock(vl, 1, 60*time.Second)
-	if vl.UpdateVolumeSize(1, 4000, 0) {
+	if vl.UpdateVolumeSize(1, 4000, 0, true) {
 		t.Errorf("recovery should not re-fire after the volume is already writable")
 	}
 }
@@ -565,7 +565,7 @@ func TestUpdateVolumeSizeNoRecoveryWhenDiskStillOversized(t *testing.T) {
 	// Plenty of time elapsed — but reported stays at 10500 (over limit).
 	for i := 0; i < 5; i++ {
 		advanceSizeTrackingClock(vl, 1, 10*time.Second)
-		if vl.UpdateVolumeSize(1, 10500, 0) {
+		if vl.UpdateVolumeSize(1, 10500, 0, true) {
 			t.Fatalf("recovery must not fire when reported >= limit")
 		}
 	}
@@ -612,7 +612,7 @@ func TestHeartbeatDecaysPendingSize(t *testing.T) {
 	// Heartbeat: volume server reports size=3000 (some writes landed).
 	// Old effective=9000, new reported=3000 → excess=6000 → decayed to 3000.
 	// So vid2size should become 3000 + 6000/2 = 6000, not just 3000.
-	vl.UpdateVolumeSize(1, 3000, 0)
+	vl.UpdateVolumeSize(1, 3000, 0, true)
 
 	vl.accessLock.RLock()
 	if vl.sizeTracking[1].effectiveSize != 6000 {
@@ -623,7 +623,7 @@ func TestHeartbeatDecaysPendingSize(t *testing.T) {
 	// Second heartbeat: size=5000. Old effective=6000 → excess=1000 → decay to 500.
 	// vid2size should become 5000 + 1000/2 = 5500.
 	advanceCycle()
-	vl.UpdateVolumeSize(1, 5000, 0)
+	vl.UpdateVolumeSize(1, 5000, 0, true)
 
 	vl.accessLock.RLock()
 	if vl.sizeTracking[1].effectiveSize != 5500 {
@@ -634,7 +634,7 @@ func TestHeartbeatDecaysPendingSize(t *testing.T) {
 	// Third heartbeat: size=5500. Old effective=5500 → no excess.
 	// vid2size should be exactly 5500.
 	advanceCycle()
-	vl.UpdateVolumeSize(1, 5500, 0)
+	vl.UpdateVolumeSize(1, 5500, 0, true)
 
 	vl.accessLock.RLock()
 	if vl.sizeTracking[1].effectiveSize != 5500 {
@@ -698,8 +698,8 @@ func TestHeartbeatDecayDedupReplicas(t *testing.T) {
 
 	// Both replicas report size=3000. Decay should happen once: 3000 + (9000-3000)/2 = 6000.
 	// Calling UpdateVolumeSize twice simulates two replicas reporting in the same cycle.
-	vl.UpdateVolumeSize(1, 3000, 0)
-	vl.UpdateVolumeSize(1, 3000, 0) // second replica, same size — should be a no-op
+	vl.UpdateVolumeSize(1, 3000, 0, true)
+	vl.UpdateVolumeSize(1, 3000, 0, true) // second replica, same size — should be a no-op
 
 	vl.accessLock.RLock()
 	got := vl.sizeTracking[1].effectiveSize
@@ -736,7 +736,7 @@ func TestUpdateVolumeSize_DecaysEvenWhenReportedSizeUnchanged(t *testing.T) {
 
 	// First heartbeat: reported size unchanged at 1000 (writes haven't landed).
 	// Decay should still run: 1000 + (9000-1000)/2 = 5000.
-	vl.UpdateVolumeSize(1, 1000, 0)
+	vl.UpdateVolumeSize(1, 1000, 0, true)
 	if p := vl.GetPendingSize(1); p != 4000 {
 		t.Errorf("expected 4000 pending after first decay, got %d", p)
 	}
@@ -748,7 +748,7 @@ func TestUpdateVolumeSize_DecaysEvenWhenReportedSizeUnchanged(t *testing.T) {
 	vl.accessLock.Unlock()
 
 	// Second heartbeat: still 1000. Decay again: 1000 + (5000-1000)/2 = 3000.
-	vl.UpdateVolumeSize(1, 1000, 0)
+	vl.UpdateVolumeSize(1, 1000, 0, true)
 	if p := vl.GetPendingSize(1); p != 2000 {
 		t.Errorf("expected 2000 pending after second decay, got %d", p)
 	}

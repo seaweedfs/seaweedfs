@@ -191,7 +191,12 @@ func (vl *VolumeLayout) UpdateOversizedState(v *storage.VolumeInfo, dn *DataNode
 // previously eagerly removed by RecordAssign back under the writable
 // threshold and this call re-added it to the writable list. The caller
 // should mirror the activeVolumeCount bookkeeping.
-func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint64, compactRevision uint32) (recoveredToWritable bool) {
+//
+// Only a report from a volume server claims the replica-dedup window; the
+// periodic decay replays the size already on record, and letting it dedup
+// would swallow the report that follows and strand the master on a stale size
+// no one will send again.
+func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint64, compactRevision uint32, fromHeartbeat bool) (recoveredToWritable bool) {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
@@ -211,6 +216,9 @@ func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint6
 	now := time.Now()
 	st := vl.sizeTracking[vid]
 	if st == nil {
+		if !fromHeartbeat {
+			return false // the entry went while the decay was picking its work
+		}
 		st = &volumeSizeTracking{
 			effectiveSize:   reportedSize,
 			reportedSize:    reportedSize,
@@ -218,10 +226,12 @@ func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint6
 			lastUpdateTime:  now,
 		}
 		vl.sizeTracking[vid] = st
-	} else if now.Sub(st.lastUpdateTime) < 2*time.Second {
+	} else if fromHeartbeat && now.Sub(st.lastUpdateTime) < 2*time.Second {
 		return false // duplicate replica in the same heartbeat cycle
 	} else {
-		st.lastUpdateTime = now
+		if fromHeartbeat {
+			st.lastUpdateTime = now
+		}
 		st.reportedSize = reportedSize
 		if compactRevision != st.compactRevision {
 			// Compaction happened — size drop is real, not pending. Reset.
@@ -290,7 +300,7 @@ func (vl *VolumeLayout) DecayQuietVolumeSizes(quietCutoff time.Duration) {
 	}
 	vl.accessLock.RUnlock()
 	for _, q := range quiets {
-		if vl.UpdateVolumeSize(q.vid, q.reportedSize, q.compactRevision) {
+		if vl.UpdateVolumeSize(q.vid, q.reportedSize, q.compactRevision, false) {
 			vl.AdjustActiveVolumeCountAfterRecovery(q.vid)
 		}
 	}
