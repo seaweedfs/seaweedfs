@@ -55,3 +55,15 @@ func (evi *EcVolumeInfo) ToVolumeEcShardInformationMessage() (ret *master_pb.Vol
 		EncodeTsNs:  evi.EncodeTsNs,
 	}
 }
+
+func (evi *EcVolumeInfo) GetCollection() string {
+	return evi.Collection
+}
+
+func (evi *EcVolumeInfo) GetVolumeId() needle.VolumeId {
+	return evi.VolumeId
+}
+
+func (evi *EcVolumeInfo) GetRemoteStorageName() string {
+	return ""
+}
