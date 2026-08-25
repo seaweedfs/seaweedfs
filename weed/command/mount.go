@@ -192,6 +192,13 @@ var cmdMount = &Command{
 
   On OS X, it requires OSXFUSE (https://osxfuse.github.io/).
 
+  On Windows, it requires WinFsp (https://winfsp.dev/). The mount point can be
+  a drive letter (-dir=S:), a directory that does not exist yet, or a network
+  path (-dir=\\seaweedfs\share). A drive letter belongs to the logon session
+  that created it, so one mounted by a service is usually invisible to users
+  at the desktop; the network path form is reachable from every session, and
+  each user can map their own drive letter to it.
+
   RDMA Acceleration:
   For ultra-fast reads, enable RDMA acceleration with an RDMA sidecar:
     weed mount -filer=localhost:8888 -dir=/mnt/seaweedfs \
