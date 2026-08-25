@@ -400,24 +400,23 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, filerClient
 	// For "weed mini" without any S3 config, default to allowing all access (isAuthEnabled = false)
 	// If any credentials are configured (via file, filer, or env vars), enable authentication
 	iam.m.Lock()
-	iam.isAuthEnabled = len(iam.identities) > 0
+	identityCount := len(iam.identities)
+	// Pointing the gateway at a config file is the operator asking for
+	// authentication. A file that yields no identity - an empty secret mount, a
+	// mistyped key the proto parser drops - must deny everyone rather than serve
+	// the cluster to anonymous callers.
+	iam.isAuthEnabled = identityCount > 0 || startConfigFile != ""
 	iam.m.Unlock()
-	if iam.isAuthEnabled {
-		hasAnyIdentity.Store(true)
-	}
 
-	if iam.isAuthEnabled {
-		// Credentials were configured - enable authentication
-		glog.V(1).Infof("S3 authentication enabled (%d identities configured)", len(iam.identities))
-	} else {
-		// No credentials configured
-		if startConfigFile != "" {
-			// Config file was specified but contained no identities - this is unusual, log a warning
-			glog.Warningf("S3 config file %s specified but no identities loaded - authentication disabled", startConfigFile)
-		} else {
-			// No config file and no identities - this is the normal allow-all case
-			glog.V(1).Infof("S3 authentication disabled - no credentials configured (allowing all access)")
-		}
+	switch {
+	case identityCount > 0:
+		hasAnyIdentity.Store(true)
+		glog.V(1).Infof("S3 authentication enabled (%d identities configured)", identityCount)
+	case startConfigFile != "":
+		glog.Warningf("S3 config file %s loaded no identities - every request is denied until one is configured", startConfigFile)
+	default:
+		// No config file and no identities - this is the normal allow-all case
+		glog.V(1).Infof("S3 authentication disabled - no credentials configured (allowing all access)")
 	}
 
 	return iam
@@ -1297,6 +1296,7 @@ func (iam *IdentityAccessManagement) UpsertIdentity(ident *iam_pb.Identity) erro
 //
 // Driven solely by isAuthEnabled, which is set when:
 //   - any locally managed identities/credentials are loaded (file/filer/env), or
+//   - the operator names a config file, whether or not it yields an identity, or
 //   - the operator passes -s3.iam.config, which triggers EnableAuthEnforcement
 //     at startup time even before any identities sync in.
 //
