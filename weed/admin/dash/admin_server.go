@@ -169,7 +169,7 @@ type AdminServer struct {
 
 // Type definitions moved to types.go
 
-func NewAdminServer(masters string, filerGroup string, templateFS http.FileSystem, dataDir string, icebergPort, lancePort int) *AdminServer {
+func NewAdminServer(masters string, filerGroup string, templateFS http.FileSystem, dataDir string, icebergPort, lancePort int, s3PublicEndpoint string) *AdminServer {
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.admin")
 
 	// Create master client with multiple master support
@@ -206,7 +206,7 @@ func NewAdminServer(masters string, filerGroup string, templateFS http.FileSyste
 		s3TablesManager:               newS3TablesManager(),
 		icebergPort:                   icebergPort,
 		lancePort:                     lancePort,
-		s3PublicEndpoint:              normalizeS3PublicEndpoint(util.GetViper().GetString("s3.public_endpoint")),
+		s3PublicEndpoint:              normalizeS3PublicEndpoint(s3PublicEndpoint),
 		pluginLock:                    lockManager,
 		adminPresenceLock:             presenceLock,
 		bgCancel:                      bgCancel,
@@ -1561,17 +1561,22 @@ func (s *AdminServer) GetS3Endpoint() string {
 }
 
 // normalizeS3PublicEndpoint trims a trailing slash and drops, with a warning,
-// a value that is not an absolute http or https URL, so the file browser hides
-// its URL actions instead of copying broken links.
+// a value that is not a plain absolute http or https URL, so the file browser
+// hides its URL actions instead of copying broken links. Checking the string
+// for "?" and "#" rather than the parsed query and fragment also catches
+// delimiters with nothing after them, which url.Parse stores as empty.
 func normalizeS3PublicEndpoint(endpoint string) string {
 	endpoint = strings.TrimRight(endpoint, "/")
 	if endpoint == "" {
 		return ""
 	}
 	u, err := url.Parse(endpoint)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||
-		u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
-		glog.Warningf("ignoring s3.public_endpoint %q: expecting an http:// or https:// URL with a host and no query or fragment", endpoint)
+	if err != nil {
+		glog.Warningf("ignoring s3.public_endpoint: not a valid URL")
+		return ""
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || strings.ContainsAny(endpoint, "?#") {
+		glog.Warningf("ignoring s3.public_endpoint %q: expecting an http:// or https:// URL with a host and no credentials, query, or fragment", u.Redacted())
 		return ""
 	}
 	return endpoint

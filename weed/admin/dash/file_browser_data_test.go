@@ -174,6 +174,8 @@ func TestNormalizeS3PublicEndpoint(t *testing.T) {
 		{"https://s3.example.com?x=1", ""},
 		{"https://s3.example.com/?", ""},
 		{"https://s3.example.com#frag", ""},
+		{"https://s3.example.com/#", ""},
+		{"http://user:pass@s3.example.com", ""},
 	}
 
 	for _, tt := range tests {
