@@ -404,7 +404,7 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, filerClient
 	identityCount := len(iam.identities)
 	// Pointing the gateway at a config file is the operator asking for
 	// authentication. A file that yields no identity - an empty secret mount, a
-	// mistyped key the proto parser drops - must deny everyone rather than serve
+	// key the proto parser does not recognise - must deny everyone rather than serve
 	// the cluster to anonymous callers.
 	iam.isAuthEnabled = identityCount > 0 || startConfigFile != ""
 	iam.m.Unlock()
@@ -660,8 +660,8 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFile(fileName str
 var nonIdentityS3ConfigKeys = []string{"kms", "sts", "policy", "providers", "roles"}
 
 // unknownS3ConfigKeys returns the top-level keys the proto parser discards. A
-// mistyped "identites" otherwise loads as an empty config, which denies every
-// request with nothing pointing at the typo.
+// singular "identity" otherwise loads as an empty config, which denies every
+// request with nothing pointing at the mistake.
 func unknownS3ConfigKeys(content []byte) []string {
 	var root map[string]json.RawMessage
 	if err := json.Unmarshal(content, &root); err != nil {

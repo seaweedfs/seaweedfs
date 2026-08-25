@@ -9,14 +9,14 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// A config file the proto parser reads as empty - a mistyped "identites", an
+// A config file the proto parser reads as empty - a singular "identity", an
 // unpopulated secret mount - used to leave the gateway serving every
 // anonymous request, including ListBuckets and bucket creation.
 func TestConfigWithoutIdentitiesDeniesAnonymous(t *testing.T) {
 	resetMemoryStore()
 	clearEnvironmentVariableCredentials(t)
 
-	path := writeTempIamConfig(t, `{"identites":[{"name":"admin","credentials":[{"accessKey":"adminkey","secretKey":"adminsecret"}],"actions":["Admin"]}]}`)
+	path := writeTempIamConfig(t, `{"identity":[{"name":"admin","credentials":[{"accessKey":"adminkey","secretKey":"adminsecret"}],"actions":["Admin"]}]}`)
 	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{Config: path}, nil, "memory")
 
 	assert.True(t, iam.isEnabled(), "naming a config file asks for authentication, even if it yields no identity")
@@ -53,7 +53,7 @@ func clearEnvironmentVariableCredentials(t *testing.T) {
 // The proto parser drops what it does not recognise, so a typo has to be named
 // at startup or the resulting lockout has no visible cause.
 func TestUnknownS3ConfigKeys(t *testing.T) {
-	assert.Equal(t, []string{"identites"}, unknownS3ConfigKeys([]byte(`{"identites":[],"accounts":[]}`)))
+	assert.Equal(t, []string{"identity"}, unknownS3ConfigKeys([]byte(`{"identity":[],"accounts":[]}`)))
 	assert.Empty(t, unknownS3ConfigKeys([]byte(`{"identities":[],"service_accounts":[],"serviceAccounts":[],"policies":[],"groups":[]}`)))
 	assert.Empty(t, unknownS3ConfigKeys([]byte(`{"kms":{},"sts":{},"policy":{},"providers":[],"roles":[]}`)), "sections owned by other subsystems are not typos")
 	assert.Empty(t, unknownS3ConfigKeys([]byte(`not json`)))
