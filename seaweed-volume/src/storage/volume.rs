@@ -921,13 +921,31 @@ impl Volume {
                     );
                 }
             }
-            // Go opens .idx with O_CREATE on the delete-capable read-only path;
-            // an empty index yields an empty .sdx and a volume that still mounts.
-            File::create(idx_path)?;
+            // Go opens .idx with O_CREATE only where deletes are allowed; an
+            // empty index yields an empty .sdx and a volume that still mounts.
+            // A volume that takes neither writes nor deletes must not write
+            // here, since its index directory can sit on a read-only mount.
+            if !self.no_write_or_delete {
+                File::create(idx_path)?;
+            }
         }
-        let nm = SortedFileNeedleMap::open(&self.index_file_name(), self.version())?;
-        self.nm = Some(NeedleMap::SortedFile(nm));
-        Ok(())
+        // Building .sdx writes to the index directory. Where that cannot be
+        // done — a read-only mount, a full disk — keep this volume's index in
+        // memory rather than failing the load and taking its data offline.
+        match SortedFileNeedleMap::open(&self.index_file_name(), self.version()) {
+            Ok(nm) => {
+                self.nm = Some(NeedleMap::SortedFile(nm));
+                Ok(())
+            }
+            Err(e) => {
+                warn!(
+                    volume_id = self.id.0,
+                    error = %e,
+                    "cannot build the sorted index; keeping this volume's index in memory"
+                );
+                self.load_index_inmemory(idx_path)
+            }
+        }
     }
 
     /// Load index using in-memory CompactNeedleMap.
@@ -5877,6 +5895,68 @@ mod tests {
             .write()
             .unwrap()
             .remove("s3.vif_compact_test");
+    }
+
+    // Building .sdx writes to the index directory, which a read-only volume's
+    // may not allow. Before the sorted map that volume mounted and served reads
+    // off an in-memory index; it must still do so rather than going offline.
+    #[test]
+    #[cfg(unix)]
+    fn test_read_only_volume_mounts_when_the_index_dir_is_not_writable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // root ignores the directory mode, so there is nothing to simulate.
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap().to_string();
+        {
+            let mut v = make_test_volume(&dir);
+            let mut n = Needle {
+                id: NeedleId(1),
+                cookie: Cookie(0x1234),
+                data: b"still-readable".to_vec(),
+                data_size: 14,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+            v.set_read_only_persist(false, true).unwrap();
+            v.sync_to_disk().unwrap();
+        }
+
+        let set_mode = |mode: u32| {
+            let mut perms = std::fs::metadata(tmp.path()).unwrap().permissions();
+            perms.set_mode(mode);
+            std::fs::set_permissions(tmp.path(), perms).unwrap();
+        };
+        set_mode(0o555);
+
+        let loaded = Volume::new(
+            &dir,
+            &dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        );
+        set_mode(0o755); // restore before any assertion, so cleanup works
+
+        let v = loaded.expect("a read-only volume must mount without writing its index dir");
+        assert!(
+            !matches!(v.nm, Some(NeedleMap::SortedFile(_))),
+            "the .sdx could not be built, so the index should have fallen back to memory"
+        );
+        let mut probe = Needle {
+            id: NeedleId(1),
+            ..Needle::default()
+        };
+        v.read_needle(&mut probe).unwrap();
+        assert_eq!(probe.data, b"still-readable");
     }
 
     // Issue #10937: a volume server holding hundreds of thousands of cloud-tiered

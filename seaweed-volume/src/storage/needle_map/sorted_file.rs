@@ -20,6 +20,9 @@ use crate::storage::idx;
 use crate::storage::needle_map::{CompactNeedleMap, NeedleMapMetric, NeedleValue};
 use crate::storage::types::*;
 
+/// Entries per positional read when scanning `.sdx` end to end.
+const ROWS_TO_READ: u64 = 1024;
+
 /// Byte offset of the `Size` field inside a 17-byte index entry.
 const ENTRY_SIZE_OFFSET: u64 = (NEEDLE_ID_SIZE + OFFSET_SIZE) as u64;
 
@@ -120,7 +123,12 @@ impl SortedFileNeedleMap {
         }
 
         // Write to the index file first: .idx is the source of truth a reload
-        // rebuilds .sdx from.
+        // rebuilds .sdx from. If the in-place mark below then fails, the delete
+        // is still durable and neither shape of failure corrupts the index: a
+        // write that lands nothing leaves .sdx older than the .idx we just
+        // appended to, so the next load rebuilds it, and a partial write leaves
+        // the size field's leading 0xff behind, which reads back negative and so
+        // already counts as deleted.
         self.append_to_index_file(key, offset, TOMBSTONE_FILE_SIZE)?;
 
         let mut buf = [0u8; SIZE_SIZE];
@@ -183,14 +191,24 @@ impl SortedFileNeedleMap {
     {
         let file = pooled_index_files().borrow(&self.db_file_name, false)?;
         let entry_count = self.db_file_size.max(0) as u64 / NEEDLE_MAP_ENTRY_SIZE as u64;
-        let mut buf = [0u8; NEEDLE_MAP_ENTRY_SIZE];
-        for i in 0..entry_count {
-            read_exact_at(&file, &mut buf, i * NEEDLE_MAP_ENTRY_SIZE as u64)?;
-            let (key, offset, size) = idx_entry_from_bytes(&buf);
-            if !size.is_valid() {
-                continue; // deleted in place by a runtime delete
+        // A batch per 1024 entries rather than a syscall per entry, matching
+        // idx::walk_index_file. Positional reads, not a cursor: the handle is
+        // shared with any other borrower, so a file position would race.
+        let rows_per_read = ROWS_TO_READ.min(entry_count.max(1));
+        let mut block = vec![0u8; rows_per_read as usize * NEEDLE_MAP_ENTRY_SIZE];
+        let mut done: u64 = 0;
+        while done < entry_count {
+            let rows = rows_per_read.min(entry_count - done) as usize;
+            let bytes = &mut block[..rows * NEEDLE_MAP_ENTRY_SIZE];
+            read_exact_at(&file, bytes, done * NEEDLE_MAP_ENTRY_SIZE as u64)?;
+            for entry in bytes.chunks_exact(NEEDLE_MAP_ENTRY_SIZE) {
+                let (key, offset, size) = idx_entry_from_bytes(entry);
+                if !size.is_valid() {
+                    continue; // deleted in place by a runtime delete
+                }
+                f(key, &NeedleValue { offset, size })?;
             }
-            f(key, &NeedleValue { offset, size })?;
+            done += rows as u64;
         }
         Ok(())
     }
@@ -587,6 +605,31 @@ mod tests {
     }
 
     #[test]
+    fn scan_spans_read_batches() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = base(&dir);
+        // Straddles ROWS_TO_READ so the batched scan has to stitch a full
+        // batch, a second full batch and a short tail together.
+        let total = ROWS_TO_READ as u32 * 2 + 7;
+        let rows: Vec<(u64, u32, i32)> = (1..=total)
+            .map(|i| (i as u64, i * 8, (i * 10) as i32))
+            .collect();
+        write_idx(&format!("{base}.idx"), &rows);
+
+        let m = SortedFileNeedleMap::open(&base, version()).unwrap();
+        let entries = m.iter_entries().unwrap();
+        assert_eq!(entries.len(), total as usize);
+        assert_eq!(entries[0].0, NeedleId(1));
+        assert_eq!(entries[entries.len() - 1].0, NeedleId(total as u64));
+        assert_eq!(entries[entries.len() - 1].1.size, Size((total * 10) as i32));
+        // Every id is still reachable through the binary search.
+        assert_eq!(
+            m.get(NeedleId(total as u64)).unwrap().size,
+            Size((total * 10) as i32)
+        );
+    }
+
+    #[test]
     fn iter_entries_reports_a_truncated_sdx() {
         let dir = tempfile::tempdir().unwrap();
         let base = base(&dir);
@@ -654,7 +697,8 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+// Only meaningful with 5-byte offsets, which is what production Go builds use.
+#[cfg(all(test, feature = "5bytes"))]
 mod go_parity_tests {
     use super::*;
 
@@ -668,7 +712,6 @@ mod go_parity_tests {
 0001f4";
 
     #[test]
-    #[cfg(feature = "5bytes")]
     fn sdx_matches_the_bytes_go_writes() {
         let dir = tempfile::tempdir().unwrap();
         let base = dir.path().join("1").to_str().unwrap().to_string();
