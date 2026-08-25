@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +21,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/topology/balancer"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -131,7 +131,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	*allowedVolumeBy["ACTIVE"] = true
 	balanceCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	verbose := balanceCommand.Bool("v", false, "verbose mode")
-	collection := balanceCommand.String("collection", "ALL_COLLECTIONS", "collection name, or use \"ALL_COLLECTIONS\" across collections, \"EACH_COLLECTION\" for each collection")
+	collection := balanceCommand.String("collection", "ALL_COLLECTIONS", "comma-separated collection names, wildcards, or regex patterns, or \"ALL_COLLECTIONS\" across collections, \"EACH_COLLECTION\" for each collection")
 	dc := balanceCommand.String("dataCenter", "", "only apply the balancing for this dataCenter")
 	racks := balanceCommand.String("racks", "", "only apply the balancing for this racks")
 	nodes := balanceCommand.String("nodes", "", "only apply the balancing for this nodes")
@@ -198,7 +198,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	volumeReplicas, _ := collectVolumeReplicaLocations(topologyInfo)
 	diskTypes := collectVolumeDiskTypes(topologyInfo)
 
-	if *collection == "EACH_COLLECTION" {
+	if *collection == string(wildcard.CollectionFilterEach) {
 		collections, err := ListCollectionNames(commandEnv, true, false)
 		if err != nil {
 			return err
@@ -212,18 +212,18 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 				return err
 			}
 		}
-	} else if *collection == "ALL_COLLECTIONS" {
-		// Pass nil pattern for all collections
-		if err = c.balanceVolumeServers(diskTypes, volumeReplicas, volumeServers, nil, *collection); err != nil {
+	} else if *collection == string(wildcard.CollectionFilterAll) || *collection == "*" {
+		// Pass nil matcher for all collections
+		if err = c.balanceVolumeServers(diskTypes, volumeReplicas, volumeServers, nil, string(wildcard.CollectionFilterAll)); err != nil {
 			return err
 		}
 	} else {
 		// Compile user-provided pattern
-		collectionPattern, err := compileCollectionPattern(*collection)
+		collectionMatcher, err := compileCollectionPattern(*collection)
 		if err != nil {
 			return fmt.Errorf("invalid collection pattern '%s': %v", *collection, err)
 		}
-		if err = c.balanceVolumeServers(diskTypes, volumeReplicas, volumeServers, collectionPattern, *collection); err != nil {
+		if err = c.balanceVolumeServers(diskTypes, volumeReplicas, volumeServers, collectionMatcher, *collection); err != nil {
 			return err
 		}
 	}
@@ -231,25 +231,24 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	return nil
 }
 
-func (c *commandVolumeBalance) balanceVolumeServers(diskTypes []types.DiskType, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, collectionPattern *regexp.Regexp, collectionName string) error {
+func (c *commandVolumeBalance) balanceVolumeServers(diskTypes []types.DiskType, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, collectionMatcher *wildcard.CollectionMatcher, collectionName string) error {
 	for _, diskType := range diskTypes {
 		if c.volumesPerExec > 0 && c.movedCount >= c.volumesPerExec {
 			break
 		}
-		if err := c.balanceVolumeServersByDiskType(diskType, volumeReplicas, nodes, collectionPattern, collectionName); err != nil {
+		if err := c.balanceVolumeServersByDiskType(diskType, volumeReplicas, nodes, collectionMatcher, collectionName); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (c *commandVolumeBalance) balanceVolumeServersByDiskType(diskType types.DiskType, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, collectionPattern *regexp.Regexp, collectionName string) error {
+func (c *commandVolumeBalance) balanceVolumeServersByDiskType(diskType types.DiskType, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, collectionMatcher *wildcard.CollectionMatcher, collectionName string) error {
 	for _, n := range nodes {
 		n.selectVolumes(func(v *master_pb.VolumeInformationMessage) bool {
-			if collectionName != "ALL_COLLECTIONS" {
-				if collectionPattern != nil {
-					// Use regex pattern matching
-					if !collectionPattern.MatchString(v.Collection) {
+			if collectionName != string(wildcard.CollectionFilterAll) {
+				if collectionMatcher != nil {
+					if !collectionMatcher.Matches(v.Collection) {
 						return false
 					}
 				} else {

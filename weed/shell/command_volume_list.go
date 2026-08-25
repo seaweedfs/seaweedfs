@@ -24,7 +24,7 @@ func init() {
 }
 
 type commandVolumeList struct {
-	collectionPattern *string
+	collectionMatcher *wildcard.CollectionMatcher
 	dataCenter        *string
 	rack              *string
 	dataNode          *string
@@ -54,7 +54,7 @@ func (c *commandVolumeList) Do(args []string, commandEnv *CommandEnv, writer io.
 
 	volumeListCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	verbosityLevel := volumeListCommand.Int("v", 5, "verbose mode: 0, 1, 2, 3, 4, 5")
-	c.collectionPattern = volumeListCommand.String("collectionPattern", "", "match with wildcard characters '*' and '?'")
+	collectionPattern := volumeListCommand.String("collectionPattern", "", "comma-separated collection names, with '*' and '?' wildcards; empty matches all")
 	c.readonly = volumeListCommand.Bool("readonly", false, "show only readonly volumes")
 	c.writable = volumeListCommand.Bool("writable", false, "show only writable volumes")
 	c.volumeId = volumeListCommand.Uint64("volumeId", 0, "show only volume id")
@@ -64,6 +64,10 @@ func (c *commandVolumeList) Do(args []string, commandEnv *CommandEnv, writer io.
 
 	if err = volumeListCommand.Parse(args); err != nil {
 		return nil
+	}
+
+	if c.collectionMatcher, err = wildcard.CompileCollectionMatcher(*collectionPattern); err != nil {
+		return err
 	}
 
 	// collect topology information
@@ -319,23 +323,13 @@ func (c *commandVolumeList) isNotMatchDiskInfo(readOnly bool, collection string,
 	if *c.writable && (readOnly || volumeSize == -1 || (c.volumeSizeLimitMb > 0 && uint64(volumeSize) >= c.volumeSizeLimitMb*util.MiByte)) {
 		return true
 	}
-	if !matchesVolumeCollectionPattern(*c.collectionPattern, collection) {
+	if !c.collectionMatcher.Matches(collection) {
 		return true
 	}
 	if *c.volumeId > 0 && *c.volumeId != uint64(volumeId) {
 		return true
 	}
 	return false
-}
-
-func matchesVolumeCollectionPattern(pattern, collection string) bool {
-	if pattern == "" {
-		return true
-	}
-	if pattern == CollectionDefault {
-		return collection == ""
-	}
-	return wildcard.MatchesWildcard(pattern, collection)
 }
 
 func (c *commandVolumeList) writeDiskInfo(writer io.Writer, t *master_pb.DiskInfo, verbosityLevel int, outNodeInfo func()) statistics {

@@ -21,6 +21,8 @@ func TestCompileCollectionMatcher(t *testing.T) {
 		{filter: "photos|videos", matches: []string{"photos", "videos"}, misses: []string{"photos-backup"}},
 		{filter: "^photos", matches: []string{"photos", "photos-backup"}, misses: []string{"videos"}},
 		{filter: "photos-.*,videos", matches: []string{"photos-backup", "videos"}, misses: []string{"photos"}},
+		{filter: CollectionDefault, matches: []string{""}, misses: []string{"photos"}},
+		{filter: "photos," + CollectionDefault, matches: []string{"photos", ""}, misses: []string{"videos"}},
 	}
 
 	for _, c := range cases {

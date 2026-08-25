@@ -17,6 +17,10 @@ type CollectionFilterMode string
 const (
 	CollectionFilterAll  CollectionFilterMode = "ALL_COLLECTIONS"
 	CollectionFilterEach CollectionFilterMode = "EACH_COLLECTION"
+
+	// CollectionDefault is the entry that matches the empty-named collection.
+	// "_default" avoids colliding with a collection literally named "default".
+	CollectionDefault = "_default"
 )
 
 // regexMetaCharacters mark a filter entry as a regex; "*" and "?" stay wildcards.
@@ -24,16 +28,19 @@ const regexMetaCharacters = `.^$+()[]{}|\`
 
 // CollectionMatcher matches a volume collection against a collection_filter value.
 type CollectionMatcher struct {
-	wildcards []string
-	regexes   []*regexp.Regexp
+	filter     string
+	matchEmpty bool
+	wildcards  []string
+	regexes    []*regexp.Regexp
 }
 
 // CompileCollectionMatcher parses a collection_filter into a matcher. A nil
 // matcher accepts every collection: that is the empty filter, "*", and both
 // mode sentinels. Any other value is a comma-separated list, and a collection
 // passes when one entry matches it. An entry is a name, optionally with "*" and
-// "?" wildcards, or a regex when it carries regex syntax. A regex entry must
-// match the whole name unless it anchors itself with "^" or "$".
+// "?" wildcards, CollectionDefault for the empty-named collection, or a regex
+// when it carries regex syntax. A regex entry must match the whole name unless
+// it anchors itself with "^" or "$".
 func CompileCollectionMatcher(filter string) (*CollectionMatcher, error) {
 	trimmed := strings.TrimSpace(filter)
 	mode := CollectionFilterMode(trimmed)
@@ -41,10 +48,14 @@ func CompileCollectionMatcher(filter string) (*CollectionMatcher, error) {
 		return nil, nil
 	}
 
-	matcher := &CollectionMatcher{}
+	matcher := &CollectionMatcher{filter: trimmed}
 	for _, entry := range strings.Split(trimmed, ",") {
 		entry = strings.TrimSpace(entry)
 		if entry == "" {
+			continue
+		}
+		if entry == CollectionDefault {
+			matcher.matchEmpty = true
 			continue
 		}
 		if !strings.ContainsAny(entry, regexMetaCharacters) {
@@ -62,7 +73,7 @@ func CompileCollectionMatcher(filter string) (*CollectionMatcher, error) {
 		matcher.regexes = append(matcher.regexes, compiled)
 	}
 
-	if len(matcher.wildcards) == 0 && len(matcher.regexes) == 0 {
+	if !matcher.matchEmpty && len(matcher.wildcards) == 0 && len(matcher.regexes) == 0 {
 		return nil, nil
 	}
 	return matcher, nil
@@ -71,6 +82,9 @@ func CompileCollectionMatcher(filter string) (*CollectionMatcher, error) {
 // Matches reports whether a collection passes the filter. A nil matcher accepts everything.
 func (m *CollectionMatcher) Matches(collection string) bool {
 	if m == nil {
+		return true
+	}
+	if m.matchEmpty && collection == "" {
 		return true
 	}
 	for _, pattern := range m.wildcards {
@@ -84,4 +98,12 @@ func (m *CollectionMatcher) Matches(collection string) bool {
 		}
 	}
 	return false
+}
+
+// String returns the filter this matcher was compiled from.
+func (m *CollectionMatcher) String() string {
+	if m == nil {
+		return ""
+	}
+	return m.filter
 }

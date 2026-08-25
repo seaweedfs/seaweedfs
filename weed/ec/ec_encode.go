@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -25,6 +24,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/storage/volume_replica"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
 )
@@ -927,7 +927,7 @@ func generateEcShards(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, 
 
 }
 
-func SelectVolumeIdsFromTopology(topologyInfo *master_pb.TopologyInfo, volumeSizeLimitMb uint64, collectionRegex *regexp.Regexp, sourceDiskType *types.DiskType, quietSeconds int64, nowUnixSeconds int64, fullPercentage float64, verbose bool) (vids []needle.VolumeId, matchedCollections []string) {
+func SelectVolumeIdsFromTopology(topologyInfo *master_pb.TopologyInfo, volumeSizeLimitMb uint64, collectionMatcher *wildcard.CollectionMatcher, sourceDiskType *types.DiskType, quietSeconds int64, nowUnixSeconds int64, fullPercentage float64, verbose bool) (vids []needle.VolumeId, matchedCollections []string) {
 	// Statistics for verbose mode
 	var (
 		totalVolumes    int
@@ -957,11 +957,11 @@ func SelectVolumeIdsFromTopology(topologyInfo *master_pb.TopologyInfo, volumeSiz
 				}
 
 				// check collection against regex pattern
-				if !collectionRegex.MatchString(v.Collection) {
+				if !collectionMatcher.Matches(v.Collection) {
 					wrongCollection++
 					if verbose {
 						fmt.Printf("skip volume %d on %s: collection doesn't match pattern (pattern: %s, actual: %s)\n",
-							v.Id, dn.Id, collectionRegex.String(), v.Collection)
+							v.Id, dn.Id, collectionMatcher.String(), v.Collection)
 					}
 					continue
 				}
