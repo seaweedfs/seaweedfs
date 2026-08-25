@@ -116,3 +116,51 @@ func TestSetVolumeAvailableRestoresActiveCountForCapacityFullVolume(t *testing.T
 		t.Fatalf("expected activeVolumeCount to remain %d, got %d", initialActive, got)
 	}
 }
+
+// A volume that pending assign estimates marked full takes no more writes, so
+// no heartbeat reports it again and the heartbeat-driven decay never runs. The
+// periodic decay must recover it, or the writable list stays empty forever.
+func TestDecayQuietVolumeSizesRecoversPhantomFullVolume(t *testing.T) {
+	layout := `
+{
+  "dc1":{
+    "rack1":{
+      "server1":{
+        "volumes":[
+          {"id":1, "size":4000, "replication":"000"}
+        ],
+        "limit":10
+      }
+    }
+  }
+}
+`
+	topo, vl := setupPickTest(t, layout, 10000)
+	VolumeGrowStrategy.Threshold = 0.9
+
+	initialActive := topo.diskUsages.usages[types.HardDriveType].activeVolumeCount
+	if !vl.RecordAssign(1, 20000) {
+		t.Fatalf("expected RecordAssign to remove the volume from writable")
+	}
+	vl.AdjustActiveVolumeCountForFull(1)
+	if w, _ := vl.GetWritableVolumeCount(); w != 0 {
+		t.Fatalf("expected 0 writable after the pending estimate filled the volume, got %d", w)
+	}
+
+	recovered := false
+	for i := 0; i < 10 && !recovered; i++ {
+		advanceSizeTrackingClock(vl, 1, capacityRecoveryDelay+time.Second)
+		topo.DecayQuietVolumeSizes()
+		w, _ := vl.GetWritableVolumeCount()
+		recovered = w == 1
+	}
+	if !recovered {
+		t.Fatalf("the periodic decay never returned the volume to the writable list")
+	}
+	if got := topo.diskUsages.usages[types.HardDriveType].activeVolumeCount; got != initialActive {
+		t.Fatalf("expected activeVolumeCount restored to %d, got %d", initialActive, got)
+	}
+	if !vl.sizeTracking[1].fullSince.IsZero() {
+		t.Fatalf("expected fullSince cleared after recovery")
+	}
+}

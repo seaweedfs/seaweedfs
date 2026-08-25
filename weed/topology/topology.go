@@ -430,6 +430,19 @@ func (t *Topology) GetVolumeLayout(collectionName string, rp *super_block.Replic
 	}).(*Collection).GetOrCreateVolumeLayout(rp, ttl, diskType)
 }
 
+// DecayQuietVolumeSizes decays pending assign estimates across every layout
+// for volumes no heartbeat has reported recently. A volume that changed
+// reports within a pulse, so two quiet pulses mean the size on record is the
+// size there is.
+func (t *Topology) DecayQuietVolumeSizes() {
+	quietCutoff := time.Duration(2*t.pulse) * time.Second
+	for _, c := range t.collectionMap.Items() {
+		for _, vl := range c.(*Collection).GetAllVolumeLayouts() {
+			vl.DecayQuietVolumeSizes(quietCutoff)
+		}
+	}
+}
+
 // CollectionVolumeStats aggregates stats across all volume layouts and EC
 // volumes of one collection, or across every collection when collectionName is
 // empty.
