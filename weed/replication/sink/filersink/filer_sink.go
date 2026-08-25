@@ -75,6 +75,10 @@ func (fs *FilerSink) GetSinkToDirectory() string {
 	return fs.dir
 }
 
+func (fs *FilerSink) GetDestinationIdentity() string {
+	return fs.grpcAddress + "\x00" + fs.dir
+}
+
 func (fs *FilerSink) IsIncremental() bool {
 	return fs.isIncremental
 }

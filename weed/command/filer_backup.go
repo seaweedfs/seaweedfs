@@ -137,14 +137,14 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 
 	// get start time for the data sink
 	startFrom := time.Unix(0, 0)
-	sinkId := util.HashStringToLong(dataSink.GetName() + dataSink.GetSinkToDirectory())
+	sinkId, legacySinkId := backupCheckpointIds(sourcePath, dataSink)
 	runSnapshot := *backupOption.initialSnapshot && timeAgo == 0
 	if timeAgo == 0 {
 		if runSnapshot {
 			// snapshot below sets the start point; no checkpoint read needed
 			glog.V(0).Infof("initialSnapshot requested — walking live tree before subscribing")
 		} else {
-			lastOffsetTsNs, err := getOffset(grpcDialOption, sourceFiler, BackupKeyPrefix, int32(sinkId))
+			lastOffsetTsNs, err := getOffsetWithFallback(grpcDialOption, sourceFiler, BackupKeyPrefix, sinkId, BackupKeyPrefix, legacySinkId)
 			if err != nil {
 				glog.V(0).Infof("starting from %v (offset read failed: %v)", startFrom, err)
 			} else if lastOffsetTsNs > 0 {
@@ -186,7 +186,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		// The walk can take hours on large trees; retry the tiny KV write a
 		// handful of times before giving up so a flaky filer KV doesn't force
 		// the whole walk to repeat on the next retry loop iteration.
-		if err := persistSnapshotOffset(grpcDialOption, sourceFiler, int32(sinkId), snapshotTsNs); err != nil {
+		if err := persistSnapshotOffset(grpcDialOption, sourceFiler, sinkId, snapshotTsNs); err != nil {
 			glog.Errorf("initialSnapshot: FAILED to persist offset %d for sinkId %d after retries: %v — the next retry will redo the full walk", snapshotTsNs, sinkId, err)
 			return fmt.Errorf("persist initial snapshot offset: %w", err)
 		}
@@ -220,7 +220,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 
 	processEventFnWithOffset := pb.AddOffsetFunc(processEventFn, 3*time.Second, func(counter int64, lastTsNs int64) error {
 		glog.V(0).Infof("backup %s progressed to %v %0.2f/sec", sourceFiler, time.Unix(0, lastTsNs), float64(counter)/float64(3))
-		return setOffset(grpcDialOption, sourceFiler, BackupKeyPrefix, int32(sinkId), lastTsNs)
+		return setOffset(grpcDialOption, sourceFiler, BackupKeyPrefix, sinkId, lastTsNs)
 	})
 
 	if dataSink.IsIncremental() && *filerBackupOptions.retentionDays > 0 {
@@ -260,6 +260,24 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 
 	return pb.FollowMetadata(sourceFiler, grpcDialOption, metadataFollowOption, processEventFnWithOffset)
 
+}
+
+// backupCheckpointIds derives the checkpoint key for this backup and the
+// historical key kept for fallback reads. The checkpoint covers everything
+// that defines one backup stream: what is backed up (the source path) and
+// exactly where it lands (the sink's destination identity). The historical
+// key hashed only sink name + directory, so two backups to different buckets
+// or endpoints sharing a directory layout advanced one checkpoint and could
+// silently skip each other's changes. Writes go only to the new key; the
+// historical key is read once when the new key has no value yet, so an
+// existing backup resumes where it left off after an upgrade.
+//
+// NUL joins the fields because it cannot occur in a path or a configuration
+// value, so distinct field tuples cannot concatenate to the same hash input.
+func backupCheckpointIds(sourcePath string, dataSink sink.ReplicationSink) (sinkId, legacySinkId int32) {
+	sinkId = int32(util.HashStringToLong(sourcePath + "\x00" + dataSink.GetName() + "\x00" + dataSink.GetDestinationIdentity()))
+	legacySinkId = int32(util.HashStringToLong(dataSink.GetName() + dataSink.GetSinkToDirectory()))
+	return
 }
 
 func getSourceKey(resp *filer_pb.SubscribeMetadataResponse) string {

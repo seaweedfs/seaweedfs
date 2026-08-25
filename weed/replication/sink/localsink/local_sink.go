@@ -56,6 +56,10 @@ func (localsink *LocalSink) GetSinkToDirectory() string {
 	return localsink.Dir
 }
 
+func (localsink *LocalSink) GetDestinationIdentity() string {
+	return localsink.Dir
+}
+
 func (localsink *LocalSink) IsIncremental() bool {
 	return localsink.isIncremental
 }

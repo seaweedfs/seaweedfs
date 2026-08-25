@@ -71,6 +71,10 @@ func (s *recordingSink) GetSinkToDirectory() string {
 	return s.sinkToDirectory
 }
 
+func (s *recordingSink) GetDestinationIdentity() string {
+	return s.sinkToDirectory
+}
+
 func (s *recordingSink) SetSourceFiler(*source.FilerSource) {}
 
 func (s *recordingSink) IsIncremental() bool {
