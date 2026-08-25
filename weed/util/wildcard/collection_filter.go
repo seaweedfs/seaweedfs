@@ -33,6 +33,7 @@ const regexMetaCharacters = `^$+()[]{}|\`
 type CollectionMatcher struct {
 	filter     string
 	matchEmpty bool
+	literals   []string
 	wildcards  []string
 	regexes    []*regexp.Regexp
 }
@@ -43,7 +44,8 @@ type CollectionMatcher struct {
 // passes when one entry matches it. An entry is a name, optionally with "*" and
 // "?" wildcards, CollectionDefault for the empty-named collection, or a regex
 // when it carries regex syntax. A regex entry must match the whole name unless
-// it anchors itself with "^" or "$".
+// it anchors itself with "^" or "$", and always matches its own spelling too,
+// so a collection named "logs(2024)" stays reachable by name.
 func CompileCollectionMatcher(filter string) (*CollectionMatcher, error) {
 	trimmed := strings.TrimSpace(filter)
 	mode := CollectionFilterMode(trimmed)
@@ -73,6 +75,7 @@ func CompileCollectionMatcher(filter string) (*CollectionMatcher, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid collection_filter entry %q: %w", entry, err)
 		}
+		matcher.literals = append(matcher.literals, entry)
 		matcher.regexes = append(matcher.regexes, compiled)
 	}
 
@@ -132,6 +135,11 @@ func (m *CollectionMatcher) Matches(collection string) bool {
 	}
 	if m.matchEmpty && collection == "" {
 		return true
+	}
+	for _, literal := range m.literals {
+		if literal == collection {
+			return true
+		}
 	}
 	for _, pattern := range m.wildcards {
 		if MatchesWildcard(pattern, collection) {
