@@ -192,11 +192,12 @@ func (vl *VolumeLayout) UpdateOversizedState(v *storage.VolumeInfo, dn *DataNode
 // threshold and this call re-added it to the writable list. The caller
 // should mirror the activeVolumeCount bookkeeping.
 //
-// Only a report from a volume server claims the replica-dedup window; the
-// periodic decay replays the size already on record, and letting it dedup
-// would swallow the report that follows and strand the master on a stale size
-// no one will send again. The decay passes no size of its own — it reads the
-// record under this lock, so a heartbeat that landed since is not rolled back.
+// fromHeartbeat marks a volume server's report. The periodic decay stands in
+// for the report a quiet volume never sends, so it passes no size of its own —
+// it reads the record under this lock, and never advances lastUpdateTime, or
+// it would swallow the next real report and strand the master on a stale size
+// no one will send again. Both callers give way to a report already handled
+// for this cycle.
 func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint64, compactRevision uint32, fromHeartbeat bool) (recoveredToWritable bool) {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
@@ -227,8 +228,12 @@ func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint6
 			lastUpdateTime:  now,
 		}
 		vl.sizeTracking[vid] = st
-	} else if fromHeartbeat && now.Sub(st.lastUpdateTime) < 2*time.Second {
-		return false // duplicate replica in the same heartbeat cycle
+	} else if now.Sub(st.lastUpdateTime) < 2*time.Second {
+		// Something already decayed this volume for this cycle: another replica
+		// of the same report, or for the decay a heartbeat that arrived after
+		// the pass chose the volume. Halving twice would forget pending bytes
+		// the volume has not written yet.
+		return false
 	} else {
 		if fromHeartbeat {
 			st.lastUpdateTime = now

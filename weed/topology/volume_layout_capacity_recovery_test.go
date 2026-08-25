@@ -239,3 +239,44 @@ func TestDecayQuietVolumeSizesDoesNotRollBackAHeartbeat(t *testing.T) {
 		t.Errorf("effectiveSize %d outgrew the compacted size the heartbeat reported", got)
 	}
 }
+
+// The decay stands in for a report that never came, so a heartbeat arriving
+// after the pass chose the volume takes its place rather than adding to it:
+// halving twice in one cycle forgets pending bytes the volume has yet to write.
+func TestDecayQuietVolumeSizesYieldsToAHeartbeatItRaced(t *testing.T) {
+	layout := `
+{
+  "dc1":{
+    "rack1":{
+      "server1":{
+        "volumes":[
+          {"id":1, "size":4000, "replication":"000"}
+        ],
+        "limit":10
+      }
+    }
+  }
+}
+`
+	_, vl := setupPickTest(t, layout, 10000)
+
+	vl.RecordAssign(1, 4000)
+	advanceSizeTrackingClock(vl, 1, 30*time.Second)
+
+	// The heartbeat wins the race and does the one decay this cycle owes.
+	vl.UpdateVolumeSize(1, 4000, 0, true)
+	vl.accessLock.RLock()
+	afterHeartbeat := vl.sizeTracking[1].effectiveSize
+	vl.accessLock.RUnlock()
+	if afterHeartbeat != 6000 {
+		t.Fatalf("the heartbeat left effectiveSize at %d, want 6000", afterHeartbeat)
+	}
+
+	vl.UpdateVolumeSize(1, 0, 0, false)
+
+	vl.accessLock.RLock()
+	defer vl.accessLock.RUnlock()
+	if got := vl.sizeTracking[1].effectiveSize; got != afterHeartbeat {
+		t.Errorf("the decay halved again to %d, want the heartbeat's %d left alone", got, afterHeartbeat)
+	}
+}
