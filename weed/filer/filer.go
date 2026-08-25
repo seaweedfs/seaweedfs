@@ -46,7 +46,7 @@ type Filer struct {
 	UniqueFilerEpoch        int32
 	Store                   VirtualFilerStore
 	MasterClient            *wdclient.MasterClient
-	fileIdDeletionQueue     *util.UnboundedQueue
+	FileIdDeletionQueue     *util.UnboundedQueue
 	GrpcDialOption          grpc.DialOption
 	DirBucketsPath          string
 	Cipher                  bool
@@ -74,7 +74,7 @@ type Filer struct {
 func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress, filerGroup string, collection string, replication string, dataCenter string, maxFilenameLength uint32, notifyFn func()) *Filer {
 	f := &Filer{
 		MasterClient:        wdclient.NewMasterClient(grpcDialOption, filerGroup, cluster.FilerType, filerHost, dataCenter, "", masters),
-		fileIdDeletionQueue: util.NewUnboundedQueue(),
+		FileIdDeletionQueue: util.NewUnboundedQueue(),
 		GrpcDialOption:      grpcDialOption,
 		FilerConf:           NewFilerConf(),
 		RemoteStorage:       NewFilerRemoteStorage(),
