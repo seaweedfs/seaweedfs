@@ -14,8 +14,9 @@ import (
 // request, including ListBuckets and bucket creation.
 func TestConfigWithoutIdentitiesDeniesAnonymous(t *testing.T) {
 	for name, config := range map[string]string{
-		"empty":            `{"identities":[]}`,
-		"unrecognised key": `{"identity":[{"name":"admin","credentials":[{"accessKey":"adminkey","secretKey":"adminsecret"}],"actions":["Admin"]}]}`,
+		"no identities key": `{}`,
+		"empty":             `{"identities":[]}`,
+		"unrecognised key":  `{"identity":[{"name":"admin","credentials":[{"accessKey":"adminkey","secretKey":"adminsecret"}],"actions":["Admin"]}]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			resetMemoryStore()
