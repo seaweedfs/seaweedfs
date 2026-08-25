@@ -14,7 +14,6 @@ import (
 	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
 	ecstorage "github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	workertypes "github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
@@ -78,7 +77,7 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						{
 							Name:        "collection_filter",
 							Label:       "Collection Filter",
-							Description: "Only detect erasure coding opportunities in this collection when set.",
+							Description: "Only erasure code volumes in matching collections. Comma-separated list of names, wildcards, or regex patterns.",
 							Placeholder: "all collections",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
@@ -296,7 +295,10 @@ func emitErasureCodingDetectionDecisionTrace(
 
 	quietThreshold := time.Duration(taskConfig.QuietForSeconds) * time.Second
 	minSizeBytes := uint64(taskConfig.MinSizeMB) * 1024 * 1024
-	allowedCollections := wildcard.CompileWildcardMatchers(taskConfig.CollectionFilter)
+	allowedCollections, err := pluginworker.CompileCollectionMatcher(taskConfig.CollectionFilter)
+	if err != nil {
+		return err
+	}
 
 	volumeGroups := make(map[uint32][]*workertypes.VolumeHealthMetrics)
 	for _, metric := range metrics {
@@ -334,7 +336,7 @@ func emitErasureCodingDetectionDecisionTrace(
 			skippedTooSmall++
 			continue
 		}
-		if len(allowedCollections) > 0 && !wildcard.MatchesAnyWildcard(allowedCollections, metric.Collection) {
+		if !allowedCollections.Matches(metric.Collection) {
 			skippedCollectionFilter++
 			continue
 		}

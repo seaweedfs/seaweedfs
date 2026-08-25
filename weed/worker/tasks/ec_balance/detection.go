@@ -9,6 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
+	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding/ecbalancer"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
@@ -48,7 +49,12 @@ func Detection(
 		return nil, false, fmt.Errorf("topology info not available")
 	}
 
-	topo, nodeCount, volumeRatio := buildBalancerTopology(topoInfo, ecConfig)
+	allowedCollections, err := pluginworker.CompileCollectionMatcher(ecConfig.CollectionFilter)
+	if err != nil {
+		return nil, false, err
+	}
+
+	topo, nodeCount, volumeRatio := buildBalancerTopology(topoInfo, ecConfig, allowedCollections)
 	if nodeCount < ecConfig.MinServerCount {
 		glog.V(1).Infof("EC balance: only %d servers, need at least %d", nodeCount, ecConfig.MinServerCount)
 		return nil, false, nil
@@ -148,9 +154,8 @@ func Detection(
 // per-volume ratio lookup built from each shard's heartbeat (0,0 when unreported,
 // e.g. always in OSS) which Plan prefers over the collection ratio for mixed-ratio
 // clusters.
-func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config) (*ecbalancer.Topology, int, func(collection string, vid uint32) (int, int)) {
+func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config, allowedCollections *pluginworker.CollectionMatcher) (*ecbalancer.Topology, int, func(collection string, vid uint32) (int, int)) {
 	topo := ecbalancer.NewTopology()
-	allowedCollections := wildcard.CompileWildcardMatchers(config.CollectionFilter)
 
 	type volRatioKey struct {
 		collection string
@@ -255,7 +260,7 @@ func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config) (*e
 						continue
 					}
 					for _, eci := range diskInfo.EcShardInfos {
-						if len(allowedCollections) > 0 && !wildcard.MatchesAnyWildcard(allowedCollections, eci.Collection) {
+						if !allowedCollections.Matches(eci.Collection) {
 							continue
 						}
 						node.AddShards(eci.Id, eci.Collection, eci.DiskId, erasure_coding.ShardBits(eci.EcIndexBits))
