@@ -53,7 +53,7 @@ func NewVolumeFilter(req *master_pb.VolumeListRequest) VolumeFilter {
 
 // SelectsEverything lets a caller size its result for the whole disk up front.
 func (f VolumeFilter) SelectsEverything() bool {
-	return !f.nothing && f.Collection == nil && f.VolumeId == nil
+	return !f.nothing && f.Collection == nil && f.VolumeId == nil && f.remoteStorageName == nil
 }
 
 type volumeLike interface {
