@@ -49,6 +49,9 @@ func setupWithLimit(t testing.TB, topologyLayout string, volumeSizeLimit uint64)
 						Size:    uint64(m["size"].(float64)),
 						Version: needle.GetCurrentVersion(),
 					}
+					if mVal, ok := m["fileCount"]; ok {
+						vi.FileCount = uint32(mVal.(float64))
+					}
 					if mVal, ok := m["collection"]; ok {
 						vi.Collection = mVal.(string)
 					}
@@ -173,6 +176,82 @@ func TestPickForWriteWithPendingSize(t *testing.T) {
 	ratio := float64(counts[2]) / float64(counts[1])
 	if ratio < 3.0 {
 		t.Errorf("vid2/vid1 ratio %.2f expected >= 3.0 (vid1=%d, vid2=%d)", ratio, counts[1], counts[2])
+	}
+}
+
+// An assign without a size hint used to charge a flat 1MB per file id. For a
+// small-file workload that overcharges by orders of magnitude: volumes holding
+// a few hundred MB of real data got marked full, and once every volume was out
+// of the writable list all assigns failed. The estimate must come from the
+// volume's own average file size instead.
+func TestPickForWriteEstimatesPendingSizeFromVolumeAverage(t *testing.T) {
+	layout := `
+{
+  "dc1":{
+    "rack1":{
+      "server1":{
+        "volumes":[
+          {"id":1, "size":409600, "fileCount":100, "replication":"000"}
+        ],
+        "limit":10
+      }
+    }
+  }
+}
+`
+	topo, vl := setupPickTest(t, layout, 30*1024*1024)
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	option := &VolumeGrowOption{ReplicaPlacement: rp}
+
+	pendingAfterAssign := func(expectedDataSize uint64) uint64 {
+		vl.accessLock.RLock()
+		before := vl.sizeTracking[1].effectiveSize
+		vl.accessLock.RUnlock()
+		if _, _, _, _, err := topo.PickForWrite(1, option, vl, expectedDataSize); err != nil {
+			t.Fatalf("PickForWrite: %v", err)
+		}
+		vl.accessLock.RLock()
+		defer vl.accessLock.RUnlock()
+		return vl.sizeTracking[1].effectiveSize - before
+	}
+
+	if got := pendingAfterAssign(0); got != 4096 {
+		t.Errorf("a hintless assign charged %d, want the volume's 4096-byte average", got)
+	}
+	if got := pendingAfterAssign(8192); got != 8192 {
+		t.Errorf("a hinted assign charged %d, want the 8192-byte hint to win over the average", got)
+	}
+}
+
+// A volume with no files yet has no average to draw on, so the 1MB fallback
+// still applies.
+func TestPickForWriteEstimateFallsBackWithoutHistory(t *testing.T) {
+	layout := `
+{
+  "dc1":{
+    "rack1":{
+      "server1":{
+        "volumes":[
+          {"id":1, "size":0, "replication":"000"}
+        ],
+        "limit":10
+      }
+    }
+  }
+}
+`
+	topo, vl := setupPickTest(t, layout, 30*1024*1024)
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	option := &VolumeGrowOption{ReplicaPlacement: rp}
+
+	if _, _, _, _, err := topo.PickForWrite(1, option, vl, 0); err != nil {
+		t.Fatalf("PickForWrite: %v", err)
+	}
+	vl.accessLock.RLock()
+	pending := vl.sizeTracking[1].effectiveSize - vl.sizeTracking[1].reportedSize
+	vl.accessLock.RUnlock()
+	if pending != DefaultNeedleSizeEstimate {
+		t.Errorf("a hintless assign on an empty volume charged %d, want the %d fallback", pending, DefaultNeedleSizeEstimate)
 	}
 }
 

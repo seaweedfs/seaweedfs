@@ -404,10 +404,16 @@ func (t *Topology) PickForWrite(requestedCount uint64, option *VolumeGrowOption,
 		return "", 0, nil, shouldGrow, fmt.Errorf("%s available for collection:%s replication:%s ttl:%s", NoWritableVolumes, option.Collection, option.ReplicaPlacement.String(), option.Ttl.String())
 	}
 	// Track estimated assigned bytes to spread load between heartbeats.
-	// Use the client hint if provided, otherwise fall back to 1MB estimate.
+	// Use the client hint if provided, otherwise the volume's own average
+	// file size: a flat 1MB guess charges a small-file workload orders of
+	// magnitude too much and marks near-empty volumes as full.
 	sizePerFile := DefaultNeedleSizeEstimate
 	if expectedDataSize > 0 {
 		sizePerFile = expectedDataSize
+	} else if vi, infoErr := volumeLocationList.Head().GetVolumesById(vid); infoErr == nil && vi.FileCount > 0 {
+		if avg := vi.Size / uint64(vi.FileCount); avg > 0 {
+			sizePerFile = avg
+		}
 	}
 	pendingBytes := min(uint64(count)*sizePerFile, uint64(math.MaxInt64))
 	if volumeLayout.RecordAssign(vid, int64(pendingBytes)) {
