@@ -403,7 +403,10 @@ func shouldInvalidateConnection(ctx context.Context, err error) bool {
 
 	// gRPC raises this locally, before the RPC reaches the wire, when this
 	// process already closed the ClientConn. The caller is a bystander of
-	// someone else's teardown, and knows nothing about the peer.
+	// someone else's teardown, and knows nothing about the peer. Its message
+	// is the only thing separating it from any other Canceled, so the plain
+	// codes.Canceled its deprecation notice recommends cannot stand in: that
+	// is the very code this function has to keep telling apart below.
 	if errors.Is(err, grpc.ErrClientConnClosing) {
 		return false
 	}
