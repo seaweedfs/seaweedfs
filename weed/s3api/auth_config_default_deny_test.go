@@ -40,3 +40,12 @@ func TestNoConfigKeepsAnonymousAllowed(t *testing.T) {
 
 	assert.False(t, iam.isEnabled(), "auth must stay off when no config file and no identities are configured")
 }
+
+// The proto parser drops what it does not recognise, so a typo has to be named
+// at startup or the resulting lockout has no visible cause.
+func TestUnknownS3ConfigKeys(t *testing.T) {
+	assert.Equal(t, []string{"identites"}, unknownS3ConfigKeys([]byte(`{"identites":[],"accounts":[]}`)))
+	assert.Empty(t, unknownS3ConfigKeys([]byte(`{"identities":[],"service_accounts":[],"serviceAccounts":[],"policies":[],"groups":[]}`)))
+	assert.Empty(t, unknownS3ConfigKeys([]byte(`{"kms":{},"sts":{},"policy":{},"providers":[],"roles":[]}`)), "sections owned by other subsystems are not typos")
+	assert.Empty(t, unknownS3ConfigKeys([]byte(`not json`)))
+}

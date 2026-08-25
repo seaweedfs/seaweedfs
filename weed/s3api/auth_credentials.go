@@ -28,6 +28,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	// Import KMS providers to register them
 	_ "github.com/seaweedfs/seaweedfs/weed/kms/aws"
@@ -628,6 +629,10 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFile(fileName str
 		return fmt.Errorf("fail to read %s : %v", fileName, readErr)
 	}
 
+	if unknown := unknownS3ConfigKeys(content); len(unknown) > 0 {
+		glog.Warningf("S3 config %s: ignoring unknown top-level keys %v", fileName, unknown)
+	}
+
 	// Initialize KMS if configuration contains KMS settings
 	if err := iam.initializeKMSFromConfig(content); err != nil {
 		glog.Warningf("KMS initialization failed: %v", err)
@@ -647,6 +652,31 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFile(fileName str
 	iam.markStaticIdentities(config)
 	iam.updateCredentialManagerStaticIdentities()
 	return nil
+}
+
+// nonIdentityS3ConfigKeys are the top-level sections of a config file that
+// belong to another subsystem rather than to S3ApiConfiguration: the KMS block,
+// and the advanced IAM blocks of a -s3.iam.config file.
+var nonIdentityS3ConfigKeys = []string{"kms", "sts", "policy", "providers", "roles"}
+
+// unknownS3ConfigKeys returns the top-level keys the proto parser discards. A
+// mistyped "identites" otherwise loads as an empty config, which denies every
+// request with nothing pointing at the typo.
+func unknownS3ConfigKeys(content []byte) []string {
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(content, &root); err != nil {
+		return nil
+	}
+	fields := (&iam_pb.S3ApiConfiguration{}).ProtoReflect().Descriptor().Fields()
+	var unknown []string
+	for key := range root {
+		if slices.Contains(nonIdentityS3ConfigKeys, key) || fields.ByName(protoreflect.Name(key)) != nil || fields.ByJSONName(key) != nil {
+			continue
+		}
+		unknown = append(unknown, key)
+	}
+	slices.Sort(unknown)
+	return unknown
 }
 
 func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromBytes(content []byte) error {
