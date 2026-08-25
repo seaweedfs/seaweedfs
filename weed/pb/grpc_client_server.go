@@ -386,9 +386,9 @@ func isClientSideMarshalError(err error) bool {
 }
 
 // shouldInvalidateConnection checks if an error indicates the cached connection
-// should be invalidated. ctx is the caller's per-request context (nil is treated
-// as a live context); it disambiguates a genuinely broken channel from the
-// caller cancelling or timing out its own request.
+// should be invalidated. ctx must be the context that bounds this RPC attempt; it
+// disambiguates a genuinely broken channel from the RPC hitting its own deadline
+// or cancellation. A nil or non-cancellable ctx carries no such evidence.
 func shouldInvalidateConnection(ctx context.Context, err error) bool {
 	if err == nil {
 		return false
@@ -415,16 +415,15 @@ func shouldInvalidateConnection(ctx context.Context, err error) bool {
 			// the caller retry.
 			return false
 		case codes.Canceled, codes.DeadlineExceeded:
-			// Ambiguous: this fires both when a stale cached channel rejects
-			// RPCs (e.g. a peer restart behind a k8s Service VIP), where we must
-			// invalidate, and when the caller's own context expired, where the
-			// shared channel is fine. Tearing the channel down for the latter
-			// cancels every other in-flight RPC on it with "the client
-			// connection is closing", a cascade that turns one slow request into
-			// a flood of failures across all concurrent callers. Only invalidate
-			// while the caller's context is still live, isolating the genuine
-			// stale-channel signal.
-			return ctx == nil || ctx.Err() == nil
+			// Ambiguous: a stale cached channel rejects RPCs this way (a peer
+			// restart behind a k8s Service VIP), and so does the RPC's own context
+			// expiring. Tearing the channel down for the latter cancels every other
+			// in-flight RPC on it with "the client connection is closing", turning
+			// one abandoned request into a flood of failures. Only a cancellable
+			// context bounds an RPC attempt and can tell the two apart:
+			// Background/TODO never expires, so its Err() would answer
+			// "stale channel" for every caller with no deadline to honor.
+			return ctx != nil && ctx.Done() != nil && ctx.Err() == nil
 		}
 	}
 
@@ -441,10 +440,11 @@ func shouldInvalidateConnection(ctx context.Context, err error) bool {
 }
 
 // WithGrpcClient In streamingMode, always use a fresh connection. Otherwise, try to reuse an existing connection.
-// ctx is the caller's per-request context: a Canceled/DeadlineExceeded that fires
-// because ctx itself expired will not tear down the shared cached ClientConn out
-// from under other concurrent callers. Pass context.Background() when there is no
-// per-request deadline to honor.
+// ctx must be the context that bounds the RPC fn issues, so that a
+// Canceled/DeadlineExceeded fired by ctx itself does not tear down the shared
+// cached ClientConn out from under other concurrent callers. Pass
+// context.Background() when fn picks its own context: a Canceled/DeadlineExceeded
+// then never invalidates, since nothing here can attribute it to the channel.
 func WithGrpcClient(ctx context.Context, streamingMode bool, signature int32, fn func(*grpc.ClientConn) error, address string, waitForReady bool, opts ...grpc.DialOption) error {
 
 	if !streamingMode {
@@ -552,10 +552,10 @@ func GrpcAddressToServerAddress(grpcAddress string) (serverAddress string) {
 	return util.JoinHostPort(host, port)
 }
 
-// WithMasterClient threads the caller's per-request context into the
+// WithMasterClient threads the context bounding this RPC attempt into the
 // connection-invalidation decision, so a Canceled/DeadlineExceeded from the
-// caller's own timeout does not invalidate the shared cached master connection.
-// Pass context.Background() when there is no per-request deadline to honor.
+// attempt's own timeout does not invalidate the shared cached master connection.
+// Pass context.Background() when fn picks its own context.
 func WithMasterClient(ctx context.Context, streamingMode bool, master ServerAddress, grpcDialOption grpc.DialOption, waitForReady bool, fn func(client master_pb.SeaweedClient) error) error {
 	return WithGrpcClient(ctx, streamingMode, 0, func(grpcConnection *grpc.ClientConn) error {
 		client := master_pb.NewSeaweedClient(grpcConnection)
