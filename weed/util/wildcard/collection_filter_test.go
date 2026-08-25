@@ -53,7 +53,9 @@ func TestCompileCollectionMatcher(t *testing.T) {
 }
 
 func TestCompileCollectionMatcherInvalidEntry(t *testing.T) {
-	if _, err := CompileCollectionMatcher("photos,[invalid"); err == nil {
-		t.Fatal("expected an error for an unparsable entry")
+	for _, filter := range []string{"photos,[invalid", ",", ", ,"} {
+		if _, err := CompileCollectionMatcher(filter); err == nil {
+			t.Errorf("filter %q should not compile", filter)
+		}
 	}
 }

@@ -80,7 +80,10 @@ func CompileCollectionMatcher(filter string) (*CollectionMatcher, error) {
 	}
 
 	if !matcher.matchEmpty && len(matcher.wildcards) == 0 && len(matcher.regexes) == 0 {
-		return nil, nil
+		// Only a genuinely empty filter means "every collection". A value like ","
+		// is a typo, and matching everything on it would encode or delete far more
+		// than the operator asked for.
+		return nil, fmt.Errorf("collection_filter %q has no collection names", trimmed)
 	}
 	return matcher, nil
 }
