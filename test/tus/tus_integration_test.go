@@ -1042,6 +1042,8 @@ func TestTusConcurrentPatchRefused(t *testing.T) {
 	conn, err := net.Dial("tcp", "127.0.0.1:"+testFilerPort)
 	require.NoError(t, err)
 	defer conn.Close()
+	// bound the raw reads below so a filer that never answers fails here
+	require.NoError(t, conn.SetDeadline(time.Now().Add(60*time.Second)))
 	_, err = fmt.Fprintf(conn, "PATCH %s HTTP/1.1\r\nHost: 127.0.0.1:%s\r\nTus-Resumable: %s\r\nContent-Type: application/offset+octet-stream\r\nUpload-Offset: 0\r\nContent-Length: %d\r\n\r\n",
 		uploadLocation, testFilerPort, TusVersion, subChunkSize)
 	require.NoError(t, err)
