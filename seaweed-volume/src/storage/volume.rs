@@ -943,7 +943,25 @@ impl Volume {
                     error = %e,
                     "cannot build the sorted index; keeping this volume's index in memory"
                 );
-                self.load_index_inmemory(idx_path)
+                match self.load_index_inmemory(idx_path) {
+                    Ok(()) => Ok(()),
+                    // Where deletes are allowed the in-memory loader opens .idx
+                    // read-write, which fails on the same directory that just
+                    // refused the .sdx. Give up the deletes rather than the
+                    // volume: without a writer no tombstone could be recorded
+                    // anyway, so refusing them is the honest answer, and a
+                    // remount on a writable directory restores them.
+                    Err(retry_err) if !self.no_write_or_delete => {
+                        warn!(
+                            volume_id = self.id.0,
+                            error = %retry_err,
+                            "cannot open the index for write; serving this volume without deletes"
+                        );
+                        self.no_write_or_delete = true;
+                        self.load_index_inmemory(idx_path)
+                    }
+                    Err(retry_err) => Err(retry_err),
+                }
             }
         }
     }
@@ -978,7 +996,7 @@ impl Volume {
                 .create(true)
                 .open(&idx_path)?;
 
-            let idx_size = idx_file.metadata()?.len();
+            let idx_size = trim_torn_idx_tail(&idx_file, idx_path)?;
             let mut idx_reader = io::BufReader::new(&idx_file);
             let mut nm = CompactNeedleMap::load_from_idx(&mut idx_reader, self.version())?;
 
@@ -1027,7 +1045,7 @@ impl Volume {
                 .create(true)
                 .open(&idx_path)?;
 
-            let idx_size = idx_file.metadata()?.len();
+            let idx_size = trim_torn_idx_tail(&idx_file, idx_path)?;
             let mut idx_reader = io::BufReader::new(&idx_file);
             let mut nm = RedbNeedleMap::load_from_idx(&rdb_path, &mut idx_reader, self.version())?;
 
@@ -2543,7 +2561,7 @@ impl Volume {
                 .append(true)
                 .create(true)
                 .open(&idx_path)?;
-            let idx_size = write_file.metadata()?.len();
+            let idx_size = trim_torn_idx_tail(&write_file, &idx_path)?;
             if let Some(ref mut nm) = self.nm {
                 nm.set_idx_file(Box::new(write_file), idx_size);
             }
@@ -3947,6 +3965,29 @@ fn size_mismatch_error(offset: i64, id: NeedleId, found: Size, expected: Size) -
             offset, id, found.0, expected.0
         ),
     ))
+}
+
+/// Drop a partial row from the end of `.idx` and return the remaining length.
+///
+/// `.idx` is a run of fixed-size rows, and writers append at EOF: a short write
+/// leaves a partial row behind, and every row appended after it lands off
+/// alignment, so the next load parses the rest of the file as garbage. The
+/// partial row is unrecoverable either way — every loader already skips it — so
+/// removing it before anything can append is what keeps the file parseable.
+/// Go instead refuses to load a volume whose `.idx` is not a whole number of
+/// rows; trimming keeps it mountable, and the rows before the tear are intact.
+fn trim_torn_idx_tail(idx_file: &File, idx_path: &str) -> Result<u64, VolumeError> {
+    let size = idx_file.metadata()?.len();
+    let aligned = size - size % NEEDLE_MAP_ENTRY_SIZE as u64;
+    if aligned != size {
+        warn!(
+            idx = %idx_path,
+            size, aligned, "dropping a partial row from the end of the index"
+        );
+        idx_file.set_len(aligned)?;
+        idx_file.sync_all()?;
+    }
+    Ok(aligned)
 }
 
 pub fn volume_file_name(dir: &str, collection: &str, id: VolumeId) -> String {
@@ -6039,6 +6080,153 @@ mod tests {
             no_write_or_delete && read_only,
             "a failed mark must leave the volume read-only, not writable with an index it cannot append to"
         );
+    }
+
+    // .idx is a run of fixed-size rows and writers append at EOF, so a partial
+    // row left by a short write puts every row appended after it off alignment
+    // and the next load parses the rest as garbage. The tail has to go before
+    // anything writable attaches.
+    #[test]
+    fn test_writable_load_trims_a_torn_idx_tail() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap().to_string();
+        {
+            let mut v = make_test_volume(&dir);
+            let mut n = Needle {
+                id: NeedleId(1),
+                cookie: Cookie(0x1234),
+                data: b"first".to_vec(),
+                data_size: 5,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, true).unwrap();
+            v.sync_to_disk().unwrap();
+        }
+
+        let idx_path = tmp.path().join("1.idx");
+        let whole = std::fs::metadata(&idx_path).unwrap().len();
+        {
+            use std::io::Write as _;
+            let mut f = OpenOptions::new().append(true).open(&idx_path).unwrap();
+            f.write_all(&[0xcd; 5]).unwrap();
+        }
+
+        let mut v = Volume::new(
+            &dir,
+            &dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::metadata(&idx_path).unwrap().len(),
+            whole,
+            "the partial row should be gone before any writer attaches"
+        );
+
+        let mut n = Needle {
+            id: NeedleId(2),
+            cookie: Cookie(0x5678),
+            data: b"second".to_vec(),
+            data_size: 6,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true, true).unwrap();
+        v.sync_to_disk().unwrap();
+        drop(v);
+
+        // Both rows have to survive the round trip; a misaligned append loses
+        // the second one and garbles whatever follows it.
+        let v = Volume::new(
+            &dir,
+            &dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        for (id, want) in [(1u64, &b"first"[..]), (2u64, &b"second"[..])] {
+            let mut probe = Needle {
+                id: NeedleId(id),
+                ..Needle::default()
+            };
+            v.read_needle(&mut probe).unwrap();
+            assert_eq!(probe.data, want);
+        }
+    }
+
+    // A delete-capable read-only volume — every tiered one — takes the in-memory
+    // loader's read-write branch, which fails on the same unwritable directory
+    // that refused the .sdx. It has to end up read-only rather than offline.
+    #[test]
+    #[cfg(unix)]
+    fn test_delete_capable_volume_falls_all_the_way_back_to_read_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // root ignores the directory mode, so there is nothing to simulate.
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap().to_string();
+        {
+            let mut v = make_test_volume(&dir);
+            let mut n = Needle {
+                id: NeedleId(1),
+                cookie: Cookie(0x1234),
+                data: b"still-readable".to_vec(),
+                data_size: 14,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+            v.set_read_only_persist(true, true).unwrap();
+            v.sync_to_disk().unwrap();
+        }
+
+        let set_mode = |path: &std::path::Path, mode: u32| {
+            let mut perms = std::fs::metadata(path).unwrap().permissions();
+            perms.set_mode(mode);
+            std::fs::set_permissions(path, perms).unwrap();
+        };
+        let idx_path = tmp.path().join("1.idx");
+        set_mode(&idx_path, 0o444);
+        set_mode(tmp.path(), 0o555);
+
+        let loaded = Volume::new(
+            &dir,
+            &dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        );
+        set_mode(tmp.path(), 0o755);
+        set_mode(&idx_path, 0o644);
+
+        let v = loaded.expect("a delete-capable volume must mount without a writable index dir");
+        assert!(
+            v.no_write_or_delete,
+            "with no writer for tombstones, deletes have to be refused outright"
+        );
+        let mut probe = Needle {
+            id: NeedleId(1),
+            ..Needle::default()
+        };
+        v.read_needle(&mut probe).unwrap();
+        assert_eq!(probe.data, b"still-readable");
     }
 
     // Issue #10937: a volume server holding hundreds of thousands of cloud-tiered

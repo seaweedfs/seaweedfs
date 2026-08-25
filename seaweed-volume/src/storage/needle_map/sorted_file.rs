@@ -153,6 +153,17 @@ impl SortedFileNeedleMap {
             &buf,
             entry_index * NEEDLE_MAP_ENTRY_SIZE as u64 + ENTRY_SIZE_OFFSET,
         )?;
+
+        // Move the counters to where a reload would put them, so the heartbeat
+        // does not report this volume as garbage-free until it restarts. The
+        // tombstone is one more .idx row, and under the rule index_metric
+        // applies both it and the row it supersedes count as deletions; the
+        // bytes leave the live set without leaving the .idx.
+        self.metric.file_count.fetch_add(1, Ordering::Relaxed);
+        self.metric.deletion_count.fetch_add(2, Ordering::Relaxed);
+        self.metric
+            .deletion_byte_count
+            .fetch_add(size.0.max(0) as u64, Ordering::Relaxed);
         Ok(Some(size))
     }
 
@@ -615,6 +626,44 @@ mod tests {
             .unwrap()
             .is_none());
         assert!(!m.get(NeedleId(1)).unwrap().size.is_deleted());
+    }
+
+    #[test]
+    fn delete_moves_the_counters_where_a_reload_would() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = base(&dir);
+        write_idx(
+            &format!("{base}.idx"),
+            &[(1, 8, 100), (2, 16, 200), (3, 24, 300)],
+        );
+
+        let m = SortedFileNeedleMap::open(&base, version()).unwrap();
+        assert_eq!(
+            (m.file_count(), m.deleted_count(), m.deleted_size()),
+            (3, 0, 0)
+        );
+
+        m.delete(NeedleId(2), Offset::from_actual_offset(16))
+            .unwrap();
+        let live = m.file_count() - m.deleted_count();
+        assert_eq!(live, 2, "one of the three needles is gone");
+        assert_eq!(m.deleted_size(), 200);
+        assert_eq!(m.content_size(), 600, "a delete does not shrink .idx bytes");
+
+        // A reload recomputes from .idx and .sdx; the runtime numbers must
+        // already agree with it or the heartbeat jumps at every restart.
+        drop(m);
+        let reloaded = SortedFileNeedleMap::open(&base, version()).unwrap();
+        assert_eq!(reloaded.file_count(), 4);
+        assert_eq!(reloaded.deleted_count(), 2);
+        assert_eq!(reloaded.deleted_size(), 200);
+        assert_eq!(reloaded.content_size(), 600);
+
+        // Deleting again is a no-op and must not move them further.
+        reloaded
+            .delete(NeedleId(2), Offset::from_actual_offset(16))
+            .unwrap();
+        assert_eq!((reloaded.file_count(), reloaded.deleted_count()), (4, 2));
     }
 
     #[test]
