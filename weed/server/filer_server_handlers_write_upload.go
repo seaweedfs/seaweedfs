@@ -206,7 +206,12 @@ func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, 
 	var uploadResult *operation.UploadResult
 	var failedFileChunks []*filer_pb.FileChunk
 
-	err := util.Retry("filerDataToChunk", func() error {
+	// Each attempt assigns anew, so also retry the errors a fresh volume dodges:
+	// a target gone read-only or full mid-write 5xxs until the master notices.
+	shouldRetry := func(err error) bool {
+		return util.IsTransientError(err) || operation.ShouldReassignUpload(err)
+	}
+	err := util.RetryOnError("filerDataToChunk", shouldRetry, func() error {
 		// assign one file id for one chunk
 		fileId, urlLocation, auth, uploadErr = fs.assignNewFileInfo(ctx, so, uint64(len(data)))
 		if uploadErr != nil {

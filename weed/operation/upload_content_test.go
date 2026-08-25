@@ -69,8 +69,8 @@ func TestShouldReassignUpload(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := shouldReassignUpload(tc.err); got != tc.want {
-				t.Fatalf("shouldReassignUpload(%v) = %v, want %v", tc.err, got, tc.want)
+			if got := ShouldReassignUpload(tc.err); got != tc.want {
+				t.Fatalf("ShouldReassignUpload(%v) = %v, want %v", tc.err, got, tc.want)
 			}
 		})
 	}
