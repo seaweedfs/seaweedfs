@@ -1578,7 +1578,7 @@ mod tests {
             let (_, volume) = store.find_volume_mut(VolumeId(17)).unwrap();
             volume.set_read_only().unwrap();
             volume.volume_info.files.push(Default::default());
-            volume.refresh_remote_write_mode();
+            volume.refresh_remote_write_mode().unwrap();
         }
 
         let heartbeat = build_heartbeat(&test_config(), &mut store);
@@ -1944,7 +1944,7 @@ mod tests {
             key: "volumes/71.dat".to_string(),
             ..Default::default()
         });
-        volume.refresh_remote_write_mode();
+        volume.refresh_remote_write_mode().unwrap();
 
         let heartbeat = build_heartbeat(&test_config(), &mut store);
 

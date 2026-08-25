@@ -22,6 +22,7 @@ use tracing::{error, info, warn};
 #[cfg(test)]
 use crate::storage::idx;
 use crate::storage::needle::needle::{self, get_actual_size, Needle, NeedleError};
+use crate::storage::needle_map::sorted_file::SortedFileNeedleMap;
 use crate::storage::needle_map::{CompactNeedleMap, NeedleMap, NeedleMapKind, RedbNeedleMap};
 use crate::storage::super_block::{ReplicaPlacement, SuperBlock, SUPER_BLOCK_SIZE};
 use crate::storage::types::*;
@@ -885,13 +886,84 @@ impl Volume {
             fs::create_dir_all(parent)?;
         }
 
-        if use_redb {
+        // Go picks the sorted-file map for both read-only modes, which is every
+        // cloud-tiered volume: the index stays on disk in .sdx instead of in
+        // RAM, and nothing is held open between lookups.
+        if self.use_sorted_index() {
+            self.load_index_sorted_file(&idx_path)?;
+        } else if use_redb {
             self.load_index_redb(&idx_path)?;
         } else {
             self.load_index_inmemory(&idx_path)?;
         }
 
         Ok(())
+    }
+
+    /// Whether this volume's index belongs in a `.sdx`. Mirrors Go's
+    /// `v.noWriteOrDelete || v.noWriteCanDelete` branch in volume_loading.go —
+    /// a tiered volume is always the second of the two.
+    fn use_sorted_index(&self) -> bool {
+        self.no_write_or_delete || self.no_write_can_delete
+    }
+
+    /// Load the on-disk sorted index for a read-only or cloud-tiered volume.
+    fn load_index_sorted_file(&mut self, idx_path: &str) -> Result<(), VolumeError> {
+        if !Path::new(idx_path).exists() {
+            // Missing .idx with existing .dat could orphan needles
+            let dat_path = self.file_name(".dat");
+            if Path::new(&dat_path).exists() {
+                let dat_size = fs::metadata(&dat_path).map(|m| m.len()).unwrap_or(0);
+                if dat_size > SUPER_BLOCK_SIZE as u64 {
+                    warn!(
+                        volume_id = self.id.0,
+                        ".idx file missing but .dat exists with data; needles may be orphaned"
+                    );
+                }
+            }
+            // Go opens .idx with O_CREATE only where deletes are allowed; an
+            // empty index yields an empty .sdx and a volume that still mounts.
+            // A volume that takes neither writes nor deletes must not write
+            // here, since its index directory can sit on a read-only mount.
+            if !self.no_write_or_delete {
+                File::create(idx_path)?;
+            }
+        }
+        // Building .sdx writes to the index directory. Where that cannot be
+        // done — a read-only mount, a full disk — keep this volume's index in
+        // memory rather than failing the load and taking its data offline.
+        match SortedFileNeedleMap::open(&self.index_file_name(), self.version()) {
+            Ok(nm) => {
+                self.nm = Some(NeedleMap::SortedFile(nm));
+                Ok(())
+            }
+            Err(e) => {
+                warn!(
+                    volume_id = self.id.0,
+                    error = %e,
+                    "cannot build the sorted index; keeping this volume's index in memory"
+                );
+                match self.load_index_inmemory(idx_path) {
+                    Ok(()) => Ok(()),
+                    // Where deletes are allowed the in-memory loader opens .idx
+                    // read-write, which fails on the same directory that just
+                    // refused the .sdx. Give up the deletes rather than the
+                    // volume: without a writer no tombstone could be recorded
+                    // anyway, so refusing them is the honest answer, and a
+                    // remount on a writable directory restores them.
+                    Err(retry_err) if !self.no_write_or_delete => {
+                        warn!(
+                            volume_id = self.id.0,
+                            error = %retry_err,
+                            "cannot open the index for write; serving this volume without deletes"
+                        );
+                        self.no_write_or_delete = true;
+                        self.load_index_inmemory(idx_path)
+                    }
+                    Err(retry_err) => Err(retry_err),
+                }
+            }
+        }
     }
 
     /// Load index using in-memory CompactNeedleMap.
@@ -924,7 +996,7 @@ impl Volume {
                 .create(true)
                 .open(&idx_path)?;
 
-            let idx_size = idx_file.metadata()?.len();
+            let idx_size = trim_torn_idx_tail(&idx_file, idx_path)?;
             let mut idx_reader = io::BufReader::new(&idx_file);
             let mut nm = CompactNeedleMap::load_from_idx(&mut idx_reader, self.version())?;
 
@@ -973,7 +1045,7 @@ impl Volume {
                 .create(true)
                 .open(&idx_path)?;
 
-            let idx_size = idx_file.metadata()?.len();
+            let idx_size = trim_torn_idx_tail(&idx_file, idx_path)?;
             let mut idx_reader = io::BufReader::new(&idx_file);
             let mut nm = RedbNeedleMap::load_from_idx(&rdb_path, &mut idx_reader, self.version())?;
 
@@ -2489,7 +2561,7 @@ impl Volume {
                 .append(true)
                 .create(true)
                 .open(&idx_path)?;
-            let idx_size = write_file.metadata()?.len();
+            let idx_size = trim_torn_idx_tail(&write_file, &idx_path)?;
             if let Some(ref mut nm) = self.nm {
                 nm.set_idx_file(Box::new(write_file), idx_size);
             }
@@ -2505,17 +2577,59 @@ impl Volume {
     /// surviving until the next restart, then vanishing. Re-attach a writer
     /// here so writes persist again.
     pub fn set_writable(&mut self) -> Result<(), VolumeError> {
-        self.attach_idx_writer_if_missing()?;
+        let was_no_write_or_delete = self.no_write_or_delete;
+        let was_no_write_can_delete = self.no_write_can_delete;
         self.no_write_or_delete = false;
         // Remote-tiered volumes must stay no_write_can_delete regardless of marks.
         if !self.has_remote_file {
             self.no_write_can_delete = false;
         }
+
+        // Everything below keys off the flags above, so it runs with the volume
+        // already marked writable. Any failure has to put them back: a volume
+        // advertising writable whose needle map cannot reach .idx acknowledges
+        // writes that are gone after a restart.
+        if let Err(e) = self.publish_writable() {
+            self.no_write_or_delete = was_no_write_or_delete;
+            self.no_write_can_delete = was_no_write_can_delete;
+            return Err(e);
+        }
+        Ok(())
+    }
+
+    /// The steps that must all succeed before a volume can be left marked
+    /// writable: swap out the read-only map, attach the .idx writer, persist the
+    /// mark. Split out so set_writable has one rollback point rather than three.
+    fn publish_writable(&mut self) -> Result<(), VolumeError> {
+        self.reopen_idx_for_write()?;
+        self.attach_idx_writer_if_missing()?;
         self.save_vif()
     }
 
-    /// Recompute the Go-style write/delete mode from the current remote tier state.
-    pub fn refresh_remote_write_mode(&mut self) {
+    /// Swap the read-only sorted map for the configured writable one once the
+    /// current mode says the volume is no longer read-only. Mirrors Go's
+    /// reopenIdxForWrite, and is the reason a volume that stops being read-only
+    /// can accept writes at all: SortedFileNeedleMap::put always fails, so
+    /// publishing a writable volume without this leaves every write appending to
+    /// .dat and then failing to index it. A no-op unless the map is the sorted
+    /// one and the flags have already moved.
+    fn reopen_idx_for_write(&mut self) -> Result<(), VolumeError> {
+        if self.use_sorted_index() || !matches!(self.nm, Some(NeedleMap::SortedFile(_))) {
+            return Ok(());
+        }
+        // load_index only publishes self.nm once the new map is built, so a
+        // failure leaves the sorted map in place and the caller can recover.
+        self.load_index()
+    }
+
+    /// Recompute the Go-style write/delete mode from the current remote tier
+    /// state, and bring the needle map in line with it — a volume that stops
+    /// being remote also stops using the read-only sorted index.
+    ///
+    /// If the map cannot be rebuilt the volume is pinned read-only rather than
+    /// published as writable with an index that rejects every put; a restart
+    /// recovers it.
+    pub fn refresh_remote_write_mode(&mut self) -> Result<(), VolumeError> {
         self.has_remote_file = !self.volume_info.files.is_empty();
         if self.has_remote_file {
             self.no_write_can_delete = true;
@@ -2524,6 +2638,11 @@ impl Volume {
             // only clear the remoteness-derived flag, not an operator mark
             self.no_write_can_delete = false;
         }
+        if let Err(e) = self.reopen_idx_for_write() {
+            self.no_write_or_delete = true;
+            return Err(e);
+        }
+        Ok(())
     }
 
     /// Open the local .dat as the data backend, dropping any remote backend, so reads
@@ -2563,7 +2682,7 @@ impl Volume {
                     }
                 }
                 self.volume_info = pb_info;
-                self.refresh_remote_write_mode();
+                self.refresh_remote_write_mode()?;
                 if self.volume_info.version == 0 {
                     self.volume_info.version = Version::current().0 as u32;
                 }
@@ -2592,7 +2711,7 @@ impl Volume {
                     self.no_write_or_delete = true;
                 }
                 self.volume_info = pb_info;
-                self.refresh_remote_write_mode();
+                self.refresh_remote_write_mode()?;
                 if self.volume_info.version == 0 {
                     self.volume_info.version = Version::current().0 as u32;
                 }
@@ -3165,7 +3284,7 @@ impl Volume {
         // Collect live entries from needle map (sorted ascending)
         let nm = self.nm.as_ref().ok_or(VolumeError::NotInitialized)?;
         let mut entries: Vec<(NeedleId, Offset, Size)> = Vec::new();
-        for (id, nv) in nm.iter_entries() {
+        for (id, nv) in nm.iter_entries().map_err(VolumeError::Io)? {
             if nv.offset.is_zero() || nv.size.is_deleted() {
                 continue;
             }
@@ -3846,6 +3965,29 @@ fn size_mismatch_error(offset: i64, id: NeedleId, found: Size, expected: Size) -
             offset, id, found.0, expected.0
         ),
     ))
+}
+
+/// Drop a partial row from the end of `.idx` and return the remaining length.
+///
+/// `.idx` is a run of fixed-size rows, and writers append at EOF: a short write
+/// leaves a partial row behind, and every row appended after it lands off
+/// alignment, so the next load parses the rest of the file as garbage. The
+/// partial row is unrecoverable either way — every loader already skips it — so
+/// removing it before anything can append is what keeps the file parseable.
+/// Go instead refuses to load a volume whose `.idx` is not a whole number of
+/// rows; trimming keeps it mountable, and the rows before the tear are intact.
+fn trim_torn_idx_tail(idx_file: &File, idx_path: &str) -> Result<u64, VolumeError> {
+    let size = idx_file.metadata()?.len();
+    let aligned = size - size % NEEDLE_MAP_ENTRY_SIZE as u64;
+    if aligned != size {
+        warn!(
+            idx = %idx_path,
+            size, aligned, "dropping a partial row from the end of the index"
+        );
+        idx_file.set_len(aligned)?;
+        idx_file.sync_all()?;
+    }
+    Ok(aligned)
 }
 
 pub fn volume_file_name(dir: &str, collection: &str, id: VolumeId) -> String {
@@ -5642,6 +5784,587 @@ mod tests {
             .remove("s3.vif_rw_test");
     }
 
+    /// Build a volume with `needles` needles, tier it to a fake remote backend,
+    /// and reload it the way a restart would — so it comes back read-only with
+    /// its index on disk. The local .dat is left in place, matching the state a
+    /// completed tier-down download leaves behind.
+    fn reload_as_tiered(dir: &str, backend_id: &str, needles: u64) -> Volume {
+        {
+            let mut v = make_test_volume(dir);
+            for i in 1..=needles {
+                let mut n = Needle {
+                    id: NeedleId(i),
+                    cookie: Cookie(0x1234),
+                    data: format!("needle-{i}").into_bytes(),
+                    data_size: format!("needle-{i}").len() as u32,
+                    ..Needle::default()
+                };
+                v.write_needle(&mut n, true, false).unwrap();
+            }
+
+            let vif = VifVolumeInfo {
+                files: vec![VifRemoteFile {
+                    backend_type: "s3".to_string(),
+                    backend_id: backend_id.to_string(),
+                    key: "remote-key".to_string(),
+                    offset: 0,
+                    file_size: v.dat_file_size().unwrap(),
+                    modified_time: 123,
+                    extension: ".dat".to_string(),
+                }],
+                version: v.version().0 as u32,
+                ..VifVolumeInfo::default()
+            };
+            std::fs::write(
+                format!("{}/1.vif", dir),
+                serde_json::to_string_pretty(&vif).unwrap(),
+            )
+            .unwrap();
+
+            let tier_config = crate::remote_storage::s3_tier::S3TierConfig {
+                access_key: "access".to_string(),
+                secret_key: "secret".to_string(),
+                region: "us-east-1".to_string(),
+                bucket: "bucket-a".to_string(),
+                endpoint: "http://127.0.0.1:1".to_string(),
+                storage_class: "STANDARD".to_string(),
+                force_path_style: true,
+            };
+            crate::remote_storage::s3_tier::global_s3_tier_registry()
+                .write()
+                .unwrap()
+                .register(
+                    format!("s3.{backend_id}"),
+                    crate::remote_storage::s3_tier::S3TierBackend::new(&tier_config),
+                );
+        }
+
+        Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap()
+    }
+
+    // Tier-down clears the remote mode and publishes the volume as writable. The
+    // map it booted with is the read-only sorted one, whose put always fails, so
+    // without a rebuild the first write appends to .dat and then cannot be
+    // indexed — leaving bytes nothing references.
+    #[test]
+    fn test_tier_down_swaps_in_a_writable_needle_map() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = reload_as_tiered(dir, "vif_tierdown_test", 2);
+        assert!(matches!(v.nm, Some(NeedleMap::SortedFile(_))));
+
+        // The tail of the tier-down handler, once the .dat is back on disk.
+        v.volume_info.files.remove(0);
+        v.refresh_remote_write_mode().unwrap();
+        v.save_volume_info().unwrap();
+        v.open_local_dat_backend().unwrap();
+
+        assert!(!v.has_remote_file);
+        assert!(!v.is_read_only(), "tier-down should publish a writable volume");
+        assert!(
+            !matches!(v.nm, Some(NeedleMap::SortedFile(_))),
+            "tier-down must swap the read-only map out before writes are allowed"
+        );
+
+        let mut n = Needle {
+            id: NeedleId(7),
+            cookie: Cookie(0x5678),
+            data: b"after-tier-down".to_vec(),
+            data_size: 15,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true, true).unwrap();
+        v.sync_to_disk().unwrap();
+        drop(v);
+
+        // Reload: the needle must come back from .idx, not just have landed in
+        // .dat as unreferenced bytes.
+        let v = Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        let mut probe = Needle {
+            id: NeedleId(7),
+            ..Needle::default()
+        };
+        v.read_needle(&mut probe).unwrap();
+        assert_eq!(probe.data, b"after-tier-down");
+
+        crate::remote_storage::s3_tier::global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .remove("s3.vif_tierdown_test");
+    }
+
+    // A .sdx that cannot be read end to end must abort compaction. Treating the
+    // short scan as the complete live set would commit a volume missing every
+    // needle past the truncation.
+    #[test]
+    fn test_compaction_aborts_on_unreadable_sorted_index() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = reload_as_tiered(dir, "vif_compact_test", 4);
+        let Some(NeedleMap::SortedFile(ref nm)) = v.nm else {
+            panic!("tiered volume should search the on-disk .sdx");
+        };
+        let sdx_path = nm.db_file_name().to_string();
+
+        let sdx = OpenOptions::new().write(true).open(&sdx_path).unwrap();
+        sdx.set_len(NEEDLE_MAP_ENTRY_SIZE as u64).unwrap();
+        drop(sdx);
+        crate::storage::needle_map::file_pool::pooled_index_files().discard(&sdx_path);
+
+        let err = v
+            .compact_by_index(0, 0, |_| true)
+            .expect_err("compaction must not commit a partially scanned index");
+        assert!(
+            matches!(err, VolumeError::Io(ref e) if e.kind() == io::ErrorKind::UnexpectedEof),
+            "unexpected error: {err:?}"
+        );
+
+        crate::remote_storage::s3_tier::global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .remove("s3.vif_compact_test");
+    }
+
+    // Building .sdx writes to the index directory, which a read-only volume's
+    // may not allow. Before the sorted map that volume mounted and served reads
+    // off an in-memory index; it must still do so rather than going offline.
+    #[test]
+    #[cfg(unix)]
+    fn test_read_only_volume_mounts_when_the_index_dir_is_not_writable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // root ignores the directory mode, so there is nothing to simulate.
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap().to_string();
+        {
+            let mut v = make_test_volume(&dir);
+            let mut n = Needle {
+                id: NeedleId(1),
+                cookie: Cookie(0x1234),
+                data: b"still-readable".to_vec(),
+                data_size: 14,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+            v.set_read_only_persist(false, true).unwrap();
+            v.sync_to_disk().unwrap();
+        }
+
+        let set_mode = |mode: u32| {
+            let mut perms = std::fs::metadata(tmp.path()).unwrap().permissions();
+            perms.set_mode(mode);
+            std::fs::set_permissions(tmp.path(), perms).unwrap();
+        };
+        set_mode(0o555);
+
+        let loaded = Volume::new(
+            &dir,
+            &dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        );
+        set_mode(0o755); // restore before any assertion, so cleanup works
+
+        let v = loaded.expect("a read-only volume must mount without writing its index dir");
+        assert!(
+            !matches!(v.nm, Some(NeedleMap::SortedFile(_))),
+            "the .sdx could not be built, so the index should have fallen back to memory"
+        );
+        let mut probe = Needle {
+            id: NeedleId(1),
+            ..Needle::default()
+        };
+        v.read_needle(&mut probe).unwrap();
+        assert_eq!(probe.data, b"still-readable");
+    }
+
+    // set_writable clears the read-only flags before it can know the .idx writer
+    // will attach. If attaching fails the flags have to go back: a volume that
+    // advertises writable while its map has no writer takes puts into memory and
+    // loses them at the next restart.
+    #[test]
+    #[cfg(unix)]
+    fn test_set_writable_rolls_back_when_the_idx_writer_cannot_attach() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // root ignores the directory mode, so there is nothing to simulate.
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap().to_string();
+        {
+            let mut v = make_test_volume(&dir);
+            let mut n = Needle {
+                id: NeedleId(1),
+                cookie: Cookie(0x1234),
+                data: b"before".to_vec(),
+                data_size: 6,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+            v.set_read_only_persist(false, true).unwrap();
+            v.sync_to_disk().unwrap();
+        }
+
+        // A read-only mount, both halves of it: nothing new can be created in the
+        // directory, so .sdx generation fails and the index falls back to memory,
+        // and the .idx itself cannot be opened for write, so no writer attaches.
+        let set_mode = |path: &std::path::Path, mode: u32| {
+            let mut perms = std::fs::metadata(path).unwrap().permissions();
+            perms.set_mode(mode);
+            std::fs::set_permissions(path, perms).unwrap();
+        };
+        let idx_path = tmp.path().join("1.idx");
+        set_mode(&idx_path, 0o444);
+        set_mode(tmp.path(), 0o555);
+
+        let loaded = Volume::new(
+            &dir,
+            &dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        );
+        let marked = loaded.map(|mut v| {
+            let r = v.set_writable();
+            (v.no_write_or_delete, v.is_read_only(), v.nm.as_ref().unwrap().has_idx_writer(), r)
+        });
+        // Restore before any assertion, so cleanup works.
+        set_mode(tmp.path(), 0o755);
+        set_mode(&idx_path, 0o644);
+
+        let (no_write_or_delete, read_only, has_writer, result) = marked.unwrap();
+        assert!(
+            result.is_err(),
+            "set_writable cannot succeed without an .idx writer"
+        );
+        assert!(!has_writer, "the writer is what failed to attach");
+        assert!(
+            no_write_or_delete && read_only,
+            "a failed mark must leave the volume read-only, not writable with an index it cannot append to"
+        );
+    }
+
+    // .idx is a run of fixed-size rows and writers append at EOF, so a partial
+    // row left by a short write puts every row appended after it off alignment
+    // and the next load parses the rest as garbage. The tail has to go before
+    // anything writable attaches.
+    #[test]
+    fn test_writable_load_trims_a_torn_idx_tail() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap().to_string();
+        {
+            let mut v = make_test_volume(&dir);
+            let mut n = Needle {
+                id: NeedleId(1),
+                cookie: Cookie(0x1234),
+                data: b"first".to_vec(),
+                data_size: 5,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, true).unwrap();
+            v.sync_to_disk().unwrap();
+        }
+
+        let idx_path = tmp.path().join("1.idx");
+        let whole = std::fs::metadata(&idx_path).unwrap().len();
+        {
+            use std::io::Write as _;
+            let mut f = OpenOptions::new().append(true).open(&idx_path).unwrap();
+            f.write_all(&[0xcd; 5]).unwrap();
+        }
+
+        let mut v = Volume::new(
+            &dir,
+            &dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::metadata(&idx_path).unwrap().len(),
+            whole,
+            "the partial row should be gone before any writer attaches"
+        );
+
+        let mut n = Needle {
+            id: NeedleId(2),
+            cookie: Cookie(0x5678),
+            data: b"second".to_vec(),
+            data_size: 6,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true, true).unwrap();
+        v.sync_to_disk().unwrap();
+        drop(v);
+
+        // Both rows have to survive the round trip; a misaligned append loses
+        // the second one and garbles whatever follows it.
+        let v = Volume::new(
+            &dir,
+            &dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        for (id, want) in [(1u64, &b"first"[..]), (2u64, &b"second"[..])] {
+            let mut probe = Needle {
+                id: NeedleId(id),
+                ..Needle::default()
+            };
+            v.read_needle(&mut probe).unwrap();
+            assert_eq!(probe.data, want);
+        }
+    }
+
+    // A delete-capable read-only volume — every tiered one — takes the in-memory
+    // loader's read-write branch, which fails on the same unwritable directory
+    // that refused the .sdx. It has to end up read-only rather than offline.
+    #[test]
+    #[cfg(unix)]
+    fn test_delete_capable_volume_falls_all_the_way_back_to_read_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // root ignores the directory mode, so there is nothing to simulate.
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap().to_string();
+        {
+            let mut v = make_test_volume(&dir);
+            let mut n = Needle {
+                id: NeedleId(1),
+                cookie: Cookie(0x1234),
+                data: b"still-readable".to_vec(),
+                data_size: 14,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+            v.set_read_only_persist(true, true).unwrap();
+            v.sync_to_disk().unwrap();
+        }
+
+        let set_mode = |path: &std::path::Path, mode: u32| {
+            let mut perms = std::fs::metadata(path).unwrap().permissions();
+            perms.set_mode(mode);
+            std::fs::set_permissions(path, perms).unwrap();
+        };
+        let idx_path = tmp.path().join("1.idx");
+        set_mode(&idx_path, 0o444);
+        set_mode(tmp.path(), 0o555);
+
+        let loaded = Volume::new(
+            &dir,
+            &dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        );
+        set_mode(tmp.path(), 0o755);
+        set_mode(&idx_path, 0o644);
+
+        let v = loaded.expect("a delete-capable volume must mount without a writable index dir");
+        assert!(
+            v.no_write_or_delete,
+            "with no writer for tombstones, deletes have to be refused outright"
+        );
+        let mut probe = Needle {
+            id: NeedleId(1),
+            ..Needle::default()
+        };
+        v.read_needle(&mut probe).unwrap();
+        assert_eq!(probe.data, b"still-readable");
+    }
+
+    // Issue #10937: a volume server holding hundreds of thousands of cloud-tiered
+    // volumes ran out of descriptors because every one of them pinned its index
+    // for the life of the process. A tiered volume must search the on-disk .sdx
+    // and hold nothing open while it sits idle.
+    #[test]
+    fn test_remote_volume_index_is_on_disk_and_holds_no_descriptors() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        {
+            let mut v = make_test_volume(dir);
+            for i in 1..=4u64 {
+                let mut n = Needle {
+                    id: NeedleId(i),
+                    cookie: Cookie(0x1234),
+                    data: format!("needle-{i}").into_bytes(),
+                    data_size: format!("needle-{i}").len() as u32,
+                    ..Needle::default()
+                };
+                v.write_needle(&mut n, true, false).unwrap();
+            }
+
+            // A writable volume does pin its .idx, which is also what proves the
+            // descriptor probe below is looking at something real.
+            if let Some(count) = crate::storage::needle_map::file_pool::open_index_fds(tmp.path()) {
+                assert!(count > 0, "a writable volume should hold its .idx open");
+            }
+
+            let vif = VifVolumeInfo {
+                files: vec![VifRemoteFile {
+                    backend_type: "s3".to_string(),
+                    backend_id: "vif_fd_test".to_string(),
+                    key: "remote-key".to_string(),
+                    offset: 0,
+                    file_size: v.dat_file_size().unwrap(),
+                    modified_time: 123,
+                    extension: ".dat".to_string(),
+                }],
+                version: v.version().0 as u32,
+                ..VifVolumeInfo::default()
+            };
+            std::fs::write(
+                format!("{}/1.vif", dir),
+                serde_json::to_string_pretty(&vif).unwrap(),
+            )
+            .unwrap();
+
+            let tier_config = crate::remote_storage::s3_tier::S3TierConfig {
+                access_key: "access".to_string(),
+                secret_key: "secret".to_string(),
+                region: "us-east-1".to_string(),
+                bucket: "bucket-a".to_string(),
+                endpoint: "http://127.0.0.1:1".to_string(),
+                storage_class: "STANDARD".to_string(),
+                force_path_style: true,
+            };
+            crate::remote_storage::s3_tier::global_s3_tier_registry()
+                .write()
+                .unwrap()
+                .register(
+                    "s3.vif_fd_test".to_string(),
+                    crate::remote_storage::s3_tier::S3TierBackend::new(&tier_config),
+                );
+        }
+
+        let mut v = Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+
+        assert!(v.has_remote_file);
+        let Some(NeedleMap::SortedFile(ref nm)) = v.nm else {
+            panic!("tiered volume should search the on-disk .sdx, got {:?}", v.nm.is_some());
+        };
+        let idx_path = nm.index_file_name().to_string();
+        let sdx_path = nm.db_file_name().to_string();
+        assert!(Path::new(&sdx_path).exists(), "load should build the .sdx");
+
+        let drop_pooled = || {
+            crate::storage::needle_map::file_pool::pooled_index_files().discard(&idx_path);
+            crate::storage::needle_map::file_pool::pooled_index_files().discard(&sdx_path);
+        };
+
+        if crate::storage::needle_map::file_pool::open_index_fds(tmp.path()).is_some() {
+            drop_pooled();
+            assert_eq!(
+                crate::storage::needle_map::file_pool::open_index_fds(tmp.path()),
+                Some(0),
+                "a loaded tiered volume must hold no .idx/.sdx descriptor"
+            );
+        }
+
+        // Lookups still resolve, straight off .sdx.
+        assert!(!v.nm.as_ref().unwrap().get(NeedleId(3)).unwrap().size.is_deleted());
+        assert!(v.nm.as_ref().unwrap().get(NeedleId(9)).is_none());
+
+        // Deletes are still allowed on a tiered volume and land in .idx.
+        let idx_before = std::fs::metadata(&idx_path).unwrap().len();
+        let deleted = v
+            .delete_needle(&mut Needle {
+                id: NeedleId(3),
+                cookie: Cookie(0x1234),
+                ..Needle::default()
+            })
+            .unwrap();
+        assert!(deleted.0 > 0);
+        assert_eq!(
+            std::fs::metadata(&idx_path).unwrap().len(),
+            idx_before + NEEDLE_MAP_ENTRY_SIZE as u64,
+            "the tombstone must be appended to the .idx tail"
+        );
+        assert!(v.nm.as_ref().unwrap().get(NeedleId(3)).unwrap().size.is_deleted());
+
+        if crate::storage::needle_map::file_pool::open_index_fds(tmp.path()).is_some() {
+            drop_pooled();
+            assert_eq!(
+                crate::storage::needle_map::file_pool::open_index_fds(tmp.path()),
+                Some(0),
+                "reads and deletes must give their borrowed handles back"
+            );
+        }
+
+        crate::remote_storage::s3_tier::global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .remove("s3.vif_fd_test");
+    }
+
     #[test]
     fn test_set_writable_keeps_remote_delete_only_mode() {
         let tmp = TempDir::new().unwrap();
@@ -5657,7 +6380,7 @@ mod tests {
             modified_time: 123,
             extension: ".dat".to_string(),
         });
-        v.refresh_remote_write_mode();
+        v.refresh_remote_write_mode().unwrap();
         v.set_writable().unwrap();
 
         assert!(v.is_read_only());
@@ -5706,12 +6429,16 @@ mod tests {
             "reloaded volume should be read-only from .vif"
         );
         assert!(
-            !v.nm.as_ref().unwrap().has_idx_writer(),
-            "read-only load should not attach an .idx writer"
+            matches!(v.nm, Some(NeedleMap::SortedFile(_))),
+            "read-only load should search the on-disk .sdx"
         );
 
         v.set_writable().unwrap();
         assert!(!v.is_read_only());
+        assert!(
+            !matches!(v.nm, Some(NeedleMap::SortedFile(_))),
+            "set_writable must swap out the read-only map, whose put always fails"
+        );
         assert!(
             v.nm.as_ref().unwrap().has_idx_writer(),
             "set_writable must reattach the .idx writer or post-restart writes vanish"
