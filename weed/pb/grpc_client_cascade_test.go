@@ -52,10 +52,14 @@ func startCascadeFiler(t *testing.T) (*cascadeFilerServer, string, grpc.DialOpti
 	grpcClients = make(map[string]*versionedGrpcClient)
 	grpcClientsLock.Unlock()
 	t.Cleanup(func() {
-		server.Stop()
 		grpcClientsLock.Lock()
+		cached := grpcClients
 		grpcClients = previous
 		grpcClientsLock.Unlock()
+		for _, connection := range cached {
+			connection.Close()
+		}
+		server.Stop()
 	})
 
 	return fake, listener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials())
