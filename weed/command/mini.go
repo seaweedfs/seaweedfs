@@ -244,11 +244,6 @@ type miniClientsState struct {
 
 var miniClients *miniClientsState
 
-// miniSeededS3Endpoint is the s3.public_endpoint value this process seeded
-// for the admin file browser, tracked so a later in-process run can tell it
-// apart from an operator-configured value.
-var miniSeededS3Endpoint string
-
 // resetMiniClients installs a fresh client-shutdown state chained from
 // MiniClusterCtx. Called once at the top of runMini; any goroutines from a
 // prior invocation keep their old state via closure and are unaffected.
@@ -1591,15 +1586,11 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	*miniAdminOptions.master = masterAddr
 
 	// Mini knows its own S3 address, so the file browser can offer object
-	// URLs without any configuration. A seed from a prior in-process run is
-	// dropped first so it cannot outlive its S3 server.
-	if miniSeededS3Endpoint != "" && util.GetViper().GetString("s3.public_endpoint") == miniSeededS3Endpoint {
-		util.GetViper().Set("s3.public_endpoint", "")
-		miniSeededS3Endpoint = ""
-	}
-	if *miniEnableS3 && util.GetViper().GetString("s3.public_endpoint") == "" {
-		miniSeededS3Endpoint = "http://" + util.JoinHostPort(*miniIp, *miniS3Options.port)
-		util.GetViper().Set("s3.public_endpoint", miniSeededS3Endpoint)
+	// URLs without any configuration. Assigned unconditionally so a value
+	// from a prior in-process run cannot outlive its S3 server.
+	miniAdminOptions.defaultS3PublicEndpoint = ""
+	if *miniEnableS3 {
+		miniAdminOptions.defaultS3PublicEndpoint = "http://" + util.JoinHostPort(*miniIp, *miniS3Options.port)
 	}
 
 	// Resolve admin credentials from security.toml [admin] / WEED_ADMIN_* env
