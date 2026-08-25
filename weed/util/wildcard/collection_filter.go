@@ -89,11 +89,12 @@ func CompileCollectionMatcher(filter string) (*CollectionMatcher, error) {
 }
 
 // splitCollectionEntries splits a filter on the commas that separate entries,
-// leaving alone the ones inside a regex character class or repetition count, so
-// "bucket[0-9]{1,3}" stays one entry.
+// leaving alone the ones inside a regex character class, repetition count, or
+// group, so "bucket[0-9]{1,3}" and "bucket(foo,bar)" each stay one entry.
 func splitCollectionEntries(filter string) []string {
 	entries := make([]string, 0, 4)
 	inClass, inRepeat := false, false
+	groupDepth := 0
 	start := 0
 	for i := 0; i < len(filter); i++ {
 		switch filter[i] {
@@ -107,8 +108,16 @@ func splitCollectionEntries(filter string) []string {
 			inRepeat = !inClass
 		case '}':
 			inRepeat = false
+		case '(':
+			if !inClass {
+				groupDepth++
+			}
+		case ')':
+			if !inClass && groupDepth > 0 {
+				groupDepth--
+			}
 		case ',':
-			if !inClass && !inRepeat {
+			if !inClass && !inRepeat && groupDepth == 0 {
 				entries = append(entries, filter[start:i])
 				start = i + 1
 			}
