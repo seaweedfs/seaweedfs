@@ -232,14 +232,14 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
-            # The URL reaches the shell below; a value with metacharacters must
-            # arrive as data, not syntax.
+            {{- /* the URL crosses a shell line; metacharacters must arrive as data, not syntax */}}
             - name: LANCE_NAMESPACE_URL
               value: {{ include "seaweedfs.worker.lanceNamespaceUrl" . | quote }}
           command:
             - "/bin/sh"
             - "-ec"
             - |
+              {{- /* the armv7/386 placeholder is empty; exec of it becomes the shell and exits 0 */}}
               if [ ! -s /usr/bin/weed-worker ]; then
                 echo "the Rust worker is not available on this platform ($(uname -m)); it ships for amd64 and arm64" >&2
                 exit 1
