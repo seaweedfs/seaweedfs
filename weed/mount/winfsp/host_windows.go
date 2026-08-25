@@ -65,9 +65,13 @@ func (h *Host) Notify(wfs *mount.WFS) {
 }
 
 // Serve attaches the filesystem at mountPoint, which is a drive letter ("S:"),
-// a directory that does not yet exist, or a UNC path. It blocks until the
-// filesystem is unmounted.
+// a directory that does not yet exist, or a \\server\share UNC path. It blocks
+// until the filesystem is unmounted.
 func (h *Host) Serve(mountPoint string) error {
+	prefix, err := VolumePrefix(mountPoint)
+	if err != nil {
+		return err
+	}
 	opts := []string{
 		"-o", "volname=" + h.volumeName(),
 		"-o", "uid=-1",
@@ -98,6 +102,13 @@ func (h *Host) Serve(mountPoint string) error {
 			"-o", "VolumeInfoTimeout="+ms,
 			"-o", "EaTimeout="+ms,
 		)
+	}
+	if prefix != "" {
+		// The mount point itself becomes the network prefix; what WinFsp
+		// still wants a mount point for is the drive letter it gives the
+		// mounting session, and "*" lets it pick a free one.
+		opts = append(opts, "-o", "VolumePrefix="+prefix)
+		mountPoint = "*"
 	}
 	if h.options.Debug {
 		opts = append(opts, "-d")
