@@ -129,7 +129,7 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/cognusion/imaging v1.0.4
 	github.com/fluent/fluent-logger-golang v1.10.1
-	github.com/getsentry/sentry-go v0.44.1
+	github.com/getsentry/sentry-go v0.48.0
 	github.com/go-ldap/ldap/v3 v3.4.13
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/flatbuffers/go v0.0.0-20230108230133-3b8644d32c50
@@ -193,7 +193,7 @@ require (
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/cockroachdb/apd/v3 v3.2.1 // indirect
-	github.com/cockroachdb/errors v1.11.3 // indirect
+	github.com/cockroachdb/errors v1.14.0 // indirect
 	github.com/cockroachdb/logtags v0.0.0-20241215232642-bb51bb14a506 // indirect
 	github.com/cockroachdb/redact v1.1.5 // indirect
 	github.com/cockroachdb/version v0.0.0-20250314144055-3860cd14adf2 // indirect
