@@ -1006,6 +1006,10 @@ s3:
   # Iceberg catalog REST port (Apache Iceberg REST Catalog API)
   # Set to a port number to enable, or 0/null to disable
   icebergPort: null
+  # Lance Namespace REST port (Lance Namespace API), on by default like
+  # standalone `weed s3`. Set to 0 to disable; that also drops the worker's
+  # Lance maintenance container.
+  lancePort: 9101
   loggingOverrideLevel: null
   # enable user & permission to s3 (need to inject to all services)
   enableAuth: false
@@ -1193,12 +1197,22 @@ s3:
       http: null
       https: null
       iceberg: null
+      lance: null
       metrics: null
 
   icebergIngress:
     enabled: false
     className: ""
     host: "seaweedfs-iceberg.cluster.local"
+    path: "/"
+    pathType: Prefix
+    annotations: {}
+    tls: []
+
+  lanceIngress:
+    enabled: false
+    className: ""
+    host: "seaweedfs-lance.cluster.local"
     path: "/"
     pathType: Prefix
     annotations: {}

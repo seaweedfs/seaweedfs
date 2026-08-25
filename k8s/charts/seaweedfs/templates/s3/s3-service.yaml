@@ -44,6 +44,15 @@ spec:
 {{- end }}
     protocol: TCP
 {{- end }}
+{{- if and .Values.s3.enabled .Values.s3.lancePort }}
+  - name: "swfs-lance"
+    port: {{ .Values.s3.lancePort }}
+    targetPort: {{ .Values.s3.lancePort }}
+{{- if $nodePorts.lance }}
+    nodePort: {{ $nodePorts.lance }}
+{{- end }}
+    protocol: TCP
+{{- end }}
 {{- if and .Values.s3.enabled .Values.s3.httpsPort }}
   - name: "swfs-s3-tls"
     port: {{ .Values.s3.httpsPort }}

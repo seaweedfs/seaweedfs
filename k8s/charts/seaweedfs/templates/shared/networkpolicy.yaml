@@ -73,6 +73,9 @@
 {{-   if .Values.s3.icebergPort }}
 {{-     $ports = append $ports .Values.s3.icebergPort }}
 {{-   end }}
+{{-   if .Values.s3.lancePort }}
+{{-     $ports = append $ports .Values.s3.lancePort }}
+{{-   end }}
 {{-   if .Values.s3.metricsPort }}
 {{-     $ports = append $ports .Values.s3.metricsPort }}
 {{-   end }}

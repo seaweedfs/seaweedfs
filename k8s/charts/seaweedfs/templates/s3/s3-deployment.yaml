@@ -149,6 +149,7 @@ spec:
               {{- if .Values.s3.icebergPort }}
               -port.iceberg={{ .Values.s3.icebergPort }} \
               {{- end }}
+              -port.lance={{ .Values.s3.lancePort | default 0 }} \
               {{- range .Values.s3.extraArgs }}
               {{ . }} \
               {{- end }}
@@ -197,6 +198,10 @@ spec:
             {{- if .Values.s3.icebergPort }}
             - containerPort: {{ .Values.s3.icebergPort }}
               name: swfs-iceberg
+            {{- end }}
+            {{- if .Values.s3.lancePort }}
+            - containerPort: {{ .Values.s3.lancePort }}
+              name: swfs-lance
             {{- end }}
             {{- if .Values.s3.metricsPort }}
             - containerPort: {{ .Values.s3.metricsPort }}
