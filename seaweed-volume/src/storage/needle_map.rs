@@ -14,7 +14,10 @@ use std::path::Path;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 
 mod compact_map;
+pub mod file_pool;
+pub mod sorted_file;
 use compact_map::CompactMap;
+use sorted_file::SortedFileNeedleMap;
 
 use redb::{Database, Durability, ReadableDatabase, ReadableTable, TableDefinition};
 
@@ -977,6 +980,10 @@ impl RedbNeedleMap {
 pub enum NeedleMap {
     InMemory(CompactNeedleMap),
     Redb(RedbNeedleMap),
+    /// Read-only volumes — including every cloud-tiered one — search the sorted
+    /// `.sdx` on disk instead of holding an index in RAM. Mirrors Go's
+    /// `SortedFileNeedleMap`.
+    SortedFile(SortedFileNeedleMap),
 }
 
 impl NeedleMap {
@@ -985,6 +992,7 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => nm.put(key, offset, size),
             NeedleMap::Redb(nm) => nm.put(key, offset, size),
+            NeedleMap::SortedFile(nm) => nm.put(key, offset, size),
         }
     }
 
@@ -993,6 +1001,7 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => nm.get(key),
             NeedleMap::Redb(nm) => nm.get(key),
+            NeedleMap::SortedFile(nm) => nm.get(key),
         }
     }
 
@@ -1001,6 +1010,7 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => nm.delete(key, offset),
             NeedleMap::Redb(nm) => nm.delete(key, offset),
+            NeedleMap::SortedFile(nm) => nm.delete(key, offset),
         }
     }
 
@@ -1009,6 +1019,9 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => nm.set_idx_file(file, offset),
             NeedleMap::Redb(nm) => nm.set_idx_file(file, offset),
+            // The sorted map borrows its .idx per append, so there is no
+            // long-lived writer to install.
+            NeedleMap::SortedFile(_) => {}
         }
     }
 
@@ -1017,6 +1030,8 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => nm.has_idx_writer(),
             NeedleMap::Redb(nm) => nm.has_idx_writer(),
+            // Appends open the .idx on demand, so one is always available.
+            NeedleMap::SortedFile(_) => true,
         }
     }
 
@@ -1025,6 +1040,7 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => nm.content_size(),
             NeedleMap::Redb(nm) => nm.content_size(),
+            NeedleMap::SortedFile(nm) => nm.content_size(),
         }
     }
 
@@ -1033,6 +1049,7 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => nm.deleted_size(),
             NeedleMap::Redb(nm) => nm.deleted_size(),
+            NeedleMap::SortedFile(nm) => nm.deleted_size(),
         }
     }
 
@@ -1041,6 +1058,7 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => nm.file_count(),
             NeedleMap::Redb(nm) => nm.file_count(),
+            NeedleMap::SortedFile(nm) => nm.file_count(),
         }
     }
 
@@ -1049,6 +1067,7 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => nm.deleted_count(),
             NeedleMap::Redb(nm) => nm.deleted_count(),
+            NeedleMap::SortedFile(nm) => nm.deleted_count(),
         }
     }
 
@@ -1057,6 +1076,7 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => nm.max_file_key(),
             NeedleMap::Redb(nm) => nm.max_file_key(),
+            NeedleMap::SortedFile(nm) => nm.max_file_key(),
         }
     }
 
@@ -1067,6 +1087,7 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => nm.max_needle_end(),
             NeedleMap::Redb(nm) => nm.max_needle_end(),
+            NeedleMap::SortedFile(nm) => nm.max_needle_end(),
         }
     }
 
@@ -1075,6 +1096,7 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => nm.index_file_size(),
             NeedleMap::Redb(nm) => nm.index_file_size(),
+            NeedleMap::SortedFile(nm) => nm.index_file_size(),
         }
     }
 
@@ -1083,6 +1105,7 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => nm.sync(),
             NeedleMap::Redb(nm) => nm.sync(),
+            NeedleMap::SortedFile(nm) => nm.sync(),
         }
     }
 
@@ -1091,6 +1114,7 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => nm.close(),
             NeedleMap::Redb(nm) => nm.close(),
+            NeedleMap::SortedFile(nm) => nm.close(),
         }
     }
 
@@ -1099,6 +1123,7 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => nm.save_to_idx(path),
             NeedleMap::Redb(nm) => nm.save_to_idx(path),
+            NeedleMap::SortedFile(nm) => nm.save_to_idx(path),
         }
     }
 
@@ -1110,6 +1135,7 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => nm.ascending_visit(f),
             NeedleMap::Redb(nm) => nm.ascending_visit(f),
+            NeedleMap::SortedFile(nm) => nm.ascending_visit(f),
         }
     }
 
@@ -1126,6 +1152,7 @@ impl NeedleMap {
                 entries
             }
             NeedleMap::Redb(nm) => nm.collect_entries(),
+            NeedleMap::SortedFile(nm) => nm.iter_entries(),
         }
     }
 }
