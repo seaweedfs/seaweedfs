@@ -224,6 +224,10 @@ func TestDecayQuietVolumeSizesDoesNotRollBackAHeartbeat(t *testing.T) {
 	vl.RecordAssign(1, 500)
 	// The heartbeat that wins the race: a compaction shrank the volume.
 	vl.UpdateVolumeSize(1, 2000, 3, true)
+	// Far enough behind that the dedup window no longer covers for the replay,
+	// which is the only case where reading the record under the lock is what
+	// saves the report.
+	advanceSizeTrackingClock(vl, 1, 3*time.Second)
 
 	vl.UpdateVolumeSize(1, 9000, 0, false)
 
