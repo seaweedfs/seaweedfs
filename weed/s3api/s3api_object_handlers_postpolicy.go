@@ -79,10 +79,13 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 	}
 
 	// Verify policy signature.
-	errCode := s3a.iam.doesPolicySignatureMatch(formValues)
+	identity, errCode := s3a.iam.doesPolicySignatureMatch(formValues)
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
+	}
+	if identity != nil {
+		r = r.WithContext(s3_constants.SetIdentityNameInContext(r.Context(), identity.Name))
 	}
 
 	policyBytes, err := base64.StdEncoding.DecodeString(formValues.Get("Policy"))
@@ -319,8 +322,8 @@ func getRedirectPostRawQuery(bucket, key, etag string) string {
 	return redirectValues.Encode()
 }
 
-// Check to see if Policy is signed correctly.
-func (iam *IdentityAccessManagement) doesPolicySignatureMatch(formValues http.Header) s3err.ErrorCode {
+// Check to see if Policy is signed correctly, returning the signing identity.
+func (iam *IdentityAccessManagement) doesPolicySignatureMatch(formValues http.Header) (*Identity, s3err.ErrorCode) {
 	// For SignV2 - Signature field will be valid
 	if _, ok := formValues["Signature"]; ok {
 		return iam.doesPolicySignatureV2Match(formValues)
