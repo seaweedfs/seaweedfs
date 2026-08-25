@@ -57,7 +57,8 @@
 # scan_interval_seconds = 3600
 # max_concurrent = 1
 # min_size_mb = 30
-# only process volumes from this collection ("" = all collections)
+# only process volumes from these collections, comma separated, "*" and "?" wildcards
+# and regex patterns allowed ("" = all collections)
 # collection_filter = ""
 # disk tags preferred for shard placement
 # preferred_tags = ["fast", "ssd"]

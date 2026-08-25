@@ -95,6 +95,26 @@ func TestBuildVolumeMetricsRegexFilter(t *testing.T) {
 	}
 }
 
+func TestBuildVolumeMetricsCollectionList(t *testing.T) {
+	resp := makeTestVolumeListResponse(
+		&master_pb.VolumeInformationMessage{Id: 1, Collection: "photos", Size: 100},
+		&master_pb.VolumeInformationMessage{Id: 2, Collection: "videos", Size: 200},
+		&master_pb.VolumeInformationMessage{Id: 3, Collection: "clips", Size: 300},
+	)
+	metrics, _, _, err := buildVolumeMetrics(resp, "photos,videos")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(metrics) != 2 {
+		t.Fatalf("expected 2 metrics, got %d", len(metrics))
+	}
+	for _, metric := range metrics {
+		if metric.Collection != "photos" && metric.Collection != "videos" {
+			t.Fatalf("unexpected collection %q", metric.Collection)
+		}
+	}
+}
+
 func TestBuildVolumeMetricsInvalidRegex(t *testing.T) {
 	resp := makeTestVolumeListResponse(
 		&master_pb.VolumeInformationMessage{Id: 1, Collection: "photos", Size: 100},

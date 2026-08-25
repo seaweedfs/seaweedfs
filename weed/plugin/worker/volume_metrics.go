@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -137,15 +136,9 @@ func buildVolumeMetrics(
 		return nil, nil, nil, err
 	}
 
-	var collectionRegex *regexp.Regexp
-	trimmedFilter := strings.TrimSpace(collectionFilter)
-	filterMode := CollectionFilterMode(trimmedFilter)
-	if trimmedFilter != "" && filterMode != CollectionFilterAll && filterMode != CollectionFilterEach && trimmedFilter != "*" {
-		var err error
-		collectionRegex, err = regexp.Compile(trimmedFilter)
-		if err != nil {
-			return nil, nil, nil, &configError{err: fmt.Errorf("invalid collection_filter regex %q: %w", trimmedFilter, err)}
-		}
+	collectionMatcher, err := CompileCollectionMatcher(collectionFilter)
+	if err != nil {
+		return nil, nil, nil, &configError{err: err}
 	}
 
 	volumeSizeLimitBytes := uint64(response.VolumeSizeLimitMb) * 1024 * 1024
@@ -167,7 +160,7 @@ func buildVolumeMetrics(
 							Host:       pb.NewServerAddressFromDataNode(node).ToHost(),
 						})
 
-						if collectionRegex != nil && !collectionRegex.MatchString(volume.Collection) {
+						if !collectionMatcher.Matches(volume.Collection) {
 							continue
 						}
 

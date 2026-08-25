@@ -81,7 +81,7 @@ func (h *ECBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						{
 							Name:        "collection_filter",
 							Label:       "Collection Filter",
-							Description: "Only balance EC shards in matching collections (wildcard supported).",
+							Description: "Only balance EC shards in matching collections. Comma-separated list of names, wildcards, or regex patterns.",
 							Placeholder: "all collections",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,

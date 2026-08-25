@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding/ecbalancer"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
@@ -41,7 +42,7 @@ func ecTopo(node1Collection string) *master_pb.TopologyInfo {
 
 func TestBuildBalancerTopology(t *testing.T) {
 	config := NewDefaultConfig()
-	topo, nodeCount, _ := buildBalancerTopology(ecTopo("col1"), config)
+	topo, nodeCount, _ := buildBalancerTopology(ecTopo("col1"), config, nil)
 	if nodeCount != 2 {
 		t.Fatalf("nodeCount = %d, want 2", nodeCount)
 	}
@@ -77,7 +78,7 @@ func TestBuildBalancerTopologyGroupsByHost(t *testing.T) {
 		}},
 	}
 
-	topo, _, _ := buildBalancerTopology(topoInfo, NewDefaultConfig())
+	topo, _, _ := buildBalancerTopology(topoInfo, NewDefaultConfig(), nil)
 	moves := ecbalancer.Plan(topo, ecbalancer.Options{ImbalanceThreshold: 0.01})
 
 	host := func(nodeID string) string { h, _, _ := net.SplitHostPort(nodeID); return h }
@@ -99,7 +100,11 @@ func TestBuildBalancerTopologyGroupsByHost(t *testing.T) {
 func TestBuildBalancerTopologyCollectionFilter(t *testing.T) {
 	config := NewDefaultConfig()
 	config.CollectionFilter = "other" // does not match the volume's collection
-	topo, nodeCount, _ := buildBalancerTopology(ecTopo("col1"), config)
+	allowed, err := pluginworker.CompileCollectionMatcher(config.CollectionFilter)
+	if err != nil {
+		t.Fatalf("CompileCollectionMatcher: %v", err)
+	}
+	topo, nodeCount, _ := buildBalancerTopology(ecTopo("col1"), config, allowed)
 	if nodeCount != 2 {
 		t.Fatalf("nodeCount = %d, want 2", nodeCount)
 	}
