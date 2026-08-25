@@ -140,7 +140,7 @@ pub fn read_ec_shard_config(
     volume_id: VolumeId,
 ) -> io::Result<(u32, u32, i64)> {
     let vif = load_vif_info(dir, dir_idx, collection, volume_id)?;
-    Ok(ec_shard_config_from(vif.as_ref(), dir, collection, volume_id))
+    ec_shard_config_from(vif.as_ref(), dir, collection, volume_id)
 }
 
 /// Resolve (data_shards, parity_shards, block_size) from an already-loaded
@@ -155,26 +155,60 @@ pub fn ec_shard_config_from(
     dir: &str,
     collection: &str,
     volume_id: VolumeId,
-) -> (u32, u32, i64) {
+) -> io::Result<(u32, u32, i64)> {
     let default_ds = crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT as u32;
     let default_ps = crate::storage::erasure_coding::ec_shard::PARITY_SHARDS_COUNT as u32;
-    let usable = |ds: u32, ps: u32| ds > 0 && ps > 0 && (ds + ps) <= MAX_SHARD_COUNT as u32;
+    // Sum as u64: counts near the u32 ceiling would wrap and pass the bound.
+    let usable = |ds: u32, ps: u32| {
+        ds > 0 && ps > 0 && (ds as u64 + ps as u64) <= MAX_SHARD_COUNT as u64
+    };
 
     if let Some(ec) = vif.and_then(|v| v.ec_shard_config.as_ref()) {
         if usable(ec.data_shards, ec.parity_shards) {
-            return (ec.data_shards, ec.parity_shards, ec.block_size);
+            // A recorded block size that no encoder could have produced maps
+            // every read to the wrong shard offset. Refuse the mount rather
+            // than serve those bytes or silently pick a layout.
+            validate_block_size(ec.block_size)?;
+            return Ok((ec.data_shards, ec.parity_shards, ec.block_size));
         }
     }
     let base = crate::storage::volume::volume_file_name(dir, collection, volume_id);
     let path = crate::storage::erasure_coding::ec_bitrot::bitrot_sidecar_path(&base, 0);
     if let Ok(prot) = crate::storage::erasure_coding::ec_bitrot::load_bitrot_sidecar(&path) {
         if let Some(ec) = prot.ec_shard_config.as_ref() {
-            if usable(ec.data_shards, ec.parity_shards) {
-                return (ec.data_shards, ec.parity_shards, ec.block_size);
+            if usable(ec.data_shards, ec.parity_shards)
+                && validate_block_size(ec.block_size).is_ok()
+            {
+                return Ok((ec.data_shards, ec.parity_shards, ec.block_size));
             }
         }
     }
-    (default_ds, default_ps, 0)
+    Ok((default_ds, default_ps, 0))
+}
+
+/// Reports whether a `.vif`-recorded shard block size is one an encoder could
+/// have produced. 0 means the legacy two-tier layout, which is always valid;
+/// anything positive must be a whole number of small blocks, because that is
+/// what `uniform_block_size` rounds to. Mirrors Go's `ValidateBlockSize`.
+pub fn validate_block_size(block_size: i64) -> io::Result<()> {
+    if block_size == 0 {
+        return Ok(());
+    }
+    if block_size < 0
+        || block_size
+            % crate::storage::erasure_coding::ec_shard::ERASURE_CODING_SMALL_BLOCK_SIZE as i64
+            != 0
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "invalid shard block size {}: expected 0 (legacy) or a multiple of {}",
+                block_size,
+                crate::storage::erasure_coding::ec_shard::ERASURE_CODING_SMALL_BLOCK_SIZE
+            ),
+        ));
+    }
+    Ok(())
 }
 
 impl EcVolume {
@@ -189,7 +223,7 @@ impl EcVolume {
         // the version / dat-size fields below.
         let vif = load_vif_info(dir, dir_idx, collection, volume_id)?;
         let (data_shards, parity_shards, block_size) =
-            ec_shard_config_from(vif.as_ref(), dir, collection, volume_id);
+            ec_shard_config_from(vif.as_ref(), dir, collection, volume_id)?;
 
         let total_shards = (data_shards + parity_shards) as usize;
         let mut shards = Vec::with_capacity(total_shards);

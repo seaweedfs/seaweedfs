@@ -175,6 +175,7 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 	// Absent stays legal — legacy volumes predate the sidecar.
 	volumeInfo, _, found, vifErr := volume_info.MaybeLoadVolumeInfo(vifFileName)
 	if vifErr != nil {
+		ev.Close()
 		return nil, fmt.Errorf("ec volume %d: load %s: %w", vid, vifFileName, vifErr)
 	}
 	if found {
@@ -192,6 +193,12 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 			if ds <= 0 || ps <= 0 || ds+ps > MaxShardCount {
 				glog.Warningf("Invalid EC config in VolumeInfo for volume %d (data=%d, parity=%d), using defaults", vid, ds, ps)
 				ev.ECContext = NewDefaultECContext(collection, vid)
+			} else if blockErr := ValidateBlockSize(volumeInfo.EcShardConfig.GetBlockSize()); blockErr != nil {
+				// A recorded block size that no encoder could have produced maps
+				// every read to the wrong shard offset. Refuse the mount rather
+				// than serve those bytes or silently pick a layout.
+				ev.Close()
+				return nil, fmt.Errorf("ec volume %d: %s: %w", vid, vifFileName, blockErr)
 			} else {
 				ev.ECContext = &ECContext{
 					Collection:   collection,
@@ -220,13 +227,17 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 		// sidecar for the same reason.
 		ev.ECContext = NewDefaultECContext(collection, vid)
 		if prot, serr := LoadBitrotSidecar(BitrotSidecarPath(dataBaseFileName, 0)); serr == nil {
-			if cfg := prot.GetEcShardConfig(); cfg.GetDataShards() > 0 &&
-				int(cfg.GetDataShards()+cfg.GetParityShards()) <= MaxShardCount {
+			// Sum in int, not uint32: a malformed sidecar claiming counts near
+			// the uint32 ceiling would wrap and pass the bound.
+			cfg := prot.GetEcShardConfig()
+			ds, ps := int(cfg.GetDataShards()), int(cfg.GetParityShards())
+			if ds > 0 && ps > 0 && ds+ps <= MaxShardCount &&
+				ValidateBlockSize(cfg.GetBlockSize()) == nil {
 				ev.ECContext = &ECContext{
 					Collection:   collection,
 					VolumeId:     vid,
-					DataShards:   int(cfg.GetDataShards()),
-					ParityShards: int(cfg.GetParityShards()),
+					DataShards:   ds,
+					ParityShards: ps,
 					BlockSize:    cfg.GetBlockSize(),
 				}
 				ev.EncodeTsNs = cfg.GetEncodeTsNs()

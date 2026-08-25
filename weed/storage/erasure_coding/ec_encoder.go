@@ -83,6 +83,23 @@ func WriteEcFiles(baseFileName string, ctx *ECContext) (*volume_server_pb.EcBitr
 // small block. For every input this equals the legacy layout's padded shard
 // size, so only the byte placement differs between the two layouts, never the
 // shard length.
+// ValidateBlockSize reports whether a `.vif`-recorded shard block size is one
+// an encoder could have produced. 0 means the legacy two-tier layout, which is
+// always valid; anything positive must be a whole number of small blocks,
+// because that is what UniformBlockSize rounds to. A negative or unaligned
+// value is corruption, and using it would map every read to the wrong shard
+// offset.
+func ValidateBlockSize(blockSize int64) error {
+	if blockSize == 0 {
+		return nil
+	}
+	if blockSize < 0 || blockSize%ErasureCodingSmallBlockSize != 0 {
+		return fmt.Errorf("invalid shard block size %d: expected 0 (legacy) or a multiple of %d",
+			blockSize, ErasureCodingSmallBlockSize)
+	}
+	return nil
+}
+
 func UniformBlockSize(datFileSize int64, dataShards int) int64 {
 	perShard := (datFileSize + int64(dataShards) - 1) / int64(dataShards)
 	blocks := (perShard + ErasureCodingSmallBlockSize - 1) / ErasureCodingSmallBlockSize

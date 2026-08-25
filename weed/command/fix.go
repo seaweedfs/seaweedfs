@@ -344,7 +344,13 @@ func doFixEcxFromShards(basePath, baseFileName, collection string, volumeId int6
 			fail(fmt.Errorf("volume %d: read %s: %w", volumeId, vifName, loadErr))
 			return
 		} else if found && vi != nil {
-			if cfg := vi.GetEcShardConfig(); cfg != nil && cfg.GetDataShards() > 0 {
+			// A partial config (parity 0, or counts past the shard ceiling)
+			// describes no layout: leave the sentinel unknown and let the
+			// sidecar / dual scan below answer, and rewrite the .vif at the end
+			// rather than trusting it.
+			cfg := vi.GetEcShardConfig()
+			if cfg != nil && cfg.GetDataShards() > 0 && cfg.GetParityShards() > 0 &&
+				int(cfg.GetDataShards())+int(cfg.GetParityShards()) <= erasure_coding.MaxShardCount {
 				dataShards = int(cfg.GetDataShards())
 				parityShards = int(cfg.GetParityShards())
 				// Only an EC config answers the layout question. Reading 0 off a

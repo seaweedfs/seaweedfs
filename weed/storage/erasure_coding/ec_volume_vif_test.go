@@ -6,8 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 )
 
 // A present-but-malformed .vif must FAIL the mount: every new encode
@@ -45,5 +47,53 @@ func TestNewEcVolumeAbsentVifMountsWithDefaults(t *testing.T) {
 	defer ev.Close()
 	if ev.ECContext.BlockSize != 0 {
 		t.Errorf("legacy mount must use the legacy layout: BlockSize=%d", ev.ECContext.BlockSize)
+	}
+}
+
+// A block size no encoder could have produced (negative, or not a whole
+// number of small blocks) maps every read to the wrong shard offset, so the
+// mount refuses it rather than serving those bytes.
+func TestNewEcVolumeRejectsImplausibleBlockSize(t *testing.T) {
+	for _, blockSize := range []int64{1, -1, 3*1024*1024 + 1} {
+		dir := t.TempDir()
+		base := filepath.Join(dir, "1")
+		if err := os.WriteFile(base+".ecx", []byte{}, 0644); err != nil {
+			t.Fatalf("seed .ecx: %v", err)
+		}
+		if err := volume_info.SaveVolumeInfo(base+".vif", &volume_server_pb.VolumeInfo{
+			Version: uint32(needle.Version3),
+			EcShardConfig: &volume_server_pb.EcShardConfig{
+				DataShards: 10, ParityShards: 4, BlockSize: blockSize,
+			},
+		}); err != nil {
+			t.Fatalf("seed .vif: %v", err)
+		}
+		if _, err := NewEcVolume(types.HardDriveType, dir, dir, "", needle.VolumeId(1)); err == nil {
+			t.Errorf("block size %d must fail the mount", blockSize)
+		}
+	}
+}
+
+func TestNewEcVolumeAcceptsAlignedBlockSize(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "1")
+	if err := os.WriteFile(base+".ecx", []byte{}, 0644); err != nil {
+		t.Fatalf("seed .ecx: %v", err)
+	}
+	if err := volume_info.SaveVolumeInfo(base+".vif", &volume_server_pb.VolumeInfo{
+		Version: uint32(needle.Version3),
+		EcShardConfig: &volume_server_pb.EcShardConfig{
+			DataShards: 10, ParityShards: 4, BlockSize: 3 * 1024 * 1024,
+		},
+	}); err != nil {
+		t.Fatalf("seed .vif: %v", err)
+	}
+	ev, err := NewEcVolume(types.HardDriveType, dir, dir, "", needle.VolumeId(1))
+	if err != nil {
+		t.Fatalf("aligned block size must mount: %v", err)
+	}
+	defer ev.Close()
+	if ev.ECContext.BlockSize != 3*1024*1024 {
+		t.Errorf("BlockSize = %d, want 3MiB", ev.ECContext.BlockSize)
 	}
 }
