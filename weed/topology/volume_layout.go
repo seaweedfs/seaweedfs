@@ -195,7 +195,8 @@ func (vl *VolumeLayout) UpdateOversizedState(v *storage.VolumeInfo, dn *DataNode
 // Only a report from a volume server claims the replica-dedup window; the
 // periodic decay replays the size already on record, and letting it dedup
 // would swallow the report that follows and strand the master on a stale size
-// no one will send again.
+// no one will send again. The decay passes no size of its own — it reads the
+// record under this lock, so a heartbeat that landed since is not rolled back.
 func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint64, compactRevision uint32, fromHeartbeat bool) (recoveredToWritable bool) {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
@@ -231,8 +232,13 @@ func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint6
 	} else {
 		if fromHeartbeat {
 			st.lastUpdateTime = now
+			st.reportedSize = reportedSize
+		} else {
+			// Take the record as it stands under this lock, not as the decay
+			// pass saw it: a heartbeat may have landed since, and replaying
+			// the older size would roll its report back.
+			reportedSize, compactRevision = st.reportedSize, st.compactRevision
 		}
-		st.reportedSize = reportedSize
 		if compactRevision != st.compactRevision {
 			// Compaction happened — size drop is real, not pending. Reset.
 			st.compactRevision = compactRevision
@@ -285,23 +291,18 @@ func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint6
 // and a volume held out of the writable list takes no writes, so without this
 // an inflated estimate is never decayed and the volume never returns.
 func (vl *VolumeLayout) DecayQuietVolumeSizes(quietCutoff time.Duration) {
-	type quietVolume struct {
-		vid             needle.VolumeId
-		reportedSize    uint64
-		compactRevision uint32
-	}
-	var quiets []quietVolume
+	var quiets []needle.VolumeId
 	now := time.Now()
 	vl.accessLock.RLock()
 	for vid, st := range vl.sizeTracking {
 		if now.Sub(st.lastUpdateTime) >= quietCutoff && (st.effectiveSize > st.reportedSize || !st.fullSince.IsZero()) {
-			quiets = append(quiets, quietVolume{vid, st.reportedSize, st.compactRevision})
+			quiets = append(quiets, vid)
 		}
 	}
 	vl.accessLock.RUnlock()
-	for _, q := range quiets {
-		if vl.UpdateVolumeSize(q.vid, q.reportedSize, q.compactRevision, false) {
-			vl.AdjustActiveVolumeCountAfterRecovery(q.vid)
+	for _, vid := range quiets {
+		if vl.UpdateVolumeSize(vid, 0, 0, false) {
+			vl.AdjustActiveVolumeCountAfterRecovery(vid)
 		}
 	}
 }

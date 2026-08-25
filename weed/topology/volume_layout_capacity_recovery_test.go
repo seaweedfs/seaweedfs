@@ -199,3 +199,43 @@ func TestDecayQuietVolumeSizesKeepsTheNextHeartbeat(t *testing.T) {
 		t.Errorf("the heartbeat after a decay left compactRevision at %d, want the reported 7", got)
 	}
 }
+
+// The decay picks its volumes under a read lock and replays them under a write
+// one. A compaction heartbeat landing in that gap must survive, so the replay
+// takes the record as it stands rather than the size the pass set out with —
+// the arguments below stand in for that older snapshot.
+func TestDecayQuietVolumeSizesDoesNotRollBackAHeartbeat(t *testing.T) {
+	layout := `
+{
+  "dc1":{
+    "rack1":{
+      "server1":{
+        "volumes":[
+          {"id":1, "size":9000, "replication":"000"}
+        ],
+        "limit":10
+      }
+    }
+  }
+}
+`
+	_, vl := setupPickTest(t, layout, 10000)
+
+	vl.RecordAssign(1, 500)
+	// The heartbeat that wins the race: a compaction shrank the volume.
+	vl.UpdateVolumeSize(1, 2000, 3, true)
+
+	vl.UpdateVolumeSize(1, 9000, 0, false)
+
+	vl.accessLock.RLock()
+	defer vl.accessLock.RUnlock()
+	if got := vl.sizeTracking[1].reportedSize; got != 2000 {
+		t.Errorf("the decay rolled reportedSize back to %d, want the compacted 2000", got)
+	}
+	if got := vl.sizeTracking[1].compactRevision; got != 3 {
+		t.Errorf("the decay rolled compactRevision back to %d, want the reported 3", got)
+	}
+	if got := vl.sizeTracking[1].effectiveSize; got > 2000 {
+		t.Errorf("effectiveSize %d outgrew the compacted size the heartbeat reported", got)
+	}
+}
