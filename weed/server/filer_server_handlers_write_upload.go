@@ -242,6 +242,13 @@ func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, 
 		return failedFileChunks, err
 	}
 
+	// A retry that lands elsewhere strands the earlier attempts: a volume server
+	// 5xxs after storing the needle locally when replication fails, and each
+	// attempt used its own file id, so nothing references them now.
+	if len(failedFileChunks) > 0 {
+		fs.filer.DeleteUncommittedChunks(ctx, failedFileChunks)
+	}
+
 	// if last chunk exhausted the reader exactly at the border
 	if uploadResult.Size == 0 {
 		return nil, nil
