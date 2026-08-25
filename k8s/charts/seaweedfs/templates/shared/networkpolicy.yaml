@@ -100,6 +100,9 @@
 {{-   if .Values.worker.metricsPort }}
 {{-     $ports = append $ports .Values.worker.metricsPort }}
 {{-   end }}
+{{-   if and .Values.worker.lanceMetricsPort (include "seaweedfs.worker.lanceNamespaceUrl" .) }}
+{{-     $ports = append $ports .Values.worker.lanceMetricsPort }}
+{{-   end }}
 {{-   $targets = append $targets (dict "component" "worker" "ports" $ports) }}
 {{- end }}
 

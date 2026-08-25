@@ -1474,6 +1474,23 @@ worker:
   metricsPort: 9327
   metricsIp: ""  # If empty, defaults to 0.0.0.0
 
+  # The Lance maintenance worker (/usr/bin/weed-worker, Rust) runs as a
+  # second container beside `weed worker` whenever its namespace is
+  # reachable: namespaceUrl set, or s3 enabled with a nonzero s3.lancePort.
+  # It runs alongside rather than instead, because the job families are
+  # disjoint: the Go worker serves vacuum, balance, EC and
+  # iceberg_maintenance; only the Rust worker serves lance_compact,
+  # lance_optimize_indices and lance_cleanup_versions. The binary ships for
+  # amd64 and arm64; on an armv7/386-only cluster set s3.lancePort: 0, or
+  # the container exits at startup naming the platform.
+
+  # Lance namespace URL override. When empty, derived from this release's
+  # S3 service and s3.lancePort.
+  namespaceUrl: ""
+
+  # Metrics port for the Lance worker container; the Go worker keeps metricsPort
+  lanceMetricsPort: 9328
+
   # Admin server to connect to
   adminServer: ""
 

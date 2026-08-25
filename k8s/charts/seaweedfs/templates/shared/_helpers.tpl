@@ -148,6 +148,15 @@ true
 {{- end -}}
 {{- end -}}
 
+{{/* Lance namespace URL the worker's Lance container maintains; empty when unreachable */}}
+{{- define "seaweedfs.worker.lanceNamespaceUrl" -}}
+{{- if .Values.worker.namespaceUrl -}}
+{{- .Values.worker.namespaceUrl -}}
+{{- else if and .Values.s3.enabled .Values.s3.lancePort -}}
+{{- printf "http://%s.%s:%d" (include "seaweedfs.componentName" (list . "s3")) .Release.Namespace (int .Values.s3.lancePort) -}}
+{{- end -}}
+{{- end -}}
+
 {{/* Return the proper volume image */}}
 {{- define "seaweedfs.volume.image" -}}
 {{- if .Values.volume.imageOverride -}}
