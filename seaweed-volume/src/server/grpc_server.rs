@@ -3766,18 +3766,40 @@ impl VolumeServer for VolumeGrpcService {
                         )));
                     }
 
-                    if !vol.volume_info.files.is_empty() {
-                        vol.volume_info.files.remove(0);
-                    }
+                    // Snapshot the remote reference before dropping it: the
+                    // refresh below can fail, and a half-applied transition
+                    // leaves the volume claiming local while the remote backend
+                    // is still attached and the on-disk .vif still says remote
+                    // — a state a retry reads as "already on local disk" and
+                    // refuses to finish.
+                    let removed_remote = if vol.volume_info.files.is_empty() {
+                        None
+                    } else {
+                        Some(vol.volume_info.files.remove(0))
+                    };
                     // Swaps the read-only sorted map out before the volume is
                     // published as writable; without it the first write would
                     // append to the local .dat and then fail to index.
-                    vol.refresh_remote_write_mode().map_err(|e| {
-                        Status::internal(format!(
+                    if let Err(e) = vol.refresh_remote_write_mode() {
+                        if let Some(remote) = removed_remote {
+                            vol.volume_info.files.insert(0, remote);
+                        }
+                        // Put the derived flags and the needle map back where
+                        // the restored reference says they belong. Best effort:
+                        // if even this fails the volume stays pinned read-only,
+                        // which is the safe end of the transition.
+                        if let Err(restore_err) = vol.refresh_remote_write_mode() {
+                            tracing::warn!(
+                                volume_id = vid.0,
+                                error = %restore_err,
+                                "tier-down rollback could not restore the remote write mode",
+                            );
+                        }
+                        return Err(Status::internal(format!(
                             "volume {} failed to refresh write mode: {}",
                             vid, e
-                        ))
-                    })?;
+                        )));
+                    }
 
                     if let Err(e) = vol.save_volume_info() {
                         return Err(Status::internal(format!(

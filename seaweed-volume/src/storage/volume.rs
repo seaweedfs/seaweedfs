@@ -958,6 +958,11 @@ impl Volume {
                             "cannot open the index for write; serving this volume without deletes"
                         );
                         self.no_write_or_delete = true;
+                        // Deletes are gone with the writer, so stop advertising
+                        // them: leaving no_write_can_delete set would report
+                        // this volume as delete-capable in metrics and mode
+                        // checks while every delete is refused.
+                        self.no_write_can_delete = false;
                         self.load_index_inmemory(idx_path)
                     }
                     Err(retry_err) => Err(retry_err),
@@ -1242,7 +1247,7 @@ impl Volume {
     ) -> Result<i32, VolumeError> {
         let _guard = self.data_file_access_control.read_lock();
         let nm = self.nm_or_not_found()?;
-        let nv = nm.get(n.id).ok_or(VolumeError::NotFound)?;
+        let nv = nm.get(n.id)?.ok_or(VolumeError::NotFound)?;
 
         if nv.offset.is_zero() {
             return Err(VolumeError::NotFound);
@@ -1484,7 +1489,7 @@ impl Volume {
     ) -> Result<NeedleStreamInfo, VolumeError> {
         let _guard = self.data_file_access_control.read_lock();
         let nm = self.nm_or_not_found()?;
-        let nv = nm.get(n.id).ok_or(VolumeError::NotFound)?;
+        let nv = nm.get(n.id)?.ok_or(VolumeError::NotFound)?;
 
         if nv.offset.is_zero() {
             return Err(VolumeError::NotFound);
@@ -1586,7 +1591,7 @@ impl Volume {
         needle_id: NeedleId,
     ) -> Result<(u64, u16), VolumeError> {
         let nm = self.nm_or_not_found()?;
-        let nv = nm.get(needle_id).ok_or(VolumeError::NotFound)?;
+        let nv = nm.get(needle_id)?.ok_or(VolumeError::NotFound)?;
         if nv.offset.is_zero() {
             return Err(VolumeError::NotFound);
         }
@@ -1723,7 +1728,7 @@ impl Volume {
 
         // Cookie validation for existing needle (matches Go: check whenever nm.Get returns ok)
         if let Some(nm) = &self.nm {
-            if let Some(nv) = nm.get(n.id) {
+            if let Some(nv) = nm.get(n.id)? {
                 let mut existing = Needle::default();
                 // Read only the header to check cookie
                 self.read_needle_header_unlocked(&mut existing, nv.offset.to_actual_offset())?;
@@ -1774,7 +1779,7 @@ impl Volume {
 
         // Update needle map (uses n.size = full body size, matching Go's nm.Put)
         let should_update = if let Some(nm) = &self.nm {
-            match nm.get(n.id) {
+            match nm.get(n.id)? {
                 Some(nv) => (nv.offset.to_actual_offset() as u64) < offset,
                 None => true,
             }
@@ -1835,7 +1840,17 @@ impl Volume {
         }
 
         if let Some(nm) = &self.nm {
-            if let Some(nv) = nm.get(n.id) {
+            let existing = match nm.get(n.id) {
+                Ok(existing) => existing,
+                Err(e) => {
+                    // Not a lookup miss: the index could not be read. Report
+                    // "unknown" so the caller writes the needle again rather
+                    // than treating an unreadable index as proof of a change.
+                    warn!(volume_id = self.id.0, error = %e, "needle map lookup failed");
+                    return None;
+                }
+            };
+            if let Some(nv) = existing {
                 if !nv.offset.is_zero() && nv.size.is_valid() {
                     let mut old = Needle::default();
                     let mut ro = ReadOption::default();
@@ -1905,7 +1920,10 @@ impl Volume {
 
     fn do_delete_request(&mut self, n: &mut Needle) -> Result<Size, VolumeError> {
         let (found, size, _stored_offset) = if let Some(nm) = &self.nm {
-            if let Some(nv) = nm.get(n.id) {
+            // Propagate: acknowledging the delete as a no-op because the index
+            // could not be read would drop the tombstone on the floor while the
+            // caller believes the needle is gone.
+            if let Some(nv) = nm.get(n.id)? {
                 if !nv.size.is_deleted() {
                     (true, nv.size, nv.offset)
                 } else {
@@ -2051,7 +2069,7 @@ impl Volume {
                 continue;
             }
 
-            let Some(nv) = nm.get(key) else {
+            let Some(nv) = nm.get(key)? else {
                 offset += total_size;
                 continue;
             };
@@ -2601,7 +2619,7 @@ impl Volume {
     /// writable: swap out the read-only map, attach the .idx writer, persist the
     /// mark. Split out so set_writable has one rollback point rather than three.
     fn publish_writable(&mut self) -> Result<(), VolumeError> {
-        self.reopen_idx_for_write()?;
+        self.reconcile_index_mode()?;
         self.attach_idx_writer_if_missing()?;
         self.save_vif()
     }
@@ -2613,12 +2631,21 @@ impl Volume {
     /// publishing a writable volume without this leaves every write appending to
     /// .dat and then failing to index it. A no-op unless the map is the sorted
     /// one and the flags have already moved.
-    fn reopen_idx_for_write(&mut self) -> Result<(), VolumeError> {
-        if self.use_sorted_index() || !matches!(self.nm, Some(NeedleMap::SortedFile(_))) {
+    fn reconcile_index_mode(&mut self) -> Result<(), VolumeError> {
+        let wants_sorted = self.use_sorted_index();
+        let has_sorted = matches!(self.nm, Some(NeedleMap::SortedFile(_)));
+        if wants_sorted == has_sorted {
             return Ok(());
         }
+        // Both directions matter. Tiering DOWN has to trade the read-only
+        // sorted map for a writable one before the volume is published as
+        // writable. Tiering UP has to install the sorted map, or a volume
+        // tiered while the server runs keeps its whole index in RAM and its
+        // .idx descriptor pinned until the next restart — the cost this map
+        // exists to avoid.
+        //
         // load_index only publishes self.nm once the new map is built, so a
-        // failure leaves the sorted map in place and the caller can recover.
+        // failure leaves the previous map in place and the caller can recover.
         self.load_index()
     }
 
@@ -2638,7 +2665,7 @@ impl Volume {
             // only clear the remoteness-derived flag, not an operator mark
             self.no_write_can_delete = false;
         }
-        if let Err(e) = self.reopen_idx_for_write() {
+        if let Err(e) = self.reconcile_index_mode() {
             self.no_write_or_delete = true;
             return Err(e);
         }
@@ -3066,7 +3093,7 @@ impl Volume {
         // Dedup check: if the same needle already exists with matching content, skip the write.
         // Matches Go's WriteNeedleBlob which reads existing needle and compares cookie+checksum+data.
         if let Some(nm) = &self.nm {
-            if let Some(nv) = nm.get(needle_id) {
+            if let Some(nv) = nm.get(needle_id)? {
                 if nv.size == size {
                     let version = self.version();
                     // Read existing needle from disk
@@ -4419,7 +4446,7 @@ mod tests {
             ..Needle::default()
         };
         v.write_needle(&mut kept, true, true).unwrap();
-        let prior = v.nm.as_ref().unwrap().get(NeedleId(1)).unwrap();
+        let prior = v.nm.as_ref().unwrap().get(NeedleId(1)).unwrap().unwrap();
         let dat_len_before = std::fs::metadata(v.file_name(".dat")).unwrap().len();
         let file_count_before = v.file_count();
         let content_size_before = v.content_size();
@@ -4440,7 +4467,7 @@ mod tests {
             dat_len_before,
             "the unflushed append should be off the .dat"
         );
-        let now = v.nm.as_ref().unwrap().get(NeedleId(1)).unwrap();
+        let now = v.nm.as_ref().unwrap().get(NeedleId(1)).unwrap().unwrap();
         assert_eq!(
             now.offset, prior.offset,
             "the mapping should never have moved"
@@ -4570,7 +4597,7 @@ mod tests {
             dat_len_before
         );
         assert!(
-            v.nm.as_ref().unwrap().get(NeedleId(7)).is_none(),
+            v.nm.as_ref().unwrap().get(NeedleId(7)).unwrap().is_none(),
             "a needle that never reached the disk must not be indexed at all"
         );
         assert_eq!(v.file_count(), file_count_before);
@@ -5857,6 +5884,60 @@ mod tests {
     // map it booted with is the read-only sorted one, whose put always fails, so
     // without a rebuild the first write appends to .dat and then cannot be
     // indexed — leaving bytes nothing references.
+    /// A volume tiered while the server runs must install the sorted map right
+    /// then. Reconciling only on the way down left it holding the whole index
+    /// in RAM and its .idx descriptor pinned until the next restart — the cost
+    /// the sorted map exists to avoid.
+    #[test]
+    fn test_tier_up_installs_the_sorted_needle_map() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+        for i in 1..=2u64 {
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(0x1234),
+                data: format!("needle-{i}").into_bytes(),
+                data_size: format!("needle-{i}").len() as u32,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+        }
+        v.sync_to_disk().unwrap();
+        assert!(
+            !matches!(v.nm, Some(NeedleMap::SortedFile(_))),
+            "a local volume starts with a writable in-memory map"
+        );
+
+        // What the tier-up handler does once the .dat is uploaded: record the
+        // remote reference and reconcile the mode.
+        v.volume_info.files.push(PbRemoteFile {
+            backend_type: "s3".to_string(),
+            backend_id: "vif_tierup_test".to_string(),
+            key: "remote-key".to_string(),
+            offset: 0,
+            file_size: v.dat_file_size().unwrap(),
+            modified_time: 123,
+            extension: ".dat".to_string(),
+        });
+        v.refresh_remote_write_mode().unwrap();
+
+        assert!(v.has_remote_file);
+        assert!(
+            matches!(v.nm, Some(NeedleMap::SortedFile(_))),
+            "tier-up must install the sorted map without waiting for a restart"
+        );
+        // The index still answers, now off .sdx.
+        let nv = v
+            .nm
+            .as_ref()
+            .unwrap()
+            .get(NeedleId(1))
+            .unwrap()
+            .expect("needle 1 still resolves through the sorted index");
+        assert!(!nv.size.is_deleted());
+    }
+
     #[test]
     fn test_tier_down_swaps_in_a_writable_needle_map() {
         let tmp = TempDir::new().unwrap();
@@ -6330,8 +6411,8 @@ mod tests {
         }
 
         // Lookups still resolve, straight off .sdx.
-        assert!(!v.nm.as_ref().unwrap().get(NeedleId(3)).unwrap().size.is_deleted());
-        assert!(v.nm.as_ref().unwrap().get(NeedleId(9)).is_none());
+        assert!(!v.nm.as_ref().unwrap().get(NeedleId(3)).unwrap().unwrap().size.is_deleted());
+        assert!(v.nm.as_ref().unwrap().get(NeedleId(9)).unwrap().is_none());
 
         // Deletes are still allowed on a tiered volume and land in .idx.
         let idx_before = std::fs::metadata(&idx_path).unwrap().len();
@@ -6348,7 +6429,7 @@ mod tests {
             idx_before + NEEDLE_MAP_ENTRY_SIZE as u64,
             "the tombstone must be appended to the .idx tail"
         );
-        assert!(v.nm.as_ref().unwrap().get(NeedleId(3)).unwrap().size.is_deleted());
+        assert!(v.nm.as_ref().unwrap().get(NeedleId(3)).unwrap().unwrap().size.is_deleted());
 
         if crate::storage::needle_map::file_pool::open_index_fds(tmp.path()).is_some() {
             drop_pooled();
