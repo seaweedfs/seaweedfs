@@ -223,6 +223,81 @@ spec:
           {{- if .Values.worker.containerSecurityContext.enabled }}
           securityContext: {{- omit .Values.worker.containerSecurityContext "enabled" | toYaml | nindent 12 }}
           {{- end }}
+        {{- if include "seaweedfs.worker.lanceNamespaceUrl" . }}
+        - name: worker-lance
+          image: {{ template "seaweedfs.worker.image" . }}
+          imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            # The URL reaches the shell below; a value with metacharacters must
+            # arrive as data, not syntax.
+            - name: LANCE_NAMESPACE_URL
+              value: {{ include "seaweedfs.worker.lanceNamespaceUrl" . | quote }}
+          command:
+            - "/bin/sh"
+            - "-ec"
+            - |
+              if [ ! -s /usr/bin/weed-worker ]; then
+                echo "the Rust worker is not available on this platform ($(uname -m)); it ships for amd64 and arm64" >&2
+                exit 1
+              fi
+              exec /usr/bin/weed-worker \
+              --id="$POD_NAME" \
+              {{- if .Values.worker.adminServer }}
+              --admin={{ .Values.worker.adminServer }} \
+              {{- else }}
+              --admin={{ template "seaweedfs.fullname" . }}-admin.{{ .Release.Namespace }}:{{ .Values.admin.port }}{{ if .Values.admin.grpcPort }}.{{ .Values.admin.grpcPort }}{{ end }} \
+              {{- end }}
+              --namespace="$LANCE_NAMESPACE_URL" \
+              {{- if .Values.global.seaweedfs.enableSecurity }}
+              --tls-ca=/usr/local/share/ca-certificates/ca/tls.crt \
+              --tls-cert=/usr/local/share/ca-certificates/worker/tls.crt \
+              --tls-key=/usr/local/share/ca-certificates/worker/tls.key \
+              {{- end }}
+              {{- if .Values.worker.lanceMetricsPort }}
+              --metrics-port={{ .Values.worker.lanceMetricsPort }} \
+              --metrics-ip=0.0.0.0 \
+              {{- end }}
+              --max-concurrency={{ .Values.worker.maxExecute }}
+          {{- if .Values.global.seaweedfs.enableSecurity }}
+          volumeMounts:
+            - name: ca-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/ca/
+            - name: worker-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/worker/
+          {{- end }}
+          {{- if .Values.worker.lanceMetricsPort }}
+          ports:
+            - containerPort: {{ .Values.worker.lanceMetricsPort }}
+              name: lance-metrics
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: lance-metrics
+            initialDelaySeconds: 30
+            periodSeconds: 60
+            successThreshold: 1
+            failureThreshold: 5
+            timeoutSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: lance-metrics
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            successThreshold: 1
+            failureThreshold: 3
+            timeoutSeconds: 10
+          {{- end }}
+          {{- if .Values.worker.containerSecurityContext.enabled }}
+          securityContext: {{- omit .Values.worker.containerSecurityContext "enabled" | toYaml | nindent 12 }}
+          {{- end }}
+        {{- end }}
       {{- if .Values.worker.sidecars }}
       {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.worker.sidecars "context" $) | nindent 8 }}
       {{- end }}
