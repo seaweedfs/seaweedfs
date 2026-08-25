@@ -191,7 +191,14 @@ func (vl *VolumeLayout) UpdateOversizedState(v *storage.VolumeInfo, dn *DataNode
 // previously eagerly removed by RecordAssign back under the writable
 // threshold and this call re-added it to the writable list. The caller
 // should mirror the activeVolumeCount bookkeeping.
-func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint64, compactRevision uint32) (recoveredToWritable bool) {
+//
+// fromHeartbeat marks a volume server's report. The periodic decay stands in
+// for the report a quiet volume never sends, so it passes no size of its own —
+// it reads the record under this lock, and never advances lastUpdateTime, or
+// it would swallow the next real report and strand the master on a stale size
+// no one will send again. Both callers give way to a report already handled
+// for this cycle.
+func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint64, compactRevision uint32, fromHeartbeat bool) (recoveredToWritable bool) {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
@@ -211,6 +218,9 @@ func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint6
 	now := time.Now()
 	st := vl.sizeTracking[vid]
 	if st == nil {
+		if !fromHeartbeat {
+			return false // the entry went while the decay was picking its work
+		}
 		st = &volumeSizeTracking{
 			effectiveSize:   reportedSize,
 			reportedSize:    reportedSize,
@@ -219,10 +229,21 @@ func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint6
 		}
 		vl.sizeTracking[vid] = st
 	} else if now.Sub(st.lastUpdateTime) < 2*time.Second {
-		return false // duplicate replica in the same heartbeat cycle
+		// Something already decayed this volume for this cycle: another replica
+		// of the same report, or for the decay a heartbeat that arrived after
+		// the pass chose the volume. Halving twice would forget pending bytes
+		// the volume has not written yet.
+		return false
 	} else {
-		st.lastUpdateTime = now
-		st.reportedSize = reportedSize
+		if fromHeartbeat {
+			st.lastUpdateTime = now
+			st.reportedSize = reportedSize
+		} else {
+			// Take the record as it stands under this lock, not as the decay
+			// pass saw it: a heartbeat may have landed since, and replaying
+			// the older size would roll its report back.
+			reportedSize, compactRevision = st.reportedSize, st.compactRevision
+		}
 		if compactRevision != st.compactRevision {
 			// Compaction happened — size drop is real, not pending. Reset.
 			st.compactRevision = compactRevision
@@ -268,6 +289,43 @@ func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint6
 	glog.V(0).Infof("Volume %d recovered to writable (effective=%d, reported=%d, limit=%d).",
 		vid, st.effectiveSize, reportedSize, vl.volumeSizeLimit)
 	return true
+}
+
+// DecayQuietVolumeSizes re-runs the size decay for volumes whose heartbeat
+// reports have gone quiet. Only a volume whose content changed is reported,
+// and a volume held out of the writable list takes no writes, so without this
+// an inflated estimate is never decayed and the volume never returns.
+//
+// A volume the disk really did fill is skipped: UpdateVolumeSize refuses to
+// recover one whose reported size is at the limit, so walking it every pulse
+// only takes the write lock away from the heartbeats. Nothing is lost by
+// waiting — shrinking it means compaction, which changes content and is
+// therefore reported.
+func (vl *VolumeLayout) DecayQuietVolumeSizes(quietCutoff time.Duration) {
+	for _, vid := range vl.quietDecayCandidates(quietCutoff) {
+		if vl.UpdateVolumeSize(vid, 0, 0, false) {
+			vl.AdjustActiveVolumeCountAfterRecovery(vid)
+		}
+	}
+}
+
+// quietDecayCandidates names the volumes the decay has something to do for.
+// Skipping the rest is what keeps the pass off the write lock: the work is
+// what costs, not the outcome, since replaying a size that cannot move leaves
+// the record exactly as it found it.
+func (vl *VolumeLayout) quietDecayCandidates(quietCutoff time.Duration) (quiets []needle.VolumeId) {
+	now := time.Now()
+	vl.accessLock.RLock()
+	defer vl.accessLock.RUnlock()
+	for vid, st := range vl.sizeTracking {
+		if now.Sub(st.lastUpdateTime) < quietCutoff {
+			continue
+		}
+		if st.effectiveSize > st.reportedSize || (!st.fullSince.IsZero() && st.reportedSize < vl.volumeSizeLimit) {
+			quiets = append(quiets, vid)
+		}
+	}
+	return quiets
 }
 
 func (vl *VolumeLayout) UnRegisterVolume(v *storage.VolumeInfo, dn *DataNode) {

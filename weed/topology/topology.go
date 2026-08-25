@@ -403,11 +403,16 @@ func (t *Topology) PickForWrite(requestedCount uint64, option *VolumeGrowOption,
 	if volumeLocationList == nil || volumeLocationList.Length() == 0 {
 		return "", 0, nil, shouldGrow, fmt.Errorf("%s available for collection:%s replication:%s ttl:%s", NoWritableVolumes, option.Collection, option.ReplicaPlacement.String(), option.Ttl.String())
 	}
-	// Track estimated assigned bytes to spread load between heartbeats.
-	// Use the client hint if provided, otherwise fall back to 1MB estimate.
+	// Track estimated assigned bytes to spread load between heartbeats. A flat
+	// fallback overcharges a small-file workload enough to mark near-empty
+	// volumes full, so prefer the volume's own average.
 	sizePerFile := DefaultNeedleSizeEstimate
 	if expectedDataSize > 0 {
 		sizePerFile = expectedDataSize
+	} else if vi, infoErr := volumeLocationList.Head().GetVolumesById(vid); infoErr == nil && vi.FileCount > 0 {
+		if avg := vi.Size / uint64(vi.FileCount); avg > 0 {
+			sizePerFile = avg
+		}
 	}
 	pendingBytes := min(uint64(count)*sizePerFile, uint64(math.MaxInt64))
 	if volumeLayout.RecordAssign(vid, int64(pendingBytes)) {
@@ -422,6 +427,18 @@ func (t *Topology) GetVolumeLayout(collectionName string, rp *super_block.Replic
 	return t.collectionMap.Get(collectionName, func() interface{} {
 		return NewCollection(collectionName, t.volumeSizeLimit, t.replicationAsMin)
 	}).(*Collection).GetOrCreateVolumeLayout(rp, ttl, diskType)
+}
+
+// DecayQuietVolumeSizes decays pending assign estimates across every layout.
+// A volume that changed reports within a pulse, so two quiet pulses mean the
+// size on record is the size there is.
+func (t *Topology) DecayQuietVolumeSizes() {
+	quietCutoff := time.Duration(2*t.pulse) * time.Second
+	for _, c := range t.collectionMap.Items() {
+		for _, vl := range c.(*Collection).GetAllVolumeLayouts() {
+			vl.DecayQuietVolumeSizes(quietCutoff)
+		}
+	}
 }
 
 // CollectionVolumeStats aggregates stats across all volume layouts and EC
@@ -642,7 +659,7 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 			newVolumes = append(newVolumes, v)
 		}
 		vl.UpdateOversizedState(&v, dn)
-		if vl.UpdateVolumeSize(v.Id, v.Size, v.CompactRevision) {
+		if vl.UpdateVolumeSize(v.Id, v.Size, v.CompactRevision, true) {
 			vl.AdjustActiveVolumeCountAfterRecovery(v.Id)
 		}
 		vl.EnsureCorrectWritables(&v)
@@ -720,7 +737,7 @@ func (t *Topology) ApplyVolumeChanges(changed []*master_pb.VolumeInformationMess
 			newVolumes = append(newVolumes, vi)
 		}
 		vl.UpdateOversizedState(&vi, dn)
-		if vl.UpdateVolumeSize(vi.Id, vi.Size, vi.CompactRevision) {
+		if vl.UpdateVolumeSize(vi.Id, vi.Size, vi.CompactRevision, true) {
 			vl.AdjustActiveVolumeCountAfterRecovery(vi.Id)
 		}
 		vl.EnsureCorrectWritables(&vi)
