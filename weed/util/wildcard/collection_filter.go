@@ -88,42 +88,82 @@ func CompileCollectionMatcher(filter string) (*CollectionMatcher, error) {
 	return matcher, nil
 }
 
-// splitCollectionEntries splits a filter on the commas that separate entries,
-// leaving alone the ones inside a regex character class, repetition count, or
-// group, so "bucket[0-9]{1,3}" and "bucket(foo,bar)" each stay one entry.
+// splitCollectionEntries splits a filter on the commas that separate entries.
+// A comma inside a closed regex construct - a character class, a repetition
+// count, or a group - belongs to that construct. An unclosed one is a literal
+// brace or bracket in a name, so the commas after it still separate entries.
 func splitCollectionEntries(filter string) []string {
 	entries := make([]string, 0, 4)
-	inClass, inRepeat := false, false
-	groupDepth := 0
 	start := 0
 	for i := 0; i < len(filter); i++ {
 		switch filter[i] {
 		case '\\':
 			i++
 		case '[':
-			inClass = true
-		case ']':
-			inClass = false
-		case '{':
-			inRepeat = !inClass
-		case '}':
-			inRepeat = false
-		case '(':
-			if !inClass {
-				groupDepth++
+			if end := classEnd(filter, i); end > i {
+				i = end
 			}
-		case ')':
-			if !inClass && groupDepth > 0 {
-				groupDepth--
+		case '{':
+			if end := repeatCountEnd(filter, i); end > i {
+				i = end
+			}
+		case '(':
+			if end := groupEnd(filter, i); end > i {
+				i = end
 			}
 		case ',':
-			if !inClass && !inRepeat && groupDepth == 0 {
-				entries = append(entries, filter[start:i])
-				start = i + 1
-			}
+			entries = append(entries, filter[start:i])
+			start = i + 1
 		}
 	}
 	return append(entries, filter[start:])
+}
+
+// classEnd returns the index of the "]" closing the character class opened at
+// start, or -1 when it is never closed. Character classes do not nest.
+func classEnd(filter string, start int) int {
+	for i := start + 1; i < len(filter); i++ {
+		switch filter[i] {
+		case '\\':
+			i++
+		case ']':
+			return i
+		}
+	}
+	return -1
+}
+
+// repeatCountEnd returns the index of the "}" closing the repetition count
+// opened at start, or -1 when what follows is not a count.
+func repeatCountEnd(filter string, start int) int {
+	for i := start + 1; i < len(filter); i++ {
+		if filter[i] == '}' {
+			return i
+		}
+		if filter[i] != ',' && (filter[i] < '0' || filter[i] > '9') {
+			return -1
+		}
+	}
+	return -1
+}
+
+// groupEnd returns the index of the ")" closing the group opened at start, or
+// -1 when it is never closed.
+func groupEnd(filter string, start int) int {
+	depth := 0
+	for i := start; i < len(filter); i++ {
+		switch filter[i] {
+		case '\\':
+			i++
+		case '(':
+			depth++
+		case ')':
+			if depth--; depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
 }
 
 // isRegexEntry reports whether an entry carries regex syntax rather than being a

@@ -34,6 +34,9 @@ func TestCompileCollectionMatcher(t *testing.T) {
 		{filter: "bucket[0-9]{1,3},videos", matches: []string{"bucket7", "videos"}, misses: []string{"bucketx"}},
 		{filter: "bucket(foo,bar)", matches: []string{"bucketfoo,bar", "bucket(foo,bar)"}, misses: []string{"bucketfoo"}},
 		{filter: "logs(2024),videos", matches: []string{"logs(2024)", "logs2024", "videos"}, misses: []string{"logs"}},
+		// An unclosed brace is a literal in a name, so the comma after it still separates.
+		{filter: "foo{bar,videos", matches: []string{"foo{bar", "videos"}, misses: []string{"foo"}},
+		{filter: "foo{2,videos", matches: []string{"foo{2", "videos"}, misses: []string{"foo"}},
 		{filter: CollectionDefault, matches: []string{""}, misses: []string{"photos"}},
 		{filter: "photos," + CollectionDefault, matches: []string{"photos", ""}, misses: []string{"videos"}},
 	}
