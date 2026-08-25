@@ -1571,12 +1571,9 @@ func normalizeS3PublicEndpoint(endpoint string) string {
 		return ""
 	}
 	u, err := url.Parse(endpoint)
-	if err != nil {
-		glog.Warningf("ignoring s3.public_endpoint: not a valid URL")
-		return ""
-	}
-	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || strings.ContainsAny(endpoint, "?#") {
-		glog.Warningf("ignoring s3.public_endpoint %q: expecting an http:// or https:// URL with a host and no credentials, query, or fragment", u.Redacted())
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || strings.ContainsAny(endpoint, "?#") {
+		// the value is not echoed: it may hold credentials in userinfo or a query
+		glog.Warningf("ignoring s3.public_endpoint: expecting an http:// or https:// URL with a host and no credentials, query, or fragment")
 		return ""
 	}
 	return endpoint
