@@ -295,21 +295,37 @@ func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint6
 // reports have gone quiet. Only a volume whose content changed is reported,
 // and a volume held out of the writable list takes no writes, so without this
 // an inflated estimate is never decayed and the volume never returns.
+//
+// A volume the disk really did fill is skipped: UpdateVolumeSize refuses to
+// recover one whose reported size is at the limit, so walking it every pulse
+// only takes the write lock away from the heartbeats. Nothing is lost by
+// waiting — shrinking it means compaction, which changes content and is
+// therefore reported.
 func (vl *VolumeLayout) DecayQuietVolumeSizes(quietCutoff time.Duration) {
-	var quiets []needle.VolumeId
-	now := time.Now()
-	vl.accessLock.RLock()
-	for vid, st := range vl.sizeTracking {
-		if now.Sub(st.lastUpdateTime) >= quietCutoff && (st.effectiveSize > st.reportedSize || !st.fullSince.IsZero()) {
-			quiets = append(quiets, vid)
-		}
-	}
-	vl.accessLock.RUnlock()
-	for _, vid := range quiets {
+	for _, vid := range vl.quietDecayCandidates(quietCutoff) {
 		if vl.UpdateVolumeSize(vid, 0, 0, false) {
 			vl.AdjustActiveVolumeCountAfterRecovery(vid)
 		}
 	}
+}
+
+// quietDecayCandidates names the volumes the decay has something to do for.
+// Skipping the rest is what keeps the pass off the write lock: the work is
+// what costs, not the outcome, since replaying a size that cannot move leaves
+// the record exactly as it found it.
+func (vl *VolumeLayout) quietDecayCandidates(quietCutoff time.Duration) (quiets []needle.VolumeId) {
+	now := time.Now()
+	vl.accessLock.RLock()
+	defer vl.accessLock.RUnlock()
+	for vid, st := range vl.sizeTracking {
+		if now.Sub(st.lastUpdateTime) < quietCutoff {
+			continue
+		}
+		if st.effectiveSize > st.reportedSize || (!st.fullSince.IsZero() && st.reportedSize < vl.volumeSizeLimit) {
+			quiets = append(quiets, vid)
+		}
+	}
+	return quiets
 }
 
 func (vl *VolumeLayout) UnRegisterVolume(v *storage.VolumeInfo, dn *DataNode) {

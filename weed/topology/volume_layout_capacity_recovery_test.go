@@ -280,3 +280,49 @@ func TestDecayQuietVolumeSizesYieldsToAHeartbeatItRaced(t *testing.T) {
 		t.Errorf("the decay halved again to %d, want the heartbeat's %d left alone", got, afterHeartbeat)
 	}
 }
+
+// A volume the disk really did fill can never recover through the decay, so it
+// must leave the candidate set instead of costing a write lock every pulse for
+// the rest of its life.
+func TestDecayQuietVolumeSizesSkipsAGenuinelyFullVolume(t *testing.T) {
+	layout := `
+{
+  "dc1":{
+    "rack1":{
+      "server1":{
+        "volumes":[
+          {"id":1, "size":10000, "replication":"000"},
+          {"id":2, "size":4000, "replication":"000"}
+        ],
+        "limit":10
+      }
+    }
+  }
+}
+`
+	_, vl := setupPickTest(t, layout, 10000)
+
+	// Volume 1 is full on disk; volume 2 only looks full to the estimate.
+	vl.SetVolumeCapacityFull(1)
+	vl.RecordAssign(2, 6000)
+	advanceSizeTrackingClock(vl, 1, 30*time.Second)
+	advanceSizeTrackingClock(vl, 2, 30*time.Second)
+
+	candidates := vl.quietDecayCandidates(10 * time.Second)
+	for _, vid := range candidates {
+		if vid == 1 {
+			t.Errorf("the decay keeps taking the write lock for volume 1, which the disk really did fill")
+		}
+	}
+	if len(candidates) != 1 || candidates[0] != 2 {
+		t.Errorf("candidates %v, want only the phantom-full volume 2", candidates)
+	}
+
+	vl.DecayQuietVolumeSizes(10 * time.Second)
+
+	vl.accessLock.RLock()
+	defer vl.accessLock.RUnlock()
+	if got := vl.sizeTracking[2].effectiveSize; got != 7000 {
+		t.Errorf("the phantom-full volume was left at %d, want it decayed to 7000", got)
+	}
+}
