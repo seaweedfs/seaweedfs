@@ -120,17 +120,43 @@ func splitCollectionEntries(filter string) []string {
 }
 
 // classEnd returns the index of the "]" closing the character class opened at
-// start, or -1 when it is never closed. Character classes do not nest.
+// start, or -1 when it is never closed. It follows the regexp parser: a "]"
+// leading the class is a member of it, and a POSIX class such as "[:alpha:]"
+// carries a "]" of its own.
 func classEnd(filter string, start int) int {
-	for i := start + 1; i < len(filter); i++ {
+	i := start + 1
+	if i < len(filter) && filter[i] == '^' {
+		i++
+	}
+	if i < len(filter) && filter[i] == ']' {
+		i++
+	}
+	for ; i < len(filter); i++ {
 		switch filter[i] {
 		case '\\':
 			i++
+		case '[':
+			if end := posixClassEnd(filter, i); end > i {
+				i = end
+			}
 		case ']':
 			return i
 		}
 	}
 	return -1
+}
+
+// posixClassEnd returns the index of the "]" closing the POSIX class opened at
+// start, or -1 when start does not open one.
+func posixClassEnd(filter string, start int) int {
+	if !strings.HasPrefix(filter[start:], "[:") {
+		return -1
+	}
+	end := strings.Index(filter[start+2:], ":]")
+	if end < 0 {
+		return -1
+	}
+	return start + 2 + end + 1
 }
 
 // repeatCountEnd returns the index of the "}" closing the repetition count
