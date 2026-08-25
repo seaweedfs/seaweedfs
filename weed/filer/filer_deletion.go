@@ -306,7 +306,7 @@ func (f *Filer) loopProcessingDeletion() {
 			glog.V(0).Infof("deletion processor shutting down")
 			return
 		case <-ticker.C:
-			f.fileIdDeletionQueue.Consume(func(fileIds []string) {
+			f.FileIdDeletionQueue.Consume(func(fileIds []string) {
 				for i := 0; i < len(fileIds); i += DeletionBatchSize {
 					end := i + DeletionBatchSize
 					if end > len(fileIds) {
@@ -599,7 +599,7 @@ func (f *Filer) DeleteChunks(ctx context.Context, fullpath util.FullPath, chunks
 func (f *Filer) doDeleteChunks(ctx context.Context, chunks []*filer_pb.FileChunk) {
 	for _, chunk := range chunks {
 		if !chunk.IsChunkManifest {
-			f.fileIdDeletionQueue.EnQueue(chunk.GetFileIdString())
+			f.FileIdDeletionQueue.EnQueue(chunk.GetFileIdString())
 			continue
 		}
 		dataChunks, manifestResolveErr := ResolveOneChunkManifest(ctx, f.MasterClient.LookupFileId, chunk)
@@ -607,15 +607,15 @@ func (f *Filer) doDeleteChunks(ctx context.Context, chunks []*filer_pb.FileChunk
 			glog.V(0).InfofCtx(ctx, "failed to resolve manifest %s: %v", chunk.FileId, manifestResolveErr)
 		}
 		for _, dChunk := range dataChunks {
-			f.fileIdDeletionQueue.EnQueue(dChunk.GetFileIdString())
+			f.FileIdDeletionQueue.EnQueue(dChunk.GetFileIdString())
 		}
-		f.fileIdDeletionQueue.EnQueue(chunk.GetFileIdString())
+		f.FileIdDeletionQueue.EnQueue(chunk.GetFileIdString())
 	}
 }
 
 func (f *Filer) DeleteChunksNotRecursive(chunks []*filer_pb.FileChunk) {
 	for _, chunk := range chunks {
-		f.fileIdDeletionQueue.EnQueue(chunk.GetFileIdString())
+		f.FileIdDeletionQueue.EnQueue(chunk.GetFileIdString())
 	}
 }
 
