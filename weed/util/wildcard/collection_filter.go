@@ -1,11 +1,9 @@
-package pluginworker
+package wildcard
 
 import (
 	"fmt"
 	"regexp"
 	"strings"
-
-	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
 
 // CollectionFilterMode controls how collections are interpreted during
@@ -76,7 +74,7 @@ func (m *CollectionMatcher) Matches(collection string) bool {
 		return true
 	}
 	for _, pattern := range m.wildcards {
-		if wildcard.MatchesWildcard(pattern, collection) {
+		if MatchesWildcard(pattern, collection) {
 			return true
 		}
 	}

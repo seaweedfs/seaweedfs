@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	workertypes "github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/grpc"
 )
@@ -136,7 +137,7 @@ func buildVolumeMetrics(
 		return nil, nil, nil, err
 	}
 
-	collectionMatcher, err := CompileCollectionMatcher(collectionFilter)
+	collectionMatcher, err := wildcard.CompileCollectionMatcher(collectionFilter)
 	if err != nil {
 		return nil, nil, nil, &configError{err: err}
 	}

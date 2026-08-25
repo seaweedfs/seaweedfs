@@ -1,4 +1,4 @@
-package pluginworker
+package wildcard
 
 import "testing"
 

@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
-	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding/ecbalancer"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
@@ -100,7 +100,7 @@ func TestBuildBalancerTopologyGroupsByHost(t *testing.T) {
 func TestBuildBalancerTopologyCollectionFilter(t *testing.T) {
 	config := NewDefaultConfig()
 	config.CollectionFilter = "other" // does not match the volume's collection
-	allowed, err := pluginworker.CompileCollectionMatcher(config.CollectionFilter)
+	allowed, err := wildcard.CompileCollectionMatcher(config.CollectionFilter)
 	if err != nil {
 		t.Fatalf("CompileCollectionMatcher: %v", err)
 	}
