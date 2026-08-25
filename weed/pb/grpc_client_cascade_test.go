@@ -98,3 +98,46 @@ func TestWithGrpcClient_AbandonedRequestKeepsSharedConnection(t *testing.T) {
 		t.Fatalf("concurrent caller must survive an unrelated abandoned request: %v", concurrentErr)
 	}
 }
+
+func (s *cascadeFilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeMetadataServer) error {
+	return nil
+}
+
+// TestWithGrpcClient_EndedStreamKeepsSharedConnection covers the other half of
+// seaweedfs#10947: the S3 gateway follows filer metadata on a long-lived
+// SubscribeMetadata stream and reconnects forever. Every ordinary end of that
+// stream used to drop the shared filer ClientConn the request handlers use,
+// firing the same burst of "the client connection is closing" failures.
+func TestWithGrpcClient_EndedStreamKeepsSharedConnection(t *testing.T) {
+	fake, address, dialOption := startCascadeFiler(t)
+
+	var concurrentErr error
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		concurrentErr = WithGrpcClient(context.Background(), false, 0, func(connection *grpc.ClientConn) error {
+			_, err := filer_pb.NewSeaweedFilerClient(connection).LookupDirectoryEntry(context.Background(),
+				&filer_pb.LookupDirectoryEntryRequest{Directory: "/buckets/b", Name: "slow"})
+			return err
+		}, address, false, dialOption)
+	}()
+	<-fake.inFlight
+
+	if err := WithGrpcClient(context.Background(), true, 0, func(connection *grpc.ClientConn) error {
+		stream, err := filer_pb.NewSeaweedFilerClient(connection).SubscribeMetadata(context.Background(), &filer_pb.SubscribeMetadataRequest{})
+		if err != nil {
+			return err
+		}
+		_, err = stream.Recv()
+		return err
+	}, address, false, dialOption); err == nil {
+		t.Fatal("the ended stream should have reported io.EOF")
+	}
+
+	close(fake.release)
+	wg.Wait()
+	if concurrentErr != nil {
+		t.Fatalf("concurrent caller must survive an unrelated stream ending: %v", concurrentErr)
+	}
+}

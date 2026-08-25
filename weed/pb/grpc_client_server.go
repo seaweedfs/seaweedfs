@@ -488,14 +488,15 @@ func WithGrpcClient(ctx context.Context, streamingMode bool, signature int32, fn
 	}
 	defer grpcConnection.Close()
 	executionErr := fn(grpcConnection)
-	if executionErr != nil {
+	if executionErr != nil && shouldInvalidateConnection(ctx, executionErr) {
 		// The streaming channel is dedicated to this caller, but unrelated
 		// request-path callers share a cached non-streaming ClientConn to the
-		// same peer. When the stream fails, drop that cached channel so the
-		// next caller dials fresh: this recovers cases where a stable L4
-		// endpoint (k8s Service VIP, external LB) hides a peer restart from
-		// the transport layer, leaving the cached ClientConn healthy-looking
-		// but silently cancelling RPCs.
+		// same peer. When the stream dies of a peer that went away, drop that
+		// cached channel so the next caller dials fresh: this recovers cases
+		// where a stable L4 endpoint (k8s Service VIP, external LB) hides a
+		// peer restart from the transport layer, leaving the cached ClientConn
+		// healthy-looking but silently cancelling RPCs. A stream that merely
+		// ended, or that its own caller gave up on, says nothing about the peer.
 		InvalidateGrpcConnection(address)
 	}
 	return executionErr
