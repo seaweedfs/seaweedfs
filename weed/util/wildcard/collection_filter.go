@@ -155,6 +155,11 @@ func groupEnd(filter string, start int) int {
 		switch filter[i] {
 		case '\\':
 			i++
+		case '[':
+			// a ")" inside a character class is a literal, not the group's end
+			if end := classEnd(filter, i); end > i {
+				i = end
+			}
 		case '(':
 			depth++
 		case ')':
