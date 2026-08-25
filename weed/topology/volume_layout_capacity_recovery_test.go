@@ -117,9 +117,8 @@ func TestSetVolumeAvailableRestoresActiveCountForCapacityFullVolume(t *testing.T
 	}
 }
 
-// A volume that pending assign estimates marked full takes no more writes, so
-// no heartbeat reports it again and the heartbeat-driven decay never runs. The
-// periodic decay must recover it, or the writable list stays empty forever.
+// A volume marked full by pending estimates takes no writes, so no heartbeat
+// reports it again and only the periodic decay can bring it back.
 func TestDecayQuietVolumeSizesRecoversPhantomFullVolume(t *testing.T) {
 	layout := `
 {

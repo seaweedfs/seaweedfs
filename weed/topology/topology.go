@@ -403,10 +403,9 @@ func (t *Topology) PickForWrite(requestedCount uint64, option *VolumeGrowOption,
 	if volumeLocationList == nil || volumeLocationList.Length() == 0 {
 		return "", 0, nil, shouldGrow, fmt.Errorf("%s available for collection:%s replication:%s ttl:%s", NoWritableVolumes, option.Collection, option.ReplicaPlacement.String(), option.Ttl.String())
 	}
-	// Track estimated assigned bytes to spread load between heartbeats.
-	// Use the client hint if provided, otherwise the volume's own average
-	// file size: a flat 1MB guess charges a small-file workload orders of
-	// magnitude too much and marks near-empty volumes as full.
+	// Track estimated assigned bytes to spread load between heartbeats. A flat
+	// fallback overcharges a small-file workload enough to mark near-empty
+	// volumes full, so prefer the volume's own average.
 	sizePerFile := DefaultNeedleSizeEstimate
 	if expectedDataSize > 0 {
 		sizePerFile = expectedDataSize
@@ -430,10 +429,9 @@ func (t *Topology) GetVolumeLayout(collectionName string, rp *super_block.Replic
 	}).(*Collection).GetOrCreateVolumeLayout(rp, ttl, diskType)
 }
 
-// DecayQuietVolumeSizes decays pending assign estimates across every layout
-// for volumes no heartbeat has reported recently. A volume that changed
-// reports within a pulse, so two quiet pulses mean the size on record is the
-// size there is.
+// DecayQuietVolumeSizes decays pending assign estimates across every layout.
+// A volume that changed reports within a pulse, so two quiet pulses mean the
+// size on record is the size there is.
 func (t *Topology) DecayQuietVolumeSizes() {
 	quietCutoff := time.Duration(2*t.pulse) * time.Second
 	for _, c := range t.collectionMap.Items() {

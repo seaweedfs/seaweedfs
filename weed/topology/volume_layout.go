@@ -271,12 +271,9 @@ func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint6
 }
 
 // DecayQuietVolumeSizes re-runs the size decay for volumes whose heartbeat
-// reports have gone quiet. A volume is only reported when its content changes,
-// and a volume held out of the writable list takes no writes, so once pending
-// assign estimates mark every volume full the decay that would recover them
-// never runs again and the cluster refuses writes until a restart. Feeding the
-// last reported size back through UpdateVolumeSize gives quiet volumes the
-// same decay and recovery an unchanged heartbeat would.
+// reports have gone quiet. Only a volume whose content changed is reported,
+// and a volume held out of the writable list takes no writes, so without this
+// an inflated estimate is never decayed and the volume never returns.
 func (vl *VolumeLayout) DecayQuietVolumeSizes(quietCutoff time.Duration) {
 	type quietVolume struct {
 		vid             needle.VolumeId

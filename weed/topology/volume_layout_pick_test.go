@@ -179,11 +179,9 @@ func TestPickForWriteWithPendingSize(t *testing.T) {
 	}
 }
 
-// An assign without a size hint used to charge a flat 1MB per file id. For a
-// small-file workload that overcharges by orders of magnitude: volumes holding
-// a few hundred MB of real data got marked full, and once every volume was out
-// of the writable list all assigns failed. The estimate must come from the
-// volume's own average file size instead.
+// A flat 1MB charge per hintless file id overcharges a small-file workload by
+// orders of magnitude, marking volumes full while they hold a fraction of the
+// limit.
 func TestPickForWriteEstimatesPendingSizeFromVolumeAverage(t *testing.T) {
 	layout := `
 {
