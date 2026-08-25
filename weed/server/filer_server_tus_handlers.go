@@ -85,6 +85,18 @@ func (fs *FilerServer) tusHandler(w http.ResponseWriter, r *http.Request) {
 			writeJsonError(w, r, http.StatusUnauthorized, errors.New("wrong jwt"))
 			return
 		}
+		// One mutating request per session at a time, like tusd: a PATCH retried
+		// while its predecessor is still storing a sub-chunk would otherwise
+		// record the same range twice, and a DELETE would race the writer. The
+		// chunk state is loaded under this claim so the offset check sees every
+		// record the previous request left behind. 423 tells the client to retry.
+		if r.Method != http.MethodHead {
+			if !fs.lockTusUpload(uploadID) {
+				http.Error(w, "Upload is locked by another request", http.StatusLocked)
+				return
+			}
+			defer fs.unlockTusUpload(uploadID)
+		}
 		if err := fs.loadTusSessionChunks(ctx, session); err != nil {
 			glog.Errorf("Failed to load TUS session %s chunks: %v", uploadID, err)
 			writeTusSessionNotFound(w, r.Method)
@@ -115,6 +127,17 @@ func (fs *FilerServer) tusHandler(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+// lockTusUpload claims a session for one mutating request; it reports false
+// while another request holds the claim.
+func (fs *FilerServer) lockTusUpload(uploadID string) bool {
+	_, loaded := fs.tusActiveUploads.LoadOrStore(uploadID, struct{}{})
+	return !loaded
+}
+
+func (fs *FilerServer) unlockTusUpload(uploadID string) {
+	fs.tusActiveUploads.Delete(uploadID)
 }
 
 // writeTusSessionNotFound answers a request whose session cannot be resolved.

@@ -127,6 +127,11 @@ type FilerServer struct {
 	// chunk sharing (tier 1). Always populated.
 	mountPeerRegistry *filer.MountPeerRegistry
 
+	// tusActiveUploads marks TUS sessions with a mutating request in flight, so
+	// a concurrent PATCH or DELETE is refused instead of recording duplicate
+	// chunks behind the first request's back.
+	tusActiveUploads sync.Map
+
 	// entryLockTable serializes mutations to the same entry path on this filer.
 	// CreateEntry takes it today; UpdateEntry and DeleteEntry are intended to take
 	// it too as their callers route a key's writes to this node, making it the
