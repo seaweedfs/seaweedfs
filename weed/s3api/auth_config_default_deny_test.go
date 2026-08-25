@@ -14,6 +14,7 @@ import (
 // anonymous request, including ListBuckets and bucket creation.
 func TestConfigWithoutIdentitiesDeniesAnonymous(t *testing.T) {
 	resetMemoryStore()
+	clearEnvironmentVariableCredentials(t)
 
 	path := writeTempIamConfig(t, `{"identites":[{"name":"admin","credentials":[{"accessKey":"adminkey","secretKey":"adminsecret"}],"actions":["Admin"]}]}`)
 	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{Config: path}, nil, "memory")
@@ -35,10 +36,18 @@ func TestConfigWithoutIdentitiesDeniesAnonymous(t *testing.T) {
 // `weed mini` and `docker run seaweedfs` name no config file and stay open.
 func TestNoConfigKeepsAnonymousAllowed(t *testing.T) {
 	resetMemoryStore()
+	clearEnvironmentVariableCredentials(t)
 
 	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{}, nil, "memory")
 
 	assert.False(t, iam.isEnabled(), "auth must stay off when no config file and no identities are configured")
+}
+
+// AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY register an admin identity of
+// their own, which would decide isAuthEnabled before the config file does.
+func clearEnvironmentVariableCredentials(t *testing.T) {
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
 }
 
 // The proto parser drops what it does not recognise, so a typo has to be named
