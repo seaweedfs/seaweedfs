@@ -2549,24 +2549,42 @@ impl Volume {
             self.no_write_can_delete = false;
         }
 
-        // Mirrors Go's reopenIdxForWrite: a volume that booted read-only holds a
-        // SortedFileNeedleMap whose put() always fails, so the flags alone would
-        // leave writes rejected. Rebuild the writable map, and put the flags back
-        // if that fails so the caller can roll the mark back cleanly.
-        if matches!(self.nm, Some(NeedleMap::SortedFile(_))) && !self.use_sorted_index() {
-            if let Err(e) = self.load_index() {
-                self.no_write_or_delete = was_no_write_or_delete;
-                self.no_write_can_delete = was_no_write_can_delete;
-                return Err(e);
-            }
+        // Put the flags back if the rebuild fails, so the caller can roll the
+        // mark back cleanly.
+        if let Err(e) = self.reopen_idx_for_write() {
+            self.no_write_or_delete = was_no_write_or_delete;
+            self.no_write_can_delete = was_no_write_can_delete;
+            return Err(e);
         }
 
         self.attach_idx_writer_if_missing()?;
         self.save_vif()
     }
 
-    /// Recompute the Go-style write/delete mode from the current remote tier state.
-    pub fn refresh_remote_write_mode(&mut self) {
+    /// Swap the read-only sorted map for the configured writable one once the
+    /// current mode says the volume is no longer read-only. Mirrors Go's
+    /// reopenIdxForWrite, and is the reason a volume that stops being read-only
+    /// can accept writes at all: SortedFileNeedleMap::put always fails, so
+    /// publishing a writable volume without this leaves every write appending to
+    /// .dat and then failing to index it. A no-op unless the map is the sorted
+    /// one and the flags have already moved.
+    fn reopen_idx_for_write(&mut self) -> Result<(), VolumeError> {
+        if self.use_sorted_index() || !matches!(self.nm, Some(NeedleMap::SortedFile(_))) {
+            return Ok(());
+        }
+        // load_index only publishes self.nm once the new map is built, so a
+        // failure leaves the sorted map in place and the caller can recover.
+        self.load_index()
+    }
+
+    /// Recompute the Go-style write/delete mode from the current remote tier
+    /// state, and bring the needle map in line with it — a volume that stops
+    /// being remote also stops using the read-only sorted index.
+    ///
+    /// If the map cannot be rebuilt the volume is pinned read-only rather than
+    /// published as writable with an index that rejects every put; a restart
+    /// recovers it.
+    pub fn refresh_remote_write_mode(&mut self) -> Result<(), VolumeError> {
         self.has_remote_file = !self.volume_info.files.is_empty();
         if self.has_remote_file {
             self.no_write_can_delete = true;
@@ -2575,6 +2593,11 @@ impl Volume {
             // only clear the remoteness-derived flag, not an operator mark
             self.no_write_can_delete = false;
         }
+        if let Err(e) = self.reopen_idx_for_write() {
+            self.no_write_or_delete = true;
+            return Err(e);
+        }
+        Ok(())
     }
 
     /// Open the local .dat as the data backend, dropping any remote backend, so reads
@@ -2614,7 +2637,7 @@ impl Volume {
                     }
                 }
                 self.volume_info = pb_info;
-                self.refresh_remote_write_mode();
+                self.refresh_remote_write_mode()?;
                 if self.volume_info.version == 0 {
                     self.volume_info.version = Version::current().0 as u32;
                 }
@@ -2643,7 +2666,7 @@ impl Volume {
                     self.no_write_or_delete = true;
                 }
                 self.volume_info = pb_info;
-                self.refresh_remote_write_mode();
+                self.refresh_remote_write_mode()?;
                 if self.volume_info.version == 0 {
                     self.volume_info.version = Version::current().0 as u32;
                 }
@@ -3216,7 +3239,7 @@ impl Volume {
         // Collect live entries from needle map (sorted ascending)
         let nm = self.nm.as_ref().ok_or(VolumeError::NotInitialized)?;
         let mut entries: Vec<(NeedleId, Offset, Size)> = Vec::new();
-        for (id, nv) in nm.iter_entries() {
+        for (id, nv) in nm.iter_entries().map_err(VolumeError::Io)? {
             if nv.offset.is_zero() || nv.size.is_deleted() {
                 continue;
             }
@@ -5693,6 +5716,169 @@ mod tests {
             .remove("s3.vif_rw_test");
     }
 
+    /// Build a volume with `needles` needles, tier it to a fake remote backend,
+    /// and reload it the way a restart would — so it comes back read-only with
+    /// its index on disk. The local .dat is left in place, matching the state a
+    /// completed tier-down download leaves behind.
+    fn reload_as_tiered(dir: &str, backend_id: &str, needles: u64) -> Volume {
+        {
+            let mut v = make_test_volume(dir);
+            for i in 1..=needles {
+                let mut n = Needle {
+                    id: NeedleId(i),
+                    cookie: Cookie(0x1234),
+                    data: format!("needle-{i}").into_bytes(),
+                    data_size: format!("needle-{i}").len() as u32,
+                    ..Needle::default()
+                };
+                v.write_needle(&mut n, true, false).unwrap();
+            }
+
+            let vif = VifVolumeInfo {
+                files: vec![VifRemoteFile {
+                    backend_type: "s3".to_string(),
+                    backend_id: backend_id.to_string(),
+                    key: "remote-key".to_string(),
+                    offset: 0,
+                    file_size: v.dat_file_size().unwrap(),
+                    modified_time: 123,
+                    extension: ".dat".to_string(),
+                }],
+                version: v.version().0 as u32,
+                ..VifVolumeInfo::default()
+            };
+            std::fs::write(
+                format!("{}/1.vif", dir),
+                serde_json::to_string_pretty(&vif).unwrap(),
+            )
+            .unwrap();
+
+            let tier_config = crate::remote_storage::s3_tier::S3TierConfig {
+                access_key: "access".to_string(),
+                secret_key: "secret".to_string(),
+                region: "us-east-1".to_string(),
+                bucket: "bucket-a".to_string(),
+                endpoint: "http://127.0.0.1:1".to_string(),
+                storage_class: "STANDARD".to_string(),
+                force_path_style: true,
+            };
+            crate::remote_storage::s3_tier::global_s3_tier_registry()
+                .write()
+                .unwrap()
+                .register(
+                    format!("s3.{backend_id}"),
+                    crate::remote_storage::s3_tier::S3TierBackend::new(&tier_config),
+                );
+        }
+
+        Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap()
+    }
+
+    // Tier-down clears the remote mode and publishes the volume as writable. The
+    // map it booted with is the read-only sorted one, whose put always fails, so
+    // without a rebuild the first write appends to .dat and then cannot be
+    // indexed — leaving bytes nothing references.
+    #[test]
+    fn test_tier_down_swaps_in_a_writable_needle_map() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = reload_as_tiered(dir, "vif_tierdown_test", 2);
+        assert!(matches!(v.nm, Some(NeedleMap::SortedFile(_))));
+
+        // The tail of the tier-down handler, once the .dat is back on disk.
+        v.volume_info.files.remove(0);
+        v.refresh_remote_write_mode().unwrap();
+        v.save_volume_info().unwrap();
+        v.open_local_dat_backend().unwrap();
+
+        assert!(!v.has_remote_file);
+        assert!(!v.is_read_only(), "tier-down should publish a writable volume");
+        assert!(
+            !matches!(v.nm, Some(NeedleMap::SortedFile(_))),
+            "tier-down must swap the read-only map out before writes are allowed"
+        );
+
+        let mut n = Needle {
+            id: NeedleId(7),
+            cookie: Cookie(0x5678),
+            data: b"after-tier-down".to_vec(),
+            data_size: 15,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true, true).unwrap();
+        v.sync_to_disk().unwrap();
+        drop(v);
+
+        // Reload: the needle must come back from .idx, not just have landed in
+        // .dat as unreferenced bytes.
+        let v = Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        let mut probe = Needle {
+            id: NeedleId(7),
+            ..Needle::default()
+        };
+        v.read_needle(&mut probe).unwrap();
+        assert_eq!(probe.data, b"after-tier-down");
+
+        crate::remote_storage::s3_tier::global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .remove("s3.vif_tierdown_test");
+    }
+
+    // A .sdx that cannot be read end to end must abort compaction. Treating the
+    // short scan as the complete live set would commit a volume missing every
+    // needle past the truncation.
+    #[test]
+    fn test_compaction_aborts_on_unreadable_sorted_index() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = reload_as_tiered(dir, "vif_compact_test", 4);
+        let Some(NeedleMap::SortedFile(ref nm)) = v.nm else {
+            panic!("tiered volume should search the on-disk .sdx");
+        };
+        let sdx_path = nm.db_file_name().to_string();
+
+        let sdx = OpenOptions::new().write(true).open(&sdx_path).unwrap();
+        sdx.set_len(NEEDLE_MAP_ENTRY_SIZE as u64).unwrap();
+        drop(sdx);
+        crate::storage::needle_map::file_pool::pooled_index_files().discard(&sdx_path);
+
+        let err = v
+            .compact_by_index(0, 0, |_| true)
+            .expect_err("compaction must not commit a partially scanned index");
+        assert!(
+            matches!(err, VolumeError::Io(ref e) if e.kind() == io::ErrorKind::UnexpectedEof),
+            "unexpected error: {err:?}"
+        );
+
+        crate::remote_storage::s3_tier::global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .remove("s3.vif_compact_test");
+    }
+
     // Issue #10937: a volume server holding hundreds of thousands of cloud-tiered
     // volumes ran out of descriptors because every one of them pinned its index
     // for the life of the process. A tiered volume must search the on-disk .sdx
@@ -5844,7 +6030,7 @@ mod tests {
             modified_time: 123,
             extension: ".dat".to_string(),
         });
-        v.refresh_remote_write_mode();
+        v.refresh_remote_write_mode().unwrap();
         v.set_writable().unwrap();
 
         assert!(v.is_read_only());

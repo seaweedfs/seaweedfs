@@ -3575,7 +3575,12 @@ impl VolumeServer for VolumeGrpcService {
                             modified_time: dat_modified_secs,
                             extension: ".dat".to_string(),
                         });
-                        vol.refresh_remote_write_mode();
+                        vol.refresh_remote_write_mode().map_err(|e| {
+                            Status::internal(format!(
+                                "volume {} failed to refresh write mode: {}",
+                                vid, e
+                            ))
+                        })?;
 
                         if let Err(e) = vol.save_volume_info() {
                             return Err(Status::internal(format!(
@@ -3764,7 +3769,15 @@ impl VolumeServer for VolumeGrpcService {
                     if !vol.volume_info.files.is_empty() {
                         vol.volume_info.files.remove(0);
                     }
-                    vol.refresh_remote_write_mode();
+                    // Swaps the read-only sorted map out before the volume is
+                    // published as writable; without it the first write would
+                    // append to the local .dat and then fail to index.
+                    vol.refresh_remote_write_mode().map_err(|e| {
+                        Status::internal(format!(
+                            "volume {} failed to refresh write mode: {}",
+                            vid, e
+                        ))
+                    })?;
 
                     if let Err(e) = vol.save_volume_info() {
                         return Err(Status::internal(format!(

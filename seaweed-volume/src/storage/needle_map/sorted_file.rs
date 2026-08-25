@@ -210,13 +210,13 @@ impl SortedFileNeedleMap {
         .map_err(|e| visit_error.take().unwrap_or_else(|| e.to_string()))
     }
 
-    pub fn iter_entries(&self) -> Vec<(NeedleId, NeedleValue)> {
+    pub fn iter_entries(&self) -> io::Result<Vec<(NeedleId, NeedleValue)>> {
         let mut entries = Vec::new();
-        let _ = self.visit_live_entries(|id, nv| {
+        self.visit_live_entries(|id, nv| {
             entries.push((id, *nv));
             Ok(())
-        });
-        entries
+        })?;
+        Ok(entries)
     }
 
     pub fn save_to_idx(&self, path: &str) -> io::Result<()> {
@@ -584,6 +584,34 @@ mod tests {
 
         let m = SortedFileNeedleMap::open(&base, version()).unwrap();
         assert_eq!(m.get(NeedleId(1)).unwrap().size, Size(100));
+    }
+
+    #[test]
+    fn iter_entries_reports_a_truncated_sdx() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = base(&dir);
+        write_idx(
+            &format!("{base}.idx"),
+            &[(1, 8, 100), (2, 16, 200), (3, 24, 300), (4, 32, 400)],
+        );
+
+        let m = SortedFileNeedleMap::open(&base, version()).unwrap();
+        assert_eq!(m.iter_entries().unwrap().len(), 4);
+
+        // Losing the tail of .sdx must surface as an error, not as a shorter
+        // list: compaction takes this vector for the complete live set and would
+        // otherwise commit a volume missing the needles it could not read.
+        let sdx = OpenOptions::new()
+            .write(true)
+            .open(format!("{base}.sdx"))
+            .unwrap();
+        sdx.set_len(2 * NEEDLE_MAP_ENTRY_SIZE as u64).unwrap();
+        drop(sdx);
+        pooled_index_files().discard(m.db_file_name());
+
+        let err = m.iter_entries().unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        assert!(m.save_to_idx(&format!("{base}.check")).is_err());
     }
 
     #[test]

@@ -942,33 +942,31 @@ impl RedbNeedleMap {
     }
 
     /// Collect all entries as a Vec for iteration (used by volume.rs iter patterns).
-    pub fn collect_entries(&self) -> Vec<(NeedleId, NeedleValue)> {
+    pub fn collect_entries(&self) -> io::Result<Vec<(NeedleId, NeedleValue)>> {
         let mut result = Vec::new();
-        let txn: redb::ReadTransaction = match self.db.begin_read() {
-            Ok(t) => t,
-            Err(_) => return result,
-        };
-        let table = match txn.open_table(NEEDLE_TABLE) {
-            Ok(t) => t,
-            Err(_) => return result,
-        };
-        let iter = match table.iter() {
-            Ok(i) => i,
-            Err(_) => return result,
-        };
+        let txn: redb::ReadTransaction = self
+            .db
+            .begin_read()
+            .map_err(|e| io::Error::other(format!("redb begin_read: {e}")))?;
+        let table = txn
+            .open_table(NEEDLE_TABLE)
+            .map_err(|e| io::Error::other(format!("redb open_table: {e}")))?;
+        let iter = table
+            .iter()
+            .map_err(|e| io::Error::other(format!("redb iter: {e}")))?;
         for entry in iter {
-            if let Ok((key_guard, val_guard)) = entry {
-                let key_u64: u64 = key_guard.value();
-                let bytes: &[u8] = val_guard.value();
-                if bytes.len() == PACKED_NEEDLE_VALUE_SIZE {
-                    let mut arr = [0u8; PACKED_NEEDLE_VALUE_SIZE];
-                    arr.copy_from_slice(bytes);
-                    let nv = unpack_needle_value(&arr);
-                    result.push((NeedleId(key_u64), nv));
-                }
+            let (key_guard, val_guard) =
+                entry.map_err(|e| io::Error::other(format!("redb entry: {e}")))?;
+            let key_u64: u64 = key_guard.value();
+            let bytes: &[u8] = val_guard.value();
+            if bytes.len() == PACKED_NEEDLE_VALUE_SIZE {
+                let mut arr = [0u8; PACKED_NEEDLE_VALUE_SIZE];
+                arr.copy_from_slice(bytes);
+                let nv = unpack_needle_value(&arr);
+                result.push((NeedleId(key_u64), nv));
             }
         }
-        result
+        Ok(result)
     }
 }
 
@@ -1140,16 +1138,20 @@ impl NeedleMap {
     }
 
     /// Iterate all entries. Returns a Vec of (NeedleId, NeedleValue) pairs.
-    /// For InMemory this collects via ascending visit; for Redb it reads from disk.
-    pub fn iter_entries(&self) -> Vec<(NeedleId, NeedleValue)> {
+    /// For InMemory this collects via ascending visit; the disk-backed maps read
+    /// it back off disk, so a truncated .sdx or a redb read fault surfaces here
+    /// as an error. Compaction treats the result as the complete live set, so a
+    /// partial scan must never be mistaken for an empty tail.
+    pub fn iter_entries(&self) -> io::Result<Vec<(NeedleId, NeedleValue)>> {
         match self {
             NeedleMap::InMemory(nm) => {
                 let mut entries = Vec::new();
+                // The visitor never fails, so neither can this.
                 let _ = nm.ascending_visit(|id, nv| {
                     entries.push((id, *nv));
                     Ok(())
                 });
-                entries
+                Ok(entries)
             }
             NeedleMap::Redb(nm) => nm.collect_entries(),
             NeedleMap::SortedFile(nm) => nm.iter_entries(),
