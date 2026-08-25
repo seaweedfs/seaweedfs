@@ -96,7 +96,7 @@ func (d *Disk) streamVolumes(filter VolumeFilter, batchSize int, newBatch func()
 		d.RLock()
 		for _, id := range ids[start:end] {
 			v, found := d.volumes[id]
-			if !found || !filter.matches(v.Collection, v.Id) {
+			if !found || !filter.matches(v) {
 				continue
 			}
 			batch.VolumeInfos = append(batch.VolumeInfos, v.ToVolumeInformationMessage())
@@ -121,7 +121,7 @@ func (d *Disk) streamEcShards(filter VolumeFilter, batchSize int, newBatch func(
 		end := min(start+batchSize, len(shards))
 		batch := newBatch()
 		for _, ecv := range shards[start:end] {
-			if !filter.matches(ecv.Collection, ecv.VolumeId) {
+			if !filter.matches(ecv) {
 				continue
 			}
 			batch.EcShardInfos = append(batch.EcShardInfos, ecv.ToVolumeEcShardInformationMessage())

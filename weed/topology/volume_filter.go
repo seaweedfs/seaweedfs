@@ -3,14 +3,16 @@ package topology
 import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
 
 // VolumeFilter narrows a topology listing to the volumes a caller asked about,
 // selecting only what is listed under a disk. A nil field filters nothing, and
 // only nil does: the empty collection is a real one.
 type VolumeFilter struct {
-	Collection *string
-	VolumeId   *needle.VolumeId
+	Collection        *string
+	remoteStorageName *string
+	VolumeId          *needle.VolumeId
 	// nothing selects the topology alone, for a listing whose volumes travel
 	// in messages of their own.
 	nothing bool
@@ -34,6 +36,14 @@ func NewVolumeFilter(req *master_pb.VolumeListRequest) VolumeFilter {
 		defaultCollection := ""
 		filter.Collection = &defaultCollection
 	}
+
+	switch {
+	case req.RemoteStorageName != "":
+		filter.remoteStorageName = new(req.RemoteStorageName)
+	case req.LocalVolumeOnly:
+		filter.remoteStorageName = new("")
+	}
+
 	if req.VolumeId != 0 {
 		volumeId := needle.VolumeId(req.VolumeId)
 		filter.VolumeId = &volumeId
@@ -46,14 +56,31 @@ func (f VolumeFilter) SelectsEverything() bool {
 	return !f.nothing && f.Collection == nil && f.VolumeId == nil
 }
 
-func (f VolumeFilter) matches(collection string, id needle.VolumeId) bool {
+type volumeLike interface {
+	GetCollection() string
+	GetVolumeId() needle.VolumeId
+	GetRemoteStorageName() string
+}
+
+func (f VolumeFilter) matches(vi volumeLike) bool {
 	if f.nothing {
 		return false
 	}
-	if f.Collection != nil && *f.Collection != collection {
+	if f.Collection != nil && *f.Collection != vi.GetCollection() {
 		return false
 	}
-	if f.VolumeId != nil && *f.VolumeId != id {
+	if f.remoteStorageName != nil {
+		pattern, name := *f.remoteStorageName, vi.GetRemoteStorageName()
+		// the empty name is the local volumes, which only asking for the empty
+		// name selects; even * leaves them out.
+		if name == "" && pattern != "" {
+			return false
+		}
+		if !wildcard.MatchesWildcard(pattern, name) {
+			return false
+		}
+	}
+	if f.VolumeId != nil && *f.VolumeId != vi.GetVolumeId() {
 		return false
 	}
 	return true

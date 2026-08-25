@@ -426,7 +426,7 @@ func (d *Disk) ToDiskInfo(filter VolumeFilter) *master_pb.DiskInfo {
 		if !haveDiskId || v.DiskId < diskId {
 			diskId, haveDiskId = v.DiskId, true
 		}
-		if !filter.matches(v.Collection, v.Id) {
+		if !filter.matches(v) {
 			continue
 		}
 		volumeInfos = append(volumeInfos, v.ToVolumeInformationMessage())
@@ -460,7 +460,7 @@ func (d *Disk) ToDiskInfo(filter VolumeFilter) *master_pb.DiskInfo {
 	}
 	m.EcShardInfos = make([]*master_pb.VolumeEcShardInformationMessage, 0, ecCapacity)
 	for _, ecv := range ecShards {
-		if !filter.matches(ecv.Collection, ecv.VolumeId) {
+		if !filter.matches(ecv) {
 			continue
 		}
 		m.EcShardInfos = append(m.EcShardInfos, ecv.ToVolumeEcShardInformationMessage())
