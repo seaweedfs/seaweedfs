@@ -218,6 +218,17 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 		return nil
 	}
 
+	// The name is only ours to write while it still belongs to this inode. A
+	// rename that replaced it handed it to another entry, and writing here
+	// would overwrite that entry with this handle's stale one. Windows makes
+	// this easy to hit: the close carrying the flush runs after the
+	// application's CloseHandle has already returned, so a handle on the
+	// replaced destination flushes once the rename has landed.
+	if inode, found := wfs.inodeToPath.GetInode(util.FullPath(dir).Child(name)); found && inode != fh.inode {
+		glog.V(3).Infof("flushMetadataToFiler %s/%s fh %d: the name now holds inode %d, skipping", dir, name, fh.fh, inode)
+		return nil
+	}
+
 	entry := fh.GetEntry()
 	entry.Name = name // this flush may be just after a rename operation
 
