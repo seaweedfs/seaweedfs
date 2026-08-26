@@ -199,6 +199,10 @@ var cmdMount = &Command{
   at the desktop; the network path form is reachable from every session, and
   each user can map their own drive letter to it.
 
+  Where the platform labels the disk, in Finder and in Explorer, the mounted
+  path names it: -filer.path="/Image Disk" shows up as "Image Disk". Mounting
+  the whole tree labels it with the filer address instead.
+
   RDMA Acceleration:
   For ultra-fast reads, enable RDMA acceleration with an RDMA sidecar:
     weed mount -filer=localhost:8888 -dir=/mnt/seaweedfs \

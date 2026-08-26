@@ -283,3 +283,14 @@ func resolveCacheDirs(option *MountOptions) (string, string) {
 	}
 	return cacheDirForRead, cacheDirForWrite
 }
+
+// volumeName labels the mount where the platform shows one, in Finder and in
+// Explorer. The mounted path names the disk; the filer address, which every
+// mount from one filer shares, is only the whole-tree fallback.
+func volumeName(filer, filerMountRootPath string) string {
+	name := path.Base(filerMountRootPath)
+	if name == "/" || name == "." {
+		name = filer
+	}
+	return strings.ReplaceAll(name, ",", "+")
+}
