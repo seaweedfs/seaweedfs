@@ -388,8 +388,7 @@ func (fs *FilerServer) ObjectTransactionBatch(ctx context.Context, req *filer_pb
 
 // applyStorageDefaultsToEntry enforces the path's storage rule (read-only
 // prefixes reject the write) and fills in the rule TTL when the entry carries
-// none. Remote entries never expire locally; the remote storage owns their
-// lifecycle. The returned option carries the same TTL as the entry, so chunks a
+// none. The returned option carries the same TTL as the entry, so chunks a
 // caller still has to place expire with it.
 func (fs *FilerServer) applyStorageDefaultsToEntry(ctx context.Context, entry *filer.Entry) (*operation.StorageOption, error) {
 	if entry.Remote != nil {
@@ -399,10 +398,7 @@ func (fs *FilerServer) applyStorageDefaultsToEntry(ctx context.Context, entry *f
 	if err != nil {
 		return nil, err
 	}
-	if entry.Remote == nil {
-		entry.TtlSec = so.TtlSeconds
-	}
-	entry.ApplyS3ExpiryMetadata()
+	entry.ApplyStorageTtl(so.TtlSeconds)
 	return so, nil
 }
 

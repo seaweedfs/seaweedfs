@@ -2,9 +2,11 @@ package weed_server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -58,6 +60,77 @@ func TestObjectTransactionPutAppliesRuleTtl(t *testing.T) {
 	}
 	if entry.TtlSec != 180 {
 		t.Errorf("entry TtlSec = %d, want 180", entry.TtlSec)
+	}
+}
+
+// A copy landing in a TTL path re-uploads its chunks under that path's rule, so
+// the entry has to carry the rule's TTL too - whatever TTL the source had.
+func TestCopyAppliesRuleTtl(t *testing.T) {
+	for _, sourceTtlSec := range []int32{0, 600} {
+		t.Run(fmt.Sprintf("source ttl %d", sourceTtlSec), func(t *testing.T) {
+			store := newRenameTestStore()
+			source := newFileEntry("/src.txt", 11)
+			source.Content = []byte("hello")
+			source.TtlSec = sourceTtlSec
+			source.Crtime = time.Now() // a TTL entry older than its TTL reads back as expired
+			store.entries["/src.txt"] = source
+			store.entries[ttlRulePrefix] = newDirectoryEntry(ttlRulePrefix, 10)
+
+			server := &FilerServer{
+				filer:          newRenameTestFiler(t, store),
+				option:         &FilerOption{},
+				entryLockTable: util.NewLockTable[util.FullPath](),
+			}
+			addTtlRule(t, server.filer)
+
+			req := httptest.NewRequest(http.MethodPost, ttlRulePrefix+"dst.txt?cp.from=/src.txt", http.NoBody)
+			rec := httptest.NewRecorder()
+			server.PostHandler(rec, req, 0)
+			if rec.Code != http.StatusNoContent {
+				t.Fatalf("copy = %d, want %d; body=%q", rec.Code, http.StatusNoContent, rec.Body.String())
+			}
+
+			entry, err := store.FindEntry(context.Background(), ttlRulePrefix+"dst.txt")
+			if err != nil {
+				t.Fatalf("FindEntry: %v", err)
+			}
+			if entry.TtlSec != 180 {
+				t.Errorf("entry TtlSec = %d, want 180", entry.TtlSec)
+			}
+		})
+	}
+}
+
+// A remote-backed entry copied into a TTL path must not expire locally: the
+// remote storage owns its lifecycle, so a local expiry would drop the pointer
+// to an object that is still there.
+func TestCopyKeepsRemoteEntryUnexpiring(t *testing.T) {
+	store := newRenameTestStore()
+	source := newFileEntry("/src.txt", 11)
+	source.Remote = &filer_pb.RemoteEntry{StorageName: "s3-remote", RemoteSize: 5}
+	store.entries["/src.txt"] = source
+	store.entries[ttlRulePrefix] = newDirectoryEntry(ttlRulePrefix, 10)
+
+	server := &FilerServer{
+		filer:          newRenameTestFiler(t, store),
+		option:         &FilerOption{},
+		entryLockTable: util.NewLockTable[util.FullPath](),
+	}
+	addTtlRule(t, server.filer)
+
+	req := httptest.NewRequest(http.MethodPost, ttlRulePrefix+"dst.txt?cp.from=/src.txt", http.NoBody)
+	rec := httptest.NewRecorder()
+	server.PostHandler(rec, req, 0)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("copy = %d, want %d; body=%q", rec.Code, http.StatusNoContent, rec.Body.String())
+	}
+
+	entry, err := store.FindEntry(context.Background(), ttlRulePrefix+"dst.txt")
+	if err != nil {
+		t.Fatalf("FindEntry: %v", err)
+	}
+	if entry.TtlSec != 0 {
+		t.Errorf("remote entry TtlSec = %d, want 0", entry.TtlSec)
 	}
 }
 
