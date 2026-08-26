@@ -807,6 +807,13 @@ mod tests {
         sdx.set_len(good - 5).unwrap();
         drop(sdx);
         pooled_index_files().discard(&format!("{base}.sdx"));
+        // Truncation bumps the .sdx mtime, but "bumps" is only true at the
+        // filesystem's timestamp granularity: where both writes land in the
+        // same tick the torn file does not look fresher, and the precondition
+        // below then fails for a reason the test is not about. Age the .idx the
+        // way stale_sdx_is_regenerated does, so freshness is established rather
+        // than raced for.
+        filetime_backdate(&format!("{base}.idx"));
         assert!(
             std::fs::metadata(format!("{base}.sdx"))
                 .unwrap()
