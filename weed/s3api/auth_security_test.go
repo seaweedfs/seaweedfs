@@ -320,6 +320,13 @@ func TestExternalUrlSignatureVerification(t *testing.T) {
 			expectSuccess: true,
 		},
 		{
+			name:          "externalUrl set, external client signs a virtual-hosted bucket name",
+			clientUrl:     "https://test-bucket.api.example.com/object",
+			backendHost:   "test-bucket.api.example.com",
+			externalUrl:   "https://api.example.com",
+			expectSuccess: true,
+		},
+		{
 			name:          "without externalUrl, internal host causes mismatch",
 			clientUrl:     "https://api.example.com:9000/test-bucket/object",
 			backendHost:   "backend:8333",
