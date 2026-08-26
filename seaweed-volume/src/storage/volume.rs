@@ -1778,13 +1778,28 @@ impl Volume {
         self.last_append_at_ns = n.append_at_ns;
 
         // Update needle map (uses n.size = full body size, matching Go's nm.Put)
-        let should_update = if let Some(nm) = &self.nm {
-            match nm.get(n.id)? {
-                Some(nv) => (nv.offset.to_actual_offset() as u64) < offset,
-                None => true,
+        let prior = match self.nm.as_ref() {
+            Some(nm) => nm.get(n.id),
+            None => Ok(None),
+        };
+        let should_update = match prior {
+            Ok(Some(nv)) => (nv.offset.to_actual_offset() as u64) < offset,
+            Ok(None) => true,
+            Err(e) => {
+                if fsync {
+                    // Leaves the same durable-but-unindexed record a failed put
+                    // below does, so it gets the same treatment.
+                    self.no_write_or_delete = true;
+                    tracing::error!(
+                        "volume {}: failed to read the prior mapping for a durable write at {}, \
+                         marking read only: {}",
+                        self.id.0,
+                        offset,
+                        e
+                    );
+                }
+                return Err(VolumeError::Io(e));
             }
-        } else {
-            true
         };
 
         if should_update {
