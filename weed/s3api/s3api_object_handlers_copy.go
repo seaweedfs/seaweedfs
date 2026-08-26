@@ -974,7 +974,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	rangeHeader := r.Header.Get("x-amz-copy-source-range")
 	var startOffset, endOffset int64
 	if rangeHeader != "" {
-		startOffset, endOffset, err = parseRangeHeader(rangeHeader)
+		startOffset, endOffset, err = parseRangeHeader(rangeHeader, int64(filer.FileSize(entry)))
 		if err != nil {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
 			return
@@ -1444,8 +1444,10 @@ func (s3a *S3ApiServer) assignNewVolume(dstPath string, expectedDataSize uint64)
 	return assignResult, nil
 }
 
-// parseRangeHeader parses the x-amz-copy-source-range header
-func parseRangeHeader(rangeHeader string) (startOffset, endOffset int64, err error) {
+// parseRangeHeader parses the x-amz-copy-source-range header against a source of
+// fileSize bytes. Unlike a GET, a part copy does not clamp: a range reaching past
+// the source is unsatisfiable, and copying it would pad the part with zeros.
+func parseRangeHeader(rangeHeader string, fileSize int64) (startOffset, endOffset int64, err error) {
 	// Remove "bytes=" prefix if present
 	rangeStr := strings.TrimPrefix(rangeHeader, "bytes=")
 	parts := strings.Split(rangeStr, "-")
@@ -1461,6 +1463,10 @@ func parseRangeHeader(rangeHeader string) (startOffset, endOffset int64, err err
 	endOffset, err = strconv.ParseInt(parts[1], 10, 64)
 	if err != nil {
 		return 0, 0, fmt.Errorf("invalid end offset: %w", err)
+	}
+
+	if startOffset < 0 || endOffset < startOffset || endOffset >= fileSize {
+		return 0, 0, fmt.Errorf("range %s is not satisfiable for a %d byte source", rangeHeader, fileSize)
 	}
 
 	return startOffset, endOffset, nil
