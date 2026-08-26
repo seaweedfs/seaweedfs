@@ -127,6 +127,8 @@ jobs:
 
         Start-Mount 'seaweed-mount'
 
+        Invoke-Tests 'rename-loop' @('test','-v','-failfast','-count=400','-timeout','25m','./test/winfsp','-run','TestRenameOverExisting','-mountpoint=S:\')
+
         Invoke-Tests 'exercise' @('test','-v','-timeout','20m','./test/winfsp','-mountpoint=S:\')
         Invoke-Tests 'persist-write' @('test','-v','-timeout','15m','./test/winfsp','-run','TestPersistence','-mountpoint=S:\','-phase=write','-filer=127.0.0.1:8888')
 
