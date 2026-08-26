@@ -122,3 +122,45 @@ func TestStatisticsReplicaCopyCount(t *testing.T) {
 		})
 	}
 }
+
+// reportDiskBytes has every node report the same filesystem capacity, the way
+// a volume server does in its heartbeat.
+func reportDiskBytes(ms *MasterServer, totalBytes, freeBytes uint64) {
+	rack := ms.Topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1")
+	for _, node := range rack.Children() {
+		node.(*topology.DataNode).AdjustDiskUsageBytes(
+			map[string]uint64{"": totalBytes}, map[string]uint64{"": freeBytes})
+	}
+}
+
+// TestStatisticsPhysicalCapacity covers a cluster configured with more volume
+// slots than its disks hold. Slots promise 40MB here; what the disks can still
+// take is what gets reported.
+func TestStatisticsPhysicalCapacity(t *testing.T) {
+	ms := newStatisticsMaster(t)
+
+	slotCapacity := uint64(40 * 1024 * 1024)
+	statistics := func() *master_pb.StatisticsResponse {
+		t.Helper()
+		resp, err := ms.Statistics(context.Background(), &master_pb.StatisticsRequest{})
+		if err != nil {
+			t.Fatalf("Statistics: %v", err)
+		}
+		return resp
+	}
+
+	if got := statistics().TotalSize; got != slotCapacity {
+		t.Fatalf("disks that report nothing: got %d, want %d", got, slotCapacity)
+	}
+
+	reportDiskBytes(ms, 8<<20, 1<<20)
+	resp := statistics()
+	if want := resp.UsedSize + (4 << 20); resp.TotalSize != want {
+		t.Errorf("four disks with 1MB free: got %d, want %d", resp.TotalSize, want)
+	}
+
+	reportDiskBytes(ms, 1<<30, 1<<30)
+	if got := statistics().TotalSize; got != slotCapacity {
+		t.Errorf("disks roomier than the slots: got %d, want %d", got, slotCapacity)
+	}
+}

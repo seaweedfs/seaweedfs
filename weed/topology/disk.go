@@ -129,6 +129,24 @@ func (d *DiskUsages) GetMaxVolumeCount() (maxVolumeCount int64) {
 	return
 }
 
+// FreeBytes sums the space the volume servers report as still free on their
+// filesystems. reported is false when none of them said anything -- a failed
+// statfs and a volume server older than the field look the same -- so callers
+// can fall back to counting volume slots.
+func (d *DiskUsages) FreeBytes() (freeBytes uint64, reported bool) {
+	d.RLock()
+	defer d.RUnlock()
+	for _, diskUsageCounts := range d.usages {
+		usage := diskUsageCounts.snapshot()
+		if usage.diskTotalBytes <= 0 {
+			continue
+		}
+		reported = true
+		freeBytes += uint64(max(0, usage.diskFreeBytes))
+	}
+	return
+}
+
 type DiskUsageCounts struct {
 	volumeCount       int64
 	remoteVolumeCount int64
