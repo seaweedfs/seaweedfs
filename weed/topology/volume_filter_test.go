@@ -65,7 +65,6 @@ func equalIds(got, want []uint32) bool {
 func TestVolumeFilterSelects(t *testing.T) {
 	topo := filterTestTopology(t)
 	collection := func(name string) *string { return &name }
-	volume := func(id uint32) *needle.VolumeId { v := needle.VolumeId(id); return &v }
 
 	for _, tc := range []struct {
 		name          string
@@ -78,13 +77,51 @@ func TestVolumeFilterSelects(t *testing.T) {
 		// Asking for it must not read as asking for everything.
 		{"the default collection", VolumeFilter{Collection: collection("")}, []uint32{1}, nil},
 		{"a collection nothing is in", VolumeFilter{Collection: collection("none")}, nil, nil},
-		{"one volume", VolumeFilter{VolumeId: volume(3)}, []uint32{3}, nil},
-		{"one ec volume", VolumeFilter{VolumeId: volume(9)}, nil, []uint32{9}},
-		{"both, agreeing", VolumeFilter{Collection: collection("other"), VolumeId: volume(3)}, []uint32{3}, nil},
-		{"both, disagreeing", VolumeFilter{Collection: collection("c"), VolumeId: volume(3)}, nil, nil},
+		{"one volume", VolumeFilter{VolumeIDs: map[needle.VolumeId]struct{}{3: {}}}, []uint32{3}, nil},
+		{"one ec volume", VolumeFilter{VolumeIDs: map[needle.VolumeId]struct{}{9: {}}}, nil, []uint32{9}},
+		{"both, agreeing", VolumeFilter{Collection: collection("other"), VolumeIDs: map[needle.VolumeId]struct{}{3: {}}}, []uint32{3}, nil},
+		{"both, disagreeing", VolumeFilter{Collection: collection("c"), VolumeIDs: map[needle.VolumeId]struct{}{3: {}}}, nil, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			volumes, ecVolumes := listed(topo.ToTopologyInfo(tc.filter))
+			if !equalIds(volumes, tc.wantVolumes) {
+				t.Errorf("listed volumes %v, want %v", volumes, tc.wantVolumes)
+			}
+			if !equalIds(ecVolumes, tc.wantEcVolumes) {
+				t.Errorf("listed ec volumes %v, want %v", ecVolumes, tc.wantEcVolumes)
+			}
+		})
+	}
+}
+
+// an id nothing answers to narrows the listing rather than widening it.
+func TestVolumeFilterVolumeIDs(t *testing.T) {
+	topo := filterTestTopology(t)
+
+	for _, tc := range []struct {
+		name          string
+		ids           []needle.VolumeId
+		wantVolumes   []uint32
+		wantEcVolumes []uint32
+	}{
+		// No id asked of the filter, so every volume is listed. NewVolumeFilter
+		// hands out an empty map for this, which must read the same as none.
+		{"no id asked", nil, []uint32{1, 2, 3}, []uint32{8, 9}},
+		{"one regular volume asked", []needle.VolumeId{2}, []uint32{2}, nil},
+		{"one ec volume asked", []needle.VolumeId{8}, nil, []uint32{8}},
+		// Both kinds answer to the same set of ids.
+		{"both kinds asked", []needle.VolumeId{1, 8}, []uint32{1}, []uint32{8}},
+		{"every volume asked", []needle.VolumeId{1, 2, 3, 8, 9}, []uint32{1, 2, 3}, []uint32{8, 9}},
+		// An id nothing answers to must not read as asking for everything.
+		{"a missing id", []needle.VolumeId{7}, nil, nil},
+		{"a found and a missing id", []needle.VolumeId{2, 7}, []uint32{2}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ids := make(map[needle.VolumeId]struct{}, len(tc.ids))
+			for _, id := range tc.ids {
+				ids[id] = struct{}{}
+			}
+			volumes, ecVolumes := listed(topo.ToTopologyInfo(VolumeFilter{VolumeIDs: ids}))
 			if !equalIds(volumes, tc.wantVolumes) {
 				t.Errorf("listed volumes %v, want %v", volumes, tc.wantVolumes)
 			}
@@ -206,12 +243,78 @@ func TestNewVolumeFilterReadsTheRequest(t *testing.T) {
 		})
 	}
 
-	if f := NewVolumeFilter(&master_pb.VolumeListRequest{}); f.VolumeId != nil {
-		t.Error("a zero volume id must not filter")
-	}
 	f := NewVolumeFilter(&master_pb.VolumeListRequest{VolumeId: 7})
-	if f.VolumeId == nil || uint32(*f.VolumeId) != 7 {
-		t.Errorf("volume id not carried across: %v", f.VolumeId)
+	if _, ok := f.VolumeIDs[7]; !ok {
+		t.Errorf("volume id not carried across: %v", f.VolumeIDs)
+	}
+}
+
+func TestNewVolumeFilterReadsTheRemoteStorageRequest(t *testing.T) {
+	remoteStorageOf := func(f VolumeFilter) string {
+		if f.remoteStorageName == nil {
+			return "<every>"
+		}
+		return *f.remoteStorageName
+	}
+
+	for _, tc := range []struct {
+		name    string
+		request *master_pb.VolumeListRequest
+		want    string
+	}{
+		// A caller passing through its own "" is answered too much, not wrongly.
+		{"an empty request", &master_pb.VolumeListRequest{}, "<every>"},
+		{"an empty remote storage name", &master_pb.VolumeListRequest{RemoteStorageName: ""}, "<every>"},
+		{"a named remote storage", &master_pb.VolumeListRequest{RemoteStorageName: "s3.backup"}, "s3.backup"},
+		// A wildcard is the caller's pattern, carried across untouched.
+		{"a wildcarded storage", &master_pb.VolumeListRequest{RemoteStorageName: "*"}, "*"},
+		// The one storage (local) the empty string cannot name.
+		{"the local volumes only", &master_pb.VolumeListRequest{LocalVolumeOnly: true}, ""},
+		// Contradictory, so the more specific of the two wins.
+		{"both", &master_pb.VolumeListRequest{RemoteStorageName: "s3.backup", LocalVolumeOnly: true}, "s3.backup"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := remoteStorageOf(NewVolumeFilter(tc.request)); got != tc.want {
+				t.Errorf("selected remote storage %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNewVolumeFilterReadsTheVolumeIds(t *testing.T) {
+	idsOf := func(f VolumeFilter) []uint32 {
+		ids := make([]uint32, 0, len(f.VolumeIDs))
+		for id := range f.VolumeIDs {
+			ids = append(ids, uint32(id))
+		}
+		return ids
+	}
+
+	for _, tc := range []struct {
+		name    string
+		request *master_pb.VolumeListRequest
+		want    []uint32
+	}{
+		// No id asked of the request, so every volume is listed. The empty
+		// map NewVolumeFilter hands out must read the same as none.
+		{"an empty request", &master_pb.VolumeListRequest{}, nil},
+		// Zero is the single field's everything, not the id of a volume.
+		{"a zero volume id", &master_pb.VolumeListRequest{VolumeId: 0}, nil},
+		{"the deprecated single id", &master_pb.VolumeListRequest{VolumeId: 7}, []uint32{7}},
+		{"a list of ids", &master_pb.VolumeListRequest{VolumeIds: []uint32{2, 8}}, []uint32{2, 8}},
+		// The two fields ask one question twice, answered as one set.
+		{"both", &master_pb.VolumeListRequest{VolumeId: 7, VolumeIds: []uint32{2, 8}}, []uint32{2, 7, 8}},
+		// Asking twice for a volume selects it once.
+		{"duplicates", &master_pb.VolumeListRequest{VolumeIds: []uint32{2, 2}}, []uint32{2}},
+		// The list is taken literally: no volume answers to zero, so a zero in
+		// it narrows the listing rather than widening it.
+		{"a zero among the ids", &master_pb.VolumeListRequest{VolumeIds: []uint32{0}}, []uint32{0}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := idsOf(NewVolumeFilter(tc.request)); !equalIds(got, tc.want) {
+				t.Errorf("selected volume ids %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
