@@ -77,7 +77,7 @@ jobs:
 
         function Start-Mount($log) {
           Start-Process -FilePath .\weed.exe `
-            -ArgumentList '-logtostderr','mount','-filer=127.0.0.1:8888','-dir=S:' `
+            -ArgumentList '-logtostderr','-v=4','mount','-filer=127.0.0.1:8888','-dir=S:' `
             -RedirectStandardOutput "C:\$log.log" -RedirectStandardError "C:\$log.err.log"
           $deadline = (Get-Date).AddMinutes(2)
           while ((Get-Date) -lt $deadline) {
@@ -126,6 +126,8 @@ jobs:
         Write-Host "filer is up on http 8888 and grpc 18888"
 
         Start-Mount 'seaweed-mount'
+
+        Invoke-Tests 'rename-loop' @('test','-v','-failfast','-count=300','-timeout','25m','./test/winfsp','-run','TestRenameOverExisting','-mountpoint=S:\')
 
         Invoke-Tests 'exercise' @('test','-v','-timeout','20m','./test/winfsp','-mountpoint=S:\')
         Invoke-Tests 'persist-write' @('test','-v','-timeout','15m','./test/winfsp','-run','TestPersistence','-mountpoint=S:\','-phase=write','-filer=127.0.0.1:8888')
@@ -190,5 +192,5 @@ jobs:
       shell: pwsh
       run: |
         foreach ($f in 'C:\seaweed-mount.log','C:\seaweed-mount.err.log','C:\seaweed-remount.log','C:\seaweed-remount.err.log','C:\seaweed-remount2.log','C:\seaweed-remount2.err.log','C:\seaweed-dirmount.log','C:\seaweed-dirmount.err.log','C:\seaweed-mini.log','C:\seaweed-mini.err.log') {
-          if (Test-Path $f) { Write-Host "===== $f"; Get-Content $f -Tail 200 }
+          if (Test-Path $f) { Write-Host "===== $f"; Get-Content $f -Tail 4000 }
         }
