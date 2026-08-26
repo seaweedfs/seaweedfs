@@ -436,17 +436,39 @@ func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode u
 }
 
 // markHandleDeleted flags the inode's open handle so its flushes stop writing
-// the entry back. Taken and released under the handle's flush lock: a flush
-// already holding it finishes before the caller's delete runs, and any later
-// flush sees the flag; setting the flag bare raced the flush's own check and
-// resurrected the entry right after the delete.
-func (wfs *WFS) markHandleDeleted(inode uint64) {
+// the entry back, and reports which mark this was. Taken and released under
+// the handle's flush lock: a flush already holding it finishes before the
+// caller's delete runs, and any later flush sees the flag; setting the flag
+// bare raced the flush's own check and resurrected the entry right after the
+// delete.
+func (wfs *WFS) markHandleDeleted(inode uint64) uint64 {
+	fh, found := wfs.fhMap.FindFileHandle(inode)
+	if !found {
+		return 0
+	}
+	fhActiveLock := wfs.fhLockTable.AcquireLock("markHandleDeleted", fh.fh, util.ExclusiveLock)
+	fh.isDeleted = true
+	fh.deleteEpoch++
+	epoch := fh.deleteEpoch
+	wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
+	return epoch
+}
+
+// clearHandleDeleted lifts a mark whose delete did not go through. Only the
+// mark epoch names: an unlink that raised the flag after it owns the entry's
+// fate and keeps it.
+func (wfs *WFS) clearHandleDeleted(inode uint64, epoch uint64) {
+	if epoch == 0 {
+		return
+	}
 	fh, found := wfs.fhMap.FindFileHandle(inode)
 	if !found {
 		return
 	}
-	fhActiveLock := wfs.fhLockTable.AcquireLock("Unlink", fh.fh, util.ExclusiveLock)
-	fh.isDeleted = true
+	fhActiveLock := wfs.fhLockTable.AcquireLock("clearHandleDeleted", fh.fh, util.ExclusiveLock)
+	if fh.deleteEpoch == epoch {
+		fh.isDeleted = false
+	}
 	wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 }
 

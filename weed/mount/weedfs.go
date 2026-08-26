@@ -938,6 +938,7 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 		// dirty pages stay, so the open fd still reads its buffered writes.
 		if invalidation.Deleted {
 			fh.isDeleted = true
+			fh.deleteEpoch++
 		}
 		if !fh.dirtyMetadata {
 			fh.dirtyPages.Destroy()
