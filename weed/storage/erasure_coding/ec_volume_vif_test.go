@@ -137,3 +137,51 @@ func TestNewEcVolumeRejectsSidecarGeometryDisagreement(t *testing.T) {
 		t.Errorf("the error should name the disagreement: %v", err)
 	}
 }
+
+// With no .vif the bitrot sidecar is the ONLY record of the volume's layout.
+// Present but unusable — unreadable, stamped for another generation, or
+// carrying an incomplete ratio — must fail the mount: answering reads from a
+// guessed layout returns wrong bytes rather than none. Genuine absence stays
+// legal, and is covered by TestNewEcVolumeAbsentVifMountsWithDefaults.
+func TestNewEcVolumeRejectsUnusableSoleSidecar(t *testing.T) {
+	seed := map[string]*volume_server_pb.EcBitrotProtection{
+		"another generation": {
+			Algorithm:     volume_server_pb.ChecksumAlgorithm_CHECKSUM_CRC32C,
+			BlockSize:     uint32(BitrotBlockSize),
+			Generation:    5,
+			EcShardConfig: &volume_server_pb.EcShardConfig{DataShards: 10, ParityShards: 4},
+		},
+		"no ec config": {
+			Algorithm:  volume_server_pb.ChecksumAlgorithm_CHECKSUM_CRC32C,
+			BlockSize:  uint32(BitrotBlockSize),
+			Generation: 0,
+		},
+		"incomplete ratio": {
+			Algorithm:     volume_server_pb.ChecksumAlgorithm_CHECKSUM_CRC32C,
+			BlockSize:     uint32(BitrotBlockSize),
+			Generation:    0,
+			EcShardConfig: &volume_server_pb.EcShardConfig{DataShards: 10},
+		},
+		"invalid block size": {
+			Algorithm:  volume_server_pb.ChecksumAlgorithm_CHECKSUM_CRC32C,
+			BlockSize:  uint32(BitrotBlockSize),
+			Generation: 0,
+			EcShardConfig: &volume_server_pb.EcShardConfig{
+				DataShards: 10, ParityShards: 4, BlockSize: 3*1024*1024 + 1,
+			},
+		},
+	}
+	for name, prot := range seed {
+		dir := t.TempDir()
+		base := filepath.Join(dir, "1")
+		if err := os.WriteFile(base+".ecx", []byte{}, 0644); err != nil {
+			t.Fatalf("%s: seed .ecx: %v", name, err)
+		}
+		if err := SaveBitrotSidecar(BitrotSidecarPath(base, 0), prot); err != nil {
+			t.Fatalf("%s: seed .ecsum: %v", name, err)
+		}
+		if _, err := NewEcVolume(types.HardDriveType, dir, dir, "", needle.VolumeId(1)); err == nil {
+			t.Errorf("%s: an unusable sole layout record must fail the mount", name)
+		}
+	}
+}

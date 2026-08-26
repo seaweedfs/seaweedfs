@@ -174,16 +174,45 @@ pub fn ec_shard_config_from(
     }
     let base = crate::storage::volume::volume_file_name(dir, collection, volume_id);
     let path = crate::storage::erasure_coding::ec_bitrot::bitrot_sidecar_path(&base, 0);
-    if let Ok(prot) = crate::storage::erasure_coding::ec_bitrot::load_bitrot_sidecar(&path) {
-        if let Some(ec) = prot.ec_shard_config.as_ref() {
-            if usable(ec.data_shards, ec.parity_shards)
-                && validate_block_size(ec.block_size).is_ok()
-            {
-                return Ok((ec.data_shards, ec.parity_shards, ec.block_size));
-            }
+    // With no vif the sidecar is the ONLY record of this volume's layout, so
+    // the three answers stay distinct: absent means the volume may genuinely
+    // predate the sidecar and legacy is the right guess; present-but-unusable
+    // means the record is corrupt, and answering reads from a guessed layout
+    // returns wrong bytes rather than none.
+    match std::fs::metadata(&path) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok((default_ds, default_ps, 0)),
+        Err(e) => {
+            return Err(io::Error::new(e.kind(), format!("stat {}: {}", path, e)));
         }
+        Ok(_) => {}
     }
-    Ok((default_ds, default_ps, 0))
+    let prot = crate::storage::erasure_coding::ec_bitrot::load_bitrot_sidecar(&path)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("read {}: {}", path, e)))?;
+    // The un-suffixed sidecar describes generation 0 and nothing else.
+    if prot.generation != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{} records generation {}, not generation 0", path, prot.generation),
+        ));
+    }
+    let ec = prot.ec_shard_config.as_ref().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{} records no EC config", path),
+        )
+    })?;
+    if !usable(ec.data_shards, ec.parity_shards) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "{} records invalid shard counts {}+{}",
+                path, ec.data_shards, ec.parity_shards
+            ),
+        ));
+    }
+    validate_block_size(ec.block_size)
+        .map_err(|e| io::Error::new(e.kind(), format!("{}: {}", path, e)))?;
+    Ok((ec.data_shards, ec.parity_shards, ec.block_size))
 }
 
 /// Reports whether a `.vif`-recorded shard block size is one an encoder could

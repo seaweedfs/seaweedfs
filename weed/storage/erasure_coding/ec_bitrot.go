@@ -539,6 +539,45 @@ func (ev *EcVolume) loadBitrotForGeneration(generation uint32) error {
 	return nil
 }
 
+// EcShardConfigFromSidecar reads the generation-0 bitrot sidecar's record of a
+// volume's EC config. The three answers are distinct on purpose: absent means
+// the volume may genuinely predate the sidecar, which is the only case a caller
+// may answer with the legacy layout; present-but-unusable means the one
+// surviving record of the geometry is corrupt, and guessing from there returns
+// wrong bytes rather than no bytes.
+func EcShardConfigFromSidecar(baseFileName string) (cfg *volume_server_pb.EcShardConfig, found bool, err error) {
+	path := BitrotSidecarPath(baseFileName, 0)
+	if _, statErr := os.Stat(path); statErr != nil {
+		if os.IsNotExist(statErr) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("stat %s: %w", path, statErr)
+	}
+	prot, loadErr := LoadBitrotSidecar(path)
+	if loadErr != nil {
+		return nil, true, fmt.Errorf("read %s: %w", path, loadErr)
+	}
+	// The un-suffixed sidecar describes generation 0 and nothing else; one
+	// stamped for another generation is not a record of these shards.
+	if prot.GetGeneration() != 0 {
+		return nil, true, fmt.Errorf("%s records generation %d, not generation 0", path, prot.GetGeneration())
+	}
+	cfg = prot.GetEcShardConfig()
+	if cfg == nil {
+		return nil, true, fmt.Errorf("%s records no EC config", path)
+	}
+	// Sum in int, not uint32: a malformed sidecar claiming counts near the
+	// uint32 ceiling would wrap and pass the bound.
+	ds, ps := int(cfg.GetDataShards()), int(cfg.GetParityShards())
+	if ds <= 0 || ps <= 0 || ds+ps > MaxShardCount {
+		return nil, true, fmt.Errorf("%s records invalid shard counts %d+%d", path, ds, ps)
+	}
+	if bsErr := ValidateBlockSize(cfg.GetBlockSize()); bsErr != nil {
+		return nil, true, fmt.Errorf("%s: %w", path, bsErr)
+	}
+	return cfg, true, nil
+}
+
 // RemoveBitrotSidecars removes the legacy <base>.ecsum and any versioned
 // <base>.ecsum.v<N> sidecars for a base file name. Best-effort.
 func RemoveBitrotSidecars(base string) {

@@ -226,18 +226,22 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 		// every read to the wrong shard offset. `weed fix -ecx` reads the
 		// sidecar for the same reason.
 		ev.ECContext = NewDefaultECContext(collection, vid)
-		if prot, serr := LoadBitrotSidecar(BitrotSidecarPath(dataBaseFileName, 0)); serr == nil {
-			// Sum in int, not uint32: a malformed sidecar claiming counts near
-			// the uint32 ceiling would wrap and pass the bound.
-			cfg := prot.GetEcShardConfig()
-			ds, ps := int(cfg.GetDataShards()), int(cfg.GetParityShards())
-			if ds > 0 && ps > 0 && ds+ps <= MaxShardCount &&
-				ValidateBlockSize(cfg.GetBlockSize()) == nil {
+		cfg, sidecarFound, sidecarErr := EcShardConfigFromSidecar(dataBaseFileName)
+		if sidecarErr != nil {
+			// With no .vif the sidecar is the ONLY record of this volume's
+			// layout. Present but unusable is not "assume legacy" — that
+			// answers reads with the wrong shard offsets, which is worse than
+			// not answering at all.
+			ev.Close()
+			return nil, fmt.Errorf("ec volume %d: no .vif and the bitrot sidecar cannot establish the layout: %w", vid, sidecarErr)
+		}
+		if sidecarFound {
+			{
 				ev.ECContext = &ECContext{
 					Collection:   collection,
 					VolumeId:     vid,
-					DataShards:   ds,
-					ParityShards: ps,
+					DataShards:   int(cfg.GetDataShards()),
+					ParityShards: int(cfg.GetParityShards()),
 					BlockSize:    cfg.GetBlockSize(),
 				}
 				ev.EncodeTsNs = cfg.GetEncodeTsNs()
