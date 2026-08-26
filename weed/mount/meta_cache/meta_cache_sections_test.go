@@ -927,3 +927,48 @@ func TestRenameAcrossSectionsCountsBoth(t *testing.T) {
 		t.Fatal("the landing side's section should be invalidated")
 	}
 }
+
+// A refresh sweeps the names its listing did not return. One recorded at
+// exactly the snapshot has its write reflected but not its removal, so reading
+// the gate as a write left it cached for good.
+func TestSectionRefreshSweepsANameRecordedAtTheSnapshot(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true, "/dir": true})
+	defer mc.Shutdown()
+
+	buildSectionedDir(t, mc, util.FullPath("/dir"), 1000, []string{"m"})
+
+	const snapshotTsNs = 5000
+	if err := mc.ApplyMetadataResponse(context.Background(), &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		EventNotification: &filer_pb.EventNotification{
+			NewEntry: &filer_pb.Entry{
+				Name:       "b-vanish",
+				Attributes: &filer_pb.FuseAttributes{Crtime: 1, Mtime: 1, FileMode: 0100644, FileSize: 3},
+			},
+		},
+		TsNs: snapshotTsNs,
+	}, SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("seed at the snapshot version: %v", err)
+	}
+
+	if err := mc.enqueueAndWait(context.Background(), metadataApplyRequest{
+		kind:      metadataSectionRefresh,
+		buildPath: util.FullPath("/dir"),
+		refresh: &sectionRefresh{
+			hi: "m",
+			entries: []*filer.Entry{
+				{
+					FullPath: util.FullPath("/dir/b-keep"),
+					Attr:     filer.Attr{Crtime: time.Unix(1, 0), Mtime: time.Unix(2, 0), Mode: 0100644, FileSize: 7},
+				},
+			},
+			snapshotTsNs: snapshotTsNs,
+		},
+	}); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	if entry, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/b-vanish")); err == nil && entry != nil {
+		t.Error("a name the refresh did not list is still cached")
+	}
+}

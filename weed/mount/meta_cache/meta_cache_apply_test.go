@@ -868,7 +868,7 @@ func TestExpiredEntryIsJudgedByDirectoryFloor(t *testing.T) {
 	// is the accurate answer, and an event above the floor must apply.
 	mc.setEntryVersionLocked(context.Background(), util.FullPath("/dir/file"), 5000)
 	mc.dirVersionFloors[util.FullPath("/dir")] = 3000
-	blocks := mc.entryVersionBlocksLocked(context.Background(), util.FullPath("/dir/file"), 4000)
+	blocks := mc.entryVersionBlocksLocked(context.Background(), util.FullPath("/dir/file"), 4000, false)
 	mc.Unlock()
 
 	if blocks {
