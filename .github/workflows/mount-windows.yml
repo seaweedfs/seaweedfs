@@ -77,7 +77,7 @@ jobs:
 
         function Start-Mount($log) {
           Start-Process -FilePath .\weed.exe `
-            -ArgumentList '-logtostderr','-v=4','mount','-filer=127.0.0.1:8888','-dir=S:' `
+            -ArgumentList '-logtostderr','mount','-filer=127.0.0.1:8888','-dir=S:' `
             -RedirectStandardOutput "C:\$log.log" -RedirectStandardError "C:\$log.err.log"
           $deadline = (Get-Date).AddMinutes(2)
           while ((Get-Date) -lt $deadline) {

@@ -233,7 +233,7 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 		return fuse.EPERM
 	}
 
-	glog.V(4).Infof("dir Rename %s => %s", oldPath, newPath)
+	glog.V(0).Infof("DIAG rename start %s => %s", oldPath, newPath)
 
 	// Ensure the source file's metadata exists on the filer before renaming.
 	// Two cases can leave the entry only in the local cache:
@@ -339,6 +339,7 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 		}
 		return fuse.EIO
 	}
+	glog.V(0).Infof("DIAG rename applied %s => %s", oldPath, newPath)
 	wfs.inodeToPath.TouchDirectory(oldDir)
 	wfs.inodeToPath.TouchDirectory(newDir)
 	wfs.touchDirMtimeCtimeBest(oldDir)
