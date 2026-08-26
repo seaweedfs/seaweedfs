@@ -389,15 +389,17 @@ func (fs *FilerServer) ObjectTransactionBatch(ctx context.Context, req *filer_pb
 // applyStorageDefaultsToEntry enforces the path's storage rule (read-only
 // prefixes reject the write) and fills in the rule TTL when the entry carries
 // none. Remote entries never expire locally; the remote storage owns their
-// lifecycle.
+// lifecycle. The returned option carries the same TTL as the entry, so chunks a
+// caller still has to place expire with it.
 func (fs *FilerServer) applyStorageDefaultsToEntry(ctx context.Context, entry *filer.Entry) (*operation.StorageOption, error) {
-	so, err := fs.detectStorageOption(ctx, string(entry.FullPath), "", "", 0, "", "", "", "")
+	if entry.Remote != nil {
+		entry.TtlSec = 0
+	}
+	so, err := fs.detectStorageOption(ctx, string(entry.FullPath), "", "", entry.TtlSec, "", "", "", "")
 	if err != nil {
 		return nil, err
 	}
-	if entry.Remote != nil {
-		entry.TtlSec = 0
-	} else if entry.TtlSec == 0 {
+	if entry.Remote == nil {
 		entry.TtlSec = so.TtlSeconds
 	}
 	entry.ApplyS3ExpiryMetadata()
@@ -785,9 +787,9 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 	}
 
 	entry.Chunks = append(entry.GetChunks(), req.Chunks...)
-	so, err := fs.detectStorageOption(ctx, string(fullpath), "", "", entry.TtlSec, "", "", "", "")
+	so, err := fs.applyStorageDefaultsToEntry(ctx, entry)
 	if err != nil {
-		glog.WarningfCtx(ctx, "detectStorageOption: %v", err)
+		glog.WarningfCtx(ctx, "applyStorageDefaultsToEntry: %v", err)
 		return &filer_pb.AppendToEntryResponse{}, err
 	}
 	entry.Chunks, err = filer.MaybeManifestize(fs.saveAsChunk(ctx, so), entry.GetChunks())
