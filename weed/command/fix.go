@@ -357,8 +357,19 @@ func doFixEcxFromShards(basePath, baseFileName, collection string, volumeId int6
 				// vif with no config would assert "legacy" and suppress both the
 				// .ecsum fallback and the dual-layout scan below; leave the
 				// sentinel at -1 (unknown) instead.
-				blockSize = cfg.GetBlockSize()
-				vifUsable = true
+				// A recorded block size no encoder could have produced is not
+				// an answer: a positive one would pin the scan to a geometry
+				// that de-stripes to garbage, and a negative one would leave
+				// the invalid .vif in place after the dual scan recovers the
+				// real layout. Leave the sentinel unknown and rewrite the file
+				// at the end.
+				if bs := cfg.GetBlockSize(); erasure_coding.ValidateBlockSize(bs) == nil {
+					blockSize = bs
+					vifUsable = true
+				} else {
+					glog.Warningf("volume %d: %s records an invalid shard block size %d; recovering the layout by scan and rewriting it",
+						volumeId, vifName, bs)
+				}
 			}
 			datFileSize = vi.GetDatFileSize()
 		}
