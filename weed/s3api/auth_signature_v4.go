@@ -888,14 +888,16 @@ func extractHostHeader(r *http.Request, externalHost string) string {
 }
 
 // extractHostHeaderCandidates returns the host values the client may have signed, most
-// likely first. When externalHost is set (from s3.externalUrl), it is the only candidate.
-// Otherwise, the host is reconstructed from X-Forwarded-* headers or the request Host.
+// likely first. externalHost (from s3.externalUrl) leads when set, but the hosts derived
+// from X-Forwarded-* headers or the request Host still follow it, so clients that reach
+// the gateway directly rather than through the proxy keep verifying.
 // When X-Forwarded-Host carries no port, the true client port is ambiguous: a proxy that
 // kept the Host header makes the r.Host port right, one that rewrote it makes
 // X-Forwarded-Port right, and a client on the scheme's default port signed no port at all.
 func extractHostHeaderCandidates(r *http.Request, externalHost string) []string {
+	var candidates []string
 	if externalHost != "" {
-		return []string{externalHost}
+		candidates = append(candidates, externalHost)
 	}
 
 	forwardedHost := r.Header.Get("X-Forwarded-Host")
@@ -968,7 +970,6 @@ func extractHostHeaderCandidates(r *http.Request, externalHost string) []string 
 		}
 	}
 
-	var candidates []string
 	for _, port := range ports {
 		candidate := joinSignedHost(host, port, scheme)
 		if !slices.Contains(candidates, candidate) {
