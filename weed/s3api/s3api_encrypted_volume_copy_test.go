@@ -173,3 +173,56 @@ func TestEncryptedVolumeCopyScenario(t *testing.T) {
 		t.Log("✓ All chunk metadata properly preserved for encrypted volume copy scenario")
 	})
 }
+
+// A volume-encrypted source must take the re-encrypting UploadPartCopy path:
+// the raw chunk copy slices ciphertext the destination's whole-chunk cipher key
+// can no longer decrypt, and reports the part's ETag from chunks that carry
+// none (issue #10968).
+func TestSourceEntryIsEncryptedForVolumeCipher(t *testing.T) {
+	testCases := []struct {
+		name  string
+		entry *filer_pb.Entry
+		want  bool
+	}{
+		{
+			name:  "nil entry",
+			entry: nil,
+		},
+		{
+			name: "plaintext chunks",
+			entry: &filer_pb.Entry{Chunks: []*filer_pb.FileChunk{
+				{FileId: "1,abc123", Size: 1024, ETag: "etag1"},
+			}},
+		},
+		{
+			name: "volume-encrypted chunk",
+			entry: &filer_pb.Entry{Chunks: []*filer_pb.FileChunk{
+				{FileId: "1,abc123", Size: 1024, CipherKey: util.GenCipherKey()},
+			}},
+			want: true,
+		},
+		{
+			name: "volume-encrypted second chunk",
+			entry: &filer_pb.Entry{Chunks: []*filer_pb.FileChunk{
+				{FileId: "1,abc123", Size: 1024, ETag: "etag1"},
+				{FileId: "2,def456", Offset: 1024, Size: 1024, CipherKey: util.GenCipherKey()},
+			}},
+			want: true,
+		},
+		{
+			name: "SSE-S3 chunk",
+			entry: &filer_pb.Entry{Chunks: []*filer_pb.FileChunk{
+				{FileId: "1,abc123", Size: 1024, SseType: filer_pb.SSEType_SSE_S3},
+			}},
+			want: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sourceEntryIsEncrypted(tc.entry); got != tc.want {
+				t.Errorf("sourceEntryIsEncrypted = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

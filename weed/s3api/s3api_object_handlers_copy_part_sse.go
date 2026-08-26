@@ -73,15 +73,17 @@ func uploadEntryHasChecksum(uploadEntry *filer_pb.Entry) bool {
 	return checksumAlgorithmFromHeaderName(headerName) != ChecksumAlgorithmNone
 }
 
-// sourceEntryHasSSE reports whether the source object's chunks are SSE
+// sourceEntryIsEncrypted reports whether the source object's chunks are
 // ciphertext on disk and therefore cannot be raw-copied — they must be
-// decrypted on read.
-func sourceEntryHasSSE(srcEntry *filer_pb.Entry) bool {
+// decrypted on read. That is SSE, and also -encryptVolumeData, whose per-chunk
+// key only ever decrypts a whole chunk and whose chunks carry no ETag for the
+// copied part to report.
+func sourceEntryIsEncrypted(srcEntry *filer_pb.Entry) bool {
 	if srcEntry == nil {
 		return false
 	}
 	for _, c := range srcEntry.GetChunks() {
-		if c.GetSseType() != filer_pb.SSEType_NONE {
+		if c.GetSseType() != filer_pb.SSEType_NONE || len(c.GetCipherKey()) > 0 {
 			return true
 		}
 	}
