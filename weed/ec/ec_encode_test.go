@@ -1,7 +1,6 @@
 package ec
 
 import (
-	"regexp"
 	"testing"
 	"time"
 
@@ -10,6 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -126,8 +126,7 @@ func TestSelectVolumeIdsFromTopology(t *testing.T) {
 	}
 
 	volumeSizeLimitMb := uint64(1000)
-	collectionPattern := ".*"
-	collectionRegex, _ := regexp.Compile(collectionPattern)
+	collectionMatcher, _ := wildcard.CompileCollectionMatcher(".*")
 
 	// ec.encode -force
 	// force means we ignore the check for 4+ volume servers.
@@ -177,7 +176,7 @@ func TestSelectVolumeIdsFromTopology(t *testing.T) {
 	// In the provided topology, FreeVolumeCount is 1 ("free:1"), so it is < 2.
 	// So ALL volumes should be skipped due to insufficient free disk space.
 
-	vids, _ := SelectVolumeIdsFromTopology(topologyInfo, volumeSizeLimitMb, collectionRegex, nil, quietSeconds, nowUnixSeconds, fullPercentage, verbose)
+	vids, _ := SelectVolumeIdsFromTopology(topologyInfo, volumeSizeLimitMb, collectionMatcher, nil, quietSeconds, nowUnixSeconds, fullPercentage, verbose)
 
 	assert.Equal(t, 0, len(vids), "Should select 0 volumes because FreeVolumeCount is 1 (less than 2)")
 
@@ -197,7 +196,7 @@ func TestSelectVolumeIdsFromTopology(t *testing.T) {
 
 	// So expected volumes: 10, 11, 12.
 
-	vids, _ = SelectVolumeIdsFromTopology(topologyInfo, volumeSizeLimitMb, collectionRegex, nil, quietSeconds, nowUnixSeconds, fullPercentage, verbose)
+	vids, _ = SelectVolumeIdsFromTopology(topologyInfo, volumeSizeLimitMb, collectionMatcher, nil, quietSeconds, nowUnixSeconds, fullPercentage, verbose)
 
 	expectedVids := []needle.VolumeId{10, 11, 12}
 	assert.Equal(t, len(expectedVids), len(vids), "Should select 3 volumes")

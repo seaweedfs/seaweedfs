@@ -9,7 +9,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
-	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding/ecbalancer"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
@@ -49,7 +48,7 @@ func Detection(
 		return nil, false, fmt.Errorf("topology info not available")
 	}
 
-	allowedCollections, err := pluginworker.CompileCollectionMatcher(ecConfig.CollectionFilter)
+	allowedCollections, err := wildcard.CompileCollectionMatcher(ecConfig.CollectionFilter)
 	if err != nil {
 		return nil, false, err
 	}
@@ -154,7 +153,7 @@ func Detection(
 // per-volume ratio lookup built from each shard's heartbeat (0,0 when unreported,
 // e.g. always in OSS) which Plan prefers over the collection ratio for mixed-ratio
 // clusters.
-func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config, allowedCollections *pluginworker.CollectionMatcher) (*ecbalancer.Topology, int, func(collection string, vid uint32) (int, int)) {
+func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config, allowedCollections *wildcard.CollectionMatcher) (*ecbalancer.Topology, int, func(collection string, vid uint32) (int, int)) {
 	topo := ecbalancer.NewTopology()
 
 	type volRatioKey struct {

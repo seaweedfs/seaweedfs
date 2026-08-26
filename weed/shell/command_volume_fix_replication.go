@@ -29,7 +29,7 @@ func init() {
 }
 
 type commandVolumeFixReplication struct {
-	collectionPattern *string
+	collectionMatcher *wildcard.CollectionMatcher
 	// TODO: move parameter flags here so we don't shuffle them around via function calls.
 }
 
@@ -71,7 +71,7 @@ func (c *commandVolumeFixReplication) HasTag(tag CommandTag) bool {
 func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	volFixReplicationCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
-	c.collectionPattern = volFixReplicationCommand.String("collectionPattern", "", "match with wildcard characters '*' and '?'")
+	collectionPattern := volFixReplicationCommand.String("collectionPattern", "", "comma-separated collection names, with '*' and '?' wildcards; empty matches all")
 	applyChanges := volFixReplicationCommand.Bool("apply", false, "apply the fix")
 	// TODO: remove this alias
 	applyChangesAlias := volFixReplicationCommand.Bool("force", false, "apply the fix (alias for -apply)")
@@ -85,6 +85,10 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 
 	if err = volFixReplicationCommand.Parse(args); err != nil {
 		return nil
+	}
+
+	if c.collectionMatcher, err = wildcard.CompileCollectionMatcher(*collectionPattern); err != nil {
+		return err
 	}
 
 	handleDeprecatedForceFlag(writer, volFixReplicationCommand, applyChangesAlias, applyChanges)
@@ -127,7 +131,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 			replica := replicas[0]
 
 			// Filter here so the termination counter matches what gets fixed; else -apply loops forever.
-			if !c.matchCollectionPattern(replica.info.Collection) {
+			if !c.collectionMatcher.Matches(replica.info.Collection) {
 				continue
 			}
 
@@ -328,18 +332,6 @@ func checkOneVolume(a *VolumeReplica, b *VolumeReplica, writer io.Writer, comman
 		return fmt.Errorf("doVolumeCheckDisk source:%s target:%s volume %d: %v", a.location.dataNode.Id, b.location.dataNode.Id, a.info.Id, err)
 	}
 	return
-}
-
-// matchCollectionPattern reports whether collection matches -collectionPattern:
-// empty matches everything, CollectionDefault matches the unnamed collection.
-func (c *commandVolumeFixReplication) matchCollectionPattern(collection string) bool {
-	if *c.collectionPattern == "" {
-		return true
-	}
-	if *c.collectionPattern == CollectionDefault {
-		return collection == ""
-	}
-	return wildcard.MatchesWildcard(*c.collectionPattern, collection)
 }
 
 // deleteOneVolume trims one replica from each of the given volumes, and

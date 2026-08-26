@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -18,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -66,8 +66,9 @@ func (c *commandVolumeTierMove) Help() string {
 	replication setting. Otherwise, the volume's existing replication is preserved.
 
 	Note:
-		Use -collectionPattern="_default" to match only the default collection (volumes with no collection name).
-		Empty collectionPattern matches all collections.
+		-collectionPattern is a comma-separated list of collection names, with "*" and "?"
+		wildcards, and regex patterns. Use "_default" to match only the default collection
+		(volumes with no collection name). An empty pattern matches all collections.
 
 `
 }
@@ -79,7 +80,7 @@ func (c *commandVolumeTierMove) HasTag(CommandTag) bool {
 func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	tierCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
-	collectionPattern := tierCommand.String("collectionPattern", "", "match with wildcard characters '*' and '?'")
+	collectionPattern := tierCommand.String("collectionPattern", "", "comma-separated collection names, with '*' and '?' wildcards; empty matches all")
 	fullPercentage := tierCommand.Float64("fullPercent", 95, "the volume reaches the percentage of max volume size")
 	quietPeriod := tierCommand.Duration("quietFor", 24*time.Hour, "select volumes without no writes for this period")
 	source := tierCommand.String("fromDiskType", "", "the source disk type")
@@ -561,6 +562,11 @@ func (c *commandVolumeTierMove) ensureReplicationFulfilled(commandEnv *CommandEn
 
 func collectVolumeIdsForTierChange(topologyInfo *master_pb.TopologyInfo, volumeSizeLimitMb uint64, sourceTier types.DiskType, sourceDataCenter string, collectionPattern string, fullPercentage float64, quietPeriod time.Duration) (vids []needle.VolumeId, err error) {
 
+	collectionMatcher, err := wildcard.CompileCollectionMatcher(collectionPattern)
+	if err != nil {
+		return nil, err
+	}
+
 	quietSeconds := int64(quietPeriod / time.Second)
 	nowUnixSeconds := time.Now().Unix()
 
@@ -573,22 +579,8 @@ func collectVolumeIdsForTierChange(topologyInfo *master_pb.TopologyInfo, volumeS
 		}
 		for _, diskInfo := range dn.DiskInfos {
 			for _, v := range diskInfo.VolumeInfos {
-				// check collection name pattern
-				if collectionPattern != "" {
-					var matched bool
-					if collectionPattern == CollectionDefault {
-						matched = v.Collection == ""
-					} else {
-						var matchErr error
-						matched, matchErr = filepath.Match(collectionPattern, v.Collection)
-						if matchErr != nil {
-							err = fmt.Errorf("collection pattern %q failed to match: %w", collectionPattern, matchErr)
-							return
-						}
-					}
-					if !matched {
-						continue
-					}
+				if !collectionMatcher.Matches(v.Collection) {
+					continue
 				}
 
 				if v.ModifiedAtSecond+quietSeconds < nowUnixSeconds && types.ToDiskType(v.DiskType) == sourceTier {

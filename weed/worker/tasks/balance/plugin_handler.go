@@ -16,6 +16,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	workertypes "github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
@@ -313,7 +314,7 @@ func (h *VolumeBalanceHandler) Detect(
 	var results []*workertypes.TaskDetectionResult
 	var hasMore bool
 
-	if pluginworker.CollectionFilterMode(collectionFilter) == pluginworker.CollectionFilterEach {
+	if wildcard.CollectionFilterMode(collectionFilter) == wildcard.CollectionFilterEach {
 		// Group metrics by collection in a single pass (O(N) instead of O(C*N))
 		metricsByCollection := make(map[string][]*workertypes.VolumeHealthMetrics)
 		for _, m := range metrics {

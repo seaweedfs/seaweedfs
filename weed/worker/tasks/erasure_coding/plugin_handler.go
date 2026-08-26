@@ -14,6 +14,7 @@ import (
 	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
 	ecstorage "github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	workertypes "github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
@@ -295,7 +296,7 @@ func emitErasureCodingDetectionDecisionTrace(
 
 	quietThreshold := time.Duration(taskConfig.QuietForSeconds) * time.Second
 	minSizeBytes := uint64(taskConfig.MinSizeMB) * 1024 * 1024
-	allowedCollections, err := pluginworker.CompileCollectionMatcher(taskConfig.CollectionFilter)
+	allowedCollections, err := wildcard.CompileCollectionMatcher(taskConfig.CollectionFilter)
 	if err != nil {
 		return err
 	}

@@ -14,10 +14,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
-	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding/ecbalancer"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
 	workerutil "github.com/seaweedfs/seaweedfs/weed/worker/tasks/util"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
@@ -69,7 +69,7 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 		glog.Warningf("EC Detection: replica placement data-center digit (%d) is ignored for EC; only rack/node digits are honored", replicaPlacement.DiffDataCenterCount)
 	}
 
-	allowedCollections, err := pluginworker.CompileCollectionMatcher(ecConfig.CollectionFilter)
+	allowedCollections, err := wildcard.CompileCollectionMatcher(ecConfig.CollectionFilter)
 	if err != nil {
 		return nil, false, err
 	}

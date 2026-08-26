@@ -55,7 +55,7 @@ func (c *commandEcDecode) HasTag(CommandTag) bool {
 func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 	decodeCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeId := decodeCommand.Int("volumeId", 0, "the volume id")
-	collection := decodeCommand.String("collection", "", "the collection name")
+	collection := decodeCommand.String("collection", "", "comma-separated collection names, wildcards, or regex patterns; empty matches the collection with no name")
 	diskTypeStr := decodeCommand.String("diskType", "", "source disk type where EC shards are stored (hdd, ssd, or empty for default hdd)")
 	checkMinFreeSpace := decodeCommand.Bool("checkMinFreeSpace", true, "check min free space when selecting the decode target")
 	batchSize := decodeCommand.Int("batchSize", DefaultEcBatchSize, "decode up to this many volumes per topology refresh (0 = one snapshot for all volumes)")
@@ -90,11 +90,11 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	}
 
 	// apply to all volumes in the collection
-	collectionRegex, err := compileCollectionPattern(*collection)
+	collectionMatcher, err := compileCollectionPattern(*collection)
 	if err != nil {
 		return fmt.Errorf("invalid collection pattern '%s': %v", *collection, err)
 	}
-	volumeIds := ec.CollectEcShardIds(topologyInfo, collectionRegex, diskType)
+	volumeIds := ec.CollectEcShardIds(topologyInfo, collectionMatcher, diskType)
 	fmt.Printf("ec decode volumes: %v\n", volumeIds)
 	batches := chunkVolumeIds(volumeIds, *batchSize)
 	for i, batch := range batches {
