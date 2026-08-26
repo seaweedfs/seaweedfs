@@ -180,7 +180,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 			fuseMountOptions.Options = append(fuseMountOptions.Options, "novncache")
 		}
 		fuseMountOptions.Options = append(fuseMountOptions.Options, "slow_statfs")
-		fuseMountOptions.Options = append(fuseMountOptions.Options, "volname="+serverFriendlyName)
+		fuseMountOptions.Options = append(fuseMountOptions.Options, "volname="+volumeName(*option.filer, filerMountRootPath))
 		fuseMountOptions.Options = append(fuseMountOptions.Options, fmt.Sprintf("iosize=%d", ioSizeMB*1024*1024))
 	}
 
