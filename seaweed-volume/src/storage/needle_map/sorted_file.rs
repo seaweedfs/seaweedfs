@@ -10,10 +10,11 @@
 //! operation from [`file_pool`](super::file_pool) — so a volume nobody is
 //! reading costs zero fds and zero index bytes of RAM.
 
+use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::sync::atomic::Ordering;
-use std::sync::Mutex;
+use std::sync::{Mutex, RwLock};
 
 use super::file_pool::pooled_index_files;
 use crate::storage::idx;
@@ -40,6 +41,19 @@ pub struct SortedFileNeedleMap {
     db_file_name: String,
     db_file_size: i64,
     tail: Mutex<IndexTail>,
+    /// Needles whose tombstone is durable in `.idx` but whose `.sdx` record
+    /// this process could not mark. `.sdx` is only a search accelerator over
+    /// `.idx`, so a stale record there would keep serving bytes the volume has
+    /// already accepted a delete for, until a reload rebuilds it. Lookups
+    /// consult this first and report the needle deleted, which is what the
+    /// next reload will conclude too.
+    pending_tombstones: RwLock<HashMap<NeedleId, Offset>>,
+    /// Test seam: forces the in-place `.sdx` mark to fail so the tests can
+    /// exercise the "tombstone durable in `.idx`, mark did not land" path,
+    /// which no portable filesystem trick reproduces (a read-only `.sdx`
+    /// fails the borrow long before the mark).
+    #[cfg(test)]
+    fail_sdx_mark: std::sync::atomic::AtomicBool,
 }
 
 impl SortedFileNeedleMap {
@@ -84,6 +98,9 @@ impl SortedFileNeedleMap {
                 offset: index_file_size,
                 needs_sync: false,
             }),
+            pending_tombstones: RwLock::new(HashMap::new()),
+            #[cfg(test)]
+            fail_sdx_mark: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -97,21 +114,31 @@ impl SortedFileNeedleMap {
         &self.index_file_name
     }
 
-    pub fn get(&self, key: NeedleId) -> Option<NeedleValue> {
-        let file = match pooled_index_files().borrow(&self.db_file_name, false) {
-            Ok(file) => file,
-            Err(e) => {
-                tracing::warn!(sdx = %self.db_file_name, error = %e, "open sorted index");
-                return None;
-            }
-        };
-        match search_sorted_index(&file, self.db_file_size, key) {
-            Ok(Some((_, offset, size))) => Some(NeedleValue { offset, size }),
-            Ok(None) => None,
-            Err(e) => {
-                tracing::warn!(sdx = %self.db_file_name, error = %e, "search sorted index");
-                None
-            }
+    /// Look up a needle. An unreadable or torn `.sdx` — or a pooled reopen that
+    /// fails — is an ERROR, not an absent needle: swallowing it would answer a
+    /// read with "not found" and let a delete report success without recording
+    /// a tombstone, both of which look like data loss to the caller.
+    pub fn get(&self, key: NeedleId) -> io::Result<Option<NeedleValue>> {
+        if let Some(offset) = self
+            .pending_tombstones
+            .read()
+            .expect("pending tombstones lock")
+            .get(&key)
+            .copied()
+        {
+            return Ok(Some(NeedleValue {
+                offset,
+                size: TOMBSTONE_FILE_SIZE,
+            }));
+        }
+        let file = pooled_index_files()
+            .borrow(&self.db_file_name, false)
+            .map_err(|e| {
+                io::Error::new(e.kind(), format!("open {}: {}", self.db_file_name, e))
+            })?;
+        match search_sorted_index(&file, self.db_file_size, key)? {
+            Some((_, offset, size)) => Ok(Some(NeedleValue { offset, size })),
+            None => Ok(None),
         }
     }
 
@@ -128,6 +155,16 @@ impl SortedFileNeedleMap {
     /// deleted. A key that is absent or already deleted is a no-op, matching
     /// Go.
     pub fn delete(&self, key: NeedleId, offset: Offset) -> io::Result<Option<Size>> {
+        if self
+            .pending_tombstones
+            .read()
+            .expect("pending tombstones lock")
+            .contains_key(&key)
+        {
+            // Already tombstoned in `.idx`; a second tombstone would double
+            // count, and the mark this process owes `.sdx` is still pending.
+            return Ok(None);
+        }
         let file = pooled_index_files().borrow(&self.db_file_name, true)?;
         let Some((entry_index, _, size)) = search_sorted_index(&file, self.db_file_size, key)?
         else {
@@ -146,25 +183,61 @@ impl SortedFileNeedleMap {
         // already counts as deleted.
         self.append_to_index_file(key, offset, TOMBSTONE_FILE_SIZE)?;
 
-        let mut buf = [0u8; SIZE_SIZE];
-        TOMBSTONE_FILE_SIZE.to_bytes(&mut buf);
-        write_at(
-            &file,
-            &buf,
-            entry_index * NEEDLE_MAP_ENTRY_SIZE as u64 + ENTRY_SIZE_OFFSET,
-        )?;
-
         // Move the counters to where a reload would put them, so the heartbeat
         // does not report this volume as garbage-free until it restarts. The
         // tombstone is one more .idx row, and under the rule index_metric
         // applies both it and the row it supersedes count as deletions; the
         // bytes leave the live set without leaving the .idx.
+        //
+        // This belongs to the `.idx` append, not to the `.sdx` mark below: the
+        // append is what makes the delete durable and what a reload would
+        // count, and the retry path returns early once the overlay records it.
+        // Leaving the counters until after the mark would strand them at their
+        // pre-delete values whenever the mark fails.
         self.metric.file_count.fetch_add(1, Ordering::Relaxed);
         self.metric.deletion_count.fetch_add(2, Ordering::Relaxed);
         self.metric
             .deletion_byte_count
             .fetch_add(size.0.max(0) as u64, Ordering::Relaxed);
+
+        // From here the delete is durable in `.idx`, so no lookup may report
+        // this needle live again. Record it before touching `.sdx` and clear
+        // the record only once that mark lands: if the mark fails, the entry
+        // stays and lookups fail closed until a reload rebuilds `.sdx` from
+        // the `.idx` that already carries the tombstone.
+        self.pending_tombstones
+            .write()
+            .expect("pending tombstones lock")
+            .insert(key, offset);
+
+        self.mark_deleted_in_sdx(&file, entry_index)?;
+        self.pending_tombstones
+            .write()
+            .expect("pending tombstones lock")
+            .remove(&key);
+
         Ok(Some(size))
+    }
+
+    /// Mark the `.sdx` record for `entry_index` deleted in place.
+    fn mark_deleted_in_sdx(&self, file: &File, entry_index: u64) -> io::Result<()> {
+        #[cfg(test)]
+        if self
+            .fail_sdx_mark
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "injected .sdx mark failure",
+            ));
+        }
+        let mut buf = [0u8; SIZE_SIZE];
+        TOMBSTONE_FILE_SIZE.to_bytes(&mut buf);
+        write_at(
+            file,
+            &buf,
+            entry_index * NEEDLE_MAP_ENTRY_SIZE as u64 + ENTRY_SIZE_OFFSET,
+        )
     }
 
     fn append_to_index_file(&self, key: NeedleId, offset: Offset, size: Size) -> io::Result<()> {
@@ -215,6 +288,15 @@ impl SortedFileNeedleMap {
     where
         F: FnMut(NeedleId, &NeedleValue) -> io::Result<()>,
     {
+        // A needle whose `.sdx` mark failed still reads live off the record.
+        // `get` answers it from the overlay and so must every scan, or a
+        // compaction would copy a deleted needle forward as live. Snapshot it
+        // rather than hold the lock across the whole file.
+        let pending = self
+            .pending_tombstones
+            .read()
+            .expect("pending tombstones lock")
+            .clone();
         let file = pooled_index_files().borrow(&self.db_file_name, false)?;
         let entry_count = self.db_file_size.max(0) as u64 / NEEDLE_MAP_ENTRY_SIZE as u64;
         // A batch per 1024 entries rather than a syscall per entry, matching
@@ -229,8 +311,8 @@ impl SortedFileNeedleMap {
             read_exact_at(&file, bytes, done * NEEDLE_MAP_ENTRY_SIZE as u64)?;
             for entry in bytes.chunks_exact(NEEDLE_MAP_ENTRY_SIZE) {
                 let (key, offset, size) = idx_entry_from_bytes(entry);
-                if !size.is_valid() {
-                    continue; // deleted in place by a runtime delete
+                if !size.is_valid() || pending.contains_key(&key) {
+                    continue; // deleted in place, or still awaiting that mark
                 }
                 f(key, &NeedleValue { offset, size })?;
             }
@@ -539,11 +621,11 @@ mod tests {
         );
 
         let m = SortedFileNeedleMap::open(&base, version()).unwrap();
-        assert_eq!(m.get(NeedleId(1)).unwrap().size, Size(100));
-        assert_eq!(m.get(NeedleId(3)).unwrap().size, Size(300));
+        assert_eq!(m.get(NeedleId(1)).unwrap().unwrap().size, Size(100));
+        assert_eq!(m.get(NeedleId(3)).unwrap().unwrap().size, Size(300));
         // A key tombstoned before the .sdx was written is not in it at all.
-        assert!(m.get(NeedleId(2)).is_none());
-        assert!(m.get(NeedleId(99)).is_none());
+        assert!(m.get(NeedleId(2)).unwrap().is_none());
+        assert!(m.get(NeedleId(99)).unwrap().is_none());
     }
 
     #[test]
@@ -620,12 +702,12 @@ mod tests {
         // .sdx is marked in place, so the needle reads back as a tombstone
         // without a reload — the same contract Go's Get has, where callers
         // check size.is_deleted().
-        assert!(m.get(NeedleId(2)).unwrap().size.is_deleted());
+        assert!(m.get(NeedleId(2)).unwrap().unwrap().size.is_deleted());
         assert!(m
             .delete(NeedleId(2), Offset::from_actual_offset(16))
             .unwrap()
             .is_none());
-        assert!(!m.get(NeedleId(1)).unwrap().size.is_deleted());
+        assert!(!m.get(NeedleId(1)).unwrap().unwrap().size.is_deleted());
     }
 
     #[test]
@@ -742,7 +824,7 @@ mod tests {
             std::fs::metadata(format!("{base}.sdx")).unwrap().len(),
             good
         );
-        assert_eq!(m.get(NeedleId(3)).unwrap().size, Size(300));
+        assert_eq!(m.get(NeedleId(3)).unwrap().unwrap().size, Size(300));
         assert_eq!(m.iter_entries().unwrap().len(), 3);
     }
 
@@ -756,7 +838,7 @@ mod tests {
         filetime_backdate(&format!("{base}.sdx"));
 
         let m = SortedFileNeedleMap::open(&base, version()).unwrap();
-        assert_eq!(m.get(NeedleId(1)).unwrap().size, Size(100));
+        assert_eq!(m.get(NeedleId(1)).unwrap().unwrap().size, Size(100));
     }
 
     #[test]
@@ -779,7 +861,7 @@ mod tests {
         assert_eq!(entries[entries.len() - 1].1.size, Size((total * 10) as i32));
         // Every id is still reachable through the binary search.
         assert_eq!(
-            m.get(NeedleId(total as u64)).unwrap().size,
+            m.get(NeedleId(total as u64)).unwrap().unwrap().size,
             Size((total * 10) as i32)
         );
     }
@@ -829,7 +911,7 @@ mod tests {
             "an idle sorted map must hold no .idx/.sdx descriptor"
         );
 
-        assert!(m.get(NeedleId(1)).is_some());
+        assert!(m.get(NeedleId(1)).unwrap().is_some());
         drop_pooled(&m);
         assert_eq!(
             super::super::file_pool::open_index_fds(dir.path()),
@@ -849,6 +931,148 @@ mod tests {
         let past = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1);
         let f = OpenOptions::new().write(true).open(path).unwrap();
         let _ = f.set_times(std::fs::FileTimes::new().set_modified(past));
+    }
+
+    /// A `.sdx` that cannot be read is an I/O error, never a lookup miss:
+    /// reporting "not found" would answer reads with NotFound and let a delete
+    /// acknowledge success without recording a tombstone.
+    #[test]
+    fn get_reports_io_errors_instead_of_missing() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let base = base(&dir);
+        write_idx(&format!("{base}.idx"), &[(1, 8, 100), (2, 16, 200)]);
+        let m = SortedFileNeedleMap::open(&base, version()).unwrap();
+
+        // Tear the .sdx before anything borrows it: the map still believes the
+        // file holds the entries it recorded at open, so the binary search
+        // reads past the end.
+        let f = OpenOptions::new()
+            .write(true)
+            .open(format!("{base}.sdx"))
+            .unwrap();
+        f.set_len(3).unwrap();
+        drop(f);
+
+        let err = m
+            .get(NeedleId(1))
+            .expect_err("a torn .sdx must surface as an error, not a miss");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof, "got {err}");
+    }
+
+    /// The deletion counters describe what a reload of `.idx` would count, so
+    /// they belong to the durable append — not to the `.sdx` mark that may
+    /// fail after it. Leaving them behind would report the volume as
+    /// garbage-free while the tombstone already sits in `.idx`, and the
+    /// idempotent retry never applies them either.
+    #[test]
+    fn delete_counts_against_the_durable_idx_append() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let base = base(&dir);
+        write_idx(&format!("{base}.idx"), &[(1, 8, 100), (2, 16, 200)]);
+        let m = SortedFileNeedleMap::open(&base, version()).unwrap();
+        let deleted_before = m.deleted_count();
+        let bytes_before = m.deleted_size();
+
+        m.fail_sdx_mark
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        m.delete(NeedleId(1), Offset::from_actual_offset(8))
+            .expect_err("the injected mark failure must surface");
+
+        assert_eq!(
+            m.deleted_count(),
+            deleted_before + 2,
+            "a durable tombstone must move the deletion count"
+        );
+        assert_eq!(
+            m.deleted_size(),
+            bytes_before + 100,
+            "a durable tombstone must move the deleted bytes"
+        );
+        assert!(
+            m.get(NeedleId(1)).unwrap().unwrap().size.is_deleted(),
+            "the needle must read as deleted while the mark is outstanding"
+        );
+
+        // The retry is a no-op: no second tombstone, no double counting.
+        assert_eq!(
+            m.delete(NeedleId(1), Offset::from_actual_offset(8)).unwrap(),
+            None
+        );
+        assert_eq!(m.deleted_count(), deleted_before + 2);
+        assert_eq!(m.deleted_size(), bytes_before + 100);
+    }
+
+    /// Once the tombstone is durable in `.idx`, no lookup may report the needle
+    /// live again — even when marking the `.sdx` record fails.
+    #[test]
+    fn failed_sdx_mark_still_reads_deleted() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let base = base(&dir);
+        write_idx(&format!("{base}.idx"), &[(1, 8, 100), (2, 16, 200)]);
+        let m = SortedFileNeedleMap::open(&base, version()).unwrap();
+
+        // Simulate the mark failing after the .idx append landed.
+        m.pending_tombstones
+            .write()
+            .unwrap()
+            .insert(NeedleId(1), Offset::from_actual_offset(8));
+
+        let nv = m.get(NeedleId(1)).unwrap().expect("entry still resolves");
+        assert!(
+            nv.size.is_deleted(),
+            "a needle whose tombstone is durable must read as deleted, got {:?}",
+            nv.size
+        );
+        // And a retry must not append a second tombstone for it.
+        assert_eq!(
+            m.delete(NeedleId(1), Offset::from_actual_offset(8)).unwrap(),
+            None
+        );
+    }
+
+    /// The scans feed compaction and the rebuilt `.idx`, so a needle the
+    /// overlay reports deleted must not come back through them as live.
+    #[test]
+    fn failed_sdx_mark_is_hidden_from_scans() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let base = base(&dir);
+        write_idx(&format!("{base}.idx"), &[(1, 8, 100), (2, 16, 200)]);
+        let m = SortedFileNeedleMap::open(&base, version()).unwrap();
+
+        m.fail_sdx_mark
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        m.delete(NeedleId(1), Offset::from_actual_offset(8))
+            .expect_err("the injected mark failure must surface");
+
+        let ids: Vec<NeedleId> = m
+            .iter_entries()
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(ids, vec![NeedleId(2)], "iter_entries must drop the needle");
+
+        let mut visited = Vec::new();
+        m.ascending_visit(|id, _| {
+            visited.push(id);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(visited, vec![NeedleId(2)]);
+
+        let saved = format!("{base}.check");
+        m.save_to_idx(&saved).unwrap();
+        let mut rows = Vec::new();
+        idx::walk_index_file(&mut File::open(&saved).unwrap(), 0, |key, _, size| {
+            rows.push((key, size));
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(
+            rows,
+            vec![(NeedleId(2), Size(200))],
+            "save_to_idx must not write the needle back as live"
+        );
     }
 }
 

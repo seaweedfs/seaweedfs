@@ -753,10 +753,12 @@ impl RedbNeedleMap {
         Ok(())
     }
 
-    /// Look up a needle.
-    pub fn get(&self, key: NeedleId) -> Option<NeedleValue> {
+    /// Look up a needle. A redb failure is an ERROR, not an absent needle:
+    /// answering "not found" would turn a database problem into a read miss
+    /// and let a delete report success without recording a tombstone.
+    pub fn get(&self, key: NeedleId) -> io::Result<Option<NeedleValue>> {
         let key_u64: u64 = key.into();
-        self.get_internal(key_u64).ok().flatten()
+        self.get_internal(key_u64)
     }
 
     /// Internal get that returns io::Result for error propagation.
@@ -994,10 +996,12 @@ impl NeedleMap {
         }
     }
 
-    /// Look up a needle.
-    pub fn get(&self, key: NeedleId) -> Option<NeedleValue> {
+    /// Look up a needle. Disk- and database-backed maps report their own
+    /// failures rather than folding them into "not found" — see the notes on
+    /// `RedbNeedleMap::get` and `SortedFileNeedleMap::get`.
+    pub fn get(&self, key: NeedleId) -> io::Result<Option<NeedleValue>> {
         match self {
-            NeedleMap::InMemory(nm) => nm.get(key),
+            NeedleMap::InMemory(nm) => Ok(nm.get(key)),
             NeedleMap::Redb(nm) => nm.get(key),
             NeedleMap::SortedFile(nm) => nm.get(key),
         }
@@ -1309,13 +1313,13 @@ mod tests {
         nm.put(NeedleId(2), Offset::from_actual_offset(128), Size(200))
             .unwrap();
 
-        let v1 = nm.get(NeedleId(1)).unwrap();
+        let v1 = nm.get(NeedleId(1)).unwrap().unwrap();
         assert_eq!(v1.size, Size(100));
 
-        let v2 = nm.get(NeedleId(2)).unwrap();
+        let v2 = nm.get(NeedleId(2)).unwrap().unwrap();
         assert_eq!(v2.size, Size(200));
 
-        assert!(nm.get(NeedleId(99)).is_none());
+        assert!(nm.get(NeedleId(99)).unwrap().is_none());
     }
 
     #[test]
@@ -1340,7 +1344,7 @@ mod tests {
         assert_eq!(nm.deleted_size(), 100);
 
         // Deleted entry should have negated size
-        let nv = nm.get(NeedleId(1)).unwrap();
+        let nv = nm.get(NeedleId(1)).unwrap().unwrap();
         assert_eq!(nv.size, Size(-100));
     }
 
@@ -1413,9 +1417,9 @@ mod tests {
         let mut cursor = Cursor::new(idx_data);
         let nm = RedbNeedleMap::load_from_idx(db_path.to_str().unwrap(), &mut cursor, Version::current()).unwrap();
 
-        assert!(nm.get(NeedleId(1)).is_some());
-        assert!(nm.get(NeedleId(2)).is_none()); // deleted and removed
-        assert!(nm.get(NeedleId(3)).is_some());
+        assert!(nm.get(NeedleId(1)).unwrap().is_some());
+        assert!(nm.get(NeedleId(2)).unwrap().is_none()); // deleted and removed
+        assert!(nm.get(NeedleId(3)).unwrap().is_some());
         assert_eq!(nm.file_count(), 2);
     }
 
@@ -1532,7 +1536,7 @@ mod tests {
         let mut nm = NeedleMap::InMemory(CompactNeedleMap::new());
         nm.put(NeedleId(1), Offset::from_actual_offset(0), Size(100))
             .unwrap();
-        assert_eq!(nm.get(NeedleId(1)).unwrap().size, Size(100));
+        assert_eq!(nm.get(NeedleId(1)).unwrap().unwrap().size, Size(100));
         assert_eq!(nm.file_count(), 1);
     }
 
@@ -1543,7 +1547,7 @@ mod tests {
         let mut nm = NeedleMap::Redb(RedbNeedleMap::new(db_path.to_str().unwrap()).unwrap());
         nm.put(NeedleId(1), Offset::from_actual_offset(0), Size(100))
             .unwrap();
-        assert_eq!(nm.get(NeedleId(1)).unwrap().size, Size(100));
+        assert_eq!(nm.get(NeedleId(1)).unwrap().unwrap().size, Size(100));
         assert_eq!(nm.file_count(), 1);
     }
 }
