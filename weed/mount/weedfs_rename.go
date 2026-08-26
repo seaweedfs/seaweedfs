@@ -362,6 +362,7 @@ func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamR
 	glog.V(4).Infof("dir Rename %+v", resp.EventNotification)
 
 	if resp.EventNotification.NewEntry != nil {
+		glog.V(0).Infof("DIAG rename response create %s/%s", resp.EventNotification.NewParentPath, resp.EventNotification.NewEntry.Name)
 		if err := wfs.applyLocalMetadataEvent(ctx, metadataEventFromRenameResponse(resp)); err != nil {
 			glog.Warningf("rename apply metadata event: %v", err)
 			wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(resp.Directory))
@@ -413,6 +414,7 @@ func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamR
 		}
 
 	} else if resp.EventNotification.OldEntry != nil {
+		glog.V(0).Infof("DIAG rename response delete %s/%s", resp.Directory, resp.EventNotification.OldEntry.Name)
 		// without new entry, only old entry name exists. This is the second step to delete old entry
 		if err := wfs.applyLocalMetadataEvent(ctx, metadataEventFromRenameResponse(resp)); err != nil {
 			glog.Warningf("rename apply delete event: %v", err)

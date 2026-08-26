@@ -201,7 +201,7 @@ func (mc *MetaCache) atomicUpdateEntryFromFilerLocked(ctx context.Context, oldPa
 	vacatingOldPath := oldPath != "" && !(newEntry != nil && oldPath == newEntry.FullPath)
 	if entry != nil && vacatingOldPath {
 		ctx = context.WithValue(ctx, "OP", "MV")
-		glog.V(3).Infof("DeleteEntry %s", oldPath)
+		glog.V(0).Infof("DIAG DeleteEntry %s", oldPath)
 		if err := mc.localStore.DeleteEntry(ctx, oldPath); err != nil {
 			return err
 		}
@@ -223,7 +223,7 @@ func (mc *MetaCache) atomicUpdateEntryFromFilerLocked(ctx context.Context, oldPa
 	if newEntry != nil {
 		newDir, _ := newEntry.DirAndName()
 		if allowUncachedInsert || mc.isCachedFn(util.FullPath(newDir)) {
-			glog.V(3).Infof("InsertEntry %s/%s", newDir, newEntry.Name())
+			glog.V(0).Infof("DIAG InsertEntry %s/%s", newDir, newEntry.Name())
 			if err := mc.localStore.InsertEntry(ctx, newEntry); err != nil {
 				return err
 			}
