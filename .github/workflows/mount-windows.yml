@@ -127,6 +127,11 @@ jobs:
 
         Start-Mount 'seaweed-mount'
 
+        Invoke-Tests 'rename-loop' @('test','-v','-failfast','-count=400','-timeout','25m','./test/winfsp','-run','TestRenameOverExisting','-mountpoint=S:\')
+
+        Write-Host "diagnostic run: stopping after the rename loop"
+        exit 0
+
         Invoke-Tests 'exercise' @('test','-v','-timeout','20m','./test/winfsp','-mountpoint=S:\')
         Invoke-Tests 'persist-write' @('test','-v','-timeout','15m','./test/winfsp','-run','TestPersistence','-mountpoint=S:\','-phase=write','-filer=127.0.0.1:8888')
 
@@ -190,5 +195,5 @@ jobs:
       shell: pwsh
       run: |
         foreach ($f in 'C:\seaweed-mount.log','C:\seaweed-mount.err.log','C:\seaweed-remount.log','C:\seaweed-remount.err.log','C:\seaweed-remount2.log','C:\seaweed-remount2.err.log','C:\seaweed-dirmount.log','C:\seaweed-dirmount.err.log','C:\seaweed-mini.log','C:\seaweed-mini.err.log') {
-          if (Test-Path $f) { Write-Host "===== $f"; Get-Content $f -Tail 200 }
+          if (Test-Path $f) { Write-Host "===== $f"; Get-Content $f -Tail 3000 }
         }

@@ -952,9 +952,13 @@ func (mc *MetaCache) applyMetadataResponseLocked(ctx context.Context, resp *file
 	// the version keeps the newer claim. Each half is gated independently.
 	if resp.TsNs != 0 {
 		if oldPath != "" && mc.entryVersionBlocksLocked(ctx, oldPath, resp.TsNs) {
+			recordTsNs, tombstone, unversioned := mc.entryVersionRecordLocked(ctx, oldPath)
+			glog.V(0).Infof("DIAG gate dropped removal of %s eventTs=%d record=%d floor=%d tombstone=%v unversioned=%v hasNew=%v",
+				oldPath, resp.TsNs, recordTsNs, mc.entryVersionFloorLocked(oldPath, recordTsNs), tombstone, unversioned, newEntry != nil)
 			oldPath = ""
 		}
 		if newEntry != nil && mc.entryVersionBlocksLocked(ctx, newEntry.FullPath, resp.TsNs) {
+			glog.V(0).Infof("DIAG gate dropped insert of %s eventTs=%d", newEntry.FullPath, resp.TsNs)
 			newEntry = nil
 		}
 	}
