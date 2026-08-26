@@ -404,7 +404,7 @@ func (mc *MetaCache) applySectionRefreshNow(ctx context.Context, dirPath util.Fu
 			if mc.pinnedChildFn != nil && mc.pinnedChildFn(entry) {
 				continue
 			}
-			if mc.entryVersionBlocksLocked(ctx, entry.FullPath, snapshotTsNs, false) {
+			if mc.entryVersionBlocksLocked(ctx, entry.FullPath, snapshotTsNs, true) {
 				continue
 			}
 			if err := mc.localStore.DeleteEntry(ctx, entry.FullPath); err != nil {
