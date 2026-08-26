@@ -288,6 +288,15 @@ impl SortedFileNeedleMap {
     where
         F: FnMut(NeedleId, &NeedleValue) -> io::Result<()>,
     {
+        // A needle whose `.sdx` mark failed still reads live off the record.
+        // `get` answers it from the overlay and so must every scan, or a
+        // compaction would copy a deleted needle forward as live. Snapshot it
+        // rather than hold the lock across the whole file.
+        let pending = self
+            .pending_tombstones
+            .read()
+            .expect("pending tombstones lock")
+            .clone();
         let file = pooled_index_files().borrow(&self.db_file_name, false)?;
         let entry_count = self.db_file_size.max(0) as u64 / NEEDLE_MAP_ENTRY_SIZE as u64;
         // A batch per 1024 entries rather than a syscall per entry, matching
@@ -302,8 +311,8 @@ impl SortedFileNeedleMap {
             read_exact_at(&file, bytes, done * NEEDLE_MAP_ENTRY_SIZE as u64)?;
             for entry in bytes.chunks_exact(NEEDLE_MAP_ENTRY_SIZE) {
                 let (key, offset, size) = idx_entry_from_bytes(entry);
-                if !size.is_valid() {
-                    continue; // deleted in place by a runtime delete
+                if !size.is_valid() || pending.contains_key(&key) {
+                    continue; // deleted in place, or still awaiting that mark
                 }
                 f(key, &NeedleValue { offset, size })?;
             }
@@ -1018,6 +1027,51 @@ mod tests {
         assert_eq!(
             m.delete(NeedleId(1), Offset::from_actual_offset(8)).unwrap(),
             None
+        );
+    }
+
+    /// The scans feed compaction and the rebuilt `.idx`, so a needle the
+    /// overlay reports deleted must not come back through them as live.
+    #[test]
+    fn failed_sdx_mark_is_hidden_from_scans() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let base = base(&dir);
+        write_idx(&format!("{base}.idx"), &[(1, 8, 100), (2, 16, 200)]);
+        let m = SortedFileNeedleMap::open(&base, version()).unwrap();
+
+        m.fail_sdx_mark
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        m.delete(NeedleId(1), Offset::from_actual_offset(8))
+            .expect_err("the injected mark failure must surface");
+
+        let ids: Vec<NeedleId> = m
+            .iter_entries()
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(ids, vec![NeedleId(2)], "iter_entries must drop the needle");
+
+        let mut visited = Vec::new();
+        m.ascending_visit(|id, _| {
+            visited.push(id);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(visited, vec![NeedleId(2)]);
+
+        let saved = format!("{base}.check");
+        m.save_to_idx(&saved).unwrap();
+        let mut rows = Vec::new();
+        idx::walk_index_file(&mut File::open(&saved).unwrap(), 0, |key, _, size| {
+            rows.push((key, size));
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(
+            rows,
+            vec![(NeedleId(2), Size(200))],
+            "save_to_idx must not write the needle back as live"
         );
     }
 }
