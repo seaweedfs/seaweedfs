@@ -134,7 +134,6 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	// mount fuse
 	fuseMountOptions := &fuse.MountOptions{
 		AllowOther:               *option.allowOthers,
-		Options:                  option.extraOptions,
 		MaxBackground:            maxBackground,
 		CongestionThreshold:      congestionThreshold,
 		MaxWrite:                 1024 * 1024 * 2,
@@ -183,6 +182,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		fuseMountOptions.Options = append(fuseMountOptions.Options, "volname="+volumeName(*option.filer, filerMountRootPath))
 		fuseMountOptions.Options = append(fuseMountOptions.Options, fmt.Sprintf("iosize=%d", ioSizeMB*1024*1024))
 	}
+	// Last, so an option given on the command line wins over the default
+	// this mount picked for it.
+	fuseMountOptions.Options = append(fuseMountOptions.Options, option.extraOptions...)
 
 	if option.writebackCache != nil {
 		fuseMountOptions.EnableWriteback = *option.writebackCache
