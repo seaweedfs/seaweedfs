@@ -123,11 +123,11 @@ func TestStatisticsReplicaCopyCount(t *testing.T) {
 	}
 }
 
-// reportDiskBytes has every node report the same filesystem capacity, the way
-// a volume server does in its heartbeat.
-func reportDiskBytes(ms *MasterServer, totalBytes, freeBytes uint64) {
+// reportDiskBytes has the first nodeCount nodes report the same filesystem
+// capacity, the way a volume server does in its heartbeat.
+func reportDiskBytes(ms *MasterServer, nodeCount int, totalBytes, freeBytes uint64) {
 	rack := ms.Topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1")
-	for _, node := range rack.Children() {
+	for _, node := range rack.Children()[:nodeCount] {
 		node.(*topology.DataNode).AdjustDiskUsageBytes(
 			map[string]uint64{"": totalBytes}, map[string]uint64{"": freeBytes})
 	}
@@ -153,13 +153,20 @@ func TestStatisticsPhysicalCapacity(t *testing.T) {
 		t.Fatalf("disks that report nothing: got %d, want %d", got, slotCapacity)
 	}
 
-	reportDiskBytes(ms, 8<<20, 1<<20)
+	// a volume server too old to report leaves the whole cluster on its slots,
+	// since the room it holds would otherwise go missing
+	reportDiskBytes(ms, 3, 8<<20, 1<<20)
+	if got := statistics().TotalSize; got != slotCapacity {
+		t.Errorf("one disk of four reporting nothing: got %d, want %d", got, slotCapacity)
+	}
+
+	reportDiskBytes(ms, 4, 8<<20, 1<<20)
 	resp := statistics()
 	if want := resp.UsedSize + (4 << 20); resp.TotalSize != want {
 		t.Errorf("four disks with 1MB free: got %d, want %d", resp.TotalSize, want)
 	}
 
-	reportDiskBytes(ms, 1<<30, 1<<30)
+	reportDiskBytes(ms, 4, 1<<30, 1<<30)
 	if got := statistics().TotalSize; got != slotCapacity {
 		t.Errorf("disks roomier than the slots: got %d, want %d", got, slotCapacity)
 	}

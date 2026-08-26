@@ -162,6 +162,25 @@ func (t *Topology) unregisterDataNodeAddress(addr pb.ServerAddress, dn *DataNode
 	}
 }
 
+// FreeBytes sums what every volume server reports as free on its filesystems.
+// reported is false unless all of them answered: the one that stayed quiet may
+// be the one holding the room, and a partial sum would read as a cluster with
+// none left.
+func (t *Topology) FreeBytes() (freeBytes uint64, reported bool) {
+	for _, dcNode := range t.Children() {
+		for _, rackNode := range dcNode.Children() {
+			for _, dataNode := range rackNode.Children() {
+				nodeFreeBytes, nodeReported := dataNode.GetDiskUsages().FreeBytes()
+				if !nodeReported {
+					return 0, false
+				}
+				freeBytes += nodeFreeBytes
+			}
+		}
+	}
+	return freeBytes, true
+}
+
 func (t *Topology) IsChildLocked() (bool, error) {
 	if t.IsLocked() {
 		return true, errors.New("topology is locked")
