@@ -2,6 +2,8 @@ package s3api
 
 import (
 	"bytes"
+	"context"
+	"io"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -222,6 +224,46 @@ func TestSourceEntryIsEncryptedForVolumeCipher(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := sourceEntryIsEncrypted(tc.entry); got != tc.want {
 				t.Errorf("sourceEntryIsEncrypted = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// A ranged part copy asks the chunk stream for its slice; reading the whole
+// object and discarding the prefix would make an N-part copy read the source
+// N/2 times over.
+func TestGetEncryptedStreamFromVolumesRangesInlineContent(t *testing.T) {
+	s3a := &S3ApiServer{}
+	entry := &filer_pb.Entry{Content: []byte("0123456789")}
+
+	testCases := []struct {
+		name   string
+		offset int64
+		size   int64
+		want   string
+	}{
+		{name: "whole content", size: 10, want: "0123456789"},
+		{name: "leading slice", size: 4, want: "0123"},
+		{name: "middle slice", offset: 3, size: 4, want: "3456"},
+		{name: "trailing slice", offset: 6, size: 4, want: "6789"},
+		{name: "size past the end", offset: 8, size: 10, want: "89"},
+		{name: "offset past the end", offset: 10, size: 4},
+		{name: "empty range", size: 0},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			reader, err := s3a.getEncryptedStreamFromVolumes(context.Background(), entry, tc.offset, tc.size)
+			if err != nil {
+				t.Fatalf("getEncryptedStreamFromVolumes: %v", err)
+			}
+			defer reader.Close()
+			got, err := io.ReadAll(reader)
+			if err != nil {
+				t.Fatalf("read: %v", err)
+			}
+			if string(got) != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
 			}
 		})
 	}

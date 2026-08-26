@@ -1542,7 +1542,7 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 		} else {
 			// For single-part, get encrypted stream and decrypt
 			tStreamFetch := time.Now()
-			encryptedReader, streamErr := s3a.getEncryptedStreamFromVolumes(r.Context(), entry)
+			encryptedReader, streamErr := s3a.getEncryptedStreamFromVolumes(r.Context(), entry, 0, int64(filer.FileSize(entry)))
 			streamFetchTime = time.Since(tStreamFetch)
 			if streamErr != nil {
 				return streamErr
@@ -1578,7 +1578,7 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 		} else {
 			// For single-part, get encrypted stream and decrypt
 			tStreamFetch := time.Now()
-			encryptedReader, streamErr := s3a.getEncryptedStreamFromVolumes(r.Context(), entry)
+			encryptedReader, streamErr := s3a.getEncryptedStreamFromVolumes(r.Context(), entry, 0, int64(filer.FileSize(entry)))
 			streamFetchTime = time.Since(tStreamFetch)
 			if streamErr != nil {
 				return streamErr
@@ -1610,7 +1610,7 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 		} else {
 			// For single-part, get encrypted stream and decrypt
 			tStreamFetch := time.Now()
-			encryptedReader, streamErr := s3a.getEncryptedStreamFromVolumes(r.Context(), entry)
+			encryptedReader, streamErr := s3a.getEncryptedStreamFromVolumes(r.Context(), entry, 0, int64(filer.FileSize(entry)))
 			streamFetchTime = time.Since(tStreamFetch)
 			if streamErr != nil {
 				return streamErr
@@ -2107,25 +2107,35 @@ func (s3a *S3ApiServer) fetchChunkViewData(ctx context.Context, chunkView *filer
 	return resp.Body, nil
 }
 
-// getEncryptedStreamFromVolumes gets raw encrypted data stream from volume servers
-func (s3a *S3ApiServer) getEncryptedStreamFromVolumes(ctx context.Context, entry *filer_pb.Entry) (io.ReadCloser, error) {
+// getEncryptedStreamFromVolumes gets a raw encrypted data stream from volume
+// servers for [offset, offset+size) of the entry.
+func (s3a *S3ApiServer) getEncryptedStreamFromVolumes(ctx context.Context, entry *filer_pb.Entry, offset, size int64) (io.ReadCloser, error) {
+	if size <= 0 {
+		return io.NopCloser(bytes.NewReader(nil)), nil
+	}
+
 	// Handle inline content
 	if len(entry.Content) > 0 {
-		return io.NopCloser(bytes.NewReader(entry.Content)), nil
+		content := entry.Content
+		if offset >= int64(len(content)) {
+			content = nil
+		} else {
+			content = content[offset:min(offset+size, int64(len(content)))]
+		}
+		return io.NopCloser(bytes.NewReader(content)), nil
 	}
 
 	// Handle empty files
 	chunks := entry.GetChunks()
 	if len(chunks) == 0 {
-		return io.NopCloser(bytes.NewReader([]byte{})), nil
+		return io.NopCloser(bytes.NewReader(nil)), nil
 	}
 
 	// Reuse shared lookup function to keep volume lookup logic in one place
 	lookupFileIdFn := s3a.createLookupFileIdFunction()
 
 	// Resolve chunks
-	totalSize := int64(filer.FileSize(entry))
-	resolvedChunks, _, err := filer.ResolveChunkManifest(ctx, lookupFileIdFn, chunks, 0, totalSize)
+	resolvedChunks, _, err := filer.ResolveChunkManifest(ctx, lookupFileIdFn, chunks, offset, offset+size)
 	if err != nil {
 		return nil, err
 	}
@@ -2136,8 +2146,8 @@ func (s3a *S3ApiServer) getEncryptedStreamFromVolumes(ctx context.Context, entry
 		s3a.filerClient,
 		filer.JwtForVolumeServer, // Use filer's JWT function (loads config once, generates JWT locally)
 		resolvedChunks,
-		0,
-		totalSize,
+		offset,
+		size,
 		0,
 		4, // prefetch 4 chunks ahead for overlapped fetching
 	)
