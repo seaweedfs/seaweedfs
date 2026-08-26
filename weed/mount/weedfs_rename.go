@@ -214,17 +214,22 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 		}
 	}
 
-	// POSIX: enforce sticky bit on the destination directory when replacing an existing entry.
+	var newEntry *filer_pb.Entry
 	if in.Flags != RenameNoReplace {
-		if newEntry, _, newStatus := wfs.maybeLoadEntry(newPath); newStatus == fuse.OK && newEntry != nil {
-			if newDirEntry, _, dirCode := wfs.maybeLoadEntry(newDir); dirCode == fuse.OK && newDirEntry != nil && newDirEntry.Attributes != nil {
-				targetUid := uint32(0)
-				if newEntry.Attributes != nil {
-					targetUid = newEntry.Attributes.Uid
-				}
-				if code := checkStickyBit(newDirEntry.Attributes.FileMode, newDirEntry.Attributes.Uid, targetUid, in.Uid); code != fuse.OK {
-					return code
-				}
+		if loaded, _, newStatus := wfs.maybeLoadEntry(newPath); newStatus == fuse.OK {
+			newEntry = loaded
+		}
+	}
+
+	// POSIX: enforce sticky bit on the destination directory when replacing an existing entry.
+	if newEntry != nil {
+		if newDirEntry, _, dirCode := wfs.maybeLoadEntry(newDir); dirCode == fuse.OK && newDirEntry != nil && newDirEntry.Attributes != nil {
+			targetUid := uint32(0)
+			if newEntry.Attributes != nil {
+				targetUid = newEntry.Attributes.Uid
+			}
+			if code := checkStickyBit(newDirEntry.Attributes.FileMode, newDirEntry.Attributes.Uid, targetUid, in.Uid); code != fuse.OK {
+				return code
 			}
 		}
 	}
@@ -272,9 +277,22 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 	// after the application's CloseHandle returned, so the flush can land on
 	// top of what the rename just put there.
 	if in.Flags == RenameEmptyFlag {
-		if targetInode, found := wfs.inodeToPath.GetInode(newPath); found && targetInode != sourceInode {
-			wfs.markHandleDeleted(targetInode)
+		targetInode, targetMapped := wfs.inodeToPath.GetInode(newPath)
+		if !targetMapped && newEntry != nil && newEntry.Attributes != nil {
+			// Forget dropped the mapping, but the entry's stored inode still
+			// names the handle, the way the source side falls back.
+			targetInode = newEntry.Attributes.Inode
+		}
+		if targetInode != 0 && targetInode != sourceInode {
+			wfs.markHandleDeleted(targetInode, true)
 			wfs.waitForPendingAsyncFlush(targetInode)
+			// A rename that does not happen leaves the destination where it
+			// was, so its handle has to go back to writing that name.
+			defer func() {
+				if code != fuse.OK {
+					wfs.markHandleDeleted(targetInode, false)
+				}
+			}()
 		}
 	}
 

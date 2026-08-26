@@ -823,7 +823,7 @@ func (wfs *WFS) onEntryInvalidation(invalidation meta_cache.EntryInvalidation) {
 	// the old content back over what took the name. Marked from here, holding
 	// no other handle's lock.
 	if replacedInode != 0 {
-		wfs.markHandleDeleted(replacedInode)
+		wfs.markHandleDeleted(replacedInode, true)
 	}
 }
 

@@ -245,11 +245,11 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	// finishes first; even if it recreated the entry, the filer delete below
 	// will remove it again.
 	if inode, found := wfs.inodeToPath.GetInode(entryFullPath); found {
-		wfs.markHandleDeleted(inode)
+		wfs.markHandleDeleted(inode, true)
 		wfs.waitForPendingAsyncFlush(inode)
 	} else if entry != nil && entry.Attributes != nil && entry.Attributes.Inode != 0 {
 		inodeFromEntry := entry.Attributes.Inode
-		wfs.markHandleDeleted(inodeFromEntry)
+		wfs.markHandleDeleted(inodeFromEntry, true)
 		wfs.waitForPendingAsyncFlush(inodeFromEntry)
 	}
 
@@ -436,17 +436,18 @@ func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode u
 }
 
 // markHandleDeleted flags the inode's open handle so its flushes stop writing
-// the entry back. Taken and released under the handle's flush lock: a flush
-// already holding it finishes before the caller's delete runs, and any later
-// flush sees the flag; setting the flag bare raced the flush's own check and
-// resurrected the entry right after the delete.
-func (wfs *WFS) markHandleDeleted(inode uint64) {
+// the entry back, and clears the flag again when a caller that raised it did
+// not go through with the delete. Taken and released under the handle's flush
+// lock: a flush already holding it finishes before the caller's delete runs,
+// and any later flush sees the flag; setting the flag bare raced the flush's
+// own check and resurrected the entry right after the delete.
+func (wfs *WFS) markHandleDeleted(inode uint64, deleted bool) {
 	fh, found := wfs.fhMap.FindFileHandle(inode)
 	if !found {
 		return
 	}
-	fhActiveLock := wfs.fhLockTable.AcquireLock("Unlink", fh.fh, util.ExclusiveLock)
-	fh.isDeleted = true
+	fhActiveLock := wfs.fhLockTable.AcquireLock("markHandleDeleted", fh.fh, util.ExclusiveLock)
+	fh.isDeleted = deleted
 	wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 }
 
