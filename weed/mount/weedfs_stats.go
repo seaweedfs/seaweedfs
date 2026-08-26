@@ -64,8 +64,8 @@ func (wfs *WFS) StatFs(cancel <-chan struct{}, in *fuse.InHeader, out *fuse.Stat
 			return nil
 		})
 		if err != nil {
+			// the last known sizes beat the empty filesystem a bare return reports
 			glog.V(0).Infof("filer Statistics: %v", err)
-			return fuse.OK
 		}
 	}
 
