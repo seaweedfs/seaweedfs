@@ -2,6 +2,8 @@ package weed_server
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -51,6 +53,36 @@ func TestObjectTransactionPutAppliesRuleTtl(t *testing.T) {
 	}
 
 	entry, err := store.FindEntry(context.Background(), ttlRulePrefix+"obj")
+	if err != nil {
+		t.Fatalf("FindEntry: %v", err)
+	}
+	if entry.TtlSec != 180 {
+		t.Errorf("entry TtlSec = %d, want 180", entry.TtlSec)
+	}
+}
+
+// A completed TUS upload uploads its chunks under the target path's rule, so the
+// entry it lands has to expire with them.
+func TestCompleteTusUploadAppliesRuleTtl(t *testing.T) {
+	fs, store := newTusTestServer(t, nil)
+	addTtlRule(t, fs.filer)
+
+	targetPath := ttlRulePrefix + "upload.bin"
+	seedTusSession(t, fs, store, TusSession{ID: tusTestUploadID, TargetPath: targetPath, Size: 8})
+	seedTusChunk(t, fs, store, tusTestUploadID, 0, 8, "3,01637037d6")
+
+	req := tusRequest(http.MethodPatch, "/.tus/.uploads/"+tusTestUploadID, map[string]string{
+		"Authorization": "Bearer " + signFilerToken(t, tusTestWriteKey, nil, nil),
+		"Content-Type":  "application/offset+octet-stream",
+		"Upload-Offset": "8",
+	}, "")
+	rec := httptest.NewRecorder()
+	fs.tusHandler(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("PATCH = %d, want %d; body=%q", rec.Code, http.StatusNoContent, rec.Body.String())
+	}
+
+	entry, err := store.FindEntry(context.Background(), util.FullPath(targetPath))
 	if err != nil {
 		t.Fatalf("FindEntry: %v", err)
 	}

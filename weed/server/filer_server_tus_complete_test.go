@@ -2,11 +2,13 @@ package weed_server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -118,5 +120,38 @@ func TestFilerServer_completeTusUpload_GapRejected(t *testing.T) {
 	}
 	if _, findErr := store.FindEntry(context.Background(), util.FullPath(targetPath)); findErr == nil {
 		t.Fatalf("entry created despite gap")
+	}
+}
+
+// TestFilerServer_completeTusUpload_ReadOnlyTarget verifies a read-only prefix
+// still refuses the completing upload, before the session's chunks are claimed.
+func TestFilerServer_completeTusUpload_ReadOnlyTarget(t *testing.T) {
+	fs, store := newTusTestServer(t, nil)
+	if err := fs.filer.FilerConf.AddLocationConf(&filer_pb.FilerConf_PathConf{
+		LocationPrefix: "/buckets/frozen/",
+		ReadOnly:       true,
+	}); err != nil {
+		t.Fatalf("AddLocationConf: %v", err)
+	}
+
+	targetPath := "/buckets/frozen/upload.bin"
+	session := &TusSession{
+		ID:         tusTestUploadID,
+		TargetPath: targetPath,
+		Size:       8,
+		Offset:     8,
+		Chunks:     []*TusChunkInfo{{Offset: 0, Size: 8, FileId: "3,01637037d6"}},
+	}
+	seedTusSession(t, fs, store, *session)
+
+	err := fs.completeTusUpload(context.Background(), session)
+	if !errors.Is(err, ErrReadOnly) {
+		t.Fatalf("completeTusUpload err = %v, want %v", err, ErrReadOnly)
+	}
+	if _, findErr := store.FindEntry(context.Background(), util.FullPath(targetPath)); findErr == nil {
+		t.Fatalf("entry created under a read-only prefix")
+	}
+	if consumed, checkErr := fs.isTusSessionConsumed(context.Background(), tusTestUploadID); checkErr != nil || consumed {
+		t.Fatalf("session consumed = %v (err %v), want false", consumed, checkErr)
 	}
 }
