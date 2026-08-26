@@ -333,8 +333,10 @@ impl EcVolume {
         // Seed the in-memory deleted set from the journal.
         vol.load_deleted_needles_from_ecj()?;
 
-        // Load the generation-0 EC bitrot checksum sidecar (optional; best-effort).
-        vol.load_active_bitrot_sidecar();
+        // Load the generation-0 EC bitrot checksum sidecar. Optional, except
+        // when it contradicts the volume's own geometry — see
+        // load_bitrot_for_generation.
+        vol.load_active_bitrot_sidecar()?;
 
         Ok(vol)
     }
@@ -342,8 +344,8 @@ impl EcVolume {
     /// Load the generation-0 checksum sidecar into `self.bitrot`/`self.bitrot_status`.
     /// OSS only produces generation-0 (fresh-encode) sidecars, mirroring Go's
     /// `loadActiveBitrotSidecar`.
-    fn load_active_bitrot_sidecar(&mut self) {
-        self.load_bitrot_for_generation(0);
+    fn load_active_bitrot_sidecar(&mut self) -> io::Result<()> {
+        self.load_bitrot_for_generation(0)
     }
 
     /// Load and validate the sidecar describing `generation`, setting
@@ -351,11 +353,41 @@ impl EcVolume {
     /// => `Off` (protection off, not corruption); self-integrity or manifest
     /// failure => `Invalid` with a warning (protection off pending repair); usable
     /// => `On`. Mirrors Go's `loadBitrotForGeneration`.
-    fn load_bitrot_for_generation(&mut self, generation: u32) {
+    fn load_bitrot_for_generation(&mut self, generation: u32) -> io::Result<()> {
         use crate::storage::erasure_coding::ec_bitrot;
         let base = self.base_name();
         let path = ec_bitrot::bitrot_sidecar_path(&base, generation);
         let loaded = ec_bitrot::load_bitrot_sidecar(&path);
+        // A sidecar written for THIS generation that contradicts the volume's
+        // geometry is not "no protection" — it says the layout the volume is
+        // about to serve reads with is wrong. Fail the mount.
+        if let Ok(prot) = &loaded {
+            if prot.generation == generation
+                && !ec_bitrot::geometry_matches(
+                    prot,
+                    self.data_shards as usize,
+                    self.parity_shards as usize,
+                    self.block_size,
+                )
+            {
+                let cfg = prot.ec_shard_config.as_ref();
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "ec volume {} generation {}: {} records layout {}+{} block {} but the volume is mounted as {}+{} block {}; refusing to serve one of the two layouts",
+                        self.volume_id.0,
+                        generation,
+                        path,
+                        cfg.map(|c| c.data_shards).unwrap_or(0),
+                        cfg.map(|c| c.parity_shards).unwrap_or(0),
+                        cfg.map(|c| c.block_size).unwrap_or(0),
+                        self.data_shards,
+                        self.parity_shards,
+                        self.block_size,
+                    ),
+                ));
+            }
+        }
         let status = ec_bitrot::resolve_status(
             &loaded,
             generation,
@@ -376,6 +408,7 @@ impl EcVolume {
                 );
             }
         }
+        Ok(())
     }
 
     /// The active-generation bitrot protection AND its status (cached at mount),

@@ -251,7 +251,10 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 	ev.ShardLocations = make(map[ShardId][]pb.ServerAddress)
 
 	// Load the active-generation bitrot checksum sidecar (optional).
-	ev.loadActiveBitrotSidecar()
+	if err := ev.loadActiveBitrotSidecar(); err != nil {
+		ev.Close()
+		return nil, err
+	}
 
 	return
 }

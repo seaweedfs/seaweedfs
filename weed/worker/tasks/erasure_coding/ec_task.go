@@ -588,11 +588,14 @@ func (t *ErasureCodingTask) generateEcShardsLocally(localFiles map[string]string
 		return nil, fmt.Errorf("failed to generate EC shard files: %w", err)
 	}
 	// Persist the bitrot checksum sidecar (generation 0) alongside the shards so
-	// it travels with them during distribution. Best-effort: a failed sidecar
-	// write leaves the generation unprotected rather than failing the encode.
+	// it travels with them during distribution. Protection was asked for, and
+	// this write is orders of magnitude smaller than the shards that just
+	// landed: if it fails the disk is in trouble, and continuing would delete
+	// the source replicas in exchange for a generation that is both unprotected
+	// and missing the geometry record the .vif fallback reads.
 	if erasure_coding.BitrotProtectionEnabled && ecBitrot != nil {
 		if serr := erasure_coding.SaveBitrotSidecar(erasure_coding.BitrotSidecarPath(baseName, 0), ecBitrot); serr != nil {
-			glog.Warningf("failed to write EC bitrot sidecar for %s: %v", baseName, serr)
+			return nil, fmt.Errorf("write EC bitrot sidecar for %s: %w", baseName, serr)
 		}
 	}
 
@@ -676,24 +679,35 @@ func (t *ErasureCodingTask) generateEcShardsLocally(localFiles map[string]string
 	} else {
 		glog.Warningf("stat %s for .vif dat file size: %v", datFile, err)
 	}
+	// The .vif carries the shard block layout the holders will read through, so
+	// neither the write nor the inclusion below is optional: an encode that
+	// distributed shards without it would leave every reader falling back to
+	// the legacy layout, and the task deletes the source replicas afterwards.
 	if err := volume_info.SaveVolumeInfo(vifFile, volumeInfo); err != nil {
-		glog.Warningf("Failed to create .vif file: %v", err)
-	} else {
-		shardFiles["vif"] = vifFile
-		if info, err := os.Stat(vifFile); err == nil {
-			t.GetLogger().WithFields(map[string]interface{}{
-				"file_type":  "vif",
-				"file_path":  vifFile,
-				"size_bytes": info.Size(),
-			}).Info("Volume info file generated")
-		}
+		return nil, fmt.Errorf("write %s: %w", vifFile, err)
 	}
+	vifInfo, err := os.Stat(vifFile)
+	if err != nil {
+		return nil, fmt.Errorf("stat %s for distribution: %w", vifFile, err)
+	}
+	shardFiles["vif"] = vifFile
+	t.GetLogger().WithFields(map[string]interface{}{
+		"file_type":  "vif",
+		"file_path":  vifFile,
+		"size_bytes": vifInfo.Size(),
+	}).Info("Volume info file generated")
 
 	// Add the generation-0 bitrot checksum sidecar so it is distributed with
 	// the shards (DistributeEcShards only ships files present in shardFiles).
-	// Best-effort like the sidecar write above: if it is absent the holders
-	// are simply unprotected rather than failing the encode.
+	// Strict when protection is enabled and the encoder produced a manifest —
+	// the write above already failed the encode otherwise — so the holders
+	// cannot end up with shards whose checksums stayed behind on the worker.
 	ecsumFile := erasure_coding.BitrotSidecarPath(baseName, 0)
+	if erasure_coding.BitrotProtectionEnabled && ecBitrot != nil {
+		if _, serr := os.Stat(ecsumFile); serr != nil {
+			return nil, fmt.Errorf("stat %s for distribution: %w", ecsumFile, serr)
+		}
+	}
 	if info, err := os.Stat(ecsumFile); err == nil {
 		shardFiles["ecsum"] = ecsumFile
 		t.GetLogger().WithFields(map[string]interface{}{

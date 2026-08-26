@@ -97,3 +97,43 @@ func TestNewEcVolumeAcceptsAlignedBlockSize(t *testing.T) {
 		t.Errorf("BlockSize = %d, want 3MiB", ev.ECContext.BlockSize)
 	}
 }
+
+// The .vif and the .ecsum both record the layout their generation was encoded
+// with. When a generation-matching sidecar disagrees, one of them is wrong and
+// reads through the other land at the wrong shard offsets — so the mount must
+// refuse rather than quietly drop to unprotected reads.
+func TestNewEcVolumeRejectsSidecarGeometryDisagreement(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "1")
+	if err := os.WriteFile(base+".ecx", []byte{}, 0644); err != nil {
+		t.Fatalf("seed .ecx: %v", err)
+	}
+	if err := volume_info.SaveVolumeInfo(base+".vif", &volume_server_pb.VolumeInfo{
+		Version: uint32(needle.Version3),
+		EcShardConfig: &volume_server_pb.EcShardConfig{
+			DataShards: 10, ParityShards: 4, BlockSize: 0, // says legacy
+		},
+	}); err != nil {
+		t.Fatalf("seed .vif: %v", err)
+	}
+	// The sidecar for the same generation says uniform.
+	prot := &volume_server_pb.EcBitrotProtection{
+		Algorithm:  volume_server_pb.ChecksumAlgorithm_CHECKSUM_CRC32C,
+		BlockSize:  uint32(BitrotBlockSize),
+		Generation: 0,
+		EcShardConfig: &volume_server_pb.EcShardConfig{
+			DataShards: 10, ParityShards: 4, BlockSize: 3 * 1024 * 1024,
+		},
+	}
+	if err := SaveBitrotSidecar(BitrotSidecarPath(base, 0), prot); err != nil {
+		t.Fatalf("seed .ecsum: %v", err)
+	}
+
+	_, err := NewEcVolume(types.HardDriveType, dir, dir, "", needle.VolumeId(1))
+	if err == nil {
+		t.Fatal("a generation-matching layout disagreement must fail the mount")
+	}
+	if !strings.Contains(err.Error(), "block") {
+		t.Errorf("the error should name the disagreement: %v", err)
+	}
+}

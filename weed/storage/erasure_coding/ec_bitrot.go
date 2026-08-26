@@ -479,51 +479,64 @@ func (ev *EcVolume) BitrotProtection() (*volume_server_pb.EcBitrotProtection, Bi
 // loadActiveBitrotSidecar loads the generation-0 checksum sidecar into the
 // volume. Best-effort: any failure leaves protection off/invalid without
 // failing the mount. OSS only produces generation-0 (fresh-encode) sidecars.
-func (ev *EcVolume) loadActiveBitrotSidecar() {
-	ev.loadBitrotForGeneration(0)
+func (ev *EcVolume) loadActiveBitrotSidecar() error {
+	return ev.loadBitrotForGeneration(0)
 }
 
 // loadBitrotForGeneration loads and validates the sidecar describing generation
 // `generation`, setting ev.bitrot/ev.bitrotStatus. Called at mount. Absent or
-// generation/config-mismatched => BitrotOff; self-integrity/manifest failure =>
+// generation-mismatched => BitrotOff; self-integrity/manifest failure =>
 // BitrotInvalid; usable => BitrotOn.
-func (ev *EcVolume) loadBitrotForGeneration(generation uint32) {
+//
+// A sidecar written FOR THIS generation that disagrees with the volume's shard
+// geometry is different in kind from those: both files record the layout the
+// generation was encoded with, so a disagreement means one of them is wrong and
+// reads through the other would land at the wrong shard offsets. That returns
+// an error and fails the mount instead of quietly dropping to unprotected
+// reads.
+func (ev *EcVolume) loadBitrotForGeneration(generation uint32) error {
 	ev.bitrotLock.Lock()
 	defer ev.bitrotLock.Unlock()
 	ev.bitrot = nil
 	ev.bitrotStatus = BitrotOff
 
 	if ev.ECContext == nil {
-		return
+		return nil
 	}
 	path := findBitrotSidecar(generation, ev.DataBaseFileName(), ev.IndexBaseFileName())
 	if path == "" {
-		return
+		return nil
 	}
 	prot, err := LoadBitrotSidecar(path)
 	if err != nil {
 		glog.Warningf("ec volume %d: bitrot sidecar %s self-integrity failed: %v", ev.VolumeId, path, err)
 		ev.bitrotStatus = BitrotInvalid
-		return
+		return nil
 	}
 	if prot.Generation != generation {
-		return // not for this generation -> off, not corruption
+		return nil // not for this generation -> off, not corruption
 	}
-	if prot.EcShardConfig == nil ||
-		int(prot.EcShardConfig.DataShards) != ev.ECContext.DataShards ||
+	if prot.EcShardConfig == nil {
+		return nil // records no geometry -> nothing to contradict
+	}
+	if int(prot.EcShardConfig.DataShards) != ev.ECContext.DataShards ||
 		int(prot.EcShardConfig.ParityShards) != ev.ECContext.ParityShards ||
 		prot.EcShardConfig.BlockSize != ev.ECContext.BlockSize {
-		return
+		return fmt.Errorf("ec volume %d generation %d: %s records layout %d+%d block %d but the volume is mounted as %d+%d block %d; refusing to serve one of the two layouts",
+			ev.VolumeId, generation, path,
+			prot.EcShardConfig.DataShards, prot.EcShardConfig.ParityShards, prot.EcShardConfig.BlockSize,
+			ev.ECContext.DataShards, ev.ECContext.ParityShards, ev.ECContext.BlockSize)
 	}
 	if err := ValidateBitrotManifest(prot, ev.ECContext.DataShards, ev.ECContext.ParityShards); err != nil {
 		glog.Warningf("ec volume %d: bitrot sidecar %s manifest invalid: %v", ev.VolumeId, path, err)
 		ev.bitrotStatus = BitrotInvalid
-		return
+		return nil
 	}
 	ev.bitrot = prot
 	ev.bitrotStatus = BitrotOn
 	glog.V(1).Infof("ec volume %d: loaded bitrot protection generation %d (%d shards, block_size %d)",
 		ev.VolumeId, generation, len(prot.Shards), prot.BlockSize)
+	return nil
 }
 
 // RemoveBitrotSidecars removes the legacy <base>.ecsum and any versioned
