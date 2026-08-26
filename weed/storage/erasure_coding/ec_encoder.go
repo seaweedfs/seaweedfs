@@ -120,7 +120,8 @@ func UniformBlockSize(datFileSize int64, dataShards int) int64 {
 func RebuildEcFiles(baseFileName string, ctx *ECContext, unsafeIgnoreSidecar bool, additionalDirs ...string) ([]uint32, error) {
 	if ctx == nil || ctx.Total() == 0 {
 		// Resolve the layout from the .vif to preserve the original configuration.
-		volumeInfo, _, foundVif, vifErr := volume_info.MaybeLoadVolumeInfo(baseFileName + ".vif")
+		vifPath := baseFileName + ".vif"
+		volumeInfo, _, foundVif, vifErr := volume_info.MaybeLoadVolumeInfo(vifPath)
 		if vifErr != nil {
 			// The .vif exists but cannot be read or parsed. Fail closed rather
 			// than silently falling back to the default ratio, which would
@@ -128,23 +129,44 @@ func RebuildEcFiles(baseFileName string, ctx *ECContext, unsafeIgnoreSidecar boo
 			// explicit ctx to override.
 			return nil, fmt.Errorf("RebuildEcFiles %s: cannot load .vif: %w", baseFileName, vifErr)
 		}
-		if foundVif && volumeInfo.EcShardConfig != nil {
-			ds := int(volumeInfo.EcShardConfig.DataShards)
-			ps := int(volumeInfo.EcShardConfig.ParityShards)
-
-			// Validate EC config before using it
-			if ds > 0 && ps > 0 && ds+ps <= MaxShardCount {
-				ctx = &ECContext{
-					DataShards:   ds,
-					ParityShards: ps,
-					BlockSize:    volumeInfo.EcShardConfig.GetBlockSize(),
-				}
-				glog.V(0).Infof("Rebuilding EC files for %s with config from .vif: %s", baseFileName, ctx.String())
-			} else {
-				glog.Warningf("Invalid EC config in .vif for %s (data=%d, parity=%d), using default", baseFileName, ds, ps)
-				ctx = NewDefaultECContext("", 0)
+		switch {
+		case foundVif && volumeInfo.EcShardConfig != nil &&
+			ValidEcShardCounts(volumeInfo.EcShardConfig.DataShards, volumeInfo.EcShardConfig.ParityShards):
+			if bsErr := ValidateBlockSize(volumeInfo.EcShardConfig.GetBlockSize()); bsErr != nil {
+				return nil, fmt.Errorf("RebuildEcFiles %s: %s: %w", baseFileName, vifPath, bsErr)
 			}
-		} else {
+			ctx = &ECContext{
+				DataShards:   int(volumeInfo.EcShardConfig.DataShards),
+				ParityShards: int(volumeInfo.EcShardConfig.ParityShards),
+				BlockSize:    volumeInfo.EcShardConfig.GetBlockSize(),
+			}
+			glog.V(0).Infof("Rebuilding EC files for %s with config from .vif: %s", baseFileName, ctx.String())
+		case foundVif && volumeInfo.EcShardConfig != nil:
+			// A recorded-but-impossible ratio is corruption, not a reason to
+			// substitute the default one: a 12+4 volume rebuilt as 10+4
+			// reconstructs from the wrong matrix and never regenerates shards
+			// 14-15. Pass an explicit ctx to override.
+			return nil, fmt.Errorf("RebuildEcFiles %s: %s records invalid shard counts %d+%d",
+				baseFileName, vifPath, volumeInfo.EcShardConfig.DataShards, volumeInfo.EcShardConfig.ParityShards)
+		default:
+			// No usable .vif: the bitrot sidecar records the same config at
+			// encode time and is then the surviving authority. Reading the
+			// default ratio and the legacy block size instead would rebuild
+			// from the wrong geometry AND make the sidecar look like it
+			// disagrees, which silently skips every checksum check below.
+			if sidecarPath := findBitrotSidecar(0, baseFileName, baseFileName, additionalDirs...); sidecarPath != "" {
+				cfg, cfgErr := EcShardConfigFromSidecarPath(sidecarPath)
+				if cfgErr != nil {
+					return nil, fmt.Errorf("RebuildEcFiles %s: no usable .vif and %w", baseFileName, cfgErr)
+				}
+				ctx = &ECContext{
+					DataShards:   int(cfg.GetDataShards()),
+					ParityShards: int(cfg.GetParityShards()),
+					BlockSize:    cfg.GetBlockSize(),
+				}
+				glog.V(0).Infof("Rebuilding EC files for %s with config from the bitrot sidecar: %s", baseFileName, ctx.String())
+				break
+			}
 			glog.V(0).Infof("Rebuilding EC files for %s with default config", baseFileName)
 			ctx = NewDefaultECContext("", 0)
 		}
@@ -421,11 +443,20 @@ func loadRebuildSidecar(baseFileName string, ctx *ECContext, additionalDirs []st
 	if prot.Generation != 0 {
 		return nil, BitrotOff
 	}
-	if prot.EcShardConfig == nil ||
-		int(prot.EcShardConfig.DataShards) != ctx.DataShards ||
+	if prot.EcShardConfig == nil {
+		return nil, BitrotOff // records no geometry -> nothing to contradict
+	}
+	if int(prot.EcShardConfig.DataShards) != ctx.DataShards ||
 		int(prot.EcShardConfig.ParityShards) != ctx.ParityShards ||
 		prot.EcShardConfig.BlockSize != ctx.BlockSize {
-		return nil, BitrotOff
+		// Both records describe the same encode, so a disagreement means the
+		// rebuild is about to reconstruct under a geometry the checksums do not
+		// cover. Treating that as "no protection" skipped every input and
+		// output check exactly when they matter most.
+		glog.Warningf("bitrot: sidecar %s records layout %d+%d block %d but the rebuild uses %d+%d block %d",
+			path, prot.EcShardConfig.DataShards, prot.EcShardConfig.ParityShards, prot.EcShardConfig.BlockSize,
+			ctx.DataShards, ctx.ParityShards, ctx.BlockSize)
+		return nil, BitrotInvalid
 	}
 	if err := ValidateBitrotManifest(prot, ctx.DataShards, ctx.ParityShards); err != nil {
 		glog.Warningf("bitrot: sidecar %s manifest invalid: %v", path, err)

@@ -553,29 +553,35 @@ func EcShardConfigFromSidecar(baseFileName string) (cfg *volume_server_pb.EcShar
 		}
 		return nil, false, fmt.Errorf("stat %s: %w", path, statErr)
 	}
+	cfg, err = EcShardConfigFromSidecarPath(path)
+	return cfg, true, err
+}
+
+// EcShardConfigFromSidecarPath is EcShardConfigFromSidecar for a sidecar whose
+// path the caller already resolved — the rebuild finds it across a multi-disk
+// server's directories, not only next to the base name.
+func EcShardConfigFromSidecarPath(path string) (*volume_server_pb.EcShardConfig, error) {
 	prot, loadErr := LoadBitrotSidecar(path)
 	if loadErr != nil {
-		return nil, true, fmt.Errorf("read %s: %w", path, loadErr)
+		return nil, fmt.Errorf("read %s: %w", path, loadErr)
 	}
 	// The un-suffixed sidecar describes generation 0 and nothing else; one
 	// stamped for another generation is not a record of these shards.
 	if prot.GetGeneration() != 0 {
-		return nil, true, fmt.Errorf("%s records generation %d, not generation 0", path, prot.GetGeneration())
+		return nil, fmt.Errorf("%s records generation %d, not generation 0", path, prot.GetGeneration())
 	}
-	cfg = prot.GetEcShardConfig()
+	cfg := prot.GetEcShardConfig()
 	if cfg == nil {
-		return nil, true, fmt.Errorf("%s records no EC config", path)
+		return nil, fmt.Errorf("%s records no EC config", path)
 	}
-	// Sum in int, not uint32: a malformed sidecar claiming counts near the
-	// uint32 ceiling would wrap and pass the bound.
 	if !ValidEcShardCounts(cfg.GetDataShards(), cfg.GetParityShards()) {
-		return nil, true, fmt.Errorf("%s records invalid shard counts %d+%d",
+		return nil, fmt.Errorf("%s records invalid shard counts %d+%d",
 			path, cfg.GetDataShards(), cfg.GetParityShards())
 	}
 	if bsErr := ValidateBlockSize(cfg.GetBlockSize()); bsErr != nil {
-		return nil, true, fmt.Errorf("%s: %w", path, bsErr)
+		return nil, fmt.Errorf("%s: %w", path, bsErr)
 	}
-	return cfg, true, nil
+	return cfg, nil
 }
 
 // RemoveBitrotSidecars removes the legacy <base>.ecsum and any versioned
