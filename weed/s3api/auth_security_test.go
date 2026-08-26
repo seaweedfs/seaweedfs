@@ -313,6 +313,13 @@ func TestExternalUrlSignatureVerification(t *testing.T) {
 			expectSuccess: true,
 		},
 		{
+			name:          "externalUrl set, in-cluster client signs the service host",
+			clientUrl:     "http://seaweedfs-s3:8333/test-bucket/object",
+			backendHost:   "seaweedfs-s3:8333",
+			externalUrl:   "https://api.example.com",
+			expectSuccess: true,
+		},
+		{
 			name:          "without externalUrl, internal host causes mismatch",
 			clientUrl:     "https://api.example.com:9000/test-bucket/object",
 			backendHost:   "backend:8333",

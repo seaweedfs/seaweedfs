@@ -60,7 +60,7 @@ type IdentityAccessManagement struct {
 	hashCounters      map[string]*int32
 	identityAnonymous *Identity
 	domain            string
-	externalHost      string // pre-computed host for S3 signature verification (from ExternalUrl)
+	externalHost      string // pre-computed host tried first during S3 signature verification (from ExternalUrl)
 	isAuthEnabled     bool
 	credentialManager *credential.CredentialManager
 	filerClient       *wdclient.FilerClient
@@ -315,7 +315,7 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, filerClient
 		if err != nil {
 			glog.Fatalf("failed to parse s3.externalUrl: %v", err)
 		}
-		glog.V(0).Infof("S3 signature verification will use external host: %q (from %q)", externalHost, option.ExternalUrl)
+		glog.V(0).Infof("S3 signature verification will try external host %q (from %q) first", externalHost, option.ExternalUrl)
 	}
 
 	iam := &IdentityAccessManagement{

@@ -26,16 +26,16 @@ nginx (:9000)
     v
 SeaweedFS S3 (:8333, -s3.externalUrl=http://localhost:9000)
     |  externalHost = "localhost:9000" (parsed at startup)
-    |  extractHostHeader() returns "localhost:9000"
+    |  extractHostHeaderCandidates() tries "localhost:9000" first
     |  Matches what AWS CLI signed with
     v
 Signature verification succeeds
 ```
 
-**Note:** When `-s3.externalUrl` is configured, direct access to the backend
-port (8333) will fail signature verification because the client signs with a
-different Host header than what `externalUrl` specifies. This is expected —
-all S3 traffic should go through the proxy.
+**Note:** `-s3.externalUrl` is tried first, not exclusively. A client that
+dials the backend port (8333) directly still verifies against the host it
+actually signed, so a mixed topology of proxied and in-cluster clients works
+with the flag set.
 
 ## Prerequisites
 

@@ -187,7 +187,7 @@ func init() {
 	s3Options.enableIam = cmdServer.Flag.Bool("s3.iam", true, "enable embedded IAM API on the same S3 port")
 	s3Options.iamReadOnly = cmdServer.Flag.Bool("s3.iam.readOnly", true, "disable IAM write operations on this server")
 	s3Options.cipher = cmdServer.Flag.Bool("s3.encryptVolumeData", false, "encrypt data on volume servers for S3 uploads")
-	s3Options.externalUrl = cmdServer.Flag.String("s3.externalUrl", "", "the external URL clients use to connect (e.g. https://api.example.com:9000). Used for S3 signature verification behind a reverse proxy. Falls back to S3_EXTERNAL_URL env var.")
+	s3Options.externalUrl = cmdServer.Flag.String("s3.externalUrl", "", "the external URL clients use to connect (e.g. https://api.example.com:9000). Advertised to Iceberg and Lance clients, and tried first when verifying S3 signatures behind a reverse proxy. Falls back to S3_EXTERNAL_URL env var.")
 	s3Options.defaultFileMode = cmdServer.Flag.String("s3.defaultFileMode", "", "default file mode for S3 uploaded objects, e.g. 0660, 0644, 0666")
 	s3Options.cacheSizeMB = cmdServer.Flag.Int64("s3.cacheCapacityMB", 0, "in-memory chunk cache capacity in MB for S3 GETs shared across requests (0 disables)")
 
