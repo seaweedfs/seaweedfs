@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -73,15 +74,17 @@ func uploadEntryHasChecksum(uploadEntry *filer_pb.Entry) bool {
 	return checksumAlgorithmFromHeaderName(headerName) != ChecksumAlgorithmNone
 }
 
-// sourceEntryHasSSE reports whether the source object's chunks are SSE
+// sourceEntryIsEncrypted reports whether the source object's chunks are
 // ciphertext on disk and therefore cannot be raw-copied — they must be
-// decrypted on read.
-func sourceEntryHasSSE(srcEntry *filer_pb.Entry) bool {
+// decrypted on read. That is SSE, and also -encryptVolumeData, whose per-chunk
+// key only ever decrypts a whole chunk and whose chunks carry no ETag for the
+// copied part to report.
+func sourceEntryIsEncrypted(srcEntry *filer_pb.Entry) bool {
 	if srcEntry == nil {
 		return false
 	}
 	for _, c := range srcEntry.GetChunks() {
-		if c.GetSseType() != filer_pb.SSEType_NONE {
+		if c.GetSseType() != filer_pb.SSEType_NONE || len(c.GetCipherKey()) > 0 {
 			return true
 		}
 	}
@@ -150,12 +153,13 @@ func (s3a *S3ApiServer) openSourcePlaintextReader(
 	case s3_constants.SSETypeC:
 		return nil, fmt.Errorf("%w: UploadPartCopy from SSE-C source", errCopySourceSSEUnsupported)
 	default:
-		// Unencrypted source: stream raw bytes and apply range.
-		raw, err := s3a.getEncryptedStreamFromVolumes(ctx, srcEntry)
+		// Plaintext or volume-encrypted source: the chunk stream seeks, so ask
+		// it for the range rather than reading and discarding the prefix.
+		raw, err := s3a.getEncryptedStreamFromVolumes(ctx, srcEntry, startOffset, sliceLen)
 		if err != nil {
-			return nil, fmt.Errorf("open unencrypted source: %w", err)
+			return nil, fmt.Errorf("open source: %w", err)
 		}
-		return applyRange(raw, startOffset, sliceLen)
+		return raw, nil
 	}
 }
 
@@ -221,7 +225,7 @@ func (s3a *S3ApiServer) openSSES3SourcePlaintextReader(
 	if err != nil {
 		return nil, fmt.Errorf("get SSE-S3 IV: %w", err)
 	}
-	encStream, err := s3a.getEncryptedStreamFromVolumes(ctx, srcEntry)
+	encStream, err := s3a.getEncryptedStreamFromVolumes(ctx, srcEntry, 0, int64(filer.FileSize(srcEntry)))
 	if err != nil {
 		return nil, fmt.Errorf("open ciphertext source: %w", err)
 	}
