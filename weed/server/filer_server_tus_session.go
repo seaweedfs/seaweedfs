@@ -545,11 +545,25 @@ func (fs *FilerServer) completeTusUpload(ctx context.Context, session *TusSessio
 
 	// Create the final file entry
 	targetPath := util.FullPath(session.TargetPath)
+	entry := &filer.Entry{
+		FullPath: targetPath,
+		Attr: filer.Attr{
+			Mode:   0644,
+			Crtime: session.CreatedAt,
+			Mtime:  time.Now(),
+			Uid:    OS_UID,
+			Gid:    OS_GID,
+			Mime:   contentType,
+		},
+		Chunks: fileChunks,
+	}
 
-	// Apply the same read-only / WORM protections the normal write path enforces
-	// before landing the entry at the client-chosen target path.
-	if fs.filer.FilerConf.MatchStorageRule(string(targetPath)).ReadOnly {
-		return fmt.Errorf("%w: %s", ErrReadOnly, targetPath)
+	// Apply the same storage rule (read-only prefixes, TTL) and WORM protections
+	// the normal write path enforces before landing the entry at the
+	// client-chosen target path.
+	so, err := fs.applyStorageDefaultsToEntry(ctx, entry)
+	if err != nil {
+		return err
 	}
 	if wormEnforced, err := fs.wormEnforcedForEntry(ctx, string(targetPath)); err != nil {
 		return fmt.Errorf("check worm: %w", err)
@@ -574,21 +588,8 @@ func (fs *FilerServer) completeTusUpload(ctx context.Context, session *TusSessio
 		return fmt.Errorf("session deleted before completion: %w", err)
 	}
 
-	entry := &filer.Entry{
-		FullPath: targetPath,
-		Attr: filer.Attr{
-			Mode:   0644,
-			Crtime: session.CreatedAt,
-			Mtime:  time.Now(),
-			Uid:    OS_UID,
-			Gid:    OS_GID,
-			Mime:   contentType,
-		},
-		Chunks: fileChunks,
-	}
-
 	// Ensure parent directory exists
-	if err := fs.filer.CreateEntry(ctx, entry, nil, false, false, nil, false, fs.filer.MaxFilenameLength); err != nil {
+	if err := fs.filer.CreateEntry(ctx, entry, nil, false, false, nil, false, so.MaxFileNameLength); err != nil {
 		return fmt.Errorf("create final file entry: %w", err)
 	}
 

@@ -157,6 +157,21 @@ func (fs *FilerServer) copy(ctx context.Context, w http.ResponseWriter, r *http.
 		return
 	}
 
+	// The copy is remote-backed when a data-only copy restores the destination's
+	// remote pointer, otherwise when the source carries one. Such an entry never
+	// expires locally, so its cached chunks must not land on a TTL volume either:
+	// the entry keeps listing them once they are gone, which reads as cached
+	// rather than remote-only, and nothing re-fetches.
+	remoteBacked := srcEntry.Remote != nil
+	if dataOnly && existingDstEntry != nil {
+		remoteBacked = existingDstEntry.Remote != nil
+	}
+	if remoteBacked && so.TtlSeconds != 0 {
+		withoutTtl := *so
+		withoutTtl.TtlSeconds = 0
+		so = &withoutTtl
+	}
+
 	// Copy the file content and chunks
 	newEntry, err := fs.copyEntry(ctx, srcEntry, finalDstPath, so)
 	if err != nil {
@@ -167,6 +182,11 @@ func (fs *FilerServer) copy(ctx context.Context, w http.ResponseWriter, r *http.
 	if dataOnly && existingDstEntry != nil {
 		preserveDestinationMetadataForDataCopy(existingDstEntry, newEntry)
 	}
+
+	// The chunks above were placed under the destination's storage option, so the
+	// entry has to carry its TTL and not the source's (or, for a data-only copy,
+	// the destination's older one) - otherwise the entry and its data expire apart.
+	newEntry.ApplyStorageTtl(so.TtlSeconds)
 
 	// Pass o_excl = !overwrite so the default copy refuses to replace an
 	// existing destination, while overwrite=true updates the pre-created target.
