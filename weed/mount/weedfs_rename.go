@@ -284,8 +284,12 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 			targetInode = newEntry.Attributes.Inode
 		}
 		if targetInode != 0 && targetInode != sourceInode {
-			epoch := wfs.markHandleDeleted(targetInode)
+			// Drained before the mark, not after: a flush already queued
+			// belongs to the destination as it stands, and one that runs
+			// marked is skipped and takes its handle with it, past the reach
+			// of the restore below.
 			wfs.waitForPendingAsyncFlush(targetInode)
+			epoch := wfs.markHandleDeleted(targetInode)
 			// A rename that does not happen leaves the destination where it
 			// was, so its handle has to go back to writing that name.
 			defer func() {
