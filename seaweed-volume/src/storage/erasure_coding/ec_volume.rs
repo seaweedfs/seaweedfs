@@ -164,13 +164,25 @@ pub fn ec_shard_config_from(
     };
 
     if let Some(ec) = vif.and_then(|v| v.ec_shard_config.as_ref()) {
-        if usable(ec.data_shards, ec.parity_shards) {
-            // A recorded block size that no encoder could have produced maps
-            // every read to the wrong shard offset. Refuse the mount rather
-            // than serve those bytes or silently pick a layout.
-            validate_block_size(ec.block_size)?;
-            return Ok((ec.data_shards, ec.parity_shards, ec.block_size));
+        // A config that is PRESENT but records an impossible ratio is not a
+        // volume to fall back on: dropping through to the sidecar or the
+        // defaults would read uniform shards with the legacy offset math and
+        // answer with the wrong bytes. Only an ENTIRELY absent config means
+        // "this predates the record".
+        if !usable(ec.data_shards, ec.parity_shards) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "vif for volume {} records invalid shard counts {}+{}",
+                    volume_id.0, ec.data_shards, ec.parity_shards
+                ),
+            ));
         }
+        // A recorded block size that no encoder could have produced maps
+        // every read to the wrong shard offset. Refuse the mount rather
+        // than serve those bytes or silently pick a layout.
+        validate_block_size(ec.block_size)?;
+        return Ok((ec.data_shards, ec.parity_shards, ec.block_size));
     }
     let base = crate::storage::volume::volume_file_name(dir, collection, volume_id);
     let path = crate::storage::erasure_coding::ec_bitrot::bitrot_sidecar_path(&base, 0);
@@ -1981,8 +1993,14 @@ mod tests {
         assert_eq!(vol.parity_shards, 3);
     }
 
+    /// A vif that RECORDS a ratio no volume could have must fail the mount.
+    /// Substituting the default 10+4 (and with it the legacy block layout)
+    /// would read a uniform volume's shards at the wrong offsets and answer
+    /// with the wrong bytes; only an entirely absent config means "this
+    /// predates the record", which
+    /// `test_ec_volume_absent_vif_config_uses_defaults` covers.
     #[test]
-    fn test_ec_volume_invalid_vif_config_falls_back_to_defaults() {
+    fn test_ec_volume_invalid_vif_config_fails_the_mount() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
         write_ecx_file(dir, "pics", VolumeId(1), &[]);
@@ -2003,9 +2021,27 @@ mod tests {
         )
         .unwrap();
 
+        // EcVolume has no Debug impl, so match rather than expect_err.
+        match EcVolume::new(dir, dir, "pics", VolumeId(1)) {
+            Ok(_) => panic!("an impossible ratio must fail the mount"),
+            Err(e) => assert_eq!(e.kind(), io::ErrorKind::InvalidData, "got {e}"),
+        }
+    }
+
+    /// The compatibility case the check above must not swallow: a vif with no
+    /// EC config at all predates the record, and mounts on the defaults.
+    #[test]
+    fn test_ec_volume_absent_vif_config_uses_defaults() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        write_ecx_file(dir, "pics", VolumeId(1), &[]);
+        let base = crate::storage::volume::volume_file_name(dir, "pics", VolumeId(1));
+        std::fs::write(format!("{}.vif", base), r#"{"version":3}"#).unwrap();
+
         let vol = EcVolume::new(dir, dir, "pics", VolumeId(1)).unwrap();
         assert_eq!(vol.data_shards, DATA_SHARDS_COUNT as u32);
         assert_eq!(vol.parity_shards, PARITY_SHARDS_COUNT as u32);
+        assert_eq!(vol.block_size, 0, "legacy layout for a pre-record volume");
     }
 
     #[test]

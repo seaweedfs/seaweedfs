@@ -189,10 +189,16 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 			ps := int(volumeInfo.EcShardConfig.ParityShards)
 			ev.EncodeTsNs = volumeInfo.EcShardConfig.GetEncodeTsNs()
 
-			// Validate shard counts to prevent zero or invalid values
-			if ds <= 0 || ps <= 0 || ds+ps > MaxShardCount {
-				glog.Warningf("Invalid EC config in VolumeInfo for volume %d (data=%d, parity=%d), using defaults", vid, ds, ps)
-				ev.ECContext = NewDefaultECContext(collection, vid)
+			// A config that is PRESENT but records an impossible ratio is not
+			// a volume to fall back on: substituting the default 10+4 with the
+			// legacy layout would read uniform shards with the wrong offset
+			// math and answer with the wrong bytes. Only an ENTIRELY absent
+			// config means "this predates the record", which the else-branch
+			// below serves with the legacy defaults.
+			if !ValidEcShardCounts(volumeInfo.EcShardConfig.DataShards, volumeInfo.EcShardConfig.ParityShards) {
+				ev.Close()
+				return nil, fmt.Errorf("ec volume %d: %s records invalid shard counts %d+%d",
+					vid, vifFileName, volumeInfo.EcShardConfig.DataShards, volumeInfo.EcShardConfig.ParityShards)
 			} else if blockErr := ValidateBlockSize(volumeInfo.EcShardConfig.GetBlockSize()); blockErr != nil {
 				// A recorded block size that no encoder could have produced maps
 				// every read to the wrong shard offset. Refuse the mount rather

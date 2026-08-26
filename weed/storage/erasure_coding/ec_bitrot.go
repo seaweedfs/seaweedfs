@@ -568,9 +568,9 @@ func EcShardConfigFromSidecar(baseFileName string) (cfg *volume_server_pb.EcShar
 	}
 	// Sum in int, not uint32: a malformed sidecar claiming counts near the
 	// uint32 ceiling would wrap and pass the bound.
-	ds, ps := int(cfg.GetDataShards()), int(cfg.GetParityShards())
-	if ds <= 0 || ps <= 0 || ds+ps > MaxShardCount {
-		return nil, true, fmt.Errorf("%s records invalid shard counts %d+%d", path, ds, ps)
+	if !ValidEcShardCounts(cfg.GetDataShards(), cfg.GetParityShards()) {
+		return nil, true, fmt.Errorf("%s records invalid shard counts %d+%d",
+			path, cfg.GetDataShards(), cfg.GetParityShards())
 	}
 	if bsErr := ValidateBlockSize(cfg.GetBlockSize()); bsErr != nil {
 		return nil, true, fmt.Errorf("%s: %w", path, bsErr)

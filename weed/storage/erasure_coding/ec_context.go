@@ -25,6 +25,16 @@ func (ctx *ECContext) Total() int {
 	return ctx.DataShards + ctx.ParityShards
 }
 
+// ValidEcShardCounts reports whether a recorded (data, parity) pair could
+// describe a real EC volume. The sum is taken in uint64 deliberately: on a
+// 32-bit build `int` is 32 bits, so converting each count first and adding
+// them wraps for values near the uint32 ceiling — 0x7fffffff + 0x7fffffff
+// lands at -2, which slips under the MaxShardCount bound.
+func ValidEcShardCounts(dataShards, parityShards uint32) bool {
+	return dataShards > 0 && parityShards > 0 &&
+		uint64(dataShards)+uint64(parityShards) <= uint64(MaxShardCount)
+}
+
 // LargeBlockSize returns the large-block length of this context's shard
 // layout; nil-safe so callers can pass an unset context for the legacy layout.
 func (ctx *ECContext) LargeBlockSize() int64 {

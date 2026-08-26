@@ -349,8 +349,7 @@ func doFixEcxFromShards(basePath, baseFileName, collection string, volumeId int6
 			// sidecar / dual scan below answer, and rewrite the .vif at the end
 			// rather than trusting it.
 			cfg := vi.GetEcShardConfig()
-			if cfg != nil && cfg.GetDataShards() > 0 && cfg.GetParityShards() > 0 &&
-				int(cfg.GetDataShards())+int(cfg.GetParityShards()) <= erasure_coding.MaxShardCount {
+			if cfg != nil && erasure_coding.ValidEcShardCounts(cfg.GetDataShards(), cfg.GetParityShards()) {
 				dataShards = int(cfg.GetDataShards())
 				parityShards = int(cfg.GetParityShards())
 				// Only an EC config answers the layout question. Reading 0 off a
@@ -392,7 +391,7 @@ func doFixEcxFromShards(basePath, baseFileName, collection string, volumeId int6
 			case prot.GetGeneration() != 0:
 				glog.Warningf("volume %d: %s records generation %d, not the generation-0 shards; ignoring it",
 					volumeId, sidecarPath, prot.GetGeneration())
-			case ds <= 0 || ps <= 0 || ds+ps > erasure_coding.MaxShardCount:
+			case !erasure_coding.ValidEcShardCounts(cfg.GetDataShards(), cfg.GetParityShards()):
 				glog.Warningf("volume %d: %s records invalid shard counts %d+%d; ignoring it",
 					volumeId, sidecarPath, ds, ps)
 			case erasure_coding.ValidateBlockSize(cfg.GetBlockSize()) != nil:
