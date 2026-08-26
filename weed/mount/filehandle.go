@@ -40,7 +40,11 @@ type FileHandle struct {
 	savedName         string // last known file name if inode-to-path state is forgotten
 
 	isDeleted bool
-	isRenamed bool // set by Rename before waiting for async flush; skips old-path metadata flush
+	// deleteEpoch counts the times isDeleted was raised, all of them under the
+	// handle's flush lock. A caller that raised it and then found it had
+	// nothing to delete after all can tell its own mark from a later one.
+	deleteEpoch uint64
+	isRenamed   bool // set by Rename before waiting for async flush; skips old-path metadata flush
 
 	// entryVersionTsNs is the filer log position the handle's entry reflects.
 	// State at or below it must not replace the entry — that rolls it back.

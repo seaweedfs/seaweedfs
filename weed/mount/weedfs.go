@@ -823,7 +823,7 @@ func (wfs *WFS) onEntryInvalidation(invalidation meta_cache.EntryInvalidation) {
 	// the old content back over what took the name. Marked from here, holding
 	// no other handle's lock.
 	if replacedInode != 0 {
-		wfs.markHandleDeleted(replacedInode, true)
+		wfs.markHandleDeleted(replacedInode)
 	}
 }
 
@@ -938,6 +938,7 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 		// dirty pages stay, so the open fd still reads its buffered writes.
 		if invalidation.Deleted {
 			fh.isDeleted = true
+			fh.deleteEpoch++
 		}
 		if !fh.dirtyMetadata {
 			fh.dirtyPages.Destroy()
