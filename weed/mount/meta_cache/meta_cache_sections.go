@@ -362,7 +362,7 @@ func (mc *MetaCache) applySectionRefreshNow(ctx context.Context, dirPath util.Fu
 			mc.setEntryVersionLocked(ctx, entry.FullPath, 0)
 			continue
 		}
-		if mc.entryVersionBlocksLocked(ctx, entry.FullPath, snapshotTsNs) {
+		if mc.entryVersionBlocksLocked(ctx, entry.FullPath, snapshotTsNs, false) {
 			continue
 		}
 		// An unversioned marker would bypass the section floor, so it cannot
@@ -404,7 +404,7 @@ func (mc *MetaCache) applySectionRefreshNow(ctx context.Context, dirPath util.Fu
 			if mc.pinnedChildFn != nil && mc.pinnedChildFn(entry) {
 				continue
 			}
-			if mc.entryVersionBlocksLocked(ctx, entry.FullPath, snapshotTsNs) {
+			if mc.entryVersionBlocksLocked(ctx, entry.FullPath, snapshotTsNs, false) {
 				continue
 			}
 			if err := mc.localStore.DeleteEntry(ctx, entry.FullPath); err != nil {

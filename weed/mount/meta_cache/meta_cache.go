@@ -497,13 +497,19 @@ func (mc *MetaCache) entryVersionRecordLocked(ctx context.Context, fp util.FullP
 	return int64(util.BytesToUint64(value[:8])), tombstone, unversioned
 }
 
-// entryVersionBlocksLocked reports whether a write at tsNs is already
+// entryVersionBlocksLocked reports whether a change at tsNs is already
 // reflected at fp. The path's version is its own record or, lacking one, the
 // listing floors — which cover names a listing saw present and absent alike.
 // A tombstone fences with no entry present, and a later floor outranks it; a
 // plain record only counts while its entry exists: records linger after a
 // bulk folder wipe and must not fence a recreate.
-func (mc *MetaCache) entryVersionBlocksLocked(ctx context.Context, fp util.FullPath, tsNs int64) bool {
+//
+// removal asks a different question from a write. An entry still present at
+// exactly tsNs has the write at that version reflected but not its removal --
+// a rename stamps the source and takes the name away at the same version --
+// so only a strictly newer record fences one out. A tombstone is the removal
+// already reflected, and fences at tsNs like any other write.
+func (mc *MetaCache) entryVersionBlocksLocked(ctx context.Context, fp util.FullPath, tsNs int64, removal bool) bool {
 	recordTsNs, tombstone, unversioned := mc.entryVersionRecordLocked(ctx, fp)
 	if unversioned {
 		// Local content no log position describes: fence nothing, so any
@@ -513,7 +519,11 @@ func (mc *MetaCache) entryVersionBlocksLocked(ctx context.Context, fp util.FullP
 	if !tombstone && !mc.entryExistsLocked(ctx, fp) {
 		recordTsNs = 0
 	}
-	return mc.entryVersionFloorLocked(fp, recordTsNs) >= tsNs
+	floorTsNs := mc.entryVersionFloorLocked(fp, recordTsNs)
+	if removal && !tombstone {
+		return floorTsNs > tsNs
+	}
+	return floorTsNs >= tsNs
 }
 
 // entryExistsLocked reports whether fp has a live entry, applying the same TTL
@@ -951,10 +961,10 @@ func (mc *MetaCache) applyMetadataResponseLocked(ctx context.Context, resp *file
 	// already reflected in it, and applying it would roll the entry back while
 	// the version keeps the newer claim. Each half is gated independently.
 	if resp.TsNs != 0 {
-		if oldPath != "" && mc.entryVersionBlocksLocked(ctx, oldPath, resp.TsNs) {
+		if oldPath != "" && mc.entryVersionBlocksLocked(ctx, oldPath, resp.TsNs, true) {
 			oldPath = ""
 		}
-		if newEntry != nil && mc.entryVersionBlocksLocked(ctx, newEntry.FullPath, resp.TsNs) {
+		if newEntry != nil && mc.entryVersionBlocksLocked(ctx, newEntry.FullPath, resp.TsNs, false) {
 			newEntry = nil
 		}
 	}
