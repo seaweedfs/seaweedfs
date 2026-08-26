@@ -240,10 +240,11 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 	//   1. deferFilerCreate=true — file handle still open, dirtyMetadata set.
 	//   2. writebackCache — close() triggered async flush, handle released.
 	// The filer rename will fail with ENOENT unless we flush/wait first.
-	if inode, found := wfs.inodeToPath.GetInode(oldPath); found {
+	sourceInode, sourceMapped := wfs.inodeToPath.GetInode(oldPath)
+	if sourceMapped {
 		// Case 1: handle still open with deferred metadata — flush synchronously
 		// BEFORE any async flush interference.
-		if fh, ok := wfs.fhMap.FindFileHandle(inode); ok && fh.dirtyMetadata {
+		if fh, ok := wfs.fhMap.FindFileHandle(sourceInode); ok && fh.dirtyMetadata {
 			glog.V(4).Infof("dir Rename %s: flushing deferred metadata before rename", oldPath)
 			// Prerequisite for the rename, so it must complete: non-cancellable context.
 			if flushStatus := wfs.doFlush(context.Background(), fh, oldEntry.Attributes.Uid, oldEntry.Attributes.Gid, false); flushStatus != fuse.OK {
@@ -255,14 +256,26 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 		// Mark ALL handles for this inode as renamed so the async flush
 		// skips old-path metadata creation (which would re-insert the
 		// renamed entry into the meta cache after rename events clean it up).
-		wfs.fhMap.MarkInodeRenamed(inode)
-		wfs.waitForPendingAsyncFlush(inode)
+		wfs.fhMap.MarkInodeRenamed(sourceInode)
+		wfs.waitForPendingAsyncFlush(sourceInode)
 	} else if oldEntry != nil && oldEntry.Attributes != nil && oldEntry.Attributes.Inode != 0 {
 		// GetInode failed (Forget already removed the mapping), but the
 		// entry's stored inode can still identify pending async flushes.
-		inode = oldEntry.Attributes.Inode
-		wfs.fhMap.MarkInodeRenamed(inode)
-		wfs.waitForPendingAsyncFlush(inode)
+		sourceInode = oldEntry.Attributes.Inode
+		wfs.fhMap.MarkInodeRenamed(sourceInode)
+		wfs.waitForPendingAsyncFlush(sourceInode)
+	}
+
+	// Replacing the destination deletes what it held, so a handle still open
+	// on that entry has to stop writing the name back, exactly as an unlink
+	// makes it. Windows is where this bites: the close carrying the flush runs
+	// after the application's CloseHandle returned, so the flush can land on
+	// top of what the rename just put there.
+	if in.Flags == RenameEmptyFlag {
+		if targetInode, found := wfs.inodeToPath.GetInode(newPath); found && targetInode != sourceInode {
+			wfs.markHandleDeleted(targetInode)
+			wfs.waitForPendingAsyncFlush(targetInode)
+		}
 	}
 
 	// Acquire DLM locks on both old and new paths to prevent another mount

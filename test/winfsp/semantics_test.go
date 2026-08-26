@@ -180,10 +180,8 @@ func TestRenameOverExisting(t *testing.T) {
 		// they indict different layers; a second look says whether it persists.
 		time.Sleep(200 * time.Millisecond)
 		fi2, err2 := os.Stat(src)
-		// Which layer answered narrows the search. A listing goes through
-		// readdir, which reads no per-path cache, and the mount's own path
-		// cache forgets within a second; a name that survives both came back
-		// from the filer.
+		// A listing reads no per-path cache and the mount's own forgets
+		// within a second, so a name that survives both is back on the filer.
 		listed := dirNames(t, dir)
 		time.Sleep(2 * time.Second)
 		_, errLater := os.Stat(src)
