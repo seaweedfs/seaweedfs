@@ -2558,20 +2558,26 @@ impl VolumeServer for VolumeGrpcService {
         // Determine data/parity shard config from rebuild dir
         // The encode-time .dat size resolves the row count the ecx rebuild
         // de-stripes with; 0 leaves it to infer from the padded shard extent.
-        let dat_file_size = crate::storage::erasure_coding::ec_volume::load_vif_info(
+        // Both lookups search the sibling disks too: the rebuild writes into one
+        // location, but a multi-disk server may keep this volume's .vif or its
+        // generation-0 .ecsum on another, and defaulting to 10+4 with the
+        // legacy layout would reconstruct through the wrong matrix.
+        let dat_file_size = crate::storage::erasure_coding::ec_volume::load_vif_info_across_dirs(
             &rebuild_dir,
             &rebuild_idx_dir,
+            &other_dirs,
             collection,
             vid,
         )
         .ok()
         .flatten()
-        .map(|v| v.dat_file_size)
+        .map(|(v, _)| v.dat_file_size)
         .unwrap_or(0);
         let (data_shards, parity_shards, block_size) =
-            crate::storage::erasure_coding::ec_volume::read_ec_shard_config(
+            crate::storage::erasure_coding::ec_volume::read_ec_shard_config_across_dirs(
                 &rebuild_dir,
                 &rebuild_idx_dir,
+                &other_dirs,
                 collection,
                 vid,
             )

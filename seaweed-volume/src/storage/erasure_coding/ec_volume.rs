@@ -143,6 +143,62 @@ pub fn read_ec_shard_config(
     ec_shard_config_from(vif.as_ref(), dir, collection, volume_id)
 }
 
+/// Load the volume's `.vif` from the selected location or, failing that, from
+/// any sibling disk — returning the directory it came from so the caller can
+/// resolve the rest of the volume's metadata against the same place. A rebuild
+/// picks one disk to write into, but a multi-disk server may hold that
+/// volume's metadata on another.
+pub fn load_vif_info_across_dirs(
+    dir: &str,
+    dir_idx: &str,
+    other_dirs: &[String],
+    collection: &str,
+    volume_id: VolumeId,
+) -> io::Result<Option<(crate::storage::volume::VifVolumeInfo, String)>> {
+    if let Some(vif) = load_vif_info(dir, dir_idx, collection, volume_id)? {
+        return Ok(Some((vif, dir.to_string())));
+    }
+    for other in other_dirs {
+        if let Some(vif) = load_vif_info(other, other, collection, volume_id)? {
+            return Ok(Some((vif, other.clone())));
+        }
+    }
+    Ok(None)
+}
+
+/// [`read_ec_shard_config`] for a caller that may find the volume's metadata on
+/// any of the server's disks. Without this a rebuild that lands on a disk
+/// holding only shards reads the default 10+4 and the legacy block layout,
+/// then reconstructs a custom-ratio or uniform volume through the wrong matrix
+/// and de-striping geometry.
+pub fn read_ec_shard_config_across_dirs(
+    dir: &str,
+    dir_idx: &str,
+    other_dirs: &[String],
+    collection: &str,
+    volume_id: VolumeId,
+) -> io::Result<(u32, u32, i64)> {
+    if let Some((vif, found_in)) =
+        load_vif_info_across_dirs(dir, dir_idx, other_dirs, collection, volume_id)?
+    {
+        return ec_shard_config_from(Some(&vif), &found_in, collection, volume_id);
+    }
+    // No .vif anywhere: the generation-0 sidecar is the surviving record, and
+    // it may sit on a different disk than the one being rebuilt into.
+    for candidate in std::iter::once(dir).chain(other_dirs.iter().map(|s| s.as_str())) {
+        let base = crate::storage::volume::volume_file_name(candidate, collection, volume_id);
+        let path = crate::storage::erasure_coding::ec_bitrot::bitrot_sidecar_path(&base, 0);
+        if std::path::Path::new(&path).exists() {
+            return ec_shard_config_from(None, candidate, collection, volume_id);
+        }
+    }
+    Ok((
+        crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT as u32,
+        crate::storage::erasure_coding::ec_shard::PARITY_SHARDS_COUNT as u32,
+        0,
+    ))
+}
+
 /// Resolve (data_shards, parity_shards, block_size) from an already-loaded
 /// `.vif`. With no vif — or one carrying no EC config — the bitrot sidecar
 /// records the same config at encode time and answers the layout question the
@@ -2358,5 +2414,70 @@ mod uniform_layout_tests {
         std::fs::write(format!("{}.ecx", base), b"").unwrap();
         let ev = EcVolume::new(dir, dir, "", VolumeId(1)).unwrap();
         assert_eq!(ev.block_size, 0, "legacy mount must use the legacy layout");
+    }
+
+    /// A rebuild lands on one disk, but the volume's metadata may live on
+    /// another. Reading only the selected directory returns the default 10+4
+    /// and the legacy block layout, which reconstructs a custom-ratio or
+    /// uniform volume through the wrong matrix.
+    #[test]
+    fn read_ec_shard_config_finds_a_sibling_disks_vif() {
+        let a = tempfile::TempDir::new().unwrap();
+        let b = tempfile::TempDir::new().unwrap();
+        let (rebuild, sibling) = (a.path().to_str().unwrap(), b.path().to_str().unwrap());
+        let base = crate::storage::volume::volume_file_name(sibling, "", VolumeId(3));
+        std::fs::write(
+            format!("{}.vif", base),
+            r#"{"version":3,"ecShardConfig":{"dataShards":12,"parityShards":4,"blockSize":3145728}}"#,
+        )
+        .unwrap();
+
+        let (ds, ps, bs) = read_ec_shard_config_across_dirs(
+            rebuild,
+            rebuild,
+            &[sibling.to_string()],
+            "",
+            VolumeId(3),
+        )
+        .unwrap();
+        assert_eq!((ds, ps, bs), (12, 4, 3 * 1024 * 1024));
+    }
+
+    /// Same, for the sidecar: with no .vif anywhere it is the surviving record
+    /// of the geometry, wherever it sits.
+    #[test]
+    fn read_ec_shard_config_finds_a_sibling_disks_sidecar() {
+        use crate::pb::volume_server_pb::{ChecksumAlgorithm, EcBitrotProtection, EcShardChecksums};
+        use crate::storage::erasure_coding::ec_bitrot;
+
+        let a = tempfile::TempDir::new().unwrap();
+        let b = tempfile::TempDir::new().unwrap();
+        let (rebuild, sibling) = (a.path().to_str().unwrap(), b.path().to_str().unwrap());
+        let base = crate::storage::volume::volume_file_name(sibling, "", VolumeId(4));
+        let prot = EcBitrotProtection {
+            algorithm: ChecksumAlgorithm::ChecksumCrc32c as i32,
+            block_size: ec_bitrot::DEFAULT_BITROT_BLOCK_SIZE as u32,
+            generation: 0,
+            ec_shard_config: Some(ec_bitrot::ec_shard_config(12, 4, 3 * 1024 * 1024)),
+            shards: (0..16u32)
+                .map(|shard_id| EcShardChecksums {
+                    shard_id,
+                    covered_size: 4,
+                    block_crc32c: vec![0u8; 4],
+                })
+                .collect(),
+            encode_uuid: vec![0u8; 16],
+        };
+        ec_bitrot::save_bitrot_sidecar(&ec_bitrot::bitrot_sidecar_path(&base, 0), &prot).unwrap();
+
+        let (ds, ps, bs) = read_ec_shard_config_across_dirs(
+            rebuild,
+            rebuild,
+            &[sibling.to_string()],
+            "",
+            VolumeId(4),
+        )
+        .unwrap();
+        assert_eq!((ds, ps, bs), (12, 4, 3 * 1024 * 1024));
     }
 }
