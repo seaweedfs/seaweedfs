@@ -378,10 +378,29 @@ func doFixEcxFromShards(basePath, baseFileName, collection string, volumeId int6
 	// the .vif is gone. A uniform-layout volume cannot be de-striped correctly
 	// without its block size.
 	if blockSize < 0 {
-		if prot, serr := erasure_coding.LoadBitrotSidecar(erasure_coding.BitrotSidecarPath(base, 0)); serr == nil {
-			if cfg := prot.GetEcShardConfig(); cfg.GetDataShards() > 0 {
-				dataShards = int(cfg.GetDataShards())
-				parityShards = int(cfg.GetParityShards())
+		sidecarPath := erasure_coding.BitrotSidecarPath(base, 0)
+		if prot, serr := erasure_coding.LoadBitrotSidecar(sidecarPath); serr == nil {
+			// The sidecar is about to pin the reconstruction to one geometry
+			// instead of letting the dual scan decide, so every field it
+			// contributes has to hold up: it must describe generation 0 (the
+			// shards being read), a complete in-range ratio, and a block size
+			// an encoder could have produced. Anything less leaves the layout
+			// unknown, which is the answer that still recovers by scanning.
+			cfg := prot.GetEcShardConfig()
+			ds, ps := int(cfg.GetDataShards()), int(cfg.GetParityShards())
+			switch {
+			case prot.GetGeneration() != 0:
+				glog.Warningf("volume %d: %s records generation %d, not the generation-0 shards; ignoring it",
+					volumeId, sidecarPath, prot.GetGeneration())
+			case ds <= 0 || ps <= 0 || ds+ps > erasure_coding.MaxShardCount:
+				glog.Warningf("volume %d: %s records invalid shard counts %d+%d; ignoring it",
+					volumeId, sidecarPath, ds, ps)
+			case erasure_coding.ValidateBlockSize(cfg.GetBlockSize()) != nil:
+				glog.Warningf("volume %d: %s records an invalid shard block size %d; ignoring it",
+					volumeId, sidecarPath, cfg.GetBlockSize())
+			default:
+				dataShards = ds
+				parityShards = ps
 				blockSize = cfg.GetBlockSize()
 			}
 		}
