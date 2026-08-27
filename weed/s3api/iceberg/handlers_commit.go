@@ -169,6 +169,12 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 					writeError(w, http.StatusNotFound, "NoSuchTableException", fmt.Sprintf("Table does not exist: %s", tableName))
 					return
 				}
+				// From here the commit creates the table, writing its metadata
+				// file before the create that authorizes it.
+				if authErr := s.authorizeCreateTable(r.Context(), bucketARN, namespace, tableName, identityName); authErr != nil {
+					writeManagerError(w, authErr)
+					return
+				}
 
 				for _, requirement := range req.Requirements {
 					validateAgainst := table.Metadata(nil)
