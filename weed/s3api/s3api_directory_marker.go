@@ -61,6 +61,19 @@ func (s3a *S3ApiServer) deleteDirectoryMarker(r *http.Request, bucket, object st
 	// cannot read or remove fails the delete rather than half finishing it.
 	switch _, historyErr := s3a.getEntry(markerDir, s3_constants.VersionsFolder); {
 	case historyErr == nil:
+		// The check above resolves the latest version, while the removal below takes
+		// every one of them, so each has to be clear of a lock of its own.
+		versions, listErr := s3a.getObjectVersionList(bucket, s3_constants.NormalizeObjectKey(object))
+		if listErr != nil {
+			glog.Errorf("deleteDirectoryMarker: cannot list history of %s/%s: %v", bucket, object, listErr)
+			return s3err.ErrInternalError
+		}
+		for _, version := range versions {
+			if err := s3a.enforceObjectLockProtections(r, bucket, object, version.VersionId, governanceBypassAllowed); err != nil {
+				glog.V(2).Infof("deleteDirectoryMarker: version %s of %s/%s is locked: %v", version.VersionId, bucket, object, err)
+				return s3err.ErrAccessDenied
+			}
+		}
 		if rmErr := s3a.rm(markerDir, s3_constants.VersionsFolder, true, true); rmErr != nil {
 			glog.Errorf("deleteDirectoryMarker: failed to remove stale history of %s/%s: %v", bucket, object, rmErr)
 			return s3err.ErrInternalError

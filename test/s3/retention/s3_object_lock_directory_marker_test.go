@@ -120,6 +120,44 @@ func TestObjectLockDirectoryMarker(t *testing.T) {
 		require.Error(t, err)
 	})
 
+	// Past 1KiB a trailing-slash key is a real versioned object, and the delete
+	// takes the whole history at once, so an older retained version has to block
+	// it even when the version on top carries no retention of its own.
+	t.Run("a retained version under an unretained one still blocks", func(t *testing.T) {
+		key := "records/history/"
+		body := strings.Repeat("x", 2048)
+
+		first, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
+			Bucket:                    aws.String(bucketName),
+			Key:                       aws.String(key),
+			Body:                      strings.NewReader(body),
+			ObjectLockMode:            types.ObjectLockModeCompliance,
+			ObjectLockRetainUntilDate: aws.Time(retainUntil),
+		})
+		require.NoError(t, err)
+		require.NotNil(t, first.VersionId)
+
+		_, err = client.PutObject(context.TODO(), &s3.PutObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(key),
+			Body:   strings.NewReader(body),
+		})
+		require.NoError(t, err)
+
+		_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(key),
+		})
+		require.Error(t, err, "the retained version underneath must block the delete")
+
+		_, err = client.HeadObject(context.TODO(), &s3.HeadObjectInput{
+			Bucket:    aws.String(bucketName),
+			Key:       aws.String(key),
+			VersionId: first.VersionId,
+		})
+		assert.NoError(t, err, "the retained version must survive")
+	})
+
 	t.Run("an unretained marker still deletes", func(t *testing.T) {
 		key := "records/plain/"
 		_, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
