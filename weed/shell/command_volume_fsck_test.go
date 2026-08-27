@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -169,6 +170,29 @@ func TestVolumeFsckPurgeEmptyDirectories(t *testing.T) {
 	sort.Strings(stub.deleted)
 	if strings.Join(stub.deleted, ",") != strings.Join(expected, ",") {
 		t.Errorf("deleted %v, expected %v", stub.deleted, expected)
+	}
+}
+
+func TestVolumeFsckPurgeEmptyDirectoriesKeepsFreshDirectory(t *testing.T) {
+	stub := &stubFilerServer{entries: map[string]*filer_pb.Entry{
+		"/fresh":     {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Mtime: time.Now().Unix()}},
+		"/fresh/dir": {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Mtime: time.Now().Unix()}},
+	}}
+
+	verbose := false
+	c := &commandVolumeFsck{
+		verbose:         &verbose,
+		writer:          io.Discard,
+		bucketsPath:     "/buckets",
+		scopedFilerPath: "/",
+		purgedDirs:      map[util.FullPath]struct{}{"/fresh/dir": {}},
+		env:             startStubFiler(t, stub),
+	}
+
+	c.purgeEmptyDirectories()
+
+	if len(stub.deleted) > 0 {
+		t.Errorf("deleted %v, expected a directory modified within the quiet period to be kept", stub.deleted)
 	}
 }
 

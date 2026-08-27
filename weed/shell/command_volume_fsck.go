@@ -44,6 +44,10 @@ func init() {
 const (
 	readbufferSize                 = 16
 	jwtFilerTokenExpirationSeconds = 300
+	// mtime is only second resolution, so a directory touched this recently is
+	// left for the next run rather than compared against a timestamp a
+	// concurrent write could share
+	directoryQuietPeriod = 5 * time.Second
 )
 
 type commandVolumeFsck struct {
@@ -737,7 +741,11 @@ func (c *commandVolumeFsck) purgeEmptyDirectories() {
 		if entry == nil || entry.IsDirectoryKeyObject() {
 			continue
 		}
-		if err := c.deleteEmptyDirectory(dir, entry.Attributes.GetMtime()); err != nil {
+		mtime := entry.Attributes.GetMtime()
+		if mtime > time.Now().Add(-directoryQuietPeriod).Unix() {
+			continue
+		}
+		if err := c.deleteEmptyDirectory(dir, mtime); err != nil {
 			if !strings.Contains(err.Error(), filer.MsgFailDelNonEmptyFolder) {
 				fmt.Fprintf(c.writer, "delete empty directory %s: %v\n", dir, err)
 			}
