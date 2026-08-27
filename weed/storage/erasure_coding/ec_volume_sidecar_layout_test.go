@@ -1,0 +1,143 @@
+package erasure_coding
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
+)
+
+func uniformSidecar(t *testing.T, base string, ds, ps uint32, blockSize int64) {
+	t.Helper()
+	prot := &volume_server_pb.EcBitrotProtection{
+		Algorithm:  volume_server_pb.ChecksumAlgorithm_CHECKSUM_CRC32C,
+		BlockSize:  uint32(BitrotBlockSize),
+		Generation: 0,
+		EcShardConfig: &volume_server_pb.EcShardConfig{
+			DataShards: ds, ParityShards: ps, BlockSize: blockSize,
+		},
+	}
+	if err := SaveBitrotSidecar(BitrotSidecarPath(base, 0), prot); err != nil {
+		t.Fatalf("seed .ecsum: %v", err)
+	}
+}
+
+// The sidecar records the layout at encode time, so it answers what a .vif
+// cannot. A .vif that merely omits ecShardConfig is no more informative than an
+// absent one — going straight to the defaults reads a uniform volume with the
+// legacy offset math and returns the wrong bytes.
+func TestNewEcVolumeTakesLayoutFromSidecarWhenVifHasNoConfig(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "1")
+	if err := os.WriteFile(base+".ecx", []byte{}, 0644); err != nil {
+		t.Fatalf("seed .ecx: %v", err)
+	}
+	// A config-free .vif: version and dat size only, as a legacy encode left it.
+	if err := volume_info.SaveVolumeInfo(base+".vif", &volume_server_pb.VolumeInfo{
+		Version: uint32(needle.Version3),
+	}); err != nil {
+		t.Fatalf("seed .vif: %v", err)
+	}
+	uniformSidecar(t, base, 12, 4, 3*1024*1024)
+
+	ev, err := NewEcVolume(types.HardDriveType, dir, dir, "", needle.VolumeId(1))
+	if err != nil {
+		t.Fatalf("mount: %v", err)
+	}
+	defer ev.Close()
+	if got := ev.ECContext; got.DataShards != 12 || got.ParityShards != 4 || got.BlockSize != 3*1024*1024 {
+		t.Errorf("layout = %d+%d block %d, want 12+4 block 3MiB", got.DataShards, got.ParityShards, got.BlockSize)
+	}
+}
+
+// A split -dir/-dir.idx layout keeps the sidecar with the INDEX. Probing only
+// the data base reports "absent", and absent is the one answer that selects the
+// legacy layout.
+func TestNewEcVolumeFindsSidecarInTheIndexDirectory(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		writeVif bool
+	}{
+		{name: "no vif at all"},
+		{name: "vif without ec config", writeVif: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dataDir, idxDir := t.TempDir(), t.TempDir()
+			idxBase := filepath.Join(idxDir, "2")
+			if err := os.WriteFile(idxBase+".ecx", []byte{}, 0644); err != nil {
+				t.Fatalf("seed .ecx: %v", err)
+			}
+			if tc.writeVif {
+				if err := volume_info.SaveVolumeInfo(idxBase+".vif", &volume_server_pb.VolumeInfo{
+					Version: uint32(needle.Version3),
+				}); err != nil {
+					t.Fatalf("seed .vif: %v", err)
+				}
+			}
+			uniformSidecar(t, idxBase, 12, 4, 3*1024*1024)
+
+			ev, err := NewEcVolume(types.HardDriveType, dataDir, idxDir, "", needle.VolumeId(2))
+			if err != nil {
+				t.Fatalf("mount: %v", err)
+			}
+			defer ev.Close()
+			if got := ev.ECContext; got.DataShards != 12 || got.ParityShards != 4 || got.BlockSize != 3*1024*1024 {
+				t.Errorf("layout = %d+%d block %d, want 12+4 block 3MiB", got.DataShards, got.ParityShards, got.BlockSize)
+			}
+		})
+	}
+}
+
+// Absence stays legal — a volume encoded before either record exists is a
+// genuine legacy volume, and only that case may select the legacy layout.
+func TestNewEcVolumeConfigFreeVifWithNoSidecarUsesDefaults(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "3")
+	if err := os.WriteFile(base+".ecx", []byte{}, 0644); err != nil {
+		t.Fatalf("seed .ecx: %v", err)
+	}
+	if err := volume_info.SaveVolumeInfo(base+".vif", &volume_server_pb.VolumeInfo{
+		Version: uint32(needle.Version3),
+	}); err != nil {
+		t.Fatalf("seed .vif: %v", err)
+	}
+	ev, err := NewEcVolume(types.HardDriveType, dir, dir, "", needle.VolumeId(3))
+	if err != nil {
+		t.Fatalf("mount: %v", err)
+	}
+	defer ev.Close()
+	if got := ev.ECContext; got.DataShards != DataShardsCount || got.ParityShards != ParityShardsCount || got.BlockSize != 0 {
+		t.Errorf("layout = %d+%d block %d, want the legacy defaults", got.DataShards, got.ParityShards, got.BlockSize)
+	}
+}
+
+// Present but unusable must fail the mount rather than default, in the
+// config-free-vif branch exactly as in the absent-vif one.
+func TestNewEcVolumeConfigFreeVifWithUnusableSidecarFails(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "4")
+	if err := os.WriteFile(base+".ecx", []byte{}, 0644); err != nil {
+		t.Fatalf("seed .ecx: %v", err)
+	}
+	if err := volume_info.SaveVolumeInfo(base+".vif", &volume_server_pb.VolumeInfo{
+		Version: uint32(needle.Version3),
+	}); err != nil {
+		t.Fatalf("seed .vif: %v", err)
+	}
+	// Stamped for another generation: not a record of these shards.
+	if err := SaveBitrotSidecar(BitrotSidecarPath(base, 0), &volume_server_pb.EcBitrotProtection{
+		Algorithm:     volume_server_pb.ChecksumAlgorithm_CHECKSUM_CRC32C,
+		BlockSize:     uint32(BitrotBlockSize),
+		Generation:    5,
+		EcShardConfig: &volume_server_pb.EcShardConfig{DataShards: 12, ParityShards: 4},
+	}); err != nil {
+		t.Fatalf("seed .ecsum: %v", err)
+	}
+	if _, err := NewEcVolume(types.HardDriveType, dir, dir, "", needle.VolumeId(4)); err == nil {
+		t.Fatal("an unusable sole layout record must fail the mount")
+	}
+}

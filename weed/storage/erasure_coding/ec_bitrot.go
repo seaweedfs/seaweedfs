@@ -549,6 +549,25 @@ func (ev *EcVolume) loadBitrotForGeneration(generation uint32) error {
 	return nil
 }
 
+// layoutFromSidecar resolves a volume's EC layout from its generation-0
+// checksum sidecar, searching the data base and then the index base. A split
+// -dir/-dir.idx layout keeps the sidecar with the index, so probing the data
+// base alone reports "absent" for a volume that has the record right there —
+// and absent is the one answer that selects the legacy 10+4 layout.
+//
+// The three answers stay distinct: (nil, false, nil) means genuinely absent
+// and the caller may fall back to the defaults; a non-nil error means the
+// record exists but cannot establish the layout, which must fail rather than
+// default; otherwise the config is usable.
+func layoutFromSidecar(dataBaseFileName, indexBaseFileName string) (cfg *volume_server_pb.EcShardConfig, found bool, err error) {
+	path := findBitrotSidecar(0, dataBaseFileName, indexBaseFileName)
+	if path == "" {
+		return nil, false, nil
+	}
+	cfg, err = EcShardConfigFromSidecarPath(path)
+	return cfg, true, err
+}
+
 // EcShardConfigFromSidecar reads the generation-0 bitrot sidecar's record of a
 // volume's EC config. The three answers are distinct on purpose: absent means
 // the volume may genuinely predate the sidecar, which is the only case a caller

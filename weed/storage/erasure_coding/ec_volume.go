@@ -216,7 +216,29 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 				glog.V(1).Infof("Loaded EC config from VolumeInfo for volume %d: %s", vid, ev.ECContext.String())
 			}
 		} else {
-			ev.ECContext = NewDefaultECContext(collection, vid)
+			// A vif that carries no ecShardConfig answers nothing about the
+			// layout — it is no more informative than an absent one, so it
+			// must not skip the sidecar. Going straight to the defaults here
+			// read a uniform volume with the legacy offset math.
+			cfg, sidecarFound, sidecarErr := layoutFromSidecar(dataBaseFileName, indexBaseFileName)
+			if sidecarErr != nil {
+				ev.Close()
+				return nil, fmt.Errorf("ec volume %d: %s records no EC config and the bitrot sidecar cannot establish the layout: %w", vid, vifFileName, sidecarErr)
+			}
+			if sidecarFound {
+				ev.ECContext = &ECContext{
+					Collection:   collection,
+					VolumeId:     vid,
+					DataShards:   int(cfg.GetDataShards()),
+					ParityShards: int(cfg.GetParityShards()),
+					BlockSize:    cfg.GetBlockSize(),
+				}
+				ev.EncodeTsNs = cfg.GetEncodeTsNs()
+				glog.V(0).Infof("ec volume %d: .vif records no EC config; took it from the bitrot sidecar: %s",
+					vid, ev.ECContext.String())
+			} else {
+				ev.ECContext = NewDefaultECContext(collection, vid)
+			}
 		}
 	} else {
 		// Don't fabricate a stub .vif here: a version-only stub implies the
@@ -232,7 +254,7 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 		// every read to the wrong shard offset. `weed fix -ecx` reads the
 		// sidecar for the same reason.
 		ev.ECContext = NewDefaultECContext(collection, vid)
-		cfg, sidecarFound, sidecarErr := EcShardConfigFromSidecar(dataBaseFileName)
+		cfg, sidecarFound, sidecarErr := layoutFromSidecar(dataBaseFileName, indexBaseFileName)
 		if sidecarErr != nil {
 			// With no .vif the sidecar is the ONLY record of this volume's
 			// layout. Present but unusable is not "assume legacy" — that
