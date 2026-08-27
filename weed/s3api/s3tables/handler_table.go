@@ -1199,6 +1199,16 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 			if strings.HasPrefix(tablePath+"/", dataPath+"/") {
 				return fmt.Errorf("refusing to delete table %s: data path %q is an ancestor of catalog path %q", tableName, dataPath, tablePath)
 			}
+			// The location is caller-supplied, so it may name a sibling that is
+			// still a live catalog entry. Only this table's authorization was
+			// checked; a decoupled location has had its catalog attributes
+			// stripped, so a surviving marker means the path belongs elsewhere.
+			switch _, markerErr := h.getExtendedAttribute(r.Context(), client, dataPath, ExtendedKeyMetadata); {
+			case markerErr == nil:
+				return fmt.Errorf("refusing to delete table %s: data path %q is another catalog entry", tableName, dataPath)
+			case !errors.Is(markerErr, ErrAttributeNotFound) && !errors.Is(markerErr, filer_pb.ErrNotFound):
+				return fmt.Errorf("refusing to delete table %s: cannot read data path %q: %w", tableName, dataPath, markerErr)
+			}
 			// Decoupled table (renamed, or created over a leftover): its data
 			// lives elsewhere. Purge the data, then clear the catalog marker
 			// without deleting the name path -- it may still hold another
