@@ -382,11 +382,7 @@ func (fs *WebDavFileSystem) stat(ctx context.Context, fullFilePath string) (os.F
 	fullpath := util.FullPath(fullFilePath)
 
 	if listedFi := listedEntriesFrom(ctx).get(string(fullpath)); listedFi != nil {
-		// the caller's spelling of the path, trailing slash and all, is what a
-		// lookup would have reported back
-		fi := *listedFi
-		fi.name = string(fullpath)
-		return &fi, nil
+		return listedFi, nil
 	}
 
 	entry, _, _, err := filer_pb.GetEntry(ctx, fs, fullpath)
@@ -404,16 +400,19 @@ func (fs *WebDavFileSystem) stat(ctx context.Context, fullFilePath string) (os.F
 }
 
 func toFileInfo(fullpath util.FullPath, entry *filer_pb.Entry) *FileInfo {
+	// Name is what WebDAV publishes as DAV:displayname; clients that build a
+	// child URL from it reach nothing when it carries the whole path.
+	fp := util.FullPath(listedEntryKey(string(fullpath)))
 	fi := &FileInfo{
 		size:         int64(filer.FileSize(entry)),
-		name:         string(fullpath),
+		name:         fp.Name(),
 		mode:         os.FileMode(entry.Attributes.FileMode),
 		modifiedTime: time.Unix(entry.Attributes.Mtime, 0),
 		etag:         filer.ETag(entry),
 		isDirectory:  entry.IsDirectory,
 	}
 
-	if fi.name == "/" {
+	if fp == "/" {
 		fi.modifiedTime = time.Now()
 		fi.isDirectory = true
 	}
@@ -594,24 +593,14 @@ func (f *WebDavFile) Readdir(count int) (ret []os.FileInfo, err error) {
 	listed := listedEntriesFrom(ctx)
 
 	err = filer_pb.ReadDirAllEntries(ctx, f.fs, util.FullPath(dir), "", func(entry *filer_pb.Entry, isLast bool) error {
-		fi := FileInfo{
-			size:         int64(filer.FileSize(entry)),
-			name:         entry.Name,
-			mode:         os.FileMode(entry.Attributes.FileMode),
-			modifiedTime: time.Unix(entry.Attributes.Mtime, 0),
-			isDirectory:  entry.IsDirectory,
-		}
-
-		if !strings.HasSuffix(fi.name, "/") && fi.IsDir() {
-			fi.name += "/"
-		}
+		childPath := util.NewFullPath(dir, entry.Name)
+		fi := toFileInfo(childPath, entry)
 
 		glog.V(4).Infof("entry: %v", fi.name)
 
-		childPath := util.NewFullPath(dir, entry.Name)
-		listed.put(string(childPath), toFileInfo(childPath, entry))
+		listed.put(string(childPath), fi)
 
-		ret = append(ret, &fi)
+		ret = append(ret, fi)
 		return nil
 	})
 	if err != nil {
