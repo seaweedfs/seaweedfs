@@ -274,3 +274,30 @@ func TestOverlappingHeartbeatsNameNoDepartures(t *testing.T) {
 		}
 	}
 }
+
+// The departure message is built from what the entry held, not kept ready as a
+// message per volume, so everything the master matches on has to survive the
+// round trip through the entry.
+func TestDepartureCarriesTheVolumeIdentity(t *testing.T) {
+	store := newTestStore(t, 1)
+	v := mountTestVolume(t, store.Locations[0], 7, "pictures")
+	v.SuperBlock.ReplicaPlacement = &super_block.ReplicaPlacement{SameRackCount: 1}
+	v.SuperBlock.Ttl, _ = needle.ReadTTL("5m")
+	v.diskId = 3
+	store.ResetVolumeReporting()
+	store.AcceptVolumeChanges()
+	reported := store.CollectHeartbeat().Volumes[0]
+
+	store.Locations[0].UnloadVolume(needle.VolumeId(7))
+	heartbeat := store.CollectHeartbeat()
+	if len(heartbeat.DeletedVolumes) != 1 {
+		t.Fatalf("expected volume 7 to be named as departed, got %v", heartbeat.DeletedVolumes)
+	}
+	departed := heartbeat.DeletedVolumes[0]
+	if departed.Id != reported.Id || departed.DiskId != reported.DiskId ||
+		departed.Collection != reported.Collection || departed.DiskType != reported.DiskType ||
+		departed.ReplicaPlacement != reported.ReplicaPlacement ||
+		departed.Version != reported.Version || departed.Ttl != reported.Ttl {
+		t.Errorf("departure named %v, want it to match the volume as reported %v", departed, reported)
+	}
+}
