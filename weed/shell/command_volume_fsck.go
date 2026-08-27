@@ -728,18 +728,16 @@ func (c *commandVolumeFsck) purgeEmptyDirectories() {
 	sort.Slice(dirs, func(i, j int) bool { return len(dirs[i]) > len(dirs[j]) })
 
 	for _, dir := range dirs {
-		isKeyObject, lookupErr := c.isDirectoryKeyObject(dir)
-		if lookupErr != nil {
+		entry, _, _, lookupErr := filer_pb.GetEntry(context.Background(), c.env, dir)
+		if lookupErr != nil && !errors.Is(lookupErr, filer_pb.ErrNotFound) {
 			fmt.Fprintf(c.writer, "lookup directory %s: %v\n", dir, lookupErr)
 			continue
 		}
 		// a directory key object is an S3 object of its own
-		if isKeyObject {
+		if entry == nil || entry.IsDirectoryKeyObject() {
 			continue
 		}
-		parent, name := dir.DirAndName()
-		// a non-recursive delete lets the filer reject a directory that is not empty
-		if err := filer_pb.Remove(context.Background(), c.env, parent, name, false, false, false, false, nil); err != nil {
+		if err := c.deleteEmptyDirectory(dir, entry.Attributes.GetMtime()); err != nil {
 			if !strings.Contains(err.Error(), filer.MsgFailDelNonEmptyFolder) {
 				fmt.Fprintf(c.writer, "delete empty directory %s: %v\n", dir, err)
 			}
@@ -747,6 +745,27 @@ func (c *commandVolumeFsck) purgeEmptyDirectories() {
 		}
 		fmt.Fprintf(c.writer, "deleted empty directory %s\n", dir)
 	}
+}
+
+// deleteEmptyDirectory deletes dir unless it changed since it was looked up at mtime,
+// so a directory promoted to an S3 object meanwhile survives. The delete is not
+// recursive, leaving the filer to reject a directory that is not empty.
+func (c *commandVolumeFsck) deleteEmptyDirectory(dir util.FullPath, mtime int64) error {
+	parent, name := dir.DirAndName()
+	return c.env.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
+			Directory:          parent,
+			Name:               name,
+			IfNotModifiedAfter: mtime,
+		})
+		if err != nil {
+			return err
+		}
+		if resp.Error != "" {
+			return errors.New(resp.Error)
+		}
+		return nil
+	})
 }
 
 func (c *commandVolumeFsck) canPurgeDirectory(dir util.FullPath) bool {
@@ -757,14 +776,6 @@ func (c *commandVolumeFsck) canPurgeDirectory(dir util.FullPath) bool {
 	// deleting a bucket drops its whole collection
 	parent, _ := dir.DirAndName()
 	return string(dir) != c.bucketsPath && parent != c.bucketsPath
-}
-
-func (c *commandVolumeFsck) isDirectoryKeyObject(dir util.FullPath) (bool, error) {
-	entry, _, _, err := filer_pb.GetEntry(context.Background(), c.env, dir)
-	if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
-		return false, err
-	}
-	return entry != nil && entry.IsDirectoryKeyObject(), nil
 }
 
 func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId string, volumeId uint32, vinfo *VInfo, modifyFrom, cutoffFrom uint64) (inUseCount uint64, orphanFileIds []string, orphanDataSize uint64, err error) {

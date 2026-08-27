@@ -73,22 +73,36 @@ func TestVolumeFsckHttpDeleteRecordsParentDirectory(t *testing.T) {
 	}
 }
 
-// stubFilerServer keeps a flat set of full paths and enforces the same
-// non-recursive delete rule as the filer: a directory with children is kept.
+// stubFilerServer keeps a flat set of full paths and enforces the same delete
+// rules as the filer: a directory with children is kept, and so is one modified
+// after the caller looked it up. A path in writtenAfterLookup is modified by a
+// client right after fsck reads it.
 type stubFilerServer struct {
 	filer_pb.UnimplementedSeaweedFilerServer
-	entries map[string]*filer_pb.Entry
-	deleted []string
+	entries            map[string]*filer_pb.Entry
+	writtenAfterLookup map[string]bool
+	deleted            []string
 }
 
 func (s *stubFilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
-	return &filer_pb.LookupDirectoryEntryResponse{Entry: s.entries[string(util.NewFullPath(req.Directory, req.Name))]}, nil
+	fullPath := string(util.NewFullPath(req.Directory, req.Name))
+	entry := s.entries[fullPath]
+	if entry != nil && s.writtenAfterLookup[fullPath] {
+		seen := &filer_pb.Entry{IsDirectory: entry.IsDirectory, Attributes: &filer_pb.FuseAttributes{Mtime: entry.Attributes.GetMtime()}}
+		entry.Attributes.Mtime++
+		return &filer_pb.LookupDirectoryEntryResponse{Entry: seen}, nil
+	}
+	return &filer_pb.LookupDirectoryEntryResponse{Entry: entry}, nil
 }
 
 func (s *stubFilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntryRequest) (*filer_pb.DeleteEntryResponse, error) {
 	fullPath := string(util.NewFullPath(req.Directory, req.Name))
-	if _, found := s.entries[fullPath]; !found {
+	entry, found := s.entries[fullPath]
+	if !found {
 		return &filer_pb.DeleteEntryResponse{Error: filer_pb.ErrNotFound.Error()}, nil
+	}
+	if req.IfNotModifiedAfter > 0 && entry.Attributes.GetMtime() > req.IfNotModifiedAfter {
+		return &filer_pb.DeleteEntryResponse{}, nil
 	}
 	for path := range s.entries {
 		if strings.HasPrefix(path, fullPath+"/") {
@@ -98,6 +112,24 @@ func (s *stubFilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteE
 	delete(s.entries, fullPath)
 	s.deleted = append(s.deleted, fullPath)
 	return &filer_pb.DeleteEntryResponse{}, nil
+}
+
+// startStubFiler serves stub on a random localhost port and returns the shell
+// environment whose filer client reaches it.
+func startStubFiler(t *testing.T, stub *stubFilerServer) *CommandEnv {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	srv := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(srv, stub)
+	go srv.Serve(lis)
+	t.Cleanup(srv.Stop)
+	return &CommandEnv{option: &ShellOptions{
+		FilerAddress:   pb.ServerAddress(fmt.Sprintf("127.0.0.1:1.%d", lis.Addr().(*net.TCPAddr).Port)),
+		GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+	}}
 }
 
 func TestVolumeFsckPurgeEmptyDirectories(t *testing.T) {
@@ -114,15 +146,6 @@ func TestVolumeFsckPurgeEmptyDirectories(t *testing.T) {
 		"/buckets/bucket1/folder": {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Mime: "application/octet-stream"}},
 	}}
 
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	srv := grpc.NewServer()
-	filer_pb.RegisterSeaweedFilerServer(srv, stub)
-	go srv.Serve(lis)
-	t.Cleanup(srv.Stop)
-
 	verbose := false
 	c := &commandVolumeFsck{
 		verbose:         &verbose,
@@ -135,10 +158,7 @@ func TestVolumeFsckPurgeEmptyDirectories(t *testing.T) {
 			"/keep":                   {},
 			"/buckets/bucket1/folder": {},
 		},
-		env: &CommandEnv{option: &ShellOptions{
-			FilerAddress:   pb.ServerAddress(fmt.Sprintf("127.0.0.1:1.%d", lis.Addr().(*net.TCPAddr).Port)),
-			GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
-		}},
+		env: startStubFiler(t, stub),
 	}
 
 	c.purgeEmptyDirectories()
@@ -149,5 +169,31 @@ func TestVolumeFsckPurgeEmptyDirectories(t *testing.T) {
 	sort.Strings(stub.deleted)
 	if strings.Join(stub.deleted, ",") != strings.Join(expected, ",") {
 		t.Errorf("deleted %v, expected %v", stub.deleted, expected)
+	}
+}
+
+func TestVolumeFsckPurgeEmptyDirectoriesKeepsChangedDirectory(t *testing.T) {
+	stub := &stubFilerServer{
+		entries: map[string]*filer_pb.Entry{
+			"/race":     {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Mtime: 100}},
+			"/race/dir": {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Mtime: 100}},
+		},
+		writtenAfterLookup: map[string]bool{"/race/dir": true},
+	}
+
+	verbose := false
+	c := &commandVolumeFsck{
+		verbose:         &verbose,
+		writer:          io.Discard,
+		bucketsPath:     "/buckets",
+		scopedFilerPath: "/",
+		purgedDirs:      map[util.FullPath]struct{}{"/race/dir": {}},
+		env:             startStubFiler(t, stub),
+	}
+
+	c.purgeEmptyDirectories()
+
+	if len(stub.deleted) > 0 {
+		t.Errorf("deleted %v, expected a directory written to after the lookup to be kept", stub.deleted)
 	}
 }
