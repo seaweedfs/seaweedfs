@@ -62,16 +62,36 @@ func (s3a *S3ApiServer) deleteDirectoryMarker(r *http.Request, bucket, object st
 	switch _, historyErr := s3a.getEntry(markerDir, s3_constants.VersionsFolder); {
 	case historyErr == nil:
 		// The check above resolves the latest version, while the removal below takes
-		// every one of them, so each has to be clear of a lock of its own.
-		versions, listErr := s3a.getObjectVersionList(bucket, s3_constants.NormalizeObjectKey(object))
-		if listErr != nil {
-			glog.Errorf("deleteDirectoryMarker: cannot list history of %s/%s: %v", bucket, object, listErr)
-			return s3err.ErrInternalError
-		}
-		for _, version := range versions {
-			if err := s3a.enforceObjectLockProtections(r, bucket, object, version.VersionId, governanceBypassAllowed); err != nil {
-				glog.V(2).Infof("deleteDirectoryMarker: version %s of %s/%s is locked: %v", version.VersionId, bucket, object, err)
-				return s3err.ErrAccessDenied
+		// every entry under the key, so each has to be clear of a lock of its own.
+		versionsDir := markerDir + "/" + s3_constants.VersionsFolder
+		for startFrom := ""; ; {
+			entries, isLast, listErr := s3a.list(versionsDir, "", startFrom, false, 1000)
+			if listErr != nil {
+				glog.Errorf("deleteDirectoryMarker: cannot list history of %s/%s: %v", bucket, object, listErr)
+				return s3err.ErrInternalError
+			}
+			for _, entry := range entries {
+				startFrom = entry.Name
+				versionId, named := entry.Extended[s3_constants.ExtVersionIdKey]
+				if !named {
+					// An entry an older build left without a version id is what this
+					// removal is here to clear, but one still under a lock cannot be
+					// named to check it, so leave it alone rather than take it blind.
+					_, retentionActive, _ := s3a.getRetentionFromEntry(entry)
+					_, legalHoldActive, _ := s3a.getLegalHoldFromEntry(entry)
+					if retentionActive || legalHoldActive {
+						glog.V(2).Infof("deleteDirectoryMarker: unnamed history entry %s of %s/%s is locked", entry.Name, bucket, object)
+						return s3err.ErrAccessDenied
+					}
+					continue
+				}
+				if err := s3a.enforceObjectLockProtections(r, bucket, object, string(versionId), governanceBypassAllowed); err != nil {
+					glog.V(2).Infof("deleteDirectoryMarker: version %s of %s/%s is locked: %v", versionId, bucket, object, err)
+					return s3err.ErrAccessDenied
+				}
+			}
+			if isLast || len(entries) == 0 {
+				break
 			}
 		}
 		if rmErr := s3a.rm(markerDir, s3_constants.VersionsFolder, true, true); rmErr != nil {
