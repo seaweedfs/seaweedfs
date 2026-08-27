@@ -243,10 +243,30 @@ func (s *Store) countEcShardsNodeWide(collection string, vid needle.VolumeId) in
 	return len(seen)
 }
 
+// hasEcVolumes reports whether any disk on this store has an EC volume loaded.
+func (s *Store) hasEcVolumes() bool {
+	for _, loc := range s.Locations {
+		loc.ecVolumesLock.RLock()
+		count := len(loc.ecVolumes)
+		loc.ecVolumesLock.RUnlock()
+		if count > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Store) pruneIncompleteEcWithSiblingDat() {
 	if len(s.Locations) < 2 {
 		return
 	}
+	// Only loaded EC volumes are ever pruned, so a store holding none has
+	// nothing to decide — and indexDatOwners below would otherwise walk every
+	// disk and key a map by every .dat on the server to answer no question.
+	if !s.hasEcVolumes() {
+		return
+	}
+
 	datOwners := s.indexDatOwners()
 	if len(datOwners) == 0 {
 		return
