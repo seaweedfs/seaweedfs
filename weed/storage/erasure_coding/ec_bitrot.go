@@ -480,8 +480,8 @@ func (ev *EcVolume) BitrotProtection() (*volume_server_pb.EcBitrotProtection, Bi
 // already mounted — a shard delivery can bring the manifest with it, and the
 // receive path only writes the file, so without this the in-memory volume
 // keeps the protection state it resolved at mount (off) until a remount.
-func (ev *EcVolume) ReloadBitrotSidecar() {
-	if err := ev.loadActiveBitrotSidecar(); err != nil {
+func (ev *EcVolume) ReloadBitrotSidecar(additionalDirs ...string) {
+	if err := ev.loadActiveBitrotSidecar(additionalDirs...); err != nil {
 		glog.Warningf("ec volume %d: reload bitrot sidecar: %v", ev.VolumeId, err)
 	}
 }
@@ -489,8 +489,8 @@ func (ev *EcVolume) ReloadBitrotSidecar() {
 // loadActiveBitrotSidecar loads the generation-0 checksum sidecar into the
 // volume. Best-effort: any failure leaves protection off/invalid without
 // failing the mount. OSS only produces generation-0 (fresh-encode) sidecars.
-func (ev *EcVolume) loadActiveBitrotSidecar() error {
-	return ev.loadBitrotForGeneration(0)
+func (ev *EcVolume) loadActiveBitrotSidecar(additionalDirs ...string) error {
+	return ev.loadBitrotForGeneration(0, additionalDirs...)
 }
 
 // loadBitrotForGeneration loads and validates the sidecar describing generation
@@ -504,7 +504,7 @@ func (ev *EcVolume) loadActiveBitrotSidecar() error {
 // reads through the other would land at the wrong shard offsets. That returns
 // an error and fails the mount instead of quietly dropping to unprotected
 // reads.
-func (ev *EcVolume) loadBitrotForGeneration(generation uint32) error {
+func (ev *EcVolume) loadBitrotForGeneration(generation uint32, additionalDirs ...string) error {
 	ev.bitrotLock.Lock()
 	defer ev.bitrotLock.Unlock()
 	ev.bitrot = nil
@@ -513,7 +513,7 @@ func (ev *EcVolume) loadBitrotForGeneration(generation uint32) error {
 	if ev.ECContext == nil {
 		return nil
 	}
-	path := findBitrotSidecar(generation, ev.DataBaseFileName(), ev.IndexBaseFileName())
+	path := findBitrotSidecar(generation, ev.DataBaseFileName(), ev.IndexBaseFileName(), additionalDirs...)
 	if path == "" {
 		return nil
 	}

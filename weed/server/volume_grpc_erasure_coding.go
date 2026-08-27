@@ -827,8 +827,15 @@ func (vs *VolumeServer) VolumeEcShardsMount(ctx context.Context, req *volume_ser
 	// first-match FindEcVolume would leave the siblings reporting no protection
 	// until a remount. Each re-resolves against its own data and index base, so
 	// a shared -dir.idx reaches all of them.
+	//
+	// Resolving across every EC metadata directory is what makes that reload
+	// mean something. Startup mirroring gives each shard-bearing disk its own
+	// .ecx/.ecj/.vif but deliberately not the sidecar, so a runtime restricted
+	// to its own two directories would find nothing however often it reloaded.
+	// One delivered copy, reachable from all of them.
+	ecMetadataDirs := vs.store.EcMetadataDirs()
 	for _, v := range vs.store.FindAllEcVolumes(needle.VolumeId(req.VolumeId)) {
-		v.ReloadBitrotSidecar()
+		v.ReloadBitrotSidecar(ecMetadataDirs...)
 	}
 
 	return &volume_server_pb.VolumeEcShardsMountResponse{}, nil

@@ -3099,8 +3099,14 @@ impl VolumeServer for VolumeGrpcService {
         // the first-match lookup would leave the siblings reporting no
         // protection. Each re-resolves against its own data and index
         // directories, so a shared -dir.idx reaches all of them.
+        // Resolving across every EC metadata directory is what makes that
+        // reload mean something: startup mirroring gives each shard-bearing
+        // disk its own .ecx/.ecj/.vif but deliberately not the sidecar, so a
+        // runtime restricted to its own two directories would find nothing
+        // however often it reloaded. One delivered copy, reachable from all.
+        let ec_metadata_dirs = store.ec_metadata_dirs();
         for ec_vol in store.find_all_ec_volumes_mut(vid) {
-            ec_vol.reload_bitrot_sidecar();
+            ec_vol.reload_bitrot_sidecar(&ec_metadata_dirs);
         }
         drop(store);
         self.state.volume_state_notify.notify_one();

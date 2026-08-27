@@ -141,3 +141,62 @@ func TestNewEcVolumeConfigFreeVifWithUnusableSidecarFails(t *testing.T) {
 		t.Fatal("an unusable sole layout record must fail the mount")
 	}
 }
+
+// Startup mirroring gives each shard-bearing disk its own .ecx/.ecj/.vif but
+// deliberately not the .ecsum, and a repair delivers exactly one copy. A
+// runtime restricted to its own two directories therefore reports no
+// protection no matter how often it reloads — so the resolution has to reach
+// the sibling disk that actually received the manifest.
+func TestReloadBitrotSidecarFindsItOnASiblingDisk(t *testing.T) {
+	mine, sibling := t.TempDir(), t.TempDir()
+	myBase := filepath.Join(mine, "7")
+	if err := os.WriteFile(myBase+".ecx", []byte{}, 0644); err != nil {
+		t.Fatalf("seed .ecx: %v", err)
+	}
+	if err := volume_info.SaveVolumeInfo(myBase+".vif", &volume_server_pb.VolumeInfo{
+		Version: uint32(needle.Version3),
+		EcShardConfig: &volume_server_pb.EcShardConfig{
+			DataShards: 10, ParityShards: 4, BlockSize: 0,
+		},
+	}); err != nil {
+		t.Fatalf("seed .vif: %v", err)
+	}
+
+	ev, err := NewEcVolume(types.HardDriveType, mine, mine, "", needle.VolumeId(7))
+	if err != nil {
+		t.Fatalf("mount: %v", err)
+	}
+	defer ev.Close()
+	if got := ev.bitrotStatus; got != BitrotOff {
+		t.Fatalf("precondition: status = %v, want BitrotOff before the delivery", got)
+	}
+
+	// The delivery lands the manifest on the sibling disk only.
+	prot := &volume_server_pb.EcBitrotProtection{
+		Algorithm:  volume_server_pb.ChecksumAlgorithm_CHECKSUM_CRC32C,
+		BlockSize:  uint32(BitrotBlockSize),
+		Generation: 0,
+		EcShardConfig: &volume_server_pb.EcShardConfig{
+			DataShards: 10, ParityShards: 4, BlockSize: 0,
+		},
+	}
+	for i := 0; i < 14; i++ {
+		prot.Shards = append(prot.Shards, &volume_server_pb.EcShardChecksums{
+			ShardId: uint32(i), CoveredSize: 1, BlockCrc32C: make([]byte, 4),
+		})
+	}
+	if err := SaveBitrotSidecar(BitrotSidecarPath(filepath.Join(sibling, "7"), 0), prot); err != nil {
+		t.Fatalf("seed sibling .ecsum: %v", err)
+	}
+
+	// Reloading against only its own directories still finds nothing.
+	ev.ReloadBitrotSidecar()
+	if got := ev.bitrotStatus; got != BitrotOff {
+		t.Errorf("own-directories reload: status = %v, want BitrotOff", got)
+	}
+
+	ev.ReloadBitrotSidecar(mine, sibling)
+	if got := ev.bitrotStatus; got != BitrotOn {
+		t.Errorf("cross-disk reload: status = %v, want BitrotOn", got)
+	}
+}

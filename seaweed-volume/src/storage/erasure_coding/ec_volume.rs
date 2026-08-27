@@ -470,7 +470,7 @@ impl EcVolume {
         // Load the generation-0 EC bitrot checksum sidecar. Optional, except
         // when it contradicts the volume's own geometry — see
         // load_bitrot_for_generation.
-        vol.load_active_bitrot_sidecar()?;
+        vol.load_active_bitrot_sidecar(&[])?;
 
         Ok(vol)
     }
@@ -479,8 +479,8 @@ impl EcVolume {
     /// shard delivery can bring the manifest with it, and the receive path only
     /// writes the file, so without this the in-memory volume keeps the
     /// protection state it resolved at mount (off) until a remount.
-    pub fn reload_bitrot_sidecar(&mut self) {
-        if let Err(e) = self.load_active_bitrot_sidecar() {
+    pub fn reload_bitrot_sidecar(&mut self, additional_dirs: &[String]) {
+        if let Err(e) = self.load_active_bitrot_sidecar(additional_dirs) {
             tracing::warn!(
                 volume_id = self.volume_id.0,
                 error = %e,
@@ -492,8 +492,8 @@ impl EcVolume {
     /// Load the generation-0 checksum sidecar into `self.bitrot`/`self.bitrot_status`.
     /// OSS only produces generation-0 (fresh-encode) sidecars, mirroring Go's
     /// `loadActiveBitrotSidecar`.
-    fn load_active_bitrot_sidecar(&mut self) -> io::Result<()> {
-        self.load_bitrot_for_generation(0)
+    fn load_active_bitrot_sidecar(&mut self, additional_dirs: &[String]) -> io::Result<()> {
+        self.load_bitrot_for_generation(0, additional_dirs)
     }
 
     /// Load and validate the sidecar describing `generation`, setting
@@ -501,7 +501,7 @@ impl EcVolume {
     /// => `Off` (protection off, not corruption); self-integrity or manifest
     /// failure => `Invalid` with a warning (protection off pending repair); usable
     /// => `On`. Mirrors Go's `loadBitrotForGeneration`.
-    fn load_bitrot_for_generation(&mut self, generation: u32) -> io::Result<()> {
+    fn load_bitrot_for_generation(&mut self, generation: u32, additional_dirs: &[String]) -> io::Result<()> {
         use crate::storage::erasure_coding::ec_bitrot;
         // Data base then index base, matching Go's findBitrotSidecar. A split
         // -dir/-dir.idx location keeps the sidecar with the INDEX, and on a
@@ -509,16 +509,21 @@ impl EcVolume {
         // the per-disk runtimes other than the first can see — searching the
         // data base alone left them reporting no protection at all.
         let data_path = ec_bitrot::bitrot_sidecar_path(&self.base_name(), generation);
-        let path = if std::path::Path::new(&data_path).exists() {
-            data_path
-        } else {
-            let idx_path = ec_bitrot::bitrot_sidecar_path(&self.idx_base_name(), generation);
-            if std::path::Path::new(&idx_path).exists() {
-                idx_path
-            } else {
-                data_path
-            }
-        };
+        let idx_path = ec_bitrot::bitrot_sidecar_path(&self.idx_base_name(), generation);
+        // Sibling disks last: startup mirroring gives each shard-bearing disk
+        // its own .ecx/.ecj/.vif but not the sidecar, and a delivery lands
+        // exactly one copy, so a runtime restricted to its own two directories
+        // would report no protection however often it reloaded.
+        let path = std::iter::once(data_path.clone())
+            .chain(std::iter::once(idx_path))
+            .chain(additional_dirs.iter().filter(|d| !d.is_empty()).map(|d| {
+                ec_bitrot::bitrot_sidecar_path(
+                    &crate::storage::volume::volume_file_name(d, &self.collection, self.volume_id),
+                    generation,
+                )
+            }))
+            .find(|p| std::path::Path::new(p).exists())
+            .unwrap_or(data_path);
         let loaded = ec_bitrot::load_bitrot_sidecar(&path);
         // A sidecar written for THIS generation that contradicts the volume's
         // geometry is not "no protection" — it says the layout the volume is
