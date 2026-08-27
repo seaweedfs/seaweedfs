@@ -142,6 +142,25 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			return
 		}
 
+		objectLockEnabled, lockErr := s3a.isObjectLockEnabled(bucket)
+		if lockErr != nil && !errors.Is(lockErr, filer_pb.ErrNotFound) {
+			glog.Errorf("PutObjectHandler: failed to check object lock for bucket %s: %v", bucket, lockErr)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
+		}
+		if validationErr := s3a.validateObjectLockHeaders(r, objectLockEnabled); validationErr != nil {
+			glog.V(2).Infof("PutObjectHandler: object lock header validation failed for %s/%s: %v", bucket, object, validationErr)
+			s3err.WriteErrorResponse(w, r, mapValidationErrorToS3Error(validationErr))
+			return
+		}
+		// A marker is never versioned, so this PUT replaces whatever the key holds.
+		governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object)
+		if lockErr := s3a.enforceObjectLockProtections(r, bucket, object, "", governanceBypassAllowed); lockErr != nil {
+			glog.V(2).Infof("PutObjectHandler: object lock permissions check failed for %s/%s: %v", bucket, object, lockErr)
+			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+			return
+		}
+
 		// Split the object into directory path and name
 		objectWithoutSlash := strings.TrimSuffix(object, "/")
 		dirName := path.Dir(objectWithoutSlash)
@@ -196,6 +215,10 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 				// Set object owner for directory objects (same as regular objects)
 				s3a.setObjectOwnerFromRequest(r, bucket, entry)
+
+				if lockErr := s3a.extractObjectLockMetadataFromRequest(r, entry); lockErr != nil {
+					glog.Errorf("PutObjectHandler: failed to extract object lock metadata for %s/%s: %v", bucket, object, lockErr)
+				}
 			}); err != nil {
 			s3err.WriteErrorResponse(w, r, filerErrorToS3Error(err))
 			return
