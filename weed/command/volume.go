@@ -293,11 +293,29 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 
 	// Set multiple folders and each folder's max volume count limit'
 	v.folders = strings.Split(volumeFolders, ",")
+	// Two locations on one directory would load every volume twice, appending to
+	// the same .dat under two independent locks. Compare identity rather than the
+	// path, so a symlink or bind mount aliasing an earlier -dir is caught too.
+	type seenFolder struct {
+		path string
+		info os.FileInfo
+	}
+	var seenFolders []seenFolder
 	for i, folder := range v.folders {
 		v.folders[i] = util.ResolvePath(folder)
 		if err := util.TestFolderWritable(v.folders[i]); err != nil {
 			glog.Fatalf("Check Data Folder(-dir) Writable %s : %s", v.folders[i], err)
 		}
+		folderInfo, err := os.Stat(v.folders[i])
+		if err != nil {
+			glog.Fatalf("Check Data Folder(-dir) %s : %s", v.folders[i], err)
+		}
+		for _, seen := range seenFolders {
+			if os.SameFile(seen.info, folderInfo) {
+				glog.Fatalf("Data Folder(-dir) %s and %s are the same directory", seen.path, v.folders[i])
+			}
+		}
+		seenFolders = append(seenFolders, seenFolder{v.folders[i], folderInfo})
 	}
 
 	// set max
