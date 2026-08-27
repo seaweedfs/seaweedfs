@@ -94,3 +94,29 @@ func TestDeleteTableColocatedRemovesData(t *testing.T) {
 	assert.Nil(t, fs.Get(GetNamespacePath(renameTestBucket, "ns"), "t"), "colocated table entry must be deleted")
 	assert.Nil(t, fs.Get(GetTablePath(renameTestBucket, "ns", "t"), "metadata"), "colocated table data must be deleted")
 }
+
+// A table whose MetadataLocation points at a sibling that is still a live
+// catalog entry must not be deleted: only the named table was authorized, so a
+// recursive purge of that location would destroy another tenant's table.
+func TestDeleteTableRefusesLiveSiblingDataPath(t *testing.T) {
+	fs, m := startRenameManager(t)
+
+	nsMeta, _ := json.Marshal(namespaceMetadata{Namespace: []string{"attackerns"}, OwnerAccountID: DefaultAccountID})
+	fs.Put(GetTableBucketPath(renameTestBucket), "attackerns", map[string][]byte{ExtendedKeyMetadata: nsMeta})
+
+	decoyMeta, _ := json.Marshal(tableMetadataInternal{
+		Name:             "decoy",
+		Namespace:        "attackerns",
+		Format:           "ICEBERG",
+		OwnerAccountID:   DefaultAccountID,
+		MetadataLocation: "s3://" + renameTestBucket + "/ns/t/metadata/v3.metadata.json",
+	})
+	fs.Put(GetNamespacePath(renameTestBucket, "attackerns"), "decoy", map[string][]byte{ExtendedKeyMetadata: decoyMeta})
+
+	require.Error(t, runDeleteTable(t, m, fs, "attackerns", "decoy"))
+
+	assert.NotNil(t, fs.Get(GetNamespacePath(renameTestBucket, "ns"), "t"),
+		"the targeted table's catalog entry must survive")
+	assert.NotNil(t, fs.Get(GetTablePath(renameTestBucket, "ns", "t"), "data"),
+		"the targeted table's data must survive")
+}
