@@ -2534,10 +2534,12 @@ impl VolumeServer for VolumeGrpcService {
             {
                 if let Some(prev) = rebuild_loc_idx {
                     other_dirs.push(loc_infos[prev].dir.clone());
+                    other_dirs.push(loc_infos[prev].idx_dir.clone());
                 }
                 rebuild_loc_idx = Some(i);
             } else {
                 other_dirs.push(info.dir.clone());
+                other_dirs.push(info.idx_dir.clone());
             }
         }
 
@@ -2554,6 +2556,14 @@ impl VolumeServer for VolumeGrpcService {
 
         let rebuild_dir = loc_infos[rebuild_loc_idx].dir.clone();
         let rebuild_idx_dir = loc_infos[rebuild_loc_idx].idx_dir.clone();
+        // A split -dir/-dir.idx layout keeps .ecx/.ecj/.vif with the index, so
+        // the sibling INDEX directories have to be searched too — a sibling's
+        // data dir alone leaves a custom-ratio volume resolving to 10+4 with
+        // the legacy layout. Drop empties, the rebuild's own directories, and
+        // duplicates; the list is also what the shard lookup walks.
+        other_dirs.retain(|d| !d.is_empty() && *d != rebuild_dir && *d != rebuild_idx_dir);
+        other_dirs.sort();
+        other_dirs.dedup();
 
         // Determine data/parity shard config from rebuild dir
         // The encode-time .dat size resolves the row count the ecx rebuild

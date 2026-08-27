@@ -269,7 +269,15 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 	// and corrupt ones are regenerated; unsafe_ignore_sidecar bypasses the guard.
 	start := time.Now()
 	dataBaseFileName := path.Join(rebuildDataDir, baseFileName)
-	generatedShardIds, err := erasure_coding.RebuildEcFiles(dataBaseFileName, erasure_coding.BackgroundECContext(), req.UnsafeIgnoreSidecar, additionalDirs...)
+	// Resolve the layout ONCE and use that same answer for the rebuild and for
+	// the backfill below: a manifest describing these shards has to record the
+	// geometry they were actually reconstructed with.
+	rebuildCtx, resolveErr := erasure_coding.ResolveRebuildECContext(dataBaseFileName, erasure_coding.BackgroundECContext(), additionalDirs)
+	if resolveErr != nil {
+		recordEcRebuild("failure", time.Since(start))
+		return nil, fmt.Errorf("resolve rebuild layout for %s: %v", dataBaseFileName, resolveErr)
+	}
+	generatedShardIds, err := erasure_coding.RebuildEcFiles(dataBaseFileName, rebuildCtx, req.UnsafeIgnoreSidecar, additionalDirs...)
 	if err != nil {
 		recordEcRebuild("failure", time.Since(start))
 		return nil, fmt.Errorf("RebuildEcFiles %s: %v", dataBaseFileName, err)
@@ -295,12 +303,11 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 	if erasure_coding.BitrotProtectionEnabled {
 		sidecarPath := erasure_coding.BitrotSidecarPath(dataBaseFileName, 0)
 		if _, statErr := os.Stat(sidecarPath); os.IsNotExist(statErr) {
-			ctx := erasure_coding.NewDefaultECContext("", 0)
-			if vi, _, found, _ := volume_info.MaybeLoadVolumeInfo(dataBaseFileName + ".vif"); found && vi.EcShardConfig != nil {
-				if ds, ps := int(vi.EcShardConfig.DataShards), int(vi.EcShardConfig.ParityShards); ds > 0 && ps > 0 && ds+ps <= erasure_coding.MaxShardCount {
-					ctx = &erasure_coding.ECContext{DataShards: ds, ParityShards: ps}
-				}
-			}
+			// The manifest must describe the shards as rebuilt, so it takes the
+			// context the rebuild resolved — not a narrower re-derivation that
+			// reads only this directory's .vif and drops the block size, which
+			// records the legacy layout for shards written with a uniform one.
+			ctx := rebuildCtx
 			if prot, berr := erasure_coding.ComputeProtectionFromShards(dataBaseFileName, ctx, 0, additionalDirs); berr != nil {
 				glog.V(2).Infof("bitrot backfill skipped for %s: %v", dataBaseFileName, berr)
 			} else if werr := erasure_coding.SaveBitrotSidecar(sidecarPath, prot); werr != nil {
@@ -800,6 +807,15 @@ func (vs *VolumeServer) VolumeEcShardsMount(ctx context.Context, req *volume_ser
 		if err != nil {
 			return nil, fmt.Errorf("mount %d.%d: %v", req.VolumeId, shardId, err)
 		}
+	}
+
+	// A shard delivery can bring the checksum manifest with it, but the receive
+	// path only writes the file. When this server already had the volume
+	// mounted, the EcVolume in memory keeps whatever protection state it
+	// resolved at mount — off, for a volume whose sidecar arrives now — until a
+	// remount. Re-resolve it here, where the shards it describes were added.
+	if v, found := vs.store.FindEcVolume(needle.VolumeId(req.VolumeId)); found {
+		v.ReloadBitrotSidecar()
 	}
 
 	return &volume_server_pb.VolumeEcShardsMountResponse{}, nil

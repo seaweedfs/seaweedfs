@@ -109,15 +109,15 @@ func UniformBlockSize(datFileSize int64, dataShards int) int64 {
 	return blocks * ErasureCodingSmallBlockSize
 }
 
-// RebuildEcFiles rebuilds missing EC shard files. Pass BackgroundECContext to
-// resolve the layout from the volume's .vif (falling back to the default ratio),
-// or an explicit ctx when the caller already knows the shard layout.
-// additionalDirs are extra directories to search for existing shard files,
-// which handles multi-disk servers where shards may be spread across disks.
-// When a bitrot checksum sidecar is present for the (generation-0) volume,
-// present input shards are verified against it and corrupt ones are excluded
-// from Reed-Solomon and regenerated; unsafeIgnoreSidecar bypasses that guard.
-func RebuildEcFiles(baseFileName string, ctx *ECContext, unsafeIgnoreSidecar bool, additionalDirs ...string) ([]uint32, error) {
+// ResolveRebuildECContext answers which shard layout a rebuild of baseFileName
+// will use: the caller's context when it already states one, else the volume's
+// own metadata — its `.vif` in any of the directories the rebuild can read,
+// then the generation-0 bitrot sidecar, and only then the build defaults.
+// Exported so a caller that must agree with the rebuild (the post-rebuild
+// bitrot backfill writes a manifest describing these very shards) resolves
+// once and uses the same answer, instead of re-deriving it from a narrower
+// search and recording a layout the rebuild did not use.
+func ResolveRebuildECContext(baseFileName string, ctx *ECContext, additionalDirs []string) (*ECContext, error) {
 	if ctx == nil || ctx.Total() == 0 {
 		// Resolve the layout from the .vif to preserve the original configuration.
 		vifPath := findVifPath(baseFileName, additionalDirs)
@@ -171,7 +171,22 @@ func RebuildEcFiles(baseFileName string, ctx *ECContext, unsafeIgnoreSidecar boo
 			ctx = NewDefaultECContext("", 0)
 		}
 	}
+	return ctx, nil
+}
 
+// RebuildEcFiles rebuilds missing EC shard files. Pass BackgroundECContext to
+// resolve the layout from the volume's .vif (falling back to the default ratio),
+// or an explicit ctx when the caller already knows the shard layout.
+// additionalDirs are extra directories to search for existing shard files,
+// which handles multi-disk servers where shards may be spread across disks.
+// When a bitrot checksum sidecar is present for the (generation-0) volume,
+// present input shards are verified against it and corrupt ones are excluded
+// from Reed-Solomon and regenerated; unsafeIgnoreSidecar bypasses that guard.
+func RebuildEcFiles(baseFileName string, ctx *ECContext, unsafeIgnoreSidecar bool, additionalDirs ...string) ([]uint32, error) {
+	ctx, err := ResolveRebuildECContext(baseFileName, ctx, additionalDirs)
+	if err != nil {
+		return nil, err
+	}
 	return generateMissingEcFiles(baseFileName, 256*1024, ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, ctx, unsafeIgnoreSidecar, additionalDirs)
 }
 

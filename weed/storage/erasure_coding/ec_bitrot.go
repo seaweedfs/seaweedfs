@@ -476,6 +476,16 @@ func (ev *EcVolume) BitrotProtection() (*volume_server_pb.EcBitrotProtection, Bi
 	return ev.bitrot, ev.bitrotStatus
 }
 
+// ReloadBitrotSidecar re-resolves the checksum sidecar for a volume that is
+// already mounted — a shard delivery can bring the manifest with it, and the
+// receive path only writes the file, so without this the in-memory volume
+// keeps the protection state it resolved at mount (off) until a remount.
+func (ev *EcVolume) ReloadBitrotSidecar() {
+	if err := ev.loadActiveBitrotSidecar(); err != nil {
+		glog.Warningf("ec volume %d: reload bitrot sidecar: %v", ev.VolumeId, err)
+	}
+}
+
 // loadActiveBitrotSidecar loads the generation-0 checksum sidecar into the
 // volume. Best-effort: any failure leaves protection off/invalid without
 // failing the mount. OSS only produces generation-0 (fresh-encode) sidecars.
