@@ -29,17 +29,21 @@ func (wfs *WFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse
 		return status
 	}
 	out.AttrValid = wfs.attrValidSec
-	// When an open handle owns the entry, async upload workers append
-	// chunks under the LockedEntry lock; take it for reading so FileSize
-	// does not iterate the chunk slice mid-reallocation. Re-read under the
-	// lock in case SetEntry swapped the pointer since maybeReadEntry.
+	// An open handle's entry has two sets of writers: async upload workers
+	// append chunks under the LockedEntry lock, while Write and the metadata
+	// flush rewrite size, times and the whole chunk slice under the handle
+	// lock. Hold both for reading, in that order, so FileSize never iterates a
+	// slice mid-reallocation. Re-read the entry under them in case SetEntry
+	// swapped the pointer since maybeReadEntry.
 	if fh != nil {
+		fhActiveLock := wfs.fhLockTable.AcquireLock("GetAttr", fh.fh, util.SharedLock)
 		fh.entry.RLock()
 		entry = fh.entry.Entry
-	}
-	wfs.setAttrByPbEntry(&out.Attr, inode, entry, true)
-	if fh != nil {
+		wfs.setAttrByPbEntry(&out.Attr, inode, entry, true)
 		fh.entry.RUnlock()
+		wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
+	} else {
+		wfs.setAttrByPbEntry(&out.Attr, inode, entry, true)
 	}
 	wfs.applyInMemoryAtime(&out.Attr, inode)
 	if path == "" {
