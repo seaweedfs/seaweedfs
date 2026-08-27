@@ -227,9 +227,13 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 		return false
 	}
 
-	// .vif next to .ecx is EC shard metadata, not a regular volume.
-	// Without this guard NewVolume below would create a phantom empty .dat.
-	if strings.HasSuffix(basename, ".vif") && l.hasEcxFile(volumeName) {
+	// A .vif next to an .ecx with no .idx beside it is EC shard metadata, not a
+	// regular volume. Without this guard NewVolume below would create a phantom
+	// empty .dat. Ask for the .idx rather than trust which of a volume's two
+	// entries the scan handed over: an .idx next to the .ecx is an interrupted
+	// encode, and validateEcVolume below is what decides that one.
+	if strings.HasSuffix(basename, ".vif") && l.hasEcxFile(volumeName) &&
+		!util.FileExists(l.Directory+"/"+volumeName+".idx") {
 		glog.V(1).Infof("loadExistingVolume: skipping .vif-only entry for volume %d (collection=%q); .ecx present", vid, collection)
 		return false
 	}
