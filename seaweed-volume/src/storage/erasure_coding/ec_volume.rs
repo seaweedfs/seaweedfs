@@ -184,8 +184,15 @@ pub fn read_ec_shard_config_across_dirs(
         return ec_shard_config_from(Some(&vif), &found_in, collection, volume_id);
     }
     // No .vif anywhere: the generation-0 sidecar is the surviving record, and
-    // it may sit on a different disk than the one being rebuilt into.
-    for candidate in std::iter::once(dir).chain(other_dirs.iter().map(|s| s.as_str())) {
+    // it may sit on a different disk than the one being rebuilt into. A split
+    // -dir/-dir.idx location keeps it with the INDEX, and callers exclude their
+    // own index directory from other_dirs on the understanding that it is
+    // passed here separately — so it has to be searched explicitly, exactly as
+    // the .vif lookup above and Go's findBitrotSidecar both do.
+    for candidate in std::iter::once(dir)
+        .chain(std::iter::once(dir_idx).filter(|d| !d.is_empty() && *d != dir))
+        .chain(other_dirs.iter().map(|s| s.as_str()))
+    {
         let base = crate::storage::volume::volume_file_name(candidate, collection, volume_id);
         let path = crate::storage::erasure_coding::ec_bitrot::bitrot_sidecar_path(&base, 0);
         if std::path::Path::new(&path).exists() {
@@ -2445,6 +2452,44 @@ mod uniform_layout_tests {
 
     /// Same, for the sidecar: with no .vif anywhere it is the surviving record
     /// of the geometry, wherever it sits.
+    // A split -dir/-dir.idx location keeps its metadata with the INDEX, and
+    // callers leave their own index directory out of other_dirs because it is
+    // passed separately. With no .vif anywhere the generation-0 .ecsum is the
+    // only record of the layout, so missing that directory resolves a 12+4
+    // uniform volume to 10+4 legacy and reconstructs through the wrong matrix.
+    #[test]
+    fn read_ec_shard_config_finds_the_sidecar_in_its_own_index_dir() {
+        use crate::pb::volume_server_pb::{ChecksumAlgorithm, EcBitrotProtection, EcShardChecksums};
+        use crate::storage::erasure_coding::ec_bitrot;
+
+        let data = tempfile::TempDir::new().unwrap();
+        let idx = tempfile::TempDir::new().unwrap();
+        let (dir, dir_idx) = (
+            data.path().to_str().unwrap(),
+            idx.path().to_str().unwrap(),
+        );
+        let base = crate::storage::volume::volume_file_name(dir_idx, "", VolumeId(7));
+        let prot = EcBitrotProtection {
+            algorithm: ChecksumAlgorithm::ChecksumCrc32c as i32,
+            block_size: ec_bitrot::DEFAULT_BITROT_BLOCK_SIZE as u32,
+            generation: 0,
+            ec_shard_config: Some(ec_bitrot::ec_shard_config(12, 4, 3 * 1024 * 1024)),
+            shards: (0..16u32)
+                .map(|shard_id| EcShardChecksums {
+                    shard_id,
+                    covered_size: 4,
+                    block_crc32c: vec![0u8; 4],
+                })
+                .collect(),
+            encode_uuid: vec![0u8; 16],
+        };
+        ec_bitrot::save_bitrot_sidecar(&ec_bitrot::bitrot_sidecar_path(&base, 0), &prot).unwrap();
+
+        let (ds, ps, bs) =
+            read_ec_shard_config_across_dirs(dir, dir_idx, &[], "", VolumeId(7)).unwrap();
+        assert_eq!((ds, ps, bs), (12, 4, 3 * 1024 * 1024));
+    }
+
     #[test]
     fn read_ec_shard_config_finds_a_sibling_disks_sidecar() {
         use crate::pb::volume_server_pb::{ChecksumAlgorithm, EcBitrotProtection, EcShardChecksums};
