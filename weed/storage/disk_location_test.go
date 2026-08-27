@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -98,5 +100,42 @@ func TestResolveVolumeIDs(t *testing.T) {
 	}
 	if got, want := l.EcVolumeIds(), []needle.VolumeId{3, 4, 5}; !reflect.DeepEqual(got, want) {
 		t.Errorf("wanted EC volume IDs %v, got %v", want, got)
+	}
+}
+
+// The threshold a disk is probed against is picked from that disk's own type,
+// so a server mixing media holds each of them to its own latency.
+func TestCheckDiskSpaceProbesWithTheDiskTypeThreshold(t *testing.T) {
+	original := newDiskStatus
+	defer func() { newDiskStatus = original }()
+
+	config := stats.DiskIOProbeConfig{
+		SlowLatency: 500 * time.Millisecond,
+		SlowLatencyByDiskType: map[string]time.Duration{
+			types.HddType:  500 * time.Millisecond,
+			types.SsdType:  100 * time.Millisecond,
+			types.NvmeType: 50 * time.Millisecond,
+		},
+	}
+
+	for diskType, want := range map[string]time.Duration{
+		"hdd":       500 * time.Millisecond,
+		"":          500 * time.Millisecond,
+		"ssd":       100 * time.Millisecond,
+		"nvme":      50 * time.Millisecond,
+		"nvme-gen5": 500 * time.Millisecond,
+	} {
+		var probed time.Duration
+		newDiskStatus = func(path string, probeConfig stats.DiskIOProbeConfig) *volume_server_pb.DiskStatus {
+			probed = probeConfig.SlowLatency
+			return &volume_server_pb.DiskStatus{Dir: path}
+		}
+
+		location := &DiskLocation{Directory: t.TempDir(), DiskType: types.ToDiskType(diskType)}
+		location.CheckDiskSpace(config)
+
+		if probed != want {
+			t.Errorf("-disk %q: probed with %v, want %v", diskType, probed, want)
+		}
 	}
 }

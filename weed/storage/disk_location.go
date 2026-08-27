@@ -671,9 +671,13 @@ func (l *DiskLocation) UnUsedSpace(volumeSizeLimit uint64) (unUsedSpace uint64) 
 	return
 }
 
+// newDiskStatus is a seam letting a test observe the config CheckDiskSpace probes with.
+var newDiskStatus = stats.NewDiskStatusOnStart
+
 func (l *DiskLocation) CheckDiskSpace(config stats.DiskIOProbeConfig) {
+	config.SlowLatency = config.SlowLatencyFor(l.DiskType.ReadableString())
 	if dir, e := filepath.Abs(l.Directory); e == nil {
-		s := stats.NewDiskStatusOnStart(dir, config)
+		s := newDiskStatus(dir, config)
 		if len(s.Error) != 0 {
 			l.isDiskUnavailable.Store(true)
 			stats.VolumeServerDiskErrorGauge.WithLabelValues(l.Directory, "error").Set(1)
