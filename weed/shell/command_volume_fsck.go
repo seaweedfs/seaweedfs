@@ -44,6 +44,10 @@ func init() {
 const (
 	readbufferSize                 = 16
 	jwtFilerTokenExpirationSeconds = 300
+	// mtime is only second resolution, so a directory touched this recently is
+	// left for the next run rather than compared against a timestamp a
+	// concurrent write could share
+	directoryQuietPeriod = 5 * time.Second
 )
 
 type commandVolumeFsck struct {
@@ -61,6 +65,8 @@ type commandVolumeFsck struct {
 	verifyNeedle              *bool
 	filerSigningKey           string
 	unresolvedManifestEntries atomic.Int64
+	purgedDirsLock            sync.Mutex
+	purgedDirs                map[util.FullPath]struct{}
 }
 
 func (c *commandVolumeFsck) Name() string {
@@ -122,6 +128,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	// unresolved-manifest counter so a previous failed run can't permanently
 	// suppress -reallyDeleteFromVolume in this session.
 	c.unresolvedManifestEntries.Store(0)
+	c.purgedDirs = make(map[util.FullPath]struct{})
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return
@@ -248,6 +255,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 				return fmt.Errorf("findFilerChunksMissingInVolumeServers: %w", err)
 			}
 		}
+		c.purgeEmptyDirectories()
 	} else {
 		// collect all filer file ids
 		if err = c.collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo, false, 0, 0); err != nil {
@@ -694,6 +702,89 @@ func (c *commandVolumeFsck) httpDelete(path util.FullPath) {
 		fmt.Fprintln(c.writer, "delete response Status : ", resp.Status)
 		fmt.Fprintln(c.writer, "delete response Headers : ", resp.Header)
 	}
+
+	if resp.StatusCode < http.StatusBadRequest {
+		dir, _ := path.DirAndName()
+		c.purgedDirsLock.Lock()
+		c.purgedDirs[util.FullPath(dir)] = struct{}{}
+		c.purgedDirsLock.Unlock()
+	}
+}
+
+// purgeEmptyDirectories removes the directories emptied by the purged entries, walking up while each parent is empty too.
+func (c *commandVolumeFsck) purgeEmptyDirectories() {
+	candidates := make(map[util.FullPath]struct{})
+	c.purgedDirsLock.Lock()
+	for dir := range c.purgedDirs {
+		for d := dir; c.canPurgeDirectory(d); {
+			candidates[d] = struct{}{}
+			parent, _ := d.DirAndName()
+			d = util.FullPath(parent)
+		}
+	}
+	c.purgedDirsLock.Unlock()
+
+	dirs := make([]util.FullPath, 0, len(candidates))
+	for dir := range candidates {
+		dirs = append(dirs, dir)
+	}
+	// deepest first, so a directory is only tried once its children are gone
+	sort.Slice(dirs, func(i, j int) bool { return len(dirs[i]) > len(dirs[j]) })
+
+	for _, dir := range dirs {
+		entry, _, _, lookupErr := filer_pb.GetEntry(context.Background(), c.env, dir)
+		if lookupErr != nil && !errors.Is(lookupErr, filer_pb.ErrNotFound) {
+			fmt.Fprintf(c.writer, "lookup directory %s: %v\n", dir, lookupErr)
+			continue
+		}
+		// a directory key object is an S3 object of its own
+		if entry == nil || entry.IsDirectoryKeyObject() {
+			continue
+		}
+		// a zero mtime turns the delete's condition off, leaving nothing to hold it to
+		mtime := entry.Attributes.GetMtime()
+		if mtime <= 0 || mtime >= time.Now().Add(-directoryQuietPeriod).Unix() {
+			continue
+		}
+		if err := c.deleteEmptyDirectory(dir, mtime); err != nil {
+			if !strings.Contains(err.Error(), filer.MsgFailDelNonEmptyFolder) {
+				fmt.Fprintf(c.writer, "delete empty directory %s: %v\n", dir, err)
+			}
+			continue
+		}
+		fmt.Fprintf(c.writer, "deleted empty directory %s\n", dir)
+	}
+}
+
+// deleteEmptyDirectory deletes dir unless it changed since it was looked up at mtime,
+// so a directory promoted to an S3 object meanwhile survives. The delete is not
+// recursive, leaving the filer to reject a directory that is not empty.
+func (c *commandVolumeFsck) deleteEmptyDirectory(dir util.FullPath, mtime int64) error {
+	parent, name := dir.DirAndName()
+	return c.env.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
+			Directory:          parent,
+			Name:               name,
+			IfNotModifiedAfter: mtime,
+		})
+		if err != nil {
+			return err
+		}
+		if resp.Error != "" {
+			return errors.New(resp.Error)
+		}
+		return nil
+	})
+}
+
+func (c *commandVolumeFsck) canPurgeDirectory(dir util.FullPath) bool {
+	root := c.getCollectFilerFilePath()
+	if string(dir) == root || !strings.HasPrefix(string(dir), strings.TrimSuffix(root, "/")+"/") {
+		return false
+	}
+	// deleting a bucket drops its whole collection
+	parent, _ := dir.DirAndName()
+	return string(dir) != c.bucketsPath && parent != c.bucketsPath
 }
 
 func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId string, volumeId uint32, vinfo *VInfo, modifyFrom, cutoffFrom uint64) (inUseCount uint64, orphanFileIds []string, orphanDataSize uint64, err error) {
