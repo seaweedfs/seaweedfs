@@ -804,6 +804,17 @@ impl Store {
     }
 
     /// Find an EC volume across all locations (mutable).
+    /// Every per-disk `EcVolume` this store maps for `vid`. A vid can mount on
+    /// N disks as N distinct runtimes, and the first-match `find_ec_volume_mut`
+    /// hides the siblings — so anything that has to reach the whole volume,
+    /// rather than any one runtime of it, iterates this instead.
+    pub fn find_all_ec_volumes_mut(&mut self, vid: VolumeId) -> Vec<&mut EcVolume> {
+        self.locations
+            .iter_mut()
+            .filter_map(|loc| loc.find_ec_volume_mut(vid))
+            .collect()
+    }
+
     pub fn find_ec_volume_mut(&mut self, vid: VolumeId) -> Option<&mut EcVolume> {
         for loc in &mut self.locations {
             if let Some(ecv) = loc.find_ec_volume_mut(vid) {

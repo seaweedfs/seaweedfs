@@ -822,7 +822,12 @@ func (vs *VolumeServer) VolumeEcShardsMount(ctx context.Context, req *volume_ser
 	// mounted, the EcVolume in memory keeps whatever protection state it
 	// resolved at mount — off, for a volume whose sidecar arrives now — until a
 	// remount. Re-resolve it here, where the shards it describes were added.
-	if v, found := vs.store.FindEcVolume(needle.VolumeId(req.VolumeId)); found {
+	// Every per-disk runtime, not just the first: a vid mounts as one EcVolume
+	// per disk, the delivery lands the .ecsum on one of them, and the
+	// first-match FindEcVolume would leave the siblings reporting no protection
+	// until a remount. Each re-resolves against its own data and index base, so
+	// a shared -dir.idx reaches all of them.
+	for _, v := range vs.store.FindAllEcVolumes(needle.VolumeId(req.VolumeId)) {
 		v.ReloadBitrotSidecar()
 	}
 

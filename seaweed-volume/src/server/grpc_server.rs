@@ -3087,6 +3087,21 @@ impl VolumeServer for VolumeGrpcService {
                     Status::internal(format!("mount {}.{}: {}", req.volume_id, shard_id, e))
                 })?;
         }
+        // A delivery can bring the checksum manifest alongside the shards, but
+        // the receive path only writes the file. When this server already had
+        // the volume mounted, the EcVolume in memory keeps whatever protection
+        // state it resolved at mount — off, for a volume whose sidecar arrives
+        // now — until a remount. Re-resolve it here, where the shards it
+        // describes have just been added.
+        //
+        // Every per-disk runtime, not just the first: a vid mounts as one
+        // EcVolume per disk, the delivery lands the .ecsum on one of them, and
+        // the first-match lookup would leave the siblings reporting no
+        // protection. Each re-resolves against its own data and index
+        // directories, so a shared -dir.idx reaches all of them.
+        for ec_vol in store.find_all_ec_volumes_mut(vid) {
+            ec_vol.reload_bitrot_sidecar();
+        }
         drop(store);
         self.state.volume_state_notify.notify_one();
 

@@ -344,6 +344,21 @@ func (s *Store) FindEcVolumeWithShard(vid needle.VolumeId, shardId erasure_codin
 	return nil, nil, false
 }
 
+// FindAllEcVolumes returns every per-disk *EcVolume the store maps for vid. A vid
+// can mount on N disks as N distinct runtimes, and the first-match FindEcVolume
+// hides the siblings — so anything that has to reach the whole volume, rather
+// than any one runtime of it, iterates this instead. Order mirrors the
+// deterministic s.Locations order; nil when no disk holds the vid.
+func (s *Store) FindAllEcVolumes(vid needle.VolumeId) []*erasure_coding.EcVolume {
+	var evs []*erasure_coding.EcVolume
+	for _, location := range s.Locations {
+		if ev, found := location.FindEcVolume(vid); found {
+			evs = append(evs, ev)
+		}
+	}
+	return evs
+}
+
 func (s *Store) FindEcVolume(vid needle.VolumeId) (*erasure_coding.EcVolume, bool) {
 	for _, location := range s.Locations {
 		if s, found := location.FindEcVolume(vid); found {
