@@ -885,13 +885,30 @@ func (fs *FilerServer) resolveAssignStorageOption(ctx context.Context, req *file
 	return so, nil
 }
 
+// collectionListTimeout bounds the whole attempt to list collections: the wait
+// for a master address, the util.Retry walk around it, and the RPC itself. The
+// budget is taken before WithClientCtx, so a transient failure cannot restart
+// the clock and a master that is down or mid-election cannot park this handler
+// indefinitely (issue #7229).
+//
+// The master answers this out of its in-memory topology, so a reply that has not
+// arrived well inside the budget is not arriving. 15s is three times the 5s
+// MasterClient.grpcTimeout the tree already applies per master RPC, and a
+// quarter of the 60s an S3 client typically waits, so a stuck listing surfaces
+// as an error while the client still has retry budget left rather than after it
+// has spent it.
+const collectionListTimeout = 15 * time.Second
+
 func (fs *FilerServer) CollectionList(ctx context.Context, req *filer_pb.CollectionListRequest) (resp *filer_pb.CollectionListResponse, err error) {
 
 	glog.V(4).InfofCtx(ctx, "CollectionList %v", req)
 	resp = &filer_pb.CollectionListResponse{}
 
-	err = fs.filer.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
-		masterResp, err := client.CollectionList(context.Background(), &master_pb.CollectionListRequest{
+	ctx, cancel := context.WithTimeout(ctx, collectionListTimeout)
+	defer cancel()
+
+	err = fs.filer.MasterClient.WithClientCtx(ctx, false, func(client master_pb.SeaweedClient) error {
+		masterResp, err := client.CollectionList(ctx, &master_pb.CollectionListRequest{
 			IncludeNormalVolumes: req.IncludeNormalVolumes,
 			IncludeEcVolumes:     req.IncludeEcVolumes,
 		})
@@ -911,7 +928,7 @@ func (fs *FilerServer) DeleteCollection(ctx context.Context, req *filer_pb.Delet
 
 	glog.V(4).InfofCtx(ctx, "DeleteCollection %v", req)
 
-	err = fs.filer.DoDeleteCollection(req.GetCollection())
+	err = fs.filer.DoDeleteCollection(ctx, req.GetCollection())
 
 	return &filer_pb.DeleteCollectionResponse{}, err
 }

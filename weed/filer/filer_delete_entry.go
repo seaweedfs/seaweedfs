@@ -3,6 +3,7 @@ package filer
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -63,7 +64,14 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 
 	if isDeleteCollection {
 		collectionName := entry.Name()
-		f.DoDeleteCollection(collectionName)
+		// The bucket's metadata is already gone by this point and the result here
+		// is advisory, so a request that hangs up now must not take the
+		// collection's volumes with it: pass the values on without the
+		// cancellation, or the volumes are stranded with nothing left to come back
+		// for them. Same shape FilerStoreWrapper uses to keep a store write whole
+		// once it has started. DoDeleteCollection still bounds the RPC itself and
+		// logs what it could not delete.
+		f.DoDeleteCollection(context.WithoutCancel(ctx), collectionName)
 		// drop bucket-labeled series held by this process; the S3 gateway
 		// only cleans its own registry
 		stats.DeleteBucketMetrics(collectionName)
@@ -167,14 +175,36 @@ func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shou
 	return nil
 }
 
-func (f *Filer) DoDeleteCollection(collectionName string) (err error) {
+// collectionDeleteTimeout bounds the whole attempt to have a collection
+// deleted: the wait for a master address, the util.Retry walk around it, and the
+// RPC itself. The budget is taken before WithClientCtx, so a transient failure
+// cannot restart the clock and a master that is down or mid-election cannot park
+// the caller indefinitely (issue #7232).
+//
+// It bounds the wait, not the work. The master does not stop deleting when this
+// expires: it runs its volume-server fan-out on a context carrying no deadline
+// precisely so a caller giving up cannot strand it half done. A collection this
+// gave up on is therefore still being removed, and a later delete of the same
+// collection finds nothing left to do rather than repeating the work.
+//
+// 15s is fifteen times the bucket cleanup issue #7232 reports as healthy, and
+// the same budget the filer gives its other master RPC (collectionListTimeout).
+// A bucket deletion pays it at most twice -- once here, under the bucket entry's
+// own delete, and once again for the S3 gateway's follow-up DeleteCollection --
+// so the collection work stays inside roughly 25s of the 60s an S3 client waits.
+const collectionDeleteTimeout = 15 * time.Second
 
-	return f.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
-		_, err := client.CollectionDelete(context.Background(), &master_pb.CollectionDeleteRequest{
+func (f *Filer) DoDeleteCollection(ctx context.Context, collectionName string) (err error) {
+
+	ctx, cancel := context.WithTimeout(ctx, collectionDeleteTimeout)
+	defer cancel()
+
+	return f.MasterClient.WithClientCtx(ctx, false, func(client master_pb.SeaweedClient) error {
+		_, err := client.CollectionDelete(ctx, &master_pb.CollectionDeleteRequest{
 			Name: collectionName,
 		})
 		if err != nil {
-			glog.Infof("delete collection %s: %v", collectionName, err)
+			glog.InfofCtx(ctx, "delete collection %s: %v", collectionName, err)
 		}
 		return err
 	})
