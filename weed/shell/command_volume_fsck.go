@@ -743,7 +743,7 @@ func (c *commandVolumeFsck) purgeEmptyDirectories() {
 		}
 		// a zero mtime turns the delete's condition off, leaving nothing to hold it to
 		mtime := entry.Attributes.GetMtime()
-		if mtime <= 0 || mtime > time.Now().Add(-directoryQuietPeriod).Unix() {
+		if mtime <= 0 || mtime >= time.Now().Add(-directoryQuietPeriod).Unix() {
 			continue
 		}
 		if err := c.deleteEmptyDirectory(dir, mtime); err != nil {
