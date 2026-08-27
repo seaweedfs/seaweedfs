@@ -76,13 +76,9 @@ func (s3a *S3ApiServer) deleteDirectoryMarker(r *http.Request, bucket, object st
 				if !named {
 					// An entry an older build left without a version id is what this
 					// removal is here to clear, but one still under a lock cannot be
-					// named to check it, so leave it alone rather than take it blind.
-					retention, retentionActive, _ := s3a.getRetentionFromEntry(entry)
-					_, legalHoldActive, _ := s3a.getLegalHoldFromEntry(entry)
-					held := retentionActive && retention != nil &&
-						(retention.Mode == s3_constants.RetentionModeCompliance || !governanceBypassAllowed)
-					if held || legalHoldActive {
-						glog.V(2).Infof("deleteDirectoryMarker: unnamed history entry %s of %s/%s is locked", entry.Name, bucket, object)
+					// named to check it, so judge it on what it carries itself.
+					if err := s3a.enforceObjectLockOnEntry(entry, bucket, object, "", governanceBypassAllowed); err != nil {
+						glog.V(2).Infof("deleteDirectoryMarker: unnamed history entry %s of %s/%s is locked: %v", entry.Name, bucket, object, err)
 						return s3err.ErrAccessDenied
 					}
 					continue

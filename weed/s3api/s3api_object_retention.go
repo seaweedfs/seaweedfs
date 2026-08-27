@@ -608,14 +608,20 @@ func (s3a *S3ApiServer) enforceObjectLockProtections(request *http.Request, buck
 		return err
 	}
 
-	// Extract retention information from the entry
+	return s3a.enforceObjectLockOnEntry(entry, bucket, object, versionId, governanceBypassAllowed)
+}
+
+// enforceObjectLockOnEntry reports whether a lock recorded on an entry stops the
+// operation. Callers holding the entry already -- one reached without a version id
+// of its own, or the one a write is about to replace -- use it directly, so that
+// the decision lives in one place.
+func (s3a *S3ApiServer) enforceObjectLockOnEntry(entry *filer_pb.Entry, bucket, object, versionId string, governanceBypassAllowed bool) error {
 	retention, retentionActive, err := s3a.getRetentionFromEntry(entry)
 	if err != nil {
 		glog.Warningf("Error parsing retention for %s/%s (versionId: %s): %v", bucket, object, versionId, err)
 		// Continue with legal hold check even if retention parsing fails
 	}
 
-	// Extract legal hold information from the entry
 	_, legalHoldActive, err := s3a.getLegalHoldFromEntry(entry)
 	if err != nil {
 		glog.Warningf("Error parsing legal hold for %s/%s (versionId: %s): %v", bucket, object, versionId, err)
