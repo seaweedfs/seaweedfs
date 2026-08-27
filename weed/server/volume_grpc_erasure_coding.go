@@ -279,8 +279,14 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 	// blesses current bytes; ComputeProtectionFromShards refuses a partial
 	// manifest, so a multi-server rebuild that cannot reach all shards just skips.
 	if erasure_coding.BitrotProtectionEnabled {
-		sidecarPath := erasure_coding.BitrotSidecarPath(dataBaseFileName, 0)
-		if _, statErr := os.Stat(sidecarPath); os.IsNotExist(statErr) {
+		// "No sidecar yet" has to be asked of every place one could be, not
+		// just this directory. A split -dir/-dir.idx layout keeps it with the
+		// index and a sibling disk may hold it, and answering from the data
+		// base alone would write a fresh TOFU baseline over a volume that
+		// already has a manifest — blessing whatever the shards currently say
+		// and shadowing the real record, since the data base is searched first.
+		if erasure_coding.FindBitrotSidecar(0, dataBaseFileName, indexBaseFileName, additionalDirs...) == "" {
+			sidecarPath := erasure_coding.BitrotSidecarPath(dataBaseFileName, 0)
 			// The manifest must describe the shards as rebuilt, so it takes the
 			// context the rebuild resolved — not a narrower re-derivation that
 			// reads only this directory's .vif and drops the block size, which

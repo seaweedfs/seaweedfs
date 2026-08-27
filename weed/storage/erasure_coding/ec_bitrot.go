@@ -624,6 +624,15 @@ func RemoveBitrotSidecars(base string) {
 	}
 }
 
+// FindBitrotSidecar is findBitrotSidecar for callers outside this package. It
+// answers "does this volume already have a manifest, and where" — a question
+// that cannot be settled from one base name, because a split -dir/-dir.idx
+// layout keeps the sidecar with the index and a multi-disk server may keep it
+// on a sibling. Returns "" when no candidate exists.
+func FindBitrotSidecar(generation uint32, dataBase, indexBase string, additionalDirs ...string) string {
+	return findBitrotSidecar(generation, dataBase, indexBase, additionalDirs...)
+}
+
 // findBitrotSidecar resolves the sidecar path for a generation, searching the
 // data base, the index base, and any additional directories — mirroring how
 // shard/.vif lookups handle split data/idx layouts and per-disk mirrors.

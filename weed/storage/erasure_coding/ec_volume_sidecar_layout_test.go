@@ -200,3 +200,47 @@ func TestReloadBitrotSidecarFindsItOnASiblingDisk(t *testing.T) {
 		t.Errorf("cross-disk reload: status = %v, want BitrotOn", got)
 	}
 }
+
+// "Does this volume already have a manifest" cannot be answered from one base
+// name. The rebuild's opportunistic backfill asks it before writing a TOFU
+// baseline, and a false "no" there writes a second sidecar at the data base
+// that then shadows the real one — blessing whatever the shards currently say.
+func TestFindBitrotSidecarSearchesEveryCandidate(t *testing.T) {
+	dataDir, idxDir, sibling := t.TempDir(), t.TempDir(), t.TempDir()
+	dataBase := filepath.Join(dataDir, "8")
+	idxBase := filepath.Join(idxDir, "8")
+	siblingBase := filepath.Join(sibling, "8")
+
+	if got := FindBitrotSidecar(0, dataBase, idxBase, sibling); got != "" {
+		t.Errorf("no sidecar anywhere should answer empty, got %q", got)
+	}
+
+	// Each location on its own: any one of them is enough to answer "yes".
+	for _, tc := range []struct{ name, base string }{
+		{"data directory", dataBase},
+		{"index directory", idxBase},
+		{"sibling disk", siblingBase},
+	} {
+		want := BitrotSidecarPath(tc.base, 0)
+		if err := os.WriteFile(want, []byte("x"), 0644); err != nil {
+			t.Fatalf("%s: seed: %v", tc.name, err)
+		}
+		if got := FindBitrotSidecar(0, dataBase, idxBase, sibling); got != want {
+			t.Errorf("%s: got %q, want %q", tc.name, got, want)
+		}
+		if err := os.Remove(want); err != nil {
+			t.Fatalf("%s: cleanup: %v", tc.name, err)
+		}
+	}
+
+	// With copies everywhere the data base wins, which is the order every
+	// resolver uses — so a stray copy there shadows the others.
+	for _, base := range []string{siblingBase, idxBase, dataBase} {
+		if err := os.WriteFile(BitrotSidecarPath(base, 0), []byte("x"), 0644); err != nil {
+			t.Fatalf("seed %s: %v", base, err)
+		}
+	}
+	if got, want := FindBitrotSidecar(0, dataBase, idxBase, sibling), BitrotSidecarPath(dataBase, 0); got != want {
+		t.Errorf("precedence: got %q, want the data base %q", got, want)
+	}
+}
