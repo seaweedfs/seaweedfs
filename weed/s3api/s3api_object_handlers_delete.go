@@ -126,7 +126,7 @@ func (s3a *S3ApiServer) deleteVersionedObject(r *http.Request, bucket, object, v
 	// in for without hiding the children underneath it. It is not a versioned object,
 	// so it is deleted the way an unversioned bucket deletes it.
 	if versionId == "" && strings.HasSuffix(object, "/") {
-		return result, s3a.deleteDirectoryMarker(bucket, object)
+		return result, s3a.deleteDirectoryMarker(r, bucket, object)
 	}
 
 	switch {
@@ -245,7 +245,7 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 		deleteCode, deleteHandled = s3a.withObjectWriteLock(bucket, object, func() s3err.ErrorCode {
 			return s3a.checkDeleteIfMatch(bucket, object, versionId, versioningState, r.Header.Get(s3_constants.IfMatch), s3err.ErrPreconditionFailed)
 		}, func() s3err.ErrorCode {
-			return s3a.deleteDirectoryMarker(bucket, object)
+			return s3a.deleteDirectoryMarker(r, bucket, object)
 		}), true
 	}
 
@@ -486,7 +486,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 				}
 
 				if strings.HasSuffix(object.Key, "/") {
-					return s3a.deleteDirectoryMarker(bucket, object.Key)
+					return s3a.deleteDirectoryMarker(r, bucket, object.Key)
 				}
 
 				if err := s3a.deleteUnversionedObjectWithClient(client, bucket, object.Key, false); err != nil {
