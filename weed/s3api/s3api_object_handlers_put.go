@@ -185,48 +185,57 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		dirMd5 := md5.Sum(dirContent)
 		dirEtag := fmt.Sprintf("%x", dirMd5)
 
-		// mkdir replaces this entry outright, so a lock recorded on the entry
-		// itself is what stands in the way -- not the latest version, which a
-		// versioned write of the same key is free to add to.
-		if objectLockEnabled {
-			if existing, existErr := s3a.getEntry(fullDirPath, entryName); existErr == nil {
-				governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object)
-				if lockErr := s3a.enforceObjectLockOnEntry(existing, bucket, object, "", governanceBypassAllowed); lockErr != nil {
-					glog.V(2).Infof("PutObjectHandler: object lock permissions check failed for %s/%s: %v", bucket, object, lockErr)
-					s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-					return
-				}
-			}
-		}
-
 		glog.Infof("PutObjectHandler: explicit directory marker %s/%s (contentType=%q, len=%d)",
 			bucket, object, objectContentType, r.ContentLength)
-		if err := s3a.mkdir(
-			fullDirPath, entryName,
-			func(entry *filer_pb.Entry) {
-				if objectContentType == "" {
-					objectContentType = s3_constants.FolderMimeType
-				}
-				if len(dirContent) > 0 {
-					entry.Content = dirContent
-				}
-				entry.Attributes.Mime = objectContentType
-				entry.Attributes.Md5 = dirMd5[:]
+		// mkdir replaces this entry outright, so a lock recorded on the entry itself
+		// is what stands in the way -- not the latest version, which a versioned
+		// write of the same key is free to add to. Check it under the same lock the
+		// marker delete takes, so the entry cannot change in between.
+		markerCode := s3a.withObjectWriteLock(bucket, object, func() s3err.ErrorCode {
+			if !objectLockEnabled {
+				return s3err.ErrNone
+			}
+			existing, existErr := s3a.getEntry(fullDirPath, entryName)
+			if existErr != nil {
+				return s3err.ErrNone
+			}
+			if lockErr := s3a.enforceObjectLockOnEntry(existing, bucket, object, "", s3a.evaluateGovernanceBypassRequest(r, bucket, object)); lockErr != nil {
+				glog.V(2).Infof("PutObjectHandler: object lock permissions check failed for %s/%s: %v", bucket, object, lockErr)
+				return s3err.ErrAccessDenied
+			}
+			return s3err.ErrNone
+		}, func() s3err.ErrorCode {
+			if err := s3a.mkdir(
+				fullDirPath, entryName,
+				func(entry *filer_pb.Entry) {
+					if objectContentType == "" {
+						objectContentType = s3_constants.FolderMimeType
+					}
+					if len(dirContent) > 0 {
+						entry.Content = dirContent
+					}
+					entry.Attributes.Mime = objectContentType
+					entry.Attributes.Md5 = dirMd5[:]
 
-				// Store ETag in extended attributes for consistency with regular objects
-				if entry.Extended == nil {
-					entry.Extended = make(map[string][]byte)
-				}
-				entry.Extended[s3_constants.ExtETagKey] = []byte(dirEtag)
+					// Store ETag in extended attributes for consistency with regular objects
+					if entry.Extended == nil {
+						entry.Extended = make(map[string][]byte)
+					}
+					entry.Extended[s3_constants.ExtETagKey] = []byte(dirEtag)
 
-				// Set object owner for directory objects (same as regular objects)
-				s3a.setObjectOwnerFromRequest(r, bucket, entry)
+					// Set object owner for directory objects (same as regular objects)
+					s3a.setObjectOwnerFromRequest(r, bucket, entry)
 
-				if lockErr := s3a.extractObjectLockMetadataFromRequest(r, entry); lockErr != nil {
-					glog.Errorf("PutObjectHandler: failed to extract object lock metadata for %s/%s: %v", bucket, object, lockErr)
-				}
-			}); err != nil {
-			s3err.WriteErrorResponse(w, r, filerErrorToS3Error(err))
+					if lockErr := s3a.extractObjectLockMetadataFromRequest(r, entry); lockErr != nil {
+						glog.Errorf("PutObjectHandler: failed to extract object lock metadata for %s/%s: %v", bucket, object, lockErr)
+					}
+				}); err != nil {
+				return filerErrorToS3Error(err)
+			}
+			return s3err.ErrNone
+		})
+		if markerCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, markerCode)
 			return
 		}
 		setEtag(w, dirEtag)
