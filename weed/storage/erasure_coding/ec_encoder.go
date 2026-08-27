@@ -120,7 +120,7 @@ func UniformBlockSize(datFileSize int64, dataShards int) int64 {
 func RebuildEcFiles(baseFileName string, ctx *ECContext, unsafeIgnoreSidecar bool, additionalDirs ...string) ([]uint32, error) {
 	if ctx == nil || ctx.Total() == 0 {
 		// Resolve the layout from the .vif to preserve the original configuration.
-		vifPath := baseFileName + ".vif"
+		vifPath := findVifPath(baseFileName, additionalDirs)
 		volumeInfo, _, foundVif, vifErr := volume_info.MaybeLoadVolumeInfo(vifPath)
 		if vifErr != nil {
 			// The .vif exists but cannot be read or parsed. Fail closed rather
@@ -423,6 +423,30 @@ func cleanupRebuildOutputs(outputFiles []*os.File, writePaths []string) {
 		}
 		os.Remove(writePaths[i])
 	}
+}
+
+// findVifPath locates the volume's `.vif` for a rebuild: next to the shards
+// first, then in every directory the caller also handed us — the index
+// directory of a split `-dir`/`-dir.idx` layout, and the sibling disks of a
+// multi-disk server, where `.ecx`/`.ecj`/`.vif` may live while this disk holds
+// only shards. Returns the data-base path when nothing exists, so the caller's
+// "not found" handling stays on the canonical name.
+func findVifPath(baseFileName string, additionalDirs []string) string {
+	dataPath := baseFileName + ".vif"
+	candidates := []string{dataPath}
+	base := filepath.Base(baseFileName)
+	for _, dir := range additionalDirs {
+		if dir == "" {
+			continue
+		}
+		candidates = append(candidates, filepath.Join(dir, base)+".vif")
+	}
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			return c
+		}
+	}
+	return dataPath
 }
 
 // loadRebuildSidecar loads and validates the generation-0 checksum sidecar for a

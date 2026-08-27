@@ -240,9 +240,28 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 	// On multi-disk servers, existing local shards may be on a different disk
 	// than where copied shards were placed during ec.rebuild.
 	rebuildDataDir := rebuildLocation.Directory
+	// Every directory the rebuild may have to read from, not just the ones
+	// holding shards: a split -dir/-dir.idx layout keeps .ecx/.ecj/.vif in the
+	// index directory, and on a multi-disk server this disk may hold only
+	// shards while the volume's metadata sits on a sibling. Without them the
+	// layout resolution falls back to the default ratio and the legacy block
+	// size, and reconstructs through the wrong matrix.
 	var additionalDirs []string
+	appendDir := func(dir string) {
+		if dir == "" || dir == rebuildDataDir {
+			return
+		}
+		for _, existing := range additionalDirs {
+			if existing == dir {
+				return
+			}
+		}
+		additionalDirs = append(additionalDirs, dir)
+	}
+	appendDir(rebuildLocation.IdxDirectory)
 	for _, otherLocation := range otherLocationsWithShards {
-		additionalDirs = append(additionalDirs, otherLocation.Directory)
+		appendDir(otherLocation.Directory)
+		appendDir(otherLocation.IdxDirectory)
 	}
 
 	// Rebuild missing EC files, searching all disk locations for input shards.
