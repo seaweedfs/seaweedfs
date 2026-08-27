@@ -175,3 +175,26 @@ func TestStageCreateWritesStagedFilesForOwner(t *testing.T) {
 		t.Error("stage-create registered the table")
 	}
 }
+
+// A caller allowed by the actions on its own identity, rather than by ownership
+// or a resource policy, has to survive the hop into the s3tables manager: the
+// gate must not refuse what the create behind it would allow.
+func TestCreateTableAllowedByIdentityActions(t *testing.T) {
+	const bucket = "warehouse"
+	fc := newMemFiler()
+	seedNamespace(fc, bucket, "finance", "alice")
+	s := NewServer(fc, nil)
+
+	r := newCreateTableRequest(t, bucket, "finance", `{"name":"quarterly_reports","stage-create":true}`, "mallory")
+	r = r.WithContext(s3_constants.SetIdentityInContext(r.Context(), &struct {
+		Name    string
+		Actions []string
+	}{Name: "mallory", Actions: []string{"s3tables:CreateTable"}}))
+
+	w := httptest.NewRecorder()
+	s.handleCreateTable(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body: %s)", w.Code, http.StatusOK, w.Body.String())
+	}
+}
