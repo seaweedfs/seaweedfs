@@ -240,29 +240,7 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 	// On multi-disk servers, existing local shards may be on a different disk
 	// than where copied shards were placed during ec.rebuild.
 	rebuildDataDir := rebuildLocation.Directory
-	// Every directory the rebuild may have to read from, not just the ones
-	// holding shards: a split -dir/-dir.idx layout keeps .ecx/.ecj/.vif in the
-	// index directory, and on a multi-disk server this disk may hold only
-	// shards while the volume's metadata sits on a sibling. Without them the
-	// layout resolution falls back to the default ratio and the legacy block
-	// size, and reconstructs through the wrong matrix.
-	var additionalDirs []string
-	appendDir := func(dir string) {
-		if dir == "" || dir == rebuildDataDir {
-			return
-		}
-		for _, existing := range additionalDirs {
-			if existing == dir {
-				return
-			}
-		}
-		additionalDirs = append(additionalDirs, dir)
-	}
-	appendDir(rebuildLocation.IdxDirectory)
-	for _, otherLocation := range otherLocationsWithShards {
-		appendDir(otherLocation.Directory)
-		appendDir(otherLocation.IdxDirectory)
-	}
+	additionalDirs := rebuildSearchDirs(rebuildLocation, otherLocationsWithShards)
 
 	// Rebuild missing EC files, searching all disk locations for input shards.
 	// Present input shards are verified against the bitrot sidecar (when present)
@@ -735,6 +713,36 @@ func removeBitrotSidecars(baseFilename string) error {
 		}
 	}
 	return firstErr
+}
+
+// rebuildSearchDirs lists every directory besides the rebuild's own data
+// directory that a rebuild may have to read from. Shards are only half of it:
+// a split -dir/-dir.idx layout keeps .ecx/.ecj/.vif with the index, and on a
+// multi-disk server the chosen disk may hold nothing but shards while the
+// volume's .vif or generation-0 .ecsum sits on a sibling. Miss those and the
+// layout resolution falls back to the default ratio and the legacy block
+// size, reconstructing through the wrong matrix. The rebuild's own INDEX
+// directory belongs here too — callers pass the data-directory base name, so
+// it is not otherwise searched. Empty and duplicate entries are dropped.
+func rebuildSearchDirs(rebuildLocation *storage.DiskLocation, otherLocations []*storage.DiskLocation) []string {
+	var dirs []string
+	appendDir := func(dir string) {
+		if dir == "" || dir == rebuildLocation.Directory {
+			return
+		}
+		for _, existing := range dirs {
+			if existing == dir {
+				return
+			}
+		}
+		dirs = append(dirs, dir)
+	}
+	appendDir(rebuildLocation.IdxDirectory)
+	for _, otherLocation := range otherLocations {
+		appendDir(otherLocation.Directory)
+		appendDir(otherLocation.IdxDirectory)
+	}
+	return dirs
 }
 
 func checkEcVolumeStatus(bName string, location *storage.DiskLocation) (hasEcxFile bool, hasIdxFile bool, existingShardCount int, err error) {

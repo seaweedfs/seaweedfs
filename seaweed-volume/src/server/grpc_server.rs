@@ -91,6 +91,57 @@ pub fn load_state_file(
     volume_server_pb::VolumeServerState::decode(data.as_slice()).ok()
 }
 
+/// One disk location's stake in an EC volume, as seen by the rebuild handler.
+struct LocInfo {
+    dir: String,
+    idx_dir: String,
+    shard_count: usize,
+    has_ecx: bool,
+}
+
+/// Picks the location a rebuild should write into — the one holding an `.ecx`
+/// and the most shards — and returns every other directory it may have to read
+/// from. Shards are only half of what the rebuild needs: a split
+/// `-dir`/`-dir.idx` layout keeps `.ecx`/`.ecj`/`.vif` with the INDEX, and on a
+/// multi-disk server the chosen disk may hold nothing but shards while this
+/// volume's `.vif` or generation-0 `.ecsum` sits on a sibling. Miss those and
+/// the layout resolution falls back to 10+4 with the legacy striping and
+/// reconstructs through the wrong matrix, so both directories of every other
+/// location are listed. The rebuild's own two are passed separately by the
+/// caller and dropped here, along with empties and duplicates.
+///
+/// Returns `None` when no location holds an `.ecx`, i.e. there is nothing to
+/// rebuild from.
+fn select_rebuild_location(loc_infos: &[LocInfo]) -> Option<(usize, Vec<String>)> {
+    let mut rebuild_loc_idx: Option<usize> = None;
+    let mut other_dirs: Vec<String> = Vec::new();
+
+    for (i, info) in loc_infos.iter().enumerate() {
+        let better = info.has_ecx
+            && rebuild_loc_idx
+                .is_none_or(|prev| info.shard_count > loc_infos[prev].shard_count);
+        if better {
+            if let Some(prev) = rebuild_loc_idx {
+                other_dirs.push(loc_infos[prev].dir.clone());
+                other_dirs.push(loc_infos[prev].idx_dir.clone());
+            }
+            rebuild_loc_idx = Some(i);
+        } else {
+            other_dirs.push(info.dir.clone());
+            other_dirs.push(info.idx_dir.clone());
+        }
+    }
+
+    let rebuild_loc_idx = rebuild_loc_idx?;
+    let rebuild_dir = &loc_infos[rebuild_loc_idx].dir;
+    let rebuild_idx_dir = &loc_infos[rebuild_loc_idx].idx_dir;
+    other_dirs.retain(|d| !d.is_empty() && d != rebuild_dir && d != rebuild_idx_dir);
+    other_dirs.sort();
+    other_dirs.dedup();
+
+    Some((rebuild_loc_idx, other_dirs))
+}
+
 struct WriteThrottler {
     bytes_per_second: i64,
     last_size_counter: i64,
@@ -2469,13 +2520,6 @@ impl VolumeServer for VolumeGrpcService {
             format!("{}_{}", collection, vid.0)
         };
 
-        struct LocInfo {
-            dir: String,
-            idx_dir: String,
-            shard_count: usize,
-            has_ecx: bool,
-        }
-
         let store = self.state.store.read().unwrap();
         let mut loc_infos: Vec<LocInfo> = Vec::new();
 
@@ -2523,28 +2567,8 @@ impl VolumeServer for VolumeGrpcService {
             ));
         }
 
-        // Pick rebuild location: has .ecx and most shards
-        let mut rebuild_loc_idx: Option<usize> = None;
-        let mut other_dirs: Vec<String> = Vec::new();
-
-        for (i, info) in loc_infos.iter().enumerate() {
-            if info.has_ecx
-                && (rebuild_loc_idx.is_none()
-                    || info.shard_count > loc_infos[rebuild_loc_idx.unwrap()].shard_count)
-            {
-                if let Some(prev) = rebuild_loc_idx {
-                    other_dirs.push(loc_infos[prev].dir.clone());
-                    other_dirs.push(loc_infos[prev].idx_dir.clone());
-                }
-                rebuild_loc_idx = Some(i);
-            } else {
-                other_dirs.push(info.dir.clone());
-                other_dirs.push(info.idx_dir.clone());
-            }
-        }
-
-        let rebuild_loc_idx = match rebuild_loc_idx {
-            Some(i) => i,
+        let (rebuild_loc_idx, other_dirs) = match select_rebuild_location(&loc_infos) {
+            Some(picked) => picked,
             None => {
                 return Ok(Response::new(
                     volume_server_pb::VolumeEcShardsRebuildResponse {
@@ -2556,14 +2580,6 @@ impl VolumeServer for VolumeGrpcService {
 
         let rebuild_dir = loc_infos[rebuild_loc_idx].dir.clone();
         let rebuild_idx_dir = loc_infos[rebuild_loc_idx].idx_dir.clone();
-        // A split -dir/-dir.idx layout keeps .ecx/.ecj/.vif with the index, so
-        // the sibling INDEX directories have to be searched too — a sibling's
-        // data dir alone leaves a custom-ratio volume resolving to 10+4 with
-        // the legacy layout. Drop empties, the rebuild's own directories, and
-        // duplicates; the list is also what the shard lookup walks.
-        other_dirs.retain(|d| !d.is_empty() && *d != rebuild_dir && *d != rebuild_idx_dir);
-        other_dirs.sort();
-        other_dirs.dedup();
 
         // Determine data/parity shard config from rebuild dir
         // The encode-time .dat size resolves the row count the ecx rebuild
@@ -5088,6 +5104,110 @@ mod tests {
     use std::sync::RwLock;
     use tempfile::TempDir;
     use tokio_stream::StreamExt;
+
+    fn loc(dir: &str, idx_dir: &str, shard_count: usize, has_ecx: bool) -> LocInfo {
+        LocInfo {
+            dir: dir.to_string(),
+            idx_dir: idx_dir.to_string(),
+            shard_count,
+            has_ecx,
+        }
+    }
+
+    // The rebuild reads its shards from one directory but resolves the volume's
+    // layout -- ratio and uniform block size -- from the .vif or the
+    // generation-0 .ecsum, which on a multi-disk server may sit anywhere. Every
+    // directory that could hold one has to be in the search list, or the
+    // resolution silently falls back to 10+4 with the legacy striping and
+    // reconstructs through the wrong matrix.
+    // The rebuild's own data and index directories are handed to the resolvers
+    // as their own arguments, so they are deliberately absent from this list --
+    // unlike Go, whose resolver takes a single directory list and therefore
+    // carries the rebuild's index directory inside it.
+    #[test]
+    fn select_rebuild_location_excludes_the_rebuilds_own_dirs() {
+        for infos in [
+            vec![loc("/data1", "/idx1", 3, true)],
+            vec![loc("/data1", "/data1", 3, true)],
+        ] {
+            let (idx, others) = select_rebuild_location(&infos).expect("a location with .ecx");
+            assert_eq!(idx, 0);
+            assert!(others.is_empty(), "got {:?}", others);
+        }
+    }
+
+    // The case two reviewers flagged: a sibling holding only shards while its
+    // index directory holds this volume's .vif.
+    #[test]
+    fn select_rebuild_location_searches_a_siblings_index_dir_not_just_its_data_dir() {
+        let infos = vec![
+            loc("/data1", "/data1", 5, true),
+            loc("/data2", "/idx2", 2, false),
+        ];
+        let (idx, others) = select_rebuild_location(&infos).expect("a location with .ecx");
+        assert_eq!(idx, 0);
+        assert_eq!(others, vec!["/data2".to_string(), "/idx2".to_string()]);
+    }
+
+    // Several disks pointed at one index directory is a normal -dir.idx
+    // deployment; the shared directory is worth searching but only once.
+    #[test]
+    fn select_rebuild_location_lists_a_shared_index_dir_once() {
+        let infos = vec![
+            loc("/data1", "/data1", 5, true),
+            loc("/data2", "/shared-idx", 2, false),
+            loc("/data3", "/shared-idx", 1, false),
+        ];
+        let (_, others) = select_rebuild_location(&infos).expect("a location with .ecx");
+        assert_eq!(
+            others,
+            vec![
+                "/data2".to_string(),
+                "/data3".to_string(),
+                "/shared-idx".to_string()
+            ]
+        );
+    }
+
+    // When the shared index directory is the rebuild's own it drops out, since
+    // the caller passes it separately.
+    #[test]
+    fn select_rebuild_location_omits_a_shared_index_dir_it_rebuilds_into() {
+        let infos = vec![
+            loc("/data1", "/shared-idx", 5, true),
+            loc("/data2", "/shared-idx", 2, false),
+        ];
+        let (_, others) = select_rebuild_location(&infos).expect("a location with .ecx");
+        assert_eq!(others, vec!["/data2".to_string()]);
+    }
+
+    // The winner moves as a fuller location turns up; the one it displaces
+    // still has to be searched, index directory included.
+    #[test]
+    fn select_rebuild_location_keeps_the_displaced_winners_dirs() {
+        let infos = vec![
+            loc("/data1", "/idx1", 2, true),
+            loc("/data2", "/idx2", 9, true),
+        ];
+        let (idx, others) = select_rebuild_location(&infos).expect("a location with .ecx");
+        assert_eq!(idx, 1, "the fuller location wins");
+        assert_eq!(others, vec!["/data1".to_string(), "/idx1".to_string()]);
+    }
+
+    #[test]
+    fn select_rebuild_location_drops_empty_dirs() {
+        let infos = vec![loc("/data1", "", 3, true), loc("/data2", "", 1, false)];
+        let (_, others) = select_rebuild_location(&infos).expect("a location with .ecx");
+        assert_eq!(others, vec!["/data2".to_string()]);
+    }
+
+    // Nothing carries an .ecx: there is no index to rebuild the shards against,
+    // so the caller answers with an empty rebuild rather than guessing.
+    #[test]
+    fn select_rebuild_location_is_none_without_an_ecx() {
+        let infos = vec![loc("/data1", "/idx1", 3, false)];
+        assert!(select_rebuild_location(&infos).is_none());
+    }
 
     #[test]
     fn test_parse_grpc_address_with_explicit_grpc_port() {
