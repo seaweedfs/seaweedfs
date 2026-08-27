@@ -638,3 +638,36 @@ func TestGuardedReplicaDialerRebind(t *testing.T) {
 		t.Fatalf("private peer must be allowed by the replica dialer, got %v", perr)
 	}
 }
+
+// TestBuildGuardedRemoteStorageClient confirms the shared builder refuses a
+// caller-influenced endpoint that resolves to a blocked address, and a gcs
+// credentials path, while allowUntrusted falls back to the plain builder.
+func TestBuildGuardedRemoteStorageClient(t *testing.T) {
+	loopbackS3 := &remote_pb.RemoteConf{
+		Name:        "poc",
+		Type:        "s3",
+		S3Endpoint:  "http://127.0.0.1:8000",
+		S3AccessKey: "k",
+		S3SecretKey: "s",
+		S3Region:    "us-east-1",
+	}
+	if _, err := BuildGuardedRemoteStorageClient(context.Background(), loopbackS3, false); err == nil {
+		t.Error("expected a loopback s3 endpoint to be rejected")
+	} else if !strings.Contains(err.Error(), "reject remote endpoint") {
+		t.Errorf("error = %v, want reject remote endpoint", err)
+	}
+	if _, err := BuildGuardedRemoteStorageClient(context.Background(), loopbackS3, true); err != nil {
+		t.Errorf("allowUntrusted should build the client: %v", err)
+	}
+
+	gcsPathCreds := &remote_pb.RemoteConf{
+		Name:                            "poc",
+		Type:                            "gcs",
+		GcsGoogleApplicationCredentials: "/etc/hostname",
+	}
+	if _, err := BuildGuardedRemoteStorageClient(context.Background(), gcsPathCreds, false); err == nil {
+		t.Error("expected a gcs credentials path to be rejected")
+	} else if !strings.Contains(err.Error(), "reject remote credentials") {
+		t.Errorf("error = %v, want reject remote credentials", err)
+	}
+}
