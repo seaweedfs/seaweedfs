@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 )
@@ -65,5 +66,31 @@ func TestSetDiskStatusRequiresRepeatedSuccessesToRecover(t *testing.T) {
 	diskProbe(disk, config)
 	if disk.Error != "" {
 		t.Fatalf("expected disk error to recover after %d successful checks: %s", recoveryChecks, disk.Error)
+	}
+}
+
+func TestSlowLatencyForFallsBackToDefault(t *testing.T) {
+	config := DiskIOProbeConfig{
+		SlowLatency: 500 * time.Millisecond,
+		SlowLatencyByDiskType: map[string]time.Duration{
+			"hdd":  500 * time.Millisecond,
+			"nvme": 50 * time.Millisecond,
+		},
+	}
+
+	for diskType, want := range map[string]time.Duration{
+		"hdd":       500 * time.Millisecond,
+		"nvme":      50 * time.Millisecond,
+		"ssd":       500 * time.Millisecond,
+		"nvme-gen5": 500 * time.Millisecond,
+	} {
+		if got := config.SlowLatencyFor(diskType); got != want {
+			t.Errorf("disk type %q: got %v, want %v", diskType, got, want)
+		}
+	}
+
+	empty := DiskIOProbeConfig{SlowLatency: 100 * time.Millisecond}
+	if got := empty.SlowLatencyFor("nvme"); got != 100*time.Millisecond {
+		t.Errorf("unconfigured table: got %v, want %v", got, 100*time.Millisecond)
 	}
 }

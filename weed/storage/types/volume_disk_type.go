@@ -16,6 +16,7 @@ const (
 	HardDriveType DiskType = ""
 	HddType                = "hdd"
 	SsdType                = "ssd"
+	NvmeType               = "nvme"
 )
 
 func ToDiskType(vt string) (diskType DiskType) {

@@ -672,6 +672,7 @@ func (l *DiskLocation) UnUsedSpace(volumeSizeLimit uint64) (unUsedSpace uint64) 
 }
 
 func (l *DiskLocation) CheckDiskSpace(config stats.DiskIOProbeConfig) {
+	config.SlowLatency = config.SlowLatencyFor(l.DiskType.ReadableString())
 	if dir, e := filepath.Abs(l.Directory); e == nil {
 		s := stats.NewDiskStatusOnStart(dir, config)
 		if len(s.Error) != 0 {

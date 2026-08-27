@@ -27,6 +27,9 @@ type DiskIOProbeConfig struct {
 	// latency above this threshold is considered slow
 	SlowLatency time.Duration
 
+	// per disk type overrides for SlowLatency, keyed by the -disk tag
+	SlowLatencyByDiskType map[string]time.Duration
+
 	// rolling observation window
 	Window time.Duration
 
@@ -62,6 +65,15 @@ func DefaultDiskIOProbeConfig() DiskIOProbeConfig {
 
 		MaxStatFailures: 3,
 	}
+}
+
+// SlowLatencyFor returns the slow threshold configured for a disk type,
+// falling back to SlowLatency when the type has no entry of its own.
+func (config DiskIOProbeConfig) SlowLatencyFor(diskType string) time.Duration {
+	if slowLatency, found := config.SlowLatencyByDiskType[diskType]; found {
+		return slowLatency
+	}
+	return config.SlowLatency
 }
 
 type ioSample struct {

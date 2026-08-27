@@ -396,24 +396,18 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 
 	// Determine volume server ID: if not specified, use ip:port
 	volumeServerId := util.GetVolumeServerId(*v.id, *v.ip, *v.port)
-	var slowLatency time.Duration
 
-	switch *v.diskType {
-	case "hdd":
-		slowLatency = *v.diskHDDIOSlowLatency
-	case "ssd":
-		slowLatency = *v.diskSSDIOSlowLatency
-	case "nvme":
-		slowLatency = *v.diskNVMEIOSlowLatency
-	default:
-		slowLatency = *v.diskHDDIOSlowLatency
-	}
 	diskProbeConfig := stats_collect.DiskIOProbeConfig{
 		Enabled:  *v.diskIOProbe,
 		Timeout:  *v.diskIOTimeout,
 		Interval: *v.diskIOInterval,
 
-		SlowLatency: slowLatency,
+		SlowLatency: *v.diskHDDIOSlowLatency,
+		SlowLatencyByDiskType: map[string]time.Duration{
+			types.HddType:  *v.diskHDDIOSlowLatency,
+			types.SsdType:  *v.diskSSDIOSlowLatency,
+			types.NvmeType: *v.diskNVMEIOSlowLatency,
+		},
 
 		Window:     *v.diskIOWindow,
 		MinSamples: *v.diskIOMinSamples,
