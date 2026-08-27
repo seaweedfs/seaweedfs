@@ -521,21 +521,26 @@ func (wfs *WFS) Init(server *fuse.Server) {
 	wfs.fuseServer = server
 }
 
+// maybeReadEntry resolves an inode to the entry metadata operations act on. An
+// open handle answers ahead of the path: unlink drops the name while the
+// descriptor stays valid, so an unlinked-but-open file returns its handle's
+// entry with an empty path instead of ENOENT.
 func (wfs *WFS) maybeReadEntry(inode uint64) (path util.FullPath, fh *FileHandle, entry *filer_pb.Entry, status fuse.Status) {
-	path, status = wfs.inodeToPath.GetPath(inode)
-	if status != fuse.OK {
-		return
-	}
 	var found bool
 	if fh, found = wfs.fhMap.FindFileHandle(inode); found {
+		path, _ = wfs.inodeToPath.GetPath(inode)
 		entry = fh.UpdateEntry(func(entry *filer_pb.Entry) {
 			if entry != nil && fh.entry.Attributes == nil {
 				entry.Attributes = &filer_pb.FuseAttributes{}
 			}
 		})
-	} else {
-		entry, _, status = wfs.maybeLoadEntry(path)
+		return path, fh, entry, fuse.OK
 	}
+	path, status = wfs.inodeToPath.GetPath(inode)
+	if status != fuse.OK {
+		return
+	}
+	entry, _, status = wfs.maybeLoadEntry(path)
 	return
 }
 
