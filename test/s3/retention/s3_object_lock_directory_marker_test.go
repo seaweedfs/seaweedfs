@@ -176,6 +176,43 @@ func TestObjectLockDirectoryMarker(t *testing.T) {
 		assert.NoError(t, err, "the retained version must survive")
 	})
 
+	// mkdir replaces the marker entry outright, taking its lock metadata with it,
+	// so a plain PUT over a retained marker has to be refused - including once the
+	// key has grown a version history that the latest-version lookup would find
+	// instead of the marker.
+	t.Run("a plain PUT cannot replace a retained marker", func(t *testing.T) {
+		key := "records/overwrite/"
+		_, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
+			Bucket:                    aws.String(bucketName),
+			Key:                       aws.String(key),
+			Body:                      strings.NewReader("marker"),
+			ObjectLockMode:            types.ObjectLockModeCompliance,
+			ObjectLockRetainUntilDate: aws.Time(retainUntil),
+		})
+		require.NoError(t, err)
+
+		_, err = client.PutObject(context.TODO(), &s3.PutObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(key),
+			Body:   strings.NewReader("replacement"),
+		})
+		requireAccessDenied(t, err, "a retained marker must not be replaceable")
+
+		_, err = client.PutObject(context.TODO(), &s3.PutObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(key),
+			Body:   strings.NewReader(strings.Repeat("x", 2048)),
+		})
+		require.NoError(t, err, "a versioned write of the same key adds a version")
+
+		_, err = client.PutObject(context.TODO(), &s3.PutObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(key),
+			Body:   strings.NewReader("replacement"),
+		})
+		requireAccessDenied(t, err, "the history must not hide the marker's own lock")
+	})
+
 	t.Run("an unretained marker still deletes", func(t *testing.T) {
 		key := "records/plain/"
 		_, err := client.PutObject(context.TODO(), &s3.PutObjectInput{

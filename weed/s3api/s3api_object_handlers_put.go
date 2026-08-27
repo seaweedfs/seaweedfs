@@ -153,14 +153,6 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			s3err.WriteErrorResponse(w, r, mapValidationErrorToS3Error(validationErr))
 			return
 		}
-		// A marker is never versioned, so this PUT replaces whatever the key holds.
-		governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object)
-		if lockErr := s3a.enforceObjectLockProtections(r, bucket, object, "", governanceBypassAllowed); lockErr != nil {
-			glog.V(2).Infof("PutObjectHandler: object lock permissions check failed for %s/%s: %v", bucket, object, lockErr)
-			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-			return
-		}
-
 		// Split the object into directory path and name
 		objectWithoutSlash := strings.TrimSuffix(object, "/")
 		dirName := path.Dir(objectWithoutSlash)
@@ -192,6 +184,20 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		// Compute MD5 for ETag (md5.Sum of nil/empty = MD5 of empty content)
 		dirMd5 := md5.Sum(dirContent)
 		dirEtag := fmt.Sprintf("%x", dirMd5)
+
+		// mkdir replaces this entry outright, so a lock recorded on the entry
+		// itself is what stands in the way -- not the latest version, which a
+		// versioned write of the same key is free to add to.
+		if objectLockEnabled {
+			if existing, existErr := s3a.getEntry(fullDirPath, entryName); existErr == nil {
+				governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object)
+				if lockErr := s3a.enforceObjectLockOnEntry(existing, bucket, object, "", governanceBypassAllowed); lockErr != nil {
+					glog.V(2).Infof("PutObjectHandler: object lock permissions check failed for %s/%s: %v", bucket, object, lockErr)
+					s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+					return
+				}
+			}
+		}
 
 		glog.Infof("PutObjectHandler: explicit directory marker %s/%s (contentType=%q, len=%d)",
 			bucket, object, objectContentType, r.ContentLength)
