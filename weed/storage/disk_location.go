@@ -202,11 +202,7 @@ func vifIsEcVolume(vifPath string) bool {
 	return err == nil && vi.GetEcShardConfig() != nil
 }
 
-func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind NeedleMapKind, skipIfEcVolumesExists bool, ldbTimeout int64, diskId uint32) bool {
-	basename := dirEntry.Name()
-	if dirEntry.IsDir() {
-		return false
-	}
+func (l *DiskLocation) loadExistingVolume(basename string, needleMapKind NeedleMapKind, skipIfEcVolumesExists bool, ldbTimeout int64, diskId uint32) bool {
 	volumeName := getValidVolumeName(basename)
 	if volumeName == "" {
 		return false
@@ -311,20 +307,32 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 
 func (l *DiskLocation) concurrentLoadingVolumes(needleMapKind NeedleMapKind, concurrency int, ldbTimeout int64, diskId uint32) {
 
-	task_queue := make(chan os.DirEntry, 10*concurrency)
+	// Read the directory to its end before the workers start writing into it:
+	// loading a volume creates .sdx, .vif and .ldb files in the same directory,
+	// and a stream left open across those writes is not guaranteed to hand back
+	// every entry it has not reached yet. Only the names are kept, one per
+	// volume, which is what the dedup here always held.
+	foundVolumeNames := make(map[string]string)
+	if err := eachDirEntry(l.Directory, func(entry os.DirEntry) bool {
+		if entry.IsDir() {
+			return true
+		}
+		volumeName := getValidVolumeName(entry.Name())
+		if volumeName == "" {
+			return true
+		}
+		if _, found := foundVolumeNames[volumeName]; !found {
+			foundVolumeNames[volumeName] = entry.Name()
+		}
+		return true
+	}); err != nil {
+		glog.Warningf("scan volume directory %s: %v", l.Directory, err)
+	}
+
+	task_queue := make(chan string, 10*concurrency)
 	go func() {
-		foundVolumeNames := make(map[string]bool)
-		if dirEntries, err := os.ReadDir(l.Directory); err == nil {
-			for _, entry := range dirEntries {
-				volumeName := getValidVolumeName(entry.Name())
-				if volumeName == "" {
-					continue
-				}
-				if _, found := foundVolumeNames[volumeName]; !found {
-					foundVolumeNames[volumeName] = true
-					task_queue <- entry
-				}
-			}
+		for _, basename := range foundVolumeNames {
+			task_queue <- basename
 		}
 		close(task_queue)
 	}()
@@ -334,8 +342,8 @@ func (l *DiskLocation) concurrentLoadingVolumes(needleMapKind NeedleMapKind, con
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for fi := range task_queue {
-				_ = l.loadExistingVolume(fi, needleMapKind, true, ldbTimeout, diskId)
+			for basename := range task_queue {
+				_ = l.loadExistingVolume(basename, needleMapKind, true, ldbTimeout, diskId)
 			}
 		}()
 	}
@@ -389,23 +397,22 @@ func (l *DiskLocation) reconcileCompactStates() {
 	}
 	pending := make(map[volKey]bool)
 	collect := func(dir string) {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			return
-		}
-		for _, entry := range entries {
+		if err := eachDirEntry(dir, func(entry os.DirEntry) bool {
 			if entry.IsDir() {
-				continue
+				return true
 			}
 			name := entry.Name()
 			if !strings.HasSuffix(name, ".cpc") && !strings.HasSuffix(name, ".cpd") && !strings.HasSuffix(name, ".cpx") {
-				continue
+				return true
 			}
 			collection, vid, err := parseCollectionVolumeId(name[:len(name)-4])
 			if err != nil {
-				continue
+				return true
 			}
 			pending[volKey{collection, vid}] = true
+			return true
+		}); err != nil {
+			glog.Warningf("scan %s for interrupted compactions: %v", dir, err)
 		}
 	}
 	collect(l.Directory)
@@ -503,7 +510,7 @@ func (l *DiskLocation) deleteVolumeById(vid needle.VolumeId, onlyEmpty bool, kee
 
 func (l *DiskLocation) LoadVolume(diskId uint32, vid needle.VolumeId, needleMapKind NeedleMapKind) bool {
 	if fileInfo, found := l.LocateVolume(vid); found {
-		return l.loadExistingVolume(fileInfo, needleMapKind, false, 0, diskId)
+		return l.loadExistingVolume(fileInfo.Name(), needleMapKind, false, 0, diskId)
 	}
 	return false
 }
@@ -641,19 +648,21 @@ func (l *DiskLocation) Close() {
 }
 
 func (l *DiskLocation) LocateVolume(vid needle.VolumeId) (os.DirEntry, bool) {
-	// println("LocateVolume", vid, "on", l.Directory)
-	if dirEntries, err := os.ReadDir(l.Directory); err == nil {
-		for _, entry := range dirEntries {
-			// println("checking", entry.Name(), "...")
-			volId, _, err := volumeIdFromFileName(entry.Name())
-			// println("volId", volId, "err", err)
-			if vid == volId && err == nil {
-				return entry, true
-			}
+	var found os.DirEntry
+	if err := eachDirEntry(l.Directory, func(entry os.DirEntry) bool {
+		if entry.IsDir() {
+			return true
 		}
+		volId, _, err := volumeIdFromFileName(entry.Name())
+		if vid == volId && err == nil {
+			found = entry
+			return false
+		}
+		return true
+	}); err != nil {
+		glog.Warningf("locate volume %d in %s: %v", vid, l.Directory, err)
 	}
-
-	return nil, false
+	return found, found != nil
 }
 
 func (l *DiskLocation) UnUsedSpace(volumeSizeLimit uint64) (unUsedSpace uint64) {

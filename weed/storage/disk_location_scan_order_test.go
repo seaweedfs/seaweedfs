@@ -8,21 +8,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
 
-func dirEntryNamed(t *testing.T, dir, name string) os.DirEntry {
-	t.Helper()
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, entry := range entries {
-		if entry.Name() == name {
-			return entry
-		}
-	}
-	t.Fatalf("%s is not in %s", name, dir)
-	return nil
-}
-
 // A volume has both an .idx and a .vif, and the scan hands over whichever the
 // filesystem returned first. Which one it was must not decide whether the
 // volume loads -- it used to, through the .vif guard, and only a sorted
@@ -43,7 +28,7 @@ func TestScanOrderDoesNotDecideWhetherAVolumeLoads(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		location.loadExistingVolume(dirEntryNamed(t, location.Directory, "9"+ext), NeedleMapInMemory, true, 0, 0)
+		location.loadExistingVolume("9"+ext, NeedleMapInMemory, true, 0, 0)
 		_, found := location.FindVolume(needle.VolumeId(9))
 		loaded[ext] = found
 	}

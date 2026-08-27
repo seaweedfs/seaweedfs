@@ -3,6 +3,7 @@ package storage
 import (
 	"os"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -154,17 +155,13 @@ func (s *Store) indexEcxOwners() map[ecKeyForReconcile]ecxOwnerInfo {
 				continue
 			}
 			seen[scan] = true
-			entries, err := os.ReadDir(scan)
-			if err != nil {
-				continue
-			}
-			for _, entry := range entries {
+			if err := eachDirEntry(scan, func(entry os.DirEntry) bool {
 				if entry.IsDir() {
-					continue
+					return true
 				}
 				name := entry.Name()
 				if !strings.HasSuffix(name, ".ecx") {
-					continue
+					return true
 				}
 				// A 0-byte .ecx is a corrupt stub from a failed copy and
 				// not a credible owner — skip it so the scan keeps looking
@@ -175,17 +172,20 @@ func (s *Store) indexEcxOwners() map[ecKeyForReconcile]ecxOwnerInfo {
 				// shards unloaded even when a valid index exists nearby.
 				info, statErr := entry.Info()
 				if statErr != nil || info.Size() == 0 {
-					continue
+					return true
 				}
 				base := name[:len(name)-len(".ecx")]
 				collection, vid, err := parseCollectionVolumeId(base)
 				if err != nil {
-					continue
+					return true
 				}
 				key := ecKeyForReconcile{collection: collection, vid: vid}
 				if _, exists := owners[key]; !exists {
 					owners[key] = ecxOwnerInfo{location: loc, idxDir: scan}
 				}
+				return true
+			}); err != nil {
+				glog.Warningf("scan %s for .ecx owners: %v", scan, err)
 			}
 		}
 	}
@@ -247,7 +247,6 @@ func (s *Store) pruneIncompleteEcWithSiblingDat() {
 	if len(s.Locations) < 2 {
 		return
 	}
-
 	datOwners := s.indexDatOwners()
 	if len(datOwners) == 0 {
 		return
@@ -344,31 +343,30 @@ func (s *Store) pruneIncompleteEcWithSiblingDat() {
 func (s *Store) indexDatOwners() map[ecKeyForReconcile]datOwnerInfo {
 	owners := make(map[ecKeyForReconcile]datOwnerInfo)
 	for _, loc := range s.Locations {
-		entries, err := os.ReadDir(loc.Directory)
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
+		if err := eachDirEntry(loc.Directory, func(entry os.DirEntry) bool {
 			if entry.IsDir() {
-				continue
+				return true
 			}
 			name := entry.Name()
 			if !strings.HasSuffix(name, ".dat") {
-				continue
+				return true
 			}
 			base := name[:len(name)-len(".dat")]
 			collection, vid, err := parseCollectionVolumeId(base)
 			if err != nil {
-				continue
+				return true
 			}
 			info, err := entry.Info()
 			if err != nil {
-				continue
+				return true
 			}
 			key := ecKeyForReconcile{collection: collection, vid: vid}
 			if _, exists := owners[key]; !exists {
 				owners[key] = datOwnerInfo{location: loc, size: info.Size()}
 			}
+			return true
+		}); err != nil {
+			glog.Warningf("scan %s for .dat owners: %v", loc.Directory, err)
 		}
 	}
 	return owners
@@ -382,38 +380,42 @@ func (s *Store) indexDatOwners() map[ecKeyForReconcile]datOwnerInfo {
 // Zero-byte shard files are ignored — loadAllEcShards already treats them
 // as cleanup-worthy noise and we want the same shape here.
 func (l *DiskLocation) collectOrphanEcShards() map[ecKeyForReconcile][]string {
-	entries, err := os.ReadDir(l.Directory)
-	if err != nil {
-		return nil
-	}
 	orphans := make(map[ecKeyForReconcile][]string)
-	for _, entry := range entries {
+	if err := eachDirEntry(l.Directory, func(entry os.DirEntry) bool {
 		if entry.IsDir() {
-			continue
+			return true
 		}
 		name := entry.Name()
 		ext := path.Ext(name)
 		if !re.MatchString(ext) {
-			continue
+			return true
 		}
 		info, err := entry.Info()
 		if err != nil || info.Size() == 0 {
-			continue
+			return true
 		}
 		shardId, err := strconv.ParseInt(ext[3:], 10, 64)
 		if err != nil || shardId < 0 || shardId > 255 {
-			continue
+			return true
 		}
 		base := name[:len(name)-len(ext)]
 		collection, vid, err := parseCollectionVolumeId(base)
 		if err != nil {
-			continue
+			return true
 		}
 		if _, loaded := l.FindEcShard(vid, erasure_coding.ShardId(shardId)); loaded {
-			continue
+			return true
 		}
 		key := ecKeyForReconcile{collection: collection, vid: vid}
 		orphans[key] = append(orphans[key], name)
+		return true
+	}); err != nil {
+		return nil
+	}
+	// os.ReadDir used to hand these back sorted; the shard lists are logged
+	// and mounted in order, so keep them so.
+	for _, shards := range orphans {
+		slices.Sort(shards)
 	}
 	return orphans
 }
