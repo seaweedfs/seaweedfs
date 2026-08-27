@@ -10,6 +10,8 @@ import (
 
 	"github.com/apache/iceberg-go"
 	"github.com/google/uuid"
+	"github.com/gorilla/mux"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
@@ -107,5 +109,69 @@ func TestBuildLoadTableResultNeverReturnsNilMetadata(t *testing.T) {
 				t.Fatal("buildLoadTableResult() returned nil metadata with no error")
 			}
 		})
+	}
+}
+
+func newCreateTableRequest(t *testing.T, bucket, namespace, body, identity string) *http.Request {
+	t.Helper()
+	r := httptest.NewRequest(http.MethodPost, "/v1/"+bucket+"/namespaces/"+namespace+"/tables", strings.NewReader(body))
+	r = mux.SetURLVars(r, map[string]string{"prefix": bucket, "namespace": namespace})
+	return r.WithContext(s3_constants.SetIdentityNameInContext(r.Context(), identity))
+}
+
+// A caller who may not create the table must be refused before anything is
+// written: both branches of CreateTable write to the bucket, and stage-create
+// never reaches the registration that carries the authorization.
+func TestCreateTableDeniedBeforeAnyWrite(t *testing.T) {
+	const bucket = "warehouse"
+	for name, body := range map[string]string{
+		"stage-create": `{"name":"quarterly_reports","stage-create":true}`,
+		"create":       `{"name":"quarterly_reports"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			fc := newMemFiler()
+			seedNamespace(fc, bucket, "finance", "alice")
+			s := NewServer(fc, nil)
+
+			w := httptest.NewRecorder()
+			s.handleCreateTable(w, newCreateTableRequest(t, bucket, "finance", body, "mallory"))
+
+			if w.Code != http.StatusForbidden {
+				t.Errorf("status = %d, want %d (body: %s)", w.Code, http.StatusForbidden, w.Body.String())
+			}
+			for p, entry := range fc.entries {
+				if !entry.IsDirectory && strings.Contains(p, "quarterly_reports") {
+					t.Errorf("unauthorized caller wrote %s", p)
+				}
+			}
+		})
+	}
+}
+
+// The namespace owner still gets the staged metadata and marker stage-create
+// exists to leave behind.
+func TestStageCreateWritesStagedFilesForOwner(t *testing.T) {
+	const bucket = "warehouse"
+	fc := newMemFiler()
+	seedNamespace(fc, bucket, "finance", "alice")
+	s := NewServer(fc, nil)
+
+	w := httptest.NewRecorder()
+	s.handleCreateTable(w, newCreateTableRequest(t, bucket, "finance", `{"name":"quarterly_reports","stage-create":true}`, "alice"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body: %s)", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	staged := 0
+	for p, entry := range fc.entries {
+		if !entry.IsDirectory && strings.Contains(p, stageCreateMarkerDirName) {
+			staged++
+		}
+	}
+	if staged != 2 {
+		t.Fatalf("staged files = %d, want the metadata file and its marker", staged)
+	}
+	if _, ok := fc.entries[s3tables.GetTablePath(bucket, "finance", "quarterly_reports")]; ok {
+		t.Error("stage-create registered the table")
 	}
 }
