@@ -416,6 +416,31 @@ func (mc *MasterClient) WithClient(streamingMode bool, fn func(client master_pb.
 	return mc.WithClientCustomGetMaster(getMasterF, streamingMode, fn)
 }
 
+// WithClientCtx is WithClient with ctx bounding the whole call, the wait for a
+// master address included.
+//
+// WithClient waits on context.Background(): GetMaster blocks until
+// KeepConnectedToMaster reports a master, and while none is reachable that is a
+// ~200ms poll with nothing to end it, since every failed connect cycle clears
+// the current master again. A caller that set a deadline is still stuck there,
+// before its own context is ever reached -- and if it is a request handler, a
+// client retrying behind it parks another goroutine in the same wait each time.
+//
+// Only pass a ctx that actually carries a deadline or cancellation; with
+// context.Background() this behaves exactly like WithClient.
+func (mc *MasterClient) WithClientCtx(ctx context.Context, streamingMode bool, fn func(client master_pb.SeaweedClient) error) error {
+	return util.Retry("master grpc", func() error {
+		master := mc.GetMaster(ctx)
+		// GetMaster returns the empty address when ctx ended first.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return pb.WithMasterClient(ctx, streamingMode, master, mc.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
+			return fn(client)
+		})
+	})
+}
+
 func (mc *MasterClient) WithClientCustomGetMaster(getMasterF func() pb.ServerAddress, streamingMode bool, fn func(client master_pb.SeaweedClient) error) error {
 	return util.Retry("master grpc", func() error {
 		return pb.WithMasterClient(context.Background(), streamingMode, getMasterF(), mc.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
