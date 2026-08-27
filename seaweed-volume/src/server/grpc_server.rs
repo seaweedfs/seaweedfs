@@ -2651,8 +2651,17 @@ impl VolumeServer for VolumeGrpcService {
 
         // Rebuild missing shards, searching all locations for input shards.
         // Pass other_dirs so shards on sibling disks are found even when the
-        // primary rebuild dir doesn't hold them.
-        let other_dir_refs: Vec<&str> = other_dirs.iter().map(|s| s.as_str()).collect();
+        // primary rebuild dir doesn't hold them. This one takes a single flat
+        // list — the shape Go's RebuildEcFiles uses — so unlike the resolvers
+        // above it cannot be handed the rebuild's own index directory
+        // separately, and a split -dir/-dir.idx location keeps its .ecx and
+        // .vif there. Go's additionalDirs carries that directory for the same
+        // reason.
+        let mut rebuild_search_dirs: Vec<String> = other_dirs.clone();
+        if !rebuild_idx_dir.is_empty() && rebuild_idx_dir != rebuild_dir {
+            rebuild_search_dirs.push(rebuild_idx_dir.clone());
+        }
+        let other_dir_refs: Vec<&str> = rebuild_search_dirs.iter().map(|s| s.as_str()).collect();
         crate::storage::erasure_coding::ec_encoder::rebuild_ec_files(
             &rebuild_dir,
             collection,
