@@ -376,7 +376,7 @@ func applyMultipartSSES3HeadersFromUploadEntry(dst *filer_pb.Entry, sses3Info *m
 }
 
 func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *s3.CompleteMultipartUploadInput, uploadDirectory, entryName, dirName string, completedPartNumbers []int, completedPartMap map[int][]string, maxPartNo int) (*multipartCompletionState, *CompleteMultipartUploadResult, s3err.ErrorCode) {
-	if entry, err := s3a.resolveObjectEntry(*input.Bucket, *input.Key); err == nil && entry != nil && entry.Extended != nil {
+	if entry, err := s3a.resolveObjectEntry(*input.Bucket, *input.Key, ""); err == nil && entry != nil && entry.Extended != nil {
 		if uploadId, ok := entry.Extended[s3_constants.SeaweedFSUploadId]; ok && *input.UploadId == string(uploadId) {
 			cleanupEntries, _, cleanupErr := s3a.list(uploadDirectory, "", "", false, s3_constants.MaxS3MultipartParts+1)
 			if cleanupErr != nil && !errors.Is(cleanupErr, filer_pb.ErrNotFound) {

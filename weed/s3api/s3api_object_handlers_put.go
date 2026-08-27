@@ -2277,7 +2277,7 @@ func (s3a *S3ApiServer) checkConditionalHeaders(r *http.Request, bucket, object 
 
 	// Use resolveObjectEntry to correctly handle versioned objects.
 	// This ensures we check conditions against the LATEST version, not a null version.
-	entry, err := s3a.resolveObjectEntry(bucket, object)
+	entry, err := s3a.resolveObjectEntry(bucket, object, "")
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrDeleteMarker) {
 			entry = nil
@@ -2392,9 +2392,10 @@ func (s3a *S3ApiServer) checkConditionalHeadersForReads(r *http.Request, bucket,
 		return ConditionalHeaderResult{ErrorCode: s3err.ErrNone, Entry: nil}
 	}
 
-	// Use resolveObjectEntry to correctly handle versioned objects.
-	// This ensures we check conditions against the LATEST version, not a null version.
-	entry, err := s3a.resolveObjectEntry(bucket, object)
+	// Use resolveObjectEntry to correctly handle versioned objects: the version the
+	// request names, or the LATEST version rather than a null version.
+	versionId := r.URL.Query().Get("versionId")
+	entry, err := s3a.resolveObjectEntry(bucket, object, versionId)
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrDeleteMarker) {
 			entry = nil
@@ -2402,6 +2403,11 @@ func (s3a *S3ApiServer) checkConditionalHeadersForReads(r *http.Request, bucket,
 			glog.Errorf("checkConditionalHeadersForReads: error resolving object entry for %s/%s: %v", bucket, object, err)
 			return ConditionalHeaderResult{ErrorCode: s3err.ErrInternalError, Entry: nil}
 		}
+	}
+	// A named version that resolves to nothing is the handler's answer to give: only it
+	// knows whether the bucket is versioned, and so whether that is NoSuchVersion.
+	if versionId != "" && normalizeConditionalTargetEntry(entry) == nil {
+		return ConditionalHeaderResult{ErrorCode: s3err.ErrNone, Entry: nil}
 	}
 	return s3a.validateConditionalHeadersForReads(r, headers, entry, bucket, object)
 }

@@ -423,9 +423,10 @@ func (s3a *S3ApiServer) checkDirectoryObject(bucket, object string) (*filer_pb.E
 	return dirEntry, true, nil
 }
 
-// resolveObjectEntry resolves the object entry for conditional checks,
-// handling versioned buckets by resolving the latest version.
-func (s3a *S3ApiServer) resolveObjectEntry(bucket, object string) (*filer_pb.Entry, error) {
+// resolveObjectEntry resolves the object entry for conditional checks: the version the
+// request names when the bucket is versioned, otherwise the latest version. Callers
+// with no version to target pass an empty versionId.
+func (s3a *S3ApiServer) resolveObjectEntry(bucket, object, versionId string) (*filer_pb.Entry, error) {
 	// Check if versioning is configured
 	versioningConfigured, err := s3a.isVersioningConfigured(bucket)
 	if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
@@ -434,6 +435,9 @@ func (s3a *S3ApiServer) resolveObjectEntry(bucket, object string) (*filer_pb.Ent
 	}
 
 	if versioningConfigured {
+		if versionId != "" {
+			return s3a.getSpecificObjectVersion(bucket, object, versionId)
+		}
 		// For versioned buckets, we must use getLatestObjectVersion to correctly
 		// find the latest versioned object (in .versions/) or null version.
 		// Standard getEntry would fail to find objects moved to .versions/.
