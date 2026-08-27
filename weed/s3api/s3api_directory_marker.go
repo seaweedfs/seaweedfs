@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"errors"
+	"net/http"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -25,7 +26,17 @@ import (
 
 // deleteDirectoryMarker removes the key "<dir>/". Callers hold the object write lock,
 // so the entry this decides about cannot change between the read and the delete.
-func (s3a *S3ApiServer) deleteDirectoryMarker(bucket, object string) s3err.ErrorCode {
+func (s3a *S3ApiServer) deleteDirectoryMarker(r *http.Request, bucket, object string) s3err.ErrorCode {
+	// The key is deleted the unversioned way, but Object Lock still covers it: the
+	// gateway lists it as an object and serves retention set on it, and the history
+	// dropped below can be a real one this key was given before it grew past the
+	// size that makes a PUT a marker.
+	governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object)
+	if err := s3a.enforceObjectLockProtections(r, bucket, object, "", governanceBypassAllowed); err != nil {
+		glog.V(2).Infof("deleteDirectoryMarker: object lock check failed for %s/%s: %v", bucket, object, err)
+		return s3err.ErrAccessDenied
+	}
+
 	markerDir := s3a.bucketDir(bucket) + "/" + strings.TrimSuffix(strings.TrimPrefix(object, "/"), "/")
 	dir, name := util.FullPath(markerDir).DirAndName()
 
