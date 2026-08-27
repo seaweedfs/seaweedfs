@@ -2277,7 +2277,7 @@ func (s3a *S3ApiServer) checkConditionalHeaders(r *http.Request, bucket, object 
 
 	// Use resolveObjectEntry to correctly handle versioned objects.
 	// This ensures we check conditions against the LATEST version, not a null version.
-	entry, err := s3a.resolveObjectEntry(bucket, object)
+	entry, err := s3a.resolveObjectEntry(bucket, object, "")
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrDeleteMarker) {
 			entry = nil
@@ -2298,18 +2298,14 @@ func (s3a *S3ApiServer) validateConditionalHeadersForReads(r *http.Request, head
 	entry = normalizeConditionalTargetEntry(entry)
 	objectExists := entry != nil
 
-	// If object doesn't exist, fail for If-Match and If-Unmodified-Since
+	// A precondition only fails against an object that exists: AWS keeps GET/HEAD of a
+	// missing key a missing-key answer, so a condition never turns absence into 412.
+	// If-None-Match and If-Modified-Since pass here and the handler answers 404 itself.
 	if !objectExists {
-		if headers.ifMatch != "" {
-			glog.V(3).Infof("validateConditionalHeadersForReads: If-Match failed - object %s/%s does not exist", bucket, object)
-			return ConditionalHeaderResult{ErrorCode: s3err.ErrPreconditionFailed, Entry: nil}
+		if headers.ifMatch != "" || !headers.ifUnmodifiedSince.IsZero() {
+			glog.V(3).Infof("validateConditionalHeadersForReads: object %s/%s does not exist", bucket, object)
+			return ConditionalHeaderResult{ErrorCode: s3err.ErrNoSuchKey, Entry: nil}
 		}
-		if !headers.ifUnmodifiedSince.IsZero() {
-			glog.V(3).Infof("validateConditionalHeadersForReads: If-Unmodified-Since failed - object %s/%s does not exist", bucket, object)
-			return ConditionalHeaderResult{ErrorCode: s3err.ErrPreconditionFailed, Entry: nil}
-		}
-		// If-None-Match and If-Modified-Since succeed when object doesn't exist
-		// No entry to return since object doesn't exist
 		return ConditionalHeaderResult{ErrorCode: s3err.ErrNone, Entry: nil}
 	}
 
@@ -2396,9 +2392,10 @@ func (s3a *S3ApiServer) checkConditionalHeadersForReads(r *http.Request, bucket,
 		return ConditionalHeaderResult{ErrorCode: s3err.ErrNone, Entry: nil}
 	}
 
-	// Use resolveObjectEntry to correctly handle versioned objects.
-	// This ensures we check conditions against the LATEST version, not a null version.
-	entry, err := s3a.resolveObjectEntry(bucket, object)
+	// Use resolveObjectEntry to correctly handle versioned objects: the version the
+	// request names, or the LATEST version rather than a null version.
+	versionId := r.URL.Query().Get("versionId")
+	entry, err := s3a.resolveObjectEntry(bucket, object, versionId)
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrDeleteMarker) {
 			entry = nil
@@ -2406,6 +2403,11 @@ func (s3a *S3ApiServer) checkConditionalHeadersForReads(r *http.Request, bucket,
 			glog.Errorf("checkConditionalHeadersForReads: error resolving object entry for %s/%s: %v", bucket, object, err)
 			return ConditionalHeaderResult{ErrorCode: s3err.ErrInternalError, Entry: nil}
 		}
+	}
+	// A named version that resolves to nothing is the handler's answer to give: only it
+	// knows whether the bucket is versioned, and so whether that is NoSuchVersion.
+	if versionId != "" && normalizeConditionalTargetEntry(entry) == nil {
+		return ConditionalHeaderResult{ErrorCode: s3err.ErrNone, Entry: nil}
 	}
 	return s3a.validateConditionalHeadersForReads(r, headers, entry, bucket, object)
 }

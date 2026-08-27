@@ -78,7 +78,7 @@ func (s3a *S3ApiServer) resolveDeleteConditionalEntry(bucket, object, versionId,
 		}
 		return normalizeConditionalTargetEntry(entry), nil
 	default:
-		entry, err := s3a.resolveObjectEntry(bucket, normalizedObject)
+		entry, err := s3a.resolveObjectEntry(bucket, normalizedObject, "")
 		if err != nil {
 			return nil, err
 		}
