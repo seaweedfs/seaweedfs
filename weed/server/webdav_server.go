@@ -115,6 +115,11 @@ func (fi *FileInfo) ETag(ctx context.Context) (string, error) {
 	if fi.err != nil {
 		return "", fi.err
 	}
+	if fi.etag == "" {
+		// nothing hashed this entry; let webdav derive one rather than
+		// publish an empty DAV:getetag, which is not a valid entity-tag
+		return "", webdav.ErrNotImplemented
+	}
 	return fi.etag, nil
 }
 

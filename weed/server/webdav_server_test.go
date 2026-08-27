@@ -1,7 +1,11 @@
 package weed_server
 
 import (
+	"context"
+	"os"
 	"testing"
+
+	"golang.org/x/net/webdav"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -32,5 +36,21 @@ func TestToFileInfoRootIsDirectory(t *testing.T) {
 	entry := &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{}}
 	if !toFileInfo("/", entry).IsDir() {
 		t.Error("root is not a directory")
+	}
+}
+
+func TestFileInfoETag(t *testing.T) {
+	ctx := context.Background()
+
+	if _, err := (&FileInfo{}).ETag(ctx); err != webdav.ErrNotImplemented {
+		t.Errorf("empty etag returned %v, want ErrNotImplemented so webdav derives one", err)
+	}
+	if etag, err := (&FileInfo{etag: "abc"}).ETag(ctx); err != nil || etag != "abc" {
+		t.Errorf("ETag() = %q, %v, want \"abc\", nil", etag, err)
+	}
+
+	failed := &FileInfo{err: os.ErrInvalid}
+	if _, err := failed.ETag(ctx); err != os.ErrInvalid {
+		t.Errorf("ETag() = %v, want the stat error", err)
 	}
 }
