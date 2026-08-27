@@ -76,6 +76,10 @@ func TestSetAttrOnUnlinkedOpenFile(t *testing.T) {
 	if !fh.dirtyMetadata {
 		t.Fatal("SetAttr did not mark the handle dirty")
 	}
+	// The kernel caches what this reply carries, so it has to agree with fstat.
+	if out.Attr.Nlink != 0 {
+		t.Fatalf("SetAttr nlink: got %d, want 0", out.Attr.Nlink)
+	}
 
 	in = &fuse.SetAttrIn{}
 	in.NodeId = inode

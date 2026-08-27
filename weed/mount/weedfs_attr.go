@@ -46,10 +46,7 @@ func (wfs *WFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse
 		wfs.setAttrByPbEntry(&out.Attr, inode, entry, true)
 	}
 	wfs.applyInMemoryAtime(&out.Attr, inode)
-	if path == "" {
-		// unlinked while open: the entry lives on, but no name points at it
-		out.Nlink = 0
-	}
+	applyUnlinkedNlink(&out.Attr, path)
 	if entry.GetIsDirectory() {
 		wfs.applyInMemoryDirMtime(&out.Attr, inode)
 		if wfs.option.PosixDirNlink {
@@ -196,6 +193,7 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 	}
 	wfs.setAttrByPbEntry(&out.Attr, input.NodeId, entry, !includeSize)
 	wfs.applyInMemoryAtime(&out.Attr, input.NodeId)
+	applyUnlinkedNlink(&out.Attr, path)
 
 	if fh != nil {
 		fh.dirtyMetadata = true
@@ -415,6 +413,15 @@ func (wfs *WFS) applyInMemoryAtime(out *fuse.Attr, inode uint64) {
 		out.Atimensec = uint32(t.Nanosecond())
 	}
 	wfs.atimeMu.Unlock()
+}
+
+// applyUnlinkedNlink zeroes nlink for an inode no name points at any more: the
+// file was unlinked while open and lives on only through its handle. Every
+// reply carrying attributes must say so, or the kernel caches a live nlink.
+func applyUnlinkedNlink(out *fuse.Attr, path util.FullPath) {
+	if path == "" {
+		out.Nlink = 0
+	}
 }
 
 // applyDirNlink sets nlink = 2 + number_of_subdirectories for a directory.
