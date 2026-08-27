@@ -25,43 +25,33 @@ func (wfs *WFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse
 
 	inode := input.NodeId
 	path, fh, entry, status := wfs.maybeReadEntry(inode)
-	if status == fuse.OK {
-		out.AttrValid = wfs.attrValidSec
-		// When an open handle owns the entry, async upload workers append
-		// chunks under the LockedEntry lock; take it for reading so FileSize
-		// does not iterate the chunk slice mid-reallocation. Re-read under the
-		// lock in case SetEntry swapped the pointer since maybeReadEntry.
-		if fh != nil {
-			fh.entry.RLock()
-			entry = fh.entry.Entry
-		}
-		wfs.setAttrByPbEntry(&out.Attr, inode, entry, true)
-		if fh != nil {
-			fh.entry.RUnlock()
-		}
-		wfs.applyInMemoryAtime(&out.Attr, inode)
-		if entry.IsDirectory {
-			wfs.applyInMemoryDirMtime(&out.Attr, inode)
-			if wfs.option.PosixDirNlink {
-				wfs.applyDirNlink(&out.Attr, path)
-			}
-		}
+	if status != fuse.OK {
 		return status
-	} else {
-		if fh, found := wfs.fhMap.FindFileHandle(inode); found {
-			out.AttrValid = wfs.attrValidSec
-			// Use shared lock to prevent race with Write operations
-			fhActiveLock := wfs.fhLockTable.AcquireLock("GetAttr", fh.fh, util.SharedLock)
-			fh.entry.RLock()
-			wfs.setAttrByPbEntry(&out.Attr, inode, fh.entry.Entry, true)
-			fh.entry.RUnlock()
-			wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
-			wfs.applyInMemoryAtime(&out.Attr, inode)
-			out.Nlink = 0
-			return fuse.OK
+	}
+	out.AttrValid = wfs.attrValidSec
+	// When an open handle owns the entry, async upload workers append
+	// chunks under the LockedEntry lock; take it for reading so FileSize
+	// does not iterate the chunk slice mid-reallocation. Re-read under the
+	// lock in case SetEntry swapped the pointer since maybeReadEntry.
+	if fh != nil {
+		fh.entry.RLock()
+		entry = fh.entry.Entry
+	}
+	wfs.setAttrByPbEntry(&out.Attr, inode, entry, true)
+	if fh != nil {
+		fh.entry.RUnlock()
+	}
+	wfs.applyInMemoryAtime(&out.Attr, inode)
+	if path == "" {
+		// unlinked while open: the entry lives on, but no name points at it
+		out.Nlink = 0
+	}
+	if entry.GetIsDirectory() {
+		wfs.applyInMemoryDirMtime(&out.Attr, inode)
+		if wfs.option.PosixDirNlink {
+			wfs.applyDirNlink(&out.Attr, path)
 		}
 	}
-
 	return status
 }
 
