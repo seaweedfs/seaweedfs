@@ -2298,18 +2298,14 @@ func (s3a *S3ApiServer) validateConditionalHeadersForReads(r *http.Request, head
 	entry = normalizeConditionalTargetEntry(entry)
 	objectExists := entry != nil
 
-	// If object doesn't exist, fail for If-Match and If-Unmodified-Since
+	// A precondition only fails against an object that exists: AWS keeps GET/HEAD of a
+	// missing key a missing-key answer, so a condition never turns absence into 412.
+	// If-None-Match and If-Modified-Since pass here and the handler answers 404 itself.
 	if !objectExists {
-		if headers.ifMatch != "" {
-			glog.V(3).Infof("validateConditionalHeadersForReads: If-Match failed - object %s/%s does not exist", bucket, object)
-			return ConditionalHeaderResult{ErrorCode: s3err.ErrPreconditionFailed, Entry: nil}
+		if headers.ifMatch != "" || !headers.ifUnmodifiedSince.IsZero() {
+			glog.V(3).Infof("validateConditionalHeadersForReads: object %s/%s does not exist", bucket, object)
+			return ConditionalHeaderResult{ErrorCode: s3err.ErrNoSuchKey, Entry: nil}
 		}
-		if !headers.ifUnmodifiedSince.IsZero() {
-			glog.V(3).Infof("validateConditionalHeadersForReads: If-Unmodified-Since failed - object %s/%s does not exist", bucket, object)
-			return ConditionalHeaderResult{ErrorCode: s3err.ErrPreconditionFailed, Entry: nil}
-		}
-		// If-None-Match and If-Modified-Since succeed when object doesn't exist
-		// No entry to return since object doesn't exist
 		return ConditionalHeaderResult{ErrorCode: s3err.ErrNone, Entry: nil}
 	}
 
