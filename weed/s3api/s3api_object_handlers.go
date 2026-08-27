@@ -24,6 +24,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -3333,7 +3334,7 @@ func (s3a *S3ApiServer) openRemoteStream(ctx context.Context, bucket, object str
 		return nil, err
 	}
 
-	client, err := remote_storage.GetRemoteStorage(storageConf)
+	client, err := weed_server.BuildGuardedRemoteStorageClient(ctx, storageConf, false)
 	if err != nil {
 		return nil, err
 	}
