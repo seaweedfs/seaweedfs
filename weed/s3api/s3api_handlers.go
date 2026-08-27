@@ -18,14 +18,23 @@ import (
 var _ = filer_pb.FilerClient(&S3ApiServer{})
 
 func (s3a *S3ApiServer) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+	return s3a.WithFilerClientCtx(context.Background(), streamingMode, fn)
+}
+
+// WithFilerClientCtx is WithFilerClient told which context bounds the calls fn
+// makes. It does not cancel anything itself -- fn owns its own RPC contexts --
+// but the failover walk needs to know whose budget ran out: a caller's expiry is
+// not evidence against the filer that was answering, and must not be recorded as
+// one. Pass context.Background() when fn's calls carry no deadline.
+func (s3a *S3ApiServer) WithFilerClientCtx(ctx context.Context, streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 	// Use filerClient for proper connection management and failover
 	if s3a.filerClient != nil {
-		return s3a.withFilerClientFailover("", streamingMode, fn)
+		return s3a.withFilerClientFailover(ctx, "", streamingMode, fn)
 	}
 
 	// Fallback to direct connection if filerClient not initialized
 	// This should only happen during initialization or testing
-	return pb.WithGrpcClient(context.Background(), streamingMode, s3a.randomClientId, func(grpcConnection *grpc.ClientConn) error {
+	return pb.WithGrpcClient(ctx, streamingMode, s3a.randomClientId, func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		return fn(client)
 	}, s3a.getFilerAddress().ToGrpcAddress(), false, s3a.option.GrpcDialOption)
@@ -43,8 +52,10 @@ func (s3a *S3ApiServer) WithFilerClient(streamingMode bool, fn func(filer_pb.Sea
 // Failover replays fn from scratch, so it stops once any response has reached
 // fn: a replay after that could silently duplicate state fn accumulated (a
 // listing that failed mid-stream, say), so the error surfaces instead and the
-// caller decides whether a clean-slate retry is safe.
-func (s3a *S3ApiServer) withFilerClientFailover(preferred pb.ServerAddress, streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+// caller decides whether a clean-slate retry is safe. ctx is the budget bounding
+// fn's own calls; it is only read, to tell a filer's failure apart from the
+// caller running out of time.
+func (s3a *S3ApiServer) withFilerClientFailover(ctx context.Context, preferred pb.ServerAddress, streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 	currentFiler := s3a.filerClient.GetCurrentFiler()
 
 	candidates := make([]pb.ServerAddress, 0, 2+len(s3a.option.Filers))
@@ -87,7 +98,7 @@ func (s3a *S3ApiServer) withFilerClientFailover(preferred pb.ServerAddress, stre
 	var lastErr error
 	for _, filer := range ordered {
 		received := false
-		err := pb.WithGrpcClient(context.Background(), streamingMode, s3a.randomClientId, func(grpcConnection *grpc.ClientConn) error {
+		err := pb.WithGrpcClient(ctx, streamingMode, s3a.randomClientId, func(grpcConnection *grpc.ClientConn) error {
 			return fn(filer_pb.NewSeaweedFilerClient(receiveTrackingConn{ClientConnInterface: grpcConnection, received: &received}))
 		}, filer.ToGrpcAddress(), false, s3a.option.GrpcDialOption)
 
@@ -100,6 +111,16 @@ func (s3a *S3ApiServer) withFilerClientFailover(preferred pb.ServerAddress, stre
 			return nil
 		}
 		if errors.Is(err, filer_pb.ErrNotFound) {
+			return err
+		}
+
+		// The caller's own budget expiring is not evidence against this filer, and
+		// the next one has no time left to answer either. Recording it would let a
+		// slow master upstream mark every filer in the walk, and the three failures
+		// that open the circuit would then take unrelated object reads down with a
+		// health flag no filer earned.
+		if ctx.Err() != nil {
+			glog.V(2).Infof("WithFilerClient: giving up on %s, the caller's context ended: %v", filer, err)
 			return err
 		}
 
