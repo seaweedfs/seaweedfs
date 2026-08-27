@@ -2,6 +2,7 @@ package retention
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -9,9 +10,18 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func requireAccessDenied(t *testing.T, err error, msg string) {
+	t.Helper()
+	require.Error(t, err, msg)
+	var apiErr smithy.APIError
+	require.True(t, errors.As(err, &apiErr), "expected an API error, got %T", err)
+	assert.Equal(t, "AccessDenied", apiErr.ErrorCode(), msg)
+}
 
 // A key ending in "/" is stored as the filer directory rather than as an object
 // beside it, and is deleted the unversioned way. Object Lock still covers it: the
@@ -40,7 +50,7 @@ func TestObjectLockDirectoryMarker(t *testing.T) {
 			Bucket: aws.String(bucketName),
 			Key:    aws.String(key),
 		})
-		require.Error(t, err, "a retained marker must not be deletable")
+		requireAccessDenied(t, err, "a retained marker must not be deletable")
 
 		_, err = client.HeadObject(context.TODO(), &s3.HeadObjectInput{
 			Bucket: aws.String(bucketName),
@@ -72,7 +82,13 @@ func TestObjectLockDirectoryMarker(t *testing.T) {
 			Bucket: aws.String(bucketName),
 			Key:    aws.String(key),
 		})
-		require.Error(t, err, "retention the gateway serves back must also block the delete")
+		requireAccessDenied(t, err, "retention the gateway serves back must also block the delete")
+
+		_, err = client.HeadObject(context.TODO(), &s3.HeadObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(key),
+		})
+		assert.NoError(t, err, "the marker must still be there after the refused delete")
 	})
 
 	t.Run("multi-object delete is refused too", func(t *testing.T) {
@@ -92,7 +108,9 @@ func TestObjectLockDirectoryMarker(t *testing.T) {
 		})
 		require.NoError(t, err)
 		assert.Empty(t, resp.Deleted, "a retained marker must not be reported deleted")
-		assert.Len(t, resp.Errors, 1)
+		require.Len(t, resp.Errors, 1)
+		assert.Equal(t, key, aws.ToString(resp.Errors[0].Key))
+		assert.Equal(t, "AccessDenied", aws.ToString(resp.Errors[0].Code))
 
 		_, err = client.HeadObject(context.TODO(), &s3.HeadObjectInput{
 			Bucket: aws.String(bucketName),
@@ -148,7 +166,7 @@ func TestObjectLockDirectoryMarker(t *testing.T) {
 			Bucket: aws.String(bucketName),
 			Key:    aws.String(key),
 		})
-		require.Error(t, err, "the retained version underneath must block the delete")
+		requireAccessDenied(t, err, "the retained version underneath must block the delete")
 
 		_, err = client.HeadObject(context.TODO(), &s3.HeadObjectInput{
 			Bucket:    aws.String(bucketName),
