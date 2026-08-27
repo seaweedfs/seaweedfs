@@ -35,6 +35,27 @@ import (
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
+const (
+	// collectionListTimeout bounds the filer CollectionList a bucket creation
+	// issues, and collectionDeleteTimeout the filer DeleteCollection a bucket
+	// deletion issues. Neither carried a deadline, so a transient failure
+	// anywhere down the chain -- gateway to filer, filer to master, master to
+	// volume server -- held the S3 request open until the client gave up on it
+	// (issues #7229 and #7232).
+	//
+	// Both budgets are taken before WithFilerClientCtx, so they cover the whole
+	// failover walk rather than granting each filer a fresh one, and the walk
+	// stops rather than blaming filers for the caller running out of time.
+	//
+	// The listing matches what the filer allows itself for the same RPC. The
+	// delete is deliberately shorter: DeleteBucket has already paid the filer's
+	// own 15s for this collection, under the bucket entry's delete inside s3a.rm,
+	// and this call is the follow-up for when that did not happen. Together that
+	// is roughly 25s of the 60s an S3 client waits.
+	collectionListTimeout   = 15 * time.Second
+	collectionDeleteTimeout = 10 * time.Second
+)
+
 func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Request) {
 
 	glog.V(3).Infof("ListBucketsHandler")
@@ -259,12 +280,13 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		s3err.WriteErrorResponse(w, r, s3err.ErrBucketAlreadyExists)
 		return
 	}
-	if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		if resp, err := client.CollectionList(context.Background(), &filer_pb.CollectionListRequest{
+	listCtx, cancelList := context.WithTimeout(context.Background(), collectionListTimeout)
+	defer cancelList()
+	if err := s3a.WithFilerClientCtx(listCtx, false, func(client filer_pb.SeaweedFilerClient) error {
+		if resp, err := client.CollectionList(listCtx, &filer_pb.CollectionListRequest{
 			IncludeEcVolumes:     true,
 			IncludeNormalVolumes: true,
 		}); err != nil {
-			glog.Errorf("list collection: %v", err)
 			return fmt.Errorf("list collections: %w", err)
 		} else {
 			for _, c := range resp.Collections {
@@ -276,8 +298,12 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		}
 		return nil
 	}); err != nil {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-		return
+		// Advisory only: the answer decides nothing below except whether to log
+		// that a leftover collection is being reused. s3a.exists is what decides
+		// whether the bucket already exists. Failing the whole creation because a
+		// diagnostic listing timed out is what made a transient master hiccup
+		// surface to the client as a failed CreateBucket.
+		glog.Warningf("PutBucketHandler: list collections for %s: %v", bucket, err)
 	}
 
 	// Bucket already exists: report whether the caller already owns it or the
@@ -475,13 +501,15 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	deleteCtx, cancelDelete := context.WithTimeout(context.Background(), collectionDeleteTimeout)
+	defer cancelDelete()
+	err = s3a.WithFilerClientCtx(deleteCtx, false, func(client filer_pb.SeaweedFilerClient) error {
 		deleteCollectionRequest := &filer_pb.DeleteCollectionRequest{
 			Collection: s3a.getCollectionName(bucket),
 		}
 
 		glog.V(1).Infof("delete collection: %v", deleteCollectionRequest)
-		if _, err := client.DeleteCollection(context.Background(), deleteCollectionRequest); err != nil {
+		if _, err := client.DeleteCollection(deleteCtx, deleteCollectionRequest); err != nil {
 			return fmt.Errorf("delete collection %s: %v", bucket, err)
 		}
 
@@ -491,7 +519,14 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		// Log but don't fail — the bucket directory is already removed, so the bucket
 		// is effectively deleted. The orphaned collection will be cleaned up or reused.
-		glog.Errorf("DeleteBucketHandler: failed to delete collection for bucket %s: %v", bucket, err)
+		if deleteCtx.Err() != nil {
+			// Our own budget ran out, which is not the same as a refusal: the master
+			// carries on deleting once asked, so this only says we stopped waiting
+			// for the confirmation. Not worth an error on an otherwise fine cluster.
+			glog.Warningf("DeleteBucketHandler: stopped waiting for the collection delete for bucket %s: %v", bucket, err)
+		} else {
+			glog.Errorf("DeleteBucketHandler: failed to delete collection for bucket %s: %v", bucket, err)
+		}
 	}
 
 	// Clean up bucket-related caches, locks, and metrics after successful deletion
