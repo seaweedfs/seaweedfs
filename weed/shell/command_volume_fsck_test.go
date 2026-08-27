@@ -134,7 +134,8 @@ func startStubFiler(t *testing.T, stub *stubFilerServer) *CommandEnv {
 }
 
 func TestVolumeFsckPurgeEmptyDirectories(t *testing.T) {
-	directory := &filer_pb.Entry{IsDirectory: true}
+	settled := &filer_pb.FuseAttributes{Mtime: time.Now().Add(-time.Hour).Unix()}
+	directory := &filer_pb.Entry{IsDirectory: true, Attributes: settled}
 	stub := &stubFilerServer{entries: map[string]*filer_pb.Entry{
 		"/orphan":                 directory,
 		"/orphan/dir":             directory,
@@ -144,7 +145,10 @@ func TestVolumeFsckPurgeEmptyDirectories(t *testing.T) {
 		"/keep/file.txt":          {},
 		"/buckets":                directory,
 		"/buckets/bucket1":        directory,
-		"/buckets/bucket1/folder": {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Mime: "application/octet-stream"}},
+		"/buckets/bucket1/folder": {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Mime: "application/octet-stream", Mtime: settled.Mtime}},
+		// no mtime to condition a delete on, so it stays
+		"/nomtime":     {IsDirectory: true},
+		"/nomtime/dir": {IsDirectory: true},
 	}}
 
 	verbose := false
@@ -158,6 +162,7 @@ func TestVolumeFsckPurgeEmptyDirectories(t *testing.T) {
 			"/orphan/dir/wide":        {},
 			"/keep":                   {},
 			"/buckets/bucket1/folder": {},
+			"/nomtime/dir":            {},
 		},
 		env: startStubFiler(t, stub),
 	}
