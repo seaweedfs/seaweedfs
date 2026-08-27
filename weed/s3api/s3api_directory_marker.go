@@ -27,15 +27,7 @@ import (
 // deleteDirectoryMarker removes the key "<dir>/". Callers hold the object write lock,
 // so the entry this decides about cannot change between the read and the delete.
 func (s3a *S3ApiServer) deleteDirectoryMarker(r *http.Request, bucket, object string) s3err.ErrorCode {
-	// The key is deleted the unversioned way, but Object Lock still covers it: the
-	// gateway lists it as an object and serves retention set on it, and the history
-	// dropped below can be a real one this key was given before it grew past the
-	// size that makes a PUT a marker.
 	governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object)
-	if err := s3a.enforceObjectLockProtections(r, bucket, object, "", governanceBypassAllowed); err != nil {
-		glog.V(2).Infof("deleteDirectoryMarker: object lock check failed for %s/%s: %v", bucket, object, err)
-		return s3err.ErrAccessDenied
-	}
 
 	markerDir := s3a.bucketDir(bucket) + "/" + strings.TrimSuffix(strings.TrimPrefix(object, "/"), "/")
 	dir, name := util.FullPath(markerDir).DirAndName()
@@ -56,13 +48,22 @@ func (s3a *S3ApiServer) deleteDirectoryMarker(r *http.Request, bucket, object st
 		return s3err.ErrNone
 	}
 
+	// The key is deleted the unversioned way, but Object Lock still covers it: the
+	// gateway lists it as an object and serves retention set on it. The lock that
+	// matters is the one on this entry, since that is what is removed -- looking the
+	// key up instead would answer with a version once the key has a history.
+	if err := s3a.enforceObjectLockOnEntry(entry, bucket, object, "", governanceBypassAllowed); err != nil {
+		glog.V(2).Infof("deleteDirectoryMarker: %s/%s is locked: %v", bucket, object, err)
+		return s3err.ErrAccessDenied
+	}
+
 	// Drop a history an older build recorded for this key. Nothing writes one now, and
 	// leaving it behind keeps reporting the key in ListObjectVersions, so a history we
 	// cannot read or remove fails the delete rather than half finishing it.
 	switch _, historyErr := s3a.getEntry(markerDir, s3_constants.VersionsFolder); {
 	case historyErr == nil:
-		// The check above resolves the latest version, while the removal below takes
-		// every entry under the key, so each has to be clear of a lock of its own.
+		// The removal below takes every entry under the key, so each has to be clear
+		// of a lock of its own.
 		versionsDir := markerDir + "/" + s3_constants.VersionsFolder
 		for startFrom := ""; ; {
 			entries, isLast, listErr := s3a.list(versionsDir, "", startFrom, false, 1000)
