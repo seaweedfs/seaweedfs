@@ -98,7 +98,7 @@ func (s3a *S3ApiServer) rm(parentDirectoryPath, entryName string, isDeleteData, 
 
 	return s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
-		return doDeleteEntry(client, parentDirectoryPath, entryName, isDeleteData, isRecursive)
+		return doDeleteEntry(context.Background(), client, parentDirectoryPath, entryName, isDeleteData, isRecursive)
 	})
 
 }
@@ -113,7 +113,7 @@ func (s3a *S3ApiServer) rmObject(parentDirectoryPath, entryName string, isDelete
 }
 
 func deleteObjectEntry(client filer_pb.SeaweedFilerClient, parentDirectoryPath, entryName string, isDeleteData, isRecursive bool) error {
-	err := doDeleteEntry(client, parentDirectoryPath, entryName, isDeleteData, isRecursive)
+	err := doDeleteEntry(context.Background(), client, parentDirectoryPath, entryName, isDeleteData, isRecursive)
 	if err == nil {
 		return nil
 	}
@@ -124,7 +124,57 @@ func deleteObjectEntry(client filer_pb.SeaweedFilerClient, parentDirectoryPath, 
 	return demoteDirectoryMarkerToImplicitDirectory(client, parentDirectoryPath, entryName)
 }
 
-func doDeleteEntry(client filer_pb.SeaweedFilerClient, parentDirectoryPath string, entryName string, isDeleteData bool, isRecursive bool) error {
+// A delete is idempotent at the filer, so replaying one whose reply was lost in
+// transit cannot turn into a spurious failure: FilerServer.DeleteEntry leaves
+// resp.Error empty when the entry is already gone. That rests on it comparing
+// the sentinel by identity (err != filer_pb.ErrNotFound) rather than with
+// errors.Is, so a future wrap of that error on the filer side would make the
+// second attempt report a failure instead. Worth re-checking if this is ever
+// revisited.
+//
+// The replay is immediate. What clears a transient failure here is the gRPC
+// channel reconnecting underneath the call, not the passage of time, and any
+// wait short enough to sit in a request path is far too short to outlast a
+// filer that is genuinely down. Not sleeping also keeps the cost a property of
+// the delete rather than of the request: DeleteMultipleObjectsHandler deletes
+// up to deleteMultipleObjectsLimit keys and completeMultipartUpload removes one
+// entry per unused part, so a per-delete backoff would be paid once per key.
+const deleteRetryAttempts = 3
+
+// isRetryableDeleteRPCError reports whether a failed DeleteEntry call is worth
+// replaying. It classifies by gRPC status code, never by message text.
+//
+// Every failure it can see carries a code no client input can influence.
+// FilerServer.DeleteEntry answers (resp, nil) in every case, its own failures
+// included, so a non-nil error out of the call was produced by the gRPC stack
+// itself. Context cancellation arrives as Canceled or DeadlineExceeded and is
+// not replayed: the caller is already gone.
+//
+// The filer's own failures arrive in resp.Error instead and are never replayed.
+// They are its considered answer about the tree, and they are free text with
+// the deleted path formatted into them - and, for a recursive delete, the paths
+// of the children it stopped on (weed/filer/filer_delete_entry.go builds
+// "delete file %s: %v", "list folder %s: %v" and MsgFailDelNonEmptyFolder that
+// way, and weed/server/filer_grpc_server.go copies the result into resp.Error
+// verbatim). Substring-matching that text would let an object named
+// "transport.log" make a permission denial look transient, and one named after
+// filer_pb.ErrNotFound make a genuine connection reset look authoritative.
+func isRetryableDeleteRPCError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s, ok := status.FromError(err)
+	if !ok {
+		return false
+	}
+	switch s.Code() {
+	case codes.Unavailable, codes.ResourceExhausted:
+		return true
+	}
+	return false
+}
+
+func doDeleteEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, parentDirectoryPath string, entryName string, isDeleteData bool, isRecursive bool) error {
 	request := &filer_pb.DeleteEntryRequest{
 		Directory:            parentDirectoryPath,
 		Name:                 entryName,
@@ -134,15 +184,33 @@ func doDeleteEntry(client filer_pb.SeaweedFilerClient, parentDirectoryPath strin
 	}
 
 	glog.V(1).Infof("delete entry %v/%v: %v", parentDirectoryPath, entryName, request)
-	if resp, err := client.DeleteEntry(context.Background(), request); err != nil {
-		glog.V(1).Infof("delete entry %v: %v", request, err)
-		return fmt.Errorf("delete entry %s/%s: %v", parentDirectoryPath, entryName, err)
-	} else {
-		if resp.Error != "" {
+
+	// The loop always makes one attempt whatever deleteRetryAttempts is set to,
+	// so lastErr is never nil at the return below and no count can turn a
+	// delete that was never issued into a reported success.
+	var lastErr error
+	for attempt := 1; ; attempt++ {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			// the caller is gone, so a further attempt has nobody to answer
+			lastErr = ctxErr
+			break
+		}
+
+		resp, err := client.DeleteEntry(ctx, request)
+		if err == nil {
+			if resp.Error == "" {
+				return nil
+			}
 			return fmt.Errorf("delete entry %s/%s: %v", parentDirectoryPath, entryName, resp.Error)
 		}
+
+		lastErr = err
+		if attempt >= deleteRetryAttempts || !isRetryableDeleteRPCError(err) {
+			break
+		}
+		glog.V(2).Infof("delete entry %s/%s attempt %d/%d hit a transient error, replaying: %v", parentDirectoryPath, entryName, attempt, deleteRetryAttempts, err)
 	}
-	return nil
+	return fmt.Errorf("delete entry %s/%s: %v", parentDirectoryPath, entryName, lastErr)
 }
 
 func demoteDirectoryMarkerToImplicitDirectory(client filer_pb.SeaweedFilerClient, parentDirectoryPath, entryName string) error {
