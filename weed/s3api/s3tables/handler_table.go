@@ -23,22 +23,6 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		return err
 	}
 
-	if req.TableBucketARN == "" {
-		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "tableBucketARN is required")
-		return fmt.Errorf("tableBucketARN is required")
-	}
-
-	namespaceName, err := validateNamespace(req.Namespace)
-	if err != nil {
-		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
-		return err
-	}
-
-	if req.Name == "" {
-		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "name is required")
-		return fmt.Errorf("name is required")
-	}
-
 	if req.Format == "" {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "format is required")
 		return fmt.Errorf("format is required")
@@ -50,115 +34,19 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		return fmt.Errorf("invalid format")
 	}
 
-	bucketName, err := parseBucketNameFromARN(req.TableBucketARN)
+	target, err := h.authorizeCreateTable(w, r, filerClient, req.TableBucketARN, req.Namespace, req.Name, req.Tags)
 	if err != nil {
-		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 		return err
 	}
-
-	// Validate table name
-	tableName, err := validateTableName(req.Name)
-	if err != nil {
-		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
-		return err
-	}
-
-	// Check if namespace exists
-	namespacePath := GetNamespacePath(bucketName, namespaceName)
-	namespaceMetadata, err := h.loadNamespaceMetadata(r.Context(), filerClient, bucketName, namespaceName)
-	if err != nil {
-		if errors.Is(err, filer_pb.ErrNotFound) {
-			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", namespaceName))
-		} else {
-			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check namespace: %v", err))
-		}
-		return err
-	}
-
-	// Authorize table creation using policy framework (namespace + bucket policies)
-	accountID := h.getAccountID(r)
-	bucketPath := GetTableBucketPath(bucketName)
-	namespacePolicy := ""
-	bucketPolicy := ""
-	bucketTags := map[string]string{}
-	var data []byte
-	var bucketMetadata tableBucketMetadata
-
-	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		// Fetch bucket metadata to use correct owner for bucket policy evaluation
-		data, err = h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
-		if err == nil {
-			if err := json.Unmarshal(data, &bucketMetadata); err != nil {
-				return fmt.Errorf("failed to unmarshal bucket metadata: %w", err)
-			}
-		} else if !errors.Is(err, ErrAttributeNotFound) {
-			return fmt.Errorf("failed to fetch bucket metadata: %v", err)
-		}
-
-		// Fetch namespace policy if it exists
-		policyData, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyPolicy)
-		if err == nil {
-			namespacePolicy = string(policyData)
-		} else if !errors.Is(err, ErrAttributeNotFound) {
-			return fmt.Errorf("failed to fetch namespace policy: %v", err)
-		}
-
-		// Fetch bucket policy if it exists
-		policyData, err = h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
-		if err == nil {
-			bucketPolicy = string(policyData)
-		} else if !errors.Is(err, ErrAttributeNotFound) {
-			return fmt.Errorf("failed to fetch bucket policy: %v", err)
-		}
-		if tags, err := h.readTags(r.Context(), client, bucketPath); err != nil {
-			return err
-		} else if tags != nil {
-			bucketTags = tags
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to fetch policies: %v", err))
-		return err
-	}
+	bucketName, namespaceName, tableName := target.bucketName, target.namespaceName, target.tableName
 
 	// A bucket declares the format it holds, and a table of another format would
 	// be invisible to the catalog serving it. A bucket made before the
 	// declaration existed has none, and keeps taking anything.
-	if bucketMetadata.Format != "" && bucketMetadata.Format != req.Format {
-		message := fmt.Sprintf("table bucket %s holds %s tables", bucketName, bucketMetadata.Format)
+	if target.bucketFormat != "" && target.bucketFormat != req.Format {
+		message := fmt.Sprintf("table bucket %s holds %s tables", bucketName, target.bucketFormat)
 		h.writeError(w, http.StatusConflict, ErrCodeConflict, message)
 		return fmt.Errorf("%s", message)
-	}
-
-	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
-	identityActions := getIdentityActions(r)
-	nsAllowed := CheckPermissionWithContext("CreateTable", accountID, namespaceMetadata.OwnerAccountID, namespacePolicy, bucketARN, &PolicyContext{
-		TableBucketName: bucketName,
-		Namespace:       namespaceName,
-		TableName:       tableName,
-		RequestTags:     req.Tags,
-		TagKeys:         mapKeys(req.Tags),
-		TableBucketTags: bucketTags,
-		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllowFor(r),
-	})
-	bucketAllowed := CheckPermissionWithContext("CreateTable", accountID, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-		TableBucketName: bucketName,
-		Namespace:       namespaceName,
-		TableName:       tableName,
-		RequestTags:     req.Tags,
-		TagKeys:         mapKeys(req.Tags),
-		TableBucketTags: bucketTags,
-		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllowFor(r),
-	})
-
-	if !nsAllowed && !bucketAllowed {
-		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create table in this namespace")
-		return ErrAccessDenied
 	}
 
 	tablePath := GetTablePath(bucketName, namespaceName, tableName)
@@ -221,7 +109,7 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		Format:           req.Format,
 		CreatedAt:        now,
 		ModifiedAt:       now,
-		OwnerAccountID:   namespaceMetadata.OwnerAccountID, // Inherit namespace owner for consistency
+		OwnerAccountID:   target.ownerAccountID, // Inherit namespace owner for consistency
 		VersionToken:     versionToken,
 		MetadataVersion:  max(req.MetadataVersion, 1),
 		MetadataLocation: req.MetadataLocation,
@@ -328,117 +216,16 @@ func (h *S3TablesHandler) handleRegisterTable(w http.ResponseWriter, r *http.Req
 		return err
 	}
 
-	if req.TableBucketARN == "" {
-		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "tableBucketARN is required")
-		return fmt.Errorf("tableBucketARN is required")
-	}
-
-	namespaceName, err := validateNamespace(req.Namespace)
-	if err != nil {
-		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
-		return err
-	}
-
-	if req.Name == "" {
-		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "name is required")
-		return fmt.Errorf("name is required")
-	}
-
 	if req.MetadataLocation == "" {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "metadataLocation is required")
 		return fmt.Errorf("metadataLocation is required")
 	}
 
-	bucketName, err := parseBucketNameFromARN(req.TableBucketARN)
+	target, err := h.authorizeCreateTable(w, r, filerClient, req.TableBucketARN, req.Namespace, req.Name, nil)
 	if err != nil {
-		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 		return err
 	}
-
-	tableName, err := validateTableName(req.Name)
-	if err != nil {
-		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
-		return err
-	}
-
-	// Namespace must exist.
-	namespacePath := GetNamespacePath(bucketName, namespaceName)
-	namespaceMetadata, err := h.loadNamespaceMetadata(r.Context(), filerClient, bucketName, namespaceName)
-	if err != nil {
-		if errors.Is(err, filer_pb.ErrNotFound) {
-			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", namespaceName))
-		} else {
-			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check namespace: %v", err))
-		}
-		return err
-	}
-
-	// Authorize using policy framework (namespace + bucket policies).
-	accountID := h.getAccountID(r)
-	bucketPath := GetTableBucketPath(bucketName)
-	namespacePolicy := ""
-	bucketPolicy := ""
-	bucketTags := map[string]string{}
-	var bucketMetadata tableBucketMetadata
-
-	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
-		if err == nil {
-			if err := json.Unmarshal(data, &bucketMetadata); err != nil {
-				return fmt.Errorf("failed to unmarshal bucket metadata: %w", err)
-			}
-		} else if !errors.Is(err, ErrAttributeNotFound) {
-			return fmt.Errorf("failed to fetch bucket metadata: %v", err)
-		}
-
-		policyData, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyPolicy)
-		if err == nil {
-			namespacePolicy = string(policyData)
-		} else if !errors.Is(err, ErrAttributeNotFound) {
-			return fmt.Errorf("failed to fetch namespace policy: %v", err)
-		}
-
-		policyData, err = h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
-		if err == nil {
-			bucketPolicy = string(policyData)
-		} else if !errors.Is(err, ErrAttributeNotFound) {
-			return fmt.Errorf("failed to fetch bucket policy: %v", err)
-		}
-		if tags, err := h.readTags(r.Context(), client, bucketPath); err != nil {
-			return err
-		} else if tags != nil {
-			bucketTags = tags
-		}
-
-		return nil
-	})
-	if err != nil {
-		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to fetch policies: %v", err))
-		return err
-	}
-
-	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
-	identityActions := getIdentityActions(r)
-	nsAllowed := CheckPermissionWithContext("CreateTable", accountID, namespaceMetadata.OwnerAccountID, namespacePolicy, bucketARN, &PolicyContext{
-		TableBucketName: bucketName,
-		Namespace:       namespaceName,
-		TableName:       tableName,
-		TableBucketTags: bucketTags,
-		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllowFor(r),
-	})
-	bucketAllowed := CheckPermissionWithContext("CreateTable", accountID, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-		TableBucketName: bucketName,
-		Namespace:       namespaceName,
-		TableName:       tableName,
-		TableBucketTags: bucketTags,
-		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllowFor(r),
-	})
-	if !nsAllowed && !bucketAllowed {
-		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to register table in this namespace")
-		return ErrAccessDenied
-	}
+	bucketName, namespaceName, tableName := target.bucketName, target.namespaceName, target.tableName
 
 	tablePath := GetTablePath(bucketName, namespaceName, tableName)
 
@@ -467,7 +254,7 @@ func (h *S3TablesHandler) handleRegisterTable(w http.ResponseWriter, r *http.Req
 		Format:           FormatIceberg,
 		CreatedAt:        now,
 		ModifiedAt:       now,
-		OwnerAccountID:   namespaceMetadata.OwnerAccountID,
+		OwnerAccountID:   target.ownerAccountID,
 		VersionToken:     versionToken,
 		MetadataVersion:  metadataVersionFromLocation(req.MetadataLocation),
 		MetadataLocation: req.MetadataLocation,
@@ -1807,4 +1594,136 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 		VersionToken:     metadata.VersionToken,
 	})
 	return nil
+}
+
+// createTableTarget is the namespace a create or register resolved to, once the
+// caller has been authorized to put a table there.
+type createTableTarget struct {
+	bucketName     string
+	namespaceName  string
+	tableName      string
+	bucketFormat   string
+	ownerAccountID string
+}
+
+// authorizeCreateTable validates the names a create names and checks the caller
+// may create a table in that namespace, writing the error response itself.
+// Deferred creates (Iceberg stage-create) write into the table bucket before any
+// table is registered, so they run this same gate first through
+// Manager.AuthorizeCreateTable.
+func (h *S3TablesHandler) authorizeCreateTable(w http.ResponseWriter, r *http.Request, filerClient FilerClient, tableBucketARN string, namespace []string, name string, requestTags map[string]string) (*createTableTarget, error) {
+	if tableBucketARN == "" {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "tableBucketARN is required")
+		return nil, fmt.Errorf("tableBucketARN is required")
+	}
+
+	namespaceName, err := validateNamespace(namespace)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return nil, err
+	}
+
+	if name == "" {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "name is required")
+		return nil, fmt.Errorf("name is required")
+	}
+
+	bucketName, err := parseBucketNameFromARN(tableBucketARN)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return nil, err
+	}
+
+	tableName, err := validateTableName(name)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return nil, err
+	}
+
+	// Check if namespace exists
+	namespacePath := GetNamespacePath(bucketName, namespaceName)
+	namespaceMetadata, err := h.loadNamespaceMetadata(r.Context(), filerClient, bucketName, namespaceName)
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", namespaceName))
+		} else {
+			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check namespace: %v", err))
+		}
+		return nil, err
+	}
+
+	// Authorize table creation using policy framework (namespace + bucket policies)
+	accountID := h.getAccountID(r)
+	bucketPath := GetTableBucketPath(bucketName)
+	namespacePolicy := ""
+	bucketPolicy := ""
+	bucketTags := map[string]string{}
+	var bucketMetadata tableBucketMetadata
+
+	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		// Fetch bucket metadata to use correct owner for bucket policy evaluation
+		data, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
+		if err == nil {
+			if err := json.Unmarshal(data, &bucketMetadata); err != nil {
+				return fmt.Errorf("failed to unmarshal bucket metadata: %w", err)
+			}
+		} else if !errors.Is(err, ErrAttributeNotFound) {
+			return fmt.Errorf("failed to fetch bucket metadata: %v", err)
+		}
+
+		// Fetch namespace policy if it exists
+		policyData, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyPolicy)
+		if err == nil {
+			namespacePolicy = string(policyData)
+		} else if !errors.Is(err, ErrAttributeNotFound) {
+			return fmt.Errorf("failed to fetch namespace policy: %v", err)
+		}
+
+		// Fetch bucket policy if it exists
+		policyData, err = h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
+		if err == nil {
+			bucketPolicy = string(policyData)
+		} else if !errors.Is(err, ErrAttributeNotFound) {
+			return fmt.Errorf("failed to fetch bucket policy: %v", err)
+		}
+		if tags, err := h.readTags(r.Context(), client, bucketPath); err != nil {
+			return err
+		} else if tags != nil {
+			bucketTags = tags
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to fetch policies: %v", err))
+		return nil, err
+	}
+
+	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
+	identityActions := getIdentityActions(r)
+	policyContext := &PolicyContext{
+		TableBucketName: bucketName,
+		Namespace:       namespaceName,
+		TableName:       tableName,
+		RequestTags:     requestTags,
+		TagKeys:         mapKeys(requestTags),
+		TableBucketTags: bucketTags,
+		IdentityActions: identityActions,
+		DefaultAllow:    h.defaultAllowFor(r),
+	}
+	nsAllowed := CheckPermissionWithContext("CreateTable", accountID, namespaceMetadata.OwnerAccountID, namespacePolicy, bucketARN, policyContext)
+	bucketAllowed := CheckPermissionWithContext("CreateTable", accountID, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, policyContext)
+	if !nsAllowed && !bucketAllowed {
+		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create table in this namespace")
+		return nil, ErrAccessDenied
+	}
+
+	return &createTableTarget{
+		bucketName:     bucketName,
+		namespaceName:  namespaceName,
+		tableName:      tableName,
+		bucketFormat:   bucketMetadata.Format,
+		ownerAccountID: namespaceMetadata.OwnerAccountID,
+	}, nil
 }
