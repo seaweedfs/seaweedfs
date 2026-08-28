@@ -264,20 +264,22 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 			return nil, fmt.Errorf("ec volume %d: no .vif and the bitrot sidecar cannot establish the layout: %w", vid, sidecarErr)
 		}
 		if sidecarFound {
-			{
-				ev.ECContext = &ECContext{
-					Collection:   collection,
-					VolumeId:     vid,
-					DataShards:   int(cfg.GetDataShards()),
-					ParityShards: int(cfg.GetParityShards()),
-					BlockSize:    cfg.GetBlockSize(),
-				}
-				ev.EncodeTsNs = cfg.GetEncodeTsNs()
-				glog.V(0).Infof("ec volume %d: .vif missing; took EC config from the bitrot sidecar: %s",
-					vid, ev.ECContext.String())
+			ev.ECContext = &ECContext{
+				Collection:   collection,
+				VolumeId:     vid,
+				DataShards:   int(cfg.GetDataShards()),
+				ParityShards: int(cfg.GetParityShards()),
+				BlockSize:    cfg.GetBlockSize(),
 			}
+			ev.EncodeTsNs = cfg.GetEncodeTsNs()
+			glog.V(0).Infof("ec volume %d: .vif missing; took EC config from the bitrot sidecar: %s",
+				vid, ev.ECContext.String())
+		} else {
+			// Only now are the defaults what the volume actually mounted on;
+			// logging this after the sidecar answered would send an operator
+			// triaging wrong bytes after the legacy layout instead.
+			glog.Warningf("vif file not found, using defaults, volumeId:%d, filename:%s", vid, vifFileName)
 		}
-		glog.Warningf("vif file not found, using defaults, volumeId:%d, filename:%s", vid, vifFileName)
 	}
 
 	ev.ShardLocations = make(map[ShardId][]pb.ServerAddress)
