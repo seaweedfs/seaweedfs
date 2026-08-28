@@ -946,7 +946,9 @@ async fn recover_one_remote_ec_shard_interval(
     })?;
 
     // Charge the buffers this recovery is about to hold against the budget, so a
-    // burst of them queues here rather than on the heap.
+    // burst of them queues here rather than on the heap. An interval whose
+    // fan-out outgrows the whole budget takes all of it and so runs alone,
+    // rather than waiting on permits that can never be granted.
     let _permit = EC_RECOVER_SEM
         .acquire_many((size * data_shards).min(EC_RECOVER_BUDGET) as u32)
         .await

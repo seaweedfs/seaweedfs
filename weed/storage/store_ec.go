@@ -730,7 +730,9 @@ func (s *Store) recoverOneRemoteEcShardInterval(needleId types.NeedleId, ecVolum
 	// burst of them queues here rather than on the heap.
 	weight := int64(len(buf)) * int64(ecCtx.DataShards)
 	if weight > ecRecoverBudget {
-		// never exceeds the semaphore size, or the acquire could not succeed
+		// An interval whose fan-out outgrows the whole budget takes all of it and
+		// so runs alone, rather than blocking forever on an acquire that can never
+		// succeed. The cap is then one such recovery, not a burst of them.
 		weight = ecRecoverBudget
 	}
 	if err = ecRecoverSem.Acquire(context.Background(), weight); err != nil {
