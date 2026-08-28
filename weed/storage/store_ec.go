@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/klauspost/reedsolomon"
+	"golang.org/x/sync/semaphore"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -436,6 +437,15 @@ func (s *Store) IntervalToShardIdAndOffset(iv erasure_coding.Interval) (erasure_
 	return iv.ToShardIdAndOffset(erasure_coding.ErasureCodingLargeBlockSize, erasure_coding.ErasureCodingSmallBlockSize)
 }
 
+var (
+	// ecRecoverBudget bounds the interval-sized buffers EC recovery holds across
+	// all concurrent reads: a peer that is slow to fail keeps a whole fan-out of
+	// them alive for the gRPC timeout, and a burst of those walked servers into an
+	// OOM. A var so a test can narrow it alongside ecRecoverSem.
+	ecRecoverBudget int64 = 256 << 20
+	ecRecoverSem          = semaphore.NewWeighted(ecRecoverBudget)
+)
+
 // ecIntervalReadConcurrency bounds the fan-out of a single needle read. Blocks
 // that follow each other in the .dat live on different shards, so a needle
 // spanning several of them costs one round trip per block when read in sequence.
@@ -713,6 +723,18 @@ func (s *Store) recoverOneRemoteEcShardInterval(needleId types.NeedleId, ecVolum
 		return 0, false, fmt.Errorf("failed to create encoder: %w", err)
 	}
 
+	// Charge the buffers this recovery is about to hold against the budget, so a
+	// burst of them queues here rather than on the heap.
+	weight := int64(len(buf)) * int64(ecCtx.DataShards)
+	if weight > ecRecoverBudget {
+		// never exceeds the semaphore size, or the acquire could not succeed
+		weight = ecRecoverBudget
+	}
+	if err = ecRecoverSem.Acquire(context.Background(), weight); err != nil {
+		return 0, false, err
+	}
+	defer ecRecoverSem.Release(weight)
+
 	// Use MaxShardCount to support custom EC ratios up to 32 shards
 	bufs := make([][]byte, erasure_coding.MaxShardCount)
 
@@ -753,13 +775,14 @@ func (s *Store) recoverOneRemoteEcShardInterval(needleId types.NeedleId, ecVolum
 	}
 	ecVolume.ShardLocationsLock.RUnlock()
 
-	// Reconstruction consumes DataShards buffers, so reading every remaining shard
-	// holds a third more than that and asks a third more of peers that may already
-	// be struggling. Fetch what is still missing, and widen only if some fail.
 	// The recover goroutines run concurrently, so the deleted flag is collected
 	// atomically and folded into the named return after they join, rather than each
 	// goroutine writing the shared bool directly.
 	var isDeletedFlag atomic.Bool
+
+	// Reconstruction consumes DataShards buffers, so reading every remaining shard
+	// holds a third more than that and asks a third more of peers that are, by
+	// then, already struggling. Widen only when a wave falls short.
 	for len(candidates) > 0 && available < ecCtx.DataShards {
 		wave := min(ecCtx.DataShards-available, len(candidates))
 		var wg sync.WaitGroup

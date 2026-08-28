@@ -5,10 +5,12 @@ import (
 	"math/rand"
 	"net"
 	"os"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"golang.org/x/sync/semaphore"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -28,17 +30,28 @@ import (
 // test releases it, so a stalled fan-out is observable while it is stalled.
 type countingEcShardPeer struct {
 	volume_server_pb.UnimplementedVolumeServerServer
-	requests atomic.Int64
-	inFlight atomic.Int64
-	release  chan struct{}
+	requests    atomic.Int64
+	inFlight    atomic.Int64
+	peak        atomic.Int64
+	release     chan struct{}
+	releaseOnce sync.Once
 }
 
 func (p *countingEcShardPeer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardReadRequest, stream volume_server_pb.VolumeServer_VolumeEcShardReadServer) error {
 	p.requests.Add(1)
-	p.inFlight.Add(1)
+	inFlight := p.inFlight.Add(1)
+	for peak := p.peak.Load(); inFlight > peak; peak = p.peak.Load() {
+		if p.peak.CompareAndSwap(peak, inFlight) {
+			break
+		}
+	}
 	defer p.inFlight.Add(-1)
 	<-p.release
 	return status.Error(codes.Unavailable, "transient failure")
+}
+
+func (p *countingEcShardPeer) releaseAll() {
+	p.releaseOnce.Do(func() { close(p.release) })
 }
 
 func startCountingEcShardPeer(t *testing.T) (*countingEcShardPeer, pb.ServerAddress) {
@@ -52,7 +65,7 @@ func startCountingEcShardPeer(t *testing.T) (*countingEcShardPeer, pb.ServerAddr
 	volume_server_pb.RegisterVolumeServerServer(srv, peer)
 	go srv.Serve(lis)
 	t.Cleanup(func() {
-		close(peer.release)
+		peer.releaseAll()
 		srv.Stop()
 	})
 	return peer, pb.NewServerAddressWithGrpcPort("127.0.0.1:1", lis.Addr().(*net.TCPAddr).Port)
@@ -239,4 +252,58 @@ func TestRecoverOneRemoteEcShardIntervalFetchesOnlyWhatItNeeds(t *testing.T) {
 	if !bytes.Equal(got, want) {
 		t.Errorf("recovered shard %d bytes differ from the shard on disk", shardIdToRecover)
 	}
+}
+
+// setEcRecoverBudget narrows the process-wide recovery budget for one test.
+func setEcRecoverBudget(t *testing.T, budget int64) {
+	t.Helper()
+	oldBudget, oldSem := ecRecoverBudget, ecRecoverSem
+	ecRecoverBudget, ecRecoverSem = budget, semaphore.NewWeighted(budget)
+	t.Cleanup(func() { ecRecoverBudget, ecRecoverSem = oldBudget, oldSem })
+}
+
+// A burst of reads against a peer that has stopped answering queues on the
+// recovery budget instead of piling interval-sized buffers onto the heap.
+func TestRecoverOneRemoteEcShardIntervalBoundsInFlightBytes(t *testing.T) {
+	const intervalSize = 1 << 20
+	const readers = 8
+	const budget = 24 << 20
+
+	setEcRecoverBudget(t, budget)
+	peer, addr := startCountingEcShardPeer(t)
+
+	store := &Store{grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials())}
+	ecVolume := &erasure_coding.EcVolume{
+		VolumeId:       7,
+		ShardLocations: make(map[erasure_coding.ShardId][]pb.ServerAddress),
+	}
+	seedShardLocations(ecVolume, addr)
+
+	var wg sync.WaitGroup
+	for i := 0; i < readers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			store.recoverOneRemoteEcShardInterval(types.Uint64ToNeedleId(42), ecVolume, 0, make([]byte, intervalSize), 0)
+		}()
+	}
+
+	// let the fan-out reach the peer and settle there
+	for deadline, settled, last := time.Now().Add(10*time.Second), 0, int64(-1); time.Now().Before(deadline) && settled < 5; {
+		time.Sleep(50 * time.Millisecond)
+		inFlight := peer.inFlight.Load()
+		if inFlight > 0 && inFlight == last {
+			settled++
+		} else {
+			settled = 0
+		}
+		last = inFlight
+	}
+
+	if peak, allowed := peer.peak.Load(), int64(budget/intervalSize); peak > allowed {
+		t.Errorf("%d shard reads of %dMB in flight at once, more than the %dMB budget allows", peak, intervalSize>>20, budget>>20)
+	}
+
+	peer.releaseAll()
+	wg.Wait()
 }

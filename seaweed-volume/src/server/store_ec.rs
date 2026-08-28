@@ -35,6 +35,7 @@ use std::time::{Duration, Instant};
 use futures::future::join_all;
 use futures::stream::{self, StreamExt};
 use reed_solomon_erasure::galois_8::ReedSolomon;
+use tokio::sync::Semaphore;
 use tonic::Request;
 
 use crate::pb::master_pb::{self, seaweed_client::SeaweedClient, LookupEcVolumeRequest};
@@ -53,6 +54,15 @@ use crate::storage::volume::volume_file_name;
 /// Bounds the fan-out of a single needle read. Mirrors Go's
 /// `ecIntervalReadConcurrency`.
 const INTERVAL_READ_CONCURRENCY: usize = 8;
+
+/// Bounds the bytes EC recovery holds in flight across every concurrent read.
+/// Recovery is the one read path that multiplies the served bytes — it keeps an
+/// interval-sized buffer per shard alive until Reed-Solomon runs — and a peer
+/// that is slow to fail holds each of them for the whole gRPC timeout, so a
+/// burst of reads during a network blip walked the server into an OOM. Mirrors
+/// Go's `ecRecoverBudget`.
+const EC_RECOVER_BUDGET: usize = 256 << 20;
+static EC_RECOVER_SEM: Semaphore = Semaphore::const_new(EC_RECOVER_BUDGET);
 
 /// One interval's data after Phase A.
 enum IntervalResult {
@@ -935,6 +945,21 @@ async fn recover_one_remote_ec_shard_interval(
             format!("reed-solomon init: {:?}", e),
         )
     })?;
+
+    // Charge the buffers this recovery is about to hold against the budget, so a
+    // burst of them queues here rather than on the heap.
+    let _permit = EC_RECOVER_SEM
+        .acquire_many((size * data_shards).min(EC_RECOVER_BUDGET) as u32)
+        .await
+        .map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::Other,
+                format!(
+                    "ec recover budget for shard {}.{}: {}",
+                    vid.0, shard_id_to_recover, e
+                ),
+            )
+        })?;
 
     let mut bufs: Vec<Option<Vec<u8>>> = vec![None; total_shards];
 
