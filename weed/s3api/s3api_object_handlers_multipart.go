@@ -510,11 +510,14 @@ func (s3a *S3ApiServer) checkUploadStillOpen(w http.ResponseWriter, r *http.Requ
 	if isMultipartUploadEntry(entry) {
 		return true
 	}
-	s3a.abortMultipartUpload(&s3.AbortMultipartUploadInput{
+	// the upload is gone either way, so the client still hears NoSuchUpload
+	if _, code := s3a.abortMultipartUpload(&s3.AbortMultipartUploadInput{
 		Bucket:   aws.String(bucket),
 		Key:      objectKey(aws.String(object)),
 		UploadId: aws.String(uploadID),
-	})
+	}); code != s3err.ErrNone {
+		glog.Warningf("checkUploadStillOpen %s/%s: part left behind, cleanup failed", bucket, uploadID)
+	}
 	s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)
 	return false
 }
