@@ -77,7 +77,7 @@ func TestDeleteObjectEntryDemotesNonEmptyDirectoryMarker(t *testing.T) {
 		},
 	}
 
-	err := deleteObjectEntry(client, "/buckets/test", "photos", true, false)
+	err := deleteObjectEntry(context.Background(), client, "/buckets/test", "photos", true, false)
 	require.NoError(t, err)
 	require.NotNil(t, client.lookupReq)
 	require.NotNil(t, client.updateReq)
@@ -116,7 +116,7 @@ func TestDeleteObjectEntryDemotesPrefixObject(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, deleteObjectEntry(client, "/buckets/test", "photos", true, false))
+	require.NoError(t, deleteObjectEntry(context.Background(), client, "/buckets/test", "photos", true, false))
 	require.NotNil(t, client.updateReq)
 
 	updated := client.updateReq.Entry
@@ -140,7 +140,7 @@ func TestDeleteObjectEntryTreatsImplicitDirectoryAsSuccessfulNoop(t *testing.T) 
 		},
 	}
 
-	err := deleteObjectEntry(client, "/buckets/test", "photos", true, false)
+	err := deleteObjectEntry(context.Background(), client, "/buckets/test", "photos", true, false)
 	require.NoError(t, err)
 	require.NotNil(t, client.lookupReq)
 	assert.Nil(t, client.updateReq)
@@ -163,7 +163,7 @@ func TestDeleteObjectEntryIgnoresConcurrentUpdateNotFound(t *testing.T) {
 		updateErr: status.Error(codes.NotFound, "already removed"),
 	}
 
-	err := deleteObjectEntry(client, "/buckets/test", "photos", true, false)
+	err := deleteObjectEntry(context.Background(), client, "/buckets/test", "photos", true, false)
 	require.NoError(t, err)
 	require.NotNil(t, client.lookupReq)
 	require.NotNil(t, client.updateReq)
@@ -180,7 +180,7 @@ func TestDeleteObjectEntryIgnoresMarkerSpoofedByKey(t *testing.T) {
 		},
 	}
 
-	err := deleteObjectEntry(client, "/buckets/test", name, true, false)
+	err := deleteObjectEntry(context.Background(), client, "/buckets/test", name, true, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "disk full")
 	assert.Nil(t, client.lookupReq)
@@ -192,7 +192,7 @@ func TestDeleteObjectEntryPropagatesNonDirectoryDeleteErrors(t *testing.T) {
 		deleteErr: errors.New("boom"),
 	}
 
-	err := deleteObjectEntry(client, "/buckets/test", "photos", true, false)
+	err := deleteObjectEntry(context.Background(), client, "/buckets/test", "photos", true, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "boom")
 	assert.Nil(t, client.lookupReq)

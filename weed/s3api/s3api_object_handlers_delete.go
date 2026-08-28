@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"context"
 	"encoding/xml"
 	"errors"
 	"io"
@@ -189,13 +190,13 @@ func (s3a *S3ApiServer) deleteVersionedObject(r *http.Request, bucket, object, v
 // relies on the volume's natural TTL to reclaim chunks; pass true only
 // when the entry's Attributes.TtlSec > 0 so the volume is guaranteed to
 // drop the chunks on its own.
-func (s3a *S3ApiServer) deleteUnversionedObjectWithClient(client filer_pb.SeaweedFilerClient, bucket, object string, metadataOnly bool) error {
+func (s3a *S3ApiServer) deleteUnversionedObjectWithClient(ctx context.Context, client filer_pb.SeaweedFilerClient, bucket, object string, metadataOnly bool) error {
 	if !s3_constants.IsValidBucketName(bucket) || !s3_constants.IsValidObjectKey(object) {
 		return errors.New("invalid bucket or object path")
 	}
 	target := util.NewFullPath(s3a.bucketDir(bucket), object)
 	dir, name := target.DirAndName()
-	return deleteObjectEntry(client, dir, name, !metadataOnly, false)
+	return deleteObjectEntry(ctx, client, dir, name, !metadataOnly, false)
 }
 
 func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Request) {
@@ -326,7 +327,7 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 			}
 
 			if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-				return s3a.deleteUnversionedObjectWithClient(client, bucket, object, false)
+				return s3a.deleteUnversionedObjectWithClient(r.Context(), client, bucket, object, false)
 			}); err != nil {
 				glog.Errorf("DeleteObjectHandler: failed to delete %s/%s: %v", bucket, object, err)
 				return s3err.ErrInternalError
@@ -493,7 +494,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 					return s3a.deleteDirectoryMarker(r, bucket, object.Key)
 				}
 
-				if err := s3a.deleteUnversionedObjectWithClient(client, bucket, object.Key, false); err != nil {
+				if err := s3a.deleteUnversionedObjectWithClient(r.Context(), client, bucket, object.Key, false); err != nil {
 					glog.Errorf("DeleteMultipleObjectsHandler: failed to delete %s/%s: %v", bucket, object.Key, err)
 					return s3err.ErrInternalError
 				}

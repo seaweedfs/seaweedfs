@@ -88,7 +88,7 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 			return done(), nil
 		default:
 			err := s3a.WithFilerClient(false, func(c filer_pb.SeaweedFilerClient) error {
-				return s3a.deleteUnversionedObjectWithClient(c, req.Bucket, req.ObjectPath, metadataOnly)
+				return s3a.deleteUnversionedObjectWithClient(ctx, c, req.Bucket, req.ObjectPath, metadataOnly)
 			})
 			if err != nil {
 				if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrObjectNotFound) {
