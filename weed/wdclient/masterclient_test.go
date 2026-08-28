@@ -9,6 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // TestWaitUntilConnectedWithoutKeepConnected verifies that WaitUntilConnected
@@ -151,5 +152,35 @@ func TestWithClientStopsWaitingOnDeadline(t *testing.T) {
 	}
 	if elapsed > time.Second {
 		t.Errorf("WithClient blocked for %v past a 100ms deadline", elapsed)
+	}
+}
+
+// TestWithClientStopsBackoffOnCancel verifies that a cancellation arriving while
+// the retry is backing off cuts the backoff short rather than sleeping it out.
+func TestWithClientStopsBackoffOnCancel(t *testing.T) {
+	mc := NewMasterClient(grpc.WithTransportCredentials(insecure.NewCredentials()), "test-group", "test-client", "", "", "", pb.ServerDiscovery{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	getMasterF := func() pb.ServerAddress { return "localhost:19333" }
+
+	attempts := 0
+	start := time.Now()
+	err := mc.WithClientCustomGetMaster(ctx, getMasterF, false, func(client master_pb.SeaweedClient) error {
+		attempts++
+		cancel()
+		return errors.New("connection reset by peer")
+	})
+	elapsed := time.Since(start)
+
+	if attempts != 1 {
+		t.Errorf("expected 1 attempt, got %d", attempts)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled, got %v", err)
+	}
+	if elapsed > time.Second {
+		t.Errorf("WithClientCustomGetMaster slept %v after the context was canceled", elapsed)
 	}
 }
