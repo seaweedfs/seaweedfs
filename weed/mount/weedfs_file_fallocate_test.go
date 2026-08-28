@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -127,5 +128,30 @@ func TestFallocateNoOpIgnoresQuotaAndWorm(t *testing.T) {
 	wfs.IsOverQuota = false
 	if status := wfs.Fallocate(nil, in); status != fuse.EPERM {
 		t.Fatalf("Fallocate past the end under worm: got %v, want EPERM", status)
+	}
+}
+
+// TestFallocateChargesTheGrowth pins the quota accounting: the writes that fill
+// a pre-extended range do not grow the file, so they charge nothing and the
+// growth has to be counted where it happens.
+func TestFallocateChargesTheGrowth(t *testing.T) {
+	atomic.StoreInt64(&uncommittedBytes, 0)
+	wfs, fh := newFallocateTestHandle(t, 10)
+	wfs.option.Quota = 100 << 20
+
+	in := &fuse.FallocateIn{Fh: uint64(fh.fh), Offset: 0, Length: 8192}
+	if status := wfs.Fallocate(nil, in); status != fuse.OK {
+		t.Fatalf("Fallocate past the end: got %v, want OK", status)
+	}
+	if got := wfs.GetUncommittedBytes(); got != 8192-10 {
+		t.Fatalf("uncommitted bytes: got %d, want %d", got, 8192-10)
+	}
+
+	// A second request inside the now-larger file allocates nothing more.
+	if status := wfs.Fallocate(nil, in); status != fuse.OK {
+		t.Fatalf("Fallocate inside the file: got %v, want OK", status)
+	}
+	if got := wfs.GetUncommittedBytes(); got != 8192-10 {
+		t.Fatalf("uncommitted bytes after a no-op: got %d, want %d", got, 8192-10)
 	}
 }
