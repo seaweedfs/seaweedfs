@@ -1442,6 +1442,8 @@ func (b *filerRetryBudget) take(d time.Duration) (time.Duration, bool) {
 //   - NotFound: the entry genuinely doesn't exist. Retrying won't make
 //     it appear, and callers (e.g. repointLatestBeforeDeletion) want
 //     to act on this directly.
+//   - non-empty folder: the filer looked and the children are there, so
+//     the answer will not change; callers act on it directly too.
 //   - context.Canceled / DeadlineExceeded: the request was aborted by
 //     the client or hit a deadline. Continuing to retry just delays
 //     the failure return.
@@ -1453,6 +1455,9 @@ func isRetryableFilerErr(err error) bool {
 		return false
 	}
 	if errors.Is(err, filer_pb.ErrNotFound) || status.Code(err) == codes.NotFound {
+		return false
+	}
+	if errors.Is(err, filer.ErrNonEmptyFolder) {
 		return false
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
