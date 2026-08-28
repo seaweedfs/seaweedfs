@@ -401,6 +401,13 @@ func shouldInvalidateConnection(ctx context.Context, err error) bool {
 		return false
 	}
 
+	// A metadata subscriber reads log chunks over HTTP from volume servers and
+	// returns what went wrong there through the stream. Those failures read like
+	// transport failures below, and would drop a filer channel that is fine.
+	if errors.Is(err, ErrLogFileRead) {
+		return false
+	}
+
 	// gRPC raises this locally, before the RPC reaches the wire, when this
 	// process already closed the ClientConn. The caller is a bystander of
 	// someone else's teardown, and knows nothing about the peer. Its message
