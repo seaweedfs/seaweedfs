@@ -88,6 +88,8 @@ struct Snapshot {
     intervals: Vec<IntervalResult>,
     cached_locations: HashMap<ShardId, Vec<String>>,
     cache_refreshed_at: Option<Instant>,
+    /// Whether a failed read has disproved the cached map since its last refresh.
+    locations_stale: bool,
     /// This volume's encode identity, carried to peers on remote shard reads so a
     /// shard from a different encode run is rejected rather than served at a
     /// mismatched offset. 0 for a pre-feature volume (lenient).
@@ -124,6 +126,7 @@ pub async fn read_ec_shard_needle_distributed(
         && needs_refresh(
             &shard_locations,
             snapshot.cache_refreshed_at,
+            snapshot.locations_stale,
             snapshot.data_shards as usize,
             total_shards,
         )
@@ -252,7 +255,16 @@ pub async fn scrub_ec_volume_distributed(
 ) -> (i64, Vec<crate::pb::volume_server_pb::EcShardInfo>, Vec<String>) {
     // Phase A — under the Store read lock, run the index scrub and grab the
     // paths/scalars + shard-location staleness; release the lock before any await.
-    let (ecx_path, collection, seed_errs, cached_locations, cache_refreshed_at, data_shards, total_shards) = {
+    let (
+        ecx_path,
+        collection,
+        seed_errs,
+        cached_locations,
+        cache_refreshed_at,
+        locations_stale,
+        data_shards,
+        total_shards,
+    ) = {
         let store = state.store.read().unwrap();
         let ecv = match store.find_ec_volume(vid) {
             Some(v) => v,
@@ -269,6 +281,9 @@ pub async fn scrub_ec_volume_distributed(
         // Bind to locals so the inner RwLock/Mutex guards drop before the block ends.
         let cached_locations = ecv.shard_locations.read().unwrap().clone();
         let cache_refreshed_at = *ecv.shard_locations_refresh_time.lock().unwrap();
+        let locations_stale = ecv
+            .shard_locations_stale
+            .load(std::sync::atomic::Ordering::Relaxed);
         let data_shards = ecv.data_shards as usize;
         let total_shards = (ecv.data_shards + ecv.parity_shards) as usize;
         (
@@ -277,6 +292,7 @@ pub async fn scrub_ec_volume_distributed(
             errs,
             cached_locations,
             cache_refreshed_at,
+            locations_stale,
             data_shards,
             total_shards,
         )
@@ -287,7 +303,13 @@ pub async fn scrub_ec_volume_distributed(
     // cachedLookupEcShardLocations). A partial reply (< data_shards locations, a
     // master mid-recovery) or a failed lookup is a hard, retryable error — never
     // overwrite a good cache with a partial map or storm a down master per needle.
-    if needs_refresh(&cached_locations, cache_refreshed_at, data_shards, total_shards) {
+    if needs_refresh(
+        &cached_locations,
+        cache_refreshed_at,
+        locations_stale,
+        data_shards,
+        total_shards,
+    ) {
         match cached_lookup_ec_shard_locations(state, vid).await {
             Ok(fresh) => {
                 if write_back_shard_locations(state, vid, fresh, data_shards).is_none() {
@@ -583,6 +605,9 @@ fn build_snapshot(
     let interval_results = read_local_intervals(ecv, intervals);
     let cached_locations = ecv.shard_locations.read().unwrap().clone();
     let cache_refreshed_at = *ecv.shard_locations_refresh_time.lock().unwrap();
+    let locations_stale = ecv
+        .shard_locations_stale
+        .load(std::sync::atomic::Ordering::Relaxed);
 
     Ok(Snapshot {
         data_shards: ecv.data_shards,
@@ -594,6 +619,7 @@ fn build_snapshot(
         intervals: interval_results,
         cached_locations,
         cache_refreshed_at,
+        locations_stale,
         encode_ts_ns: ecv.encode_ts_ns,
     })
 }
@@ -603,6 +629,7 @@ fn build_snapshot(
 fn needs_refresh(
     locations: &HashMap<ShardId, Vec<String>>,
     refreshed_at: Option<Instant>,
+    stale: bool,
     data_shards: usize,
     total_shards: usize,
 ) -> bool {
@@ -612,16 +639,30 @@ fn needs_refresh(
         None => return true,
     };
     let shard_count = locations.len();
-    if shard_count < data_shards && age < Duration::from_secs(11) {
-        return false;
+    // A complete map is trusted longest. One short of data_shards, or one a
+    // failed read has just disproved, is re-checked promptly: until it is, reads
+    // keep aiming at a location the shard has left.
+    let ttl = if stale || shard_count < data_shards {
+        Duration::from_secs(11)
+    } else if shard_count == total_shards {
+        Duration::from_secs(37 * 60)
+    } else {
+        Duration::from_secs(7 * 60)
+    };
+    age >= ttl
+}
+
+/// Mark the cached shard map for a prompt re-check after a read failed against
+/// one of its locations. Go drops the entry outright in `forgetShardId`, which
+/// costs it the direct read until the map is re-learned; here the entry stays
+/// (a dead peer just fails fast on the next attempt) and only the freshness
+/// window is cut, so a shard that has moved is picked up in seconds either way.
+fn mark_shard_locations_stale(state: &Arc<VolumeServerState>, vid: VolumeId) {
+    let store = state.store.read().unwrap();
+    if let Some(ecv) = store.find_ec_volume(vid) {
+        ecv.shard_locations_stale
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
-    if shard_count == total_shards && age < Duration::from_secs(37 * 60) {
-        return false;
-    }
-    if shard_count >= data_shards && age < Duration::from_secs(7 * 60) {
-        return false;
-    }
-    true
 }
 
 async fn cached_lookup_ec_shard_locations(
@@ -1058,6 +1099,7 @@ async fn recover_one_remote_ec_shard_interval(
                         needle_id,
                         e
                     );
+                    mark_shard_locations_stale(state, vid);
                 }
             }
         }
@@ -1331,4 +1373,35 @@ async fn drain_copy_stream(
             .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("write {}: {}", dest_path, e)))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn locations(count: usize) -> HashMap<ShardId, Vec<String>> {
+        (0..count)
+            .map(|sid| (sid as ShardId, vec!["127.0.0.1:8080".to_string()]))
+            .collect()
+    }
+
+    #[test]
+    fn needs_refresh_re_checks_a_map_a_failed_read_disproved() {
+        let just_now = Some(Instant::now());
+        let aged = Some(Instant::now() - Duration::from_secs(12));
+
+        // A complete map is trusted for a long time, and one shard short still
+        // outlasts a 12-second gap.
+        assert!(!needs_refresh(&locations(14), aged, false, 10, 14));
+        assert!(!needs_refresh(&locations(13), aged, false, 10, 14));
+        // Disproved by a read, the same maps are re-checked within seconds.
+        assert!(needs_refresh(&locations(14), aged, true, 10, 14));
+        assert!(needs_refresh(&locations(13), aged, true, 10, 14));
+        // But the mark buys one prompt re-check, not a lookup per read.
+        assert!(!needs_refresh(&locations(14), just_now, true, 10, 14));
+        // A map short of the data shards is re-checked promptly regardless.
+        assert!(needs_refresh(&locations(9), aged, false, 10, 14));
+        // An unrefreshed cache always looks up.
+        assert!(needs_refresh(&locations(0), None, false, 10, 14));
+    }
 }

@@ -548,7 +548,23 @@ func forgetShardId(ecVolume *erasure_coding.EcVolume, shardId erasure_coding.Sha
 	// failed to access the source data nodes, clear it up
 	ecVolume.ShardLocationsLock.Lock()
 	delete(ecVolume.ShardLocations, shardId)
+	ecVolume.ShardLocationsStale = true
 	ecVolume.ShardLocationsLock.Unlock()
+}
+
+// ecShardLocationsTTL is how long a cached shard map is trusted. A complete map
+// is trusted longest. One short of DataShards, or one a failed read has just
+// invalidated, is re-checked promptly: until it is, every read of the dropped
+// shard skips the direct fetch and pays for a Reed-Solomon recovery instead.
+func ecShardLocationsTTL(shardCount int, stale bool, ecCtx *erasure_coding.ECContext) time.Duration {
+	switch {
+	case stale || shardCount < ecCtx.DataShards:
+		return 11 * time.Second
+	case shardCount == ecCtx.Total():
+		return 37 * time.Minute
+	default:
+		return 7 * time.Minute
+	}
 }
 
 func (s *Store) cachedLookupEcShardLocations(ecVolume *erasure_coding.EcVolume) (err error) {
@@ -567,13 +583,9 @@ func (s *Store) cachedLookupEcShardLocations(ecVolume *erasure_coding.EcVolume) 
 	ecVolume.ShardLocationsLock.RLock()
 	shardCount := len(ecVolume.ShardLocations)
 	refreshTime := ecVolume.ShardLocationsRefreshTime
+	stale := ecVolume.ShardLocationsStale
 	ecVolume.ShardLocationsLock.RUnlock()
-	if shardCount < ecCtx.DataShards &&
-		refreshTime.Add(11*time.Second).After(time.Now()) ||
-		shardCount == ecCtx.Total() &&
-			refreshTime.Add(37*time.Minute).After(time.Now()) ||
-		shardCount >= ecCtx.DataShards &&
-			refreshTime.Add(7*time.Minute).After(time.Now()) {
+	if refreshTime.Add(ecShardLocationsTTL(shardCount, stale, ecCtx)).After(time.Now()) {
 		// still fresh
 		return nil
 	}
@@ -601,6 +613,7 @@ func (s *Store) cachedLookupEcShardLocations(ecVolume *erasure_coding.EcVolume) 
 			}
 		}
 		ecVolume.ShardLocationsRefreshTime = time.Now()
+		ecVolume.ShardLocationsStale = false
 		ecVolume.ShardLocationsLock.Unlock()
 
 		return nil

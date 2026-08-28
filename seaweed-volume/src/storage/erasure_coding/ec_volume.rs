@@ -55,6 +55,11 @@ pub struct EcVolume {
     /// `cached_lookup_ec_shard_locations` (mirrors Go's
     /// `ShardLocationsRefreshTime`).
     pub shard_locations_refresh_time: std::sync::Mutex<Option<std::time::Instant>>,
+    /// Marks the map for a prompt re-check: a read that failed against a cached
+    /// location has disproved what the map claims, and the normal freshness
+    /// window is far too long to serve from a map known to be wrong. Mirrors the
+    /// invalidation Go's `forgetShardId` performs.
+    pub shard_locations_stale: std::sync::atomic::AtomicBool,
     /// EC volume expiration time (unix epoch seconds), set during EC encode from TTL.
     pub expire_at_sec: u64,
     /// Encode-run identity (unix nanos) loaded from the .vif EcShardConfig. A read
@@ -196,6 +201,7 @@ impl EcVolume {
             ecx_actual_dir: dir_idx.to_string(),
             shard_locations: std::sync::RwLock::new(HashMap::new()),
             shard_locations_refresh_time: std::sync::Mutex::new(None),
+            shard_locations_stale: std::sync::atomic::AtomicBool::new(false),
             expire_at_sec,
             encode_ts_ns,
             bitrot: None,
@@ -673,6 +679,8 @@ impl EcVolume {
     pub fn replace_shard_locations(&self, locations: HashMap<ShardId, Vec<String>>) {
         *self.shard_locations.write().unwrap() = locations;
         *self.shard_locations_refresh_time.lock().unwrap() = Some(std::time::Instant::now());
+        self.shard_locations_stale
+            .store(false, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Merge a fresh `LookupEcVolume` reply into the shard-locations cache and
@@ -695,6 +703,8 @@ impl EcVolume {
             guard.clone()
         };
         *self.shard_locations_refresh_time.lock().unwrap() = Some(std::time::Instant::now());
+        self.shard_locations_stale
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         merged
     }
 
