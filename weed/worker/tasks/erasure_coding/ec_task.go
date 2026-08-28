@@ -712,17 +712,16 @@ func (t *ErasureCodingTask) generateEcShardsLocally(localFiles map[string]string
 	// the write above already failed the encode otherwise — so the holders
 	// cannot end up with shards whose checksums stayed behind on the worker.
 	ecsumFile := erasure_coding.BitrotSidecarPath(baseName, 0)
-	if erasure_coding.BitrotProtectionEnabled && ecBitrot != nil {
-		if _, serr := os.Stat(ecsumFile); serr != nil {
-			return nil, fmt.Errorf("stat %s for distribution: %w", ecsumFile, serr)
-		}
+	ecsumInfo, ecsumErr := os.Stat(ecsumFile)
+	if ecsumErr != nil && erasure_coding.BitrotProtectionEnabled && ecBitrot != nil {
+		return nil, fmt.Errorf("stat %s for distribution: %w", ecsumFile, ecsumErr)
 	}
-	if info, err := os.Stat(ecsumFile); err == nil {
+	if ecsumErr == nil {
 		shardFiles["ecsum"] = ecsumFile
 		t.GetLogger().WithFields(map[string]interface{}{
 			"file_type":  "ecsum",
 			"file_path":  ecsumFile,
-			"size_bytes": info.Size(),
+			"size_bytes": ecsumInfo.Size(),
 		}).Info("EC bitrot checksum sidecar generated")
 	}
 
