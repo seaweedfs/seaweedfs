@@ -1,17 +1,22 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"net"
+	"os"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
 
@@ -155,5 +160,83 @@ func TestEcShardLocationsTTL(t *testing.T) {
 				t.Errorf("ttl = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// oneBadShardPeer serves every shard out of an EC volume's files except one,
+// standing in for a shard that has moved off the address the map still names.
+type oneBadShardPeer struct {
+	volume_server_pb.UnimplementedVolumeServerServer
+	baseFileName string
+	badShard     erasure_coding.ShardId
+}
+
+func (p *oneBadShardPeer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardReadRequest, stream volume_server_pb.VolumeServer_VolumeEcShardReadServer) error {
+	if erasure_coding.ShardId(req.ShardId) == p.badShard {
+		return status.Errorf(codes.NotFound, "shard %d is not here", req.ShardId)
+	}
+	f, err := os.Open(p.baseFileName + erasure_coding.ToExt(int(req.ShardId)))
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	data := make([]byte, req.Size)
+	if _, err := f.ReadAt(data, req.Offset); err != nil {
+		return err
+	}
+	return stream.Send(&volume_server_pb.VolumeEcShardReadResponse{Data: data, EncodeTsNs: req.EncodeTsNs})
+}
+
+// Recovery skips the shard whose direct read failed, so that failure is the one
+// thing that never invalidates the map. The read still succeeds off the other
+// shards, and the location it just disproved has to be re-checked anyway.
+func TestReadOneEcShardIntervalMarksTheMapAfterADirectReadFails(t *testing.T) {
+	const badShard = erasure_coding.ShardId(3)
+	baseFileName, n := writeEcVolumeFiles(t, t.TempDir(), 7)
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	srv := grpc.NewServer()
+	volume_server_pb.RegisterVolumeServerServer(srv, &oneBadShardPeer{baseFileName: baseFileName, badShard: badShard})
+	go srv.Serve(lis)
+	t.Cleanup(srv.Stop)
+
+	store := &Store{grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials())}
+	ecVolume := &erasure_coding.EcVolume{
+		VolumeId:       7,
+		ShardLocations: make(map[erasure_coding.ShardId][]pb.ServerAddress),
+	}
+	seedShardLocations(ecVolume, pb.NewServerAddressWithGrpcPort("127.0.0.1:1", lis.Addr().(*net.TCPAddr).Port))
+
+	interval := erasure_coding.Interval{BlockIndex: int(badShard), Size: 4096, IsLargeBlock: true}
+	got := make([]byte, interval.Size)
+	if _, err := store.readOneEcShardInterval(n.Id, ecVolume, interval, got); err != nil {
+		t.Fatalf("read interval: %v", err)
+	}
+
+	ecVolume.ShardLocationsLock.RLock()
+	stale := ecVolume.ShardLocationsStale
+	_, stillMapped := ecVolume.ShardLocations[badShard]
+	ecVolume.ShardLocationsLock.RUnlock()
+	if !stale {
+		t.Error("a failed direct read left the map trusted, so the moved shard stays hidden until the window expires")
+	}
+	if !stillMapped {
+		t.Error("shard 3 was dropped from the map; the direct read is worth retrying")
+	}
+
+	want := make([]byte, len(got))
+	f, err := os.Open(baseFileName + erasure_coding.ToExt(int(badShard)))
+	if err != nil {
+		t.Fatalf("open shard %d: %v", badShard, err)
+	}
+	defer f.Close()
+	if _, err := f.ReadAt(want, 0); err != nil {
+		t.Fatalf("read shard %d: %v", badShard, err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Error("the interval recovered from the other shards does not match the shard on disk")
 	}
 }

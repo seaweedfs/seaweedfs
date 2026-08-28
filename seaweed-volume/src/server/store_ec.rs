@@ -798,6 +798,9 @@ async fn fetch_one_interval(
                         sources,
                         e
                     );
+                    // Reconstruction below skips this very shard, so nothing else
+                    // invalidates the location that just failed.
+                    mark_shard_locations_stale(state, vid);
                 }
             }
         }

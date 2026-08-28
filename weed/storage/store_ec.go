@@ -532,6 +532,10 @@ func (s *Store) readOneEcShardInterval(needleId types.NeedleId, ecVolume *erasur
 			return
 		}
 		glog.V(0).Infof("read remote ec shard %d.%d locations: %v", ecVolume.VolumeId, shardId, err)
+		// Recovery below skips this very shard, so nothing else invalidates the
+		// location that just failed -- and a shard that has moved would otherwise
+		// be reconstructed on every read until the map's own window expires.
+		markShardLocationsStale(ecVolume)
 	}
 
 	// try reading by recovering from other shards
@@ -548,6 +552,15 @@ func forgetShardId(ecVolume *erasure_coding.EcVolume, shardId erasure_coding.Sha
 	// failed to access the source data nodes, clear it up
 	ecVolume.ShardLocationsLock.Lock()
 	delete(ecVolume.ShardLocations, shardId)
+	ecVolume.ShardLocationsStale = true
+	ecVolume.ShardLocationsLock.Unlock()
+}
+
+// markShardLocationsStale flags the cached map for a prompt re-check after a
+// read failed against one of its locations. Unlike forgetShardId it keeps the
+// entry: a direct read is worth retrying, since a dead peer fails fast.
+func markShardLocationsStale(ecVolume *erasure_coding.EcVolume) {
+	ecVolume.ShardLocationsLock.Lock()
 	ecVolume.ShardLocationsStale = true
 	ecVolume.ShardLocationsLock.Unlock()
 }
