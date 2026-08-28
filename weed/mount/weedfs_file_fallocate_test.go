@@ -1,0 +1,95 @@
+package mount
+
+import (
+	"testing"
+
+	"github.com/seaweedfs/go-fuse/v2/fuse"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+)
+
+func newFallocateTestHandle(t *testing.T, fileSize uint64) (*WFS, *FileHandle) {
+	t.Helper()
+
+	wfs := newCopyRangeTestWFS()
+	path := util.FullPath("/file.txt")
+	inode := wfs.inodeToPath.Lookup(path, 1, false, false, 0, true)
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+		Name: "file.txt",
+		Attributes: &filer_pb.FuseAttributes{
+			FileMode: 0100644,
+			FileSize: fileSize,
+			Inode:    inode,
+		},
+	}, 0, 0)
+	fh.RememberPath(path)
+
+	return wfs, fh
+}
+
+// TestFallocateWithinFile covers the posix_fallocate() case that used to fall
+// back to a glibc emulation reading through a write-only descriptor: the range
+// is already inside the file, so the file must be left alone and answered OK.
+func TestFallocateWithinFile(t *testing.T) {
+	wfs, fh := newFallocateTestHandle(t, 10)
+
+	in := &fuse.FallocateIn{Fh: uint64(fh.fh), Offset: 0, Length: 1}
+	if status := wfs.Fallocate(nil, in); status != fuse.OK {
+		t.Fatalf("Fallocate inside the file: got %v, want OK", status)
+	}
+	if got := fh.GetEntry().GetEntry().GetAttributes().GetFileSize(); got != 10 {
+		t.Fatalf("file size: got %d, want 10", got)
+	}
+	if fh.dirtyMetadata {
+		t.Fatal("Fallocate inside the file marked the handle dirty")
+	}
+}
+
+func TestFallocateGrowsFile(t *testing.T) {
+	wfs, fh := newFallocateTestHandle(t, 10)
+
+	in := &fuse.FallocateIn{Fh: uint64(fh.fh), Offset: 4096, Length: 4096}
+	if status := wfs.Fallocate(nil, in); status != fuse.OK {
+		t.Fatalf("Fallocate past the end: got %v, want OK", status)
+	}
+	if got := fh.GetEntry().GetEntry().GetAttributes().GetFileSize(); got != 8192 {
+		t.Fatalf("file size: got %d, want 8192", got)
+	}
+	if !fh.dirtyMetadata {
+		t.Fatal("Fallocate past the end did not mark the handle dirty")
+	}
+}
+
+func TestFallocateKeepSize(t *testing.T) {
+	wfs, fh := newFallocateTestHandle(t, 10)
+
+	in := &fuse.FallocateIn{Fh: uint64(fh.fh), Offset: 0, Length: 4096, Mode: FALLOC_FL_KEEP_SIZE}
+	if status := wfs.Fallocate(nil, in); status != fuse.OK {
+		t.Fatalf("Fallocate with FALLOC_FL_KEEP_SIZE: got %v, want OK", status)
+	}
+	if got := fh.GetEntry().GetEntry().GetAttributes().GetFileSize(); got != 10 {
+		t.Fatalf("file size: got %d, want 10", got)
+	}
+}
+
+// TestFallocateUnsupportedMode pins the status for a mode we cannot honor:
+// ENOSYS would make the kernel stop sending FUSE_FALLOCATE altogether.
+func TestFallocateUnsupportedMode(t *testing.T) {
+	wfs, fh := newFallocateTestHandle(t, 10)
+
+	const punchHole = 0x02
+	in := &fuse.FallocateIn{Fh: uint64(fh.fh), Offset: 0, Length: 4, Mode: punchHole | FALLOC_FL_KEEP_SIZE}
+	if status := wfs.Fallocate(nil, in); status != fuse.ENOTSUP {
+		t.Fatalf("Fallocate with FALLOC_FL_PUNCH_HOLE: got %v, want ENOTSUP", status)
+	}
+}
+
+func TestFallocateUnknownHandle(t *testing.T) {
+	wfs, _ := newFallocateTestHandle(t, 10)
+
+	in := &fuse.FallocateIn{Fh: 12345, Offset: 0, Length: 1}
+	if status := wfs.Fallocate(nil, in); status != fuse.EBADF {
+		t.Fatalf("Fallocate on an unknown handle: got %v, want EBADF", status)
+	}
+}
