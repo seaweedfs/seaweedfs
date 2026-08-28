@@ -972,26 +972,27 @@ async fn recover_one_remote_ec_shard_interval(
     let mut available = 0usize;
     {
         let store = state.store.read().unwrap();
-        // A local shard from a different encode run must not be fed to
-        // Reed-Solomon; lenient only when the caller carries no identity
-        // (pre-upgrade). Mirrors Go's `readLocalEcShardInterval`.
-        let local = store
-            .find_ec_volume(vid)
-            .filter(|ecv| expected_encode_ts_ns == 0 || ecv.encode_ts_ns == expected_encode_ts_ns);
-        if let Some(ecv) = local {
-            for sid in 0..total_shards {
-                if available >= data_shards {
-                    break;
-                }
-                if sid as ShardId == shard_id_to_recover {
-                    continue;
-                }
-                if let Some(Some(shard)) = ecv.shards.get(sid) {
-                    let mut buf = vec![0u8; size];
-                    if shard.read_at(&mut buf, shard_offset as u64).map(|n| n == size).unwrap_or(false) {
-                        bufs[sid] = Some(buf);
-                        available += 1;
-                    }
+        for sid in 0..total_shards {
+            if available >= data_shards {
+                break;
+            }
+            if sid as ShardId == shard_id_to_recover {
+                continue;
+            }
+            // Resolve the shard together with the EcVolume on the disk that owns
+            // it: a reconciled volume has its shards split across data dirs. A
+            // shard from a different encode run must not be fed to Reed-Solomon;
+            // lenient only when the caller carries no identity (pre-upgrade).
+            // Mirrors Go's `readLocalEcShardInterval`.
+            let owner = match store.find_ec_volume_with_shard(vid, sid as u32) {
+                Some(ecv) if expected_encode_ts_ns == 0 || ecv.encode_ts_ns == expected_encode_ts_ns => ecv,
+                _ => continue,
+            };
+            if let Some(Some(shard)) = owner.shards.get(sid) {
+                let mut buf = vec![0u8; size];
+                if shard.read_at(&mut buf, shard_offset as u64).map(|n| n == size).unwrap_or(false) {
+                    bufs[sid] = Some(buf);
+                    available += 1;
                 }
             }
         }
