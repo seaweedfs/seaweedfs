@@ -1241,11 +1241,25 @@ func (vs *VolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_serv
 		return nil, err
 	}
 
+	// Report the layout this holder will actually serve reads through. It is
+	// the only way a coordinator can tell a holder that understands the
+	// uniform block layout from one that dropped the unknown .vif field on the
+	// floor and mounted the volume as legacy.
+	var ecShardConfig *volume_server_pb.EcShardConfig
+	if primary.ECContext != nil {
+		ecShardConfig = &volume_server_pb.EcShardConfig{
+			DataShards:   uint32(primary.ECContext.DataShards),
+			ParityShards: uint32(primary.ECContext.ParityShards),
+			BlockSize:    primary.ECContext.BlockSize,
+		}
+	}
+
 	res := &volume_server_pb.VolumeEcShardsInfoResponse{
 		EcShardInfos:     shardInfos,
 		FileCount:        files,
 		FileDeletedCount: filesDeleted,
 		VolumeSize:       totalSize,
+		EcShardConfig:    ecShardConfig,
 	}
 
 	return res, nil

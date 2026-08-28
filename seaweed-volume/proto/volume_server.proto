@@ -539,6 +539,7 @@ message VolumeEcShardsInfoResponse {
     uint64 volume_size = 2;
     uint64 file_count = 3;
     uint64 file_deleted_count = 4;
+    EcShardConfig ec_shard_config = 10;  // the layout this holder serves reads through; a binary predating a field reports it as unset
 }
 
 message EcShardInfo {

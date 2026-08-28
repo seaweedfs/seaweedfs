@@ -51,6 +51,11 @@ type ErasureCodingTask struct {
 	// pre-distribute sweep. deleteOriginalVolume skips these so it does not
 	// re-delete and remove the now-EC .vif those servers share.
 	emptyReplicasDeleted map[string]bool
+
+	// encodedBlockSize is the shard block layout WriteEcFiles actually encoded
+	// with, read back off the EC context. Every holder must report serving the
+	// same one before the source volume may be deleted.
+	encodedBlockSize int64
 }
 
 // NewErasureCodingTask creates a new unified EC task instance
@@ -583,10 +588,14 @@ func (t *ErasureCodingTask) generateEcShardsLocally(localFiles map[string]string
 	}
 
 	// Generate EC shard files (.ec00 ~ .ec13)
-	ecBitrot, err := erasure_coding.WriteEcFiles(baseName, erasure_coding.BackgroundECContext())
+	ecCtx := erasure_coding.BackgroundECContext()
+	ecBitrot, err := erasure_coding.WriteEcFiles(baseName, ecCtx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate EC shard files: %w", err)
 	}
+	// The layout the shards were actually written in, for the holder agreement
+	// check before the source is deleted.
+	t.encodedBlockSize = ecCtx.BlockSize
 	// Persist the bitrot checksum sidecar (generation 0) alongside the shards so
 	// it travels with them during distribution. Protection was asked for, and
 	// this write is orders of magnitude smaller than the shards that just
@@ -783,6 +792,20 @@ func (t *ErasureCodingTask) verifyEcShardsBeforeDelete(ctx context.Context) erro
 			"per_server":   summary,
 		}).Warning("EC shard set incomplete but recoverable; proceeding with source deletion")
 	}
+
+	// Before anything irreversible: every holder that answered must report
+	// serving the layout these shards were encoded in. A holder too old to
+	// know the uniform layout mounts them as legacy and returns wrong bytes,
+	// and the source volume is the only remaining correct copy.
+	if err := erasure_coding.RequireAgreedBlockLayout(t.volumeID, t.encodedBlockSize, perServer); err != nil {
+		t.GetLogger().WithFields(map[string]interface{}{
+			"volume_id":  t.volumeID,
+			"per_server": summary,
+			"error":      err.Error(),
+		}).Error("EC holders disagree on the shard block layout — source volume will be kept")
+		return err
+	}
+
 	return nil
 }
 
