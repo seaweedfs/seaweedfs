@@ -447,6 +447,10 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 		identity, _ = id.(*Identity)
 	}
 
+	// The keys below each drive their own bounded filer retries, and the client
+	// picks how many keys there are, so the whole batch shares one allowance.
+	r = r.WithContext(withFilerRetryBudget(r.Context(), filerRetryRequestBudget))
+
 	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// delete file entries
 		for _, object := range deleteObjects.Objects {
