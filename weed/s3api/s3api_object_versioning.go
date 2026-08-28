@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -1375,13 +1376,63 @@ func (s3a *S3ApiServer) repointLatestBeforeDeletion(ctx context.Context, bucket,
 
 // retryAttempts and retryStep tune the bounded retries used when the
 // load-bearing filer ops in updateLatestVersionAfterDeletion fail with
-// transient errors. Doubled per attempt, capped at retryCap. Total
-// worst-case wall time ≈ 6.3s before propagating.
+// transient errors. Doubled per attempt, capped at retryCap, for a
+// worst case of ~3.1s of backoff per op before propagating.
 const (
 	updateLatestRetryAttempts = 6
 	updateLatestRetryStep     = 100 * time.Millisecond
 	updateLatestRetryCap      = 2 * time.Second
 )
+
+func retryFilerBackoff(attempt int) time.Duration {
+	backoff := updateLatestRetryStep << (attempt - 1)
+	if backoff <= 0 || backoff > updateLatestRetryCap {
+		return updateLatestRetryCap
+	}
+	return backoff
+}
+
+// filerRetryRequestBudget is the total backoff one request may spend across
+// every retryFilerOp it drives: the worst case of a single op, so a batch
+// whose length the client chooses waits about as long as one key would.
+var filerRetryRequestBudget = func() (total time.Duration) {
+	for attempt := 1; attempt < updateLatestRetryAttempts; attempt++ {
+		total += retryFilerBackoff(attempt)
+	}
+	return total
+}()
+
+type filerRetryBudgetKey struct{}
+
+type filerRetryBudget struct {
+	mu        sync.Mutex
+	remaining time.Duration
+}
+
+// withFilerRetryBudget hands every retryFilerOp reached through ctx one shared
+// allowance, so per-key backoff no longer multiplies by the number of keys.
+func withFilerRetryBudget(ctx context.Context, total time.Duration) context.Context {
+	return context.WithValue(ctx, filerRetryBudgetKey{}, &filerRetryBudget{remaining: total})
+}
+
+func filerRetryBudgetFrom(ctx context.Context) *filerRetryBudget {
+	budget, _ := ctx.Value(filerRetryBudgetKey{}).(*filerRetryBudget)
+	return budget
+}
+
+// take reserves up to d of what is left, reporting false once nothing is.
+func (b *filerRetryBudget) take(d time.Duration) (time.Duration, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.remaining <= 0 {
+		return 0, false
+	}
+	if d > b.remaining {
+		d = b.remaining
+	}
+	b.remaining -= d
+	return d, true
+}
 
 // isRetryableFilerErr reports whether err is worth retrying through
 // retryFilerOp. Terminal conditions return false so the caller surfaces
@@ -1412,7 +1463,7 @@ func isRetryableFilerErr(err error) bool {
 
 func retryFilerOp(ctx context.Context, name string, fn func() error) error {
 	var lastErr error
-	backoff := updateLatestRetryStep
+	budget := filerRetryBudgetFrom(ctx)
 	for attempt := 1; attempt <= updateLatestRetryAttempts; attempt++ {
 		err := fn()
 		if err == nil {
@@ -1431,19 +1482,23 @@ func retryFilerOp(ctx context.Context, name string, fn func() error) error {
 		if attempt == updateLatestRetryAttempts {
 			break
 		}
+		backoff := retryFilerBackoff(attempt)
+		if budget != nil {
+			granted, ok := budget.take(backoff)
+			if !ok {
+				return fmt.Errorf("%s stopped after %d attempts, request retry allowance spent: %w", name, attempt, lastErr)
+			}
+			backoff = granted
+		}
 		// Context-aware backoff so a server shutdown / client
-		// disconnect cancels the worst-case ~6.3s retry budget
-		// immediately instead of blocking the goroutine.
+		// disconnect cancels the pending retries immediately
+		// instead of blocking the goroutine.
 		timer := time.NewTimer(backoff)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
 			return ctx.Err()
 		case <-timer.C:
-		}
-		backoff *= 2
-		if backoff > updateLatestRetryCap {
-			backoff = updateLatestRetryCap
 		}
 	}
 	return fmt.Errorf("%s exhausted %d retries: %w", name, updateLatestRetryAttempts, lastErr)
