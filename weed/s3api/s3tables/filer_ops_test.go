@@ -2,10 +2,12 @@ package s3tables
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables/s3tablestest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -69,4 +71,32 @@ func TestDeleteDirectoryDeletesTheSubtree(t *testing.T) {
 	assert.True(t, stub.req.IsDeleteData)
 	assert.True(t, stub.req.IsRecursive)
 	assert.True(t, stub.req.IgnoreRecursiveError)
+}
+
+// The bucket is the directory, so DeleteTableBucket must not answer success
+// when the filer refused to remove it.
+func TestDeleteTableBucketReportsRejectedDirectoryDelete(t *testing.T) {
+	fs := s3tablestest.Start(t)
+	bucketMeta, err := json.Marshal(tableBucketMetadata{Name: renameTestBucket, OwnerAccountID: DefaultAccountID})
+	require.NoError(t, err)
+	fs.Put(TablesPath, renameTestBucket, map[string][]byte{
+		ExtendedKeyTableBucket: []byte("{}"),
+		ExtendedKeyMetadata:    bucketMeta,
+	})
+
+	bucketPath := GetTableBucketPath(renameTestBucket)
+	fs.RejectDelete = func(dir, name string) string {
+		if dir+"/"+name == bucketPath {
+			return "fail to delete non-empty folder"
+		}
+		return ""
+	}
+
+	m := NewManager()
+	m.SetTrusted(true)
+	err = m.Execute(context.Background(), NewManagerClient(fs.Client), "DeleteTableBucket",
+		&DeleteTableBucketRequest{TableBucketARN: mustBucketARN(t)}, nil, "")
+
+	require.Error(t, err, "a bucket the filer refused to delete must not be reported as deleted")
+	assert.NotNil(t, fs.Get(TablesPath, renameTestBucket), "the bucket is still there")
 }
