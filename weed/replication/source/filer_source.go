@@ -2,6 +2,7 @@ package source
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -17,6 +18,12 @@ import (
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	util_http_client "github.com/seaweedfs/seaweedfs/weed/util/http/client"
 )
+
+// ErrVolumeNotFound reports that the source cluster has no location for a
+// chunk's volume: vacuumed away, deleted, or every replica offline. Callers
+// need it apart from a lookup that simply failed, which a later attempt can
+// still get past.
+var ErrVolumeNotFound = errors.New("volume not found")
 
 type FilerSource struct {
 	grpcAddress    string
@@ -88,8 +95,8 @@ func (fs *FilerSource) LookupFileId(ctx context.Context, part string) (fileUrls 
 	locations := vid2Locations[vid]
 
 	if locations == nil || len(locations.Locations) == 0 {
-		glog.V(1).InfofCtx(ctx, "LookupFileId locate volume id %s: %v", vid, err)
-		return nil, fmt.Errorf("LookupFileId locate volume id %s: %v", vid, err)
+		glog.V(1).InfofCtx(ctx, "LookupFileId locate volume id %s: %v", vid, ErrVolumeNotFound)
+		return nil, fmt.Errorf("LookupFileId locate volume id %s: %w", vid, ErrVolumeNotFound)
 	}
 
 	if !fs.proxyByFiler {
