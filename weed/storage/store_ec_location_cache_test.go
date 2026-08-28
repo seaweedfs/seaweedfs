@@ -28,12 +28,17 @@ type countingMaster struct {
 	// onLookup runs inside the RPC, standing in for whatever else the volume
 	// server is doing while it waits on the master.
 	onLookup func()
+	// failLookup answers with an error instead of a shard map.
+	failLookup atomic.Bool
 }
 
 func (m *countingMaster) LookupEcVolume(_ context.Context, req *master_pb.LookupEcVolumeRequest) (*master_pb.LookupEcVolumeResponse, error) {
 	m.lookups.Add(1)
 	if m.onLookup != nil {
 		m.onLookup()
+	}
+	if m.failLookup.Load() {
+		return nil, status.Error(codes.Unavailable, "master is having a moment")
 	}
 	resp := &master_pb.LookupEcVolumeResponse{VolumeId: req.VolumeId}
 	for shardId := 0; shardId < erasure_coding.TotalShardsCount; shardId++ {
@@ -281,5 +286,45 @@ func TestCachedLookupEcShardLocationsKeepsAMarkRaisedDuringTheLookup(t *testing.
 	}
 	if got := master.lookups.Load(); got != 2 {
 		t.Errorf("asked the master %d times, want 2", got)
+	}
+}
+
+// A refresh that never answered cannot be treated as one that did: the mark it
+// consumed goes back, or the map it was meant to correct is trusted for its
+// whole window on the strength of a lookup that failed.
+func TestCachedLookupEcShardLocationsKeepsTheMarkWhenTheLookupFails(t *testing.T) {
+	master, masterAddr := startCountingMaster(t)
+	store := &Store{
+		MasterAddress:  masterAddr,
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+	}
+	ecVolume := &erasure_coding.EcVolume{
+		VolumeId:       10,
+		ShardLocations: make(map[erasure_coding.ShardId][]pb.ServerAddress),
+	}
+	if err := store.cachedLookupEcShardLocations(ecVolume); err != nil {
+		t.Fatalf("first lookup: %v", err)
+	}
+
+	rewindShardLocationsRefresh(ecVolume, 12*time.Second)
+	markShardLocationsStale(ecVolume)
+	master.failLookup.Store(true)
+	if err := store.cachedLookupEcShardLocations(ecVolume); err == nil {
+		t.Fatal("expected the lookup to fail")
+	}
+
+	ecVolume.ShardLocationsLock.RLock()
+	stale := ecVolume.ShardLocationsStale
+	ecVolume.ShardLocationsLock.RUnlock()
+	if !stale {
+		t.Error("the failed lookup kept the mark it consumed")
+	}
+
+	master.failLookup.Store(false)
+	if err := store.cachedLookupEcShardLocations(ecVolume); err != nil {
+		t.Fatalf("retry after the failed lookup: %v", err)
+	}
+	if got := master.lookups.Load(); got != 3 {
+		t.Errorf("asked the master %d times, want 3: a failed lookup must not leave the disproved map trusted", got)
 	}
 }

@@ -134,17 +134,21 @@ pub async fn read_ec_shard_needle_distributed(
             Ok(fresh) => {
                 // A complete reply merges into the cache; an incomplete one
                 // (< data_shards) is left unwritten — keep the prior cache.
-                if let Some(merged) =
-                    write_back_shard_locations(state, vid, fresh, snapshot.data_shards as usize)
+                match write_back_shard_locations(state, vid, fresh, snapshot.data_shards as usize)
                 {
-                    shard_locations = merged;
+                    Some(merged) => shard_locations = merged,
+                    // An incomplete reply leaves the cache unwritten and its refresh
+                    // time unadvanced, so the mark this refresh consumed goes back.
+                    None => mark_shard_locations_stale(state, vid),
                 }
             }
             Err(e) => {
                 // Lookup failed — proceed with cached values. If cache
                 // is empty, the remote fetch below will fail and we
                 // surface a NotFound (matching Go's behavior when no
-                // locations are known).
+                // locations are known). The mark goes back: nothing
+                // answered for it, and the map stays disproved.
+                mark_shard_locations_stale(state, vid);
                 tracing::warn!(
                     "ec lookup failed for volume {}: {} — using cached locations ({} entries)",
                     vid.0,
@@ -308,6 +312,7 @@ pub async fn scrub_ec_volume_distributed(
         match cached_lookup_ec_shard_locations(state, vid).await {
             Ok(fresh) => {
                 if write_back_shard_locations(state, vid, fresh, data_shards).is_none() {
+                    mark_shard_locations_stale(state, vid);
                     return (
                         0,
                         Vec::new(),
@@ -319,11 +324,12 @@ pub async fn scrub_ec_volume_distributed(
                 }
             }
             Err(e) => {
+                mark_shard_locations_stale(state, vid);
                 return (
                     0,
                     Vec::new(),
                     vec![format!("failed to locate shard via master grpc: {}", e)],
-                )
+                );
             }
         }
     }

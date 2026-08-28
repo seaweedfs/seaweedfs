@@ -634,6 +634,14 @@ func (s *Store) cachedLookupEcShardLocations(ecVolume *erasure_coding.EcVolume) 
 
 		return nil
 	})
+	if err != nil {
+		// The lookup this mark was consumed for did not answer, and the refresh time
+		// is only advanced on success -- so without putting the mark back, a map a
+		// read had already disproved would be trusted for its full window again.
+		// Marking unconditionally is safe: where no mark was consumed the refresh
+		// time is stale anyway, and the next call looks up whatever the mark says.
+		markShardLocationsStale(ecVolume)
+	}
 	return
 }
 
