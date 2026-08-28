@@ -842,7 +842,15 @@ func reconstructEcShardInterval(ecVolume *erasure_coding.EcVolume, ecCtx *erasur
 			ecCtx.DataShards, missingShards)
 	}
 
-	if err := enc.ReconstructData(shardIntervals); err != nil {
+	// Rebuild only what was asked for. ReconstructData rebuilds every missing data
+	// shard, and a gather that stopped at DataShards can leave up to ParityShards of
+	// them missing -- an interval-sized buffer and a decode each, discarded unread.
+	// The mask is Total() long, not DataShards: reedsolomon documents both lengths
+	// but indexes the short one past its end when a parity shard is absent, which
+	// here it usually is.
+	required := make([]bool, ecCtx.Total())
+	required[shardIdToRecover] = true
+	if err := enc.ReconstructSome(shardIntervals, required); err != nil {
 		return fmt.Errorf("failed to reconstruct data for shard %d.%d with %d available shards %v: %w",
 			ecVolume.VolumeId, shardIdToRecover, len(availableShards), availableShards, err)
 	}
@@ -868,8 +876,9 @@ func (s *Store) recoverOneRemoteEcShardInterval(needleId types.NeedleId, ecVolum
 	}
 
 	// Charge the buffers this recovery is about to hold against the budget, so a
-	// burst of them queues here rather than on the heap.
-	weight := int64(len(buf)) * int64(ecCtx.DataShards)
+	// burst of them queues here rather than on the heap: DataShards gathered, plus
+	// the one the rebuild allocates for the shard it recreates.
+	weight := int64(len(buf)) * int64(ecCtx.DataShards+1)
 	if weight > ecRecoverBudget {
 		// An interval whose fan-out outgrows the whole budget takes all of it and
 		// so runs alone, rather than blocking forever on an acquire that can never

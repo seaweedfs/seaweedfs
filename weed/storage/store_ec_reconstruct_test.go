@@ -88,3 +88,31 @@ func TestReconstructEcShardIntervalNeedsDataShardCount(t *testing.T) {
 		t.Fatalf("error %v, want it to report too few shards", err)
 	}
 }
+
+// A gather that filled up on parity leaves several data shards missing, and only one
+// of them is the shard anybody asked for.
+func TestReconstructEcShardIntervalRebuildsOnlyTheTarget(t *testing.T) {
+	shardIntervals, ecCtx := encodedInterval(t, 1024)
+	ecVolume := &erasure_coding.EcVolume{VolumeId: needle.VolumeId(1), ECContext: ecCtx}
+
+	const lost = erasure_coding.ShardId(0)
+	want := bytes.Clone(shardIntervals[lost])
+	// exactly DataShards left in hand, ParityShards of the data shards missing
+	spare := []erasure_coding.ShardId{4, 6, 8}
+	shardIntervals[lost] = nil
+	for _, sid := range spare {
+		shardIntervals[sid] = nil
+	}
+
+	if err := reconstructEcShardInterval(ecVolume, ecCtx, shardIntervals, lost); err != nil {
+		t.Fatalf("reconstruct: %v", err)
+	}
+	if !bytes.Equal(shardIntervals[lost], want) {
+		t.Fatalf("rebuilt shard %d does not match the encoded bytes", lost)
+	}
+	for _, sid := range spare {
+		if shardIntervals[sid] != nil {
+			t.Errorf("shard %d was rebuilt too, only shard %d was asked for", sid, lost)
+		}
+	}
+}
