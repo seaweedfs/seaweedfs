@@ -464,7 +464,12 @@ pub async fn scrub_ec_volume_distributed(
                             )
                             .await
                             {
-                                Ok(buf) => data.extend_from_slice(&buf),
+                                // Same as the direct read above: a holder reporting the
+                                // needle deleted is authoritative and answers with no
+                                // bytes, so zero-fill and let the delete-state
+                                // suppression have it.
+                                Ok((_, true)) => data.resize(data.len() + *ssize, 0),
+                                Ok((buf, false)) => data.extend_from_slice(&buf),
                                 Err(e) => {
                                     errs.push(format!(
                                         "failed to recover EC shard {} for needle {} on volume {} (interval {}/{}): {}",

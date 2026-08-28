@@ -87,7 +87,10 @@ func (s *Store) ScrubEcVolume(vid needle.VolumeId, mode volume_server_pb.VolumeS
 				errs = append(errs, fmt.Errorf("failed to read EC shard %d for needle %d on volume %d (interval %d/%d): %v", shardId, id, ecv.VolumeId, i+1, len(intervals), readErr))
 				break
 			}
-			if _, _, err := s.recoverOneRemoteEcShardInterval(id, ecv, shardId, chunk, offset); err != nil {
+			// A holder reporting the needle deleted is authoritative, and it answers
+			// with no bytes: the chunk stays zeroed and reaches ReadBytes as the
+			// delete-state mismatch the walk below already tolerates.
+			if _, isDeleted, err := s.recoverOneRemoteEcShardInterval(id, ecv, shardId, chunk, offset); err != nil && !isDeleted {
 				errs = append(errs, fmt.Errorf("failed to recover EC shard %d for needle %d on volume %d (interval %d/%d): %v", shardId, id, ecv.VolumeId, i+1, len(intervals), err))
 				break
 			}
