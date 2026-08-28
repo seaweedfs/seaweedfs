@@ -14,7 +14,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-func newFallocateTestHandle(t *testing.T, fileSize uint64) (*WFS, *FileHandle) {
+// newOpenFileHandle builds a WFS holding one open handle on a file of the given
+// size, the state a descriptor is in after an open and before any write.
+func newOpenFileHandle(t *testing.T, fileSize uint64) (*WFS, *FileHandle) {
 	t.Helper()
 
 	wfs := newCopyRangeTestWFS()
@@ -37,7 +39,7 @@ func newFallocateTestHandle(t *testing.T, fileSize uint64) (*WFS, *FileHandle) {
 // back to a glibc emulation reading through a write-only descriptor: the range
 // is already inside the file, so the file must be left alone and answered OK.
 func TestFallocateWithinFile(t *testing.T) {
-	wfs, fh := newFallocateTestHandle(t, 10)
+	wfs, fh := newOpenFileHandle(t, 10)
 
 	in := &fuse.FallocateIn{Fh: uint64(fh.fh), Offset: 0, Length: 1}
 	if status := wfs.Fallocate(nil, in); status != fuse.OK {
@@ -52,7 +54,7 @@ func TestFallocateWithinFile(t *testing.T) {
 }
 
 func TestFallocateGrowsFile(t *testing.T) {
-	wfs, fh := newFallocateTestHandle(t, 10)
+	wfs, fh := newOpenFileHandle(t, 10)
 
 	in := &fuse.FallocateIn{Fh: uint64(fh.fh), Offset: 4096, Length: 4096}
 	if status := wfs.Fallocate(nil, in); status != fuse.OK {
@@ -67,7 +69,7 @@ func TestFallocateGrowsFile(t *testing.T) {
 }
 
 func TestFallocateKeepSize(t *testing.T) {
-	wfs, fh := newFallocateTestHandle(t, 10)
+	wfs, fh := newOpenFileHandle(t, 10)
 
 	in := &fuse.FallocateIn{Fh: uint64(fh.fh), Offset: 0, Length: 4096, Mode: FALLOC_FL_KEEP_SIZE}
 	if status := wfs.Fallocate(nil, in); status != fuse.OK {
@@ -81,7 +83,7 @@ func TestFallocateKeepSize(t *testing.T) {
 // TestFallocateUnsupportedMode pins the status for a mode we cannot honor:
 // ENOSYS would make the kernel stop sending FUSE_FALLOCATE altogether.
 func TestFallocateUnsupportedMode(t *testing.T) {
-	wfs, fh := newFallocateTestHandle(t, 10)
+	wfs, fh := newOpenFileHandle(t, 10)
 
 	const punchHole = 0x02
 	in := &fuse.FallocateIn{Fh: uint64(fh.fh), Offset: 0, Length: 4, Mode: punchHole | FALLOC_FL_KEEP_SIZE}
@@ -91,7 +93,7 @@ func TestFallocateUnsupportedMode(t *testing.T) {
 }
 
 func TestFallocateUnknownHandle(t *testing.T) {
-	wfs, _ := newFallocateTestHandle(t, 10)
+	wfs, _ := newOpenFileHandle(t, 10)
 
 	in := &fuse.FallocateIn{Fh: 12345, Offset: 0, Length: 1}
 	if status := wfs.Fallocate(nil, in); status != fuse.EBADF {
@@ -102,7 +104,7 @@ func TestFallocateUnknownHandle(t *testing.T) {
 // TestFallocateNoOpIgnoresQuotaAndWorm covers the two guards a request that
 // allocates nothing must not trip: it reserves no space and rewrites no entry.
 func TestFallocateNoOpIgnoresQuotaAndWorm(t *testing.T) {
-	wfs, fh := newFallocateTestHandle(t, 10)
+	wfs, fh := newOpenFileHandle(t, 10)
 	wfs.option.Quota = 1
 	wfs.IsOverQuota = true
 	wfs.FilerConf = filer.NewFilerConf()
@@ -136,7 +138,7 @@ func TestFallocateNoOpIgnoresQuotaAndWorm(t *testing.T) {
 // growth has to be counted where it happens.
 func TestFallocateChargesTheGrowth(t *testing.T) {
 	atomic.StoreInt64(&uncommittedBytes, 0)
-	wfs, fh := newFallocateTestHandle(t, 10)
+	wfs, fh := newOpenFileHandle(t, 10)
 	wfs.option.Quota = 100 << 20
 
 	in := &fuse.FallocateIn{Fh: uint64(fh.fh), Offset: 0, Length: 8192}

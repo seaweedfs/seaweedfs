@@ -103,7 +103,8 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 		// Invalidate the open-mtime cache so the next Open does not set
 		// FOPEN_KEEP_CACHE with stale kernel page cache data.
 		wfs.invalidateOpenMtimeCache(input.NodeId)
-		if size < filer.FileSize(entry) {
+		oldFileSize := filer.FileSize(entry)
+		if size < oldFileSize {
 			// fmt.Printf("truncate %v \n", fullPath)
 			var chunks []*filer_pb.FileChunk
 			var truncatedChunks []*filer_pb.FileChunk
@@ -134,6 +135,12 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 		entry.Attributes.Mtime = truncNow.Unix()
 		entry.Attributes.MtimeNs = int32(truncNow.Nanosecond())
 		entry.Attributes.FileSize = size
+		if size > oldFileSize {
+			// The writes that fill the range will not grow the file, so they
+			// charge nothing; the growth is counted here or the quota never
+			// sees it. Matches Write and Fallocate.
+			wfs.AddUncommittedBytes(int64(size - oldFileSize))
+		}
 
 	}
 
