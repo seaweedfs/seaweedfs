@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -103,8 +104,12 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	if isDeleteCollection {
 		collectionName := entry.Name()
 		// the entry is already gone: a caller that hung up must not leave the
-		// collection behind, so this cleanup outlives the request
-		f.DoDeleteCollection(context.Background(), collectionName)
+		// collection behind, so this cleanup outlives the request -- bounded all
+		// the same, or a master that is down parks this handler indefinitely and
+		// every client retry behind it parks another
+		collectionCtx, cancelCollection := context.WithTimeout(context.WithoutCancel(ctx), collectionDeleteTimeout)
+		f.DoDeleteCollection(collectionCtx, collectionName)
+		cancelCollection()
 		// drop bucket-labeled series held by this process; the S3 gateway
 		// only cleans its own registry
 		stats.DeleteBucketMetrics(collectionName)
@@ -207,6 +212,14 @@ func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shou
 
 	return nil
 }
+
+// collectionDeleteTimeout bounds the collection delete a bucket entry's own
+// delete leaves behind, which carries no deadline of its own. It bounds the wait
+// and not the work: the master keeps deleting on its own fan-out once asked, so
+// giving up costs the confirmation. Short enough that the S3 client waiting on
+// the bucket delete, which pays this and then the gateway's own follow-up
+// DeleteCollection, still has retry budget left.
+const collectionDeleteTimeout = 15 * time.Second
 
 func (f *Filer) DoDeleteCollection(ctx context.Context, collectionName string) (err error) {
 

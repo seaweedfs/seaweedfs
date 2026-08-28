@@ -170,7 +170,7 @@ func (s3a *S3ApiServer) objectTxnOnFiler(owner pb.ServerAddress, req *filer_pb.O
 	if s3a.ownerRecentlyUnreachable(owner) {
 		preferred = ""
 	}
-	err := s3a.withFilerClientFailover(preferred, false, txn)
+	err := s3a.withFilerClientFailover(context.Background(), preferred, false, txn)
 	return resp, err
 }
 
