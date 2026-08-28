@@ -501,7 +501,7 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 						return processOne(event)
 					})
 				if readErr != nil {
-					return fmt.Errorf("read log file refs from %s: %w", peer, readErr)
+					return fmt.Errorf("%w from %s: %w", pb.ErrLogFileRead, peer, readErr)
 				}
 				if lastTs > 0 {
 					lastTsNs = lastTs

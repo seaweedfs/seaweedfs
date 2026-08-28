@@ -2,9 +2,13 @@ package pb
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net"
+	"net/http"
 	"sync"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -104,7 +108,16 @@ func TestWithGrpcClient_AbandonedRequestKeepsSharedConnection(t *testing.T) {
 }
 
 func (s *cascadeFilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeMetadataServer) error {
-	return nil
+	if !req.ClientSupportsMetadataChunks {
+		return nil
+	}
+	return stream.Send(&filer_pb.SubscribeMetadataResponse{
+		LogFileRefs: []*filer_pb.LogFileChunkRef{{
+			FilerId:  "5319c0e8",
+			FileTsNs: time.Now().UnixNano(),
+			Chunks:   []*filer_pb.FileChunk{{FileId: "4471,ce598bfff8416e", Size: 64}},
+		}},
+	})
 }
 
 // TestWithGrpcClient_EndedStreamKeepsSharedConnection covers the other half of
@@ -143,5 +156,54 @@ func TestWithGrpcClient_EndedStreamKeepsSharedConnection(t *testing.T) {
 	wg.Wait()
 	if concurrentErr != nil {
 		t.Fatalf("concurrent caller must survive an unrelated stream ending: %v", concurrentErr)
+	}
+}
+
+// TestWithGrpcClient_LogChunkReadFailureKeepsSharedConnection covers a
+// subscriber replaying persisted log chunks over HTTP: an unreachable volume
+// server reports "connection refused" as the subscription's error, which used
+// to drop the shared filer ClientConn and cancel the assign and upload RPCs
+// riding on it.
+func TestWithGrpcClient_LogChunkReadFailureKeepsSharedConnection(t *testing.T) {
+	fake, address, dialOption := startCascadeFiler(t)
+
+	var concurrentErr error
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		concurrentErr = WithGrpcClient(context.Background(), false, 0, func(connection *grpc.ClientConn) error {
+			_, err := filer_pb.NewSeaweedFilerClient(connection).LookupDirectoryEntry(context.Background(),
+				&filer_pb.LookupDirectoryEntryRequest{Directory: "/buckets/b", Name: "slow"})
+			return err
+		}, address, false, dialOption)
+	}()
+	<-fake.inFlight
+
+	option := &MetadataFollowOption{
+		ClientName:     "mount",
+		PathPrefix:     "/",
+		EventErrorType: DontLogError,
+		LogFileReaderFn: func(chunks []*filer_pb.FileChunk) (io.ReadCloser, error) {
+			// An unreachable volume server, as a filerProxy mount sees it.
+			response, err := http.Get("http://127.0.0.1:1/" + chunks[0].FileId)
+			if err != nil {
+				return nil, err
+			}
+			return response.Body, nil
+		},
+	}
+	subscribe := makeSubscribeMetadataFunc(option, func(resp *filer_pb.SubscribeMetadataResponse) error { return nil })
+	err := WithGrpcClient(context.Background(), true, 0, func(connection *grpc.ClientConn) error {
+		return subscribe(filer_pb.NewSeaweedFilerClient(connection))
+	}, address, false, dialOption)
+	if err == nil || !errors.Is(err, ErrLogFileRead) {
+		t.Fatalf("the replay should have failed reading the log chunk: %v", err)
+	}
+
+	close(fake.release)
+	wg.Wait()
+	if concurrentErr != nil {
+		t.Fatalf("concurrent caller must survive a log chunk read failure: %v", concurrentErr)
 	}
 }
