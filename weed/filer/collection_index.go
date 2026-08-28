@@ -16,8 +16,12 @@ import (
 // during collection cleanup.
 const ColIdxDeleteBatchSize = 1000
 
+// ColIdxKey builds the reverse-index key. It deliberately does not pre-size
+// the buffer from len(collection)+len(filerPath): that sum could overflow for
+// adversarial input, so append is left to manage growth. These keys are short,
+// so the extra reallocation cost is negligible.
 func ColIdxKey(collection string, filerPath util.FullPath) []byte {
-	buf := make([]byte, 0, 4+len(collection)+len(filerPath))
+	var buf []byte
 	buf = append(buf, 1, 'c', 1)
 	buf = append(buf, collection...)
 	buf = append(buf, 1)
@@ -25,8 +29,10 @@ func ColIdxKey(collection string, filerPath util.FullPath) []byte {
 	return buf
 }
 
+// ColIdxPrefix builds the prefix that iterates every index key of a collection.
+// See ColIdxKey for why the buffer is not pre-sized.
 func ColIdxPrefix(collection string) []byte {
-	buf := make([]byte, 0, 4+len(collection))
+	var buf []byte
 	buf = append(buf, 1, 'c', 1)
 	buf = append(buf, collection...)
 	buf = append(buf, 1)
