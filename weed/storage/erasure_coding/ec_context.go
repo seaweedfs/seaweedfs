@@ -18,6 +18,11 @@ type ECContext struct {
 	// one shard instead of striping across all of them at 1MiB granularity.
 	// 0 is the legacy two-tier 1GiB/1MiB layout.
 	BlockSize int64
+	// DatFileSize is the length of the .dat the encode actually read, set by
+	// WriteEcFiles from the same measurement it derives BlockSize from. The
+	// .vif must record the two together: they describe one file, and a live
+	// volume can grow between two separate stats.
+	DatFileSize int64
 }
 
 // Total returns the total number of shards (data + parity)

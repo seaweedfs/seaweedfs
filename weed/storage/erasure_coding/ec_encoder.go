@@ -62,18 +62,28 @@ func WriteSortedFileFromIdx(baseFileName string, ext string) (e error) {
 // BackgroundECContext for the default ratio, or an explicit ctx for a configured
 // (e.g. custom-ratio) layout. It returns the bitrot protection (per-shard block
 // CRC32C) computed during the single encode pass; the caller persists it as a
-// <base>.ecsum sidecar, and persists ctx.BlockSize (set here) to the .vif so
-// readers resolve the shard block layout.
+// <base>.ecsum sidecar, and persists ctx.BlockSize and ctx.DatFileSize (both
+// set here, from one measurement of the .dat) to the .vif so readers resolve
+// the shard block layout.
 func WriteEcFiles(baseFileName string, ctx *ECContext) (*volume_server_pb.EcBitrotProtection, error) {
-	if ctx == nil || ctx.Total() == 0 {
+	if ctx == nil {
 		ctx = NewDefaultECContext("", 0)
+	} else if ctx.Total() == 0 {
+		// Fill the placeholder in place rather than swapping the pointer: the
+		// caller reads BlockSize and DatFileSize back off the context it
+		// passed, and a replacement leaves it holding the zero values.
+		ctx.DataShards, ctx.ParityShards = DataShardsCount, ParityShardsCount
 	}
-	// Always encode with the uniform block layout, sized for this .dat. The
-	// computed size is left on ctx so the caller can persist it to .vif.
+	// Always encode with the uniform block layout, sized for this .dat. Both
+	// the block size and the .dat length it was derived from are left on ctx,
+	// so the caller persists a .vif whose two fields describe one measurement
+	// — a second stat could see a different size on a volume still taking
+	// writes.
 	fi, err := os.Stat(baseFileName + ".dat")
 	if err != nil {
 		return nil, fmt.Errorf("failed to stat dat file: %w", err)
 	}
+	ctx.DatFileSize = fi.Size()
 	ctx.BlockSize = UniformBlockSize(fi.Size(), ctx.DataShards)
 	return generateEcFiles(baseFileName, 256*1024, ctx.BlockSize, ctx.BlockSize, ctx)
 }

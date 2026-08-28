@@ -122,9 +122,6 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 		return nil, fmt.Errorf("WriteSortedFileFromIdx %s: %v", v.IndexFileName(), err)
 	}
 
-	// snapshot .dat file size before encoding — must match what .ecx references
-	datSize, _, _ := v.FileStat()
-
 	// write .ec00 ~ .ec[TotalShards-1] files using context
 	ecBitrot, err := erasure_coding.WriteEcFiles(baseFileName, ecCtx)
 	if err != nil {
@@ -151,7 +148,10 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 	}
 	volumeInfo := &volume_server_pb.VolumeInfo{Version: uint32(v.Version())}
 	volumeInfo.ExpireAtSec = expireAtSec
-	volumeInfo.DatFileSize = int64(datSize)
+	// The size the encode actually read, not a separate stat: a replica-sync
+	// write can land between two stats of a live .dat, and the .vif would then
+	// record a DatFileSize and a BlockSize describing different files.
+	volumeInfo.DatFileSize = ecCtx.DatFileSize
 
 	// Validate EC configuration before saving to .vif
 	if ecCtx.DataShards <= 0 || ecCtx.ParityShards <= 0 || ecCtx.Total() > erasure_coding.MaxShardCount {
