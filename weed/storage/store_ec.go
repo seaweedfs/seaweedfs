@@ -480,13 +480,19 @@ func (s *Store) ReadEcShardNeedle(vid needle.VolumeId, n *needle.Needle, onReadS
 // spanning several of them costs one round trip per block when read in sequence.
 const ecIntervalReadConcurrency = 8
 
-// ecRecoveryConcurrency bounds the reconstruct reads ONE needle may have in
-// flight across all of its intervals. A degraded interval fans out to every
+// ecRecoveryConcurrency bounds the reconstruct reads ONE needle may have IN
+// FLIGHT across all of its intervals. A degraded interval fans out to every
 // shard location it can reach (up to MaxShardCount), each with a buffer the
 // size of the interval, so without a shared budget a needle spanning 8 blocks
-// multiplies that by ecIntervalReadConcurrency. The cap keeps a single read's
-// peak at roughly one interval's worth of recovery — what it was before the
-// intervals were read in parallel — while leaving separate reads independent.
+// multiplies that by ecIntervalReadConcurrency. The cap holds the number of
+// simultaneous reconstruct round trips to one interval's worth, while leaving
+// separate reads independent.
+//
+// It is a concurrency budget, not a memory one: a shard's buffer is kept in
+// bufs until its interval reconstructs, which is after the read that filled it
+// finished. Peak retained bytes per needle are therefore bounded by the
+// intervals reconstructing at once (ecIntervalReadConcurrency) times the shard
+// locations each reaches times the interval size — not by this constant.
 const ecRecoveryConcurrency = erasure_coding.MaxShardCount
 
 func (s *Store) readEcShardIntervals(needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, intervals []erasure_coding.Interval) (data []byte, is_deleted bool, err error) {
@@ -788,9 +794,11 @@ func (s *Store) recoverOneRemoteEcShardInterval(needleId types.NeedleId, ecVolum
 		wg.Add(1)
 		go func(shardId erasure_coding.ShardId, locations []pb.ServerAddress) {
 			defer wg.Done()
-			// Hold a slot for the buffer's whole lifetime, not just the read:
-			// the point of the budget is to cap how much a single needle's
-			// recovery allocates at once.
+			// Held across the allocation as well as the round trip, so the
+			// budget covers the moment the buffer is filled rather than only
+			// the wait for bytes. It is released when this goroutine returns;
+			// the buffer itself outlives that, in bufs, until the interval
+			// reconstructs (see ecRecoveryConcurrency).
 			if recoverySem != nil {
 				recoverySem <- struct{}{}
 				defer func() { <-recoverySem }()
