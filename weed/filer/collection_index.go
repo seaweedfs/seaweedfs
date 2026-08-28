@@ -47,3 +47,15 @@ func EntryCollection(entry *Entry) string {
 	}
 	return string(entry.Extended[ExtendedCollectionKey])
 }
+
+// EntryCollectionFromBlob decodes only the attributes of an encoded entry blob
+// (skipping chunk deserialization) and returns the collection recorded on it,
+// or "" if none. Stores use this on delete/update paths where a full entry
+// decode would be wasteful.
+func EntryCollectionFromBlob(fullpath util.FullPath, blob []byte) (string, error) {
+	entry := &Entry{FullPath: fullpath}
+	if err := entry.DecodeAttributesOnly(util.MaybeDecompressData(blob)); err != nil {
+		return "", err
+	}
+	return EntryCollection(entry), nil
+}

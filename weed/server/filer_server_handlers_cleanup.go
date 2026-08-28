@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -18,6 +19,11 @@ import (
 // seconds are kept (default 24h = 86400; 0 disables the guard, for testing).
 // Intended to run after the collection's volumes were deleted on the master.
 func (fs *FilerServer) cleanupCollectionHandler(w http.ResponseWriter, r *http.Request) {
+	if !fs.maybeCheckJwtAuthorization(r, true) {
+		writeJsonError(w, r, http.StatusUnauthorized, errors.New("wrong jwt"))
+		return
+	}
+
 	ctx := r.Context()
 
 	var req struct {

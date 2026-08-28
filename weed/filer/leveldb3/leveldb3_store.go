@@ -220,6 +220,20 @@ func (store *LevelDB3Store) InsertEntry(ctx context.Context, entry *filer.Entry)
 
 func (store *LevelDB3Store) UpdateEntry(ctx context.Context, entry *filer.Entry) (err error) {
 
+	db, _, shortPath, findErr := store.findDB(entry.FullPath, false)
+	if findErr == nil {
+		sDir, sName := shortPath.DirAndName()
+		key := genKey(sDir, sName)
+		// If the entry previously belonged to a different collection, remove
+		// that stale index key so a later cleanup of the old collection cannot
+		// delete this entry through a leftover index.
+		if oldData, getErr := db.Get(key, nil); getErr == nil {
+			if oldCollection, _ := filer.EntryCollectionFromBlob(entry.FullPath, oldData); oldCollection != "" && oldCollection != filer.EntryCollection(entry) {
+				db.Delete(filer.ColIdxKey(oldCollection, entry.FullPath), nil)
+			}
+		}
+	}
+
 	return store.InsertEntry(ctx, entry)
 }
 
@@ -266,8 +280,8 @@ func (store *LevelDB3Store) DeleteEntry(ctx context.Context, fullpath weed_util.
 	key := genKey(dir, name)
 
 	// remove the collection index key together with the entry, if any
-	if entry, findErr := store.FindEntry(ctx, fullpath); findErr == nil {
-		if collection := filer.EntryCollection(entry); collection != "" {
+	if oldData, getErr := db.Get(key, nil); getErr == nil {
+		if collection, _ := filer.EntryCollectionFromBlob(fullpath, oldData); collection != "" {
 			batch := new(leveldb.Batch)
 			batch.Delete(key)
 			batch.Delete(filer.ColIdxKey(collection, fullpath))
@@ -442,6 +456,12 @@ func (store *LevelDB3Store) DeleteCollectionEntries(ctx context.Context, collect
 	prefix := filer.ColIdxPrefix(collection)
 	dirSet := make(map[weed_util.FullPath]bool)
 
+	// Open every bucket db so the scan covers all collection indexes; a bucket
+	// db that was never touched is not in the map yet.
+	if err = store.openAllBucketDBs(); err != nil {
+		return 0, nil, err
+	}
+
 	store.dbsLock.RLock()
 	dbs := make([]*leveldb.DB, 0, len(store.dbs))
 	for _, db := range store.dbs {
@@ -452,35 +472,71 @@ func (store *LevelDB3Store) DeleteCollectionEntries(ctx context.Context, collect
 	for _, db := range dbs {
 		batch := new(leveldb.Batch)
 		batchCount := 0
+		var notifyEntries []*filer.Entry
 
 		iter := db.NewIterator(leveldb_util.BytesPrefix(prefix), nil)
 		for iter.Next() {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				iter.Release()
+				return deletedFiles, dirsOf(dirSet), ctxErr
+			}
+
 			idxKey := append([]byte(nil), iter.Key()...)
 			fullPath := weed_util.FullPath(idxKey[len(prefix):])
 
-			// route through findDB so bucket-relative entry keys are computed
-			// correctly (index keys always live in the same db as their entry)
-			if entryDb, _, shortPath, findErr := store.findDB(fullPath, false); findErr == nil {
-				sDir, sName := shortPath.DirAndName()
-				entryKey := genKey(sDir, sName)
-				if has, _ := entryDb.Has(entryKey, nil); has {
-					if eachEntryFn != nil {
-						// decode the entry so the caller can propagate the deletion
-						// (e.g. NotifyUpdateEvent) before it is removed
-						if entry, findErr := store.FindEntry(ctx, fullPath); findErr == nil {
-							eachEntryFn(entry)
-						}
+			// Resolve the entry's db and bucket-relative key without creating a
+			// bucket db (all of them are already open from openAllBucketDBs).
+			entryDb, shortPath, ok := store.findOpenedDB(fullPath)
+			if !ok {
+				// The bucket db vanished concurrently; drop the stale index key.
+				batch.Delete(idxKey)
+				batchCount++
+				if batchCount >= filer.ColIdxDeleteBatchSize {
+					if err = db.Write(batch, nil); err != nil {
+						iter.Release()
+						return deletedFiles, dirsOf(dirSet), fmt.Errorf("delete collection %s entries: %v", collection, err)
 					}
-					if entryDb == db {
-						batch.Delete(entryKey)
-						batchCount++
-					} else {
-						entryDb.Delete(entryKey, nil)
-					}
-					deletedFiles++
-					dir, _ := fullPath.DirAndName()
-					dirSet[weed_util.FullPath(dir)] = true
+					batch.Reset()
+					batchCount = 0
 				}
+				continue
+			}
+
+			sDir, sName := shortPath.DirAndName()
+			entryKey := genKey(sDir, sName)
+
+			if has, _ := entryDb.Has(entryKey, nil); has {
+				// Decode the entry so the caller can propagate the deletion
+				// (NotifyUpdateEvent) once it is durable. If decoding fails the
+				// entry is still removed, so publish the path anyway with a
+				// minimal entry so peers/subscribers drop it too.
+				var notifyEntry *filer.Entry
+				if eachEntryFn != nil {
+					if e, findErr := store.FindEntry(ctx, fullPath); findErr == nil && e != nil {
+						notifyEntry = e
+					} else {
+						notifyEntry = &filer.Entry{FullPath: fullPath}
+					}
+				}
+
+				if entryDb == db {
+					batch.Delete(entryKey)
+					batchCount++
+					if notifyEntry != nil {
+						notifyEntries = append(notifyEntries, notifyEntry)
+					}
+				} else {
+					if err = entryDb.Delete(entryKey, nil); err != nil {
+						iter.Release()
+						return deletedFiles, dirsOf(dirSet), fmt.Errorf("delete collection %s entry %s: %v", collection, fullPath, err)
+					}
+					if notifyEntry != nil {
+						eachEntryFn(notifyEntry)
+					}
+				}
+				deletedFiles++
+				dir, _ := fullPath.DirAndName()
+				dirSet[weed_util.FullPath(dir)] = true
 			}
 			batch.Delete(idxKey)
 			batchCount++
@@ -488,8 +544,13 @@ func (store *LevelDB3Store) DeleteCollectionEntries(ctx context.Context, collect
 			if batchCount >= filer.ColIdxDeleteBatchSize {
 				if err = db.Write(batch, nil); err != nil {
 					iter.Release()
-					return deletedFiles, nil, fmt.Errorf("delete collection %s entries: %v", collection, err)
+					return deletedFiles, dirsOf(dirSet), fmt.Errorf("delete collection %s entries: %v", collection, err)
 				}
+				// Deletion is durable; publish the events now.
+				for _, e := range notifyEntries {
+					eachEntryFn(e)
+				}
+				notifyEntries = notifyEntries[:0]
 				batch.Reset()
 				batchCount = 0
 			}
@@ -498,8 +559,11 @@ func (store *LevelDB3Store) DeleteCollectionEntries(ctx context.Context, collect
 
 		if batchCount > 0 {
 			if err = db.Write(batch, nil); err != nil {
-				return deletedFiles, nil, fmt.Errorf("delete collection %s entries: %v", collection, err)
+				return deletedFiles, dirsOf(dirSet), fmt.Errorf("delete collection %s entries: %v", collection, err)
 			}
+		}
+		for _, e := range notifyEntries {
+			eachEntryFn(e)
 		}
 	}
 
@@ -507,4 +571,67 @@ func (store *LevelDB3Store) DeleteCollectionEntries(ctx context.Context, collect
 		parentDirs = append(parentDirs, dir)
 	}
 	return deletedFiles, parentDirs, nil
+}
+
+func dirsOf(dirSet map[weed_util.FullPath]bool) (dirs []weed_util.FullPath) {
+	for dir := range dirSet {
+		dirs = append(dirs, dir)
+	}
+	return dirs
+}
+
+// openAllBucketDBs opens every bucket db present on disk so a subsequent scan
+// over store.dbs covers all collection indexes. Bucket dbs are otherwise opened
+// lazily on first access.
+func (store *LevelDB3Store) openAllBucketDBs() error {
+	entries, err := os.ReadDir(store.dir)
+	if err != nil {
+		return fmt.Errorf("list filer store dir %s: %v", store.dir, err)
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if name == DEFAULT || strings.HasPrefix(name, ".") {
+			// DEFAULT is opened at init; dot-prefixed buckets live in DEFAULT.
+			continue
+		}
+		if _, err := store.createDB(name); err != nil {
+			return fmt.Errorf("open bucket db %s: %v", name, err)
+		}
+	}
+	return nil
+}
+
+// findOpenedDB resolves the db and bucket-relative path for a full path without
+// creating a bucket db. ok is false when the bucket db is not open. It is used
+// by the collection-index scan, which opens every bucket db first.
+func (store *LevelDB3Store) findOpenedDB(fullpath weed_util.FullPath) (db *leveldb.DB, shortPath weed_util.FullPath, ok bool) {
+	store.dbsLock.RLock()
+	defer store.dbsLock.RUnlock()
+
+	defaultDB := store.dbs[DEFAULT]
+	if !strings.HasPrefix(string(fullpath), "/buckets/") {
+		return defaultDB, fullpath, true
+	}
+	bucketAndObjectKey := string(fullpath)[len("/buckets/"):]
+	t := strings.Index(bucketAndObjectKey, "/")
+	if t < 0 {
+		return defaultDB, fullpath, true
+	}
+	bucket := bucketAndObjectKey
+	shortPath = weed_util.FullPath("/")
+	if t > 0 {
+		bucket = bucketAndObjectKey[:t]
+		shortPath = weed_util.FullPath(bucketAndObjectKey[t:])
+	}
+	if strings.HasPrefix(bucket, ".") {
+		return defaultDB, fullpath, true
+	}
+	db, found := store.dbs[bucket]
+	if !found {
+		return nil, "", false
+	}
+	return db, shortPath, true
 }

@@ -116,6 +116,18 @@ func (store *LevelDB2Store) InsertEntry(ctx context.Context, entry *filer.Entry)
 
 func (store *LevelDB2Store) UpdateEntry(ctx context.Context, entry *filer.Entry) (err error) {
 
+	dir, name := entry.DirAndName()
+	key, partitionId := genKey(dir, name, store.dbCount)
+
+	// If the entry previously belonged to a different collection, remove that
+	// stale index key so a later cleanup of the old collection cannot delete
+	// this entry through a leftover index.
+	if oldData, getErr := store.dbs[partitionId].Get(key, nil); getErr == nil {
+		if oldCollection, _ := filer.EntryCollectionFromBlob(entry.FullPath, oldData); oldCollection != "" && oldCollection != filer.EntryCollection(entry) {
+			store.dbs[partitionId].Delete(filer.ColIdxKey(oldCollection, entry.FullPath), nil)
+		}
+	}
+
 	return store.InsertEntry(ctx, entry)
 }
 
@@ -150,8 +162,8 @@ func (store *LevelDB2Store) DeleteEntry(ctx context.Context, fullpath weed_util.
 	key, partitionId := genKey(dir, name, store.dbCount)
 
 	// remove the collection index key together with the entry, if any
-	if entry, findErr := store.FindEntry(ctx, fullpath); findErr == nil {
-		if collection := filer.EntryCollection(entry); collection != "" {
+	if oldData, getErr := store.dbs[partitionId].Get(key, nil); getErr == nil {
+		if collection, _ := filer.EntryCollectionFromBlob(fullpath, oldData); collection != "" {
 			batch := new(leveldb.Batch)
 			batch.Delete(key)
 			batch.Delete(filer.ColIdxKey(collection, fullpath))
@@ -316,9 +328,15 @@ func (store *LevelDB2Store) DeleteCollectionEntries(ctx context.Context, collect
 		db := store.dbs[d]
 		batch := new(leveldb.Batch)
 		batchCount := 0
+		var notifyEntries []*filer.Entry
 
 		iter := db.NewIterator(leveldb_util.BytesPrefix(prefix), nil)
 		for iter.Next() {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				iter.Release()
+				return deletedFiles, dirsOf(dirSet), ctxErr
+			}
+
 			idxKey := append([]byte(nil), iter.Key()...)
 			fullPath := weed_util.FullPath(idxKey[len(prefix):])
 
@@ -326,20 +344,35 @@ func (store *LevelDB2Store) DeleteCollectionEntries(ctx context.Context, collect
 			entryKey, partitionId := genKey(dir, name, store.dbCount)
 
 			if has, _ := store.dbs[partitionId].Has(entryKey, nil); has {
+				// Decode the entry so the caller can propagate the deletion
+				// (NotifyUpdateEvent) once it is durable. If decoding fails the
+				// entry is still removed, so publish the path anyway with a
+				// minimal entry so peers/subscribers drop it too.
+				var notifyEntry *filer.Entry
 				if eachEntryFn != nil {
-					// decode the entry so the caller can propagate the deletion
-					// (e.g. NotifyUpdateEvent) before it is removed
-					if entry, findErr := store.FindEntry(ctx, fullPath); findErr == nil {
-						eachEntryFn(entry)
+					if e, findErr := store.FindEntry(ctx, fullPath); findErr == nil && e != nil {
+						notifyEntry = e
+					} else {
+						notifyEntry = &filer.Entry{FullPath: fullPath}
 					}
 				}
+
 				if partitionId == d {
 					batch.Delete(entryKey)
 					batchCount++
+					if notifyEntry != nil {
+						notifyEntries = append(notifyEntries, notifyEntry)
+					}
 				} else {
 					// index key landed in a different partition than the entry
 					// (should not happen, but stay safe)
-					store.dbs[partitionId].Delete(entryKey, nil)
+					if err = store.dbs[partitionId].Delete(entryKey, nil); err != nil {
+						iter.Release()
+						return deletedFiles, dirsOf(dirSet), fmt.Errorf("delete collection %s entry %s: %v", collection, fullPath, err)
+					}
+					if notifyEntry != nil {
+						eachEntryFn(notifyEntry)
+					}
 				}
 				deletedFiles++
 				dirSet[weed_util.FullPath(dir)] = true
@@ -350,8 +383,13 @@ func (store *LevelDB2Store) DeleteCollectionEntries(ctx context.Context, collect
 			if batchCount >= filer.ColIdxDeleteBatchSize {
 				if err = db.Write(batch, nil); err != nil {
 					iter.Release()
-					return deletedFiles, nil, fmt.Errorf("delete collection %s entries: %v", collection, err)
+					return deletedFiles, dirsOf(dirSet), fmt.Errorf("delete collection %s entries: %v", collection, err)
 				}
+				// Deletion is durable; publish the events now.
+				for _, e := range notifyEntries {
+					eachEntryFn(e)
+				}
+				notifyEntries = notifyEntries[:0]
 				batch.Reset()
 				batchCount = 0
 			}
@@ -360,8 +398,11 @@ func (store *LevelDB2Store) DeleteCollectionEntries(ctx context.Context, collect
 
 		if batchCount > 0 {
 			if err = db.Write(batch, nil); err != nil {
-				return deletedFiles, nil, fmt.Errorf("delete collection %s entries: %v", collection, err)
+				return deletedFiles, dirsOf(dirSet), fmt.Errorf("delete collection %s entries: %v", collection, err)
 			}
+		}
+		for _, e := range notifyEntries {
+			eachEntryFn(e)
 		}
 	}
 
@@ -369,4 +410,11 @@ func (store *LevelDB2Store) DeleteCollectionEntries(ctx context.Context, collect
 		parentDirs = append(parentDirs, dir)
 	}
 	return deletedFiles, parentDirs, nil
+}
+
+func dirsOf(dirSet map[weed_util.FullPath]bool) (dirs []weed_util.FullPath) {
+	for dir := range dirSet {
+		dirs = append(dirs, dir)
+	}
+	return dirs
 }

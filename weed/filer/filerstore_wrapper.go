@@ -442,6 +442,11 @@ func (fsw *FilerStoreWrapper) Shutdown() {
 // store. The wrapper must expose this because Filer.Store is always a
 // *FilerStoreWrapper, so a type assertion to the concrete store would fail.
 func (fsw *FilerStoreWrapper) DeleteCollectionEntries(ctx context.Context, collection string, eachEntryFn func(*Entry)) (int, []util.FullPath, error) {
+	if fsw.hasPathSpecificStore {
+		// Path-specific stores are not scanned here, so a cleanup would silently
+		// leave their entries behind while reporting success.
+		return 0, nil, fmt.Errorf("collection index cleanup is not supported with path-specific filer stores")
+	}
 	if indexed, ok := fsw.defaultStore.(CollectionIndexedStore); ok {
 		return indexed.DeleteCollectionEntries(ctx, collection, eachEntryFn)
 	}

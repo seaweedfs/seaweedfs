@@ -259,6 +259,13 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 			glog.V(0).InfofCtx(ctx, "failing to find %s: %v", path, findErr)
 		}
 		entry = existingEntry
+		// Append/offset keeps the existing chunks, so the entry must not move to
+		// a different collection: its old chunks would then be indexed under a
+		// collection that a later cleanup could use to delete the whole entry.
+		if entry != nil && so.Collection != "" && filer.EntryCollection(entry) != so.Collection {
+			replyerr = fmt.Errorf("cannot change collection to %q on append/offset write of %s", so.Collection, path)
+			return
+		}
 	}
 	if entry != nil {
 		entry.Mtime = time.Now()
