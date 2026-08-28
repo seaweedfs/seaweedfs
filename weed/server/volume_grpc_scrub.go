@@ -43,11 +43,9 @@ func (vs *VolumeServer) ScrubVolume(ctx context.Context, req *volume_server_pb.S
 		switch m := req.GetMode(); m {
 		case volume_server_pb.VolumeScrubMode_INDEX:
 			files, serrs = v.ScrubIndex()
-		case volume_server_pb.VolumeScrubMode_LOCAL:
-			// LOCAL is equivalent to FULL for regular volumes
-			fallthrough
-		case volume_server_pb.VolumeScrubMode_READS:
-			// READS is equivalent to FULL for regular volumes
+		case volume_server_pb.VolumeScrubMode_LOCAL, volume_server_pb.VolumeScrubMode_READS:
+			// both are equivalent to FULL for regular volumes: there are no shards to
+			// stay local to, and nothing to reconstruct from
 			fallthrough
 		case volume_server_pb.VolumeScrubMode_FULL:
 			files, serrs = v.Scrub()
@@ -99,8 +97,9 @@ func (vs *VolumeServer) ScrubEcVolume(ctx context.Context, req *volume_server_pb
 	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
 		return nil, err
 	}
-	if req.GetForceDeletedNeedlesCheck() && req.GetMode() != volume_server_pb.VolumeScrubMode_FULL {
-		return nil, fmt.Errorf("deleted needle checks are only supported for FULL scrubs")
+	if m := req.GetMode(); req.GetForceDeletedNeedlesCheck() &&
+		m != volume_server_pb.VolumeScrubMode_FULL && m != volume_server_pb.VolumeScrubMode_READS {
+		return nil, fmt.Errorf("deleted needle checks are only supported for FULL and READS scrubs")
 	}
 
 	vids := []needle.VolumeId{}
@@ -133,10 +132,8 @@ func (vs *VolumeServer) ScrubEcVolume(ctx context.Context, req *volume_server_pb
 			files, serrs = v.ScrubIndex()
 		case volume_server_pb.VolumeScrubMode_LOCAL:
 			files, shardInfos, serrs = v.ScrubLocal()
-		case volume_server_pb.VolumeScrubMode_READS:
-			files, shardInfos, serrs = vs.store.ScrubEcVolume(v.VolumeId, req.GetForceDeletedNeedlesCheck(), true)
-		case volume_server_pb.VolumeScrubMode_FULL:
-			files, shardInfos, serrs = vs.store.ScrubEcVolume(v.VolumeId, req.GetForceDeletedNeedlesCheck(), false)
+		case volume_server_pb.VolumeScrubMode_FULL, volume_server_pb.VolumeScrubMode_READS:
+			files, shardInfos, serrs = vs.store.ScrubEcVolume(v.VolumeId, m, req.GetForceDeletedNeedlesCheck())
 		case volume_server_pb.VolumeScrubMode_CHECKSUM:
 			// Verify each local shard's raw bytes against the bitrot sidecar,
 			// exercising cold parity shards. Read-only. ChecksumScrub's first

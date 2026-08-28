@@ -38,6 +38,7 @@ fn scrub_mode_label(mode: i32) -> &'static str {
         2 => "FULL",
         3 => "LOCAL",
         4 => "CHECKSUM",
+        5 => "READS",
         _ => "UNKNOWN",
     }
 }
@@ -4097,7 +4098,7 @@ impl VolumeServer for VolumeGrpcService {
         // Validate mode
         let mode = req.mode;
         match mode {
-            1 | 2 | 3 => {} // INDEX=1, FULL=2, LOCAL=3
+            1 | 2 | 3 | 5 => {} // INDEX=1, FULL=2, LOCAL=3, READS=5 (FULL for regular volumes)
             _ => {
                 return Err(Status::invalid_argument(format!(
                     "unsupported volume scrub mode {}",
@@ -4197,13 +4198,21 @@ impl VolumeServer for VolumeGrpcService {
         // Validate mode
         let mode = req.mode;
         match mode {
-            1 | 2 | 3 | 4 => {} // INDEX=1, FULL=2, LOCAL=3, CHECKSUM=4
+            1 | 2 | 3 | 4 | 5 => {} // INDEX=1, FULL=2, LOCAL=3, CHECKSUM=4, READS=5
             _ => {
                 return Err(Status::invalid_argument(format!(
                     "unsupported EC volume scrub mode {}",
                     mode
                 )))
             }
+        }
+
+        // Only the modes that walk needles can be strict about deleted ones.
+        let force_deleted_needles_check = req.force_deleted_needles_check;
+        if force_deleted_needles_check && mode != 2 && mode != 5 {
+            return Err(Status::invalid_argument(
+                "deleted needle checks are only supported for FULL and READS scrubs",
+            ));
         }
 
         // Collect the volume ids under a brief lock, then release it: FULL (mode 2)
@@ -4247,8 +4256,8 @@ impl VolumeServer for VolumeGrpcService {
                         }
                     }
                 }
-                2 => {
-                    // FULL: Go-parity per-needle local+remote walk, PLUS a TEMPORARY
+                2 | 5 => {
+                    // FULL/READS: Go-parity per-needle local+remote walk, PLUS a TEMPORARY
                     // local Reed-Solomon parity check. The needle walk only reads
                     // DATA-shard intervals of LIVE needles, so on its own it can't
                     // catch silent bitrot in a PARITY shard or an unwalked cold
@@ -4280,8 +4289,13 @@ impl VolumeServer for VolumeGrpcService {
 
                     // (1) Per-needle local+remote walk (Go ScrubEcVolume parity).
                     let (files, mut shard_infos, mut errs) =
-                        crate::server::store_ec::scrub_ec_volume_distributed(&self.state, vid, false)
-                            .await;
+                        crate::server::store_ec::scrub_ec_volume_distributed(
+                            &self.state,
+                            vid,
+                            force_deleted_needles_check,
+                            mode == 5,
+                        )
+                        .await;
                     total_files += files as u64; // count comes from the needle walk only
 
                     // (2) Local parity check, gated on all-shards-local. Blocking RS

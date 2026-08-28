@@ -714,22 +714,11 @@ message FetchAndWriteNeedleResponse {
 
 enum VolumeScrubMode {
     UNKNOWN = 0;
-    // Perform a quick scrub of volume index contents only.
     INDEX = 1;
-    // Performs a full scrub of the volume, reading and verifying every needle contained in it.
     FULL = 2;
-    // Performs a local scrub of volume contents hosted in this server. For regular volumes,
-    // this operation is equivalent to FULL; for EC volumes, only needles fully contained
-    // in local shards are verified.
     LOCAL = 3;
-    // Performs an EC checksum scrub, verifying each local shard's raw bytes against the bitrot
-    // checksum sidecar. Available only for EC volumes.
-    CHECKSUM = 4;
-    // Performs a full scrub of the volume, but attempting to reconstruct data from missing/damaged
-    // shards from other shards in the cluster when necessary. This check ensures that EC volume
-    // contents are readable by Seaweed, even on a degraded storage state, by exercising parity data.
-    // For regular volumes, this operation is equivalent to FULL.
-    READS = 5;
+    CHECKSUM = 4; // EC only: verify each local shard's raw bytes against the bitrot checksum sidecar
+    READS = 5;    // like FULL, but EC intervals no shard can serve are reconstructed from parity
 }
 
 message ScrubVolumeRequest {
