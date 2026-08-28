@@ -890,8 +890,8 @@ func (fs *FilerServer) CollectionList(ctx context.Context, req *filer_pb.Collect
 	glog.V(4).InfofCtx(ctx, "CollectionList %v", req)
 	resp = &filer_pb.CollectionListResponse{}
 
-	err = fs.filer.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
-		masterResp, err := client.CollectionList(context.Background(), &master_pb.CollectionListRequest{
+	err = fs.filer.MasterClient.WithClient(ctx, false, func(client master_pb.SeaweedClient) error {
+		masterResp, err := client.CollectionList(ctx, &master_pb.CollectionListRequest{
 			IncludeNormalVolumes: req.IncludeNormalVolumes,
 			IncludeEcVolumes:     req.IncludeEcVolumes,
 		})
@@ -911,7 +911,7 @@ func (fs *FilerServer) DeleteCollection(ctx context.Context, req *filer_pb.Delet
 
 	glog.V(4).InfofCtx(ctx, "DeleteCollection %v", req)
 
-	err = fs.filer.DoDeleteCollection(req.GetCollection())
+	err = fs.filer.DoDeleteCollection(ctx, req.GetCollection())
 
 	return &filer_pb.DeleteCollectionResponse{}, err
 }

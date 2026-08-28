@@ -114,7 +114,7 @@ func (ce *CommandEnv) isLocked() bool {
 // lock. Best effort: masters without GetAdminLockStatus report no holder, and
 // each attempt is bounded so an unresponsive master cannot hang the shell.
 func (ce *CommandEnv) shellLockHolder() (clientName string, message string, held bool) {
-	ce.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+	ce.MasterClient.WithClient(context.Background(), false, func(client master_pb.SeaweedClient) error {
 		attemptCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		resp, err := client.GetAdminLockStatus(attemptCtx, &master_pb.GetAdminLockStatusRequest{

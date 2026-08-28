@@ -409,16 +409,24 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 		len(resp.VolumeLocation.NewEcVids), len(resp.VolumeLocation.DeletedEcVids))
 }
 
-func (mc *MasterClient) WithClient(streamingMode bool, fn func(client master_pb.SeaweedClient) error) error {
+func (mc *MasterClient) WithClient(ctx context.Context, streamingMode bool, fn func(client master_pb.SeaweedClient) error) error {
 	getMasterF := func() pb.ServerAddress {
-		return mc.GetMaster(context.Background())
+		return mc.GetMaster(ctx)
 	}
-	return mc.WithClientCustomGetMaster(getMasterF, streamingMode, fn)
+	return mc.WithClientCustomGetMaster(ctx, getMasterF, streamingMode, fn)
 }
 
-func (mc *MasterClient) WithClientCustomGetMaster(getMasterF func() pb.ServerAddress, streamingMode bool, fn func(client master_pb.SeaweedClient) error) error {
+// WithClientCustomGetMaster bounds the wait for a master leader by ctx, so a
+// caller with a deadline is not parked for the length of an election. The dial
+// still gets context.Background(): fn brings its own RPC context, so nothing
+// here can attribute a cancellation to the shared connection.
+func (mc *MasterClient) WithClientCustomGetMaster(ctx context.Context, getMasterF func() pb.ServerAddress, streamingMode bool, fn func(client master_pb.SeaweedClient) error) error {
 	return util.Retry("master grpc", func() error {
-		return pb.WithMasterClient(context.Background(), streamingMode, getMasterF(), mc.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
+		master := getMasterF()
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return pb.WithMasterClient(context.Background(), streamingMode, master, mc.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
 			return fn(client)
 		})
 	})

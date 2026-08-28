@@ -115,7 +115,7 @@ func (c *commandGrow) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 	if !collectionFound {
 		return fmt.Errorf("collection not found")
 	}
-	if err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+	if err = commandEnv.MasterClient.WithClient(context.Background(), false, func(client master_pb.SeaweedClient) error {
 		if _, err := client.VolumeGrow(context.Background(), volumeGrowRequest); err != nil {
 			return err
 		}
