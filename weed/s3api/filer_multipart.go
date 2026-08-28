@@ -411,6 +411,11 @@ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *
 		}
 		return nil, nil, s3err.ErrInternalError
 	}
+	// only createMultipartUpload stamps the key; a directory a part write left behind is not an upload
+	if !isMultipartUploadEntry(pentry) {
+		stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedNoSuchUpload).Inc()
+		return nil, nil, s3err.ErrNoSuchUpload
+	}
 
 	deleteEntries := make([]*filer_pb.Entry, 0)
 	partEntries := make(map[int][]*filer_pb.Entry, len(entries))

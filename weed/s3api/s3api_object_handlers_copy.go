@@ -1028,6 +1028,10 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 			s3err.WriteErrorResponse(w, r, errCode)
 			return
 		}
+		// the copy above re-creates a directory an abort removed mid-copy
+		if !s3a.checkUploadStillOpen(w, r, dstBucket, dstObject, uploadID) {
+			return
+		}
 		setEtag(w, "\""+strings.Trim(etag, "\"")+"\"")
 		// Mirror PutObjectPartHandler: write x-amz-server-side-encryption /
 		// x-amz-server-side-encryption-aws-kms-key-id headers on the response
@@ -1101,6 +1105,11 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		entry.Extended = dstEntry.Extended
 	}); err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	// the copy above re-creates a directory an abort removed mid-copy
+	if !s3a.checkUploadStillOpen(w, r, dstBucket, dstObject, uploadID) {
 		return
 	}
 

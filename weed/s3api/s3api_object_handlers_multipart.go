@@ -469,6 +469,11 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// the write above re-creates a directory an abort removed mid-body
+	if !s3a.checkUploadStillOpen(w, r, bucket, object, uploadID) {
+		return
+	}
+
 	glog.V(2).Infof("PutObjectPart: SUCCESS - bucket=%s, object=%s, partNumber=%d, etag=%s, sseType=%s",
 		bucket, object, partID, etag, sseMetadata.SSEType)
 
@@ -483,6 +488,38 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 
 func (s3a *S3ApiServer) genUploadsFolder(bucket string) string {
 	return fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), s3_constants.MultipartUploadsFolder)
+}
+
+// isMultipartUploadEntry tells the .uploads/<id> directory createMultipartUpload
+// made from the one a part write re-created on its way to the filer: only the
+// former carries the destination object key.
+func isMultipartUploadEntry(entry *filer_pb.Entry) bool {
+	return entry != nil && len(entry.Extended[s3_constants.ExtMultipartObjectKey]) > 0
+}
+
+// checkUploadStillOpen re-checks the upload after a part landed, and removes the
+// part along with the directory it resurrected when an abort was answered while
+// the part was in flight. It reports whether the caller may answer success.
+func (s3a *S3ApiServer) checkUploadStillOpen(w http.ResponseWriter, r *http.Request, bucket, object, uploadID string) bool {
+	entry, err := s3a.getEntry(s3a.genUploadsFolder(bucket), uploadID)
+	if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		glog.Errorf("checkUploadStillOpen %s/%s: %v", bucket, uploadID, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return false
+	}
+	if isMultipartUploadEntry(entry) {
+		return true
+	}
+	// the upload is gone either way, so the client still hears NoSuchUpload
+	if _, code := s3a.abortMultipartUpload(&s3.AbortMultipartUploadInput{
+		Bucket:   aws.String(bucket),
+		Key:      objectKey(aws.String(object)),
+		UploadId: aws.String(uploadID),
+	}); code != s3err.ErrNone {
+		glog.Warningf("checkUploadStillOpen %s/%s: part left behind, cleanup failed", bucket, uploadID)
+	}
+	s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)
+	return false
 }
 
 // getMultipartSSEAlgorithm returns the canonical SSE algorithm ("AES256" or
