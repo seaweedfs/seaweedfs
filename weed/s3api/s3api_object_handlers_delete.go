@@ -196,13 +196,20 @@ func (s3a *S3ApiServer) deleteUnversionedObjectWithClient(ctx context.Context, c
 	}
 	target := util.NewFullPath(s3a.bucketDir(bucket), object)
 	dir, name := target.DirAndName()
-	return deleteObjectEntry(ctx, client, dir, name, !metadataOnly, false)
+	// The caller holds one client for a whole batch, so a dropped reply is
+	// replayed on that client rather than by re-entering WithFilerClient.
+	return retryFilerOp(ctx, "delete "+string(target), func() error {
+		return deleteObjectEntry(ctx, client, dir, name, !metadataOnly, false)
+	})
 }
 
 func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.Infof("DeleteObjectHandler %s %s", bucket, object)
+	// The filer ops below each retry, and a failover walk runs the whole set
+	// once per filer, so the backoff comes out of one allowance held here.
+	r = r.WithContext(withFilerRetryBudget(r.Context(), filerRetryRequestBudget))
 	if err := s3a.validateTableBucketObjectPath(bucket, object); err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 		return

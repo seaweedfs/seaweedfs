@@ -94,20 +94,30 @@ func listWithRetry(parentDirectoryPath string, doList func() (entries []*filer_p
 
 }
 
-func (s3a *S3ApiServer) rm(parentDirectoryPath, entryName string, isDeleteData, isRecursive bool) error {
+// A delete is idempotent at the filer, which answers an entry that is already
+// gone with an empty resp.Error, so a reply the transport dropped can be
+// reissued instead of surfaced: as a 500 on the bucket delete, or as a per-key
+// InternalError inside the 200 of a multi-object delete, which no SDK retries.
+// Each attempt re-enters WithFilerClient, so it walks the failover list again
+// on a connection the failed one had invalidated.
+func (s3a *S3ApiServer) rm(ctx context.Context, parentDirectoryPath, entryName string, isDeleteData, isRecursive bool) error {
 
-	return s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	return retryFilerOp(ctx, "rm "+parentDirectoryPath+"/"+entryName, func() error {
+		return s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
-		return doDeleteEntry(context.Background(), client, parentDirectoryPath, entryName, isDeleteData, isRecursive)
+			return doDeleteEntry(ctx, client, parentDirectoryPath, entryName, isDeleteData, isRecursive)
+		})
 	})
 
 }
 
-func (s3a *S3ApiServer) rmObject(parentDirectoryPath, entryName string, isDeleteData, isRecursive bool) error {
+func (s3a *S3ApiServer) rmObject(ctx context.Context, parentDirectoryPath, entryName string, isDeleteData, isRecursive bool) error {
 
-	return s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	return retryFilerOp(ctx, "rmObject "+parentDirectoryPath+"/"+entryName, func() error {
+		return s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
-		return deleteObjectEntry(context.Background(), client, parentDirectoryPath, entryName, isDeleteData, isRecursive)
+			return deleteObjectEntry(ctx, client, parentDirectoryPath, entryName, isDeleteData, isRecursive)
+		})
 	})
 
 }

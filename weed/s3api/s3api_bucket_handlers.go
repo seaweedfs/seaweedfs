@@ -370,7 +370,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 	// This ensures we don't leave a bucket without the requested Object Lock configuration
 	if objectLockSetupError != nil {
 		glog.Errorf("PutBucketHandler: rolling back bucket %s creation due to Object Lock setup failure: %v", bucket, objectLockSetupError)
-		if deleteErr := s3a.rm(s3a.option.BucketsPath, bucket, true, true); deleteErr != nil {
+		if deleteErr := s3a.rm(context.Background(), s3a.option.BucketsPath, bucket, true, true); deleteErr != nil {
 			glog.Errorf("PutBucketHandler: failed to rollback bucket %s after Object Lock setup failure: %v", bucket, deleteErr)
 		}
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -414,6 +414,9 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("DeleteBucketHandler %s", bucket)
+	// The teardown below retries, and a failover walk repeats it once per
+	// filer, so the backoff comes out of one allowance held here.
+	r = r.WithContext(withFilerRetryBudget(r.Context(), filerRetryRequestBudget))
 
 	if s3a.isTableBucket(bucket) {
 		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
@@ -463,7 +466,7 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 	// the "collection exists but bucket directory missing" inconsistency that blocks
 	// bucket recreation. An orphaned collection is harmless and will be cleaned up
 	// or reused when the bucket is recreated.
-	err := s3a.rm(s3a.option.BucketsPath, bucket, false, true)
+	err := s3a.rm(r.Context(), s3a.option.BucketsPath, bucket, false, true)
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return

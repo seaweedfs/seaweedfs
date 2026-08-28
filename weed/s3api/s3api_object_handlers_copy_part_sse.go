@@ -415,7 +415,7 @@ func (s3a *S3ApiServer) copyObjectPartViaReencryption(
 func (s3a *S3ApiServer) writeEmptyCopyPart(dstBucket, uploadID string, partID int) (string, s3err.ErrorCode) {
 	uploadDir, partName := s3a.copyPartLocation(dstBucket, uploadID, partID)
 	if exists, _ := s3a.exists(uploadDir, partName, false); exists {
-		if err := s3a.rm(uploadDir, partName, false, false); err != nil {
+		if err := s3a.rm(context.Background(), uploadDir, partName, false, false); err != nil {
 			return "", s3err.ErrInternalError
 		}
 	}

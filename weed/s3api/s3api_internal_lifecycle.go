@@ -179,7 +179,7 @@ func (s3a *S3ApiServer) lifecycleAbortMPU(ctx context.Context, req *s3_lifecycle
 	if !exists {
 		return noopResolved("NOT_FOUND"), nil
 	}
-	if err := s3a.rm(uploadsFolder, uploadID, true, true); err != nil {
+	if err := s3a.rm(ctx, uploadsFolder, uploadID, true, true); err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			return noopResolved("NOT_FOUND_AT_DELETE"), nil
 		}

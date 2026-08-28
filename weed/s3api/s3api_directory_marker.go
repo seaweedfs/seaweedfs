@@ -93,7 +93,7 @@ func (s3a *S3ApiServer) deleteDirectoryMarker(r *http.Request, bucket, object st
 				break
 			}
 		}
-		if rmErr := s3a.rm(markerDir, s3_constants.VersionsFolder, true, true); rmErr != nil {
+		if rmErr := s3a.rm(r.Context(), markerDir, s3_constants.VersionsFolder, true, true); rmErr != nil {
 			glog.Errorf("deleteDirectoryMarker: failed to remove stale history of %s/%s: %v", bucket, object, rmErr)
 			return s3err.ErrInternalError
 		}
