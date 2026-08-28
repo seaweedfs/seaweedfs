@@ -263,14 +263,7 @@ func (store *FilerEtcStore) DeletePolicy(ctx context.Context, name string) error
 	}
 
 	if err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		_, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
-			Directory: filer.IamConfigDirectory + "/" + IamPoliciesDirectory,
-			Name:      name + ".json",
-		})
-		if err != nil && !strings.Contains(err.Error(), filer_pb.ErrNotFound.Error()) {
-			return err
-		}
-		return nil
+		return filer_pb.DoRemove(ctx, client, filer.IamConfigDirectory+"/"+IamPoliciesDirectory, name+".json", false, false, false, false, nil)
 	}); err != nil {
 		return err
 	}

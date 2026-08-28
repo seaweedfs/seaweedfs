@@ -34,6 +34,9 @@ type MemFiler struct {
 	// BeforeUpdate runs once, at the start of the next UpdateEntry, so a test
 	// can land a competing write in a handler's read-to-write window.
 	BeforeUpdate func()
+	// RejectDelete returns the reason DeleteEntry refuses a path, answered the
+	// way the filer answers one: no transport error, the reason in the response.
+	RejectDelete func(dir, name string) string
 }
 
 func newMemFiler() *MemFiler {
@@ -167,6 +170,11 @@ func (f *MemFiler) UpdateEntry(_ context.Context, req *filer_pb.UpdateEntryReque
 }
 
 func (f *MemFiler) DeleteEntry(_ context.Context, req *filer_pb.DeleteEntryRequest) (*filer_pb.DeleteEntryResponse, error) {
+	if reject := f.RejectDelete; reject != nil {
+		if reason := reject(req.Directory, req.Name); reason != "" {
+			return &filer_pb.DeleteEntryResponse{Error: reason}, nil
+		}
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if d, ok := f.entries[req.Directory]; ok {

@@ -751,12 +751,7 @@ func (cr *CoordinatorRegistry) deleteCoordinatorAssignment(consumerGroup string)
 		fileName := fmt.Sprintf("%s_assignments.json", consumerGroup)
 		filePath := fmt.Sprintf("%s/%s", CoordinatorAssignmentsDir, fileName)
 
-		_, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
-			Directory: CoordinatorAssignmentsDir,
-			Name:      fileName,
-		})
-
-		if err != nil {
+		if err := filer_pb.DoRemove(context.Background(), client, CoordinatorAssignmentsDir, fileName, false, false, false, false, nil); err != nil {
 			return fmt.Errorf("failed to delete assignment file %s: %w", filePath, err)
 		}
 

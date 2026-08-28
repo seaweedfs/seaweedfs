@@ -1233,14 +1233,8 @@ func (s *AdminServer) DeleteS3Bucket(bucketName string) error {
 	// Then delete bucket directory recursively from filer
 	// Use same parameters as s3.bucket.delete shell command and S3 API
 	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		_, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
-			Directory:            filerConfig.BucketsPath,
-			Name:                 bucketName,
-			IsDeleteData:         false, // Collection already deleted, just remove metadata
-			IsRecursive:          true,
-			IgnoreRecursiveError: true, // Same as S3 API and shell command
-		})
-		if err != nil {
+		// The collection is already gone, so this only has to drop the metadata.
+		if err := filer_pb.DoRemove(ctx, client, filerConfig.BucketsPath, bucketName, false, true, true, false, nil); err != nil {
 			return fmt.Errorf("failed to delete bucket: %w", err)
 		}
 
