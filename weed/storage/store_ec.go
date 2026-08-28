@@ -590,26 +590,21 @@ func (s *Store) cachedLookupEcShardLocations(ecVolume *erasure_coding.EcVolume) 
 		ecCtx = erasure_coding.NewDefaultECContext(ecVolume.Collection, ecVolume.VolumeId)
 	}
 
-	// Snapshot the shard map size and refresh time under the lock: recover
-	// goroutines mutate ShardLocations via forgetShardId, so an unguarded read here
-	// races with a concurrent map write.
-	ecVolume.ShardLocationsLock.RLock()
-	shardCount := len(ecVolume.ShardLocations)
-	refreshTime := ecVolume.ShardLocationsRefreshTime
+	// Judge the map and consume its mark in one critical section, so a mark raised
+	// from here on belongs to the next refresh rather than being cleared by this
+	// one -- the read that raised it has disproved the map this lookup is about to
+	// install. Recover goroutines mutate all three fields via forgetShardId, so an
+	// unguarded read would race a concurrent map write besides.
+	ecVolume.ShardLocationsLock.Lock()
 	stale := ecVolume.ShardLocationsStale
-	ecVolume.ShardLocationsLock.RUnlock()
-	if refreshTime.Add(ecShardLocationsTTL(shardCount, stale, ecCtx)).After(time.Now()) {
-		// still fresh
-		return nil
-	}
-
-	// Consume the mark before the lookup rather than on its return: a read that
-	// fails while the master is answering has disproved the map that answer is
-	// about to install, and clearing afterwards would swallow it.
-	if stale {
-		ecVolume.ShardLocationsLock.Lock()
+	ttl := ecShardLocationsTTL(len(ecVolume.ShardLocations), stale, ecCtx)
+	fresh := ecVolume.ShardLocationsRefreshTime.Add(ttl).After(time.Now())
+	if !fresh {
 		ecVolume.ShardLocationsStale = false
-		ecVolume.ShardLocationsLock.Unlock()
+	}
+	ecVolume.ShardLocationsLock.Unlock()
+	if fresh {
+		return nil
 	}
 
 	glog.V(3).Infof("lookup and cache ec volume %d locations", ecVolume.VolumeId)

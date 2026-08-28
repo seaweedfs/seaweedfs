@@ -88,8 +88,6 @@ struct Snapshot {
     intervals: Vec<IntervalResult>,
     cached_locations: HashMap<ShardId, Vec<String>>,
     cache_refreshed_at: Option<Instant>,
-    /// Whether a failed read has disproved the cached map since its last refresh.
-    locations_stale: bool,
     /// This volume's encode identity, carried to peers on remote shard reads so a
     /// shard from a different encode run is rejected rather than served at a
     /// mismatched offset. 0 for a pre-feature volume (lenient).
@@ -123,15 +121,15 @@ pub async fn read_ec_shard_needle_distributed(
 
     let mut shard_locations = snapshot.cached_locations.clone();
     if any_remote
-        && needs_refresh(
+        && claim_shard_locations_refresh(
+            state,
+            vid,
             &shard_locations,
             snapshot.cache_refreshed_at,
-            snapshot.locations_stale,
             snapshot.data_shards as usize,
             total_shards,
         )
     {
-        clear_shard_locations_stale(state, vid);
         match cached_lookup_ec_shard_locations(state, vid).await {
             Ok(fresh) => {
                 // A complete reply merges into the cache; an incomplete one
@@ -262,7 +260,6 @@ pub async fn scrub_ec_volume_distributed(
         seed_errs,
         cached_locations,
         cache_refreshed_at,
-        locations_stale,
         data_shards,
         total_shards,
     ) = {
@@ -282,9 +279,6 @@ pub async fn scrub_ec_volume_distributed(
         // Bind to locals so the inner RwLock/Mutex guards drop before the block ends.
         let cached_locations = ecv.shard_locations.read().unwrap().clone();
         let cache_refreshed_at = *ecv.shard_locations_refresh_time.lock().unwrap();
-        let locations_stale = ecv
-            .shard_locations_stale
-            .load(std::sync::atomic::Ordering::Relaxed);
         let data_shards = ecv.data_shards as usize;
         let total_shards = (ecv.data_shards + ecv.parity_shards) as usize;
         (
@@ -293,7 +287,6 @@ pub async fn scrub_ec_volume_distributed(
             errs,
             cached_locations,
             cache_refreshed_at,
-            locations_stale,
             data_shards,
             total_shards,
         )
@@ -304,14 +297,14 @@ pub async fn scrub_ec_volume_distributed(
     // cachedLookupEcShardLocations). A partial reply (< data_shards locations, a
     // master mid-recovery) or a failed lookup is a hard, retryable error — never
     // overwrite a good cache with a partial map or storm a down master per needle.
-    if needs_refresh(
+    if claim_shard_locations_refresh(
+        state,
+        vid,
         &cached_locations,
         cache_refreshed_at,
-        locations_stale,
         data_shards,
         total_shards,
     ) {
-        clear_shard_locations_stale(state, vid);
         match cached_lookup_ec_shard_locations(state, vid).await {
             Ok(fresh) => {
                 if write_back_shard_locations(state, vid, fresh, data_shards).is_none() {
@@ -607,9 +600,6 @@ fn build_snapshot(
     let interval_results = read_local_intervals(ecv, intervals);
     let cached_locations = ecv.shard_locations.read().unwrap().clone();
     let cache_refreshed_at = *ecv.shard_locations_refresh_time.lock().unwrap();
-    let locations_stale = ecv
-        .shard_locations_stale
-        .load(std::sync::atomic::Ordering::Relaxed);
 
     Ok(Snapshot {
         data_shards: ecv.data_shards,
@@ -621,7 +611,6 @@ fn build_snapshot(
         intervals: interval_results,
         cached_locations,
         cache_refreshed_at,
-        locations_stale,
         encode_ts_ns: ecv.encode_ts_ns,
     })
 }
@@ -662,20 +651,32 @@ fn needs_refresh(
 fn mark_shard_locations_stale(state: &Arc<VolumeServerState>, vid: VolumeId) {
     let store = state.store.read().unwrap();
     if let Some(ecv) = store.find_ec_volume(vid) {
-        ecv.shard_locations_stale
-            .store(true, std::sync::atomic::Ordering::Relaxed);
+        *ecv.shard_locations_stale.lock().unwrap() = true;
     }
 }
 
-/// Consume the mark before the master lookup rather than on its return: a read
-/// that fails while the master is answering has disproved the map that answer is
-/// about to install, and clearing afterwards would swallow it.
-fn clear_shard_locations_stale(state: &Arc<VolumeServerState>, vid: VolumeId) {
+/// Decide whether the cached map is due a master lookup and, when it is, consume
+/// its stale mark in the same critical section. A mark raised from here on
+/// belongs to the next refresh: the read that raised it has disproved the map
+/// this lookup is about to install.
+fn claim_shard_locations_refresh(
+    state: &Arc<VolumeServerState>,
+    vid: VolumeId,
+    locations: &HashMap<ShardId, Vec<String>>,
+    refreshed_at: Option<Instant>,
+    data_shards: usize,
+    total_shards: usize,
+) -> bool {
     let store = state.store.read().unwrap();
-    if let Some(ecv) = store.find_ec_volume(vid) {
-        ecv.shard_locations_stale
-            .store(false, std::sync::atomic::Ordering::Relaxed);
+    let Some(ecv) = store.find_ec_volume(vid) else {
+        return needs_refresh(locations, refreshed_at, false, data_shards, total_shards);
+    };
+    let mut stale = ecv.shard_locations_stale.lock().unwrap();
+    let refresh = needs_refresh(locations, refreshed_at, *stale, data_shards, total_shards);
+    if refresh {
+        *stale = false;
     }
+    refresh
 }
 
 async fn cached_lookup_ec_shard_locations(
