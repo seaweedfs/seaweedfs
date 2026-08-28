@@ -573,12 +573,13 @@ func (fs *FilerSink) sourceServed(fileId string) {
 	fs.missingVolumes.Delete(filer.VolumeId(fileId))
 }
 
-// sourceStillServesChunks reports whether the source cluster can still locate the
+// sourceStillServesChunks reports whether the source cluster can still produce the
 // last chunk it served. A volume with no locations reads the same whether it was
 // vacuumed away or every replica is down, so before an entry is written off the
-// sink re-checks a file id the source did serve: if that one has become
-// unresolvable too the source is in an outage, and skipping would drop live files
-// wholesale.
+// sink re-reads a file id the source did serve: if that one cannot be produced
+// either the source is in an outage, and skipping would drop live files wholesale.
+// It is a read and not a lookup because a lookup only proves the master still has
+// the topology, not that a volume server answers.
 func (fs *FilerSink) sourceStillServesChunks() bool {
 	if fs.filerSource == nil {
 		return false
@@ -587,10 +588,12 @@ func (fs *FilerSink) sourceStillServesChunks() bool {
 	if probe == nil {
 		return false
 	}
-	if _, err := fs.filerSource.LookupFileId(context.Background(), *probe); err != nil {
-		glog.V(0).Infof("source cannot locate %s either, so it is not only the one chunk: %v", *probe, err)
+	_, _, resp, err := fs.filerSource.ReadPart(*probe, 0)
+	if err != nil {
+		glog.V(0).Infof("source cannot serve %s either, so it is not only the one chunk: %v", *probe, err)
 		return false
 	}
+	util_http.CloseResponse(resp)
 	return true
 }
 

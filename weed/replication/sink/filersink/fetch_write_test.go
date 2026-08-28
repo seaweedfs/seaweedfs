@@ -434,11 +434,12 @@ func TestManifestResolveRetryGateNonTransientPropagates(t *testing.T) {
 
 // sourceFilerServer answers as a source filer that still holds the entry,
 // unchanged, while its master locates the chunk's volume only for the volume ids
-// in resolvable. With none listed it is a cluster that has vacuumed the volume
-// away — or lost every replica of it.
+// in resolvable, which it serves from volumeUrl. With none listed it is a cluster
+// that has vacuumed the volume away — or lost every replica of it.
 type sourceFilerServer struct {
 	filer_pb.UnimplementedSeaweedFilerServer
 	mtime      int64
+	volumeUrl  string
 	resolvable []string
 }
 
@@ -447,7 +448,7 @@ func (s *sourceFilerServer) LookupVolume(ctx context.Context, req *filer_pb.Look
 	for _, vid := range req.VolumeIds {
 		if slices.Contains(s.resolvable, vid) {
 			locationsMap[vid] = &filer_pb.Locations{
-				Locations: []*filer_pb.Location{{Url: "127.0.0.1:1"}},
+				Locations: []*filer_pb.Location{{Url: s.volumeUrl}},
 			}
 		}
 	}
@@ -461,14 +462,25 @@ func (s *sourceFilerServer) LookupDirectoryEntry(ctx context.Context, req *filer
 	}}, nil
 }
 
-func startSourceFiler(t *testing.T, mtime int64, resolvable ...string) *source.FilerSource {
+// liveVolume serves a chunk read the way a healthy volume server would, so the
+// sink's probe finds the source still producing data.
+func liveVolume(t *testing.T) string {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("chunk bytes"))
+	}))
+	t.Cleanup(server.Close)
+	return strings.TrimPrefix(server.URL, "http://")
+}
+
+func startSourceFiler(t *testing.T, mtime int64, volumeUrl string, resolvable ...string) *source.FilerSource {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
 	server := grpc.NewServer()
-	filer_pb.RegisterSeaweedFilerServer(server, &sourceFilerServer{mtime: mtime, resolvable: resolvable})
+	filer_pb.RegisterSeaweedFilerServer(server, &sourceFilerServer{mtime: mtime, volumeUrl: volumeUrl, resolvable: resolvable})
 	go server.Serve(listener)
 	t.Cleanup(server.Stop)
 
@@ -493,7 +505,7 @@ func TestFetchAndWriteStopsOnMissingSourceChunk(t *testing.T) {
 		util.RetryWaitTime, missingSourceChunkGrace = prevRetryWaitTime, prevGrace
 	})
 
-	filerSrc := startSourceFiler(t, 5)
+	filerSrc := startSourceFiler(t, 5, "")
 
 	fs := &FilerSink{
 		filerSource: filerSrc,
@@ -580,7 +592,7 @@ func TestOnReplicateChunkErrorMissingSourceChunk(t *testing.T) {
 	missing := fmt.Errorf("copy 5617,02def: %w: %w", errSourceChunkMissing, source.ErrVolumeNotFound)
 
 	t.Run("source still serving", func(t *testing.T) {
-		fs := &FilerSink{filerSource: startSourceFiler(t, 5, "5616"), dir: "/dst"}
+		fs := &FilerSink{filerSource: startSourceFiler(t, 5, liveVolume(t), "5616"), dir: "/dst"}
 		served := probe
 		fs.lastServedFileId.Store(&served)
 
@@ -590,7 +602,7 @@ func TestOnReplicateChunkErrorMissingSourceChunk(t *testing.T) {
 	})
 
 	t.Run("source locating nothing", func(t *testing.T) {
-		fs := &FilerSink{filerSource: startSourceFiler(t, 5), dir: "/dst"}
+		fs := &FilerSink{filerSource: startSourceFiler(t, 5, ""), dir: "/dst"}
 		served := probe
 		fs.lastServedFileId.Store(&served)
 
@@ -599,8 +611,25 @@ func TestOnReplicateChunkErrorMissingSourceChunk(t *testing.T) {
 		}
 	})
 
+	t.Run("probe locates but cannot be read", func(t *testing.T) {
+		gone := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "Not Found", http.StatusNotFound)
+		}))
+		defer gone.Close()
+		fs := &FilerSink{
+			filerSource: startSourceFiler(t, 5, strings.TrimPrefix(gone.URL, "http://"), "5616"),
+			dir:         "/dst",
+		}
+		served := probe
+		fs.lastServedFileId.Store(&served)
+
+		if err := fs.onReplicateChunkError("/dst/x.bin", liveEntry, missing); !errors.Is(err, errSourceChunkMissing) {
+			t.Fatalf("a volume the master lists but no server answers must not license a skip, got %v", err)
+		}
+	})
+
 	t.Run("nothing served yet", func(t *testing.T) {
-		fs := &FilerSink{filerSource: startSourceFiler(t, 5, "5616"), dir: "/dst"}
+		fs := &FilerSink{filerSource: startSourceFiler(t, 5, liveVolume(t), "5616"), dir: "/dst"}
 
 		if err := fs.onReplicateChunkError("/dst/x.bin", liveEntry, missing); !errors.Is(err, errSourceChunkMissing) {
 			t.Fatalf("expected the error to be held with no probe to check, got %v", err)
@@ -618,7 +647,7 @@ func TestFetchAndWriteMissingSourceChunkUnverifiableSupersession(t *testing.T) {
 	t.Cleanup(func() { util.RetryWaitTime = prevRetryWaitTime })
 
 	fs := &FilerSink{
-		filerSource:   startSourceFiler(t, 5),
+		filerSource:   startSourceFiler(t, 5, ""),
 		dir:           "/backup",
 		isIncremental: true,
 		executor:      util.NewLimitedConcurrentExecutor(1),

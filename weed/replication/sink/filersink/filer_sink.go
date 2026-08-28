@@ -464,7 +464,7 @@ func (fs *FilerSink) onReplicateChunkError(key string, entry *filer_pb.Entry, er
 		return nil
 	}
 	if errors.Is(err, errSourceChunkMissing) && fs.sourceStillServesChunks() {
-		glog.Errorf("skip %s: the source cluster no longer has its data: %v", key, err)
+		glog.Errorf("skip %s: the source cluster cannot produce its data, so it stays unreplicated: %v", key, err)
 		return nil
 	}
 	return fmt.Errorf("replicate entry chunks %s: %w", key, err)
