@@ -483,10 +483,21 @@ func doFixEcxFromShards(basePath, baseFileName, collection string, volumeId int6
 	case blockSize == 0:
 		candidates = []layoutCandidate{{"legacy", erasure_coding.ErasureCodingLargeBlockSize, erasure_coding.ErasureCodingSmallBlockSize}}
 	default:
-		glog.Infof("volume %d: no .vif or .ecsum records the shard block layout; trying both", volumeId)
 		candidates = []layoutCandidate{
 			{"legacy", erasure_coding.ErasureCodingLargeBlockSize, erasure_coding.ErasureCodingSmallBlockSize},
-			{"uniform", shardSize, shardSize},
+		}
+		// A uniform-layout shard is exactly one block long, and every block
+		// size an encoder can produce is a whole number of small blocks. An
+		// extent that is not — a truncated or partially copied shard — could
+		// not have come from a uniform encode, and recording it would write a
+		// .vif that ValidateBlockSize refuses on the next mount: the volume
+		// this tool was run to rescue would never open again.
+		if erasure_coding.ValidateBlockSize(shardSize) == nil && shardSize > 0 {
+			candidates = append(candidates, layoutCandidate{"uniform", shardSize, shardSize})
+			glog.Infof("volume %d: no .vif or .ecsum records the shard block layout; trying both", volumeId)
+		} else {
+			glog.Infof("volume %d: no .vif or .ecsum records the shard block layout, and the %d-byte shard extent is not a whole number of %d-byte blocks; trying the legacy layout only",
+				volumeId, shardSize, erasure_coding.ErasureCodingSmallBlockSize)
 		}
 	}
 
@@ -551,6 +562,13 @@ func doFixEcxFromShards(basePath, baseFileName, collection string, volumeId int6
 		size := datFileSize
 		if size <= 0 {
 			size = realDatSize
+		}
+		// Never publish a layout the mount path will refuse: NewEcVolume runs
+		// the same check and fails closed, so an unvalidated write here would
+		// trade a recoverable volume for one that can no longer be opened.
+		if bsErr := erasure_coding.ValidateBlockSize(blockSize); bsErr != nil {
+			fail(fmt.Errorf("volume %d: refusing to write %s: %w", volumeId, vifName, bsErr))
+			return
 		}
 		volumeInfo := &volume_server_pb.VolumeInfo{
 			Version:     uint32(version),
