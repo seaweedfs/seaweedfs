@@ -714,6 +714,7 @@ enum VolumeScrubMode {
     FULL = 2;
     LOCAL = 3;
     CHECKSUM = 4; // EC only: verify each local shard's raw bytes against the bitrot checksum sidecar
+    READS = 5;    // like FULL, but EC intervals no shard can serve are reconstructed from parity
 }
 
 message ScrubVolumeRequest {

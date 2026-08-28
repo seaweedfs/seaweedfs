@@ -246,7 +246,9 @@ pub async fn read_ec_shard_needle_distributed(
 /// without decoding (so genuine shard faults are reported rather than healed).
 /// Mirrors Go's `Store.ScrubEcVolume`. Returns (rows walked, broken shards,
 /// errors). `force_deleted_needles_check` disables the benign delete-state
-/// size-mismatch suppression.
+/// size-mismatch suppression. `recover_unreadable` (READS mode) rebuilds an
+/// unreadable interval from the surviving shards: the same shards are reported
+/// broken, but only needles parity can no longer recover become errors.
 ///
 /// Shard locations are refreshed once up front. Each needle is then processed via
 /// `scrub_snapshot_under_lock` + lock-drop + no-reconstruct `read_remote_ec_shard_interval`,
@@ -255,6 +257,7 @@ pub async fn scrub_ec_volume_distributed(
     state: &Arc<VolumeServerState>,
     vid: VolumeId,
     force_deleted_needles_check: bool,
+    recover_unreadable: bool,
 ) -> (i64, Vec<crate::pb::volume_server_pb::EcShardInfo>, Vec<String>) {
     // Phase A — under the Store read lock, run the index scrub and grab the
     // paths/scalars + shard-location staleness; release the lock before any await.
@@ -395,8 +398,9 @@ pub async fn scrub_ec_volume_distributed(
             }
         };
 
-        // Read each interval local-then-remote WITHOUT reconstructing: we verify
-        // the shards are valid, we do not heal them. Locations refreshed above.
+        // Read each interval local-then-remote. Neither read decodes: the point is to
+        // find shards that are themselves broken, not to heal around them. READS then
+        // rebuilds what it could not read. Locations refreshed above.
         let n_intervals = snapshot.intervals.len();
         let mut data: Vec<u8> = Vec::with_capacity(snapshot.actual_size);
         for (i, res) in snapshot.intervals.iter().enumerate() {
@@ -426,11 +430,9 @@ pub async fn scrub_ec_volume_distributed(
                         // -> the delete-state suppression (mirrors Go's pre-zeroed buffer).
                         Ok((_, true)) => data.resize(data.len() + *ssize, 0),
                         Ok((buf, false)) => data.extend_from_slice(&buf),
-                        Err(_) => {
-                            errs.push(format!(
-                                "failed to read EC shard {} for needle {} on volume {} (interval {}/{})",
-                                shard_id, id.0, vid.0, i + 1, n_intervals
-                            ));
+                        Err(read_err) => {
+                            // The shard is broken whether or not the needle survives it,
+                            // so report it either way.
                             broken_shards.insert(
                                 *shard_id,
                                 crate::pb::volume_server_pb::EcShardInfo {
@@ -441,7 +443,41 @@ pub async fn scrub_ec_volume_distributed(
                                     ..Default::default()
                                 },
                             );
-                            break;
+                            if !recover_unreadable {
+                                errs.push(format!(
+                                    "failed to read EC shard {} for needle {} on volume {} (interval {}/{}): {}",
+                                    shard_id, id.0, vid.0, i + 1, n_intervals, read_err
+                                ));
+                                break;
+                            }
+                            match recover_one_remote_ec_shard_interval(
+                                state,
+                                vid,
+                                id,
+                                *shard_id,
+                                *shard_offset,
+                                *ssize,
+                                &locations,
+                                data_shards,
+                                total_shards - data_shards,
+                                snapshot.encode_ts_ns,
+                            )
+                            .await
+                            {
+                                // Same as the direct read above: a holder reporting the
+                                // needle deleted is authoritative and answers with no
+                                // bytes, so zero-fill and let the delete-state
+                                // suppression have it.
+                                Ok((_, true)) => data.resize(data.len() + *ssize, 0),
+                                Ok((buf, false)) => data.extend_from_slice(&buf),
+                                Err(e) => {
+                                    errs.push(format!(
+                                        "failed to recover EC shard {} for needle {} on volume {} (interval {}/{}): {}",
+                                        shard_id, id.0, vid.0, i + 1, n_intervals, e
+                                    ));
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
