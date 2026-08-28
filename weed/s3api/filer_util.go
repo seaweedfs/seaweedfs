@@ -94,26 +94,36 @@ func listWithRetry(parentDirectoryPath string, doList func() (entries []*filer_p
 
 }
 
-func (s3a *S3ApiServer) rm(parentDirectoryPath, entryName string, isDeleteData, isRecursive bool) error {
+// A delete is idempotent at the filer, which answers an entry that is already
+// gone with an empty resp.Error, so a reply the transport dropped can be
+// reissued instead of surfaced: as a 500 on the bucket delete, or as a per-key
+// InternalError inside the 200 of a multi-object delete, which no SDK retries.
+// Each attempt re-enters WithFilerClient, so it walks the failover list again
+// on a connection the failed one had invalidated.
+func (s3a *S3ApiServer) rm(ctx context.Context, parentDirectoryPath, entryName string, isDeleteData, isRecursive bool) error {
 
-	return s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	return retryFilerOp(ctx, "rm "+parentDirectoryPath+"/"+entryName, func() error {
+		return s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
-		return doDeleteEntry(client, parentDirectoryPath, entryName, isDeleteData, isRecursive)
+			return doDeleteEntry(ctx, client, parentDirectoryPath, entryName, isDeleteData, isRecursive)
+		})
 	})
 
 }
 
-func (s3a *S3ApiServer) rmObject(parentDirectoryPath, entryName string, isDeleteData, isRecursive bool) error {
+func (s3a *S3ApiServer) rmObject(ctx context.Context, parentDirectoryPath, entryName string, isDeleteData, isRecursive bool) error {
 
-	return s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	return retryFilerOp(ctx, "rmObject "+parentDirectoryPath+"/"+entryName, func() error {
+		return s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
-		return deleteObjectEntry(client, parentDirectoryPath, entryName, isDeleteData, isRecursive)
+			return deleteObjectEntry(ctx, client, parentDirectoryPath, entryName, isDeleteData, isRecursive)
+		})
 	})
 
 }
 
-func deleteObjectEntry(client filer_pb.SeaweedFilerClient, parentDirectoryPath, entryName string, isDeleteData, isRecursive bool) error {
-	err := doDeleteEntry(client, parentDirectoryPath, entryName, isDeleteData, isRecursive)
+func deleteObjectEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, parentDirectoryPath, entryName string, isDeleteData, isRecursive bool) error {
+	err := doDeleteEntry(ctx, client, parentDirectoryPath, entryName, isDeleteData, isRecursive)
 	if err == nil {
 		return nil
 	}
@@ -121,10 +131,10 @@ func deleteObjectEntry(client filer_pb.SeaweedFilerClient, parentDirectoryPath, 
 		return err
 	}
 
-	return demoteDirectoryMarkerToImplicitDirectory(client, parentDirectoryPath, entryName)
+	return demoteDirectoryMarkerToImplicitDirectory(ctx, client, parentDirectoryPath, entryName)
 }
 
-func doDeleteEntry(client filer_pb.SeaweedFilerClient, parentDirectoryPath string, entryName string, isDeleteData bool, isRecursive bool) error {
+func doDeleteEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, parentDirectoryPath string, entryName string, isDeleteData bool, isRecursive bool) error {
 	request := &filer_pb.DeleteEntryRequest{
 		Directory:            parentDirectoryPath,
 		Name:                 entryName,
@@ -134,7 +144,7 @@ func doDeleteEntry(client filer_pb.SeaweedFilerClient, parentDirectoryPath strin
 	}
 
 	glog.V(1).Infof("delete entry %v/%v: %v", parentDirectoryPath, entryName, request)
-	if resp, err := client.DeleteEntry(context.Background(), request); err != nil {
+	if resp, err := client.DeleteEntry(ctx, request); err != nil {
 		glog.V(1).Infof("delete entry %v: %v", request, err)
 		return fmt.Errorf("delete entry %s/%s: %w", parentDirectoryPath, entryName, err)
 	} else {
@@ -147,8 +157,8 @@ func doDeleteEntry(client filer_pb.SeaweedFilerClient, parentDirectoryPath strin
 	return nil
 }
 
-func demoteDirectoryMarkerToImplicitDirectory(client filer_pb.SeaweedFilerClient, parentDirectoryPath, entryName string) error {
-	resp, err := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
+func demoteDirectoryMarkerToImplicitDirectory(ctx context.Context, client filer_pb.SeaweedFilerClient, parentDirectoryPath, entryName string) error {
+	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
 		Directory: parentDirectoryPath,
 		Name:      entryName,
 	})
@@ -167,7 +177,7 @@ func demoteDirectoryMarkerToImplicitDirectory(client filer_pb.SeaweedFilerClient
 
 	clearDirectoryMarkerMetadata(resp.Entry)
 
-	if err := filer_pb.UpdateEntry(context.Background(), client, &filer_pb.UpdateEntryRequest{
+	if err := filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
 		Directory: parentDirectoryPath,
 		Entry:     resp.Entry,
 	}); err != nil {

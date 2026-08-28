@@ -1144,7 +1144,7 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(ctx context.Context, bucket,
 		// it falls back to for an entry other keys are nested under writes the entry
 		// back under that parent - so a key with a slash in it has to be split first.
 		dir, name := util.NewFullPath(bucketDir, normalizedObject).DirAndName()
-		deleteErr := s3a.rmObject(dir, name, !metadataOnly, false)
+		deleteErr := s3a.rmObject(ctx, dir, name, !metadataOnly, false)
 		if deleteErr != nil {
 			// Check if file was already deleted by another process
 			if _, checkErr := s3a.getEntry(bucketDir, normalizedObject); checkErr != nil {
@@ -1193,7 +1193,7 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(ctx context.Context, bucket,
 	// Attempt to delete the version file
 	// Note: We don't check if the file exists first to avoid race conditions
 	// The deletion operation should be idempotent
-	deleteErr := s3a.rm(versionsDir, versionFile, !metadataOnly, false)
+	deleteErr := s3a.rm(ctx, versionsDir, versionFile, !metadataOnly, false)
 	if deleteErr != nil {
 		// Check if file was already deleted by another process (race condition handling)
 		if _, checkErr := s3a.getEntry(versionsDir, versionFile); checkErr != nil {
@@ -1212,7 +1212,7 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(ctx context.Context, bucket,
 		// down. Non-recursive: any orphan from older code paths leaves
 		// the directory in place for the empty-folder cleaner or our
 		// reconciler to handle.
-		if rmErr := s3a.rm(s3a.bucketDir(bucket), normalizedObject+s3_constants.VersionsFolder, true, false); rmErr != nil {
+		if rmErr := s3a.rm(ctx, s3a.bucketDir(bucket), normalizedObject+s3_constants.VersionsFolder, true, false); rmErr != nil {
 			glog.V(2).Infof("deleteSpecificObjectVersion: deferring .versions/ teardown for %s/%s: %v", bucket, normalizedObject, rmErr)
 		}
 	case isLatestVersion && !prePointerRolled:
@@ -1442,6 +1442,8 @@ func (b *filerRetryBudget) take(d time.Duration) (time.Duration, bool) {
 //   - NotFound: the entry genuinely doesn't exist. Retrying won't make
 //     it appear, and callers (e.g. repointLatestBeforeDeletion) want
 //     to act on this directly.
+//   - non-empty folder: the filer looked and the children are there, so
+//     the answer will not change; callers act on it directly too.
 //   - context.Canceled / DeadlineExceeded: the request was aborted by
 //     the client or hit a deadline. Continuing to retry just delays
 //     the failure return.
@@ -1452,10 +1454,16 @@ func isRetryableFilerErr(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, filer_pb.ErrNotFound) || status.Code(err) == codes.NotFound {
+	if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, filer.ErrNonEmptyFolder) {
 		return false
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	// the same conditions once they have crossed gRPC, where a cancelled
+	// context arrives as a status and no longer matches the sentinel above
+	switch status.Code(err) {
+	case codes.NotFound, codes.Canceled, codes.DeadlineExceeded:
 		return false
 	}
 	return true
@@ -1650,41 +1658,28 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(ctx context.Context, bu
 		// object is correctly absent.
 		glog.V(2).Infof("updateLatestVersionAfterDeletion: no versions left for %s/%s, deleting .versions directory", bucket, object)
 
-		rmErr := s3a.rm(bucketDir, versionsObjectPath, true, false)
+		rmErr := s3a.rm(ctx, bucketDir, versionsObjectPath, true, false)
 		if rmErr == nil {
 			return nil
 		}
-		// Two ways rm can fail here: "non-empty folder" (orphan entries
-		// blocking the teardown — fall through to pointer clear) and a
-		// transient filer error (worth retrying). Distinguish by the
-		// sentinel; if we can't tell, treat as transient.
+		// "non-empty folder" means orphan entries are blocking the
+		// teardown — fall through to the pointer clear. Anything else
+		// has already exhausted rm's own retries. Either way we still
+		// clear the stale pointer so readers get a clean miss; the
+		// directory can be tidied by the reconciler later.
 		if errors.Is(rmErr, filer.ErrNonEmptyFolder) {
 			glog.V(2).Infof("updateLatestVersionAfterDeletion: .versions/ for %s/%s still has orphan entries: %v", bucket, object, rmErr)
 			s3a.clearStaleLatestVersionPointer(bucket, object, bucketDir, versionsObjectPath, versionsEntry, "updateLatestVersionAfterDeletion")
 			return nil
 		}
-		// Transient — retry the rm a few times before giving up. Even
-		// if it ultimately fails, we still clear the stale pointer so
-		// readers get a clean miss; the directory can be tidied by the
-		// reconciler later.
-		retryErr := retryFilerOp(ctx, "updateLatestVersionAfterDeletion.rm", func() error {
-			return s3a.rm(bucketDir, versionsObjectPath, true, false)
-		})
-		if retryErr == nil {
-			return nil
-		}
-		if errors.Is(retryErr, filer.ErrNonEmptyFolder) {
-			s3a.clearStaleLatestVersionPointer(bucket, object, bucketDir, versionsObjectPath, versionsEntry, "updateLatestVersionAfterDeletion")
-			return nil
-		}
-		versioningHealWarningf("teardown_failed", "bucket=%s key=%s err=%v (fell through to clearStale)", bucket, object, retryErr)
+		versioningHealWarningf("teardown_failed", "bucket=%s key=%s err=%v (fell through to clearStale)", bucket, object, rmErr)
 		if s3a.clearStaleLatestVersionPointer(bucket, object, bucketDir, versionsObjectPath, versionsEntry, "updateLatestVersionAfterDeletion") {
 			// Pointer is consistent again; reader will get NoSuchKey via
 			// the clean-miss path. Don't emit `produced` or enqueue the
 			// reconciler — there's no stranded state left to heal.
 			return nil
 		}
-		return fmt.Errorf("delete .versions directory: %w", retryErr)
+		return fmt.Errorf("delete .versions directory: %w", rmErr)
 	}
 
 	return nil
@@ -2067,7 +2062,7 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 		// non-recursive rm makes this safe against a concurrent PUT — a new
 		// child fails the rm, and a directory removed just before that PUT's
 		// version file lands is recreated by the create's parent handling.
-		if rmErr := s3a.rm(bucketDir, versionsObjectPath, true, false); rmErr == nil {
+		if rmErr := s3a.rm(context.Background(), bucketDir, versionsObjectPath, true, false); rmErr == nil {
 			versioningHealInfof("healed", "bucket=%s key=%s mode=empty_dir_removed", bucket, normalizedObject)
 		} else {
 			// Orphan entries (files in .versions/ that lack the version-id

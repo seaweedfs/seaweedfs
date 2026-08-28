@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"cmp"
+	"context"
 	"crypto/md5"
 	"crypto/rand"
 	"encoding/base64"
@@ -936,12 +937,16 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 	}
 
 	if completionState != nil {
+		// The object is already committed and the client is still waiting, so the
+		// cleanup below runs on its own context but spends one allowance between
+		// all of it rather than a retry backoff per unused entry.
+		cleanupCtx := withFilerRetryBudget(context.Background(), filerRetryRequestBudget)
 		for _, deleteEntry := range completionState.deleteEntries {
-			if err := s3a.rm(uploadDirectory, deleteEntry.Name, !completionState.metadataOnlyCleanup, true); err != nil {
+			if err := s3a.rm(cleanupCtx, uploadDirectory, deleteEntry.Name, !completionState.metadataOnlyCleanup, true); err != nil {
 				glog.Warningf("completeMultipartUpload cleanup %s upload %s unused %s : %v", *input.Bucket, *input.UploadId, deleteEntry.Name, err)
 			}
 		}
-		if err := s3a.rm(s3a.genUploadsFolder(*input.Bucket), *input.UploadId, false, true); err != nil {
+		if err := s3a.rm(cleanupCtx, s3a.genUploadsFolder(*input.Bucket), *input.UploadId, false, true); err != nil {
 			glog.V(1).Infof("completeMultipartUpload cleanup %s upload %s: %v", *input.Bucket, *input.UploadId, err)
 		}
 		if len(completionState.supersededPartManifests) > 0 {
@@ -955,7 +960,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 // Metadata-only: the version file's chunks are the still-registered parts'
 // chunks, which a retried completion needs.
 func (s3a *S3ApiServer) rollbackMultipartVersion(versionDir, versionFileName string) error {
-	return s3a.rmObject(versionDir, versionFileName, false, false)
+	return s3a.rmObject(context.Background(), versionDir, versionFileName, false, false)
 }
 
 func (s3a *S3ApiServer) getEntryNameAndDir(input *s3.CompleteMultipartUploadInput) (string, string) {
@@ -995,7 +1000,7 @@ func (s3a *S3ApiServer) abortMultipartUpload(input *s3.AbortMultipartUploadInput
 		return nil, s3err.ErrInternalError
 	}
 	if exists {
-		err = s3a.rm(s3a.genUploadsFolder(*input.Bucket), *input.UploadId, true, true)
+		err = s3a.rm(context.Background(), s3a.genUploadsFolder(*input.Bucket), *input.UploadId, true, true)
 	}
 	if err != nil {
 		glog.V(1).Infof("bucket %s remove upload %s: %v", *input.Bucket, *input.UploadId, err)

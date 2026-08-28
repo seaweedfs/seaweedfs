@@ -933,7 +933,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		entryCreated = true
 		if finalize != nil && finalize.afterCreate != nil {
 			if afterCreateCode := finalize.afterCreate(entry); afterCreateCode != s3err.ErrNone {
-				rollbackErr = s3a.rmObject(path.Dir(filePath), path.Base(filePath), true, false)
+				rollbackErr = s3a.rmObject(context.Background(), path.Dir(filePath), path.Base(filePath), true, false)
 				if rollbackErr != nil {
 					glog.Errorf("putToFiler: failed to rollback created entry for %s after post-create error: %v", filePath, rollbackErr)
 				} else {
@@ -1470,7 +1470,7 @@ func (s3a *S3ApiServer) removeNullVersionFile(bucket, object string) {
 		if string(entry.Extended[s3_constants.ExtVersionIdKey]) != "null" {
 			continue
 		}
-		if rmErr := s3a.rm(versionsDir, entry.Name, true, false); rmErr != nil {
+		if rmErr := s3a.rm(context.Background(), versionsDir, entry.Name, true, false); rmErr != nil {
 			glog.Warningf("removeNullVersionFile: %s/%s: %v", bucket, object, rmErr)
 		}
 		return
