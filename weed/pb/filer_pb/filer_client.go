@@ -155,7 +155,9 @@ func DoSeaweedListWithSnapshot(ctx context.Context, client SeaweedFilerClient, f
 	defer cancel()
 	stream, err := client.ListEntries(ctx, request)
 	if err != nil {
-		return actualSnapshotTsNs, fmt.Errorf("list %s: %v", fullDirPath, err)
+		// fullDirPath is the caller's bucket and prefix; keep the status the filer
+		// sent so a retry is decided on that rather than on this message
+		return actualSnapshotTsNs, fmt.Errorf("list %s: %w", fullDirPath, err)
 	}
 
 	var prevEntry *Entry

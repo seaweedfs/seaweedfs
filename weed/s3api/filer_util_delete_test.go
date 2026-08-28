@@ -169,6 +169,24 @@ func TestDeleteObjectEntryIgnoresConcurrentUpdateNotFound(t *testing.T) {
 	require.NotNil(t, client.updateReq)
 }
 
+// The key is the client's and the filer echoes it in the message it sends back,
+// so a key named after the marker must not turn a real failure into the demote
+// no-op, which would answer a failed delete with a 204.
+func TestDeleteObjectEntryIgnoresMarkerSpoofedByKey(t *testing.T) {
+	name := filer.MsgFailDelNonEmptyFolder
+	client := &deleteObjectEntryTestClient{
+		deleteResp: &filer_pb.DeleteEntryResponse{
+			Error: "delete file /buckets/test/" + name + ": filer store delete: disk full",
+		},
+	}
+
+	err := deleteObjectEntry(client, "/buckets/test", name, true, false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "disk full")
+	assert.Nil(t, client.lookupReq)
+	assert.Nil(t, client.updateReq)
+}
+
 func TestDeleteObjectEntryPropagatesNonDirectoryDeleteErrors(t *testing.T) {
 	client := &deleteObjectEntryTestClient{
 		deleteErr: errors.New("boom"),

@@ -67,10 +67,10 @@ const (
 	listRetryInitialBackoff = 100 * time.Millisecond
 )
 
-// isRetryableListError classifies by message via util.IsTransientError because
-// DoSeaweedListWithSnapshot wraps a failed ListEntries call with %v, dropping
-// the gRPC status from the chain. Not-found is authoritative and must reach the
-// caller unchanged.
+// isRetryableListError defers to util.IsTransientError, which reads the status
+// the filer sent rather than the message DoSeaweedListWithSnapshot builds around
+// it out of the bucket and prefix the client chose. Not-found is authoritative
+// and must reach the caller unchanged.
 func isRetryableListError(err error) bool {
 	return err != nil && !isFilerNotFound(err) && util.IsTransientError(err)
 }
@@ -117,7 +117,7 @@ func deleteObjectEntry(client filer_pb.SeaweedFilerClient, parentDirectoryPath, 
 	if err == nil {
 		return nil
 	}
-	if !strings.Contains(err.Error(), filer.MsgFailDelNonEmptyFolder) {
+	if !errors.Is(err, filer.ErrNonEmptyFolder) {
 		return err
 	}
 
@@ -136,10 +136,12 @@ func doDeleteEntry(client filer_pb.SeaweedFilerClient, parentDirectoryPath strin
 	glog.V(1).Infof("delete entry %v/%v: %v", parentDirectoryPath, entryName, request)
 	if resp, err := client.DeleteEntry(context.Background(), request); err != nil {
 		glog.V(1).Infof("delete entry %v: %v", request, err)
-		return fmt.Errorf("delete entry %s/%s: %v", parentDirectoryPath, entryName, err)
+		return fmt.Errorf("delete entry %s/%s: %w", parentDirectoryPath, entryName, err)
 	} else {
 		if resp.Error != "" {
-			return fmt.Errorf("delete entry %s/%s: %v", parentDirectoryPath, entryName, resp.Error)
+			// the path wrapped in here is the client's, so classify the filer's
+			// text now, while it still stands alone
+			return fmt.Errorf("delete entry %s/%s: %w", parentDirectoryPath, entryName, filer.DeleteEntryError(resp.Error))
 		}
 	}
 	return nil

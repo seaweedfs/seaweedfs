@@ -747,7 +747,7 @@ func (c *commandVolumeFsck) purgeEmptyDirectories() {
 			continue
 		}
 		if err := c.deleteEmptyDirectory(dir, mtime); err != nil {
-			if !strings.Contains(err.Error(), filer.MsgFailDelNonEmptyFolder) {
+			if !errors.Is(err, filer.ErrNonEmptyFolder) {
 				fmt.Fprintf(c.writer, "delete empty directory %s: %v\n", dir, err)
 			}
 			continue
@@ -771,7 +771,7 @@ func (c *commandVolumeFsck) deleteEmptyDirectory(dir util.FullPath, mtime int64)
 			return err
 		}
 		if resp.Error != "" {
-			return errors.New(resp.Error)
+			return filer.DeleteEntryError(resp.Error)
 		}
 		return nil
 	})
