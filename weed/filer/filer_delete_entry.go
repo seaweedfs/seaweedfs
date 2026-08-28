@@ -63,7 +63,9 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 
 	if isDeleteCollection {
 		collectionName := entry.Name()
-		f.DoDeleteCollection(collectionName)
+		// the entry is already gone: a caller that hung up must not leave the
+		// collection behind, so this cleanup outlives the request
+		f.DoDeleteCollection(context.Background(), collectionName)
 		// drop bucket-labeled series held by this process; the S3 gateway
 		// only cleans its own registry
 		stats.DeleteBucketMetrics(collectionName)
@@ -167,10 +169,10 @@ func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shou
 	return nil
 }
 
-func (f *Filer) DoDeleteCollection(collectionName string) (err error) {
+func (f *Filer) DoDeleteCollection(ctx context.Context, collectionName string) (err error) {
 
-	return f.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
-		_, err := client.CollectionDelete(context.Background(), &master_pb.CollectionDeleteRequest{
+	return f.MasterClient.WithClient(ctx, false, func(client master_pb.SeaweedClient) error {
+		_, err := client.CollectionDelete(ctx, &master_pb.CollectionDeleteRequest{
 			Name: collectionName,
 		})
 		if err != nil {

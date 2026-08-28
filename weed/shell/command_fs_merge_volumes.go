@@ -318,7 +318,7 @@ func (c *commandFsMergeVolumes) volumesAreCompatible(src needle.VolumeId, dest n
 func (c *commandFsMergeVolumes) reloadVolumesInfo(masterClient *wdclient.MasterClient) error {
 	c.volumes = make(map[needle.VolumeId]*master_pb.VolumeInformationMessage)
 
-	return masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+	return masterClient.WithClient(context.Background(), false, func(client master_pb.SeaweedClient) error {
 		volumes, err := pb.CollectVolumeList(context.Background(), client, &master_pb.VolumeListRequest{})
 		if err != nil {
 			return err

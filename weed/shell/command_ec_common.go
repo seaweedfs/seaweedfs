@@ -55,7 +55,7 @@ func _getDefaultReplicaPlacement(commandEnv *CommandEnv) (*super_block.ReplicaPl
 	var resp *master_pb.GetMasterConfigurationResponse
 	var err error
 
-	err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+	err = commandEnv.MasterClient.WithClient(context.Background(), false, func(client master_pb.SeaweedClient) error {
 		resp, err = client.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
 		return err
 	})
@@ -94,7 +94,7 @@ func collectTopologyInfo(commandEnv *CommandEnv, delayBeforeCollecting time.Dura
 	}
 
 	var resp *master_pb.VolumeListResponse
-	err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+	err = commandEnv.MasterClient.WithClient(context.Background(), false, func(client master_pb.SeaweedClient) error {
 		resp, err = pb.CollectVolumeList(context.Background(), client, &master_pb.VolumeListRequest{})
 		return err
 	})
