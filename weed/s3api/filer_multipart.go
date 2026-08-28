@@ -937,12 +937,16 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 	}
 
 	if completionState != nil {
+		// The object is already committed and the client is still waiting, so the
+		// cleanup below runs on its own context but spends one allowance between
+		// all of it rather than a retry backoff per unused entry.
+		cleanupCtx := withFilerRetryBudget(context.Background(), filerRetryRequestBudget)
 		for _, deleteEntry := range completionState.deleteEntries {
-			if err := s3a.rm(context.Background(), uploadDirectory, deleteEntry.Name, !completionState.metadataOnlyCleanup, true); err != nil {
+			if err := s3a.rm(cleanupCtx, uploadDirectory, deleteEntry.Name, !completionState.metadataOnlyCleanup, true); err != nil {
 				glog.Warningf("completeMultipartUpload cleanup %s upload %s unused %s : %v", *input.Bucket, *input.UploadId, deleteEntry.Name, err)
 			}
 		}
-		if err := s3a.rm(context.Background(), s3a.genUploadsFolder(*input.Bucket), *input.UploadId, false, true); err != nil {
+		if err := s3a.rm(cleanupCtx, s3a.genUploadsFolder(*input.Bucket), *input.UploadId, false, true); err != nil {
 			glog.V(1).Infof("completeMultipartUpload cleanup %s upload %s: %v", *input.Bucket, *input.UploadId, err)
 		}
 		if len(completionState.supersededPartManifests) > 0 {
