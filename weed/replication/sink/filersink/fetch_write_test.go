@@ -1,9 +1,11 @@
 package filersink
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +13,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -390,7 +395,7 @@ func TestSourceSupersedesEpochMtime(t *testing.T) {
 // attempts and propagate instead of spinning forever.
 func TestManifestResolveRetryGateUnverifiableSupersessionBounded(t *testing.T) {
 	fs := &FilerSink{isIncremental: true, dir: "/backup"}
-	gate := fs.manifestResolveRetryGate("/backup/2026-07-10/buckets/x/f.pt", 123, "3,01abc")
+	gate := fs.manifestResolveRetryGate("/backup/2026-07-10/buckets/x/f.pt", 123, "3,01abc", &missingSourceChunkGate{})
 	resolveErr := errors.New("LookupFileId volume id 3: not found")
 	for i := 1; i < maxUnverifiableResolveAttempts; i++ {
 		if !gate(resolveErr) {
@@ -408,7 +413,7 @@ func TestManifestResolveRetryGateUnverifiableSupersessionBounded(t *testing.T) {
 // retrying until the source is superseded.
 func TestManifestResolveRetryGateNonTransientPropagates(t *testing.T) {
 	fs := &FilerSink{dir: "/backup"}
-	gate := fs.manifestResolveRetryGate("/backup/buckets/x/f.pt", 123, "3,01abc")
+	gate := fs.manifestResolveRetryGate("/backup/buckets/x/f.pt", 123, "3,01abc", &missingSourceChunkGate{})
 	permanentErrs := []error{
 		errors.New("fail to unmarshal manifest 3,01abc: proto: cannot parse invalid wire-format data"),
 		errors.New("invalid fileId abc"),
@@ -423,5 +428,116 @@ func TestManifestResolveRetryGateNonTransientPropagates(t *testing.T) {
 	}
 	if isTransientResolveError(nil) {
 		t.Error("isTransientResolveError(nil) must be false")
+	}
+}
+
+// vacuumedSourceServer answers as a healthy source filer whose master no longer
+// has the chunk's volume: the entry is still there, unchanged, but the volume has
+// no locations. That is what a replayed event looks like once vacuum has removed
+// the volume its chunks lived in.
+type vacuumedSourceServer struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+	mtime int64
+}
+
+func (s *vacuumedSourceServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVolumeRequest) (*filer_pb.LookupVolumeResponse, error) {
+	return &filer_pb.LookupVolumeResponse{LocationsMap: map[string]*filer_pb.Locations{}}, nil
+}
+
+func (s *vacuumedSourceServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	return &filer_pb.LookupDirectoryEntryResponse{Entry: &filer_pb.Entry{
+		Name:       req.Name,
+		Attributes: &filer_pb.FuseAttributes{Mtime: s.mtime},
+	}}, nil
+}
+
+// A chunk the source cluster cannot produce must stop being retried once the
+// grace period is up. Before, the retry loop ran forever: the sync job never
+// completed, so it held its slot and pinned the offset watermark at the event
+// ahead of it, and filer.sync never checkpointed again.
+func TestFetchAndWriteStopsOnMissingSourceChunk(t *testing.T) {
+	prevRetryWaitTime, prevGrace := util.RetryWaitTime, missingSourceChunkGrace
+	util.RetryWaitTime = 100 * time.Millisecond
+	missingSourceChunkGrace = 500 * time.Millisecond
+	t.Cleanup(func() {
+		util.RetryWaitTime, missingSourceChunkGrace = prevRetryWaitTime, prevGrace
+	})
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	server := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(server, &vacuumedSourceServer{mtime: 5})
+	go server.Serve(listener)
+	t.Cleanup(server.Stop)
+
+	address := listener.Addr().String()
+	filerSrc := &source.FilerSource{}
+	if err := filerSrc.DoInitialize(address, address, "/src", false); err != nil {
+		t.Fatalf("filerSource.DoInitialize: %v", err)
+	}
+	filerSrc.SetGrpcDialOption(grpc.WithTransportCredentials(insecure.NewCredentials()))
+
+	fs := &FilerSink{
+		filerSource: filerSrc,
+		address:     address,
+		dir:         "/dst",
+		executor:    util.NewLimitedConcurrentExecutor(1),
+	}
+	fs.SetUploader(operation.NewUploaderWithHttpClient(http.DefaultClient))
+
+	done := make(chan error, 1)
+	go func() {
+		_, fetchErr := fs.fetchAndWrite(&filer_pb.FileChunk{FileId: "5617,01abc", Size: 10}, "/dst/x.bin", 5*int64(time.Second))
+		done <- fetchErr
+	}()
+
+	select {
+	case fetchErr := <-done:
+		if !errors.Is(fetchErr, errSourceChunkMissing) {
+			t.Fatalf("expected errSourceChunkMissing, got %v", fetchErr)
+		}
+		if !errors.Is(fetchErr, source.ErrVolumeNotFound) {
+			t.Fatalf("expected the underlying lookup failure to survive, got %v", fetchErr)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("fetchAndWrite is still retrying a chunk the source cannot produce")
+	}
+}
+
+// The gate waits out the shapes a restarting volume server produces, and only
+// gives up once the source has been saying "gone" for the whole grace period.
+func TestMissingSourceChunkGate(t *testing.T) {
+	volumeGone := fmt.Errorf("read part 5617,01abc: %w", source.ErrVolumeNotFound)
+	needleGone := fmt.Errorf("read part 5617,01abc: 404 Not Found: %w", util_http.ErrNotFound)
+
+	gate := &missingSourceChunkGate{}
+	for _, err := range []error{volumeGone, needleGone} {
+		if gate.isPermanent(err) {
+			t.Fatalf("must keep retrying inside the grace period: %v", err)
+		}
+	}
+	if got := gate.wrap(volumeGone); errors.Is(got, errSourceChunkMissing) {
+		t.Fatalf("must not mark permanent while still retrying: %v", got)
+	}
+
+	// an unrelated failure means the source never got to answer: start over
+	gate.isPermanent(errors.New("connection reset by peer"))
+	if !gate.missingSince.IsZero() {
+		t.Fatal("a non-missing error must restart the grace period")
+	}
+
+	gate.isPermanent(volumeGone)
+	gate.missingSince = time.Now().Add(-2 * missingSourceChunkGrace)
+	if !gate.isPermanent(volumeGone) {
+		t.Fatal("must give up once the source has been missing the chunk for the whole grace period")
+	}
+	wrapped := gate.wrap(volumeGone)
+	if !errors.Is(wrapped, errSourceChunkMissing) || !errors.Is(wrapped, source.ErrVolumeNotFound) {
+		t.Fatalf("wrapped error lost a sentinel: %v", wrapped)
+	}
+	if gate.wrap(nil) != nil {
+		t.Fatal("a successful retry must not be turned into an error")
 	}
 }
