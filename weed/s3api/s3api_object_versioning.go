@@ -1454,13 +1454,16 @@ func isRetryableFilerErr(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, filer_pb.ErrNotFound) || status.Code(err) == codes.NotFound {
-		return false
-	}
-	if errors.Is(err, filer.ErrNonEmptyFolder) {
+	if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, filer.ErrNonEmptyFolder) {
 		return false
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	// the same conditions once they have crossed gRPC, where a cancelled
+	// context arrives as a status and no longer matches the sentinel above
+	switch status.Code(err) {
+	case codes.NotFound, codes.Canceled, codes.DeadlineExceeded:
 		return false
 	}
 	return true
