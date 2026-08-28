@@ -47,23 +47,22 @@ func isSourceChunkMissing(err error) bool {
 	return errors.Is(err, source.ErrVolumeNotFound) || errors.Is(err, util_http.ErrNotFound)
 }
 
-// missingSourceChunkGate tracks how long the source has been unable to produce a
-// chunk across retries, so a lookup race or a restarting volume server is waited
-// out while a vacuumed one is written off instead of retried forever.
+// missingSourceChunkGate decides when to stop retrying a chunk the source cannot
+// produce, so a lookup race or a restarting volume server is waited out while a
+// vacuumed one is written off instead of retried forever. The wait is kept per
+// volume on the sink: a volume that is gone took every file it held with it, and
+// waiting it out once per file would stall the sync for as long as it holds files.
 type missingSourceChunkGate struct {
-	missingSince time.Time
-	gaveUp       bool
+	sink     *FilerSink
+	volumeId string
+	gaveUp   bool
 }
 
 func (g *missingSourceChunkGate) isPermanent(err error) bool {
 	if !isSourceChunkMissing(err) {
-		g.missingSince = time.Time{}
 		return false
 	}
-	if g.missingSince.IsZero() {
-		g.missingSince = time.Now()
-	}
-	if time.Since(g.missingSince) < missingSourceChunkGrace {
+	if time.Since(g.sink.sourceVolumeMissingSince(g.volumeId)) < missingSourceChunkGrace {
 		return false
 	}
 	g.gaveUp = true
@@ -194,7 +193,7 @@ func (fs *FilerSink) replicateOneManifestChunk(ctx context.Context, sourceChunk 
 	// supersession or, when that cannot be checked, after a few attempts.
 	var resolvedChunks []*filer_pb.FileChunk
 	resolveName := fmt.Sprintf("resolve manifest %s", sourceChunk.GetFileIdString())
-	missingGate := &missingSourceChunkGate{}
+	missingGate := fs.newMissingSourceChunkGate(sourceChunk.GetFileIdString())
 	err := util.RetryUntil(resolveName, func() error {
 		rc, e := filer.ResolveOneChunkManifest(ctx, fs.filerSource.LookupFileId, sourceChunk)
 		if e != nil {
@@ -374,7 +373,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 
 	transientBackoff := time.Duration(0)
 	_, canCheckSupersession := fs.targetPathToSourcePath(path)
-	missingGate := &missingSourceChunkGate{}
+	missingGate := fs.newMissingSourceChunkGate(sourceChunk.GetFileIdString())
 	var partialData []byte
 	var savedFilename string
 	var savedHeader http.Header
@@ -418,8 +417,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 		if err := validateReplicatedReadSize(sourceChunk, len(fullData)); err != nil {
 			return err
 		}
-		servedFileId := sourceChunk.GetFileIdString()
-		fs.lastServedFileId.Store(&servedFileId)
+		fs.sourceServed(sourceChunk.GetFileIdString())
 
 		transferStatus.mu.Lock()
 		transferStatus.BytesReceived = int64(len(fullData))
@@ -555,6 +553,24 @@ func validateReplicatedReadSize(sourceChunk *filer_pb.FileChunk, readSize int) e
 			readSize, sourceChunk.Size)
 	}
 	return nil
+}
+
+func (fs *FilerSink) newMissingSourceChunkGate(fileId string) *missingSourceChunkGate {
+	return &missingSourceChunkGate{sink: fs, volumeId: filer.VolumeId(fileId)}
+}
+
+// sourceVolumeMissingSince returns when the sink first found volumeId
+// unlocatable, recording now on the first sighting.
+func (fs *FilerSink) sourceVolumeMissingSince(volumeId string) time.Time {
+	since, _ := fs.missingVolumes.LoadOrStore(volumeId, time.Now())
+	return since.(time.Time)
+}
+
+// sourceServed records a chunk the source did serve: the probe
+// sourceStillServesChunks re-checks, and proof its volume is locatable again.
+func (fs *FilerSink) sourceServed(fileId string) {
+	fs.lastServedFileId.Store(&fileId)
+	fs.missingVolumes.Delete(filer.VolumeId(fileId))
 }
 
 // sourceStillServesChunks reports whether the source cluster can still locate the

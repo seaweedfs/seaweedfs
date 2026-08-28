@@ -396,7 +396,7 @@ func TestSourceSupersedesEpochMtime(t *testing.T) {
 // attempts and propagate instead of spinning forever.
 func TestManifestResolveRetryGateUnverifiableSupersessionBounded(t *testing.T) {
 	fs := &FilerSink{isIncremental: true, dir: "/backup"}
-	gate := fs.manifestResolveRetryGate("/backup/2026-07-10/buckets/x/f.pt", 123, "3,01abc", &missingSourceChunkGate{})
+	gate := fs.manifestResolveRetryGate("/backup/2026-07-10/buckets/x/f.pt", 123, "3,01abc", fs.newMissingSourceChunkGate("3,01abc"))
 	resolveErr := errors.New("LookupFileId volume id 3: not found")
 	for i := 1; i < maxUnverifiableResolveAttempts; i++ {
 		if !gate(resolveErr) {
@@ -414,7 +414,7 @@ func TestManifestResolveRetryGateUnverifiableSupersessionBounded(t *testing.T) {
 // retrying until the source is superseded.
 func TestManifestResolveRetryGateNonTransientPropagates(t *testing.T) {
 	fs := &FilerSink{dir: "/backup"}
-	gate := fs.manifestResolveRetryGate("/backup/buckets/x/f.pt", 123, "3,01abc", &missingSourceChunkGate{})
+	gate := fs.manifestResolveRetryGate("/backup/buckets/x/f.pt", 123, "3,01abc", fs.newMissingSourceChunkGate("3,01abc"))
 	permanentErrs := []error{
 		errors.New("fail to unmarshal manifest 3,01abc: proto: cannot parse invalid wire-format data"),
 		errors.New("invalid fileId abc"),
@@ -523,11 +523,15 @@ func TestFetchAndWriteStopsOnMissingSourceChunk(t *testing.T) {
 
 // The gate waits out the shapes a restarting volume server produces, and only
 // gives up once the source has been saying "gone" for the whole grace period.
+// The wait belongs to the volume: a vacuumed one takes every file it held with
+// it, and waiting it out per file would stall the sync for as long as it holds
+// files.
 func TestMissingSourceChunkGate(t *testing.T) {
 	volumeGone := fmt.Errorf("read part 5617,01abc: %w", source.ErrVolumeNotFound)
 	needleGone := fmt.Errorf("read part 5617,01abc: 404 Not Found: %w", util_http.ErrNotFound)
 
-	gate := &missingSourceChunkGate{}
+	fs := &FilerSink{}
+	gate := fs.newMissingSourceChunkGate("5617,01abc")
 	for _, err := range []error{volumeGone, needleGone} {
 		if gate.isPermanent(err) {
 			t.Fatalf("must keep retrying inside the grace period: %v", err)
@@ -537,23 +541,31 @@ func TestMissingSourceChunkGate(t *testing.T) {
 		t.Fatalf("must not mark permanent while still retrying: %v", got)
 	}
 
-	// an unrelated failure means the source never got to answer: start over
-	gate.isPermanent(errors.New("connection reset by peer"))
-	if !gate.missingSince.IsZero() {
-		t.Fatal("a non-missing error must restart the grace period")
+	// an unrelated failure is not the source answering "gone": it must not start a wait
+	other := fs.newMissingSourceChunkGate("5618,01abc")
+	other.isPermanent(errors.New("connection reset by peer"))
+	if _, found := fs.missingVolumes.Load("5618"); found {
+		t.Fatal("a non-missing error must not start the volume's wait")
 	}
 
-	gate.isPermanent(volumeGone)
-	gate.missingSince = time.Now().Add(-2 * missingSourceChunkGrace)
-	if !gate.isPermanent(volumeGone) {
-		t.Fatal("must give up once the source has been missing the chunk for the whole grace period")
+	// a second file in the same volume inherits that wait instead of restarting it
+	fs.missingVolumes.Store("5617", time.Now().Add(-2*missingSourceChunkGrace))
+	second := fs.newMissingSourceChunkGate("5617,02def")
+	if !second.isPermanent(volumeGone) {
+		t.Fatal("a later file must inherit the wait its volume already served")
 	}
-	wrapped := gate.wrap(volumeGone)
+	wrapped := second.wrap(volumeGone)
 	if !errors.Is(wrapped, errSourceChunkMissing) || !errors.Is(wrapped, source.ErrVolumeNotFound) {
 		t.Fatalf("wrapped error lost a sentinel: %v", wrapped)
 	}
-	if gate.wrap(nil) != nil {
+	if second.wrap(nil) != nil {
 		t.Fatal("a successful retry must not be turned into an error")
+	}
+
+	// the volume answering again clears the wait it had served
+	fs.sourceServed("5617,09fff")
+	if _, found := fs.missingVolumes.Load("5617"); found {
+		t.Fatal("a served chunk must clear its volume's wait")
 	}
 }
 

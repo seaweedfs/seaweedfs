@@ -65,6 +65,7 @@ type FilerSink struct {
 	// lastServedFileId is the most recent chunk the source did serve, the probe
 	// sourceStillServesChunks re-checks before writing an entry off.
 	lastServedFileId atomic.Pointer[string]
+	missingVolumes   sync.Map // source volume id -> time.Time first found unlocatable
 }
 
 func init() {
