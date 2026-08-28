@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -433,7 +432,7 @@ func (fs *FilerServer) applyObjectMutation(ctx context.Context, m *filer_pb.Obje
 			// the expected no-op, and a failed teardown must not fail the
 			// already-applied delete.
 			parentErr := fs.filer.DeleteEntryMetaAndData(ctx, util.FullPath(m.Directory), false, false, false, fromOtherCluster, signatures, 0)
-			if parentErr != nil && parentErr != filer_pb.ErrNotFound && !strings.Contains(parentErr.Error(), filer.MsgFailDelNonEmptyFolder) {
+			if parentErr != nil && parentErr != filer_pb.ErrNotFound && !errors.Is(parentErr, filer.ErrNonEmptyFolder) {
 				glog.V(1).InfofCtx(ctx, "remove empty parent %s: %v", m.Directory, parentErr)
 			}
 		}

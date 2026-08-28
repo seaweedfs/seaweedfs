@@ -1602,8 +1602,8 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(ctx context.Context, bu
 		// Two ways rm can fail here: "non-empty folder" (orphan entries
 		// blocking the teardown — fall through to pointer clear) and a
 		// transient filer error (worth retrying). Distinguish by the
-		// canonical error substring; if we can't tell, treat as transient.
-		if strings.Contains(rmErr.Error(), filer.MsgFailDelNonEmptyFolder) {
+		// sentinel; if we can't tell, treat as transient.
+		if errors.Is(rmErr, filer.ErrNonEmptyFolder) {
 			glog.V(2).Infof("updateLatestVersionAfterDeletion: .versions/ for %s/%s still has orphan entries: %v", bucket, object, rmErr)
 			s3a.clearStaleLatestVersionPointer(bucket, object, bucketDir, versionsObjectPath, versionsEntry, "updateLatestVersionAfterDeletion")
 			return nil
@@ -1618,7 +1618,7 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(ctx context.Context, bu
 		if retryErr == nil {
 			return nil
 		}
-		if strings.Contains(retryErr.Error(), filer.MsgFailDelNonEmptyFolder) {
+		if errors.Is(retryErr, filer.ErrNonEmptyFolder) {
 			s3a.clearStaleLatestVersionPointer(bucket, object, bucketDir, versionsObjectPath, versionsEntry, "updateLatestVersionAfterDeletion")
 			return nil
 		}

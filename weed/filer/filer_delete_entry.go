@@ -2,7 +2,9 @@ package filer
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -14,6 +16,40 @@ import (
 const (
 	MsgFailDelNonEmptyFolder = "fail to delete non-empty folder"
 )
+
+// ErrNonEmptyFolder is a non-recursive delete refused because the folder still
+// has children. The marker leads the message the filer builds for it and is
+// never wrapped on the way out, so the path that follows it, which the client
+// chose, cannot forge one.
+var ErrNonEmptyFolder = errors.New(MsgFailDelNonEmptyFolder)
+
+// DeleteEntryError turns the text of DeleteEntryResponse.Error back into an
+// error carrying the condition the filer reported. Call it on the response
+// field, before formatting a path around it.
+func DeleteEntryError(msg string) error {
+	if strings.HasPrefix(msg, MsgFailDelNonEmptyFolder) {
+		return &deleteEntryError{msg: msg, cause: ErrNonEmptyFolder}
+	}
+	return errors.New(msg)
+}
+
+// IsNonEmptyFolderError is for callers holding a delete failure that has not
+// been wrapped yet: the sentinel when it survived, the leading marker when the
+// error only crossed the wire as text.
+func IsNonEmptyFolderError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, ErrNonEmptyFolder) || strings.HasPrefix(err.Error(), MsgFailDelNonEmptyFolder)
+}
+
+type deleteEntryError struct {
+	msg   string
+	cause error
+}
+
+func (e *deleteEntryError) Error() string { return e.msg }
+func (e *deleteEntryError) Unwrap() error { return e.cause }
 
 type OnChunksFunc func([]*filer_pb.FileChunk) error
 type OnHardLinkIdsFunc func([]HardLinkId) error
@@ -43,6 +79,9 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 		})
 		if err != nil {
 			glog.V(2).InfofCtx(ctx, "delete directory %s: %v", p, err)
+			if errors.Is(err, ErrNonEmptyFolder) {
+				return err
+			}
 			return fmt.Errorf("delete directory %s: %v", p, err)
 		}
 	}
@@ -89,7 +128,7 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 			if lastFileName == "" && !isRecursive && len(entries) > 0 {
 				// only for first iteration in the loop
 				glog.V(2).InfofCtx(ctx, "deleting a folder %s has children: %+v ...", entry.FullPath, entries[0].Name())
-				return fmt.Errorf("%s: %s", MsgFailDelNonEmptyFolder, entry.FullPath)
+				return fmt.Errorf("%w: %s", ErrNonEmptyFolder, entry.FullPath)
 			}
 
 			for _, sub := range entries {
