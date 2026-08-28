@@ -88,11 +88,6 @@ func WriteEcFiles(baseFileName string, ctx *ECContext) (*volume_server_pb.EcBitr
 	return generateEcFiles(baseFileName, 256*1024, ctx.BlockSize, ctx.BlockSize, ctx)
 }
 
-// UniformBlockSize returns the per-shard block size of the uniform layout for
-// a .dat of the given size: ceil(datFileSize/dataShards) rounded up to a whole
-// small block. For every input this equals the legacy layout's padded shard
-// size, so only the byte placement differs between the two layouts, never the
-// shard length.
 // ValidateBlockSize reports whether a `.vif`-recorded shard block size is one
 // an encoder could have produced. 0 means the legacy two-tier layout, which is
 // always valid; anything positive must be a whole number of small blocks,
@@ -110,6 +105,11 @@ func ValidateBlockSize(blockSize int64) error {
 	return nil
 }
 
+// UniformBlockSize returns the per-shard block size of the uniform layout for
+// a .dat of the given size: ceil(datFileSize/dataShards) rounded up to a whole
+// small block. For every input this equals the legacy layout's padded shard
+// size, so only the byte placement differs between the two layouts, never the
+// shard length.
 func UniformBlockSize(datFileSize int64, dataShards int) int64 {
 	perShard := (datFileSize + int64(dataShards) - 1) / int64(dataShards)
 	blocks := (perShard + ErasureCodingSmallBlockSize - 1) / ErasureCodingSmallBlockSize
@@ -197,7 +197,7 @@ func RebuildEcFiles(baseFileName string, ctx *ECContext, unsafeIgnoreSidecar boo
 	if err != nil {
 		return nil, err
 	}
-	return generateMissingEcFiles(baseFileName, 256*1024, ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, ctx, unsafeIgnoreSidecar, additionalDirs)
+	return generateMissingEcFiles(baseFileName, 256*1024, ctx, unsafeIgnoreSidecar, additionalDirs)
 }
 
 func ToExt(ecIndex int) string {
@@ -246,7 +246,10 @@ func findShardFile(baseFileName string, ext string, additionalDirs []string) str
 	return ""
 }
 
-func generateMissingEcFiles(baseFileName string, bufferSize int, largeBlockSize int64, smallBlockSize int64, ctx *ECContext, unsafeIgnoreSidecar bool, additionalDirs []string) (generatedShardIds []uint32, err error) {
+// generateMissingEcFiles takes no block sizes: Reed-Solomon reconstruction is
+// layout-agnostic — it rebuilds a missing shard from the same offsets of the
+// survivors — so the shard layout only ever reaches it through ctx.
+func generateMissingEcFiles(baseFileName string, bufferSize int, ctx *ECContext, unsafeIgnoreSidecar bool, additionalDirs []string) (generatedShardIds []uint32, err error) {
 
 	// Pass 1: discover which shards exist and which are missing,
 	// opening input files but NOT creating output files yet.
