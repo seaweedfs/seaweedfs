@@ -417,6 +417,8 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 		if err := validateReplicatedReadSize(sourceChunk, len(fullData)); err != nil {
 			return err
 		}
+		servedFileId := sourceChunk.GetFileIdString()
+		fs.lastServedFileId.Store(&servedFileId)
 
 		transferStatus.mu.Lock()
 		transferStatus.BytesReceived = int64(len(fullData))
@@ -547,6 +549,27 @@ func validateReplicatedReadSize(sourceChunk *filer_pb.FileChunk, readSize int) e
 			readSize, sourceChunk.Size)
 	}
 	return nil
+}
+
+// sourceStillServesChunks reports whether the source cluster can still locate the
+// last chunk it served. A volume with no locations reads the same whether it was
+// vacuumed away or every replica is down, so before an entry is written off the
+// sink re-checks a file id the source did serve: if that one has become
+// unresolvable too the source is in an outage, and skipping would drop live files
+// wholesale.
+func (fs *FilerSink) sourceStillServesChunks() bool {
+	if fs.filerSource == nil {
+		return false
+	}
+	probe := fs.lastServedFileId.Load()
+	if probe == nil {
+		return false
+	}
+	if _, err := fs.filerSource.LookupFileId(context.Background(), *probe); err != nil {
+		glog.V(0).Infof("source cannot locate %s either, so it is not only the one chunk: %v", *probe, err)
+		return false
+	}
+	return true
 }
 
 // hasSourceNewerVersion reports whether the source's current entry for targetPath

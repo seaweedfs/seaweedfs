@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -431,24 +432,53 @@ func TestManifestResolveRetryGateNonTransientPropagates(t *testing.T) {
 	}
 }
 
-// vacuumedSourceServer answers as a healthy source filer whose master no longer
-// has the chunk's volume: the entry is still there, unchanged, but the volume has
-// no locations. That is what a replayed event looks like once vacuum has removed
-// the volume its chunks lived in.
-type vacuumedSourceServer struct {
+// sourceFilerServer answers as a source filer that still holds the entry,
+// unchanged, while its master locates the chunk's volume only for the volume ids
+// in resolvable. With none listed it is a cluster that has vacuumed the volume
+// away — or lost every replica of it.
+type sourceFilerServer struct {
 	filer_pb.UnimplementedSeaweedFilerServer
-	mtime int64
+	mtime      int64
+	resolvable []string
 }
 
-func (s *vacuumedSourceServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVolumeRequest) (*filer_pb.LookupVolumeResponse, error) {
-	return &filer_pb.LookupVolumeResponse{LocationsMap: map[string]*filer_pb.Locations{}}, nil
+func (s *sourceFilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVolumeRequest) (*filer_pb.LookupVolumeResponse, error) {
+	locationsMap := make(map[string]*filer_pb.Locations)
+	for _, vid := range req.VolumeIds {
+		if slices.Contains(s.resolvable, vid) {
+			locationsMap[vid] = &filer_pb.Locations{
+				Locations: []*filer_pb.Location{{Url: "127.0.0.1:1"}},
+			}
+		}
+	}
+	return &filer_pb.LookupVolumeResponse{LocationsMap: locationsMap}, nil
 }
 
-func (s *vacuumedSourceServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+func (s *sourceFilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
 	return &filer_pb.LookupDirectoryEntryResponse{Entry: &filer_pb.Entry{
 		Name:       req.Name,
 		Attributes: &filer_pb.FuseAttributes{Mtime: s.mtime},
 	}}, nil
+}
+
+func startSourceFiler(t *testing.T, mtime int64, resolvable ...string) *source.FilerSource {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	server := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(server, &sourceFilerServer{mtime: mtime, resolvable: resolvable})
+	go server.Serve(listener)
+	t.Cleanup(server.Stop)
+
+	address := listener.Addr().String()
+	filerSrc := &source.FilerSource{}
+	if err := filerSrc.DoInitialize(address, address, "/src", false); err != nil {
+		t.Fatalf("filerSource.DoInitialize: %v", err)
+	}
+	filerSrc.SetGrpcDialOption(grpc.WithTransportCredentials(insecure.NewCredentials()))
+	return filerSrc
 }
 
 // A chunk the source cluster cannot produce must stop being retried once the
@@ -463,25 +493,10 @@ func TestFetchAndWriteStopsOnMissingSourceChunk(t *testing.T) {
 		util.RetryWaitTime, missingSourceChunkGrace = prevRetryWaitTime, prevGrace
 	})
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	server := grpc.NewServer()
-	filer_pb.RegisterSeaweedFilerServer(server, &vacuumedSourceServer{mtime: 5})
-	go server.Serve(listener)
-	t.Cleanup(server.Stop)
-
-	address := listener.Addr().String()
-	filerSrc := &source.FilerSource{}
-	if err := filerSrc.DoInitialize(address, address, "/src", false); err != nil {
-		t.Fatalf("filerSource.DoInitialize: %v", err)
-	}
-	filerSrc.SetGrpcDialOption(grpc.WithTransportCredentials(insecure.NewCredentials()))
+	filerSrc := startSourceFiler(t, 5)
 
 	fs := &FilerSink{
 		filerSource: filerSrc,
-		address:     address,
 		dir:         "/dst",
 		executor:    util.NewLimitedConcurrentExecutor(1),
 	}
@@ -540,4 +555,43 @@ func TestMissingSourceChunkGate(t *testing.T) {
 	if gate.wrap(nil) != nil {
 		t.Fatal("a successful retry must not be turned into an error")
 	}
+}
+
+// Once the source has lost a chunk for good, holding the sync offset for its
+// entry only stops every later event from ever being checkpointed: the bytes are
+// not coming back. Skip it loudly instead — but only while the source is
+// demonstrably still serving other chunks, since a cluster that cannot locate
+// anything is having an outage and skipping would drop live files wholesale.
+func TestOnReplicateChunkErrorMissingSourceChunk(t *testing.T) {
+	const probe = "5616,01abc"
+	liveEntry := &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{Mtime: 5}}
+	missing := fmt.Errorf("copy 5617,02def: %w: %w", errSourceChunkMissing, source.ErrVolumeNotFound)
+
+	t.Run("source still serving", func(t *testing.T) {
+		fs := &FilerSink{filerSource: startSourceFiler(t, 5, "5616"), dir: "/dst"}
+		served := probe
+		fs.lastServedFileId.Store(&served)
+
+		if err := fs.onReplicateChunkError("/dst/x.bin", liveEntry, missing); err != nil {
+			t.Fatalf("expected the entry to be skipped, got %v", err)
+		}
+	})
+
+	t.Run("source locating nothing", func(t *testing.T) {
+		fs := &FilerSink{filerSource: startSourceFiler(t, 5), dir: "/dst"}
+		served := probe
+		fs.lastServedFileId.Store(&served)
+
+		if err := fs.onReplicateChunkError("/dst/x.bin", liveEntry, missing); !errors.Is(err, errSourceChunkMissing) {
+			t.Fatalf("expected the error to be held for a retry, got %v", err)
+		}
+	})
+
+	t.Run("nothing served yet", func(t *testing.T) {
+		fs := &FilerSink{filerSource: startSourceFiler(t, 5, "5616"), dir: "/dst"}
+
+		if err := fs.onReplicateChunkError("/dst/x.bin", liveEntry, missing); !errors.Is(err, errSourceChunkMissing) {
+			t.Fatalf("expected the error to be held with no probe to check, got %v", err)
+		}
+	})
 }
