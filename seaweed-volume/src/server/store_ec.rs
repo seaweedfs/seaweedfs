@@ -942,16 +942,15 @@ async fn recover_one_remote_ec_shard_interval(
     // already holds enough sibling shards, reconstruction completes
     // without any peer fan-out — and even with a cold/incomplete
     // shard_locations cache or a failed master lookup, local
-    // survivors still contribute. Mirrors Go's
-    // recoverOneRemoteEcShardInterval behaviour, which is implicitly
-    // local-aware because the Store fan-out targets ALL known
-    // locations (including the caller's own server address); the
-    // Rust port had been remote-only, so reconstructing with a cold
-    // cache failed even when enough siblings were on disk.
+    // survivors still contribute.
+    let mut available = 0usize;
     {
         let store = state.store.read().unwrap();
         if let Some(ecv) = store.find_ec_volume(vid) {
             for sid in 0..total_shards {
+                if available >= data_shards {
+                    break;
+                }
                 if sid as ShardId == shard_id_to_recover {
                     continue;
                 }
@@ -959,65 +958,82 @@ async fn recover_one_remote_ec_shard_interval(
                     let mut buf = vec![0u8; size];
                     if shard.read_at(&mut buf, shard_offset as u64).map(|n| n == size).unwrap_or(false) {
                         bufs[sid] = Some(buf);
+                        available += 1;
                     }
                 }
             }
         }
     }
 
-    // Phase 1: remote fan-out — one task per known shard location
-    // we DON'T already have locally and DON'T need to recover.
-    let mut tasks = Vec::new();
-    for (sid, locs) in shard_locations {
-        if *sid == shard_id_to_recover || locs.is_empty() {
-            continue;
-        }
-        if bufs[*sid as usize].is_some() {
-            continue;
-        }
-        let sid = *sid;
-        let locs = locs.clone();
-        let state = state.clone();
-        tasks.push(async move {
-            let res = read_remote_ec_shard_interval(
-                &state,
-                &locs,
-                vid,
-                needle_id,
-                sid,
-                shard_offset,
-                size,
-                expected_encode_ts_ns,
-            )
-            .await;
-            (sid, res)
-        });
-    }
-    let results = join_all(tasks).await;
+    // Phase 1: remote fan-out over the shard locations we DON'T already have
+    // locally and DON'T need to recover. Reconstruction consumes data_shards
+    // shards, so reading every remaining one holds a third more buffers than
+    // that and asks a third more of peers that may already be struggling: fetch
+    // what is still missing, and widen only if some of those reads fail.
+    let mut candidates: Vec<(ShardId, Vec<String>)> = shard_locations
+        .iter()
+        .filter(|(sid, locs)| {
+            **sid != shard_id_to_recover
+                && (**sid as usize) < total_shards
+                && !locs.is_empty()
+                && bufs[**sid as usize].is_none()
+        })
+        .map(|(sid, locs)| (*sid, locs.clone()))
+        .collect();
 
-    for (sid, res) in results {
-        match res {
-            // Exclude a deleted shard from reconstruction (Go gates on a full
-            // read): feeding the empty/zero buffer into Reed-Solomon would
-            // corrupt the recovered shard.
-            Ok((buf, is_deleted)) => {
-                if !is_deleted && (sid as usize) < total_shards {
+    while available < data_shards && !candidates.is_empty() {
+        let rest = candidates.split_off((data_shards - available).min(candidates.len()));
+        let wave = std::mem::replace(&mut candidates, rest);
+        let results = join_all(wave.into_iter().map(|(sid, locs)| {
+            let state = state.clone();
+            async move {
+                let res = read_remote_ec_shard_interval(
+                    &state,
+                    &locs,
+                    vid,
+                    needle_id,
+                    sid,
+                    shard_offset,
+                    size,
+                    expected_encode_ts_ns,
+                )
+                .await;
+                (sid, res)
+            }
+        }))
+        .await;
+
+        let mut any_deleted = false;
+        for (sid, res) in results {
+            match res {
+                // Exclude a deleted shard from reconstruction (Go gates on a full
+                // read): feeding the empty/zero buffer into Reed-Solomon would
+                // corrupt the recovered shard.
+                Ok((buf, is_deleted)) => {
+                    if is_deleted {
+                        any_deleted = true;
+                        continue;
+                    }
                     bufs[sid as usize] = Some(buf);
+                    available += 1;
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        "recover: read {}.{} for needle {} failed: {}",
+                        vid.0,
+                        sid,
+                        needle_id,
+                        e
+                    );
                 }
             }
-            Err(e) => {
-                tracing::debug!(
-                    "recover: read {}.{} for needle {} failed: {}",
-                    vid.0,
-                    sid,
-                    needle_id,
-                    e
-                );
-            }
+        }
+        if any_deleted {
+            // every shard of a deleted needle answers deleted, so another wave cannot help
+            break;
         }
     }
 
-    let available = bufs.iter().filter(|b| b.is_some()).count();
     if available < data_shards {
         return Err(io::Error::new(
             io::ErrorKind::Other,
