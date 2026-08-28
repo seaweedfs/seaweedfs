@@ -970,7 +970,13 @@ async fn recover_one_remote_ec_shard_interval(
     let mut available = 0usize;
     {
         let store = state.store.read().unwrap();
-        if let Some(ecv) = store.find_ec_volume(vid) {
+        // A local shard from a different encode run must not be fed to
+        // Reed-Solomon; lenient only when the caller carries no identity
+        // (pre-upgrade). Mirrors Go's `readLocalEcShardInterval`.
+        let local = store
+            .find_ec_volume(vid)
+            .filter(|ecv| expected_encode_ts_ns == 0 || ecv.encode_ts_ns == expected_encode_ts_ns);
+        if let Some(ecv) = local {
             for sid in 0..total_shards {
                 if available >= data_shards {
                     break;
