@@ -25,10 +25,6 @@ func (wfs *WFS) Fallocate(cancel <-chan struct{}, in *fuse.FallocateIn) (code fu
 		return fuse.ENOTSUP
 	}
 
-	if wfs.IsOverQuotaWithUncommitted() {
-		return fuse.Status(syscall.ENOSPC)
-	}
-
 	fh := wfs.GetHandle(FileHandleId(in.Fh))
 	if fh == nil {
 		return fuse.EBADF
@@ -42,13 +38,17 @@ func (wfs *WFS) Fallocate(cancel <-chan struct{}, in *fuse.FallocateIn) (code fu
 		return fuse.ENOENT
 	}
 
-	if wormEnforced, _ := wfs.wormEnforcedForEntry(fh.FullPath(), entry); wormEnforced {
-		return fuse.EPERM
-	}
-
 	newFileSize := in.Offset + in.Length
 	if in.Mode&FALLOC_FL_KEEP_SIZE != 0 || newFileSize <= filer.FileSize(entry) {
 		return fuse.OK
+	}
+
+	if wfs.IsOverQuotaWithUncommitted() {
+		return fuse.Status(syscall.ENOSPC)
+	}
+
+	if wormEnforced, _ := wfs.wormEnforcedForEntry(fh.FullPath(), entry); wormEnforced {
+		return fuse.EPERM
 	}
 
 	glog.V(4).Infof("Fallocate %s fh %d grow to %d", fh.FullPath(), fh.fh, newFileSize)

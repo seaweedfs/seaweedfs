@@ -1,10 +1,14 @@
 package mount
 
 import (
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"google.golang.org/protobuf/proto"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -91,5 +95,37 @@ func TestFallocateUnknownHandle(t *testing.T) {
 	in := &fuse.FallocateIn{Fh: 12345, Offset: 0, Length: 1}
 	if status := wfs.Fallocate(nil, in); status != fuse.EBADF {
 		t.Fatalf("Fallocate on an unknown handle: got %v, want EBADF", status)
+	}
+}
+
+// TestFallocateNoOpIgnoresQuotaAndWorm covers the two guards a request that
+// allocates nothing must not trip: it reserves no space and rewrites no entry.
+func TestFallocateNoOpIgnoresQuotaAndWorm(t *testing.T) {
+	wfs, fh := newFallocateTestHandle(t, 10)
+	wfs.option.Quota = 1
+	wfs.IsOverQuota = true
+	wfs.FilerConf = filer.NewFilerConf()
+	if err := wfs.FilerConf.AddLocationConf(&filer_pb.FilerConf_PathConf{
+		LocationPrefix: "/",
+		Worm:           proto.Bool(true),
+	}); err != nil {
+		t.Fatalf("AddLocationConf: %v", err)
+	}
+	fh.GetEntry().GetEntry().WormEnforcedAtTsNs = time.Now().UnixNano()
+
+	in := &fuse.FallocateIn{Fh: uint64(fh.fh), Offset: 0, Length: 1}
+	if status := wfs.Fallocate(nil, in); status != fuse.OK {
+		t.Fatalf("Fallocate inside the file: got %v, want OK", status)
+	}
+
+	in = &fuse.FallocateIn{Fh: uint64(fh.fh), Offset: 0, Length: 4096}
+	if status := wfs.Fallocate(nil, in); status != fuse.Status(syscall.ENOSPC) {
+		t.Fatalf("Fallocate past the end over quota: got %v, want ENOSPC", status)
+	}
+
+	wfs.option.Quota = 0
+	wfs.IsOverQuota = false
+	if status := wfs.Fallocate(nil, in); status != fuse.EPERM {
+		t.Fatalf("Fallocate past the end under worm: got %v, want EPERM", status)
 	}
 }
