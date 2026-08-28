@@ -421,7 +421,7 @@ func (mc *MasterClient) WithClient(ctx context.Context, streamingMode bool, fn f
 // still gets context.Background(): fn brings its own RPC context, so nothing
 // here can attribute a cancellation to the shared connection.
 func (mc *MasterClient) WithClientCustomGetMaster(ctx context.Context, getMasterF func() pb.ServerAddress, streamingMode bool, fn func(client master_pb.SeaweedClient) error) error {
-	return util.Retry("master grpc", func() error {
+	return util.RetryWithBackoff(ctx, "master grpc", util.RetryWaitTime, util.IsTransientError, func() error {
 		master := getMasterF()
 		if err := ctx.Err(); err != nil {
 			return err
