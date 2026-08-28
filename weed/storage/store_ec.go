@@ -716,6 +716,23 @@ func (s *Store) recoverOneRemoteEcShardInterval(needleId types.NeedleId, ecVolum
 	// Use MaxShardCount to support custom EC ratios up to 32 shards
 	bufs := make([][]byte, erasure_coding.MaxShardCount)
 
+	// A shard this server already holds costs no round trip and no peer buffer,
+	// so seed those before asking peers for the rest.
+	for shardId := erasure_coding.ShardId(0); int(shardId) < ecCtx.Total(); shardId++ {
+		if shardId == shardIdToRecover {
+			continue
+		}
+		if _, _, found := s.FindEcVolumeWithShard(ecVolume.VolumeId, shardId); !found {
+			continue
+		}
+		data := make([]byte, len(buf))
+		if localErr := s.readLocalEcShardInterval(ecVolume, shardId, data, offset); localErr != nil {
+			glog.V(3).Infof("recover: read local ec shard %d.%d: %v", ecVolume.VolumeId, shardId, localErr)
+			continue
+		}
+		bufs[shardId] = data
+	}
+
 	var wg sync.WaitGroup
 	// The recover goroutines run concurrently, so the deleted flag is collected
 	// atomically and folded into the named return after they join, rather than each
@@ -724,8 +741,8 @@ func (s *Store) recoverOneRemoteEcShardInterval(needleId types.NeedleId, ecVolum
 	ecVolume.ShardLocationsLock.RLock()
 	for shardId, locations := range ecVolume.ShardLocations {
 
-		// skip current shard or empty shard
-		if shardId == shardIdToRecover {
+		// skip the shard being recovered, one already seeded locally, or an empty shard
+		if shardId == shardIdToRecover || (int(shardId) < ecCtx.Total() && bufs[shardId] != nil) {
 			continue
 		}
 		if len(locations) == 0 {
