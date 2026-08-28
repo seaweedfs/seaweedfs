@@ -55,6 +55,13 @@ pub struct EcVolume {
     /// `cached_lookup_ec_shard_locations` (mirrors Go's
     /// `ShardLocationsRefreshTime`).
     pub shard_locations_refresh_time: std::sync::Mutex<Option<std::time::Instant>>,
+    /// Marks the map for a prompt re-check: a read that failed against a cached
+    /// location has disproved what the map claims, and the normal freshness
+    /// window is far too long to serve from a map known to be wrong. Mirrors the
+    /// invalidation Go's `forgetShardId` performs. A mutex rather than an atomic
+    /// so the refresh can judge the map and consume the mark in one critical
+    /// section, and a mark raised meanwhile survives for the next refresh.
+    pub shard_locations_stale: std::sync::Mutex<bool>,
     /// EC volume expiration time (unix epoch seconds), set during EC encode from TTL.
     pub expire_at_sec: u64,
     /// Encode-run identity (unix nanos) loaded from the .vif EcShardConfig. A read
@@ -196,6 +203,7 @@ impl EcVolume {
             ecx_actual_dir: dir_idx.to_string(),
             shard_locations: std::sync::RwLock::new(HashMap::new()),
             shard_locations_refresh_time: std::sync::Mutex::new(None),
+            shard_locations_stale: std::sync::Mutex::new(false),
             expire_at_sec,
             encode_ts_ns,
             bitrot: None,

@@ -532,6 +532,10 @@ func (s *Store) readOneEcShardInterval(needleId types.NeedleId, ecVolume *erasur
 			return
 		}
 		glog.V(0).Infof("read remote ec shard %d.%d locations: %v", ecVolume.VolumeId, shardId, err)
+		// Recovery below skips this very shard, so nothing else invalidates the
+		// location that just failed -- and a shard that has moved would otherwise
+		// be reconstructed on every read until the map's own window expires.
+		markShardLocationsStale(ecVolume)
 	}
 
 	// try reading by recovering from other shards
@@ -548,7 +552,32 @@ func forgetShardId(ecVolume *erasure_coding.EcVolume, shardId erasure_coding.Sha
 	// failed to access the source data nodes, clear it up
 	ecVolume.ShardLocationsLock.Lock()
 	delete(ecVolume.ShardLocations, shardId)
+	ecVolume.ShardLocationsStale = true
 	ecVolume.ShardLocationsLock.Unlock()
+}
+
+// markShardLocationsStale flags the cached map for a prompt re-check after a
+// read failed against one of its locations. Unlike forgetShardId it keeps the
+// entry: a direct read is worth retrying, since a dead peer fails fast.
+func markShardLocationsStale(ecVolume *erasure_coding.EcVolume) {
+	ecVolume.ShardLocationsLock.Lock()
+	ecVolume.ShardLocationsStale = true
+	ecVolume.ShardLocationsLock.Unlock()
+}
+
+// ecShardLocationsTTL is how long a cached shard map is trusted. A complete map
+// is trusted longest. One short of DataShards, or one a failed read has just
+// invalidated, is re-checked promptly: until it is, every read of the dropped
+// shard skips the direct fetch and pays for a Reed-Solomon recovery instead.
+func ecShardLocationsTTL(shardCount int, stale bool, ecCtx *erasure_coding.ECContext) time.Duration {
+	switch {
+	case stale || shardCount < ecCtx.DataShards:
+		return 11 * time.Second
+	case shardCount == ecCtx.Total():
+		return 37 * time.Minute
+	default:
+		return 7 * time.Minute
+	}
 }
 
 func (s *Store) cachedLookupEcShardLocations(ecVolume *erasure_coding.EcVolume) (err error) {
@@ -561,20 +590,20 @@ func (s *Store) cachedLookupEcShardLocations(ecVolume *erasure_coding.EcVolume) 
 		ecCtx = erasure_coding.NewDefaultECContext(ecVolume.Collection, ecVolume.VolumeId)
 	}
 
-	// Snapshot the shard map size and refresh time under the lock: recover
-	// goroutines mutate ShardLocations via forgetShardId, so an unguarded read here
-	// races with a concurrent map write.
-	ecVolume.ShardLocationsLock.RLock()
-	shardCount := len(ecVolume.ShardLocations)
-	refreshTime := ecVolume.ShardLocationsRefreshTime
-	ecVolume.ShardLocationsLock.RUnlock()
-	if shardCount < ecCtx.DataShards &&
-		refreshTime.Add(11*time.Second).After(time.Now()) ||
-		shardCount == ecCtx.Total() &&
-			refreshTime.Add(37*time.Minute).After(time.Now()) ||
-		shardCount >= ecCtx.DataShards &&
-			refreshTime.Add(7*time.Minute).After(time.Now()) {
-		// still fresh
+	// Judge the map and consume its mark in one critical section, so a mark raised
+	// from here on belongs to the next refresh rather than being cleared by this
+	// one -- the read that raised it has disproved the map this lookup is about to
+	// install. Recover goroutines mutate all three fields via forgetShardId, so an
+	// unguarded read would race a concurrent map write besides.
+	ecVolume.ShardLocationsLock.Lock()
+	stale := ecVolume.ShardLocationsStale
+	ttl := ecShardLocationsTTL(len(ecVolume.ShardLocations), stale, ecCtx)
+	fresh := ecVolume.ShardLocationsRefreshTime.Add(ttl).After(time.Now())
+	if !fresh {
+		ecVolume.ShardLocationsStale = false
+	}
+	ecVolume.ShardLocationsLock.Unlock()
+	if fresh {
 		return nil
 	}
 
@@ -605,6 +634,14 @@ func (s *Store) cachedLookupEcShardLocations(ecVolume *erasure_coding.EcVolume) 
 
 		return nil
 	})
+	if err != nil {
+		// The lookup this mark was consumed for did not answer, and the refresh time
+		// is only advanced on success -- so without putting the mark back, a map a
+		// read had already disproved would be trusted for its full window again.
+		// Marking unconditionally is safe: where no mark was consumed the refresh
+		// time is stale anyway, and the next call looks up whatever the mark says.
+		markShardLocationsStale(ecVolume)
+	}
 	return
 }
 
