@@ -304,7 +304,7 @@ var _ filer.CollectionIndexedStore = (*LevelDB2Store)(nil)
 // collection via the collection index, returning the number of deleted
 // files and the set of parent directories that may now be empty.
 // Stale index keys (entry already gone) are removed without being counted.
-func (store *LevelDB2Store) DeleteCollectionEntries(ctx context.Context, collection string) (deletedFiles int, parentDirs []weed_util.FullPath, err error) {
+func (store *LevelDB2Store) DeleteCollectionEntries(ctx context.Context, collection string, eachEntryFn func(*filer.Entry)) (deletedFiles int, parentDirs []weed_util.FullPath, err error) {
 	if collection == "" {
 		return 0, nil, fmt.Errorf("collection is required")
 	}
@@ -326,6 +326,13 @@ func (store *LevelDB2Store) DeleteCollectionEntries(ctx context.Context, collect
 			entryKey, partitionId := genKey(dir, name, store.dbCount)
 
 			if has, _ := store.dbs[partitionId].Has(entryKey, nil); has {
+				if eachEntryFn != nil {
+					// decode the entry so the caller can propagate the deletion
+					// (e.g. NotifyUpdateEvent) before it is removed
+					if entry, findErr := store.FindEntry(ctx, fullPath); findErr == nil {
+						eachEntryFn(entry)
+					}
+				}
 				if partitionId == d {
 					batch.Delete(entryKey)
 					batchCount++

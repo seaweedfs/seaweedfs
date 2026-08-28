@@ -21,8 +21,12 @@ const ExtendedCollectionKey = "x-seaweedfs-collection"
 // CollectionIndexedStore is implemented by filer stores that maintain a
 // collection → path reverse index and can bulk-delete all entries of a
 // collection without walking the directory tree.
+//
+// eachEntryFn, when non-nil, is invoked with each entry just before it is
+// removed, so the caller can propagate the deletion (NotifyUpdateEvent to peer
+// filers and metadata subscribers). It is optional.
 type CollectionIndexedStore interface {
-	DeleteCollectionEntries(ctx context.Context, collection string) (deletedFiles int, parentDirs []util.FullPath, err error)
+	DeleteCollectionEntries(ctx context.Context, collection string, eachEntryFn func(*Entry)) (deletedFiles int, parentDirs []util.FullPath, err error)
 }
 
 // CleanupCollection deletes all filer entries recorded under the given
@@ -43,7 +47,13 @@ func (f *Filer) CleanupCollection(ctx context.Context, collection string, recent
 	}
 
 	var parentDirs []util.FullPath
-	deletedFiles, parentDirs, err = indexedStore.DeleteCollectionEntries(ctx, collection)
+	deletedFiles, parentDirs, err = indexedStore.DeleteCollectionEntries(ctx, collection, func(entry *Entry) {
+		// The normal delete path emits NotifyUpdateEvent so peer filers and
+		// metadata subscribers stay in sync; a bulk store delete bypasses it,
+		// so replay it here. Chunks were already removed when the collection's
+		// volumes were deleted on the master, so deleteChunks is false.
+		f.NotifyUpdateEvent(ctx, entry, nil, false, false, nil)
+	})
 	if err != nil {
 		return deletedFiles, 0, err
 	}
@@ -92,6 +102,7 @@ func (f *Filer) CleanupCollection(ctx context.Context, collection string, recent
 				glog.V(1).InfofCtx(ctx, "CleanupCollection %s: delete empty dir %s: %v", collection, dirPath, delErr)
 				continue
 			}
+			f.NotifyUpdateEvent(ctx, dirEntry, nil, false, false, nil)
 			deletedDirs++
 			changed = true
 			parent, _ := dirPath.DirAndName()
