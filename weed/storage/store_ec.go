@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/klauspost/reedsolomon"
+	"golang.org/x/sync/semaphore"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -414,11 +415,14 @@ func (s *Store) ReadEcShardNeedle(vid needle.VolumeId, n *needle.Needle, onReadS
 				glog.V(3).Infof("ReadEcShardNeedle needle id %s intervals:%+v", n.String(), intervals)
 			}
 			bytes, isDeleted, err := s.readEcShardIntervals(n.Id, localEcVolume, intervals)
-			if err != nil {
-				return 0, fmt.Errorf("ReadEcShardIntervals: %w", err)
-			}
+			// A holder reporting the needle deleted is authoritative -- deletes are
+			// never invented and never undone -- so answer that ahead of whatever
+			// error the shards it could not gather produced.
 			if isDeleted {
 				return 0, ErrorDeleted
+			}
+			if err != nil {
+				return 0, fmt.Errorf("ReadEcShardIntervals: %w", err)
 			}
 
 			err = n.ReadBytes(bytes, offset.ToActualOffset(), size, localEcVolume.Version)
@@ -435,6 +439,15 @@ func (s *Store) ReadEcShardNeedle(vid needle.VolumeId, n *needle.Needle, onReadS
 func (s *Store) IntervalToShardIdAndOffset(iv erasure_coding.Interval) (erasure_coding.ShardId, int64) {
 	return iv.ToShardIdAndOffset(erasure_coding.ErasureCodingLargeBlockSize, erasure_coding.ErasureCodingSmallBlockSize)
 }
+
+var (
+	// ecRecoverBudget bounds the interval-sized buffers EC recovery holds across
+	// all concurrent reads: a peer that is slow to fail keeps a whole fan-out of
+	// them alive for the gRPC timeout, and a burst of those walked servers into an
+	// OOM. A var so a test can narrow it alongside ecRecoverSem.
+	ecRecoverBudget int64 = 256 << 20
+	ecRecoverSem          = semaphore.NewWeighted(ecRecoverBudget)
+)
 
 // ecIntervalReadConcurrency bounds the fan-out of a single needle read. Blocks
 // that follow each other in the .dat live on different shards, so a needle
@@ -713,47 +726,100 @@ func (s *Store) recoverOneRemoteEcShardInterval(needleId types.NeedleId, ecVolum
 		return 0, false, fmt.Errorf("failed to create encoder: %w", err)
 	}
 
+	// Charge the buffers this recovery is about to hold against the budget, so a
+	// burst of them queues here rather than on the heap.
+	weight := int64(len(buf)) * int64(ecCtx.DataShards)
+	if weight > ecRecoverBudget {
+		// An interval whose fan-out outgrows the whole budget takes all of it and
+		// so runs alone, rather than blocking forever on an acquire that can never
+		// succeed. The cap is then one such recovery, not a burst of them.
+		weight = ecRecoverBudget
+	}
+	if err = ecRecoverSem.Acquire(context.Background(), weight); err != nil {
+		return 0, false, err
+	}
+	defer ecRecoverSem.Release(weight)
+
 	// Use MaxShardCount to support custom EC ratios up to 32 shards
 	bufs := make([][]byte, erasure_coding.MaxShardCount)
 
-	var wg sync.WaitGroup
-	// The recover goroutines run concurrently, so the deleted flag is collected
-	// atomically and folded into the named return after they join, rather than each
-	// goroutine writing the shared bool directly.
-	var isDeletedFlag atomic.Bool
+	// A shard this server already holds costs no round trip and no peer buffer,
+	// so seed those before asking peers for the rest.
+	available := 0
+	for shardId := erasure_coding.ShardId(0); int(shardId) < ecCtx.Total() && available < ecCtx.DataShards; shardId++ {
+		if shardId == shardIdToRecover {
+			continue
+		}
+		if _, _, found := s.FindEcVolumeWithShard(ecVolume.VolumeId, shardId); !found {
+			continue
+		}
+		data := make([]byte, len(buf))
+		if localErr := s.readLocalEcShardInterval(ecVolume, shardId, data, offset); localErr != nil {
+			glog.V(3).Infof("recover: read local ec shard %d.%d: %v", ecVolume.VolumeId, shardId, localErr)
+			continue
+		}
+		bufs[shardId] = data
+		available++
+	}
+
+	var candidates []erasure_coding.ShardId
+	candidateLocations := make(map[erasure_coding.ShardId][]pb.ServerAddress)
 	ecVolume.ShardLocationsLock.RLock()
 	for shardId, locations := range ecVolume.ShardLocations {
 
-		// skip current shard or empty shard
-		if shardId == shardIdToRecover {
+		// skip the shard being recovered, one already seeded locally, or an empty shard
+		if shardId == shardIdToRecover || int(shardId) >= ecCtx.Total() || bufs[shardId] != nil {
 			continue
 		}
 		if len(locations) == 0 {
 			glog.V(3).Infof("readRemoteEcShardInterval missing %d.%d from %+v", ecVolume.VolumeId, shardId, locations)
 			continue
 		}
-
-		// read from remote locations
-		wg.Add(1)
-		go func(shardId erasure_coding.ShardId, locations []pb.ServerAddress) {
-			defer wg.Done()
-			data := make([]byte, len(buf))
-			nRead, isDeleted, readErr := s.readRemoteEcShardInterval(locations, needleId, ecVolume.VolumeId, shardId, data, offset, ecVolume.EncodeTsNs)
-			if readErr != nil {
-				glog.V(3).Infof("recover: readRemoteEcShardInterval %d.%d %d bytes from %+v: %v", ecVolume.VolumeId, shardId, nRead, locations, readErr)
-				forgetShardId(ecVolume, shardId)
-			}
-			if isDeleted {
-				isDeletedFlag.Store(true)
-			}
-			if nRead == len(buf) {
-				bufs[shardId] = data
-			}
-		}(shardId, locations)
+		candidates = append(candidates, shardId)
+		candidateLocations[shardId] = locations
 	}
 	ecVolume.ShardLocationsLock.RUnlock()
 
-	wg.Wait()
+	// The recover goroutines run concurrently, so the deleted flag is collected
+	// atomically and folded into the named return after they join, rather than each
+	// goroutine writing the shared bool directly.
+	var isDeletedFlag atomic.Bool
+
+	// Reconstruction consumes DataShards buffers, so reading every remaining shard
+	// holds a third more than that and asks a third more of peers that are, by
+	// then, already struggling. Widen only when a wave falls short.
+	for len(candidates) > 0 && available < ecCtx.DataShards {
+		wave := min(ecCtx.DataShards-available, len(candidates))
+		var wg sync.WaitGroup
+		var fetched atomic.Int64
+		for _, shardId := range candidates[:wave] {
+			locations := candidateLocations[shardId]
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				data := make([]byte, len(buf))
+				nRead, isDeleted, readErr := s.readRemoteEcShardInterval(locations, needleId, ecVolume.VolumeId, shardId, data, offset, ecVolume.EncodeTsNs)
+				if readErr != nil {
+					glog.V(3).Infof("recover: readRemoteEcShardInterval %d.%d %d bytes from %+v: %v", ecVolume.VolumeId, shardId, nRead, locations, readErr)
+					forgetShardId(ecVolume, shardId)
+				}
+				if isDeleted {
+					isDeletedFlag.Store(true)
+				}
+				if nRead == len(buf) {
+					bufs[shardId] = data
+					fetched.Add(1)
+				}
+			}()
+		}
+		wg.Wait()
+		candidates = candidates[wave:]
+		available += int(fetched.Load())
+		if isDeletedFlag.Load() {
+			// every shard of a deleted needle answers deleted, so another wave cannot help
+			break
+		}
+	}
 	is_deleted = isDeletedFlag.Load()
 
 	// Count and log available shards for diagnostics
@@ -773,14 +839,14 @@ func (s *Store) recoverOneRemoteEcShardInterval(needleId types.NeedleId, ecVolum
 		len(missingShards), missingShards)
 
 	if len(availableShards) < ecCtx.DataShards {
-		return 0, false, fmt.Errorf("cannot recover shard %d.%d: only %d shards available %v, need at least %d (missing: %v)",
+		return 0, is_deleted, fmt.Errorf("cannot recover shard %d.%d: only %d shards available %v, need at least %d (missing: %v)",
 			ecVolume.VolumeId, shardIdToRecover,
 			len(availableShards), availableShards,
 			ecCtx.DataShards, missingShards)
 	}
 
 	if err = enc.ReconstructData(bufs[:ecCtx.Total()]); err != nil {
-		return 0, false, fmt.Errorf("failed to reconstruct data for shard %d.%d with %d available shards %v: %w",
+		return 0, is_deleted, fmt.Errorf("failed to reconstruct data for shard %d.%d with %d available shards %v: %w",
 			ecVolume.VolumeId, shardIdToRecover, len(availableShards), availableShards, err)
 	}
 	glog.V(4).Infof("recovered ec shard %d.%d from other locations", ecVolume.VolumeId, shardIdToRecover)
