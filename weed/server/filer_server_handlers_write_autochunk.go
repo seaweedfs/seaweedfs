@@ -328,6 +328,10 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 	if entry.Extended == nil {
 		entry.Extended = make(map[string][]byte)
 	}
+	if so.Collection != "" {
+		// record the collection so the store can maintain its collection index
+		entry.Extended[filer.ExtendedCollectionKey] = []byte(so.Collection)
+	}
 	for k, v := range r.Header {
 		if len(v) > 0 && len(v[0]) > 0 {
 			if strings.HasPrefix(k, needle.PairNamePrefix) || k == "Cache-Control" || k == "Expires" || k == "Content-Disposition" {

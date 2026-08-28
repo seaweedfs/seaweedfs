@@ -438,6 +438,16 @@ func (fsw *FilerStoreWrapper) Shutdown() {
 	fsw.getDefaultStore().Shutdown()
 }
 
+// DeleteCollectionEntries delegates collection-index cleanup to the underlying
+// store. The wrapper must expose this because Filer.Store is always a
+// *FilerStoreWrapper, so a type assertion to the concrete store would fail.
+func (fsw *FilerStoreWrapper) DeleteCollectionEntries(ctx context.Context, collection string) (int, []util.FullPath, error) {
+	if indexed, ok := fsw.defaultStore.(CollectionIndexedStore); ok {
+		return indexed.DeleteCollectionEntries(ctx, collection)
+	}
+	return 0, nil, fmt.Errorf("filer store %s does not support collection index cleanup", fsw.defaultStore.GetName())
+}
+
 func (fsw *FilerStoreWrapper) KvPut(ctx context.Context, key []byte, value []byte) (err error) {
 	if err := ctx.Err(); err != nil {
 		return err

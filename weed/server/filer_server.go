@@ -273,6 +273,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 				fs.StartTusSessionCleanup(1 * time.Hour)
 			}
 		}
+		defaultMux.HandleFunc("/admin/cleanup-collection", fs.filerGuard.WhiteList(requestIDMiddleware(fs.cleanupCollectionHandler)))
 		defaultMux.HandleFunc("/", fs.filerGuard.WhiteList(requestIDMiddleware(fs.filerHandler)))
 	}
 	if defaultMux != readonlyMux {
