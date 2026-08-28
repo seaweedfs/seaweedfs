@@ -59,6 +59,41 @@ func (c *alwaysTransientClient) DeleteEntry(_ context.Context, _ *filer_pb.Delet
 	return nil, status.Error(codes.Unavailable, "transport is closing")
 }
 
+// ctxCapturingClient records each attempt's context deadline, and always fails
+// so that every allowed attempt is made.
+type ctxCapturingClient struct {
+	filer_pb.SeaweedFilerClient
+
+	deadlines   []time.Time
+	hadDeadline []bool
+}
+
+func (c *ctxCapturingClient) DeleteEntry(ctx context.Context, _ *filer_pb.DeleteEntryRequest, _ ...grpc.CallOption) (*filer_pb.DeleteEntryResponse, error) {
+	deadline, ok := ctx.Deadline()
+	c.hadDeadline = append(c.hadDeadline, ok)
+	c.deadlines = append(c.deadlines, deadline)
+	return nil, status.Error(codes.Unavailable, "transport is closing")
+}
+
+// blockingClient stands in for a pick that finds no ready subconn: the call does
+// not fail fast, it waits for the context, which is the case deleteReplayTimeout
+// exists to bound.
+type blockingClient struct {
+	filer_pb.SeaweedFilerClient
+
+	attempts int
+}
+
+func (c *blockingClient) DeleteEntry(ctx context.Context, _ *filer_pb.DeleteEntryRequest, _ ...grpc.CallOption) (*filer_pb.DeleteEntryResponse, error) {
+	c.attempts++
+	if c.attempts == 1 {
+		// fail fast once so the loop reaches a replay
+		return nil, status.Error(codes.Unavailable, "transport is closing")
+	}
+	<-ctx.Done()
+	return nil, status.FromContextError(ctx.Err()).Err()
+}
+
 // transientKeys each embed a substring from util's transient-error list, and
 // notFoundKey is named after the not-found sentinel. A client can create any of
 // them, so none may influence whether a delete is replayed.
@@ -183,6 +218,61 @@ func TestDoDeleteEntryReplaysWithoutSleeping(t *testing.T) {
 	assert.Less(t, elapsed, 5*time.Second, "the replay must not sleep, so a batch cannot multiply a backoff")
 }
 
+// The first attempt keeps the caller's own context, so a recursive delete of a
+// large bucket is not suddenly given a deadline it never had. Every replay
+// shares one bounded context, because a pick with no ready subconn waits for
+// the context rather than failing fast, and three unbounded waits would be
+// three times the stall of the one attempt master made.
+func TestDoDeleteEntryBoundsOnlyItsReplays(t *testing.T) {
+	client := &ctxCapturingClient{}
+
+	err := doDeleteEntry(context.Background(), client, "/buckets/b", "k", true, false)
+
+	require.Error(t, err)
+	require.Len(t, client.hadDeadline, deleteRetryAttempts)
+	assert.False(t, client.hadDeadline[0], "the first attempt must keep the caller's context untouched")
+	for i := 1; i < deleteRetryAttempts; i++ {
+		assert.True(t, client.hadDeadline[i], "replay %d must be bounded", i)
+	}
+	// one budget shared by every replay, not one per replay
+	assert.Equal(t, client.deadlines[1], client.deadlines[2], "the replays must share a single bound")
+}
+
+// A deadline the caller brought still wins: the replay context derives from it,
+// so it cannot extend the caller's own budget.
+func TestDoDeleteEntryReplayKeepsACallerDeadline(t *testing.T) {
+	client := &ctxCapturingClient{}
+	callerDeadline := time.Now().Add(20 * time.Millisecond)
+	ctx, cancel := context.WithDeadline(context.Background(), callerDeadline)
+	defer cancel()
+
+	_ = doDeleteEntry(ctx, client, "/buckets/b", "k", true, false)
+
+	require.NotEmpty(t, client.hadDeadline)
+	for i, had := range client.hadDeadline {
+		assert.True(t, had, "attempt %d must carry the caller's deadline", i)
+		assert.False(t, client.deadlines[i].After(callerDeadline),
+			"attempt %d must not outlive the caller's own deadline", i)
+	}
+}
+
+// The bound is what makes the replay escape a pick that never returns. Driven
+// with a caller deadline far below deleteReplayTimeout so the test does not
+// wait out the real bound.
+func TestDoDeleteEntryReplayUnblocksOnTheContext(t *testing.T) {
+	client := &blockingClient{}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	err := doDeleteEntry(ctx, client, "/buckets/b", "k", true, false)
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	assert.Less(t, elapsed, deleteReplayTimeout, "a blocked replay must end on the context, not run to its own bound")
+	assert.LessOrEqual(t, client.attempts, deleteRetryAttempts)
+}
+
 // A caller that has gone away stops the replay: the loop checks the context
 // before every attempt, so a cancelled request cannot be held open by retries.
 func TestDoDeleteEntryStopsWhenTheCallerIsGone(t *testing.T) {
@@ -234,6 +324,8 @@ func TestDoDeleteEntryPropagatesNonTransientError(t *testing.T) {
 		"permission denied": status.Error(codes.PermissionDenied, "not allowed"),
 		"invalid argument":  status.Error(codes.InvalidArgument, "bad name"),
 		"not found":         status.Error(codes.NotFound, filer_pb.ErrNotFound.Error()),
+		// a conflict the filer decided on, not a channel that broke
+		"aborted": status.Error(codes.Aborted, "conflicting update"),
 	} {
 		t.Run(name, func(t *testing.T) {
 			client := &deleteRetryClient{callErrs: []error{deleteErr, nil}}
@@ -264,6 +356,11 @@ func TestIsRetryableDeleteRPCError(t *testing.T) {
 	assert.False(t, isRetryableDeleteRPCError(nil))
 	assert.True(t, isRetryableDeleteRPCError(status.Error(codes.Unavailable, "transport is closing")))
 	assert.True(t, isRetryableDeleteRPCError(status.Error(codes.ResourceExhausted, "too many requests")))
+	// a server ending the stream without trailers, which is how a truncated
+	// reply through an L7 gRPC proxy arrives
+	assert.True(t, isRetryableDeleteRPCError(status.Error(codes.Internal, "server closed the stream without sending trailers")))
+	// a conflict the filer decided on: replaying would only lose the race again
+	assert.False(t, isRetryableDeleteRPCError(status.Error(codes.Aborted, "conflicting update")))
 	assert.False(t, isRetryableDeleteRPCError(status.Error(codes.NotFound, filer_pb.ErrNotFound.Error())))
 	assert.False(t, isRetryableDeleteRPCError(status.Error(codes.PermissionDenied, "not allowed")))
 	assert.False(t, isRetryableDeleteRPCError(status.Error(codes.Canceled, "context canceled")))

@@ -132,14 +132,30 @@ func deleteObjectEntry(client filer_pb.SeaweedFilerClient, parentDirectoryPath, 
 // second attempt report a failure instead. Worth re-checking if this is ever
 // revisited.
 //
-// The replay is immediate. What clears a transient failure here is the gRPC
-// channel reconnecting underneath the call, not the passage of time, and any
-// wait short enough to sit in a request path is far too short to outlast a
-// filer that is genuinely down. Not sleeping also keeps the cost a property of
-// the delete rather than of the request: DeleteMultipleObjectsHandler deletes
-// up to deleteMultipleObjectsLimit keys and completeMultipartUpload removes one
-// entry per unused part, so a per-delete backoff would be paid once per key.
+// The replay carries no backoff of its own. What clears a transient failure
+// here is the gRPC channel reconnecting underneath the call, not the passage of
+// time, and a sleep would be paid once per key in handlers that delete up to
+// deleteMultipleObjectsLimit entries per request.
+//
+// That does not make the replay free. A pick that finds no ready subconn
+// returns balancer.ErrNoSubConnAvailable, and the picker then waits for the
+// balancer to publish a new one; WaitForReady(false) does not shorten that wait,
+// and its only escape is the context. So while a channel is CONNECTING an
+// attempt blocks rather than failing fast, and replaying would multiply that
+// stall by deleteRetryAttempts. deleteReplayTimeout bounds it instead.
 const deleteRetryAttempts = 3
+
+// deleteReplayTimeout bounds every replay of one delete taken together, so this
+// replay can add at most this much to a request however the channel behaves.
+//
+// The first attempt deliberately keeps the caller's own context: a recursive
+// delete of a large bucket is legitimately slow, and putting a deadline on it
+// here would fail deletes that succeed today. Only the attempts this change
+// adds are bounded, which is what keeps it from making anything worse than it
+// already is. Deriving from the caller's context rather than replacing it means
+// a real request context, once one is threaded in, still cancels the replay and
+// an earlier deadline of its own still wins.
+const deleteReplayTimeout = 2 * time.Second
 
 // isRetryableDeleteRPCError reports whether a failed DeleteEntry call is worth
 // replaying. It classifies by gRPC status code, never by message text.
@@ -159,6 +175,24 @@ const deleteRetryAttempts = 3
 // verbatim). Substring-matching that text would let an object named
 // "transport.log" make a permission denial look transient, and one named after
 // filer_pb.ErrNotFound make a genuine connection reset look authoritative.
+//
+// The set matches what pb.shouldInvalidateConnection treats as a broken
+// channel, less Aborted:
+//
+//   - Unavailable is the ordinary transport failure, and the reason this exists.
+//   - Internal is what grpc-go reports when a server ends a stream without
+//     trailers, which is how an L7 gRPC proxy truncating a reply arrives - the
+//     "error while returning the response" shape issue #7204 describes.
+//   - Aborted is excluded: it reports a concurrency conflict the filer decided
+//     on, not a channel that broke, so replaying it would just lose the race
+//     again.
+//   - ResourceExhausted is included for symmetry with the connection check but
+//     is unreachable today, as nothing filer-side sheds load with it. If a shed
+//     is ever added, an immediate zero-backoff replay is the wrong answer to
+//     backpressure and this line should become a delay instead.
+//
+// Context cancellation arrives as Canceled or DeadlineExceeded and is not
+// replayed: the caller is already gone.
 func isRetryableDeleteRPCError(err error) bool {
 	if err == nil {
 		return false
@@ -168,7 +202,7 @@ func isRetryableDeleteRPCError(err error) bool {
 		return false
 	}
 	switch s.Code() {
-	case codes.Unavailable, codes.ResourceExhausted:
+	case codes.Unavailable, codes.Internal, codes.ResourceExhausted:
 		return true
 	}
 	return false
@@ -185,32 +219,68 @@ func doDeleteEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, pare
 
 	glog.V(1).Infof("delete entry %v/%v: %v", parentDirectoryPath, entryName, request)
 
-	// The loop always makes one attempt whatever deleteRetryAttempts is set to,
-	// so lastErr is never nil at the return below and no count can turn a
-	// delete that was never issued into a reported success.
-	var lastErr error
-	for attempt := 1; ; attempt++ {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			// the caller is gone, so a further attempt has nobody to answer
-			lastErr = ctxErr
-			break
+	// Master logged every failed delete RPC at V(1); keep that, so a delete that
+	// ends in failure still says so here whatever the replay did.
+	fail := func(cause string) error {
+		glog.V(1).Infof("delete entry %s/%s: %s", parentDirectoryPath, entryName, cause)
+		return fmt.Errorf("delete entry %s/%s: %s", parentDirectoryPath, entryName, cause)
+	}
+
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return fail(ctxErr.Error())
+	}
+
+	// The first attempt is unconditional and runs on the caller's own context,
+	// so no attempt count can turn a delete that was never issued into a
+	// reported success, and a legitimately slow recursive delete keeps the
+	// budget it has today.
+	rpcErr, filerErr := deleteEntryAttempt(ctx, client, request)
+	if rpcErr == nil {
+		if filerErr == "" {
+			return nil
+		}
+		return fail(filerErr)
+	}
+	if !isRetryableDeleteRPCError(rpcErr) {
+		return fail(rpcErr.Error())
+	}
+
+	// Every replay shares this one bounded context, so the wait they add is
+	// capped whether or not the caller supplied a deadline of its own.
+	replayCtx, cancelReplays := context.WithTimeout(ctx, deleteReplayTimeout)
+	defer cancelReplays()
+
+	for attempt := 2; attempt <= deleteRetryAttempts; attempt++ {
+		glog.V(2).Infof("delete entry %s/%s attempt %d/%d hit a transient error, replaying: %v", parentDirectoryPath, entryName, attempt-1, deleteRetryAttempts, rpcErr)
+		if ctxErr := replayCtx.Err(); ctxErr != nil {
+			return fail(ctxErr.Error())
 		}
 
-		resp, err := client.DeleteEntry(ctx, request)
-		if err == nil {
-			if resp.Error == "" {
+		rpcErr, filerErr = deleteEntryAttempt(replayCtx, client, request)
+		if rpcErr == nil {
+			if filerErr == "" {
 				return nil
 			}
-			return fmt.Errorf("delete entry %s/%s: %v", parentDirectoryPath, entryName, resp.Error)
+			return fail(filerErr)
 		}
-
-		lastErr = err
-		if attempt >= deleteRetryAttempts || !isRetryableDeleteRPCError(err) {
+		if !isRetryableDeleteRPCError(rpcErr) {
 			break
 		}
-		glog.V(2).Infof("delete entry %s/%s attempt %d/%d hit a transient error, replaying: %v", parentDirectoryPath, entryName, attempt, deleteRetryAttempts, err)
 	}
-	return fmt.Errorf("delete entry %s/%s: %v", parentDirectoryPath, entryName, lastErr)
+	return fail(rpcErr.Error())
+}
+
+// deleteEntryAttempt makes one DeleteEntry call and keeps the two ways it can
+// fail apart. Only the RPC error is safe to classify; the filer's own message
+// is returned as a plain string so it cannot be mistaken for one, because
+// FilerServer.DeleteEntry reports its failures there with the deleted path
+// formatted in. See isRetryableDeleteRPCError.
+func deleteEntryAttempt(ctx context.Context, client filer_pb.SeaweedFilerClient, request *filer_pb.DeleteEntryRequest) (rpcErr error, filerErr string) {
+	resp, err := client.DeleteEntry(ctx, request)
+	if err != nil {
+		return err, ""
+	}
+	return nil, resp.Error
 }
 
 func demoteDirectoryMarkerToImplicitDirectory(client filer_pb.SeaweedFilerClient, parentDirectoryPath, entryName string) error {
