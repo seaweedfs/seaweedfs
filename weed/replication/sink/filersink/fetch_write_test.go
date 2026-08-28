@@ -595,3 +595,40 @@ func TestOnReplicateChunkErrorMissingSourceChunk(t *testing.T) {
 		}
 	})
 }
+
+// An incremental sink's dated target keys cannot be mapped back to a source path,
+// so nothing here can tell a vacuumed chunk from a superseded one. Waiting out the
+// grace period would stall every such entry for half an hour; propagate instead
+// and let filer.backup decide with the event's real source key.
+func TestFetchAndWriteMissingSourceChunkUnverifiableSupersession(t *testing.T) {
+	prevRetryWaitTime := util.RetryWaitTime
+	util.RetryWaitTime = 100 * time.Millisecond
+	t.Cleanup(func() { util.RetryWaitTime = prevRetryWaitTime })
+
+	fs := &FilerSink{
+		filerSource:   startSourceFiler(t, 5),
+		dir:           "/backup",
+		isIncremental: true,
+		executor:      util.NewLimitedConcurrentExecutor(1),
+	}
+	fs.SetUploader(operation.NewUploaderWithHttpClient(http.DefaultClient))
+
+	done := make(chan error, 1)
+	go func() {
+		_, fetchErr := fs.fetchAndWrite(&filer_pb.FileChunk{FileId: "5617,01abc", Size: 10},
+			"/backup/2026-07-10/x.bin", 5*int64(time.Second))
+		done <- fetchErr
+	}()
+
+	select {
+	case fetchErr := <-done:
+		if !errors.Is(fetchErr, source.ErrVolumeNotFound) {
+			t.Fatalf("expected the lookup failure to propagate, got %v", fetchErr)
+		}
+		if errors.Is(fetchErr, errSourceChunkMissing) {
+			t.Fatalf("must not write the chunk off without checking supersession: %v", fetchErr)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("fetchAndWrite waited out the grace period with supersession unverifiable")
+	}
+}

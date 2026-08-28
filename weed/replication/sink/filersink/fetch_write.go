@@ -373,6 +373,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 	defer fs.activeTransfers.Delete(sourceChunk.GetFileIdString())
 
 	transientBackoff := time.Duration(0)
+	_, canCheckSupersession := fs.targetPathToSourcePath(path)
 	missingGate := &missingSourceChunkGate{}
 	var partialData []byte
 	var savedFilename string
@@ -477,6 +478,11 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 		transferStatus.mu.Lock()
 		transferStatus.LastErr = retryErr.Error()
 		transferStatus.mu.Unlock()
+		if isSourceChunkMissing(retryErr) && !canCheckSupersession {
+			glog.V(0).Infof("source does not have %s for %s, supersession unverifiable, propagating: %v",
+				sourceChunk.GetFileIdString(), path, retryErr)
+			return false
+		}
 		if missingGate.isPermanent(retryErr) {
 			glog.Errorf("source has not had %s for %s in %v, giving up on it: %v",
 				sourceChunk.GetFileIdString(), path, missingSourceChunkGrace, retryErr)
