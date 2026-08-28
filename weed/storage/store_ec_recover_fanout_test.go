@@ -307,3 +307,53 @@ func TestRecoverOneRemoteEcShardIntervalBoundsInFlightBytes(t *testing.T) {
 	peer.releaseAll()
 	wg.Wait()
 }
+
+// deletingEcShardPeer answers every shard read with the needle's deletion.
+type deletingEcShardPeer struct {
+	volume_server_pb.UnimplementedVolumeServerServer
+}
+
+func (p *deletingEcShardPeer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardReadRequest, stream volume_server_pb.VolumeServer_VolumeEcShardReadServer) error {
+	return stream.Send(&volume_server_pb.VolumeEcShardReadResponse{IsDeleted: true, EncodeTsNs: req.EncodeTsNs})
+}
+
+// A needle the peers report deleted reads as deleted -- a 404 -- even when too
+// few shards came back to reconstruct it.
+func TestReadEcShardNeedleAnswersDeletedWhenRecoveryFallsShort(t *testing.T) {
+	store := newTestStore(t, 1)
+	store.grpcDialOption = grpc.WithTransportCredentials(insecure.NewCredentials())
+	const vid = needle.VolumeId(7)
+	_, n := writeEcVolumeFiles(t, store.Locations[0].Directory, vid)
+
+	// Too few local shards to reconstruct, and none for the shard the needle's
+	// first interval lands on, so that interval has to recover from peers.
+	for shardId := 1; shardId <= 5; shardId++ {
+		if err := store.MountEcShards("", vid, erasure_coding.ShardId(shardId), ""); err != nil {
+			t.Fatalf("mount shard %d: %v", shardId, err)
+		}
+	}
+	ecVolume, found := store.Locations[0].FindEcVolume(vid)
+	if !found {
+		t.Fatal("ec volume not mounted")
+	}
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	srv := grpc.NewServer()
+	volume_server_pb.RegisterVolumeServerServer(srv, &deletingEcShardPeer{})
+	go srv.Serve(lis)
+	t.Cleanup(srv.Stop)
+
+	seedShardLocations(ecVolume, pb.NewServerAddressWithGrpcPort("127.0.0.1:1", lis.Addr().(*net.TCPAddr).Port))
+	ecVolume.ShardLocationsLock.Lock()
+	delete(ecVolume.ShardLocations, erasure_coding.ShardId(0))
+	ecVolume.ShardLocationsLock.Unlock()
+
+	got := new(needle.Needle)
+	got.Id = n.Id
+	if _, err := store.ReadEcShardNeedle(vid, got, nil); err != ErrorDeleted {
+		t.Errorf("read a deleted needle returned %v, want %v", err, ErrorDeleted)
+	}
+}

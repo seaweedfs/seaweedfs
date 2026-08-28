@@ -764,7 +764,7 @@ async fn fetch_one_interval(
 
     // Reconstruct: fan-out reads to every other shard at the same
     // (shard_offset, size). Mirrors `recoverOneRemoteEcShardInterval`.
-    let buf = recover_one_remote_ec_shard_interval(
+    recover_one_remote_ec_shard_interval(
         state,
         vid,
         needle_id,
@@ -776,8 +776,7 @@ async fn fetch_one_interval(
         parity_shards,
         expected_encode_ts_ns,
     )
-    .await?;
-    Ok((buf, false))
+    .await
 }
 
 async fn read_remote_ec_shard_interval(
@@ -937,7 +936,7 @@ async fn recover_one_remote_ec_shard_interval(
     data_shards: usize,
     parity_shards: usize,
     expected_encode_ts_ns: i64,
-) -> io::Result<Vec<u8>> {
+) -> io::Result<(Vec<u8>, bool)> {
     let total_shards = data_shards + parity_shards;
     let rs = ReedSolomon::new(data_shards, parity_shards).map_err(|e| {
         io::Error::new(
@@ -1006,6 +1005,7 @@ async fn recover_one_remote_ec_shard_interval(
         .map(|(sid, locs)| (*sid, locs.clone()))
         .collect();
 
+    let mut any_deleted = false;
     while available < data_shards && !candidates.is_empty() {
         let rest = candidates.split_off((data_shards - available).min(candidates.len()));
         let wave = std::mem::replace(&mut candidates, rest);
@@ -1028,7 +1028,6 @@ async fn recover_one_remote_ec_shard_interval(
         }))
         .await;
 
-        let mut any_deleted = false;
         for (sid, res) in results {
             match res {
                 // Exclude a deleted shard from reconstruction (Go gates on a full
@@ -1060,6 +1059,12 @@ async fn recover_one_remote_ec_shard_interval(
     }
 
     if available < data_shards {
+        // A holder reporting the needle deleted is authoritative -- deletes are
+        // never invented and never undone -- so answer that rather than the
+        // failure to gather shards of a needle that is gone.
+        if any_deleted {
+            return Ok((Vec::new(), true));
+        }
         return Err(io::Error::new(
             io::ErrorKind::Other,
             format!(
@@ -1080,7 +1085,7 @@ async fn recover_one_remote_ec_shard_interval(
     })?;
 
     match bufs.into_iter().nth(shard_id_to_recover as usize).flatten() {
-        Some(buf) => Ok(buf),
+        Some(buf) => Ok((buf, any_deleted)),
         None => Err(io::Error::new(
             io::ErrorKind::Other,
             format!(

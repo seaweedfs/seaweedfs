@@ -415,11 +415,14 @@ func (s *Store) ReadEcShardNeedle(vid needle.VolumeId, n *needle.Needle, onReadS
 				glog.V(3).Infof("ReadEcShardNeedle needle id %s intervals:%+v", n.String(), intervals)
 			}
 			bytes, isDeleted, err := s.readEcShardIntervals(n.Id, localEcVolume, intervals)
-			if err != nil {
-				return 0, fmt.Errorf("ReadEcShardIntervals: %w", err)
-			}
+			// A holder reporting the needle deleted is authoritative -- deletes are
+			// never invented and never undone -- so answer that ahead of whatever
+			// error the shards it could not gather produced.
 			if isDeleted {
 				return 0, ErrorDeleted
+			}
+			if err != nil {
+				return 0, fmt.Errorf("ReadEcShardIntervals: %w", err)
 			}
 
 			err = n.ReadBytes(bytes, offset.ToActualOffset(), size, localEcVolume.Version)
@@ -834,14 +837,14 @@ func (s *Store) recoverOneRemoteEcShardInterval(needleId types.NeedleId, ecVolum
 		len(missingShards), missingShards)
 
 	if len(availableShards) < ecCtx.DataShards {
-		return 0, false, fmt.Errorf("cannot recover shard %d.%d: only %d shards available %v, need at least %d (missing: %v)",
+		return 0, is_deleted, fmt.Errorf("cannot recover shard %d.%d: only %d shards available %v, need at least %d (missing: %v)",
 			ecVolume.VolumeId, shardIdToRecover,
 			len(availableShards), availableShards,
 			ecCtx.DataShards, missingShards)
 	}
 
 	if err = enc.ReconstructData(bufs[:ecCtx.Total()]); err != nil {
-		return 0, false, fmt.Errorf("failed to reconstruct data for shard %d.%d with %d available shards %v: %w",
+		return 0, is_deleted, fmt.Errorf("failed to reconstruct data for shard %d.%d with %d available shards %v: %w",
 			ecVolume.VolumeId, shardIdToRecover, len(availableShards), availableShards, err)
 	}
 	glog.V(4).Infof("recovered ec shard %d.%d from other locations", ecVolume.VolumeId, shardIdToRecover)
