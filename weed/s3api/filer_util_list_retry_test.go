@@ -248,3 +248,50 @@ func TestIsRetryableListError(t *testing.T) {
 	assert.False(t, isRetryableListError(status.Error(codes.PermissionDenied, "not allowed")))
 	assert.False(t, isRetryableListError(context.Canceled))
 }
+
+// The bucket and the prefix are the client's to choose and they land inside the
+// message DoSeaweedListWithSnapshot builds, so they must not decide whether the
+// failure is retried.
+func TestListWithRetryIgnoresUserControlledPath(t *testing.T) {
+	for name, listErr := range map[string]error{
+		"permission denied": status.Error(codes.PermissionDenied, "not allowed"),
+		"invalid argument":  status.Error(codes.InvalidArgument, "bad prefix"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			client := &listRetryClient{
+				entries:  testUploadEntries("upload-1"),
+				callErrs: []error{listErr, nil},
+			}
+			accessor := &listRetryAccessor{client: client}
+
+			_, _, err := listWithRetry("/buckets/transport/unavailable", func() ([]*filer_pb.Entry, bool, error) {
+				return listOnce(accessor, "/buckets/transport/unavailable")
+			})
+
+			require.Error(t, err)
+			assert.Equal(t, 1, client.attempts, "a bucket name must not make a non-transient error look transient")
+		})
+	}
+}
+
+// The inverse: a prefix carrying the not-found sentence must not suppress a
+// retry the filer actually asked for.
+func TestListWithRetryIgnoresSpoofedNotFoundPath(t *testing.T) {
+	client := &listRetryClient{
+		entries: testUploadEntries("upload-1"),
+		callErrs: []error{
+			status.Error(codes.Unavailable, "filer is restarting"),
+			nil,
+		},
+	}
+	accessor := &listRetryAccessor{client: client}
+
+	dir := "/buckets/b/filer: no entry is found in filer store"
+	entries, _, err := listWithRetry(dir, func() ([]*filer_pb.Entry, bool, error) {
+		return listOnce(accessor, dir)
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"upload-1"}, entryNames(entries))
+	assert.Equal(t, 2, client.attempts, "an object name must not suppress a retry")
+}

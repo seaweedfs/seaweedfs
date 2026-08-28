@@ -67,10 +67,10 @@ const (
 	listRetryInitialBackoff = 100 * time.Millisecond
 )
 
-// isRetryableListError classifies by message via util.IsTransientError because
-// DoSeaweedListWithSnapshot wraps a failed ListEntries call with %v, dropping
-// the gRPC status from the chain. Not-found is authoritative and must reach the
-// caller unchanged.
+// isRetryableListError defers to util.IsTransientError, which reads the status
+// the filer sent rather than the message DoSeaweedListWithSnapshot builds around
+// it out of the bucket and prefix the client chose. Not-found is authoritative
+// and must reach the caller unchanged.
 func isRetryableListError(err error) bool {
 	return err != nil && !isFilerNotFound(err) && util.IsTransientError(err)
 }
