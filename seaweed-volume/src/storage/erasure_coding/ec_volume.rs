@@ -679,8 +679,6 @@ impl EcVolume {
     pub fn replace_shard_locations(&self, locations: HashMap<ShardId, Vec<String>>) {
         *self.shard_locations.write().unwrap() = locations;
         *self.shard_locations_refresh_time.lock().unwrap() = Some(std::time::Instant::now());
-        self.shard_locations_stale
-            .store(false, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Merge a fresh `LookupEcVolume` reply into the shard-locations cache and
@@ -703,8 +701,6 @@ impl EcVolume {
             guard.clone()
         };
         *self.shard_locations_refresh_time.lock().unwrap() = Some(std::time::Instant::now());
-        self.shard_locations_stale
-            .store(false, std::sync::atomic::Ordering::Relaxed);
         merged
     }
 

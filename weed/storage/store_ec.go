@@ -603,6 +603,15 @@ func (s *Store) cachedLookupEcShardLocations(ecVolume *erasure_coding.EcVolume) 
 		return nil
 	}
 
+	// Consume the mark before the lookup rather than on its return: a read that
+	// fails while the master is answering has disproved the map that answer is
+	// about to install, and clearing afterwards would swallow it.
+	if stale {
+		ecVolume.ShardLocationsLock.Lock()
+		ecVolume.ShardLocationsStale = false
+		ecVolume.ShardLocationsLock.Unlock()
+	}
+
 	glog.V(3).Infof("lookup and cache ec volume %d locations", ecVolume.VolumeId)
 
 	err = operation.WithMasterServerClient(context.Background(), false, s.MasterAddress, s.grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
@@ -626,7 +635,6 @@ func (s *Store) cachedLookupEcShardLocations(ecVolume *erasure_coding.EcVolume) 
 			}
 		}
 		ecVolume.ShardLocationsRefreshTime = time.Now()
-		ecVolume.ShardLocationsStale = false
 		ecVolume.ShardLocationsLock.Unlock()
 
 		return nil

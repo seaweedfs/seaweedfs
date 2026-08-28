@@ -25,10 +25,16 @@ import (
 type countingMaster struct {
 	master_pb.UnimplementedSeaweedServer
 	lookups atomic.Int64
+	// onLookup runs inside the RPC, standing in for whatever else the volume
+	// server is doing while it waits on the master.
+	onLookup func()
 }
 
 func (m *countingMaster) LookupEcVolume(_ context.Context, req *master_pb.LookupEcVolumeRequest) (*master_pb.LookupEcVolumeResponse, error) {
 	m.lookups.Add(1)
+	if m.onLookup != nil {
+		m.onLookup()
+	}
 	resp := &master_pb.LookupEcVolumeResponse{VolumeId: req.VolumeId}
 	for shardId := 0; shardId < erasure_coding.TotalShardsCount; shardId++ {
 		resp.ShardIdLocations = append(resp.ShardIdLocations, &master_pb.LookupEcVolumeResponse_EcShardIdLocation{
@@ -238,5 +244,42 @@ func TestReadOneEcShardIntervalMarksTheMapAfterADirectReadFails(t *testing.T) {
 	}
 	if !bytes.Equal(got, want) {
 		t.Error("the interval recovered from the other shards does not match the shard on disk")
+	}
+}
+
+// A read that fails while the master is answering has disproved the very map
+// that answer is about to install, so the refresh must not clear its mark.
+func TestCachedLookupEcShardLocationsKeepsAMarkRaisedDuringTheLookup(t *testing.T) {
+	master, masterAddr := startCountingMaster(t)
+	store := &Store{
+		MasterAddress:  masterAddr,
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+	}
+	ecVolume := &erasure_coding.EcVolume{
+		VolumeId:       9,
+		ShardLocations: make(map[erasure_coding.ShardId][]pb.ServerAddress),
+	}
+
+	master.onLookup = func() { markShardLocationsStale(ecVolume) }
+	if err := store.cachedLookupEcShardLocations(ecVolume); err != nil {
+		t.Fatalf("first lookup: %v", err)
+	}
+	master.onLookup = nil
+
+	ecVolume.ShardLocationsLock.RLock()
+	stale := ecVolume.ShardLocationsStale
+	ecVolume.ShardLocationsLock.RUnlock()
+	if !stale {
+		t.Fatal("the refresh swallowed a mark raised while it was in flight")
+	}
+
+	// And the mark shortens the window, so the next read re-checks in seconds
+	// rather than trusting a map already disproved.
+	rewindShardLocationsRefresh(ecVolume, 12*time.Second)
+	if err := store.cachedLookupEcShardLocations(ecVolume); err != nil {
+		t.Fatalf("lookup after the swallowed mark: %v", err)
+	}
+	if got := master.lookups.Load(); got != 2 {
+		t.Errorf("asked the master %d times, want 2", got)
 	}
 }

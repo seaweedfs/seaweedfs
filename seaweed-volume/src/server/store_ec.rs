@@ -131,6 +131,7 @@ pub async fn read_ec_shard_needle_distributed(
             total_shards,
         )
     {
+        clear_shard_locations_stale(state, vid);
         match cached_lookup_ec_shard_locations(state, vid).await {
             Ok(fresh) => {
                 // A complete reply merges into the cache; an incomplete one
@@ -310,6 +311,7 @@ pub async fn scrub_ec_volume_distributed(
         data_shards,
         total_shards,
     ) {
+        clear_shard_locations_stale(state, vid);
         match cached_lookup_ec_shard_locations(state, vid).await {
             Ok(fresh) => {
                 if write_back_shard_locations(state, vid, fresh, data_shards).is_none() {
@@ -662,6 +664,17 @@ fn mark_shard_locations_stale(state: &Arc<VolumeServerState>, vid: VolumeId) {
     if let Some(ecv) = store.find_ec_volume(vid) {
         ecv.shard_locations_stale
             .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Consume the mark before the master lookup rather than on its return: a read
+/// that fails while the master is answering has disproved the map that answer is
+/// about to install, and clearing afterwards would swallow it.
+fn clear_shard_locations_stale(state: &Arc<VolumeServerState>, vid: VolumeId) {
+    let store = state.store.read().unwrap();
+    if let Some(ecv) = store.find_ec_volume(vid) {
+        ecv.shard_locations_stale
+            .store(false, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
