@@ -784,7 +784,7 @@ func TestLoadAllEcShardsDeletesStaleZeroSizedShards(t *testing.T) {
 func TestLoadEcShardRefusesEmptyShardFile(t *testing.T) {
 	dir := t.TempDir()
 	diskLocation := NewDiskLocation(dir, 10, util.MinFreeSpace{}, dir, types.HardDriveType, nil, stats.DefaultDiskIOProbeConfig())
-	defer closeEcVolumes(diskLocation)
+	defer diskLocation.Close() // also stops NewDiskLocation's background goroutine
 
 	// A usable .ecx sits alongside, so without the size gate the load would
 	// succeed and register the empty shard — the .ecx must not mask the gate.
@@ -820,7 +820,7 @@ func TestLoadEcShardRefusesEmptyShardFile(t *testing.T) {
 func TestLoadEcShardDuplicateReleasesTheNewShard(t *testing.T) {
 	dir := t.TempDir()
 	diskLocation := NewDiskLocation(dir, 10, util.MinFreeSpace{}, dir, types.HardDriveType, nil, stats.DefaultDiskIOProbeConfig())
-	defer closeEcVolumes(diskLocation)
+	defer diskLocation.Close() // also stops NewDiskLocation's background goroutine
 
 	if err := os.WriteFile(filepath.Join(dir, "124.ec00"), []byte("shard bytes"), 0o644); err != nil {
 		t.Fatalf("seed .ec00: %v", err)
