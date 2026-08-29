@@ -412,16 +412,12 @@ message VolumeListRequest {
   // under a disk are selected; the topology and its disk counters are always
   // reported in full.
   string collection = 1;
-  uint32 volume_id = 2; // Deprecated: use volume_ids instead.
+  repeated uint32 volume_ids = 2;
   // The one collection the empty string cannot name. A named collection wins.
   bool default_collection_only = 3;
-  // Empty and zero take everything.
-  // Wildcards are supported. "*" for all remote volumes, "aws.*" for storage
-  // name starts with "aws.", "aws.gold" for storage name exactly equals to "aws.gold"
+  // Empty and zero take everything. Wildcards are supported.
   string remote_storage_name = 4;
-  // The one storage (local) the empty string cannot name. A named storage wins.
   bool local_volume_only = 5;
-  repeated uint32 volume_ids = 6;
 }
 message VolumeListResponse {
   TopologyInfo topology_info = 1;

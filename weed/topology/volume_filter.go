@@ -12,7 +12,8 @@ import (
 type VolumeFilter struct {
 	Collection        *string
 	remoteStorageName *string
-	VolumeIDs         map[needle.VolumeId]struct{}
+	// VolumeIds selects the volumes it holds, and an empty one selects them all.
+	VolumeIds map[needle.VolumeId]struct{}
 	// nothing selects the topology alone, for a listing whose volumes travel
 	// in messages of their own.
 	nothing bool
@@ -27,10 +28,7 @@ func NoVolumes() VolumeFilter {
 // zero mean everything so a caller that forgets to narrow gets too much rather
 // than the wrong thing.
 func NewVolumeFilter(req *master_pb.VolumeListRequest) VolumeFilter {
-	filter := VolumeFilter{
-		VolumeIDs: make(map[needle.VolumeId]struct{}),
-	}
-
+	var filter VolumeFilter
 	switch {
 	case req.Collection != "":
 		collection := req.Collection
@@ -47,21 +45,18 @@ func NewVolumeFilter(req *master_pb.VolumeListRequest) VolumeFilter {
 		filter.remoteStorageName = new("")
 	}
 
-	if req.VolumeId != 0 {
-		volumeId := needle.VolumeId(req.VolumeId)
-		filter.VolumeIDs[volumeId] = struct{}{}
-	}
-
-	for _, vid := range req.VolumeIds {
-		volumeId := needle.VolumeId(vid)
-		filter.VolumeIDs[volumeId] = struct{}{}
+	if len(req.VolumeIds) > 0 {
+		filter.VolumeIds = make(map[needle.VolumeId]struct{}, len(req.VolumeIds))
+		for _, volumeId := range req.VolumeIds {
+			filter.VolumeIds[needle.VolumeId(volumeId)] = struct{}{}
+		}
 	}
 	return filter
 }
 
 // SelectsEverything lets a caller size its result for the whole disk up front.
 func (f VolumeFilter) SelectsEverything() bool {
-	return !f.nothing && f.Collection == nil && len(f.VolumeIDs) == 0 && f.remoteStorageName == nil
+	return !f.nothing && f.Collection == nil && len(f.VolumeIds) == 0 && f.remoteStorageName == nil
 }
 
 type volumeLike interface {
@@ -88,9 +83,8 @@ func (f VolumeFilter) matches(vi volumeLike) bool {
 			return false
 		}
 	}
-	if len(f.VolumeIDs) > 0 {
-		_, ok := f.VolumeIDs[vi.GetVolumeId()]
-		if !ok {
+	if len(f.VolumeIds) > 0 {
+		if _, ok := f.VolumeIds[vi.GetVolumeId()]; !ok {
 			return false
 		}
 	}

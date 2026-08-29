@@ -65,6 +65,13 @@ func equalIds(got, want []uint32) bool {
 func TestVolumeFilterSelects(t *testing.T) {
 	topo := filterTestTopology(t)
 	collection := func(name string) *string { return &name }
+	volumes := func(ids ...needle.VolumeId) map[needle.VolumeId]struct{} {
+		set := make(map[needle.VolumeId]struct{}, len(ids))
+		for _, id := range ids {
+			set[id] = struct{}{}
+		}
+		return set
+	}
 
 	for _, tc := range []struct {
 		name          string
@@ -77,10 +84,10 @@ func TestVolumeFilterSelects(t *testing.T) {
 		// Asking for it must not read as asking for everything.
 		{"the default collection", VolumeFilter{Collection: collection("")}, []uint32{1}, nil},
 		{"a collection nothing is in", VolumeFilter{Collection: collection("none")}, nil, nil},
-		{"one volume", VolumeFilter{VolumeIDs: map[needle.VolumeId]struct{}{3: {}}}, []uint32{3}, nil},
-		{"one ec volume", VolumeFilter{VolumeIDs: map[needle.VolumeId]struct{}{9: {}}}, nil, []uint32{9}},
-		{"both, agreeing", VolumeFilter{Collection: collection("other"), VolumeIDs: map[needle.VolumeId]struct{}{3: {}}}, []uint32{3}, nil},
-		{"both, disagreeing", VolumeFilter{Collection: collection("c"), VolumeIDs: map[needle.VolumeId]struct{}{3: {}}}, nil, nil},
+		{"one volume", VolumeFilter{VolumeIds: volumes(3)}, []uint32{3}, nil},
+		{"one ec volume", VolumeFilter{VolumeIds: volumes(9)}, nil, []uint32{9}},
+		{"both, agreeing", VolumeFilter{Collection: collection("other"), VolumeIds: volumes(3)}, []uint32{3}, nil},
+		{"both, disagreeing", VolumeFilter{Collection: collection("c"), VolumeIds: volumes(3)}, nil, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			volumes, ecVolumes := listed(topo.ToTopologyInfo(tc.filter))
@@ -95,7 +102,7 @@ func TestVolumeFilterSelects(t *testing.T) {
 }
 
 // an id nothing answers to narrows the listing rather than widening it.
-func TestVolumeFilterVolumeIDs(t *testing.T) {
+func TestVolumeFilterVolumeIds(t *testing.T) {
 	topo := filterTestTopology(t)
 
 	for _, tc := range []struct {
@@ -104,8 +111,7 @@ func TestVolumeFilterVolumeIDs(t *testing.T) {
 		wantVolumes   []uint32
 		wantEcVolumes []uint32
 	}{
-		// No id asked of the filter, so every volume is listed. NewVolumeFilter
-		// hands out an empty map for this, which must read the same as none.
+		// No id asked of the filter, so every volume is listed.
 		{"no id asked", nil, []uint32{1, 2, 3}, []uint32{8, 9}},
 		{"one regular volume asked", []needle.VolumeId{2}, []uint32{2}, nil},
 		{"one ec volume asked", []needle.VolumeId{8}, nil, []uint32{8}},
@@ -121,7 +127,7 @@ func TestVolumeFilterVolumeIDs(t *testing.T) {
 			for _, id := range tc.ids {
 				ids[id] = struct{}{}
 			}
-			volumes, ecVolumes := listed(topo.ToTopologyInfo(VolumeFilter{VolumeIDs: ids}))
+			volumes, ecVolumes := listed(topo.ToTopologyInfo(VolumeFilter{VolumeIds: ids}))
 			if !equalIds(volumes, tc.wantVolumes) {
 				t.Errorf("listed volumes %v, want %v", volumes, tc.wantVolumes)
 			}
@@ -242,11 +248,6 @@ func TestNewVolumeFilterReadsTheRequest(t *testing.T) {
 			}
 		})
 	}
-
-	f := NewVolumeFilter(&master_pb.VolumeListRequest{VolumeId: 7})
-	if _, ok := f.VolumeIDs[7]; !ok {
-		t.Errorf("volume id not carried across: %v", f.VolumeIDs)
-	}
 }
 
 func TestNewVolumeFilterReadsTheRemoteStorageRequest(t *testing.T) {
@@ -283,8 +284,8 @@ func TestNewVolumeFilterReadsTheRemoteStorageRequest(t *testing.T) {
 
 func TestNewVolumeFilterReadsTheVolumeIds(t *testing.T) {
 	idsOf := func(f VolumeFilter) []uint32 {
-		ids := make([]uint32, 0, len(f.VolumeIDs))
-		for id := range f.VolumeIDs {
+		ids := make([]uint32, 0, len(f.VolumeIds))
+		for id := range f.VolumeIds {
 			ids = append(ids, uint32(id))
 		}
 		return ids
@@ -295,15 +296,10 @@ func TestNewVolumeFilterReadsTheVolumeIds(t *testing.T) {
 		request *master_pb.VolumeListRequest
 		want    []uint32
 	}{
-		// No id asked of the request, so every volume is listed. The empty
-		// map NewVolumeFilter hands out must read the same as none.
+		// No id asked of the request, so every volume is listed.
 		{"an empty request", &master_pb.VolumeListRequest{}, nil},
-		// Zero is the single field's everything, not the id of a volume.
-		{"a zero volume id", &master_pb.VolumeListRequest{VolumeId: 0}, nil},
-		{"the deprecated single id", &master_pb.VolumeListRequest{VolumeId: 7}, []uint32{7}},
+		{"one id", &master_pb.VolumeListRequest{VolumeIds: []uint32{7}}, []uint32{7}},
 		{"a list of ids", &master_pb.VolumeListRequest{VolumeIds: []uint32{2, 8}}, []uint32{2, 8}},
-		// The two fields ask one question twice, answered as one set.
-		{"both", &master_pb.VolumeListRequest{VolumeId: 7, VolumeIds: []uint32{2, 8}}, []uint32{2, 7, 8}},
 		// Asking twice for a volume selects it once.
 		{"duplicates", &master_pb.VolumeListRequest{VolumeIds: []uint32{2, 2}}, []uint32{2}},
 		// The list is taken literally: no volume answers to zero, so a zero in
