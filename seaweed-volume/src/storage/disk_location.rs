@@ -843,7 +843,8 @@ impl DiskLocation {
         // .ecx open error, .ecj create error, malformed .vif) would
         // have to panic via unwrap(). Build the EcVolume up front and
         // propagate the error to the caller.
-        if !self.ec_volumes.contains_key(&vid) {
+        let created = !self.ec_volumes.contains_key(&vid);
+        if created {
             let ec_vol = EcVolume::new(&dir, idx_dir, collection, vid)
                 .map_err(VolumeError::Io)?;
             self.ec_volumes.insert(vid, ec_vol);
@@ -866,9 +867,27 @@ impl DiskLocation {
         }
 
         for &shard_id in shard_ids {
+            // A mount retry re-listing a shard this volume already holds:
+            // keep the existing registration (mirrors Go's AddEcVolumeShard
+            // added=false) — re-adding would replace a serving fd and bump
+            // the ec_shards gauge without growing the mounted count.
+            if ec_vol.has_shard(shard_id as u8) {
+                continue;
+            }
             let mut shard = EcVolumeShard::new(&dir, collection, vid, shard_id as u8);
             shard.disk_type = ec_vol.disk_type.clone();
-            ec_vol.add_shard(shard).map_err(VolumeError::Io)?;
+            if let Err(e) = ec_vol.add_shard(shard) {
+                // The shard was dropped (its descriptors closed) inside the
+                // failed add. If this call just created the EcVolume and it
+                // holds nothing, remove it too — a zero-shard registration
+                // would advertise a mount that serves no data while pinning
+                // its descriptors.
+                let now_empty = ec_vol.shard_count() == 0;
+                if created && now_empty {
+                    self.ec_volumes.remove(&vid);
+                }
+                return Err(VolumeError::Io(e));
+            }
             crate::metrics::VOLUME_GAUGE
                 .with_label_values(&[collection, "ec_shards"])
                 .inc();
@@ -1777,6 +1796,94 @@ mod tests {
                 "empty-source remount must not reset disk type to the physical location's",
             );
         }
+    }
+
+    /// A refused shard (a 0-byte file beside an index with entries) on the
+    /// FIRST mount of a volume must not leave the just-created zero-shard
+    /// EcVolume registered — it would advertise a mount serving no data,
+    /// pin the .ecx/.ecj descriptors, and make placement's mounted tier
+    /// prefer this disk. A volume that already holds shards keeps them
+    /// (the mount RPC's pre-existing first-error-aborts contract).
+    #[test]
+    fn test_mount_ec_shards_refused_shard_removes_created_empty_volume() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut loc = DiskLocation::new(
+            dir,
+            dir,
+            10,
+            DiskType::HardDrive,
+            MinFreeSpace::Percent(1.0),
+            Vec::new(),
+        )
+        .unwrap();
+
+        // An index with one 16-byte entry and a 0-byte shard: the mount is
+        // refused, and the EcVolume created for it must be unregistered.
+        std::fs::write(format!("{}/pics_9.ecx", dir), [0u8; 16]).unwrap();
+        std::fs::write(format!("{}/pics_9.ec00", dir), b"").unwrap();
+        let err = loc
+            .mount_ec_shards(VolumeId(9), "pics", &[0], "")
+            .expect_err("a 0-byte shard beside an index with entries must refuse the mount");
+        assert!(
+            err.to_string().contains("empty (0 bytes)"),
+            "want the empty-shard refusal, got: {}",
+            err
+        );
+        assert!(
+            loc.find_ec_volume(VolumeId(9)).is_none(),
+            "a refused first mount must not leave a zero-shard EcVolume registered",
+        );
+
+        // With a valid shard mounted, a later refused shard keeps the
+        // existing registration intact.
+        std::fs::write(format!("{}/pics_9.ec01", dir), b"good bytes").unwrap();
+        loc.mount_ec_shards(VolumeId(9), "pics", &[1], "").unwrap();
+        loc.mount_ec_shards(VolumeId(9), "pics", &[0], "")
+            .expect_err("the 0-byte shard stays refused");
+        assert_eq!(
+            loc.find_ec_volume(VolumeId(9)).map(|v| v.shard_count()),
+            Some(1),
+            "an existing volume keeps its valid shards when a later shard is refused",
+        );
+    }
+
+    /// A mount retry re-listing an already mounted shard must keep the
+    /// existing registration and not bump the ec_shards gauge — the Rust
+    /// twin of Go's AddEcVolumeShard added=false handling.
+    #[test]
+    fn test_mount_ec_shards_duplicate_keeps_registration_and_gauge() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut loc = DiskLocation::new(
+            dir,
+            dir,
+            10,
+            DiskType::HardDrive,
+            MinFreeSpace::Percent(1.0),
+            Vec::new(),
+        )
+        .unwrap();
+
+        // A collection name unique to this test: the gauge is process-global
+        // and sibling tests running in parallel touch other labels.
+        std::fs::write(format!("{}/dupmount_11.ec00", dir), b"shard bytes").unwrap();
+        let gauge = crate::metrics::VOLUME_GAUGE.with_label_values(&["dupmount", "ec_shards"]);
+        let before = gauge.get();
+
+        loc.mount_ec_shards(VolumeId(11), "dupmount", &[0], "").unwrap();
+        loc.mount_ec_shards(VolumeId(11), "dupmount", &[0], "")
+            .expect("a duplicate mount must succeed as a no-op");
+
+        assert_eq!(
+            loc.find_ec_volume(VolumeId(11)).map(|v| v.shard_count()),
+            Some(1),
+        );
+        assert_eq!(
+            gauge.get(),
+            before + 1.0,
+            "the duplicate mount must not bump the ec_shards gauge",
+        );
     }
 
     #[test]

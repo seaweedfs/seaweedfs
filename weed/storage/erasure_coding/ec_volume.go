@@ -297,11 +297,24 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 	return
 }
 
-func (ev *EcVolume) AddEcVolumeShard(ecVolumeShard *EcVolumeShard) bool {
+func (ev *EcVolume) AddEcVolumeShard(ecVolumeShard *EcVolumeShard) (bool, error) {
 	for _, s := range ev.Shards {
 		if s.ShardId == ecVolumeShard.ShardId {
-			return false
+			return false, nil
 		}
+	}
+	// A 0-byte shard file beside an index with entries is residue of a
+	// failed copy or a truncation, not a mountable shard: registering it
+	// would advertise a size-0 claim that serves nothing and, since
+	// placement pins re-copies to the owning disk, would keep attracting
+	// repairs to a file that was never valid. A 0-byte shard beside a
+	// 0-byte index is different — that is the legitimate layout of a
+	// volume encoded with no live needles, and it must keep mounting.
+	// The startup scan already skips 0-byte shard files; this covers the
+	// mount RPC path, which opens the file directly.
+	if ecVolumeShard.Size() == 0 && ev.ecxFileSize > 0 {
+		return false, fmt.Errorf("ec volume %d shard %d: shard file is empty (0 bytes) but the index has %d entries: residue of a failed copy, not a mountable shard",
+			ev.VolumeId, ecVolumeShard.ShardId, ev.ecxFileSize/types.NeedleMapEntrySize)
 	}
 	ev.Shards = append(ev.Shards, ecVolumeShard)
 	slices.SortFunc(ev.Shards, func(a, b *EcVolumeShard) int {
@@ -310,7 +323,7 @@ func (ev *EcVolume) AddEcVolumeShard(ecVolumeShard *EcVolumeShard) bool {
 		}
 		return int(a.ShardId - b.ShardId)
 	})
-	return true
+	return true, nil
 }
 
 func (ev *EcVolume) DeleteEcVolumeShard(shardId ShardId) (ecVolumeShard *EcVolumeShard, deleted bool) {

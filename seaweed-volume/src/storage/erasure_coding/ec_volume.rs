@@ -836,6 +836,27 @@ impl EcVolume {
             ));
         }
         shard.open()?;
+        // A 0-byte shard file beside an index with entries is residue of a
+        // failed copy or a truncation, not a mountable shard: registering
+        // it would advertise a size-0 claim that serves nothing and, since
+        // placement pins re-copies to the owning disk, would keep
+        // attracting repairs to a file that was never valid. A 0-byte shard
+        // beside a 0-byte index is different — that is the legitimate
+        // layout of a volume encoded with no live needles, and it must keep
+        // mounting. The startup scan already skips 0-byte shard files; this
+        // covers the mount path. Mirrors AddEcVolumeShard in
+        // weed/storage/erasure_coding/ec_volume.go.
+        if shard.file_size() == 0 && self.ecx_file_size > 0 {
+            let path = shard.file_name();
+            shard.close();
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "ec volume shard {} is empty (0 bytes) but the index has entries: residue of a failed copy, not a mountable shard",
+                    path
+                ),
+            ));
+        }
         self.shards[id] = Some(shard);
         Ok(())
     }
@@ -2099,6 +2120,62 @@ mod tests {
             .unwrap();
         assert_eq!(vol.shard_count(), 1);
         assert!(vol.shard_bits().has_shard_id(3));
+    }
+
+    /// A 0-byte shard file beside an index WITH entries is residue of a
+    /// failed copy: `add_shard` must refuse it and leave the slot
+    /// unregistered, so no size-0 claim is advertised (and no re-copy is
+    /// attracted to a file that was never valid). Beside a 0-byte index it
+    /// is the legitimate empty-volume layout and must keep mounting. The
+    /// startup scan already skips such files; this covers the mount path.
+    /// Mirrors TestLoadEcShardRefusesEmptyShardFile in Go.
+    #[test]
+    fn test_add_shard_refuses_empty_shard_file() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        write_ecx_file(
+            dir,
+            "",
+            VolumeId(1),
+            &[(NeedleId(1), Offset::from_actual_offset(8), Size(100))],
+        );
+
+        let mut vol = EcVolume::new(dir, dir, "", VolumeId(1)).unwrap();
+
+        let mut shard = EcVolumeShard::new(dir, "", VolumeId(1), 4);
+        shard.create().unwrap();
+        shard.close();
+
+        let err = vol
+            .add_shard(EcVolumeShard::new(dir, "", VolumeId(1), 4))
+            .expect_err("adding a 0-byte shard file must fail when the index has entries");
+        assert!(
+            err.to_string().contains("empty (0 bytes)"),
+            "a 0-byte shard should be refused as empty, got: {}",
+            err
+        );
+        assert_eq!(vol.shard_count(), 0, "a refused shard must not register");
+        assert!(!vol.shard_bits().has_shard_id(4));
+    }
+
+    /// The legitimate empty-volume layout: a volume encoded with no live
+    /// needles has a 0-byte .ecx AND 0-byte shards, and mounting it must
+    /// keep working.
+    #[test]
+    fn test_add_shard_accepts_empty_shard_of_empty_volume() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        write_ecx_file(dir, "", VolumeId(1), &[]);
+
+        let mut vol = EcVolume::new(dir, dir, "", VolumeId(1)).unwrap();
+
+        let mut shard = EcVolumeShard::new(dir, "", VolumeId(1), 4);
+        shard.create().unwrap();
+        shard.close();
+
+        vol.add_shard(EcVolumeShard::new(dir, "", VolumeId(1), 4))
+            .expect("a 0-byte shard of an empty volume (0-byte index) must mount");
+        assert!(vol.shard_bits().has_shard_id(4));
     }
 
     #[test]

@@ -218,7 +218,9 @@ func TestEcVolumeGeometryFromVif(t *testing.T) {
 				if err != nil {
 					t.Fatalf("NewEcVolumeShard %d: %v", i, err)
 				}
-				ev.AddEcVolumeShard(shard)
+				if _, err := ev.AddEcVolumeShard(shard); err != nil {
+					t.Fatalf("AddEcVolumeShard: %v", err)
+				}
 			}
 
 			// Sweep a large extent through the volume's own interval mapping.
