@@ -211,6 +211,31 @@ func TestFindEcShardTargetLocation_OwningDiskWinsWhenFull(t *testing.T) {
 	}
 }
 
+// TestEcShardOwnerDisks pins the mixed-owner batch contract: a batch whose
+// requested shards are already owned by different disks reports every owner,
+// so VolumeEcShardsCopy can refuse it rather than rank the owners into one
+// destination and duplicate the loser's claim.
+func TestEcShardOwnerDisks(t *testing.T) {
+	store := newEcTargetTestStore(t, 3)
+	collection := "grafana-loki"
+	vid := needle.VolumeId(11111)
+
+	mountEcShards(store.Locations[0], collection, vid, 0, 1)
+	mountEcShards(store.Locations[1], collection, vid, 2)
+
+	if owners := store.EcShardOwnerDisks(vid, []erasure_coding.ShardId{0, 2}); len(owners) != 2 {
+		t.Errorf("a batch owned by two disks reported %d owners; the copy handler would duplicate a claim", len(owners))
+	}
+	// A batch on one disk, with or without unowned extras, has one owner.
+	if owners := store.EcShardOwnerDisks(vid, []erasure_coding.ShardId{0, 1, 7}); len(owners) != 1 || owners[0] != store.Locations[0] {
+		t.Errorf("a single-owner batch reported owners %v; want just disk 0", owners)
+	}
+	// A wholly unowned batch reports none — fresh placement stays allowed.
+	if owners := store.EcShardOwnerDisks(vid, []erasure_coding.ShardId{7, 8}); len(owners) != 0 {
+		t.Errorf("an unowned batch reported owners %v; want none", owners)
+	}
+}
+
 // mountEcShards registers an EcVolume for vid on loc claiming shardIds.
 func mountEcShards(loc *DiskLocation, collection string, vid needle.VolumeId, shardIds ...erasure_coding.ShardId) {
 	ecVolume := &erasure_coding.EcVolume{VolumeId: vid, Collection: collection}

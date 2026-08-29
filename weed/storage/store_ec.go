@@ -128,6 +128,21 @@ func (s *Store) FindEcShardTargetLocation(collection string, vid needle.VolumeId
 	return best
 }
 
+// EcShardOwnerDisks returns the distinct disks that already own one of
+// shardIds for vid, in Locations order. More than one owner means the batch
+// has no single correct destination — whichever disk receives it would
+// duplicate a sibling disk's claim — so batch callers must split by owner
+// (VolumeEcShardsCopy refuses such a batch instead of guessing).
+func (s *Store) EcShardOwnerDisks(vid needle.VolumeId, shardIds []erasure_coding.ShardId) []*DiskLocation {
+	var owners []*DiskLocation
+	for _, loc := range s.Locations {
+		if ownedEcShardCount(loc, vid, shardIds) > 0 {
+			owners = append(owners, loc)
+		}
+	}
+	return owners
+}
+
 // ownedEcShardCount reports how many of shardIds this disk already claims
 // for vid, per the in-memory registration the read path and heartbeats use.
 func ownedEcShardCount(loc *DiskLocation, vid needle.VolumeId, shardIds []erasure_coding.ShardId) int {

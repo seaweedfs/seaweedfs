@@ -352,6 +352,22 @@ impl Store {
         best.map(|(i, _, _, _)| i)
     }
 
+    /// Returns the distinct disk indexes that already own one of `shard_ids`
+    /// for `vid`, in location order. More than one owner means the batch has
+    /// no single correct destination — whichever disk receives it would
+    /// duplicate a sibling disk's claim — so batch callers must split by
+    /// owner (`volume_ec_shards_copy` refuses such a batch instead of
+    /// guessing). Mirrors `Store.EcShardOwnerDisks` in
+    /// `weed/storage/store_ec.go`.
+    pub fn ec_shard_owner_disks(&self, vid: VolumeId, shard_ids: &[u32]) -> Vec<usize> {
+        self.locations
+            .iter()
+            .enumerate()
+            .filter(|(_, loc)| owned_ec_shard_count(loc, vid, shard_ids) > 0)
+            .map(|(i, _)| i)
+            .collect()
+    }
+
     /// Create a new volume, placing it on the location with the most free space.
     pub fn add_volume(
         &mut self,
@@ -2220,5 +2236,38 @@ mod tests {
             Some(1),
             "an unclaimed shard should go to the disk with free slots",
         );
+    }
+
+    /// Mixed-owner batch contract: a batch whose requested shards are
+    /// already owned by different disks reports every owner, so
+    /// `volume_ec_shards_copy` can refuse it rather than rank the owners
+    /// into one destination and duplicate the loser's claim.
+    #[test]
+    fn test_ec_shard_owner_disks() {
+        let (mut store, _tmp) = make_ec_target_test_store(3);
+        let collection = "grafana-loki";
+        let vid = VolumeId(11111);
+
+        let base0 = volume_file_name(&store.locations[0].directory, collection, vid);
+        std::fs::write(format!("{}.ec00", base0), b"x").unwrap();
+        std::fs::write(format!("{}.ec01", base0), b"x").unwrap();
+        store.locations[0]
+            .mount_ec_shards(vid, collection, &[0, 1], "")
+            .unwrap();
+        let base1 = volume_file_name(&store.locations[1].directory, collection, vid);
+        std::fs::write(format!("{}.ec02", base1), b"x").unwrap();
+        store.locations[1]
+            .mount_ec_shards(vid, collection, &[2], "")
+            .unwrap();
+
+        assert_eq!(
+            store.ec_shard_owner_disks(vid, &[0, 2]),
+            vec![0, 1],
+            "a batch owned by two disks must report both owners",
+        );
+        // A batch on one disk, with or without unowned extras, has one owner.
+        assert_eq!(store.ec_shard_owner_disks(vid, &[0, 1, 7]), vec![0]);
+        // A wholly unowned batch reports none — fresh placement stays allowed.
+        assert!(store.ec_shard_owner_disks(vid, &[7, 8]).is_empty());
     }
 }

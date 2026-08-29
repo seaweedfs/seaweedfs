@@ -358,6 +358,17 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 		for _, shardId := range req.ShardIds {
 			shardIds = append(shardIds, erasure_coding.ShardId(shardId))
 		}
+		// A batch whose requested shards are already owned by different local
+		// disks has no single correct destination: writing them all to one
+		// disk would duplicate the other disks' claims. Refuse so the caller
+		// splits the batch per shard (or chooses explicitly via disk_id).
+		if owners := vs.store.EcShardOwnerDisks(needle.VolumeId(req.VolumeId), shardIds); len(owners) > 1 {
+			dirs := make([]string, 0, len(owners))
+			for _, owner := range owners {
+				dirs = append(dirs, owner.Directory)
+			}
+			return nil, fmt.Errorf("volume %d shards %v are already owned by multiple local disks %v: no single destination; copy per shard or pass disk_id", req.VolumeId, req.ShardIds, dirs)
+		}
 		location = vs.store.FindEcShardTargetLocation(req.Collection, needle.VolumeId(req.VolumeId), erasure_coding.DataShardsCount, shardIds...)
 		if location == nil {
 			return nil, fmt.Errorf("no space left")

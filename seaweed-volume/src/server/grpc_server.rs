@@ -2753,6 +2753,22 @@ impl VolumeServer for VolumeGrpcService {
                 let loc = &store.locations[req.disk_id as usize];
                 (loc.directory.clone(), loc.idx_directory.clone())
             } else {
+                // A batch whose requested shards are already owned by
+                // different local disks has no single correct destination:
+                // writing them all to one disk would duplicate the other
+                // disks' claims. Refuse so the caller splits the batch per
+                // shard (or chooses explicitly via disk_id).
+                let owners = store.ec_shard_owner_disks(vid, &req.shard_ids);
+                if owners.len() > 1 {
+                    let dirs: Vec<&str> = owners
+                        .iter()
+                        .map(|&i| store.locations[i].directory.as_str())
+                        .collect();
+                    return Err(Status::failed_precondition(format!(
+                        "volume {} shards {:?} are already owned by multiple local disks {:?}: no single destination; copy per shard or pass disk_id",
+                        req.volume_id, req.shard_ids, dirs
+                    )));
+                }
                 match store.find_ec_shard_target_location(
                     &req.collection,
                     vid,
