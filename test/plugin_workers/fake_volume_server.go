@@ -15,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -339,7 +340,14 @@ func (v *VolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_serve
 		}
 	}
 
-	resp := &volume_server_pb.VolumeEcShardsInfoResponse{}
+	// Answer with the layout out of the .vif that was actually delivered here,
+	// the way a real holder answers from the context it mounted the shards
+	// with. A coordinator uses this to tell a server that understands the
+	// shard block layout from one that never knew the field, so a fake that
+	// always reported "unset" would look like a pre-upgrade server.
+	resp := &volume_server_pb.VolumeEcShardsInfoResponse{
+		EcShardConfig: v.ecShardConfigFromVif(req.VolumeId),
+	}
 	prefix := fmt.Sprintf("%d.ec", req.VolumeId)
 	entries, _ := os.ReadDir(v.baseDir)
 	for _, entry := range entries {
@@ -370,6 +378,16 @@ func (v *VolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_serve
 		})
 	}
 	return resp, nil
+}
+
+// ecShardConfigFromVif reads the EC layout out of the .vif this server was
+// given, which distribution ships to every holder alongside its shards.
+func (v *VolumeServer) ecShardConfigFromVif(volumeID uint32) *volume_server_pb.EcShardConfig {
+	vi, _, found, err := volume_info.MaybeLoadVolumeInfo(v.filePath(volumeID, ".vif"))
+	if err != nil || !found {
+		return nil
+	}
+	return vi.GetEcShardConfig()
 }
 
 func (v *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.VolumeDeleteRequest) (*volume_server_pb.VolumeDeleteResponse, error) {
