@@ -2784,8 +2784,8 @@ type VolumeListRequest struct {
 	// Empty and zero take everything. Only the volumes and ec shards listed
 	// under a disk are selected; the topology and its disk counters are always
 	// reported in full.
-	Collection string `protobuf:"bytes,1,opt,name=collection,proto3" json:"collection,omitempty"`
-	VolumeId   uint32 `protobuf:"varint,2,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	Collection string   `protobuf:"bytes,1,opt,name=collection,proto3" json:"collection,omitempty"`
+	VolumeIds  []uint32 `protobuf:"varint,2,rep,packed,name=volume_ids,json=volumeIds,proto3" json:"volume_ids,omitempty"`
 	// The one collection the empty string cannot name. A named collection wins.
 	DefaultCollectionOnly bool `protobuf:"varint,3,opt,name=default_collection_only,json=defaultCollectionOnly,proto3" json:"default_collection_only,omitempty"`
 	// Empty and zero take everything. Wildcards are supported.
@@ -2832,11 +2832,11 @@ func (x *VolumeListRequest) GetCollection() string {
 	return ""
 }
 
-func (x *VolumeListRequest) GetVolumeId() uint32 {
+func (x *VolumeListRequest) GetVolumeIds() []uint32 {
 	if x != nil {
-		return x.VolumeId
+		return x.VolumeIds
 	}
-	return 0
+	return nil
 }
 
 func (x *VolumeListRequest) GetDefaultCollectionOnly() bool {
@@ -5232,12 +5232,13 @@ const file_master_proto_rawDesc = "" +
 	"\tdiskInfos\x18\x03 \x03(\v2&.master_pb.TopologyInfo.DiskInfosEntryR\tdiskInfos\x1aQ\n" +
 	"\x0eDiskInfosEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
-	"\x05value\x18\x02 \x01(\v2\x13.master_pb.DiskInfoR\x05value:\x028\x01\"\xe4\x01\n" +
+	"\x05value\x18\x02 \x01(\v2\x13.master_pb.DiskInfoR\x05value:\x028\x01\"\xe6\x01\n" +
 	"\x11VolumeListRequest\x12\x1e\n" +
 	"\n" +
 	"collection\x18\x01 \x01(\tR\n" +
-	"collection\x12\x1b\n" +
-	"\tvolume_id\x18\x02 \x01(\rR\bvolumeId\x126\n" +
+	"collection\x12\x1d\n" +
+	"\n" +
+	"volume_ids\x18\x02 \x03(\rR\tvolumeIds\x126\n" +
 	"\x17default_collection_only\x18\x03 \x01(\bR\x15defaultCollectionOnly\x12.\n" +
 	"\x13remote_storage_name\x18\x04 \x01(\tR\x11remoteStorageName\x12*\n" +
 	"\x11local_volume_only\x18\x05 \x01(\bR\x0flocalVolumeOnly\"\x83\x01\n" +

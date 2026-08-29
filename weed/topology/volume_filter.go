@@ -12,7 +12,8 @@ import (
 type VolumeFilter struct {
 	Collection        *string
 	remoteStorageName *string
-	VolumeId          *needle.VolumeId
+	// VolumeIds selects the volumes it holds, and an empty one selects them all.
+	VolumeIds map[needle.VolumeId]struct{}
 	// nothing selects the topology alone, for a listing whose volumes travel
 	// in messages of their own.
 	nothing bool
@@ -44,16 +45,18 @@ func NewVolumeFilter(req *master_pb.VolumeListRequest) VolumeFilter {
 		filter.remoteStorageName = new("")
 	}
 
-	if req.VolumeId != 0 {
-		volumeId := needle.VolumeId(req.VolumeId)
-		filter.VolumeId = &volumeId
+	if len(req.VolumeIds) > 0 {
+		filter.VolumeIds = make(map[needle.VolumeId]struct{}, len(req.VolumeIds))
+		for _, volumeId := range req.VolumeIds {
+			filter.VolumeIds[needle.VolumeId(volumeId)] = struct{}{}
+		}
 	}
 	return filter
 }
 
 // SelectsEverything lets a caller size its result for the whole disk up front.
 func (f VolumeFilter) SelectsEverything() bool {
-	return !f.nothing && f.Collection == nil && f.VolumeId == nil && f.remoteStorageName == nil
+	return !f.nothing && f.Collection == nil && len(f.VolumeIds) == 0 && f.remoteStorageName == nil
 }
 
 type volumeLike interface {
@@ -80,8 +83,10 @@ func (f VolumeFilter) matches(vi volumeLike) bool {
 			return false
 		}
 	}
-	if f.VolumeId != nil && *f.VolumeId != vi.GetVolumeId() {
-		return false
+	if len(f.VolumeIds) > 0 {
+		if _, ok := f.VolumeIds[vi.GetVolumeId()]; !ok {
+			return false
+		}
 	}
 	return true
 }

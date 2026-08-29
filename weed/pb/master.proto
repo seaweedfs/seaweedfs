@@ -412,7 +412,7 @@ message VolumeListRequest {
   // under a disk are selected; the topology and its disk counters are always
   // reported in full.
   string collection = 1;
-  uint32 volume_id = 2;
+  repeated uint32 volume_ids = 2;
   // The one collection the empty string cannot name. A named collection wins.
   bool default_collection_only = 3;
   // Empty and zero take everything. Wildcards are supported.
