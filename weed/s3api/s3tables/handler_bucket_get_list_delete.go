@@ -347,22 +347,13 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 
 	// Delete the bucket
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		// Delete table object entry first, then directory
-		// This ensures we clean up the leaf entry even if directory deletion fails
-		tableObjErr := h.deleteEntryIfExists(r.Context(), client, GetTableObjectBucketPath(bucketName))
-		dirErr := h.deleteDirectory(r.Context(), client, bucketPath)
-
-		// Log any errors but don't fail if one succeeds
-		if tableObjErr != nil && dirErr != nil {
-			return fmt.Errorf("delete table object failed: %w, delete directory failed: %w", tableObjErr, dirErr)
-		}
-		if tableObjErr != nil {
+		// Drop the leaf entry first, so it does not outlive the directory.
+		if tableObjErr := h.deleteEntryIfExists(r.Context(), client, GetTableObjectBucketPath(bucketName)); tableObjErr != nil {
 			glog.V(1).Infof("failed to delete table object for %s: %v", bucketName, tableObjErr)
 		}
-		if dirErr != nil {
-			glog.V(1).Infof("failed to delete table bucket dir for %s: %v", bucketName, dirErr)
-		}
-		return nil
+		// The bucket is the directory, so a refused delete leaves it in place
+		// and the caller must hear about it.
+		return h.deleteDirectory(r.Context(), client, bucketPath)
 	})
 
 	if err != nil {

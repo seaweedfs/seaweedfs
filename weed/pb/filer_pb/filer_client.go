@@ -155,7 +155,9 @@ func DoSeaweedListWithSnapshot(ctx context.Context, client SeaweedFilerClient, f
 	defer cancel()
 	stream, err := client.ListEntries(ctx, request)
 	if err != nil {
-		return actualSnapshotTsNs, fmt.Errorf("list %s: %v", fullDirPath, err)
+		// fullDirPath is the caller's bucket and prefix; keep the status the filer
+		// sent so a retry is decided on that rather than on this message
+		return actualSnapshotTsNs, fmt.Errorf("list %s: %w", fullDirPath, err)
 	}
 
 	var prevEntry *Entry
@@ -261,7 +263,7 @@ func DoMkdir(ctx context.Context, client SeaweedFilerClient, parentDirectoryPath
 	glog.V(1).InfofCtx(ctx, "mkdir: %v", request)
 	if err := CreateEntry(ctx, client, request); err != nil {
 		glog.V(0).InfofCtx(ctx, "mkdir %v: %v", request, err)
-		return fmt.Errorf("mkdir %s/%s: %v", parentDirectoryPath, dirName, err)
+		return fmt.Errorf("mkdir %s/%s: %w", parentDirectoryPath, dirName, err)
 	}
 
 	return nil
@@ -295,7 +297,7 @@ func MkFile(ctx context.Context, filerClient FilerClient, parentDirectoryPath st
 		glog.V(1).InfofCtx(ctx, "create file: %s/%s", parentDirectoryPath, fileName)
 		if err := CreateEntry(ctx, client, request); err != nil {
 			glog.V(0).InfofCtx(ctx, "create file %v:%v", request, err)
-			return fmt.Errorf("create file %s/%s: %v", parentDirectoryPath, fileName, err)
+			return fmt.Errorf("create file %s/%s: %w", parentDirectoryPath, fileName, err)
 		}
 
 		return nil

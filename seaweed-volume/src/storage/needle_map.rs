@@ -14,7 +14,10 @@ use std::path::Path;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 
 mod compact_map;
+pub mod file_pool;
+pub mod sorted_file;
 use compact_map::CompactMap;
+use sorted_file::SortedFileNeedleMap;
 
 use redb::{Database, Durability, ReadableDatabase, ReadableTable, TableDefinition};
 
@@ -750,10 +753,12 @@ impl RedbNeedleMap {
         Ok(())
     }
 
-    /// Look up a needle.
-    pub fn get(&self, key: NeedleId) -> Option<NeedleValue> {
+    /// Look up a needle. A redb failure is an ERROR, not an absent needle:
+    /// answering "not found" would turn a database problem into a read miss
+    /// and let a delete report success without recording a tombstone.
+    pub fn get(&self, key: NeedleId) -> io::Result<Option<NeedleValue>> {
         let key_u64: u64 = key.into();
-        self.get_internal(key_u64).ok().flatten()
+        self.get_internal(key_u64)
     }
 
     /// Internal get that returns io::Result for error propagation.
@@ -939,33 +944,31 @@ impl RedbNeedleMap {
     }
 
     /// Collect all entries as a Vec for iteration (used by volume.rs iter patterns).
-    pub fn collect_entries(&self) -> Vec<(NeedleId, NeedleValue)> {
+    pub fn collect_entries(&self) -> io::Result<Vec<(NeedleId, NeedleValue)>> {
         let mut result = Vec::new();
-        let txn: redb::ReadTransaction = match self.db.begin_read() {
-            Ok(t) => t,
-            Err(_) => return result,
-        };
-        let table = match txn.open_table(NEEDLE_TABLE) {
-            Ok(t) => t,
-            Err(_) => return result,
-        };
-        let iter = match table.iter() {
-            Ok(i) => i,
-            Err(_) => return result,
-        };
+        let txn: redb::ReadTransaction = self
+            .db
+            .begin_read()
+            .map_err(|e| io::Error::other(format!("redb begin_read: {e}")))?;
+        let table = txn
+            .open_table(NEEDLE_TABLE)
+            .map_err(|e| io::Error::other(format!("redb open_table: {e}")))?;
+        let iter = table
+            .iter()
+            .map_err(|e| io::Error::other(format!("redb iter: {e}")))?;
         for entry in iter {
-            if let Ok((key_guard, val_guard)) = entry {
-                let key_u64: u64 = key_guard.value();
-                let bytes: &[u8] = val_guard.value();
-                if bytes.len() == PACKED_NEEDLE_VALUE_SIZE {
-                    let mut arr = [0u8; PACKED_NEEDLE_VALUE_SIZE];
-                    arr.copy_from_slice(bytes);
-                    let nv = unpack_needle_value(&arr);
-                    result.push((NeedleId(key_u64), nv));
-                }
+            let (key_guard, val_guard) =
+                entry.map_err(|e| io::Error::other(format!("redb entry: {e}")))?;
+            let key_u64: u64 = key_guard.value();
+            let bytes: &[u8] = val_guard.value();
+            if bytes.len() == PACKED_NEEDLE_VALUE_SIZE {
+                let mut arr = [0u8; PACKED_NEEDLE_VALUE_SIZE];
+                arr.copy_from_slice(bytes);
+                let nv = unpack_needle_value(&arr);
+                result.push((NeedleId(key_u64), nv));
             }
         }
-        result
+        Ok(result)
     }
 }
 
@@ -977,6 +980,10 @@ impl RedbNeedleMap {
 pub enum NeedleMap {
     InMemory(CompactNeedleMap),
     Redb(RedbNeedleMap),
+    /// Read-only volumes — including every cloud-tiered one — search the sorted
+    /// `.sdx` on disk instead of holding an index in RAM. Mirrors Go's
+    /// `SortedFileNeedleMap`.
+    SortedFile(SortedFileNeedleMap),
 }
 
 impl NeedleMap {
@@ -985,14 +992,18 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => nm.put(key, offset, size),
             NeedleMap::Redb(nm) => nm.put(key, offset, size),
+            NeedleMap::SortedFile(nm) => nm.put(key, offset, size),
         }
     }
 
-    /// Look up a needle.
-    pub fn get(&self, key: NeedleId) -> Option<NeedleValue> {
+    /// Look up a needle. Disk- and database-backed maps report their own
+    /// failures rather than folding them into "not found" — see the notes on
+    /// `RedbNeedleMap::get` and `SortedFileNeedleMap::get`.
+    pub fn get(&self, key: NeedleId) -> io::Result<Option<NeedleValue>> {
         match self {
-            NeedleMap::InMemory(nm) => nm.get(key),
+            NeedleMap::InMemory(nm) => Ok(nm.get(key)),
             NeedleMap::Redb(nm) => nm.get(key),
+            NeedleMap::SortedFile(nm) => nm.get(key),
         }
     }
 
@@ -1001,6 +1012,7 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => nm.delete(key, offset),
             NeedleMap::Redb(nm) => nm.delete(key, offset),
+            NeedleMap::SortedFile(nm) => nm.delete(key, offset),
         }
     }
 
@@ -1009,6 +1021,9 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => nm.set_idx_file(file, offset),
             NeedleMap::Redb(nm) => nm.set_idx_file(file, offset),
+            // The sorted map borrows its .idx per append, so there is no
+            // long-lived writer to install.
+            NeedleMap::SortedFile(_) => {}
         }
     }
 
@@ -1017,6 +1032,8 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => nm.has_idx_writer(),
             NeedleMap::Redb(nm) => nm.has_idx_writer(),
+            // Appends open the .idx on demand, so one is always available.
+            NeedleMap::SortedFile(_) => true,
         }
     }
 
@@ -1025,6 +1042,7 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => nm.content_size(),
             NeedleMap::Redb(nm) => nm.content_size(),
+            NeedleMap::SortedFile(nm) => nm.content_size(),
         }
     }
 
@@ -1033,6 +1051,7 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => nm.deleted_size(),
             NeedleMap::Redb(nm) => nm.deleted_size(),
+            NeedleMap::SortedFile(nm) => nm.deleted_size(),
         }
     }
 
@@ -1041,6 +1060,7 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => nm.file_count(),
             NeedleMap::Redb(nm) => nm.file_count(),
+            NeedleMap::SortedFile(nm) => nm.file_count(),
         }
     }
 
@@ -1049,6 +1069,7 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => nm.deleted_count(),
             NeedleMap::Redb(nm) => nm.deleted_count(),
+            NeedleMap::SortedFile(nm) => nm.deleted_count(),
         }
     }
 
@@ -1057,6 +1078,7 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => nm.max_file_key(),
             NeedleMap::Redb(nm) => nm.max_file_key(),
+            NeedleMap::SortedFile(nm) => nm.max_file_key(),
         }
     }
 
@@ -1067,6 +1089,7 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => nm.max_needle_end(),
             NeedleMap::Redb(nm) => nm.max_needle_end(),
+            NeedleMap::SortedFile(nm) => nm.max_needle_end(),
         }
     }
 
@@ -1075,6 +1098,7 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => nm.index_file_size(),
             NeedleMap::Redb(nm) => nm.index_file_size(),
+            NeedleMap::SortedFile(nm) => nm.index_file_size(),
         }
     }
 
@@ -1083,6 +1107,7 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => nm.sync(),
             NeedleMap::Redb(nm) => nm.sync(),
+            NeedleMap::SortedFile(nm) => nm.sync(),
         }
     }
 
@@ -1091,6 +1116,7 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => nm.close(),
             NeedleMap::Redb(nm) => nm.close(),
+            NeedleMap::SortedFile(nm) => nm.close(),
         }
     }
 
@@ -1099,6 +1125,7 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => nm.save_to_idx(path),
             NeedleMap::Redb(nm) => nm.save_to_idx(path),
+            NeedleMap::SortedFile(nm) => nm.save_to_idx(path),
         }
     }
 
@@ -1110,22 +1137,28 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => nm.ascending_visit(f),
             NeedleMap::Redb(nm) => nm.ascending_visit(f),
+            NeedleMap::SortedFile(nm) => nm.ascending_visit(f),
         }
     }
 
     /// Iterate all entries. Returns a Vec of (NeedleId, NeedleValue) pairs.
-    /// For InMemory this collects via ascending visit; for Redb it reads from disk.
-    pub fn iter_entries(&self) -> Vec<(NeedleId, NeedleValue)> {
+    /// For InMemory this collects via ascending visit; the disk-backed maps read
+    /// it back off disk, so a truncated .sdx or a redb read fault surfaces here
+    /// as an error. Compaction treats the result as the complete live set, so a
+    /// partial scan must never be mistaken for an empty tail.
+    pub fn iter_entries(&self) -> io::Result<Vec<(NeedleId, NeedleValue)>> {
         match self {
             NeedleMap::InMemory(nm) => {
                 let mut entries = Vec::new();
+                // The visitor never fails, so neither can this.
                 let _ = nm.ascending_visit(|id, nv| {
                     entries.push((id, *nv));
                     Ok(())
                 });
-                entries
+                Ok(entries)
             }
             NeedleMap::Redb(nm) => nm.collect_entries(),
+            NeedleMap::SortedFile(nm) => nm.iter_entries(),
         }
     }
 }
@@ -1280,13 +1313,13 @@ mod tests {
         nm.put(NeedleId(2), Offset::from_actual_offset(128), Size(200))
             .unwrap();
 
-        let v1 = nm.get(NeedleId(1)).unwrap();
+        let v1 = nm.get(NeedleId(1)).unwrap().unwrap();
         assert_eq!(v1.size, Size(100));
 
-        let v2 = nm.get(NeedleId(2)).unwrap();
+        let v2 = nm.get(NeedleId(2)).unwrap().unwrap();
         assert_eq!(v2.size, Size(200));
 
-        assert!(nm.get(NeedleId(99)).is_none());
+        assert!(nm.get(NeedleId(99)).unwrap().is_none());
     }
 
     #[test]
@@ -1311,7 +1344,7 @@ mod tests {
         assert_eq!(nm.deleted_size(), 100);
 
         // Deleted entry should have negated size
-        let nv = nm.get(NeedleId(1)).unwrap();
+        let nv = nm.get(NeedleId(1)).unwrap().unwrap();
         assert_eq!(nv.size, Size(-100));
     }
 
@@ -1384,9 +1417,9 @@ mod tests {
         let mut cursor = Cursor::new(idx_data);
         let nm = RedbNeedleMap::load_from_idx(db_path.to_str().unwrap(), &mut cursor, Version::current()).unwrap();
 
-        assert!(nm.get(NeedleId(1)).is_some());
-        assert!(nm.get(NeedleId(2)).is_none()); // deleted and removed
-        assert!(nm.get(NeedleId(3)).is_some());
+        assert!(nm.get(NeedleId(1)).unwrap().is_some());
+        assert!(nm.get(NeedleId(2)).unwrap().is_none()); // deleted and removed
+        assert!(nm.get(NeedleId(3)).unwrap().is_some());
         assert_eq!(nm.file_count(), 2);
     }
 
@@ -1503,7 +1536,7 @@ mod tests {
         let mut nm = NeedleMap::InMemory(CompactNeedleMap::new());
         nm.put(NeedleId(1), Offset::from_actual_offset(0), Size(100))
             .unwrap();
-        assert_eq!(nm.get(NeedleId(1)).unwrap().size, Size(100));
+        assert_eq!(nm.get(NeedleId(1)).unwrap().unwrap().size, Size(100));
         assert_eq!(nm.file_count(), 1);
     }
 
@@ -1514,7 +1547,7 @@ mod tests {
         let mut nm = NeedleMap::Redb(RedbNeedleMap::new(db_path.to_str().unwrap()).unwrap());
         nm.put(NeedleId(1), Offset::from_actual_offset(0), Size(100))
             .unwrap();
-        assert_eq!(nm.get(NeedleId(1)).unwrap().size, Size(100));
+        assert_eq!(nm.get(NeedleId(1)).unwrap().unwrap().size, Size(100));
         assert_eq!(nm.file_count(), 1);
     }
 }

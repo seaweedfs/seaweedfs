@@ -55,7 +55,7 @@ func (c *commandVolumeTierDownload) Do(args []string, commandEnv *CommandEnv, wr
 
 	tierCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeId := tierCommand.Int("volumeId", 0, "the volume id")
-	collection := tierCommand.String("collection", "", "the collection name")
+	collection := tierCommand.String("collection", "", "comma-separated collection names, wildcards, or regex patterns; empty matches the collection with no name")
 	if err = tierCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -95,7 +95,7 @@ func (c *commandVolumeTierDownload) Do(args []string, commandEnv *CommandEnv, wr
 
 func collectRemoteVolumes(topoInfo *master_pb.TopologyInfo, collectionPattern string) (vids []needle.VolumeId, err error) {
 	// compile regex pattern for collection matching
-	collectionRegex, err := compileCollectionPattern(collectionPattern)
+	collectionMatcher, err := compileCollectionPattern(collectionPattern)
 	if err != nil {
 		return nil, fmt.Errorf("invalid collection pattern '%s': %v", collectionPattern, err)
 	}
@@ -104,7 +104,7 @@ func collectRemoteVolumes(topoInfo *master_pb.TopologyInfo, collectionPattern st
 	eachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
 		for _, diskInfo := range dn.DiskInfos {
 			for _, v := range diskInfo.VolumeInfos {
-				if collectionRegex.MatchString(v.Collection) && v.RemoteStorageName != "" {
+				if collectionMatcher.Matches(v.Collection) && v.RemoteStorageName != "" {
 					vidMap[v.Id] = true
 				}
 			}

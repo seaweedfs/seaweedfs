@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -61,6 +62,10 @@ type FilerSink struct {
 	signature         int32
 	activeTransfers   sync.Map // chunkFileId -> *ChunkTransferStatus
 	uploader          *operation.Uploader
+	// lastServedFileId is the most recent chunk the source did serve, the probe
+	// sourceStillServesChunks re-checks before writing an entry off.
+	lastServedFileId atomic.Pointer[string]
+	missingVolumes   sync.Map // source volume id -> time.Time first found unlocatable
 }
 
 func init() {
@@ -73,6 +78,10 @@ func (fs *FilerSink) GetName() string {
 
 func (fs *FilerSink) GetSinkToDirectory() string {
 	return fs.dir
+}
+
+func (fs *FilerSink) GetDestinationIdentity() string {
+	return fs.grpcAddress + "\x00" + fs.dir
 }
 
 func (fs *FilerSink) IsIncremental() bool {
@@ -443,13 +452,19 @@ func (fs *FilerSink) onCorruptChunk(key string, entry *filer_pb.Entry, err error
 }
 
 // onReplicateChunkError handles a non-size-mismatch replicateChunks failure.
-// Skip (return nil) only when the live source has moved past this version —
-// deleted or strictly-newer mtime — so a later event carries the current
-// content and the skip is lossless. Otherwise propagate so the offset stays
-// put and the event is retried; returning nil would silently drop the file.
+// Skip (return nil) when the live source has moved past this version — deleted
+// or strictly-newer mtime — so a later event carries the current content and the
+// skip is lossless, or when the source has lost the chunk for good: it can never
+// serve those bytes to anyone, and holding the offset for it only stops every
+// later event from ever being checkpointed. Otherwise propagate so the offset
+// stays put and the event is retried; returning nil would silently drop the file.
 func (fs *FilerSink) onReplicateChunkError(key string, entry *filer_pb.Entry, err error) error {
 	if fs.hasSourceNewerVersion(key, getEntryMtimeNs(entry)) {
 		glog.Warningf("skip stale entry %s, source superseded during replicate: %v", key, err)
+		return nil
+	}
+	if errors.Is(err, errSourceChunkMissing) && fs.sourceStillServesChunks() {
+		glog.Errorf("skip %s: the source cluster cannot produce its data, so it stays unreplicated: %v", key, err)
 		return nil
 	}
 	return fmt.Errorf("replicate entry chunks %s: %w", key, err)

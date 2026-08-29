@@ -23,6 +23,7 @@ func TestAttrChunkRace(t *testing.T) {
 		option:         &Option{},
 		inodeToPath:    NewInodeToPath(util.FullPath("/"), 0),
 		fhMap:          NewFileHandleToInode(),
+		fhLockTable:    util.NewLockTable[FileHandleId](),
 		openMtimeCache: make(map[uint64][2]int64, 8),
 	}
 

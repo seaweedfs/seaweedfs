@@ -16,7 +16,7 @@ import (
 )
 
 func TestPlanECDestinationsUsesPlanner(t *testing.T) {
-	activeTopology := buildActiveTopology(t, 7, []string{"hdd", "ssd"}, 100, 0)
+	activeTopology := buildActiveTopology(t, 7, []string{"hdd", "ssd"}, 100, 0, "")
 
 	metric := &types.VolumeHealthMetrics{
 		VolumeID:   1,
@@ -207,7 +207,7 @@ func TestCountExistingEcShardsForVolume(t *testing.T) {
 }
 
 func TestDetectionContextCancellation(t *testing.T) {
-	activeTopology := buildActiveTopology(t, 5, []string{"hdd", "ssd"}, 50, 0)
+	activeTopology := buildActiveTopology(t, 5, []string{"hdd", "ssd"}, 50, 0, "")
 	clusterInfo := &types.ClusterInfo{ActiveTopology: activeTopology}
 	metrics := buildVolumeMetricsForIDs(50)
 
@@ -218,9 +218,44 @@ func TestDetectionContextCancellation(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 }
 
+// The admin UI collection filter takes a list, and the two mode sentinels must
+// not be read as a collection name.
+func TestDetectionCollectionFilter(t *testing.T) {
+	for _, tc := range []struct {
+		filter string
+		want   int
+	}{
+		{filter: "", want: 3},
+		{filter: "ALL_COLLECTIONS", want: 3},
+		{filter: "collection-a", want: 3},
+		{filter: "collection-a,collection-b", want: 3},
+		{filter: " collection-b , collection-a ", want: 3},
+		{filter: "collection-*", want: 3},
+		{filter: "collection-b,collection-c", want: 0},
+		{filter: "collection-ab", want: 0},
+	} {
+		t.Run(tc.filter, func(t *testing.T) {
+			// A fresh topology per case: planned destinations reserve capacity.
+			activeTopology := buildActiveTopology(t, erasure_coding.TotalShardsCount, []string{"hdd"}, 20, 0, "collection-a")
+			clusterInfo := &types.ClusterInfo{ActiveTopology: activeTopology}
+
+			metrics := buildVolumeMetricsForIDs(3)
+			for _, metric := range metrics {
+				metric.Collection = "collection-a"
+			}
+
+			config := NewDefaultConfig()
+			config.CollectionFilter = tc.filter
+			results, _, err := Detection(context.Background(), metrics, clusterInfo, config, 0)
+			require.NoError(t, err)
+			assert.Len(t, results, tc.want)
+		})
+	}
+}
+
 func TestDetectionMaxResultsHonorsLimit(t *testing.T) {
 	// One node per shard so each shard gets its own disk (#9369).
-	activeTopology := buildActiveTopology(t, erasure_coding.TotalShardsCount, []string{"hdd"}, 20, 0)
+	activeTopology := buildActiveTopology(t, erasure_coding.TotalShardsCount, []string{"hdd"}, 20, 0, "")
 	clusterInfo := &types.ClusterInfo{ActiveTopology: activeTopology}
 	metrics := buildVolumeMetricsForIDs(3)
 
@@ -285,7 +320,7 @@ func TestPlanECDestinationsSpreadsAcrossPhysicalDisks(t *testing.T) {
 }
 
 func TestPlanECDestinationsFailsWithInsufficientCapacity(t *testing.T) {
-	activeTopology := buildActiveTopology(t, 1, []string{"hdd"}, 1, 1)
+	activeTopology := buildActiveTopology(t, 1, []string{"hdd"}, 1, 1, "")
 
 	metric := &types.VolumeHealthMetrics{
 		VolumeID:   2,
@@ -411,7 +446,7 @@ func buildVolumeMetricsForIDs(count int) []*types.VolumeHealthMetrics {
 	return metrics
 }
 
-func buildActiveTopology(t *testing.T, nodeCount int, diskTypes []string, maxVolumeCount, usedVolumeCount int64) *topology.ActiveTopology {
+func buildActiveTopology(t *testing.T, nodeCount int, diskTypes []string, maxVolumeCount, usedVolumeCount int64, collection string) *topology.ActiveTopology {
 	t.Helper()
 	activeTopology := topology.NewActiveTopology(10)
 
@@ -427,7 +462,7 @@ func buildActiveTopology(t *testing.T, nodeCount int, diskTypes []string, maxVol
 			for vid := 1; vid <= 200; vid++ {
 				volumeInfos = append(volumeInfos, &master_pb.VolumeInformationMessage{
 					Id:         uint32(vid),
-					Collection: "",
+					Collection: collection,
 					DiskId:     uint32(diskIndex),
 				})
 			}

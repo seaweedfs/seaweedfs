@@ -535,8 +535,22 @@ func TestExtractHostHeaderCandidates(t *testing.T) {
 		expected       []string
 	}{
 		{
-			name:         "externalHost is the only candidate",
+			name:         "externalHost leads, request host still follows",
 			hostHeader:   "backend:8333",
+			externalHost: "api.example.com:9000",
+			expected:     []string{"api.example.com:9000", "backend:8333"},
+		},
+		{
+			name:          "externalHost leads the forwarded candidates",
+			hostHeader:    "backend:8333",
+			forwardedHost: "example.com",
+			forwardedPort: "9000",
+			externalHost:  "api.example.com",
+			expected:      []string{"api.example.com", "example.com:9000", "example.com"},
+		},
+		{
+			name:         "externalHost equal to the request host is not repeated",
+			hostHeader:   "api.example.com:9000",
 			externalHost: "api.example.com:9000",
 			expected:     []string{"api.example.com:9000"},
 		},

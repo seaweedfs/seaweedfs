@@ -400,6 +400,28 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 			return ""
 		}
 
+		// addCommonPrefix records a CommonPrefix the page has not emitted yet. maxKeys is
+		// unsigned, so the decrement is clamped rather than allowed to wrap: a prefix
+		// object spends two slots on one entry, and the budget is only checked between
+		// entries.
+		addCommonPrefix := func(prefix string) {
+			for i := range commonPrefixes {
+				if commonPrefixes[i].Prefix == prefix {
+					if prefix == lastCommonPrefix {
+						lastPrefixConfirmed = true
+					}
+					return
+				}
+			}
+			commonPrefixes = append(commonPrefixes, PrefixEntry{Prefix: prefix})
+			if cursor.maxKeys > 0 {
+				cursor.maxKeys--
+			}
+			lastEntryWasCommonPrefix = true
+			lastCommonPrefix = prefix
+			lastPrefixNullBackers, lastPrefixConfirmed = nil, true
+		}
+
 		retractPrefixBacking := func(prefix, dir, name string) {
 			if prefix != lastCommonPrefix || !lastPrefixNullBackers[dir+"/"+name] {
 				return
@@ -513,6 +535,29 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 								return
 							}
 						}
+					}
+					// A prefix object's key carries no trailing slash, so it lists as a
+					// plain key. The traversal never descends into it under a delimiter,
+					// so the CommonPrefix its nested keys fold into is added here too.
+					if entry.IsPrefixObject() {
+						key := fmt.Sprintf("%s/%s", dir, entry.Name)[len(bucketPrefix):]
+						if strings.HasPrefix(key, originalPrefix) {
+							if folded := prefixForKey(dir, entry.Name); folded != "" {
+								// The key and everything under it fold into the same prefix.
+								addCommonPrefix(folded)
+								return
+							}
+							appendOrDedup(newListEntry(s3a, entry, "", dirName, entryName, bucketPrefix, fetchOwner, false, false))
+							lastEntryWasCommonPrefix = false
+						}
+						// The key and the prefix come off one entry, which a marker names as a
+						// whole, so a page ending between them cannot resume at the prefix:
+						// a marker of "<key>/" means the subtree is done, not that it is
+						// next. The page runs one item over maxKeys instead of dropping it.
+						if childPrefix := prefixForKey(dir, entry.Name+"/"); childPrefix != "" && s3a.hasChildren(ctx, bucket, key) {
+							addCommonPrefix(childPrefix)
+						}
+						return
 					}
 					// When delimiter is specified, apply delimiter logic to directory key objects too
 					if delimiter != "" && entry.IsDirectoryKeyObject() {

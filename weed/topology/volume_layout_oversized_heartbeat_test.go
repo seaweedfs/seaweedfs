@@ -53,7 +53,7 @@ func TestUpdateOversizedStateKeepsOversizedVolumeUnwritable(t *testing.T) {
 	oversized := vi
 	oversized.Size = 12000
 	vl.UpdateOversizedState(&oversized, dn)
-	vl.UpdateVolumeSize(1, oversized.Size, 0)
+	vl.UpdateVolumeSize(1, oversized.Size, 0, true)
 	vl.EnsureCorrectWritables(&oversized)
 
 	if w, _ := vl.GetWritableVolumeCount(); w != 0 {
@@ -144,7 +144,7 @@ func TestEnsureCorrectWritablesHonorsRecoveryCooldown(t *testing.T) {
 	// capacityRecoveryDelay.
 	vi.Size = 4000
 	vl.UpdateOversizedState(&vi, dn)
-	vl.UpdateVolumeSize(1, vi.Size, 0)
+	vl.UpdateVolumeSize(1, vi.Size, 0, true)
 	vl.EnsureCorrectWritables(&vi)
 	if w, _ := vl.GetWritableVolumeCount(); w != 0 {
 		t.Fatalf("expected volume to stay unwritable during the cooldown, got %d writable", w)
@@ -152,7 +152,7 @@ func TestEnsureCorrectWritablesHonorsRecoveryCooldown(t *testing.T) {
 
 	// After the cooldown, a heartbeat with the shrunken size recovers it.
 	advanceSizeTrackingClock(vl, 1, capacityRecoveryDelay+time.Second)
-	if !vl.UpdateVolumeSize(1, vi.Size, 0) {
+	if !vl.UpdateVolumeSize(1, vi.Size, 0, true) {
 		t.Fatalf("expected volume to recover to writable after the cooldown")
 	}
 	vl.EnsureCorrectWritables(&vi)
@@ -202,7 +202,7 @@ func TestEnsureCorrectWritablesDoesNotRestoreVolumeStillAtLimit(t *testing.T) {
 	// past the limit and UpdateVolumeSize refuses recovery.
 	vi.Size = 8000
 	vl.UpdateOversizedState(&vi, dn)
-	vl.UpdateVolumeSize(1, vi.Size, 0)
+	vl.UpdateVolumeSize(1, vi.Size, 0, true)
 	if vl.vid2location[1].AnyOversized() {
 		t.Fatalf("expected oversized mark cleared after the shrink report")
 	}
@@ -249,7 +249,7 @@ func TestEnsureCorrectWritablesRestoresCrowdedVolumeAfterReplicaReturns(t *testi
 	vl := topo.GetVolumeLayout("", rp, needle.EMPTY_TTL, types.HardDriveType)
 
 	// 9500 is past the growth threshold (9000) but under the limit (10000).
-	vl.UpdateVolumeSize(1, 9500, 0)
+	vl.UpdateVolumeSize(1, 9500, 0, true)
 	if _, crowded := vl.crowded[1]; !crowded {
 		t.Fatalf("expected the volume to be crowded")
 	}
@@ -271,7 +271,7 @@ func TestEnsureCorrectWritablesRestoresCrowdedVolumeAfterReplicaReturns(t *testi
 	topo.RegisterVolumeLayout(vi, dn)
 	advanceSizeTrackingClock(vl, 1, 5*time.Second)
 	vl.UpdateOversizedState(&vi, dn)
-	vl.UpdateVolumeSize(1, vi.Size, 0)
+	vl.UpdateVolumeSize(1, vi.Size, 0, true)
 	vl.EnsureCorrectWritables(&vi)
 	if w, _ := vl.GetWritableVolumeCount(); w != 1 {
 		t.Fatalf("expected the volume writable again, got %d", w)

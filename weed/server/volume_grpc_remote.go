@@ -350,6 +350,42 @@ func checkGcsCredentials(creds string) error {
 	return nil
 }
 
+// BuildGuardedRemoteStorageClient builds a remote storage client whose dial
+// path is validated against the SSRF deny-list and pinned against DNS
+// rebinding, unless allowUntrusted is set. It is the single builder for every
+// caller that dials a caller-influenced RemoteConf endpoint: the volume
+// FetchAndWriteNeedle write path and the filer and S3 gateway remote-mount read
+// paths, which otherwise reach the same s3manager sink unguarded.
+func BuildGuardedRemoteStorageClient(ctx context.Context, remoteConf *remote_pb.RemoteConf, allowUntrusted bool) (remote_storage.RemoteStorageClient, error) {
+	if !allowUntrusted {
+		if remoteConf.GetType() == "gcs" {
+			if credsErr := checkGcsCredentials(remoteConf.GetGcsGoogleApplicationCredentials()); credsErr != nil {
+				return nil, fmt.Errorf("reject remote credentials: %w", credsErr)
+			}
+		}
+		if endpoint, makeClient, ok := guardedRemoteClient(remoteConf); ok {
+			if validateErr := validateRemoteEndpoint(ctx, endpoint); validateErr != nil {
+				return nil, fmt.Errorf("reject remote endpoint: %w", validateErr)
+			}
+			// Build a one-shot client whose dial path re-validates the resolved
+			// IP every time. This pins the validated endpoint against DNS
+			// rebinding (a hostname that resolves to a public IP for
+			// validateRemoteEndpoint and then flips to 127.0.0.1 / 169.254.x.x
+			// when the SDK dials).
+			client, err := makeClient(newGuardedHTTPClient(endpoint))
+			if err != nil {
+				return nil, fmt.Errorf("get remote client: %w", err)
+			}
+			return client, nil
+		}
+	}
+	client, err := remote_storage.GetRemoteStorage(remoteConf)
+	if err != nil {
+		return nil, fmt.Errorf("get remote client: %w", err)
+	}
+	return client, nil
+}
+
 func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_server_pb.FetchAndWriteNeedleRequest) (resp *volume_server_pb.FetchAndWriteNeedleResponse, err error) {
 	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
 		return nil, err
@@ -366,29 +402,9 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 
 	remoteConf := req.RemoteConf
 
-	if !vs.AllowUntrustedRemoteEndpoints && remoteConf.GetType() == "gcs" {
-		if credsErr := checkGcsCredentials(remoteConf.GetGcsGoogleApplicationCredentials()); credsErr != nil {
-			return nil, fmt.Errorf("reject remote credentials: %w", credsErr)
-		}
-	}
-
-	var client remote_storage.RemoteStorageClient
-	var getClientErr error
-	if endpoint, makeClient, ok := guardedRemoteClient(remoteConf); ok && !vs.AllowUntrustedRemoteEndpoints {
-		if validateErr := validateRemoteEndpoint(ctx, endpoint); validateErr != nil {
-			return nil, fmt.Errorf("reject remote endpoint: %w", validateErr)
-		}
-		// Build a one-shot client whose dial path re-validates the resolved
-		// IP every time. This pins the validated endpoint against DNS
-		// rebinding (a hostname that resolves to a public IP for
-		// validateRemoteEndpoint and then flips to 127.0.0.1 / 169.254.x.x
-		// when the SDK dials).
-		client, getClientErr = makeClient(newGuardedHTTPClient(endpoint))
-	} else {
-		client, getClientErr = remote_storage.GetRemoteStorage(remoteConf)
-	}
+	client, getClientErr := BuildGuardedRemoteStorageClient(ctx, remoteConf, vs.AllowUntrustedRemoteEndpoints)
 	if getClientErr != nil {
-		return nil, fmt.Errorf("get remote client: %w", getClientErr)
+		return nil, getClientErr
 	}
 
 	remoteStorageLocation := req.RemoteLocation

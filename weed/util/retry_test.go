@@ -9,6 +9,9 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestIsTransientError(t *testing.T) {
@@ -35,6 +38,35 @@ func TestIsTransientError(t *testing.T) {
 		errors.New("NoSuchBucket: The specified bucket does not exist"),
 		context.Canceled,
 		fmt.Errorf("write: %w", context.DeadlineExceeded),
+	}
+	for _, err := range permanent {
+		if IsTransientError(err) {
+			t.Errorf("expected permanent: %v", err)
+		}
+	}
+}
+
+// A caller that formats a path into its wrapper must not be able to hand the
+// substring matcher a word the client chose: once the chain carries the status
+// the server sent, that status is what gets classified.
+func TestIsTransientErrorPrefersServerStatus(t *testing.T) {
+	transient := []error{
+		fmt.Errorf("list %s: %w", "/buckets/b/logs", status.Error(codes.Unavailable, "filer is restarting")),
+		fmt.Errorf("list %s: %w", "/buckets/b/filer: no entry is found in filer store", status.Error(codes.Unavailable, "filer is restarting")),
+		status.Error(codes.ResourceExhausted, "too many requests"),
+		// the server's own text still counts when the code does not name the condition
+		status.Error(codes.Internal, "connection reset by peer"),
+	}
+	for _, err := range transient {
+		if !IsTransientError(err) {
+			t.Errorf("expected transient: %v", err)
+		}
+	}
+
+	permanent := []error{
+		fmt.Errorf("list %s: %w", "/buckets/transport/unavailable", status.Error(codes.PermissionDenied, "not allowed")),
+		fmt.Errorf("all filers failed, last error: %w",
+			fmt.Errorf("list %s: %w", "/buckets/slowdown/throttling", status.Error(codes.InvalidArgument, "bad prefix"))),
 	}
 	for _, err := range permanent {
 		if IsTransientError(err) {

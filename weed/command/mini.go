@@ -526,7 +526,7 @@ func initMiniS3Flags() {
 	miniS3Options.auditLogConfig = cmdMini.Flag.String("s3.auditLogConfig", "", "path to the audit log config file")
 	miniS3Options.allowDeleteBucketNotEmpty = miniS3AllowDeleteBucketNotEmpty
 	miniS3Options.autoCreateBucket = miniS3AutoCreateBucket
-	miniS3Options.externalUrl = cmdMini.Flag.String("s3.externalUrl", "", "the external URL clients use to connect (e.g. https://api.example.com:9000). Used for S3 signature verification behind a reverse proxy. Falls back to S3_EXTERNAL_URL env var.")
+	miniS3Options.externalUrl = cmdMini.Flag.String("s3.externalUrl", "", "the external URL clients use to connect (e.g. https://api.example.com:9000). Advertised to Iceberg and Lance clients, and tried first when verifying S3 signatures behind a reverse proxy. Falls back to S3_EXTERNAL_URL env var.")
 	miniS3Options.defaultFileMode = cmdMini.Flag.String("s3.defaultFileMode", "", "default file mode for S3 uploaded objects, e.g. 0660, 0644, 0666")
 	miniS3Options.cacheSizeMB = cmdMini.Flag.Int64("s3.cacheCapacityMB", 0, "in-memory chunk cache capacity in MB for S3 GETs shared across requests (0 disables)")
 	// In mini mode, S3 uses the shared debug server started at line 681, not its own separate debug server
@@ -941,6 +941,20 @@ func ensureAllPortsAvailableOnIP(bindIp string) error {
 	// This ensures they won't be recalculated and cause conflicts
 	// All gRPC port handling (calculation, validation, and assignment) is performed exclusively in initializeGrpcPortsOnIP
 	initializeGrpcPortsOnIP(bindIp)
+
+	// Every other service binds within a moment of this check, but the admin
+	// waits for all of them first. The admin gRPC port sits inside the Linux
+	// ephemeral range, so during that gap one of the cluster's own outgoing
+	// connections can take it and the admin then dies on bind. Hold a listener
+	// from here and hand it to the admin instead of re-binding later. Clear
+	// first: an in-process rerun would otherwise inherit the closed listener
+	// of the previous run and only find out inside Serve.
+	miniAdminOptions.workerGrpcListener = nil
+	if listener, err := net.Listen("tcp", fmt.Sprintf(":%d", *miniAdminOptions.grpcPort)); err != nil {
+		glog.Warningf("Could not reserve Admin gRPC port %d: %v", *miniAdminOptions.grpcPort, err)
+	} else {
+		miniAdminOptions.workerGrpcListener = listener
+	}
 
 	// Log the final port configuration
 	icebergPortStr := "disabled"
@@ -1571,6 +1585,14 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	// Set admin options
 	*miniAdminOptions.master = masterAddr
 
+	// Mini knows its own S3 address, so the file browser can offer object
+	// URLs without any configuration. Assigned unconditionally so a value
+	// from a prior in-process run cannot outlive its S3 server.
+	miniAdminOptions.defaultS3PublicEndpoint = ""
+	if *miniEnableS3 {
+		miniAdminOptions.defaultS3PublicEndpoint = "http://" + util.JoinHostPort(*miniIp, *miniS3Options.port)
+	}
+
 	// Resolve admin credentials from security.toml [admin] / WEED_ADMIN_* env
 	// vars, matching the standalone `weed admin` command.
 	applyMiniAdminCredentialFallback(&miniAdminOptions)
@@ -1616,6 +1638,9 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	if miniProgressBoard != nil {
 		miniProgressBoard.starting("Admin")
 	}
+	// Snapshot the options, and with them the reserved listener, so a later
+	// in-process run cannot swap either out from under this goroutine.
+	adminOptions := miniAdminOptions
 	done := trackMiniClient()
 	go func() {
 		defer done()
@@ -1631,8 +1656,13 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 				lancePort = *miniS3Options.portLance
 			}
 		}
-		if err := startAdminServer(ctx, miniAdminOptions, *miniEnableAdminUI, icebergPort, lancePort, urlPrefix); err != nil {
+		if err := startAdminServer(ctx, adminOptions, *miniEnableAdminUI, icebergPort, lancePort, urlPrefix); err != nil {
 			glog.Errorf("Admin server error: %v", err)
+		}
+		// A no-op once the admin took it over and shut it down; it matters when
+		// startAdminServer bailed out before that.
+		if adminOptions.workerGrpcListener != nil {
+			adminOptions.workerGrpcListener.Close()
 		}
 	}()
 

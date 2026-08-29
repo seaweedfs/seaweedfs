@@ -160,7 +160,6 @@ func TestWriteDataNodeInfo_SplitsCollapsedDisksByPhysicalDiskId(t *testing.T) {
 
 	c := &commandVolumeList{}
 	fs := flag.NewFlagSet("volume.list", flag.ContinueOnError)
-	c.collectionPattern = fs.String("collection", "", "")
 	c.dataCenter = fs.String("dataCenter", "", "")
 	c.rack = fs.String("rack", "", "")
 	c.dataNode = fs.String("dataNode", "", "")
@@ -205,7 +204,6 @@ func TestWriteTopologyInfo_PrintsParentHeadersOnce(t *testing.T) {
 
 	c := &commandVolumeList{}
 	fs := flag.NewFlagSet("volume.list", flag.ContinueOnError)
-	c.collectionPattern = fs.String("collection", "", "")
 	c.dataCenter = fs.String("dataCenter", "", "")
 	c.rack = fs.String("rack", "", "")
 	c.dataNode = fs.String("dataNode", "", "")

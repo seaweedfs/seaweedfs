@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
 
 func makeTestVolumeListResponse(volumes ...*master_pb.VolumeInformationMessage) *master_pb.VolumeListResponse {
@@ -53,7 +54,7 @@ func TestBuildVolumeMetricsAllCollections(t *testing.T) {
 		&master_pb.VolumeInformationMessage{Id: 1, Collection: "photos", Size: 100},
 		&master_pb.VolumeInformationMessage{Id: 2, Collection: "videos", Size: 200},
 	)
-	metrics, _, _, err := buildVolumeMetrics(resp, string(CollectionFilterAll))
+	metrics, _, _, err := buildVolumeMetrics(resp, string(wildcard.CollectionFilterAll))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -68,7 +69,7 @@ func TestBuildVolumeMetricsEachCollection(t *testing.T) {
 		&master_pb.VolumeInformationMessage{Id: 2, Collection: "videos", Size: 200},
 	)
 	// EACH_COLLECTION passes all volumes through; filtering happens in the handler
-	metrics, _, _, err := buildVolumeMetrics(resp, string(CollectionFilterEach))
+	metrics, _, _, err := buildVolumeMetrics(resp, string(wildcard.CollectionFilterEach))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -92,6 +93,26 @@ func TestBuildVolumeMetricsRegexFilter(t *testing.T) {
 	}
 	if metrics[0].Collection != "photos" {
 		t.Fatalf("expected collection 'photos', got %q", metrics[0].Collection)
+	}
+}
+
+func TestBuildVolumeMetricsCollectionList(t *testing.T) {
+	resp := makeTestVolumeListResponse(
+		&master_pb.VolumeInformationMessage{Id: 1, Collection: "photos", Size: 100},
+		&master_pb.VolumeInformationMessage{Id: 2, Collection: "videos", Size: 200},
+		&master_pb.VolumeInformationMessage{Id: 3, Collection: "clips", Size: 300},
+	)
+	metrics, _, _, err := buildVolumeMetrics(resp, "photos,videos")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(metrics) != 2 {
+		t.Fatalf("expected 2 metrics, got %d", len(metrics))
+	}
+	for _, metric := range metrics {
+		if metric.Collection != "photos" && metric.Collection != "videos" {
+			t.Fatalf("unexpected collection %q", metric.Collection)
+		}
 	}
 }
 

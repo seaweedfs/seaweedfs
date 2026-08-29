@@ -130,7 +130,7 @@ type uploadStatusError struct {
 func (e *uploadStatusError) Error() string { return e.err.Error() }
 func (e *uploadStatusError) Unwrap() error { return e.err }
 
-// shouldReassignUpload reports whether an upload error means the client should
+// ShouldReassignUpload reports whether an upload error means the client should
 // ask for a fresh volume assignment and retry on another volume.
 //
 // On the write path a volume server only 5xxs on a ReplicatedWrite failure
@@ -139,7 +139,7 @@ func (e *uploadStatusError) Unwrap() error { return e.err }
 // assigned target never answered (down/unreachable), also reassignable. A 4xx
 // is a genuine client error and is surfaced. Errors without a status come from
 // the AssignVolume RPC or request setup; retry only transient transport ones.
-func shouldReassignUpload(err error) bool {
+func ShouldReassignUpload(err error) bool {
 	if err == nil {
 		return false
 	}
@@ -220,7 +220,7 @@ func (uploader *Uploader) uploadWithRetryData(assignFn func() (fileId string, ho
 			return true
 		})
 	} else {
-		err = util.RetryOnError("uploadWithRetry", shouldReassignUpload, doUploadFunc)
+		err = util.RetryOnError("uploadWithRetry", ShouldReassignUpload, doUploadFunc)
 	}
 
 	return
@@ -250,8 +250,9 @@ func (uploader *Uploader) UploadWithRetry(filerClient filer_pb.FilerClient, assi
 
 	// Hash the buffer we already hold so the server echoes Content-MD5 back as
 	// the chunk ETag (std-base64 of the raw digest, the form ParseUpload
-	// verifies). Never under cipher: the server sees only ciphertext.
-	if uploadOption.WantMd5 && uploadOption.Md5 == "" && !uploadOption.Cipher {
+	// verifies). Under cipher the server never sees the header, but the digest
+	// still becomes the chunk ETag.
+	if uploadOption.WantMd5 && uploadOption.Md5 == "" {
 		digest := md5.Sum(data)
 		uploadOption.Md5 = base64.StdEncoding.EncodeToString(digest[:])
 	}
@@ -412,6 +413,9 @@ func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option 
 		uploadResult.Name = option.Filename
 		uploadResult.Mime = option.MimeType
 		uploadResult.CipherKey = cipherKey
+		// The volume server only ever hashes the ciphertext it stored, so the
+		// chunk ETag has to come from the caller's plaintext digest.
+		uploadResult.ContentMd5 = option.Md5
 		uploadResult.Size = uint32(clearDataLen)
 		if contentIsGzipped {
 			uploadResult.Gzip = 1

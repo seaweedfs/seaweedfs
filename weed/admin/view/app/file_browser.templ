@@ -194,6 +194,11 @@ templ FileBrowser(data dash.FileBrowserData) {
 												<button type="button" class="btn btn-outline-info btn-sm" title="View" data-action="view" data-path={ entry.FullPath }>
 													<i class="fas fa-eye"></i>
 												</button>
+												if data.S3Endpoint != "" {
+													<button type="button" class="btn btn-outline-secondary btn-sm" title="Copy S3 URL" data-action="copy-url" data-url={ dash.S3ObjectURL(data.S3Endpoint, entry.FullPath) }>
+														<i class="fas fa-link"></i>
+													</button>
+												}
 											}
 											<button type="button" class="btn btn-outline-secondary btn-sm" title="Properties" data-action="properties" data-path={ entry.FullPath }>
 												<i class="fas fa-info-circle"></i>
@@ -363,8 +368,13 @@ templ FileBrowser(data dash.FileBrowserData) {
 			if (!button) return;
 			
 			const action = button.getAttribute('data-action');
+			if (action === 'copy-url') {
+				const url = button.getAttribute('data-url');
+				if (url) adminCopyToClipboard(url);
+				return;
+			}
 			const path = button.getAttribute('data-path');
-			
+
 			if (!path) return;
 			
 			switch(action) {
@@ -476,6 +486,10 @@ templ FileBrowser(data dash.FileBrowserData) {
 		if (!data.is_directory) {
 			html += '<tr><td><strong>Size:</strong></td><td>' + (data.size_formatted || (data.size ? formatBytes(data.size) : 'N/A')) + '</td></tr>' +
 				'<tr><td><strong>MIME Type:</strong></td><td>' + (data.mime_type || 'N/A') + '</td></tr>';
+			if (data.object_url) {
+				html += '<tr><td><strong>Object URL:</strong></td><td><code class="text-break">' + data.object_url + '</code>' +
+					' <button type="button" class="btn btn-outline-secondary btn-sm" title="Copy S3 URL" data-action="copy-url" data-url="' + data.object_url + '"><i class="fas fa-copy"></i></button></td></tr>';
+			}
 		}
 		
 		html += '</table>' +

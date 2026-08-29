@@ -13,7 +13,11 @@ import (
 
 // ScrubEcVolume checks the full integrity of a EC volume, across both local and remote shards.
 // Returns a count of processed file entries, slice of found broken shards, and slice of found errors.
-func (s *Store) ScrubEcVolume(vid needle.VolumeId, forceDeletedNeedlesCheck bool) (int64, []*volume_server_pb.EcShardInfo, []error) {
+//
+// FULL reports an unreadable shard and gives up on the needle. READS additionally rebuilds the
+// interval from the surviving shards, so it reports the same broken shards but only errors on
+// needles that parity can no longer recover - which is what exercises the parity data.
+func (s *Store) ScrubEcVolume(vid needle.VolumeId, mode volume_server_pb.VolumeScrubMode, forceDeletedNeedlesCheck bool) (int64, []*volume_server_pb.EcShardInfo, []error) {
 	ecv, found := s.FindEcVolume(vid)
 	if !found {
 		return 0, nil, []error{fmt.Errorf("EC volume id %d not found", vid)}
@@ -24,6 +28,8 @@ func (s *Store) ScrubEcVolume(vid needle.VolumeId, forceDeletedNeedlesCheck bool
 
 	// full scan means verifying indexes as well
 	_, errs := ecv.ScrubIndex()
+
+	recoverUnreadable := mode == volume_server_pb.VolumeScrubMode_READS
 
 	var count int64
 	// reads for EC chunks can hit the same shard multiple times, so dedupe upon read errors
@@ -56,27 +62,39 @@ func (s *Store) ScrubEcVolume(vid needle.VolumeId, forceDeletedNeedlesCheck bool
 				continue
 			}
 
-			// ...then remote. note we do not try to recover EC-encoded data upon read failures;
-			// we want check that shards are valid without decoding
+			// ...then remote. neither read decodes: the point is to find shards that are
+			// themselves broken, not to heal around them
 			ecv.ShardLocationsLock.RLock()
 			sourceDataNodes, ok := ecv.ShardLocations[shardId]
 			ecv.ShardLocationsLock.RUnlock()
+			readErr := errors.New("no known shard locations")
 			if ok {
-				if _, _, err := s.readRemoteEcShardInterval(sourceDataNodes, id, ecv.VolumeId, shardId, chunk, offset, ecv.EncodeTsNs); err == nil {
+				if _, _, readErr = s.readRemoteEcShardInterval(sourceDataNodes, id, ecv.VolumeId, shardId, chunk, offset, ecv.EncodeTsNs); readErr == nil {
 					data = append(data, chunk...)
 					continue
 				}
 			}
 
-			// chunk read for shard failed :(
-			errs = append(errs, fmt.Errorf("failed to read EC shard %d for needle %d on volume %d (interval %d/%d)", shardId, id, ecv.VolumeId, i+1, len(intervals)))
+			// the shard is broken whether or not the needle survives it, so report it either way
 			brokenShardsMap[shardId] = &volume_server_pb.EcShardInfo{
 				ShardId:    uint32(shardId),
 				Size:       int64(iv.Size),
 				Collection: ecv.Collection,
 				VolumeId:   uint32(ecv.VolumeId),
 			}
-			break
+
+			if !recoverUnreadable {
+				errs = append(errs, fmt.Errorf("failed to read EC shard %d for needle %d on volume %d (interval %d/%d): %v", shardId, id, ecv.VolumeId, i+1, len(intervals), readErr))
+				break
+			}
+			// A holder reporting the needle deleted is authoritative, and it answers
+			// with no bytes: the chunk stays zeroed and reaches ReadBytes as the
+			// delete-state mismatch the walk below already tolerates.
+			if _, isDeleted, err := s.recoverOneRemoteEcShardInterval(id, ecv, shardId, chunk, offset); err != nil && !isDeleted {
+				errs = append(errs, fmt.Errorf("failed to recover EC shard %d for needle %d on volume %d (interval %d/%d): %v", shardId, id, ecv.VolumeId, i+1, len(intervals), err))
+				break
+			}
+			data = append(data, chunk...)
 		}
 
 		if got, want := int64(len(data)), needle.GetActualSize(size, ecv.Version); got != want {

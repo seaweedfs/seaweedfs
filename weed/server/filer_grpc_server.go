@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -388,19 +387,17 @@ func (fs *FilerServer) ObjectTransactionBatch(ctx context.Context, req *filer_pb
 
 // applyStorageDefaultsToEntry enforces the path's storage rule (read-only
 // prefixes reject the write) and fills in the rule TTL when the entry carries
-// none. Remote entries never expire locally; the remote storage owns their
-// lifecycle.
+// none. The returned option carries the same TTL as the entry, so chunks a
+// caller still has to place expire with it.
 func (fs *FilerServer) applyStorageDefaultsToEntry(ctx context.Context, entry *filer.Entry) (*operation.StorageOption, error) {
-	so, err := fs.detectStorageOption(ctx, string(entry.FullPath), "", "", 0, "", "", "", "")
+	if entry.Remote != nil {
+		entry.TtlSec = 0
+	}
+	so, err := fs.detectStorageOption(ctx, string(entry.FullPath), "", "", entry.TtlSec, "", "", "", "")
 	if err != nil {
 		return nil, err
 	}
-	if entry.Remote != nil {
-		entry.TtlSec = 0
-	} else if entry.TtlSec == 0 {
-		entry.TtlSec = so.TtlSeconds
-	}
-	entry.ApplyS3ExpiryMetadata()
+	entry.ApplyStorageTtl(so.TtlSeconds)
 	return so, nil
 }
 
@@ -435,7 +432,7 @@ func (fs *FilerServer) applyObjectMutation(ctx context.Context, m *filer_pb.Obje
 			// the expected no-op, and a failed teardown must not fail the
 			// already-applied delete.
 			parentErr := fs.filer.DeleteEntryMetaAndData(ctx, util.FullPath(m.Directory), false, false, false, fromOtherCluster, signatures, 0)
-			if parentErr != nil && parentErr != filer_pb.ErrNotFound && !strings.Contains(parentErr.Error(), filer.MsgFailDelNonEmptyFolder) {
+			if parentErr != nil && parentErr != filer_pb.ErrNotFound && !errors.Is(parentErr, filer.ErrNonEmptyFolder) {
 				glog.V(1).InfofCtx(ctx, "remove empty parent %s: %v", m.Directory, parentErr)
 			}
 		}
@@ -785,9 +782,9 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 	}
 
 	entry.Chunks = append(entry.GetChunks(), req.Chunks...)
-	so, err := fs.detectStorageOption(ctx, string(fullpath), "", "", entry.TtlSec, "", "", "", "")
+	so, err := fs.applyStorageDefaultsToEntry(ctx, entry)
 	if err != nil {
-		glog.WarningfCtx(ctx, "detectStorageOption: %v", err)
+		glog.WarningfCtx(ctx, "applyStorageDefaultsToEntry: %v", err)
 		return &filer_pb.AppendToEntryResponse{}, err
 	}
 	entry.Chunks, err = filer.MaybeManifestize(fs.saveAsChunk(ctx, so), entry.GetChunks())
@@ -892,8 +889,8 @@ func (fs *FilerServer) CollectionList(ctx context.Context, req *filer_pb.Collect
 	glog.V(4).InfofCtx(ctx, "CollectionList %v", req)
 	resp = &filer_pb.CollectionListResponse{}
 
-	err = fs.filer.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
-		masterResp, err := client.CollectionList(context.Background(), &master_pb.CollectionListRequest{
+	err = fs.filer.MasterClient.WithClient(ctx, false, func(client master_pb.SeaweedClient) error {
+		masterResp, err := client.CollectionList(ctx, &master_pb.CollectionListRequest{
 			IncludeNormalVolumes: req.IncludeNormalVolumes,
 			IncludeEcVolumes:     req.IncludeEcVolumes,
 		})
@@ -913,7 +910,7 @@ func (fs *FilerServer) DeleteCollection(ctx context.Context, req *filer_pb.Delet
 
 	glog.V(4).InfofCtx(ctx, "DeleteCollection %v", req)
 
-	err = fs.filer.DoDeleteCollection(req.GetCollection())
+	err = fs.filer.DoDeleteCollection(ctx, req.GetCollection())
 
 	return &filer_pb.DeleteCollectionResponse{}, err
 }

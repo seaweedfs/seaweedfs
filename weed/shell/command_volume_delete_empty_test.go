@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
 
 func TestIsEmptyVolumeDeleteCandidateCollectionPattern(t *testing.T) {
@@ -26,13 +27,19 @@ func TestIsEmptyVolumeDeleteCandidateCollectionPattern(t *testing.T) {
 		{name: "wildcard rejects collection", pattern: "important*", collection: "other-logs", want: false},
 		{name: "default pattern matches empty collection", pattern: CollectionDefault, collection: "", want: true},
 		{name: "default pattern rejects named collection", pattern: CollectionDefault, collection: "important-logs", want: false},
+		{name: "list matches a listed collection", pattern: "other-logs,important-logs", collection: "important-logs", want: true},
+		{name: "list rejects an unlisted collection", pattern: "other-logs,important-logs", collection: "audit-logs", want: false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			v := *quietEmptyVolume
 			v.Collection = tt.collection
-			if got := isEmptyVolumeDeleteCandidate(&v, quietSeconds, now, tt.pattern); got != tt.want {
+			matcher, err := wildcard.CompileCollectionMatcher(tt.pattern)
+			if err != nil {
+				t.Fatalf("CompileCollectionMatcher(%q): %v", tt.pattern, err)
+			}
+			if got := isEmptyVolumeDeleteCandidate(&v, quietSeconds, now, matcher); got != tt.want {
 				t.Fatalf("isEmptyVolumeDeleteCandidate(collection=%q, pattern=%q) = %v, want %v",
 					tt.collection, tt.pattern, got, tt.want)
 			}

@@ -179,16 +179,8 @@ func (c *commandRemoteConfigure) deleteRemoteStorage(commandEnv *CommandEnv, wri
 
 	return commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
-		request := &filer_pb.DeleteEntryRequest{
-			Directory:            filer.DirectoryEtcRemote,
-			Name:                 storageName + filer.REMOTE_STORAGE_CONF_SUFFIX,
-			IgnoreRecursiveError: false,
-			IsDeleteData:         true,
-			IsRecursive:          true,
-			IsFromOtherCluster:   false,
-			Signatures:           nil,
-		}
-		_, err := client.DeleteEntry(context.Background(), request)
+		name := storageName + filer.REMOTE_STORAGE_CONF_SUFFIX
+		err := filer_pb.DoRemove(context.Background(), client, filer.DirectoryEtcRemote, name, true, true, false, false, nil)
 
 		if err == nil {
 			fmt.Fprintf(writer, "removed: %s\n", storageName)

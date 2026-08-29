@@ -26,7 +26,30 @@ func (entry *Entry) IsDirectoryKeyObject() bool {
 	// Also true for a file promoted to a directory by a child write, which keeps its
 	// chunks/content, or its remote entry when the file was tiered to remote storage.
 	return entry.IsDirectory &&
-		((entry.Attributes != nil && entry.Attributes.Mime != "") || len(entry.GetChunks()) > 0 || len(entry.GetContent()) > 0 || entry.IsInRemoteOnly())
+		((entry.Attributes != nil && entry.Attributes.Mime != "") || len(entry.GetChunks()) > 0 || len(entry.GetContent()) > 0 || entry.IsInRemoteOnly() || entry.IsPrefixObject())
+}
+
+// IsPrefixObject reports whether the directory entry also holds the object named by its
+// path without a trailing slash, which an empty object leaves no other trace of.
+func (entry *Entry) IsPrefixObject() bool {
+	if entry == nil || !entry.IsDirectory {
+		return false
+	}
+	_, marked := entry.Extended[s3_constants.SeaweedFSPrefixObject]
+	return marked
+}
+
+// MarkPrefixObject turns a file entry into the directory entry that stores it, so keys
+// nested under its key can be created beside it.
+func (entry *Entry) MarkPrefixObject() {
+	entry.IsDirectory = true
+	if entry.Attributes != nil {
+		entry.Attributes.FileMode |= uint32(os.ModeDir) | 0111
+	}
+	if entry.Extended == nil {
+		entry.Extended = make(map[string][]byte)
+	}
+	entry.Extended[s3_constants.SeaweedFSPrefixObject] = []byte("true")
 }
 
 func (entry *Entry) GetExpiryTime() (expiryTime int64) {

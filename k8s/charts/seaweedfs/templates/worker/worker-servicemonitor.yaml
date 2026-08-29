@@ -1,6 +1,7 @@
 {{- include "seaweedfs.compat" . -}}
 {{- if .Values.worker.enabled }}
-{{- if .Values.worker.metricsPort }}
+{{- $lanceMetrics := and .Values.worker.lanceMetricsPort (include "seaweedfs.worker.lanceNamespaceUrl" .) }}
+{{- if or .Values.worker.metricsPort $lanceMetrics }}
 {{- if .Values.global.seaweedfs.monitoring.enabled }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
@@ -22,9 +23,16 @@ metadata:
 {{- end }}
 spec:
   endpoints:
+    {{- if .Values.worker.metricsPort }}
     - interval: 30s
       port: metrics
       scrapeTimeout: 5s
+    {{- end }}
+    {{- if $lanceMetrics }}
+    - interval: 30s
+      port: lance-metrics
+      scrapeTimeout: 5s
+    {{- end }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ template "seaweedfs.name" . }}

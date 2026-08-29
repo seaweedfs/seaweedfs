@@ -69,7 +69,10 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 		glog.Warningf("EC Detection: replica placement data-center digit (%d) is ignored for EC; only rack/node digits are honored", replicaPlacement.DiffDataCenterCount)
 	}
 
-	allowedCollections := wildcard.CompileWildcardMatchers(ecConfig.CollectionFilter)
+	allowedCollections, err := wildcard.CompileCollectionMatcher(ecConfig.CollectionFilter)
+	if err != nil {
+		return nil, false, err
+	}
 
 	// Cluster node count for the min-node safety gate (mirrors the shell ec.encode
 	// guard that refuses to encode when nodes < parity shards, so shards cannot be
@@ -187,7 +190,7 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 		}
 
 		// Check collection filter if specified
-		if len(allowedCollections) > 0 && !wildcard.MatchesAnyWildcard(allowedCollections, metric.Collection) {
+		if !allowedCollections.Matches(metric.Collection) {
 			skippedCollectionFilter++
 			continue
 		}

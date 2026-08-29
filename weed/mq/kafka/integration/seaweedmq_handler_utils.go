@@ -54,7 +54,7 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost str
 
 	// Discover brokers from masters using master client
 	glog.V(1).Infof("About to call discoverBrokersWithMasterClient...")
-	brokerAddresses, err := discoverBrokersWithMasterClient(masterClient, filerGroup)
+	brokerAddresses, err := discoverBrokersWithMasterClient(ctx, masterClient, filerGroup)
 	if err != nil {
 		glog.Errorf("Broker discovery failed: %v", err)
 		return nil, fmt.Errorf("failed to discover brokers: %v", err)
@@ -66,7 +66,7 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost str
 	}
 
 	// Discover filers from masters using master client
-	filerAddresses, err := discoverFilersWithMasterClient(masterClient, filerGroup)
+	filerAddresses, err := discoverFilersWithMasterClient(ctx, masterClient, filerGroup)
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover filers: %v", err)
 	}
@@ -107,12 +107,12 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost str
 }
 
 // discoverBrokersWithMasterClient queries masters for available brokers using reusable master client
-func discoverBrokersWithMasterClient(masterClient *wdclient.MasterClient, filerGroup string) ([]string, error) {
+func discoverBrokersWithMasterClient(ctx context.Context, masterClient *wdclient.MasterClient, filerGroup string) ([]string, error) {
 	var brokers []string
 
-	err := masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+	err := masterClient.WithClient(ctx, false, func(client master_pb.SeaweedClient) error {
 		glog.V(1).Infof("Inside MasterClient.WithClient callback - client obtained successfully")
-		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
+		resp, err := client.ListClusterNodes(ctx, &master_pb.ListClusterNodesRequest{
 			ClientType: cluster.BrokerType,
 			FilerGroup: filerGroup,
 			Limit:      1000,
@@ -144,11 +144,11 @@ func discoverBrokersWithMasterClient(masterClient *wdclient.MasterClient, filerG
 }
 
 // discoverFilersWithMasterClient queries masters for available filers using reusable master client
-func discoverFilersWithMasterClient(masterClient *wdclient.MasterClient, filerGroup string) ([]pb.ServerAddress, error) {
+func discoverFilersWithMasterClient(ctx context.Context, masterClient *wdclient.MasterClient, filerGroup string) ([]pb.ServerAddress, error) {
 	var filers []pb.ServerAddress
 
-	err := masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
-		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
+	err := masterClient.WithClient(ctx, false, func(client master_pb.SeaweedClient) error {
+		resp, err := client.ListClusterNodes(ctx, &master_pb.ListClusterNodesRequest{
 			ClientType: cluster.FilerType,
 			FilerGroup: filerGroup,
 			Limit:      1000,

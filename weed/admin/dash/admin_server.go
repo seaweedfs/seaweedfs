@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -159,11 +161,15 @@ type AdminServer struct {
 	s3TablesManager *s3tables.Manager
 	icebergPort     int
 	lancePort       int
+
+	// s3PublicEndpoint is the client-facing S3 address from admin.toml
+	// (s3.public_endpoint); discovered S3 servers are the fallback.
+	s3PublicEndpoint string
 }
 
 // Type definitions moved to types.go
 
-func NewAdminServer(masters string, filerGroup string, templateFS http.FileSystem, dataDir string, icebergPort, lancePort int) *AdminServer {
+func NewAdminServer(masters string, filerGroup string, templateFS http.FileSystem, dataDir string, icebergPort, lancePort int, s3PublicEndpoint string) *AdminServer {
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.admin")
 
 	// Create master client with multiple master support
@@ -200,6 +206,7 @@ func NewAdminServer(masters string, filerGroup string, templateFS http.FileSyste
 		s3TablesManager:               newS3TablesManager(),
 		icebergPort:                   icebergPort,
 		lancePort:                     lancePort,
+		s3PublicEndpoint:              normalizeS3PublicEndpoint(s3PublicEndpoint),
 		pluginLock:                    lockManager,
 		adminPresenceLock:             presenceLock,
 		bgCancel:                      bgCancel,
@@ -1226,14 +1233,8 @@ func (s *AdminServer) DeleteS3Bucket(bucketName string) error {
 	// Then delete bucket directory recursively from filer
 	// Use same parameters as s3.bucket.delete shell command and S3 API
 	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		_, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
-			Directory:            filerConfig.BucketsPath,
-			Name:                 bucketName,
-			IsDeleteData:         false, // Collection already deleted, just remove metadata
-			IsRecursive:          true,
-			IgnoreRecursiveError: true, // Same as S3 API and shell command
-		})
-		if err != nil {
+		// The collection is already gone, so this only has to drop the metadata.
+		if err := filer_pb.DoRemove(ctx, client, filerConfig.BucketsPath, bucketName, false, true, true, false, nil); err != nil {
 			return fmt.Errorf("failed to delete bucket: %w", err)
 		}
 
@@ -1546,6 +1547,32 @@ func (s *AdminServer) GetClusterS3Servers() (*ClusterS3ServersData, error) {
 	}, nil
 }
 
+// GetS3Endpoint returns the configured address clients reach the S3 gateway
+// at, or "". S3 servers register only their gRPC address with the master, so
+// the client-facing address cannot be discovered and must be configured.
+func (s *AdminServer) GetS3Endpoint() string {
+	return s.s3PublicEndpoint
+}
+
+// normalizeS3PublicEndpoint trims a trailing slash and drops, with a warning,
+// a value that is not a plain absolute http or https URL, so the file browser
+// hides its URL actions instead of copying broken links. Checking the string
+// for "?" and "#" rather than the parsed query and fragment also catches
+// delimiters with nothing after them, which url.Parse stores as empty.
+func normalizeS3PublicEndpoint(endpoint string) string {
+	endpoint = strings.TrimRight(endpoint, "/")
+	if endpoint == "" {
+		return ""
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || strings.ContainsAny(endpoint, "?#") {
+		// the value is not echoed: it may hold credentials in userinfo or a query
+		glog.Warningf("ignoring s3.public_endpoint: expecting an http:// or https:// URL with a host and no credentials, query, or fragment")
+		return ""
+	}
+	return endpoint
+}
+
 // GetAllFilers method moved to client_management.go
 
 // GetVolumeDetails method moved to volume_management.go
@@ -1572,6 +1599,7 @@ func (as *AdminServer) GetConfigInfo(w http.ResponseWriter, r *http.Request) {
 	configInfo["master_address"] = string(currentMaster)
 	configInfo["cache_expiration"] = as.cacheExpiration.String()
 	configInfo["filer_cache_expiration"] = as.filerCacheExpiration.String()
+	configInfo["s3_public_endpoint"] = as.s3PublicEndpoint
 
 	// Add maintenance system info
 	if as.maintenanceManager != nil {
@@ -1589,13 +1617,13 @@ func (as *AdminServer) GetConfigInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 // StartWorkerGrpcServer starts the worker gRPC server
-func (s *AdminServer) StartWorkerGrpcServer(grpcPort int) error {
+func (s *AdminServer) StartWorkerGrpcServer(grpcPort int, listener net.Listener) error {
 	if s.workerGrpcServer != nil {
 		return fmt.Errorf("worker gRPC server is already running")
 	}
 
 	s.workerGrpcServer = NewWorkerGrpcServer(s)
-	return s.workerGrpcServer.StartWithTLS(grpcPort)
+	return s.workerGrpcServer.StartWithTLS(grpcPort, listener)
 }
 
 // StopWorkerGrpcServer stops the worker gRPC server

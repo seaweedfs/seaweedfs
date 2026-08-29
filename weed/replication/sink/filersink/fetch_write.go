@@ -29,6 +29,55 @@ import (
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
+// missingSourceChunkGrace is how long a chunk the source cannot produce keeps
+// being retried before it counts as gone for good. Long enough to outlast a
+// volume server restart or a master failover, after which every volume that
+// still exists is registered again.
+var missingSourceChunkGrace = 30 * time.Minute
+
+// errSourceChunkMissing is a permanent replication failure: the source cluster
+// no longer holds the chunk's data, so no later attempt can fetch it.
+var errSourceChunkMissing = errors.New("source chunk missing")
+
+// isSourceChunkMissing reports whether the source answered that it does not have
+// the chunk — no location for its volume, or a 404 from the volume server that
+// does. Both shapes also cover a volume that is merely offline, which is why the
+// gate below waits them out instead of trusting a single answer.
+func isSourceChunkMissing(err error) bool {
+	return errors.Is(err, source.ErrVolumeNotFound) || errors.Is(err, util_http.ErrNotFound)
+}
+
+// missingSourceChunkGate decides when to stop retrying a chunk the source cannot
+// produce, so a lookup race or a restarting volume server is waited out while a
+// vacuumed one is written off instead of retried forever. The wait is kept per
+// volume on the sink: a volume that is gone took every file it held with it, and
+// waiting it out once per file would stall the sync for as long as it holds files.
+type missingSourceChunkGate struct {
+	sink     *FilerSink
+	volumeId string
+	gaveUp   bool
+}
+
+func (g *missingSourceChunkGate) isPermanent(err error) bool {
+	if !isSourceChunkMissing(err) {
+		return false
+	}
+	if time.Since(g.sink.sourceVolumeMissingSince(g.volumeId)) < missingSourceChunkGrace {
+		return false
+	}
+	g.gaveUp = true
+	return true
+}
+
+// wrap marks err permanent once the gate gave up, so the sink can tell a source
+// that lost the data from one that is only unreachable right now.
+func (g *missingSourceChunkGate) wrap(err error) error {
+	if err == nil || !g.gaveUp {
+		return err
+	}
+	return fmt.Errorf("%w: %w", errSourceChunkMissing, err)
+}
+
 func (fs *FilerSink) replicateChunks(ctx context.Context, sourceChunks []*filer_pb.FileChunk, path string, sourceMtimeNs int64) (replicatedChunks []*filer_pb.FileChunk, err error) {
 	if len(sourceChunks) == 0 {
 		return
@@ -144,6 +193,7 @@ func (fs *FilerSink) replicateOneManifestChunk(ctx context.Context, sourceChunk 
 	// supersession or, when that cannot be checked, after a few attempts.
 	var resolvedChunks []*filer_pb.FileChunk
 	resolveName := fmt.Sprintf("resolve manifest %s", sourceChunk.GetFileIdString())
+	missingGate := fs.newMissingSourceChunkGate(sourceChunk.GetFileIdString())
 	err := util.RetryUntil(resolveName, func() error {
 		rc, e := filer.ResolveOneChunkManifest(ctx, fs.filerSource.LookupFileId, sourceChunk)
 		if e != nil {
@@ -151,9 +201,9 @@ func (fs *FilerSink) replicateOneManifestChunk(ctx context.Context, sourceChunk 
 		}
 		resolvedChunks = rc
 		return nil
-	}, fs.manifestResolveRetryGate(path, sourceMtimeNs, sourceChunk.GetFileIdString()))
+	}, fs.manifestResolveRetryGate(path, sourceMtimeNs, sourceChunk.GetFileIdString(), missingGate))
 	if err != nil {
-		return nil, fmt.Errorf("resolve manifest %s: %w", sourceChunk.GetFileIdString(), err)
+		return nil, fmt.Errorf("resolve manifest %s: %w", sourceChunk.GetFileIdString(), missingGate.wrap(err))
 	}
 
 	replicatedResolvedChunks, err := fs.replicateChunks(ctx, resolvedChunks, path, sourceMtimeNs)
@@ -196,18 +246,24 @@ const maxUnverifiableResolveAttempts = 3
 
 // manifestResolveRetryGate decides whether a failing manifest resolve keeps
 // retrying: stop when the source superseded the replayed version (the caller
-// skips it as lossless), stop immediately on non-transient errors (e.g. corrupt
-// manifest data) so the configured metadata error policy applies, and stop
-// after a few attempts when supersession cannot be checked at all (incremental
+// skips it as lossless), stop once the source has been unable to produce the
+// manifest for the whole grace period, stop immediately on non-transient errors
+// (e.g. corrupt manifest data) so the configured metadata error policy applies,
+// and stop after a few attempts when supersession cannot be checked at all (incremental
 // dated target keys don't map back to a source path) — propagating lets
 // filer.backup decide with the event's real source key instead of spinning
 // here forever.
-func (fs *FilerSink) manifestResolveRetryGate(path string, sourceMtimeNs int64, chunkName string) func(error) bool {
+func (fs *FilerSink) manifestResolveRetryGate(path string, sourceMtimeNs int64, chunkName string, missingGate *missingSourceChunkGate) func(error) bool {
 	_, canCheckSupersession := fs.targetPathToSourcePath(path)
 	attempts := 0
 	return func(resolveErr error) (shouldContinue bool) {
 		if fs.hasSourceNewerVersion(path, sourceMtimeNs) {
 			glog.V(1).Infof("skip retrying stale source manifest %s for %s: %v", chunkName, path, resolveErr)
+			return false
+		}
+		if missingGate.isPermanent(resolveErr) {
+			glog.Errorf("source has not had manifest %s for %s in %v, giving up on it: %v",
+				chunkName, path, missingSourceChunkGrace, resolveErr)
 			return false
 		}
 		if !isTransientResolveError(resolveErr) {
@@ -316,6 +372,8 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 	defer fs.activeTransfers.Delete(sourceChunk.GetFileIdString())
 
 	transientBackoff := time.Duration(0)
+	_, canCheckSupersession := fs.targetPathToSourcePath(path)
+	missingGate := fs.newMissingSourceChunkGate(sourceChunk.GetFileIdString())
 	var partialData []byte
 	var savedFilename string
 	var savedHeader http.Header
@@ -359,6 +417,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 		if err := validateReplicatedReadSize(sourceChunk, len(fullData)); err != nil {
 			return err
 		}
+		fs.sourceServed(sourceChunk.GetFileIdString())
 
 		transferStatus.mu.Lock()
 		transferStatus.BytesReceived = int64(len(fullData))
@@ -417,6 +476,16 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 		transferStatus.mu.Lock()
 		transferStatus.LastErr = retryErr.Error()
 		transferStatus.mu.Unlock()
+		if isSourceChunkMissing(retryErr) && !canCheckSupersession {
+			glog.V(0).Infof("source does not have %s for %s, supersession unverifiable, propagating: %v",
+				sourceChunk.GetFileIdString(), path, retryErr)
+			return false
+		}
+		if missingGate.isPermanent(retryErr) {
+			glog.Errorf("source has not had %s for %s in %v, giving up on it: %v",
+				sourceChunk.GetFileIdString(), path, missingSourceChunkGrace, retryErr)
+			return false
+		}
 		if isRetryableNetworkError(retryErr) {
 			transientBackoff = nextTransientBackoff(transientBackoff)
 			transferStatus.mu.Lock()
@@ -435,7 +504,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 		return true
 	})
 	if err != nil {
-		return "", err
+		return "", missingGate.wrap(err)
 	}
 
 	return fileId, nil
@@ -484,6 +553,48 @@ func validateReplicatedReadSize(sourceChunk *filer_pb.FileChunk, readSize int) e
 			readSize, sourceChunk.Size)
 	}
 	return nil
+}
+
+func (fs *FilerSink) newMissingSourceChunkGate(fileId string) *missingSourceChunkGate {
+	return &missingSourceChunkGate{sink: fs, volumeId: filer.VolumeId(fileId)}
+}
+
+// sourceVolumeMissingSince returns when the sink first found volumeId
+// unlocatable, recording now on the first sighting.
+func (fs *FilerSink) sourceVolumeMissingSince(volumeId string) time.Time {
+	since, _ := fs.missingVolumes.LoadOrStore(volumeId, time.Now())
+	return since.(time.Time)
+}
+
+// sourceServed records a chunk the source did serve: the probe
+// sourceStillServesChunks re-checks, and proof its volume is locatable again.
+func (fs *FilerSink) sourceServed(fileId string) {
+	fs.lastServedFileId.Store(&fileId)
+	fs.missingVolumes.Delete(filer.VolumeId(fileId))
+}
+
+// sourceStillServesChunks reports whether the source cluster can still produce the
+// last chunk it served. A volume with no locations reads the same whether it was
+// vacuumed away or every replica is down, so before an entry is written off the
+// sink re-reads a file id the source did serve: if that one cannot be produced
+// either the source is in an outage, and skipping would drop live files wholesale.
+// It is a read and not a lookup because a lookup only proves the master still has
+// the topology, not that a volume server answers.
+func (fs *FilerSink) sourceStillServesChunks() bool {
+	if fs.filerSource == nil {
+		return false
+	}
+	probe := fs.lastServedFileId.Load()
+	if probe == nil {
+		return false
+	}
+	_, _, resp, err := fs.filerSource.ReadPart(*probe, 0)
+	if err != nil {
+		glog.V(0).Infof("source cannot serve %s either, so it is not only the one chunk: %v", *probe, err)
+		return false
+	}
+	util_http.CloseResponse(resp)
+	return true
 }
 
 // hasSourceNewerVersion reports whether the source's current entry for targetPath

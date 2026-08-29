@@ -3,7 +3,6 @@ package ec
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -15,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -357,12 +357,12 @@ func collectEcShards(env *Env, nodeToShardsInfo map[pb.ServerAddress]*erasure_co
 
 	return targetNodeLocation, err
 }
-func CollectEcShardIds(topoInfo *master_pb.TopologyInfo, collectionRegex *regexp.Regexp, diskType types.DiskType) (vids []needle.VolumeId) {
+func CollectEcShardIds(topoInfo *master_pb.TopologyInfo, collectionMatcher *wildcard.CollectionMatcher, diskType types.DiskType) (vids []needle.VolumeId) {
 	vidMap := make(map[uint32]bool)
 	EachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
 		if diskInfo, found := dn.DiskInfos[string(diskType)]; found {
 			for _, v := range diskInfo.EcShardInfos {
-				if collectionRegex.MatchString(v.Collection) {
+				if collectionMatcher.Matches(v.Collection) {
 					vidMap[v.Id] = true
 				}
 			}

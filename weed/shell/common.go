@@ -2,6 +2,7 @@ package shell
 
 import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
 
 var (
@@ -10,8 +11,7 @@ var (
 	// Default number of volumes EC encode/decode process per batch.
 	DefaultEcBatchSize = 10
 	// CollectionDefault is the special keyword to match empty collection names.
-	// Use "_default" to avoid collision with a literal collection named "default".
-	CollectionDefault = "_default"
+	CollectionDefault = wildcard.CollectionDefault
 )
 
 // ErrorWaitGroup lives in weed/util so packages outside the shell can share it.

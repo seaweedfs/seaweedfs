@@ -104,7 +104,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	}
 
 	host := winfsp.New(seaweedFileSystem, winfsp.Options{
-		VolumeName:   strings.ReplaceAll(*option.filer, ",", "+"),
+		VolumeName:   volumeName(*option.filer, *option.filerMountRootPath),
 		Uid:          ownedByMounter,
 		Gid:          ownedByMounter,
 		CacheTimeout: windowsCacheTimeout,
@@ -136,6 +136,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	glog.V(0).Infof("mounting %s%s to %v", *option.filer, mountRoot, dir)
 	glog.V(0).Infof("This is SeaweedFS version %s %s %s", version.Version(), runtime.GOOS, runtime.GOARCH)
 	glog.V(0).Infof("Windows mount is beta: hard links are unavailable and byte-range locks are not shared across mounts")
+	if prefix, _ := winfsp.VolumePrefix(dir); prefix != "" {
+		glog.V(0).Infof(`network mount: every session on this machine can open \%s or map a drive letter to it`, prefix)
+	}
 
 	if err := host.Serve(windowsMountPoint(dir)); err != nil {
 		glog.Errorf("%v", err)
@@ -156,6 +159,9 @@ func checkWindowsMountPoint(dir string) error {
 			return fmt.Errorf("drive %s is already in use", dir)
 		}
 		return nil
+	}
+	if prefix, err := winfsp.VolumePrefix(dir); err != nil || prefix != "" {
+		return err
 	}
 	if strings.HasPrefix(dir, `\\`) {
 		return nil

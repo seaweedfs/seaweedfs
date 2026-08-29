@@ -59,6 +59,16 @@ type AdminOptions struct {
 	debugPort        *int
 	cpuProfile       *string
 	memProfile       *string
+
+	// workerGrpcListener, when set, is a listener already bound to grpcPort by
+	// the caller. `weed mini` reserves the port this way because the admin
+	// binds it only after every other service is up.
+	workerGrpcListener net.Listener
+
+	// defaultS3PublicEndpoint, when set, is used for object URLs when
+	// s3.public_endpoint is not configured. `weed mini` sets it to its own
+	// S3 address.
+	defaultS3PublicEndpoint string
 }
 
 func init() {
@@ -391,7 +401,11 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 	r.PathPrefix("/static/").Handler(http.StripPrefix("/static/", admin.StaticHandler()))
 
 	// Create admin server (plugin is always enabled)
-	adminServer := dash.NewAdminServer(*options.master, *options.filerGroup, nil, dataDir, icebergPort, lancePort)
+	s3PublicEndpoint := util.GetViper().GetString("s3.public_endpoint")
+	if s3PublicEndpoint == "" {
+		s3PublicEndpoint = options.defaultS3PublicEndpoint
+	}
+	adminServer := dash.NewAdminServer(*options.master, *options.filerGroup, nil, dataDir, icebergPort, lancePort, s3PublicEndpoint)
 
 	if err := adminServer.ApplyPluginConfigFromToml(util.GetViper()); err != nil {
 		return fmt.Errorf("apply admin.toml to plugin config: %w", err)
@@ -406,7 +420,7 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 	}
 
 	// Start worker gRPC server for worker connections
-	err = adminServer.StartWorkerGrpcServer(*options.grpcPort)
+	err = adminServer.StartWorkerGrpcServer(*options.grpcPort, options.workerGrpcListener)
 	if err != nil {
 		return fmt.Errorf("failed to start worker gRPC server: %w", err)
 	}

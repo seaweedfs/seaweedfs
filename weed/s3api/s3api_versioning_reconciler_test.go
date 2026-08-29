@@ -168,3 +168,78 @@ func TestRetryFilerOp_TerminalErrorsShortCircuit(t *testing.T) {
 		})
 	}
 }
+
+// TestFilerRetryBudget_ClampsToWhatIsLeft covers the allowance arithmetic:
+// a reservation larger than the remainder is trimmed, and once nothing is
+// left the caller is told to stop rather than handed a zero wait.
+func TestFilerRetryBudget_ClampsToWhatIsLeft(t *testing.T) {
+	b := &filerRetryBudget{remaining: 150 * time.Millisecond}
+
+	granted, ok := b.take(100 * time.Millisecond)
+	require.True(t, ok)
+	assert.Equal(t, 100*time.Millisecond, granted)
+
+	granted, ok = b.take(200 * time.Millisecond)
+	require.True(t, ok)
+	assert.Equal(t, 50*time.Millisecond, granted, "trimmed to the remainder")
+
+	_, ok = b.take(time.Millisecond)
+	assert.False(t, ok, "allowance spent")
+}
+
+// TestFilerRetryRequestBudget_MatchesOneOpWorstCase pins the request-wide
+// allowance to what a single retryFilerOp can sleep for, so a batch delete
+// adds the wait of one key rather than one per key.
+func TestFilerRetryRequestBudget_MatchesOneOpWorstCase(t *testing.T) {
+	var singleOp time.Duration
+	for attempt := 1; attempt < updateLatestRetryAttempts; attempt++ {
+		singleOp += retryFilerBackoff(attempt)
+	}
+	assert.Equal(t, singleOp, filerRetryRequestBudget)
+	assert.Equal(t, 3100*time.Millisecond, filerRetryRequestBudget)
+}
+
+// TestRetryFilerOp_SharedBudgetAcrossBatch is the batch-delete shape: many
+// keys, each driving its own retryFilerOp against a filer that always fails
+// retryably. Without a shared allowance every key pays the full per-op
+// backoff, so the wait scales with a key count the client picks. The
+// allowance here is deliberately small so the test never sleeps for the
+// production budget.
+func TestRetryFilerOp_SharedBudgetAcrossBatch(t *testing.T) {
+	const keys = 200
+	const allowance = 250 * time.Millisecond
+
+	ctx := withFilerRetryBudget(context.Background(), allowance)
+	calls := 0
+	start := time.Now()
+	for i := 0; i < keys; i++ {
+		err := retryFilerOp(ctx, "test", func() error {
+			calls++
+			return errors.New("transient")
+		})
+		require.Error(t, err)
+	}
+	elapsed := time.Since(start)
+
+	assert.LessOrEqual(t, calls, keys+updateLatestRetryAttempts, "only the keys that fit the allowance retry")
+	assert.Less(t, elapsed, 2*allowance, "the whole batch stays inside one allowance")
+}
+
+// TestRetryFilerOp_SpentBudgetStopsAfterFirstAttempt confirms a key that
+// arrives after the allowance is gone fails immediately, reporting why, and
+// still gets its one real attempt at the filer.
+func TestRetryFilerOp_SpentBudgetStopsAfterFirstAttempt(t *testing.T) {
+	ctx := withFilerRetryBudget(context.Background(), 0)
+	calls := 0
+	start := time.Now()
+	err := retryFilerOp(ctx, "test", func() error {
+		calls++
+		return errors.New("transient")
+	})
+
+	require.Error(t, err)
+	assert.Equal(t, 1, calls, "the op still runs once")
+	assert.Less(t, time.Since(start), 50*time.Millisecond, "no backoff once the allowance is spent")
+	assert.Contains(t, err.Error(), "retry allowance spent")
+	assert.Contains(t, err.Error(), "transient", "underlying error preserved")
+}

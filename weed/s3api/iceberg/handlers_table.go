@@ -119,6 +119,18 @@ func (s *Server) tablePathOccupied(ctx context.Context, bucketName, tablePath st
 	return occupied, err
 }
 
+// authorizeCreateTable checks the caller may create the table, for the create
+// paths that write to the bucket before the catalog registers it.
+func (s *Server) authorizeCreateTable(ctx context.Context, bucketARN string, namespace []string, tableName, identityName string) error {
+	return s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return s.tablesManager.AuthorizeCreateTable(ctx, s3tables.NewManagerClient(client), &s3tables.CreateTableRequest{
+			TableBucketARN: bucketARN,
+			Namespace:      namespace,
+			Name:           tableName,
+		}, identityName)
+	})
+}
+
 // handleCreateTable creates a new table.
 func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
@@ -260,6 +272,14 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	if !isNoSuchTableError(existsErr) {
 		glog.V(1).Infof("Iceberg: CreateTable existence check failed for %s.%s: %v", flattenNamespacePath(namespace), tableName, existsErr)
 		writeManagerError(w, existsErr)
+		return
+	}
+
+	// Both branches below write into the table bucket, and stage-create never
+	// reaches the registration that carries the authorization, so the caller has
+	// to pass the CreateTable gate here.
+	if authErr := s.authorizeCreateTable(r.Context(), bucketARN, namespace, tableName, identityName); authErr != nil {
+		writeManagerError(w, authErr)
 		return
 	}
 

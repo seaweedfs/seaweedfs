@@ -370,7 +370,7 @@ func removeTwoShardFiles(t *testing.T, testDir string, volumeId uint32) []int {
 func masterEcShardIds(commandEnv *shell.CommandEnv, volumeId uint32) map[int]bool {
 	ids := map[int]bool{}
 	var resp *master_pb.VolumeListResponse
-	err := commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+	err := commandEnv.MasterClient.WithClient(context.Background(), false, func(client master_pb.SeaweedClient) error {
 		var e error
 		resp, e = client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
 		return e

@@ -35,14 +35,18 @@ type EcVolume struct {
 	Shards                    []*EcVolumeShard
 	ShardLocations            map[ShardId][]pb.ServerAddress
 	ShardLocationsRefreshTime time.Time
-	ShardLocationsLock        sync.RWMutex
-	Version                   needle.Version
-	ecjFile                   *os.File
-	ecjFileAccessLock         sync.Mutex
-	diskType                  types.DiskType
-	datFileSize               int64
-	ExpireAtSec               uint64     //ec volume destroy time, calculated from the ec volume was created
-	ECContext                 *ECContext // EC encoding parameters
+	// ShardLocationsStale marks the map for a prompt re-check: a read that failed
+	// against a cached location has disproved what the map claims, and the normal
+	// freshness window is far too long to serve from a map known to be wrong.
+	ShardLocationsStale bool
+	ShardLocationsLock  sync.RWMutex
+	Version             needle.Version
+	ecjFile             *os.File
+	ecjFileAccessLock   sync.Mutex
+	diskType            types.DiskType
+	datFileSize         int64
+	ExpireAtSec         uint64     //ec volume destroy time, calculated from the ec volume was created
+	ECContext           *ECContext // EC encoding parameters
 
 	// EncodeTsNs is the encode time (unix nanos) loaded from .vif; reads carry it
 	// so a shard from a different encode run is rejected. 0 for pre-upgrade volumes.

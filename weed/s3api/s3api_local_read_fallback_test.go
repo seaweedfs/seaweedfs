@@ -166,7 +166,7 @@ func TestS3CachedReadFallsBackToRemote(t *testing.T) {
 		assert.Equal(t, int64(4), client.gotSize)
 	})
 
-	t.Run("a local-only object keeps the existing error", func(t *testing.T) {
+	t.Run("a local-only object gets a clean 500, not a broken 200 body", func(t *testing.T) {
 		client := &fakeStreamRemoteClient{data: content}
 		remote_storage.RemoteStorageClientMakers["faketest"] = &fakeStreamRemoteMaker{client: client}
 		s3a := newLocalReadFallbackServer(t, startStreamThroughFiler(t, "faketest-nofallback", nil))
@@ -180,6 +180,8 @@ func TestS3CachedReadFallsBackToRemote(t *testing.T) {
 		err := s3a.streamFromVolumeServers(w, r, local, "", "mybucket", "dir/obj.bin", "")
 
 		require.Error(t, err)
+		assert.Equal(t, http.StatusInternalServerError, w.Code, "the status must not be committed before the first read succeeds")
+		assert.Contains(t, w.Body.String(), "InternalError")
 		assert.Nil(t, client.gotLoc, "an object that is not remote-mounted has no remote to fall back to")
 	})
 
@@ -198,6 +200,52 @@ func TestS3CachedReadFallsBackToRemote(t *testing.T) {
 
 		require.Error(t, err)
 		assert.Nil(t, client.gotLoc, "a versioned read must not serve the unversioned remote object")
+	})
+}
+
+// the deferred status commit must be invisible on the success path: a readable
+// local object still streams with the same status and headers as before
+func TestS3LocalReadCommitsStatusOnFirstWrite(t *testing.T) {
+	content := []byte("0123456789")
+	newLocalServer := func(t *testing.T, name string) *S3ApiServer {
+		s3a := newLocalReadFallbackServer(t, startStreamThroughFiler(t, name, nil))
+		cache := chunk_cache.NewChunkCacheInMemory(16)
+		cache.SetChunk("1,0123456789ab", content)
+		s3a.readerCache = filer.NewReaderCache(8, cache, s3a.filerClient.GetLookupFileIdFunction(), s3a.filerClient)
+		return s3a
+	}
+	localEntry := func() *filer_pb.Entry {
+		local := cachedEntry(content)
+		local.RemoteEntry = nil
+		return local
+	}
+
+	t.Run("readable local object streams a 200", func(t *testing.T) {
+		s3a := newLocalServer(t, "faketest-localok")
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/mybucket/dir/obj.bin", nil)
+
+		err := s3a.streamFromVolumeServers(w, r, localEntry(), "", "mybucket", "dir/obj.bin", "")
+
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, content, w.Body.Bytes())
+		assert.Equal(t, "10", w.Header().Get("Content-Length"))
+	})
+
+	t.Run("readable range streams a 206 with range headers", func(t *testing.T) {
+		s3a := newLocalServer(t, "faketest-localrange")
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/mybucket/dir/obj.bin", nil)
+		r.Header.Set("Range", "bytes=2-5")
+
+		err := s3a.streamFromVolumeServers(w, r, localEntry(), "", "mybucket", "dir/obj.bin", "")
+
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusPartialContent, w.Code)
+		assert.Equal(t, content[2:6], w.Body.Bytes())
+		assert.Equal(t, "bytes 2-5/10", w.Header().Get("Content-Range"))
+		assert.Equal(t, "4", w.Header().Get("Content-Length"))
 	})
 }
 

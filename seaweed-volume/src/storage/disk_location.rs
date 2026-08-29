@@ -921,27 +921,32 @@ impl DiskLocation {
         // double-count for those filenames.
         let mut seen: HashSet<String> = HashSet::new();
         let mut entries: Vec<String> = Vec::new();
-        for ent in fs::read_dir(&self.directory)? {
-            let ent = ent?;
-            if ent.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
-                continue;
-            }
-            let name = ent.file_name().to_string_lossy().into_owned();
-            if seen.insert(name.clone()) {
-                entries.push(name);
-            }
-        }
-        if self.idx_directory != self.directory {
-            for ent in fs::read_dir(&self.idx_directory)? {
+        // Keep only the shard and index files this scan acts on: a disk of
+        // regular volumes has millions of .dat/.idx/.vif names that would
+        // otherwise each cost a String here and a slot in the sort below.
+        let mut collect = |dir: &str| -> io::Result<()> {
+            for ent in fs::read_dir(dir)? {
                 let ent = ent?;
                 if ent.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
                     continue;
                 }
                 let name = ent.file_name().to_string_lossy().into_owned();
+                let Some(dot) = name.rfind('.') else {
+                    continue;
+                };
+                let ext = &name[dot..];
+                if parse_ec_shard_extension(ext).is_none() && ext != ".ecx" {
+                    continue;
+                }
                 if seen.insert(name.clone()) {
                     entries.push(name);
                 }
             }
+            Ok(())
+        };
+        collect(&self.directory)?;
+        if self.idx_directory != self.directory {
+            collect(&self.idx_directory)?;
         }
         entries.sort();
 

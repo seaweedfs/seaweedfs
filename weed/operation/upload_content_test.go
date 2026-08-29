@@ -3,6 +3,8 @@ package operation
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 )
 
@@ -69,8 +72,8 @@ func TestShouldReassignUpload(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := shouldReassignUpload(tc.err); got != tc.want {
-				t.Fatalf("shouldReassignUpload(%v) = %v, want %v", tc.err, got, tc.want)
+			if got := ShouldReassignUpload(tc.err); got != tc.want {
+				t.Fatalf("ShouldReassignUpload(%v) = %v, want %v", tc.err, got, tc.want)
 			}
 		})
 	}
@@ -453,5 +456,62 @@ func TestUploadRetryStopsOnContextCancel(t *testing.T) {
 	}
 	if got := client.attempts(); got > 1 {
 		t.Fatalf("dial attempts = %d, want at most 1 after cancellation", got)
+	}
+}
+
+// A ciphered upload hands the volume server ciphertext, so it cannot echo a
+// Content-MD5 back; without the caller's plaintext digest the chunk lands with
+// no ETag and every ETag computed from those chunks comes out empty
+// (issue #10968).
+func TestCipherUploadKeepsPlaintextETag(t *testing.T) {
+	payload := bytes.Repeat([]byte("encrypt me\n"), 4096)
+	digest := md5.Sum(payload)
+	wantMd5 := base64.StdEncoding.EncodeToString(digest[:])
+
+	var storedNeedle *needle.Needle
+	var sentContentMd5 string
+	var parseErr error
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sentContentMd5 = r.Header.Get("Content-MD5")
+		storedNeedle, _, _, parseErr = needle.CreateNeedleFromRequest(r, false, 1024*1024, &bytes.Buffer{})
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = io.WriteString(w, `{"name":"payload","size":45056}`)
+	}))
+	defer server.Close()
+
+	uploader := newUploader(server.Client())
+	result, err := uploader.UploadData(context.Background(), payload, &UploadOption{
+		UploadUrl:   server.URL + "/3,01637037d6",
+		Cipher:      true,
+		Md5:         wantMd5,
+		MaxAttempts: 1,
+	})
+	if err != nil {
+		t.Fatalf("cipher upload failed: %v", err)
+	}
+	if parseErr != nil {
+		t.Fatalf("parse ciphered upload: %v", parseErr)
+	}
+	if sentContentMd5 != "" {
+		t.Fatalf("Content-MD5 %q sent to the volume server, which only sees ciphertext", sentContentMd5)
+	}
+	if result.ContentMd5 != wantMd5 {
+		t.Fatalf("chunk ETag = %q, want the plaintext digest %q", result.ContentMd5, wantMd5)
+	}
+	if bytes.Equal(storedNeedle.Data, payload) {
+		t.Fatal("volume server stored plaintext for a ciphered upload")
+	}
+	decrypted, err := util.Decrypt(storedNeedle.Data, util.CipherKey(result.CipherKey))
+	if err != nil {
+		t.Fatalf("decrypt stored needle: %v", err)
+	}
+	if result.Gzip > 0 {
+		if decrypted, err = util.DecompressData(decrypted); err != nil {
+			t.Fatalf("decompress stored needle: %v", err)
+		}
+	}
+	if !bytes.Equal(decrypted, payload) {
+		t.Fatalf("decrypted %d bytes, want %d", len(decrypted), len(payload))
 	}
 }

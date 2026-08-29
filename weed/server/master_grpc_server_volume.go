@@ -239,6 +239,13 @@ func (ms *MasterServer) Statistics(ctx context.Context, req *master_pb.Statistic
 	if req.Collection != "" {
 		clusterUsedSize = ms.Topo.CollectionVolumeStats("").UsedSize
 	}
+	// volume slots are provisioning, not capacity: a cluster configured with
+	// more of them than its disks hold would report space it can never take.
+	// What the disks still have free, on top of what the cluster already wrote,
+	// is the real ceiling.
+	if freeBytes, reported := ms.Topo.FreeBytes(); reported {
+		totalSize = min(totalSize, clusterUsedSize+freeBytes)
+	}
 	// and the free space holds that many copies fewer of whatever the caller writes
 	var freeSize uint64
 	if totalSize > clusterUsedSize {

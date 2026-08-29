@@ -38,6 +38,7 @@ fn scrub_mode_label(mode: i32) -> &'static str {
         2 => "FULL",
         3 => "LOCAL",
         4 => "CHECKSUM",
+        5 => "READS",
         _ => "UNKNOWN",
     }
 }
@@ -3685,7 +3686,12 @@ impl VolumeServer for VolumeGrpcService {
                             modified_time: dat_modified_secs,
                             extension: ".dat".to_string(),
                         });
-                        vol.refresh_remote_write_mode();
+                        vol.refresh_remote_write_mode().map_err(|e| {
+                            Status::internal(format!(
+                                "volume {} failed to refresh write mode: {}",
+                                vid, e
+                            ))
+                        })?;
 
                         if let Err(e) = vol.save_volume_info() {
                             return Err(Status::internal(format!(
@@ -3871,10 +3877,40 @@ impl VolumeServer for VolumeGrpcService {
                         )));
                     }
 
-                    if !vol.volume_info.files.is_empty() {
-                        vol.volume_info.files.remove(0);
+                    // Snapshot the remote reference before dropping it: the
+                    // refresh below can fail, and a half-applied transition
+                    // leaves the volume claiming local while the remote backend
+                    // is still attached and the on-disk .vif still says remote
+                    // — a state a retry reads as "already on local disk" and
+                    // refuses to finish.
+                    let removed_remote = if vol.volume_info.files.is_empty() {
+                        None
+                    } else {
+                        Some(vol.volume_info.files.remove(0))
+                    };
+                    // Swaps the read-only sorted map out before the volume is
+                    // published as writable; without it the first write would
+                    // append to the local .dat and then fail to index.
+                    if let Err(e) = vol.refresh_remote_write_mode() {
+                        if let Some(remote) = removed_remote {
+                            vol.volume_info.files.insert(0, remote);
+                        }
+                        // Put the derived flags and the needle map back where
+                        // the restored reference says they belong. Best effort:
+                        // if even this fails the volume stays pinned read-only,
+                        // which is the safe end of the transition.
+                        if let Err(restore_err) = vol.refresh_remote_write_mode() {
+                            tracing::warn!(
+                                volume_id = vid.0,
+                                error = %restore_err,
+                                "tier-down rollback could not restore the remote write mode",
+                            );
+                        }
+                        return Err(Status::internal(format!(
+                            "volume {} failed to refresh write mode: {}",
+                            vid, e
+                        )));
                     }
-                    vol.refresh_remote_write_mode();
 
                     if let Err(e) = vol.save_volume_info() {
                         return Err(Status::internal(format!(
@@ -4172,7 +4208,7 @@ impl VolumeServer for VolumeGrpcService {
         // Validate mode
         let mode = req.mode;
         match mode {
-            1 | 2 | 3 => {} // INDEX=1, FULL=2, LOCAL=3
+            1 | 2 | 3 | 5 => {} // INDEX=1, FULL=2, LOCAL=3, READS=5 (FULL for regular volumes)
             _ => {
                 return Err(Status::invalid_argument(format!(
                     "unsupported volume scrub mode {}",
@@ -4272,13 +4308,21 @@ impl VolumeServer for VolumeGrpcService {
         // Validate mode
         let mode = req.mode;
         match mode {
-            1 | 2 | 3 | 4 => {} // INDEX=1, FULL=2, LOCAL=3, CHECKSUM=4
+            1 | 2 | 3 | 4 | 5 => {} // INDEX=1, FULL=2, LOCAL=3, CHECKSUM=4, READS=5
             _ => {
                 return Err(Status::invalid_argument(format!(
                     "unsupported EC volume scrub mode {}",
                     mode
                 )))
             }
+        }
+
+        // Only the modes that walk needles can be strict about deleted ones.
+        let force_deleted_needles_check = req.force_deleted_needles_check;
+        if force_deleted_needles_check && mode != 2 && mode != 5 {
+            return Err(Status::invalid_argument(
+                "deleted needle checks are only supported for FULL and READS scrubs",
+            ));
         }
 
         // Collect the volume ids under a brief lock, then release it: FULL (mode 2)
@@ -4322,8 +4366,8 @@ impl VolumeServer for VolumeGrpcService {
                         }
                     }
                 }
-                2 => {
-                    // FULL: Go-parity per-needle local+remote walk, PLUS a TEMPORARY
+                2 | 5 => {
+                    // FULL/READS: Go-parity per-needle local+remote walk, PLUS a TEMPORARY
                     // local Reed-Solomon parity check. The needle walk only reads
                     // DATA-shard intervals of LIVE needles, so on its own it can't
                     // catch silent bitrot in a PARITY shard or an unwalked cold
@@ -4355,8 +4399,13 @@ impl VolumeServer for VolumeGrpcService {
 
                     // (1) Per-needle local+remote walk (Go ScrubEcVolume parity).
                     let (files, mut shard_infos, mut errs) =
-                        crate::server::store_ec::scrub_ec_volume_distributed(&self.state, vid, false)
-                            .await;
+                        crate::server::store_ec::scrub_ec_volume_distributed(
+                            &self.state,
+                            vid,
+                            force_deleted_needles_check,
+                            mode == 5,
+                        )
+                        .await;
                     total_files += files as u64; // count comes from the needle walk only
 
                     // (2) Local parity check, gated on all-shards-local. Blocking RS
@@ -6266,5 +6315,90 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(vif_path).unwrap()).unwrap();
         assert!(vif.expire_at_sec >= before + ttl.to_seconds());
         assert!(vif.expire_at_sec <= before + ttl.to_seconds() + 5);
+    }
+
+    async fn scrub_ec_volume_1(
+        service: &VolumeGrpcService,
+        mode: i32,
+    ) -> volume_server_pb::ScrubEcVolumeResponse {
+        service
+            .scrub_ec_volume(Request::new(volume_server_pb::ScrubEcVolumeRequest {
+                mode,
+                volume_ids: vec![1],
+                force_deleted_needles_check: false,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+    }
+
+    #[tokio::test]
+    async fn test_scrub_ec_volume_reads_mode_reconstructs_missing_shard() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        service
+            .volume_ec_shards_generate(Request::new(
+                volume_server_pb::VolumeEcShardsGenerateRequest {
+                    volume_id: 1,
+                    collection: String::new(),
+                },
+            ))
+            .await
+            .unwrap();
+        service
+            .volume_ec_shards_mount(Request::new(
+                volume_server_pb::VolumeEcShardsMountRequest {
+                    volume_id: 1,
+                    collection: String::new(),
+                    shard_ids: (0..14).collect(),
+                    source_disk_type: String::new(),
+                    recover_missing_index: false,
+                },
+            ))
+            .await
+            .unwrap();
+
+        // Seed the shard-location cache so the scrub skips the master lookup.
+        // The explicit-gRPC-port form targets port 1, so remote reads fail fast
+        // with connection-refused instead of resolving to a live local port.
+        {
+            let store = service.state.store.read().unwrap();
+            let ecv = store.find_ec_volume(VolumeId(1)).unwrap();
+            let mut locs = ecv.shard_locations.write().unwrap();
+            for sid in 0u8..14 {
+                locs.insert(sid, vec!["127.0.0.1:255.1".to_string()]);
+            }
+            *ecv.shard_locations_refresh_time.lock().unwrap() =
+                Some(std::time::Instant::now());
+        }
+
+        // All shards local: FULL is clean.
+        let resp = scrub_ec_volume_1(&service, 2).await;
+        assert!(resp.broken_volume_ids.is_empty(), "{:?}", resp.details);
+        assert_eq!(resp.total_files, 1);
+
+        service
+            .volume_ec_shards_unmount(Request::new(
+                volume_server_pb::VolumeEcShardsUnmountRequest {
+                    volume_id: 1,
+                    shard_ids: vec![0],
+                    encode_ts_ns: 0,
+                },
+            ))
+            .await
+            .unwrap();
+
+        // With a shard unreadable, FULL flags it AND fails the needle...
+        let resp = scrub_ec_volume_1(&service, 2).await;
+        assert_eq!(resp.broken_volume_ids, vec![1]);
+        assert!(resp.broken_shard_infos.iter().any(|s| s.shard_id == 0));
+        assert!(!resp.details.is_empty());
+
+        // ...while READS still reports the shard broken but reconstructs the
+        // interval from the local survivors, so no needle errors surface.
+        let resp = scrub_ec_volume_1(&service, 5).await;
+        assert_eq!(resp.broken_volume_ids, vec![1]);
+        assert!(resp.broken_shard_infos.iter().any(|s| s.shard_id == 0));
+        assert!(resp.details.is_empty(), "{:?}", resp.details);
+        assert_eq!(resp.total_files, 1);
     }
 }

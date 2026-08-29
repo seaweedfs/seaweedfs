@@ -3,7 +3,6 @@ package mount
 import (
 	"context"
 	"os"
-	"strings"
 	"syscall"
 	"time"
 
@@ -161,7 +160,7 @@ func (wfs *WFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string
 	resp, err := wfs.streamDeleteEntry(context.Background(), deleteReq)
 	if err != nil {
 		glog.V(1).Infof("remove %s: %v", entryFullPath, err)
-		if strings.Contains(err.Error(), filer.MsgFailDelNonEmptyFolder) {
+		if filer.IsNonEmptyFolderError(err) {
 			return fuse.Status(syscall.ENOTEMPTY)
 		}
 		return fuse.ENOENT

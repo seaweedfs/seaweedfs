@@ -27,6 +27,8 @@ service Seaweed {
   }
   rpc VolumeList (VolumeListRequest) returns (VolumeListResponse) {
   }
+  rpc VolumeListStream (VolumeListRequest) returns (stream VolumeListStreamResponse) {
+  }
   rpc LookupEcVolume (LookupEcVolumeRequest) returns (LookupEcVolumeResponse) {
   }
   rpc VacuumVolume (VacuumVolumeRequest) returns (VacuumVolumeResponse) {
@@ -406,10 +408,38 @@ message TopologyInfo {
   map<string, DiskInfo> diskInfos = 3;
 }
 message VolumeListRequest {
+  // Empty and zero take everything. Only the volumes and ec shards listed
+  // under a disk are selected; the topology and its disk counters are always
+  // reported in full.
+  string collection = 1;
+  uint32 volume_id = 2;
+  // The one collection the empty string cannot name. A named collection wins.
+  bool default_collection_only = 3;
+  // Empty and zero take everything. Wildcards are supported.
+  string remote_storage_name = 4;
+  bool local_volume_only = 5;
 }
 message VolumeListResponse {
   TopologyInfo topology_info = 1;
   uint64 volume_size_limit_mb = 2;
+}
+
+// VolumeListStream answers the same request as VolumeList without either end
+// holding every volume in the cluster at once. At 800k volumes the reply is
+// 36MB on the wire but 305MB as messages, which the master built in full
+// before sending any of it.
+message VolumeListStreamResponse {
+  // Sent once, first, listing no volumes: the topology, its disks and their
+  // counters. Every message after carries volumes for one of those disks.
+  VolumeListResponse header = 1;
+  // Which disk this batch is from. A disk arrives over as many batches as it
+  // takes, so append rather than assign.
+  string data_center = 2;
+  string rack = 3;
+  string data_node = 4;
+  string disk_type = 5;
+  repeated VolumeInformationMessage volume_infos = 6;
+  repeated VolumeEcShardInformationMessage ec_shard_infos = 7;
 }
 
 message LookupEcVolumeRequest {

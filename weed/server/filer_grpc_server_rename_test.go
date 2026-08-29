@@ -250,12 +250,13 @@ func newRenameTestFiler(t *testing.T, store *renameTestStore) *filer.Filer {
 	t.Cleanup(logBuffer.ShutdownLogBuffer)
 
 	return &filer.Filer{
-		Store:              filer.NewFilerStoreWrapper(store),
-		MasterClient:       masterClient,
-		FilerConf:          filer.NewFilerConf(),
-		RemoteStorage:      filer.NewFilerRemoteStorage(),
-		MaxFilenameLength:  255,
-		LocalMetaLogBuffer: logBuffer,
+		Store:               filer.NewFilerStoreWrapper(store),
+		MasterClient:        masterClient,
+		FilerConf:           filer.NewFilerConf(),
+		RemoteStorage:       filer.NewFilerRemoteStorage(),
+		MaxFilenameLength:   255,
+		LocalMetaLogBuffer:  logBuffer,
+		FileIdDeletionQueue: util.NewUnboundedQueue(),
 	}
 }
 

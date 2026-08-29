@@ -94,6 +94,8 @@ func (s3a *S3ApiServer) RenameObjectHandler(w http.ResponseWriter, r *http.Reque
 
 	errCode = s3a.withRenameWriteLocks(bucket, srcObject, dstObject, func() s3err.ErrorCode {
 		entry, err := s3a.resolveCopySourceEntry(bucket, srcObject, "", "")
+		srcIsPrefixObject := entry.IsPrefixObject()
+		entry = prefixObjectSource(entry)
 		if errCode := classifyCopySourceError(entry, err); errCode != s3err.ErrNone {
 			return errCode
 		}
@@ -103,7 +105,7 @@ func (s3a *S3ApiServer) RenameObjectHandler(w http.ResponseWriter, r *http.Reque
 		if errCode := s3a.checkConditionalHeaders(r, bucket, dstObject); errCode != s3err.ErrNone {
 			return errCode
 		}
-		return s3a.renameObjectEntry(r.Context(), bucket, srcObject, dstObject)
+		return s3a.renameObjectEntry(r.Context(), bucket, srcObject, dstObject, entry, srcIsPrefixObject)
 	})
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
@@ -218,17 +220,26 @@ func (s3a *S3ApiServer) withRenameWriteLocks(bucket, srcObject, dstObject string
 	})
 }
 
-func (s3a *S3ApiServer) renameObjectEntry(ctx context.Context, bucket, srcObject, dstObject string) s3err.ErrorCode {
+func (s3a *S3ApiServer) renameObjectEntry(ctx context.Context, bucket, srcObject, dstObject string, srcEntry *filer_pb.Entry, srcIsPrefixObject bool) s3err.ErrorCode {
 	srcDir, srcName := util.FullPath(s3a.toFilerPath(bucket, srcObject)).DirAndName()
 	dstDir, dstName := util.FullPath(s3a.toFilerPath(bucket, dstObject)).DirAndName()
 
-	// The move overwrites an existing destination object, but a directory in
-	// the way is a conflict the filer reports as an opaque error.
-	if existing, err := s3a.getEntry(dstDir, dstName); err == nil && existing.IsDirectory {
-		return s3err.ErrExistingObjectIsDirectory
-	} else if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+	// The move overwrites an existing destination object. A directory there is not a
+	// conflict: it means other keys are nested under the destination key, and the
+	// object goes onto the directory they live in, the way a PutObject of that key
+	// would put it there.
+	dstHoldsNestedKeys := false
+	if existing, err := s3a.getEntry(dstDir, dstName); err == nil {
+		dstHoldsNestedKeys = existing.IsDirectory
+	} else if !errors.Is(err, filer_pb.ErrNotFound) {
 		glog.Errorf("RenameObject %s: destination %s: %v", bucket, dstObject, err)
 		return s3err.ErrInternalError
+	}
+
+	// AtomicRenameEntry moves a directory by moving everything under it, and the keys
+	// nested under either end of this rename are not part of what is being renamed.
+	if srcIsPrefixObject || dstHoldsNestedKeys {
+		return s3a.renameKeyHoldingNestedKeys(bucket, srcObject, dstObject, srcEntry)
 	}
 
 	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
@@ -245,6 +256,41 @@ func (s3a *S3ApiServer) renameObjectEntry(ctx context.Context, bucket, srcObject
 		if isTransientFilerError(err) {
 			return s3err.ErrServiceUnavailable
 		}
+		return s3err.ErrInternalError
+	}
+	return s3err.ErrNone
+}
+
+// renameKeyHoldingNestedKeys moves an object when either key of the rename is one
+// other keys are nested under. Such a key is stored on the directory those keys live
+// in, which has to stay where it is, so the object's own data is written at the
+// destination and then stripped off the source key - the entry survives as the plain
+// directory it also is. Both keys are held under their write locks for the whole
+// move, so no other S3 write interleaves; a crash between the two steps leaves the
+// destination written and the source still there, which a retry settles.
+func (s3a *S3ApiServer) renameKeyHoldingNestedKeys(bucket, srcObject, dstObject string, srcEntry *filer_pb.Entry) s3err.ErrorCode {
+	dstPath := util.FullPath(s3a.toFilerPath(bucket, dstObject))
+	dstDir, dstName := dstPath.DirAndName()
+
+	chunks, err := s3a.copyChunks(srcEntry, string(dstPath))
+	if err != nil {
+		glog.Errorf("RenameObject %s: copy chunks of %s: %v", bucket, srcObject, err)
+		return s3err.ErrInternalError
+	}
+
+	if err := s3a.mkFile(dstDir, dstName, chunks, func(entry *filer_pb.Entry) {
+		copyEntryToTarget(entry, srcEntry)
+		entry.Chunks = chunks
+	}); err != nil {
+		glog.Errorf("RenameObject %s: write %s: %v", bucket, dstObject, err)
+		s3a.deleteOrphanedChunks(chunks)
+		return filerErrorToS3Error(err)
+	}
+
+	// The destination holds copies now, so the source's own chunks go with it.
+	srcDir, srcName := util.FullPath(s3a.toFilerPath(bucket, srcObject)).DirAndName()
+	if err := s3a.rmObject(context.Background(), srcDir, srcName, true, false); err != nil {
+		glog.Errorf("RenameObject %s: strip %s: %v", bucket, srcObject, err)
 		return s3err.ErrInternalError
 	}
 	return s3err.ErrNone

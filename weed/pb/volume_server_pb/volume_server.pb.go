@@ -76,6 +76,7 @@ const (
 	VolumeScrubMode_FULL     VolumeScrubMode = 2
 	VolumeScrubMode_LOCAL    VolumeScrubMode = 3
 	VolumeScrubMode_CHECKSUM VolumeScrubMode = 4 // EC only: verify each local shard's raw bytes against the bitrot checksum sidecar
+	VolumeScrubMode_READS    VolumeScrubMode = 5 // like FULL, but EC intervals no shard can serve are reconstructed from parity
 )
 
 // Enum value maps for VolumeScrubMode.
@@ -86,6 +87,7 @@ var (
 		2: "FULL",
 		3: "LOCAL",
 		4: "CHECKSUM",
+		5: "READS",
 	}
 	VolumeScrubMode_value = map[string]int32{
 		"UNKNOWN":  0,
@@ -93,6 +95,7 @@ var (
 		"FULL":     2,
 		"LOCAL":    3,
 		"CHECKSUM": 4,
+		"READS":    5,
 	}
 )
 
@@ -7768,13 +7771,14 @@ const file_volume_server_proto_rawDesc = "" +
 	"stopTimeNs*;\n" +
 	"\x11ChecksumAlgorithm\x12\x11\n" +
 	"\rCHECKSUM_NONE\x10\x00\x12\x13\n" +
-	"\x0fCHECKSUM_CRC32C\x10\x01*L\n" +
+	"\x0fCHECKSUM_CRC32C\x10\x01*W\n" +
 	"\x0fVolumeScrubMode\x12\v\n" +
 	"\aUNKNOWN\x10\x00\x12\t\n" +
 	"\x05INDEX\x10\x01\x12\b\n" +
 	"\x04FULL\x10\x02\x12\t\n" +
 	"\x05LOCAL\x10\x03\x12\f\n" +
-	"\bCHECKSUM\x10\x042\xfa)\n" +
+	"\bCHECKSUM\x10\x04\x12\t\n" +
+	"\x05READS\x10\x052\xfa)\n" +
 	"\fVolumeServer\x12\\\n" +
 	"\vBatchDelete\x12$.volume_server_pb.BatchDeleteRequest\x1a%.volume_server_pb.BatchDeleteResponse\"\x00\x12n\n" +
 	"\x11VacuumVolumeCheck\x12*.volume_server_pb.VacuumVolumeCheckRequest\x1a+.volume_server_pb.VacuumVolumeCheckResponse\"\x00\x12v\n" +

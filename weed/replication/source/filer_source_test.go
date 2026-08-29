@@ -3,14 +3,22 @@ package source
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
@@ -280,5 +288,108 @@ func TestDownloadFile_GzipPartialReadThenResume(t *testing.T) {
 	fullData := append(partialData, remainingData...)
 	if !bytes.Equal(fullData, testData) {
 		t.Fatalf("combined data mismatch: got %d bytes, want %d", len(fullData), len(testData))
+	}
+}
+
+// lookupFilerServer answers volume lookups with a fixed set of locations, so a
+// test can hand ReadPart several replicas, or none at all.
+type lookupFilerServer struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+	locations []string
+}
+
+func (s *lookupFilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVolumeRequest) (*filer_pb.LookupVolumeResponse, error) {
+	locationsMap := make(map[string]*filer_pb.Locations)
+	for _, vid := range req.VolumeIds {
+		if len(s.locations) == 0 {
+			continue
+		}
+		locations := &filer_pb.Locations{}
+		for _, url := range s.locations {
+			locations.Locations = append(locations.Locations, &filer_pb.Location{Url: url})
+		}
+		locationsMap[vid] = locations
+	}
+	return &filer_pb.LookupVolumeResponse{LocationsMap: locationsMap}, nil
+}
+
+func startLookupFiler(t *testing.T, locations ...string) *FilerSource {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	server := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(server, &lookupFilerServer{locations: locations})
+	go server.Serve(listener)
+	t.Cleanup(server.Stop)
+
+	address := listener.Addr().String()
+	filerSource := &FilerSource{}
+	if err := filerSource.DoInitialize(address, address, "/", false); err != nil {
+		t.Fatalf("DoInitialize: %v", err)
+	}
+	filerSource.SetGrpcDialOption(grpc.WithTransportCredentials(insecure.NewCredentials()))
+	return filerSource
+}
+
+// A volume the source cluster no longer has must be reported as ErrVolumeNotFound,
+// not as an untyped message the caller can only string-match.
+func TestLookupFileIdVolumeNotFound(t *testing.T) {
+	filerSource := startLookupFiler(t)
+
+	_, err := filerSource.LookupFileId(context.Background(), "5617,01abc")
+	if !errors.Is(err, ErrVolumeNotFound) {
+		t.Fatalf("expected ErrVolumeNotFound, got %v", err)
+	}
+}
+
+// A replica answering 404 is a failed read, not an empty file: ReadPart must move
+// on to the next replica instead of handing the error page back as content.
+func TestReadPartSkipsNotFoundReplica(t *testing.T) {
+	const body = "chunk bytes"
+
+	gone := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "Not Found", http.StatusNotFound)
+	}))
+	defer gone.Close()
+	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(body))
+	}))
+	defer live.Close()
+
+	filerSource := startLookupFiler(t,
+		strings.TrimPrefix(gone.URL, "http://"), strings.TrimPrefix(live.URL, "http://"))
+
+	_, _, resp, err := filerSource.ReadPart("5617,01abc", 0)
+	if err != nil {
+		t.Fatalf("ReadPart: %v", err)
+	}
+	defer util_http.CloseResponse(resp)
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if string(data) != body {
+		t.Fatalf("got %q, want %q", data, body)
+	}
+}
+
+// Every replica gone: the caller must see a not-found error it can act on, and no
+// response left open behind it.
+func TestReadPartAllReplicasNotFound(t *testing.T) {
+	gone := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "Not Found", http.StatusNotFound)
+	}))
+	defer gone.Close()
+
+	filerSource := startLookupFiler(t, strings.TrimPrefix(gone.URL, "http://"))
+
+	_, _, resp, err := filerSource.ReadPart("5617,01abc", 0)
+	if !errors.Is(err, util_http.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+	if resp != nil {
+		t.Fatal("expected no response alongside the error")
 	}
 }

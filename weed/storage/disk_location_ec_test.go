@@ -720,22 +720,7 @@ func TestLoadExistingVolumeSkipsVifWhenEcxPresent(t *testing.T) {
 				t.Fatalf("write .ecx: %v", err)
 			}
 
-			entries, err := os.ReadDir(dataDir)
-			if err != nil {
-				t.Fatalf("read dir: %v", err)
-			}
-			var vifEntry os.DirEntry
-			for _, e := range entries {
-				if filepath.Ext(e.Name()) == ".vif" {
-					vifEntry = e
-					break
-				}
-			}
-			if vifEntry == nil {
-				t.Fatalf(".vif entry missing from dir listing")
-			}
-
-			loaded := diskLocation.loadExistingVolume(vifEntry, NeedleMapInMemory, false, 0, 0)
+			loaded := diskLocation.loadExistingVolume(filepath.Base(vifPath), NeedleMapInMemory, false, 0, 0)
 			if loaded {
 				t.Fatalf("loadExistingVolume should refuse to load a .vif-only entry when .ecx is present (volume %d)", vid)
 			}

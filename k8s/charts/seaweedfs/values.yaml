@@ -1006,6 +1006,9 @@ s3:
   # Iceberg catalog REST port (Apache Iceberg REST Catalog API)
   # Set to a port number to enable, or 0/null to disable
   icebergPort: null
+  # Lance Namespace port; weed serves 9101 by default, 0 disables it
+  # (and, unless worker.namespaceUrl points elsewhere, the worker's Lance container)
+  lancePort: 9101
   loggingOverrideLevel: null
   # enable user & permission to s3 (need to inject to all services)
   enableAuth: false
@@ -1184,17 +1187,31 @@ s3:
   # Service settings
   service:
     type: ClusterIP
+    # used only when type is LoadBalancer
+    loadBalancerClass: ""
+    loadBalancerIP: ""
+    loadBalancerSourceRanges: []
     # fixed nodePorts, used only when type is NodePort or LoadBalancer
     nodePorts:
       http: null
       https: null
       iceberg: null
+      lance: null
       metrics: null
 
   icebergIngress:
     enabled: false
     className: ""
     host: "seaweedfs-iceberg.cluster.local"
+    path: "/"
+    pathType: Prefix
+    annotations: {}
+    tls: []
+
+  lanceIngress:
+    enabled: false
+    className: ""
+    host: "seaweedfs-lance.cluster.local"
     path: "/"
     pathType: Prefix
     annotations: {}
@@ -1288,6 +1305,10 @@ sftp:
   # Service settings
   service:
     type: ClusterIP
+    # used only when type is LoadBalancer
+    loadBalancerClass: ""
+    loadBalancerIP: ""
+    loadBalancerSourceRanges: []
     # fixed nodePorts, used only when type is NodePort or LoadBalancer
     nodePorts:
       sftp: null
@@ -1430,6 +1451,10 @@ admin:
   service:
     type: ClusterIP
     annotations: {}
+    # used only when type is LoadBalancer
+    loadBalancerClass: ""
+    loadBalancerIP: ""
+    loadBalancerSourceRanges: []
     # fixed nodePorts, used only when type is NodePort or LoadBalancer
     nodePorts:
       http: null
@@ -1447,6 +1472,15 @@ worker:
   loggingOverrideLevel: null
   metricsPort: 9327
   metricsIp: ""  # If empty, defaults to 0.0.0.0
+
+  # The lance_* jobs run in their own container, /usr/bin/weed-worker.
+  # amd64/arm64 only; pin mixed clusters with worker.affinity/nodeSelector.
+
+  # Lance namespace URL override; empty derives it from s3.lancePort.
+  namespaceUrl: ""
+
+  # Metrics port for the Lance worker container; the Go worker keeps metricsPort
+  lanceMetricsPort: 9328
 
   # Admin server to connect to
   adminServer: ""
@@ -1654,6 +1688,10 @@ allInOne:
     annotations: {}  # Annotations for the service
     type: ClusterIP  # Service type (ClusterIP, NodePort, LoadBalancer)
     internalTrafficPolicy: Cluster  # Internal traffic policy
+    # used only when type is LoadBalancer
+    loadBalancerClass: ""
+    loadBalancerIP: ""
+    loadBalancerSourceRanges: []
     # fixed nodePorts, used only when type is NodePort or LoadBalancer
     nodePorts:
       master: null

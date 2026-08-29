@@ -145,6 +145,18 @@ func (vi VolumeInfo) String() string {
 	return s
 }
 
+func (vi VolumeInfo) GetCollection() string {
+	return vi.Collection
+}
+
+func (vi VolumeInfo) GetVolumeId() needle.VolumeId {
+	return vi.Id
+}
+
+func (vi VolumeInfo) GetRemoteStorageName() string {
+	return vi.RemoteStorageName
+}
+
 func (vi VolumeInfo) ToVolumeInformationMessage() *master_pb.VolumeInformationMessage {
 	return &master_pb.VolumeInformationMessage{
 		Id:                uint32(vi.Id),

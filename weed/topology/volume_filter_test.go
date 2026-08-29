@@ -95,6 +95,45 @@ func TestVolumeFilterSelects(t *testing.T) {
 	}
 }
 
+func TestVolumeFilterRemoteStorageNameWildcards(t *testing.T) {
+	topo := NewTopology("filter", nil, 32*1024*1024*1024, 5, false)
+	dn := topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+		GetOrCreateDataNode("10.0.0.2", 8080, 18080, "", "", map[string]uint32{"": 100})
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{
+		{Id: 11, Collection: "c", Size: 100, Version: 3, DiskId: 3, RemoteStorageName: "s3.backup"},
+		{Id: 12, Collection: "c", Size: 100, Version: 3, DiskId: 3, RemoteStorageName: "s3.archive"},
+		{Id: 13, Collection: "c", Size: 100, Version: 3, DiskId: 3, RemoteStorageName: "gcs.cold"},
+		{Id: 14, Collection: "c", Size: 100, Version: 3, DiskId: 3},
+	}, dn)
+
+	for _, tc := range []struct {
+		name string
+		f    VolumeFilter
+		want []uint32
+	}{
+		// A nil name asks for every volume, tiered or local alike.
+		{"no remote storage asked", VolumeFilter{}, []uint32{11, 12, 13, 14}},
+		{"an exact name", VolumeFilter{remoteStorageName: new("s3.backup")}, []uint32{11}},
+		{"a wildcarded storage", VolumeFilter{remoteStorageName: new("s3.*")}, []uint32{11, 12}},
+		{"a wildcarded tier", VolumeFilter{remoteStorageName: new("*.cold")}, []uint32{13}},
+		{"every tiered volume", VolumeFilter{remoteStorageName: new("*")}, []uint32{11, 12, 13}},
+		// Not a wildcard, so it matches nothing rather than everything.
+		{"a name no volume is on", VolumeFilter{remoteStorageName: new("s3.other")}, nil},
+		// The local volumes are the ones with no remote storage name.
+		{"the local ones only", VolumeFilter{remoteStorageName: new("")}, []uint32{14}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			volumes, ecVolumes := listed(topo.ToTopologyInfo(tc.f))
+			if !equalIds(volumes, tc.want) {
+				t.Errorf("listed volumes %v, want %v", volumes, tc.want)
+			}
+			if len(ecVolumes) != 0 {
+				t.Errorf("listed ec volumes %v, want none", ecVolumes)
+			}
+		})
+	}
+}
+
 // A filter never changes which disks are reported or what they say about
 // themselves.
 func TestVolumeFilterKeepsTheTopology(t *testing.T) {

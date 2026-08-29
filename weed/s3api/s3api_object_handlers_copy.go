@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"reflect"
 	"strconv"
 	"strings"
@@ -67,6 +68,23 @@ func isValidDirective(value string) bool {
 // hasPrefixFold reports whether s starts with prefix, ignoring case.
 func hasPrefixFold(s, prefix string) bool {
 	return len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix)
+}
+
+// prefixObjectSource presents the object stored on a key that other keys are nested
+// under as the plain object that key names. The entry itself stays a directory - it
+// is where those keys live - so a caller that copies or moves the object works off
+// this view and leaves the directory, and everything under it, alone.
+func prefixObjectSource(entry *filer_pb.Entry) *filer_pb.Entry {
+	if entry == nil || !entry.IsPrefixObject() {
+		return entry
+	}
+	flattened := proto.Clone(entry).(*filer_pb.Entry)
+	flattened.IsDirectory = false
+	if flattened.Attributes != nil {
+		flattened.Attributes.FileMode &^= uint32(os.ModeDir)
+	}
+	delete(flattened.Extended, s3_constants.SeaweedFSPrefixObject)
+	return flattened
 }
 
 // classifyCopySourceError maps a copy-source lookup to an S3 error: a missing
@@ -180,6 +198,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	entry, err := s3a.resolveCopySourceEntry(srcBucket, srcObject, srcVersionId, srcVersioningState)
+	entry = prefixObjectSource(entry)
 	if errCode := classifyCopySourceError(entry, err); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
@@ -250,6 +269,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		routeInPlace := owner != "" && !mimeChanged
 		selfCopyBody := func() s3err.ErrorCode {
 			currentEntry, currentErr := s3a.resolveCopySourceEntry(srcBucket, srcObject, srcVersionId, srcVersioningState)
+			currentEntry = prefixObjectSource(currentEntry)
 			if errCode := classifyCopySourceError(currentEntry, currentErr); errCode != s3err.ErrNone {
 				return errCode
 			}
@@ -623,7 +643,7 @@ func (s3a *S3ApiServer) finalizeCopyDestination(dstBucket, dstObject, dstVersion
 func (s3a *S3ApiServer) rollbackCopyVersion(bucketDir, versionObjectPath string) error {
 	versionPath := util.FullPath(fmt.Sprintf("%s/%s", bucketDir, versionObjectPath))
 	versionDir, versionName := versionPath.DirAndName()
-	return s3a.rmObject(versionDir, versionName, true, false)
+	return s3a.rmObject(context.Background(), versionDir, versionName, true, false)
 }
 
 func (s3a *S3ApiServer) resolveCopySourceEntry(bucket, object, versionId, versioningState string) (*filer_pb.Entry, error) {
@@ -954,7 +974,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	rangeHeader := r.Header.Get("x-amz-copy-source-range")
 	var startOffset, endOffset int64
 	if rangeHeader != "" {
-		startOffset, endOffset, err = parseRangeHeader(rangeHeader)
+		startOffset, endOffset, err = parseRangeHeader(rangeHeader, int64(filer.FileSize(entry)))
 		if err != nil {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
 			return
@@ -1002,10 +1022,14 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if uploadEntryHasSSE(uploadEntry) || sourceEntryHasSSE(entry) || uploadEntryHasChecksum(uploadEntry) {
+	if uploadEntryHasSSE(uploadEntry) || sourceEntryIsEncrypted(entry) || uploadEntryHasChecksum(uploadEntry) {
 		etag, sseMetadata, errCode := s3a.copyObjectPartViaReencryption(r, entry, startOffset, endOffset, dstBucket, dstObject, uploadID, partID, uploadEntry)
 		if errCode != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, errCode)
+			return
+		}
+		// the copy above re-creates a directory an abort removed mid-copy
+		if !s3a.checkUploadStillOpen(w, r, dstBucket, dstObject, uploadID) {
 			return
 		}
 		setEtag(w, "\""+strings.Trim(etag, "\"")+"\"")
@@ -1070,7 +1094,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	// Save the part entry to the multipart uploads folder
 	// Check if part exists and remove it first (allow re-copying same part)
 	if exists, _ := s3a.exists(uploadDir, partName, false); exists {
-		if err := s3a.rm(uploadDir, partName, false, false); err != nil {
+		if err := s3a.rm(r.Context(), uploadDir, partName, false, false); err != nil {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return
 		}
@@ -1081,6 +1105,11 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		entry.Extended = dstEntry.Extended
 	}); err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	// the copy above re-creates a directory an abort removed mid-copy
+	if !s3a.checkUploadStillOpen(w, r, dstBucket, dstObject, uploadID) {
 		return
 	}
 
@@ -1424,8 +1453,10 @@ func (s3a *S3ApiServer) assignNewVolume(dstPath string, expectedDataSize uint64)
 	return assignResult, nil
 }
 
-// parseRangeHeader parses the x-amz-copy-source-range header
-func parseRangeHeader(rangeHeader string) (startOffset, endOffset int64, err error) {
+// parseRangeHeader parses the x-amz-copy-source-range header against a source of
+// fileSize bytes. Unlike a GET, a part copy does not clamp: a range reaching past
+// the source is unsatisfiable, and copying it would pad the part with zeros.
+func parseRangeHeader(rangeHeader string, fileSize int64) (startOffset, endOffset int64, err error) {
 	// Remove "bytes=" prefix if present
 	rangeStr := strings.TrimPrefix(rangeHeader, "bytes=")
 	parts := strings.Split(rangeStr, "-")
@@ -1441,6 +1472,10 @@ func parseRangeHeader(rangeHeader string) (startOffset, endOffset int64, err err
 	endOffset, err = strconv.ParseInt(parts[1], 10, 64)
 	if err != nil {
 		return 0, 0, fmt.Errorf("invalid end offset: %w", err)
+	}
+
+	if startOffset < 0 || endOffset < startOffset || endOffset >= fileSize {
+		return 0, 0, fmt.Errorf("range %s is not satisfiable for a %d byte source", rangeHeader, fileSize)
 	}
 
 	return startOffset, endOffset, nil

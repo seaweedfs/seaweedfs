@@ -47,10 +47,13 @@ func (c *commandEcEncode) Help() string {
 	If you only have less than 4 volume servers, with erasure coding, at least you can afford to
 	have 4 corrupted shard files.
 
-	The -collection parameter supports regular expressions for pattern matching:
-	  - Use exact match: ec.encode -collection="^mybucket$"
-	  - Match multiple buckets: ec.encode -collection="bucket.*"
-	  - Match all collections: ec.encode -collection=".*"
+	The -collection parameter is a comma-separated list of collection names, with
+	"*" and "?" wildcards, and regex patterns:
+	  - One collection: ec.encode -collection="mybucket"
+	  - Several collections: ec.encode -collection="mybucket,otherbucket"
+	  - Match by prefix: ec.encode -collection="bucket*"
+	  - Match all collections: ec.encode -collection="*"
+	  - The empty-named collection: ec.encode -collection="_default"
 
 	Options:
 	  -verbose: show detailed reasons why volumes are not selected for encoding
@@ -88,7 +91,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	encodeCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeId := encodeCommand.Int("volumeId", 0, "the volume id")
 	volumeIdsStr := encodeCommand.String("volumeIds", "", "comma-separated volume ids")
-	collection := encodeCommand.String("collection", "", "collection name or regex pattern")
+	collection := encodeCommand.String("collection", "", "comma-separated collection names, wildcards, or regex patterns; empty matches the collection with no name")
 	fullPercentage := encodeCommand.Float64("fullPercent", 95, "the volume reaches the percentage of max volume size")
 	quietPeriod := encodeCommand.Duration("quietFor", time.Hour, "select volumes without no writes for this period")
 	maxParallelization := encodeCommand.Int("maxParallelization", DefaultMaxParallelization, "run up to X tasks in parallel, whenever possible")
@@ -186,7 +189,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 }
 func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, collectionPattern string, sourceDiskType *types.DiskType, fullPercentage float64, quietPeriod time.Duration, verbose bool) (vids []needle.VolumeId, matchedCollections []string, err error) {
 	// compile regex pattern for collection matching
-	collectionRegex, err := compileCollectionPattern(collectionPattern)
+	collectionMatcher, err := compileCollectionPattern(collectionPattern)
 	if err != nil {
 		return nil, nil, fmt.Errorf("invalid collection pattern '%s': %v", collectionPattern, err)
 	}
@@ -202,6 +205,6 @@ func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, collectionPattern strin
 
 	fmt.Printf("collect volumes with collection pattern '%s', quiet for: %d seconds and %.1f%% full\n", collectionPattern, quietSeconds, fullPercentage)
 
-	vids, matchedCollections = ec.SelectVolumeIdsFromTopology(topologyInfo, volumeSizeLimitMb, collectionRegex, sourceDiskType, quietSeconds, nowUnixSeconds, fullPercentage, verbose)
+	vids, matchedCollections = ec.SelectVolumeIdsFromTopology(topologyInfo, volumeSizeLimitMb, collectionMatcher, sourceDiskType, quietSeconds, nowUnixSeconds, fullPercentage, verbose)
 	return
 }

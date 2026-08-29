@@ -131,7 +131,7 @@ jobs:
 
     - name: Results
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: results-windows
         path: C:\results-*.json
@@ -196,7 +196,7 @@ jobs:
 
     - name: Results
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: results-linux
         path: /tmp/results-linux.json

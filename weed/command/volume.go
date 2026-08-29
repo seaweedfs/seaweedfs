@@ -293,11 +293,29 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 
 	// Set multiple folders and each folder's max volume count limit'
 	v.folders = strings.Split(volumeFolders, ",")
+	// Two locations on one directory would load every volume twice, appending to
+	// the same .dat under two independent locks. Compare identity rather than the
+	// path, so a symlink or bind mount aliasing an earlier -dir is caught too.
+	type seenFolder struct {
+		path string
+		info os.FileInfo
+	}
+	var seenFolders []seenFolder
 	for i, folder := range v.folders {
 		v.folders[i] = util.ResolvePath(folder)
 		if err := util.TestFolderWritable(v.folders[i]); err != nil {
 			glog.Fatalf("Check Data Folder(-dir) Writable %s : %s", v.folders[i], err)
 		}
+		folderInfo, err := os.Stat(v.folders[i])
+		if err != nil {
+			glog.Fatalf("Check Data Folder(-dir) %s : %s", v.folders[i], err)
+		}
+		for _, seen := range seenFolders {
+			if os.SameFile(seen.info, folderInfo) {
+				glog.Fatalf("Data Folder(-dir) %s and %s are the same directory", seen.path, v.folders[i])
+			}
+		}
+		seenFolders = append(seenFolders, seenFolder{v.folders[i], folderInfo})
 	}
 
 	// set max
@@ -396,24 +414,18 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 
 	// Determine volume server ID: if not specified, use ip:port
 	volumeServerId := util.GetVolumeServerId(*v.id, *v.ip, *v.port)
-	var slowLatency time.Duration
 
-	switch *v.diskType {
-	case "hdd":
-		slowLatency = *v.diskHDDIOSlowLatency
-	case "ssd":
-		slowLatency = *v.diskSSDIOSlowLatency
-	case "nvme":
-		slowLatency = *v.diskNVMEIOSlowLatency
-	default:
-		slowLatency = *v.diskHDDIOSlowLatency
-	}
 	diskProbeConfig := stats_collect.DiskIOProbeConfig{
 		Enabled:  *v.diskIOProbe,
 		Timeout:  *v.diskIOTimeout,
 		Interval: *v.diskIOInterval,
 
-		SlowLatency: slowLatency,
+		SlowLatency: *v.diskHDDIOSlowLatency,
+		SlowLatencyByDiskType: map[string]time.Duration{
+			types.HddType:  *v.diskHDDIOSlowLatency,
+			types.SsdType:  *v.diskSSDIOSlowLatency,
+			types.NvmeType: *v.diskNVMEIOSlowLatency,
+		},
 
 		Window:     *v.diskIOWindow,
 		MinSamples: *v.diskIOMinSamples,
@@ -424,10 +436,6 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		MaxStatFailures: *v.diskIOMaxStatFailures,
 
 		RecoveryCoef: *v.diskRecoveryCoef,
-	}
-	if diskProbeConfig.Enabled && len(v.folders) > 1 {
-		glog.Warningf("disk IO probe is disabled for multiple volume directories: %v", v.folders)
-		diskProbeConfig.Enabled = false
 	}
 	volumeServer := weed_server.NewVolumeServer(volumeMux, publicVolumeMux,
 		*v.ip, *v.port, *v.portGrpc, *v.publicUrl, volumeServerId,

@@ -24,6 +24,8 @@ import (
 
 type AzureSink struct {
 	client        *azblob.Client
+	accountName   string
+	endpoint      string
 	container     string
 	dir           string
 	filerSource   *source.FilerSource
@@ -40,6 +42,10 @@ func (g *AzureSink) GetName() string {
 
 func (g *AzureSink) GetSinkToDirectory() string {
 	return g.dir
+}
+
+func (g *AzureSink) GetDestinationIdentity() string {
+	return g.accountName + "\x00" + g.endpoint + "\x00" + g.container + "\x00" + g.dir
 }
 
 func (g *AzureSink) IsIncremental() bool {
@@ -63,6 +69,8 @@ func (g *AzureSink) SetSourceFiler(s *source.FilerSource) {
 }
 
 func (g *AzureSink) initialize(accountName, accountKey, clientID, endpoint, container, dir string) error {
+	g.accountName = accountName
+	g.endpoint = endpoint
 	g.container = container
 	g.dir = dir
 

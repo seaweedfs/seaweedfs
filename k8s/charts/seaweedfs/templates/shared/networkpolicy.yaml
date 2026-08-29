@@ -73,6 +73,9 @@
 {{-   if .Values.s3.icebergPort }}
 {{-     $ports = append $ports .Values.s3.icebergPort }}
 {{-   end }}
+{{-   if .Values.s3.lancePort }}
+{{-     $ports = append $ports .Values.s3.lancePort }}
+{{-   end }}
 {{-   if .Values.s3.metricsPort }}
 {{-     $ports = append $ports .Values.s3.metricsPort }}
 {{-   end }}
@@ -96,6 +99,9 @@
 {{-   $ports := list }}
 {{-   if .Values.worker.metricsPort }}
 {{-     $ports = append $ports .Values.worker.metricsPort }}
+{{-   end }}
+{{-   if and .Values.worker.lanceMetricsPort (include "seaweedfs.worker.lanceNamespaceUrl" .) }}
+{{-     $ports = append $ports .Values.worker.lanceMetricsPort }}
 {{-   end }}
 {{-   $targets = append $targets (dict "component" "worker" "ports" $ports) }}
 {{- end }}

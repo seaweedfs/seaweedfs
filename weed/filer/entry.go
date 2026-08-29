@@ -181,6 +181,16 @@ func (entry *Entry) isS3Entry() bool {
 	return false
 }
 
+// ApplyStorageTtl stamps the TTL the entry's data was placed with. Remote
+// entries never expire locally; the remote storage owns their lifecycle.
+func (entry *Entry) ApplyStorageTtl(ttlSec int32) {
+	if entry.Remote != nil {
+		ttlSec = 0
+	}
+	entry.TtlSec = ttlSec
+	entry.ApplyS3ExpiryMetadata()
+}
+
 func (entry *Entry) ApplyS3ExpiryMetadata() {
 	if entry.TtlSec == 0 {
 		return

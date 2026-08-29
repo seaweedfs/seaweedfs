@@ -139,6 +139,12 @@ const (
 	// SeaweedFS internal metadata prefix (used to filter internal headers from client responses)
 	SeaweedFSInternalPrefix = "x-seaweedfs-"
 
+	// SeaweedFSPrefixObject marks a directory entry that also holds the object named by
+	// its path without a trailing slash. S3 keys are flat, so "a/b" and "a/b/c" are
+	// independent keys, and the filer stores the first one on the directory the second
+	// one lives under.
+	SeaweedFSPrefixObject = "x-seaweedfs-prefix-object"
+
 	// SeaweedFS internal metadata keys for encryption (prefixed to avoid automatic HTTP header conversion)
 	SeaweedFSSSEKMSKey = "x-seaweedfs-sse-kms-key" // Key for storing serialized SSE-KMS metadata
 	SeaweedFSSSES3Key  = "x-seaweedfs-sse-s3-key"  // Key for storing serialized SSE-S3 metadata

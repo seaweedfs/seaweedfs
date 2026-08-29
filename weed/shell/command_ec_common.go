@@ -2,7 +2,7 @@ package shell
 
 import (
 	"context"
-	"regexp"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/ec"
@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
@@ -54,7 +55,7 @@ func _getDefaultReplicaPlacement(commandEnv *CommandEnv) (*super_block.ReplicaPl
 	var resp *master_pb.GetMasterConfigurationResponse
 	var err error
 
-	err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+	err = commandEnv.MasterClient.WithClient(context.Background(), false, func(client master_pb.SeaweedClient) error {
 		resp, err = client.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
 		return err
 	})
@@ -93,7 +94,7 @@ func collectTopologyInfo(commandEnv *CommandEnv, delayBeforeCollecting time.Dura
 	}
 
 	var resp *master_pb.VolumeListResponse
-	err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+	err = commandEnv.MasterClient.WithClient(context.Background(), false, func(client master_pb.SeaweedClient) error {
 		resp, err = pb.CollectVolumeList(context.Background(), client, &master_pb.VolumeListRequest{})
 		return err
 	})
@@ -141,17 +142,13 @@ func EcBalance(commandEnv *CommandEnv, collections []string, dc string, ecReplic
 	return ec.EcBalance(commandEnv.ecEnv(), collections, dc, ecReplicaPlacement, diskType, maxParallelization, ioBytePerSecond, applyBalancing, excludeNodes, volumeIds, nil)
 }
 
-// compileCollectionPattern compiles a regex pattern for collection matching.
-// Empty patterns match empty collections only.
-// The special keyword CollectionDefault ("_default") matches empty collections.
-func compileCollectionPattern(pattern string) (*regexp.Regexp, error) {
-	if pattern == "" {
-		// empty pattern matches empty collection
-		return regexp.Compile("^$")
+// compileCollectionPattern compiles the -collection value shared by the ec and
+// tier commands: a comma-separated list of collection names, wildcards, and
+// regex patterns. An empty value matches the empty-named collection only, the
+// same as CollectionDefault.
+func compileCollectionPattern(pattern string) (*wildcard.CollectionMatcher, error) {
+	if strings.TrimSpace(pattern) == "" {
+		pattern = CollectionDefault
 	}
-	if pattern == CollectionDefault {
-		// CollectionDefault keyword matches empty collection
-		return regexp.Compile("^$")
-	}
-	return regexp.Compile(pattern)
+	return wildcard.CompileCollectionMatcher(pattern)
 }

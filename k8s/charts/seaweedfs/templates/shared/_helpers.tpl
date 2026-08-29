@@ -148,6 +148,15 @@ true
 {{- end -}}
 {{- end -}}
 
+{{/* Lance namespace URL the worker's Lance container maintains; empty when unreachable */}}
+{{- define "seaweedfs.worker.lanceNamespaceUrl" -}}
+{{- if .Values.worker.namespaceUrl -}}
+{{- .Values.worker.namespaceUrl -}}
+{{- else if and .Values.s3.enabled .Values.s3.lancePort -}}
+{{- printf "http://%s.%s:%d" (include "seaweedfs.componentName" (list . "s3")) .Release.Namespace (int .Values.s3.lancePort) -}}
+{{- end -}}
+{{- end -}}
+
 {{/* Return the proper volume image */}}
 {{- define "seaweedfs.volume.image" -}}
 {{- if .Values.volume.imageOverride -}}
@@ -547,4 +556,24 @@ true
 {{- if .value -}}
 {{- and (eq .value "PreferClose") (semverCompare ">=1.35-0" .Capabilities.KubeVersion.GitVersion) | ternary "PreferSameZone" .value -}}
 {{- end -}}
+{{- end -}}
+
+{{/*
+Render LoadBalancer-specific service fields (loadBalancerClass, loadBalancerIP,
+loadBalancerSourceRanges), only when the service type is LoadBalancer.
+Usage: {{ include "seaweedfs.service.loadBalancerFields" .Values.s3.service }}
+*/}}
+{{- define "seaweedfs.service.loadBalancerFields" -}}
+{{- if eq (.type | default "ClusterIP") "LoadBalancer" }}
+{{- with .loadBalancerClass }}
+  loadBalancerClass: {{ . }}
+{{- end }}
+{{- with .loadBalancerIP }}
+  loadBalancerIP: {{ . }}
+{{- end }}
+{{- with .loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- toYaml . | nindent 4 }}
+{{- end }}
+{{- end }}
 {{- end -}}

@@ -28,6 +28,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	// Import KMS providers to register them
 	_ "github.com/seaweedfs/seaweedfs/weed/kms/aws"
@@ -59,7 +60,7 @@ type IdentityAccessManagement struct {
 	hashCounters      map[string]*int32
 	identityAnonymous *Identity
 	domain            string
-	externalHost      string // pre-computed host for S3 signature verification (from ExternalUrl)
+	externalHost      string // pre-computed host tried first during S3 signature verification (from ExternalUrl)
 	isAuthEnabled     bool
 	credentialManager *credential.CredentialManager
 	filerClient       *wdclient.FilerClient
@@ -314,7 +315,7 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, filerClient
 		if err != nil {
 			glog.Fatalf("failed to parse s3.externalUrl: %v", err)
 		}
-		glog.V(0).Infof("S3 signature verification will use external host: %q (from %q)", externalHost, option.ExternalUrl)
+		glog.V(0).Infof("S3 signature verification will try external host %q (from %q) first", externalHost, option.ExternalUrl)
 	}
 
 	iam := &IdentityAccessManagement{
@@ -400,24 +401,23 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, filerClient
 	// For "weed mini" without any S3 config, default to allowing all access (isAuthEnabled = false)
 	// If any credentials are configured (via file, filer, or env vars), enable authentication
 	iam.m.Lock()
-	iam.isAuthEnabled = len(iam.identities) > 0
+	identityCount := len(iam.identities)
+	// Pointing the gateway at a config file is the operator asking for
+	// authentication. A file that yields no identity - an empty secret mount, a
+	// key the proto parser does not recognise - must deny everyone rather than serve
+	// the cluster to anonymous callers.
+	iam.isAuthEnabled = identityCount > 0 || startConfigFile != ""
 	iam.m.Unlock()
-	if iam.isAuthEnabled {
-		hasAnyIdentity.Store(true)
-	}
 
-	if iam.isAuthEnabled {
-		// Credentials were configured - enable authentication
-		glog.V(1).Infof("S3 authentication enabled (%d identities configured)", len(iam.identities))
-	} else {
-		// No credentials configured
-		if startConfigFile != "" {
-			// Config file was specified but contained no identities - this is unusual, log a warning
-			glog.Warningf("S3 config file %s specified but no identities loaded - authentication disabled", startConfigFile)
-		} else {
-			// No config file and no identities - this is the normal allow-all case
-			glog.V(1).Infof("S3 authentication disabled - no credentials configured (allowing all access)")
-		}
+	switch {
+	case identityCount > 0:
+		hasAnyIdentity.Store(true)
+		glog.V(1).Infof("S3 authentication enabled (%d identities configured)", identityCount)
+	case startConfigFile != "":
+		glog.Warningf("S3 config file %s loaded no identities - every request is denied until one is configured", startConfigFile)
+	default:
+		// No config file and no identities - this is the normal allow-all case
+		glog.V(1).Infof("S3 authentication disabled - no credentials configured (allowing all access)")
 	}
 
 	return iam
@@ -629,6 +629,10 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFile(fileName str
 		return fmt.Errorf("fail to read %s : %v", fileName, readErr)
 	}
 
+	if unknown := unknownS3ConfigKeys(content); len(unknown) > 0 {
+		glog.Warningf("S3 config %s: ignoring unknown top-level keys %v", fileName, unknown)
+	}
+
 	// Initialize KMS if configuration contains KMS settings
 	if err := iam.initializeKMSFromConfig(content); err != nil {
 		glog.Warningf("KMS initialization failed: %v", err)
@@ -648,6 +652,31 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFile(fileName str
 	iam.markStaticIdentities(config)
 	iam.updateCredentialManagerStaticIdentities()
 	return nil
+}
+
+// nonIdentityS3ConfigKeys are the top-level sections of a config file that
+// belong to another subsystem rather than to S3ApiConfiguration: the KMS block,
+// and the advanced IAM blocks of a -s3.iam.config file.
+var nonIdentityS3ConfigKeys = []string{"kms", "sts", "policy", "providers", "roles"}
+
+// unknownS3ConfigKeys returns the top-level keys the proto parser discards. A
+// singular "identity" otherwise loads as an empty config, which denies every
+// request with nothing pointing at the mistake.
+func unknownS3ConfigKeys(content []byte) []string {
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(content, &root); err != nil {
+		return nil
+	}
+	fields := (&iam_pb.S3ApiConfiguration{}).ProtoReflect().Descriptor().Fields()
+	var unknown []string
+	for key := range root {
+		if slices.Contains(nonIdentityS3ConfigKeys, key) || fields.ByName(protoreflect.Name(key)) != nil || fields.ByJSONName(key) != nil {
+			continue
+		}
+		unknown = append(unknown, key)
+	}
+	slices.Sort(unknown)
+	return unknown
 }
 
 func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromBytes(content []byte) error {
@@ -1297,6 +1326,7 @@ func (iam *IdentityAccessManagement) UpsertIdentity(ident *iam_pb.Identity) erro
 //
 // Driven solely by isAuthEnabled, which is set when:
 //   - any locally managed identities/credentials are loaded (file/filer/env), or
+//   - the operator names a config file, whether or not it yields an identity, or
 //   - the operator passes -s3.iam.config, which triggers EnableAuthEnforcement
 //     at startup time even before any identities sync in.
 //

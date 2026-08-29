@@ -286,7 +286,7 @@ func (fs *FilerServer) streamFromRemote(ctx context.Context, dir, name string, o
 	if err != nil {
 		return nil, err
 	}
-	client, err := remote_storage.GetRemoteStorage(storageConf)
+	client, err := BuildGuardedRemoteStorageClient(ctx, storageConf, false)
 	if err != nil {
 		return nil, err
 	}
