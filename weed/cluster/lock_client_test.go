@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -148,5 +149,19 @@ func TestLockClientPriorOwnerForKeyExpires(t *testing.T) {
 		if got := lc.PriorOwnerForKey(fmt.Sprintf("key-%d", i)); got != "" {
 			t.Fatalf("prior owner should expire after the cooling window, got %q", got)
 		}
+	}
+}
+
+// LiveLock.generation is a fencing token written and read with 64-bit atomic
+// operations. On 32-bit platforms (GOARCH=386 and GOARCH=arm) a 64-bit atomic
+// op requires an 8-byte-aligned address, which Go only guarantees for the
+// first field of an allocated struct. generation must therefore stay first:
+// a misaligned field makes StoreInt64 panic with "unaligned 64-bit atomic
+// operation" the moment this test runs on a 32-bit target.
+func TestLiveLockGenerationIsAligned(t *testing.T) {
+	var lock LiveLock
+	atomic.StoreInt64(&lock.generation, 42)
+	if got := lock.Generation(); got != 42 {
+		t.Fatalf("generation = %d, want 42", got)
 	}
 }
