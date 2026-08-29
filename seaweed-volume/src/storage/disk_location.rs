@@ -867,6 +867,13 @@ impl DiskLocation {
         }
 
         for &shard_id in shard_ids {
+            // A mount retry re-listing a shard this volume already holds:
+            // keep the existing registration (mirrors Go's AddEcVolumeShard
+            // added=false) — re-adding would replace a serving fd and bump
+            // the ec_shards gauge without growing the mounted count.
+            if ec_vol.has_shard(shard_id as u8) {
+                continue;
+            }
             let mut shard = EcVolumeShard::new(&dir, collection, vid, shard_id as u8);
             shard.disk_type = ec_vol.disk_type.clone();
             if let Err(e) = ec_vol.add_shard(shard) {
@@ -1838,6 +1845,44 @@ mod tests {
             loc.find_ec_volume(VolumeId(9)).map(|v| v.shard_count()),
             Some(1),
             "an existing volume keeps its valid shards when a later shard is refused",
+        );
+    }
+
+    /// A mount retry re-listing an already mounted shard must keep the
+    /// existing registration and not bump the ec_shards gauge — the Rust
+    /// twin of Go's AddEcVolumeShard added=false handling.
+    #[test]
+    fn test_mount_ec_shards_duplicate_keeps_registration_and_gauge() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut loc = DiskLocation::new(
+            dir,
+            dir,
+            10,
+            DiskType::HardDrive,
+            MinFreeSpace::Percent(1.0),
+            Vec::new(),
+        )
+        .unwrap();
+
+        // A collection name unique to this test: the gauge is process-global
+        // and sibling tests running in parallel touch other labels.
+        std::fs::write(format!("{}/dupmount_11.ec00", dir), b"shard bytes").unwrap();
+        let gauge = crate::metrics::VOLUME_GAUGE.with_label_values(&["dupmount", "ec_shards"]);
+        let before = gauge.get();
+
+        loc.mount_ec_shards(VolumeId(11), "dupmount", &[0], "").unwrap();
+        loc.mount_ec_shards(VolumeId(11), "dupmount", &[0], "")
+            .expect("a duplicate mount must succeed as a no-op");
+
+        assert_eq!(
+            loc.find_ec_volume(VolumeId(11)).map(|v| v.shard_count()),
+            Some(1),
+        );
+        assert_eq!(
+            gauge.get(),
+            before + 1.0,
+            "the duplicate mount must not bump the ec_shards gauge",
         );
     }
 
