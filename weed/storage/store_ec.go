@@ -34,10 +34,24 @@ var errShardNotLocal = errors.New("ec shard not on this server")
 // FindEcShardTargetLocation returns the disk that should receive a new
 // shard / index file for (collection, vid). The selection order is:
 //
+//  0. a disk that already owns one of shardIds (in-memory claim),
 //  1. a disk that already has the EC volume mounted (in-memory state),
 //  2. a disk that owns the .ecx file on disk (volume not mounted yet),
 //  3. any HDD with free space,
 //  4. any disk with free space.
+//
+// Step 0 keeps the per-server invariant that a shard id is owned by at
+// most one disk. Steps 1-4 only know the volume, and a multi-disk server
+// legitimately mounts the same vid on several disks, so the free-count
+// tie-break alone can send a re-copy of a shard the server already holds
+// (a retried ec.balance / ec.rebuild move) to a sibling disk. Both disks
+// then claim the same (vid, shard) and report it to the master from two
+// disk ids, and which claimant serves reads or survives a later
+// unmount/delete of the shard id becomes an accident of Locations order.
+// Overwriting in place is what the caller meant, so an owning disk wins
+// ahead of the space filters too — a re-copy of a shard already on that
+// disk needs no new shard slot, and a genuinely full disk fails the
+// write with ENOSPC rather than silently splitting the claim.
 //
 // Step 2 is the missing primitive that pinned subsequent shards to the
 // first-shard disk during ec.rebuild. ec.rebuild only sets CopyEcxFile=true
@@ -58,26 +72,31 @@ var errShardNotLocal = errors.New("ec shard not on this server")
 // across four FindFreeLocation passes was equivalent but acquired
 // volumesLock and ecVolumesLock RLocks (via VolumesLen / EcShardCount) up
 // to four times per disk per call.
-func (s *Store) FindEcShardTargetLocation(collection string, vid needle.VolumeId, dataShardCount int) *DiskLocation {
+func (s *Store) FindEcShardTargetLocation(collection string, vid needle.VolumeId, dataShardCount int, shardIds ...erasure_coding.ShardId) *DiskLocation {
 	const (
 		tierAnyDisk = iota + 1
 		tierHDD
 		tierEcxOnDisk
 		tierMounted
+		tierOwnsShard
 	)
 
 	var (
-		best     *DiskLocation
-		bestTier int
-		bestFree int32
+		best      *DiskLocation
+		bestTier  int
+		bestOwned int
+		bestFree  int32
 	)
 	for _, loc := range s.Locations {
-		if loc.isDiskSpaceLow.Load() {
-			continue
-		}
+		owned := ownedEcShardCount(loc, vid, shardIds)
 		freeCount := ecFreeShardCount(loc, dataShardCount)
-		if freeCount <= 0 {
-			continue
+		if owned == 0 {
+			if loc.isDiskSpaceLow.Load() {
+				continue
+			}
+			if freeCount <= 0 {
+				continue
+			}
 		}
 		tier := tierAnyDisk
 		if loc.DiskType == types.HardDriveType {
@@ -89,13 +108,63 @@ func (s *Store) FindEcShardTargetLocation(collection string, vid needle.VolumeId
 		if _, mounted := loc.FindEcVolume(vid); mounted {
 			tier = tierMounted
 		}
-		if best == nil || tier > bestTier || (tier == bestTier && freeCount > bestFree) {
+		if owned > 0 {
+			tier = tierOwnsShard
+		}
+		better := best == nil || tier > bestTier
+		if !better && tier == bestTier {
+			// owned only separates disks inside tierOwnsShard; it is 0
+			// everywhere else, so this falls through to the free-count
+			// tie-break for the other tiers.
+			better = owned > bestOwned || (owned == bestOwned && freeCount > bestFree)
+		}
+		if better {
 			best = loc
 			bestTier = tier
+			bestOwned = owned
 			bestFree = freeCount
 		}
 	}
 	return best
+}
+
+// EcShardOwnerDisks returns the distinct disks that already own one of
+// shardIds for vid, in Locations order. More than one owner means the batch
+// has no single correct destination — whichever disk receives it would
+// duplicate a sibling disk's claim — so batch callers must split by owner
+// (VolumeEcShardsCopy refuses such a batch instead of guessing).
+func (s *Store) EcShardOwnerDisks(vid needle.VolumeId, shardIds []erasure_coding.ShardId) []*DiskLocation {
+	var owners []*DiskLocation
+	for _, loc := range s.Locations {
+		if ownedEcShardCount(loc, vid, shardIds) > 0 {
+			owners = append(owners, loc)
+		}
+	}
+	return owners
+}
+
+// ownedEcShardCount reports how many of shardIds this disk already claims
+// for vid, per the in-memory registration the read path and heartbeats use.
+func ownedEcShardCount(loc *DiskLocation, vid needle.VolumeId, shardIds []erasure_coding.ShardId) int {
+	if len(shardIds) == 0 {
+		return 0
+	}
+	loc.ecVolumesLock.RLock()
+	defer loc.ecVolumesLock.RUnlock()
+	ecVolume, found := loc.ecVolumes[vid]
+	if !found {
+		return 0
+	}
+	owned := 0
+	for _, shard := range ecVolume.Shards {
+		for _, shardId := range shardIds {
+			if shard.ShardId == shardId {
+				owned++
+				break
+			}
+		}
+	}
+	return owned
 }
 
 // ecFreeShardCount returns the free EC shard capacity of loc, expressed
