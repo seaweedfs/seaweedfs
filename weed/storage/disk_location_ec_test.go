@@ -3,6 +3,7 @@ package storage
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/stats"
@@ -766,6 +767,47 @@ func TestLoadAllEcShardsDeletesStaleZeroSizedShards(t *testing.T) {
 	}
 	if _, err := os.Stat(fresh); err != nil {
 		t.Errorf("fresh zero-sized shard %s must survive the scan: %v", fresh, err)
+	}
+}
+
+// TestLoadEcShardRefusesEmptyShardFile: the startup scan skips 0-byte shard
+// files, but the mount RPC path (MountEcShards -> LoadEcShard) opens the file
+// directly. A 0-byte shard beside an index WITH entries is residue of a
+// failed copy — registering it would advertise a size-0 claim that serves
+// nothing and, with placement pinned to the owning disk, would keep
+// attracting re-copies to a file that was never valid. AddEcVolumeShard must
+// refuse it and the loader must leave nothing registered. (A 0-byte shard
+// beside a 0-byte index is the legitimate empty-volume layout and keeps
+// mounting — TestMountEcShards_EmptyEcxMountsSuccessfully.)
+func TestLoadEcShardRefusesEmptyShardFile(t *testing.T) {
+	dir := t.TempDir()
+	diskLocation := NewDiskLocation(dir, 10, util.MinFreeSpace{}, dir, types.HardDriveType, nil, stats.DefaultDiskIOProbeConfig())
+	defer closeEcVolumes(diskLocation)
+
+	// A usable .ecx sits alongside, so without the size gate the load would
+	// succeed and register the empty shard — the .ecx must not mask the gate.
+	empty := filepath.Join(dir, "123.ec00")
+	if f, err := os.Create(empty); err != nil {
+		t.Fatalf("create %s: %v", empty, err)
+	} else {
+		f.Close()
+	}
+	if err := os.WriteFile(filepath.Join(dir, "123.ecx"), make([]byte, 16), 0o644); err != nil {
+		t.Fatalf("seed .ecx: %v", err)
+	}
+
+	_, err := diskLocation.LoadEcShard("", needle.VolumeId(123), erasure_coding.ShardId(0))
+	if err == nil {
+		t.Fatalf("loading a 0-byte shard file must fail")
+	}
+	if !strings.Contains(err.Error(), "empty (0 bytes)") {
+		t.Fatalf("a 0-byte shard should be refused as empty, got: %v", err)
+	}
+	if _, found := diskLocation.FindEcShard(needle.VolumeId(123), erasure_coding.ShardId(0)); found {
+		t.Errorf("a 0-byte shard file must not register a shard claim")
+	}
+	if _, found := diskLocation.FindEcVolume(needle.VolumeId(123)); found {
+		t.Errorf("a refused shard load must not leave an empty EcVolume registered")
 	}
 }
 

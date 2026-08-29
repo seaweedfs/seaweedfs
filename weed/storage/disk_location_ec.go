@@ -161,7 +161,20 @@ func (l *DiskLocation) loadEcShardWithIdxDir(collection string, vid needle.Volum
 		}
 		l.ecVolumes[vid] = ecVolume
 	}
-	ecVolume.AddEcVolumeShard(ecVolumeShard)
+	if _, err := ecVolume.AddEcVolumeShard(ecVolumeShard); err != nil {
+		// The shard could not be registered (e.g. a 0-byte file beside an
+		// index with entries). Leave nothing behind: close the opened shard,
+		// and remove the EcVolume if this call just created it and it holds
+		// no shards — a zero-shard registration would advertise a mount that
+		// serves no data while pinning its descriptors.
+		ecVolumeShard.Unmount() // release the gauge the constructor's Mount took
+		ecVolumeShard.Close()
+		if !found && len(ecVolume.Shards) == 0 {
+			delete(l.ecVolumes, vid)
+			ecVolume.Close()
+		}
+		return nil, err
+	}
 
 	return ecVolume, nil
 }
