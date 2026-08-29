@@ -343,15 +343,22 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 		location = vs.store.Locations[req.DiskId]
 		glog.V(1).Infof("Using disk %d for EC shard copy: %s", req.DiskId, location.Directory)
 	} else {
-		// Auto-select the target disk: prefer a disk that already has the
-		// EC volume mounted, then a disk that owns the .ecx on disk (the
-		// volume hasn't been mounted yet — relevant for ec.rebuild, where
-		// only the first shard carries .ecx and subsequent shards must
-		// land on the same disk; see #9212), then any HDD, then any disk.
-		// Pass the build's default data-shard count for free-slot maths;
-		// the helper takes it as a parameter so custom-ratio builds (e.g.
-		// enterprise) can swap it without touching this file.
-		location = vs.store.FindEcShardTargetLocation(req.Collection, needle.VolumeId(req.VolumeId), erasure_coding.DataShardsCount)
+		// Auto-select the target disk: prefer a disk that already owns one
+		// of the shards being copied (a retried move must overwrite in
+		// place, not leave two disks of this server claiming the same
+		// shard), then a disk that already has the EC volume mounted, then
+		// a disk that owns the .ecx on disk (the volume hasn't been mounted
+		// yet — relevant for ec.rebuild, where only the first shard carries
+		// .ecx and subsequent shards must land on the same disk; see
+		// #9212), then any HDD, then any disk. Pass the build's default
+		// data-shard count for free-slot maths; the helper takes it as a
+		// parameter so custom-ratio builds (e.g. enterprise) can swap it
+		// without touching this file.
+		shardIds := make([]erasure_coding.ShardId, 0, len(req.ShardIds))
+		for _, shardId := range req.ShardIds {
+			shardIds = append(shardIds, erasure_coding.ShardId(shardId))
+		}
+		location = vs.store.FindEcShardTargetLocation(req.Collection, needle.VolumeId(req.VolumeId), erasure_coding.DataShardsCount, shardIds...)
 		if location == nil {
 			return nil, fmt.Errorf("no space left")
 		}

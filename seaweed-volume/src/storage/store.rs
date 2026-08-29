@@ -259,10 +259,24 @@ impl Store {
     /// Returns the index of the disk that should receive a new EC
     /// shard / index file for `(collection, vid)`. Selection order:
     ///
+    /// 0. a disk that already owns one of `shard_ids` (in-memory claim),
     /// 1. a disk that already has the EC volume mounted (in-memory state),
     /// 2. a disk that owns the `.ecx` file on disk (volume not yet mounted),
     /// 3. any HDD with free space,
     /// 4. any disk with free space.
+    ///
+    /// Step 0 keeps the per-server invariant that a shard id is owned by
+    /// at most one disk. Steps 1-4 only know the volume, and a multi-disk
+    /// server legitimately mounts the same vid on several disks, so the
+    /// free-count tie-break alone can send a re-copy of a shard the server
+    /// already holds (a retried `ec.balance` / `ec.rebuild` move) to a
+    /// sibling disk. Both disks then claim the same (vid, shard) and
+    /// report it to the master from two disk ids, and which claimant
+    /// serves reads or survives a later unmount/delete of the shard id
+    /// becomes an accident of location order. Overwriting in place is what
+    /// the caller meant, so an owning disk wins ahead of the space filters
+    /// too — a re-copy needs no new shard slot, and a genuinely full disk
+    /// fails the write rather than silently splitting the claim.
     ///
     /// Step 2 is the missing primitive that pinned subsequent shards to
     /// the first-shard disk during `ec.rebuild`: rebuild only sets
@@ -286,20 +300,26 @@ impl Store {
         collection: &str,
         vid: VolumeId,
         data_shard_count: u32,
+        shard_ids: &[u32],
     ) -> Option<usize> {
         const TIER_ANY_DISK: u8 = 1;
         const TIER_HDD: u8 = 2;
         const TIER_ECX_ON_DISK: u8 = 3;
         const TIER_MOUNTED: u8 = 4;
+        const TIER_OWNS_SHARD: u8 = 5;
 
-        let mut best: Option<(usize, u8, i64)> = None;
+        // (index, tier, owned shard count, free shard slots)
+        let mut best: Option<(usize, u8, usize, i64)> = None;
         for (i, loc) in self.locations.iter().enumerate() {
-            if loc.is_disk_space_low.load(Ordering::Relaxed) {
-                continue;
-            }
+            let owned = owned_ec_shard_count(loc, vid, shard_ids);
             let free = ec_free_shard_count(loc, data_shard_count);
-            if free <= 0 {
-                continue;
+            if owned == 0 {
+                if loc.is_disk_space_low.load(Ordering::Relaxed) {
+                    continue;
+                }
+                if free <= 0 {
+                    continue;
+                }
             }
             let mut tier = TIER_ANY_DISK;
             if loc.disk_type == DiskType::HardDrive {
@@ -311,15 +331,25 @@ impl Store {
             if loc.has_ec_volume(vid) {
                 tier = TIER_MOUNTED;
             }
+            if owned > 0 {
+                tier = TIER_OWNS_SHARD;
+            }
             let better = match best {
                 None => true,
-                Some((_, b_tier, b_free)) => tier > b_tier || (tier == b_tier && free > b_free),
+                // owned only separates disks inside TIER_OWNS_SHARD; it is 0
+                // everywhere else, so this falls through to the free-count
+                // tie-break for the other tiers.
+                Some((_, b_tier, b_owned, b_free)) => {
+                    tier > b_tier
+                        || (tier == b_tier
+                            && (owned > b_owned || (owned == b_owned && free > b_free)))
+                }
             };
             if better {
-                best = Some((i, tier, free));
+                best = Some((i, tier, owned, free));
             }
         }
-        best.map(|(i, _, _)| i)
+        best.map(|(i, _, _, _)| i)
     }
 
     /// Create a new volume, placing it on the location with the most free space.
@@ -1333,6 +1363,20 @@ fn ec_free_shard_count(loc: &DiskLocation, data_shard_count: u32) -> i64 {
     free
 }
 
+/// Reports how many of `shard_ids` this disk already claims for `vid`, per
+/// the in-memory registration the read path and heartbeats use.
+///
+/// Mirrors `ownedEcShardCount` in `weed/storage/store_ec.go`.
+fn owned_ec_shard_count(loc: &DiskLocation, vid: VolumeId, shard_ids: &[u32]) -> usize {
+    let Some(ecv) = loc.find_ec_volume(vid) else {
+        return 0;
+    };
+    shard_ids
+        .iter()
+        .filter(|&&shard_id| ecv.has_shard(shard_id as u8))
+        .count()
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -1871,7 +1915,7 @@ mod tests {
         let base = volume_file_name(&store.locations[2].idx_directory, collection, vid);
         std::fs::write(format!("{}.ecx", base), vec![0u8; 20]).unwrap();
 
-        let got = store.find_ec_shard_target_location(collection, vid, 10);
+        let got = store.find_ec_shard_target_location(collection, vid, 10, &[]);
         assert_eq!(
             got,
             Some(2),
@@ -2013,7 +2057,7 @@ mod tests {
         let base = volume_file_name(&store.locations[2].idx_directory, collection, vid);
         std::fs::write(format!("{}.ecx", base), vec![0u8; 20]).unwrap();
 
-        let got = store.find_ec_shard_target_location(collection, vid, 10);
+        let got = store.find_ec_shard_target_location(collection, vid, 10, &[]);
         assert_eq!(got, Some(1), "expected the mounted disk to win; got {:?}", got);
     }
 
@@ -2022,7 +2066,7 @@ mod tests {
     #[test]
     fn test_find_ec_shard_target_location_falls_through_to_hdd_when_nothing_matches() {
         let (store, _tmp) = make_ec_target_test_store(2);
-        let got = store.find_ec_shard_target_location("grafana-loki", VolumeId(3333), 10);
+        let got = store.find_ec_shard_target_location("grafana-loki", VolumeId(3333), 10, &[]);
         assert!(got.is_some(), "expected an HDD fallback");
         assert_eq!(store.locations[got.unwrap()].disk_type, DiskType::HardDrive);
     }
@@ -2038,7 +2082,7 @@ mod tests {
             .max_volume_count
             .store(0, Ordering::Relaxed);
 
-        let got = store.find_ec_shard_target_location("grafana-loki", VolumeId(4444), 10);
+        let got = store.find_ec_shard_target_location("grafana-loki", VolumeId(4444), 10, &[]);
         assert_eq!(
             got,
             Some(0),
@@ -2076,12 +2120,105 @@ mod tests {
             .mount_ec_shards(vid, collection, &[0], "")
             .unwrap();
 
-        let got = store.find_ec_shard_target_location(collection, vid, 10);
+        let got = store.find_ec_shard_target_location(collection, vid, 10, &[]);
         assert_eq!(
             got,
             Some(1),
             "expected the .ecx-owning disk (1 shard placed, 9 free shard slots) to be picked; got {:?}",
             got,
+        );
+    }
+
+    /// Per-server invariant: a shard id is owned by at most one disk.
+    ///
+    /// A multi-disk server legitimately mounts one vid on several disks, each
+    /// holding a disjoint subset of the shards, so the mounted tier ties and
+    /// the free-count tie-break decides — and it points at whichever disk
+    /// happens to be emptier, not at the disk that already has this shard. A
+    /// re-copy of a shard the server already holds (a retried `ec.balance` /
+    /// `ec.rebuild` move) then lands a second copy on the sibling disk, and
+    /// both disks register the same shard id.
+    #[test]
+    fn test_find_ec_shard_target_location_pins_to_the_disk_owning_the_shard() {
+        let (mut store, _tmp) = make_ec_target_test_store(2);
+        let collection = "grafana-loki";
+        let vid = VolumeId(8888);
+
+        // Disk 0 owns shards 0 and 1, disk 1 owns shard 2 — so disk 1 is the
+        // emptier of the two and wins the free-count tie-break.
+        let base0 = volume_file_name(&store.locations[0].directory, collection, vid);
+        std::fs::write(format!("{}.ec00", base0), b"x").unwrap();
+        std::fs::write(format!("{}.ec01", base0), b"x").unwrap();
+        store.locations[0]
+            .mount_ec_shards(vid, collection, &[0, 1], "")
+            .unwrap();
+
+        let base1 = volume_file_name(&store.locations[1].directory, collection, vid);
+        std::fs::write(format!("{}.ec02", base1), b"x").unwrap();
+        store.locations[1]
+            .mount_ec_shards(vid, collection, &[2], "")
+            .unwrap();
+
+        assert_eq!(
+            store.find_ec_shard_target_location(collection, vid, 10, &[0]),
+            Some(0),
+            "a copy of shard 0 left its owning disk",
+        );
+        assert_eq!(
+            store.find_ec_shard_target_location(collection, vid, 10, &[2]),
+            Some(1),
+            "a copy of shard 2 left its owning disk",
+        );
+        // A shard no disk owns yet is placed by the unchanged waterfall: both
+        // disks have it mounted, so the emptier one wins.
+        assert_eq!(
+            store.find_ec_shard_target_location(collection, vid, 10, &[7]),
+            Some(1),
+            "placement of an unclaimed shard changed",
+        );
+    }
+
+    /// The second half of the invariant: a disk with no free shard slots
+    /// still wins for a shard it already owns. Re-copying that shard
+    /// overwrites bytes the disk is already accounted for, while routing to a
+    /// sibling splits the claim across two disks.
+    #[test]
+    fn test_find_ec_shard_target_location_owning_disk_wins_when_full() {
+        let (mut store, _tmp) = make_ec_target_test_store(2);
+        store.locations[0]
+            .max_volume_count
+            .store(1, Ordering::Relaxed);
+
+        let collection = "grafana-loki";
+        let vid = VolumeId(9999);
+
+        let base = volume_file_name(&store.locations[0].directory, collection, vid);
+        std::fs::write(format!("{}.ec00", base), b"x").unwrap();
+        store.locations[0]
+            .mount_ec_shards(vid, collection, &[0], "")
+            .unwrap();
+
+        // Fill disk 0 past its shard-slot budget so ec_free_shard_count is 0.
+        let filler = VolumeId(10000);
+        let filler_base = volume_file_name(&store.locations[0].directory, collection, filler);
+        let filler_shards: Vec<u32> = (0..10).collect();
+        for shard_id in &filler_shards {
+            std::fs::write(format!("{}.ec{:02}", filler_base, shard_id), b"x").unwrap();
+        }
+        store.locations[0]
+            .mount_ec_shards(filler, collection, &filler_shards, "")
+            .unwrap();
+
+        assert_eq!(
+            store.find_ec_shard_target_location(collection, vid, 10, &[0]),
+            Some(0),
+            "a copy of shard 0 left its owning disk when the disk was full",
+        );
+        // A shard it does not own still respects the space filter.
+        assert_eq!(
+            store.find_ec_shard_target_location(collection, vid, 10, &[7]),
+            Some(1),
+            "an unclaimed shard should go to the disk with free slots",
         );
     }
 }

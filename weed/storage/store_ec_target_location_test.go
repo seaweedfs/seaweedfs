@@ -148,6 +148,82 @@ func TestFindEcShardTargetLocation_TightProvisioningKeepsEcxDisk(t *testing.T) {
 	}
 }
 
+// TestFindEcShardTargetLocation_PinsToTheDiskOwningTheShard covers the
+// per-server invariant that a shard id is owned by at most one disk.
+//
+// A multi-disk server legitimately mounts one vid on several disks, each
+// holding a disjoint subset of the shards, so the mounted tier ties and the
+// free-count tie-break decides — and it points at whichever disk happens to
+// be emptier, not at the disk that already has this shard. A re-copy of a
+// shard the server already holds (a retried ec.balance / ec.rebuild move)
+// then lands a second copy on the sibling disk, and both disks register the
+// same shard id.
+func TestFindEcShardTargetLocation_PinsToTheDiskOwningTheShard(t *testing.T) {
+	store := newEcTargetTestStore(t, 2)
+	collection := "grafana-loki"
+	vid := needle.VolumeId(8888)
+
+	// Disk 0 owns shards 0 and 1, disk 1 owns shard 2 — so disk 1 is the
+	// emptier of the two and wins the free-count tie-break.
+	mountEcShards(store.Locations[0], collection, vid, 0, 1)
+	mountEcShards(store.Locations[1], collection, vid, 2)
+
+	if got := store.FindEcShardTargetLocation(collection, vid, dataShardCount, 0); got != store.Locations[0] {
+		t.Errorf("a copy of shard 0 left its owning disk: got %v, want %s", got, store.Locations[0].Directory)
+	}
+	if got := store.FindEcShardTargetLocation(collection, vid, dataShardCount, 2); got != store.Locations[1] {
+		t.Errorf("a copy of shard 2 left its owning disk: got %v, want %s", got, store.Locations[1].Directory)
+	}
+
+	// A shard no disk owns yet is placed by the unchanged waterfall: both
+	// disks have it mounted, so the emptier one wins.
+	if got := store.FindEcShardTargetLocation(collection, vid, dataShardCount, 7); got != store.Locations[1] {
+		t.Errorf("placement of an unclaimed shard changed: got %v, want the emptier mounted disk", got)
+	}
+}
+
+// TestFindEcShardTargetLocation_OwningDiskWinsWhenFull pins the second half
+// of the invariant: a disk with no free shard slots still wins for a shard it
+// already owns. Re-copying that shard overwrites bytes the disk is already
+// accounted for, while the alternative — routing to a sibling — splits the
+// claim across two disks.
+func TestFindEcShardTargetLocation_OwningDiskWinsWhenFull(t *testing.T) {
+	store := newEcTargetTestStore(t, 2)
+	collection := "grafana-loki"
+	vid := needle.VolumeId(9999)
+
+	store.Locations[0].MaxVolumeCount = 1
+	mountEcShards(store.Locations[0], collection, vid, 0)
+	// Fill disk 0 past its shard-slot budget so ecFreeShardCount reports 0.
+	filler := needle.VolumeId(10000)
+	fillerShards := make([]erasure_coding.ShardId, dataShardCount)
+	for i := range fillerShards {
+		fillerShards[i] = erasure_coding.ShardId(i)
+	}
+	mountEcShards(store.Locations[0], collection, filler, fillerShards...)
+
+	if got := store.FindEcShardTargetLocation(collection, vid, dataShardCount, 0); got != store.Locations[0] {
+		t.Errorf("a copy of shard 0 left its owning disk when the disk was full: got %v", got)
+	}
+	// A shard it does not own still respects the space filter.
+	if got := store.FindEcShardTargetLocation(collection, vid, dataShardCount, 7); got != store.Locations[1] {
+		t.Errorf("an unclaimed shard should go to the disk with free slots: got %v", got)
+	}
+}
+
+// mountEcShards registers an EcVolume for vid on loc claiming shardIds.
+func mountEcShards(loc *DiskLocation, collection string, vid needle.VolumeId, shardIds ...erasure_coding.ShardId) {
+	ecVolume := &erasure_coding.EcVolume{VolumeId: vid, Collection: collection}
+	for _, shardId := range shardIds {
+		ecVolume.Shards = append(ecVolume.Shards, &erasure_coding.EcVolumeShard{
+			VolumeId: vid, ShardId: shardId, Collection: collection,
+		})
+	}
+	loc.ecVolumesLock.Lock()
+	loc.ecVolumes[vid] = ecVolume
+	loc.ecVolumesLock.Unlock()
+}
+
 // newEcTargetTestStore is a leaner cousin of the helper in
 // store_load_balancing_test.go: it spins up an in-memory Store with N
 // HDD disk locations under a single t.TempDir and consumes any heartbeat

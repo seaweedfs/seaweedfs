@@ -1820,11 +1820,14 @@ impl VolumeServer for VolumeGrpcService {
                                 }
                                 Some(store.locations[info.disk_id as usize].directory.clone())
                             } else {
+                                // The mounted-volume refusal above means no disk
+                                // holds an in-memory claim here.
                                 store
                                     .find_ec_shard_target_location(
                                         &info.collection,
                                         vid,
                                         DATA_SHARDS_COUNT as u32,
+                                        &[],
                                     )
                                     .map(|i| store.locations[i].directory.clone())
                             };
@@ -2726,13 +2729,15 @@ impl VolumeServer for VolumeGrpcService {
         //   When disk_id > 0: use that specific location.
         //   When disk_id == 0 (unset): auto-select via
         //   find_ec_shard_target_location, which prefers a disk that
-        //   already has the EC volume mounted, then a disk that owns the
-        //   .ecx on disk (volume not yet mounted — relevant for
-        //   ec.rebuild, where only the first shard carries .ecx and
-        //   subsequent shards must land on the same disk; see #9212),
-        //   then any HDD, then any disk. Pass the build's default
-        //   data-shard count; the helper takes it as a parameter so
-        //   custom-ratio builds can swap it.
+        //   already owns one of the shards being copied (a retried move
+        //   must overwrite in place, not leave two disks of this server
+        //   claiming the same shard), then a disk that already has the EC
+        //   volume mounted, then a disk that owns the .ecx on disk (volume
+        //   not yet mounted — relevant for ec.rebuild, where only the
+        //   first shard carries .ecx and subsequent shards must land on
+        //   the same disk; see #9212), then any HDD, then any disk. Pass
+        //   the build's default data-shard count; the helper takes it as a
+        //   parameter so custom-ratio builds can swap it.
         let (dest_dir, dest_idx_dir) = {
             let store = self.state.store.read().unwrap();
             let count = store.locations.len();
@@ -2752,6 +2757,7 @@ impl VolumeServer for VolumeGrpcService {
                     &req.collection,
                     vid,
                     DATA_SHARDS_COUNT as u32,
+                    &req.shard_ids,
                 ) {
                     Some(i) => {
                         let loc = &store.locations[i];
