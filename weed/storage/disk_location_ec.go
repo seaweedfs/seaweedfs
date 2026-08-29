@@ -484,26 +484,17 @@ func (l *DiskLocation) checkOrphanedShards(shards []string, collection string, v
 // erasure_coding.DataShardsCount so that tests writing a custom layout
 // to .vif compute the matching shard size, and so custom-ratio builds
 // (e.g. enterprise) can swap the default without touching this helper.
+// The padded shard length is the same number under both layouts —
+// TestUniformBlockSizeMatchesLegacyShardSize asserts the equivalence for every
+// input — so defer to the encoder's own helper instead of keeping a second copy
+// of the padding rule that a future change would have to be made in twice. An
+// empty .dat keeps its historic answer: the legacy encoder emits no block for
+// it, where UniformBlockSize floors at one.
 func calculateExpectedShardSize(datFileSize int64, dataShardCount int) int64 {
-	if dataShardCount <= 0 {
+	if dataShardCount <= 0 || datFileSize <= 0 {
 		return 0
 	}
-	var shardSize int64
-
-	// Process large blocks (1GB * dataShardCount per batch)
-	largeBatchSize := int64(erasure_coding.ErasureCodingLargeBlockSize) * int64(dataShardCount)
-	numLargeBatches := datFileSize / largeBatchSize
-	shardSize = numLargeBatches * int64(erasure_coding.ErasureCodingLargeBlockSize)
-	remainingSize := datFileSize - (numLargeBatches * largeBatchSize)
-
-	// Process remaining data in small blocks (1MB * dataShardCount per batch)
-	if remainingSize > 0 {
-		smallBatchSize := int64(erasure_coding.ErasureCodingSmallBlockSize) * int64(dataShardCount)
-		numSmallBatches := (remainingSize + smallBatchSize - 1) / smallBatchSize // Ceiling division
-		shardSize += numSmallBatches * int64(erasure_coding.ErasureCodingSmallBlockSize)
-	}
-
-	return shardSize
+	return erasure_coding.UniformBlockSize(datFileSize, dataShardCount)
 }
 
 // validateEcVolume reports whether the EC files for (collection, vid) on this

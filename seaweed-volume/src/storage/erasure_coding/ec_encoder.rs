@@ -25,6 +25,10 @@ use crate::storage::volume::volume_file_name;
 ///
 /// Creates .ec00-.ec13 files in the same directory.
 /// Also creates a sorted .ecx index from the .idx file.
+///
+/// Always encodes with the uniform block layout, sized for this .dat, and
+/// returns the block size so the caller can persist it to .vif. Mirrors Go's
+/// WriteEcFiles.
 pub fn write_ec_files(
     dir: &str,
     idx_dir: &str,
@@ -32,7 +36,7 @@ pub fn write_ec_files(
     volume_id: VolumeId,
     data_shards: usize,
     parity_shards: usize,
-) -> io::Result<()> {
+) -> io::Result<i64> {
     let base = volume_file_name(dir, collection, volume_id);
     let dat_path = format!("{}.dat", base);
     let idx_base = volume_file_name(idx_dir, collection, volume_id);
@@ -66,7 +70,7 @@ pub fn write_ec_files(
         .map(|_| ShardChecksumBuilder::new(DEFAULT_BITROT_BLOCK_SIZE as i64))
         .collect();
 
-    // Encode in large blocks, then small blocks
+    let block_size = uniform_block_size(dat_size, data_shards);
     encode_dat_file(
         &dat_file,
         dat_size,
@@ -75,8 +79,9 @@ pub fn write_ec_files(
         &mut builders,
         data_shards,
         parity_shards,
-        ERASURE_CODING_LARGE_BLOCK_SIZE,
-        ERASURE_CODING_SMALL_BLOCK_SIZE,
+        ENCODE_BUFFER_SIZE,
+        block_size as usize,
+        block_size as usize,
     )?;
 
     // Close all shards
@@ -103,6 +108,7 @@ pub fn write_ec_files(
         ec_shard_config: Some(ec_bitrot::ec_shard_config(
             data_shards as u32,
             parity_shards as u32,
+            block_size,
         )),
         shards: shard_checksums,
         encode_uuid: ec_bitrot::new_encode_uuid(),
@@ -120,7 +126,19 @@ pub fn write_ec_files(
         );
     }
 
-    Ok(())
+    Ok(block_size)
+}
+
+/// uniform_block_size returns the per-shard block size of the uniform layout
+/// for a .dat of the given size: ceil(dat_file_size/data_shards) rounded up to
+/// a whole small block. For every input this equals the legacy layout's padded
+/// shard size, so only the byte placement differs between the two layouts,
+/// never the shard length. Mirrors Go's UniformBlockSize.
+pub fn uniform_block_size(dat_file_size: i64, data_shards: usize) -> i64 {
+    let small = ERASURE_CODING_SMALL_BLOCK_SIZE as i64;
+    let per_shard = (dat_file_size + data_shards as i64 - 1) / data_shards as i64;
+    let blocks = ((per_shard + small - 1) / small).max(1);
+    blocks * small
 }
 
 /// Rebuild missing EC shard files from existing shards using Reed-Solomon reconstruct.
@@ -370,7 +388,7 @@ pub fn verify_ec_shards(
 }
 
 /// Write sorted .ecx index from .idx file.
-fn write_sorted_ecx_from_idx(idx_path: &str, ecx_path: &str) -> io::Result<()> {
+pub(crate) fn write_sorted_ecx_from_idx(idx_path: &str, ecx_path: &str) -> io::Result<()> {
     if !std::path::Path::new(idx_path).exists() {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
@@ -421,6 +439,8 @@ pub fn rebuild_ecx_file(
     collection: &str,
     volume_id: VolumeId,
     data_shards: usize,
+    block_size: i64,
+    dat_file_size: i64,
     additional_dirs: &[&str],
 ) -> io::Result<()> {
     use crate::storage::needle::needle::get_actual_size;
@@ -463,10 +483,42 @@ pub fn rebuild_ecx_file(
     // Determine total logical data size from shard sizes
     let shard_size = shards.iter().map(|s| s.file_size()).max().unwrap_or(0);
     let total_data_size = shard_size as i64 * data_shards as i64;
+    // The volume's shard block layout: the .vif-recorded uniform block size,
+    // or the legacy two-tier sizes when 0. The row count comes from the shard
+    // length; -1 disambiguates a legacy shard that is an exact large-block
+    // multiple (mirrors the ecdFileSize-1 fallback in the read path).
+    let (large_block, small_block) = if block_size > 0 {
+        (block_size, block_size)
+    } else {
+        (
+            ERASURE_CODING_LARGE_BLOCK_SIZE as i64,
+            ERASURE_CODING_SMALL_BLOCK_SIZE as i64,
+        )
+    };
+    // The row count the de-stripe walks with. The encode-time .dat size is the
+    // authority — the same value the read path divides by data_shards — and the
+    // padded extent is only a fallback: under the legacy layout a shard that is
+    // an exact large-block multiple reads as one row too many, which
+    // re-interprets its last large row as small blocks and scrambles the
+    // recovered offsets. Subtracting one keeps that fallback on the safe side of
+    // the boundary, exactly as the read path's own fallback does.
+    let locate_shard_size = if dat_file_size > 0 {
+        dat_file_size / data_shards as i64
+    } else {
+        (shard_size as i64 - 1).max(0)
+    };
 
     // Read version from superblock (first byte of logical data)
     let mut sb_buf = [0u8; SUPER_BLOCK_SIZE];
-    read_from_data_shards(&shards, &mut sb_buf, 0, data_shards)?;
+    read_from_data_shards(
+        &shards,
+        &mut sb_buf,
+        0,
+        data_shards,
+        locate_shard_size,
+        large_block,
+        small_block,
+    )?;
     let version = Version(sb_buf[0]);
 
     // Walk needles starting after superblock
@@ -475,10 +527,30 @@ pub fn rebuild_ecx_file(
     let mut entries: Vec<(NeedleId, Offset, Size)> = Vec::new();
 
     while offset + header_size as i64 <= total_data_size {
-        // Read needle header (cookie + needle_id + size = 16 bytes)
+        // Read needle header (cookie + needle_id + size = 16 bytes).
+        // A read failure is NOT the end of the data — every offset in
+        // range maps into the shards, so an error means a truncated or
+        // unreadable shard. Publishing the entries collected so far as
+        // a successful .ecx would hand out a silently incomplete
+        // recovery index; propagate instead. (The scan still ends
+        // normally on the zero-cookie tail below.)
         let mut header_buf = [0u8; NEEDLE_HEADER_SIZE];
-        if read_from_data_shards(&shards, &mut header_buf, offset as u64, data_shards).is_err() {
-            break;
+        if let Err(e) = read_from_data_shards(
+            &shards,
+            &mut header_buf,
+            offset as u64,
+            data_shards,
+            locate_shard_size,
+            large_block,
+            small_block,
+        ) {
+            for s in &mut shards {
+                s.close();
+            }
+            return Err(io::Error::new(
+                e.kind(),
+                format!("scan needle header at offset {}: {}", offset, e),
+            ));
         }
 
         let cookie = Cookie::from_bytes(&header_buf[..COOKIE_SIZE]);
@@ -532,58 +604,83 @@ pub fn rebuild_ecx_file(
     Ok(())
 }
 
-/// Read bytes from EC data shards at a logical offset in the .dat file.
+/// Read bytes from EC data shards at a logical offset in the .dat file,
+/// resolving the shard/offset through the volume's block layout via
+/// locate_data — the same mapping the read path uses.
+#[allow(clippy::too_many_arguments)]
 fn read_from_data_shards(
     shards: &[EcVolumeShard],
     buf: &mut [u8],
     logical_offset: u64,
     data_shards: usize,
+    locate_shard_size: i64,
+    large_block_size: i64,
+    small_block_size: i64,
 ) -> io::Result<()> {
-    let small_block = ERASURE_CODING_SMALL_BLOCK_SIZE as u64;
-    let data_shards_u64 = data_shards as u64;
-
-    let mut bytes_read = 0u64;
-    let mut remaining = buf.len() as u64;
-    let mut current_offset = logical_offset;
-
-    while remaining > 0 {
-        // Determine which shard and at what shard-offset this logical offset maps to.
-        // The data is interleaved: large blocks first, then small blocks.
-        // For simplicity, use the small block size for all calculations since
-        // large blocks are multiples of small blocks.
-        let row_size = small_block * data_shards_u64;
-        let row_index = current_offset / row_size;
-        let row_offset = current_offset % row_size;
-        let shard_index = (row_offset / small_block) as usize;
-        let shard_offset = row_index * small_block + (row_offset % small_block);
-
-        if shard_index >= data_shards {
+    let intervals = crate::storage::erasure_coding::ec_locate::locate_data(
+        logical_offset as i64,
+        Size(buf.len() as i32),
+        locate_shard_size,
+        data_shards as u32,
+        large_block_size,
+        small_block_size,
+    );
+    let mut bytes_read = 0usize;
+    for interval in &intervals {
+        let (shard_id, shard_offset) =
+            interval.to_shard_id_and_offset(data_shards as u32, large_block_size, small_block_size);
+        if shard_id as usize >= data_shards {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "shard index out of range",
             ));
         }
-
-        // How many bytes can we read from this position in this shard block
-        let bytes_left_in_block = small_block - (row_offset % small_block);
-        let to_read = remaining.min(bytes_left_in_block) as usize;
-
-        let dest = &mut buf[bytes_read as usize..bytes_read as usize + to_read];
-        shards[shard_index].read_at(dest, shard_offset)?;
-
-        bytes_read += to_read as u64;
-        remaining -= to_read as u64;
-        current_offset += to_read as u64;
+        let to_read = interval.size as usize;
+        let dest = &mut buf[bytes_read..bytes_read + to_read];
+        // Exact-read semantics: read_at may legally return fewer bytes
+        // than requested, and treating a short read as complete leaves
+        // the tail of `dest` as whatever the buffer held before. Loop
+        // until filled; zero bytes inside the mapped range means the
+        // shard is truncated — an error, not an end.
+        let mut filled = 0usize;
+        while filled < to_read {
+            let n = shards[shard_id as usize]
+                .read_at(&mut dest[filled..], shard_offset as u64 + filled as u64)?;
+            if n == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    format!(
+                        "short read from data shard {}: {} of {} bytes at offset {}",
+                        shard_id, filled, to_read, shard_offset
+                    ),
+                ));
+            }
+            filled += n;
+        }
+        bytes_read += to_read;
     }
-
+    if bytes_read != buf.len() {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "short read from data shards",
+        ));
+    }
     Ok(())
 }
+
+/// Buffer size for one encode sub-batch per shard, mirroring Go's 256KB
+/// bufferSize in WriteEcFiles. A block is processed in block_size/buffer_size
+/// sub-batches, so memory stays at total_shards * 256KB no matter how large
+/// the uniform block is.
+const ENCODE_BUFFER_SIZE: usize = 256 * 1024;
 
 /// Encode the .dat file data into shard files.
 ///
 /// Uses a two-phase approach matching Go's ec_encoder.go:
-/// 1. Process as many large blocks (1GB) as possible
-/// 2. Process remaining data with small blocks (1MB)
+/// 1. Process as many large blocks as possible
+/// 2. Process remaining data with small blocks
+///
+/// `buffer_size` must divide both block sizes.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_dat_file(
     dat_file: &File,
@@ -593,44 +690,50 @@ pub(crate) fn encode_dat_file(
     builders: &mut [ShardChecksumBuilder],
     data_shards: usize,
     parity_shards: usize,
+    buffer_size: usize,
     large_block_size: usize,
     small_block_size: usize,
 ) -> io::Result<()> {
+    let total_shards = data_shards + parity_shards;
+    let mut buffers: Vec<Vec<u8>> = (0..total_shards)
+        .map(|_| vec![0u8; buffer_size])
+        .collect();
+
     let mut remaining = dat_size;
     let mut offset: u64 = 0;
 
-    // Phase 1: Process large blocks (1GB each) while enough data remains
+    // Phase 1: process whole large-block rows while enough data remains
     let large_row_size = large_block_size * data_shards;
 
     while remaining >= large_row_size as i64 {
-        encode_one_batch(
+        encode_data(
             dat_file,
             offset,
             large_block_size,
             rs,
+            &mut buffers,
             shards,
             builders,
             data_shards,
-            parity_shards,
         )?;
         offset += large_row_size as u64;
         remaining -= large_row_size as i64;
     }
 
-    // Phase 2: Process remaining data with small blocks (1MB each)
+    // Phase 2: process remaining data with small blocks
     let small_row_size = small_block_size * data_shards;
 
     while remaining > 0 {
         let to_process = remaining.min(small_row_size as i64);
-        encode_one_batch(
+        encode_data(
             dat_file,
             offset,
             small_block_size,
             rs,
+            &mut buffers,
             shards,
             builders,
             data_shards,
-            parity_shards,
         )?;
         offset += to_process as u64;
         remaining -= to_process;
@@ -639,61 +742,71 @@ pub(crate) fn encode_dat_file(
     Ok(())
 }
 
-/// Encode one batch (row) of data.
+/// Encode one row of blocks, streaming it in ENCODE_BUFFER_SIZE sub-batches so
+/// arbitrarily large blocks never require block-sized allocations. Mirrors
+/// Go's encodeData.
+#[allow(clippy::too_many_arguments)]
+fn encode_data(
+    dat_file: &File,
+    row_offset: u64,
+    block_size: usize,
+    rs: &ReedSolomon,
+    buffers: &mut [Vec<u8>],
+    shards: &mut [EcVolumeShard],
+    builders: &mut [ShardChecksumBuilder],
+    data_shards: usize,
+) -> io::Result<()> {
+    let buffer_size = buffers[0].len();
+    if block_size % buffer_size != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "unexpected block size {} buffer size {}",
+                block_size, buffer_size
+            ),
+        ));
+    }
+    let batch_count = block_size / buffer_size;
+    for b in 0..batch_count {
+        encode_one_batch(
+            dat_file,
+            row_offset + (b * buffer_size) as u64,
+            block_size,
+            rs,
+            buffers,
+            shards,
+            builders,
+            data_shards,
+        )?;
+    }
+    Ok(())
+}
+
+/// Encode one sub-batch: the same buffer-sized slice of every shard's block in
+/// this row. Mirrors Go's encodeDataOneBatch.
+#[allow(clippy::too_many_arguments)]
 fn encode_one_batch(
     dat_file: &File,
     offset: u64,
     block_size: usize,
     rs: &ReedSolomon,
+    buffers: &mut [Vec<u8>],
     shards: &mut [EcVolumeShard],
     builders: &mut [ShardChecksumBuilder],
     data_shards: usize,
-    parity_shards: usize,
 ) -> io::Result<()> {
-    let total_shards = data_shards + parity_shards;
-    // Each batch allocates block_size * total_shards bytes.
-    // With large blocks (1 GiB) this is 14 GiB -- guard against OOM.
-    let total_alloc = block_size.checked_mul(total_shards).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "block_size * shard count overflows usize",
-        )
-    })?;
-    // Large-block encoding uses 1 GiB * 14 shards = 14 GiB; allow up to 16 GiB.
-    const MAX_BATCH_ALLOC: usize = 16 * 1024 * 1024 * 1024; // 16 GiB safety limit
-    if total_alloc > MAX_BATCH_ALLOC {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!(
-                "batch allocation too large ({} bytes, limit {} bytes); block_size={} shards={}",
-                total_alloc, MAX_BATCH_ALLOC, block_size, total_shards,
-            ),
-        ));
-    }
-
-    // Allocate buffers for all shards
-    let mut buffers: Vec<Vec<u8>> = (0..total_shards).map(|_| vec![0u8; block_size]).collect();
-
-    // Read data shards from .dat file
+    // Read data shards from the .dat file, zero-filling past EOF — the buffers
+    // are reused across batches, so the tail must be cleared explicitly.
     for i in 0..data_shards {
         let read_offset = offset + (i * block_size) as u64;
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::FileExt;
-            dat_file.read_at(&mut buffers[i], read_offset)?;
-        }
-
-        #[cfg(not(unix))]
-        {
-            let mut f = dat_file.try_clone()?;
-            f.seek(SeekFrom::Start(read_offset))?;
-            f.read(&mut buffers[i])?;
+        let n = read_at_most(dat_file, &mut buffers[i], read_offset)?;
+        for b in buffers[i][n..].iter_mut() {
+            *b = 0;
         }
     }
 
     // Encode parity shards
-    rs.encode(&mut buffers).map_err(|e| {
+    rs.encode(&mut *buffers).map_err(|e| {
         io::Error::new(
             io::ErrorKind::Other,
             format!("reed-solomon encode: {:?}", e),
@@ -708,6 +821,29 @@ fn encode_one_batch(
     }
 
     Ok(())
+}
+
+/// Read into `buf` at `offset` until it is full or EOF; returns bytes read.
+fn read_at_most(dat_file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
+    let mut n = 0;
+    while n < buf.len() {
+        #[cfg(unix)]
+        let r = {
+            use std::os::unix::fs::FileExt;
+            dat_file.read_at(&mut buf[n..], offset + n as u64)?
+        };
+        #[cfg(not(unix))]
+        let r = {
+            let mut f = dat_file.try_clone()?;
+            f.seek(SeekFrom::Start(offset + n as u64))?;
+            f.read(&mut buf[n..])?
+        };
+        if r == 0 {
+            break;
+        }
+        n += r;
+    }
+    Ok(n)
 }
 
 #[cfg(test)]
@@ -1020,7 +1156,7 @@ mod tests {
 
         // Without additional_dirs, rebuild must fail: shards 1, 3, 6 are not
         // in primary and the full logical .dat content can't be reconstructed.
-        let res = rebuild_ecx_file(&primary, "", VolumeId(1), 10, &[]);
+        let res = rebuild_ecx_file(&primary, "", VolumeId(1), 10, 0, 0, &[]);
         assert!(
             res.is_err(),
             "ecx rebuild without additional_dirs must fail when data shards are on another disk"
@@ -1031,7 +1167,7 @@ mod tests {
         );
 
         // With additional_dirs pointing at the secondary, the rebuild must succeed.
-        rebuild_ecx_file(&primary, "", VolumeId(1), 10, &[secondary.as_str()]).unwrap();
+        rebuild_ecx_file(&primary, "", VolumeId(1), 10, 0, 0, &[secondary.as_str()]).unwrap();
 
         assert!(
             std::path::Path::new(&ecx_path).exists(),
@@ -1040,6 +1176,118 @@ mod tests {
         assert!(
             std::fs::metadata(&ecx_path).unwrap().len() > 0,
             "rebuilt .ecx must be non-empty"
+        );
+    }
+
+    // A uniform-layout volume (block size > 1MiB) must have its .ecx rebuilt
+    // through the recorded geometry; the legacy 1MiB mapping would scan
+    // garbage past the first block boundary.
+    #[test]
+    fn test_rebuild_ecx_file_uniform_layout() {
+        use crate::storage::needle_map::NeedleMapKind;
+        use crate::storage::volume::Volume;
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap().to_string();
+        let mut v = Volume::new(
+            &dir,
+            &dir,
+            "",
+            VolumeId(2),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        for i in 1u64..=12 {
+            let data: Vec<u8> = (0..2 << 20)
+                .map(|b| ((b as u64).wrapping_mul(2654435761).wrapping_add(i) >> 8) as u8)
+                .collect();
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                data: data.clone(),
+                data_size: data.len() as u32,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+        }
+        v.sync_to_disk().unwrap();
+        v.close();
+        let block_size = write_ec_files(&dir, &dir, "", VolumeId(2), 10, 4).unwrap();
+        assert!(
+            block_size > ERASURE_CODING_SMALL_BLOCK_SIZE as i64,
+            "fixture must diverge from the legacy layout"
+        );
+
+        let ecx_path = format!("{}/2.ecx", dir);
+        let canonical = std::fs::read(&ecx_path).unwrap();
+        std::fs::remove_file(&ecx_path).unwrap();
+
+        rebuild_ecx_file(&dir, "", VolumeId(2), 10, block_size, 0, &[]).unwrap();
+        let rebuilt = std::fs::read(&ecx_path).unwrap();
+        assert_eq!(canonical, rebuilt, "rebuilt .ecx must match the encode-time .ecx");
+    }
+
+    // A truncated data shard must FAIL the .ecx rebuild, not publish the
+    // entries scanned so far as a successful (silently incomplete) index.
+    #[test]
+    fn test_rebuild_ecx_file_fails_on_truncated_shard() {
+        use crate::storage::needle_map::NeedleMapKind;
+        use crate::storage::volume::Volume;
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap().to_string();
+        let mut v = Volume::new(
+            &dir,
+            &dir,
+            "",
+            VolumeId(3),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        for i in 1u64..=12 {
+            let data: Vec<u8> = (0..2 << 20)
+                .map(|b| ((b as u64).wrapping_mul(2654435761).wrapping_add(i) >> 8) as u8)
+                .collect();
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                data: data.clone(),
+                data_size: data.len() as u32,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+        }
+        v.sync_to_disk().unwrap();
+        v.close();
+        let block_size = write_ec_files(&dir, &dir, "", VolumeId(3), 10, 4).unwrap();
+
+        let ecx_path = format!("{}/3.ecx", dir);
+        std::fs::remove_file(&ecx_path).unwrap();
+
+        // Truncate shard 0 to just the superblock: the scan's very first
+        // needle-header read (offset SUPER_BLOCK_SIZE, shard 0 under the
+        // uniform layout) lands in the missing region. The pre-fix code
+        // broke the scan there and published an EMPTY .ecx as success.
+        let shard_path = format!("{}/3.ec00", dir);
+        let f = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&shard_path)
+            .unwrap();
+        f.set_len(crate::storage::super_block::SUPER_BLOCK_SIZE as u64)
+            .unwrap();
+        drop(f);
+
+        let res = rebuild_ecx_file(&dir, "", VolumeId(3), 10, block_size, 0, &[]);
+        assert!(res.is_err(), "rebuild over a truncated shard must fail");
+        assert!(
+            !std::path::Path::new(&ecx_path).exists(),
+            "a failed rebuild must not leave a partial .ecx behind"
         );
     }
 

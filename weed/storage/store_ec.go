@@ -345,6 +345,49 @@ func (s *Store) FindEcVolumeWithShard(vid needle.VolumeId, shardId erasure_codin
 	return nil, nil, false
 }
 
+// EcMetadataDirs lists every directory on this server that could hold an EC
+// volume's metadata — each disk's data and index directory. Startup mirroring
+// gives each shard-bearing disk its own .ecx/.ecj/.vif, but the checksum
+// sidecar is not mirrored and a repair delivers exactly one copy, so a runtime
+// looking only at its own two directories cannot see it. Handing this list to
+// the sidecar resolution keeps one authoritative copy reachable from every
+// runtime rather than duplicating a file that is rewritten as shards are
+// repaired and generations published.
+func (s *Store) EcMetadataDirs() []string {
+	var dirs []string
+	appendDir := func(dir string) {
+		if dir == "" {
+			return
+		}
+		for _, existing := range dirs {
+			if existing == dir {
+				return
+			}
+		}
+		dirs = append(dirs, dir)
+	}
+	for _, location := range s.Locations {
+		appendDir(location.Directory)
+		appendDir(location.IdxDirectory)
+	}
+	return dirs
+}
+
+// FindAllEcVolumes returns every per-disk *EcVolume the store maps for vid. A vid
+// can mount on N disks as N distinct runtimes, and the first-match FindEcVolume
+// hides the siblings — so anything that has to reach the whole volume, rather
+// than any one runtime of it, iterates this instead. Order mirrors the
+// deterministic s.Locations order; nil when no disk holds the vid.
+func (s *Store) FindAllEcVolumes(vid needle.VolumeId) []*erasure_coding.EcVolume {
+	var evs []*erasure_coding.EcVolume
+	for _, location := range s.Locations {
+		if ev, found := location.FindEcVolume(vid); found {
+			evs = append(evs, ev)
+		}
+	}
+	return evs
+}
+
 func (s *Store) FindEcVolume(vid needle.VolumeId) (*erasure_coding.EcVolume, bool) {
 	for _, location := range s.Locations {
 		if s, found := location.FindEcVolume(vid); found {
@@ -436,10 +479,6 @@ func (s *Store) ReadEcShardNeedle(vid needle.VolumeId, n *needle.Needle, onReadS
 	return 0, fmt.Errorf("ec shard %d not found", vid)
 }
 
-func (s *Store) IntervalToShardIdAndOffset(iv erasure_coding.Interval) (erasure_coding.ShardId, int64) {
-	return iv.ToShardIdAndOffset(erasure_coding.ErasureCodingLargeBlockSize, erasure_coding.ErasureCodingSmallBlockSize)
-}
-
 var (
 	// ecRecoverBudget bounds the interval-sized buffers EC recovery holds across
 	// all concurrent reads: a peer that is slow to fail keeps a whole fan-out of
@@ -507,7 +546,7 @@ func (s *Store) readEcShardIntervals(needleId types.NeedleId, ecVolume *erasure_
 
 // readOneEcShardInterval fills data, which must be interval.Size long.
 func (s *Store) readOneEcShardInterval(needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, interval erasure_coding.Interval, data []byte) (is_deleted bool, err error) {
-	shardId, actualOffset := s.IntervalToShardIdAndOffset(interval)
+	shardId, actualOffset := ecVolume.IntervalToShardIdAndOffset(interval)
 
 	// try local read
 	err = s.readLocalEcShardInterval(ecVolume, shardId, data, actualOffset)

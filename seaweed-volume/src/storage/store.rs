@@ -804,6 +804,37 @@ impl Store {
     }
 
     /// Find an EC volume across all locations (mutable).
+    /// Every per-disk `EcVolume` this store maps for `vid`. A vid can mount on
+    /// N disks as N distinct runtimes, and the first-match `find_ec_volume_mut`
+    /// hides the siblings — so anything that has to reach the whole volume,
+    /// rather than any one runtime of it, iterates this instead.
+    /// Every directory on this server that could hold an EC volume's metadata —
+    /// each disk's data and index directory. Startup mirroring gives each
+    /// shard-bearing disk its own .ecx/.ecj/.vif, but the checksum sidecar is
+    /// not mirrored and a repair delivers exactly one copy, so a runtime looking
+    /// only at its own two directories cannot see it. Handing this list to the
+    /// sidecar resolution keeps one authoritative copy reachable from every
+    /// runtime rather than duplicating a file that is rewritten as shards are
+    /// repaired and generations published.
+    pub fn ec_metadata_dirs(&self) -> Vec<String> {
+        let mut dirs: Vec<String> = Vec::with_capacity(self.locations.len() * 2);
+        for loc in &self.locations {
+            for dir in [&loc.directory, &loc.idx_directory] {
+                if !dir.is_empty() && !dirs.iter().any(|d| d == dir) {
+                    dirs.push(dir.clone());
+                }
+            }
+        }
+        dirs
+    }
+
+    pub fn find_all_ec_volumes_mut(&mut self, vid: VolumeId) -> Vec<&mut EcVolume> {
+        self.locations
+            .iter_mut()
+            .filter_map(|loc| loc.find_ec_volume_mut(vid))
+            .collect()
+    }
+
     pub fn find_ec_volume_mut(&mut self, vid: VolumeId) -> Option<&mut EcVolume> {
         for loc in &mut self.locations {
             if let Some(ecv) = loc.find_ec_volume_mut(vid) {

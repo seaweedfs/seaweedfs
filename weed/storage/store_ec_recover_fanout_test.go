@@ -95,7 +95,8 @@ func writeEcVolumeFiles(t *testing.T, dir string, vid needle.VolumeId) (baseFile
 	if err != nil {
 		t.Fatalf("stat .dat: %v", err)
 	}
-	if _, err := erasure_coding.WriteEcFiles(baseFileName, erasure_coding.BackgroundECContext()); err != nil {
+	ecCtx := erasure_coding.BackgroundECContext()
+	if _, err := erasure_coding.WriteEcFiles(baseFileName, ecCtx); err != nil {
 		t.Fatalf("write ec files: %v", err)
 	}
 	if err := erasure_coding.WriteSortedFileFromIdx(baseFileName, ".ecx"); err != nil {
@@ -110,6 +111,10 @@ func writeEcVolumeFiles(t *testing.T, dir string, vid needle.VolumeId) (baseFile
 		EcShardConfig: &volume_server_pb.EcShardConfig{
 			DataShards:   erasure_coding.DataShardsCount,
 			ParityShards: erasure_coding.ParityShardsCount,
+			// The encode writes the uniform layout; a .vif that omitted its
+			// block size would mount these shards as legacy and read every
+			// interval at the wrong offset.
+			BlockSize: ecCtx.BlockSize,
 		},
 	}); err != nil {
 		t.Fatalf("save .vif: %v", err)
@@ -162,7 +167,7 @@ func TestRecoverOneRemoteEcShardIntervalUsesLocalShards(t *testing.T) {
 	if err != nil {
 		t.Fatalf("locate needle: %v", err)
 	}
-	shardIdToRecover, actualOffset := store.IntervalToShardIdAndOffset(intervals[0])
+	shardIdToRecover, actualOffset := ecVolume.IntervalToShardIdAndOffset(intervals[0])
 
 	got := make([]byte, intervals[0].Size)
 	nRead, _, err := store.recoverOneRemoteEcShardInterval(n.Id, ecVolume, shardIdToRecover, got, actualOffset)

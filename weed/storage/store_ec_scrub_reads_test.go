@@ -45,7 +45,8 @@ func newLocalEcVolume(t *testing.T, vid needle.VolumeId) (*Store, *erasure_codin
 	if err != nil {
 		t.Fatalf("stat .dat: %v", err)
 	}
-	if _, err := erasure_coding.WriteEcFiles(baseFileName, erasure_coding.BackgroundECContext()); err != nil {
+	ecCtx := erasure_coding.BackgroundECContext()
+	if _, err := erasure_coding.WriteEcFiles(baseFileName, ecCtx); err != nil {
 		t.Fatalf("write ec files: %v", err)
 	}
 	if err := erasure_coding.WriteSortedFileFromIdx(baseFileName, ".ecx"); err != nil {
@@ -60,6 +61,10 @@ func newLocalEcVolume(t *testing.T, vid needle.VolumeId) (*Store, *erasure_codin
 		EcShardConfig: &volume_server_pb.EcShardConfig{
 			DataShards:   erasure_coding.DataShardsCount,
 			ParityShards: erasure_coding.ParityShardsCount,
+			// The encode writes the uniform layout; a .vif that omitted its
+			// block size would mount these shards as legacy and read every
+			// interval at the wrong offset.
+			BlockSize: ecCtx.BlockSize,
 		},
 	}); err != nil {
 		t.Fatalf("save .vif: %v", err)

@@ -17,11 +17,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 )
 
-// buildAndEncodeTestEcVolume writes a small volume (.dat + .idx), EC-encodes it
-// into .ec00..ec13, and produces the canonical sorted .ecx. It returns the base
-// path, the canonical .ecx bytes, and the original .dat size. A couple of
-// needles are deleted so the .ecx must exclude them (live entries only).
-func buildAndEncodeTestEcVolume(t *testing.T, dir, baseName string) (base string, canonicalEcx []byte, origDatSize int64) {
+// buildAndEncodeTestEcVolume writes a volume of needleCount needles of about
+// needleSize bytes (.dat + .idx), EC-encodes it into .ec00..ec13, and produces
+// the canonical sorted .ecx. It returns the base path, the canonical .ecx
+// bytes, the original .dat size, and the encode's bitrot protection. A couple
+// of needles are deleted so the .ecx must exclude them (live entries only).
+func buildAndEncodeTestEcVolume(t *testing.T, dir, baseName string, needleCount, needleSize int) (base string, canonicalEcx []byte, origDatSize int64, prot *volume_server_pb.EcBitrotProtection) {
 	t.Helper()
 	base = filepath.Join(dir, baseName)
 	version := needle.GetCurrentVersion()
@@ -41,10 +42,10 @@ func buildAndEncodeTestEcVolume(t *testing.T, dir, baseName string) (base string
 	}
 
 	nm := needle_map.NewMemDb()
-	for i := uint64(1); i <= 12; i++ {
+	for i := uint64(1); i <= uint64(needleCount); i++ {
 		n := new(needle.Needle)
 		n.Id = types.Uint64ToNeedleId(i)
-		n.Data = make([]byte, 200+int(i))
+		n.Data = make([]byte, needleSize+int(i))
 		rand.Read(n.Data)
 		n.Checksum = needle.NewCRC(n.Data)
 		offset, _, _, err := n.Append(datBackend, version)
@@ -92,7 +93,8 @@ func buildAndEncodeTestEcVolume(t *testing.T, dir, baseName string) (base string
 	idxFile.Close()
 	nm.Close()
 
-	if _, err := erasure_coding.WriteEcFiles(base, erasure_coding.BackgroundECContext()); err != nil {
+	prot, err = erasure_coding.WriteEcFiles(base, erasure_coding.BackgroundECContext())
+	if err != nil {
 		t.Fatalf("WriteEcFiles: %v", err)
 	}
 	if err := erasure_coding.WriteSortedFileFromIdx(base, ".ecx"); err != nil {
@@ -105,7 +107,7 @@ func buildAndEncodeTestEcVolume(t *testing.T, dir, baseName string) (base string
 	if len(canonicalEcx) == 0 {
 		t.Fatal("canonical .ecx is empty")
 	}
-	return base, canonicalEcx, origDatSize
+	return base, canonicalEcx, origDatSize, prot
 }
 
 // TestFixEcxFromShards verifies the .ecx and .vif are rebuilt purely from the
@@ -121,7 +123,7 @@ func TestFixEcxFromShards(t *testing.T) {
 
 	dir := t.TempDir()
 	const volumeId = 7
-	base, canonical, origDatSize := buildAndEncodeTestEcVolume(t, dir, "7")
+	base, canonical, origDatSize, _ := buildAndEncodeTestEcVolume(t, dir, "7", 12, 200)
 
 	// Disaster: keep only the shards.
 	for _, ext := range []string{".ecx", ".ecj", ".idx", ".dat", ".vif"} {
@@ -175,7 +177,7 @@ func TestFixEcxFromShardsWithVif(t *testing.T) {
 
 	dir := t.TempDir()
 	const volumeId = 9
-	base, canonical, origDatSize := buildAndEncodeTestEcVolume(t, dir, "9")
+	base, canonical, origDatSize, _ := buildAndEncodeTestEcVolume(t, dir, "9", 12, 200)
 
 	// Write a .vif as the volume server would after encoding.
 	if err := volume_info.SaveVolumeInfo(base+".vif", &volume_server_pb.VolumeInfo{
@@ -234,7 +236,7 @@ func TestFixEcxFromShardsMissingShards(t *testing.T) {
 
 	dir := t.TempDir()
 	const volumeId = 11
-	base, canonical, origDatSize := buildAndEncodeTestEcVolume(t, dir, "11")
+	base, canonical, origDatSize, _ := buildAndEncodeTestEcVolume(t, dir, "11", 12, 200)
 
 	// Lose every index/metadata file plus three shards (two data: .ec02, .ec05;
 	// one parity: .ec11), keeping 11 of 14 — enough to reconstruct. The highest
@@ -269,5 +271,62 @@ func TestFixEcxFromShardsMissingShards(t *testing.T) {
 	}
 	if vi.GetDatFileSize() != origDatSize {
 		t.Fatalf("dat size = %d, want %d", vi.GetDatFileSize(), origDatSize)
+	}
+}
+
+// TestFixEcxFromShardsUniformLayout loses the .vif of a volume big enough that
+// the uniform and legacy layouts place bytes differently, and verifies the
+// layout is recovered — from the bitrot sidecar when it survives, and by
+// de-striping under both candidate layouts when it does not.
+func TestFixEcxFromShardsUniformLayout(t *testing.T) {
+	oldData, oldParity := *fixEcDataShards, *fixEcParityShards
+	*fixEcDataShards, *fixEcParityShards = 0, 0
+	*fixIgnoreError = true
+	t.Cleanup(func() {
+		*fixIgnoreError = false
+		*fixEcDataShards, *fixEcParityShards = oldData, oldParity
+	})
+
+	for _, withSidecar := range []bool{true, false} {
+		name := "from-sidecar"
+		if !withSidecar {
+			name = "dual-scan"
+		}
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			const volumeId = 13
+			base, canonical, _, prot := buildAndEncodeTestEcVolume(t, dir, "13", 13, 2*1024*1024)
+			if got := prot.GetEcShardConfig().GetBlockSize(); got <= erasure_coding.ErasureCodingSmallBlockSize {
+				t.Fatalf("fixture block size %d does not diverge from the legacy layout", got)
+			}
+			if withSidecar {
+				if err := erasure_coding.SaveBitrotSidecar(erasure_coding.BitrotSidecarPath(base, 0), prot); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			for _, ext := range []string{".ecx", ".ecj", ".idx", ".dat", ".vif"} {
+				if err := os.Remove(base + ext); err != nil && !os.IsNotExist(err) {
+					t.Fatalf("remove %s: %v", base+ext, err)
+				}
+			}
+
+			doFixEcxFromShards(dir, "13", "", volumeId)
+
+			recovered, err := os.ReadFile(base + ".ecx")
+			if err != nil {
+				t.Fatalf("recovered .ecx not written: %v", err)
+			}
+			if !bytes.Equal(canonical, recovered) {
+				t.Fatalf(".ecx mismatch: canonical %d bytes, recovered %d bytes", len(canonical), len(recovered))
+			}
+			vi, _, found, err := volume_info.MaybeLoadVolumeInfo(base + ".vif")
+			if err != nil || !found {
+				t.Fatalf(".vif not regenerated: found=%v err=%v", found, err)
+			}
+			if got, want := vi.GetEcShardConfig().GetBlockSize(), prot.GetEcShardConfig().GetBlockSize(); got != want {
+				t.Fatalf("regenerated .vif block size = %d, want %d", got, want)
+			}
+		})
 	}
 }

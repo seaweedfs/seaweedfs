@@ -92,6 +92,57 @@ pub fn load_state_file(
     volume_server_pb::VolumeServerState::decode(data.as_slice()).ok()
 }
 
+/// One disk location's stake in an EC volume, as seen by the rebuild handler.
+struct LocInfo {
+    dir: String,
+    idx_dir: String,
+    shard_count: usize,
+    has_ecx: bool,
+}
+
+/// Picks the location a rebuild should write into — the one holding an `.ecx`
+/// and the most shards — and returns every other directory it may have to read
+/// from. Shards are only half of what the rebuild needs: a split
+/// `-dir`/`-dir.idx` layout keeps `.ecx`/`.ecj`/`.vif` with the INDEX, and on a
+/// multi-disk server the chosen disk may hold nothing but shards while this
+/// volume's `.vif` or generation-0 `.ecsum` sits on a sibling. Miss those and
+/// the layout resolution falls back to 10+4 with the legacy striping and
+/// reconstructs through the wrong matrix, so both directories of every other
+/// location are listed. The rebuild's own two are passed separately by the
+/// caller and dropped here, along with empties and duplicates.
+///
+/// Returns `None` when no location holds an `.ecx`, i.e. there is nothing to
+/// rebuild from.
+fn select_rebuild_location(loc_infos: &[LocInfo]) -> Option<(usize, Vec<String>)> {
+    let mut rebuild_loc_idx: Option<usize> = None;
+    let mut other_dirs: Vec<String> = Vec::new();
+
+    for (i, info) in loc_infos.iter().enumerate() {
+        let better = info.has_ecx
+            && rebuild_loc_idx
+                .is_none_or(|prev| info.shard_count > loc_infos[prev].shard_count);
+        if better {
+            if let Some(prev) = rebuild_loc_idx {
+                other_dirs.push(loc_infos[prev].dir.clone());
+                other_dirs.push(loc_infos[prev].idx_dir.clone());
+            }
+            rebuild_loc_idx = Some(i);
+        } else {
+            other_dirs.push(info.dir.clone());
+            other_dirs.push(info.idx_dir.clone());
+        }
+    }
+
+    let rebuild_loc_idx = rebuild_loc_idx?;
+    let rebuild_dir = &loc_infos[rebuild_loc_idx].dir;
+    let rebuild_idx_dir = &loc_infos[rebuild_loc_idx].idx_dir;
+    other_dirs.retain(|d| !d.is_empty() && d != rebuild_dir && d != rebuild_idx_dir);
+    other_dirs.sort();
+    other_dirs.dedup();
+
+    Some((rebuild_loc_idx, other_dirs))
+}
+
 struct WriteThrottler {
     bytes_per_second: i64,
     last_size_counter: i64,
@@ -2383,13 +2434,21 @@ impl VolumeServer for VolumeGrpcService {
             )
         };
 
-        // Check existing .vif for EC shard config (matching Go's MaybeLoadVolumeInfo)
-        let (data_shards, parity_shards) =
+        // Check existing .vif for EC shard config (matching Go's MaybeLoadVolumeInfo).
+        // The block size is recomputed by the encode for the current .dat, so
+        // only the ratio is carried over from a prior config.
+        let (data_shards, parity_shards, _) =
             crate::storage::erasure_coding::ec_volume::read_ec_shard_config(
                 &dir, &idx_dir, collection, vid,
-            );
+            )
+            .map_err(|e| {
+                tonic::Status::internal(format!(
+                    "read ec shard config for volume {}: {}",
+                    vid.0, e
+                ))
+            })?;
 
-        if let Err(e) = crate::storage::erasure_coding::ec_encoder::write_ec_files(
+        let block_size = match crate::storage::erasure_coding::ec_encoder::write_ec_files(
             &dir,
             &idx_dir,
             collection,
@@ -2397,16 +2456,19 @@ impl VolumeServer for VolumeGrpcService {
             data_shards as usize,
             parity_shards as usize,
         ) {
-            // Cleanup partially-created .ecNN and .ecx files on failure (matching Go defer)
-            let base = crate::storage::volume::volume_file_name(&dir, collection, vid);
-            let total_shards = data_shards + parity_shards;
-            for i in 0..total_shards {
-                let shard_path = format!("{}.ec{:02}", base, i);
-                let _ = std::fs::remove_file(&shard_path);
+            Ok(block_size) => block_size,
+            Err(e) => {
+                // Cleanup partially-created .ecNN and .ecx files on failure (matching Go defer)
+                let base = crate::storage::volume::volume_file_name(&dir, collection, vid);
+                let total_shards = data_shards + parity_shards;
+                for i in 0..total_shards {
+                    let shard_path = format!("{}.ec{:02}", base, i);
+                    let _ = std::fs::remove_file(&shard_path);
+                }
+                let _ = std::fs::remove_file(format!("{}.ecx", base));
+                return Err(Status::internal(e.to_string()));
             }
-            let _ = std::fs::remove_file(format!("{}.ecx", base));
-            return Err(Status::internal(e.to_string()));
-        }
+        };
 
         // Write .vif file with EC shard metadata
         {
@@ -2425,6 +2487,7 @@ impl VolumeServer for VolumeGrpcService {
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
                         .as_nanos() as i64,
+                    block_size,
                 }),
                 ..Default::default()
             };
@@ -2457,13 +2520,6 @@ impl VolumeServer for VolumeGrpcService {
         } else {
             format!("{}_{}", collection, vid.0)
         };
-
-        struct LocInfo {
-            dir: String,
-            idx_dir: String,
-            shard_count: usize,
-            has_ecx: bool,
-        }
 
         let store = self.state.store.read().unwrap();
         let mut loc_infos: Vec<LocInfo> = Vec::new();
@@ -2512,26 +2568,8 @@ impl VolumeServer for VolumeGrpcService {
             ));
         }
 
-        // Pick rebuild location: has .ecx and most shards
-        let mut rebuild_loc_idx: Option<usize> = None;
-        let mut other_dirs: Vec<String> = Vec::new();
-
-        for (i, info) in loc_infos.iter().enumerate() {
-            if info.has_ecx
-                && (rebuild_loc_idx.is_none()
-                    || info.shard_count > loc_infos[rebuild_loc_idx.unwrap()].shard_count)
-            {
-                if let Some(prev) = rebuild_loc_idx {
-                    other_dirs.push(loc_infos[prev].dir.clone());
-                }
-                rebuild_loc_idx = Some(i);
-            } else {
-                other_dirs.push(info.dir.clone());
-            }
-        }
-
-        let rebuild_loc_idx = match rebuild_loc_idx {
-            Some(i) => i,
+        let (rebuild_loc_idx, other_dirs) = match select_rebuild_location(&loc_infos) {
+            Some(picked) => picked,
             None => {
                 return Ok(Response::new(
                     volume_server_pb::VolumeEcShardsRebuildResponse {
@@ -2545,13 +2583,37 @@ impl VolumeServer for VolumeGrpcService {
         let rebuild_idx_dir = loc_infos[rebuild_loc_idx].idx_dir.clone();
 
         // Determine data/parity shard config from rebuild dir
-        let (data_shards, parity_shards) =
-            crate::storage::erasure_coding::ec_volume::read_ec_shard_config(
+        // The encode-time .dat size resolves the row count the ecx rebuild
+        // de-stripes with; 0 leaves it to infer from the padded shard extent.
+        // Both lookups search the sibling disks too: the rebuild writes into one
+        // location, but a multi-disk server may keep this volume's .vif or its
+        // generation-0 .ecsum on another, and defaulting to 10+4 with the
+        // legacy layout would reconstruct through the wrong matrix.
+        let dat_file_size = crate::storage::erasure_coding::ec_volume::load_vif_info_across_dirs(
+            &rebuild_dir,
+            &rebuild_idx_dir,
+            &other_dirs,
+            collection,
+            vid,
+        )
+        .ok()
+        .flatten()
+        .map(|(v, _)| v.dat_file_size)
+        .unwrap_or(0);
+        let (data_shards, parity_shards, block_size) =
+            crate::storage::erasure_coding::ec_volume::read_ec_shard_config_across_dirs(
                 &rebuild_dir,
                 &rebuild_idx_dir,
+                &other_dirs,
                 collection,
                 vid,
-            );
+            )
+            .map_err(|e| {
+                tonic::Status::internal(format!(
+                    "read ec shard config for volume {}: {}",
+                    vid.0, e
+                ))
+            })?;
         let total_shards = data_shards + parity_shards;
 
         // Check which shards are missing (check rebuild dir and all other dirs)
@@ -2590,8 +2652,17 @@ impl VolumeServer for VolumeGrpcService {
 
         // Rebuild missing shards, searching all locations for input shards.
         // Pass other_dirs so shards on sibling disks are found even when the
-        // primary rebuild dir doesn't hold them.
-        let other_dir_refs: Vec<&str> = other_dirs.iter().map(|s| s.as_str()).collect();
+        // primary rebuild dir doesn't hold them. This one takes a single flat
+        // list — the shape Go's RebuildEcFiles uses — so unlike the resolvers
+        // above it cannot be handed the rebuild's own index directory
+        // separately, and a split -dir/-dir.idx location keeps its .ecx and
+        // .vif there. Go's additionalDirs carries that directory for the same
+        // reason.
+        let mut rebuild_search_dirs: Vec<String> = other_dirs.clone();
+        if !rebuild_idx_dir.is_empty() && rebuild_idx_dir != rebuild_dir {
+            rebuild_search_dirs.push(rebuild_idx_dir.clone());
+        }
+        let other_dir_refs: Vec<&str> = rebuild_search_dirs.iter().map(|s| s.as_str()).collect();
         crate::storage::erasure_coding::ec_encoder::rebuild_ec_files(
             &rebuild_dir,
             collection,
@@ -2629,6 +2700,8 @@ impl VolumeServer for VolumeGrpcService {
             collection,
             vid,
             data_shards as usize,
+            block_size,
+            dat_file_size,
             &ecx_dir_refs,
         )
         .map_err(|e| Status::internal(format!("RebuildEcxFile: {}", e)))?;
@@ -3015,6 +3088,27 @@ impl VolumeServer for VolumeGrpcService {
                     Status::internal(format!("mount {}.{}: {}", req.volume_id, shard_id, e))
                 })?;
         }
+        // A delivery can bring the checksum manifest alongside the shards, but
+        // the receive path only writes the file. When this server already had
+        // the volume mounted, the EcVolume in memory keeps whatever protection
+        // state it resolved at mount — off, for a volume whose sidecar arrives
+        // now — until a remount. Re-resolve it here, where the shards it
+        // describes have just been added.
+        //
+        // Every per-disk runtime, not just the first: a vid mounts as one
+        // EcVolume per disk, the delivery lands the .ecsum on one of them, and
+        // the first-match lookup would leave the siblings reporting no
+        // protection. Each re-resolves against its own data and index
+        // directories, so a shared -dir.idx reaches all of them.
+        // Resolving across every EC metadata directory is what makes that
+        // reload mean something: startup mirroring gives each shard-bearing
+        // disk its own .ecx/.ecj/.vif but deliberately not the sidecar, so a
+        // runtime restricted to its own two directories would find nothing
+        // however often it reloaded. One delivered copy, reachable from all.
+        let ec_metadata_dirs = store.ec_metadata_dirs();
+        for ec_vol in store.find_all_ec_volumes_mut(vid) {
+            ec_vol.reload_bitrot_sidecar(&ec_metadata_dirs);
+        }
         drop(store);
         self.state.volume_state_notify.notify_one();
 
@@ -3349,6 +3443,8 @@ impl VolumeServer for VolumeGrpcService {
         let ecx_dir = ec_vol.ecx_actual_dir().to_string();
         let collection = ec_vol.collection.clone();
         let vif_dat_file_size = ec_vol.dat_file_size;
+        let (large_block_size, small_block_size) =
+            (ec_vol.large_block_size(), ec_vol.small_block_size());
         // shard_dirs[i] is guaranteed Some for i in 0..data_shards by
         // the check above; collect concrete dirs for the decoder.
         let per_shard_dirs: Vec<String> = shard_dirs[..data_shards]
@@ -3382,6 +3478,8 @@ impl VolumeServer for VolumeGrpcService {
             vif_dat_file_size,
             data_shards,
             &per_shard_dirs,
+            large_block_size as usize,
+            small_block_size as usize,
         )
         .map_err(|e| Status::internal(format!("WriteDatFile: {}", e)))?;
 
@@ -3440,12 +3538,24 @@ impl VolumeServer for VolumeGrpcService {
             .walk_ecx_stats()
             .map_err(|e| Status::internal(e.to_string()))?;
 
+        // The layout this holder serves reads through, as Go reports it: a
+        // coordinator cannot otherwise tell a holder that understands the
+        // uniform block layout from one that dropped the unknown .vif field
+        // and mounted the volume as legacy.
+        let ec_shard_config = Some(volume_server_pb::EcShardConfig {
+            data_shards: ec_vol.data_shards,
+            parity_shards: ec_vol.parity_shards,
+            encode_ts_ns: 0,
+            block_size: ec_vol.block_size,
+        });
+
         Ok(Response::new(
             volume_server_pb::VolumeEcShardsInfoResponse {
                 ec_shard_infos: shard_infos,
                 volume_size,
                 file_count,
                 file_deleted_count,
+                ec_shard_config,
             },
         ))
     }
@@ -5085,6 +5195,110 @@ mod tests {
     use std::sync::RwLock;
     use tempfile::TempDir;
     use tokio_stream::StreamExt;
+
+    fn loc(dir: &str, idx_dir: &str, shard_count: usize, has_ecx: bool) -> LocInfo {
+        LocInfo {
+            dir: dir.to_string(),
+            idx_dir: idx_dir.to_string(),
+            shard_count,
+            has_ecx,
+        }
+    }
+
+    // The rebuild reads its shards from one directory but resolves the volume's
+    // layout -- ratio and uniform block size -- from the .vif or the
+    // generation-0 .ecsum, which on a multi-disk server may sit anywhere. Every
+    // directory that could hold one has to be in the search list, or the
+    // resolution silently falls back to 10+4 with the legacy striping and
+    // reconstructs through the wrong matrix.
+    // The rebuild's own data and index directories are handed to the resolvers
+    // as their own arguments, so they are deliberately absent from this list --
+    // unlike Go, whose resolver takes a single directory list and therefore
+    // carries the rebuild's index directory inside it.
+    #[test]
+    fn select_rebuild_location_excludes_the_rebuilds_own_dirs() {
+        for infos in [
+            vec![loc("/data1", "/idx1", 3, true)],
+            vec![loc("/data1", "/data1", 3, true)],
+        ] {
+            let (idx, others) = select_rebuild_location(&infos).expect("a location with .ecx");
+            assert_eq!(idx, 0);
+            assert!(others.is_empty(), "got {:?}", others);
+        }
+    }
+
+    // The case two reviewers flagged: a sibling holding only shards while its
+    // index directory holds this volume's .vif.
+    #[test]
+    fn select_rebuild_location_searches_a_siblings_index_dir_not_just_its_data_dir() {
+        let infos = vec![
+            loc("/data1", "/data1", 5, true),
+            loc("/data2", "/idx2", 2, false),
+        ];
+        let (idx, others) = select_rebuild_location(&infos).expect("a location with .ecx");
+        assert_eq!(idx, 0);
+        assert_eq!(others, vec!["/data2".to_string(), "/idx2".to_string()]);
+    }
+
+    // Several disks pointed at one index directory is a normal -dir.idx
+    // deployment; the shared directory is worth searching but only once.
+    #[test]
+    fn select_rebuild_location_lists_a_shared_index_dir_once() {
+        let infos = vec![
+            loc("/data1", "/data1", 5, true),
+            loc("/data2", "/shared-idx", 2, false),
+            loc("/data3", "/shared-idx", 1, false),
+        ];
+        let (_, others) = select_rebuild_location(&infos).expect("a location with .ecx");
+        assert_eq!(
+            others,
+            vec![
+                "/data2".to_string(),
+                "/data3".to_string(),
+                "/shared-idx".to_string()
+            ]
+        );
+    }
+
+    // When the shared index directory is the rebuild's own it drops out, since
+    // the caller passes it separately.
+    #[test]
+    fn select_rebuild_location_omits_a_shared_index_dir_it_rebuilds_into() {
+        let infos = vec![
+            loc("/data1", "/shared-idx", 5, true),
+            loc("/data2", "/shared-idx", 2, false),
+        ];
+        let (_, others) = select_rebuild_location(&infos).expect("a location with .ecx");
+        assert_eq!(others, vec!["/data2".to_string()]);
+    }
+
+    // The winner moves as a fuller location turns up; the one it displaces
+    // still has to be searched, index directory included.
+    #[test]
+    fn select_rebuild_location_keeps_the_displaced_winners_dirs() {
+        let infos = vec![
+            loc("/data1", "/idx1", 2, true),
+            loc("/data2", "/idx2", 9, true),
+        ];
+        let (idx, others) = select_rebuild_location(&infos).expect("a location with .ecx");
+        assert_eq!(idx, 1, "the fuller location wins");
+        assert_eq!(others, vec!["/data1".to_string(), "/idx1".to_string()]);
+    }
+
+    #[test]
+    fn select_rebuild_location_drops_empty_dirs() {
+        let infos = vec![loc("/data1", "", 3, true), loc("/data2", "", 1, false)];
+        let (_, others) = select_rebuild_location(&infos).expect("a location with .ecx");
+        assert_eq!(others, vec!["/data2".to_string()]);
+    }
+
+    // Nothing carries an .ecx: there is no index to rebuild the shards against,
+    // so the caller answers with an empty rebuild rather than guessing.
+    #[test]
+    fn select_rebuild_location_is_none_without_an_ecx() {
+        let infos = vec![loc("/data1", "/idx1", 3, false)];
+        assert!(select_rebuild_location(&infos).is_none());
+    }
 
     #[test]
     fn test_parse_grpc_address_with_explicit_grpc_port() {

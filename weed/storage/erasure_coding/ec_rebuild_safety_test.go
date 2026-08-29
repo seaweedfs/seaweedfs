@@ -5,7 +5,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 )
 
 // readEcxSizeField returns the size field of the .ecx entry for needleId, or
@@ -293,5 +296,103 @@ func TestRebuildEcFiles_CustomRatioRebuildsByteIdentical(t *testing.T) {
 	// No shard position beyond the 9+3 layout must have been created.
 	if _, err := os.Stat(base + ToExt(12)); err == nil {
 		t.Errorf("unexpected shard .ec12 for a 9+3 volume")
+	}
+}
+
+// With no .vif, the bitrot sidecar is the surviving record of the volume's
+// geometry. Defaulting to 10+4 and the legacy block layout instead would
+// reconstruct a custom-ratio volume from the wrong matrix — and would make the
+// sidecar look like it disagrees, silently skipping every checksum check.
+func TestRebuildEcFiles_ResolvesGeometryFromSidecarWithoutVif(t *testing.T) {
+	if !BitrotProtectionEnabled {
+		t.Skip("bitrot protection is compiled out")
+	}
+	dir := t.TempDir()
+	base := filepath.Join(dir, "vol")
+	ctx := &ECContext{DataShards: 12, ParityShards: 4}
+	writeRandomDat(t, base, 7000)
+
+	prot, err := WriteEcFiles(base, ctx)
+	if err != nil {
+		t.Fatalf("WriteEcFiles: %v", err)
+	}
+	if err := SaveBitrotSidecar(BitrotSidecarPath(base, 0), prot); err != nil {
+		t.Fatalf("save sidecar: %v", err)
+	}
+	// No .vif at all: the sidecar has to answer.
+	const dropped = 11
+	want, err := os.ReadFile(base + ToExt(dropped))
+	if err != nil {
+		t.Fatalf("read shard: %v", err)
+	}
+	if err := os.Remove(base + ToExt(dropped)); err != nil {
+		t.Fatalf("remove shard: %v", err)
+	}
+
+	// nil ctx: the production RPC's BackgroundECContext path.
+	if _, err := RebuildEcFiles(base, nil, false); err != nil {
+		t.Fatalf("RebuildEcFiles: %v", err)
+	}
+	got, err := os.ReadFile(base + ToExt(dropped))
+	if err != nil {
+		t.Fatalf("read rebuilt shard: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("rebuilt shard %d differs; the rebuild used the wrong geometry", dropped)
+	}
+	// The 12+4 shards past the default ratio must still be there.
+	for _, id := range []int{14, 15} {
+		if _, err := os.Stat(base + ToExt(id)); err != nil {
+			t.Errorf("shard %d missing after rebuild: %v", id, err)
+		}
+	}
+}
+
+// A split -dir/-dir.idx layout keeps the .vif with the index, and a multi-disk
+// server may leave this disk holding only shards. Probing just the data base
+// resolves such a volume to the default ratio and the legacy block layout.
+func TestRebuildEcFiles_FindsVifInAnAdditionalDir(t *testing.T) {
+	dataDir := t.TempDir()
+	idxDir := t.TempDir()
+	base := filepath.Join(dataDir, "vol")
+	ctx := &ECContext{DataShards: 12, ParityShards: 4}
+	writeRandomDat(t, base, 7000)
+
+	if _, err := WriteEcFiles(base, ctx); err != nil {
+		t.Fatalf("WriteEcFiles: %v", err)
+	}
+	// The volume's .vif lives with the index, not the shards.
+	if err := volume_info.SaveVolumeInfo(filepath.Join(idxDir, "vol")+".vif", &volume_server_pb.VolumeInfo{
+		Version: uint32(needle.GetCurrentVersion()),
+		EcShardConfig: &volume_server_pb.EcShardConfig{
+			DataShards: 12, ParityShards: 4, BlockSize: ctx.BlockSize,
+		},
+	}); err != nil {
+		t.Fatalf("save .vif: %v", err)
+	}
+
+	const dropped = 11
+	want, err := os.ReadFile(base + ToExt(dropped))
+	if err != nil {
+		t.Fatalf("read shard: %v", err)
+	}
+	if err := os.Remove(base + ToExt(dropped)); err != nil {
+		t.Fatalf("remove shard: %v", err)
+	}
+
+	if _, err := RebuildEcFiles(base, nil, true, idxDir); err != nil {
+		t.Fatalf("RebuildEcFiles: %v", err)
+	}
+	got, err := os.ReadFile(base + ToExt(dropped))
+	if err != nil {
+		t.Fatalf("read rebuilt shard: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("rebuilt shard %d differs; the rebuild used the wrong geometry", dropped)
+	}
+	for _, id := range []int{14, 15} {
+		if _, err := os.Stat(base + ToExt(id)); err != nil {
+			t.Errorf("shard %d missing after rebuild: %v", id, err)
+		}
 	}
 }

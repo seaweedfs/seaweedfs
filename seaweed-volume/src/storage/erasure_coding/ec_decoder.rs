@@ -80,6 +80,8 @@ pub fn write_dat_file_from_shards(
     dat_file_size: i64,
     encoded_dat_file_size: i64,
     data_shards: usize,
+    large_block_size: usize,
+    small_block_size: usize,
 ) -> io::Result<()> {
     let dirs: Vec<String> = (0..data_shards).map(|_| dir.to_string()).collect();
     write_dat_file_from_shards_with_dirs(
@@ -90,6 +92,8 @@ pub fn write_dat_file_from_shards(
         encoded_dat_file_size,
         data_shards,
         &dirs,
+        large_block_size,
+        small_block_size,
     )
 }
 
@@ -113,7 +117,10 @@ pub fn write_dat_file_from_shards(
 /// boundary, and deriving the layout from the shrunk extent would read
 /// the shards in the wrong block order. Pass zero when the .vif does
 /// not record the encode-time size to infer the layout from the shard
-/// size.
+/// size. `large_block_size`/`small_block_size` are the volume's shard
+/// block layout, e.g. `EcVolume::large_block_size()` /
+/// `small_block_size()` from its .vif EC config.
+#[allow(clippy::too_many_arguments)]
 pub fn write_dat_file_from_shards_with_dirs(
     dat_dir: &str,
     collection: &str,
@@ -122,6 +129,8 @@ pub fn write_dat_file_from_shards_with_dirs(
     encoded_dat_file_size: i64,
     data_shards: usize,
     shard_dirs: &[String],
+    large_block_size: usize,
+    small_block_size: usize,
 ) -> io::Result<()> {
     write_dat_file(
         dat_dir,
@@ -131,8 +140,8 @@ pub fn write_dat_file_from_shards_with_dirs(
         encoded_dat_file_size,
         data_shards,
         shard_dirs,
-        ERASURE_CODING_LARGE_BLOCK_SIZE,
-        ERASURE_CODING_SMALL_BLOCK_SIZE,
+        large_block_size,
+        small_block_size,
     )
 }
 
@@ -412,7 +421,9 @@ mod tests {
         // Encode to EC
         let data_shards = 10;
         let parity_shards = 4;
-        ec_encoder::write_ec_files(dir, dir, "", VolumeId(1), data_shards, parity_shards).unwrap();
+        let block_size =
+            ec_encoder::write_ec_files(dir, dir, "", VolumeId(1), data_shards, parity_shards)
+                .unwrap();
 
         // Delete original .dat and .idx
         std::fs::remove_file(format!("{}/1.dat", dir)).unwrap();
@@ -426,6 +437,8 @@ mod tests {
             original_dat_size as i64,
             original_dat_size as i64,
             data_shards,
+            block_size as usize,
+            block_size as usize,
         )
         .unwrap();
         write_idx_file_from_ec_index(dir, "", VolumeId(1)).unwrap();
@@ -472,7 +485,16 @@ mod tests {
         let dir = tmp.path().to_str().unwrap();
         // No shard files exist, so de-striping must fail and publish nothing:
         // neither the final .dat nor a partial .dat.tmp may remain.
-        let res = write_dat_file_from_shards(dir, "", VolumeId(7), 100, 100, 10);
+        let res = write_dat_file_from_shards(
+            dir,
+            "",
+            VolumeId(7),
+            100,
+            100,
+            10,
+            ERASURE_CODING_LARGE_BLOCK_SIZE,
+            ERASURE_CODING_SMALL_BLOCK_SIZE,
+        );
         assert!(res.is_err());
         assert!(!std::path::Path::new(&format!("{}/7.dat", dir)).exists());
         assert!(!std::path::Path::new(&format!("{}/7.dat.tmp", dir)).exists());
@@ -525,6 +547,7 @@ mod tests {
                 &mut builders,
                 data_shards,
                 parity_shards,
+                SMALL,
                 LARGE,
                 SMALL,
             )
@@ -616,6 +639,7 @@ mod tests {
             &mut builders,
             data_shards,
             parity_shards,
+            SMALL,
             LARGE,
             SMALL,
         )

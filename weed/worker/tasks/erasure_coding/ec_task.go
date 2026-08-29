@@ -51,6 +51,11 @@ type ErasureCodingTask struct {
 	// pre-distribute sweep. deleteOriginalVolume skips these so it does not
 	// re-delete and remove the now-EC .vif those servers share.
 	emptyReplicasDeleted map[string]bool
+
+	// encodedBlockSize is the shard block layout WriteEcFiles actually encoded
+	// with, read back off the EC context. Every holder must report serving the
+	// same one before the source volume may be deleted.
+	encodedBlockSize int64
 }
 
 // NewErasureCodingTask creates a new unified EC task instance
@@ -583,16 +588,23 @@ func (t *ErasureCodingTask) generateEcShardsLocally(localFiles map[string]string
 	}
 
 	// Generate EC shard files (.ec00 ~ .ec13)
-	ecBitrot, err := erasure_coding.WriteEcFiles(baseName, erasure_coding.BackgroundECContext())
+	ecCtx := erasure_coding.BackgroundECContext()
+	ecBitrot, err := erasure_coding.WriteEcFiles(baseName, ecCtx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate EC shard files: %w", err)
 	}
+	// The layout the shards were actually written in, for the holder agreement
+	// check before the source is deleted.
+	t.encodedBlockSize = ecCtx.BlockSize
 	// Persist the bitrot checksum sidecar (generation 0) alongside the shards so
-	// it travels with them during distribution. Best-effort: a failed sidecar
-	// write leaves the generation unprotected rather than failing the encode.
+	// it travels with them during distribution. Protection was asked for, and
+	// this write is orders of magnitude smaller than the shards that just
+	// landed: if it fails the disk is in trouble, and continuing would delete
+	// the source replicas in exchange for a generation that is both unprotected
+	// and missing the geometry record the .vif fallback reads.
 	if erasure_coding.BitrotProtectionEnabled && ecBitrot != nil {
 		if serr := erasure_coding.SaveBitrotSidecar(erasure_coding.BitrotSidecarPath(baseName, 0), ecBitrot); serr != nil {
-			glog.Warningf("failed to write EC bitrot sidecar for %s: %v", baseName, serr)
+			return nil, fmt.Errorf("write EC bitrot sidecar for %s: %w", baseName, serr)
 		}
 	}
 
@@ -662,6 +674,7 @@ func (t *ErasureCodingTask) generateEcShardsLocally(localFiles map[string]string
 	if ecBitrot != nil && ecBitrot.EcShardConfig != nil {
 		ecShardConfig.DataShards = ecBitrot.EcShardConfig.DataShards
 		ecShardConfig.ParityShards = ecBitrot.EcShardConfig.ParityShards
+		ecShardConfig.BlockSize = ecBitrot.EcShardConfig.BlockSize
 	}
 	volumeInfo := &volume_server_pb.VolumeInfo{
 		Version:       uint32(needle.GetCurrentVersion()),
@@ -675,30 +688,40 @@ func (t *ErasureCodingTask) generateEcShardsLocally(localFiles map[string]string
 	} else {
 		glog.Warningf("stat %s for .vif dat file size: %v", datFile, err)
 	}
+	// The .vif carries the shard block layout the holders will read through, so
+	// neither the write nor the inclusion below is optional: an encode that
+	// distributed shards without it would leave every reader falling back to
+	// the legacy layout, and the task deletes the source replicas afterwards.
 	if err := volume_info.SaveVolumeInfo(vifFile, volumeInfo); err != nil {
-		glog.Warningf("Failed to create .vif file: %v", err)
-	} else {
-		shardFiles["vif"] = vifFile
-		if info, err := os.Stat(vifFile); err == nil {
-			t.GetLogger().WithFields(map[string]interface{}{
-				"file_type":  "vif",
-				"file_path":  vifFile,
-				"size_bytes": info.Size(),
-			}).Info("Volume info file generated")
-		}
+		return nil, fmt.Errorf("write %s: %w", vifFile, err)
 	}
+	vifInfo, err := os.Stat(vifFile)
+	if err != nil {
+		return nil, fmt.Errorf("stat %s for distribution: %w", vifFile, err)
+	}
+	shardFiles["vif"] = vifFile
+	t.GetLogger().WithFields(map[string]interface{}{
+		"file_type":  "vif",
+		"file_path":  vifFile,
+		"size_bytes": vifInfo.Size(),
+	}).Info("Volume info file generated")
 
 	// Add the generation-0 bitrot checksum sidecar so it is distributed with
 	// the shards (DistributeEcShards only ships files present in shardFiles).
-	// Best-effort like the sidecar write above: if it is absent the holders
-	// are simply unprotected rather than failing the encode.
+	// Strict when protection is enabled and the encoder produced a manifest —
+	// the write above already failed the encode otherwise — so the holders
+	// cannot end up with shards whose checksums stayed behind on the worker.
 	ecsumFile := erasure_coding.BitrotSidecarPath(baseName, 0)
-	if info, err := os.Stat(ecsumFile); err == nil {
+	ecsumInfo, ecsumErr := os.Stat(ecsumFile)
+	if ecsumErr != nil && erasure_coding.BitrotProtectionEnabled && ecBitrot != nil {
+		return nil, fmt.Errorf("stat %s for distribution: %w", ecsumFile, ecsumErr)
+	}
+	if ecsumErr == nil {
 		shardFiles["ecsum"] = ecsumFile
 		t.GetLogger().WithFields(map[string]interface{}{
 			"file_type":  "ecsum",
 			"file_path":  ecsumFile,
-			"size_bytes": info.Size(),
+			"size_bytes": ecsumInfo.Size(),
 		}).Info("EC bitrot checksum sidecar generated")
 	}
 
@@ -768,6 +791,20 @@ func (t *ErasureCodingTask) verifyEcShardsBeforeDelete(ctx context.Context) erro
 			"per_server":   summary,
 		}).Warning("EC shard set incomplete but recoverable; proceeding with source deletion")
 	}
+
+	// Before anything irreversible: every holder that answered must report
+	// serving the layout these shards were encoded in. A holder too old to
+	// know the uniform layout mounts them as legacy and returns wrong bytes,
+	// and the source volume is the only remaining correct copy.
+	if err := erasure_coding.RequireAgreedBlockLayout(t.volumeID, t.encodedBlockSize, perServer); err != nil {
+		t.GetLogger().WithFields(map[string]interface{}{
+			"volume_id":  t.volumeID,
+			"per_server": summary,
+			"error":      err.Error(),
+		}).Error("EC holders disagree on the shard block layout — source volume will be kept")
+		return err
+	}
+
 	return nil
 }
 

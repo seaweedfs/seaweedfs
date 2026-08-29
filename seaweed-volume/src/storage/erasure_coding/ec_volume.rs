@@ -26,6 +26,9 @@ pub struct EcVolume {
     pub dat_file_size: i64,
     pub data_shards: u32,
     pub parity_shards: u32,
+    /// Uniform block layout: each shard is one contiguous block of this many
+    /// bytes. 0 = legacy 1GiB/1MiB two-tier layout. Loaded from .vif.
+    pub block_size: i64,
     ecx_file: Option<File>,
     ecx_file_size: i64,
     ecj_file: Option<File>,
@@ -101,34 +104,249 @@ fn locate_vif_path(dir: &str, dir_idx: &str, collection: &str, volume_id: Volume
     data_vif
 }
 
-/// Read EC data/parity shard counts from `.vif`, defaulting to the
-/// build's standard ratio when no `.vif` is present or is malformed.
+/// Load the volume's `.vif` (data dir first, then idx dir, then the active
+/// generation's versioned sidecar — see [`locate_vif_path`]). Absent
+/// everywhere is legal — legacy volumes predate the sidecar — and returns
+/// `None`; so does a zero-byte stub (an ec.decode copy from a source
+/// without one), mirroring Go's MaybeLoadVolumeInfo. A
+/// present-but-unreadable or malformed `.vif` is an ERROR: silently
+/// defaulting would mount a uniform-layout volume with legacy offset math
+/// and serve wrong bytes with a straight face.
+pub fn load_vif_info(
+    dir: &str,
+    dir_idx: &str,
+    collection: &str,
+    volume_id: VolumeId,
+) -> io::Result<Option<crate::storage::volume::VifVolumeInfo>> {
+    let vif_path = locate_vif_path(dir, dir_idx, collection, volume_id);
+    match std::fs::read_to_string(&vif_path) {
+        Ok(content) if content.trim().is_empty() => Ok(None),
+        Ok(content) => serde_json::from_str(&content).map(Some).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("parse {}: {}", vif_path, e),
+            )
+        }),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(io::Error::new(
+            e.kind(),
+            format!("read {}: {}", vif_path, e),
+        )),
+    }
+}
+
+/// Read the EC data/parity shard counts and shard block size from `.vif`,
+/// defaulting to the build's standard ratio and the legacy block layout when
+/// no `.vif` is present. A present-but-unreadable or malformed `.vif`
+/// fails instead of defaulting (see [`load_vif_info`]).
 /// Looks at the data dir first, then the idx dir — see [`locate_vif_path`].
 pub fn read_ec_shard_config(
     dir: &str,
     dir_idx: &str,
     collection: &str,
     volume_id: VolumeId,
-) -> (u32, u32) {
-    let mut data_shards = crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT as u32;
-    let mut parity_shards = crate::storage::erasure_coding::ec_shard::PARITY_SHARDS_COUNT as u32;
-    let vif_path = locate_vif_path(dir, dir_idx, collection, volume_id);
-    if let Ok(vif_content) = std::fs::read_to_string(&vif_path) {
-        if let Ok(vif_info) =
-            serde_json::from_str::<crate::storage::volume::VifVolumeInfo>(&vif_content)
-        {
-            if let Some(ec) = vif_info.ec_shard_config {
-                if ec.data_shards > 0
-                    && ec.parity_shards > 0
-                    && (ec.data_shards + ec.parity_shards) <= MAX_SHARD_COUNT as u32
-                {
-                    data_shards = ec.data_shards;
-                    parity_shards = ec.parity_shards;
-                }
+) -> io::Result<(u32, u32, i64)> {
+    let vif = load_vif_info(dir, dir_idx, collection, volume_id)?;
+    ec_shard_config_from(vif.as_ref(), &[dir, dir_idx], collection, volume_id)
+}
+
+/// Load the volume's `.vif` from the selected location or, failing that, from
+/// any sibling disk — returning the directory it came from so the caller can
+/// resolve the rest of the volume's metadata against the same place. A rebuild
+/// picks one disk to write into, but a multi-disk server may hold that
+/// volume's metadata on another.
+pub fn load_vif_info_across_dirs(
+    dir: &str,
+    dir_idx: &str,
+    other_dirs: &[String],
+    collection: &str,
+    volume_id: VolumeId,
+) -> io::Result<Option<(crate::storage::volume::VifVolumeInfo, String)>> {
+    if let Some(vif) = load_vif_info(dir, dir_idx, collection, volume_id)? {
+        // Report where it actually came from. load_vif_info probes the data
+        // directory then the index directory, so naming `dir` unconditionally
+        // pointed callers at the wrong disk whenever the vif lived with the
+        // index — and a caller resolving the rest of the volume's metadata
+        // against that answer would look in a directory holding none of it.
+        let data_vif = format!(
+            "{}.vif",
+            crate::storage::volume::volume_file_name(dir, collection, volume_id)
+        );
+        let found_in = if std::path::Path::new(&data_vif).exists() {
+            dir.to_string()
+        } else {
+            dir_idx.to_string()
+        };
+        return Ok(Some((vif, found_in)));
+    }
+    for other in other_dirs {
+        if let Some(vif) = load_vif_info(other, other, collection, volume_id)? {
+            return Ok(Some((vif, other.clone())));
+        }
+    }
+    Ok(None)
+}
+
+/// [`read_ec_shard_config`] for a caller that may find the volume's metadata on
+/// any of the server's disks. Without this a rebuild that lands on a disk
+/// holding only shards reads the default 10+4 and the legacy block layout,
+/// then reconstructs a custom-ratio or uniform volume through the wrong matrix
+/// and de-striping geometry.
+pub fn read_ec_shard_config_across_dirs(
+    dir: &str,
+    dir_idx: &str,
+    other_dirs: &[String],
+    collection: &str,
+    volume_id: VolumeId,
+) -> io::Result<(u32, u32, i64)> {
+    // Every directory this volume's metadata could be in. A split -dir/-dir.idx
+    // location keeps .vif and .ecsum with the INDEX, and callers exclude their
+    // own index directory from other_dirs on the understanding that it is
+    // passed here separately — so it is chained explicitly, exactly as the .vif
+    // lookup and Go's findBitrotSidecar both do.
+    let mut candidates: Vec<&str> = Vec::with_capacity(2 + other_dirs.len());
+    candidates.push(dir);
+    if !dir_idx.is_empty() && dir_idx != dir {
+        candidates.push(dir_idx);
+    }
+    candidates.extend(other_dirs.iter().map(|s| s.as_str()));
+
+    // A vif that carries no ecShardConfig answers nothing about the layout, so
+    // it must NOT short-circuit the sidecar search: a legacy config-free vif
+    // and the generation-0 sidecar can sit in different directories, and
+    // stopping at the vif resolved a 12+4 uniform volume as 10+4 legacy. Pass
+    // the whole candidate list so the fallback covers the same ground the vif
+    // lookup did.
+    let vif = load_vif_info_across_dirs(dir, dir_idx, other_dirs, collection, volume_id)?;
+    ec_shard_config_from(
+        vif.as_ref().map(|(v, _)| v),
+        &candidates,
+        collection,
+        volume_id,
+    )
+}
+
+/// Resolve (data_shards, parity_shards, block_size) from an already-loaded
+/// `.vif`. With no vif — or one carrying no EC config — the bitrot sidecar
+/// records the same config at encode time and answers the layout question the
+/// vif cannot: defaulting a uniform-layout volume to the legacy block sizes
+/// maps every read to the wrong shard offset. `weed fix -ecx` reads the
+/// sidecar for the same reason. Absent both, the build's standard ratio and
+/// the legacy layout.
+pub fn ec_shard_config_from(
+    vif: Option<&crate::storage::volume::VifVolumeInfo>,
+    dirs: &[&str],
+    collection: &str,
+    volume_id: VolumeId,
+) -> io::Result<(u32, u32, i64)> {
+    let default_ds = crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT as u32;
+    let default_ps = crate::storage::erasure_coding::ec_shard::PARITY_SHARDS_COUNT as u32;
+    // Sum as u64: counts near the u32 ceiling would wrap and pass the bound.
+    let usable = |ds: u32, ps: u32| {
+        ds > 0 && ps > 0 && (ds as u64 + ps as u64) <= MAX_SHARD_COUNT as u64
+    };
+
+    if let Some(ec) = vif.and_then(|v| v.ec_shard_config.as_ref()) {
+        // A config that is PRESENT but records an impossible ratio is not a
+        // volume to fall back on: dropping through to the sidecar or the
+        // defaults would read uniform shards with the legacy offset math and
+        // answer with the wrong bytes. Only an ENTIRELY absent config means
+        // "this predates the record".
+        if !usable(ec.data_shards, ec.parity_shards) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "vif for volume {} records invalid shard counts {}+{}",
+                    volume_id.0, ec.data_shards, ec.parity_shards
+                ),
+            ));
+        }
+        // A recorded block size that no encoder could have produced maps
+        // every read to the wrong shard offset. Refuse the mount rather
+        // than serve those bytes or silently pick a layout.
+        validate_block_size(ec.block_size)?;
+        return Ok((ec.data_shards, ec.parity_shards, ec.block_size));
+    }
+    // With no usable vif config the sidecar is the ONLY record of this volume's
+    // layout, so the three answers stay distinct: absent EVERYWHERE means the
+    // volume may genuinely predate the sidecar and legacy is the right guess;
+    // present-but-unusable means the record is corrupt, and answering reads
+    // from a guessed layout returns wrong bytes rather than none.
+    //
+    // Every candidate directory is searched, not just the first: a split
+    // -dir/-dir.idx location keeps the sidecar with the INDEX, and a multi-disk
+    // server may keep it on a sibling. Stopping at the data directory resolved
+    // a 12+4 uniform volume as 10+4 legacy.
+    let mut path = String::new();
+    for candidate in dirs.iter().filter(|d| !d.is_empty()) {
+        let base = crate::storage::volume::volume_file_name(candidate, collection, volume_id);
+        let probe = crate::storage::erasure_coding::ec_bitrot::bitrot_sidecar_path(&base, 0);
+        match std::fs::metadata(&probe) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+            Err(e) => {
+                return Err(io::Error::new(e.kind(), format!("stat {}: {}", probe, e)));
+            }
+            Ok(_) => {
+                path = probe;
+                break;
             }
         }
     }
-    (data_shards, parity_shards)
+    if path.is_empty() {
+        return Ok((default_ds, default_ps, 0));
+    }
+    let prot = crate::storage::erasure_coding::ec_bitrot::load_bitrot_sidecar(&path)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("read {}: {}", path, e)))?;
+    // The un-suffixed sidecar describes generation 0 and nothing else.
+    if prot.generation != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{} records generation {}, not generation 0", path, prot.generation),
+        ));
+    }
+    let ec = prot.ec_shard_config.as_ref().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{} records no EC config", path),
+        )
+    })?;
+    if !usable(ec.data_shards, ec.parity_shards) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "{} records invalid shard counts {}+{}",
+                path, ec.data_shards, ec.parity_shards
+            ),
+        ));
+    }
+    validate_block_size(ec.block_size)
+        .map_err(|e| io::Error::new(e.kind(), format!("{}: {}", path, e)))?;
+    Ok((ec.data_shards, ec.parity_shards, ec.block_size))
+}
+
+/// Reports whether a `.vif`-recorded shard block size is one an encoder could
+/// have produced. 0 means the legacy two-tier layout, which is always valid;
+/// anything positive must be a whole number of small blocks, because that is
+/// what `uniform_block_size` rounds to. Mirrors Go's `ValidateBlockSize`.
+pub fn validate_block_size(block_size: i64) -> io::Result<()> {
+    if block_size == 0 {
+        return Ok(());
+    }
+    if block_size < 0
+        || block_size
+            % crate::storage::erasure_coding::ec_shard::ERASURE_CODING_SMALL_BLOCK_SIZE as i64
+            != 0
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "invalid shard block size {}: expected 0 (legacy) or a multiple of {}",
+                block_size,
+                crate::storage::erasure_coding::ec_shard::ERASURE_CODING_SMALL_BLOCK_SIZE
+            ),
+        ));
+    }
+    Ok(())
 }
 
 impl EcVolume {
@@ -139,7 +357,14 @@ impl EcVolume {
         collection: &str,
         volume_id: VolumeId,
     ) -> io::Result<Self> {
-        let (data_shards, parity_shards) = read_ec_shard_config(dir, dir_idx, collection, volume_id);
+        // One load of the volume's `.vif`, used for both the shard config and
+        // the version / dat-size fields below.
+        let vif = load_vif_info(dir, dir_idx, collection, volume_id)?;
+        // Both directories: a split -dir/-dir.idx layout keeps the .ecsum with
+        // the INDEX, and it is the only layout record a volume whose vif is
+        // absent or config-free still has.
+        let (data_shards, parity_shards, block_size) =
+            ec_shard_config_from(vif.as_ref(), &[dir, dir_idx], collection, volume_id)?;
 
         let total_shards = (data_shards + parity_shards) as usize;
         let mut shards = Vec::with_capacity(total_shards);
@@ -155,12 +380,11 @@ impl EcVolume {
         // for shard-size math and by the Store-level prune in
         // `store_ec_reconcile.rs` to verify a sibling-disk .dat is
         // plausibly the encoding source (#9478).
-        let (expire_at_sec, vif_version, vif_dat_file_size, encode_ts_ns) = {
-            let vif_path = locate_vif_path(dir, dir_idx, collection, volume_id);
-            if let Ok(vif_content) = std::fs::read_to_string(&vif_path) {
-                if let Ok(vif_info) =
-                    serde_json::from_str::<crate::storage::volume::VifVolumeInfo>(&vif_content)
-                {
+        let (expire_at_sec, vif_version, vif_dat_file_size, encode_ts_ns) =
+            // Absent everywhere = legacy defaults; a present-but-unreadable or
+            // malformed vif already failed the mount in load_vif_info above.
+            match vif.as_ref() {
+                Some(vif_info) => {
                     let ver = if vif_info.version > 0 {
                         Version(vif_info.version as u8)
                     } else {
@@ -176,13 +400,9 @@ impl EcVolume {
                         vif_info.dat_file_size,
                         cfg_encode_ts_ns,
                     )
-                } else {
-                    (0, Version::current(), 0, 0)
                 }
-            } else {
-                (0, Version::current(), 0, 0)
-            }
-        };
+                None => (0, Version::current(), 0, 0),
+            };
 
         let mut vol = EcVolume {
             volume_id,
@@ -194,6 +414,7 @@ impl EcVolume {
             dat_file_size: vif_dat_file_size,
             data_shards,
             parity_shards,
+            block_size,
             ecx_file: None,
             ecx_file_size: 0,
             ecj_file: None,
@@ -254,17 +475,33 @@ impl EcVolume {
         // Seed the in-memory deleted set from the journal.
         vol.load_deleted_needles_from_ecj()?;
 
-        // Load the generation-0 EC bitrot checksum sidecar (optional; best-effort).
-        vol.load_active_bitrot_sidecar();
+        // Load the generation-0 EC bitrot checksum sidecar. Optional, except
+        // when it contradicts the volume's own geometry — see
+        // load_bitrot_for_generation.
+        vol.load_active_bitrot_sidecar(&[])?;
 
         Ok(vol)
+    }
+
+    /// Re-resolve the checksum sidecar for a volume that is already mounted. A
+    /// shard delivery can bring the manifest with it, and the receive path only
+    /// writes the file, so without this the in-memory volume keeps the
+    /// protection state it resolved at mount (off) until a remount.
+    pub fn reload_bitrot_sidecar(&mut self, additional_dirs: &[String]) {
+        if let Err(e) = self.load_active_bitrot_sidecar(additional_dirs) {
+            tracing::warn!(
+                volume_id = self.volume_id.0,
+                error = %e,
+                "reload bitrot sidecar",
+            );
+        }
     }
 
     /// Load the generation-0 checksum sidecar into `self.bitrot`/`self.bitrot_status`.
     /// OSS only produces generation-0 (fresh-encode) sidecars, mirroring Go's
     /// `loadActiveBitrotSidecar`.
-    fn load_active_bitrot_sidecar(&mut self) {
-        self.load_bitrot_for_generation(0);
+    fn load_active_bitrot_sidecar(&mut self, additional_dirs: &[String]) -> io::Result<()> {
+        self.load_bitrot_for_generation(0, additional_dirs)
     }
 
     /// Load and validate the sidecar describing `generation`, setting
@@ -272,11 +509,60 @@ impl EcVolume {
     /// => `Off` (protection off, not corruption); self-integrity or manifest
     /// failure => `Invalid` with a warning (protection off pending repair); usable
     /// => `On`. Mirrors Go's `loadBitrotForGeneration`.
-    fn load_bitrot_for_generation(&mut self, generation: u32) {
+    fn load_bitrot_for_generation(&mut self, generation: u32, additional_dirs: &[String]) -> io::Result<()> {
         use crate::storage::erasure_coding::ec_bitrot;
-        let base = self.base_name();
-        let path = ec_bitrot::bitrot_sidecar_path(&base, generation);
+        // Data base then index base, matching Go's findBitrotSidecar. A split
+        // -dir/-dir.idx location keeps the sidecar with the INDEX, and on a
+        // multi-disk server sharing one index directory that is the only copy
+        // the per-disk runtimes other than the first can see — searching the
+        // data base alone left them reporting no protection at all.
+        let data_path = ec_bitrot::bitrot_sidecar_path(&self.base_name(), generation);
+        let idx_path = ec_bitrot::bitrot_sidecar_path(&self.idx_base_name(), generation);
+        // Sibling disks last: startup mirroring gives each shard-bearing disk
+        // its own .ecx/.ecj/.vif but not the sidecar, and a delivery lands
+        // exactly one copy, so a runtime restricted to its own two directories
+        // would report no protection however often it reloaded.
+        let path = std::iter::once(data_path.clone())
+            .chain(std::iter::once(idx_path))
+            .chain(additional_dirs.iter().filter(|d| !d.is_empty()).map(|d| {
+                ec_bitrot::bitrot_sidecar_path(
+                    &crate::storage::volume::volume_file_name(d, &self.collection, self.volume_id),
+                    generation,
+                )
+            }))
+            .find(|p| std::path::Path::new(p).exists())
+            .unwrap_or(data_path);
         let loaded = ec_bitrot::load_bitrot_sidecar(&path);
+        // A sidecar written for THIS generation that contradicts the volume's
+        // geometry is not "no protection" — it says the layout the volume is
+        // about to serve reads with is wrong. Fail the mount.
+        if let Ok(prot) = &loaded {
+            if prot.generation == generation
+                && !ec_bitrot::geometry_matches(
+                    prot,
+                    self.data_shards as usize,
+                    self.parity_shards as usize,
+                    self.block_size,
+                )
+            {
+                let cfg = prot.ec_shard_config.as_ref();
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "ec volume {} generation {}: {} records layout {}+{} block {} but the volume is mounted as {}+{} block {}; refusing to serve one of the two layouts",
+                        self.volume_id.0,
+                        generation,
+                        path,
+                        cfg.map(|c| c.data_shards).unwrap_or(0),
+                        cfg.map(|c| c.parity_shards).unwrap_or(0),
+                        cfg.map(|c| c.block_size).unwrap_or(0),
+                        self.data_shards,
+                        self.parity_shards,
+                        self.block_size,
+                    ),
+                ));
+            }
+        }
         let status = ec_bitrot::resolve_status(
             &loaded,
             generation,
@@ -297,6 +583,7 @@ impl EcVolume {
                 );
             }
         }
+        Ok(())
     }
 
     /// The active-generation bitrot protection AND its status (cached at mount),
@@ -765,6 +1052,26 @@ impl EcVolume {
         Ok(None)
     }
 
+    /// Large-block length of this volume's shard layout (the uniform block
+    /// size when set, the legacy 1GiB otherwise). Mirrors Go's
+    /// ECContext.LargeBlockSize.
+    pub fn large_block_size(&self) -> i64 {
+        if self.block_size > 0 {
+            self.block_size
+        } else {
+            ERASURE_CODING_LARGE_BLOCK_SIZE as i64
+        }
+    }
+
+    /// Small-block length of this volume's shard layout.
+    pub fn small_block_size(&self) -> i64 {
+        if self.block_size > 0 {
+            self.block_size
+        } else {
+            ERASURE_CODING_SMALL_BLOCK_SIZE as i64
+        }
+    }
+
     /// Locate the EC shard intervals needed to read a needle.
     /// Locate the EC shard intervals covering a needle at `actual_offset` whose
     /// index size is `size`. Mirrors Go's EcVolume.LocateEcShardNeedleInterval.
@@ -783,7 +1090,27 @@ impl EcVolume {
         };
         // locate_data wants the on-disk size (header+body+checksum+timestamp+padding).
         let actual = get_actual_size(size, self.version);
-        ec_locate::locate_data(actual_offset, Size(actual as i32), shard_size, self.data_shards)
+        ec_locate::locate_data(
+            actual_offset,
+            Size(actual as i32),
+            shard_size,
+            self.data_shards,
+            self.large_block_size(),
+            self.small_block_size(),
+        )
+    }
+
+    /// Resolve an interval against this volume's shard block layout. Mirrors
+    /// Go's EcVolume.IntervalToShardIdAndOffset.
+    pub fn interval_to_shard_id_and_offset(
+        &self,
+        interval: &ec_locate::Interval,
+    ) -> (ShardId, i64) {
+        interval.to_shard_id_and_offset(
+            self.data_shards,
+            self.large_block_size(),
+            self.small_block_size(),
+        )
     }
 
     pub fn locate_needle(
@@ -829,7 +1156,7 @@ impl EcVolume {
         let mut bytes = Vec::with_capacity(actual_size);
 
         for interval in &intervals {
-            let (shard_id, shard_offset) = interval.to_shard_id_and_offset(self.data_shards);
+            let (shard_id, shard_offset) = self.interval_to_shard_id_and_offset(interval);
             let shard = self
                 .shards
                 .get(shard_id as usize)
@@ -989,7 +1316,7 @@ impl EcVolume {
             // A needle is verifiable locally only if every shard it spans is local;
             // when any is remote, skip the reassembly buffer entirely.
             let has_remote_chunks = locations.iter().any(|iv| {
-                let (sid, _) = iv.to_shard_id_and_offset(self.data_shards);
+                let (sid, _) = self.interval_to_shard_id_and_offset(iv);
                 self.shards.get(sid as usize).and_then(|s| s.as_ref()).is_none()
             });
             let mut read: i64 = 0;
@@ -1001,7 +1328,7 @@ impl EcVolume {
             let mut local_shard_ids: Vec<ShardId> = Vec::new();
 
             for (i, iv) in locations.iter().enumerate() {
-                let (sid, soffset) = iv.to_shard_id_and_offset(self.data_shards);
+                let (sid, soffset) = self.interval_to_shard_id_and_offset(iv);
                 let ssize = iv.size;
                 let shard = match self.shards.get(sid as usize).and_then(|s| s.as_ref()) {
                     Some(s) => s,
@@ -1800,8 +2127,14 @@ mod tests {
         assert_eq!(vol.parity_shards, 3);
     }
 
+    /// A vif that RECORDS a ratio no volume could have must fail the mount.
+    /// Substituting the default 10+4 (and with it the legacy block layout)
+    /// would read a uniform volume's shards at the wrong offsets and answer
+    /// with the wrong bytes; only an entirely absent config means "this
+    /// predates the record", which
+    /// `test_ec_volume_absent_vif_config_uses_defaults` covers.
     #[test]
-    fn test_ec_volume_invalid_vif_config_falls_back_to_defaults() {
+    fn test_ec_volume_invalid_vif_config_fails_the_mount() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
         write_ecx_file(dir, "pics", VolumeId(1), &[]);
@@ -1822,9 +2155,27 @@ mod tests {
         )
         .unwrap();
 
+        // EcVolume has no Debug impl, so match rather than expect_err.
+        match EcVolume::new(dir, dir, "pics", VolumeId(1)) {
+            Ok(_) => panic!("an impossible ratio must fail the mount"),
+            Err(e) => assert_eq!(e.kind(), io::ErrorKind::InvalidData, "got {e}"),
+        }
+    }
+
+    /// The compatibility case the check above must not swallow: a vif with no
+    /// EC config at all predates the record, and mounts on the defaults.
+    #[test]
+    fn test_ec_volume_absent_vif_config_uses_defaults() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        write_ecx_file(dir, "pics", VolumeId(1), &[]);
+        let base = crate::storage::volume::volume_file_name(dir, "pics", VolumeId(1));
+        std::fs::write(format!("{}.vif", base), r#"{"version":3}"#).unwrap();
+
         let vol = EcVolume::new(dir, dir, "pics", VolumeId(1)).unwrap();
         assert_eq!(vol.data_shards, DATA_SHARDS_COUNT as u32);
         assert_eq!(vol.parity_shards, PARITY_SHARDS_COUNT as u32);
+        assert_eq!(vol.block_size, 0, "legacy layout for a pre-record volume");
     }
 
     #[test]
@@ -1971,5 +2322,372 @@ mod tests {
             !errs.is_empty(),
             "a non-zero size mismatch is genuine corruption and must be reported"
         );
+    }
+}
+
+#[cfg(test)]
+mod uniform_layout_tests {
+    use super::*;
+    use crate::storage::needle_map::NeedleMapKind;
+    use crate::storage::volume::{VifEcShardConfig, VifVolumeInfo, Volume};
+    use tempfile::TempDir;
+
+    // Write ~26MB of needles so the uniform block size (3MB) diverges from the
+    // legacy layout, encode, and verify EcVolume reads every needle back
+    // through the .vif-recorded geometry. A legacy-encoded fixture (no .vif
+    // block size) must keep reading through the legacy interpretation.
+    #[test]
+    fn test_read_needles_uniform_and_legacy_layouts() {
+        for legacy in [false, true] {
+            let tmp = TempDir::new().unwrap();
+            let dir = tmp.path().to_str().unwrap();
+            let vid = VolumeId(8);
+
+            let mut v = Volume::new(
+                dir,
+                dir,
+                "",
+                vid,
+                NeedleMapKind::InMemory,
+                None,
+                None,
+                0,
+                Version::current(),
+            )
+            .unwrap();
+            let mut expected: Vec<(NeedleId, Vec<u8>)> = Vec::new();
+            for i in 1u64..=11 {
+                let size = if i <= 5 { 4 << 20 } else { 1 << 20 };
+                let data: Vec<u8> = (0..size)
+                    .map(|b| ((b as u64).wrapping_mul(2654435761).wrapping_add(i) >> 8) as u8)
+                    .collect();
+                let mut n = Needle {
+                    id: NeedleId(i),
+                    cookie: Cookie(i as u32),
+                    data: data.clone(),
+                    data_size: data.len() as u32,
+                    ..Needle::default()
+                };
+                v.write_needle(&mut n, true, false).unwrap();
+                expected.push((NeedleId(i), data));
+            }
+            v.sync_to_disk().unwrap();
+            let dat_size = v.dat_file_size().unwrap() as i64;
+            v.close();
+
+            let block_size = if legacy {
+                // Legacy fixture: two-tier encode plus a .vif without a block
+                // size, the state every pre-upgrade EC volume is in.
+                use crate::storage::erasure_coding::ec_bitrot::{
+                    ShardChecksumBuilder, DEFAULT_BITROT_BLOCK_SIZE,
+                };
+                use reed_solomon_erasure::galois_8::ReedSolomon;
+                let base = crate::storage::volume::volume_file_name(dir, "", vid);
+                crate::storage::erasure_coding::ec_encoder::write_sorted_ecx_from_idx(
+                    &format!("{}.idx", base),
+                    &format!("{}.ecx", base),
+                )
+                .unwrap();
+                let dat_file = std::fs::File::open(format!("{}.dat", base)).unwrap();
+                let rs = ReedSolomon::new(10, 4).unwrap();
+                let mut shards: Vec<EcVolumeShard> = (0..14u8)
+                    .map(|i| EcVolumeShard::new(dir, "", vid, i))
+                    .collect();
+                for shard in &mut shards {
+                    shard.create().unwrap();
+                }
+                let mut builders: Vec<ShardChecksumBuilder> = (0..14)
+                    .map(|_| ShardChecksumBuilder::new(DEFAULT_BITROT_BLOCK_SIZE as i64))
+                    .collect();
+                crate::storage::erasure_coding::ec_encoder::encode_dat_file(
+                    &dat_file,
+                    dat_size,
+                    &rs,
+                    &mut shards,
+                    &mut builders,
+                    10,
+                    4,
+                    256 * 1024,
+                    ERASURE_CODING_LARGE_BLOCK_SIZE,
+                    ERASURE_CODING_SMALL_BLOCK_SIZE,
+                )
+                .unwrap();
+                for shard in &mut shards {
+                    shard.close();
+                }
+                0
+            } else {
+                let bs = crate::storage::erasure_coding::ec_encoder::write_ec_files(
+                    dir, dir, "", vid, 10, 4,
+                )
+                .unwrap();
+                assert!(
+                    bs > ERASURE_CODING_SMALL_BLOCK_SIZE as i64,
+                    "block size {} does not diverge from the legacy layout",
+                    bs
+                );
+                bs
+            };
+
+            let base = crate::storage::volume::volume_file_name(dir, "", vid);
+            let vif = VifVolumeInfo {
+                version: Version::current().0 as u32,
+                dat_file_size: dat_size,
+                ec_shard_config: Some(VifEcShardConfig {
+                    data_shards: 10,
+                    parity_shards: 4,
+                    block_size,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            std::fs::write(
+                format!("{}.vif", base),
+                serde_json::to_string_pretty(&vif).unwrap(),
+            )
+            .unwrap();
+            std::fs::remove_file(format!("{}.dat", base)).unwrap();
+            std::fs::remove_file(format!("{}.idx", base)).unwrap();
+
+            let mut vol = EcVolume::new(dir, dir, "", vid).unwrap();
+            assert_eq!(vol.block_size, block_size, "block size not loaded from .vif");
+            for i in 0..10u8 {
+                vol.add_shard(EcVolumeShard::new(dir, "", vid, i)).unwrap();
+            }
+
+            for (id, data) in &expected {
+                let n = vol
+                    .read_ec_shard_needle(*id)
+                    .unwrap()
+                    .unwrap_or_else(|| panic!("needle {} not found (legacy={})", id.0, legacy));
+                assert_eq!(
+                    n.data, *data,
+                    "needle {} data mismatch (legacy={})",
+                    id.0, legacy
+                );
+            }
+        }
+    }
+
+    // A present-but-malformed .vif must FAIL the mount: every new encode
+    // records a positive uniform block size there, and silently defaulting
+    // to the legacy layout would serve those shards with the wrong offset
+    // math. Absence stays legal — legacy volumes predate the sidecar.
+    #[test]
+    fn new_fails_on_malformed_vif() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let base = crate::storage::volume::volume_file_name(dir, "", VolumeId(1));
+        std::fs::write(format!("{}.ecx", base), b"").unwrap();
+        std::fs::write(format!("{}.vif", base), b"not json").unwrap();
+        let res = EcVolume::new(dir, dir, "", VolumeId(1));
+        assert!(res.is_err(), "mount over a malformed .vif must fail");
+    }
+
+    #[test]
+    fn new_absent_vif_mounts_with_defaults() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let base = crate::storage::volume::volume_file_name(dir, "", VolumeId(1));
+        std::fs::write(format!("{}.ecx", base), b"").unwrap();
+        let ev = EcVolume::new(dir, dir, "", VolumeId(1)).unwrap();
+        assert_eq!(ev.block_size, 0, "legacy mount must use the legacy layout");
+    }
+
+    /// A rebuild lands on one disk, but the volume's metadata may live on
+    /// another. Reading only the selected directory returns the default 10+4
+    /// and the legacy block layout, which reconstructs a custom-ratio or
+    /// uniform volume through the wrong matrix.
+    fn seed_uniform_sidecar(base: &str, ds: u32, ps: u32, block: i64) {
+        use crate::pb::volume_server_pb::{ChecksumAlgorithm, EcBitrotProtection, EcShardChecksums};
+        use crate::storage::erasure_coding::ec_bitrot;
+        let prot = EcBitrotProtection {
+            algorithm: ChecksumAlgorithm::ChecksumCrc32c as i32,
+            block_size: ec_bitrot::DEFAULT_BITROT_BLOCK_SIZE as u32,
+            generation: 0,
+            ec_shard_config: Some(ec_bitrot::ec_shard_config(ds, ps, block)),
+            shards: (0..(ds + ps))
+                .map(|shard_id| EcShardChecksums {
+                    shard_id,
+                    covered_size: 4,
+                    block_crc32c: vec![0u8; 4],
+                })
+                .collect(),
+            encode_uuid: vec![0u8; 16],
+        };
+        ec_bitrot::save_bitrot_sidecar(&ec_bitrot::bitrot_sidecar_path(base, 0), &prot).unwrap();
+    }
+
+    fn seed_config_free_vif(base: &str) {
+        std::fs::write(
+            format!("{}.vif", base),
+            r#"{"version":3,"datFileSize":0}"#,
+        )
+        .unwrap();
+    }
+
+    // A .vif that omits ecShardConfig answers nothing about the layout, so it
+    // must not short-circuit the sidecar search. Returning as soon as any
+    // parseable vif turned up resolved a 12+4 uniform volume as 10+4 legacy.
+    #[test]
+    fn read_ec_shard_config_falls_back_when_the_vif_has_no_config() {
+        let d = tempfile::TempDir::new().unwrap();
+        let dir = d.path().to_str().unwrap();
+        let base = crate::storage::volume::volume_file_name(dir, "", VolumeId(11));
+        seed_config_free_vif(&base);
+        seed_uniform_sidecar(&base, 12, 4, 3 * 1024 * 1024);
+
+        let got = read_ec_shard_config(dir, dir, "", VolumeId(11)).unwrap();
+        assert_eq!(got, (12, 4, 3 * 1024 * 1024));
+    }
+
+    // Split -dir/-dir.idx: the vif and the sidecar both live with the INDEX,
+    // and the resolver was told to report the DATA directory, so the fallback
+    // looked in a directory holding neither.
+    #[test]
+    fn read_ec_shard_config_finds_a_config_free_vifs_sidecar_in_the_index_dir() {
+        let data = tempfile::TempDir::new().unwrap();
+        let idx = tempfile::TempDir::new().unwrap();
+        let (dir, dir_idx) = (data.path().to_str().unwrap(), idx.path().to_str().unwrap());
+        let idx_base = crate::storage::volume::volume_file_name(dir_idx, "", VolumeId(12));
+        seed_config_free_vif(&idx_base);
+        seed_uniform_sidecar(&idx_base, 12, 4, 3 * 1024 * 1024);
+
+        let got = read_ec_shard_config(dir, dir_idx, "", VolumeId(12)).unwrap();
+        assert_eq!(got, (12, 4, 3 * 1024 * 1024));
+    }
+
+    // Same gap in the cross-disk resolver the rebuild uses.
+    #[test]
+    fn read_ec_shard_config_across_dirs_falls_back_when_the_vif_has_no_config() {
+        let data = tempfile::TempDir::new().unwrap();
+        let sib = tempfile::TempDir::new().unwrap();
+        let (dir, sibling) = (data.path().to_str().unwrap(), sib.path().to_str().unwrap());
+        seed_config_free_vif(&crate::storage::volume::volume_file_name(dir, "", VolumeId(13)));
+        seed_uniform_sidecar(
+            &crate::storage::volume::volume_file_name(sibling, "", VolumeId(13)),
+            12,
+            4,
+            3 * 1024 * 1024,
+        );
+
+        let got = read_ec_shard_config_across_dirs(
+            dir,
+            dir,
+            &[sibling.to_string()],
+            "",
+            VolumeId(13),
+        )
+        .unwrap();
+        assert_eq!(got, (12, 4, 3 * 1024 * 1024));
+    }
+
+    // Absence stays legal: a volume predating both records is genuinely legacy.
+    #[test]
+    fn read_ec_shard_config_config_free_vif_without_a_sidecar_is_legacy() {
+        let d = tempfile::TempDir::new().unwrap();
+        let dir = d.path().to_str().unwrap();
+        seed_config_free_vif(&crate::storage::volume::volume_file_name(dir, "", VolumeId(14)));
+        let got = read_ec_shard_config(dir, dir, "", VolumeId(14)).unwrap();
+        assert_eq!(got, (10, 4, 0));
+    }
+
+    #[test]
+    fn read_ec_shard_config_finds_a_sibling_disks_vif() {
+        let a = tempfile::TempDir::new().unwrap();
+        let b = tempfile::TempDir::new().unwrap();
+        let (rebuild, sibling) = (a.path().to_str().unwrap(), b.path().to_str().unwrap());
+        let base = crate::storage::volume::volume_file_name(sibling, "", VolumeId(3));
+        std::fs::write(
+            format!("{}.vif", base),
+            r#"{"version":3,"ecShardConfig":{"dataShards":12,"parityShards":4,"blockSize":3145728}}"#,
+        )
+        .unwrap();
+
+        let (ds, ps, bs) = read_ec_shard_config_across_dirs(
+            rebuild,
+            rebuild,
+            &[sibling.to_string()],
+            "",
+            VolumeId(3),
+        )
+        .unwrap();
+        assert_eq!((ds, ps, bs), (12, 4, 3 * 1024 * 1024));
+    }
+
+    /// Same, for the sidecar: with no .vif anywhere it is the surviving record
+    /// of the geometry, wherever it sits.
+    // A split -dir/-dir.idx location keeps its metadata with the INDEX, and
+    // callers leave their own index directory out of other_dirs because it is
+    // passed separately. With no .vif anywhere the generation-0 .ecsum is the
+    // only record of the layout, so missing that directory resolves a 12+4
+    // uniform volume to 10+4 legacy and reconstructs through the wrong matrix.
+    #[test]
+    fn read_ec_shard_config_finds_the_sidecar_in_its_own_index_dir() {
+        use crate::pb::volume_server_pb::{ChecksumAlgorithm, EcBitrotProtection, EcShardChecksums};
+        use crate::storage::erasure_coding::ec_bitrot;
+
+        let data = tempfile::TempDir::new().unwrap();
+        let idx = tempfile::TempDir::new().unwrap();
+        let (dir, dir_idx) = (
+            data.path().to_str().unwrap(),
+            idx.path().to_str().unwrap(),
+        );
+        let base = crate::storage::volume::volume_file_name(dir_idx, "", VolumeId(7));
+        let prot = EcBitrotProtection {
+            algorithm: ChecksumAlgorithm::ChecksumCrc32c as i32,
+            block_size: ec_bitrot::DEFAULT_BITROT_BLOCK_SIZE as u32,
+            generation: 0,
+            ec_shard_config: Some(ec_bitrot::ec_shard_config(12, 4, 3 * 1024 * 1024)),
+            shards: (0..16u32)
+                .map(|shard_id| EcShardChecksums {
+                    shard_id,
+                    covered_size: 4,
+                    block_crc32c: vec![0u8; 4],
+                })
+                .collect(),
+            encode_uuid: vec![0u8; 16],
+        };
+        ec_bitrot::save_bitrot_sidecar(&ec_bitrot::bitrot_sidecar_path(&base, 0), &prot).unwrap();
+
+        let (ds, ps, bs) =
+            read_ec_shard_config_across_dirs(dir, dir_idx, &[], "", VolumeId(7)).unwrap();
+        assert_eq!((ds, ps, bs), (12, 4, 3 * 1024 * 1024));
+    }
+
+    #[test]
+    fn read_ec_shard_config_finds_a_sibling_disks_sidecar() {
+        use crate::pb::volume_server_pb::{ChecksumAlgorithm, EcBitrotProtection, EcShardChecksums};
+        use crate::storage::erasure_coding::ec_bitrot;
+
+        let a = tempfile::TempDir::new().unwrap();
+        let b = tempfile::TempDir::new().unwrap();
+        let (rebuild, sibling) = (a.path().to_str().unwrap(), b.path().to_str().unwrap());
+        let base = crate::storage::volume::volume_file_name(sibling, "", VolumeId(4));
+        let prot = EcBitrotProtection {
+            algorithm: ChecksumAlgorithm::ChecksumCrc32c as i32,
+            block_size: ec_bitrot::DEFAULT_BITROT_BLOCK_SIZE as u32,
+            generation: 0,
+            ec_shard_config: Some(ec_bitrot::ec_shard_config(12, 4, 3 * 1024 * 1024)),
+            shards: (0..16u32)
+                .map(|shard_id| EcShardChecksums {
+                    shard_id,
+                    covered_size: 4,
+                    block_crc32c: vec![0u8; 4],
+                })
+                .collect(),
+            encode_uuid: vec![0u8; 16],
+        };
+        ec_bitrot::save_bitrot_sidecar(&ec_bitrot::bitrot_sidecar_path(&base, 0), &prot).unwrap();
+
+        let (ds, ps, bs) = read_ec_shard_config_across_dirs(
+            rebuild,
+            rebuild,
+            &[sibling.to_string()],
+            "",
+            VolumeId(4),
+        )
+        .unwrap();
+        assert_eq!((ds, ps, bs), (12, 4, 3 * 1024 * 1024));
     }
 }

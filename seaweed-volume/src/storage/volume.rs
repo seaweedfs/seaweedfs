@@ -194,6 +194,10 @@ pub struct VifEcShardConfig {
     /// so a read served from a different run's shard is rejected.
     #[serde(default, rename = "encodeTsNs", with = "string_or_i64")]
     pub encode_ts_ns: i64,
+    /// Uniform block layout: each shard is a single contiguous block of this
+    /// many bytes. 0 = legacy 1GiB/1MiB two-tier layout.
+    #[serde(default, rename = "blockSize", with = "string_or_i64")]
+    pub block_size: i64,
 }
 
 /// Serde-compatible representation of OldVersionVolumeInfo for legacy .vif JSON deserialization.
@@ -288,6 +292,7 @@ impl VifVolumeInfo {
                 data_shards: c.data_shards,
                 parity_shards: c.parity_shards,
                 encode_ts_ns: c.encode_ts_ns,
+                block_size: c.block_size,
             }),
             read_only_can_delete: pb.read_only_can_delete,
         }
@@ -320,6 +325,7 @@ impl VifVolumeInfo {
                     data_shards: c.data_shards,
                     parity_shards: c.parity_shards,
                     encode_ts_ns: c.encode_ts_ns,
+                    block_size: c.block_size,
                 }
             }),
             read_only_can_delete: self.read_only_can_delete,
