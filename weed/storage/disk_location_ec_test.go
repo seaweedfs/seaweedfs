@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -808,6 +810,40 @@ func TestLoadEcShardRefusesEmptyShardFile(t *testing.T) {
 	}
 	if _, found := diskLocation.FindEcVolume(needle.VolumeId(123)); found {
 		t.Errorf("a refused shard load must not leave an empty EcVolume registered")
+	}
+}
+
+// TestLoadEcShardDuplicateReleasesTheNewShard: a mount retry re-loads a shard
+// this disk already registered. AddEcVolumeShard keeps the existing shard and
+// reports added=false — the loader must then release the duplicate it just
+// opened (fd + mount gauge), or every retry leaks both.
+func TestLoadEcShardDuplicateReleasesTheNewShard(t *testing.T) {
+	dir := t.TempDir()
+	diskLocation := NewDiskLocation(dir, 10, util.MinFreeSpace{}, dir, types.HardDriveType, nil, stats.DefaultDiskIOProbeConfig())
+	defer closeEcVolumes(diskLocation)
+
+	if err := os.WriteFile(filepath.Join(dir, "124.ec00"), []byte("shard bytes"), 0o644); err != nil {
+		t.Fatalf("seed .ec00: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "124.ecx"), make([]byte, 16), 0o644); err != nil {
+		t.Fatalf("seed .ecx: %v", err)
+	}
+
+	gauge := stats.VolumeServerVolumeGauge.WithLabelValues("", "ec_shards")
+	before := testutil.ToFloat64(gauge)
+
+	if _, err := diskLocation.LoadEcShard("", needle.VolumeId(124), erasure_coding.ShardId(0)); err != nil {
+		t.Fatalf("first LoadEcShard: %v", err)
+	}
+	ecVolume, err := diskLocation.LoadEcShard("", needle.VolumeId(124), erasure_coding.ShardId(0))
+	if err != nil {
+		t.Fatalf("duplicate LoadEcShard must succeed as a no-op: %v", err)
+	}
+	if len(ecVolume.Shards) != 1 {
+		t.Errorf("duplicate load registered %d shards; want 1", len(ecVolume.Shards))
+	}
+	if after := testutil.ToFloat64(gauge); after != before+1 {
+		t.Errorf("mount gauge at %v after a duplicate load; want %v (the duplicate's Mount must be released)", after, before+1)
 	}
 }
 

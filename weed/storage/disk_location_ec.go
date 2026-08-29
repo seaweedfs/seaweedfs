@@ -161,7 +161,8 @@ func (l *DiskLocation) loadEcShardWithIdxDir(collection string, vid needle.Volum
 		}
 		l.ecVolumes[vid] = ecVolume
 	}
-	if _, err := ecVolume.AddEcVolumeShard(ecVolumeShard); err != nil {
+	added, err := ecVolume.AddEcVolumeShard(ecVolumeShard)
+	if err != nil {
 		// The shard could not be registered (e.g. a 0-byte file beside an
 		// index with entries). Leave nothing behind: close the opened shard,
 		// and remove the EcVolume if this call just created it and it holds
@@ -174,6 +175,13 @@ func (l *DiskLocation) loadEcShardWithIdxDir(collection string, vid needle.Volum
 			ecVolume.Close()
 		}
 		return nil, err
+	}
+	if !added {
+		// Already registered on this disk (a mount retry): the existing
+		// shard keeps serving; release the duplicate's fd and gauge so
+		// repeated LoadEcShard calls don't leak either.
+		ecVolumeShard.Unmount()
+		ecVolumeShard.Close()
 	}
 
 	return ecVolume, nil
