@@ -117,7 +117,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 		fid, count, dnList, shouldGrow, err := ms.Topo.PickForWrite(req.Count, option, vl, req.ExpectedDataSize)
 		if shouldGrow && !initiatedGrow && !ms.option.VolumeGrowthDisabled && vl.AddGrowRequestIfAbsent() {
 			initiatedGrow = true
-			if err != nil && ms.Topo.AvailableSpaceFor(option) <= 0 {
+			if err != nil && ms.Topo.AvailableSpaceFor(option) <= 0 && ms.Topo.CapacityFor(option) > 0 {
 				err = fmt.Errorf("%s and no free volumes left for %s", err.Error(), option.String())
 			}
 			ms.volumeGrowthRequestChan <- &topology.VolumeGrowRequest{
@@ -136,7 +136,14 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 			}
 			if shouldGrow {
 				if ms.Topo.AvailableSpaceFor(option) <= 0 {
-					break // out of space: surface the real error, not a retryable shed
+					if ms.Topo.CapacityFor(option) > 0 {
+						break // out of space: surface the real error, not a retryable shed
+					}
+					// No capacity registered for this disk type yet, typically a
+					// just-started cluster whose volume servers have not
+					// heartbeated. Shed retryably so the first write rides out
+					// the startup window instead of failing outright.
+					return nil, status.Errorf(codes.ResourceExhausted, "no volume server capacity registered yet for %s", option.String())
 				}
 				// Only the initiator waits, and only while the growth it triggered
 				// is still pending: followers shed fast so a herd doesn't pin a
