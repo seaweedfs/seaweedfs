@@ -313,6 +313,13 @@ func (n *NodeImpl) AvailableSpaceFor(option *VolumeGrowOption) int64 {
 	return freeVolumeSlotCount
 }
 
+// CapacityFor is the total registered volume slots for the option's disk type;
+// zero means no volume server has reported capacity for it yet.
+func (n *NodeImpl) CapacityFor(option *VolumeGrowOption) int64 {
+	t := n.getOrCreateDisk(option.DiskType)
+	return atomic.LoadInt64(&t.maxVolumeCount) + atomic.LoadInt64(&t.remoteVolumeCount)
+}
+
 // AvailableSpaceForReservation returns available space considering existing reservations
 func (n *NodeImpl) AvailableSpaceForReservation(option *VolumeGrowOption) int64 {
 	baseAvailable := n.AvailableSpaceFor(option)

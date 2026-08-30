@@ -175,9 +175,24 @@ func TestAssignAbortsOnCancel(t *testing.T) {
 // Out of space, Assign fails fast with the real error rather than masking it as
 // a retryable "growth in progress".
 func TestAssignFailsFastWhenOutOfSpace(t *testing.T) {
-	ms := newLeaderMaster() // no data nodes -> no free space
+	ms := newLeaderMaster()
+	// One slot, already taken by another collection's volume: capacity is
+	// registered but genuinely exhausted.
+	dn := ms.Topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+		GetOrCreateDataNode("127.0.0.1", 8080, 18080, "127.0.0.1", "dn1", map[string]uint32{"": 1})
+	rp, err := super_block.NewReplicaPlacementFromString("000")
+	require.NoError(t, err)
+	v := storage.VolumeInfo{
+		Id:               needle.VolumeId(1),
+		Collection:       "other",
+		Version:          needle.GetCurrentVersion(),
+		ReplicaPlacement: rp,
+		Ttl:              needle.EMPTY_TTL,
+	}
+	dn.UpdateVolumes([]storage.VolumeInfo{v})
+	ms.Topo.RegisterVolumeLayout(v, dn)
 
-	req := &master_pb.AssignRequest{Count: 1, Replication: "000"}
+	req := &master_pb.AssignRequest{Count: 1, Replication: "000", Collection: "fresh"}
 
 	start := time.Now()
 	resp, err := ms.Assign(context.Background(), req)
@@ -187,7 +202,29 @@ func TestAssignFailsFastWhenOutOfSpace(t *testing.T) {
 	require.Nil(t, resp)
 	if st, ok := status.FromError(err); ok {
 		assert.NotEqual(t, codes.Unavailable, st.Code())
+		assert.NotEqual(t, codes.ResourceExhausted, st.Code())
 	}
 	assert.Contains(t, err.Error(), "no free volumes left")
+	assert.Less(t, elapsed, 2*time.Second)
+}
+
+// A topology with no registered capacity is a cluster whose volume servers have
+// not heartbeated yet, not one that is full: the first write to a fresh bucket
+// races the volume server registration at startup, so Assign must shed with a
+// retryable code instead of failing the write outright.
+func TestAssignShedsRetryablyBeforeCapacityRegisters(t *testing.T) {
+	ms := newLeaderMaster() // no data nodes: nothing has heartbeated yet
+
+	req := &master_pb.AssignRequest{Count: 1, Replication: "000"}
+
+	start := time.Now()
+	resp, err := ms.Assign(context.Background(), req)
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	require.Nil(t, resp)
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.ResourceExhausted, st.Code())
 	assert.Less(t, elapsed, 2*time.Second)
 }
