@@ -61,14 +61,18 @@ func (m *MockOIDCProvider) Authenticate(ctx context.Context, token string) (*pro
 	groups, _ := claims.GetClaimStringSlice("groups")
 	rawRoles, _ := claims.GetClaimStringSlice("roles")
 
-	return &providers.ExternalIdentity{
+	identity := &providers.ExternalIdentity{
 		UserID:      claims.Subject,
 		Email:       email,
 		DisplayName: displayName,
 		Groups:      groups,
 		Roles:       rawRoles,
 		Provider:    m.name,
-	}, nil
+	}
+	if !claims.ExpiresAt.IsZero() {
+		identity.TokenExpiration = &claims.ExpiresAt
+	}
+	return identity, nil
 }
 
 // ValidateToken validates tokens using test data

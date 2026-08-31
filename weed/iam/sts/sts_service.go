@@ -596,9 +596,8 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 		}
 	}
 
-	// 4. Calculate session duration, capping at the source token's expiration
-	// This ensures sessions from short-lived tokens (e.g., GitLab CI job tokens) don't outlive their source
-	sessionDuration := s.calculateSessionDuration(request.DurationSeconds, externalIdentity.TokenExpiration)
+	// 4. Calculate session duration
+	sessionDuration := s.calculateSessionDuration(request.DurationSeconds)
 	expiresAt := time.Now().Add(sessionDuration)
 
 	// 5. Generate session ID and credentials
@@ -754,18 +753,17 @@ func (s *STSService) AssumeRoleWithCredentials(ctx context.Context, request *Ass
 		return nil, fmt.Errorf("role assumption denied: %w", err)
 	}
 
-	// 4-7. Mint the session. For credential-based auth there is no source token
-	// with an expiration to cap the duration against.
+	// 4-7. Mint the session
 	return s.issueSession(request.RoleArn, request.RoleSessionName, sessionPolicy,
-		request.DurationSeconds, nil, provider.Name(), externalIdentity.UserID)
+		request.DurationSeconds, provider.Name(), externalIdentity.UserID)
 }
 
 // issueSession mints temporary credentials and the self-contained JWT that
 // carries the whole session, shared by every assume-role entry point.
 func (s *STSService) issueSession(roleArn, roleSessionName, sessionPolicy string,
-	durationSeconds *int64, tokenExpiration *time.Time, providerName, subject string) (*AssumeRoleResponse, error) {
+	durationSeconds *int64, providerName, subject string) (*AssumeRoleResponse, error) {
 
-	sessionDuration := s.calculateSessionDuration(durationSeconds, tokenExpiration)
+	sessionDuration := s.calculateSessionDuration(durationSeconds)
 	expiresAt := time.Now().Add(sessionDuration)
 
 	sessionId, err := GenerateSessionId()
@@ -882,7 +880,7 @@ func (s *STSService) AssumeRoleForPrincipal(ctx context.Context, request *Assume
 	}
 
 	return s.issueSession(request.RoleArn, request.RoleSessionName, sessionPolicy,
-		request.DurationSeconds, nil, request.ProviderName, request.Principal)
+		request.DurationSeconds, request.ProviderName, request.Principal)
 }
 
 // ValidateSessionToken validates a session token and returns session information
@@ -1110,32 +1108,16 @@ func (s *STSService) validateRoleAssumptionForCredentials(ctx context.Context, r
 	return nil
 }
 
-// calculateSessionDuration calculates the session duration, respecting the source token's expiration
-// If the incoming web identity token has an exp claim, the session duration is capped to not exceed it
-// This ensures that sessions from short-lived tokens (e.g., GitLab CI job tokens) don't outlive their source
-func (s *STSService) calculateSessionDuration(durationSeconds *int64, tokenExpiration *time.Time) time.Duration {
+// calculateSessionDuration returns the requested DurationSeconds, or the
+// configured TokenDuration default, capped at MaxSessionLength. The source
+// token's exp deliberately plays no part: per AWS semantics the session
+// outlives the (already verified) web identity token.
+func (s *STSService) calculateSessionDuration(durationSeconds *int64) time.Duration {
 	var duration time.Duration
 	if durationSeconds != nil {
 		duration = time.Duration(*durationSeconds) * time.Second
 	} else {
-		// Use default from config
 		duration = s.Config.TokenDuration.Duration
-	}
-
-	// If the source token has an expiration, cap the session duration to not exceed it
-	// This follows the principle: "if calculated exp > incoming exp claim, then limit outgoing exp to incoming exp"
-	if tokenExpiration != nil && !tokenExpiration.IsZero() {
-		timeUntilTokenExpiry := time.Until(*tokenExpiration)
-		if timeUntilTokenExpiry <= 0 {
-			// Token already expired - use minimal duration as defense-in-depth
-			// The token should have been rejected during validation, but we handle this defensively
-			glog.V(2).Infof("Source token already expired, using minimal session duration")
-			duration = time.Minute
-		} else if timeUntilTokenExpiry < duration {
-			glog.V(2).Infof("Limiting session duration from %v to %v based on source token expiration",
-				duration, timeUntilTokenExpiry)
-			duration = timeUntilTokenExpiry
-		}
 	}
 
 	// Cap at MaxSessionLength if configured
