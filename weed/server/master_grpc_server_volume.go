@@ -286,8 +286,13 @@ func (ms *MasterServer) VolumeList(ctx context.Context, req *master_pb.VolumeLis
 		return nil, raft.NotLeaderError
 	}
 
+	filter, err := topology.NewVolumeFilter(req)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
 	resp := &master_pb.VolumeListResponse{
-		TopologyInfo:      ms.Topo.ToTopologyInfo(topology.NewVolumeFilter(req)),
+		TopologyInfo:      ms.Topo.ToTopologyInfo(filter),
 		VolumeSizeLimitMb: uint64(ms.option.VolumeSizeLimitMB),
 	}
 
@@ -303,8 +308,13 @@ func (ms *MasterServer) VolumeListStream(req *master_pb.VolumeListRequest, strea
 		return raft.NotLeaderError
 	}
 
+	filter, err := topology.NewVolumeFilter(req)
+	if err != nil {
+		return status.Error(codes.InvalidArgument, err.Error())
+	}
+
 	listed := ms.Topo.ToTopologyInfo(topology.NoVolumes())
-	err := stream.Send(&master_pb.VolumeListStreamResponse{
+	err = stream.Send(&master_pb.VolumeListStreamResponse{
 		Header: &master_pb.VolumeListResponse{
 			TopologyInfo:      listed,
 			VolumeSizeLimitMb: uint64(ms.option.VolumeSizeLimitMB),
@@ -314,7 +324,7 @@ func (ms *MasterServer) VolumeListStream(req *master_pb.VolumeListRequest, strea
 		return err
 	}
 
-	return ms.Topo.StreamVolumes(listed, topology.NewVolumeFilter(req), 0, stream.Send)
+	return ms.Topo.StreamVolumes(listed, filter, 0, stream.Send)
 }
 
 func (ms *MasterServer) LookupEcVolume(ctx context.Context, req *master_pb.LookupEcVolumeRequest) (*master_pb.LookupEcVolumeResponse, error) {

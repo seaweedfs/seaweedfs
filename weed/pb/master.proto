@@ -418,6 +418,10 @@ message VolumeListRequest {
   // Empty and zero take everything. Wildcards are supported.
   string remote_storage_name = 4;
   bool local_volume_only = 5;
+  // The topology, its disks and their counters alone, without the volumes
+  // and ec shards. Selecting volumes above contradicts this and is refused.
+  // A master that predates this field ignores it and answers in full.
+  bool topology_only = 6;
 }
 message VolumeListResponse {
   TopologyInfo topology_info = 1;
