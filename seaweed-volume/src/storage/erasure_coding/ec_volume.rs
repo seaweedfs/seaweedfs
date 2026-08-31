@@ -14,6 +14,7 @@ use crate::storage::erasure_coding::ec_locate;
 use crate::storage::erasure_coding::ec_shard::*;
 use crate::storage::needle::needle::{get_actual_size, Needle, NeedleError};
 use crate::storage::types::*;
+use crate::storage::volume_open::open_volume_file;
 
 /// An erasure-coded volume managing its local shards and index.
 pub struct EcVolume {
@@ -435,7 +436,7 @@ impl EcVolume {
         // Matches Go which opens ecx for writing via MarkNeedleDeleted.
         let ecx_path = vol.ecx_file_name();
         if std::path::Path::new(&ecx_path).exists() {
-            let file = OpenOptions::new().read(true).write(true).open(&ecx_path)?;
+            let file = open_volume_file(OpenOptions::new().read(true).write(true), &ecx_path)?;
             vol.ecx_file_size = file.metadata()?.len() as i64;
             vol.ecx_file = Some(file);
         } else if dir_idx != dir {
@@ -447,7 +448,8 @@ impl EcVolume {
                     volume_id = volume_id.0,
                     "ecx file not found in idx dir, falling back to data dir"
                 );
-                let file = OpenOptions::new().read(true).write(true).open(&fallback_ecx)?;
+                let file =
+                    open_volume_file(OpenOptions::new().read(true).write(true), &fallback_ecx)?;
                 vol.ecx_file_size = file.metadata()?.len() as i64;
                 vol.ecx_file = Some(file);
                 vol.ecx_actual_dir = dir.to_string();
@@ -463,12 +465,14 @@ impl EcVolume {
         let ecj_base =
             crate::storage::volume::volume_file_name(&vol.ecx_actual_dir, collection, volume_id);
         let ecj_path = format!("{}.ecj", ecj_base);
-        let ecj_file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .append(true)
-            .open(&ecj_path)?;
+        let ecj_file = open_volume_file(
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .append(true),
+            &ecj_path,
+        )?;
         vol.ecj_file_size = ecj_file.metadata()?.len() as i64;
         vol.ecj_file = Some(ecj_file);
 
@@ -1559,12 +1563,14 @@ impl EcVolume {
         // in-memory deleted set (all of its contents are now materialized
         // in .ecx), and reset the cached size.
         fs::remove_file(&ecj_path)?;
-        let ecj_file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .append(true)
-            .open(&ecj_path)?;
+        let ecj_file = open_volume_file(
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .append(true),
+            &ecj_path,
+        )?;
         self.ecj_file = Some(ecj_file);
         self.ecj_file_size = 0;
         if let Ok(mut set) = self.deleted_needles.write() {
