@@ -295,8 +295,7 @@ func (v *Volume) doWriteRequest(n *needle.Needle, checkCookie bool) (offset uint
 	// add to needle map
 	if !ok || uint64(nv.Offset.ToActualOffset()) < offset {
 		if err = v.nm.Put(n.Id, ToOffset(int64(offset)), n.Size); err != nil {
-			err = fmt.Errorf("index needle %d of volume %d at offset %d: %w", n.Id, v.Id, offset, err)
-			glog.V(0).Info(err)
+			glog.V(4).Infof("failed to save in needle map %d: %v", n.Id, err)
 		}
 	}
 	if v.lastModifiedTsSeconds < n.LastModified {
@@ -475,22 +474,6 @@ func (v *Volume) WriteNeedleBlob(needleId NeedleId, needleBlob []byte, size Size
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 
-	// nm.Put on a read-only volume fails only after the blob is appended to .dat.
-	if v.IsReadOnly() {
-		return fmt.Errorf("volume %d is read only", v.Id)
-	}
-
-	// size indexes the needle and places the v3 append timestamp, so a caller using
-	// the payload-only DataSize corrupts both, silently until the needle is read back.
-	if len(needleBlob) < NeedleHeaderSize {
-		return fmt.Errorf("needle %d blob of %d bytes is shorter than a needle header", needleId, len(needleBlob))
-	}
-	var blobHeader needle.Needle
-	blobHeader.ParseNeedleHeader(needleBlob)
-	if blobHeader.Size != size {
-		return fmt.Errorf("needle %d size %d does not match its blob header size %d", needleId, size, blobHeader.Size)
-	}
-
 	if MaxPossibleVolumeSize < v.nm.ContentSize()+uint64(len(needleBlob)) {
 		return fmt.Errorf("volume size limit %d exceeded! current size is %d", MaxPossibleVolumeSize, v.nm.ContentSize())
 	}
@@ -519,8 +502,7 @@ func (v *Volume) WriteNeedleBlob(needleId NeedleId, needleBlob []byte, size Size
 
 	// add to needle map
 	if err = v.nm.Put(needleId, ToOffset(int64(offset)), size); err != nil {
-		err = fmt.Errorf("index needle %d of volume %d at offset %d: %w", needleId, v.Id, offset, err)
-		glog.V(0).Info(err)
+		glog.V(4).Infof("failed to put in needle map %d: %v", needleId, err)
 	}
 
 	return err

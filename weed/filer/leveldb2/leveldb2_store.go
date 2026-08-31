@@ -94,7 +94,16 @@ func (store *LevelDB2Store) InsertEntry(ctx context.Context, entry *filer.Entry)
 		value = weed_util.MaybeGzipData(value)
 	}
 
-	err = store.dbs[partitionId].Put(key, value, nil)
+	if collection := filer.EntryCollection(entry); collection != "" {
+		// atomically write the entry together with its collection index key,
+		// in the same partition db as the entry
+		batch := new(leveldb.Batch)
+		batch.Put(key, value)
+		batch.Put(filer.ColIdxKey(collection, entry.FullPath), nil)
+		err = store.dbs[partitionId].Write(batch, nil)
+	} else {
+		err = store.dbs[partitionId].Put(key, value, nil)
+	}
 
 	if err != nil {
 		return fmt.Errorf("persisting %s : %v", entry.FullPath, err)
@@ -139,6 +148,19 @@ func (store *LevelDB2Store) FindEntry(ctx context.Context, fullpath weed_util.Fu
 func (store *LevelDB2Store) DeleteEntry(ctx context.Context, fullpath weed_util.FullPath) (err error) {
 	dir, name := fullpath.DirAndName()
 	key, partitionId := genKey(dir, name, store.dbCount)
+
+	// remove the collection index key together with the entry, if any
+	if entry, findErr := store.FindEntry(ctx, fullpath); findErr == nil {
+		if collection := filer.EntryCollection(entry); collection != "" {
+			batch := new(leveldb.Batch)
+			batch.Delete(key)
+			batch.Delete(filer.ColIdxKey(collection, fullpath))
+			if err = store.dbs[partitionId].Write(batch, nil); err != nil {
+				return fmt.Errorf("delete %s : %v", fullpath, err)
+			}
+			return nil
+		}
+	}
 
 	err = store.dbs[partitionId].Delete(key, nil)
 	if err != nil {
@@ -268,4 +290,76 @@ func (store *LevelDB2Store) Shutdown() {
 	for d := 0; d < store.dbCount; d++ {
 		store.dbs[d].Close()
 	}
+}
+
+// ============================================================
+// Collection -> Filer Path reverse index
+// Key format and shared helpers in weed/filer/collection_index.go
+// Index keys are written in the same partitioned DB as their entry; scans iterate all partitions.
+// ============================================================
+
+var _ filer.CollectionIndexedStore = (*LevelDB2Store)(nil)
+
+// DeleteCollectionEntries deletes all entries recorded under the given
+// collection via the collection index, returning the number of deleted
+// files and the set of parent directories that may now be empty.
+// Stale index keys (entry already gone) are removed without being counted.
+func (store *LevelDB2Store) DeleteCollectionEntries(ctx context.Context, collection string) (deletedFiles int, parentDirs []weed_util.FullPath, err error) {
+	if collection == "" {
+		return 0, nil, fmt.Errorf("collection is required")
+	}
+
+	prefix := filer.ColIdxPrefix(collection)
+	dirSet := make(map[weed_util.FullPath]bool)
+
+	for d := 0; d < store.dbCount; d++ {
+		db := store.dbs[d]
+		batch := new(leveldb.Batch)
+		batchCount := 0
+
+		iter := db.NewIterator(leveldb_util.BytesPrefix(prefix), nil)
+		for iter.Next() {
+			idxKey := append([]byte(nil), iter.Key()...)
+			fullPath := weed_util.FullPath(idxKey[len(prefix):])
+
+			dir, name := fullPath.DirAndName()
+			entryKey, partitionId := genKey(dir, name, store.dbCount)
+
+			if has, _ := store.dbs[partitionId].Has(entryKey, nil); has {
+				if partitionId == d {
+					batch.Delete(entryKey)
+					batchCount++
+				} else {
+					// index key landed in a different partition than the entry
+					// (should not happen, but stay safe)
+					store.dbs[partitionId].Delete(entryKey, nil)
+				}
+				deletedFiles++
+				dirSet[weed_util.FullPath(dir)] = true
+			}
+			batch.Delete(idxKey)
+			batchCount++
+
+			if batchCount >= filer.ColIdxDeleteBatchSize {
+				if err = db.Write(batch, nil); err != nil {
+					iter.Release()
+					return deletedFiles, nil, fmt.Errorf("delete collection %s entries: %v", collection, err)
+				}
+				batch.Reset()
+				batchCount = 0
+			}
+		}
+		iter.Release()
+
+		if batchCount > 0 {
+			if err = db.Write(batch, nil); err != nil {
+				return deletedFiles, nil, fmt.Errorf("delete collection %s entries: %v", collection, err)
+			}
+		}
+	}
+
+	for dir := range dirSet {
+		parentDirs = append(parentDirs, dir)
+	}
+	return deletedFiles, parentDirs, nil
 }
