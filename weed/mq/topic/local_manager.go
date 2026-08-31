@@ -52,6 +52,7 @@ func (manager *LocalTopicManager) StartIdlePartitionCleanup(ctx context.Context,
 // cleanupIdlePartitions removes idle partitions from memory
 func (manager *LocalTopicManager) cleanupIdlePartitions(idleTimeout time.Duration) {
 	cleanedCount := 0
+	var emptyTopics []string
 
 	// Iterate through all topics
 	manager.topics.IterCb(func(topicKey string, localTopic *LocalTopic) {
@@ -78,12 +79,32 @@ func (manager *LocalTopicManager) cleanupIdlePartitions(idleTimeout time.Duratio
 			}
 		}
 
-		// If topic has no partitions left, remove it
 		if len(localTopic.Partitions) == 0 {
-			glog.V(1).Infof("Removing empty topic %s", topicKey)
-			manager.topics.Remove(topicKey)
+			emptyTopics = append(emptyTopics, topicKey)
 		}
 	})
+
+	// Remove emptied topics only after the iteration: IterCb holds the shard's
+	// read lock while running the callback, so calling Remove (which takes the
+	// same shard's write lock) inside it self-deadlocks and permanently wedges
+	// the shard — every later reader of that shard blocks behind the stuck
+	// writer, hanging ListTopicsInMemory/TopicExistsInMemory forever.
+	for _, topicKey := range emptyTopics {
+		manager.topics.RemoveCb(topicKey, func(key string, localTopic *LocalTopic, exists bool) bool {
+			if !exists || localTopic == nil {
+				return false
+			}
+			// Re-check emptiness under the shard's write lock: a publisher or
+			// subscriber may have added a partition since the scan above.
+			localTopic.partitionLock.RLock()
+			defer localTopic.partitionLock.RUnlock()
+			if len(localTopic.Partitions) > 0 {
+				return false
+			}
+			glog.V(1).Infof("Removing empty topic %s", key)
+			return true
+		})
+	}
 
 	if cleanedCount > 0 {
 		glog.V(0).Infof("Cleaned up %d idle partition(s)", cleanedCount)

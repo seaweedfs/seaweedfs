@@ -430,7 +430,7 @@ jobs:
 
       - name: Upload Trivy scan results to GitHub Security
         if: always()
-        uses: github/codeql-action/upload-sarif@v4.37.8
+        uses: github/codeql-action/upload-sarif@v4.37.9
         with:
           sarif_file: trivy-results.sarif
           category: trivy-${{ matrix.variant }}

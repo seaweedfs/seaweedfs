@@ -2791,8 +2791,12 @@ type VolumeListRequest struct {
 	// Empty and zero take everything. Wildcards are supported.
 	RemoteStorageName string `protobuf:"bytes,4,opt,name=remote_storage_name,json=remoteStorageName,proto3" json:"remote_storage_name,omitempty"`
 	LocalVolumeOnly   bool   `protobuf:"varint,5,opt,name=local_volume_only,json=localVolumeOnly,proto3" json:"local_volume_only,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// The topology, its disks and their counters alone, without the volumes
+	// and ec shards. Selecting volumes above contradicts this and is refused.
+	// A master that predates this field ignores it and answers in full.
+	TopologyOnly  bool `protobuf:"varint,6,opt,name=topology_only,json=topologyOnly,proto3" json:"topology_only,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *VolumeListRequest) Reset() {
@@ -2856,6 +2860,13 @@ func (x *VolumeListRequest) GetRemoteStorageName() string {
 func (x *VolumeListRequest) GetLocalVolumeOnly() bool {
 	if x != nil {
 		return x.LocalVolumeOnly
+	}
+	return false
+}
+
+func (x *VolumeListRequest) GetTopologyOnly() bool {
+	if x != nil {
+		return x.TopologyOnly
 	}
 	return false
 }
@@ -5232,7 +5243,7 @@ const file_master_proto_rawDesc = "" +
 	"\tdiskInfos\x18\x03 \x03(\v2&.master_pb.TopologyInfo.DiskInfosEntryR\tdiskInfos\x1aQ\n" +
 	"\x0eDiskInfosEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
-	"\x05value\x18\x02 \x01(\v2\x13.master_pb.DiskInfoR\x05value:\x028\x01\"\xe6\x01\n" +
+	"\x05value\x18\x02 \x01(\v2\x13.master_pb.DiskInfoR\x05value:\x028\x01\"\x8b\x02\n" +
 	"\x11VolumeListRequest\x12\x1e\n" +
 	"\n" +
 	"collection\x18\x01 \x01(\tR\n" +
@@ -5241,7 +5252,8 @@ const file_master_proto_rawDesc = "" +
 	"volume_ids\x18\x02 \x03(\rR\tvolumeIds\x126\n" +
 	"\x17default_collection_only\x18\x03 \x01(\bR\x15defaultCollectionOnly\x12.\n" +
 	"\x13remote_storage_name\x18\x04 \x01(\tR\x11remoteStorageName\x12*\n" +
-	"\x11local_volume_only\x18\x05 \x01(\bR\x0flocalVolumeOnly\"\x83\x01\n" +
+	"\x11local_volume_only\x18\x05 \x01(\bR\x0flocalVolumeOnly\x12#\n" +
+	"\rtopology_only\x18\x06 \x01(\bR\ftopologyOnly\"\x83\x01\n" +
 	"\x12VolumeListResponse\x12<\n" +
 	"\rtopology_info\x18\x01 \x01(\v2\x17.master_pb.TopologyInfoR\ftopologyInfo\x12/\n" +
 	"\x14volume_size_limit_mb\x18\x02 \x01(\x04R\x11volumeSizeLimitMb\"\xda\x02\n" +
