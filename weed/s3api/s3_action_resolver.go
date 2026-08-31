@@ -300,7 +300,9 @@ func resolveBucketLevelAction(method string, baseAction string) string {
 		}
 
 	case http.MethodPut:
-		if baseAction == s3_constants.ACTION_WRITE {
+		// CreateBucket is registered with ACTION_ADMIN; resolving it to s3:*
+		// would make it unmatchable by a policy granting s3:CreateBucket.
+		if baseAction == s3_constants.ACTION_WRITE || baseAction == s3_constants.ACTION_ADMIN {
 			return s3_constants.S3_ACTION_CREATE_BUCKET
 		}
 

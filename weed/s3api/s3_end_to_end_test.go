@@ -17,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/iam/oidc"
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -357,6 +358,134 @@ func TestS3ListObjectsV2PrefixCondition(t *testing.T) {
 			req := httptest.NewRequest("GET", tt.url, http.NoBody)
 			result := s3IAMIntegration.AuthorizeAction(ctx, identity, Action("List"), tt.bucket, tt.objKey, req)
 			assert.Equal(t, tt.expected, result, "unexpected authorization result for %s", tt.name)
+		})
+	}
+}
+
+// TestS3CreateBucketWithAttachedPolicy verifies a federated session whose
+// attached policy grants s3:CreateBucket on a bucket ARN pattern can create
+// matching buckets. CreateBucket is registered with ACTION_ADMIN, which used
+// to resolve to s3:* and made the operation unmatchable by any narrower grant.
+func TestS3CreateBucketWithAttachedPolicy(t *testing.T) {
+	iamManager := integration.NewIAMManager()
+	config := &integration.IAMConfig{
+		STS: &sts.STSConfig{
+			TokenDuration:    sts.FlexibleDuration{Duration: time.Hour},
+			MaxSessionLength: sts.FlexibleDuration{Duration: time.Hour * 12},
+			Issuer:           "test-sts",
+			SigningKey:       []byte("test-signing-key-32-characters-long"),
+		},
+		Policy: &policy.PolicyEngineConfig{
+			DefaultEffect: "Deny",
+			StoreType:     "memory",
+		},
+		Roles: &integration.RoleStoreConfig{
+			StoreType: "memory",
+		},
+	}
+
+	err := iamManager.Initialize(config, func() string { return "localhost:8888" })
+	require.NoError(t, err)
+
+	setupTestProviders(t, iamManager)
+
+	s3IAMIntegration := NewS3IAMIntegration(iamManager, "localhost:8888")
+	ctx := context.Background()
+
+	bucketPolicy := &policy.PolicyDocument{
+		Version: "2012-10-17",
+		Statement: []policy.Statement{
+			{
+				Sid:      "AllowBucketManagement",
+				Effect:   "Allow",
+				Action:   []string{"s3:CreateBucket", "s3:DeleteBucket"},
+				Resource: []string{"arn:aws:s3:::ml-*"},
+			},
+			{
+				Sid:      "AllowSTSSessionValidation",
+				Effect:   "Allow",
+				Action:   []string{"sts:ValidateSession"},
+				Resource: []string{"*"},
+			},
+		},
+	}
+
+	iamManager.CreatePolicy(ctx, "", "BucketManagementPolicy", bucketPolicy)
+	iamManager.CreateRole(ctx, "", "BucketManagerRole", &integration.RoleDefinition{
+		RoleName: "BucketManagerRole",
+		TrustPolicy: &policy.PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []policy.Statement{
+				{
+					Effect:    "Allow",
+					Principal: map[string]interface{}{"Federated": "test-oidc"},
+					Action:    []string{"sts:AssumeRoleWithWebIdentity"},
+				},
+			},
+		},
+		AttachedPolicies: []string{"BucketManagementPolicy"},
+	})
+
+	validJWTToken := createTestJWTEndToEnd(t, "https://test-issuer.com", "test-user-123", "test-signing-key")
+	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
+		RoleArn:          "arn:aws:iam::role/BucketManagerRole",
+		WebIdentityToken: validJWTToken,
+		RoleSessionName:  "bucket-create-session",
+	})
+	require.NoError(t, err)
+
+	authReq := httptest.NewRequest("PUT", "/ml-models", http.NoBody)
+	authReq.Header.Set("Authorization", "Bearer "+response.Credentials.SessionToken)
+	identity, errCode := s3IAMIntegration.AuthenticateJWT(ctx, authReq)
+	require.Equal(t, s3err.ErrNone, errCode)
+
+	tests := []struct {
+		name     string
+		method   string
+		url      string
+		bucket   string
+		action   Action
+		expected s3err.ErrorCode
+	}{
+		{
+			name:     "CreateBucket on matching bucket is allowed",
+			method:   "PUT",
+			url:      "/ml-models",
+			bucket:   "ml-models",
+			action:   Action(s3_constants.ACTION_ADMIN),
+			expected: s3err.ErrNone,
+		},
+		{
+			name:     "CreateBucket outside the resource pattern is denied",
+			method:   "PUT",
+			url:      "/other-bucket",
+			bucket:   "other-bucket",
+			action:   Action(s3_constants.ACTION_ADMIN),
+			expected: s3err.ErrAccessDenied,
+		},
+		{
+			name:     "PutBucketEncryption is not swept into CreateBucket",
+			method:   "PUT",
+			url:      "/ml-models?encryption",
+			bucket:   "ml-models",
+			action:   Action(s3_constants.ACTION_ADMIN),
+			expected: s3err.ErrAccessDenied,
+		},
+		{
+			name:     "DeleteBucket on matching bucket is allowed",
+			method:   "DELETE",
+			url:      "/ml-models",
+			bucket:   "ml-models",
+			action:   Action(s3_constants.ACTION_DELETE_BUCKET),
+			expected: s3err.ErrNone,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, tt.url, http.NoBody)
+			result := s3IAMIntegration.AuthorizeAction(ctx, identity, tt.action, tt.bucket, "", req)
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }

@@ -148,6 +148,16 @@ func TestResolveS3Action_AdminBucketSubresources(t *testing.T) {
 	}
 }
 
+// CreateBucket is a plain bucket-level PUT registered with ACTION_ADMIN. It
+// must resolve to s3:CreateBucket so an attached policy granting that action
+// can authorize it without granting s3:*.
+func TestResolveS3Action_CreateBucket(t *testing.T) {
+	r, _ := http.NewRequest(http.MethodPut, "http://localhost/new-bucket", nil)
+	if got := ResolveS3Action(r, s3_constants.ACTION_ADMIN, "new-bucket", ""); got != s3_constants.S3_ACTION_CREATE_BUCKET {
+		t.Errorf("ResolveS3Action() = %q, want %q", got, s3_constants.S3_ACTION_CREATE_BUCKET)
+	}
+}
+
 // A base action naming another service carries no S3 request shape, so a query
 // parameter on the request must not redirect it to an S3 action.
 func TestResolveS3ActionKeepsNonS3Service(t *testing.T) {
