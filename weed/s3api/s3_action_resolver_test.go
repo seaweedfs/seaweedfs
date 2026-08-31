@@ -114,6 +114,40 @@ func TestResolveS3Action_AttributesBeforeVersionId(t *testing.T) {
 	}
 }
 
+// Bucket subresources registered with ACTION_ADMIN must resolve to their own
+// S3 actions so a policy granting one of them does not need s3:*, and so no
+// broader grant sweeps them in.
+func TestResolveS3Action_AdminBucketSubresources(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		query  string
+		want   string
+	}{
+		{"get encryption", http.MethodGet, "encryption", s3_constants.S3_ACTION_GET_BUCKET_ENCRYPTION},
+		{"put encryption", http.MethodPut, "encryption", s3_constants.S3_ACTION_PUT_BUCKET_ENCRYPTION},
+		{"delete encryption", http.MethodDelete, "encryption", s3_constants.S3_ACTION_PUT_BUCKET_ENCRYPTION},
+		{"get requestPayment", http.MethodGet, "requestPayment", s3_constants.S3_ACTION_GET_BUCKET_REQUEST_PAYMENT},
+		{"put requestPayment", http.MethodPut, "requestPayment", s3_constants.S3_ACTION_PUT_BUCKET_REQUEST_PAYMENT},
+		{"get publicAccessBlock", http.MethodGet, "publicAccessBlock", s3_constants.S3_ACTION_GET_BUCKET_PUBLIC_ACCESS_BLOCK},
+		{"put publicAccessBlock", http.MethodPut, "publicAccessBlock", s3_constants.S3_ACTION_PUT_BUCKET_PUBLIC_ACCESS_BLOCK},
+		{"delete publicAccessBlock", http.MethodDelete, "publicAccessBlock", s3_constants.S3_ACTION_PUT_BUCKET_PUBLIC_ACCESS_BLOCK},
+		{"get ownershipControls", http.MethodGet, "ownershipControls", s3_constants.S3_ACTION_GET_BUCKET_OWNERSHIP_CONTROLS},
+		{"put ownershipControls", http.MethodPut, "ownershipControls", s3_constants.S3_ACTION_PUT_BUCKET_OWNERSHIP_CONTROLS},
+		{"delete ownershipControls", http.MethodDelete, "ownershipControls", s3_constants.S3_ACTION_PUT_BUCKET_OWNERSHIP_CONTROLS},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, _ := http.NewRequest(tt.method, "http://localhost/bucket?"+tt.query, nil)
+			got := ResolveS3Action(r, s3_constants.ACTION_ADMIN, "bucket", "")
+			if got != tt.want {
+				t.Errorf("ResolveS3Action() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // A base action naming another service carries no S3 request shape, so a query
 // parameter on the request must not redirect it to an S3 action.
 func TestResolveS3ActionKeepsNonS3Service(t *testing.T) {

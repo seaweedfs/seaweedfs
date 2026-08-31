@@ -97,6 +97,25 @@ var bucketQueryActions = map[string]map[string]string{
 		http.MethodGet: s3_constants.S3_ACTION_GET_BUCKET_OBJECT_LOCK,
 		http.MethodPut: s3_constants.S3_ACTION_PUT_BUCKET_OBJECT_LOCK,
 	},
+	"encryption": {
+		http.MethodGet:    s3_constants.S3_ACTION_GET_BUCKET_ENCRYPTION,
+		http.MethodPut:    s3_constants.S3_ACTION_PUT_BUCKET_ENCRYPTION,
+		http.MethodDelete: s3_constants.S3_ACTION_PUT_BUCKET_ENCRYPTION, // DELETE uses same permission as PUT
+	},
+	"requestPayment": {
+		http.MethodGet: s3_constants.S3_ACTION_GET_BUCKET_REQUEST_PAYMENT,
+		http.MethodPut: s3_constants.S3_ACTION_PUT_BUCKET_REQUEST_PAYMENT,
+	},
+	"publicAccessBlock": {
+		http.MethodGet:    s3_constants.S3_ACTION_GET_BUCKET_PUBLIC_ACCESS_BLOCK,
+		http.MethodPut:    s3_constants.S3_ACTION_PUT_BUCKET_PUBLIC_ACCESS_BLOCK,
+		http.MethodDelete: s3_constants.S3_ACTION_PUT_BUCKET_PUBLIC_ACCESS_BLOCK, // DELETE uses same permission as PUT
+	},
+	"ownershipControls": {
+		http.MethodGet:    s3_constants.S3_ACTION_GET_BUCKET_OWNERSHIP_CONTROLS,
+		http.MethodPut:    s3_constants.S3_ACTION_PUT_BUCKET_OWNERSHIP_CONTROLS,
+		http.MethodDelete: s3_constants.S3_ACTION_PUT_BUCKET_OWNERSHIP_CONTROLS, // DELETE uses same permission as PUT
+	},
 }
 
 // resolveFromQueryParameters checks query parameters to determine specific S3 actions
