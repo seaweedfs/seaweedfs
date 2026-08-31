@@ -2,9 +2,12 @@ package filer_pb
 
 import (
 	"context"
+	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
@@ -114,5 +117,36 @@ func TestTraverseBfsVisitsDuplicateDirectoryOnce(t *testing.T) {
 		if seen[path] != 1 {
 			t.Fatalf("visited %s %d times, want 1", path, seen[path])
 		}
+	}
+}
+
+// A store whose pagination never advances past the cursor must error out
+// instead of re-listing the same page forever.
+func TestReadDirAllEntriesStuckPagination(t *testing.T) {
+	server := &stubFiler{}
+	server.listings = func(req *ListEntriesRequest, send func(*Entry) error) error {
+		for i := uint32(0); i < req.Limit; i++ {
+			if err := send(&Entry{Name: fmt.Sprintf("f%05d", i)}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	filerClient := startStubFiler(t, server)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- ReadDirAllEntries(context.Background(), filerClient, "/", "", func(entry *Entry, isLast bool) error {
+			return nil
+		})
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "pagination stuck") {
+			t.Fatalf("want pagination stuck error, got %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("listing loops forever on a non-advancing store")
 	}
 }
