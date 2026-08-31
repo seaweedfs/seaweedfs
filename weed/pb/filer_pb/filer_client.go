@@ -91,8 +91,14 @@ func ReadDirAllEntriesWithSnapshot(ctx context.Context, filerClient FilerClient,
 
 	for counter == paginationLimit {
 		counter = 0
+		lastStartFrom := startFrom
 		if _, err = doListWithSnapshot(ctx, filerClient, fullDirPath, prefix, counterFunc, startFrom, false, paginationLimit, snapshotTsNs); err != nil {
 			return snapshotTsNs, err
+		}
+		// A full page that ends on the name it started from would loop forever;
+		// a store whose ordering does not advance past the cursor causes this.
+		if counter == paginationLimit && startFrom == lastStartFrom {
+			return snapshotTsNs, fmt.Errorf("list %s: pagination stuck at %q", fullDirPath, startFrom)
 		}
 	}
 

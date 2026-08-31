@@ -139,6 +139,13 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 	// synchronize without a global lock.
 	var processedHardLinks sync.Map
 
+	planCollections := make(map[string]bool)
+	for src := range plan.targets {
+		if info := c.volumes[src]; info != nil {
+			planCollections[info.Collection] = true
+		}
+	}
+
 	return commandEnv.WithFilerClient(false, func(filerClient filer_pb.SeaweedFilerClient) error {
 		return filer_pb.TraverseBfs(context.Background(), commandEnv, util.FullPath(dir), func(parentPath util.FullPath, entry *filer_pb.Entry) error {
 			if entry.IsDirectory {
@@ -164,6 +171,9 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 			var movedSources []movedSourceNeedle
 			for i, chunk := range entry.Chunks {
 				if chunk.IsChunkManifest {
+					if !c.manifestMayReferencePlan(plan, planCollections, needle.VolumeId(chunk.Fid.VolumeId)) {
+						continue
+					}
 					oldManifestFid := chunk.GetFileIdString()
 					oldManifestVid := chunk.Fid.VolumeId
 					newChunk, changed, subSources, mErr := c.rewriteManifestChunk(context.Background(), commandEnv, lookupFn, plan, entryPath, chunk, *apply)
@@ -290,6 +300,18 @@ func (c *commandFsMergeVolumes) deleteMovedSourceNeedles(commandEnv *CommandEnv,
 			}
 		}
 	}
+}
+
+// Sub-chunks are assigned in the manifest's own collection, so a manifest on
+// a volume in a collection the plan does not touch cannot reference any plan
+// volume — resolving it would just download manifest needles across the whole
+// namespace for nothing.
+func (c *commandFsMergeVolumes) manifestMayReferencePlan(plan *mergePlan, planCollections map[string]bool, vid needle.VolumeId) bool {
+	if plan.isSource(vid) {
+		return true
+	}
+	info := c.volumes[vid]
+	return info == nil || planCollections[info.Collection]
 }
 
 func (c *commandFsMergeVolumes) getVolumeInfoById(vid needle.VolumeId) (*master_pb.VolumeInformationMessage, error) {

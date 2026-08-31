@@ -26,10 +26,20 @@ func TraverseBfs(ctx context.Context, filerClient FilerClient, parentPath util.F
 	var once sync.Once
 	var firstErr error
 
+	// A directory delivered twice (a page-boundary race with concurrent
+	// renames, or a store whose listing order misbehaves) must not be walked
+	// twice: the second walk re-lists the same subtree and can keep the
+	// traversal from ever terminating.
+	var visited sync.Map
+	visited.Store(string(parentPath), struct{}{})
+
 	enqueue := func(p util.FullPath) bool {
 		// Stop expanding traversal once canceled (e.g. first error encountered).
 		if ctx.Err() != nil {
 			return false
+		}
+		if _, seen := visited.LoadOrStore(string(p), struct{}{}); seen {
+			return true
 		}
 		pending.Add(1)
 		queue.Enqueue(p)
