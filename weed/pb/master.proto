@@ -418,6 +418,8 @@ message VolumeListRequest {
   // Empty and zero take everything. Wildcards are supported.
   string remote_storage_name = 4;
   bool local_volume_only = 5;
+  // Set to true when you only want the topology, not the volumes
+  bool without_volumes = 6;
 }
 message VolumeListResponse {
   TopologyInfo topology_info = 1;
