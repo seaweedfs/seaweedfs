@@ -30,7 +30,7 @@ func NoVolumes() VolumeFilter {
 func NewVolumeFilter(req *master_pb.VolumeListRequest) VolumeFilter {
 	var filter VolumeFilter
 
-	if req.WithoutVolumes {
+	if req.TopologyOnly {
 		filter.nothing = true
 		return filter
 	}
