@@ -1,6 +1,8 @@
 package topology
 
 import (
+	"errors"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
@@ -26,13 +28,19 @@ func NoVolumes() VolumeFilter {
 
 // NewVolumeFilter reads what a VolumeList request asked for, where empty and
 // zero mean everything so a caller that forgets to narrow gets too much rather
-// than the wrong thing.
-func NewVolumeFilter(req *master_pb.VolumeListRequest) VolumeFilter {
+// than the wrong thing. The exception is topology_only, which asks for no
+// volumes at all: pairing it with a selector is refused rather than resolved,
+// since either reading would silently drop half the request.
+func NewVolumeFilter(req *master_pb.VolumeListRequest) (VolumeFilter, error) {
 	var filter VolumeFilter
 
 	if req.TopologyOnly {
+		if req.Collection != "" || len(req.VolumeIds) > 0 || req.DefaultCollectionOnly ||
+			req.RemoteStorageName != "" || req.LocalVolumeOnly {
+			return filter, errors.New("topology_only asks for no volumes, so it cannot be combined with collection, volume_ids, default_collection_only, remote_storage_name or local_volume_only")
+		}
 		filter.nothing = true
-		return filter
+		return filter, nil
 	}
 
 	switch {
@@ -57,7 +65,7 @@ func NewVolumeFilter(req *master_pb.VolumeListRequest) VolumeFilter {
 			filter.VolumeIds[needle.VolumeId(volumeId)] = struct{}{}
 		}
 	}
-	return filter
+	return filter, nil
 }
 
 // SelectsEverything lets a caller size its result for the whole disk up front.

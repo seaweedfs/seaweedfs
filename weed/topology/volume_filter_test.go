@@ -243,7 +243,11 @@ func TestNewVolumeFilterReadsTheRequest(t *testing.T) {
 		{"both", &master_pb.VolumeListRequest{Collection: "c", DefaultCollectionOnly: true}, "c"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := collectionOf(NewVolumeFilter(tc.request)); got != tc.want {
+			filter, err := NewVolumeFilter(tc.request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := collectionOf(filter); got != tc.want {
 				t.Errorf("selected collection %q, want %q", got, tc.want)
 			}
 		})
@@ -275,7 +279,11 @@ func TestNewVolumeFilterReadsTheRemoteStorageRequest(t *testing.T) {
 		{"both", &master_pb.VolumeListRequest{RemoteStorageName: "s3.backup", LocalVolumeOnly: true}, "s3.backup"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := remoteStorageOf(NewVolumeFilter(tc.request)); got != tc.want {
+			filter, err := NewVolumeFilter(tc.request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := remoteStorageOf(filter); got != tc.want {
 				t.Errorf("selected remote storage %q, want %q", got, tc.want)
 			}
 		})
@@ -307,8 +315,59 @@ func TestNewVolumeFilterReadsTheVolumeIds(t *testing.T) {
 		{"a zero among the ids", &master_pb.VolumeListRequest{VolumeIds: []uint32{0}}, []uint32{0}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := idsOf(NewVolumeFilter(tc.request)); !equalIds(got, tc.want) {
+			filter, err := NewVolumeFilter(tc.request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := idsOf(filter); !equalIds(got, tc.want) {
 				t.Errorf("selected volume ids %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// topology_only leaves out the ec shards too, not just the volumes; the disks
+// and their counters stay.
+func TestNewVolumeFilterReadsTopologyOnly(t *testing.T) {
+	topo := filterTestTopology(t)
+	filter, err := NewVolumeFilter(&master_pb.VolumeListRequest{TopologyOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := topo.ToTopologyInfo(filter)
+	volumes, ecVolumes := listed(info)
+	if len(volumes) != 0 || len(ecVolumes) != 0 {
+		t.Errorf("listed volumes %v and ec volumes %v, want neither", volumes, ecVolumes)
+	}
+
+	full := topo.ToTopologyInfo(VolumeFilter{})
+	fullDisk := full.DataCenterInfos[0].RackInfos[0].DataNodeInfos[0].DiskInfos[""]
+	disk := info.DataCenterInfos[0].RackInfos[0].DataNodeInfos[0].DiskInfos[""]
+	if disk == nil {
+		t.Fatal("the topology_only listing dropped the disk")
+	}
+	if disk.VolumeCount != fullDisk.VolumeCount || disk.MaxVolumeCount != fullDisk.MaxVolumeCount {
+		t.Errorf("disk counters %d/%d, want the full listing's %d/%d",
+			disk.VolumeCount, disk.MaxVolumeCount, fullDisk.VolumeCount, fullDisk.MaxVolumeCount)
+	}
+}
+
+// Selecting volumes in a request that asks for none is a caller bug, refused
+// rather than resolved either way in silence.
+func TestNewVolumeFilterRefusesTopologyOnlyWithSelectors(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		request *master_pb.VolumeListRequest
+	}{
+		{"a collection", &master_pb.VolumeListRequest{TopologyOnly: true, Collection: "c"}},
+		{"volume ids", &master_pb.VolumeListRequest{TopologyOnly: true, VolumeIds: []uint32{1}}},
+		{"the default collection", &master_pb.VolumeListRequest{TopologyOnly: true, DefaultCollectionOnly: true}},
+		{"a remote storage", &master_pb.VolumeListRequest{TopologyOnly: true, RemoteStorageName: "s3.backup"}},
+		{"the local volumes", &master_pb.VolumeListRequest{TopologyOnly: true, LocalVolumeOnly: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := NewVolumeFilter(tc.request); err == nil {
+				t.Error("expected the contradiction refused, got a filter")
 			}
 		})
 	}
