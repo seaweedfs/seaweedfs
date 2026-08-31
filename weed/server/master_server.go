@@ -473,6 +473,11 @@ func processEachCmd(reg *regexp.Regexp, line string, commandEnv *shell.CommandEn
 				continue
 			}
 			glog.V(0).Infof("executing: %s %v", cmd, args)
+			// noLock belongs to the invocation that set it, not to the
+			// CommandEnv this loop reuses for every line of the script. Without
+			// this, a dry run earlier in the script leaves the mutations after
+			// it unlocked.
+			commandEnv.SetNoLock(false)
 			if err := c.Do(args, commandEnv, os.Stdout); err != nil {
 				glog.V(0).Infof("error: %v", err)
 			}

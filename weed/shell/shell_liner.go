@@ -141,6 +141,12 @@ func processEachCmd(cmd string, commandEnv *CommandEnv) bool {
 			foundCommand := false
 			for _, c := range Commands {
 				if c.Name() == cmd || c.Name() == "fs."+cmd {
+					// noLock says "this invocation changes nothing", which is a
+					// property of the invocation and not of the session. A
+					// command that set it for a dry run would otherwise leave
+					// every later command in the session unlocked, so a real
+					// mutation right after a simulation would skip its lock.
+					commandEnv.SetNoLock(false)
 					if err := c.Do(args, commandEnv, os.Stdout); err != nil {
 						fmt.Fprintf(os.Stderr, "error: %v\n", err)
 					}
