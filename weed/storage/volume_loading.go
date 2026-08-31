@@ -71,7 +71,7 @@ func (v *Volume) reopenIdxForWrite() error {
 		return nil
 	}
 
-	indexFile, err := os.OpenFile(v.FileName(".idx"), os.O_RDWR|os.O_CREATE, 0644)
+	indexFile, err := backend.OpenVolumeFile(v.FileName(".idx"), os.O_RDWR|os.O_CREATE)
 	if err != nil {
 		return fmt.Errorf("reopen %s read-write: %v", v.FileName(".idx"), err)
 	}
@@ -192,10 +192,10 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		}
 		var dataFile *os.File
 		if canWrite {
-			dataFile, err = os.OpenFile(v.FileName(".dat"), os.O_RDWR|os.O_CREATE, 0644)
+			dataFile, err = backend.OpenVolumeFile(v.FileName(".dat"), os.O_RDWR|os.O_CREATE)
 		} else {
 			glog.V(0).Infof("opening %s in READONLY mode", v.FileName(".dat"))
-			dataFile, err = os.Open(v.FileName(".dat"))
+			dataFile, err = backend.OpenVolumeFile(v.FileName(".dat"), os.O_RDONLY)
 			v.noWriteOrDelete = true
 		}
 		v.lastModifiedTsSeconds = uint64(modifiedTime.Unix())
@@ -267,12 +267,12 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		var indexFile *os.File
 		if v.noWriteOrDelete {
 			glog.V(0).Infoln("open to read file", v.FileName(".idx"))
-			if indexFile, err = os.OpenFile(v.FileName(".idx"), os.O_RDONLY, 0644); err != nil {
+			if indexFile, err = backend.OpenVolumeFile(v.FileName(".idx"), os.O_RDONLY); err != nil {
 				return fmt.Errorf("cannot read Volume Index %s: %v", v.FileName(".idx"), err)
 			}
 		} else {
 			glog.V(1).Infoln("open to write file", v.FileName(".idx"))
-			if indexFile, err = os.OpenFile(v.FileName(".idx"), os.O_RDWR|os.O_CREATE, 0644); err != nil {
+			if indexFile, err = backend.OpenVolumeFile(v.FileName(".idx"), os.O_RDWR|os.O_CREATE); err != nil {
 				return fmt.Errorf("cannot write Volume Index %s: %v", v.FileName(".idx"), err)
 			}
 		}
