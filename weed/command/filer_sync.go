@@ -398,6 +398,31 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, sourceGrpcDi
 		})
 	}
 
+	// The offset callback below only fires while events flow, so it freezes
+	// exactly when the workers are saturated; a ticker keeps lag honest. The
+	// idle heartbeat is folded in because the watermark stops at the last real
+	// event, so a quiet caught-up stream would otherwise show phantom lag.
+	lagGauge := statsCollect.FilerSyncLagSecondsGauge.WithLabelValues(sourceFiler.String(), targetFiler.String(), clientName, sourcePath)
+	var idleHeartbeatTsNs atomic.Int64
+	stopLagTicker := make(chan struct{})
+	defer close(stopLagTicker)
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopLagTicker:
+				return
+			case <-ticker.C:
+				freshnessTsNs := max(processor.processedTsWatermark.Load(), idleHeartbeatTsNs.Load())
+				if freshnessTsNs == 0 {
+					continue
+				}
+				lagGauge.Set(max(0, time.Since(time.Unix(0, freshnessTsNs)).Seconds()))
+			}
+		}
+	}()
+
 	var lastLogTsNs = time.Now().UnixNano()
 	var lastProgressedTsNs int64
 	processEventFnWithOffset := pb.AddOffsetFunc(func(resp *filer_pb.SubscribeMetadataResponse) error {
@@ -451,6 +476,7 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, sourceGrpcDi
 		// are caught up, so now-sync_offset reflects real lag and stays alertable.
 		OnIdleHeartbeat: func(tsNs int64) {
 			statsCollect.FilerSyncOffsetGauge.WithLabelValues(sourceFiler.String(), targetFiler.String(), clientName, sourcePath).Set(float64(tsNs))
+			idleHeartbeatTsNs.Store(tsNs)
 		},
 	}
 

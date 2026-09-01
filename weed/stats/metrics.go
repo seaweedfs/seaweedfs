@@ -333,6 +333,14 @@ var (
 			Help:      "Number of sync jobs currently being replicated; pinned at the concurrency limit means the sync itself is the bottleneck.",
 		}, []string{"sourceFiler", "targetFiler", "clientName", "path"})
 
+	FilerSyncLagSecondsGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemFilerSync,
+			Name:      "lag_seconds",
+			Help:      "How far the replicated watermark trails the source filer, in seconds.",
+		}, []string{"sourceFiler", "targetFiler", "clientName", "path"})
+
 	VolumeServerStartTimeSeconds = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
@@ -948,6 +956,7 @@ func init() {
 	Gather.MustRegister(FilerSyncEventsProcessedCounter)
 	Gather.MustRegister(FilerSyncEventsFailedCounter)
 	Gather.MustRegister(FilerSyncInFlightJobsGauge)
+	Gather.MustRegister(FilerSyncLagSecondsGauge)
 	Gather.MustRegister(FilerServerLastSendTsOfSubscribeGauge)
 	Gather.MustRegister(FilerSubscribeGapStalledGauge)
 	Gather.MustRegister(FilerSubscribeUnprovenGapCrossings)
