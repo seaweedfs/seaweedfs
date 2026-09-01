@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -178,6 +179,12 @@ func (wfs *WFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string
 	if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
 		glog.Warningf("rmdir %s: best-effort metadata apply failed: %v", entryFullPath, applyErr)
 		wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
+	}
+	// The filer serialized the delete against concurrent updates and returned
+	// the entry as it stood; the snapshot loaded above may predate one.
+	if oldEntry := resp.GetMetadataEvent().GetEventNotification().GetOldEntry(); oldEntry.GetAttributes() != nil {
+		targetEntry = proto.Clone(oldEntry).(*filer_pb.Entry)
+		wfs.mapPbIdFromFilerToLocal(targetEntry)
 	}
 	inode, stillReferenced := wfs.inodeToPath.RemovePath(entryFullPath)
 	if stillReferenced && targetEntry != nil {
