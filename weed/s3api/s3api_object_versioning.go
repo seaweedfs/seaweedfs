@@ -1824,6 +1824,27 @@ func (s3a *S3ApiServer) getLatestObjectVersion(bucket, object string) (*filer_pb
 	return s3a.doGetLatestObjectVersion(bucket, object, 8)
 }
 
+// lookupVersionsEntryWithRetry retries a .versions directory lookup, but only
+// for errors that can change on retry (isRetryableFilerErr). A definitive
+// NotFound is an answer, not a transient failure: retrying it walks the whole
+// backoff ladder (12.7s at 8 attempts) before the caller's pre-versioning
+// fallback gets to run, stalling every missing-key retention/tagging/ACL call.
+func lookupVersionsEntryWithRetry(lookup func() (*filer_pb.Entry, error), maxRetries int) (entry *filer_pb.Entry, err error) {
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		entry, err = lookup()
+		if err == nil || !isRetryableFilerErr(err) {
+			return entry, err
+		}
+
+		if attempt < maxRetries {
+			// Exponential backoff with higher base: 100ms, 200ms, 400ms, 800ms, 1600ms, 3200ms, 6400ms
+			delay := time.Millisecond * time.Duration(100*(1<<(attempt-1)))
+			time.Sleep(delay)
+		}
+	}
+	return entry, err
+}
+
 func (s3a *S3ApiServer) doGetLatestObjectVersion(bucket, object string, maxRetries int) (*filer_pb.Entry, error) {
 	// Normalize object path to ensure consistency with toFilerPath behavior
 	normalizedObject := s3_constants.NormalizeObjectKey(object)
@@ -1834,20 +1855,9 @@ func (s3a *S3ApiServer) doGetLatestObjectVersion(bucket, object string, maxRetri
 	glog.V(1).Infof("doGetLatestObjectVersion: looking for latest version of %s/%s (normalized: %s, retries: %d)", bucket, object, normalizedObject, maxRetries)
 
 	// Get the .versions directory entry to read latest version metadata with retry logic for filer consistency
-	var versionsEntry *filer_pb.Entry
-	var err error
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		versionsEntry, err = s3a.getEntry(bucketDir, versionsObjectPath)
-		if err == nil {
-			break
-		}
-
-		if attempt < maxRetries {
-			// Exponential backoff with higher base: 100ms, 200ms, 400ms, 800ms, 1600ms, 3200ms, 6400ms
-			delay := time.Millisecond * time.Duration(100*(1<<(attempt-1)))
-			time.Sleep(delay)
-		}
-	}
+	versionsEntry, err := lookupVersionsEntryWithRetry(func() (*filer_pb.Entry, error) {
+		return s3a.getEntry(bucketDir, versionsObjectPath)
+	}, maxRetries)
 
 	if err != nil {
 		// .versions directory doesn't exist - this can happen for objects that existed
