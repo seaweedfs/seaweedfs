@@ -302,7 +302,7 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 		}
 	}
 
-	wfs.inodeToPath.RemovePath(entryFullPath)
+	wfs.inodeToPath.RemovePath(entryFullPath, nil)
 
 	if isHardLink && sharedInode != 0 {
 		decremented := proto.Clone(entry).(*filer_pb.Entry)

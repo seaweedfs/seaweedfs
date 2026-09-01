@@ -483,10 +483,12 @@ func (i *InodeToPath) AddPath(inode uint64, path util.FullPath) {
 	}
 }
 
-// RemovePath drops the name, reporting the inode it mapped to and whether the
-// kernel still holds lookup references to it: such an inode keeps receiving
-// requests until the final forget.
-func (i *InodeToPath) RemovePath(path util.FullPath) (inode uint64, stillReferenced bool) {
+// RemovePath drops the name. onStillReferenced, if given, runs under the
+// table's lock when the kernel still holds lookup references to the inode:
+// such an inode keeps receiving requests until the final forget, and holding
+// the lock is what keeps that forget from racing whatever per-inode state the
+// callback installs — Forget releases under the same lock.
+func (i *InodeToPath) RemovePath(path util.FullPath, onStillReferenced func(inode uint64)) {
 	i.Lock()
 	defer i.Unlock()
 	inode, found := i.path2inode[path]
@@ -494,11 +496,10 @@ func (i *InodeToPath) RemovePath(path util.FullPath) (inode uint64, stillReferen
 		delete(i.path2inode, path)
 		i.dropDirPath(inode)
 		i.removePathFromInode2Path(inode, path)
-		if ie := i.inode2path[inode]; ie != nil {
-			stillReferenced = ie.nlookup > 0
+		if ie := i.inode2path[inode]; ie != nil && ie.nlookup > 0 && onStillReferenced != nil {
+			onStillReferenced(inode)
 		}
 	}
-	return
 }
 
 func (i *InodeToPath) removePathFromInode2Path(inode uint64, path util.FullPath) {

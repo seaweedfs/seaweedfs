@@ -429,6 +429,11 @@ func (wfs *WFS) forgetInMemoryTimes(inode uint64) {
 // live on through, so this is what serves fstat/fchmod/f*xattr on a still-open
 // descriptor until the final forget. Mutations publish through here as well,
 // replacing the stored entry wholesale.
+//
+// The final forget's cleanup cannot miss an insert: Rmdir inserts inside
+// RemovePath's callback, under the same inode table lock the forget releases
+// under, and a publish runs inside a request whose open descriptor keeps the
+// kernel from issuing that forget at all.
 func (wfs *WFS) rememberRemovedDir(inode uint64, entry *filer_pb.Entry) {
 	wfs.removedDirMu.Lock()
 	if wfs.removedDirs == nil {
@@ -436,14 +441,6 @@ func (wfs *WFS) rememberRemovedDir(inode uint64, entry *filer_pb.Entry) {
 	}
 	wfs.removedDirs[inode] = entry
 	wfs.removedDirMu.Unlock()
-	// The final forget can land between the caller's reference check and the
-	// insert above; its cleanup finds nothing and the entry would outlive the
-	// inode. Re-check and take it back out.
-	if !wfs.inodeToPath.HasInode(inode) {
-		wfs.removedDirMu.Lock()
-		delete(wfs.removedDirs, inode)
-		wfs.removedDirMu.Unlock()
-	}
 }
 
 // removedDirEntry hands out a private copy: stored entries are never mutated

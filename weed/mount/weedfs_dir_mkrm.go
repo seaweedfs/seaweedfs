@@ -186,10 +186,11 @@ func (wfs *WFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string
 		targetEntry = proto.Clone(oldEntry).(*filer_pb.Entry)
 		wfs.mapPbIdFromFilerToLocal(targetEntry)
 	}
-	inode, stillReferenced := wfs.inodeToPath.RemovePath(entryFullPath)
-	if stillReferenced && targetEntry != nil {
-		wfs.rememberRemovedDir(inode, targetEntry)
-	}
+	wfs.inodeToPath.RemovePath(entryFullPath, func(inode uint64) {
+		if targetEntry != nil {
+			wfs.rememberRemovedDir(inode, targetEntry)
+		}
+	})
 	wfs.inodeToPath.TouchDirectory(dirFullPath)
 	wfs.touchDirMtimeCtimeBest(dirFullPath)
 	wfs.inodeToPath.AdjustSubdirCount(dirFullPath, -1)

@@ -49,7 +49,7 @@ func newUnlinkedOpenFile(t *testing.T) (*WFS, uint64, *FileHandle) {
 	wfs.fhMap.inode2fh[inode] = fh
 	wfs.fhMap.fh2inode[fh.fh] = inode
 
-	wfs.inodeToPath.RemovePath(fullPath)
+	wfs.inodeToPath.RemovePath(fullPath, nil)
 	fh.isDeleted = true
 
 	return wfs, inode, fh
@@ -159,15 +159,18 @@ func newRemovedOpenDir(t *testing.T) (*WFS, uint64) {
 	fullPath := util.FullPath("/dir")
 	wfs.inodeToPath.Lookup(fullPath, 1, true, false, inode, true)
 
-	removedInode, stillReferenced := wfs.inodeToPath.RemovePath(fullPath)
-	if removedInode != inode || !stillReferenced {
-		t.Fatalf("RemovePath: got inode %d referenced %v, want %d true", removedInode, stillReferenced, inode)
-	}
-	wfs.rememberRemovedDir(inode, &filer_pb.Entry{
-		Name:        "dir",
-		IsDirectory: true,
-		Attributes:  &filer_pb.FuseAttributes{FileMode: uint32(os.ModeDir | 0755), Uid: 1, Gid: 2},
+	kept := false
+	wfs.inodeToPath.RemovePath(fullPath, func(removedInode uint64) {
+		kept = true
+		wfs.rememberRemovedDir(removedInode, &filer_pb.Entry{
+			Name:        "dir",
+			IsDirectory: true,
+			Attributes:  &filer_pb.FuseAttributes{FileMode: uint32(os.ModeDir | 0755), Uid: 1, Gid: 2},
+		})
 	})
+	if !kept {
+		t.Fatal("RemovePath did not report the inode as still referenced")
+	}
 
 	return wfs, inode
 }
@@ -273,19 +276,17 @@ func TestForgetReleasesRemovedOpenDir(t *testing.T) {
 	}
 }
 
-// TestRememberRemovedDirAfterForget pins the insert-forget race: an insert
-// that loses to the final forget must not outlive the inode.
-func TestRememberRemovedDirAfterForget(t *testing.T) {
-	wfs, inode := newRemovedOpenDir(t)
+// TestRemovePathSkipsUnreferencedInode pins the insert-forget ordering: once
+// the kernel's references are gone, RemovePath must not offer the inode for
+// retention, so nothing can be inserted that the forget's cleanup missed.
+func TestRemovePathSkipsUnreferencedInode(t *testing.T) {
+	itp := NewInodeToPath(util.FullPath("/"), 0)
+	fullPath := util.FullPath("/dir")
+	itp.Lookup(fullPath, 1, true, false, 7, true)
+	itp.Forget(7, 1, nil, nil)
 
-	wfs.Forget(inode, 1)
-	wfs.rememberRemovedDir(inode, &filer_pb.Entry{
-		Name:        "dir",
-		IsDirectory: true,
-		Attributes:  &filer_pb.FuseAttributes{},
+	itp.Lookup(fullPath, 1, true, false, 7, false)
+	itp.RemovePath(fullPath, func(inode uint64) {
+		t.Fatalf("RemovePath offered unreferenced inode %d for retention", inode)
 	})
-
-	if len(wfs.removedDirs) != 0 {
-		t.Fatalf("removedDirs kept an entry past the final forget: %d entries", len(wfs.removedDirs))
-	}
 }
