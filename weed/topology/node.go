@@ -320,6 +320,18 @@ func (n *NodeImpl) CapacityFor(option *VolumeGrowOption) int64 {
 	return atomic.LoadInt64(&t.maxVolumeCount) + atomic.LoadInt64(&t.remoteVolumeCount)
 }
 
+// CapacityForAnyDisk is the total registered volume slots across every disk
+// type. CapacityFor answers zero both while a cluster is still starting and
+// when it never serves the option's medium; this tells the two apart.
+func (n *NodeImpl) CapacityForAnyDisk() (total int64) {
+	n.diskUsages.RLock()
+	defer n.diskUsages.RUnlock()
+	for _, t := range n.diskUsages.usages {
+		total += atomic.LoadInt64(&t.maxVolumeCount) + atomic.LoadInt64(&t.remoteVolumeCount)
+	}
+	return
+}
+
 // AvailableSpaceForReservation returns available space considering existing reservations
 func (n *NodeImpl) AvailableSpaceForReservation(option *VolumeGrowOption) int64 {
 	baseAvailable := n.AvailableSpaceFor(option)

@@ -136,13 +136,24 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 			}
 			if shouldGrow {
 				if ms.Topo.AvailableSpaceFor(option) <= 0 {
-					if ms.Topo.CapacityFor(option) > 0 {
-						break // out of space: surface the real error, not a retryable shed
+					// Fail fast whenever any capacity is registered: full for
+					// this medium, or a medium no volume server serves — a
+					// state a heartbeat won't change, so a retryable shed
+					// would loop until the client's deadline. Shed retryably
+					// only while nothing at all has registered, a just-started
+					// cluster whose volume servers have not heartbeated, so
+					// the first write rides out the startup window instead of
+					// failing outright.
+					if ms.Topo.CapacityForAnyDisk() > 0 {
+						if ms.Topo.CapacityFor(option) <= 0 {
+							// Wrapped here, not beside the "no free volumes left"
+							// wrap above, so followers and growth-disabled
+							// masters name the unserved medium too — the
+							// initiator block is skipped for both.
+							lastErr = fmt.Errorf("%s and no volume server carries disk type %q for %s", err.Error(), option.DiskType.ReadableString(), option.String())
+						}
+						break // surface the real error, not a retryable shed
 					}
-					// No capacity registered for this disk type yet, typically a
-					// just-started cluster whose volume servers have not
-					// heartbeated. Shed retryably so the first write rides out
-					// the startup window instead of failing outright.
 					return nil, status.Errorf(codes.ResourceExhausted, "no volume server capacity registered yet for %s", option.String())
 				}
 				// Only the initiator waits, and only while the growth it triggered
