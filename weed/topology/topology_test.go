@@ -2,17 +2,18 @@ package topology
 
 import (
 	"reflect"
+	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/sequence"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
-
-	"testing"
 )
 
 func TestRemoveDataCenter(t *testing.T) {
@@ -232,6 +233,44 @@ func TestAddRemoveVolume(t *testing.T) {
 
 	if _, hasCollection := topo.FindCollection(v.Collection); hasCollection {
 		t.Errorf("collection %v should not exist", v.Collection)
+	}
+}
+
+func TestUnRegisterVolumeLayoutClearsReplicaPlacementMismatchMetric(t *testing.T) {
+	stats.MasterReplicaPlacementMismatch.Reset()
+	t.Cleanup(stats.MasterReplicaPlacementMismatch.Reset)
+
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+
+	dc := topo.GetOrCreateDataCenter("dc1")
+	rack := dc.GetOrCreateRack("rack1")
+	maxVolumeCounts := map[string]uint32{"": 25}
+	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", "", maxVolumeCounts)
+
+	rp, err := super_block.NewReplicaPlacementFromString("001")
+	if err != nil {
+		t.Fatalf("NewReplicaPlacementFromString: %v", err)
+	}
+	v := storage.VolumeInfo{
+		Id:               needle.VolumeId(42),
+		Size:             100,
+		Collection:       "metrics-test",
+		ReplicaPlacement: rp,
+		Ttl:              needle.EMPTY_TTL,
+	}
+
+	dn.UpdateVolumes([]storage.VolumeInfo{v})
+	topo.RegisterVolumeLayout(v, dn)
+
+	stats.MasterReplicaPlacementMismatch.WithLabelValues(v.Collection, v.Id.String()).Set(1)
+	if n := testutil.CollectAndCount(stats.MasterReplicaPlacementMismatch); n != 1 {
+		t.Fatalf("expected 1 replica_placement_mismatch series, got %d", n)
+	}
+
+	topo.UnRegisterVolumeLayout(v, dn)
+
+	if n := testutil.CollectAndCount(stats.MasterReplicaPlacementMismatch); n != 0 {
+		t.Errorf("%d replica_placement_mismatch series left after volume left topology", n)
 	}
 }
 
