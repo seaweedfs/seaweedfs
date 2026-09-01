@@ -2694,10 +2694,7 @@ impl Volume {
     /// Open the local .dat as the data backend, dropping any remote backend, so reads
     /// are served from local disk. Mirrors Go's swapToLocalDatBackend after a tier-down.
     pub(crate) fn open_local_dat_backend(&mut self) -> Result<(), VolumeError> {
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(self.dat_path())?;
+        let file = open_volume_file(OpenOptions::new().read(true).write(true), self.dat_path())?;
         self.remote_dat_file = None;
         self.dat_file = Some(file);
         Ok(())
