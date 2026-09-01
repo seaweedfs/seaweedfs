@@ -232,26 +232,44 @@ func TestAssignShedsRetryablyBeforeCapacityRegisters(t *testing.T) {
 // A cluster serving only other media is not one still starting up: capacity for
 // the requested disk type will never register, so the startup shed would loop
 // until the client's deadline. Assign must fail fast with the real error and
-// name the unserved medium.
+// name the unserved medium — for the growth initiator, for a follower whose
+// growth is already in flight, and when growth is disabled outright.
 func TestAssignFailsFastWhenDiskTypeUnserved(t *testing.T) {
-	ms := newLeaderMaster()
-	// ssd capacity registered, but the request asks for the default (hdd).
-	ms.Topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
-		GetOrCreateDataNode("127.0.0.1", 8080, 18080, "127.0.0.1", "dn1", map[string]uint32{"ssd": 1})
-
-	req := &master_pb.AssignRequest{Count: 1, Replication: "000", Collection: "fresh"}
-
-	start := time.Now()
-	resp, err := ms.Assign(context.Background(), req)
-	elapsed := time.Since(start)
-
-	require.Error(t, err)
-	require.Nil(t, resp)
-	if st, ok := status.FromError(err); ok {
-		assert.NotEqual(t, codes.Unavailable, st.Code())
-		assert.NotEqual(t, codes.ResourceExhausted, st.Code())
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, ms *MasterServer, req *master_pb.AssignRequest)
+	}{
+		{"initiator", func(t *testing.T, ms *MasterServer, req *master_pb.AssignRequest) {}},
+		{"follower joins growth in flight", func(t *testing.T, ms *MasterServer, req *master_pb.AssignRequest) {
+			markGrowthInFlight(t, ms.Topo, req)
+		}},
+		{"growth disabled", func(t *testing.T, ms *MasterServer, req *master_pb.AssignRequest) {
+			ms.option.VolumeGrowthDisabled = true
+		}},
 	}
-	assert.Contains(t, err.Error(), topology.NoWritableVolumes)
-	assert.Contains(t, err.Error(), `no volume server carries disk type "hdd"`)
-	assert.Less(t, elapsed, 2*time.Second)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ms := newLeaderMaster()
+			// ssd capacity registered, but the request asks for the default (hdd).
+			ms.Topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+				GetOrCreateDataNode("127.0.0.1", 8080, 18080, "127.0.0.1", "dn1", map[string]uint32{"ssd": 1})
+
+			req := &master_pb.AssignRequest{Count: 1, Replication: "000", Collection: "fresh"}
+			tc.setup(t, ms, req)
+
+			start := time.Now()
+			resp, err := ms.Assign(context.Background(), req)
+			elapsed := time.Since(start)
+
+			require.Error(t, err)
+			require.Nil(t, resp)
+			if st, ok := status.FromError(err); ok {
+				assert.NotEqual(t, codes.Unavailable, st.Code())
+				assert.NotEqual(t, codes.ResourceExhausted, st.Code())
+			}
+			assert.Contains(t, err.Error(), topology.NoWritableVolumes)
+			assert.Contains(t, err.Error(), `no volume server carries disk type "hdd"`)
+			assert.Less(t, elapsed, 2*time.Second)
+		})
+	}
 }

@@ -117,12 +117,8 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 		fid, count, dnList, shouldGrow, err := ms.Topo.PickForWrite(req.Count, option, vl, req.ExpectedDataSize)
 		if shouldGrow && !initiatedGrow && !ms.option.VolumeGrowthDisabled && vl.AddGrowRequestIfAbsent() {
 			initiatedGrow = true
-			if err != nil && ms.Topo.AvailableSpaceFor(option) <= 0 {
-				if ms.Topo.CapacityFor(option) > 0 {
-					err = fmt.Errorf("%s and no free volumes left for %s", err.Error(), option.String())
-				} else if ms.Topo.CapacityForAnyDisk() > 0 {
-					err = fmt.Errorf("%s and no volume server carries disk type %q for %s", err.Error(), option.DiskType.ReadableString(), option.String())
-				}
+			if err != nil && ms.Topo.AvailableSpaceFor(option) <= 0 && ms.Topo.CapacityFor(option) > 0 {
+				err = fmt.Errorf("%s and no free volumes left for %s", err.Error(), option.String())
 			}
 			ms.volumeGrowthRequestChan <- &topology.VolumeGrowRequest{
 				Option: option,
@@ -149,6 +145,13 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 					// the first write rides out the startup window instead of
 					// failing outright.
 					if ms.Topo.CapacityForAnyDisk() > 0 {
+						if ms.Topo.CapacityFor(option) <= 0 {
+							// Wrapped here, not beside the "no free volumes left"
+							// wrap above, so followers and growth-disabled
+							// masters name the unserved medium too — the
+							// initiator block is skipped for both.
+							lastErr = fmt.Errorf("%s and no volume server carries disk type %q for %s", err.Error(), option.DiskType.ReadableString(), option.String())
+						}
 						break // surface the real error, not a retryable shed
 					}
 					return nil, status.Errorf(codes.ResourceExhausted, "no volume server capacity registered yet for %s", option.String())
