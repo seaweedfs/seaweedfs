@@ -272,3 +272,20 @@ func TestForgetReleasesRemovedOpenDir(t *testing.T) {
 		t.Fatalf("removedDirs not cleaned up: %d entries", len(wfs.removedDirs))
 	}
 }
+
+// TestRememberRemovedDirAfterForget pins the insert-forget race: an insert
+// that loses to the final forget must not outlive the inode.
+func TestRememberRemovedDirAfterForget(t *testing.T) {
+	wfs, inode := newRemovedOpenDir(t)
+
+	wfs.Forget(inode, 1)
+	wfs.rememberRemovedDir(inode, &filer_pb.Entry{
+		Name:        "dir",
+		IsDirectory: true,
+		Attributes:  &filer_pb.FuseAttributes{},
+	})
+
+	if len(wfs.removedDirs) != 0 {
+		t.Fatalf("removedDirs kept an entry past the final forget: %d entries", len(wfs.removedDirs))
+	}
+}

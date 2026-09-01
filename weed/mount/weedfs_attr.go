@@ -436,6 +436,14 @@ func (wfs *WFS) rememberRemovedDir(inode uint64, entry *filer_pb.Entry) {
 	}
 	wfs.removedDirs[inode] = entry
 	wfs.removedDirMu.Unlock()
+	// The final forget can land between the caller's reference check and the
+	// insert above; its cleanup finds nothing and the entry would outlive the
+	// inode. Re-check and take it back out.
+	if !wfs.inodeToPath.HasInode(inode) {
+		wfs.removedDirMu.Lock()
+		delete(wfs.removedDirs, inode)
+		wfs.removedDirMu.Unlock()
+	}
 }
 
 // removedDirEntry hands out a private copy: stored entries are never mutated
