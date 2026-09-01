@@ -147,6 +147,14 @@ func (t *MetadataProcessor) SetMetrics(sourceFiler, targetFiler, clientName, pat
 	}
 }
 
+// OldestFailedTsNs returns the timestamp of the oldest permanently failed
+// event, or 0 when none is pinning the watermark.
+func (t *MetadataProcessor) OldestFailedTsNs() int64 {
+	t.activeJobsLock.Lock()
+	defer t.activeJobsLock.Unlock()
+	return t.oldestFailedTsNs
+}
+
 // pathAncestors returns all proper ancestor directories of p.
 // For "/a/b/c", returns ["/a/b", "/a", "/"].
 func pathAncestors(p util.FullPath) []util.FullPath {

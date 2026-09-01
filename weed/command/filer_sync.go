@@ -414,7 +414,12 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, sourceGrpcDi
 			case <-stopLagTicker:
 				return
 			case <-ticker.C:
-				freshnessTsNs := max(processor.processedTsWatermark.Load(), idleHeartbeatTsNs.Load())
+				freshnessTsNs := processor.processedTsWatermark.Load()
+				// a heartbeat means consumed, not replicated: while a failure
+				// pins the watermark it must not mask the growing lag
+				if processor.OldestFailedTsNs() == 0 {
+					freshnessTsNs = max(freshnessTsNs, idleHeartbeatTsNs.Load())
+				}
 				if freshnessTsNs == 0 {
 					continue
 				}
@@ -475,6 +480,11 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, sourceGrpcDi
 		// The idle heartbeat moves the gauge to the source's current time once we
 		// are caught up, so now-sync_offset reflects real lag and stays alertable.
 		OnIdleHeartbeat: func(tsNs int64) {
+			// same masking concern as the lag ticker: a pinned failure must
+			// keep now-sync_offset growing too
+			if processor.OldestFailedTsNs() != 0 {
+				return
+			}
 			statsCollect.FilerSyncOffsetGauge.WithLabelValues(sourceFiler.String(), targetFiler.String(), clientName, sourcePath).Set(float64(tsNs))
 			idleHeartbeatTsNs.Store(tsNs)
 		},
