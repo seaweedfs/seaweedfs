@@ -52,6 +52,10 @@ func ecVolumeWithDeletedNeedle(t *testing.T, vid needle.VolumeId, id types.Needl
 	}
 
 	location := storage.NewDiskLocation(dir, 100, util.MinFreeSpace{}, dir, types.HardDriveType, nil, stats.DiskIOProbeConfig{})
+	// Close stops the location's disk-space goroutine and releases the mounted
+	// EC volume's file handles. Registered before the mount so it also covers a
+	// failure there.
+	t.Cleanup(location.Close)
 	if _, err := location.LoadEcShard("", vid, erasure_coding.ShardId(0)); err != nil {
 		t.Fatalf("load ec shard: %v", err)
 	}
