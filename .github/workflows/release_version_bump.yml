@@ -178,6 +178,8 @@ jobs:
     needs: release
     if: ${{ inputs.downstream && !inputs.dry_run }}
     runs-on: ubuntu-latest
+    # The wait below puts no bound of its own on runner-queue time; this does.
+    timeout-minutes: 120
     permissions: {}
     strategy:
       fail-fast: false
@@ -216,21 +218,60 @@ jobs:
             exit 1
           fi
 
-          # Wait on the release the dispatched workflow publishes, not on the run
-          # that publishes it: a dispatch cannot be told apart from a concurrent
-          # one through the API, and the release is what we are here for.
+          # The dispatched workflow publishes the release as its last step, so
+          # its conclusion decides success. Wait on the run, not on a wall
+          # clock: time it spends queued for a runner must not count against
+          # the budget. A dispatch does not return its run id, so take the
+          # newest workflow_dispatch run created since ours; a concurrent
+          # dispatch would be performing this same release, and waiting on it
+          # is just as good.
           released() { gh api "repos/${REPO}/releases?per_page=30" --jq '[.[].tag_name]'; }
 
           BEFORE=$(released)
+          # A minute early, so runner clock skew cannot hide the run.
+          DISPATCHED_AT=$(date -u -d '1 minute ago' '+%Y-%m-%dT%H:%M:%SZ')
           gh workflow run -R "$REPO" "$WORKFLOW" --ref master -f bump=patch -f update_seaweedfs=true
 
-          for _ in $(seq 80); do
-            sleep 15
-            NEW=$(released | jq -c --argjson before "$BEFORE" '. - $before')
-            [ "$(jq length <<<"$NEW")" -gt 0 ] && break
+          RUN_ID=""
+          for _ in $(seq 12); do
+            sleep 10
+            RUN_ID=$(gh api -X GET "repos/${REPO}/actions/workflows/${WORKFLOW}/runs" \
+              -f event=workflow_dispatch -f "created=>=${DISPATCHED_AT}" \
+              --jq '(.workflow_runs | sort_by(.created_at) | last | .id) // empty' || true)
+            [ -n "$RUN_ID" ] && break
           done
+          if [ -z "$RUN_ID" ]; then
+            echo "::error::the dispatch created no ${WORKFLOW} run in ${REPO}; see https://github.com/${REPO}/actions/workflows/${WORKFLOW}"
+            exit 1
+          fi
+          RUN_URL="https://github.com/${REPO}/actions/runs/${RUN_ID}"
+          echo "waiting on ${RUN_URL}"
+
+          # 20 minutes of execution; polls that find the run still queued do
+          # not consume it.
+          RUNNING=0
+          STATE=""
+          while :; do
+            sleep 15
+            STATE=$(gh api "repos/${REPO}/actions/runs/${RUN_ID}" \
+              --jq '.status + "/" + (.conclusion // "")' || true)
+            case "$STATE" in
+              completed/*) break ;;
+              in_progress/*) RUNNING=$((RUNNING + 1)) ;;
+            esac
+            if [ "$RUNNING" -gt 80 ]; then
+              echo "::error::${RUN_URL} has been executing for over 20 minutes; giving up on it"
+              exit 1
+            fi
+          done
+          if [ "$STATE" != "completed/success" ]; then
+            echo "::error::${RUN_URL} concluded '${STATE#completed/}'"
+            exit 1
+          fi
+
+          NEW=$(released | jq -c --argjson before "$BEFORE" '. - $before')
           if [ "$(jq length <<<"$NEW")" -eq 0 ]; then
-            echo "::error::${REPO} published no release within 20 minutes; see https://github.com/${REPO}/actions/workflows/${WORKFLOW}"
+            echo "::error::${RUN_URL} succeeded but ${REPO} shows no new release"
             exit 1
           fi
           echo "${REPO} released $(jq -r 'join(", ")' <<<"$NEW")"
