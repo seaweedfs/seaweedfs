@@ -686,8 +686,11 @@ func TestFailedJobHoldsWatermarkAtOldestFailure(t *testing.T) {
 	}
 }
 
-// TestSyncStreamMetrics verifies the per-event counters and the in-flight
-// gauge across success and failure outcomes.
+// TestSyncStreamMetrics verifies the per-event and byte counters and the
+// in-flight gauges across success and failure outcomes. Bytes count only the
+// chunk delta: the failing create's 40, the successful create's 100, the
+// update's new 60-byte chunk but not its shared one, and nothing for the
+// delete despite its chunk.
 func TestSyncStreamMetrics(t *testing.T) {
 	fn := func(resp *filer_pb.SubscribeMetadataResponse) error {
 		if resp.TsNs == 2 {
@@ -698,8 +701,26 @@ func TestSyncStreamMetrics(t *testing.T) {
 	p := NewMetadataProcessor(fn, 100, 0)
 	p.SetMetrics("srcFiler", "dstFiler", "TestSyncStreamMetrics", "/")
 
-	p.AddSyncJob(makeResp("/dir1", "a.txt", false, 1, true))
-	p.AddSyncJob(makeResp("/dir1", "b.txt", false, 2, true))
+	create := makeResp("/dir1", "a.txt", false, 1, true)
+	create.EventNotification.NewEntry.Chunks = []*filer_pb.FileChunk{{FileId: "1,a0", Size: 100}}
+	failing := makeResp("/dir1", "b.txt", false, 2, true)
+	failing.EventNotification.NewEntry.Chunks = []*filer_pb.FileChunk{{FileId: "2,b0", Size: 40}}
+	shared := &filer_pb.FileChunk{FileId: "3,c0", Size: 30}
+	update := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir1",
+		TsNs:      3,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      &filer_pb.Entry{Name: "c.txt", Chunks: []*filer_pb.FileChunk{shared}},
+			NewEntry:      &filer_pb.Entry{Name: "c.txt", Chunks: []*filer_pb.FileChunk{shared, {FileId: "3,c1", Size: 60}}},
+			NewParentPath: "/dir1",
+		},
+	}
+	del := makeResp("/dir1", "d.txt", false, 4, false)
+	del.EventNotification.OldEntry.Chunks = []*filer_pb.FileChunk{{FileId: "4,d0", Size: 999}}
+
+	for _, resp := range []*filer_pb.SubscribeMetadataResponse{create, failing, update, del} {
+		p.AddSyncJob(resp)
+	}
 	waitForJobsToDrain(t, p)
 
 	for _, tc := range []struct {
@@ -707,10 +728,14 @@ func TestSyncStreamMetrics(t *testing.T) {
 		got  float64
 		want float64
 	}{
-		{"received", testutil.ToFloat64(p.metrics.received), 2},
-		{"processed", testutil.ToFloat64(p.metrics.processed), 1},
+		{"received", testutil.ToFloat64(p.metrics.received), 4},
+		{"processed", testutil.ToFloat64(p.metrics.processed), 3},
 		{"failed", testutil.ToFloat64(p.metrics.failed), 1},
 		{"in_flight", testutil.ToFloat64(p.metrics.inFlight), 0},
+		{"received_bytes", testutil.ToFloat64(p.metrics.receivedBytes), 200},
+		{"processed_bytes", testutil.ToFloat64(p.metrics.processedBytes), 160},
+		{"failed_bytes", testutil.ToFloat64(p.metrics.failedBytes), 40},
+		{"in_flight_bytes", testutil.ToFloat64(p.metrics.inFlightBytes), 0},
 	} {
 		if tc.got != tc.want {
 			t.Errorf("%s = %v, want %v", tc.name, tc.got, tc.want)

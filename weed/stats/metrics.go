@@ -333,6 +333,38 @@ var (
 			Help:      "Number of sync jobs currently being replicated; pinned at the concurrency limit means the sync itself is the bottleneck.",
 		}, []string{"sourceFiler", "targetFiler", "clientName", "path"})
 
+	FilerSyncReceivedBytesCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemFilerSync,
+			Name:      "received_bytes_total",
+			Help:      "Counter of chunk data bytes carried by received events: new chunks the old entry does not already have, so deletes, renames, and attribute-only updates count zero.",
+		}, []string{"sourceFiler", "targetFiler", "clientName", "path"})
+
+	FilerSyncProcessedBytesCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemFilerSync,
+			Name:      "processed_bytes_total",
+			Help:      "Counter of chunk data bytes carried by successfully replicated events.",
+		}, []string{"sourceFiler", "targetFiler", "clientName", "path"})
+
+	FilerSyncFailedBytesCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemFilerSync,
+			Name:      "failed_bytes_total",
+			Help:      "Counter of chunk data bytes carried by events that failed after retries.",
+		}, []string{"sourceFiler", "targetFiler", "clientName", "path"})
+
+	FilerSyncInFlightBytesGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemFilerSync,
+			Name:      "in_flight_bytes",
+			Help:      "Chunk data bytes carried by the jobs currently being replicated; distinguishes workers stuck on a few large files from many small ones.",
+		}, []string{"sourceFiler", "targetFiler", "clientName", "path"})
+
 	FilerSyncLagSecondsGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
@@ -957,6 +989,10 @@ func init() {
 	Gather.MustRegister(FilerSyncEventsFailedCounter)
 	Gather.MustRegister(FilerSyncInFlightJobsGauge)
 	Gather.MustRegister(FilerSyncLagSecondsGauge)
+	Gather.MustRegister(FilerSyncReceivedBytesCounter)
+	Gather.MustRegister(FilerSyncProcessedBytesCounter)
+	Gather.MustRegister(FilerSyncFailedBytesCounter)
+	Gather.MustRegister(FilerSyncInFlightBytesGauge)
 	Gather.MustRegister(FilerServerLastSendTsOfSubscribeGauge)
 	Gather.MustRegister(FilerSubscribeGapStalledGauge)
 	Gather.MustRegister(FilerSubscribeUnprovenGapCrossings)
