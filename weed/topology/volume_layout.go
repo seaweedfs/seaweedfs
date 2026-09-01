@@ -1082,7 +1082,12 @@ func (vlc *VolumeLayoutCollection) ToVolumeGrowRequest() *master_pb.VolumeGrowRe
 	}
 	// A layout living in exactly one data center is either pinned there or on
 	// a single-DC cluster; either way unconstrained growth has no business
-	// placing its volumes elsewhere.
+	// placing its volumes elsewhere. Cross-DC replication can never
+	// legitimately live in one DC — there a single hosting DC means an
+	// outage, not a pin.
+	if vlc.VolumeLayout.rp.DiffDataCenterCount > 0 {
+		return vgr
+	}
 	if dcs := vlc.VolumeLayout.ListVolumeDataCenters(); len(dcs) == 1 {
 		for dc := range dcs {
 			vgr.DataCenter = string(dc)

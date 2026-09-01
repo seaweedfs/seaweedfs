@@ -332,6 +332,25 @@ func TestToVolumeGrowRequest_SingleDataCenterLayout(t *testing.T) {
 	}
 }
 
+// Cross-DC replication can never legitimately live in one data center: a
+// single hosting DC there means the other DCs are down, and pinning growth to
+// the survivor would encode the outage as a placement constraint.
+func TestToVolumeGrowRequest_CrossDCReplicationNeverPinned(t *testing.T) {
+	layout := `
+{
+  "dc1":{ "rack1":{ "node-a":{ "ip":"10.0.0.1", "volumes":[ {"id":1, "size":1000, "replication":"100", "collection":"c"} ], "limit":30 } } },
+  "dc2":{ "rack2":{ "node-b":{ "ip":"10.0.0.2", "volumes":[], "limit":30 } } }
+}
+`
+	topo := setupWithLimit(t, layout, 30000)
+	rp, _ := super_block.NewReplicaPlacementFromString("100")
+
+	vlc := &VolumeLayoutCollection{"c", topo.GetVolumeLayout("c", rp, needle.EMPTY_TTL, types.HardDriveType)}
+	if vgr := vlc.ToVolumeGrowRequest(); vgr.DataCenter != "" {
+		t.Errorf("expected unconstrained growth for cross-DC replication, got %q", vgr.DataCenter)
+	}
+}
+
 // Volumes packed to capacity (e.g. by fs.mergeVolumes) go crowded and then
 // unwritable, but stay in the crowded map. ShouldGrowVolumes must count only
 // writable crowded volumes, or those leftovers keep writable <= crowded true
