@@ -550,6 +550,37 @@ func (vc *versionCollector) computeStartFrom(relativePath string) (startFrom str
 	return remainder, true
 }
 
+// computeListPrefix returns the name prefix that every entry of the directory
+// at relativePath must carry to be relevant to vc.prefix: the next path
+// component of the requested prefix under that directory. Pushing it into the
+// filer listing stops unrelated siblings from being transferred and scanned at
+// every level on the way down to the prefix. A name can hold no slash, so a
+// directory whose name does not start with this component cannot contain a
+// matching key, and a file whose name does not start with it cannot be one.
+// Inside the prefix zone (and without a prefix) it returns "" - no constraint.
+func (vc *versionCollector) computeListPrefix(relativePath string) string {
+	if vc.prefix == "" {
+		return ""
+	}
+
+	var remainder string
+	if relativePath == "" {
+		remainder = vc.prefix
+	} else if strings.HasPrefix(vc.prefix, relativePath+"/") {
+		remainder = vc.prefix[len(relativePath)+1:]
+	} else {
+		// The walk only enters a directory that matches the prefix or can
+		// descend toward it; one the prefix does not extend into means the
+		// whole directory is inside the prefix zone.
+		return ""
+	}
+
+	if idx := strings.Index(remainder, "/"); idx >= 0 {
+		return remainder[:idx]
+	}
+	return remainder
+}
+
 // shouldSkipObjectForMarker returns true if the object should be skipped based on keyMarker
 func (vc *versionCollector) shouldSkipObjectForMarker(objectKey string) bool {
 	if vc.keyMarker == "" {
@@ -795,12 +826,13 @@ func (vc *versionCollector) collectVersions(currentPath, relativePath string) er
 		startFrom = markerStart
 		inclusive = true
 	}
+	listPrefix := vc.computeListPrefix(relativePath)
 	for {
 		if vc.isFull() {
 			return nil
 		}
 
-		entries, isLast, err := vc.s3a.list(currentPath, "", startFrom, inclusive, filer.PaginationSize)
+		entries, isLast, err := vc.s3a.list(currentPath, listPrefix, startFrom, inclusive, filer.PaginationSize)
 		// After the first batch, use exclusive mode for standard pagination
 		inclusive = false
 		if err != nil {
