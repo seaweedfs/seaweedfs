@@ -306,6 +306,32 @@ func TestPlanRackAwareGrowth_DivisorCountsOnlyHostingRacks(t *testing.T) {
 	}
 }
 
+// The periodic must-grow and crowded growth paths build their request from
+// ToVolumeGrowRequest. For a layout living in exactly one data center the
+// request carries that DC, so those paths do not scatter a pinned collection
+// either; a layout spanning DCs keeps unconstrained growth.
+func TestToVolumeGrowRequest_SingleDataCenterLayout(t *testing.T) {
+	layout := `
+{
+  "dc1":{ "rack1":{ "node-a":{ "ip":"10.0.0.1", "volumes":[ {"id":1, "size":1000, "replication":"000", "collection":"pinned"} ], "limit":30 } } },
+  "dc2":{ "rack2":{ "node-b":{ "ip":"10.0.0.2", "volumes":[ {"id":2, "size":1000, "replication":"000", "collection":"spread"} ], "limit":30 } } },
+  "dc3":{ "rack3":{ "node-c":{ "ip":"10.0.0.3", "volumes":[ {"id":3, "size":1000, "replication":"000", "collection":"spread"} ], "limit":30 } } }
+}
+`
+	topo := setupWithLimit(t, layout, 30000)
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+
+	pinned := &VolumeLayoutCollection{"pinned", topo.GetVolumeLayout("pinned", rp, needle.EMPTY_TTL, types.HardDriveType)}
+	if vgr := pinned.ToVolumeGrowRequest(); vgr.DataCenter != "dc1" {
+		t.Errorf("expected growth pinned to dc1, got %q", vgr.DataCenter)
+	}
+
+	spread := &VolumeLayoutCollection{"spread", topo.GetVolumeLayout("spread", rp, needle.EMPTY_TTL, types.HardDriveType)}
+	if vgr := spread.ToVolumeGrowRequest(); vgr.DataCenter != "" {
+		t.Errorf("expected unconstrained growth for a multi-DC layout, got %q", vgr.DataCenter)
+	}
+}
+
 // Volumes packed to capacity (e.g. by fs.mergeVolumes) go crowded and then
 // unwritable, but stay in the crowded map. ShouldGrowVolumes must count only
 // writable crowded volumes, or those leftovers keep writable <= crowded true

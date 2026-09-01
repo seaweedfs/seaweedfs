@@ -1074,12 +1074,21 @@ func (vl *VolumeLayout) ToInfo() (info VolumeLayoutInfo) {
 }
 
 func (vlc *VolumeLayoutCollection) ToVolumeGrowRequest() *master_pb.VolumeGrowRequest {
-	return &master_pb.VolumeGrowRequest{
+	vgr := &master_pb.VolumeGrowRequest{
 		Collection:  vlc.Collection,
 		Replication: vlc.VolumeLayout.rp.String(),
 		Ttl:         vlc.VolumeLayout.ttl.String(),
 		DiskType:    vlc.VolumeLayout.diskType.String(),
 	}
+	// A layout living in exactly one data center is either pinned there or on
+	// a single-DC cluster; either way unconstrained growth has no business
+	// placing its volumes elsewhere.
+	if dcs := vlc.VolumeLayout.ListVolumeDataCenters(); len(dcs) == 1 {
+		for dc := range dcs {
+			vgr.DataCenter = string(dc)
+		}
+	}
+	return vgr
 }
 
 func (vl *VolumeLayout) Stats() *VolumeLayoutStats {
