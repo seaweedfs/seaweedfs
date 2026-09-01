@@ -942,6 +942,12 @@ func (vc *versionCollector) processDirectory(currentPath, entryPath string, entr
 func (s3a *S3ApiServer) getObjectVersionList(bucket, object string, versionsEntry *filer_pb.Entry) ([]*ObjectVersion, error) {
 	var versions []*ObjectVersion
 
+	// A nil entry means the .versions directory is absent: no versions, the
+	// same empty result the internal lookup used to produce.
+	if versionsEntry == nil {
+		return versions, nil
+	}
+
 	// All versions are now stored in the .versions directory only
 	bucketDir := s3a.bucketDir(bucket)
 	versionsObjectPath := object + s3_constants.VersionsFolder
