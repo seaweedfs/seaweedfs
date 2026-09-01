@@ -53,13 +53,16 @@ const capacityRecoveryDelay = 30 * time.Second
 
 // mapping from volume to its locations, inverted from server to volume
 type VolumeLayout struct {
-	growRequest      atomic.Bool
-	lastGrowCount    atomic.Uint32
-	rp               *super_block.ReplicaPlacement
-	ttl              *needle.TTL
-	diskType         types.DiskType
-	vid2location     map[needle.VolumeId]*VolumeLocationList
-	writables        []needle.VolumeId // transient array of writable volume id
+	growRequest   atomic.Bool
+	lastGrowCount atomic.Uint32
+	rp            *super_block.ReplicaPlacement
+	ttl           *needle.TTL
+	diskType      types.DiskType
+	vid2location  map[needle.VolumeId]*VolumeLocationList
+	writables     []needle.VolumeId // transient array of writable volume id
+	// writableMembers mirrors writables for membership tests, which run for
+	// every volume on every heartbeat through ensureCorrectWritables.
+	writableMembers  map[needle.VolumeId]struct{}
 	crowded          map[needle.VolumeId]struct{}
 	vacuumedVolumes  map[needle.VolumeId]time.Time
 	volumeSizeLimit  uint64
@@ -86,6 +89,7 @@ func NewVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType
 		diskType:         diskType,
 		vid2location:     make(map[needle.VolumeId]*VolumeLocationList),
 		writables:        *new([]needle.VolumeId),
+		writableMembers:  make(map[needle.VolumeId]struct{}),
 		crowded:          make(map[needle.VolumeId]struct{}),
 		vacuumedVolumes:  make(map[needle.VolumeId]time.Time),
 		volumeSizeLimit:  volumeSizeLimit,
@@ -896,28 +900,26 @@ func (vl *VolumeLayout) CountUnderReplicatedVolumes() int {
 }
 
 func (vl *VolumeLayout) removeFromWritable(vid needle.VolumeId) bool {
-	toDeleteIndex := -1
+	if _, ok := vl.writableMembers[vid]; !ok {
+		return false
+	}
 	for k, id := range vl.writables {
 		if id == vid {
-			toDeleteIndex = k
-			break
+			glog.V(0).Infoln("Volume", vid, "becomes unwritable")
+			vl.writables = append(vl.writables[0:k], vl.writables[k+1:]...)
+			delete(vl.writableMembers, vid)
+			return true
 		}
-	}
-	if toDeleteIndex >= 0 {
-		glog.V(0).Infoln("Volume", vid, "becomes unwritable")
-		vl.writables = append(vl.writables[0:toDeleteIndex], vl.writables[toDeleteIndex+1:]...)
-		return true
 	}
 	return false
 }
 func (vl *VolumeLayout) setVolumeWritable(vid needle.VolumeId) bool {
-	for _, v := range vl.writables {
-		if v == vid {
-			return false
-		}
+	if _, ok := vl.writableMembers[vid]; ok {
+		return false
 	}
 	glog.V(1).Infoln("Volume", vid, "becomes writable")
 	vl.writables = append(vl.writables, vid)
+	vl.writableMembers[vid] = struct{}{}
 	return true
 }
 
