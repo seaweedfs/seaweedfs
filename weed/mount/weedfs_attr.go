@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"google.golang.org/protobuf/proto"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -206,6 +208,11 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 		fh.dirtyMetadata = true
 		return fuse.OK
 	}
+	if path == "" {
+		// removed while open: the remembered entry is all there is to update
+		wfs.rememberRemovedDir(input.NodeId, entry)
+		return fuse.OK
+	}
 
 	return wfs.saveEntry(path, entry)
 
@@ -399,10 +406,10 @@ func (wfs *WFS) setAtime(inode uint64, t time.Time) {
 }
 
 // applyInMemoryAtime overlays the in-memory atime onto a fuse.Attr if present.
-// forgetInMemoryTimes drops the overlays for an inode. Both maps are keyed by
-// inode and inodes are derived from the path, so a delete and recreate can
+// forgetInMemoryTimes drops the overlays for an inode. All these maps are keyed
+// by inode and inodes are derived from the path, so a delete and recreate can
 // hand the same number to a different file — which would then inherit the
-// previous one's access or modification time.
+// previous one's access or modification time, or a removed directory's entry.
 func (wfs *WFS) forgetInMemoryTimes(inode uint64) {
 	wfs.atimeMu.Lock()
 	delete(wfs.atimeMap, inode)
@@ -411,6 +418,41 @@ func (wfs *WFS) forgetInMemoryTimes(inode uint64) {
 	wfs.dirMtimeMu.Lock()
 	delete(wfs.dirMtimeMap, inode)
 	wfs.dirMtimeMu.Unlock()
+
+	wfs.removedDirMu.Lock()
+	delete(wfs.removedDirs, inode)
+	wfs.removedDirMu.Unlock()
+}
+
+// rememberRemovedDir keeps the last-known entry of a directory removed while
+// the kernel still references its inode. A directory has no file handle to
+// live on through, so this is what serves fstat/fchmod/f*xattr on a still-open
+// descriptor until the final forget. Mutations publish through here as well,
+// replacing the stored entry wholesale.
+//
+// The final forget's cleanup cannot miss an insert: Rmdir inserts inside
+// RemovePath's callback, under the same inode table lock the forget releases
+// under, and a publish runs inside a request whose open descriptor keeps the
+// kernel from issuing that forget at all.
+func (wfs *WFS) rememberRemovedDir(inode uint64, entry *filer_pb.Entry) {
+	wfs.removedDirMu.Lock()
+	if wfs.removedDirs == nil {
+		wfs.removedDirs = make(map[uint64]*filer_pb.Entry)
+	}
+	wfs.removedDirs[inode] = entry
+	wfs.removedDirMu.Unlock()
+}
+
+// removedDirEntry hands out a private copy: stored entries are never mutated
+// in place, so concurrent readers cannot see a half-applied change.
+func (wfs *WFS) removedDirEntry(inode uint64) *filer_pb.Entry {
+	wfs.removedDirMu.Lock()
+	entry := wfs.removedDirs[inode]
+	wfs.removedDirMu.Unlock()
+	if entry == nil {
+		return nil
+	}
+	return proto.Clone(entry).(*filer_pb.Entry)
 }
 
 func (wfs *WFS) applyInMemoryAtime(out *fuse.Attr, inode uint64) {

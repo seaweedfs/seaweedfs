@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -138,10 +139,15 @@ func (wfs *WFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string
 	}
 	entryFullPath := dirFullPath.Child(name)
 
+	targetEntry, _, targetCode := wfs.maybeLoadEntry(entryFullPath)
+	if targetCode != fuse.OK {
+		targetEntry = nil
+	}
+
 	// POSIX: enforce sticky bit on the parent directory.
 	if dirEntry, _, dirCode := wfs.maybeLoadEntry(dirFullPath); dirCode == fuse.OK && dirEntry != nil && dirEntry.Attributes != nil {
 		targetUid := uint32(0)
-		if targetEntry, _, targetCode := wfs.maybeLoadEntry(entryFullPath); targetCode == fuse.OK && targetEntry != nil && targetEntry.Attributes != nil {
+		if targetEntry != nil && targetEntry.Attributes != nil {
 			targetUid = targetEntry.Attributes.Uid
 		}
 		if code := checkStickyBit(dirEntry.Attributes.FileMode, dirEntry.Attributes.Uid, targetUid, header.Uid); code != fuse.OK {
@@ -174,7 +180,17 @@ func (wfs *WFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string
 		glog.Warningf("rmdir %s: best-effort metadata apply failed: %v", entryFullPath, applyErr)
 		wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
 	}
-	wfs.inodeToPath.RemovePath(entryFullPath)
+	// The filer serialized the delete against concurrent updates and returned
+	// the entry as it stood; the snapshot loaded above may predate one.
+	if oldEntry := resp.GetMetadataEvent().GetEventNotification().GetOldEntry(); oldEntry.GetAttributes() != nil {
+		targetEntry = proto.Clone(oldEntry).(*filer_pb.Entry)
+		wfs.mapPbIdFromFilerToLocal(targetEntry)
+	}
+	wfs.inodeToPath.RemovePath(entryFullPath, func(inode uint64) {
+		if targetEntry != nil {
+			wfs.rememberRemovedDir(inode, targetEntry)
+		}
+	})
 	wfs.inodeToPath.TouchDirectory(dirFullPath)
 	wfs.touchDirMtimeCtimeBest(dirFullPath)
 	wfs.inodeToPath.AdjustSubdirCount(dirFullPath, -1)

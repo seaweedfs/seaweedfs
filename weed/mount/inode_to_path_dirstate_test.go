@@ -56,7 +56,7 @@ func TestDirStateIndexesStayInStep(t *testing.T) {
 		t.Error("renamed directory not indexed")
 	}
 
-	itp.RemovePath("/a/moved")
+	itp.RemovePath("/a/moved", nil)
 	if itp.dirStateOf("/a/moved") != nil {
 		t.Error("removed directory still indexed")
 	}
@@ -77,7 +77,7 @@ func TestForgetDoesNotDropAReusedDirPath(t *testing.T) {
 	now := time.Now().Unix()
 
 	oldInode := itp.Lookup("/a", now, true, false, 0, true)
-	itp.RemovePath("/a")
+	itp.RemovePath("/a", nil)
 	newInode := itp.Lookup("/a", now+1, true, false, 0, true)
 	if newInode == oldInode {
 		t.Fatalf("recreated directory reused inode %d", newInode)
