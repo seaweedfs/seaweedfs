@@ -113,8 +113,6 @@ type MetadataProcessor struct {
 
 	// metrics is nil for callers that do not report per-event metrics.
 	metrics *syncStreamMetrics
-	// activeJobsBytes sums the dataSize of active jobs. Guarded by activeJobsLock.
-	activeJobsBytes int64
 }
 
 func NewMetadataProcessor(fn pb.ProcessMetadataFunc, concurrency int, offsetTsNs int64) *MetadataProcessor {
@@ -310,10 +308,12 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 	if newPath != "" {
 		t.addPathToIndex(newPath, kind)
 	}
-	t.activeJobsBytes += dataSize
+	// Inc/Dec rather than Set from local state: after a subscription retry a
+	// new processor shares these children with the old one's still-draining
+	// jobs, and each job accounting for itself keeps the total truthful.
 	if t.metrics != nil {
-		t.metrics.inFlight.Set(float64(len(t.activeJobs)))
-		t.metrics.inFlightBytes.Set(float64(t.activeJobsBytes))
+		t.metrics.inFlight.Inc()
+		t.metrics.inFlightBytes.Add(float64(dataSize))
 	}
 
 	heap.Push(&t.tsHeap, resp.TsNs)
@@ -341,7 +341,6 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 		if jobPaths.newPath != "" {
 			t.removePathFromIndex(jobPaths.newPath, jobPaths.kind)
 		}
-		t.activeJobsBytes -= jobPaths.dataSize
 		if t.metrics != nil {
 			if jobErr != nil {
 				t.metrics.failed.Inc()
@@ -350,8 +349,8 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 				t.metrics.processed.Inc()
 				t.metrics.processedBytes.Add(float64(jobPaths.dataSize))
 			}
-			t.metrics.inFlight.Set(float64(len(t.activeJobs)))
-			t.metrics.inFlightBytes.Set(float64(t.activeJobsBytes))
+			t.metrics.inFlight.Dec()
+			t.metrics.inFlightBytes.Sub(float64(jobPaths.dataSize))
 		}
 
 		// Lazy-clean stale entries from heap top (already-completed jobs).
