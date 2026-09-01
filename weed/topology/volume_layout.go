@@ -758,9 +758,12 @@ func (vl *VolumeLayout) ShouldGrowVolumesByDcAndRack(writables *[]needle.VolumeI
 	return true
 }
 
-// ListVolumeDataCenters returns the data centers hosting at least one volume
-// of this layout.
-func (vl *VolumeLayout) ListVolumeDataCenters() map[NodeId]struct{} {
+// listVolumeDataCenters returns the data centers hosting at least one volume
+// of this layout, stopping once limit distinct DCs are seen (0 = no limit).
+// The walk holds accessLock and a layout can span millions of volumes, so
+// callers pass the smallest limit that answers their question and only a
+// layout truly confined to fewer DCs pays for a full walk.
+func (vl *VolumeLayout) listVolumeDataCenters(limit int) map[NodeId]struct{} {
 	vl.accessLock.RLock()
 	defer vl.accessLock.RUnlock()
 	dataCenters := make(map[NodeId]struct{})
@@ -768,6 +771,9 @@ func (vl *VolumeLayout) ListVolumeDataCenters() map[NodeId]struct{} {
 		for _, dn := range location.list {
 			if dcId := dn.GetDataCenterId(); dcId != "" {
 				dataCenters[NodeId(dcId)] = struct{}{}
+				if limit > 0 && len(dataCenters) >= limit {
+					return dataCenters
+				}
 			}
 		}
 	}
@@ -802,7 +808,7 @@ func (vl *VolumeLayout) PlanRackAwareGrowth(dcs map[NodeId][]NodeId, lastGrowCou
 	// collection pinned to one DC (fs.configure -dataCenter) must not sprout
 	// volumes in every other DC, and a DC that does need this layout gets its
 	// volumes from the DC-constrained assign that first asks for them.
-	hostingDCs := vl.ListVolumeDataCenters()
+	hostingDCs := vl.listVolumeDataCenters(len(dcs))
 	// Spread lastGrowCount evenly across all grow targets. Summing every rack
 	// up front keeps the divisor global, so DCs with different rack counts do
 	// not each over-grow from a per-DC divisor.
@@ -1088,7 +1094,7 @@ func (vlc *VolumeLayoutCollection) ToVolumeGrowRequest() *master_pb.VolumeGrowRe
 	if vlc.VolumeLayout.rp.DiffDataCenterCount > 0 {
 		return vgr
 	}
-	if dcs := vlc.VolumeLayout.ListVolumeDataCenters(); len(dcs) == 1 {
+	if dcs := vlc.VolumeLayout.listVolumeDataCenters(2); len(dcs) == 1 {
 		for dc := range dcs {
 			vgr.DataCenter = string(dc)
 		}
