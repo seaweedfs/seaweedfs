@@ -177,6 +177,8 @@ type WFS struct {
 	atimeMap              map[uint64]time.Time // inode -> atime, in-memory only, bounded
 	dirMtimeMu            sync.Mutex
 	dirMtimeMap           map[uint64]time.Time // inode -> mtime/ctime, in-memory overlay for dirs
+	removedDirMu          sync.Mutex
+	removedDirs           map[uint64]*filer_pb.Entry // inode -> last-known entry of a directory removed while still referenced
 	entryValidSec         uint64               // kernel FUSE entry cache TTL in seconds
 	attrValidSec          uint64               // kernel FUSE attr cache TTL in seconds
 	dirIdleEvict          time.Duration

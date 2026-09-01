@@ -483,7 +483,10 @@ func (i *InodeToPath) AddPath(inode uint64, path util.FullPath) {
 	}
 }
 
-func (i *InodeToPath) RemovePath(path util.FullPath) {
+// RemovePath drops the name, reporting the inode it mapped to and whether the
+// kernel still holds lookup references to it: such an inode keeps receiving
+// requests until the final forget.
+func (i *InodeToPath) RemovePath(path util.FullPath) (inode uint64, stillReferenced bool) {
 	i.Lock()
 	defer i.Unlock()
 	inode, found := i.path2inode[path]
@@ -491,7 +494,11 @@ func (i *InodeToPath) RemovePath(path util.FullPath) {
 		delete(i.path2inode, path)
 		i.dropDirPath(inode)
 		i.removePathFromInode2Path(inode, path)
+		if ie := i.inode2path[inode]; ie != nil {
+			stillReferenced = ie.nlookup > 0
+		}
 	}
+	return
 }
 
 func (i *InodeToPath) removePathFromInode2Path(inode uint64, path util.FullPath) {
