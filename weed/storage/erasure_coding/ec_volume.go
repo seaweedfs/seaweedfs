@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -132,7 +133,7 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 	default:
 		return nil, fmt.Errorf("cannot open ec volume index %s.ecx (or %s.ecx): %w", localBaseFileName, sharedBaseFileName, os.ErrNotExist)
 	}
-	if ev.ecxFile, err = os.OpenFile(indexBaseFileName+".ecx", os.O_RDWR, 0644); err != nil {
+	if ev.ecxFile, err = backend.OpenVolumeFile(indexBaseFileName+".ecx", os.O_RDWR); err != nil {
 		return nil, fmt.Errorf("cannot open ec volume index %s.ecx: %w", indexBaseFileName, err)
 	}
 	ecxFi, statErr := ev.ecxFile.Stat()
@@ -144,7 +145,7 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 	ev.ecxCreatedAt = ecxFi.ModTime()
 
 	// open ecj file and seed the in-memory deleted set from it.
-	if ev.ecjFile, err = os.OpenFile(indexBaseFileName+".ecj", os.O_RDWR|os.O_CREATE, 0644); err != nil {
+	if ev.ecjFile, err = backend.OpenVolumeFile(indexBaseFileName+".ecj", os.O_RDWR|os.O_CREATE); err != nil {
 		return nil, fmt.Errorf("cannot open ec volume journal %s.ecj: %v", indexBaseFileName, err)
 	}
 	if ecjFi, statErr := ev.ecjFile.Stat(); statErr == nil {

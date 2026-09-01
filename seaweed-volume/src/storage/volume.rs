@@ -26,6 +26,7 @@ use crate::storage::needle_map::sorted_file::SortedFileNeedleMap;
 use crate::storage::needle_map::{CompactNeedleMap, NeedleMap, NeedleMapKind, RedbNeedleMap};
 use crate::storage::super_block::{ReplicaPlacement, SuperBlock, SUPER_BLOCK_SIZE};
 use crate::storage::types::*;
+use crate::storage::volume_open::open_volume_file;
 
 // ============================================================================
 // Errors
@@ -736,12 +737,12 @@ impl Volume {
             let metadata = fs::metadata(&dat_path)?;
 
             // Try to open read-write; fall back to read-only
-            match OpenOptions::new().read(true).write(true).open(&dat_path) {
+            match open_volume_file(OpenOptions::new().read(true).write(true), &dat_path) {
                 Ok(file) => {
                     self.dat_file = Some(file);
                 }
                 Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
-                    self.dat_file = Some(File::open(&dat_path)?);
+                    self.dat_file = Some(open_volume_file(OpenOptions::new().read(true), &dat_path)?);
                     self.no_write_or_delete = true;
                 }
                 Err(e) => return Err(e.into()),
@@ -762,11 +763,10 @@ impl Volume {
             if let Some(parent) = Path::new(&dat_path).parent() {
                 fs::create_dir_all(parent)?;
             }
-            let file = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(true)
-                .open(&dat_path)?;
+            let file = open_volume_file(
+                OpenOptions::new().read(true).write(true).create(true),
+                &dat_path,
+            )?;
             if preallocate > 0 {
                 preallocate_file(&file, preallocate);
             }
@@ -982,7 +982,7 @@ impl Volume {
         if self.no_write_or_delete {
             // Open read-only
             if Path::new(&idx_path).exists() {
-                let mut idx_file = File::open(&idx_path)?;
+                let mut idx_file = open_volume_file(OpenOptions::new().read(true), idx_path)?;
                 let nm = CompactNeedleMap::load_from_idx(&mut idx_file, self.version())?;
                 self.nm = Some(NeedleMap::InMemory(nm));
             } else {
@@ -1001,11 +1001,10 @@ impl Volume {
             }
         } else {
             // Open read-write (create if missing)
-            let idx_file = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(true)
-                .open(&idx_path)?;
+            let idx_file = open_volume_file(
+                OpenOptions::new().read(true).write(true).create(true),
+                idx_path,
+            )?;
 
             let idx_size = trim_torn_idx_tail(&idx_file, idx_path)?;
             let mut idx_reader = io::BufReader::new(&idx_file);
@@ -1031,7 +1030,7 @@ impl Volume {
         if self.no_write_or_delete {
             // Open read-only
             if Path::new(&idx_path).exists() {
-                let mut idx_file = File::open(&idx_path)?;
+                let mut idx_file = open_volume_file(OpenOptions::new().read(true), idx_path)?;
                 let nm = RedbNeedleMap::load_from_idx(&rdb_path, &mut idx_file, self.version())?;
                 self.nm = Some(NeedleMap::Redb(nm));
             } else {
@@ -1050,11 +1049,10 @@ impl Volume {
             }
         } else {
             // Open read-write (create if missing)
-            let idx_file = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(true)
-                .open(&idx_path)?;
+            let idx_file = open_volume_file(
+                OpenOptions::new().read(true).write(true).create(true),
+                idx_path,
+            )?;
 
             let idx_size = trim_torn_idx_tail(&idx_file, idx_path)?;
             let mut idx_reader = io::BufReader::new(&idx_file);
@@ -2696,10 +2694,7 @@ impl Volume {
     /// Open the local .dat as the data backend, dropping any remote backend, so reads
     /// are served from local disk. Mirrors Go's swapToLocalDatBackend after a tier-down.
     pub(crate) fn open_local_dat_backend(&mut self) -> Result<(), VolumeError> {
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(self.dat_path())?;
+        let file = open_volume_file(OpenOptions::new().read(true).write(true), self.dat_path())?;
         self.remote_dat_file = None;
         self.dat_file = Some(file);
         Ok(())

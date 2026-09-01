@@ -18,6 +18,8 @@ use std::fs::{File, OpenOptions};
 use std::io;
 use std::sync::{Arc, Mutex, OnceLock};
 
+use crate::storage::volume_open::open_volume_file;
+
 /// Descriptors the pool keeps open. Matches Go's `maxPooledIndexFiles`.
 pub const MAX_POOLED_INDEX_FILES: usize = 1024;
 
@@ -68,7 +70,10 @@ impl IndexFilePool {
 
         // Opened outside the lock: a cold open blocks on disk, and holding a
         // process-wide mutex across it would serialize every volume's lookups.
-        let file = Arc::new(OpenOptions::new().read(true).write(writable).open(path)?);
+        let file = Arc::new(open_volume_file(
+            OpenOptions::new().read(true).write(writable),
+            path,
+        )?);
         Ok(self.insert(key, file))
     }
 
