@@ -382,7 +382,9 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, sourceGrpcDi
 		glog.Warningf("invalid concurrency value, using default: %d", DefaultConcurrencyLimit)
 		concurrency = DefaultConcurrencyLimit
 	}
+	clientName := fmt.Sprintf("syncFrom_%s_To_%s", string(sourceFiler), string(targetFiler))
 	processor := NewMetadataProcessor(processEventFn, concurrency, sourceFilerOffsetTsNs)
+	processor.SetMetrics(sourceFiler.String(), targetFiler.String(), clientName, sourcePath)
 
 	// update sync state for graceful shutdown checkpoint saving
 	if statePtr != nil {
@@ -398,7 +400,6 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, sourceGrpcDi
 
 	var lastLogTsNs = time.Now().UnixNano()
 	var lastProgressedTsNs int64
-	var clientName = fmt.Sprintf("syncFrom_%s_To_%s", string(sourceFiler), string(targetFiler))
 	processEventFnWithOffset := pb.AddOffsetFunc(func(resp *filer_pb.SubscribeMetadataResponse) error {
 		processor.AddSyncJob(resp)
 		return nil

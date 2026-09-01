@@ -301,6 +301,38 @@ var (
 			Help:      "The offset of the filer synchronization service.",
 		}, []string{"sourceFiler", "targetFiler", "clientName", "path"})
 
+	FilerSyncEventsReceivedCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemFilerSync,
+			Name:      "events_received_total",
+			Help:      "Counter of metadata events read off the source subscription stream.",
+		}, []string{"sourceFiler", "targetFiler", "clientName", "path"})
+
+	FilerSyncEventsProcessedCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemFilerSync,
+			Name:      "events_processed_total",
+			Help:      "Counter of metadata events successfully replicated to the target.",
+		}, []string{"sourceFiler", "targetFiler", "clientName", "path"})
+
+	FilerSyncEventsFailedCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemFilerSync,
+			Name:      "events_failed_total",
+			Help:      "Counter of metadata events that failed after retries; the sync offset is held at the oldest failure so it is replayed on restart.",
+		}, []string{"sourceFiler", "targetFiler", "clientName", "path"})
+
+	FilerSyncInFlightJobsGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemFilerSync,
+			Name:      "in_flight_jobs",
+			Help:      "Number of sync jobs currently being replicated; pinned at the concurrency limit means the sync itself is the bottleneck.",
+		}, []string{"sourceFiler", "targetFiler", "clientName", "path"})
+
 	VolumeServerStartTimeSeconds = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
@@ -912,6 +944,10 @@ func init() {
 	Gather.MustRegister(FilerStoreCounter)
 	Gather.MustRegister(FilerStoreHistogram)
 	Gather.MustRegister(FilerSyncOffsetGauge)
+	Gather.MustRegister(FilerSyncEventsReceivedCounter)
+	Gather.MustRegister(FilerSyncEventsProcessedCounter)
+	Gather.MustRegister(FilerSyncEventsFailedCounter)
+	Gather.MustRegister(FilerSyncInFlightJobsGauge)
 	Gather.MustRegister(FilerServerLastSendTsOfSubscribeGauge)
 	Gather.MustRegister(FilerSubscribeGapStalledGauge)
 	Gather.MustRegister(FilerSubscribeUnprovenGapCrossings)

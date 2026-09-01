@@ -7,9 +7,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	statsCollect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -56,6 +58,15 @@ type syncJobPaths struct {
 	kind    jobKind
 }
 
+// syncStreamMetrics holds the metric children for one sync stream, curried
+// once so per-event updates skip the label lookup.
+type syncStreamMetrics struct {
+	received  prometheus.Counter
+	processed prometheus.Counter
+	failed    prometheus.Counter
+	inFlight  prometheus.Gauge
+}
+
 type MetadataProcessor struct {
 	activeJobs           map[int64]*syncJobPaths
 	activeJobsLock       sync.Mutex
@@ -93,6 +104,9 @@ type MetadataProcessor struct {
 	// past it, so the persisted sync offset stays behind the failure and a
 	// restart replays the event instead of skipping it forever.
 	oldestFailedTsNs int64
+
+	// metrics is nil for callers that do not report per-event metrics.
+	metrics *syncStreamMetrics
 }
 
 func NewMetadataProcessor(fn pb.ProcessMetadataFunc, concurrency int, offsetTsNs int64) *MetadataProcessor {
@@ -108,6 +122,17 @@ func NewMetadataProcessor(fn pb.ProcessMetadataFunc, concurrency int, offsetTsNs
 	t.processedTsWatermark.Store(offsetTsNs)
 	t.activeJobsCond = sync.NewCond(&t.activeJobsLock)
 	return t
+}
+
+// SetMetrics enables per-event metrics for this stream, labeled the same way
+// as the existing sync_offset gauge.
+func (t *MetadataProcessor) SetMetrics(sourceFiler, targetFiler, clientName, path string) {
+	t.metrics = &syncStreamMetrics{
+		received:  statsCollect.FilerSyncEventsReceivedCounter.WithLabelValues(sourceFiler, targetFiler, clientName, path),
+		processed: statsCollect.FilerSyncEventsProcessedCounter.WithLabelValues(sourceFiler, targetFiler, clientName, path),
+		failed:    statsCollect.FilerSyncEventsFailedCounter.WithLabelValues(sourceFiler, targetFiler, clientName, path),
+		inFlight:  statsCollect.FilerSyncInFlightJobsGauge.WithLabelValues(sourceFiler, targetFiler, clientName, path),
+	}
 }
 
 // pathAncestors returns all proper ancestor directories of p.
@@ -241,6 +266,12 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 		return
 	}
 
+	// counted before the admission wait: received-processed-failed is the
+	// number of events read off the stream but not yet done
+	if t.metrics != nil {
+		t.metrics.received.Inc()
+	}
+
 	t.activeJobsLock.Lock()
 	defer t.activeJobsLock.Unlock()
 
@@ -255,6 +286,9 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 	t.addPathToIndex(p, kind)
 	if newPath != "" {
 		t.addPathToIndex(newPath, kind)
+	}
+	if t.metrics != nil {
+		t.metrics.inFlight.Set(float64(len(t.activeJobs)))
 	}
 
 	heap.Push(&t.tsHeap, resp.TsNs)
@@ -281,6 +315,14 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 		t.removePathFromIndex(jobPaths.path, jobPaths.kind)
 		if jobPaths.newPath != "" {
 			t.removePathFromIndex(jobPaths.newPath, jobPaths.kind)
+		}
+		if t.metrics != nil {
+			if jobErr != nil {
+				t.metrics.failed.Inc()
+			} else {
+				t.metrics.processed.Inc()
+			}
+			t.metrics.inFlight.Set(float64(len(t.activeJobs)))
 		}
 
 		// Lazy-clean stale entries from heap top (already-completed jobs).

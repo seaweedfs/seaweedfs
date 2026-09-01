@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -682,5 +683,37 @@ func TestFailedJobHoldsWatermarkAtOldestFailure(t *testing.T) {
 
 	if got := p.processedTsWatermark.Load(); got != 100 {
 		t.Fatalf("watermark = %d, want it held at 100 by the failure at 200", got)
+	}
+}
+
+// TestSyncStreamMetrics verifies the per-event counters and the in-flight
+// gauge across success and failure outcomes.
+func TestSyncStreamMetrics(t *testing.T) {
+	fn := func(resp *filer_pb.SubscribeMetadataResponse) error {
+		if resp.TsNs == 2 {
+			return errors.New("AccessDenied: Access Denied")
+		}
+		return nil
+	}
+	p := NewMetadataProcessor(fn, 100, 0)
+	p.SetMetrics("srcFiler", "dstFiler", "TestSyncStreamMetrics", "/")
+
+	p.AddSyncJob(makeResp("/dir1", "a.txt", false, 1, true))
+	p.AddSyncJob(makeResp("/dir1", "b.txt", false, 2, true))
+	waitForJobsToDrain(t, p)
+
+	for _, tc := range []struct {
+		name string
+		got  float64
+		want float64
+	}{
+		{"received", testutil.ToFloat64(p.metrics.received), 2},
+		{"processed", testutil.ToFloat64(p.metrics.processed), 1},
+		{"failed", testutil.ToFloat64(p.metrics.failed), 1},
+		{"in_flight", testutil.ToFloat64(p.metrics.inFlight), 0},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("%s = %v, want %v", tc.name, tc.got, tc.want)
+		}
 	}
 }
