@@ -141,6 +141,11 @@ func (wfs *WFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr st
 		fh.dirtyMetadata = true
 		return fuse.OK
 	}
+	if path == "" {
+		// removed while open: the remembered entry is all there is to update
+		wfs.rememberRemovedDir(input.NodeId, entry)
+		return fuse.OK
+	}
 
 	return wfs.saveEntry(path, entry)
 
@@ -217,6 +222,11 @@ func (wfs *WFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr 
 
 	if fh != nil {
 		fh.dirtyMetadata = true
+		return fuse.OK
+	}
+	if path == "" {
+		// removed while open: the remembered entry is all there is to update
+		wfs.rememberRemovedDir(header.NodeId, entry)
 		return fuse.OK
 	}
 

@@ -179,8 +179,8 @@ type WFS struct {
 	dirMtimeMap           map[uint64]time.Time // inode -> mtime/ctime, in-memory overlay for dirs
 	removedDirMu          sync.Mutex
 	removedDirs           map[uint64]*filer_pb.Entry // inode -> last-known entry of a directory removed while still referenced
-	entryValidSec         uint64               // kernel FUSE entry cache TTL in seconds
-	attrValidSec          uint64               // kernel FUSE attr cache TTL in seconds
+	entryValidSec         uint64                     // kernel FUSE entry cache TTL in seconds
+	attrValidSec          uint64                     // kernel FUSE attr cache TTL in seconds
 	dirIdleEvict          time.Duration
 
 	// openMtimeCache maps inode -> [mtime_sec, mtime_ns] from the last Open.
@@ -526,7 +526,8 @@ func (wfs *WFS) Init(server *fuse.Server) {
 // maybeReadEntry resolves an inode to the entry metadata operations act on. An
 // open handle answers ahead of the path: unlink drops the name while the
 // descriptor stays valid, so an unlinked-but-open file returns its handle's
-// entry with an empty path instead of ENOENT.
+// entry with an empty path instead of ENOENT. A removed directory has no
+// handle; its remembered entry answers the same way.
 func (wfs *WFS) maybeReadEntry(inode uint64) (path util.FullPath, fh *FileHandle, entry *filer_pb.Entry, status fuse.Status) {
 	var found bool
 	if fh, found = wfs.fhMap.FindFileHandle(inode); found {
@@ -540,6 +541,9 @@ func (wfs *WFS) maybeReadEntry(inode uint64) (path util.FullPath, fh *FileHandle
 	}
 	path, status = wfs.inodeToPath.GetPath(inode)
 	if status != fuse.OK {
+		if entry = wfs.removedDirEntry(inode); entry != nil {
+			return "", nil, entry, fuse.OK
+		}
 		return
 	}
 	entry, _, status = wfs.maybeLoadEntry(path)
