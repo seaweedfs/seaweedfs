@@ -2851,6 +2851,20 @@ func (iam *IdentityAccessManagement) AuthorizeObjectDelete(r *http.Request, iden
 	return iam.authorizeObjectKeyAction(r, identity, http.MethodDelete, s3_constants.ACTION_WRITE, bucket, objectKey, versionId)
 }
 
+// AuthorizeObjectWrite authorizes writing one key the request URL does not name:
+// a POST Object (presigned-POST / HTML-form) upload carries its key in the
+// multipart form, so the Auth middleware only checked the coarse bucket-level
+// Write action. This runs the same per-object authorization the PUT path applies.
+func (iam *IdentityAccessManagement) AuthorizeObjectWrite(r *http.Request, identity *Identity, bucket, objectKey string) s3err.ErrorCode {
+	if !iam.isEnabled() {
+		return s3err.ErrNone
+	}
+	if bucket == "" || objectKey == "" {
+		return s3err.ErrNone
+	}
+	return iam.authorizeObjectKeyAction(r, identity, http.MethodPut, s3_constants.ACTION_WRITE, bucket, objectKey, "")
+}
+
 // authorizeWithIAM authorizes requests using the IAM integration policy engine
 func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity *Identity, action Action, bucket string, object string) s3err.ErrorCode {
 	ctx := r.Context()
