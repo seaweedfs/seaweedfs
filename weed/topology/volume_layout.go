@@ -758,6 +758,22 @@ func (vl *VolumeLayout) ShouldGrowVolumesByDcAndRack(writables *[]needle.VolumeI
 	return true
 }
 
+// ListVolumeDataCenters returns the data centers hosting at least one volume
+// of this layout.
+func (vl *VolumeLayout) ListVolumeDataCenters() map[NodeId]struct{} {
+	vl.accessLock.RLock()
+	defer vl.accessLock.RUnlock()
+	dataCenters := make(map[NodeId]struct{})
+	for _, location := range vl.vid2location {
+		for _, dn := range location.list {
+			if dcId := dn.GetDataCenterId(); dcId != "" {
+				dataCenters[NodeId(dcId)] = struct{}{}
+			}
+		}
+	}
+	return dataCenters
+}
+
 // RackGrowPlan is one volume grow action produced by the periodic rack-aware
 // growth scan. An empty Rack means the grow is DC-wide.
 type RackGrowPlan struct {
@@ -766,8 +782,8 @@ type RackGrowPlan struct {
 	WritableVolumeCount uint32
 }
 
-// PlanRackAwareGrowth returns the grow actions needed so every location that
-// can serve writes keeps a non-crowded writable volume. stepCount is the
+// PlanRackAwareGrowth returns the grow actions needed so every data center
+// this layout lives in keeps a non-crowded writable volume. stepCount is the
 // default per-event increment.
 //
 // For rack-spanning replication (DiffRackCount > 0) a single logical volume
@@ -782,21 +798,33 @@ func (vl *VolumeLayout) PlanRackAwareGrowth(dcs map[NodeId][]NodeId, lastGrowCou
 		stepCount = c
 	}
 	growOncePerDc := vl.rp.DiffRackCount > 0
+	// Only maintain data centers already hosting this layout's volumes: a
+	// collection pinned to one DC (fs.configure -dataCenter) must not sprout
+	// volumes in every other DC, and a DC that does need this layout gets its
+	// volumes from the DC-constrained assign that first asks for them.
+	hostingDCs := vl.ListVolumeDataCenters()
 	// Spread lastGrowCount evenly across all grow targets. Summing every rack
 	// up front keeps the divisor global, so DCs with different rack counts do
 	// not each over-grow from a per-DC divisor.
-	var rackPairs uint32
-	for _, racks := range dcs {
+	var rackPairs, dcCount uint32
+	for dcId, racks := range dcs {
+		if _, hosting := hostingDCs[dcId]; !hosting {
+			continue
+		}
+		dcCount++
 		rackPairs += uint32(len(racks))
 	}
 	for dcId, racks := range dcs {
+		if _, hosting := hostingDCs[dcId]; !hosting {
+			continue
+		}
 		if growOncePerDc {
 			if !vl.ShouldGrowVolumesByDcAndRack(&writables, dcId, "") {
 				continue
 			}
 			count := stepCount
 			if lastGrowCount > 0 {
-				count = ceilDiv(lastGrowCount, uint32(len(dcs)))
+				count = ceilDiv(lastGrowCount, dcCount)
 			}
 			plans = append(plans, RackGrowPlan{DataCenter: string(dcId), WritableVolumeCount: count})
 			continue

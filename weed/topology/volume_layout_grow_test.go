@@ -1,6 +1,7 @@
 package topology
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -237,6 +238,71 @@ func TestPlanRackAwareGrowth_EvenDistributionAcrossUnevenDCs(t *testing.T) {
 	}
 	if total != 10 {
 		t.Errorf("expected total grow 10, got %d", total)
+	}
+}
+
+// A collection pinned to one data center (fs.configure -dataCenter) lives only
+// there, yet the scan used to plan growth for every data center in the
+// topology, spreading the collection's volumes across all of them. Data
+// centers hosting none of the layout's volumes are not the scan's to fill.
+func TestPlanRackAwareGrowth_SkipsDataCentersWithoutLayoutVolumes(t *testing.T) {
+	layout := `
+{
+  "dc1":{ "rack1":{ "node-a":{ "ip":"10.0.0.1", "volumes":[ {"id":1, "size":%d, "replication":"000", "collection":"pinned"} ], "limit":30 } } },
+  "dc2":{ "rack2":{ "node-b":{ "ip":"10.0.0.2", "volumes":[], "limit":30 } } },
+  "dc3":{ "rack3":{ "node-c":{ "ip":"10.0.0.3", "volumes":[], "limit":30 } } },
+  "dc4":{ "rack4":{ "node-d":{ "ip":"10.0.0.4", "volumes":[], "limit":30 } } }
+}
+`
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+
+	topo := setupWithLimit(t, fmt.Sprintf(layout, 1000), 30000)
+	vl := topo.GetVolumeLayout("pinned", rp, needle.EMPTY_TTL, types.HardDriveType)
+	if plans := vl.PlanRackAwareGrowth(topo.ListDCAndRacks(), 0, 2); len(plans) != 0 {
+		t.Fatalf("healthy dc1 volume: expected no growth, got %+v", plans)
+	}
+
+	topo = setupWithLimit(t, fmt.Sprintf(layout, 28650), 30000)
+	vl = topo.GetVolumeLayout("pinned", rp, needle.EMPTY_TTL, types.HardDriveType)
+	plans := vl.PlanRackAwareGrowth(topo.ListDCAndRacks(), 0, 2)
+	if len(plans) != 1 {
+		t.Fatalf("crowded dc1 volume: expected 1 grow, got %d: %+v", len(plans), plans)
+	}
+	if plans[0].DataCenter != "dc1" || plans[0].Rack != "rack1" {
+		t.Errorf("expected grow pinned to dc1/rack1, got %s/%s", plans[0].DataCenter, plans[0].Rack)
+	}
+}
+
+// The lastGrowCount divisor counts only the racks the scan can actually plan
+// for; racks of skipped data centers would dilute every grow.
+func TestPlanRackAwareGrowth_DivisorCountsOnlyHostingRacks(t *testing.T) {
+	layout := `
+{
+  "dc1":{
+    "rack1":{ "node-a":{ "ip":"10.0.0.1", "volumes":[ {"id":1, "size":28650, "replication":"000", "collection":"pinned"} ], "limit":30 } },
+    "rack2":{ "node-b":{ "ip":"10.0.0.2", "volumes":[ {"id":2, "size":28650, "replication":"000", "collection":"pinned"} ], "limit":30 } }
+  },
+  "dc2":{
+    "rack3":{ "node-c":{ "ip":"10.0.0.3", "volumes":[], "limit":30 } },
+    "rack4":{ "node-d":{ "ip":"10.0.0.4", "volumes":[], "limit":30 } }
+  }
+}
+`
+	topo := setupWithLimit(t, layout, 30000)
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	vl := topo.GetVolumeLayout("pinned", rp, needle.EMPTY_TTL, types.HardDriveType)
+
+	plans := vl.PlanRackAwareGrowth(topo.ListDCAndRacks(), 4, 2)
+	if len(plans) != 2 {
+		t.Fatalf("expected a grow per crowded dc1 rack, got %d: %+v", len(plans), plans)
+	}
+	for _, p := range plans {
+		if p.DataCenter != "dc1" {
+			t.Errorf("expected grows pinned to dc1, got %s/%s", p.DataCenter, p.Rack)
+		}
+		if p.WritableVolumeCount != 2 { // ceilDiv(4, 2 hosting racks), not ceilDiv(4, 4)
+			t.Errorf("expected per-rack count 2, got %d", p.WritableVolumeCount)
+		}
 	}
 }
 
