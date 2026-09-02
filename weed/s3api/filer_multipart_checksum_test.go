@@ -192,3 +192,15 @@ func TestCompleteMultipartResultChecksumFromEntry(t *testing.T) {
 		t.Fatalf("ChecksumType = %q, want %q", result.ChecksumType, s3_constants.ChecksumTypeComposite)
 	}
 }
+
+// CreateMultipartUpload echoes the algorithm and type it recorded, so a client
+// can tell which checksum the upload will be completed with.
+func TestCreateMultipartUploadResultChecksumHeaders(t *testing.T) {
+	result := &InitiateMultipartUploadResult{
+		ChecksumAlgorithm: "CRC32C",
+		ChecksumType:      s3_constants.ChecksumTypeComposite,
+	}
+	if encoded := string(s3err.EncodeXMLResponse(result)); strings.Contains(encoded, "Checksum") {
+		t.Fatalf("response %q carries checksum members in the XML body", encoded)
+	}
+}

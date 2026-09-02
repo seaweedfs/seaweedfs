@@ -120,6 +120,13 @@ func (s3a *S3ApiServer) NewMultipartUploadHandler(w http.ResponseWriter, r *http
 		return
 	}
 
+	if response.ChecksumAlgorithm != "" {
+		w.Header().Set(s3_constants.AmzChecksumAlgorithm, response.ChecksumAlgorithm)
+		if response.ChecksumType != "" {
+			w.Header().Set(s3_constants.AmzChecksumType, response.ChecksumType)
+		}
+	}
+
 	writeSuccessResponseXML(w, r, response)
 
 }

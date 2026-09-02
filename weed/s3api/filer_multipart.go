@@ -43,6 +43,10 @@ const (
 type InitiateMultipartUploadResult struct {
 	XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ InitiateMultipartUploadResult"`
 	s3.CreateMultipartUploadOutput
+
+	// Checksum fields — returned as HTTP response headers, not in the XML body
+	ChecksumAlgorithm string `xml:"-"`
+	ChecksumType      string `xml:"-"`
 }
 
 // getRequestScheme determines the URL scheme (http or https) from the request
@@ -148,6 +152,8 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 			Key:      objectKey(input.Key),
 			UploadId: aws.String(uploadIdString),
 		},
+		ChecksumAlgorithm: checksumAlgorithmNameFromHeaderName(checksumHeaderName),
+		ChecksumType:      checksumType,
 	}
 
 	return
