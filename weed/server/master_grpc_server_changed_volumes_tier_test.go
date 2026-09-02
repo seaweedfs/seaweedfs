@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
-	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/topology"
 )
@@ -18,19 +17,16 @@ func changedTierVolume(id uint32, size uint64, remoteStorageName string) *master
 	return v
 }
 
-// announceChangedVolumes runs the same routing loop master_grpc_server's
-// SendHeartbeat does on a ChangedVolumes heartbeat. Returning the resulting
-// NewVids / RemoteVids lists lets the tests below assert what would actually
-// be broadcast to clients without standing up a gRPC stream.
+// announceChangedVolumes drives the message SendHeartbeat builds on a
+// ChangedVolumes heartbeat through announceVolume, the routing the server
+// itself uses, so the tests below assert what would really be broadcast
+// without standing up a gRPC stream.
 func announceChangedVolumes(topo *topology.Topology, dn *topology.DataNode, changed []*master_pb.VolumeInformationMessage) (newVids, remoteVids []uint32) {
+	message := &master_pb.VolumeLocation{}
 	for _, v := range topo.ApplyVolumeChanges(changed, dn) {
-		if v.IsRemote() {
-			remoteVids = append(remoteVids, uint32(v.Id))
-		} else {
-			newVids = append(newVids, uint32(v.Id))
-		}
+		announceVolume(message, uint32(v.Id), v.IsRemote())
 	}
-	return
+	return message.NewVids, message.RemoteVids
 }
 
 // A replica that the heartbeat says has just been tiered to remote storage is
@@ -46,11 +42,11 @@ func TestChangedVolumesAnnounceLocalToRemoteTierTransition(t *testing.T) {
 	newVids, remoteVids := announceChangedVolumes(topo, dn, []*master_pb.VolumeInformationMessage{
 		changedTierVolume(1, 1024, "s3-bucket"),
 	})
-	if containsUint32(newVids, 1) {
-		t.Errorf("a tier-transitioned replica was routed as a local arrival: newVids=%v", newVids)
-	}
 	if !containsUint32(remoteVids, 1) {
 		t.Errorf("a local-to-remote transition was not announced as RemoteVids: %v", remoteVids)
+	}
+	if !containsUint32(newVids, 1) {
+		t.Errorf("a remote volume must stay on NewVids for clients that cannot read RemoteVids: %v", newVids)
 	}
 }
 
@@ -103,17 +99,14 @@ func TestChangedVolumesAnnounceOnlyTierTransitions(t *testing.T) {
 	}, dn)
 
 	newVids, remoteVids := announceChangedVolumes(topo, dn, []*master_pb.VolumeInformationMessage{
-		changedTestVolume(1, 4096),                        // pure growth
-		changedTierVolume(2, 1024, "s3-bucket"),           // tier transition
+		changedTestVolume(1, 4096),              // pure growth
+		changedTierVolume(2, 1024, "s3-bucket"), // tier transition
 	})
 	if containsUint32(newVids, 1) || containsUint32(remoteVids, 1) {
 		t.Errorf("a volume that only grew was broadcast: newVids=%v remoteVids=%v", newVids, remoteVids)
 	}
 	if !containsUint32(remoteVids, 2) {
 		t.Errorf("the tier-transitioned replica was missing from RemoteVids: newVids=%v remoteVids=%v", newVids, remoteVids)
-	}
-	if _, err := storage.NewVolumeInfo(changedTestVolume(1, 4096)); err != nil {
-		t.Fatal(err)
 	}
 	if _, err := dn.GetVolumesById(needle.VolumeId(1)); err != nil {
 		t.Errorf("a pure-growth heartbeat should not have removed the volume: %v", err)
@@ -146,8 +139,8 @@ func TestFullReconciliationAnnouncesTierTransition(t *testing.T) {
 	if !containsUint32(remoteVids, 1) {
 		t.Errorf("a tier transition reported in a full reconciliation was not announced: newVids=%v remoteVids=%v", newVids, remoteVids)
 	}
-	if containsUint32(newVids, 1) {
-		t.Errorf("a remote replica was routed as a local arrival: newVids=%v", newVids)
+	if !containsUint32(newVids, 1) {
+		t.Errorf("a remote volume must stay on NewVids for clients that cannot read RemoteVids: %v", newVids)
 	}
 }
 
@@ -155,20 +148,10 @@ func TestFullReconciliationAnnouncesTierTransition(t *testing.T) {
 // SendHeartbeat does on a full Volumes heartbeat, including the changed-set
 // re-route added so digest-mismatch recovery propagates tier transitions.
 func announceFullReconciliation(topo *topology.Topology, dn *topology.DataNode, volumes []*master_pb.VolumeInformationMessage) (newVids, remoteVids []uint32) {
+	message := &master_pb.VolumeLocation{}
 	newOnes, _, changedOnes := topo.SyncDataNodeRegistration(volumes, dn)
-	for _, v := range newOnes {
-		if v.IsRemote() {
-			remoteVids = append(remoteVids, uint32(v.Id))
-		} else {
-			newVids = append(newVids, uint32(v.Id))
-		}
+	for _, v := range append(newOnes, changedOnes...) {
+		announceVolume(message, uint32(v.Id), v.IsRemote())
 	}
-	for _, v := range changedOnes {
-		if v.IsRemote() {
-			remoteVids = append(remoteVids, uint32(v.Id))
-		} else {
-			newVids = append(newVids, uint32(v.Id))
-		}
-	}
-	return
+	return message.NewVids, message.RemoteVids
 }

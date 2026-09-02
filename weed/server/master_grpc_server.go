@@ -84,6 +84,17 @@ func (ms *MasterServer) UnRegisterUuids(ip string, port int) {
 	glog.V(0).Infof("remove volume server %v, online volume server: %v", key, ms.Topo.UuidMap)
 }
 
+// announceVolume records vid on the broadcast message. A remote-tier volume
+// goes on both lists: RemoteVids carries the classification, and NewVids keeps
+// a client too old to read RemoteVids from losing the volume altogether during
+// a rolling upgrade.
+func announceVolume(message *master_pb.VolumeLocation, vid uint32, isRemote bool) {
+	message.NewVids = append(message.NewVids, vid)
+	if isRemote {
+		message.RemoteVids = append(message.RemoteVids, vid)
+	}
+}
+
 func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServer) error {
 	var dn *topology.DataNode
 
@@ -234,7 +245,9 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 
 			// process delta volume ids if exists for fast volume id updates
 			for _, volInfo := range heartbeat.NewVolumes {
-				message.NewVids = append(message.NewVids, volInfo.Id)
+				// The short form carries no remote-storage name, so the volume
+				// reads as local until a changed or full report names its tier.
+				announceVolume(message, volInfo.Id, false)
 			}
 			for _, volInfo := range heartbeat.DeletedVolumes {
 				if !shouldBroadcastVolumeRemoval(dn, needle.VolumeId(volInfo.Id)) {
@@ -248,14 +261,9 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			stats.MasterReceivedHeartbeatCounter.WithLabelValues("changedVolumes").Inc()
 			for _, v := range ms.Topo.ApplyVolumeChanges(heartbeat.ChangedVolumes, dn) {
 				// Changed volumes include both newly-added replicas and existing
-				// replicas whose remote/local classification flipped on tier
-				// transition. Routed the same way as newVolumes so the client
-				// receives the updated DataInRemote through NewVids/RemoteVids.
-				if v.IsRemote() {
-					message.RemoteVids = append(message.RemoteVids, uint32(v.Id))
-				} else {
-					message.NewVids = append(message.NewVids, uint32(v.Id))
-				}
+				// replicas whose tier classification flipped, which the client
+				// has to be told about to refresh its replica priority.
+				announceVolume(message, uint32(v.Id), v.IsRemote())
 			}
 		}
 
@@ -271,24 +279,15 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 
 			for _, v := range newVolumes {
 				glog.V(1).Infof("master see new volume %d from %s", uint32(v.Id), dn.Url())
-				if v.IsRemote() {
-					message.RemoteVids = append(message.RemoteVids, uint32(v.Id))
-				} else {
-					message.NewVids = append(message.NewVids, uint32(v.Id))
-				}
+				announceVolume(message, uint32(v.Id), v.IsRemote())
 			}
-			// A full reconciliation is the digest mismatch recovery path; it is
+			// A full reconciliation is the digest mismatch recovery path, and
 			// the only way a re-tiered replica reaches the master without a
-			// separate ChangedVolumes heartbeat. Re-route the changed set through
-			// NewVids/RemoteVids so wdclient refreshes DataInRemote -- without
-			// this the client would keep the old classification forever.
+			// separate ChangedVolumes heartbeat. Announcing the changed set
+			// too is what stops the client keeping the old classification.
 			for _, v := range changedVolumes {
 				glog.V(1).Infof("master see tier/readonly change on volume %d from %s", uint32(v.Id), dn.Url())
-				if v.IsRemote() {
-					message.RemoteVids = append(message.RemoteVids, uint32(v.Id))
-				} else {
-					message.NewVids = append(message.NewVids, uint32(v.Id))
-				}
+				announceVolume(message, uint32(v.Id), v.IsRemote())
 			}
 			for _, v := range deletedVolumes {
 				glog.V(1).Infof("master see deleted volume %d from %s", uint32(v.Id), dn.Url())
@@ -333,7 +332,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			}
 
 		}
-		if len(message.NewVids) > 0 || len(message.DeletedVids) > 0 || len(message.NewEcVids) > 0 || len(message.DeletedEcVids) > 0 || len(message.RemoteVids) > 0 {
+		if len(message.NewVids) > 0 || len(message.DeletedVids) > 0 || len(message.NewEcVids) > 0 || len(message.DeletedEcVids) > 0 {
 			ms.broadcastToClients(&master_pb.KeepConnectedResponse{VolumeLocation: message})
 		}
 
