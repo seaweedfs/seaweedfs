@@ -454,12 +454,14 @@ func (h *Handler) rewriteManifests(
 		if err != nil {
 			return "", nil, fmt.Errorf("parse manifest %s: %w", mf.FilePath(), err)
 		}
+		sid := mf.PartitionSpecID()
+		spec, found := specByID[int(sid)]
+		if !found {
+			return "", nil, fmt.Errorf("partition spec %d not found in table metadata", sid)
+		}
+		normalizeDayPartitionTimes(entries, spec)
 
 		if predicate != nil {
-			spec, found := specByID[int(mf.PartitionSpecID())]
-			if !found {
-				return "", nil, fmt.Errorf("partition spec %d not found in table metadata", mf.PartitionSpecID())
-			}
 			allMatch := len(entries) > 0
 			for _, entry := range entries {
 				match, err := predicate.Matches(spec, entry.DataFile().Partition())
@@ -477,14 +479,9 @@ func (h *Handler) rewriteManifests(
 			}
 		}
 
-		sid := mf.PartitionSpecID()
 		se, ok := specMap[sid]
 		if !ok {
-			ps, found := specByID[int(sid)]
-			if !found {
-				return "", nil, fmt.Errorf("partition spec %d not found in table metadata", sid)
-			}
-			se = &specEntries{specID: sid, spec: ps}
+			se = &specEntries{specID: sid, spec: spec}
 			specMap[sid] = se
 		}
 		se.entries = append(se.entries, entries...)
@@ -622,6 +619,37 @@ func (h *Handler) rewriteManifests(
 		MetricDurationMs:         time.Since(start).Milliseconds(),
 	}
 	return fmt.Sprintf("rewrote %d manifests into %d (%d entries)", manifestsRewritten, len(specMap), totalEntries), metrics, nil
+}
+
+// normalizeDayPartitionTimes converts Avro date values exposed as time.Time by
+// foreign manifest writers to iceberg.Date before an entry is written again.
+// iceberg-go v0.6.0 only recognizes the logical type when it is in the last
+// branch of an Avro union; some writers emit [date, null] instead of
+// [null, date].
+func normalizeDayPartitionTimes(entries []iceberg.ManifestEntry, spec iceberg.PartitionSpec) {
+	dayFieldIDs := make(map[int]struct{})
+	for _, field := range spec.Fields() {
+		switch field.Transform.(type) {
+		case iceberg.DayTransform, *iceberg.DayTransform:
+			dayFieldIDs[field.FieldID] = struct{}{}
+		}
+	}
+	if len(dayFieldIDs) == 0 {
+		return
+	}
+
+	for _, entry := range entries {
+		partition := entry.DataFile().Partition()
+		for fieldID := range dayFieldIDs {
+			value, ok := partition[fieldID].(time.Time)
+			if !ok {
+				continue
+			}
+			utc := value.UTC()
+			midnight := time.Date(utc.Year(), utc.Month(), utc.Day(), 0, 0, 0, 0, time.UTC)
+			partition[fieldID] = iceberg.Date(midnight.Unix() / int64(24*time.Hour/time.Second))
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
