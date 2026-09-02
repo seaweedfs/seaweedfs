@@ -58,7 +58,7 @@ func (dn *DataNode) String() string {
 	return fmt.Sprintf("Node:%s, Ip:%s, Port:%d, PublicUrl:%s", dn.NodeImpl.String(), dn.Ip, dn.Port, dn.PublicUrl)
 }
 
-func (dn *DataNode) AddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChangedRO bool) {
+func (dn *DataNode) AddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChangedRO, tierTransition bool) {
 	dn.Lock()
 	defer dn.Unlock()
 	return dn.doAddOrUpdateVolume(v)
@@ -74,14 +74,14 @@ func (dn *DataNode) getOrCreateDisk(diskType string) *Disk {
 	return disk
 }
 
-func (dn *DataNode) doAddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChanged bool) {
+func (dn *DataNode) doAddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChanged, tierTransition bool) {
 	disk := dn.getOrCreateDisk(v.DiskType)
 	return disk.AddOrUpdateVolume(v)
 }
 
 // AddProvisionalVolume records a volume the master registered on its own,
 // ahead of any server report naming it. See Disk.AddProvisionalVolume.
-func (dn *DataNode) AddProvisionalVolume(v storage.VolumeInfo) (isNew, isChanged bool) {
+func (dn *DataNode) AddProvisionalVolume(v storage.VolumeInfo) (isNew, isChanged, tierTransition bool) {
 	dn.Lock()
 	defer dn.Unlock()
 	disk := dn.getOrCreateDisk(v.DiskType)
@@ -133,7 +133,7 @@ func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (newVolume
 		newVolumes = make([]storage.VolumeInfo, 0, addedCount)
 	}
 	for _, v := range actualVolumes {
-		isNew, isChanged := dn.doAddOrUpdateVolume(v)
+		isNew, isChanged, _ := dn.doAddOrUpdateVolume(v)
 		if isNew {
 			newVolumes = append(newVolumes, v)
 		}
