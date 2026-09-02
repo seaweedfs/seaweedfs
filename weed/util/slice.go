@@ -15,6 +15,11 @@ func DrainChannel[T any](ch chan T, first T) []T {
 	}
 }
 
+// ReorderToFront returns a new slice with every element present in frontMap
+// pulled to the front while keeping the relative order seen in inputSlice
+// within each partition. Items not in frontMap keep their relative order
+// behind the moved-up items. Useful for prioritizing a subset of candidates
+// (e.g. local replicas) without disturbing the shuffle order of the rest.
 func ReorderToFront[T comparable](frontMap map[T]bool, inputSlice []T) []T {
 	var prioritized []T
 	var remaining []T

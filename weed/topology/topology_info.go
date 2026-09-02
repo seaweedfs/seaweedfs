@@ -87,6 +87,12 @@ func (t *Topology) ToVolumeMap() interface{} {
 	return m
 }
 
+// ToVolumeLocations snapshots every data node's volume set into a list of
+// per-node VolumeLocation messages. Each message splits the node's volumes
+// into local (NewVids) and remote-tier (RemoteVids) so clients can route
+// reads to a local replica first when one exists on any node. EC shards are
+// flattened into NewEcVids so each vid is reported once even when its shards
+// live on multiple disks of the same node.
 func (t *Topology) ToVolumeLocations() (volumeLocations []*master_pb.VolumeLocation) {
 	for _, c := range t.Children() {
 		dc := c.(*DataCenter)

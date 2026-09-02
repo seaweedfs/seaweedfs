@@ -489,14 +489,13 @@ func (fc *FilerClient) GetLookupFileIdFunction() LookupFileIdFunctionType {
 		// Shuffle to distribute load across volume servers
 		rand.Shuffle(len(sameDcUrls), func(i, j int) { sameDcUrls[i], sameDcUrls[j] = sameDcUrls[j], sameDcUrls[i] })
 		rand.Shuffle(len(otherDcUrls), func(i, j int) { otherDcUrls[i], otherDcUrls[j] = otherDcUrls[j], otherDcUrls[i] })
-		// Keep local volumes in front so remote-tier replicas are only used as fallback,
-		// mirroring vidMap.LookupVolumeServerUrl
-		if len(localUrls) > 0 {
-			sameDcUrls = util.ReorderToFront(localUrls, sameDcUrls)
-			otherDcUrls = util.ReorderToFront(localUrls, otherDcUrls)
-		}
-		// Prefer same data center
+		// Prefer same data center, then move every local replica ahead of any
+		// remote-tier replica regardless of which DC it sits in. Mirrors
+		// vidMap.LookupVolumeServerUrl so all client lookup paths agree.
 		fullUrls = append(sameDcUrls, otherDcUrls...)
+		if len(localUrls) > 0 {
+			fullUrls = util.ReorderToFront(localUrls, fullUrls)
+		}
 		return fullUrls, nil
 	}
 }
