@@ -239,8 +239,10 @@ func (m *streamMutateMux) doUnary(ctx context.Context, req *filer_pb.StreamMutat
 			// A failed create still carries a structured error code in the
 			// nested CreateEntryResponse; hand the response to CreateEntry so
 			// the sentinel (e.g. entry-already-exists → EEXIST) survives
-			// instead of collapsing into the top-level generic errno.
-			if _, isCreate := resp.Response.(*filer_pb.StreamMutateEntryResponse_CreateResponse); !isCreate {
+			// instead of collapsing into the top-level generic errno. A create
+			// wrapper with no nested response has nothing to hand over —
+			// CreateEntry would dereference it.
+			if cr, isCreate := resp.Response.(*filer_pb.StreamMutateEntryResponse_CreateResponse); !isCreate || cr.CreateResponse == nil {
 				return nil, &streamMutateError{
 					msg:   resp.Error,
 					errno: syscall.Errno(resp.Errno),

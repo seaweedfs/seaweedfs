@@ -2,12 +2,10 @@ package mount
 
 import (
 	"context"
+	"errors"
 	"hash/fnv"
-	"sort"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -23,30 +21,47 @@ import (
 // concurrently: the existence check is a read-then-insert against the shared
 // store, whose insert has upsert semantics.
 //
-// The address list is sorted so mounts started with the filers listed in a
-// different order still agree on the owner.
+// Rendezvous (highest-random-weight) hashing keeps the choice independent of
+// the order the filers were listed in, and mounts configured with different
+// but overlapping lists still agree wherever the winning filer appears in
+// both; a membership change only moves the paths the changed filer owned.
 func (wfs *WFS) ownerFilerAddress(fullpath util.FullPath) pb.ServerAddress {
 	addresses := wfs.option.FilerAddresses
+	owner := addresses[0]
 	if len(addresses) == 1 {
-		return addresses[0]
+		return owner
 	}
-	sorted := make([]pb.ServerAddress, len(addresses))
-	copy(sorted, addresses)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
-	h := fnv.New32a()
-	h.Write([]byte(fullpath))
-	return sorted[h.Sum32()%uint32(len(sorted))]
+	var bestScore uint32
+	for i, addr := range addresses {
+		h := fnv.New32a()
+		h.Write([]byte(fullpath))
+		h.Write([]byte{0})
+		h.Write([]byte(addr))
+		score := h.Sum32()
+		if i == 0 || score > bestScore || (score == bestScore && addr < owner) {
+			bestScore = score
+			owner = addr
+		}
+	}
+	return owner
 }
 
 // exclusiveCreateEntry sends an OExcl CreateEntryRequest to the path's owner
-// filer, falling back to the ordered mutation stream when the owner already
-// is this mount's stream target (same arbitration, better transport) or is
-// unreachable (degrades to filer-local exclusivity rather than failing the
-// create outright).
+// filer and nowhere else: a retry on a different filer would race the owner's
+// possibly still-in-flight create through a separate per-path lock — the very
+// hole this routing closes. The ordered mutation stream is used when it
+// already targets the owner; if the stream transport breaks mid-request, the
+// retry goes to the same owner over unary, where OExcl answers EEXIST in case
+// the first attempt had landed. An unreachable owner fails the create: mkdir
+// is exclusive by contract, so unavailability beats a silent duplicate.
 func (wfs *WFS) exclusiveCreateEntry(ctx context.Context, req *filer_pb.CreateEntryRequest, fullpath util.FullPath) (*filer_pb.CreateEntryResponse, error) {
 	owner := wfs.ownerFilerAddress(fullpath)
-	if owner == wfs.getCurrentFiler() {
-		return wfs.streamCreateEntry(ctx, req)
+	if owner == wfs.getCurrentFiler() && wfs.streamMutate != nil && wfs.streamMutate.IsAvailable() {
+		resp, err := wfs.streamMutate.CreateEntry(ctx, req)
+		if err == nil || !errors.Is(err, ErrStreamTransport) {
+			return resp, err // success or application error
+		}
+		glog.V(1).Infof("exclusive create %s/%s: stream failed, retrying on owner %s: %v", req.Directory, req.Entry.Name, owner, err)
 	}
 
 	var resp *filer_pb.CreateEntryResponse
@@ -55,17 +70,5 @@ func (wfs *WFS) exclusiveCreateEntry(ctx context.Context, req *filer_pb.CreateEn
 		resp, err = filer_pb.CreateEntryWithResponse(ctx, filer_pb.NewSeaweedFilerClient(grpcConnection), req)
 		return err
 	}, owner.ToGrpcAddress(), false, wfs.option.GrpcDialOption)
-
-	if err == nil {
-		return resp, nil
-	}
-	// Application-level failures (EEXIST and friends) come back as plain
-	// errors reconstructed from the response; only RPC-level failures carry
-	// a gRPC status. Those mean the owner is unreachable — retry on the
-	// mount's own stream filer instead of failing the create.
-	if s, ok := status.FromError(err); ok && s.Code() != codes.OK {
-		glog.V(0).Infof("exclusive create %s/%s: owner filer %s unreachable (%v), falling back to mutation stream", req.Directory, req.Entry.Name, owner, err)
-		return wfs.streamCreateEntry(ctx, req)
-	}
 	return resp, err
 }
