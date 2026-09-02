@@ -42,6 +42,12 @@ var (
 	vc VidCache // caching of volume locations, re-check if after 10 minutes
 )
 
+// LookupFileId resolves a "<vid>,<cookie>" file id to one HTTP read URL,
+// preferring a volume server whose replica holds the data locally over one
+// backed by remote-tier storage. If no local replica is known the function
+// falls back to a random remote replica. The returned jwt is the read
+// authorization the master stamped on the volume; pass it through to the
+// volume server on the read request.
 func LookupFileId(masterFn GetMasterFn, grpcDialOption grpc.DialOption, fileId string) (fullUrl string, jwt string, err error) {
 	var location string
 

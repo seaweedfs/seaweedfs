@@ -209,7 +209,7 @@ func (d *Disk) String() string {
 	return fmt.Sprintf("Disk:%s, volumes:%v, ecShards:%v", d.NodeImpl.String(), d.volumes, d.ecShards)
 }
 
-func (d *Disk) AddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChanged bool) {
+func (d *Disk) AddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChanged, tierTransition bool) {
 	d.Lock()
 	defer d.Unlock()
 	return d.doAddOrUpdateVolume(v, true)
@@ -218,13 +218,26 @@ func (d *Disk) AddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChanged bool) {
 // AddProvisionalVolume records a volume the master registered on its own --
 // volume growth -- before any server report has named it. Until one does, the
 // volume is protected from removal by a report that raced its creation.
-func (d *Disk) AddProvisionalVolume(v storage.VolumeInfo) (isNew, isChanged bool) {
+func (d *Disk) AddProvisionalVolume(v storage.VolumeInfo) (isNew, isChanged, tierTransition bool) {
 	d.Lock()
 	defer d.Unlock()
 	return d.doAddOrUpdateVolume(v, false)
 }
 
-func (d *Disk) doAddOrUpdateVolume(v storage.VolumeInfo, fromReport bool) (isNew, isChanged bool) {
+// doAddOrUpdateVolume returns three signals about how v was installed against
+// any existing record:
+//
+//   - isNew: no record was held before; the volume arrived.
+//   - isChanged: the ReadOnly flag flipped (the only field isChanged currently
+//     tracks). Other fields changing without ReadOnly flipping leaves this
+//     false.
+//   - tierTransition: v's IsRemote() classification differs from the previous
+//     record. The volume was already known and remains servable, but every
+//     connected client needs to refresh its replica priority -- a remote-tier
+//     replica restored locally must jump the read order, and one newly tiered
+//     to remote storage must give way. Callers that broadcast volume changes
+//     to clients must include tier-transitioned volumes alongside arrivals.
+func (d *Disk) doAddOrUpdateVolume(v storage.VolumeInfo, fromReport bool) (isNew, isChanged, tierTransition bool) {
 	deltaDiskUsage := &DiskUsageCounts{}
 	if oldV, ok := d.volumes[v.Id]; !ok {
 		stored := v
@@ -253,7 +266,8 @@ func (d *Disk) doAddOrUpdateVolume(v storage.VolumeInfo, fromReport bool) (isNew
 			// server keeps reporting.
 			v.DiskId = oldV.DiskId
 		}
-		if oldV.IsRemote() != v.IsRemote() {
+		tierTransition = oldV.IsRemote() != v.IsRemote()
+		if tierTransition {
 			if v.IsRemote() {
 				deltaDiskUsage.remoteVolumeCount = 1
 			}

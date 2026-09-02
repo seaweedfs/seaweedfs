@@ -151,6 +151,11 @@ func (ms *MasterServer) ProcessGrowRequest() {
 	}()
 }
 
+// LookupVolume resolves one or more volume ids (or "<vid>,<cookie>" file ids)
+// to their current replica locations on the volume servers. Each returned
+// entry carries DataInRemote per replica so the caller can prefer a local
+// replica; entries carrying a file id also receive a freshly generated read
+// jwt the volume server will accept.
 func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupVolumeRequest) (*master_pb.LookupVolumeResponse, error) {
 
 	resp := &master_pb.LookupVolumeResponse{}

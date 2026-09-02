@@ -723,7 +723,10 @@ func (t *Topology) IncrementalSyncDataNodeRegistration(newVolumes, deletedVolume
 //
 // Most changes are a volume growing, which moves no location, so returning
 // only the arrivals keeps a busy cluster from telling every client about
-// volumes they can already reach.
+// volumes they can already reach. The arrival set also includes replicas whose
+// IsRemote() classification flipped on tier transition: the volume is still
+// servable from the same node, but every connected client has stale replica
+// priority and must be told to refresh.
 func (t *Topology) ApplyVolumeChanges(changed []*master_pb.VolumeInformationMessage, dn *DataNode) (newVolumes []storage.VolumeInfo) {
 	volumeInfos := make([]storage.VolumeInfo, 0, len(changed))
 	for _, v := range changed {
@@ -736,7 +739,7 @@ func (t *Topology) ApplyVolumeChanges(changed []*master_pb.VolumeInformationMess
 	}
 
 	for _, vi := range volumeInfos {
-		isNew, _ := dn.AddOrUpdateVolume(vi)
+		isNew, _, tierTransition := dn.AddOrUpdateVolume(vi)
 		if vi.ReplicaPlacement == nil {
 			if isNew {
 				newVolumes = append(newVolumes, vi)
@@ -752,7 +755,7 @@ func (t *Topology) ApplyVolumeChanges(changed []*master_pb.VolumeInformationMess
 			// Dropped with its collection; the next lookup creates a fresh one.
 			vl = t.GetVolumeLayout(vi.Collection, vi.ReplicaPlacement, vi.Ttl, types.ToDiskType(vi.DiskType))
 		}
-		if isNew || becameServable {
+		if isNew || becameServable || tierTransition {
 			newVolumes = append(newVolumes, vi)
 		}
 		vl.UpdateOversizedState(&vi, dn)
