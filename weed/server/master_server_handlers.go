@@ -85,18 +85,7 @@ func (ms *MasterServer) findVolumeLocation(collection, vid string) operation.Loo
 		} else {
 			machines := ms.Topo.Lookup(collection, volumeId)
 			for _, loc := range machines {
-				volInfo, err := loc.GetVolumesById(volumeId)
-				if err != nil {
-					glog.V(0).Infof("failed to get volume info from %s: %v", loc.Url(), err)
-					continue
-				}
-				locations = append(locations, operation.Location{
-					Url:          loc.Url(),
-					PublicUrl:    loc.PublicUrl,
-					DataCenter:   loc.GetDataCenterId(),
-					GrpcPort:     loc.GrpcPort,
-					DataInRemote: volInfo.IsRemote(),
-				})
+				locations = append(locations, topologyLocation(loc, volumeId))
 			}
 		}
 	} else {
@@ -126,6 +115,23 @@ func (ms *MasterServer) findVolumeLocation(collection, vid string) operation.Loo
 		ret.Error = err.Error()
 	}
 	return ret
+}
+
+// topologyLocation describes one node holding vid. A node that answers for an
+// EC volume holds shards rather than a volume record, so an absent record means
+// the read is local, never that the node should be left out of the answer.
+func topologyLocation(dn *topology.DataNode, vid needle.VolumeId) operation.Location {
+	dataInRemote := false
+	if volInfo, lookupErr := dn.GetVolumesById(vid); lookupErr == nil {
+		dataInRemote = volInfo.IsRemote()
+	}
+	return operation.Location{
+		Url:          dn.Url(),
+		PublicUrl:    dn.PublicUrl,
+		DataCenter:   dn.GetDataCenterId(),
+		GrpcPort:     dn.GrpcPort,
+		DataInRemote: dataInRemote,
+	}
 }
 
 func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request) {
