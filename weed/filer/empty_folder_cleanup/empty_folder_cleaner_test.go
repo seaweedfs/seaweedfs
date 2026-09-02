@@ -1141,6 +1141,53 @@ func TestEmptyFolderCleaner_executeCleanup_directoryMarker(t *testing.T) {
 	}
 }
 
+func TestEmptyFolderCleaner_executeCleanup_skipsCatalogEntry(t *testing.T) {
+	lockRing := lock_manager.NewLockRing(5 * time.Second)
+	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"}, 0)
+
+	const namespace = "/buckets/warehouse/pedsnet"
+	const table = namespace + "/person"
+
+	var deleted []string
+	mock := &mockFilerOps{
+		countFn: func(_ util.FullPath) (int, error) {
+			return 0, nil
+		},
+		deleteFn: func(path util.FullPath) error {
+			deleted = append(deleted, string(path))
+			return nil
+		},
+		attrsFn: func(path util.FullPath) (map[string][]byte, error) {
+			if path == namespace || path == table {
+				return map[string][]byte{s3_constants.ExtS3TablesPrefix + "metadata": []byte("{}")}, nil
+			}
+			return nil, nil
+		},
+	}
+
+	cleaner := &EmptyFolderCleaner{
+		filer:          mock,
+		lockRing:       lockRing,
+		host:           "filer1:8888",
+		bucketPath:     "/buckets",
+		enabled:        true,
+		folderCounts:   make(map[string]*folderState),
+		cleanupQueue:   NewCleanupQueue(1000, time.Minute),
+		maxCountCheck:  1000,
+		cacheExpiry:    time.Minute,
+		processorSleep: time.Second,
+		stopCh:         make(chan struct{}),
+	}
+
+	// The dropped table left its metadata folder empty; the cascade up from it must
+	// stop at the table the rename put back, and at the namespace above it.
+	cleaner.executeCleanup(table+"/metadata", "v2.metadata.json")
+
+	if len(deleted) != 1 || deleted[0] != table+"/metadata" {
+		t.Fatalf("expected only %s to be deleted, got %v", table+"/metadata", deleted)
+	}
+}
+
 func TestEmptyFolderCleaner_restoreIfWrittenTo(t *testing.T) {
 	lockRing := lock_manager.NewLockRing(5 * time.Second)
 	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"}, 0)
