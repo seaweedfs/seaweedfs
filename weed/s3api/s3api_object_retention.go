@@ -282,7 +282,9 @@ func (s3a *S3ApiServer) setObjectRetention(bucket, object, versionId string, ret
 			if entry.Extended != nil {
 				if versionIdBytes, exists := entry.Extended[s3_constants.ExtVersionIdKey]; exists {
 					versionId = string(versionIdBytes)
-					if versionId != "null" {
+					// A stored version id must be a valid path segment before it can
+					// name a .versions file; otherwise fall back to the regular object.
+					if versionId != "null" && isValidVersionID(versionId) {
 						entryPath = object + ".versions/" + s3a.getVersionFileName(versionId)
 					}
 				}
@@ -425,7 +427,9 @@ func (s3a *S3ApiServer) setObjectLegalHold(bucket, object, versionId string, leg
 			if entry.Extended != nil {
 				if versionIdBytes, exists := entry.Extended[s3_constants.ExtVersionIdKey]; exists {
 					versionId = string(versionIdBytes)
-					if versionId != "null" {
+					// A stored version id must be a valid path segment before it can
+					// name a .versions file; otherwise fall back to the regular object.
+					if versionId != "null" && isValidVersionID(versionId) {
 						entryPath = object + ".versions/" + s3a.getVersionFileName(versionId)
 					}
 				}

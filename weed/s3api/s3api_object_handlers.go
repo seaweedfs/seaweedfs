@@ -3381,7 +3381,9 @@ func (s3a *S3ApiServer) doCacheRemoteObject(ctx context.Context, dir, name strin
 }
 
 func (s3a *S3ApiServer) buildVersionedRemoteObjectPath(bucket, object, versionId string) (dir, name string) {
-	if versionId != "" && versionId != "null" {
+	// versionId names a .versions file, so a value that is not a valid path
+	// segment falls back to the unversioned remote path rather than escaping it.
+	if versionId != "" && versionId != "null" && isValidVersionID(versionId) {
 		normalizedObject := s3_constants.NormalizeObjectKey(object)
 		return s3a.bucketDir(bucket) + "/" + normalizedObject + s3_constants.VersionsFolder, s3a.getVersionFileName(versionId)
 	}
