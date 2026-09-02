@@ -21,17 +21,17 @@ const (
 	DefaultRegion    = "us-east-1"
 
 	// Extended entry attributes for metadata storage
-	ExtendedKeyTableBucket     = "s3tables.tableBucket"
-	ExtendedKeyMetadata        = "s3tables.metadata"
-	ExtendedKeyMetadataVersion = "s3tables.metadataVersion"
-	ExtendedKeyPolicy          = "s3tables.policy"
-	ExtendedKeyTags            = "s3tables.tags"
-	ExtendedKeyMaintenance     = "s3tables.maintenance"
+	ExtendedKeyTableBucket     = s3_constants.ExtS3TablesPrefix + "tableBucket"
+	ExtendedKeyMetadata        = s3_constants.ExtS3TablesPrefix + "metadata"
+	ExtendedKeyMetadataVersion = s3_constants.ExtS3TablesPrefix + "metadataVersion"
+	ExtendedKeyPolicy          = s3_constants.ExtS3TablesPrefix + "policy"
+	ExtendedKeyTags            = s3_constants.ExtS3TablesPrefix + "tags"
+	ExtendedKeyMaintenance     = s3_constants.ExtS3TablesPrefix + "maintenance"
 	// Written by the maintenance worker, read by GetTableMaintenanceJobStatus.
 	// Separate from ExtendedKeyMaintenance so worker and operator writes do not
 	// contend on the same attribute.
-	ExtendedKeyMaintenanceStatus = "s3tables.maintenanceStatus"
-	ExtendedKeyEntryType         = "s3tables.entryType"
+	ExtendedKeyMaintenanceStatus = s3_constants.ExtS3TablesPrefix + "maintenanceStatus"
+	ExtendedKeyEntryType         = s3_constants.ExtS3TablesPrefix + "entryType"
 
 	// Entry-type marker values for ExtendedKeyEntryType. Absent or "table" means
 	// a table; views are stored like tables but tagged "view".

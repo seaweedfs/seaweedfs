@@ -49,6 +49,10 @@ const (
 	// Bucket Policy
 	ExtBucketPolicyKey = "Seaweed-X-Amz-Bucket-Policy"
 
+	// Every attribute the s3tables catalog stores on a table bucket, namespace,
+	// table or view directory entry starts with this.
+	ExtS3TablesPrefix = "s3tables."
+
 	// Object Retention and Legal Hold
 	ExtObjectLockModeKey     = "Seaweed-X-Amz-Object-Lock-Mode"
 	ExtRetentionUntilDateKey = "Seaweed-X-Amz-Retention-Until-Date"
