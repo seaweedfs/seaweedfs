@@ -267,10 +267,23 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 
 			// process heartbeat.Volumes
 			stats.MasterReceivedHeartbeatCounter.WithLabelValues("Volumes").Inc()
-			newVolumes, deletedVolumes := ms.Topo.SyncDataNodeRegistration(heartbeat.Volumes, dn)
+			newVolumes, deletedVolumes, changedVolumes := ms.Topo.SyncDataNodeRegistration(heartbeat.Volumes, dn)
 
 			for _, v := range newVolumes {
 				glog.V(1).Infof("master see new volume %d from %s", uint32(v.Id), dn.Url())
+				if v.IsRemote() {
+					message.RemoteVids = append(message.RemoteVids, uint32(v.Id))
+				} else {
+					message.NewVids = append(message.NewVids, uint32(v.Id))
+				}
+			}
+			// A full reconciliation is the digest mismatch recovery path; it is
+			// the only way a re-tiered replica reaches the master without a
+			// separate ChangedVolumes heartbeat. Re-route the changed set through
+			// NewVids/RemoteVids so wdclient refreshes DataInRemote -- without
+			// this the client would keep the old classification forever.
+			for _, v := range changedVolumes {
+				glog.V(1).Infof("master see tier/readonly change on volume %d from %s", uint32(v.Id), dn.Url())
 				if v.IsRemote() {
 					message.RemoteVids = append(message.RemoteVids, uint32(v.Id))
 				} else {

@@ -118,7 +118,7 @@ func TestRepairedLookupEntryIsAnnounced(t *testing.T) {
 			return topo.ApplyVolumeChanges([]*master_pb.VolumeInformationMessage{v}, dn)
 		}},
 		{"ViaFullList", func(topo *topology.Topology, dn *topology.DataNode, v *master_pb.VolumeInformationMessage) []storage.VolumeInfo {
-			announced, _ := topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{v}, dn)
+			announced, _, _ := topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{v}, dn)
 			return announced
 		}},
 	} {

@@ -128,3 +128,47 @@ func containsUint32(haystack []uint32, needle uint32) bool {
 	}
 	return false
 }
+
+// A full Volumes reconciliation (the digest mismatch recovery path) is the
+// only way a re-tiered replica reaches the master without a separate
+// ChangedVolumes heartbeat. The routing in master_grpc_server.go has to
+// re-announce it on NewVids/RemoteVids or the wdclient keeps the stale
+// DataInRemote classification forever.
+func TestFullReconciliationAnnouncesTierTransition(t *testing.T) {
+	topo, dn := changedTestCluster(t)
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{
+		changedTestVolume(1, 1024),
+	}, dn)
+
+	newVids, remoteVids := announceFullReconciliation(topo, dn, []*master_pb.VolumeInformationMessage{
+		changedTierVolume(1, 1024, "s3-bucket"),
+	})
+	if !containsUint32(remoteVids, 1) {
+		t.Errorf("a tier transition reported in a full reconciliation was not announced: newVids=%v remoteVids=%v", newVids, remoteVids)
+	}
+	if containsUint32(newVids, 1) {
+		t.Errorf("a remote replica was routed as a local arrival: newVids=%v", newVids)
+	}
+}
+
+// announceFullReconciliation runs the same routing loop master_grpc_server's
+// SendHeartbeat does on a full Volumes heartbeat, including the changed-set
+// re-route added so digest-mismatch recovery propagates tier transitions.
+func announceFullReconciliation(topo *topology.Topology, dn *topology.DataNode, volumes []*master_pb.VolumeInformationMessage) (newVids, remoteVids []uint32) {
+	newOnes, _, changedOnes := topo.SyncDataNodeRegistration(volumes, dn)
+	for _, v := range newOnes {
+		if v.IsRemote() {
+			remoteVids = append(remoteVids, uint32(v.Id))
+		} else {
+			newVids = append(newVids, uint32(v.Id))
+		}
+	}
+	for _, v := range changedOnes {
+		if v.IsRemote() {
+			remoteVids = append(remoteVids, uint32(v.Id))
+		} else {
+			newVids = append(newVids, uint32(v.Id))
+		}
+	}
+	return
+}
