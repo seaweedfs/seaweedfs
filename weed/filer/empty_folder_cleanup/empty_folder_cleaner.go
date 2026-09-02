@@ -239,6 +239,16 @@ func (efc *EmptyFolderCleaner) OnCreateEvent(directory string, entryName string,
 	if efc.cleanupQueue.Remove(directory) {
 		glog.V(3).Infof("EmptyFolderCleaner: cancelled cleanup for %s due to new entry", directory)
 	}
+
+	// A directory that has just been created is a new incarnation, so a cleanup
+	// queued against the one it replaces would delete it rather than the folder
+	// that was found empty.
+	if isDirectory {
+		recreated := string(util.NewFullPath(directory, entryName))
+		if efc.cleanupQueue.Remove(recreated) {
+			glog.V(3).Infof("EmptyFolderCleaner: cancelled cleanup for %s, recreated", recreated)
+		}
+	}
 }
 
 // cleanupProcessor runs in background and processes the cleanup queue

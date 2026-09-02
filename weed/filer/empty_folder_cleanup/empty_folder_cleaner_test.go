@@ -1141,6 +1141,38 @@ func TestEmptyFolderCleaner_executeCleanup_directoryMarker(t *testing.T) {
 	}
 }
 
+func TestEmptyFolderCleaner_OnCreateEvent_cancelsCleanupForRecreatedDirectory(t *testing.T) {
+	lockRing := lock_manager.NewLockRing(5 * time.Second)
+	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"}, 0)
+
+	cleaner := &EmptyFolderCleaner{
+		filer:          &mockFilerOps{},
+		lockRing:       lockRing,
+		host:           "filer1:8888",
+		bucketPath:     "/buckets",
+		enabled:        true,
+		folderCounts:   make(map[string]*folderState),
+		deleted:        make(map[string]*deletedFolder),
+		cleanupQueue:   NewCleanupQueue(1000, time.Minute),
+		maxCountCheck:  1000,
+		cacheExpiry:    time.Minute,
+		processorSleep: time.Second,
+		stopCh:         make(chan struct{}),
+	}
+
+	// Dropping the table queues the folder its children were removed from, then a
+	// rename puts a new table back under the same name.
+	cleaner.OnDeleteEvent("/buckets/warehouse/pedsnet/person", "metadata", true, time.Now())
+	if cleaner.GetPendingCleanupCount() != 1 {
+		t.Fatalf("expected the emptied folder to be queued, got %d", cleaner.GetPendingCleanupCount())
+	}
+
+	cleaner.OnCreateEvent("/buckets/warehouse/pedsnet", "person", true)
+	if cleaner.GetPendingCleanupCount() != 0 {
+		t.Fatalf("expected the recreated folder to leave the queue, got %d", cleaner.GetPendingCleanupCount())
+	}
+}
+
 func TestEmptyFolderCleaner_executeCleanup_skipsCatalogEntry(t *testing.T) {
 	lockRing := lock_manager.NewLockRing(5 * time.Second)
 	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"}, 0)
