@@ -13,6 +13,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // VolumeLocationProvider is the interface for looking up volume locations
@@ -90,8 +91,13 @@ func (vc *vidMapClient) LookupFileIdWithFallback(ctx context.Context, fileId str
 
 	// Build HTTP URLs from locations, preferring same data center
 	var sameDcUrls, otherDcUrls []string
+	localUrls := make(map[string]bool)
 	for _, loc := range locations {
 		httpUrl := "http://" + loc.Url + "/" + fileId
+		glog.V(4).Infof("lookup %s => %s, data in remote storage tier: %v", fileId, loc.Url, loc.DataInRemote)
+		if !loc.DataInRemote {
+			localUrls[httpUrl] = true
+		}
 		if dataCenter != "" && dataCenter == loc.DataCenter {
 			sameDcUrls = append(sameDcUrls, httpUrl)
 		} else {
@@ -102,6 +108,13 @@ func (vc *vidMapClient) LookupFileIdWithFallback(ctx context.Context, fileId str
 	// Shuffle to distribute load across volume servers
 	rand.Shuffle(len(sameDcUrls), func(i, j int) { sameDcUrls[i], sameDcUrls[j] = sameDcUrls[j], sameDcUrls[i] })
 	rand.Shuffle(len(otherDcUrls), func(i, j int) { otherDcUrls[i], otherDcUrls[j] = otherDcUrls[j], otherDcUrls[i] })
+
+	// Keep local volumes in front so remote-tier replicas are only used as fallback,
+	// mirroring vidMap.LookupVolumeServerUrl
+	if len(localUrls) > 0 {
+		sameDcUrls = util.ReorderToFront(localUrls, sameDcUrls)
+		otherDcUrls = util.ReorderToFront(localUrls, otherDcUrls)
+	}
 
 	// Prefer same data center
 	fullUrls = append(sameDcUrls, otherDcUrls...)
