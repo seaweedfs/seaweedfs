@@ -1061,6 +1061,31 @@ var checksumHeaders = []struct {
 	{s3_constants.AmzChecksumSHA256, ChecksumAlgorithmSHA256, s3_constants.AmzChecksumSHA256},
 }
 
+// ChecksumResult carries the flexible-checksum members S3 returns inside an XML
+// response body, keyed by the canonical x-amz-checksum-* header name.
+type ChecksumResult struct {
+	ChecksumCRC32     string `xml:"ChecksumCRC32,omitempty"`
+	ChecksumCRC32C    string `xml:"ChecksumCRC32C,omitempty"`
+	ChecksumCRC64NVME string `xml:"ChecksumCRC64NVME,omitempty"`
+	ChecksumSHA1      string `xml:"ChecksumSHA1,omitempty"`
+	ChecksumSHA256    string `xml:"ChecksumSHA256,omitempty"`
+}
+
+func (c *ChecksumResult) SetChecksum(headerName, value string) {
+	switch headerName {
+	case s3_constants.AmzChecksumCRC32:
+		c.ChecksumCRC32 = value
+	case s3_constants.AmzChecksumCRC32C:
+		c.ChecksumCRC32C = value
+	case s3_constants.AmzChecksumCRC64NVME:
+		c.ChecksumCRC64NVME = value
+	case s3_constants.AmzChecksumSHA1:
+		c.ChecksumSHA1 = value
+	case s3_constants.AmzChecksumSHA256:
+		c.ChecksumSHA256 = value
+	}
+}
+
 // lookupHeaderOrQuery returns the value of an x-amz-* parameter, checking the
 // request headers first and falling back to the pre-parsed query values. AWS
 // SDK presigners hoist headers such as x-amz-sdk-checksum-algorithm into the
