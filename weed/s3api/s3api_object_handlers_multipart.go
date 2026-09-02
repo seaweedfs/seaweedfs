@@ -120,6 +120,13 @@ func (s3a *S3ApiServer) NewMultipartUploadHandler(w http.ResponseWriter, r *http
 		return
 	}
 
+	if response.ChecksumAlgorithm != "" {
+		w.Header().Set(s3_constants.AmzChecksumAlgorithm, response.ChecksumAlgorithm)
+		if response.ChecksumType != "" {
+			w.Header().Set(s3_constants.AmzChecksumType, response.ChecksumType)
+		}
+	}
+
 	writeSuccessResponseXML(w, r, response)
 
 }
@@ -178,14 +185,6 @@ func (s3a *S3ApiServer) CompleteMultipartUploadHandler(w http.ResponseWriter, r 
 	// Set version ID in HTTP header if present
 	if response.VersionId != nil {
 		w.Header().Set("x-amz-version-id", *response.VersionId)
-	}
-
-	// Set checksum header if present
-	if response.ChecksumHeaderName != "" && response.ChecksumValue != "" {
-		w.Header().Set(response.ChecksumHeaderName, response.ChecksumValue)
-		if response.ChecksumType != "" {
-			w.Header().Set(s3_constants.AmzChecksumType, response.ChecksumType)
-		}
 	}
 
 	stats_collect.RecordBucketActiveTime(bucket)

@@ -4,11 +4,17 @@ import (
 	"bytes"
 	"encoding/base64"
 	"hash/crc32"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/minio/crc64nvme"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
 func makeCRC64NVMEPartEntry(data []byte) *filer_pb.Entry {
@@ -142,5 +148,59 @@ func TestResolveMultipartChecksumType(t *testing.T) {
 				t.Fatalf("got %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// CompleteMultipartUpload returns the object checksum in the XML body, where the
+// AWS SDKs read it from — not as an HTTP response header.
+func TestCompleteMultipartUploadResultChecksumXML(t *testing.T) {
+	result := &CompleteMultipartUploadResult{
+		ETag:         aws.String("\"etag-1\""),
+		ChecksumType: s3_constants.ChecksumTypeComposite,
+	}
+	result.SetChecksum(s3_constants.AmzChecksumCRC32C, "fx4FQw==-1")
+
+	encoded := string(s3err.EncodeXMLResponse(result))
+	for _, want := range []string{
+		"<ChecksumCRC32C>fx4FQw==-1</ChecksumCRC32C>",
+		"<ChecksumType>COMPOSITE</ChecksumType>",
+	} {
+		if !strings.Contains(encoded, want) {
+			t.Fatalf("response %q does not contain %q", encoded, want)
+		}
+	}
+	if strings.Contains(encoded, "<ChecksumCRC32>") {
+		t.Fatalf("response %q carries an unrequested algorithm", encoded)
+	}
+}
+
+// A retried CompleteMultipartUpload rebuilds the response from the committed
+// entry, so it must repeat the checksum the first attempt returned.
+func TestCompleteMultipartResultChecksumFromEntry(t *testing.T) {
+	input := &s3.CompleteMultipartUploadInput{Bucket: aws.String("bucket"), Key: aws.String("key")}
+	entry := &filer_pb.Entry{Extended: map[string][]byte{
+		s3_constants.ExtChecksumAlgorithm: []byte(s3_constants.AmzChecksumCRC32C),
+		s3_constants.ExtChecksumValue:     []byte("fx4FQw==-1"),
+		s3_constants.ExtChecksumType:      []byte(s3_constants.ChecksumTypeComposite),
+	}}
+
+	result := completeMultipartResult(httptest.NewRequest(http.MethodPost, "/bucket/key", nil), input, "\"etag-1\"", entry)
+	if result.ChecksumCRC32C != "fx4FQw==-1" {
+		t.Fatalf("ChecksumCRC32C = %q, want %q", result.ChecksumCRC32C, "fx4FQw==-1")
+	}
+	if result.ChecksumType != s3_constants.ChecksumTypeComposite {
+		t.Fatalf("ChecksumType = %q, want %q", result.ChecksumType, s3_constants.ChecksumTypeComposite)
+	}
+}
+
+// CreateMultipartUpload echoes the algorithm and type it recorded, so a client
+// can tell which checksum the upload will be completed with.
+func TestCreateMultipartUploadResultChecksumHeaders(t *testing.T) {
+	result := &InitiateMultipartUploadResult{
+		ChecksumAlgorithm: "CRC32C",
+		ChecksumType:      s3_constants.ChecksumTypeComposite,
+	}
+	if encoded := string(s3err.EncodeXMLResponse(result)); strings.Contains(encoded, "Checksum") {
+		t.Fatalf("response %q carries checksum members in the XML body", encoded)
 	}
 }
