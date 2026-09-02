@@ -168,7 +168,7 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 			// look like mergeVolumes hadn't done anything. Track the old fids
 			// and delete them below after the filer update commits, so the
 			// filer never points at a fid we already deleted.
-			var movedSources []movedSourceNeedle
+			var movedSources []orphanedNeedle
 			for i, chunk := range entry.Chunks {
 				if chunk.IsChunkManifest {
 					if !c.manifestMayReferencePlan(plan, planCollections, needle.VolumeId(chunk.Fid.VolumeId)) {
@@ -191,7 +191,7 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 					// replace it with a freshly uploaded one, even when the
 					// rewrite was triggered by sub-chunk moves rather than the
 					// manifest volume itself being in the plan.
-					movedSources = append(movedSources, movedSourceNeedle{volumeId: oldManifestVid, fileId: oldManifestFid})
+					movedSources = append(movedSources, orphanedNeedle{volumeId: oldManifestVid, fileId: oldManifestFid})
 					continue
 				}
 
@@ -211,13 +211,13 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 				if !*apply {
 					continue
 				}
-				if mvErr := moveChunk(chunk, toVolumeId, commandEnv.MasterClient); mvErr != nil {
+				if mvErr := moveChunk(commandEnv, entryPath, chunk, toVolumeId); mvErr != nil {
 					fmt.Printf("failed to move %s(%s): %v\n", entryPath, oldFid, mvErr)
 					plan.release(chunkVolumeId, toVolumeId, chunk.Size)
 					continue
 				}
 				entryChanged = true
-				movedSources = append(movedSources, movedSourceNeedle{volumeId: oldVid, fileId: oldFid})
+				movedSources = append(movedSources, orphanedNeedle{volumeId: oldVid, fileId: oldFid})
 			}
 			if entryChanged {
 				if uErr := filer_pb.UpdateEntry(context.Background(), filerClient, &filer_pb.UpdateEntryRequest{
@@ -230,38 +230,39 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 					// entry and let fsck reconcile later.
 					return nil
 				}
-				c.deleteMovedSourceNeedles(commandEnv, entryPath, movedSources)
+				deleteOrphanedNeedles(commandEnv, entryPath, movedSources)
 			}
 			return nil
 		})
 	})
 }
 
-// movedSourceNeedle is a needle that was copied out of its source volume by
-// a move/rewrite operation and is safe to delete once the filer update that
-// re-pointed references to the new location has committed.
-type movedSourceNeedle struct {
+// orphanedNeedle is a needle no filer entry references any more: either a
+// source needle whose references have been re-pointed at the new location, or
+// a copy left on a target volume by a write that failed before the filer could
+// be updated.
+type orphanedNeedle struct {
 	volumeId uint32
 	fileId   string
 }
 
-// deleteMovedSourceNeedles fans out BatchDelete RPCs to every replica of each
-// source volume. Errors are logged but never returned — the source data is
-// already orphan at this point, so a failed cleanup just leaves work for a
-// later fsck. Propagating an error here would abort TraverseBfs and strand
-// the remaining entries mid-merge, which is strictly worse.
-func (c *commandFsMergeVolumes) deleteMovedSourceNeedles(commandEnv *CommandEnv, entryPath util.FullPath, sources []movedSourceNeedle) {
-	if len(sources) == 0 {
+// deleteOrphanedNeedles fans out BatchDelete RPCs to every replica of each
+// needle's volume. Errors are logged but never returned — the data is already
+// orphan at this point, so a failed cleanup just leaves work for a later fsck.
+// Propagating an error here would abort TraverseBfs and strand the remaining
+// entries mid-merge, which is strictly worse.
+func deleteOrphanedNeedles(commandEnv *CommandEnv, entryPath util.FullPath, needles []orphanedNeedle) {
+	if len(needles) == 0 {
 		return
 	}
 	byVolume := make(map[uint32][]string)
-	for _, s := range sources {
-		byVolume[s.volumeId] = append(byVolume[s.volumeId], s.fileId)
+	for _, n := range needles {
+		byVolume[n.volumeId] = append(byVolume[n.volumeId], n.fileId)
 	}
 	for vid, fids := range byVolume {
 		locations, found := commandEnv.MasterClient.GetLocations(vid)
 		if !found {
-			fmt.Printf("source cleanup %s: no locations for volume %d\n", entryPath, vid)
+			fmt.Printf("orphan cleanup %s: no locations for volume %d\n", entryPath, vid)
 			continue
 		}
 		for _, loc := range locations {
@@ -293,9 +294,9 @@ func (c *commandFsMergeVolumes) deleteMovedSourceNeedles(commandEnv *CommandEnv,
 				errCount++
 			}
 			if errCount == 1 {
-				fmt.Printf("source cleanup %s: delete %s on %v: %s\n", entryPath, firstFid, loc.ServerAddress(), firstErr)
+				fmt.Printf("orphan cleanup %s: delete %s on %v: %s\n", entryPath, firstFid, loc.ServerAddress(), firstErr)
 			} else if errCount > 1 {
-				fmt.Printf("source cleanup %s: %d/%d needles failed on %v (e.g. %s: %s)\n",
+				fmt.Printf("orphan cleanup %s: %d/%d needles failed on %v (e.g. %s: %s)\n",
 					entryPath, errCount, len(fids), loc.ServerAddress(), firstFid, firstErr)
 			}
 		}
@@ -647,7 +648,7 @@ func (c *commandFsMergeVolumes) rewriteManifestChunk(
 	entryPath util.FullPath,
 	chunk *filer_pb.FileChunk,
 	apply bool,
-) (*filer_pb.FileChunk, bool, []movedSourceNeedle, error) {
+) (*filer_pb.FileChunk, bool, []orphanedNeedle, error) {
 	if !chunk.IsChunkManifest {
 		return chunk, false, nil, fmt.Errorf("not a manifest chunk: %s", chunk.GetFileIdString())
 	}
@@ -657,7 +658,7 @@ func (c *commandFsMergeVolumes) rewriteManifestChunk(
 		return chunk, false, nil, err
 	}
 
-	var movedSources []movedSourceNeedle
+	var movedSources []orphanedNeedle
 	anySubChanged := false
 	for i, sub := range subChunks {
 		if sub.IsChunkManifest {
@@ -674,7 +675,7 @@ func (c *commandFsMergeVolumes) rewriteManifestChunk(
 					movedSources = append(movedSources, nestedSources...)
 					// Nested manifest got replaced — its old needle is now
 					// orphan on the same volume it used to live on.
-					movedSources = append(movedSources, movedSourceNeedle{volumeId: oldSubManifestVid, fileId: oldSubManifestFid})
+					movedSources = append(movedSources, orphanedNeedle{volumeId: oldSubManifestVid, fileId: oldSubManifestFid})
 				}
 			}
 			continue
@@ -695,13 +696,13 @@ func (c *commandFsMergeVolumes) rewriteManifestChunk(
 			anySubChanged = true
 			continue
 		}
-		if mErr := moveChunk(sub, toVid, commandEnv.MasterClient); mErr != nil {
+		if mErr := moveChunk(commandEnv, entryPath, sub, toVid); mErr != nil {
 			fmt.Printf("failed to move %s(%s): %v\n", entryPath, oldSubFid, mErr)
 			plan.release(subVid, toVid, sub.Size)
 			continue
 		}
 		anySubChanged = true
-		movedSources = append(movedSources, movedSourceNeedle{volumeId: oldSubVid, fileId: oldSubFid})
+		movedSources = append(movedSources, orphanedNeedle{volumeId: oldSubVid, fileId: oldSubFid})
 	}
 
 	manifestVid := needle.VolumeId(chunk.Fid.VolumeId)
@@ -761,6 +762,7 @@ func (c *commandFsMergeVolumes) uploadManifestChunk(
 ) (*filer_pb.FileChunk, error) {
 	const manifestAssignAttempts = 10
 	var assignResp *filer_pb.AssignVolumeResponse
+	var assignedVid uint32
 	if err := commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		for attempt := 1; attempt <= manifestAssignAttempts; attempt++ {
 			resp, err := client.AssignVolume(ctx, &filer_pb.AssignVolumeRequest{
@@ -785,6 +787,7 @@ func (c *commandFsMergeVolumes) uploadManifestChunk(
 			}
 			if !plan.isSource(needle.VolumeId(fid.VolumeId)) {
 				assignResp = resp
+				assignedVid = fid.VolumeId
 				return nil
 			}
 			fmt.Printf("rejecting manifest assignment to merge-source volume %d (attempt %d/%d)\n",
@@ -818,17 +821,22 @@ func (c *commandFsMergeVolumes) uploadManifestChunk(
 		UploadUrl: uploadUrl,
 		Jwt:       jwt,
 	})
-	if err != nil {
-		return nil, err
+	if err == nil && uploadResult.Error != "" {
+		err = fmt.Errorf("upload: %s", uploadResult.Error)
 	}
-	if uploadResult.Error != "" {
-		return nil, fmt.Errorf("upload: %s", uploadResult.Error)
+	if err != nil {
+		// Same partial-write window as moveChunk: the needle can be on the
+		// volume even though the upload reported failure, and the caller drops
+		// this manifest instead of pointing the filer at it.
+		deleteOrphanedNeedles(commandEnv, entryPath, []orphanedNeedle{{volumeId: assignedVid, fileId: assignResp.FileId}})
+		return nil, err
 	}
 
 	return uploadResult.ToPbFileChunk(assignResp.FileId, 0, time.Now().UnixNano()), nil
 }
 
-func moveChunk(chunk *filer_pb.FileChunk, toVolumeId needle.VolumeId, masterClient *wdclient.MasterClient) error {
+func moveChunk(commandEnv *CommandEnv, entryPath util.FullPath, chunk *filer_pb.FileChunk, toVolumeId needle.VolumeId) error {
+	masterClient := commandEnv.MasterClient
 	fromFid := needle.NewFileId(needle.VolumeId(chunk.Fid.VolumeId), chunk.Fid.FileKey, chunk.Fid.Cookie)
 	toFid := needle.NewFileId(toVolumeId, chunk.Fid.FileKey, chunk.Fid.Cookie)
 
@@ -891,6 +899,11 @@ func moveChunk(chunk *filer_pb.FileChunk, toVolumeId needle.VolumeId, masterClie
 		Jwt:               security.EncodedJwt(jwt),
 	})
 	if err != nil {
+		// A replicated write commits the needle to the local volume before it
+		// fans out to the other replicas, so an upload that reports failure can
+		// still have left a copy on the target. The caller skips the filer
+		// update for this chunk, so nothing will ever reference that copy.
+		deleteOrphanedNeedles(commandEnv, entryPath, []orphanedNeedle{{volumeId: uint32(toVolumeId), fileId: toFid.String()}})
 		return err
 	}
 	chunk.Fid.VolumeId = uint32(toVolumeId)
