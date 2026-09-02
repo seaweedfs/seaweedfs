@@ -175,7 +175,7 @@ func TestTraverseBfsTrailingSlashRoot(t *testing.T) {
 	var seen []string
 	err := TraverseBfs(context.Background(), filerClient, "/buckets/data/", func(parentPath util.FullPath, entry *Entry) error {
 		mu.Lock()
-		seen = append(seen, string(parentPath.Child(entry.Name)))
+		seen = append(seen, fmt.Sprintf("%s -> %s", parentPath, entry.Name))
 		mu.Unlock()
 		return nil
 	})
@@ -184,7 +184,7 @@ func TestTraverseBfsTrailingSlashRoot(t *testing.T) {
 	}
 
 	sort.Strings(seen)
-	want := []string{"/buckets/data/sub", "/buckets/data/sub/a.txt"}
+	want := []string{"/buckets/data -> sub", "/buckets/data/sub -> a.txt"}
 	if !reflect.DeepEqual(seen, want) {
 		t.Fatalf("visited %v, want %v", seen, want)
 	}

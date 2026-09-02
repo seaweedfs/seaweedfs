@@ -15,6 +15,10 @@ import (
 func TraverseBfs(ctx context.Context, filerClient FilerClient, parentPath util.FullPath, fn func(parentPath util.FullPath, entry *Entry) error) (err error) {
 	K := 5
 
+	// callers hand in user-typed paths, and every entry is reported relative
+	// to this one, so a trailing slash must not reach the callback
+	parentPath = util.NormalizePath(string(parentPath))
+
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
