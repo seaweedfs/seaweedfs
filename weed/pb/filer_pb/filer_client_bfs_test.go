@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -148,5 +150,42 @@ func TestReadDirAllEntriesStuckPagination(t *testing.T) {
 		}
 	case <-time.After(30 * time.Second):
 		t.Fatal("listing loops forever on a non-advancing store")
+	}
+}
+
+// A start path with a trailing slash must still descend into subdirectories.
+func TestTraverseBfsTrailingSlashRoot(t *testing.T) {
+	server := &stubFiler{}
+	server.listings = func(req *ListEntriesRequest, send func(*Entry) error) error {
+		if req.StartFromFileName != "" {
+			return nil
+		}
+		// the filer trims a single trailing slash, nothing more
+		switch strings.TrimSuffix(req.Directory, "/") {
+		case "/buckets/data":
+			return send(&Entry{Name: "sub", IsDirectory: true})
+		case "/buckets/data/sub":
+			return send(&Entry{Name: "a.txt"})
+		}
+		return nil
+	}
+	filerClient := startStubFiler(t, server)
+
+	var mu sync.Mutex
+	var seen []string
+	err := TraverseBfs(context.Background(), filerClient, "/buckets/data/", func(parentPath util.FullPath, entry *Entry) error {
+		mu.Lock()
+		seen = append(seen, string(parentPath.Child(entry.Name)))
+		mu.Unlock()
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sort.Strings(seen)
+	want := []string{"/buckets/data/sub", "/buckets/data/sub/a.txt"}
+	if !reflect.DeepEqual(seen, want) {
+		t.Fatalf("visited %v, want %v", seen, want)
 	}
 }

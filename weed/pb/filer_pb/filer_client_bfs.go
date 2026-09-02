@@ -102,11 +102,7 @@ func processOneDirectory(ctx context.Context, filerClient FilerClient, parentPat
 		}
 
 		if entry.IsDirectory {
-			subDir := fmt.Sprintf("%s/%s", parentPath, entry.Name)
-			if parentPath == "/" {
-				subDir = "/" + entry.Name
-			}
-			if !enqueue(util.FullPath(subDir)) {
+			if !enqueue(parentPath.Child(entry.Name)) {
 				return ctx.Err()
 			}
 		}
