@@ -628,3 +628,35 @@ func TestFetchWholeChunkUnchangedLocations(t *testing.T) {
 	assert.Equal(t, int32(2), lookup.calls.Load())
 	assert.Equal(t, int32(1), inv.invalidations.Load())
 }
+
+// TestFetchWholeChunkCancelledKeepsLocations checks that a caller walking away
+// mid-read does not cost every other reader a master round trip.
+func TestFetchWholeChunkCancelledKeepsLocations(t *testing.T) {
+	lookup := &stagedLookup{
+		staleUrls: []string{"http://unused:8080/5,abc"},
+		freshUrls: []string{"http://elsewhere:8080/5,abc"},
+	}
+	inv := &countingInvalidator{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := fetchWholeChunk(ctx, fetchManifestBuffer(t), lookup.lookup, "5,abc", nil, false, inv)
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, int32(0), inv.invalidations.Load())
+	assert.Equal(t, int32(1), lookup.calls.Load())
+
+	// the cancellation must survive the wrapping ResolveOneChunkManifest does,
+	// or callers cannot tell a dead volume server from their own abort
+	manifestChunk := &filer_pb.FileChunk{FileId: "5,abc", IsChunkManifest: true}
+	_, resolveErr := ResolveOneChunkManifest(ctx, lookup.lookup, manifestChunk, inv)
+	assert.ErrorIs(t, resolveErr, context.Canceled)
+
+	// volume.fsck resolves manifests with no invalidator and still has to tell
+	// its own abort from a corrupt manifest, so the nil path keeps the identity
+	noInvalidator := retryFetchWithFreshLocations(ctx, nil, lookup.lookup, "5,abc", nil, fmt.Errorf("stale server said no"), func([]string) error {
+		t.Fatal("refetch must not run on a cancelled read")
+		return nil
+	})
+	assert.ErrorIs(t, noInvalidator, context.Canceled)
+}

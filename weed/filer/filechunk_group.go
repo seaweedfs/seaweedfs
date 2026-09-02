@@ -18,9 +18,7 @@ type ChunkGroup struct {
 	sectionsLock      sync.RWMutex
 	readerCache       *ReaderCache
 	concurrentReaders int
-	// cacheInvalidator lets manifest resolution (SetChunks → fetchWholeChunk)
-	// drop stale volume locations and retry, mirroring what ReaderCache does
-	// for chunk reads.
+	// cacheInvalidator lets manifest resolution drop stale volume locations, as ReaderCache does for chunk reads
 	cacheInvalidator CacheInvalidator
 }
 

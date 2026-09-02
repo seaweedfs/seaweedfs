@@ -90,11 +90,11 @@ func ResolveOneChunkManifest(ctx context.Context, lookupFileIdFn wdclient.Lookup
 	defer bytesBufferPool.Put(bytesBuffer)
 	err := fetchWholeChunk(ctx, bytesBuffer, lookupFileIdFn, chunk.GetFileIdString(), chunk.CipherKey, chunk.IsCompressed, invalidator)
 	if err != nil {
-		return nil, fmt.Errorf("fail to read manifest %s: %v", chunk.GetFileIdString(), err)
+		return nil, fmt.Errorf("fail to read manifest %s: %w", chunk.GetFileIdString(), err)
 	}
 	m := &filer_pb.FileChunkManifest{}
 	if err := proto.Unmarshal(bytesBuffer.Bytes(), m); err != nil {
-		return nil, fmt.Errorf("fail to unmarshal manifest %s: %v", chunk.GetFileIdString(), err)
+		return nil, fmt.Errorf("fail to unmarshal manifest %s: %w", chunk.GetFileIdString(), err)
 	}
 
 	// recursive
@@ -110,19 +110,20 @@ func fetchWholeChunk(ctx context.Context, bytesBuffer *bytes.Buffer, lookupFileI
 		return err
 	}
 	jwt := JwtForVolumeServer(fileId)
-	_, err = retriedStreamFetchChunkData(ctx, bytesBuffer, urlStrings, jwt, cipherKey, isGzipped, true, 0, 0)
-	if err != nil {
-		// Self-heal: drop stale volume locations and retry once with fresh ones.
-		// The buffer must be reset before retry - retriedStreamFetchChunkData is
-		// streaming and may have written partial bytes that would corrupt the
-		// proto.Unmarshal of FileChunkManifest downstream.
-		err = retryFetchWithFreshLocations(ctx, invalidator, lookupFileIdFn, fileId, urlStrings, err, func(newUrls []string) error {
-			bytesBuffer.Reset()
-			_, err2 := retriedStreamFetchChunkData(ctx, bytesBuffer, newUrls, jwt, cipherKey, isGzipped, true, 0, 0)
-			return err2
-		})
+	if _, err = retriedStreamFetchChunkData(ctx, bytesBuffer, urlStrings, jwt, cipherKey, isGzipped, true, 0, 0); err == nil {
+		return nil
 	}
-	return err
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		// a cancelled read says nothing about where the volume lives, and the
+		// stream error it provoked is a symptom, not the cause
+		return ctxErr
+	}
+	return retryFetchWithFreshLocations(ctx, invalidator, lookupFileIdFn, fileId, urlStrings, err, func(newUrls []string) error {
+		// the failed attempt may have streamed a partial prefix into the buffer
+		bytesBuffer.Reset()
+		_, retryErr := retriedStreamFetchChunkData(ctx, bytesBuffer, newUrls, jwt, cipherKey, isGzipped, true, 0, 0)
+		return retryErr
+	})
 }
 
 func fetchChunkRange(ctx context.Context, buffer []byte, lookupFileIdFn wdclient.LookupFileIdFunctionType, fileId string, cipherKey []byte, isGzipped bool, offset int64, refreshUrls util_http.RefreshUrlsFunc) (int, error) {
