@@ -176,7 +176,7 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 					}
 					oldManifestFid := chunk.GetFileIdString()
 					oldManifestVid := chunk.Fid.VolumeId
-					newChunk, changed, subSources, mErr := c.rewriteManifestChunk(context.Background(), commandEnv, lookupFn, plan, entryPath, chunk, *apply)
+					newChunk, changed, rewritten, mErr := c.rewriteManifestChunk(context.Background(), commandEnv, lookupFn, plan, entryPath, chunk, *apply)
 					if mErr != nil {
 						fmt.Printf("failed to rewrite manifest %s(%s): %v\n", entryPath, oldManifestFid, mErr)
 						continue
@@ -186,7 +186,7 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 					}
 					entry.Chunks[i] = newChunk
 					entryChanged = true
-					movedSources = append(movedSources, subSources...)
+					movedSources = append(movedSources, rewritten.sources...)
 					// The old manifest needle is always orphaned when we
 					// replace it with a freshly uploaded one, even when the
 					// rewrite was triggered by sub-chunk moves rather than the
@@ -244,6 +244,14 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 type orphanedNeedle struct {
 	volumeId uint32
 	fileId   string
+}
+
+// rewrittenNeedles is the bookkeeping a manifest rewrite hands back: sources
+// whose references have moved, deletable once the filer commits, and the new
+// copies on the target volumes, which orphan if it never does.
+type rewrittenNeedles struct {
+	sources []orphanedNeedle
+	targets []orphanedNeedle
 }
 
 // deleteOrphanedNeedles fans out BatchDelete RPCs to every replica of each
@@ -655,34 +663,43 @@ func (c *commandFsMergeVolumes) rewriteManifestChunk(
 	entryPath util.FullPath,
 	chunk *filer_pb.FileChunk,
 	apply bool,
-) (*filer_pb.FileChunk, bool, []orphanedNeedle, error) {
+) (*filer_pb.FileChunk, bool, rewrittenNeedles, error) {
 	if !chunk.IsChunkManifest {
-		return chunk, false, nil, fmt.Errorf("not a manifest chunk: %s", chunk.GetFileIdString())
+		return chunk, false, rewrittenNeedles{}, fmt.Errorf("not a manifest chunk: %s", chunk.GetFileIdString())
 	}
 
 	subChunks, err := filer.ResolveOneChunkManifest(ctx, lookupFn, chunk)
 	if err != nil {
-		return chunk, false, nil, err
+		return chunk, false, rewrittenNeedles{}, err
 	}
 
-	var movedSources []orphanedNeedle
+	var rewritten rewrittenNeedles
+	// Every path out of here that is not the successful return abandons the
+	// rewrite with the filer still pointing at the old manifest, so whatever
+	// already landed on the target volumes belongs to nobody.
+	abandon := func() {
+		deleteOrphanedNeedles(commandEnv, entryPath, rewritten.targets, true)
+	}
 	anySubChanged := false
 	for i, sub := range subChunks {
 		if sub.IsChunkManifest {
 			oldSubManifestFid := sub.GetFileIdString()
 			oldSubManifestVid := sub.Fid.VolumeId
-			newSub, changed, nestedSources, rErr := c.rewriteManifestChunk(ctx, commandEnv, lookupFn, plan, entryPath, sub, apply)
+			newSub, changed, nested, rErr := c.rewriteManifestChunk(ctx, commandEnv, lookupFn, plan, entryPath, sub, apply)
 			if rErr != nil {
-				return chunk, false, nil, rErr
+				abandon()
+				return chunk, false, rewrittenNeedles{}, rErr
 			}
 			if changed {
 				subChunks[i] = newSub
 				anySubChanged = true
 				if apply {
-					movedSources = append(movedSources, nestedSources...)
+					rewritten.sources = append(rewritten.sources, nested.sources...)
 					// Nested manifest got replaced — its old needle is now
 					// orphan on the same volume it used to live on.
-					movedSources = append(movedSources, orphanedNeedle{volumeId: oldSubManifestVid, fileId: oldSubManifestFid})
+					rewritten.sources = append(rewritten.sources, orphanedNeedle{volumeId: oldSubManifestVid, fileId: oldSubManifestFid})
+					rewritten.targets = append(rewritten.targets, nested.targets...)
+					rewritten.targets = append(rewritten.targets, orphanedNeedle{volumeId: newSub.Fid.VolumeId, fileId: newSub.GetFileIdString()})
 				}
 			}
 			continue
@@ -709,14 +726,15 @@ func (c *commandFsMergeVolumes) rewriteManifestChunk(
 			continue
 		}
 		anySubChanged = true
-		movedSources = append(movedSources, orphanedNeedle{volumeId: oldSubVid, fileId: oldSubFid})
+		rewritten.sources = append(rewritten.sources, orphanedNeedle{volumeId: oldSubVid, fileId: oldSubFid})
+		rewritten.targets = append(rewritten.targets, orphanedNeedle{volumeId: uint32(toVid), fileId: sub.GetFileIdString()})
 	}
 
 	manifestVid := needle.VolumeId(chunk.Fid.VolumeId)
 	manifestMustMove := plan.isSource(manifestVid)
 
 	if !anySubChanged && !manifestMustMove {
-		return chunk, false, nil, nil
+		return chunk, false, rewrittenNeedles{}, nil
 	}
 
 	fmt.Printf("rewrite manifest %s(%s)\n", entryPath, chunk.GetFileIdString())
@@ -724,14 +742,15 @@ func (c *commandFsMergeVolumes) rewriteManifestChunk(
 		// Propagate "would change" so nested callers also announce their
 		// rewrites in dry-run mode. The top-level caller gates any actual
 		// filer writes on *apply, so returning true here is safe.
-		return chunk, true, nil, nil
+		return chunk, true, rewrittenNeedles{}, nil
 	}
 
 	filer_pb.BeforeEntrySerialization(subChunks)
 	defer filer_pb.AfterEntryDeserialization(subChunks)
 	data, err := proto.Marshal(&filer_pb.FileChunkManifest{Chunks: subChunks})
 	if err != nil {
-		return chunk, false, nil, fmt.Errorf("marshal manifest: %w", err)
+		abandon()
+		return chunk, false, rewrittenNeedles{}, fmt.Errorf("marshal manifest: %w", err)
 	}
 
 	collection := ""
@@ -740,7 +759,8 @@ func (c *commandFsMergeVolumes) rewriteManifestChunk(
 	}
 	newChunk, err := c.uploadManifestChunk(ctx, commandEnv, entryPath, collection, plan, data)
 	if err != nil {
-		return chunk, false, nil, fmt.Errorf("upload new manifest: %w", err)
+		abandon()
+		return chunk, false, rewrittenNeedles{}, fmt.Errorf("upload new manifest: %w", err)
 	}
 
 	newChunk.IsChunkManifest = true
@@ -751,7 +771,7 @@ func (c *commandFsMergeVolumes) rewriteManifestChunk(
 	}
 	newChunk.FileId = ""
 
-	return newChunk, true, movedSources, nil
+	return newChunk, true, rewritten, nil
 }
 
 // uploadManifestChunk assigns a fresh file id via the filer and uploads the
