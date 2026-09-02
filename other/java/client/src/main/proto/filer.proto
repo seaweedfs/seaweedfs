@@ -561,6 +561,9 @@ message AssignVolumeResponse {
     string error = 8;
     Location location = 9;
     repeated Location replicas = 10;
+    // fsync is the storage rule's fsync decision for the assigned path, so the
+    // client can carry it onto the volume server upload request.
+    bool fsync = 11;
 }
 
 message LookupVolumeRequest {
