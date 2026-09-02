@@ -600,7 +600,7 @@ func (fs *FilerServer) copyChunksWithManifest(ctx context.Context, srcChunks []*
 			return fs.filer.MasterClient.GetLookupFileIdFunction()(ctx, fileId)
 		}
 
-		resolvedChunks, err := filer.ResolveOneChunkManifest(ctx, lookupFileIdFn, manifestChunk)
+		resolvedChunks, err := filer.ResolveOneChunkManifest(ctx, lookupFileIdFn, manifestChunk, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve manifest chunk %s: %w", manifestChunk.GetFileIdString(), err)
 		}

@@ -49,7 +49,7 @@ func SeparateManifestChunks(chunks []*filer_pb.FileChunk) (manifestChunks, nonMa
 	return
 }
 
-func ResolveChunkManifest(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, startOffset, stopOffset int64) (dataChunks, manifestChunks []*filer_pb.FileChunk, manifestResolveErr error) {
+func ResolveChunkManifest(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, startOffset, stopOffset int64, invalidator CacheInvalidator) (dataChunks, manifestChunks []*filer_pb.FileChunk, manifestResolveErr error) {
 	// TODO maybe parallel this
 	for _, chunk := range chunks {
 
@@ -62,14 +62,14 @@ func ResolveChunkManifest(ctx context.Context, lookupFileIdFn wdclient.LookupFil
 			continue
 		}
 
-		resolvedChunks, err := ResolveOneChunkManifest(ctx, lookupFileIdFn, chunk)
+		resolvedChunks, err := ResolveOneChunkManifest(ctx, lookupFileIdFn, chunk, invalidator)
 		if err != nil {
 			return dataChunks, nil, err
 		}
 
 		manifestChunks = append(manifestChunks, chunk)
 		// recursive
-		subDataChunks, subManifestChunks, subErr := ResolveChunkManifest(ctx, lookupFileIdFn, resolvedChunks, startOffset, stopOffset)
+		subDataChunks, subManifestChunks, subErr := ResolveChunkManifest(ctx, lookupFileIdFn, resolvedChunks, startOffset, stopOffset, invalidator)
 		if subErr != nil {
 			return dataChunks, nil, subErr
 		}
@@ -79,7 +79,7 @@ func ResolveChunkManifest(ctx context.Context, lookupFileIdFn wdclient.LookupFil
 	return
 }
 
-func ResolveOneChunkManifest(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunk *filer_pb.FileChunk) (dataChunks []*filer_pb.FileChunk, manifestResolveErr error) {
+func ResolveOneChunkManifest(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunk *filer_pb.FileChunk, invalidator CacheInvalidator) (dataChunks []*filer_pb.FileChunk, manifestResolveErr error) {
 	if !chunk.IsChunkManifest {
 		return
 	}
@@ -88,7 +88,7 @@ func ResolveOneChunkManifest(ctx context.Context, lookupFileIdFn wdclient.Lookup
 	bytesBuffer := bytesBufferPool.Get().(*bytes.Buffer)
 	bytesBuffer.Reset()
 	defer bytesBufferPool.Put(bytesBuffer)
-	err := fetchWholeChunk(ctx, bytesBuffer, lookupFileIdFn, chunk.GetFileIdString(), chunk.CipherKey, chunk.IsCompressed)
+	err := fetchWholeChunk(ctx, bytesBuffer, lookupFileIdFn, chunk.GetFileIdString(), chunk.CipherKey, chunk.IsCompressed, invalidator)
 	if err != nil {
 		return nil, fmt.Errorf("fail to read manifest %s: %v", chunk.GetFileIdString(), err)
 	}
@@ -103,7 +103,7 @@ func ResolveOneChunkManifest(ctx context.Context, lookupFileIdFn wdclient.Lookup
 }
 
 // TODO fetch from cache for weed mount?
-func fetchWholeChunk(ctx context.Context, bytesBuffer *bytes.Buffer, lookupFileIdFn wdclient.LookupFileIdFunctionType, fileId string, cipherKey []byte, isGzipped bool) error {
+func fetchWholeChunk(ctx context.Context, bytesBuffer *bytes.Buffer, lookupFileIdFn wdclient.LookupFileIdFunctionType, fileId string, cipherKey []byte, isGzipped bool, invalidator CacheInvalidator) error {
 	urlStrings, err := lookupFileIdFn(ctx, fileId)
 	if err != nil {
 		glog.ErrorfCtx(ctx, "operation LookupFileId %s failed, err: %v", fileId, err)
@@ -112,9 +112,17 @@ func fetchWholeChunk(ctx context.Context, bytesBuffer *bytes.Buffer, lookupFileI
 	jwt := JwtForVolumeServer(fileId)
 	_, err = retriedStreamFetchChunkData(ctx, bytesBuffer, urlStrings, jwt, cipherKey, isGzipped, true, 0, 0)
 	if err != nil {
-		return err
+		// Self-heal: drop stale volume locations and retry once with fresh ones.
+		// The buffer must be reset before retry - retriedStreamFetchChunkData is
+		// streaming and may have written partial bytes that would corrupt the
+		// proto.Unmarshal of FileChunkManifest downstream.
+		err = retryFetchWithFreshLocations(ctx, invalidator, lookupFileIdFn, fileId, urlStrings, err, func(newUrls []string) error {
+			bytesBuffer.Reset()
+			_, err2 := retriedStreamFetchChunkData(ctx, bytesBuffer, newUrls, jwt, cipherKey, isGzipped, true, 0, 0)
+			return err2
+		})
 	}
-	return nil
+	return err
 }
 
 func fetchChunkRange(ctx context.Context, buffer []byte, lookupFileIdFn wdclient.LookupFileIdFunctionType, fileId string, cipherKey []byte, isGzipped bool, offset int64, refreshUrls util_http.RefreshUrlsFunc) (int, error) {
