@@ -368,6 +368,12 @@ func addedVids(added, removed []uint32) map[uint32]struct{} {
 	return index
 }
 
+// updateVidMap applies a KeepConnectedResponse volume-location message to the
+// local vidMap: NewVids and RemoteVids add their respective entries (with
+// RemoteVids marked DataInRemote so read paths can prefer the cheap local
+// replica), DeletedVids drop the named entry unless the same message also
+// added it back (volume moved between this server's disks). EC vid changes go
+// through the parallel addEcLocation / deleteEcLocation pair.
 func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 	if resp.VolumeLocation.IsEmptyUrl() {
 		glog.V(0).Infof("updateVidMap ignore short heartbeat: %+v", resp)

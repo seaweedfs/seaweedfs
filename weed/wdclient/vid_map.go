@@ -88,6 +88,10 @@ func (vc *vidMap) isSameDataCenter(loc *Location) bool {
 	return true
 }
 
+// LookupVolumeServerUrl returns the cached volume-server URLs for vid in
+// preference order: same-DC local, then other-DC local, then same-DC
+// remote-tier replicas, then other-DC remote-tier replicas. Within each tier
+// the order is randomized so load spreads across equivalent servers.
 func (vc *vidMap) LookupVolumeServerUrl(vid string) (serverUrls []string, err error) {
 	id, err := strconv.Atoi(vid)
 	if err != nil {
@@ -121,15 +125,20 @@ func (vc *vidMap) LookupVolumeServerUrl(vid string) (serverUrls []string, err er
 	rand.Shuffle(len(otherDcServers), func(i, j int) {
 		otherDcServers[i], otherDcServers[j] = otherDcServers[j], otherDcServers[i]
 	})
-	if len(localUrls) > 0 {
-		sameDcServers = util.ReorderToFront(localUrls, sameDcServers)
-		otherDcServers = util.ReorderToFront(localUrls, otherDcServers)
-	}
-	// Prefer same data center
+	// Prefer same data center, then move every local replica ahead of any
+	// remote-tier replica regardless of which DC it sits in. This keeps the
+	// DC preference for the remote fallback chain (same-DC remote beats
+	// other-DC remote) while making sure the cheap local replica is always
+	// tried first when one exists anywhere in the cluster.
 	serverUrls = append(sameDcServers, otherDcServers...)
+	if len(localUrls) > 0 {
+		serverUrls = util.ReorderToFront(localUrls, serverUrls)
+	}
 	return
 }
 
+// LookupFileId resolves a "<vid>,<cookie>" file id to a list of HTTP read
+// URLs using the same DC-then-local-first ordering as LookupVolumeServerUrl.
 func (vc *vidMap) LookupFileId(ctx context.Context, fileId string) (fullUrls []string, err error) {
 	parts := strings.Split(fileId, ",")
 	if len(parts) != 2 {
@@ -145,6 +154,10 @@ func (vc *vidMap) LookupFileId(ctx context.Context, fileId string) (fullUrls []s
 	return
 }
 
+// GetVidLocations returns the cached Location entries for vid as a string.
+// The locations preserve the DC-then-local-first ordering produced by
+// LookupVolumeServerUrl so callers that need richer per-server fields than
+// raw URLs (e.g. DataInRemote, PublicUrl) can consume the same priority.
 func (vc *vidMap) GetVidLocations(vid string) (locations []Location, err error) {
 	id, err := strconv.Atoi(vid)
 	if err != nil {
@@ -158,6 +171,11 @@ func (vc *vidMap) GetVidLocations(vid string) (locations []Location, err error) 
 	return nil, fmt.Errorf("volume id %s not found", vid)
 }
 
+// GetLocations returns the cached Location entries for vid as a uint32.
+// When both regular and EC entries are present, whichever was learned last
+// wins so a volume that switched between regular and EC encoding stops
+// answering from the stale copy. Returns found=false when nothing remains,
+// including when only an older-generation entry would otherwise apply.
 func (vc *vidMap) GetLocations(vid uint32) (locations []Location, found bool) {
 	vc.RLock()
 	defer vc.RUnlock()

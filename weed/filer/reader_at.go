@@ -138,12 +138,14 @@ func LookupFn(filerClient filer_pb.FilerClient) wdclient.LookupFileIdFunctionTyp
 		rand.Shuffle(len(otherTargetUrls), func(i, j int) {
 			otherTargetUrls[i], otherTargetUrls[j] = otherTargetUrls[j], otherTargetUrls[i]
 		})
-		if len(localUrls) > 0 {
-			sameDcTargetUrls = util.ReorderToFront(localUrls, sameDcTargetUrls)
-			otherTargetUrls = util.ReorderToFront(localUrls, otherTargetUrls)
-		}
-		// Prefer same data center
+		// Prefer same data center, then move every local replica ahead of any
+		// remote-tier replica regardless of which DC it sits in. This matches
+		// the wdclient lookup paths so deprecated callers pick cheap reads
+		// first too.
 		targetUrls = append(sameDcTargetUrls, otherTargetUrls...)
+		if len(localUrls) > 0 {
+			targetUrls = util.ReorderToFront(localUrls, targetUrls)
+		}
 		return
 	}
 }

@@ -13,28 +13,21 @@ func TestReorderToFront_StringSlice(t *testing.T) {
 
 	sameDcTargetUrls := []string{
 		"http://remote1",
-		"http://local2",
-		"http://remote2",
 		"http://local1",
+		"http://remote2",
+		"http://local2",
 	}
 
-	expected1 := []string{
+	expected := []string{
 		"http://local1",
 		"http://local2",
-		"http://remote1",
-		"http://remote2",
-	}
-
-	expected2 := []string{
-		"http://local2",
-		"http://local1",
 		"http://remote1",
 		"http://remote2",
 	}
 
 	result := ReorderToFront(localUrls, sameDcTargetUrls)
 
-	if !reflect.DeepEqual(result, expected1) && !reflect.DeepEqual(result, expected2) {
-		t.Errorf("ReorderToFront failed for strings. Got: %v, Expected1: %v, Expected2: %v", result, expected1, expected2)
+	if !reflect.DeepEqual(result, expected) {
+		t.Errorf("ReorderToFront failed for strings. Got: %v, Expected: %v", result, expected)
 	}
 }
