@@ -2140,7 +2140,7 @@ func (s3a *S3ApiServer) getEncryptedStreamFromVolumes(ctx context.Context, entry
 	lookupFileIdFn := s3a.createLookupFileIdFunction()
 
 	// Resolve chunks
-	resolvedChunks, _, err := filer.ResolveChunkManifest(ctx, lookupFileIdFn, chunks, offset, offset+size)
+	resolvedChunks, _, err := filer.ResolveChunkManifest(ctx, lookupFileIdFn, chunks, offset, offset+size, nil)
 	if err != nil {
 		return nil, err
 	}

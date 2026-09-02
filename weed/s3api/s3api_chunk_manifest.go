@@ -65,7 +65,7 @@ func (s3a *S3ApiServer) flattenManifestChunks(ctx context.Context, entry *filer_
 	if entry == nil || !filer.HasChunkManifest(entry.GetChunks()) {
 		return nil, nil
 	}
-	dataChunks, manifestChunks, err := filer.ResolveChunkManifest(ctx, s3a.createLookupFileIdFunction(), entry.GetChunks(), 0, math.MaxInt64)
+	dataChunks, manifestChunks, err := filer.ResolveChunkManifest(ctx, s3a.createLookupFileIdFunction(), entry.GetChunks(), 0, math.MaxInt64, nil)
 	if err != nil {
 		return nil, err
 	}

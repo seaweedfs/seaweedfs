@@ -190,7 +190,7 @@ func loadLogFileEntries(masterClient *wdclient.MasterClient, chunk *filer_pb.Fil
 	lookupFileIdFn := func(ctx context.Context, fileId string) (targetUrls []string, err error) {
 		return masterClient.LookupFileId(ctx, fileId)
 	}
-	if fetchErr := fetchWholeChunk(context.Background(), bytesBuffer, lookupFileIdFn, chunk.GetFileIdString(), chunk.CipherKey, chunk.IsCompressed); fetchErr != nil {
+	if fetchErr := fetchWholeChunk(context.Background(), bytesBuffer, lookupFileIdFn, chunk.GetFileIdString(), chunk.CipherKey, chunk.IsCompressed, nil); fetchErr != nil {
 		return nil, false, fetchErr
 	}
 	return decodeLogRecords(bytesBuffer.Bytes())

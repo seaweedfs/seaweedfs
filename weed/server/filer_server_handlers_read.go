@@ -132,7 +132,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			if entry.Chunks, _, err = filer.ResolveChunkManifest(
 				ctx,
 				fs.filer.MasterClient.GetLookupFileIdFunction(),
-				entry.GetChunks(), 0, math.MaxInt64); err != nil {
+				entry.GetChunks(), 0, math.MaxInt64, nil); err != nil {
 				err = fmt.Errorf("failed to resolve chunk manifest, err: %s", err.Error())
 				writeJsonError(w, r, http.StatusInternalServerError, err)
 				return

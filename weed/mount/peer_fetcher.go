@@ -65,7 +65,7 @@ func (fh *FileHandle) tryPeerRead(ctx context.Context, fileSize int64, buff []by
 	if readStop > fileSize {
 		readStop = fileSize
 	}
-	dataChunks, _, err := filer.ResolveChunkManifest(ctx, fh.wfs.LookupFn(), chunks, offset, readStop)
+	dataChunks, _, err := filer.ResolveChunkManifest(ctx, fh.wfs.LookupFn(), chunks, offset, readStop, fh.wfs.CacheInvalidator())
 	if err != nil {
 		return 0, 0, fmt.Errorf("resolve manifest: %w", err)
 	}
