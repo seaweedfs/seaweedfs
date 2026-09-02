@@ -533,12 +533,11 @@ func (t *Topology) DeleteCollection(collectionName string) {
 	// the node's held and servable digests apart forever, and the master asks
 	// for the full volume list on every heartbeat from then on.
 	// Unpublish first so a racing registration re-resolves into a fresh collection.
-	collection, found := t.FindCollection(collectionName)
-	t.collectionMap.Delete(collectionName)
+	collection, found := t.collectionMap.Delete(collectionName)
 	if !found {
 		return
 	}
-	for _, vl := range collection.GetAllVolumeLayouts() {
+	for _, vl := range collection.(*Collection).GetAllVolumeLayouts() {
 		vl.releaseLookupOwnership()
 	}
 }
