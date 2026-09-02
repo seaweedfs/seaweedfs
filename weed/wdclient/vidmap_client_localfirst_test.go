@@ -79,10 +79,11 @@ func TestLookupFileIdWithFallbackAllRemote(t *testing.T) {
 	}
 }
 
-// TestLookupFileIdWithFallbackGlobalLocalFirst verifies that a local replica in
-// any data center is preferred over a same-DC remote replica. The cheap read
-// should win even when it crosses a data-center boundary.
-func TestLookupFileIdWithFallbackGlobalLocalFirst(t *testing.T) {
+// TestLookupFileIdWithFallbackKeepsDataCenterFirst verifies that the local-first
+// ordering applies inside each data center and does not override the data-center
+// preference: a same-DC remote replica still beats an other-DC local one, because
+// the remote tier is usually nearer than another data center.
+func TestLookupFileIdWithFallbackKeepsDataCenterFirst(t *testing.T) {
 	vc := newVidMapClient(&testLocationProvider{
 		locations: map[string][]Location{
 			"7": {
@@ -102,45 +103,11 @@ func TestLookupFileIdWithFallbackGlobalLocalFirst(t *testing.T) {
 		t.Fatalf("expected 4 urls, got %v", urls)
 	}
 
-	// First two: the local replicas (dc1-local, dc2-local) in some order.
-	// Last two: the remote replicas (dc1-remote, dc2-remote) in some order.
-	// DC priority is preserved within each tier.
-	first := urls[:2]
-	second := urls[2:]
-
-	for _, u := range first {
-		if !strings.Contains(u, "10.0.0.2:8080") && !strings.Contains(u, "10.0.0.3:8080") {
-			t.Errorf("first half must be local replicas, got %v", first)
+	// dc1 local, dc1 remote, dc2 local, dc2 remote.
+	want := []string{"10.0.0.2:8080", "10.0.0.1:8080", "10.0.0.3:8080", "10.0.0.4:8080"}
+	for i, host := range want {
+		if !strings.Contains(urls[i], host) {
+			t.Fatalf("position %d should be %s, got %v", i, host, urls)
 		}
-		if strings.Contains(u, "10.0.0.1:8080") || strings.Contains(u, "10.0.0.4:8080") {
-			t.Errorf("first half must not contain remote replicas, got %v", first)
-		}
-	}
-	for _, u := range second {
-		if !strings.Contains(u, "10.0.0.1:8080") && !strings.Contains(u, "10.0.0.4:8080") {
-			t.Errorf("second half must be remote replicas, got %v", second)
-		}
-	}
-
-	// Within each tier, DC1 precedes DC2.
-	dc1Local, dc2Local := -1, -1
-	dc1Remote, dc2Remote := -1, -1
-	for i, u := range urls {
-		switch {
-		case strings.Contains(u, "10.0.0.2:8080"):
-			dc1Local = i
-		case strings.Contains(u, "10.0.0.3:8080"):
-			dc2Local = i
-		case strings.Contains(u, "10.0.0.1:8080"):
-			dc1Remote = i
-		case strings.Contains(u, "10.0.0.4:8080"):
-			dc2Remote = i
-		}
-	}
-	if dc1Local > dc2Local {
-		t.Errorf("dc1-local should precede dc2-local, got order %v", urls)
-	}
-	if dc1Remote > dc2Remote {
-		t.Errorf("dc1-remote should precede dc2-remote, got order %v", urls)
 	}
 }

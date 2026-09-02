@@ -55,10 +55,10 @@ func (vc *vidMapClient) GetLookupFileIdFunction() LookupFileIdFunctionType {
 // LookupFileIdWithFallback resolves a "<vid>,<cookie>" file id to a list of
 // HTTP read URLs, using the cached vidMap when populated and falling back to
 // the provider for a fresh lookup on miss. URLs are returned in preference
-// order: same-DC local, other-DC local, same-DC remote-tier replicas, then
-// other-DC remote-tier replicas -- mirroring the cached vidMap path so both
-// routes agree. Concurrent misses for the same vid are coalesced via the
-// singleflight group on LookupVolumeIdsWithFallback.
+// order: same-DC local, same-DC remote-tier, then the other data centers on
+// the same footing -- mirroring the cached vidMap path so both routes agree.
+// Concurrent misses for the same vid are coalesced via the singleflight group
+// on LookupVolumeIdsWithFallback.
 func (vc *vidMapClient) LookupFileIdWithFallback(ctx context.Context, fileId string) (fullUrls []string, err error) {
 	// Try cache first
 	dataCenter := vc.vidMap.DataCenter
@@ -115,15 +115,14 @@ func (vc *vidMapClient) LookupFileIdWithFallback(ctx context.Context, fileId str
 	rand.Shuffle(len(sameDcUrls), func(i, j int) { sameDcUrls[i], sameDcUrls[j] = sameDcUrls[j], sameDcUrls[i] })
 	rand.Shuffle(len(otherDcUrls), func(i, j int) { otherDcUrls[i], otherDcUrls[j] = otherDcUrls[j], otherDcUrls[i] })
 
-	// Prefer same data center, then move every local replica ahead of any
-	// remote-tier replica regardless of which DC it sits in. This keeps the
-	// DC preference for the remote fallback chain while ensuring cheap
-	// local reads are tried first.
-	fullUrls = append(sameDcUrls, otherDcUrls...)
+	// Local replicas go first inside each data center, but never ahead of the
+	// data-center preference itself. Mirrors vidMap.LookupVolumeServerUrl so
+	// all client lookup paths agree.
 	if len(localUrls) > 0 {
-		fullUrls = util.ReorderToFront(localUrls, fullUrls)
+		sameDcUrls = util.ReorderToFront(localUrls, sameDcUrls)
+		otherDcUrls = util.ReorderToFront(localUrls, otherDcUrls)
 	}
-
+	fullUrls = append(sameDcUrls, otherDcUrls...)
 	return fullUrls, nil
 }
 
