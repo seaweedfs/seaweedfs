@@ -1,7 +1,6 @@
 package iceberg
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -438,13 +437,16 @@ func hasEligibleCompaction(
 		return false, nil
 	}
 
+	specsByID := specByID(meta)
+	schema := meta.CurrentSchema()
+
 	var allEntries []iceberg.ManifestEntry
 	for _, mf := range dataManifests {
 		manifestData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, dataPath, mf.FilePath())
 		if err != nil {
 			return false, fmt.Errorf("read manifest %s: %w", mf.FilePath(), err)
 		}
-		entries, err := iceberg.ReadManifest(mf, bytes.NewReader(manifestData), true)
+		entries, err := s3tables.ReadManifest(mf, manifestData, true, specsByID, schema)
 		if err != nil {
 			return false, fmt.Errorf("parse manifest %s: %w", mf.FilePath(), err)
 		}
@@ -453,7 +455,6 @@ func hasEligibleCompaction(
 
 	candidateEntries := allEntries
 	if predicate != nil {
-		specsByID := specByID(meta)
 		candidateEntries = make([]iceberg.ManifestEntry, 0, len(allEntries))
 		for _, entry := range allEntries {
 			spec, ok := specsByID[int(entry.DataFile().SpecID())]

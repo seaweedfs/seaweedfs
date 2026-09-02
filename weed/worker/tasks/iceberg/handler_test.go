@@ -123,7 +123,7 @@ func TestNeedsMaintenanceNoSnapshots(t *testing.T) {
 		MaxSnapshotsToKeep:  2,
 	}
 
-	meta := buildTestMetadata(t, nil, nil, 0, nil)
+	meta := buildTestMetadata(t, nil, nil, 0, nil, nil, nil)
 	if needsMaintenance(meta, config) {
 		t.Error("expected no maintenance for table with no snapshots")
 	}
@@ -141,7 +141,7 @@ func TestNeedsMaintenanceExceedsMaxSnapshots(t *testing.T) {
 		{SnapshotID: 2, TimestampMs: now + 1, ManifestList: "metadata/snap-2.avro"},
 		{SnapshotID: 3, TimestampMs: now + 2, ManifestList: "metadata/snap-3.avro"},
 	}
-	meta := buildTestMetadata(t, snapshots, nil, 48*time.Hour, nil)
+	meta := buildTestMetadata(t, snapshots, nil, 48*time.Hour, nil, nil, nil)
 	if !needsMaintenance(meta, config) {
 		t.Error("expected maintenance for table exceeding max snapshots")
 	}
@@ -161,7 +161,7 @@ func TestNeedsMaintenanceExceedsMaxSnapshotsWithinRetention(t *testing.T) {
 		{SnapshotID: 2, TimestampMs: now + 1, ManifestList: "metadata/snap-2.avro"},
 		{SnapshotID: 3, TimestampMs: now + 2, ManifestList: "metadata/snap-3.avro"},
 	}
-	if needsMaintenance(buildTestMetadata(t, snapshots, nil, 0, nil), config) {
+	if needsMaintenance(buildTestMetadata(t, snapshots, nil, 0, nil, nil, nil), config) {
 		t.Error("expected no maintenance while every snapshot is inside the retention window")
 	}
 }
@@ -181,10 +181,10 @@ func TestNeedsMaintenanceSkipsRefPinnedSnapshots(t *testing.T) {
 	refs := map[string]table.SnapshotRef{
 		"release": {SnapshotID: 1, SnapshotRefType: table.TagRef},
 	}
-	if needsMaintenance(buildTestMetadata(t, snapshots, refs, 0, nil), config) {
+	if needsMaintenance(buildTestMetadata(t, snapshots, refs, 0, nil, nil, nil), config) {
 		t.Error("expected no maintenance when the only old snapshot is tagged")
 	}
-	if !needsMaintenance(buildTestMetadata(t, snapshots, nil, 0, nil), config) {
+	if !needsMaintenance(buildTestMetadata(t, snapshots, nil, 0, nil, nil, nil), config) {
 		t.Error("expected maintenance for the same table without the tag")
 	}
 }
@@ -199,7 +199,7 @@ func TestNeedsMaintenanceWithinLimits(t *testing.T) {
 	snapshots := []table.Snapshot{
 		{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro"},
 	}
-	meta := buildTestMetadata(t, snapshots, nil, 0, nil)
+	meta := buildTestMetadata(t, snapshots, nil, 0, nil, nil, nil)
 	if needsMaintenance(meta, config) {
 		t.Error("expected no maintenance for table within limits")
 	}
@@ -217,7 +217,7 @@ func TestNeedsMaintenanceOldSnapshot(t *testing.T) {
 		{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro"},
 		{SnapshotID: 2, TimestampMs: now + 1, ManifestList: "metadata/snap-2.avro"},
 	}
-	meta := buildTestMetadata(t, snapshots, nil, 0, nil)
+	meta := buildTestMetadata(t, snapshots, nil, 0, nil, nil, nil)
 	if !needsMaintenance(meta, config) {
 		t.Error("expected maintenance for table with expired snapshot")
 	}
@@ -235,7 +235,7 @@ func TestNeedsMaintenanceSingleSnapshot(t *testing.T) {
 	snapshots := []table.Snapshot{
 		{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro"},
 	}
-	if needsMaintenance(buildTestMetadata(t, snapshots, nil, 0, nil), config) {
+	if needsMaintenance(buildTestMetadata(t, snapshots, nil, 0, nil, nil, nil), config) {
 		t.Error("expected no maintenance for a table with only the current snapshot")
 	}
 }
@@ -280,7 +280,7 @@ func TestBuildMaintenanceProposal(t *testing.T) {
 		{SnapshotID: 1, TimestampMs: now},
 		{SnapshotID: 2, TimestampMs: now + 1},
 	}
-	meta := buildTestMetadata(t, snapshots, nil, 0, nil)
+	meta := buildTestMetadata(t, snapshots, nil, 0, nil, nil, nil)
 
 	info := tableInfo{
 		BucketName: "my-bucket",
@@ -1549,11 +1549,16 @@ func TestExecuteNilRequest(t *testing.T) {
 // are genuinely past a retention window - iceberg-go refuses to add a snapshot
 // stamped more than a minute before the metadata's last-updated time, so the
 // shift has to happen after the build.
-func buildTestMetadata(t *testing.T, snapshots []table.Snapshot, refs map[string]table.SnapshotRef, age time.Duration, properties iceberg.Properties) table.Metadata {
+func buildTestMetadata(t *testing.T, snapshots []table.Snapshot, refs map[string]table.SnapshotRef, age time.Duration, properties iceberg.Properties, schema *iceberg.Schema, spec *iceberg.PartitionSpec) table.Metadata {
 	t.Helper()
 
-	schema := newTestSchema()
-	meta, err := table.NewMetadata(schema, iceberg.UnpartitionedSpec, table.UnsortedSortOrder, "s3://test-bucket/test-table", properties)
+	if schema == nil {
+		schema = newTestSchema()
+	}
+	if spec == nil {
+		spec = iceberg.UnpartitionedSpec
+	}
+	meta, err := table.NewMetadata(schema, spec, table.UnsortedSortOrder, "s3://test-bucket/test-table", properties)
 	if err != nil {
 		t.Fatalf("failed to create test metadata: %v", err)
 	}

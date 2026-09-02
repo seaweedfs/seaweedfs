@@ -46,7 +46,7 @@ func hasEligibleDeleteRewrite(
 	meta table.Metadata,
 	predicate *partitionPredicate,
 ) (bool, error) {
-	groups, _, err := collectDeleteRewriteGroups(ctx, filerClient, bucketName, dataPath, manifests)
+	groups, _, err := collectDeleteRewriteGroups(ctx, filerClient, bucketName, dataPath, manifests, specByID(meta), meta.CurrentSchema())
 	if err != nil {
 		return false, err
 	}
@@ -76,6 +76,8 @@ func collectDeleteRewriteGroups(
 	filerClient filer_pb.SeaweedFilerClient,
 	bucketName, dataPath string,
 	manifests []iceberg.ManifestFile,
+	specs map[int]iceberg.PartitionSpec,
+	schema *iceberg.Schema,
 ) (map[string]*deleteRewriteGroup, []iceberg.ManifestEntry, error) {
 	groups := make(map[string]*deleteRewriteGroup)
 	var allPositionEntries []iceberg.ManifestEntry
@@ -89,7 +91,7 @@ func collectDeleteRewriteGroups(
 		if err != nil {
 			return nil, nil, fmt.Errorf("read delete manifest %s: %w", mf.FilePath(), err)
 		}
-		entries, err := iceberg.ReadManifest(mf, bytes.NewReader(manifestData), true)
+		entries, err := s3tables.ReadManifest(mf, manifestData, true, specs, schema)
 		if err != nil {
 			return nil, nil, fmt.Errorf("parse delete manifest %s: %w", mf.FilePath(), err)
 		}
@@ -289,6 +291,9 @@ func (h *Handler) rewritePositionDeleteFiles(
 		return "", nil, fmt.Errorf("parse manifest list: %w", err)
 	}
 
+	specs := specByID(meta)
+	schema := meta.CurrentSchema()
+
 	var dataManifests []iceberg.ManifestFile
 	var allEqualityEntries []iceberg.ManifestEntry
 	for _, mf := range manifests {
@@ -300,7 +305,7 @@ func (h *Handler) rewritePositionDeleteFiles(
 			if readErr != nil {
 				return "", nil, fmt.Errorf("read delete manifest %s: %w", mf.FilePath(), readErr)
 			}
-			entries, parseErr := iceberg.ReadManifest(mf, bytes.NewReader(manifestData), true)
+			entries, parseErr := s3tables.ReadManifest(mf, manifestData, true, specs, schema)
 			if parseErr != nil {
 				return "", nil, fmt.Errorf("parse delete manifest %s: %w", mf.FilePath(), parseErr)
 			}
@@ -312,7 +317,7 @@ func (h *Handler) rewritePositionDeleteFiles(
 		}
 	}
 
-	groupMap, allPositionEntries, err := collectDeleteRewriteGroups(ctx, filerClient, bucketName, dataPath, manifests)
+	groupMap, allPositionEntries, err := collectDeleteRewriteGroups(ctx, filerClient, bucketName, dataPath, manifests, specs, schema)
 	if err != nil {
 		return "", nil, err
 	}

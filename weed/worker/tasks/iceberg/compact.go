@@ -91,6 +91,9 @@ func (h *Handler) compactDataFiles(
 		return "compaction skipped: delete manifests present and apply_deletes is disabled", nil, nil
 	}
 
+	specsByID := specByID(meta)
+	schema := meta.CurrentSchema()
+
 	// Collect data file entries from data manifests
 	var allEntries []iceberg.ManifestEntry
 	for _, mf := range dataManifests {
@@ -98,14 +101,12 @@ func (h *Handler) compactDataFiles(
 		if err != nil {
 			return "", nil, fmt.Errorf("read manifest %s: %w", mf.FilePath(), err)
 		}
-		entries, err := iceberg.ReadManifest(mf, bytes.NewReader(manifestData), true)
+		entries, err := s3tables.ReadManifest(mf, manifestData, true, specsByID, schema)
 		if err != nil {
 			return "", nil, fmt.Errorf("parse manifest %s: %w", mf.FilePath(), err)
 		}
 		allEntries = append(allEntries, entries...)
 	}
-
-	specsByID := specByID(meta)
 
 	// Collect delete entries if we need to apply deletes
 	var positionDeletes map[string][]int64
@@ -117,7 +118,7 @@ func (h *Handler) compactDataFiles(
 			if err != nil {
 				return "", nil, fmt.Errorf("read delete manifest %s: %w", mf.FilePath(), err)
 			}
-			entries, err := iceberg.ReadManifest(mf, bytes.NewReader(manifestData), true)
+			entries, err := s3tables.ReadManifest(mf, manifestData, true, specsByID, schema)
 			if err != nil {
 				return "", nil, fmt.Errorf("parse delete manifest %s: %w", mf.FilePath(), err)
 			}
@@ -157,7 +158,7 @@ func (h *Handler) compactDataFiles(
 		}
 
 		if len(eqDeleteEntries) > 0 {
-			eqDeleteGroups, err = collectEqualityDeletes(ctx, filerClient, bucketName, dataPath, eqDeleteEntries, meta.CurrentSchema())
+			eqDeleteGroups, err = collectEqualityDeletes(ctx, filerClient, bucketName, dataPath, eqDeleteEntries, schema)
 			if err != nil {
 				return "", nil, fmt.Errorf("collect equality deletes: %w", err)
 			}
@@ -199,7 +200,6 @@ func (h *Handler) compactDataFiles(
 	// Build a lookup from spec ID to PartitionSpec for per-bin manifest writing.
 	specLookup := specsByID
 
-	schema := meta.CurrentSchema()
 	version := meta.Version()
 	snapshotID := currentSnap.SnapshotID
 
