@@ -55,7 +55,7 @@ global:
       gatewayHost: null
       gatewayPort: null
       additionalLabels: {}
-    # if enabled will use global.seaweedfs.replicationPlacement and override master & filer defaultReplicaPlacement config
+    # if enabled will use global.seaweedfs.replicationPlacement and override master.defaultReplication & filer.defaultReplicaPlacement config
     enableReplication: false
     #  replication type is XYZ:
     # X number of replica in other data centers
