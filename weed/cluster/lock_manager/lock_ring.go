@@ -163,6 +163,24 @@ func (r *LockRing) GetPrimary(key string) pb.ServerAddress {
 func (r *LockRing) PriorOwner(key string) pb.ServerAddress {
 	r.RLock()
 	defer r.RUnlock()
+	return r.priorOwnerLocked(key)
+}
+
+// WriteOwner returns the filer that should serialize writes to key: the prior
+// owner while a ring change is still within the cooling-off window, otherwise
+// the current primary. Both are read under one lock so the pair cannot come
+// from different rings, which could otherwise name the same filer twice.
+func (r *LockRing) WriteOwner(key string) pb.ServerAddress {
+	r.RLock()
+	defer r.RUnlock()
+	if prior := r.priorOwnerLocked(key); prior != "" {
+		return prior
+	}
+	return r.Ring.GetPrimary(key)
+}
+
+// priorOwnerLocked is PriorOwner's body; the caller holds at least RLock.
+func (r *LockRing) priorOwnerLocked(key string) pb.ServerAddress {
 	if len(r.snapshots) < 2 {
 		return ""
 	}

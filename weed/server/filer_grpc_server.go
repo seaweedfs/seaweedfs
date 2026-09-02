@@ -286,27 +286,29 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 	// serialization point — even when the caller's ring view was stale. is_moved
 	// bounds this to one hop: a forwarded transaction is applied locally, so two
 	// filers that disagree on the owner during a ring change cannot loop.
-	if req.RouteKey != "" && !req.IsMoved && fs.filer.Dlm != nil {
-		if owner := fs.filer.Dlm.LockRing.GetPrimary(req.RouteKey); owner != "" && owner != fs.option.Host {
-			// Rebuild rather than copy the request struct (it carries a mutex);
-			// the pointer/slice fields are shared since the original is not mutated.
-			forwarded := &filer_pb.ObjectTransactionRequest{
-				LockKey:            req.LockKey,
-				Condition:          req.Condition,
-				Mutations:          req.Mutations,
-				IsFromOtherCluster: req.IsFromOtherCluster,
-				Signatures:         req.Signatures,
-				ConditionKey:       req.ConditionKey,
-				RouteKey:           req.RouteKey,
-				IsMoved:            true,
-			}
+	if req.RouteKey != "" && !req.IsMoved {
+		// Rebuild rather than copy the request struct (it carries a mutex); the
+		// pointer/slice fields are shared since the original is not mutated.
+		forwarded := &filer_pb.ObjectTransactionRequest{
+			LockKey:            req.LockKey,
+			Condition:          req.Condition,
+			Mutations:          req.Mutations,
+			IsFromOtherCluster: req.IsFromOtherCluster,
+			Signatures:         req.Signatures,
+			ConditionKey:       req.ConditionKey,
+			RouteKey:           req.RouteKey,
+			IsMoved:            true,
+		}
+		var resp *filer_pb.ObjectTransactionResponse
+		handled, err := fs.forwardToWriteOwner(ctx, req.RouteKey, func(owner pb.ServerAddress) error {
 			glog.V(2).InfofCtx(ctx, "ObjectTransaction %s: forwarding to owner %s", req.LockKey, owner)
-			var resp *filer_pb.ObjectTransactionResponse
-			err := pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+			return pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 				var e error
 				resp, e = client.ObjectTransaction(ctx, forwarded)
 				return e
 			})
+		})
+		if handled {
 			if err != nil {
 				return &filer_pb.ObjectTransactionResponse{}, err
 			}
