@@ -247,7 +247,15 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		if len(heartbeat.ChangedVolumes) > 0 {
 			stats.MasterReceivedHeartbeatCounter.WithLabelValues("changedVolumes").Inc()
 			for _, v := range ms.Topo.ApplyVolumeChanges(heartbeat.ChangedVolumes, dn) {
-				message.NewVids = append(message.NewVids, uint32(v.Id))
+				// Changed volumes include both newly-added replicas and existing
+				// replicas whose remote/local classification flipped on tier
+				// transition. Routed the same way as newVolumes so the client
+				// receives the updated DataInRemote through NewVids/RemoteVids.
+				if v.IsRemote() {
+					message.RemoteVids = append(message.RemoteVids, uint32(v.Id))
+				} else {
+					message.NewVids = append(message.NewVids, uint32(v.Id))
+				}
 			}
 		}
 
