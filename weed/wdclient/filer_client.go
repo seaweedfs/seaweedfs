@@ -468,6 +468,7 @@ func (fc *FilerClient) GetLookupFileIdFunction() LookupFileIdFunctionType {
 
 		// Build URLs with publicUrl preference, and also prefer same DC
 		var sameDcUrls, otherDcUrls []string
+		localUrls := make(map[string]bool)
 		dataCenter := fc.GetDataCenter()
 		for _, loc := range locations {
 			url := loc.PublicUrl
@@ -475,6 +476,10 @@ func (fc *FilerClient) GetLookupFileIdFunction() LookupFileIdFunctionType {
 				url = loc.Url
 			}
 			httpUrl := "http://" + url + "/" + fileId
+			glog.V(4).Infof("lookup %s => %s, data in remote storage tier: %v", fileId, url, loc.DataInRemote)
+			if !loc.DataInRemote {
+				localUrls[httpUrl] = true
+			}
 			if dataCenter != "" && dataCenter == loc.DataCenter {
 				sameDcUrls = append(sameDcUrls, httpUrl)
 			} else {
@@ -484,7 +489,13 @@ func (fc *FilerClient) GetLookupFileIdFunction() LookupFileIdFunctionType {
 		// Shuffle to distribute load across volume servers
 		rand.Shuffle(len(sameDcUrls), func(i, j int) { sameDcUrls[i], sameDcUrls[j] = sameDcUrls[j], sameDcUrls[i] })
 		rand.Shuffle(len(otherDcUrls), func(i, j int) { otherDcUrls[i], otherDcUrls[j] = otherDcUrls[j], otherDcUrls[i] })
-		// Prefer same data center
+		// Local replicas go first inside each data center, but never ahead of
+		// the data-center preference itself. Mirrors
+		// vidMap.LookupVolumeServerUrl so all client lookup paths agree.
+		if len(localUrls) > 0 {
+			sameDcUrls = util.ReorderToFront(localUrls, sameDcUrls)
+			otherDcUrls = util.ReorderToFront(localUrls, otherDcUrls)
+		}
 		fullUrls = append(sameDcUrls, otherDcUrls...)
 		return fullUrls, nil
 	}

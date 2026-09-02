@@ -158,14 +158,19 @@ func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVol
 	return resp, err
 }
 
+// wdclientLocationsToPb converts the wdclient's internal Location entries
+// (carrying DataInRemote and grpc-port metadata) to the protobuf form served
+// by the filer gRPC API, preserving the fields the lookup client uses to
+// prefer a local replica over a remote-tiered one.
 func wdclientLocationsToPb(locations []wdclient.Location) []*filer_pb.Location {
 	locs := make([]*filer_pb.Location, 0, len(locations))
 	for _, loc := range locations {
 		locs = append(locs, &filer_pb.Location{
-			Url:        loc.Url,
-			PublicUrl:  loc.PublicUrl,
-			GrpcPort:   uint32(loc.GrpcPort),
-			DataCenter: loc.DataCenter,
+			Url:          loc.Url,
+			PublicUrl:    loc.PublicUrl,
+			GrpcPort:     uint32(loc.GrpcPort),
+			DataCenter:   loc.DataCenter,
+			DataInRemote: loc.DataInRemote,
 		})
 	}
 	return locs

@@ -630,7 +630,7 @@ func (t *Topology) ListDCAndRacks() (dcs map[NodeId][]NodeId) {
 	return dcs
 }
 
-func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformationMessage, dn *DataNode) (newVolumes, deletedVolumes []storage.VolumeInfo) {
+func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformationMessage, dn *DataNode) (newVolumes, deletedVolumes, changedVolumes []storage.VolumeInfo) {
 	// convert into in memory struct storage.VolumeInfo
 	volumeInfos := make([]storage.VolumeInfo, 0, len(volumes))
 	for _, v := range volumes {
@@ -641,7 +641,7 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 		}
 	}
 	// find out the delta volumes
-	newVolumes, deletedVolumes, _ = dn.UpdateVolumes(volumeInfos)
+	newVolumes, deletedVolumes, changedVolumes = dn.UpdateVolumes(volumeInfos)
 	for _, v := range newVolumes {
 		t.RegisterVolumeLayout(v, dn)
 	}
@@ -722,7 +722,10 @@ func (t *Topology) IncrementalSyncDataNodeRegistration(newVolumes, deletedVolume
 //
 // Most changes are a volume growing, which moves no location, so returning
 // only the arrivals keeps a busy cluster from telling every client about
-// volumes they can already reach.
+// volumes they can already reach. The arrival set also includes replicas whose
+// IsRemote() classification flipped on tier transition: the volume is still
+// servable from the same node, but every connected client has stale replica
+// priority and must be told to refresh.
 func (t *Topology) ApplyVolumeChanges(changed []*master_pb.VolumeInformationMessage, dn *DataNode) (newVolumes []storage.VolumeInfo) {
 	volumeInfos := make([]storage.VolumeInfo, 0, len(changed))
 	for _, v := range changed {
@@ -735,7 +738,7 @@ func (t *Topology) ApplyVolumeChanges(changed []*master_pb.VolumeInformationMess
 	}
 
 	for _, vi := range volumeInfos {
-		isNew, _ := dn.AddOrUpdateVolume(vi)
+		isNew, _, tierTransition := dn.AddOrUpdateVolume(vi)
 		if vi.ReplicaPlacement == nil {
 			if isNew {
 				newVolumes = append(newVolumes, vi)
@@ -751,7 +754,7 @@ func (t *Topology) ApplyVolumeChanges(changed []*master_pb.VolumeInformationMess
 			// Dropped with its collection; the next lookup creates a fresh one.
 			vl = t.GetVolumeLayout(vi.Collection, vi.ReplicaPlacement, vi.Ttl, types.ToDiskType(vi.DiskType))
 		}
-		if isNew || becameServable {
+		if isNew || becameServable || tierTransition {
 			newVolumes = append(newVolumes, vi)
 		}
 		vl.UpdateOversizedState(&vi, dn)

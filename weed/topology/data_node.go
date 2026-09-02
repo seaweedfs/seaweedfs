@@ -58,7 +58,7 @@ func (dn *DataNode) String() string {
 	return fmt.Sprintf("Node:%s, Ip:%s, Port:%d, PublicUrl:%s", dn.NodeImpl.String(), dn.Ip, dn.Port, dn.PublicUrl)
 }
 
-func (dn *DataNode) AddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChangedRO bool) {
+func (dn *DataNode) AddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChangedRO, tierTransition bool) {
 	dn.Lock()
 	defer dn.Unlock()
 	return dn.doAddOrUpdateVolume(v)
@@ -74,14 +74,14 @@ func (dn *DataNode) getOrCreateDisk(diskType string) *Disk {
 	return disk
 }
 
-func (dn *DataNode) doAddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChanged bool) {
+func (dn *DataNode) doAddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChanged, tierTransition bool) {
 	disk := dn.getOrCreateDisk(v.DiskType)
 	return disk.AddOrUpdateVolume(v)
 }
 
 // AddProvisionalVolume records a volume the master registered on its own,
 // ahead of any server report naming it. See Disk.AddProvisionalVolume.
-func (dn *DataNode) AddProvisionalVolume(v storage.VolumeInfo) (isNew, isChanged bool) {
+func (dn *DataNode) AddProvisionalVolume(v storage.VolumeInfo) (isNew, isChanged, tierTransition bool) {
 	dn.Lock()
 	defer dn.Unlock()
 	disk := dn.getOrCreateDisk(v.DiskType)
@@ -90,6 +90,14 @@ func (dn *DataNode) AddProvisionalVolume(v storage.VolumeInfo) (isNew, isChanged
 
 // UpdateVolumes detects new/deleted/changed volumes on a volume server
 // used in master to notify master clients of these changes.
+//
+// changedVolumes covers every replica the disk already held whose
+// classification the new report altered in a way clients must learn about:
+// the ReadOnly flag flipped, or IsRemote() flipped on tier transition. The
+// latter is what lets the wdclient refresh DataInRemote after the digest
+// mismatch recovery path resends a full Volumes list -- that path is the
+// only way a re-tiered replica reaches the master without a separate
+// ChangedVolumes heartbeat.
 func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (newVolumes, deletedVolumes, changedVolumes []storage.VolumeInfo) {
 
 	reported := newReportedVolumes(len(actualVolumes))
@@ -133,11 +141,11 @@ func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (newVolume
 		newVolumes = make([]storage.VolumeInfo, 0, addedCount)
 	}
 	for _, v := range actualVolumes {
-		isNew, isChanged := dn.doAddOrUpdateVolume(v)
+		isNew, isChanged, tierTransition := dn.doAddOrUpdateVolume(v)
 		if isNew {
 			newVolumes = append(newVolumes, v)
 		}
-		if isChanged {
+		if isChanged || tierTransition {
 			changedVolumes = append(changedVolumes, v)
 		}
 	}
@@ -219,15 +227,16 @@ func (dn *DataNode) AdjustDiskUsageBytes(diskTotalBytes, diskFreeBytes map[strin
 	}
 }
 
-// AppendVolumeIds appends the ids of this node's volumes to dst, without
-// copying the volume records to read them.
-func (dn *DataNode) AppendVolumeIds(dst []uint32) []uint32 {
+// AppendVolumeIds appends the ids of this node's volumes to all, and repeats
+// the remote-tier ones on remote, without copying the volume records to read
+// them.
+func (dn *DataNode) AppendVolumeIds(all, remote []uint32) ([]uint32, []uint32) {
 	dn.RLock()
 	defer dn.RUnlock()
 	for _, c := range dn.children {
-		dst = c.(*Disk).AppendVolumeIds(dst)
+		all, remote = c.(*Disk).AppendVolumeIds(all, remote)
 	}
-	return dst
+	return all, remote
 }
 
 func (dn *DataNode) GetVolumes() (ret []storage.VolumeInfo) {

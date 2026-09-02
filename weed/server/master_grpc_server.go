@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster/maintenance"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
@@ -81,6 +82,17 @@ func (ms *MasterServer) UnRegisterUuids(ip string, port int) {
 	key := fmt.Sprintf("%s:%d", ip, port)
 	delete(ms.Topo.UuidMap, key)
 	glog.V(0).Infof("remove volume server %v, online volume server: %v", key, ms.Topo.UuidMap)
+}
+
+// announceVolume records vid on the broadcast message. A remote-tier volume
+// goes on both lists: RemoteVids carries the classification, and NewVids keeps
+// a client too old to read RemoteVids from losing the volume altogether during
+// a rolling upgrade.
+func announceVolume(message *master_pb.VolumeLocation, vid uint32, isRemote bool) {
+	message.NewVids = append(message.NewVids, vid)
+	if isRemote {
+		message.RemoteVids = append(message.RemoteVids, vid)
+	}
 }
 
 func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServer) error {
@@ -233,7 +245,9 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 
 			// process delta volume ids if exists for fast volume id updates
 			for _, volInfo := range heartbeat.NewVolumes {
-				message.NewVids = append(message.NewVids, volInfo.Id)
+				// The short form carries no remote-storage name, so the volume
+				// reads as local until a changed or full report names its tier.
+				announceVolume(message, volInfo.Id, false)
 			}
 			for _, volInfo := range heartbeat.DeletedVolumes {
 				if !shouldBroadcastVolumeRemoval(dn, needle.VolumeId(volInfo.Id)) {
@@ -246,7 +260,10 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		if len(heartbeat.ChangedVolumes) > 0 {
 			stats.MasterReceivedHeartbeatCounter.WithLabelValues("changedVolumes").Inc()
 			for _, v := range ms.Topo.ApplyVolumeChanges(heartbeat.ChangedVolumes, dn) {
-				message.NewVids = append(message.NewVids, uint32(v.Id))
+				// Changed volumes include both newly-added replicas and existing
+				// replicas whose tier classification flipped, which the client
+				// has to be told about to refresh its replica priority.
+				announceVolume(message, uint32(v.Id), v.IsRemote())
 			}
 		}
 
@@ -258,11 +275,19 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 
 			// process heartbeat.Volumes
 			stats.MasterReceivedHeartbeatCounter.WithLabelValues("Volumes").Inc()
-			newVolumes, deletedVolumes := ms.Topo.SyncDataNodeRegistration(heartbeat.Volumes, dn)
+			newVolumes, deletedVolumes, changedVolumes := ms.Topo.SyncDataNodeRegistration(heartbeat.Volumes, dn)
 
 			for _, v := range newVolumes {
 				glog.V(1).Infof("master see new volume %d from %s", uint32(v.Id), dn.Url())
-				message.NewVids = append(message.NewVids, uint32(v.Id))
+				announceVolume(message, uint32(v.Id), v.IsRemote())
+			}
+			// A full reconciliation is the digest mismatch recovery path, and
+			// the only way a re-tiered replica reaches the master without a
+			// separate ChangedVolumes heartbeat. Announcing the changed set
+			// too is what stops the client keeping the old classification.
+			for _, v := range changedVolumes {
+				glog.V(1).Infof("master see tier/readonly change on volume %d from %s", uint32(v.Id), dn.Url())
+				announceVolume(message, uint32(v.Id), v.IsRemote())
 			}
 			for _, v := range deletedVolumes {
 				glog.V(1).Infof("master see deleted volume %d from %s", uint32(v.Id), dn.Url())
