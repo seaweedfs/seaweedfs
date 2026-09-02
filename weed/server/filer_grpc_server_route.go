@@ -5,6 +5,8 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // writeOwner returns the filer that serializes writes to key, or "" when this
@@ -45,4 +47,11 @@ func (fs *FilerServer) forwardToWriteOwner(ctx context.Context, key string, send
 		return true, err
 	}
 	return true, nil
+}
+
+// entryRouteKey is the ring key for an entry's writes. It shares the S3
+// gateway's namespace so an object's ObjectTransaction and its CreateEntry
+// resolve to the same owner, and land on that filer's one per-path lock.
+func entryRouteKey(fullpath util.FullPath) string {
+	return s3_constants.ObjectWriteRouteKeyPrefix + string(fullpath)
 }

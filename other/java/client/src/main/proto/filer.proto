@@ -250,9 +250,11 @@ message CreateEntryRequest {
     repeated int32 signatures = 5;
     bool skip_check_parent_directory = 6;
     // Optional precondition evaluated against the current entry atomically with
-    // the write, under the filer's per-path lock. The caller must route the
-    // key's writes to this entry's owner filer for the check to be authoritative.
+    // the write, under the filer's per-path lock.
     WriteCondition condition = 7;
+    // Set on a create a filer forwarded to the entry's ring owner, so the owner
+    // applies it locally instead of forwarding again. Clients leave it unset.
+    bool is_moved = 8;
 }
 
 // WriteCondition is the precondition the filer evaluates against the existing
@@ -579,7 +581,6 @@ message Location {
     string public_url = 2;
     uint32 grpc_port = 3;
     string data_center = 4;
-    bool data_in_remote = 5;
 }
 message LookupVolumeResponse {
     map<string, Locations> locations_map = 1;
