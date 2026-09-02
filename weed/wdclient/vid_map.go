@@ -267,10 +267,10 @@ func (vc *vidMap) addEcLocation(vid uint32, location Location) {
 // If the URL is already present and the remote/local classification matches,
 // the entry is left untouched (same replica, same view). When the
 // classification flips -- e.g. a volume tiered to remote storage, or a
-// remote-backed replica restored locally -- the existing entry is replaced
-// in place so subsequent lookups pick up the new DataInRemote. The server
-// reference key only depends on the URL/grpc port, so it stays stable across
-// the flip and the refcount does not need to move.
+// remote-backed replica restored locally -- the entry is rebuilt so
+// subsequent lookups pick up the new DataInRemote. The server reference key
+// only depends on the URL/grpc port, so it stays stable across the flip and
+// the refcount does not need to move.
 func (vc *vidMap) addLocationToMap(vid2Locations map[uint32]*locationsEntry, vid uint32, location Location) {
 	entry, found := vid2Locations[vid]
 	if !found || entry.generation != vc.generation {
@@ -290,7 +290,13 @@ func (vc *vidMap) addLocationToMap(vid2Locations map[uint32]*locationsEntry, vid
 			if loc.DataInRemote == location.DataInRemote {
 				return
 			}
-			entry.locations[i] = location
+			// A reader holds the slice GetLocations handed it after the lock
+			// was dropped, so the replacement is copied rather than written
+			// into the array underneath it.
+			updated := make([]Location, len(entry.locations))
+			copy(updated, entry.locations)
+			updated[i] = location
+			entry.locations = updated
 			return
 		}
 	}

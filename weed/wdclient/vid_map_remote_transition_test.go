@@ -1,6 +1,7 @@
 package wdclient
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -89,4 +90,33 @@ func TestLookupVolumeServerUrlReflectsRemoteTransition(t *testing.T) {
 	if len(urls) != 1 || urls[0] != "10.0.0.1:8080" {
 		t.Fatalf("expected only the restored replica, got %v", urls)
 	}
+}
+
+// A tier flip must not write into the slice a concurrent lookup is still
+// walking: GetLocations hands out the entry's own slice and the caller reads
+// it after the lock is dropped.
+func TestTierFlipDoesNotRaceWithLookup(t *testing.T) {
+	vm := newVidMap("dc1", DefaultVidMapCacheSize)
+	vid := uint32(13)
+	vm.addLocation(vid, Location{Url: "10.0.0.1:8080", DataCenter: "dc1"})
+	vm.addLocation(vid, Location{Url: "10.0.0.2:8080", DataCenter: "dc1"})
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 2000; i++ {
+			vm.addLocation(vid, Location{Url: "10.0.0.1:8080", DataCenter: "dc1", DataInRemote: i%2 == 0})
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 2000; i++ {
+			if _, err := vm.LookupVolumeServerUrl("13"); err != nil {
+				t.Errorf("lookup failed mid-flip: %v", err)
+				return
+			}
+		}
+	}()
+	wg.Wait()
 }
