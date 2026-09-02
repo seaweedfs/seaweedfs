@@ -24,7 +24,12 @@ import (
 
 var historyPath = path.Join(os.TempDir(), "weed-shell")
 
-func RunShell(options ShellOptions) {
+// RunShell drives the admin shell. In interactive mode it always returns nil
+// (errors are shown to the operator and the session continues). In
+// non-interactive mode (commands piped on stdin -- the scriptable path
+// CronJobs use) it returns the LAST command failure, so a wrapper can exit
+// non-zero instead of reporting success for a run that printed "error: ...".
+func RunShell(options ShellOptions) error {
 	slices.SortFunc(Commands, func(a, b command) int {
 		return strings.Compare(a.Name(), b.Name())
 	})
@@ -94,7 +99,7 @@ func RunShell(options ShellOptions) {
 				if err != io.EOF {
 					fmt.Fprintf(os.Stderr, "%v\n", err)
 				}
-				return
+				return nil
 			}
 
 			if strings.TrimSpace(cmd) != "" {
@@ -102,32 +107,42 @@ func RunShell(options ShellOptions) {
 			}
 
 			for _, c := range util.StringSplit(cmd, ";") {
-				if processEachCmd(c, commandEnv) {
-					return
+				if exit, _ := processEachCmd(c, commandEnv); exit {
+					return nil
 				}
 			}
 		}
 	} else {
+		// Non-interactive: remember failures so the process can exit non-zero.
+		// A CronJob piping "s3.lifecycle.run-shard ..." into weed shell
+		// otherwise reports green while the run aborted partway.
+		var lastErr error
 		scanner := bufio.NewScanner(os.Stdin)
 		for scanner.Scan() {
 			cmd := scanner.Text()
 			for _, c := range util.StringSplit(cmd, ";") {
-				if processEachCmd(c, commandEnv) {
-					return
+				exit, err := processEachCmd(c, commandEnv)
+				if err != nil {
+					lastErr = err
+				}
+				if exit {
+					return lastErr
 				}
 			}
 		}
 		if err := scanner.Err(); err != nil {
 			fmt.Fprintf(os.Stderr, "error reading stdin: %v\n", err)
+			lastErr = err
 		}
+		return lastErr
 	}
 }
 
-func processEachCmd(cmd string, commandEnv *CommandEnv) bool {
+func processEachCmd(cmd string, commandEnv *CommandEnv) (exit bool, cmdErr error) {
 	cmds := splitCommandLine(cmd)
 
 	if len(cmds) == 0 {
-		return false
+		return false, nil
 	} else {
 
 		args := cmds[1:]
@@ -136,7 +151,7 @@ func processEachCmd(cmd string, commandEnv *CommandEnv) bool {
 		if cmd == "help" || cmd == "?" {
 			printHelp(cmds)
 		} else if cmd == "exit" || cmd == "quit" {
-			return true
+			return true, nil
 		} else {
 			foundCommand := false
 			for _, c := range Commands {
@@ -149,17 +164,19 @@ func processEachCmd(cmd string, commandEnv *CommandEnv) bool {
 					commandEnv.SetNoLock(false)
 					if err := c.Do(args, commandEnv, os.Stdout); err != nil {
 						fmt.Fprintf(os.Stderr, "error: %v\n", err)
+						cmdErr = err
 					}
 					foundCommand = true
 				}
 			}
 			if !foundCommand {
 				fmt.Fprintf(os.Stderr, "unknown command: %v\n", cmd)
+				cmdErr = fmt.Errorf("unknown command: %v", cmd)
 			}
 		}
 
 	}
-	return false
+	return false, cmdErr
 }
 
 func splitCommandLine(line string) []string {
