@@ -227,15 +227,16 @@ func (dn *DataNode) AdjustDiskUsageBytes(diskTotalBytes, diskFreeBytes map[strin
 	}
 }
 
-// AppendVolumeIds appends the ids of this node's volumes to dst, without
-// copying the volume records to read them.
-func (dn *DataNode) AppendVolumeIds(dst []uint32) []uint32 {
+// AppendVolumeIds appends the ids of this node's volumes to all, and repeats
+// the remote-tier ones on remote, without copying the volume records to read
+// them.
+func (dn *DataNode) AppendVolumeIds(all, remote []uint32) ([]uint32, []uint32) {
 	dn.RLock()
 	defer dn.RUnlock()
 	for _, c := range dn.children {
-		dst = c.(*Disk).AppendVolumeIds(dst)
+		all, remote = c.(*Disk).AppendVolumeIds(all, remote)
 	}
-	return dst
+	return all, remote
 }
 
 func (dn *DataNode) GetVolumes() (ret []storage.VolumeInfo) {

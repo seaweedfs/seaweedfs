@@ -305,16 +305,20 @@ func (d *Disk) GetVolumes() []storage.VolumeInfo {
 	return d.AppendVolumes(make([]storage.VolumeInfo, 0, d.VolumeCount()))
 }
 
-// AppendVolumeIds appends the ids of the disk's volumes to dst. Callers that
-// only need to name volumes use this rather than AppendVolumes, which copies
-// a whole record per volume to be read for four bytes of it.
-func (d *Disk) AppendVolumeIds(dst []uint32) []uint32 {
+// AppendVolumeIds appends the ids of the disk's volumes to all, and repeats
+// the remote-tier ones on remote. Callers that only need to name volumes use
+// this rather than AppendVolumes, which copies a whole record per volume to
+// be read for four bytes of it.
+func (d *Disk) AppendVolumeIds(all, remote []uint32) ([]uint32, []uint32) {
 	d.RLock()
 	defer d.RUnlock()
-	for id := range d.volumes {
-		dst = append(dst, uint32(id))
+	for id, v := range d.volumes {
+		all = append(all, uint32(id))
+		if v.IsRemote() {
+			remote = append(remote, uint32(id))
+		}
 	}
-	return dst
+	return all, remote
 }
 
 // AppendVolumes appends the disk's volumes to dst, so a caller gathering
