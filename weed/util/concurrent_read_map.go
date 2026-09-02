@@ -53,8 +53,12 @@ func (m *ConcurrentReadMap) Items() (itemsCopy []interface{}) {
 	return itemsCopy
 }
 
-func (m *ConcurrentReadMap) Delete(key string) {
+// Delete removes the key and returns what it held, so a caller that has to
+// wind the entry down does not race another deleter for it.
+func (m *ConcurrentReadMap) Delete(key string) (interface{}, bool) {
 	m.Lock()
+	value, ok := m.items[key]
 	delete(m.items, key)
 	m.Unlock()
+	return value, ok
 }
