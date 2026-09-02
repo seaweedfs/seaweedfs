@@ -54,7 +54,10 @@ func (c *Collection) GetVolumeLayout(rp *super_block.ReplicaPlacement, ttl *need
 		keyString += string(diskType)
 	}
 	vl, ok := c.storageType2VolumeLayout.Find(keyString)
-	return vl.(*VolumeLayout), ok
+	if !ok {
+		return nil, false
+	}
+	return vl.(*VolumeLayout), true
 }
 
 func (c *Collection) GetAllVolumeLayouts() []*VolumeLayout {
