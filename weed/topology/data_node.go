@@ -90,6 +90,14 @@ func (dn *DataNode) AddProvisionalVolume(v storage.VolumeInfo) (isNew, isChanged
 
 // UpdateVolumes detects new/deleted/changed volumes on a volume server
 // used in master to notify master clients of these changes.
+//
+// changedVolumes covers every replica the disk already held whose
+// classification the new report altered in a way clients must learn about:
+// the ReadOnly flag flipped, or IsRemote() flipped on tier transition. The
+// latter is what lets the wdclient refresh DataInRemote after the digest
+// mismatch recovery path resends a full Volumes list -- that path is the
+// only way a re-tiered replica reaches the master without a separate
+// ChangedVolumes heartbeat.
 func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (newVolumes, deletedVolumes, changedVolumes []storage.VolumeInfo) {
 
 	reported := newReportedVolumes(len(actualVolumes))
@@ -133,11 +141,11 @@ func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (newVolume
 		newVolumes = make([]storage.VolumeInfo, 0, addedCount)
 	}
 	for _, v := range actualVolumes {
-		isNew, isChanged, _ := dn.doAddOrUpdateVolume(v)
+		isNew, isChanged, tierTransition := dn.doAddOrUpdateVolume(v)
 		if isNew {
 			newVolumes = append(newVolumes, v)
 		}
-		if isChanged {
+		if isChanged || tierTransition {
 			changedVolumes = append(changedVolumes, v)
 		}
 	}

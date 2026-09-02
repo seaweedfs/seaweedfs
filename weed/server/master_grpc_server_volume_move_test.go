@@ -29,7 +29,7 @@ func TestVolumeMovedBetweenDisksIsNotBroadcastAsRemoved(t *testing.T) {
 	topo, dn := moveTestNode(t)
 	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{moveTestVolume("", 0)}, dn)
 
-	_, deleted := topo.SyncDataNodeRegistration(
+	_, deleted, _ := topo.SyncDataNodeRegistration(
 		[]*master_pb.VolumeInformationMessage{moveTestVolume("ssd", 1)}, dn)
 
 	if len(deleted) != 1 {
@@ -44,7 +44,7 @@ func TestVolumeGoneFromTheNodeIsBroadcastAsRemoved(t *testing.T) {
 	topo, dn := moveTestNode(t)
 	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{moveTestVolume("", 0)}, dn)
 
-	if _, deleted := topo.SyncDataNodeRegistration(nil, dn); len(deleted) != 1 {
+	if _, deleted, _ := topo.SyncDataNodeRegistration(nil, dn); len(deleted) != 1 {
 		t.Fatalf("expected the volume to be removed, got %d removals", len(deleted))
 	}
 	if !shouldBroadcastVolumeRemoval(dn, needle.VolumeId(1)) {
@@ -89,7 +89,7 @@ func TestVolumeReplacedByEcShardsIsBroadcastAsRemoved(t *testing.T) {
 		{Id: 1, Collection: "c", EcIndexBits: 0x3fff},
 	}, dn)
 
-	if _, deleted := topo.SyncDataNodeRegistration(nil, dn); len(deleted) != 1 {
+	if _, deleted, _ := topo.SyncDataNodeRegistration(nil, dn); len(deleted) != 1 {
 		t.Fatalf("expected the normal volume to be removed, got %d removals", len(deleted))
 	}
 	if !shouldBroadcastVolumeRemoval(dn, needle.VolumeId(1)) {
