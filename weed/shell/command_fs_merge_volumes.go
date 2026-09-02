@@ -230,7 +230,7 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 					// entry and let fsck reconcile later.
 					return nil
 				}
-				deleteOrphanedNeedles(commandEnv, entryPath, movedSources)
+				deleteOrphanedNeedles(commandEnv, entryPath, movedSources, false)
 			}
 			return nil
 		})
@@ -251,7 +251,14 @@ type orphanedNeedle struct {
 // orphan at this point, so a failed cleanup just leaves work for a later fsck.
 // Propagating an error here would abort TraverseBfs and strand the remaining
 // entries mid-merge, which is strictly worse.
-func deleteOrphanedNeedles(commandEnv *CommandEnv, entryPath util.FullPath, needles []orphanedNeedle) {
+//
+// includeCookie makes the volume server verify the needle is the one we mean
+// before deleting it. Source needles are the ones the filer just pointed at,
+// so they delete by id like every other filer-driven delete. A target needle
+// is one an upload may or may not have written, and the id alone would also
+// match a same-key needle that a restored or re-sequenced volume put there
+// first, so those always verify.
+func deleteOrphanedNeedles(commandEnv *CommandEnv, entryPath util.FullPath, needles []orphanedNeedle, includeCookie bool) {
 	if len(needles) == 0 {
 		return
 	}
@@ -266,7 +273,7 @@ func deleteOrphanedNeedles(commandEnv *CommandEnv, entryPath util.FullPath, need
 			continue
 		}
 		for _, loc := range locations {
-			results := operation.DeleteFileIdsAtOneVolumeServer(loc.ServerAddress(), commandEnv.option.GrpcDialOption, fids, false)
+			results := operation.DeleteFileIdsAtOneVolumeServer(loc.ServerAddress(), commandEnv.option.GrpcDialOption, fids, includeCookie)
 			// Summarize per server: an unreachable volume server returns one
 			// error per needle, which for manifest-heavy files can mean
 			// hundreds of near-identical lines. Keep the first error as the
@@ -828,7 +835,7 @@ func (c *commandFsMergeVolumes) uploadManifestChunk(
 		// Same partial-write window as moveChunk: the needle can be on the
 		// volume even though the upload reported failure, and the caller drops
 		// this manifest instead of pointing the filer at it.
-		deleteOrphanedNeedles(commandEnv, entryPath, []orphanedNeedle{{volumeId: assignedVid, fileId: assignResp.FileId}})
+		deleteOrphanedNeedles(commandEnv, entryPath, []orphanedNeedle{{volumeId: assignedVid, fileId: assignResp.FileId}}, true)
 		return nil, err
 	}
 
@@ -903,7 +910,7 @@ func moveChunk(commandEnv *CommandEnv, entryPath util.FullPath, chunk *filer_pb.
 		// fans out to the other replicas, so an upload that reports failure can
 		// still have left a copy on the target. The caller skips the filer
 		// update for this chunk, so nothing will ever reference that copy.
-		deleteOrphanedNeedles(commandEnv, entryPath, []orphanedNeedle{{volumeId: uint32(toVolumeId), fileId: toFid.String()}})
+		deleteOrphanedNeedles(commandEnv, entryPath, []orphanedNeedle{{volumeId: uint32(toVolumeId), fileId: toFid.String()}}, true)
 		return err
 	}
 	chunk.Fid.VolumeId = uint32(toVolumeId)
