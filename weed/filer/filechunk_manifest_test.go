@@ -6,6 +6,10 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -503,4 +507,124 @@ func TestManifestBloatDetection(t *testing.T) {
 			t.Errorf("n=%d: should NOT trigger merge at ratio %.1f", n, float64(totalStored)/float64(totalFile))
 		}
 	}
+}
+
+// countingInvalidator stands in for the vidMap cache a mount or filer hands to
+// manifest resolution, recording how often the locations were dropped.
+type countingInvalidator struct {
+	invalidations atomic.Int32
+}
+
+func (inv *countingInvalidator) InvalidateCache(fileId string) {
+	inv.invalidations.Add(1)
+}
+
+// stagedLookup returns staleUrls once and freshUrls afterwards, the way a
+// vidMapClient re-reads the master once InvalidateCache has dropped the entry.
+type stagedLookup struct {
+	staleUrls []string
+	freshUrls []string
+	calls     atomic.Int32
+}
+
+func (l *stagedLookup) lookup(ctx context.Context, fileId string) ([]string, error) {
+	if l.calls.Add(1) == 1 {
+		return l.staleUrls, nil
+	}
+	return l.freshUrls, nil
+}
+
+func manifestServer(t *testing.T, manifestBytes []byte) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(len(manifestBytes)))
+		w.Write(manifestBytes)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func fetchManifestBuffer(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	bytesBuffer := bytesBufferPool.Get().(*bytes.Buffer)
+	bytesBuffer.Reset()
+	t.Cleanup(func() { bytesBufferPool.Put(bytesBuffer) })
+	return bytesBuffer
+}
+
+// TestFetchWholeChunkRetriesFreshLocations covers the mount reading a multipart
+// file whose manifest volume has moved: the cached location is dead, so the
+// fetch has to drop it and come back with what the master knows now. The stale
+// server streams a prefix before dying, which the retry must not keep.
+func TestFetchWholeChunkRetriesFreshLocations(t *testing.T) {
+	manifestBytes, err := proto.Marshal(&filer_pb.FileChunkManifest{
+		Chunks: []*filer_pb.FileChunk{
+			{FileId: "100,abc", Offset: 0, Size: 8},
+			{FileId: "101,def", Offset: 8, Size: 8},
+		},
+	})
+	assert.NoError(t, err)
+
+	staleSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(len(manifestBytes)+64))
+		w.Write([]byte("garbage-from-stale-server"))
+		w.(http.Flusher).Flush()
+		panic(http.ErrAbortHandler)
+	}))
+	defer staleSrv.Close()
+
+	lookup := &stagedLookup{
+		staleUrls: []string{staleSrv.URL + "/5,stale"},
+		freshUrls: []string{manifestServer(t, manifestBytes).URL + "/5,stale"},
+	}
+	inv := &countingInvalidator{}
+	bytesBuffer := fetchManifestBuffer(t)
+
+	assert.NoError(t, fetchWholeChunk(context.Background(), bytesBuffer, lookup.lookup, "5,stale", nil, false, inv))
+	assert.Equal(t, int32(1), inv.invalidations.Load())
+	assert.Equal(t, int32(2), lookup.calls.Load())
+
+	// the buffer must hold the fresh manifest alone, not the stale prefix ahead of it
+	decoded := &filer_pb.FileChunkManifest{}
+	assert.NoError(t, proto.Unmarshal(bytesBuffer.Bytes(), decoded))
+	assertEqualChunks(t, []*filer_pb.FileChunk{
+		{FileId: "100,abc", Offset: 0, Size: 8},
+		{FileId: "101,def", Offset: 8, Size: 8},
+	}, decoded.Chunks)
+}
+
+// TestFetchWholeChunkWithoutInvalidator keeps the old behavior for callers whose
+// lookup function has no cache to drop: the fetch error surfaces as it is.
+func TestFetchWholeChunkWithoutInvalidator(t *testing.T) {
+	failSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer failSrv.Close()
+
+	lookup := &stagedLookup{
+		staleUrls: []string{failSrv.URL + "/5,abc"},
+		freshUrls: []string{"http://unused:8080/5,abc"},
+	}
+
+	assert.Error(t, fetchWholeChunk(context.Background(), fetchManifestBuffer(t), lookup.lookup, "5,abc", nil, false, nil))
+	assert.Equal(t, int32(1), lookup.calls.Load())
+}
+
+// TestFetchWholeChunkUnchangedLocations guards against looping: when the master
+// still reports the servers that just failed, there is nothing new to try.
+func TestFetchWholeChunkUnchangedLocations(t *testing.T) {
+	failSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer failSrv.Close()
+
+	lookup := &stagedLookup{
+		staleUrls: []string{failSrv.URL + "/5,abc"},
+		freshUrls: []string{failSrv.URL + "/5,abc"},
+	}
+	inv := &countingInvalidator{}
+
+	assert.Error(t, fetchWholeChunk(context.Background(), fetchManifestBuffer(t), lookup.lookup, "5,abc", nil, false, inv))
+	assert.Equal(t, int32(2), lookup.calls.Load())
+	assert.Equal(t, int32(1), inv.invalidations.Load())
 }
