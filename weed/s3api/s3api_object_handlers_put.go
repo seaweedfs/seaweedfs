@@ -788,8 +788,14 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	// Set object owner according to bucket ownership settings.
 	s3a.setObjectOwnerFromRequest(r, bucket, entry)
 
-	// Set version ID if present
+	// Set version ID if present. It is later used as a filer path segment, so a
+	// value carrying "/", "\\" or ".." must never be stored.
 	if versionIdHeader := r.Header.Get(s3_constants.ExtVersionIdKey); versionIdHeader != "" {
+		if !isValidVersionID(versionIdHeader) {
+			glog.Warningf("putToFiler: rejecting invalid version ID %q for object %s", versionIdHeader, filePath)
+			s3a.deleteOrphanedChunks(chunkResult.FileChunks)
+			return "", s3err.ErrInvalidRequest, SSEResponseMetadata{}
+		}
 		entry.Extended[s3_constants.ExtVersionIdKey] = []byte(versionIdHeader)
 		glog.V(3).Infof("putToFiler: setting version ID %s for object %s", versionIdHeader, filePath)
 	}
