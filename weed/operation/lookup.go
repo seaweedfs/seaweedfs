@@ -49,8 +49,6 @@ var (
 // authorization the master stamped on the volume; pass it through to the
 // volume server on the read request.
 func LookupFileId(masterFn GetMasterFn, grpcDialOption grpc.DialOption, fileId string) (fullUrl string, jwt string, err error) {
-	var location string
-
 	parts := strings.Split(fileId, ",")
 	if len(parts) != 2 {
 		return "", jwt, errors.New("Invalid fileId " + fileId)
@@ -69,13 +67,13 @@ func LookupFileId(masterFn GetMasterFn, grpcDialOption grpc.DialOption, fileId s
 			localUrls = append(localUrls, loc.Url)
 		}
 	}
-	if len(localUrls) > 0 {
-		location = "http://" + localUrls[rand.IntN(len(localUrls))] + "/" + fileId
-	} else {
-		location = "http://" + lookup.Locations[rand.IntN(len(lookup.Locations))].Url + "/" + fileId
+	if len(localUrls) == 0 {
+		for _, loc := range lookup.Locations {
+			localUrls = append(localUrls, loc.Url)
+		}
 	}
 
-	return location, lookup.Jwt, nil
+	return "http://" + localUrls[rand.IntN(len(localUrls))] + "/" + fileId, lookup.Jwt, nil
 }
 
 func LookupVolumeId(masterFn GetMasterFn, grpcDialOption grpc.DialOption, vid string) (*LookupResult, error) {
