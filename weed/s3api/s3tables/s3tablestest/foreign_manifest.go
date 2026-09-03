@@ -19,7 +19,9 @@ import (
 //
 // logicalType is stamped onto the value branch, since iceberg-go writes a day
 // partition as a bare int, and decoded replaces the partition value in the
-// record, standing in for what the foreign writer encoded.
+// record, standing in for what the foreign writer encoded. valueFirst orders
+// the union [<type>, null] rather than the [null, <type>] Java and iceberg-rust
+// emit.
 func ForeignPartitionManifest(
 	t *testing.T,
 	schema *iceberg.Schema,
@@ -27,6 +29,7 @@ func ForeignPartitionManifest(
 	entry iceberg.ManifestEntry,
 	manifestPath, logicalType string,
 	decoded any,
+	valueFirst bool,
 ) ([]byte, iceberg.ManifestFile) {
 	t.Helper()
 
@@ -79,7 +82,11 @@ func ForeignPartitionManifest(
 			valueType = map[string]any{"type": primitive}
 		}
 		valueType["logicalType"] = logicalType
-		field["type"] = []any{valueType, "null"}
+		if valueFirst {
+			field["type"] = []any{valueType, "null"}
+		} else {
+			field["type"] = []any{"null", valueType}
+		}
 		break
 	}
 

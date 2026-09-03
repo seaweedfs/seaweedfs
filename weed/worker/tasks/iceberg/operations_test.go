@@ -16,9 +16,25 @@ import (
 )
 
 // Merging manifests a foreign producer wrote used to fail for good on a
-// day-partitioned table: the entries carry the time.Time the Avro decoder
-// produced, and the manifest writer has no way to encode that as a day.
+// day-partitioned table, whichever way round the producer spelled the
+// partition union: nothing between reading an entry and writing it looks at
+// its partition, so the time.Time the Avro decoder produced is still there
+// when the manifest writer, which has no date logical type for a day
+// partition, tries to encode it.
 func TestRewriteManifestsNormalizesForeignDayPartitions(t *testing.T) {
+	for _, valueFirst := range []bool{true, false} {
+		name := "null-first partition union"
+		if valueFirst {
+			name = "value-first partition union"
+		}
+		t.Run(name, func(t *testing.T) {
+			rewriteForeignDayPartitions(t, valueFirst)
+		})
+	}
+}
+
+func rewriteForeignDayPartitions(t *testing.T, valueFirst bool) {
+	t.Helper()
 	fs, client := startFakeFiler(t)
 
 	schema := iceberg.NewSchema(0,
@@ -57,7 +73,7 @@ func TestRewriteManifestsNormalizesForeignDayPartitions(t *testing.T) {
 
 		manifestName := fmt.Sprintf("foreign-manifest-%d.avro", i)
 		foreignBytes, manifest := s3tablestest.ForeignPartitionManifest(t, schema, spec, entry,
-			setup.fileRef("metadata", manifestName), "date", time.Unix(int64(day)*24*60*60, 0).UTC())
+			setup.fileRef("metadata", manifestName), "date", time.Unix(int64(day)*24*60*60, 0).UTC(), valueFirst)
 		fs.putEntry(metaDir, manifestName, &filer_pb.Entry{
 			Name: manifestName, Attributes: &filer_pb.FuseAttributes{Mtime: time.Now().Unix()}, Content: foreignBytes,
 		})

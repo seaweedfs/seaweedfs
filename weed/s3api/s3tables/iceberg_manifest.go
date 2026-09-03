@@ -10,37 +10,44 @@ import (
 
 const secondsPerDay = int64(24 * 60 * 60)
 
-// ReadManifest parses an Iceberg manifest, restoring partition values that a
-// foreign writer's Avro schema hides from iceberg-go.
+// ReadManifest parses an Iceberg manifest and converts its partition values
+// while the manifest's own schema still describes them.
 //
-// iceberg-go takes a partition field's logical type from the last branch of its
-// Avro union, so a writer that spells an optional day partition [date, null]
-// rather than [null, date] leaves the value as the time.Time the Avro decoder
-// produced. Rewriting such an entry then fails, either in the manifest writer's
-// partition summaries ("expected type iceberg.Date, got time.Time") or in the
-// encoder itself ("cannot use time.Time with Avro type int"), and a time
-// partition is worse: time.Duration converts to int64 nanoseconds and silently
-// records the wrong value.
+// iceberg-go converts what the Avro decoder returned for a logical type - a
+// time.Time for a date, a time.Duration for a time - to an Iceberg value
+// lazily, on the first Partition() call, using the logical types it read from
+// the manifest being parsed. ManifestWriter.addEntry rebinds those to the
+// logical types of the manifest it is about to write before it makes that
+// call, so an entry that is read and written again without anyone looking at
+// its partition converts against the wrong schema. A day partition is where
+// the two disagree: iceberg-go's day transform reports an int32 result type,
+// so the manifest it writes has no date logical type for that field, nothing
+// converts, and the time.Time reaches the encoder as "cannot use time.Time
+// with Avro type int".
+//
+// What survives that is a value iceberg-go never recognized on read either: it
+// takes a partition field's logical type from the last branch of its Avro
+// union, so a writer that spells an optional partition [<type>, null] rather
+// than [null, <type>] hides it, and a time partition is then worse than a
+// failed write - time.Duration converts to int64 nanoseconds and silently
+// records the wrong value. normalizePartitionValue puts those back.
 //
 // specs maps partition spec ID to spec the way the table metadata records them.
-// Entries from a manifest written under an unknown spec are returned as read.
 func ReadManifest(m iceberg.ManifestFile, manifest []byte, discardDeleted bool, specs map[int]iceberg.PartitionSpec, schema *iceberg.Schema) ([]iceberg.ManifestEntry, error) {
 	entries, err := iceberg.ReadManifest(m, bytes.NewReader(manifest), discardDeleted)
 	if err != nil {
 		return nil, err
 	}
-	spec, found := specs[int(m.PartitionSpecID())]
-	if !found || schema == nil {
-		return entries, nil
-	}
 
-	partitionType := spec.PartitionType(schema)
-	if partitionType == nil {
-		return entries, nil
+	var partitionFields []iceberg.NestedField
+	if spec, found := specs[int(m.PartitionSpecID())]; found && schema != nil {
+		if partitionType := spec.PartitionType(schema); partitionType != nil {
+			partitionFields = partitionType.FieldList
+		}
 	}
 	for _, entry := range entries {
 		partition := entry.DataFile().Partition()
-		for _, field := range partitionType.FieldList {
+		for _, field := range partitionFields {
 			value, ok := partition[field.ID]
 			if !ok {
 				continue
