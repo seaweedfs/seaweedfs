@@ -83,13 +83,19 @@ Table of Contents
 
 ## One command ##
 
-Download the latest binary from the [releases](https://github.com/seaweedfs/seaweedfs/releases/latest) page and unzip the single `weed` (or `weed.exe`) file, or run `go install github.com/seaweedfs/seaweedfs/weed@latest`. Then:
+Download the latest binary from the [releases](https://github.com/seaweedfs/seaweedfs/releases/latest) page and unzip the single `weed` (or `weed.exe`) file, or let the install script put it in `/usr/local/bin`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/seaweedfs/seaweedfs/master/install.sh | bash
+```
+
+Then start a ready-to-use S3 object store:
 
 ```bash
 AWS_ACCESS_KEY_ID=admin \
 AWS_SECRET_ACCESS_KEY=secret \
 S3_BUCKET=my-bucket \
-./weed mini -dir=/data
+./weed mini -dir=./data
 ```
 
 That's it. The S3 endpoint is at http://localhost:8333, `my-bucket` exists, and `admin`/`secret` are valid credentials:
@@ -247,7 +253,7 @@ SeaweedFS is a lakehouse in one system. [S3 Table Buckets][S3TableBucket] hold A
 * IAM at the bucket, namespace, and table level with standard bucket policies, see [S3 Tables Security][S3TablesSecurity].
 * A [Hadoop compatible file system][Hadoop] for Spark, Flink, and HBase.
 
-`S3_TABLE_BUCKET=warehouse weed mini -dir=/data` brings the whole stack up on a laptop.
+`S3_TABLE_BUCKET=warehouse ./weed mini -dir=./data` brings the whole stack up on a laptop.
 
 ## A fast cache for cloud storage ##
 
