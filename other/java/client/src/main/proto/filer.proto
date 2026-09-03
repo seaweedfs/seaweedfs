@@ -13,6 +13,9 @@ service SeaweedFiler {
     rpc LookupDirectoryEntry (LookupDirectoryEntryRequest) returns (LookupDirectoryEntryResponse) {
     }
 
+    rpc LookupDirectoryEntries (LookupDirectoryEntriesRequest) returns (LookupDirectoryEntriesResponse) {
+    }
+
     rpc ListEntries (ListEntriesRequest) returns (stream ListEntriesResponse) {
     }
 
@@ -581,6 +584,7 @@ message Location {
     string public_url = 2;
     uint32 grpc_port = 3;
     string data_center = 4;
+    bool data_in_remote = 5;
 }
 message LookupVolumeResponse {
     map<string, Locations> locations_map = 1;
@@ -911,4 +915,41 @@ message MountInfo {
     string rack = 2;
     int64 last_seen_ns = 3;
     string data_center = 4;
+}
+
+// LookupDirectoryEntriesRequest batches independent exact-path lookups into
+// one bounded RPC. Results preserve this order. Empty batches and batches over
+// 4096 requests are rejected. Declared last to keep generated message indices
+// stable.
+message LookupDirectoryEntriesRequest {
+    repeated LookupDirectoryEntryRequest requests = 1;
+    // Cache callers may treat an Entry whose Volume the master no longer
+    // reports as a miss. A lookup the filer could not complete still marks the
+    // Entry with an error. Ordinary filesystem callers keep the fail-closed
+    // error in both cases.
+    bool unavailable_volume_is_miss = 2;
+}
+
+message LookupDirectoryEntryResult {
+    // found reports metadata presence. An error makes this item unusable even
+    // when entry is present, for example when a chunk volume cannot be located.
+    bool found = 1;
+    Entry entry = 2;
+    string error = 3;
+    // Per-entry read fence. Every filer event at or below this position is
+    // reflected in found/entry/error for this item.
+    int64 log_ts_ns = 4;
+    int32 log_signature = 5;
+}
+
+message LookupDirectoryEntriesResponse {
+    repeated LookupDirectoryEntryResult results = 1;
+    // One deduplicated location set for every volume referenced by returned
+    // Entry.chunks. A missing/unavailable volume has an empty Locations value
+    // and marks each affected result with an error.
+    map<string, Locations> locations_map = 2;
+    // Short-lived, exact-FID read capabilities. Direct data-plane clients must
+    // present the matching token to a Volume instead of treating a shared
+    // service credential as authority to read arbitrary needles.
+    map<string, string> read_auth = 3;
 }

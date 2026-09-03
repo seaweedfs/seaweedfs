@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"path/filepath"
@@ -200,6 +201,7 @@ func (vs *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.
 
 	if err != nil {
 		glog.Errorf("volume delete %v: %v", req, err)
+		return resp, volumeDeleteStatusError(err)
 	} else {
 		// V(0) so destructive RPCs are always traceable.
 		glog.Infof("volume delete %v", req)
@@ -207,6 +209,19 @@ func (vs *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.
 
 	return resp, err
 
+}
+
+// volumeDeleteStatusError keeps the store's message so callers matching on
+// "not found" or "volume not empty" keep working, and adds the status code so
+// new callers do not have to.
+func volumeDeleteStatusError(err error) error {
+	if errors.Is(err, storage.ErrVolumeNotFound) {
+		return status.Error(codes.NotFound, err.Error())
+	}
+	if errors.Is(err, storage.ErrVolumeNotEmpty) {
+		return status.Error(codes.FailedPrecondition, err.Error())
+	}
+	return err
 }
 
 func (vs *VolumeServer) VolumeConfigure(ctx context.Context, req *volume_server_pb.VolumeConfigureRequest) (*volume_server_pb.VolumeConfigureResponse, error) {

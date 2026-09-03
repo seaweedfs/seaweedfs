@@ -1039,7 +1039,15 @@ impl VolumeServer for VolumeGrpcService {
         }
         store
             .delete_volume(vid, req.only_empty, req.keep_remote_data)
-            .map_err(|e| Status::internal(e.to_string()))?;
+            .map_err(|e| match e {
+                crate::storage::volume::VolumeError::NotFound => {
+                    Status::not_found(format!("not found volume id {}", vid))
+                }
+                crate::storage::volume::VolumeError::NotEmpty => {
+                    Status::failed_precondition("volume not empty")
+                }
+                other => Status::internal(other.to_string()),
+            })?;
         self.state.volume_state_notify.notify_one();
         Ok(Response::new(volume_server_pb::VolumeDeleteResponse {}))
     }
@@ -6422,5 +6430,39 @@ mod tests {
         assert!(resp.broken_shard_infos.iter().any(|s| s.shard_id == 0));
         assert!(resp.details.is_empty(), "{:?}", resp.details);
         assert_eq!(resp.total_files, 1);
+    }
+
+    #[tokio::test]
+    async fn volume_delete_reports_absent_volume_as_not_found() {
+        let (service, _tmp) = make_service_with_seed_masters(&[]);
+        let err = service
+            .volume_delete(Request::new(volume_server_pb::VolumeDeleteRequest {
+                volume_id: 4242,
+                only_empty: false,
+                keep_remote_data: false,
+            }))
+            .await
+            .expect_err("deleting an absent volume must fail");
+        assert_eq!(err.code(), tonic::Code::NotFound, "{err:?}");
+        assert!(err.message().contains("not found"), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn volume_delete_only_empty_refuses_a_volume_with_data() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        let err = service
+            .volume_delete(Request::new(volume_server_pb::VolumeDeleteRequest {
+                volume_id: 1,
+                only_empty: true,
+                keep_remote_data: false,
+            }))
+            .await
+            .expect_err("only_empty must refuse a volume holding a needle");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition, "{err:?}");
+        assert!(err.message().contains("volume not empty"), "{err:?}");
+        assert!(
+            service.state.store.read().unwrap().find_volume(VolumeId(1)).is_some(),
+            "refused delete must leave the volume mounted"
+        );
     }
 }

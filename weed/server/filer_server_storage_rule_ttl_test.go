@@ -27,6 +27,52 @@ func addTtlRule(t *testing.T, f *filer.Filer) {
 	}
 }
 
+// The native LMCache path allocates chunks and publishes the Filer Entry in
+// separate RPCs. Both RPCs must resolve the same storage rule, or metadata can
+// expire while its Volume remains permanent (or the reverse).
+func TestNativeCacheWriteUsesOneTtlForAllocationAndEntry(t *testing.T) {
+	store := newRenameTestStore()
+	store.entries[ttlRulePrefix] = newDirectoryEntry(ttlRulePrefix, 10)
+	server := &FilerServer{
+		filer:          newRenameTestFiler(t, store),
+		option:         &FilerOption{},
+		entryLockTable: util.NewLockTable[util.FullPath](),
+	}
+	addTtlRule(t, server.filer)
+
+	allocation, err := server.resolveAssignStorageOption(context.Background(), &filer_pb.AssignVolumeRequest{
+		Path:       ttlRulePrefix + "cache-key",
+		Collection: "lmcache",
+	})
+	if err != nil {
+		t.Fatalf("resolveAssignStorageOption: %v", err)
+	}
+	if allocation.Collection != "lmcache" {
+		t.Fatalf("allocation collection = %q, want lmcache", allocation.Collection)
+	}
+	if allocation.TtlSeconds != 180 {
+		t.Fatalf("allocation TTL = %d, want 180", allocation.TtlSeconds)
+	}
+
+	if _, err := server.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
+		Directory: "/buckets/ttl",
+		Entry: &filer_pb.Entry{
+			Name:       "cache-key",
+			Attributes: &filer_pb.FuseAttributes{FileMode: 0644},
+		},
+	}); err != nil {
+		t.Fatalf("CreateEntry: %v", err)
+	}
+
+	entry, err := store.FindEntry(context.Background(), ttlRulePrefix+"cache-key")
+	if err != nil {
+		t.Fatalf("FindEntry: %v", err)
+	}
+	if entry.TtlSec != allocation.TtlSeconds {
+		t.Fatalf("entry TTL = %d, allocation TTL = %d", entry.TtlSec, allocation.TtlSeconds)
+	}
+}
+
 // An object written through ObjectTransaction (the routed S3 write path) must
 // pick up the path's TTL rule, the same as one written through CreateEntry.
 func TestObjectTransactionPutAppliesRuleTtl(t *testing.T) {
