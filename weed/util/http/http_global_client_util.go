@@ -111,8 +111,10 @@ func GetAuthenticated(url, jwt string) ([]byte, bool, error) {
 
 	response, err := GetGlobalHttpClient().Do(request)
 	if err != nil {
+		recordUnreachable(request.URL.Host)
 		return nil, true, err
 	}
+	recordReachable(request.URL.Host)
 	defer CloseResponse(response)
 
 	var reader io.ReadCloser
@@ -392,8 +394,12 @@ func ReadUrlAsStream(ctx context.Context, fileUrl, jwt string, cipherKey []byte,
 
 	r, err := GetGlobalHttpClient().Do(req)
 	if err != nil {
+		if ctx.Err() == nil {
+			recordUnreachable(req.URL.Host)
+		}
 		return true, err
 	}
+	recordReachable(req.URL.Host)
 	defer CloseResponse(r)
 	if r.StatusCode >= 400 {
 		if r.StatusCode == http.StatusNotFound {
@@ -613,7 +619,7 @@ func RetriedFetchChunkData(ctx context.Context, buffer []byte, urlStrings []stri
 		default:
 		}
 
-		for _, urlString := range urlStrings {
+		for _, urlString := range ReachableFirst(urlStrings) {
 			// Check for context cancellation before each volume server request
 			select {
 			case <-ctx.Done():
@@ -686,7 +692,7 @@ func retriedFetchChunkDataDirect(ctx context.Context, buffer []byte, urlStrings 
 		default:
 		}
 
-		for _, urlString := range urlStrings {
+		for _, urlString := range ReachableFirst(urlStrings) {
 			select {
 			case <-ctx.Done():
 				return 0, ctx.Err()
@@ -737,8 +743,12 @@ func readUrlDirectToBuffer(ctx context.Context, fileUrl, jwt string, buffer []by
 
 	r, err := GetGlobalHttpClient().Do(req)
 	if err != nil {
+		if ctx.Err() == nil {
+			recordUnreachable(req.URL.Host)
+		}
 		return 0, true, err
 	}
+	recordReachable(req.URL.Host)
 	defer CloseResponse(r)
 
 	if r.StatusCode >= 400 {

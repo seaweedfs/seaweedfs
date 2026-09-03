@@ -149,7 +149,7 @@ func retriedStreamFetchChunkData(ctx context.Context, writer io.Writer, urlStrin
 		}
 
 		retriedCnt := 0
-		for _, urlString := range urlStrings {
+		for _, urlString := range util_http.ReachableFirst(urlStrings) {
 			// Check for context cancellation before each volume server request
 			select {
 			case <-ctx.Done():
