@@ -35,10 +35,10 @@ pub const DECLARED_FIELDS_KEY: &str = "seaweedfs.sort.fields";
 /// changed order is noticed.
 pub const SORTED_FIELDS_KEY: &str = "seaweedfs.sort.sorted_fields";
 pub const SORTED_ROWS_KEY: &str = "seaweedfs.sort.sorted_rows";
-/// How many data files the sort wrote, and a digest of their names. Together
-/// they identify the data the sort produced — see [`verdict`] for why a version
-/// number cannot.
-pub const SORTED_FILES_KEY: &str = "seaweedfs.sort.sorted_files";
+/// How many fragments the sort wrote, and a digest of their data file names.
+/// Together they identify the data the sort produced — see [`verdict`] for why
+/// a version number cannot.
+pub const SORTED_FRAGMENTS_KEY: &str = "seaweedfs.sort.sorted_fragments";
 pub const SORTED_DIGEST_KEY: &str = "seaweedfs.sort.sorted_digest";
 
 /// One field of a sort order.
@@ -160,6 +160,25 @@ pub fn resolve(declared: Option<&str>, configured: &str) -> Result<Option<SortSp
     SortSpec::parse(configured).context("read the configured sort order")
 }
 
+/// One fragment as detection sees it.
+///
+/// `rows` is the live row count the manifest records — physical rows less the
+/// deletions — and is None when the manifest does not say, which older
+/// fragments do not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FragmentSummary {
+    pub files: Vec<String>,
+    pub rows: Option<u64>,
+}
+
+/// Every data file of these fragments, in order.
+pub fn data_files(fragments: &[FragmentSummary]) -> Vec<&str> {
+    fragments
+        .iter()
+        .flat_map(|fragment| fragment.files.iter().map(String::as_str))
+        .collect()
+}
+
 /// A digest of data file names, in the order the fragments hold them.
 ///
 /// FNV-1a rather than the standard library's hasher, whose output is explicitly
@@ -181,10 +200,10 @@ pub fn digest<S: AsRef<str>>(files: &[S]) -> String {
 pub struct SortState {
     pub fields: Option<String>,
     pub rows: Option<u64>,
-    /// The data files the sort wrote: how many, and a digest of their names.
-    /// Data file names are chosen before the commit, which is what makes them
-    /// usable in a marker the same commit carries.
-    pub files: Option<usize>,
+    /// The fragments the sort wrote: how many, and a digest of their data file
+    /// names. Data file names are chosen before the commit, which is what makes
+    /// them usable in a marker the same commit carries.
+    pub fragments: Option<usize>,
     pub digest: Option<String>,
 }
 
@@ -197,23 +216,30 @@ impl SortState {
         Self {
             fields: config.get(SORTED_FIELDS_KEY).cloned(),
             rows: config.get(SORTED_ROWS_KEY).and_then(|v| v.parse().ok()),
-            files: config.get(SORTED_FILES_KEY).and_then(|v| v.parse().ok()),
+            fragments: config
+                .get(SORTED_FRAGMENTS_KEY)
+                .and_then(|v| v.parse().ok()),
             digest: config.get(SORTED_DIGEST_KEY).cloned(),
         }
     }
 
     /// The marker to write for a sort that just finished.
-    pub fn record<I, S>(spec: &SortSpec, files: I, rows: u64) -> HashMap<String, String>
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<str>,
-    {
-        let files: Vec<String> = files.into_iter().map(|f| f.as_ref().to_string()).collect();
+    pub fn record(
+        spec: &SortSpec,
+        fragments: &[FragmentSummary],
+        rows: u64,
+    ) -> HashMap<String, String> {
         HashMap::from([
             (SORTED_FIELDS_KEY.to_string(), spec.to_string()),
             (SORTED_ROWS_KEY.to_string(), rows.to_string()),
-            (SORTED_FILES_KEY.to_string(), files.len().to_string()),
-            (SORTED_DIGEST_KEY.to_string(), digest(&files)),
+            (
+                SORTED_FRAGMENTS_KEY.to_string(),
+                fragments.len().to_string(),
+            ),
+            (
+                SORTED_DIGEST_KEY.to_string(),
+                digest(&data_files(fragments)),
+            ),
         ])
     }
 }
@@ -275,32 +301,46 @@ impl SortVerdict {
 pub fn verdict(
     spec: &SortSpec,
     state: &SortState,
-    rows: u64,
-    files: &[String],
+    fragments: &[FragmentSummary],
     min_unsorted_rows: u64,
 ) -> SortVerdict {
-    let (Some(recorded_digest), Some(recorded_files)) = (state.digest.as_deref(), state.files)
+    let (Some(recorded_digest), Some(recorded_fragments)) =
+        (state.digest.as_deref(), state.fragments)
     else {
         return SortVerdict::NeverSorted;
     };
     if state.fields.as_deref() != Some(spec.to_string().as_str()) {
         return SortVerdict::OrderChanged;
     }
-    if digest(files) == recorded_digest {
+    if digest(&data_files(fragments)) == recorded_digest {
         return SortVerdict::UpToDate;
     }
 
     // Not the same files. Only a prefix match means the sorted data survived
     // and the rest was appended after it.
-    if recorded_files > files.len() || digest(&files[..recorded_files]) != recorded_digest {
+    if recorded_fragments > fragments.len()
+        || digest(&data_files(&fragments[..recorded_fragments])) != recorded_digest
+    {
         return SortVerdict::Rewritten;
     }
-    // A marker that lost its row count cannot say how much was appended, and
-    // guessing zero would report a table with new fragments as sorted.
-    let Some(sorted_rows) = state.rows else {
-        return SortVerdict::Rewritten;
-    };
-    let appended = rows.saturating_sub(sorted_rows);
+
+    // How many rows are in the fragments appended after the sorted ones.
+    //
+    // Not the table's net growth against the recorded row count: rows deleted
+    // from the sorted fragments hide appended rows one for one, and enough of
+    // them hide every appended row, leaving a table that reads as sorted with
+    // an unsorted tail. Counting the appended fragments themselves is the same
+    // arithmetic the threshold was always meant to do.
+    let mut appended = 0u64;
+    for fragment in &fragments[recorded_fragments..] {
+        // A fragment whose length the manifest does not record cannot be
+        // counted, and a table that cannot be judged is one to sort rather than
+        // one to leave alone forever.
+        let Some(rows) = fragment.rows else {
+            return SortVerdict::Rewritten;
+        };
+        appended += rows;
+    }
     if appended >= min_unsorted_rows.max(1) {
         return SortVerdict::RowsAppended(appended);
     }
@@ -416,97 +456,138 @@ mod tests {
         assert!(resolve(Some("a sideways"), "b desc").is_err());
     }
 
-    fn files(names: &[&str]) -> Vec<String> {
-        names.iter().map(|n| n.to_string()).collect()
+    /// One fragment per name, one file each, with a known row count.
+    fn frags(names: &[(&str, u64)]) -> Vec<FragmentSummary> {
+        names
+            .iter()
+            .map(|(name, rows)| FragmentSummary {
+                files: vec![name.to_string()],
+                rows: Some(*rows),
+            })
+            .collect()
     }
 
     #[test]
     fn verdicts_follow_the_marker() {
         let spec = SortSpec::parse("a asc").unwrap().unwrap();
-        let sorted = files(&["a.lance", "b.lance"]);
+        let sorted = frags(&[("a.lance", 500), ("b.lance", 500)]);
 
         let fresh = SortState::default();
         assert_eq!(
-            verdict(&spec, &fresh, 10, &sorted, 100),
+            verdict(&spec, &fresh, &sorted, 100),
             SortVerdict::NeverSorted
         );
 
         let state = SortState {
             fields: Some(spec.to_string()),
             rows: Some(1_000),
-            files: Some(sorted.len()),
-            digest: Some(digest(&sorted)),
+            fragments: Some(sorted.len()),
+            digest: Some(digest(&data_files(&sorted))),
         };
 
         // The same files, whatever version the commit ended up as.
-        assert_eq!(
-            verdict(&spec, &state, 1_000, &sorted, 100),
-            SortVerdict::UpToDate
-        );
+        assert_eq!(verdict(&spec, &state, &sorted, 100), SortVerdict::UpToDate);
 
-        // Appended: the sorted files are still the first ones.
-        let appended = files(&["a.lance", "b.lance", "c.lance"]);
+        // Appended: the sorted fragments are still the first ones.
+        let appended_50 = frags(&[("a.lance", 500), ("b.lance", 500), ("c.lance", 50)]);
         assert_eq!(
-            verdict(&spec, &state, 1_050, &appended, 100),
+            verdict(&spec, &state, &appended_50, 100),
             SortVerdict::UpToDate
         );
+        let appended_100 = frags(&[("a.lance", 500), ("b.lance", 500), ("c.lance", 100)]);
         assert_eq!(
-            verdict(&spec, &state, 1_100, &appended, 100),
+            verdict(&spec, &state, &appended_100, 100),
             SortVerdict::RowsAppended(100)
         );
 
         // Replaced: different files, and the row count is no defence — this is
         // the case a row-count threshold lets through, whatever the delta.
-        let replaced = files(&["x.lance", "y.lance", "z.lance"]);
+        let replaced = frags(&[("x.lance", 500), ("y.lance", 501)]);
         assert_eq!(
-            verdict(&spec, &state, 1_001, &replaced, 100),
-            SortVerdict::Rewritten
-        );
-        assert_eq!(
-            verdict(&spec, &state, 1_000, &replaced, 100),
+            verdict(&spec, &state, &replaced, 100),
             SortVerdict::Rewritten
         );
         // Compacted into fewer files is a replacement too.
         assert_eq!(
-            verdict(&spec, &state, 1_000, &files(&["merged.lance"]), 100),
+            verdict(&spec, &state, &frags(&[("merged.lance", 1_000)]), 100),
             SortVerdict::Rewritten
         );
 
         // Deleting rows rewrites no data file, so the table still reads as
         // sorted — which it is.
+        let after_deletes = frags(&[("a.lance", 500), ("b.lance", 400)]);
         assert_eq!(
-            verdict(&spec, &state, 900, &sorted, 100),
+            verdict(&spec, &state, &after_deletes, 100),
             SortVerdict::UpToDate
         );
 
         let other = SortSpec::parse("b desc").unwrap().unwrap();
         assert_eq!(
-            verdict(&other, &state, 1_000, &sorted, 100),
+            verdict(&other, &state, &sorted, 100),
             SortVerdict::OrderChanged
         );
     }
 
-    // Guessing zero would call a table with fragments appended after the sort
-    // "sorted", and it would stay that way.
+    /// Deletions must not hide appended rows. Net growth against the recorded
+    /// row count would say this table shrank, and it would stay unsorted with
+    /// an unsorted tail for as long as the deletes kept pace with the appends.
     #[test]
-    fn a_marker_without_a_row_count_is_stale() {
+    fn deletions_do_not_mask_appended_rows() {
         let spec = SortSpec::parse("a asc").unwrap().unwrap();
-        let sorted = files(&["a.lance"]);
+        let sorted = frags(&[("a.lance", 500), ("b.lance", 500)]);
         let state = SortState {
             fields: Some(spec.to_string()),
-            rows: None,
-            files: Some(1),
-            digest: Some(digest(&sorted)),
+            rows: Some(1_000),
+            fragments: Some(sorted.len()),
+            digest: Some(digest(&data_files(&sorted))),
         };
+
+        // 800 rows deleted from the sorted fragments, 300 appended after them:
+        // the table is smaller than it was, and 300 rows of it are unsorted.
+        let mixed = frags(&[("a.lance", 100), ("b.lance", 100), ("c.lance", 300)]);
         assert_eq!(
-            verdict(&spec, &state, 5, &files(&["a.lance", "b.lance"]), 100),
+            verdict(&spec, &state, &mixed, 100),
+            SortVerdict::RowsAppended(300)
+        );
+
+        // The threshold still damps a small append beside heavy deletion.
+        let small = frags(&[("a.lance", 100), ("b.lance", 100), ("c.lance", 20)]);
+        assert_eq!(verdict(&spec, &state, &small, 100), SortVerdict::UpToDate);
+
+        // And net growth is still detected where there are no deletions.
+        let grown = frags(&[("a.lance", 500), ("b.lance", 500), ("c.lance", 700)]);
+        assert_eq!(
+            verdict(&spec, &state, &grown, 100),
+            SortVerdict::RowsAppended(700)
+        );
+    }
+
+    // An appended fragment whose length the manifest does not record cannot be
+    // measured against the threshold, and a table that cannot be judged is one
+    // to sort rather than one to leave alone forever.
+    #[test]
+    fn an_uncountable_appended_fragment_is_stale() {
+        let spec = SortSpec::parse("a asc").unwrap().unwrap();
+        let sorted = frags(&[("a.lance", 500)]);
+        let state = SortState {
+            fields: Some(spec.to_string()),
+            rows: Some(500),
+            fragments: Some(1),
+            digest: Some(digest(&data_files(&sorted))),
+        };
+
+        let mut appended = sorted.clone();
+        appended.push(FragmentSummary {
+            files: vec!["b.lance".to_string()],
+            rows: None,
+        });
+        assert_eq!(
+            verdict(&spec, &state, &appended, 100),
             SortVerdict::Rewritten
         );
-        // The untouched table is still up to date: the files answer that.
-        assert_eq!(
-            verdict(&spec, &state, 5, &sorted, 100),
-            SortVerdict::UpToDate
-        );
+        // The untouched table is still up to date: the files answer that
+        // without needing to count anything.
+        assert_eq!(verdict(&spec, &state, &sorted, 100), SortVerdict::UpToDate);
     }
 
     // Distinct columns whose names differ only in case are two columns in an
@@ -521,14 +602,11 @@ mod tests {
     #[test]
     fn the_marker_round_trips_through_a_config_map() {
         let spec = SortSpec::parse("a asc").unwrap().unwrap();
-        let written = files(&["one.lance", "two.lance"]);
+        let written = frags(&[("one.lance", 20), ("two.lance", 22)]);
         let recorded = SortState::record(&spec, &written, 42);
         let state = SortState::from_config(&recorded);
         assert_eq!(state.rows, Some(42));
-        assert_eq!(state.files, Some(2));
-        assert_eq!(
-            verdict(&spec, &state, 42, &written, 1),
-            SortVerdict::UpToDate
-        );
+        assert_eq!(state.fragments, Some(2));
+        assert_eq!(verdict(&spec, &state, &written, 1), SortVerdict::UpToDate);
     }
 }

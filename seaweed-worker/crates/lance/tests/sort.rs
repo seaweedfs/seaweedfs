@@ -377,3 +377,128 @@ async fn proposes_a_replacement_that_barely_changes_the_row_count() {
         "a replaced table must be proposed even when the row count barely moved"
     );
 }
+
+/// Deletions must not hide appended rows. This is the arithmetic against a real
+/// manifest rather than a hand-built one: the sorted fragments keep their files
+/// and lose most of their rows, a smaller batch is appended after them, and the
+/// table has to be proposed *because rows were appended* — not because it looks
+/// replaced, and not left alone because it now holds fewer rows than when it
+/// was sorted.
+#[tokio::test]
+async fn deletions_do_not_hide_appended_rows() {
+    let _gateway = GATEWAY.lock().await;
+    let Some(url) = namespace_url() else {
+        eprintln!("WEED_LANCE_NAMESPACE is unset, skipping");
+        return;
+    };
+    let encoded = seed_unsorted_table(&url, "deleteme", 4, 250, Some("id asc"))
+        .await
+        .expect("seed an unsorted table");
+
+    let handler = SortHandler::new(url.clone()).with_fallback(fallback());
+    let detection = RunDetectionRequest {
+        request_id: "detect-delete".to_string(),
+        job_type: JOB_TYPE.to_string(),
+        worker_config_values: config(&[("min_unsorted_rows", int(100))]),
+        ..Default::default()
+    };
+
+    let recorder = Recorder::default();
+    handler
+        .detect(&detection, &recorder)
+        .await
+        .expect("detection");
+    let proposal = recorder
+        .proposals
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|p| p.summary.contains(encoded.as_str()))
+        .cloned()
+        .expect("a never-sorted table was not proposed");
+    handler
+        .execute(
+            &ExecuteJobRequest {
+                request_id: "execute-delete".to_string(),
+                job: Some(JobSpec {
+                    job_id: "job-delete".to_string(),
+                    job_type: JOB_TYPE.to_string(),
+                    parameters: proposal.parameters.clone(),
+                    ..Default::default()
+                }),
+                worker_config_values: config(&[("max_rows_per_file", int(1024))]),
+                ..Default::default()
+            },
+            &recorder,
+        )
+        .await
+        .expect("sorting failed");
+
+    // Delete 900 of the 1000 sorted rows, then append 200 unsorted ones. The
+    // table is smaller than when it was sorted, so net growth reads as zero.
+    let client = NamespaceClient::new(url.clone());
+    let id = vec!["vec".to_string(), "ml".to_string(), "deleteme".to_string()];
+    let mut table = weed_lance_worker::dataset::open(&client, &id, &fallback())
+        .await
+        .expect("reopen the sorted table");
+    table
+        .dataset
+        .delete("id < 900")
+        .await
+        .expect("delete most of the sorted rows");
+    append_ids(&url, "deleteme", 5_000, 200)
+        .await
+        .expect("append rows after the sorted ones");
+
+    let after = Recorder::default();
+    handler.detect(&detection, &after).await.expect("detection");
+    let proposal = after
+        .proposals
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|p| p.summary.contains(encoded.as_str()))
+        .cloned()
+        .expect("a table with 200 unsorted rows appended was not proposed");
+    assert!(
+        proposal.detail.contains("200 rows appended"),
+        "expected the appended rows to be counted, got {:?}",
+        proposal.detail
+    );
+}
+
+/// Appends one batch of ascending ids to an existing table.
+async fn append_ids(url: &str, name: &str, first_id: i64, rows: i64) -> Result<()> {
+    use arrow_array::{Int64Array, RecordBatch, RecordBatchIterator};
+    use arrow_schema::{DataType, Field, Schema};
+    use lance::dataset::{Dataset, WriteMode, WriteParams};
+    use lance::io::{ObjectStoreParams, StorageOptionsAccessor};
+    use std::sync::Arc;
+
+    let client = NamespaceClient::new(url.to_string());
+    let id = vec!["vec".to_string(), "ml".to_string(), name.to_string()];
+    let description = client.describe_table(&id).await?;
+    let mut options = description.storage_options.clone();
+    options.extend(fallback());
+
+    let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
+    let ids: Vec<i64> = (0..rows).map(|row| first_id + row).collect();
+    let batch = RecordBatch::try_new(schema.clone(), vec![Arc::new(Int64Array::from(ids))])?;
+    let params = WriteParams {
+        mode: WriteMode::Append,
+        store_params: Some(ObjectStoreParams {
+            storage_options_accessor: Some(Arc::new(StorageOptionsAccessor::with_static_options(
+                options,
+            ))),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    Dataset::write(
+        RecordBatchIterator::new(vec![Ok(batch)], schema.clone()),
+        description.location.as_str(),
+        Some(params),
+    )
+    .await?;
+    Ok(())
+}

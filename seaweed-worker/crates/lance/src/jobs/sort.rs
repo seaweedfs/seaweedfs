@@ -17,8 +17,9 @@ use seaweed_worker_core::pb::{
 };
 use seaweed_worker_core::{DetectionSender, ExecutionSender, JobHandler};
 use seaweed_worker_sort::{
-    config_fields, resolve, verdict, SortSpec, SortState, CONFIG_MAX_ROWS_PER_FILE,
-    CONFIG_MEMORY_BUDGET_MB, CONFIG_MIN_UNSORTED_ROWS, CONFIG_SORT_FIELDS, DECLARED_FIELDS_KEY,
+    config_fields, resolve, verdict, FragmentSummary, SortSpec, SortState,
+    CONFIG_MAX_ROWS_PER_FILE, CONFIG_MEMORY_BUDGET_MB, CONFIG_MIN_UNSORTED_ROWS,
+    CONFIG_SORT_FIELDS, DECLARED_FIELDS_KEY,
 };
 use tracing::warn;
 
@@ -81,24 +82,32 @@ impl SortHandler {
     }
 }
 
-/// The data files a dataset holds, in fragment order.
+/// The fragments a dataset holds, in fragment order, as the sort crate reads
+/// them: the data files each one names, and the live rows it holds.
 ///
 /// Appends only add fragments after the existing ones and lance hands out
 /// fragment ids monotonically even across an overwrite, so ordering by id makes
-/// "the files the sort wrote are still the first ones" a prefix test.
-fn data_files(dataset: &lance::Dataset) -> Vec<String> {
+/// "the fragments the sort wrote are still the first ones" a prefix test.
+fn fragment_summaries(dataset: &lance::Dataset) -> Vec<FragmentSummary> {
     let mut fragments = dataset.get_fragments();
     fragments.sort_by_key(|fragment| fragment.id());
     fragments
         .iter()
-        .flat_map(|fragment| {
-            fragment
-                .metadata()
-                .files
-                .iter()
-                .map(|file| file.path.clone())
-        })
+        .map(|fragment| summarize(fragment.metadata()))
         .collect()
+}
+
+/// The manifest's own account of one fragment. `num_rows` is physical rows less
+/// deletions, and None where the manifest does not record them.
+fn summarize(fragment: &lance_table::format::Fragment) -> FragmentSummary {
+    FragmentSummary {
+        files: fragment
+            .files
+            .iter()
+            .map(|file| file.path.clone())
+            .collect(),
+        rows: fragment.num_rows().map(|rows| rows as u64),
+    }
 }
 
 /// The scan ordering for a spec. Lance validates the column names against the
@@ -242,8 +251,7 @@ impl JobHandler for SortHandler {
             let decision = verdict(
                 &spec,
                 &state,
-                stats.rows as u64,
-                &data_files(&table.dataset),
+                &fragment_summaries(&table.dataset),
                 min_unsorted_rows,
             );
 
@@ -409,10 +417,7 @@ impl JobHandler for SortHandler {
                 // The files these fragments name were written a moment ago and
                 // keep their names whatever version this commit becomes, which
                 // is what lets the marker travel inside the commit it describes.
-                let written: Vec<String> = fragments
-                    .iter()
-                    .flat_map(|fragment| fragment.files.iter().map(|file| file.path.clone()))
-                    .collect();
+                let written: Vec<FragmentSummary> = fragments.iter().map(summarize).collect();
                 *config_upsert_values =
                     Some(SortState::record(&spec, &written, before.rows as u64));
             }

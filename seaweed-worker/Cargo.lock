@@ -6553,6 +6553,7 @@ dependencies = [
  "lance-datafusion",
  "lance-index",
  "lance-linalg",
+ "lance-table",
  "prometheus",
  "reqwest 0.12.28",
  "seaweed-worker-core",
