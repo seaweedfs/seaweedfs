@@ -489,9 +489,10 @@ jobs:
           sudo mv crane /usr/local/bin/
           crane version
       - name: Create and push manifest
+        env:
+          BASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.image_tag || 'latest' }}
         run: |
           SUFFIX="${{ steps.config.outputs.tag_suffix }}"
-          BASE_TAG="${{ github.event_name == 'workflow_dispatch' && github.event.inputs.image_tag || 'latest' }}"
           
           # Create manifest on GHCR first (no rate limits)
           echo "Creating GHCR manifest (no rate limits)..."
