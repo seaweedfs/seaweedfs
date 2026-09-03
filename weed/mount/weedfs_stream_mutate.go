@@ -102,6 +102,9 @@ func createEntryFromResponse(resp *filer_pb.StreamMutateEntryResponse, req *file
 		return nil, fmt.Errorf("unexpected response type %T", resp.Response)
 	}
 	cr := r.CreateResponse
+	if cr == nil {
+		return nil, &streamMutateError{msg: "create response missing", errno: syscall.EIO}
+	}
 	if cr.ErrorCode != filer_pb.FilerError_OK {
 		if sentinel := filer_pb.FilerErrorToSentinel(cr.ErrorCode); sentinel != nil {
 			return nil, fmt.Errorf("CreateEntry %s/%s: %w", req.Directory, req.Entry.Name, sentinel)
@@ -110,6 +113,11 @@ func createEntryFromResponse(resp *filer_pb.StreamMutateEntryResponse, req *file
 	}
 	if cr.Error != "" {
 		return nil, &streamMutateError{msg: cr.Error, errno: syscall.EIO}
+	}
+	if resp.Error != "" {
+		// The nested response explained nothing, so the top-level failure is all
+		// there is: reporting success here would lose the create's error entirely.
+		return nil, &streamMutateError{msg: resp.Error, errno: syscall.Errno(resp.Errno)}
 	}
 	return cr, nil
 }

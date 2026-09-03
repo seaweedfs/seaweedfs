@@ -96,3 +96,41 @@ func TestStreamMutateCreateEntryKeepsGenericFailure(t *testing.T) {
 		t.Fatalf("err = %v, want a streamMutateError with EIO", err)
 	}
 }
+
+// A create wrapper whose nested response is missing must be reported, not
+// dereferenced. Nothing our filer sends looks like this, but the mount is
+// reading off the wire and a panic here takes the whole mount down.
+func TestStreamMutateCreateEntryRejectsMissingNestedResponse(t *testing.T) {
+	_, err := createEntryFromResponse(&filer_pb.StreamMutateEntryResponse{
+		Response: &filer_pb.StreamMutateEntryResponse_CreateResponse{},
+	}, &filer_pb.CreateEntryRequest{
+		Directory: "/dir",
+		Entry:     &filer_pb.Entry{Name: "name"},
+	})
+	var sme *streamMutateError
+	if !errors.As(err, &sme) || sme.Errno() != syscall.EIO {
+		t.Fatalf("err = %v, want a streamMutateError with EIO", err)
+	}
+}
+
+// A top-level failure the nested response does not explain must not read as
+// success just because the nested fields happen to be empty.
+func TestStreamMutateCreateEntryKeepsUnexplainedTopLevelError(t *testing.T) {
+	_, err := createEntryFromResponse(&filer_pb.StreamMutateEntryResponse{
+		Error: "filer went away mid-create",
+		Errno: int32(syscall.EAGAIN),
+		Response: &filer_pb.StreamMutateEntryResponse_CreateResponse{
+			CreateResponse: &filer_pb.CreateEntryResponse{},
+		},
+	}, &filer_pb.CreateEntryRequest{
+		Directory: "/dir",
+		Entry:     &filer_pb.Entry{Name: "name"},
+	})
+	var sme *streamMutateError
+	if !errors.As(err, &sme) {
+		t.Fatalf("err = %v, want a streamMutateError", err)
+	}
+	if sme.Errno() != syscall.EAGAIN {
+		t.Fatalf("errno = %v, want the top-level EAGAIN", sme.Errno())
+	}
+}
