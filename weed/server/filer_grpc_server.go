@@ -200,6 +200,36 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 
 	resp = &filer_pb.CreateEntryResponse{}
 
+	// An exclusive or conditional create is a read-then-write that the per-path
+	// lock below only makes atomic on this filer, while the store's insert is an
+	// upsert. Route it to the entry's ring owner so one filer's lock arbitrates
+	// every creator cluster-wide; is_moved bounds this to one hop. Plain creates
+	// are upserts either way and stay local.
+	if !req.IsMoved && (req.OExcl || conditionIsSet(req.Condition)) {
+		fullpath := util.NewFullPath(req.Directory, req.Entry.Name)
+		// Held apart from the named resp, which the local path below writes into:
+		// a failed forward must not leave it nil.
+		var ownerResp *filer_pb.CreateEntryResponse
+		handled, forwardErr := fs.forwardToWriteOwner(ctx, entryRouteKey(fullpath), func(owner pb.ServerAddress) error {
+			glog.V(2).InfofCtx(ctx, "CreateEntry %s: forwarding to owner %s", fullpath, owner)
+			req.IsMoved = true
+			return pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+				forwarded, e := client.CreateEntry(ctx, req)
+				if e != nil {
+					return e
+				}
+				ownerResp = forwarded
+				return nil
+			})
+		})
+		if handled {
+			if forwardErr != nil {
+				return &filer_pb.CreateEntryResponse{}, forwardErr
+			}
+			return ownerResp, nil
+		}
+	}
+
 	chunks, garbage, err2 := fs.cleanupChunks(ctx, util.Join(req.Directory, req.Entry.Name), nil, req.Entry)
 	if err2 != nil {
 		return &filer_pb.CreateEntryResponse{}, fmt.Errorf("CreateEntry cleanupChunks %s %s: %v", req.Directory, req.Entry.Name, err2)
