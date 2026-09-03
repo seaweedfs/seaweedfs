@@ -118,3 +118,55 @@ func TestRebuildIdx_StopsAtZeroPaddedDatTail(t *testing.T) {
 		t.Errorf("rebuilt idx has %d bytes, want the %d the server wrote", len(rebuilt), len(seeded))
 	}
 }
+
+// A .dat whose last append was torn mid-body must not gain an index row that
+// points past the end of the file.
+func TestRebuildIdx_SkipsTruncatedDatTail(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("create volume: %v", err)
+	}
+	if _, _, _, err := v.writeNeedle2(newRandomNeedle(1), true, false, false); err != nil {
+		t.Fatalf("seed write: %v", err)
+	}
+	base := VolumeFileName(dir, "", 1)
+	kept, err := os.ReadFile(base + ".idx")
+	if err != nil {
+		t.Fatalf("read the seeded idx: %v", err)
+	}
+	if _, _, _, err := v.writeNeedle2(newRandomNeedle(2), true, false, false); err != nil {
+		t.Fatalf("seed torn write: %v", err)
+	}
+	v.Close()
+
+	// Chop the second needle's body, leaving its header intact.
+	datSize, err := os.Stat(base + ".dat")
+	if err != nil {
+		t.Fatalf("stat dat: %v", err)
+	}
+	if err := os.Truncate(base+".dat", datSize.Size()-8); err != nil {
+		t.Fatalf("tear dat: %v", err)
+	}
+	if err := os.Remove(base + ".idx"); err != nil {
+		t.Fatalf("drop idx: %v", err)
+	}
+
+	v2, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	defer v2.Close()
+
+	rebuilt, err := os.ReadFile(base + ".idx")
+	if err != nil {
+		t.Fatalf("read the rebuilt idx: %v", err)
+	}
+	if !bytes.Equal(kept, rebuilt) {
+		t.Errorf("rebuilt idx has %d bytes, want the %d covering only the intact needle", len(rebuilt), len(kept))
+	}
+	if maxEnd := v2.nm.MaxNeedleEnd(); maxEnd > datSize.Size()-8 {
+		t.Errorf("rebuilt idx reaches %d, past the %d-byte .dat", maxEnd, datSize.Size()-8)
+	}
+}

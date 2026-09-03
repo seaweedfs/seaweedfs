@@ -16,7 +16,9 @@ import (
 // VolumeFileScanner4RebuildIdx writes one .idx row per .dat record, in .dat
 // append order, which is the shape the volume server's own writes leave behind.
 type VolumeFileScanner4RebuildIdx struct {
-	writer *bufio.Writer
+	writer  *bufio.Writer
+	datSize int64
+	version needle.Version
 }
 
 func (scanner *VolumeFileScanner4RebuildIdx) VisitSuperBlock(superBlock super_block.SuperBlock) error {
@@ -28,9 +30,13 @@ func (scanner *VolumeFileScanner4RebuildIdx) ReadNeedleBody() bool {
 }
 
 func (scanner *VolumeFileScanner4RebuildIdx) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
-	// An all-zero header is unwritten space, not a record: stop rather than
-	// index a truncated .dat's tail as millions of needle 0 rows.
+	// An all-zero header is unwritten space and a record reaching past the end
+	// of .dat is a torn append: either way nothing beyond it is indexable, and
+	// a row pointing past EOF would fail every read of that needle.
 	if n.Size == 0 && n.Id == 0 {
+		return io.EOF
+	}
+	if needleDiskEnd(types.ToOffset(offset), n.Size, scanner.version) > scanner.datSize {
 		return io.EOF
 	}
 	size := n.Size
@@ -52,6 +58,11 @@ func (v *Volume) rebuildIdxFile() error {
 		return fmt.Errorf("volume %d has no data backend", v.Id)
 	}
 
+	datSize, _, err := v.DataBackend.GetStat()
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", v.FileName(".dat"), err)
+	}
+
 	idxFileName := v.FileName(".idx")
 	tmpFileName := idxFileName + ".tmp"
 	tmpFile, err := os.OpenFile(tmpFileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
@@ -60,8 +71,8 @@ func (v *Volume) rebuildIdxFile() error {
 	}
 	defer os.Remove(tmpFileName)
 
-	scanner := &VolumeFileScanner4RebuildIdx{writer: bufio.NewWriter(tmpFile)}
-	err = ScanVolumeFileFrom(v.Version(), v.DataBackend, int64(v.SuperBlock.BlockSize()), scanner)
+	scanner := &VolumeFileScanner4RebuildIdx{writer: bufio.NewWriter(tmpFile), datSize: datSize, version: v.Version()}
+	err = ScanVolumeFileFrom(scanner.version, v.DataBackend, int64(v.SuperBlock.BlockSize()), scanner)
 	if err == nil {
 		err = scanner.writer.Flush()
 	}

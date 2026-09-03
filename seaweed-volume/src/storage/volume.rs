@@ -4019,7 +4019,7 @@ impl Volume {
 /// Byte offset just past the needle's on-disk record. Deletion tombstones
 /// carry TombstoneFileSize (-1) in the .idx but are written with DataSize=0,
 /// so their on-disk record is sized as 0. Mirrors Go's needleDiskEnd.
-fn needle_disk_end(offset: Offset, size: Size, version: Version) -> i64 {
+pub(crate) fn needle_disk_end(offset: Offset, size: Size, version: Version) -> i64 {
     let on_disk_size = if size.is_deleted() { Size(0) } else { size };
     offset.to_actual_offset() + get_actual_size(on_disk_size, version)
 }

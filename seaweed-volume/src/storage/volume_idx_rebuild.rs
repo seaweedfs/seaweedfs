@@ -8,12 +8,17 @@ use crate::storage::idx;
 use crate::storage::needle::Needle;
 use crate::storage::super_block::SuperBlock;
 use crate::storage::types::*;
-use crate::storage::volume::{fsync_dir, scan_volume_file, Volume, VolumeError, VolumeFileVisitor};
+use crate::storage::volume::{
+    fsync_dir, needle_disk_end, scan_volume_file, Volume, VolumeError, VolumeFileVisitor,
+};
 
 /// Writes one .idx row per .dat record, in .dat append order, which is the
 /// shape the volume server's own writes leave behind.
 struct VolumeFileScanner4RebuildIdx<W: Write> {
     writer: W,
+    dat_size: i64,
+    version: Version,
+    stopped: bool,
 }
 
 impl<W: Write> VolumeFileVisitor for VolumeFileScanner4RebuildIdx<W> {
@@ -26,6 +31,18 @@ impl<W: Write> VolumeFileVisitor for VolumeFileScanner4RebuildIdx<W> {
     }
 
     fn visit_needle(&mut self, n: &Needle, offset: i64) -> Result<(), VolumeError> {
+        // A record reaching past the end of .dat is a torn append or a corrupt
+        // header: nothing beyond it is indexable, and a row pointing past EOF
+        // would fail every read of that needle. The all-zero header case ends
+        // the walk upstream.
+        if self.stopped {
+            return Ok(());
+        }
+        if needle_disk_end(Offset::from_actual_offset(offset), n.size, self.version) > self.dat_size
+        {
+            self.stopped = true;
+            return Ok(());
+        }
         let size = if n.size.is_valid() {
             n.size
         } else {
@@ -61,6 +78,9 @@ impl Volume {
                 .open(&tmp_path)?;
             let mut scanner = VolumeFileScanner4RebuildIdx {
                 writer: BufWriter::new(&tmp_file),
+                dat_size: fs::metadata(&dat_path)?.len() as i64,
+                version: self.version(),
+                stopped: false,
             };
             scan_volume_file(&dat_path, &mut scanner)?;
             scanner.writer.flush()?;
@@ -224,6 +244,63 @@ mod tests {
             fs::read(format!("{dir}/1.idx")).unwrap(),
             seeded,
             "the zero-padded tail leaked into the rebuilt idx"
+        );
+    }
+
+    // A .dat whose last append was torn mid-body must not gain an index row
+    // that points past the end of the file.
+    #[test]
+    fn test_rebuild_idx_skips_truncated_dat_tail() {
+        let root = TempDir::new().unwrap();
+        let dir = root.path().to_str().unwrap();
+
+        let mut v = Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        v.write_needle(&mut needle(1), true, false).unwrap();
+        v.sync_to_disk().unwrap();
+        let kept = fs::read(format!("{dir}/1.idx")).unwrap();
+        v.write_needle(&mut needle(2), true, false).unwrap();
+        v.sync_to_disk().unwrap();
+        drop(v);
+
+        // Chop the second needle's body, leaving its header intact.
+        let dat = fs::OpenOptions::new()
+            .write(true)
+            .open(format!("{dir}/1.dat"))
+            .unwrap();
+        let torn_size = dat.metadata().unwrap().len() - 8;
+        dat.set_len(torn_size).unwrap();
+        drop(dat);
+        fs::remove_file(format!("{dir}/1.idx")).unwrap();
+
+        let reopened = Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        drop(reopened);
+
+        assert_eq!(
+            fs::read(format!("{dir}/1.idx")).unwrap(),
+            kept,
+            "the torn record leaked into the rebuilt idx"
         );
     }
 }
