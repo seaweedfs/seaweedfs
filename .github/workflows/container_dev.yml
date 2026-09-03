@@ -101,6 +101,9 @@ jobs:
   build-dev-containers:
     needs: [build-rust-binaries]
     runs-on: [ubuntu-latest]
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       - name: Checkout
@@ -180,6 +183,7 @@ jobs:
           password: ${{ secrets.GHCR_TOKEN }}
 
       - name: Build
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: ./docker
@@ -188,3 +192,11 @@ jobs:
           platforms: linux/amd64, linux/arm64
           tags: ${{ steps.docker_meta.outputs.tags }}
           labels: ${{ steps.docker_meta.outputs.labels }}
+
+      - name: Sign
+        if: github.event_name != 'pull_request'
+        uses: ./.github/actions/sign-image
+        with:
+          images: >-
+            chrislusf/seaweedfs@${{ steps.build.outputs.digest }}
+            ghcr.io/chrislusf/seaweedfs@${{ steps.build.outputs.digest }}
