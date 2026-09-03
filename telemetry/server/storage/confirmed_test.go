@@ -14,7 +14,7 @@ func report(id, version string) *proto.TelemetryData {
 		Version:           version,
 		Os:                "linux/amd64",
 		VolumeServerCount: 1,
-		TotalDiskBytes:    100,
+		TotalDiskBytes:    proto.MinDiskBytes,
 		TotalVolumeCount:  1,
 	}
 }
