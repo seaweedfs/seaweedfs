@@ -73,8 +73,9 @@ func runShell(command *Command, args []string) bool {
 		// already printed "error: ..."; exit non-zero so scripts and CronJobs
 		// see the failure -- previously a run that aborted partway (e.g.
 		// s3.lifecycle.run-shard dying mid-walk) still exited 0 and schedulers
-		// reported it green.
-		os.Exit(2)
+		// reported it green. Recorded rather than os.Exit'ed so the process
+		// still goes through main's shutdown path (atexit hooks, sentry flush).
+		SetCommandExitStatus(2)
 	}
 
 	return true
