@@ -4190,6 +4190,11 @@ pub fn scan_volume_file(
         if size.0 == 0 && _id.is_empty() {
             break; // end of valid data
         }
+        // A negative size is a corrupt header, and body_length would advance the
+        // walk backwards from it. Go's scanners stop here by returning io.EOF.
+        if size.0 < 0 {
+            break;
+        }
 
         let body_length = needle::needle_body_length(size, version);
         let total_size = NEEDLE_HEADER_SIZE as i64 + body_length;

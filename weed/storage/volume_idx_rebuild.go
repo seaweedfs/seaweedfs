@@ -30,10 +30,12 @@ func (scanner *VolumeFileScanner4RebuildIdx) ReadNeedleBody() bool {
 }
 
 func (scanner *VolumeFileScanner4RebuildIdx) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
-	// An all-zero header is unwritten space and a record reaching past the end
-	// of .dat is a torn append: either way nothing beyond it is indexable, and
-	// a row pointing past EOF would fail every read of that needle.
-	if n.Size == 0 && n.Id == 0 {
+	// Stop at the first thing that is not a record: an all-zero header is
+	// unwritten space, a negative size is a corrupt header, and a record
+	// reaching past the end of .dat is a torn append. Indexing any of them
+	// fabricates rows, and io.EOF here stops the walk before it advances by a
+	// bad size -- a negative one moves the offset backwards.
+	if (n.Size == 0 && n.Id == 0) || n.Size < 0 {
 		return io.EOF
 	}
 	if needleDiskEnd(types.ToOffset(offset), n.Size, scanner.version) > scanner.datSize {

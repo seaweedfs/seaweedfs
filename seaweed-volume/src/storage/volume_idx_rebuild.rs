@@ -303,4 +303,70 @@ mod tests {
             "the torn record leaked into the rebuilt idx"
         );
     }
+
+    // A corrupt header carrying a negative size advances the .dat walk
+    // backwards, which cycles forever between it and the record before it.
+    #[test]
+    fn test_rebuild_idx_stops_at_negative_size_header() {
+        let root = TempDir::new().unwrap();
+        let dir = root.path().to_str().unwrap();
+
+        let mut v = Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        v.write_needle(&mut needle(1), true, false).unwrap();
+        v.sync_to_disk().unwrap();
+        let kept = fs::read(format!("{dir}/1.idx")).unwrap();
+        v.write_needle(&mut needle(2), true, false).unwrap();
+        v.sync_to_disk().unwrap();
+        drop(v);
+
+        let rows = fs::read(format!("{dir}/1.idx")).unwrap();
+        let (_, offset, _) = idx_entry_from_bytes(&rows[NEEDLE_MAP_ENTRY_SIZE..]);
+        let corrupt_at = offset.to_actual_offset();
+
+        // Overwrite the second needle's size field with a negative i32.
+        use std::io::{Seek, SeekFrom, Write};
+        let mut dat = fs::OpenOptions::new()
+            .write(true)
+            .open(format!("{dir}/1.dat"))
+            .unwrap();
+        dat.seek(SeekFrom::Start(
+            corrupt_at as u64 + COOKIE_SIZE as u64 + NEEDLE_ID_SIZE as u64,
+        ))
+        .unwrap();
+        dat.write_all(&[0xff, 0xff, 0xf0, 0x00]).unwrap();
+        drop(dat);
+        fs::remove_file(format!("{dir}/1.idx")).unwrap();
+
+        // Pre-fix the rebuild walked backwards from here and never terminated.
+        let reopened = Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        drop(reopened);
+
+        assert_eq!(
+            fs::read(format!("{dir}/1.idx")).unwrap(),
+            kept,
+            "the corrupt record leaked into the rebuilt idx"
+        );
+    }
 }

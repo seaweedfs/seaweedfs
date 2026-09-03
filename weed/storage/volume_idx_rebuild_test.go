@@ -8,6 +8,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 // Pointing -dir.idx at a directory with no .idx used to abort the whole volume
@@ -168,5 +169,61 @@ func TestRebuildIdx_SkipsTruncatedDatTail(t *testing.T) {
 	}
 	if maxEnd := v2.nm.MaxNeedleEnd(); maxEnd > datSize.Size()-8 {
 		t.Errorf("rebuilt idx reaches %d, past the %d-byte .dat", maxEnd, datSize.Size()-8)
+	}
+}
+
+// A corrupt header carrying a negative size advances the .dat walk backwards,
+// which cycles forever between it and the record before it.
+func TestRebuildIdx_StopsAtNegativeSizeHeader(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("create volume: %v", err)
+	}
+	if _, _, _, err := v.writeNeedle2(newRandomNeedle(1), true, false, false); err != nil {
+		t.Fatalf("seed write: %v", err)
+	}
+	base := VolumeFileName(dir, "", 1)
+	kept, err := os.ReadFile(base + ".idx")
+	if err != nil {
+		t.Fatalf("read the seeded idx: %v", err)
+	}
+	if _, _, _, err := v.writeNeedle2(newRandomNeedle(2), true, false, false); err != nil {
+		t.Fatalf("seed second write: %v", err)
+	}
+	nv, ok := v.nm.Get(2)
+	if !ok {
+		t.Fatalf("second needle missing from the index")
+	}
+	corruptAt := nv.Offset.ToActualOffset()
+	v.Close()
+
+	// Overwrite the second needle's size field with a negative int32.
+	dat, err := os.OpenFile(base+".dat", os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatalf("open dat: %v", err)
+	}
+	if _, err := dat.WriteAt([]byte{0xff, 0xff, 0xf0, 0x00}, corruptAt+types.CookieSize+types.NeedleIdSize); err != nil {
+		t.Fatalf("corrupt size field: %v", err)
+	}
+	dat.Close()
+	if err := os.Remove(base + ".idx"); err != nil {
+		t.Fatalf("drop idx: %v", err)
+	}
+
+	// Pre-fix the rebuild walked backwards from here and never terminated.
+	v2, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	defer v2.Close()
+
+	rebuilt, err := os.ReadFile(base + ".idx")
+	if err != nil {
+		t.Fatalf("read the rebuilt idx: %v", err)
+	}
+	if !bytes.Equal(kept, rebuilt) {
+		t.Errorf("rebuilt idx has %d bytes, want the %d covering only the intact needle", len(rebuilt), len(kept))
 	}
 }
