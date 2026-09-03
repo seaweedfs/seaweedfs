@@ -224,11 +224,9 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 			if message.NewEntry.IsDirectory {
 				return client.WriteDirectory(dest, message.NewEntry)
 			}
-			if resp.Directory == message.NewParentPath && message.OldEntry.Name == message.NewEntry.Name {
-				if filer.IsSameData(message.OldEntry, message.NewEntry) {
-					glog.V(2).Infof("update meta: %+v", resp)
-					return client.UpdateFileMetadata(dest, message.OldEntry, message.NewEntry)
-				}
+			if isMetadataOnlyUpdate(resp.Directory, message) {
+				glog.V(2).Infof("update meta: %+v", resp)
+				return client.UpdateFileMetadata(dest, message.OldEntry, message.NewEntry)
 			}
 			glog.V(2).Infof("update: %+v", resp)
 			glog.V(0).Infof("delete %s", remote_storage.FormatLocation(oldDest))
@@ -303,6 +301,24 @@ func toRemoteStorageLocation(mountDir, sourcePath util.FullPath, remoteMountLoca
 		Bucket: remoteMountLocation.Bucket,
 		Path:   string(dest),
 	}
+}
+
+// isMetadataOnlyUpdate reports whether an update to an existing entry can be
+// applied to the remote by rewriting metadata alone, instead of deleting the
+// old object and writing the new content.
+//
+// It requires the object to already be on the remote. A nil RemoteEntry means
+// it never got there, and the metadata path would return without ever writing
+// it, leaving the entry unreplicated for as long as its content stays the same
+// -- shouldSendToRemote has already reported that this entry needs sending.
+func isMetadataOnlyUpdate(dir string, message *filer_pb.EventNotification) bool {
+	if dir != message.NewParentPath || message.OldEntry.Name != message.NewEntry.Name {
+		return false
+	}
+	if !filer.IsSameData(message.OldEntry, message.NewEntry) {
+		return false
+	}
+	return message.NewEntry.RemoteEntry != nil
 }
 
 func shouldSendToRemote(entry *filer_pb.Entry) bool {
