@@ -39,7 +39,12 @@ Your support will be really appreciated by me and other supporters!
 
 ---
 
-SeaweedFS is a fast, scalable distributed storage system. One `weed` binary serves an S3 object store, a POSIX file system, and a lakehouse with S3 Tables, all over the same data. It stores billions of files with one disk read per object, grows by starting another volume server, and can cache or tier to cloud storage transparently.
+SeaweedFS is a simple and highly scalable distributed file system. There are two objectives:
+
+1. to store billions of files!
+2. to serve the files fast!
+
+One `weed` binary serves an S3 object store, a POSIX file system, and a lakehouse with S3 Tables, all over the same data. Every file is one disk read away, capacity grows by starting another volume server, and cloud storage can be cached or tiered transparently.
 
 - [Download Binaries for different platforms](https://github.com/seaweedfs/seaweedfs/releases/latest)
 - [Wiki Documentation](https://github.com/seaweedfs/seaweedfs/wiki)
