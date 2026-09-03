@@ -33,15 +33,8 @@ func (store *PostgresStore2) GetName() string {
 }
 
 func (store *PostgresStore2) Initialize(configuration util.Configuration, prefix string) (err error) {
-	// Absent keys keep pooled defaults; an explicit 0 still disables the idle
-	// pool / caps. The defaults keep max_idle == max_open: with idle below open,
-	// a concurrent burst (s3.lifecycle.run-shard walks 16 shards in parallel)
-	// churns a fresh TCP connection per released operation -- open, one query,
-	// close -- until the filer exhausts its ephemeral ports
-	// ("dial tcp ...:5432/3306: connect: cannot assign requested address").
-	// Idle connections only accumulate up to the actual peak concurrency and
-	// are recycled by connection_max_lifetime_seconds, so the higher idle
-	// default costs a quiet deployment nothing.
+	// Fewer idle slots than concurrent operations means a fresh connection per
+	// operation, until the filer runs out of ephemeral ports.
 	configuration.SetDefault(prefix+"connection_max_idle", 50)
 	configuration.SetDefault(prefix+"connection_max_open", 50)
 	configuration.SetDefault(prefix+"connection_max_lifetime_seconds", 300)
