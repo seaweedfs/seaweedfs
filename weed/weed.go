@@ -102,6 +102,8 @@ func main() {
 				// Command execution failed - general error
 				setExitStatus(1)
 			}
+			// A command can also record a failure without returning false.
+			setExitStatus(command.CommandExitStatus())
 			exit()
 			return
 		}
@@ -200,5 +202,7 @@ func exit() {
 	for _, f := range atexitFuncs {
 		f()
 	}
+	// os.Exit below skips main's deferred flush.
+	sentry.Flush(2 * time.Second)
 	os.Exit(exitStatus)
 }

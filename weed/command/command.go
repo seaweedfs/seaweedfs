@@ -97,3 +97,17 @@ func (c *Command) Usage() {
 func (c *Command) Runnable() bool {
 	return c.Run != nil
 }
+
+// Recorded, not os.Exit'ed, so the failure still travels through main's
+// shutdown path. The highest requested status wins.
+var commandExitStatus int
+
+func SetCommandExitStatus(n int) {
+	if n > commandExitStatus {
+		commandExitStatus = n
+	}
+}
+
+func CommandExitStatus() int {
+	return commandExitStatus
+}
