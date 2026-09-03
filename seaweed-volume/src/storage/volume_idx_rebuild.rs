@@ -1,0 +1,175 @@
+//! Rebuild a missing .idx from the .dat it indexes. Mirrors
+//! `weed/storage/volume_idx_rebuild.go`.
+
+use std::fs::{self, OpenOptions};
+use std::io::{BufWriter, Write};
+
+use crate::storage::idx;
+use crate::storage::needle::Needle;
+use crate::storage::super_block::SuperBlock;
+use crate::storage::types::*;
+use crate::storage::volume::{fsync_dir, scan_volume_file, Volume, VolumeError, VolumeFileVisitor};
+
+/// Writes one .idx row per .dat record, in .dat append order, which is the
+/// shape the volume server's own writes leave behind.
+struct VolumeFileScanner4RebuildIdx<W: Write> {
+    writer: W,
+}
+
+impl<W: Write> VolumeFileVisitor for VolumeFileScanner4RebuildIdx<W> {
+    fn visit_super_block(&mut self, _sb: &SuperBlock) -> Result<(), VolumeError> {
+        Ok(())
+    }
+
+    fn read_needle_body(&self) -> bool {
+        false
+    }
+
+    fn visit_needle(&mut self, n: &Needle, offset: i64) -> Result<(), VolumeError> {
+        let size = if n.size.is_valid() {
+            n.size
+        } else {
+            TOMBSTONE_FILE_SIZE
+        };
+        idx::write_index_entry(
+            &mut self.writer,
+            n.id,
+            Offset::from_actual_offset(offset),
+            size,
+        )?;
+        Ok(())
+    }
+}
+
+impl Volume {
+    /// Regenerate the volume's .idx from its .dat. The whole index is derivable
+    /// from the data file, so a volume whose index directory has no .idx -- a
+    /// --dir.idx pointed at an empty directory, or a lost index -- comes back on
+    /// its own instead of mounting with every needle invisible. The rows go to a
+    /// temp file that is renamed in, so an interrupted rebuild leaves no partial
+    /// index behind.
+    pub(crate) fn rebuild_idx_file(&self) -> Result<(), VolumeError> {
+        let idx_path = self.file_name(".idx");
+        let dat_path = self.file_name(".dat");
+        let tmp_path = format!("{idx_path}.tmp");
+
+        let rebuild = || -> Result<(), VolumeError> {
+            let tmp_file = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&tmp_path)?;
+            let mut scanner = VolumeFileScanner4RebuildIdx {
+                writer: BufWriter::new(&tmp_file),
+            };
+            scan_volume_file(&dat_path, &mut scanner)?;
+            scanner.writer.flush()?;
+            drop(scanner);
+            tmp_file.sync_all()?;
+            fs::rename(&tmp_path, &idx_path)?;
+            fsync_dir(&idx_path)?;
+            Ok(())
+        };
+
+        let result = rebuild();
+        if result.is_err() {
+            let _ = fs::remove_file(&tmp_path);
+        }
+        result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::storage::needle::crc::CRC;
+    use crate::storage::needle::Needle;
+    use crate::storage::needle_map::NeedleMapKind;
+    use crate::storage::types::*;
+    use crate::storage::volume::Volume;
+    use std::fs;
+    use std::path::Path;
+    use tempfile::TempDir;
+
+    fn needle(id: u64) -> Needle {
+        let data = format!("payload-{id}").into_bytes();
+        Needle {
+            id: NeedleId(id),
+            cookie: Cookie(0x55),
+            data_size: data.len() as u32,
+            checksum: CRC::new(&data),
+            data,
+            ..Needle::default()
+        }
+    }
+
+    // Pointing --dir.idx at a directory with no .idx used to mount the volume on
+    // an empty index; the index is derivable from the .dat, so it must be
+    // rebuilt in place instead.
+    #[test]
+    fn test_load_moved_idx_directory_rebuilds_idx() {
+        let root = TempDir::new().unwrap();
+        let data_dir = root.path().join("data");
+        let old_idx_dir = root.path().join("idxA");
+        let new_idx_dir = root.path().join("idxB");
+        for dir in [&data_dir, &old_idx_dir, &new_idx_dir] {
+            fs::create_dir_all(dir).unwrap();
+        }
+        let data = data_dir.to_str().unwrap();
+        let old_idx = old_idx_dir.to_str().unwrap();
+        let new_idx = new_idx_dir.to_str().unwrap();
+
+        let mut v = Volume::new(
+            data,
+            old_idx,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        for id in 1..=3 {
+            v.write_needle(&mut needle(id), true, false).unwrap();
+        }
+        v.delete_needle(&mut needle(2)).unwrap();
+        v.sync_to_disk().unwrap();
+        let (want_count, want_deleted) = (v.file_count(), v.deleted_count());
+        drop(v);
+
+        let seeded = fs::read(format!("{old_idx}/1.idx")).unwrap();
+
+        let reopened = Volume::new(
+            data,
+            new_idx,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+
+        assert!(
+            Path::new(&format!("{new_idx}/1.idx")).exists(),
+            "idx not rebuilt in the new idx dir"
+        );
+        assert_eq!(reopened.file_count(), want_count);
+        assert_eq!(reopened.deleted_count(), want_deleted);
+        assert_eq!(
+            fs::read(format!("{new_idx}/1.idx")).unwrap(),
+            seeded,
+            "rebuilt idx differs from the one the server wrote"
+        );
+
+        for id in [1, 3] {
+            let mut got = needle(id);
+            got.data.clear();
+            reopened.read_needle(&mut got).unwrap();
+            assert_eq!(got.data, format!("payload-{id}").into_bytes());
+        }
+    }
+}

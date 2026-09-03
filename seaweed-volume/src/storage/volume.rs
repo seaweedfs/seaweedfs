@@ -810,6 +810,21 @@ impl Volume {
                 self.dir_idx = self.dir.clone();
             }
 
+            // A changed --dir.idx leaves the new directory without an index.
+            // The .dat still holds every row, so rebuild rather than mount the
+            // volume with every needle invisible.
+            if !self.has_remote_file
+                && !Path::new(&self.file_name(".idx")).exists()
+                && self.current_dat_file_size()? > SUPER_BLOCK_SIZE as u64
+            {
+                self.rebuild_idx_file()?;
+                info!(
+                    volume_id = self.id.0,
+                    idx = %self.file_name(".idx"),
+                    "rebuilt the index from the data file"
+                );
+            }
+
             // Recover rows that deletes on a tiered read-only volume overwrote
             // at the front of .idx. Best effort: a volume that cannot be
             // repaired is still servable for everything the surviving rows
