@@ -593,6 +593,35 @@ func TestFetchWholeChunkRetriesFreshLocations(t *testing.T) {
 	}, decoded.Chunks)
 }
 
+// TestFetchWholeChunkRefreshesLocationsAfterPartialFailure is the manifest read
+// whose cached list still names a dead replica ahead of a live one: the read
+// succeeds, and the cached entry must still be dropped and looked up again.
+func TestFetchWholeChunkRefreshesLocationsAfterPartialFailure(t *testing.T) {
+	manifestBytes, err := proto.Marshal(&filer_pb.FileChunkManifest{
+		Chunks: []*filer_pb.FileChunk{{FileId: "100,abc", Offset: 0, Size: 8}},
+	})
+	assert.NoError(t, err)
+
+	liveURL := manifestServer(t, manifestBytes).URL + "/5,abc"
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	deadURL := dead.URL
+	dead.Close()
+
+	lookup := &stagedLookup{
+		staleUrls: []string{deadURL + "/5,abc", liveURL},
+		freshUrls: []string{liveURL},
+	}
+	inv := &countingInvalidator{}
+	bytesBuffer := fetchManifestBuffer(t)
+
+	assert.NoError(t, fetchWholeChunk(context.Background(), bytesBuffer, lookup.lookup, "5,abc", nil, false, inv))
+	assert.Equal(t, int32(1), inv.invalidations.Load())
+	assert.Equal(t, int32(2), lookup.calls.Load())
+	decoded := &filer_pb.FileChunkManifest{}
+	assert.NoError(t, proto.Unmarshal(bytesBuffer.Bytes(), decoded))
+	assertEqualChunks(t, []*filer_pb.FileChunk{{FileId: "100,abc", Offset: 0, Size: 8}}, decoded.Chunks)
+}
+
 // TestFetchWholeChunkWithoutInvalidator keeps the old behavior for callers whose
 // lookup function has no cache to drop: the fetch error surfaces as it is.
 func TestFetchWholeChunkWithoutInvalidator(t *testing.T) {

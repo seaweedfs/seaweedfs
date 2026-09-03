@@ -3,11 +3,14 @@ package filer
 import (
 	"context"
 	"fmt"
-	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 // mockChunkCacheForReaderCache implements chunk cache for testing
@@ -144,6 +147,47 @@ func TestReaderCacheRetryAfterCacheInvalidation(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&fetchCount); got != 2 {
 		t.Fatalf("expected stale fetch and retry fetch, got %d", got)
+	}
+}
+
+// TestReaderCacheRefreshesLocationsAfterPartialFailure is the mount reading
+// through a cached location list that still names a replica the master has
+// dropped: the read succeeds on the other replica, and the cached entry must
+// be dropped and looked up again so the next read starts without the dead one.
+func TestReaderCacheRefreshesLocationsAfterPartialFailure(t *testing.T) {
+	payload := []byte("chunk contents")
+	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(payload)
+	}))
+	defer live.Close()
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	deadURL := dead.URL
+	dead.Close()
+
+	fileId := "3,abc"
+	invalidator := &mockCacheInvalidatorForReaderCache{}
+	var lookupCount int32
+	lookupFn := func(ctx context.Context, requestedFileId string) ([]string, error) {
+		atomic.AddInt32(&lookupCount, 1)
+		if atomic.LoadInt32(&invalidator.calls) == 0 {
+			return []string{deadURL + "/" + fileId, live.URL + "/" + fileId}, nil
+		}
+		return []string{live.URL + "/" + fileId}, nil
+	}
+
+	rc := NewReaderCache(10, newMockChunkCacheForReaderCache(), lookupFn, invalidator)
+	defer rc.destroy()
+
+	buffer := make([]byte, len(payload))
+	n, err := rc.ReadChunkAt(context.Background(), buffer, fileId, nil, false, 0, len(payload), false)
+	if err != nil || string(buffer[:n]) != string(payload) {
+		t.Fatalf("got %q, %v; want %q", buffer[:n], err, payload)
+	}
+	if got := atomic.LoadInt32(&invalidator.calls); got != 1 {
+		t.Fatalf("expected the stale entry to be invalidated once, got %d", got)
+	}
+	if got := atomic.LoadInt32(&lookupCount); got != 2 {
+		t.Fatalf("expected a lookup before the read and one after invalidation, got %d", got)
 	}
 }
 
