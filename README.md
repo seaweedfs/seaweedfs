@@ -245,7 +245,7 @@ SeaweedFS is a lakehouse in one system. [S3 Table Buckets][S3TableBucket] hold A
 * Query engines operate on the same tables at the same time: [Spark][SparkIceberg], [Trino][TrinoIceberg], [Dremio][DremioIceberg], [DuckDB][DuckDBIceberg], [Apache Doris][DorisIceberg], [RisingWave][RisingWaveIceberg], ClickHouse, and [LanceDB][LanceDB]. Catalog commits are atomic compare-and-swap, so concurrent writers are safe. [Lakekeeper][Lakekeeper] can front the same storage with STS-vended credentials.
 * [Automated table maintenance][IcebergMaintenance]: compaction, snapshot expiration, orphan file removal, and manifest rewriting, configured per bucket or table through the S3 Tables maintenance APIs, and the same for [Lance][LanceMaintenance].
 * IAM at the bucket, namespace, and table level with standard bucket policies, see [S3 Tables Security][S3TablesSecurity].
-* A [Hadoop compatible file system][Hadoop] for Spark, Flink, and HBase; a [Kafka gateway][KafkaGateway] and [Seaweed Message Queue][SMQ] that land streams as Parquet; and [`weed db`][WeedDB], a PostgreSQL wire server for SQL over those streams.
+* A [Hadoop compatible file system][Hadoop] for Spark, Flink, and HBase.
 
 `S3_TABLE_BUCKET=warehouse weed mini -dir=/data` brings the whole stack up on a laptop.
 
@@ -480,9 +480,6 @@ The text of this page is available for modification and reuse under the terms of
 [LanceMaintenance]: https://github.com/seaweedfs/seaweedfs/wiki/Lance-Maintenance-Worker
 [S3TablesSecurity]: https://github.com/seaweedfs/seaweedfs/wiki/S3-Tables-Security
 [Hadoop]: https://github.com/seaweedfs/seaweedfs/wiki/Hadoop-Compatible-File-System
-[KafkaGateway]: https://github.com/seaweedfs/seaweedfs/wiki/Kafka-to-Kafka-Gateway-to-SMQ-to-SQL
-[SMQ]: https://github.com/seaweedfs/seaweedfs/wiki/Seaweed-Message-Queue
-[WeedDB]: https://github.com/seaweedfs/seaweedfs/wiki/PostgreSQL-compatible-Server-weed-db
 [CloudDrive]: https://github.com/seaweedfs/seaweedfs/wiki/Cloud-Drive-Architecture
 [CacheRemote]: https://github.com/seaweedfs/seaweedfs/wiki/Cache-Remote-Storage
 [GatewayToRemoteObjectStore]: https://github.com/seaweedfs/seaweedfs/wiki/Gateway-to-Remote-Object-Storage
