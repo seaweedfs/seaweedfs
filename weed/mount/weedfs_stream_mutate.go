@@ -29,6 +29,14 @@ type streamMutateError struct {
 func (e *streamMutateError) Error() string        { return e.msg }
 func (e *streamMutateError) Errno() syscall.Errno { return e.errno }
 
+// hasCreateResponse reports whether resp carries a nested CreateEntryResponse to
+// unwrap. A create wrapper without one has no structured code to recover, and
+// CreateEntry would dereference the nil.
+func hasCreateResponse(resp *filer_pb.StreamMutateEntryResponse) bool {
+	cr, ok := resp.Response.(*filer_pb.StreamMutateEntryResponse_CreateResponse)
+	return ok && cr.CreateResponse != nil
+}
+
 // ErrStreamTransport is a sentinel error type for transport-level stream
 // failures (disconnects, send errors). Callers use errors.Is to decide
 // whether to fall back to unary RPCs.
@@ -82,11 +90,17 @@ func (m *streamMutateMux) CreateEntry(ctx context.Context, req *filer_pb.CreateE
 	if err != nil {
 		return nil, err
 	}
+	return createEntryFromResponse(resp, req)
+}
+
+// createEntryFromResponse unwraps a create's nested response, mapping its
+// structured code back to the sentinel callers match on (same logic as
+// CreateEntryWithResponse).
+func createEntryFromResponse(resp *filer_pb.StreamMutateEntryResponse, req *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
 	r, ok := resp.Response.(*filer_pb.StreamMutateEntryResponse_CreateResponse)
 	if !ok {
 		return nil, fmt.Errorf("unexpected response type %T", resp.Response)
 	}
-	// Check nested error fields (same logic as CreateEntryWithResponse).
 	cr := r.CreateResponse
 	if cr.ErrorCode != filer_pb.FilerError_OK {
 		if sentinel := filer_pb.FilerErrorToSentinel(cr.ErrorCode); sentinel != nil {
@@ -235,18 +249,14 @@ func (m *streamMutateMux) doUnary(ctx context.Context, req *filer_pb.StreamMutat
 		if !ok {
 			return nil, fmt.Errorf("%w: stream closed", ErrStreamTransport)
 		}
-		if resp.Error != "" {
-			// A failed create still carries a structured error code in the
-			// nested CreateEntryResponse; hand the response to CreateEntry so
-			// the sentinel (e.g. entry-already-exists → EEXIST) survives
-			// instead of collapsing into the top-level generic errno. A create
-			// wrapper with no nested response has nothing to hand over —
-			// CreateEntry would dereference it.
-			if cr, isCreate := resp.Response.(*filer_pb.StreamMutateEntryResponse_CreateResponse); !isCreate || cr.CreateResponse == nil {
-				return nil, &streamMutateError{
-					msg:   resp.Error,
-					errno: syscall.Errno(resp.Errno),
-				}
+		// A failed create still carries a structured error code in its nested
+		// CreateEntryResponse, so hand that back for CreateEntry to unwrap and
+		// the sentinel (entry-already-exists → EEXIST) survives instead of
+		// collapsing into the top-level generic errno.
+		if resp.Error != "" && !hasCreateResponse(resp) {
+			return nil, &streamMutateError{
+				msg:   resp.Error,
+				errno: syscall.Errno(resp.Errno),
 			}
 		}
 		return resp, nil
