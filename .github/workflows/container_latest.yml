@@ -551,8 +551,11 @@ jobs:
 
       - name: Resolve the published digests
         id: digests
+        env:
+          BASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.image_tag || 'latest' }}
+          SUFFIX: ${{ steps.config.outputs.tag_suffix }}
         run: |
-          tag="${{ github.event_name == 'workflow_dispatch' && github.event.inputs.image_tag || 'latest' }}${{ steps.config.outputs.tag_suffix }}"
+          tag="${BASE_TAG}${SUFFIX}"
           echo "images=ghcr.io/chrislusf/seaweedfs@$(crane digest "ghcr.io/chrislusf/seaweedfs:${tag}") chrislusf/seaweedfs@$(crane digest "chrislusf/seaweedfs:${tag}")" >> "$GITHUB_OUTPUT"
 
       - name: Sign
