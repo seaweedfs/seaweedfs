@@ -195,9 +195,12 @@ func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupV
 		}
 	}
 
-	// Only return Unavailable during warmup when every requested ID was a transient not-found
-	if len(req.VolumeOrFileIds) > 0 && notFoundCount == len(req.VolumeOrFileIds) && ms.Topo.IsLeader() && ms.Topo.IsWarmingUp() {
-		glog.V(0).Infof("lookup volume warming up: topology is still loading (%d not found)", notFoundCount)
+	// While warming up, a not-found may only mean the volume server has not
+	// reported yet, so no part of the answer can be treated as authoritative.
+	// Callers retry Unavailable; a partial answer would let them take a
+	// missing volume as gone.
+	if notFoundCount > 0 && ms.Topo.IsLeader() && ms.Topo.IsWarmingUp() {
+		glog.V(0).Infof("lookup volume warming up: topology is still loading (%d of %d not found)", notFoundCount, len(req.VolumeOrFileIds))
 		return nil, status.Errorf(codes.Unavailable, "master is warming up, topology is still loading")
 	}
 
