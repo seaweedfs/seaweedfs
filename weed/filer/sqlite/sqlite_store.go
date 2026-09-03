@@ -8,6 +8,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/filer/abstract_sql"
@@ -49,6 +51,21 @@ func (store *SqliteStore) Initialize(configuration util.Configuration, prefix st
 	)
 }
 
+// sqliteDSN keeps the store's two pools on one database and lets a writer that
+// meets the other pool's reader wait for it instead of failing outright. A bare
+// :memory: is private to each connection, so it has to be named and shared.
+func sqliteDSN(dbFile string) string {
+	dsn := dbFile
+	if dsn == ":memory:" {
+		dsn = fmt.Sprintf("file:seaweedfs%d?mode=memory&cache=shared", time.Now().UnixNano())
+	}
+	separator := "?"
+	if strings.Contains(dsn, "?") {
+		separator = "&"
+	}
+	return dsn + separator + "_pragma=busy_timeout(10000)"
+}
+
 func (store *SqliteStore) initialize(dbFile, createTable, upsertQuery string) (err error) {
 
 	store.SupportBucketTable = true
@@ -58,9 +75,7 @@ func (store *SqliteStore) initialize(dbFile, createTable, upsertQuery string) (e
 		UpsertQueryTemplate:    upsertQuery,
 	}
 
-	// A writer that meets the key-value pool's reader waits for it instead of
-	// failing the operation outright.
-	dsn := dbFile + "?_pragma=busy_timeout(10000)"
+	dsn := sqliteDSN(dbFile)
 
 	db, dbErr := sql.Open("sqlite", dsn)
 	if dbErr != nil {
