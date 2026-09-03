@@ -12,10 +12,7 @@ use weed_lance_worker::metrics::LanceMetrics;
 /// Mirrors `weed worker`'s flags, because this is the same contract from another
 /// language and an operator should not have to learn a second set of names.
 #[derive(Parser, Debug)]
-#[command(
-    name = "weed-worker",
-    about = "SeaweedFS maintenance worker"
-)]
+#[command(name = "weed-worker", about = "SeaweedFS maintenance worker")]
 struct Args {
     /// Admin server gRPC address.
     #[arg(long, default_value = "localhost:23646", env = "WEED_ADMIN")]

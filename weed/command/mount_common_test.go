@@ -9,12 +9,14 @@ func Test_volumeName(t *testing.T) {
 		name               string
 		filer              string
 		filerMountRootPath string
+		dir                string
 		expected           string
 	}{
 		{
-			name:               "whole tree falls back to the filer",
+			name:               "a drive letter leaves only the filer to fall back on",
 			filer:              "127.0.0.1:8888",
 			filerMountRootPath: "/",
+			dir:                "S:",
 			expected:           "127.0.0.1:8888",
 		},
 		{
@@ -28,6 +30,34 @@ func Test_volumeName(t *testing.T) {
 			filer:              "127.0.0.1:8888,127.0.0.1:8889",
 			filerMountRootPath: "/",
 			expected:           "127.0.0.1:8888+127.0.0.1:8889",
+		},
+		{
+			name:               "a whole-tree mount takes the name of its network share",
+			filer:              "127.0.0.1:8888",
+			filerMountRootPath: "/",
+			dir:                `\\seaweedfs\Images`,
+			expected:           "Images",
+		},
+		{
+			name:               "a whole-tree mount takes the name of its directory",
+			filer:              "127.0.0.1:8888",
+			filerMountRootPath: "/",
+			dir:                "/mnt/seaweedfs",
+			expected:           "seaweedfs",
+		},
+		{
+			name:               "the mounted path outranks the mount point",
+			filer:              "127.0.0.1:8888",
+			filerMountRootPath: "/buckets/videos",
+			dir:                "/mnt/seaweedfs",
+			expected:           "videos",
+		},
+		{
+			name:               "a relative mount point is not a name",
+			filer:              "127.0.0.1:8888",
+			filerMountRootPath: "/",
+			dir:                ".",
+			expected:           "127.0.0.1:8888",
 		},
 		{
 			name:               "mounted directory names the disk",
@@ -50,8 +80,8 @@ func Test_volumeName(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := volumeName(tt.filer, tt.filerMountRootPath); got != tt.expected {
-				t.Errorf("volumeName(%q, %q) = %q, want %q", tt.filer, tt.filerMountRootPath, got, tt.expected)
+			if got := volumeName(tt.filer, tt.filerMountRootPath, tt.dir); got != tt.expected {
+				t.Errorf("volumeName(%q, %q, %q) = %q, want %q", tt.filer, tt.filerMountRootPath, tt.dir, got, tt.expected)
 			}
 		})
 	}

@@ -16,11 +16,17 @@ path = "src/main.rs"
 
 [dependencies]
 seaweed-worker-core = { path = "../core" }
+seaweed-worker-sort = { path = "../sort" }
 prometheus.workspace = true
 # Only the S3 backend: the other object stores lance enables by default are
 # build time this worker never spends.
 lance = { version = "10", default-features = false, features = ["aws"] }
 lance-index = "10"
+# For the manifest's own fragment type, which the sort marker summarises.
+lance-table = "10"
+# For the execution options the sort needs; the scanner's own stream helper
+# takes the default, which has spilling off.
+lance-datafusion = "10"
 arrow-schema = "58"
 arrow-cast = "58"
 chrono = "0.4"

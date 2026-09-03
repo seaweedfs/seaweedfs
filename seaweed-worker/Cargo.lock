@@ -5452,6 +5452,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "seaweed-worker-sort"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "seaweed-worker-core",
+]
+
+[[package]]
 name = "security-framework"
 version = "3.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6542,11 +6550,14 @@ dependencies = [
  "clap",
  "futures",
  "lance",
+ "lance-datafusion",
  "lance-index",
  "lance-linalg",
+ "lance-table",
  "prometheus",
  "reqwest 0.12.28",
  "seaweed-worker-core",
+ "seaweed-worker-sort",
  "serde",
  "serde_json",
  "tokio",

@@ -1,0 +1,12 @@
+[package]
+name = "seaweed-worker-sort"
+version.workspace = true
+edition.workspace = true
+description = "The sort specification shared by SeaweedFS sorting jobs"
+
+[lib]
+name = "seaweed_worker_sort"
+
+[dependencies]
+seaweed-worker-core = { path = "../core" }
+anyhow.workspace = true
