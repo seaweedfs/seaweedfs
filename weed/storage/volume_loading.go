@@ -254,7 +254,12 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 				glog.Errorf("skip remote volume %d (idx: %s): %v", v.Id, v.FileName(".idx"), err)
 				return fmt.Errorf("check volume idx file %s: %w", v.FileName(".idx"), err)
 			}
-			glog.Fatalf("check volume idx file %s: %v", v.FileName(".idx"), err)
+			// A changed -dir.idx leaves the new directory without an index.
+			// The .dat still holds every row, so rebuild rather than exit.
+			if rebuildErr := v.rebuildIdxFile(); rebuildErr != nil {
+				glog.Fatalf("check volume idx file %s: %v: %v", v.FileName(".idx"), err, rebuildErr)
+			}
+			glog.V(0).Infof("volume %d: rebuilt %s from %s", v.Id, v.FileName(".idx"), v.FileName(".dat"))
 		}
 		// Recover rows that deletes on a tiered read-only volume overwrote at
 		// the front of .idx. Best effort: a volume that cannot be repaired is
