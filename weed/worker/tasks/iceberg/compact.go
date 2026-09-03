@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path"
 	"sort"
 	"strings"
@@ -1149,19 +1150,48 @@ func mergeParquetFilesSorted(
 		return nil, 0, fmt.Errorf("resolve equality columns: %w", err)
 	}
 
-	comparator := parquetSchema.Comparator(sortingColumns...)
-	var allRows []parquet.Row
+	// Sorted rewrites stream rows through parquet-go's sorting writer rather
+	// than holding the whole bin: rows accumulate until sortBufferRows, then a
+	// sorted run is encoded into a temporary row group, and Close merges the
+	// runs into the output. The runs live in files from a buffer pool instead
+	// of on the heap, so a bin larger than memory sorts rather than failing.
+	spillDir := rewritePlan.spillDir
+	if spillDir == "" {
+		// NewFileBufferPool takes filepath.Abs of what it is given, and
+		// filepath.Abs("") is the working directory, not the temp directory.
+		spillDir = os.TempDir()
+	}
+	sortBufferRows := rewritePlan.bufferRows
+	if sortBufferRows < minSortBufferRows {
+		sortBufferRows = defaultSortBufferRows
+	}
 
-	collectRows := func(reader *parquet.Reader, source string) (int64, error) {
+	var outputBuf bytes.Buffer
+	writer := parquet.NewSortingWriter[any](&outputBuf, sortBufferRows, parquetSchema,
+		parquet.SortingWriterConfig(
+			parquet.SortingColumns(sortingColumns...),
+			parquet.SortingBuffers(parquet.NewFileBufferPool(spillDir, "seaweedfs-iceberg-sort-*")),
+		),
+	)
+	// Closing returns the run files to the pool, which deletes them. A failure
+	// before that has to release them too, or the job leaves temp files behind.
+	closed := false
+	defer func() {
+		if !closed {
+			writer.Reset(io.Discard)
+		}
+	}()
+
+	writeRows := func(reader *parquet.Reader, source string) (int64, error) {
 		return visitFilteredParquetRows(ctx, reader, source, bucketName, dataPath, positionDeletes, resolvedEqGroups, func(filtered []parquet.Row) error {
-			for _, row := range filtered {
-				allRows = append(allRows, row.Clone())
-			}
-			return nil
+			// The writer's row buffer copies the values it is handed, so these
+			// rows need no cloning out of the reader's own buffer first.
+			_, writeErr := writer.WriteRows(filtered)
+			return writeErr
 		})
 	}
 
-	totalRows, err := collectRows(firstReader, entries[0].DataFile().FilePath())
+	totalRows, err := writeRows(firstReader, entries[0].DataFile().FilePath())
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1184,28 +1214,17 @@ func mergeParquetFilesSorted(
 			return nil, 0, fmt.Errorf("schema mismatch in %s: cannot merge files with different schemas", entry.DataFile().FilePath())
 		}
 
-		rowsCollected, err := collectRows(reader, entry.DataFile().FilePath())
+		rowsWritten, err := writeRows(reader, entry.DataFile().FilePath())
 		if err != nil {
 			return nil, 0, err
 		}
-		totalRows += rowsCollected
+		totalRows += rowsWritten
 	}
 
-	sort.SliceStable(allRows, func(i, j int) bool {
-		return comparator(allRows[i], allRows[j]) < 0
-	})
-
-	var outputBuf bytes.Buffer
-	writer := parquet.NewWriter(&outputBuf, parquetSchema)
-	if len(allRows) > 0 {
-		if _, err := writer.WriteRows(allRows); err != nil {
-			writer.Close()
-			return nil, 0, fmt.Errorf("write sorted rows: %w", err)
-		}
-	}
 	if err := writer.Close(); err != nil {
-		return nil, 0, fmt.Errorf("close writer: %w", err)
+		return nil, 0, fmt.Errorf("close sorting writer: %w", err)
 	}
+	closed = true
 
 	return outputBuf.Bytes(), totalRows, nil
 }
