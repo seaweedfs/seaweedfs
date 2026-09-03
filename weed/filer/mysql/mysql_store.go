@@ -33,8 +33,12 @@ func (store *MysqlStore) GetName() string {
 }
 
 func (store *MysqlStore) Initialize(configuration util.Configuration, prefix string) (err error) {
-	// Absent key keeps a pooled default; an explicit 0 disables the idle pool.
-	configuration.SetDefault(prefix+"connection_max_idle", 2)
+	// Fewer idle slots than concurrent operations means a fresh connection per
+	// operation, until the filer runs out of ephemeral ports. connection_max_open
+	// stays unset: a listing runs a second query from its own callback, so a
+	// bounded pool deadlocks once the concurrency reaches it.
+	configuration.SetDefault(prefix+"connection_max_idle", 50)
+	configuration.SetDefault(prefix+"connection_max_lifetime_seconds", 300)
 	// Default on so minimal configs avoid the duplicate-key roundtrip the
 	// inode-index KvPut would otherwise emit on every write.
 	configuration.SetDefault(prefix+"enableUpsert", true)
