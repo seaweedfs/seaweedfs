@@ -448,11 +448,12 @@ jobs:
       matrix:
         variant: ${{ fromJSON(needs.setup.outputs.variants) }}
     steps:
-      - name: Checkout
+      - name: Checkout the signing action
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref || github.ref }}
-      
+          sparse-checkout: .github/actions
+          persist-credentials: false
+
       - name: Configure variant
         id: config
         run: |
