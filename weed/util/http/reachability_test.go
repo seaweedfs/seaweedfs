@@ -46,14 +46,25 @@ func TestReachableFirstTriesUnansweringHostLast(t *testing.T) {
 
 func TestReachableFirstProbesOnceAfterRetryInterval(t *testing.T) {
 	forgetUnreachable(t)
-	urls := []string{"http://a:8080/3,x", "http://b:8080/3,x"}
+	urls := []string{"http://b:8080/3,x", "http://a:8080/3,x"}
 	unreachable.Store("a:8080", time.Now().Add(-unreachableRetryInterval))
 
 	// the first read to come by probes a, the next keeps it last until that settles
-	assertOrder(t, ReachableFirst(urls), urls...)
 	assertOrder(t, ReachableFirst(urls), urls[1], urls[0])
+	assertOrder(t, ReachableFirst(urls), urls...)
 	recordReachable("a:8080")
 	assertOrder(t, ReachableFirst(urls), urls...)
+}
+
+func TestReachableFirstClaimsEveryExpiredHost(t *testing.T) {
+	forgetUnreachable(t)
+	urls := []string{"http://a:8080/3,x", "http://b:8080/3,x", "http://c:8080/3,x"}
+	expired := time.Now().Add(-unreachableRetryInterval)
+	unreachable.Store("a:8080", expired)
+	unreachable.Store("c:8080", expired)
+
+	assertOrder(t, ReachableFirst(urls), urls[0], urls[2], urls[1])
+	assertOrder(t, ReachableFirst(urls), urls[1], urls[0], urls[2])
 }
 
 // hangupServer accepts the connection and drops it without answering, the way

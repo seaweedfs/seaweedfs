@@ -4,8 +4,6 @@ import (
 	"net/url"
 	"sync"
 	"time"
-
-	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // unreachableRetryInterval is how long a server that failed to answer is tried
@@ -25,45 +23,30 @@ func recordReachable(host string) {
 	unreachable.Delete(host)
 }
 
-func lastUnanswered(host string) (time.Time, bool) {
-	failedAt, failed := unreachable.Load(host)
-	if !failed {
-		return time.Time{}, false
-	}
-	return failedAt.(time.Time), true
-}
-
-// ReachableFirst returns urls with those on hosts that recently failed to
-// answer moved to the back, keeping the order within each group. Once the
-// retry interval has passed, the first read that would try such a host first
-// probes it, and the others keep it last until that probe settles.
+// ReachableFirst orders urls so that hosts which recently failed to answer
+// come last, keeping the order within each group. Once the retry interval has
+// passed, the first read to ask claims the probe and tries that host first;
+// the others keep it last until the probe settles.
 func ReachableFirst(urls []string) []string {
-	front := make(map[string]bool, len(urls))
+	var probes, reachable, unanswered []string
 	for _, u := range urls {
-		failedAt, failed := lastUnanswered(hostOf(u))
-		if !failed || time.Since(failedAt) >= unreachableRetryInterval {
-			front[u] = true
+		host := hostOf(u)
+		failedAt, failed := unreachable.Load(host)
+		switch {
+		case !failed:
+			reachable = append(reachable, u)
+		case time.Since(failedAt.(time.Time)) < unreachableRetryInterval:
+			unanswered = append(unanswered, u)
+		case unreachable.CompareAndSwap(host, failedAt, time.Now()):
+			probes = append(probes, u)
+		default:
+			unanswered = append(unanswered, u)
 		}
 	}
-	if len(front) != len(urls) {
-		urls = util.ReorderToFront(front, urls)
+	if len(probes) == 0 && len(unanswered) == 0 {
+		return urls
 	}
-	if len(urls) > 1 && !claimProbe(hostOf(urls[0])) {
-		rotated := make([]string, 0, len(urls))
-		rotated = append(rotated, urls[1:]...)
-		urls = append(rotated, urls[0])
-	}
-	return urls
-}
-
-// claimProbe reports whether the caller is the one read that tries an expired
-// host again; losing the race means another read is already probing it.
-func claimProbe(host string) bool {
-	failedAt, failed := lastUnanswered(host)
-	if !failed || time.Since(failedAt) < unreachableRetryInterval {
-		return true
-	}
-	return unreachable.CompareAndSwap(host, failedAt, time.Now())
+	return append(append(probes, reachable...), unanswered...)
 }
 
 func hostOf(rawUrl string) string {
