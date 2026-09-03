@@ -441,6 +441,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [setup, build, trivy-scan]
     if: needs.setup.outputs.publish == 'true' && github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       matrix:
         variant: ${{ fromJSON(needs.setup.outputs.variants) }}
@@ -545,3 +548,14 @@ jobs:
               ghcr.io/chrislusf/seaweedfs:${BASE_TAG}${SUFFIX}-arm \
               ghcr.io/chrislusf/seaweedfs:${BASE_TAG}${SUFFIX}-386
           fi
+
+      - name: Resolve the published digests
+        id: digests
+        run: |
+          tag="${{ github.event_name == 'workflow_dispatch' && github.event.inputs.image_tag || 'latest' }}${{ steps.config.outputs.tag_suffix }}"
+          echo "images=ghcr.io/chrislusf/seaweedfs@$(crane digest "ghcr.io/chrislusf/seaweedfs:${tag}") chrislusf/seaweedfs@$(crane digest "chrislusf/seaweedfs:${tag}")" >> "$GITHUB_OUTPUT"
+
+      - name: Sign
+        uses: ./.github/actions/sign-image
+        with:
+          images: ${{ steps.digests.outputs.images }}
