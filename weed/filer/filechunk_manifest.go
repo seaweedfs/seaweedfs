@@ -110,7 +110,7 @@ func fetchWholeChunk(ctx context.Context, bytesBuffer *bytes.Buffer, lookupFileI
 		return err
 	}
 	jwt := JwtForVolumeServer(fileId)
-	if _, err = retriedStreamFetchChunkData(ctx, bytesBuffer, urlStrings, jwt, cipherKey, isGzipped, true, 0, 0); err == nil {
+	if _, err = retriedStreamFetchChunkData(ctx, bytesBuffer, urlStrings, jwt, cipherKey, isGzipped, true, 0, 0, refreshUrls(ctx, invalidator, lookupFileIdFn, fileId)); err == nil {
 		return nil
 	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
@@ -121,7 +121,7 @@ func fetchWholeChunk(ctx context.Context, bytesBuffer *bytes.Buffer, lookupFileI
 	return retryFetchWithFreshLocations(ctx, invalidator, lookupFileIdFn, fileId, urlStrings, err, func(newUrls []string) error {
 		// the failed attempt may have streamed a partial prefix into the buffer
 		bytesBuffer.Reset()
-		_, retryErr := retriedStreamFetchChunkData(ctx, bytesBuffer, newUrls, jwt, cipherKey, isGzipped, true, 0, 0)
+		_, retryErr := retriedStreamFetchChunkData(ctx, bytesBuffer, newUrls, jwt, cipherKey, isGzipped, true, 0, 0, nil)
 		return retryErr
 	})
 }
@@ -135,7 +135,10 @@ func fetchChunkRange(ctx context.Context, buffer []byte, lookupFileIdFn wdclient
 	return util_http.RetriedFetchChunkData(ctx, buffer, urlStrings, cipherKey, isGzipped, false, offset, fileId, refreshUrls)
 }
 
-func retriedStreamFetchChunkData(ctx context.Context, writer io.Writer, urlStrings []string, jwt string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, size int) (written int64, err error) {
+// retriedStreamFetchChunkData streams a chunk from the first location that
+// answers. refreshUrls may be nil; when a location failed and a later one
+// answered, it is called so the reads that follow start from a fresh list.
+func retriedStreamFetchChunkData(ctx context.Context, writer io.Writer, urlStrings []string, jwt string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, size int, refreshUrls util_http.RefreshUrlsFunc) (written int64, err error) {
 
 	var shouldRetry bool
 	var totalWritten int
@@ -149,6 +152,7 @@ func retriedStreamFetchChunkData(ctx context.Context, writer io.Writer, urlStrin
 		}
 
 		retriedCnt := 0
+		var failed bool
 		for _, urlString := range util_http.ReachableFirst(urlStrings) {
 			// Check for context cancellation before each volume server request
 			select {
@@ -191,10 +195,14 @@ func retriedStreamFetchChunkData(ctx context.Context, writer io.Writer, urlStrin
 				break
 			}
 			if err != nil {
+				failed = true
 				glog.V(0).InfofCtx(ctx, "read %s failed, err: %v", urlString, err)
 			} else {
 				break
 			}
+		}
+		if err == nil && failed && refreshUrls != nil {
+			refreshUrls()
 		}
 		// all nodes have tried it
 		if retriedCnt == len(urlStrings) {
