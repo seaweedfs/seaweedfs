@@ -287,3 +287,93 @@ async fn leaves_a_table_that_declares_no_order_alone() {
         "a table with no order named anywhere must not be proposed"
     );
 }
+
+/// The case a row-count threshold cannot see: the table replaced by a write of
+/// its own, growing by far less than `min_unsorted_rows`. Every row moved, so
+/// the table is unsorted, and detection has to say so however small the delta.
+#[tokio::test]
+async fn proposes_a_replacement_that_barely_changes_the_row_count() {
+    let _gateway = GATEWAY.lock().await;
+    let Some(url) = namespace_url() else {
+        eprintln!("WEED_LANCE_NAMESPACE is unset, skipping");
+        return;
+    };
+    let encoded = seed_unsorted_table(&url, "replaceme", 4, 250, Some("id asc"))
+        .await
+        .expect("seed an unsorted table");
+
+    let handler = SortHandler::new(url.clone()).with_fallback(fallback());
+    // A threshold no realistic append would cross, so nothing but the identity
+    // of the data can be what proposes this table.
+    let detection = RunDetectionRequest {
+        request_id: "detect-replace".to_string(),
+        job_type: JOB_TYPE.to_string(),
+        worker_config_values: config(&[("min_unsorted_rows", int(1_000_000))]),
+        ..Default::default()
+    };
+
+    let first = Recorder::default();
+    handler.detect(&detection, &first).await.expect("detection");
+    let proposal = first
+        .proposals
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|p| p.summary.contains(encoded.as_str()))
+        .cloned()
+        .expect("a never-sorted table was not proposed");
+
+    handler
+        .execute(
+            &ExecuteJobRequest {
+                request_id: "execute-replace".to_string(),
+                job: Some(JobSpec {
+                    job_id: "job-replace".to_string(),
+                    job_type: JOB_TYPE.to_string(),
+                    parameters: proposal.parameters.clone(),
+                    ..Default::default()
+                }),
+                worker_config_values: config(&[("max_rows_per_file", int(1024))]),
+                ..Default::default()
+            },
+            &first,
+        )
+        .await
+        .expect("sorting failed");
+
+    // Sorted, and left alone by the next sweep.
+    let after_sort = Recorder::default();
+    handler
+        .detect(&detection, &after_sort)
+        .await
+        .expect("detection");
+    assert!(
+        !after_sort
+            .proposals
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|p| p.summary.contains(encoded.as_str())),
+        "a table that was just sorted must not be proposed again"
+    );
+
+    // Now replace the data: 1002 rows where there were 1000, shuffled again.
+    seed_unsorted_table(&url, "replaceme", 3, 334, Some("id asc"))
+        .await
+        .expect("replace the table's data");
+
+    let after_replace = Recorder::default();
+    handler
+        .detect(&detection, &after_replace)
+        .await
+        .expect("detection");
+    assert!(
+        after_replace
+            .proposals
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|p| p.summary.contains(encoded.as_str())),
+        "a replaced table must be proposed even when the row count barely moved"
+    );
+}

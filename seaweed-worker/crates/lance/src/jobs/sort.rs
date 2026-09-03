@@ -81,6 +81,26 @@ impl SortHandler {
     }
 }
 
+/// The data files a dataset holds, in fragment order.
+///
+/// Appends only add fragments after the existing ones and lance hands out
+/// fragment ids monotonically even across an overwrite, so ordering by id makes
+/// "the files the sort wrote are still the first ones" a prefix test.
+fn data_files(dataset: &lance::Dataset) -> Vec<String> {
+    let mut fragments = dataset.get_fragments();
+    fragments.sort_by_key(|fragment| fragment.id());
+    fragments
+        .iter()
+        .flat_map(|fragment| {
+            fragment
+                .metadata()
+                .files
+                .iter()
+                .map(|file| file.path.clone())
+        })
+        .collect()
+}
+
 /// The scan ordering for a spec. Lance validates the column names against the
 /// schema when the ordering is set, so a spec naming a column the table does
 /// not have fails before anything is written.
@@ -223,7 +243,7 @@ impl JobHandler for SortHandler {
                 &spec,
                 &state,
                 stats.rows as u64,
-                stats.version,
+                &data_files(&table.dataset),
                 min_unsorted_rows,
             );
 
@@ -383,10 +403,18 @@ impl JobHandler for SortHandler {
         match &mut transaction.operation {
             Operation::Overwrite {
                 config_upsert_values,
+                fragments,
                 ..
             } => {
+                // The files these fragments name were written a moment ago and
+                // keep their names whatever version this commit becomes, which
+                // is what lets the marker travel inside the commit it describes.
+                let written: Vec<String> = fragments
+                    .iter()
+                    .flat_map(|fragment| fragment.files.iter().map(|file| file.path.clone()))
+                    .collect();
                 *config_upsert_values =
-                    Some(SortState::record(&spec, before.version, before.rows as u64));
+                    Some(SortState::record(&spec, &written, before.rows as u64));
             }
             other => {
                 return Err(anyhow!(
