@@ -250,7 +250,8 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 // LookupVolumeIdsAuthoritative bypasses the asynchronously maintained vid map.
 // Use it when a stale positive result is unsafe, such as before serving cache
 // payload from a Volume that the master may have retired. The provider still
-// batches all requested IDs into one lookup.
+// batches all requested IDs into one lookup, returns a nil map when it got no
+// answer, and reports the volumes the master does not serve as errors.
 func (vc *vidMapClient) LookupVolumeIdsAuthoritative(ctx context.Context, volumeIds []string) (map[string][]Location, error) {
 	return vc.provider.LookupVolumeIds(ctx, volumeIds)
 }

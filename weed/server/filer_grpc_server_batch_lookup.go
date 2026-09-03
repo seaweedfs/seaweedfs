@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -99,7 +100,7 @@ func lookupDirectoryEntries(
 					LogSignature: logSignature,
 				}
 				switch {
-				case err == filer_pb.ErrNotFound:
+				case errors.Is(err, filer_pb.ErrNotFound):
 					results[index] = result
 				case err != nil:
 					result.Error = err.Error()
@@ -158,7 +159,9 @@ func lookupDirectoryEntries(
 	}
 
 	locationsByVolume, lookupErr := lookupVolumes(ctx, volumeIDs)
-	// A nil map means the provider never got an answer. Only a volume the
+	// The provider returns a nil map when it got no answer, and a populated map
+	// with the volumes the master does not serve reported as errors when it did,
+	// so a nil map is the only sign of an unanswered lookup. Only a volume the
 	// master itself left out may become a miss; anything else stays an error.
 	missIsAuthoritative := req.UnavailableVolumeIsMiss && locationsByVolume != nil
 	for _, volumeID := range volumeIDs {
