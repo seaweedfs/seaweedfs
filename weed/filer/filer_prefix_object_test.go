@@ -75,3 +75,32 @@ func TestExpiredDirectoryIsNotDeletedOnRead(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, stillThere)
 }
+
+// TestExpiredFileIsDeletedOnRead pins the native cache-TTL path: regular
+// entries become invisible and their metadata row is removed without a
+// cache-specific transaction or reverse Volume index.
+func TestExpiredFileIsDeletedOnRead(t *testing.T) {
+	f, store := newTestFilerWithStubStore()
+	ctx := context.Background()
+
+	filePath := util.FullPath("/buckets/lmcache/expired")
+	expired := time.Now().Add(-2 * time.Hour)
+	require.NoError(t, store.InsertEntry(ctx, &Entry{
+		FullPath: filePath,
+		Attr: Attr{
+			Mode:   0o644,
+			Crtime: expired,
+			Mtime:  expired,
+			TtlSec: 60,
+		},
+		Chunks: []*filer_pb.FileChunk{{FileId: "7,01", Size: 4}},
+	}))
+
+	found, err := f.FindEntry(ctx, filePath)
+	require.ErrorIs(t, err, filer_pb.ErrNotFound)
+	require.Nil(t, found)
+
+	_, err = store.FindEntry(ctx, filePath)
+	require.ErrorIs(t, err, filer_pb.ErrNotFound,
+		"native TTL lookup should remove the expired metadata row")
+}
