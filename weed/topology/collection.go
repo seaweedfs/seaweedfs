@@ -54,7 +54,10 @@ func (c *Collection) GetVolumeLayout(rp *super_block.ReplicaPlacement, ttl *need
 		keyString += string(diskType)
 	}
 	vl, ok := c.storageType2VolumeLayout.Find(keyString)
-	return vl.(*VolumeLayout), ok
+	if !ok {
+		return nil, false
+	}
+	return vl.(*VolumeLayout), true
 }
 
 func (c *Collection) GetAllVolumeLayouts() []*VolumeLayout {
@@ -76,10 +79,8 @@ func (c *Collection) DeleteVolumeLayout(rp *super_block.ReplicaPlacement, ttl *n
 		keyString += string(diskType)
 	}
 	// Unpublish first so a racing registration re-resolves into a fresh layout.
-	vl, found := c.GetVolumeLayout(rp, ttl, diskType)
-	c.storageType2VolumeLayout.Delete(keyString)
-	if found {
-		vl.releaseLookupOwnership()
+	if vl, found := c.storageType2VolumeLayout.Delete(keyString); found {
+		vl.(*VolumeLayout).releaseLookupOwnership()
 	}
 }
 

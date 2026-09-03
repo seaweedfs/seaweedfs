@@ -550,6 +550,37 @@ func (vc *versionCollector) computeStartFrom(relativePath string) (startFrom str
 	return remainder, true
 }
 
+// computeListPrefix returns the name prefix that every entry of the directory
+// at relativePath must carry to be relevant to vc.prefix: the next path
+// component of the requested prefix under that directory. Pushing it into the
+// filer listing stops unrelated siblings from being transferred and scanned at
+// every level on the way down to the prefix. A name can hold no slash, so a
+// directory whose name does not start with this component cannot contain a
+// matching key, and a file whose name does not start with it cannot be one.
+// Inside the prefix zone (and without a prefix) it returns "" - no constraint.
+func (vc *versionCollector) computeListPrefix(relativePath string) string {
+	if vc.prefix == "" {
+		return ""
+	}
+
+	var remainder string
+	if relativePath == "" {
+		remainder = vc.prefix
+	} else if strings.HasPrefix(vc.prefix, relativePath+"/") {
+		remainder = vc.prefix[len(relativePath)+1:]
+	} else {
+		// The walk only enters a directory that matches the prefix or can
+		// descend toward it; one the prefix does not extend into means the
+		// whole directory is inside the prefix zone.
+		return ""
+	}
+
+	if idx := strings.Index(remainder, "/"); idx >= 0 {
+		return remainder[:idx]
+	}
+	return remainder
+}
+
 // shouldSkipObjectForMarker returns true if the object should be skipped based on keyMarker
 func (vc *versionCollector) shouldSkipObjectForMarker(objectKey string) bool {
 	if vc.keyMarker == "" {
@@ -588,7 +619,7 @@ func (vc *versionCollector) addVersion(version *ObjectVersion, objectKey string)
 			VersionId:    version.VersionId,
 			IsLatest:     version.IsLatest,
 			LastModified: version.LastModified,
-			Owner:        vc.s3a.getObjectOwnerFromVersion(version, vc.bucket, objectKey),
+			Owner:        vc.s3a.getObjectOwnerFromVersion(version),
 		}
 		*vc.allVersions = append(*vc.allVersions, deleteMarker)
 	} else {
@@ -599,15 +630,16 @@ func (vc *versionCollector) addVersion(version *ObjectVersion, objectKey string)
 			LastModified: version.LastModified,
 			ETag:         version.ETag,
 			Size:         version.Size,
-			Owner:        vc.s3a.getObjectOwnerFromVersion(version, vc.bucket, objectKey),
+			Owner:        vc.s3a.getObjectOwnerFromVersion(version),
 			StorageClass: StorageClass(vc.s3a.getStorageClassFromExtended(entryExtended(version))),
 		}
 		*vc.allVersions = append(*vc.allVersions, versionEntry)
 	}
 }
 
-// processVersionsDirectory handles a .versions directory entry
-func (vc *versionCollector) processVersionsDirectory(entryPath string) error {
+// processVersionsDirectory handles a .versions directory entry, using the
+// entry already fetched by the parent directory listing.
+func (vc *versionCollector) processVersionsDirectory(entryPath string, versionsEntry *filer_pb.Entry) error {
 	objectKey := strings.TrimSuffix(entryPath, s3_constants.VersionsFolder)
 	normalizedObjectKey := s3_constants.NormalizeObjectKey(objectKey)
 
@@ -623,7 +655,7 @@ func (vc *versionCollector) processVersionsDirectory(entryPath string) error {
 
 	glog.V(2).Infof("processVersionsDirectory: found object %s", normalizedObjectKey)
 
-	versions, err := vc.s3a.getObjectVersionList(vc.bucket, normalizedObjectKey)
+	versions, err := vc.s3a.getObjectVersionList(vc.bucket, normalizedObjectKey, versionsEntry)
 	if err != nil {
 		glog.Warningf("processVersionsDirectory: failed to get versions for %s: %v", normalizedObjectKey, err)
 		return nil // Continue with other entries
@@ -713,7 +745,7 @@ func (vc *versionCollector) processRegularFile(currentPath, entryPath string, en
 	versionsDirEntry, versionsErr := vc.s3a.getEntry(currentPath, versionsEntryName)
 	if versionsErr == nil && !hasVersionMeta {
 		// .versions exists but file has no version metadata - check for null version in .versions
-		versions, err := vc.s3a.getObjectVersionList(vc.bucket, normalizedObjectKey)
+		versions, err := vc.s3a.getObjectVersionList(vc.bucket, normalizedObjectKey, versionsDirEntry)
 		if err == nil {
 			for _, v := range versions {
 				if v.VersionId == "null" {
@@ -794,12 +826,13 @@ func (vc *versionCollector) collectVersions(currentPath, relativePath string) er
 		startFrom = markerStart
 		inclusive = true
 	}
+	listPrefix := vc.computeListPrefix(relativePath)
 	for {
 		if vc.isFull() {
 			return nil
 		}
 
-		entries, isLast, err := vc.s3a.list(currentPath, "", startFrom, inclusive, filer.PaginationSize)
+		entries, isLast, err := vc.s3a.list(currentPath, listPrefix, startFrom, inclusive, filer.PaginationSize)
 		// After the first batch, use exclusive mode for standard pagination
 		inclusive = false
 		if err != nil {
@@ -828,7 +861,7 @@ func (vc *versionCollector) collectVersions(currentPath, relativePath string) er
 
 				// Handle .versions directory
 				if strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
-					if err := vc.processVersionsDirectory(entryPath); err != nil {
+					if err := vc.processVersionsDirectory(entryPath, entry); err != nil {
 						return err
 					}
 					continue
@@ -933,25 +966,24 @@ func (vc *versionCollector) processDirectory(currentPath, entryPath string, entr
 	return nil
 }
 
-// getObjectVersionList returns all versions of a specific object
+// getObjectVersionList returns all versions of a specific object.
+// versionsEntry is the object's .versions directory entry, which every caller
+// already holds from listing the parent directory - re-fetching it here would
+// cost one extra filer round-trip per object listed.
 // Uses pagination to handle objects with more than 1000 versions
-func (s3a *S3ApiServer) getObjectVersionList(bucket, object string) ([]*ObjectVersion, error) {
+func (s3a *S3ApiServer) getObjectVersionList(bucket, object string, versionsEntry *filer_pb.Entry) ([]*ObjectVersion, error) {
 	var versions []*ObjectVersion
 
-	glog.V(2).Infof("getObjectVersionList: looking for versions of %s/%s in .versions directory", bucket, object)
+	// A nil entry means the .versions directory is absent: no versions, the
+	// same empty result the internal lookup used to produce.
+	if versionsEntry == nil {
+		return versions, nil
+	}
 
 	// All versions are now stored in the .versions directory only
 	bucketDir := s3a.bucketDir(bucket)
 	versionsObjectPath := object + s3_constants.VersionsFolder
-	glog.V(2).Infof("getObjectVersionList: checking versions directory %s", versionsObjectPath)
-
-	// Get the .versions directory entry to read latest version metadata
-	versionsEntry, err := s3a.getEntry(bucketDir, versionsObjectPath)
-	if err != nil {
-		// No versions directory exists, return empty list
-		glog.V(2).Infof("getObjectVersionList: no versions directory found: %v", err)
-		return versions, nil
-	}
+	glog.V(2).Infof("getObjectVersionList: looking for versions of %s/%s in %s", bucket, object, versionsObjectPath)
 
 	// Get the latest version info from directory metadata
 	var latestVersionId string
@@ -1824,6 +1856,27 @@ func (s3a *S3ApiServer) getLatestObjectVersion(bucket, object string) (*filer_pb
 	return s3a.doGetLatestObjectVersion(bucket, object, 8)
 }
 
+// lookupVersionsEntryWithRetry retries a .versions directory lookup, but only
+// for errors that can change on retry (isRetryableFilerErr). A definitive
+// NotFound is an answer, not a transient failure: retrying it walks the whole
+// backoff ladder (12.7s at 8 attempts) before the caller's pre-versioning
+// fallback gets to run, stalling every missing-key retention/tagging/ACL call.
+func lookupVersionsEntryWithRetry(lookup func() (*filer_pb.Entry, error), maxRetries int) (entry *filer_pb.Entry, err error) {
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		entry, err = lookup()
+		if err == nil || !isRetryableFilerErr(err) {
+			return entry, err
+		}
+
+		if attempt < maxRetries {
+			// Exponential backoff with higher base: 100ms, 200ms, 400ms, 800ms, 1600ms, 3200ms, 6400ms
+			delay := time.Millisecond * time.Duration(100*(1<<(attempt-1)))
+			time.Sleep(delay)
+		}
+	}
+	return entry, err
+}
+
 func (s3a *S3ApiServer) doGetLatestObjectVersion(bucket, object string, maxRetries int) (*filer_pb.Entry, error) {
 	// Normalize object path to ensure consistency with toFilerPath behavior
 	normalizedObject := s3_constants.NormalizeObjectKey(object)
@@ -1834,20 +1887,9 @@ func (s3a *S3ApiServer) doGetLatestObjectVersion(bucket, object string, maxRetri
 	glog.V(1).Infof("doGetLatestObjectVersion: looking for latest version of %s/%s (normalized: %s, retries: %d)", bucket, object, normalizedObject, maxRetries)
 
 	// Get the .versions directory entry to read latest version metadata with retry logic for filer consistency
-	var versionsEntry *filer_pb.Entry
-	var err error
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		versionsEntry, err = s3a.getEntry(bucketDir, versionsObjectPath)
-		if err == nil {
-			break
-		}
-
-		if attempt < maxRetries {
-			// Exponential backoff with higher base: 100ms, 200ms, 400ms, 800ms, 1600ms, 3200ms, 6400ms
-			delay := time.Millisecond * time.Duration(100*(1<<(attempt-1)))
-			time.Sleep(delay)
-		}
-	}
+	versionsEntry, err := lookupVersionsEntryWithRetry(func() (*filer_pb.Entry, error) {
+		return s3a.getEntry(bucketDir, versionsObjectPath)
+	}, maxRetries)
 
 	if err != nil {
 		// .versions directory doesn't exist - this can happen for objects that existed
@@ -2299,24 +2341,16 @@ func (s3a *S3ApiServer) recoverLatestListEntryByScan(bucket, normalizedObject st
 }
 
 // getObjectOwnerFromVersion extracts object owner information from version metadata
-func (s3a *S3ApiServer) getObjectOwnerFromVersion(version *ObjectVersion, bucket, objectKey string) CanonicalUser {
-	// First try to get owner from the version's OwnerID field (extracted during listing)
+// getObjectOwnerFromVersion resolves the owner recorded on a listed version.
+// OwnerID was extracted from the version entry's Extended metadata during
+// listing; an empty value means that entry carries no owner (data written
+// before owners were stamped), so re-fetching the same entry cannot answer
+// differently and would only add one filer round-trip per listed version.
+func (s3a *S3ApiServer) getObjectOwnerFromVersion(version *ObjectVersion) CanonicalUser {
 	if version.OwnerID != "" {
 		ownerDisplayName := s3a.iam.GetAccountNameById(version.OwnerID)
 		return CanonicalUser{ID: version.OwnerID, DisplayName: ownerDisplayName}
 	}
-
-	// Fallback: fetch the specific version entry to get the owner
-	// This handles cases where OwnerID wasn't populated during listing
-	if specificVersionEntry, err := s3a.getSpecificObjectVersion(bucket, objectKey, version.VersionId); err == nil && specificVersionEntry.Extended != nil {
-		if ownerBytes, exists := specificVersionEntry.Extended[s3_constants.ExtAmzOwnerKey]; exists {
-			ownerId := string(ownerBytes)
-			ownerDisplayName := s3a.iam.GetAccountNameById(ownerId)
-			return CanonicalUser{ID: ownerId, DisplayName: ownerDisplayName}
-		}
-	}
-
-	// Fallback: return anonymous if no owner found
 	return CanonicalUser{ID: s3_constants.AccountAnonymousId, DisplayName: "anonymous"}
 }
 

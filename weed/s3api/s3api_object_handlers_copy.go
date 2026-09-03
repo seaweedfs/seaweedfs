@@ -787,13 +787,9 @@ func pathToBucketObjectAndVersion(rawPath, decodedPath string) (bucket, object, 
 }
 
 type CopyPartResult struct {
-	LastModified      time.Time `xml:"LastModified"`
-	ETag              string    `xml:"ETag"`
-	ChecksumCRC32     string    `xml:"ChecksumCRC32,omitempty"`
-	ChecksumCRC32C    string    `xml:"ChecksumCRC32C,omitempty"`
-	ChecksumCRC64NVME string    `xml:"ChecksumCRC64NVME,omitempty"`
-	ChecksumSHA1      string    `xml:"ChecksumSHA1,omitempty"`
-	ChecksumSHA256    string    `xml:"ChecksumSHA256,omitempty"`
+	LastModified time.Time `xml:"LastModified"`
+	ETag         string    `xml:"ETag"`
+	ChecksumResult
 }
 
 func buildCopyPartResult(etag string, lastModified time.Time, metadata SSEResponseMetadata) CopyPartResult {
@@ -801,18 +797,7 @@ func buildCopyPartResult(etag string, lastModified time.Time, metadata SSERespon
 		ETag:         etag,
 		LastModified: lastModified,
 	}
-	switch metadata.ChecksumHeaderName {
-	case s3_constants.AmzChecksumCRC32:
-		result.ChecksumCRC32 = metadata.ChecksumValue
-	case s3_constants.AmzChecksumCRC32C:
-		result.ChecksumCRC32C = metadata.ChecksumValue
-	case s3_constants.AmzChecksumCRC64NVME:
-		result.ChecksumCRC64NVME = metadata.ChecksumValue
-	case s3_constants.AmzChecksumSHA1:
-		result.ChecksumSHA1 = metadata.ChecksumValue
-	case s3_constants.AmzChecksumSHA256:
-		result.ChecksumSHA256 = metadata.ChecksumValue
-	}
+	result.SetChecksum(metadata.ChecksumHeaderName, metadata.ChecksumValue)
 	return result
 }
 

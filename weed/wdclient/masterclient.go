@@ -105,10 +105,11 @@ func (p *masterVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []
 					var locations []Location
 					for _, masterLoc := range vidLoc.Locations {
 						loc := Location{
-							Url:        masterLoc.Url,
-							PublicUrl:  masterLoc.PublicUrl,
-							GrpcPort:   int(masterLoc.GrpcPort),
-							DataCenter: masterLoc.DataCenter,
+							Url:          masterLoc.Url,
+							PublicUrl:    masterLoc.PublicUrl,
+							GrpcPort:     int(masterLoc.GrpcPort),
+							DataCenter:   masterLoc.DataCenter,
+							DataInRemote: masterLoc.DataInRemote,
 						}
 						// Update cache with the location
 						p.masterClient.addLocation(uint32(vid), loc)
@@ -367,6 +368,12 @@ func addedVids(added, removed []uint32) map[uint32]struct{} {
 	return index
 }
 
+// updateVidMap applies a KeepConnectedResponse volume-location message to the
+// local vidMap. NewVids adds the entries; RemoteVids names the subset of them
+// backed by remote storage, which is added with DataInRemote so read paths can
+// prefer the cheap local replica. DeletedVids drops the named entry unless the
+// same message also added it back (volume moved between this server's disks).
+// EC vid changes go through the parallel addEcLocation / deleteEcLocation pair.
 func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 	if resp.VolumeLocation.IsEmptyUrl() {
 		glog.V(0).Infof("updateVidMap ignore short heartbeat: %+v", resp)
@@ -380,9 +387,27 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 		GrpcPort:   int(resp.VolumeLocation.GrpcPort),
 	}
 	stillOnServer := addedVids(resp.VolumeLocation.NewVids, resp.VolumeLocation.DeletedVids)
+	// RemoteVids repeats ids NewVids already carries, so the tier is settled
+	// before anything is written rather than adding each one twice.
+	var remoteVids map[uint32]struct{}
+	if len(resp.VolumeLocation.RemoteVids) > 0 {
+		remoteVids = make(map[uint32]struct{}, len(resp.VolumeLocation.RemoteVids))
+		for _, vid := range resp.VolumeLocation.RemoteVids {
+			remoteVids[vid] = struct{}{}
+		}
+	}
 	for _, newVid := range resp.VolumeLocation.NewVids {
+		if _, isRemote := remoteVids[newVid]; isRemote {
+			continue
+		}
 		glog.V(2).Infof("%s.%s: %s masterClient adds volume %d", mc.FilerGroup, mc.clientType, loc.Url, newVid)
 		mc.addLocation(newVid, loc)
+	}
+	for _, remoteVid := range resp.VolumeLocation.RemoteVids {
+		remoteLoc := loc
+		remoteLoc.DataInRemote = true
+		glog.V(2).Infof("%s.%s: %s masterClient adds remote volume %d", mc.FilerGroup, mc.clientType, remoteLoc.Url, remoteVid)
+		mc.addLocation(remoteVid, remoteLoc)
 	}
 	for _, deletedVid := range resp.VolumeLocation.DeletedVids {
 		if _, moved := stillOnServer[deletedVid]; moved {
@@ -403,10 +428,12 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 		glog.V(2).Infof("%s.%s: %s masterClient removes ec volume %d", mc.FilerGroup, mc.clientType, loc.Url, deletedEcVid)
 		mc.deleteEcLocation(deletedEcVid, loc)
 	}
-	glog.V(1).Infof("updateVidMap(%s) %s.%s: %s volume add: %d, del: %d, add ec: %d del ec: %d",
+	glog.V(1).Infof("updateVidMap(%s) %s.%s: %s volume add local: %d, remote: %d, del: %d, add ec: %d del ec: %d",
 		resp.VolumeLocation.DataCenter, mc.FilerGroup, mc.clientType, loc.Url,
-		len(resp.VolumeLocation.NewVids), len(resp.VolumeLocation.DeletedVids),
-		len(resp.VolumeLocation.NewEcVids), len(resp.VolumeLocation.DeletedEcVids))
+		len(resp.VolumeLocation.NewVids)-len(resp.VolumeLocation.RemoteVids),
+		len(resp.VolumeLocation.RemoteVids),
+		len(resp.VolumeLocation.DeletedVids), len(resp.VolumeLocation.NewEcVids),
+		len(resp.VolumeLocation.DeletedEcVids))
 }
 
 func (mc *MasterClient) WithClient(ctx context.Context, streamingMode bool, fn func(client master_pb.SeaweedClient) error) error {

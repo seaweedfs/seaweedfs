@@ -29,7 +29,7 @@ func seedAdapterRegisteredLanceTable(t *testing.T, properties iceberg.Properties
 	}
 	filer.Put(s3tables.GetTableBucketPath(bucket), namespace, map[string][]byte{s3tables.ExtendedKeyMetadata: nsMeta})
 
-	full, err := json.Marshal(buildTestMetadata(t, nil, nil, 0, properties))
+	full, err := json.Marshal(buildTestMetadata(t, nil, nil, 0, properties, nil, nil))
 	if err != nil {
 		t.Fatalf("marshal iceberg metadata: %v", err)
 	}
@@ -64,7 +64,7 @@ func seedAdapterRegisteredLanceTable(t *testing.T, properties iceberg.Properties
 func TestOrphanCleanupWouldDeleteAnAdapterRegisteredLanceDataset(t *testing.T) {
 	filer, tablePath := seedAdapterRegisteredLanceTable(t, iceberg.Properties{tableTypeProperty: "lance"})
 
-	meta := buildTestMetadata(t, nil, nil, 0, iceberg.Properties{tableTypeProperty: "lance"})
+	meta := buildTestMetadata(t, nil, nil, 0, iceberg.Properties{tableTypeProperty: "lance"}, nil, nil)
 	candidates, err := collectOrphanCandidates(context.Background(), filer.Client, "vectors", tablePath,
 		meta, "v1.metadata.json", defaultOrphanOlderThanHours)
 	if err != nil {

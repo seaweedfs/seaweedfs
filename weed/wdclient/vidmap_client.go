@@ -13,6 +13,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // VolumeLocationProvider is the interface for looking up volume locations
@@ -51,7 +52,13 @@ func (vc *vidMapClient) GetLookupFileIdFunction() LookupFileIdFunctionType {
 	return vc.LookupFileIdWithFallback
 }
 
-// LookupFileIdWithFallback looks up a file ID, checking cache first, then using provider
+// LookupFileIdWithFallback resolves a "<vid>,<cookie>" file id to a list of
+// HTTP read URLs, using the cached vidMap when populated and falling back to
+// the provider for a fresh lookup on miss. URLs are returned in preference
+// order: same-DC local, same-DC remote-tier, then the other data centers on
+// the same footing -- mirroring the cached vidMap path so both routes agree.
+// Concurrent misses for the same vid are coalesced via the singleflight group
+// on LookupVolumeIdsWithFallback.
 func (vc *vidMapClient) LookupFileIdWithFallback(ctx context.Context, fileId string) (fullUrls []string, err error) {
 	// Try cache first
 	dataCenter := vc.vidMap.DataCenter
@@ -90,8 +97,13 @@ func (vc *vidMapClient) LookupFileIdWithFallback(ctx context.Context, fileId str
 
 	// Build HTTP URLs from locations, preferring same data center
 	var sameDcUrls, otherDcUrls []string
+	localUrls := make(map[string]bool)
 	for _, loc := range locations {
 		httpUrl := "http://" + loc.Url + "/" + fileId
+		glog.V(4).Infof("lookup %s => %s, data in remote storage tier: %v", fileId, loc.Url, loc.DataInRemote)
+		if !loc.DataInRemote {
+			localUrls[httpUrl] = true
+		}
 		if dataCenter != "" && dataCenter == loc.DataCenter {
 			sameDcUrls = append(sameDcUrls, httpUrl)
 		} else {
@@ -103,7 +115,13 @@ func (vc *vidMapClient) LookupFileIdWithFallback(ctx context.Context, fileId str
 	rand.Shuffle(len(sameDcUrls), func(i, j int) { sameDcUrls[i], sameDcUrls[j] = sameDcUrls[j], sameDcUrls[i] })
 	rand.Shuffle(len(otherDcUrls), func(i, j int) { otherDcUrls[i], otherDcUrls[j] = otherDcUrls[j], otherDcUrls[i] })
 
-	// Prefer same data center
+	// Local replicas go first inside each data center, but never ahead of the
+	// data-center preference itself. Mirrors vidMap.LookupVolumeServerUrl so
+	// all client lookup paths agree.
+	if len(localUrls) > 0 {
+		sameDcUrls = util.ReorderToFront(localUrls, sameDcUrls)
+		otherDcUrls = util.ReorderToFront(localUrls, otherDcUrls)
+	}
 	fullUrls = append(sameDcUrls, otherDcUrls...)
 	return fullUrls, nil
 }

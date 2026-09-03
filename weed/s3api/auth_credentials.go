@@ -2758,23 +2758,16 @@ func (iam *IdentityAccessManagement) bucketsNamedByAttachedPolicies(r *http.Requ
 	return true, granted
 }
 
-// AuthorizeCopySource verifies the caller is allowed to read the CopyObject /
-// UploadPartCopy source. The Auth middleware only checks the destination
-// (s3:PutObject) because routing keys on the request URL; without this call,
-// an STS session token scoped to a prefix could copy from any other prefix in
-// the same bucket.
-//
-// The source path is checked against both bucket policy and IAM/identity
-// permissions, mirroring the normal request-routed flow but with a synthetic
-// GetObject request so action resolution and ARN building target the source.
-// Returns s3err.ErrNone when allowed or when auth is disabled.
-func (iam *IdentityAccessManagement) AuthorizeCopySource(r *http.Request, identity *Identity, srcBucket, srcObject, srcVersionId string) s3err.ErrorCode {
-	if !iam.isEnabled() {
-		return s3err.ErrNone
-	}
-	if srcBucket == "" {
-		return s3err.ErrNone
-	}
+// authorizeObjectKeyAction authorizes action on bucket/objectKey for an
+// already-authenticated identity, for a key the request URL does not name: a
+// copy/rename source, a DeleteObjects body key, or a POST Object form key. It
+// evaluates the bucket policy (an explicit Deny wins) and then IAM/identity
+// against a synthetic <method> /<bucket>/<objectKey> request, so ResolveS3Action
+// and buildResourceARN target the object rather than whatever the real URL and
+// its query describe. versionId, when set, and the STS session token ride along
+// for policy conditions. Returns ErrNone when auth is disabled (checked by the
+// callers) or the identity is an admin.
+func (iam *IdentityAccessManagement) authorizeObjectKeyAction(r *http.Request, identity *Identity, method string, action Action, bucket, objectKey, versionId string) s3err.ErrorCode {
 	if identity == nil {
 		return s3err.ErrAccessDenied
 	}
@@ -2782,72 +2775,8 @@ func (iam *IdentityAccessManagement) AuthorizeCopySource(r *http.Request, identi
 		return s3err.ErrNone
 	}
 
-	srcReq := r.Clone(r.Context())
-	srcURL := &url.URL{
-		Scheme: r.URL.Scheme,
-		Host:   r.URL.Host,
-		Path:   "/" + srcBucket + "/" + srcObject,
-	}
-	// Build the synthetic source query from scratch so leftover params like
-	// uploadId/partNumber on UploadPartCopy do not steer ResolveS3Action away
-	// from s3:GetObject. The session token must still flow through for
-	// presigned URLs that carry STS credentials in the query string.
-	srcQuery := make(url.Values)
-	if token := r.URL.Query().Get("X-Amz-Security-Token"); token != "" {
-		srcQuery.Set("X-Amz-Security-Token", token)
-	}
-	if srcVersionId != "" {
-		srcQuery.Set("versionId", srcVersionId)
-	}
-	if len(srcQuery) > 0 {
-		srcURL.RawQuery = srcQuery.Encode()
-	}
-	srcReq.URL = srcURL
-	srcReq.Method = http.MethodGet
-	srcReq.RequestURI = ""
-	srcReq.Body = nil
-	srcReq.GetBody = nil
-	srcReq.ContentLength = 0
-
-	action := s3_constants.ACTION_READ
-
-	if iam.policyEngine != nil {
-		principal := buildPrincipalARN(identity, srcReq)
-		allowed, evaluated, err := iam.policyEngine.EvaluatePolicy(srcBucket, srcObject, action, principal, srcReq, identity.Claims, nil)
-		if err != nil {
-			glog.Errorf("CopyObject source policy evaluation failed for %s/%s: %v - denying", srcBucket, srcObject, err)
-			return s3err.ErrAccessDenied
-		}
-		if evaluated {
-			if allowed {
-				return s3err.ErrNone
-			}
-			return s3err.ErrAccessDenied
-		}
-	}
-
-	return iam.VerifyActionPermission(srcReq, identity, Action(action), srcBucket, srcObject)
-}
-
-// AuthorizeObjectDelete authorizes removing one key the request URL does not
-// name: a key from a DeleteObjects body, or the source of a RenameObject. It is
-// checked against a synthetic DELETE /<bucket>/<key> so that ResolveS3Action and
-// buildResourceARN target the object. Mirrors AuthorizeCopySource.
-func (iam *IdentityAccessManagement) AuthorizeObjectDelete(r *http.Request, identity *Identity, bucket, objectKey, versionId string) s3err.ErrorCode {
-	if !iam.isEnabled() {
-		return s3err.ErrNone
-	}
-	if bucket == "" || objectKey == "" {
-		return s3err.ErrNone
-	}
-	if identity == nil {
-		return s3err.ErrAccessDenied
-	}
-	if identity.isAdmin() {
-		return s3err.ErrNone
-	}
-
-	// Shallow copy: authorization only reads headers, and this runs once per key.
+	// Shallow copy: authorization only reads headers, so sharing the header map
+	// with the original request is safe, and this can run once per key.
 	keyReq := new(http.Request)
 	*keyReq = *r
 	keyURL := &url.URL{
@@ -2855,8 +2784,9 @@ func (iam *IdentityAccessManagement) AuthorizeObjectDelete(r *http.Request, iden
 		Host:   r.URL.Host,
 		Path:   "/" + bucket + "/" + objectKey,
 	}
-	// Build the query from scratch so the envelope's "delete" param can't steer
-	// ResolveS3Action; keep the STS token and per-key versionId for policy eval.
+	// Build the query from scratch so a param on the real request (delete,
+	// uploadId, partNumber, ...) cannot steer ResolveS3Action off the intended
+	// action; keep the STS token and per-key versionId for policy conditions.
 	keyQuery := make(url.Values)
 	if versionId != "" {
 		keyQuery.Set("versionId", versionId)
@@ -2870,19 +2800,17 @@ func (iam *IdentityAccessManagement) AuthorizeObjectDelete(r *http.Request, iden
 		keyURL.RawQuery = keyQuery.Encode()
 	}
 	keyReq.URL = keyURL
-	keyReq.Method = http.MethodDelete
+	keyReq.Method = method
 	keyReq.RequestURI = ""
 	keyReq.Body = nil
 	keyReq.GetBody = nil
 	keyReq.ContentLength = 0
 
-	action := s3_constants.ACTION_WRITE
-
 	if iam.policyEngine != nil {
 		principal := buildPrincipalARN(identity, keyReq)
-		allowed, evaluated, err := iam.policyEngine.EvaluatePolicy(bucket, objectKey, action, principal, keyReq, identity.Claims, nil)
+		allowed, evaluated, err := iam.policyEngine.EvaluatePolicy(bucket, objectKey, string(action), principal, keyReq, identity.Claims, nil)
 		if err != nil {
-			glog.Errorf("DeleteObjects key policy evaluation failed for %s/%s: %v - denying", bucket, objectKey, err)
+			glog.Errorf("policy evaluation failed for %s %s/%s: %v - denying", action, bucket, objectKey, err)
 			return s3err.ErrAccessDenied
 		}
 		if evaluated {
@@ -2893,7 +2821,48 @@ func (iam *IdentityAccessManagement) AuthorizeObjectDelete(r *http.Request, iden
 		}
 	}
 
-	return iam.VerifyActionPermission(keyReq, identity, Action(action), bucket, objectKey)
+	return iam.VerifyActionPermission(keyReq, identity, action, bucket, objectKey)
+}
+
+// AuthorizeCopySource verifies the caller is allowed to read the CopyObject /
+// UploadPartCopy source. The Auth middleware only checks the destination
+// (s3:PutObject) because routing keys on the request URL; without this call,
+// an STS session token scoped to a prefix could copy from any other prefix in
+// the same bucket. Returns s3err.ErrNone when allowed or when auth is disabled.
+func (iam *IdentityAccessManagement) AuthorizeCopySource(r *http.Request, identity *Identity, srcBucket, srcObject, srcVersionId string) s3err.ErrorCode {
+	if !iam.isEnabled() {
+		return s3err.ErrNone
+	}
+	if srcBucket == "" {
+		return s3err.ErrNone
+	}
+	return iam.authorizeObjectKeyAction(r, identity, http.MethodGet, s3_constants.ACTION_READ, srcBucket, srcObject, srcVersionId)
+}
+
+// AuthorizeObjectDelete authorizes removing one key the request URL does not
+// name: a key from a DeleteObjects body, or the source of a RenameObject.
+func (iam *IdentityAccessManagement) AuthorizeObjectDelete(r *http.Request, identity *Identity, bucket, objectKey, versionId string) s3err.ErrorCode {
+	if !iam.isEnabled() {
+		return s3err.ErrNone
+	}
+	if bucket == "" || objectKey == "" {
+		return s3err.ErrNone
+	}
+	return iam.authorizeObjectKeyAction(r, identity, http.MethodDelete, s3_constants.ACTION_WRITE, bucket, objectKey, versionId)
+}
+
+// AuthorizeObjectWrite authorizes writing one key the request URL does not name:
+// a POST Object (presigned-POST / HTML-form) upload carries its key in the
+// multipart form, so the Auth middleware only checked the coarse bucket-level
+// Write action. This runs the same per-object authorization the PUT path applies.
+func (iam *IdentityAccessManagement) AuthorizeObjectWrite(r *http.Request, identity *Identity, bucket, objectKey string) s3err.ErrorCode {
+	if !iam.isEnabled() {
+		return s3err.ErrNone
+	}
+	if bucket == "" || objectKey == "" {
+		return s3err.ErrNone
+	}
+	return iam.authorizeObjectKeyAction(r, identity, http.MethodPut, s3_constants.ACTION_WRITE, bucket, objectKey, "")
 }
 
 // authorizeWithIAM authorizes requests using the IAM integration policy engine

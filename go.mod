@@ -154,6 +154,7 @@ require (
 	github.com/tarantool/go-tarantool/v3 v3.0.1
 	github.com/testcontainers/testcontainers-go v0.43.0
 	github.com/tikv/client-go/v2 v2.0.7
+	github.com/twmb/avro v1.7.2
 	github.com/xeipuuv/gojsonschema v1.2.0
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.5.2
 	github.com/ydb-platform/ydb-go-sdk/v3 v3.151.1
@@ -269,7 +270,6 @@ require (
 	github.com/substrait-io/substrait v0.87.0 // indirect
 	github.com/substrait-io/substrait-go/v8 v8.1.1 // indirect
 	github.com/substrait-io/substrait-protobuf/go v0.85.0 // indirect
-	github.com/twmb/avro v1.7.2 // indirect
 	github.com/twpayne/go-geom v1.6.1 // indirect
 	github.com/twpayne/go-kml/v3 v3.2.1 // indirect
 	github.com/tyler-smith/go-bip39 v1.1.0 // indirect
@@ -515,13 +515,6 @@ require (
 )
 
 // replace github.com/seaweedfs/raft => /Users/chrislu/go/src/github.com/seaweedfs/raft
-
-// apache/thrift v0.23.0 fixes CVE-2026-41602 but compares int against the
-// untyped math.MaxUint32 in lib/go/thrift/framed_transport.go, which overflows
-// int on 32-bit GOARCHes (e.g. openbsd/arm, linux/arm) and fails to compile.
-// Upstream fixed the range check post-release; pin to that commit until the
-// next tagged release carries both the CVE fix and the 32-bit fix.
-replace github.com/apache/thrift => github.com/apache/thrift v0.23.1-0.20260429145742-d2acd3c49e58
 
 // tyler-smith/go-bip39 was deleted from GitHub, so `go mod download` fails for
 // anyone resolving it directly (GOPROXY=direct). It only reaches us transitively

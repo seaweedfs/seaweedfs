@@ -250,9 +250,11 @@ message CreateEntryRequest {
     repeated int32 signatures = 5;
     bool skip_check_parent_directory = 6;
     // Optional precondition evaluated against the current entry atomically with
-    // the write, under the filer's per-path lock. The caller must route the
-    // key's writes to this entry's owner filer for the check to be authoritative.
+    // the write, under the filer's per-path lock.
     WriteCondition condition = 7;
+    // Set on a create a filer forwarded to the entry's ring owner, so the owner
+    // applies it locally instead of forwarding again. Clients leave it unset.
+    bool is_moved = 8;
 }
 
 // WriteCondition is the precondition the filer evaluates against the existing
@@ -561,6 +563,9 @@ message AssignVolumeResponse {
     string error = 8;
     Location location = 9;
     repeated Location replicas = 10;
+    // fsync is the storage rule's fsync decision for the assigned path, so the
+    // client can carry it onto the volume server upload request.
+    bool fsync = 11;
 }
 
 message LookupVolumeRequest {
@@ -662,6 +667,7 @@ message SubscribeMetadataResponse {
     int64 ts_ns = 3;
     repeated SubscribeMetadataResponse events = 4; // batch of additional events (backlog catch-up)
     repeated LogFileChunkRef log_file_refs = 5;    // log file chunk refs for client direct-read
+    int64 flushed_ts_ns = 6; // local log-buffer flush watermark: everything at or below it is on disk
 }
 message ListMetadataSubscribersRequest {
     repeated string client_types = 1; // optional filter by client type, e.g. "mount"; empty = all

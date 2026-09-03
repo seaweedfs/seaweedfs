@@ -442,6 +442,7 @@ func (h *Handler) rewriteManifests(
 
 	// Build a lookup from spec ID to PartitionSpec
 	specByID := specByID(meta)
+	schema := meta.CurrentSchema()
 	var carriedDataManifests []iceberg.ManifestFile
 	var manifestsRewritten int64
 
@@ -450,16 +451,17 @@ func (h *Handler) rewriteManifests(
 		if err != nil {
 			return "", nil, fmt.Errorf("read manifest %s: %w", mf.FilePath(), err)
 		}
-		entries, err := iceberg.ReadManifest(mf, bytes.NewReader(manifestData), true)
+		entries, err := s3tables.ReadManifest(mf, manifestData, true, specByID, schema)
 		if err != nil {
 			return "", nil, fmt.Errorf("parse manifest %s: %w", mf.FilePath(), err)
 		}
+		sid := mf.PartitionSpecID()
+		spec, found := specByID[int(sid)]
+		if !found {
+			return "", nil, fmt.Errorf("partition spec %d not found in table metadata", sid)
+		}
 
 		if predicate != nil {
-			spec, found := specByID[int(mf.PartitionSpecID())]
-			if !found {
-				return "", nil, fmt.Errorf("partition spec %d not found in table metadata", mf.PartitionSpecID())
-			}
 			allMatch := len(entries) > 0
 			for _, entry := range entries {
 				match, err := predicate.Matches(spec, entry.DataFile().Partition())
@@ -477,14 +479,9 @@ func (h *Handler) rewriteManifests(
 			}
 		}
 
-		sid := mf.PartitionSpecID()
 		se, ok := specMap[sid]
 		if !ok {
-			ps, found := specByID[int(sid)]
-			if !found {
-				return "", nil, fmt.Errorf("partition spec %d not found in table metadata", sid)
-			}
-			se = &specEntries{specID: sid, spec: ps}
+			se = &specEntries{specID: sid, spec: spec}
 			specMap[sid] = se
 		}
 		se.entries = append(se.entries, entries...)
@@ -499,7 +496,6 @@ func (h *Handler) rewriteManifests(
 		return "no data entries to rewrite", nil, nil
 	}
 
-	schema := meta.CurrentSchema()
 	version := meta.Version()
 	snapshotID := currentSnap.SnapshotID
 	newSnapshotID := time.Now().UnixMilli()

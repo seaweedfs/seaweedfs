@@ -26,6 +26,8 @@ const (
 	defaultDeleteMaxOutputFiles   = 8
 	defaultRewriteStrategy        = "binpack"
 	rewriteStrategyAuto           = "auto"
+	defaultSortBufferRows         = 262144
+	minSortBufferRows             = 1024
 	defaultMinManifestsToRewrite  = 5
 	minManifestsToRewrite         = 2
 	defaultOperations             = "all"
@@ -126,6 +128,8 @@ type Config struct {
 	Where                       string
 	RewriteStrategy             string
 	SortMaxInputBytes           int64
+	SortBufferRows              int64
+	SortSpillDir                string
 }
 
 // ParseConfig extracts an iceberg maintenance Config from plugin config values.
@@ -149,6 +153,8 @@ func ParseConfig(values map[string]*plugin_pb.ConfigValue) Config {
 		Where:                       strings.TrimSpace(readStringConfig(values, "where", "")),
 		RewriteStrategy:             strings.TrimSpace(strings.ToLower(readStringConfig(values, "rewrite_strategy", defaultRewriteStrategy))),
 		SortMaxInputBytes:           readSizeMBConfig(values, "sort_max_input_mb", 0),
+		SortBufferRows:              readInt64Config(values, "sort_buffer_rows", defaultSortBufferRows),
+		SortSpillDir:                strings.TrimSpace(readStringConfig(values, "sort_spill_dir", "")),
 	}
 
 	// Clamp the fields that are always defaulted by worker config parsing.
@@ -198,6 +204,11 @@ func applyThresholdDefaults(cfg Config) Config {
 	}
 	if cfg.SortMaxInputBytes < 0 {
 		cfg.SortMaxInputBytes = 0
+	}
+	// A run smaller than this buys no memory back worth the extra runs, and
+	// the writer stops at 32K of them, so a tiny value would cap the output.
+	if cfg.SortBufferRows < minSortBufferRows {
+		cfg.SortBufferRows = defaultSortBufferRows
 	}
 	if cfg.MinManifestsToRewrite < minManifestsToRewrite {
 		cfg.MinManifestsToRewrite = minManifestsToRewrite

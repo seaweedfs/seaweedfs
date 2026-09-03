@@ -382,7 +382,9 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, sourceGrpcDi
 		glog.Warningf("invalid concurrency value, using default: %d", DefaultConcurrencyLimit)
 		concurrency = DefaultConcurrencyLimit
 	}
+	clientName := fmt.Sprintf("syncFrom_%s_To_%s", string(sourceFiler), string(targetFiler))
 	processor := NewMetadataProcessor(processEventFn, concurrency, sourceFilerOffsetTsNs)
+	processor.SetMetrics(sourceFiler.String(), targetFiler.String(), clientName, sourcePath)
 
 	// update sync state for graceful shutdown checkpoint saving
 	if statePtr != nil {
@@ -396,9 +398,38 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, sourceGrpcDi
 		})
 	}
 
+	// The offset callback below only fires while events flow, so it freezes
+	// exactly when the workers are saturated; a ticker keeps lag honest. The
+	// idle heartbeat is folded in because the watermark stops at the last real
+	// event, so a quiet caught-up stream would otherwise show phantom lag.
+	lagGauge := statsCollect.FilerSyncLagSecondsGauge.WithLabelValues(sourceFiler.String(), targetFiler.String(), clientName, sourcePath)
+	var idleHeartbeatTsNs atomic.Int64
+	stopLagTicker := make(chan struct{})
+	defer close(stopLagTicker)
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopLagTicker:
+				return
+			case <-ticker.C:
+				freshnessTsNs := processor.processedTsWatermark.Load()
+				// a heartbeat means consumed, not replicated: while a failure
+				// pins the watermark it must not mask the growing lag
+				if processor.OldestFailedTsNs() == 0 {
+					freshnessTsNs = max(freshnessTsNs, idleHeartbeatTsNs.Load())
+				}
+				if freshnessTsNs == 0 {
+					continue
+				}
+				lagGauge.Set(max(0, time.Since(time.Unix(0, freshnessTsNs)).Seconds()))
+			}
+		}
+	}()
+
 	var lastLogTsNs = time.Now().UnixNano()
 	var lastProgressedTsNs int64
-	var clientName = fmt.Sprintf("syncFrom_%s_To_%s", string(sourceFiler), string(targetFiler))
 	processEventFnWithOffset := pb.AddOffsetFunc(func(resp *filer_pb.SubscribeMetadataResponse) error {
 		processor.AddSyncJob(resp)
 		return nil
@@ -449,7 +480,13 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, sourceGrpcDi
 		// The idle heartbeat moves the gauge to the source's current time once we
 		// are caught up, so now-sync_offset reflects real lag and stays alertable.
 		OnIdleHeartbeat: func(tsNs int64) {
+			// same masking concern as the lag ticker: a pinned failure must
+			// keep now-sync_offset growing too
+			if processor.OldestFailedTsNs() != 0 {
+				return
+			}
 			statsCollect.FilerSyncOffsetGauge.WithLabelValues(sourceFiler.String(), targetFiler.String(), clientName, sourcePath).Set(float64(tsNs))
+			idleHeartbeatTsNs.Store(tsNs)
 		},
 	}
 

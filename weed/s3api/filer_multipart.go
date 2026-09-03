@@ -43,6 +43,10 @@ const (
 type InitiateMultipartUploadResult struct {
 	XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ InitiateMultipartUploadResult"`
 	s3.CreateMultipartUploadOutput
+
+	// Checksum fields — returned as HTTP response headers, not in the XML body
+	ChecksumAlgorithm string `xml:"-"`
+	ChecksumType      string `xml:"-"`
 }
 
 // getRequestScheme determines the URL scheme (http or https) from the request
@@ -148,6 +152,8 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 			Key:      objectKey(input.Key),
 			UploadId: aws.String(uploadIdString),
 		},
+		ChecksumAlgorithm: checksumAlgorithmNameFromHeaderName(checksumHeaderName),
+		ChecksumType:      checksumType,
 	}
 
 	return
@@ -160,10 +166,8 @@ type CompleteMultipartUploadResult struct {
 	Key      *string  `xml:"Key,omitempty"`
 	ETag     *string  `xml:"ETag,omitempty"`
 
-	// Checksum fields — returned as HTTP response headers, not in the XML body
-	ChecksumHeaderName string `xml:"-"`
-	ChecksumValue      string `xml:"-"`
-	ChecksumType       string `xml:"-"`
+	ChecksumResult
+	ChecksumType string `xml:"ChecksumType,omitempty"`
 
 	// VersionId is NOT included in XML body - it should only be in x-amz-version-id HTTP header
 
@@ -253,6 +257,8 @@ func completeMultipartResult(r *http.Request, input *s3.CompleteMultipartUploadI
 				result.VersionId = aws.String(versionId)
 			}
 		}
+		result.SetChecksum(string(entry.Extended[s3_constants.ExtChecksumAlgorithm]), string(entry.Extended[s3_constants.ExtChecksumValue]))
+		result.ChecksumType = string(entry.Extended[s3_constants.ExtChecksumType])
 	}
 	return result
 }
@@ -763,15 +769,14 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			// For versioned buckets, all content is stored in .versions directory
 			// The latest version information is tracked in the .versions directory metadata
 			output = &CompleteMultipartUploadResult{
-				Location:           aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
-				Bucket:             input.Bucket,
-				ETag:               aws.String(etagQuote),
-				Key:                objectKey(input.Key),
-				VersionId:          aws.String(versionId),
-				ChecksumHeaderName: completionState.checksumHeaderName,
-				ChecksumValue:      completionState.checksumValue,
-				ChecksumType:       completionState.checksumType,
+				Location:     aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
+				Bucket:       input.Bucket,
+				ETag:         aws.String(etagQuote),
+				Key:          objectKey(input.Key),
+				VersionId:    aws.String(versionId),
+				ChecksumType: completionState.checksumType,
 			}
+			output.SetChecksum(completionState.checksumHeaderName, completionState.checksumValue)
 			return s3err.ErrNone
 		}
 
@@ -840,15 +845,14 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 
 			// Note: Suspended versioning should NOT return VersionId field according to AWS S3 spec
 			output = &CompleteMultipartUploadResult{
-				Location:           aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
-				Bucket:             input.Bucket,
-				ETag:               aws.String(etagQuote),
-				Key:                objectKey(input.Key),
-				ChecksumHeaderName: completionState.checksumHeaderName,
-				ChecksumValue:      completionState.checksumValue,
-				ChecksumType:       completionState.checksumType,
+				Location:     aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
+				Bucket:       input.Bucket,
+				ETag:         aws.String(etagQuote),
+				Key:          objectKey(input.Key),
+				ChecksumType: completionState.checksumType,
 				// VersionId field intentionally omitted for suspended versioning
 			}
+			output.SetChecksum(completionState.checksumHeaderName, completionState.checksumValue)
 			return s3err.ErrNone
 		}
 
@@ -911,14 +915,13 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 
 		// For non-versioned buckets, return response without VersionId
 		output = &CompleteMultipartUploadResult{
-			Location:           aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
-			Bucket:             input.Bucket,
-			ETag:               aws.String(etagQuote),
-			Key:                objectKey(input.Key),
-			ChecksumHeaderName: completionState.checksumHeaderName,
-			ChecksumValue:      completionState.checksumValue,
-			ChecksumType:       completionState.checksumType,
+			Location:     aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
+			Bucket:       input.Bucket,
+			ETag:         aws.String(etagQuote),
+			Key:          objectKey(input.Key),
+			ChecksumType: completionState.checksumType,
 		}
+		output.SetChecksum(completionState.checksumHeaderName, completionState.checksumValue)
 		return s3err.ErrNone
 	}
 	var finalizeCode s3err.ErrorCode
@@ -1104,6 +1107,23 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 	// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListParts.html
 
 	glog.V(2).Infof("listObjectParts input %v", input)
+
+	// complete/abort delete the upload directory, but most stores list a missing
+	// directory as empty instead of erroring, so listing alone cannot tell a
+	// completed upload (NoSuchUpload on AWS) from an open upload with no parts
+	// yet (200 with an empty list). Probe the upload record instead.
+	pentry, err := s3a.getEntry(s3a.genUploadsFolder(*input.Bucket), *input.UploadId)
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return nil, s3err.ErrNoSuchUpload
+		}
+		glog.Errorf("listObjectParts %s %s error: %v", *input.Bucket, *input.UploadId, err)
+		return nil, s3err.ErrInternalError
+	}
+	// only createMultipartUpload stamps the key; a directory a part write left behind is not an upload
+	if !isMultipartUploadEntry(pentry) {
+		return nil, s3err.ErrNoSuchUpload
+	}
 
 	output = &ListPartsResult{
 		Bucket:           input.Bucket,

@@ -302,6 +302,10 @@ type tableSetup struct {
 	// Age backdates the whole table so its snapshots can sit outside a
 	// retention window.
 	Age time.Duration
+	// Schema and Spec describe the table when the default unpartitioned test
+	// table does not fit.
+	Schema *iceberg.Schema
+	Spec   *iceberg.PartitionSpec
 }
 
 func (ts tableSetup) tablePath() string {
@@ -329,7 +333,7 @@ func (ts tableSetup) fileRef(elem ...string) string {
 func populateTable(t *testing.T, fs *fakeFilerServer, setup tableSetup) table.Metadata {
 	t.Helper()
 
-	meta := buildTestMetadata(t, setup.Snapshots, setup.Refs, setup.Age, nil)
+	meta := buildTestMetadata(t, setup.Snapshots, setup.Refs, setup.Age, nil, setup.Schema, setup.Spec)
 	fullMetadataJSON, err := json.Marshal(meta)
 	if err != nil {
 		t.Fatalf("marshal metadata: %v", err)

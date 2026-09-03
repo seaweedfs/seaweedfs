@@ -602,7 +602,7 @@ func (f *Filer) doDeleteChunks(ctx context.Context, chunks []*filer_pb.FileChunk
 			f.FileIdDeletionQueue.EnQueue(chunk.GetFileIdString())
 			continue
 		}
-		dataChunks, manifestResolveErr := ResolveOneChunkManifest(ctx, f.MasterClient.LookupFileId, chunk)
+		dataChunks, manifestResolveErr := ResolveOneChunkManifest(ctx, f.MasterClient.LookupFileId, chunk, f.MasterClient)
 		if manifestResolveErr != nil {
 			glog.V(0).InfofCtx(ctx, "failed to resolve manifest %s: %v", chunk.FileId, manifestResolveErr)
 		}
@@ -628,7 +628,7 @@ func (f *Filer) deleteChunksIfNotNew(ctx context.Context, oldEntry, newEntry *En
 		newChunks = newEntry.GetChunks()
 	}
 
-	toDelete, err := MinusChunks(ctx, f.MasterClient.GetLookupFileIdFunction(), oldChunks, newChunks)
+	toDelete, err := MinusChunks(ctx, f.MasterClient.GetLookupFileIdFunction(), oldChunks, newChunks, f.MasterClient)
 	if err != nil {
 		glog.ErrorfCtx(ctx, "Failed to resolve old entry chunks when delete old entry chunks. new: %s, old: %s", newChunks, oldChunks)
 		return

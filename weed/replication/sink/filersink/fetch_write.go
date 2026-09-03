@@ -195,7 +195,7 @@ func (fs *FilerSink) replicateOneManifestChunk(ctx context.Context, sourceChunk 
 	resolveName := fmt.Sprintf("resolve manifest %s", sourceChunk.GetFileIdString())
 	missingGate := fs.newMissingSourceChunkGate(sourceChunk.GetFileIdString())
 	err := util.RetryUntil(resolveName, func() error {
-		rc, e := filer.ResolveOneChunkManifest(ctx, fs.filerSource.LookupFileId, sourceChunk)
+		rc, e := filer.ResolveOneChunkManifest(ctx, fs.filerSource.LookupFileId, sourceChunk, nil)
 		if e != nil {
 			return e
 		}
