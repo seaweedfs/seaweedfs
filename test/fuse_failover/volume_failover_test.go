@@ -215,10 +215,12 @@ func TestReadAfterCachedLocationDies(t *testing.T) {
 	c := startFailoverCluster(t, 3, 2)
 
 	// Small files so each is a single chunk on a single volume, which keeps the
-	// mapping from file to server unambiguous.
+	// mapping from file to server unambiguous. The master grows six 001 volumes
+	// at a time, so seven files put two of them on one volume however the
+	// writes are spread.
 	const fileSize = 256 << 10
 	payloads := make(map[string][]byte)
-	for i := 0; i < 6; i++ {
+	for i := 0; i < 7; i++ {
 		name := fmt.Sprintf("smallfile-%d", i)
 		data := make([]byte, fileSize)
 		_, err := rand.Read(data)

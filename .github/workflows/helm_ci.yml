@@ -90,6 +90,12 @@ jobs:
             echo "S3 credentials reference the existing secret for $workload"
           done
 
+          echo "=== Testing ingress labels ==="
+          helm template test $CHART_DIR --set s3.enabled=true,s3.ingress.enabled=true \
+            --set s3.ingress.labels.external-dns=s3 > /tmp/s3-ingress-labels.yaml
+          grep -A 12 "^kind: Ingress" /tmp/s3-ingress-labels.yaml | grep -q "^    external-dns: s3"
+          echo "S3 ingress renders custom labels"
+
           echo "=== Testing with all-in-one mode ==="
           helm template test $CHART_DIR --set allInOne.enabled=true > /tmp/allinone.yaml
           grep -q "seaweedfs-all-in-one" /tmp/allinone.yaml
