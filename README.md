@@ -44,7 +44,7 @@ SeaweedFS is a simple and highly scalable distributed file system. There are two
 1. to store billions of files!
 2. to serve the files fast!
 
-One `weed` binary serves an S3 object store, a POSIX file system, and a lakehouse with S3 Tables, all over the same data. Every file is one disk read away, capacity grows by starting another volume server, and cloud storage can be cached or tiered transparently.
+One `weed` binary serves an S3 object store, a POSIX file system, and a lakehouse with S3 Tables, all over the same data. Each blob is one disk read away, capacity grows by starting another volume server, and cloud storage can be cached or tiered transparently.
 
 - [Download Binaries for different platforms](https://github.com/seaweedfs/seaweedfs/releases/latest)
 - [Wiki Documentation](https://github.com/seaweedfs/seaweedfs/wiki)
@@ -95,7 +95,8 @@ S3_BUCKET=my-bucket \
 That's it. The S3 endpoint is at http://localhost:8333, `my-bucket` exists, and `admin`/`secret` are valid credentials:
 
 ```bash
-aws --endpoint-url http://localhost:8333 s3 cp README.md s3://my-bucket/
+AWS_ACCESS_KEY_ID=admin AWS_SECRET_ACCESS_KEY=secret \
+  aws --endpoint-url http://localhost:8333 s3 cp README.md s3://my-bucket/
 ```
 
 The same process also runs the master, a volume server, the filer, WebDAV, the Iceberg REST catalog, and the Admin UI. Add `S3_TABLE_BUCKET=warehouse` to also create an Iceberg table bucket, or `warehouse:LANCE` for a Lance one. Drop the AWS keys to run without authentication for development.
@@ -122,6 +123,7 @@ To run master, volume server, filer, S3, and WebDAV as separate services:
 
 ```bash
 wget https://raw.githubusercontent.com/seaweedfs/seaweedfs/master/docker/seaweedfs-compose.yml
+wget -P prometheus https://raw.githubusercontent.com/seaweedfs/seaweedfs/master/docker/prometheus/prometheus.yml
 docker compose -f seaweedfs-compose.yml -p seaweedfs up
 ```
 
@@ -145,8 +147,7 @@ global:
 master:
   replicas: 3
   data:
-    type: persistentVolumeClaim
-    storageClass: local-path
+    type: persistentVolumeClaim   # the cluster's default storage class; add storageClass to pick one
     size: 1Gi
 
 volume:
@@ -154,15 +155,14 @@ volume:
   dataDirs:
     - name: data
       type: persistentVolumeClaim
-      storageClass: local-path
       size: 500Gi
       maxVolumes: 0               # size the volume count from the disk
 
 filer:
   replicas: 2
-  enablePVC: true
-  storageClass: local-path
-  storage: 20Gi
+  data:
+    type: persistentVolumeClaim
+    size: 20Gi
 
 s3:
   enabled: true
@@ -203,7 +203,7 @@ Nothing rebalances until you ask it to. Throughput is a filer or S3 gateway; the
 
 ## Fast ##
 
-* One disk read per object. A volume server keeps a 16-byte index entry per blob in memory and reads the data in a single seek, also for erasure-coded data.
+* One disk read per blob. A small file is one blob; a large file is split into chunks of a few MB, each its own blob. A volume server keeps a 16-byte index entry per blob in memory and reads it in a single seek, also for erasure-coded data.
 * The master is not in the read path. Clients cache the volume-to-server mapping and talk to volume servers directly.
 * 40 bytes of metadata per file on disk. Small files are packed into append-only volume files, so there is no per-file inode, no per-file metadata file, no fragmentation, and writes are SSD friendly.
 * Hot data is replicated; [erasure coding][ErasureCoding] is applied to warm data in the background, so writes never pay the encoding cost.
