@@ -2,10 +2,11 @@
 #
 # `core` is the plugin.proto contract and nothing else; a worker crate beside it
 # supplies job handlers and a binary. Adding a worker means adding a member here,
-# not touching the protocol.
+# not touching the protocol. `sort` is neither: it is the sort specification the
+# sorting jobs share, so that two of them cannot drift on what an order means.
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/lance"]
+members = ["crates/core", "crates/lance", "crates/sort"]
 
 [workspace.package]
 version = "0.1.0"

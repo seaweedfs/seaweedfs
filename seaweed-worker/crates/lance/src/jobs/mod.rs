@@ -9,6 +9,7 @@
 pub mod cleanup;
 pub mod compact;
 pub mod indices;
+pub mod sort;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -51,6 +52,11 @@ pub fn handlers(
         ),
         Arc::new(
             indices::OptimizeIndicesHandler::new(namespace_url.clone())
+                .with_fallback(fallback.clone())
+                .with_metrics(metrics.clone()),
+        ),
+        Arc::new(
+            sort::SortHandler::new(namespace_url.clone())
                 .with_fallback(fallback.clone())
                 .with_metrics(metrics.clone()),
         ),
