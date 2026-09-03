@@ -26,9 +26,11 @@ func recordReachable(host string) {
 // ReachableFirst orders urls so that hosts which recently failed to answer
 // come last, keeping the order within each group. Once the retry interval has
 // passed, the first read to ask claims the probe and tries that host first;
-// the others keep it last until the probe settles.
+// the others keep it last until the probe settles. A read probes at most one
+// host, so a claim is always followed by an attempt and several expired hosts
+// are probed by successive reads.
 func ReachableFirst(urls []string) []string {
-	var probes, reachable, unanswered []string
+	var probe, reachable, unanswered []string
 	for _, u := range urls {
 		host := hostOf(u)
 		failedAt, failed := unreachable.Load(host)
@@ -37,16 +39,16 @@ func ReachableFirst(urls []string) []string {
 			reachable = append(reachable, u)
 		case time.Since(failedAt.(time.Time)) < unreachableRetryInterval:
 			unanswered = append(unanswered, u)
-		case unreachable.CompareAndSwap(host, failedAt, time.Now()):
-			probes = append(probes, u)
+		case probe == nil && unreachable.CompareAndSwap(host, failedAt, time.Now()):
+			probe = append(probe, u)
 		default:
 			unanswered = append(unanswered, u)
 		}
 	}
-	if len(probes) == 0 && len(unanswered) == 0 {
+	if probe == nil && unanswered == nil {
 		return urls
 	}
-	return append(append(probes, reachable...), unanswered...)
+	return append(append(probe, reachable...), unanswered...)
 }
 
 func hostOf(rawUrl string) string {

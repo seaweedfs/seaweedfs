@@ -56,14 +56,15 @@ func TestReachableFirstProbesOnceAfterRetryInterval(t *testing.T) {
 	assertOrder(t, ReachableFirst(urls), urls...)
 }
 
-func TestReachableFirstClaimsEveryExpiredHost(t *testing.T) {
+func TestReachableFirstProbesOneExpiredHostPerRead(t *testing.T) {
 	forgetUnreachable(t)
 	urls := []string{"http://a:8080/3,x", "http://b:8080/3,x", "http://c:8080/3,x"}
 	expired := time.Now().Add(-unreachableRetryInterval)
 	unreachable.Store("a:8080", expired)
 	unreachable.Store("c:8080", expired)
 
-	assertOrder(t, ReachableFirst(urls), urls[0], urls[2], urls[1])
+	assertOrder(t, ReachableFirst(urls), urls[0], urls[1], urls[2])
+	assertOrder(t, ReachableFirst(urls), urls[2], urls[1], urls[0])
 	assertOrder(t, ReachableFirst(urls), urls[1], urls[0], urls[2])
 }
 
