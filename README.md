@@ -98,7 +98,7 @@ That's it. The S3 endpoint is at http://localhost:8333, `my-bucket` exists, and 
 aws --endpoint-url http://localhost:8333 s3 cp README.md s3://my-bucket/
 ```
 
-The same process also runs the master (http://localhost:9333), a volume server (9340), the filer (http://localhost:8888), WebDAV (7333), the Iceberg REST catalog (8181), and the Admin UI (http://localhost:23646). Add `S3_TABLE_BUCKET=warehouse` to also create an Iceberg table bucket, or `warehouse:LANCE` for a Lance one. Drop the AWS keys to run without authentication for development.
+The same process also runs the master, a volume server, the filer, WebDAV, the Iceberg REST catalog, and the Admin UI. Add `S3_TABLE_BUCKET=warehouse` to also create an Iceberg table bucket, or `warehouse:LANCE` for a Lance one. Drop the AWS keys to run without authentication for development.
 
 > macOS: if the binary is quarantined, run `xattr -d com.apple.quarantine ./weed` first.
 
