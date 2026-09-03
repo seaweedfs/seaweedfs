@@ -64,6 +64,17 @@ pub fn number_field(name: &str, label: &str, description: &str, min: i64, max: i
     }
 }
 
+pub fn text_field(name: &str, label: &str, description: &str, placeholder: &str) -> ConfigField {
+    ConfigField {
+        name: name.to_string(),
+        label: label.to_string(),
+        description: description.to_string(),
+        field_type: ConfigFieldType::String as i32,
+        placeholder: placeholder.to_string(),
+        ..Default::default()
+    }
+}
+
 pub fn bool_field(name: &str, label: &str, description: &str) -> ConfigField {
     ConfigField {
         name: name.to_string(),
