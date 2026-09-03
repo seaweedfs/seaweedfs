@@ -91,6 +91,9 @@ func NewDiskLocation(dir string, maxVolumeCount int32, minFreeSpace util.MinFree
 		idxDir = dir
 	} else {
 		idxDir = util.ResolvePath(idxDir)
+		if err := os.MkdirAll(idxDir, 0755); err != nil {
+			glog.Fatalf("cannot create idx dir %s: %v", idxDir, err)
+		}
 	}
 	dirUuid, err := GenerateDirUuid(dir)
 	if err != nil {
