@@ -273,6 +273,29 @@ func TestLookupDirectoryEntriesMarksEntriesWithUnavailableVolumes(t *testing.T) 
 	}
 }
 
+func TestLookupDirectoryEntriesKeepsMalformedEntryError(t *testing.T) {
+	response, err := lookupDirectoryEntries(context.Background(), &filer_pb.LookupDirectoryEntriesRequest{
+		Requests: []*filer_pb.LookupDirectoryEntryRequest{{Directory: "/batch", Name: "key"}},
+	}, 42, func(_ context.Context, path util.FullPath) (*filer.Entry, int64, error) {
+		return &filer.Entry{
+			FullPath: path,
+			Chunks: []*filer_pb.FileChunk{
+				{Fid: &filer_pb.FileId{VolumeId: 9, FileKey: 1, Cookie: 2}},
+				{FileId: "not-a-file-id"},
+			},
+		}, 123, nil
+	}, func(context.Context, []string) (map[string][]wdclient.Location, error) {
+		return map[string][]wdclient.Location{}, nil
+	})
+	if err != nil {
+		t.Fatalf("batch lookup: %v", err)
+	}
+	result := response.Results[0]
+	if !result.Found || result.Entry == nil || !strings.Contains(result.Error, "invalid file id") {
+		t.Fatalf("malformed entry was reported as a clean miss: %+v", result)
+	}
+}
+
 func cacheVolumeEntry(_ context.Context, path util.FullPath) (*filer.Entry, int64, error) {
 	return &filer.Entry{
 		FullPath: path,
