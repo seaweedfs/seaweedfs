@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -21,6 +22,7 @@ type PrometheusStorage struct {
 	brokerCount       *prometheus.GaugeVec
 	clusterInfo       *prometheus.GaugeVec
 	telemetryReceived prometheus.Counter
+	reportsSkipped    prometheus.Counter
 
 	// In-memory storage for API endpoints (if needed)
 	mu        sync.RWMutex
@@ -83,6 +85,10 @@ func newPrometheusStorage(reg prometheus.Registerer) *PrometheusStorage {
 			Name: "seaweedfs_telemetry_reports_received_total",
 			Help: "Total number of telemetry reports received",
 		}),
+		reportsSkipped: promauto.NewCounter(prometheus.CounterOpts{
+			Name: "seaweedfs_telemetry_reports_skipped_total",
+			Help: fmt.Sprintf("Reports not kept because the cluster stores less than %d GiB", proto.MinDiskBytes>>30),
+		}),
 		instances: make(map[string]*telemetryData),
 		histories: make(map[string][]HistorySample),
 		stats:     make(map[string]interface{}),
@@ -93,6 +99,12 @@ func (s *PrometheusStorage) StoreTelemetry(data *proto.TelemetryData) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.telemetryReceived.Inc()
+	if data.TotalDiskBytes < proto.MinDiskBytes {
+		s.reportsSkipped.Inc()
+		return nil
+	}
+
 	// Drop the cluster_info series recorded under the previous label set when
 	// a cluster reports back with a different version or OS, so it is not
 	// counted under two versions at once.
@@ -101,8 +113,6 @@ func (s *PrometheusStorage) StoreTelemetry(data *proto.TelemetryData) error {
 		s.clusterInfo.Delete(infoLabels(prev.TelemetryData))
 	}
 	s.setClusterMetrics(data)
-
-	s.telemetryReceived.Inc()
 
 	// Store in memory for API endpoints
 	receivedAt := time.Now().UTC()

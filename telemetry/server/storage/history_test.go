@@ -17,7 +17,7 @@ func TestClusterHistory(t *testing.T) {
 		Version:           "4.40",
 		Os:                "linux/amd64",
 		VolumeServerCount: 3,
-		TotalDiskBytes:    1000,
+		TotalDiskBytes:    proto.MinDiskBytes + 1000,
 		TotalVolumeCount:  10,
 	}
 	if err := s.StoreTelemetry(report); err != nil {
@@ -25,7 +25,7 @@ func TestClusterHistory(t *testing.T) {
 	}
 
 	// A second report on the same UTC day replaces the day's sample.
-	report.TotalDiskBytes = 2000
+	report.TotalDiskBytes = proto.MinDiskBytes + 2000
 	if err := s.StoreTelemetry(report); err != nil {
 		t.Fatalf("store: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestClusterHistory(t *testing.T) {
 	if len(samples) != 1 {
 		t.Fatalf("got %d samples, want 1 (same-day replace)", len(samples))
 	}
-	if samples[0].TotalDiskBytes != 2000 {
+	if samples[0].TotalDiskBytes != proto.MinDiskBytes+2000 {
 		t.Errorf("same-day sample not replaced: got %d", samples[0].TotalDiskBytes)
 	}
 
@@ -62,7 +62,7 @@ func TestClusterHistory(t *testing.T) {
 	if !ok || len(samples) != 2 {
 		t.Fatalf("after round trip: ok=%v samples=%d, want 2", ok, len(samples))
 	}
-	if samples[0].TotalDiskBytes != 500 || samples[1].TotalDiskBytes != 2000 {
+	if samples[0].TotalDiskBytes != 500 || samples[1].TotalDiskBytes != proto.MinDiskBytes+2000 {
 		t.Errorf("samples corrupted after round trip: %+v", samples)
 	}
 

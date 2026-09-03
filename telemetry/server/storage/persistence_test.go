@@ -26,7 +26,7 @@ func TestStateRoundTrip(t *testing.T) {
 		Version:           "4.40",
 		Os:                "linux/amd64",
 		VolumeServerCount: 5,
-		TotalDiskBytes:    123456789,
+		TotalDiskBytes:    123 << 30,
 		TotalVolumeCount:  42,
 		FilerCount:        2,
 		BrokerCount:       1,
@@ -79,7 +79,7 @@ func TestLoadStateFillsNewestSampleVersion(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "telemetry-state.json")
 
 	s := newPrometheusStorage(prometheus.NewRegistry())
-	report := &proto.TelemetryData{TopologyId: "test-cluster-1", Version: "4.40", Os: "linux/amd64"}
+	report := &proto.TelemetryData{TopologyId: "test-cluster-1", Version: "4.40", Os: "linux/amd64", TotalDiskBytes: proto.MinDiskBytes}
 	if err := s.StoreTelemetry(report); err != nil {
 		t.Fatalf("store: %v", err)
 	}
