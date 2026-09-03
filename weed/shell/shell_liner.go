@@ -24,11 +24,8 @@ import (
 
 var historyPath = path.Join(os.TempDir(), "weed-shell")
 
-// RunShell drives the admin shell. In interactive mode it always returns nil
-// (errors are shown to the operator and the session continues). In
-// non-interactive mode (commands piped on stdin -- the scriptable path
-// CronJobs use) it returns the LAST command failure, so a wrapper can exit
-// non-zero instead of reporting success for a run that printed "error: ...".
+// Piped stdin returns the last command failure; an interactive session shows
+// the error to the operator and keeps going.
 func RunShell(options ShellOptions) error {
 	slices.SortFunc(Commands, func(a, b command) int {
 		return strings.Compare(a.Name(), b.Name())
@@ -113,9 +110,6 @@ func RunShell(options ShellOptions) error {
 			}
 		}
 	} else {
-		// Non-interactive: remember failures so the process can exit non-zero.
-		// A CronJob piping "s3.lifecycle.run-shard ..." into weed shell
-		// otherwise reports green while the run aborted partway.
 		var lastErr error
 		scanner := bufio.NewScanner(os.Stdin)
 		for scanner.Scan() {

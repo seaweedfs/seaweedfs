@@ -98,20 +98,16 @@ func (c *Command) Runnable() bool {
 	return c.Run != nil
 }
 
-// commandExitStatus is a non-zero exit status a command wants the process to
-// end with. Commands record it instead of calling os.Exit so the failure still
-// travels through main's normal shutdown path (atexit hooks, sentry flush).
+// Recorded, not os.Exit'ed, so the failure still travels through main's
+// shutdown path. The highest requested status wins.
 var commandExitStatus int
 
-// SetCommandExitStatus records a non-zero exit status for main to apply after
-// the command returns. The highest requested status wins.
 func SetCommandExitStatus(n int) {
 	if n > commandExitStatus {
 		commandExitStatus = n
 	}
 }
 
-// CommandExitStatus returns the exit status recorded by the command, 0 when none.
 func CommandExitStatus() int {
 	return commandExitStatus
 }

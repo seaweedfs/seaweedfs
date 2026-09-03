@@ -102,8 +102,7 @@ func main() {
 				// Command execution failed - general error
 				setExitStatus(1)
 			}
-			// A command that ran may still have recorded a failure status
-			// (e.g. a piped `weed shell` whose command errored).
+			// A command can also record a failure without returning false.
 			setExitStatus(command.CommandExitStatus())
 			exit()
 			return
@@ -203,8 +202,7 @@ func exit() {
 	for _, f := range atexitFuncs {
 		f()
 	}
-	// os.Exit skips deferred functions, so main's deferred sentry.Flush never
-	// ran on this path; flush here so buffered events survive the exit.
+	// os.Exit below skips main's deferred flush.
 	sentry.Flush(2 * time.Second)
 	os.Exit(exitStatus)
 }
