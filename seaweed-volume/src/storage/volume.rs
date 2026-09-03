@@ -801,6 +801,15 @@ impl Volume {
         }
 
         if also_load_index {
+            // Adjust for existing volumes with .idx together with .dat files:
+            // an index already beside the data keeps serving after --dir.idx
+            // named a different directory.
+            if self.dir_idx != self.dir
+                && Path::new(&format!("{}.idx", self.data_file_name())).exists()
+            {
+                self.dir_idx = self.dir.clone();
+            }
+
             // Recover rows that deletes on a tiered read-only volume overwrote
             // at the front of .idx. Best effort: a volume that cannot be
             // repaired is still servable for everything the surviving rows
@@ -5237,6 +5246,71 @@ mod tests {
         // Relocating again is a no-op: the index is already where asked.
         v.relocate_index_to(idx).unwrap();
         assert!(Path::new(&idx_dir_idx).exists());
+    }
+
+    #[test]
+    fn test_load_keeps_index_co_located_with_the_data() {
+        let root = TempDir::new().unwrap();
+        let data_dir = root.path().join("data");
+        let idx_dir = root.path().join("idx");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::create_dir_all(&idx_dir).unwrap();
+        let data = data_dir.to_str().unwrap();
+        let idx = idx_dir.to_str().unwrap();
+
+        let mut v = Volume::new(
+            data,
+            data,
+            "",
+            VolumeId(7),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        let payload = b"payload-beside-the-data".to_vec();
+        let mut n = Needle {
+            id: NeedleId(42),
+            cookie: Cookie(0x55),
+            data: payload.clone(),
+            data_size: payload.len() as u32,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true, false).unwrap();
+        v.sync_to_disk().unwrap();
+        drop(v);
+
+        // --dir.idx now names an empty directory: the index already beside the
+        // data keeps serving, and nothing lands in the new directory.
+        let reopened = Volume::new(
+            data,
+            idx,
+            "",
+            VolumeId(7),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        assert!(
+            Path::new(&format!("{data}/7.idx")).exists(),
+            "index stays with the data"
+        );
+        assert!(
+            !Path::new(&format!("{idx}/7.idx")).exists(),
+            "nothing written to the new idx dir"
+        );
+
+        let mut got = Needle {
+            id: NeedleId(42),
+            ..Needle::default()
+        };
+        reopened.read_needle(&mut got).unwrap();
+        assert_eq!(got.data, payload);
     }
 
     #[test]
