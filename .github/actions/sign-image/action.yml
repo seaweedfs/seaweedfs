@@ -25,7 +25,8 @@ runs:
         set -euo pipefail
         # The .sig tag layout: the OCI-referrer bundle cosign 3 writes by default
         # is not read by the Kyverno and policy-controller releases in use today.
-        cosign sign --yes --recursive --new-bundle-format=false $IMAGES
+        # Its signing config only supports bundles, so disable that path too.
+        cosign sign --yes --recursive --new-bundle-format=false --use-signing-config=false $IMAGES
 
     - name: Verify
       shell: bash
