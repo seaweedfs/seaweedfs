@@ -30,6 +30,9 @@ permissions:
 jobs:
   build-foundationdb-image:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       - name: Checkout
@@ -154,6 +157,7 @@ jobs:
           fi
 
       - name: Build and push image
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: ./docker
@@ -171,3 +175,8 @@ jobs:
             org.opencontainers.image.description=SeaweedFS is a distributed storage system for blobs, objects, files, and data lake, to store and serve billions of files fast!
             org.opencontainers.image.vendor=Chris Lu
 
+      - name: Sign
+        if: github.event_name != 'pull_request'
+        uses: ./.github/actions/sign-image
+        with:
+          images: chrislusf/seaweedfs@${{ steps.build.outputs.digest }}
