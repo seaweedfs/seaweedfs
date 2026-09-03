@@ -8,6 +8,7 @@
 package postgres
 
 import (
+	"database/sql"
 	"strconv"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -119,7 +120,11 @@ func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, us
 	if openErr != nil {
 		return openErr
 	}
-	store.DB = db
+	if err = store.UseConnectionPools(db, func() (*sql.DB, error) {
+		return OpenPGXDB(sqlUrl, adaptedSqlUrl, pgbouncerCompatible, maxIdle, maxOpen, maxLifetimeSeconds)
+	}, maxIdle, maxOpen, maxLifetimeSeconds); err != nil {
+		return err
+	}
 
 	ConfigureListOrdering(store.DB, gen)
 

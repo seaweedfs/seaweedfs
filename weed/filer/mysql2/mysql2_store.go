@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
-	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -84,19 +83,19 @@ func (store *MysqlStore2) initialize(createTable, upsertQuery string, enableUpse
 		adaptedSqlUrl += "&interpolateParams=true"
 	}
 
-	var dbErr error
-	store.DB, dbErr = sql.Open("mysql", sqlUrl)
+	db, dbErr := sql.Open("mysql", sqlUrl)
 	if dbErr != nil {
-		if store.DB != nil {
-			store.DB.Close()
+		if db != nil {
+			db.Close()
 		}
-		store.DB = nil
 		return fmt.Errorf("can not connect to %s error:%w", adaptedSqlUrl, dbErr)
 	}
 
-	store.DB.SetMaxIdleConns(maxIdle)
-	store.DB.SetMaxOpenConns(maxOpen)
-	store.DB.SetConnMaxLifetime(time.Duration(maxLifetimeSeconds) * time.Second)
+	if err = store.UseConnectionPools(db, func() (*sql.DB, error) {
+		return sql.Open("mysql", sqlUrl)
+	}, maxIdle, maxOpen, maxLifetimeSeconds); err != nil {
+		return err
+	}
 
 	if err = store.DB.Ping(); err != nil {
 		return fmt.Errorf("connect to %s error:%v", adaptedSqlUrl, err)
