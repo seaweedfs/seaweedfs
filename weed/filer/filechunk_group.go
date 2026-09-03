@@ -18,6 +18,8 @@ type ChunkGroup struct {
 	sectionsLock      sync.RWMutex
 	readerCache       *ReaderCache
 	concurrentReaders int
+	// cacheInvalidator lets manifest resolution drop stale volume locations, as ReaderCache does for chunk reads
+	cacheInvalidator CacheInvalidator
 }
 
 // NewChunkGroup creates a ChunkGroup with configurable concurrency.
@@ -43,6 +45,7 @@ func NewChunkGroup(lookupFn wdclient.LookupFileIdFunctionType, chunkCache chunk_
 		sections:          make(map[SectionIndex]*FileChunkSection),
 		readerCache:       NewReaderCache(readerCacheLimit, chunkCache, lookupFn, cacheInvalidator),
 		concurrentReaders: concurrentReaders,
+		cacheInvalidator:  cacheInvalidator,
 	}
 
 	err := group.SetChunks(chunks)
@@ -227,7 +230,7 @@ func (group *ChunkGroup) SetChunks(chunks []*filer_pb.FileChunk) error {
 			continue
 		}
 
-		resolvedChunks, err := ResolveOneChunkManifest(context.Background(), group.lookupFn, chunk)
+		resolvedChunks, err := ResolveOneChunkManifest(context.Background(), group.lookupFn, chunk, group.cacheInvalidator)
 		if err != nil {
 			return err
 		}

@@ -676,7 +676,7 @@ func (c *commandFsMergeVolumes) rewriteManifestChunk(
 		return chunk, false, rewrittenNeedles{}, fmt.Errorf("not a manifest chunk: %s", chunk.GetFileIdString())
 	}
 
-	subChunks, err := filer.ResolveOneChunkManifest(ctx, lookupFn, chunk)
+	subChunks, err := filer.ResolveOneChunkManifest(ctx, lookupFn, chunk, nil)
 	if err != nil {
 		return chunk, false, rewrittenNeedles{}, err
 	}

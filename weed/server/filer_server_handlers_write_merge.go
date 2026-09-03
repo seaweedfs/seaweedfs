@@ -64,7 +64,7 @@ func (fs *FilerServer) mergeChunks(ctx context.Context, so *operation.StorageOpt
 		}
 	}
 
-	garbage, err := filer.MinusChunks(ctx, fs.lookupFileId, inputChunks, mergedChunks)
+	garbage, err := filer.MinusChunks(ctx, fs.lookupFileId, inputChunks, mergedChunks, fs.filer.MasterClient)
 	if err != nil {
 		glog.ErrorfCtx(ctx, "Failed to resolve old entry chunks when delete old entry chunks. new: %s, old: %s",
 			mergedChunks, inputChunks)

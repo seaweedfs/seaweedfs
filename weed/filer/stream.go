@@ -107,6 +107,12 @@ type VolumeServerJwtFunction func(fileId string) string
 // resolved locations actually changed (so we never retry against the same servers). originalErr
 // is returned unchanged when no retry is attempted, so callers surface the real fetch failure.
 func retryFetchWithFreshLocations(ctx context.Context, invalidator CacheInvalidator, lookupFn wdclient.LookupFileIdFunctionType, fileId string, oldUrls []string, originalErr error, refetch func(newUrls []string) error) error {
+	// the caller may have gone away between its own check and this one; a
+	// cancelled read is no evidence the locations are wrong, and callers such
+	// as volume.fsck tell an abort from real corruption with errors.Is
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
 	if invalidator == nil {
 		return originalErr
 	}
