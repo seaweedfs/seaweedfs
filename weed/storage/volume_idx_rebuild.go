@@ -3,6 +3,7 @@ package storage
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -27,6 +28,11 @@ func (scanner *VolumeFileScanner4RebuildIdx) ReadNeedleBody() bool {
 }
 
 func (scanner *VolumeFileScanner4RebuildIdx) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
+	// An all-zero header is unwritten space, not a record: stop rather than
+	// index a truncated .dat's tail as millions of needle 0 rows.
+	if n.Size == 0 && n.Id == 0 {
+		return io.EOF
+	}
 	size := n.Size
 	if !size.IsValid() {
 		size = types.TombstoneFileSize

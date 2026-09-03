@@ -172,4 +172,58 @@ mod tests {
             assert_eq!(got.data, format!("payload-{id}").into_bytes());
         }
     }
+
+    // A .dat padded with zeros must not be indexed as needle 0 rows: the walk
+    // stops where the records do.
+    #[test]
+    fn test_rebuild_idx_stops_at_zero_padded_dat_tail() {
+        let root = TempDir::new().unwrap();
+        let dir = root.path().to_str().unwrap();
+
+        let mut v = Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        v.write_needle(&mut needle(1), true, false).unwrap();
+        v.sync_to_disk().unwrap();
+        drop(v);
+
+        let seeded = fs::read(format!("{dir}/1.idx")).unwrap();
+        let dat = fs::OpenOptions::new()
+            .write(true)
+            .open(format!("{dir}/1.dat"))
+            .unwrap();
+        let dat_size = dat.metadata().unwrap().len();
+        dat.set_len(dat_size + 4096).unwrap();
+        drop(dat);
+        fs::remove_file(format!("{dir}/1.idx")).unwrap();
+
+        let reopened = Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        drop(reopened);
+
+        assert_eq!(
+            fs::read(format!("{dir}/1.idx")).unwrap(),
+            seeded,
+            "the zero-padded tail leaked into the rebuilt idx"
+        );
+    }
 }

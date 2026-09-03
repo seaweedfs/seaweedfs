@@ -73,3 +73,48 @@ func TestLoad_MovedIdxDirectory_RebuildsIdx(t *testing.T) {
 		t.Errorf("volume marked read-only after the rebuild")
 	}
 }
+
+// A .dat padded with zeros must not be indexed as needle 0 rows: the walk stops
+// where the records do.
+func TestRebuildIdx_StopsAtZeroPaddedDatTail(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("create volume: %v", err)
+	}
+	if _, _, _, err := v.writeNeedle2(newRandomNeedle(1), true, false, false); err != nil {
+		t.Fatalf("seed write: %v", err)
+	}
+	v.Close()
+
+	base := VolumeFileName(dir, "", 1)
+	seeded, err := os.ReadFile(base + ".idx")
+	if err != nil {
+		t.Fatalf("read the seeded idx: %v", err)
+	}
+	datSize, err := os.Stat(base + ".dat")
+	if err != nil {
+		t.Fatalf("stat dat: %v", err)
+	}
+	if err := os.Truncate(base+".dat", datSize.Size()+4096); err != nil {
+		t.Fatalf("pad dat: %v", err)
+	}
+	if err := os.Remove(base + ".idx"); err != nil {
+		t.Fatalf("drop idx: %v", err)
+	}
+
+	v2, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	defer v2.Close()
+
+	rebuilt, err := os.ReadFile(base + ".idx")
+	if err != nil {
+		t.Fatalf("read the rebuilt idx: %v", err)
+	}
+	if !bytes.Equal(seeded, rebuilt) {
+		t.Errorf("rebuilt idx has %d bytes, want the %d the server wrote", len(rebuilt), len(seeded))
+	}
+}
