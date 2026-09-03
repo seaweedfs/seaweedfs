@@ -347,10 +347,12 @@ jobs:
         run: |
           docker buildx imagetools create \
             -t ${{ env.IMAGE }}:${{ env.RELEASE_TAG }}${{ matrix.tag_suffix }} \
+            --metadata-file /tmp/manifest.json \
             $(printf '${{ env.IMAGE }}@sha256:%s ' *)
           docker buildx imagetools inspect ${{ env.IMAGE }}:${{ env.RELEASE_TAG }}${{ matrix.tag_suffix }}
-          # The copy and the signature below use this digest, not whatever the tag points at by then.
-          echo "digest=$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' ${{ env.IMAGE }}:${{ env.RELEASE_TAG }}${{ matrix.tag_suffix }})" >> "$GITHUB_OUTPUT"
+          # The copy and the signature below use the digest this run pushed, not whatever the tag points at by then.
+          digest=$(jq -er '."containerimage.descriptor".digest' /tmp/manifest.json)
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
 
       - name: Login to Docker Hub
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant

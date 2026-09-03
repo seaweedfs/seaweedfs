@@ -501,12 +501,13 @@ jobs:
           # Create manifest on GHCR first (no rate limits)
           echo "Creating GHCR manifest (no rate limits)..."
           docker buildx imagetools create -t ghcr.io/chrislusf/seaweedfs:${BASE_TAG}${SUFFIX} \
+            --metadata-file /tmp/manifest.json \
             ghcr.io/chrislusf/seaweedfs:${BASE_TAG}${SUFFIX}-amd64 \
             ghcr.io/chrislusf/seaweedfs:${BASE_TAG}${SUFFIX}-arm64 \
             ghcr.io/chrislusf/seaweedfs:${BASE_TAG}${SUFFIX}-arm \
             ghcr.io/chrislusf/seaweedfs:${BASE_TAG}${SUFFIX}-386
-          # The copy and the signature below use this digest, not whatever the tag points at by then.
-          DIGEST=$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' ghcr.io/chrislusf/seaweedfs:${BASE_TAG}${SUFFIX})
+          # The copy and the signature below use the digest this run pushed, not whatever the tag points at by then.
+          DIGEST=$(jq -er '."containerimage.descriptor".digest' /tmp/manifest.json)
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
           
           # Copy the complete multi-arch image from GHCR to Docker Hub
