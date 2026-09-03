@@ -9,6 +9,7 @@ package postgres2
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strconv"
 
@@ -124,7 +125,11 @@ func (store *PostgresStore2) initialize(createTable, upsertQuery string, enableU
 	if openErr != nil {
 		return openErr
 	}
-	store.DB = db
+	if err = store.UseConnectionPools(db, func() (*sql.DB, error) {
+		return postgres.OpenPGXDB(sqlUrl, adaptedSqlUrl, pgbouncerCompatible, maxIdle, maxOpen, maxLifetimeSeconds)
+	}, maxIdle, maxOpen, maxLifetimeSeconds); err != nil {
+		return err
+	}
 
 	if err = store.CreateTable(context.Background(), abstract_sql.DEFAULT_TABLE); err != nil {
 		return fmt.Errorf("init table %s: %v", abstract_sql.DEFAULT_TABLE, err)

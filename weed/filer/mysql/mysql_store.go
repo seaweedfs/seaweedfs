@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -147,10 +146,11 @@ func (store *MysqlStore) initialize(dsn string, upsertQuery string, enableUpsert
 		return fmt.Errorf("can not create mysql connector for %s error:%w", maskedDSN(cfg), err)
 	}
 
-	store.DB = sql.OpenDB(connector)
-	store.DB.SetMaxIdleConns(maxIdle)
-	store.DB.SetMaxOpenConns(maxOpen)
-	store.DB.SetConnMaxLifetime(time.Duration(maxLifetimeSeconds) * time.Second)
+	if err = store.UseConnectionPools(sql.OpenDB(connector), func() (*sql.DB, error) {
+		return sql.OpenDB(connector), nil
+	}, maxIdle, maxOpen, maxLifetimeSeconds); err != nil {
+		return err
+	}
 
 	if err = store.DB.Ping(); err != nil {
 		return fmt.Errorf("connect to %s error:%v", maskedDSN(cfg), err)

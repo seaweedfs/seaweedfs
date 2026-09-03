@@ -58,21 +58,27 @@ func (store *SqliteStore) initialize(dbFile, createTable, upsertQuery string) (e
 		UpsertQueryTemplate:    upsertQuery,
 	}
 
-	var dbErr error
-	store.DB, dbErr = sql.Open("sqlite", dbFile)
+	// A writer that meets the key-value pool's reader waits for it instead of
+	// failing the operation outright.
+	dsn := dbFile + "?_pragma=busy_timeout(10000)"
+
+	db, dbErr := sql.Open("sqlite", dsn)
 	if dbErr != nil {
-		if store.DB != nil {
-			store.DB.Close()
-			store.DB = nil
+		if db != nil {
+			db.Close()
 		}
 		return fmt.Errorf("can not connect to %s error:%v", dbFile, dbErr)
 	}
 
-	if err = store.DB.Ping(); err != nil {
+	if err = db.Ping(); err != nil {
 		return fmt.Errorf("connect to %s error:%v", dbFile, err)
 	}
 
-	store.DB.SetMaxOpenConns(1)
+	if err = store.UseConnectionPools(db, func() (*sql.DB, error) {
+		return sql.Open("sqlite", dsn)
+	}, 1, 1, 0); err != nil {
+		return err
+	}
 
 	if err = store.CreateTable(context.Background(), abstract_sql.DEFAULT_TABLE); err != nil {
 		return fmt.Errorf("init table %s: %v", abstract_sql.DEFAULT_TABLE, err)
