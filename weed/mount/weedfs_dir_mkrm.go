@@ -80,11 +80,13 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 		// duplicate as an update and reports success to both callers; the
 		// kernel's pre-mkdir lookup only catches the duplicate when the
 		// winner's create is already visible, which a cross-node race defeats.
+		// The filer routes an OExcl create to the entry's ring owner, so its
+		// per-path lock arbitrates every creator in the cluster.
 		OExcl: true,
 	}
 
 	glog.V(1).Infof("mkdir: %v", request)
-	resp, err := wfs.exclusiveCreateEntry(context.Background(), request, entryFullPath)
+	resp, err := wfs.streamCreateEntry(context.Background(), request)
 	if err != nil {
 		glog.V(0).Infof("mkdir %s: %v", entryFullPath, err)
 	} else {
