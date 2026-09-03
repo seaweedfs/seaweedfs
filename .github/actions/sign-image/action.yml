@@ -1,0 +1,39 @@
+name: Sign container images
+description: >
+  Keyless cosign signature on each image, then a verification pass against the
+  identity the signature should carry, so a misconfigured job fails here and not
+  on someone's cluster. That identity is the calling workflow's own,
+  https://github.com/<owner>/<repo>/.github/workflows/<file>@<ref>.
+  The calling job needs `id-token: write` and a registry login for every image.
+
+inputs:
+  images:
+    description: Image references by digest (name@sha256:...), whitespace separated.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install cosign
+      uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+    - name: Sign
+      shell: bash
+      env:
+        IMAGES: ${{ inputs.images }}
+      run: |
+        set -euo pipefail
+        # The .sig tag layout: the OCI-referrer bundle cosign 3 writes by default
+        # is not read by the Kyverno and policy-controller releases in use today.
+        cosign sign --yes --recursive --new-bundle-format=false $IMAGES
+
+    - name: Verify
+      shell: bash
+      env:
+        IMAGES: ${{ inputs.images }}
+      run: |
+        set -euo pipefail
+        cosign verify \
+          --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+          --certificate-identity "https://github.com/$GITHUB_WORKFLOW_REF" \
+          $IMAGES
