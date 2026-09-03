@@ -66,6 +66,9 @@ func (v *Volume) rebuildIdxFile() error {
 	}
 
 	idxFileName := v.FileName(".idx")
+	if err := os.MkdirAll(filepath.Dir(idxFileName), 0755); err != nil {
+		return fmt.Errorf("create idx dir for %s: %w", idxFileName, err)
+	}
 	tmpFileName := idxFileName + ".tmp"
 	tmpFile, err := os.OpenFile(tmpFileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {

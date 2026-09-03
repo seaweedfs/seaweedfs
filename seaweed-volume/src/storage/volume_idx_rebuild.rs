@@ -3,6 +3,7 @@
 
 use std::fs::{self, OpenOptions};
 use std::io::{BufWriter, Write};
+use std::path::Path;
 
 use crate::storage::idx;
 use crate::storage::needle::Needle;
@@ -71,6 +72,9 @@ impl Volume {
         let tmp_path = format!("{idx_path}.tmp");
 
         let rebuild = || -> Result<(), VolumeError> {
+            if let Some(parent) = Path::new(&idx_path).parent() {
+                fs::create_dir_all(parent)?;
+            }
             let tmp_file = OpenOptions::new()
                 .write(true)
                 .create(true)
