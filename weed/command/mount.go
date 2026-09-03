@@ -201,7 +201,9 @@ var cmdMount = &Command{
 
   Where the platform labels the disk, in Finder and in Explorer, the mounted
   path names it: -filer.path="/Image Disk" shows up as "Image Disk". Mounting
-  the whole tree labels it with the filer address instead.
+  the whole tree takes the name from the mount point instead, so
+  -dir=\\seaweedfs\Images labels the disk "Images" while still mounting
+  everything, and only a bare drive letter falls back to the filer address.
 
   RDMA Acceleration:
   For ultra-fast reads, enable RDMA acceleration with an RDMA sidecar:
