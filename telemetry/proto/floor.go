@@ -4,4 +4,4 @@ package proto
 // the server keeps the report: fresh `weed server` runs, CI jobs and throwaway
 // containers each mint their own cluster id, and they were most of the counted
 // clusters while holding almost none of the bytes.
-const MinDiskBytes = 10 << 30
+const MinDiskBytes uint64 = 10 << 30
