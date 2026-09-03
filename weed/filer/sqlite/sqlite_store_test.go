@@ -62,8 +62,9 @@ func TestSqliteDSN(t *testing.T) {
 		t.Errorf("sqliteDSN with options = %q, want %q", got, want)
 	}
 	memory := sqliteDSN(":memory:")
-	if !strings.HasPrefix(memory, "file:seaweedfs") || !strings.Contains(memory, "mode=memory&cache=shared") {
-		t.Errorf("sqliteDSN(:memory:) = %q, want a named shared-memory URI", memory)
+	if !strings.HasPrefix(memory, "file:seaweedfs") || !strings.Contains(memory, "mode=memory&cache=shared") ||
+		!strings.HasSuffix(memory, "&_pragma=busy_timeout(10000)") {
+		t.Errorf("sqliteDSN(:memory:) = %q, want a named shared-memory URI carrying the busy timeout", memory)
 	}
 }
 
