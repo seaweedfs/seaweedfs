@@ -87,14 +87,6 @@ type Option struct {
 	// This protects chunks from being purged by volume.fsck for long-running writes
 	MetadataFlushSeconds int
 
-	// RDMA acceleration options
-	RdmaEnabled       bool
-	RdmaSidecarAddr   string
-	RdmaFallback      bool
-	RdmaReadOnly      bool
-	RdmaMaxConcurrent int
-	RdmaTimeoutMs     int
-
 	// Peer chunk sharing options (design-weed-mount-peer-chunk-sharing.md).
 	// When PeerEnabled is false (default), the mount runs exactly as today.
 	// One gRPC port carries everything: directory RPCs (ChunkAnnounce /
@@ -162,7 +154,6 @@ type WFS struct {
 	posixSid              uint64             // this mount's session id, for routed-lock owner identity
 	posixHint             *posixLockHint     // local fcntl-lock hint for routed mode
 	posixOwn              *posixlock.Manager // mirror of locks this mount holds, re-asserted via keepalive
-	rdmaClient            *RDMAMountClient
 	peerRegistrar         *PeerRegistrar
 	peerDirectory         *PeerDirectory
 	peerGrpcServer        *PeerGrpcServer
@@ -340,9 +331,6 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 			os.RemoveAll(option.getUniqueCacheDirForWrite())
 		}
 		os.RemoveAll(option.getUniqueCacheDirForRead())
-		if wfs.rdmaClient != nil {
-			wfs.rdmaClient.Close()
-		}
 		if wfs.peerAnnouncer != nil {
 			wfs.peerAnnouncer.Stop()
 		}
@@ -364,23 +352,6 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 			wfs.peerRegistrar.Stop()
 		}
 	})
-
-	// Initialize RDMA client if enabled
-	if option.RdmaEnabled && option.RdmaSidecarAddr != "" {
-		rdmaClient, err := NewRDMAMountClient(
-			option.RdmaSidecarAddr,
-			wfs.LookupFn(),
-			option.RdmaMaxConcurrent,
-			option.RdmaTimeoutMs,
-		)
-		if err != nil {
-			glog.Warningf("Failed to initialize RDMA client: %v", err)
-		} else {
-			wfs.rdmaClient = rdmaClient
-			glog.Infof("RDMA acceleration enabled: sidecar=%s, maxConcurrent=%d, timeout=%dms",
-				option.RdmaSidecarAddr, option.RdmaMaxConcurrent, option.RdmaTimeoutMs)
-		}
-	}
 
 	// Peer chunk sharing: register with every configured filer's mount
 	// registry + start the single gRPC server that handles ChunkAnnounce /

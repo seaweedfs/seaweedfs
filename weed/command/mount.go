@@ -48,14 +48,6 @@ type MountOptions struct {
 	// Periodic metadata flush to protect against orphan chunk cleanup
 	metadataFlushSeconds *int
 
-	// RDMA acceleration options
-	rdmaEnabled       *bool
-	rdmaSidecarAddr   *string
-	rdmaFallback      *bool
-	rdmaReadOnly      *bool
-	rdmaMaxConcurrent *int
-	rdmaTimeoutMs     *int
-
 	// Peer chunk sharing options (design-weed-mount-peer-chunk-sharing.md).
 	peerEnabled    *bool
 	peerListen     *string
@@ -139,14 +131,6 @@ func init() {
 	// Periodic metadata flush to protect against orphan chunk cleanup
 	mountOptions.metadataFlushSeconds = cmdMount.Flag.Int("metadataFlushSeconds", 120, "periodically flush file metadata to filer in seconds (0 to disable). This protects chunks from being purged by volume.fsck for long-running writes")
 
-	// RDMA acceleration flags
-	mountOptions.rdmaEnabled = cmdMount.Flag.Bool("rdma.enabled", false, "enable RDMA acceleration for reads")
-	mountOptions.rdmaSidecarAddr = cmdMount.Flag.String("rdma.sidecar", "", "RDMA sidecar address (e.g., localhost:8081)")
-	mountOptions.rdmaFallback = cmdMount.Flag.Bool("rdma.fallback", true, "fallback to HTTP when RDMA fails")
-	mountOptions.rdmaReadOnly = cmdMount.Flag.Bool("rdma.readOnly", false, "use RDMA for reads only (writes use HTTP)")
-	mountOptions.rdmaMaxConcurrent = cmdMount.Flag.Int("rdma.maxConcurrent", 64, "max concurrent RDMA operations")
-	mountOptions.rdmaTimeoutMs = cmdMount.Flag.Int("rdma.timeoutMs", 5000, "RDMA operation timeout in milliseconds")
-
 	// Peer chunk sharing flags.
 	mountOptions.peerEnabled = cmdMount.Flag.Bool("peer.enable", false, "opt in to peer chunk sharing — mount serves its chunk cache to other mounts and fetches from peers instead of volume servers when available")
 	mountOptions.peerListen = cmdMount.Flag.String("peer.listen", ":18080", "bind address for peer gRPC (directory RPCs + FetchChunk streaming)")
@@ -204,19 +188,6 @@ var cmdMount = &Command{
   the whole tree takes the name from the mount point instead, so
   -dir=\\seaweedfs\Images labels the disk "Images" while still mounting
   everything, and only a bare drive letter falls back to the filer address.
-
-  RDMA Acceleration:
-  For ultra-fast reads, enable RDMA acceleration with an RDMA sidecar:
-    weed mount -filer=localhost:8888 -dir=/mnt/seaweedfs \
-      -rdma.enabled=true -rdma.sidecar=localhost:8081
-
-  RDMA Options:
-    -rdma.enabled=false          Enable RDMA acceleration for reads
-    -rdma.sidecar=""             RDMA sidecar address (required if enabled)
-    -rdma.fallback=true          Fallback to HTTP when RDMA fails
-    -rdma.readOnly=false         Use RDMA for reads only (writes use HTTP)
-    -rdma.maxConcurrent=64       Max concurrent RDMA operations
-    -rdma.timeoutMs=5000         RDMA operation timeout in milliseconds
 
   `,
 }
