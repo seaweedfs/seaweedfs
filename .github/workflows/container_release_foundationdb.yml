@@ -21,6 +21,9 @@ jobs:
 
   build-large-release-container_foundationdb:
     runs-on: [ubuntu-latest]
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       -
@@ -65,6 +68,7 @@ jobs:
           fi
       -
         name: Build
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: ./docker
@@ -76,4 +80,10 @@ jobs:
           platforms: linux/amd64
           tags: ${{ steps.docker_meta.outputs.tags }}
           labels: ${{ steps.docker_meta.outputs.labels }}
+      -
+        name: Sign
+        if: github.event_name != 'pull_request'
+        uses: ./.github/actions/sign-image
+        with:
+          images: chrislusf/seaweedfs@${{ steps.build.outputs.digest }}
 
