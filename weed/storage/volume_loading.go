@@ -257,7 +257,8 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 			// A changed -dir.idx leaves the new directory without an index.
 			// The .dat still holds every row, so rebuild rather than exit.
 			if rebuildErr := v.rebuildIdxFile(); rebuildErr != nil {
-				glog.Fatalf("check volume idx file %s: %v: %v", v.FileName(".idx"), err, rebuildErr)
+				glog.Errorf("skip volume %d (idx: %s): %v", v.Id, v.FileName(".idx"), rebuildErr)
+				return fmt.Errorf("rebuild volume idx file %s: %w", v.FileName(".idx"), rebuildErr)
 			}
 			glog.V(0).Infof("volume %d: rebuilt %s from %s", v.Id, v.FileName(".idx"), v.FileName(".dat"))
 		}

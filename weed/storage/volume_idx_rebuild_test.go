@@ -227,3 +227,39 @@ func TestRebuildIdx_StopsAtNegativeSizeHeader(t *testing.T) {
 		t.Errorf("rebuilt idx has %d bytes, want the %d covering only the intact needle", len(rebuilt), len(kept))
 	}
 }
+
+// A rebuild that cannot write skips just this volume; it used to call
+// glog.Fatalf and take the whole volume server down with it.
+func TestRebuildIdx_UnwritableIdxDirSkipsOnlyThisVolume(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	idxDir := filepath.Join(root, "idx")
+	for _, dir := range []string{dataDir, idxDir} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+
+	v, err := NewVolume(dataDir, dataDir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("create volume: %v", err)
+	}
+	if _, _, _, err := v.writeNeedle2(newRandomNeedle(1), true, false, false); err != nil {
+		t.Fatalf("seed write: %v", err)
+	}
+	v.Close()
+	if err := os.Remove(VolumeFileName(dataDir, "", 1) + ".idx"); err != nil {
+		t.Fatalf("drop idx: %v", err)
+	}
+	if err := os.Chmod(idxDir, 0555); err != nil {
+		t.Fatalf("seal idx dir: %v", err)
+	}
+	defer os.Chmod(idxDir, 0755)
+
+	if _, err := NewVolume(dataDir, idxDir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0); err == nil {
+		t.Errorf("expected a load error for an unwritable idx dir")
+	}
+}
