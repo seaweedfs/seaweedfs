@@ -31,6 +31,33 @@ docker compose -f seaweedfs-dev-compose.yml -p seaweedfs up
 
 ```
 
+## Verify an image signature
+
+Every image CI pushes to `chrislusf/seaweedfs` and `ghcr.io/chrislusf/seaweedfs` is signed with [cosign](https://docs.sigstore.dev/cosign/verifying/verify/), keyless, by the GitHub Actions workflow that built it, so there is no key to fetch or pin. The signature is attached to the image digest and covers the multi-arch index and each platform image in it; `latest` is the release image under another tag and verifies the same way. Images published before September 2026 predate signing.
+
+```bash
+cosign verify \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github.com/seaweedfs/seaweedfs/\.github/workflows/container_release_unified\.yml@' \
+  chrislusf/seaweedfs:latest
+```
+
+The identity ends in the git ref the workflow ran for: `refs/tags/<version>` for a release, `refs/heads/master` when a variant was republished by hand. The other images name the workflow that built them. `dev` is `container_dev.yml`, a `latest` rebuilt by hand is `container_latest.yml`, the `_large_disk_foundationdb` release image is `container_release_foundationdb.yml`, and the per-version FoundationDB and RocksDB builds are `container_foundationdb_version.yml` and `container_rocksdb_version.yml`.
+
+The same check as a Kyverno policy:
+
+```yaml
+verifyImages:
+  - imageReferences:
+      - "chrislusf/seaweedfs:*"
+      - "ghcr.io/chrislusf/seaweedfs:*"
+    attestors:
+      - entries:
+          - keyless:
+              issuer: https://token.actions.githubusercontent.com
+              subject: https://github.com/seaweedfs/seaweedfs/.github/workflows/container_release_unified.yml@refs/tags/*
+```
+
 ## Local Development
 
 ```bash
