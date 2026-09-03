@@ -71,7 +71,7 @@ func runShell(command *Command, args []string) bool {
 	if err := shell.RunShell(shellOptions); err != nil {
 		// The command already printed the error; a piped run has to fail the
 		// script wrapping it too.
-		SetCommandExitStatus(2)
+		SetCommandExitStatus(1)
 	}
 
 	return true
