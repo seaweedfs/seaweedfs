@@ -246,12 +246,20 @@ type orphanedNeedle struct {
 	fileId   string
 }
 
+// reservation is the plan capacity a successful move consumed, remembered so
+// an abandoned rewrite can hand it back with the copy it deletes.
+type reservation struct {
+	src, dst needle.VolumeId
+	size     uint64
+}
+
 // rewrittenNeedles is the bookkeeping a manifest rewrite hands back: sources
 // whose references have moved, deletable once the filer commits, and the new
 // copies on the target volumes, which orphan if it never does.
 type rewrittenNeedles struct {
-	sources []orphanedNeedle
-	targets []orphanedNeedle
+	sources      []orphanedNeedle
+	targets      []orphanedNeedle
+	reservations []reservation
 }
 
 // deleteOrphanedNeedles fans out BatchDelete RPCs to every replica of each
@@ -676,9 +684,14 @@ func (c *commandFsMergeVolumes) rewriteManifestChunk(
 	var rewritten rewrittenNeedles
 	// Every path out of here that is not the successful return abandons the
 	// rewrite with the filer still pointing at the old manifest, so whatever
-	// already landed on the target volumes belongs to nobody.
+	// already landed on the target volumes belongs to nobody. Give the plan
+	// back the room those copies were holding, or a multi-target merge keeps
+	// counting bytes it just deleted and skips later chunks for no reason.
 	abandon := func() {
 		deleteOrphanedNeedles(commandEnv, entryPath, rewritten.targets, true)
+		for _, r := range rewritten.reservations {
+			plan.release(r.src, r.dst, r.size)
+		}
 	}
 	anySubChanged := false
 	for i, sub := range subChunks {
@@ -700,6 +713,7 @@ func (c *commandFsMergeVolumes) rewriteManifestChunk(
 					rewritten.sources = append(rewritten.sources, orphanedNeedle{volumeId: oldSubManifestVid, fileId: oldSubManifestFid})
 					rewritten.targets = append(rewritten.targets, nested.targets...)
 					rewritten.targets = append(rewritten.targets, orphanedNeedle{volumeId: newSub.Fid.VolumeId, fileId: newSub.GetFileIdString()})
+					rewritten.reservations = append(rewritten.reservations, nested.reservations...)
 				}
 			}
 			continue
@@ -728,6 +742,7 @@ func (c *commandFsMergeVolumes) rewriteManifestChunk(
 		anySubChanged = true
 		rewritten.sources = append(rewritten.sources, orphanedNeedle{volumeId: oldSubVid, fileId: oldSubFid})
 		rewritten.targets = append(rewritten.targets, orphanedNeedle{volumeId: uint32(toVid), fileId: sub.GetFileIdString()})
+		rewritten.reservations = append(rewritten.reservations, reservation{src: subVid, dst: toVid, size: sub.Size})
 	}
 
 	manifestVid := needle.VolumeId(chunk.Fid.VolumeId)
