@@ -386,8 +386,10 @@ func TestCacheBatchLookupSelectsAuthoritativeVolumeLocations(t *testing.T) {
 func repeatedBatchLookupRequest(count int, request *filer_pb.LookupDirectoryEntryRequest) *filer_pb.LookupDirectoryEntriesRequest {
 	requests := make([]*filer_pb.LookupDirectoryEntryRequest, count)
 	for index := range requests {
-		copy := *request
-		requests[index] = &copy
+		requests[index] = &filer_pb.LookupDirectoryEntryRequest{
+			Directory: request.Directory,
+			Name:      request.Name,
+		}
 	}
 	return &filer_pb.LookupDirectoryEntriesRequest{Requests: requests}
 }
