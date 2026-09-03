@@ -295,10 +295,14 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # Assemble each variant's per-platform digests into one tag, then mirror to Docker Hub.
+  # Assemble each variant's per-platform digests into one tag, mirror it to
+  # Docker Hub, and sign the result on both registries.
   merge:
     needs: [build]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -309,6 +313,12 @@ jobs:
           - { variant: large_disk_full, tag_suffix: _large_disk_full }
           - { variant: rocksdb,         tag_suffix: _large_disk_rocksdb }
     steps:
+      - name: Checkout the signing action
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
+        uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/actions
+
       - name: Download digests
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
         uses: actions/download-artifact@v8
@@ -384,6 +394,19 @@ jobs:
             chrislusf/seaweedfs:${{ env.RELEASE_TAG }}${{ matrix.tag_suffix }}
           echo "Copied ${{ matrix.variant }} to Docker Hub"
 
+      - name: Resolve the published digests
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
+        id: digests
+        run: |
+          tag="${RELEASE_TAG}${{ matrix.tag_suffix }}"
+          echo "images=${IMAGE}@$(crane digest "${IMAGE}:${tag}") chrislusf/seaweedfs@$(crane digest "chrislusf/seaweedfs:${tag}")" >> "$GITHUB_OUTPUT"
+
+      - name: Sign ${{ matrix.variant }}
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
+        uses: ./.github/actions/sign-image
+        with:
+          images: ${{ steps.digests.outputs.images }}
+
   # Report-only trivy scan: uploads fixable HIGH/CRITICAL findings to GitHub
   # Security for visibility, but never blocks the release. Releases (including
   # `latest`) ship regardless — vulnerabilities are tracked, not gated, since
@@ -439,7 +462,8 @@ jobs:
   # image. crane tag adds an extra tag to an existing manifest — no rebuild,
   # no QEMU, no separate workflow. Replaces the old container_latest.yml
   # rebuild that often failed or lagged behind the release. Independent of
-  # trivy-scan: vuln findings are reported but do not block `latest`.
+  # trivy-scan: vuln findings are reported but do not block `latest`. The
+  # cosign signature is attached to the digest, so `latest` carries it too.
   tag-latest:
     runs-on: ubuntu-latest
     needs: [merge]
