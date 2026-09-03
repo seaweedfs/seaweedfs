@@ -801,6 +801,30 @@ impl Volume {
         }
 
         if also_load_index {
+            // Adjust for existing volumes with .idx together with .dat files:
+            // an index already beside the data keeps serving after --dir.idx
+            // named a different directory.
+            if self.dir_idx != self.dir
+                && Path::new(&format!("{}.idx", self.data_file_name())).exists()
+            {
+                self.dir_idx = self.dir.clone();
+            }
+
+            // A changed --dir.idx leaves the new directory without an index.
+            // The .dat still holds every row, so rebuild rather than mount the
+            // volume with every needle invisible.
+            if !self.has_remote_file
+                && !Path::new(&self.file_name(".idx")).exists()
+                && self.current_dat_file_size()? > SUPER_BLOCK_SIZE as u64
+            {
+                self.rebuild_idx_file()?;
+                info!(
+                    volume_id = self.id.0,
+                    idx = %self.file_name(".idx"),
+                    "rebuilt the index from the data file"
+                );
+            }
+
             // Recover rows that deletes on a tiered read-only volume overwrote
             // at the front of .idx. Best effort: a volume that cannot be
             // repaired is still servable for everything the surviving rows
@@ -3995,7 +4019,7 @@ impl Volume {
 /// Byte offset just past the needle's on-disk record. Deletion tombstones
 /// carry TombstoneFileSize (-1) in the .idx but are written with DataSize=0,
 /// so their on-disk record is sized as 0. Mirrors Go's needleDiskEnd.
-fn needle_disk_end(offset: Offset, size: Size, version: Version) -> i64 {
+pub(crate) fn needle_disk_end(offset: Offset, size: Size, version: Version) -> i64 {
     let on_disk_size = if size.is_deleted() { Size(0) } else { size };
     offset.to_actual_offset() + get_actual_size(on_disk_size, version)
 }
@@ -4165,6 +4189,11 @@ pub fn scan_volume_file(
 
         if size.0 == 0 && _id.is_empty() {
             break; // end of valid data
+        }
+        // A negative size is a corrupt header, and body_length would advance the
+        // walk backwards from it. Go's scanners stop here by returning io.EOF.
+        if size.0 < 0 {
+            break;
         }
 
         let body_length = needle::needle_body_length(size, version);
@@ -5237,6 +5266,71 @@ mod tests {
         // Relocating again is a no-op: the index is already where asked.
         v.relocate_index_to(idx).unwrap();
         assert!(Path::new(&idx_dir_idx).exists());
+    }
+
+    #[test]
+    fn test_load_keeps_index_co_located_with_the_data() {
+        let root = TempDir::new().unwrap();
+        let data_dir = root.path().join("data");
+        let idx_dir = root.path().join("idx");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::create_dir_all(&idx_dir).unwrap();
+        let data = data_dir.to_str().unwrap();
+        let idx = idx_dir.to_str().unwrap();
+
+        let mut v = Volume::new(
+            data,
+            data,
+            "",
+            VolumeId(7),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        let payload = b"payload-beside-the-data".to_vec();
+        let mut n = Needle {
+            id: NeedleId(42),
+            cookie: Cookie(0x55),
+            data: payload.clone(),
+            data_size: payload.len() as u32,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true, false).unwrap();
+        v.sync_to_disk().unwrap();
+        drop(v);
+
+        // --dir.idx now names an empty directory: the index already beside the
+        // data keeps serving, and nothing lands in the new directory.
+        let reopened = Volume::new(
+            data,
+            idx,
+            "",
+            VolumeId(7),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        assert!(
+            Path::new(&format!("{data}/7.idx")).exists(),
+            "index stays with the data"
+        );
+        assert!(
+            !Path::new(&format!("{idx}/7.idx")).exists(),
+            "nothing written to the new idx dir"
+        );
+
+        let mut got = Needle {
+            id: NeedleId(42),
+            ..Needle::default()
+        };
+        reopened.read_needle(&mut got).unwrap();
+        assert_eq!(got.data, payload);
     }
 
     #[test]

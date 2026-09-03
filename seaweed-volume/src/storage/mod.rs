@@ -9,6 +9,7 @@ pub mod store_ec_reconcile;
 pub mod super_block;
 pub mod types;
 pub mod volume;
+pub mod volume_idx_rebuild;
 pub mod volume_idx_repair;
 pub mod volume_open;
 pub mod volume_report;
