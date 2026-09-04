@@ -99,6 +99,10 @@ func (fs *FilerServer) tusHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := fs.loadTusSessionChunks(ctx, session); err != nil {
 			glog.Errorf("Failed to load TUS session %s chunks: %v", uploadID, err)
+			if !errors.Is(err, filer_pb.ErrNotFound) {
+				http.Error(w, "Failed to load upload state", http.StatusInternalServerError)
+				return
+			}
 			writeTusSessionNotFound(w, r.Method)
 			return
 		}
