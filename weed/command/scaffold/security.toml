@@ -73,6 +73,14 @@ expires_after_seconds = 10           # seconds
 key = ""
 expires_after_seconds = 10           # seconds
 
+# HLS playback uses the same filer read JWT and path-prefix checks as normal
+# filer reads by default. Set enabled=false to make GET/HEAD requests under the
+# virtual /hls/ namespace public even when jwt.filer_signing.read.key is set.
+# HLS POST/PUT ingest is never bypassed and always follows the normal filer
+# write JWT policy.
+[jwt.filer_signing.hls]
+enabled = true
+
 # gRPC mTLS configuration
 # All gRPC TLS authentications are mutual (mTLS)
 # The values for ca, cert, and key are paths to the certificate/key files
